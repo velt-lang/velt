@@ -319,6 +319,7 @@ the standard library. The output has one page per module and a client-side searc
   declare or list itself, each with a link to where it is declared. A re-export from a module
   that isn't documented alongside (another package; std when documenting a package) is listed
   as one line. Names in a local `export { a, b as c };` list are documented too.
+  An interface declared more than once is documented once, with the members of every declaration.
 - **Tags** in doc comments are rendered as sections: `@param name - text` as a parameter list
   (a `{type}` is ignored, as the signature shows the type), `@returns` (`@return`), `@throws`,
   `@example` (code, shown in a code block), `@deprecated [text]` (the item is also marked
@@ -357,12 +358,12 @@ An item (an export, or a member in `members`, which has the same shape):
 | `name` | its exported name |
 | `kind` | `function`, `class`, `struct`, `interface`, `enum`, `type`, `const`, `extend` (an `extend` block, named after its type), `re-export` (from a module not documented alongside); members: `field`, `method`, `getter`, `setter`, `constructor`, `member` (of an enum) |
 | `modifiers` | `static`, `async`, `readonly`, `abstract`, `protected`, `public`, `mut` as written, and `deprecated` |
-| `signature` | the canonical signature (one line per overload) |
+| `signature` | the canonical signature (one line per overload, and per differing header of a merged interface) |
 | `spans` | the type names in `signature` (of members too) that link to their documentation: `{start, end, role, target}`, offsets in UTF-16 code units (JavaScript string indices); `role` is where the name is: `param`, `return`, `throws`, `extends`, `implements`, `typeArg` (a bound or default of the item's own type parameters), `field` (a field's type) or `type` (a constant's or type alias's type, the type an `extend` block extends); a type argument has the role of the type it belongs to (`Promise<Point>` as a return type: `return`) |
 | `doc`, `summary` | the doc comment's text without its tags (Markdown; `{@link}` already rendered as in HTML) and its first sentence |
 | `tags` | `params` (`[{name, doc}]`), `returns`, `throws` (`[…]`), `examples` (`[…]`, verbatim), `deprecated` (`null` without a `@deprecated` tag, `""` for a tag without text, otherwise its text), `see` (`[…]`) |
-| `links` | the `{@link}`s in the doc comment and its tags: `{text, ref, target}`, `text` as the Markdown shows it, `ref` as written, `target` `null` when nothing documented has that name |
-| `source` | `{file, line}` of the declaration (a re-exported item's is where it is declared); `null` for a `re-export` |
+| `links` | the `{@link}`s in the doc comment and its tags: `{text, ref, target}`, `text` as the Markdown shows it, `ref` as written, `target` `null` when nothing documented has that name; a name that is both a type and a value (`type Color` and `const Color`) links to the value |
+| `source` | `{file, line}` of the declaration (a re-exported item's is where it is declared); `null` for a `re-export`; for an interface declared more than once (the declarations merge, and are one item with the members of all), the first declaration |
 | `reexportedFrom` | `{module, name}` where a re-exported item is declared, else `null` |
 | `members` | the public fields, accessors, constructor and methods (static ones too) of a class, struct or interface; an enum's members; an `extend` block's methods |
 

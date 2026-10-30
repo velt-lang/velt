@@ -344,3 +344,52 @@ fn span_offsets_count_utf16_code_units() {
     let at = sig.find("Color").expect("Color");
     assert_eq!(spans[0]["start"], sig[..at].encode_utf16().count());
 }
+
+#[test]
+fn merged_interface_declarations_are_one_item() {
+    let inputs = velt_doc::inputs_from_dir(&dir().join("pkg"), "pkg").expect("fixture");
+    let doc: Value = serde_json::from_str(&velt_doc::api_json("pkg", &inputs)).expect("JSON");
+    let lib = doc["modules"]
+        .as_array()
+        .and_then(|ms| ms.iter().find(|m| m["module"] == "pkg/lib"))
+        .expect("pkg/lib");
+    let labeled: Vec<&Value> = lib["exports"]
+        .as_array()
+        .expect("exports")
+        .iter()
+        .filter(|e| e["name"] == "Labeled")
+        .collect();
+    assert_eq!(labeled.len(), 1, "{labeled:?}");
+    let members: Vec<&str> = labeled[0]["members"]
+        .as_array()
+        .expect("members")
+        .iter()
+        .map(|m| m["name"].as_str().expect("name"))
+        .collect();
+    assert_eq!(members, ["label", "short"]);
+    assert_eq!(labeled[0]["summary"], "Something with a label.");
+    assert_eq!(labeled[0]["signature"], "interface Labeled");
+}
+
+#[test]
+fn the_name_a_signature_declares_is_not_a_link() {
+    // `function Unit(): Unit` with an interface `Unit`: the return type links to the
+    // interface, the function's own name does not.
+    let inputs = velt_doc::inputs_from_dir(&dir().join("pkg"), "pkg").expect("fixture");
+    let doc: Value = serde_json::from_str(&velt_doc::api_json("pkg", &inputs)).expect("JSON");
+    let unit = export(&doc, "pkg/lib", "Unit", "function");
+    assert_eq!(unit["signature"], "function Unit(): Unit");
+    let spans = unit["spans"].as_array().expect("spans");
+    assert_eq!(spans.len(), 1, "{spans:?}");
+    assert_eq!(
+        (&spans[0]["start"], &spans[0]["role"]),
+        (&Value::from(17), &Value::from("return"))
+    );
+    assert_eq!(spans[0]["target"]["id"], "pkg/lib#type:Unit");
+
+    let out = tempfile::tempdir().expect("tempdir");
+    velt_doc::write_api_docs("pkg", "", &inputs, out.path()).expect("HTML");
+    let page = std::fs::read_to_string(out.path().join("pkg.lib.html")).expect("page");
+    let sig = "function Unit(): <a href=\"#interface.Unit\">Unit</a>";
+    assert!(page.contains(sig), "no `{sig}` in the page:\n{page}");
+}

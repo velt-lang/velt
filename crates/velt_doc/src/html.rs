@@ -211,8 +211,9 @@ pub struct SigPart<'a> {
 }
 
 /// `signature` in pieces, with the type names that `scope` knows linked. Names in `generics`
-/// are type parameters, never links; neither are parameter and field names, strings, or the
-/// item being declared (`self_href`, a [`Target::href`]).
+/// are type parameters, never links; neither are parameter and field names, strings, the name
+/// each line declares (`function Thing()` when a type is named `Thing` too), or the item being
+/// declared (`self_href`, a [`Target::href`]).
 pub fn signature_parts<'a>(
     signature: &str,
     generics: &[&str],
@@ -228,6 +229,7 @@ pub fn signature_parts<'a>(
         }),
     };
     let chars: Vec<char> = signature.chars().collect();
+    let declared = declared_names(&chars);
     let mut i = 0;
     while i < chars.len() {
         let c = chars[i];
@@ -264,6 +266,7 @@ pub fn signature_parts<'a>(
         let target = scope
             .get(&word)
             .filter(|_| !is_name && !preceded_by_dot && !generics.contains(&word.as_str()))
+            .filter(|_| !declared.contains(&start))
             .filter(|t| t.href() != self_href);
         match target {
             Some(target) => parts.push(SigPart {
@@ -274,6 +277,67 @@ pub fn signature_parts<'a>(
         }
     }
     parts
+}
+
+/// Words a declaration line may start with before the name it declares.
+const DECLARATION_WORDS: &[&str] = &[
+    "function",
+    "class",
+    "struct",
+    "interface",
+    "enum",
+    "type",
+    "const",
+    "let",
+    "var",
+    "declare",
+    "default",
+    "async",
+    "static",
+    "get",
+    "set",
+    "readonly",
+    "abstract",
+    "protected",
+    "public",
+    "private",
+    "mut",
+];
+
+/// Where (char index) the name each line of `chars` declares starts: the first word after the
+/// declaration words (`Thing` in `async function* Thing()`, `length` in `get length()`). An
+/// `extend Point` line declares nothing: `Point` is the type it extends.
+fn declared_names(chars: &[char]) -> Vec<usize> {
+    let mut out = vec![];
+    let mut line = 0;
+    while line < chars.len() {
+        let mut i = line;
+        loop {
+            while i < chars.len() && matches!(chars[i], ' ' | '\t' | '*') {
+                i += 1;
+            }
+            let start = i;
+            while i < chars.len() && is_ident_char(chars[i]) {
+                i += 1;
+            }
+            if start == i || !is_ident_start(chars[start]) {
+                break;
+            }
+            let word: String = chars[start..i].iter().collect();
+            if word == "extend" {
+                break;
+            }
+            if !DECLARATION_WORDS.contains(&word.as_str()) {
+                out.push(start);
+                break;
+            }
+        }
+        line = match chars[line..].iter().position(|&c| c == '\n') {
+            Some(n) => line + n + 1,
+            None => chars.len(),
+        };
+    }
+    out
 }
 
 /// What a page needs to render signatures with links.

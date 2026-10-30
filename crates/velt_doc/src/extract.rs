@@ -213,6 +213,7 @@ fn extract_with(name: &str, source: &str) -> (DocModule, Vec<u32>) {
             _ => items.extend(text.item(item, false)),
         }
     }
+    let items = merge_interfaces(items);
     let module_doc = text.module_doc();
     let module = DocModule {
         name: name.to_string(),
@@ -223,6 +224,32 @@ fn extract_with(name: &str, source: &str) -> (DocModule, Vec<u32>) {
         reexports,
     };
     (module, text.plain_above.into_inner())
+}
+
+/// `items` with the declarations of one interface (`interface Shape { … }` twice, which merge)
+/// as one item, where the first is: the members of all of them, the first doc comment there is,
+/// and each different header (`interface Shape extends Named`) as a line of its signature.
+fn merge_interfaces(items: Vec<DocItem>) -> Vec<DocItem> {
+    let mut out: Vec<DocItem> = Vec::with_capacity(items.len());
+    for item in items {
+        let first = out.iter_mut().find(|it| {
+            it.kind == Kind::Interface && item.kind == Kind::Interface && it.name == item.name
+        });
+        let Some(first) = first else {
+            out.push(item);
+            continue;
+        };
+        if !first.signature.lines().any(|l| l == item.signature) {
+            first.signature = format!("{}\n{}", first.signature, item.signature);
+        }
+        if first.comment.is_empty() {
+            first.doc = item.doc;
+            first.comment = item.comment;
+            first.deprecated = item.deprecated;
+        }
+        first.members.extend(item.members);
+    }
+    out
 }
 
 fn exported_name(n: &ast::ImportName) -> String {

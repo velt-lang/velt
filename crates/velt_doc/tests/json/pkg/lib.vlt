@@ -151,3 +151,31 @@ export function tint(c: "é" | Color, p: Point): Point {
 export function first<T = Point>(xs: T[]): T | undefined {
   return xs[0];
 }
+
+/** Something with a label. */
+export interface Labeled {
+  /** The label. */
+  label(): string;
+}
+
+/** Labels can be short too: a second declaration of the interface, merged with the first. */
+export interface Labeled {
+  /** The short label. */
+  short: string;
+}
+
+/** The label of `l`. */
+export function labelOf(l: Labeled): string {
+  return l.label();
+}
+
+/** A unit of something. */
+export interface Unit {
+  /** How many. */
+  count: i64;
+}
+
+/** A unit count: a function with the name of an interface. */
+export function Unit(): Unit {
+  return { count: 1 };
+}

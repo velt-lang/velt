@@ -1255,6 +1255,209 @@
           "members": []
         },
         {
+          "id": "pkg/lib#Labeled",
+          "name": "Labeled",
+          "kind": "interface",
+          "modifiers": [],
+          "signature": "interface Labeled",
+          "spans": [],
+          "doc": "Something with a label.",
+          "summary": "Something with a label.",
+          "tags": {
+            "params": [],
+            "returns": null,
+            "throws": [],
+            "examples": [],
+            "deprecated": null,
+            "see": []
+          },
+          "links": [],
+          "source": {
+            "file": "lib.vlt",
+            "line": 156
+          },
+          "reexportedFrom": null,
+          "members": [
+            {
+              "id": "pkg/lib#Labeled.label",
+              "name": "label",
+              "kind": "method",
+              "modifiers": [],
+              "signature": "label(): string",
+              "spans": [],
+              "doc": "The label.",
+              "summary": "The label.",
+              "tags": {
+                "params": [],
+                "returns": null,
+                "throws": [],
+                "examples": [],
+                "deprecated": null,
+                "see": []
+              },
+              "links": [],
+              "source": {
+                "file": "lib.vlt",
+                "line": 158
+              },
+              "reexportedFrom": null,
+              "members": []
+            },
+            {
+              "id": "pkg/lib#Labeled.short",
+              "name": "short",
+              "kind": "field",
+              "modifiers": [],
+              "signature": "short: string",
+              "spans": [],
+              "doc": "The short label.",
+              "summary": "The short label.",
+              "tags": {
+                "params": [],
+                "returns": null,
+                "throws": [],
+                "examples": [],
+                "deprecated": null,
+                "see": []
+              },
+              "links": [],
+              "source": {
+                "file": "lib.vlt",
+                "line": 164
+              },
+              "reexportedFrom": null,
+              "members": []
+            }
+          ]
+        },
+        {
+          "id": "pkg/lib#labelOf",
+          "name": "labelOf",
+          "kind": "function",
+          "modifiers": [],
+          "signature": "function labelOf(l: Labeled): string",
+          "spans": [
+            {
+              "start": 20,
+              "end": 27,
+              "role": "param",
+              "target": {
+                "id": "pkg/lib#Labeled",
+                "module": "pkg/lib",
+                "kind": "interface",
+                "name": "Labeled",
+                "member": null
+              }
+            }
+          ],
+          "doc": "The label of `l`.",
+          "summary": "The label of `l`.",
+          "tags": {
+            "params": [],
+            "returns": null,
+            "throws": [],
+            "examples": [],
+            "deprecated": null,
+            "see": []
+          },
+          "links": [],
+          "source": {
+            "file": "lib.vlt",
+            "line": 168
+          },
+          "reexportedFrom": null,
+          "members": []
+        },
+        {
+          "id": "pkg/lib#type:Unit",
+          "name": "Unit",
+          "kind": "interface",
+          "modifiers": [],
+          "signature": "interface Unit",
+          "spans": [],
+          "doc": "A unit of something.",
+          "summary": "A unit of something.",
+          "tags": {
+            "params": [],
+            "returns": null,
+            "throws": [],
+            "examples": [],
+            "deprecated": null,
+            "see": []
+          },
+          "links": [],
+          "source": {
+            "file": "lib.vlt",
+            "line": 173
+          },
+          "reexportedFrom": null,
+          "members": [
+            {
+              "id": "pkg/lib#type:Unit.count",
+              "name": "count",
+              "kind": "field",
+              "modifiers": [],
+              "signature": "count: i64",
+              "spans": [],
+              "doc": "How many.",
+              "summary": "How many.",
+              "tags": {
+                "params": [],
+                "returns": null,
+                "throws": [],
+                "examples": [],
+                "deprecated": null,
+                "see": []
+              },
+              "links": [],
+              "source": {
+                "file": "lib.vlt",
+                "line": 175
+              },
+              "reexportedFrom": null,
+              "members": []
+            }
+          ]
+        },
+        {
+          "id": "pkg/lib#Unit",
+          "name": "Unit",
+          "kind": "function",
+          "modifiers": [],
+          "signature": "function Unit(): Unit",
+          "spans": [
+            {
+              "start": 17,
+              "end": 21,
+              "role": "return",
+              "target": {
+                "id": "pkg/lib#type:Unit",
+                "module": "pkg/lib",
+                "kind": "interface",
+                "name": "Unit",
+                "member": null
+              }
+            }
+          ],
+          "doc": "A unit count: a function with the name of an interface.",
+          "summary": "A unit count: a function with the name of an interface.",
+          "tags": {
+            "params": [],
+            "returns": null,
+            "throws": [],
+            "examples": [],
+            "deprecated": null,
+            "see": []
+          },
+          "links": [],
+          "source": {
+            "file": "lib.vlt",
+            "line": 179
+          },
+          "reexportedFrom": null,
+          "members": []
+        },
+        {
           "id": "pkg/lib#Figure",
           "name": "Figure",
           "kind": "interface",
