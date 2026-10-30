@@ -3,10 +3,12 @@
 //! hands the decoder a cursor over its live result, and the decoder takes each value straight
 //! from the driver's memory into the Velt value it builds (one copy, of the text it keeps).
 //!
-//! Any native driver can offer one: it implements [`RowCursor`] and hands std the address of a
-//! [`RawCursor`] ([`RawCursor::new`]); std decodes with `jsonParseCursor<T>`
-//! (flag `FLAG_CURSOR` of `velt_rt_json_reader_new_with`) and gives the cursor back to the
-//! driver afterwards, which then releases what it held and reports a failure the rows met.
+//! Any native driver can offer one: it implements [`RowCursor`], registers the cursor with the
+//! runtime (`open_cursor`, `sdk` feature) and hands velt/db's `decodeRows` the handle. std finds
+//! the cursor by it, decodes with `jsonParseCursor<T>` (flag `FLAG_CURSOR` of
+//! `velt_rt_json_reader_new_with`) and gives the handle back to the driver afterwards, which
+//! takes the cursor back (`close_cursor`), releases what it held and reports a failure the rows
+//! met.
 //!
 //! The cursor answers like the binary rows it replaces: the same header (`single`, the column
 //! names), then the rows, each read cell by cell, in any order, between two steps.
@@ -70,8 +72,9 @@ pub struct CursorVTable {
     pub cell: unsafe extern "C" fn(data: *mut c_void, col: usize, out: *mut RawCell),
 }
 
-/// A driver's cursor as std and the runtime see it: its data and functions. std receives its
-/// address (a `u64`) from the driver and gives that back when it has decoded the rows.
+/// A driver's cursor as the runtime sees it: its data and functions. The runtime keeps it under
+/// the handle `open_cursor` returned; std gives the handle back to the driver when it has
+/// decoded the rows.
 #[repr(C)]
 pub struct RawCursor {
     pub data: *mut c_void,
@@ -250,6 +253,71 @@ impl RawSink {
         (self.vtable.value)(self.data, &raw_cell(v))
     }
 }
+
+/// Handing cursors and sinks to Velt code (with the `sdk` feature): the runtime registers each
+/// one and Velt code holds its key, a `u64` handle as for every other native object, never its
+/// address. std's `decodeRows` / `bindParams` look the handle up, and a number that names no
+/// open cursor or sink (made up, closed already, another kind) only makes them throw; the
+/// driver takes its object back with [`close_cursor`] / [`close_sink`], which check the handle
+/// and the type the same way.
+#[cfg(feature = "sdk")]
+mod handles {
+    use super::*;
+
+    const CURSOR: u32 = 0;
+    const SINK: u32 = 1;
+
+    /// A tag per Rust type, so that a handle is only ever given back as the type it was opened
+    /// with (two drivers in one program, a sink's handle passed as a cursor's).
+    fn tag<T: 'static>() -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        std::any::TypeId::of::<T>().hash(&mut h);
+        h.finish()
+    }
+
+    /// Registers `cursor` for std's decoder and returns its handle for the Velt side (never 0).
+    /// The cursor stays registered, and alive, until [`close_cursor`] takes it back.
+    pub fn open_cursor<C: RowCursor + 'static>(cursor: Box<C>) -> u64 {
+        let data = Box::into_raw(cursor);
+        let vtable: &'static CursorVTable = &Vtable::<C>::VTABLE;
+        // SAFETY: `data` is a live `C` that stays put until `close_cursor` frees it; the table
+        // is static.
+        unsafe {
+            (velt_native::api().db_open)(CURSOR, data.cast(), (vtable as *const CursorVTable).cast(), tag::<C>())
+        }
+    }
+
+    /// Takes back the cursor `handle` names, if it is an open cursor of type `C` (else `None`,
+    /// and nothing changes): the handle is dead afterwards, for every copy of it.
+    pub fn close_cursor<C: RowCursor + 'static>(handle: u64) -> Option<Box<C>> {
+        let data = (velt_native::api().db_close)(CURSOR, handle, tag::<C>());
+        // SAFETY: registered by `open_cursor::<C>` (the tag says so), from a `Box<C>`, and no
+        // longer registered.
+        (!data.is_null()).then(|| unsafe { Box::from_raw(data as *mut C) })
+    }
+
+    /// Registers `sink` for std's `bindParams` and returns its handle (never 0), as
+    /// [`open_cursor`] does for a cursor.
+    pub fn open_sink<S: ParamSink + 'static>(sink: Box<S>) -> u64 {
+        let data = Box::into_raw(sink);
+        let vtable: &'static SinkVTable = &SinkTable::<S>::VTABLE;
+        // SAFETY: as in `open_cursor`.
+        unsafe {
+            (velt_native::api().db_open)(SINK, data.cast(), (vtable as *const SinkVTable).cast(), tag::<S>())
+        }
+    }
+
+    /// Takes back the sink `handle` names, if it is an open sink of type `S` (else `None`).
+    pub fn close_sink<S: ParamSink + 'static>(handle: u64) -> Option<Box<S>> {
+        let data = (velt_native::api().db_close)(SINK, handle, tag::<S>());
+        // SAFETY: as in `close_cursor`.
+        (!data.is_null()).then(|| unsafe { Box::from_raw(data as *mut S) })
+    }
+}
+
+#[cfg(feature = "sdk")]
+pub use handles::{close_cursor, close_sink, open_cursor, open_sink};
 
 struct SinkTable<S>(std::marker::PhantomData<S>);
 

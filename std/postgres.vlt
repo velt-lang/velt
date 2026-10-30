@@ -33,7 +33,7 @@
 import { JSON } from "velt/prelude/json/json";
 import { IoResult } from "velt/native/result";
 import { IoStatus } from "velt/native/status";
-import { dbBind, jsonParseCursor } from "velt/lang/intrinsics";
+import { bindParams, decodeRow, decodeRows } from "velt/db/native";
 
 declare async function velt_std_postgres__connect(url: string): Promise<IoResult<u64>>;
 declare async function velt_std_postgres__execute(
@@ -200,7 +200,7 @@ function cursorRows<T>(client: u64, cursor: u64): T[] {
   let out: T[] = [];
   let failure: string | null = null;
   try {
-    out = jsonParseCursor<T[]>(cursor, 0, 0);
+    out = decodeRows<T>(cursor);
   } catch (e) {
     failure = e.message;
   }
@@ -218,7 +218,7 @@ function cursorRow<T>(client: u64, cursor: u64): T | null {
   let out: T | null = null;
   let failure: string | null = null;
   try {
-    out = jsonParseCursor<T>(cursor, 0, 0);
+    out = decodeRow<T>(cursor);
   } catch (e) {
     failure = e.message;
   }
@@ -272,7 +272,7 @@ export struct Client {
   /** Runs `sql`; the number of rows it inserted, updated, deleted or returned. */
   async execute<P>(sql: string, params: P): Promise<i64> {
     const sink = velt_std_postgres__bind_begin();
-    if (dbBind<P>(sink, params)) {
+    if (bindParams<P>(sink, params)) {
       return unwrap(await velt_std_postgres__execute_bound(this.handle, sql, sink));
     }
     velt_std_postgres__bind_abort(sink);
@@ -295,7 +295,7 @@ export struct Client {
   // the type allows (the same binding as their JSON text), else as JSON text.
   private async open<P>(sql: string, params: P, firstOnly: bool): Promise<u64> {
     const sink = velt_std_postgres__bind_begin();
-    if (dbBind<P>(sink, params)) {
+    if (bindParams<P>(sink, params)) {
       return unwrap(await velt_std_postgres__query_bound(this.handle, sql, sink, firstOnly));
     }
     velt_std_postgres__bind_abort(sink);
@@ -528,7 +528,7 @@ export struct Pool {
 
   async execute<P>(sql: string, params: P): Promise<i64> {
     const sink = velt_std_postgres__bind_begin();
-    if (dbBind<P>(sink, params)) {
+    if (bindParams<P>(sink, params)) {
       return unwrap(await velt_std_postgres__pool_execute_bound(this.handle, sql, sink));
     }
     velt_std_postgres__bind_abort(sink);
@@ -548,7 +548,7 @@ export struct Pool {
   // As `Client.open`, on one of the pool's connections.
   private async open<P>(sql: string, params: P, firstOnly: bool): Promise<u64> {
     const sink = velt_std_postgres__bind_begin();
-    if (dbBind<P>(sink, params)) {
+    if (bindParams<P>(sink, params)) {
       return unwrap(await velt_std_postgres__pool_query_bound(this.handle, sql, sink, firstOnly));
     }
     velt_std_postgres__bind_abort(sink);

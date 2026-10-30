@@ -34,7 +34,7 @@ use futures::{native_drop, native_poll, take_completer};
 use std::task::Waker;
 
 /// The table version this runtime provides.
-pub const NATIVE_ABI_VERSION: u32 = 2;
+pub const NATIVE_ABI_VERSION: u32 = 3;
 
 /// The work of a [`fut_blocking`] future: runs on the blocking pool with its context and the result
 /// slot to fill.
@@ -44,7 +44,7 @@ pub type DropCtxFn = unsafe extern "C" fn(ctx: *mut c_void);
 /// Drops a finished result nobody claimed (the future was dropped first).
 pub type DropResultFn = unsafe extern "C" fn(result: *mut u8);
 
-/// `VeltRtApi`, ABI version 2 (native_abi.md "The function table").
+/// `VeltRtApi`, ABI version 3 (native_abi.md "The function table").
 #[repr(C)]
 pub struct VeltRtApi {
     /// [`NATIVE_ABI_VERSION`].
@@ -157,6 +157,11 @@ pub struct VeltRtApi {
         usize,
         *mut *mut c_void,
     ) -> *mut VeltFut,
+    // ABI 3: the row cursors and parameter sinks drivers hand to std (native_abi.md "Row cursors").
+    /// `db_handles::db_open(kind, data, vtable, tag) -> handle`.
+    pub db_open: unsafe extern "C" fn(u32, *mut c_void, *const c_void, u64) -> u64,
+    /// `db_handles::db_close(kind, handle, tag) -> data` (null: not open with that tag).
+    pub db_close: extern "C" fn(u32, u64, u64) -> *mut c_void,
 }
 
 /// The table every native library receives.
@@ -205,6 +210,8 @@ pub static VELT_RT_API: VeltRtApi = VeltRtApi {
     strbuf_commit: crate::strbuf::velt_rt_strbuf_commit,
     str_utf8,
     fut_poll_in: aio::fut_poll_in,
+    db_open: crate::db_handles::db_open,
+    db_close: crate::db_handles::db_close,
 };
 
 /// `const VeltRtApi* velt_rt_native_api(void)`: the table, for generated code to pass to each

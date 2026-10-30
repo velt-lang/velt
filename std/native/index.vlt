@@ -4,4 +4,4 @@
 
 export { IoResult, unwrapIo } from "velt/native/result";
 export { checkIo, IoStatus } from "velt/native/status";
-export { ioError } from "velt/native/error";
+export { errorCodeName, ioError } from "velt/native/error";

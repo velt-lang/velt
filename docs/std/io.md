@@ -12,8 +12,9 @@
   read`). The system calls are Node's: `open`, `read`, `write`, `scandir`, `stat`, `lstat`,
   `readlink`, `symlink`, `mkdir`, `unlink`, `rmdir`, `rm`, `rename`, `copyfile`. The path is the
   one you passed (Node on Windows prints the absolute path).
-- `IoResult<T>`, `IoStatus`, `ioError`, `unwrapIo` and `checkIo` are exported only for other std
-  modules; don't use them in programs.
+- `IoResult<T>`, `IoStatus`, `ioError`, `unwrapIo`, `checkIo` and `errorCodeName` are in
+  `velt/native`, for the Velt side of a package with native code
+  ([Packages with native code](../book/native-packages.md)).
 
 ```ts
 import { IoError } from "velt/io";

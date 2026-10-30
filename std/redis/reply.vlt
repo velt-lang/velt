@@ -6,11 +6,10 @@
 // Typed commands read them directly (`get` looks at node 0, `lrange` at nodes 1..); `call()` and
 // pipelines rebuild the tree as `RedisReply` objects.
 
+import { errorCodeName } from "velt/native/error";
 import { IoResult } from "velt/native/result";
 import { RedisError } from "velt/redis";
 import { arrayWithCapacity } from "velt/lang/intrinsics";
-
-declare function velt_rt_err_code_name(code: i32): string;
 
 // Node kinds (the runtime's `reply::tag`).
 const NIL: u8 = 0;
@@ -98,7 +97,7 @@ export function redisError(code: i32, message: string): RedisError {
     const space = message.indexOf(" ");
     return new RedisError(space > 0 ? message.slice(0, space) : message, message);
   }
-  return new RedisError(velt_rt_err_code_name(code), message);
+  return new RedisError(errorCodeName(code), message);
 }
 
 /** The reply of a successful operation; throws `RedisError` otherwise. */

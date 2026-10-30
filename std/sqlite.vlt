@@ -25,7 +25,7 @@
 import { JSON } from "velt/prelude/json/json";
 import { IoResult } from "velt/native/result";
 import { IoStatus } from "velt/native/status";
-import { dbBind, jsonParseCursor } from "velt/lang/intrinsics";
+import { bindParams, decodeRow, decodeRows } from "velt/db/native";
 
 // `RunResult` as the driver returns it (`velt_std_sqlite::statement::RunInfo`).
 struct RunSlot {
@@ -235,7 +235,7 @@ export class Statement {
 
   runWith<P>(params: P): RunResult {
     const sink = unwrap(velt_std_sqlite__bind_begin(this.#handle));
-    if (dbBind<P>(sink, params)) {
+    if (bindParams<P>(sink, params)) {
       const r = unwrap(velt_std_sqlite__run_bound(sink));
       return new RunResult(r.changes, r.lastInsertRowid);
     }
@@ -277,7 +277,7 @@ export class Statement {
   // type allows (the same binding as their JSON text), else as JSON text.
   private openWith<P>(params: P, firstOnly: bool): u64 {
     const sink = unwrap(velt_std_sqlite__bind_begin(this.#handle));
-    if (dbBind<P>(sink, params)) {
+    if (bindParams<P>(sink, params)) {
       return unwrap(velt_std_sqlite__open_rows_bound(sink, firstOnly));
     }
     velt_std_sqlite__bind_abort(sink);
@@ -299,7 +299,7 @@ export class Statement {
     let row: T | null = null;
     let failure: string | null = null;
     try {
-      row = jsonParseCursor<T>(cursor, 0, 0);
+      row = decodeRow<T>(cursor);
     } catch (e) {
       failure = e.message;
     }
@@ -314,7 +314,7 @@ export class Statement {
     let rows: T[] = [];
     let failure: string | null = null;
     try {
-      rows = jsonParseCursor<T[]>(cursor, 0, 0);
+      rows = decodeRows<T>(cursor);
     } catch (e) {
       failure = e.message;
     }

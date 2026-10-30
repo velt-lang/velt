@@ -104,7 +104,6 @@ export const allow: Allow = {
     "sqlite/sql/lexer.vlt",
   ],
   indexCode: [
-    "db/index.vlt",
     "encoding/json/index.vlt",
     "net/dns/index.vlt",
     "net/index.vlt",

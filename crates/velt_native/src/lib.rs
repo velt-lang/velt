@@ -58,7 +58,7 @@ pub use velt_native_macros::Value;
 extern crate self as velt_native;
 
 /// The table version this crate needs (the runtime's must be at least this).
-pub const ABI_VERSION: u32 = 2;
+pub const ABI_VERSION: u32 = 3;
 
 /// A Velt `string` (24 bytes, layout owned by the runtime; read it through [`Api`]).
 #[repr(C)]
@@ -234,6 +234,11 @@ pub struct Api {
         usize,
         *mut *mut c_void,
     ) -> *mut c_void,
+    /// `(kind, data, vtable, tag) -> handle`: registers a row cursor (kind 0) or parameter sink
+    /// (kind 1) for std (`velt_text::rows_cursor::open_cursor`).
+    pub db_open: unsafe extern "C" fn(u32, *mut c_void, *const c_void, u64) -> u64,
+    /// `(kind, handle, tag) -> data`: unregisters one opened with `tag` (null: none such).
+    pub db_close: extern "C" fn(u32, u64, u64) -> *mut c_void,
 }
 
 static API: AtomicPtr<Api> = AtomicPtr::new(std::ptr::null_mut());

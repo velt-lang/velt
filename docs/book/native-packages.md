@@ -184,6 +184,35 @@ Only a package's own library can be declared this way. A `declare function` anyw
 a program or a package without native code, or naming another package's export) is a compile
 error, so ordinary Velt code can't call arbitrary C functions such as `free`.
 
+`velt/native` also has what turns a failed result into an error: `unwrapIo(r)` and `checkIo(s)`
+throw an `IoError` (velt/io), and `errorCodeName(code)` is the Node-style name of a failure code
+(`"ECONNREFUSED"`, `"ETIMEDOUT"`), for a package that throws an error class of its own:
+
+```ts ignore
+import { errorCodeName, IoStatus } from "velt/native";
+
+export class GreetError extends Error {
+  code: string;
+
+  constructor(code: string, message: string) {
+    super(message);
+    this.code = code;
+  }
+}
+
+function check(s: IoStatus) {
+  if (s.code != 0) {
+    throw new GreetError(errorCodeName(s.code), s.message);
+  }
+}
+```
+
+A database driver hands its rows and a statement's parameters to std's generated decoder and
+binder through velt/db's `decodeRows` and `bindParams` ([velt/db](../std/db.md) "Native
+drivers"). Its library registers the row cursor or parameter sink with the runtime
+(`velt_text::rows_cursor::open_cursor` / `open_sink`) and returns the handle; std looks it up, so
+the Velt side never holds an address that a wrong number could stand in for.
+
 Wrap handles in a class that releases them in `[Symbol.dispose]()`, so `using` and the end of
 the object's life close them (see `packages/sqlite/src/lib.vlt`).
 

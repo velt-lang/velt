@@ -1,0 +1,8 @@
+// velt/db (internal): the module's error.
+
+/** A row that does not fit the requested type (`expected i64 at $[0].id`). */
+export class RowError extends Error {
+  constructor(message: string) {
+    super(message);
+  }
+}

@@ -1,0 +1,37 @@
+// velt/db (internal): `RowSource`, the rows a driver written in Velt produces, and `CellKind`,
+// what one of its cells holds.
+
+/** What a column of the current row holds. */
+export enum CellKind {
+  Null,
+  Bool,
+  Int,
+  Float,
+  /** Text (UTF-8). */
+  Text,
+  /** Bytes, a `u8[]`. */
+  Blob,
+  /** A nested value (an array or object) as its JSON text. */
+  Json,
+}
+
+/**
+ * Rows as a driver produces them: their columns, and the current row's values by column. The
+ * reader asks each value's kind before taking it with the getter of that kind.
+ */
+export interface RowSource {
+  /** The number of columns. */
+  columnCount(): i64;
+  /** The name of column `i` (from 0): the field it fills. */
+  columnName(i: i64): string;
+  /** Moves to the next row (the first on the first call): false when there is none. */
+  next(): bool;
+  /** What column `i` of the current row holds. */
+  kind(i: i64): CellKind;
+  bool(i: i64): bool;
+  int(i: i64): i64;
+  float(i: i64): f64;
+  text(i: i64): string;
+  blob(i: i64): u8[];
+  json(i: i64): string;
+}
