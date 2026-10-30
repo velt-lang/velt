@@ -64,7 +64,17 @@ a TS or JS file, at its top-level statements: when the root file has statements 
 declarations, they run in order in a generated `main` (`async` when one of them awaits). A
 top-level `const` or `let` moves into that `main` with them, unless a function, class, struct,
 `extend` block or module constant refers to it; then it stays at module level
-([module state](variables.md#module-state)).
+([module state](variables.md#module-state)). So does one that a closure the statements make
+refers to (an arrow, a function expression, a method of an object literal, a function declared in
+a block) when the code assigns it or it holds a new object (`new Map()`, `[]`): as in
+Node, the closure then sees the module's variable itself, with what a statement assigns after the
+closure was made and what the closure assigns or changes, also from a request handler or a task on
+another thread (`let hits = 0;` and a `serve` handler that runs `hits++`). A closure gets a copy of
+one that nothing assigns, which is the same value. Not yet a destructuring declaration, a `let`
+without an initializer, one whose initializer awaits (`const server = await serve(…)`), an object
+literal a closure changes (`const stats = { n: 0 }`), or a new object declared with a type that
+checks narrow (`const m: object = new Map()`): those stay locals of `main`, which a closure
+captures as a copy.
 
 ```ts
 const GREETING = "hello";               // a function uses it: a module constant
@@ -78,6 +88,13 @@ names.push("cy");
 for (const n of names) {
   console.log(greet(n));
 }
+
+let calls = 0;                          // a closure uses it: module state
+const shout = (n: string) => {
+  calls++;
+  return greet(n).toUpperCase();
+};
+console.log(names.map(shout).join(" "), calls); // HELLO ANN HELLO BOB HELLO CY 3
 ```
 
 The statements and the declarations between them run in source order, as in Node: a module constant,

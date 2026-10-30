@@ -5,7 +5,11 @@
 //! (`script_names`) or a computed key names it (`[KEY]`, a symbol or string constant): then it
 //! stays a module constant, which those declarations can see. So does one that code above it
 //! names (a statement, or another variable's initializer): a function that code makes may run
-//! after the declaration (`const get = () => K; const K = 1; get();`). Sema initializes the
+//! after the declaration (`const get = () => K; const K = 1; get();`). And so does one that a
+//! function the code makes names (an arrow, a function expression, a method, a function declared
+//! in a block; #1872): as in Node, that function sees the module's variable, which it may assign
+//! from another task (a request handler), and what the statements assign after making it, where
+//! a local of `main` would be captured as a copy. Sema initializes the
 //! ones that are module state where they stand among the statements (#1438) and reports a
 //! statement that uses a declaration below it directly (`velt_sema` `script_tdz`).
 //!
@@ -74,7 +78,10 @@ impl Parser<'_> {
         body.sort_by_key(|s| s.span.lo);
         let is_async = self.awaits(&body);
         let last = body.iter().map(|s| s.span.hi).max().unwrap_or(first.hi);
-        let span = Span::new(self.file, first.lo, last);
+        // From the first variable that moved in, when it stands above the first statement, so
+        // the body's span holds all of its code (closures find what they capture by it).
+        let lo = body.first().map_or(first.lo, |s| s.span.lo.min(first.lo));
+        let span = Span::new(self.file, lo, last);
         let sig = FnSig {
             name: Ident {
                 name: if has_main { crate::SCRIPT_MAIN } else { "main" }.into(),
@@ -136,9 +143,9 @@ impl Parser<'_> {
     /// Per item: is it a top-level variable that stays at module level? Exported ones do (also by
     /// an export list, `export { x };`), a [`rest_arrow`] constant, a `const` a computed key
     /// `[NAME]` names anywhere in the file (sema resolves the key to the symbol or string the
-    /// module constant holds), and those a staying declaration refers to (to a fixed point), and
-    /// those code above them names (a statement in `stmts` or another variable's initializer;
-    /// module docs).
+    /// module constant holds), and those a staying declaration refers to (to a fixed point),
+    /// those code above them names (a statement in `stmts` or another variable's initializer)
+    /// and those a function the code makes names ([`captured_names`]; module docs).
     fn kept_vars(&self, items: &[Item], stmts: &[Stmt]) -> Vec<bool> {
         let listed = export_listed(items);
         let mut keep: Vec<bool> = items
@@ -163,6 +170,8 @@ impl Parser<'_> {
             .iter()
             .map(|s| (s.span.lo, super::script_names::stmt_free_names(s)))
             .collect();
+        let captured = captured_names(items, stmts);
+        let assigned = assigned_names(items, stmts);
         for (i, item) in items.iter().enumerate() {
             let ItemKind::Var(v) = &item.kind else {
                 continue;
@@ -177,6 +186,7 @@ impl Parser<'_> {
                 continue;
             }
             let names = bound_names(&v.pattern);
+            let own_captured = v.init.as_ref().map(own_captures).unwrap_or_default();
             let named =
                 |free: &rustc_hash::FxHashSet<String>| names.iter().any(|n| free.contains(n));
             let above = stmt_free
@@ -185,7 +195,22 @@ impl Parser<'_> {
                 || items.iter().zip(&free).any(|(j, free)| {
                     matches!(j.kind, ItemKind::Var(_)) && j.span.lo < item.span.lo && named(free)
                 });
-            keep[i] |= above;
+            // A closure (a function the code makes) refers to the variable itself, as in Node: it
+            // sees what the code assigns after making it, and it may assign the variable, or
+            // change the new object it holds (`new Map()`, `[]`), on another task (a request
+            // handler; #1872). A copy of a variable nothing assigns, holding no such object, is
+            // the variable, so that one stays a local of `main`. So does a new object a closure
+            // in its own initializer names (`const p = new Proxy(t, { get: () => p })`, which
+            // would need a type as module state), and one whose declared type is wider than the
+            // object (`const m: object = new Map()`): the checks the statements make narrow a
+            // local (`m instanceof Map`), not module state.
+            let fresh = v.init.as_ref().is_some_and(fresh_object)
+                && !v.ty.as_ref().is_some_and(wide_type)
+                && !own_captured.iter().any(|n| names.contains(n));
+            let changes =
+                fresh || (v.kind == VarKind::Let && names.iter().any(|n| assigned.contains(n)));
+            let by_closure = changes && captured.iter().any(|n| names.contains(n));
+            keep[i] |= above || by_closure;
         }
         loop {
             let mut changed = false;
@@ -261,6 +286,105 @@ impl Parser<'_> {
                 !touching && before != Some('.') && !after.is_some_and(ident)
             })
             .map(|(at, _)| at)
+    }
+}
+
+/// The top-level names that the functions the code in `main` makes (an arrow, a function
+/// expression, a method, a nested declaration, in a statement or in the initializer of a
+/// variable) refer to.
+fn captured_names(items: &[Item], stmts: &[Stmt]) -> rustc_hash::FxHashSet<String> {
+    let inits = items.iter().filter_map(|i| match &i.kind {
+        ItemKind::Var(v) => v.init.as_ref(),
+        _ => None,
+    });
+    stmts
+        .iter()
+        .flat_map(super::script_names::stmt_free_uses)
+        .chain(inits.flat_map(super::script_names::expr_free_uses))
+        .filter(|u| u.deferred)
+        .map(|u| u.name)
+        .collect()
+}
+
+/// The names the code in `main` assigns (`x = …`, `x += …`, `x++`, `[x, y] = …`), also in the
+/// functions it makes. A name a nested scope declares counts too: it only keeps a variable at
+/// module level.
+fn assigned_names(items: &[Item], stmts: &[Stmt]) -> rustc_hash::FxHashSet<String> {
+    struct Assigned(rustc_hash::FxHashSet<String>);
+    impl Assigned {
+        fn target(&mut self, e: &Expr) {
+            match &e.kind {
+                ExprKind::Ident(id) => {
+                    self.0.insert(id.name.clone());
+                }
+                ExprKind::Paren(e) | ExprKind::NonNull(e) | ExprKind::Cast { expr: e, .. } => {
+                    self.target(e)
+                }
+                ExprKind::Array(es) => es.iter().for_each(|e| self.target(e)),
+                ExprKind::Spread(e) => self.target(e),
+                ExprKind::Assign { target, .. } => self.target(target),
+                ExprKind::Object(props) => {
+                    for p in props {
+                        match p {
+                            ObjectProp::KeyValue(_, e) | ObjectProp::Spread(e) => self.target(e),
+                            ObjectProp::Shorthand(id) => {
+                                self.0.insert(id.name.clone());
+                            }
+                            ObjectProp::Method(_) => {}
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    impl<'a> crate::visit::Visit<'a> for Assigned {
+        fn expr(&mut self, e: &'a Expr) {
+            if let ExprKind::Assign { target, .. } | ExprKind::Update { target, .. } = &e.kind {
+                self.target(target);
+            }
+        }
+    }
+    let mut a = Assigned(rustc_hash::FxHashSet::default());
+    for s in stmts {
+        crate::visit::walk_stmt(s, &mut a);
+    }
+    for i in items {
+        if let ItemKind::Var(VarDecl { init: Some(e), .. }) = &i.kind {
+            crate::visit::walk_expr(e, &mut a);
+        }
+    }
+    a.0
+}
+
+/// Does `e` make a new object the code may change: `new C(…)` or an array literal? (Not an
+/// object literal yet: sema checks some uses of one, such as `Object.defineProperty` on it, only
+/// on a local.)
+fn fresh_object(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::New { .. } | ExprKind::Array(_) => true,
+        ExprKind::Paren(e) | ExprKind::Cast { expr: e, .. } => fresh_object(e),
+        _ => false,
+    }
+}
+
+/// The names the functions that `init` makes refer to.
+fn own_captures(init: &Expr) -> rustc_hash::FxHashSet<String> {
+    super::script_names::expr_free_uses(init)
+        .into_iter()
+        .filter(|u| u.deferred)
+        .map(|u| u.name)
+        .collect()
+}
+
+/// A declared type that checks narrow: a union, `object`, `unknown` or `any`.
+fn wide_type(t: &TypeExpr) -> bool {
+    match &t.kind {
+        TypeExprKind::Union(_) => true,
+        TypeExprKind::Named { path, .. } => {
+            matches!(path.as_slice(), [n] if matches!(n.name.as_str(), "object" | "Object" | "unknown" | "any"))
+        }
+        _ => false,
     }
 }
 
