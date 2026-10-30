@@ -1,0 +1,207 @@
+// velt/task (internal): task scopes (`taskScope`, `TaskScope`): structured concurrency, the
+// tasks spawned in a scope end with it.
+
+import { DEFAULT_REASON } from "velt/task/errors";
+import {
+  velt_rt_group_enter,
+  velt_rt_group_free,
+  velt_rt_group_leave,
+  velt_rt_group_new,
+  velt_rt_group_wait,
+  velt_rt_signal_abort,
+  velt_rt_signal_free,
+  velt_rt_signal_new,
+  velt_rt_signal_retain,
+} from "velt/task/rt";
+import { AbortSignal, signalCell } from "velt/task/signal";
+
+/**
+ * `taskScope`'s options. `cancelOnError`: abort `scope.signal` when the body or a child fails
+ * (default true).
+ */
+export type ScopeOptions = { cancelOnError?: bool };
+
+// Owns a scope's runtime group and a reference to its signal: released once, at the last
+// reference. A scope that never ended normally (the runtime dropped its task) aborts its signal
+// then, so its children stop.
+class GroupObj {
+  private group: u64;
+  private sig: u64;
+  private ended: bool = false;
+
+  constructor(group: u64, sig: u64) {
+    this.group = group;
+    this.sig = sig;
+  }
+
+  key(): u64 {
+    return this.group;
+  }
+
+  signal(): u64 {
+    return this.sig;
+  }
+
+  // The scope finished: later `spawn`s fail.
+  end() {
+    velt_rt_group_free(this.group);
+    this.ended = true;
+  }
+
+  [Symbol.dispose]() {
+    if (!this.ended) {
+      velt_rt_signal_abort(this.sig, "the task scope was cancelled");
+      velt_rt_group_free(this.group);
+    }
+    velt_rt_signal_free(this.sig);
+  }
+}
+
+// The first error of a scope (its body's or a child's) in time; children add theirs from other
+// tasks, so it lives in a `shared` cell and holds copies.
+type FirstError<E> = shared<Mutex<E[]>>;
+
+function recordFirst<E>(errors: FirstError<E>, e: E) {
+  errors.with((es) => {
+    if (es.length == 0) {
+      es.push(e.clone());
+    }
+  });
+}
+
+/**
+ * A running `taskScope`: spawns its child tasks and carries the signal that cancels them. `E`
+ * is the error type of the scope, its body and its children.
+ */
+export class TaskScope<E> {
+  // Ends the group at its last reference; `g` is its registry key (safe to use when stale).
+  #group: shared<Mutex<GroupObj>>;
+  #g: u64;
+  #sig: AbortSignal;
+  // The scope's runtime signal (alive as long as `group`); each child retains its own.
+  #sigH: u64;
+  #errors: FirstError<E>;
+  #cancelOnError: bool;
+
+  /** Made by `taskScope` (`GroupObj` is internal). */
+  constructor(
+    group: shared<Mutex<GroupObj>>,
+    sig: AbortSignal,
+    errors: FirstError<E>,
+    cancelOnError: bool,
+  ) {
+    this.#g = group.with((o) => o.key());
+    this.#sigH = group.with((o) => o.signal());
+    this.#group = group;
+    this.#sig = sig;
+    this.#errors = errors;
+    this.#cancelOnError = cancelOnError;
+  }
+
+  /**
+   * The scope's signal: aborted when the body or a child fails (with `cancelOnError`), on
+   * `cancel()`, and when the scope's task is cancelled. Pass it to the children so they stop
+   * cooperatively.
+   */
+  get signal(): AbortSignal {
+    return this.#sig;
+  }
+
+  /**
+   * Adds `p` as a child task of the scope (`spawn(p)`; a call starts on this task, as any
+   * promise value); the scope waits for it. A promise that cannot fail (`Promise<T>`) is
+   * accepted too.
+   */
+  spawn<T>(p: Promise<T, E>): Promise<T, E> {
+    if (!velt_rt_group_enter(this.#g)) {
+      panic("scope.spawn after its taskScope ended");
+    }
+    // Only plain values and shared cells go to the child (its own signal reference), so
+    // `scope.spawn(work(scope.signal))` doesn't hand the task anything reachable from `scope`.
+    const sig = velt_rt_signal_retain(this.#sigH);
+    // The scope fails with the child's error, so a handle nobody awaits drops it quietly.
+    return __intrinsic_spawn_handled(
+      scopeChild<T, E>(this.#g, sig, this.#errors, this.#cancelOnError, p),
+    );
+  }
+
+  /** Aborts the scope's signal. */
+  cancel(reason: string = DEFAULT_REASON) {
+    velt_rt_signal_abort(this.#sigH, reason);
+  }
+}
+
+// Leaves a child's group and releases its signal reference when the child ends, also when its
+// task is dropped unfinished.
+class ChildGuard {
+  private group: u64;
+  private sig: u64;
+
+  constructor(group: u64, sig: u64) {
+    this.group = group;
+    this.sig = sig;
+  }
+
+  [Symbol.dispose]() {
+    velt_rt_signal_free(this.sig);
+    velt_rt_group_leave(this.group);
+  }
+}
+
+// A scope's child: `signal` is the child's own reference to the scope's signal.
+async function scopeChild<T, E>(
+  group: u64,
+  signal: u64,
+  errors: FirstError<E>,
+  cancelOnError: bool,
+  p: Promise<T, E>,
+): Promise<T> throws E {
+  using guard = new ChildGuard(group, signal);
+  try {
+    return await p;
+  } catch (e) {
+    recordFirst<E>(errors, e);
+    if (cancelOnError) {
+      velt_rt_signal_abort(signal, "a task in the scope failed");
+    }
+    throw e;
+  }
+}
+
+/**
+ * Structured concurrency: runs `body` with a `TaskScope` and settles only once the body and
+ * every task it spawned with `scope.spawn` have finished, so no child outlives the scope. The
+ * scope fails with the first error in time, of the body or of any child (even one nobody
+ * awaited, or whose error the body caught), and otherwise returns the body's result. With
+ * `cancelOnError` (the default), that first error aborts `scope.signal`, so the other children
+ * can stop; their `AbortError`s come later and don't replace it.
+ */
+export async function taskScope<T, E>(
+  body: (scope: TaskScope<E>) => Promise<T> throws E,
+  options: ScopeOptions = {},
+): Promise<T> throws E {
+  const cancelOnError = options.cancelOnError ?? true;
+  const cell = signalCell(velt_rt_signal_new());
+  const h = cell.with((s) => s.raw());
+  const group = shared(
+    new Mutex<GroupObj>(new GroupObj(velt_rt_group_new(), velt_rt_signal_retain(h))),
+  );
+  const errors: FirstError<E> = shared(new Mutex<E[]>([]));
+  const scope = new TaskScope<E>(group, new AbortSignal(cell), errors, cancelOnError);
+  const result: T[] = [];
+  try {
+    result.push(await body(scope));
+  } catch (e) {
+    recordFirst<E>(errors, e);
+    if (cancelOnError) {
+      velt_rt_signal_abort(h, "the task scope failed");
+    }
+  }
+  await velt_rt_group_wait(group.with((o) => o.key()));
+  group.with((o) => o.end());
+  const first = errors.with((es) => es.pop());
+  if (first != null) {
+    throw first;
+  }
+  return result[0];
+}

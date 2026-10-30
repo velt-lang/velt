@@ -1,4 +1,4 @@
-//! `velt_rt_group_*`: the runtime half of `taskScope` (std/task/index.vlt): a count of the scope's
+//! `velt_rt_group_*`: the runtime half of `taskScope` (std/task/scope.vlt): a count of the scope's
 //! live child tasks that the scope waits on before it settles, so children never outlive it.
 //! The handle is a registry key: a `TaskScope` copy used after its scope ended finds no group
 //! (`enter` fails) instead of freed memory. No code pointers are stored (rt_abi_async.md §13.5).

@@ -1,0 +1,21 @@
+// velt/task (internal): the workers that run tasks: how many, and which one runs this task.
+
+import { velt_rt_current_worker, velt_rt_worker_count } from "velt/task/rt";
+
+/**
+ * How many workers run tasks: fixed for the process (`VELT_THREADS`, else the number of cores;
+ * 1 on WebAssembly), with either scheduler. Calling it doesn't change the scheduler: only
+ * pinning a task (`spawn(p, { worker })`) selects the per-core one.
+ */
+export function workerCount(): i64 {
+  return velt_rt_worker_count() as i64;
+}
+
+/**
+ * The worker running this task, from `0` to `workerCount() - 1`; `0` outside a task (a
+ * synchronous `main`). A task stays on its worker with the per-core scheduler (which a program
+ * that pins a task gets); otherwise it may move at any `await`.
+ */
+export function currentWorker(): i64 {
+  return velt_rt_current_worker() as i64;
+}
