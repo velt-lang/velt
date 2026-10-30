@@ -7,7 +7,9 @@ class Emitter {
   }
   emit(x: number): number {
     let s = 0.0;
-    for (const h of this.handlers) s += h(x);
+    for (const h of this.handlers) {
+      s += h(x);
+    }
     return s;
   }
 }
@@ -15,14 +17,18 @@ class Emitter {
 function compose(fs: ((x: number) => number)[]): (x: number) => number {
   return (x) => {
     let v = x;
-    for (const f of fs) v = f(v);
+    for (const f of fs) {
+      v = f(v);
+    }
     return v;
   };
 }
 
 function sum(xs: Iterable<number>): number {
   let s = 0.0;
-  for (const x of xs) s += x;
+  for (const x of xs) {
+    s += x;
+  }
   return s;
 }
 
@@ -33,11 +39,19 @@ function main() {
     em.on((x) => x * kk);
   }
   let total = 0.0;
-  for (let i = 0; i < 2000000; i++) total += em.emit(i % 100);
+  for (let i = 0; i < 2000000; i++) {
+    total += em.emit(i % 100);
+  }
   const pipe = compose([(x) => x + 1, (x) => x * 2, (x) => x - 3, (x) => x / 2]);
-  for (let i = 0; i < 10000000; i++) total += pipe(i % 1000);
+  for (let i = 0; i < 10000000; i++) {
+    total += pipe(i % 1000);
+  }
   const xs: number[] = [];
-  for (let i = 0; i < 1000000; i++) xs.push(i % 7);
-  for (let r = 0; r < 20; r++) total += sum(xs);
+  for (let i = 0; i < 1000000; i++) {
+    xs.push(i % 7);
+  }
+  for (let r = 0; r < 20; r++) {
+    total += sum(xs);
+  }
   console.log(total);
 }

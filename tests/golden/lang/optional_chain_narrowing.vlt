@@ -14,7 +14,9 @@ function lookup(k: string, c: Ctx | undefined): number {
 
 function viaActive(k: string): number | undefined {
   const a = active;
-  if (a?.provides.has(k)) return a.provides.get(k);
+  if (a?.provides.has(k)) {
+    return a.provides.get(k);
+  }
   return undefined;
 }
 
@@ -29,11 +31,19 @@ class Node1 {
 }
 
 function nameOf(n: Node1 | null): string {
-  if (n?.ok()) return n.name;
+  if (n?.ok()) {
+    return n.name;
+  }
   return "-";
 }
 
 const m = new Map<string, number>([["a", 1]]);
 console.log(lookup("a", { provides: m }), lookup("b", { provides: m }), lookup("a", undefined));
 active = { provides: m };
-console.log(viaActive("a"), viaActive("z"), nameOf(new Node1("x")), nameOf(new Node1("")), nameOf(null));
+console.log(
+  viaActive("a"),
+  viaActive("z"),
+  nameOf(new Node1("x")),
+  nameOf(new Node1("")),
+  nameOf(null),
+);

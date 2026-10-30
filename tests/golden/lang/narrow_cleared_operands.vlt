@@ -2,18 +2,57 @@
 // Cleared narrowed values where a supertype or a string is expected, and writes through a
 // cleared field path of an object, an array or a record: into the old object, as in
 // JavaScript (#1280).
-interface Named { name(): string; }
-class Base { n = 1; }
-class S1 extends Base implements Named { name(): string { return "s1"; } }
-class S2 extends Base implements Named { name(): string { return "s2"; } }
+interface Named {
+  name(): string;
+}
+
+class Base {
+  n = 1;
+}
+
+class S1 extends Base implements Named {
+  name(): string {
+    return "s1";
+  }
+}
+
+class S2 extends Base implements Named {
+  name(): string {
+    return "s2";
+  }
+}
+
 let x: S1 | S2 | null = new S1();
-const st: { f: S1 | S2 | null; s: string | null; t: string | null } = { f: new S2(), s: "s", t: "t" };
-function clr(): number { x = null; st.f = null; st.s = null; st.t = null; return 1; }
-function back(): Base | null { if (x) { clr(); return x; } return null; }
-function named(v: Named | null): string { return v === null ? "none" : v.name(); }
+const st: { f: S1 | S2 | null; s: string | null; t: string | null } = {
+  f: new S2(),
+  s: "s",
+  t: "t",
+};
+
+function clr(): number {
+  x = null;
+  st.f = null;
+  st.s = null;
+  st.t = null;
+  return 1;
+}
+
+function back(): Base | null {
+  if (x) {
+    clr();
+    return x;
+  }
+  return null;
+}
+
+function named(v: Named | null): string {
+  return v === null ? "none" : v.name();
+}
+
 function run(c: boolean, i: number): void {
   console.log(back());
-  x = new S2(); st.f = new S1();
+  x = new S2();
+  st.f = new S1();
   if (x && st.f) {
     clr();
     const y: Base | null = x;
@@ -21,7 +60,8 @@ function run(c: boolean, i: number): void {
     list.push(st.f);
     console.log(y, list, named(x), named(st.f));
   }
-  st.s = "s"; st.t = "t";
+  st.s = "s";
+  st.t = "t";
   if (st.s && st.t) {
     clr();
     console.log("a" + (c ? st.s : st.t), (c ? st.s : "q") + (c ? "r" : "w"), `${c ? st.t : 1}`);
@@ -38,22 +78,50 @@ function run(c: boolean, i: number): void {
     const o = { f: box as { items: number[] } | null };
     if (o.f) {
       const g = o.f;
-      const zap = (): number => { o.f = null; return 5; };
+      const zap = (): number => {
+        o.f = null;
+        return 5;
+      };
       o.f.items[k++] = zap();
       console.log(g.items, k, o.f);
     }
     console.log(f.n, idx);
   }
 }
+
 run(true, 1);
 run(false, 0);
-const st7: { o: { x: number } | null; t: [number, string] | null; r: Record<string, number> | null } = { o: { x: 1 }, t: [1, "a"], r: { a: 1 } };
-function change7(): number { st7.o = null; st7.t = null; st7.r = null; return 9; }
-function run7(): void {
-  if (st7.o) { const o = st7.o; st7.o.x = change7(); console.log(o, st7.o); }
-  st7.o = { x: 1 };
-  if (st7.o) { const o = st7.o; st7.o.x += change7(); console.log(o, st7.o); }
-  st7.r = { a: 1 };
-  if (st7.r) { const r = st7.r; st7.r["a"] = change7(); console.log(r, st7.r); }
+const st7: {
+  o: { x: number } | null;
+  t: [number, string] | null;
+  r: Record<string, number> | null;
+} = { o: { x: 1 }, t: [1, "a"], r: { a: 1 } };
+
+function change7(): number {
+  st7.o = null;
+  st7.t = null;
+  st7.r = null;
+  return 9;
 }
+
+function run7(): void {
+  if (st7.o) {
+    const o = st7.o;
+    st7.o.x = change7();
+    console.log(o, st7.o);
+  }
+  st7.o = { x: 1 };
+  if (st7.o) {
+    const o = st7.o;
+    st7.o.x += change7();
+    console.log(o, st7.o);
+  }
+  st7.r = { a: 1 };
+  if (st7.r) {
+    const r = st7.r;
+    st7.r["a"] = change7();
+    console.log(r, st7.r);
+  }
+}
+
 run7();

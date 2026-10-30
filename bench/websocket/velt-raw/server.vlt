@@ -174,8 +174,13 @@ class Reader {
     const start = this.pos + at;
     const payload = this.buf.slice(start, start + len);
     if (masked) {
-      const mask = ((this.byteAt(maskAt) << 24) | (this.byteAt(maskAt + 1) << 16) |
-        (this.byteAt(maskAt + 2) << 8) | this.byteAt(maskAt + 3)) as u32;
+      const mask =
+        (
+          (this.byteAt(maskAt) << 24) |
+          (this.byteAt(maskAt + 1) << 16) |
+          (this.byteAt(maskAt + 2) << 8) |
+          this.byteAt(maskAt + 3)
+        ) as u32;
       payload.xorMask(mask);
     }
     this.consume(at + len);

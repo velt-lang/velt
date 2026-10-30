@@ -37,4 +37,3 @@ async function main() {
   log(`r1 -> ${await w1}`);
   await t;
 }
-

@@ -36,6 +36,7 @@ class Base {
     this.cb("x");
   }
 }
+
 class Sub extends Base {}
 
 function fireIt(o: Input) {
@@ -46,10 +47,14 @@ async function main() {
   let last = "";
   const o = { m: new Map<string, Fn>() };
   const m = o.m;
-  o.m.set("a", (v: string) => { last = `${v}${last.length}`; });
+  o.m.set("a", (v: string) => {
+    last = `${v}${last.length}`;
+  });
   const a = await serve({ port: 0 }, async (req) => {
     const f = m.get("a");
-    if (f !== undefined) { f("x"); }
+    if (f !== undefined) {
+      f("x");
+    }
     return new Response("ok");
   });
   await a.shutdown();

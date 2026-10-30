@@ -36,6 +36,7 @@ class Base {
     this.cb("x");
   }
 }
+
 class Sub extends Base {}
 
 function fireIt(o: Input) {
@@ -47,9 +48,13 @@ async function main() {
   const arr: Fn[] = [];
   const e = new Emitter(arr);
   const e2 = new Emitter(arr);
-  e.on((v: string) => { last = `${v}${last.length}`; });
+  e.on((v: string) => {
+    last = `${v}${last.length}`;
+  });
   const a = await serve({ port: 0 }, async (req) => {
-    for (const f of e2.listeners) { f("x"); }
+    for (const f of e2.listeners) {
+      f("x");
+    }
     return new Response("ok");
   });
   await a.shutdown();

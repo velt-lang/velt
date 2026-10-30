@@ -1,12 +1,19 @@
 // check: no leaks
 // `"k" in o` then a test of `o.k` itself.
 function g(o: { k?: number }): string {
-  if ("k" in o) { return o.k === undefined ? "U" : String(o.k * 2); }
+  if ("k" in o) {
+    return o.k === undefined ? "U" : String(o.k * 2);
+  }
   return "absent";
 }
+
 console.log(g({ k: 1 }), g({}), g({ k: undefined }));
+
 function h(o: { k?: string | null }): string {
-  if ("k" in o && o.k !== undefined && o.k !== null) return o.k.toUpperCase();
+  if ("k" in o && o.k !== undefined && o.k !== null) {
+    return o.k.toUpperCase();
+  }
   return "-";
 }
+
 console.log(h({ k: "a" }), h({}), h({ k: undefined }), h({ k: null }));

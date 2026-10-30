@@ -4,10 +4,17 @@
 // once (#1188, #1161). Identical to Node.
 class Killer {
   label: string = "k" + String(1);
-  kill(): string { clearK(); return this.label + " killed"; }
+  kill(): string {
+    clearK();
+    return this.label + " killed";
+  }
 }
+
 let k: Killer | null = new Killer();
-function clearK(): void { k = null; }
+
+function clearK(): void {
+  k = null;
+}
 
 function main(): void {
   console.log(k!.label);

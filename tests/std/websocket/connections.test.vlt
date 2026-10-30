@@ -4,13 +4,8 @@ import { channel, Channel } from "velt/sync";
 import { serve } from "velt/net/http";
 import { IoError } from "velt/io";
 import { afterAll, beforeAll, describe, expect, it } from "velt/test";
-import {
-  WebSocket,
-  connectWebSocket,
-  publish,
-  publishBytes,
-  upgradeWebSocket,
-} from "velt/net/websocket";
+import { WebSocket, connectWebSocket, publish, publishBytes } from "velt/net/websocket";
+import { upgradeWebSocket } from "velt/net/http";
 
 describe("a WebSocket as an async iterable", () => {
   // The server session iterates the messages with `for await` until the client closes; the

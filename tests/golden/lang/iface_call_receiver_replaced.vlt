@@ -1,14 +1,36 @@
 // check: no leaks
 // `box.inner.m(repl())` where `repl` replaces `box.inner`: the old inner value runs the method
 // and is freed after it.
-interface N { val: string; m(s: string): string; }
+interface N {
+  val: string;
+  m(s: string): string;
+}
+
 class Node1 implements N {
   val: string;
-  constructor(v: string) { this.val = v; }
-  m(s: string): string { const was = this.val; this.val = s; return was + " -> " + this.val; }
+  constructor(v: string) {
+    this.val = v;
+  }
+  m(s: string): string {
+    const was = this.val;
+    this.val = s;
+    return was + " -> " + this.val;
+  }
 }
-class Box { inner: N; constructor(n: N) { this.inner = n; } }
+
+class Box {
+  inner: N;
+  constructor(n: N) {
+    this.inner = n;
+  }
+}
+
 const box = new Box(new Node1("first"));
-function repl(): string { box.inner = new Node1("second"); return "replaced"; }
+
+function repl(): string {
+  box.inner = new Node1("second");
+  return "replaced";
+}
+
 console.log(box.inner.m(repl()));
 console.log(box.inner.val);

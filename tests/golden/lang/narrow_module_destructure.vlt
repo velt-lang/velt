@@ -2,65 +2,141 @@
 // Destructuring a narrowed module variable, a field path of one, an `r[k]` or a checked copy
 // takes its payload apart (#1280). A write through a narrowed field path evaluates the object
 // before the value, as JavaScript does: a value that clears the field writes into the old object.
-class Box { n = 1; items: number[] = [7]; }
-let x: Box | null = new Box(); let xs: number[] | null = [1, 2];
+class Box {
+  n = 1;
+  items: number[] = [7];
+}
+
+let x: Box | null = new Box();
+let xs: number[] | null = [1, 2];
 const st: { f: Box | null; a: number[] | string } = { f: new Box(), a: [3, 4] };
 let r: Record<string, Box> = { k: new Box() };
 if (x && xs && st.f && r["k"]) {
-  const { n } = x; const [a] = xs; const { n: p } = st.f; const k = "k"; const { n: q } = r[k];
-  const c = x; const { n: s } = c;
+  const { n } = x;
+  const [a] = xs;
+  const { n: p } = st.f;
+  const k = "k";
+  const { n: q } = r[k];
+  const c = x;
+  const { n: s } = c;
   console.log(n, a, p, q, s);
 }
+
 function inner(): void {
   if (x && xs && st.f && r["k"] && typeof st.a !== "string") {
-    const { n } = x; const [a, b] = xs; const { n: p, items } = st.f; const k = "k"; const { n: q } = r[k];
-    const c = x; const { n: s } = c;
+    const { n } = x;
+    const [a, b] = xs;
+    const { n: p, items } = st.f;
+    const k = "k";
+    const { n: q } = r[k];
+    const c = x;
+    const { n: s } = c;
     const [z] = st.a;
-    let w = 0; ({ n: w } = st.f); [w] = xs;
-    const { n: d = 5 } = x; const [e = 6] = xs;
+    let w = 0;
+    ({ n: w } = st.f);
+    [w] = xs;
+    const { n: d = 5 } = x;
+    const [e = 6] = xs;
     console.log(n, a, b, p, items, q, s, z, w, d, e);
   }
 }
+
 inner();
-function change(): number { st.a = "x"; st.f = null; x = null; return 9; }
+
+function change(): number {
+  st.a = "x";
+  st.f = null;
+  x = null;
+  return 9;
+}
+
 function order(): void {
   if (st.f && typeof st.a !== "string") {
-    const f = st.f; const arr = st.a;
+    const f = st.f;
+    const arr = st.a;
     st.f.items[0] = change();
     console.log(f.items);
   }
-  st.f = new Box(); st.a = [1, 2];
-  if (st.f) { const f = st.f; st.f.n += change(); console.log(f.n); }
-  st.f = new Box(); st.a = [1, 2];
-  if (typeof st.a !== "string") { const arr = st.a; st.a[0] = change(); console.log(arr); }
-  st.f = new Box(); st.a = [1, 2];
-  if (typeof st.a !== "string") { const arr = st.a; st.a[1] += change(); console.log(arr); }
   st.f = new Box();
-  if (st.f) { const f = st.f; st.f.n = change(); console.log(f.n, st.f); }
+  st.a = [1, 2];
+  if (st.f) {
+    const f = st.f;
+    st.f.n += change();
+    console.log(f.n);
+  }
   st.f = new Box();
-  if (st.f) { const f = st.f; st.f.items[0] += change(); console.log(f.items); }
+  st.a = [1, 2];
+  if (typeof st.a !== "string") {
+    const arr = st.a;
+    st.a[0] = change();
+    console.log(arr);
+  }
+  st.f = new Box();
+  st.a = [1, 2];
+  if (typeof st.a !== "string") {
+    const arr = st.a;
+    st.a[1] += change();
+    console.log(arr);
+  }
+  st.f = new Box();
+  if (st.f) {
+    const f = st.f;
+    st.f.n = change();
+    console.log(f.n, st.f);
+  }
+  st.f = new Box();
+  if (st.f) {
+    const f = st.f;
+    st.f.items[0] += change();
+    console.log(f.items);
+  }
   x = new Box();
-  if (x) { const y = x; x.items[0] = change(); console.log(y.items, x); }
+  if (x) {
+    const y = x;
+    x.items[0] = change();
+    console.log(y.items, x);
+  }
 }
+
 order();
-class Holder { s: string = "a"; }
+
+class Holder {
+  s: string = "a";
+}
+
 const hs: { h: Holder | null } = { h: new Holder() };
-function clrH(): string { hs.h = null; return "b"; }
-if (hs.h) { const h = hs.h; hs.h.s += clrH(); console.log(h.s); }
+
+function clrH(): string {
+  hs.h = null;
+  return "b";
+}
+
+if (hs.h) {
+  const h = hs.h;
+  hs.h.s += clrH();
+  console.log(h.s);
+}
 
 // Rest and default patterns of narrowed values.
-class Box6 { n = 1; m: number | undefined = undefined; }
+class Box6 {
+  n = 1;
+  m: number | undefined = undefined;
+}
+
 let x6: Box6 | null = new Box6();
 let xs6: number[] | null = [1, 2, 3];
 const st6: { f: Box6 | null } = { f: new Box6() };
+
 function run6(): void {
   if (x6 && xs6 && st6.f) {
     const { n, m = 7 } = x6;
     const [a, ...rest] = xs6;
     const { n: q, ...others } = st6.f;
-    let p = 0; let r: number[] = [];
+    let p = 0;
+    let r: number[] = [];
     [p, ...r] = xs6;
     console.log(n, m, a, rest, q, others, p, r);
   }
 }
+
 run6();

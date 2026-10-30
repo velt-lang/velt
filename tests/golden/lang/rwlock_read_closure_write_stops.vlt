@@ -7,9 +7,11 @@ class Item {
     this.v = v;
   }
 }
+
 class St {
   items: Item[] = [];
 }
+
 function setup(): shared<RwLock<St>> {
   const rw = shared(new RwLock<St>(new St()));
   rw.write((s) => {
@@ -17,9 +19,11 @@ function setup(): shared<RwLock<St>> {
   });
   return rw;
 }
+
 function g(rw: shared<RwLock<St>>, cb: (it: Item) => i64): i64 {
   return rw.read((s) => cb(s.items[0]));
 }
+
 function main() {
   const rw = setup();
   const n = g(rw, (it) => {

@@ -3,6 +3,7 @@
 interface Reader {
   get value(): number;
 }
+
 interface Writer {
   get value(): number;
   set value(v: number);
@@ -11,11 +12,15 @@ interface Writer {
 let bad = true;
 const lit = {
   get value(): number {
-    if (bad) throw new TypeError("getter failed");
+    if (bad) {
+      throw new TypeError("getter failed");
+    }
     return 1;
   },
   set value(v: number) {
-    if (bad) throw new RangeError(`setter refused ${v}`);
+    if (bad) {
+      throw new RangeError(`setter refused ${v}`);
+    }
   },
 };
 const r = lit as Reader;

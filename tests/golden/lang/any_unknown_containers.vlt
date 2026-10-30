@@ -6,9 +6,11 @@
 function lower(m: Record<string, any>): Record<string, unknown> {
   return m;
 }
+
 function upper(m: Record<string, unknown>): Record<string, any> {
   return m;
 }
+
 const rec: Record<string, any> = { q: 1 };
 const seen = lower(rec);
 seen.w = "two";

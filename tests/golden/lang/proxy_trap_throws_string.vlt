@@ -1,13 +1,16 @@
 // A proxy trap that throws a value other than an `Error` (#1174): as in Node, the operation throws
 // it, and a `catch` around it gets it (inferred error sets hold any thrown value).
-const p: any = new Proxy({ a: 1 }, {
-  get(t, k, r) {
-    if (k === "bad") {
-      throw "a string";
-    }
-    return Reflect.get(t, k, r);
+const p: any = new Proxy(
+  { a: 1 },
+  {
+    get(t, k, r) {
+      if (k === "bad") {
+        throw "a string";
+      }
+      return Reflect.get(t, k, r);
+    },
   },
-});
+);
 try {
   console.log(p.bad);
 } catch (e) {

@@ -3,7 +3,9 @@
 // as JS takes a typed array's `length`. Velt-only: a Node `Buffer` cannot shrink.
 function main() {
   const b: u8[] = Buffer.alloc(48);
-  for (let i = 0; i < 48; i++) b[i] = (47 - i) as u8;
+  for (let i = 0; i < 48; i++) {
+    b[i] = (47 - i) as u8;
+  }
   const v = b.subarray(8, 40);
   const w = new Uint32Array(v.buffer, 16, 4);
   console.log(v.length, w.length);
@@ -20,7 +22,13 @@ function main() {
 
   // Nothing is left of either.
   b.length = 4;
-  console.log(v.length, v.slice(0, 4).length, v.subarray(0, 4).length, w.slice().length, w.subarray(1).length);
+  console.log(
+    v.length,
+    v.slice(0, 4).length,
+    v.subarray(0, 4).length,
+    w.slice().length,
+    w.subarray(1).length,
+  );
   console.log(v.toReversed().length, w.toSorted().length);
   try {
     w.with(0, 1);

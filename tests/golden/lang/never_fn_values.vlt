@@ -11,6 +11,7 @@ function runVoid(f: () => void): string {
     return `caught ${(e as Error).message}`;
   }
 }
+
 function runNumber(f: () => number): number {
   try {
     return f();
@@ -29,6 +30,7 @@ function make2() {
     throw new Error("m");
   };
 }
+
 console.log(runVoid(make2()));
 let h: () => void = () => {};
 console.log(runVoid(h));
@@ -53,9 +55,11 @@ async function load(ok: boolean): Promise<number> {
 }
 
 async function run() {
-  console.log(await load(true).catch((e) => {
-    throw e;
-  }));
+  console.log(
+    await load(true).catch((e) => {
+      throw e;
+    }),
+  );
   try {
     await load(false).catch((e) => {
       throw e;
@@ -64,6 +68,7 @@ async function run() {
     console.log("rethrown", e instanceof RangeError, (e as Error).message);
   }
 }
+
 run();
 
 // Callbacks that only throw, inferred for a type argument (`map`) or passed as values.
@@ -93,16 +98,19 @@ try {
 const fieldBoom = () => {
   throw new Error("field");
 };
+
 class Fields {
   h: () => void = fieldBoom;
   n: () => number = fieldBoom;
 }
+
 console.log(runVoid(new Fields().h), runNumber(new Fields().n), runNumber(libNumber));
 
 // `catch` on a promise that never fulfills gives what the handler gives.
 function wrap<R>(f: () => R): (x: number) => R {
   return (x) => f();
 }
+
 async function more() {
   const w = await Promise.resolve(1)
     .then((x) => {
@@ -121,4 +129,5 @@ async function more() {
     console.log((e as Error).message);
   }
 }
+
 more();

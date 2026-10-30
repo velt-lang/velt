@@ -1,6 +1,7 @@
 export interface Options {
   name: string;
 }
+
 export function show(o: Options): string {
   return JSON.stringify(o);
 }

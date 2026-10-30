@@ -38,7 +38,10 @@ function main(): void {
     }
   }
   console.log(seen, grow.length, arr.length);
-  const pairs: any = [["a", "one"], ["b", "two"]];
+  const pairs: any = [
+    ["a", "one"],
+    ["b", "two"],
+  ];
   outer: for (const p of pairs) {
     for (const part of p) {
       console.log(typeof part, part);

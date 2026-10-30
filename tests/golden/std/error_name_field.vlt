@@ -3,6 +3,7 @@
 class FieldError extends Error {
   name = "FieldError";
 }
+
 class Typed extends Error {
   name: string = "Typed";
   code: number = 7;
@@ -12,13 +13,17 @@ class Typed extends Error {
     console.log(`in ctor: ${this.name}`);
   }
 }
+
 class Sub extends FieldError {}
+
 class Again extends FieldError {
   name = "Again";
 }
+
 class T2 extends TypeError {
   name = "T2Error";
 }
+
 const e = new FieldError("f");
 console.log(e.name, String(e), `${e}`);
 const t = new Typed("t");

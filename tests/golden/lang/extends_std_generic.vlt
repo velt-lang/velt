@@ -1,6 +1,7 @@
 // Classes extending generic std classes (`Map<K, V>`, `Set<T>`), with and without their own
 // constructors and redefined methods (issue #1096).
 class M extends Map<string, number> {}
+
 const m = new M();
 m.set("a", 1);
 console.log(m.get("a"), m.size);
@@ -11,6 +12,7 @@ class Counted extends Map<string, number> {
     return v === undefined ? undefined : v * 10;
   }
 }
+
 const c = new Counted();
 c.set("x", 4);
 console.log(c.get("x"), c.get("y"));
@@ -21,14 +23,21 @@ class Named<V> extends Map<string, V> {
   }
   describe(): string {
     const keys: string[] = [];
-    for (const k of this.keys()) keys.push(k);
+    for (const k of this.keys()) {
+      keys.push(k);
+    }
     return `${this.label}: ${keys.join(",")}`;
   }
 }
-const n = new Named<boolean>("flags", [["on", true], ["off", false]]);
+
+const n = new Named<boolean>("flags", [
+  ["on", true],
+  ["off", false],
+]);
 console.log(n.describe(), n.get("on"));
 
 class Tags extends Set<string> {}
+
 const t = new Tags();
 t.add("x");
 t.add("y");
@@ -41,6 +50,9 @@ class Base<K> {
     this.n = xs.length;
   }
 }
+
 class Sub extends Base<string> {}
+
 class SubSub extends Sub {}
+
 console.log(new Sub().n, new SubSub().n);

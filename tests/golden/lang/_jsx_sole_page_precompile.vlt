@@ -27,10 +27,18 @@ export function cases(maybe: string | null, flag: bool, some: bool, reads: Reads
     <p>{flag}a</p>,
     <p>{maybe}</p>,
     <p>{maybe}a</p>,
-    <p>{maybe}{maybe}</p>,
+    <p>
+      {maybe}
+      {maybe}
+    </p>,
     <p title={maybe}>{flag}</p>,
-    <p>{/* a comment is no child */}{maybe}</p>,
-    <p><span>{flag}</span></p>,
+    <p>
+      {/* a comment is no child */}
+      {maybe}
+    </p>,
+    <p>
+      <span>{flag}</span>
+    </p>,
     <p>{el}</p>,
     <p>{el}a</p>,
     <p>{flag ? <Name name="ada" /> : null}</p>,

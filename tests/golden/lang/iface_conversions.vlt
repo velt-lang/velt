@@ -3,38 +3,77 @@
 // same object (#350); `A & B` and `B & A` are one type. A class converts to an intersection of
 // interfaces it implements itself or through a base class, generic classes too, and fields
 // written through the intersection reach the object.
-interface P { f(): number }
-interface Q { f(): number }
-interface A { a(): number }
-interface B { b(): number }
-interface Get<T> { get(): T }
-interface Put<T> { put(v: T): void }
-interface Base { refresh(): number }
+interface P {
+  f(): number;
+}
+
+interface Q {
+  f(): number;
+}
+
+interface A {
+  a(): number;
+}
+
+interface B {
+  b(): number;
+}
+
+interface Get<T> {
+  get(): T;
+}
+
+interface Put<T> {
+  put(v: T): void;
+}
+
+interface Base {
+  refresh(): number;
+}
+
 function sumBA(v: B & A): number {
   return v.a() + v.b();
 }
+
 class PA implements A {
-  a() { return 1; }
+  a() {
+    return 1;
+  }
 }
+
 class C extends PA implements B {
-  b() { return 2; }
+  b() {
+    return 2;
+  }
 }
+
 class Box<T> implements Get<T>, Put<T> {
   v: T;
-  constructor(v: T) { this.v = v; }
-  get() { return this.v; }
-  put(v: T) { this.v = v; }
+  constructor(v: T) {
+    this.v = v;
+  }
+  get() {
+    return this.v;
+  }
+  put(v: T) {
+    this.v = v;
+  }
 }
+
 class Counted implements Base {
   errors = 1;
-  refresh() { return this.errors; }
+  refresh() {
+    return this.errors;
+  }
 }
+
 function roundTrip<T>(b: Box<T>, v: T): T {
   const gp: Get<T> & Put<T> = b;
   gp.put(v);
   const g: Get<T> = gp;
   return g.get();
 }
+
 const p: P = { f: () => 1 };
 const q: Q = p;
 const p2: P = q;

@@ -13,21 +13,69 @@ function same(a: Product, b: Product): boolean {
 async function main() {
   const o = new Product();
   const xs = [1];
-  console.log(await (async () => { const k: any = o; const k2: any = o; return k === k2; })());
-  console.log(await spawn((async () => { const k: any = o; const k2: any = o; return k === k2; })()));
-  console.log(await spawn((async () => { const a: any = xs; const b: any = xs; return a === b; })()));
+  console.log(
+    await (async () => {
+      const k: any = o;
+      const k2: any = o;
+      return k === k2;
+    })(),
+  );
+  console.log(
+    await spawn(
+      (async () => {
+        const k: any = o;
+        const k2: any = o;
+        return k === k2;
+      })(),
+    ),
+  );
+  console.log(
+    await spawn(
+      (async () => {
+        const a: any = xs;
+        const b: any = xs;
+        return a === b;
+      })(),
+    ),
+  );
   console.log(await spawn((async () => same(o, o))()));
-  console.log(await spawn((async () => { const p = o; const q = o; return p === q; })()));
+  console.log(
+    await spawn(
+      (async () => {
+        const p = o;
+        const q = o;
+        return p === q;
+      })(),
+    ),
+  );
   const w = new Product();
   const ws = [1];
-  console.log(await spawn((async () => { const p = w; p.price = 7; return w.price; })()));
-  console.log(await spawn((async () => { const ys = ws; ys.push(3); return ws.length; })()));
-  const t = spawn((async () => {
-    const p: any = xs;
-    await Promise.resolve(0);
-    const q: any = xs;
-    return p === q;
-  })());
+  console.log(
+    await spawn(
+      (async () => {
+        const p = w;
+        p.price = 7;
+        return w.price;
+      })(),
+    ),
+  );
+  console.log(
+    await spawn(
+      (async () => {
+        const ys = ws;
+        ys.push(3);
+        return ws.length;
+      })(),
+    ),
+  );
+  const t = spawn(
+    (async () => {
+      const p: any = xs;
+      await Promise.resolve(0);
+      const q: any = xs;
+      return p === q;
+    })(),
+  );
   console.log(await t);
   // A closure value spawned twice: each task reads its own copy as one object.
   const f = async () => {

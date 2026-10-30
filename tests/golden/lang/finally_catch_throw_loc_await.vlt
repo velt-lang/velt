@@ -3,6 +3,7 @@
 async function fails(): Promise<void> {
   throw new Error("in finally");
 }
+
 async function g(): Promise<void> {
   try {
     throw new RangeError("outer");
@@ -14,4 +15,5 @@ async function g(): Promise<void> {
     }
   }
 }
+
 await g();

@@ -26,19 +26,25 @@ function main() {
   // A pass keeps the clock it read: `G`, created by `E`'s callback in the 60 ms list, is not due
   // by then and waits for the next pass, after `F` (due already), though `E`'s callback runs on
   // past `G`'s due time.
-  setTimeout(() => {
-    console.log("E 60");
-    setTimeout(() => {
-      console.log("G 60, created by E");
-      // An immediate runs once the timers pass is over, before the timers created after the
-      // pass began, however long ago they came due.
-      setTimeout(() => console.log("timeout 1, created by G"), 1);
-      busy(5);
-      setImmediate(() => console.log("immediate, created by G"));
-      interval();
-    }, 60);
-    busy(100);
-  }, 60);
+  setTimeout(
+    () => {
+      console.log("E 60");
+      setTimeout(
+        () => {
+          console.log("G 60, created by E");
+          // An immediate runs once the timers pass is over, before the timers created after the
+          // pass began, however long ago they came due.
+          setTimeout(() => console.log("timeout 1, created by G"), 1);
+          busy(5);
+          setImmediate(() => console.log("immediate, created by G"));
+          interval();
+        },
+        60,
+      );
+      busy(100);
+    },
+    60,
+  );
   setTimeout(() => console.log("D 60"), 60);
   setTimeout(() => console.log("F 70"), 70);
   busy(150);
@@ -49,14 +55,17 @@ function main() {
 // started, before `T`, created 60 ms into the run with a 70 ms delay.
 function interval() {
   let runs = 0;
-  const every = setInterval(() => {
-    runs++;
-    console.log("interval run", runs);
-    if (runs == 1) {
-      busy(60);
-      setTimeout(() => console.log("T 70, created by the interval"), 70);
-    } else {
-      clearInterval(every);
-    }
-  }, 100);
+  const every = setInterval(
+    () => {
+      runs++;
+      console.log("interval run", runs);
+      if (runs == 1) {
+        busy(60);
+        setTimeout(() => console.log("T 70, created by the interval"), 70);
+      } else {
+        clearInterval(every);
+      }
+    },
+    100,
+  );
 }

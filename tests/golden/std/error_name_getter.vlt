@@ -18,7 +18,9 @@ const es: Error[] = [g, new Computed("four"), new Error("plain")];
 for (const e of es) {
   console.log(e.name, "|", String(e), "|", e.toString());
 }
+
 function either(e: Getter | Computed): string {
   return `${e.name}: ${e}`;
 }
+
 console.log(either(new Computed("ab")));

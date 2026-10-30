@@ -3,14 +3,16 @@
 interface DirectiveState {
   n: number;
 }
+
 function stateOf(el: { states?: Map<string, DirectiveState> }): Map<string, DirectiveState> {
-  let map = el.states as Map<string, DirectiveState> | undefined;
+  let map = el.states as (Map<string, DirectiveState> | undefined);
   if (!map) {
     map = new Map();
     el.states = map;
   }
   return map;
 }
+
 const el: { states?: Map<string, DirectiveState> } = {};
 stateOf(el).set("a", { n: 1 });
 console.log(stateOf(el).size, el.states);
@@ -19,6 +21,7 @@ function keys(ctx: any): Set<string> {
   const seen: Set<string> = (ctx._streamKeys ??= new Set());
   return seen;
 }
+
 const bag: Record<string, unknown> = {};
 const ctx: any = bag;
 keys(ctx).add("k");
@@ -32,6 +35,7 @@ function streamKeys(ctx: Record<string, unknown>): Set<string> {
   const seen: Set<string> = ((ctx as any)._streamKeys ??= new Set());
   return seen;
 }
+
 const reqCtx: Record<string, unknown> = {};
 streamKeys(reqCtx).add("a");
 streamKeys(reqCtx).add("b");

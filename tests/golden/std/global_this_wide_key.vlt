@@ -3,36 +3,51 @@
 // `Object.defineProperty` takes any key in TypeScript; Velt, which keeps each property as a
 // variable, needs one of the listed keys there too. `delete` of a property is not supported yet.
 type Host = { __WA__?: number; __WB__?: number };
+
 let calls = 0;
+
 function value(): number {
   calls++;
   return calls;
 }
+
 function read(k: string): number | undefined {
   return (globalThis as Host)[k];
 }
+
 function write(k: string): void {
   (globalThis as Host)[k] = value();
 }
+
 function define(k: string): void {
-  Object.defineProperty(globalThis as Host, k, { value: value(), writable: true, configurable: true });
+  Object.defineProperty(globalThis as Host, k, {
+    value: value(),
+    writable: true,
+    configurable: true,
+  });
 }
+
 read("console");
 write("__WZ__");
 define("__WZ__");
+
 function bump(k: string): void {
   const h = globalThis as Host;
   h[k] += 2;
 }
+
 function either(k: "__WA__" | "__WZ__"): number | undefined {
   return (globalThis as Host)[k];
 }
+
 const TYPED: string = "__WA__";
 console.log((globalThis as Host)[TYPED]);
+
 function inc(k: string): void {
   const h = globalThis as Host;
   h[k]++;
 }
+
 function del(k: string, ok: keyof Host): void {
   delete (globalThis as Host)[k];
   delete (globalThis as Host)[ok];

@@ -32,6 +32,7 @@ class H<T> implements Ctx<T[]> {
     return "h";
   }
 }
+
 const hs: unknown[] = [new H<string>(["x"]), new H<number>([1, 2])];
 for (const h of hs) {
   const c = h as Ctx<any>;
@@ -48,21 +49,25 @@ class Base<T> implements Ctx<T> {
     return "base";
   }
 }
+
 class Sub extends Base<number> {
   override name(): string {
     return "sub";
   }
 }
+
 class Sub2 extends Base<string> {
   override name(): string {
     return "sub2";
   }
 }
+
 class Deep<U> extends Base<U[]> {
   override name(): string {
     return "deep";
   }
 }
+
 const bs: unknown[] = [
   new Sub(5),
   new Sub2("five"),

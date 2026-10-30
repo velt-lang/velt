@@ -8,6 +8,7 @@ interface P {
 function cmp(n: number | null | undefined, k: number | null, m: number | undefined): string {
   return `${n === k} ${n == m} ${k == n} ${n !== m} ${k === n} ${k == m} ${k === m}`;
 }
+
 console.log(cmp(null, null, undefined), cmp(undefined, null, undefined));
 console.log(cmp(1, 1, 1), cmp(2, null, 2), cmp(undefined, 3, undefined));
 const names: (string | null | undefined)[] = ["a", null, undefined];
@@ -20,6 +21,7 @@ function opt(p: P | null | undefined): void {
     console.log(p?.n);
   }
 }
+
 opt(null);
 opt({ n: 1 });
 opt(undefined);
@@ -31,12 +33,14 @@ function defined(x: string | null | undefined): string | undefined {
   }
   return x;
 }
+
 function definedObj(p: P | null | undefined): P | undefined {
   if (p !== null) {
     return p;
   }
   return { n: -1 };
 }
+
 console.log(defined(null), defined(undefined), defined("s"));
 console.log(definedObj(null), definedObj(undefined), definedObj({ n: 2 }));
 

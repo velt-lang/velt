@@ -347,8 +347,9 @@ function negativeZero(db: Database) {
   for (let i: usize = 0; i < cases.length; i++) {
     const v = arith(opNames[i], ops[i][0], ops[i][1]);
     const mine = `${typeName(v.t)}${v.t == REAL && v.r == 0 && 1 / v.r < 0 ? " -0.0" : ""}`;
-    const c: Signed =
-      db.prepare(`SELECT typeof(${cases[i]}) AS k, ${cases[i]} AS v`).get<Signed>()!;
+    const c: Signed = db
+      .prepare(`SELECT typeof(${cases[i]}) AS k, ${cases[i]} AS v`)
+      .get<Signed>()!;
     const theirs = `${c.k}${c.k == "real" && c.v == 0 && 1 / c.v < 0 ? " -0.0" : ""}`;
     console.log(`${cases[i]}: ${mine}${mine == theirs ? "" : " (C: " + theirs + ")"}`);
   }

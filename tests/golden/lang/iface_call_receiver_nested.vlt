@@ -1,18 +1,51 @@
 // check: no leaks
 // `a.b.m(f())` where `f` replaces `a.b` and `a` itself: the receiver read before the argument
 // keeps running the method.
-interface N { val: string; m(s: string): string; }
+interface N {
+  val: string;
+  m(s: string): string;
+}
+
 class Node1 implements N {
   val: string;
-  constructor(v: string) { this.val = v; }
-  m(s: string): string { const was = this.val; this.val = s; return was + " -> " + this.val; }
+  constructor(v: string) {
+    this.val = v;
+  }
+  m(s: string): string {
+    const was = this.val;
+    this.val = s;
+    return was + " -> " + this.val;
+  }
 }
-class Inner { b: N; constructor(n: N) { this.b = n; } }
-class Outer { a: Inner; constructor(i: Inner) { this.a = i; } }
+
+class Inner {
+  b: N;
+  constructor(n: N) {
+    this.b = n;
+  }
+}
+
+class Outer {
+  a: Inner;
+  constructor(i: Inner) {
+    this.a = i;
+  }
+}
+
 let o = new Outer(new Inner(new Node1("deep")));
-function f(): string { o.a.b = new Node1("other"); return "f"; }
+
+function f(): string {
+  o.a.b = new Node1("other");
+  return "f";
+}
+
 console.log(o.a.b.m(f()));
 console.log(o.a.b.val);
-function g(): string { o = new Outer(new Inner(new Node1("fresh"))); return "g"; }
+
+function g(): string {
+  o = new Outer(new Inner(new Node1("fresh")));
+  return "g";
+}
+
 console.log(o.a.b.m(g()));
 console.log(o.a.b.val);

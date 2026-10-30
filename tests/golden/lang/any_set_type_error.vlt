@@ -3,6 +3,7 @@
 class P {
   x: number = 1;
 }
+
 function main(): void {
   const a: any = new P();
   a.x = 2;

@@ -1,8 +1,23 @@
 // A function returned from `with` cannot take a `WeakRef` to a part of the locked value out.
-class K { n: number; constructor(n: number) { this.n = n; } }
-class Box { k: K; constructor(k: K) { this.k = k; } }
+class K {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+class Box {
+  k: K;
+  constructor(k: K) {
+    this.k = k;
+  }
+}
+
 async function main() {
   const m = shared(new Mutex<Box>(new Box(new K(5))));
-  const f = m.with((v) => { const r = new WeakRef(v.k); return () => r.deref(); });
+  const f = m.with((v) => {
+    const r = new WeakRef(v.k);
+    return () => r.deref();
+  });
   console.log(f() !== null);
 }

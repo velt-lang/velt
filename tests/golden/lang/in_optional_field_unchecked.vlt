@@ -5,5 +5,12 @@ const b: { x?: number | null } = {};
 const c: { x?: number | null } = { x: null };
 for (const o of [a, b, c]) {
   console.log("x" in o, JSON.stringify(o), Object.keys(o).join(","));
-  if ("x" in o) { const v = o.x; if (v !== null) console.log("v*2", v * 2); else console.log("null"); }
+  if ("x" in o) {
+    const v = o.x;
+    if (v !== null) {
+      console.log("v*2", v * 2);
+    } else {
+      console.log("null");
+    }
+  }
 }

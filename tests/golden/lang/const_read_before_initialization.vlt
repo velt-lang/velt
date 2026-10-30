@@ -13,4 +13,5 @@ function run(): void {
   });
   console.log("never", x);
 }
+
 run();

@@ -3,9 +3,11 @@
 function sync__topLevelAwaitAt(s: string): void {
   console.log("fn", s);
 }
+
 function __topLevelAwaitAt(s: string): void {
   console.log("same name", s);
 }
+
 class Log {
   static x__topLevelAwaitAt(s: string): void {
     console.log("static", s);
@@ -14,12 +16,14 @@ class Log {
     console.log("method", s);
   }
 }
+
 async function inner(): Promise<number> {
   sync__topLevelAwaitAt("in async");
   await new Promise<void>((r) => setTimeout(() => r(), 1));
   new Log().m__topLevelAwaitAt("after await in async");
   return 1;
 }
+
 sync__topLevelAwaitAt("inside a function");
 Log.x__topLevelAwaitAt("method");
 __topLevelAwaitAt("top");

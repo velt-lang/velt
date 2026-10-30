@@ -2,7 +2,9 @@
 // accepts.
 export const S: unique symbol = Symbol("s");
 const o: unknown = { [S]: 5, a: 1 };
+
 function read(ka: any): unknown {
   return (o as Record<symbol, unknown>)[ka];
 }
+
 console.log(read("a"), (o as Record<symbol, unknown>)[S]);

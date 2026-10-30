@@ -7,7 +7,9 @@
 type N = { name: string; log: number[] };
 
 function pushF(xs: number[], n: number): void {
-  for (let i = 0; i < 40; i++) xs.push(n + i);
+  for (let i = 0; i < 40; i++) {
+    xs.push(n + i);
+  }
 }
 
 function swapF(b: N): number {
@@ -16,7 +18,9 @@ function swapF(b: N): number {
 }
 
 function growF(b: N): number {
-  for (let i = 0; i < 40; i++) b.log.push(i);
+  for (let i = 0; i < 40; i++) {
+    b.log.push(i);
+  }
   return 5000;
 }
 
@@ -29,7 +33,9 @@ function show(label: string, p: N): void {
 
 function factory() {
   const push = (xs: number[], n: number): void => {
-    for (let i = 0; i < 40; i++) xs.push(n + i);
+    for (let i = 0; i < 40; i++) {
+      xs.push(n + i);
+    }
   };
   const swap = (b: N): number => {
     b.log = [7];

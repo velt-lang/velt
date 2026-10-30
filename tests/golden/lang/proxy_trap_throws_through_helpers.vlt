@@ -6,7 +6,9 @@
 const KEY = Symbol("key");
 
 function isCollection(value: unknown): boolean {
-  if (!value || typeof value !== "object") return false;
+  if (!value || typeof value !== "object") {
+    return false;
+  }
   const ctor = value.constructor;
   return ctor === Set || ctor === Map || ctor === WeakSet || ctor === WeakMap;
 }
@@ -16,8 +18,10 @@ class Box {
 }
 
 function wrap<T>(target: T): string {
-  if (typeof target !== "object") return "primitive";
-  const objectTarget = target as T & object;
+  if (typeof target !== "object") {
+    return "primitive";
+  }
+  const objectTarget = target as (T & object);
   return isCollection(objectTarget) ? "collection" : "object";
 }
 
@@ -44,11 +48,15 @@ function plus(o: any): any {
 let armed = false;
 const p = new Proxy({} as any, {
   get(t: any, k: string | symbol): any {
-    if (armed) throw new Error("get " + String(k));
+    if (armed) {
+      throw new Error("get " + String(k));
+    }
     return 7;
   },
   set(t: any, k: string | symbol, v: any): boolean {
-    if (armed) throw new Error("set " + String(k));
+    if (armed) {
+      throw new Error("set " + String(k));
+    }
     return true;
   },
 });

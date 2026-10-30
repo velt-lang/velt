@@ -5,25 +5,31 @@ async function inner(): Promise<string> {
   console.log("inner");
   return "x";
 }
+
 async function viaReturn(): Promise<string> {
   return inner();
 }
+
 async function viaHop(): Promise<string> {
   const p = inner();
   await Promise.resolve(0);
   return await p;
 }
+
 async function viaAwait(): Promise<string> {
   return await inner();
 }
+
 async function a(): Promise<void> {
   const v = await viaReturn();
   console.log("a-return", v);
 }
+
 async function b(): Promise<void> {
   const v = await viaAwait();
   console.log("b-await", v);
 }
+
 async function c(): Promise<void> {
   const v = await viaHop();
   console.log("c-hop", v);
@@ -34,17 +40,21 @@ async function failing(): Promise<string> {
   console.log("failing");
   throw new Error("no");
 }
+
 async function rejReturn(): Promise<string> {
   return failing();
 }
+
 async function rejHop(): Promise<string> {
   const p = failing();
   await Promise.resolve(0);
   return await p;
 }
+
 async function rejAwait(): Promise<string> {
   return await failing();
 }
+
 async function ra(): Promise<void> {
   try {
     await rejReturn();
@@ -52,6 +62,7 @@ async function ra(): Promise<void> {
     console.log("a-return", (e as Error).message);
   }
 }
+
 async function rb(): Promise<void> {
   try {
     await rejAwait();
@@ -59,6 +70,7 @@ async function rb(): Promise<void> {
     console.log("b-await", (e as Error).message);
   }
 }
+
 async function rc(): Promise<void> {
   try {
     await rejHop();
@@ -72,12 +84,15 @@ async function slowValue(): Promise<number> {
   await Promise.resolve(0);
   return 2;
 }
+
 async function either(fn: () => number | Promise<number>): Promise<number> {
   return fn();
 }
+
 async function ua(): Promise<void> {
   console.log("plain", await either(() => 1));
 }
+
 async function ub(): Promise<void> {
   console.log("slow", await either(slowValue));
 }

@@ -4,6 +4,7 @@
 
 const MISS = { hit: false, value: 0 } as const;
 const EMPTY_SEQUENCE: number[] = [];
+
 type Pending = { state: string; loading: boolean; refresh: () => number };
 
 const INERT: Readonly<Pending> = Object.freeze({
@@ -27,13 +28,17 @@ const defaultEngine: Engine = {
 type Hit = { readonly hit: boolean; readonly value: number };
 
 function peek(key: string): Hit {
-  if (key === "x") return { hit: true, value: 1 };
+  if (key === "x") {
+    return { hit: true, value: 1 };
+  }
   return MISS;
 }
 
 function sequence(n: number): number[] {
   const out: number[] = [];
-  for (let i = 0; i < n; i++) out.push(i);
+  for (let i = 0; i < n; i++) {
+    out.push(i);
+  }
   return out;
 }
 
@@ -42,7 +47,9 @@ function stable(moved: boolean, n: number): number[] {
 }
 
 function state(ready: boolean): Readonly<Pending> {
-  if (!ready) return INERT;
+  if (!ready) {
+    return INERT;
+  }
   return { state: "pending", loading: false, refresh: (): number => 1 };
 }
 

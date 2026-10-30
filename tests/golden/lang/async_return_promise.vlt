@@ -3,21 +3,27 @@
 async function f(): Promise<number> {
   return Promise.resolve(1);
 }
+
 async function g(): Promise<number> {
   return Promise.reject(new Error("e"));
 }
+
 async function later(n: number): Promise<number> {
   return n * 2;
 }
+
 async function viaCall(n: number): Promise<number> {
   return later(n);
 }
+
 async function h<T>(fn: () => T | Promise<T>): Promise<T> {
   return fn();
 }
+
 async function k(fn: () => number | Promise<number>): Promise<number> {
   return fn();
 }
+
 async function checked(n: number, fn: () => Promise<number>): Promise<number> {
   try {
     if (n < 0) {
@@ -29,6 +35,7 @@ async function checked(n: number, fn: () => Promise<number>): Promise<number> {
     return fn();
   }
 }
+
 async function main() {
   console.log(await f());
   try {

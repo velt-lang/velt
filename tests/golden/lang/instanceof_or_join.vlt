@@ -1,32 +1,56 @@
 // `x instanceof A || x instanceof B` narrows `x` to the nearest class both tests imply (#747).
-class B { b = "b"; }
-class S extends B { s = "s"; }
-class S2 extends S { s2 = "s2"; }
-class T1 extends S { t = "t1"; }
-class T2 extends S { t = "t2"; }
+class B {
+  b = "b";
+}
+
+class S extends B {
+  s = "s";
+}
+
+class S2 extends S {
+  s2 = "s2";
+}
+
+class T1 extends S {
+  t = "t1";
+}
+
+class T2 extends S {
+  t = "t2";
+}
 
 function g(b: B): string {
-  if (b instanceof S || b instanceof S2) { return b.s; }
+  if (b instanceof S || b instanceof S2) {
+    return b.s;
+  }
   return b.b;
 }
 
 function h(b: B): string {
-  if (b instanceof S2 || b instanceof S) { return "S:" + b.s; }
+  if (b instanceof S2 || b instanceof S) {
+    return "S:" + b.s;
+  }
   return "B:" + b.b;
 }
 
 function siblings(b: B): string {
-  if (b instanceof T1 || b instanceof T2) { return b.s; }
+  if (b instanceof T1 || b instanceof T2) {
+    return b.s;
+  }
   return "-";
 }
 
 function neither(b: B): string {
-  if (!(b instanceof S) && !(b instanceof S2)) { return "plain " + b.b; }
+  if (!(b instanceof S) && !(b instanceof S2)) {
+    return "plain " + b.b;
+  }
   return "sub";
 }
 
 function fallback(x: string | B | null): string {
-  if (typeof x === "string" || x === null) { return "not a B"; }
+  if (typeof x === "string" || x === null) {
+    return "not a B";
+  }
   return x.b;
 }
 

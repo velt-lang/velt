@@ -135,7 +135,9 @@ function stored() {
   };
   push();
   push();
-  for (const fn of fns) fn();
+  for (const fn of fns) {
+    fn();
+  }
   console.log(u);
 }
 
@@ -146,7 +148,9 @@ function seenByOuter() {
       n++;
     };
     const fs: (() => void)[] = [g];
-    for (const h of fs) h();
+    for (const h of fs) {
+      h();
+    }
     console.log("in f", n);
   };
   f();
@@ -195,7 +199,9 @@ function loops() {
     };
     out.push(f3());
   }
-  for (const k of out) console.log(k());
+  for (const k of out) {
+    console.log(k());
+  }
   console.log(shared);
   // A variable declared in the loop body: one per iteration, each shared by its own closures.
   const hs: (() => string)[] = [];
@@ -212,8 +218,12 @@ function loops() {
       return s;
     });
   }
-  for (const h of hs) console.log(h());
-  for (const h of hs) console.log(h());
+  for (const h of hs) {
+    console.log(h());
+  }
+  for (const h of hs) {
+    console.log(h());
+  }
 }
 
 function methods() {
@@ -284,7 +294,10 @@ async function patternBindings() {
   }
   console.log(fs.map((f) => f()).join(","), fs.map((f) => f()).join(","));
   const ns: (() => number)[] = [];
-  for (let [k, v] of new Map<string, number>([["a", 1], ["b", 2]])) {
+  for (let [k, v] of new Map<string, number>([
+    ["a", 1],
+    ["b", 2],
+  ])) {
     ns.push(() => {
       const g = () => {
         v += 10;

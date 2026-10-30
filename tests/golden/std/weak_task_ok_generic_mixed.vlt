@@ -1,21 +1,70 @@
 // Generic helpers used both with a weak-holding class (on one task) and with an interface crossing threads.
 import { channel, Channel, ChannelClosed } from "velt/sync";
-interface Job { run(): number; }
-class Add implements Job { a: number; b: number; constructor(a: number, b: number) { this.a = a; this.b = b; } run(): number { return this.a + this.b; } }
-class Node { v: number; constructor(v: number) { this.v = v; } }
-class Cache { m: WeakMap<Node, number>; constructor() { this.m = new WeakMap<Node, number>(); } }
-function first<T>(xs: T[]): T { return xs[0]; }
-async function relay<T>(ch: Channel<T>, x: T): Promise<void> throws ChannelClosed { await ch.send(x); }
-class Pool<T> { items: T[]; constructor() { this.items = []; } add(x: T): void { this.items.push(x); } }
-async function work(j: Job): Promise<number> { return j.run(); }
+
+interface Job {
+  run(): number;
+}
+
+class Add implements Job {
+  a: number;
+  b: number;
+  constructor(a: number, b: number) {
+    this.a = a;
+    this.b = b;
+  }
+  run(): number {
+    return this.a + this.b;
+  }
+}
+
+class Node {
+  v: number;
+  constructor(v: number) {
+    this.v = v;
+  }
+}
+
+class Cache {
+  m: WeakMap<Node, number>;
+  constructor() {
+    this.m = new WeakMap<Node, number>();
+  }
+}
+
+function first<T>(xs: T[]): T {
+  return xs[0];
+}
+
+async function relay<T>(ch: Channel<T>, x: T): Promise<void> throws ChannelClosed {
+  await ch.send(x);
+}
+
+class Pool<T> {
+  items: T[];
+  constructor() {
+    this.items = [];
+  }
+  add(x: T): void {
+    this.items.push(x);
+  }
+}
+
+async function work(j: Job): Promise<number> {
+  return j.run();
+}
+
 async function main() {
   const c = first<Cache>([new Cache()]);
   const n = new Node(3);
   c.m.set(n, 9);
-  const pc = new Pool<Cache>(); pc.add(c);
-  const pj = new Pool<Job>(); pj.add(new Add(1, 2));
+  const pc = new Pool<Cache>();
+  pc.add(c);
+  const pj = new Pool<Job>();
+  pj.add(new Add(1, 2));
   const ch = channel<Job>(4);
-  try { await relay<Job>(ch, first<Job>(pj.items)); } catch (e) { }
+  try {
+    await relay<Job>(ch, first<Job>(pj.items));
+  } catch (e) {}
   const j = (await ch.receive())!;
   const r = await spawn(work(j));
   const s = shared(new Mutex<Pool<Job>>(pj));

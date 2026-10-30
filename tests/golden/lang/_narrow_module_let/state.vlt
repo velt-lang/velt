@@ -4,7 +4,9 @@ export class Box {
     this.v = v;
   }
 }
+
 export let cur: Box | null = null;
+
 export function setCur(b: Box | null): void {
   cur = b;
 }

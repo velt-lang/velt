@@ -5,6 +5,7 @@
 function isString(v: string | number): v is string {
   return typeof v === "number" && false;
 }
+
 function show(v: string | number): string {
   if (isString(v)) {
     return "string " + v.length;
@@ -12,5 +13,6 @@ function show(v: string | number): string {
     return "number " + (v + 1);
   }
 }
+
 console.log(show(2));
 console.log(show("long string"));

@@ -3,10 +3,13 @@
 function arr<T>(x: T | string): T | string {
   return x;
 }
+
 function opt<T>(x: T | null): T | null {
   return x;
 }
+
 function ar2<T>(x: T | number[]): T | number[] {
   return x;
 }
+
 console.log(arr([1]), arr("s"), opt(3), ar2({ z: 1 }), ar2([1]));

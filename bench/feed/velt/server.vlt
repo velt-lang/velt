@@ -153,7 +153,11 @@ function getPost(db: Database, id: i64): Response throws HttpError | SqliteError
   return Response.json(OnePost { post: post });
 }
 
-async function createPost(req: Request, db: Database, user: User): Promise<Response, HttpError | SqliteError> {
+async function createPost(
+  req: Request,
+  db: Database,
+  user: User,
+): Promise<Response, HttpError | SqliteError> {
   let input: JsonValue;
   try {
     input = JSON.parseValue(await req.text());
@@ -167,11 +171,19 @@ async function createPost(req: Request, db: Database, user: User): Promise<Respo
   if ([...body].length > 500) {
     throw new HttpError(400, "body must be at most 500 characters");
   }
-  const row: Created | null = db.prepare(INSERT_POST).getWith([JsonValue.of(user.id as f64), JsonValue.of(body)]);
+  const row: Created | null = db
+    .prepare(INSERT_POST)
+    .getWith([JsonValue.of(user.id as f64), JsonValue.of(body)]);
   if (row == null) {
     throw new HttpError(500, "internal server error");
   }
-  const post = Post { id: row.id, body: body, created_at: row.created_at, author: user.name, like_count: 0 };
+  const post = Post {
+    id: row.id,
+    body: body,
+    created_at: row.created_at,
+    author: user.name,
+    like_count: 0,
+  };
   return Response.json(OnePost { post: post }, { status: 201 });
 }
 
@@ -181,10 +193,18 @@ function like(db: Database, user: User, id: i64): Response throws HttpError | Sq
     throw new HttpError(404, "post not found");
   }
   const added = db.prepare(INSERT_LIKE).runWith([user.id, id]).changes == 1;
-  return Response.json(Liked { liked: true, already_liked: !added, post_id: id }, { status: added ? 201 : 200 });
+  return Response.json(Liked { liked: true, already_liked: !added, post_id: id }, {
+    status: added ? 201 : 200,
+  });
 }
 
-async function route(req: Request, db: Database, writes: Database, secret: u8[], started: number): Promise<Response, HttpError | SqliteError> {
+async function route(
+  req: Request,
+  db: Database,
+  writes: Database,
+  secret: u8[],
+  started: number,
+): Promise<Response, HttpError | SqliteError> {
   const path = pathOf(req.url);
   const method = req.method;
   if (method == "GET") {
@@ -197,7 +217,11 @@ async function route(req: Request, db: Database, writes: Database, secret: u8[],
     }
     if (path == "/health") {
       db.prepare("SELECT 1").run();
-      return Response.json(Health { status: "ok", db: "ok", uptime_s: Math.floor((Date.now() - started) / 1000.0) as i64 });
+      return Response.json(Health {
+        status: "ok",
+        db: "ok",
+        uptime_s: Math.floor((Date.now() - started) / 1000.0) as i64,
+      });
     }
   }
   if (method == "POST") {

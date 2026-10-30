@@ -33,10 +33,7 @@ console.log(f());
 c.renderFn = null;
 console.log(init.renderFn === null);
 
-const state = {
-  count: 3 as any,
-  bump: () => console.log("bump"),
-};
+const state = { count: 3 as any, bump: () => console.log("bump") };
 const k = state as unknown as Counter;
 k.count = k.count + 1;
 k.bump();

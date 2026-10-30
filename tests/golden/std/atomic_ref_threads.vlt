@@ -9,7 +9,9 @@ interface Snapshot {
 }
 
 class Registry {
-  current: Atomic<shared<Snapshot>> = new Atomic<shared<Snapshot>>(shared({ version: 0, check: 0 }));
+  current: Atomic<shared<Snapshot>> = new Atomic<shared<Snapshot>>(
+    shared({ version: 0, check: 0 }),
+  );
 }
 
 function snapshot(version: u64): shared<Snapshot> {

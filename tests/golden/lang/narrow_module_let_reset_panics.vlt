@@ -7,7 +7,9 @@ class Ctx {
     f();
   }
 }
+
 let cur: Ctx | null = new Ctx();
+
 function f(): void {
   if (cur) {
     cur.run(() => {
@@ -17,4 +19,5 @@ function f(): void {
     console.log(cur.name);
   }
 }
+
 f();

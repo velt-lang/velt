@@ -8,12 +8,15 @@ function delay(ms: number): Promise<void> {
 
 async function main() {
   let k = 0;
-  setTimeout(() => {
-    const g = () => {
-      k += 5;
-    };
-    g();
-  }, 1);
+  setTimeout(
+    () => {
+      const g = () => {
+        k += 5;
+      };
+      g();
+    },
+    1,
+  );
   await delay(10);
   console.log(k);
 }

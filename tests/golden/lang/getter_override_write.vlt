@@ -4,10 +4,20 @@
 // `errors/getter_override_assign.vlt`).
 class P2 {
   private _n = 3;
-  get n(): number { return this._n; }
-  set n(v: number) { this._n = v + 100; }
+  get n(): number {
+    return this._n;
+  }
+  set n(v: number) {
+    this._n = v + 100;
+  }
 }
-class S2 extends P2 { override get n(): number { return 42; } }
+
+class S2 extends P2 {
+  override get n(): number {
+    return 42;
+  }
+}
+
 const q: P2 = new P2();
 q.n = 1;
 console.log(q.n);

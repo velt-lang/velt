@@ -1,32 +1,47 @@
 // A class expression bound to a variable, `const K = class { … }`, is the class `K` (an
 // anonymous class takes the variable's name, as in JavaScript); also with its own name when
 // that is the variable's, with `extends`, and inside a function.
-const Point = class {
+class Point {
   x: number;
   y: number;
   constructor(x: number, y: number) {
     this.x = x;
     this.y = y;
   }
-  len(): number { return Math.sqrt(this.x * this.x + this.y * this.y); }
-  static origin() { return new Point(0, 0); }
-};
-const Named = class Named {
-  label = "named";
-};
-class Animal {
-  speak(): string { return "..."; }
+  len(): number {
+    return Math.sqrt(this.x * this.x + this.y * this.y);
+  }
+  static origin() {
+    return new Point(0, 0);
+  }
 }
-const Dog = class extends Animal {
-  override speak(): string { return "woof"; }
-};
+
+class Named {
+  label = "named";
+}
+
+class Animal {
+  speak(): string {
+    return "...";
+  }
+}
+
+class Dog extends Animal {
+  override speak(): string {
+    return "woof";
+  }
+}
+
 function make(): string {
-  const Local = class {
+  class Local {
     n = 3;
-    twice(): number { return this.n * 2; }
-  };
+    twice(): number {
+      return this.n * 2;
+    }
+  }
   return `${new Local().twice()}`;
 }
+
 const p = new Point(3, 4);
 console.log(p.len(), Point.origin().x, p);
 console.log(new Named().label, new Named());

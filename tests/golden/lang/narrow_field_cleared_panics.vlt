@@ -3,10 +3,13 @@
 class Box {
   n: number = 1;
 }
+
 let state: { next: Box | null } = { next: new Box() };
+
 function reset(): void {
   state.next = null;
 }
+
 function f(): void {
   if (state.next) {
     reset();
@@ -14,4 +17,5 @@ function f(): void {
     console.log(state.next.n);
   }
 }
+
 f();

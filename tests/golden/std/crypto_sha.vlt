@@ -16,7 +16,27 @@ function bytes(n: usize, seed: usize): u8[] {
 }
 
 function main() {
-  const lens: usize[] = [0, 1, 2, 3, 55, 56, 57, 63, 64, 65, 111, 112, 119, 120, 127, 128, 129, 1000, 1048576];
+  const lens: usize[] = [
+    0,
+    1,
+    2,
+    3,
+    55,
+    56,
+    57,
+    63,
+    64,
+    65,
+    111,
+    112,
+    119,
+    120,
+    127,
+    128,
+    129,
+    1000,
+    1048576,
+  ];
   for (const n of lens) {
     const d = bytes(n, 7);
     console.log(`sha1 ${n} ${hexEncode(sha1(d))}`);
@@ -32,7 +52,14 @@ function main() {
       console.log(`hmac256 ${k} ${dl} ${hexEncode(hmacSha256(key, d))}`);
     }
   }
-  const strs: string[] = ["", "abc", "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq", "héllo wörld", "日本語", "😀 emoji"];
+  const strs: string[] = [
+    "",
+    "abc",
+    "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq",
+    "héllo wörld",
+    "日本語",
+    "😀 emoji",
+  ];
   for (const s of strs) {
     console.log(`s1 ${s.length} ${sha1Hex(s)}`);
     console.log(`s256 ${s.length} ${sha256Hex(s)}`);

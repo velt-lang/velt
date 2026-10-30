@@ -1,18 +1,37 @@
 // A closure capturing a WeakRef is a spawn argument; the task derefs it while main churns.
-class V { n: number; constructor(n: number) { this.n = n; } }
+class V {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
 async function run(f: () => number): Promise<number> {
   let s = 0;
-  for (let j = 0; j < 200000; j++) s += f();
+  for (let j = 0; j < 200000; j++) {
+    s += f();
+  }
   return s;
 }
+
 async function main() {
   const keep = new V(7);
   const r = new WeakRef(keep);
   let total = 0;
   for (let round = 0; round < 20; round++) {
-    const p = spawn(run(() => { const x = r.deref(); return x === null ? -1 : x.n; }));
+    const p = spawn(
+      run(() => {
+        const x = r.deref();
+        return x === null ? -1 : x.n;
+      }),
+    );
     const a: V[] = [];
-    for (let j = 0; j < 200000; j++) { a.push(keep); if (a.length > 8) { a.length = 0; } }
+    for (let j = 0; j < 200000; j++) {
+      a.push(keep);
+      if (a.length > 8) {
+        a.length = 0;
+      }
+    }
     total += await p;
   }
   console.log(total, keep.n);

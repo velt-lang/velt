@@ -24,12 +24,15 @@ async function main() {
     await sleep(5);
     return 0;
   });
-  setTimeout(() => {
-    console.log("main timer sets the flag");
-    flag.with((v) => {
-      v.set = true;
-    });
-  }, 20);
+  setTimeout(
+    () => {
+      console.log("main timer sets the flag");
+      flag.with((v) => {
+        v.set = true;
+      });
+    },
+    20,
+  );
   await h;
   console.log("spawned task done");
 }

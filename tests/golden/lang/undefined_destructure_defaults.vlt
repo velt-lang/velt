@@ -19,8 +19,6 @@ function main(): void {
   const [s = "s", u = "u"] = t;
   console.log(s, u);
   const nested: { inner: O } = { inner: { a: null } };
-  const {
-    inner: { a = "d" },
-  } = nested;
+  const { inner: { a = "d" } } = nested;
   console.log(a);
 }

@@ -21,7 +21,9 @@ let store: Handler[] | null = null;
 // Keeps the array, grows it (moving its buffer), empties it and drops it again.
 function take(xs: Handler[], round: number): number {
   store = xs;
-  for (let i = 0; i < 40; i++) xs.push(new Handler("extra" + i));
+  for (let i = 0; i < 40; i++) {
+    xs.push(new Handler("extra" + i));
+  }
   xs.length = 0;
   store = null;
   return round;
@@ -38,8 +40,15 @@ function walk(xs: Handler[], round: number): string {
 }
 
 // The shape of a recursive encoder that passes its handler lists on (sigx `serialize`).
-function encode(value: unknown, custom: readonly Handler[], builtin: readonly Handler[], depth: number): unknown {
-  if (depth > 4) return value;
+function encode(
+  value: unknown,
+  custom: readonly Handler[],
+  builtin: readonly Handler[],
+  depth: number,
+): unknown {
+  if (depth > 4) {
+    return value;
+  }
   for (const h of custom) {
     if (h.test(value)) {
       const payload = encode(h.serialize(value), custom, builtin, depth + 1);

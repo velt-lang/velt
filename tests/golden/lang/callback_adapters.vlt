@@ -29,7 +29,9 @@ async function work(n: number): Promise<string> {
   return "ok";
 }
 
-async function newStyle<E>(h: (n: number) => string | Promise<string, E> throws E): Promise<string> {
+async function newStyle<E>(
+  h: (n: number) => string | Promise<string, E> throws E,
+): Promise<string> {
   try {
     return await h(2);
   } catch (e) {

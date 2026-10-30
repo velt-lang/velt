@@ -5,9 +5,13 @@ class Counts extends Map<string, number> {
     this.set(k, (this.get(k) ?? 0) + 1);
   }
 }
+
 class Tags extends Set<string> {}
+
 class Named<V> extends Map<string, V> {}
+
 class Deeper extends Counts {}
+
 const c = new Counts();
 c.bump("a");
 c.bump("a");
@@ -26,12 +30,15 @@ class MF extends Map<string, number> {
   tag = "t";
   n = 2;
 }
+
 class SF extends Set<number> {
   label = "s";
 }
+
 class Big extends Map<string, string> {
   description = "a fairly long description string here";
 }
+
 const mf = new MF();
 console.log(mf);
 mf.set("z", 3);

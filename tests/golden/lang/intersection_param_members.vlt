@@ -29,7 +29,9 @@ function bump<T>(x: Tagged<T>): string {
 
 function look<T>(x: Tagged<T> | null): string {
   const t = x?.tag;
-  if (x === null) return "none";
+  if (x === null) {
+    return "none";
+  }
   const { n, tag } = x;
   return `${t} ${n} ${tag}`;
 }
@@ -37,12 +39,14 @@ function look<T>(x: Tagged<T> | null): string {
 function both<T extends object>(t: T, f: (t: T) => Both<T>): Both<T> {
   return f(t);
 }
+
 function named<D extends string>(d: D): string {
   const s = both({ a: d }, (t) => ({ ...t, b: 1 }));
   return `${s.a} ${s.b}`;
 }
 
 let calls = 0;
+
 function nested<V>(v: V): number {
   const outer: Signal<Signal<{ value: V }>> = {
     value: v,

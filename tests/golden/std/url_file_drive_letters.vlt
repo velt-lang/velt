@@ -16,7 +16,12 @@ console.log(new URL("..", "file:///C:/").href, new URL("/q", "http://h/C:/a").hr
 console.log(new URL("file:///C|/x").href, new URL("/C|/z", b).href, new URL("file:///a/C|/y").href);
 // A relative path starting with a drive letter takes none of the base's path.
 const d = "file:///D:/p/m.ts";
-console.log(new URL("C|/x", d).href, new URL("C|", d).href, new URL("c|/x", d).href, new URL("C|\\x", d).href);
+console.log(
+  new URL("C|/x", d).href,
+  new URL("C|", d).href,
+  new URL("c|/x", d).href,
+  new URL("C|\\x", d).href,
+);
 // A drive letter where the host would be starts the path.
 console.log(new URL("file://C:/x").href, new URL("file://C|/x").href);
 // The `pathname` setter.
@@ -25,4 +30,3 @@ u.pathname = "/D|/y";
 const w = new URL("file:///a/b");
 w.pathname = "E|";
 console.log(u.href, w.href);
-

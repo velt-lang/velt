@@ -11,6 +11,7 @@ const b: ById = {};
 console.log(b["q"], lit);
 const mixed: Record<string | number, string> = { a: "x" };
 console.log(r.abc, mixed);
+
 function f(byId: ById): () => string | undefined {
   return () => byId["name"];
 }

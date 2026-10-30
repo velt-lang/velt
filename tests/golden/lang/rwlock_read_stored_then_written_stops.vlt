@@ -7,9 +7,11 @@ class Item {
     this.v = v;
   }
 }
+
 class Bag {
   items: Item[] = [];
 }
+
 class St {
   items: Item[] = [new Item(1)];
   bag: Bag = new Bag();

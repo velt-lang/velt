@@ -1,16 +1,37 @@
 // check: no leaks
 // A signal compares `any` values on `set` while the only conversion that copies goes into
 // `draw`'s parameter, which never reaches a dynamic type (#1240).
-class Signal { v: any; subs: ((v: any) => void)[] = []; constructor(v: any) { this.v = v; }
-  set(n: any): void { if (n === this.v) return; this.v = n; for (const s of this.subs) s(n); } }
+class Signal {
+  v: any;
+  subs: ((v: any) => void)[] = [];
+  constructor(v: any) {
+    this.v = v;
+  }
+  set(n: any): void {
+    if (n === this.v) {
+      return;
+    }
+    this.v = n;
+    for (const s of this.subs) {
+      s(n);
+    }
+  }
+}
+
 type View = { label: string };
 type Model = { label: string; n: number };
-function draw(v: View): string { return "[" + v.label + "]"; }
+
+function draw(v: View): string {
+  return "[" + v.label + "]";
+}
+
 const m: Model = { label: "a", n: 1 };
 console.log(draw(m));
 const s = new Signal(0);
 s.subs.push((v: any) => console.log("changed", v));
-s.set(1); s.set(1); s.set(2);
+s.set(1);
+s.set(1);
+s.set(2);
 const v0: View = { label: "z" };
 const s2 = new Signal(v0);
 s2.set(v0);

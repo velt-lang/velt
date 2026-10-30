@@ -9,22 +9,27 @@ class C<K> {
     this.n = 1;
   }
 }
+
 class Init<K> {
   r: Record<K, number> | null = null;
 }
+
 function wrap<K>(x: K): number {
   let r: Record<K, number> | null = null;
   return 2;
 }
+
 interface Sh {
   area<U>(u: U): number;
 }
+
 class Sq implements Sh {
   area<U>(u: U): number {
     let o: Record<U, number> | null = null;
     return 1;
   }
 }
+
 function go<S extends Sh>(s: S): number {
   return s.area<string[]>([]);
 }

@@ -5,7 +5,8 @@
 
 import { serve } from "velt/net/http";
 import { args } from "velt/process";
-import { WebSocket, WsMessage, isWebSocketRequest, upgradeWebSocket } from "velt/net/websocket";
+import { WebSocket, WsMessage } from "velt/net/websocket";
+import { isWebSocketRequest, upgradeWebSocket } from "velt/net/http";
 
 // The next message, or null once the client has gone (closed, or the connection broke).
 async function receive(ws: WebSocket): Promise<WsMessage | null> {

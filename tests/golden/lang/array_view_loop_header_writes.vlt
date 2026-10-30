@@ -104,7 +104,10 @@ async function main() {
   console.log(inCondition([["a", "bb"], ["c", "dd", "eee"], ["f"]], v));
   console.log(storeInBody([["a", "b", "c"], ["d"]], v));
   console.log(closureCall([["x"], ["y", "z"], ["w"]], v));
-  const rows: string[][] = [["p", "q"], ["r", "s", "t"]];
+  const rows: string[][] = [
+    ["p", "q"],
+    ["r", "s", "t"],
+  ];
   const done = awaited(rows);
   rows[0] = v;
   rows[1] = v;

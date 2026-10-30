@@ -6,6 +6,7 @@ interface VNode {
   type: string;
   dom: string | null;
 }
+
 interface IV extends VNode {
   _ns?: boolean;
   _cb?: () => number;

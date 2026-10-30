@@ -2,9 +2,17 @@
 // the property, so the spread copies its `undefined`, which the result's field (`n: number`,
 // as TypeScript types it) can't hold: the program stops with a `TypeError` (Node keeps
 // `undefined` in the field). Generic and concrete spreads agree; a set field is copied.
-class C { n?: number; s = "c"; }
+class C {
+  n?: number;
+  s = "c";
+}
+
 type U = { n: number; s: string };
-function both<A extends object, B extends object>(a: A, b: B) { return { ...a, ...b }; }
+
+function both<A extends object, B extends object>(a: A, b: B) {
+  return { ...a, ...b };
+}
+
 const u: U = { n: 1, s: "a" };
 const set = new C();
 set.n = 2;

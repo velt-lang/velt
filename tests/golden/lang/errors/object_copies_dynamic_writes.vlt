@@ -4,9 +4,11 @@ interface Full {
   a: number;
   b: string;
 }
+
 interface Part {
   a?: number;
 }
+
 function keep(p: Part): Part {
   return p;
 }

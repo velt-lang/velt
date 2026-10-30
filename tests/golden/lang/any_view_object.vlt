@@ -106,6 +106,7 @@ console.log(v1);
 function first(xs: any[]): VNode {
   return xs[0] as VNode;
 }
+
 const list: VNode[] = [first([el]), mk("span")];
 console.log(list.map((n) => n.type).join(" "));
 

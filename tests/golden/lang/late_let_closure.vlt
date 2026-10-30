@@ -9,7 +9,9 @@ function cached(compute: () => number): () => number {
     const changed = fresh || next !== value;
     value = next;
     fresh = false;
-    if (changed) console.log("changed to", value);
+    if (changed) {
+      console.log("changed to", value);
+    }
   };
   return () => {
     refresh();

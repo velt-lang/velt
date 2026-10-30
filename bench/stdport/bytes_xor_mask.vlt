@@ -15,5 +15,9 @@ function mix(data: u8[], rounds: usize): i64 {
 }
 
 function main() {
-  console.log(mix(Buffer.alloc(125), 20000000) + mix(Buffer.alloc(4096), 1000000) + mix(Buffer.alloc(65536), 60000));
+  console.log(
+    mix(Buffer.alloc(125), 20000000) +
+      mix(Buffer.alloc(4096), 1000000) +
+      mix(Buffer.alloc(65536), 60000),
+  );
 }

@@ -9,21 +9,23 @@ console.log(f(), f(1));
 
 type Mode = "stream" | "inline" | "skip";
 type S = { mode: Mode; n: number };
+
 function reactive<T extends object>(t: T, log: string[]): T {
-    return new Proxy(t, {
-        set(o: any, k: string | symbol, v: any): boolean {
-            log.push(String(k) + "=" + String(v));
-            o[k] = v;
-            return true;
-        },
-    }) as T;
+  return new Proxy(t, {
+    set(o: any, k: string | symbol, v: any): boolean {
+      log.push(String(k) + "=" + String(v));
+      o[k] = v;
+      return true;
+    },
+  }) as T;
 }
+
 const log: string[] = [];
 const target: S = { mode: "skip", n: 1 };
 const p = reactive(target, log);
 if (Math.random() > 2) {
-    // Writing a member of a typed proxy through `any` is not supported yet (#924).
-    p.mode = "inline";
+  // Writing a member of a typed proxy through `any` is not supported yet (#924).
+  p.mode = "inline";
 }
 console.log(target.mode, log.length);
 
@@ -33,6 +35,6 @@ type F = { flag?: false; n: number };
 const ft: F = { n: 1 };
 const fp = reactive(ft, log);
 if (Math.random() > 2) {
-    fp.flag = false;
+  fp.flag = false;
 }
 console.log(ft.n, ft.flag);

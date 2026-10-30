@@ -5,7 +5,8 @@ import { HttpRequest, HttpResponse, serveHttp } from "velt/net/http";
 import { connect } from "velt/net";
 import { afterAll, beforeAll, describe, expect, it } from "velt/test";
 import "velt/test/http";
-import { acceptWebSocket, connectWebSocket } from "velt/net/websocket";
+import { connectWebSocket } from "velt/net/websocket";
+import { acceptWebSocket } from "velt/net/http";
 
 // Sends `head` (and `extra` right after it, in the same write), half-closes, reads everything.
 async function raw(port: number, head: string, extra: u8[] = []): Promise<string> {

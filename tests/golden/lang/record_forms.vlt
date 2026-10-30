@@ -21,7 +21,7 @@ function main() {
   console.log(counts);
 
   // Parentheses around the operand of `delete`, as in TypeScript (`velt fmt` drops them).
-  delete (counts["a"]);
+  delete counts["a"];
   console.log(counts, Object.keys(counts));
 
   // `Object.keys` and friends on an object literal: its keys are strings.

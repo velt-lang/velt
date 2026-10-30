@@ -5,27 +5,33 @@ class NeedsRadix {
     return `${radix}`;
   }
 }
+
 class NumberKey {
   toJSON(key: number): string {
     return `${key}`;
   }
 }
+
 class ExtraParam {
   toJSON(key: string, extra: number): string {
     return `${key}${extra}`;
   }
 }
+
 class AsyncText {
   async toString(): Promise<string> {
     return "d";
   }
 }
+
 class NoText {
   toString(): void {}
 }
+
 class OwnGeneric {
   toString<U>(): string {
     return "f";
   }
 }
+
 console.log("never runs");

@@ -73,14 +73,14 @@ function main(): void {
   console.log(p(3), apply(f), [1, 2].map(f));
   {
     const k = 1;
-    const sh = <T,>(x: T): number => k;
+    const sh = <T>(x: T): number => k;
     console.log(sh(1), sh("a"));
   }
   {
     const helper = (): number => 1;
-    const sh = <T,>(x: T): number => helper();
+    const sh = <T>(x: T): number => helper();
     console.log(sh(1), sh("a"));
   }
-  const top = <T,>(x: T): number => k + helper();
+  const top = <T>(x: T): number => k + helper();
   console.log(top(true));
 }

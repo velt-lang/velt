@@ -5,11 +5,13 @@ interface I {
   p: number;
   q?: any;
 }
+
 class C {
   q?: any;
   r?: unknown;
   s: number = 1;
 }
+
 const o: I = { p: 1 };
 console.log(o.q === undefined, typeof o.q, o.q === null, o.q == null, o);
 const t: { p: number; q?: any; r?: unknown } = { p: 2 };

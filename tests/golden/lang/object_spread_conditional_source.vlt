@@ -1,10 +1,16 @@
 // check: no leaks
 // A conditional spread of an optional source: a present key may hold `undefined`.
 // a conditional spread of an optional source: tsc keeps k?: number in the branch
-function n(c: boolean, s: { k?: number }) { return { a: 0, ...(c ? s : {}) }; }
+function n(c: boolean, s: { k?: number }) {
+  return { a: 0, ...(c ? s : {}) };
+}
+
 const srcs: { k?: number }[] = [{ k: 1 }, {}, { k: undefined }];
 for (const s of srcs) {
   const r = n(true, s);
   console.log(JSON.stringify(r), "k" in r, Object.keys(r).join(","));
-  if ("k" in r) { const k = r.k; console.log(k === undefined ? "U" : k * 2); }
+  if ("k" in r) {
+    const k = r.k;
+    console.log(k === undefined ? "U" : k * 2);
+  }
 }

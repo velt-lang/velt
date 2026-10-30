@@ -12,5 +12,7 @@ async function main() {
       return i;
     });
   }
-  for (const f of fs) console.log(f());
+  for (const f of fs) {
+    console.log(f());
+  }
 }

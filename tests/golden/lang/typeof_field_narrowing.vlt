@@ -7,7 +7,9 @@ interface VNode {
 }
 
 function textLength(v: VNode): number {
-  if (typeof v.text === "string") return v.text.length;
+  if (typeof v.text === "string") {
+    return v.text.length;
+  }
   return -1;
 }
 
@@ -24,6 +26,7 @@ function describe(v: VNode): string {
 interface Holder {
   node: VNode;
 }
+
 function nested(h: Holder): string {
   const shout = typeof h.node.text === "string" && h.node.text.endsWith("!");
   const n = typeof h.node.text === "number" ? h.node.text * 2 : 0;
@@ -38,8 +41,12 @@ class Cell {
     this.value = value;
   }
   show(): string {
-    if (typeof this.label === "number") this.label = `#${this.label + 1}`;
-    if (typeof this.value === "boolean") return this.value ? "yes" : "no";
+    if (typeof this.label === "number") {
+      this.label = `#${this.label + 1}`;
+    }
+    if (typeof this.value === "boolean") {
+      return this.value ? "yes" : "no";
+    }
     return `${this.label}: ${this.value.trim()}`;
   }
 }
@@ -49,7 +56,9 @@ function reassign(v: VNode): string {
   if (typeof v.text === "string") {
     const before = v.text.length;
     v.text = 42;
-    if (typeof v.text === "number") return `${before} then ${v.text + 1}`;
+    if (typeof v.text === "number") {
+      return `${before} then ${v.text + 1}`;
+    }
   }
   return "no";
 }

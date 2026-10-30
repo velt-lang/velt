@@ -8,12 +8,15 @@ import { Q as R } from "./_namespace_import_conflict_lib.vlt";
 namespace N {
   export type T = string;
 }
+
 namespace P {
   export type T = string;
 }
+
 namespace M {
   export type T = string;
 }
+
 namespace R {
   export type T = string;
 }

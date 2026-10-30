@@ -3,25 +3,36 @@
 // closure in its own initializer (`const_used_by_its_closures_errors`).
 function run(): void {
   const show = () => console.log(o.get().n);
-  const o = { n: 1, get() { return o; } };
+  const o = {
+    n: 1,
+    get() {
+      return o;
+    },
+  };
   show();
 }
+
 run();
+
 // A destructuring declaration, or a `let` without a value, used so is not supported yet, also
 // where an outer name is the same (TypeScript's closure would read the later one).
 function a(): string {
   return "outer";
 }
+
 function destructured(): void {
   const h = () => a();
   const { a } = { a: () => "inner" };
   console.log(h());
 }
+
 destructured();
+
 function unassigned(): void {
   const h = () => later;
   let later: string;
   later = "x";
   console.log(h());
 }
+
 unassigned();

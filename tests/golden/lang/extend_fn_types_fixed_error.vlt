@@ -2,7 +2,7 @@
 // fits a function would depend on the error type inferred for the function's type. Leave
 // `throws` out, or write a type parameter of the block.
 
-extend<R> (() => R throws Error) {
+extend<R> () => R throws Error {
   m(): number {
     return 1;
   }

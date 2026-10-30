@@ -2,6 +2,7 @@
 interface A {
   x: number;
 }
+
 interface A {
   x: string;
 }
@@ -9,6 +10,7 @@ interface A {
 interface B<T> {
   v: T;
 }
+
 interface B<U> {
   w: U;
 }
@@ -16,6 +18,7 @@ interface B<U> {
 export interface C {
   c: number;
 }
+
 interface C {
   d: number;
 }

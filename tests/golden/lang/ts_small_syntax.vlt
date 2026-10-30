@@ -18,6 +18,7 @@ console.log(entry + 1);
 function tag<const K>(k: K): K[] {
   return [k, k];
 }
+
 console.log(tag("key"));
 
 // Tuple labels document the elements.
@@ -26,25 +27,33 @@ const wire: BytesWire = ["bytes", "AAE="];
 console.log(wire[0], wire[1]);
 
 // Several declarators, typed or not, at the top level and in a block.
-let i: number, j: number = 2, u = 3;
+let i: number;
+let j: number = 2;
+let u = 3;
 i = 1;
 console.log(i, j, u);
+
 function swap(a: number, b: number): number[] {
-  const x = b, y = a;
-  let t: number, s: string = "s";
+  const x = b;
+  const y = a;
+  let t: number;
+  let s: string = "s";
   t = x * 10 + y;
   return [t, s.length];
 }
+
 console.log(swap(1, 2));
 
 // `declare` fields get no initializer of their own.
 class Parent {
   label: string | null = null;
 }
+
 class Child extends Parent {
   declare readonly code?: string;
   constructor() {
     super();
   }
 }
+
 console.log(new Child().label);

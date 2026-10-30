@@ -3,6 +3,7 @@
 function setF<T, K extends keyof T>(o: T, k: K, v: T[K]): void {
   o[k] = v;
 }
+
 type W = { a: number | null; b?: number; c: number | null | undefined; d?: number | null };
 
 function main() {

@@ -3,11 +3,13 @@
 function get<T extends object, K extends keyof T>(s: T, k: K): T[K] {
   return s[k];
 }
+
 function put<T extends object, K extends keyof T>(s: T, k: K, v: T[K]): void {
   s[k] = v;
 }
 
 const log: string[] = [];
+
 function traced<T extends object>(target: T): T {
   return new Proxy(target, {
     get(t, k, r) {
@@ -22,12 +24,15 @@ function traced<T extends object>(target: T): T {
 }
 
 // An untyped proxy (`any`).
-const p = new Proxy({ count: 1, name: "a" }, {
-  get(t, k, r) {
-    log.push("any get " + String(k));
-    return Reflect.get(t, k, r);
+const p = new Proxy(
+  { count: 1, name: "a" },
+  {
+    get(t, k, r) {
+      log.push("any get " + String(k));
+      return Reflect.get(t, k, r);
+    },
   },
-});
+);
 console.log(get(p, "count"), get(p, "name"));
 put(p, "count", 5);
 console.log(get(p, "count"));
@@ -48,11 +53,13 @@ const keys: ("count" | "name")[] = ["count", "name"];
 for (const k of keys) {
   console.log(k, get(s, k));
 }
+
 function setEach<T extends object, K extends keyof T>(o: T, ks: K[], v: T[K]): void {
   for (const k of ks) {
     o[k] = v;
   }
 }
+
 setEach(s, ["count"], 7);
 console.log(s.count, s.name, s.on);
 
@@ -64,13 +71,16 @@ console.log(log.join("\n"));
 
 // Symbol and number keys reach the traps too.
 const sym = Symbol("k");
-const keyed = new Proxy({ [sym]: 1, a: 2 }, {
-  get(t: any, k: any) {
-    // The trap sees the symbol itself.
-    console.log("get", typeof k === "symbol" ? "symbol" : k);
-    return typeof k === "symbol" ? "from the trap" : t[k];
+const keyed = new Proxy(
+  { [sym]: 1, a: 2 },
+  {
+    get(t: any, k: any) {
+      // The trap sees the symbol itself.
+      console.log("get", typeof k === "symbol" ? "symbol" : k);
+      return typeof k === "symbol" ? "from the trap" : t[k];
+    },
   },
-});
+);
 console.log(get(keyed, sym));
 const listed = new Proxy([10, 20, 30], {
   get(t: any, k: any, r: any) {

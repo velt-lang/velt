@@ -3,14 +3,22 @@
 // Object.create(null), as in Node (#925).
 
 // Object.is: SameValue.
-console.log(Object.is(NaN, NaN), Object.is(0, -0), Object.is(-0, -0), Object.is(1, 1), Object.is(NaN, 0));
+console.log(
+  Object.is(NaN, NaN),
+  Object.is(0, -0),
+  Object.is(-0, -0),
+  Object.is(1, 1),
+  Object.is(NaN, 0),
+);
 console.log(Object.is("a", "a"), Object.is("a", "b"), Object.is(true, true), Object.is(null, null));
 const o1 = { a: 1 };
 const o2 = { a: 1 };
 console.log(Object.is(o1, o1), Object.is(o1, o2), Object.is([1], [1]));
+
 function changed<T>(a: T, b: T): boolean {
   return !Object.is(a, b);
 }
+
 console.log(changed(NaN, NaN), changed(0, -0), changed("x", "x"), changed(o1, o2));
 const maybe: number | null = Math.random() > 2 ? 1 : null;
 console.log(Object.is(maybe, null), Object.is(maybe, 0));
@@ -22,12 +30,14 @@ console.log(Object.is(1, "1"), Object.is(null, undefined), Object.is(undefined, 
 function len(x: number | number[]): number {
   return Array.isArray(x) ? x.length : x;
 }
+
 function first(x: string | string[] | null): string {
   if (!Array.isArray(x)) {
     return x === null ? "none" : x;
   }
   return x[0];
 }
+
 console.log(len(7), len([1, 2, 3]), first("s"), first(["a", "b"]), first(null));
 console.log(Array.isArray([]), Array.isArray("abc"), Array.isArray({ length: 0 }));
 
@@ -35,6 +45,7 @@ console.log(Array.isArray([]), Array.isArray("abc"), Array.isArray({ length: 0 }
 const target = { a: 1, b: "x", c: true };
 const same = Object.assign(target, { a: 2 }, { b: "y", a: 3 });
 console.log(target, same === target);
+
 class Point {
   x = 0;
   y = 0;
@@ -46,6 +57,7 @@ class Point {
     return this._label;
   }
 }
+
 const p = Object.assign(new Point(), { x: 5, label: "p" });
 console.log(p.x, p.y, p.label);
 const opt: { a: number; b?: string } = { a: 9 };
@@ -60,36 +72,69 @@ console.log(Object.assign({} as Record<string, number>, rec, more));
 // Object.freeze of a new object literal.
 const frozen = Object.freeze({ name: "inert", n: 0 });
 console.log(frozen, frozen.name, Object.keys(frozen));
+
 function show(v: Readonly<{ name: string; n: number }>): string {
   return `${v.name}:${v.n}`;
 }
+
 console.log(show(frozen));
 
 // Object.fromEntries.
-console.log(Object.fromEntries([["a", 1], ["b", 2], ["a", 3]]));
-console.log(Object.fromEntries([["2", "two"], ["b", "bee"], ["1", "one"]]));
-const m = new Map<string, boolean>([["on", true], ["off", false]]);
+console.log(
+  Object.fromEntries([
+    ["a", 1],
+    ["b", 2],
+    ["a", 3],
+  ]),
+);
+console.log(
+  Object.fromEntries([
+    ["2", "two"],
+    ["b", "bee"],
+    ["1", "one"],
+  ]),
+);
+const m = new Map<string, boolean>([
+  ["on", true],
+  ["off", false],
+]);
 console.log(Object.fromEntries(m), Object.fromEntries(m.entries()));
+
 function* pairs(): Generator<[string, number]> {
   yield ["g", 1];
   yield ["h", 2];
 }
+
 console.log(Object.fromEntries(pairs()));
 
 // Own keys: Object.hasOwn, Object.prototype.hasOwnProperty.call.
-const hasOwn = (o: Record<string, number>, k: string): boolean => Object.prototype.hasOwnProperty.call(o, k);
+const hasOwn = (
+  o: Record<string, number>,
+  k: string,
+): boolean => Object.prototype.hasOwnProperty.call(o, k);
 console.log(hasOwn(rec, "x"), hasOwn(rec, "nope"), hasOwn(rec, "toString"));
-console.log(Object.prototype.hasOwnProperty.call(rec, "y"), Object.hasOwn(rec, "y"), Object.hasOwn(rec, "q"));
+console.log(
+  Object.prototype.hasOwnProperty.call(rec, "y"),
+  Object.hasOwn(rec, "y"),
+  Object.hasOwn(rec, "q"),
+);
 const withOpt: { a: number; b?: string } = { a: 1 };
 const key: string = "b";
-console.log(Object.hasOwn(withOpt, "a"), Object.hasOwn(withOpt, key), Object.hasOwn({ a: 1, b: "x" }, key));
+console.log(
+  Object.hasOwn(withOpt, "a"),
+  Object.hasOwn(withOpt, key),
+  Object.hasOwn({ a: 1, b: "x" }, key),
+);
 console.log(Object.hasOwn(p, "x"), Object.hasOwn(p, "label"), Object.hasOwn(p, "toString"));
+
 class Base {
   base = 1;
 }
+
 class Derived extends Base {
   extra = 2;
 }
+
 const asBase: Base = new Derived();
 console.log(Object.hasOwn(asBase, "extra"), Object.hasOwn(new Base(), "extra"));
 
@@ -110,10 +155,25 @@ tag(Object.prototype.toString.call(maybe));
 tag(Object.prototype.toString.call(u));
 
 // Object.getPrototypeOf, Object.prototype, C.prototype.
-console.log(Object.getPrototypeOf({ a: 1 }) === Object.prototype, Object.getPrototypeOf(rec) === Object.prototype);
-console.log(Object.getPrototypeOf(p) === Point.prototype, Object.getPrototypeOf(p) === Object.prototype);
-console.log(Object.getPrototypeOf(asBase) === Derived.prototype, Object.getPrototypeOf(asBase) === Base.prototype, Object.getPrototypeOf(new Base()) === Base.prototype);
-console.log(Object.getPrototypeOf([1]) === Array.prototype, Object.getPrototypeOf(m) === Map.prototype, Object.getPrototypeOf(m) !== Object.prototype);
+console.log(
+  Object.getPrototypeOf({ a: 1 }) === Object.prototype,
+  Object.getPrototypeOf(rec) === Object.prototype,
+);
+console.log(
+  Object.getPrototypeOf(p) === Point.prototype,
+  Object.getPrototypeOf(p) === Object.prototype,
+);
+console.log(
+  Object.getPrototypeOf(asBase) === Derived.prototype,
+  Object.getPrototypeOf(asBase) === Base.prototype,
+  Object.getPrototypeOf(new Base()) === Base.prototype,
+);
+console.log(
+  Object.getPrototypeOf([1]) === Array.prototype,
+  Object.getPrototypeOf(m) === Map.prototype,
+  Object.getPrototypeOf(m) !== Object.prototype,
+);
+
 function isPlainObject(v: { a: number } | Point | number[]): boolean {
   if (Array.isArray(v)) {
     return false;
@@ -121,10 +181,16 @@ function isPlainObject(v: { a: number } | Point | number[]): boolean {
   const proto = Object.getPrototypeOf(v);
   return proto === Object.prototype || proto === null;
 }
+
 console.log(isPlainObject({ a: 1 }), isPlainObject(p), isPlainObject([]));
 console.log(Object.prototype, Point.prototype, Derived.prototype, Array.prototype, Map.prototype);
 console.log([Object.getPrototypeOf(p)], { proto: Object.prototype });
-console.log(String(Object.prototype), `${Point.prototype}`, JSON.stringify(Object.prototype), JSON.stringify(Array.prototype));
+console.log(
+  String(Object.prototype),
+  `${Point.prototype}`,
+  JSON.stringify(Object.prototype),
+  JSON.stringify(Array.prototype),
+);
 
 // Object.create(null): a record without a prototype.
 const dict: Record<string, number> = Object.create(null);

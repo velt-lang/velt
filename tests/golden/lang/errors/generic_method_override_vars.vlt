@@ -1,10 +1,31 @@
 // Values of the base class that may hold the overriding subclass: a reassigned `let`, a `const`
 // typed as the base class, a value a function returns (#1132).
-interface Mapper { apply<U>(f: (n: number) => U): U; }
-class A implements Mapper { apply<U>(f: (n: number) => U): U { return f(1); } }
-class B extends A { override apply<U>(f: (n: number) => U): U { return f(2); } }
-function run<T extends Mapper>(m: T): number { return m.apply((n) => n); }
-class Runner { run<T extends Mapper>(m: T): number { return m.apply((n) => n); } }
+interface Mapper {
+  apply<U>(f: (n: number) => U): U;
+}
+
+class A implements Mapper {
+  apply<U>(f: (n: number) => U): U {
+    return f(1);
+  }
+}
+
+class B extends A {
+  override apply<U>(f: (n: number) => U): U {
+    return f(2);
+  }
+}
+
+function run<T extends Mapper>(m: T): number {
+  return m.apply((n) => n);
+}
+
+class Runner {
+  run<T extends Mapper>(m: T): number {
+    return m.apply((n) => n);
+  }
+}
+
 let a = new A();
 a = new B();
 console.log(run(a));

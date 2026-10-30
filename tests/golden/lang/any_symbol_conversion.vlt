@@ -20,7 +20,7 @@ function dep(k: string | symbol): number {
 
 function track(key: unknown): number {
   const raw = toRaw(key);
-  return dep(raw as string | symbol);
+  return dep(raw as (string | symbol));
 }
 
 function describe(v: any): string {

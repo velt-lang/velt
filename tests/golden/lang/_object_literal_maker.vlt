@@ -14,7 +14,9 @@ export function failing(): Source {
 export function recursive(): Source {
   return {
     read(n: number): number {
-      if (n <= 0) throw new RangeError("bottom");
+      if (n <= 0) {
+        throw new RangeError("bottom");
+      }
       return depth(recursive(), n - 1) + 1;
     },
   };

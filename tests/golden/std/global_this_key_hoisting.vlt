@@ -2,13 +2,16 @@
 // (both keep the literal), and a module constant read by a closure that runs after its
 // declaration.
 type H = { __KA__?: number; __KB__?: number };
+
 export const K = "__KA__";
 (globalThis as H).__KA__ = 1;
 (globalThis as H).__KB__ = 2;
+
 function typedSelf(): number | undefined {
   const K: "__KB__" = "__KB__";
   return (globalThis as H)[K];
 }
+
 const S = "__KB__" satisfies string;
 const read = () => (globalThis as H)[LATER];
 const LATER = "__KB__";

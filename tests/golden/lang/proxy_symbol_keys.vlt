@@ -15,7 +15,9 @@ function main(): void {
   const p: any = new Proxy({ a: 1 } as any, {
     get(t, k, r) {
       log.push(`get ${typeof k} ${k === TRACK}`);
-      if (k === TRACK) return "tracked";
+      if (k === TRACK) {
+        return "tracked";
+      }
       return Reflect.get(t, k, r);
     },
     has(t, k) {

@@ -5,15 +5,19 @@
 class K {
   n = 1;
 }
+
 class Holder {
   k: K | null = new K();
 }
+
 function keep(o: object): WeakRef<object> {
   return new WeakRef(o);
 }
+
 function keepK(o: K): WeakRef<K> {
   return new WeakRef(o);
 }
+
 function main(): void {
   let k: K | null = new K();
   const r = new WeakRef(k!);

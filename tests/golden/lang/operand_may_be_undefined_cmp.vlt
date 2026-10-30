@@ -1,3 +1,6 @@
 // A compared operand that may be `undefined` (TS18048).
-function g(x: number | undefined, y: number) { return x < y; }
+function g(x: number | undefined, y: number) {
+  return x < y;
+}
+
 console.log(g(1, 2));

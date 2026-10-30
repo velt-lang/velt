@@ -1,13 +1,29 @@
 // A function value that captured an instance of a class extending a weak collection, passed to
 // a spawned task: its transfer panics as for the weak collection itself.
-class V { n: number; constructor(n: number) { this.n = n; } }
-class Cache extends WeakMap<V, V> { hits: number = 0; }
+class V {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+class Cache extends WeakMap<V, V> {
+  hits: number = 0;
+}
+
 function mk(keep: V): () => number {
   const c = new Cache();
   c.set(keep, keep);
-  return () => { const x = c.get(keep); return x === undefined ? -1 : x.n; };
+  return () => {
+    const x = c.get(keep);
+    return x === undefined ? -1 : x.n;
+  };
 }
-async function run(f: () => number): Promise<number> { return f(); }
+
+async function run(f: () => number): Promise<number> {
+  return f();
+}
+
 async function main() {
   const keep = new V(7);
   console.log("before");

@@ -6,7 +6,7 @@ class E {
   name: string = "the class E";
 }
 
-extend<R> (() => R) {
+extend<R> () => R {
   tag(e: E): string {
     return e.name;
   }

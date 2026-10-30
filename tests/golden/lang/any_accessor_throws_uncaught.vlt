@@ -3,14 +3,19 @@
 class Temp {
   #c = 20;
   get celsius(): number {
-    if (this.#c < -273) throw new RangeError("below absolute zero");
+    if (this.#c < -273) {
+      throw new RangeError("below absolute zero");
+    }
     return this.#c;
   }
   set celsius(v: number) {
-    if (v < -273) throw new RangeError(`${v} is below absolute zero`);
+    if (v < -273) {
+      throw new RangeError(`${v} is below absolute zero`);
+    }
     this.#c = v;
   }
 }
+
 const t: any = new Temp();
 console.log(t.celsius);
 t.celsius = 25;

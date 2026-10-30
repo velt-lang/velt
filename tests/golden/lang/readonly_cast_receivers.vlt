@@ -7,13 +7,16 @@ function leak2(xs: readonly unknown[], ys: unknown[]): void {
   (xs as readonly unknown[]).toString();
   ys.push(2);
 }
+
 function leak4(xs: readonly string[], ys: string[]): void {
   console.log((xs as readonly string[]).length, (xs as readonly string[]).indexOf("a"));
   ys.push("z");
 }
-function opt(xs: readonly string[] | undefined): void {
-  (xs as string[] | undefined)?.push("o");
+
+function opt(xs: (readonly string[]) | undefined): void {
+  (xs as (string[] | undefined))?.push("o");
 }
+
 const a: unknown[] = [];
 leak2([0], a);
 const b: string[] = [];

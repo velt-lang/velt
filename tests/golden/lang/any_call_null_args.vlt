@@ -4,6 +4,7 @@ function arg(): number {
   console.log("arg evaluated");
   return 1;
 }
+
 function main(): void {
   const n: any = null;
   console.log("before");

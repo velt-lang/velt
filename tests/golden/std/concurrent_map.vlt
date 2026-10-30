@@ -26,16 +26,24 @@ function main() {
       m.set(k, i);
       model.set(k, i);
     } else if (op < 7) {
-      if (m.delete(k) != model.delete(k)) wrong++;
+      if (m.delete(k) != model.delete(k)) {
+        wrong++;
+      }
     } else {
       const want = model.get(k);
       const got = m.get(k);
-      if ((want == undefined) != (got == undefined) || (got != undefined && got != want)) wrong++;
-      if (m.has(k) != model.has(k)) wrong++;
+      if ((want == undefined) != (got == undefined) || (got != undefined && got != want)) {
+        wrong++;
+      }
+      if (m.has(k) != model.has(k)) {
+        wrong++;
+      }
     }
   }
   for (const [k, v] of model) {
-    if (m.get(k) != v) wrong++;
+    if (m.get(k) != v) {
+      wrong++;
+    }
   }
   console.log("entries", model.size, "wrong", wrong);
 

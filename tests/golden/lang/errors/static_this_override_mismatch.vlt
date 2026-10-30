@@ -2,10 +2,18 @@
 // a type the overridden one's converts from (TypeScript's TS2417); the error names the
 // subclass whose copy of the inherited static needs it.
 class A {
-  static kind(): number { return 1; }
-  static run(): number { return this.kind() + 1; }
+  static kind(): number {
+    return 1;
+  }
+  static run(): number {
+    return this.kind() + 1;
+  }
 }
+
 class B extends A {
-  static kind(): string { return "b"; }
+  static kind(): string {
+    return "b";
+  }
 }
+
 console.log(A.run(), B.run());

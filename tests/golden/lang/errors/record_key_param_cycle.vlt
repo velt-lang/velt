@@ -4,13 +4,16 @@
 interface Sh {
   area<U>(u: U, n: number): number;
 }
+
 function go2<S extends Sh, V>(s: S, v: V, n: number): number {
   return s.area<V>(v, n);
 }
+
 class Sq implements Sh {
   area<U>(u: U, n: number): number {
     let o: Record<U, number> | null = null;
     return n == 0 ? 0 : go2<Sq, U[]>(this, [u], n - 1);
   }
 }
+
 console.log(go2(new Sq(), "a", 3));

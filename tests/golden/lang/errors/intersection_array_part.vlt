@@ -2,12 +2,15 @@
 // call that makes it, not inside the standard library or again at each instantiation (tsc
 // accepts it): arrays with extra members are not supported.
 type Signal<T> = T & { $set: (v: T) => void };
+
 function sig<T extends object>(t: T): Signal<T> {
   throw new Error("not called");
 }
+
 function arr<D>(d: D): number {
   const s = sig([d] as D[]);
   s.push(d);
   return s.length;
 }
+
 console.log(arr(1));

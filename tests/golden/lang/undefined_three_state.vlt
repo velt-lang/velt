@@ -11,8 +11,12 @@ class Box {
 }
 
 function show(x: string | null | undefined): string {
-  if (x === undefined) return "undef";
-  if (x === null) return "null";
+  if (x === undefined) {
+    return "undef";
+  }
+  if (x === null) {
+    return "null";
+  }
   return "str:" + x;
 }
 
@@ -21,7 +25,9 @@ function len(x: string | null | undefined): number {
 }
 
 function kind(x: Box | null | undefined): string {
-  if (x == null) return typeof x;
+  if (x == null) {
+    return typeof x;
+  }
   return "box " + x.v;
 }
 
@@ -68,7 +74,6 @@ function basics(): void {
   const mixed = [1, undefined, 3];
   console.log(mixed);
 }
-
 
 interface Node2 {
   name: string;
@@ -173,12 +178,15 @@ function optionals(): void {
 }
 
 type F = "inline" | "end";
+
 interface B {
   flush: F | null;
 }
+
 function flushes(b: B | undefined, c: F | null | undefined, d: F | null): string {
   return `${b?.flush === "inline"} ${c === "inline"} ${d === "inline"} ${c === "end"}`;
 }
+
 function flushName(x: F | null | undefined): string {
   switch (x) {
     case null:
@@ -191,6 +199,7 @@ function flushName(x: F | null | undefined): string {
       return "other";
   }
 }
+
 function literals(): void {
   console.log(flushes(undefined, undefined, null));
   console.log(flushes({ flush: "inline" }, "inline", "inline"));

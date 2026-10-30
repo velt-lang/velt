@@ -4,26 +4,29 @@
 interface Named {
   name(): string;
 }
+
 class B implements Named {
   name(): string {
     return "b";
   }
   base: number = 10;
-  m(a: number = this.base, b: number = a + 1): string {
+  m(a: number | undefined = this.base, b: number | undefined = a + 1): string {
     return "B" + a + "," + b;
   }
   list(xs: number[] = [1]): number {
     return xs.length;
   }
 }
+
 class D extends B {
-  override m(a: number = this.base * 2, b: number = a * 3): string {
+  override m(a: number | undefined = this.base * 2, b: number | undefined = a * 3): string {
     return "D" + a + "," + b;
   }
   override list(xs: number[] = [1, 2, 3]): number {
     return xs.length;
   }
 }
+
 const ys: B[] = [new B(), new D()];
 const ns: Named[] = [new B(), new D()];
 for (const y of ys) {

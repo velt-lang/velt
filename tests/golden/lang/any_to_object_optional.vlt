@@ -33,6 +33,7 @@ interface L {
   kind: "a";
   n: number;
 }
+
 const u: unknown = { kind: "a", n: 1 };
 const l = u as L;
 console.log(l.kind, l.n);
@@ -43,6 +44,7 @@ interface Factory {
   __setup: (n: number) => number;
   __name?: string;
 }
+
 function make(): Factory {
   const f: any = function (p: number) {
     return p + 1;
@@ -51,5 +53,6 @@ function make(): Factory {
   f.__name = "F";
   return f as Factory;
 }
+
 const F = make();
 console.log(F(1), F.__setup(21), F.__name);

@@ -2,12 +2,20 @@
 // `"k" in o` for an optional `any` field: a left-out field holds the dynamic `undefined`, so
 // the test is that the field isn't `undefined` (it compiled to an invalid program before).
 // Expected output from node.
-interface Cell { value: number; extra?: any }
+interface Cell {
+  value: number;
+  extra?: any;
+}
+
 type V = { t: string };
+
 function kind(x: V | Cell | null): string {
-  if (x && "extra" in x) return "extra";
+  if (x && "extra" in x) {
+    return "extra";
+  }
   return "other";
 }
+
 function main() {
   const c: Cell = { value: 1, extra: 2 };
   console.log(kind(c), kind({ value: 1 }), "extra" in c);

@@ -15,8 +15,9 @@ function normalizeChildren(children: JSXChildren): string[] {
     return [String(children)];
   }
   if (Array.isArray(children)) {
-    return children.map((c) =>
-      typeof c === "object" && c !== null && !Array.isArray(c) ? (c as VNode).type : String(c)
+    return children.map(
+      (c) =>
+        typeof c === "object" && c !== null && !Array.isArray(c) ? (c as VNode).type : String(c),
     );
   }
   return ["node"];
@@ -32,7 +33,10 @@ async function run() {
   const v = result as JSXChildren;
   console.log(normalizeChildren(v));
 
-  const items: JSXElement[] = [{ type: "a", children: [] }, { type: "b", children: [] }];
+  const items: JSXElement[] = [
+    { type: "a", children: [] },
+    { type: "b", children: [] },
+  ];
   const nodes = items as VNode[];
   console.log(nodes.length, nodes[1].type, nodes.map((n) => n.type).join("+"));
   nodes[0].type = "A";

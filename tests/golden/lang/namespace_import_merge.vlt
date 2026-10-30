@@ -7,15 +7,21 @@ import { Q as R } from "./_namespace_import_merge_lib.vlt";
 namespace N {
   export type T = string;
 }
+
 namespace P {
   export type T = boolean;
 }
+
 namespace Q {
   export type T = number;
 }
-namespace R.Inner {
-  export type U = string;
+
+namespace R {
+  export namespace Inner {
+    export type U = string;
+  }
 }
+
 declare namespace v {
   type T = string;
 }

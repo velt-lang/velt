@@ -3,6 +3,7 @@
 interface F {
   (x?: number): string;
 }
+
 type T = { (x = 1): void };
 
 // A callable interface can't be declared in `declare global` (it would not merge) or in a
@@ -11,6 +12,7 @@ declare global {
   interface Cb {
     (x: number): void;
   }
+
   interface Window {
     (x: number): void;
     foo: number;

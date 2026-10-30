@@ -31,9 +31,11 @@ function main() {
   a.v = 7;
   const p = part();
   p.v += 1;
-  const fs = [(o: { n: number }) => {
-    o.n = 9;
-  }];
+  const fs = [
+    (o: { n: number }) => {
+      o.n = 9;
+    },
+  ];
   fs[0](OBJ);
   console.log(m.CONFIG.retries, m.CONFIG.tags, K.n, K.inner.v, OBJ.n);
   console.log(PARTS.inner === PARTS.inner, isPart(PARTS.inner), isPart({ v: 1 }));

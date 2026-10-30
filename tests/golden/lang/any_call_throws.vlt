@@ -3,9 +3,12 @@
 
 // sigx's `slots.default`: a function stored on an `any` object, whose callee may throw.
 function inner(list: any[], p?: any): any[] {
-  if (list.length > 5) throw new Error("too many");
+  if (list.length > 5) {
+    throw new Error("too many");
+  }
   return list.map((x) => (typeof x === "function" ? x(p) : x));
 }
+
 const store: any = Object.create(null);
 const kids: any[] = ["a", () => "b"];
 store.default = (scopedProps?: any) => inner(kids, scopedProps);
@@ -14,14 +17,19 @@ console.log(store.default({ n: 1 }));
 
 // A named function, an arrow and a field of an object literal, called through `any`.
 function check(n: number): number {
-  if (n < 0) throw new RangeError(`${n} is negative`);
+  if (n < 0) {
+    throw new RangeError(`${n} is negative`);
+  }
   return n * 2;
 }
+
 const f: any = check;
 console.log(f(21));
 const o: any = {
   ratio: (x: number) => {
-    if (x === 0) throw new Error("zero");
+    if (x === 0) {
+      throw new Error("zero");
+    }
     return 10 / x;
   },
 };
@@ -31,17 +39,22 @@ console.log(o.ratio(4));
 class Counter {
   n = 1;
   add(k: number): number {
-    if (k < 0) throw new Error("negative step");
+    if (k < 0) {
+      throw new Error("negative step");
+    }
     this.n += k;
     return this.n;
   }
 }
+
 const c: any = new Counter();
 console.log(c.add(2), c.add(3));
 
 // Nested calls through `any`, and a function passed through `any` and called there.
 const leaf: any = (n: number) => {
-  if (n === 3) throw new TypeError("three");
+  if (n === 3) {
+    throw new TypeError("three");
+  }
   return n * 10;
 };
 const mid: any = (n: number) => leaf(n) + 1;

@@ -1,10 +1,43 @@
 // A class holding an interface value whose implementer holds a WeakRef, behind another interface.
-class V { n: number; constructor(n: number) { this.n = n; } }
-interface Peek { peek(): number; }
-interface Outer { get(): number; }
-class H implements Peek { r: WeakRef<V>; constructor(r: WeakRef<V>) { this.r = r; } peek(): number { return 1; } }
-class O implements Outer { p: Peek; constructor(p: Peek) { this.p = p; } get(): number { return this.p.peek(); } }
-async function run(o: Outer): Promise<number> { return o.get(); }
+class V {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+interface Peek {
+  peek(): number;
+}
+
+interface Outer {
+  get(): number;
+}
+
+class H implements Peek {
+  r: WeakRef<V>;
+  constructor(r: WeakRef<V>) {
+    this.r = r;
+  }
+  peek(): number {
+    return 1;
+  }
+}
+
+class O implements Outer {
+  p: Peek;
+  constructor(p: Peek) {
+    this.p = p;
+  }
+  get(): number {
+    return this.p.peek();
+  }
+}
+
+async function run(o: Outer): Promise<number> {
+  return o.get();
+}
+
 async function main() {
   const keep = new V(7);
   const o: Outer = new O(new H(new WeakRef(keep)));

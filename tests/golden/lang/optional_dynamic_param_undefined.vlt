@@ -5,14 +5,17 @@
 function opt(o?: any): string {
   return o === undefined ? "none" : typeof o;
 }
+
 function optUnknown(o?: unknown): string {
   return o === undefined ? "none" : typeof o;
 }
+
 console.log(opt(), optUnknown(), opt(1), optUnknown("s"), opt(null), optUnknown(null));
 
 function show(o?: any): void {
   console.log(o, typeof o, o ?? "fallback", o == null, o === null, o === undefined);
 }
+
 show();
 show(undefined);
 show(null);
@@ -21,6 +24,7 @@ show(0);
 function showUnknown(o?: unknown): void {
   console.log(o, typeof o, o ?? "fallback", o == null, o === null, o === undefined);
 }
+
 showUnknown();
 showUnknown(false);
 
@@ -28,6 +32,7 @@ showUnknown(false);
 function mixed(a: number, o?: any, u?: unknown): void {
   console.log(a, o, u, typeof o, typeof u, o === undefined, u === undefined);
 }
+
 mixed(1);
 mixed(2, undefined, "x");
 mixed(3, "o");
@@ -36,6 +41,7 @@ mixed(3, "o");
 function orUndefined(o?: number | undefined): void {
   console.log(o, typeof o, o === undefined);
 }
+
 orUndefined();
 orUndefined(undefined);
 orUndefined(4);
@@ -46,6 +52,7 @@ console.log(arrowOrUndefined(), arrowOrUndefined("s"));
 function anyDefault(o: any = 5): void {
   console.log(o, typeof o);
 }
+
 anyDefault();
 anyDefault(undefined);
 anyDefault(null);
@@ -53,15 +60,18 @@ anyDefault("given");
 const held: any = undefined;
 anyDefault(held);
 anyDefault([1, 2]);
+
 function passOn(o?: any): void {
   anyDefault(o);
 }
+
 passOn();
 passOn(0);
 
 // Arrows, methods and static methods.
 const arrow = (o?: any): string => (o === undefined ? "arrow none" : `arrow ${typeof o}`);
 console.log(arrow(), arrow([1]));
+
 class K {
   method(o?: unknown): string {
     return o === undefined ? "method none" : `method ${typeof o}`;
@@ -70,17 +80,20 @@ class K {
     return `${o}`;
   }
 }
+
 console.log(new K().method(), new K().method(1), K.make(), K.make(2));
 
 // Through an interface.
 interface Opt {
   take(o?: any): string;
 }
+
 class Impl implements Opt {
   take(o?: any): string {
     return o === undefined ? "impl none" : `impl ${o}`;
   }
 }
+
 const viaIface: Opt = new Impl();
 console.log(viaIface.take(), viaIface.take(7));
 
@@ -88,5 +101,6 @@ console.log(viaIface.take(), viaIface.take(7));
 function keep(o?: any): any[] {
   return [o, typeof o];
 }
+
 console.log(keep());
 console.log(JSON.stringify({ v: opt() }), String(keep()[0]));

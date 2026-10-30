@@ -16,6 +16,7 @@ if (maybe !== null) {
 function call(f: Function, x: unknown): unknown {
   return f(x);
 }
+
 console.log(call((v: number) => v + 1, 41));
 
 const registry = new Map<Function, string>();
@@ -24,12 +25,14 @@ registry.set(fa, "a");
 console.log(registry.get(fa), registry.has(() => {}), registry.size);
 
 type Tag = string | Function;
+
 function render(type: Tag, props: number): unknown {
   if (typeof type === "string") {
     return "<" + type + ">";
   }
   return (type as Function)(props);
 }
+
 console.log(render("div", 1), render((n: number) => n * 10, 4));
 
 const o: object = fa;
@@ -38,5 +41,6 @@ console.log(typeof o);
 class Plug {
   constructor(public setup: Function) {}
 }
+
 const pl = new Plug((name: string): string => name.toUpperCase());
 console.log(pl.setup("velt"));

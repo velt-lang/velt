@@ -1,13 +1,38 @@
 // An error: main would keep an alias to the value of 64 entries whose keys live in a shared Mutex;
 // tasks on other threads replace the keys (inside the Mutex), which would release the value on
 // their thread while main changes its count outside any lock.
-class K { n: number; constructor(n: number) { this.n = n; } }
-class Box { ks: K[]; constructor() { this.ks = []; } }
-class V { n: number; constructor(n: number) { this.n = n; } }
+class K {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+class Box {
+  ks: K[];
+  constructor() {
+    this.ks = [];
+  }
+}
+
+class V {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
 async function swap(m: shared<Mutex<Box>>, i: number): Promise<number> {
-  m.with((v) => { const fresh: K[] = []; for (let j = 0; j < 64; j++) fresh.push(new K(j)); v.ks = fresh; });
+  m.with((v) => {
+    const fresh: K[] = [];
+    for (let j = 0; j < 64; j++) {
+      fresh.push(new K(j));
+    }
+    v.ks = fresh;
+  });
   return i;
 }
+
 async function main() {
   const m = shared(new Mutex<Box>(new Box()));
   const wm = new WeakMap<K, V>();
@@ -16,15 +41,28 @@ async function main() {
   for (let round = 0; round < 300; round++) {
     m.with((v) => {
       const fresh: K[] = [];
-      for (let j = 0; j < 64; j++) fresh.push(new K(j));
+      for (let j = 0; j < 64; j++) {
+        fresh.push(new K(j));
+      }
       v.ks = fresh;
-      for (const k of v.ks) wm.set(k, keep);
+      for (const k of v.ks) {
+        wm.set(k, keep);
+      }
     });
     const ps: Promise<number>[] = [];
-    for (let t = 1; t < 5; t++) ps.push(spawn(swap(m.clone(), t)));
+    for (let t = 1; t < 5; t++) {
+      ps.push(spawn(swap(m.clone(), t)));
+    }
     const a: V[] = [];
-    for (let j = 0; j < 200000; j++) { a.push(keep); if (a.length > 8) { a.length = 0; } }
-    for (const x of await Promise.all(ps)) { total += x; }
+    for (let j = 0; j < 200000; j++) {
+      a.push(keep);
+      if (a.length > 8) {
+        a.length = 0;
+      }
+    }
+    for (const x of await Promise.all(ps)) {
+      total += x;
+    }
   }
   console.log(total, keep.n);
 }

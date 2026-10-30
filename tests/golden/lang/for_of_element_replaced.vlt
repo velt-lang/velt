@@ -83,7 +83,10 @@ async function main(): Promise<void> {
     }
   }
 
-  const pairs: [V, V][] = [[new V(1), new V(2)], [new V(3), new V(4)]];
+  const pairs: [V, V][] = [
+    [new V(1), new V(2)],
+    [new V(3), new V(4)],
+  ];
   for (const [a, b] of pairs) {
     pairs[0] = [new V(7), new V(8)];
     console.log("pair", a.n, b.n);
@@ -97,7 +100,10 @@ async function main(): Promise<void> {
     console.log("pair part", a.n, b.n);
   }
 
-  const arrs: V[][] = [[new V(1), new V(2)], [new V(3), new V(4)]];
+  const arrs: V[][] = [
+    [new V(1), new V(2)],
+    [new V(3), new V(4)],
+  ];
   for (const [a, b] of arrs) {
     arrs[0][0] = new V(9);
     arrs[1] = [new V(5), new V(6)];

@@ -2,4 +2,5 @@
 // generic_fn_types.vlt).
 export type Wrap = <T>(value: T) => T[];
 export type Keyed<K> = <V>(key: K, value: V) => { key: K; value: V };
+
 export const twice: Wrap = (v) => [v, v];

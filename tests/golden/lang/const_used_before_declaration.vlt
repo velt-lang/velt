@@ -2,12 +2,19 @@
 // effect / computed / watch / renderer shapes).
 type Job = () => void;
 
-function makeEffect(fn: () => void, scheduler?: (job: Job) => void): { run: () => void; stop: () => void } {
+function makeEffect(fn: () => void, scheduler?: (job: Job) => void): {
+  run: () => void;
+  stop: () => void;
+} {
   let stopped = false;
   let running = false;
   const effectFn = (): void => {
-    if (stopped) return;
-    if (running) return;
+    if (stopped) {
+      return;
+    }
+    if (running) {
+      return;
+    }
     if (scheduler) {
       scheduler(runJob);
       return;
@@ -15,13 +22,20 @@ function makeEffect(fn: () => void, scheduler?: (job: Job) => void): { run: () =
     runJob();
   };
   const runJob = (): void => {
-    if (stopped) return;
+    if (stopped) {
+      return;
+    }
     running = true;
     fn();
     running = false;
   };
   effectFn();
-  return { run: effectFn, stop: () => { stopped = true; } };
+  return {
+    run: effectFn,
+    stop: () => {
+      stopped = true;
+    },
+  };
 }
 
 interface Box {
@@ -32,7 +46,9 @@ function computedBox(getter: () => number, seen: string[]): Box {
   let cached: number | undefined = undefined;
   const readValue = (): number => {
     seen.push("read " + (computedObj === undefined ? "none" : "box"));
-    if (cached === undefined) cached = getter();
+    if (cached === undefined) {
+      cached = getter();
+    }
     return cached;
   };
   const computedObj: Box = {
@@ -51,7 +67,9 @@ function watchOnce(log: string[]): void {
     queueMicrotask(() => stop());
   });
   const stop = () => {
-    if (disposed) return;
+    if (disposed) {
+      return;
+    }
     disposed = true;
     log.push("stopped");
   };
@@ -65,17 +83,24 @@ function mount(dev: boolean, hooks: ((c: MountContext) => void)[]): () => void {
   let reload: () => void = () => {};
   if (dev) {
     reload = () => {
-      for (let i = 0; i < hooks.length; i++) hooks[i](mountCtx);
+      for (let i = 0; i < hooks.length; i++) {
+        hooks[i](mountCtx);
+      }
     };
   }
   const mountCtx = { el: "root" } as MountContext;
-  for (const h of hooks) h(mountCtx);
+  for (const h of hooks) {
+    h(mountCtx);
+  }
   return reload;
 }
 
 const log: string[] = [];
 let count = 0;
-const e = makeEffect(() => { count++; log.push("effect " + count); });
+const e = makeEffect(() => {
+  count++;
+  log.push("effect " + count);
+});
 e.run();
 const queued: Job[] = [];
 const s = makeEffect(() => log.push("scheduled"), (job) => queued.push(job));
@@ -99,7 +124,9 @@ queueMicrotask(() => {
 function helperName(): string {
   return "module";
 }
+
 const topv = "topv";
+
 function shadowing(c: boolean): void {
   const out: (() => string)[] = [];
   if (c) {
@@ -111,20 +138,26 @@ function shadowing(c: boolean): void {
   out.push(() => helperName() + " " + topv);
   const helperName = (): string => "later";
   const topv = "local topv";
-  for (const f of out) console.log(f());
+  for (const f of out) {
+    console.log(f());
+  }
 }
+
 shadowing(true);
 shadowing(false);
+
 function params(): void {
   const apply = (f: (s: string) => string, g: () => string) => f("p") + g();
   const call = () => apply((stop) => stop + "!", () => stop);
   const stop = "S";
   console.log(call());
 }
+
 params();
 
 // A `let`, and declarations using each other (the later one first).
 const outerY = "outer";
+
 function lets(): void {
   const f = () => outerY + " " + n;
   let n = 1;
@@ -133,13 +166,16 @@ function lets(): void {
   n = 2;
   console.log(f());
 }
+
 lets();
+
 function mutual(): void {
   const f = (): number => a() + b();
   const b = () => a() + 1;
   const a = () => 1;
   console.log(f());
 }
+
 mutual();
 
 // Nothing between the closure and the declaration runs code: no ready check is needed.
@@ -147,10 +183,14 @@ function inertBetween(): number {
   const f = (): number => g() + 1;
   const g = (): number => 41;
   let s = 0;
-  for (let i = 0; i < 3; i++) s += f();
+  for (let i = 0; i < 3; i++) {
+    s += f();
+  }
   return s;
 }
+
 console.log(inertBetween());
+
 function methodBefore(): number {
   const o = {
     m() {
@@ -160,4 +200,5 @@ function methodBefore(): number {
   const k3 = () => 3;
   return o.m();
 }
+
 console.log(methodBefore());

@@ -10,11 +10,16 @@ console.log(Array.isArray(tu) ? tu[1] : tu);
 function g(): any {
   return [1];
 }
+
 function g2(): any {
   return 1;
 }
+
 console.log(Array.isArray(g()), Array.isArray(g2()));
 const arr: any[] = [[1], 2];
 console.log(Array.isArray(arr[0]), Array.isArray(arr[1]));
-const m = new Map<string, unknown>([["x", [1]], ["y", "z"]]);
+const m = new Map<string, unknown>([
+  ["x", [1]],
+  ["y", "z"],
+]);
 console.log(Array.isArray(m.get("x")), Array.isArray(m.get("y")));

@@ -7,12 +7,15 @@ class Animal {
     this.name = name;
   }
 }
+
 class Dog extends Animal {
   bark(): string {
     return this.name + " woof";
   }
 }
+
 function assertDog(a: Animal): asserts a is Dog {}
+
 const pets: Animal[] = [new Dog("rex"), new Animal("tom")];
 for (const p of pets) {
   assertDog(p);

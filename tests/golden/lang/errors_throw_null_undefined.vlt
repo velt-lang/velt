@@ -3,9 +3,14 @@
 function f(k: number): void {
   const a: Error | undefined = undefined;
   const b: string | null = null;
-  if (k === 0) throw a;
-  if (k === 1) throw b;
+  if (k === 0) {
+    throw a;
+  }
+  if (k === 1) {
+    throw b;
+  }
 }
+
 for (const k of [0, 1]) {
   try {
     f(k);
@@ -13,11 +18,17 @@ for (const k of [0, 1]) {
     console.log(k, e);
   }
 }
+
 function g(k: number): void {
   const n: null = null;
-  if (k === 0) throw n;
-  if (k === 1) throw undefined;
+  if (k === 0) {
+    throw n;
+  }
+  if (k === 1) {
+    throw undefined;
+  }
 }
+
 for (const k of [0, 1, 2]) {
   try {
     g(k);

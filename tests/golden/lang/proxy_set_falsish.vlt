@@ -1,11 +1,14 @@
 // A `set` trap that returns `false` makes the assignment throw, as in strict code in Node.
 function main(): void {
-  const p = new Proxy({ n: 1 }, {
-    set(t, k, v, r) {
-      console.log("refused", k);
-      return false;
+  const p = new Proxy(
+    { n: 1 },
+    {
+      set(t, k, v, r) {
+        console.log("refused", k);
+        return false;
+      },
     },
-  });
+  );
   p.n = 2;
   console.log("not reached");
 }

@@ -10,10 +10,12 @@ class Item {
     this.v = v;
   }
 }
+
 class St {
   items: Item[] = [];
   m: Map<string, Item> = new Map<string, Item>();
 }
+
 function single() {
   const rw = shared(new RwLock<St>(new St()));
   rw.write((s) => {

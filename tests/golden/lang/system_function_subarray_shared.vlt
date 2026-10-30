@@ -11,7 +11,9 @@ let g: u8[] = filled(8, 97);
 
 function filled(n: usize, v: u8): u8[] {
   const xs: u8[] = Buffer.alloc(n);
-  for (let i = 0; i < n; i++) xs[i] = v;
+  for (let i = 0; i < n; i++) {
+    xs[i] = v;
+  }
   return xs;
 }
 

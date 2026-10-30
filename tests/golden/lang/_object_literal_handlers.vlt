@@ -6,11 +6,7 @@ export interface Handler {
   handle(input: string): string;
 }
 
-export const upper: Handler = {
-  name: "upper",
-  priority: 2,
-  handle: (s) => s.toUpperCase(),
-};
+export const upper: Handler = { name: "upper", priority: 2, handle: (s) => s.toUpperCase() };
 
 export const reverse: Handler = {
   name: "reverse",
@@ -22,11 +18,7 @@ export const reverse: Handler = {
   },
 };
 
-const twice: Handler = {
-  name: "twice",
-  priority: 3,
-  handle: (s) => s + s,
-};
+const twice: Handler = { name: "twice", priority: 3, handle: (s) => s + s };
 
 export function all(): Handler[] {
   return [upper, reverse, twice];

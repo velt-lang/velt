@@ -1,6 +1,4 @@
-type Shape =
-  | { kind: "circle"; r: f64 }
-  | { kind: "rect"; w: f64; h: f64 };
+type Shape = { kind: "circle"; r: f64 } | { kind: "rect"; w: f64; h: f64 };
 
 enum Mode {
   Fast = "FAST",

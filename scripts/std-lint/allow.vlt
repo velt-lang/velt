@@ -21,7 +21,6 @@ export const allow: Allow = {
     "net/http/server/response.vlt",
     "net/url/index.vlt",
     "net/url/record.vlt",
-    "net/websocket/index.vlt",
     "postgres.vlt",
     "prelude/adapt.vlt",
     "prelude/any_methods.vlt",
@@ -79,7 +78,6 @@ export const allow: Allow = {
     "net/url/index.vlt",
     "net/websocket/bytes.vlt",
     "net/websocket/handshake.vlt",
-    "net/websocket/index.vlt",
     "net/websocket/reader.vlt",
     "postgres.vlt",
     "prelude/error.vlt",
@@ -118,7 +116,6 @@ export const allow: Allow = {
     "net/index.vlt",
     "net/udp/index.vlt",
     "net/url/index.vlt",
-    "net/websocket/index.vlt",
     "package/index.vlt",
   ],
   unowned: [

@@ -1,6 +1,6 @@
 // Brand keys (#1299): a symbol from a module other than the type's, and descriptions held in
 // string constants.
-import { type Cell } from "./_define_property_cell";
+import type { Cell } from "./_define_property_cell";
 import { SHARED } from "./_define_property_key";
 
 const name = "local";

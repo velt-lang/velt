@@ -14,7 +14,7 @@ async function main() {
   }
   console.log(fs.map((f) => f()).join(","));
   const hs: (() => number)[] = [];
-  for (let i = 0, n = 0; n < 3; ) {
+  for (let i = 0, n = 0; n < 3;) {
     hs.push(() => {
       const g = () => {
         i += 10;

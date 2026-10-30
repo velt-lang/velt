@@ -23,5 +23,4 @@ async function main() {
   const f = new Float32Array(chunk.buffer, 0, 2);
   chunk[0] = 0;
   console.log(f.length, chunk.length, chunk[1], (await reader.read()).done);
-
 }

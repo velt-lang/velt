@@ -4,27 +4,29 @@ function pick(s: boolean): string | number {
   return s ? "3" : 3;
 }
 
-class P { x = 1; }
+class P {
+  x = 1;
+}
 
 function mixed(v: string | number | null, n: number, w: number | P, p: P): void {
   console.log(v === n, n !== v, w === n, w === p, p === w);
 }
 
 function main() {
-  const a = 3 as string | number;
+  const a = 3 as (string | number);
   const b: number = 3;
   console.log(a === b, b === a, a !== b, b !== a);
-  const s = "3" as string | number;
+  const s = "3" as (string | number);
   console.log(s === b, b === s, s !== b);
   const t: string = "3";
   console.log(s === t, t === s, a === t);
   console.log(pick(true) === 3, pick(false) === b, pick(true) === t);
-  const n = NaN as string | number;
+  const n = NaN as (string | number);
   const m: number = NaN;
   console.log(n === m, n !== m);
-  const z = -0 as string | number;
+  const z = -0 as (string | number);
   console.log(z === 0);
-  const u = true as string | number | boolean;
+  const u = true as (string | number | boolean);
   console.log(u === b, u === t, u === true);
   const p = new P();
   mixed(2, 2, 2, p);

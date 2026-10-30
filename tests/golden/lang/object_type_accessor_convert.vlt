@@ -1,12 +1,22 @@
 // An alias of an object type with accessors converts to and from the object types of its
 // shape as the same object: `{ v: number }`, a field-only interface, a `readonly` form, and
 // a wider alias to a wider object type (#1501).
-type T = { get v(): number; set v(x: number) };
+type T = {
+  get v(): number;
+  set v(x: number);
+};
+
 interface I {
   v: number;
 }
+
 type R = { readonly v: number };
-type L = { get v(): number; set v(x: number); label: string };
+
+type L = {
+  get v(): number;
+  set v(x: number);
+  label: string;
+};
 
 const t: T = { v: 1 };
 const back: { v: number } = t;
@@ -28,6 +38,7 @@ console.log(r.v);
 function take(x: { v: number; label: string }): string {
   return x.label + x.v;
 }
+
 const lit: L = { v: 3, label: "a" };
 console.log(take(lit));
 lit.v = 4;
@@ -36,6 +47,7 @@ console.log(take(lit));
 function bump(x: T): void {
   x.v = x.v + 1;
 }
+
 const plain: { v: number } = { v: 20 };
 bump(plain);
 const again: { v: number } = t;

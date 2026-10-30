@@ -4,6 +4,7 @@
 function g(o: { a: number }): number {
   return o.a;
 }
+
 function main(): void {
   let a = 1;
   let s = "";

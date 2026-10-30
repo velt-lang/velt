@@ -1,7 +1,7 @@
 // WebSockets over HTTP/2 (RFC 8441): `acceptWebSocket` on an extended CONNECT, the WebSocket's
 // frames carried in the stream's DATA frames, and its close as the stream's end.
 import { HttpRequest, HttpResponse, serve, serveHttp } from "velt/net/http";
-import { acceptWebSocket, isWebSocketRequest, upgradeWebSocket } from "velt/net/websocket";
+import { acceptWebSocket, isWebSocketRequest, upgradeWebSocket } from "velt/net/http";
 import { timeout } from "velt/task";
 import { describe, expect, it } from "velt/test";
 import { Client, Frame } from "./_h2";

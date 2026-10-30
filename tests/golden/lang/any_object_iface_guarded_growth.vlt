@@ -3,16 +3,22 @@
 // #1251): carrying the conversion's target to the instantiations ends, and the program runs as
 // in Node (#1909).
 type Primitive = string | number | boolean | symbol | bigint | null | undefined;
+
 function isPrimitive(value: unknown): value is Primitive {
   return value === null || (typeof value !== "object" && typeof value !== "function");
 }
+
 interface Box<T> {
   value: T;
   show(): string;
 }
+
 function depth<T>(target: T, o: unknown, n: number): string {
   const b = o as Box<T>;
-  if (isPrimitive(target)) return b.show() + depth({ value: target }, o, n + 1);
+  if (isPrimitive(target)) {
+    return b.show() + depth({ value: target }, o, n + 1);
+  }
   return b.show() + n;
 }
+
 console.log(depth(5, { value: 1, show: () => "g" } as unknown, 0));

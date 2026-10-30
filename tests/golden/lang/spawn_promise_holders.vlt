@@ -9,29 +9,36 @@ class Obj {
     this.n = n;
   }
 }
+
 async function make(n: number): Promise<Obj> {
   await Promise.resolve();
   return new Obj(n);
 }
+
 async function use(p: Promise<Obj>): Promise<number> {
   const o = await p;
   return o.n;
 }
+
 class Holder {
   p: Promise<Obj>;
   constructor(p: Promise<Obj>) {
     this.p = p;
   }
 }
+
 interface Entry {
   p: Promise<Obj>;
 }
+
 async function useHolder(h: Holder): Promise<number> {
   return (await h.p).n;
 }
+
 async function useEntry(e: Entry): Promise<number> {
   return (await e.p).n;
 }
+
 async function useAll(ps: Promise<Obj>[]): Promise<number> {
   let s = 0;
   for (const p of ps) {
@@ -39,9 +46,11 @@ async function useAll(ps: Promise<Obj>[]): Promise<number> {
   }
   return s;
 }
+
 async function useFn(f: () => Promise<Obj>): Promise<number> {
   return (await f()).n;
 }
+
 async function main() {
   const p = make(1);
   const q = p;

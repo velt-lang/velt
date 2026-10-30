@@ -2,8 +2,13 @@
 // (#1352): the assertion is checked again after the right-hand side, and the program stops,
 // where Node writes into the array the variable held before.
 let uu: [number, string] | number = [1, "b"];
-const set = (): void => { uu = 3; };
+const set = (): void => {
+  uu = 3;
+};
 (uu as [number, string])[0] += 1;
 console.log(uu);
-(uu as [number, string])[0] = (() => { set(); return 9; })();
+(uu as [number, string])[0] = (() => {
+  set();
+  return 9;
+})();
 console.log(uu);

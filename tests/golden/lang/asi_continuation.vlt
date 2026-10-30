@@ -4,38 +4,27 @@
 // statement: no warning there. Output compared with Node.
 
 function id(x: number): number {
-  return x * 10
+  return x * 10;
 }
 
 function main() {
-  const f = id
+  const f = id;
   // Calls `id(4)`: `const a = id(4)`.
-  const a = f
-  (4)
-  console.log(a)
-  const xs = [7, 8, 9]
+  const a = f(4);
+  console.log(a);
+  const xs = [7, 8, 9];
   // Indexes: `const b = xs[1]`.
-  const b = xs
-  [1]
-  console.log(b)
-  const c = 5
-  + 1
-  const d = 5
-  - 1
-  const e = 12
-  / 3
-  console.log(c, d, e)
+  const b = xs[1];
+  console.log(b);
+  const c = 5 + 1;
+  const d = 5 - 1;
+  const e = 12 / 3;
+  console.log(c, d, e);
   // No warnings: inside brackets, a `.` chain, a conditional.
-  const g = Math.max(1,
-    (2))
-  const h = [1
-    + 1]
-  const i = { v: 2
-    - 1 }
-  const j = "s"
-    .repeat(2)
-  const k = g > 1
-    ? "big"
-    : "small"
-  console.log(g, h[0], i.v, j, k)
+  const g = Math.max(1, (2));
+  const h = [1 + 1];
+  const i = { v: 2 - 1 };
+  const j = "s".repeat(2);
+  const k = g > 1 ? "big" : "small";
+  console.log(g, h[0], i.v, j, k);
 }

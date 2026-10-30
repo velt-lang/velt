@@ -1,11 +1,26 @@
 // check: no leaks
 // Rest patterns of narrowed module values, writes through a cleared field path across `await`
 // and in methods, and cleared values read as they are (#1280).
-class Box { n = 1; m = 2; items: number[] = [7, 8]; }
-let x: Box | null = new Box(); let xs: number[] | null = [1, 2, 3];
+class Box {
+  n = 1;
+  m = 2;
+  items: number[] = [7, 8];
+}
+
+let x: Box | null = new Box();
+let xs: number[] | null = [1, 2, 3];
 const st: { f: Box | null; s: string | null } = { f: new Box(), s: "s" };
-function clr(): number { x = null; xs = null; st.f = null; st.s = null; return 4; }
+
+function clr(): number {
+  x = null;
+  xs = null;
+  st.f = null;
+  st.s = null;
+  return 4;
+}
+
 async function tick(): Promise<void> {}
+
 function rest(): void {
   if (x && xs && st.f) {
     const { n, ...others } = st.f;
@@ -15,7 +30,9 @@ function rest(): void {
     console.log(n, others, a, tail, z, length, q, o2);
   }
 }
+
 rest();
+
 async function later(): Promise<void> {
   if (st.f && x) {
     const f = st.f;
@@ -24,14 +41,33 @@ async function later(): Promise<void> {
     console.log(f.items, st.f);
   }
 }
-class Node2 { v: Box | null = new Box(); reset(): number { this.v = null; return 3; } run(): void {
-  if (this.v) { const v = this.v; this.v.n = this.reset(); console.log(v.n, this.v); }
-  this.v = new Box();
-  if (this.v) { const v = this.v; this.v.items[0] += this.reset(); console.log(v.items); }
-} }
+
+class Node2 {
+  v: Box | null = new Box();
+  reset(): number {
+    this.v = null;
+    return 3;
+  }
+  run(): void {
+    if (this.v) {
+      const v = this.v;
+      this.v.n = this.reset();
+      console.log(v.n, this.v);
+    }
+    this.v = new Box();
+    if (this.v) {
+      const v = this.v;
+      this.v.items[0] += this.reset();
+      console.log(v.items);
+    }
+  }
+}
+
 later().then(() => {
   new Node2().run();
-  st.f = new Box(); st.s = "s"; x = new Box();
+  st.f = new Box();
+  st.s = "s";
+  x = new Box();
   if (st.f && st.s && x) {
     let acc = "";
     clr();
@@ -42,30 +78,59 @@ later().then(() => {
   const o = { f: new Box() as Box | null, s: "w" as string | null };
   if (o.f && o.s) {
     const alias = o;
-    alias.f = null; alias.s = null;
+    alias.f = null;
+    alias.s = null;
     console.log(o.f, `${o.f}`, "x" + o.s, o.s + "y");
   }
 });
 
 // Assigning a narrowed checked copy back narrows the field or module variable.
-class Box9 { n = 1; }
+class Box9 {
+  n = 1;
+}
+
 const st9: { b: Box9 | null } = { b: new Box9() };
 let g9: Box9 | null = new Box9();
-function clr9(): void { st9.b = null; g9 = null; }
+
+function clr9(): void {
+  st9.b = null;
+  g9 = null;
+}
+
 function run9(): void {
-  if (st9.b && g9) { const b = st9.b; const c = g9; st9.b = b; g9 = c; st9.b.n = 3; g9.n = 4; console.log(st9.b, g9); }
-  st9.b = new Box9(); g9 = new Box9();
   if (st9.b && g9) {
-    const b = st9.b; const c = g9;
+    const b = st9.b;
+    const c = g9;
+    st9.b = b;
+    g9 = c;
+    st9.b.n = 3;
+    g9.n = 4;
+    console.log(st9.b, g9);
+  }
+  st9.b = new Box9();
+  g9 = new Box9();
+  if (st9.b && g9) {
+    const b = st9.b;
+    const c = g9;
     clr9();
-    st9.b = b; g9 = c;
+    st9.b = b;
+    g9 = c;
     console.log(st9.b, g9, st9.b === null);
   }
 }
+
 run9();
-class Box10 { n = 1; }
+
+class Box10 {
+  n = 1;
+}
+
 const st10: { b: Box10 | null } = { b: new Box10() };
-function clr10(): void { st10.b = null; }
+
+function clr10(): void {
+  st10.b = null;
+}
+
 function run10(): void {
   if (st10.b) {
     const b = st10.b;
@@ -75,4 +140,5 @@ function run10(): void {
     st10.b.n = 3;
   }
 }
+
 run10();

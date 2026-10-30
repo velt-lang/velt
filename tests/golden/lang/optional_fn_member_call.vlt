@@ -14,7 +14,9 @@ class Hooks {
 }
 
 function report(config: Config, err: Error): boolean {
-  if (config.onError) return config.onError(err, "render");
+  if (config.onError) {
+    return config.onError(err, "render");
+  }
   return false;
 }
 
@@ -23,13 +25,17 @@ function show(config: Config, n: number): string {
 }
 
 function early(config: Config, n: number): string {
-  if (!config.format) return "-";
+  if (!config.format) {
+    return "-";
+  }
   const s = config.format(n);
   return config.format(n + 1) + s;
 }
 
 function maybe(config: Config | null, n: number): string {
-  if (config?.format) return config.format(n);
+  if (config?.format) {
+    return config.format(n);
+  }
   return "none";
 }
 

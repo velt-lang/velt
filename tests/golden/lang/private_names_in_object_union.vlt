@@ -5,4 +5,5 @@ class A {
     return #x in o;
   }
 }
+
 console.log(A.s([1, 2]), A.s(new A()));

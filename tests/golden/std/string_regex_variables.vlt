@@ -4,6 +4,7 @@ class Patterns {
   readonly digit = /(\d)/g;
   readonly pair = /(\w)(\d)/g;
 }
+
 class Derived extends Patterns {}
 
 function main() {
@@ -27,8 +28,10 @@ function main() {
   console.log("abab".replace(/(x)?b/g, (m: string, p1: string = "dflt") => `<${p1}>`));
   console.log("a1b2".replace(re2, (m, off, s, extra = "E") => `${extra}${off}`));
   // Parameters are variables.
-  console.log("a b".replace(/(a)/, (m, p1) => {
-    p1 = p1.toUpperCase();
-    return p1;
-  }));
+  console.log(
+    "a b".replace(/(a)/, (m, p1) => {
+      p1 = p1.toUpperCase();
+      return p1;
+    }),
+  );
 }

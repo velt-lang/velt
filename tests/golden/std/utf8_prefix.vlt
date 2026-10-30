@@ -98,7 +98,9 @@ function main() {
       checks++;
       for (const c of chars) {
         const len = c.length as usize;
-        for (let at: usize = start; at + 1 <= n && at + len <= n + 8; at += at < start + 70 ? 1 : 3) {
+        for (
+          let at: usize = start; at + 1 <= n && at + len <= n + 8; at += at < start + 70 ? 1 : 3
+        ) {
           const kept = d.slice(at as i64, (at + len) as i64);
           for (let k: usize = 0; k < len; k++) {
             d[at + k] = c[k];

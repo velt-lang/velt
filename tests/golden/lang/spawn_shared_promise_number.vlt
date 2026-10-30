@@ -8,16 +8,20 @@ class Box {
     this.p = p;
   }
 }
+
 async function make(n: number): Promise<number> {
   await Promise.resolve();
   return n;
 }
+
 async function use(p: Promise<number>): Promise<number> {
   return (await p) + 1;
 }
+
 async function unbox(b: Box): Promise<number> {
   return (await b.p) * 2;
 }
+
 async function main() {
   const p = make(1);
   const q = p;

@@ -10,9 +10,12 @@ async function main() {
   const res = await fetch(`http://127.0.0.1:${server.port}/`);
   console.log(await res.text());
   await server.shutdown();
-  setTimeout(async () => {
-    console.log("still running 3 seconds later");
-  }, 3000).unref();
+  setTimeout(
+    async () => {
+      console.log("still running 3 seconds later");
+    },
+    3000,
+  ).unref();
 }
 
 await main();

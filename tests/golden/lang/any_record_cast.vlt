@@ -9,9 +9,8 @@ const tracked = new Proxy({ hits: 0 }, {}); // views of objects need a program w
 function toSignals<T extends object>(source: T): ToSignals<T> {
   const result = {} as ToSignals<T>;
   for (const key of Object.keys(source)) {
-    (result as Record<string, PropertySignal<unknown>>)[key] = {
-      value: (source as any)[key],
-    } as PropertySignal<unknown>;
+    (result as Record<string, PropertySignal<unknown>>)[key] =
+      { value: (source as any)[key] } as PropertySignal<unknown>;
   }
   return result;
 }
@@ -25,14 +24,20 @@ const o: any = {} as Record<string, number>;
 (o as Record<string, number>).b = 2;
 const k = "c";
 (o as Record<string, number>)[k] = (o as Record<string, number>)["a"]! + 2;
-console.log(JSON.stringify(o), (o as Record<string, number>).b, (o as Record<string, number>)["zz"]);
+console.log(
+  JSON.stringify(o),
+  (o as Record<string, number>).b,
+  (o as Record<string, number>)["zz"],
+);
 const n: number | undefined = (o as Record<string, number>)[k];
 console.log(n, Object.keys(o).join(","));
 (o as Record<string, number>)["a"] += 2;
 const none: any = null;
 console.log((o as Record<string, number>)?.a, (none as Record<string, number>)?.a);
 console.log((o as Record<string, number>)["a"]?.toFixed(1));
+
 function read<T>(x: any, k: string): T {
   return (x as Record<string, T>)[k];
 }
+
 console.log(read<number>(o, "b"));

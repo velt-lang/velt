@@ -5,7 +5,8 @@ import { channel, Channel } from "velt/sync";
 import { base64Decode, utf8Decode, utf8Encode } from "velt/encoding";
 import { serve } from "velt/net/http";
 import { afterAll, beforeAll, describe, expect, it } from "velt/test";
-import { WebSocket, connectWebSocket, upgradeWebSocket } from "velt/net/websocket";
+import { WebSocket, connectWebSocket } from "velt/net/websocket";
+import { upgradeWebSocket } from "velt/net/http";
 import { maskKey } from "velt/net/websocket/bytes";
 import {
   Frame,
@@ -23,7 +24,7 @@ import {
   validCloseCode,
   writeHead,
 } from "velt/net/websocket/frame";
-import { acceptKey, checkResponse, generateKey, target } from "velt/net/websocket/handshake";
+import { webSocketAccept, checkResponse, generateKey, target } from "velt/net/websocket/handshake";
 import { RawClient, RawFrame, rawConnect } from "./_ws_raw";
 
 // Echoes until the connection ends, then reports how it ended.
@@ -217,7 +218,7 @@ describe("the WebSocket protocol against a peer by hand", () => {
 const KEY = "dGhlIHNhbXBsZSBub25jZQ==";
 
 function head(extra: string): string {
-  return `HTTP/1.1 101 Switching Protocols\r\nUpgrade: WebSocket\r\nConnection: keep-alive, Upgrade\r\nSec-WebSocket-Accept: ${acceptKey(KEY)}${extra}`;
+  return `HTTP/1.1 101 Switching Protocols\r\nUpgrade: WebSocket\r\nConnection: keep-alive, Upgrade\r\nSec-WebSocket-Accept: ${webSocketAccept(KEY)}${extra}`;
 }
 
 function where(url: string): string {
@@ -233,7 +234,7 @@ describe("the opening handshake", () => {
   // The accept key, the checks a client makes on the server's response (RFC 6455 §4.1), and
   // where a URL points. (Was the golden std/websocket_handshake.)
   it("makes the accept key of RFC 6455 §1.3, and random keys", () => {
-    expect(acceptKey(KEY)).toBe("s3pPLMBiTxaQ9kYGzzhZRbK+xOo=");
+    expect(webSocketAccept(KEY)).toBe("s3pPLMBiTxaQ9kYGzzhZRbK+xOo=");
     const a = generateKey();
     const b = generateKey();
     expect(a.length).toBe(24);

@@ -14,43 +14,55 @@ function main() {
 
   // Equal delays: creation order.
   for (const n of ["a", "b", "c", "d", "e"]) {
-    setTimeout(() => {
-      console.log("timeout", n);
-      queueMicrotask(() => console.log("microtask", n));
-    }, 50);
+    setTimeout(
+      () => {
+        console.log("timeout", n);
+        queueMicrotask(() => console.log("microtask", n));
+      },
+      50,
+    );
   }
 
   // A callback clears a timer due at the same time (created after it): it never runs.
   let victim: Timer | null = null;
-  setTimeout(() => {
-    console.log("clearing");
-    if (victim != null) {
-      clearTimeout(victim);
-    }
-  }, 70);
+  setTimeout(
+    () => {
+      console.log("clearing");
+      if (victim != null) {
+        clearTimeout(victim);
+      }
+    },
+    70,
+  );
   victim = setTimeout(() => console.log("cleared timer ran"), 70);
 
   // An interval runs in turn with a timeout due at the same time, which clears it.
   const every = setInterval(() => console.log("interval"), 100);
-  setTimeout(() => {
-    console.log("stopping interval");
-    clearInterval(every);
-  }, 100);
+  setTimeout(
+    () => {
+      console.log("stopping interval");
+      clearInterval(every);
+    },
+    100,
+  );
 
   // Timers created by a callback: a microtask first, then the immediate, then the timeout.
-  setTimeout(() => {
-    console.log("outer");
-    setTimeout(() => console.log("nested timeout"), 0);
-    setImmediate(() => console.log("nested immediate"));
-    queueMicrotask(() => console.log("nested microtask"));
+  setTimeout(
+    () => {
+      console.log("outer");
+      setTimeout(() => console.log("nested timeout"), 0);
+      setImmediate(() => console.log("nested immediate"));
+      queueMicrotask(() => console.log("nested microtask"));
 
-    // Shorter delays first, though created later (named by when they are due after `main`
-    // started; created here, so a loop that reaches `outer` late cannot run them before its
-    // immediate).
-    setTimeout(() => console.log("delay 500"), 380);
-    setTimeout(() => console.log("delay 400"), 280);
-    setTimeout(() => console.log("delay 300"), 180);
-  }, 120);
+      // Shorter delays first, though created later (named by when they are due after `main`
+      // started; created here, so a loop that reaches `outer` late cannot run them before its
+      // immediate).
+      setTimeout(() => console.log("delay 500"), 380);
+      setTimeout(() => console.log("delay 400"), 280);
+      setTimeout(() => console.log("delay 300"), 180);
+    },
+    120,
+  );
 
   console.log("main end");
 }

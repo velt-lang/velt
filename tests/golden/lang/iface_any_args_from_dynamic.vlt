@@ -37,7 +37,9 @@ store.set("s", new Sub());
 
 function read(k: string): Ctx<any, any> | null {
   const v = store.get(k);
-  if (v === undefined) return null;
+  if (v === undefined) {
+    return null;
+  }
   return v as Ctx<any, any>;
 }
 
@@ -64,9 +66,11 @@ console.log(on === null);
 const again: any = back;
 const twice = again as Ctx<{ n: number }, { s: string }>;
 console.log(twice.name(), twice.props.n, twice.state.s);
+
 function viaGeneric<T>(v: T): unknown {
   return v;
 }
+
 const g = viaGeneric(a) as Ctx<any, any>;
 console.log(g.name(), g === back);
 const x: any = a;

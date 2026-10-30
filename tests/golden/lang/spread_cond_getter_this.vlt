@@ -1,5 +1,18 @@
 // A getter using `this` in a conditional spread is not supported yet.
 function f(c: boolean) {
-  return { a: 1, ...(c ? { v: 2, get g() { return this.v * 10; } } : {}) };
+  return {
+    a: 1,
+    ...(
+      c
+        ? {
+          v: 2,
+          get g() {
+            return this.v * 10;
+          },
+        }
+        : {}
+    ),
+  };
 }
+
 console.log(JSON.stringify(f(true)));

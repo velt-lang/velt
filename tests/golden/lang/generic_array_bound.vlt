@@ -2,18 +2,26 @@
 // where the bound is expected (#1212).
 function total(xs: readonly number[]): number {
   let s = 0;
-  for (const x of xs) s += x;
+  for (const x of xs) {
+    s += x;
+  }
   return s;
 }
+
 function sumAll<T extends readonly number[]>(xs: T): number {
   return total(xs) + xs.length;
 }
+
 function loop<T extends readonly number[]>(xs: T): number {
   let s = 0;
-  for (const x of xs) s += x;
+  for (const x of xs) {
+    s += x;
+  }
   return s;
 }
+
 function firstLen<T extends string>(s: T): number {
   return s.length;
 }
+
 console.log(sumAll([1, 2]), loop([4, 5]), firstLen("abc"));

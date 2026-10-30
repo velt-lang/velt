@@ -4,8 +4,10 @@
 function tpl<T>(v: T): string {
   return `<${v}>`;
 }
+
 function text<T>(v: T): string {
   return String(v);
 }
+
 console.log(tpl<any>("ok"), text<any>(Symbol("s")));
 console.log(tpl<any>(Symbol("s")));

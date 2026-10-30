@@ -3,13 +3,37 @@
 // layout (and stays the same object), and as a bound it is satisfied by any type with its
 // fields. Interfaces with methods stay nominal.
 
-interface Base { readonly id: number }
-interface User extends Base { name: string; email?: string }
-interface Tree { label: string; children: Tree[] }
-interface Page<T> { items: T[]; total: number }
-interface HasId { id: number }
-interface Named { name(): string }
-interface Tagged extends Named { tag: string }
+interface Base {
+  readonly id: number;
+}
+
+interface User extends Base {
+  name: string;
+  email?: string;
+}
+
+interface Tree {
+  label: string;
+  children: Tree[];
+}
+
+interface Page<T> {
+  items: T[];
+  total: number;
+}
+
+interface HasId {
+  id: number;
+}
+
+interface Named {
+  name(): string;
+}
+
+interface Tagged extends Named {
+  tag: string;
+}
+
 type UserRow = { readonly id: number; name: string; email?: string };
 
 class Admin {

@@ -5,6 +5,7 @@
 function show<T>(x: T): string {
   return `v=${x}`;
 }
+
 class Box<T> {
   v: T;
   constructor(v: T) {
@@ -14,9 +15,11 @@ class Box<T> {
     return `box(${this.v})`;
   }
 }
+
 function pick(i: number): string | symbol {
   return i === 0 ? "text" : Symbol("s");
 }
+
 function main(): void {
   const a: string | symbol = pick(0);
   const n: number | symbol = 4.5;

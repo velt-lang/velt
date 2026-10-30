@@ -10,6 +10,7 @@ interface I {
   [K]: number;
   b: string;
 }
+
 const i: I = { [K]: 5, b: "x" };
 console.log(i[K], K in i, R in i, i);
 
@@ -19,5 +20,6 @@ class Tagged {
     return 7;
   }
 }
+
 const t = new Tagged();
 console.log(t[R], t[K], K in t, R in t, t);

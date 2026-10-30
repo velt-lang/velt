@@ -2,7 +2,9 @@
 // symbol keys or its accessors (#1629). `PropertyKey` is TypeScript's `string | number | symbol`.
 
 const S = Symbol("s");
+
 type PK = PropertyKey;
+
 function main() {
   const r: Record<string | symbol, number> = { a: 1 };
   r[S] = 2;
@@ -17,4 +19,5 @@ function main() {
   pk["x"] = 3;
   console.log(pk, Reflect.ownKeys(pk));
 }
+
 main();

@@ -14,7 +14,9 @@ let g: u8[] = Buffer.alloc(1);
 
 function filled(n: usize, v: u8): u8[] {
   const xs: u8[] = Buffer.alloc(n);
-  for (let i = 0; i < n; i++) xs[i] = v;
+  for (let i = 0; i < n; i++) {
+    xs[i] = v;
+  }
   return xs;
 }
 
@@ -29,7 +31,9 @@ function replaceEmpty(n: i64): i64 {
 }
 
 function grow(): i64 {
-  for (let i = 0; i < 100000; i++) g.push(7);
+  for (let i = 0; i < 100000; i++) {
+    g.push(7);
+  }
   return 0;
 }
 

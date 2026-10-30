@@ -1,7 +1,7 @@
 // Regression: a `JsonValue` inside a typed `JSON.parse<T>` takes any JSON value as a tree.
 // It used to be decoded as an object with the class's private `handle` field, so
 // `{"v":{"handle":4096}}` became a dangling runtime pointer and arrays were rejected.
-type Wrap = { name: string, v: JsonValue };
+type Wrap = { name: string; v: JsonValue };
 
 class Bag {
   items: JsonValue[] | null = null;

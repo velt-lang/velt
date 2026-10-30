@@ -12,28 +12,33 @@ class A {
     this.n = n;
   }
 }
+
 class Box<T> {
   v: T;
   constructor(v: T) {
     this.v = v;
   }
 }
+
 class O {
   a: number | undefined;
   constructor(a?: number) {
     this.a = a;
   }
 }
+
 class P {
   a: number;
   constructor(a: number = 7) {
     this.a = a;
   }
 }
+
 interface Runner {
   (): number;
   stop: number;
 }
+
 type Ctor = new (n: number) => A;
 
 const a: new (n: number) => A = A;
@@ -41,6 +46,7 @@ const b: new (n: number) => A = a;
 const c: new (n: number) => A throws Error = a;
 const xs: (new (n: number) => A)[] = [a];
 console.log(new b(2).n, new c(3).n, a === b, xs[0] === A);
+
 async function run(): Promise<void> {
   const p: Promise<new (n: number) => A> = Promise.resolve(a);
   const C = await p;
@@ -49,7 +55,10 @@ async function run(): Promise<void> {
 }
 
 // Readonly object types with a function type written twice: one object.
-const ox: { readonly f: (n: number) => A; readonly g: string } = { f: (n: number) => new A(n), g: "a" };
+const ox: { readonly f: (n: number) => A; readonly g: string } = {
+  f: (n: number) => new A(n),
+  g: "a",
+};
 const oy: { readonly f: (n: number) => A; readonly g: string } = ox;
 console.log(oy.f(2).n, ox === oy);
 
@@ -64,18 +73,22 @@ console.log(typeof u, typeof (k as unknown), typeof k, typeof ur, typeof r);
 const CO: new (a?: number) => O = O;
 const CP: new (a?: number) => P = P;
 console.log(new CO().a, new CP().a, new CP(3).a, new CO(4).a);
+
 function g(f: (a?: number) => string): string {
   return f() + f(1);
 }
+
 console.log(g((a?: number) => `${a}`));
 
 // Generic classes.
 const bn: new (v: number) => Box<number> = Box;
 const bs: new (v: string) => Box<string> = Box;
 console.log(new bn(1).v, new bs("x").v, bn.name, bs.name);
+
 function boxer<T>(): new (v: T) => Box<T> {
   return Box;
 }
+
 const b2 = boxer<number>();
 console.log(new b2(5).v);
 
@@ -85,6 +98,7 @@ function reg(c: string): string;
 function reg(c: Ctor | string): string {
   return typeof c === "string" ? c : c.name;
 }
+
 console.log(reg(A), reg("s"));
 const list: Ctor[] = [];
 list.push(A);

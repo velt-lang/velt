@@ -1,11 +1,13 @@
 // A swap through a key union that would store `null` in an optional `number` field stops with a
 // `TypeError` (decision 4 of deferred-types.md); Node stores it.
 type P = { a: number | null; b?: number };
+
 function swap<T, K extends keyof T>(o: T, x: K, y: K): void {
   const v = o[x];
   o[x] = o[y];
   o[y] = v;
 }
+
 function main() {
   const p: P = { a: null, b: 2 };
   swap(p, "b" as keyof P, "a" as keyof P);

@@ -6,6 +6,7 @@ declare system function open(path: readonly u8[], oflag: i32, mode: u32): i32;
 declare system function pread(fd: i32, buf: u8[], offset: i64): isize;
 
 let g: u8[] = Buffer.alloc(4096);
+
 function swap(): i64 {
   g = Buffer.alloc(1);
   return 0;

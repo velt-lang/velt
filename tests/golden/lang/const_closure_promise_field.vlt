@@ -7,9 +7,16 @@ interface A {
 }
 
 async function run(): Promise<void> {
-  const a: A = { n: 3, started: (async () => { await Promise.resolve(); return a.n; })() };
+  const a: A = {
+    n: 3,
+    started: (async () => {
+      await Promise.resolve();
+      return a.n;
+    })(),
+  };
   console.log(await a.started);
 }
+
 async function main() {
   await run();
 }

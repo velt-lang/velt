@@ -11,11 +11,13 @@ class C {
     return this.helper() * 10;
   }
 }
+
 class D extends C {
   override m(): number {
     return super.m() + 1;
   }
 }
+
 function wrap(o: any): any {
   return new Proxy(o, {
     get(t: any, k: string | symbol, r: any): any {
@@ -24,5 +26,6 @@ function wrap(o: any): any {
     },
   });
 }
+
 const d: C = wrap(new D()) as D;
 console.log(d.m());

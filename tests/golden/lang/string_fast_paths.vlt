@@ -41,12 +41,16 @@ function tokens(src: string): string[] {
       i++;
     } else if (isDigit(c)) {
       let j = i;
-      while (j < src.length && isDigit(src[j])) j++;
+      while (j < src.length && isDigit(src[j])) {
+        j++;
+      }
       out.push(`num:${src.slice(i, j)}`);
       i = j;
     } else if (isAlpha(c)) {
       let j = i;
-      while (j < src.length && (isAlpha(src[j]) || isDigit(src[j]))) j++;
+      while (j < src.length && (isAlpha(src[j]) || isDigit(src[j]))) {
+        j++;
+      }
       out.push(`id:${src.slice(i, j)}`);
       i = j;
     } else {
@@ -131,7 +135,20 @@ function main() {
   compare("lone", lone);
 
   const kinds: string[] = [];
-  for (const c of ["", " ", "(", ")", "==", "=", "7", "q", "_", "é", "a very long literal of more than sixteen bytes", "Z!"]) {
+  for (const c of [
+    "",
+    " ",
+    "(",
+    ")",
+    "==",
+    "=",
+    "7",
+    "q",
+    "_",
+    "é",
+    "a very long literal of more than sixteen bytes",
+    "Z!",
+  ]) {
     kinds.push(kind(c));
   }
   console.log(kinds.join(" "));
@@ -141,7 +158,9 @@ function main() {
   for (let i = 0; i < 2000; i++) {
     const h = `${heap}${i}`;
     const c = h[i % h.length];
-    if (c === "o" || c >= "w") total++;
+    if (c === "o" || c >= "w") {
+      total++;
+    }
     total += h.length;
   }
   console.log(total);

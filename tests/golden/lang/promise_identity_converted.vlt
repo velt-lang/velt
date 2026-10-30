@@ -6,7 +6,9 @@ async function f(): Promise<string> {
 }
 
 function track(s: Set<Promise<unknown>>, p: Promise<unknown>): boolean {
-  if (s.has(p)) return false;
+  if (s.has(p)) {
+    return false;
+  }
   s.add(p);
   return true;
 }

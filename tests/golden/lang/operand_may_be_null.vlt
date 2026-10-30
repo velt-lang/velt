@@ -1,3 +1,6 @@
 // An arithmetic operand that may be `null` (TS18047).
-function g(x: number | null) { return 3 - x; }
+function g(x: number | null) {
+  return 3 - x;
+}
+
 console.log(g(1));

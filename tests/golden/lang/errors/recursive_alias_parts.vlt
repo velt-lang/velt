@@ -12,6 +12,7 @@ interface Shape {
   value: number;
   area(): number;
 }
+
 type Shapes = Shape & { inner: Shapes[] };
 
 type Twice = Base & { value: string; kids: Twice[] };

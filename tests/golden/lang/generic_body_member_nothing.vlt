@@ -4,56 +4,104 @@
 function isNothing<T>(x: T | string | undefined): boolean {
   return x == null;
 }
+
 function isNull<T>(x: T | string | undefined): boolean {
   return x === null;
 }
+
 function isUndef<T>(x: T | string | undefined): boolean {
   return x === undefined;
 }
+
 function orDefault<T>(x: T | string | undefined): T | string {
   return x ?? "dflt";
 }
+
 function str<T>(x: T | string | undefined): string {
-  if (x == null) return "nothing";
+  if (x == null) {
+    return "nothing";
+  }
   return `${x}`;
 }
+
 function arr<T>(xs: (T | string | undefined)[]): number {
   let n = 0;
-  for (const x of xs) if (x == null) n++;
+  for (const x of xs) {
+    if (x == null) {
+      n++;
+    }
+  }
   return n;
 }
+
 function retNull<T>(x: T | string | undefined): T | string | undefined {
-  if (x == undefined) return undefined;
+  if (x == undefined) {
+    return undefined;
+  }
   return x;
 }
-console.log(isNothing<number | null>(null), isNothing<number | null>(undefined), isNothing<number | null>(1));
-console.log(isNull<number | null>(null), isNull<number | null>(undefined), isNull<number | null>("s"));
-console.log(isUndef<number | null>(null), isUndef<number | null>(undefined), isUndef<number | undefined>(undefined));
-console.log(orDefault<number | null>(null), orDefault<number | null>(undefined), orDefault<number | null>(2));
+
+console.log(
+  isNothing<number | null>(null),
+  isNothing<number | null>(undefined),
+  isNothing<number | null>(1),
+);
+console.log(
+  isNull<number | null>(null),
+  isNull<number | null>(undefined),
+  isNull<number | null>("s"),
+);
+console.log(
+  isUndef<number | null>(null),
+  isUndef<number | null>(undefined),
+  isUndef<number | undefined>(undefined),
+);
+console.log(
+  orDefault<number | null>(null),
+  orDefault<number | null>(undefined),
+  orDefault<number | null>(2),
+);
 console.log(str<number | null>(null), str<boolean | null>(false), str<string | null>("v"));
 console.log(arr<number | null>([null, undefined, 1, "s", null]));
 console.log(retNull<number | null>(null), retNull<number | null>(3));
 const vs: (number | null)[] = [null, 1];
 const v = vs[0];
 console.log(isNothing<number | null>(v), isNull<number | null>(v));
+
 function via<T>(x: T): boolean {
   return isNothing<T>(x);
 }
+
 console.log(via<number | null>(null), via<number | null>(0));
 
 // The mirror case: `T | string | null` at `T = number | undefined`.
 function isN3<T>(x: T | string | null): boolean {
   return x == null;
 }
+
 function isNull3<T>(x: T | string | null): boolean {
   return x === null;
 }
+
 function od<T>(x: T | string | null): T | string {
   return x ?? "d";
 }
-console.log(isN3<number | undefined>(undefined), isN3<number | undefined>(null), isN3<number | undefined>(4));
-console.log(isNull3<number | undefined>(undefined), isNull3<number | null>(null), isNull3<number | undefined>(4));
-console.log(od<number | undefined>(undefined), od<number | undefined>(5), od<number | undefined>(null));
+
+console.log(
+  isN3<number | undefined>(undefined),
+  isN3<number | undefined>(null),
+  isN3<number | undefined>(4),
+);
+console.log(
+  isNull3<number | undefined>(undefined),
+  isNull3<number | null>(null),
+  isNull3<number | undefined>(4),
+);
+console.log(
+  od<number | undefined>(undefined),
+  od<number | undefined>(5),
+  od<number | undefined>(null),
+);
 
 // A generic class holding `T | undefined` at `T = string | null`.
 class Holder<T> {
@@ -68,26 +116,49 @@ class Holder<T> {
     return this.items[0] ?? d;
   }
 }
+
 const h = new Holder<string | null>();
 h.add(null);
 h.add(undefined);
 h.add("x");
-console.log(h.nothings(), h.firstOr("fallback"), h.items, h.items[0] === null, h.items[1] === undefined);
+console.log(
+  h.nothings(),
+  h.firstOr("fallback"),
+  h.items,
+  h.items[0] === null,
+  h.items[1] === undefined,
+);
 
 // A bare `T`, and a `T | string` with no nothing of its own.
 function bare<T>(x: T): string {
   return `${x == null} ${x === null} ${x === undefined} ${x != null}`;
 }
+
 function orElse<T>(x: T, d: T): T {
   return x ?? d;
 }
+
 function noOwn<T>(x: T | string): boolean {
   return x == null;
 }
+
 function defined<T>(x: T | string | undefined): string {
   return x !== undefined ? "defined" : "undefined";
 }
+
 console.log(bare<number | null>(null), bare<string | undefined>(undefined), bare<number>(0));
-console.log(orElse<number | null>(null, 2), orElse<string | undefined>(undefined, "u"), orElse<number>(0, 1));
-console.log(noOwn<number | null>(null), noOwn<number | undefined>(undefined), noOwn<number | null>("s"));
-console.log(defined<number | null>(null), defined<number | undefined>(undefined), defined<number>(1));
+console.log(
+  orElse<number | null>(null, 2),
+  orElse<string | undefined>(undefined, "u"),
+  orElse<number>(0, 1),
+);
+console.log(
+  noOwn<number | null>(null),
+  noOwn<number | undefined>(undefined),
+  noOwn<number | null>("s"),
+);
+console.log(
+  defined<number | null>(null),
+  defined<number | undefined>(undefined),
+  defined<number>(1),
+);

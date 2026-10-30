@@ -1,7 +1,19 @@
 // spawn through a generic helper whose argument is a type parameter.
-class V { n: number; constructor(n: number) { this.n = n; } }
-async function run<T>(x: T): Promise<number> { return 1; }
-async function go<T>(x: T): Promise<number> { return await spawn(run(x)); }
+class V {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+async function run<T>(x: T): Promise<number> {
+  return 1;
+}
+
+async function go<T>(x: T): Promise<number> {
+  return await spawn(run(x));
+}
+
 async function main() {
   const keep = new V(7);
   console.log(await go(new WeakRef(keep)), keep.n);

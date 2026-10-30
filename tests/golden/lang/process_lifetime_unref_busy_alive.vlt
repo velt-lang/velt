@@ -7,22 +7,34 @@ const p = new Promise<void>((r) => {
   wake = r;
 });
 setTimeout(() => console.log("first unref'd runs"), 50).unref();
-setTimeout(() => {
-  const end = Date.now() + 150;
-  while (Date.now() < end) {}
-  console.log("ref");
-  setTimeout(() => {
-    console.log("later");
-    setTimeout(() => {
-      second = true;
-    }, 50).unref();
-    setTimeout(() => {
-      const end2 = Date.now() + 150;
-      while (Date.now() < end2) {}
-      wake();
-    }, 10);
-  }, 50);
-}, 10);
+setTimeout(
+  () => {
+    const end = Date.now() + 150;
+    while (Date.now() < end) {}
+    console.log("ref");
+    setTimeout(
+      () => {
+        console.log("later");
+        setTimeout(
+          () => {
+            second = true;
+          },
+          50,
+        ).unref();
+        setTimeout(
+          () => {
+            const end2 = Date.now() + 150;
+            while (Date.now() < end2) {}
+            wake();
+          },
+          10,
+        );
+      },
+      50,
+    );
+  },
+  10,
+);
 await p;
 console.log("resumed");
 setTimeout(() => console.log("second unref'd ran:", second), 20);

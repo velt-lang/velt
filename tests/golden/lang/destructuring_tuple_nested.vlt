@@ -13,6 +13,7 @@ console.log(c2);
 function f([i, { 0: c }]: [number, string[]]): string {
   return `${i}${c}`;
 }
+
 console.log(f([3, ["q"]]));
 
 const xs: string[][] = [["a", "b"], ["c"]];
@@ -41,9 +42,13 @@ console.log(i6, a6);
 function g([i, { a = 7 }]: [number, { a?: number }]): number {
   return i + a;
 }
+
 console.log(g([1, {}]), g([1, { a: 1 }]));
 
-const pairs: [number, { a?: number }][] = [[1, {}], [2, { a: 3 }]];
+const pairs: [number, { a?: number }][] = [
+  [1, {}],
+  [2, { a: 3 }],
+];
 for (const [i, { a = 4 }] of pairs) {
   console.log(i, a);
 }
@@ -64,9 +69,11 @@ function lengths(): void {
   const { length: m = 9 } = s;
   console.log(n, first, length, m, arity([true, 1, "x"]));
 }
+
 function arity({ length: k }: [boolean, number, string]): number {
   return k * 2;
 }
+
 lengths();
 for (const { 1: s1, length: l } of [[1, "p"]] as [number, string][]) {
   console.log(s1, l);

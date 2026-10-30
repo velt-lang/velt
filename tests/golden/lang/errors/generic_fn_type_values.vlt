@@ -1,8 +1,10 @@
 // A value of a generic function type takes any type arguments at each call (#943): a function
 // of fixed types is not one, as TypeScript reports too.
 type Id = <T>(x: T) => T;
+
 function apply(f: Id): number {
   return f(1);
 }
+
 const h: Id = [(x: number) => x][0];
 console.log(apply(h));

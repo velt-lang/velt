@@ -47,7 +47,7 @@ function swap(u: number | undefined, n: number | null) {
 // `as` keeps the value in TypeScript; this phase cannot hold it.
 function casts(u: number | undefined, n: string | null) {
   const a = u as number | null;
-  const s = n as string | undefined;
+  const s = n as (string | undefined);
 }
 
 // A default that JavaScript applies to a passed `undefined` too (supported now).
@@ -132,12 +132,6 @@ function toJson(b: Base) {
 // now: the field is a `T | null | undefined` and the default replaces only `undefined`;
 // see lang/optional_undefined.)
 
-
-
-
-
-
-
 // `undefined` given for a parameter with a default (supported now, lang/undefined_param_defaults),
 // and for an optional parameter or field (lang/optional_undefined).
 function withValue(x: number = 5): number {
@@ -150,11 +144,6 @@ function optional(a?: number): number {
 
 function optionals(u: number | undefined) {
   const a = withValue(undefined);
-
-
-
-
-
 }
 
 // A generic alias whose `T | null` would hold a `T` that allows `undefined` (`Maybe<number | null>`
@@ -178,8 +167,4 @@ function prodError(code: number, detail?: string): string {
   return `${code}:${detail ?? "-"}`;
 }
 
-function conditionals(name: string, c: boolean) {
-
-
-
-}
+function conditionals(name: string, c: boolean) {}

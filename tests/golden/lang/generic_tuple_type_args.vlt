@@ -13,8 +13,18 @@ function nest<T>(x: T): [T, [T, T]] {
 
 function main() {
   console.log(swap<number, [string, number]>([3, ["x", 2.5]]));
-  console.log(swap([["a", 1], [true, "b"]]));
-  console.log(firsts<[number, number], string>([[[1, 2], "p"], [[3, 4], "q"]]));
+  console.log(
+    swap([
+      ["a", 1],
+      [true, "b"],
+    ]),
+  );
+  console.log(
+    firsts<[number, number], string>([
+      [[1, 2], "p"],
+      [[3, 4], "q"],
+    ]),
+  );
   const n = nest<[string, boolean]>(["k", false]);
   console.log(n, n[1][0][1]);
 }

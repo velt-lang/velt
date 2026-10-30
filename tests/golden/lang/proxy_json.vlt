@@ -15,7 +15,9 @@ function main(): void {
     },
     getOwnPropertyDescriptor(t, k) {
       log.push(`describe ${String(k)}`);
-      if (k === "b") return { value: "two", enumerable: false, configurable: true };
+      if (k === "b") {
+        return { value: "two", enumerable: false, configurable: true };
+      }
       return Reflect.getOwnPropertyDescriptor(t, k);
     },
   });

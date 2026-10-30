@@ -5,29 +5,69 @@
 // change another's. Identical to Node.
 class InnerA {
   label: string;
-  constructor(l: string) { this.label = l; }
-  swap(): string { slot.inner = new InnerA("slot2"); return this.label + "!"; }
+  constructor(l: string) {
+    this.label = l;
+  }
+  swap(): string {
+    slot.inner = new InnerA("slot2");
+    return this.label + "!";
+  }
 }
-class HolderA { inner: InnerA; constructor(i: InnerA) { this.inner = i; } }
+
+class HolderA {
+  inner: InnerA;
+  constructor(i: InnerA) {
+    this.inner = i;
+  }
+}
+
 let slot = new HolderA(new InnerA("slot" + String(1)));
 
 class InnerB {
   label: string;
-  constructor(l: string) { this.label = l; }
-  swap(): string { holders[0].inner = new InnerB("arr2"); return this.label + "?"; }
+  constructor(l: string) {
+    this.label = l;
+  }
+  swap(): string {
+    holders[0].inner = new InnerB("arr2");
+    return this.label + "?";
+  }
 }
-class HolderB { inner: InnerB; constructor(i: InnerB) { this.inner = i; } }
+
+class HolderB {
+  inner: InnerB;
+  constructor(i: InnerB) {
+    this.inner = i;
+  }
+}
+
 const holders: HolderB[] = [];
 
 class InnerC {
   label: string;
-  constructor(l: string) { this.label = l; }
-  swap(): string { renew(); return this.label + "#"; }
+  constructor(l: string) {
+    this.label = l;
+  }
+  swap(): string {
+    renew();
+    return this.label + "#";
+  }
 }
-class Mid { inner: InnerC = new InnerC("nested" + String(1)); }
-class Outer { mid: Mid = new Mid(); }
+
+class Mid {
+  inner: InnerC = new InnerC("nested" + String(1));
+}
+
+class Outer {
+  mid: Mid = new Mid();
+}
+
 let outer = new Outer();
-function renew(): void { outer.mid = new Mid(); outer.mid.inner.label = "nested2"; }
+
+function renew(): void {
+  outer.mid = new Mid();
+  outer.mid.inner.label = "nested2";
+}
 
 function main(): void {
   console.log(slot.inner.swap(), slot.inner.label);

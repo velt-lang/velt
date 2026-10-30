@@ -11,5 +11,7 @@ function main() {
   withCallback((cb) => {
     saved.push(cb);
   });
-  for (const f of saved) f();
+  for (const f of saved) {
+    f();
+  }
 }

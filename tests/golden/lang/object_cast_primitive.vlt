@@ -8,4 +8,3 @@ function main(): void {
   console.log(typeof asObject([1]));
   console.log(asObject(5));
 }
-

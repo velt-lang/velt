@@ -1,6 +1,7 @@
 // A generic closure that throws, stored into a generic function type written without `throws`:
 // calls through the type throw what it throws, and `catch` sees it (#943).
 class Bad extends Error {}
+
 type Check = <T>(x: T, ok: boolean) => T;
 
 function run(c: Check): void {
@@ -14,7 +15,9 @@ function run(c: Check): void {
 
 function main(): void {
   run(<T>(x: T, ok: boolean): T => {
-    if (!ok) throw new Bad("no " + String(x));
+    if (!ok) {
+      throw new Bad("no " + String(x));
+    }
     return x;
   });
   run((x, ok) => x);

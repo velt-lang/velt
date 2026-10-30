@@ -15,11 +15,15 @@ function createTopic(): Topic {
       subscribers.push(handler);
       return () => {
         const i = subscribers.indexOf(handler);
-        if (i > -1) subscribers.splice(i, 1);
+        if (i > -1) {
+          subscribers.splice(i, 1);
+        }
       };
     },
     publish(data: string): void {
-      for (const h of subscribers) h(data);
+      for (const h of subscribers) {
+        h(data);
+      }
       console.log("published to", subscribers.length);
     },
   };

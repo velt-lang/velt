@@ -3,26 +3,47 @@
 // before it are assigned and their targets evaluated; holes; `for...of` / `for...in` over
 // targets declared elsewhere (#1227). Expected output: Node's.
 const log: string[] = [];
-function idx(i: number): number { log.push("i" + i); return i; }
-function dflt(n: number): number { log.push("d" + n); return n; }
-interface P { x?: number; y: string; z?: string | null }
-class Pt { x = 0; y = 0; }
+
+function idx(i: number): number {
+  log.push("i" + i);
+  return i;
+}
+
+function dflt(n: number): number {
+  log.push("d" + n);
+  return n;
+}
+
+interface P {
+  x?: number;
+  y: string;
+  z?: string | null;
+}
+
+class Pt {
+  x = 0;
+  y = 0;
+}
+
 function main1(): void {
   const arr = [0, 0, 0];
   let q = 0;
   [arr[idx(0)], q = dflt(1)] = [7] as number[];
   console.log(log.join(), arr, q);
-  let p = 1, z = 0;
+  let p = 1;
+  let z = 0;
   ({ p, z = p * 10 } = { p: 3 } as { p: number; z?: number });
   console.log(p, z);
-  let a = 0, b = 0;
+  let a = 0;
+  let b = 0;
   [a, b = a] = [5];
   console.log(a, b);
   [a = 1, b = a + 1] = [] as number[];
   console.log(a, b);
   [a, , b] = [10, 20, 30];
   console.log(a, b);
-  let s = "", t = "";
+  let s = "";
+  let t = "";
   ({ y: s, x: a = s.length } = { y: "hello" } as P);
   console.log(s, a);
   let zz: string | null | undefined = "init";
@@ -30,8 +51,10 @@ function main1(): void {
   console.log(zz);
   ({ z: zz = "dz" } = { y: "" } as P);
   console.log(zz);
-  let m = 0, n = 0;
-  n = 2; [{ a: m = 4 } = { a: n }] = [] as { a?: number }[];
+  let m = 0;
+  let n = 0;
+  n = 2;
+  [{ a: m = 4 } = { a: n }] = [] as { a?: number }[];
   console.log(m, n);
   [[m, n] = [n + 1, m + 1]] = [] as number[][];
   console.log(m, n);
@@ -46,18 +69,29 @@ function main1(): void {
   console.log(t, s);
   [t, s = t + "!"] = ["only"];
   console.log(t, s);
-  let k = "", v = 0;
-  for ([k, v] of new Map([["a", 1], ["b", 2]])) console.log(k, v);
-  for ({ x: v = 9 } of [{ y: "a" }, { x: 2, y: "b" }] as P[]) console.log(v);
+  let k = "";
+  let v = 0;
+  for ([k, v] of new Map([
+    ["a", 1],
+    ["b", 2],
+  ])) {
+    console.log(k, v);
+  }
+  for ({ x: v = 9 } of [{ y: "a" }, { x: 2, y: "b" }] as P[]) {
+    console.log(v);
+  }
 }
+
 // Defaults where the value is never `undefined` (a tuple's element, a required field) never
 // apply; a `null` element keeps its `null`.
 function main2(): void {
-  let a = 0, b = 0;
+  let a = 0;
+  let b = 0;
   [a, b = 1] = [5, 6] as [number, number];
   console.log(a, b);
   const o = { x: 1, y: 2 };
-  let x = 0, y = 0;
+  let x = 0;
+  let y = 0;
   ({ x, y = 9 } = o);
   console.log(x, y);
   let s: string | undefined = "q";
@@ -67,6 +101,7 @@ function main2(): void {
   [n = 3] = [null] as (number | null)[];
   console.log(n);
 }
+
 function main(): void {
   main1();
   main2();

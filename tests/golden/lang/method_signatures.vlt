@@ -2,11 +2,7 @@
 // (expected output from `node`): `m(x: T): R` is a member of function type `(x: T) => R`, and
 // `m?(x: T): R` an optional one.
 
-type Scope = {
-  stop(): void;
-  size(n: number): number;
-  label?(prefix: string): string;
-};
+type Scope = { stop(): void; size(n: number): number; label?(prefix: string): string };
 
 const scope: Scope = {
   stop: () => console.log("stopped"),
@@ -33,11 +29,15 @@ class Host implements HostOps {
     return id > 0;
   }
 }
+
 const ops: HostOps = new Host();
 console.log(ops.name, ops.remove(3), ops.querySelector === undefined);
 
 // In an inline parameter type.
-function defineHandler(handler: { test(value: string): boolean; encode(value: string): number }): number {
+function defineHandler(
+  handler: { test(value: string): boolean; encode(value: string): number },
+): number {
   return handler.test("abc") ? handler.encode("abc") : -1;
 }
+
 console.log(defineHandler({ test: (v) => v.length > 2, encode: (v) => v.length * 10 }));

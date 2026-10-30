@@ -5,28 +5,36 @@
 function tag<T>(x: T): string {
   return typeof x;
 }
+
 function isUndefTag<T>(x: T): boolean {
   return typeof x === "undefined";
 }
+
 function toAny<T>(x: T): any {
   return x;
 }
+
 function toUnknown<T>(x: T): unknown {
   const u: unknown = x;
   return u;
 }
+
 function isUndef<T>(x: T): boolean {
   return x === undefined;
 }
+
 function isNull<T>(x: T): boolean {
   return x === null;
 }
+
 function isNothing<T>(x: T): boolean {
   return x == null;
 }
+
 function optTag<T>(x: T | undefined): string {
   return typeof x;
 }
+
 class Holder<T> {
   v: T;
   constructor(v: T) {
@@ -44,7 +52,21 @@ const a = toAny<undefined>(undefined);
 console.log(a === undefined, typeof a, toAny<null>(null) === null);
 console.log(isUndef<undefined>(undefined), isUndef<number | undefined>(undefined), isUndef(3));
 console.log(isUndef<null>(null), isUndef<string | null>(null));
-console.log(isNull<null>(null), isNull<undefined>(undefined), isNull<number | null>(null), isNull("x"));
+console.log(
+  isNull<null>(null),
+  isNull<undefined>(undefined),
+  isNull<number | null>(null),
+  isNull("x"),
+);
 console.log(isNothing<undefined>(undefined), isNothing<null>(null), isNothing(0), isNothing(""));
-console.log(optTag<number>(3), optTag<string>("a"), optTag<number>(undefined), optTag<undefined>(undefined));
-console.log(new Holder<undefined>(undefined).tag(), new Holder<null>(null).tag(), new Holder(5).tag());
+console.log(
+  optTag<number>(3),
+  optTag<string>("a"),
+  optTag<number>(undefined),
+  optTag<undefined>(undefined),
+);
+console.log(
+  new Holder<undefined>(undefined).tag(),
+  new Holder<null>(null).tag(),
+  new Holder(5).tag(),
+);

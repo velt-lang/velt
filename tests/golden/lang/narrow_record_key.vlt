@@ -12,12 +12,14 @@ function group(items: string[]): Record<string, string[]> {
   }
   return named;
 }
+
 const g = group(["ab", "ac", "bd"]);
 for (const name in g) {
   const list = g[name];
   const copy = () => list.slice();
   console.log(name, copy().join(","));
 }
+
 function del(r: Record<string, number[]>): void {
   for (const k in r) {
     delete r[k];
@@ -26,18 +28,27 @@ function del(r: Record<string, number[]>): void {
     console.log(v === undefined);
   }
 }
+
 del({ a: [1] });
+
 function viaCheck(r: Record<string, number[]>, k: string): void {
   const key = k;
-  if (r[key] === undefined) r[key] = [0];
+  if (r[key] === undefined) {
+    r[key] = [0];
+  }
   r[key].push(1);
   console.log(r[key].length);
-  if (r[key] !== undefined) console.log(r[key][0]);
+  if (r[key] !== undefined) {
+    console.log(r[key][0]);
+  }
 }
+
 viaCheck({}, "z");
+
 function literalKey(r: Record<string, number[]>): void {
   const key = "q";
   r[key] = [5];
   console.log(r[key].length, r.q.length);
 }
+
 literalKey({});

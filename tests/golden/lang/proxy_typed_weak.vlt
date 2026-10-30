@@ -13,6 +13,7 @@ function logged(target: any): any {
 class State {
   n: number = 1;
 }
+
 type Rec = { k: string };
 
 const raw = new State();
@@ -52,5 +53,6 @@ function scoped(m: WeakMap<State, number>, set: WeakSet<State>): WeakRef<State> 
   set.add(p);
   return new WeakRef<State>(p);
 }
+
 const gone = scoped(wm, ws);
 console.log(typeof gone);

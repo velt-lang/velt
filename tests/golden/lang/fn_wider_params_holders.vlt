@@ -5,6 +5,7 @@
 interface Shape {
   area(): number;
 }
+
 class Sq implements Shape {
   side: number;
   constructor(side: number) {
@@ -14,15 +15,21 @@ class Sq implements Shape {
     return this.side * this.side;
   }
 }
+
 [new Sq(2), new Sq(3)].forEach((s: Shape) => console.log("shape", s.area()));
-const m = new Map<string, number>([["a", 1], ["b", 2]]);
+const m = new Map<string, number>([
+  ["a", 1],
+  ["b", 2],
+]);
 m.forEach((v: any, k: unknown) => console.log("map", k, v));
+
 class C {
   tag = "c";
   m(v: unknown): void {
     console.log("method", v);
   }
 }
+
 const c = new C();
 [1, 2].forEach(c.m.bind(c));
 const s = new Set<string>(["x"]);
@@ -34,9 +41,11 @@ const p = new Promise<number>((resolve) => resolve(4));
 p.then((v: object | number) => console.log("obj|num", v));
 const fns: Array<(x: number) => void> = [(v: any) => console.log("arr fn", v)];
 fns[0](5);
+
 function ret(): (x: number) => string {
   return (v: any) => `ret ${v}`;
 }
+
 console.log(ret()(6));
 const obj: { cb: (x: number) => void } = { cb: (v: any) => console.log("obj field", v) };
 obj.cb(7);

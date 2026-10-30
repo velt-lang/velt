@@ -3,6 +3,7 @@
 // compared through `any` or used as dynamic keys (#1240): Node prints `true` for each.
 type Sig = { a: number; b: number };
 type A = { a: number };
+
 function wrap(o: any): any {
   return new Proxy(o, {
     get(t: any, k: string | symbol, r: any): any {
@@ -11,6 +12,7 @@ function wrap(o: any): any {
     },
   });
 }
+
 const s = wrap(JSON.parse('{"a":1,"b":2}') as Sig) as Sig;
 console.log(s.a);
 const v: A = s;

@@ -4,6 +4,7 @@ interface Stamp {
   readonly version: string;
   warned?: boolean;
 }
+
 type StampKey = "__APP_A__" | "__APP_B__";
 type StampHost = { [K in StampKey]?: Stamp };
 
@@ -31,14 +32,17 @@ stamp("__APP_B__", "3.0");
 console.log(readStamp("__APP_A__"), readStamp("__APP_B__")?.version);
 
 type Flags = { __FLAG_X__?: number; __FLAG_Y__?: number };
+
 function flag(k: "__FLAG_X__" | "__FLAG_Y__"): number {
   return (globalThis as Flags)[k] ?? -1;
 }
+
 (globalThis as Flags).__FLAG_Y__ = 7;
 console.log(flag("__FLAG_X__"), flag("__FLAG_Y__"));
 
 // Defined, never read: the call only evaluates its value.
 let declared = false;
+
 function declareLive(live = true): void {
   declared = live;
   Object.defineProperty(globalThis, "__LIVE_CLIENT__", {
@@ -48,16 +52,19 @@ function declareLive(live = true): void {
     enumerable: false,
   });
 }
+
 declareLive();
 console.log(declared);
 
 // Assigned with a variable key, also through a compound or logical assignment.
 type Counters = { __HITS_A__?: number; __HITS_B__?: number };
+
 function hit(k: keyof Counters): void {
   const g = globalThis as Counters;
   g[k] ??= 0;
   g[k] = (g[k] ?? 0) + 1;
 }
+
 hit("__HITS_A__");
 hit("__HITS_A__");
 hit("__HITS_B__");

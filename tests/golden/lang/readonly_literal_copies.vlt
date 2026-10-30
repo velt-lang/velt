@@ -4,7 +4,9 @@
 // `new Set` copies from (#1271 review).
 function joined(xs: Iterable<string>): string {
   let r = "";
-  for (const x of xs) r += x;
+  for (const x of xs) {
+    r += x;
+  }
   return r;
 }
 

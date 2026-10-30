@@ -2,32 +2,68 @@
 // A function applies the default of a parameter of a dynamic type (`x: any = "d"`) itself when
 // it receives `undefined`, as in JavaScript: through an interface, a base class, a function
 // value, an arrow stored in a field and a callback passed to an array method too (#1186).
-interface I { m(x?: any): string; }
-class Im implements I { m(x: any = "im"): string { return `${x}`; } }
+interface I {
+  m(x?: any): string;
+}
+
+class Im implements I {
+  m(x: any = "im"): string {
+    return `${x}`;
+  }
+}
+
 const i: I = new Im();
 console.log(i.m(), i.m(undefined), i.m(1));
 
-interface J { m(x?: unknown): string; }
-class Jm implements J { m(x: unknown = 7): string { return `${x}`; } }
+interface J {
+  m(x?: unknown): string;
+}
+
+class Jm implements J {
+  m(x: unknown = 7): string {
+    return `${x}`;
+  }
+}
+
 const j: J = new Jm();
 console.log(j.m(), j.m("j"));
 
 // virtual dispatch through a base class: the overriding method's default
-class B { m(x: any = "b"): string { return `B${x}`; } }
-class D extends B { override m(x: any = "d"): string { return `D${x}`; } }
+class B {
+  m(x: any = "b"): string {
+    return `B${x}`;
+  }
+}
+
+class D extends B {
+  override m(x: any = "d"): string {
+    return `D${x}`;
+  }
+}
+
 const b: B = new D();
 console.log(b.m(), b.m(undefined), new B().m(), b.m("x"));
 
 // function values
-function d(x: any = "dv"): string { return `${x}`; }
+function d(x: any = "dv"): string {
+  return `${x}`;
+}
+
 const g = d;
 console.log(g(undefined), d(undefined), d(), g(null));
-function u(x: unknown = 5): string { return `${x}`; }
+
+function u(x: unknown = 5): string {
+  return `${x}`;
+}
+
 const fu = u;
 console.log(fu(undefined));
 
 // an arrow stored in a field, and one in a const
-class F { f: (x?: any) => string = (x: any = "arrow") => `${x}`; }
+class F {
+  f: (x?: any) => string = (x: any = "arrow") => `${x}`;
+}
+
 console.log(new F().f(undefined), new F().f("y"));
 let base = "base";
 const k = (a: any, b: any = base): string => `${a}/${b}`;
@@ -43,27 +79,60 @@ console.log(ys.filter((v: any = 0) => v === 0).length);
 console.log(ys.map((v: any = "m") => `${v}`).join(","));
 
 // the body reassigns the parameter; a closure assigns it
-function r(x: any = 1): any { x = "r"; return x; }
+function r(x: any = 1): any {
+  x = "r";
+  return x;
+}
+
 console.log(r(), r(undefined), r(10));
+
 function c(x: any = "c"): string {
-  const set = () => { x = "set"; };
+  const set = () => {
+    x = "set";
+  };
   const before = `${x}`;
   set();
   return `${before}${x}`;
 }
+
 console.log(c(), c(undefined), c("p"));
 
 // constructors and static methods
-class A { v: any; constructor(x: any = "ctor") { this.v = x; } }
-class Sub extends A { constructor(y: any = "sub") { super(y); } }
+class A {
+  v: any;
+  constructor(x: any = "ctor") {
+    this.v = x;
+  }
+}
+
+class Sub extends A {
+  constructor(y: any = "sub") {
+    super(y);
+  }
+}
+
 console.log(new A().v, new A(undefined).v, new A(1).v, new Sub().v, new Sub(undefined).v);
-class S { static s(x: any = "static"): any { return x; } }
+
+class S {
+  static s(x: any = "static"): any {
+    return x;
+  }
+}
+
 const ss = S.s;
 console.log(S.s(), ss(undefined));
 
 // async: the default is applied when the call starts
-function side(): string { console.log("default"); return "async"; }
-async function af(x: any = side()): Promise<any> { console.log("body"); return x; }
+function side(): string {
+  console.log("default");
+  return "async";
+}
+
+async function af(x: any = side()): Promise<any> {
+  console.log("body");
+  return x;
+}
+
 const fa = af;
 const p = fa(undefined);
 console.log("after the call");
@@ -71,7 +140,15 @@ console.log(await p);
 
 // the default is evaluated only when it is used, once
 let calls = 0;
-function next(): number { calls++; return calls; }
-function once(x: any = next()): string { return `${x}`; }
+
+function next(): number {
+  calls++;
+  return calls;
+}
+
+function once(x: any = next()): string {
+  return `${x}`;
+}
+
 const fonce = once;
 console.log(once(), fonce(undefined), once("given"), calls);

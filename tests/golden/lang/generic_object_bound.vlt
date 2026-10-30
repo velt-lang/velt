@@ -3,32 +3,45 @@
 class Person {
   constructor(public name: string, public age: number) {}
 }
+
 class Getter {
   get name(): string {
     return "got";
   }
 }
+
 function getName<T extends { name: string }>(p: T): string {
   return p.name;
 }
+
 function bump<T extends { count: number }>(c: T): T {
   c.count += 1;
   return c;
 }
+
 function val<U, T extends { value: U }>(t: T): U {
   return t.value;
 }
+
 function opt<T extends { id?: number }>(t: T): string {
   return `${t.id ?? "none"}`;
 }
+
 type Named = { name: string };
+
 function viaAlias<T extends Named>(xs: T[]): string[] {
   return xs.map((x) => x.name);
 }
+
 function rename<T extends Named>(x: T, to: string): void {
   x.name = to;
 }
-console.log(getName(new Person("ann", 3)), getName(new Getter()), getName({ name: "lit", other: true }));
+
+console.log(
+  getName(new Person("ann", 3)),
+  getName(new Getter()),
+  getName({ name: "lit", other: true }),
+);
 const c = { count: 1, label: "c" };
 console.log(bump(c).count, c.count, c.label);
 console.log(val<number, { value: number; z: string }>({ value: 5, z: "q" }));

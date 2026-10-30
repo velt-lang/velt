@@ -44,8 +44,16 @@ function check(n: number): number {
   console.log([e.toString()]);
   console.log(new Plain("p").name, String(new Plain("p")));
   console.log(new TypeError("bad") instanceof Error, new TypeError("bad").name);
-  const all: Error[] = [new TypeError("a"), new RangeError("b"), new SyntaxError("c"),
-    new ReferenceError("d"), new EvalError("e"), new URIError("f"), new Error("g"), new Error()];
+  const all: Error[] = [
+    new TypeError("a"),
+    new RangeError("b"),
+    new SyntaxError("c"),
+    new ReferenceError("d"),
+    new EvalError("e"),
+    new URIError("f"),
+    new Error("g"),
+    new Error(),
+  ];
   for (const x of all) {
     console.log(String(x), x.name, x instanceof Error);
   }

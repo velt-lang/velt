@@ -5,6 +5,7 @@ class P {
     return 7;
   }
 }
+
 function main(): void {
   const a: any = new P();
   console.log(a.only);

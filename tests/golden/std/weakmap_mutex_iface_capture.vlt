@@ -1,17 +1,52 @@
 // `with` captures an interface value that holds main's WeakMap and keys it on the locked value.
-class K { n: number; constructor(n: number) { this.n = n; } }
-class Box { ks: K[]; constructor() { this.ks = []; } }
-class V { n: number; constructor(n: number) { this.n = n; } }
-interface Put { put(k: K): void; }
-class P implements Put {
-  wm: WeakMap<K, V>; keep: V;
-  constructor(wm: WeakMap<K, V>, keep: V) { this.wm = wm; this.keep = keep; }
-  put(k: K): void { this.wm.set(k, this.keep); }
+class K {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
 }
+
+class Box {
+  ks: K[];
+  constructor() {
+    this.ks = [];
+  }
+}
+
+class V {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+interface Put {
+  put(k: K): void;
+}
+
+class P implements Put {
+  wm: WeakMap<K, V>;
+  keep: V;
+  constructor(wm: WeakMap<K, V>, keep: V) {
+    this.wm = wm;
+    this.keep = keep;
+  }
+  put(k: K): void {
+    this.wm.set(k, this.keep);
+  }
+}
+
 async function swap(m: shared<Mutex<Box>>, i: number): Promise<number> {
-  m.with((v) => { const fresh: K[] = []; for (let j = 0; j < 64; j++) fresh.push(new K(j)); v.ks = fresh; });
+  m.with((v) => {
+    const fresh: K[] = [];
+    for (let j = 0; j < 64; j++) {
+      fresh.push(new K(j));
+    }
+    v.ks = fresh;
+  });
   return i;
 }
+
 async function main() {
   const m = shared(new Mutex<Box>(new Box()));
   const keep = new V(7);
@@ -20,15 +55,28 @@ async function main() {
   for (let round = 0; round < 300; round++) {
     m.with((v) => {
       const fresh: K[] = [];
-      for (let j = 0; j < 64; j++) fresh.push(new K(j));
+      for (let j = 0; j < 64; j++) {
+        fresh.push(new K(j));
+      }
       v.ks = fresh;
-      for (const k of v.ks) p.put(k);
+      for (const k of v.ks) {
+        p.put(k);
+      }
     });
     const ps: Promise<number>[] = [];
-    for (let t = 1; t < 5; t++) ps.push(spawn(swap(m.clone(), t)));
+    for (let t = 1; t < 5; t++) {
+      ps.push(spawn(swap(m.clone(), t)));
+    }
     const a: V[] = [];
-    for (let j = 0; j < 200000; j++) { a.push(keep); if (a.length > 8) { a.length = 0; } }
-    for (const x of await Promise.all(ps)) { total += x; }
+    for (let j = 0; j < 200000; j++) {
+      a.push(keep);
+      if (a.length > 8) {
+        a.length = 0;
+      }
+    }
+    for (const x of await Promise.all(ps)) {
+      total += x;
+    }
   }
   console.log(total, keep.n);
 }

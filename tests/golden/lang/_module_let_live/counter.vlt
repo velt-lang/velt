@@ -2,7 +2,9 @@ function trace(s: string): number {
   console.log("init", s);
   return 0;
 }
+
 export let value = trace("counter");
+
 export function inc() {
   value++;
 }

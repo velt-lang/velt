@@ -3,11 +3,13 @@
 // object as in JavaScript, and the new one keeps its own value.
 type Inner = { v: number };
 type Outer = { inner: Inner };
+
 function unused(o: Outer): Inner {
   const k = o.inner;
   o.inner.v = 1;
   return k;
 }
+
 function main() {
   const o: Outer = { inner: { v: 0 } };
   const g = (): number => {

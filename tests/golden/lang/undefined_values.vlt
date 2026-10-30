@@ -147,7 +147,7 @@ function main(): void {
   strict(undefined);
   strict(2);
   console.log(patch(), patch(undefined), patch(true));
-  const same = u as number | undefined;
+  const same = u as (number | undefined);
   console.log(same);
   // Destructuring defaults apply where the value is `undefined` (an element of the array or
   // tuple, an `undefined` or absent field), not to a `null`.

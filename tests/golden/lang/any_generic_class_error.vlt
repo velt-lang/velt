@@ -6,6 +6,7 @@ class Bx<T> {
     this.v = v;
   }
 }
+
 function main(): void {
   const ab: any = new Bx<string>("s");
   console.log("before");

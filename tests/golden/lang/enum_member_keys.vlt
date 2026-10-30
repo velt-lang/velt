@@ -17,7 +17,7 @@ interface Target {
 type Slots = { [Slot.First]: string; [Slot.Third]: number };
 
 class Ref {
-  public readonly [ReactiveFlags.IS_REF] = true;
+  readonly [ReactiveFlags.IS_REF] = true;
   value = 1;
 }
 

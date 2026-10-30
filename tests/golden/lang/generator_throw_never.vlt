@@ -1,7 +1,10 @@
 // check: no leaks
 // `it.throw(e)` with an `e` that cannot exist (the `catch` of a `try` that throws nothing) adds
 // nothing to what the caller throws: `drive()` is still a `Promise<number>`.
-function* g(): Generator<number, void, unknown> { yield 1; }
+function* g(): Generator<number, void, unknown> {
+  yield 1;
+}
+
 async function drive(): Promise<number> {
   const it = g();
   let r = it.next();
@@ -15,6 +18,7 @@ async function drive(): Promise<number> {
   }
   return 7;
 }
+
 async function main(): Promise<void> {
   const x: Promise<number> = drive();
   console.log(await x);

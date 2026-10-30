@@ -1,12 +1,39 @@
 // Join handles of tasks returning interface values that may hold a WeakRef, awaited together.
-class V { n: number; constructor(n: number) { this.n = n; } }
-interface Peek { peek(): number; }
-class H implements Peek { r: WeakRef<V>; v: V; constructor(v: V) { this.v = v; this.r = new WeakRef(v); } peek(): number { return 1; } }
-async function make(i: number): Promise<Peek> { return new H(new V(i)); }
+class V {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+interface Peek {
+  peek(): number;
+}
+
+class H implements Peek {
+  r: WeakRef<V>;
+  v: V;
+  constructor(v: V) {
+    this.v = v;
+    this.r = new WeakRef(v);
+  }
+  peek(): number {
+    return 1;
+  }
+}
+
+async function make(i: number): Promise<Peek> {
+  return new H(new V(i));
+}
+
 async function main() {
   const ps: Promise<Peek>[] = [];
-  for (let i = 0; i < 4; i++) ps.push(spawn(make(i)));
+  for (let i = 0; i < 4; i++) {
+    ps.push(spawn(make(i)));
+  }
   let s = 0;
-  for (const p of await Promise.all(ps)) s += p.peek();
+  for (const p of await Promise.all(ps)) {
+    s += p.peek();
+  }
   console.log(s);
 }

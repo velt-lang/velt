@@ -11,11 +11,13 @@ class Base implements Ctx<{ n: number }> {
     return "base";
   }
 }
+
 class Sub extends Base {
   override name(): string {
     return "sub";
   }
 }
+
 class Gen<T> implements Ctx<T> {
   props: T;
   constructor(p: T) {
@@ -25,6 +27,7 @@ class Gen<T> implements Ctx<T> {
     return "gen";
   }
 }
+
 class GenSub extends Gen<string> {
   override name(): string {
     return "gensub";

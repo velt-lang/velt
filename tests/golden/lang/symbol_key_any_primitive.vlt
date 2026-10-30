@@ -3,11 +3,22 @@
 // is `undefined`, as in Node, and so is one from an object that doesn't have it (#923).
 // Expected output from node.
 const VNODE: unique symbol = Symbol("sigx:vnode");
+
 type VNode = { type: string };
+
 function isVNode(x: unknown): boolean {
   return (x as any)?.[VNODE] === true;
 }
+
 function main() {
   const v = { type: "div", [VNODE]: true } as VNode;
-  console.log(isVNode("s"), isVNode(1), isVNode(true), isVNode([1]), isVNode(null), isVNode(v), isVNode({ type: "p" }));
+  console.log(
+    isVNode("s"),
+    isVNode(1),
+    isVNode(true),
+    isVNode([1]),
+    isVNode(null),
+    isVNode(v),
+    isVNode({ type: "p" }),
+  );
 }

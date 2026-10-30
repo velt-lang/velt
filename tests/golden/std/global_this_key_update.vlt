@@ -1,5 +1,6 @@
 // `++` and `--` through a variable key of `globalThis`, as statements, also with `!`.
 type Host = { __UA__?: number; __UB__?: number };
+
 function inc(k: keyof Host): void {
   const h = globalThis as Host;
   h[k] ??= 0;
@@ -7,6 +8,7 @@ function inc(k: keyof Host): void {
   h[k]!++;
   h[k]!--;
 }
+
 inc("__UA__");
 inc("__UB__");
 inc("__UB__");

@@ -5,19 +5,27 @@ interface Box<T> {
   value: T;
   show(): string;
 }
+
 function f<A, B>(o: unknown, n: number): string {
   const b = o as Box<A>;
-  if (n <= 0) return b.show();
+  if (n <= 0) {
+    return b.show();
+  }
   return b.show() + f<Box<B>, number>(o, n - 1);
 }
+
 console.log(f<number, number>({ value: 1, show: () => "x" } as unknown, 2));
 
 function g<A, B>(o: unknown, n: number): string {
   const b = o as Box<A>;
-  if (n <= 0) return b.show();
+  if (n <= 0) {
+    return b.show();
+  }
   return b.show() + h<Box<B>>(o, n - 1);
 }
+
 function h<U>(o: unknown, n: number): string {
   return "g" + g<U, string>(o, n);
 }
+
 console.log(g<number, number>({ value: 1, show: () => "y" } as unknown, 2));

@@ -7,20 +7,31 @@ interface I {
   o: { v: number };
   m(): number;
 }
+
 class Pair implements I {
   sets = 0;
   _o: { v: number } = { v: 1 };
-  m(): number { return 0; }
-  get o(): { v: number } { return this._o; }
-  set o(x: { v: number }) { this.sets++; this._o = { v: x.v * 10 }; }
+  m(): number {
+    return 0;
+  }
+  get o(): { v: number } {
+    return this._o;
+  }
+  set o(x: { v: number }) {
+    this.sets++;
+    this._o = { v: x.v * 10 };
+  }
 }
+
 function bump(x: I): void {
   x.o.v += 1;
 }
+
 // Through an intersection too: the error names the interface part declaring the field.
 class KPair extends Pair {
   k = 1;
 }
+
 function bumpX(x: { k: number } & I): void {
   x.o.v += 2;
 }
@@ -29,18 +40,28 @@ interface R {
   readonly t: [number, string];
   m(): number;
 }
+
 class G implements R {
   _t: [number, string] = [1, "a"];
-  m(): number { return 0; }
-  get t(): [number, string] { return this._t; }
+  m(): number {
+    return 0;
+  }
+  get t(): [number, string] {
+    return this._t;
+  }
 }
+
 class P implements R {
   t: [number, string] = [3, "c"];
-  m(): number { return 0; }
+  m(): number {
+    return 0;
+  }
 }
+
 function rd(x: R): void {
   console.log(x.t[0]);
 }
+
 function wr(x: R): void {
   x.t[0]++;
 }

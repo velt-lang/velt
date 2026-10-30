@@ -2,10 +2,12 @@
 // key as `Symbol(d)` (#1629).
 
 const SIZE = Symbol("size");
+
 function main() {
   const r: Record<string | symbol, number> = {};
   Object.defineProperty(r, SIZE, { get: () => 1 });
   console.log(r[SIZE]);
   r[SIZE] = 2;
 }
+
 main();

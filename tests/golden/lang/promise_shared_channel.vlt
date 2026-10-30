@@ -1,16 +1,19 @@
 // A shared promise sent over a channel to a task started later (#212): the receiving task
 // awaits a copy of the result made on the sending task's side.
 import { channel, Channel } from "velt/sync";
+
 class Obj {
   n: number;
   constructor(n: number) {
     this.n = n;
   }
 }
+
 async function make(i: number): Promise<Obj> {
   await sleep(5);
   return new Obj(i);
 }
+
 async function step(i: number, ch: Channel<Promise<Obj>>): Promise<number> {
   if (i % 2 == 0) {
     const p = make(i);
@@ -25,6 +28,7 @@ async function step(i: number, ch: Channel<Promise<Obj>>): Promise<number> {
   const o = await r;
   return o.n;
 }
+
 async function main() {
   const ch = channel<Promise<Obj>>();
   for (let i = 0; i < 6; i++) {

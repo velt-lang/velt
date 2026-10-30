@@ -2,7 +2,9 @@
 // `p.catch(handler)` where the handler returns nothing gives a `Promise<T | undefined>`
 // (TypeScript's `T | void`): `p`'s value, or `undefined` once the handler ran.
 async function load(fail: boolean): Promise<number> {
-  if (fail) throw new Error("boom");
+  if (fail) {
+    throw new Error("boom");
+  }
   return 5;
 }
 
@@ -25,4 +27,3 @@ async function main(): Promise<void> {
   const v = await load(false).catch(async () => {});
   console.log(v === undefined ? "none" : v + 1);
 }
-

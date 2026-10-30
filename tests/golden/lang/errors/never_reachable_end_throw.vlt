@@ -5,6 +5,7 @@ function f(x: number): never {
     throw new Error("p");
   }
 }
+
 try {
   f(-1);
   console.log("f returned");

@@ -6,7 +6,9 @@ interface VNode {
 }
 
 function text(raw: string | number | VNode | undefined): string {
-  if (typeof raw === "string") return raw;
+  if (typeof raw === "string") {
+    return raw;
+  }
   return String(raw);
 }
 

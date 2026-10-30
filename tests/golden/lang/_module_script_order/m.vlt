@@ -16,7 +16,12 @@ const local = [1, 2];
 console.log("local", local.length);
 export let c = local.length;
 console.log("c", c, local[0]);
-const obj = { n: 1, f(k: number): number { return k + 1; } };
+const obj = {
+  n: 1,
+  f(k: number): number {
+    return k + 1;
+  },
+};
 export const mid = 5;
 obj.n = obj.f(mid);
 console.log("obj", obj.n);

@@ -5,7 +5,9 @@ function walk(root: number): number {
   const limit = root;
   function* down(n: number): Generator<number> {
     if (n < limit) {
-      for (const x of down(n + 1)) yield x;
+      for (const x of down(n + 1)) {
+        yield x;
+      }
     }
     yield n;
   }

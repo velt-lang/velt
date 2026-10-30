@@ -6,6 +6,7 @@ namespace N {
   type A = number;
   export type X = A;
 }
+
 namespace N {
   type A = string;
   export type Y = A;
@@ -15,6 +16,7 @@ namespace K {
   type A = number;
   export type X = A;
 }
+
 namespace K {
   export type A = string;
   export type Y = A;
@@ -24,12 +26,15 @@ namespace I {
   namespace J {
     export type T = number;
   }
+
   export type X = J.T;
 }
+
 namespace I {
   namespace J {
     export type T = string;
   }
+
   export type Y = J.T;
 }
 
@@ -37,12 +42,15 @@ namespace F {
   interface A {
     a: string;
   }
+
   export type X = A;
 }
+
 namespace F {
   interface A {
     b: string;
   }
+
   export type Y = A;
 }
 

@@ -2,15 +2,93 @@
 // concatenates after `ToPrimitive`, the other arithmetic and bitwise operators convert with
 // `ToNumber`, relational operators compare strings or numbers, `==` converts, `===` does not;
 // `++`, `--` and compound assignments write the result back.
-const vals: any[] = [1, 2.5, "3", "abc", "", true, false, null, undefined, [], [5], [1, 2], {}, NaN, -0];
-const names = ["1", "2.5", "'3'", "'abc'", "''", "true", "false", "null", "undefined", "[]", "[5]", "[1,2]", "{}", "NaN", "-0"];
+const vals: any[] = [
+  1,
+  2.5,
+  "3",
+  "abc",
+  "",
+  true,
+  false,
+  null,
+  undefined,
+  [],
+  [5],
+  [1, 2],
+  {},
+  NaN,
+  -0,
+];
+const names = [
+  "1",
+  "2.5",
+  "'3'",
+  "'abc'",
+  "''",
+  "true",
+  "false",
+  "null",
+  "undefined",
+  "[]",
+  "[5]",
+  "[1,2]",
+  "{}",
+  "NaN",
+  "-0",
+];
 for (let i = 0; i < vals.length; i++) {
   const a: any = vals[i];
-  console.log(names[i], "+1:", a + 1, "1+:", 1 + a, "-1:", a - 1, "*2:", a * 2, "/2:", a / 2, "%2:", a % 2, "**2:", a ** 2);
-  console.log(names[i], "neg:", -a, "pos:", +a, "not:", ~a, "|0:", a | 0, "<<1:", a << 1, ">>>0:", a >>> 0);
+  console.log(
+    names[i],
+    "+1:",
+    a + 1,
+    "1+:",
+    1 + a,
+    "-1:",
+    a - 1,
+    "*2:",
+    a * 2,
+    "/2:",
+    a / 2,
+    "%2:",
+    a % 2,
+    "**2:",
+    a ** 2,
+  );
+  console.log(
+    names[i],
+    "neg:",
+    -a,
+    "pos:",
+    +a,
+    "not:",
+    ~a,
+    "|0:",
+    a | 0,
+    "<<1:",
+    a << 1,
+    ">>>0:",
+    a >>> 0,
+  );
   for (let j = 0; j < vals.length; j++) {
     const b: any = vals[j];
-    console.log("  ", names[i], names[j], "+", a + b, "-", a - b, "<", a < b, ">=", a >= b, "==", a == b, "===", a === b);
+    console.log(
+      "  ",
+      names[i],
+      names[j],
+      "+",
+      a + b,
+      "-",
+      a - b,
+      "<",
+      a < b,
+      ">=",
+      a >= b,
+      "==",
+      a == b,
+      "===",
+      a === b,
+    );
   }
 }
 let x: any = 5;
@@ -56,8 +134,8 @@ const counts: number[] = [1];
 counts[0] += two;
 console.log(counts);
 // A `+` feeding another operator: numbers stay numbers, a concatenation converts after.
-const one: any = 1,
-  sx: any = "2";
+const one: any = 1;
+const sx: any = "2";
 let acc: any = 0;
 for (let i = 0; i < 3; i++) {
   acc = acc + one * 2 - 1;

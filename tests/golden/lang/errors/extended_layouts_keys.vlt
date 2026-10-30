@@ -1,9 +1,11 @@
 // Keys, `in` and spreads of a base whose objects an extension writes a field on (#1383): Node
 // would show the written field, which the base type does not list, so each is an error.
 type VNode = { type: string; children: VNode[] };
+
 interface InternalVNode extends VNode {
   _ns?: boolean;
 }
+
 function mount(v: VNode): void {
   (v as InternalVNode)._ns = true;
   console.log(Object.keys(v).join(","));
@@ -14,4 +16,5 @@ function mount(v: VNode): void {
     console.log(key);
   }
 }
+
 mount({ type: "a", children: [] });

@@ -18,8 +18,16 @@ function fill<T>(fallback: T, x: T | undefined): T {
 }
 
 function main() {
-  console.log(pick<string | null>("d", null), pick<string | null>("d"), pick<string | null>("d", "v"));
+  console.log(
+    pick<string | null>("d", null),
+    pick<string | null>("d"),
+    pick<string | null>("d", "v"),
+  );
   console.log(pick<number>(0), pick<number>(0, 7), pick<number | null>(1, null));
   console.log(pick<Box | null>(new Box("d"), null), pick<Box | null>(new Box("d"), new Box("v")));
-  console.log(fill<string | null>("d", null), fill<string | null>("d", undefined), fill<string | null>("d", `v${1}`));
+  console.log(
+    fill<string | null>("d", null),
+    fill<string | null>("d", undefined),
+    fill<string | null>("d", `v${1}`),
+  );
 }

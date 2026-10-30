@@ -7,5 +7,9 @@ async function Posts(): Promise<JSX.Element> {
 }
 
 function main() {
-  const page = <div><Posts /></div>;
+  const page = (
+    <div>
+      <Posts />
+    </div>
+  );
 }

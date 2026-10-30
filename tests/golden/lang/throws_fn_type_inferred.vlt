@@ -111,6 +111,7 @@ console.log(parseWith(json, '["a"]'), parseWith(json, "["));
 function apply<T>(f: () => T): T {
   return f();
 }
+
 try {
   apply((): number => JSON.parse("{"));
 } catch (e) {
@@ -136,9 +137,11 @@ console.log(safe(1, 1));
 // known to throw.
 type Gen = () => number;
 type Task = () => void;
+
 function callGen(g: Gen): number {
   return g();
 }
+
 const gens: Gen[] = [
   () => {
     throw new RangeError("from gen");
@@ -162,9 +165,11 @@ const quiet = () => {
 };
 let g: () => void = quiet;
 g();
+
 function loud(): void {
   throw new RangeError("loud");
 }
+
 const later: () => void = loud;
 try {
   later();

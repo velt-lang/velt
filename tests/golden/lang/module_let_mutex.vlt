@@ -7,8 +7,10 @@ class Box {
   n = 1;
   name = "box";
 }
+
 let boxes: Box[] = [];
 let swaps = 0;
+
 async function holder(m: shared<Mutex<number>>, rounds: number): Promise<number> {
   for (let i = 0; i < rounds; i++) {
     m.with((v) => {
@@ -22,6 +24,7 @@ async function holder(m: shared<Mutex<number>>, rounds: number): Promise<number>
   }
   return 0;
 }
+
 async function reader(m: shared<Mutex<number>>, rounds: number): Promise<number> {
   let t = 0;
   for (let i = 0; i < rounds; i++) {
@@ -32,6 +35,7 @@ async function reader(m: shared<Mutex<number>>, rounds: number): Promise<number>
   }
   return t;
 }
+
 async function replacer(rounds: number): Promise<number> {
   for (let i = 0; i < rounds; i++) {
     if (i % 2 == 0) {
@@ -48,6 +52,7 @@ async function replacer(rounds: number): Promise<number> {
   }
   return 0;
 }
+
 async function main() {
   for (let k = 0; k < 16; k++) {
     boxes.push(new Box());

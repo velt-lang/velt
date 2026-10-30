@@ -18,9 +18,15 @@ interface Point {
 function count<T>(v: T, n: number): number {
   let hits = 0;
   for (let i = 0; i < n; i++) {
-    if (isNumber(v)) hits++;
-    if (tag(v) === "object") hits += 2;
-    if (v === undefined) hits += 4;
+    if (isNumber(v)) {
+      hits++;
+    }
+    if (tag(v) === "object") {
+      hits += 2;
+    }
+    if (v === undefined) {
+      hits += 4;
+    }
   }
   return hits;
 }

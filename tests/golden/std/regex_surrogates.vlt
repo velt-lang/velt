@@ -19,8 +19,16 @@ function unit(u: number): string {
 const NEEDS_ESCAPE = /["\\\x00-\x1f\uD800-\uDFFF]/;
 
 function serializer(): void {
-  console.log(NEEDS_ESCAPE.test("plain"), NEEDS_ESCAPE.test('a"b'), NEEDS_ESCAPE.test("x\u{1F600}"));
-  console.log(NEEDS_ESCAPE.test("tab\there"), NEEDS_ESCAPE.test("lone " + unit(0xdc00)), NEEDS_ESCAPE.test("é ü"));
+  console.log(
+    NEEDS_ESCAPE.test("plain"),
+    NEEDS_ESCAPE.test('a"b'),
+    NEEDS_ESCAPE.test("x\u{1F600}"),
+  );
+  console.log(
+    NEEDS_ESCAPE.test("tab\there"),
+    NEEDS_ESCAPE.test("lone " + unit(0xdc00)),
+    NEEDS_ESCAPE.test("é ü"),
+  );
 }
 
 function halves(): void {
@@ -62,7 +70,10 @@ function literals(): void {
   console.log(units("\u{1F600}".replace(/[😀]/g, "x")));
   // Without `u`, `\u{…}` is the letter `u` and braces, and `\x` without two hex digits is `x`.
   console.log(/\u{1F600}/.test("u{1F600}"), /\u{2}/.test("uu"), /\x-\xZ/.test("x-xZ"));
-  console.log(new RegExp(unit(0xd800)).test("a" + unit(0xd800)), new RegExp(unit(0xd800)).test("a\u{10000}"));
+  console.log(
+    new RegExp(unit(0xd800)).test("a" + unit(0xd800)),
+    new RegExp(unit(0xd800)).test("a\u{10000}"),
+  );
   console.log(new RegExp("[" + unit(0xdc00) + "-" + unit(0xdfff) + "]$").test("\u{1F600}"));
 }
 
@@ -99,7 +110,9 @@ function boundariesAndRanges(): void {
   let m = b.exec(e);
   while (m != null) {
     console.log("at", m.index, units(m[0]));
-    if (m[0].length == 0) b.lastIndex++;
+    if (m[0].length == 0) {
+      b.lastIndex++;
+    }
     m = b.exec(e);
   }
   console.log(lone.split(/\B/).map(units).join(" | "));
@@ -110,7 +123,10 @@ function boundariesAndRanges(): void {
   console.log("literal", /[퟿-]/u.test(unit(0xd800)), /[퟿-]/.test("\u{1F600}"));
   console.log(units("\u{1F600}a".replace(/[^\^@-\uD7FF]/g, "x")));
   console.log(units(("\u{1F600}" + unit(0xdc00)).replace(/[^\u0000-\uD7FF]/gu, "x")));
-  console.log(units(/[^]|\uD800/.exec("\u{1F600}")?.[0] ?? "null"), /[^][\uD800-\uDFFF]/.test("\u{1F600}"));
+  console.log(
+    units(/[^]|\uD800/.exec("\u{1F600}")?.[0] ?? "null"),
+    /[^][\uD800-\uDFFF]/.test("\u{1F600}"),
+  );
   console.log(/[^]/u.test(unit(0xdc00)), /^[^]$|\uD800/u.test(unit(0xdc00)));
 }
 

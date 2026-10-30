@@ -1,18 +1,42 @@
 // A subclass whose field is a function value owning a WeakRef, passed to a spawned task as its
 // base class (which has no field that could hold one): the transfer goes by the object's own
 // class and panics.
-class V { n: number; constructor(n: number) { this.n = n; } }
-class Base { go(): number { return 0; } }
+class V {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+class Base {
+  go(): number {
+    return 0;
+  }
+}
+
 class D extends Base {
   f: () => number;
-  constructor(f: () => number) { super(); this.f = f; }
-  override go(): number { return this.f(); }
+  constructor(f: () => number) {
+    super();
+    this.f = f;
+  }
+  override go(): number {
+    return this.f();
+  }
 }
+
 function mk(keep: V): () => number {
   const r = new WeakRef(keep);
-  return () => { const x = r.deref(); return x === undefined ? -1 : x.n; };
+  return () => {
+    const x = r.deref();
+    return x === undefined ? -1 : x.n;
+  };
 }
-async function run(t: Base): Promise<number> { return t.go(); }
+
+async function run(t: Base): Promise<number> {
+  return t.go();
+}
+
 async function main() {
   const keep = new V(7);
   console.log("before");

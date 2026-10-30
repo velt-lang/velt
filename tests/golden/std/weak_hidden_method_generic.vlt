@@ -1,7 +1,23 @@
 // A generic class's method sends its type parameter on a channel.
 import { channel, Channel } from "velt/sync";
-class V { n: number; constructor(n: number) { this.n = n; } }
-class Sender<T> { ch: Channel<T>; constructor(ch: Channel<T>) { this.ch = ch; } async put(x: T): Promise<void> { await this.ch.send(x); } }
+
+class V {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+class Sender<T> {
+  ch: Channel<T>;
+  constructor(ch: Channel<T>) {
+    this.ch = ch;
+  }
+  async put(x: T): Promise<void> {
+    await this.ch.send(x);
+  }
+}
+
 async function main() {
   const keep = new V(7);
   const s = new Sender<WeakRef<V>>(channel<WeakRef<V>>(4));

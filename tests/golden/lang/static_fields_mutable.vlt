@@ -1,24 +1,60 @@
 // `static` fields that are not `readonly` (#1501): module state initialized where the class is
 // declared, assigned through the class (`=`, `+=`, `++`, from its static methods and its
 // constructor) and read through a subclass too.
-class M { static count = 0; static label: string = "m"; static bump(): void { M.count++; } }
+class M {
+  static count = 0;
+  static label: string = "m";
+  static bump(): void {
+    M.count++;
+  }
+}
+
 console.log(M.count);
 M.count = 5;
 M.bump();
 M.count += 2;
 M.label = M.label + "!";
 console.log(M.count, M.label);
-function f(): number { return ++M.count; }
+
+function f(): number {
+  return ++M.count;
+}
+
 console.log(f(), f());
-class Base { static readonly K: number = 1; static count: number = 0; static inc(): number { return ++Base.count; } }
-class Sub extends Base { }
+
+class Base {
+  static readonly K: number = 1;
+  static count: number = 0;
+  static inc(): number {
+    return ++Base.count;
+  }
+}
+
+class Sub extends Base {}
+
 console.log("Sub sees", Sub.K, Sub.count);
 Base.count = 3;
 console.log(Sub.K, Sub.count, Base.inc(), Sub.count);
-class Reg { static items: string[] = []; static add(s: string): void { Reg.items.push(s); } }
-Reg.add("a"); Reg.add("b");
+
+class Reg {
+  static items: string[] = [];
+  static add(s: string): void {
+    Reg.items.push(s);
+  }
+}
+
+Reg.add("a");
+Reg.add("b");
 Reg.items = [...Reg.items, "c"];
 console.log(Reg.items.join("|"), Reg.items.length);
-class Cnt { static n: number = 0; constructor() { Cnt.n++; } }
-new Cnt(); new Cnt();
+
+class Cnt {
+  static n: number = 0;
+  constructor() {
+    Cnt.n++;
+  }
+}
+
+new Cnt();
+new Cnt();
 console.log(Cnt.n);

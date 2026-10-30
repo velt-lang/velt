@@ -5,9 +5,11 @@
 class P {
   constructor(public n: number) {}
 }
+
 function eq<T>(a: T, b: T): boolean {
   return a === b;
 }
+
 const xs: any[] = [undefined, null, 1, "s", NaN, -0];
 console.log(xs.indexOf(1), xs.includes("s"), xs.includes(null), xs.indexOf(undefined));
 console.log(xs.indexOf(NaN), xs.indexOf(0), xs.lastIndexOf("s"), xs.includes(2));
@@ -28,7 +30,16 @@ s.add(undefined);
 s.add(null);
 s.add(true);
 s.add(true);
-console.log(s.size, s.has(1), s.has("a"), s.has(NaN), s.has(-0), s.has(null), s.has(undefined), s.has(false));
+console.log(
+  s.size,
+  s.has(1),
+  s.has("a"),
+  s.has(NaN),
+  s.has(-0),
+  s.has(null),
+  s.has(undefined),
+  s.has(false),
+);
 const m = new Map<any, number>();
 m.set("k", 1);
 m.set("k", 2);

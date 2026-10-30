@@ -3,8 +3,10 @@
 // `function`), instead of answering from `M`'s field type.
 type V = { type: string; at: number };
 type C = V | string;
+
 function a(c: C): string {
   return typeof (c as V).at;
 }
+
 console.log(a({ type: "t", at: 1 }));
 console.log(a("s"));

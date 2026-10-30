@@ -8,6 +8,7 @@ type Kinds = { kind: "a"; x: number } & { kind: "b" };
 class Point {
   x = 0;
 }
+
 type Located = Point & { label: string };
 type Listed = string[] & { label: string };
 type Overloads = ((x: string) => void) & ((x: number) => void);

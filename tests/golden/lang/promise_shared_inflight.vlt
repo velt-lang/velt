@@ -30,7 +30,9 @@ function acquire(key: string): InflightEntry {
         }
       },
       () => {
-        if (inflight.get(key) === entry) inflight.delete(key);
+        if (inflight.get(key) === entry) {
+          inflight.delete(key);
+        }
       },
     );
     e = entry;

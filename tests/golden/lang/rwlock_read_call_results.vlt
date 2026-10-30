@@ -15,17 +15,21 @@ class Item {
     return this;
   }
 }
+
 class Box2 {
   it: Item = new Item(7);
   pair: [i64[], i64] = [[1], 2];
 }
+
 class St {
   items: Item[] = [new Item(1), new Item(2)];
   m: Map<string, Item> = new Map<string, Item>();
 }
+
 function mk(): Item {
   return new Item(3);
 }
+
 function main() {
   const st = new St();
   st.m.set("a", st.items[1]);
@@ -56,8 +60,26 @@ function main() {
     out.at(0)!.nums.sort();
     out.at(0)!.kids.push(new Item(2));
     (out.length > 0 ? out[0] : out.at(0)!).nums.push(7);
-    out.find((x) => x.v == 1)!.kids.at(0)!.nums.push(8);
-    return [m.get("a")!.nums.length, xs[1].nums.length, xs[0].nums.length, it.nums.length, it.kids[0].nums.length, b.pair[0].length, b.it.nums.length, s.items[1].nums.length];
+    out
+      .find((x) => x.v == 1)!
+      .kids.at(0)!
+      .nums.push(8);
+    return [
+      m.get("a")!.nums.length,
+      xs[1].nums.length,
+      xs[0].nums.length,
+      it.nums.length,
+      it.kids[0].nums.length,
+      b.pair[0].length,
+      b.it.nums.length,
+      s.items[1].nums.length,
+    ];
   });
-  console.log(n.join(","), out[0].nums.join(","), out[0].kids.length, out[0].kids[0].v, out[0].kids[0].nums.join(","));
+  console.log(
+    n.join(","),
+    out[0].nums.join(","),
+    out[0].kids.length,
+    out[0].kids[0].v,
+    out[0].kids[0].nums.join(","),
+  );
 }

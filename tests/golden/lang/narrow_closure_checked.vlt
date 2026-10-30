@@ -13,7 +13,9 @@ function watch(): string[] {
     };
   };
   const run = (n: number): void => {
-    if (cleanupFn) cleanupFn();
+    if (cleanupFn) {
+      cleanupFn();
+    }
     onCleanup(n);
     log.push("run " + n);
   };
@@ -46,7 +48,7 @@ function lazyMap(keys: string[]): number {
 }
 
 function timer(): string {
-  let pending = undefined as string | undefined;
+  let pending = undefined as (string | undefined);
   const schedule = (s: string): void => {
     pending = s;
   };
@@ -55,7 +57,9 @@ function timer(): string {
   if (pending !== undefined) {
     out = pending.toUpperCase();
   }
-  if (pending) out += pending.length;
+  if (pending) {
+    out += pending.length;
+  }
   return out;
 }
 

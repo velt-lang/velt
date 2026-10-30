@@ -3,6 +3,7 @@
 // a promise that never rejects goes where one rejecting with `A` is expected.
 
 class A extends Error {}
+
 class B extends Error {}
 
 async function fa(ok: boolean): Promise<string> {

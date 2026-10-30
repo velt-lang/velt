@@ -48,7 +48,9 @@ function step(bs: Body[], dt: number) {
     const b = bs[i];
     let acc: Vec3 = { x: 0, y: 0, z: 0 };
     for (let j = 0; j < n; j++) {
-      if (j == i) continue;
+      if (j == i) {
+        continue;
+      }
       const d = bs[j].pos.sub(b.pos);
       const r2 = d.dot(d) + 0.01;
       acc = acc.add(d.scale(bs[j].mass / (r2 * Math.sqrt(r2))));

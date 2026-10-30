@@ -7,10 +7,13 @@ type Signal<T> = T & { $set: (v: T) => void };
 type StateName = "idle" | "pending" | "ready" | "errored";
 
 let sets = 0;
+
 function count(): void {
   sets++;
 }
+
 const seen: object[] = [];
+
 // `attach` makes the signal; the one it returns is kept, not a copy.
 function signal<T extends object>(t: T, attach: (t: T) => Signal<T>): Signal<T> {
   const s = attach(t);
@@ -20,12 +23,7 @@ function signal<T extends object>(t: T, attach: (t: T) => Signal<T>): Signal<T> 
 
 function cell<D>(d: D, fail: boolean): string {
   const state = signal(
-    {
-      st: "idle" as StateName,
-      data: null as D | null,
-      err: null as Error | null,
-      has: false,
-    },
+    { st: "idle" as StateName, data: null as D | null, err: null as Error | null, has: false },
     (t) => ({ ...t, $set: (v) => count() }),
   );
   const alias = state;

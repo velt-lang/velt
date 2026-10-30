@@ -2,9 +2,7 @@
 // parameters (#934 phase 2): an alias like `PropsAccessor<TProps>` in a generic signature, class
 // or interface stays deferred and is evaluated once the type arguments are known, at each
 // instantiation, as TypeScript evaluates it.
-type PropsAccessor<TProps> = {
-  readonly [K in keyof TProps]: TProps[K];
-};
+type PropsAccessor<TProps> = { readonly [K in keyof TProps]: TProps[K] };
 type IsString<T> = T extends string ? "yes" : "no";
 type Getters<T> = { [K in keyof T as `get${Capitalize<string & K>}`]: () => T[K] };
 type Boxed<T> = { [K in keyof T]: T[K][] };
@@ -54,6 +52,7 @@ class Store<T> {
 
 // A truthiness test on a deferred type is chosen per instance: here a string, there a number.
 type Pick1<T> = T extends string ? string : number;
+
 function truthy<T>(x: T, v: Pick1<T>): boolean {
   return v ? true : false;
 }

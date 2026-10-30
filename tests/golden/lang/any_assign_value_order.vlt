@@ -5,6 +5,7 @@
 class P {
   f: number = 0;
 }
+
 class Ctx {
   p: P = new P();
   getAny(): any {
@@ -12,28 +13,35 @@ class Ctx {
     return this.p;
   }
 }
+
 function side(): number {
   console.log("value");
   return 5;
 }
+
 function key(): string {
   console.log("key");
   return "f";
 }
+
 function index(): number {
   console.log("index");
   return 0;
 }
+
 class A {
   f: number = 0;
 }
+
 class H {
   a: any = new A();
 }
+
 function swap(h: any): number {
   h.a = new A();
   return 7;
 }
+
 function main(): void {
   const c = new Ctx();
   const r = (c.getAny().f = side());
@@ -56,9 +64,12 @@ function main(): void {
   console.log(r4, xs[0]);
   let k = "f";
   const o: any = new A();
-  const r5 = (o[k] = (() => {
-    k = "g";
-    return 9;
-  })());
+  const r5 =
+    (
+      o[k] = (() => {
+        k = "g";
+        return 9;
+      })()
+    );
   console.log(r5, o.f, k);
 }

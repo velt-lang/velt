@@ -13,15 +13,18 @@ function main() {
   let fired = 0;
   let inOrder = true;
   for (let i = 0; i < n; i++) {
-    setTimeout(() => {
-      if (fired != i) {
-        inOrder = false;
-      }
-      fired++;
-      if (fired == n) {
-        console.log("fired", fired, "in order", inOrder);
-      }
-    }, 1);
+    setTimeout(
+      () => {
+        if (fired != i) {
+          inOrder = false;
+        }
+        fired++;
+        if (fired == n) {
+          console.log("fired", fired, "in order", inOrder);
+        }
+      },
+      1,
+    );
   }
   setTimeout(() => console.log("only this"), 60);
 }

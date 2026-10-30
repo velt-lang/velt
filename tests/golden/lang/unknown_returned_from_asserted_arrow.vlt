@@ -1,35 +1,46 @@
 // An arrow asserted to a callable type returning an `unknown` it read (TypeScript compares the
 // result it infers, `unknown`, with the asserted one; sigx's `defineInjectable`, #924).
 const store = new Map<symbol, unknown>();
+
 interface Use<T> {
   (): T;
   _token: symbol;
 }
+
 function define<T>(factory: () => T): Use<T> {
   const token = Symbol("t");
-  const useFn = (() => {
-    const found = store.get(token);
-    if (found !== undefined) {
-      return found as T;
-    }
-    store.set(token, factory());
-    return store.get(token);
-  }) as Use<T>;
+  const useFn =
+    (() => {
+      const found = store.get(token);
+      if (found !== undefined) {
+        return found as T;
+      }
+      store.set(token, factory());
+      return store.get(token);
+    }) as Use<T>;
   useFn._token = token;
   return useFn;
 }
+
 const useN = define(() => ({ n: 1 }));
 const useS = define(() => "s");
 console.log(useN().n, useN() === useN(), useS(), useS().length, typeof useN._token);
 
 // The same with a plain function type.
 type Get<T> = () => T;
+
 const cache = new Map<string, unknown>();
 cache.set("a", 42);
 cache.set("b", "str");
+
 function make<T>(key: string): Get<T> {
   return (() => {
     return cache.get(key);
   }) as Get<T>;
 }
-console.log(make<number>("a")() + 1, make<string>("b")().toUpperCase(), make<string | undefined>("zz")());
+
+console.log(
+  make<number>("a")() + 1,
+  make<string>("b")().toUpperCase(),
+  make<string | undefined>("zz")(),
+);

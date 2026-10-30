@@ -99,7 +99,9 @@ function twice<Y>(y: Y): Shower {
 
 function main(): void {
   const bs: Box[] = [new A(), new B(7)];
-  for (const b of bs) useBox(b);
+  for (const b of bs) {
+    useBox(b);
+  }
   console.log(gen(bs[1], { x: 1 }), gen(bs[0], 2.5));
   const m: Mapper<string> = new M();
   console.log(m.pair("k", 3), m.pair("j", null));

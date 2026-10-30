@@ -8,6 +8,7 @@ type Base = { value: number };
 interface IBase {
   value: number;
 }
+
 type ITree = IBase & { kids: ITree[] };
 
 type A = { name: string; b: B | null };

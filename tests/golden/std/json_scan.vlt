@@ -24,7 +24,12 @@ function num(src: string) {
     console.log(src, "error:", s.what, "at", s.at);
     return;
   }
-  console.log(src, s.integer, numberF64(src, s.start, s.end, s.integer), numberI64(src, s.start, s.end, s.integer));
+  console.log(
+    src,
+    s.integer,
+    numberF64(src, s.start, s.end, s.integer),
+    numberI64(src, s.start, s.end, s.integer),
+  );
 }
 
 function main() {

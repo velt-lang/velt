@@ -9,12 +9,15 @@ class Item {
     this.v = v;
   }
 }
+
 class Box2 {
   it: Item = new Item(7);
 }
+
 class St {
   items: Item[] = [new Item(2)];
 }
+
 function main() {
   const rw = shared(new RwLock<St>(new St()));
   const bx = new Box2();

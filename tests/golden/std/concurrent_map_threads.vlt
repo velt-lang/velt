@@ -23,7 +23,9 @@ async function deleter(m: shared<ConcurrentMap>): Promise<u64> {
   // Keys `N + i`, set before the threads start, deleted while the writers split leaves.
   let removed: u64 = 0;
   for (let i: u64 = 0; i < N; i += 2) {
-    if (m.delete(mix(N + i))) removed++;
+    if (m.delete(mix(N + i))) {
+      removed++;
+    }
   }
   return removed;
 }
@@ -33,7 +35,9 @@ async function reader(m: shared<ConcurrentMap>): Promise<u64> {
   for (let r = 0; r < 3; r++) {
     for (let i: u64 = 0; i < N; i++) {
       const v = m.get(mix(i));
-      if (v != undefined && v != i) wrong++;
+      if (v != undefined && v != i) {
+        wrong++;
+      }
     }
   }
   return wrong;
@@ -59,9 +63,13 @@ async function main() {
   }
   let missing: u64 = 0;
   for (let i: u64 = 0; i < N; i++) {
-    if (s.get(mix(i)) != i) missing++;
+    if (s.get(mix(i)) != i) {
+      missing++;
+    }
     const kept = s.get(mix(N + i));
-    if (i % 2 == 0 ? kept != undefined : kept != N + i) missing++;
+    if (i % 2 == 0 ? kept != undefined : kept != N + i) {
+      missing++;
+    }
   }
   console.log("removed", removed, "wrong", wrong, "missing", missing);
 }

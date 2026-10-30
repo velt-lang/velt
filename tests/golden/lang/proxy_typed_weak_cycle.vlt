@@ -7,23 +7,28 @@ class Node2 {
   n: number = 1;
   other: Node2 | null = null;
 }
+
 function logged(target: any): any {
   return new Proxy(target, {});
 }
 
 const wm = new WeakMap<Node2, Node2>();
+
 function cyc2(m: WeakMap<Node2, Node2>): void {
   const k = logged(new Node2()) as Node2;
   const v = new Node2();
   v.other = k;
   m.set(k, v);
 }
+
 cyc2(wm);
 const ws = new WeakSet<Node2>();
+
 function plain(s: WeakSet<Node2>): void {
   const k = new Node2();
   s.add(k);
 }
+
 plain(ws);
 
 function both(m: WeakMap<Node2, Node2>, s: WeakSet<Node2>): WeakRef<Node2> {
@@ -39,6 +44,7 @@ function both(m: WeakMap<Node2, Node2>, s: WeakSet<Node2>): WeakRef<Node2> {
   s.add(pk);
   return new WeakRef<Node2>(k);
 }
+
 const r = both(wm, ws);
 console.log(typeof r);
 
@@ -50,11 +56,13 @@ function list(s: WeakSet<Node2>): void {
   s.add(b);
   s.add(a);
 }
+
 list(ws);
 
 class State {
   n: number = 0;
 }
+
 function cache(): void {
   const c = new WeakMap<State, State>();
   const raw = new State();
@@ -63,17 +71,20 @@ function cache(): void {
   p.n = 5;
   console.log(c.get(raw) === p, raw.n);
 }
+
 cache();
 
 // The cycle `raw -> entry -> proxy -> raw` is garbage once `cached` returns: Velt frees it
 // then (the `WeakRef` is empty), where Node frees it at a later collection.
 const cm = new WeakMap<State, State>();
+
 function cached(): WeakRef<State> {
   const raw = new State();
   const p = logged(raw) as State;
   cm.set(raw, p);
   return new WeakRef<State>(raw);
 }
+
 const w = cached();
 console.log(w.deref() == null);
 console.log("ok");

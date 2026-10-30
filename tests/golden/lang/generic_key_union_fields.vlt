@@ -1,7 +1,11 @@
 // A write through a key union into a field whose own type is a union: the value's member
 // becomes the field's (`"b"` of `f64 | "a" | "b"` into `"a" | "b"`).
 type Lit = { kind: "a" | "b"; n: number };
-function setF<T, K extends keyof T>(o: T, k: K, v: T[K]): void { o[k] = v; }
+
+function setF<T, K extends keyof T>(o: T, k: K, v: T[K]): void {
+  o[k] = v;
+}
+
 const l: Lit = { kind: "a", n: 1 };
 const lk: (keyof Lit)[] = ["kind", "n"];
 setF(l, lk[0], "b");

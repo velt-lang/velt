@@ -115,12 +115,15 @@ function growing() {
 
   xs = words(4);
   ys = xs;
-  const total = xs.reduce((acc, x, i) => {
-    if (i === 0) {
-      grow(ys);
-    }
-    return acc + x.length;
-  }, 0);
+  const total = xs.reduce(
+    (acc, x, i) => {
+      if (i === 0) {
+        grow(ys);
+      }
+      return acc + x.length;
+    },
+    0,
+  );
   console.log("reduce", xs.length, total);
 
   xs = words(4);
@@ -144,10 +147,13 @@ function shrinking() {
 
   xs = words(6);
   ys = xs;
-  const total = xs.reduce((acc, x, i) => {
-    ys.pop();
-    return acc + x.length;
-  }, 0);
+  const total = xs.reduce(
+    (acc, x, i) => {
+      ys.pop();
+      return acc + x.length;
+    },
+    0,
+  );
   console.log("reduce", xs.length, total);
 
   xs = words(6);
@@ -219,7 +225,6 @@ function collections() {
     seen.push(`${k}=${v.slice(0, 8)}`);
   });
   console.log("Map forEach", m.size, seen.length, seen.slice(0, 5).join(","));
-
 }
 
 // The same through a loop of the program's own: the argument is a share of the element.

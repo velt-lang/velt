@@ -13,7 +13,18 @@ type GN<T> = G<T> | null;
 type GA<T> = ReadonlyArray<T>;
 type M2<K, V> = ReadonlyMap<K, V>;
 type M3 = M2<string, number> | undefined;
-function f(a: A2, b: U1, c: U2, d: U3, e: G<number>, g: GG<string>, h: GN<number>, i: GA<string>, m: M3): void {
+
+function f(
+  a: A2,
+  b: U1,
+  c: U2,
+  d: U3,
+  e: G<number>,
+  g: GG<string>,
+  h: GN<number>,
+  i: GA<string>,
+  m: M3,
+): void {
   a.add("x");
   b?.add("x");
   c?.add("x");

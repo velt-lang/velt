@@ -20,12 +20,15 @@ console.log(n);
 
 // An error union reads in one order (by name), whatever order its classes were made in.
 class Zed extends Error {}
+
 class Alpha extends Error {}
+
 function pick(x: number): void throws Zed | Alpha {
   if (x > 0) {
     throw new Zed("z");
   }
   throw new Alpha("a");
 }
+
 const s: string = pick;
 console.log(s);

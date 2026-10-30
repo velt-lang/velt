@@ -7,6 +7,7 @@ interface R {
   (): number;
   v: number;
 }
+
 const fn = () => 5;
 const a = Object.assign(fn, { v: 1 });
 a.v = 10;
@@ -18,5 +19,6 @@ function watch(): R {
   const later = () => stop();
   return Object.assign(stop, { v: later() });
 }
+
 console.log(watch().v, JSON.stringify(watch()));
 const parsed: R = JSON.parse("{}");

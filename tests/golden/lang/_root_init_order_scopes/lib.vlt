@@ -2,6 +2,7 @@ const g = (): number => [5].map((K) => K)[0] + K;
 console.log("lib");
 const K = 2;
 export const v = g();
+
 export function w(): number {
   return [1].map((K) => K)[0] + K;
 }

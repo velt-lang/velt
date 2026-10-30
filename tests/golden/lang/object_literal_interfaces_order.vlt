@@ -34,7 +34,11 @@ function mk(): Src {
 }
 
 function mk2(): Src {
-  return { read: () => { throw new TypeError("worse"); } };
+  return {
+    read: () => {
+      throw new TypeError("worse");
+    },
+  };
 }
 
 function fine(): Src {

@@ -15,7 +15,7 @@ function main(): void {
   const s1: string | null | undefined = k;
   console.log(s1, typeof s1, s1 === null, s1 === undefined);
   const un: unknown = null;
-  console.log(un as number | null | undefined, un as string | null | undefined);
+  console.log(un as (number | null | undefined), un as (string | null | undefined));
   const rn: number | null = k;
   console.log(id<number | null | undefined>(rn as any));
 

@@ -7,18 +7,22 @@ async function main(): Promise<void> {
   const done = new Promise<void>((res) => {
     resolveDone = res;
   });
-  setTimeout(() => {
-    console.log("resolving");
-    resolveDone();
-  }, 1);
+  setTimeout(
+    () => {
+      console.log("resolving");
+      resolveDone();
+    },
+    1,
+  );
   await done;
   console.log("done");
   const later: (() => void)[] = [];
   const p = new Promise<void>((res) => {
     later.push(res);
   });
-  for (const f of later) f();
+  for (const f of later) {
+    f();
+  }
   await p;
   console.log("all");
 }
-

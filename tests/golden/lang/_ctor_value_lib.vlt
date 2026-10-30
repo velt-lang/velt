@@ -6,8 +6,11 @@ export class A {
     this.n = n;
   }
 }
+
 export type Ctor = new (n: number) => A;
+
 export const libCtors: Ctor[] = [A];
+
 export function isA(c: Ctor): boolean {
   return c === A;
 }

@@ -4,23 +4,31 @@
 // (#1438). Each line fails in Node on its own.
 console.log(new Box().v);
 const doubled = BASE * 2;
+
 class A {
   static readonly b: number = B.v;
 }
+
 class Sub extends Base {}
+
 for (let i = 0; i < 1; i++) {
   console.log(Mode.On);
 }
+
 class Box {
   v: number = 1;
 }
+
 const BASE = 4;
+
 class B {
   static readonly v: number = 1;
 }
+
 class Base {
   v: number = 1;
 }
+
 enum Mode {
   On = 1,
 }

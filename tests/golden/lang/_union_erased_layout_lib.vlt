@@ -1,6 +1,7 @@
 export interface LA {
   a: string;
 }
+
 export type LR = { readonly a: string };
 export type USD = number & { __brand: "USD" };
 export type Id = string & { __brand: "Id" };
@@ -13,12 +14,15 @@ export const ids: (Id | string)[] = ["a" as Id, "b"];
 export function lmk(n: number): number | LR {
   return n > 0 ? { a: `s${n}` } : n;
 }
+
 export function lmk2(n: number): LR | number {
   return n > 0 ? { a: `t${n}` } : n;
 }
+
 export function setL(v: number | LR) {
   lval = v;
 }
+
 export function usd(n: number): USD {
   return n as USD;
 }

@@ -3,7 +3,13 @@
 // nothings) are released on overwrite, delete, clear and when the map goes, as is a generic
 // `V` pushed into a `(V | null)[]` at a nullable `V` (#1228), and `get` gives another
 // reference without keeping one (#1076). Expected output: Node's.
-class Foo { n: number; constructor(n: number) { this.n = n; } }
+class Foo {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
 function maps(): void {
   const m = new Map<string, number[] | null>();
   m.set("a", [1]);
@@ -18,7 +24,10 @@ function maps(): void {
   m.clear();
   m.set("d", [6]);
   console.log(m);
-  const f = new Map<string, Foo | null>([["x", new Foo(1)], ["y", null]]);
+  const f = new Map<string, Foo | null>([
+    ["x", new Foo(1)],
+    ["y", null],
+  ]);
   const got = f.get("x");
   f.set("x", new Foo(2));
   f.set("y", new Foo(3));
@@ -38,6 +47,7 @@ function maps(): void {
   console.log(t);
   t.delete("a");
 }
+
 function records(): void {
   const r: Record<string, number[] | null> = { a: [1], b: null };
   r["a"] = [2];
@@ -55,17 +65,21 @@ function records(): void {
   j["a"] = [9];
   console.log(j, JSON.stringify(j));
 }
+
 function main1(): void {
   maps();
   records();
 }
+
 function add<V>(xs: (V | null)[], v: V): void {
   xs.push(v);
 }
+
 // `get` of a nullable class value, also from a `WeakMap` (#1076).
 class W {
   n = 1;
 }
+
 function gets(): void {
   const b = new W();
   const m = new Map<string, W | null>();
@@ -76,6 +90,7 @@ function gets(): void {
     console.log(m.get("x") === b, w.get(b) === b);
   }
 }
+
 function main(): void {
   main1();
   gets();

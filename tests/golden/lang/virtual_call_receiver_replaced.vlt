@@ -2,18 +2,45 @@
 // An overridden method called through the base class while an argument empties the array the
 // receiver is read from or replaces the field holding it: the receiver read before the argument
 // runs the method and is freed after it.
-class Base { val: string; constructor(v: string) { this.val = v; } m(s: string): string { return "base"; } }
-class Node1 extends Base {
-  override m(s: string): string { const was = this.val; this.val = s; return was + " -> " + this.val; }
+class Base {
+  val: string;
+  constructor(v: string) {
+    this.val = v;
+  }
+  m(s: string): string {
+    return "base";
+  }
 }
-class Box { inner: Base; constructor(n: Base) { this.inner = n; } }
+
+class Node1 extends Base {
+  override m(s: string): string {
+    const was = this.val;
+    this.val = s;
+    return was + " -> " + this.val;
+  }
+}
+
+class Box {
+  inner: Base;
+  constructor(n: Base) {
+    this.inner = n;
+  }
+}
+
 function run(): void {
   const arr: Base[] = [new Node1("a")];
-  const clear = (): string => { arr.pop(); return "cleared"; };
+  const clear = (): string => {
+    arr.pop();
+    return "cleared";
+  };
   console.log(arr[0].m(clear()));
   const box = new Box(new Node1("first"));
-  const repl = (): string => { box.inner = new Node1("second"); return "replaced"; };
+  const repl = (): string => {
+    box.inner = new Node1("second");
+    return "replaced";
+  };
   console.log(box.inner.m(repl()));
   console.log(box.inner.val, arr.length);
 }
+
 run();

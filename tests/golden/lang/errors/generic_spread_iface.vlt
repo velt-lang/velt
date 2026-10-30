@@ -5,8 +5,15 @@ interface I {
   a: number;
   f(): number;
 }
+
 function copy<T extends object>(x: T): T {
   return { ...x };
 }
-const i: I = { a: 1, f() { return 1; } };
+
+const i: I = {
+  a: 1,
+  f() {
+    return 1;
+  },
+};
 console.log(copy(i).a);

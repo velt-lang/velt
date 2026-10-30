@@ -8,9 +8,7 @@ interface Slots {
 }
 
 function describe(s: Scores): string {
-  return Object.keys(s)
-    .map((k) => `${k}=${s[k]}`)
-    .join(",");
+  return Object.keys(s).map((k) => `${k}=${s[k]}`).join(",");
 }
 
 function main() {

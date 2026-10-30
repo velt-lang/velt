@@ -19,7 +19,9 @@ function fannkuch(n: number): string {
       count[r - 1] = r;
       r--;
     }
-    for (let i = 0; i < n; i++) perm[i] = perm1[i];
+    for (let i = 0; i < n; i++) {
+      perm[i] = perm1[i];
+    }
     let flips = 0;
     let k = perm[0];
     while (k !== 0) {
@@ -35,15 +37,23 @@ function fannkuch(n: number): string {
       flips++;
       k = perm[0];
     }
-    if (flips > maxFlips) maxFlips = flips;
+    if (flips > maxFlips) {
+      maxFlips = flips;
+    }
     checksum += permIndex % 2 === 0 ? flips : -flips;
     while (true) {
-      if (r === n) return `${checksum}\nPfannkuchen(${n}) = ${maxFlips}`;
+      if (r === n) {
+        return `${checksum}\nPfannkuchen(${n}) = ${maxFlips}`;
+      }
       const first = perm1[0];
-      for (let i = 0; i < r; i++) perm1[i] = perm1[i + 1];
+      for (let i = 0; i < r; i++) {
+        perm1[i] = perm1[i + 1];
+      }
       perm1[r] = first;
       count[r] = count[r] - 1;
-      if (count[r] > 0) break;
+      if (count[r] > 0) {
+        break;
+      }
       r++;
     }
     permIndex++;

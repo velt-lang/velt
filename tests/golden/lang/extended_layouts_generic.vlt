@@ -5,16 +5,25 @@ interface VNode {
   type: string;
   dom: string | null;
 }
+
 interface IV extends VNode {
   _ns?: boolean;
   _key?: number;
 }
+
 function make<A, B>(type: A, dom: B): { type: A; dom: B } {
   return { type, dom };
 }
-function makeIV<A>(type: A, ns: boolean): { type: A; dom: string | null; _ns?: boolean; _key?: number } {
+
+function makeIV<A>(type: A, ns: boolean): {
+  type: A;
+  dom: string | null;
+  _ns?: boolean;
+  _key?: number;
+} {
   return { type, dom: null, _ns: ns };
 }
+
 const v: VNode = make("g", null as string | null);
 (v as IV)._ns = true;
 (v as IV)._key = 3;

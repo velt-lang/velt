@@ -3,6 +3,7 @@ namespace N {
   type Hidden = number;
   export type Shown = Hidden;
 }
+
 const shown: N.Shown = 1;
 const hidden: N.Hidden = 2;
 const missing: N.Missing = 3;

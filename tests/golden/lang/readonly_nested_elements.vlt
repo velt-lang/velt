@@ -4,6 +4,7 @@ function f(j: readonly number[][]): void {
   j[0].push(1);
   j[0][0] = 5;
 }
+
 const a = [[0]];
 f(a);
 console.log(a);

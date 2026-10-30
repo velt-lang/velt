@@ -58,4 +58,5 @@ function late(): void {
   });
   write(o as Box, 2);
 }
+
 late();

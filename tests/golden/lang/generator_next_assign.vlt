@@ -1,8 +1,25 @@
 // check: no leaks
 // A generator with a `TNext` type is still a `Generator<T>`, an `Iterable<T>` and spreadable.
-function* a(): Generator<number, void, unknown> { yield 1; }
-function take(g: Generator<number>): number { let s = 0; for (const x of g) s += x; return s; }
-function takeIt(g: Iterable<number>): number { let s = 0; for (const x of g) s += x; return s; }
+function* a(): Generator<number, void, unknown> {
+  yield 1;
+}
+
+function take(g: Generator<number>): number {
+  let s = 0;
+  for (const x of g) {
+    s += x;
+  }
+  return s;
+}
+
+function takeIt(g: Iterable<number>): number {
+  let s = 0;
+  for (const x of g) {
+    s += x;
+  }
+  return s;
+}
+
 function main(): void {
   console.log(take(a()), takeIt(a()), [...a()].length);
   const g: Generator<number> = a();

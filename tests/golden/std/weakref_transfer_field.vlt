@@ -1,12 +1,31 @@
 // As weakref_transfer_spawn, with the function value in a field of an object passed to a
 // task.
-class V { n: number; constructor(n: number) { this.n = n; } }
+class V {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
 function mk(keep: V): () => number {
   const r = new WeakRef(keep);
-  return () => { const x = r.deref(); return x === undefined ? -1 : x.n; };
+  return () => {
+    const x = r.deref();
+    return x === undefined ? -1 : x.n;
+  };
 }
-class Job { f: () => number; constructor(f: () => number) { this.f = f; } }
-async function run(j: Job): Promise<number> { return j.f(); }
+
+class Job {
+  f: () => number;
+  constructor(f: () => number) {
+    this.f = f;
+  }
+}
+
+async function run(j: Job): Promise<number> {
+  return j.f();
+}
+
 async function main() {
   const keep = new V(7);
   console.log("before");

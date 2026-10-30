@@ -25,10 +25,14 @@ async function rounds(n: number): Promise<number> {
     const p = f(i);
     s.add(p);
     const k = keep(keep(p));
-    if (s.has(k)) sum++;
+    if (s.has(k)) {
+      sum++;
+    }
     s.delete(p);
     sum += await p;
-    if (i % 1000 == 999) await new Promise<void>((r) => setTimeout(() => r(), 0));
+    if (i % 1000 == 999) {
+      await new Promise<void>((r) => setTimeout(() => r(), 0));
+    }
     const b = bad(i);
     const se = new Set<Promise<unknown, Error>>();
     se.add(keepE(b));

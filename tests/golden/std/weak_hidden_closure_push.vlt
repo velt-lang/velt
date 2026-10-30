@@ -1,9 +1,27 @@
 // A closure capturing a WeakRef pushed into an array in the locked value.
-class V { n: number; constructor(n: number) { this.n = n; } }
-class Box { fs: (() => number)[]; constructor() { this.fs = []; } }
+class V {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+class Box {
+  fs: (() => number)[];
+  constructor() {
+    this.fs = [];
+  }
+}
+
 async function main() {
   const keep = new V(7);
   const m = shared(new Mutex<Box>(new Box()));
-  m.with((v) => { const r = new WeakRef(keep); v.fs.push(() => { const x = r.deref(); return x === null ? -1 : x.n; }); });
+  m.with((v) => {
+    const r = new WeakRef(keep);
+    v.fs.push(() => {
+      const x = r.deref();
+      return x === null ? -1 : x.n;
+    });
+  });
   console.log(keep.n);
 }

@@ -8,31 +8,38 @@ class Obj {
     this.n = n;
   }
 }
+
 async function count(n: number): Promise<number> {
   await sleep(5);
   return n;
 }
+
 async function make(n: number): Promise<Obj> {
   await sleep(5);
   return new Obj(n);
 }
+
 // The other input of `any` and `race`: it settles well after the shared promise.
 async function later(n: number): Promise<number> {
   await sleep(100);
   return n;
 }
+
 async function makeLater(n: number): Promise<Obj> {
   await sleep(100);
   return new Obj(n);
 }
+
 async function sum(a: Promise<number[]>): Promise<number> {
   const xs = await a;
   return xs[0] + xs[1];
 }
+
 async function sumObjs(a: Promise<Obj[]>): Promise<number> {
   const xs = await a;
   return xs[0].n + xs[1].n;
 }
+
 async function settled(a: Promise<PromiseSettledResult<number, never>[]>): Promise<number> {
   let s = 0;
   for (const x of await a) {
@@ -42,12 +49,15 @@ async function settled(a: Promise<PromiseSettledResult<number, never>[]>): Promi
   }
   return s;
 }
+
 async function first(a: Promise<number, AggregateError>): Promise<number> {
   return await a;
 }
+
 async function winner(a: Promise<Obj>): Promise<number> {
   return (await a).n;
 }
+
 async function main() {
   const p = count(2);
   const q = p;

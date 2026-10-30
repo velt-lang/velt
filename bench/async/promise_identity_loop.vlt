@@ -26,8 +26,12 @@ async function main() {
       const p = f(i);
       s.add(p);
       const k = keep(keep(p));
-      if (s.has(k)) sum++;
-      if (i % 3 == 0) s.delete(p);
+      if (s.has(k)) {
+        sum++;
+      }
+      if (i % 3 == 0) {
+        s.delete(p);
+      }
       sum += await p;
       const b = bad(i);
       const se = new Set<Promise<unknown, Error>>();

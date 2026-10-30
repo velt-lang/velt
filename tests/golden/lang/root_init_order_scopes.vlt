@@ -41,9 +41,11 @@ const sw = (x: number): number => {
       return K;
   }
 };
+
 function item(): number {
   return [5].map((K) => K)[0] + K;
 }
+
 const K = 2;
 console.log(f());
 console.log(g());

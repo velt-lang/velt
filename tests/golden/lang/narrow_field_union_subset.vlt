@@ -20,9 +20,15 @@ interface Ctx<P> {
 }
 
 function show(e: JSXElement | undefined): string {
-  if (e === undefined) return "undefined";
-  if (e === null) return "null";
-  if (typeof e === "object") return `<${e.type}>`;
+  if (e === undefined) {
+    return "undefined";
+  }
+  if (e === null) {
+    return "null";
+  }
+  if (typeof e === "object") {
+    return `<${e.type}>`;
+  }
   return `${typeof e} ${e}`;
 }
 
@@ -30,9 +36,12 @@ function show(e: JSXElement | undefined): string {
 function fallbackOf(ctx: Ctx<DeferProps>, pending: number): JSXElement {
   const fb =
     pending > 0
-      ? (typeof ctx.props.fallback === "function"
+      ? (
+        typeof ctx.props.fallback === "function"
           ? (ctx.props.fallback as () => JSXElement)()
-          : ctx.props.fallback) ?? null
+          : ctx.props.fallback
+      ) ??
+        null
       : null;
   return fb;
 }
@@ -51,13 +60,17 @@ interface Req {
 }
 
 function optional(p: Opt): string {
-  if (typeof p.f === "function") return p.f();
+  if (typeof p.f === "function") {
+    return p.f();
+  }
   const r: string | undefined = p.f;
   return r ?? "none";
 }
 
 function required(p: Req): string {
-  if (typeof p.f === "function") return p.f();
+  if (typeof p.f === "function") {
+    return p.f();
+  }
   const r: string | number = p.f;
   return `${typeof r}:${r}`;
 }
@@ -67,7 +80,9 @@ interface Holder {
 }
 
 function noBool(h: Holder): string | number | null {
-  if (typeof h.v === "boolean") return h.v ? 1 : 0;
+  if (typeof h.v === "boolean") {
+    return h.v ? 1 : 0;
+  }
   return h.v;
 }
 

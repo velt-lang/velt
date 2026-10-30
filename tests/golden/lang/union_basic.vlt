@@ -46,9 +46,9 @@ function main() {
 
   // `==` / `!=` against a literal of a member type.
   // (`as` keeps the whole union: an annotated value would narrow `v` to its member.)
-  let v = 7 as i64 | string;
+  let v = 7 as (i64 | string);
   console.log(v == 7, v == 8, v == "7", v != 7);
-  v = "7" as i64 | string;
+  v = "7" as (i64 | string);
   console.log(v == 7, v == "7");
   if (v == "7") {
     console.log(`narrowed: ${v.length}`);

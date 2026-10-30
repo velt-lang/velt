@@ -8,6 +8,7 @@ class A {
     return new A();
   }
 }
+
 function f(): this {
   return 1;
 }

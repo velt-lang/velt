@@ -14,6 +14,7 @@ interface WatchHandle {
 }
 
 type EffectFn = () => void;
+
 interface Subscriber extends EffectFn {
   deps: string[];
   flags: number;
@@ -25,10 +26,13 @@ type Job = ((n: number) => number) & { id: number; queued?: boolean };
 function makeRunner(start: number): Runner {
   let count = start;
   let stopped = false;
-  const runner = (() => {
-    if (!stopped) count += 1;
-    return count;
-  }) as Runner;
+  const runner =
+    (() => {
+      if (!stopped) {
+        count += 1;
+      }
+      return count;
+    }) as Runner;
   runner.stop = () => {
     stopped = true;
   };
@@ -45,7 +49,9 @@ function watch(log: string[]): WatchHandle {
     log.push("paused");
   };
   const resume = () => {
-    if (paused) log.push("resumed");
+    if (paused) {
+      log.push("resumed");
+    }
     paused = false;
   };
   return Object.assign(stop, { stop, pause, resume });
@@ -63,9 +69,10 @@ h.resume();
 h();
 console.log(log.join(","), typeof h, Object.keys(h).join(","));
 
-const sub = function () {
-  console.log("run");
-} as Subscriber;
+const sub =
+  function () {
+    console.log("run");
+  } as Subscriber;
 sub.deps = ["a"];
 sub.flags = 2;
 sub();
@@ -84,6 +91,7 @@ console.log(job.queued);
 function callTwice(f: () => number): number {
   return f() + f();
 }
+
 const r2 = makeRunner(0);
 console.log(callTwice(r2));
 const jobs: Job[] = [job, Object.assign((n: number) => n + 1, { id: 8 })];
@@ -95,12 +103,14 @@ interface Injectable<T> {
   _factory: () => T;
   _token: string;
 }
+
 function defineInjectable<T>(name: string, factory: () => T): Injectable<T> {
   const useFn = (() => factory()) as Injectable<T>;
   useFn._factory = factory;
   useFn._token = name;
   return useFn;
 }
+
 const useCount = defineInjectable("count", () => 41);
 console.log(useCount() + 1, useCount._factory(), useCount._token);
 
@@ -118,15 +128,17 @@ console.log(JSON.stringify({ n: job.id }), JSON.stringify(Object.keys(job)));
 
 // The writes may follow declarations of functions, which run nothing before them.
 function makeEffect(fn: () => void): Subscriber {
-  const effectFn = function () {
-    fn();
-  } as Subscriber;
+  const effectFn =
+    function () {
+      fn();
+    } as Subscriber;
   const describe = (): string => `flags ${effectFn.flags}, deps ${effectFn.deps.length}`;
   effectFn.deps = [];
   effectFn.flags = 1;
   console.log(describe());
   return effectFn;
 }
+
 const eff = makeEffect(() => console.log("effect ran"));
 eff();
 console.log(eff.flags);

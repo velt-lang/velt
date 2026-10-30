@@ -22,4 +22,5 @@ function run(): void {
   const fs = [fact, fib];
   console.log(fs.map((f) => f(6)));
 }
+
 run();

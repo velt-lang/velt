@@ -9,25 +9,31 @@ function captured(s: ReadonlySet<string>): () => void {
     s.add("x");
   };
 }
+
 function narrowed(m: ReadonlyMap<string, number> | null): void {
   if (m) {
     m.set("a", 1);
   }
 }
+
 function chained(s: ReadonlySet<string> | undefined): void {
   s?.add("y");
   s!.add("y");
 }
+
 function aliased(t: Tags, n: Names): void {
   t.delete("z");
   n.push("w");
 }
+
 function copied(s: ReadonlySet<string>): void {
   const t = s;
   t.clear();
 }
+
 const made = new Set<string>() as ReadonlySet<string>;
 made.add("v");
+
 function afterTest(s: ReadonlySet<string>, xs: string[]): void {
   if (s instanceof Set) {
     s.add("ok");

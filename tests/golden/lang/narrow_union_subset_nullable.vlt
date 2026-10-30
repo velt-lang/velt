@@ -21,8 +21,12 @@ function isApp(input: JSXElement | App): input is App {
 }
 
 function show(e: JSXElement): string {
-  if (e === null) return "null";
-  if (typeof e === "object") return `<${e.type}>(${e.children.length})`;
+  if (e === null) {
+    return "null";
+  }
+  if (typeof e === "object") {
+    return `<${e.type}>(${e.children.length})`;
+  }
   return `${typeof e} ${e}`;
 }
 
@@ -36,7 +40,9 @@ function extract(input: JSXElement | App): { element: JSXElement; context: numbe
 
 // `typeof` tests, in `if`/`else` and after a `return`.
 function noNumber(x: VNode | string | number | null): VNode | string | null {
-  if (typeof x === "number") return `n${x}`;
+  if (typeof x === "number") {
+    return `n${x}`;
+  }
   return x;
 }
 
@@ -52,7 +58,9 @@ function noString(x: VNode | string | number | null): VNode | number | null {
 function onlyObjects(xs: (VNode | string | number | null)[]): (VNode | null)[] {
   const out: (VNode | null)[] = [];
   for (const x of xs) {
-    if (typeof x === "string" || typeof x === "number") continue;
+    if (typeof x === "string" || typeof x === "number") {
+      continue;
+    }
     out.push(x);
   }
   return out;
@@ -60,7 +68,9 @@ function onlyObjects(xs: (VNode | string | number | null)[]): (VNode | null)[] {
 
 // One member left, still with its `null`.
 function vnodeOrNull(x: VNode | string | null): VNode | null {
-  if (typeof x === "string") return null;
+  if (typeof x === "string") {
+    return null;
+  }
   return x;
 }
 
@@ -79,7 +89,9 @@ function main() {
   }
   console.log(show(noNumber(4)), show(noNumber("s")), show(noNumber(null)), show(noNumber(div)));
   console.log(noString("abc"), noString(5), noString(null), noString(div) === div);
-  console.log(onlyObjects([div, "a", 1, null, div]).map((v) => (v === null ? "null" : v.type)).join(","));
+  console.log(
+    onlyObjects([div, "a", 1, null, div]).map((v) => (v === null ? "null" : v.type)).join(","),
+  );
   console.log(vnodeOrNull("x"), vnodeOrNull(null), vnodeOrNull(div)?.type);
   console.log(orNull(undefined), orNull(null), orNull("v"));
 }

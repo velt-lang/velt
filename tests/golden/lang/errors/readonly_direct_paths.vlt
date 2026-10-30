@@ -1,6 +1,10 @@
 // Read-only collections read directly: writes through them are TypeScript's TS2339 (a field or
 // an element of a read-only type is not reported yet).
-function f(p: { a: ReadonlySet<string> }, q: Array<readonly string[]>, j: readonly (readonly number[])[]): void {
+function f(
+  p: { a: ReadonlySet<string> },
+  q: Array<readonly string[]>,
+  j: readonly (readonly number[])[],
+): void {
   p.a.add("x");
   q[0].push("x");
   j[0].push(1);

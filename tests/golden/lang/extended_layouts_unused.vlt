@@ -5,10 +5,12 @@ interface VNode {
   type: string;
   children: VNode[];
 }
+
 interface IV extends VNode {
   _ns?: boolean;
   _cb?: () => number;
 }
+
 const v: VNode = { type: "a", children: [{ type: "b", children: [] }] };
 console.log(v);
 console.log(JSON.stringify(v));

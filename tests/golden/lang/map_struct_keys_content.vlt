@@ -66,7 +66,11 @@ function main() {
   names.add({ first: "ann", last: long });
   names.add({ first: "ann", last: "a family name longer than " + "twenty-three bytes" });
   names.add({ first: "bob", last: long });
-  console.log(names.size, names.has({ first: "bob", last: long }), names.has({ first: "", last: long }));
+  console.log(
+    names.size,
+    names.has({ first: "bob", last: long }),
+    names.has({ first: "", last: long }),
+  );
 
   // Number fields compare as JS `Map` keys do (SameValueZero): `NaN` finds itself, `0` is `-0`.
   const fs = new Map<F, string>();
@@ -112,7 +116,13 @@ function main() {
 
   // Counting by struct key, iterated in insertion order.
   const visits = new Map<Cell, number>();
-  const walk: Cell[] = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 0 }];
+  const walk: Cell[] = [
+    { x: 0, y: 0 },
+    { x: 1, y: 0 },
+    { x: 0, y: 0 },
+    { x: 1, y: 0 },
+    { x: 0, y: 0 },
+  ];
   for (const c of walk) {
     visits.set(c, (visits.get(c) ?? 0) + 1);
   }

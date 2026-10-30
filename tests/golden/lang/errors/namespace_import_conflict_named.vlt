@@ -1,8 +1,10 @@
 // A named import of another module's namespace next to a local namespace of the same name
 // conflicts (TypeScript's TS2440): both are namespaces.
 import { NS } from "./_namespace_import_conflict_ns.vlt";
+
 namespace NS {
   export type U = number;
 }
+
 const x: NS.U = 1;
 console.log(x);

@@ -1,7 +1,7 @@
 // Namespaces of types: qualified names, members naming each other without the namespace,
 // nested and dotted namespaces, `declare namespace`, blocks of one namespace merging, a
 // namespace merged with an interface, and namespaces imported by name and re-exported.
-import { type Define, type Shape } from "./_namespaces_reexport.vlt";
+import type { Define, Shape } from "./_namespaces_reexport.vlt";
 import * as lib from "./_namespaces_lib.vlt";
 
 namespace Geo {
@@ -9,9 +9,11 @@ namespace Geo {
     x: number;
     y: number;
   }
+
   // Not exported: visible inside `Geo` only.
   type Pair = [Point, Point];
   export type Segment = { ends: Pair; length: number };
+
   export namespace Grid {
     export type Cell = { at: Point; label: string };
   }
@@ -25,8 +27,12 @@ declare namespace Units {
   type Meters = number;
 }
 
-namespace App.Config.Keys {
-  export type Name = "debug" | "verbose";
+namespace App {
+  export namespace Config {
+    export namespace Keys {
+      export type Name = "debug" | "verbose";
+    }
+  }
 }
 
 interface Settings {

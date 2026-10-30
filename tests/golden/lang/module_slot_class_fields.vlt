@@ -3,7 +3,10 @@
 // a method walks or holds them through `this`, or a callee through a parameter (#1161): the
 // class is counted, as for a variable in a closure's cell, so those borrows are shared.
 
-class T { constructor(public name: string) {} }
+class T {
+  constructor(public name: string) {}
+}
+
 class Reg {
   items: T[] = [];
   names: string[] = [];
@@ -14,15 +17,40 @@ class Reg {
       this.names.push("n" + String(k));
     }
   }
-  walk(): void { for (const x of this.items) { reset(); console.log("a", x.name); } }
-  first(): void { const x = this.items[0]; reset(); console.log("b", x.name); }
-  each(): void { this.items.forEach((x) => { reset(); console.log("c", x.name); }); }
-  walkNames(): void { for (const s of this.names) { reset(); console.log("f", s); } }
-  useChild(): void { const c = this.child; reset(); console.log("g", c.name); }
+  walk(): void {
+    for (const x of this.items) {
+      reset();
+      console.log("a", x.name);
+    }
+  }
+  first(): void {
+    const x = this.items[0];
+    reset();
+    console.log("b", x.name);
+  }
+  each(): void {
+    this.items.forEach((x) => {
+      reset();
+      console.log("c", x.name);
+    });
+  }
+  walkNames(): void {
+    for (const s of this.names) {
+      reset();
+      console.log("f", s);
+    }
+  }
+  useChild(): void {
+    const c = this.child;
+    reset();
+    console.log("g", c.name);
+  }
 }
+
 const REG = new Reg();
 let RL: Reg = new Reg();
 let RO: Reg | null = new Reg();
+
 function reset(): void {
   REG.items = [];
   REG.names = [];
@@ -30,16 +58,41 @@ function reset(): void {
   RL.items = [];
   RO!.items = [];
 }
-REG.fill(); REG.walk();
-REG.fill(); REG.first();
-REG.fill(); REG.each();
-function walkP(r: Reg): void { for (const x of r.items) { reset(); console.log("d", x.name); } }
-REG.fill(); walkP(REG);
-function useP(r: Reg): void { const x = r.items[1]; reset(); console.log("e", x.name); }
-REG.fill(); useP(REG);
-REG.fill(); REG.walkNames();
-REG.child = new T("c" + String(2)); REG.useChild();
-RL.fill(); RL.walk();
-RL.fill(); walkP(RL);
-RO!.fill(); RO!.walk();
-RO!.fill(); useP(RO!);
+
+REG.fill();
+REG.walk();
+REG.fill();
+REG.first();
+REG.fill();
+REG.each();
+
+function walkP(r: Reg): void {
+  for (const x of r.items) {
+    reset();
+    console.log("d", x.name);
+  }
+}
+
+REG.fill();
+walkP(REG);
+
+function useP(r: Reg): void {
+  const x = r.items[1];
+  reset();
+  console.log("e", x.name);
+}
+
+REG.fill();
+useP(REG);
+REG.fill();
+REG.walkNames();
+REG.child = new T("c" + String(2));
+REG.useChild();
+RL.fill();
+RL.walk();
+RL.fill();
+walkP(RL);
+RO!.fill();
+RO!.walk();
+RO!.fill();
+useP(RO!);

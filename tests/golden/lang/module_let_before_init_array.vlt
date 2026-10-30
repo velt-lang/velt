@@ -2,9 +2,11 @@
 // `ReferenceError`, as in Node.
 let a = first();
 let names: string[] = ["x", "y"];
+
 function first(): number {
   return names.length;
 }
+
 function main() {
   console.log(a, names.length);
 }

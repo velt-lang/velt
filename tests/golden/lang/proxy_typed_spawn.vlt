@@ -14,16 +14,19 @@ function logged(target: any): any {
 interface Shape {
   area(): number;
 }
+
 class Sq implements Shape {
   side: number = 3;
   area(): number {
     return this.side * this.side;
   }
 }
+
 class State {
   n: number = 2;
   label: string = "ab";
 }
+
 type Obj = { n: number; label: string };
 
 const s = logged(new State()) as State;
@@ -39,8 +42,8 @@ const items: State[] = [logged(new State()) as State, new State()];
 const r4 = await spawn(async () => items[0].n + items[1].n);
 console.log(r4);
 const all = shared(new Mutex<State>(logged(new State()) as State));
-const r5 = await spawn(async () =>
-  all.with((v) => {
+const r5 = await spawn(
+  async () => all.with((v) => {
     v.n = 9;
     return v.n + v.label.length;
   }),

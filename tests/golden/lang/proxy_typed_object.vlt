@@ -5,14 +5,14 @@ type State = { count: number; name: string };
 
 function makeHandler(): ProxyHandler<any> {
   return {
-  get(target: any, key: string | symbol, receiver: any): any {
-    console.log("get", key);
-    return Reflect.get(target, key, receiver);
-  },
-  set(target: any, key: string | symbol, value: any, receiver: any): boolean {
-    console.log("set", key, value);
-    return Reflect.set(target, key, value, receiver);
-  },
+    get(target: any, key: string | symbol, receiver: any): any {
+      console.log("get", key);
+      return Reflect.get(target, key, receiver);
+    },
+    set(target: any, key: string | symbol, value: any, receiver: any): boolean {
+      console.log("set", key, value);
+      return Reflect.set(target, key, value, receiver);
+    },
   };
 }
 

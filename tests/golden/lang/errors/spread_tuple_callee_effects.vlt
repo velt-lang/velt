@@ -10,7 +10,7 @@ class Adder {
 }
 
 class Holder {
-  adder = new Adder();
+  adder: Adder = new Adder();
 }
 
 function holder(): Holder {

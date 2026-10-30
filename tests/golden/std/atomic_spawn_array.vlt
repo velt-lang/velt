@@ -3,6 +3,7 @@
 async function work(xs: Atomic<u64>[]) {
   xs[0].add(1);
 }
+
 async function main() {
   const xs = [new Atomic<u64>(0)];
   await spawn(work(xs));

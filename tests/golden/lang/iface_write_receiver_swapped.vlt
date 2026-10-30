@@ -1,10 +1,28 @@
 // check: no leaks
 // `holder.val = swap()` where `swap` reassigns `holder`: the write goes to the object `holder`
 // held before the value was evaluated, which stays alive for the write.
-interface N { val: string; m(): number; }
-class Node1 implements N { val: string; constructor(v: string) { this.val = v; } m(): number { return 0; } }
+interface N {
+  val: string;
+  m(): number;
+}
+
+class Node1 implements N {
+  val: string;
+  constructor(v: string) {
+    this.val = v;
+  }
+  m(): number {
+    return 0;
+  }
+}
+
 let holder: N = new Node1("h1");
 let other: N = new Node1("h2");
-function swap(): string { holder = other; return "swapped value"; }
+
+function swap(): string {
+  holder = other;
+  return "swapped value";
+}
+
 holder.val = swap();
 console.log(holder.val, other.val);

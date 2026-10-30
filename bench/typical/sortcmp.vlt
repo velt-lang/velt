@@ -23,9 +23,18 @@ function main() {
     x = (x * 48271) % 2147483647;
     people.push(new Person(`p${x % 50000}`, x % 90, (x % 10007) / 7));
   }
-  people.sort((a, b) => (a.age !== b.age ? (a.age < b.age ? -1 : 1) : a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  people.sort(
+    (a, b) =>
+      (a.age !== b.age ? (a.age < b.age ? -1 : 1) : a.name < b.name ? -1 : a.name > b.name ? 1 : 0),
+  );
   const byScore = people.slice(0, 100000);
   byScore.sort((a, b) => (b.score > a.score ? 1 : b.score < a.score ? -1 : 0));
-  console.log(nums[0], nums[500000], nums[999999], people[0].name, people[299999].name,
-    byScore[0].score.toFixed(3));
+  console.log(
+    nums[0],
+    nums[500000],
+    nums[999999],
+    people[0].name,
+    people[299999].name,
+    byScore[0].score.toFixed(3),
+  );
 }

@@ -1,12 +1,36 @@
 // An interface extending another; the class implements the derived one.
-class V { n: number; constructor(n: number) { this.n = n; } }
-interface Peek { peek(): number; }
-interface Peek2 extends Peek { more(): number; }
-class H implements Peek2 {
-  r: WeakRef<V>; constructor(r: WeakRef<V>) { this.r = r; }
-  peek(): number { return 1; } more(): number { return 2; }
+class V {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
 }
-async function run(p: Peek): Promise<number> { return p.peek(); }
+
+interface Peek {
+  peek(): number;
+}
+
+interface Peek2 extends Peek {
+  more(): number;
+}
+
+class H implements Peek2 {
+  r: WeakRef<V>;
+  constructor(r: WeakRef<V>) {
+    this.r = r;
+  }
+  peek(): number {
+    return 1;
+  }
+  more(): number {
+    return 2;
+  }
+}
+
+async function run(p: Peek): Promise<number> {
+  return p.peek();
+}
+
 async function main() {
   const keep = new V(7);
   const p: Peek = new H(new WeakRef(keep));

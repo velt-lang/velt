@@ -1,14 +1,17 @@
 // check: no leaks
 // A generator's default applies at the call, also through a function value (issue #1197).
 let calls = 0;
+
 function fallback(): string {
   calls++;
   return "f";
 }
+
 function* gen(x: any = "g", y: unknown = fallback()): Generator<string> {
   yield `${x}`;
   yield `${y}`;
 }
+
 class Box {
   *items(x: any = "m"): Generator<string> {
     yield `${x}`;
@@ -17,20 +20,26 @@ class Box {
     yield `${x}`;
   }
 }
+
 const kept: ((x: any) => Generator<string>)[] = [];
+
 function* pair(x: any = "g", y: number = 1): Generator<any> {
   yield x;
   yield y;
 }
+
 function* plain(x: number): Generator<number> {
   yield x;
 }
+
 function pick<T>(t: T): (x: any, y: unknown) => Generator<string> {
   return gen;
 }
+
 function run(f: (x: any, y: unknown) => Generator<string>): string[] {
   return [...f(undefined, undefined)];
 }
+
 function main(): void {
   console.log(gen().next().value, gen(undefined).next().value);
   const gv = gen;

@@ -6,24 +6,30 @@ type Tagged<T> = T & { tag: string };
 function unwrap<T>(s: Tagged<T>): T {
   return s;
 }
+
 function viaLocal<T>(s: Tagged<T>): T {
   const r: T = s;
   return r;
 }
+
 function viaLet<T>(s: Tagged<T>): T {
   let r: T = s;
   const q = r;
   return q;
 }
+
 function keep<T>(s: Tagged<T>, out: T[]): void {
   out.push(s);
 }
+
 function each<T>(s: Tagged<T>, f: (t: T) => void): void {
   f(s);
 }
+
 function arr<T>(s: Tagged<T>): T[] {
   return [s, s];
 }
+
 function obj<T>(s: Tagged<T>): { v: T } {
   return { v: s };
 }
@@ -31,6 +37,7 @@ function obj<T>(s: Tagged<T>): { v: T } {
 class St {
   n: number = 1;
 }
+
 function underRead<T>(rw: shared<RwLock<St>>, mine: Tagged<T>, out: T[]): void {
   rw.read((c) => {
     const r: T = mine;

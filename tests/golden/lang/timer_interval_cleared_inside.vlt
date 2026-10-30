@@ -8,17 +8,23 @@ function busy(ms: number) {
 
 function main() {
   const ivs: Timer[] = [];
-  const iv = setInterval(() => {
-    console.log("interval once");
-    clearInterval(ivs[0]);
-  }, 100);
+  const iv = setInterval(
+    () => {
+      console.log("interval once");
+      clearInterval(ivs[0]);
+    },
+    100,
+  );
   ivs.push(iv);
-  setTimeout(() => {
-    console.log("B 120");
-    setTimeout(() => console.log("Y 130"), 130);
-    busy(50);
-    setTimeout(() => console.log("X 100"), 100);
-    busy(200);
-  }, 120);
+  setTimeout(
+    () => {
+      console.log("B 120");
+      setTimeout(() => console.log("Y 130"), 130);
+      busy(50);
+      setTimeout(() => console.log("X 100"), 100);
+      busy(200);
+    },
+    120,
+  );
   console.log("main end");
 }

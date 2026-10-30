@@ -1,25 +1,32 @@
 // check: no leaks
 // Object.defineProperty writes the object itself and returns it, as in Node (#922).
 import { CELL, makeCell, type Cell } from "./_define_property_cell";
+
 const K: unique symbol = Symbol("k");
 const W: unique symbol = Symbol("w");
+
 interface A {
   a: number;
   [K]?: boolean;
 }
+
 interface B {
   a: number;
 }
+
 interface C {
   a: number;
 }
+
 interface P {
   value: number;
   on: boolean;
 }
+
 interface Named {
   name: string;
 }
+
 // A top-level local with the field declared, and one with the field added.
 const z: A = { a: 1 };
 Object.defineProperty(z, K, { value: true });
@@ -31,6 +38,7 @@ console.log(K in y, y, { ...y });
 const p: P = { value: 1, on: false };
 Object.defineProperty(p, "value", { value: 9 });
 console.log(p.value, p);
+
 // A local in a function, and the result is the object itself.
 function local(): void {
   const c: B = { a: 3 };
@@ -39,6 +47,7 @@ function local(): void {
   const r2 = Object.defineProperty(c, "a", { value: 4 });
   console.log(r2 === c, c.a, r.a);
 }
+
 local();
 // A brand made in another module, read here.
 const made = makeCell(1);
@@ -46,7 +55,9 @@ const plain: Cell = { n: 2 };
 console.log(CELL in made, CELL in plain, made);
 // Each element of an array, through the loop variable.
 const items: B[] = [{ a: 1 }, { a: 2 }];
-for (const it of items) Object.defineProperty(it, K, { value: true });
+for (const it of items) {
+  Object.defineProperty(it, K, { value: true });
+}
 console.log(items.map((i) => K in i), items);
 // An element and a field path.
 const grid: B[][] = [[{ a: 5 }]];

@@ -3,81 +3,89 @@
 // restricted productions end at a line break. Output compared with Node.
 
 interface Point {
-  x: number
-  y: number
+  x: number;
+  y: number;
 }
 
 class Counter {
-  count = 0
-  readonly step: number
+  count = 0;
+  readonly step: number;
   constructor(step: number) {
-    this.step = step
+    this.step = step;
   }
   bump() {
-    this.count += this.step
-    return this
+    this.count += this.step;
+    return this;
   }
 }
 
-type Pair = [string, number]
+type Pair = [string, number];
 
-const origin: Point = { x: 0, y: 0 }
-let total = 0
+const origin: Point = { x: 0, y: 0 };
+let total = 0;
 
 function unit(): void {
   // `return`, a line break, then a value: the function returns nothing and the next line is
   // never reached.
-  return
-  total = 100
+  return;
+  total = 100;
 }
 
-let log: string[] = []
+let log: string[] = [];
 
 function* ticks(): Generator<void> {
   // `yield` at the end of a line yields nothing; the next line is a statement of its own.
-  yield
-  log.push("after first")
-  yield
+  yield;
+  log.push("after first");
+  yield;
 }
 
 function labels(): number {
-  let n = 0
+  let n = 0;
   outer: for (let i = 0; i < 3; i++) {
     for (let j = 0; j < 3; j++) {
-      if (j == 1) continue outer
-      if (i == 2) break outer
-      n++
+      if (j == 1) {
+        continue outer;
+      }
+      if (i == 2) {
+        break outer;
+      }
+      n++;
     }
   }
-  return n
+  return n;
 }
 
 function main() {
-  const c = new Counter(2)
-  c.bump().bump()
-  console.log(c.count)
-  let a = 1
-  let b = 5
+  const c = new Counter(2);
+  c.bump().bump();
+  console.log(c.count);
+  let a = 1;
+  let b = 5;
   // A line break before `++` makes it the prefix operator of the next line.
-  a
-  ++b
-  console.log(a, b)
-  unit()
-  console.log(total)
-  let n = 0
-  for (const _ of ticks()) n++
-  console.log(n, log.join(","))
-  console.log(labels())
-  let k = 0
-  do k++; while (k < 3) console.log("k", k)
-  const p: Pair = ["p", origin.x + 1]
-  console.log(p[0], p[1])
-  const add = (x: number, y: number) => x + y
-  const twice = (f: (n: number) => number) => {
-    return (n: number) => f(f(n))
+  a;
+  ++b;
+  console.log(a, b);
+  unit();
+  console.log(total);
+  let n = 0;
+  for (const _ of ticks()) {
+    n++;
   }
-  console.log(add(2, 3), twice((n) => n * 3)(2))
-  const s = "line"
-    .toUpperCase()
-  console.log(s)
+  console.log(n, log.join(","));
+  console.log(labels());
+  let k = 0;
+  do {
+    k++;
+  } while (k < 3);
+  console.log("k", k);
+  const p: Pair = ["p", origin.x + 1];
+  console.log(p[0], p[1]);
+  const add = (x: number, y: number) => x + y;
+  const twice = (f: (n: number) => number) => {
+    return (n: number) => f(f(n));
+  };
+  console.log(add(2, 3), twice((n) => n * 3)(2));
+  const s = "line".toUpperCase();
+  console.log(s);
 }

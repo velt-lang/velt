@@ -23,6 +23,13 @@ function main() {
   console.log(Symbol.asyncIterator in g(), Symbol.iterator in g());
   console.log(Symbol.asyncIterator in h(), Symbol.iterator in h());
   console.log(Symbol.iterator in [1], Symbol.asyncIterator in [1]);
-  console.log(Symbol.iterator in new Map<string, number>(), Symbol.asyncIterator in new Set<number>());
-  console.log(Symbol.iterator in new Plain(), Symbol.iterator in new Counter(), Symbol.asyncIterator in new Counter());
+  console.log(
+    Symbol.iterator in new Map<string, number>(),
+    Symbol.asyncIterator in new Set<number>(),
+  );
+  console.log(
+    Symbol.iterator in new Plain(),
+    Symbol.iterator in new Counter(),
+    Symbol.asyncIterator in new Counter(),
+  );
 }

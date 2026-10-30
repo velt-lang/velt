@@ -2,6 +2,7 @@
 // A trap's error reaches a promise's `catch` / `then` callbacks: proxies with only a `set` trap
 // or only a `has` trap, and callbacks taking the reason untyped, as `any` or as an error class.
 class E1 extends Error {}
+
 class E2 extends Error {}
 
 function setOnly(): any {

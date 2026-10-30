@@ -14,13 +14,53 @@ async function Late(props: { n: number }): Promise<JSX.Element> {
 // One case per line: lists in fragments and templates, nested templates, text with quotes.
 export function cases(xs: string[], n: i64): JSX.Element[] {
   return [
-    <ul>{xs.map((x) => <li>{x}</li>)}</ul>,
-    <>{xs.map((x) => <b>{x}</b>)}</>,
-    <>a{xs.map((x) => <i>{x}</i>)}b{n}</>,
-    <ol>{xs.map((x) => <Item label={x} />)}<li>end</li></ol>,
-    <section><table>{xs.map((x) => <tr><td>{x}</td><td>{n}</td></tr>)}</table></section>,
-    <div>{raw("<!-- raw -->")}<p>it's "quoted" {xs[0]}</p></div>,
-    <div>{[<p>one</p>, <>{xs.map((x) => <span>{x}</span>)}</>]}</div>,
+    <ul>
+      {xs.map((x) => (
+        <li>{x}</li>
+      ))}
+    </ul>,
+    <>
+      {xs.map((x) => (
+        <b>{x}</b>
+      ))}
+    </>,
+    <>
+      a
+      {xs.map((x) => (
+        <i>{x}</i>
+      ))}
+      b{n}
+    </>,
+    <ol>
+      {xs.map((x) => (
+        <Item label={x} />
+      ))}
+      <li>end</li>
+    </ol>,
+    <section>
+      <table>
+        {xs.map((x) => (
+          <tr>
+            <td>{x}</td>
+            <td>{n}</td>
+          </tr>
+        ))}
+      </table>
+    </section>,
+    <div>
+      {raw("<!-- raw -->")}
+      <p>it's "quoted" {xs[0]}</p>
+    </div>,
+    <div>
+      {[
+        <p>one</p>,
+        <>
+          {xs.map((x) => (
+            <span>{x}</span>
+          ))}
+        </>,
+      ]}
+    </div>,
   ];
 }
 
@@ -36,9 +76,17 @@ export function wrap(el: JSX.Element): JSX.Element {
 export function withAsync(xs: string[]): JSX.Element {
   return (
     <main>
-      <ul>{xs.map((x) => <li>{x}</li>)}</ul>
+      <ul>
+        {xs.map((x) => (
+          <li>{x}</li>
+        ))}
+      </ul>
       <Late n={xs.length} />
-      <p>{xs.map((x) => <>{x};</>)}</p>
+      <p>
+        {xs.map((x) => (
+          <>{x};</>
+        ))}
+      </p>
     </main>
   );
 }

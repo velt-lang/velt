@@ -8,10 +8,10 @@ class Doc {
 
 function main() {
   const d = new Doc();
-  const k = "count" as "title" | "count";
+  const k = "count" as ("title" | "count");
   d[k] = 5;
   const s: string = "title";
-  console.log(d[s as "title" | "count"]);
+  console.log(d[s as ("title" | "count")]);
 }
 
 function title(): string {

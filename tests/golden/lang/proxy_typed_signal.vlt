@@ -11,7 +11,9 @@ const deps: Map<string, (() => void)[]> = new Map();
 
 function track(key: string): void {
   const e = active;
-  if (e === null) return;
+  if (e === null) {
+    return;
+  }
   const list = deps.get(key);
   if (list == null) {
     deps.set(key, [e]);
@@ -22,8 +24,12 @@ function track(key: string): void {
 
 function trigger(key: string): void {
   const list = deps.get(key);
-  if (list == null) return;
-  for (const e of list.slice()) e();
+  if (list == null) {
+    return;
+  }
+  for (const e of list.slice()) {
+    e();
+  }
 }
 
 function effect(fn: () => void): void {
@@ -43,14 +49,18 @@ function reactive(target: any, path: string): any {
       }
       track(k);
       const v = Reflect.get(t, key, receiver);
-      if (typeof v === "object" && v !== null) return reactive(v, k + ".");
+      if (typeof v === "object" && v !== null) {
+        return reactive(v, k + ".");
+      }
       return v;
     },
     set(t: any, key: string | symbol, value: any, receiver: any): boolean {
       const k = path + String(key);
       const old = Reflect.get(t, key, receiver);
       const ok = Reflect.set(t, key, value, receiver);
-      if (old !== value) trigger(k);
+      if (old !== value) {
+        trigger(k);
+      }
       return ok;
     },
   });

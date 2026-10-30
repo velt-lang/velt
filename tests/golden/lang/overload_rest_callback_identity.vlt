@@ -3,11 +3,13 @@
 // comparison or a stored copy would see the adapter, not the caller's function (Node prints
 // `false true`).
 let last: unknown = null;
+
 function reg<T1>(fn: (p1: T1) => void): boolean;
 function reg(fn: (...args: unknown[]) => void): boolean {
-    const same = last === fn;
-    last = fn;
-    return same;
+  const same = last === fn;
+  last = fn;
+  return same;
 }
+
 const f = (p: number) => {};
 console.log(reg(f), reg(f));

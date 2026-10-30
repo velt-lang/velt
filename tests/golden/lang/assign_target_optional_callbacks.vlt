@@ -4,7 +4,10 @@
 type Stats = { n: number };
 type S = { stats: Stats };
 const s: S = { stats: { n: 0 } };
-const reset = (): number => { s.stats = { n: 5 }; return 1; };
+const reset = (): number => {
+  s.stats = { n: 5 };
+  return 1;
+};
 const xs = [3, 1, 2];
 const words = ["b", "a"];
 const rec: Record<string, number> = { b: 1, a: 2 };
@@ -20,8 +23,10 @@ s.stats.n = Object.keys(rec).length;
 console.log(s.stats.n);
 s.stats.n = Object.entries(rec).length + 1;
 console.log(s.stats.n);
+
 function pick(xs: number[], cmp: ((a: number, b: number) => number) | null = null): number {
   return cmp === null ? xs[0] : xs.toSorted(cmp)[0];
 }
+
 s.stats.n = pick(xs) + pick(xs, null) + pick(xs, (a, b) => a - b);
 console.log(s.stats.n, reset(), s.stats.n);

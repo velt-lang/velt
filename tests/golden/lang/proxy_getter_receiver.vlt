@@ -10,27 +10,30 @@ class Box {
     return this.n * 2;
   }
 }
+
 type S<T> = T & { $set(v: T): void };
 
 const keys: string[] = [];
-const p = new Proxy(new Box(), {
-  get(t: any, k: string | symbol, r: any) {
-    keys.push(String(k));
-    if (k === "n") {
-      return 10;
-    }
-    return Reflect.get(t, k);
-  },
-}) as S<Box>;
+const p =
+  new Proxy(new Box(), {
+    get(t: any, k: string | symbol, r: any) {
+      keys.push(String(k));
+      if (k === "n") {
+        return 10;
+      }
+      return Reflect.get(t, k);
+    },
+  }) as S<Box>;
 console.log(p.twice, p.n, keys.join(","));
 
-const q = new Proxy(new Box(), {
-  get(t: any, k: string | symbol, r: any) {
-    if (k === "n") {
-      return 10;
-    }
-    return Reflect.get(t, k, r);
-  },
-}) as S<Box>;
+const q =
+  new Proxy(new Box(), {
+    get(t: any, k: string | symbol, r: any) {
+      if (k === "n") {
+        return 10;
+      }
+      return Reflect.get(t, k, r);
+    },
+  }) as S<Box>;
 console.log(q.n);
 console.log(q.twice); // Node: 20

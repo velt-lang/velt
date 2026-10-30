@@ -7,15 +7,19 @@
 // `generic_spread_undefined_error.vlt`.
 type U = { n: number; s: string; o?: number };
 type P = { n?: number; s: string };
+
 function merge<T extends object>(x: T, patch: Partial<T>) {
   return { ...x, ...patch };
 }
+
 function update<T extends object>(x: T, patch: Partial<T>): T {
   return { ...x, ...patch };
 }
+
 function both<A extends object, B extends object>(a: A, b: B) {
   return { ...a, ...b };
 }
+
 const u: U = { n: 1, s: "a" };
 const m2 = merge(u, { s: "b" });
 console.log(JSON.stringify(m2), m2.n.toFixed(1), Object.keys(m2).join(","));

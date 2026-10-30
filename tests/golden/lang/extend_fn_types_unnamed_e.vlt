@@ -1,7 +1,7 @@
 // The error type an `extend` target's function type gets (#1878) is a type parameter source
 // can't name: with no type `E` in scope, a block's method can't write `E`.
 
-extend<R> (() => R) {
+extend<R> () => R {
   leak(x: E): number {
     return 1;
   }

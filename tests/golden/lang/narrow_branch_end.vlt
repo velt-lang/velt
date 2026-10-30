@@ -4,48 +4,82 @@
 // (#1226). The valid shapes keep compiling and run as in Node.
 function early(x: string | null): number {
   let p = x;
-  if (p == null) { return 0; } else { p = "xyz"; }
+  if (p == null) {
+    return 0;
+  } else {
+    p = "xyz";
+  }
   return p.length;
 }
 
 function mirror(x: string | null): number {
   let p = x;
-  if (p != null) { p = p + "!"; } else { return -1; }
+  if (p != null) {
+    p = p + "!";
+  } else {
+    return -1;
+  }
   return p.length;
 }
 
 function elseIf(x: string | null, c: boolean): number {
   let p = x;
-  if (p == null) { return 0; } else if (c) { p = "four"; }
+  if (p == null) {
+    return 0;
+  } else if (c) {
+    p = "four";
+  }
   return p.length;
 }
 
 function nestedInElse(x: string | null, y: string | null): number {
-  if (x == null) { return 0; } else { if (y == null) { return 1; } }
+  if (x == null) {
+    return 0;
+  } else {
+    if (y == null) {
+      return 1;
+    }
+  }
   return x.length + y.length;
 }
 
 function filled(x: string | null): number {
   let p = x;
-  if (p == null) { p = "filled"; }
+  if (p == null) {
+    p = "filled";
+  }
   return p.length;
 }
 
 function filledElse(x: string | null): number {
   let p = x;
-  if (p == null) { p = "ab"; } else { p = p + "c"; }
+  if (p == null) {
+    p = "ab";
+  } else {
+    p = p + "c";
+  }
   return p.length;
 }
 
 function three(x: string | null | undefined): number {
   let p = x;
-  if (p === undefined) { return 0; } else if (p === null) { return 1; } else { p = p + "?"; }
+  if (p === undefined) {
+    return 0;
+  } else if (p === null) {
+    return 1;
+  } else {
+    p = p + "?";
+  }
   return p.length;
 }
 
 function threeFill(x: string | null | undefined): number {
   let p = x;
-  if (p == null) { return 0; } else { p = "z"; }
+  if (p == null) {
+    return 0;
+  } else {
+    p = "z";
+  }
   return p.length;
 }
 
@@ -53,14 +87,20 @@ function loops(xs: (string | null)[]): number {
   let n = 0;
   for (const x of xs) {
     let p = x;
-    if (p == null) { continue; } else { p = p + p; }
+    if (p == null) {
+      continue;
+    } else {
+      p = p + p;
+    }
     n += p.length;
   }
   let i = 0;
   while (i < xs.length) {
     const p = xs[i];
     i++;
-    if (p == null) { break; }
+    if (p == null) {
+      break;
+    }
     n += p.length;
   }
   return n;
@@ -68,25 +108,35 @@ function loops(xs: (string | null)[]): number {
 
 function logical(x: string | null, c: boolean): number {
   let p = x;
-  if (p == null || c) { return 0; } else { p = p.toUpperCase(); }
+  if (p == null || c) {
+    return 0;
+  } else {
+    p = p.toUpperCase();
+  }
   return p.length;
 }
 
 function sw(x: string | null): number {
   let p = x;
   switch (p) {
-    case null: return 0;
-    default: p = p + "s";
+    case null:
+      return 0;
+    default:
+      p = p + "s";
   }
   return p.length;
 }
 
 function fallthrough(k: number, y: string | null): number {
   let x = y;
-  if (x == null) return -1;
+  if (x == null) {
+    return -1;
+  }
   switch (k) {
-    case 1: x = "four";
-    case 2: return x.length;
+    case 1:
+      x = "four";
+    case 2:
+      return x.length;
   }
   return x.length + 10;
 }
@@ -103,5 +153,10 @@ function main() {
   console.log(loops(["a", null, "bc"]), loops([null, "a"]));
   console.log(logical("ab", false), logical(null, false), logical("ab", true));
   console.log(sw(null), sw("ab"));
-  console.log(fallthrough(1, "ab"), fallthrough(2, "ab"), fallthrough(3, "ab"), fallthrough(1, null));
+  console.log(
+    fallthrough(1, "ab"),
+    fallthrough(2, "ab"),
+    fallthrough(3, "ab"),
+    fallthrough(1, null),
+  );
 }

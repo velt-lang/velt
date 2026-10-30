@@ -96,9 +96,12 @@ async function main() {
     return new Response("ok");
   });
   let hit = false;
-  const two = await serve({ port: 0 }, makeHandler((b: boolean) => {
-    hit = b;
-  }));
+  const two = await serve(
+    { port: 0 },
+    makeHandler((b: boolean) => {
+      hit = b;
+    }),
+  );
   await one.shutdown();
   await two.shutdown();
 }

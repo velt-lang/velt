@@ -6,11 +6,13 @@ async function tick(n: number): Promise<void> {
     await Promise.resolve();
   }
 }
+
 async function make(tag: string, n: number): Promise<string> {
   await tick(n);
   console.log(`settle ${tag}`);
   return tag;
 }
+
 async function w(name: string, p: Promise<string>, pre: number, post: number): Promise<string> {
   await tick(pre);
   console.log(`${name} waits`);
@@ -20,12 +22,20 @@ async function w(name: string, p: Promise<string>, pre: number, post: number): P
   console.log(`${name} done`);
   return name;
 }
+
 async function main() {
   const p0 = make("p0", 0);
   p0.then((v) => console.log(`then p0 ${v}`));
   const p1 = make("p1", 4);
   p1.then((v) => console.log(`then p1 ${v}`));
   const p2 = make("p2", 1);
-  const r = await Promise.all([w("a", p0, 3, 1), w("b", p0, 2, 0), w("c", p0, 1, 0), w("d", p2, 0, 0), w("e", p0, 1, 2), w("f", p1, 1, 2)]);
+  const r = await Promise.all([
+    w("a", p0, 3, 1),
+    w("b", p0, 2, 0),
+    w("c", p0, 1, 0),
+    w("d", p2, 0, 0),
+    w("e", p0, 1, 2),
+    w("f", p1, 1, 2),
+  ]);
   console.log(r.join(","));
 }

@@ -3,9 +3,13 @@
 function ok(x: string | null): x is string {
   return true;
 }
+
 function len(x: string | null): number {
-  if (ok(x)) return x.length;
+  if (ok(x)) {
+    return x.length;
+  }
   return -1;
 }
+
 console.log(len("abc"));
 console.log(len(null));

@@ -7,6 +7,7 @@ class Proxy {
     this.#target = t;
   }
 }
+
 function main(): void {
   const x: any = new Proxy(5);
   console.log(x.label);

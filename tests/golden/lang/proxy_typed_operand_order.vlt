@@ -3,9 +3,11 @@
 // it are read first, as in JavaScript, in call arguments, array and object literals, binary
 // operators and template literals, for module variables and captured locals.
 let traps = 0;
+
 class C {
   n: number = 1;
 }
+
 function mk(t: any): any {
   return new Proxy(t, {
     get(o: any, k: string | symbol, r: any): any {
@@ -14,6 +16,7 @@ function mk(t: any): any {
     },
   });
 }
+
 const q = mk(new C()) as C;
 console.log(traps, q.n, traps);
 const sum = traps + q.n;
@@ -22,20 +25,25 @@ const arr = [traps, q.n, traps];
 console.log(arr);
 const obj = { a: traps, b: q.n, c: traps };
 console.log(obj.a, obj.b, obj.c);
+
 function three(a: number, b: number, c: number): string {
   return `${a} ${b} ${c}`;
 }
+
 console.log(three(traps, q.n, traps));
 console.log(`${traps} ${q.n} ${traps}`);
+
 function captured(): void {
   let seen = 0;
-  const p = new Proxy(new C(), {
-    get(o: any, k: string | symbol, r: any): any {
-      seen += 10;
-      return Reflect.get(o, k);
-    },
-  }) as C;
+  const p =
+    new Proxy(new C(), {
+      get(o: any, k: string | symbol, r: any): any {
+        seen += 10;
+        return Reflect.get(o, k);
+      },
+    }) as C;
   console.log(seen, p.n, seen);
   console.log(seen * 2 + p.n);
 }
+
 captured();

@@ -13,7 +13,9 @@ const make: Factory<[number, string], string> = (n, s) => s + n;
 class View {
   constructor(public size: number) {}
 }
+
 class Wide extends View {}
+
 type ViewCtor = new (size: number) => View;
 const kinds: [string, ViewCtor][] = [
   ["view", View],
@@ -26,6 +28,7 @@ const loose: (x: any) => void = (x: number) => {};
 const narrower: () => object = () => ({ a: 1 });
 
 const triple = (x: number) => x * 3;
+
 function inc(x: number): number {
   return x + 1;
 }
@@ -39,10 +42,12 @@ const kind = kinds.find(([, C]) => v instanceof C && C !== View);
 const K = kinds[0][1];
 console.log(kind ? kind[0] : "none", new K(2).size);
 console.log(fewer(1, "a"), typeof loose, narrower());
+
 function inner(offset: number): void {
   const shift = (s: string) => s.length + offset;
   console.log(["ab", "c"].map(shift), ["ab", "c"].filter((s) => s.length > 1));
   const cb: (v: number, i: number) => number = triple;
   console.log(cb(2, 0));
 }
+
 inner(10);

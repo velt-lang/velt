@@ -1,14 +1,41 @@
 // check: no leaks
 // `arr[0].val = clear()` where `clear` empties `arr`: the element read before the value stays
 // alive for the write.
-interface N { val: string; m(): number; }
-class Node1 implements N { val: string; constructor(v: string) { this.val = v; } m(): number { return 0; } }
+interface N {
+  val: string;
+  m(): number;
+}
+
+class Node1 implements N {
+  val: string;
+  constructor(v: string) {
+    this.val = v;
+  }
+  m(): number {
+    return 0;
+  }
+}
+
 const arr: N[] = [new Node1("a")];
 const kept: N[] = [];
-function clear(): string { const n = arr.pop(); if (n) kept.push(n); arr.pop(); return "cleared"; }
+
+function clear(): string {
+  const n = arr.pop();
+  if (n) {
+    kept.push(n);
+  }
+  arr.pop();
+  return "cleared";
+}
+
 arr[0].val = clear();
 console.log(arr.length, kept.length, kept[0].val);
 const arr2: N[] = [new Node1("b")];
-function clear2(): string { arr2.pop(); return "gone"; }
+
+function clear2(): string {
+  arr2.pop();
+  return "gone";
+}
+
 arr2[0].val = clear2();
 console.log(arr2.length);

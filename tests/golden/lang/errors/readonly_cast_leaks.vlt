@@ -4,6 +4,7 @@ function leak1(xs: readonly unknown[]): void {
   (xs as unknown[]).join();
   xs.push(1);
 }
+
 function leak3(s: ReadonlySet<string>, t: Set<string>): void {
   (s as Set<string>).has("a");
   s.add("b");

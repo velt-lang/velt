@@ -4,14 +4,22 @@
 // `null` too (#930 phase 2). Expected output from Node 22.
 
 function g<T>(x?: T): string {
-  if (x === null) return "null";
-  if (x == null) return "nullish";
+  if (x === null) {
+    return "null";
+  }
+  if (x == null) {
+    return "nullish";
+  }
   return "val";
 }
 
 function h<T>(x: T | undefined): string {
-  if (x === null) return "null";
-  if (x === undefined) return "undef";
+  if (x === null) {
+    return "null";
+  }
+  if (x === undefined) {
+    return "undef";
+  }
   return x != null ? "val" : "?";
 }
 
@@ -21,6 +29,11 @@ function notNull<T>(x?: T): boolean {
 
 function main() {
   console.log(g<string | null>(null), g<string>(), g<number>(1), g<string | null>("s"));
-  console.log(h<string | null>(null), h<string>(undefined), h<number>(2), h<string | null>(undefined));
+  console.log(
+    h<string | null>(null),
+    h<string>(undefined),
+    h<number>(2),
+    h<string | null>(undefined),
+  );
   console.log(notNull<number | null>(null), notNull<number>(), notNull<number | null>(3));
 }

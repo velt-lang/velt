@@ -34,6 +34,7 @@ console.log(closure({ value: 3, show: () => "three" }), hits);
 function opt<P>(setup?: (c: Box<P>) => string): any {
   return setup as any;
 }
+
 const g = opt<number>((b) => `b=${b.value} ${b.show()}`);
 console.log(g({ value: 9, show: () => "nine" }));
 
@@ -42,6 +43,7 @@ class Reader<T> {
     return o as Box<T>;
   }
 }
+
 const r = new Reader<number>().read({ value: 5, show: () => "five" } as unknown);
 const s = new Reader<string>().read({ value: "x", show: () => "ex" } as unknown);
 console.log(r.value, r.show(), s.value, s.show());
@@ -49,15 +51,19 @@ console.log(r.value, r.show(), s.value, s.show());
 function inner<U>(o: unknown): Box<U> {
   return o as Box<U>;
 }
+
 function outer<V>(o: unknown): string {
   return inner<V>(o).show();
 }
+
 function list<T>(o: unknown): Box<T>[] {
   return o as Box<T>[];
 }
+
 function conv<T>(o: unknown): T {
   return o as T;
 }
+
 console.log(conv<Box<string>>({ value: "c", show: () => "conv" } as unknown).show());
 console.log(outer<boolean>({ value: true, show: () => "yes" } as unknown));
 const l = list<number>([{ value: 1, show: () => "one" }] as unknown);

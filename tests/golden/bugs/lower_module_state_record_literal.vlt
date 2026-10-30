@@ -4,10 +4,12 @@
 // an index out of bounds). Expected output: Node's.
 const cache: Record<string, string> = { seed: "s" };
 const counts: Record<string, number> = {};
+
 function remember(k: string): void {
   cache[k] = k.toUpperCase();
   counts[k] = (counts[k] ?? 0) + 1;
 }
+
 remember("a");
 remember("a");
 console.log(cache, counts);

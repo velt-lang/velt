@@ -3,9 +3,11 @@
 // its `undefined`: every comparison is false and the arithmetic is `NaN`.
 type V = { type: string; props: number };
 type C = V | string | C[];
+
 function f(c: C): boolean {
   return (c as V).props > 0;
 }
+
 function g(c: C): string {
   const parts: string[] = [];
   parts.push(String((c as V).props < 5), String((c as V).props <= 5), String((c as V).props >= 0));
@@ -13,6 +15,7 @@ function g(c: C): string {
   parts.push(String(((c as V).props / 2) % 3));
   return parts.join(" ");
 }
+
 console.log(f({ type: "x", props: 1 }), f("s"), f([]));
 console.log(g({ type: "x", props: 4 }));
 console.log(g("s"));

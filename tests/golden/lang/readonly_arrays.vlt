@@ -3,15 +3,20 @@
 
 function total(values: readonly number[]): number {
   let sum = 0;
-  for (const v of values) sum += v;
+  for (const v of values) {
+    sum += v;
+  }
   return sum;
 }
 
 const NO_HANDLERS: readonly string[] = [];
 const pair: readonly [string, number] = ["a", 1];
-const KINDS: readonly (readonly [string, number])[] = [["u8", 1], ["u16", 2]];
+const KINDS: readonly (readonly [string, number])[] = [
+  ["u8", 1],
+  ["u16", 2],
+];
 
-function count(patterns: ReadonlyArray<string | readonly number[]>): number {
+function count(patterns: ReadonlyArray<string | (readonly number[])>): number {
   return patterns.length;
 }
 

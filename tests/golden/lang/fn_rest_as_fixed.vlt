@@ -1,11 +1,40 @@
 // check: no leaks
 // A function with a rest parameter used as a function type with fixed parameters: the
 // arguments become the rest array (also for a closure returned from a call).
-function mk<R>(r: R) { return (...args: unknown[]) => r; }
-function wrapB<R>(r: R): (p: number) => R { return mk<R>(r); }
-function wrapC<R>(r: R): () => R { return mk<R>(r); }
-function wrapD(r: string): () => string { return mk(r); }
-function wrapE<R>(r: R): () => R { const f = mk<R>(r); return f; }
-function wrapF<R>(f: (...a: unknown[]) => R): () => R { return f; }
-function wrapG<R, T1>(f: (...a: unknown[]) => R): (p: T1) => R { return f; }
-console.log(wrapB("b")(1), wrapC("c")(), wrapD("d")(), wrapE("e")(), wrapF(() => "f")(), wrapG<string, number>(() => "g")(1));
+function mk<R>(r: R) {
+  return (...args: unknown[]) => r;
+}
+
+function wrapB<R>(r: R): (p: number) => R {
+  return mk<R>(r);
+}
+
+function wrapC<R>(r: R): () => R {
+  return mk<R>(r);
+}
+
+function wrapD(r: string): () => string {
+  return mk(r);
+}
+
+function wrapE<R>(r: R): () => R {
+  const f = mk<R>(r);
+  return f;
+}
+
+function wrapF<R>(f: (...a: unknown[]) => R): () => R {
+  return f;
+}
+
+function wrapG<R, T1>(f: (...a: unknown[]) => R): (p: T1) => R {
+  return f;
+}
+
+console.log(
+  wrapB("b")(1),
+  wrapC("c")(),
+  wrapD("d")(),
+  wrapE("e")(),
+  wrapF(() => "f")(),
+  wrapG<string, number>(() => "g")(1),
+);

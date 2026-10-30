@@ -18,10 +18,10 @@ try {
 }
 
 // The same through a function value the callback calls.
-const make = (depth: number, start: number): string[] =>
-  Array.from({ length: 2 }, (_, i) =>
-    depth > 1 ? make(depth - 1, start).join("+") : label(i + start),
-  );
+const make = (depth: number, start: number): string[] => Array.from(
+  { length: 2 },
+  (_, i) => depth > 1 ? make(depth - 1, start).join("+") : label(i + start),
+);
 console.log(make(2, 0));
 try {
   make(3, 2);

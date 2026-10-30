@@ -7,16 +7,20 @@ class G {
     this.n = n;
   }
 }
+
 let g: G | null = new G(1);
 let h: G | null = new G(3);
+
 function swap(x: G): number {
   g = new G(99);
   return x.n + 1;
 }
+
 function clear(x: G): number {
   h = null;
   return x.n;
 }
+
 function main(): void {
   console.log(swap(g!), g!.n);
   console.log(clear(h!), h === null);

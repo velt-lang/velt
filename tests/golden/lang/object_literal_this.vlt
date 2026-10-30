@@ -164,6 +164,7 @@ function cell<T>(initial: T) {
     },
   };
 }
+
 const c = cell("a");
 c.set("b");
 c.set("c");
@@ -188,6 +189,7 @@ function useAction() {
   };
   return action;
 }
+
 const a = useAction();
 console.log(a.state, a.loading);
 a.run();

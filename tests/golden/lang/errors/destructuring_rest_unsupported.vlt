@@ -1,6 +1,9 @@
 // `...rest` that is not supported (of an `any`, next to a computed key) and a computed key
 // that is an expression in an assignment target: one error each, nothing at their uses.
-function k(s: string): string { return s; }
+function k(s: string): string {
+  return s;
+}
+
 function main(): void {
   const o: Record<string, number> = { a: 1 };
   let p = 0;

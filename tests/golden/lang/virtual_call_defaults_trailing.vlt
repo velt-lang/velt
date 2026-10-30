@@ -1,11 +1,32 @@
 // Left-out trailing arguments, a passed undefined in the middle and this.m() take the defaults of
 // the override that runs, through classes that inherit it too (#1506).
-class B { m(a: number = 1, b: string = "b", c: boolean = false): string { return "B" + a + b + c; } run(): string { return this.m() + "|" + this.m(9); } }
-class D extends B { override m(a: number = 10, b: string = "d", c: boolean = true): string { return "D" + a + b + c; } }
-class E extends D { }
-class F extends E { override m(a: number = 100, b: string = "f", c: boolean = false): string { return "F" + a + b + c; } }
+class B {
+  m(a: number = 1, b: string = "b", c: boolean = false): string {
+    return "B" + a + b + c;
+  }
+  run(): string {
+    return this.m() + "|" + this.m(9);
+  }
+}
+
+class D extends B {
+  override m(a: number = 10, b: string = "d", c: boolean = true): string {
+    return "D" + a + b + c;
+  }
+}
+
+class E extends D {}
+
+class F extends E {
+  override m(a: number = 100, b: string = "f", c: boolean = false): string {
+    return "F" + a + b + c;
+  }
+}
+
 const xs: B[] = [new B(), new D(), new E(), new F()];
-for (const x of xs) console.log(x.m(), x.m(2), x.m(2, "z"), x.m(undefined, "u"), x.m(3, undefined, true), x.run());
+for (const x of xs) {
+  console.log(x.m(), x.m(2), x.m(2, "z"), x.m(undefined, "u"), x.m(3, undefined, true), x.run());
+}
 const e: E = new F();
 console.log(e.m(), e.m(1));
 const fs = xs.map((x) => x.m);

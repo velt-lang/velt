@@ -5,18 +5,26 @@ type V = { type: string; props: number };
 type C = V | string | number | boolean | null | undefined | C[];
 
 function f(c: C): string {
-  if ((c as V).type) return "vnode " + (c as V).type;
-  if (Array.isArray(c)) return "array " + c.length;
+  if ((c as V).type) {
+    return "vnode " + (c as V).type;
+  }
+  if (Array.isArray(c)) {
+    return "array " + c.length;
+  }
   return "other";
 }
 
 function props(c: C): string {
-  if (!(c as V).props) return "no props";
+  if (!(c as V).props) {
+    return "no props";
+  }
   return "props " + ((c as V).props + 1);
 }
 
 function both(c: C): boolean {
-  if ((c as V).type && (c as V).props > 0) return true;
+  if ((c as V).type && (c as V).props > 0) {
+    return true;
+  }
   return false;
 }
 
@@ -27,6 +35,7 @@ class Box {
     this.size = size;
   }
 }
+
 type Shape = Box | number[] | string;
 
 function shape(s: Shape): string {
@@ -35,6 +44,7 @@ function shape(s: Shape): string {
 
 type A = { tag: string };
 type B = { tag: number; b: boolean };
+
 function tagged(u: A | B): string {
   // `tag` of a `B` is its number: tested as it is.
   return (u as A).tag ? "tag" : "no tag";
@@ -46,7 +56,12 @@ console.log(kids.map(f).join(", "));
 console.log(props({ type: "p", props: 0 }), props({ type: "p", props: 4 }), props([]), props("x"));
 console.log(both({ type: "a", props: 1 }), both({ type: "a", props: 0 }), both([]), both(""));
 console.log(shape(new Box(3)), shape([1, 2]), shape("box"));
-console.log(tagged({ tag: "x" }), tagged({ tag: "" }), tagged({ tag: 0, b: true }), tagged({ tag: 5, b: false }));
+console.log(
+  tagged({ tag: "x" }),
+  tagged({ tag: "" }),
+  tagged({ tag: 0, b: true }),
+  tagged({ tag: 5, b: false }),
+);
 const v = { type: "span", props: 9 };
 const c: C = v;
 const t: string = (c as V).type;

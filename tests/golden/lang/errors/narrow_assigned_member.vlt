@@ -8,13 +8,19 @@ function reassigned(): number {
 
 function joined(c: boolean): number {
   let u: string | number = "x";
-  if (c) { u = 1; }
+  if (c) {
+    u = 1;
+  }
   return u.length;
 }
 
 function otherMember(c: boolean): number {
   let u: string | number = 0;
-  if (c) { u = "a"; } else { u = 1; }
+  if (c) {
+    u = "a";
+  } else {
+    u = 1;
+  }
   return u.length;
 }
 
@@ -35,7 +41,10 @@ function breakNull(k: number, c: boolean): number {
   let x: string | null = "s";
   switch (k) {
     case 1:
-      if (c) { x = null; break; }
+      if (c) {
+        x = null;
+        break;
+      }
       x = "b";
       break;
     default:
@@ -50,7 +59,12 @@ function finallyNull(k: number): number {
   let x: string | null = "s";
   switch (k) {
     case 1:
-      try { x = "a"; break; } finally { x = null; }
+      try {
+        x = "a";
+        break;
+      } finally {
+        x = null;
+      }
     default:
       x = "c";
   }
@@ -72,7 +86,9 @@ function noBreakState(k: number): number {
 function whileBreak(x: string | null, c: boolean): number {
   let y = x;
   while (y === null) {
-    if (c) break;
+    if (c) {
+      break;
+    }
     y = "w";
   }
   return y.length;

@@ -12,8 +12,11 @@ const GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 // The response head may be this long.
 const MAX_HEAD: usize = 16384;
 
-/** The `Sec-WebSocket-Accept` value for a client's `Sec-WebSocket-Key`. */
-export function acceptKey(key: string): string {
+/**
+ * The `Sec-WebSocket-Accept` value that answers a client's `Sec-WebSocket-Key` (RFC 6455
+ * §4.2.2).
+ */
+export function webSocketAccept(key: string): string {
   return base64Encode(sha1(utf8Encode(key + GUID)));
 }
 
@@ -96,7 +99,7 @@ export function checkResponse(head: string, key: string): string {
     return "no Connection: upgrade";
   }
   const accept = values(lines, "sec-websocket-accept");
-  if (accept.length == 0 || accept[0] != acceptKey(key)) {
+  if (accept.length == 0 || accept[0] != webSocketAccept(key)) {
     return "wrong Sec-WebSocket-Accept";
   }
   if (values(lines, "sec-websocket-extensions").some((v) => v != "")) {

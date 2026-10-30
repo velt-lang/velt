@@ -2,5 +2,6 @@
 function key(): number {
   return 0;
 }
+
 const xs: (number | null)[] = [null];
 xs[key()] ??= 5;

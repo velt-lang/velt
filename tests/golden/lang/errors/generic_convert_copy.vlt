@@ -8,9 +8,11 @@ type Tagged<T> = T & { tag: string };
 function unwrap<T>(s: Tagged<T>): T {
   return s;
 }
+
 function tagPart<T>(s: Tagged<T>): { tag: string } {
   return s;
 }
+
 function spreadNum<T>(t: T): T {
   return { ...t };
 }

@@ -1,6 +1,7 @@
 // `JSON.parse` into `any` (here a parameter of type `any`) is not supported yet (#924, #1240):
 // the error says how to name the type instead.
 type Sig = { a: number; b: number };
+
 function wrap(o: any): any {
   return new Proxy(o, {
     get(t: any, k: string | symbol, r: any): any {
@@ -9,5 +10,6 @@ function wrap(o: any): any {
     },
   });
 }
+
 const s = wrap(JSON.parse('{"a":1,"b":2}')) as Sig;
 console.log(s.a);

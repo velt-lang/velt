@@ -167,7 +167,11 @@ function nothings(): void {
   console.log(fields<unknown>(undefined), fields<any>(null), fields<unknown>(2));
   console.log(count2<unknown>([0, 1, "", "a", null, undefined, NaN]), count2<any>([false, true]));
   console.log(loop<unknown>(0), loop<any>(1), present<unknown>(null), present<any>(undefined));
-  console.log(present<unknown>(0), shape<any>({ a: 1, b: 2 }), shape<unknown>({ default: 1, x: 2 }));
+  console.log(
+    present<unknown>(0),
+    shape<any>({ a: 1, b: 2 }),
+    shape<unknown>({ default: 1, x: 2 }),
+  );
 }
 
 interface A {
@@ -212,15 +216,27 @@ function inField<T>(o: { v: T | Mod<T> }): string {
 }
 
 function literals(): void {
-  console.log(keys<unknown>({ a: 1, b: 2, c: 3 }), keys<unknown>({ a: 1 }), keys<any>({ a: 1, z: 0 }));
+  console.log(
+    keys<unknown>({ a: 1, b: 2, c: 3 }),
+    keys<unknown>({ a: 1 }),
+    keys<any>({ a: 1, z: 0 }),
+  );
   console.log(readB<unknown>({ a: 1, b: 2 }), readB<any>({ a: 1, b: 2 }), readB<unknown>({ a: 1 }));
   console.log(readDefault<unknown>({ default: "s" }), readDefault<unknown>({ default: 1 }));
   console.log(orDefault<unknown>(null), orDefault<any>(undefined), orDefault<unknown>(0));
   console.log(orDefault<number>(1), orDefault<unknown>({ default: 2 }) === "[object Object]");
   console.log(plainOr<unknown>(null), plainOr<any>(undefined), plainOr<null>(null));
   console.log(plainOr<number | null>(null), plainOr<number>(2), plainOr<string>("") === "");
-  console.log(new Holder<unknown>(null).get(), new Holder<unknown>(5).get(), new Holder<any>(undefined).get());
-  console.log(inField<unknown>({ v: undefined }), inField<unknown>({ v: "x" }), inField<any>({ v: null }));
+  console.log(
+    new Holder<unknown>(null).get(),
+    new Holder<unknown>(5).get(),
+    new Holder<any>(undefined).get(),
+  );
+  console.log(
+    inField<unknown>({ v: undefined }),
+    inField<unknown>({ v: "x" }),
+    inField<any>({ v: null }),
+  );
 }
 
 demo();

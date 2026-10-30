@@ -55,6 +55,7 @@ class Impl implements Ctx<string, { n: number }> {
     return "impl";
   }
 }
+
 const i = new Impl();
 const ia: Ctx<any, any> = i;
 const b: Ctx<unknown, unknown> = ia;

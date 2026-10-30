@@ -1,10 +1,26 @@
 // A closure `with` calls cannot use a weak collection from outside the lock either.
-class K { n: number; constructor(n: number) { this.n = n; } }
-class Box { k: K; constructor(k: K) { this.k = k; } }
+class K {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+class Box {
+  k: K;
+  constructor(k: K) {
+    this.k = k;
+  }
+}
+
 async function main() {
   const m = shared(new Mutex<Box>(new Box(new K(5))));
   const wm = new WeakMap<K, number>();
-  const put = (k: K) => { wm.set(k, 1); };
-  m.with((v) => { put(v.k); });
+  const put = (k: K) => {
+    wm.set(k, 1);
+  };
+  m.with((v) => {
+    put(v.k);
+  });
   console.log(wm.has(new K(1)));
 }

@@ -6,10 +6,12 @@
 // typed proxies (#823), as this one is.
 
 const BRAND: unique symbol = Symbol("brand");
+
 interface Ro<T> {
   readonly value: T;
   readonly [BRAND]: true;
 }
+
 interface Rw<T> {
   value: T;
   readonly [BRAND]: true;
@@ -43,12 +45,13 @@ function make<T>(get: () => T, set?: (v: T) => void): Ro<T> | Rw<T> {
   return obj as Ro<T>;
 }
 
-const c = make(
-  () => stored * 2,
-  (v) => {
-    stored = v;
-  },
-) as Rw<number>;
+const c =
+  make(
+    () => stored * 2,
+    (v) => {
+      stored = v;
+    },
+  ) as Rw<number>;
 console.log(c.value, reads);
 c.value = 5;
 console.log(c.value, reads, stored);
@@ -68,10 +71,14 @@ const lit = {
 const view = lit as Ro<number>;
 console.log(view.value, view.value, (view as any) === (lit as any), n);
 
-
 // Printed and serialized as Node does: an accessor shows as `[Getter]` (or `[Getter/Setter]`)
 // without running, and `JSON.stringify` writes what the getter returns.
-const tagged = { tag: "t", get value(): number { return ++n; } };
+const tagged = {
+  tag: "t",
+  get value(): number {
+    return ++n;
+  },
+};
 const tv = tagged as { readonly tag: string; readonly value: number };
 console.log(tv);
 console.log(JSON.stringify(tv), JSON.stringify(tagged as any), n);

@@ -12,17 +12,21 @@ class Item {
     this.v = v;
   }
 }
+
 class St {
   items: Item[] = [new Item(1), new Item(2)];
 }
+
 function mk(out: Item[]): Item {
   const it = new Item(out.length);
   it.kids.push(new Item(2));
   return it;
 }
+
 function firstOf(out: Item[]): Item {
   return out[0];
 }
+
 function main() {
   const rw = shared(new RwLock<St>(new St()));
   const out: Item[] = [new Item(9), new Item(8)];

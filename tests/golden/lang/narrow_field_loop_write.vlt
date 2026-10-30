@@ -3,6 +3,7 @@
 // TS18047, and JavaScript reads `undefined` from `r[key]` after the `delete`). Before, these
 // compiled and stopped at the second read.
 type O = { v: string | number; n: { k: number } | null };
+
 function f(o: O): void {
   if (typeof o.v === "string") {
     for (let i = 0; i < 2; i++) {
@@ -17,13 +18,17 @@ function f(o: O): void {
     }
   }
 }
+
 function g(r: Record<string, number[]>, k: string): void {
   const key = k;
-  if (!r[key]) r[key] = [];
+  if (!r[key]) {
+    r[key] = [];
+  }
   while (r.x === undefined) {
     r[key].push(1);
     delete r[key];
   }
 }
+
 f({ v: "ab", n: { k: 1 } });
 g({}, "a");

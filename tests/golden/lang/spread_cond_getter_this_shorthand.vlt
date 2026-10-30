@@ -1,4 +1,19 @@
 // A getter using `this` next to a shorthand property in a conditional spread.
 const v = 3;
-function f(c: boolean) { return { ...(c ? { v, get g() { return this.v + 1; } } : {}) }; }
+
+function f(c: boolean) {
+  return {
+    ...(
+      c
+        ? {
+          v,
+          get g() {
+            return this.v + 1;
+          },
+        }
+        : {}
+    ),
+  };
+}
+
 console.log(JSON.stringify(f(true)));

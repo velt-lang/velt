@@ -1,6 +1,7 @@
 // `T | void` is `T | undefined`, and a function whose result may be `undefined` returns it on a
 // bare `return;` and at its end, declared or inferred (issue #930), as in TypeScript.
 type Handler = (code: number) => boolean | void;
+
 function run(h: Handler, code: number): string {
   const r = h(code);
   if (r === true) {
@@ -8,6 +9,7 @@ function run(h: Handler, code: number): string {
   }
   return `not handled (${r})`;
 }
+
 function find(xs: number[], v: number): number | undefined {
   for (const x of xs) {
     if (x === v) {
@@ -15,18 +17,42 @@ function find(xs: number[], v: number): number | undefined {
     }
   }
 }
+
 function firstEven(xs: number[]): number | undefined {
   for (const x of xs) {
-    if (x % 2 == 0) return x;
-    if (x < 0) return;
+    if (x % 2 == 0) {
+      return x;
+    }
+    if (x < 0) {
+      return;
+    }
   }
 }
+
 function mainA() {
   console.log(run((c) => c > 1, 2));
   console.log(run((c) => c > 1, 0));
   console.log(run(() => {}, 0));
-  console.log(run((c) => { if (c > 5) return true; }, 9));
-  console.log(run((c) => { if (c > 5) return true; }, 1));
+  console.log(
+    run(
+      (c) => {
+        if (c > 5) {
+          return true;
+        }
+      },
+      9,
+    ),
+  );
+  console.log(
+    run(
+      (c) => {
+        if (c > 5) {
+          return true;
+        }
+      },
+      1,
+    ),
+  );
   console.log(find([1, 2], 2), find([1, 2], 3));
   console.log(firstEven([1, 3, 4]), firstEven([1, -1, 4]), firstEven([]));
 }
@@ -39,18 +65,26 @@ function findAny(xs: number[], x: number) {
   }
   return;
 }
+
 function pick(c: boolean) {
   if (c) {
     return "yes";
   }
 }
+
 const label = (n: number) => {
-  if (n > 0) return "pos";
+  if (n > 0) {
+    return "pos";
+  }
 };
+
 function nothing(c: boolean) {
-  if (c) return;
+  if (c) {
+    return;
+  }
   console.log("side");
 }
+
 function main() {
   mainA();
   console.log(findAny([1, 2], 2), findAny([1, 2], 5));

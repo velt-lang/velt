@@ -20,26 +20,34 @@ interface O {
 }
 
 function g(b: I): string {
-  if (typeof b.v === "string") return "str";
+  if (typeof b.v === "string") {
+    return "str";
+  }
   const r = b.v;
   const xs = [b.v];
   return `${typeof r} ${xs.length}`;
 }
 
 function h(b: J): string {
-  if (typeof b.v === "string") return "str";
+  if (typeof b.v === "string") {
+    return "str";
+  }
   const r = b.v;
   return typeof r === "function" ? `fn ${r()}` : `v ${r.name}`;
 }
 
 function opt(b: O): string {
-  if (typeof b.v === "string") return "str";
+  if (typeof b.v === "string") {
+    return "str";
+  }
   const r = b.v;
   return r === undefined ? "none" : typeof r === "function" ? `fn ${r()}` : `n ${r}`;
 }
 
 function annotated(b: I): number {
-  if (typeof b.v === "string") return -1;
+  if (typeof b.v === "string") {
+    return -1;
+  }
   const r: number | (() => number) = b.v;
   return typeof r === "function" ? r() : r;
 }

@@ -5,16 +5,48 @@
 class State {
   n: number = 1;
   label: string = "lbl" + String(1);
-  bump(): string { reset(); this.n = this.n + 1; return this.label + this.n; }
-  get twice(): string { reset(); return this.label + this.label; }
-  set count(v: number) { reset(); this.n = v; console.log("set", this.label, this.n); }
-  deep(): string { return this.inner(); }
-  inner(): string { reset(); return this.label + "/deep"; }
-  plain(): number { this.n = this.n * 2; return this.n; }
+  bump(): string {
+    reset();
+    this.n = this.n + 1;
+    return this.label + this.n;
+  }
+  get twice(): string {
+    reset();
+    return this.label + this.label;
+  }
+  set count(v: number) {
+    reset();
+    this.n = v;
+    console.log("set", this.label, this.n);
+  }
+  deep(): string {
+    return this.inner();
+  }
+  inner(): string {
+    reset();
+    return this.label + "/deep";
+  }
+  plain(): number {
+    this.n = this.n * 2;
+    return this.n;
+  }
 }
+
 let cur = new State();
-function reset(): void { cur = new State(); cur.label = "new" + String(cur.n); }
-class Other { label: string = "o" + String(1); swap(): string { other = new Other(); return this.label + " swapped"; } }
+
+function reset(): void {
+  cur = new State();
+  cur.label = "new" + String(cur.n);
+}
+
+class Other {
+  label: string = "o" + String(1);
+  swap(): string {
+    other = new Other();
+    return this.label + " swapped";
+  }
+}
+
 let other = new Other();
 
 function main(): void {

@@ -27,7 +27,9 @@ function bump(s: Count): void {
 }
 
 function bumpUnless(s: Count, c: boolean): void {
-  if (c) return undefined;
+  if (c) {
+    return undefined;
+  }
   s.n += 10;
 }
 
@@ -41,7 +43,9 @@ function pushTwice(xs: number[]): void {
 }
 
 function pushLater(xs: number[], c: boolean): void {
-  if (c) return (void xs.push(2));
+  if (c) {
+    return (void xs.push(2));
+  }
   xs.push(3);
 }
 
@@ -58,9 +62,7 @@ async function main() {
   console.log(b2, c2);
   // Nested, and a default that is not evaluated when the field is present.
   const n: { in: { b?: number | null } } = { in: { b: null } };
-  const {
-    in: { b: b3 = 1 },
-  } = n;
+  const { in: { b: b3 = 1 } } = n;
   console.log(b3);
   let count = 0;
   const q: { b?: number | null } = { b: null };

@@ -5,13 +5,16 @@ interface G {
   get y(): number;
   label: string;
 }
+
 interface S {
   get v(): number;
   set v(x: number);
 }
+
 function conv<T>(o: unknown): T {
   return o as T;
 }
+
 const g = conv<G>({ y: 2, label: "g" } as unknown);
 console.log(g.y, g.label);
 const s = conv<S>({ v: 3 } as unknown);

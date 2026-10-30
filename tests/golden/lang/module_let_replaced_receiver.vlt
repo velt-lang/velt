@@ -3,22 +3,70 @@
 // clears that `let` (#1161): typed field writes, methods, getters and setters, arguments, and
 // an array held in a module `let` emptied during `push` or an element's call. Identical to Node.
 
-class Box { name: string = "box" + String(1); n: number = 0;
-  kill(): string { B = null; return this.name + " killed"; }
-  set s(v: number) { B = null; this.n = v; console.log("set", this.name, this.n); }
-  get g(): string { B = new Box(); return this.name + "g"; }
-  swap(): string { B = new Box(); return this.name + " swapped"; } }
+class Box {
+  name: string = "box" + String(1);
+  n: number = 0;
+  kill(): string {
+    B = null;
+    return this.name + " killed";
+  }
+  set s(v: number) {
+    B = null;
+    this.n = v;
+    console.log("set", this.name, this.n);
+  }
+  get g(): string {
+    B = new Box();
+    return this.name + "g";
+  }
+  swap(): string {
+    B = new Box();
+    return this.name + " swapped";
+  }
+}
+
 let B: Box | null = new Box();
-function clearB(): number { B = null; return 7; }
-function clearBs(): string { B = null; return "s" + String(2); }
-function take(b: Box): string { B = null; return b.name + "/" + b.n; }
-function takeS(s: string): string { S = "other"; return s + "!"; }
+
+function clearB(): number {
+  B = null;
+  return 7;
+}
+
+function clearBs(): string {
+  B = null;
+  return "s" + String(2);
+}
+
+function take(b: Box): string {
+  B = null;
+  return b.name + "/" + b.n;
+}
+
+function takeS(s: string): string {
+  S = "other";
+  return s + "!";
+}
+
 let S: string = "str" + String(3);
 
 let XS: Box[] = [new Box(), new Box()];
-function makeBox(): Box { XS = []; const b = new Box(); b.n = 9; return b; }
-function showBox(b: Box): string { XS = []; return b.name + ":" + b.n; }
-function popAll(): number { XS.length = 0; return 4; }
+
+function makeBox(): Box {
+  XS = [];
+  const b = new Box();
+  b.n = 9;
+  return b;
+}
+
+function showBox(b: Box): string {
+  XS = [];
+  return b.name + ":" + b.n;
+}
+
+function popAll(): number {
+  XS.length = 0;
+  return 4;
+}
 
 function main(): void {
   B!.n = clearB();

@@ -13,7 +13,9 @@ async function crawl(root: number): Promise<number> {
     }
   }
   async function other(n: number): Promise<number> {
-    if (n < root) await visit(n + 10);
+    if (n < root) {
+      await visit(n + 10);
+    }
     return n;
   }
   await visit(1);
@@ -27,7 +29,9 @@ function fetcher(limit: number) {
   async function get(n: number): Promise<string> {
     log.push("get" + n);
     await sleep(1);
-    if (n > limit) throw new Error("over " + n);
+    if (n > limit) {
+      throw new Error("over " + n);
+    }
     return n <= 1 ? log.join(" ") : await retry(n - 1);
   }
   async function retry(n: number): Promise<string> {

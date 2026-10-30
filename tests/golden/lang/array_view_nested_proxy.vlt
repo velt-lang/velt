@@ -7,6 +7,7 @@ interface VNode {
   type: string;
   children: JSXChild[];
 }
+
 type JSXChild = VNode | string | number | boolean | null | undefined | JSXChild[];
 
 // The program makes proxies (sigx's signals do), so its object types can hold views.

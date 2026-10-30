@@ -9,6 +9,7 @@ class B {
     return this.n;
   }
 }
+
 class FieldBefore extends B {
   m: i64 = 1;
   constructor() {
@@ -16,23 +17,27 @@ class FieldBefore extends B {
     super(1);
   }
 }
+
 class MethodBefore extends B {
   constructor() {
     const k = this.get();
     super(k);
   }
 }
+
 class SuperBefore extends B {
   constructor() {
     const k = super.get();
     super(k);
   }
 }
+
 class InArgs extends B {
   constructor() {
     super(this.n);
   }
 }
+
 class InClosure extends B {
   constructor() {
     const f = (): i64 => this.n;
@@ -40,6 +45,7 @@ class InClosure extends B {
     console.log(f());
   }
 }
+
 class InBranch extends B {
   constructor(f: bool) {
     if (f) {
@@ -48,6 +54,7 @@ class InBranch extends B {
     super(1);
   }
 }
+
 class ReturnBefore extends B {
   constructor(f: bool) {
     if (f) {
@@ -56,6 +63,7 @@ class ReturnBefore extends B {
     super(1);
   }
 }
+
 class Fine extends B {
   constructor(k: i64) {
     const doubled = k * 2;
@@ -63,4 +71,5 @@ class Fine extends B {
     console.log(this.n, super.get());
   }
 }
+
 function main() {}

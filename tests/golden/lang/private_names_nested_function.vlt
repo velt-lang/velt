@@ -3,8 +3,12 @@
 class Counter {
   #count: number = 0;
   private step: number = 2;
-  #bump(): void { this.#count += this.step; }
-  get #doubled(): number { return this.#count * 2; }
+  #bump(): void {
+    this.#count += this.step;
+  }
+  get #doubled(): number {
+    return this.#count * 2;
+  }
 
   run(other: Counter): number {
     function poke(c: Counter): void {
@@ -13,8 +17,12 @@ class Counter {
       c.step = 5;
     }
     function read(c: Counter): number {
-      function inner(d: Counter): number { return d.#doubled; }
-      if (#count in c) return inner(c) + 1;
+      function inner(d: Counter): number {
+        return d.#doubled;
+      }
+      if (#count in c) {
+        return inner(c) + 1;
+      }
       return 0;
     }
     poke(other);
@@ -29,7 +37,9 @@ class Counter {
       build(): Counter {
         const c = new Counter();
         // Both classes' private names are in scope here.
-        function fill(b: Builder, into: Counter): void { into.#count = b.#seed + 1; }
+        function fill(b: Builder, into: Counter): void {
+          into.#count = b.#seed + 1;
+        }
         fill(this, c);
         return c;
       }
@@ -37,7 +47,9 @@ class Counter {
     return new Builder().build();
   }
 
-  value(): number { return this.#count; }
+  value(): number {
+    return this.#count;
+  }
 }
 
 const a = new Counter();

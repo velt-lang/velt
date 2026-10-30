@@ -5,7 +5,10 @@
 // function declaring it and every closure on the way share (#799).
 
 async function loops() {
-  const m = new Map<string, number>([["a", 1], ["b", 2]]);
+  const m = new Map<string, number>([
+    ["a", 1],
+    ["b", 2],
+  ]);
   let total = 0;
   const fs: (() => void)[] = [];
   for (let [k, v] of m) {
@@ -73,10 +76,12 @@ async function readAfter() {
   console.log(out);
   const fs: (() => () => number)[] = [];
   for (let n of [1, 2]) {
-    fs.push(() => () => {
-      n += 1;
-      return n;
-    });
+    fs.push(
+      () => () => {
+        n += 1;
+        return n;
+      },
+    );
   }
   const inner = fs.map((o) => o());
   console.log(inner.map((f) => f()).join(","), inner.map((f) => f()).join(","));

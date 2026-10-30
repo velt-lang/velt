@@ -4,6 +4,7 @@
 function get<T extends object, K extends keyof T>(source: T, key: K): T[K] {
   return source[key];
 }
+
 const st = { count: 0, name: "a" };
 const k: "count" | "name" = st.count > 0 ? "count" : "name";
 console.log(get(st, k), get(st, "count"));

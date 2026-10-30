@@ -51,6 +51,8 @@ async function main() {
   // The steps: the same order as Node's.
   const t = tick("tick");
   const a = f(7).then((v) => console.log("inferred", v));
-  const b = (async (n: number): Promise<number> => inner(n))(8).then((v) => console.log("declared", v));
+  const b = (async (n: number): Promise<number> => inner(n))(8).then(
+    (v) => console.log("declared", v),
+  );
   await Promise.all([t, a, b]);
 }

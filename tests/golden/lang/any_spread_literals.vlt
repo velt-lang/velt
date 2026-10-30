@@ -26,9 +26,11 @@ const nums: number[] = [...[far ? 1 : 2]];
 console.log(nums);
 const v: any = { a: { ...{ q: far ? 1 : o.name } } };
 console.log(v);
+
 function r(): any {
   return [...[far ? 1 : o.name]];
 }
+
 console.log(r());
 const rec: Record<string, any> = { k: [...[far ? 1 : o.name]] };
 console.log(rec);
@@ -36,9 +38,11 @@ const m: any[] = [[far ? 1 : o.name], { z: o.n ?? 1 }];
 console.log(m);
 const w: any = [[far ? 1 : o.name]];
 console.log(w);
+
 function takes(x: any): string {
   return JSON.stringify(x);
 }
+
 console.log(takes({ ...{ q: far ? 1 : o.name } }), takes([...[o.n && o.name]]));
 // Where an `unknown` is expected, the same.
 const un: unknown = [far ? 1 : o.name];
@@ -49,7 +53,11 @@ const us: unknown[] = [...[far ? 1 : o.name], o.n ?? 2];
 console.log(us);
 const uo: unknown = { ...{ q: far ? 1 : o.name } };
 console.log(uo);
-function ug(): unknown { return o.zz || "fallback"; }
+
+function ug(): unknown {
+  return o.zz || "fallback";
+}
+
 console.log(ug());
 const typed: number = far ? 1 : o.n;
 console.log(typed + 1);

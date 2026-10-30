@@ -4,15 +4,28 @@
 // buffer (`in_array_buffer`), or `p` reads the old buffer (`21 5001`). Velt-only syntax
 // (`struct`, `f64`, `i64`, `main` as the entry); Node prints the same for a copy with
 // `interface`, `number` and a call of `main`.
-struct P { x: f64; y: f64; }
-class H { ps: P[] = []; }
+struct P {
+  x: f64;
+  y: f64;
+}
+
+class H {
+  ps: P[] = [];
+}
+
 function grow(o: H, p: P, n: i64): f64 {
   let s = 0.0;
-  for (let i = 0; i < n; i++) { o.ps.push({ x: 1.0, y: 2.0 }); s += p.x + p.y; }
+  for (let i = 0; i < n; i++) {
+    o.ps.push({ x: 1.0, y: 2.0 });
+    s += p.x + p.y;
+  }
   return s;
 }
+
 function main() {
-  const a = new H(); a.ps.push({ x: 3.0, y: 4.0 });
-  const b = new H(); b.ps = a.ps;
+  const a = new H();
+  a.ps.push({ x: 3.0, y: 4.0 });
+  const b = new H();
+  b.ps = a.ps;
   console.log(grow(b, a.ps[0], 5000), a.ps.length);
 }

@@ -8,14 +8,70 @@
 import { u32x4 } from "velt/simd";
 
 const K256: u32[] = [
-  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
-  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
-  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
-  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
-  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+  0x428a2f98,
+  0x71374491,
+  0xb5c0fbcf,
+  0xe9b5dba5,
+  0x3956c25b,
+  0x59f111f1,
+  0x923f82a4,
+  0xab1c5ed5,
+  0xd807aa98,
+  0x12835b01,
+  0x243185be,
+  0x550c7dc3,
+  0x72be5d74,
+  0x80deb1fe,
+  0x9bdc06a7,
+  0xc19bf174,
+  0xe49b69c1,
+  0xefbe4786,
+  0x0fc19dc6,
+  0x240ca1cc,
+  0x2de92c6f,
+  0x4a7484aa,
+  0x5cb0a9dc,
+  0x76f988da,
+  0x983e5152,
+  0xa831c66d,
+  0xb00327c8,
+  0xbf597fc7,
+  0xc6e00bf3,
+  0xd5a79147,
+  0x06ca6351,
+  0x14292967,
+  0x27b70a85,
+  0x2e1b2138,
+  0x4d2c6dfc,
+  0x53380d13,
+  0x650a7354,
+  0x766a0abb,
+  0x81c2c92e,
+  0x92722c85,
+  0xa2bfe8a1,
+  0xa81a664b,
+  0xc24b8b70,
+  0xc76c51a3,
+  0xd192e819,
+  0xd6990624,
+  0xf40e3585,
+  0x106aa070,
+  0x19a4c116,
+  0x1e376c08,
+  0x2748774c,
+  0x34b0bcb5,
+  0x391c0cb3,
+  0x4ed8aa4a,
+  0x5b9cca4f,
+  0x682e6ff3,
+  0x748f82ee,
+  0x78a5636f,
+  0x84c87814,
+  0x8cc70208,
+  0x90befffa,
+  0xa4506ceb,
+  0xbef9a3f7,
+  0xc67178f2,
 ];
 
 const K1: u32[] = [0x5a827999, 0x6ed9eba1, 0x8f1bbcdc, 0xca62c1d6];
@@ -56,16 +112,31 @@ function hex(h: u32[]): string {
 
 // SHA-256, ARMv8: state ABCD / EFGH, four rounds per sha256h + sha256h2.
 function sha256Arm(w: u32[]): string {
-  let abcd = u32x4.splat(0x6a09e667).withLane(1, 0xbb67ae85).withLane(2, 0x3c6ef372).withLane(3, 0xa54ff53a);
-  let efgh = u32x4.splat(0x510e527f).withLane(1, 0x9b05688c).withLane(2, 0x1f83d9ab).withLane(3, 0x5be0cd19);
+  let abcd = u32x4
+    .splat(0x6a09e667)
+    .withLane(1, 0xbb67ae85)
+    .withLane(2, 0x3c6ef372)
+    .withLane(3, 0xa54ff53a);
+  let efgh = u32x4
+    .splat(0x510e527f)
+    .withLane(1, 0x9b05688c)
+    .withLane(2, 0x1f83d9ab)
+    .withLane(3, 0x5be0cd19);
   for (let off: usize = 0; off < w.length; off += 16) {
-    const msg: u32x4[] = [u32x4.load(w, off), u32x4.load(w, off + 4), u32x4.load(w, off + 8), u32x4.load(w, off + 12)];
+    const msg: u32x4[] = [
+      u32x4.load(w, off),
+      u32x4.load(w, off + 4),
+      u32x4.load(w, off + 8),
+      u32x4.load(w, off + 12),
+    ];
     const abcd0 = abcd;
     const efgh0 = efgh;
     for (let j: usize = 0; j < 16; j++) {
       const wk = msg[j % 4].add(u32x4.load(K256, 4 * j));
       if (j < 12) {
-        msg[j % 4] = msg[j % 4].sha256su0(msg[(j + 1) % 4]).sha256su1(msg[(j + 2) % 4], msg[(j + 3) % 4]);
+        msg[j % 4] = msg[j % 4]
+          .sha256su0(msg[(j + 1) % 4])
+          .sha256su1(msg[(j + 2) % 4], msg[(j + 3) % 4]);
       }
       const before = abcd;
       abcd = abcd.sha256h(efgh, wk);
@@ -74,13 +145,30 @@ function sha256Arm(w: u32[]): string {
     abcd = abcd.add(abcd0);
     efgh = efgh.add(efgh0);
   }
-  return hex([abcd.lane(0), abcd.lane(1), abcd.lane(2), abcd.lane(3), efgh.lane(0), efgh.lane(1), efgh.lane(2), efgh.lane(3)]);
+  return hex([
+    abcd.lane(0),
+    abcd.lane(1),
+    abcd.lane(2),
+    abcd.lane(3),
+    efgh.lane(0),
+    efgh.lane(1),
+    efgh.lane(2),
+    efgh.lane(3),
+  ]);
 }
 
 // SHA-256, x86 SHA-NI: state ABEF / CDGH (A in lane 3), two rounds per sha256rnds2.
 function sha256X86(w: u32[]): string {
-  const dcba = u32x4.splat(0x6a09e667).withLane(1, 0xbb67ae85).withLane(2, 0x3c6ef372).withLane(3, 0xa54ff53a);
-  const hgfe = u32x4.splat(0x510e527f).withLane(1, 0x9b05688c).withLane(2, 0x1f83d9ab).withLane(3, 0x5be0cd19);
+  const dcba = u32x4
+    .splat(0x6a09e667)
+    .withLane(1, 0xbb67ae85)
+    .withLane(2, 0x3c6ef372)
+    .withLane(3, 0xa54ff53a);
+  const hgfe = u32x4
+    .splat(0x510e527f)
+    .withLane(1, 0x9b05688c)
+    .withLane(2, 0x1f83d9ab)
+    .withLane(3, 0x5be0cd19);
   const cdab = u32x4.shuffle(dcba, dcba, 1, 0, 3, 2);
   const efgh = u32x4.shuffle(hgfe, hgfe, 3, 2, 1, 0);
   let abef = u32x4.shuffle(efgh, cdab, 2, 3, 4, 5);
@@ -95,7 +183,12 @@ function sha256X86(w: u32[]): string {
       } else {
         const prev = msg[j - 1];
         const tail = u32x4.shuffle(msg[j - 2], prev, 1, 2, 3, 4);
-        msg.push(msg[j - 4].sha256msg1(msg[j - 3]).add(tail).sha256msg2(prev));
+        msg.push(
+          msg[j - 4]
+            .sha256msg1(msg[j - 3])
+            .add(tail)
+            .sha256msg2(prev),
+        );
       }
       const wk = msg[j].add(u32x4.load(K256, 4 * j));
       cdgh = cdgh.sha256rnds2(abef, wk);
@@ -108,15 +201,33 @@ function sha256X86(w: u32[]): string {
   const dchg = u32x4.shuffle(cdgh, cdgh, 1, 0, 3, 2);
   const outAbcd = u32x4.shuffle(feba, dchg, 0, 1, 6, 7);
   const outEfgh = u32x4.shuffle(feba, dchg, 2, 3, 4, 5);
-  return hex([outAbcd.lane(0), outAbcd.lane(1), outAbcd.lane(2), outAbcd.lane(3), outEfgh.lane(0), outEfgh.lane(1), outEfgh.lane(2), outEfgh.lane(3)]);
+  return hex([
+    outAbcd.lane(0),
+    outAbcd.lane(1),
+    outAbcd.lane(2),
+    outAbcd.lane(3),
+    outEfgh.lane(0),
+    outEfgh.lane(1),
+    outEfgh.lane(2),
+    outEfgh.lane(3),
+  ]);
 }
 
 // SHA-1, ARMv8: ABCD (A in lane 0) and E, four rounds per sha1c / sha1p / sha1m.
 function sha1Arm(w: u32[]): string {
-  let abcd = u32x4.splat(0x67452301).withLane(1, 0xefcdab89).withLane(2, 0x98badcfe).withLane(3, 0x10325476);
+  let abcd = u32x4
+    .splat(0x67452301)
+    .withLane(1, 0xefcdab89)
+    .withLane(2, 0x98badcfe)
+    .withLane(3, 0x10325476);
   let e: u32 = 0xc3d2e1f0;
   for (let off: usize = 0; off < w.length; off += 16) {
-    const msg: u32x4[] = [u32x4.load(w, off), u32x4.load(w, off + 4), u32x4.load(w, off + 8), u32x4.load(w, off + 12)];
+    const msg: u32x4[] = [
+      u32x4.load(w, off),
+      u32x4.load(w, off + 4),
+      u32x4.load(w, off + 8),
+      u32x4.load(w, off + 12),
+    ];
     const abcd0 = abcd;
     const e0 = e;
     for (let j: usize = 0; j < 20; j++) {
@@ -131,7 +242,9 @@ function sha1Arm(w: u32[]): string {
       }
       e = next;
       if (j < 16) {
-        msg[j % 4] = msg[j % 4].sha1su0(msg[(j + 1) % 4], msg[(j + 2) % 4]).sha1su1(msg[(j + 3) % 4]);
+        msg[j % 4] = msg[j % 4]
+          .sha1su0(msg[(j + 1) % 4], msg[(j + 2) % 4])
+          .sha1su1(msg[(j + 3) % 4]);
       }
     }
     abcd = abcd.add(abcd0);
@@ -142,7 +255,11 @@ function sha1Arm(w: u32[]): string {
 
 // SHA-1, x86 SHA-NI: ABCD with A in lane 3, E carried in lane 3 through sha1nexte.
 function sha1X86(w: u32[]): string {
-  const dcba = u32x4.splat(0x67452301).withLane(1, 0xefcdab89).withLane(2, 0x98badcfe).withLane(3, 0x10325476);
+  const dcba = u32x4
+    .splat(0x67452301)
+    .withLane(1, 0xefcdab89)
+    .withLane(2, 0x98badcfe)
+    .withLane(3, 0x10325476);
   let abcd = u32x4.shuffle(dcba, dcba, 3, 2, 1, 0);
   let e = u32x4.splat(0).withLane(3, 0xc3d2e1f0);
   for (let off: usize = 0; off < w.length; off += 16) {
@@ -155,7 +272,12 @@ function sha1X86(w: u32[]): string {
         const v = u32x4.load(w, off + 4 * j);
         msg.push(u32x4.shuffle(v, v, 3, 2, 1, 0));
       } else {
-        msg.push(msg[j - 4].sha1msg1(msg[j - 3]).xor(msg[j - 2]).sha1msg2(msg[j - 1]));
+        msg.push(
+          msg[j - 4]
+            .sha1msg1(msg[j - 3])
+            .xor(msg[j - 2])
+            .sha1msg2(msg[j - 1]),
+        );
       }
       const ewk = j == 0 ? e.add(msg[0]) : prev.sha1nexte(msg[j]);
       prev = abcd;
@@ -193,9 +315,26 @@ function main() {
     return s;
   };
   const names = [
-    "sha1c", "sha1p", "sha1m", "sha1h", "sha1su0", "sha1su1", "sha256h", "sha256h2", "sha256su0",
-    "sha256su1", "sha256rnds2", "sha256msg1", "sha256msg2", "sha1rnds4/0", "sha1rnds4/1",
-    "sha1rnds4/2", "sha1rnds4/3", "sha1nexte", "sha1msg1", "sha1msg2",
+    "sha1c",
+    "sha1p",
+    "sha1m",
+    "sha1h",
+    "sha1su0",
+    "sha1su1",
+    "sha256h",
+    "sha256h2",
+    "sha256su0",
+    "sha256su1",
+    "sha256rnds2",
+    "sha256msg1",
+    "sha256msg2",
+    "sha1rnds4/0",
+    "sha1rnds4/1",
+    "sha1rnds4/2",
+    "sha1rnds4/3",
+    "sha1nexte",
+    "sha1msg1",
+    "sha1msg2",
   ];
   const sums: u64[] = [];
   for (let k: usize = 0; k < names.length; k++) {
@@ -207,10 +346,26 @@ function main() {
     const c = u32x4.splat(next()).withLane(1, next()).withLane(2, next()).withLane(3, next());
     const e = next();
     const results: u32x4[] = [
-      a.sha1c(e, b), a.sha1p(e, b), a.sha1m(e, b), u32x4.splat(u32x4.sha1h(e)), a.sha1su0(b, c),
-      a.sha1su1(b), a.sha256h(b, c), a.sha256h2(b, c), a.sha256su0(b), a.sha256su1(b, c),
-      a.sha256rnds2(b, c), a.sha256msg1(b), a.sha256msg2(b), a.sha1rnds4(b, 0), a.sha1rnds4(b, 1),
-      a.sha1rnds4(b, 2), a.sha1rnds4(b, 3), a.sha1nexte(b), a.sha1msg1(b), a.sha1msg2(b),
+      a.sha1c(e, b),
+      a.sha1p(e, b),
+      a.sha1m(e, b),
+      u32x4.splat(u32x4.sha1h(e)),
+      a.sha1su0(b, c),
+      a.sha1su1(b),
+      a.sha256h(b, c),
+      a.sha256h2(b, c),
+      a.sha256su0(b),
+      a.sha256su1(b, c),
+      a.sha256rnds2(b, c),
+      a.sha256msg1(b),
+      a.sha256msg2(b),
+      a.sha1rnds4(b, 0),
+      a.sha1rnds4(b, 1),
+      a.sha1rnds4(b, 2),
+      a.sha1rnds4(b, 3),
+      a.sha1nexte(b),
+      a.sha1msg1(b),
+      a.sha1msg2(b),
     ];
     for (let k: usize = 0; k < results.length; k++) {
       sums[k] = fold(sums[k], results[k]);

@@ -23,7 +23,10 @@ const r: Req<Props> = { name: "a", age: 3, id: "x" };
 
 type Ev = "click" | "focus";
 type Handlers = { [K in Ev as `on${Capitalize<K>}`]: (n: number) => void };
-const h: Handlers = { onClick: (n: number) => console.log("click", n), onFocus: (n: number) => console.log("focus", n) };
+const h: Handlers = {
+  onClick: (n: number) => console.log("click", n),
+  onFocus: (n: number) => console.log("focus", n),
+};
 h.onClick(1);
 
 type Cap<S extends string> = S extends `${infer F}${infer R}` ? `${Uppercase<F>}${R}` : S;
@@ -42,48 +45,43 @@ type Strip<T> = { [K in keyof T as K extends `model:${string}` ? never : K]: T[K
 const s: Strip<{ "model:x": number; y: string }> = { y: "kept" };
 type Tup = [Box<number>] extends [never] ? "never" : "some";
 const tup: Tup = "some";
-console.log(a, b, c, d, g.getName(), g.getSize(), k, r.name, r.age, cap, nn, ex, xt, m1, m2, s.y, tup);
+console.log(
+  a,
+  b,
+  c,
+  d,
+  g.getName(),
+  g.getSize(),
+  k,
+  r.name,
+  r.age,
+  cap,
+  nn,
+  ex,
+  xt,
+  m1,
+  m2,
+  s.y,
+  tup,
+);
 
 type EventDefinition<T> = { __eventDetail: T };
 type ModelBinding<_T> = [string, string];
 
 type ExtractModelBindings<T> = T extends { __modelBindings?: infer M } ? NonNullable<M> : {};
 type ModelPropName<K extends string> = K extends "model" ? "model" : `model:${K}`;
-type ExternalModelProps<T> = {
-  [K in keyof ExtractModelBindings<T> as K extends string ? ModelPropName<K> : never]?:
-    | ModelBinding<ExtractModelBindings<T>[K]>
-    | (() => ExtractModelBindings<T>[K]);
-};
+type ExternalModelProps<T> = { [K in keyof ExtractModelBindings<T> as K extends string ? ModelPropName<K> : never]?: ModelBinding<ExtractModelBindings<T>[K]> | (() => ExtractModelBindings<T>[K]) };
 
-type EventNames<TEvents> = {
-  [K in keyof TEvents]: TEvents[K] extends EventDefinition<any> | undefined ? K : never
-}[keyof TEvents] & string;
+type EventNames<TEvents> = { [K in keyof TEvents]: TEvents[K] extends EventDefinition<any> | undefined ? K : never }[keyof TEvents] & string;
 
-type Capitalize2<S extends string> = S extends `${infer First}${infer Rest}`
-  ? `${Uppercase<First>}${Rest}`
-  : S;
-type EventHandlers<TEvents> = {
-  [K in keyof TEvents as TEvents[K] extends EventDefinition<any> | undefined
-    ? `on${Capitalize2<string & K>}`
-    : never]?: (detail: TEvents[K] extends EventDefinition<infer D> | undefined ? D : never) => void;
-};
+type Capitalize2<S extends string> = S extends `${infer First}${infer Rest}` ? `${Uppercase<First>}${Rest}` : S;
+type EventHandlers<TEvents> = { [K in keyof TEvents as TEvents[K] extends EventDefinition<any> | undefined ? `on${Capitalize2<string & K>}` : never]?: (detail: TEvents[K] extends EventDefinition<infer D> | undefined ? D : never) => void };
 
 type _OptionalKeys<T> = { [K in keyof T]: undefined extends T[K] ? K : never }[keyof T];
-type _DefaultsFor<TProps> = {
-  [K in keyof TProps as undefined extends TProps[K] ? K : never]-?: NonNullable<TProps[K]>;
-};
-type PropsWithDefaults<TProps, D> = {
-  readonly [K in keyof TProps]-?: K extends keyof D ? NonNullable<TProps[K]> : TProps[K];
-};
-type StripInternalMarkers<T> = {
-  [K in keyof T as K extends "__exposed" | "__slots" | "__modelBindings" ? never
-    : K extends `model:${string}` ? never
-    : K extends `update:${string}` ? never
-    : K]: T[K];
-};
-type Prop<TName extends string, TType, Required extends boolean = false> = Required extends false
-  ? { [K in TName]?: TType }
-  : { [K in TName]: TType };
+type _DefaultsFor<TProps> = { [K in keyof TProps as undefined extends TProps[K] ? K : never]-?: NonNullable<TProps[K]> };
+type PropsWithDefaults<TProps, D> = { readonly [K in keyof TProps]-?: K extends keyof D ? NonNullable<TProps[K]> : TProps[K] };
+type StripInternalMarkers<T> = { [K in keyof T as K extends "__exposed" | "__slots" | "__modelBindings" ? never : K extends `model:${string}` ? never : K extends `update:${string}` ? never : K]: T[K] };
+type Prop<TName extends string, TType, Required extends boolean = false> = Required extends false ? { [K in TName]?: TType } : { [K in TName]: TType };
 
 type Combined = {
   label?: string;
@@ -94,30 +92,52 @@ type Combined = {
 };
 
 const names: EventNames<Combined>[] = ["update:value", "change"];
-const handlers: EventHandlers<Combined> = {
-  onChange: (d: string) => console.log("change", d),
-};
+const handlers: EventHandlers<Combined> = { onChange: (d: string) => console.log("change", d) };
 const models: ExternalModelProps<Combined> = { "model:value": () => 7 };
 const optional: _OptionalKeys<{ a?: number; b: string; c?: boolean }>[] = ["a", "c"];
 const defaults: _DefaultsFor<{ a?: number; b: string }> = { a: 1 };
 const withDefaults: PropsWithDefaults<{ a?: number; b?: string }, { a: number }> = { a: 2, b: "x" };
-const stripped: StripInternalMarkers<Combined> = { label: "l", count: 1, change: { __eventDetail: "c" } };
+const stripped: StripInternalMarkers<Combined> = {
+  label: "l",
+  count: 1,
+  change: { __eventDetail: "c" },
+};
 const p1: Prop<"size", number> = {};
 const p2: Prop<"size", number, true> = { size: 3 };
 const cap2: Capitalize2<"click"> = "Click";
 
 const onChange = handlers.onChange;
-if (onChange) onChange("now");
+if (onChange) {
+  onChange("now");
+}
 const getter = models["model:value"];
-console.log(names, optional, defaults.a, withDefaults.a, withDefaults.b, stripped.label, stripped.count, p1.size ?? "none", p2.size, cap2);
-if (getter && typeof getter === "function") console.log(getter());
+console.log(
+  names,
+  optional,
+  defaults.a,
+  withDefaults.a,
+  withDefaults.b,
+  stripped.label,
+  stripped.count,
+  p1.size ?? "none",
+  p2.size,
+  cap2,
+);
+if (getter && typeof getter === "function") {
+  console.log(getter());
+}
 
 // A homomorphic mapped type distributes over a union; `boolean` is `true | false`; colliding
 // `as` keys union their values (#1099 review).
 type Same<T> = { [K in keyof T]: T[K] };
 type Shape = { kind: "circle"; r: number } | { kind: "square"; side: number };
-const shapes: Same<Shape>[] = [{ kind: "circle", r: 1 }, { kind: "square", side: 2 }];
-for (const s of shapes) console.log(s.kind === "circle" ? s.r : s.side);
+const shapes: Same<Shape>[] = [
+  { kind: "circle", r: 1 },
+  { kind: "square", side: 2 },
+];
+for (const s of shapes) {
+  console.log(s.kind === "circle" ? s.r : s.side);
+}
 const flag: Exclude<boolean | string, "x"> = false;
 const collide: { [K in "a" | "b" as "z"]: K } = { z: "b" };
 console.log(shapes, flag, collide);

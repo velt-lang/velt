@@ -2,14 +2,35 @@
 // Operands read from a module-level `let` before a later operand replaces it (#1161):
 // compound assignments, concatenation, template literals, `for of` over a module array.
 
-class Box { name: string = "box" + String(1); n: number = 0; }
+class Box {
+  name: string = "box" + String(1);
+  n: number = 0;
+}
+
 let B: Box | null = new Box();
 let XS: Box[] = [new Box(), new Box()];
 let S: string = "s" + String(1);
-function clearB(): number { B = null; return 7; }
-function clearBs(): string { B = null; return "z"; }
-function clearXs(): number { XS = []; return 1; }
-function clearS(): string { S = "q"; return "r"; }
+
+function clearB(): number {
+  B = null;
+  return 7;
+}
+
+function clearBs(): string {
+  B = null;
+  return "z";
+}
+
+function clearXs(): number {
+  XS = [];
+  return 1;
+}
+
+function clearS(): string {
+  S = "q";
+  return "r";
+}
+
 function main(): void {
   B!.n += clearB();
   console.log(B);
@@ -18,7 +39,10 @@ function main(): void {
   console.log(B);
   B = new Box();
   console.log(B!.name + clearBs());
-  for (const x of XS) { clearXs(); console.log(x.name, XS.length); }
+  for (const x of XS) {
+    clearXs();
+    console.log(x.name, XS.length);
+  }
   XS = [new Box()];
   console.log(S + clearS(), S);
   S = "t" + String(2);

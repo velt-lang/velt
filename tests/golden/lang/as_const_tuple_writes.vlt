@@ -8,6 +8,7 @@ function run(): string {
   const [m] = e;
   return `${m}${e[0]}`;
 }
+
 console.log(run());
 
 const c = [1, "s"] as const;
@@ -24,9 +25,11 @@ function reversed(): string {
   const [a, b, c] = e;
   return `${a}${b}${c}`;
 }
+
 console.log(reversed());
 
 const d = [1, "s", true] as const;
+
 function assigned(): string {
   const [a, , b] = d;
   let x: number = 0;
@@ -34,6 +37,7 @@ function assigned(): string {
   [x, y] = d;
   return `${a} ${b} ${x + 1} ${y.toUpperCase()}`;
 }
+
 console.log(assigned());
 
 function captured(): string {
@@ -49,6 +53,7 @@ function captured(): string {
   (e as unknown as (number | string)[])[1] = "u";
   return inner() + arrow()();
 }
+
 console.log(captured());
 
 // A hole reads nothing, so an element retyped through a cast is not checked there.
@@ -67,21 +72,28 @@ function holes(): void {
   const [k0, , k2 = true] = k;
   const [first, ...rest] = k;
   console.log(s, y, n1, s1, s2, k0, k2, first, rest);
-  for (const [a, , c] of [k]) console.log(a, c);
+  for (const [a, , c] of [k]) {
+    console.log(a, c);
+  }
 }
+
 holes();
 
 // A default of an element that is never `undefined` is not evaluated.
 function defaults(): void {
   let side = 0;
   const [a, b = "d"] = [1, "s"];
-  const [h, i = ((): string => {
-    side++;
-    return "z";
-  })()] = [3, "w"];
+  const [
+    h,
+    i = ((): string => {
+      side++;
+      return "z";
+    })(),
+  ] = [3, "w"];
   const [c, d = 5] = [1, undefined];
   const [p, [q, r = "q"]] = [1, ["x", undefined]];
   const [f, , g = true] = ["s", 2, false];
   console.log(a, b, h, i, side, c, d, p, q, r, f, g);
 }
+
 defaults();

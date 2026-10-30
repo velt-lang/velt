@@ -1,8 +1,9 @@
 // `x as T & object` at `T = null` (#1304): `T & object` has no value there, so the cast stops
 // with a TypeError (expected output from `node` up to there; TypeScript keeps the `null`).
 function asObject<T>(target: T): T & object {
-  return target as T & object;
+  return target as (T & object);
 }
+
 const o = { a: 1 };
 console.log(asObject(o) === o);
 console.log(asObject(null));

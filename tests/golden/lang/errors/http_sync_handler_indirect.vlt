@@ -42,10 +42,15 @@ async function main() {
     return new Response(`${c}`);
   });
   let d = 0;
-  const s5 = await serve({ port: 0 }, d == 0 ? (req: Request): Response => {
-    d++;
-    return new Response(`${d}`);
-  } : (req: Request): Response => new Response("no"));
+  const s5 = await serve(
+    { port: 0 },
+    d == 0
+      ? (req: Request): Response => {
+        d++;
+        return new Response(`${d}`);
+      }
+      : (req: Request): Response => new Response("no"),
+  );
   for (const s of [s1, s2, s3, s4, s5]) {
     s.close();
   }

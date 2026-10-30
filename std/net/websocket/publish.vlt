@@ -1,0 +1,44 @@
+// velt/net/websocket (internal): publishing to a topic's subscribers (`publish`, and
+// `WebSocket.publish`, which leaves its own connection out): the frame is encoded once and queued
+// for each subscriber (topics.vlt).
+
+import { setText } from "velt/net/websocket/bytes";
+import { OP_BINARY, OP_TEXT, headSize, writeHead } from "velt/net/websocket/frame";
+import { publish as publishFrame } from "velt/net/websocket/topics";
+
+// A whole unmasked frame, for `publish`.
+export function textFrame(text: string): u8[] {
+  const len = Buffer.byteLength(text) as i64;
+  const out = Buffer.alloc((headSize(len, false) + len) as usize);
+  const at = writeHead(out, 0, OP_TEXT, len, false, 0u32);
+  setText(out, text, at);
+  return out;
+}
+
+export function binaryFrame(data: u8[]): u8[] {
+  const len = data.length as i64;
+  const out = Buffer.alloc((headSize(len, false) + len) as usize);
+  const at = writeHead(out, 0, OP_BINARY, len, false, 0u32);
+  out.set(data, at as usize);
+  return out;
+}
+
+/**
+ * Sends `text` to every connection subscribed to `topic` (`ws.subscribe`): the frame is encoded
+ * once and queued for each subscriber, which sends it with whatever else is queued. A subscriber
+ * with more than 16 MiB already queued misses the message. Returns the number of connections it
+ * was queued for.
+ */
+export function publish(topic: string, text: string): i64 {
+  return publishFrame(
+    topic,
+    textFrame(text),
+    headSize(Buffer.byteLength(text) as i64, false),
+    null,
+  );
+}
+
+/** `publish` with a binary message. */
+export function publishBytes(topic: string, data: u8[]): i64 {
+  return publishFrame(topic, binaryFrame(data), headSize(data.length as i64, false), null);
+}

@@ -4,4 +4,5 @@ function f(s: string) {
   const o: { a: number } = { [s]: 1 };
   console.log(o);
 }
+
 f("a");

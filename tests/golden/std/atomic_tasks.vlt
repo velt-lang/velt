@@ -35,9 +35,13 @@ async function main() {
     ps.push(spawn(workShared(s, 1000)));
   }
   for (let t = 0; t < 2; t++) {
-    ps.push(spawn((async () => {
-      s.hits.add(5);
-    })()));
+    ps.push(
+      spawn(
+        (async () => {
+          s.hits.add(5);
+        })(),
+      ),
+    );
   }
   await Promise.all(ps);
   console.log("shared", s.hits.load());

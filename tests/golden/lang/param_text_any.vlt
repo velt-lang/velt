@@ -4,6 +4,7 @@
 function show<T>(v: T): string {
   return String(v);
 }
+
 function tpl<T>(v: T): string {
   return `<${v}>`;
 }
@@ -24,6 +25,7 @@ class Gen<T> {
     return "G(" + String(this.v) + ")";
   }
 }
+
 console.log(String(new Gen<any>(new Gen<any>("s"))));
 console.log(`${new Gen<any>({ x: 1 })}`, `${new Gen<number>(7)}`);
 
@@ -39,15 +41,18 @@ class Point {
     return `(${this.x}, ${this.y})`;
   }
 }
+
 const p: any = new Point(1, 2);
 console.log(show<any>(p), tpl<any>(p), show<any>([p, p]));
 
 // The value is evaluated once.
 let calls = 0;
+
 function next(): any {
   calls++;
   return { n: calls };
 }
+
 console.log(tpl<any>(next()), calls);
 
 // Appends (`+=`) of a type parameter's text, and a field's text twice in one template.
@@ -57,6 +62,7 @@ function add<T>(acc: string, v: T): string {
   s += v;
   return s;
 }
+
 class Box<T> {
   v: T;
   constructor(v: T) {
@@ -66,10 +72,19 @@ class Box<T> {
     return `${this.v}|${this.v}`;
   }
 }
+
 console.log(add<any>("x", { k: 1 }), add<number>("y", 2), add<any>("z", [1, [2]]));
-console.log(new Box<any>({ q: 1 }).text(), new Box<unknown>(null).text(), new Box<string>("s").text());
+console.log(
+  new Box<any>({ q: 1 }).text(),
+  new Box<unknown>(null).text(),
+  new Box<string>("s").text(),
+);
 
 // Lists of dynamic values as `T`: written as `join()` writes them.
 console.log(tpl<unknown[]>([{ c: 1 }]), tpl<any[]>([1, { d: 2 }]), tpl<[any, number]>([{}, 3]));
 console.log(show<object[]>([{}, {}]), tpl<number[]>([1, 2]));
-console.log(tpl<unknown[] | null>([{ h: 1 }]), tpl<unknown[] | null>(null), tpl<string | unknown[]>([{}]));
+console.log(
+  tpl<unknown[] | null>([{ h: 1 }]),
+  tpl<unknown[] | null>(null),
+  tpl<string | unknown[]>([{}]),
+);

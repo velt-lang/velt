@@ -12,6 +12,7 @@ function mount<H = any>(make: () => H): void {
   b.dom = n;
   console.log((n as unknown as { x: number }).x, b.dom.x);
 }
+
 mount(() => ({ x: 1 }));
 
 function show<T>(v: T): string {
@@ -19,12 +20,15 @@ function show<T>(v: T): string {
   const u: unknown = v;
   return String(a) + " " + typeof a + " " + typeof u;
 }
+
 console.log(show(1), show("s"), show(true), show<number | null>(null));
 console.log(show<string | number>(5), show<string | undefined>(undefined), show<"a" | "b">("b"));
+
 function kind<T>(v: T): string {
   const a: any = v;
   return typeof a + " " + (a === null);
 }
+
 console.log(kind([1, 2]), kind({ k: 1 }), kind<number[] | null>([3]), kind<number[] | null>(null));
 
 class Holder<T> {
@@ -33,6 +37,7 @@ class Holder<T> {
     this.items.push(v);
   }
 }
+
 const h = new Holder<string | null>();
 h.add("x");
 h.add(null);
@@ -42,4 +47,5 @@ function boxed<T>(v: T): any {
   const a: any = v;
   return a;
 }
+
 console.log(boxed<undefined>(undefined), boxed<null>(null), boxed(undefined) === undefined);

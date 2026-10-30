@@ -1,6 +1,8 @@
 import { value } from "./counter";
+
 function traceA(): string {
   console.log("init a, value =", value);
   return "a";
 }
+
 export let fromA = traceA();

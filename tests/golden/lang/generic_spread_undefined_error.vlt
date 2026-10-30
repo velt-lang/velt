@@ -2,9 +2,11 @@
 // the earlier part's type (`n: number`, as TypeScript types it), which can't hold `undefined`,
 // so the program stops with a `TypeError` (Node would keep `undefined` in the field).
 type U = { n: number; s: string };
+
 function merge<T extends object>(x: T, patch: Partial<T>) {
   return { ...x, ...patch };
 }
+
 const u: U = { n: 1, s: "a" };
 console.log(JSON.stringify(merge(u, { s: "b" })));
 const m = merge(u, { n: undefined });

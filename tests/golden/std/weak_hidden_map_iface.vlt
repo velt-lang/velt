@@ -1,10 +1,30 @@
 // A Map with interface values in a shared Mutex.
-class V { n: number; constructor(n: number) { this.n = n; } }
-interface Peek { peek(): number; }
-class H implements Peek { r: WeakRef<V>; constructor(r: WeakRef<V>) { this.r = r; } peek(): number { return 1; } }
+class V {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+interface Peek {
+  peek(): number;
+}
+
+class H implements Peek {
+  r: WeakRef<V>;
+  constructor(r: WeakRef<V>) {
+    this.r = r;
+  }
+  peek(): number {
+    return 1;
+  }
+}
+
 async function main() {
   const keep = new V(7);
   const m = shared(new Mutex<Map<string, Peek>>(new Map<string, Peek>()));
-  m.with((v) => { v.set("a", new H(new WeakRef(keep))); });
+  m.with((v) => {
+    v.set("a", new H(new WeakRef(keep)));
+  });
   console.log(keep.n);
 }

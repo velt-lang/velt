@@ -3,24 +3,20 @@
 // still apply to the name on the next line. Output compared with Node.
 
 class A {
-  async
-  = 2
-  readonly
-  = "r"
-  static
-  three() {
-    return 3
+  async = 2;
+  readonly = "r";
+  static three() {
+    return 3;
   }
-  get
-  value() {
-    return 10
+  get value() {
+    return 10;
   }
   foo() {
-    return 1
+    return 1;
   }
 }
 
 function main() {
-  const a = new A()
-  console.log(a.async, a.readonly, A.three(), a.value, a.foo())
+  const a = new A();
+  console.log(a.async, a.readonly, A.three(), a.value, a.foo());
 }

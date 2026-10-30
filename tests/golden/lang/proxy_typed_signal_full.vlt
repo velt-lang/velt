@@ -8,12 +8,15 @@ type State = { count: number; todo: Todo };
 type Signal = State & { $set(v: State): void };
 
 type Effect = { run: () => void; deps: number };
+
 let active: Effect | null = null;
 const deps: Map<string, Effect[]> = new Map();
 
 function track(key: string): void {
   const e = active;
-  if (e === null) return;
+  if (e === null) {
+    return;
+  }
   const list = deps.get(key);
   if (list == null) {
     deps.set(key, [e]);
@@ -26,8 +29,12 @@ function track(key: string): void {
 
 function trigger(key: string): void {
   const list = deps.get(key);
-  if (list == null) return;
-  for (const e of list.slice()) runEffect(e);
+  if (list == null) {
+    return;
+  }
+  for (const e of list.slice()) {
+    runEffect(e);
+  }
 }
 
 function runEffect(e: Effect): void {
@@ -57,13 +64,17 @@ function reactive(target: any): any {
           Reflect.set(receiver, "todo", v.todo);
         };
       }
-      if (key === "__raw") return t;
+      if (key === "__raw") {
+        return t;
+      }
       track(prefix + String(key));
       const v = Reflect.get(t, key);
       if (typeof v === "object" && v !== null) {
         const k = String(key);
         const c = cache.get(k);
-        if (c != null && Reflect.get(c, "__raw") === v) return c;
+        if (c != null && Reflect.get(c, "__raw") === v) {
+          return c;
+        }
         const n = reactive(v);
         cache.set(k, n);
         return n;
@@ -73,7 +84,9 @@ function reactive(target: any): any {
     set(t: any, key: string | symbol, value: any, receiver: any): boolean {
       const old = Reflect.get(t, key);
       const ok = Reflect.set(t, key, value);
-      if (old !== value) trigger(prefix + String(key));
+      if (old !== value) {
+        trigger(prefix + String(key));
+      }
       return ok;
     },
   });
@@ -92,7 +105,9 @@ function computed(fn: () => string): () => string {
     console.log("computed:", value);
   });
   return (): string => {
-    if (dirty) value = fn();
+    if (dirty) {
+      value = fn();
+    }
     return value;
   };
 }

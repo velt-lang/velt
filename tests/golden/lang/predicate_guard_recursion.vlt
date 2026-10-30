@@ -6,6 +6,7 @@
 type Primitive = string | number | boolean | symbol | bigint | null | undefined;
 
 let checks = 0;
+
 function isPrimitive(value: unknown): value is Primitive {
   checks++;
   return value === null || (typeof value !== "object" && typeof value !== "function");
@@ -17,7 +18,9 @@ interface Box<T> {
 
 // The issue's `depth`, bounded by the predicate instead of a counter.
 function depth<T>(target: T, n: number): number {
-  if (isPrimitive(target)) return depth({ value: target } as Box<T>, n + 1);
+  if (isPrimitive(target)) {
+    return depth({ value: target } as Box<T>, n + 1);
+  }
   return n;
 }
 
@@ -26,6 +29,7 @@ interface Signal<T> {
   get(): T;
   label: string;
 }
+
 function signal<T>(target: T): Signal<T> {
   if (isPrimitive(target)) {
     const inner = signal({ value: target });

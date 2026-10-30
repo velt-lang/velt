@@ -3,14 +3,18 @@ interface VNode {
   type: string;
   dom: string | null;
 }
+
 interface IV extends VNode {
   _ns?: boolean;
 }
+
 function show(v: VNode): string {
   return Object.keys(v).join(",") + " " + ("_ns" in v) + " " + JSON.stringify({ ...v });
 }
+
 function mk(): VNode {
   return { type: "m", dom: null };
 }
+
 const iv: IV = { ...mk(), _ns: true };
 console.log(show(iv));

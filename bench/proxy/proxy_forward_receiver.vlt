@@ -6,6 +6,7 @@ class Box {
     return this.n * 2;
   }
 }
+
 const p: any = new Proxy(new Box(), {
   get(t: any, k: string | symbol, r: any) {
     return Reflect.get(t, k, r);

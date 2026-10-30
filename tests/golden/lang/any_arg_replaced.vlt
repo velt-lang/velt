@@ -1,20 +1,49 @@
 // An `any` argument read from a field, whose method replaces that field while the callee runs.
 // check: no leaks
-class Holder { x: any = null; }
-class S {
-  name: string; h: Holder;
-  constructor(name: string, h: Holder) { this.name = name; this.h = h; }
-  kill(): string { this.h.x = null; return this.name; }
-  swap(): string { this.h.x = new S("next", this.h); return this.name; }
+class Holder {
+  x: any = null;
 }
+
+class S {
+  name: string;
+  h: Holder;
+  constructor(name: string, h: Holder) {
+    this.name = name;
+    this.h = h;
+  }
+  kill(): string {
+    this.h.x = null;
+    return this.name;
+  }
+  swap(): string {
+    this.h.x = new S("next", this.h);
+    return this.name;
+  }
+}
+
 class Show {
   tag: string = "m";
-  show(p: any): void { console.log(this.tag, p.kill()); }
+  show(p: any): void {
+    console.log(this.tag, p.kill());
+  }
 }
-function show(p: any): void { console.log(p.kill()); }
-function outer(p: any): void { inner(p); }
-function inner(p: any): void { console.log(p.swap(), p.name); }
-function pair(p: any, q: any): void { console.log(p.kill(), q); }
+
+function show(p: any): void {
+  console.log(p.kill());
+}
+
+function outer(p: any): void {
+  inner(p);
+}
+
+function inner(p: any): void {
+  console.log(p.swap(), p.name);
+}
+
+function pair(p: any, q: any): void {
+  console.log(p.kill(), q);
+}
+
 function main(): void {
   const h = new Holder();
   h.x = new S("first", h);

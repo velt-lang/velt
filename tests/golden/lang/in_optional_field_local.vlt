@@ -1,8 +1,15 @@
 // check: no leaks
 // `"x" in a` on an optional field leaves it `T | null | undefined`: a present field may hold `undefined`.
-interface A { x?: number | null }
+interface A {
+  x?: number | null;
+}
+
 function f(a: A): string {
-  if ("x" in a) { const v = a.x; return v === undefined ? "U" : v === null ? "N" : String(v); }
+  if ("x" in a) {
+    const v = a.x;
+    return v === undefined ? "U" : v === null ? "N" : String(v);
+  }
   return "absent";
 }
+
 console.log(f({}), f({ x: null }), f({ x: 3 }), f({ x: undefined }));

@@ -1,9 +1,11 @@
 // What Velt's fixed object layouts can't do as Node does: "not supported yet" (tsc accepts all).
 const shared = { a: 1 };
 const f1 = Object.freeze(shared);
+
 function bump(o: { a: number }): void {
   o.a++;
 }
+
 bump(Object.freeze({ a: 1 }));
 const target = { a: 1 };
 Object.assign(target, { b: 2 });

@@ -26,7 +26,7 @@ function main(): void {
   const fn: Function = f;
   const plus = (x: number) => x + 1;
   const bad = plus as unknown as Id;
-  const t: Two = <A,>(a: A, b: A): A => a;
+  const t: Two = <A>(a: A, b: A): A => a;
   const needsTwo: Id = two;
   const twoHeld: unknown = needsTwo;
   const token = Symbol as unknown as <T>(d: string) => InjectionToken<T>;

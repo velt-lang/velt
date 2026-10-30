@@ -1,14 +1,32 @@
 // Writing through an intersection a field that one class provides with a `get`/`set` pair
 // and another with only a `get` (#350): the setter runs for the first; for the second the
 // program stops with Node's `TypeError` (what strict code gets: a module is strict).
-interface Base { refresh(): number }
+interface Base {
+  refresh(): number;
+}
+
 class Counted implements Base {
   private _n = 0;
-  get n(): number { return this._n; }
-  set n(v: number) { this._n = v * 2; }
-  refresh() { return this._n; }
+  get n(): number {
+    return this._n;
+  }
+  set n(v: number) {
+    this._n = v * 2;
+  }
+  refresh() {
+    return this._n;
+  }
 }
-class Cnt implements Base { get n() { return 1; } refresh() { return 0; } }
+
+class Cnt implements Base {
+  get n() {
+    return 1;
+  }
+  refresh() {
+    return 0;
+  }
+}
+
 const jn: Base & { n: number } = new Counted();
 jn.n = 5;
 console.log(jn.n);

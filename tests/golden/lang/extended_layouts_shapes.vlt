@@ -5,20 +5,25 @@ interface A {
   id: string;
   n: number;
 }
+
 interface B {
   id: string;
   n: number;
 }
+
 interface AX extends A {
   _a?: boolean;
 }
+
 interface BX extends B {
   _b?: string;
 }
+
 function touch(x: A): A {
   (x as AX)._a = true;
   return x;
 }
+
 const a: A = { id: "a", n: 1 };
 const b: B = { id: "b", n: 2 };
 touch(a);
@@ -27,14 +32,17 @@ console.log(a, b, (a as AX)._a);
 const pair: [A, number] = [a, 3];
 const px = pair as [AX, number];
 console.log(px[0]._a, px[1]);
+
 async function later(): Promise<A> {
   return a;
 }
+
 async function go(): Promise<void> {
   const x = (await later()) as AX;
   x._a = false;
   console.log(a);
 }
+
 go();
 const anon = { id: "anon", n: 4 };
 const ax = anon as AX;

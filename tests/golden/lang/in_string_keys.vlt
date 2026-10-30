@@ -124,7 +124,9 @@ type Tagged = { note?: string; tag: string };
 
 function withNote(note?: string): Note {
   const o: Note = { kind: "k" };
-  if (note) o.note = note;
+  if (note) {
+    o.note = note;
+  }
   return o;
 }
 

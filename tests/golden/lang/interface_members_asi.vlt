@@ -1,25 +1,26 @@
 // Interface and object type members end at a line break, as in TypeScript.
 interface I {
-  a: number
-  readonly b: string // a comment
-  k: (x: number) => number
-  o?: string
+  a: number;
+  readonly b: string; // a comment
+  k: (x: number) => number;
+  o?: string;
 }
+
 interface J {
-  [k: string]: number
+  [k: string]: number;
 }
+
 interface G<T> {
-  get(): T
-  set(v: T): void
-  describe(): string
+  get(): T;
+  set(v: T): void;
+  describe(): string;
 }
-type O = {
-  a: number
-  b: string
-};
+
+type O = { a: number; b: string };
+
 class Box implements G<number> {
-  v = 0
-  w: string = "w"
+  v = 0;
+  w: string = "w";
   get(): number {
     return this.v;
   }
@@ -30,6 +31,7 @@ class Box implements G<number> {
     return "Box";
   }
 }
+
 const v: I = { a: 1, b: "x", k: (x) => x * 2, o: "p" };
 console.log(v.a, v.b, v.k(4));
 const j: J = { q: 1 };

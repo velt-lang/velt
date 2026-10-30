@@ -1,14 +1,33 @@
 // check: no leaks
 // Conditional spreads: a `null` or `undefined` branch value joins the other branch's type, and an
 // earlier key or spread with another type gets the union.
-function a(c: boolean) { return { ...(c ? { k: [1, 2] } : { k: null }) }; }
+function a(c: boolean) {
+  return { ...(c ? { k: [1, 2] } : { k: null }) };
+}
+
 console.log(a(true), a(false));
-function b(c: boolean) { return { k: false, ...(c ? { k: 1 } : {}) }; }
+
+function b(c: boolean) {
+  return { k: false, ...(c ? { k: 1 } : {}) };
+}
+
 console.log(b(true), b(false));
-function d(c: boolean, e: boolean) { return { ...(c ? { k: true } : {}), ...(e ? { k: "s" } : { k: 2 }) }; }
+
+function d(c: boolean, e: boolean) {
+  return { ...(c ? { k: true } : {}), ...(e ? { k: "s" } : { k: 2 }) };
+}
+
 console.log(d(true, true), d(false, false));
 const base = { k: "x", z: 1 };
-function m(c: boolean) { return { ...base, ...(c ? { k: 5 } : {}) }; }
+
+function m(c: boolean) {
+  return { ...base, ...(c ? { k: 5 } : {}) };
+}
+
 console.log(m(true), m(false));
-function u(c: boolean) { return { ...(c ? { k: undefined } : { k: 3 }) }; }
+
+function u(c: boolean) {
+  return { ...(c ? { k: undefined } : { k: 3 }) };
+}
+
 console.log(u(true), u(false), "k" in u(true));

@@ -13,14 +13,20 @@ function main() {
     for (const row of rows) {
       const cols = row.split(",");
       sum += parseInt(cols[2]);
-      if (cols[3] === "yes") yes++;
+      if (cols[3] === "yes") {
+        yes++;
+      }
       nameLen += cols[1].toUpperCase().length;
     }
   }
   let found = 0;
   for (let i = 0; i < 2000; i++) {
-    if (csv.includes(`user${i}x`)) found++;
-    if (csv.indexOf(`,${i},`) >= 0) found++;
+    if (csv.includes(`user${i}x`)) {
+      found++;
+    }
+    if (csv.indexOf(`,${i},`) >= 0) {
+      found++;
+    }
   }
   let out = "";
   for (let i = 0; i < 100000; i++) {

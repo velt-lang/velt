@@ -8,10 +8,13 @@ async function round(k: number) {
     .then(() => console.log(`${k} a2`))
     .then(() => console.log(`${k} a3`));
   await new Promise<void>((resolve) => {
-    setTimeout(async () => {
-      console.log(`${k} timeout`);
-      resolve();
-    }, 0);
+    setTimeout(
+      async () => {
+        console.log(`${k} timeout`);
+        resolve();
+      },
+      0,
+    );
     Promise.resolve(2)
       .then(() => console.log(`${k} b1`))
       .then(() => console.log(`${k} b2`))

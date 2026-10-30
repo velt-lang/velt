@@ -16,7 +16,9 @@ function step(
     let ay: number = 0;
     let az: number = 0;
     for (let j = 0; j < n; j++) {
-      if (j == i) continue;
+      if (j == i) {
+        continue;
+      }
       const dx = px[j] - px[i];
       const dy = py[j] - py[i];
       const dz = pz[j] - pz[i];

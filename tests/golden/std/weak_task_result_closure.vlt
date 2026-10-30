@@ -1,6 +1,15 @@
 // A task body (async closure) returns a WeakRef.
-class V { n: number; constructor(n: number) { this.n = n; } }
+class V {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
 async function main() {
-  const r = await spawn(async () => { const v = new V(1); return new WeakRef(v); });
+  const r = await spawn(async () => {
+    const v = new V(1);
+    return new WeakRef(v);
+  });
   console.log(r.deref() === null);
 }

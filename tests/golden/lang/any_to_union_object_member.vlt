@@ -13,10 +13,18 @@ type JSXElement = VNode | string | number | boolean | null;
 type JSXChild = VNode | string | number | boolean | null | undefined | JSXChild[];
 
 function make(k: number): any {
-  if (k === 0) return 5;
-  if (k === 1) return "s";
-  if (k === 2) return null;
-  if (k === 3) return true;
+  if (k === 0) {
+    return 5;
+  }
+  if (k === 1) {
+    return "s";
+  }
+  if (k === 2) {
+    return null;
+  }
+  if (k === 3) {
+    return true;
+  }
   const v: VNode = { type: "div", n: k };
   return v;
 }
@@ -30,14 +38,20 @@ function nonNull(k: number): VNode | string | number | boolean {
 }
 
 function show(e: JSXElement): string {
-  if (e === null) return "null";
-  if (typeof e === "object") return `<${e.type} ${e.n}>`;
+  if (e === null) {
+    return "null";
+  }
+  if (typeof e === "object") {
+    return `<${e.type} ${e.n}>`;
+  }
   return `${typeof e} ${e}`;
 }
 
 function flat(c: JSXChild, out: string[]): void {
   if (Array.isArray(c)) {
-    for (const x of c) flat(x, out);
+    for (const x of c) {
+      flat(x, out);
+    }
     return;
   }
   if (c === undefined) {
@@ -52,10 +66,13 @@ function child(a: any): JSXChild {
 }
 
 function main() {
-  for (let k = 0; k < 5; k++) console.log(show(element(k)));
+  for (let k = 0; k < 5; k++) {
+    console.log(show(element(k)));
+  }
   console.log(show(nonNull(4)), show(nonNull(1)));
   const children: any = make(4);
-  const items: JSXElement[] = Array.isArray(children) ? children : children != null ? [children] : [];
+  const items: JSXElement[] =
+    Array.isArray(children) ? children : children != null ? [children] : [];
   console.log(items.length, show(items[0]));
   const fallback: any = (): any => make(1);
   const fb: JSXElement = typeof fallback === "function" ? fallback() : fallback;

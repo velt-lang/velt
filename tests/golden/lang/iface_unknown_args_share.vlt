@@ -39,7 +39,9 @@ const table: Counter<unknown>[] = [shared];
 function main(): void {
   const lc = new LenCounter();
   const counters: Counter<unknown>[] = [lc];
-  for (const c of counters) c.add("abc");
+  for (const c of counters) {
+    c.add("abc");
+  }
   counters[0].add("de");
   const first = counters[0];
   first.add("f");
@@ -54,7 +56,9 @@ function main(): void {
   b2.put("two");
   console.log(cell.get(), c.get(), b2.get());
 
-  for (const t of table) t.add("xy");
+  for (const t of table) {
+    t.add("xy");
+  }
   const t0 = table[0];
   t0.add("z");
   console.log(shared.total(), table[0].total(), t0.total());

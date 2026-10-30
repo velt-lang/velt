@@ -44,4 +44,3 @@ function main(): void {
   console.log(track(either2), kind(either2), seen.size);
   console.log(kind(() => 1));
 }
-

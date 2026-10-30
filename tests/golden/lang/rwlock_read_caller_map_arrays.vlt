@@ -6,9 +6,11 @@ class Item {
     this.v = v;
   }
 }
+
 class St {
   items: Item[] = [new Item(1), new Item(2)];
 }
+
 function main() {
   const rw = shared(new RwLock<St>(new St()));
   const m = new Map<string, Item[]>();

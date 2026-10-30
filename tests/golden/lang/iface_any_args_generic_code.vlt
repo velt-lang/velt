@@ -30,6 +30,7 @@ class G<T> implements Ctx<T, number> {
 function mk<T>(x: T): unknown {
   return new G<T>(x);
 }
+
 function twice<T>(x: T): unknown {
   return mk<T[]>([x, x]);
 }
@@ -96,5 +97,6 @@ function second<A, B>(a: A, b: B): unknown {
   };
   return c;
 }
+
 const sc = second(1, "two") as Ctx<any, any>;
 console.log(sc.name(), sc.props, sc.state);

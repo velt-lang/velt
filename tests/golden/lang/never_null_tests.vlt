@@ -21,6 +21,7 @@ function strict(n: number): boolean {
 }
 
 let calls = 0;
+
 function make(n: number): string[] {
   calls++;
   const r: string[] = [];

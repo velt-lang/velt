@@ -3,23 +3,14 @@
 // generic class, passed to a setup callback typed with them, and evaluated per instantiation
 // (#934 phase 2).
 export type EventDefinition<T> = { __eventDetail: T };
-type EventNames<TEvents> = {
-    [K in keyof TEvents]: TEvents[K] extends EventDefinition<any> | undefined ? K : never
-}[keyof TEvents] & string;
+type EventNames<TEvents> = { [K in keyof TEvents]: TEvents[K] extends EventDefinition<any> | undefined ? K : never }[keyof TEvents] & string;
 
 /**
  * Extract event detail type for a specific event name
  */
-type EventDetail<TEvents, TName extends EventNames<TEvents>> = TEvents extends { [K in TName]?: EventDefinition<infer TDetail> }
-    ? TDetail
-    : never;
+type EventDetail<TEvents, TName extends EventNames<TEvents>> = TEvents extends { [K in TName]?: EventDefinition<infer TDetail> } ? TDetail : never;
 
-type EventHandlers<TEvents> = {
-    [K in keyof TEvents as TEvents[K] extends EventDefinition<any> | undefined
-    ? `on${Capitalize<string & K>}`
-    : never
-    ]?: (detail: TEvents[K] extends EventDefinition<infer D> | undefined ? D : never) => void;
-};
+type EventHandlers<TEvents> = { [K in keyof TEvents as TEvents[K] extends EventDefinition<any> | undefined ? `on${Capitalize<string & K>}` : never]?: (detail: TEvents[K] extends EventDefinition<infer D> | undefined ? D : never) => void };
 type _OptionalKeys<T> = { [K in keyof T]: undefined extends T[K] ? K : never }[keyof T];
 
 /**
@@ -27,16 +18,12 @@ type _OptionalKeys<T> = { [K in keyof T]: undefined extends T[K] ? K : never }[k
  * Required props (where undefined is not assignable) get type 'never' to prevent setting them.
  * This ensures you don't forget to add a default when adding a new optional prop.
  */
-type _DefaultsFor<TProps> = {
-    [K in keyof TProps as undefined extends TProps[K] ? K : never]-?: NonNullable<TProps[K]>;
-};
+type _DefaultsFor<TProps> = { [K in keyof TProps as undefined extends TProps[K] ? K : never]-?: NonNullable<TProps[K]> };
 
 /**
  * Props type after defaults are applied - all props become required (non-undefined)
  */
-export type PropsWithDefaults<TProps, D> = {
-    readonly [K in keyof TProps]-?: K extends keyof D ? NonNullable<TProps[K]> : TProps[K];
-};
+export type PropsWithDefaults<TProps, D> = { readonly [K in keyof TProps]-?: K extends keyof D ? NonNullable<TProps[K]> : TProps[K] };
 
 /**
  * Props accessor - a reactive proxy for component props.
@@ -52,77 +39,72 @@ export type PropsWithDefaults<TProps, D> = {
  * return () => <ChildComponent {...ctx.props} />
  * ```
  */
-export type PropsAccessor<TProps> = {
-    readonly [K in keyof TProps]: TProps[K];
-};
+export type PropsAccessor<TProps> = { readonly [K in keyof TProps]: TProps[K] };
 
 export interface MountContext<TElement> {
-    el: TElement;
+  el: TElement;
 }
 
-export interface ComponentSetupContext<
-    TElement,
-    TProps,
-    TEvents,
-    TRef
-> {
-    el: TElement;
-    props: PropsAccessor<TProps>;
-    handlers: EventHandlers<TEvents>;
-    onMounted(fn: (ctx: MountContext<TElement>) => void): void;
-    expose(exposed: TRef): void;
-    update(): void;
+export interface ComponentSetupContext<TElement, TProps, TEvents, TRef> {
+  el: TElement;
+  props: PropsAccessor<TProps>;
+  handlers: EventHandlers<TEvents>;
+  onMounted(fn: (ctx: MountContext<TElement>) => void): void;
+  expose(exposed: TRef): void;
+  update(): void;
 }
 
 export type ViewFn = () => string;
 
-export type SetupFn<
-    TProps,
-    TEvents,
-    TRef
-> = (ctx: ComponentSetupContext<string, TProps, TEvents, TRef>) => ViewFn;
+export type SetupFn<TProps, TEvents, TRef> = (ctx: ComponentSetupContext<string, TProps, TEvents, TRef>) => ViewFn;
 
 class SetupCtx<TProps, TEvents> implements ComponentSetupContext<string, TProps, TEvents, number> {
-    el: string = "div";
-    props: PropsAccessor<TProps>;
-    handlers: EventHandlers<TEvents>;
-    constructor(props: PropsAccessor<TProps>, handlers: EventHandlers<TEvents>) {
-        this.props = props;
-        this.handlers = handlers;
-    }
-    onMounted(fn: (ctx: MountContext<string>) => void): void { fn({ el: this.el }); }
-    expose(exposed: number): void { console.log("exposed", exposed); }
-    update(): void { console.log("update"); }
+  el: string = "div";
+  props: PropsAccessor<TProps>;
+  handlers: EventHandlers<TEvents>;
+  constructor(props: PropsAccessor<TProps>, handlers: EventHandlers<TEvents>) {
+    this.props = props;
+    this.handlers = handlers;
+  }
+  onMounted(fn: (ctx: MountContext<string>) => void): void {
+    fn({ el: this.el });
+  }
+  expose(exposed: number): void {
+    console.log("exposed", exposed);
+  }
+  update(): void {
+    console.log("update");
+  }
 }
 
 function makeContext<TProps, TEvents>(
-    props: PropsAccessor<TProps>,
-    handlers: EventHandlers<TEvents>,
+  props: PropsAccessor<TProps>,
+  handlers: EventHandlers<TEvents>,
 ): ComponentSetupContext<string, TProps, TEvents, number> {
-    return new SetupCtx<TProps, TEvents>(props, handlers);
+  return new SetupCtx<TProps, TEvents>(props, handlers);
 }
 
 function component<TProps, TEvents>(
-    setup: SetupFn<TProps, TEvents, number>,
-    props: PropsAccessor<TProps>,
-    handlers: EventHandlers<TEvents>,
+  setup: SetupFn<TProps, TEvents, number>,
+  props: PropsAccessor<TProps>,
+  handlers: EventHandlers<TEvents>,
 ): string {
-    const view = setup(makeContext<TProps, TEvents>(props, handlers));
-    return view();
+  const view = setup(makeContext<TProps, TEvents>(props, handlers));
+  return view();
 }
 
 type CardProps = { title: string; size?: number };
 type CardEvents = { select: EventDefinition<number> };
 
 const html = component<CardProps, CardEvents>(
-    (ctx) => {
-        ctx.onMounted((m) => console.log("mounted", m.el));
-        ctx.expose(7);
-        const size = ctx.props.size ?? 1;
-        ctx.handlers.onSelect?.(size);
-        return () => `<div>${ctx.props.title}:${size}</div>`;
-    },
-    { title: "Card" },
-    { onSelect: (d: number) => console.log("selected", d) },
+  (ctx) => {
+    ctx.onMounted((m) => console.log("mounted", m.el));
+    ctx.expose(7);
+    const size = ctx.props.size ?? 1;
+    ctx.handlers.onSelect?.(size);
+    return () => `<div>${ctx.props.title}:${size}</div>`;
+  },
+  { title: "Card" },
+  { onSelect: (d: number) => console.log("selected", d) },
 );
 console.log(html);

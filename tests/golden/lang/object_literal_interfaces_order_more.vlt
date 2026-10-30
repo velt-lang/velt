@@ -41,7 +41,9 @@ function count(x: Counted, n: number): number {
 function counted(): Counted {
   return {
     read(n: number): number {
-      if (n <= 0) throw new RangeError("z");
+      if (n <= 0) {
+        throw new RangeError("z");
+      }
       return count(counted(), n - 1) + 1;
     },
   };
@@ -97,7 +99,9 @@ function chain(n: number): Chain {
     next: () => (n > 0 ? chain(n - 1) : null),
     read(): number {
       const rest = this_next(n);
-      if (rest === null) throw new TypeError("end");
+      if (rest === null) {
+        throw new TypeError("end");
+      }
       return n + rest.read();
     },
   };
@@ -117,7 +121,9 @@ function measure(s: Shape): string {
   try {
     return String(s.area());
   } catch (e) {
-    if (e instanceof SyntaxError) return "syntax " + e.message;
+    if (e instanceof SyntaxError) {
+      return "syntax " + e.message;
+    }
     return "other " + (e as Error).message;
   }
 }

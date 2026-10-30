@@ -17,15 +17,7 @@
 
 import { renderToStringSync } from "velt/jsx";
 import { args } from "velt/process";
-import {
-  Fortune,
-  fortunes,
-  hand,
-  handRows,
-  shape,
-  shapeJsxEscape,
-  shapeNoDoctype,
-} from "./_data";
+import { Fortune, fortunes, hand, handRows, shape, shapeJsxEscape, shapeNoDoctype } from "./_data";
 import * as precompiled from "./_page";
 import * as generic from "./_page_generic";
 

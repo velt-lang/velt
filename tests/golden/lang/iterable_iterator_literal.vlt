@@ -12,9 +12,10 @@ function wrap(inner: IterableIterator<number>, scale: number): IterableIterator<
     },
     [Symbol.iterator]() {
       return this;
-    }
+    },
   };
 }
+
 function pairs(inner: IterableIterator<[string, number]>): IterableIterator<[string, number]> {
   let count = 0;
   return {
@@ -32,18 +33,34 @@ function pairs(inner: IterableIterator<[string, number]>): IterableIterator<[str
     },
   };
 }
+
 function* nums(xs: number[]): Generator<number> {
-  for (const x of xs) yield x;
+  for (const x of xs) {
+    yield x;
+  }
 }
+
 function* entries(m: Map<string, number>): Generator<[string, number]> {
-  for (const e of m) yield e;
+  for (const e of m) {
+    yield e;
+  }
 }
-for (const v of wrap(nums([1, 2, 3]), 10)) console.log(v);
+
+for (const v of wrap(nums([1, 2, 3]), 10)) {
+  console.log(v);
+}
 const it = wrap(nums([4, 5, 6]), 2);
 console.log(it.next().value);
-for (const v of it) console.log("rest", v);
-const m = new Map<string, number>([["a", 1], ["b", 2]]);
-for (const [k, v] of pairs(entries(m))) console.log(k, v);
+for (const v of it) {
+  console.log("rest", v);
+}
+const m = new Map<string, number>([
+  ["a", 1],
+  ["b", 2],
+]);
+for (const [k, v] of pairs(entries(m))) {
+  console.log(k, v);
+}
 const p = pairs(entries(m));
 console.log(p[Symbol.iterator]() === p, [...p].length);
 
@@ -52,21 +69,27 @@ console.log(p[Symbol.iterator]() === p, [...p].length);
 interface Bag extends Iterable<number> {
   size(): number;
 }
+
 function bag(xs: number[]): Bag {
   return {
     size() {
       return xs.length;
     },
     *[Symbol.iterator]() {
-      for (const x of xs) yield x * 2;
+      for (const x of xs) {
+        yield x * 2;
+      }
     },
   };
 }
+
 const b = bag([1, 2, 3]);
 console.log(b.size(), [...b].join(","));
+
 interface Feed extends AsyncIterable<string> {
   name: string;
 }
+
 const feed: Feed = {
   name: "feed",
   async *[Symbol.asyncIterator]() {
@@ -74,7 +97,11 @@ const feed: Feed = {
     yield "b";
   },
 };
+
 async function run() {
-  for await (const s of feed) console.log(feed.name, s);
+  for await (const s of feed) {
+    console.log(feed.name, s);
+  }
 }
+
 run();

@@ -3,9 +3,15 @@
 type Tree = string | number | Tree[];
 
 function revive(value: Tree, depth: number): unknown {
-  if (depth > 3) throw new RangeError("too deep");
-  if (Array.isArray(value)) return value.map((item) => revive(item, depth + 1));
-  if (value === "bad") throw new TypeError("bad leaf");
+  if (depth > 3) {
+    throw new RangeError("too deep");
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => revive(item, depth + 1));
+  }
+  if (value === "bad") {
+    throw new TypeError("bad leaf");
+  }
   return value;
 }
 

@@ -1,29 +1,53 @@
 // A source's callbacks and `controller.error` take any reason, as in Node (TS lib's
 // `reason?: any`): a stream errored with `null` or a string rejects reads with it as it is
 // (sigx: server-renderer bytes.ts).
-function settle(n: number): void { if (n === 1) { const z: Error | null = null; throw z; } if (n === 2) throw "str"; }
+function settle(n: number): void {
+  if (n === 1) {
+    const z: Error | null = null;
+    throw z;
+  }
+  if (n === 2) {
+    throw "str";
+  }
+}
+
 function stream(n: number): ReadableStream<string> {
   let i = 0;
   return new ReadableStream<string>({
     async pull(controller) {
       try {
-        if (i++ > 0) { settle(n); controller.close(); } else controller.enqueue("a");
+        if (i++ > 0) {
+          settle(n);
+          controller.close();
+        } else {
+          controller.enqueue("a");
+        }
       } catch (error) {
         controller.error(error);
       }
     },
-    cancel() { settle(n); },
+    cancel() {
+      settle(n);
+    },
   });
 }
+
 async function main() {
   for (const n of [0, 1, 2]) {
     const r = stream(n).getReader();
     try {
-      for (;;) { const { value, done } = await r.read(); if (done) break; console.log(n, value); }
+      for (;;) {
+        const { value, done } = await r.read();
+        if (done) {
+          break;
+        }
+        console.log(n, value);
+      }
       console.log(n, "done");
     } catch (e) {
       console.log(n, "caught", e);
     }
   }
 }
+
 main();

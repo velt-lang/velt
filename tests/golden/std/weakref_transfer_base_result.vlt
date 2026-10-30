@@ -1,21 +1,45 @@
 // As weakref_transfer_base_class, for a task's result: the task returns the subclass as its
 // base class, and handing the result to the awaiting task panics.
-class V { n: number; constructor(n: number) { this.n = n; } }
-class Base { go(): number { return 0; } }
+class V {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+class Base {
+  go(): number {
+    return 0;
+  }
+}
+
 class D extends Base {
   f: () => number;
-  constructor(f: () => number) { super(); this.f = f; }
-  override go(): number { return this.f(); }
+  constructor(f: () => number) {
+    super();
+    this.f = f;
+  }
+  override go(): number {
+    return this.f();
+  }
 }
+
 function mk(keep: V): () => number {
   const r = new WeakRef(keep);
-  return () => { const x = r.deref(); return x === undefined ? -1 : x.n + keep.n; };
+  return () => {
+    const x = r.deref();
+    return x === undefined ? -1 : x.n + keep.n;
+  };
 }
+
 async function make(n: number): Promise<Base> {
   const d = new D(mk(new V(n)));
-  if (d.go() !== 2 * n) throw new Error("the task itself can use it");
+  if (d.go() !== 2 * n) {
+    throw new Error("the task itself can use it");
+  }
   return d;
 }
+
 async function main() {
   console.log("before");
   const b = await spawn(make(7));

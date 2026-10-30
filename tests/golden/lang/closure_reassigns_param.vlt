@@ -5,6 +5,7 @@
 class Store {
   m: Map<string, number> = new Map<string, number>();
 }
+
 function mk(n: number): Store {
   const s = new Store();
   for (let i = 0; i < n; i++) {
@@ -12,6 +13,7 @@ function mk(n: number): Store {
   }
   return s;
 }
+
 function w(s: Store): number {
   const f = () => {
     s = mk(1);
@@ -19,6 +21,7 @@ function w(s: Store): number {
   f();
   return s.m.size;
 }
+
 function w2(s: Store): number {
   const f = () => {
     const g = () => {
@@ -29,6 +32,7 @@ function w2(s: Store): number {
   f();
   return s.m.size;
 }
+
 function main() {
   const a = mk(5);
   console.log(w(a), a.m.size, w2(a), a.m.size);

@@ -5,18 +5,22 @@
 function run(f: () => any): void {
   console.log("run", f());
 }
+
 function nothing(): void {
   console.log("nothing runs");
 }
+
 run(nothing);
 run(() => 42);
 run(() => "text");
+
 class Resp {
   n: number;
   constructor(n: number) {
     this.n = n;
   }
 }
+
 function either(h: () => Resp | Promise<Resp>): void {
   const r = h();
   if (r instanceof Promise) {
@@ -25,13 +29,16 @@ function either(h: () => Resp | Promise<Resp>): void {
     console.log("either sync", r.n);
   }
 }
+
 either(async function handle(): Promise<Resp> {
   return new Resp(1);
 });
 either(() => new Resp(2));
+
 async function scope<T>(fn: () => T | Promise<T>): Promise<T> {
   return fn();
 }
+
 scope(async function made(): Promise<Resp> {
   return new Resp(3);
 }).then((r) => console.log("scope", r.n));
@@ -40,16 +47,20 @@ const fs: (() => unknown)[] = [];
 const g: () => string = () => "pushed";
 fs.push(g);
 fs.push(nothing);
-for (const f of fs) console.log("unknown result", f());
+for (const f of fs) {
+  console.log("unknown result", f());
+}
 let s: (x: number) => number | string = (x: number) => x * 2;
 console.log("union result", s(4));
 s = (x: number) => `n${x}`;
 console.log("union result", s(5));
 const maybe: (() => number | null) | undefined = () => 6;
 console.log("nullable result", maybe ? maybe() : 0);
+
 class Holder {
   make: () => Resp | null = () => new Resp(7);
 }
+
 const h = new Holder();
 const made1 = h.make();
 console.log("field result", made1 ? made1.n : -1);

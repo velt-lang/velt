@@ -2,24 +2,82 @@
 // `??` on a field of type `T` (or `T | Mod<T>`) whose default has another type, at `T =
 // unknown` and concrete instantiations: the field is borrowed, so the branch that takes the
 // default frees nothing it does not own (and leaks nothing).
-interface Mod<T> { default: T; }
-function fo<T>(o: { v: T }): string { return String(o.v ?? "o"); }
-function fm<T>(o: { v: T | Mod<T> }): string { return String(o.v ?? "m"); }
-console.log(fo<unknown>({ v: null }), fo<unknown>({ v: 1 }), fo<string>({ v: "s" }), fo<number | null>({ v: null }));
+interface Mod<T> {
+  default: T;
+}
+
+function fo<T>(o: { v: T }): string {
+  return String(o.v ?? "o");
+}
+
+function fm<T>(o: { v: T | Mod<T> }): string {
+  return String(o.v ?? "m");
+}
+
+console.log(
+  fo<unknown>({ v: null }),
+  fo<unknown>({ v: 1 }),
+  fo<string>({ v: "s" }),
+  fo<number | null>({ v: null }),
+);
 console.log(fm<unknown>({ v: null }), fm<unknown>({ v: 2 }), fm<string>({ v: "s" }));
-function a1<T>(o: { v: T }, d: T): string { return String(o.v ?? d); }
-console.log(a1<unknown>({ v: null }, "d"), a1<number | null>({ v: null }, 2), a1<string>({ v: "s" }, "t"));
-function a2<T>(o: { in: { v: T } }): string { return JSON.stringify(o.in.v ?? "deep"); }
-console.log(a2<unknown>({ in: { v: null } }), a2<unknown>({ in: { v: [1, 2] } }), a2<string>({ in: { v: "x" } }));
-function a3<T>(xs: T[]): string { return JSON.stringify(xs[0] ?? "empty"); }
+
+function a1<T>(o: { v: T }, d: T): string {
+  return String(o.v ?? d);
+}
+
+console.log(
+  a1<unknown>({ v: null }, "d"),
+  a1<number | null>({ v: null }, 2),
+  a1<string>({ v: "s" }, "t"),
+);
+
+function a2<T>(o: { in: { v: T } }): string {
+  return JSON.stringify(o.in.v ?? "deep");
+}
+
+console.log(
+  a2<unknown>({ in: { v: null } }),
+  a2<unknown>({ in: { v: [1, 2] } }),
+  a2<string>({ in: { v: "x" } }),
+);
+
+function a3<T>(xs: T[]): string {
+  return JSON.stringify(xs[0] ?? "empty");
+}
+
 console.log(a3<unknown>([null]), a3<unknown>([{ k: 1 }]), a3<string>(["z"]));
+
 class C<T> {
   v: T;
-  constructor(v: T) { this.v = v; }
-  get(): string { return JSON.stringify(this.v ?? "none"); }
+  constructor(v: T) {
+    this.v = v;
+  }
+  get(): string {
+    return JSON.stringify(this.v ?? "none");
+  }
 }
-console.log(new C<unknown>(null).get(), new C<unknown>("y").get(), new C<number | null>(null).get(), new C<unknown>([3]).get());
-function a4<T>(o: { v: T | Mod<T> }): string { const r = o.v ?? "m"; return JSON.stringify(r); }
+
+console.log(
+  new C<unknown>(null).get(),
+  new C<unknown>("y").get(),
+  new C<number | null>(null).get(),
+  new C<unknown>([3]).get(),
+);
+
+function a4<T>(o: { v: T | Mod<T> }): string {
+  const r = o.v ?? "m";
+  return JSON.stringify(r);
+}
+
 console.log(a4<unknown>({ v: null }), a4<unknown>({ v: { default: 1 } }), a4<string>({ v: "q" }));
-function a5<T>(o: { v: T }): string { let s = ""; for (let i = 0; i < 3; i++) { s += String(o.v ?? i); } return s; }
+
+function a5<T>(o: { v: T }): string {
+  let s = "";
+  for (let i = 0; i < 3; i++) {
+    s += String(o.v ?? i);
+  }
+  return s;
+}
+
 console.log(a5<unknown>({ v: null }), a5<unknown>({ v: "k" }));

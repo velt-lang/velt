@@ -2,32 +2,41 @@
 // A spread of a conditional of object literals: a key that only one branch writes is present
 // only when that branch is taken, as in JavaScript.
 interface Info {
-    phase: string;
-    id: number;
-    boundaryId?: number;
+  phase: string;
+  id: number;
+  boundaryId?: number;
 }
+
 function info(has: boolean, id: number): Info {
-    return {
-        phase: "render",
-        id,
-        ...(has ? { boundaryId: id } : {})
-    };
+  return { phase: "render", id, ...(has ? { boundaryId: id } : {}) };
 }
+
 const a = info(true, 3);
 const b = info(false, 4);
 console.log(a, b, "boundaryId" in a, "boundaryId" in b);
 console.log(JSON.stringify(a), JSON.stringify(b), Object.keys(b).length);
 
-interface Resp { status: number; headers: Record<string, string>; redirect?: { location: string; status: number } }
-function summary(redirect: { location: string; status: number } | null): Resp {
-    return {
-        status: redirect?.status ?? 200,
-        headers: {},
-        ...(redirect ? { redirect: { ...redirect } } : {})
-    };
+interface Resp {
+  status: number;
+  headers: Record<string, string>;
+  redirect?: { location: string; status: number };
 }
+
+function summary(redirect: { location: string; status: number } | null): Resp {
+  return {
+    status: redirect?.status ?? 200,
+    headers: {},
+    ...(redirect ? { redirect: { ...redirect } } : {}),
+  };
+}
+
 console.log(summary(null), summary({ location: "/x", status: 302 }));
 let calls = 0;
-function v(): number { calls++; return 7; }
+
+function v(): number {
+  calls++;
+  return 7;
+}
+
 const pick = (c: boolean) => ({ a: 1, ...(c ? { b: v(), c: "x" } : { c: "y" }), d: 2 });
 console.log(pick(true), pick(false), calls);

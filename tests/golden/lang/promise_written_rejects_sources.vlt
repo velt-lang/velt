@@ -3,7 +3,9 @@
 // `error: Error | null`).
 
 class AErr extends Error {}
+
 class BErr extends Error {}
+
 class Failed extends Error {}
 
 // The result of an async function or method is no site: a `Map` of `Promise<number>` taking
@@ -11,48 +13,67 @@ class Failed extends Error {}
 async function fa(): Promise<number> {
   throw new AErr("a");
 }
+
 async function fb(): Promise<number> {
   throw new BErr("b");
 }
+
 class Svc {
   async get(): Promise<number> {
     throw new BErr("svc");
   }
 }
+
 const byName = new Map<string, Promise<number>>();
 
 // `new Promise` and `Promise.withResolvers` without a written error type reject with what
 // `reject` is called with.
 function after(ok: boolean): Promise<string> {
   return new Promise((resolve, reject) => {
-    if (ok) resolve("fine");
-    else reject(new Failed("not fine"));
+    if (ok) {
+      resolve("fine");
+    } else {
+      reject(new Failed("not fine"));
+    }
   });
 }
+
 function typed(ok: boolean): Promise<string> {
   return new Promise<string>((res, rj) => {
-    if (ok) res("typed ok");
-    else rj(new Failed("typed"));
+    if (ok) {
+      res("typed ok");
+    } else {
+      rj(new Failed("typed"));
+    }
   });
 }
+
 function deferred(ok: boolean): Promise<string> {
   const d = Promise.withResolvers<string>();
-  if (ok) d.resolve("deferred ok");
-  else d.reject(new Failed("deferred"));
+  if (ok) {
+    d.resolve("deferred ok");
+  } else {
+    d.reject(new Failed("deferred"));
+  }
   return d.promise;
 }
 
 // A synchronous override returning a rejecting promise.
 class LoadError extends Error {}
+
 async function fetchName(n: string): Promise<string> {
-  if (n.startsWith("bad")) throw new LoadError("no " + n);
+  if (n.startsWith("bad")) {
+    throw new LoadError("no " + n);
+  }
   return n;
 }
+
 class Base {
   load(n: string): Promise<string> {
     return Promise.resolve(n);
   }
 }
+
 class Sub extends Base {
   override load(n: string): Promise<string> {
     return fetchName(n);
@@ -62,14 +83,21 @@ class Sub extends Base {
 // Closures throwing `Error | null` and strings.
 function make(mode: number): () => string {
   let error: Error | null = null;
-  if (mode === 1) error = new Error("boom");
+  if (mode === 1) {
+    error = new Error("boom");
+  }
   return () => {
-    if (mode === 0) return "ok";
+    if (mode === 0) {
+      return "ok";
+    }
     throw error;
   };
 }
+
 const thrower: (s: string) => number = (s) => {
-  if (s === "x") throw "str " + s;
+  if (s === "x") {
+    throw "str " + s;
+  }
   return s.length;
 };
 

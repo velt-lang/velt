@@ -1,3 +1,6 @@
 // An arithmetic operand that may be `undefined` (TS18048).
-function g(o: { k?: number }) { return o.k * 2; }
+function g(o: { k?: number }) {
+  return o.k * 2;
+}
+
 console.log(g({ k: 1 }));

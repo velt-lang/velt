@@ -2,7 +2,11 @@
 // A narrowed field path of a local reads its payload where no type is expected, as before
 // (#1280): destructuring, `in`, `Object.keys`, a `switch`, a copy a closure returns. A log
 // argument and a template read it as it is.
-class Box { n = 1; m = 2; }
+class Box {
+  n = 1;
+  m = 2;
+}
+
 class O {
   f: Box | null = new Box();
   xs: number[] | null = [5];
@@ -12,37 +16,59 @@ class O {
       let k = 0;
       ({ m: k } = this.f);
       console.log(n, k, "n" in this.f, Object.keys(this.f));
-      switch (this.f.n) { case 1: console.log("one"); }
+      switch (this.f.n) {
+        case 1:
+          console.log("one");
+      }
       const f = this.f;
       const g = () => f;
       console.log(g().n, `${this.f.n}`, this.f);
     }
   }
 }
+
 const o = new O();
 if (o.f && o.xs) {
   const { n } = o.f;
-  let m = 0; let a = 0; ({ n: m } = o.f); [a] = o.xs;
+  let m = 0;
+  let a = 0;
+  ({ n: m } = o.f);
+  [a] = o.xs;
   console.log(n, m, a);
   console.log("n" in o.f);
   console.log(Object.keys(o.f));
-  switch (o.f.n) { case 1: console.log("one"); }
+  switch (o.f.n) {
+    case 1:
+      console.log("one");
+  }
   console.log({ a: o.f }.a.n, [o.f][0].n);
-  const f = o.f; const g = () => f; console.log(g().n);
-  const pick = (c: boolean) => (c ? f : new Box()); console.log(pick(true).n);
-  const [first] = o.xs; const { length } = o.xs;
+  const f = o.f;
+  const g = () => f;
+  console.log(g().n);
+  const pick = (c: boolean) => (c ? f : new Box());
+  console.log(pick(true).n);
+  const [first] = o.xs;
+  const { length } = o.xs;
   console.log(first, length, o.f, `${o.f.n}`, "s" + o.f.n);
 }
 o.go();
+
 function inFn(p: O): void {
   if (p.f && p.xs) {
     const { n, m } = p.f;
     const [x] = p.xs;
     console.log(n, m, x, "m" in p.f, Object.keys(p.f).length);
-    switch (p.f.m) { case 2: console.log("two"); break; default: console.log("other"); }
+    switch (p.f.m) {
+      case 2:
+        console.log("two");
+        break;
+      default:
+        console.log("other");
+    }
     const c = p.f;
     const h = () => c;
     console.log(h().m, p.f === c);
   }
 }
+
 inFn(new O());

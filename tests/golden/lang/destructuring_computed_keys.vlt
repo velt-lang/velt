@@ -7,16 +7,19 @@ function get(o: Record<string, number>, k: string): void {
   ({ [k]: p } = o);
   console.log(v, p);
 }
+
 function run1(): void {
   const o = { a: 1, b: "x" };
   const k = "a";
   const { [k]: v } = o;
-  let p = 0, q = "";
+  let p = 0;
+  let q = "";
   ({ [k]: p, b: q } = o);
   console.log(v, p, q);
   get({ z: 5 }, "z");
   get({ z: 5 }, "y");
 }
+
 function run2(): void {
   const r: Record<string, number> = { a: 1, b: 2 };
   const keys = ["a", "zz"];
@@ -33,6 +36,7 @@ function run2(): void {
   ({ [kk]: got } = r);
   console.log(got);
 }
+
 function main(): void {
   run1();
   run2();

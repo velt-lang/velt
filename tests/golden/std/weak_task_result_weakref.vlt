@@ -1,15 +1,53 @@
 // A spawned task returns a WeakRef: the join handle delivers it to the awaiting task.
-class V { n: number; constructor(n: number) { this.n = n; } }
-interface Peek { peek(): number; }
-class H implements Peek {
-  r: WeakRef<V>; v: V;
-  constructor(v: V) { this.v = v; this.r = new WeakRef(v); }
-  peek(): number { const x = this.r.deref(); if (x === null) return -1; return x.n; }
+class V {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
 }
-class N implements Peek { peek(): number { return 0; } }
-async function make(i: number): Promise<WeakRef<V>> { const v = new V(i); return new WeakRef(v); }
+
+interface Peek {
+  peek(): number;
+}
+
+class H implements Peek {
+  r: WeakRef<V>;
+  v: V;
+  constructor(v: V) {
+    this.v = v;
+    this.r = new WeakRef(v);
+  }
+  peek(): number {
+    const x = this.r.deref();
+    if (x === null) {
+      return -1;
+    }
+    return x.n;
+  }
+}
+
+class N implements Peek {
+  peek(): number {
+    return 0;
+  }
+}
+
+async function make(i: number): Promise<WeakRef<V>> {
+  const v = new V(i);
+  return new WeakRef(v);
+}
+
 async function main() {
-  let live = 0; let dead = 0;
-  for (let i = 0; i < 300; i++) { const r = await spawn(make(i)); const x = r.deref(); if (x === null) dead++; else live++; }
+  let live = 0;
+  let dead = 0;
+  for (let i = 0; i < 300; i++) {
+    const r = await spawn(make(i));
+    const x = r.deref();
+    if (x === null) {
+      dead++;
+    } else {
+      live++;
+    }
+  }
   console.log(live, dead);
 }

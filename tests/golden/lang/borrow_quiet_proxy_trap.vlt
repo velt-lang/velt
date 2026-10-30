@@ -45,28 +45,30 @@ function peekPt(b: Box, p: Pt): number {
 
 function main() {
   const h = new Holder();
-  const p = new Proxy(new Box(), {
-    get(t: any, k: string | symbol, r: any): any {
-      replace(h, 2);
-      return 10;
-    },
-    set(t: any, k: string | symbol, v: any, r: any): boolean {
-      replace(h, 3);
-      return true;
-    },
-  }) as Box;
+  const p =
+    new Proxy(new Box(), {
+      get(t: any, k: string | symbol, r: any): any {
+        replace(h, 2);
+        return 10;
+      },
+      set(t: any, k: string | symbol, v: any, r: any): boolean {
+        replace(h, 3);
+        return true;
+      },
+    }) as Box;
   console.log(peek(h.b, p));
   console.log(h.b.v);
   console.log(poke(h.b, p));
   console.log(h.b.v);
   console.log(outer(h.b, p));
   console.log(h.b.v);
-  const q = new Proxy({ x: 1, y: 2 } as Pt, {
-    get(t: any, k: string | symbol, r: any): any {
-      replace(h, 4);
-      return 20;
-    },
-  }) as Pt;
+  const q =
+    new Proxy({ x: 1, y: 2 } as Pt, {
+      get(t: any, k: string | symbol, r: any): any {
+        replace(h, 4);
+        return 20;
+      },
+    }) as Pt;
   console.log(peekPt(h.b, q));
   console.log(h.b.v);
   console.log(kept.length);

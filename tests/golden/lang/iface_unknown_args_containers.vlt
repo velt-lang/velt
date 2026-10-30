@@ -15,10 +15,7 @@ class P {
   }
 }
 
-const mapSize: Handler<Map<unknown, unknown>, number> = {
-  name: "map",
-  serialize: (m) => m.size,
-};
+const mapSize: Handler<Map<unknown, unknown>, number> = { name: "map", serialize: (m) => m.size };
 const setItems: Handler<Set<unknown>, unknown[]> = { name: "set", serialize: (s) => [...s] };
 const arrLength: Handler<unknown[], number> = { name: "arr", serialize: (v) => v.length };
 const mapEntries: Handler<Map<unknown, unknown>, [unknown, unknown][]> = {
@@ -62,7 +59,14 @@ function main(): void {
   const entries = all[3].serialize(m) as [unknown, unknown][];
   console.log(all[3].name, entries.length, entries[0][0], (entries[1][1] as P).x);
   const b = m.get("b");
-  console.log(all[4].name, all[4].serialize(m), m.size, m.has("a"), m.get("z")?.x, m.get("b") === b);
+  console.log(
+    all[4].name,
+    all[4].serialize(m),
+    m.size,
+    m.has("a"),
+    m.get("z")?.x,
+    m.get("b") === b,
+  );
   console.log(all[5].name, all[5].serialize(s), s.size, s.has("r"));
   console.log(all[6].name, all[6].serialize(xs), xs[0], xs.length);
   for (const h of all) {

@@ -3,8 +3,11 @@
 // JavaScript refers to one array from both, so a change through either shows in the other.
 
 function applyRef(ref: any, value: any): void {
-  if (typeof ref === "function") ref(value);
-  else if (ref && typeof ref === "object") ref.current = value;
+  if (typeof ref === "function") {
+    ref(value);
+  } else if (ref && typeof ref === "object") {
+    ref.current = value;
+  }
 }
 
 type State = { refs: any[] };
@@ -25,18 +28,30 @@ function mergeProps(sources: any[]): (key: string) => any {
 
   function collect(): State {
     const refs: any[] = [];
-    for (const s of sources) refs.push(s);
+    for (const s of sources) {
+      refs.push(s);
+    }
     return { refs };
   }
 
   function read(key: string, state: State): any {
     if (key === "ref") {
       const refs = state.refs;
-      if (!refs.length) return undefined;
-      if (refs.length === 1) return refs[0];
-      return cachedDerive("ref", refs, () => (value: any) => {
-        for (const ref of refs) applyRef(ref, value);
-      });
+      if (!refs.length) {
+        return undefined;
+      }
+      if (refs.length === 1) {
+        return refs[0];
+      }
+      return cachedDerive(
+        "ref",
+        refs,
+        () => (value: any) => {
+          for (const ref of refs) {
+            applyRef(ref, value);
+          }
+        },
+      );
     }
     return undefined;
   }
@@ -74,7 +89,9 @@ function register(r: Registry) {
   r.add(ys, () => {
     const other = ys;
     let n = 0;
-    for (const s of other) n += s.length;
+    for (const s of other) {
+      n += s.length;
+    }
     return n;
   });
 }
@@ -82,7 +99,12 @@ function register(r: Registry) {
 function main() {
   const box: any = { current: 0 };
   let seen = "";
-  const get = mergeProps([box, (v: any) => { seen = `fn ${v}`; }]);
+  const get = mergeProps([
+    box,
+    (v: any) => {
+      seen = `fn ${v}`;
+    },
+  ]);
   const apply = get("ref");
   apply(5);
   console.log(box.current, seen, get("ref") === apply);

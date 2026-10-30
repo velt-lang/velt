@@ -14,7 +14,11 @@ function spin(k: i64): i64 {
   return t;
 }
 
-async function cross(a: shared<RwLock<Cell>>, b: shared<RwLock<Cell>>, stop: shared<i64>): Promise<bool> {
+async function cross(
+  a: shared<RwLock<Cell>>,
+  b: shared<RwLock<Cell>>,
+  stop: shared<i64>,
+): Promise<bool> {
   let ok = true;
   let i: i64 = 0;
   // Bounded too: on one thread (wasm) the readers' yields never let a writer's timer run.

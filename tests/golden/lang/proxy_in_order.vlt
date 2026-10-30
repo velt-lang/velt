@@ -4,18 +4,23 @@ function key(): string {
   console.log("key");
   return "a";
 }
+
 function obj(): any {
   console.log("obj");
   return { a: 1 };
 }
+
 function main(): void {
   console.log(key() in obj());
-  const p = new Proxy({ b: 2 }, {
-    has(t, k) {
-      console.log("has", k);
-      return Reflect.has(t, k);
+  const p = new Proxy(
+    { b: 2 },
+    {
+      has(t, k) {
+        console.log("has", k);
+        return Reflect.has(t, k);
+      },
     },
-  });
+  );
   const order: string[] = [];
   const k2 = (): string => {
     order.push("key");

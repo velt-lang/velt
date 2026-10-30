@@ -15,19 +15,19 @@ extend<T> T implements Kind {
   }
 }
 
-extend<R> (() => R) implements Kind {
+extend<R> () => R implements Kind {
   kind(): string {
     return "thunk";
   }
 }
 
-extend<A, R> ((a: A) => R) implements Kind {
+extend<A, R> (a: A) => R implements Kind {
   kind(): string {
     return "unary";
   }
 }
 
-extend<A, R> ((...xs: A[]) => R) implements Kind {
+extend<A, R> (...xs: A[]) => R implements Kind {
   kind(): string {
     return "rest";
   }
@@ -88,7 +88,7 @@ interface Run {
   run(): string;
 }
 
-extend<R> (() => R) implements Run {
+extend<R> () => R implements Run {
   run(): string {
     try {
       return `ran: ${this()}`;
@@ -108,7 +108,7 @@ console.log(throws.run(), viaRun(throws));
 
 // An error type parameter binds to what the receiver throws; a type alias for a function type
 // is one too; and function types inside other types are matched the same way.
-extend<R, E> (() => R throws E) {
+extend<R, E> () => R throws E {
   attempt(): string {
     try {
       this();

@@ -6,15 +6,21 @@ let n = 0;
 function doWhile(limit: number): never {
   do {
     n++;
-    if (n >= limit) throw new Error(`do-while stopped at ${n}`);
+    if (n >= limit) {
+      throw new Error(`do-while stopped at ${n}`);
+    }
   } while (true);
 }
 
 function doWhileContinue(limit: number): never {
   do {
     n++;
-    if (n % 2 == 0) continue;
-    if (n >= limit) throw new Error(`do-while with continue stopped at ${n}`);
+    if (n % 2 == 0) {
+      continue;
+    }
+    if (n >= limit) {
+      throw new Error(`do-while with continue stopped at ${n}`);
+    }
   } while (true);
 }
 
@@ -22,23 +28,31 @@ function doWhileInnerBreak(limit: number): never {
   do {
     for (;;) {
       n++;
-      if (n % 3 == 0) break;
+      if (n % 3 == 0) {
+        break;
+      }
     }
-    if (n >= limit) throw new Error(`inner break stopped at ${n}`);
+    if (n >= limit) {
+      throw new Error(`inner break stopped at ${n}`);
+    }
   } while (true);
 }
 
 function whileTrue(limit: number): never {
   while (true) {
     n++;
-    if (n >= limit) throw new Error(`while stopped at ${n}`);
+    if (n >= limit) {
+      throw new Error(`while stopped at ${n}`);
+    }
   }
 }
 
 function forEver(limit: number): never {
   for (;;) {
     n++;
-    if (n >= limit) throw new Error(`for stopped at ${n}`);
+    if (n >= limit) {
+      throw new Error(`for stopped at ${n}`);
+    }
   }
 }
 

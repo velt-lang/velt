@@ -1,7 +1,34 @@
 // A spawned task throws (an inferred error type) an error holding a WeakRef.
-class V { n: number; constructor(n: number) { this.n = n; } }
-class WErr extends Error { r: WeakRef<V>; v: V; constructor(v: V) { super("w"); this.v = v; this.r = new WeakRef(v); } }
-async function bad(i: number): Promise<number> { if (i >= 0) throw new WErr(new V(i)); return 0; }
+class V {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+class WErr extends Error {
+  r: WeakRef<V>;
+  v: V;
+  constructor(v: V) {
+    super("w");
+    this.v = v;
+    this.r = new WeakRef(v);
+  }
+}
+
+async function bad(i: number): Promise<number> {
+  if (i >= 0) {
+    throw new WErr(new V(i));
+  }
+  return 0;
+}
+
 async function main() {
-  try { await spawn(bad(1)); } catch (e) { if (e instanceof WErr) console.log(e.r.deref() === null); }
+  try {
+    await spawn(bad(1));
+  } catch (e) {
+    if (e instanceof WErr) {
+      console.log(e.r.deref() === null);
+    }
+  }
 }

@@ -6,23 +6,27 @@ interface Options {
   name?: string;
   flag?: boolean;
 }
+
 interface RequiredOptions {
   hint?: string;
   flag?: boolean;
 }
+
 interface AppContext {
   provides: Map<string, number>;
   app: string;
 }
 
 function hintOf(o: Options | undefined): string {
-  return (o as RequiredOptions | undefined)?.flag === true ? "flagged" : "plain";
+  return (o as (RequiredOptions | undefined))?.flag === true ? "flagged" : "plain";
 }
 
 function listProvides(list: string[], ctx: { provides?: Map<string, number> } | null): string[] {
   const out = list.slice();
   if (ctx && ctx.provides) {
-    for (const [k, v] of ctx.provides) out.push(k + "=" + v);
+    for (const [k, v] of ctx.provides) {
+      out.push(k + "=" + v);
+    }
   }
   return out;
 }

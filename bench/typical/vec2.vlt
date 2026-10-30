@@ -24,8 +24,12 @@ function main() {
   let total = 0.0;
   for (let i = 0; i < 20000000; i++) {
     p = p.add(v.scale(0.001));
-    if (p.x > 10) p = new Vec2(0, p.y);
-    if (p.y > 10) p = new Vec2(p.x, 0);
+    if (p.x > 10) {
+      p = new Vec2(0, p.y);
+    }
+    if (p.y > 10) {
+      p = new Vec2(p.x, 0);
+    }
     total += p.len();
   }
   console.log(total.toFixed(3));

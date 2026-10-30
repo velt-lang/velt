@@ -1,6 +1,7 @@
 // A written `throws` clause (on a function, an interface method, a base method or a function
 // type) bounds what may be thrown.
 class NotFound extends Error {}
+
 class Forbidden extends Error {}
 
 function load(id: string): string throws NotFound {

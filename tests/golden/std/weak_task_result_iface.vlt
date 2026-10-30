@@ -1,15 +1,49 @@
 // A spawned task returns an interface value that is an H.
-class V { n: number; constructor(n: number) { this.n = n; } }
-interface Peek { peek(): number; }
-class H implements Peek {
-  r: WeakRef<V>; v: V;
-  constructor(v: V) { this.v = v; this.r = new WeakRef(v); }
-  peek(): number { const x = this.r.deref(); if (x === null) return -1; return x.n; }
+class V {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
 }
-class N implements Peek { peek(): number { return 0; } }
-async function make(i: number): Promise<Peek> { if (i < 0) return new N(); return new H(new V(i)); }
+
+interface Peek {
+  peek(): number;
+}
+
+class H implements Peek {
+  r: WeakRef<V>;
+  v: V;
+  constructor(v: V) {
+    this.v = v;
+    this.r = new WeakRef(v);
+  }
+  peek(): number {
+    const x = this.r.deref();
+    if (x === null) {
+      return -1;
+    }
+    return x.n;
+  }
+}
+
+class N implements Peek {
+  peek(): number {
+    return 0;
+  }
+}
+
+async function make(i: number): Promise<Peek> {
+  if (i < 0) {
+    return new N();
+  }
+  return new H(new V(i));
+}
+
 async function main() {
   let s = 0;
-  for (let i = 0; i < 300; i++) { const h = await spawn(make(i)); s += h.peek(); }
+  for (let i = 0; i < 300; i++) {
+    const h = await spawn(make(i));
+    s += h.peek();
+  }
   console.log(s);
 }

@@ -1,5 +1,8 @@
 // An `any` field holding something other than a function, called through `any` (#924).
-class H { f: any = null; }
+class H {
+  f: any = null;
+}
+
 function main(): void {
   const h = new H();
   h.f = 3;

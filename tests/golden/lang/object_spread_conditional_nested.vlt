@@ -1,19 +1,28 @@
 // check: no leaks
 // Conditional spreads: several in one literal, nested conditionals, without a target type, and
 // evaluation order.
-interface Opts { a: number; b?: string; c?: number }
-function mk(x: number, flag: boolean, s: string | null): Opts {
-    return {
-        a: x,
-        ...(flag ? { b: "yes" } : {}),
-        ...(s !== null ? { b: s, c: s.length } : { c: 0 }),
-    };
+interface Opts {
+  a: number;
+  b?: string;
+  c?: number;
 }
+
+function mk(x: number, flag: boolean, s: string | null): Opts {
+  return {
+    a: x,
+    ...(flag ? { b: "yes" } : {}),
+    ...(s !== null ? { b: s, c: s.length } : { c: 0 }),
+  };
+}
+
 console.log(mk(1, true, null), mk(2, false, "hey"), mk(3, true, "zz"));
 const untyped = (f: boolean) => ({ ...(f ? { k: 1 } : {}), z: true });
 console.log(untyped(true), untyped(false), Object.keys(untyped(false)));
 let order: string[] = [];
-const t = (s: string) => { order.push(s); return s; };
+const t = (s: string) => {
+  order.push(s);
+  return s;
+};
 const o = { p: t("p"), ...(t("c") ? { q: t("q") } : {}), r: t("r") };
 console.log(o, order.join(","));
 const nested = (a: boolean, b: boolean) => ({ ...(a ? (b ? { x: 1 } : { y: 2 }) : {}) });

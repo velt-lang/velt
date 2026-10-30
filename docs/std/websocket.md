@@ -41,7 +41,8 @@ upgrade, or opened as a client to `ws://` / `wss://` URLs. The protocol is writt
 
 ```ts
 import { serve } from "velt/net/http";
-import { WebSocket, isWebSocketRequest, upgradeWebSocket, connectWebSocket } from "velt/net/websocket";
+import { WebSocket, connectWebSocket } from "velt/net/websocket";
+import { isWebSocketRequest, upgradeWebSocket } from "velt/net/http";
 
 async function echo(ws: WebSocket): Promise<void> {
   for await (const m of ws) {
@@ -71,7 +72,8 @@ A chat room: every message a client sends goes to everyone else in the room.
 
 ```ts
 import { serve } from "velt/net/http";
-import { WebSocket, isWebSocketRequest, upgradeWebSocket } from "velt/net/websocket";
+import { WebSocket } from "velt/net/websocket";
+import { isWebSocketRequest, upgradeWebSocket } from "velt/net/http";
 
 async function member(ws: WebSocket): Promise<void> {
   await ws.subscribe("room");

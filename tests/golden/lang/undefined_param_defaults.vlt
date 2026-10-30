@@ -55,4 +55,8 @@ class Box {
 }
 
 const b = new Box();
-console.log(b.scale(), b.scale(undefined, undefined), b.scale(5, pick([], 0) === undefined ? "u" : "v"));
+console.log(
+  b.scale(),
+  b.scale(undefined, undefined),
+  b.scale(5, pick([], 0) === undefined ? "u" : "v"),
+);

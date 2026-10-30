@@ -1,13 +1,22 @@
 // A static method is a value (the function, with no `this`), also an inherited one and one of
 // a generic class.
 class MathUtil {
-  static double(n: number): number { return n * 2; }
-  static greet(name: string): string { return "hi " + name; }
+  static double(n: number): number {
+    return n * 2;
+  }
+  static greet(name: string): string {
+    return "hi " + name;
+  }
 }
+
 class Sub extends MathUtil {}
+
 class Box<T> {
-  static wrap(n: number): string { return `[${n}]`; }
+  static wrap(n: number): string {
+    return `[${n}]`;
+  }
 }
+
 const d = MathUtil.double;
 const g: (s: string) => string = Sub.greet;
 console.log(d(21), g("there"));

@@ -1,4 +1,7 @@
 // An arithmetic operand that may be `null` or `undefined` (TS18048 / TS18047).
-function n3(c: boolean, d: boolean) { return { a: 0, ...(c ? (d ? { k: 1 } : { k: null }) : {}) }; }
+function n3(c: boolean, d: boolean) {
+  return { a: 0, ...(c ? (d ? { k: 1 } : { k: null }) : {}) };
+}
+
 const r = n3(true, true);
 console.log(r.k * 2);

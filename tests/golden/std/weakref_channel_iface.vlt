@@ -1,12 +1,31 @@
 // An interface value holding a WeakRef is sent on a channel.
 import { channel } from "velt/sync";
-class V { n: number; constructor(n: number) { this.n = n; } }
-interface Peek { peek(): number; }
+
+class V {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+interface Peek {
+  peek(): number;
+}
+
 class H implements Peek {
   r: WeakRef<V>;
-  constructor(r: WeakRef<V>) { this.r = r; }
-  peek(): number { const x = this.r.deref(); if (x === null) return -1; return x.n; }
+  constructor(r: WeakRef<V>) {
+    this.r = r;
+  }
+  peek(): number {
+    const x = this.r.deref();
+    if (x === null) {
+      return -1;
+    }
+    return x.n;
+  }
 }
+
 async function main() {
   const keep = new V(7);
   const ch = channel<Peek>(4);

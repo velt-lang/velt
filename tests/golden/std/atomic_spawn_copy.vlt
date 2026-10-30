@@ -23,9 +23,13 @@ async function main() {
     ps.push(spawn(work(c, 1000)));
   }
   for (let t = 0; t < 4; t++) {
-    ps.push(spawn((async () => {
-      c.hits.add(1);
-    })()));
+    ps.push(
+      spawn(
+        (async () => {
+          c.hits.add(1);
+        })(),
+      ),
+    );
   }
   await Promise.all(ps);
   const go = async () => {
