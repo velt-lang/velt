@@ -1,27 +1,27 @@
 # The programs `velt cache warm` compiles std into the build cache with (paths relative to this
 # file; scripts/package.sh and package.ps1 copy them into the toolchain's share/velt/warm/).
 #
-# Std goldens (four of them now std's `velt test` files, tests/std) chosen to cover the most code
-# that programs share, greedily: each adds the most compiled functions also used by another
-# golden that the ones before it did not cover. These 20 cover about 58% of the functions of the
-# example apps (examples/apps); all std goldens, 67%; the rest is each app's own code. A program
-# listed here must build on its own (no relative imports).
-../../../tests/std/http/streams.test.vlt
-../../../tests/golden/std/handle_after_close.vlt
+# Std goldens and std's `velt test` files (tests/std) chosen to cover the most code that programs
+# share, greedily: each adds the most compiled functions also used by another golden that the
+# ones before it did not cover. A program listed here must build on its own (no relative imports)
+# and use std alone: the HTTP server and the database drivers are packages (packages/), which
+# the cache warms for a program that depends on them when it is built.
+../../../tests/std/fetch/server_api.test.vlt
+../../../tests/golden/std/number_parse.vlt
 ../../../tests/golden/std/btree_invariants.vlt
-../../../tests/std/fetch/client.test.vlt
-../../../tests/std/http/websocket.test.vlt
+../../../tests/golden/std/simd_sha.vlt
+../../../tests/std/websocket/over.test.vlt
 ../../../tests/golden/std/streams_basic.vlt
 ../../../tests/golden/std/object_create_null_dict.vlt
-../../../tests/golden/std/sqlite_sql_parse.vlt
-../../../tests/std/websocket/connections.test.vlt
+../../../tests/golden/std/datetime.vlt
+../../../tests/std/h2/hpack.test.vlt
 ../../../tests/golden/std/typed_arrays_basic.vlt
-../../../tests/golden/std/sqlite_engine_read.vlt
-../../../tests/golden/std/jsx_stream.vlt
+../../../tests/golden/std/collections.vlt
+../../../tests/golden/std/compress_brotli.vlt
 ../../../tests/golden/std/btree_map.vlt
-../../../tests/golden/std/http_server.vlt
+../../../tests/golden/std/concurrent_map_strings.vlt
 ../../../tests/golden/std/streams_body.vlt
-../../../tests/golden/std/postgres_pool_client_left.vlt
+../../../tests/golden/std/typed_arrays_edges.vlt
 ../../../tests/golden/std/typed_arrays_buffers.vlt
 ../../../tests/golden/std/url.vlt
 ../../../tests/golden/std/map_null_values.vlt

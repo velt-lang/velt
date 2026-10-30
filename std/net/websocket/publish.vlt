@@ -6,7 +6,7 @@ import { setText } from "velt/net/websocket/bytes";
 import { OP_BINARY, OP_TEXT, headSize, writeHead } from "velt/net/websocket/frame";
 import { publish as publishFrame } from "velt/net/websocket/topics";
 
-// A whole unmasked frame, for `publish`.
+/** A whole unmasked text frame, for `publish`. */
 export function textFrame(text: string): u8[] {
   const len = Buffer.byteLength(text) as i64;
   const out = Buffer.alloc((headSize(len, false) + len) as usize);
@@ -15,6 +15,7 @@ export function textFrame(text: string): u8[] {
   return out;
 }
 
+/** A whole unmasked binary frame, for `publishBytes`. */
 export function binaryFrame(data: u8[]): u8[] {
   const len = data.length as i64;
   const out = Buffer.alloc((headSize(len, false) + len) as usize);

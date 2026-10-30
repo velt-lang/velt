@@ -28,7 +28,10 @@ fn modules(root: &Path) -> Vec<PathBuf> {
         .expect("tests/std")
         .flatten()
         .map(|e| e.path())
-        .filter(|p| p.is_dir() && wanted(&p.file_name().unwrap().to_string_lossy()))
+        // `target/`: the build output of `velt test` in the package tests/std is (its
+        // `package.vlt` depends on the HTTP server for the clients' tests).
+        .filter(|p| p.is_dir() && p.file_name().is_some_and(|n| n != "target"))
+        .filter(|p| wanted(&p.file_name().unwrap().to_string_lossy()))
         .collect();
     modules.sort();
     modules

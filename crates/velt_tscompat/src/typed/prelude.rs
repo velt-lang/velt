@@ -469,6 +469,10 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
     (
         "Array",
         &[
+            (
+                "copy",
+                "copy with `target.set(bytes.subarray(sourceStart, sourceEnd), targetStart)`",
+            ),
             ("isEmpty", "write `xs.length === 0`"),
             ("prefetch", "leave it out: it is only a hint"),
             ("reserve", "leave it out: arrays grow as needed"),

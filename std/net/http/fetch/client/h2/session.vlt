@@ -50,13 +50,13 @@ export class ClientSession {
   waiting: H2Call[] = [];
   blocked: ClientStream[] = [];
   nextId: i64 = 1;
-  // The server's settings.
+  /** The server's settings. */
   maxStreams: i64 = 100;
   peerMaxFrame: i64 = MIN_MAX_FRAME_SIZE;
   peerInitialWindow: i64 = DEFAULT_WINDOW;
   sendWindow: i64 = DEFAULT_WINDOW;
   recvConsumed: i64 = 0;
-  // The read buffer, and a header block in pieces.
+  /** The read buffer, and a header block in pieces. */
   rbuf: u8[] = Buffer.alloc(((MIN_MAX_FRAME_SIZE + HEADER_LENGTH) * 2) as usize);
   rpos: i64 = 0;
   rlen: i64 = 0;

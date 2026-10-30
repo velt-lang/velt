@@ -24,55 +24,96 @@ export function mayBePreface(b: u8[], at: i64, end: i64): bool {
 export const HEADER_LENGTH: i64 = 9;
 
 // Frame types (RFC 9113 §6).
+
+/** A DATA frame: part of a stream's body (§6.1). */
 export const DATA: i64 = 0;
+/** A HEADERS frame: a header block, or its first part (§6.2). */
 export const HEADERS: i64 = 1;
+/** A PRIORITY frame, deprecated and ignored (§6.3). */
 export const PRIORITY: i64 = 2;
+/** An RST_STREAM frame: ends one stream at once (§6.4). */
 export const RST_STREAM: i64 = 3;
+/** A SETTINGS frame: the sender's settings, or the acknowledgement of the peer's (§6.5). */
 export const SETTINGS: i64 = 4;
+/** A PUSH_PROMISE frame (server push, which this implementation turns off) (§6.6). */
 export const PUSH_PROMISE: i64 = 5;
+/** A PING frame, answered with its ACK (§6.7). */
 export const PING: i64 = 6;
+/** A GOAWAY frame: the connection ends after the streams up to its last one (§6.8). */
 export const GOAWAY: i64 = 7;
+/** A WINDOW_UPDATE frame: more of a flow-control window (§6.9). */
 export const WINDOW_UPDATE: i64 = 8;
+/** A CONTINUATION frame: the rest of a header block (§6.10). */
 export const CONTINUATION: i64 = 9;
 
 // Flags.
+
+/** Flag: the stream's last frame from this side (DATA, HEADERS). */
 export const END_STREAM: i64 = 0x1;
+/** Flag: an acknowledgement (SETTINGS, PING). */
 export const ACK: i64 = 0x1;
+/** Flag: the header block's last frame (HEADERS, CONTINUATION). */
 export const END_HEADERS: i64 = 0x4;
+/** Flag: the payload is padded (DATA, HEADERS). */
 export const PADDED: i64 = 0x8;
+/** Flag: HEADERS carries priority fields (deprecated, skipped). */
 export const PRIORITY_FLAG: i64 = 0x20;
 
 // Settings (RFC 9113 §6.5.2).
+
+/** Setting: the largest HPACK dynamic table the sender's decoder allows. */
 export const SETTINGS_HEADER_TABLE_SIZE: i64 = 1;
+/** Setting: whether server push is allowed (0 or 1). */
 export const SETTINGS_ENABLE_PUSH: i64 = 2;
+/** Setting: the most streams the peer may have open at once. */
 export const SETTINGS_MAX_CONCURRENT_STREAMS: i64 = 3;
+/** Setting: a new stream's flow-control window. */
 export const SETTINGS_INITIAL_WINDOW_SIZE: i64 = 4;
+/** Setting: the largest frame payload the sender accepts. */
 export const SETTINGS_MAX_FRAME_SIZE: i64 = 5;
+/** Setting: the largest header list the sender accepts (advisory). */
 export const SETTINGS_MAX_HEADER_LIST_SIZE: i64 = 6;
 /// RFC 8441: extended CONNECT (WebSockets over HTTP/2).
 export const SETTINGS_ENABLE_CONNECT_PROTOCOL: i64 = 8;
 
 // Error codes (RFC 9113 §7).
+
+/** Error code: none (a graceful end). */
 export const NO_ERROR: i64 = 0;
+/** Error code: the peer broke the protocol. */
 export const PROTOCOL_ERROR: i64 = 1;
+/** Error code: the endpoint failed. */
 export const INTERNAL_ERROR: i64 = 2;
+/** Error code: the peer broke flow control. */
 export const FLOW_CONTROL_ERROR: i64 = 3;
+/** Error code: SETTINGS were not acknowledged in time. */
 export const SETTINGS_TIMEOUT: i64 = 4;
+/** Error code: a frame came for a half-closed stream. */
 export const STREAM_CLOSED: i64 = 5;
+/** Error code: a frame had the wrong size. */
 export const FRAME_SIZE_ERROR: i64 = 6;
+/** Error code: the stream was refused before any processing (safe to retry). */
 export const REFUSED_STREAM: i64 = 7;
+/** Error code: the stream is no longer needed. */
 export const CANCEL: i64 = 8;
+/** Error code: the HPACK state could not be kept. */
 export const COMPRESSION_ERROR: i64 = 9;
+/** Error code: a CONNECT tunnel failed. */
 export const CONNECT_ERROR: i64 = 10;
+/** Error code: the peer generates too much load. */
 export const ENHANCE_YOUR_CALM: i64 = 11;
+/** Error code: the TLS parameters are not good enough. */
 export const INADEQUATE_SECURITY: i64 = 12;
+/** Error code: use HTTP/1.1 for this request. */
 export const HTTP_1_1_REQUIRED: i64 = 13;
 
-/// The default and smallest SETTINGS_MAX_FRAME_SIZE, and the largest allowed.
+/// The default and smallest SETTINGS_MAX_FRAME_SIZE.
 export const MIN_MAX_FRAME_SIZE: i64 = 16384;
+/** The largest SETTINGS_MAX_FRAME_SIZE allowed. */
 export const MAX_MAX_FRAME_SIZE: i64 = 16777215;
-/// The default initial window, and the largest a window may be (RFC 9113 §6.9.1).
+/// The default initial flow-control window (RFC 9113 §6.9.1).
 export const DEFAULT_WINDOW: i64 = 65535;
+/** The largest a flow-control window may be. */
 export const MAX_WINDOW: i64 = 0x7fffffff;
 
 /// The 24-bit payload length of the frame header at `b[at..]`.
