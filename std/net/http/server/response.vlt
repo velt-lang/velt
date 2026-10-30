@@ -49,6 +49,9 @@ export class HttpResponse {
   /** The headers set for this response, encoded (`name: value\r\n` each). */
   private extra: u8[] = Buffer.alloc(256);
   private extraLength: i64 = 0;
+  /** The trailers set for this response, encoded (`name: value\r\n` each). */
+  private trailerBuf: u8[] = [];
+  private trailerLength: i64 = 0;
   private hasType: bool = false;
   /// The handler set a `Server` header: the server's own is not sent.
   private hasServer: bool = false;
@@ -167,6 +170,44 @@ export class HttpResponse {
     this.h2 = r;
   }
 
+  /**
+   * Adds trailers: fields sent after the body (Node's `res.addTrailers`), checked as `header`
+   * checks names and values. Over HTTP/1.1 they end a chunked body: a streamed one always, one
+   * written at once (`send` and the like) when the request said `TE: trailers` (it is then sent
+   * chunked); otherwise they are not sent. Over HTTP/2 they are a HEADERS frame after the body.
+   * Name them in a `Trailer` header if the client needs to know in advance. Call it before the
+   * body ends.
+   */
+  addTrailers(trailers: [string, string][]) {
+    const h2 = this.h2;
+    if (h2 != null) {
+      h2.addTrailers(trailers);
+      return;
+    }
+    for (const t of trailers) {
+      const name = t[0];
+      const value = t[1];
+      const nameLength = Buffer.byteLength(name) as i64;
+      const n = nameLength + (Buffer.byteLength(value) as i64) + 4;
+      if (this.trailerLength + n > (this.trailerBuf.length as i64)) {
+        const grown: u8[] = Buffer.alloc(((this.trailerLength + n) * 2) as usize);
+        this.trailerBuf.copy(grown, 0, 0, this.trailerLength);
+        this.trailerBuf = grown;
+      }
+      const b = this.trailerBuf;
+      const start = this.trailerLength;
+      let at = start + (b.write(name, start as usize) as i64);
+      b[at] = 58;
+      b[at + 1] = SP;
+      const valueStart = at + 2;
+      at = valueStart + (b.write(value, valueStart as usize) as i64);
+      checkField(b, start, start + nameLength, valueStart, at);
+      b[at] = CR;
+      b[at + 1] = LF;
+      this.trailerLength = at + 2;
+    }
+  }
+
   /** The connection closes after this response (internal: an error response to bad input). */
   closeAfter() {
     this.keepAlive = false;
@@ -177,6 +218,10 @@ export class HttpResponse {
     const h2 = this.h2;
     if (h2 != null) {
       h2.send(body);
+      return;
+    }
+    if (this.trailerLength > 0 && this.http11 && this.teTrailers()) {
+      this.whole(TYPE_TEXT, body, null);
       return;
     }
     const n = Buffer.byteLength(body) as i64;
@@ -193,6 +238,10 @@ export class HttpResponse {
       h2.sendBytes(body);
       return;
     }
+    if (this.trailerLength > 0 && this.http11 && this.teTrailers()) {
+      this.whole(TYPE_BYTES, null, body);
+      return;
+    }
     this.head(TYPE_BYTES, null, body.length as i64);
     if (!this.noBody) {
       this.bytes(body);
@@ -204,6 +253,10 @@ export class HttpResponse {
     const h2 = this.h2;
     if (h2 != null) {
       h2.json(json);
+      return;
+    }
+    if (this.trailerLength > 0 && this.http11 && this.teTrailers()) {
+      this.whole(TYPE_JSON, json, null);
       return;
     }
     const n = Buffer.byteLength(json) as i64;
@@ -218,6 +271,10 @@ export class HttpResponse {
     const h2 = this.h2;
     if (h2 != null) {
       h2.html(html);
+      return;
+    }
+    if (this.trailerLength > 0 && this.http11 && this.teTrailers()) {
+      this.whole(TYPE_HTML, html, null);
       return;
     }
     const n = Buffer.byteLength(html) as i64;
@@ -381,6 +438,7 @@ export class HttpResponse {
     this.noBody = false;
     this.statusCode = 200;
     this.extraLength = 0;
+    this.trailerLength = 0;
     this.hasType = false;
     this.hasServer = false;
     this.keepAlive = keepAlive;
@@ -510,11 +568,64 @@ export class HttpResponse {
       return;
     }
     this.streaming = false;
-    if (this.chunked && !this.noBody) {
-      this.text("0\r\n\r\n");
-    }
+    this.endChunks();
     // Otherwise (HTTP/1.0) the body ends with the connection: the head set `keepAlive` false.
     await this.queue();
+  }
+
+  /// The last chunk of a chunked body, with the trailers.
+  private endChunks() {
+    if (!this.chunked || this.noBody) {
+      return;
+    }
+    this.text("0\r\n");
+    const n = this.trailerLength;
+    if (n > 0) {
+      const t = this.trailerBuf;
+      this.reserve(n);
+      t.copy(this.buf, this.length, 0, n);
+      this.length += n;
+    }
+    this.text("\r\n");
+  }
+
+  /// A whole body sent chunked, so that the trailers can follow it (`TE: trailers`).
+  private whole(type: i64, text: string | null, bytes: u8[] | null) {
+    this.head(type, null, -1);
+    this.streaming = false;
+    if (!this.noBody) {
+      if (text != null) {
+        const n = Buffer.byteLength(text) as i64;
+        if (n > 0) {
+          this.chunk(n);
+          this.textOf(text, n);
+          this.text("\r\n");
+        }
+      } else if (bytes != null && bytes.length > 0) {
+        this.chunk(bytes.length as i64);
+        this.bytes(bytes);
+        this.text("\r\n");
+      }
+    }
+    this.endChunks();
+  }
+
+  /// Whether the request said `TE: trailers` (the client takes trailers).
+  private teTrailers(): bool {
+    const h = this.request;
+    for (let i: i64 = 0; i < (h.heads.length as i64); i += 4) {
+      if (
+        h.heads[i + 1] - h.heads[i] == 2 &&
+        h.buf.utf8EqualsIgnoreCase("te", h.heads[i], h.heads[i + 1])
+      ) {
+        for (const part of h.buf.utf8Slice(h.heads[i + 2], h.heads[i + 3]).split(",")) {
+          if (part.trim().toLowerCase() == "trailers") {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
   }
 
   /// A chunk's size line (HTTP/1.1), before `n` bytes of data.

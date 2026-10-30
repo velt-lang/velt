@@ -40,7 +40,7 @@ export function writeHead(
   for (let i: i64 = 0; i < (fields.length as i64); i += 2) {
     e.field(out, fields[i], fields[i + 1]);
   }
-  out.endHeaders(at, s.id, end ? END_STREAM : 0, c.peerMaxFrame);
+  out.endHeaders(at, s.id, end ? endFlag(s) : 0, c.peerMaxFrame);
   s.headersSent = true;
   if (end) {
     ended(c, s);
@@ -61,7 +61,7 @@ export function sendText(c: H2Connection, s: H2Stream, text: string, n: i64, end
   if (s.pending == 0 && n <= room(c, s)) {
     const out = c.out;
     out.reserve(HEADER_LENGTH + n);
-    out.header(n, DATA, end ? END_STREAM : 0, s.id);
+    out.header(n, DATA, end ? endFlag(s) : 0, s.id);
     out.buf.write(text, out.length as usize);
     out.length += n;
     s.sendWindow -= n;
@@ -98,7 +98,7 @@ export function sendBytes(
       }
       const n = end - at < r ? end - at : r;
       const fin = last && at + n == end;
-      c.out.data(s.id, fin ? END_STREAM : 0, src, at, at + n);
+      c.out.data(s.id, fin ? endFlag(s) : 0, src, at, at + n);
       at += n;
       s.sendWindow -= n;
       c.sendWindow -= n;
@@ -129,7 +129,9 @@ export function endBody(c: H2Connection, s: H2Stream) {
     pumpStream(c, s);
     return;
   }
-  c.out.data(s.id, END_STREAM, s.out, 0, 0);
+  if (s.trailers.length == 0) {
+    c.out.data(s.id, END_STREAM, s.out, 0, 0);
+  }
   ended(c, s);
 }
 
@@ -149,7 +151,7 @@ export function pumpStream(c: H2Connection, s: H2Stream) {
       return;
     }
     const fin = s.endAfter && n == pending;
-    c.out.data(s.id, fin ? END_STREAM : 0, s.out, s.outStart, s.outStart + n);
+    c.out.data(s.id, fin ? endFlag(s) : 0, s.out, s.outStart, s.outStart + n);
     s.outStart += n;
     s.sendWindow -= n;
     c.sendWindow -= n;
@@ -180,8 +182,29 @@ export function pumpAll(c: H2Connection) {
   }
 }
 
-/// The END_STREAM of `s` went out.
+/// END_STREAM on the last frame of the body, unless trailers follow it.
+function endFlag(s: H2Stream): i64 {
+  return s.trailers.length == 0 ? END_STREAM : 0;
+}
+
+/// The body of `s` ended: its trailers go out (a HEADERS frame with END_STREAM), if it has any.
 function ended(c: H2Connection, s: H2Stream) {
+  const t = s.trailers;
+  if (t.length > 0) {
+    const out = c.out;
+    const at = out.beginHeaders();
+    c.encoder.begin(out);
+    for (let i: i64 = 0; i < (t.length as i64); i += 2) {
+      c.encoder.field(out, t[i], t[i + 1]);
+    }
+    out.endHeaders(at, s.id, END_STREAM, c.peerMaxFrame);
+    t.length = 0;
+  }
+  finished(c, s);
+}
+
+/// The END_STREAM of `s` went out.
+function finished(c: H2Connection, s: H2Stream) {
   s.endLocal();
   c.earn();
   if (s.state == CLOSED) {

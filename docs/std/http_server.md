@@ -150,6 +150,14 @@ HTTP/1.0 request's expectation is ignored.
 - `signal(): AbortSignal`: aborted when the client can no longer be written to or the server
   closes; pass it to the work done for the request (`fetch(url, { signal })`).
 - `sent(): bool`.
+- `addTrailers(trailers: [string, string][])` (Node's `res.addTrailers`): fields sent after the
+  body, checked as `header` checks them; call it before the body ends. Over HTTP/1.1 they end a
+  chunked body: a streamed one always, one written at once (`send` and the like) only when the
+  request said `TE: trailers`, which makes the server send that body chunked; otherwise they are
+  not sent (a `Content-Length` body has no place for them). Over HTTP/2 they are a HEADERS frame
+  after the body, always. Name them in a `Trailer` header when the client needs to know in
+  advance (gRPC's `grpc-status` is sent this way). The web `Response` has no trailers (the Fetch
+  standard dropped them), so the web-standard `serve` cannot send any.
 - `upgrade(protocol, headers: [string, string][] = []): TcpStream`: answers `101 Switching
   Protocols` (after the responses to earlier requests) and hands the connection over: the
   stream is the caller's, the server no longer reads, writes or closes it. The client waits for
@@ -226,7 +234,8 @@ write. What differs from HTTP/1.1, for a handler:
   handlers at once than the limit.
 - Header names a response may not have over HTTP/2 (`Connection`, `Keep-Alive`,
   `Transfer-Encoding`, `Upgrade`) are not sent.
-- Request trailers are read and dropped; responses have none. Server push is not offered.
+- Request trailers are read and dropped; response trailers (`addTrailers`) are always sent.
+  Server push is not offered.
 
 Limits: a request head larger than `maxHeadSize` gets 431, a malformed request (an uppercase
 header name, a connection-specific header, a missing `:path`, a `content-length` that does not

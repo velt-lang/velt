@@ -51,39 +51,35 @@ export class H2Response {
    * the response to a HEAD request).
    */
   header(name: string, value: string) {
-    if (name.length == 0) {
-      throw new TypeError("a header name must not be empty");
-    }
-    for (let i: i64 = 0; i < (name.length as i64); i++) {
-      const ch = name.charCodeAt(i) as i64;
-      if (ch > 127 || !isTchar(ch as u8)) {
-        throw new TypeError(`invalid header name: ${name}`);
-      }
-    }
-    for (let i: i64 = 0; i < (value.length as i64); i++) {
-      const ch = value.charCodeAt(i) as i64;
-      if (ch < 32 ? ch != 9 : ch == 127) {
-        throw new TypeError(`invalid character in header ${name}`);
-      }
-    }
+    checkName(name);
+    checkValue(name, value);
     const n = name.toLowerCase();
     if (n == "content-length") {
       this.headLength = lengthValue(value);
       return;
     }
-    if (
-      n == "transfer-encoding" ||
-      n == "connection" ||
-      n == "keep-alive" ||
-      n == "upgrade" ||
-      n == "proxy-connection"
-    ) {
+    if (connectionField(n)) {
       return;
     }
     if (n == "content-type") {
       this.hasType = true;
     }
     this.fields.push(n, value);
+  }
+
+  /**
+   * Adds trailers, sent as a HEADERS frame after the body (names in lowercase, checked as
+   * `header` checks them; the fields HTTP/2 does not have are dropped). Before the body ends.
+   */
+  addTrailers(trailers: [string, string][]) {
+    for (const t of trailers) {
+      checkName(t[0]);
+      checkValue(t[0], t[1]);
+      const n = t[0].toLowerCase();
+      if (!connectionField(n) && n != "content-length") {
+        this.s.trailers.push(n, t[1]);
+      }
+    }
   }
 
   /** Nothing: the connection serves other streams after this response (internal). */
@@ -295,4 +291,36 @@ function lengthValue(value: string): i64 {
     throw new TypeError(`invalid Content-Length: ${value}`);
   }
   return n;
+}
+
+/// Throws `TypeError` for a name that is not a token (as `HttpResponse.header`).
+function checkName(name: string) {
+  if (name.length == 0) {
+    throw new TypeError("a header name must not be empty");
+  }
+  for (let i: i64 = 0; i < (name.length as i64); i++) {
+    const ch = name.charCodeAt(i) as i64;
+    if (ch > 127 || !isTchar(ch as u8)) {
+      throw new TypeError(`invalid header name: ${name}`);
+    }
+  }
+}
+
+/// Throws `TypeError` for a value with a control character other than TAB.
+function checkValue(name: string, value: string) {
+  for (let i: i64 = 0; i < (value.length as i64); i++) {
+    const ch = value.charCodeAt(i) as i64;
+    if (ch < 32 ? ch != 9 : ch == 127) {
+      throw new TypeError(`invalid character in header ${name}`);
+    }
+  }
+}
+
+/// Whether `n` (lowercase) is a field HTTP/2 does not have (RFC 9113 §8.2.2).
+function connectionField(n: string): bool {
+  return n == "transfer-encoding" ||
+    n == "connection" ||
+    n == "keep-alive" ||
+    n == "upgrade" ||
+    n == "proxy-connection";
 }

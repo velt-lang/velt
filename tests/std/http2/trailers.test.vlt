@@ -1,0 +1,80 @@
+// `HttpResponse.addTrailers` over HTTP/1.1: after a chunked (streamed) body always, after a body
+// written at once only when the request said `TE: trailers` (it is then sent chunked).
+import { HttpRequest, HttpResponse, serveHttp } from "velt/net/http";
+import { connect, TcpStream } from "velt/net";
+import { describe, expect, it } from "velt/test";
+
+async function readAll(c: TcpStream): Promise<string> {
+  let all = "";
+  while (true) {
+    const chunk = await c.readString();
+    if (chunk == "") {
+      return all;
+    }
+    all += chunk;
+  }
+}
+
+async function exchange(port: number, raw: string): Promise<string> {
+  const c = await connect(`127.0.0.1:${port}`);
+  await c.write(raw);
+  const all = await readAll(c);
+  c.close();
+  return all.replace(/Date: [^\r]*\r\n/g, "").replaceAll("\r\n", "|");
+}
+
+describe("trailers over HTTP/1.1", () => {
+  it("ends a chunked body with them, and a whole one when asked with TE: trailers", async () => {
+    const server = await serveHttp({ port: 0 }, async (req: HttpRequest, res: HttpResponse) => {
+      res.header("Trailer", "x-sum");
+      if (req.pathIs("/stream")) {
+        const s = await res.stream();
+        await s.write("ab");
+        res.addTrailers([["x-sum", "195"]]);
+        await s.end();
+      } else {
+        res.addTrailers([["x-sum", "1"]]);
+        res.send("hi");
+      }
+    });
+    try {
+      const p = server.port;
+      expect(
+        await exchange(p, "GET /stream HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"),
+      ).toBe(
+        "HTTP/1.1 200 OK|Server: Velt|Content-Type: text/plain; charset=utf-8|Transfer-Encoding: chunked|Connection: close|Trailer: x-sum||2|ab|0|x-sum: 195||",
+      );
+      expect(
+        await exchange(p, "GET / HTTP/1.1\r\nHost: x\r\nTE: trailers\r\nConnection: close\r\n\r\n"),
+      ).toBe(
+        "HTTP/1.1 200 OK|Server: Velt|Content-Type: text/plain; charset=utf-8|Transfer-Encoding: chunked|Connection: close|Trailer: x-sum||2|hi|0|x-sum: 1||",
+      );
+      expect(await exchange(p, "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")).toBe(
+        "HTTP/1.1 200 OK|Server: Velt|Content-Type: text/plain; charset=utf-8|Content-Length: 2|Connection: close|Trailer: x-sum||hi",
+      );
+    } finally {
+      server.close();
+    }
+  });
+
+  it("refuses a trailer name that is not a token", async () => {
+    const server = await serveHttp({ port: 0 }, async (req: HttpRequest, res: HttpResponse) => {
+      let err = "";
+      try {
+        res.addTrailers([["bad name", "1"]]);
+      } catch (e) {
+        err = `${e}`;
+      }
+      res.send(err);
+    });
+    try {
+      const out = await exchange(
+        server.port,
+        "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+      );
+      expect(out.endsWith("TypeError: invalid header name: bad name")).toBe(true);
+    } finally {
+      server.close();
+    }
+  });
+});

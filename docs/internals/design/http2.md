@@ -166,8 +166,13 @@ arrives.
   in HEADERS are checked (length, self-dependency) and otherwise ignored. RFC 9218's
   `priority` header is passed to the handler like any header; streams are scheduled round robin.
 - Request trailers (HEADERS with END_STREAM after DATA) are validated and dropped, as the
-  HTTP/1.1 server drops chunked trailers. Responses have no trailers: neither `HttpResponse`
-  nor the web `Response` has an API for them (gRPC would need one; a follow-up).
+  HTTP/1.1 server drops chunked trailers. Response trailers: `HttpResponse.addTrailers` (Node's
+  name) before the body ends; the body's last DATA frame then goes without END_STREAM and a
+  HEADERS frame with the trailers (no pseudo-headers, HPACK-encoded like any block) ends the
+  stream, also after a body sent at once or no body. Over HTTP/1.1 they end a chunked body (a
+  streamed one, or a whole one sent chunked because the request said `TE: trailers`, RFC 9110
+  §6.5.1); a `Content-Length` body drops them. The web `Response` has no trailer API (the Fetch
+  standard removed it), so nothing maps there.
 - Server push: not offered (SETTINGS_ENABLE_PUSH 0 is what we send; browsers removed it).
 - Extended CONNECT (RFC 8441, WebSockets over HTTP/2): not offered; `upgrade()` throws over
   HTTP/2, so a WebSocket uses HTTP/1.1.
@@ -281,6 +286,5 @@ carry that layer's cost over HTTP/2 too.
 
 ## Not done (follow-ups)
 
-- Response trailers (an API in `HttpResponse` first), extended CONNECT (RFC 8441) for WebSockets
-  over HTTP/2.
+- Extended CONNECT (RFC 8441) for WebSockets over HTTP/2.
 - An HTTP/2 client for `fetch`.

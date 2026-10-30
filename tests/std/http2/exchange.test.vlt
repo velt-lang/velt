@@ -20,6 +20,14 @@ async function handler(req: H2Request, res: H2Response) {
     await res.piece("a");
     await res.piece(bytes("bc"));
     await res.finishStream();
+  } else if (req.pathIs("/trailers")) {
+    res.addTrailers([["Grpc-Status", "0"]]);
+    res.send("x");
+  } else if (req.pathIs("/stream-trailers")) {
+    await res.startStream();
+    await res.piece("a");
+    res.addTrailers([["x-sum", "97"]]);
+    await res.finishStream();
   } else if (req.pathIs("/none")) {
     res.status(204);
     res.send("ignored");
@@ -136,6 +144,21 @@ describe("HTTP/2 exchanges", () => {
     await c.flush();
     expect(await c.until(endOf(1))).toBe(
       "HEADERS 1 :status=500\nDATA 1 es 21:Internal Server Error",
+    );
+    c.close();
+  });
+
+  it("sends trailers after a body, whole or streamed", async () => {
+    const c = await Client.open(port);
+    c.get(1, "/trailers");
+    await c.flush();
+    expect(await c.until(endOf(1))).toBe(
+      "HEADERS 1 :status=200\nDATA 1 1:x\nHEADERS 1 es grpc-status=0",
+    );
+    c.get(3, "/stream-trailers");
+    await c.flush();
+    expect(await c.until(endOf(3))).toBe(
+      "HEADERS 3 :status=200\nDATA 3 1:a\nHEADERS 3 es x-sum=97",
     );
     c.close();
   });

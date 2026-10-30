@@ -63,6 +63,8 @@ export class H2Stream {
   /// The request body must have arrived by `deadline` (`Date.now()` ms); `late` once it has not.
   deadline: i64 = 0;
   late: bool = false;
+  /// The response's trailers (lowercase name, value, ...), sent after its body.
+  trailers: string[] = [];
 
   // Who waits: a handler for body or window (`wake` settles it).
   private waiter: (() => void) | null = null;
@@ -89,6 +91,7 @@ export class H2Stream {
     this.running = false;
     this.queued = false;
     this.late = false;
+    this.trailers.length = 0;
     this.waiter = null;
     this.aborter = null;
   }
