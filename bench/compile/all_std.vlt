@@ -124,6 +124,8 @@ import * as std_math_integer from "velt/math/integer";
 import * as std_math_rt from "velt/math/rt";
 import * as std_mem from "velt/mem";
 import * as std_arena from "velt/mem/arena";
+import * as std_mem_blank from "velt/mem/blank";
+import * as std_mem_needs_drop from "velt/mem/needs_drop";
 import * as std_native from "velt/native";
 import * as std_native_error from "velt/native/error";
 import * as std_native_rt from "velt/native/rt";

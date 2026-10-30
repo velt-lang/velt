@@ -26,7 +26,8 @@
 // gives new fillers (`refill`), a separator that is a deleted key that owns memory follows to
 // the next key, and the last delete drops the pools (velt/collections/btree/remove).
 
-import { Blank, needsDrop } from "velt/mem";
+import { Blank } from "velt/mem/blank";
+import { needsDrop } from "velt/mem/needs_drop";
 import { InlineKey } from "velt/collections/btree/inline_key";
 import {
   countOf,

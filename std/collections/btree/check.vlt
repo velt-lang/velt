@@ -6,7 +6,7 @@
 // windows (velt/collections/btree/edges), separators that are live keys, and unused slots that
 // hold the fillers.
 
-import { needsDrop } from "velt/mem";
+import { needsDrop } from "velt/mem/needs_drop";
 import { CAP, F, NONE, Pool, Range, wordOf, wordOfB } from "velt/collections/btree/pool";
 import { EMPTY, prefixOf, wordAt } from "velt/collections/btree/line";
 import { slotAtRank } from "velt/collections/btree/leaf";

@@ -7,6 +7,7 @@
 // programs. `u32` indices are half the size of pointers, so twice as many nodes fit in each cache
 // line. Indices stay valid until `reset()`.
 
+/** A typed memory pool: values named by `u32` index, released together by `reset()`. */
 export class Arena<T> {
   private items: T[];
 

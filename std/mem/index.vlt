@@ -1,47 +1,6 @@
 // velt/mem: facts about how values are stored, for code that manages memory layouts itself
-// (Rust's `std::mem`).
+// (Rust's `std::mem`), and `Arena`, a typed memory pool. docs/std/mem.md.
 
 export { Arena } from "velt/mem/arena";
-
-/**
- * Whether values of `value`'s type own memory that dropping one releases: strings, arrays,
- * objects and class instances (and structs or unions holding any) do; numbers, `bool` and
- * SIMD vectors do not. The same for every value of a type, and a constant where the type is
- * known, so `if (needsDrop(x))` costs nothing: a generic container can skip bookkeeping that
- * only matters for values that hold memory (Rust's `std::mem::needs_drop`).
- */
-export function needsDrop<T>(value: T): bool {
-  return __intrinsic_needs_drop(value);
-}
-
-/**
- * A value that owns no memory, for a container to keep in the slots it does not use (an array
- * of plain `T` has no holes), so that a value it removes is released at once: `""` for a
- * string. Every type has it: one whose values own no memory (`needsDrop` is false) is its own
- * blank, and one without a blank value gives the value itself (`hasBlank()` is false), which a
- * container then replaces when that value goes. A type implements `Blank` to give one.
- */
-export interface Blank<T> {
-  /** Whether `blank()` owns no memory (the same for every value of the type). */
-  hasBlank(): bool;
-  /** A value that owns no memory when `hasBlank()`; else this value. */
-  blank(): T;
-}
-
-extend<T> T implements Blank<T> {
-  hasBlank(): bool {
-    return !needsDrop(this);
-  }
-  blank(): T {
-    return this;
-  }
-}
-
-extend string implements Blank<string> {
-  hasBlank(): bool {
-    return true;
-  }
-  blank(): string {
-    return "";
-  }
-}
+export { Blank } from "velt/mem/blank";
+export { needsDrop } from "velt/mem/needs_drop";

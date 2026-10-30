@@ -6,7 +6,7 @@
 // to a sibling instead of splitting keeps leaves fuller (B*-trees): about 85% instead of 70%
 // for random keys, so fewer leaves, less memory and fewer cache lines per entry.
 
-import { Blank } from "velt/mem";
+import { Blank } from "velt/mem/blank";
 import { CAP, F, NONE, Pool, commonPrefix, windowOf } from "velt/collections/btree/pool";
 import { noteEdges } from "velt/collections/btree/edges";
 import { prefixOf, shiftUp, withPrefix } from "velt/collections/btree/line";

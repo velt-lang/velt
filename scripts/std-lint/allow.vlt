@@ -150,7 +150,6 @@ export const allow: Allow = {
     "encoding/index.vlt",
     "encoding/json/index.vlt",
     "fs/index.vlt",
-    "mem/index.vlt",
     "net/dns/index.vlt",
     "net/index.vlt",
     "net/udp/index.vlt",

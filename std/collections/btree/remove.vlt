@@ -9,7 +9,7 @@
 // be. Inner nodes whose separators change get their prefix and words again (`refreshInner`); a
 // node that moves to another parent keeps its separators, so its words stay.
 
-import { needsDrop } from "velt/mem";
+import { needsDrop } from "velt/mem/needs_drop";
 import { F, NONE, Pool, Range, commonPrefix, moveSlot } from "velt/collections/btree/pool";
 import { prefixOf, shiftDown } from "velt/collections/btree/line";
 import { moveRanks, removeEntry, slotAtRank } from "velt/collections/btree/leaf";
