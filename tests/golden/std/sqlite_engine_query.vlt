@@ -155,6 +155,7 @@ const QUERIES: string[] = [
   "SELECT age FROM users UNION ALL SELECT user_id FROM posts ORDER BY 1",
   "SELECT user_id FROM posts INTERSECT SELECT id FROM users",
   "SELECT id FROM users EXCEPT SELECT user_id FROM posts ORDER BY 1 DESC",
+  "SELECT nick FROM users UNION SELECT tag FROM tags ORDER BY 1",
   "SELECT 1, 'a' UNION ALL SELECT 2, 'b' UNION SELECT 1, 'a'",
   "VALUES (1, 'x'), (2, NULL), (3, 4.5)",
   "SELECT * FROM (VALUES (2), (1), (3)) ORDER BY 1",
@@ -167,6 +168,8 @@ const QUERIES: string[] = [
   "WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r) SELECT n * 2 FROM r WHERE n % 3 = 0 LIMIT 2 OFFSET 1",
   "SELECT name FROM (SELECT name FROM users ORDER BY id) LIMIT 2",
   "SELECT * FROM (SELECT id, abs(-9223372036854775807 - 1) FROM users) LIMIT 1",
+  // A compound ordered under a COLLATE of its own matches rows under the columns' collations (SQLite runs it as a subquery).
+  "SELECT nick FROM users UNION SELECT tag FROM tags ORDER BY 1 COLLATE BINARY",
   "SELECT nick FROM users UNION SELECT name FROM users ORDER BY 1 COLLATE BINARY DESC LIMIT 4",
   "SELECT tag FROM tags INTERSECT SELECT nick FROM users ORDER BY 1 COLLATE NOCASE",
   "SELECT nick FROM users EXCEPT SELECT tag FROM tags ORDER BY nick COLLATE RTRIM",
@@ -180,6 +183,7 @@ const QUERIES: string[] = [
   // min() or max() alone of an indexed column reads the index from that end (SQLite's min/max optimization): its bare columns are that entry's.
   "SELECT max(tag), post_id FROM tags",
   "SELECT min(tag), post_id FROM tags WHERE post_id > 3",
+  "SELECT max(tag), post_id FROM tags WHERE tag < 'n'",
   "SELECT max(tag COLLATE NOCASE), post_id FROM tags",
   "SELECT min(tag), count(*) FROM tags",
   // A CTE is compiled once and shared by its uses; each use counts its tables' references (SQLite's limit of 65535).

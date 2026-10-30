@@ -1,0 +1,241 @@
+// velt:sqlite/exec/order — whether the first FROM level's loop already yields the rows in the
+// ORDER BY's order (a rowid scan, an index scan whose columns after the equalities match the
+// terms), so no sort is needed and LIMIT can stop the loops early.
+
+import { Index } from "velt:sqlite/schema";
+import { E_COLLATE, E_COLUMN, OrderTerm } from "velt:sqlite/sql/ast";
+import { ROWID, SRC_TABLE, Source } from "velt:sqlite/exec/source";
+import { Query, Scope } from "velt:sqlite/exec/scope";
+import { ExprCompiler } from "velt:sqlite/exec/expr";
+import { SortKey } from "velt:sqlite/exec/emit";
+import { ACC_INDEX, ACC_ROWID_EQ, ACC_ROWID_RANGE, ACC_SCAN, Access } from "velt:sqlite/exec/plan";
+
+/** An ORDER BY term as a column of the first level: its column, collation and direction. */
+class OrderCol {
+  col: i64;
+  coll: u8;
+  desc: bool;
+  nulls: u8;
+
+  constructor(col: i64, coll: u8, desc: bool, nulls: u8) {
+    this.col = col;
+    this.coll = coll;
+    this.desc = desc;
+    this.nulls = nulls;
+  }
+}
+
+// The terms as columns of `src`, or null when one is anything else.
+function orderCols(
+  c: ExprCompiler,
+  keys: SortKey[],
+  terms: OrderTerm[],
+  osc: Scope,
+  q: Query,
+  src: Source,
+  unique: bool,
+  prefix: bool,
+): OrderCol[] | null {
+  const out: OrderCol[] = [];
+  for (let k: usize = 0; k < keys.length; k++) {
+    const sk = keys[k];
+    let col: i64 = -2;
+    let coll = sk.coll;
+    if (sk.col >= 0) {
+      if (q.refSrc[sk.col as usize] != src) {
+        return prefix && out.length > 0 ? out : null;
+      }
+      col = q.refCol[sk.col as usize];
+    } else {
+      let e = terms[k].expr;
+      if (e.kind == E_COLLATE) {
+        e = e.a!;
+      }
+      if (e.kind != E_COLUMN) {
+        return prefix && out.length > 0 ? out : null;
+      }
+      const f = c.lookup(e, osc);
+      if (f == null || f!.src != src) {
+        return prefix && out.length > 0 ? out : null;
+      }
+      col = f!.col;
+    }
+    if (col >= 0 && col == src.rowidCol) {
+      col = ROWID;
+    }
+    // A default NULLS placement matches an index; an explicit one only if it agrees.
+    if (sk.nulls == 1 && sk.desc || sk.nulls == 2 && !sk.desc) {
+      return prefix && out.length > 0 ? out : null;
+    }
+    out.push(new OrderCol(col, coll, sk.desc, sk.nulls));
+    if (col == ROWID && unique) {
+      // Unique: the terms after it never decide.
+      break;
+    }
+  }
+  return out;
+}
+
+/** Directions an access can give an order in. */
+export const ORDER_NONE: i64 = 0;
+export const ORDER_FORWARD: i64 = 1;
+export const ORDER_REVERSE: i64 = 2;
+
+// The direction a term asks of a key column scanned forward in direction `colDesc`.
+function dirOf(colDesc: bool, termDesc: bool): i64 {
+  return colDesc == termDesc ? ORDER_FORWARD : ORDER_REVERSE;
+}
+
+// Whether an index scan with `nEq` leading equalities yields the order, and in which direction.
+function indexGives(src: Source, ix: Index, nEq: usize, cols: OrderCol[], unique: bool): i64 {
+  let pos = nEq;
+  let dir = ORDER_NONE;
+  for (const oc of cols) {
+    let fixed = false;
+    for (let k: usize = 0; k < nEq; k++) {
+      if (sameCol(src, ix.columns[k], oc.col)) {
+        fixed = true;
+      }
+    }
+    if (fixed) {
+      continue;
+    }
+    let d = ORDER_NONE;
+    if (pos < ix.columns.length) {
+      const ic = ix.columns[pos];
+      if (!sameCol(src, ic, oc.col)) {
+        return ORDER_NONE;
+      }
+      if (ic != -1 && ix.colls[pos] != oc.coll) {
+        return ORDER_NONE;
+      }
+      d = dirOf(ix.desc[pos], oc.desc);
+    } else if (pos == ix.columns.length) {
+      // The rowid follows the key columns, ascending.
+      if (oc.col != ROWID) {
+        return ORDER_NONE;
+      }
+      d = dirOf(false, oc.desc);
+    } else {
+      return ORDER_NONE;
+    }
+    if (dir != ORDER_NONE && d != dir) {
+      return ORDER_NONE;
+    }
+    dir = d;
+    if (pos == ix.columns.length && unique) {
+      // Being unique, the rowid decides the rest.
+      return dir;
+    }
+    pos++;
+  }
+  return dir == ORDER_NONE ? ORDER_FORWARD : dir;
+}
+
+function sameCol(src: Source, ixCol: i64, col: i64): bool {
+  if (ixCol == -1) {
+    return col == ROWID;
+  }
+  return ixCol == col;
+}
+
+/** Whether the first level's access already gives the ORDER BY order, and in which direction. */
+export function orderedByAccess(
+  c: ExprCompiler,
+  keys: SortKey[],
+  terms: OrderTerm[],
+  osc: Scope,
+  acc: Access,
+  q: Query,
+  unique: bool,
+): i64 {
+  const src = osc.sources[0];
+  if (src.kind != SRC_TABLE) {
+    return ORDER_NONE;
+  }
+  const cols = orderCols(c, keys, terms, osc, q, src, unique, false);
+  if (cols == null) {
+    return ORDER_NONE;
+  }
+  if (acc.kind == ACC_ROWID_EQ) {
+    return ORDER_FORWARD;
+  }
+  if (acc.kind == ACC_SCAN || acc.kind == ACC_ROWID_RANGE) {
+    let dir = ORDER_NONE;
+    for (const oc of cols!) {
+      if (oc.col != ROWID) {
+        return ORDER_NONE;
+      }
+      const d = dirOf(false, oc.desc);
+      if (dir != ORDER_NONE && d != dir) {
+        return ORDER_NONE;
+      }
+      dir = d;
+      if (unique) {
+        // The rowid is unique: terms after it never decide.
+        break;
+      }
+    }
+    return dir == ORDER_NONE ? ORDER_FORWARD : dir;
+  }
+  if (acc.kind == ACC_INDEX && acc.inList == null) {
+    return indexGives(src, acc.index!, acc.eq.length, cols!, unique);
+  }
+  return ORDER_NONE;
+}
+
+/** An index whose full scan gives the ORDER BY order (or its first `terms` terms). */
+export class OrderPick {
+  index: Index | null = null;
+  dir: i64 = ORDER_NONE;
+  /** How many leading terms it orders (all of them, or a prefix sorted further). */
+  terms: usize = 0;
+}
+
+/** An index whose full scan gives the ORDER BY order, if any. */
+export function orderIndex(
+  c: ExprCompiler,
+  keys: SortKey[],
+  terms: OrderTerm[],
+  osc: Scope,
+  q: Query,
+  unique: bool,
+): OrderPick {
+  const pick = new OrderPick();
+  const src = osc.sources[0];
+  if (src.kind != SRC_TABLE) {
+    return pick;
+  }
+  const full = orderCols(c, keys, terms, osc, q, src, unique, false);
+  if (full != null) {
+    for (const ix of src.table!.indexes) {
+      const d = ix.partial ? ORDER_NONE : indexGives(src, ix, 0, full!, unique);
+      if (d != ORDER_NONE) {
+        pick.index = ix;
+        pick.dir = d;
+        pick.terms = keys.length;
+        return pick;
+      }
+    }
+  }
+  // As SQLite, an index giving the leading terms only is scanned too: the sort then orders
+  // each run of rows equal in those terms ("USE TEMP B-TREE FOR LAST TERMS OF ORDER BY").
+  const cols = orderCols(c, keys, terms, osc, q, src, unique, true);
+  if (cols == null) {
+    return pick;
+  }
+  const all = cols!;
+  for (let n = all.length; n > 0; n--) {
+    const part = all.slice(0, n as i64);
+    for (const ix of src.table!.indexes) {
+      const d = ix.partial ? ORDER_NONE : indexGives(src, ix, 0, part, false);
+      if (d != ORDER_NONE) {
+        pick.index = ix;
+        pick.dir = d;
+        pick.terms = n;
+        return pick;
+      }
+    }
+  }
+  return pick;
+}

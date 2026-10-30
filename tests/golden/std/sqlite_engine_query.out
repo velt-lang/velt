@@ -449,6 +449,18 @@ SELECT id FROM users EXCEPT SELECT user_id FROM posts ORDER BY 1 DESC
   8
   6
   4
+SELECT nick FROM users UNION SELECT tag FROM tags ORDER BY 1
+  NULL
+  'Al'
+  'BOBBY'
+  'cc'
+  'Dave'
+  'GRACE'
+  'h'
+  'intro'
+  'Misc'
+  'news'
+  'x'
 SELECT 1, 'a' UNION ALL SELECT 2, 'b' UNION SELECT 1, 'a'
   1,'a'
   2,'b'
@@ -485,6 +497,18 @@ SELECT name FROM (SELECT name FROM users ORDER BY id) LIMIT 2
   'bob'
 SELECT * FROM (SELECT id, abs(-9223372036854775807 - 1) FROM users) LIMIT 1
   error: integer overflow
+SELECT nick FROM users UNION SELECT tag FROM tags ORDER BY 1 COLLATE BINARY
+  NULL
+  'Al'
+  'BOBBY'
+  'Dave'
+  'GRACE'
+  'Misc'
+  'cc'
+  'h'
+  'intro'
+  'news'
+  'x'
 SELECT nick FROM users UNION SELECT name FROM users ORDER BY 1 COLLATE BINARY DESC LIMIT 4
   'héloïse'
   'h'
@@ -521,6 +545,8 @@ SELECT max(tag), post_id FROM tags
   'x',10
 SELECT min(tag), post_id FROM tags WHERE post_id > 3
   'Misc',4
+SELECT max(tag), post_id FROM tags WHERE tag < 'n'
+  'misc',9
 SELECT max(tag COLLATE NOCASE), post_id FROM tags
   'x',10
 SELECT min(tag), count(*) FROM tags
