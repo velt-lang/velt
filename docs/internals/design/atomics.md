@@ -508,6 +508,11 @@ on the pointer's bits, so backends see nothing new.
   counted it yet; releasing it could free the box under that increment. Lowering calls
   `velt/sync/epoch`'s `retire<U>` with it (none for null), which drops it once no thread in a
   section can still read it.
+- **`a.load()!` and `a.load() ?? d`:** sema makes them a `match` on the load whose arm binds the
+  value by move. The load is not an owned temporary, so lowering (`match_expr`) makes such a
+  binding borrow it: a consumer that keeps it (`const o = a.load()!`, a return) counts it. Owning
+  it uncounted released the word's reference when `o` was dropped, and the next load read freed
+  memory. Tests: `std/atomic_ref_unwrap`.
 
 ## Reclamation (#1696 step 2d)
 
