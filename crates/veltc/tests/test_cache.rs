@@ -152,3 +152,24 @@ fn a_test_calling_a_system_function_runs_every_time() {
         );
     }
 }
+
+/// A test file's own function named like the harness's registrations (`__velt_r7`) is that file's
+/// code: what it reaches counts, it isn't taken for another file's registration.
+#[test]
+fn a_function_named_like_a_registration_is_the_files_own_code() {
+    let p = package();
+    p.write("data.txt", "a");
+    p.write(
+        "tests/s.test.vlt",
+        "import { expect } from \"velt:test\";\nimport { readFileSync } from \"velt:fs\";\n\nfunction __velt_r7(): string {\n  return readFileSync(\"data.txt\");\n}\n\nexport function test_s() {\n  expect(__velt_r7()).toBe(\"a\");\n}\n",
+    );
+    for _ in 0..2 {
+        let running = p.running(&[]);
+        assert!(
+            running.contains(
+                &"tests/s.test.vlt (ran: not cacheable, it uses the file system)".to_string()
+            ),
+            "{running:?}"
+        );
+    }
+}

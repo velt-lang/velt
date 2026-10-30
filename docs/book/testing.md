@@ -247,8 +247,8 @@ tests again. Only results where every test passed are kept, so a failing test al
 `--no-cache` runs everything, as does `VELT_BUILD_STAMP=off`. What reaches outside is decided per
 test file, from what its tests call, not from the runner around them. Module initializers run for
 every file of a shared harness, so a module that reads a file at its top level makes all of them
-run every time. A test whose result depends on how threads interleave is pure by this rule, and a
-pass is kept: make such tests deterministic. A leak-checked run (`VELT_RC_STATS=1`, below) keeps
+run every time. A test whose result depends on how threads interleave, or on how long work takes
+against a timer, is pure by this rule, and a pass is kept: make such tests deterministic. A leak-checked run (`VELT_RC_STATS=1`, below) keeps
 its results apart from an ordinary run's, so a result kept without the check never skips it.
 
 ### Checking for leaks

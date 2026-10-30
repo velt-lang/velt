@@ -108,7 +108,11 @@ const RUNTIME_REACH: &[(&str, &str)] = &[
     ("random", "random numbers"),
     ("prng", "random numbers"),
     ("stdin", "standard input"),
+    ("native", NATIVE_SUPPORT),
 ];
+
+/// What the runtime's support for native packages (`velt_rt_native_*`) reaches.
+const NATIVE_SUPPORT: &str = "native code";
 
 /// Velt's own functions besides the runtime's that touch nothing outside: SIMD, atomics,
 /// thread-local storage and CPU feature checks (with the underscore, and no `__`: a package's
@@ -156,6 +160,11 @@ fn describe(program: &Program, skip: &dyn Fn(&str) -> bool) -> String {
         .collect();
     reasons.sort();
     reasons.dedup();
+    // The runtime's support for native packages (`velt_rt_native_*`) comes with a package's
+    // code, which names what it is.
+    if reasons.iter().any(|r| r.starts_with("native code of")) {
+        reasons.retain(|r| r != NATIVE_SUPPORT);
+    }
     match reasons.is_empty() {
         true => "-".to_string(),
         false => reasons.join(", "),
@@ -172,18 +181,22 @@ fn harness_files(program: &Program) -> usize {
         .unwrap_or(0)
 }
 
-/// The test file whose tests the function `symbol` registers: `__velt_r<i>` of a harness, its
-/// underscores doubled by the mangling (`N12____velt__r0`).
+/// The test file whose tests the function `symbol` registers: `__velt_r<i>` of the harness, the
+/// program's entry module, whose functions have no module path (`_V12____velt__r0`, underscores
+/// doubled by the mangling). A function of that name in a test file or anything it imports has
+/// its module in front (`_V5testsP6s_2etestN12____velt__r7`) and is that file's own code.
 fn harness_file(symbol: &str) -> Option<usize> {
-    let at = symbol.find("____velt__r")?;
-    let digits: String = symbol[at + "____velt__r".len()..]
-        .chars()
-        .take_while(char::is_ascii_digit)
-        .collect();
-    let rest = &symbol[at + "____velt__r".len() + digits.len()..];
-    // The whole name, not a longer one that starts the same.
-    (rest.is_empty() || rest.starts_with('$')).then_some(())?;
-    digits.parse().ok()
+    let rest = symbol.strip_prefix("_V")?;
+    let len_digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+    let len: usize = rest[..len_digits].parse().ok()?;
+    let rest = &rest[len_digits..];
+    let name = rest.get(..len)?;
+    let index = name.strip_prefix("____velt__r")?;
+    let after = &rest[len..];
+    // The whole symbol: the name itself, or its poll function.
+    (after.is_empty() || after.starts_with('$')).then_some(())?;
+    (!index.is_empty() && index.bytes().all(|b| b.is_ascii_digit())).then_some(())?;
+    index.parse().ok()
 }
 
 /// What file `index` of a stamp's `outside` record reaches (`None`: nothing): the program's
@@ -230,6 +243,9 @@ fn reason(symbol: &str) -> Option<String> {
         });
     }
     if let Some((package, _)) = rest.split_once("__") {
+        return Some(format!("native code of `{package}`"));
+    }
+    if let Some(package) = rest.strip_prefix("native_init_") {
         return Some(format!("native code of `{package}`"));
     }
     if PURE_OWN.iter().any(|p| symbol.starts_with(p)) {
@@ -291,11 +307,11 @@ mod tests {
             noreturn: false,
         };
         let r0 = func(
-            "_V0M0P1hN12____velt__r0",
+            "_V12____velt__r0",
             Linkage::Internal,
             &[Callee::Extern(ExternId(0))],
         );
-        let r2 = func("_V0M0P1hN12____velt__r2", Linkage::Internal, &[]);
+        let r2 = func("_V12____velt__r2", Linkage::Internal, &[]);
         let main = func(
             "velt_main",
             Linkage::Export,
@@ -323,9 +339,13 @@ mod tests {
 
     #[test]
     fn harness_files_are_found_by_their_registering_function() {
-        assert_eq!(harness_file("_V0M0M0P2hN12____velt__r0"), Some(0));
-        assert_eq!(harness_file("_V0M0M0P2hN13____velt__r12$poll"), Some(12));
-        assert_eq!(harness_file("_V0M0M0P2hN14____velt__r1x"), None);
+        assert_eq!(harness_file("_V12____velt__r0"), Some(0));
+        assert_eq!(harness_file("_V13____velt__r12$poll"), Some(12));
+        assert_eq!(harness_file("_V13____velt__r1x"), None);
+        assert_eq!(harness_file("_V12____velt__r0_T3i64"), None);
+        // A user's function of the same name, in a test file's module, is that file's code.
+        assert_eq!(harness_file("_V5testsP6s_2etestN12____velt__r7"), None);
+        assert_eq!(harness_file("_V5testsN12____velt__r7"), None);
         assert_eq!(
             of_file("files -|the clock", 1).as_deref(),
             Some("the clock")
@@ -360,6 +380,8 @@ mod tests {
             outside("velt_atomic_ops__cas"),
             "native code of `atomic_ops`"
         );
+        assert_eq!(outside("velt_native_init_sigx"), "native code of `sigx`");
+        assert_eq!(outside("velt_rt_native_api"), "native code");
         assert_eq!(
             outside("velt_rt_newthing_x"),
             "a runtime function `velt_rt_newthing_x`"
