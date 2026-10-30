@@ -11,17 +11,13 @@
 // when done: a closed channel is freed once it is drained, and an unclosed one lives until the
 // program ends. Values nobody receives are dropped when the program ends.
 
-declare function velt_rt_chan_new(capacity: u64): u64;
-declare function velt_rt_chan_close(ch: u64);
-declare function velt_rt_chan_closed(ch: u64): bool;
-declare function velt_rt_chan_len(ch: u64): u64;
-
-/** Thrown by `send` on a closed channel. */
-export class ChannelClosed extends Error {
-  constructor() {
-    super("Send on a closed channel");
-  }
-}
+import { ChannelClosed } from "velt/sync/errors";
+import {
+  velt_rt_chan_close,
+  velt_rt_chan_closed,
+  velt_rt_chan_len,
+  velt_rt_chan_new,
+} from "velt/sync/rt";
 
 /**
  * A channel of `T` values. `channel<T>()` is unbounded; `channel<T>(capacity)` holds at most

@@ -125,7 +125,7 @@ fn every_std_definition_lowering_names_stays_checked() {
         std_literals(&crates.join(c).join("src"), &mut names);
     }
     assert!(
-        names.iter().any(|(m, _)| m == "std/sync/epoch"),
+        names.iter().any(|(m, _)| m == "std/sync/epoch/reclaim"),
         "{names:?}"
     );
     const INTERFACES: &[(&str, &str)] = &[("std/db", "RowSource")];

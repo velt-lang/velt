@@ -57,7 +57,7 @@ impl FnCx<'_, '_> {
         // `velt/sync/epoch`, which the prelude imports for every program, reads its registry
         // in place: that alone does not make a program one that reads `shared` values.
         let m = &self.cx.modules[self.module];
-        if !(m.is_std && m.path == "std/sync/epoch") {
+        if !(m.is_std && m.path == "std/sync/epoch/reclaim") {
             self.cx.frozen_reads = true;
         }
         let span = h.span;

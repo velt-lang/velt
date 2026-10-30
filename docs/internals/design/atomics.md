@@ -511,7 +511,7 @@ on the pointer's bits, so backends see nothing new.
 
 ## Reclamation (#1696 step 2d)
 
-`velt/sync/epoch` (std/sync/epoch/index.vlt) is epoch-based reclamation in Velt.
+`velt/sync/epoch` (std/sync/epoch/reclaim.vlt) is epoch-based reclamation in Velt.
 - **State:** a global epoch, a static `Atomic<u64>` moving in steps of 2. Per thread, a slot:
   an `Atomic<u64>` state (the epoch it saw, bit 0 set while in a section) and a
   `shared<Mutex<Garbage>>` of retired values with their epochs, which the slot's thread makes

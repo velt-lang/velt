@@ -1,0 +1,47 @@
+// velt/sync (internal): `Backoff`, waiting for another thread in a loop.
+
+import { velt_rt_thread_yield } from "velt/sync/rt";
+
+/**
+ * Waiting for another thread in a loop, twice as long each round: `snooze()` spins
+ * `2^round` CPU spin hints up to `2^SPIN_ROUNDS`, then yields the thread to the OS each round.
+ * Start a fresh one for each wait: `const b = Backoff.create(); while (!ready()) b.snooze();`.
+ * It waits for another thread, never for a task: whatever it waits for must be taken and let go
+ * between two `await`s (use a `Mutex` or a channel to wait for a task).
+ */
+export struct Backoff {
+  private round: u32;
+
+  /** A backoff that has not waited yet. */
+  static create(): Backoff {
+    return { round: 0 };
+  }
+
+  /** Spins for this round, and makes the next one twice as long, up to `2^SPIN_ROUNDS`. */
+  spin(): void {
+    const n: u32 = 1 << this.round;
+    for (let i: u32 = 0; i < n; i++) {
+      Atomic.spinHint();
+    }
+    if (this.round < SPIN_ROUNDS) {
+      this.round++;
+    }
+  }
+
+  /** `spin()`, then, once the spins are as long as they get, also yields the thread. */
+  snooze(): void {
+    if (this.round < SPIN_ROUNDS) {
+      this.spin();
+    } else {
+      velt_rt_thread_yield();
+    }
+  }
+
+  /** Whether spinning stopped growing: a loop that waits longer should block instead. */
+  get completed(): bool {
+    return this.round >= SPIN_ROUNDS;
+  }
+}
+
+/** Rounds of `Backoff` that spin before it yields: 2^10 spin hints is a few microseconds. */
+export const SPIN_ROUNDS: u32 = 10;
