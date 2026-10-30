@@ -62,6 +62,7 @@ declare async function velt_rt_tcp_listen_tls(
   key: string,
   alpn: string,
 ): Promise<IoResult<u64>>;
+declare async function velt_rt_tcp_alpn(s: u64): Promise<IoResult<string>>;
 declare function velt_rt_tcp_park(s: u64, key: string);
 declare function velt_rt_tcp_unpark(key: string, settled: u32): u64;
 declare async function velt_rt_tcp_connect_tls(
@@ -184,6 +185,15 @@ export struct TcpStream {
   async readableWithin(ms: number, signal: AbortSignal | null = null): Promise<bool> {
     const h = signal == null ? 0u64 : signal.handle();
     return unwrapIo(await velt_rt_tcp_readable_within(this.handle, ms as i64, h)) == 1;
+  }
+
+  /**
+   * The protocol the TLS handshake chose with ALPN (`"h2"`), or null: none agreed, or not TLS
+   * (Node's `socket.alpnProtocol`). Waits for the handshake; throws `IoError` if it fails.
+   */
+  async alpnProtocol(): Promise<string | null> {
+    const p = unwrapIo(await velt_rt_tcp_alpn(this.handle));
+    return p == "" ? null : p;
   }
 
   /** Resolves once every byte is written; `data` is copied at the call. */

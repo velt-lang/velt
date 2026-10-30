@@ -68,7 +68,22 @@
 
 A TLS stream is a `TcpStream` like any other: one task can read while another writes, and
 `shutdown()` sends TLS's close_notify. `alpn` lists the protocols to offer, most preferred
-first.
+first, and `await stream.alpnProtocol()` is the one the handshake chose (`"h2"`,
+`"http/1.1"`), or null when none was agreed or the stream is not TLS (Node's
+`socket.alpnProtocol`): it waits for the handshake, running it if no read or write did yet, and
+throws if it fails. A server that offers HTTP/2 and HTTP/1.1 reads it to know which one the
+client speaks:
+
+```ts
+import { listenTls, TcpListener } from "velt/net";
+
+async function protocolOf(l: TcpListener): Promise<string> {
+  const conn = await l.accept();
+  const p = await conn.alpnProtocol();
+  conn.close();
+  return p ?? "http/1.1";
+}
+```
 
 ```ts
 import { listen, connect, TcpListener } from "velt/net";

@@ -43,15 +43,28 @@ pub(crate) struct Ready {
     r: AsyncMutex<ReadHalf<Box<dyn Transport>>>,
     w: AsyncMutex<WriteHalf<Box<dyn Transport>>>,
     peer: Option<SocketAddr>,
+    /// The protocol the TLS handshake chose with ALPN (empty: none, or not TLS).
+    alpn: Vec<u8>,
 }
 
 impl Ready {
     pub(crate) fn other(io: Box<dyn Transport>, peer: Option<SocketAddr>) -> Ready {
+        Ready::other_alpn(io, peer, Vec::new())
+    }
+
+    /// [`other`](Self::other) for a TLS stream whose handshake chose protocol `alpn` (empty:
+    /// none).
+    pub(crate) fn other_alpn(
+        io: Box<dyn Transport>,
+        peer: Option<SocketAddr>,
+        alpn: Vec<u8>,
+    ) -> Ready {
         let (r, w) = tokio::io::split(io);
         Ready {
             r: AsyncMutex::new(r),
             w: AsyncMutex::new(w),
             peer,
+            alpn,
         }
     }
 }
@@ -271,6 +284,16 @@ impl StreamObj {
             Some(Err((kind, message))) => Err(io::Error::new(*kind, message.clone())),
             None => Err(aborted_error()),
         }
+    }
+
+    /// The protocol ALPN chose for this stream (empty for none, and for a plain TCP stream),
+    /// once its setup (a TLS handshake) is done.
+    pub(crate) async fn alpn_protocol(&self) -> io::Result<Vec<u8>> {
+        let ready = match &self.io {
+            Io::Tcp(_) => return Ok(Vec::new()),
+            Io::Lazy(lazy) => self.until_read_ends(self.set_up(lazy)).await?,
+        };
+        Ok(ready.alpn.clone())
     }
 
     /// `read_chunk` on this stream's raw socket: after `abort` (which shut the socket down, ending

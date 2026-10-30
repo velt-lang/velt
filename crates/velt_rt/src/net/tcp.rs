@@ -175,7 +175,8 @@ pub unsafe extern "C" fn velt_rt_tcp_accept(l: ListenerHandle) -> *mut VeltFut {
                     let tls = tokio::time::timeout(TLS_HANDSHAKE, acceptor.accept(stream))
                         .await
                         .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "TLS handshake"))??;
-                    Ok(Ready::other(Box::new(tls), Some(peer)))
+                    let alpn = tls.get_ref().1.alpn_protocol().unwrap_or_default().to_vec();
+                    Ok(Ready::other_alpn(Box::new(tls), Some(peer), alpn))
                 })))
             })
         })
@@ -230,7 +231,8 @@ pub unsafe extern "C" fn velt_rt_tcp_connect_tls(
             let tls = tokio::time::timeout(TLS_HANDSHAKE, connect)
                 .await
                 .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "TLS handshake"))??;
-            Ok(Ready::other(Box::new(tls), peer))
+            let alpn = tls.get_ref().1.alpn_protocol().unwrap_or_default().to_vec();
+            Ok(Ready::other_alpn(Box::new(tls), peer, alpn))
         }
         .await;
         IoResult::from_io(r, |ready| STREAMS.insert(StreamObj::ready(ready)))
@@ -292,6 +294,17 @@ pub unsafe extern "C" fn velt_rt_tcp_read_string(s: StreamHandle, max: u64) -> *
             IoResult::from_io(read_text(&obj, max).await, |t| {
                 VeltStr::from_bytes(t.as_bytes())
             })
+        })
+    })
+}
+
+/// `alpnProtocol()` → `IoResult<VeltStr>` once the stream is set up (a TLS stream's handshake
+/// done): the protocol ALPN chose, "" for none or a plain TCP stream.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_tcp_alpn(s: StreamHandle) -> *mut VeltFut {
+    STREAMS.op::<VeltStr>(s, |obj| {
+        new_leaf(async move {
+            IoResult::from_io(obj.alpn_protocol().await, |p| VeltStr::from_bytes(&p))
         })
     })
 }
