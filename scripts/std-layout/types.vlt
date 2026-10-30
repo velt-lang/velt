@@ -1,0 +1,18 @@
+// scripts/std-layout: the shape of layout.vlt, the standard library's target layout
+// (docs/internals/design/std-layout.md).
+
+/** The standard library's layout and the move to it. */
+export interface StdLayout {
+  /** Old folder → new folder, below `std/`; covers files added after the move too. */
+  dirs: Record<string, string>;
+  /** Old file → new file, below `std/`; wins over `dirs`. */
+  files: Record<string, string>;
+  /** Module folders whose `index.vlt` the move writes by hand. */
+  newIndex: string[];
+  /** Old `velt:` specifier → its `velt/` module, or `null` for names that are globals. */
+  modules: Record<string, string | null>;
+  /** `docs/std` page → its new place. */
+  docs: Record<string, string>;
+  /** File → the pull request that brings it under 400 lines. Only shrinks. */
+  oversize: Record<string, string>;
+}

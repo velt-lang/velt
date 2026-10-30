@@ -165,6 +165,8 @@ Decisions and their rationale, including what is still planned:
 - [TypeScript compatibility, round 1](design/ts-compat.md): JS numbers from the standard
   library, scripts, callback indexes, arrow defaults, rest parameters, `x!`, `??=`, destructuring
   defaults, `Date`.
+- [Standard library layout](design/std-layout.md): `velt/<area>` imports, one folder per module
+  with `index.vlt` as its API, the rules `precheck` enforces, and the scripted move (proposed).
 - [Hot reload](design/hot-reload.md): `velt dev`'s supervisor, JIT host and hot swap.
 - [Variables in the debugger](design/debug-variables.md): describing source variables in VIR,
   their DWARF in debug builds, and the LLDB formatters (#958).
