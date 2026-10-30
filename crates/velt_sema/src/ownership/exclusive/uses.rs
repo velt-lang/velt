@@ -19,11 +19,24 @@ use crate::visit::{self, VisitMut};
 
 use crate::ownership::validate::place_text;
 
-/// One step from a place to a part of it. `Index` stands for any element.
+/// One step from a place to a part of it. `Index` stands for any element, `Elem` for the
+/// element at a known position (one an array pattern binds: `const [a, b] = xs`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Proj {
     Field(u32),
     Index,
+    Elem(u32),
+}
+
+impl Proj {
+    /// Can the two steps reach the same part? Distinct fields or known positions can't; any
+    /// element may be at a known position.
+    pub fn may_meet(self, other: Proj) -> bool {
+        match (self, other) {
+            (Proj::Field(a), Proj::Field(b)) | (Proj::Elem(a), Proj::Elem(b)) => a == b,
+            _ => true,
+        }
+    }
 }
 
 /// A memory location rooted at a local of the function being checked.
@@ -35,13 +48,10 @@ pub(super) struct Place {
 
 impl Place {
     /// Can the two places share memory? One must be a prefix of the other; distinct fields
-    /// are disjoint, distinct indices are not (they may be equal at run time).
+    /// and distinct known positions are disjoint, distinct indices are not (they may be equal
+    /// at run time).
     pub fn overlaps(&self, other: &Place) -> bool {
-        self.root == other.root
-            && self.proj.iter().zip(&other.proj).all(|pair| match pair {
-                (Proj::Field(a), Proj::Field(b)) => a == b,
-                _ => true,
-            })
+        self.root == other.root && (self.proj.iter().zip(&other.proj)).all(|(a, b)| a.may_meet(*b))
     }
 }
 
