@@ -1,0 +1,36 @@
+// http_handler_callback_holder_order.vlt with an unrelated class declared between `Widget` and
+// `Input`: the types are numbered differently, and the note still names `Input` for both
+// callbacks, not whichever holder the analysis happens to find first.
+import { serve } from "http-server";
+
+class Widget {
+  set: (v: string) => void throws RangeError = (v) => {};
+}
+
+class Unrelated {
+  f: (x: string, y: number) => string = (x, y) => x;
+  g: (v: number, w: bool) => void = (v, w) => {};
+}
+
+class Input {
+  onChange: (v: string) => void = (v) => {};
+}
+
+async function main() {
+  let last = "";
+  const i = new Input();
+  i.onChange = (v: string) => {
+    last = v;
+  };
+  let state = "";
+  const w = new Widget();
+  w.set = (v: string) => {
+    state = v;
+  };
+  const a = await serve({ port: 0 }, async (req) => {
+    i.onChange("x");
+    w.set("y");
+    return new Response("ok");
+  });
+  await a.shutdown();
+}

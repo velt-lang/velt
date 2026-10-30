@@ -130,7 +130,9 @@ pub(super) fn check_crossing_callbacks(cx: &mut Ctx, g: &Graph, flags: &[u8]) ->
                 .iter()
                 .filter(|(t, _)| !types::mentions_param(cx, **t) && fits(cx, g.tys[n], **t))
                 .map(|(_, w)| *w)
-                .min_by_key(|w| (w.library, w.span.file, w.span.lo));
+                // The preferred reason (`Why::before`, holders named on a tie), never the first
+                // in the map's order, which unrelated types change.
+                .reduce(|best, w| if w.before(&best, cx) { w } else { best });
             if let Some(w) = found.filter(|w| why[n].is_none_or(|old| w.before(&old, cx))) {
                 work.push((n, w));
             }
