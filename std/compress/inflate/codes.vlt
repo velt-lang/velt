@@ -46,6 +46,25 @@ export class Bits {
   dist: u32[] = [];
 }
 
+/** A position in the input, to go back to. */
+struct Mark {
+  ip: i64;
+  bb: u64;
+  bc: u64;
+}
+
+/** The input position of `s`, for a step that may have to be undone. */
+export function mark(s: Bits): Mark {
+  return { ip: s.ip, bb: s.bb, bc: s.bc };
+}
+
+/** Puts `s` back at the input position `m`. */
+export function rewind(s: Bits, m: Mark) {
+  s.ip = m.ip;
+  s.bb = m.bb;
+  s.bc = m.bc;
+}
+
 /** The last 8-byte refill loads 16 bytes (`u8x16`), so it needs that many left. */
 const FAST_INPUT: i64 = 16;
 

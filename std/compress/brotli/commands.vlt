@@ -19,13 +19,13 @@ import { COMMANDS } from "velt/compress/brotli/command";
 import { CONTEXT } from "velt/compress/brotli/context";
 import { writeWord } from "velt/compress/brotli/dictionary";
 import { switchCommands, switchDistances, switchLiterals } from "velt/compress/brotli/header";
+import { State } from "velt/compress/brotli/state";
 import {
-  State,
   STAGE_COMMAND,
   STAGE_COPY,
   STAGE_DISTANCE,
   STAGE_INSERT,
-} from "velt/compress/brotli/state";
+} from "velt/compress/brotli/cursor";
 
 // The vector operations used here (`velt/simd` is the API; declared again for the unchecked
 // load and store, which take no range check): every load and store below stays inside its

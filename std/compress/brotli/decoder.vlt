@@ -17,7 +17,6 @@ import { decodeCommands, FAILED, META_DONE } from "velt/compress/brotli/commands
 import { readHeader } from "velt/compress/brotli/header";
 import {
   Cursor,
-  State,
   STAGE_COMMAND,
   STAGE_COPY,
   STAGE_DONE,
@@ -26,7 +25,8 @@ import {
   STAGE_METADATA,
   STAGE_STREAM,
   STAGE_UNCOMPRESSED,
-} from "velt/compress/brotli/state";
+} from "velt/compress/brotli/cursor";
+import { State } from "velt/compress/brotli/state";
 
 /** `run` stopped because the output reached its limit. */
 export const FULL: i64 = 0;

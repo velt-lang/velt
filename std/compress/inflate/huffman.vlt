@@ -210,3 +210,15 @@ function fill(
     }
   }
 }
+
+/** Builds the tables of the fixed codes (§3.2.6) into `lit` and `dist`. */
+export function buildFixed(lit: u32[], dist: u32[], w: Work) {
+  const lens: u8[] = Buffer.alloc(320);
+  lens.fill(8, 0, 144);
+  lens.fill(9, 144, 256);
+  lens.fill(7, 256, 280);
+  lens.fill(8, 280, 288);
+  lens.fill(5, 288, 320);
+  build(lens, 0, 288, lit, LITLEN_SIZE, LITLEN_ROOT, LITLEN, w);
+  build(lens, 288, 32, dist, DIST_SIZE, DIST_ROOT, DIST, w);
+}

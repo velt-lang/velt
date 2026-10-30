@@ -8,7 +8,7 @@
 // cannot overflow 32 bits.
 
 import { u8x16, u64x2 } from "velt/simd";
-import { CRC_TABLE } from "velt/compress/inflate/tables";
+import { CRC_TABLE } from "velt/compress/inflate/crc_table";
 
 // The vector load without its range check: `crc32` loads only where 16 bytes are left.
 declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;

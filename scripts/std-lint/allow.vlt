@@ -9,9 +9,6 @@ export const allow: Allow = {
     "collections/btree/leaf.vlt",
     "collections/btree/pool.vlt",
     "collections/concurrent_map.vlt",
-    "compress/brotli/command.vlt",
-    "compress/inflate/blocks.vlt",
-    "compress/inflate/tables.vlt",
     "encoding/json/reader.vlt",
     "encoding/json/scan.vlt",
     "encoding/json/tape.vlt",
@@ -70,7 +67,6 @@ export const allow: Allow = {
     "text/regex/regexp.vlt",
   ],
   multiClass: [
-    "compress/brotli/state.vlt",
     "encoding/json/tape.vlt",
     "net/http/server/serve.vlt",
     "net/http/server/parse.vlt",

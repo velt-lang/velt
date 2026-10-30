@@ -9,14 +9,14 @@
 import { CompressError } from "velt/compress/errors";
 import { Bits } from "velt/compress/brotli/bits";
 import { BLOCK_LENGTH_CODES, MAX_TABLE_SIZE } from "velt/compress/brotli/tables";
+import { State } from "velt/compress/brotli/state";
 import {
-  State,
   STAGE_COMMAND,
   STAGE_END,
   STAGE_METADATA,
   STAGE_STREAM,
   STAGE_UNCOMPRESSED,
-} from "velt/compress/brotli/state";
+} from "velt/compress/brotli/cursor";
 
 // Block categories.
 const LITERALS: usize = 0;
