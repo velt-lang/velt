@@ -766,9 +766,13 @@ builtins included, at zero cost (the calls are direct):
   R)` to those with one, and `extend<A, R> ((...xs: A[]) => R)` to those with a rest parameter
   only. A function type written without `throws` in a target fits a function that throws
   anything: it has a type parameter of its own for that, so `this` in the block is the
-  receiver with its error type, and calling `this()` throws what the receiver throws. To name
+  receiver with its error type, and calling `this()` throws what the receiver throws. That
+  parameter has no name in the block (a type `E` in scope keeps its meaning there). To name
   it, write the parameter (`extend<R, E> (() => R throws E)`); a fixed error type (`() => R
-  throws Error`) is an error. A function type in a type alias the target names (`extend<R>
+  throws Error`) is an error. A function type written without `throws` in a method's
+  signature can't hold `this` (`self(): () => R { return this; }` is an error: expected `() =>
+  R`, found `() => R throws E`), as a function type's error type parameter isn't assignable to
+  such a site anywhere; write the parameter and return `() => R throws E`. A function type in a type alias the target names (`extend<R>
   Thunk<R>`) or inside another type (`extend<R> Array<() => R>`) is matched the same way. A
   generic function's value is not of a function type, and gets only blanket blocks.
 

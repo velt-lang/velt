@@ -198,7 +198,7 @@ impl Ctx<'_> {
             },
             TyKind::Param(n) => names
                 .get(*n as usize)
-                .cloned()
+                .map(|s| crate::defs::shown_param(s).to_string())
                 .unwrap_or_else(|| format!("T{n}")),
         }
     }

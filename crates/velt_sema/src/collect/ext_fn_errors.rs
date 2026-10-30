@@ -22,7 +22,7 @@ use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use crate::ctx::Ctx;
-use crate::defs::Generics;
+use crate::defs::{shown_param, Generics, HIDDEN_PARAM};
 use crate::hir::{TyId, TyKind};
 use crate::resolve::TyEnv;
 
@@ -133,16 +133,19 @@ fn error_param(cx: &mut Ctx, e: TyId, free: bool, at: &mut Target) -> TyId {
     p
 }
 
-/// `E`, or else the first of `E1`, `E2`, … the block doesn't name (for messages).
+/// The name of an added parameter: `E`, or else the first of `E1`, `E2`, … no parameter of the
+/// block shows as, ended with `HIDDEN_PARAM`. Source can't name it, so a type `E` in the scope
+/// keeps its meaning in the block's methods; messages show `E`.
 fn unused_name(g: &Generics) -> String {
-    let taken = |s: &str| g.names.iter().any(|n| n == s);
-    (0..)
+    let taken = |s: &str| g.names.iter().any(|n| shown_param(n) == s);
+    let shown = (0..)
         .map(|k| match k {
             0 => "E".to_string(),
             _ => format!("E{k}"),
         })
         .find(|s| !taken(s))
-        .unwrap_or_default()
+        .unwrap_or_default();
+    format!("{shown}{HIDDEN_PARAM}")
 }
 
 fn report_fixed(cx: &mut Ctx, e: TyId, span: Span) {
