@@ -265,8 +265,9 @@ fn or_undefined(ty: ast::TypeExpr) -> ast::TypeExpr {
 }
 
 /// What the signatures of the user's modules use that is not supported: optional parameters
-/// (not supported yet) and parameter initializers (TypeScript's TS2371), in call signatures and
-/// in interface methods without a body.
+/// (not supported yet) and parameter initializers (TypeScript's TS2371), in call signatures, and
+/// initializers in signatures without a body (interface methods without one, abstract methods,
+/// `declare`d functions).
 pub(crate) fn check(modules: &[SourceModule]) -> Vec<Diagnostic> {
     struct Sigs(Vec<Diagnostic>);
     impl Sigs {
@@ -293,34 +294,51 @@ pub(crate) fn check(modules: &[SourceModule]) -> Vec<Diagnostic> {
         }
     }
     impl Sigs {
-        /// An interface method's signature: a default value belongs to the implementations,
-        /// which may each have their own (`m(x = 1)` in a class); the interface says only that
-        /// the parameter may be left out (`x?: T`).
-        fn method(&mut self, s: &ast::FnSig) {
+        /// A signature without a body (an interface's or abstract method, a `declare`d
+        /// function): a default value belongs to an implementation; the declaration says only
+        /// that the parameter may be left out (`x?: T`). `implemented`: whether implementations
+        /// in Velt give it (methods), not a `declare`d function's outside code.
+        fn bodiless(&mut self, s: &ast::FnSig, implemented: bool) {
             for p in s.params.iter().filter(|p| p.default.is_some()) {
                 if p.optional || p.rest {
                     continue;
                 }
+                let note = match implemented {
+                    true => format!(
+                        "declare it optional, `{0}?: T`; an implementation gives its own default with `{0}: T | undefined = …`",
+                        p.name.name
+                    ),
+                    false => format!(
+                        "declare it optional, `{0}?: T`, and give the default in a function that calls this one",
+                        p.name.name
+                    ),
+                };
                 self.0.push(
                     Diagnostic::error(
                         "a parameter initializer is only allowed in a function or constructor implementation",
                         p.span,
                     )
-                    .with_note(format!(
-                        "declare it optional, `{0}?: T`; an implementation gives its own default with `{0}: T | undefined = …`",
-                        p.name.name
-                    )),
+                    .with_note(note),
                 );
             }
         }
     }
     impl<'a> Visit<'a> for Sigs {
         fn item(&mut self, item: &'a ast::Item) {
-            if let ast::ItemKind::Interface(d) = &item.kind {
-                d.call_sigs.iter().for_each(|s| self.sig(s));
-                for m in d.methods.iter().filter(|m| m.body.is_none()) {
-                    self.method(&m.sig);
+            match &item.kind {
+                ast::ItemKind::Interface(d) => {
+                    d.call_sigs.iter().for_each(|s| self.sig(s));
+                    for m in d.methods.iter().filter(|m| m.body.is_none()) {
+                        self.bodiless(&m.sig, true);
+                    }
                 }
+                ast::ItemKind::Class(c) => {
+                    for m in c.methods.iter().filter(|m| m.is_abstract) {
+                        self.bodiless(&m.decl.sig, true);
+                    }
+                }
+                ast::ItemKind::ExternFn(sig) => self.bodiless(sig, false),
+                _ => {}
             }
         }
         fn ty(&mut self, t: &'a ast::TypeExpr) {
