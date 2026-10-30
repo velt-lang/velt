@@ -13,6 +13,7 @@ import urllib.error
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 
@@ -98,6 +99,47 @@ def proc_stats(pids):
             except (OSError, IndexError, ValueError):
                 pass
     return cpu, rss, hwm
+
+
+def threads_of(pids):
+    """The threads of pids (from /proc/<pid>/status `Threads:`), summed."""
+    n = 0
+    for p in pids:
+        try:
+            for line in open(f"/proc/{p}/status"):
+                if line.startswith("Threads:"):
+                    n += int(line.split()[1])
+                    break
+        except (OSError, ValueError):
+            pass
+    return n
+
+
+class PeakThreads:
+    """Samples the server's thread count (all its processes) every `every` seconds while a
+    measured run goes on: `with PeakThreads(pids) as t: ...`, then `t.peak`. It shows how many
+    threads a server really used, the "1 thread" rows included (the runtime's monitor thread,
+    and a spare worker it may start while one is blocked)."""
+
+    def __init__(self, pids, every=0.1):
+        self.pids, self.every, self.peak = [p for root in pids for p in tree(root)], every, 0
+        self.done = threading.Event()
+        self.thread = threading.Thread(target=self._run, daemon=True)
+
+    def _run(self):
+        while True:
+            self.peak = max(self.peak, threads_of(self.pids))
+            if self.done.wait(self.every):
+                return
+
+    def __enter__(self):
+        self.thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self.done.set()
+        self.thread.join()
+        self.peak = max(self.peak, threads_of(self.pids))
 
 
 class Server:
@@ -314,8 +356,10 @@ def http_run(ctx, servers, server_cpus, load_cpus, routes, prefix, reference, ex
                     url = f"http://127.0.0.1:{port}/{route}"
                     oha(ctx, load_cpus, url, warm, conns)
                     cpu0, _, _ = proc_stats(srv.pids)
-                    m = oha(ctx, load_cpus, url, duration, conns)
+                    with PeakThreads(srv.pids) as threads:
+                        m = oha(ctx, load_cpus, url, duration, conns)
                     cpu1, rss, hwm = proc_stats(srv.pids)
+                    m["server_peak_threads"] = threads.peak
                     m["server_cpu_s"] = cpu1 - cpu0
                     m["server_us_per_req"] = (cpu1 - cpu0) * 1e6 / max(m["requests"], 1)
                     m["server_rss_mb"], m["server_peak_rss_mb"] = rss, hwm
@@ -340,6 +384,7 @@ def http_run(ctx, servers, server_cpus, load_cpus, routes, prefix, reference, ex
                 summary.update(best_rps=best["rps"], p50_ms=best["p50_ms"], p99_ms=best["p99_ms"],
                                server_us_per_req=min(m["server_us_per_req"] for m in runs),
                                server_peak_rss_mb=max(m["server_peak_rss_mb"] for m in runs),
+                               server_peak_threads=max(m.get("server_peak_threads", 0) for m in runs),
                                min_success=min(m["success"] for m in runs),
                                load_cpu_share=best["load_cpu_share"],
                                load_bound=best["load_cpu_share"] >= LOAD_BOUND)
@@ -410,16 +455,18 @@ def chat_run(ctx, servers, lerr, server_cpus, load_cpus, out, load_t):
                     continue
                 time.sleep(0.5)
                 cpu0, _, _ = proc_stats(srv.pids)
-                p = subprocess.run(["taskset", "-c", load_cpus, loader, "steady", f"ws://127.0.0.1:{port}",
-                                    str(conns), str(rooms), str(rate), str(secs)],
-                                   env={**os.environ, "THREADS": str(count_cpus(load_cpus))},
-                                   capture_output=True, text=True, timeout=600)
+                with PeakThreads(srv.pids) as threads:
+                    p = subprocess.run(["taskset", "-c", load_cpus, loader, "steady", f"ws://127.0.0.1:{port}",
+                                        str(conns), str(rooms), str(rate), str(secs)],
+                                       env={**os.environ, "THREADS": str(count_cpus(load_cpus))},
+                                       capture_output=True, text=True, timeout=600)
                 cpu1, rss, hwm = proc_stats(srv.pids)
                 res = next((json.loads(line) for line in p.stdout.splitlines() if line.startswith("{")), None)
                 if res is None:
                     errors[label] = f"round {r + 1}: no result from chat-load: {p.stderr[-300:]}"
                     continue
-                res.update(server_cpu_s=cpu1 - cpu0, server_rss_mb=rss, server_peak_rss_mb=hwm)
+                res.update(server_cpu_s=cpu1 - cpu0, server_rss_mb=rss, server_peak_rss_mb=hwm,
+                           server_peak_threads=threads.peak)
                 rows[label].append(res)
             except Exception as e:  # a failed round is a result, never the end of the run
                 errors[label] = f"round {r + 1}: {type(e).__name__}: {e}"
@@ -437,7 +484,8 @@ def chat_run(ctx, servers, lerr, server_cpus, load_cpus, out, load_t):
             summary.update(p50_ms=best["p50_ms"], p99_ms=best["p99_ms"],
                            deliveries_per_s=best["deliveries_per_s"], delivered_ratio=best["delivered_ratio"],
                            server_cpu_s=min(m["server_cpu_s"] for m in runs),
-                           server_peak_rss_mb=max(m["server_peak_rss_mb"] for m in runs))
+                           server_peak_rss_mb=max(m["server_peak_rss_mb"] for m in runs),
+                           server_peak_threads=max(m.get("server_peak_threads", 0) for m in runs))
         d = {"label": label, "lang": lang, "threads": threads, "runs": runs, "summary": summary}
         if label in errors:
             d["error"] = errors[label]

@@ -2,14 +2,16 @@
 # The benchmark showcase (Linux): Velt against Rust, Node and Bun on the existing suites under
 # bench/, every category in one run. Method and fairness rules: bench/showcase/README.md.
 #
-#   bench/showcase/run.sh [--smoke] [--force] [--runs N] [--out DIR] [--categories a,b,...]
-#                         [--only name,...] [--velt PATH] [--http-duration 10s] [--http-conns 256]
+#   bench/showcase/run.sh [--smoke] [--force] [--settle-timeout S] [--runs N] [--out DIR]
+#                         [--categories a,b,...] [--only name,...] [--velt PATH]
+#                         [--http-duration 10s] [--http-conns 256]
 #
 #   --smoke        tiny sizes and one run of everything: checks that it all works, nothing more
 #                  (results go to the build directory, not bench/showcase/results)
 #   --force        run even when the 1-minute load average is over 2, before the build or after
-#                  it (the numbers will be noisy); without it, timing waits up to 15 minutes
-#                  after the build for the load to settle under 2, then gives up
+#                  it (the numbers will be noisy); without it, timing waits after the build for
+#                  the load to settle to 2 or less, then gives up
+#   --settle-timeout S  how long that wait may take, in seconds (default 900)
 #   --runs N       timed runs per implementation (default 5; start-up runs 4 × N)
 #   --out DIR      where results.json and the tables go (default bench/showcase/results/<date>)
 #   --categories   a subset of: startup cpu core benchmarks-game regex async json tsx sqlite
@@ -24,11 +26,12 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
-SMOKE=0 FORCE=0 RUNS=5 OUT="" CATS="" ONLY="" VELT="" HTTP_DURATION=10s HTTP_CONNS=256
+MAX_LOAD=2 SETTLE_TIMEOUT=900 SMOKE=0 FORCE=0 RUNS=5 OUT="" CATS="" ONLY="" VELT="" HTTP_DURATION=10s HTTP_CONNS=256
 while [[ $# -gt 0 ]]; do
   case $1 in
     --smoke) SMOKE=1 ;;
     --force) FORCE=1 ;;
+    --settle-timeout) SETTLE_TIMEOUT=$2; shift ;;
     --runs) RUNS=$2; shift ;;
     --out) OUT=$2; shift ;;
     --categories) CATS=$2; shift ;;
@@ -36,7 +39,7 @@ while [[ $# -gt 0 ]]; do
     --velt) VELT=$2; shift ;;
     --http-duration) HTTP_DURATION=$2; shift ;;
     --http-conns) HTTP_CONNS=$2; shift ;;
-    -h|--help) sed -n '2,23p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
     *) echo "run.sh: unknown argument $1 (see --help)" >&2; exit 2 ;;
   esac
   shift
@@ -51,11 +54,11 @@ PYTHON=$(command -v python3)
 
 # 1. A quiet machine: a busy one skews wall-clock times by 2-4x.
 load1=$(cut -d' ' -f1 /proc/loadavg)
-if "$PYTHON" -c "import sys; sys.exit(0 if float(sys.argv[1]) > 2 else 1)" "$load1"; then
+if "$PYTHON" -c "import sys; sys.exit(0 if float(sys.argv[1]) > float(sys.argv[2]) else 1)" "$load1" "$MAX_LOAD"; then
   if [[ $FORCE -eq 1 || $SMOKE -eq 1 ]]; then
-    echo "run.sh: load average $load1 is over 2; going on (--force or --smoke), the times will be noisy" >&2
+    echo "run.sh: load average $load1 is over $MAX_LOAD; going on (--force or --smoke), the times will be noisy" >&2
   else
-    echo "run.sh: load average $load1 is over 2: the machine is busy. Wait until it is quiet, or pass --force." >&2
+    echo "run.sh: load average $load1 is over $MAX_LOAD: the machine is busy. Wait until it is quiet, or pass --force." >&2
     exit 1
   fi
 fi
@@ -98,7 +101,8 @@ fi
 mkdir -p "$BUILD" "$OUT"
 
 args=(--out "$OUT" --build-dir "$BUILD" --runs "$RUNS" --velt "$VELT"
-  --http-duration "$HTTP_DURATION" --http-conns "$HTTP_CONNS")
+  --http-duration "$HTTP_DURATION" --http-conns "$HTTP_CONNS"
+  --max-load "$MAX_LOAD" --settle-timeout "$SETTLE_TIMEOUT")
 [[ $SMOKE -eq 1 ]] && args+=(--smoke)
 [[ $FORCE -eq 1 ]] && args+=(--force)
 [[ -n $CATS ]] && args+=(--categories "$CATS")

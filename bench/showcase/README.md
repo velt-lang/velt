@@ -59,10 +59,10 @@ sqlite 5, compile 17, http 36 (with the Velt one-thread rows), websocket 5). It 
    show the best wall time of N (default 5) and the median; CPU time is the smallest user + sys,
    peak RSS the largest of the N runs. The run refuses to start when the 1-minute load average
    is over 2 (`--force` overrides), and after the build phase it waits for the load average to
-   fall back under 2 before the first timed run (at most 15 minutes, `--settle-timeout`; then
-   it stops with a message, or goes on with `--force`). The results record that wait and the
-   load average at the start of every category. It pins the CPU frequency governor to
-   `performance` when it may, otherwise it records the governor as it is.
+   fall back to 2 or less before the first timed run (at most 15 minutes, `run.sh
+   --settle-timeout`; then it stops with a message, or goes on with `--force`). The results
+   record that wait and the load average at the start of every category. It pins the CPU
+   frequency governor to `performance` when it may, otherwise it records the governor as it is.
 5. **Like against like.** Every implementation states how many threads it computes on, in its
    benchmark definition (`threads=ST` or `threads=MT` in `suites.py`, `core.py`, `servers.py`;
    the Benchmarks Game files are listed one by one in `suites.GAME_THREADS`, and a file missing
@@ -115,7 +115,7 @@ processes; `VmHWM`, each process's own peak).
 | `http` | `/plaintext`, `/json`, `/fortunes` (sorted, escaped HTML table) with oha (`bench/http/techempower`; Velt in `velt/techempower_server.vlt`, Bun.serve in `bun/techempower.ts`) | ✓ (velt:http/server, written in Velt) | ✓ (axum) | ✓ (node:http, 1 process and node:cluster) | ✓ (Bun.serve, 1 process and `reusePort` × cores) |
 | `http` | `TSX page /small`, `/large`: the `tsx` page rendered per request (`tsx/server.vlt` on velt:http/server, `tsx/server.mjs`) | ✓ (velt:http/server) | n/a | ✓ (node:http + React or Preact, 1 process and node:cluster) | ✓ (Bun.serve + React or Preact, 1 process and `reusePort` × cores) |
 | `websocket` | the chat app under steady load: 2000 clients, 20 rooms, 1000 messages/s (`bench/chat`, Velt in `velt/chat_server.vlt`, load from `chat/load`) | ✓ (velt:http/server + velt:websocket; server cores, and 1 thread) | | ✓ (ws, 1 process) | ✓ (1 process) |
-| memory | peak RSS of every benchmark above, one table (`memory.md`) | | | | |
+| memory | peak RSS of every benchmark above, one table (`memory.md`), a row per thread kind: each language's single-threaded implementation (its `_st` one where it has several) beside the others', and its multi-threaded one beside theirs | | | | |
 
 The JSON rows say which Velt API they use; all of them run the JSON engine written in Velt
 (std/prelude/json and velt:json: the scanner and reader, the writer, the tape-backed
@@ -164,6 +164,9 @@ routes of `bench/http/techempower/server.vlt`, `velt/chat_server.vlt` is
 keep-alive and pipelining as for any client), no options the other servers do not get. Velt
 (`VELT_THREADS` set to the server CPUs) and axum use every server core, and Velt runs a second
 time on one thread (`VELT_THREADS=1`), the row the one-process servers are compared with.
+One worker thread, that is: the runtime also has its monitor thread, and may start a spare
+worker while one is blocked; every server run records the server's peak thread count (all its
+processes, from `/proc/<pid>/status`) as `server_peak_threads` in results.json.
 Before any timing, every server is started once
 and every route fetched: status 200, and the body and content-type of the reference server's
 response (axum for the TechEmpower routes, the page `tsx/render.vlt` prints for the TSX page,

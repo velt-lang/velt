@@ -68,6 +68,27 @@ class Measure(unittest.TestCase):
         self.assertIsNone(m["rss_mb"])
 
 
+@unittest.skipUnless(sys.platform.startswith("linux"), "reads /proc")
+class Threads(unittest.TestCase):
+    def test_peak_threads_of_a_server(self):
+        import subprocess
+        import servers
+        import time
+        code = ("import threading, time\n"
+                "ts = [threading.Thread(target=time.sleep, args=(3,)) for _ in range(5)]\n"
+                "[t.start() for t in ts]\n"
+                "[t.join() for t in ts]\n")
+        p = subprocess.Popen([sys.executable, "-c", code])
+        try:
+            time.sleep(0.5)
+            with servers.PeakThreads([p.pid], every=0.05) as t:
+                time.sleep(1)
+            self.assertEqual(t.peak, 6)
+        finally:
+            p.kill()
+            p.wait()
+
+
 class Settle(unittest.TestCase):
     def fake(self, loads):
         t = [0.0]
@@ -87,6 +108,12 @@ class Settle(unittest.TestCase):
         self.assertEqual(rec["load_before"], 9.0)
         self.assertEqual(rec["load_after"], 1.5)
         self.assertEqual(rec["waited_s"], 15.0)
+        self.assertFalse(rec["timed_out"])
+
+    def test_threshold_itself_is_quiet(self):
+        # run.sh starts at a load of exactly 2 (it refuses over 2): the wait agrees.
+        rec = showcase.settle(2.0, 900, False, **self.fake([2.0]))
+        self.assertEqual(rec["waited_s"], 0.0)
         self.assertFalse(rec["timed_out"])
 
     def test_quiet_already(self):

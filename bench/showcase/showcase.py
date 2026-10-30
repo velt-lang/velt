@@ -208,18 +208,19 @@ def load1():
 
 
 def settle(threshold, timeout, force, poll=10.0, now=time.time, sleep=time.sleep, load=load1):
-    """Waits until the 1-minute load average is under threshold (the build phase leaves it high),
+    """Waits until the 1-minute load average is at most threshold (the build phase leaves it high;
+    run.sh refuses to start above the same threshold),
     at most timeout seconds. Returns the record of the wait; on a timeout, exits with a message
     unless force (then the run goes on, the times noisier)."""
     t0, before = now(), load()
     cur = before
-    while cur is not None and cur >= threshold and now() - t0 < timeout:
-        suites.log(f"waiting for a quiet machine: load average {cur:.2f}, want under {threshold} "
+    while cur is not None and cur > threshold and now() - t0 < timeout:
+        suites.log(f"waiting for a quiet machine: load average {cur:.2f}, want at most {threshold} "
                    f"(waited {now() - t0:.0f} s of at most {timeout:.0f} s)")
         sleep(poll)
         cur = load()
     rec = {"threshold": threshold, "load_before": before, "load_after": cur,
-           "waited_s": round(now() - t0, 1), "timed_out": cur is not None and cur >= threshold}
+           "waited_s": round(now() - t0, 1), "timed_out": cur is not None and cur > threshold}
     if rec["timed_out"]:
         msg = (f"the load average is still {cur:.2f} after {timeout:.0f} s (threshold {threshold}): "
                "the machine is busy, so the times would be noisy")

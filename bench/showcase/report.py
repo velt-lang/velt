@@ -258,31 +258,41 @@ def category_md(cat, recs):
     return "\n".join(out)
 
 
-def headline(impls, lang):
-    """The language's first single-threaded implementation (its first one when it has none)."""
-    mine = [i for i in impls if i["lang"] == lang]
-    return next((i for i in mine if kind(i) == "st"), mine[0] if mine else None)
+def headline(impls, lang, k):
+    """The language's implementation of kind k shown in the memory table: its first one of that
+    kind, a Rust or JS `_st` program before another single-threaded variant (binary-trees_st
+    before binary-trees_box); None when the language has none of that kind (never one of the
+    other kind in its place)."""
+    mine = [i for i in impls if i["lang"] == lang and kind(i) == k and "n/a:" not in i.get("error", "")[:4]]
+    if k == "st":
+        mine.sort(key=lambda i: not i["label"].endswith("_st"))
+    return mine[0] if mine else None
 
 
 def memory_md(results):
     out = [f"# {TITLES['memory']}", "",
-           "Peak RSS (MB) of the first single-threaded implementation per language in each "
-           "benchmark (Velt `main`, Rust `_st`, Node and Bun `main_st.js` or `main.js`, and so "
-           "on); every implementation's peak RSS is in its category's table. Servers: peak RSS "
-           "of the server process(es).", "",
-           "| category | benchmark | Velt | Rust | Node | Bun |", "|---|---|---:|---:|---:|---:|"]
+           "Peak RSS (MB) per language in each benchmark, like against like: the *1 thread* row "
+           "has each language's single-threaded implementation (its `_st` program where it has "
+           "several, else its first: Velt `main`, Rust `_st`, Node and Bun `main_st.js`, one "
+           "server process), the *many* row its multi-threaded one (`_mt`, `worker_threads`, "
+           "`node:cluster`, servers on every core). A cell is empty when the language has no "
+           "implementation of that kind, or it failed; every implementation's peak RSS is in its "
+           "category's table. Servers: peak RSS of the server process(es).", "",
+           "| category | benchmark | threads | Velt | Rust | Node | Bun |", "|---|---|:-:|---:|---:|---:|---:|"]
     for cat, recs in results["categories"].items():
         if cat == "compile":
             continue
         for rec in recs:
-            cells = []
-            for lang in ("velt", "rust", "node", "bun"):
-                i = headline(rec.get("impls", []), lang)
-                s = (i or {}).get("summary", {})
-                v = s.get("peak_rss_mb", s.get("server_peak_rss_mb"))
-                cells.append(num(v, 1) if v is not None and not (i or {}).get("error") else "")
-            if any(cells):
-                out.append(f"| {cat} | {rec['name']} | " + " | ".join(cells) + " |")
+            impls = rec.get("impls", [])
+            for k in [k for k in ("st", "mt", None) if any(kind(i) == k for i in impls)]:
+                cells = []
+                for lang in ("velt", "rust", "node", "bun"):
+                    i = headline(impls, lang, k)
+                    s = (i or {}).get("summary", {})
+                    v = s.get("peak_rss_mb", s.get("server_peak_rss_mb"))
+                    cells.append(num(v, 1) if v is not None and not (i or {}).get("error") else "")
+                if any(cells):
+                    out.append(f"| {cat} | {rec['name']} | {KIND_CELL[k]} | " + " | ".join(cells) + " |")
     return "\n".join(out) + "\n"
 
 
@@ -375,7 +385,7 @@ def write(results, out_dir):
     if m.get("settle"):
         st = m["settle"]
         idx.append(f"- Before timing: waited {st.get('waited_s')} s for the 1-minute load average to fall "
-                   f"under {st.get('threshold')} (from {st.get('load_before')} to {st.get('load_after')}"
+                   f"to {st.get('threshold')} or less (from {st.get('load_before')} to {st.get('load_after')}"
                    f"{'; timed out' if st.get('timed_out') else ''})")
     if m.get("loadavg_by_category"):
         idx.append("- Load average at the start of each category: " + "; ".join(

@@ -93,7 +93,10 @@ def run_proc(cmd, stdin=None, env=None, cwd=None, timeout=TIMEOUT_S):
             finally:
                 timer.cancel()
             wall = time.perf_counter() - t
-            line = open(result).read().split() if MEASURE else []
+            line = []
+            if MEASURE:
+                with open(result) as f:
+                    line = f.read().split()
         finally:
             if stdin:
                 inp.close()

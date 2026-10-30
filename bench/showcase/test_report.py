@@ -199,6 +199,34 @@ class Tables(unittest.TestCase):
             self.assertIn("- techempower: oha not found", md)
 
 
+class Memory(unittest.TestCase):
+    def rows(self, rec, cat="benchmarks-game"):
+        md = report.memory_md({"categories": {cat: [rec]}})
+        return {line.split(" | ")[2]: line.split(" | ")[3:] for line in md.splitlines()
+                if line.startswith(f"| {cat} |")}
+
+    def test_each_kind_its_own_row(self):
+        mb = lambda label, lang, t, rss: impl(label, lang, threads=t, peak_rss_mb=rss)
+        rec = {"name": "binary-trees (21)", "impls": [
+            mb("Rust binary-trees", "rust", "mt", 442.0), mb("Rust binary-trees_box", "rust", "st", 162.0),
+            mb("Rust binary-trees_st", "rust", "st", 130.0), mb("Velt main", "velt", "st", 99.5),
+            mb("Velt main_mt", "velt", "mt", 161.0), mb("Node main", "node", "mt", 1365.0)]}
+        rows = self.rows(rec)
+        # Rust's `_st` program, not the first single-threaded one by name (`_box`); no Node cell
+        # in the single-threaded row: its only program uses worker_threads.
+        self.assertEqual(rows["1"], ["99.5", "130", "", " |"])
+        self.assertEqual(rows["many"], ["161", "442", "1,365", " |"])
+
+    def test_server_on_all_cores_not_beside_one_thread(self):
+        srv = lambda label, lang, t, rss: impl(label, lang, threads=t, server_peak_rss_mb=rss)
+        rec = {"name": "/plaintext", "kind": "http", "impls": [
+            srv("Velt (1 thread)", "velt", "st", 4.9), srv("Rust axum", "rust", "mt", 4.3),
+            srv("Velt", "velt", "mt", 5.8)]}
+        rows = self.rows(rec, "http")
+        self.assertEqual(rows["1"][:2], ["4.9", ""])
+        self.assertEqual(rows["many"][:2], ["5.8", "4.3"])
+
+
 class Definitions(unittest.TestCase):
     def test_every_benchmarks_game_implementation_is_classified(self):
         import suites
@@ -213,6 +241,42 @@ class Definitions(unittest.TestCase):
             files += [("rust", f[:-3]) for f in bins if f == f"{p}.rs" or f.startswith(f"{p}_")]
             for f in files:
                 self.assertIn(table.get(f, "missing"), (suites.ST, suites.MT), f"{p}: {f}")
+
+    def test_known_kinds(self):
+        import suites
+        t = suites.GAME_THREADS
+        self.assertEqual(t["fasta"][("rust", "fasta")], suites.MT)
+        self.assertEqual(t["fasta"][("rust", "fasta_st")], suites.ST)
+        self.assertEqual(t["fasta"][("js", "main")], suites.MT)
+        self.assertEqual(t["reverse-complement"][("js", "main")], suites.ST)
+        self.assertEqual(t["n-body"][("rust", "n-body")], suites.ST)
+        self.assertEqual(t["binary-trees"][("rust", "binary-trees_box")], suites.ST)
+        self.assertEqual(t["mandelbrot"][("velt", "main_mt")], suites.MT)
+        self.assertEqual(t["mandelbrot"][("velt", "main_opt")], suites.ST)
+
+    def test_kinds_match_the_sources(self):
+        # A multi-threaded file uses threads (Rust: rayon or std::thread; JS: worker_threads;
+        # Velt: spawn), a single-threaded one does not, except Rust `_st`, which is the
+        # multi-threaded program on a rayon pool of one thread.
+        import re
+        import suites
+        here = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "benchmarks-game")
+        marks = {"rust": r"use rayon|extern crate rayon|thread::(spawn|scope)|std::thread",
+                 "js": r"worker_threads", "velt": r"\bspawn\("}
+        for program, table in suites.GAME_THREADS.items():
+            for (lang, stem), k in table.items():
+                if lang == "rust":
+                    path = os.path.join(here, "rust", "src", "bin", f"{stem}.rs")
+                else:
+                    path = os.path.join(here, program, f"{stem}.{'vlt' if lang == 'velt' else 'js'}")
+                if not os.path.isfile(path):
+                    continue
+                src = open(path, encoding="utf-8").read()
+                threaded = re.search(marks[lang], src) is not None
+                if lang == "rust" and stem.endswith("_st") and threaded:
+                    self.assertIn("num_threads(1)", src, path)
+                    continue
+                self.assertEqual(threaded, k == suites.MT, f"{path}: listed as {k}")
 
     def test_threads_is_required(self):
         import suites
