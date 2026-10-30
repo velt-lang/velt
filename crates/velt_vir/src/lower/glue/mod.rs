@@ -137,6 +137,8 @@ pub(crate) enum Glue {
     AnyDelete,
     AnyKeys,
     AnyJson,
+    /// `(data, op, index, text, value) -> u64`: reflection (any_reflect.rs).
+    AnyReflect,
     ProxyGet,
     ProxySet,
     /// `(data, desc, out) -> bool`: an `any` as the interface type (any_iface.rs).
@@ -221,6 +223,7 @@ impl Glue {
             Glue::AnyDelete => "anydelete",
             Glue::AnyKeys => "anykeys",
             Glue::AnyJson => "anyjson",
+            Glue::AnyReflect => "anyreflect",
             Glue::ProxyGet => "proxyget",
             Glue::ProxySet => "proxyset",
             Glue::AnyIface => "anyiface",
@@ -281,6 +284,7 @@ impl Glue {
             Glue::AnySet => (vec![Ptr, Ptr, Ptr], U8),
             Glue::AnySetIndex => (vec![Ptr, F64, Ptr], U8),
             Glue::AnyHas | Glue::AnyDelete | Glue::AnyKeys | Glue::AnyJson => (vec![Ptr, Ptr], U8),
+            Glue::AnyReflect => (vec![Ptr, U64, U64, Ptr, Ptr], U64),
             Glue::ProxyGet | Glue::ProxySet => (vec![Ptr, Ptr, Ptr], Unit),
             Glue::AnyIface | Glue::AnyNumeric => (vec![Ptr, Ptr, Ptr], Bool),
             Glue::AnyNumericOrError => (vec![Ptr, Ptr, Ptr], Unit),
@@ -350,6 +354,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::AnyDelete => lw.any_delete_glue(args[0], args[1], ty),
             Glue::AnyKeys => lw.any_keys_glue(args[0], args[1], ty),
             Glue::AnyJson => lw.any_json_glue(args[0], args[1], ty),
+            Glue::AnyReflect => lw.any_reflect_glue(&args, ty),
             Glue::ProxyGet => lw.proxy_get_glue(args[0], args[1], args[2], ty),
             Glue::ProxySet => lw.proxy_set_glue(args[0], args[1], args[2], ty),
             Glue::AnyIface => lw.any_iface_body(args[0], args[1], args[2], ty),

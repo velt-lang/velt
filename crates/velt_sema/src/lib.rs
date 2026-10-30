@@ -70,6 +70,7 @@ mod global_this;
 mod hasher_tests;
 mod holds_promise;
 mod hooks;
+pub use hooks::NAMES as HOOK_NAMES;
 pub mod ide;
 mod iface_overloads;
 mod iface_writes;

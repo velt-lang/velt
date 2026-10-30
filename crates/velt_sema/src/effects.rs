@@ -74,6 +74,8 @@ pub fn runs_user_code(i: hir::Intrinsic) -> bool {
             | I::AnySetIndex
             | I::AnyHas
             | I::AnyDelete
+            | I::AnyReflectValue
+            | I::AnyReflectHook
     )
 }
 

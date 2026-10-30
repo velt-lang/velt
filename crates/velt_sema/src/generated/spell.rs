@@ -42,7 +42,7 @@ fn qualified(cx: &Ctx, qual_name: &str, args: &[String]) -> Option<String> {
     Some(s)
 }
 
-pub(crate) fn int_name(it: IntTy) -> &'static str {
+pub fn int_name(it: IntTy) -> &'static str {
     match it {
         IntTy::I8 => "i8",
         IntTy::I16 => "i16",
@@ -57,7 +57,7 @@ pub(crate) fn int_name(it: IntTy) -> &'static str {
     }
 }
 
-pub(crate) fn float_name(ft: FloatTy) -> &'static str {
+pub fn float_name(ft: FloatTy) -> &'static str {
     match ft {
         FloatTy::F32 => "f32",
         FloatTy::F64 => "f64",

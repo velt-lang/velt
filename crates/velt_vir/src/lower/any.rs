@@ -16,6 +16,7 @@
 //! | 13 | `AnyKeys` (any_keys.rs), when the program lists the keys of an `any` |
 //! | 14 | `AnyJson` (json/any.rs), when the program writes a dynamic value as JSON |
 //! | 15 | `AnyDelete` (any_delete.rs), when the prelude deletes a property through `any` |
+//! | 18 | `AnyReflect` (any_reflect.rs), when the program reflects on `any` values (velt/reflect) |
 //!
 //! Tables are built per concrete type and memoized, so two values of one type have the same
 //! table: a checked conversion compares one pointer.
@@ -187,6 +188,10 @@ impl Cx<'_> {
         if self.boxing.any_keys {
             let f = Const::Func(self.func(Work::Glue(Glue::AnyKeys, ty)));
             e.push((super::any_keys::SLOT_KEYS, f));
+        }
+        if self.boxing.any_reflect {
+            let f = Const::Func(self.func(Work::Glue(Glue::AnyReflect, ty)));
+            e.push((super::any_reflect::SLOT_REFLECT, f));
         }
         if self.boxing.any_json {
             let f = Const::Func(self.func(Work::Glue(Glue::AnyJson, ty)));

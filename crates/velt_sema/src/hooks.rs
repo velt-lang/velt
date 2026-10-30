@@ -29,6 +29,9 @@ pub(crate) const TO_JSON: &str = "toJSON";
 /// The `__inspect()` hook's name.
 pub(crate) const INSPECT: &str = "__inspect";
 
+/// The hooks' names, in the order `toJSON`, `toString`, `__inspect` (velt/reflect lists them).
+pub const NAMES: [&str; 3] = [TO_JSON, TO_STRING, INSPECT];
+
 /// Class `d<args>`'s hook method `name` (its adapter, if it has one) and its result type
 /// (substituted with `args`), if it has one.
 pub(crate) fn hook(cx: &mut Ctx, d: DefId, args: &[TyId], name: &str) -> Option<(DefId, TyId)> {

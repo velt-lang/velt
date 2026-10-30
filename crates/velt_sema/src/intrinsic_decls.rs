@@ -95,6 +95,14 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     // ownership.vlt
     ("share", Op(I::Share)),
     ("transfer", Op(I::Transfer)),
+    // reflect.vlt
+    ("anyReflectCount", Op(I::AnyReflectCount)),
+    ("anyReflectHook", Op(I::AnyReflectHook)),
+    ("anyReflectInfo", Op(I::AnyReflectInfo)),
+    ("anyReflectName", Op(I::AnyReflectName)),
+    ("anyReflectValue", Op(I::AnyReflectValue)),
+    ("identity", Op(I::Identity)),
+    ("isTypedProxy", Op(I::IsTypedProxy)),
     // report.vlt
     ("errorText", Op(I::ErrorText)),
     ("inspect", Op(I::Inspect)),

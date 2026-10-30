@@ -72,6 +72,19 @@ impl FnLower<'_, '_> {
         d: DefId,
         params: &[vir::Local],
     ) {
+        self.any_subclass_dispatch_as(g, ty, d, params, (Ty::U8, ST_UNSUPPORTED));
+    }
+
+    /// [`any_subclass_dispatch`](Self::any_subclass_dispatch) of a glue whose result has VIR
+    /// type `ret`, answering `unsupported` for an object of a generic subclass.
+    pub(super) fn any_subclass_dispatch_as(
+        &mut self,
+        g: Glue,
+        ty: TyId,
+        d: DefId,
+        params: &[vir::Local],
+        (ret, unsupported): (Ty, i128),
+    ) {
         if !self.cx.is_class(ty) || !self.cx.has_header(d) {
             return;
         }
@@ -109,12 +122,12 @@ impl FnLower<'_, '_> {
         for ((_, s, generics), b) in subs.into_iter().zip(blocks) {
             self.switch_to(b);
             if generics != 0 {
-                self.ret_status(ST_UNSUPPORTED);
+                self.terminate(Terminator::Return(cint(unsupported, ret)));
                 continue;
             }
             let sty = self.cx.intern(TyKind::Adt(s, vec![]));
             let f = self.cx.func(Work::Glue(g, sty));
-            let out = Place::local(self.temp(Ty::U8));
+            let out = Place::local(self.temp(ret));
             let args = params
                 .iter()
                 .map(|&p| Operand::Copy(Place::local(p)))

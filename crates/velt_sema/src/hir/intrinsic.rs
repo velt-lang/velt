@@ -577,6 +577,26 @@ pub enum Intrinsic {
     /// `T` is a typed proxy (velt_vir's tagged pointer, proxy_typed.rs); `false` for a type that
     /// cannot hold one. A test of a bit, so a plain value keeps its own code path.
     IsTypedProxy,
+    /// `(x: borrow T) -> u64`: the identity of the value `x` (velt/reflect `identity`): the
+    /// address of a class object, a boxed value or an array, the data pointer of an `any` that
+    /// holds an object, an array or a function; 0 for a value without one (a number, a string,
+    /// a struct copied by value). A typed proxy's tag bit is cleared. Additive.
+    Identity,
+    /// `(x: borrow any) -> string`: what the value `x` holds is, from its descriptor (velt/reflect
+    /// `typeOf`): `"<kind>|<repr>|<name>|<hooks>"`, a static string (`any_reflect.rs`). Additive.
+    AnyReflectInfo,
+    /// `(x: borrow any) -> i64`: how many entries velt/reflect lists for the value `x` holds (the
+    /// fields of an object, the elements of an array or a tuple, the entry positions of a `Map`
+    /// or a `Record`), or -1 when it cannot list them. Additive.
+    AnyReflectCount,
+    /// `(x: borrow any, i: i64) -> string`: the name of entry `i` (`AnyReflectCount`). Additive.
+    AnyReflectName,
+    /// `(x: borrow any, i: i64) -> any`: the value of entry `i`, `undefined` for an absent
+    /// optional field or a deleted `Map` entry. Additive.
+    AnyReflectValue,
+    /// `(x: borrow any, key: borrow string) -> any`: what the `toJSON(key)` hook of the class
+    /// object `x` holds returns (`undefined` without one). Additive.
+    AnyReflectHook,
     /// `(x: borrow any) -> bool`: `Array.isArray(x)` (the value held is an array or a tuple).
     AnyIsArray,
     /// `(x: borrow any) -> string[]`: `Object.keys(x)`, the own enumerable string keys of the

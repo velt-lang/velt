@@ -72,6 +72,7 @@ package](../tooling/cli.md#typescript-declarations-the-velt-type-package)).
 | [path](path.md) | paths |
 | [process](process.md) | arguments, environment, exit · [standard input](process/stdin.md) · [child](process/child.md) (child processes) |
 | [random](random.md) | a fast per-thread generator · [uuid](random/uuid.md) |
+| [reflect](reflect.md) | what an `any` holds at run time |
 | [simd](simd.md) | the vector types and their methods |
 | [sync](sync.md) | `Atomic<T>` (in the prelude), `Backoff`, `VersionLatch` · [channels](sync/channel.md) · [epoch](sync/epoch.md) (reclamation) |
 | [task](task.md) | cancellation, timeouts, task scopes |
