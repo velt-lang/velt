@@ -321,7 +321,7 @@ def sqlite_benchmarks(ctx):
         "category": "sqlite", "name": "db workloads (file database, WAL)", "check": "results",
         "parse": "results", "unit": "ops/s",
         "impls": [impl("Rust rusqlite", "rust", [os.path.join(target, "release", "sqlite"), *quick], rerr),
-                  impl("Velt velt/sqlite", "velt", [velt, *quick], verr),
+                  impl("Velt sqlite package", "velt", [velt, *quick], verr),
                   impl("Node better-sqlite3", "node", [ctx.node or "node", os.path.join(db, "node", "sqlite.mjs"), *quick],
                        nerr or (None if ctx.node else "node not found")),
                   impl("Bun bun:sqlite", "bun", [ctx.bun or "bun", bun_file, *quick],

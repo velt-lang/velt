@@ -3,6 +3,7 @@ name = "velt_sqlite_native"
 version = "0.1.0"
 edition = "2021"
 publish = false
+description = "The sqlite package's native library: SQLite through rusqlite (compiled in, no system library)"
 
 [lib]
 # velt_native_<package>: the library's file name (one per package next to an executable).
@@ -10,10 +11,13 @@ name = "velt_native_sqlite"
 crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
-# Inside this repository; a published package would depend on `velt_native` from crates.io.
+# Inside this repository; a published package would depend on `velt_native` and `velt_text` from
+# crates.io.
 velt_native = { path = "../../../crates/velt_native" }
-rusqlite = { version = "0.40.2", features = ["bundled"] }
-serde_json = "1"
+velt_text = { path = "../../../crates/velt_text", features = ["sdk"] }
+rusqlite = { version = "0.40.2", features = ["bundled", "column_decltype"] }
+parking_lot = "0.12.5"
+rustc-hash = "2.1.3"
 
 [profile.release]
 panic = "unwind"

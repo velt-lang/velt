@@ -145,7 +145,7 @@ review. A benchmark, category or server that raises an error is recorded as fail
 `results.json` and the run goes on; the tables are written at the end in any case.
 `results.json` also records the installed npm package versions (react, react-dom, preact,
 preact-render-to-string, better-sqlite3, ws), the SQLite version that better-sqlite3, bun:sqlite
-and velt/sqlite report (`sqlite_version()`), and for rusqlite the version of the
+and the sqlite package report (`sqlite_version()`), and for rusqlite the version of the
 `libsqlite3-sys` crate, whose release fixes the SQLite it bundles.
 `test_report.py` (run by `run.sh` first) tests the list of losses on made-up results.
 

@@ -1,7 +1,7 @@
 // SQLite workloads (bench/db/README.md): a file database in the temp directory with WAL and
 // synchronous = NORMAL. Prints `RESULT <workload> <ops> <checksum> <ms>` per workload; the time
 // covers only the timed loop. `quick` as the first argument runs 1/20 of the sizes.
-import { open, Database } from "velt/sqlite";
+import { open, Database } from "sqlite";
 import { args } from "velt/process";
 import { tmpdir } from "velt/os";
 import { uuidv4 } from "velt/random/uuid";

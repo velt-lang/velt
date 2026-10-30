@@ -1,0 +1,93 @@
+// sqlite/engine/db_file (internal): a database file held in memory: its header, checked once, and the
+// offsets of its pages (https://sqlite.org/fileformat2.html#the_database_header).
+//
+// Step 1 of the pure-Velt engine (docs/internals/design/sqlite-engine.md): the whole file is
+// one `u8[]` and pages are offsets into it. The pager (step 2) replaces `data` with a page
+// cache over positioned reads; every reader here goes through `page(n)`, which gives the
+// offset of page `n`'s first byte.
+
+import { CorruptError } from "./errors";
+import { UTF8, readU16, readU32 } from "./format";
+
+function corruptPage(n: u32): never {
+  throw new CorruptError(`page ${n} out of range`);
+}
+
+/**
+ * A database file held in memory. `pageSize` and `usable` (the page size less the reserved
+ * bytes at the end of each page) come from the header. A file in WAL mode reads correctly only
+ * as checkpointed: this reader does not read the `-wal` file beside it.
+ */
+export class DbFile {
+  data: u8[];
+  pageSize: usize;
+  usable: usize;
+  pageCount: u32;
+  encoding: u32;
+  schemaCookie: u32;
+
+  constructor(data: u8[]) {
+    if (data.length < 100) {
+      throw new CorruptError("file is shorter than its header");
+    }
+    // "SQLite format 3\0"
+    const magic: u8[] = [83, 81, 76, 105, 116, 101, 32, 102, 111, 114, 109, 97, 116, 32, 51, 0];
+    for (let i: usize = 0; i < 16; i++) {
+      if (data[i] != magic[i]) {
+        throw new CorruptError("not a database file");
+      }
+    }
+    let pageSize = readU16(data, 16);
+    if (pageSize == 1) {
+      pageSize = 65536;
+    }
+    if (pageSize < 512 || (pageSize & (pageSize - 1)) != 0) {
+      throw new CorruptError(`page size ${pageSize}`);
+    }
+    // The read version (offset 19): 1 is a rollback journal, 2 is WAL; anything newer is a
+    // format this reader does not know (C SQLite refuses it too). A file in WAL mode reads as
+    // its last checkpoint: pages still in its `-wal` file are not read.
+    if (data[19] > 2) {
+      throw new CorruptError(`file format read version ${data[19]} is not supported`);
+    }
+    // The payload fractions (offsets 21 to 23) must be 64, 32 and 32: the local payload sizes
+    // assume them.
+    if (data[21] != 64 || data[22] != 32 || data[23] != 32) {
+      throw new CorruptError(`payload fractions ${data[21]}, ${data[22]}, ${data[23]}`);
+    }
+    this.data = data;
+    this.pageSize = pageSize;
+    this.usable = pageSize - (data[20] as usize);
+    // SQLite's own floor: below 480 usable bytes the cell size limits stop making sense.
+    if (this.usable < 480) {
+      throw new CorruptError(`usable page size ${this.usable}`);
+    }
+    // The in-header page count is valid when the change counter matches its version
+    // (offsets 24 and 92); otherwise the file size says.
+    const counted = readU32(data, 28);
+    const fromSize = ((data.length as usize) / (pageSize as usize)) as u32;
+    this.pageCount = counted != 0 && readU32(data, 24) == readU32(data, 92) ? counted : fromSize;
+    if ((this.pageCount as usize) * pageSize > data.length) {
+      throw new CorruptError("file is shorter than its page count");
+    }
+    this.schemaCookie = readU32(data, 40);
+    const enc = readU32(data, 56);
+    this.encoding = enc == 0 ? UTF8 : enc;
+    if (this.encoding != UTF8) {
+      throw new CorruptError("UTF-16 databases are not supported yet");
+    }
+  }
+
+  /** The offset of page `n`'s first byte (pages count from 1). */
+  page(n: u32): usize {
+    if (n == 0 || n > this.pageCount) {
+      corruptPage(n);
+    }
+    return ((n - 1) as usize) * this.pageSize;
+  }
+
+  /** The offset of page `n`'s b-tree header: past the file header on page 1. */
+  header(n: u32): usize {
+    return n == 1 ? 100 : this.page(n);
+  }
+}

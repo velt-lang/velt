@@ -1,0 +1,71 @@
+// sqlite/engine/exec/plan/or_as_in (internal): `x = a OR x = b` as `x IN (a, b)` for the planner,
+// as SQLite's OR optimization rewrites it.
+
+import {
+  E_BINARY,
+  E_COLUMN,
+  E_INT,
+  E_IN_LIST,
+  E_PARAM,
+  E_REAL,
+  E_STRING,
+  Expr,
+} from "../../sql/types";
+
+/**
+ * `x = a OR x = b OR …` on one column as `x IN (a, b, …)`, for an index lookup per value
+ * (SQLite's exprAnalyzeOrTerm); null for any other term.
+ */
+export function orAsIn(e: Expr): Expr | null {
+  if (e.kind != E_BINARY || e.op != "OR") {
+    return null;
+  }
+  const parts: Expr[] = [];
+  orParts(e, parts);
+  let col: Expr | null = null;
+  const vals: Expr[] = [];
+  for (const p of parts) {
+    if (p.kind != E_BINARY || (p.op != "=" && p.op != "==")) {
+      return null;
+    }
+    const a = p.a!;
+    const b = p.b!;
+    let c: Expr | null = null;
+    let v: Expr | null = null;
+    if (a.kind == E_COLUMN && literal(b)) {
+      c = a;
+      v = b;
+    } else if (b.kind == E_COLUMN && literal(a)) {
+      c = b;
+      v = a;
+    } else {
+      return null;
+    }
+    if (col == null) {
+      col = c;
+    } else if (
+      col!.name.toUpperCase() != c!.name.toUpperCase() ||
+      col!.table.toUpperCase() != c!.table.toUpperCase()
+    ) {
+      return null;
+    }
+    vals.push(v!);
+  }
+  const x = new Expr(E_IN_LIST, e.at);
+  x.a = col;
+  x.args = vals;
+  return x;
+}
+
+export function orParts(e: Expr, out: Expr[]) {
+  if (e.kind == E_BINARY && e.op == "OR") {
+    orParts(e.a!, out);
+    orParts(e.b!, out);
+  } else {
+    out.push(e);
+  }
+}
+
+export function literal(e: Expr): bool {
+  return e.kind == E_INT || e.kind == E_REAL || e.kind == E_STRING || e.kind == E_PARAM;
+}

@@ -1,0 +1,258 @@
+// sqlite/engine/exec/value/numeric (internal): values as numbers: text read as a number
+// (`Numeric`), numeric context, column affinities, truth in a WHERE clause and integer conversion,
+// as SQLite has them (https://sqlite.org/datatype3.html).
+
+import { NULL, INTEGER, REAL, TEXT } from "../../storage_class";
+import { A_INTEGER, A_NUMERIC, A_REAL, A_TEXT } from "../../affinity";
+import { utf8Encode } from "velt/encoding";
+import { atof } from "./atof";
+import { Val, intVal, realVal, textVal } from "./val";
+import { toText } from "./value_text";
+
+/** A number read from text: its value, and whether the whole text (but spaces) was the number. */
+export struct Numeric {
+  v: Val;
+  whole: bool;
+}
+
+export function isSpace(c: i64): bool {
+  return c == 32 || c == 9 || c == 10 || c == 13 || c == 12 || c == 11;
+}
+
+/**
+ * The longest prefix of `s` that is a number, as SQLite reads text in numeric context
+ * (`'12abc' + 0` is 12, `'abc' + 0` is 0, `' 1.5e3x'` is 1500.0). An integer is exact; one
+ * outside i64 is a REAL. `whole` is set when the entire text (but surrounding spaces) is the
+ * number.
+ */
+export function parseNumeric(s: string): Numeric {
+  const n = s.length as i64;
+  let i: i64 = 0;
+  while (i < n && isSpace(s.charCodeAt(i))) {
+    i++;
+  }
+  const start = i;
+  if (i < n && (s.charCodeAt(i) == 43 || s.charCodeAt(i) == 45)) {
+    i++;
+  }
+  const digits0 = i;
+  while (i < n && s.charCodeAt(i) >= 48 && s.charCodeAt(i) <= 57) {
+    i++;
+  }
+  let intDigits = i - digits0;
+  let real = false;
+  let fracDigits: i64 = 0;
+  if (i < n && s.charCodeAt(i) == 46) {
+    const f0 = i + 1;
+    let j = f0;
+    while (j < n && s.charCodeAt(j) >= 48 && s.charCodeAt(j) <= 57) {
+      j++;
+    }
+    fracDigits = j - f0;
+    if (intDigits > 0 || fracDigits > 0) {
+      real = true;
+      i = j;
+    }
+  }
+  if (intDigits == 0 && fracDigits == 0) {
+    return Numeric { v: intVal(0), whole: false };
+  }
+  if (i < n && (s.charCodeAt(i) == 101 || s.charCodeAt(i) == 69)) {
+    let j = i + 1;
+    if (j < n && (s.charCodeAt(j) == 43 || s.charCodeAt(j) == 45)) {
+      j++;
+    }
+    const e0 = j;
+    while (j < n && s.charCodeAt(j) >= 48 && s.charCodeAt(j) <= 57) {
+      j++;
+    }
+    if (j > e0) {
+      real = true;
+      i = j;
+    }
+  }
+  const text = s.slice(start, i);
+  let end = i;
+  while (end < n && isSpace(s.charCodeAt(end))) {
+    end++;
+  }
+  const whole = end == n;
+  if (!real) {
+    // Exact in i64, else (only then) a REAL.
+    return Numeric { v: exactInt(text), whole: whole };
+  }
+  return Numeric { v: realVal(sqliteAtof(text)), whole: whole };
+}
+
+// Decimal text to a double as SQLite converts it (not always the nearest double).
+function sqliteAtof(text: string): f64 {
+  return atof(utf8Encode(text), 0).value;
+}
+
+// A decimal integer, exactly, if it fits in i64 (else a REAL).
+function exactInt(text: string): Val {
+  let neg = false;
+  let i: i64 = 0;
+  if (text.charCodeAt(0) == 45 || text.charCodeAt(0) == 43) {
+    neg = text.charCodeAt(0) == 45;
+    i = 1;
+  }
+  let v: u64 = 0;
+  while (i < (text.length as i64)) {
+    const d = (text.charCodeAt(i) - 48) as u64;
+    if (v > (18446744073709551615 - d) / 10) {
+      return realVal(sqliteAtof(text));
+    }
+    v = v * 10 + d;
+    i++;
+  }
+  if (neg) {
+    if (v > 9223372036854775808) {
+      return realVal(sqliteAtof(text));
+    }
+    return intVal(v == 9223372036854775808 ? -9223372036854775807 - 1 : -(v as i64));
+  }
+  if (v > 9223372036854775807) {
+    return realVal(sqliteAtof(text));
+  }
+  return intVal(v as i64);
+}
+
+/** A value in numeric context: TEXT and BLOB read as their numeric prefix, NULL stays. */
+export function toNumber(v: Val): Val {
+  if (v.t == INTEGER || v.t == REAL || v.t == NULL) {
+    return v;
+  }
+  return parseNumeric(toText(v)).v;
+}
+
+/**
+ * A REAL that is an integer strictly inside i64's range as an INTEGER (for affinity), else
+ * itself: SQLite's sqlite3VdbeIntegerAffinity leaves -2^63 a REAL.
+ */
+function realToInt(v: Val): Val {
+  if (
+    v.t == REAL &&
+    v.r == Math.trunc(v.r) &&
+    v.r > -9223372036854775808.0 &&
+    v.r < 9223372036854775808.0
+  ) {
+    return intVal(v.r as i64);
+  }
+  return v;
+}
+
+/** Applies a column affinity to a value being stored or compared (§3, §4.2 of datatype3). */
+export function applyAffinity(v: Val, a: u8): Val {
+  if (a == A_TEXT) {
+    if (v.t == INTEGER || v.t == REAL) {
+      return textVal(toText(v));
+    }
+    return v;
+  }
+  if (a == A_INTEGER || a == A_NUMERIC) {
+    if (v.t == TEXT) {
+      const n = parseNumeric(v.s);
+      if (n.whole) {
+        return realToInt(n.v);
+      }
+      return v;
+    }
+    if (v.t == REAL) {
+      return realToInt(v);
+    }
+    return v;
+  }
+  if (a == A_REAL) {
+    if (v.t == TEXT) {
+      const n = parseNumeric(v.s);
+      if (n.whole) {
+        return n.v.t == INTEGER ? realVal(n.v.i as f64) : positiveZero(n.v);
+      }
+      return v;
+    }
+    if (v.t == INTEGER) {
+      return realVal(v.i as f64);
+    }
+    return positiveZero(v);
+  }
+  return v;
+}
+
+/**
+ * -0.0 as 0.0: a REAL column stores an integral value as an integer (fileformat2 §2.1), so
+ * SQLite reads -0.0 back as 0.0.
+ */
+function positiveZero(v: Val): Val {
+  return v.t == REAL && v.r == 0 ? realVal(0.0) : v;
+}
+
+/** Whether a value is true in a WHERE clause (NULL is not; text reads as a number). */
+export function truthy(v: Val): bool {
+  if (v.t == INTEGER) {
+    return v.i != 0;
+  }
+  if (v.t == REAL) {
+    return v.r != 0;
+  }
+  if (v.t == NULL) {
+    return false;
+  }
+  const n = toNumber(v);
+  return n.t == INTEGER ? n.i != 0 : n.r != 0;
+}
+
+export const I64_MAX: i64 = 9223372036854775807;
+export const I64_MIN: i64 = -9223372036854775807 - 1;
+
+/**
+ * A value as an integer, as SQLite's sqlite3VdbeIntValue: an INTEGER exactly, a REAL truncated
+ * and saturated at the ends of i64, text (and a blob's bytes) by its integer prefix only
+ * (`'3.0e2'` is 3), saturated too; NULL is 0.
+ */
+export function intValue(v: Val): i64 {
+  if (v.t == INTEGER) {
+    return v.i;
+  }
+  if (v.t == REAL) {
+    if (v.r != v.r) {
+      return 0;
+    }
+    if (v.r <= -9223372036854775808.0) {
+      return I64_MIN;
+    }
+    if (v.r >= 9223372036854775807.0) {
+      return I64_MAX;
+    }
+    return Math.trunc(v.r) as i64;
+  }
+  if (v.t == NULL) {
+    return 0;
+  }
+  const s = toText(v);
+  const n = s.length as i64;
+  let i: i64 = 0;
+  while (i < n && isSpace(s.charCodeAt(i))) {
+    i++;
+  }
+  let neg = false;
+  if (i < n && (s.charCodeAt(i) == 43 || s.charCodeAt(i) == 45)) {
+    neg = s.charCodeAt(i) == 45;
+    i++;
+  }
+  let m: u64 = 0;
+  let over = false;
+  while (i < n && s.charCodeAt(i) >= 48 && s.charCodeAt(i) <= 57) {
+    const d = (s.charCodeAt(i) - 48) as u64;
+    if (m > (18446744073709551615 - d) / 10) {
+      over = true;
+    } else {
+      m = m * 10 + d;
+    }
+    i++;
+  }
+  if (neg) {
+    return over || m >= 9223372036854775808 ? I64_MIN : -(m as i64);
+  }
+  return over || m > 9223372036854775807 ? I64_MAX : m as i64;
+}

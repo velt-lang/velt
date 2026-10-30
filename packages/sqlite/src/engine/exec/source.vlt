@@ -1,0 +1,245 @@
+// sqlite/engine/exec/source (internal): one FROM item of a query at run time (`Source`).
+//
+// A `Source` is one FROM item: a table read through its b-tree cursor (and, when the plan picks
+// one, an index cursor whose entries hold some columns and the rowid), or rows a subquery, a CTE or
+// VALUES produced (materialized). Expressions read its columns while the loops of the query stand
+// on a row: values are decoded from the record only when read, and the table row behind an index
+// entry is found only when a column the index lacks is read.
+
+import { DbFile } from "../db_file";
+import { Cursor } from "../cursor";
+import { INTEGER, NULL, REAL } from "../storage_class";
+import { A_REAL } from "../affinity";
+import { Table } from "../schema/table";
+import { Val, intVal, nullVal, realVal } from "./value/val";
+import { cursorText, cursorVal } from "./cursor_values";
+import { Out } from "./out";
+
+/** Source kinds. */
+export const SRC_TABLE: u8 = 0;
+export const SRC_ROWS: u8 = 1;
+
+/** The column number standing for the rowid (`rowid`, `oid`, `_rowid_`). */
+export const ROWID: i64 = -1;
+
+/** One FROM item while a query runs. */
+export class Source {
+  kind: u8;
+  /** The name it is referred to by: its alias, else the table's name. */
+  name: string;
+  table: Table | null = null;
+  /** Its columns: names, affinities and collations. */
+  cols: string[] = [];
+  affs: u8[] = [];
+  colls: u8[] = [];
+  /** Columns that `*` and unqualified names skip (the right side of USING and NATURAL). */
+  hidden: bool[] = [];
+  /** The position of the rowid alias column, or -1. */
+  rowidCol: i64 = -1;
+  /** Columns the query reads (a covering index must hold them all). */
+  used: bool[] = [];
+  /** The value of each column in a record too short to hold it (ALTER TABLE ADD COLUMN). */
+  dflt: Val[] = [];
+
+  /** A table's cursor. */
+  cur: Cursor | null = null;
+  /** The index cursor, when the plan reads the table through an index. */
+  ix: Cursor | null = null;
+  /** For each table column, its field in the index entries, or -1. */
+  ixMap: i64[] = [];
+  /** The table row is reached through `ix`: `cur` is moved to it on the first read. */
+  viaIndex: bool = false;
+  seeked: bool = false;
+  /** A LEFT JOIN found no row: every column reads NULL. */
+  nullRow: bool = false;
+
+  /** Materialized rows (a subquery's output, not shared), `width` values each, and the current one. */
+  rows: Out | null = null;
+  width: usize = 0;
+  at: usize = 0;
+
+  constructor(kind: u8, name: string) {
+    this.kind = kind;
+    this.name = name;
+  }
+
+  /** A table read through its b-tree. */
+  static ofTable(db: DbFile, t: Table, name: string): Source {
+    const s = new Source(SRC_TABLE, name);
+    s.table = t;
+    for (const c of t.columns) {
+      s.cols.push(c.name);
+      s.affs.push(c.affinity);
+      s.colls.push(c.collation);
+      s.hidden.push(false);
+      s.used.push(false);
+      s.dflt.push(nullVal());
+    }
+    s.rowidCol = t.rowidColumn;
+    s.cur = new Cursor(db, t.root);
+    return s;
+  }
+
+  /** The column named `name` (case-insensitive), or -1. */
+  column(name: string): i64 {
+    const n = name.toUpperCase();
+    for (let i: usize = 0; i < this.cols.length; i++) {
+      if (this.cols[i].toUpperCase() == n) {
+        return i as i64;
+      }
+    }
+    return -1;
+  }
+
+  /** Whether `name` is the rowid of this source (a table without a column of that name). */
+  isRowidName(name: string): bool {
+    if (this.kind != SRC_TABLE) {
+      return false;
+    }
+    const n = name.toUpperCase();
+    return n == "ROWID" || n == "OID" || n == "_ROWID_";
+  }
+
+  /** The current row's rowid. */
+  rowid(): i64 {
+    if (this.viaIndex) {
+      const ix = this.ix!;
+      const n = ix.columnCount();
+      return ix.int(n - 1);
+    }
+    return this.cur!.rowid;
+  }
+
+  /** Moves the table cursor to the row the index entry names (once per entry). */
+  seek() {
+    if (this.viaIndex && !this.seeked) {
+      this.cur!.seekRowid(this.rowid());
+      this.seeked = true;
+    }
+  }
+
+  /** Whether column `i` of the current row is NULL, without decoding it. */
+  isNull(i: i64): bool {
+    if (this.nullRow) {
+      return true;
+    }
+    if (this.kind == SRC_ROWS) {
+      return this.rows!.vals[this.at * this.width + (i as usize)].t == NULL;
+    }
+    if (i < 0 || i == this.rowidCol) {
+      return false;
+    }
+    const k = i as usize;
+    if (this.viaIndex && this.ixMap[k] >= 0) {
+      return this.ix!.columnType(this.ixMap[k] as usize) == NULL;
+    }
+    this.seek();
+    const c = this.cur!;
+    if (k >= c.columnCount()) {
+      return this.dflt[k].t == NULL;
+    }
+    return c.columnType(k) == NULL;
+  }
+
+  /** Column `i` of the current row (`ROWID` for the rowid). */
+  col(i: i64): Val {
+    if (this.nullRow) {
+      return nullVal();
+    }
+    if (this.kind == SRC_ROWS) {
+      return this.rows!.vals[this.at * this.width + (i as usize)];
+    }
+    if (i < 0 || i == this.rowidCol) {
+      return intVal(this.rowid());
+    }
+    const k = i as usize;
+    if (this.viaIndex && this.ixMap[k] >= 0) {
+      return this.real(k, cursorVal(this.ix!, this.ixMap[k] as usize));
+    }
+    this.seek();
+    const c = this.cur!;
+    if (k >= c.columnCount()) {
+      return this.dflt[k];
+    }
+    return this.real(k, cursorVal(c, k));
+  }
+
+  // Typed reads of column `i` of the current row, without a `Val` (engine/exec/loop/pull):
+  // `typeAt` first, then the read of that type.
+
+  /** The storage class column `i` reads as (a REAL column's integers as REAL). */
+  typeAt(i: i64): u8 {
+    if (this.nullRow) {
+      return NULL;
+    }
+    if (this.kind == SRC_ROWS) {
+      return this.rows!.vals[this.at * this.width + (i as usize)].t;
+    }
+    if (i < 0 || i == this.rowidCol) {
+      return INTEGER;
+    }
+    const k = i as usize;
+    let t: u8 = NULL;
+    if (this.viaIndex && this.ixMap[k] >= 0) {
+      t = this.ix!.columnType(this.ixMap[k] as usize);
+    } else {
+      this.seek();
+      const c = this.cur!;
+      if (k >= c.columnCount()) {
+        return this.dflt[k].t;
+      }
+      t = c.columnType(k);
+    }
+    return t == INTEGER && this.affs[k] == A_REAL ? REAL : t;
+  }
+
+  /** Column `i` (INTEGER) of the current row. */
+  intAt(i: i64): i64 {
+    if (this.kind == SRC_ROWS) {
+      return this.rows!.vals[this.at * this.width + (i as usize)].i;
+    }
+    if (i < 0 || i == this.rowidCol) {
+      return this.rowid();
+    }
+    const k = i as usize;
+    if (this.viaIndex && this.ixMap[k] >= 0) {
+      return this.ix!.int(this.ixMap[k] as usize);
+    }
+    const c = this.cur!;
+    return k < c.columnCount() ? c.int(k) : this.dflt[k].i;
+  }
+
+  /** Column `i` (REAL) of the current row. */
+  realAt(i: i64): f64 {
+    if (this.kind == SRC_ROWS) {
+      return this.rows!.vals[this.at * this.width + (i as usize)].r;
+    }
+    const k = i as usize;
+    if (this.viaIndex && this.ixMap[k] >= 0) {
+      return this.ix!.real(this.ixMap[k] as usize);
+    }
+    const c = this.cur!;
+    return k < c.columnCount() ? c.real(k) : this.dflt[k].r;
+  }
+
+  /** Column `i` (TEXT) of the current row. */
+  textAt(i: i64): string {
+    if (this.kind == SRC_ROWS) {
+      return this.rows!.vals[this.at * this.width + (i as usize)].s;
+    }
+    const k = i as usize;
+    if (this.viaIndex && this.ixMap[k] >= 0) {
+      return cursorText(this.ix!, this.ixMap[k] as usize);
+    }
+    const c = this.cur!;
+    return k < c.columnCount() ? cursorText(c, k) : this.dflt[k].s;
+  }
+
+  /** A REAL column's integral values are stored as integers: they read back as REAL. */
+  real(k: usize, v: Val): Val {
+    if (v.t == INTEGER && this.affs[k] == A_REAL) {
+      return realVal(v.i as f64);
+    }
+    return v;
+  }
+}

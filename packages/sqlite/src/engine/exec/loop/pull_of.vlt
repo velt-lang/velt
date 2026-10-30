@@ -1,0 +1,60 @@
+// sqlite/engine/exec/loop/pull_of (internal): a SELECT core's query as a `Pull`
+// (engine/exec/loop/pull): a walk per FROM level, the terms its loop checks, the result columns.
+
+import { Ev, Pred } from "../types";
+import { Scope } from "../scope";
+import { Query } from "../query";
+import { ExprCompiler } from "../expr_compiler";
+import { Pull } from "./pull";
+import { walkOf } from "./walk_of";
+import { Emitter } from "../emitter";
+import { Access } from "../plan/access";
+import { Term } from "../plan/term";
+import { allOf } from "./loop";
+
+// The query as a `Pull`: a walk per level, the terms its loop checks, the result columns.
+export function pullOf(
+  c: ExprCompiler,
+  sc: Scope,
+  access: Access[],
+  terms: Term[],
+  left: bool[],
+  pre: Pred[],
+  em: Emitter,
+  q: Query,
+  limitEv: Ev | null,
+  offsetEv: Ev | null,
+): Pull {
+  const p = new Pull(q.names);
+  for (let lv: usize = 0; lv < sc.sources.length; lv++) {
+    const src = sc.sources[lv];
+    p.walks.push(walkOf(c, src, access[lv]));
+    p.srcs.push(src);
+    p.left.push(left[lv]);
+    const wh: Pred[] = [];
+    const on: Pred[] = [];
+    for (const t of terms) {
+      if (t.level != (lv as i64) || t.used || t.virtual) {
+        continue;
+      }
+      if (left[lv] && t.on == (lv as i64)) {
+        on.push(t.pred);
+      } else {
+        wh.push(t.pred);
+      }
+    }
+    p.wheres.push(allOf(wh));
+    p.ons.push(allOf(on));
+  }
+  p.pre = pre;
+  p.evs = em.results;
+  for (let i: usize = 0; i < q.refSrc.length; i++) {
+    p.plain.push(q.refSrc[i]);
+    p.cols.push(q.refCol[i]);
+  }
+  p.readers();
+  p.limitEv = limitEv;
+  p.offsetEv = offsetEv;
+  p.single = sc.sources.length == 1 && !left[0];
+  return p;
+}

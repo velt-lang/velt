@@ -1,0 +1,63 @@
+// sqlite/engine/exec/plan/rowid_key (internal): the keys the loops seek with: a rowid from a value
+// compared under numeric affinity (`RowidKey`), where a value that is no rowid lies, and a value
+// added to an index key.
+
+import { NULL, INTEGER, REAL, TEXT, BLOB } from "../../storage_class";
+import { KeyRec } from "../../key_rec";
+import { A_NUMERIC } from "../../affinity";
+import { AFF_NONE, forCompare } from "../value/ops";
+import { Val } from "../value/val";
+
+/** Adds a value to a decoded index key. */
+export function addKeyField(k: KeyRec, v: Val) {
+  if (v.t == NULL) {
+    k.addNull();
+  } else if (v.t == INTEGER) {
+    k.addInt(v.i);
+  } else if (v.t == REAL) {
+    k.addReal(v.r);
+  } else if (v.t == TEXT) {
+    k.addText(v.s);
+  } else {
+    k.addBlob(v.b);
+  }
+}
+
+/** A rowid from a value compared under numeric affinity: its integer, or none. */
+export struct RowidKey {
+  ok: bool;
+  value: i64;
+  /** For a REAL between integers: the value was rounded (exclusive bounds move). */
+  frac: bool;
+}
+
+export function rowidKey(v0: Val, aff: u8, up: bool): RowidKey {
+  const v = forCompare(v0, aff == AFF_NONE ? A_NUMERIC : aff);
+  if (v.t == INTEGER) {
+    return RowidKey { ok: true, value: v.i, frac: false };
+  }
+  if (v.t == REAL) {
+    const r = v.r;
+    if (r != r || r >= 9223372036854775808.0 || r < -9223372036854775808.0) {
+      return RowidKey { ok: false, value: 0, frac: false };
+    }
+    const t = up ? Math.ceil(r) : Math.floor(r);
+    return RowidKey { ok: true, value: t as i64, frac: t != r };
+  }
+  return RowidKey { ok: false, value: 0, frac: false };
+}
+
+/**
+ * Where a bound that is no rowid lies (`rowidKey` not ok): 1 above every integer (a REAL of
+ * 2^63 or more, text, a blob), -1 below every integer (a REAL under -2^63), 0 nowhere (NULL).
+ */
+export function beyondRowids(v0: Val, aff: u8): i64 {
+  const v = forCompare(v0, aff == AFF_NONE ? A_NUMERIC : aff);
+  if (v.t == REAL) {
+    return v.r < 0 ? -1 : (v.r > 0 ? 1 : 0);
+  }
+  if (v.t == TEXT || v.t == BLOB) {
+    return 1;
+  }
+  return 0;
+}

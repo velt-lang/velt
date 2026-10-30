@@ -1,7 +1,7 @@
 // The todo list in a SQLite database: the same operations and rules as `TodoStore`, but every
 // change is its own committed statement, so there is no snapshot file to write. The schema is
 // created on open, the database runs in WAL mode and each query is a statement prepared once.
-import { open, Database, Statement, SqliteError } from "velt/sqlite";
+import { open, Database, Statement, SqliteError } from "sqlite";
 import {
   Todo,
   NewTodoBody,

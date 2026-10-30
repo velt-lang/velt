@@ -1,0 +1,49 @@
+// sqlite/engine/sql/expr_height (internal): the height of an expression tree, bounded as in SQLite
+// (exprSetHeight, sqlite3ExprCheckHeight).
+
+import { SqlError } from "./errors";
+import { Expr } from "./types";
+
+/** SQLite's SQLITE_MAX_EXPR_DEPTH: the highest expression tree it accepts. */
+export const MAX_HEIGHT: i64 = 1000;
+
+/** Sets `e.height` to one more than its highest operand, as SQLite's exprSetHeight. */
+export function sized(e: Expr): Expr {
+  let h: i64 = 0;
+  if (e.a != null) {
+    h = e.a!.height;
+  }
+  if (e.b != null && e.b!.height > h) {
+    h = e.b!.height;
+  }
+  if (e.c != null && e.c!.height > h) {
+    h = e.c!.height;
+  }
+  for (const x of e.args) {
+    if (x.height > h) {
+      h = x.height;
+    }
+  }
+  if (e.filter != null && e.filter!.height > h) {
+    h = e.filter!.height;
+  }
+  if (e.select != null && e.select!.height > h) {
+    h = e.select!.height;
+  }
+  e.height = h + 1;
+  return checked(e);
+}
+
+/** `e` one level higher (a folded operator). */
+export function raised(e: Expr): Expr {
+  e.height++;
+  return checked(e);
+}
+
+/** Throws SQLite's error for a tree higher than it accepts (sqlite3ExprCheckHeight). */
+export function checked(e: Expr): Expr {
+  if (e.height > MAX_HEIGHT) {
+    throw new SqlError(`Expression tree is too large (maximum depth ${MAX_HEIGHT})`, e.at);
+  }
+  return e;
+}

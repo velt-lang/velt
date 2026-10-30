@@ -1,0 +1,63 @@
+// sqlite/engine/sql/constraint (internal): the clauses table and column constraints of SQLite's grammar
+// share: ON CONFLICT, REFERENCES with its actions, and DEFERRABLE.
+
+import { Parser } from "./parser";
+import { columnNames, conflictResolution } from "./clauses";
+
+/** ON CONFLICT <resolution> of a constraint (kept by SQLite in the schema; enforced later). */
+export function conflictClause(p: Parser) {
+  if (p.isKw("ON") && p.isKwAt(1, "CONFLICT")) {
+    p.advance();
+    p.advance();
+    conflictResolution(p);
+  }
+}
+
+/**
+ * REFERENCES table [(columns)], then ON DELETE / UPDATE / INSERT actions and MATCH: read and
+ * kept in the schema text only.
+ */
+export function references(p: Parser) {
+  p.expectKw("REFERENCES");
+  p.name();
+  if (p.isOp("(")) {
+    columnNames(p);
+  }
+  while (true) {
+    if (p.eatKw("MATCH")) {
+      p.name();
+    } else if (p.eatKw("ON")) {
+      if (!p.eatKw("DELETE") && !p.eatKw("UPDATE") && !p.eatKw("INSERT")) {
+        p.fail();
+      }
+      // SET NULL, SET DEFAULT, CASCADE, RESTRICT, NO ACTION.
+      if (p.eatKw("SET")) {
+        if (!p.eatKw("NULL") && !p.eatKw("DEFAULT")) {
+          p.fail();
+        }
+      } else if (p.eatKw("NO")) {
+        p.expectKw("ACTION");
+      } else if (!p.eatKw("CASCADE") && !p.eatKw("RESTRICT")) {
+        p.fail();
+      }
+    } else {
+      return;
+    }
+  }
+}
+
+/** `[NOT] DEFERRABLE [INITIALLY DEFERRED | INITIALLY IMMEDIATE]`, if there. */
+export function deferrable(p: Parser): bool {
+  if (p.isKw("NOT") && p.isKwAt(1, "DEFERRABLE")) {
+    p.advance();
+  }
+  if (!p.eatKw("DEFERRABLE")) {
+    return false;
+  }
+  if (p.eatKw("INITIALLY")) {
+    if (!p.eatKw("DEFERRED")) {
+      p.expectKw("IMMEDIATE");
+    }
+  }
+  return true;
+}

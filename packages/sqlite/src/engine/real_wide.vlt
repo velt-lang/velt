@@ -1,0 +1,175 @@
+// sqlite/engine/real_wide (internal): the wide arithmetic of SQLite's decimal conversion (util.c, public
+// domain): 128-bit products, the top bits of a power of ten, and the double nearest
+// d * 10^p (sqlite3Fp10Convert2), which engine/real and the parse of REAL text use.
+
+import { BASE, SCALE, SCALE_LO } from "./real_tables";
+
+const M32: u64 = 0xffffffff;
+export const BIT63: u64 = 0x8000000000000000;
+const BIT52: u64 = 0x10000000000000;
+
+/** A 128-bit (or 96-bit) quantity: the high 64 bits and the bits below them. */
+struct Wide {
+  hi: u64;
+  lo: u64;
+}
+
+/** a * b as 128 bits. */
+export function mul128(a: u64, b: u64): Wide {
+  const a0 = a & M32;
+  const a1 = a >> 32;
+  const b0 = b & M32;
+  const b1 = b >> 32;
+  const a0b0 = a0 * b0;
+  const a0b1 = a0 * b1;
+  const a1b0 = a1 * b0;
+  const t = (a0b0 >> 32) + (a0b1 & M32) + (a1b0 & M32);
+  return Wide {
+    hi: a1 * b1 + (a0b1 >> 32) + (a1b0 >> 32) + (t >> 32),
+    lo: (a0b0 & M32) | ((t & M32) << 32),
+  };
+}
+
+/** The upper 96 bits of (a << 32 | aLo) * b: the top 64 in `hi`, the next 32 in `lo`. */
+function mul160(a: u64, aLo: u64, b: u64): Wide {
+  const x2 = a >> 32;
+  const x1 = a & M32;
+  const y1 = b >> 32;
+  const y0 = b & M32;
+  const x2y1 = x2 * y1;
+  const x2y0 = x2 * y0;
+  const x1y1 = x1 * y1;
+  const x1y0 = x1 * y0;
+  const x0y1 = aLo * y1;
+  const x0y0 = aLo * y0;
+  let r3 = (x2y1 & M32) + (x2y0 >> 32) + (x1y1 >> 32);
+  let r2 = (x2y0 & M32) + (x1y1 & M32) + (x1y0 >> 32) + (x0y1 >> 32);
+  const r1 = (x1y0 & M32) + (x0y1 & M32) + (x0y0 >> 32);
+  r2 += r1 >> 32;
+  r3 += r2 >> 32;
+  return Wide { hi: ((x2y1 >> 32) << 32) + r3, lo: r2 & M32 };
+}
+
+/** The top 64 bits of pow(10, p) (and the next 32 in `lo`), p in -348..347. */
+export function powerOfTen(p: i64): Wide {
+  let g: i64 = 0;
+  let n: i64 = 0;
+  if (p < 0) {
+    if (p == -1) {
+      return Wide { hi: SCALE[13], lo: SCALE_LO[13] };
+    }
+    // C's truncating division and remainder, then n brought into 0..26.
+    g = -(-p / 27);
+    n = -(-p % 27);
+    if (n != 0) {
+      g--;
+      n += 27;
+    }
+  } else if (p < 27) {
+    return Wide { hi: BASE[p as usize], lo: 0 };
+  } else {
+    g = p / 27;
+    n = p % 27;
+  }
+  const s = SCALE[(g + 13) as usize];
+  const sLo = SCALE_LO[(g + 13) as usize];
+  if (n == 0) {
+    return Wide { hi: s, lo: sLo };
+  }
+  const w = mul160(s, sLo, BASE[n as usize]);
+  if ((w.hi & BIT63) == 0) {
+    return Wide { hi: (w.hi << 1) | ((w.lo >> 31) & 1), lo: ((w.lo << 1) | 1) & M32 };
+  }
+  return w;
+}
+
+/** floor(log2(10^p)) and floor(log10(2^p)), as util.c approximates them. */
+export function pwr10to2(p: i64): i64 {
+  return (p * 108853) >> 15;
+}
+
+export function pwr2to10(p: i64): i64 {
+  return (p * 78913) >> 18;
+}
+
+export function leadingZeros(m: u64): i64 {
+  let n: i64 = 0;
+  let x = m;
+  if (x <= 0x00000000ffffffff) {
+    n += 32;
+    x = x << 32;
+  }
+  if (x <= 0x0000ffffffffffff) {
+    n += 16;
+    x = x << 16;
+  }
+  if (x <= 0x00ffffffffffffff) {
+    n += 8;
+    x = x << 8;
+  }
+  if (x <= 0x0fffffffffffffff) {
+    n += 4;
+    x = x << 4;
+  }
+  if (x <= 0x3fffffffffffffff) {
+    n += 2;
+    x = x << 2;
+  }
+  if (x <= 0x7fffffffffffffff) {
+    n += 1;
+  }
+  return n;
+}
+
+/** The double nearest d * 10^p (sqlite3Fp10Convert2, after Russ Cox's fpfmt). */
+export function toDouble(d: u64, p: i64): f64 {
+  if (p < -348) {
+    return 0;
+  }
+  if (p > 347) {
+    return Infinity;
+  }
+  const b = 64 - leadingZeros(d);
+  const lp = pwr10to2(p);
+  let e = 53 - b - lp;
+  if (e > 1074) {
+    if (e >= 1130) {
+      return 0;
+    }
+    e = 1074;
+  }
+  const s = (-(e - (64 - b) + lp + 3)) as u64;
+  const pw = powerOfTen(p);
+  let pwrHi = pw.hi;
+  let pwrLo = pw.lo;
+  if (pwrLo != 0) {
+    pwrHi++;
+    pwrLo = ~pwrLo & M32;
+  }
+  const x = d << ((64 - b) as u64);
+  const w = mul128(x, pwrHi);
+  let hi = w.hi;
+  const mid1 = w.lo >> 32;
+  let sticky: u64 = 1;
+  if ((hi & ((1 << s) - 1)) == 0) {
+    const mid2 = mul128(x, pwrLo << 32).hi >> 32;
+    // u32 arithmetic in C: the difference wraps.
+    sticky = ((mid1 + 0x100000000 - mid2) & M32) > 1 ? 1 : 0;
+    if (mid1 < mid2) {
+      hi--;
+    }
+  }
+  let u = (hi >> s) | sticky;
+  if (u >= (1 << 55) - 2) {
+    u = (u >> 1) | (u & 1);
+    e--;
+  }
+  let m = (u + 1 + ((u >> 2) & 1)) >> 2;
+  if (e <= -972) {
+    return Infinity;
+  }
+  if ((m & BIT52) != 0) {
+    m = (m & ~BIT52) | (((1075 - e) as u64) << 52);
+  }
+  return f64.fromBits(m);
+}

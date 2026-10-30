@@ -1,0 +1,159 @@
+// sqlite/engine/exec/select_recursive (internal): recursive common table expressions (`initial
+// UNION [ALL] recursive`) compiled by the SELECT compiler (engine/exec/select_compiler): rows go
+// through a queue, as SQLite runs them.
+
+import { BINARY } from "../collation";
+import { C_NONE, C_UNION, C_UNION_ALL, Select } from "../sql/types";
+import { Ev } from "./types";
+import { Query } from "./query";
+import { Scope } from "./scope";
+import { prepareError } from "./errors";
+import { KeySet } from "./value/key_set";
+import { Val } from "./value/val";
+import { SelectCompiler } from "./select_compiler";
+import { limitValue } from "./emitter";
+import { CteDef, coreRefersTo } from "./cte_def";
+
+export function compileRecursive(sel: SelectCompiler, def: CteDef): Query {
+  const s = def.select;
+  let k: usize = 0;
+  while (k < s.cores.length && !coreRefersTo(s.cores[k], def.name)) {
+    k++;
+  }
+  if (k == 0 || k == s.cores.length) {
+    prepareError(`recursive reference in a subquery: ${def.name}`);
+  }
+  const op = s.cores[k].op;
+  if (op != C_UNION && op != C_UNION_ALL) {
+    prepareError(`circular reference: ${def.name}`);
+  }
+  if (s.orderBy.length > 0) {
+    prepareError("ORDER BY in a recursive common table expression is not supported yet");
+  }
+  const init = new Select();
+  const rec = new Select();
+  for (let i: usize = 0; i < s.cores.length; i++) {
+    if (i < k) {
+      init.cores.push(s.cores[i]);
+    } else {
+      rec.cores.push(s.cores[i]);
+    }
+  }
+  const qi = sel.select(init, def.outer);
+  const width: usize = qi.names.length;
+  if (def.cols.length > 0 && def.cols.length != width) {
+    prepareError(`table ${def.name} has ${width} values for ${def.cols.length} columns`);
+  }
+  const cur = new Query();
+  cur.fixed = true;
+  cur.names = def.cols.length > 0 ? def.cols : qi.names;
+  cur.affs = qi.affs;
+  cur.colls = qi.colls;
+  cur.out.width = width;
+  def.current = cur;
+  const firstOp = rec.cores[0].op;
+  rec.cores[0].op = C_NONE;
+  const qr = sel.select(rec, def.outer);
+  rec.cores[0].op = firstOp;
+  def.current = null;
+  if (qr.names.length != width) {
+    prepareError(
+      `SELECTs to the left and right of ${op == C_UNION ? "UNION" : "UNION ALL"} do not have the same number of result columns`,
+    );
+  }
+  const q = new Query();
+  q.names = cur.names;
+  q.affs = qi.affs;
+  q.colls = qi.colls;
+  q.out.width = width;
+  q.correlated = qi.correlated || qr.correlated;
+  for (let i: usize = 0; i < width; i++) {
+    q.refSrc.push(null);
+    q.refCol.push(-2);
+  }
+  // LIMIT and OFFSET name no column (SQLite's empty name context).
+  const limitEv: Ev | null = s.limit == null ? null : sel.ev(s.limit!, new Scope());
+  const offsetEv: Ev | null = s.offset == null ? null : sel.ev(s.offset!, new Scope());
+  const distinct = op == C_UNION;
+  const colls: u8[] = [];
+  for (const c of qi.colls) {
+    colls.push(c >= 0 ? c as u8 : BINARY);
+  }
+  const out = q.out;
+  // Run as a co-routine: each row is made when the reader wants it (an endless recursion
+  // stops at a LIMIT outside).
+  const st = new RecState();
+  q.lazyStart = () => {
+    st.limit = limitValue(limitEv, -1);
+    st.offset = limitValue(offsetEv, 0);
+    st.queue = [];
+    st.seen = new KeySet(width, colls);
+    st.head = 0;
+    st.done = st.limit == 0;
+    if (!st.done) {
+      qi.run();
+      enqueue(st.queue, qi.out.vals, width, distinct, st.seen);
+    }
+  };
+  q.lazyMore = () => {
+    while (!st.done && st.head * width < st.queue.length) {
+      const at = st.head * width;
+      st.head++;
+      let made = false;
+      if (st.offset > 0) {
+        st.offset--;
+      } else {
+        for (let j: usize = 0; j < width; j++) {
+          out.vals.push(st.queue[at + j]);
+        }
+        out.rows++;
+        made = true;
+        if (st.limit > 0 && (out.rows as i64) >= st.limit) {
+          st.done = true;
+          return true;
+        }
+      }
+      cur.out.reset();
+      for (let j: usize = 0; j < width; j++) {
+        cur.out.vals.push(st.queue[at + j]);
+      }
+      cur.out.rows = 1;
+      qr.run();
+      enqueue(st.queue, qr.out.vals, width, distinct, st.seen);
+      if (made) {
+        return true;
+      }
+    }
+    return false;
+  };
+  const start = q.lazyStart!;
+  const more = q.lazyMore!;
+  q.body = () => {
+    start();
+    while (more()) {}
+  };
+  return q;
+}
+
+/** The state of a recursive CTE's run: its queue, the rows seen (UNION), LIMIT and OFFSET. */
+class RecState {
+  queue: Val[] = [];
+  seen: KeySet = new KeySet(0, []);
+  head: usize = 0;
+  limit: i64 = -1;
+  offset: i64 = 0;
+  done: bool = false;
+}
+
+// Rows appended to a recursive CTE's queue (UNION: only rows not seen before).
+function enqueue(queue: Val[], rows: Val[], width: usize, distinct: bool, seen: KeySet) {
+  const n = width == 0 ? 0 : (rows.length as usize) / width;
+  for (let r: usize = 0; r < n; r++) {
+    if (distinct && seen.find(rows, r * width) >= 0) {
+      continue;
+    }
+    for (let j: usize = 0; j < width; j++) {
+      queue.push(rows[r * width + j]);
+    }
+  }
+}

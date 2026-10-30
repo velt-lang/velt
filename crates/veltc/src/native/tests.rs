@@ -108,6 +108,7 @@ fn diagnostics() -> String {
         shared: "shared/libvelt_native_demo.so".into(),
         import_lib: None,
         static_obj: None,
+        system_libs: None,
         exports: exports
             .iter()
             .map(|(n, s)| (n.to_string(), s.to_string()))

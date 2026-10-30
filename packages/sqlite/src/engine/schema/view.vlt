@@ -1,0 +1,16 @@
+// sqlite/engine/schema/view (internal): a view of the schema: its name, its column names and its SELECT.
+
+import { Select } from "../sql/types";
+
+/** A view: its name, its column names (if given) and its SELECT. */
+export class View {
+  name: string;
+  columns: string[];
+  select: Select;
+
+  constructor(name: string, columns: string[], select: Select) {
+    this.name = name;
+    this.columns = columns;
+    this.select = select;
+  }
+}

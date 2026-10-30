@@ -1,0 +1,84 @@
+// sqlite/engine/record (internal): comparing records as SQLite orders index keys
+// (https://sqlite.org/fileformat2.html#record_format, https://sqlite.org/datatype3.html#sort_order).
+//
+// Order: NULL < INTEGER and REAL (by value, compared exactly across the two) < TEXT (by the
+// column's collation; BINARY compares the UTF-8 bytes) < BLOB (bytes). A key that is a prefix of
+// a record compares equal to it here; the caller decides what equal means for a seek.
+
+import { corrupt } from "./errors";
+import { fieldSize, readBe } from "./format";
+import { readVarint } from "./varint";
+import { BINARY } from "./collation";
+import { compareBytes, compareIntReal, intAt, rank } from "./record_compare";
+
+/**
+ * Compares the record at `a` (in `x`, `na` bytes) with the record at `b` (in `y`) field by
+ * field, over the first `fields` fields or the shorter record. `colls[i]` and `desc[i]` give
+ * field `i`'s collation and direction (missing entries are BINARY, ascending). Returns a
+ * negative number, zero or a positive number.
+ */
+export function compareRecords(
+  x: u8[],
+  a: usize,
+  na: usize,
+  y: u8[],
+  b: usize,
+  nb: usize,
+  fields: usize,
+  colls: u8[],
+  desc: bool[],
+): i64 {
+  const ha = readVarint(x, a);
+  const hb = readVarint(y, b);
+  if (ha.value < 0 || (ha.value as usize) > na || hb.value < 0 || (hb.value as usize) > nb) {
+    corrupt("record header size");
+  }
+  const enda = a + (ha.value as usize);
+  const endb = b + (hb.value as usize);
+  let ta = a + ha.len;
+  let tb = b + hb.len;
+  let ba = enda;
+  let bb = endb;
+  let i: usize = 0;
+  while (i < fields && ta < enda && tb < endb) {
+    const va = readVarint(x, ta);
+    const vb = readVarint(y, tb);
+    ta += va.len;
+    tb += vb.len;
+    const sa = va.value;
+    const sb = vb.value;
+    // Each field's body must lie inside its record.
+    const za = fieldSize(sa, a + na - ba);
+    const zb = fieldSize(sb, b + nb - bb);
+    let c: i64 = 0;
+    const ra = rank(sa);
+    const rb = rank(sb);
+    if (ra != rb) {
+      c = ra < rb ? -1 : 1;
+    } else if (ra == 1) {
+      if (sa == 7 && sb == 7) {
+        const fa = f64.fromBits(readBe(x, ba, 8));
+        const fb = f64.fromBits(readBe(y, bb, 8));
+        c = fa < fb ? -1 : fa > fb ? 1 : 0;
+      } else if (sa == 7) {
+        c = -compareIntReal(intAt(y, bb, sb), f64.fromBits(readBe(x, ba, 8)));
+      } else if (sb == 7) {
+        c = compareIntReal(intAt(x, ba, sa), f64.fromBits(readBe(y, bb, 8)));
+      } else {
+        const ia = intAt(x, ba, sa);
+        const ib = intAt(y, bb, sb);
+        c = ia < ib ? -1 : ia > ib ? 1 : 0;
+      }
+    } else if (ra >= 2) {
+      const coll = ra == 2 && i < colls.length ? colls[i] : BINARY;
+      c = compareBytes(x, ba, za, y, bb, zb, coll);
+    }
+    if (c != 0) {
+      return i < desc.length && desc[i] ? -c : c;
+    }
+    ba += za;
+    bb += zb;
+    i++;
+  }
+  return 0;
+}

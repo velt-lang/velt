@@ -1,0 +1,148 @@
+// sqlite/engine/exec/value/format_real (internal): the `%g`, `%f` and `%e` renderings of a double
+// with the `!` flag, as SQLite's printf.c (3.53) writes them.
+
+import { fpDecode } from "./fp_decode";
+
+/** printf conversions. */
+export const FMT_FLOAT: u8 = 0; // %f
+export const FMT_EXP: u8 = 1; // %e
+export const FMT_GENERIC: u8 = 2; // %g
+
+/**
+ * `r` as SQLite's printf renders `%<flags>.<precision><conv>`: `alt2` is the "!" flag,
+ * `zeropad` the "0" flag (infinity as 9.0e+999), `alt` the "#" flag.
+ */
+export function formatReal(
+  r: f64,
+  conv: u8,
+  precision0: i64,
+  alt2: bool,
+  zeropad: bool,
+  alt: bool,
+): string {
+  let precision = precision0 < 0 ? 6 : precision0;
+  let xtype = conv;
+  let iRound: i64 = 0;
+  if (xtype == FMT_FLOAT) {
+    iRound = -precision;
+  } else if (xtype == FMT_GENERIC) {
+    if (precision == 0) {
+      precision = 1;
+    }
+    iRound = precision;
+  } else {
+    iRound = precision + 1;
+  }
+  const s = fpDecode(r, iRound, alt2 ? 20 : 16);
+  if (s.special != 0) {
+    if (s.special == 2) {
+      return zeropad ? "null" : "NaN";
+    }
+    if (!zeropad) {
+      return s.sign == 45 ? "-Inf" : "Inf";
+    }
+    s.digits = [57];
+    s.iDP = 1000;
+  }
+  const out: u8[] = [];
+  if (s.sign == 45) {
+    if (!(alt && xtype == FMT_FLOAT && s.iDP <= iRound)) {
+      out.push(45);
+    }
+  }
+  let rtz = false;
+  if (xtype == FMT_GENERIC) {
+    precision--;
+    rtz = !alt;
+    const exp = s.iDP - 1;
+    if (exp < -4 || exp > precision) {
+      xtype = FMT_EXP;
+    } else {
+      precision = precision - exp;
+      xtype = FMT_FLOAT;
+    }
+  } else {
+    rtz = alt2;
+  }
+  let e2: i64 = xtype == FMT_EXP ? 0 : s.iDP - 1;
+  const z = s.digits;
+  const zn = z.length as i64;
+  const dp = precision > 0 || alt || alt2;
+  let j: i64 = 0;
+  if (e2 < 0) {
+    out.push(48);
+  } else {
+    j = e2 + 1;
+    if (j > zn) {
+      j = zn;
+    }
+    for (let i: i64 = 0; i < j; i++) {
+      out.push(z[i as usize]);
+    }
+    e2 -= j;
+    while (e2 >= 0) {
+      out.push(48);
+      e2--;
+    }
+  }
+  const mark = out.length;
+  if (dp) {
+    out.push(46);
+  }
+  if (e2 < -1 && precision > 0) {
+    let nn = -1 - e2;
+    if (nn > precision) {
+      nn = precision;
+    }
+    for (let i: i64 = 0; i < nn; i++) {
+      out.push(48);
+    }
+    precision -= nn;
+  }
+  if (precision > 0) {
+    let nn = zn - j;
+    if (nn > precision) {
+      nn = precision;
+    }
+    for (let i: i64 = 0; i < nn; i++) {
+      out.push(z[(j + i) as usize]);
+    }
+    if (nn > 0) {
+      precision -= nn;
+    }
+    if (precision > 0 && !rtz) {
+      for (let i: i64 = 0; i < precision; i++) {
+        out.push(48);
+      }
+    }
+  }
+  if (rtz && dp) {
+    while (out.length > mark + 1 && out[out.length - 1] == 48) {
+      out.pop();
+    }
+    if (out[out.length - 1] == 46) {
+      if (alt2) {
+        out.push(48);
+      } else {
+        out.pop();
+      }
+    }
+  }
+  if (xtype == FMT_EXP) {
+    let exp = s.iDP - 1;
+    out.push(101);
+    if (exp < 0) {
+      out.push(45);
+      exp = -exp;
+    } else {
+      out.push(43);
+    }
+    if (exp >= 100) {
+      out.push((48 + exp / 100) as u8);
+      exp = exp % 100;
+    }
+    out.push((48 + exp / 10) as u8);
+    out.push((48 + exp % 10) as u8);
+  }
+  return out.utf8Slice(0, out.length as i64);
+}

@@ -1,0 +1,78 @@
+// sqlite/engine/exec/values_core (internal): a VALUES core (`VALUES (...), (...)`) compiled: each
+// row's expressions.
+
+import { BINARY } from "../collation";
+import { SelectCore } from "../sql/types";
+import { prepareError } from "./errors";
+import { Ev } from "./types";
+import { Scope } from "./scope";
+import { Query } from "./query";
+import { ExprCompiler } from "./expr_compiler";
+import { MAX_COLUMN } from "./result";
+import { Emitter, limitValue } from "./emitter";
+import { AFF_NONE } from "./value/ops";
+import { Val, nullVal } from "./value/val";
+import { Tail } from "./tail";
+
+/** VALUES (…), (…): each row's expressions. */
+export function valuesCore(
+  c: ExprCompiler,
+  core: SelectCore,
+  outer: Scope | null,
+  tail: Tail,
+  q: Query,
+): Query {
+  const sc = new Scope();
+  sc.parent = outer;
+  const rows: Ev[][] = [];
+  const width: usize = core.values[0].length;
+  if (width > MAX_COLUMN) {
+    prepareError("too many columns in result set");
+  }
+  for (const r of core.values) {
+    if (r.length != width) {
+      prepareError("all VALUES must have the same number of terms");
+    }
+    const evs: Ev[] = [];
+    for (const e of r) {
+      evs.push(c.ev(e, sc));
+    }
+    rows.push(evs);
+  }
+  for (let i: usize = 0; i < width; i++) {
+    q.names.push(`column${i + 1}`);
+    q.affs.push(AFF_NONE);
+    q.colls.push(-1);
+  }
+  q.out.width = width;
+  q.correlated = sc.outer;
+  const out = q.out;
+  const em = new Emitter(out);
+  for (let i: usize = 0; i < width; i++) {
+    em.results.push(() => nullVal());
+    em.colls.push(BINARY);
+  }
+  const limitEv: Ev | null = tail.limit == null ? null : c.ev(tail.limit!, new Scope());
+  const offsetEv: Ev | null = tail.offset == null ? null : c.ev(tail.offset!, new Scope());
+  const need = q.need;
+  q.body = () => {
+    let limit = limitValue(limitEv, -1);
+    const offset = limitValue(offsetEv, 0);
+    if (need.n >= 0 && (limit < 0 || limit > need.n)) {
+      limit = need.n;
+    }
+    em.begin(limit, offset);
+    const tmp: Val[] = [];
+    for (const r of rows) {
+      if (out.stop) {
+        break;
+      }
+      tmp.truncate(0);
+      for (const e of r) {
+        tmp.push(e());
+      }
+      em.put(tmp, 0);
+    }
+  };
+  return q;
+}

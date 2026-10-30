@@ -227,6 +227,11 @@ velt native build --target aarch64-apple-darwin    # another target your toolcha
 velt publish                                       # the package plus one library per target
 ```
 
+A release build links the library's prelinked object into the executable (Linux and macOS),
+with the system libraries the crate needs: `velt native build` records the ones rustc lists for
+it (what its dependencies declare, e.g. a framework on macOS), and only programs that use the
+package link them.
+
 `velt publish` needs the crate's `Cargo.lock` (commit it) and a library for every target in
 `native.targets`. Build the others on machines for those platforms (a CI matrix), collect their `target/velt-native/<triple>/`
 directories into one directory, and pass it with `velt publish --native-artifacts <dir>`. A

@@ -1,5 +1,5 @@
 //! A package with native code end to end (docs/internals/design/native-packages.md), with the
-//! prototype driver `packages/sqlite`:
+//! SQLite driver `packages/sqlite`:
 //!
 //! 1. the author builds the library (`velt native build`, cargo) and publishes the package with
 //!    it to a `velt registry serve`;
@@ -79,52 +79,60 @@ fn copy_dir(from: &Path, to: &Path) {
     }
 }
 
-const PROGRAM: &str = r#"import { Database, SqliteError, version } from "sqlite";
+const PROGRAM: &str = r#"import { open, SqliteError } from "sqlite";
 
 struct User {
   id: i64;
   name: string;
 }
 
-async function main() {
-  console.log("sqlite", version().length > 0);
-  using db = new Database(":memory:");
+struct Version {
+  v: string;
+}
+
+function main() {
+  const db = open(":memory:");
+  const version: Version | null = db.prepare("SELECT sqlite_version() AS v").get();
+  console.log("sqlite", (version?.v ?? "").length > 0);
   db.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT UNIQUE)");
-  db.query<User>("INSERT INTO users (name) VALUES (?), (?)", "[\"ada\", \"grace\"]");
-  for (const u of db.query<User>("SELECT id, name FROM users ORDER BY id")) {
+  const insert = db.prepare("INSERT INTO users (name) VALUES (?)");
+  insert.runWith(["ada"]);
+  insert.runWith(["grace"]);
+  const users: User[] = db.prepare("SELECT id, name FROM users ORDER BY id").all();
+  for (const u of users) {
     console.log(u.id, u.name);
   }
-  const found = await db.ref.query<User>("SELECT id, name FROM users WHERE id = ?", "[2]");
-  console.log("async", found[0].name);
+  const found: User | null = db.prepare("SELECT id, name FROM users WHERE id = :id").getWith({ id: 2 });
+  console.log("get", found?.name);
   try {
-    db.query<User>("INSERT INTO users (name) VALUES (?)", "[\"ada\"]");
+    insert.runWith(["ada"]);
   } catch (e) {
     if (e instanceof SqliteError) {
       console.log("error", e.code);
     }
   }
+  db.close();
 }
 "#;
 
-const EXPECTED: &str = "sqlite true\n1 ada\n2 grace\nasync grace\nerror SQLITE_CONSTRAINT_UNIQUE\n";
+const EXPECTED: &str = "sqlite true\n1 ada\n2 grace\nget grace\nerror SQLITE_CONSTRAINT_UNIQUE\n";
 
 fn server(version: &str) -> String {
     format!(
-        r#"import {{ serve }} from "http-server";
-import {{ Database }} from "sqlite";
+        r#"import {{ serve }} from "velt/net/http";
+import {{ open }} from "sqlite";
 
 struct Count {{
   n: i64;
 }}
 
 async function main() {{
-  const db = new Database(":memory:");
+  const db = open(":memory:");
   db.exec("CREATE TABLE hits (at INTEGER)");
-  const r = db.ref;
   const server = await serve({{ port: 0 }}, async (req: Request): Promise<Response> => {{
-    await r.query<Count>("INSERT INTO hits (at) VALUES (1)");
-    const rows = await r.query<Count>("SELECT count(*) AS n FROM hits");
-    return new Response(`{version} ${{rows[0].n}}`);
+    db.prepare("INSERT INTO hits (at) VALUES (1)").run();
+    const count: Count | null = db.prepare("SELECT count(*) AS n FROM hits").get();
+    return new Response(`{version} ${{count?.n ?? 0}}`);
   }});
   console.log(`listening on ${{server.port}}`);
   await sleep(1000000000);
@@ -216,7 +224,7 @@ fn sqlite_package_with_native_code() {
     let added = ok(velt(&app, &home, &["add", "sqlite"]), "velt add");
     let text = String::from_utf8_lossy(&added.stderr);
     assert!(
-        text.contains("`sqlite` 0.1.0 runs native code (prebuilt, checksum verified"),
+        text.contains("`sqlite` 0.2.0 runs native code (prebuilt, checksum verified"),
         "{text}"
     );
     let lock = std::fs::read_to_string(app.join("velt.lock.json")).unwrap();
@@ -249,21 +257,6 @@ fn sqlite_package_with_native_code() {
         assert_eq!(String::from_utf8_lossy(&out.stdout), EXPECTED);
         std::fs::rename(home.join("cache.moved"), home.join("cache")).unwrap();
     }
-
-    // The server program serves with the repository's HTTP server package, published there too.
-    let http = tmp.path().join("http-server");
-    copy_dir(&repo().join("packages/http-server"), &http);
-    let mut manifest = vpm::Manifest::from_dir(&http).unwrap();
-    manifest.registry = Some(url.clone());
-    std::fs::write(http.join(vpm::manifest::MANIFEST_FILE), manifest.to_vlt()).unwrap();
-    ok(
-        velt(&http, &home_a, &["publish"]),
-        "velt publish http-server",
-    );
-    ok(
-        velt(&app, &home, &["add", "http-server"]),
-        "velt add http-server",
-    );
 
     // `velt dev`: the JIT host loads the library; a Velt edit hot-swaps and the database the
     // program opened before the swap is still there.

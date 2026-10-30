@@ -1,8 +1,9 @@
 import type { Package } from "velt/package";
 
-// The benchmark's Velt servers, on the repository's HTTP server package.
+// The benchmark's Velt programs, on the repository's database packages (their native libraries
+// are built with cargo the first time).
 export const pkg: Package = {
   name: "chat-bench",
   version: "0.1.0",
-  dependencies: { "http-server": { path: "../../../packages/http-server" } },
+  dependencies: { sqlite: { path: "../../../packages/sqlite" } },
 };

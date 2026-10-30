@@ -357,10 +357,17 @@ pub fn links(graph: Option<&PackageGraph>, release: bool) -> Vec<velt_link::Nati
     graph
         .into_iter()
         .flat_map(|g| g.natives())
-        .map(|(_, lib)| velt_link::NativeLink {
-            shared: lib.shared_lib(),
-            import_lib: lib.import_lib(),
-            static_obj: lib.static_obj().filter(|_| release),
+        .map(|(_, lib)| {
+            let static_obj = lib.static_obj().filter(|_| release);
+            velt_link::NativeLink {
+                shared: lib.shared_lib(),
+                import_lib: lib.import_lib(),
+                system_libs: match static_obj {
+                    Some(_) => lib.meta.system_libs.clone().unwrap_or_default(),
+                    None => Vec::new(),
+                },
+                static_obj,
+            }
         })
         .collect()
 }

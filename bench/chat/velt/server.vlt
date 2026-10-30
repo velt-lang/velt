@@ -1,5 +1,5 @@
-// chatbench, the Velt server (bench/chat/SPEC.md): std/http + std/websocket + std/sqlite, all
-// cores, one process. Rooms are shared state behind a Mutex; a broadcast is a loop of queued
+// chatbench, the Velt server (bench/chat/SPEC.md): std/http + std/websocket + the sqlite package,
+// all cores, one process. Rooms are shared state behind a Mutex; a broadcast is a loop of queued
 // sends (std/websocket sends return once queued).
 // Usage: server [port]; env PORT, HOST (127.0.0.1), DB (chat.db), TLS_CERT and TLS_KEY (PEM
 // files: serve HTTPS/WSS instead of HTTP/WS when both are set).
@@ -10,7 +10,7 @@ import { WebSocket, WsMessage } from "velt/net/websocket";
 import { isWebSocketRequest, upgradeWebSocket } from "http-server/websocket";
 import { hmacSha256 } from "velt/crypto";
 import { hexEncode, utf8Encode } from "velt/encoding";
-import { open, Database } from "velt/sqlite";
+import { open, Database } from "sqlite";
 import { args } from "velt/process";
 import { existsSync, readFileSync, removeSync } from "velt/fs";
 

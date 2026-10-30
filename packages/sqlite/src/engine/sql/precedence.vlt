@@ -1,0 +1,53 @@
+// sqlite/engine/sql/precedence (internal): the precedence levels of SQLite's binary operators
+// (https://sqlite.org/lang_expr.html#operators), loosest first.
+
+/** Binary operator levels, loosest first (L_NOT is NOT's operand: past AND and OR). */
+export const L_NONE: i64 = 0;
+export const L_OR: i64 = 1;
+export const L_AND: i64 = 2;
+export const L_NOT: i64 = 3;
+export const L_EQ: i64 = 4;
+export const L_CMP: i64 = 5;
+export const L_BIT: i64 = 6;
+export const L_ADD: i64 = 7;
+export const L_MUL: i64 = 8;
+export const L_CONCAT: i64 = 9;
+
+/** The level of a binary operator token (`=`, `<`, `+`, `||`, …), or L_NONE. */
+export function opLevel(op: string): i64 {
+  switch (op) {
+    case "=":
+    case "==":
+    case "!=":
+    case "<>":
+      return L_EQ;
+    case "<":
+    case "<=":
+    case ">":
+    case ">=":
+      return L_CMP;
+    case "&":
+    case "|":
+    case "<<":
+    case ">>":
+      return L_BIT;
+    case "+":
+    case "-":
+      return L_ADD;
+    case "*":
+    case "/":
+    case "%":
+      return L_MUL;
+    case "||":
+    case "->":
+    case "->>":
+      return L_CONCAT;
+    default:
+      return L_NONE;
+  }
+}
+
+/** Whether `w` (upper case) is one of the pattern operators LIKE, GLOB, MATCH, REGEXP. */
+export function isMatchWord(w: string): bool {
+  return w == "LIKE" || w == "GLOB" || w == "MATCH" || w == "REGEXP";
+}

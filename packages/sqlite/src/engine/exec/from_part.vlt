@@ -1,0 +1,119 @@
+// sqlite/engine/exec/from_part (internal): a SELECT core's FROM items compiled (`FromPart`): their
+// scope, LEFT JOIN levels, ON terms and their levels, USING and NATURAL joins as equalities, and
+// WHERE split into its AND terms.
+
+import {
+  E_BINARY,
+  E_COLUMN,
+  Expr,
+  FromItem,
+  J_FULL,
+  J_LEFT,
+  J_RIGHT,
+  SelectCore,
+} from "../sql/types";
+import { Source } from "./source";
+import { prepareError } from "./errors";
+import { Scope } from "./scope";
+import { ExprCompiler } from "./expr_compiler";
+
+/** Splits `e` into its AND terms. */
+export function andTerms(e: Expr | null, out: Expr[]) {
+  if (e == null) {
+    return;
+  }
+  const x = e!;
+  if (x.kind == E_BINARY && x.op == "AND") {
+    andTerms(x.a, out);
+    andTerms(x.b, out);
+    return;
+  }
+  out.push(x);
+}
+
+function colExpr(table: string, name: string): Expr {
+  const e = new Expr(E_COLUMN, 0);
+  e.table = table;
+  e.name = name;
+  return e;
+}
+
+function eqExpr(a: Expr, b: Expr): Expr {
+  const e = new Expr(E_BINARY, 0);
+  e.op = "=";
+  e.a = a;
+  e.b = b;
+  return e;
+}
+
+/** A core's FROM items compiled: their scope, LEFT JOIN levels, ON terms and their levels. */
+export class FromPart {
+  sc: Scope = new Scope();
+  left: bool[] = [];
+  onExprs: Expr[] = [];
+  onLevel: i64[] = [];
+}
+
+// The FROM items: compiled before the rest of the core, in a small frame, since a nested
+// subquery, view or CTE compiles inside it (the rest of the core's frame is not on the stack
+// while nested queries compile).
+export function compileFrom(c: ExprCompiler, core: SelectCore, outer: Scope | null): FromPart {
+  const fp = new FromPart();
+  const sc = fp.sc;
+  sc.parent = outer;
+  sc.core = core;
+  for (const item of core.from) {
+    const lv = sc.sources.length;
+    const src = c.fromSource(item, outer);
+    if (item.join == J_RIGHT || item.join == J_FULL) {
+      prepareError("RIGHT and FULL OUTER JOINs are not supported yet");
+    }
+    const isLeft = item.join == J_LEFT && lv > 0;
+    joinColumns(sc, src, item, fp.onExprs, fp.onLevel, isLeft ? lv as i64 : -1);
+    sc.sources.push(src);
+    fp.left.push(isLeft);
+    if (item.on != null) {
+      const parts: Expr[] = [];
+      andTerms(item.on, parts);
+      for (const p of parts) {
+        fp.onExprs.push(p);
+        fp.onLevel.push(isLeft ? lv as i64 : -1);
+      }
+    }
+  }
+  // After its FROM items compiled: theirs are counted (and kept) already.
+  c.noteFromTerms(core);
+  return fp;
+}
+
+/** USING and NATURAL: the right side's shared columns are hidden, and joined by equality. */
+function joinColumns(sc: Scope, src: Source, item: FromItem, ons: Expr[], lv: i64[], on: i64) {
+  let names: string[] = item.using;
+  if (item.natural) {
+    names = [];
+    for (let i: usize = 0; i < src.cols.length; i++) {
+      for (const l of sc.sources) {
+        const k = l.column(src.cols[i]);
+        if (k >= 0 && !l.hidden[k as usize] && !names.includes(src.cols[i])) {
+          names.push(src.cols[i]);
+        }
+      }
+    }
+  }
+  for (const n of names) {
+    const r = src.column(n);
+    let from: Source | null = null;
+    for (const l of sc.sources) {
+      const k = l.column(n);
+      if (k >= 0 && !l.hidden[k as usize] && from == null) {
+        from = l;
+      }
+    }
+    if (r < 0 || from == null) {
+      prepareError(`cannot join using column ${n} - column not present in both tables`);
+    }
+    src.hidden[r as usize] = true;
+    ons.push(eqExpr(colExpr(from!.name, n), colExpr(src.name, n)));
+    lv.push(on);
+  }
+}

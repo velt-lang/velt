@@ -3,5 +3,6 @@ import type { Package } from "velt/package";
 export const pkg: Package = {
   name: "todo-api",
   version: "0.1.0",
-  dependencies: { "http-server": { path: "../../../packages/http-server" } },
+  // The SQLite store: the repository's sqlite package (its native library is built with cargo).
+  dependencies: { sqlite: { path: "../../../packages/sqlite" } },
 };

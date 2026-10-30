@@ -1,0 +1,72 @@
+// sqlite/engine/exec/plan/access (internal): how one FROM level is read (`Access`): the access
+// paths (a full scan, a rowid lookup, list or range, an index prefix of equalities with a range on
+// the next column, the rows of a subquery) and their rough costs.
+
+import { A_BLOB } from "../../affinity";
+import { Index } from "../../schema/table_index";
+import { Ev } from "../types";
+import { Query } from "../query";
+import { Term } from "./term";
+
+/** Access paths. */
+export const ACC_SCAN: u8 = 0;
+export const ACC_ROWID_EQ: u8 = 1;
+export const ACC_ROWID_RANGE: u8 = 2;
+export const ACC_INDEX: u8 = 3;
+export const ACC_ROWS: u8 = 4;
+export const ACC_ROWID_IN: u8 = 5;
+
+/** How one level is read. */
+export class Access {
+  kind: u8 = ACC_SCAN;
+  index: Index | null = null;
+  /** Values of the index's leading columns (or the rowid), compared under `eqAff`. */
+  eq: Ev[] = [];
+  eqAff: u8[] = [];
+  /** Which equalities are `IS` ones (a NULL value looks up NULL rather than nothing). */
+  eqIs: bool[] = [];
+  lo: Ev | null = null;
+  loAff: u8 = A_BLOB;
+  hi: Ev | null = null;
+  hiAff: u8 = A_BLOB;
+  /** Lower bound inclusive (>=), upper bound inclusive (<=). */
+  loIncl: bool = true;
+  hiIncl: bool = true;
+  /** Scanned last to first (ORDER BY ... DESC without a sort). */
+  reverse: bool = false;
+  /** `col IN (list)` on the rowid or the index column after `eq`: one lookup per value. */
+  inList: Ev[] | null = null;
+  inAff: u8 = A_BLOB;
+  /** `col IN (SELECT …)`: the values are the subquery's (its first column). */
+  inQuery: Query | null = null;
+  inColl: u8 = 0;
+  /** Terms this access answers exactly (marked used once the access is chosen). */
+  uses: Term[] = [];
+}
+
+/** A rough cost of reading a level through `acc`, for ordering joins (lower is better). */
+export function accessCost(acc: Access): i64 {
+  if (acc.kind == ACC_ROWID_EQ) {
+    return 1;
+  }
+  if (acc.kind == ACC_ROWID_IN) {
+    return 2;
+  }
+  if (acc.kind == ACC_INDEX) {
+    const ix = acc.index!;
+    if (acc.inList == null && ix.unique && acc.eq.length == ix.columns.length) {
+      return 3;
+    }
+    if (acc.eq.length > 0 || acc.inList != null) {
+      return 20 - (acc.eq.length as i64);
+    }
+    return acc.lo != null || acc.hi != null ? 50 : 900;
+  }
+  if (acc.kind == ACC_ROWID_RANGE) {
+    return 60;
+  }
+  if (acc.kind == ACC_ROWS) {
+    return 500;
+  }
+  return 1000;
+}

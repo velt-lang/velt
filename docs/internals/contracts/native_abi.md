@@ -364,15 +364,24 @@ A bundle is one target's library, a directory exchanged as a `VELTPKG1` archive
 (`vpm::archive`) restricted to these paths:
 
 ```text
-native.json                   # package, version, target, abi, shared, import_lib?, static?, exports
+native.json                   # package, version, target, abi, shared, import_lib?, static?,
+                              # system_libs?, exports
 shared/libvelt_native_<p>.so  # .dylib (install name @rpath/...) on macOS
 shared/velt_native_<p>.dll    # Windows, with shared/velt_native_<p>.dll.lib
 static/<p>.o                  # Linux and macOS only
 ```
 
 - `velt native build [--target <triple>]` runs
-  `cargo build --release --lib --target <triple> --manifest-path <pkg>/<path>/Cargo.toml`
-  (`$VELT_CARGO`); the crate must build a `cdylib` and (except on Windows) a `staticlib`.
+  `cargo rustc --release --lib --target <triple> --manifest-path <pkg>/<path>/Cargo.toml --
+  --print native-static-libs=<file>` (`$VELT_CARGO`); the crate must build a `cdylib` and (except
+  on Windows) a `staticlib`.
+- `system_libs` (with `static`): the system libraries the object needs, as rustc printed them
+  for the staticlib (`-lgcc_s`, `-framework`, `SystemConfiguration`, …: what the crate's
+  dependencies declare with `cargo:rustc-link-lib`). A release link adds those that the link
+  does not pass anyway, so a library's system dependencies (packages/postgres: `whoami`'s
+  SystemConfiguration and CoreFoundation on macOS) reach only the programs that use it. A shared
+  library brings its own. A bundle without the field (built by an older velt) is built again
+  when it is built from source, and linked without them when it is prebuilt.
 - **Prelinking** (`static/<p>.o`): `ld -r --force-group-allocation -u <export>… lib.a`, then
   `objcopy --strip-debug --keep-global-symbols=<exports + init>` (GNU ld/objcopy,
   `$VELT_NATIVE_LD`/`$VELT_NATIVE_OBJCOPY`); macOS: `ld -r -exported_symbols_list`. The Rust
@@ -426,7 +435,7 @@ For the build target (`InstallOptions::target`):
 | Build | Linux / macOS | Windows |
 |---|---|---|
 | debug | `-L<dir> -lvelt_native_<p> -Wl,-rpath,<dir>` | import library; the DLL is copied next to the executable |
-| `--release` | `static/<p>.o` after the program's objects: self-contained | as debug (no partial link with MSVC) |
+| `--release` | `static/<p>.o` after the program's objects, its `system_libs` after the runtime's libraries: self-contained | as debug (no partial link with MSVC) |
 | `velt dev` (JIT) | `dlopen` (RTLD_NOW, RTLD_LOCAL), exports and init given to the JIT | `LoadLibraryW` |
 
 The bundled linker (lld with a link kit, [linking](../linking.md)) gets the same libraries
@@ -434,9 +443,11 @@ The bundled linker (lld with a link kit, [linking](../linking.md)) gets the same
 (`--target <arch>-unknown-linux-musl`) takes only `static/<p>.o`, so its native packages need a
 `--release` build. The kits' system libraries cover what the runtime imports and, on Windows and
 Linux, every export of those system libraries; a native library that needs another system
-library links with `VELT_LINKER=system`.
+library links with `VELT_LINKER=system` (the macOS kit has CoreFoundation and
+SystemConfiguration besides libSystem).
 
-The link stamp hashes every native file (path, size, modification time). A statically linked
+The link stamp hashes every native file (path, size, modification time) and the system
+libraries. A statically linked
 (musl) `velt` cannot load libraries into its JIT host and says to use `velt dev --exe`.
 `velt dev` watches the crate sources of libraries built from source and restarts (never swaps)
 when they change.

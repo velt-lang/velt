@@ -1,12 +1,12 @@
-// bench/sqlite/rows.vlt on the SQLite engine written in Velt (velt/sqlite/engine): the same
-// database (written by C SQLite through velt/sqlite into a temporary file, then read into
-// memory), queries and output. Prints the bytes written, which must equal rows.vlt's and the
-// Rust program's (bench/sqlite/rust, which also has `scan` and `point`). Usage:
-// engine [feed|post|both|scan|point] [rounds]. `scan` reads all 2000 posts into structs per
-// round, `point` one post by its rowid (10 a round).
+// bench/sqlite/rows.vlt on the SQLite engine written in Velt (the sqlite package's
+// sqlite/engine): the same database (written by C SQLite through the package's driver into a
+// temporary file, then read into memory), queries and output. Prints the bytes written, which
+// must equal rows.vlt's and the Rust program's (bench/sqlite/rust, which also has `scan` and
+// `point`). Usage: engine [feed|post|both|scan|point] [rounds]. `scan` reads all 2000 posts into
+// structs per round, `point` one post by its rowid (10 a round).
 
-import { open } from "velt/sqlite";
-import { openDatabase } from "velt/sqlite/engine";
+import { open } from "sqlite";
+import { openDatabase } from "sqlite/engine";
 import { args } from "velt/process";
 import { tmpdir } from "velt/os";
 import { removeSync } from "velt/fs";

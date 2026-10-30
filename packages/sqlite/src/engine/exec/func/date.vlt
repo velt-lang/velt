@@ -1,0 +1,93 @@
+// sqlite/engine/exec/func/date (internal): SQLite's date and time functions (date, time, datetime,
+// julianday, unixepoch, strftime), ported from its date.c: a time (engine/exec/func/date_time)
+// parsed from the first argument (engine/exec/func/date_parse) and changed by the modifiers after
+// it (engine/exec/func/date_modifier).
+
+import { NULL, INTEGER, REAL } from "../../storage_class";
+import { cBytes } from "../value/text";
+import { hmsText, strftime, ymdText } from "./date_format";
+import { Val, nullVal, intVal, realVal, textVal } from "../value/val";
+import { toText } from "../value/value_text";
+import {
+  DateTime,
+  computeHMS,
+  computeJD,
+  computeYMD,
+  setNow,
+  setRawNumber,
+  validJulianDay,
+} from "./date_time";
+import { parseModifier } from "./date_modifier";
+import { parseDateOrTime } from "./date_parse";
+
+/** The time of a date function's arguments, or null (the result is NULL). */
+function isDate(args: Val[]): DateTime | null {
+  const p = new DateTime();
+  if (args.length == 0) {
+    setNow(p);
+  } else {
+    const v = args[0];
+    if (v.t == REAL || v.t == INTEGER) {
+      setRawNumber(p, v.t == REAL ? v.r : v.i as f64);
+    } else if (v.t == NULL || parseDateOrTime(cBytes(toText(v)), p)) {
+      return null;
+    }
+  }
+  for (let i: usize = 1; i < args.length; i++) {
+    if (args[i].t == NULL || parseModifier(cBytes(toText(args[i])), p, i)) {
+      return null;
+    }
+  }
+  computeJD(p);
+  if (p.isError || !validJulianDay(p.iJD)) {
+    return null;
+  }
+  if (args.length == 1 && p.validYMD && p.D > 28) {
+    p.validYMD = false;
+  }
+  return p;
+}
+
+/** A date function (upper-case name) over its argument values, or null if it is none. */
+export function dateFunction(name: string, args: Val[]): Val {
+  if (name == "STRFTIME") {
+    if (args.length == 0 || args[0].t == NULL) {
+      return nullVal();
+    }
+    const p = isDate(args.slice(1));
+    return p == null ? nullVal() : strftime(toText(args[0]), p!);
+  }
+  const p0 = isDate(args);
+  if (p0 == null) {
+    return nullVal();
+  }
+  const p = p0!;
+  if (name == "JULIANDAY") {
+    return realVal((p.iJD as f64) / 86400000.0);
+  }
+  if (name == "UNIXEPOCH") {
+    if (p.useSubsec) {
+      return realVal(((p.iJD - 210866760000000) as f64) / 1000.0);
+    }
+    return intVal(p.iJD / 1000 - 210866760000);
+  }
+  computeYMD(p);
+  computeHMS(p);
+  if (name == "DATE") {
+    return textVal(ymdText(p));
+  }
+  if (name == "TIME") {
+    return textVal(hmsText(p));
+  }
+  return textVal(ymdText(p) + " " + hmsText(p));
+}
+
+/** Whether `name` (upper case) is a date function. */
+export function isDateFunction(name: string): bool {
+  return name == "DATE" ||
+    name == "TIME" ||
+    name == "DATETIME" ||
+    name == "JULIANDAY" ||
+    name == "UNIXEPOCH" ||
+    name == "STRFTIME";
+}

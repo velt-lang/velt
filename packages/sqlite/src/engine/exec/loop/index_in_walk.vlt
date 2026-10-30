@@ -1,0 +1,103 @@
+// sqlite/engine/exec/loop/index_in_walk (internal): the rows of an index lookup per IN value,
+// stepped one at a time (`IndexInWalk`).
+
+import { Cursor } from "../../cursor";
+import { NULL } from "../../storage_class";
+import { KeyRec } from "../../key_rec";
+import "../../btree_back";
+import { Source } from "../source";
+import { Ev } from "../types";
+import { Params } from "../params";
+import { Query } from "../query";
+import { Access } from "../plan/access";
+import { addKeyField } from "../plan/rowid_key";
+import { inValues } from "./in_values";
+import { forCompare } from "../value/ops";
+import { Val } from "../value/val";
+import { Walk } from "./walk";
+
+/** An index lookup per value of `col IN (list)` (the column after the equalities). */
+export class IndexInWalk extends Walk {
+  src: Source;
+  ix: Cursor;
+  colls: u8[];
+  desc: bool[];
+  eq: Ev[];
+  eqAff: u8[];
+  eqIs: bool[];
+  nEq: usize;
+  list: Ev[];
+  inq: Query | null;
+  params: Params;
+  aff: u8;
+  inColl: u8;
+  key: KeyRec = new KeyRec([]);
+  fixed: Val[] = [];
+  vals: Val[] = [];
+  vi: usize = 0;
+
+  constructor(src: Source, acc: Access, params: Params) {
+    super();
+    this.src = src;
+    this.ix = src.ix!;
+    const index = acc.index!;
+    this.colls = index.colls;
+    this.desc = index.desc;
+    this.eq = acc.eq;
+    this.eqAff = acc.eqAff;
+    this.eqIs = acc.eqIs;
+    this.nEq = acc.eq.length;
+    this.list = acc.inList!;
+    this.inq = acc.inQuery;
+    this.params = params;
+    this.aff = acc.inAff;
+    this.inColl = acc.inColl;
+  }
+
+  start(): bool {
+    this.fixed.truncate(0);
+    this.vals = [];
+    this.vi = 0;
+    for (let i: usize = 0; i < this.nEq; i++) {
+      const v = forCompare(this.eq[i](), this.eqAff[i]);
+      if (v.t == NULL && !this.eqIs[i]) {
+        return false;
+      }
+      this.fixed.push(v);
+    }
+    this.vals = inValues(this.list, this.inq, this.params, this.aff, this.inColl);
+    return this.nextValue();
+  }
+
+  step(): bool {
+    const n = this.nEq + 1;
+    if (this.ix.next() && this.ix.compareKeyRec(this.key, n, this.colls, this.desc) == 0) {
+      this.src.seeked = false;
+      return true;
+    }
+    return this.nextValue();
+  }
+
+  // The first entry of the next IN value that has one.
+  nextValue(): bool {
+    const key = this.key;
+    const n = this.nEq + 1;
+    while (this.vi < this.vals.length) {
+      const v = this.vals[this.vi];
+      this.vi++;
+      key.clear();
+      for (const f of this.fixed) {
+        addKeyField(key, f);
+      }
+      addKeyField(key, v);
+      if (
+        this.ix.seekKeyRec(key, n, this.colls, this.desc) &&
+        this.ix.compareKeyRec(key, n, this.colls, this.desc) == 0
+      ) {
+        this.src.seeked = false;
+        return true;
+      }
+    }
+    return false;
+  }
+}

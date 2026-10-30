@@ -1,0 +1,177 @@
+// sqlite/engine/exec/window/frame (internal): a window function's frame (`Frame`): where it starts
+// and ends for a row, its offsets checked as SQLite checks them, EXCLUDE, and which functions
+// SQLite computes over a moving frame.
+
+import { INTEGER } from "../../storage_class";
+import { A_NUMERIC } from "../../affinity";
+import {
+  BOUND_FOLLOWING,
+  BOUND_PRECEDING,
+  BOUND_UNBOUNDED_FOLLOWING,
+  BOUND_UNBOUNDED_PRECEDING,
+  FRAME_DEFAULT,
+  FRAME_ROWS,
+} from "../../sql/types";
+import {
+  AG_AVG,
+  AG_CONCAT,
+  AG_COUNT,
+  AG_COUNT_STAR,
+  AG_MAX,
+  AG_MIN,
+  AG_SUM,
+  AG_TOTAL,
+} from "../agg/agg_fn";
+import { SqlRunError } from "../errors";
+import { Ev } from "../types";
+import { applyAffinity } from "../value/numeric";
+import { compareVals } from "../value/compare";
+import { W_AGG, WinFn } from "./win_fn";
+import { WinSpec } from "./win_spec";
+
+/** A frame: rows `lo` to `hi` of the partition. */
+export struct Frame {
+  lo: i64;
+  hi: i64;
+}
+
+/** The frame of row `i` (in peer group `g`): partition positions lo..hi (empty when lo > hi). */
+export function frameOf(
+  f: WinFn,
+  i: usize,
+  n: usize,
+  g: usize,
+  gs: usize[],
+  ge: usize[],
+  ordered: bool,
+): Frame {
+  const last = (n as i64) - 1;
+  if (f.frame == FRAME_DEFAULT) {
+    return Frame { lo: 0, hi: ordered ? ge[g] as i64 : last };
+  }
+  const lo = bound(f, true, i, g, gs, ge, last);
+  const hi = bound(f, false, i, g, gs, ge, last);
+  return Frame { lo: lo < 0 ? 0 : lo, hi: hi > last ? last : hi };
+}
+
+/** Whether row `j` is at least `lag` rows (or groups) behind row `at`. */
+export function behind(group: usize[], j: i64, at: i64, lag: i64, groups: bool): bool {
+  if (groups) {
+    return (group[j as usize] as i64) <= (group[at as usize] as i64) - lag;
+  }
+  return j <= at - lag;
+}
+
+/**
+ * Whether SQLite computes `f` by stepping rows in and out of a moving frame (an aggregate with
+ * an inverse, and no EXCLUDE: that one is computed afresh for each row), or only in (min() and
+ * max() from the partition's first row: engine/exec/window/moving's `grown`).
+ */
+export function incremental(f: WinFn): bool {
+  if (f.kind != W_AGG || f.exclude != "") {
+    return false;
+  }
+  const k = f.agg!.kind;
+  return (
+    k == AG_COUNT_STAR ||
+    k == AG_COUNT ||
+    k == AG_SUM ||
+    k == AG_TOTAL ||
+    k == AG_AVG ||
+    k == AG_CONCAT ||
+    k == AG_MIN ||
+    k == AG_MAX
+  );
+}
+
+/**
+ * min() or max() whose frame starts at the partition's first row, without EXCLUDE: computed as
+ * the frame grows (engine/exec/window/moving's `grown`).
+ */
+export function growing(f: WinFn): bool {
+  if (f.kind != W_AGG || f.exclude != "") {
+    return false;
+  }
+  const k = f.agg!.kind;
+  return (k == AG_MIN || k == AG_MAX) && f.start == BOUND_UNBOUNDED_PRECEDING;
+}
+
+/**
+ * A frame bound's offset: checked once per run, as SQLite does (OP_MustBeInt: numeric affinity
+ * first, so TEXT that reads as an integer counts, and a REAL only if it is an integer strictly
+ * inside i64's range).
+ */
+export function offsetOf(e: Ev | null, kind: u8, start: bool): i64 {
+  if (e == null || !(kind == BOUND_PRECEDING || kind == BOUND_FOLLOWING)) {
+    return 0;
+  }
+  const v = applyAffinity(e!(), A_NUMERIC);
+  const off = v.i;
+  if (v.t != INTEGER || off < 0) {
+    throw new SqlRunError(
+      start
+        ? "frame starting offset must be a non-negative integer"
+        : "frame ending offset must be a non-negative integer",
+    );
+  }
+  return kind == BOUND_PRECEDING ? -off : off;
+}
+
+// Where a frame starts (or ends) for row `i` in peer group `g`.
+function bound(
+  f: WinFn,
+  start: bool,
+  i: usize,
+  g: usize,
+  gs: usize[],
+  ge: usize[],
+  last: i64,
+): i64 {
+  const kind = start ? f.start : f.end;
+  if (kind == BOUND_UNBOUNDED_PRECEDING) {
+    return start ? 0 : -1;
+  }
+  if (kind == BOUND_UNBOUNDED_FOLLOWING) {
+    return start ? last + 1 : last;
+  }
+  const off = start ? f.startOff : f.endOff;
+  if (f.frame == FRAME_ROWS) {
+    return (i as i64) + off;
+  }
+  // RANGE (CURRENT ROW) and GROUPS: by peer groups.
+  const ng = (gs.length as i64) - 1;
+  const t = (g as i64) + off;
+  if (t < 0) {
+    return start ? 0 : -1;
+  }
+  if (t > ng) {
+    return start ? last + 1 : last;
+  }
+  return start ? gs[t as usize] as i64 : ge[t as usize] as i64;
+}
+
+/** Whether EXCLUDE takes row `j` out of row `i`'s frame. */
+export function excluded(f: WinFn, i: usize, j: usize, group: usize[]): bool {
+  if (f.exclude == "") {
+    return false;
+  }
+  if (f.exclude == "CURRENT ROW") {
+    return i == j;
+  }
+  if (f.exclude == "GROUP") {
+    return group[i] == group[j];
+  }
+  // TIES: the current row's peers but itself.
+  return i != j && group[i] == group[j];
+}
+
+/** Whether rows `a` and `b` have equal keys from..to of window `sp`. */
+export function samePrefix(sp: WinSpec, a: usize, b: usize, from: usize, to: usize): bool {
+  const n: usize = sp.sk.length;
+  for (let k = from; k < to; k++) {
+    if (compareVals(sp.keys[a * n + k], sp.keys[b * n + k], sp.sk[k].coll) != 0) {
+      return false;
+    }
+  }
+  return true;
+}

@@ -1,0 +1,166 @@
+// sqlite/engine/exec/window/moving (internal): aggregates over a moving window frame, computed as
+// SQLite computes them: rows entering the frame are stepped and rows leaving it taken back out
+// (xInverse), or, for min() and max() over a frame that only grows, stepped in once.
+
+import { INTEGER } from "../../storage_class";
+import { BOUND_FOLLOWING, BOUND_PRECEDING, FRAME_DEFAULT, FRAME_GROUPS } from "../../sql/types";
+import { AG_CONCAT, AG_MAX, AG_MIN, AggFn } from "../agg/agg_fn";
+import { Acc, finish, inverseValues, stepValues } from "../agg/acc";
+import { nullVal } from "../value/val";
+import { WinFn } from "./win_fn";
+import { WinCtx } from "./win_ctx";
+import { behind, frameOf, growing } from "./frame";
+import { Concat } from "./concat";
+import { MinMax } from "./min_max";
+
+/**
+ * count(), sum(), total(), avg(), group_concat(), min() or max() (function `k`) over a moving
+ * frame of the partition order[s..s+n]: rows entering the frame are stepped and rows leaving it
+ * taken back out (xInverse) in SQLite's order, so that the state a value has passed through (an
+ * overflow, a REAL, rounding) shows as in SQLite.
+ */
+export function moving(
+  w: WinCtx,
+  f: WinFn,
+  k: usize,
+  order: usize[],
+  s: usize,
+  n: usize,
+  group: usize[],
+  gs: usize[],
+  ge: usize[],
+  ordered: bool,
+) {
+  if (growing(f)) {
+    grown(w, f, k, order, s, n, group, gs, ge, ordered);
+    return;
+  }
+  const af = f.agg!;
+  let acc = new Acc();
+  let gc = new Concat();
+  const concat = af.kind == AG_CONCAT;
+  const minmax = af.kind == AG_MIN || af.kind == AG_MAX;
+  let mm = new MinMax(af.kind == AG_MAX, af.coll);
+  let stepped: i64 = -1;
+  let removed: i64 = -1;
+  // n FOLLOWING AND m FOLLOWING takes a row (or group) out as soon as the frame is full.
+  let lag: i64 = 1 << 62;
+  if (f.start == BOUND_FOLLOWING && f.end == BOUND_FOLLOWING) {
+    lag = f.endOff - f.startOff;
+  }
+  const groups = f.frame == FRAME_GROUPS;
+  // A frame that ends before it starts is empty for every row.
+  const empty =
+    f.frame != FRAME_DEFAULT &&
+    (f.start == BOUND_PRECEDING || f.start == BOUND_FOLLOWING) &&
+    (f.end == BOUND_PRECEDING || f.end == BOUND_FOLLOWING) &&
+    f.startOff > f.endOff;
+  for (let i: usize = 0; i < n; i++) {
+    const fr = frameOf(f, i, n, group[i], gs, ge, ordered);
+    if (empty) {
+      acc = new Acc();
+      gc = new Concat();
+      mm = new MinMax(af.kind == AG_MAX, af.coll);
+    } else {
+      while (removed + 1 < fr.lo && removed + 1 <= stepped) {
+        removed++;
+        stepRow(w, f, af, acc, gc, mm, order[s + (removed as usize)], true);
+      }
+      while (stepped < fr.hi) {
+        stepped++;
+        stepRow(w, f, af, acc, gc, mm, order[s + (stepped as usize)], false);
+        // In units of rows, or of whole groups for GROUPS.
+        const st = stepped as usize;
+        if (!groups || st == ge[group[st]]) {
+          while (removed + 1 < fr.lo && behind(group, removed + 1, stepped, lag, groups)) {
+            removed++;
+            stepRow(w, f, af, acc, gc, mm, order[s + (removed as usize)], true);
+          }
+        }
+      }
+      while (removed + 1 < fr.lo && removed + 1 <= stepped) {
+        removed++;
+        stepRow(w, f, af, acc, gc, mm, order[s + (removed as usize)], true);
+      }
+    }
+    w.results[order[s + i] * w.fns.length + k] =
+      concat ? gc.value() : minmax ? mm.value() : finish(af, acc);
+  }
+}
+
+// min() or max() over a frame that starts at the partition's first row: the frame only grows,
+// so rows are stepped in once (SQLite needs no inverse there), O(n) a partition.
+function grown(
+  w: WinCtx,
+  f: WinFn,
+  k: usize,
+  order: usize[],
+  s: usize,
+  n: usize,
+  group: usize[],
+  gs: usize[],
+  ge: usize[],
+  ordered: bool,
+) {
+  const af = f.agg!;
+  const acc = new Acc();
+  let stepped: i64 = -1;
+  for (let i: usize = 0; i < n; i++) {
+    const fr = frameOf(f, i, n, group[i], gs, ge, ordered);
+    while (stepped < fr.hi) {
+      stepped++;
+      stepAgg(w, f, af, acc, order[s + (stepped as usize)]);
+    }
+    w.results[order[s + i] * w.fns.length + k] = finish(af, acc);
+  }
+}
+
+/** Steps aggregate `af` with row `r`'s arguments, unless its FILTER rejects it. */
+export function stepAgg(w: WinCtx, f: WinFn, af: AggFn, acc: Acc, r: usize) {
+  if (f.filterAt >= 0) {
+    const fv = w.rows[r * w.stride() + (f.filterAt as usize)];
+    if (fv.t != INTEGER || fv.i == 0) {
+      return;
+    }
+  }
+  const v = f.nargs > 0 ? w.arg(r, f, 0) : nullVal();
+  const sep = f.nargs > 1 ? w.arg(r, f, 1) : nullVal();
+  stepValues(af, acc, v, sep, f.nargs > 1);
+}
+
+// Steps (or with `inverse` takes back) row `r`'s arguments, unless its FILTER rejects it.
+function stepRow(
+  w: WinCtx,
+  f: WinFn,
+  af: AggFn,
+  acc: Acc,
+  gc: Concat,
+  mm: MinMax,
+  r: usize,
+  inverse: bool,
+) {
+  if (f.filterAt >= 0) {
+    const fv = w.rows[r * w.stride() + (f.filterAt as usize)];
+    if (fv.t != INTEGER || fv.i == 0) {
+      return;
+    }
+  }
+  const v = f.nargs > 0 ? w.arg(r, f, 0) : nullVal();
+  if (af.kind == AG_MIN || af.kind == AG_MAX) {
+    if (inverse) {
+      mm.remove(v);
+    } else {
+      mm.add(v);
+    }
+  } else if (af.kind == AG_CONCAT) {
+    if (inverse) {
+      gc.inverse(v);
+    } else {
+      gc.step(v, f.nargs > 1 ? w.arg(r, f, 1) : nullVal(), f.nargs > 1);
+    }
+  } else if (inverse) {
+    inverseValues(af, acc, v);
+  } else {
+    stepValues(af, acc, v, v, false);
+  }
+}

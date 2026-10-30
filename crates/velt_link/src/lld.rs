@@ -84,9 +84,15 @@ fn elf_gnu_args(req: &LinkRequest, kit: &Kit) -> Vec<OsString> {
     args.extend(native::lld_shared_args(req.native));
     args.push("--as-needed".into());
     args.extend(kit::linux_gnu_libs(kit.arch).map(|lib| kit.file(lib).into()));
+    // The packages' prelinked objects' libraries beyond the kit's glibc ones.
+    args.extend(native::system_lib_args(req.native, GLIBC_LIBS));
     args.push("--no-as-needed".into());
     args
 }
+
+/// The libraries of glibc a kit has stubs for (`kit::linux_gnu_libs`), as rustc names them in a
+/// staticlib's `native-static-libs`.
+const GLIBC_LIBS: &[&str] = &["-lgcc_s", "-lutil", "-lrt", "-lpthread", "-lm", "-ldl", "-lc"];
 
 /// `ld.lld` for musl: a static executable (musl's crt objects, the runtime built for musl,
 /// libunwind and libc from the kit). Programs cannot load shared libraries.
@@ -164,16 +170,18 @@ fn macho_args(req: &LinkRequest, kit: &Kit) -> Vec<OsString> {
         args.push(req.runtime_lib.into());
     }
     args.extend(native::lld_shared_args(req.native));
-    args.extend(
-        [
-            "-lSystem",
-            "-framework",
-            "CoreFoundation",
-            "-framework",
-            "SystemConfiguration",
-        ]
-        .map(OsString::from),
-    );
+    let base = [
+        "-lSystem",
+        "-framework",
+        "CoreFoundation",
+        "-framework",
+        "SystemConfiguration",
+    ];
+    args.extend(base.map(OsString::from));
+    // The packages' prelinked objects' libraries (frameworks resolve to the kit's stubs). libc,
+    // libm and libiconv are in libSystem (rustc lists them for every staticlib).
+    let covered: Vec<&str> = base.into_iter().chain(["-lc", "-lm", "-liconv"]).collect();
+    args.extend(native::system_lib_args(req.native, &covered));
     args
 }
 

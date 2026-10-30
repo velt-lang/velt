@@ -48,6 +48,8 @@ const TOOLING: &[(&str, &[&str])] = &[
             "ts_compat",
             // `velt test --locked` resolves each example app as a package.
             "example_apps",
+            // `velt test` in each of the repository's packages (path dependencies, native code).
+            "packages",
         ],
     ),
     ("velt_registry", &["registry_cli", "cli_package"]),
@@ -140,7 +142,14 @@ const READ_BY_TESTS: &[(&str, &[&str], &[&str])] = &[
     // The standard library's `velt test` suites (`std_tests`; std and the compiler run it too:
     // they select every `veltc` test).
     ("tests/std/", &[], &["std_tests"]),
-    ("packages/", &[], &["native_packages"]),
+    // `packages` runs `velt test` in every packages/<name>/ (building its native crate);
+    // `native_packages` publishes packages/sqlite through a local registry; example apps depend
+    // on packages by path.
+    (
+        "packages/",
+        &[],
+        &["packages", "native_packages", "example_apps"],
+    ),
     ("playground/", &[], &["playground"]),
     ("editors/vscode/templates/", &[], &["debugger"]),
     // The LLDB script the toolchain ships (`install_layout` installs it and asks for its path;
@@ -248,8 +257,11 @@ pub struct Plan {
     pub all_tests: bool,
     pub veltc: Veltc,
     pub goldens: Goldens,
-    /// `velt fmt --check std examples`.
+    /// `velt fmt --check std examples packages`.
     pub vlt_fmt: bool,
+    /// The native crates of the repository's packages (`packages/<name>/native`, outside the
+    /// workspace): `cargo fmt` and clippy. (`veltc::packages` runs their tests.)
+    pub native_crates: bool,
     /// `tests/difftest`: `cargo fmt`, clippy and its unit tests.
     pub difftest: bool,
     /// The VS Code extension (`editors/vscode`): `npm ci`, then `npm test` (tsc and its unit
@@ -288,6 +300,7 @@ impl Plan {
             veltc: Veltc::All,
             goldens: Goldens::All,
             vlt_fmt: true,
+            native_crates: true,
             difftest: true,
             vscode: true,
             // `--full` (the merge queue, nightly) knows no changes: the environment chooses
@@ -318,6 +331,7 @@ impl Plan {
             veltc: Veltc::None,
             goldens: Goldens::None,
             vlt_fmt: false,
+            native_crates: false,
             difftest: false,
             vscode: false,
             sweep: Sweep::Sampled(BTreeSet::new()),
@@ -383,8 +397,11 @@ impl Plan {
                     if let Some(filter) = golden_filter(path) {
                         plan.add_golden(filter);
                     }
-                    if path.starts_with("examples/") {
+                    if path.starts_with("examples/") || path.starts_with("packages/") {
                         plan.vlt_fmt = true;
+                    }
+                    if path.starts_with("packages/") && path.contains("/native/") {
+                        plan.native_crates = true;
                     }
                 }
             }
@@ -619,8 +636,12 @@ impl Plan {
         };
         out.push_str(&format!("  parser robustness sweep: {sweep}\n"));
         out.push_str(&format!(
-            "  velt fmt --check std examples: {}\n",
+            "  velt fmt --check std examples packages: {}\n",
             yes(self.vlt_fmt)
+        ));
+        out.push_str(&format!(
+            "  packages/*/native (fmt, clippy): {}\n",
+            yes(self.native_crates)
         ));
         out.push_str(&format!(
             "  tests/difftest (fmt, clippy, unit tests): {}\n",

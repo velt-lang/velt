@@ -1,0 +1,187 @@
+// sqlite/engine/real (internal): a REAL's text as SQLite writes it (`CAST(r AS TEXT)`, the sqlite3 shell):
+// `printf("%!.17g", r)`, with SQLite's own decimal conversion (sqlite3FpDecode in util.c, public
+// domain) ported to Velt so the digits match byte for byte. The conversion finds 18 significant
+// digits with a 64x64-bit product against a table of powers of ten, rounds them to 17, and tries
+// shorter forms that still read back as the same double (so 0.1 is "0.1", not
+// "0.10000000000000001"). `%!g` keeps a ".0" on integral values and switches to an exponent
+// below 1e-4 or from 1e17 on.
+
+import { BIT63, leadingZeros, mul128, powerOfTen, pwr10to2, pwr2to10, toDouble } from "./real_wide";
+
+/** A decimal approximation d * 10^p of m * 2^e (m's top bit set), with 18 digits in d. */
+struct Decimal {
+  d: u64;
+  p: i64;
+}
+
+function toDecimal(m: u64, e: i64): Decimal {
+  const p = 17 - pwr2to10(e + 63);
+  let h = mul128(m, powerOfTen(p).hi).hi;
+  h = h >> ((-(e + pwr10to2(p) + 2)) as u64);
+  return Decimal { d: (h + ((h << 1) & 2)) >> 1, p: -p };
+}
+
+/** The digits of `r` (> 0, finite) rounded as sqlite3FpDecode(r, 17, 20) does, and `iDP`. */
+class Digits {
+  /** Digit values; z[0] is a spare slot for a carry out of the first digit. */
+  z: u8[] = [];
+  first: usize = 1;
+  n: usize = 0;
+  iDP: i64 = 0;
+}
+
+function decode(r: f64): Digits {
+  const out = new Digits();
+  const bits = r.toBits();
+  let e = ((bits >> 52) & 0x7ff) as i64;
+  let v = bits & 0x000fffffffffffff;
+  if (e == 0) {
+    const nn = leadingZeros(v);
+    v = v << (nn as u64);
+    e = -1074 - nn;
+  } else {
+    v = (v << 11) | BIT63;
+    e -= 1086;
+  }
+  const dec = toDecimal(v, e);
+  // Its decimal digits, most significant first, after the spare slot.
+  const rev: u8[] = [];
+  let d = dec.d;
+  while (d > 0) {
+    rev.push((d % 10) as u8);
+    d = d / 10;
+  }
+  out.z.push(0);
+  for (let i = rev.length; i > 0; i--) {
+    out.z.push(rev[i - 1]);
+  }
+  let n: usize = rev.length;
+  out.iDP = (n as i64) + dec.p;
+  const z = out.z;
+  let iRound: usize = 17;
+  if (iRound < n) {
+    iRound = shorter(r, z, n, dec.p, out.iDP);
+    n = iRound;
+    if (z[1 + iRound] >= 5) {
+      // Round up, carrying into the spare slot if every digit was 9.
+      let j = iRound;
+      while (true) {
+        z[j]++;
+        if (z[j] <= 9) {
+          break;
+        }
+        z[j] = 0;
+        if (j == 1) {
+          z[0] = 1;
+          out.first = 0;
+          n++;
+          out.iDP++;
+          break;
+        }
+        j--;
+      }
+    }
+  }
+  while (z[out.first + n - 1] == 0) {
+    n--;
+  }
+  out.n = n;
+  return out;
+}
+
+/**
+ * The digits to keep of 18 or more (`z[1..1+n)`, value z * 10^exp): 17, or fewer when a run of
+ * nines or zeros at digits 14-16 hides a shorter form that reads back as `r`.
+ */
+function shorter(r: f64, z: u8[], n: usize, exp: i64, iDP: i64): usize {
+  if (z[1 + 15] == 9 && z[1 + 14] == 9) {
+    let jj: usize = 14;
+    while (jj > 0 && z[jj] == 9) {
+      jj--;
+    }
+    let v2: u64 = 1;
+    if (jj > 0) {
+      v2 = 0;
+      for (let k: usize = 0; k < jj; k++) {
+        v2 = v2 * 10 + (z[1 + k] as u64);
+      }
+      v2++;
+    }
+    if (r == toDouble(v2, exp + (n as i64) - (jj as i64))) {
+      return jj + 1;
+    }
+  } else if (iDP >= (n as i64) || (z[1 + 15] == 0 && z[1 + 14] == 0 && z[1 + 13] == 0)) {
+    let jj: usize = 13;
+    while (z[jj] == 0) {
+      jj--;
+    }
+    let v2: u64 = 0;
+    for (let k: usize = 0; k < jj; k++) {
+      v2 = v2 * 10 + (z[1 + k] as u64);
+    }
+    if (r == toDouble(v2, exp + (n as i64) - (jj as i64))) {
+      return jj + 1;
+    }
+  }
+  return 17;
+}
+
+/**
+ * A REAL as SQLite prints it (`%!.17g`): up to 17 significant digits, fewer when they read back
+ * as the same double; ".0" on integral values; an exponent (two digits at least) below 1e-4 and
+ * from 1e17 on. Infinities are "Inf" and "-Inf"; -0.0 is "0.0".
+ */
+export function realText(r: f64): string {
+  if (r != r) {
+    return "NaN";
+  }
+  if (r == Infinity) {
+    return "Inf";
+  }
+  if (r == -Infinity) {
+    return "-Inf";
+  }
+  if (r == 0) {
+    return "0.0";
+  }
+  const neg = r < 0;
+  const dg = decode(neg ? -r : r);
+  let out = neg ? "-" : "";
+  const exp = dg.iDP - 1;
+  if (exp < -4 || exp > 16) {
+    // d.ddd…e±XX
+    out += digit(dg, 0) + ".";
+    out += dg.n > 1 ? digitRun(dg, 1, dg.n) : "0";
+    const a = exp < 0 ? -exp : exp;
+    out += exp < 0 ? "e-" : "e+";
+    out += a < 10 ? "0" + String(a) : String(a);
+    return out;
+  }
+  // ddd.ddd: the integer digits (zero-padded), then the fraction, at least one digit.
+  if (exp < 0) {
+    out += "0.";
+    for (let i: i64 = -1; i > exp; i--) {
+      out += "0";
+    }
+    return out + digitRun(dg, 0, dg.n);
+  }
+  const whole = (exp + 1) as usize;
+  const j = whole < dg.n ? whole : dg.n;
+  out += digitRun(dg, 0, j);
+  for (let i = j; i < whole; i++) {
+    out += "0";
+  }
+  return out + "." + (j < dg.n ? digitRun(dg, j, dg.n) : "0");
+}
+
+function digit(dg: Digits, i: usize): string {
+  return String(dg.z[dg.first + i]);
+}
+
+function digitRun(dg: Digits, from: usize, to: usize): string {
+  let s = "";
+  for (let i = from; i < to; i++) {
+    s += digit(dg, i);
+  }
+  return s;
+}

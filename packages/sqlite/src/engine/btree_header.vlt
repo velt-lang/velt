@@ -1,0 +1,138 @@
+// sqlite/engine/btree_header (internal): decoding the record header of the cell a b-tree cursor is on
+// (https://sqlite.org/fileformat2.html#record_format): the serial type and body offset of
+// each column, with the common record decoded inline and anything else (and any damage)
+// checked by decodeHeader.
+
+import { corrupt } from "./errors";
+import { fieldSize } from "./format";
+import { readVarint } from "./varint";
+import { Cursor } from "./cursor";
+import { SIZES } from "./serial_sizes";
+
+extend Cursor {
+  /** Decodes the record header of the current payload. */
+  parse() {
+    if (this.parsed) {
+      return;
+    }
+    this.types.truncate(0);
+    this.offsets.truncate(0);
+    // The common record in place: a one-byte header size, serial types of one or two bytes.
+    // Anything else (and any damage) goes through decodeHeader, which reports it.
+    if (this.local && this.parseFast()) {
+      this.parsed = true;
+      return;
+    }
+    this.types.truncate(0);
+    this.offsets.truncate(0);
+    if (this.local) {
+      decodeHeader(this.db.data, this.start, this.size, this.types, this.offsets);
+    } else {
+      decodeHeader(this.scratch, 0, this.size, this.types, this.offsets);
+    }
+    this.parsed = true;
+  }
+
+  /** decodeHeader's common case inline; false (nothing decided) for anything it does not cover. */
+  parseFast(): bool {
+    const data = this.db.data;
+    const types = this.types;
+    const offsets = this.offsets;
+    let at = this.start;
+    const size = this.size;
+    if (size == 0) {
+      return false;
+    }
+    const h0 = data[at] as usize;
+    if (h0 >= 0x80 || h0 > size || h0 == 0) {
+      return false;
+    }
+    const end = at + h0;
+    at++;
+    let body = h0;
+    while (at < end) {
+      const b = data[at];
+      if (b < 0x80) {
+        if (b == 10 || b == 11) {
+          return false;
+        }
+        at++;
+        types.push(b as i64);
+        offsets.push(body);
+        body += b < 12 ? smallSize(b) : ((b - 12) >> 1) as usize;
+      } else {
+        if (at + 1 >= end || data[at + 1] >= 0x80) {
+          return false;
+        }
+        const t = (((b & 0x7f) as usize) << 7) | (data[at + 1] as usize);
+        at += 2;
+        types.push(t as i64);
+        offsets.push(body);
+        body += (t - 12) >> 1;
+      }
+    }
+    return body <= size;
+  }
+}
+
+/**
+ * Fills `types` and `offsets` (relative to `start`) from the record at `start`. The header
+ * must lie inside the payload and the fields' bodies must add up to no more than it.
+ */
+function decodeHeader(data: u8[], start: usize, size: usize, types: i64[], offsets: usize[]) {
+  // A header under 128 bytes has a one-byte size: no varint to decode.
+  let hsize: usize = 0;
+  let at = start;
+  if (size > 0 && data[start] < 0x80) {
+    hsize = data[start] as usize;
+    at++;
+  } else {
+    const hs = readVarint(data, start);
+    if (hs.value < 0) {
+      corrupt("record header size");
+    }
+    hsize = hs.value as usize;
+    at += hs.len;
+  }
+  if (hsize > size || hsize < at - start) {
+    corrupt("record header size");
+  }
+  const end = start + hsize;
+  let body = hsize;
+  while (at < end) {
+    // Serial types below 128 (every type but long text and blobs) are one byte.
+    const b = data[at];
+    if (b < 0x80) {
+      at++;
+      types.push(b as i64);
+      offsets.push(body);
+      body += SIZES[b as usize];
+    } else {
+      const v = readVarint(data, at);
+      at += v.len;
+      types.push(v.value);
+      offsets.push(body);
+      body += body > size ? 0 : fieldSize(v.value, size - body);
+    }
+  }
+  if (body > size || at > end) {
+    headerError(types, offsets, size, at > end);
+  }
+}
+
+// The body bytes of serial types 0 to 11 (10 and 11 never get here).
+function smallSize(b: u8): usize {
+  if (b < 5) {
+    return b as usize;
+  }
+  return b == 5 ? 6 : b < 8 ? 8 : 0;
+}
+
+/** Why a decoded header is corrupt (out of line: only damaged files get here). */
+function headerError(types: i64[], offsets: usize[], size: usize, overrun: bool): never {
+  for (let i: usize = 0; i < types.length; i++) {
+    const t = types[i];
+    fieldSize(t, offsets[i] > size ? 0 : size - offsets[i]);
+  }
+  corrupt(overrun ? "record header runs into its body" : "record body larger than its payload");
+}

@@ -1,0 +1,124 @@
+// sqlite/engine/btree_row (internal): reading the columns of the record a b-tree cursor is on: storage
+// classes, integers, floats, text and blobs, as SQLite converts between them.
+
+import { readBe, serialSize } from "./format";
+import { realText } from "./real";
+import { utf8DecodeLossy } from "velt/encoding";
+import { Cursor } from "./cursor";
+import { NULL, INTEGER, REAL, TEXT, BLOB } from "./storage_class";
+
+extend Cursor {
+  /** The number of columns in the current record. */
+  columnCount(): usize {
+    this.parse();
+    return this.types.length;
+  }
+
+  /** The storage class of column `i` (a column past the record's end is NULL). */
+  columnType(i: usize): u8 {
+    this.parse();
+    if (i >= this.types.length) {
+      return NULL;
+    }
+    const t = this.types[i];
+    if (t == 0) {
+      return NULL;
+    }
+    if (t == 7) {
+      return REAL;
+    }
+    if (t < 10) {
+      return INTEGER;
+    }
+    return (t & 1) == 0 ? BLOB : TEXT;
+  }
+
+  /** Column `i` as an integer (a REAL truncates; TEXT, BLOB and NULL are 0 here). */
+  int(i: usize): i64 {
+    this.parse();
+    if (i >= this.types.length) {
+      return 0;
+    }
+    const t = this.types[i];
+    if (t == 7) {
+      return this.real(i) as i64;
+    }
+    if (t > 9) {
+      return 0;
+    }
+    if (this.local) {
+      return intValue(this.db.data, this.start + this.offsets[i], t);
+    }
+    return intValue(this.scratch, this.offsets[i], t);
+  }
+
+  /** Column `i` as a float. */
+  real(i: usize): f64 {
+    this.parse();
+    if (i >= this.types.length) {
+      return 0;
+    }
+    const t = this.types[i];
+    if (t != 7) {
+      return this.int(i) as f64;
+    }
+    const bits =
+      this.local
+        ? readBe(this.db.data, this.start + this.offsets[i], 8)
+        : readBe(this.scratch, this.offsets[i], 8);
+    return f64.fromBits(bits);
+  }
+
+  /** Column `i` as text (an invalid UTF-8 sequence becomes U+FFFD; NULL is ""). */
+  text(i: usize): string {
+    this.parse();
+    if (i >= this.types.length || this.types[i] < 12) {
+      return this.types.length > i && this.types[i] != 0 ? this.numberText(i) : "";
+    }
+    return utf8DecodeLossy(this.bytesOf(i));
+  }
+
+  /** Column `i` as bytes (TEXT gives its UTF-8; NULL and numbers give an empty array here). */
+  blob(i: usize): u8[] {
+    this.parse();
+    if (i >= this.types.length || this.types[i] < 12) {
+      return [];
+    }
+    return this.bytesOf(i);
+  }
+
+  /** A copy of the body bytes of TEXT or BLOB column `i` (one block copy). */
+  bytesOf(i: usize): u8[] {
+    const n = serialSize(this.types[i]) as i64;
+    if (this.local) {
+      const from = (this.start + this.offsets[i]) as i64;
+      return this.db.data.slice(from, from + n);
+    }
+    const from = this.offsets[i] as i64;
+    return this.scratch.slice(from, from + n);
+  }
+
+  /** The text of a numeric column, as SQLite converts it: a REAL as `realText`. */
+  numberText(i: usize): string {
+    return this.types[i] == 7 ? realText(this.real(i)) : String(this.int(i));
+  }
+}
+
+/** The integer of serial type `t` (1 to 6 big-endian two's complement, 8 is 0, 9 is 1). */
+/** The integer of serial type `t` (1 to 6, 8 or 9) whose bytes are at `at`. */
+export function intValue(data: u8[], at: usize, t: i64): i64 {
+  if (t == 8 || t == 0) {
+    return 0;
+  }
+  if (t == 9) {
+    return 1;
+  }
+  const n: usize = t == 5 ? 6 : t == 6 ? 8 : t as usize;
+  const v = readBe(data, at, n);
+  if (n == 8) {
+    return v as i64;
+  }
+  /** Sign-extend from n bytes. */
+  const shift = (64 - 8 * n) as u64;
+  return ((v << shift) as i64) >> (shift as i64);
+}

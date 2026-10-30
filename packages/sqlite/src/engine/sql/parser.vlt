@@ -1,0 +1,276 @@
+// sqlite/engine/sql/parser (internal): SELECT (with WITH, compound cores, joins, ORDER BY, LIMIT) of
+// SQLite's grammar (parse.y), on the expression grammar of engine/sql/expr_parser. FROM is
+// engine/sql/from (an `extend` block).
+
+import { ExprParser } from "./expr_parser";
+import { SqlError } from "./errors";
+import {
+  C_EXCEPT,
+  C_INTERSECT,
+  C_NONE,
+  C_UNION,
+  C_UNION_ALL,
+  Cte,
+  E_STAR,
+  Expr,
+  OrderTerm,
+  ResultColumn,
+  Select,
+  SelectCore,
+  Window,
+} from "./types";
+import { overWindow, windowClause } from "./window_def";
+import "./from";
+
+/** SQLite's limit: terms of a compound SELECT. */
+const MAX_COMPOUND: usize = 500;
+
+/** The height of a SELECT's highest expression, as SQLite's heightOfSelect (all its cores). */
+function selectHeight(s: Select): i64 {
+  let h: i64 = 0;
+  for (const c of s.cores) {
+    for (const r of c.columns) {
+      h = higher(h, r.expr);
+    }
+    h = higher(h, c.where);
+    h = higher(h, c.having);
+    for (const e of c.groupBy) {
+      h = higher(h, e);
+    }
+    for (const row of c.values) {
+      for (const e of row) {
+        h = higher(h, e);
+      }
+    }
+  }
+  for (const o of s.orderBy) {
+    h = higher(h, o.expr);
+  }
+  h = higher(h, s.limit);
+  return higher(h, s.offset);
+}
+
+function higher(h: i64, e: Expr | null): i64 {
+  return e != null && e!.height > h ? e!.height : h;
+}
+
+/** The SQL parser: `new Parser(sql)`, then `select()` or (engine/sql/statement) a statement. */
+export class Parser extends ExprParser {
+  constructor(sql: string) {
+    super(sql);
+  }
+
+  // SELECT.
+
+  select(): Select {
+    // A subquery nests deeper than an expression does: it counts as a level of its own.
+    this.enter();
+    const s = this.selectBody();
+    this.leave();
+    s.height = selectHeight(s);
+    return s;
+  }
+
+  /** A SELECT's WITH, cores, ORDER BY and LIMIT, at the current nesting level. */
+  selectBody(): Select {
+    const s = new Select();
+    if (this.eatKw("WITH")) {
+      s.recursive = this.eatKw("RECURSIVE");
+      this.ctes(s);
+    }
+    s.cores.push(this.core(C_NONE));
+    while (true) {
+      let op = C_NONE;
+      if (this.isKw("UNION")) {
+        this.pos++;
+        op = this.eatKw("ALL") ? C_UNION_ALL : C_UNION;
+      } else if (this.eatKw("INTERSECT")) {
+        op = C_INTERSECT;
+      } else if (this.eatKw("EXCEPT")) {
+        op = C_EXCEPT;
+      } else {
+        break;
+      }
+      if (s.cores.length >= MAX_COMPOUND) {
+        throw new SqlError("too many terms in compound SELECT", this.peek().start);
+      }
+      s.cores.push(this.core(op));
+    }
+    if (
+      s.cores[s.cores.length - 1].values.length > 0 && (this.isKw("ORDER") || this.isKw("LIMIT"))
+    ) {
+      // ORDER BY and LIMIT belong to a SELECT core in SQLite's grammar, not to VALUES.
+      this.fail();
+    }
+    if (this.isKw("ORDER")) {
+      this.pos++;
+      this.expectKw("BY");
+      s.orderBy = this.orderTerms();
+    }
+    if (this.eatKw("LIMIT")) {
+      s.limit = this.expr();
+      if (this.eatKw("OFFSET")) {
+        s.offset = this.expr();
+      } else if (this.eatOp(",")) {
+        // LIMIT offset, count
+        s.offset = s.limit;
+        s.limit = this.expr();
+      }
+    }
+    return s;
+  }
+
+  ctes(s: Select) {
+    while (true) {
+      const name = this.name();
+      const columns: string[] = [];
+      if (this.eatOp("(")) {
+        columns.push(this.name());
+        while (this.eatOp(",")) {
+          columns.push(this.name());
+        }
+        this.expectOp(")");
+      }
+      this.expectKw("AS");
+      let materialized: u8 = 0;
+      if (this.eatKw("MATERIALIZED")) {
+        materialized = 1;
+      } else if (this.isKw("NOT") && this.isKwAt(1, "MATERIALIZED")) {
+        this.pos += 2;
+        materialized = 2;
+      }
+      this.expectOp("(");
+      // A CTE's frames are a subquery's and more: it counts two levels.
+      this.enter();
+      const c = new Cte(name, this.select());
+      this.leave();
+      this.expectOp(")");
+      c.columns = columns;
+      c.materialized = materialized;
+      s.with.push(c);
+      if (!this.eatOp(",")) {
+        return;
+      }
+    }
+  }
+
+  orderTerms(): OrderTerm[] {
+    const out: OrderTerm[] = [];
+    while (true) {
+      const e = this.expr();
+      let desc = false;
+      if (this.eatKw("DESC")) {
+        desc = true;
+      } else {
+        this.eatKw("ASC");
+      }
+      let nulls: u8 = 0;
+      if (this.eatKw("NULLS")) {
+        if (this.eatKw("FIRST")) {
+          nulls = 1;
+        } else {
+          this.expectKw("LAST");
+          nulls = 2;
+        }
+      }
+      out.push(OrderTerm { expr: e, desc: desc, nulls: nulls });
+      if (!this.eatOp(",")) {
+        return out;
+      }
+    }
+  }
+
+  core(op: u8): SelectCore {
+    const c = new SelectCore();
+    c.op = op;
+    if (this.eatKw("VALUES")) {
+      while (true) {
+        const at = this.peek().start;
+        this.expectOp("(");
+        const row: Expr[] = [this.expr()];
+        while (this.eatOp(",")) {
+          row.push(this.expr());
+        }
+        this.expectOp(")");
+        if (c.values.length > 0 && row.length != c.values[0].length) {
+          throw new SqlError("all VALUES must have the same number of terms", at);
+        }
+        c.values.push(row);
+        if (!this.eatOp(",")) {
+          return c;
+        }
+      }
+    }
+    this.expectKw("SELECT");
+    if (this.eatKw("DISTINCT")) {
+      c.distinct = true;
+    } else {
+      this.eatKw("ALL");
+    }
+    c.columns = this.resultColumns();
+    if (this.eatKw("FROM")) {
+      c.from = this.fromItems();
+    }
+    if (this.eatKw("WHERE")) {
+      c.where = this.expr();
+    }
+    if (this.isKw("GROUP")) {
+      this.pos++;
+      this.expectKw("BY");
+      c.groupBy.push(this.expr());
+      while (this.eatOp(",")) {
+        c.groupBy.push(this.expr());
+      }
+    }
+    if (this.eatKw("HAVING")) {
+      c.having = this.expr();
+    }
+    if (this.isKeyword("WINDOW")) {
+      this.pos++;
+      windowClause(this, c);
+    }
+    return c;
+  }
+
+  /** After OVER: a window's name, or its definition in parentheses (engine/sql/window_def). */
+  over(): Window {
+    return overWindow(this);
+  }
+
+  /**
+   * Result columns (`selcollist`, of SELECT and RETURNING): `*`, `t.*`, or an expression with an
+   * optional alias (AS and a name, or a bare name or string).
+   */
+  resultColumns(): ResultColumn[] {
+    const out: ResultColumn[] = [];
+    while (true) {
+      if (this.isOp("*")) {
+        out.push(ResultColumn {
+          expr: new Expr(E_STAR, this.advance().start),
+          alias: "",
+          span: "*",
+        });
+      } else if (this.isName() && this.isOpAt(1, ".") && this.isOpAt(2, "*")) {
+        const star = new Expr(E_STAR, this.peek().start);
+        star.table = this.advance().text;
+        this.pos += 2;
+        out.push(ResultColumn { expr: star, alias: "", span: `${star.table}.*` });
+      } else {
+        const from = this.peek().start;
+        const e = this.expr();
+        // The running index: spans of many columns cost one pass over the text, not one each.
+        const span = this.text(from, this.toks[this.pos - 1].end);
+        let alias = "";
+        if (this.eatKw("AS")) {
+          alias = this.name();
+        } else if (this.isAlias()) {
+          alias = this.advance().text;
+        }
+        out.push(ResultColumn { expr: e, alias: alias, span: span });
+      }
+      if (!this.eatOp(",")) {
+        return out;
+      }
+    }
+  }
+}

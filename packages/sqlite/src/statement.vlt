@@ -1,0 +1,136 @@
+// sqlite (internal): `Statement`, a prepared statement: parameters handed to the library
+// through velt/db's `bindParams` (as JSON text for the types it cannot hand over), rows read
+// from the library's row cursor with velt/db's `decodeRows`.
+
+import { bindParams, decodeRow, decodeRows } from "velt/db";
+import {
+  velt_sqlite__bind_abort,
+  velt_sqlite__bind_begin,
+  velt_sqlite__close_rows,
+  velt_sqlite__note_error,
+  velt_sqlite__open_rows,
+  velt_sqlite__open_rows_bound,
+  velt_sqlite__run,
+  velt_sqlite__run_bound,
+  velt_sqlite__stmt_free,
+} from "./native";
+import { check, SQLITE_MISMATCH, SqliteError, sqliteError, unwrap } from "./errors";
+import { RunResult } from "./run_result";
+
+/**
+ * A prepared statement (compiled once per connection and cached, so preparing the same SQL
+ * again is cheap). Released when dropped, or earlier with `close()`. `...With(params)` binds
+ * parameters (see the header); the variants without them are for statements without any.
+ */
+export class Statement {
+  #handle: u64;
+
+  constructor(handle: u64) {
+    this.#handle = handle;
+  }
+
+  /** Executes the statement (rows it returns are discarded). */
+  run(): RunResult {
+    return this.runJson("");
+  }
+
+  runWith<P>(params: P): RunResult {
+    const sink = unwrap(velt_sqlite__bind_begin(this.#handle));
+    if (bindParams<P>(sink, params)) {
+      const r = unwrap(velt_sqlite__run_bound(sink));
+      return new RunResult(r.changes, r.lastInsertRowid);
+    }
+    velt_sqlite__bind_abort(sink);
+    return this.runJson(JSON.stringify(params));
+  }
+
+  /** The first row, or null if there is none. */
+  get<T>(): T | null {
+    return this.first(unwrap(velt_sqlite__open_rows(this.#handle, "", true)));
+  }
+
+  getWith<T, P>(params: P): T | null {
+    return this.first(this.openWith(params, true));
+  }
+
+  /** Every row. */
+  all<T>(): T[] {
+    return this.rows(unwrap(velt_sqlite__open_rows(this.#handle, "", false)));
+  }
+
+  allWith<T, P>(params: P): T[] {
+    return this.rows(this.openWith(params, false));
+  }
+
+  /** Releases the statement now (later calls throw "SQLITE_MISUSE"). */
+  close() {
+    velt_sqlite__stmt_free(this.#handle);
+    this.#handle = 0;
+  }
+
+  /** Drop hook: releases the statement. */
+  [Symbol.dispose]() {
+    velt_sqlite__stmt_free(this.#handle);
+    this.#handle = 0;
+  }
+
+  // A cursor over the rows with `params` bound: handed to the driver value by value when the
+  // type allows (the same binding as their JSON text), else as JSON text.
+  private openWith<P>(params: P, firstOnly: bool): u64 {
+    const sink = unwrap(velt_sqlite__bind_begin(this.#handle));
+    if (bindParams<P>(sink, params)) {
+      return unwrap(velt_sqlite__open_rows_bound(sink, firstOnly));
+    }
+    velt_sqlite__bind_abort(sink);
+    const text = JSON.stringify(params);
+    return unwrap(velt_sqlite__open_rows(this.#handle, text, firstOnly));
+  }
+
+  private runJson(params: string): RunResult {
+    const r = unwrap(velt_sqlite__run(this.#handle, params));
+    return new RunResult(r.changes, r.lastInsertRowid);
+  }
+
+  // The decoder reads the rows from the cursor, which is given back once, whatever happens: a
+  // failure SQLite met while stepping comes first, then one of decoding.
+  private first<T>(cursor: u64): T | null {
+    if (cursor == 0) {
+      return null;
+    }
+    let row: T | null = null;
+    let failure: string | null = null;
+    try {
+      row = decodeRow<T>(cursor);
+    } catch (e) {
+      failure = e.message;
+    }
+    check(velt_sqlite__close_rows(cursor));
+    if (failure != null) {
+      throw this.decodeError(failure);
+    }
+    return row;
+  }
+
+  private rows<T>(cursor: u64): T[] {
+    let rows: T[] = [];
+    let failure: string | null = null;
+    try {
+      rows = decodeRows<T>(cursor);
+    } catch (e) {
+      failure = e.message;
+    }
+    check(velt_sqlite__close_rows(cursor));
+    if (failure != null) {
+      throw this.decodeError(failure);
+    }
+    return rows;
+  }
+
+  // A row did not fit the requested type; counted against the connection so an enclosing
+  // `transaction` rolls back.
+  private decodeError(detail: string): SqliteError {
+    const message = `row does not match the requested type: ${detail}`;
+    velt_sqlite__note_error(this.#handle, SQLITE_MISMATCH, message);
+    return sqliteError(SQLITE_MISMATCH, message);
+  }
+}

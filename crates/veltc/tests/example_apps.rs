@@ -1,9 +1,9 @@
-//! `velt test` for every example application: each `examples/apps/<app>/` with a `tests/` directory
-//! is copied to a temporary directory (so its build output stays out of the source tree), at the
-//! same place relative to the repository's `packages/` (which apps depend on by path, `{ path:
-//! "../../../packages/http-server" }`), and its tests must pass, with an unchanged lock file
-//! (`--locked`); an app where no test ran fails too. The apps' `demo.vlt` programs run as goldens;
-//! this covers their `*.test.vlt` files.
+//! `velt test` for every example application: each `examples/apps/<app>/` with a `tests/`
+//! directory is copied to a temporary directory (so its build output stays out of the source
+//! tree), at the same place relative to the repository's `packages/` (which apps depend on by
+//! path, `{ path: "../../../packages/sqlite" }`), and its tests must pass, with an unchanged lock file (`--locked`); an app where no test
+//! ran fails too. The apps' `demo.vlt` programs run as goldens; this covers their `*.test.vlt`
+//! files.
 //!
 //! Filter with `VELT_EXAMPLE_APPS=<name>` (several separated by `,`).
 

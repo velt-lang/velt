@@ -1,0 +1,40 @@
+// sqlite/engine/exec/loop/in_values (internal): the values `x IN (list)` or `x IN (SELECT ...)`
+// looks up, one lookup each, as the loops and walks of a FROM level read them.
+
+import { NULL } from "../../storage_class";
+import { Ev } from "../types";
+import { Params } from "../params";
+import { Query } from "../query";
+import { forCompare } from "../value/ops";
+import { Val } from "../value/val";
+import { compareVals } from "../value/compare";
+
+/** An IN list's values as lookups take them: affinity applied, NULLs out, sorted, distinct. */
+export function inValues(list: Ev[], q: Query | null, p: Params, aff: u8, coll: u8): Val[] {
+  const vals: Val[] = [];
+  if (q != null) {
+    // A subquery's rows (run once per statement run unless correlated).
+    const sub = q!;
+    sub.runFor(p);
+    for (let r: usize = 0; r < sub.out.rows; r++) {
+      const v = forCompare(sub.out.vals[r * sub.out.width], aff);
+      if (v.t != NULL) {
+        vals.push(v);
+      }
+    }
+  }
+  for (const e of list) {
+    const v = forCompare(e(), aff);
+    if (v.t != NULL) {
+      vals.push(v);
+    }
+  }
+  vals.sort((a, b) => compareVals(a, b, coll) as f64);
+  const out: Val[] = [];
+  for (const v of vals) {
+    if (out.length == 0 || compareVals(out[out.length - 1], v, coll) != 0) {
+      out.push(v);
+    }
+  }
+  return out;
+}

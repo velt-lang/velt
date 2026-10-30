@@ -1,0 +1,385 @@
+// sqlite/engine/cursor (internal): cursors over the table and index b-trees of a database file
+// (https://sqlite.org/fileformat2.html#b_tree_pages): moving forwards, and where the payload
+// of the current cell is. Seeks are in engine/btree_seek and engine/btree_seek_index, moving
+// backwards in engine/btree_back, the record of the current cell in engine/btree_header and
+// engine/btree_row (`extend Cursor` blocks).
+//
+// A cursor keeps its path from the root (one page and cell index per level), so `next` climbs
+// only as far as it must. A payload that fits its page is read in place; one that spills onto
+// overflow pages is copied into the cursor's scratch buffer first.
+
+import { CorruptError, corrupt } from "./errors";
+import { DbFile } from "./db_file";
+import {
+  INTERIOR_INDEX,
+  INTERIOR_TABLE,
+  LEAF_INDEX,
+  LEAF_TABLE,
+  localSize,
+  maxLocal,
+  readU16,
+  readU32,
+} from "./format";
+import { readVarint } from "./varint";
+import { KeyRec } from "./key_rec";
+import { compareRecords } from "./record";
+import "./btree_seek";
+import "./btree_seek_index";
+import "./btree_header";
+import "./btree_row";
+
+/** A b-tree is at most this deep: SQLite's own limit (BTCURSOR_MAX_DEPTH). */
+export const MAX_DEPTH: usize = 20;
+
+/**
+ * A cursor over one b-tree. On a table b-tree, `rowid` is the current row's key; on an index
+ * b-tree the key is the record. `valid` is false before the first move and past the end.
+ */
+export class Cursor {
+  db: DbFile;
+  root: u32;
+  table: bool = false;
+  valid: bool = false;
+  rowid: i64 = 0;
+  /** The path: the page (its header's offset) and cell index at each level, leaf last. */
+  pages: u32[] = [];
+  cells: usize[] = [];
+  /** The payload of the current cell: in `db.data` at `start` when `local`, else in `scratch`. */
+  local: bool = true;
+  start: usize = 0;
+  size: usize = 0;
+  scratch: u8[] = [];
+  /** The decoded record header: a serial type and the body offset of each column. */
+  types: i64[] = [];
+  offsets: usize[] = [];
+  parsed: bool = false;
+  /** The most payload an index cell keeps on its page. */
+  maxIndexLocal: usize = 0;
+  /** The most payload a cell of this b-tree keeps on its page. */
+  maxLocalHere: usize = 0;
+  /**
+   * The page last entered (its header's offset; 1 is none), checked once as SQLite's
+   * btreeInitPage does: its first byte, where its cells may start (past the pointer array),
+   * where its usable bytes end, and whether 18 bytes follow that end in the file (true but near
+   * the end of the file), so the varints of its cells need no bounds check of their own: a cell
+   * starts before that end, and its header is at most two varints of 9 bytes (a table leaf's
+   * payload size and rowid; an interior cell's 4-byte child pointer and one varint).
+   */
+  ph: usize = 1;
+  pBase: usize = 0;
+  pFirst: usize = 0;
+  pEnd: usize = 0;
+  pSafe: bool = false;
+
+  constructor(db: DbFile, root: u32) {
+    this.db = db;
+    this.root = root;
+    this.maxIndexLocal = maxLocal(db.usable, false);
+    const t = db.data[db.header(root)];
+    if (t == LEAF_TABLE || t == INTERIOR_TABLE) {
+      this.table = true;
+    } else if (t == LEAF_INDEX || t == INTERIOR_INDEX) {
+      this.table = false;
+    } else {
+      throw new CorruptError(`page ${root} is not a b-tree root`);
+    }
+    this.maxLocalHere = maxLocal(db.usable, this.table);
+  }
+
+  /** Moves to the first entry; false if the tree is empty. */
+  first(): bool {
+    this.pages.truncate(0);
+    this.cells.truncate(0);
+    return this.descendLeft(this.root);
+  }
+
+  /** Moves to the next entry; false (and not `valid`) past the last. */
+  next(): bool {
+    if (!this.valid) {
+      return false;
+    }
+    const data = this.db.data;
+    let depth = this.pages.length - 1;
+    const leaf = this.db.header(this.pages[depth]);
+    const idx = this.cells[depth] + 1;
+    if (data[leaf] == INTERIOR_INDEX) {
+      // On an index interior cell: next is the leftmost entry of the subtree after it.
+      this.cells[depth] = idx;
+      const n = readU16(data, leaf + 3);
+      const child = idx < n ? this.childAt(leaf, idx) : readU32(data, leaf + 8);
+      return this.descendLeft(child);
+    }
+    // Next cell on the leaf.
+    if (idx < readU16(data, leaf + 3)) {
+      this.cells[depth] = idx;
+      this.locate(leaf, idx);
+      this.valid = true;
+      return true;
+    }
+    // Climb to the first ancestor with a cell (or right pointer) left to visit.
+    while (depth > 0) {
+      this.pages.pop();
+      this.cells.pop();
+      depth--;
+      const h = this.db.header(this.pages[depth]);
+      const n = readU16(data, h + 3);
+      const i = this.cells[depth];
+      if (!this.table && i < n) {
+        // An index interior cell holds an entry of its own, after its left subtree.
+        return this.load();
+      }
+      const j = i + 1;
+      this.cells[depth] = j;
+      if (j < n) {
+        const child = this.childAt(h, j);
+        return this.descendLeft(child);
+      }
+      if (j == n) {
+        return this.descendLeft(readU32(data, h + 8));
+      }
+    }
+    this.valid = false;
+    return false;
+  }
+
+  /** On a table b-tree, moves to the row with key `rowid`; false if there is none. */
+  seekRowid(rowid: i64): bool {
+    const lo = this.findLeaf(rowid);
+    const leaf = this.db.header(this.pages[this.pages.length - 1]);
+    this.cells.push(lo);
+    if (lo < readU16(this.db.data, leaf + 3)) {
+      this.load();
+      if (this.rowid == rowid) {
+        return true;
+      }
+    }
+    this.valid = false;
+    return false;
+  }
+
+  /**
+   * Follows leftmost children from `page` to a leaf and loads its first cell (or, for an
+   * empty leaf, moves on).
+   */
+  descendLeft(page: u32): bool {
+    const data = this.db.data;
+    while (true) {
+      if (this.pages.length >= MAX_DEPTH) {
+        corrupt("b-tree too deep");
+      }
+      const h = this.db.header(page);
+      const t = data[h];
+      // A page below the root must be of the root's kind, as SQLite's getAndInitPage checks: a
+      // retyped page would otherwise read as a leaf of the other kind and skip its subtrees.
+      if (
+        this.table ? t != LEAF_TABLE && t != INTERIOR_TABLE : t != LEAF_INDEX && t != INTERIOR_INDEX
+      ) {
+        throw new CorruptError(
+          `page ${page} is not ${this.table ? "a table" : "an index"} b-tree page`,
+        );
+      }
+      this.pages.push(page);
+      this.cells.push(0);
+      if (t == LEAF_TABLE || t == LEAF_INDEX) {
+        if (readU16(data, h + 3) == 0) {
+          // Only a root may be an empty leaf.
+          if (this.pages.length > 1) {
+            corrupt(`page ${page} is an empty leaf below the root`);
+          }
+          this.valid = false;
+          return false;
+        }
+        return this.load();
+      }
+      if (t != INTERIOR_TABLE && t != INTERIOR_INDEX) {
+        throw new CorruptError(`page ${page} is not a b-tree page`);
+      }
+      page = readU16(data, h + 3) == 0 ? readU32(data, h + 8) : this.childAt(h, 0);
+    }
+  }
+
+  /**
+   * The offset of cell `i` of the page whose header is at `h` (header `hlen` bytes long). The
+   * cell pointer array must fit the page and the cell must start past it, inside the usable
+   * bytes, room for its smallest form (4 bytes) included.
+   */
+  cellOffset(h: usize, hlen: usize, i: usize): usize {
+    if (h != this.ph) {
+      this.enterPage(h, hlen);
+    }
+    const at = this.pBase + readU16(this.db.data, h + hlen + 2 * i);
+    if (at < this.pFirst || at + 4 > this.pEnd) {
+      corrupt(`cell offset ${at - this.pBase} out of range`);
+    }
+    return at;
+  }
+
+  /** Checks the page whose header is at `h` once: its cell pointer array must fit it. */
+  enterPage(h: usize, hlen: usize) {
+    const data = this.db.data;
+    const base = h - (h % this.db.pageSize);
+    const end = base + this.db.usable;
+    const first = h + hlen + 2 * readU16(data, h + 3);
+    if (first > end) {
+      corrupt(`cell count ${readU16(data, h + 3)} overflows its page`);
+    }
+    this.ph = h;
+    this.pBase = base;
+    this.pFirst = first;
+    this.pEnd = end;
+    this.pSafe = end + 18 <= data.length;
+  }
+
+  /** The left child of cell `i` of the interior page at `h`. */
+  childAt(h: usize, i: usize): u32 {
+    const at = this.cellOffset(h, 12, i);
+    return readU32(this.db.data, at);
+  }
+
+  /** Loads the cell at the end of the path: its key and where its payload is. */
+  load(): bool {
+    const depth = this.pages.length - 1;
+    this.locate(this.db.header(this.pages[depth]), this.cells[depth]);
+    this.valid = true;
+    return true;
+  }
+
+  /**
+   * Points the payload at cell `i` of the page whose header is at `h` (and, on a table leaf,
+   * sets `rowid`); a payload that spills is gathered into `scratch`.
+   */
+  locate(h: usize, i: usize) {
+    const data = this.db.data;
+    const t = data[h];
+    const leaf = t == LEAF_TABLE || t == LEAF_INDEX;
+    // cellOffset, in place.
+    const base = h == 100 ? 0 : h;
+    const hlen: usize = leaf ? 8 : 12;
+    const n = ((data[h + 3] as usize) << 8) | (data[h + 4] as usize);
+    const cellsEnd = h + hlen + 2 * n;
+    if (cellsEnd > base + this.db.usable) {
+      corrupt(`cell count ${n} overflows its page`);
+    }
+    const ptr = h + hlen + 2 * i;
+    const off = ((data[ptr] as usize) << 8) | (data[ptr + 1] as usize);
+    if (base + off < cellsEnd || off + 4 > this.db.usable) {
+      corrupt(`cell offset ${off} out of range`);
+    }
+    let at = base + off;
+    if (!leaf) {
+      at += 4;
+    }
+    // Sizes and rowids of one or two varint bytes are read in place.
+    let szv: i64 = 0;
+    const s0 = data[at];
+    if (s0 < 0x80) {
+      szv = s0 as i64;
+      at++;
+    } else if (data[at + 1] < 0x80) {
+      szv = (((s0 & 0x7f) as i64) << 7) | (data[at + 1] as i64);
+      at += 2;
+    } else {
+      const sz = readVarint(data, at);
+      szv = sz.value;
+      at += sz.len;
+    }
+    if (this.table) {
+      const k0 = data[at];
+      if (k0 < 0x80) {
+        this.rowid = k0 as i64;
+        at++;
+      } else if (data[at + 1] < 0x80) {
+        this.rowid = (((k0 & 0x7f) as i64) << 7) | (data[at + 1] as i64);
+        at += 2;
+      } else {
+        const key = readVarint(data, at);
+        this.rowid = key.value;
+        at += key.len;
+      }
+    }
+    // A payload is at most 2^31 - 1 bytes (SQLite's limit) and its overflow fits in the file.
+    if (szv < 0 || szv > 2147483647) {
+      corrupt(`payload size ${szv}`);
+    }
+    const size = szv as usize;
+    const usable = this.db.usable;
+    const end = (h == 100 ? 0 : h) + usable;
+    const keep = size <= this.maxLocalHere ? size : localSize(usable, this.table, size);
+    if (keep == size) {
+      if (at + size > end) {
+        corrupt("cell runs past its page");
+      }
+      this.size = size;
+      this.local = true;
+      this.start = at;
+    } else {
+      if (at + keep + 4 > end) {
+        corrupt("cell runs past its page");
+      }
+      if (size - keep > (this.db.pageCount as usize) * (usable - 4)) {
+        corrupt(`payload size ${size} exceeds the file`);
+      }
+      this.size = size;
+      this.local = false;
+      this.gather(at, keep);
+    }
+    this.parsed = false;
+  }
+
+  /** The current payload against `key` (a record) over its first `fields` fields. */
+  compareKey(key: u8[], fields: usize, colls: u8[], desc: bool[]): i64 {
+    if (this.local) {
+      return compareRecords(
+        this.db.data,
+        this.start,
+        this.size,
+        key,
+        0,
+        key.length,
+        fields,
+        colls,
+        desc,
+      );
+    }
+    return compareRecords(this.scratch, 0, this.size, key, 0, key.length, fields, colls, desc);
+  }
+
+  /**
+   * On an index b-tree, moves to the first entry whose first `fields` fields compare >= `key`
+   * (a record, from `RecordBuilder`), under the columns' collations and directions; false (and
+   * not `valid`) when every entry is smaller.
+   */
+  seekKey(key: u8[], fields: usize, colls: u8[], desc: bool[]): bool {
+    return this.seekKeyRec(new KeyRec(key), fields, colls, desc);
+  }
+
+  /** Copies a payload whose first `keep` bytes are at `at` and the rest on overflow pages. */
+  gather(at: usize, keep: usize) {
+    const data = this.db.data;
+    const out = this.scratch;
+    out.truncate(0);
+    for (let i: usize = 0; i < keep; i++) {
+      out.push(data[at + i]);
+    }
+    let next = readU32(data, at + keep);
+    const per = this.db.usable - 4;
+    // A chain that loops is cut off once it has visited more pages than the file has.
+    let visited: u32 = 0;
+    while (out.length < this.size) {
+      if (next == 0) {
+        corrupt("overflow chain ends early");
+      }
+      visited++;
+      if (visited > this.db.pageCount) {
+        corrupt("overflow chain loops");
+      }
+      const p = this.db.page(next);
+      next = readU32(data, p);
+      const left = this.size - out.length;
+      const n = left < per ? left : per;
+      for (let i: usize = 0; i < n; i++) {
+        out.push(data[p + 4 + i]);
+      }
+    }
+  }
+}

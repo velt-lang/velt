@@ -1,0 +1,23 @@
+// sqlite/engine/exec/window/win_spec (internal): one distinct window of a query (`WinSpec`): its
+// PARTITION BY and ORDER BY terms, and their values in each collected row.
+
+import { OrderTerm } from "../../sql/types";
+import { Ev } from "../types";
+import { SortKey } from "../sort_key";
+import { Val } from "../value/val";
+
+/** One distinct window (PARTITION BY and ORDER BY): its keys of each collected row. */
+export class WinSpec {
+  key: string;
+  partition: Ev[] = [];
+  order: Ev[] = [];
+  /** The sort: the partition terms (ascending) then the ORDER BY terms. */
+  sk: SortKey[] = [];
+  /** The same terms as written (to find an index giving the order). */
+  terms: OrderTerm[] = [];
+  keys: Val[] = [];
+
+  constructor(key: string) {
+    this.key = key;
+  }
+}

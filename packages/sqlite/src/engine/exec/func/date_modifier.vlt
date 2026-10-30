@@ -1,0 +1,267 @@
+// sqlite/engine/exec/func/date_modifier (internal): the modifiers of SQLite's date and time
+// functions ('+N days', 'start of month', 'weekday N', 'unixepoch', 'subsec', ...), as date.c
+// applies them. 'localtime' and 'utc' need the system's time zone rules and fail for now.
+
+import { SqlRunError } from "../errors";
+import { atof } from "../value/atof";
+import { at, digits, isDigit, isSpace, parseHhMmSs } from "./date_parse";
+import {
+  DateTime,
+  computeHMS,
+  computeJD,
+  computeYMD,
+  clearYMDHMS,
+  computeFloor,
+} from "./date_time";
+
+function autoAdjust(p: DateTime) {
+  if (!p.rawS || p.validJD) {
+    p.rawS = false;
+  } else if (p.s >= -210866760000.0 && p.s <= 253402300799.0) {
+    const r = p.s * 1000 + 210866760000000.0;
+    clearYMDHMS(p);
+    p.iJD = (r + 0.5) as i64;
+    p.validJD = true;
+    p.rawS = false;
+  }
+}
+
+/** A modifier: false when it applies, true when it is not one (the result is NULL). */
+export function parseModifier(b: u8[], p: DateTime, idx: usize): bool {
+  const z = b.utf8Slice(0, b.length as i64).toLowerCase();
+  if (z == "auto") {
+    if (idx > 1) {
+      return true;
+    }
+    autoAdjust(p);
+    return false;
+  }
+  if (z == "ceiling") {
+    computeJD(p);
+    clearYMDHMS(p);
+    p.nFloor = 0;
+    return false;
+  }
+  if (z == "floor") {
+    computeJD(p);
+    p.iJD -= p.nFloor * 86400000;
+    clearYMDHMS(p);
+    return false;
+  }
+  if (z == "julianday") {
+    if (idx > 1) {
+      return true;
+    }
+    if (p.validJD && p.rawS) {
+      p.rawS = false;
+      return false;
+    }
+    return true;
+  }
+  if (z == "unixepoch") {
+    if (idx > 1 || !p.rawS) {
+      return true;
+    }
+    const r = p.s * 1000 + 210866760000000.0;
+    if (r >= 0 && r < 464269060800000.0) {
+      clearYMDHMS(p);
+      p.iJD = (r + 0.5) as i64;
+      p.validJD = true;
+      p.rawS = false;
+      return false;
+    }
+    return true;
+  }
+  if (z == "localtime" || z == "utc") {
+    throw new SqlRunError(`the ${z} modifier is not supported yet`);
+  }
+  if (z == "subsec" || z == "subsecond") {
+    p.useSubsec = true;
+    return false;
+  }
+  if (z.startsWith("weekday ")) {
+    const r = atof(b, 8);
+    if (
+      !(r.whole && r.state > 0) || r.value < 0 || r.value >= 7 || r.value != Math.trunc(r.value)
+    ) {
+      return true;
+    }
+    const n = r.value as i64;
+    computeYMD(p);
+    computeHMS(p);
+    p.tz = 0;
+    p.validJD = false;
+    computeJD(p);
+    let Z = ((p.iJD + 129600000) / 86400000) % 7;
+    if (Z > n) {
+      Z -= 7;
+    }
+    p.iJD += (n - Z) * 86400000;
+    clearYMDHMS(p);
+    return false;
+  }
+  if (z.startsWith("start of ")) {
+    if (!p.validJD && !p.validYMD && !p.validHMS) {
+      return true;
+    }
+    const what = z.slice(9);
+    computeYMD(p);
+    p.validHMS = true;
+    p.h = 0;
+    p.m = 0;
+    p.s = 0;
+    p.rawS = false;
+    p.tz = 0;
+    p.validJD = false;
+    if (what == "month") {
+      p.D = 1;
+      return false;
+    }
+    if (what == "year") {
+      p.M = 1;
+      p.D = 1;
+      return false;
+    }
+    return what != "day";
+  }
+  const c0 = at(b, 0);
+  if (c0 == 43 || c0 == 45 || isDigit(c0)) {
+    return shift(b, p);
+  }
+  return true;
+}
+
+// `[+-]N unit`, `[+-]HH:MM[:SS]`, `[+-]YYYY-MM-DD[ HH:MM]`.
+function shift(b: u8[], p: DateTime): bool {
+  const c0 = b[0];
+  let n: usize = 1;
+  while (n < b.length) {
+    const c = b[n];
+    if (c == 58 || isSpace(c)) {
+      break;
+    }
+    if (
+      c == 45 &&
+      (
+        (n == 5 && digits(b, 1, 4, 0, 9999, 0) >= 0) ||
+        (n == 6 && digits(b, 1, 5, 0, 14712, 0) >= 0)
+      )
+    ) {
+      break;
+    }
+    n++;
+  }
+  const num = atof(b.slice(0, n as i64), 0);
+  if (!(num.whole && num.state > 0)) {
+    return true;
+  }
+  let r = num.value;
+  if (at(b, n) == 45) {
+    // (+|-)YYYY-MM-DD
+    if (c0 != 43 && c0 != 45) {
+      return true;
+    }
+    const yw: usize = n == 5 ? 4 : 5;
+    const Y = digits(b, 1, yw, 0, yw == 4 ? 9999 : 14712, 45);
+    const M = Y < 0 ? -1 : digits(b, 2 + yw, 2, 0, 12, 45);
+    let D = M < 0 ? -1 : digits(b, 5 + yw, 2, 0, 31, 0);
+    if (D < 0 || M >= 12 || D >= 31) {
+      return true;
+    }
+    computeYMD(p);
+    computeHMS(p);
+    p.validJD = false;
+    if (c0 == 45) {
+      p.Y -= Y;
+      p.M -= M;
+      D = -D;
+    } else {
+      p.Y += Y;
+      p.M += M;
+    }
+    const x = p.M > 0 ? (p.M - 1) / 12 : (p.M - 12) / 12;
+    p.Y += x;
+    p.M -= x * 12;
+    computeFloor(p);
+    computeJD(p);
+    p.validHMS = false;
+    p.validYMD = false;
+    p.iJD += D * 86400000;
+    const end = 7 + yw;
+    if (end >= b.length) {
+      return false;
+    }
+    if (isSpace(b[end]) && digits(b, end + 1, 2, 0, 24, 58) >= 0) {
+      return hhmm(b, end + 1, c0, p);
+    }
+    return true;
+  }
+  if (at(b, n) == 58) {
+    return hhmm(b, isDigit(c0) ? 0 : 1, c0, p);
+  }
+  // N unit(s)
+  let i = n;
+  while (i < b.length && isSpace(b[i])) {
+    i++;
+  }
+  let unit = b.utf8Slice(i as i64, b.length as i64).toLowerCase();
+  if (unit.length < 3 || unit.length > 10) {
+    return true;
+  }
+  if (unit.endsWith("s")) {
+    unit = unit.slice(0, (unit.length as i64) - 1);
+  }
+  computeJD(p);
+  const rounder = r < 0 ? -0.5 : 0.5;
+  p.nFloor = 0;
+  const names = ["second", "minute", "hour", "day", "month", "year"];
+  const limits = [4.6427e14, 7.7379e12, 1.2897e11, 5373485.0, 176546.0, 14713.0];
+  const scale = [1.0, 60.0, 3600.0, 86400.0, 2592000.0, 31536000.0];
+  for (let k: usize = 0; k < 6; k++) {
+    if (unit != names[k] || !(r > -limits[k] && r < limits[k])) {
+      continue;
+    }
+    if (k == 4) {
+      computeYMD(p);
+      computeHMS(p);
+      p.M += r as i64;
+      const x = p.M > 0 ? (p.M - 1) / 12 : (p.M - 12) / 12;
+      p.Y += x;
+      p.M -= x * 12;
+      computeFloor(p);
+      p.validJD = false;
+      r -= Math.trunc(r);
+    } else if (k == 5) {
+      computeYMD(p);
+      computeHMS(p);
+      p.Y += r as i64;
+      computeFloor(p);
+      p.validJD = false;
+      r -= Math.trunc(r);
+    }
+    computeJD(p);
+    p.iJD += (r * 1000 * scale[k] + rounder) as i64;
+    clearYMDHMS(p);
+    return false;
+  }
+  clearYMDHMS(p);
+  return true;
+}
+
+function hhmm(b: u8[], from: usize, c0: u8, p: DateTime): bool {
+  const tx = new DateTime();
+  if (parseHhMmSs(b, from, tx)) {
+    return true;
+  }
+  computeJD(tx);
+  tx.iJD -= 43200000;
+  const day = tx.iJD / 86400000;
+  tx.iJD -= day * 86400000;
+  if (c0 == 45) {
+    tx.iJD = -tx.iJD;
+  }
+  computeJD(p);
+  clearYMDHMS(p);
+  p.iJD += tx.iJD;
+  return false;
+}

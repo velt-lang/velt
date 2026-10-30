@@ -1,0 +1,55 @@
+// sqlite/engine/exec/cte_def (internal): a common table expression of a WITH clause (`CteDef`),
+// compiled where it is used, and whether a SELECT refers to one.
+
+import { Select, SelectCore } from "../sql/types";
+import { Query } from "./query";
+import { Scope } from "./scope";
+import { prepareError } from "./errors";
+
+/** A WITH clause's table: its SELECT, compiled where it is used. */
+export class CteDef {
+  name: string;
+  cols: string[];
+  select: Select;
+  outer: Scope | null;
+  active: bool = false;
+  /** While its recursive part compiles: the query holding the row being expanded. */
+  current: Query | null = null;
+  /** Its FROM terms once flattened (-1: not yet counted). */
+  flat: i64 = -1;
+  /** Its compiled query, once a use compiled it, and the tables it read (counted per table). */
+  query: Query | null = null;
+  refNames: string[] = [];
+  refCounts: i64[] = [];
+
+  constructor(name: string, cols: string[], select: Select, outer: Scope | null) {
+    this.name = name;
+    this.cols = cols;
+    this.select = select;
+    this.outer = outer;
+  }
+}
+
+export function circular(name: string): never {
+  prepareError(`circular reference: ${name}`);
+}
+
+// Whether a FROM item of a core names `name` (a recursive CTE's reference to itself).
+export function coreRefersTo(core: SelectCore, name: string): bool {
+  const n = name.toUpperCase();
+  for (const f of core.from) {
+    if (f.schema == "" && f.subquery == null && f.name.toUpperCase() == n) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function refersTo(s: Select, name: string): bool {
+  for (const c of s.cores) {
+    if (coreRefersTo(c, name)) {
+      return true;
+    }
+  }
+  return false;
+}

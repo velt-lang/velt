@@ -1,0 +1,44 @@
+// sqlite (internal): the native library's functions (native/src/abi.rs; the ABI is
+// docs/native_abi.md). Every other file of the package is plain Velt.
+
+import { IoResult, IoStatus } from "velt/native";
+
+// `RunResult` as the library returns it (`statement::RunInfo`).
+export struct RunSlot {
+  changes: i64;
+  lastInsertRowid: i64;
+}
+
+export declare function velt_sqlite__open(
+  path: string,
+  readonly: bool,
+  create: bool,
+  timeoutMs: u32,
+): IoResult<u64>;
+export declare function velt_sqlite__close(db: u64): IoStatus;
+export declare function velt_sqlite__exec(db: u64, sql: string): IoStatus;
+export declare function velt_sqlite__pragma(db: u64, source: string): IoResult<string>;
+export declare function velt_sqlite__in_transaction(db: u64): bool;
+export declare function velt_sqlite__error_count(db: u64): u64;
+export declare function velt_sqlite__reset_error_count(db: u64, count: u64);
+export declare function velt_sqlite__last_error(db: u64): IoStatus;
+export declare function velt_sqlite__prepare(db: u64, sql: string): IoResult<u64>;
+export declare function velt_sqlite__run(stmt: u64, params: string): IoResult<RunSlot>;
+// A cursor over the rows (`velt_text::rows_cursor`): the decoder reads each value from the
+// stepped statement; 0 for `firstOnly` without a row. Given back with `close_rows`, which
+// reports a failure met while stepping.
+export declare function velt_sqlite__open_rows(
+  stmt: u64,
+  params: string,
+  firstOnly: bool,
+): IoResult<u64>;
+export declare function velt_sqlite__close_rows(cursor: u64): IoStatus;
+// A parameter sink (`velt_text::rows_cursor`): `dbBind` hands it the parameters
+// value by value, for the types it can (else they go as JSON text); then it runs the statement.
+export declare function velt_sqlite__bind_begin(stmt: u64): IoResult<u64>;
+export declare function velt_sqlite__open_rows_bound(sink: u64, firstOnly: bool): IoResult<u64>;
+export declare function velt_sqlite__run_bound(sink: u64): IoResult<RunSlot>;
+export declare function velt_sqlite__bind_abort(sink: u64);
+export declare function velt_sqlite__note_error(stmt: u64, code: i32, message: string);
+export declare function velt_sqlite__stmt_free(stmt: u64);
+export declare function velt_sqlite__error_name(code: i32): string;

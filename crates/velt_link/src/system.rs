@@ -183,7 +183,11 @@ pub(crate) fn unix_args(req: &LinkRequest, os: TargetOs) -> Vec<OsString> {
         args.push(req.runtime_lib.into());
     }
     args.extend(native::unix_shared_args(req.native));
-    args.extend(p.libs_for(req, os).iter().map(OsString::from));
+    let libs = p.libs_for(req, os);
+    args.extend(libs.iter().map(OsString::from));
+    // What the packages' prelinked objects need besides (`cc` links libSystem on macOS).
+    let covered: Vec<&str> = libs.iter().copied().chain(["-lSystem"]).collect();
+    args.extend(native::system_lib_args(req.native, &covered));
     args.push("-o".into());
     args.push(req.output.into());
     args

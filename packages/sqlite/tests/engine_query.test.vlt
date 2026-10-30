@@ -1,0 +1,1201 @@
+// The SQLite engine written in Velt (sqlite/engine, #1720) on a database C SQLite writes
+// (through the driver): each query's rows, every value printed as SQLite's quote() prints it
+// (blobs as the sqlite3 shell's x'…'). The expected rows are the sqlite3 shell's (`.mode quote`)
+// for the same queries on the same data; rows of a query without ORDER BY are sorted on both
+// sides, since their order is SQLite's choice.
+import { open } from "../src/lib";
+import { openDatabase, Database } from "../src/engine/index";
+import { BLOB, REAL } from "../src/engine/storage_class";
+import { Val } from "../src/engine/exec/value/val";
+import { quote } from "../src/engine/exec/func/func_text";
+import { hexEncode } from "velt/encoding";
+import { tmpdir } from "velt/os";
+import { uuidv4 } from "velt/random/uuid";
+import { removeSync } from "velt/fs";
+
+const SETUP = `
+CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL, age INT, score REAL, note,
+  nick TEXT COLLATE NOCASE);
+CREATE TABLE posts (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, title TEXT, body TEXT,
+  created TEXT NOT NULL, stars NUMERIC);
+CREATE INDEX posts_user ON posts (user_id);
+CREATE INDEX posts_created ON posts (created DESC, id DESC);
+CREATE TABLE tags (post_id INTEGER, tag TEXT, PRIMARY KEY (post_id, tag));
+CREATE INDEX tags_tag ON tags (tag);
+CREATE TABLE kv (k TEXT PRIMARY KEY, v);
+CREATE VIEW popular AS SELECT post_id, count(*) AS n FROM tags GROUP BY post_id HAVING count(*) > 1;
+INSERT INTO users VALUES
+  (1, 'alice', 30, 4.5, NULL, 'Al'), (2, 'bob', 25, 3.0, 'hi', 'BOBBY'), (3, 'carol', 35, NULL, 7, 'cc'),
+  (4, 'dave', 25, 2.25, x'00ff', 'Dave'), (5, 'eve', NULL, 5.0, 1.5, 'al'), (6, 'Frank', 41, -1.0, '12', NULL),
+  (7, 'grace', 30, 1e10, '', 'GRACE'), (8, 'héloïse', 28, 0.1, 'ü', 'h');
+INSERT INTO posts VALUES
+  (1, 1, 'Hello', 'first post', '2024-01-01', 5), (2, 1, 'Again', 'second', '2024-01-03', '7'),
+  (3, 2, 'Bob here', NULL, '2024-01-02', 2.5), (4, 3, 'x', 'carol''s', '2024-01-05', NULL),
+  (5, 3, 'y', 'more', '2024-01-04', 0), (6, 3, 'z', '', '2024-01-04', -3), (7, 9, 'orphan', 'no user', '2024-01-06', 1),
+  (8, 5, 'Eve', 'eve', '2024-01-07', '1e2'), (9, 7, 'Grace', 'g', '2024-01-02', 'abc'), (10, 2, 'Bob 2', 'b2', '2024-01-08', 4);
+INSERT INTO tags VALUES (1, 'intro'), (1, 'misc'), (2, 'misc'), (3, 'intro'), (4, 'Misc'),
+  (5, 'news'), (8, 'news'), (8, 'intro'), (9, 'misc'), (10, 'x');
+INSERT INTO kv VALUES ('a', 1), ('b', '2'), ('c', 3.5), ('d', NULL), ('e', x'41'), ('f', 'text'),
+  ('g', -9223372036854775808), ('h', 9223372036854775807), ('i', 1e300), ('j', 0.30000000000000004);
+`;
+
+/** A query and the rows it gives (or its error). */
+struct Case {
+  sql: string;
+  rows: string[];
+}
+
+const Q_SCANS_LOOKUPS_RANGES_AND_INDEXES: Case[] = [
+  // Scans, lookups, ranges and index access.
+  Case {
+    sql: "SELECT * FROM users",
+    rows: [
+      "1,'alice',30,4.5,NULL,'Al'",
+      "2,'bob',25,3.0,'hi','BOBBY'",
+      "3,'carol',35,NULL,7,'cc'",
+      "4,'dave',25,2.25,x'00ff','Dave'",
+      "5,'eve',NULL,5.0,1.5,'al'",
+      "6,'Frank',41,-1.0,'12',NULL",
+      "7,'grace',30,10000000000.0,'','GRACE'",
+      "8,'héloïse',28,0.1,'ü','h'",
+    ],
+  },
+  Case { sql: "SELECT id, name FROM users WHERE id = 3", rows: ["3,'carol'"] },
+  Case { sql: "SELECT id FROM users WHERE id > 2 AND id <= 5", rows: ["3", "4", "5"] },
+  Case { sql: "SELECT id FROM users WHERE id BETWEEN 2.5 AND 6", rows: ["3", "4", "5", "6"] },
+  Case { sql: "SELECT id FROM users WHERE id < '4'", rows: ["1", "2", "3"] },
+  Case {
+    sql: "SELECT id, title FROM posts WHERE user_id = 3 ORDER BY id",
+    rows: ["4,'x'", "5,'y'", "6,'z'"],
+  },
+  Case { sql: "SELECT id FROM posts WHERE user_id = '2' ORDER BY id", rows: ["3", "10"] },
+  Case {
+    sql: "SELECT id, created FROM posts ORDER BY created DESC, id DESC LIMIT 4",
+    rows: ["10,'2024-01-08'", "8,'2024-01-07'", "7,'2024-01-06'", "4,'2024-01-05'"],
+  },
+  Case {
+    sql: "SELECT id, created FROM posts ORDER BY created DESC, id DESC LIMIT 3 OFFSET 2",
+    rows: ["7,'2024-01-06'", "4,'2024-01-05'", "6,'2024-01-04'"],
+  },
+  Case {
+    sql: "SELECT id, created FROM posts WHERE created > '2024-01-03' ORDER BY created, id",
+    rows: [
+      "5,'2024-01-04'",
+      "6,'2024-01-04'",
+      "4,'2024-01-05'",
+      "7,'2024-01-06'",
+      "8,'2024-01-07'",
+      "10,'2024-01-08'",
+    ],
+  },
+  Case {
+    sql: "SELECT post_id FROM tags WHERE tag = 'misc' ORDER BY post_id",
+    rows: ["1", "2", "9"],
+  },
+  Case {
+    sql: "SELECT k, v, typeof(v) FROM kv ORDER BY k",
+    rows: [
+      "'a',1,'integer'",
+      "'b','2','text'",
+      "'c',3.5,'real'",
+      "'d',NULL,'null'",
+      "'e',x'41','blob'",
+      "'f','text','text'",
+      "'g',-9223372036854775808,'integer'",
+      "'h',9223372036854775807,'integer'",
+      "'i',1.0e+300,'real'",
+      "'j',0.30000000000000004,'real'",
+    ],
+  },
+  Case {
+    sql: "SELECT id, title FROM posts WHERE id IN (9, 2, 4, 2, NULL, '3')",
+    rows: ["2,'Again'", "3,'Bob here'", "4,'x'", "9,'Grace'"],
+  },
+  Case {
+    sql: "SELECT id FROM posts WHERE user_id IN (3, 7) ORDER BY id",
+    rows: ["4", "5", "6", "9"],
+  },
+  Case {
+    sql: "SELECT p.title, v.n FROM popular v JOIN posts p ON p.id = v.post_id ORDER BY 1",
+    rows: ["'Eve',2", "'Hello',2"],
+  },
+  Case { sql: "SELECT rowid, oid, _rowid_ FROM users WHERE rowid < 3", rows: ["1,1,1", "2,2,2"] },
+];
+
+const Q_EXPRESSIONS_NULL_AND_AFFINITY: Case[] = [
+  // Expressions, NULL and affinity rules.
+  Case {
+    sql: "SELECT 1 + 2, 7 / 2, 7.0 / 2, 7 % 3, -7 % 3, 7 % -3, 5 / 0, 5 % 0, 2.5 * 2",
+    rows: ["3,3,3.5,1,-1,1,NULL,NULL,5.0"],
+  },
+  Case {
+    sql:
+      "SELECT 9223372036854775807 + 1, -9223372036854775808 - 1, 3037000500 * 3037000500, -(-9223372036854775808)",
+    rows: [
+      "9.2233720368547758e+18,-9.2233720368547758e+18,9.2233720370002493e+18,9.2233720368547758e+18",
+    ],
+  },
+  Case {
+    sql:
+      "SELECT 1 / 3.0, 2.0 / 3, 0.1 + 0.2, 1e300 * 1e10, -1e300 * 1e10, 100.0, 1e15, 1e16, 123456789012345678.0",
+    rows: [
+      "0.33333333333333332,0.66666666666666663,0.30000000000000004,Inf,-Inf,100.0,1000000000000000.0,10000000000000000.0,1.2345678901234568e+17",
+    ],
+  },
+  Case { sql: "SELECT 'abc' || 1 || 2.5 || NULL, 'x' || x'41'", rows: ["NULL,'xA'"] },
+  Case {
+    sql:
+      "SELECT 1 = 1, 1 = '1', '1' = 1, 1 < 'a', x'00' > 'z', NULL = NULL, NULL IS NULL, 1 IS NOT NULL",
+    rows: ["1,0,0,1,1,NULL,1,1"],
+  },
+  Case {
+    sql: "SELECT 1 AND NULL, 0 AND NULL, 1 OR NULL, 0 OR NULL, NOT NULL, NOT 0, NOT 'a', NOT '1x'",
+    rows: ["NULL,0,1,NULL,NULL,1,1,0"],
+  },
+  Case {
+    sql: "SELECT id, name FROM users WHERE age = '25' ORDER BY id",
+    rows: ["2,'bob'", "4,'dave'"],
+  },
+  Case { sql: "SELECT id FROM users WHERE note = 7", rows: ["3"] },
+  Case { sql: "SELECT id FROM users WHERE note = '7'", rows: [] },
+  Case {
+    sql: "SELECT id, nick FROM users WHERE nick = 'al' ORDER BY id",
+    rows: ["1,'Al'", "5,'al'"],
+  },
+  Case { sql: "SELECT id FROM users WHERE nick = 'AL' COLLATE BINARY", rows: [] },
+  Case {
+    sql: "SELECT id FROM users WHERE name > 'b' AND name < 'e' ORDER BY name",
+    rows: ["2", "3", "4"],
+  },
+  Case {
+    sql: "SELECT 5 & 3, 5 | 3, 1 << 62, 1 << 64, -8 >> 1, -8 >> 100, ~5, 1 << -1",
+    rows: ["1,7,4611686018427387904,0,-4,-1,-6,0"],
+  },
+  Case {
+    sql:
+      "SELECT 3 BETWEEN 1 AND 5, 3 NOT BETWEEN 4 AND 5, NULL BETWEEN 1 AND 2, 'b' BETWEEN 'a' AND 'c'",
+    rows: ["1,1,NULL,1"],
+  },
+  Case {
+    sql:
+      "SELECT 2 IN (1, 2), 3 IN (1, 2), NULL IN (1), 3 IN (1, NULL), 3 NOT IN (1, NULL), 1 IN (), 1 NOT IN ()",
+    rows: ["1,0,NULL,NULL,NULL,0,1"],
+  },
+  Case {
+    sql:
+      "SELECT CASE 2 WHEN 1 THEN 'one' WHEN 2 THEN 'two' ELSE 'many' END, CASE WHEN NULL THEN 1 ELSE 0 END, CASE 1 WHEN NULL THEN 1 END",
+    rows: ["'two',0,NULL"],
+  },
+  Case {
+    sql:
+      "SELECT CAST('12abc' AS INTEGER), CAST('1e3' AS INTEGER), CAST(' 12 ' AS INTEGER), CAST(3.9 AS INTEGER), CAST(-3.9 AS INT)",
+    rows: ["12,1,12,3,-3"],
+  },
+  Case {
+    sql:
+      "SELECT CAST('1.5e3' AS REAL), CAST('abc' AS REAL), CAST(12 AS TEXT), CAST(1.5 AS TEXT), CAST('4.0' AS NUMERIC), CAST('x' AS NUMERIC)",
+    rows: ["1500.0,0.0,'12','1.5',4,0"],
+  },
+  Case {
+    sql:
+      "SELECT CAST(x'616263' AS TEXT), CAST('abc' AS BLOB), CAST(NULL AS TEXT), typeof(CAST(1 AS BLOB))",
+    rows: ["'abc',x'616263',NULL,'blob'"],
+  },
+];
+
+const Q_FUNCTIONS: Case[] = [
+  // Functions.
+  Case {
+    sql:
+      "SELECT length('héllo'), length(x'0102'), length(123), length(NULL), octet_length('héllo')",
+    rows: ["5,2,3,NULL,6"],
+  },
+  Case {
+    sql:
+      "SELECT lower('ÀBC'), upper('héllo'), typeof(1), typeof(1.0), typeof('x'), typeof(x''), typeof(NULL)",
+    rows: ["'Àbc','HéLLO','integer','real','text','blob','null'"],
+  },
+  Case {
+    sql:
+      "SELECT substr('hello', 2), substr('hello', 2, 3), substr('hello', -3), substr('hello', -3, 2), substr('hello', 0, 2), substr('hello', 10), substr(x'010203', 2, 1)",
+    rows: ["'ello','ell','llo','ll','h','',x'02'"],
+  },
+  Case {
+    sql:
+      "SELECT substr('héllo', 2, 2), substr('hello', 3, -2), substr('hello', NULL), substr('hello', 2, NULL)",
+    rows: ["'él','he',NULL,NULL"],
+  },
+  Case {
+    sql:
+      "SELECT instr('hello', 'l'), instr('hello', 'z'), instr('héllo', 'l'), instr(x'0102', x'02'), instr('a', '')",
+    rows: ["3,0,3,2,1"],
+  },
+  Case {
+    sql:
+      "SELECT replace('hello', 'l', 'L'), replace('aaa', 'a', 'bb'), replace('x', '', 'y'), replace(NULL, 'a', 'b')",
+    rows: ["'heLLo','bbbbbb','x',NULL"],
+  },
+  Case {
+    sql:
+      "SELECT trim('  x  '), ltrim('  x  '), rtrim('  x  '), trim('xxaxx', 'x'), ltrim('abcba', 'ab'), trim(NULL)",
+    rows: ["'x','x  ','  x','a','cba',NULL"],
+  },
+  Case {
+    sql:
+      "SELECT abs(-5), abs(5.5), abs(-0.0), abs('x'), abs(NULL), sign(-3), sign(0.0), sign('2'), sign('x')",
+    rows: ["5,5.5,0.0,0.0,NULL,-1,0,1,NULL"],
+  },
+  Case {
+    sql:
+      "SELECT round(2.5), round(-2.5), round(1.2345, 2), round(1.005, 2), round(123.456, -1), round(NULL), round(1e20, 2)",
+    rows: ["3.0,-3.0,1.23,1.0,123.0,NULL,1.0e+20"],
+  },
+  Case {
+    sql:
+      "SELECT hex('abc'), hex(x'00ff'), hex(12), hex(NULL), quote('it''s'), quote(1.5), quote(x'0a'), quote(NULL)",
+    rows: ["'616263','00FF','3132','','''it''''s''','1.5','X''0A''','NULL'"],
+  },
+  Case {
+    sql:
+      "SELECT coalesce(NULL, NULL, 3), ifnull(NULL, 'x'), nullif(1, 1), nullif(1, 2), iif(1, 'y', 'n'), iif(0, 'y', 'n')",
+    rows: ["3,'x',NULL,1,'y','n'"],
+  },
+  Case {
+    sql: "SELECT min(3, 1, 2), max(3, 1, 2), max(1, NULL), min('b', 'a'), max(1, 'a', x'00')",
+    rows: ["1,3,NULL,'a',x'00'"],
+  },
+  Case {
+    sql:
+      "SELECT 'abc' LIKE 'A%', 'abc' LIKE 'b%', 'a_c' LIKE 'a\\_c' ESCAPE '\\', 'abc' NOT LIKE '%z%', NULL LIKE 'a'",
+    rows: ["1,0,1,1,NULL"],
+  },
+  Case {
+    sql:
+      "SELECT 'abc' GLOB 'a*', 'abc' GLOB 'A*', 'a1' GLOB 'a[0-9]', 'ab' GLOB 'a[^b]', 'a?' GLOB 'a?'",
+    rows: ["1,0,1,0,1"],
+  },
+  Case {
+    sql:
+      "SELECT date('2024-02-29 13:45:12.345'), time('2024-02-29 13:45:12.345', 'subsec'), datetime(1700000000, 'unixepoch'), julianday('2000-01-01'), unixepoch('2024-03-31 23:59:59+02:00')",
+    rows: ["'2024-02-29','13:45:12.345','2023-11-14 22:13:20',2451544.5,1711922399"],
+  },
+  Case {
+    sql:
+      "SELECT date('2024-01-31', '+1 month'), date('2024-01-31', '+1 month', 'floor'), date('2024-03-15', 'start of month', '-1 day'), date('2024-03-15', 'weekday 0'), datetime('2024-03-15', '+90 minutes')",
+    rows: ["'2024-03-02','2024-02-29','2024-02-29','2024-03-17','2024-03-15 01:30:00'"],
+  },
+  Case {
+    sql:
+      "SELECT strftime('%Y-%m-%d %H:%M:%S %j %w %W %V %G', '2024-12-30 08:05:09'), strftime('%s', '1970-01-02'), date('bad'), date(NULL), time('12:30')",
+    rows: ["'2024-12-30 08:05:09 365 1 53 01 2025','86400',NULL,NULL,'12:30:00'"],
+  },
+  Case {
+    sql:
+      "SELECT printf('%d|%5.2f|%-4s|%q|%Q|%x|%,d|%e|%g|%c', 42, 3.14159, 'ab', 'it''s', NULL, 255, 1234567, 12345.678, 0.0001, 'xyz'), format('%s=%d', 'n', 7)",
+    rows: ["'42| 3.14|ab  |it''''s|NULL|ff|1,234,567|1.234568e+04|0.0001|x','n=7'"],
+  },
+  Case {
+    sql:
+      "SELECT char(72, 105), unicode('é'), unicode(''), zeroblob(3), concat('a', NULL, 1), concat_ws('-', 'a', NULL, 'b')",
+    rows: ["'Hi',233,NULL,x'000000','a1','a-b'"],
+  },
+];
+
+const Q_JOINS: Case[] = [
+  // Joins.
+  Case {
+    sql: "SELECT u.name, p.title FROM users u JOIN posts p ON p.user_id = u.id ORDER BY p.id",
+    rows: [
+      "'alice','Hello'",
+      "'alice','Again'",
+      "'bob','Bob here'",
+      "'carol','x'",
+      "'carol','y'",
+      "'carol','z'",
+      "'eve','Eve'",
+      "'grace','Grace'",
+      "'bob','Bob 2'",
+    ],
+  },
+  Case {
+    sql:
+      "SELECT u.name, p.title FROM users u, posts p WHERE p.user_id = u.id AND u.age > 28 ORDER BY u.id, p.id",
+    rows: [
+      "'alice','Hello'",
+      "'alice','Again'",
+      "'carol','x'",
+      "'carol','y'",
+      "'carol','z'",
+      "'grace','Grace'",
+    ],
+  },
+  Case {
+    sql:
+      "SELECT u.name, p.id FROM users u LEFT JOIN posts p ON p.user_id = u.id ORDER BY u.id, p.id",
+    rows: [
+      "'alice',1",
+      "'alice',2",
+      "'bob',3",
+      "'bob',10",
+      "'carol',4",
+      "'carol',5",
+      "'carol',6",
+      "'dave',NULL",
+      "'eve',8",
+      "'Frank',NULL",
+      "'grace',9",
+      "'héloïse',NULL",
+    ],
+  },
+  Case {
+    sql:
+      "SELECT u.name, p.id FROM users u LEFT JOIN posts p ON p.user_id = u.id WHERE p.id IS NULL ORDER BY u.id",
+    rows: ["'dave',NULL", "'Frank',NULL", "'héloïse',NULL"],
+  },
+  Case {
+    sql: "SELECT p.id, u.name FROM posts p LEFT JOIN users u ON u.id = p.user_id ORDER BY p.id",
+    rows: [
+      "1,'alice'",
+      "2,'alice'",
+      "3,'bob'",
+      "4,'carol'",
+      "5,'carol'",
+      "6,'carol'",
+      "7,NULL",
+      "8,'eve'",
+      "9,'grace'",
+      "10,'bob'",
+    ],
+  },
+  Case {
+    sql:
+      "SELECT p.title, t.tag FROM posts p JOIN tags t ON t.post_id = p.id WHERE t.tag = 'intro' ORDER BY p.id",
+    rows: ["'Hello','intro'", "'Bob here','intro'", "'Eve','intro'"],
+  },
+  Case {
+    sql:
+      "SELECT a.id, b.id FROM users a JOIN users b ON a.age = b.age AND a.id < b.id ORDER BY 1, 2",
+    rows: ["1,7", "2,4"],
+  },
+  Case {
+    sql:
+      "SELECT * FROM tags JOIN posts ON posts.id = tags.post_id WHERE tags.tag = 'news' ORDER BY posts.id",
+    rows: ["5,'news',5,3,'y','more','2024-01-04',0", "8,'news',8,5,'Eve','eve','2024-01-07',100"],
+  },
+  Case {
+    sql:
+      "SELECT id, name FROM users JOIN (SELECT user_id AS id, count(*) AS n FROM posts GROUP BY user_id) USING (id) ORDER BY id",
+    rows: ["1,'alice'", "2,'bob'", "3,'carol'", "5,'eve'", "7,'grace'"],
+  },
+];
+
+const Q_AGGREGATES: Case[] = [
+  // Aggregates.
+  Case {
+    sql:
+      "SELECT count(*), count(age), sum(age), total(age), avg(age), min(age), max(age) FROM users",
+    rows: ["8,7,214,214.0,30.571428571428573,25,41"],
+  },
+  Case {
+    sql: "SELECT count(*), sum(age), avg(age), min(age) FROM users WHERE id > 100",
+    rows: ["0,NULL,NULL,NULL"],
+  },
+  Case {
+    sql: "SELECT age, count(*) FROM users GROUP BY age",
+    rows: ["25,2", "28,1", "30,2", "35,1", "41,1", "NULL,1"],
+  },
+  Case {
+    sql: "SELECT age, count(*) AS n FROM users GROUP BY age HAVING n > 1 ORDER BY n DESC, age",
+    rows: ["25,2", "30,2"],
+  },
+  Case {
+    sql:
+      "SELECT user_id, count(*), max(created), min(title) FROM posts GROUP BY user_id ORDER BY user_id",
+    rows: [
+      "1,2,'2024-01-03','Again'",
+      "2,2,'2024-01-08','Bob 2'",
+      "3,3,'2024-01-05','x'",
+      "5,1,'2024-01-07','Eve'",
+      "7,1,'2024-01-02','Grace'",
+      "9,1,'2024-01-06','orphan'",
+    ],
+  },
+  Case {
+    sql: "SELECT count(DISTINCT age), count(DISTINCT nick), sum(DISTINCT age) FROM users",
+    rows: ["5,6,159"],
+  },
+  Case {
+    sql: "SELECT group_concat(name), group_concat(name, '; ') FROM users WHERE id < 5",
+    rows: ["'alice,bob,carol,dave','alice; bob; carol; dave'"],
+  },
+  Case {
+    sql: "SELECT sum(v), total(v), avg(v), count(v), min(v), max(v) FROM kv WHERE k < 'g'",
+    rows: ["6.5,6.5,1.3,5,1,x'41'"],
+  },
+  Case {
+    sql: "SELECT sum(stars), avg(stars), max(stars), min(stars) FROM posts",
+    rows: ["116.5,12.944444444444445,'abc',-3"],
+  },
+  Case {
+    sql: "SELECT nick, count(*) FROM users GROUP BY nick ORDER BY 1",
+    rows: ["NULL,1", "'Al',2", "'BOBBY',1", "'cc',1", "'Dave',1", "'GRACE',1", "'h',1"],
+  },
+  Case { sql: "SELECT name, max(score) FROM users", rows: ["'grace',10000000000.0"] },
+  Case { sql: "SELECT name, min(age) FROM users WHERE age IS NOT NULL", rows: ["'bob',25"] },
+  Case {
+    sql: "SELECT count(*) FILTER (WHERE age > 28), sum(age) FILTER (WHERE id % 2 = 0) FROM users",
+    rows: ["4,119"],
+  },
+  Case { sql: "SELECT sum(9223372036854775807), 1", rows: ["9223372036854775807,1"] },
+];
+
+const Q_DISTINCT_ORDER_BY_LIMIT: Case[] = [
+  // DISTINCT, ORDER BY, LIMIT.
+  Case {
+    sql: "SELECT DISTINCT age FROM users ORDER BY age",
+    rows: ["NULL", "25", "28", "30", "35", "41"],
+  },
+  Case {
+    sql: "SELECT DISTINCT user_id FROM posts ORDER BY 1 DESC",
+    rows: ["9", "7", "5", "3", "2", "1"],
+  },
+  Case {
+    sql: "SELECT name FROM users ORDER BY age DESC, name LIMIT 3",
+    rows: ["'Frank'", "'carol'", "'alice'"],
+  },
+  Case {
+    sql: "SELECT name, age FROM users ORDER BY age NULLS LAST, name",
+    rows: [
+      "'bob',25",
+      "'dave',25",
+      "'héloïse',28",
+      "'alice',30",
+      "'grace',30",
+      "'carol',35",
+      "'Frank',41",
+      "'eve',NULL",
+    ],
+  },
+  Case {
+    sql: "SELECT name, age FROM users ORDER BY age DESC NULLS FIRST, name",
+    rows: [
+      "'eve',NULL",
+      "'Frank',41",
+      "'carol',35",
+      "'alice',30",
+      "'grace',30",
+      "'héloïse',28",
+      "'bob',25",
+      "'dave',25",
+    ],
+  },
+  Case {
+    sql: "SELECT name FROM users ORDER BY nick, id",
+    rows: ["'Frank'", "'alice'", "'eve'", "'bob'", "'carol'", "'dave'", "'grace'", "'héloïse'"],
+  },
+  Case {
+    sql: "SELECT name FROM users ORDER BY length(name), name LIMIT 2 OFFSET 1",
+    rows: ["'eve'", "'dave'"],
+  },
+  Case { sql: "SELECT id FROM users ORDER BY id LIMIT 2, 3", rows: ["3", "4", "5"] },
+  Case { sql: "SELECT id FROM users ORDER BY id LIMIT -1 OFFSET 6", rows: ["7", "8"] },
+  Case {
+    sql: "SELECT score FROM users ORDER BY score",
+    rows: ["NULL", "-1.0", "0.1", "2.25", "3.0", "4.5", "5.0", "10000000000.0"],
+  },
+];
+
+const Q_SUBQUERIES_AND_CTES: Case[] = [
+  // Subqueries and CTEs.
+  Case {
+    sql: "SELECT name FROM users WHERE id IN (SELECT user_id FROM posts) ORDER BY id",
+    rows: ["'alice'", "'bob'", "'carol'", "'eve'", "'grace'"],
+  },
+  Case {
+    sql: "SELECT name FROM users WHERE id NOT IN (SELECT user_id FROM posts) ORDER BY id",
+    rows: ["'dave'", "'Frank'", "'héloïse'"],
+  },
+  Case {
+    sql:
+      "SELECT name FROM users u WHERE EXISTS (SELECT 1 FROM posts p WHERE p.user_id = u.id AND p.stars > 3) ORDER BY id",
+    rows: ["'alice'", "'bob'", "'eve'", "'grace'"],
+  },
+  Case {
+    sql:
+      "SELECT name, (SELECT count(*) FROM posts p WHERE p.user_id = u.id) AS n FROM users u ORDER BY n DESC, id",
+    rows: [
+      "'carol',3",
+      "'alice',2",
+      "'bob',2",
+      "'eve',1",
+      "'grace',1",
+      "'dave',0",
+      "'Frank',0",
+      "'héloïse',0",
+    ],
+  },
+  Case {
+    sql:
+      "SELECT p.id, p.title, u.name AS author, (SELECT count(*) FROM tags t WHERE t.post_id = p.id) AS tags FROM posts p JOIN users u ON u.id = p.user_id ORDER BY p.created DESC, p.id DESC LIMIT 5",
+    rows: [
+      "10,'Bob 2','bob',1",
+      "8,'Eve','eve',2",
+      "4,'x','carol',1",
+      "6,'z','carol',0",
+      "5,'y','carol',1",
+    ],
+  },
+  Case {
+    sql:
+      "SELECT (SELECT max(id) FROM users), (SELECT name FROM users WHERE id = 99), (SELECT 1 WHERE 0)",
+    rows: ["8,NULL,NULL"],
+  },
+  Case {
+    sql: "SELECT x, y FROM (SELECT id AS x, name AS y FROM users WHERE id < 3) ORDER BY x",
+    rows: ["1,'alice'", "2,'bob'"],
+  },
+  Case {
+    sql: "WITH old AS (SELECT * FROM users WHERE age >= 30) SELECT name FROM old ORDER BY name",
+    rows: ["'Frank'", "'alice'", "'carol'", "'grace'"],
+  },
+  Case {
+    sql:
+      "WITH a(n) AS (SELECT 1 UNION ALL SELECT 2), b AS (SELECT n * 10 AS m FROM a) SELECT n, m FROM a, b ORDER BY n, m",
+    rows: ["1,10", "1,20", "2,10", "2,20"],
+  },
+  Case {
+    sql: "SELECT 1 IN (SELECT 1), 2 IN (SELECT 1), NULL IN (SELECT 1 WHERE 0), 3 IN (SELECT NULL)",
+    rows: ["1,0,0,NULL"],
+  },
+  Case {
+    sql:
+      "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 5) SELECT i, i * i FROM n",
+    rows: ["1,1", "2,4", "3,9", "4,16", "5,25"],
+  },
+  Case {
+    sql: "WITH RECURSIVE n(i) AS (SELECT 1 UNION SELECT (i * 3) % 7 FROM n) SELECT i FROM n",
+    rows: ["1", "2", "3", "4", "5", "6"],
+  },
+  Case {
+    sql:
+      "WITH RECURSIVE r(id, depth) AS (SELECT 1, 0 UNION ALL SELECT p.id, r.depth + 1 FROM posts p JOIN r ON p.user_id = r.id WHERE p.id != r.id) SELECT id, depth FROM r ORDER BY depth, id",
+    rows: ["1,0", "2,1", "3,2", "10,2", "4,3", "5,3", "6,3", "8,4"],
+  },
+  Case { sql: "SELECT id FROM posts ORDER BY id DESC LIMIT 3", rows: ["10", "9", "8"] },
+  Case {
+    sql: "SELECT id, created FROM posts WHERE created < '2024-01-05' ORDER BY created, id DESC",
+    rows: [
+      "1,'2024-01-01'",
+      "9,'2024-01-02'",
+      "3,'2024-01-02'",
+      "2,'2024-01-03'",
+      "6,'2024-01-04'",
+      "5,'2024-01-04'",
+    ],
+  },
+  Case { sql: "SELECT title FROM posts ORDER BY title DESC LIMIT 2", rows: ["'z'", "'y'"] },
+];
+
+const Q_COMPOUND_SELECTS_AND_VALUES: Case[] = [
+  // Compound selects and VALUES.
+  Case {
+    sql: "SELECT age FROM users UNION SELECT user_id FROM posts",
+    rows: ["1", "2", "25", "28", "3", "30", "35", "41", "5", "7", "9", "NULL"],
+  },
+  Case {
+    sql: "SELECT age FROM users UNION ALL SELECT user_id FROM posts ORDER BY 1",
+    rows: [
+      "NULL",
+      "1",
+      "1",
+      "2",
+      "2",
+      "3",
+      "3",
+      "3",
+      "5",
+      "7",
+      "9",
+      "25",
+      "25",
+      "28",
+      "30",
+      "30",
+      "35",
+      "41",
+    ],
+  },
+  Case {
+    sql: "SELECT user_id FROM posts INTERSECT SELECT id FROM users",
+    rows: ["1", "2", "3", "5", "7"],
+  },
+  Case {
+    sql: "SELECT id FROM users EXCEPT SELECT user_id FROM posts ORDER BY 1 DESC",
+    rows: ["8", "6", "4"],
+  },
+  Case {
+    sql: "SELECT nick FROM users UNION SELECT tag FROM tags ORDER BY 1",
+    rows: [
+      "NULL",
+      "'Al'",
+      "'BOBBY'",
+      "'cc'",
+      "'Dave'",
+      "'GRACE'",
+      "'h'",
+      "'intro'",
+      "'Misc'",
+      "'news'",
+      "'x'",
+    ],
+  },
+  Case {
+    sql: "SELECT 1, 'a' UNION ALL SELECT 2, 'b' UNION SELECT 1, 'a'",
+    rows: ["1,'a'", "2,'b'"],
+  },
+  Case { sql: "VALUES (1, 'x'), (2, NULL), (3, 4.5)", rows: ["1,'x'", "2,NULL", "3,4.5"] },
+  Case { sql: "SELECT * FROM (VALUES (2), (1), (3)) ORDER BY 1", rows: ["1", "2", "3"] },
+];
+
+const Q_ROWID_BOUNDS_AND_COROUTINES: Case[] = [
+  // Rowid bounds past the integers: a REAL of 2^63 or more is above every rowid, one under -2^63 below.
+  Case {
+    sql: "SELECT id FROM users WHERE id < 1e19 AND id > -1e30 ORDER BY id",
+    rows: ["1", "2", "3", "4", "5", "6", "7", "8"],
+  },
+  Case {
+    sql: "SELECT id FROM users WHERE id <= 9.2233720368547758e18 ORDER BY id DESC LIMIT 2",
+    rows: ["8", "7"],
+  },
+  Case { sql: "SELECT id FROM users WHERE id > 1e19 OR id < -1e30 OR id = 1e19", rows: [] },
+  // FROM subqueries and CTEs run as co-routines: a LIMIT outside stops them (an endless recursion too).
+  Case {
+    sql: "WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r) SELECT n FROM r LIMIT 3",
+    rows: ["1", "2", "3"],
+  },
+  Case {
+    sql:
+      "WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r) SELECT n * 2 FROM r WHERE n % 3 = 0 LIMIT 2 OFFSET 1",
+    rows: ["12", "18"],
+  },
+  Case {
+    sql: "SELECT name FROM (SELECT name FROM users ORDER BY id) LIMIT 2",
+    rows: ["'alice'", "'bob'"],
+  },
+  Case {
+    sql: "SELECT * FROM (SELECT id, abs(-9223372036854775807 - 1) FROM users) LIMIT 1",
+    rows: ["error: integer overflow"],
+  },
+];
+
+const Q_COMPOUND_UNDER_ITS_OWN_COLLATE: Case[] = [
+  // A compound ordered under a COLLATE of its own matches rows under the columns' collations (SQLite runs it as a subquery).
+  Case {
+    sql: "SELECT nick FROM users UNION SELECT tag FROM tags ORDER BY 1 COLLATE BINARY",
+    rows: [
+      "NULL",
+      "'Al'",
+      "'BOBBY'",
+      "'Dave'",
+      "'GRACE'",
+      "'Misc'",
+      "'cc'",
+      "'h'",
+      "'intro'",
+      "'news'",
+      "'x'",
+    ],
+  },
+  Case {
+    sql:
+      "SELECT nick FROM users UNION SELECT name FROM users ORDER BY 1 COLLATE BINARY DESC LIMIT 4",
+    rows: ["'héloïse'", "'h'", "'grace'", "'eve'"],
+  },
+  Case {
+    sql: "SELECT tag FROM tags INTERSECT SELECT nick FROM users ORDER BY 1 COLLATE NOCASE",
+    rows: [],
+  },
+  Case {
+    sql: "SELECT nick FROM users EXCEPT SELECT tag FROM tags ORDER BY nick COLLATE RTRIM",
+    rows: ["NULL", "'Al'", "'BOBBY'", "'Dave'", "'GRACE'", "'cc'", "'h'"],
+  },
+];
+
+const Q_AGGREGATES_OF_AN_ENCLOSING_QUERY: Case[] = [
+  // An aggregate whose arguments read only an enclosing query's columns belongs to that query (SQLite's rule).
+  Case { sql: "SELECT (SELECT sum(id)) FROM users", rows: ["36"] },
+  Case {
+    sql: "SELECT age, (SELECT sum(users.id)) FROM users GROUP BY age ORDER BY 1",
+    rows: ["NULL,5", "25,6", "28,8", "30,8", "35,3", "41,6"],
+  },
+  Case {
+    sql:
+      "SELECT age, count(*) FROM users GROUP BY age HAVING (SELECT count(users.id)) > 1 ORDER BY 1",
+    rows: ["25,2", "30,2"],
+  },
+  Case {
+    sql: "SELECT (SELECT count(*) FROM posts WHERE posts.id = max(users.id)) FROM users",
+    rows: ["1"],
+  },
+  Case { sql: "SELECT (SELECT max(id)), count(*) FROM users", rows: ["8,8"] },
+  Case {
+    sql: "SELECT id FROM users WHERE (SELECT sum(users.id)) > 1",
+    rows: ["error: misuse of aggregate: sum()"],
+  },
+];
+
+const Q_MIN_MAX_AND_SHARED_CTES: Case[] = [
+  // min() or max() alone of an indexed column reads the index from that end (SQLite's min/max optimization): its bare columns are that entry's.
+  Case { sql: "SELECT max(tag), post_id FROM tags", rows: ["'x',10"] },
+  Case { sql: "SELECT min(tag), post_id FROM tags WHERE post_id > 3", rows: ["'Misc',4"] },
+  Case { sql: "SELECT max(tag), post_id FROM tags WHERE tag < 'n'", rows: ["'misc',9"] },
+  Case { sql: "SELECT max(tag COLLATE NOCASE), post_id FROM tags", rows: ["'x',10"] },
+  Case { sql: "SELECT min(tag), count(*) FROM tags", rows: ["'Misc',10"] },
+  // A CTE is compiled once and shared by its uses; each use counts its tables' references (SQLite's limit of 65535).
+  Case {
+    sql:
+      "WITH c0(x) AS (SELECT id FROM users), c1(x) AS (SELECT a.x FROM c0 a JOIN c0 b ON a.x = b.x), c2(x) AS (SELECT a.x FROM c1 a JOIN c1 b ON a.x = b.x), c3(x) AS (SELECT a.x FROM c2 a JOIN c2 b ON a.x = b.x), c4(x) AS (SELECT a.x FROM c3 a JOIN c3 b ON a.x = b.x), c5(x) AS (SELECT a.x FROM c4 a JOIN c4 b ON a.x = b.x), c6(x) AS (SELECT a.x FROM c5 a JOIN c5 b ON a.x = b.x), c7(x) AS (SELECT a.x FROM c6 a JOIN c6 b ON a.x = b.x), c8(x) AS (SELECT a.x FROM c7 a JOIN c7 b ON a.x = b.x), c9(x) AS (SELECT a.x FROM c8 a JOIN c8 b ON a.x = b.x), c10(x) AS (SELECT a.x FROM c9 a JOIN c9 b ON a.x = b.x), c11(x) AS (SELECT a.x FROM c10 a JOIN c10 b ON a.x = b.x), c12(x) AS (SELECT a.x FROM c11 a JOIN c11 b ON a.x = b.x), c13(x) AS (SELECT a.x FROM c12 a JOIN c12 b ON a.x = b.x), c14(x) AS (SELECT a.x FROM c13 a JOIN c13 b ON a.x = b.x), c15(x) AS (SELECT a.x FROM c14 a JOIN c14 b ON a.x = b.x), c16(x) AS (SELECT a.x FROM c15 a JOIN c15 b ON a.x = b.x) SELECT count(*) FROM c16",
+    rows: ["error: too many references to \"users\": max 65535"],
+  },
+  Case {
+    sql:
+      "WITH c0(x) AS (SELECT id FROM users), c1(x) AS (SELECT a.x FROM c0 a JOIN c0 b ON a.x = b.x), c2(x) AS (SELECT a.x FROM c1 a JOIN c1 b ON a.x = b.x), c3(x) AS (SELECT a.x FROM c2 a JOIN c2 b ON a.x = b.x), c4(x) AS (SELECT a.x FROM c3 a JOIN c3 b ON a.x = b.x), c5(x) AS (SELECT a.x FROM c4 a JOIN c4 b ON a.x = b.x), c6(x) AS (SELECT a.x FROM c5 a JOIN c5 b ON a.x = b.x), c7(x) AS (SELECT a.x FROM c6 a JOIN c6 b ON a.x = b.x), c8(x) AS (SELECT a.x FROM c7 a JOIN c7 b ON a.x = b.x), c9(x) AS (SELECT a.x FROM c8 a JOIN c8 b ON a.x = b.x), c10(x) AS (SELECT a.x FROM c9 a JOIN c9 b ON a.x = b.x), c11(x) AS (SELECT a.x FROM c10 a JOIN c10 b ON a.x = b.x), c12(x) AS (SELECT a.x FROM c11 a JOIN c11 b ON a.x = b.x) SELECT count(*), sum(x) FROM c12",
+    rows: ["error: too many FROM clause terms, max: 200"],
+  },
+  Case {
+    sql:
+      "WITH c(x) AS (SELECT id FROM users) SELECT a.x, b.x FROM c a, c b WHERE a.x + 1 = b.x ORDER BY 1",
+    rows: ["1,2", "2,3", "3,4", "4,5", "5,6", "6,7", "7,8"],
+  },
+];
+
+const Q_AGGREGATE_QUERIES_AND_PREPARE_ERRORS: Case[] = [
+  // Only GROUP BY or an aggregate result column makes a query an aggregate one: HAVING or ORDER BY aggregates alone are errors, as in SQLite.
+  Case {
+    sql: "SELECT 1 FROM users HAVING count(*) > 3",
+    rows: ["error: HAVING clause on a non-aggregate query"],
+  },
+  Case {
+    sql: "SELECT id FROM users ORDER BY count(*)",
+    rows: ["error: misuse of aggregate: count()"],
+  },
+  Case { sql: "SELECT count(*) FROM users ORDER BY sum(id)", rows: ["8"] },
+  Case { sql: "SELECT count(*) FROM users HAVING sum(id) > 3", rows: ["8"] },
+  // What SQLite rejects at prepare: likelihood() without a REAL literal of at most 1.0, INDEXED BY an unknown index, schemas other than main; printf() writing nothing is NULL, a final '%' itself; GROUP BY numbers count the columns * expands to.
+  Case {
+    sql: "SELECT likelihood(id, 2) FROM users",
+    rows: ["error: second argument to likelihood() must be a constant between 0.0 and 1.0"],
+  },
+  Case { sql: "SELECT likelihood(id, 0.5) FROM users WHERE id < 3", rows: ["1", "2"] },
+  Case { sql: "SELECT id FROM users INDEXED BY nope", rows: ["error: no such index: nope"] },
+  Case {
+    sql: "SELECT tag FROM tags INDEXED BY tags_tag WHERE tag = 'misc' ORDER BY 1",
+    rows: ["'misc'", "'misc'", "'misc'"],
+  },
+  Case { sql: "SELECT id FROM nosuch.users", rows: ["error: no such table: nosuch.users"] },
+  Case { sql: "SELECT id FROM temp.users", rows: ["error: no such table: temp.users"] },
+  Case { sql: "SELECT id FROM main.users WHERE id = 2", rows: ["2"] },
+  Case {
+    sql:
+      "SELECT printf(''), printf('%s', ''), printf('ab%'), printf('a%5'), printf('%5.2'), printf('%')",
+    rows: ["NULL,NULL,'ab%','a',NULL,'%'"],
+  },
+  Case {
+    sql: "SELECT * FROM (VALUES (1, 'a'), (2, 'b'), (1, 'c')) GROUP BY 1",
+    rows: ["1,'a'", "2,'b'"],
+  },
+  Case {
+    sql: "SELECT *, length(tag) FROM tags GROUP BY 3 ORDER BY 3",
+    rows: ["10,'x',1", "1,'misc',4", "1,'intro',5"],
+  },
+];
+
+const Q_INDEX_LOOKUPS: Case[] = [
+  // IS and IS NULL look up an index as equalities (NULL finds NULL).
+  Case {
+    sql: "SELECT post_id, tag FROM tags WHERE tag IS 'misc' ORDER BY 1",
+    rows: ["1,'misc'", "2,'misc'", "9,'misc'"],
+  },
+  Case { sql: "SELECT k FROM kv WHERE k IS NULL", rows: [] },
+  Case {
+    sql: "SELECT p.id, t.tag FROM posts p JOIN tags t ON t.tag IS p.title ORDER BY 1",
+    rows: ["4,'x'"],
+  },
+  // x = a OR x = b on an indexed column reads the index once per value, as x IN (a, b).
+  Case {
+    sql: "SELECT post_id, tag FROM tags WHERE tag = 'news' OR tag = 'intro' ORDER BY 1, 2",
+    rows: ["1,'intro'", "3,'intro'", "5,'news'", "8,'intro'", "8,'news'"],
+  },
+  Case {
+    sql: "SELECT DISTINCT tag FROM tags WHERE tag = 'x' OR 'misc' = tag",
+    rows: ["'misc'", "'x'"],
+  },
+  Case {
+    sql: "SELECT id FROM posts WHERE user_id = 3 OR user_id = 2",
+    rows: ["10", "3", "4", "5", "6"],
+  },
+  // x IN (SELECT …) on an indexed column (or the rowid) reads it once per subquery value.
+  Case {
+    sql: "SELECT post_id, tag FROM tags WHERE tag IN (SELECT title FROM posts)",
+    rows: ["10,'x'"],
+  },
+  Case {
+    sql: "SELECT id, name FROM users WHERE id IN (SELECT user_id FROM posts WHERE stars > 2)",
+    rows: ["1,'alice'", "2,'bob'", "5,'eve'", "7,'grace'"],
+  },
+  Case {
+    sql: "SELECT DISTINCT tag FROM tags WHERE tag IN (SELECT tag FROM tags WHERE post_id > 4)",
+    rows: ["'intro'", "'misc'", "'news'", "'x'"],
+  },
+  // count(*) alone counts the loops' rows (LIMIT and OFFSET still apply to its one row).
+  Case { sql: "SELECT count(*) FROM posts WHERE user_id = 3", rows: ["3"] },
+  Case { sql: "SELECT count(*) FROM posts LIMIT 1 OFFSET 1", rows: [] },
+  Case {
+    sql:
+      "SELECT id, (SELECT count(*) FROM tags WHERE tags.post_id = posts.id) FROM posts ORDER BY id",
+    rows: ["1,2", "2,1", "3,1", "4,1", "5,1", "6,0", "7,0", "8,2", "9,1", "10,1"],
+  },
+];
+
+const Q_EQUAL_KEYS_OF_DIFFERENT_FORMS: Case[] = [
+  // Equal keys of different forms: a REAL equal to an INTEGER, and texts equal under NOCASE.
+  Case {
+    sql: "SELECT a, count(*) FROM (SELECT 1 AS a UNION ALL SELECT 1.0) GROUP BY a",
+    rows: ["1,2"],
+  },
+  Case { sql: "SELECT DISTINCT a FROM (SELECT 1 AS a UNION ALL SELECT 1.0)", rows: ["1"] },
+  Case { sql: "SELECT count(DISTINCT a) FROM (SELECT 1 AS a UNION ALL SELECT 1.0)", rows: ["1"] },
+  Case { sql: "SELECT 1 UNION SELECT 1.0", rows: ["1.0"] },
+  Case {
+    sql: "SELECT x COLLATE NOCASE, count(*) FROM (SELECT 'a' AS x UNION ALL SELECT 'A') GROUP BY 1",
+    rows: ["'a',2"],
+  },
+  Case {
+    sql: "SELECT DISTINCT x COLLATE NOCASE FROM (SELECT 'a' AS x UNION ALL SELECT 'A')",
+    rows: ["'a'"],
+  },
+  Case {
+    sql:
+      "SELECT count(DISTINCT x COLLATE NOCASE), count(DISTINCT x) FROM (SELECT 'a' AS x UNION ALL SELECT 'A')",
+    rows: ["1,2"],
+  },
+];
+
+const Q_ERRORS: Case[] = [
+  // Errors.
+  Case { sql: "SELECT nosuch FROM users", rows: ["error: no such column: nosuch"] },
+  Case { sql: "SELECT * FROM nosuch", rows: ["error: no such table: nosuch"] },
+  Case { sql: "SELECT id FROM users, posts", rows: ["error: ambiguous column name: id"] },
+  Case {
+    sql: "SELECT count(*) FROM users WHERE count(*) > 1",
+    rows: ["error: misuse of aggregate: count()"],
+  },
+  // Where name resolution allows no aggregate, SQLite's other message.
+  Case {
+    sql: "SELECT count(count(*)) FROM users",
+    rows: ["error: misuse of aggregate function count()"],
+  },
+  Case {
+    sql: "SELECT max(count(*)) FROM users",
+    rows: ["error: misuse of aggregate function count()"],
+  },
+  Case {
+    sql: "SELECT id FROM users WHERE count(*) > 1",
+    rows: ["error: misuse of aggregate function count()"],
+  },
+  // An outer query's aggregate in a subquery in ORDER BY: too late to make it an aggregate query.
+  Case {
+    sql: "SELECT id FROM users ORDER BY (SELECT count(users.id) FROM posts)",
+    rows: ["error: misuse of aggregate: count()"],
+  },
+];
+
+const Q_WHERE_AN_AGGREGATE_MAY_BE_WRITTEN: Case[] = [
+  // Where the call is written must allow an aggregate, even one of an enclosing query: not in
+  // a subquery's WHERE or ON unless the subquery is an aggregate query; in its ORDER BY or HAVING
+  // it may be.
+  Case {
+    sql: "SELECT (SELECT 1 FROM posts WHERE count(users.id) > 0) FROM users",
+    rows: ["error: misuse of aggregate function count()"],
+  },
+  Case {
+    sql: "SELECT count(*), (SELECT 1 FROM posts WHERE count(users.id) > 0) FROM users",
+    rows: ["error: misuse of aggregate function count()"],
+  },
+  Case {
+    sql: "SELECT (SELECT 1 FROM posts JOIN posts AS q ON count(users.id) > 0) FROM users",
+    rows: ["error: misuse of aggregate function count()"],
+  },
+  Case {
+    sql: "SELECT (SELECT 1 FROM posts WHERE count(users.id) > 0 LIMIT 1) FROM users",
+    rows: ["error: misuse of aggregate function count()"],
+  },
+  Case {
+    sql: "SELECT (SELECT 1 WHERE count(users.id) > 0) FROM users",
+    rows: ["error: misuse of aggregate function count()"],
+  },
+  Case {
+    sql:
+      "SELECT (SELECT 1 FROM posts WHERE posts.user_id IN (SELECT 1 WHERE count(users.id) > 0)) FROM users",
+    rows: ["error: misuse of aggregate function count()"],
+  },
+  Case {
+    sql: "SELECT age, (SELECT 1 FROM posts WHERE count(users.id) > 0) FROM users GROUP BY age",
+    rows: ["error: misuse of aggregate function count()"],
+  },
+  Case {
+    sql: "SELECT id FROM users WHERE (SELECT 1 FROM posts WHERE count(users.id) > 0)",
+    rows: ["error: misuse of aggregate function count()"],
+  },
+  Case {
+    sql: "SELECT (SELECT count(*) FROM posts WHERE count(users.id) > 0) FROM users",
+    rows: ["10"],
+  },
+  Case {
+    sql: "SELECT (SELECT max(posts.id) FROM posts WHERE count(users.id) > 0) FROM users",
+    rows: ["10"],
+  },
+  Case { sql: "SELECT (SELECT 1 FROM posts ORDER BY count(users.id)) FROM users", rows: ["1"] },
+  Case {
+    sql: "SELECT (SELECT count(*) FROM posts HAVING count(users.id) > 0) FROM users",
+    rows: ["10"],
+  },
+  // FILTER allows no aggregate.
+  Case {
+    sql: "SELECT count(*) FILTER (WHERE count(*) > 0) FROM users",
+    rows: ["error: misuse of aggregate function count()"],
+  },
+  Case {
+    sql: "SELECT sum(id) FILTER (WHERE max(id) > 0) FROM users",
+    rows: ["error: misuse of aggregate function max()"],
+  },
+  Case {
+    sql: "SELECT id FROM users WHERE id IN (SELECT sum(1) FILTER (WHERE count(*) > 0) FROM posts)",
+    rows: ["error: misuse of aggregate function count()"],
+  },
+  Case {
+    sql: "SELECT (SELECT sum(1) FILTER (WHERE count(users.id) > 0) FROM posts) FROM users",
+    rows: ["error: misuse of aggregate function count()"],
+  },
+  // GROUP BY allows no aggregate of its own query, even in a subquery; an enclosing query's
+  // makes that query an aggregate query.
+  Case {
+    sql: "SELECT 1 FROM users GROUP BY count(*)",
+    rows: ["error: aggregate functions are not allowed in the GROUP BY clause"],
+  },
+  Case {
+    sql: "SELECT count(*) FROM users GROUP BY 1",
+    rows: ["error: aggregate functions are not allowed in the GROUP BY clause"],
+  },
+  Case {
+    sql: "SELECT 1 FROM users GROUP BY (SELECT count(users.id) FROM posts)",
+    rows: ["error: aggregate functions are not allowed in the GROUP BY clause"],
+  },
+  Case {
+    sql: "SELECT 1 FROM users GROUP BY count(nosuch)",
+    rows: ["error: no such column: nosuch"],
+  },
+  Case {
+    sql: "SELECT 1 FROM users GROUP BY count(count(id))",
+    rows: ["error: misuse of aggregate function count()"],
+  },
+  Case {
+    sql: "SELECT (SELECT 1 FROM posts GROUP BY count(posts.id)) FROM users",
+    rows: ["error: aggregate functions are not allowed in the GROUP BY clause"],
+  },
+  Case { sql: "SELECT (SELECT 1 FROM posts GROUP BY count(users.id)) FROM users", rows: ["1"] },
+  Case {
+    sql: "SELECT count(*), (SELECT 1 FROM posts GROUP BY count(users.id)) FROM users",
+    rows: ["8,1"],
+  },
+  Case {
+    sql: "SELECT (SELECT count(*) FROM posts GROUP BY max(users.id)) FROM users",
+    rows: ["10"],
+  },
+  Case {
+    sql: "SELECT (SELECT 1 FROM posts GROUP BY count(users.id) + posts.user_id) FROM users",
+    rows: ["1"],
+  },
+  Case {
+    sql:
+      "SELECT age, (SELECT count(*) FROM posts GROUP BY count(users.id)) FROM users GROUP BY age",
+    rows: ["25,10", "28,10", "30,10", "35,10", "41,10", "NULL,10"],
+  },
+  Case {
+    sql: "SELECT id FROM users ORDER BY (SELECT 1 FROM posts GROUP BY count(users.id))",
+    rows: ["error: misuse of aggregate: count()"],
+  },
+];
+
+const Q_LIMIT_AND_OFFSET_NAME_NO_COLUMN: Case[] = [
+  // LIMIT and OFFSET name no column, not even an enclosing query's.
+  Case {
+    sql: "SELECT (SELECT 1 FROM posts LIMIT count(users.id)) FROM users",
+    rows: ["error: no such column: users.id"],
+  },
+  Case {
+    sql: "SELECT id FROM users WHERE EXISTS (SELECT 1 FROM posts LIMIT max(users.id))",
+    rows: ["error: no such column: users.id"],
+  },
+  Case {
+    sql: "SELECT id FROM users LIMIT (SELECT count(users.id) FROM posts)",
+    rows: ["error: no such column: users.id"],
+  },
+  Case {
+    sql: "SELECT (SELECT 1 FROM posts LIMIT 1 OFFSET users.id) FROM users",
+    rows: ["error: no such column: users.id"],
+  },
+  Case {
+    sql: "SELECT (SELECT 1 UNION SELECT 2 LIMIT users.id) FROM users",
+    rows: ["error: no such column: users.id"],
+  },
+  Case {
+    sql:
+      "SELECT (WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r LIMIT users.id) SELECT count(*) FROM r) FROM users",
+    rows: ["error: no such column: users.id"],
+  },
+  Case { sql: "SELECT nosuchfn(1)", rows: ["error: no such function: nosuchfn"] },
+  Case {
+    sql: "SELECT substr('x')",
+    rows: ["error: wrong number of arguments to function substr()"],
+  },
+  Case {
+    sql: "SELECT 1 FROM users ORDER BY 5",
+    rows: ["error: 1st ORDER BY term out of range - should be between 1 and 1"],
+  },
+  Case {
+    sql: "SELECT 1 UNION SELECT 1, 2",
+    rows: [
+      "error: SELECTs to the left and right of UNION do not have the same number of result columns",
+    ],
+  },
+];
+
+/** A value as the shell's quote mode prints it: quote(), but blobs as x'…' and Inf. */
+function shown(v: Val): string {
+  if (v.t == BLOB) {
+    return `x'${hexEncode(v.b)}'`;
+  }
+  if (v.t == REAL && (v.r == Infinity || v.r == -Infinity)) {
+    return v.r > 0 ? "Inf" : "-Inf";
+  }
+  return quote(v);
+}
+
+/** The rows of a query: each value as the shell's quote mode prints it, or the error. */
+function rows(db: Database, sql: string): string[] {
+  const out: string[] = [];
+  try {
+    const st = db.prepare(sql);
+    const vals = st.values();
+    const n = st.columns().length as usize;
+    const count: usize = n == 0 ? 0 : (vals.length as usize) / n;
+    for (let r: usize = 0; r < count; r++) {
+      const parts: string[] = [];
+      for (let i: usize = 0; i < n; i++) {
+        const v = vals[r * n + i];
+        parts.push(shown(v));
+      }
+      out.push(parts.join(","));
+    }
+  } catch (e) {
+    return [`error: ${e.message}`];
+  }
+  return out;
+}
+
+/**
+ * Runs each case on a fresh copy of the database; each query with its rows (sorted when it has no
+ * ORDER BY), as the golden printed them, so a failure shows the query.
+ */
+function check(cases: Case[]) {
+  const path = `${tmpdir()}/velt-engine-query-${uuidv4()}.db`;
+  const c = open(path);
+  c.exec(SETUP);
+  c.close();
+  const db = openDatabase(path);
+  const got: string[] = [];
+  const want: string[] = [];
+  for (const k of cases) {
+    let r = rows(db, k.sql);
+    if (!k.sql.includes("ORDER BY")) {
+      r = r.toSorted();
+    }
+    got.push(`${k.sql}\n  ${r.join("\n  ")}`);
+    want.push(`${k.sql}\n  ${k.rows.join("\n  ")}`);
+  }
+  removeSync(path);
+  assertEq(got, want);
+}
+
+export function test_scans_lookups_ranges_and_indexes() {
+  check(Q_SCANS_LOOKUPS_RANGES_AND_INDEXES);
+}
+
+export function test_expressions_null_and_affinity() {
+  check(Q_EXPRESSIONS_NULL_AND_AFFINITY);
+}
+
+export function test_functions() {
+  check(Q_FUNCTIONS);
+}
+
+export function test_joins() {
+  check(Q_JOINS);
+}
+
+export function test_aggregates() {
+  check(Q_AGGREGATES);
+}
+
+export function test_distinct_order_by_limit() {
+  check(Q_DISTINCT_ORDER_BY_LIMIT);
+}
+
+export function test_subqueries_and_ctes() {
+  check(Q_SUBQUERIES_AND_CTES);
+}
+
+export function test_compound_selects_and_values() {
+  check(Q_COMPOUND_SELECTS_AND_VALUES);
+}
+
+export function test_rowid_bounds_and_coroutines() {
+  check(Q_ROWID_BOUNDS_AND_COROUTINES);
+}
+
+export function test_compound_under_its_own_collate() {
+  check(Q_COMPOUND_UNDER_ITS_OWN_COLLATE);
+}
+
+export function test_aggregates_of_an_enclosing_query() {
+  check(Q_AGGREGATES_OF_AN_ENCLOSING_QUERY);
+}
+
+export function test_min_max_and_shared_ctes() {
+  check(Q_MIN_MAX_AND_SHARED_CTES);
+}
+
+export function test_aggregate_queries_and_prepare_errors() {
+  check(Q_AGGREGATE_QUERIES_AND_PREPARE_ERRORS);
+}
+
+export function test_index_lookups() {
+  check(Q_INDEX_LOOKUPS);
+}
+
+export function test_equal_keys_of_different_forms() {
+  check(Q_EQUAL_KEYS_OF_DIFFERENT_FORMS);
+}
+
+export function test_errors() {
+  check(Q_ERRORS);
+}
+
+export function test_where_an_aggregate_may_be_written() {
+  check(Q_WHERE_AN_AGGREGATE_MAY_BE_WRITTEN);
+}
+
+export function test_limit_and_offset_name_no_column() {
+  check(Q_LIMIT_AND_OFFSET_NAME_NO_COLUMN);
+}

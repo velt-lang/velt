@@ -6,7 +6,7 @@
 //! select:
 //! - `cargo fmt --check -p <crates with changed Rust files>` (`--all` when the build
 //!   configuration changed);
-//! - the gate's own `velt fmt --check std examples` when anything under `std/` or `examples/`
+//! - the gate's own `velt fmt --check std examples packages` when anything under them
 //!   changed, or when the formatter (`velt_fmt`) or a crate it depends on did (it takes about a
 //!   second, and it picks the `.vlt` files and the `.ts`/`.tsx` files of packages exactly as the
 //!   gate does);
@@ -41,7 +41,7 @@ const WORKSPACE_CONFIG: &[&str] = &[
 
 /// The directories `velt fmt --check` checks (as crates/xtask/src/check.rs does): a change under
 /// them runs the same command on them.
-const FORMATTED: &[&str] = &["std", "examples"];
+const FORMATTED: &[&str] = &["std", "examples", "packages"];
 
 /// The formatter's crate: a change to it or to a crate it depends on can change how the files
 /// under [`FORMATTED`] format.
@@ -94,7 +94,7 @@ pub struct Selection {
     pub rustfmt: Crates,
     /// Clippy: the crates with changed Rust files or manifests, and their dependents.
     pub clippy: Crates,
-    /// `velt fmt --check std examples`: something under them changed, or the formatter or a
+    /// `velt fmt --check std examples packages`: something under them changed, or the formatter or a
     /// crate it depends on did.
     pub velt_fmt: bool,
     /// Changed Rust files the file-size rule covers.
@@ -278,7 +278,7 @@ pub fn run(root: &Path, sel: &Selection, reason: &str) -> Result<(), String> {
     summary(&r, start.elapsed().as_secs_f64())
 }
 
-/// `velt fmt --check std examples`, with this checkout's `velt` (built first: a no-op
+/// `velt fmt --check std examples packages`, with this checkout's `velt` (built first: a no-op
 /// when it is up to date; `--workspace` resolves the features like `cargo xtask check`, so the
 /// two never rebuild each other's crates).
 fn velt_fmt(r: &mut Runner) {

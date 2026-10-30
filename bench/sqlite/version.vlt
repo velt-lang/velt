@@ -1,6 +1,6 @@
-// Prints the version of the SQLite that velt/sqlite links (bench/showcase records it beside
-// the versions the other drivers bundle).
-import { open } from "velt/sqlite";
+// Prints the version of the SQLite that the sqlite package's driver links (bench/showcase records
+// it beside the versions the other drivers bundle).
+import { open } from "sqlite";
 
 struct Version {
   v: string;

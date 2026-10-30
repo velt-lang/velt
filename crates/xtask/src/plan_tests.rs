@@ -141,6 +141,24 @@ fn the_formatter_reaches_its_dependents_and_the_vlt_format_check() {
     assert!(binaries.contains("templates") && binaries.contains("native_packages"));
 }
 
+/// A change in packages/ runs `velt test` in the packages, the registry flow of packages/sqlite
+/// and the example apps (which depend on packages by path), not the goldens.
+#[test]
+fn a_changed_package_runs_the_package_tests() {
+    let p = plan(&["packages/redis/src/client.vlt"]);
+    assert_eq!(
+        p.veltc,
+        Veltc::Some(set(&["packages", "native_packages", "example_apps"]))
+    );
+    assert_eq!(p.goldens, Goldens::None);
+    assert!(p.filterset().unwrap().contains("binary(packages)"));
+    // Its Velt files are formatted like std's; its native crate is linted only when it changed.
+    assert!(p.vlt_fmt && !p.native_crates);
+    let p = plan(&["packages/redis/native/src/resp.rs"]);
+    assert!(p.native_crates);
+    assert!(!p.rust, "no workspace crate changed");
+}
+
 #[test]
 fn a_changed_golden_runs_that_golden_and_the_tests_reading_goldens() {
     let p = plan(&[
@@ -225,7 +243,7 @@ fn benchmarks_are_compiled_when_they_the_compiler_or_std_change() {
     assert_eq!(p.goldens, Goldens::None);
     assert!(p.filterset().unwrap().contains("binary(bench_programs)"));
     // Every veltc test binary, `bench_programs` among them, runs for these.
-    assert_eq!(plan(&["std/postgres.vlt"]).veltc, Veltc::All);
+    assert_eq!(plan(&["std/db/index.vlt"]).veltc, Veltc::All);
     assert_eq!(plan(&["crates/velt_sema/src/check.rs"]).veltc, Veltc::All);
 }
 

@@ -1,0 +1,201 @@
+// sqlite/engine/sql/dml (internal): the statements of SQLite's grammar that change rows: INSERT (with
+// UPSERT and RETURNING), UPDATE and DELETE.
+
+import { Parser } from "./parser";
+import { SqlError } from "./errors";
+import { T_EOF, T_IDENT, T_OP, T_SEMI } from "./token";
+import { E_STAR, Expr, S_DELETE, S_INSERT, S_UPDATE, Statement, Upsert } from "./types";
+import { conflictResolution, indexedColumns, qualified } from "./clauses";
+
+function names(p: Parser): string[] {
+  p.expectOp("(");
+  const out: string[] = [p.name()];
+  while (p.eatOp(",")) {
+    out.push(p.name());
+  }
+  p.expectOp(")");
+  return out;
+}
+
+function returning(p: Parser, s: Statement) {
+  if (!p.eatKw("RETURNING")) {
+    return;
+  }
+  const at = p.peek().start;
+  s.returning = p.resultColumns();
+  for (const r of s.returning) {
+    if (r.expr.kind == E_STAR && r.expr.table != "") {
+      throw new SqlError(`RETURNING may not use "TABLE.*" wildcards`, at);
+    }
+  }
+}
+
+/** `[schema.]name [AS alias]` of INSERT, UPDATE and DELETE (an alias needs AS). */
+function target(p: Parser, s: Statement) {
+  qualified(p, s);
+  if (p.eatKw("AS")) {
+    s.alias = p.name();
+  }
+}
+
+/** INDEXED BY name or NOT INDEXED, after UPDATE's or DELETE's table. */
+function indexHint(p: Parser, s: Statement) {
+  if (p.eatKw("INDEXED")) {
+    p.expectKw("BY");
+    s.indexedBy = p.name();
+  } else if (p.eatKw("NOT")) {
+    p.expectKw("INDEXED");
+    s.notIndexed = true;
+  }
+}
+
+export function insert(p: Parser): Statement {
+  const s = new Statement(S_INSERT);
+  if (p.eatKw("REPLACE")) {
+    s.orConflict = "REPLACE";
+  } else {
+    p.expectKw("INSERT");
+    if (p.eatKw("OR")) {
+      s.orConflict = conflictResolution(p);
+    }
+  }
+  p.expectKw("INTO");
+  target(p, s);
+  if (p.isOp("(")) {
+    s.columns = names(p);
+  }
+  if (p.eatKw("DEFAULT")) {
+    // DEFAULT VALUES takes RETURNING, but no upsert.
+    p.expectKw("VALUES");
+    s.defaultValues = true;
+    returning(p, s);
+    return s;
+  }
+  if (p.isKw("VALUES") && !compoundValues(p)) {
+    p.advance();
+    while (true) {
+      const at = p.peek().start;
+      p.expectOp("(");
+      const row: Expr[] = [p.expr()];
+      while (p.eatOp(",")) {
+        row.push(p.expr());
+      }
+      p.expectOp(")");
+      if (s.rows.length > 0 && row.length != s.rows[0].length) {
+        throw new SqlError("all VALUES must have the same number of terms", at);
+      }
+      s.rows.push(row);
+      if (!p.eatOp(",")) {
+        break;
+      }
+    }
+  } else {
+    s.select = p.select();
+  }
+  while (p.isKw("ON") && p.isKwAt(1, "CONFLICT")) {
+    p.advance();
+    p.advance();
+    const u = upsert(p);
+    s.upserts.push(u);
+    if (u.target.length == 0) {
+      // Only the last ON CONFLICT may omit its target.
+      break;
+    }
+  }
+  returning(p, s);
+  return s;
+}
+
+/** VALUES followed by UNION, INTERSECT or EXCEPT is a compound select, not plain rows. */
+function compoundValues(p: Parser): bool {
+  let depth = 0;
+  let k: usize = 0;
+  while (true) {
+    const t = p.peekAt(k);
+    if (t.kind == T_EOF || t.kind == T_SEMI) {
+      return false;
+    }
+    if (t.kind == T_OP && t.text == "(") {
+      depth++;
+    } else if (t.kind == T_OP && t.text == ")") {
+      depth--;
+    } else if (
+      depth == 0 &&
+      t.kind == T_IDENT &&
+      (t.upper == "UNION" || t.upper == "EXCEPT" || t.upper == "INTERSECT")
+    ) {
+      return true;
+    } else if (depth == 0 && t.kind == T_IDENT && (t.upper == "ON" || t.upper == "RETURNING")) {
+      return false;
+    }
+    k++;
+  }
+}
+
+function upsert(p: Parser): Upsert {
+  const u = new Upsert();
+  if (p.isOp("(")) {
+    u.target = indexedColumns(p);
+    if (p.eatKw("WHERE")) {
+      u.targetWhere = p.expr();
+    }
+  }
+  p.expectKw("DO");
+  if (p.eatKw("NOTHING")) {
+    return u;
+  }
+  p.expectKw("UPDATE");
+  p.expectKw("SET");
+  u.doNothing = false;
+  assignments(p, u.setColumns, u.setValues);
+  if (p.eatKw("WHERE")) {
+    u.where = p.expr();
+  }
+  return u;
+}
+
+function assignments(p: Parser, columns: string[][], values: Expr[]) {
+  while (true) {
+    if (p.isOp("(")) {
+      columns.push(names(p));
+    } else {
+      columns.push([p.name()]);
+    }
+    p.expectOp("=");
+    values.push(p.expr());
+    if (!p.eatOp(",")) {
+      return;
+    }
+  }
+}
+
+export function update(p: Parser): Statement {
+  const s = new Statement(S_UPDATE);
+  if (p.eatKw("OR")) {
+    s.orConflict = conflictResolution(p);
+  }
+  target(p, s);
+  indexHint(p, s);
+  p.expectKw("SET");
+  assignments(p, s.setColumns, s.setValues);
+  if (p.eatKw("FROM")) {
+    s.from = p.fromItems();
+  }
+  if (p.eatKw("WHERE")) {
+    s.where = p.expr();
+  }
+  returning(p, s);
+  return s;
+}
+
+export function remove(p: Parser): Statement {
+  const s = new Statement(S_DELETE);
+  p.expectKw("FROM");
+  target(p, s);
+  indexHint(p, s);
+  if (p.eatKw("WHERE")) {
+    s.where = p.expr();
+  }
+  returning(p, s);
+  return s;
+}

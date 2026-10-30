@@ -1,0 +1,294 @@
+// The statement API of the SQLite engine written in Velt (sqlite/engine, #1720): typed rows
+// by column name, parameters by position and by name, column names, the plan cache, errors.
+import { open, Database as CDatabase } from "../src/lib";
+import { openDatabase, Database, SqliteError } from "../src/engine/index";
+import { quote } from "../src/engine/exec/func/func_text";
+import { tmpdir } from "velt/os";
+import { uuidv4 } from "velt/random/uuid";
+import { removeSync } from "velt/fs";
+
+struct User {
+  id: i64;
+  name: string;
+  score: f64;
+  note: string | null;
+}
+
+struct Named {
+  id: i64;
+  label: string;
+}
+
+struct Count {
+  n: i64;
+}
+
+struct Bound {
+  t: string;
+  q: string;
+}
+
+struct Bytes {
+  b: u8[];
+}
+
+/** A database file of three users, written by C SQLite; its path. */
+function create(): string {
+  const path = `${tmpdir()}/velt-engine-api-${uuidv4()}.db`;
+  const c = open(path);
+  c.exec(`
+    CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, score REAL, note TEXT, data BLOB);
+    INSERT INTO users VALUES (1, 'ann', 2, NULL, x'0102'), (2, 'bo', 3.5, 'hi', NULL),
+      (3, 'cy', -1, 'x', x'');
+  `);
+  c.close();
+  return path;
+}
+
+/** `params` bound to `sql` in the engine and in the driver: each row's `t|q`, or the error. */
+function both<P>(db: Database, c: CDatabase, sql: string, params: P): string {
+  let mine = "";
+  try {
+    const rows: Bound[] = db.prepare(sql).allWith(params);
+    mine = rows.map((r) => `${r.t}|${r.q}`).join(" ");
+  } catch (e) {
+    mine = e.message;
+  }
+  let theirs = "";
+  try {
+    const rows: Bound[] = c.prepare(sql).allWith(params);
+    theirs = rows.map((r) => `${r.t}|${r.q}`).join(" ");
+  } catch (e) {
+    theirs = e.message;
+  }
+  const shown = JSON.stringify(params);
+  return mine == theirs ? `${shown}: ${mine}` : `${shown}: velt ${mine}, driver ${theirs}`;
+}
+
+// Rows into structs, a REAL column's integral value into an f64 field, NULL into `| null`.
+export function test_rows_into_structs() {
+  const path = create();
+  const db = openDatabase(path);
+  const all: User[] = db.prepare("SELECT id, name, score, note FROM users ORDER BY id").all();
+  assertEq(all.map((u) => `${u.id} ${u.name} ${u.score} ${u.note ?? "(null)"}`), [
+    "1 ann 2 (null)",
+    "2 bo 3.5 hi",
+    "3 cy -1 x",
+  ]);
+  assert(all[0].note == null, "a NULL note reads as null");
+  const one: User | null = db.prepare("SELECT * FROM users WHERE id = 2").get();
+  assertEq(one!.name, "bo");
+  assertEq(one!.score, 3.5);
+  const none: User | null = db.prepare("SELECT * FROM users WHERE id = 9").get();
+  assert(none == null, "no row reads as null");
+  removeSync(path);
+}
+
+// Parameters: `?` in order, `?NNN`, and names with any sigil.
+export function test_parameters_by_position_and_name() {
+  const path = create();
+  const db = openDatabase(path);
+  const byPos: User | null = db.prepare("SELECT * FROM users WHERE id = ?").getWith([3]);
+  assertEq(byPos!.name, "cy");
+  const range: Named[] = db
+    .prepare("SELECT id, name AS label FROM users WHERE id >= ?2 AND id <= ?1 ORDER BY id")
+    .allWith([3, 2]);
+  assertEq(range.map((r) => `${r.id}:${r.label}`).join(" "), "2:bo 3:cy");
+  const byName: Named[] = db
+    .prepare(
+      "SELECT id, name || :suffix AS label FROM users WHERE id < $max AND name != @skip ORDER BY id",
+    )
+    .allWith({ suffix: "!", max: 3, skip: "bo" });
+  assertEq(byName.map((r) => r.label).join(" "), "ann!");
+  const single: Count | null = db
+    .prepare("SELECT count(*) AS n FROM users WHERE score > ?")
+    .getWith(0);
+  assertEq(single!.n, 2);
+  const text: Count | null = db
+    .prepare("SELECT count(*) AS n FROM users WHERE name = ?")
+    .getWith("cy");
+  assertEq(text!.n, 1);
+  const blob: Bytes | null = db.prepare("SELECT data AS b FROM users WHERE id = 1").get();
+  const len: usize = blob!.b.length;
+  assertEq(len, 2);
+  assertEq(blob!.b[1], 2);
+  removeSync(path);
+}
+
+export function test_column_names_and_plans() {
+  const path = create();
+  const db = openDatabase(path);
+  // Column names: aliases, column names, the expression's text.
+  const st = db.prepare("SELECT id, name AS who, score * 2, upper(name) FROM users");
+  assertEq(st.columns().join(" | "), "id | who | score * 2 | upper(name)");
+  // plan(): EXPLAIN QUERY PLAN's words.
+  const plans: string[] = [];
+  for (const sql of [
+    "SELECT name FROM users WHERE id = 2",
+    "SELECT name FROM users WHERE id IN (1, 3)",
+    "SELECT name FROM users WHERE id > 1 AND id <= 3",
+    "SELECT name FROM users",
+  ]) {
+    plans.push(db.prepare(sql).plan().join(" ; "));
+  }
+  assertEq(plans, [
+    "SEARCH users USING INTEGER PRIMARY KEY (rowid=?)",
+    "SEARCH users USING INTEGER PRIMARY KEY (rowid=?)",
+    "SEARCH users USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)",
+    "SCAN users",
+  ]);
+  // The rowid's spellings are named after its alias column (else "rowid"), as in SQLite.
+  assertEq(
+    db.prepare("SELECT _rowid_, oid, rowid, users.ROWID FROM users").columns().join(" | "),
+    "id | id | id | id",
+  );
+  removeSync(path);
+}
+
+export function test_plan_cache() {
+  const path = create();
+  const db = openDatabase(path);
+  // Prepared once: the same text gives the same statement.
+  const st = db.prepare("SELECT id, name AS who, score * 2, upper(name) FROM users");
+  db.prepare("SELECT name FROM users");
+  assert(
+    db.prepare("SELECT id, name AS who, score * 2, upper(name) FROM users") == st,
+    "the same text gives the same statement",
+  );
+  // The plan cache keeps the 200 plans used last: an older text compiles again.
+  const first = db.prepare("SELECT 0 AS n");
+  for (let i = 1; i <= 200; i++) {
+    db.prepare(`SELECT ${i} AS n`);
+  }
+  assert(db.prepare("SELECT 200 AS n") == db.prepare("SELECT 200 AS n"), "a recent plan stays");
+  assert(!(db.prepare("SELECT 0 AS n") == first), "the oldest plan is compiled again");
+  removeSync(path);
+}
+
+// Rows read one at a time through the typed reads' getters are the rows values() gives.
+export function test_rows_pulled_one_at_a_time() {
+  const path = create();
+  const db = openDatabase(path);
+  const got: string[] = [];
+  for (const sql of [
+    "SELECT * FROM users",
+    "SELECT id, name FROM users WHERE id > 1",
+    "SELECT name, score FROM users ORDER BY id DESC LIMIT 2",
+    "SELECT note, data, id + 1, upper(name) FROM users WHERE score > 0",
+  ]) {
+    const st = db.prepare(sql);
+    const pulled = st.pulledValues().map((v) => quote(v)).join(" ");
+    const all = st.values().map((v) => quote(v)).join(" ");
+    got.push(pulled == all ? `pulled: ${pulled}` : `pulled ${pulled}, values() ${all}`);
+  }
+  assertEq(got, [
+    "pulled: 1 'ann' 2.0 NULL X'0102' 2 'bo' 3.5 'hi' NULL 3 'cy' -1.0 'x' X''",
+    "pulled: 2 'bo' 3 'cy'",
+    "pulled: 'cy' -1.0 'bo' 3.5",
+    "pulled: NULL X'0102' 2 'ANN' 'hi' NULL 3 'BO'",
+  ]);
+  removeSync(path);
+}
+
+// Parameters as the driver binds them: every i64 exactly (past it, REAL), one value for each
+// parameter, a field for each named one.
+export function test_parameters_bound_as_velt_sqlite_binds_them() {
+  const path = create();
+  const db = openDatabase(path);
+  const mem = open(":memory:");
+  const got: string[] = [];
+  const one1 = "SELECT typeof(?1) AS t, quote(?1) AS q";
+  const big: i64[] = [1234567890123456789, 9223372036854775807, -9223372036854775807 - 1];
+  for (const n of big) {
+    got.push(both(db, mem, one1, [n]));
+  }
+  // Through the reader (a field that is no integer): a negative of 18 digits, i64's ends, past them.
+  const neg: i64 = -123456789012345678;
+  const top: i64 = 9223372036854775807;
+  const ab = "SELECT typeof(:a) AS t, quote(:a) || ' ' || quote(:b) || ' ' || quote(:c) AS q";
+  got.push(both(db, mem, ab, { a: neg, b: "x", c: top }));
+  got.push(both(db, mem, ab, { a: -9223372036854775807 - 1, b: 1e20, c: "y" }));
+  got.push(both(db, mem, one1, 99999999999999999999.0));
+  const noValues: i64[] = [];
+  got.push(both(db, mem, one1, noValues));
+  got.push(both(db, mem, one1, [1, 2]));
+  got.push(both(db, mem, one1, { a: 1 }));
+  got.push(both(db, mem, "SELECT typeof(:a) AS t, quote(:b) AS q", { a: 1 }));
+  got.push(both(db, mem, "SELECT typeof(:a) AS t, quote(:a) AS q", { a: 1, z: 2 }));
+  for (const sql of [one1, "SELECT '1' AS t, '2' AS q"]) {
+    let mine = "";
+    try {
+      const rows: Bound[] = db.prepare(sql).all();
+      mine = `${rows.length} row(s)`;
+    } catch (e) {
+      mine = e.message;
+    }
+    let theirs = "";
+    try {
+      const rows: Bound[] = mem.prepare(sql).all();
+      theirs = `${rows.length} row(s)`;
+    } catch (e) {
+      theirs = e.message;
+    }
+    got.push(
+      mine == theirs ? `no parameters: ${mine}` : `no parameters: velt ${mine}, driver ${theirs}`,
+    );
+  }
+  mem.close();
+  assertEq(got, [
+    "[1234567890123456789]: integer|1234567890123456789",
+    "[9223372036854775807]: integer|9223372036854775807",
+    "[-9223372036854775808]: integer|-9223372036854775808",
+    '{"a":-123456789012345678,"b":"x","c":9223372036854775807}: integer|-123456789012345678 \'x\' 9223372036854775807',
+    '{"a":-9223372036854776000,"b":100000000000000000000,"c":"y"}: integer|-9223372036854775808 1.0e+20 \'y\'',
+    "100000000000000000000: real|1.0e+20",
+    "[]: the statement has 1 parameter(s) but 0 value(s) were given",
+    "[1,2]: the statement has 1 parameter(s) but 2 value(s) were given",
+    '{"a":1}: parameter 1 is positional (`?`); pass an array to bind it',
+    '{"a":1}: missing named parameter "b"',
+    '{"a":1,"z":2}: integer|1',
+    "no parameters: the statement has 1 parameter(s) but none were given (use runWith / getWith / allWith)",
+    "no parameters: 1 row(s)",
+  ]);
+  removeSync(path);
+}
+
+// Errors: SQLite's codes and messages.
+export function test_errors() {
+  const path = create();
+  const db = openDatabase(path);
+  const got: string[] = [];
+  for (const sql of [
+    "SELECT nosuch FROM users",
+    "SELECT * FROM nosuch",
+    "SELECT * FROM users WHERE",
+    "DELETE FROM users",
+    "SELECT sum(9223372036854775807) FROM users",
+    "SELECT abs(-9223372036854775807 - 1)",
+  ]) {
+    try {
+      const rows: Count[] = db.prepare(sql).all();
+      got.push(`ok ${rows.length}`);
+    } catch (e) {
+      got.push(e instanceof SqliteError ? `${e.code} ${e.message}` : `unexpected ${e.message}`);
+    }
+  }
+  assertEq(got, [
+    "SQLITE_ERROR no such column: nosuch",
+    "SQLITE_ERROR no such table: nosuch",
+    "SQLITE_ERROR incomplete input",
+    "SQLITE_ERROR only SELECT statements are supported yet",
+    "SQLITE_ERROR integer overflow",
+    "SQLITE_ERROR integer overflow",
+  ]);
+  // A row that does not fit the struct: SQLITE_MISMATCH.
+  let code = "";
+  try {
+    const bad: User[] = db.prepare("SELECT name AS id FROM users").all();
+    code = `${bad.length} row(s)`;
+  } catch (e) {
+    code = e instanceof SqliteError ? e.code : `unexpected ${e.message}`;
+  }
+  assertEq(code, "SQLITE_MISMATCH");
+  removeSync(path);
+}

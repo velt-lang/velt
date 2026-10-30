@@ -1,0 +1,324 @@
+// The query engine's scalar functions (src/engine/exec/func: text and number functions, printf,
+// the date and time functions) against C SQLite (the driver): each call's result is compared with
+// what C SQLite computes for the same SQL and with the value expected. The arguments are literals,
+// read back from C SQLite as typed values.
+import { open, Database } from "../src/lib";
+import { BLOB, INTEGER, NULL, REAL, TEXT } from "../src/engine/storage_class";
+import { BINARY } from "../src/engine/collation";
+import { Val, blobVal, intVal, nullVal, realVal, textVal } from "../src/engine/exec/value/val";
+import { toText } from "../src/engine/exec/value/value_text";
+import { scalarFunction } from "../src/engine/exec/func/func";
+import { hexDecode, hexEncode } from "velt/encoding";
+
+struct Described {
+  d: string;
+}
+
+struct Int {
+  i: i64;
+}
+
+struct Typed {
+  ty: string;
+  v: string;
+}
+
+const DESCRIBE =
+  "typeof(e) || ':' || CASE typeof(e) WHEN 'blob' THEN hex(e) WHEN 'null' THEN '' ELSE CAST(e AS TEXT) END AS d";
+
+function describe(v: Val): string {
+  if (v.t == NULL) {
+    return "null:";
+  }
+  if (v.t == INTEGER) {
+    return `integer:${toText(v)}`;
+  }
+  if (v.t == REAL) {
+    return `real:${toText(v)}`;
+  }
+  if (v.t == TEXT) {
+    return `text:${toText(v)}`;
+  }
+  return `blob:${hexEncode(v.b).toUpperCase()}`;
+}
+
+/** The value of literal `sql`, as C SQLite reads it. */
+function literal(db: Database, sql: string): Val {
+  const rows: Typed[] = db
+    .prepare(
+      `SELECT typeof(e) AS ty, CASE typeof(e) WHEN 'real' THEN printf('%!.17g', e) WHEN 'blob' THEN hex(e) ELSE coalesce(CAST(e AS TEXT), '') END AS v FROM (SELECT ${sql} AS e)`,
+    )
+    .all();
+  const r = rows[0];
+  if (r.ty == "null") {
+    return nullVal();
+  }
+  if (r.ty == "integer") {
+    const ints: Int[] = db.prepare(`SELECT ${sql} AS i`).all();
+    return intVal(ints[0].i);
+  }
+  if (r.ty == "real") {
+    return realVal(parseFloat(r.v));
+  }
+  if (r.ty == "text") {
+    return textVal(r.v);
+  }
+  return blobVal(hexDecode(r.v));
+}
+
+function cValue(db: Database, expr: string): string {
+  try {
+    const rows: Described[] = db.prepare(`SELECT ${DESCRIBE} FROM (SELECT ${expr} AS e)`).all();
+    return rows[0].d;
+  } catch (e) {
+    const m = e.message;
+    const at = m.indexOf(" in ");
+    return `error: ${at >= 0 ? m.slice(0, at) : m}`;
+  }
+}
+
+function veltValue(db: Database, name: string, args: string[]): string {
+  const evs: (() => Val throws Error)[] = [];
+  for (const a of args) {
+    const v = literal(db, a);
+    evs.push(() => v);
+  }
+  try {
+    const f = scalarFunction(name.toUpperCase(), name, evs, BINARY);
+    if (f == null) {
+      return `error: no such function: ${name}`;
+    }
+    return describe(f!());
+  } catch (e) {
+    return `error: ${e.message}`;
+  }
+}
+
+struct Call {
+  name: string;
+  args: string[];
+  /** The result both give, as `describe` writes it. */
+  want: string;
+}
+
+function call(name: string, args: string[], want: string): Call {
+  return Call { name: name, args: args, want: want };
+}
+
+/**
+ * Each call's result in the engine, against C SQLite's and the expected one: `<sql> = <value>`
+ * when the engine and C SQLite agree, else both values.
+ */
+function check(calls: Call[]) {
+  const db = open(":memory:");
+  const got: string[] = [];
+  const expected: string[] = [];
+  for (const c of calls) {
+    const sql = `${c.name}(${c.args.join(", ")})`;
+    const want = cValue(db, sql);
+    const mine = veltValue(db, c.name, c.args);
+    got.push(want == mine ? `${sql} = ${mine}` : `${sql}: velt ${mine}, C ${want}`);
+    expected.push(`${sql} = ${c.want}`);
+  }
+  db.close();
+  assertEq(got, expected);
+}
+
+const TEXT_AND_NUMBERS: Call[] = [
+  call("length", ["'héllo'"], "integer:5"),
+  call("length", ["x'00ff'"], "integer:2"),
+  call("length", ["12.5"], "integer:4"),
+  call("octet_length", ["'héllo'"], "integer:6"),
+  call("lower", ["'ÀBC'"], "text:Àbc"),
+  call("upper", ["'àbc'"], "text:àBC"),
+  call("typeof", ["1.0"], "text:real"),
+  call("abs", ["-9223372036854775807"], "integer:9223372036854775807"),
+  call("abs", ["'-2.5'"], "real:2.5"),
+  call("coalesce", ["NULL", "NULL", "3"], "integer:3"),
+  call("ifnull", ["NULL", "'x'"], "text:x"),
+  call("nullif", ["1", "1.0"], "null:"),
+  call("iif", ["0", "'a'", "'b'"], "text:b"),
+  call("min", ["3", "'a'", "2.5"], "real:2.5"),
+  call("max", ["3", "'a'", "x'01'"], "blob:01"),
+  call("max", ["3", "NULL"], "null:"),
+  call("substr", ["'héllo'", "2", "3"], "text:éll"),
+  call("substr", ["'hello'", "-3"], "text:llo"),
+  call("substr", ["'hello'", "0", "2"], "text:h"),
+  call("substr", ["x'0102030405'", "2", "-1"], "blob:01"),
+  call("substr", ["'hello'", "-2", "-5"], "text:hel"),
+  call("instr", ["'héllo'", "'l'"], "integer:3"),
+  call("instr", ["x'010203'", "x'03'"], "integer:3"),
+  call("replace", ["'aaa'", "'a'", "'bb'"], "text:bbbbbb"),
+  call("replace", ["'abc'", "''", "'x'"], "text:abc"),
+  call("trim", ["'  x  '"], "text:x"),
+  call("ltrim", ["'xxyxx'", "'x'"], "text:yxx"),
+  call("rtrim", ["'aé!é'", "'é!'"], "text:a"),
+  call("round", ["2.5"], "real:3.0"),
+  call("round", ["-2.5"], "real:-3.0"),
+  call("round", ["1.005", "2"], "real:1.0"),
+  call("round", ["123456.789", "-2"], "real:123457.0"),
+  call("round", ["'7.45'", "1"], "real:7.5"),
+  call("hex", ["'é'"], "text:C3A9"),
+  call("hex", ["12.5"], "text:31322E35"),
+  call("quote", ["'it''s'"], "text:'it''s'"),
+  call("quote", ["0.1"], "text:0.1"),
+  call("quote", ["x'ab'"], "text:X'AB'"),
+  call("quote", ["NULL"], "text:NULL"),
+  call("char", ["72", "233", "128512"], "text:Hé😀"),
+  call("unicode", ["'é'"], "integer:233"),
+  call("zeroblob", ["3"], "blob:000000"),
+  call("sign", ["-0.5"], "integer:-1"),
+  call("sign", ["'abc'"], "null:"),
+  call("concat", ["'a'", "NULL", "1", "2.5"], "text:a12.5"),
+  call("concat_ws", ["'-'", "'a'", "NULL", "'b'"], "text:a-b"),
+  call("like", ["'a%'", "'ABC'"], "integer:1"),
+  call("glob", ["'a*'", "'ABC'"], "integer:0"),
+];
+
+const PRINTF: Call[] = [
+  call("printf", ["'%d %5.2f %s %x'", "42", "3.14159", "'hi'", "255"], "text:42  3.14 hi ff"),
+  call("printf", ["'%-6s|%06d|%+d'", "'ab'", "42", "7"], "text:ab    |000042|+7"),
+  call("printf", ["'%q %Q %w'", "'it''s'", "NULL", "'a\"b'"], "text:it''s NULL a\"\"b"),
+  call("printf", ["'%.3e %g %g'", "123456.789", "0.0001", "1e20"], "text:1.235e+05 0.0001 1e+20"),
+  call("printf", ["'%!.20g'", "0.1"], "text:0.1000000000000000056"),
+  call("printf", ["'%c%c'", "'xyz'", "65"], "text:x6"),
+  call("printf", ["'%,d'", "1234567"], "text:1,234,567"),
+  call("printf", ["'%5.1s|'", "'abc'"], "text:    a|"),
+  call("format", ["'%lld%%'", "9223372036854775807"], "text:9223372036854775807%"),
+];
+
+const LENGTH_LIMIT: Call[] = [
+  // SQLite's length limit (1,000,000,000 bytes), found before anything that big is built.
+  call(
+    "replace",
+    ["hex(zeroblob(100000))", "'0'", "hex(zeroblob(10000))"],
+    "error: string or blob too big",
+  ),
+  call("zeroblob", ["1000000001"], "error: string or blob too big"),
+  call("printf", ["'%2147483647d'", "1"], "error: string or blob too big"),
+  call("printf", ["'%1000000000d'", "1"], "error: string or blob too big"),
+  call("printf", ["'%.*c'", "1500000000", "'x'"], "error: string or blob too big"),
+  call("printf", ["'%.999999995d'", "1"], "error: string or blob too big"),
+  call("printf", ["'%,.900000000d'", "1"], "error: string or blob too big"),
+  call("printf", ["'%2147483647.1f'", "1.0"], "error: string or blob too big"),
+  call("printf", ["'%999999987.3f'", "1.5"], "error: string or blob too big"),
+];
+
+const EDGES: Call[] = [
+  call("min", [], "error: wrong number of arguments to function min()"),
+  // An empty pattern (or one starting with a NUL) gives x's text; %c's width counts characters.
+  call("replace", ["12", "''", "'x'"], "text:12"),
+  call("replace", ["'a'", "x'00'", "NULL"], "text:a"),
+  call("printf", ["'%y'"], "null:"),
+  call("printf", ["'%5.3c|'", "'é'"], "text:  ééé|"),
+  // like() checks the ESCAPE before a NULL operand, as likeFunc does.
+  call("like", ["NULL", "1", "12"], "error: ESCAPE expression must be a single character"),
+  call("like", ["1", "NULL", "12"], "error: ESCAPE expression must be a single character"),
+];
+
+const DATES: Call[] = [
+  call("date", ["'2024-02-29'", "'+1 year'"], "text:2025-03-01"),
+  call("date", ["'2024-01-31'", "'+1 month'"], "text:2024-03-02"),
+  call("time", ["'12:34:56.789'"], "text:12:34:56"),
+  call("datetime", ["1700000000", "'unixepoch'"], "text:2023-11-14 22:13:20"),
+  call(
+    "datetime",
+    ["'2024-03-10 12:00'", "'-36 hours'", "'start of day'"],
+    "text:2024-03-09 00:00:00",
+  ),
+  call("datetime", ["2460000.5"], "text:2023-02-25 00:00:00"),
+  call("julianday", ["'2000-01-01 12:00:00'"], "real:2451545.0"),
+  call("unixepoch", ["'2038-01-19 03:14:08'"], "integer:2147483648"),
+  call("unixepoch", ["'2024-01-01'", "'subsec'"], "real:1704067200.0"),
+  call(
+    "strftime",
+    ["'%Y-%m-%d %H:%M:%f %j %w %W %s'", "'2024-12-31 23:59:59.5'"],
+    "text:2024-12-31 23:59:59.500 366 2 53 1735689599",
+  ),
+  call(
+    "strftime",
+    ["'%J %e %k %l %p %I %u %G %V %g'", "'2021-01-03 07:08:09'"],
+    "text:2459217.797326389  3  7  7 AM 07 7 2020 53 20",
+  ),
+  call("date", ["'2024-05-15'", "'weekday 0'"], "text:2024-05-19"),
+  // A date already on the weekday it asks for stays.
+  call("date", ["'2024-05-19'", "'weekday 0'"], "text:2024-05-19"),
+  // A negative year as C's %04d writes it: the sign counts in the width.
+  call("strftime", ["'%Y'", "'-0001-01-01'"], "text:-001"),
+  call("strftime", ["'%Y %F'", "'-0123-12-31'"], "text:-123 -123-12-31"),
+  call("strftime", ["'%G %g'", "'-0009-01-04'", "'weekday 6'"], "text:-009 -9"),
+  call("strftime", ["'%Y-%m-%d'", "'0000-01-01'", "'-1 year'"], "text:-001-01-01"),
+  call("date", ["'2024-05-15'", "'start of month'", "'+1 month'", "'-1 day'"], "text:2024-05-31"),
+  call("date", ["'not a date'"], "null:"),
+  call("date", ["'2024-02-30'"], "text:2024-03-01"),
+  call("datetime", ["'2024-01-01T10:00:00+02:30'"], "text:2024-01-01 07:30:00"),
+  call("time", ["'24:00'"], "text:24:00:00"),
+];
+
+// Calls whose results are compared by type and size only: they are too long to print.
+const SIZED: Call[] = [
+  // A float's precision stops at 100,000,000 digits (SQLITE_FP_PRECISION_LIMIT).
+  call("printf", ["'%.2147483647f'", "1.0"], "text:100000002"),
+  // The widest float C accepts: its buffer's NUL counts against the limit, the result's does not.
+  call("printf", ["'%999999986.3f'", "1.5"], "text:999999986"),
+];
+
+function sizeOf(v: Val): string {
+  if (v.t == NULL) {
+    return "null";
+  }
+  return v.t == BLOB ? `blob:${v.b.length}` : `text:${toText(v).length}`;
+}
+
+export function test_text_and_number_functions() {
+  check(TEXT_AND_NUMBERS);
+}
+
+export function test_printf() {
+  check(PRINTF);
+}
+
+export function test_the_length_limit() {
+  check(LENGTH_LIMIT);
+}
+
+export function test_argument_errors_and_edge_cases() {
+  check(EDGES);
+}
+
+export function test_date_and_time_functions() {
+  check(DATES);
+}
+
+export function test_results_too_long_to_compare_by_text() {
+  const db = open(":memory:");
+  const got: string[] = [];
+  const expected: string[] = [];
+  for (const c of SIZED) {
+    const sql = `${c.name}(${c.args.join(", ")})`;
+    const rows: Described[] = db
+      .prepare(`SELECT typeof(e) || ':' || length(e) AS d FROM (SELECT ${sql} AS e)`)
+      .all();
+    const evs: (() => Val throws Error)[] = [];
+    for (const a of c.args) {
+      const v = literal(db, a);
+      evs.push(() => v);
+    }
+    const mine = sizeOf(scalarFunction(c.name.toUpperCase(), c.name, evs, BINARY)!());
+    got.push(`${sql}: velt ${mine}, C ${rows[0].d}`);
+    expected.push(`${sql}: velt ${c.want}, C ${c.want}`);
+  }
+  db.close();
+  assertEq(got, expected);
+}
+
+export function test_all_97_calls_are_checked() {
+  const n =
+    TEXT_AND_NUMBERS.length +
+    PRINTF.length +
+    LENGTH_LIMIT.length +
+    EDGES.length +
+    DATES.length +
+    SIZED.length;
+  assertEq(n, 97);
+}

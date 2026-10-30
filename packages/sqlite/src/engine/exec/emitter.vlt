@@ -1,0 +1,170 @@
+// sqlite/engine/exec/emitter (internal): the end of a SELECT's pipeline (`Emitter`): each row's
+// result columns are computed, DISTINCT drops repeats, ORDER BY collects rows into a sort (unless
+// the loops already produce them in order), and OFFSET and LIMIT pick the rows that go out.
+
+import { INTEGER } from "../storage_class";
+import { SqlRunError } from "./errors";
+import { KeySet } from "./value/key_set";
+import { forCompare } from "./value/ops";
+import { A_NUMERIC } from "../affinity";
+import { Ev } from "./types";
+import { Out } from "./out";
+import { Val } from "./value/val";
+import { SortKey, sortRows } from "./sort_key";
+
+/** The output stage of one SELECT core. */
+export class Emitter {
+  out: Out;
+  results: Ev[] = [];
+  colls: u8[] = [];
+  distinct: bool = false;
+  /** The rows output so far (DISTINCT). */
+  seen: KeySet = new KeySet(0, []);
+  sort: SortKey[] = [];
+  sorting: bool = false;
+  sortKeys: Val[] = [];
+  sortVals: Val[] = [];
+  sorted: usize = 0;
+  tmp: Val[] = [];
+  limit: i64 = -1;
+  offset: i64 = 0;
+  skipped: i64 = 0;
+
+  constructor(out: Out) {
+    this.out = out;
+  }
+
+  /** Starts a run. */
+  begin(limit: i64, offset: i64) {
+    this.limit = limit;
+    this.offset = offset < 0 ? 0 : offset;
+    this.skipped = 0;
+    if (this.distinct) {
+      this.seen = new KeySet(this.results.length, this.colls);
+    }
+    if (this.sorting) {
+      this.sortKeys.truncate(0);
+      this.sortVals.truncate(0);
+      this.sorted = 0;
+    }
+    if (limit == 0) {
+      this.out.stop = true;
+    }
+  }
+
+  /** One result row, from the rows the loops stand on (or the group being output). */
+  row() {
+    if (!this.distinct && !this.sorting) {
+      if (this.skipped < this.offset) {
+        this.skipped++;
+        return;
+      }
+      const out = this.out;
+      for (const r of this.results) {
+        out.vals.push(r());
+      }
+      this.counted();
+      return;
+    }
+    const tmp = this.tmp;
+    tmp.truncate(0);
+    for (const r of this.results) {
+      tmp.push(r());
+    }
+    if (this.distinct) {
+      if (this.seen.find(tmp, 0) >= 0) {
+        return;
+      }
+    }
+    if (this.sorting) {
+      for (const s of this.sort) {
+        this.sortKeys.push(s.col >= 0 ? tmp[s.col as usize] : s.ev!());
+      }
+      for (const v of tmp) {
+        this.sortVals.push(v);
+      }
+      this.sorted++;
+      // With LIMIT only the first rows matter: keep the buffer within twice their count.
+      if (this.limit >= 0) {
+        const keep = (this.limit + this.offset) as usize;
+        if (this.sorted >= 2 * keep + 64) {
+          this.compact(keep);
+        }
+      }
+      return;
+    }
+    this.put(tmp, 0);
+  }
+
+  put(vals: Val[], from: usize) {
+    if (this.skipped < this.offset) {
+      this.skipped++;
+      return;
+    }
+    const n = this.results.length;
+    for (let i: usize = 0; i < n; i++) {
+      this.out.vals.push(vals[from + i]);
+    }
+    this.counted();
+  }
+
+  counted() {
+    const out = this.out;
+    out.rows++;
+    if (this.limit >= 0 && (out.rows as i64) >= this.limit) {
+      out.stop = true;
+    }
+  }
+
+  /** Sorts the buffered rows and keeps the first `keep` (stable: earlier rows first on ties). */
+  compact(keep: usize) {
+    const idx = sortRows(this.sortKeys, this.sort, this.sorted);
+    const w: usize = this.results.length;
+    const nk: usize = this.sort.length;
+    const keys: Val[] = [];
+    const vals: Val[] = [];
+    for (let r: usize = 0; r < keep && r < idx.length; r++) {
+      const i = idx[r] as usize;
+      for (let k: usize = 0; k < nk; k++) {
+        keys.push(this.sortKeys[i * nk + k]);
+      }
+      for (let k: usize = 0; k < w; k++) {
+        vals.push(this.sortVals[i * w + k]);
+      }
+    }
+    this.sortKeys = keys;
+    this.sortVals = vals;
+    this.sorted = keep < idx.length ? keep : idx.length;
+  }
+
+  /** Ends a run: the sorted rows go out. */
+  finish() {
+    if (!this.sorting) {
+      return;
+    }
+    const idx = sortRows(this.sortKeys, this.sort, this.sorted);
+    const w: usize = this.results.length;
+    // Taken out while the rows go out (put() may not reach it through `this`).
+    const vals = this.sortVals;
+    this.sortVals = [];
+    for (const i of idx) {
+      if (this.out.stop) {
+        break;
+      }
+      this.put(vals, (i as usize) * w);
+    }
+    this.sortVals = vals;
+  }
+}
+
+/** A value of LIMIT or OFFSET: an integer, or an error. */
+export function limitValue(ev: Ev | null, dflt: i64): i64 {
+  if (ev == null) {
+    return dflt;
+  }
+  const v = forCompare(ev!(), A_NUMERIC);
+  if (v.t != INTEGER) {
+    throw new SqlRunError("datatype mismatch");
+  }
+  return v.i;
+}

@@ -292,6 +292,7 @@ mod tests {
             shared: "shared/libvelt_native_p.so".into(),
             import_lib: None,
             static_obj: Some("static/p.o".into()),
+            system_libs: None,
             exports: BTreeMap::from([("velt_p__open".into(), "()->u64".into())]),
         };
         std::fs::create_dir_all(dir.join("shared")).unwrap();

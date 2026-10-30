@@ -1,0 +1,194 @@
+// sqlite/engine/exec/select_compound (internal): compound selects (UNION [ALL], INTERSECT, EXCEPT)
+// compiled by the SELECT compiler (engine/exec/select_compiler), their rows combined by
+// engine/exec/compound.
+
+import { BINARY, collationOf } from "../collation";
+import {
+  C_INTERSECT,
+  C_UNION,
+  C_UNION_ALL,
+  E_COLLATE,
+  E_COLUMN,
+  E_STAR,
+  Expr,
+  FromItem,
+  ResultColumn,
+  Select,
+  SelectCore,
+} from "../sql/types";
+import { Ev } from "./types";
+import { Query } from "./query";
+import { Scope } from "./scope";
+import { prepareError } from "./errors";
+import { SortKey } from "./sort_key";
+import { compoundRows } from "./compound";
+import { Tail } from "./tail";
+import { compileCore } from "./core";
+import { ordinal, resultIndex, checkTerms, rangeError } from "./result";
+import { SelectCompiler } from "./select_compiler";
+import { limitValue } from "./emitter";
+
+export function compileCompound(sel: SelectCompiler, s: Select, outer: Scope | null): Query {
+  // UNION, INTERSECT or EXCEPT ordered under a COLLATE of its own: as SQLite
+  // (convertCompoundSelectToSubquery), `SELECT * FROM (compound) ORDER BY … LIMIT …`, so that
+  // rows match under their columns' collations and the ORDER BY's only orders them.
+  if (collatedOrder(s)) {
+    const inner = new Select();
+    inner.cores = s.cores;
+    inner.height = s.height;
+    const wrap = new Select();
+    wrap.height = s.height;
+    const core = new SelectCore();
+    core.columns.push(ResultColumn { expr: new Expr(E_STAR, 0), alias: "", span: "*" });
+    const item = new FromItem();
+    item.subquery = inner;
+    core.from.push(item);
+    wrap.cores.push(core);
+    wrap.orderBy = s.orderBy;
+    wrap.limit = s.limit;
+    wrap.offset = s.offset;
+    return sel.select(wrap, outer);
+  }
+  const parts: Query[] = [];
+  for (const core of s.cores) {
+    parts.push(compileCore(sel, core, outer, new Tail()));
+  }
+  const first = parts[0];
+  const width: usize = first.names.length;
+  for (let i: usize = 1; i < parts.length; i++) {
+    if (parts[i].names.length != width) {
+      const op = s.cores[i].op;
+      const name =
+        op == C_UNION_ALL
+          ? "UNION ALL"
+          : op == C_UNION ? "UNION" : op == C_INTERSECT ? "INTERSECT" : "EXCEPT";
+      prepareError(
+        `SELECTs to the left and right of ${name} do not have the same number of result columns`,
+      );
+    }
+  }
+  const q = new Query();
+  q.names = first.names;
+  q.affs = first.affs;
+  q.colls = first.colls;
+  q.out.width = width;
+  for (const p of parts) {
+    if (p.correlated) {
+      q.correlated = true;
+    }
+  }
+  for (let i: usize = 0; i < width; i++) {
+    q.refSrc.push(null);
+    q.refCol.push(-2);
+  }
+  const colls: u8[] = [];
+  for (const c of first.colls) {
+    colls.push(c >= 0 ? c as u8 : BINARY);
+  }
+  const sort: SortKey[] = [];
+  checkTerms(s.orderBy.length, "ORDER");
+  for (let k: usize = 0; k < s.orderBy.length; k++) {
+    const t = s.orderBy[k];
+    let i = resultIndex(t.expr, s.cores[0].columns, width, "ORDER", k);
+    if (i >= (width as i64)) {
+      rangeError(k, "ORDER", width);
+    }
+    if (i < 0 && t.expr.kind == E_COLUMN) {
+      for (let j: usize = 0; j < width; j++) {
+        if (first.names[j].toUpperCase() == t.expr.name.toUpperCase()) {
+          i = j as i64;
+          break;
+        }
+      }
+    }
+    if (i < 0) {
+      prepareError(`${ordinal(k + 1)} ORDER BY term does not match any column in the result set`);
+    }
+    const coll: u8 = t.expr.kind == E_COLLATE ? collationOf(t.expr.name) as u8 : colls[i as usize];
+    sort.push(new SortKey(i, null, t.desc, t.nulls, coll));
+  }
+  // LIMIT and OFFSET name no column (SQLite's empty name context).
+  const limitEv: Ev | null = s.limit == null ? null : sel.ev(s.limit!, new Scope());
+  const offsetEv: Ev | null = s.offset == null ? null : sel.ev(s.offset!, new Scope());
+  const ops: u8[] = [];
+  for (const core of s.cores) {
+    ops.push(core.op);
+  }
+  const out = q.out;
+  const need = q.need;
+  q.body = () => {
+    let limit = limitValue(limitEv, -1);
+    let offset = limitValue(offsetEv, 0);
+    if (need.n >= 0 && (limit < 0 || limit > need.n)) {
+      limit = need.n;
+    }
+    for (const p of parts) {
+      p.run();
+    }
+    const rows = compoundRows(
+      parts,
+      ops,
+      parts.length - 1,
+      sort.length > 0 ? sort : null,
+      width,
+      colls,
+    );
+    const n = (rows.length as usize) / width;
+    const order: i64[] = [];
+    for (let r: usize = 0; r < n; r++) {
+      order.push(r as i64);
+    }
+    for (const r of order) {
+      if (limit >= 0 && (out.rows as i64) >= limit) {
+        break;
+      }
+      if (offset > 0) {
+        offset--;
+        continue;
+      }
+      for (let j: usize = 0; j < width; j++) {
+        out.vals.push(rows[(r as usize) * width + j]);
+      }
+      out.rows++;
+    }
+  };
+  return q;
+}
+
+// Whether a compound has UNION, INTERSECT or EXCEPT and an ORDER BY term with a COLLATE.
+function collatedOrder(s: Select): bool {
+  let distinct = false;
+  for (let i: usize = 1; i < s.cores.length; i++) {
+    if (s.cores[i].op != C_UNION_ALL) {
+      distinct = true;
+    }
+  }
+  if (!distinct) {
+    return false;
+  }
+  for (const t of s.orderBy) {
+    if (hasCollate(t.expr)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function hasCollate(e: Expr | null): bool {
+  if (e == null) {
+    return false;
+  }
+  const x = e!;
+  if (x.kind == E_COLLATE) {
+    return true;
+  }
+  if (hasCollate(x.a) || hasCollate(x.b) || hasCollate(x.c)) {
+    return true;
+  }
+  for (const a of x.args) {
+    if (hasCollate(a)) {
+      return true;
+    }
+  }
+  return false;
+}

@@ -1,110 +1,22 @@
-// sqlite: SQLite databases through a native library (the `native/` Rust crate, published
-// prebuilt for each target). Rows come back as JSON and are decoded into your row type:
+// sqlite: embedded SQLite, with an API close to better-sqlite3 (README.md). The driver is the
+// package's native library (native/, Rust over rusqlite, SQLite compiled in); `sqlite/engine` is
+// a SQLite engine written in Velt (read-only for now; docs/engine.md).
 //
-//   import { Database } from "sqlite";
-//   struct User { id: i64; name: string; }
-//   using db = new Database(":memory:");
-//   db.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
-//   db.query<User>("INSERT INTO users (name) VALUES (?)", "[\"ada\"]");
-//   const users = db.query<User>("SELECT id, name FROM users");
+// Synchronous by design: a typical query takes microseconds, less than handing it to a
+// blocking thread pool and back would cost, and SQLite serializes writers anyway. Run a long
+// query in `spawn(...)` to keep it off the current task.
 //
-// A `Database` owns its connection and closes it when it is disposed (`using`, or when the
-// last reference goes away). `db.ref` is a copyable reference for async queries, which run on
-// the runtime's blocking pool; after the database is closed they fail with "SQLITE_MISUSE".
+// Parameters bind as their JSON text would: an object binds by name (`:id`, `@id`, `$id` all
+// take the field `id`), an array (or a single number or string) binds `?` by position. int →
+// INTEGER, float → REAL, string → TEXT, bool → 0/1, null → NULL, `u8[]` → BLOB. Rows are decoded
+// by velt/db's `decodeRows` from the library's row cursor: each column fills the field of the
+// same name (rename with `AS`). INTEGER decodes into integer fields exactly (all of i64) and into
+// `f64` fields; REAL into `f64`; TEXT into `string`; BLOB into `u8[]`; NULL into `T | null`
+// fields. SQLite has no booleans: a column declared `BOOLEAN` decodes into `bool`, any other 0/1
+// value (an expression) needs an integer field.
 
-import { IoResult, IoStatus } from "velt/native";
-
-declare function velt_sqlite__open(path: string): IoResult<u64>;
-declare function velt_sqlite__close(db: u64): IoStatus;
-declare function velt_sqlite__exec(db: u64, sql: string): IoStatus;
-declare function velt_sqlite__query(db: u64, sql: string, params: string): IoResult<string>;
-declare async function velt_sqlite__query_async(
-  db: u64,
-  sql: string,
-  params: string,
-): Promise<IoResult<string>>;
-declare function velt_sqlite__version(): string;
-declare function velt_sqlite__error_name(code: i32): string;
-
-// A failed SQLite operation. `code` is SQLite's result code name ("SQLITE_ERROR" for bad SQL,
-// "SQLITE_CONSTRAINT_UNIQUE", "SQLITE_MISUSE" for a closed database, ...).
-export class SqliteError extends Error {
-  code: string;
-
-  constructor(code: string, message: string) {
-    super(message);
-    this.code = code;
-  }
-}
-
-function check(s: IoStatus) {
-  if (s.code != 0) {
-    throw new SqliteError(velt_sqlite__error_name(s.code), s.message);
-  }
-}
-
-function unwrap(r: IoResult<string>): string {
-  if (r.code != 0) {
-    throw new SqliteError(velt_sqlite__error_name(r.code), r.message);
-  }
-  return r.value;
-}
-
-// The version of the bundled SQLite library ("3.50.4").
-export function version(): string {
-  return velt_sqlite__version();
-}
-
-// An open database (a file, or ":memory:").
-export class Database {
-  private handle: u64;
-
-  // Opens (creating if needed) the database at `path`; throws `SqliteError`.
-  constructor(path: string) {
-    const r = velt_sqlite__open(path);
-    if (r.code != 0) {
-      throw new SqliteError(velt_sqlite__error_name(r.code), r.message);
-    }
-    this.handle = r.value;
-  }
-
-  // Runs `;`-separated statements without parameters (schema scripts).
-  exec(sql: string) {
-    check(velt_sqlite__exec(this.handle, sql));
-  }
-
-  // Runs one statement with `params` (a JSON array: `"[1, \"two\"]"`) and decodes its rows.
-  query<T>(sql: string, params: string = "[]"): T[] {
-    return JSON.parse<T[]>(unwrap(velt_sqlite__query(this.handle, sql, params)));
-  }
-
-  // A copyable reference for async queries.
-  get ref(): DatabaseRef {
-    return DatabaseRef { handle: this.handle };
-  }
-
-  // Closes the connection. Disposal cannot throw: a failed close is a panic.
-  [Symbol.dispose]() {
-    const s = velt_sqlite__close(this.handle);
-    if (s.code != 0) {
-      panic(`sqlite: closing the database failed: ${s.message}`);
-    }
-  }
-}
-
-// A copyable reference to an open `Database`, for queries that run on the blocking pool.
-export struct DatabaseRef {
-  handle: u64;
-  private runtime: RuntimeHandle = RuntimeHandle {};
-
-  // `Database.query`, without blocking the calling task.
-  async query<T>(sql: string, params: string = "[]"): Promise<T[]> {
-    const json = unwrap(await velt_sqlite__query_async(this.handle, sql, params));
-    return JSON.parse<T[]>(json);
-  }
-}
-
-// A field of this type makes a type opaque: a type with a private field has no JSON form,
-// so untrusted JSON can't produce the runtime handle it holds, and `JSON.stringify` doesn't
-// write it. It takes no space.
-struct RuntimeHandle {}
+export { Database, open, OpenOptions } from "./database";
+export { SqliteError } from "./errors";
+export { RunResult } from "./run_result";
+export { Statement } from "./statement";
+export { Transaction } from "./transaction";

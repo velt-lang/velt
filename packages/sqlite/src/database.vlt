@@ -1,0 +1,127 @@
+// sqlite (internal): `Database`, an open connection, and `open`, which makes one.
+//
+// `Database` is a Copy handle like velt/net's sockets: pass and capture it freely and release it
+// with `close()`; then every copy throws "SQLITE_MISUSE" (closing again does nothing). Closing
+// the database while statements exist is safe: they then throw "SQLITE_MISUSE".
+
+import {
+  velt_sqlite__close,
+  velt_sqlite__error_count,
+  velt_sqlite__exec,
+  velt_sqlite__in_transaction,
+  velt_sqlite__last_error,
+  velt_sqlite__open,
+  velt_sqlite__pragma,
+  velt_sqlite__prepare,
+  velt_sqlite__reset_error_count,
+} from "./native";
+import { check, SqliteError, sqliteError, unwrap } from "./errors";
+import { Statement } from "./statement";
+import { Transaction } from "./transaction";
+
+/** `open` options. */
+export struct OpenOptions {
+  /** Open without write access (default false). */
+  readonly?: bool;
+  /** Fail with "SQLITE_CANTOPEN" instead of creating a missing file (default false). */
+  fileMustExist?: bool;
+  /** Milliseconds to wait for another connection's lock before "SQLITE_BUSY" (default 5000). */
+  timeout?: i64;
+  /** Switch to write-ahead logging (`PRAGMA journal_mode = WAL`; default false). */
+  wal?: bool;
+}
+
+/** An open connection (see the header for handle rules). */
+export struct Database {
+  private handle: u64;
+
+  /**
+   * Opens (by default creating) the database file at `path`: what `open(path, opts)` does.
+   */
+  static open(path: string, opts: OpenOptions = {}): Database {
+    const r = velt_sqlite__open(
+      path,
+      opts.readonly ?? false,
+      !(opts.fileMustExist ?? false),
+      (opts.timeout ?? 5000) as u32,
+    );
+    const db = Database { handle: unwrap(r) };
+    if (opts.wal ?? false) {
+      db.pragma("journal_mode = WAL");
+    }
+    return db;
+  }
+
+  /** Runs one or more `;`-separated statements without parameters (schema scripts). */
+  exec(sql: string) {
+    check(velt_sqlite__exec(this.handle, sql));
+  }
+
+  /** Compiles one statement (throws for bad SQL). */
+  prepare(sql: string): Statement {
+    return new Statement(unwrap(velt_sqlite__prepare(this.handle, sql)));
+  }
+
+  /**
+   * `PRAGMA <source>`: the first column of the first row as text ("" if none):
+   * `pragma("journal_mode = WAL")` is "wal", `pragma("user_version")` "0".
+   */
+  pragma(source: string): string {
+    return unwrap(velt_sqlite__pragma(this.handle, source));
+  }
+
+  /** Whether a transaction is open. */
+  get inTransaction(): bool {
+    return velt_sqlite__in_transaction(this.handle);
+  }
+
+  /**
+   * Starts a transaction (a savepoint when one is already open); end it with `commit()` or
+   * `rollback()`.
+   */
+  begin(): Transaction {
+    return Transaction.begin(this);
+  }
+
+  /**
+   * Runs `fn` in a transaction and commits it. If `fn` throws, or any operation on this
+   * connection failed meanwhile (even one `fn` caught), everything `fn` did is rolled back and
+   * the error is thrown here: the transaction is all-or-nothing. Nested calls use a savepoint:
+   * a failed inner transaction undoes only its own work, and the outer one continues if `fn`
+   * catches its error. Use `begin()` to decide about commit or rollback yourself.
+   */
+  transaction<T, E>(fn: () => T throws E): T throws SqliteError | E {
+    const tx = this.begin();
+    const failures = velt_sqlite__error_count(this.handle);
+    try {
+      const result = fn();
+      if (velt_sqlite__error_count(this.handle) != failures) {
+        const s = velt_sqlite__last_error(this.handle);
+        throw sqliteError(s.code, s.message);
+      }
+      tx.commit();
+      return result;
+    } catch (e) {
+      if (this.inTransaction) {
+        tx.rollback();
+      }
+      velt_sqlite__reset_error_count(this.handle, failures);
+      throw e;
+    }
+  }
+
+  /** Closes the connection and releases the handle (later calls throw "SQLITE_MISUSE"). */
+  close() {
+    const s = velt_sqlite__close(this.handle);
+    this.handle = 0;
+    check(s);
+  }
+}
+
+/**
+ * Opens (by default creating) the database file at `path`; ":memory:" is a private in-memory
+ * database. Throws `SqliteError`.
+ */
+export function open(path: string, opts: OpenOptions = {}): Database {
+  return Database.open(path, opts);
+}

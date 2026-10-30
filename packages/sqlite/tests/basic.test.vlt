@@ -1,0 +1,128 @@
+// sqlite basics: open ":memory:", exec, prepare, run/get/all with and without params.
+import { open, Database } from "../src/lib";
+
+class User {
+  id: i64;
+  name: string;
+  email: string;
+  age: i64 | null;
+
+  constructor(id: i64, name: string, email: string, age: i64 | null) {
+    this.id = id;
+    this.name = name;
+    this.email = email;
+    this.age = age;
+  }
+}
+
+class Count {
+  n: i64;
+
+  constructor(n: i64) {
+    this.n = n;
+  }
+}
+
+function setup(): Database {
+  const db = open(":memory:");
+  db.exec(`
+    CREATE TABLE users (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      email TEXT NOT NULL UNIQUE,
+      age INTEGER
+    );
+    CREATE INDEX users_name ON users (name);
+  `);
+  return db;
+}
+
+// The four users the tests read: Ann (41), Bob (29), Cy and Dee (no age).
+function filled(): Database {
+  const db = setup();
+  const insert = db.prepare("INSERT INTO users (name, email, age) VALUES (:name, :email, :age)");
+  insert.runWith({ name: "Ann", email: "ann@example.com", age: 41 });
+  insert.runWith({ name: "Bob", email: "bob@example.com", age: 29 });
+  const age: i64 | null = null;
+  insert.runWith({ name: "Cy", email: "cy@example.com", age: age });
+  db.prepare("INSERT INTO users (name, email) VALUES (?, ?)").runWith(["Dee", "dee@example.com"]);
+  insert.close();
+  return db;
+}
+
+export function test_run_reports_changes_and_rowids() {
+  const db = setup();
+  const insert = db.prepare("INSERT INTO users (name, email, age) VALUES (:name, :email, :age)");
+  const r1 = insert.runWith({ name: "Ann", email: "ann@example.com", age: 41 });
+  assertEq(r1.changes, 1);
+  assertEq(r1.lastInsertRowid, 1);
+  const r2 = insert.runWith({ name: "Bob", email: "bob@example.com", age: 29 });
+  assertEq(r2.changes, 1);
+  assertEq(r2.lastInsertRowid, 2);
+  const age: i64 | null = null;
+  insert.runWith({ name: "Cy", email: "cy@example.com", age: age });
+
+  // Positional parameters take an array.
+  const byPos = db.prepare("INSERT INTO users (name, email) VALUES (?, ?)");
+  assertEq(byPos.runWith(["Dee", "dee@example.com"]).lastInsertRowid, 4);
+  insert.close();
+  byPos.close();
+  db.close();
+}
+
+export function test_all_reads_every_row() {
+  const db = filled();
+  const all: User[] = db.prepare("SELECT * FROM users ORDER BY id").all();
+  const shown: string[] = [];
+  for (const u of all) {
+    shown.push(`${u.id} ${u.name} ${u.email} ${u.age}`);
+  }
+  assertEq(shown, [
+    "1 Ann ann@example.com 41",
+    "2 Bob bob@example.com 29",
+    "3 Cy cy@example.com null",
+    "4 Dee dee@example.com null",
+  ]);
+  db.close();
+}
+
+export function test_get_with_named_parameter() {
+  const db = filled();
+  const byId = db.prepare("SELECT id, name, email, age FROM users WHERE id = $id");
+  const bob: User | null = byId.getWith({ id: 2 });
+  assert(bob != null, "user 2 is found");
+  if (bob != null) {
+    assertEq(bob.name, "Bob");
+    assertEq(bob.age, 29);
+  }
+  const nobody: User | null = byId.getWith({ id: 99 });
+  assertEq(nobody == null, true);
+  byId.close();
+  db.close();
+}
+
+export function test_scalar_parameter_and_aggregates() {
+  const db = filled();
+  // A single scalar is one positional parameter.
+  const older: User[] = db.prepare("SELECT * FROM users WHERE age > ? ORDER BY age").allWith(30);
+  assertEq(older.length, 1);
+  assertEq(older[0].name, "Ann");
+
+  const n: Count | null = db.prepare("SELECT count(*) AS n FROM users").get();
+  assertEq(n?.n, 4);
+
+  const upd = db.prepare("UPDATE users SET age = age + 1 WHERE age IS NOT NULL");
+  assertEq(upd.run().changes, 2);
+  upd.close();
+  db.close();
+}
+
+export function test_anonymous_row_types_and_pragma() {
+  const db = filled();
+  // Anonymous object types work as row types too.
+  const names: { name: string }[] = db.prepare("SELECT name FROM users ORDER BY name DESC").all();
+  assertEq(names.map((r) => r.name).join(","), "Dee,Cy,Bob,Ann");
+  assertEq(db.pragma("user_version"), "0");
+  assertEq(db.inTransaction, false);
+  db.close();
+}
