@@ -156,7 +156,6 @@ export const allow: Allow = {
     "net/url/index.vlt",
     "net/websocket/index.vlt",
     "package/index.vlt",
-    "path/index.vlt",
     "process/child/index.vlt",
     "process/index.vlt",
     "random/index.vlt",

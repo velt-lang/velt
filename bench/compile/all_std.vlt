@@ -179,6 +179,7 @@ import * as std_os from "velt/os";
 import * as std_os_machine from "velt/os/machine";
 import * as std_os_rt from "velt/os/rt";
 import * as std_package from "velt/package";
+import * as std_path_posix from "velt/path/posix";
 import * as std_postgres from "velt/postgres";
 import * as std_child_process from "velt/process/child";
 import * as std_stdin from "velt/process/stdin";
