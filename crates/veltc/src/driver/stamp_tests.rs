@@ -31,6 +31,7 @@ fn render_of(sm: &SourceMap, seen: &Seen, link_inputs: &[PathBuf]) -> String {
         link_inputs,
         std_objects: &[],
         outside: "-",
+        generator_inputs: &[],
     };
     render(&Key::of(&[b"opts"]), sm, &built)
 }
@@ -173,6 +174,7 @@ fn a_generated_root_is_left_to_the_key() {
         link_inputs: &[],
         std_objects: &[],
         outside: "-",
+        generator_inputs: &[],
     };
     let stamp = render(&key, &sm, &built);
     assert!(!stamp.contains("harness.vlt"));
@@ -200,6 +202,7 @@ fn std_objects_are_linked_again_and_must_stay_as_they_were() {
         link_inputs: &[],
         std_objects: std::slice::from_ref(&member),
         outside: "-",
+        generator_inputs: &[],
     };
     let stamp = render(&key, &SourceMap::new(), &built);
     let path = tmp.path().join("app.build-stamp");

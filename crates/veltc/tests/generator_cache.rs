@@ -8,6 +8,8 @@ fn run(dir: &Path, cache: &Path) -> String {
     let out = Command::new(env!("CARGO_BIN_EXE_velt"))
         .arg("run")
         .arg(dir.join("main.vlt"))
+        // Its own `target/velt`: the tests run at once.
+        .current_dir(dir)
         .env("VELT_BUILD_CACHE", cache)
         .output()
         .expect("run velt");
@@ -48,4 +50,58 @@ fn a_changed_generator_is_run_again() {
     // The generator changed: its output must not come from the cache.
     std::fs::write(dir.join("gen.vlt"), generator("goodbye")).expect("gen");
     assert_eq!(run(&dir, &cache), "goodbye User\n");
+}
+
+/// A generator that lists a type's fields: its output changes when the type does.
+const FIELDS: &str = "import { Request, Output } from \"velt/generate\";\n\
+     export function fields(req: Request, out: Output): void {\n\
+     \x20 const t = req.model.type(req.args[0]);\n\
+     \x20 const names: string[] = [];\n\
+     \x20 for (const f of t.fields) { names.push(f.name); }\n\
+     \x20 out.line(`return ${out.literal(t.display + \": \" + names.join(\",\"))};`);\n\
+     }\n";
+
+fn program(types: &str, uses: &str) -> String {
+    format!(
+        "declare generated(\"./gen\") function fields<T>(): string;\n\
+         {types}\n\
+         function main() {{ {uses} }}\n"
+    )
+}
+
+/// The second build is offered the first one's generated code: it is used only while the types
+/// it was generated for are unchanged (their fingerprints), and dropped without a word when it
+/// no longer compiles.
+#[test]
+fn offered_code_is_used_only_while_it_fits() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let dir = tmp.path().join("prog");
+    let cache = tmp.path().join("cache");
+    std::fs::create_dir_all(&dir).expect("dir");
+    std::fs::write(dir.join("gen.vlt"), FIELDS).expect("gen");
+    let main = dir.join("main.vlt");
+    let write = |text: String| std::fs::write(&main, text).expect("main");
+    write(program(
+        "class User { name = \"\"; }\nclass Admin { level = 1; }",
+        "console.log(fields<User>()); console.log(fields<Admin>());",
+    ));
+    assert_eq!(run(&dir, &cache), "User: name\nAdmin: level\n");
+    // A field added: the offered code for `User` still compiles, but is stale.
+    write(program(
+        "class User { name = \"\"; age = 0; }\nclass Admin { level = 1; }",
+        "console.log(fields<User>()); console.log(fields<Admin>());",
+    ));
+    assert_eq!(run(&dir, &cache), "User: name,age\nAdmin: level\n");
+    // `Admin` gone: the offered code that names it does not compile, and is not reported.
+    write(program(
+        "class User { name = \"\"; age = 0; }",
+        "console.log(fields<User>());",
+    ));
+    assert_eq!(run(&dir, &cache), "User: name,age\n");
+    // A new instance the offer does not hold.
+    write(program(
+        "class User { name = \"\"; age = 0; }\nclass Team { size = 2; }",
+        "console.log(fields<User>()); console.log(fields<Team>());",
+    ));
+    assert_eq!(run(&dir, &cache), "User: name,age\nTeam: size\n");
 }

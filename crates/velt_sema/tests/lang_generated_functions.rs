@@ -96,3 +96,30 @@ fn the_model_describes_fields_and_spells_types() {
     assert_eq!(arr.spelling, "(f64)[]");
     assert_eq!(d.model.types[arr.args[0] as usize].repr, "f64");
 }
+
+/// A fingerprint covers what a request reaches, whatever else the model holds and in whatever
+/// order: the offered code of an earlier build is bound only while it matches.
+#[test]
+fn fingerprints_cover_the_types_a_request_reaches() {
+    let d = demand(PROGRAM);
+    let user = d.requests[0].type_args.clone();
+    let sig = d.functions[d.requests[0].function].signature();
+    let fp = d.model.fingerprint(&user, &sig);
+    // The same types in a model of their own (built for another request first).
+    let alone = demand(&PROGRAM.replace("console.log(via<f64[]>());", ""));
+    let fp_alone = alone.model.fingerprint(&alone.requests[0].type_args, &sig);
+    assert_eq!(fp, fp_alone);
+    // Positions do not count; a field does.
+    let moved = demand(&PROGRAM.replace("class User {", "\n\nclass User {"));
+    assert_eq!(
+        fp,
+        moved.model.fingerprint(&moved.requests[0].type_args, &sig)
+    );
+    let grown = demand(&PROGRAM.replace("age?: i32;", "age?: i32;\n  email: string = \"\";"));
+    assert_ne!(
+        fp,
+        grown.model.fingerprint(&grown.requests[0].type_args, &sig)
+    );
+    // Nor is another signature the same request.
+    assert_ne!(fp, d.model.fingerprint(&user, "describe(): number"));
+}

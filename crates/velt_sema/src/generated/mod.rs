@@ -48,6 +48,11 @@ pub struct GenInstance {
     pub function: String,
     pub type_args: Vec<String>,
     pub body: String,
+    /// The [`model::Model::fingerprint`] of the request the code was generated for, with the
+    /// function's [`GenFunction::signature`]: an instance offered from an earlier build
+    /// (docs/internals/design/source-generators.md §9) is bound only while the types it was
+    /// generated for are still the same. Empty: not checked (generated in this build).
+    pub fingerprint: String,
 }
 
 /// What a check that found instances without generated code returns instead of a program.
@@ -59,6 +64,8 @@ pub struct Demand {
     pub requests: Vec<Request>,
     /// The types the requests reach (one model shared by all of them).
     pub model: model::Model,
+    /// Code offered from an earlier build was stale (generated for types that changed since).
+    pub stale: bool,
 }
 
 /// A generated function's declaration, its types written as generated code spells them with
@@ -77,6 +84,23 @@ pub struct GenFunction {
     pub is_async: bool,
     /// The declared `throws` type.
     pub throws: Option<String>,
+}
+
+impl GenFunction {
+    /// The signature as generated code spells it, for fingerprints.
+    pub fn signature(&self) -> String {
+        let params: Vec<String> = (self.params.iter())
+            .map(|(n, t)| format!("{n}: {t}"))
+            .collect();
+        format!(
+            "{}{}({}): {} throws {}",
+            if self.is_async { "async " } else { "" },
+            self.function,
+            params.join(", "),
+            self.ret,
+            self.throws.as_deref().unwrap_or("-")
+        )
+    }
 }
 
 /// A request for the body of one instance of a generated function.
@@ -186,6 +210,7 @@ pub(crate) fn instances(cx: &mut Ctx) -> Result<bind::Bound, Demand> {
         functions,
         requests,
         model: model.model,
+        stale: cx.gen_stale,
     })
 }
 
@@ -250,31 +275,37 @@ fn functions(cx: &mut Ctx) -> (Vec<GenFunction>, rustc_hash::FxHashMap<DefId, us
     let mut out = vec![];
     let mut index = rustc_hash::FxHashMap::default();
     for d in (0..cx.info.len() as u32).map(DefId) {
-        let Some(spec) = cx.generator_of(d).cloned() else {
+        let Some(f) = gen_function(cx, d) else {
             continue;
         };
-        let f = cx.fn_info(d).clone();
-        let mut params = vec![];
-        for p in &f.params {
-            let s = spell::spell_template(cx, p.ty).unwrap_or_default();
-            params.push((p.name.clone(), s));
-        }
-        let ret = spell::spell_template(cx, f.ret).unwrap_or_default();
-        let throws = match f.declared_throws.as_ref().and_then(|t| t.ty) {
-            Some(t) => spell::spell_template(cx, t),
-            None => None,
-        };
         index.insert(d, out.len());
-        out.push(GenFunction {
-            module: cx.modules[f.module].path.clone(),
-            function: f.name.rsplit("::").next().unwrap_or(&f.name).to_string(),
-            generator: spec.spec,
-            generator_span: spec.span,
-            params,
-            ret,
-            is_async: f.is_async,
-            throws,
-        });
+        out.push(f);
     }
     (out, index)
+}
+
+/// Generated function `d`'s declaration as the driver sees it.
+pub(crate) fn gen_function(cx: &mut Ctx, d: DefId) -> Option<GenFunction> {
+    let spec = cx.generator_of(d).cloned()?;
+    let f = cx.fn_info(d).clone();
+    let mut params = vec![];
+    for p in &f.params {
+        let s = spell::spell_template(cx, p.ty).unwrap_or_default();
+        params.push((p.name.clone(), s));
+    }
+    let ret = spell::spell_template(cx, f.ret).unwrap_or_default();
+    let throws = match f.declared_throws.as_ref().and_then(|t| t.ty) {
+        Some(t) => spell::spell_template(cx, t),
+        None => None,
+    };
+    Some(GenFunction {
+        module: cx.modules[f.module].path.clone(),
+        function: f.name.rsplit("::").next().unwrap_or(&f.name).to_string(),
+        generator: spec.spec,
+        generator_span: spec.span,
+        params,
+        ret,
+        is_async: f.is_async,
+        throws,
+    })
 }

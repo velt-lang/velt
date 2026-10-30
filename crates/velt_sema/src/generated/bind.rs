@@ -47,6 +47,12 @@ pub(crate) fn bind(cx: &mut Ctx) -> Bound {
                 cx.resolve_type(&t, &env)
             })
             .collect();
+        if !inst.fingerprint.is_empty() && !still_fresh(cx, f, &targs, &inst.fingerprint) {
+            // Offered from an earlier build for types that changed since: not bound, so the
+            // instance is missing and generated again.
+            cx.gen_stale = true;
+            continue;
+        }
         out.insert((f, targs), body);
     }
     out
@@ -59,4 +65,15 @@ fn ice_missing(cx: &mut Ctx, name: &str, what: &str) {
         ),
         Span::DUMMY,
     ));
+}
+
+/// Whether code generated with fingerprint `fp` is still what generated function `f` at
+/// `targs` would get: the same types and the same signature.
+fn still_fresh(cx: &mut Ctx, f: DefId, targs: &[TyId], fp: &str) -> bool {
+    let Some(sig) = super::gen_function(cx, f).map(|g| g.signature()) else {
+        return false;
+    };
+    let mut model = super::model::Builder::new();
+    let roots: Vec<u32> = targs.iter().map(|t| model.add(cx, *t)).collect();
+    model.model.fingerprint(&roots, &sig) == fp
 }

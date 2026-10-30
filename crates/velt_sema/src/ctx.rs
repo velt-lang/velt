@@ -50,6 +50,8 @@ pub(crate) struct Ctx<'m> {
     /// Those instances bound to their generated definitions (`crate::generated::bind`), once
     /// the bodies are checked.
     pub gen_bound: crate::generated::bind::Bound,
+    /// Some instance offered from an earlier build was not bound: its types changed.
+    pub gen_stale: bool,
     pub ty: Types,
     /// Final HIR definitions, indexed by `DefId` (filled at the end).
     pub defs: Vec<Option<Def>>,
@@ -431,6 +433,7 @@ impl<'m> Ctx<'m> {
             root,
             gen: None,
             gen_bound: Default::default(),
+            gen_stale: false,
             export_memo: Default::default(),
             import_targets: crate::collect::exports::import_targets(modules),
             ty: Types::new(),

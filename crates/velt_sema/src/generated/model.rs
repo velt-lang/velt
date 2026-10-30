@@ -310,3 +310,105 @@ fn subclasses(cx: &Ctx, d: DefId) -> Vec<DefId> {
     }
     out
 }
+
+impl Model {
+    /// A fingerprint of what a request for type arguments `roots` reads: the types they reach,
+    /// renumbered in the order a walk from `roots` meets them, without positions (`at`), so it is
+    /// the same in any model that holds them and changes when any of them does
+    /// (docs/internals/design/source-generators.md §9, the offered modules). `extra` is mixed in
+    /// (the generated function's signature).
+    pub fn fingerprint(&self, roots: &[u32], extra: &str) -> String {
+        let mut order: Vec<u32> = vec![];
+        let mut index: FxHashMap<u32, u32> = FxHashMap::default();
+        let mut visit = |t: u32, order: &mut Vec<u32>| -> u32 {
+            *index.entry(t).or_insert_with(|| {
+                order.push(t);
+                order.len() as u32 - 1
+            })
+        };
+        let mut h = Fnv128::new();
+        h.str(extra);
+        for &r in roots {
+            let n = visit(r, &mut order);
+            h.u32(n);
+        }
+        let mut next = 0;
+        while next < order.len() {
+            let Some(t) = self.types.get(order[next] as usize) else {
+                h.str("?");
+                next += 1;
+                continue;
+            };
+            next += 1;
+            h.str(t.kind);
+            h.str(&t.display);
+            h.str(&t.qualified_name);
+            h.str(&t.spelling);
+            h.str(&t.repr);
+            h.str(&t.literal);
+            for (tag, list) in [("a", &t.args), ("u", &t.arms), ("s", &t.subclasses)] {
+                h.str(tag);
+                h.u32(list.len() as u32);
+                for &x in list {
+                    let n = visit(x, &mut order);
+                    h.u32(n);
+                }
+            }
+            h.str("b");
+            match t.base {
+                Some(b) => {
+                    let n = visit(b, &mut order);
+                    h.u32(n + 1);
+                }
+                None => h.u32(0),
+            }
+            h.u32(t.fields.len() as u32);
+            for f in &t.fields {
+                h.str(&f.name);
+                let n = visit(f.ty, &mut order);
+                h.u32(n);
+                let flags = [
+                    f.optional,
+                    f.readonly,
+                    f.private,
+                    f.es_private,
+                    f.has_default,
+                ];
+                h.u32(flags.iter().fold(0, |acc, &b| acc << 1 | u32::from(b)));
+            }
+            h.u32(t.members.len() as u32);
+            for m in &t.members {
+                h.str(&m.name);
+                h.str(&m.value);
+            }
+        }
+        format!("{:032x}", h.0)
+    }
+}
+
+/// 128-bit FNV-1a: stable across runs and platforms (the fingerprints are stored).
+struct Fnv128(u128);
+
+impl Fnv128 {
+    const PRIME: u128 = 0x0000_0000_0100_0000_0000_0000_0000_013b;
+
+    fn new() -> Self {
+        Fnv128(0x6c62_272e_07bb_0142_62b8_2175_6295_c58d)
+    }
+
+    fn bytes(&mut self, b: &[u8]) {
+        for &x in b {
+            self.0 ^= u128::from(x);
+            self.0 = self.0.wrapping_mul(Self::PRIME);
+        }
+    }
+
+    fn u32(&mut self, v: u32) {
+        self.bytes(&v.to_le_bytes());
+    }
+
+    fn str(&mut self, s: &str) {
+        self.u32(s.len() as u32);
+        self.bytes(s.as_bytes());
+    }
+}

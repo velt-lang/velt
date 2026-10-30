@@ -156,6 +156,9 @@ pub struct Session {
     pub cached: Option<(usize, usize, &'static str)>,
     /// Objects of std functions the program links instead of compiling (`std_cache`).
     pub std_objects: Vec<PathBuf>,
+    /// What the source generators the build ran read, as build-stamp `file` entries
+    /// (`crate::generate`): a changed generator rebuilds the program.
+    pub generator_inputs: Vec<String>,
 }
 
 impl Session {
@@ -630,6 +633,7 @@ fn build_on_current_thread(
             link_inputs: &outputs,
             std_objects: &sess.std_objects,
             outside: &reaches,
+            generator_inputs: &sess.generator_inputs,
         };
         // Best effort: without a stamp the next build compiles again.
         let _ = stamp::write(&stamp_path, &stamp::render(&key, &sess.sm, &built));
