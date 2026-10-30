@@ -159,6 +159,35 @@ fn fn_params_in(cx: &mut Ctx, t: TyId) -> Vec<TyId> {
     out
 }
 
+/// The targets of the conversions of dynamic values (`Intrinsic::AnyTo`) written with type
+/// parameters that `keep` selects, as each site instantiating their definitions makes them
+/// (substituted, through the generic definitions in between): the function types among their
+/// members that lowering converts to at run time (`dynamic_fn_views`, #1935).
+pub(crate) fn instantiated_targets(
+    cx: &mut Ctx,
+    keep: &mut dyn FnMut(&mut Ctx, TyId) -> bool,
+) -> Vec<TyId> {
+    // Reported later, as in `instantiated_conversions`.
+    if crate::instantiation_cycles::has_growing_cycle(cx) {
+        return vec![];
+    }
+    let units = collect(cx);
+    let callers = callers_of(&units);
+    let mut convs = vec![];
+    for (d, u) in &units {
+        for (t, span) in &u.convs {
+            if cx.has_type_params(*t) && keep(cx, *t) {
+                convs.push((*d, *t, 0, *span));
+            }
+        }
+    }
+    let mut out = vec![];
+    carry(cx, &callers, convs, &mut |_, t, _, _| out.push(t));
+    out.sort_unstable_by_key(|t| t.0);
+    out.dedup();
+    out
+}
+
 /// The sites instantiating each definition, in `units`.
 fn callers_of(units: &[(DefId, Unit)]) -> Callers {
     let mut callers: Callers = FxHashMap::default();

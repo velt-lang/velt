@@ -444,19 +444,14 @@ impl FnCx<'_, '_> {
             if self.cx.union_def(core).is_some()
                 || self.cx.lit_value(core).is_some()
                 || self.plain_enum(core).is_some()
-                || matches!(self.cx.ty.kind(core), TyKind::FnPtr { rest: false, .. })
+                || matches!(self.cx.ty.kind(core), TyKind::FnPtr { .. })
             {
                 return self.dynamic_to_optional(h, exp, payload);
             }
         }
         // A function: called through `any`, whatever types it was made with (dynamic_as_fn).
         let mut h = h;
-        if let TyKind::FnPtr {
-            params,
-            rest: false,
-            ..
-        } = self.cx.ty.kind(exp).clone()
-        {
+        if let TyKind::FnPtr { params, .. } = self.cx.ty.kind(exp).clone() {
             match self.dynamic_as_fn(h, exp, params.len()) {
                 Ok(g) => return g,
                 Err(back) => h = back,
@@ -464,6 +459,7 @@ impl FnCx<'_, '_> {
         }
         self.note_dynamic_iface(exp, span);
         self.note_object_fill(exp);
+        self.note_fn_views(exp, span);
         self.cx.note_dyn_object_target(exp);
         let h = self.share_if_place(h);
         self.intrinsic(Intrinsic::AnyTo, vec![h], exp, span)

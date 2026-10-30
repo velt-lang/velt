@@ -12,6 +12,10 @@ use super::operand::proj;
 use super::{cint, FnLower};
 use crate::vir::{self, BinOp, Const, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
+/// How deep an object's members are filled from a record's or object's members, one inside
+/// another (`{ inner: { deep: { f } } }`): a type that contains itself ends there.
+pub(super) const FILL_DEPTH: u32 = 4;
+
 impl FnLower<'_, '_> {
     /// The value of type `ty` the `any` at `p` (owned, consumed here) holds.
     /// The string literal type `ty` (`"a"`, a key known per instantiation) the `any` at `p`
@@ -77,7 +81,7 @@ impl FnLower<'_, '_> {
             return;
         };
         if !self.cx.hir.record_fills
-            || self.record_fill
+            || self.record_fill >= FILL_DEPTH
             || self.cx.is_class(ty)
             || a.fields.is_empty()
         {
@@ -102,7 +106,8 @@ impl FnLower<'_, '_> {
         let any = self.cx.any_ty();
         let avt = self.cx.ty(any);
         let tys = self.cx.adt_field_tys(ty);
-        let filling = std::mem::replace(&mut self.record_fill, true);
+        let filling = self.record_fill;
+        self.record_fill += 1;
         // The value is a record here, never a proxy: its reads route no trap's error (a
         // conversion that throws nothing, proxy_throws.rs).
         let routes = std::mem::replace(&mut self.proxy_routes, false);

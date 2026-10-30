@@ -228,6 +228,9 @@ pub struct Program {
     /// unchecked (hir_encodings.md "Unchecked definitions"): each has a stub definition (an
     /// empty body, a `void` constant) that lowering never builds or reads. Additive.
     pub unchecked: HashSet<DefId>,
+    /// The functions `(f: any) => T` converting a function held as `any` to the function type
+    /// `T` (their result type) inside a conversion lowering makes (hir_encodings.md). Additive.
+    pub any_fn_views: Vec<DefId>,
 }
 
 impl Program {

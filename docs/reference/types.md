@@ -3147,6 +3147,37 @@ const s = setup as (c: Ctx<any>) => string;
 console.log(s({ v: 1 })); // x1
 ```
 
+The same holds for a function that is a member of the value converted: a field of function type
+read from a record (`Object.create(null)`) or an object converted to an object type, and an element
+of an array of functions (#1935). A function of another type than the member's converts as above,
+as TypeScript lets a function with optional parameters stand for one with fewer and `any[]` for any
+array: `slots as { default: () => VNode[] }` where `slots.default` holds `(scopedProps?: any) =>
+any[]` gives a `default` that calls the held function with no arguments and converts each element
+of its result to `VNode`. Extra arguments are dropped and missing ones are `undefined`, as in Node,
+and a rest parameter of the target type (`(...xs: number[]) => string`) passes its elements as
+separate arguments. This reaches members of objects inside the value (`{ inner: { deep: { f } } }`),
+up to four objects deep, and the results of the converted functions; a function five or more
+objects deep stops the conversion with a `TypeError`. The function is made once, at the conversion, so each
+call costs one call through `any`, and the member read twice is one function (`s.f === s.f`). Two
+conversions of the same object give two functions, though: `(o as S).f === (o as S).f` is `false`,
+where Node keeps the one function. In a program that makes proxies, the converted object is a view
+of the object (below), whose member converts at each read: there each read gives a new function, so
+`s.f === s.f` is `false` too, and each call of `s.f()` makes the function first. An async function
+of another type than the member's (`async (x?: any): Promise<any>` as `() => Promise<any>`)
+converts, but calling it stops with ``TypeError: calling this function through `any` is not
+supported yet``, as an async function is not called through `any` yet (#1674); one of the member's
+own type is that function.
+
+```ts
+interface Slots {
+  default: () => string[];
+}
+const store: any = Object.create(null);
+store.default = (props?: any): any[] => ["a", props === undefined ? "none" : "some"];
+const slots = store as Slots;
+console.log(slots.default().join(",")); // a,none
+```
+
 An object of another type converted to an object type (`a as Item` where `a` holds a class
 instance with `Item`'s fields, or an object literal with more fields than `Item`) is, in a program
 that makes proxies (`new Proxy` anywhere in its own code, as a reactive framework does), a *view*

@@ -53,6 +53,7 @@ mod dynamic_arith;
 mod dynamic_concat;
 mod dynamic_enum;
 mod dynamic_fill;
+pub(crate) mod dynamic_fn_views;
 mod dynamic_member;
 mod dynamic_members;
 mod dynamic_narrow;

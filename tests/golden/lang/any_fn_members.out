@@ -1,0 +1,12 @@
+[ 'a', 1, { tag: 'b' }, true, null ] b
+[ 'L', true ]
+5000
+x-undefined three 2 1+2+3 42
+[ 7, 'k7', 'none' ]
+2
+[ 'none', 2 ]
+[ true ]
+[ 'T', 'undefined' ] true
+3 inner undefined
+[ 1, 2, true ]
+promise later

@@ -89,8 +89,7 @@ pub(crate) struct Ctx<'m> {
     /// (collect/ext_impls.rs). Their bounds must hold for an impl to fit a type, and among the
     /// fitting ones the most specific wins (`Ctx::find_impl`).
     pub ext_impls: FxHashMap<u32, usize>,
-    /// `ext_impls` by interface, in order.
-    pub ext_by_iface: FxHashMap<DefId, Vec<u32>>,
+    pub ext_by_iface: FxHashMap<DefId, Vec<u32>>, // `ext_impls` by interface, in order
     /// Finished `extend` lookups (infer/ext_impls.rs) and bound checks through blocks
     /// (infer/ext_exists.rs), valid while `impls` has `ext_memo_impls` entries.
     pub ext_memo: FxHashMap<(TyId, DefId), Option<crate::infer::FoundImpl>>,
@@ -127,8 +126,7 @@ pub(crate) struct Ctx<'m> {
     pub record_views: FxHashMap<DefId, TyId>,
     /// Field-only interface → its object type's def (`collect::field_only`).
     pub field_only: FxHashMap<DefId, DefId>,
-    /// The reverse of `field_only`.
-    pub field_only_of: FxHashMap<DefId, DefId>,
+    pub field_only_of: FxHashMap<DefId, DefId>, // the reverse of `field_only`
     /// Every declared type's fields are resolved (`collect::shapes`); before that, a utility
     /// type (`crate::utility_types`) may only read the fields of types already shaped.
     pub shapes_done: bool,
@@ -270,6 +268,7 @@ pub(crate) struct Ctx<'m> {
     >,
     /// Checked conversions of dynamic values to generic interfaces (`iface_adapt_dynamic`).
     pub(crate) dyn_iface_targets: Vec<crate::body::expr::iface_adapt_dynamic::DynIfaceTarget>,
+    pub(crate) fn_views: crate::body::expr::dynamic_fn_views::FnViews, // dynamic_fn_views.rs
     /// Error types committed to while checking bodies, re-checked after inference.
     pub throw_checks: Vec<crate::throws::ThrowCheck>,
     /// Function types written without `throws` and what is stored into them (`throws::fn_types`).
@@ -538,6 +537,7 @@ impl<'m> Ctx<'m> {
             literal_display: Default::default(),
             iface_adapters: FxHashMap::default(),
             dyn_iface_targets: vec![],
+            fn_views: Default::default(),
             throw_checks: vec![],
             fn_sites: Default::default(),
             collected_defs: 0,

@@ -442,8 +442,10 @@ fn check_timed(
         generic_called,
         generic_fns,
         lock_free_callbacks,
+        fn_views,
         ..
     } = cx;
+    let any_fn_views = fn_views.into_program();
     let program = hir::Program {
         types: ty.table,
         defs: (defs.into_iter())
@@ -476,6 +478,7 @@ fn check_timed(
         dyn_bounds: dyn_bounds.into_iter().collect(),
         lock_free_callbacks: lock_free_callbacks.into_iter().collect(),
         unchecked: unchecked.into_iter().collect(),
+        any_fn_views,
     };
     (Some(program), diags)
 }
@@ -533,11 +536,8 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     timings::pass("body::check_bodies", || body::check_bodies(cx));
     timings::pass("global_this::check_sites", || global_this::check_sites(cx));
     timings::pass("module_scripts::declare", || module_scripts::declare(cx));
-    timings::pass("make_dynamic_iface_adapters", || {
-        body::expr::iface_adapt_dynamic::make_dynamic_iface_adapters(cx)
-    });
-    timings::pass("make_dynamic_object_impls", || {
-        object_ifaces::make_dynamic_object_impls(cx)
+    timings::pass("make_dynamic_impls", || {
+        body::expr::dynamic_fn_views::make_dynamic_impls(cx)
     });
     timings::pass("check_adapter_writes", || cx.check_adapter_writes());
     timings::pass("check_adapted_array_reads", || {
