@@ -228,7 +228,7 @@ mod tests {
         .map(|n| extract(n, ""))
         .collect();
         let idx = ModuleIndex::new(&ms);
-        assert_eq!(idx.resolve("pkg", "velt:fs"), Some(0));
+        assert_eq!(idx.resolve("pkg", "velt/fs"), Some(0));
         assert_eq!(idx.resolve("pkg", "./util"), Some(4));
         assert_eq!(idx.resolve("pkg", "./util.ts"), Some(4));
         assert_eq!(idx.resolve("pkg", "./util.js"), Some(4));
@@ -247,7 +247,7 @@ mod tests {
             extract(
                 "pkg/lib",
                 "export { Circle, area as circleArea } from \"./circle\";\nexport * from \"./square\";\n\
-                 export { readFile } from \"velt:fs\";\nexport * from \"other\";\n\
+                 export { readFile } from \"velt/fs\";\nexport * from \"other\";\n\
                  import { helper } from \"./square\";\nexport { helper as help, local };\n\
                  /** Local. */\nfunction local() {}\nexport function side(): i64 { return 1; }\n",
             ),
@@ -284,7 +284,7 @@ mod tests {
         assert_eq!(lib.items[2].doc, "A circle.");
         assert_eq!(
             (lib.items[6].kind, lib.items[6].signature.as_str()),
-            (Kind::ReExport, "export { readFile } from \"velt:fs\"")
+            (Kind::ReExport, "export { readFile } from \"velt/fs\"")
         );
         assert_eq!(lib.items[7].signature, "export * from \"other\"");
         // The cycle square → lib → square is cut; square still gets lib's own items.

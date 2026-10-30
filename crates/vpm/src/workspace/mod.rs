@@ -4,7 +4,7 @@
 //! requirements the workspace writes for them, with `"workspace"`:
 //!
 //! ```ts ignore
-//! import type { Workspace } from "velt:package";
+//! import type { Workspace } from "velt/package";
 //!
 //! export const workspace: Workspace = {
 //!   members: ["packages/*", "apps/*"],

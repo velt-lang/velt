@@ -1,5 +1,5 @@
 // Global, conditional (crates/veltc/src/loader/globals.rs): `bytes()`, `arrayBuffer()` and
-// `stream()` of `Blob` (velt:fetch/blob_typed), with the typed arrays and streams they give, for a
+// `stream()` of `Blob` (velt/net/http/fetch/blob_typed), with the typed arrays and streams they give, for a
 // program that uses `Blob` and calls one; other blob programs don't load them.
-// load when std/fetch/blob uses: bytes arrayBuffer stream
-import "velt:fetch/blob_typed";
+// load when std/net/http/fetch/blob uses: bytes arrayBuffer stream
+import "velt/net/http/fetch/blob_typed";

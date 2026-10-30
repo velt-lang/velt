@@ -1,14 +1,14 @@
-// velt:sqlite/exec/emit — the end of a SELECT's pipeline: each row's result columns are
+// velt/sqlite/exec/emit — the end of a SELECT's pipeline: each row's result columns are
 // computed, DISTINCT drops repeats, ORDER BY collects rows into a sort (unless the loops already
 // produce them in order), and OFFSET and LIMIT pick the rows that go out.
 
-import { INTEGER, NULL } from "velt:sqlite/btree";
-import { SqlRunError } from "velt:sqlite/exec/errors";
-import { KeySet } from "velt:sqlite/exec/keys";
-import { forCompare } from "velt:sqlite/exec/ops";
-import { A_NUMERIC } from "velt:sqlite/schema";
-import { Ev, Out } from "velt:sqlite/exec/scope";
-import { Val, compareVals } from "velt:sqlite/exec/value";
+import { INTEGER, NULL } from "velt/sqlite/btree";
+import { SqlRunError } from "velt/sqlite/exec/errors";
+import { KeySet } from "velt/sqlite/exec/keys";
+import { forCompare } from "velt/sqlite/exec/ops";
+import { A_NUMERIC } from "velt/sqlite/schema";
+import { Ev, Out } from "velt/sqlite/exec/scope";
+import { Val, compareVals } from "velt/sqlite/exec/value";
 
 /** One ORDER BY term: a result column (`col`) or an expression of its own. */
 export class SortKey {

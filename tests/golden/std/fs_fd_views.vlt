@@ -2,8 +2,8 @@
 // Node's `readSync` and `writeSync` with typed arrays and `DataView`s: `offset` and `length`
 // count bytes of the view, whatever its element type, and its errors are Node's (this program
 // prints what `node` prints for it with `fs` from "node:fs").
-import * as fs from "velt:fs/fd";
-import { writeFileSync } from "velt:fs";
+import * as fs from "velt/fs/fd";
+import { writeFileSync } from "velt/fs";
 
 function attempt(f: () => string) {
   try {

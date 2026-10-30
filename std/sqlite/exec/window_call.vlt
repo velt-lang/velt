@@ -1,9 +1,9 @@
-// velt:sqlite/exec/window_call — a window function call compiled (velt:sqlite/exec/window
+// velt/sqlite/exec/window_call — a window function call compiled (velt/sqlite/exec/window
 // computes them): its window resolved against the WINDOW clause and checked as SQLite checks it,
 // its arguments and the window's PARTITION BY and ORDER BY compiled in the scope the rows are
 // collected in.
 
-import { BINARY } from "velt:sqlite/record";
+import { BINARY } from "velt/sqlite/record";
 import {
   BOUND_CURRENT,
   BOUND_FOLLOWING,
@@ -26,15 +26,15 @@ import {
   OrderTerm,
   ResultColumn,
   Window,
-} from "velt:sqlite/sql/ast";
-import { Ev, Scope } from "velt:sqlite/exec/scope";
-import { AggFn, aggregateKind } from "velt:sqlite/exec/agg";
-import { prepareError } from "velt:sqlite/exec/errors";
-import { scalarFunction } from "velt:sqlite/exec/func";
-import { C, ExprCompiler } from "velt:sqlite/exec/expr";
-import { SortKey } from "velt:sqlite/exec/emit";
-import { plain } from "velt:sqlite/exec/compiled";
-import { MAX_COLUMN, termNumber } from "velt:sqlite/exec/result";
+} from "velt/sqlite/sql/ast";
+import { Ev, Scope } from "velt/sqlite/exec/scope";
+import { AggFn, aggregateKind } from "velt/sqlite/exec/agg";
+import { prepareError } from "velt/sqlite/exec/errors";
+import { scalarFunction } from "velt/sqlite/exec/func";
+import { C, ExprCompiler } from "velt/sqlite/exec/expr";
+import { SortKey } from "velt/sqlite/exec/emit";
+import { plain } from "velt/sqlite/exec/compiled";
+import { MAX_COLUMN, termNumber } from "velt/sqlite/exec/result";
 import {
   W_AGG,
   W_FIRST,
@@ -46,8 +46,8 @@ import {
   WinCtx,
   WinFn,
   windowKind,
-} from "velt:sqlite/exec/window";
-import { intVal, nullVal } from "velt:sqlite/exec/value";
+} from "velt/sqlite/exec/window";
+import { intVal, nullVal } from "velt/sqlite/exec/value";
 
 /** Arity of a window function kind: [least, most]. */
 export function windowArity(kind: i64): i64[] {

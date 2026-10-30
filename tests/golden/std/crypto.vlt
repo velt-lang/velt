@@ -11,8 +11,8 @@ import {
   randomBytes,
   randomInt,
   timingSafeEqual,
-} from "velt:crypto";
-import { hexEncode, hexDecode, utf8Encode } from "velt:encoding";
+} from "velt/crypto";
+import { hexEncode, hexDecode, utf8Encode } from "velt/encoding";
 
 function repeated(b: u8, n: usize): u8[] {
   const out: u8[] = [];

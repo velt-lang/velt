@@ -11,12 +11,12 @@
 // a slow client (backpressure); a client that went away makes it throw and aborts the request's
 // signal (cancellation).
 
-import { utf8Encode } from "velt:encoding";
-import { BodyStream } from "velt:fetch/body";
-import { Head, isTchar } from "velt:http/server/parse";
-import { TcpStream } from "velt:net";
-import { AbortController, AbortSignal } from "velt:task";
-import { Uint8Array } from "velt:typed_array/uint8_array";
+import { utf8Encode } from "velt/encoding";
+import { BodyStream } from "velt/net/http/fetch/body";
+import { Head, isTchar } from "velt/http/server/parse";
+import { TcpStream } from "velt/net";
+import { AbortController, AbortSignal } from "velt/task";
+import { Uint8Array } from "velt/lang/typed_array/uint8_array";
 
 const CR: u8 = 13;
 const LF: u8 = 10;
@@ -199,7 +199,7 @@ export class HttpResponse {
   /**
    * Streams `body` as the response (default type `text/html; charset=utf-8`): each chunk is
    * written as it comes, once the client took the one before. For `renderToStream` of
-   * [velt:jsx](jsx.md): the markup above a pending async component reaches the client while it
+   * [velt/jsx](jsx.md): the markup above a pending async component reaches the client while it
    * loads. A client that goes away ends it quietly (the source is closed, so rendering stops;
    * `signal()` is aborted).
    */

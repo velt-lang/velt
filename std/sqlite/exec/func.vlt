@@ -1,14 +1,14 @@
-// velt:sqlite/exec/func — SQLite's core scalar functions (https://sqlite.org/lang_corefunc.html),
+// velt/sqlite/exec/func — SQLite's core scalar functions (https://sqlite.org/lang_corefunc.html),
 // each compiled from its arguments' compiled expressions. Text functions work on UTF-8 and
 // fold case for ASCII letters only, as SQLite does without ICU.
 
-import { NULL, INTEGER, REAL, TEXT, BLOB } from "velt:sqlite/btree";
-import { SqlRunError, prepareError } from "velt:sqlite/exec/errors";
-import { FMT_FLOAT, atof, formatReal } from "velt:sqlite/exec/fp";
-import { realToI64, toF64, toI64, truth } from "velt:sqlite/exec/ops";
-import { dateFunction, isDateFunction } from "velt:sqlite/exec/date";
-import { printf } from "velt:sqlite/exec/printf";
-import { likeValue } from "velt:sqlite/exec/like";
+import { NULL, INTEGER, REAL, TEXT, BLOB } from "velt/sqlite/btree";
+import { SqlRunError, prepareError } from "velt/sqlite/exec/errors";
+import { FMT_FLOAT, atof, formatReal } from "velt/sqlite/exec/fp";
+import { realToI64, toF64, toI64, truth } from "velt/sqlite/exec/ops";
+import { dateFunction, isDateFunction } from "velt/sqlite/exec/date";
+import { printf } from "velt/sqlite/exec/printf";
+import { likeValue } from "velt/sqlite/exec/like";
 import {
   asciiLower,
   cBytes,
@@ -18,7 +18,7 @@ import {
   chars,
   hexUpper,
   inSet,
-} from "velt:sqlite/exec/text";
+} from "velt/sqlite/exec/text";
 import {
   MAX_LENGTH,
   Val,
@@ -33,8 +33,8 @@ import {
   toBlob,
   toText,
   tooBig,
-} from "velt:sqlite/exec/value";
-import { utf8Encode } from "velt:encoding";
+} from "velt/sqlite/exec/value";
+import { utf8Encode } from "velt/encoding";
 
 type Ev = () => Val throws Error;
 

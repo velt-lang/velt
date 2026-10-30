@@ -6,8 +6,8 @@
 // escapes static text and attributes of precompiled templates the same way, and leaves those with a
 // `'` to `jsxEscape`/`jsxAttr`, so both lowerings render the same bytes.
 
-import type { AttrValue } from "velt:jsx/node";
-import { renderStyle } from "velt:jsx/style";
+import type { AttrValue } from "velt/jsx/node";
+import { renderStyle } from "velt/jsx/style";
 
 // `(const VeltStr* s, VeltStr* out)`: `s` with `& < > " '` replaced by entities (`'`: `&#x27;`).
 declare function velt_rt_jsx_escape(s: string): string;

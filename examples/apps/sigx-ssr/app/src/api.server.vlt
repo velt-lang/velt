@@ -3,7 +3,7 @@
 // browser code into sigx client stubs, and server.vlt registers the same functions.
 // (api.server.d.ts gives TypeScript their types.)
 
-import { delay } from "velt:timers";
+import { delay } from "velt/time";
 
 export type Stats = { renderer: string; components: number; uptime: string };
 

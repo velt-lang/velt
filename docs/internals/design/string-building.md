@@ -17,7 +17,7 @@ With the JSON writer written in Velt (#1668, a later pull request), a profile of
 them; the pull request that implements step 1 commits the profile's numbers with the script that
 measures them.
 
-Velt code has no better way to build strings. The Velt JSON writer (`std/json/writer.vlt`, in
+Velt code has no better way to build strings. The Velt JSON writer (`std/encoding/json/writer.vlt`, in
 the engine's `std/json/` modules, json-engine.md §0) passes the glue's builder
 around as an opaque `string` and calls `velt_rt_strbuf_*` externs on it. That is a trap, as
 #1668 found: an argument after it that is a call makes the compiler copy the "string" first, so
@@ -99,7 +99,7 @@ for the position between its two UTF-16 units, as slicing there does (`"😀".sl
 range that starts there begins with the low surrogate, and one that ends there ends with the
 high surrogate, each appended as a lone surrogate. An end inside any other sequence is a
 `RangeError` panic (no position in a JavaScript string corresponds to it). The copy between stays one
-`memcpy`, and the UTF-16 count is taken while copying (non-ASCII blocks only). Std parsers (`velt:json`, `velt:url`, `velt:csv`)
+`memcpy`, and the UTF-16 count is taken while copying (non-ASCII blocks only). Std parsers (`velt/encoding/json`, `velt/net/url`, `velt/encoding/csv`)
 then need neither `__intrinsic_str_byte_at` nor `utf8ByteAt`'s check at each byte: the view is
 bounds-checked once per loop where the compiler can prove the range, like an array.
 
@@ -123,4 +123,4 @@ bounds-checked once per loop where the compiler can prove the range, like an arr
 1. Inline appends (step 1). Measured on `bench/json/stringify` and the template literal
    benchmarks (`bench/typical` `strings`).
 2. `StringBuilder`, and the JSON writer moved onto it; integer digits in Velt.
-3. Byte views, and `velt:json/scan` moved onto them.
+3. Byte views, and `velt/encoding/json/scan` moved onto them.

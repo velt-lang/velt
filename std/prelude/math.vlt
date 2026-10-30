@@ -103,8 +103,8 @@ export class Math {
   }
 
   /**
-   * Uniform in [0, 1), like JS: the per-thread generator of `velt:random` (not for secrets; use
-   * `velt:crypto`).
+   * Uniform in [0, 1), like JS: the per-thread generator of `velt/random` (not for secrets; use
+   * `velt/crypto`).
    */
   static random(): f64 {
     return velt_rt_prng_f64();

@@ -4,7 +4,7 @@
 // Multi-threaded version of main.vlt: the rows are split into blocks, each block is rendered by
 // a spawned task, and `Promise.all` collects the blocks in order (the runtime runs tasks on one
 // worker thread per core). Same per-pixel code as main.vlt.
-import { argv, stdout } from "velt:process";
+import { argv, stdout } from "velt/process";
 
 const MAX_ITERATIONS = 50;
 const LIMIT_SQUARED = 4.0;

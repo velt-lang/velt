@@ -351,7 +351,7 @@ convert to it (`const ns: Named[] = wrap(new C())` calls `wrap<Named>`;
 `const ps: (i64 | null)[] = pair(1, 2)` calls `pair<i64 | null>`):
 
 ```ts
-import { Set } from "velt:collections/set";
+import { Set } from "velt/collections";
 
 function id<T>(x: T): T {
   return x;

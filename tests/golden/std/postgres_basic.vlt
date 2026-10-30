@@ -1,7 +1,7 @@
 // std/postgres basics: connect, batch, query/queryOne/execute with positional and named
 // parameters, the no-parameter forms, and close.
 // requires-env: VELT_TEST_PG_URL
-import { connect } from "velt:postgres";
+import { connect } from "velt/postgres";
 
 class User {
   id: i64;

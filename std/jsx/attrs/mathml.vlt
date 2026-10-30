@@ -1,7 +1,7 @@
 // std/jsx/attrs/mathml: attribute types of MathML Core elements (each is `MathAttrs`, the
-// attributes every MathML element accepts, `&` its own; public as `velt:jsx/attrs`).
+// attributes every MathML element accepts, `&` its own; public as `velt/jsx/attrs/attrs`).
 
-import type { Style } from "velt:jsx/node";
+import type { Style } from "velt/jsx/node";
 
 /** The attributes of MathML elements that have no others (`<mi>`, `<mrow>`, `<msqrt>`, …). */
 export type MathAttrs = {

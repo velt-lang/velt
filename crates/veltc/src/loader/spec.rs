@@ -37,7 +37,7 @@ pub fn resolve_spec(spec: &str, importer_dir: &Path) -> Result<ModuleRef, String
         ));
     }
     if spec == "std" {
-        return Err("standard library modules are imported as `velt:x` (`velt:fs`)".into());
+        return Err("standard library modules are imported as `velt:x` (`velt/fs`)".into());
     }
     if let Some(rel) = spec.strip_prefix("velt:") {
         extension_check(spec)?;
@@ -48,7 +48,7 @@ pub fn resolve_spec(spec: &str, importer_dir: &Path) -> Result<ModuleRef, String
             rel: rel.to_string(),
         });
     }
-    // Vitest's module is `velt:test`, which has its API (`describe`, `it`, `expect`), so a test
+    // Vitest's module is `velt/test`, which has its API (`describe`, `it`, `expect`), so a test
     // file written for Vitest runs as it is.
     if spec == "vitest" {
         return Ok(ModuleRef::Std { rel: "test".into() });
@@ -94,8 +94,8 @@ pub fn resolve_spec(spec: &str, importer_dir: &Path) -> Result<ModuleRef, String
     })
 }
 
-/// Standard library and package specifiers name modules without an extension (`velt:fs`, not
-/// `velt:fs.vlt`); only relative imports may name one.
+/// Standard library and package specifiers name modules without an extension (`velt/fs`, not
+/// `velt/fs.vlt`); only relative imports may name one.
 fn extension_check(spec: &str) -> Result<(), String> {
     match vpm::sources::SOURCE_EXTENSIONS
         .iter()
@@ -154,8 +154,8 @@ mod tests {
             );
         }
         for spec in [
-            "velt:jsx/jsx-runtime",
-            "velt:collections/priority_queue",
+            "velt/jsx/jsx-runtime",
+            "velt/collections",
             "velt:fs2",
         ] {
             assert!(resolve_spec(spec, dir).is_ok(), "{spec}");
@@ -168,7 +168,7 @@ mod tests {
     fn classify_specs() {
         let dir = Path::new("proj/src");
         assert_eq!(
-            resolve_spec("velt:fs", dir).unwrap(),
+            resolve_spec("velt/fs", dir).unwrap(),
             ModuleRef::Std { rel: "fs".into() }
         );
         assert_eq!(
@@ -259,7 +259,7 @@ mod tests {
                 "`{bad}` should be rejected"
             );
         }
-        let err = resolve_spec("velt:fs.vlt", dir).unwrap_err();
+        let err = resolve_spec("velt/fs.vlt", dir).unwrap_err();
         assert!(
             err.contains("should not include the `.vlt` extension"),
             "{err}"

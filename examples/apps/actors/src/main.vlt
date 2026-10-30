@@ -4,8 +4,8 @@
 //   actors calls [--scenario warm|fan] [--c 64] [--n 100000] [--shards N]
 //                                               a fixed number of calls, for CPU-time comparisons
 // `cli.vlt` is a golden that compiles this module (and so src/bench.vlt) and runs `cli`.
-import { args } from "velt:process";
-import { availableParallelism } from "velt:os";
+import { args } from "velt/process";
+import { availableParallelism } from "velt/os";
 import {
   ActorStorage,
   ActorType,

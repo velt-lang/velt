@@ -73,7 +73,7 @@ pub struct LoadOptions<'a> {
     /// Unsaved file contents by path (the language server's open documents); consulted before
     /// the disk for every module, prelude included.
     pub overlay: Option<&'a HashMap<PathBuf, String>>,
-    /// A root inside [`LoadOptions::std_root`] is loaded as the std module it is (`velt:fs`), not
+    /// A root inside [`LoadOptions::std_root`] is loaded as the std module it is (`velt/fs`), not
     /// as `main`: the language server, for a std file opened in the editor, so it is checked like
     /// std code (runtime declarations, std's own types) instead of as a user program.
     pub std_root_as_std: bool,

@@ -1,12 +1,12 @@
-// The TechEmpower tests on velt:http/server, the HTTP/1.1 server written in Velt on std/net (not
+// The TechEmpower tests on velt/http/server, the HTTP/1.1 server written in Velt on std/net (not
 // std/http, which is hyper): bench/web/README.md, `velt-native`. Every route of velt/app.ts
 // (/plaintext, /json, /db, /queries, /fortunes, /updates, the database side shared through
 // velt/worlds.ts) and the TSX pages.
 // Usage: server [port]; env PORT, HOST (127.0.0.1), DATABASE_URL, DB_POOL (default 2 × cores).
 
-import { HttpRequest, HttpResponse, serve } from "velt:http/server";
-import { args } from "velt:process";
-import { renderToString, renderToStringSync, renderToStream } from "velt:jsx";
+import { HttpRequest, HttpResponse, serve } from "velt/http/server";
+import { args } from "velt/process";
+import { renderToString, renderToStringSync, renderToStream } from "velt/jsx";
 import {
   fortunesHtml,
   fortunesPage,

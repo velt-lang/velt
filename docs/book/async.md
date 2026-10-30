@@ -192,7 +192,7 @@ WebSocket messages, ticks — is consumed with `for await`, as in TypeScript. A 
 values between tasks and ends the loop once it is closed and drained:
 
 ```ts
-import { channel, Channel, ChannelClosed } from "velt:channel";
+import { channel, Channel, ChannelClosed } from "velt/sync";
 
 async function worker(id: i64, jobs: Channel<string>, results: Channel<string>): Promise<void> throws ChannelClosed {
   for await (const job of jobs) {
@@ -225,7 +225,7 @@ for other receivers. Your own sources are `async function*` generators
 
 ## Timers
 
-`sleep(ms)` pauses the current async function. [`velt:timers`](../std/timers.md) has
+`sleep(ms)` pauses the current async function. [`velt/time`](../std/timers.md) has
 `setImmediate` and `Ticker`, a drift-free interval you iterate with `for await (const n of
 ticker)` or pull with `await ticker.tick()`. `setTimeout` and `setInterval` are globals, as in
 TypeScript.

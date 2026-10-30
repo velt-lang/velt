@@ -1,5 +1,5 @@
 // check: unfreed blocks at most 8
-// (The 8 blocks, kept until the program exits: `velt:sync/epoch`'s registry of thread slots, 4,
+// (The 8 blocks, kept until the program exits: `velt/sync/epoch`'s registry of thread slots, 4,
 // and this thread's list of retired values, 4.)
 // A `ConcurrentMap` with string keys: the tree orders keys by their first 8 bytes and tells
 // keys that share them apart by the whole string, so keys with long common prefixes (thousands
@@ -10,8 +10,8 @@
 // and values are dropped once deleted or replaced (when the epoch drops them: `main` drains it
 // at the end, outside any section), so nothing but the epoch's own blocks is left unfreed.
 
-import { ConcurrentMap } from "velt:collections/concurrent_map";
-import { collect, outstanding } from "velt:sync/epoch";
+import { ConcurrentMap } from "velt/collections";
+import { collect, outstanding } from "velt/sync/epoch";
 
 interface Entry {
   name: string;

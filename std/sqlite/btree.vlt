@@ -1,4 +1,4 @@
-// velt:sqlite/btree — cursors over the table and index b-trees of a database file, and the
+// velt/sqlite/btree — cursors over the table and index b-trees of a database file, and the
 // record of the cell a cursor is on (https://sqlite.org/fileformat2.html#b_tree_pages).
 //
 // A cursor keeps its path from the root (one page and cell index per level), so `next` climbs
@@ -21,11 +21,11 @@ import {
   readU32,
   readVarint,
   serialSize,
-} from "velt:sqlite/format";
-import { KeyRec, compareRecords } from "velt:sqlite/record";
-import { realText } from "velt:sqlite/real";
-import { utf8DecodeLossy } from "velt:encoding";
-import "velt:sqlite/btree_seek";
+} from "velt/sqlite/format";
+import { KeyRec, compareRecords } from "velt/sqlite/record";
+import { realText } from "velt/sqlite/real";
+import { utf8DecodeLossy } from "velt/encoding";
+import "velt/sqlite/btree_seek";
 
 /** A b-tree is at most this deep: SQLite's own limit (BTCURSOR_MAX_DEPTH). */
 const MAX_DEPTH: usize = 20;

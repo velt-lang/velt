@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# Generates the typed arrays of `velt:typed_array`: std/typed_array/base.vlt (what they share)
-# and one module per array class (std/typed_array/uint8_array.vlt, …), and their two globals
+# Generates the typed arrays of `velt/lang/typed_array`: std/lang/typed_array/base.vlt (what they share)
+# and one module per array class (std/lang/typed_array/uint8_array.vlt, …), and their two globals
 # (std/prelude/global/typed_array.vlt: `ArrayBuffer`, `DataView`, `Uint8Array`; and
 # typed_array_kinds.vlt: the other eight), so a program loads the classes it names or that the
 # std modules it uses import (`TextEncoder` and `fetch` take `Uint8Array` only). The same
@@ -10,8 +10,8 @@
 #
 #   python3 scripts/gen-typed-arrays.py && velt fmt std/typed_array std/prelude/global
 #
-# `ArrayBuffer` and the element conversions are in std/typed_array/buffer.vlt, `DataView` in
-# std/typed_array/data_view.vlt.
+# `ArrayBuffer` and the element conversions are in std/lang/typed_array/buffer.vlt, `DataView` in
+# std/lang/typed_array/data_view.vlt.
 import os
 import re
 
@@ -43,9 +43,9 @@ KINDS = [
 ]
 
 BASE_DOC = """\
-// velt:typed_array/base: what the typed arrays share (ES2024 §23.2: `%TypedArray%`): the
+// velt/lang/typed_array/base: what the typed arrays share (ES2024 §23.2: `%TypedArray%`): the
 // std-only base class `TypedArray`, the layout of a new array, and the default sort order.
-// Programs use the globals (velt:typed_array).
+// Programs use the globals (velt/lang/typed_array).
 //
 """
 
@@ -215,8 +215,8 @@ export function localeNumber(x: number): string {
 """
 
 CLASS_DOC = """\
-// velt:typed_array/@SNAKE@: `@C@` (ES2024 §23.2), a view of a byte range of an `ArrayBuffer`
-// (std/typed_array/buffer.vlt) as @WHAT@. Programs use the global.
+// velt/lang/typed_array/@SNAKE@: `@C@` (ES2024 §23.2), a view of a byte range of an `ArrayBuffer`
+// (std/lang/typed_array/buffer.vlt) as @WHAT@. Programs use the global.
 //
 // Elements read as numbers and are converted when written, as in JS (`ToUint8`: 300 is 44,
 // `-1` is 255; `Uint8ClampedArray` clamps; `Float32Array` rounds to `f32`). `xs[i]` reads
@@ -789,8 +789,8 @@ export class @C@ extends TypedArray implements Iterable<number> {
 
 UINT8_EXTRA = """
   /**
-   * A `Uint8Array` of a copy of `bytes` (Velt: `u8[]` is Velt's byte array, as in `velt:crypto`
-   * and `velt:encoding`). A copy, so the buffer keeps its length whatever happens to `bytes`.
+   * A `Uint8Array` of a copy of `bytes` (Velt: `u8[]` is Velt's byte array, as in `velt/crypto`
+   * and `velt/encoding`). A copy, so the buffer keeps its length whatever happens to `bytes`.
    */
   static fromBytes(bytes: u8[]): Uint8Array {
     return Uint8Array.wrap(bytes.slice());
@@ -803,7 +803,7 @@ UINT8_EXTRA = """
     return Uint8Array.view(ArrayBuffer.adopt(bytes), 0, n);
   }
 
-  /** A copy of the elements as a `u8[]` (Velt's byte array, for `velt:crypto` and the like). */
+  /** A copy of the elements as a `u8[]` (Velt's byte array, for `velt/crypto` and the like). */
   toBytes(): u8[] {
     return this.bytesCopy();
   }
@@ -888,8 +888,8 @@ def write(path, text):
 def main():
     base = BASE_BODY
     write(os.path.join(DIR, "base.vlt"),
-          BASE_DOC + GENERATED + "\n" + imports(base, BUFFER_NAMES, "velt:typed_array/buffer")
-          + 'import { BufferView } from "velt:typed_array/core";\n' + "\n" + base)
+          BASE_DOC + GENERATED + "\n" + imports(base, BUFFER_NAMES, "velt/lang/typed_array/buffer")
+          + 'import { BufferView } from "velt/lang/typed_array/core";\n' + "\n" + base)
     for kind, (c, n, read, convert, store, what) in enumerate(KINDS):
         t = TEMPLATE
         extra = UINT8_EXTRA if c == "Uint8Array" else ""
@@ -907,7 +907,7 @@ def main():
                      ("@READ@", read), ("@WRITE@", write_), ("@WHAT@", what), ("@EXTRA@", extra)]:
             t = t.replace(k, v.replace("b[o", "this.buf.bytes[o").replace("(b, o", "(this.buf.bytes, o") if k in ("@READ@", "@WRITE@") else v)
         doc = CLASS_DOC.replace("@SNAKE@", snake(c)).replace("@C@", c).replace("@WHAT@", what)
-        head = imports(t, BUFFER_NAMES, "velt:typed_array/buffer") + imports(t, BASE_NAMES, "velt:typed_array/base")
+        head = imports(t, BUFFER_NAMES, "velt/lang/typed_array/buffer") + imports(t, BASE_NAMES, "velt/lang/typed_array/base")
         write(os.path.join(DIR, snake(c) + ".vlt"), doc + GENERATED + "\n" + head + t)
 
     # Two globals: `Uint8Array` with `ArrayBuffer` and `DataView` (what `TextEncoder` and `fetch`
@@ -918,14 +918,14 @@ def main():
           "// Global (loaded when a module names one of these): `ArrayBuffer`, `DataView` and `Uint8Array`,\n"
           "// as in Node (docs/std/typed_array.md); the other typed arrays are in typed_array_kinds.vlt.\n"
           + GENERATED
-          + "export { ArrayBuffer, ArrayBufferView } from \"velt:typed_array/core\";\n"
-          + "export { DataView } from \"velt:typed_array/data_view\";\n"
-          + "export { Uint8Array } from \"velt:typed_array/uint8_array\";\n")
+          + "export { ArrayBuffer, ArrayBufferView } from \"velt/lang/typed_array/core\";\n"
+          + "export { DataView } from \"velt/lang/typed_array/data_view\";\n"
+          + "export { Uint8Array } from \"velt/lang/typed_array/uint8_array\";\n")
     write(os.path.join(GLOBAL, "typed_array_kinds.vlt"),
           "// Global (loaded when a module names one of these): the typed arrays other than `Uint8Array`,\n"
           "// as in Node (docs/std/typed_array.md).\n"
           + GENERATED
-          + "".join("export { %s } from \"velt:typed_array/%s\";\n" % (c, snake(c)) for c in others))
+          + "".join("export { %s } from \"velt/lang/typed_array/%s\";\n" % (c, snake(c)) for c in others))
 
 
 main()

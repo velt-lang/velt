@@ -4,7 +4,7 @@
 // on `<button>` and `<input>`, std's own attributes and the `style` object form still are,
 // and the handlers render nothing on the server.
 
-import { renderToStringSync } from "velt:jsx";
+import { renderToStringSync } from "velt/jsx";
 
 function main() {
   let clicks = 0;

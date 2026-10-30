@@ -1,18 +1,18 @@
 // std/collections/btree_map: `BTreeMap<K, V>`, a map that keeps its keys in ascending order
 // (`K extends Comparable<K>`: numbers, strings, bool, user types that implement `Comparable`).
 //
-// A B+tree of 32-slot nodes in flat pools (velt:collections/btree/pool): lookups, inserts and
+// A B+tree of 32-slot nodes in flat pools (velt/collections/btree/pool): lookups, inserts and
 // deletes are O(log n) and touch a few cache lines per level; ordered walks follow the linked
 // leaves. Keys with an order-preserving encoding (`InlineKey`: numbers, `bool`, strings, and user
 // types that implement it) are searched by two bytes of it per key, eight keys per compare. Values are shared as `Map` shares them (objects are not copied); keys are shared too.
 
-import { F, NONE, Pool, SLOT_MASK, SLOT_SHIFT, windowOf } from "velt:collections/btree/pool";
-import { insert } from "velt:collections/btree/insert";
-import { removeAt } from "velt:collections/btree/remove";
-import { afterRemove, edgeOrder, isEdge } from "velt:collections/btree/edges";
-import { NO_SLOT, descendMany, leafFind, leafRank, slotAtRank } from "velt:collections/btree/leaf";
+import { F, NONE, Pool, SLOT_MASK, SLOT_SHIFT, windowOf } from "velt/collections/btree/pool";
+import { insert } from "velt/collections/btree/insert";
+import { removeAt } from "velt/collections/btree/remove";
+import { afterRemove, edgeOrder, isEdge } from "velt/collections/btree/edges";
+import { NO_SLOT, descendMany, leafFind, leafRank, slotAtRank } from "velt/collections/btree/leaf";
 
-export { InlineKey } from "velt:collections/btree/inline_key";
+export { InlineKey } from "velt/collections/btree/inline_key";
 
 /** How many lookups of a `getMany` batch run interleaved. */
 const BATCH: usize = 16;

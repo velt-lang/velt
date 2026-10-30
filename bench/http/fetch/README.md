@@ -32,8 +32,8 @@ The server ignores it except on `/json-gzip`.
 
 ### The client in Velt
 
-Since the client is Velt code (std/fetch/client/) on `velt:net`, with gzip and Brotli decoded by
-`velt:compress`, instead of hyper, `flate2` and `brotli-decompressor` in the runtime.
+Since the client is Velt code (std/fetch/client/) on `velt/net`, with gzip and Brotli decoded by
+`velt/compress`, instead of hyper, `flate2` and `brotli-decompressor` in the runtime.
 Instructions each client executed (cachegrind's `I refs`, millions), Linux x86-64 container,
 4 cores; `main` at 692592c, built the same way:
 
@@ -56,9 +56,9 @@ reqwest's 919; `big`: 128 → 365 MB/s). Where it comes from:
   copies nothing (hyper's client copied the 100 MB once).
 - `text()` validates UTF-8 before decoding (`Buffer.utf8Slice`, which now does so for every
   caller), as #653 did for the old client.
-- gzip: `velt:compress/inflate` decodes the 1 MB in 0.65 of `flate2`'s instructions
+- gzip: `velt/compress` decodes the 1 MB in 0.65 of `flate2`'s instructions
   (bench/stdport `gunzip`), its CRC-32 folded with carry-less multiplication (PCLMULQDQ /
-  PMULL through `velt:simd`'s `u64x2.clmulLow` & co.), as `flate2` does.
+  PMULL through `velt/simd`'s `u64x2.clmulLow` & co.), as `flate2` does.
 - HTTP/1.1 only, as Node's `fetch`: HTTP/2 is not offered over TLS any more.
 
 ### Before
@@ -104,7 +104,7 @@ lookup), and the `Response` object.
 ### History
 
 The Velt clients of the table below come from five compilers: `main` before the global `fetch`
-(080387d, calling `fetch` from `velt:http`), the global `fetch` (#577, a0b9bd5), the base of
+(080387d, calling `fetch` from `velt/http`), the global `fetch` (#577, a0b9bd5), the base of
 #594 (d52bf62, #577 plus #557), the decoding of #594 (891150d) and this benchmark's pull
 request (#600). `seq` and `conc` were counted again after both were merged with `main`: those
 two rows show `main` at 4b459dc as #594's base, #594 at 683cdbe (which sizes the request's

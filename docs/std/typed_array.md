@@ -2,7 +2,7 @@
 
 `ArrayBuffer`, `DataView` and the typed arrays `Uint8Array`, `Int8Array`, `Uint8ClampedArray`,
 `Int16Array`, `Uint16Array`, `Int32Array`, `Uint32Array`, `Float32Array` and `Float64Array` are
-globals, as in Node (no import; the module is `velt:typed_array`). They behave as in Node 22:
+globals, as in Node (no import; the module is `velt/lang/typed_array`). They behave as in Node 22:
 the same conversions, errors and `console.log` / `JSON.stringify` output.
 
 ```ts
@@ -69,14 +69,14 @@ function main() {
   `TextDecoder.decode` takes a typed array, an `ArrayBuffer`, a `DataView` or a `u8[]`.
   `fetch` and `Response` / `Request` take them as a body, and `res.bytes()` /
   `res.arrayBuffer()` return a `Uint8Array` / an `ArrayBuffer`. Velt's own modules
-  (`velt:crypto`, `velt:encoding`'s Base64 and hex, `Buffer.alloc`) work on `u8[]`, Velt's byte
+  (`velt/crypto`, `velt/encoding`'s Base64 and hex, `Buffer.alloc`) work on `u8[]`, Velt's byte
   array: `Uint8Array.fromBytes(b)` makes a `Uint8Array` of a copy of a `u8[]` (so the buffer
   keeps its length whatever happens to `b` afterwards), and `xs.toBytes()` copies a
   `Uint8Array`'s elements into a `u8[]`, and `b.subarray(begin, end)` of a `u8[]` is a
   `Uint8Array` over its bytes, not a copy, whose `length` counts the elements `b` still has
   when `b` became shorter, as its `slice`, `subarray` and `with` do ([prelude](prelude.md)). An index may be an integer of any type
   (`xs[k]` with `k: usize`), as for arrays.
-- **To the system**: a typed array or a `DataView` passed to `velt:fs/fd`'s `readSync` /
+- **To the system**: a typed array or a `DataView` passed to `velt/fs/fd`'s `readSync` /
   `writeSync` or to a [system function](../reference/system-functions.md#views)'s buffer
   parameter passes its bytes where they are, with no copy (`readSync(fd, page.subarray(0,
   512))` reads into the page).
@@ -85,8 +85,8 @@ function main() {
   don't share its bytes. Views of one buffer stay views of one buffer within a task.
 
 ```ts
-import { sha256 } from "velt:crypto";
-import { hexEncode } from "velt:encoding";
+import { sha256 } from "velt/crypto";
+import { hexEncode } from "velt/encoding";
 
 function main() {
   const data = new TextEncoder().encode("abc");

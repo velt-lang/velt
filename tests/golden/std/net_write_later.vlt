@@ -1,8 +1,8 @@
 // `writeLater` queues bytes that go out when the task next waits: in order with `write`s,
 // bounded with `drained`, and with the error a write would report once sending failed.
-import { connect, listen, TcpStream } from "velt:net";
-import { utf8DecodeLossy, utf8Encode } from "velt:encoding";
-import { Uint8Array } from "velt:typed_array/uint8_array";
+import { connect, listen, TcpStream } from "velt/net";
+import { utf8DecodeLossy, utf8Encode } from "velt/encoding";
+import { Uint8Array } from "velt/lang/typed_array/uint8_array";
 
 const BIG = 1048576;
 

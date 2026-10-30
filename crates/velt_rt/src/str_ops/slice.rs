@@ -35,7 +35,7 @@ pub unsafe extern "C" fn velt_rt_str_slice(
     });
 }
 
-/// `utf8Substring(s, start, end)` (velt:encoding): the text of bytes `start..end` of `s`'s
+/// `utf8Substring(s, start, end)` (velt/encoding): the text of bytes `start..end` of `s`'s
 /// WTF-8, shared with `s` or copied as `slice` decides. The caller (std) has checked
 /// `start <= end <= byte length` and that both are code point boundaries.
 #[no_mangle]

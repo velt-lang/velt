@@ -323,7 +323,7 @@ fn jsx_on_the_default_provider_is_reported() {
 }
 
 /// `tsc` ignores a pragma in a line comment; the fix writes it as a block comment, which Velt
-/// reads the same way: the file keeps its provider (with `velt:jsx` it would get `jsx-provider`).
+/// reads the same way: the file keeps its provider (with `velt/jsx` it would get `jsx-provider`).
 #[test]
 fn a_line_comment_pragma_is_fixed_to_a_block_comment_with_the_same_provider() {
     let tmp = test_dir::TestDir::new();
@@ -331,7 +331,7 @@ fn a_line_comment_pragma_is_fixed_to_a_block_comment_with_the_same_provider() {
     write(
         dir,
         "ui/jsx-runtime.vlt",
-        "export * from \"velt:jsx/jsx-runtime\";\n",
+        "export * from \"velt/jsx/jsx-runtime\";\n",
     );
     let body =
         "export function Badge(p: { n: string }): JSX.Element {\n  return <b>{p.n}</b>;\n}\n";
@@ -358,7 +358,7 @@ fn a_line_comment_pragma_is_fixed_to_a_block_comment_with_the_same_provider() {
 
 fn manifest(name: &str) -> String {
     format!(
-        "import type {{ Package }} from \"velt:package\";\n\n\
+        "import type {{ Package }} from \"velt/package\";\n\n\
          export const pkg: Package = {{ name: \"{name}\", version: \"0.1.0\" }};\n"
     )
 }
@@ -437,7 +437,7 @@ fn findings_follow_the_check_after_a_blank_line() {
 /// A manifest named `app` with `tsCompat` set to `dirs` (a Velt array literal).
 fn manifest_with_ts_compat(dirs: &str) -> String {
     format!(
-        "import type {{ Package }} from \"velt:package\";\n\n\
+        "import type {{ Package }} from \"velt/package\";\n\n\
          export const pkg: Package = {{ name: \"app\", version: \"0.1.0\", tsCompat: {dirs} }};\n"
     )
 }

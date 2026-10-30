@@ -1,10 +1,10 @@
 // std/test/expect: `expect(actual)` and its matchers (docs/book/testing.md), as Vitest's. A
 // matcher that fails throws an `AssertionError`, which fails the test. `extend Expect<T>` adds
 // matchers, through `check` as the built-in ones do. The pattern matchers take a `Pattern`
-// (velt:regex/pattern), which `RegExp` implements, so a test file compiles std/regex only when it
+// (velt/text/regex/pattern), which `RegExp` implements, so a test file compiles std/regex only when it
 // has a regex.
 
-import { Pattern } from "velt:regex/pattern";
+import { Pattern } from "velt/text/regex/pattern";
 
 /** What `expect(actual)` returns: the matchers for `actual`. */
 export class Expect<T> {

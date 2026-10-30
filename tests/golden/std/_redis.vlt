@@ -1,8 +1,8 @@
 // Shared by the redis_* goldens: the server URL and per-run key names, so concurrent runs never
 // see each other's keys and every run deletes what it created (never FLUSHALL).
-import { RedisClient } from "velt:redis";
+import { RedisClient } from "velt/redis";
 
-import { uuidv4 } from "velt:uuid";
+import { uuidv4 } from "velt/random/uuid";
 
 // $VELT_TEST_REDIS_URL (the goldens are skipped when it is unset).
 export function redisUrl(): string {

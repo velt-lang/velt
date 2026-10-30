@@ -12,7 +12,7 @@
 // last reference goes away). `db.ref` is a copyable reference for async queries, which run on
 // the runtime's blocking pool; after the database is closed they fail with "SQLITE_MISUSE".
 
-import { IoResult, IoStatus } from "velt:io";
+import { IoResult, IoStatus } from "velt/native";
 
 declare function velt_sqlite__open(path: string): IoResult<u64>;
 declare function velt_sqlite__close(db: u64): IoStatus;

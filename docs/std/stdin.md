@@ -1,6 +1,6 @@
-# velt:stdin
+# velt/process
 
-`import { lines, readLine } from "velt:stdin"`. Reads standard input. The sync and async readers
+`import { lines, readLine } from "velt/process"`. Reads standard input. The sync and async readers
 share one buffered stream. Text is UTF-8, and invalid bytes become U+FFFD. Before a read waits
 for input, what the program wrote to standard output is flushed, as in Node: a prompt printed
 with `console.log` is on the screen while the program waits for the answer.
@@ -14,7 +14,7 @@ with `console.log` is on the screen while the program waits for the answer.
 - `readAllBytes(): Promise<u8[]>` / `readAllBytesSync()`: the same, as raw bytes.
 
 ```ts
-import { lines } from "velt:stdin";
+import { lines } from "velt/process";
 
 async function main() {
   let n = 0;

@@ -56,7 +56,7 @@ pub(crate) fn run(aggs: &[AggLayout], func: &mut Function) -> bool {
 }
 
 /// Whether `func` compares something with `y - k` for a constant `k`: the form of a range
-/// check (`b > len - 8`, velt:simd's `at > length - 2`) from which the facts that decide other
+/// check (`b > len - 8`, velt/simd's `at > length - 2`) from which the facts that decide other
 /// checks come. Without one nothing can be decided, and the analysis is skipped.
 fn has_range_check(func: &Function) -> bool {
     let mut subs: Vec<u32> = vec![];

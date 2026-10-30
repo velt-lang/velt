@@ -1,6 +1,6 @@
 // requires-env: VELT_TEST_REDIS_URL
 // std/redis: connecting, strings, expiry, counters, mget/mset, call() and database selection.
-import { connect } from "velt:redis";
+import { connect } from "velt/redis";
 import { redisUrl, freshPrefix, cleanup } from "./_redis";
 
 async function main() {

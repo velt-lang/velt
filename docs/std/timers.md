@@ -1,8 +1,8 @@
-# velt:timers
+# velt/time
 
-`import { Ticker } from "velt:timers"`. Timers and a pull-based interval.
+`import { Ticker } from "velt/time"`. Timers and a pull-based interval.
 `setTimeout`, `clearTimeout`, `setInterval`, `clearInterval`, `setImmediate`, `clearImmediate`
-and `Timer` are globals (from the [prelude](prelude.md)), as in Node; `velt:timers` exports them
+and `Timer` are globals (from the [prelude](prelude.md)), as in Node; `velt/time` exports them
 too. A timer takes a
 callback, like JS: one returning the promise to run (`() => save(doc)` or `async () => { … }`),
 or a plain one (`() => console.log("x")`, a function name or a local function value,
@@ -98,7 +98,7 @@ Differences from Node:
   Leaving the loop early does not stop the ticker.
 
 ```ts
-import { Ticker } from "velt:timers";
+import { Ticker } from "velt/time";
 
 async function remind(msg: string): Promise<void> {
   console.log(msg);

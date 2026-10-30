@@ -1,7 +1,7 @@
 //! Gated functions (#1330): a std function whose first statement is
 //! `__intrinsic_target("sha-x86")` is compiled for that CPU extension (backends may use it
 //! anywhere in the function), so it must only run where the CPU has it. Sema checks every call:
-//! it sits in the `then` branch of `if (u32x4.hasShaX86())` (velt:simd's method, resolved by
+//! it sits in the `then` branch of `if (u32x4.hasShaX86())` (velt/simd's method, resolved by
 //! definition), or in a function gated on the same target. `f.call(this, …)` and
 //! `f.apply(this, [...])` are direct calls of `f` and checked as such. A gated function cannot
 //! be used as a value, and a closure written inside one starts without its target
@@ -38,7 +38,7 @@ fn target_call(stmt: &ast::Stmt) -> Option<&str> {
 }
 
 impl FnCx<'_, '_> {
-    /// The CPU extension the condition `c` checks: a call of velt:simd's `u32x4.hasShaArm()`,
+    /// The CPU extension the condition `c` checks: a call of velt/simd's `u32x4.hasShaArm()`,
     /// `u32x4.hasShaX86()`, `u64x2.hasClmulX86()` or `u64x2.hasClmulArm()`, resolved to its
     /// definition (so also through `import { u32x4 as V }`,
     /// and never a user type or function that is only named like it).

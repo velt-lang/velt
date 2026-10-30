@@ -1,6 +1,6 @@
-# velt:collections/set
+# velt/collections
 
-`Set` is a global, as in Node (or `import { Set } from "velt:collections/set"`). An
+`Set` is a global, as in Node (or `import { Set } from "velt/collections"`). An
 insertion-ordered hash set with JS `Set` semantics plus the ES2025 set algebra. It is built on
 the prelude `Map`, so elements compare as [map keys](../prelude.md#map) do: numbers, bool and
 strings by value, objects (class instances, object types, arrays) by identity, as in JS,
@@ -22,7 +22,7 @@ structs (Velt value types) by content, and tuples part by part.
   first 100 elements followed by `... n more items`.
 
 ```ts
-import { Set } from "velt:collections/set";
+import { Set } from "velt/collections";
 
 function main() {
   const seen = new Set(["a", "b", "a", "c"]);

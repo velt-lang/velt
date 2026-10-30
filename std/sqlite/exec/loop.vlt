@@ -1,13 +1,13 @@
-// velt:sqlite/exec/loop — the loop of one FROM level, as a closure around the loops inside it:
+// velt/sqlite/exec/loop — the loop of one FROM level, as a closure around the loops inside it:
 // a full scan, a rowid lookup or range, an index scan (prefix equality, a range on the next
 // column), or the rows of a subquery; for a LEFT JOIN, the row of NULLs when nothing matched.
 
-import { Cursor, NULL } from "velt:sqlite/btree";
-import { KeyRec } from "velt:sqlite/record";
-import "velt:sqlite/btree_back";
-import { Source } from "velt:sqlite/exec/source";
-import { Ev, Out, Params, Pred, Query, Step } from "velt:sqlite/exec/scope";
-import { ExprCompiler } from "velt:sqlite/exec/expr";
+import { Cursor, NULL } from "velt/sqlite/btree";
+import { KeyRec } from "velt/sqlite/record";
+import "velt/sqlite/btree_back";
+import { Source } from "velt/sqlite/exec/source";
+import { Ev, Out, Params, Pred, Query, Step } from "velt/sqlite/exec/scope";
+import { ExprCompiler } from "velt/sqlite/exec/expr";
 import {
   ACC_INDEX,
   ACC_ROWID_EQ,
@@ -19,9 +19,9 @@ import {
   addKeyField,
   beyondRowids,
   rowidKey,
-} from "velt:sqlite/exec/plan";
-import { forCompare } from "velt:sqlite/exec/ops";
-import { Val, compareVals } from "velt:sqlite/exec/value";
+} from "velt/sqlite/exec/plan";
+import { forCompare } from "velt/sqlite/exec/ops";
+import { Val, compareVals } from "velt/sqlite/exec/value";
 
 /** Whether a LEFT JOIN level found a row this time round. */
 class Matched {

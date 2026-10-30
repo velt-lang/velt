@@ -1,18 +1,18 @@
-// The internal pieces velt:websocket is built on: the byte helpers (std/websocket/bytes), and
+// The internal pieces velt/net/websocket is built on: the byte helpers (std/websocket/bytes), and
 // the send queue's bounds against a peer that reads slowly or not at all (std/websocket/queue,
 // reader, receive, writer).
-import { utf8Encode } from "velt:encoding";
-import { serve } from "velt:http";
-import { connect, listen } from "velt:net";
-import { TimeoutError, timeout } from "velt:task";
-import { describe, expect, it } from "velt:test";
-import { WebSocket, isWebSocketRequest, upgradeWebSocket } from "velt:websocket";
-import { ByteBuf, setText, textOf, utf8Prefix } from "velt:websocket/bytes";
-import { OP_BINARY, OP_CLOSE, OP_PING, closePayload } from "velt:websocket/frame";
-import { CLOSED, FAILED, HIGH_WATER, START, STATUS, SendQueue } from "velt:websocket/queue";
-import { PING, Reader, Step } from "velt:websocket/reader";
-import { other } from "velt:websocket/receive";
-import { finish, flush, settleQuietly } from "velt:websocket/writer";
+import { utf8Encode } from "velt/encoding";
+import { serve } from "velt/http";
+import { connect, listen } from "velt/net";
+import { TimeoutError, timeout } from "velt/task";
+import { describe, expect, it } from "velt/test";
+import { WebSocket, isWebSocketRequest, upgradeWebSocket } from "velt/net/websocket";
+import { ByteBuf, setText, textOf, utf8Prefix } from "velt/net/websocket/bytes";
+import { OP_BINARY, OP_CLOSE, OP_PING, closePayload } from "velt/net/websocket/frame";
+import { CLOSED, FAILED, HIGH_WATER, START, STATUS, SendQueue } from "velt/net/websocket/queue";
+import { PING, Reader, Step } from "velt/net/websocket/reader";
+import { other } from "velt/net/websocket/receive";
+import { finish, flush, settleQuietly } from "velt/net/websocket/writer";
 import { rawConnect } from "./_ws_raw";
 
 describe("the byte helpers", () => {

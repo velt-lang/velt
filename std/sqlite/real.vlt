@@ -1,4 +1,4 @@
-// velt:sqlite/real — a REAL's text as SQLite writes it (`CAST(r AS TEXT)`, the sqlite3 shell):
+// velt/sqlite/real — a REAL's text as SQLite writes it (`CAST(r AS TEXT)`, the sqlite3 shell):
 // `printf("%!.17g", r)`, with SQLite's own decimal conversion (sqlite3FpDecode in util.c, public
 // domain) ported to Velt so the digits match byte for byte. The conversion finds 18 significant
 // digits with a 64x64-bit product against a table of powers of ten, rounds them to 17, and tries

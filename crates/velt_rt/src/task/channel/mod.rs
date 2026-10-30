@@ -1,4 +1,4 @@
-//! `velt_rt_chan_*`: `Channel<T>` (std/channel.vlt, docs/std/channel.md), a multi-producer,
+//! `velt_rt_chan_*`: `Channel<T>` (std/sync/channel.vlt, docs/std/channel.md), a multi-producer,
 //! multi-consumer FIFO of Velt values between tasks, bounded (`send` waits while full) or
 //! unbounded.
 //!
@@ -8,7 +8,7 @@
 //! pointers kept are drop glue: the `item_drop` of a `send` future that owns the bytes in flight
 //! (like `velt_rt_race_ok`'s), and the channel's copy of it (rt_abi_async.md §2.2, §13.5).
 //!
-//! Handles: `Channel<T>` is a Copy struct (like `TcpStream`, std/net.vlt), so its handle is a
+//! Handles: `Channel<T>` is a Copy struct (like `TcpStream`, std/net/index.vlt), so its handle is a
 //! [`Registry`] key. A channel leaves the table once it is closed and drained; every copy then
 //! sees a closed, empty channel (`send` fails, `receive` gets null) instead of freed memory.
 //! Operations in flight keep their own `Arc`. Since any copy may still receive, values queued in

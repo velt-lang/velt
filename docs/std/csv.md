@@ -1,6 +1,6 @@
-# velt:csv
+# velt/encoding/csv
 
-`import { parseCsv, stringifyCsv } from "velt:csv"`. RFC 4180 CSV. Quoted fields may contain
+`import { parseCsv, stringifyCsv } from "velt/encoding/csv"`. RFC 4180 CSV. Quoted fields may contain
 delimiters, `""` escapes and line breaks. Records end at LF, CRLF or a lone CR. A final line
 break doesn't add a record, and a BOM is skipped.
 
@@ -14,7 +14,7 @@ break doesn't add a record, and a BOM is skipped.
   a bad delimiter (`line` is 0 for the delimiter case).
 
 ```ts
-import { parseCsv, parseCsvRecords, stringifyCsv } from "velt:csv";
+import { parseCsv, parseCsvRecords, stringifyCsv } from "velt/encoding/csv";
 
 function main() {
   const text = "name,city\nAda,London\n\"Hopper, Grace\",\"New\nYork\"\n";

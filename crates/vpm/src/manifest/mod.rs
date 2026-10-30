@@ -1,7 +1,7 @@
 //! The package manifest, `package.vlt` (CONTRACT: docs/internals/contracts/manifest.md):
 //!
 //! ```ts ignore
-//! import type { Package } from "velt:package";
+//! import type { Package } from "velt/package";
 //!
 //! export const pkg: Package = {
 //!   name: "hello",

@@ -1,10 +1,10 @@
-// Instruction counts per operation of velt:collections/concurrent_map, one thread, for cachegrind
+// Instruction counts per operation of velt/collections, one thread, for cachegrind
 // (bench/concurrent_map/phases.sh): `phases <keys> <phase>` fills a map, then runs one phase,
 // and the fill alone (phase `fill`) is subtracted. `<keys>` is `u64` (1M keys `mix(2i)`), `str`
 // (200k keys `key-<n>`), `strtie` (200k keys `user:000` + 6 digits, all tied on their first 8
 // bytes) or `map` (`Map<string, u64>` on the `str` keys). Phases: get hits, get misses, set of
 // present keys, add, delete of half the keys, and `getManyInto` (u64 only), 64 keys a call.
-import { ConcurrentMap } from "velt:collections/concurrent_map";
+import { ConcurrentMap } from "velt/collections";
 
 function mix(x: u64): u64 {
   let z = x + 0x9E3779B97F4A7C15;

@@ -22,7 +22,7 @@ mod work_dir;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-/// Goldens that cannot run on WebAssembly: the runtime has no sockets (nor `velt:http`) and the
+/// Goldens that cannot run on WebAssembly: the runtime has no sockets (nor `velt/http`) and the
 /// target no system functions, a
 /// `resolve` called later, or a shared promise settling, resumes its waiters at the executor's
 /// next step instead of queueing them as microtasks (docs/reference/async.md), and the tasks a

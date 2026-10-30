@@ -7,4 +7,4 @@ export {
   encodeURI,
   decodeURIComponent,
   decodeURI,
-} from "velt:url";
+} from "velt/net/url";

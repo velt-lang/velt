@@ -9,9 +9,9 @@
 // every bit counted: when the input runs out in the middle of a symbol it puts everything back
 // as it was before the symbol, to be decoded again once more input arrives.
 
-import { u8x16, u64x2 } from "velt:simd";
-import { CompressError } from "velt:compress/error";
-import { BASE, END, LITERAL, SUBTABLE } from "velt:compress/inflate/huffman";
+import { u8x16, u64x2 } from "velt/simd";
+import { CompressError } from "velt/compress/errors";
+import { BASE, END, LITERAL, SUBTABLE } from "velt/compress/inflate/huffman";
 
 // The vector load and store without their range checks: `fast` loads only where its loop
 // condition leaves 16 input bytes, and copies only where the output has a match's room and

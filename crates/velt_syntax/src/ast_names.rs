@@ -16,7 +16,7 @@ pub const IMPORT_META_FIELDS: [&str; 5] = ["dirname", "filename", "main", "resol
 pub const IMPORT_META_CLASS: &str = "__ImportMeta";
 
 /// The std module that exports the class of `import.meta`.
-pub const IMPORT_META_MODULE: &str = "velt:import_meta";
+pub const IMPORT_META_MODULE: &str = "velt/lang/import_meta";
 
 /// The prelude function an object-literal property with a computed key known only at run time
 /// is written as a spread of: `{ [k]: v }` is `{ ...__computed_key(k, v) }` (a one-entry

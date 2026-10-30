@@ -34,7 +34,7 @@ export function run(): u64 {
 }
 "#;
 
-const REAL: &str = r#"import { IoResult, IoStatus } from "velt:io";
+const REAL: &str = r#"import { IoResult, IoStatus } from "velt/io";
 
 declare function velt_demo__real(): IoResult<u64>;
 
@@ -200,9 +200,9 @@ fn a_program_without_packages_declares_nothing() {
         d.contains("`declare async function sleep_ms` is not allowed"),
         "{d}"
     );
-    // std's own declarations (behind `velt:fs` and the prelude) are not affected.
+    // std's own declarations (behind `velt/fs` and the prelude) are not affected.
     let d = check_alone(
-        "import { readFile } from \"velt:fs\";\nfunction main() {\n  console.log(\"ok\");\n}\n",
+        "import { readFile } from \"velt/fs\";\nfunction main() {\n  console.log(\"ok\");\n}\n",
     );
     assert_eq!(d, "");
 }
@@ -220,7 +220,7 @@ fn std_driver_records_reach_the_compiler() {
     assert_eq!(get("velt_std_postgres__close"), Some("(u64)->void"));
     // And a program using std's driver compiles (its declarations match).
     let d = check_alone(
-        "import { connect } from \"velt:postgres\";\n\nasync function main() {\n  const c = await connect(\"postgres://nobody@127.0.0.1:1/x\");\n  c.close();\n}\n",
+        "import { connect } from \"velt/postgres\";\n\nasync function main() {\n  const c = await connect(\"postgres://nobody@127.0.0.1:1/x\");\n  c.close();\n}\n",
     );
     assert_eq!(d, "", "{d}");
 }
@@ -289,21 +289,21 @@ fn system_functions_are_bound_per_target() {
     let unused = format!("{PREAD}function main() {{}}\n");
     assert_eq!(lower_for(&unused, "wasm32-wasip1"), "");
     // std's fd API is behind such declarations: a program that does not call it compiles.
-    let fs = "import { readFileSync } from \"velt:fs\";\n\
-              import { openSync } from \"velt:fs/fd\";\nfunction main() {\n  \
+    let fs = "import { readFileSync } from \"velt/fs\";\n\
+              import { openSync } from \"velt/fs/fd\";\nfunction main() {\n  \
               console.log(readFileSync(\"x\"));\n}\n";
     assert_eq!(lower_for(fs, "wasm32-wasip1"), "");
     // A call of std's fd API where the target lacks its system functions is reported at the
     // program's call, once per call, as the std function it called.
-    let fd = "import * as fs from \"velt:fs/fd\";\nfunction main() {\n  \
+    let fd = "import * as fs from \"velt/fs/fd\";\nfunction main() {\n  \
               const fd = fs.openSync(\"x\", \"r\");\n  fs.closeSync(fd);\n}\n";
     for t in ["x86_64-pc-windows-msvc", "wasm32-wasip1"] {
         let d = lower_for(fd, t);
         assert!(
             d.contains(&format!(
-                "main.vlt:3:14: error: `openSync` (velt:fs/fd) is not available on {t}"
+                "main.vlt:3:14: error: `openSync` (velt/fs/fd) is not available on {t}"
             )) && d.contains(&format!(
-                "main.vlt:4:3: error: `closeSync` (velt:fs/fd) is not available on {t}"
+                "main.vlt:4:3: error: `closeSync` (velt/fs/fd) is not available on {t}"
             )) && d.contains("it calls the system function `open`")
                 && d.matches("error:").count() == 2,
             "{d}"

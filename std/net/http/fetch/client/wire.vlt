@@ -1,0 +1,776 @@
+// std/fetch/client/wire (std-internal): HTTP/1.1 on the wire (RFC 9112): the request head the
+// client writes, and the response head it reads, parsed in place in the connection's buffer.
+//
+// A request head goes into one byte array with its body when the body is small, so most
+// requests leave in one write. The headers `fetch` adds (`host`, `accept`, `user-agent`,
+// `accept-encoding`) are written unless the caller set them; the caller's names and values are
+// checked as hyper checks them (a token; no control characters but tab). The framing is always
+// the client's own, as undici's: `content-length` is written from the body (a caller's must
+// agree with it), and a caller's `transfer-encoding` is refused, so a header cannot make the
+// server read a different body than the one sent (request smuggling).
+//
+// A response head is found by its blank line and kept as ranges of the buffer: the status, the
+// reason, and four numbers per header (name and value), so nothing is copied until a program
+// asks for a header. The headers the client acts on (`content-length`, `transfer-encoding`,
+// `connection`, `content-encoding`, `location`) are recognised as they go by.
+
+import { IoError } from "velt/io/error";
+import { Target } from "velt/net/http/fetch/client/target";
+
+/** The largest response head accepted (hyper's default; it bounds the number of headers). */
+const MAX_HEAD: i64 = 409600;
+
+/** A request body this small is sent in the same write as the head. */
+const INLINE_BODY: i64 = 65536;
+
+/** How a response body is framed. */
+export const BODY_NONE: i64 = 0;
+export const BODY_LENGTH: i64 = 1;
+export const BODY_CHUNKED: i64 = 2;
+export const BODY_CLOSE: i64 = 3;
+
+/** A request's head (and small body) as bytes, `data[0..length]`; `body` is still to send. */
+export struct Encoded {
+  data: u8[];
+  length: i64;
+  bodyInline: bool;
+}
+
+/** Whether `c` may be in a token (a header name, a method; RFC 9110 §5.6.2). */
+function isTchar(c: i64): bool {
+  if ((c >= 97 && c <= 122) || (c >= 65 && c <= 90) || (c >= 48 && c <= 57)) {
+    return true;
+  }
+  // ! # $ % & ' * + - . ^ _ ` | ~
+  return c == 33 ||
+    (c >= 35 && c <= 39) ||
+    c == 42 ||
+    c == 43 ||
+    c == 45 ||
+    c == 46 ||
+    (c >= 94 && c <= 96) ||
+    c == 124 ||
+    c == 126;
+}
+
+function validName(s: string): bool {
+  const n = s.length as i64;
+  if (n == 0) {
+    return false;
+  }
+  for (let i: i64 = 0; i < n; i++) {
+    if (!isTchar(s.charCodeAt(i))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function validValue(s: string): bool {
+  const n = s.length as i64;
+  for (let i: i64 = 0; i < n; i++) {
+    const c = s.charCodeAt(i);
+    if ((c < 32 && c != 9) || c == 127) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** A request head being written into a growing byte array. */
+class Writer {
+  data: u8[];
+  at: i64 = 0;
+
+  constructor(size: i64) {
+    this.data = Buffer.allocUnsafe(size as usize);
+  }
+
+  put(s: string) {
+    const n = Buffer.byteLength(s) as i64;
+    if (this.at + n > (this.data.length as i64)) {
+      this.grow(n);
+    }
+    this.data.write(s, this.at as usize);
+    this.at += n;
+  }
+
+  bytes(b: u8[]) {
+    const n = b.length as i64;
+    if (this.at + n > (this.data.length as i64)) {
+      this.grow(n);
+    }
+    this.data.set(b, this.at as usize);
+    this.at += n;
+  }
+
+  private grow(n: i64) {
+    let size = (this.data.length as i64) * 2;
+    if (size < this.at + n) {
+      size = this.at + n;
+    }
+    const bigger: u8[] = Buffer.allocUnsafe(size as usize);
+    bigger.set(this.data, 0);
+    this.data = bigger;
+  }
+}
+
+/** The headers `fetch` adds, found among the caller's. */
+const HAS_HOST: i64 = 1;
+const HAS_ACCEPT: i64 = 2;
+const HAS_AGENT: i64 = 4;
+const HAS_CODINGS: i64 = 8;
+/** A caller's `content-length`, checked and replaced; or `transfer-encoding`, refused. */
+const FRAMING: i64 = 16;
+
+function known(name: string): i64 {
+  if (name == "host") {
+    return HAS_HOST;
+  }
+  if (name == "accept") {
+    return HAS_ACCEPT;
+  }
+  if (name == "user-agent") {
+    return HAS_AGENT;
+  }
+  if (name == "accept-encoding") {
+    return HAS_CODINGS;
+  }
+  return name == "content-length" || name == "transfer-encoding" ? FRAMING : 0;
+}
+
+/**
+ * The head of a request: `method` to `t`, the caller's `headers` (`[name, value, …]`, names
+ * lowercase) and the defaults; `body` (or `text`) inline when it is small. `EINVAL` for a
+ * header name or value that is not valid HTTP.
+ */
+export function encode(
+  method: string,
+  t: Target,
+  headers: string[],
+  codings: string,
+  kind: u32,
+  text: string,
+  body: u8[],
+): Encoded throws IoError {
+  const length = kind == 1 ? Buffer.byteLength(text) as i64 : kind == 2 ? body.length as i64 : -1;
+  const w = new Writer(256 + (length > 0 && length <= INLINE_BODY ? length : 0));
+  w.put(method);
+  w.put(" ");
+  w.put(t.path);
+  w.put(" HTTP/1.1\r\n");
+  let has: i64 = 0;
+  const n = headers.length as i64;
+  for (let i: i64 = 0; i + 1 < n; i += 2) {
+    has |= known(headers[i]);
+  }
+  if ((has & HAS_HOST) == 0) {
+    w.put("host: ");
+    w.put(t.host);
+    w.put("\r\n");
+  }
+  for (let i: i64 = 0; i + 1 < n; i += 2) {
+    const name = headers[i];
+    const value = headers[i + 1];
+    if ((has & FRAMING) != 0 && known(name) == FRAMING) {
+      framing(name, value, length);
+      continue;
+    }
+    if (!validName(name)) {
+      throw new IoError("EINVAL", `invalid header name "${name}"`);
+    }
+    if (!validValue(value)) {
+      throw new IoError("EINVAL", `invalid value of header ${name}`);
+    }
+    w.put(name);
+    w.put(": ");
+    w.put(value);
+    w.put("\r\n");
+  }
+  if ((has & HAS_ACCEPT) == 0) {
+    w.put("accept: */*\r\n");
+  }
+  if ((has & HAS_AGENT) == 0) {
+    w.put("user-agent: velt\r\n");
+  }
+  if ((has & HAS_CODINGS) == 0) {
+    w.put("accept-encoding: ");
+    w.put(codings);
+    w.put("\r\n");
+  }
+  if (length >= 0) {
+    w.put(`content-length: ${length}\r\n`);
+  } else if (method == "POST" || method == "PUT" || method == "PATCH") {
+    w.put("content-length: 0\r\n");
+  }
+  w.put("\r\n");
+  const inline = length > 0 && length <= INLINE_BODY;
+  if (inline) {
+    if (kind == 1) {
+      w.put(text);
+    } else {
+      w.bytes(body);
+    }
+  }
+  return { data: w.data, length: w.at, bodyInline: inline || length <= 0 };
+}
+
+/**
+ * A caller's `content-length` or `transfer-encoding`, for a body of `length` bytes (-1: none):
+ * `EINVAL` (with undici's words) for any `transfer-encoding`, and for a `content-length` that is
+ * not the body's length; a `content-length` without a body is dropped, as undici does.
+ */
+function framing(name: string, value: string, length: i64) throws IoError {
+  if (name == "transfer-encoding") {
+    throw new IoError("EINVAL", "fetch failed: invalid transfer-encoding header");
+  }
+  if (length >= 0 && value.trim() != `${length}`) {
+    throw new IoError(
+      "EINVAL",
+      "fetch failed: Request body length does not match content-length header",
+    );
+  }
+}
+
+/** A response head, parsed in place: ranges of the buffer it was read into. */
+export class Head {
+  buf: u8[] = [];
+  status: i64 = 0;
+  reasonStart: i64 = 0;
+  reasonEnd: i64 = 0;
+  /** Four numbers per header: name start and end, value start and end. */
+  fields: i64[] = [];
+  /** Where the body starts in `buf`. */
+  bodyStart: i64 = 0;
+  /** The body's framing (`BODY_*`), and its length for `BODY_LENGTH`. */
+  framing: i64 = BODY_CLOSE;
+  length: i64 = 0;
+  /** The connection may carry another request after this response. */
+  keepAlive: bool = true;
+  /** The `content-encoding` header's value, and the `location` header's (-1: none). */
+  codingStart: i64 = -1;
+  codingEnd: i64 = -1;
+  locationStart: i64 = -1;
+  locationEnd: i64 = -1;
+
+  /** The reason phrase. */
+  reason(): string {
+    return this.buf.utf8Slice(this.reasonStart, this.reasonEnd);
+  }
+
+  /** The headers as `[name, value, …]`, names lowercase. */
+  list(): string[] {
+    const out: string[] = [];
+    const f = this.fields;
+    const n = f.length as i64;
+    for (let i: i64 = 0; i < n; i += 4) {
+      out.push(this.buf.utf8Slice(f[i], f[i + 1]).toLowerCase());
+      out.push(this.buf.utf8Slice(f[i + 2], f[i + 3]));
+    }
+    return out;
+  }
+
+  /** The `content-encoding` header, or "". */
+  coding(): string {
+    return this.codingStart < 0 ? "" : this.buf.utf8Slice(this.codingStart, this.codingEnd);
+  }
+
+  /** The `location` header, or null. */
+  location(): string | null {
+    return this.locationStart < 0 ? null : this.buf.utf8Slice(this.locationStart, this.locationEnd);
+  }
+}
+
+/** Not a valid HTTP/1.1 response: the connection cannot be used any more. */
+export function malformed(what: string): IoError {
+  return new IoError("EPROTO", `fetch failed: invalid HTTP response: ${what}`);
+}
+
+/**
+ * The end of the head that starts at `buf[from]`, just past its blank line; -1 when it has not
+ * all arrived (`EPROTO` once it is longer than a head may be).
+ */
+export function headEnd(buf: u8[], from: i64, end: i64): i64 throws IoError {
+  let i = from;
+  while (true) {
+    const lf = buf.indexOf(10, i);
+    if (lf < 0 || lf >= end) {
+      if (end - from > MAX_HEAD) {
+        throw malformed("head too large");
+      }
+      return -1;
+    }
+    // A blank line: LF, or CR LF, right after the previous LF (or at the start).
+    if (
+      lf == from || buf[lf - 1] == 10 || (lf - 1 > from && buf[lf - 1] == 13 && buf[lf - 2] == 10)
+    ) {
+      return lf + 1;
+    }
+    i = lf + 1;
+  }
+}
+
+/** Whether `buf[s..e]` is `word`, letters in any case (`word` is lowercase). */
+function named(buf: u8[], s: i64, e: i64, word: string): bool {
+  return e - s == (word.length as i64) && buf.utf8EqualsIgnoreCase(word, s, e);
+}
+
+/**
+ * The head in `buf[from..to]` (`to` from `headEnd`), for a request with `method`. `EPROTO` for
+ * a head that is not HTTP/1.x.
+ */
+export function parseHead(buf: u8[], from: i64, to: i64, method: string): Head throws IoError {
+  const h = new Head();
+  h.buf = buf;
+  h.bodyStart = to;
+  let lineEnd = buf.indexOf(10, from);
+  let e = lineEnd > from && buf[lineEnd - 1] == 13 ? lineEnd - 1 : lineEnd;
+  // HTTP/1.x SP 3DIGIT [SP reason]
+  if (e - from < 12 || !buf.utf8Equals("HTTP/1.", from, from + 7) || buf[from + 8] != 32) {
+    throw malformed("status line");
+  }
+  const minor = buf[from + 7];
+  if (minor != 48 && minor != 49) {
+    throw malformed("version");
+  }
+  h.keepAlive = minor == 49;
+  let status: i64 = 0;
+  for (let i = from + 9; i < from + 12; i++) {
+    const d = buf[i] as i64;
+    if (d < 48 || d > 57) {
+      throw malformed("status code");
+    }
+    status = status * 10 + d - 48;
+  }
+  if (status < 100) {
+    throw malformed("status code");
+  }
+  h.status = status;
+  h.reasonStart = e > from + 12 ? from + 13 : e;
+  h.reasonEnd = e;
+  if (!plainText(buf, h.reasonStart, e)) {
+    throw malformed("reason phrase");
+  }
+  fields(h, buf, lineEnd + 1, to);
+  frame(h, method);
+  return h;
+}
+
+/** The header lines of `h` in `buf[at..to]`. */
+function fields(h: Head, buf: u8[], at: i64, to: i64) throws IoError {
+  let line = at;
+  let length: i64 = -1;
+  let chunked = false;
+  let encoded = false;
+  while (line < to) {
+    const lf = buf.indexOf(10, line);
+    let e = lf > line && buf[lf - 1] == 13 ? lf - 1 : lf;
+    if (e == line) {
+      break;
+    }
+    const colon = buf.indexOf(58, line);
+    if (colon < 0 || colon > e || colon == line || !token(buf, line, colon)) {
+      throw malformed("header line");
+    }
+    let vs = colon + 1;
+    while (vs < e && (buf[vs] == 32 || buf[vs] == 9)) {
+      vs++;
+    }
+    while (e > vs && (buf[e - 1] == 32 || buf[e - 1] == 9)) {
+      e--;
+    }
+    if (!plainText(buf, vs, e)) {
+      throw malformed("header value");
+    }
+    h.fields.push(line);
+    h.fields.push(colon);
+    h.fields.push(vs);
+    h.fields.push(e);
+    const nameLen = colon - line;
+    if (nameLen == 14 && named(buf, line, colon, "content-length")) {
+      const n = lengthOf(buf, vs, e);
+      if (n < 0 || (length >= 0 && n != length)) {
+        throw malformed("content-length");
+      }
+      length = n;
+    } else if (nameLen == 17 && named(buf, line, colon, "transfer-encoding")) {
+      encoded = true;
+      chunked = lastIsChunked(buf, vs, e);
+    } else if (nameLen == 10 && named(buf, line, colon, "connection")) {
+      connection(h, buf, vs, e);
+    } else if (nameLen == 16 && named(buf, line, colon, "content-encoding")) {
+      h.codingStart = vs;
+      h.codingEnd = e;
+    } else if (nameLen == 8 && named(buf, line, colon, "location")) {
+      h.locationStart = vs;
+      h.locationEnd = e;
+    }
+    line = lf + 1;
+  }
+  // Both framings in one response is how a desync starts (RFC 9112 §6.3): refused, as Node
+  // refuses it. Another coding than chunked last leaves the end of the body to the end of the
+  // connection.
+  if (encoded && length >= 0) {
+    throw malformed("both transfer-encoding and content-length");
+  }
+  if (encoded) {
+    h.framing = chunked ? BODY_CHUNKED : BODY_CLOSE;
+  } else if (length >= 0) {
+    h.framing = BODY_LENGTH;
+    h.length = length;
+  } else {
+    h.framing = BODY_CLOSE;
+  }
+}
+
+/**
+ * The bodies a response cannot have: to HEAD, and 1xx, 204 and 304 responses, whatever length
+ * or chunking the head announces. A body that ends with the connection closes it.
+ */
+function frame(h: Head, method: string) {
+  const s = h.status;
+  if (method == "HEAD" || (s >= 100 && s < 200) || s == 204 || s == 304) {
+    h.framing = BODY_NONE;
+    h.length = 0;
+  }
+  if (h.framing == BODY_CLOSE) {
+    h.keepAlive = false;
+  }
+}
+
+/**
+ * What each byte may be in a response head: bit 1 a token character (a header name), bit 2 a
+ * character of a header value or reason phrase (anything but a control character other than
+ * tab). One look-up per byte, where the tests are several branches.
+ */
+const CLASS: u8[] = [
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  2,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  2,
+  3,
+  2,
+  3,
+  3,
+  3,
+  3,
+  3,
+  2,
+  2,
+  3,
+  3,
+  2,
+  3,
+  3,
+  2,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  2,
+  2,
+  2,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  3,
+  2,
+  3,
+  2,
+  3,
+  0,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+];
+
+/** Whether `buf[s..e]` is a token (a header name: no space, no separator). */
+function token(buf: u8[], s: i64, e: i64): bool {
+  for (let i = s; i < e; i++) {
+    if ((CLASS[buf[i] as i64] & 1) == 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** Whether `buf[s..e]` has no control character but tab (a header value, a reason phrase). */
+function plainText(buf: u8[], s: i64, e: i64): bool {
+  let all: u8 = 2;
+  for (let i = s; i < e; i++) {
+    all &= CLASS[buf[i] as i64];
+  }
+  return all != 0;
+}
+
+/** The value of a `content-length` (digits only), or -1. */
+function lengthOf(buf: u8[], s: i64, e: i64): i64 {
+  if (s == e || e - s > 15) {
+    return -1;
+  }
+  let n: i64 = 0;
+  for (let i = s; i < e; i++) {
+    const d = buf[i] as i64;
+    if (d < 48 || d > 57) {
+      return -1;
+    }
+    n = n * 10 + d - 48;
+  }
+  return n;
+}
+
+/** Whether the last coding of a `transfer-encoding` list is `chunked`. */
+function lastIsChunked(buf: u8[], s: i64, e: i64): bool {
+  let start = s;
+  for (let i = e - 1; i >= s; i--) {
+    if (buf[i] == 44) {
+      start = i + 1;
+      break;
+    }
+  }
+  while (start < e && (buf[start] == 32 || buf[start] == 9)) {
+    start++;
+  }
+  return named(buf, start, e, "chunked");
+}
+
+/** The `close` and `keep-alive` tokens of a `connection` header. */
+function connection(h: Head, buf: u8[], s: i64, e: i64) {
+  let start = s;
+  for (let i = s; i <= e; i++) {
+    if (i == e || buf[i] == 44) {
+      let a = start;
+      let b = i;
+      while (a < b && (buf[a] == 32 || buf[a] == 9)) {
+        a++;
+      }
+      while (b > a && (buf[b - 1] == 32 || buf[b - 1] == 9)) {
+        b--;
+      }
+      if (named(buf, a, b, "close")) {
+        h.keepAlive = false;
+      } else if (named(buf, a, b, "keep-alive")) {
+        h.keepAlive = true;
+      }
+      start = i + 1;
+    }
+  }
+}

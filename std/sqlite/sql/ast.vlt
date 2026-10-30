@@ -1,4 +1,4 @@
-// velt:sqlite/sql/ast — the syntax tree of SQLite's SQL, as velt:sqlite/sql/parser builds it.
+// velt/sqlite/sql/ast — the syntax tree of SQLite's SQL, as velt/sqlite/sql/parser builds it.
 // One class per node family with a `kind` tag (an expression's operator, a statement's verb),
 // so the planner switches on a byte instead of testing types.
 
@@ -52,7 +52,7 @@ export class Expr {
   over: Window | null = null;
   /** The source offset, for errors. */
   at: usize = 0;
-  /** The tree's height (a leaf is 1), bounded as in SQLite (velt:sqlite/sql/expr). */
+  /** The tree's height (a leaf is 1), bounded as in SQLite (velt/sqlite/sql/expr). */
   height: i64 = 1;
 
   constructor(kind: u8, at: usize) {

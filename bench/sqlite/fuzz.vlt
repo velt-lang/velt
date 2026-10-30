@@ -1,23 +1,23 @@
-// Differential fuzzing of the Velt SQLite engine (velt:sqlite/engine) against C SQLite, #1725:
+// Differential fuzzing of the Velt SQLite engine (velt/sqlite/engine) against C SQLite, #1725:
 // random tables (affinities, collations, indexes) with random values of every storage class,
 // and random SELECTs (expressions, functions, joins, aggregates, subqueries, compound selects)
 // run through the Velt engine and through the `sqlite3` command-line shell (`.mode quote`, which
 // prints each value as SQLite's quote() does). Every row must be the same; queries that differ
-// are printed. The database is written by C SQLite (velt:sqlite).
+// are printed. The database is written by C SQLite (velt/sqlite).
 //
 // Usage: fuzz [seed] [queries]          random queries
 //        fuzz <seed> 0 <sql>...         both engines' rows of these queries on the seed's data
 // Env: SQLITE3 (default /usr/bin/sqlite3).
 
-import { open } from "velt:sqlite";
-import { openDatabase, Database } from "velt:sqlite/engine";
-import { BLOB, REAL } from "velt:sqlite/btree";
-import { quote } from "velt:sqlite/exec/func";
-import { hexEncode } from "velt:encoding";
-import { args } from "velt:process";
-import { tmpdir } from "velt:os";
-import { removeSync } from "velt:fs";
-import { execSync } from "velt:child_process";
+import { open } from "velt/sqlite";
+import { openDatabase, Database } from "velt/sqlite/engine";
+import { BLOB, REAL } from "velt/sqlite/btree";
+import { quote } from "velt/sqlite/exec/func";
+import { hexEncode } from "velt/encoding";
+import { args } from "velt/process";
+import { tmpdir } from "velt/os";
+import { removeSync } from "velt/fs";
+import { execSync } from "velt/process/child";
 import { Gen, generateSchema, generateQuery } from "./_fuzz_gen.vlt";
 
 /** The Velt engine's rows, each as the shell's quote mode prints it, or ["error: …"]. */

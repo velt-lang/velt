@@ -1,15 +1,15 @@
-// std/collections/btree: the tree's invariants (velt:collections/btree/check `checkPool`) after
+// std/collections/btree: the tree's invariants (velt/collections/btree/check `checkPool`) after
 // every insert and delete of seeded random runs, against a sorted array, for key kinds that take
 // different paths: small integers (many splits, merges and B* moves), integers that differ only
 // in their low bytes (long node prefixes), floats with NaN, and strings with long shared beginnings, keys
 // that are prefixes of others, and the empty string (wide words, edge prefixes, word ties).
 
-import { F, Pool, windowOf } from "velt:collections/btree/pool";
-import { insert } from "velt:collections/btree/insert";
-import { removeAt } from "velt:collections/btree/remove";
-import { afterRemove, isEdge } from "velt:collections/btree/edges";
-import { NO_SLOT, leafFind, slotAtRank } from "velt:collections/btree/leaf";
-import { checkPool } from "velt:collections/btree/check";
+import { F, Pool, windowOf } from "velt/collections/btree/pool";
+import { insert } from "velt/collections/btree/insert";
+import { removeAt } from "velt/collections/btree/remove";
+import { afterRemove, isEdge } from "velt/collections/btree/edges";
+import { NO_SLOT, leafFind, slotAtRank } from "velt/collections/btree/leaf";
+import { checkPool } from "velt/collections/btree/check";
 
 function next(x: u64): u64 {
   let y = x ^ (x << 13);

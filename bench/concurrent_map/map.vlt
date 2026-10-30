@@ -1,11 +1,11 @@
-// velt:collections/concurrent_map against bbtree's concurrent `BBTreeMap` (rust/), the same
+// velt/collections against bbtree's concurrent `BBTreeMap` (rust/), the same
 // workloads on both: `insert` puts N keys `mix(2i)` into an empty map, split across T threads;
 // `get_half` then does OPS lookups per thread, half of them hits (`mix(2i)`) and half misses
 // (`mix(2i + 1)`), i uniform; `get_half_batch` the same 64 keys a call (`getManyInto`, bbtree's
 // `get_many_copied`); `update` OPS adds of 1 to present keys per thread (`add`, bbtree's
 // `update`); `mixed` 90% `get_half` lookups and 10% updates. Each line: `name threads Mops/s
 // checksum`. Times run from a start barrier to the last thread's end.
-import { ConcurrentMap } from "velt:collections/concurrent_map";
+import { ConcurrentMap } from "velt/collections";
 
 const N: u64 = 10000000;
 const OPS: u64 = 5000000;

@@ -1,11 +1,11 @@
-// The statement API of the SQLite engine written in Velt (velt:sqlite/engine, #1720): typed rows
+// The statement API of the SQLite engine written in Velt (velt/sqlite/engine, #1720): typed rows
 // by column name, parameters by position and by name, column names, the plan cache, errors.
-import { open, Database as CDatabase } from "velt:sqlite";
-import { openDatabase, Database, SqliteError } from "velt:sqlite/engine";
-import { quote } from "velt:sqlite/exec/func";
-import { tmpdir } from "velt:os";
-import { uuidv4 } from "velt:uuid";
-import { removeSync } from "velt:fs";
+import { open, Database as CDatabase } from "velt/sqlite";
+import { openDatabase, Database, SqliteError } from "velt/sqlite/engine";
+import { quote } from "velt/sqlite/exec/func";
+import { tmpdir } from "velt/os";
+import { uuidv4 } from "velt/random/uuid";
+import { removeSync } from "velt/fs";
 
 struct User {
   id: i64;
@@ -28,7 +28,7 @@ struct Bound {
   q: string;
 }
 
-/** `params` bound to `sql` in the engine and in velt:sqlite: each row's `t|q`, or the error. */
+/** `params` bound to `sql` in the engine and in velt/sqlite: each row's `t|q`, or the error. */
 function both<P>(db: Database, c: CDatabase, sql: string, params: P) {
   let mine = "";
   try {
@@ -46,7 +46,7 @@ function both<P>(db: Database, c: CDatabase, sql: string, params: P) {
   }
   const shown = JSON.stringify(params);
   console.log(
-    mine == theirs ? `${shown}: ${mine}` : `${shown}: velt ${mine}, velt:sqlite ${theirs}`,
+    mine == theirs ? `${shown}: ${mine}` : `${shown}: velt ${mine}, velt/sqlite ${theirs}`,
   );
 }
 
@@ -140,7 +140,7 @@ function main() {
     console.log(pulled == all ? `pulled: ${pulled}` : `pulled ${pulled}, values() ${all}`);
   }
 
-  // Parameters as velt:sqlite binds them: every i64 exactly (past it, REAL), one value for each
+  // Parameters as velt/sqlite binds them: every i64 exactly (past it, REAL), one value for each
   // parameter, a field for each named one.
   const mem = open(":memory:");
   const one1 = "SELECT typeof(?1) AS t, quote(?1) AS q";
@@ -179,7 +179,7 @@ function main() {
     console.log(
       mine == theirs
         ? `no parameters: ${mine}`
-        : `no parameters: velt ${mine}, velt:sqlite ${theirs}`,
+        : `no parameters: velt ${mine}, velt/sqlite ${theirs}`,
     );
   }
   mem.close();

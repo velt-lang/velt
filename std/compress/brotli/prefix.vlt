@@ -1,4 +1,4 @@
-// std/compress/brotli/prefix (internal to velt:compress/brotli): prefix codes (RFC 7932 section
+// std/compress/brotli/prefix (internal to velt/compress/brotli/brotli_decoder): prefix codes (RFC 7932 section
 // 3) read from the stream and turned into lookup tables.
 //
 // A table is `u32` entries `symbol << 16 | length`, indexed by the next 8 input bits (the
@@ -7,10 +7,10 @@
 // input bits. This is the reference decoder's layout; one table lookup decodes most symbols.
 // Bits arrive first-bit-lowest, so a code's table index is its bits reversed.
 
-import { u32x4 } from "velt:simd";
-import { CompressError } from "velt:compress/error";
-import { Bits } from "velt:compress/brotli/bits";
-import { CODE_LENGTH_CODE, CODE_LENGTH_ORDER } from "velt:compress/brotli/tables";
+import { u32x4 } from "velt/simd";
+import { CompressError } from "velt/compress/errors";
+import { Bits } from "velt/compress/brotli/bits";
+import { CODE_LENGTH_CODE, CODE_LENGTH_ORDER } from "velt/compress/brotli/tables";
 
 // Bits indexed by a table's root.
 const ROOT_BITS: usize = 8;

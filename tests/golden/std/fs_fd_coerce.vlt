@@ -3,7 +3,7 @@
 // truncated to a 32-bit integer for a read and used as-is for a write, left out is the rest of
 // the buffer, `null` reads 0; a read's position is validated strictly, a write's bad position
 // falls back to the file's own. This program prints what `node` prints for it ("node:fs").
-import * as fs from "velt:fs/fd";
+import * as fs from "velt/fs/fd";
 
 function attempt(f: () => string) {
   try {

@@ -1,7 +1,7 @@
-// velt:http/server's request framing, seen from a raw socket.
-import { HttpRequest, HttpResponse, serve } from "velt:http/server";
-import { connect, TcpStream } from "velt:net";
-import { afterAll, beforeAll, describe, expect, it } from "velt:test";
+// velt/http/server's request framing, seen from a raw socket.
+import { HttpRequest, HttpResponse, serve } from "velt/http/server";
+import { connect, TcpStream } from "velt/net";
+import { afterAll, beforeAll, describe, expect, it } from "velt/test";
 
 async function readAll(c: TcpStream): Promise<string> {
   let all = "";
@@ -36,7 +36,7 @@ function summary(text: string): string {
 const H = "Host: x\r\n";
 
 describe("request framing", () => {
-  // velt:http/server frames requests as RFC 9112 asks, so a proxy in front of it cannot see
+  // velt/http/server frames requests as RFC 9112 asks, so a proxy in front of it cannot see
   // other request boundaries than it does (request smuggling): Transfer-Encoding with
   // Content-Length, a coding other than chunked last, Transfer-Encoding in HTTP/1.0, two
   // Content-Lengths, bytes that are not allowed in the request line or a header, bare LF in

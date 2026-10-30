@@ -1,9 +1,9 @@
-//! `new Proxy(target, handler)` and `Reflect.*` (issue #823; std/proxy.vlt, a global loaded on
+//! `new Proxy(target, handler)` and `Reflect.*` (issue #823; std/lang/proxy/index.vlt, a global loaded on
 //! demand: std/prelude/global/proxy.vlt; hir_encodings.md "Proxy and Reflect").
 //!
 //! A program that never names `Proxy` or `Reflect` doesn't load them, and no value of it can be a
-//! proxy: its operations on `any` call the prelude's helpers (std/prelude/zzz_adapt.vlt), which
-//! don't test for one. Once loaded, `proxy_op` picks the versions that do (velt:proxy/ops).
+//! proxy: its operations on `any` call the prelude's helpers (std/prelude/adapt.vlt), which
+//! don't test for one. Once loaded, `proxy_op` picks the versions that do (velt/lang/proxy/ops).
 //!
 //! A proxy is a dynamic value: the `Proxy` object `new Proxy(...)` builds is converted to `any`
 //! at once, so every operation on it goes through the descriptor of the `Proxy` class, whose
@@ -30,7 +30,7 @@ impl FnCx<'_, '_> {
     }
 
     /// The prelude helper `name` for an operation on `any`, or, in a program that has loaded
-    /// `Proxy`, its version that asks a proxy's traps (`<name>Proxy`, velt:proxy/ops).
+    /// `Proxy`, its version that asks a proxy's traps (`<name>Proxy`, velt/lang/proxy/ops).
     pub(crate) fn proxy_op(&self, name: &'static str) -> &'static str {
         if !self.uses_proxy() {
             return name;
@@ -76,7 +76,7 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let std = self.cx.scopes[self.module].is_std;
-        if !std || self.cx.modules[self.module].path == "std/proxy" {
+        if !std || self.cx.modules[self.module].path == "std/lang/proxy" {
             let m = Self::proxy_method_of(i).and_then(|name| {
                 let p = self.cx.prelude_adt("Proxy")?;
                 let a = self.cx.adt(p)?;

@@ -1,0 +1,949 @@
+// velt/encoding/json/tape — a parsed JSON document as one flat tape (#1660, part of #1655): what a
+// `JsonValue` from `JSON.parseValue` reads. No allocation per value: two words per value in one
+// array, numbers decoded once, strings left in the source until a reader asks for one (only
+// strings with escapes are decoded while parsing), and each array's elements and each object's
+// keys listed together in one array of positions, so `at(i)` is O(1).
+//
+// A tape's values never change after it is built (only `find` adds the hash index of a large
+// object it searches); values share it. Editing a value (`set`, `push`, …) turns that value into
+// the runtime's tree (prelude `JsonValue`), so it never shows through the tape.
+
+import {
+  blankComments,
+  Scanner,
+  TOO_DEEP,
+  UNEXPECTED_CHAR,
+  EXPECTED_KEY,
+  EXPECTED_COLON,
+  EXPECTED_COMMA_BRACE,
+  EXPECTED_COMMA_BRACKET,
+  TRAILING,
+  OK,
+  detailText,
+} from "velt/encoding/json/scan";
+import { utf8Substring } from "velt/encoding";
+import {
+  copyRun,
+  nextEscape,
+  putDecimal,
+  shortNumber,
+  writeString,
+} from "velt/encoding/json/writer";
+import { FLAG_COMMENTS, FLAG_TRAILING_COMMAS, shortPath } from "velt/encoding/json/reader";
+
+declare function velt_rt_json_node_syntax(src: string, out: string): bool;
+declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
+declare function velt_rt_strbuf_new(cap: u64, out: string);
+declare function velt_rt_strbuf_push_u8s(out: string, bytes: u8[], len: u64, units: u64);
+declare function velt_rt_bytes_put_f64(bytes: u8[], at: u64, v: f64): u64;
+declare function velt_rt_strbuf_finish(buf: string, out: string);
+declare function velt_simd_u8x16_eq(a: u8x16, b: u8x16): mask8x16;
+declare function velt_simd_mask8x16_all(m: mask8x16): bool;
+
+/** Value kinds (the low byte of a value's first word). */
+export const T_NULL: u64 = 1;
+export const T_FALSE: u64 = 2;
+export const T_TRUE: u64 = 3;
+export const T_NUMBER: u64 = 4;
+export const T_STRING: u64 = 5;
+export const T_ARRAY: u64 = 6;
+export const T_OBJECT: u64 = 7;
+
+// A string's first word: bit 8 is set when it had escapes (its text is `decoded[second word]`;
+// otherwise the second word is `start | end << 32`, a byte range of the source), and bits 32
+// and up hold its UTF-16 length.
+const ESCAPED: u64 = 0x100;
+// An object's first word: bit 9 is set when a key is repeated (its value is the last one), bit
+// 10 when it has a member list in `ordered`, bit 11 when a key had escapes.
+const REPEATED: u64 = 0x200;
+const ORDERED: u64 = 0x400;
+const ESCAPED_KEY: u64 = 0x800;
+// Objects with more keys than this get a hash index (`find`), built on their first lookup.
+const INDEX_THRESHOLD: usize = 16;
+
+/**
+ * A parsed document. Value `v`'s words are `words[2v]` (kind, and a container's member count
+ * from bit 32) and `words[2v + 1]` (a number's bits, a string's range or decoded index, a
+ * container's first position in `kids`). An array's `kids` are its elements; an object's are its
+ * key strings, each followed on the tape by its value (`key + 1`). Value 0 is the root.
+ *
+ * Every lookup is O(1) but `find` in a small object (at most `INDEX_THRESHOLD` keys, compared in
+ * place), so walking any value is linear in its size.
+ */
+export class Tape {
+  src: string;
+  words: u64[] = [];
+  kids: u32[] = [];
+  decoded: string[] = [];
+  /** Objects whose members are not their keys in order (index-like or repeated keys, flagged
+   *  `ORDERED`): one key position per distinct key, in JS order; a repeated key's is its last
+   *  occurrence (whose value is the one that counts), at the place of its first. */
+  ordered: Map<u32, u32[]> = new Map<u32, u32[]>();
+  /** The hash index of each object over `INDEX_THRESHOLD` keys that `find` was asked about:
+   *  key text to the value's position (a repeated key's last). A cache: the tape is unchanged. */
+  index: Map<u32, Map<string, u32>> = new Map<u32, Map<string, u32>>();
+
+  constructor(src: string) {
+    this.src = src;
+  }
+
+  kind(v: u32): u64 {
+    return this.words[2 * (v as usize)] & 0xff;
+  }
+
+  /** A container's member count (an object's keys as written, repeats included), else 0. */
+  rawCount(v: u32): u32 {
+    const w = this.words[2 * (v as usize)];
+    const k = w & 0xff;
+    return k == T_ARRAY || k == T_OBJECT ? (w >> 32) as u32 : 0;
+  }
+
+  number(v: u32): f64 {
+    return f64.fromBits(this.words[2 * (v as usize) + 1]);
+  }
+
+  /** A string value's (or key's) text. */
+  text(v: u32): string {
+    const w = this.words[2 * (v as usize)];
+    const p = this.words[2 * (v as usize) + 1];
+    if ((w & ESCAPED) != 0) {
+      return this.decoded[p as usize];
+    }
+    // The range lies between a string's quotes: whole characters, no check needed.
+    return velt_rt_str_byte_slice(this.src, p & 0xffffffff, p >> 32);
+  }
+
+  /** A string's UTF-16 length. */
+  units(v: u32): i64 {
+    return (this.words[2 * (v as usize)] >> 32) as i64;
+  }
+
+  /** Object `v`'s value for `name` (the last, if repeated), or -1 (also when `v` is no object). */
+  find(v: u32, name: string): i64 {
+    const w = this.words[2 * (v as usize)];
+    if ((w & 0xff) != T_OBJECT) {
+      return -1;
+    }
+    const n = (w >> 32) as usize;
+    const len = __intrinsic_str_byte_len(name);
+    if (n > INDEX_THRESHOLD || len > 16 || (w & (REPEATED | ESCAPED_KEY)) != 0) {
+      return this.findOther(v, name);
+    }
+    // No key had escapes: each is a range of the source, compared to `name` with one vector
+    // compare when the lengths match (both sides' bytes in the low lanes, zeros in the others;
+    // `name`'s side loaded once).
+    const first = this.words[2 * (v as usize) + 1] as usize;
+    const nv = __intrinsic_str_load_partial_u8x16(name, 0, len as u64);
+    for (let i: usize = 0; i < n; i++) {
+      const k = this.kids[first + i];
+      const p = this.words[2 * (k as usize) + 1];
+      if ((p >> 32) - (p & 0xffffffff) == len as u64) {
+        const kv = __intrinsic_str_load_partial_u8x16(this.src, p & 0xffffffff, len as u64);
+        if (velt_simd_mask8x16_all(velt_simd_u8x16_eq(kv, nv))) {
+          return (k + 1) as i64;
+        }
+      }
+    }
+    return -1;
+  }
+
+  // `find` in an object over `INDEX_THRESHOLD` keys, through its hash index (made the first
+  // time), or in a small one with a repeated or escaped key, or of a name over 16 bytes (out of
+  // line: `find` stays small).
+  private findOther(v: u32, name: string): i64 {
+    const n = this.rawCount(v) as usize;
+    const first = this.words[2 * (v as usize) + 1] as usize;
+    if (n <= INDEX_THRESHOLD) {
+      // A repeated key's value is its last: from the end.
+      for (let i = n; i > 0; i--) {
+        const k = this.kids[first + i - 1];
+        if (this.keyIs(k, name)) {
+          return (k + 1) as i64;
+        }
+      }
+      return -1;
+    }
+    let ix = this.index.get(v);
+    if (ix == undefined) {
+      const m = new Map<string, u32>();
+      // In order, so a repeated key ends at its last value.
+      for (let i: usize = 0; i < n; i++) {
+        const k = this.kids[first + i];
+        m.set(this.text(k), k + 1);
+      }
+      this.index.set(v, m);
+      ix = m;
+    }
+    const at = ix.get(name);
+    return at == undefined ? -1 : at as i64;
+  }
+
+  /** Whether key string `k` is `name`, compared in place. */
+  keyIs(k: u32, name: string): bool {
+    const p = this.words[2 * (k as usize) + 1];
+    const w = this.words[2 * (k as usize)];
+    if ((w & ESCAPED) != 0) {
+      return this.decoded[p as usize] == name;
+    }
+    const start = (p & 0xffffffff) as usize;
+    const n = __intrinsic_str_byte_len(name);
+    if ((p >> 32) as usize - start != n) {
+      return false;
+    }
+    for (let i: usize = 0; i < n; i++) {
+      if (
+        __intrinsic_str_byte_at(this.src, (start + i) as u64) !=
+        __intrinsic_str_byte_at(name, i as u64)
+      ) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /** Whether keys `a` and `b` have the same text, compared in place. */
+  sameKey(a: u32, b: u32): bool {
+    const wa = this.words[2 * (a as usize)];
+    const wb = this.words[2 * (b as usize)];
+    if ((wa & ESCAPED) != 0 || (wb & ESCAPED) != 0) {
+      return this.text(a) == this.text(b);
+    }
+    const pa = this.words[2 * (a as usize) + 1];
+    const pb = this.words[2 * (b as usize) + 1];
+    const sa = (pa & 0xffffffff) as usize;
+    const sb = (pb & 0xffffffff) as usize;
+    const n = (pa >> 32) as usize - sa;
+    if ((pb >> 32) as usize - sb != n) {
+      return false;
+    }
+    for (let i: usize = 0; i < n; i++) {
+      if (
+        __intrinsic_str_byte_at(this.src, (sa + i) as u64) !=
+        __intrinsic_str_byte_at(this.src, (sb + i) as u64)
+      ) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /** Whether key `k` may be an array index: its first byte is a digit (no string is made). */
+  digitFirst(k: u32): bool {
+    const w = this.words[2 * (k as usize)];
+    const p = this.words[2 * (k as usize) + 1];
+    if ((w & ESCAPED) != 0) {
+      const d = this.decoded[p as usize];
+      return d.length > 0 && d.charCodeAt(0) - 48 >= 0 && d.charCodeAt(0) - 48 <= 9;
+    }
+    const start = (p & 0xffffffff) as usize;
+    return (p >> 32) as usize > start && __intrinsic_str_byte_at(this.src, start as u64) - 48 <= 9;
+  }
+
+  /** An object's member list (`ordered`), or null when its members are its keys in order. */
+  members(v: u32): u32[] | null {
+    if ((this.words[2 * (v as usize)] & ORDERED) == 0) {
+      return null;
+    }
+    return this.ordered.get(v) ?? null;
+  }
+
+  /** The number of members: elements, an object's distinct keys. */
+  count(v: u32): i64 {
+    const m = this.members(v);
+    return m != null ? m.length as i64 : this.rawCount(v) as i64;
+  }
+
+  /**
+   * Member `i` of container `v` (an object's: the key's position, its value at `key + 1`), or -1
+   * past the end.
+   */
+  member(v: u32, i: i64): i64 {
+    const m = this.members(v);
+    if (m != null) {
+      return i < (m.length as i64) ? (m[i as usize] as i64) : -1;
+    }
+    if (i >= (this.rawCount(v) as i64)) {
+      return -1;
+    }
+    return this.kids[(this.words[2 * (v as usize) + 1] + (i as u64)) as usize] as i64;
+  }
+
+  /** Element `i` of array `v`, or the value of member `i` of object `v`; -1 if there is none. */
+  child(v: u32, i: i64): i64 {
+    const w = this.words[2 * (v as usize)];
+    const k = w & 0xff;
+    if (k == T_ARRAY) {
+      if (i >= ((w >> 32) as i64)) {
+        return -1;
+      }
+      return this.kids[(this.words[2 * (v as usize) + 1] + (i as u64)) as usize] as i64;
+    }
+    if (k != T_OBJECT) {
+      return -1;
+    }
+    const m = this.member(v, i);
+    return m < 0 ? -1 : m + 1;
+  }
+
+  /**
+   * Appends value `v` as compact JSON text (`JSON.stringify`) to the builder `out`. Every call
+   * that takes `out` gets no argument that is itself a call (it would make a copy of `out`
+   * first, and the text would go to the copy): such arguments are made into locals before.
+   * Iterative, with the open containers on a stack of its own, so a value nested as deeply as
+   * the parser allowed writes without running out of native stack. The text is gathered in a
+   * byte array handed to the builder in chunks: punctuation, strings and numbers cost stores,
+   * not a call each.
+   */
+  write(out: string, v: u32): void {
+    const words = this.words;
+    const kids = this.kids;
+    const src = this.src;
+    const srcLen = __intrinsic_str_byte_len(src);
+    // The text so far: `n` bytes of `buf`, `extra` of them beyond their UTF-16 units (non-ASCII
+    // text copied in). Each round of the loop starts at most `OUT_CAP` bytes in and writes at
+    // most `OUT_ROOM` more, but for strings, which check their own length.
+    const buf: u8[] = __intrinsic_array_with_capacity(OUT_CAP + OUT_ROOM);
+    __intrinsic_array_set_len(buf, OUT_CAP + OUT_ROOM);
+    let n: usize = 0;
+    let extra: u64 = 0;
+    // The innermost open container: `info` (its position, `IS_OPEN`, `IS_OBJECT`,
+    // `IS_ORDERED`; 0 while none is open), its next member `cur` and its end `end`: positions
+    // in `kids`, or in its member list (`member`) when it is ordered. The containers around it
+    // wait on `stack`, two words each (`cur | end << 32`, then `info`), the outermost first.
+    let info: u64 = 0;
+    let cur: u64 = 0;
+    let end: u64 = 0;
+    const stack: u64[] = [];
+    let sp: usize = 0;
+    // 1, or 0 right after a container opens: whether a comma goes before the next member.
+    let comma: usize = 1;
+    let at = v;
+    while (true) {
+      if (n > OUT_CAP) {
+        const len = n as u64;
+        const units = len - extra;
+        velt_rt_strbuf_push_u8s(out, buf, len, units);
+        n = 0;
+        extra = 0;
+      }
+      // The second word first: its bounds check covers the first's.
+      const p = words[2 * (at as usize) + 1];
+      const w = words[2 * (at as usize)];
+      const k = w & 0xff;
+      if (k == T_NUMBER) {
+        n = putNumber(buf, n, f64.fromBits(p));
+      } else if (k == T_STRING) {
+        let to = putText(buf, n, src, srcLen, w, p);
+        if (to == NO_ROOM) {
+          const len = n as u64;
+          const units = len - extra;
+          velt_rt_strbuf_push_u8s(out, buf, len, units);
+          n = 0;
+          extra = 0;
+          to = this.textAfterFlush(out, buf, src, srcLen, w, p, at);
+        }
+        extra += textExtra(w, p, to - n);
+        n = to;
+      } else if (k >= T_ARRAY) {
+        const object = k == T_OBJECT;
+        const count = w >> 32;
+        buf[n] = object ? 123 : 91;
+        n++;
+        if (count == 0) {
+          buf[n] = object ? 125 : 93;
+          n++;
+        } else {
+          if (info != 0) {
+            if (sp == stack.length) {
+              stack.push(0);
+              stack.push(0);
+            }
+            stack[sp] = cur | (end << 32);
+            stack[sp + 1] = info;
+            sp += 2;
+          }
+          if ((w & ORDERED) != 0) {
+            info = (at as u64) | IS_OPEN | IS_OBJECT | IS_ORDERED;
+            cur = 0;
+            end = this.count(at) as u64;
+          } else {
+            info = (at as u64) | IS_OPEN | (object ? IS_OBJECT : 0);
+            cur = p;
+            end = cur + count;
+          }
+          comma = 0;
+        }
+      } else {
+        n = putLiteral(buf, n, k);
+      }
+      // An array's numbers in a row, each with its comma (none right after the bracket).
+      if ((info & (IS_OBJECT | IS_ORDERED)) == 0) {
+        while (cur < end) {
+          const m = kids[cur as usize];
+          const pm = words[2 * (m as usize) + 1];
+          if ((words[2 * (m as usize)] & 0xff) != T_NUMBER) {
+            break;
+          }
+          if (n > OUT_CAP) {
+            const len = n as u64;
+            const units = len - extra;
+            velt_rt_strbuf_push_u8s(out, buf, len, units);
+            n = 0;
+            extra = 0;
+          }
+          buf[n] = 44;
+          n = putNumber(buf, n + comma, f64.fromBits(pm));
+          comma = 1;
+          cur++;
+        }
+      }
+      // Close the containers that are complete, then the next member.
+      while (cur == end) {
+        if (info == 0) {
+          // The last container closed (or the value was no container): the rest of the text.
+          const len = n as u64;
+          const units = len - extra;
+          if (len > 0) {
+            velt_rt_strbuf_push_u8s(out, buf, len, units);
+          }
+          return;
+        }
+        buf[n] = (info & IS_OBJECT) != 0 ? 125 : 93;
+        n++;
+        if (n > OUT_CAP) {
+          const len = n as u64;
+          const units = len - extra;
+          velt_rt_strbuf_push_u8s(out, buf, len, units);
+          n = 0;
+          extra = 0;
+        }
+        if (sp == 0) {
+          info = 0;
+          cur = 0;
+          end = 0;
+        } else {
+          sp -= 2;
+          const e = stack[sp];
+          cur = e & 0xffffffff;
+          end = e >> 32;
+          info = stack[sp + 1];
+        }
+      }
+      buf[n] = 44;
+      n += comma;
+      comma = 1;
+      const c = (info & 0xffffffff) as u32;
+      const m = (info & IS_ORDERED) != 0 ? this.member(c, cur as i64) as u32 : kids[cur as usize];
+      cur++;
+      if ((info & IS_OBJECT) != 0) {
+        // The key, its colon, then its value next round.
+        const kp = words[2 * (m as usize) + 1];
+        const kw = words[2 * (m as usize)];
+        let to = putText(buf, n, src, srcLen, kw, kp);
+        if (to == NO_ROOM) {
+          const len = n as u64;
+          const units = len - extra;
+          velt_rt_strbuf_push_u8s(out, buf, len, units);
+          n = 0;
+          extra = 0;
+          to = this.textAfterFlush(out, buf, src, srcLen, kw, kp, m);
+        }
+        extra += textExtra(kw, kp, to - n);
+        buf[to] = 58;
+        n = to + 1;
+        at = m + 1;
+      } else {
+        at = m;
+      }
+    }
+  }
+
+  // String `v` (words `w`, `p`) once `write`'s buffer `buf` is flushed: into `buf` from 0 when it
+  // fits (the position after it), else straight to the builder with its escapes (0).
+  private textAfterFlush(
+    out: string,
+    buf: u8[],
+    src: string,
+    srcLen: usize,
+    w: u64,
+    p: u64,
+    v: u32,
+  ): usize {
+    const to = putText(buf, 0, src, srcLen, w, p);
+    if (to != NO_ROOM) {
+      return to;
+    }
+    const s = this.text(v);
+    writeString(out, s);
+    return 0;
+  }
+
+  /** Value `v` as compact JSON text. */
+  stringify(v: u32): string {
+    let buf = "";
+    velt_rt_strbuf_new(0, buf);
+    this.write(buf, v);
+    let out = "";
+    velt_rt_strbuf_finish(buf, out);
+    return out;
+  }
+}
+
+// `Tape.write`'s byte buffer: it goes to the builder once a round of the walk starts past
+// `OUT_CAP` bytes, and a round writes at most `OUT_ROOM` bytes (a number takes 32 for the
+// runtime's printer), but for strings, which check their own length.
+const OUT_CAP: usize = 2048;
+const OUT_ROOM: usize = 64;
+// The innermost open container's flags in `Tape.write` (above its position).
+const IS_OBJECT: u64 = 1 << 32;
+const IS_ORDERED: u64 = 1 << 33;
+const IS_OPEN: u64 = 1 << 34;
+// `putText`: the string needs escapes, or doesn't fit.
+const NO_ROOM: usize = ~(0 as usize);
+
+// String `w`, `p` (a tape string's words) quoted into `buf` at `o`, copied from `src`
+// (`srcLen` bytes); the position after it. `NO_ROOM` when it had escapes or needs some (only
+// non-ASCII text can, for a lone surrogate), or when it doesn't fit with a colon and the 15
+// bytes `copyRun` may write past its end.
+function putText(buf: u8[], o: usize, src: string, srcLen: usize, w: u64, p: u64): usize {
+  if ((w & ESCAPED) != 0) {
+    return NO_ROOM;
+  }
+  const start = (p & 0xffffffff) as usize;
+  const stop = (p >> 32) as usize;
+  if (o + (stop - start) + 18 > OUT_CAP + OUT_ROOM) {
+    return NO_ROOM;
+  }
+  if ((w >> 32) != ((stop - start) as u64) && nextEscape(src, start, stop) < stop) {
+    return NO_ROOM;
+  }
+  buf[o] = 34;
+  const at = copyRun(buf, o + 1, src, start, stop, srcLen);
+  buf[at] = 34;
+  return at + 1;
+}
+
+// The bytes beyond their UTF-16 units of string `w`, `p` written as `len` bytes into the
+// buffer (none when it went to the builder).
+function textExtra(w: u64, p: u64, len: usize): u64 {
+  if (len == 0) {
+    return 0;
+  }
+  return ((p >> 32) - (p & 0xffffffff)) - (w >> 32);
+}
+
+// A number as `JSON.stringify` writes it, into `buf` at `o` (32 bytes of room); the position
+// after it. From its digits when it has at most 15, else by the runtime's general printer.
+function putNumber(buf: u8[], o: usize, x: f64): usize {
+  if (x != x || x == Infinity || x == -Infinity) {
+    return putLiteral(buf, o, T_NULL);
+  }
+  const d = shortNumber(x);
+  if (!d.ok) {
+    // More than 15 digits, or out of the plain range: the general printer (not 0, which is an
+    // integer).
+    return velt_rt_bytes_put_f64(buf, o as u64, x) as usize;
+  }
+  return putDecimal(buf, o, d.neg, d.m, d.k);
+}
+
+// `null`, `true` or `false` (kind `k`) into `buf` at `o`; the position after it.
+function putLiteral(buf: u8[], o: usize, k: u64): usize {
+  if (k == T_TRUE) {
+    buf[o] = 116;
+    buf[o + 1] = 114;
+    buf[o + 2] = 117;
+    buf[o + 3] = 101;
+    return o + 4;
+  }
+  if (k == T_FALSE) {
+    buf[o] = 102;
+    buf[o + 1] = 97;
+    buf[o + 2] = 108;
+    buf[o + 3] = 115;
+    buf[o + 4] = 101;
+    return o + 5;
+  }
+  buf[o] = 110;
+  buf[o + 1] = 117;
+  buf[o + 2] = 108;
+  buf[o + 3] = 108;
+  return o + 4;
+}
+
+/** Why `parseTape` failed: the message `JSON.parseValue` throws. */
+export class TapeError {
+  message: string;
+  constructor(message: string) {
+    this.message = message;
+  }
+}
+
+/**
+ * Parses `src` (one JSON value, whitespace around it) into a tape, nesting at most `maxDepth`
+ * arrays and objects (0: no limit); `jsonc` has the reader's `FLAG_COMMENTS` (16) and
+ * `FLAG_TRAILING_COMMAS` (32). Messages as the runtime's parser gives them: Node's for text
+ * that is not JSON, `JSON nested deeper than N levels at <path> (byte k)` past the limit.
+ */
+export function parseTape(src: string, maxDepth: u32, jsonc: u32 = 0): Tape | TapeError {
+  const comments = (jsonc & FLAG_COMMENTS) != 0;
+  const sc = new Scanner(comments ? blankComments(src) : src);
+  sc.comments = comments;
+  sc.trailingCommas = (jsonc & FLAG_TRAILING_COMMAS) != 0;
+  return parseWith(sc, maxDepth, true);
+}
+
+/**
+ * Parses one value at `sc`'s position into a new tape over `sc.src` (for a reader,
+ * `JsonValue.__fromReader`: the value a decoder reads into a `JsonValue` field). With `whole`,
+ * only whitespace may follow.
+ */
+export function parseWith(sc: Scanner, maxDepth: u32, whole: boolean): Tape | TapeError {
+  const t = new Tape(sc.src);
+  const limit: usize = maxDepth == 0 ? ~(0 as usize) : maxDepth as usize;
+  // Open containers (their tape positions) and the members read so far, all open containers'
+  // in one stack: a container's own start in it is `from`.
+  const open: u32[] = [];
+  const from: usize[] = [];
+  const pending: u32[] = [];
+  let ok = true;
+  // Whether a failure is at a value (its path names the value), not between members.
+  let atValue = false;
+  while (true) {
+    // At a value position.
+    const c = sc.peekNonWs();
+    const v = (t.words.length / 2) as u32;
+    if (c == 123 || c == 91) {
+      if (open.length >= limit) {
+        return tooDeep(sc, t, open, from, pending, maxDepth);
+      }
+      sc.pos++;
+      t.words.push(c == 123 ? T_OBJECT : T_ARRAY);
+      t.words.push(0);
+      // An array lists its elements; an object its keys (each value follows its key).
+      if (open.length > 0 && t.kind(open[open.length - 1]) == T_ARRAY) {
+        pending.push(v);
+      }
+      open.push(v);
+      from.push(pending.length);
+      const close = c == 123 ? 125 : 93;
+      if (sc.peekNonWs() == close) {
+        sc.pos++;
+        closeContainer(t, open, from, pending);
+      } else {
+        if (c == 123 && !key(sc, t, v, pending)) {
+          ok = false;
+          break;
+        }
+        continue;
+      }
+    } else {
+      if (!scalar(sc, t, c)) {
+        ok = false;
+        atValue = true;
+        break;
+      }
+      if (open.length > 0 && t.kind(open[open.length - 1]) == T_ARRAY) {
+        pending.push(v);
+      }
+    }
+    // A value is complete: close containers until one expects another member.
+    let more = false;
+    while (open.length > 0) {
+      const top = open[open.length - 1];
+      const object = t.kind(top) == T_OBJECT;
+      const b = sc.peekNonWs();
+      if (b == 44) {
+        sc.pos++;
+        if (sc.trailingCommas && sc.peekNonWs() == (object ? 125 : 93)) {
+          // JSONC: the comma before the closing bracket; it closes below.
+          continue;
+        }
+        if (object && !key(sc, t, top, pending)) {
+          ok = false;
+        }
+        more = true;
+        break;
+      }
+      if (b == (object ? 125 : 93)) {
+        sc.pos++;
+        closeContainer(t, open, from, pending);
+        continue;
+      }
+      sc.fail(object ? EXPECTED_COMMA_BRACE : EXPECTED_COMMA_BRACKET);
+      ok = false;
+      break;
+    }
+    if (!ok) {
+      break;
+    }
+    if (!more) {
+      break;
+    }
+  }
+  if (ok && whole && sc.peekNonWs() >= 0) {
+    ok = false;
+  }
+  if (!ok) {
+    let node = "";
+    if (!sc.comments && !sc.trailingCommas && velt_rt_json_node_syntax(sc.src, node)) {
+      return new TapeError(node);
+    }
+    if (sc.code == OK) {
+      sc.fail(TRAILING);
+    }
+    let detail = sc.what;
+    if (sc.code == UNEXPECTED_CHAR && sc.at < sc.len) {
+      // The character, as the reader names it.
+      let end = sc.at + 1;
+      while (end < sc.len && (__intrinsic_str_byte_at(sc.src, end as u64) & 0xc0) == 0x80) {
+        end++;
+      }
+      detail = `${detailText(UNEXPECTED_CHAR)} '${utf8Substring(sc.src, sc.at, end)}'`;
+    }
+    const where = shortPath(pathOf(t, open, from, pending, atValue));
+    return new TapeError(`invalid JSON at ${where}: ${detail} (byte ${sc.at})`);
+  }
+  return t;
+}
+
+// `"key" :` inside object `obj`: the key's string goes on the tape (its value follows it).
+function key(sc: Scanner, t: Tape, obj: u32, pending: u32[]): bool {
+  if (sc.peekNonWs() != 34) {
+    return sc.fail(EXPECTED_KEY);
+  }
+  const k = (t.words.length / 2) as u32;
+  if (!str(sc, t)) {
+    return false;
+  }
+  if (sc.escaped) {
+    t.words[2 * (obj as usize)] = t.words[2 * (obj as usize)] | ESCAPED_KEY;
+  }
+  pending.push(k);
+  if (sc.peekNonWs() != 58) {
+    return sc.fail(EXPECTED_COLON);
+  }
+  sc.pos++;
+  return true;
+}
+
+// A string at the scanner (its opening quote) onto the tape.
+function str(sc: Scanner, t: Tape): bool {
+  if (!sc.string(true)) {
+    return false;
+  }
+  const units = (sc.units as u64) << 32;
+  if (sc.escaped) {
+    t.words.push(T_STRING | ESCAPED | units);
+    t.words.push(t.decoded.length as u64);
+    t.decoded.push(sc.decoded);
+  } else {
+    t.words.push(T_STRING | units);
+    t.words.push((sc.start as u64) | ((sc.end as u64) << 32));
+  }
+  return true;
+}
+
+// One scalar whose first byte is `c` onto the tape.
+function scalar(sc: Scanner, t: Tape, c: i32): bool {
+  if (c == 34) {
+    return str(sc, t);
+  }
+  if (c == 116 || c == 102 || c == 110) {
+    const word = c == 116 ? "true" : c == 102 ? "false" : "null";
+    if (!sc.literal(word)) {
+      return false;
+    }
+    t.words.push(c == 116 ? T_TRUE : c == 102 ? T_FALSE : T_NULL);
+    t.words.push(0);
+    return true;
+  }
+  if (c == 45 || (c >= 48 && c <= 57)) {
+    if (!sc.number()) {
+      return false;
+    }
+    t.words.push(T_NUMBER);
+    t.words.push(sc.numberValue().toBits());
+    return true;
+  }
+  return sc.unexpected();
+}
+
+// The innermost open container is complete: its members move from `pending` to `kids`.
+function closeContainer(t: Tape, open: u32[], from: usize[], pending: u32[]) {
+  const v = open.pop()!;
+  const start = from.pop()!;
+  const n = pending.length - start;
+  const at = t.kids.length;
+  for (let i = start; i < pending.length; i++) {
+    t.kids.push(pending[i]);
+  }
+  pending.length = start as number;
+  // The container itself stays a member of its parent (pushed when it opened).
+  t.words[2 * (v as usize)] = t.words[2 * (v as usize)] | ((n as u64) << 32);
+  t.words[2 * (v as usize) + 1] = at as u64;
+  if (t.kind(v) == T_OBJECT && n > 1) {
+    orderMembers(t, v, at, n);
+  }
+}
+
+// An object's members in JSON order when its keys are not that already: array-index keys first
+// (ascending), then the others as written; a repeated key at its first place, holding the
+// position of its last occurrence (whose value counts, at `key + 1`).
+function orderMembers(t: Tape, v: u32, at: usize, n: usize) {
+  // Checked in place: only an object with a key that may be an index, or a repeated key, gets a
+  // member list.
+  let index = false;
+  for (let i: usize = 0; i < n; i++) {
+    if (t.digitFirst(t.kids[at + i]) && indexKey(t, t.kids[at + i]) >= 0) {
+      index = true;
+      break;
+    }
+  }
+  if (n <= INDEX_THRESHOLD) {
+    let repeated = false;
+    for (let i: usize = 1; i < n && !repeated; i++) {
+      for (let j: usize = 0; j < i; j++) {
+        if (t.sameKey(t.kids[at + i], t.kids[at + j])) {
+          repeated = true;
+          break;
+        }
+      }
+    }
+    if (index || repeated) {
+      setMembers(t, v, distinctKeys(t, at, n), index, repeated);
+    }
+    return;
+  }
+  // Over `INDEX_THRESHOLD` keys: each key's place in `firsts` (the distinct keys, each at its
+  // first place holding its last occurrence).
+  const firsts: u32[] = [];
+  const places = new Map<string, usize>();
+  let repeated = false;
+  for (let i: usize = 0; i < n; i++) {
+    const k = t.kids[at + i];
+    const s = t.text(k);
+    const j = places.get(s);
+    if (j == undefined) {
+      places.set(s, firsts.length);
+      firsts.push(k);
+    } else {
+      firsts[j] = k;
+      repeated = true;
+    }
+  }
+  if (index || repeated) {
+    setMembers(t, v, firsts, index, repeated);
+  }
+}
+
+// The distinct keys of a small object, each at its first place holding its last occurrence.
+function distinctKeys(t: Tape, at: usize, n: usize): u32[] {
+  const firsts: u32[] = [];
+  for (let i: usize = 0; i < n; i++) {
+    const k = t.kids[at + i];
+    let seen = false;
+    for (let j: usize = 0; j < firsts.length; j++) {
+      if (t.sameKey(firsts[j], k)) {
+        firsts[j] = k;
+        seen = true;
+        break;
+      }
+    }
+    if (!seen) {
+      firsts.push(k);
+    }
+  }
+  return firsts;
+}
+
+// Object `v`'s member list from its distinct keys `firsts` (in order of first occurrence):
+// array-index keys moved to the front, ascending, when `index`.
+function setMembers(t: Tape, v: u32, firsts: u32[], index: bool, repeated: bool) {
+  const flags = repeated ? REPEATED | ORDERED : ORDERED;
+  t.words[2 * (v as usize)] = t.words[2 * (v as usize)] | flags;
+  if (!index) {
+    t.ordered.set(v, firsts);
+    return;
+  }
+  // Index keys sorted by value (each with its key position below), then the others.
+  const idx: u64[] = [];
+  const out: u32[] = [];
+  for (const k of firsts) {
+    const x = indexKey(t, k);
+    if (x >= 0) {
+      idx.push(((x as u64) << 32) | (k as u64));
+    }
+  }
+  idx.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  for (const e of idx) {
+    out.push((e & 0xffffffff) as u32);
+  }
+  for (const k of firsts) {
+    if (indexKey(t, k) < 0) {
+      out.push(k);
+    }
+  }
+  t.ordered.set(v, out);
+}
+
+// Key `k`'s value as an array index (`"0"`, `"17"`, below 2^32 - 1, no leading zero), or -1. Read
+// in place (an escaped key from its decoded text).
+function indexKey(t: Tape, k: u32): i64 {
+  const w = t.words[2 * (k as usize)];
+  const p = t.words[2 * (k as usize) + 1];
+  const escaped = (w & ESCAPED) != 0;
+  const s = escaped ? t.decoded[p as usize] : t.src;
+  const start = escaped ? 0 : (p & 0xffffffff) as usize;
+  const end = escaped ? __intrinsic_str_byte_len(s) : (p >> 32) as usize;
+  const n = end - start;
+  if (n == 0 || n > 10) {
+    return -1;
+  }
+  let v: i64 = 0;
+  for (let i: usize = 0; i < n; i++) {
+    const d = (__intrinsic_str_byte_at(s, (start + i) as u64) as i64) - 48;
+    if (d < 0 || d > 9 || (i == 0 && d == 0 && n > 1)) {
+      return -1;
+    }
+    v = v * 10 + d;
+  }
+  return v < 4294967295 ? v : -1;
+}
+
+// Nesting past the limit: the message names where, from the open containers: an array's
+// element being read (the containers it holds are listed when they open, the value that is too
+// deep is not), an object's last key.
+function tooDeep(
+  sc: Scanner,
+  t: Tape,
+  open: u32[],
+  from: usize[],
+  pending: u32[],
+  maxDepth: u32,
+): TapeError {
+  // For a reader (`JsonValue.__fromReader`), whose message names the place itself.
+  sc.fail(TOO_DEEP);
+  const path = pathOf(t, open, from, pending, true);
+  return new TapeError(
+    `JSON nested deeper than ${maxDepth} levels at ${shortPath(path)} (byte ${sc.pos})`,
+  );
+}
+
+// The path of the place being read, from the open containers, as the typed reader names it: with
+// `atValue`, the value being read (an array's element, an object's last key); otherwise the
+// innermost container (a failure between its members or at a key).
+function pathOf(t: Tape, open: u32[], from: usize[], pending: u32[], atValue: bool): string {
+  let path = "$";
+  const levels = atValue ? open.length : open.length > 0 ? open.length - 1 : 0;
+  for (let i = 0; i < levels; i++) {
+    const inner = i + 1 == open.length;
+    const end = inner ? pending.length : from[i + 1];
+    if (t.kind(open[i]) == T_ARRAY) {
+      path += `[${inner ? end - from[i] : end - from[i] - 1}]`;
+    } else {
+      path += `.${t.text(pending[end - 1])}`;
+    }
+  }
+  return path;
+}

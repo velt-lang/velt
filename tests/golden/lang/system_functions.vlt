@@ -3,8 +3,8 @@
 // `readonly u8[]` (read), given an array or a view of one (`subarray`); paths are `readonly u8[]`
 // ending in 0; `struct flock` and `struct stat` are Velt structs whose fields name the C
 // struct's (any order, any subset), copied in and back; `lastOsError()` reads `errno`.
-import { lastOsError } from "velt:os";
-import { platform } from "velt:os";
+import { lastOsError } from "velt/os";
+import { platform } from "velt/os";
 
 declare system function open(path: readonly u8[], oflag: i32, mode: u32): i32;
 declare system function close(fd: i32): i32;

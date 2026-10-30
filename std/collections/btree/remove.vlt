@@ -1,7 +1,7 @@
-// velt:collections/btree/remove: deletes from a `Pool` (velt:collections/btree/pool), internal.
+// velt/collections/btree/remove: deletes from a `Pool` (velt/collections/btree/pool), internal.
 //
 // A leaf below `MIN_LEAF` entries takes entries from a sibling that has more, or merges with it,
-// by rank (velt:collections/btree/leaf `moveRanks`, no leaf is sorted), and the parent loses a
+// by rank (velt/collections/btree/leaf `moveRanks`, no leaf is sorted), and the parent loses a
 // separator, which may leave it short in turn (an inner node below `MIN_INNER` separators
 // borrows one or merges), up to the root; a root left with one child gives way to it. A leaf
 // whose range widens keeps its prefix when that still holds (`keepPrefix`, `mergeInto`), else
@@ -9,10 +9,10 @@
 // be. Inner nodes whose separators change get their prefix and words again (`refreshInner`); a
 // node that moves to another parent keeps its separators, so its words stay.
 
-import { needsDrop } from "velt:mem";
-import { F, NONE, Pool, Range, commonPrefix, moveSlot } from "velt:collections/btree/pool";
-import { prefixOf, shiftDown } from "velt:collections/btree/line";
-import { moveRanks, removeEntry, slotAtRank } from "velt:collections/btree/leaf";
+import { needsDrop } from "velt/mem";
+import { F, NONE, Pool, Range, commonPrefix, moveSlot } from "velt/collections/btree/pool";
+import { prefixOf, shiftDown } from "velt/collections/btree/line";
+import { moveRanks, removeEntry, slotAtRank } from "velt/collections/btree/leaf";
 
 /** The fewest entries a leaf other than the root keeps; below it, it borrows or merges. */
 const MIN_LEAF: usize = F / 4;
@@ -21,7 +21,7 @@ const MIN_INNER: usize = F / 4 - 1;
 
 /**
  * Removes the entry in physical slot `s` of `leaf` (`findLeaf` recorded the path to it;
- * velt:collections/btree/leaf `leafFind` gives the slot).
+ * velt/collections/btree/leaf `leafFind` gives the slot).
  */
 export function removeAt<K extends Comparable<K>, V>(p: Pool<K, V>, leaf: u32, s: usize) {
   // A deleted key or value is released (pool.vlt). `liveFill` and `needsDrop` are constants
@@ -102,7 +102,7 @@ function rebalanceLeaf<K extends Comparable<K>, V>(p: Pool<K, V>, leaf: u32) {
   const pn = p.innerCount(parent);
   const n = p.leafCount(leaf);
   // A sibling with more than `MIN_LEAF` gives half the difference (so the leaf is not short
-  // again a delete later), by rank (velt:collections/btree/leaf `moveRanks`): no leaf is sorted.
+  // again a delete later), by rank (velt/collections/btree/leaf `moveRanks`): no leaf is sorted.
   if (slot > 0) {
     const left = p.innerKids[pb + slot - 1];
     const ln = p.leafCount(left);

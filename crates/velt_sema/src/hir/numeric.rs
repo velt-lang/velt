@@ -99,7 +99,7 @@ impl CpuTarget {
         CpuTarget::ALL.into_iter().find(|t| t.name() == name)
     }
 
-    /// The static method of velt:simd that checks for it, by its definition's full name.
+    /// The static method of velt/simd that checks for it, by its definition's full name.
     pub fn check(self) -> &'static str {
         match self {
             CpuTarget::ShaArm => "std/simd/sha::u32x4.hasShaArm",

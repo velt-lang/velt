@@ -1,7 +1,7 @@
 // An async closure that modifies what it captured, reached through generic code: values of a
 // type parameter (`Channel<T>.send`, a generic `shared` wrapper, `resolve`) take the closure
 // with them under the caller's concrete type (#208).
-import { channel } from "velt:channel";
+import { channel } from "velt/sync";
 
 class Sent {
   run: () => Promise<void>;

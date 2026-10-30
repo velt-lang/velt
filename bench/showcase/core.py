@@ -169,7 +169,7 @@ def tsx_benchmarks(ctx):
     nerr = npm_install(ctx, here, "react, react-dom, preact, preact-render-to-string")
     scale = ["10"] if ctx.smoke else ["1"]
     prod = {"NODE_ENV": "production"}
-    impls = [impl("Velt TSX (velt:jsx renderToStringSync)", "velt", [velt, "both", *scale], verr)]
+    impls = [impl("Velt TSX (velt/jsx renderToStringSync)", "velt", [velt, "both", *scale], verr)]
     for lib, name in (("react", "React renderToString"), ("preact", "Preact preact-render-to-string")):
         for lang, exe in (("node", ctx.node), ("bun", ctx.bun)):
             err = nerr or (None if exe else f"{lang} not found")

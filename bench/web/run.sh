@@ -9,7 +9,7 @@
 #   SERVERS         velt velt-tsx node node-cluster bun go rust (also: velt-stealing and
 #                   velt-per-core, the Velt server under VELT_SCHEDULER=stealing or per-core:
 #                   tokio's schedulers, for comparison with the default; velt-native, every
-#                   route on velt:http/server, the HTTP/1.1 server written in Velt on std/net)
+#                   route on velt/http/server, the HTTP/1.1 server written in Velt on std/net)
 #   TESTS           json plaintext db queries fortunes updates
 #   QUICK=1         5 s runs, 2 s warm-up and fewer levels (a smoke run; numbers mean little)
 #   DURATION        seconds per measurement (15; QUICK 5)      WARMUP  seconds (5; QUICK 2)

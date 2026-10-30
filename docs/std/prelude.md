@@ -5,10 +5,10 @@ lives in `std/prelude/*.vlt`; some of it (arrays' `push`/`pop`, `length`, `clone
 `shared`) is implemented by the compiler.
 
 Node's web globals need no import either: `fetch`, `Request`, `Response`, `Headers`, `Blob`,
-`File` and `FormData` ([fetch](fetch.md)), `URL` and `URLSearchParams` ([velt:url](url.md)), and `AbortController` and
-`AbortSignal` ([velt:task](task.md)), `Set` ([velt:collections/set](collections/set.md)),
-`RegExp` ([velt:regex](regex.md); a regex literal counts as naming it), `TextEncoder`,
-`TextDecoder`, `btoa` and `atob` ([velt:encoding](encoding.md)), `DOMException`
+`File` and `FormData` ([fetch](fetch.md)), `URL` and `URLSearchParams` ([velt/net/url](url.md)), and `AbortController` and
+`AbortSignal` ([velt/task](task.md)), `Set` ([velt/collections](collections/set.md)),
+`RegExp` ([velt/text](regex.md); a regex literal counts as naming it), `TextEncoder`,
+`TextDecoder`, `btoa` and `atob` ([velt/encoding](encoding.md)), `DOMException`
 ([Errors](#errors)), `ArrayBuffer`, `DataView`, `Uint8Array` and the other typed arrays
 ([typed arrays](typed_array.md)), and `ReadableStream` and its reader and controller
 ([streams](streams.md)), and `Proxy`, `Reflect`, `ProxyHandler` and `PropertyDescriptor`
@@ -17,7 +17,7 @@ doesn't bind that name itself. `structuredClone(x)` is a deep copy (`x.clone()`)
 JS can't clone (a function, at any depth) or would copy as a plain object (an instance of a
 class of your own: write `x.clone()`) is a compile error. The builtin `process`
 (`process.stdout.write(s)`, `process.env`, `process.argv`, `process.exit(code)`,
-`process.memoryUsage()`; [velt:process](process.md)) needs no import either.
+`process.memoryUsage()`; [velt/process](process.md)) needs no import either.
 
 Every export and public member in `std/prelude` has a doc comment, which `velt doc --std` shows
 under its signature. Where TypeScript has the same function, the text is adapted from the JSDoc
@@ -41,7 +41,7 @@ two), and a negative position counts from the end. `Buffer.byteLength(s)` is the
 | `split(sep): string[]` | `split("")` gives the code units (a pair splits into two halves); `for (const c of s)` and `[...s]` give characters |
 | `trim()`, `trimStart()`, `trimEnd()` | |
 | `toUpperCase()`, `toLowerCase()` | |
-| `replace(from, to)`, `replaceAll(from, to)` | `from` is plain text, or a `RegExp` (as in `match`, `matchAll`, `search` and `split` with a regex: [`velt:regex`](regex.md#string-methods-with-a-regex)) |
+| `replace(from, to)`, `replaceAll(from, to)` | `from` is plain text, or a `RegExp` (as in `match`, `matchAll`, `search` and `split` with a regex: [`velt/text`](regex.md#string-methods-with-a-regex)) |
 | `repeat(n)`, `padStart(n, fill = " ")`, `padEnd(n, fill = " ")` | `repeat` panics on a negative `n` (JS's RangeError); the pads fill up to `n` code units |
 | `charCodeAt(i = 0)` | the code unit at `i` (one half of a pair for an emoji); `-1` out of range (JS: `NaN`) |
 | `codePointAt(i = 0): number \| undefined` | the character at `i` when `i` is at the high half of a pair, otherwise the code unit there; `undefined` out of range, as in JS |
@@ -146,7 +146,7 @@ so elements pushed meanwhile are not visited. Elements removed meanwhile:
 | `reverse()`, `fill(v, start?, end?)`, `sort()` | in place, returning nothing (JS returns the array: returning it would share it, which makes every array of its type reference counted). A member access chained on the call reads the changed array, as in JS: `xs.sort().join(",")`, `xs.reverse()[0]`, `s.split(",").sort().map(f)`. Such a chain changes the array, so it can't be an argument of a call that also reads the array (`console.log(xs.sort().join(), xs)` is an error, like any call that changes an argument another one reads): sort on its own line first. On a temporary array, which nothing else holds, the result is that array, as in JS: `const keys = Object.keys(r).sort()`, `return [...xs].sort(cmp)`. Any other use of the result on a variable, field or element (`return xs.sort()`, `const ys = xs.sort()`, `f(xs.sort())`) is an error: call the method on its own line and then use `xs`, or use `toSorted()` / `toReversed()` for a changed copy |
 | `toSorted(cmp?)`, `toReversed()`, `toSpliced(start, deleteCount?, ...items)`, `with(i, v)` | ES2023's copying forms: a new array, the receiver unchanged (the elements themselves are shared, as in JS); `toSorted()` without a comparator orders like `sort()`; `with` panics on an index out of range (JS's RangeError) |
 | `splice(start, deleteCount?, ...items): T[]` | removes and returns `deleteCount` elements (the rest when omitted) and inserts `items` there |
-| `shift(): T \| undefined`, `unshift(...items): i64` | take the first element (`undefined` when empty) / insert `items` at the front and return the new length, like JS; both O(length), as in V8 for large arrays: a queue that takes from the front belongs in a `Deque` ([velt:collections/deque](collections/deque.md)) |
+| `shift(): T \| undefined`, `unshift(...items): i64` | take the first element (`undefined` when empty) / insert `items` at the front and return the new length, like JS; both O(length), as in V8 for large arrays: a queue that takes from the front belongs in a `Deque` ([velt/collections](collections/deque.md)) |
 | `swap(i, j)`, `rotateLeft(start, end)`, `rotateRight(start, end)` | not in JS: exchange two elements, or move the elements of `[start, end)` one place down (the first to the end) or up (the last to the front), in place; each element's bits move, nothing is copied or dropped. A RangeError panic for an index or range outside the array |
 | `prefetch(i)`, `reserve(n)` | not in JS: a hint that element `i` is read soon, so the CPU starts loading it (it changes nothing; an index past the end does nothing); room for `n` more elements without growing again |
 | `xss.swapIn(a, i, b, j)` | not in JS, on `T[][]`: exchanges `xss[a][i]` and `xss[b][j]`, also between two inner arrays, which `[x, y] = [y, x]` does by copying (and counting) both elements. For data kept in chunks |
@@ -439,7 +439,7 @@ An `extend` block defining `[Symbol.iterator](): Iterator<T, E>` (or
 ## JSON
 
 `JSON.stringify<T>(x)`, `JSON.parse<T>(text, options?)` (throws `JsonError`) and
-`JSON.parseValue(text, options?): JsonValue` ([`velt:json`](json.md)); arrays and objects may
+`JSON.parseValue(text, options?): JsonValue` ([`velt/encoding/json`](json.md)); arrays and objects may
 nest 128 levels deep unless `options.maxDepth` says otherwise.
 
 ## Errors
@@ -498,7 +498,7 @@ console.log(deepEqual(a, b), a == b); // true false
 
 `Date` is JavaScript's: an instant in milliseconds since the epoch (`NaN` when invalid), with
 months 0-11, local-time getters and setters (the OS time zone, DST-aware) and their `UTC`
-variants. It is built on [`velt:datetime`](datetime.md), whose `DateTime` (UTC-first, months
+variants. It is built on [`velt/time`](datetime.md), whose `DateTime` (UTC-first, months
 1-12) is the better choice for new code.
 
 - `new Date()`, `new Date(ms)`, `new Date(string)`, `new Date(date)`,
@@ -525,15 +525,15 @@ console.log(start.toISOString(), end.getUTCMonth(), start < end); // 2024-01-31T
 ## Async and concurrency
 
 `sleep(ms)`, `yieldNow()`, `spawn(p, options?)` (options: `{ worker }`, see
-[velt:task](task.md#task-placement)), `Promise.all`, `Promise.race`, `Promise.allSettled`
+[velt/task](task.md#task-placement)), `Promise.all`, `Promise.race`, `Promise.allSettled`
 (with `PromiseSettledResult<T, E>`), `Promise.any`, `Promise.withResolvers` (with
 `PromiseWithResolvers<T, E>`), `Promise.resolve`, `Promise.reject`, the promise methods
 `then`, `catch` and `finally` with `queueMicrotask(f)`
 ([Async](../reference/async.md#then-catch-and-finally)), `shared(x)`, `Mutex<T>`, `RwLock<T>`,
-`Atomic<T>` (lock-free numbers and flags, [Atomics and velt:sync](sync.md)),
+`Atomic<T>` (lock-free numbers and flags, [Atomics and velt/sync](sync.md)),
 `performance.now()` and `Date.now()` ([Async](../reference/async.md)), and the timer
 functions `setTimeout`, `clearTimeout`, `setInterval`, `clearInterval`, `setImmediate` and
-`clearImmediate` with their `Timer` handle ([velt:timers](timers.md)).
+`clearImmediate` with their `Timer` handle ([velt/time](timers.md)).
 
 ```ts
 const words = "the cat and the hat".split(" ");

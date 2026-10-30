@@ -101,7 +101,7 @@ mod tests {
 
     #[test]
     fn only_std_imports() {
-        assert!(check_imports("import { readFile } from \"velt:fs\";\nfunction main() {}").is_ok());
+        assert!(check_imports("import { readFile } from \"velt/fs\";\nfunction main() {}").is_ok());
         for spec in ["./x", "../../etc/passwd", "pkg"] {
             let src = format!("import {{ x }} from \"{spec}\";\nfunction main() {{}}");
             assert!(

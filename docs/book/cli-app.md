@@ -9,9 +9,9 @@ runtime to install and no warm-up, which suits command-line tools.
 ## The program
 
 ```ts
-import { ArgParser, CliError } from "velt:cli";
-import { readFileSync } from "velt:fs";
-import { args } from "velt:process";
+import { ArgParser, CliError } from "velt/cli";
+import { readFileSync } from "velt/fs";
+import { args } from "velt/process";
 
 class InputError extends Error {}
 
@@ -103,21 +103,21 @@ Options:
 
 ## How it fits together
 
-- **Arguments**: [`velt:cli`](../std/cli.md)'s `ArgParser` follows Node's `util.parseArgs`
+- **Arguments**: [`velt/cli`](../std/cli.md)'s `ArgParser` follows Node's `util.parseArgs`
   rules (`--x`, `--x=v`, `-abc`, `--no-x`, `--`). Builder calls chain; `parse` throws a
   `CliError` for an unknown option or a missing value, and `help()` renders the usage text.
   `parse` takes the argument array, so the logic is testable without a process.
 - **Exit codes**: `main` returns an `i32`, the process's exit code. Here usage errors exit
-  with 2 and input errors with 1. `exit(code)` from [`velt:process`](../std/process.md) exits
+  with 2 and input errors with 1. `exit(code)` from [`velt/process`](../std/process.md) exits
   immediately from anywhere.
 - **Typed errors**: `read` converts the `IoError` from `readFileSync` (whose `code` is a
   Node-style name such as `ENOENT`) into an `InputError`, so `main`'s `catch` sees exactly
   `CliError | InputError` and can choose the exit code with `instanceof`.
 - **Output**: `console.log` goes to stdout, `console.error` to stderr. For large outputs,
   build the text first and print it once, or write in chunks with
-  [`velt:fs_stream`](../std/fs_stream.md).
-- **Input**: `readFileSync` reads a whole file; [`velt:stdin`](../std/stdin.md) reads standard
-  input line by line or at once; [`velt:fs_stream`](../std/fs_stream.md) reads large files in
+  [`velt/fs`](../std/fs_stream.md).
+- **Input**: `readFileSync` reads a whole file; [`velt/process`](../std/stdin.md) reads standard
+  input line by line or at once; [`velt/fs`](../std/fs_stream.md) reads large files in
   chunks.
 
 ## Testing
@@ -146,10 +146,10 @@ export function test_usage_error() {
 
 ## Running other programs
 
-[`velt:child_process`](../std/child_process.md) runs other programs and captures their output:
+[`velt/process/child`](../std/child_process.md) runs other programs and captures their output:
 
 ```ts
-import { execSync } from "velt:child_process";
+import { execSync } from "velt/process/child";
 
 function main() {
   const r = execSync("git", ["rev-parse", "--short", "HEAD"]);

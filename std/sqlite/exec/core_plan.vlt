@@ -1,10 +1,10 @@
-// velt:sqlite/exec/core_plan — the plan choices of a SELECT core (velt:sqlite/exec/core) made
+// velt/sqlite/exec/core_plan — the plan choices of a SELECT core (velt/sqlite/exec/core) made
 // as SQLite's planner makes them: the order of inner joins, the index an ORDER BY, GROUP BY or
 // DISTINCT reads, min()/max() through an index, covering indexes, `x = a OR x = b` as an IN
 // list, and the plan's description in EXPLAIN QUERY PLAN's words.
 
-import { INTEGER } from "velt:sqlite/btree";
-import { Index } from "velt:sqlite/schema";
+import { INTEGER } from "velt/sqlite/btree";
+import { Index } from "velt/sqlite/schema";
 import {
   E_BINARY,
   E_CALL,
@@ -22,14 +22,14 @@ import {
   Expr,
   OrderTerm,
   SelectCore,
-} from "velt:sqlite/sql/ast";
-import { SRC_TABLE, Source } from "velt:sqlite/exec/source";
-import { Query, Scope } from "velt:sqlite/exec/scope";
-import { AG_MAX, AG_MIN, AggCtx } from "velt:sqlite/exec/agg";
-import { ExprCompiler } from "velt:sqlite/exec/expr";
-import { rangeError, resultIndex } from "velt:sqlite/exec/result";
-export { ordinal, rangeError, resultIndex } from "velt:sqlite/exec/result";
-import { SortKey } from "velt:sqlite/exec/emit";
+} from "velt/sqlite/sql/ast";
+import { SRC_TABLE, Source } from "velt/sqlite/exec/source";
+import { Query, Scope } from "velt/sqlite/exec/scope";
+import { AG_MAX, AG_MIN, AggCtx } from "velt/sqlite/exec/agg";
+import { ExprCompiler } from "velt/sqlite/exec/expr";
+import { rangeError, resultIndex } from "velt/sqlite/exec/result";
+export { ordinal, rangeError, resultIndex } from "velt/sqlite/exec/result";
+import { SortKey } from "velt/sqlite/exec/emit";
 import {
   ACC_INDEX,
   ACC_ROWID_EQ,
@@ -41,8 +41,8 @@ import {
   accessCost,
   attachIndex,
   chooseAccess,
-} from "velt:sqlite/exec/plan";
-import { ORDER_NONE, ORDER_REVERSE, orderedByAccess, orderIndex } from "velt:sqlite/exec/order";
+} from "velt/sqlite/exec/plan";
+import { ORDER_NONE, ORDER_REVERSE, orderedByAccess, orderIndex } from "velt/sqlite/exec/order";
 
 /**
  * SQLite's min/max optimization: min() or max() alone (no GROUP BY) of a column an index leads

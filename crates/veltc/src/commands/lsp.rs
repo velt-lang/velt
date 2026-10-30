@@ -299,20 +299,20 @@ mod tests {
             .map(|e| e.spec)
             .collect();
         for want in [
-            "velt:fs",
-            "velt:collections/set",
-            "velt:jsx",
-            "velt:package",
+            "velt/fs",
+            "velt/collections",
+            "velt/jsx",
+            "velt/package",
             "util",
             "util/extra",
         ] {
             assert!(specs.iter().any(|s| s == want), "{want} in {specs:?}");
         }
         for internal in [
-            "velt:prelude/array",
-            "velt:url/encode",
-            "velt:net_bytes",
-            "velt:redis/args",
+            "velt/prelude/array",
+            "velt/net/url/encode",
+            "velt/net/bytes",
+            "velt/redis/args",
         ] {
             assert!(
                 !specs.iter().any(|s| s == internal),
@@ -334,7 +334,7 @@ mod tests {
             std::thread::spawn(move || velt_lsp::serve(server_conn, &CliLoader::default()));
         request(&conn, 1, "initialize", json!({ "capabilities": {} }));
         notify(&conn, "initialized", json!({}));
-        let text = "import { readFile,  } from \"velt:fs\";\nimport { x } from \"velt:co\";\n\nfunction main() {\n  normali\n}\n";
+        let text = "import { readFile,  } from \"velt/fs\";\nimport { x } from \"velt:co\";\n\nfunction main() {\n  normali\n}\n";
         let doc = json!({ "uri": main_uri, "languageId": "velt", "version": 1, "text": text });
         notify(
             &conn,
@@ -362,12 +362,12 @@ mod tests {
         assert!(!names.contains(&"readFile ".to_string()), "{names:?}");
         let specs = labels(1, 26);
         assert!(
-            specs.contains(&"velt:collections/set ".to_string()),
+            specs.contains(&"velt/collections ".to_string()),
             "{specs:?}"
         );
         let auto = labels(4, 9);
         assert!(
-            auto.contains(&"normalize velt:path".to_string()),
+            auto.contains(&"normalize velt/path".to_string()),
             "{auto:?}"
         );
         request(&conn, 99, "shutdown", Value::Null);
@@ -550,7 +550,7 @@ mod tests {
     fn hover_shows_std_doc_comments() {
         let dir = tempfile::tempdir().unwrap();
         let main = dir.path().join("main.vlt");
-        let text = "import { normalize } from \"velt:path\";\nfunction main() {\n  console.log(normalize(\"a//b\"));\n}\n";
+        let text = "import { normalize } from \"velt/path\";\nfunction main() {\n  console.log(normalize(\"a//b\"));\n}\n";
         std::fs::write(&main, text).unwrap();
         let main_uri = lsp_types::Url::from_file_path(&main).unwrap();
         let (server_conn, conn) = Connection::memory();

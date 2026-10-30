@@ -1,5 +1,5 @@
 //! Indexing a class of the standard library that defines `__index(i)`, and `__setIndex(i, v)`
-//! for writes: the typed arrays (`Uint8Array`, `Float64Array`, …, std/typed_array.vlt), whose
+//! for writes: the typed arrays (`Uint8Array`, `Float64Array`, …, std/lang/typed_array/index.vlt), whose
 //! elements live in an `ArrayBuffer` rather than in a Velt array, and `RegExpMatch`. `xs[i]`
 //! reads `xs.__index(i)`; `xs[i] = v` is `xs.__setIndex(i, v)`, and `xs[i] op= v`, `xs[i]++`
 //! and `xs[i] ??= v` read, then write, as in JS:

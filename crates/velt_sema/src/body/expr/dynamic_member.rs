@@ -16,7 +16,7 @@ use crate::hir::{self, ExprKind as H, Intrinsic, Lit, Nothing, TyId, TyKind, Use
 impl FnCx<'_, '_> {
     /// A member of an `any` is read, called or written here: lowering adds the member slots
     /// (`Program::dyn_members`). The standard library's own dynamic operations (`Proxy` and
-    /// `Reflect`, std/proxy.vlt) don't count: they run only in a program whose own
+    /// `Reflect`, std/lang/proxy/index.vlt) don't count: they run only in a program whose own
     /// code constructs a `Proxy` or calls `Reflect`, which counts there (`proxy.rs`).
     pub(crate) fn note_dyn_members(&mut self) {
         if !self.cx.scopes[self.module].is_std {
@@ -105,7 +105,7 @@ impl FnCx<'_, '_> {
     }
 
     /// Is `t` a symbol (also a `unique symbol`) or `string | symbol`, a key that may name a
-    /// record's symbol table (std/record/symbols.vlt)?
+    /// record's symbol table (std/lang/record/symbols.vlt)?
     pub(crate) fn symbolic_key_type(&mut self, t: TyId) -> bool {
         let w = self.cx.widened(t);
         matches!(self.cx.ty.kind(w), TyKind::Symbol) || self.string_or_symbol(t)
@@ -292,7 +292,7 @@ impl FnCx<'_, '_> {
             let k = self.coerce_number(k, f64_);
             return Ok(self.any_op(Intrinsic::AnyIndex, vec![obj, k], any, span));
         }
-        // A plain `symbol` key needs `Proxy`'s helpers (velt:proxy/ops), which a program
+        // A plain `symbol` key needs `Proxy`'s helpers (velt/lang/proxy/ops), which a program
         // loads with `Proxy` or `Reflect`.
         if self.string_or_symbol(k.ty) || (self.uses_proxy() && self.symbolic_key_type(k.ty)) {
             let k = self.coerce(k, any);
@@ -422,7 +422,7 @@ impl FnCx<'_, '_> {
         }
         let bind = prop.name == "bind";
         // `f.bind(thisArg, ...args)` in a program with function expressions taking `this`:
-        // the member call through `any`, which such a function answers (std/this_fn.vlt).
+        // the member call through `any`, which such a function answers (std/lang/this_fn/index.vlt).
         if bind && args.len() > 1 && self.cx.prelude_adt("__ThisFn").is_some() {
             let any = self.any_ty()?;
             let key = self.key_lit(&prop.name, prop.span);
@@ -493,7 +493,7 @@ impl FnCx<'_, '_> {
         let msg = self.key_lit(&msg, span);
         let never = self.cx.ty.never;
         let stop = match self.cx.prelude_adt("__ThisFn") {
-            // A program with function expressions taking `this` (std/this_fn.vlt): the member
+            // A program with function expressions taking `this` (std/lang/this_fn/index.vlt): the member
             // call `f.call(thisArg, ...)` through `any`, which such a function answers.
             Some(_) => {
                 let key = self.key_lit(&prop.name, prop.span);

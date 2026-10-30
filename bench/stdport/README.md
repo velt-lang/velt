@@ -2,7 +2,7 @@
 
 Each `<name>.vlt` exercises one part of the standard library, and `rust/src/bin/<name>.rs` is the
 same program on the crate the runtime uses for it today (`itoa`, `ryu`, `url`, `dashu-int`), or,
-where the standard library is already Velt code (`velt:crypto`, `velt:encoding`), on the crate a
+where the standard library is already Velt code (`velt/crypto`, `velt/encoding`), on the crate a
 Rust program would use (`sha2`, `base64`). Both print the same output; the harness fails
 otherwise.
 
@@ -33,11 +33,11 @@ this machine.
 | float_to_string | runtime, `ryu` | 88 | 30 | 2.96 |
 | parse_float | runtime, Rust's `f64` parser | 57 | 28 | 2.01 |
 | to_fixed | runtime | 165 | 99 | 1.66 |
-| url_parse | Velt (`velt:url`) | 161 | 64 | 2.51 |
+| url_parse | Velt (`velt/net/url`) | 161 | 64 | 2.51 |
 | bigint | runtime, `dashu-int` | 169 | 169 | 1.00 |
-| sha256_large | Velt (`velt:crypto`) | 118 | 19 | 6.09 |
-| sha256_small | Velt (`velt:crypto`) | 125 | 20 | 6.28 |
-| base64 | Velt (`velt:encoding`) | 149 | 41 | 3.64 |
+| sha256_large | Velt (`velt/crypto`) | 118 | 19 | 6.09 |
+| sha256_small | Velt (`velt/crypto`) | 125 | 20 | 6.28 |
+| base64 | Velt (`velt/encoding`) | 149 | 41 | 3.64 |
 
 `limb_mul` was added after this table (64-bit limb arithmetic on `Math.umulh`, against `u128`
 in Rust): 1,194M instructions against 888M on the same machine, 1.34.
@@ -52,8 +52,8 @@ Reading it:
 - The four number rows call the same crates as the Rust column, so their gap is the cost of
   getting there: a call into the runtime per value and a string result, where Rust formats into
   a buffer on the stack.
-- `sha2` uses the CPU's SHA-2 instructions on this machine (2 GB/s); `velt:crypto` was portable
-  code then. It now uses them too (#1330, `velt:simd`). Linux arm64 (OrbStack on an M4), best of
+- `sha2` uses the CPU's SHA-2 instructions on this machine (2 GB/s); `velt/crypto` was portable
+  code then. It now uses them too (#1330, `velt/simd`). Linux arm64 (OrbStack on an M4), best of
   5, ms and millions of instructions, Velt before → after, against Rust:
 
   | benchmark | Velt ms | Rust ms | Velt M instr | Rust M instr | Velt / Rust (instr) |
@@ -83,14 +83,14 @@ Reading it:
   without calling the runtime, as Rust's `copy_from_slice` is inline; the Velt program copies
   the digest into the message with `set` as the Rust port does with `copy_from_slice` (it used
   to copy it byte by byte).
-- `url_parse` has no IPv6 or non-ASCII host: `velt:url` has no IDNA yet, so those wait for it.
+- `url_parse` has no IPv6 or non-ASCII host: `velt/net/url` has no IDNA yet, so those wait for it.
 - Decompression (`flate2`, `brotli-decompressor`) had no row then: Velt code could reach it
   only through `fetch`. See [gzip](#gzip) for `gunzip` and [Brotli](#brotli) for
   `brotli_decode`.
 
 ## Hex
 
-`hex` is `velt:encoding`'s `hexEncode` and `hexDecode` against the `hex` crate. Instructions
+`hex` is `velt/encoding`'s `hexEncode` and `hexDecode` against the `hex` crate. Instructions
 executed (cachegrind, Linux arm64, `VELT_THREADS=1`):
 
 | benchmark | Velt before | Velt | Rust | Velt / Rust |
@@ -129,7 +129,7 @@ their runtime helpers.
 
 ## gzip
 
-`gunzip` is `velt:compress/inflate`'s `gunzip` against `flate2` (its default `miniz_oxide`
+`gunzip` is `velt/compress`'s `gunzip` against `flate2` (its default `miniz_oxide`
 backend, the crate the runtime's `fetch` decoded gzip and deflate bodies with): the 1 MB JSON of
 `gen_inputs.rs`, gzip-compressed at the default level, decoded 50 times. Instructions executed
 (cachegrind, x86-64 Linux, 4 cores), and best wall-clock of 5 interleaved runs:
@@ -148,7 +148,7 @@ instructions before.
 
 ## Brotli
 
-`brotli_decode` is `velt:compress/brotli`'s `brotliDecompress` against `brotli-decompressor`
+`brotli_decode` is `velt/compress`'s `brotliDecompress` against `brotli-decompressor`
 (the crate the runtime's `fetch` decoded `br` bodies with, read to the end through its
 `Decompressor` with a 64 KiB buffer): the 1 MB JSON of `gen_inputs.rs` at quality 5 and 11
 (window 2^22), 50 times each. Its inputs are written by `gen_inputs` with the `brotli` encoder

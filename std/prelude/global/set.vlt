@@ -1,2 +1,2 @@
 // Global (loaded when a module names it): `Set` and `ReadonlySet` (docs/std/collections/set.md).
-export { Set, ReadonlySet } from "velt:collections/set";
+export { Set, ReadonlySet } from "velt/collections/set";

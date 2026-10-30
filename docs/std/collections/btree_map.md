@@ -1,6 +1,6 @@
-# velt:collections/btree_map
+# velt/collections
 
-`import { BTreeMap } from "velt:collections/btree_map"`. A map with its keys kept in ascending
+`import { BTreeMap } from "velt/collections"`. A map with its keys kept in ascending
 order (`K extends Comparable<K>`: numbers, strings, bool, and user types with a `compareTo`).
 It is a B+tree: lookups, inserts and deletes are O(log n), and ordered walks follow the linked
 leaves. Prefer it to `SortedMap` once a map has more than a few hundred keys or changes often:
@@ -35,14 +35,14 @@ about 27 MB, and string keys of up to 23 bytes are kept in the map, not on the h
   `-0` are one key.
 - A deleted key or value, or a replaced value, is released: the map keeps no reference to it,
   so a string or an object is freed with its entry once nothing else holds it. Unused slots
-  hold a blank value (velt:mem `Blank`: `""` for strings), or for a type without one a share
+  hold a blank value (velt/mem `Blank`: `""` for strings), or for a type without one a share
   of a live entry, which moves to another entry when that one goes.
-- The map is written in Velt on public APIs only. Its parts live in `velt:collections/btree/*`
+- The map is written in Velt on public APIs only. Its parts live in `velt/collections/btree/*`
   modules, which are internal: they can be imported, but they are not API and change without
-  notice. Use `velt:collections/btree_map`.
+  notice. Use `velt/collections`.
 
 ```ts
-import { BTreeMap } from "velt:collections/btree_map";
+import { BTreeMap } from "velt/collections";
 
 function main() {
   const prices = new BTreeMap<i64, string>();
@@ -60,7 +60,7 @@ function main() {
 
 ## `InlineKey`
 
-`import { InlineKey } from "velt:collections/btree_map"`. A key type gives the map its
+`import { InlineKey } from "velt/collections"`. A key type gives the map its
 order-preserving bytes: `hasInlineKey()` is `true`, and `inlineKey(offset)` returns bytes
 `offset .. offset + 8` of an encoding that orders as the keys do (for keys `a < b`, `a`'s bytes
 are at most `b`'s in byte order), as a big-endian `u64`, zero past its end. Numbers encode
@@ -74,7 +74,7 @@ first 16, which an operation computes once and reads each node's word from) and 
 replaces it for that type ([classes](../../reference/classes.md#extend--implements)):
 
 ```ts
-import { BTreeMap, InlineKey } from "velt:collections/btree_map";
+import { BTreeMap, InlineKey } from "velt/collections";
 
 struct OrderKey {
   customer: u32;

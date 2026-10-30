@@ -2,4 +2,4 @@
 // components with client/jsx-runtime.ts instead (tsconfig.json maps the provider to it), which
 // renders the same HTML.
 
-export * from "velt:jsx/jsx-runtime";
+export * from "velt/jsx/jsx-runtime";

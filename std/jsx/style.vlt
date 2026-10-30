@@ -5,7 +5,7 @@
 // unless the property takes plain numbers (`lineHeight`, `opacity`, `zIndex`, …) or the number
 // is 0, strings are trimmed, and empty strings are left out.
 
-import type { Style } from "velt:jsx/node";
+import type { Style } from "velt/jsx/node";
 
 // Does CSS property `name` take plain numbers (react-dom 19's `unitlessNumbers` list)?
 function unitless(name: string): boolean {

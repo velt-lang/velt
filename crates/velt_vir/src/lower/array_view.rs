@@ -1,4 +1,4 @@
-//! Array views (#1485; std/prelude/zzz_adapt.vlt): an `any` holding an array of another
+//! Array views (#1485; std/prelude/adapt.vlt): an `any` holding an array of another
 //! element type, converted to `U[]` (`kids as JSXChild[]`, also as a union member, and a cast
 //! `xs as U[]` of an existing array, which sema writes through `any`), is a view of that one
 //! array, as in Node, not a copy.
@@ -45,16 +45,16 @@ use super::rt::Rt;
 use super::{cint, ice, Cx, FnLower};
 use crate::vir::{self, BinOp, Callee, Const, Operand, Place, Proj, Rvalue, Ty};
 
-pub(super) const VIEW_CLASS: &str = "std/prelude/zzz_adapt::__ArrayView";
-const VIEW_NEW: &str = "std/prelude/zzz_adapt::__arrayViewNew";
-const VIEW_SYNC: &str = "std/prelude/zzz_adapt::__arrayViewSync";
-pub(super) const VIEW_SYNC_AT: &str = "std/prelude/zzz_adapt::__arrayViewSyncAt";
-pub(super) const VIEW_SYNC_LEN: &str = "std/prelude/zzz_adapt::__arrayViewSyncLen";
-const VIEW_FLUSH: &str = "std/prelude/zzz_adapt::__arrayViewFlush";
-const VIEW_FLUSH_AT: &str = "std/prelude/zzz_adapt::__arrayViewFlushAt";
-pub(super) const VIEW_FLUSH_FROM: &str = "std/prelude/zzz_adapt::__arrayViewFlushFrom";
-pub(super) const VIEW_LEN: &str = "std/prelude/zzz_adapt::__arrayViewLen";
-pub(super) const VIEW_SORT: &str = "std/prelude/zzz_adapt::__arrayViewSort";
+pub(super) const VIEW_CLASS: &str = "std/prelude/adapt::__ArrayView";
+const VIEW_NEW: &str = "std/prelude/adapt::__arrayViewNew";
+const VIEW_SYNC: &str = "std/prelude/adapt::__arrayViewSync";
+pub(super) const VIEW_SYNC_AT: &str = "std/prelude/adapt::__arrayViewSyncAt";
+pub(super) const VIEW_SYNC_LEN: &str = "std/prelude/adapt::__arrayViewSyncLen";
+const VIEW_FLUSH: &str = "std/prelude/adapt::__arrayViewFlush";
+const VIEW_FLUSH_AT: &str = "std/prelude/adapt::__arrayViewFlushAt";
+pub(super) const VIEW_FLUSH_FROM: &str = "std/prelude/adapt::__arrayViewFlushFrom";
+pub(super) const VIEW_LEN: &str = "std/prelude/adapt::__arrayViewLen";
+pub(super) const VIEW_SORT: &str = "std/prelude/adapt::__arrayViewSort";
 
 /// What an access to a view's contents needs of the mirror (`content_with`).
 pub(super) enum ViewSync {
@@ -161,7 +161,7 @@ impl Cx<'_> {
         }
     }
 
-    /// The prelude definition `name` (std/prelude/zzz_adapt.vlt).
+    /// The prelude definition `name` (std/prelude/adapt.vlt).
     pub(super) fn prelude_def(&self, name: &str) -> Option<DefId> {
         let found = self.hir.defs.iter().position(|d| match d {
             hir::Def::Fn(f) => f.name == name,

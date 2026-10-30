@@ -1,5 +1,5 @@
 //! Errors thrown by a proxy's traps (issue #1174; hir_encodings.md "Proxy and Reflect"). A trap
-//! may throw, as in JavaScript: velt_sema infers what the `Proxy` methods of std/proxy.vlt
+//! may throw, as in JavaScript: velt_sema infers what the `Proxy` methods of std/lang/proxy/index.vlt
 //! throw from the closures stored into `ProxyHandler`'s traps, and an operation on `any` in a
 //! user module (or in std/proxy, whose `Reflect` functions reach a target that may be a proxy)
 //! throws what the method it runs on a proxy throws (velt_sema's `any_op`):

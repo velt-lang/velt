@@ -1,6 +1,6 @@
 // std classes keep runtime handles in ES private fields (`#handle`), which `console.log` leaves
 // out, as Node does; public fields still print.
-import { Server } from "velt:http";
+import { Server } from "velt/http";
 
 function main() {
   console.log(new Server());

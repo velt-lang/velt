@@ -1,8 +1,8 @@
 // std/jsx/attrs/controls: attribute types of form controls besides `<input>` and `<button>`
 // (each is `HtmlAttrs`, the global attributes from attrs/global.vlt, `&` its own; public as
-// `velt:jsx/attrs`).
+// `velt/jsx/attrs/attrs`).
 
-import type { HtmlAttrs } from "velt:jsx/attrs/global";
+import type { HtmlAttrs } from "velt/jsx/attrs/global";
 
 /** `<label>`. */
 export type LabelAttrs = HtmlAttrs & { for?: string };

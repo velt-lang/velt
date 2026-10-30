@@ -1,6 +1,6 @@
-// velt:json/scan, the JSON scanner written in Velt (#1668): UTF-16 lengths, decoded escapes,
+// velt/encoding/json/scan, the JSON scanner written in Velt (#1668): UTF-16 lengths, decoded escapes,
 // surrogates, numbers and error offsets, as the Rust scanner it replaces gives them.
-import { Scanner, numberF64, numberI64 } from "velt:json/scan";
+import { Scanner, numberF64, numberI64 } from "velt/encoding/json/scan";
 
 function str(src: string) {
   for (const decode of [true, false]) {

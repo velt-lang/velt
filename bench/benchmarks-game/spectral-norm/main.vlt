@@ -3,7 +3,7 @@
 //
 // Idiomatic single-threaded Velt, written the way a TypeScript developer would: number arrays
 // and plain loops. Follows the Node.js #1 program (Ian Osgood, Isaac Gouy).
-import { argv } from "velt:process";
+import { argv } from "velt/process";
 
 // Entry (i, j) of the infinite matrix A.
 function a(i: i64, j: i64): f64 {

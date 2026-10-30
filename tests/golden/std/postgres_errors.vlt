@@ -2,7 +2,7 @@
 // Node-style codes for failures outside the server (connection, parameters, decoding, closed
 // handles). The connection stays usable after each of them.
 // requires-env: VELT_TEST_PG_URL
-import { connect, createPool, Client } from "velt:postgres";
+import { connect, createPool, Client } from "velt/postgres";
 
 class Item {
   id: i64;

@@ -4,7 +4,7 @@
 // The other task gets a copy of the value whose promises are other holders, handed over to
 // it, and awaits a copy of each result made on this task. Node (with a channel built on
 // promises) prints the same.
-import { channel, Channel } from "velt:channel";
+import { channel, Channel } from "velt/sync";
 class Obj {
   n: number;
   constructor(n: number) {

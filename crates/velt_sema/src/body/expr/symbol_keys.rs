@@ -12,7 +12,7 @@ use crate::hir::{self, DefId, ExprKind as H, PatKind as P, TyId, TyKind};
 use crate::object_copies::Seen;
 use crate::symbols::Presence;
 
-/// The well-known symbols (std/symbol.vlt `SymbolConstructor`), which name members as
+/// The well-known symbols (std/lang/symbol/index.vlt `SymbolConstructor`), which name members as
 /// `[Symbol.<name>]`.
 const WELL_KNOWN: [&str; 15] = [
     "asyncDispose",

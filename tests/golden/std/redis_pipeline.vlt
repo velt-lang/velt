@@ -1,6 +1,6 @@
 // requires-env: VELT_TEST_REDIS_URL
 // std/redis: pipelines, MULTI/EXEC transactions and one client shared by many tasks.
-import { connect, RedisClient, RedisError, RedisReply } from "velt:redis";
+import { connect, RedisClient, RedisError, RedisReply } from "velt/redis";
 import { redisUrl, freshPrefix, cleanup } from "./_redis";
 
 function show(r: RedisReply): string {

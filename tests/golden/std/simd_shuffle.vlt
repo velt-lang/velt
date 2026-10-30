@@ -1,7 +1,7 @@
 // Constant shuffles (`T.shuffle(a, b, i0, …)`, lane indices of `a` then `b`) and `reverseBytes`:
 // byte reversal, interleaving, a palignr-style shift, pshufd-style lane moves, a blend, float
 // and 64-bit lanes; reverseBytes against the scalar byte swap of 16-, 32- and 64-bit lanes.
-import { u8x16, u16x8, u32x4, i32x4, u64x2, f32x4, f64x2, i16x8 } from "velt:simd";
+import { u8x16, u16x8, u32x4, i32x4, u64x2, f32x4, f64x2, i16x8 } from "velt/simd";
 
 function bytesOf(v: u8x16): string {
   const out: string[] = [];

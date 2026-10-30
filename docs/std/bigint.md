@@ -1,6 +1,6 @@
-# velt:bigint
+# velt/math
 
-`import { BigInt, BigIntError } from "velt:bigint"`. Arbitrary-precision integers, like JS
+`import { BigInt, BigIntError } from "velt/math"`. Arbitrary-precision integers, like JS
 `BigInt`, backed by the runtime (dashu-int). Velt has no operator overloading and no `10n`
 literals, so arithmetic is methods.
 
@@ -20,7 +20,7 @@ literals, so arithmetic is methods.
   dropped.
 
 ```ts
-import { BigInt } from "velt:bigint";
+import { BigInt } from "velt/math";
 
 function factorial(n: i64): BigInt {
   const acc = new BigInt(1);

@@ -1,15 +1,15 @@
-// velt:sqlite/exec/like — the LIKE and GLOB operators, compiled: `x LIKE p [ESCAPE e]`.
+// velt/sqlite/exec/like — the LIKE and GLOB operators, compiled: `x LIKE p [ESCAPE e]`.
 
-import { NULL } from "velt:sqlite/btree";
-import { SqlRunError } from "velt:sqlite/exec/errors";
+import { NULL } from "velt/sqlite/btree";
+import { SqlRunError } from "velt/sqlite/exec/errors";
 import {
   LIKE_PATTERN_LIMIT,
   PatternInfo,
   cBytes,
   chars,
   patternMatch,
-} from "velt:sqlite/exec/text";
-import { Val, intVal, nullVal, toText, valueBytes } from "velt:sqlite/exec/value";
+} from "velt/sqlite/exec/text";
+import { Val, intVal, nullVal, toText, valueBytes } from "velt/sqlite/exec/value";
 
 /**
  * `like(p, s [, e])` or `glob(p, s)` on values, checked in the order of SQLite's likeFunc: a

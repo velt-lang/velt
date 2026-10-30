@@ -1,17 +1,17 @@
-// The SQLite engine written in Velt (velt:sqlite/engine, #1720) on a database C SQLite writes
-// (through velt:sqlite): each query's rows, every value printed as SQLite's quote() prints it
+// The SQLite engine written in Velt (velt/sqlite/engine, #1720) on a database C SQLite writes
+// (through velt/sqlite): each query's rows, every value printed as SQLite's quote() prints it
 // (blobs as the sqlite3 shell's x'…'). The expected output is the sqlite3 shell's (`.mode quote`)
 // for the same queries on the same data; rows of a query without ORDER BY are sorted on both
 // sides, since their order is SQLite's choice.
-import { open } from "velt:sqlite";
-import { openDatabase, Database } from "velt:sqlite/engine";
-import { BLOB, REAL } from "velt:sqlite/btree";
-import { Val } from "velt:sqlite/exec/value";
-import { quote } from "velt:sqlite/exec/func";
-import { hexEncode } from "velt:encoding";
-import { tmpdir } from "velt:os";
-import { uuidv4 } from "velt:uuid";
-import { removeSync } from "velt:fs";
+import { open } from "velt/sqlite";
+import { openDatabase, Database } from "velt/sqlite/engine";
+import { BLOB, REAL } from "velt/sqlite/btree";
+import { Val } from "velt/sqlite/exec/value";
+import { quote } from "velt/sqlite/exec/func";
+import { hexEncode } from "velt/encoding";
+import { tmpdir } from "velt/os";
+import { uuidv4 } from "velt/random/uuid";
+import { removeSync } from "velt/fs";
 
 const SETUP = `
 CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL, age INT, score REAL, note,

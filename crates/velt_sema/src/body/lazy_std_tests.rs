@@ -28,7 +28,7 @@ fn helper_literals(dir: &std::path::Path, out: &mut Vec<String>) {
             if !matches!(before, Some('"') | Some(':') | Some('.')) {
                 continue;
             }
-            // A definition of a std module outside the prelude (`"std/proxy::Proxy.__view"`):
+            // A definition of a std module outside the prelude (`"std/lang/proxy::Proxy.__view"`):
             // `every_std_definition_lowering_names_stays_checked` checks those.
             let line = &src[src[..i].rfind('\n').map_or(0, |l| l + 1)..i];
             let lit = line.rfind('"').map_or("", |q| &line[q + 1..]);

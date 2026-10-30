@@ -1,4 +1,4 @@
-// velt:sqlite/btree_back — moving a b-tree cursor backwards: to the last entry, to the previous
+// velt/sqlite/btree_back — moving a b-tree cursor backwards: to the last entry, to the previous
 // one, and to the last entry at or before a key, for scans in descending order (ORDER BY ... DESC
 // through the rowid or an index, without a sort).
 //
@@ -15,9 +15,9 @@ import {
   corrupt,
   readU16,
   readU32,
-} from "velt:sqlite/format";
-import { Cursor } from "velt:sqlite/btree";
-import { KeyRec } from "velt:sqlite/record";
+} from "velt/sqlite/format";
+import { Cursor } from "velt/sqlite/btree";
+import { KeyRec } from "velt/sqlite/record";
 
 /** A b-tree is at most this deep (btree.vlt's limit). */
 const MAX_DEPTH: usize = 20;

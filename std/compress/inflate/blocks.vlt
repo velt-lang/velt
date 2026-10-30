@@ -1,13 +1,13 @@
 // std/compress/inflate/blocks (std-internal): a DEFLATE stream's blocks (RFC 1951 §3.2.3): the
 // three-bit header, stored blocks, and the fixed or dynamic Huffman tables of the others, whose
-// symbols velt:compress/inflate/codes decodes.
+// symbols velt/compress/inflate/codes decodes.
 //
 // Input may arrive in pieces. Every step that reads input either completes or, when the input
 // ends inside it, leaves the position as it was before the step (`SHORT`): a block header, a
 // dynamic block's code lengths and a symbol are decoded again whole once more input is there.
 // Only a stored block's bytes are taken as they arrive.
 
-import { CompressError } from "velt:compress/error";
+import { CompressError } from "velt/compress/errors";
 import {
   Bits,
   BLOCK_END,
@@ -17,7 +17,7 @@ import {
   SHORT,
   SLACK,
   slow,
-} from "velt:compress/inflate/codes";
+} from "velt/compress/inflate/codes";
 import {
   build,
   CODES,
@@ -30,8 +30,8 @@ import {
   LITLEN_ROOT,
   LITLEN_SIZE,
   Work,
-} from "velt:compress/inflate/huffman";
-import { CODE_ORDER } from "velt:compress/inflate/tables";
+} from "velt/compress/inflate/huffman";
+import { CODE_ORDER } from "velt/compress/inflate/tables";
 
 /** Where the block decoder is. */
 const HEADER: i64 = 0;

@@ -1,4 +1,4 @@
-// velt:sqlite/exec/agg — aggregate functions (count, sum, total, avg, min, max, group_concat,
+// velt/sqlite/exec/agg — aggregate functions (count, sum, total, avg, min, max, group_concat,
 // string_agg) and the groups of an aggregate query (https://sqlite.org/lang_aggfunc.html).
 //
 // An aggregate query runs its loops once, stepping the accumulators of each row's group; then
@@ -6,11 +6,11 @@
 // values of a row of the group, saved as the group steps: the last row, or, with min() or max(),
 // the row that holds the extreme value, as SQLite does.
 
-import { NULL, INTEGER, TEXT } from "velt:sqlite/btree";
-import { BINARY } from "velt:sqlite/record";
-import { Source } from "velt:sqlite/exec/source";
-import { SqlRunError } from "velt:sqlite/exec/errors";
-import { toF64, toI64 } from "velt:sqlite/exec/ops";
+import { NULL, INTEGER, TEXT } from "velt/sqlite/btree";
+import { BINARY } from "velt/sqlite/record";
+import { Source } from "velt/sqlite/exec/source";
+import { SqlRunError } from "velt/sqlite/exec/errors";
+import { toF64, toI64 } from "velt/sqlite/exec/ops";
 import {
   Val,
   checkLength,
@@ -21,8 +21,8 @@ import {
   realVal,
   textVal,
   toText,
-} from "velt:sqlite/exec/value";
-import { KeySet } from "velt:sqlite/exec/keys";
+} from "velt/sqlite/exec/value";
+import { KeySet } from "velt/sqlite/exec/keys";
 
 /** Aggregate kinds. */
 export const AG_COUNT_STAR: u8 = 0;

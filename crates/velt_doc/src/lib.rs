@@ -34,7 +34,7 @@ pub struct Input {
     pub module: String,
     /// Its source text.
     pub source: String,
-    /// Its source file as the JSON output shows it (`std/fs.vlt`, `src/util.vlt`), with `/`
+    /// Its source file as the JSON output shows it (`std/fs/index.vlt`, `src/util.vlt`), with `/`
     /// separators.
     pub file: String,
 }

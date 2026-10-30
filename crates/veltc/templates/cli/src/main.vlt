@@ -1,5 +1,5 @@
 // Process glue: arguments in, lines out, exit code 2 on a usage error.
-import { args, exit } from "velt:process";
+import { args, exit } from "velt/process";
 import { execute } from "./commands";
 
 function main() {

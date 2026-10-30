@@ -1,5 +1,5 @@
 // check: unfreed blocks at most 140
-// (Kept until the program exits: `velt:sync/epoch`'s registry of thread slots, 4 blocks, and a
+// (Kept until the program exits: `velt/sync/epoch`'s registry of thread slots, 4 blocks, and a
 // list of retired values per thread that retired one, 4 blocks each: 140 covers 34 threads. A
 // key string or value a `set`, `delete` or split failed to retire, or dropped, is thousands more.)
 // A `ConcurrentMap<string, string>` on worker threads: two writers each set and delete their own
@@ -9,8 +9,8 @@
 // keys whose first 8 bytes differ. Four readers `get` and `read` the same keys: every value they
 // find is its key's. At the end every key is deleted and the epoch drained.
 
-import { ConcurrentMap } from "velt:collections/concurrent_map";
-import { collect, outstanding } from "velt:sync/epoch";
+import { ConcurrentMap } from "velt/collections";
+import { collect, outstanding } from "velt/sync/epoch";
 
 const KEYS: u64 = 3000;
 const ROUNDS: u64 = 30;

@@ -3,8 +3,8 @@
 // bound and the process alive), and so does a pending read or `readable()` of a stream closed
 // meanwhile; a write in flight still goes out. `readableWithin` waits with a limit and a
 // signal, leaving nothing behind.
-import { connect, listen } from "velt:net";
-import { AbortController } from "velt:task";
+import { connect, listen } from "velt/net";
+import { AbortController } from "velt/task";
 
 async function main() {
   const l = await listen("127.0.0.1:0");

@@ -1,6 +1,6 @@
-# velt:collections/deque
+# velt/collections
 
-`import { Deque } from "velt:collections/deque"`. A double-ended queue on a growable ring buffer.
+`import { Deque } from "velt/collections"`. A double-ended queue on a growable ring buffer.
 Pushing and popping at either end is amortized O(1), and indexing is O(1).
 
 - `new Deque<T>()`, `Deque.from(xs)`, `length` / `size`, `isEmpty()`, `clear()`.
@@ -14,7 +14,7 @@ Pushing and popping at either end is amortized O(1), and indexing is O(1).
   visited, and a push or pop at the front shifts the positions still to come.
 
 ```ts
-import { Deque } from "velt:collections/deque";
+import { Deque } from "velt/collections";
 
 function main() {
   const q = Deque.from([2, 3]);

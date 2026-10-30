@@ -4,8 +4,8 @@
 // `WebSocket` is a Copy handle that `close()` releases, so only the receiving task closes it,
 // after the server has ended the conversation: leaving sends `{"type":"leave"}`, the server
 // closes, `receive` returns null, then the receiver closes.
-import { WebSocket, connectWebSocket } from "velt:websocket";
-import { readLine } from "velt:stdin";
+import { WebSocket, connectWebSocket } from "velt/net/websocket";
+import { readLine } from "velt/process";
 import { decodeServer, describe } from "./protocol";
 
 /// The next server message as the client shows it, or null once the connection has ended.

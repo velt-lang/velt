@@ -1,8 +1,8 @@
-// A velt:http server's life: serving again after `close()`, a `serve` that fails, and what
+// A velt/http server's life: serving again after `close()`, a `serve` that fails, and what
 // happens to the handler it was given.
-import { serve } from "velt:http";
-import { listen } from "velt:net";
-import { describe, expect, it } from "velt:test";
+import { serve } from "velt/http";
+import { listen } from "velt/net";
+import { describe, expect, it } from "velt/test";
 import { TEST_CERT } from "../../golden/std/_tls";
 
 async function hello(req: Request): Promise<Response> {

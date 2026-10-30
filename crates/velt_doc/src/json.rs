@@ -120,7 +120,7 @@ fn write_string(out: &mut String, s: &str) {
 }
 
 /// The JSON document for `modules` (after [`crate::resolve`]); `files[i]` is the source file
-/// of `modules[i]` as it should be shown (`std/fs.vlt`, `src/util.vlt`).
+/// of `modules[i]` as it should be shown (`std/fs/index.vlt`, `src/util.vlt`).
 pub fn api_json(title: &str, modules: &[DocModule], files: &[String]) -> Json {
     let links = Links::new(modules);
     let file_of: HashMap<&str, &str> = modules
@@ -172,7 +172,7 @@ pub fn api_json(title: &str, modules: &[DocModule], files: &[String]) -> Json {
     ])
 }
 
-/// How a module is imported: `std/fs` is `velt:fs`; a package's modules by their name.
+/// How a module is imported: `std/fs` is `velt/fs`; a package's modules by their name.
 pub fn specifier(module: &str) -> String {
     match module.strip_prefix("std/") {
         Some(rest) => format!("velt:{rest}"),
@@ -611,7 +611,7 @@ mod tests {
 
     #[test]
     fn specifiers() {
-        assert_eq!(specifier("std/fs"), "velt:fs");
+        assert_eq!(specifier("std/fs"), "velt/fs");
         assert_eq!(specifier("std/prelude/core"), "velt:prelude/core");
         assert_eq!(specifier("pkg/util"), "pkg/util");
     }

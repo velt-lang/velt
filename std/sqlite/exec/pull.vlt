@@ -1,19 +1,19 @@
-// velt:sqlite/exec/pull — a query read one row at a time, for velt:db's `readRows` and `readRow`
+// velt/sqlite/exec/pull — a query read one row at a time, for velt/db's `readRows` and `readRow`
 // to decode straight into the requested type: the FROM levels stepped as nested walks
-// (velt:sqlite/exec/walk), each level's terms checked as its loop checks them, the result
+// (velt/sqlite/exec/walk), each level's terms checked as its loop checks them, the result
 // columns read when the decoder asks for them. A plain column is read from the record as the
 // type the decoder wants (no `Val`, text decoded once, into the field). Only queries whose rows
 // go out in the loops' order take this path: no aggregate, sort, DISTINCT or window.
 
-import { NULL, INTEGER, REAL, TEXT } from "velt:sqlite/btree";
-import { CellKind, RowSource } from "velt:db";
-import { Cursor } from "velt:sqlite/btree";
-import { SRC_TABLE, Source, cursorText } from "velt:sqlite/exec/source";
-import { Ev, Pred } from "velt:sqlite/exec/scope";
-import { Walk } from "velt:sqlite/exec/walk";
-import { Val, nullVal } from "velt:sqlite/exec/value";
-import { limitValue } from "velt:sqlite/exec/emit";
-import { A_REAL } from "velt:sqlite/schema";
+import { NULL, INTEGER, REAL, TEXT } from "velt/sqlite/btree";
+import { CellKind, RowSource } from "velt/db";
+import { Cursor } from "velt/sqlite/btree";
+import { SRC_TABLE, Source, cursorText } from "velt/sqlite/exec/source";
+import { Ev, Pred } from "velt/sqlite/exec/scope";
+import { Walk } from "velt/sqlite/exec/walk";
+import { Val, nullVal } from "velt/sqlite/exec/value";
+import { limitValue } from "velt/sqlite/exec/emit";
+import { A_REAL } from "velt/sqlite/schema";
 
 const FRESH: u8 = 0;
 const ACTIVE: u8 = 1;

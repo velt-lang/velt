@@ -1,9 +1,9 @@
 // requires: unix
-// Positioned file I/O through velt:fs's fd API (Velt over system functions, no runtime in
+// Positioned file I/O through velt/fs's fd API (Velt over system functions, no runtime in
 // between): random 4 KiB `readSync` at a position in a 64 MiB file, sequential 64 KiB reads of
 // the whole file, and small `writeSync` + `fsyncSync`. The same work as pread.js (Node) and
 // rust/ (`FileExt::read_at`). Prints `name ms checksum` per workload. Usage: pread <file>.
-import * as fs from "velt:fs/fd";
+import * as fs from "velt/fs/fd";
 
 const PAGE = 4096;
 const READS = 200000;

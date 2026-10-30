@@ -54,7 +54,7 @@ impl FnCx<'_, '_> {
         if !self.frozen_readable_here(inner) {
             return h;
         }
-        // `velt:sync/epoch`, which the prelude imports for every program, reads its registry
+        // `velt/sync/epoch`, which the prelude imports for every program, reads its registry
         // in place: that alone does not make a program one that reads `shared` values.
         let m = &self.cx.modules[self.module];
         if !(m.is_std && m.path == "std/sync/epoch") {
@@ -147,7 +147,7 @@ impl FnCx<'_, '_> {
         let view = self.cx.class_of(obj.ty).is_some_and(|(d, _)| {
             self.cx
                 .adt(d)
-                .is_some_and(|a| a.qual_name.starts_with("std/typed_array/"))
+                .is_some_and(|a| a.qual_name.starts_with("std/lang/typed_array/"))
         });
         if !view {
             return false;

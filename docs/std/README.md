@@ -4,8 +4,8 @@ The standard library is written in Velt and ships with the toolchain. Import a m
 `velt:` prefix, like Node's `node:` modules:
 
 ```ts ignore
-import { readFile, writeFile } from "velt:fs";
-import { Deque } from "velt:collections/deque";
+import { readFile, writeFile } from "velt/fs";
+import { Deque } from "velt/collections";
 ```
 
 The [prelude](prelude.md) (strings, arrays, `Map`, `Math`, `JSON`, `Error`, promises, …) is in
@@ -26,7 +26,7 @@ scope everywhere without an import, and so are Node's web globals: [`fetch`](fet
   closed`). An error that escapes `main` prints `Uncaught <Class>: <message> at
   <file>:<line>:<col>`, naming the error's actual class and, for an error thrown inside the
   standard library, the line of your code that called it.
-- **I/O errors** are `IoError { code, message }` from [`velt:io`](io.md). `code` is a
+- **I/O errors** are `IoError { code, message }` from [`velt/io`](io.md). `code` is a
   Node-style name: `"ENOENT"`, `"EACCES"`, `"ECONNREFUSED"`, `"EOF"`, … A failed file-system
   call has Node's message: `ENOENT: no such file or directory, open 'data.txt'`.
 - **Strings** are sequences of UTF-16 code units, as in JS: lengths and positions (`slice`,
@@ -50,10 +50,10 @@ scope everywhere without an import, and so are Node's web globals: [`fetch`](fet
 | Data formats | [json](json.md) · [csv](csv.md) · [db](db.md) (typed rows from any source) · [encoding](encoding.md) · [typed arrays](typed_array.md) · [streams](streams.md) · [compress](compress.md) (gzip, zlib, DEFLATE, Brotli) · [url](url.md) · [html](html.md) · [jsx](jsx.md) (TSX rendering) |
 | Collections | [collections/btree_map](collections/btree_map.md) · [collections/concurrent_map](collections/concurrent_map.md) · [collections/deque](collections/deque.md) · [collections/priority_queue](collections/priority_queue.md) · [collections/set](collections/set.md) · [collections/sorted_map](collections/sorted_map.md) · [arena](arena.md) |
 | Numbers and time | [math](math.md) · [bigint](bigint.md) · [random](random.md) · [datetime](datetime.md) · [timers](timers.md) |
-| Concurrency | [channel](channel.md) · [task](task.md) (cancellation, timeouts, task scopes) · [sync](sync.md) (`Atomic<T>` in the prelude; `Backoff`, `VersionLatch`; `velt:sync/epoch`) |
+| Concurrency | [channel](channel.md) · [task](task.md) (cancellation, timeouts, task scopes) · [sync](sync.md) (`Atomic<T>` in the prelude; `Backoff`, `VersionLatch`; `velt/sync/epoch`) |
 | Security and hashing | [crypto](crypto.md) · [uuid](uuid.md) · [hash](hash.md) (stable, non-cryptographic) |
 | Text | [regex](regex.md) |
-| Language | [string_builder](string_builder.md) (global `StringBuilder`) · [symbol](symbol.md) (global `Symbol`) · [simd](simd.md) (`velt:simd`: the vector types and their methods) · [mem](mem.md) (`needsDrop`, for containers) |
+| Language | [string_builder](string_builder.md) (global `StringBuilder`) · [symbol](symbol.md) (global `Symbol`) · [simd](simd.md) (`velt/simd`: the vector types and their methods) · [mem](mem.md) (`needsDrop`, for containers) |
 | Programs and the system | [process](process.md) · [cli](cli.md) · [child_process](child_process.md) · [os](os.md) |
 | Testing | [test](test.md) (the runner `velt test` builds into test programs) |
 | Packages | [package](package.md) (the type of `package.vlt`) |
@@ -69,33 +69,33 @@ what Velt can't do on its own:
 
 | Module | Runtime use |
 |---|---|
-| `velt:fs`, `velt:fs_stream`, `velt:net`, `velt:http` | file system, TCP and TLS streams, and an HTTP server on hyper; TLS, HTTPS and HTTP/2 through rustls |
-| `velt:fetch` | none of its own: the HTTP/1.1 client is written in Velt on `velt:net` streams, which the runtime pools between requests (`TcpStream.park`), and bodies are decoded by `velt:compress` (Velt) |
-| `velt:websocket` | none of its own: the protocol is written in Velt on `velt:net` streams and `velt:http` upgrades (the runtime only masks bytes, checks UTF-8 and draws masking keys) |
-| `velt:process`, `velt:stdin`, `velt:os` | arguments, environment, working directory, standard input, platform facts |
-| `velt:regex` | Rust's `regex` engine |
-| `velt:channel`, `velt:task` | channel queues, abort signals and task groups |
-| `velt:child_process` | process spawning and pipes |
-| `velt:udp`, `velt:dns` | sockets and the system resolver |
-| `velt:bigint` | arbitrary-precision integers (dashu-int) |
-| `velt:crypto`, `velt:uuid` | only the operating system's secure random generator; hashing, HMAC and formatting are pure Velt (on the CPU's SHA instructions through `velt:simd` where it has them) |
-| `velt:random` | a per-thread wyrand generator |
-| `velt:datetime` | only the local UTC offset; calendar math, parsing and formatting are pure Velt |
-| `velt:html` | `escapeHtml` is one runtime pass |
-| `velt:hash` | FNV-1a over a string's or array's bytes, without a copy |
-| `velt:sqlite` | embedded SQLite (rusqlite); transactions and row decoding are Velt |
-| `velt:postgres` | tokio-postgres connections, pool, statement cache, TLS and `COPY`; transactions and row decoding are Velt |
-| `velt:redis` | a RESP2 client over tokio and rustls: multiplexed connections, pipelines, pub/sub |
+| `velt/fs`, `velt/fs`, `velt/net`, `velt/http` | file system, TCP and TLS streams, and an HTTP server on hyper; TLS, HTTPS and HTTP/2 through rustls |
+| `velt/net/http` | none of its own: the HTTP/1.1 client is written in Velt on `velt/net` streams, which the runtime pools between requests (`TcpStream.park`), and bodies are decoded by `velt/compress` (Velt) |
+| `velt/net/websocket` | none of its own: the protocol is written in Velt on `velt/net` streams and `velt/http` upgrades (the runtime only masks bytes, checks UTF-8 and draws masking keys) |
+| `velt/process`, `velt/process`, `velt/os` | arguments, environment, working directory, standard input, platform facts |
+| `velt/text` | Rust's `regex` engine |
+| `velt/sync`, `velt/task` | channel queues, abort signals and task groups |
+| `velt/process/child` | process spawning and pipes |
+| `velt/net/udp`, `velt/net/dns` | sockets and the system resolver |
+| `velt/math` | arbitrary-precision integers (dashu-int) |
+| `velt/crypto`, `velt/random/uuid` | only the operating system's secure random generator; hashing, HMAC and formatting are pure Velt (on the CPU's SHA instructions through `velt/simd` where it has them) |
+| `velt/random` | a per-thread wyrand generator |
+| `velt/time` | only the local UTC offset; calendar math, parsing and formatting are pure Velt |
+| `velt/text` | `escapeHtml` is one runtime pass |
+| `velt/hash` | FNV-1a over a string's or array's bytes, without a copy |
+| `velt/sqlite` | embedded SQLite (rusqlite); transactions and row decoding are Velt |
+| `velt/postgres` | tokio-postgres connections, pool, statement cache, TLS and `COPY`; transactions and row decoding are Velt |
+| `velt/redis` | a RESP2 client over tokio and rustls: multiplexed connections, pipelines, pub/sub |
 
-Pure Velt: `velt:path`, `velt:math`, `velt:mem`, `velt:collections/*`, `velt:arena`, `velt:csv`, `velt:cli`,
-`velt:timers` (built on `sleep`, `spawn` and `velt:task` signals), `velt:sqlite/engine` and `velt:json`; `velt:jsx`
-too (escaping through `velt:html`). `velt:encoding`, `velt:url` and `velt:io` use only the
+Pure Velt: `velt/path`, `velt/math`, `velt/mem`, `velt/collections/*`, `velt/mem`, `velt/encoding/csv`, `velt/cli`,
+`velt/time` (built on `sleep`, `spawn` and `velt/task` signals), `velt/sqlite/engine` and `velt/encoding/json`; `velt/jsx`
+too (escaping through `velt/text`). `velt/encoding`, `velt/net/url` and `velt/io` use only the
 runtime's UTF-8 conversions and error-code names. The runtime ABI is documented in
 [the internals](../internals/contracts/rt_abi_async.md).
 
 ## WebAssembly
 
 On the WebAssembly targets the language and the pure modules work as on native targets, and
-`velt:fs` uses the WASI file system. TCP, the HTTP server, child processes and the database
+`velt/fs` uses the WASI file system. TCP, the HTTP server, child processes and the database
 drivers are not available; `fetch` links but rejects with `IoError` `ENOTSUP` (no network)
 ([WebAssembly](../tooling/webassembly.md)).

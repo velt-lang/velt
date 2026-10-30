@@ -9,7 +9,7 @@
 // copy stops and leaves the `for await`, which closes the stream's source (an async generator's
 // `finally` blocks run).
 
-import { BodyStream } from "velt:fetch/body";
+import { BodyStream } from "velt/net/http/fetch/body";
 
 declare function velt_rt_http_resp_stream_open(r: u64): u64;
 declare function velt_rt_http_resp_stream_write_bytes(w: u64, data: u8[]): bool;

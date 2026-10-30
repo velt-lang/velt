@@ -1,5 +1,5 @@
 // A read returns at most the bytes asked for, also after a larger read on the same thread.
-import { listen, connect } from "velt:net";
+import { listen, connect } from "velt/net";
 
 async function main() {
   const l = await listen("127.0.0.1:0");

@@ -1,12 +1,12 @@
-// velt:sqlite/record — building records and comparing them as SQLite orders index keys
+// velt/sqlite/record — building records and comparing them as SQLite orders index keys
 // (https://sqlite.org/fileformat2.html#record_format, https://sqlite.org/datatype3.html#sort_order).
 //
 // Order: NULL < INTEGER and REAL (by value, compared exactly across the two) < TEXT (by the
 // column's collation; BINARY compares the UTF-8 bytes) < BLOB (bytes). A key that is a prefix of
 // a record compares equal to it here; the caller decides what equal means for a seek.
 
-import { corrupt, fieldSize, readBe, readVarint, serialSize } from "velt:sqlite/format";
-import { utf8Encode } from "velt:encoding";
+import { corrupt, fieldSize, readBe, readVarint, serialSize } from "velt/sqlite/format";
+import { utf8Encode } from "velt/encoding";
 
 /** Collations of index columns. */
 export const BINARY: u8 = 0;

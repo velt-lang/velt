@@ -1,6 +1,6 @@
 // binary-trees (Benchmarks Game): multi-threaded Velt, the shape of Node #6 / Go #2 (one task
 // per depth, results printed in order): `spawn` + `Promise.all` instead of worker threads.
-import { args } from "velt:process";
+import { args } from "velt/process";
 
 const MIN_DEPTH = 4;
 

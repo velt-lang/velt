@@ -1,4 +1,4 @@
-// velt:sqlite/sql/lexer — SQLite's SQL tokens (https://sqlite.org/lang_keywords.html,
+// velt/sqlite/sql/lexer — SQLite's SQL tokens (https://sqlite.org/lang_keywords.html,
 // tokenize.c): identifiers (bare, "double-quoted", [bracketed], `backticked`), string literals
 // with '' escapes, blob literals X'…', integers (decimal and 0x hex), reals, parameters (?, ?NNN,
 // :name, @name, $name), operators and comments. Keywords are identifiers here; the parser
@@ -37,7 +37,7 @@ export const K_INDEXED: u8 = 3;
 export const K_RESERVED: u8 = 4;
 /**
  * FILTER, OVER and WINDOW: keywords only where tokenize.c's look-around makes them so
- * (velt:sqlite/sql/cursor's `classAt` decides).
+ * (velt/sqlite/sql/cursor's `classAt` decides).
  */
 export const K_CONTEXT: u8 = 5;
 

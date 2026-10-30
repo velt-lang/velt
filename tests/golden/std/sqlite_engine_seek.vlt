@@ -1,18 +1,18 @@
-// B-tree seeks and backward scans of the Velt SQLite reader (velt:sqlite/btree_seek,
-// velt:sqlite/btree_back) on a file C SQLite writes (through velt:sqlite), with 512-byte pages so
+// B-tree seeks and backward scans of the Velt SQLite reader (velt/sqlite/btree_seek,
+// velt/sqlite/btree_back) on a file C SQLite writes (through velt/sqlite), with 512-byte pages so
 // the trees are several levels deep: a rowid seek at or after a key and at or before it, a scan
 // from the last row to the first, and seeks into an index (with mixed storage classes, a NOCASE
 // column and a DESC column) to the first entry at or after a key, after it, and the last at or
 // before it. Each answer is compared with C SQLite's for the same question.
-import { open } from "velt:sqlite";
-import { DbFile } from "velt:sqlite/format";
-import { Cursor, INTEGER, TEXT } from "velt:sqlite/btree";
-import { BINARY, KeyRec, NOCASE } from "velt:sqlite/record";
-import "velt:sqlite/btree_seek";
-import "velt:sqlite/btree_back";
-import { tmpdir } from "velt:os";
-import { uuidv4 } from "velt:uuid";
-import { readFileBytesSync, removeSync } from "velt:fs";
+import { open } from "velt/sqlite";
+import { DbFile } from "velt/sqlite/format";
+import { Cursor, INTEGER, TEXT } from "velt/sqlite/btree";
+import { BINARY, KeyRec, NOCASE } from "velt/sqlite/record";
+import "velt/sqlite/btree_seek";
+import "velt/sqlite/btree_back";
+import { tmpdir } from "velt/os";
+import { uuidv4 } from "velt/random/uuid";
+import { readFileBytesSync, removeSync } from "velt/fs";
 
 struct Root {
   name: string;

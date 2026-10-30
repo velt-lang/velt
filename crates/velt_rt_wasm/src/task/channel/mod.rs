@@ -1,4 +1,4 @@
-//! `velt_rt_chan_*` on the current-thread executor: `Channel<T>` (std/channel.vlt) with the
+//! `velt_rt_chan_*` on the current-thread executor: `Channel<T>` (std/sync/channel.vlt) with the
 //! semantics of velt_rt's task/channel (see there): items are the bytes of Velt values, the
 //! receive result is a `T | null`, and a closed, drained channel leaves the handle table. One
 //! thread, so a `RefCell` queue whose waiters are all woken on every change and re-check.

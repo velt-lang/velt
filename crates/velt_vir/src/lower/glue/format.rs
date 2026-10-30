@@ -495,11 +495,11 @@ impl FnLower<'_, '_> {
         self.call_rt(Rt::StrbufInspectAtom, vec![buf.clone(), start], None);
     }
 
-    /// Is `ty` std's `NativeInspect` (std/typed_array/core.vlt), the result of an `__inspect()`
+    /// Is `ty` std's `NativeInspect` (std/lang/typed_array/core.vlt), the result of an `__inspect()`
     /// that prints one of Node's own objects?
     fn is_native_inspect(&self, ty: TyId) -> bool {
         matches!(self.cx.kind(ty), TyKind::Adt(d, _)
-            if self.cx.adt_def(d).name == "std/typed_array/core::NativeInspect")
+            if self.cx.adt_def(d).name == "std/lang/typed_array/core::NativeInspect")
     }
 
     /// Print the object at address `p` with `body`, unless it is already being printed: an
@@ -535,7 +535,7 @@ impl FnLower<'_, '_> {
 
 impl FnLower<'_, '_> {
     /// The tag of a class object's function type (velt_sema's `ctor_objects.rs`): its rest
-    /// parameter is `__ClassMarker<T>[]`, `T` the tag (std/prelude/zzz_adapt_ctor.vlt).
+    /// parameter is `__ClassMarker<T>[]`, `T` the tag (std/prelude/adapt_ctor.vlt).
     fn class_object_tag(&self, ty: TyId) -> Option<TyId> {
         let TyKind::FnPtr {
             params, rest: true, ..

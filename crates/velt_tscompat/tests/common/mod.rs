@@ -201,7 +201,7 @@ impl Loader {
                     .ast
                     .jsx_import_source
                     .clone()
-                    .unwrap_or_else(|| "velt:jsx".into());
+                    .unwrap_or_else(|| "velt/jsx".into());
                 let spec = format!("{}/jsx-runtime", source.trim_end_matches('/'));
                 if let Some(target) = self.import(m, &spec) {
                     let path = self.modules[target].path.clone();

@@ -616,7 +616,7 @@ impl FnLower<'_, '_> {
         }
         self.this_fn_call_keys((data, key, argv, argc, out), ty);
         if self.prelude_record(ty).is_some() {
-            // The prelude's `__anyRec_` functions (std/record/reflect.vlt: what
+            // The prelude's `__anyRec_` functions (std/lang/record/reflect.vlt: what
             // `Reflect` does to a record's symbol keys); a record's function values come later.
             return self.any_record_call((data, key, argv, argc, out), ty);
         }

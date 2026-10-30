@@ -1,10 +1,10 @@
-// velt:sqlite/exec/date_format — the text of a date and time (velt:sqlite/exec/date): the
+// velt/sqlite/exec/date_format — the text of a date and time (velt/sqlite/exec/date): the
 // `YYYY-MM-DD` and `HH:MM:SS` forms and strftime()'s conversions, as SQLite's date.c writes them.
 
-import { DateTime, at, computeHMS, computeJD, computeYMD } from "velt:sqlite/exec/date";
-import { FMT_FLOAT, FMT_GENERIC, formatReal } from "velt:sqlite/exec/fp";
-import { cBytes } from "velt:sqlite/exec/text";
-import { Val, nullVal, textVal } from "velt:sqlite/exec/value";
+import { DateTime, at, computeHMS, computeJD, computeYMD } from "velt/sqlite/exec/date";
+import { FMT_FLOAT, FMT_GENERIC, formatReal } from "velt/sqlite/exec/fp";
+import { cBytes } from "velt/sqlite/exec/text";
+import { Val, nullVal, textVal } from "velt/sqlite/exec/value";
 
 // `v` as C's `%0<w>d` writes it: the sign counts in the width (-1 in four is `-001`).
 function pad(v: i64, w: usize): string {

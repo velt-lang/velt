@@ -1,7 +1,7 @@
 // requires-env: VELT_TEST_REDIS_URL
 // std/redis: pub/sub with pulled messages (`next()` and `for await`), pattern subscriptions and
 // close() from another task.
-import { connect, subscribe, psubscribe, RedisSubscriber, RedisMessage } from "velt:redis";
+import { connect, subscribe, psubscribe, RedisSubscriber, RedisMessage } from "velt/redis";
 import { redisUrl, freshPrefix } from "./_redis";
 
 function show(m: RedisMessage | null, p: string): string {

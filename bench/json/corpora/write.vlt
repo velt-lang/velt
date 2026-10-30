@@ -1,8 +1,8 @@
 // A corpus parsed once (JSON.parseValue) and written back `rounds` times (`stringify`); prints
 // the last text written, which run.sh compares byte for byte with Node's JSON.stringify.
 // Usage: write <file> <rounds>
-import { readFileSync } from "velt:fs";
-import { args } from "velt:process";
+import { readFileSync } from "velt/fs";
+import { args } from "velt/process";
 
 function main() {
   const argv = args();

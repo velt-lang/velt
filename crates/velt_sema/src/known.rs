@@ -123,7 +123,7 @@ impl Ctx<'_> {
         let module = self
             .modules
             .iter()
-            .position(|m| m.is_std && m.path == "std/channel");
+            .position(|m| m.is_std && m.path == "std/sync/channel");
         let channel = match module.and_then(|m| self.scopes[m].items.get("Channel")) {
             Some(Item::Def(d)) => *d,
             _ => return vec![],

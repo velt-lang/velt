@@ -1,5 +1,5 @@
 //! A std module may use the SIMD type names without importing them (they are built in there),
-//! but their methods come from `velt:simd`: one that calls `u8x16.splat` without the import
+//! but their methods come from `velt/simd`: one that calls `u8x16.splat` without the import
 //! gets an error that names the import, not only "not a static method". std is copied to a
 //! temp directory with a probe module added, and `velt check` runs with `$VELT_STD` on it.
 
@@ -51,5 +51,5 @@ fn std_module_without_the_import_is_told_to_import() {
         err.contains("`u8x16.splat` is not a static method"),
         "{err}"
     );
-    assert!(err.contains("import { u8x16 } from \"velt:simd\""), "{err}");
+    assert!(err.contains("import { u8x16 } from \"velt/simd\""), "{err}");
 }

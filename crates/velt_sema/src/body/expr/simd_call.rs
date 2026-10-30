@@ -1,4 +1,4 @@
-//! Static calls on the SIMD types (`velt:simd`): `u8x16.splat(x)` and the other static methods
+//! Static calls on the SIMD types (`velt/simd`): `u8x16.splat(x)` and the other static methods
 //! their `extend` blocks declare, and `T.shuffle(a, b, …)`, whose literal lane indices become
 //! part of the operation.
 
@@ -11,7 +11,7 @@ use crate::hir::{self, Callee, ExprKind as H, TyId, TyKind};
 
 impl FnCx<'_, '_> {
     /// The SIMD type `name` names in this module, where `item` is what it binds: the built-in
-    /// type in std, elsewhere the `export type u8x16 = u8x16` of `velt:simd` it imports.
+    /// type in std, elsewhere the `export type u8x16 = u8x16` of `velt/simd` it imports.
     pub(super) fn simd_type_named(&self, name: &str, item: Option<Item>) -> Option<hir::SimdTy> {
         match item {
             Some(Item::Alias(a)) => {
@@ -61,12 +61,12 @@ impl FnCx<'_, '_> {
             };
             let mut d =
                 Diagnostic::error(format!("`{}.{}` is {what}", id.name, prop.name), prop.span);
-            // No extension of the type at all: its API (`velt:simd`) is not loaded, which a std
+            // No extension of the type at all: its API (`velt/simd`) is not loaded, which a std
             // module that uses the built-in name without importing it gets.
             if !self.cx.extensions.iter().any(|x| x.target == target) {
                 let name = simd.name();
                 d = d.with_note(format!(
-                    "the methods are loaded by importing the type: `import {{ {name} }} from \"velt:simd\";`"
+                    "the methods are loaded by importing the type: `import {{ {name} }} from \"velt/simd\";`"
                 ));
             }
             self.cx.error(d);

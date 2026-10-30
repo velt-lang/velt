@@ -1,6 +1,6 @@
-# velt:net
+# velt/net
 
-`import { listen, connect } from "velt:net"`. TCP, and TLS over TCP. `TcpListener` and
+`import { listen, connect } from "velt/net"`. TCP, and TLS over TCP. `TcpListener` and
 `TcpStream` are structs around a handle, like file descriptors. Release each handle with
 `close()`.
 
@@ -71,7 +71,7 @@ A TLS stream is a `TcpStream` like any other: one task can read while another wr
 first.
 
 ```ts
-import { listen, connect, TcpListener } from "velt:net";
+import { listen, connect, TcpListener } from "velt/net";
 
 async function echoOnce(l: TcpListener): Promise<void> {
   const conn = await l.accept();
@@ -93,8 +93,8 @@ async function main() {
 ```
 
 ```ts
-import { listenTls, connectTls } from "velt:net";
-import { readFile } from "velt:fs";
+import { listenTls, connectTls } from "velt/net";
+import { readFile } from "velt/fs";
 
 async function main() {
   const l = await listenTls("127.0.0.1:0", {

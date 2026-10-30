@@ -25,7 +25,7 @@ impl FnLower<'_, '_> {
         err: Local,
         ty: TyId,
     ) {
-        // The Velt reader (std/json/reader.vlt): over the text, or over the runtime's row
+        // The Velt reader (std/encoding/json/reader.vlt): over the text, or over the runtime's row
         // reader for a driver's rows (`FLAG_ROWS`, `FLAG_CURSOR`).
         let r = self.temp(Ty::Ptr);
         let fl = Operand::Copy(Place::local(flags));

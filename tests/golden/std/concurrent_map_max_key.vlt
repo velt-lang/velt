@@ -2,7 +2,7 @@
 // tree of several levels whose values are large (inner nodes pad their keys with it, so a descent
 // for it would follow a slot no separator covers), and `set` of it is a RangeError.
 
-import { ConcurrentMap } from "velt:collections/concurrent_map";
+import { ConcurrentMap } from "velt/collections";
 
 const MAXK: u64 = 18446744073709551615;
 

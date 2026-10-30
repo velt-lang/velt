@@ -176,7 +176,7 @@ def http_servers(ctx, server_cpus):
     bun_ts = os.path.join(ctx.here, "bun", "techempower.ts")
     return [
         # (label, lang, [cmd per process] given the port, env, error)
-        ("Velt velt:http", "velt", lambda p: [[velt, str(p)]], {"VELT_THREADS": str(n)}, verr),
+        ("Velt velt/http", "velt", lambda p: [[velt, str(p)]], {"VELT_THREADS": str(n)}, verr),
         ("Rust axum", "rust", lambda p: [[os.path.join(axum_t, "release", "techempower-axum"), str(p)]], {}, aerr),
         ("Node node:http (1 process)", "node", lambda p: [[node, os.path.join(te, "server.mjs"), str(p)]], {}, nerr),
         (f"Node node:cluster ({n} workers)", "node", lambda p: [[node, os.path.join(te, "server.mjs"), str(p)]],

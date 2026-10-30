@@ -1,6 +1,6 @@
 // `scope.spawn(p)` already starts a task: as a statement it is still a floating promise, and the
 // hint says to await it or keep its handle, not to wrap it in `spawn(...)` (#148).
-import { TaskScope, taskScope } from "velt:task";
+import { TaskScope, taskScope } from "velt/task";
 
 async function work(): Promise<i64> {
   return 1;

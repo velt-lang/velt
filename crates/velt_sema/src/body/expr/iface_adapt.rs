@@ -18,7 +18,7 @@
 //! - an argument for a parameter of type `unknown[]`, `Map<unknown, unknown>` or `Set<unknown>`
 //!   ([`Container`]), which may hold elements of any type, is passed as a copy holding them
 //!   boxed, written back into the caller's container when the call returns (the prelude
-//!   helpers of std/prelude/zzz_adapt.vlt);
+//!   helpers of std/prelude/adapt.vlt);
 //! - another parameter type holding `unknown` (`Box<unknown>`) refuses the conversion, with the
 //!   reason in the mismatch's note ([`FnCx::adapt_refusal`]).
 //!
@@ -107,7 +107,7 @@ pub(super) fn has_params(cx: &Ctx, t: TyId) -> bool {
 }
 
 /// A container parameter type the adapter passes as a copy of boxed elements, written back
-/// after the call (std/prelude/zzz_adapt.vlt): `unknown[]`, `Map<unknown, unknown>` and
+/// after the call (std/prelude/adapt.vlt): `unknown[]`, `Map<unknown, unknown>` and
 /// `Set<unknown>`, the shapes of a serializer's handler table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Container {

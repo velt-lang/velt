@@ -1,9 +1,9 @@
-// Taking a connection over from HTTP: velt:http's `upgradeConnection` for a protocol of one's
-// own (velt:http/server's WebSocket handshake is websocket.test.vlt's).
-import { isUpgradeRequest, serve, upgradeConnection } from "velt:http";
-import { connect, connectTls, TcpStream } from "velt:net";
-import { afterAll, beforeAll, describe, expect, it } from "velt:test";
-import "velt:test/http";
+// Taking a connection over from HTTP: velt/http's `upgradeConnection` for a protocol of one's
+// own (velt/http/server's WebSocket handshake is websocket.test.vlt's).
+import { isUpgradeRequest, serve, upgradeConnection } from "velt/http";
+import { connect, connectTls, TcpStream } from "velt/net";
+import { afterAll, beforeAll, describe, expect, it } from "velt/test";
+import "velt/test/http";
 import { TEST_CA, TEST_CERT, TEST_KEY } from "../../golden/std/_tls";
 
 // The custom protocol: every line comes back in upper case; "bye" ends it.

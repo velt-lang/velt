@@ -14,15 +14,15 @@ const VELT_PRELUDE: &[&str] = &["std/prelude/compare", "std/prelude/bits"];
 /// The modules of Velt-only globals (no JavaScript counterpart): like `VELT_PRELUDE`, their
 /// integer parameters and results stay integers (`StringBuilder.appendInt` takes an `i64`, so a
 /// `number` with a fraction is an error, not truncated).
-const VELT_GLOBAL_MODULES: &[&str] = &["std/string_builder"];
+const VELT_GLOBAL_MODULES: &[&str] = &["std/text/string_builder"];
 
 impl<'m> Ctx<'m> {
     /// Is the function `f` (fully qualified name, module) part of the JS API the standard
     /// library provides? Everything in a prelude module is, but for `VELT_PRELUDE`. In a module the prelude's globals
-    /// re-export from (`velt:fetch` and its submodules such as `std/fetch/response`, `velt:url`,
-    /// `velt:task`), the methods are (of the re-exported classes and the classes they use), and
+    /// re-export from (`velt/net/http` and its submodules such as `std/fetch/response`, `velt/net/url`,
+    /// `velt/task`), the methods are (of the re-exported classes and the classes they use), and
     /// the top-level functions the globals re-export (`fetch`), but not its other functions:
-    /// `velt:task`'s `workerCount()` is a Velt API whether or not the program names
+    /// `velt/task`'s `workerCount()` is a Velt API whether or not the program names
     /// `AbortController`, which loads that module's global.
     pub(crate) fn is_js_api_fn(&self, module: usize, name: &str) -> bool {
         let Some(names) = self.js_api_modules().get(&module) else {

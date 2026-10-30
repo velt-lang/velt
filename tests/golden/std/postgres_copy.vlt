@@ -2,8 +2,8 @@
 // std/postgres COPY streaming: copyFrom writes rows in chunks (split anywhere), copyTo reads
 // them back as they arrive (with read() and with for await); abort() cancels a copy, a bad row
 // fails end() and a transaction.
-import { uuidv4 } from "velt:uuid";
-import { connect } from "velt:postgres";
+import { uuidv4 } from "velt/random/uuid";
+import { connect } from "velt/postgres";
 
 class Count {
   n: i64;

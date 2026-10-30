@@ -1,13 +1,13 @@
-// velt:sqlite/exec/printf — SQLite's printf() and format() SQL functions (printf.c's
+// velt/sqlite/exec/printf — SQLite's printf() and format() SQL functions (printf.c's
 // sqlite3_str_vappendf with SQL arguments): `%[flags][width][.precision]conversion` with the
 // flags `-+ 0#,!`, `*` widths, and the conversions d i u x X o c s z q Q w f e E g G %. A result
 // over SQLite's length limit is `string or blob too big`, found before the padding is built.
 
-import { NULL } from "velt:sqlite/btree";
-import { FMT_EXP, FMT_FLOAT, FMT_GENERIC, formatReal } from "velt:sqlite/exec/fp";
-import { toF64, toI64 } from "velt:sqlite/exec/ops";
-import { cBytes, charAt } from "velt:sqlite/exec/text";
-import { MAX_LENGTH, Val, nullVal, textVal, toText, tooBig } from "velt:sqlite/exec/value";
+import { NULL } from "velt/sqlite/btree";
+import { FMT_EXP, FMT_FLOAT, FMT_GENERIC, formatReal } from "velt/sqlite/exec/fp";
+import { toF64, toI64 } from "velt/sqlite/exec/ops";
+import { cBytes, charAt } from "velt/sqlite/exec/text";
+import { MAX_LENGTH, Val, nullVal, textVal, toText, tooBig } from "velt/sqlite/exec/value";
 
 class Args {
   vals: Val[];

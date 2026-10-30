@@ -1,6 +1,6 @@
 //! Standard-library code checked on demand (#1658, docs/internals/design/lazy-std.md). The
-//! prelude imports modules that most programs never use (`velt:number/parse`,
-//! `velt:json/reader`, …), and checking all of their bodies cost every program, hello world
+//! prelude imports modules that most programs never use (`velt/lang/number/parse`,
+//! `velt/encoding/json/reader`, …), and checking all of their bodies cost every program, hello world
 //! included, although lowering only builds what `main` reaches. So std definitions are
 //! *deferred*: checked once checked code reaches them. [`reach`] runs after the other bodies:
 //! it scans the checked HIR for references to deferred functions and constants (a call, a
@@ -34,18 +34,18 @@ use crate::hir::{self, Callee, DefId, ExprKind as E, TyId, TyKind};
 /// (`velt_vir` `STABLE_SORT`, the proxy and typed-array glue, the epoch sections' `pin`,
 /// `unpin` and `retire`, `this_fn`'s glue) and calls them.
 const EAGER: &[&str] = &[
-    "std/sort",
-    "std/proxy",
-    "std/typed_array",
+    "std/lang/sort",
+    "std/lang/proxy",
+    "std/lang/typed_array",
     "std/sync/epoch",
-    "std/this_fn",
+    "std/lang/this_fn",
 ];
 
 /// Std modules whose definitions lowering's JSON glue calls by name (`velt_vir` `json_std_fn`:
 /// `std/json/reader::Reader.<method>`, `std/json/writer::<fn>`): all of a module's deferred
 /// definitions are reached once checked code instantiates an intrinsic whose glue calls it
 /// (`lazy_std_json.rs`). What they call in other modules is reached from their code as usual.
-const JSON_GLUE: [&str; 2] = ["std/json/reader", "std/json/writer"];
+const JSON_GLUE: [&str; 2] = ["std/encoding/json/reader", "std/encoding/json/writer"];
 
 /// Per [`JSON_GLUE`] module: the prelude definitions (full names) that the same glue calls by
 /// name, reached with that module rather than kept checked as helpers (a `JsonValue` built from
@@ -58,7 +58,7 @@ const JSON_GLUE_PRELUDE: [&[&str]; 2] = [&[], &[]];
 /// value of the type (`JsonValue.__writeJson` writes one, `__runtimeHandle` prints one,
 /// `__fromReader` decodes one: [`LAZY_PRELUDE_STATICS`]), and
 /// their code reaches large modules most programs never load (`JsonValue`'s the tape,
-/// velt:json/tape).
+/// velt/encoding/json/tape).
 const LAZY_PRELUDE_TYPES: &[&str] = &["std/prelude/json/json::JsonValue"];
 
 /// Static methods of [`LAZY_PRELUDE_TYPES`] checked with the type's methods, once the type is
@@ -75,7 +75,7 @@ fn json_glue_prelude(name: &str) -> Option<usize> {
 /// The prelude's modules (path prefixes): lowering looks up the methods of their classes and
 /// some of their functions by name ([`is_helper`]), so only their other free functions and
 /// static methods are deferred.
-const HELPERS: &[&str] = &["std/prelude/", "std/record", "std/collections"];
+const HELPERS: &[&str] = &["std/prelude/", "std/lang/record", "std/collections"];
 
 /// The prelude functions lowering looks up by name (`velt_vir` `prelude_def`, `LOOSE_EQ`,
 /// `FLOAT_INDEX`, `TLA_MARK`, `track_caller`, …): every `"__…"` name in the code of lowering, the

@@ -1,14 +1,14 @@
-// Queries whose answer depends on the plan the SQLite engine written in Velt (velt:sqlite/engine)
-// picks, against C SQLite (velt:sqlite) on the same file: which row of a DISTINCT or GROUP BY
+// Queries whose answer depends on the plan the SQLite engine written in Velt (velt/sqlite/engine)
+// picks, against C SQLite (velt/sqlite) on the same file: which row of a DISTINCT or GROUP BY
 // group shows a column that only compares equal (NOCASE), and which index gives the order. The
 // rows must be the same as C SQLite's; the queries that differ are printed. Then plan()'s words
 // against EXPLAIN QUERY PLAN's.
-import { open } from "velt:sqlite";
-import { openDatabase } from "velt:sqlite/engine";
+import { open } from "velt/sqlite";
+import { openDatabase } from "velt/sqlite/engine";
 import { checkAll } from "./_sqlite_diff";
-import { tmpdir } from "velt:os";
-import { uuidv4 } from "velt:uuid";
-import { removeSync } from "velt:fs";
+import { tmpdir } from "velt/os";
+import { uuidv4 } from "velt/random/uuid";
+import { removeSync } from "velt/fs";
 
 const SETUP = `
 CREATE TABLE t1 (id INTEGER PRIMARY KEY, a INTEGER, b TEXT, c REAL, e TEXT COLLATE NOCASE);

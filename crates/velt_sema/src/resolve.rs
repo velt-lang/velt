@@ -298,7 +298,7 @@ impl Ctx<'_> {
             return self.ty.param(i as u32);
         }
         // The SIMD type names (`u8x16`) are built in only for std: other modules import them
-        // from `velt:simd` (#1055), whose `export type u8x16 = u8x16` names the built-in type.
+        // from `velt/simd` (#1055), whose `export type u8x16 = u8x16` names the built-in type.
         let simd_outside_std =
             crate::hir::SimdTy::named(name).is_some() && !self.scopes[env.module].is_std;
         // Velt's own type names (`u8`, `f32`, `bool`, …) are like library globals: a type the

@@ -1,14 +1,14 @@
-// velt:sqlite/exec/compound — combining the rows of compound selects as SQLite 3.53 does
+// velt/sqlite/exec/compound — combining the rows of compound selects as SQLite 3.53 does
 // (multiSelectByMerge): UNION ALL without ORDER BY appends; anything else merges the two sides
 // sorted by the ORDER BY (`ORDER BY 1` when there is none), which for UNION, INTERSECT and EXCEPT
 // is extended by every other column. On equal rows UNION keeps the right side's, INTERSECT the
 // left side's, EXCEPT drops the left one; a row equal to the one output before it is skipped.
 // The left side of `a op b op c` is `a op b`, merged the same way in the same order.
 
-import { C_EXCEPT, C_UNION, C_UNION_ALL } from "velt:sqlite/sql/ast";
-import { Query } from "velt:sqlite/exec/scope";
-import { SortKey, compareKeys } from "velt:sqlite/exec/emit";
-import { Val } from "velt:sqlite/exec/value";
+import { C_EXCEPT, C_UNION, C_UNION_ALL } from "velt/sqlite/sql/ast";
+import { Query } from "velt/sqlite/exec/scope";
+import { SortKey, compareKeys } from "velt/sqlite/exec/emit";
+import { Val } from "velt/sqlite/exec/value";
 
 function pick(rows: Val[], width: usize, idx: i64[]): Val[] {
   const out: Val[] = [];

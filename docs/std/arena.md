@@ -1,6 +1,6 @@
-# velt:arena
+# velt/mem
 
-`import { Arena } from "velt:arena"`. A typed memory pool (a region). Values are appended to one
+`import { Arena } from "velt/mem"`. A typed memory pool (a region). Values are appended to one
 growing array and named by their `u32` index, and the whole pool is released at once with
 `reset()`, which keeps the memory for the next round: a tree rebuilt on every iteration costs no
 allocation after the first one.
@@ -17,7 +17,7 @@ valid until `reset()`.
 - `reset()` drops every value and keeps the memory.
 
 ```ts
-import { Arena } from "velt:arena";
+import { Arena } from "velt/mem";
 
 struct Node {
   left: u32;

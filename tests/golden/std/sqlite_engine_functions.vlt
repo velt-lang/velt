@@ -1,13 +1,13 @@
-// The query engine's scalar functions (velt:sqlite/exec/func: text and number functions, printf,
-// the date and time functions) against C SQLite (velt:sqlite): each call's result is compared with
+// The query engine's scalar functions (velt/sqlite/exec/func: text and number functions, printf,
+// the date and time functions) against C SQLite (velt/sqlite): each call's result is compared with
 // what C SQLite computes for the same SQL; the calls that differ are printed. The arguments are
 // literals, read back from C SQLite as typed values.
-import { open, Database } from "velt:sqlite";
-import { BLOB, INTEGER, NULL, REAL, TEXT } from "velt:sqlite/btree";
-import { BINARY } from "velt:sqlite/record";
-import { Val, blobVal, intVal, nullVal, realVal, textVal, toText } from "velt:sqlite/exec/value";
-import { scalarFunction } from "velt:sqlite/exec/func";
-import { hexDecode, hexEncode } from "velt:encoding";
+import { open, Database } from "velt/sqlite";
+import { BLOB, INTEGER, NULL, REAL, TEXT } from "velt/sqlite/btree";
+import { BINARY } from "velt/sqlite/record";
+import { Val, blobVal, intVal, nullVal, realVal, textVal, toText } from "velt/sqlite/exec/value";
+import { scalarFunction } from "velt/sqlite/exec/func";
+import { hexDecode, hexEncode } from "velt/encoding";
 
 struct Described {
   d: string;

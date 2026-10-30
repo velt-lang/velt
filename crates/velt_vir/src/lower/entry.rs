@@ -272,7 +272,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
     }
 
     /// The `Error` class every member of the union `err` extends, when they all do (the errors
-    /// `velt:fs` throws: `IoError | RangeError | TypeError`).
+    /// `velt/fs` throws: `IoError | RangeError | TypeError`).
     fn common_error_root(&mut self, err: TyId) -> Option<DefId> {
         let mut root = None;
         for k in 0..self.union_len(err) {

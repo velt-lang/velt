@@ -1,5 +1,5 @@
 // Entry point: `velt run` builds and runs this.
-import { args } from "velt:process";
+import { args } from "velt/process";
 import { greet } from "./greet";
 
 function main() {

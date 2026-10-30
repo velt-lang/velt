@@ -2,8 +2,8 @@
 // component that loads when told to (`gate`), so the test can see the markup above it arrive
 // first.
 
-import { Element } from "velt:jsx";
-import { Channel } from "velt:channel";
+import { Element } from "velt/jsx";
+import { Channel } from "velt/sync";
 
 export class Post {
   id: i64;

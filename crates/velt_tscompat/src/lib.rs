@@ -98,7 +98,7 @@ pub struct LintModule<'a> {
     pub ast: &'a ast::Module,
     /// Each import's specifier with the file it resolved to.
     pub imports: Vec<(String, PathBuf)>,
-    /// The module contains JSX and its provider is the standard library's `velt:jsx`, which has
+    /// The module contains JSX and its provider is the standard library's `velt/jsx`, which has
     /// no TypeScript runtime.
     pub default_jsx_provider: bool,
 }

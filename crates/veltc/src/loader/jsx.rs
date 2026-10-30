@@ -7,7 +7,7 @@ use velt_common::Span;
 use velt_syntax::ast::{self, ExprKind as E, StmtKind as S};
 
 /// The import source of modules that name none.
-pub const DEFAULT_IMPORT_SOURCE: &str = "velt:jsx";
+pub const DEFAULT_IMPORT_SOURCE: &str = "velt/jsx";
 
 /// The module a JSX import source provides its factories from.
 pub fn runtime_spec(source: &str) -> String {

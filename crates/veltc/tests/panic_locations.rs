@@ -153,7 +153,7 @@ fn panics_report_their_source_location() {
 }
 
 /// Panic texts compiled into a program name a standard-library file relative to the std root
-/// (`std/math.vlt:17:15`), never by the absolute path of this checkout or install: std code
+/// (`std/math/index.vlt:17:15`), never by the absolute path of this checkout or install: std code
 /// compiles to the same bytes on every machine, so it can be compiled once and shared (#1728).
 #[test]
 fn std_locations_are_relative_to_the_std_root() {
@@ -171,5 +171,5 @@ fn std_locations_are_relative_to_the_std_root() {
         .find(|l| l.replace('\\', "/").contains(&std_root));
     assert_eq!(absolute, None, "an absolute std path in the program");
     // gcd's `x % y` (its division-by-zero check).
-    assert!(vir.contains(" at std/math.vlt:"), "no std location at all");
+    assert!(vir.contains(" at std/math/index.vlt:"), "no std location at all");
 }

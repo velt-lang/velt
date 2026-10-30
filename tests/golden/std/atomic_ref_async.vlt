@@ -2,7 +2,7 @@
 // that replace the value and collect at every step can never drop it between the load and the
 // count. Async tasks on 4 threads read while 4 others replace and collect; every value read is
 // whole (its check field agrees), and no count lands on a freed box.
-import { collect } from "velt:sync/epoch";
+import { collect } from "velt/sync/epoch";
 
 interface Snapshot {
   version: u64;

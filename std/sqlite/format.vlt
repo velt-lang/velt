@@ -1,4 +1,4 @@
-// velt:sqlite/format — the SQLite database file format (https://sqlite.org/fileformat2.html),
+// velt/sqlite/format — the SQLite database file format (https://sqlite.org/fileformat2.html),
 // read in Velt: the header, b-tree pages, cells, overflow chains and records.
 //
 // Step 1 of the pure-Velt engine (docs/internals/design/sqlite-engine.md): the whole file is

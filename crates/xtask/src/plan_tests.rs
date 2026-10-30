@@ -194,7 +194,7 @@ fn shared_golden_files_select_their_directory() {
 
 #[test]
 fn the_standard_library_runs_every_test_but_no_clippy() {
-    let p = plan(&["std/json.vlt"]);
+    let p = plan(&["std/encoding/json/index.vlt"]);
     assert!(!p.full && !p.rust);
     assert!(p.packages.contains("velt_rt") && p.packages.contains("velt_fmt"));
     assert!(!p.packages.contains("veltc"));
@@ -312,7 +312,7 @@ fn os_specific_changes_check_windows_and_macos_in_the_queue() {
         "crates/veltc/src/commands/registry.rs",
         "crates/vpm/src/credentials.rs",
         "crates/vpm/src/json_file.rs",
-        "std/fs.vlt",
+        "std/fs/index.vlt",
         "tests/golden/lang/foo.out",
         // The standard library's `velt test` suites run servers, sockets and files (#1892).
         "tests/std/http/responses.test.vlt",
@@ -463,7 +463,7 @@ fn example_apps_run_their_velt_tests() {
     for path in [
         "crates/velt_sema/src/lib.rs",
         "crates/velt_rt/src/lib.rs",
-        "std/fs.vlt",
+        "std/fs/index.vlt",
     ] {
         assert_eq!(plan(&[path]).veltc, Veltc::All, "{path}");
     }
@@ -480,7 +480,7 @@ fn std_suites_run_with_std_tests() {
     assert_eq!(p.veltc, Veltc::Some(set(&["std_tests"])));
     assert!(p.filterset().unwrap().contains("binary(std_tests)"));
     // A change to std or the runner runs every `veltc` test, `std_tests` with them.
-    assert_eq!(plan(&["std/test.vlt"]).veltc, Veltc::All);
+    assert_eq!(plan(&["std/test/index.vlt"]).veltc, Veltc::All);
 }
 
 #[test]
@@ -602,7 +602,7 @@ fn the_webassembly_goldens_run_only_for_webassembly_code() {
     for paths in [
         &["crates/velt_sema/src/check.rs"][..],
         &["crates/velt_rt/src/http.rs"],
-        &["std/json.vlt"],
+        &["std/encoding/json/index.vlt"],
         // Changes that select everything else leave them to the nightly too.
         &["Cargo.lock"],
         &[".github/workflows/ci.yml"],
@@ -648,7 +648,7 @@ fn main_skips_the_windows_and_macos_gate_the_queue_already_ran() {
     for path in [
         "crates/velt_rt/src/http.rs",
         "crates/veltc/src/main.rs",
-        "std/fs.vlt",
+        "std/fs/index.vlt",
         "tests/golden/lang/foo.out",
         ".github/workflows/ci.yml",
         "scripts/check-all.sh",

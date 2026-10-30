@@ -2,7 +2,7 @@
 // A subclass instance typed as its base class crosses a channel, a `shared(Mutex)` lock and a
 // task's result by its runtime class (#1057): its own fields go with it, never shared between
 // the tasks.
-import { channel, Channel, ChannelClosed } from "velt:channel";
+import { channel, Channel, ChannelClosed } from "velt/sync";
 
 class Base {
   go(): number {

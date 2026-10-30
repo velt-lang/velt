@@ -1,7 +1,7 @@
 // RESP2, the Redis protocol: requests are arrays of bulk strings (`*2\r\n$3\r\nGET\r\n$1\r\nk\r\n`)
 // or inline lines (`PING\r\n`); replies are written into a growable byte buffer.
-import { utf8Encode } from "velt:encoding";
-import { TcpStream } from "velt:net";
+import { utf8Encode } from "velt/encoding";
+import { TcpStream } from "velt/net";
 
 const CR: u8 = 13;
 const LF: u8 = 10;

@@ -2,7 +2,7 @@
 // hosts that end in a number, `@` and `:` in the authority, bracketed hosts, paths that are or
 // are not already serialized, and text to escape in each component. Expected output is Node's, except for the two hosts at
 // the end.
-import { URL } from "velt:url";
+import { URL } from "velt/net/url";
 
 function show(input: string) {
   const u = URL.parse(input);

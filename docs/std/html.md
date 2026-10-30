@@ -1,11 +1,11 @@
-# velt:html
+# velt/text
 
-`import { escapeHtml } from "velt:html"`. Escapes text for HTML element content and quoted
+`import { escapeHtml } from "velt/text"`. Escapes text for HTML element content and quoted
 attribute values in one pass: `&`, `<`, `>`, `"` and `'` become `&amp;`, `&lt;`, `&gt;`,
 `&quot;` and `&#39;`; everything else (including non-ASCII) is kept.
 
 ```ts
-import { escapeHtml } from "velt:html";
+import { escapeHtml } from "velt/text";
 
 function main() {
   const name = `<b>"Tom" & 'Jerry'</b>`;

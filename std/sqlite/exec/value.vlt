@@ -1,14 +1,14 @@
-// velt:sqlite/exec/value — SQLite's dynamically typed values and their rules: comparison across
+// velt/sqlite/exec/value — SQLite's dynamically typed values and their rules: comparison across
 // storage classes, affinity conversions, arithmetic with integer overflow to REAL, and text forms
 // (https://sqlite.org/datatype3.html, https://sqlite.org/lang_expr.html).
 
-import { NULL, INTEGER, REAL, TEXT, BLOB } from "velt:sqlite/btree";
-import { A_INTEGER, A_NUMERIC, A_REAL, A_TEXT } from "velt:sqlite/schema";
-import { BINARY, NOCASE, RTRIM } from "velt:sqlite/record";
-import { realText } from "velt:sqlite/real";
-import { utf8Encode, utf8DecodeLossy } from "velt:encoding";
-import { atof } from "velt:sqlite/exec/fp";
-import { SqlRunError } from "velt:sqlite/exec/errors";
+import { NULL, INTEGER, REAL, TEXT, BLOB } from "velt/sqlite/btree";
+import { A_INTEGER, A_NUMERIC, A_REAL, A_TEXT } from "velt/sqlite/schema";
+import { BINARY, NOCASE, RTRIM } from "velt/sqlite/record";
+import { realText } from "velt/sqlite/real";
+import { utf8Encode, utf8DecodeLossy } from "velt/encoding";
+import { atof } from "velt/sqlite/exec/fp";
+import { SqlRunError } from "velt/sqlite/exec/errors";
 
 /** A BLOB's bytes, boxed: a value that is no BLOB holds none (no empty array to make). */
 export class Blob {
@@ -19,7 +19,7 @@ export class Blob {
   }
 }
 
-/** One value: its storage class `t` (velt:sqlite/btree's NULL … BLOB) and the field for it. */
+/** One value: its storage class `t` (velt/sqlite/btree's NULL … BLOB) and the field for it. */
 export struct Val {
   t: u8;
   i: i64;
@@ -67,8 +67,8 @@ export function boolVal(x: bool): Val {
   return intVal(x ? 1 : 0);
 }
 
-/** A REAL's text as SQLite writes it (velt:sqlite/real). */
-export { realText } from "velt:sqlite/real";
+/** A REAL's text as SQLite writes it (velt/sqlite/real). */
+export { realText } from "velt/sqlite/real";
 
 /** The text of a value, as `CAST(v AS TEXT)` and concatenation give it (NULL is ""). */
 export function toText(v: Val): string {

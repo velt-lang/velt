@@ -1,6 +1,6 @@
 //! JavaScript's `ToPrimitive(v, hint)` of an object held in an `any` (#924), the conversion
 //! behind arithmetic, `+`, the relational operators and `==` on objects. The prelude's
-//! `__anyToPrimitive(v, hint, at)` (std/prelude/zzzzz_any_ops.vlt) ends with
+//! `__anyToPrimitive(v, hint, at)` (std/prelude/any_ops.vlt) ends with
 //! `__intrinsic_any_to_primitive(v, hint, at)`, which sema writes here as a dispatch over the
 //! program's classes, as `__anyString` holds the dispatch of `String(x)` (any_text.rs):
 //! - a class with a `[Symbol.toPrimitive]` is what that returns for `hint`;

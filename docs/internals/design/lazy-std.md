@@ -5,11 +5,11 @@ Status: implemented (#1658). Owner: `velt_sema` (`body/lazy_std.rs`).
 ## Problem
 
 The checker used to check every function body and module constant of every loaded module.
-The prelude imports std modules that most programs never use (`velt:number/parse` and its
-1,300-line table of powers of five, `velt:json/reader`, `velt:datetime/*`), so hello world
+The prelude imports std modules that most programs never use (`velt/lang/number/parse` and its
+1,300-line table of powers of five, `velt/encoding/json/reader`, `velt/time/*`), so hello world
 paid to check all of them. Lowering builds only what `main` reaches, so none of that code ends
 up in the program. Each such module made every program slower to compile: about 3% for
-`velt:number/parse`, about 20% more for `velt:json/reader`.
+`velt/lang/number/parse`, about 20% more for `velt/encoding/json/reader`.
 
 ## Design
 

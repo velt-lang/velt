@@ -3,7 +3,7 @@
 // the entries (a `[K, V]` tuple literal per entry) or the type arguments; a repeated key keeps
 // its first position and takes the last value. The argument stays as it was; the map or set
 // shares its keys and values, like JS.
-import { Set } from "velt:collections/set";
+import { Set } from "velt/collections";
 
 class Actor {
   name: string;

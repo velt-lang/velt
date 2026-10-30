@@ -1,4 +1,4 @@
-// velt:sqlite/exec/source — the FROM items of a query at run time, and the scopes names are
+// velt/sqlite/exec/source — the FROM items of a query at run time, and the scopes names are
 // resolved in.
 //
 // A `Source` is one FROM item: a table read through its b-tree cursor (and, when the plan picks
@@ -7,12 +7,12 @@
 // query stand on a row: values are decoded from the record only when read, and the table row
 // behind an index entry is found only when a column the index lacks is read.
 
-import { DbFile, serialSize } from "velt:sqlite/format";
-import { Cursor, INTEGER, NULL, REAL } from "velt:sqlite/btree";
-import { A_REAL, Table } from "velt:sqlite/schema";
-import { utf8Decode, utf8DecodeLossy } from "velt:encoding";
-import { Val, blobVal, intVal, nullVal, realVal, textVal } from "velt:sqlite/exec/value";
-import { IoResult } from "velt:io";
+import { DbFile, serialSize } from "velt/sqlite/format";
+import { Cursor, INTEGER, NULL, REAL } from "velt/sqlite/btree";
+import { A_REAL, Table } from "velt/sqlite/schema";
+import { utf8Decode, utf8DecodeLossy } from "velt/encoding";
+import { Val, blobVal, intVal, nullVal, realVal, textVal } from "velt/sqlite/exec/value";
+import { IoResult } from "velt/native/result";
 
 // `(const VeltBytes* b, i64 start, i64 end, IoResult<VeltStr>* out)`: the bytes in [start, end)
 // as a string, `EILSEQ` if they are not UTF-8.
@@ -242,7 +242,7 @@ export class Source {
     return this.real(k, cursorVal(c, k));
   }
 
-  // Typed reads of column `i` of the current row, without a `Val` (velt:sqlite/exec/pull):
+  // Typed reads of column `i` of the current row, without a `Val` (velt/sqlite/exec/pull):
   // `typeAt` first, then the read of that type.
 
   /** The storage class column `i` reads as (a REAL column's integers as REAL). */

@@ -5,7 +5,7 @@
 // setting the next timer: timer callbacks run as their own tasks, so two that are due at once
 // may run in either order.
 
-import { channel } from "velt:channel";
+import { channel } from "velt/sync";
 
 function tick(n?: number) {
   console.log("optional", n == null ? "none" : `${n}`);

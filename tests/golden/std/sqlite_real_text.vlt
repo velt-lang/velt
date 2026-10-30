@@ -1,8 +1,8 @@
-// A REAL as text in the Velt SQLite reader (velt:sqlite/real's `realText`, SQLite's
+// A REAL as text in the Velt SQLite reader (velt/sqlite/real's `realText`, SQLite's
 // sqlite3FpDecode and `%!.17g`) against C SQLite's CAST(x AS TEXT) of the same double: special
 // values, the exponent boundaries, integral values, subnormals, and pseudo-random bit patterns.
-import { open } from "velt:sqlite";
-import { realText } from "velt:sqlite/real";
+import { open } from "velt/sqlite";
+import { realText } from "velt/sqlite/real";
 
 struct Row {
   t: string;

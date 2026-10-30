@@ -11,8 +11,8 @@ import {
   randomInt,
   timingSafeEqual,
   CryptoError,
-} from "velt:crypto";
-import { hexEncode, utf8Encode } from "velt:encoding";
+} from "velt/crypto";
+import { hexEncode, utf8Encode } from "velt/encoding";
 
 function filled(n: i64, v: i64): u8[] {
   const out: u8[] = [];

@@ -7,8 +7,8 @@
 // 16-byte load gives two steps); Adler-32 sums 5552 bytes between reductions, the most that
 // cannot overflow 32 bits.
 
-import { u8x16, u64x2 } from "velt:simd";
-import { CRC_TABLE } from "velt:compress/inflate/tables";
+import { u8x16, u64x2 } from "velt/simd";
+import { CRC_TABLE } from "velt/compress/inflate/tables";
 
 // The vector load without its range check: `crc32` loads only where 16 bytes are left.
 declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;

@@ -1,7 +1,7 @@
 // Spawns this very program as the child (portable: no shell tools needed), selected by argv.
-import { exec, execSync, spawn } from "velt:child_process";
-import { argv, args } from "velt:process";
-import { readLineSync, readAllSync } from "velt:stdin";
+import { exec, execSync, spawn } from "velt/process/child";
+import { argv, args } from "velt/process";
+import { readLineSync, readAllSync } from "velt/process";
 
 // Child modes (the parent passes one as the first argument).
 function child(mode: string): i32 {

@@ -2,7 +2,7 @@
 // hand-written limb class, as main.vlt was before std/bigint: `BigInt` below is a minimal
 // arbitrary-precision integer (sign + base-2^32 magnitude in a `u32[]`) with only the in-place
 // operations the spigot needs. Compare with the Rust `pidigits_limbs` baseline (same limb code).
-import { args } from "velt:process";
+import { args } from "velt/process";
 
 const LIMB_BASE: f64 = 4294967296.0;
 

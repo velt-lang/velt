@@ -1,5 +1,5 @@
 //! The server side of std/fetch's `Request` and `Response` (rt_abi_async.md §7) without a
-//! network: WebAssembly programs serve nothing (`velt:http` is not available), so no request a
+//! network: WebAssembly programs serve nothing (`velt/http` is not available), so no request a
 //! server received and no server response ever exists. `Request` and `Response` still link, and
 //! these accessors stop the program if a forged handle reaches them.
 
@@ -59,7 +59,7 @@ pub extern "C" fn velt_rt_http_req_chunk(_r: u64) -> *mut VeltFut {
 #[no_mangle]
 pub extern "C" fn velt_rt_http_resp_drop(_r: u64) {}
 
-/// Building a server response: only `velt:http` does, which WebAssembly programs can't use.
+/// Building a server response: only `velt/http` does, which WebAssembly programs can't use.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_http_resp_build(
     _status: u32,
@@ -73,7 +73,7 @@ pub unsafe extern "C" fn velt_rt_http_resp_build(
     crate::panic::fatal("WebAssembly programs cannot serve HTTP")
 }
 
-/// Handing a response to a server request: there is none (only `velt:http` serves).
+/// Handing a response to a server request: there is none (only `velt/http` serves).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_http_req_respond(
     _req: u64,

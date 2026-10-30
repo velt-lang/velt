@@ -1,5 +1,5 @@
 // notes: a small note-taking CLI backed by a JSON file (see README.md).
-import { args, exit } from "velt:process";
+import { args, exit } from "velt/process";
 import { execute } from "./commands";
 
 function main() {

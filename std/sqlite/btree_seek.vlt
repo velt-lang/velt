@@ -1,5 +1,5 @@
-// velt:sqlite/btree_seek — seeking a b-tree: a table to a rowid (the leaf it is on, or the first
-// row after it), an index to a key decoded once (velt:sqlite/record's KeyRec). Each probe of a
+// velt/sqlite/btree_seek — seeking a b-tree: a table to a rowid (the leaf it is on, or the first
+// row after it), an index to a key decoded once (velt/sqlite/record's KeyRec). Each probe of a
 // binary search reads its cell in place (rowids of one or two varint bytes without a call, an
 // index payload that fits the page without copying, integer keys without decoding the record),
 // with the cell checks the rest of the reader makes.
@@ -14,9 +14,9 @@ import {
   readU16,
   readU32,
   readVarint,
-} from "velt:sqlite/format";
-import { Cursor, intValue } from "velt:sqlite/btree";
-import { KeyRec, compareToKey } from "velt:sqlite/record";
+} from "velt/sqlite/format";
+import { Cursor, intValue } from "velt/sqlite/btree";
+import { KeyRec, compareToKey } from "velt/sqlite/record";
 
 /** A b-tree is at most this deep (btree.vlt's limit). */
 const MAX_DEPTH: usize = 20;

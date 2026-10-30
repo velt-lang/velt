@@ -1,6 +1,6 @@
 //! `velt test` through the `velt` binary: the test files that only declare share one harness,
 //! each file runs in a process of its own, files run in parallel with their output in file order
-//! (`velt:test`), a failed assertion or a thrown error fails its test and the next one runs in
+//! (`velt/test`), a failed assertion or a thrown error fails its test and the next one runs in
 //! the same process, and a test that ends its process doesn't stop the tests after it.
 
 use std::path::Path;
@@ -231,7 +231,7 @@ export function test_uses_data() {
 ";
 
 const FIXTURES: &str = "\
-import { readFileSync } from \"velt:fs\";
+import { readFileSync } from \"velt/fs\";
 
 export const DATA = readFileSync(\"missing.json\");
 ";
@@ -389,7 +389,7 @@ fn a_leak_check_without_block_counts_fails_the_file() {
 
 /// Failures whose messages have several lines: `toEqual` on two values too long for one line,
 /// and an error whose message has a line break.
-const MULTI_LINE: &str = r#"import { expect } from "velt:test";
+const MULTI_LINE: &str = r#"import { expect } from "velt/test";
 
 const a = { name: "first value", items: ["one", "two", "three"], nested: { deep: true, n: 1 } };
 const b = { name: "first value", items: ["one", "two", "three"], nested: { deep: true, n: 2 } };

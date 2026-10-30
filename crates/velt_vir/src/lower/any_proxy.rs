@@ -1,5 +1,5 @@
 //! The descriptor slots of a proxy (issue #823; hir_encodings.md "Proxy and Reflect"). A
-//! proxy is an `any` holding the prelude's `Proxy` object (std/proxy.vlt); the
+//! proxy is an `any` holding the prelude's `Proxy` object (std/lang/proxy/index.vlt); the
 //! member slots of its table (any_member.rs, any_set.rs) call that class's methods, which run
 //! the handler's traps or forward to the target:
 //!
@@ -23,17 +23,17 @@ use crate::vir::{self, BinOp, Operand, Place, Rvalue, Terminator, Ty, STR_AGG};
 
 /// The qualified names of the prelude's `Proxy` and `Reflect` classes: a program's own
 /// classes are named after their modules, which are never under `std/`.
-pub(super) const PRELUDE_PROXY: &str = "std/proxy::Proxy";
-pub(super) const PRELUDE_REFLECT: &str = "std/proxy::Reflect";
+pub(super) const PRELUDE_PROXY: &str = "std/lang/proxy::Proxy";
+pub(super) const PRELUDE_REFLECT: &str = "std/lang/proxy::Reflect";
 /// The start of the names of `Reflect`'s methods.
-pub(super) const PRELUDE_REFLECT_METHODS: &str = "std/proxy::Reflect.";
-/// The prelude's array method read through a proxy (std/proxy/array.vlt).
-pub(super) const PRELUDE_ARRAY_METHOD: &str = "std/proxy/array::__ArrayMethod";
+pub(super) const PRELUDE_REFLECT_METHODS: &str = "std/lang/proxy::Reflect.";
+/// The prelude's array method read through a proxy (std/lang/proxy/array.vlt).
+pub(super) const PRELUDE_ARRAY_METHOD: &str = "std/lang/proxy/array::__ArrayMethod";
 
-/// The prelude's `Object.prototype.hasOwnProperty` read as a value (std/prelude/zzz_adapt.vlt)
-/// and its version that asks a proxy (std/proxy/ops.vlt).
-pub(super) const PRELUDE_HAS_OWN: &str = "std/prelude/zzz_adapt::__HasOwnProperty";
-pub(super) const PROXY_HAS_OWN: &str = "std/proxy/ops::__HasOwnPropertyProxy";
+/// The prelude's `Object.prototype.hasOwnProperty` read as a value (std/prelude/adapt.vlt)
+/// and its version that asks a proxy (std/lang/proxy/ops.vlt).
+pub(super) const PRELUDE_HAS_OWN: &str = "std/prelude/adapt::__HasOwnProperty";
+pub(super) const PROXY_HAS_OWN: &str = "std/lang/proxy/ops::__HasOwnPropertyProxy";
 
 /// How the key reaches a proxy slot.
 #[derive(Clone, Copy)]
@@ -209,7 +209,7 @@ impl FnLower<'_, '_> {
         self.terminate(Terminator::Return(st));
     }
 
-    /// The type of velt:proxy's `__ArrayMethod`, when the program has it.
+    /// The type of velt/lang/proxy's `__ArrayMethod`, when the program has it.
     fn array_method_ty(&mut self) -> Option<TyId> {
         let d = self
             .cx
@@ -302,7 +302,7 @@ impl FnLower<'_, '_> {
 }
 
 impl super::Cx<'_> {
-    /// Is `t` velt:proxy's `__ArrayMethod` (an array method read through `Reflect.get`), which
+    /// Is `t` velt/lang/proxy's `__ArrayMethod` (an array method read through `Reflect.get`), which
     /// `typeof` and `console.log` show as the function it stands for?
     pub(super) fn is_array_method(&self, t: TyId) -> bool {
         let TyKind::Adt(d, _) = self.types.kind(t) else {

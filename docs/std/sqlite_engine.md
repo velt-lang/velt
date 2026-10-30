@@ -1,11 +1,11 @@
-# velt:sqlite/engine
+# velt/sqlite/engine
 
-> In development (#1726): the SQLite engine written in Velt, which `velt:sqlite` will move onto
+> In development (#1726): the SQLite engine written in Velt, which `velt/sqlite` will move onto
 > once it writes. It reads databases today; INSERT, UPDATE, DELETE and DDL come next.
 
-`import { openDatabase, Database, Statement, SqliteError } from "velt:sqlite/engine"`. Queries
+`import { openDatabase, Database, Statement, SqliteError } from "velt/sqlite/engine"`. Queries
 over a SQLite database file, with no C library: the file format, the SQL parser, the planner
-and the execution are Velt (`velt:sqlite/format`, `btree`, `sql/*`, `exec/*`). Answers are
+and the execution are Velt (`velt/sqlite/format`, `btree`, `sql/*`, `exec/*`). Answers are
 SQLite's, value for value: type affinity, collations, NULL rules, integer overflow to REAL and
 the text form of REAL values are kept; the tests, and a differential fuzzer
 (`bench/sqlite/fuzz.vlt`) against the `sqlite3` shell, compare it with C SQLite. Rows a query
@@ -20,21 +20,21 @@ for its bare columns.
 - `Database.prepare(sql): Statement` parses and plans one SELECT (a trailing `;` is fine).
   Plans are cached by their text (the 200 used last), so preparing the same SQL again is a
   lookup. SQL the engine can't run yet fails here with a message naming it.
-- `Statement`, as in `velt:sqlite`: `all<T>(): T[]`, `get<T>(): T | null` (stops after the first
+- `Statement`, as in `velt/sqlite`: `all<T>(): T[]`, `get<T>(): T | null` (stops after the first
   row), `allWith<T>(params)`, `getWith<T>(params)`; also `columns(): string[]` and
-  `values()` / `valuesWith(params)`, every value as a `Val` (`velt:sqlite/exec/value`),
+  `values()` / `valuesWith(params)`, every value as a `Val` (`velt/sqlite/exec/value`),
   `columns().length` a row; `plan(): string[]`, how each FROM item is read, in the words of
   SQLite's `EXPLAIN QUERY PLAN` (`SEARCH posts USING INTEGER PRIMARY KEY (rowid=?)`).
-- **Rows** fill `T` by column name through `velt:db`'s `readRows`, straight from the engine's
+- **Rows** fill `T` by column name through `velt/db`'s `readRows`, straight from the engine's
   values (no text in between): INTEGER into integer and `f64` fields, REAL into `f64`, TEXT into
   `string`, BLOB into `u8[]`, NULL into `T | null`. A row that doesn't fit throws
   `SQLITE_MISMATCH`.
-- **Parameters**: `?`, `?NNN`, `:name`, `@name` and `$name`, bound as in `velt:sqlite`: an
+- **Parameters**: `?`, `?NNN`, `:name`, `@name` and `$name`, bound as in `velt/sqlite`: an
   array (or a single value) by position, with one value for each parameter, an object by name,
   with a field for each; an integer in i64's range (and an integral `f64` in it) → INTEGER,
   other numbers → REAL, string → TEXT, bool → 0/1, null → NULL, an array of bytes → BLOB. A
   wrong number of values, a missing field, a `?` in a statement bound by an object, or no
-  parameters at all for a statement that has some is `SQLITE_RANGE` with `velt:sqlite`'s
+  parameters at all for a statement that has some is `SQLITE_RANGE` with `velt/sqlite`'s
   message.
 - `SqliteError { code, message }`: `SQLITE_ERROR` (unknown table, column or function, wrong
   arguments, an error while running such as `integer overflow` in `sum()`), `SQLITE_RANGE`,
@@ -42,8 +42,8 @@ for its bare columns.
   (`no such column: x`, `misuse of aggregate: count()`).
 
 ```ts
-import { open } from "velt:sqlite";
-import { openDatabase } from "velt:sqlite/engine";
+import { open } from "velt/sqlite";
+import { openDatabase } from "velt/sqlite/engine";
 
 struct Post {
   id: i64;

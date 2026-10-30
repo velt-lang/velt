@@ -111,7 +111,7 @@ unsafe fn text<'a>(s: *const VeltStr) -> std::borrow::Cow<'a, str> {
     (*s).text_lossy()
 }
 
-/// `argv()` of `velt:process`: all arguments including the program path, as owned UTF-8
+/// `argv()` of `velt/process`: all arguments including the program path, as owned UTF-8
 /// strings.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_process_args(out: *mut VeltStrArray) {

@@ -3,7 +3,7 @@
 //! records, and the ` at <path>:<line>:<col>` suffix of compiler-emitted panics.
 //!
 //! Texts compiled into the program name a standard-library file relative to the std root
-//! (`std/json/scan.vlt:12:3`), so they are the same on every machine: code compiled once and
+//! (`std/encoding/json/scan.vlt:12:3`), so they are the same on every machine: code compiled once and
 //! shared, such as a cached std object (#1728), must not carry one machine's paths. Debug info
 //! keeps the path as loaded, where a debugger finds the file.
 //!
@@ -254,7 +254,7 @@ mod tests {
         let m = LocMap::new(&sm, Some(root));
         let loc = |file, line, col| SrcLoc { file, line, col };
         assert_eq!(m.describe(loc(0, 1, 1)), "/home/me/app.vlt:1:1");
-        assert_eq!(m.describe(loc(1, 2, 2)), "std/json/scan.vlt:2:2");
+        assert_eq!(m.describe(loc(1, 2, 2)), "std/encoding/json/scan.vlt:2:2");
         assert!(m.is_std_loc(loc(1, 2, 2)) && !m.is_std_loc(loc(0, 1, 1)));
         // Debug info keeps the path a debugger opens.
         assert_eq!(m.files[1], "/opt/velt/std/json/scan.vlt");

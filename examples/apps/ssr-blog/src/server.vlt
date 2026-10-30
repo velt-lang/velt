@@ -1,13 +1,13 @@
 // The HTTP side: every page is streamed (`renderToStream`), so the browser gets the layout and
 // the post before the comments have loaded.
 
-import { Channel } from "velt:channel";
-import { serve, Server } from "velt:http";
-import { BodyStream } from "velt:fetch";
-import { IoError } from "velt:io";
-import { AbortError } from "velt:task";
-import { utf8Encode } from "velt:encoding";
-import { renderToStream } from "velt:jsx";
+import { Channel } from "velt/sync";
+import { serve, Server } from "velt/http";
+import { BodyStream } from "velt/net/http";
+import { IoError } from "velt/io";
+import { AbortError } from "velt/task";
+import { utf8Encode } from "velt/encoding";
+import { renderToStream } from "velt/jsx";
 import { render, route, Route } from "./pages";
 
 // The doctype, then the page as it renders.

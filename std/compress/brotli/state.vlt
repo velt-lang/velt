@@ -1,4 +1,4 @@
-// std/compress/brotli/state (internal to velt:compress/brotli): what a Brotli decoder holds
+// std/compress/brotli/state (internal to velt/compress/brotli/brotli_decoder): what a Brotli decoder holds
 // between steps, shared by the header reader (header.vlt), the command loop (commands.vlt) and
 // the driver (decoder.vlt).
 //
@@ -7,8 +7,8 @@
 // `State` is the rest: the input, the output buffer, and what the current meta-block's header
 // set up (prefix code tables, context maps, distance codes).
 
-import { Bits } from "velt:compress/brotli/bits";
-import { PrefixReader } from "velt:compress/brotli/prefix";
+import { Bits } from "velt/compress/brotli/bits";
+import { PrefixReader } from "velt/compress/brotli/prefix";
 
 /** The stream's first bits, the window size, are not read yet. */
 export const STAGE_STREAM: i64 = 0;

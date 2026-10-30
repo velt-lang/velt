@@ -1,13 +1,13 @@
 // std/redis/reply: `RedisReply`, the `RedisError` mapping and the decoding of runtime replies for
-// std/redis (rt_abi_async.md §14.12). Internal: import the public names from "velt:redis".
+// std/redis (rt_abi_async.md §14.12). Internal: import the public names from "velt/redis".
 //
 // The runtime hands a reply over as three parallel arrays in pre-order (a node, then its
 // children): `tags` (the kind), `nums` (an integer, or an array's length) and `strs` (text).
 // Typed commands read them directly (`get` looks at node 0, `lrange` at nodes 1..); `call()` and
 // pipelines rebuild the tree as `RedisReply` objects.
 
-import { IoResult } from "velt:io";
-import { RedisError } from "velt:redis";
+import { IoResult } from "velt/native/result";
+import { RedisError } from "velt/redis";
 
 declare function velt_rt_err_code_name(code: i32): string;
 

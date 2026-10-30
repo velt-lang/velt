@@ -4,7 +4,7 @@
 // simd_partial_range covers the RangeError past it.
 // check: no leaks
 
-import { u8x16, i16x8, u32x4, i64x2, f32x4, f64x2 } from "velt:simd";
+import { u8x16, i16x8, u32x4, i64x2, f32x4, f64x2 } from "velt/simd";
 
 function checkU8x16(): number {
   let failures = 0;

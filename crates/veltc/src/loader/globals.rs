@@ -4,7 +4,7 @@
 //! sit on top of large parts of std (the HTTP client, the URL parser, cancellation), which a
 //! program that never names them should not pay for in compile time.
 //!
-//! A global module consists only of re-exports (`export { fetch, Response } from "velt:fetch";`);
+//! A global module consists only of re-exports (`export { fetch, Response } from "velt/net/http";`);
 //! the names it re-exports are its triggers. A non-std module whose source contains one of them
 //! as a whole word (in code, a comment or a string: a false positive only costs loading time)
 //! loads the global module, which then becomes part of the prelude (its canonical path starts
@@ -14,7 +14,7 @@
 //! naming `RegExp`. std modules import what they use, so they never trigger one.
 //!
 //! A **conditional** global names nothing: it holds a `// load when <module> uses: <words>`
-//! line and imports what it adds (`import "velt:fetch/typed";`, `extend` blocks that give
+//! line and imports what it adds (`import "velt/net/http/fetch/typed";`, `extend` blocks that give
 //! `Response` its `bytes()`). It is loaded once the program has loaded std module `<module>`
 //! (`std/fetch/response`) and a non-std module mentions one of the words (`bytes`): a method
 //! whose result type lives in modules that most users of the class never need. A word written
@@ -143,7 +143,7 @@ pub(super) fn names_global(src: &str, module: &ast::Module, name: &str) -> bool 
         || (name == THIS_FN && mentions(src, "this") && has_this_fn(module))
 }
 
-/// The global a function expression with a `this` parameter loads (std/this_fn.vlt).
+/// The global a function expression with a `this` parameter loads (std/lang/this_fn/index.vlt).
 const THIS_FN: &str = "__ThisFn";
 
 /// Whether `module` holds a function expression (not a generator) whose `this` parameter its
@@ -328,18 +328,18 @@ mod tests {
 
     #[test]
     fn names_are_the_reexports() {
-        let src = "// globals\nexport { fetch, Response as R } from \"velt:fetch\";\n\
-                   export { URL } from \"velt:url\";\n";
+        let src = "// globals\nexport { fetch, Response as R } from \"velt/net/http\";\n\
+                   export { URL } from \"velt/net/url\";\n";
         assert_eq!(reexported_names(src), ["fetch", "R", "URL"]);
     }
 
     #[test]
     fn a_conditional_global_names_its_module_and_words() {
-        let src = "// Bytes.\n// load when std/fetch/response uses: bytes arrayBuffer\nimport \"velt:fetch/typed\";\n";
+        let src = "// Bytes.\n// load when std/net/http/fetch/response uses: bytes arrayBuffer\nimport \"velt/net/http/fetch/typed\";\n";
         assert_eq!(
             load_when(src),
             Some((
-                "std/fetch/response".into(),
+                "std/net/http/fetch/response".into(),
                 vec!["bytes".into(), "arrayBuffer".into()]
             ))
         );

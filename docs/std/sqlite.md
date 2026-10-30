@@ -1,9 +1,9 @@
-# velt:sqlite
+# velt/sqlite
 
 > This driver is moving from the standard library to a separately versioned package. The API
 > stays the same.
 
-`import { open, Database, Statement, SqliteError } from "velt:sqlite"`. Embedded SQLite, compiled
+`import { open, Database, Statement, SqliteError } from "velt/sqlite"`. Embedded SQLite, compiled
 into the runtime (no system library), with an API close to better-sqlite3. It is
 **synchronous**: a typical query takes microseconds, which is less than handing it to a thread
 pool and back would cost. Run a long query inside `spawn(...)`.
@@ -38,7 +38,7 @@ pool and back would cost. Run a long query inside `spawn(...)`.
   `"SQLITE_MISUSE"` (closed handle, several statements passed to `prepare`).
 
 ```ts
-import { open } from "velt:sqlite";
+import { open } from "velt/sqlite";
 
 class User {
   id: i64;

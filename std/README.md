@@ -39,7 +39,7 @@ Written in Velt. The compiler resolves `import { x } from "velt:<path>"` to `std
 | `collections/priority_queue.vlt` | `std/collections/priority_queue`: `PriorityQueue<T>`, binary heap ordered by a comparator. |
 | `collections/sorted_map.vlt` | `std/collections/sorted_map`: `SortedMap<K, V>`, key-ordered map (sorted arrays) with `floorKey ceilingKey range`. |
 | `collections/btree_map.vlt` | `std/collections/btree_map`: `BTreeMap<K, V>`, key-ordered B+tree map with `floorKey ceilingKey range` (internal: `collections/btree/pool.vlt` the node pools and inner search, `leaf.vlt` leaf entries, `insert.vlt` inserts, `remove.vlt` deletes, `edges.vlt` the smallest and largest key, `line.vlt` a node's 64-byte words and rank order, `inline_key.vlt` `InlineKey` and the built-in encodings, `check.vlt` the invariants for tests). |
-| `collections/concurrent_map.vlt` | `std/collections/concurrent_map`: `ConcurrentMap`, a `u64` → `u64` map many threads read and write at once (a B+ tree with optimistic lock coupling on one `Atomic<u64>[]` arena, read with velt:simd `loadOptimistic`). |
+| `collections/concurrent_map.vlt` | `std/collections/concurrent_map`: `ConcurrentMap`, a `u64` → `u64` map many threads read and write at once (a B+ tree with optimistic lock coupling on one `Atomic<u64>[]` arena, read with velt/simd `loadOptimistic`). |
 | `encoding.vlt` | `std/encoding`: Base64 (std + URL-safe), hex, UTF-8 encode/decode/validate; `EncodingError`. |
 | `encoding/utf8.vlt` | Internal: UTF-8 validation of a byte range with SIMD over ASCII runs, behind `utf8Valid` and the WebSocket reader's check of text that arrives in pieces. |
 | `encoding/binary_string.vlt` | `std/encoding/binary_string`: the globals `btoa atob` (Node's Base64 of binary strings, forgiving decoding). |
@@ -51,9 +51,9 @@ Written in Velt. The compiler resolves `import { x } from "velt:<path>"` to `std
 | `url.vlt` | `std/url`: WHATWG `URL`, `URLSearchParams`, `encodeURIComponent` family (`url/*.vlt`: internal). |
 | `datetime.vlt` | `std/datetime`: UTC-first `DateTime` (ISO/HTTP dates, formatting, calendar math), `Duration` (`datetime/*.vlt`: internal). |
 | `html.vlt` | `std/html`: `escapeHtml` (one runtime pass). |
-| `package.vlt` | `velt:package`: types only, `Package` and its parts: the type of a package's `package.vlt` manifest (docs/tooling/manifest.md). |
-| `jsx.vlt` | `velt:jsx`: server-side TSX rendering, `renderToString renderToStringSync renderToStream raw Fragment`, `Element`, `RenderError`, the `JSX` types. |
-| `jsx/jsx-runtime.vlt` | `velt:jsx/jsx-runtime`: the JSX provider module compiled JSX calls (docs/internals/contracts/jsx.md), with the SSR precompile exports; `jsx/generic/jsx-runtime.vlt` without them. Internal: `jsx/node.vlt` (`Element`), `factory.vlt`, `escape.vlt`, `void_elements.vlt`, `render.vlt`, `intrinsic.vlt` + `attrs/*.vlt` (HTML tags and attributes). |
+| `package.vlt` | `velt/package`: types only, `Package` and its parts: the type of a package's `package.vlt` manifest (docs/tooling/manifest.md). |
+| `jsx.vlt` | `velt/jsx`: server-side TSX rendering, `renderToString renderToStringSync renderToStream raw Fragment`, `Element`, `RenderError`, the `JSX` types. |
+| `jsx/jsx-runtime.vlt` | `velt/jsx/jsx-runtime`: the JSX provider module compiled JSX calls (docs/internals/contracts/jsx.md), with the SSR precompile exports; `jsx/generic/jsx-runtime.vlt` without them. Internal: `jsx/node.vlt` (`Element`), `factory.vlt`, `escape.vlt`, `void_elements.vlt`, `render.vlt`, `intrinsic.vlt` + `attrs/*.vlt` (HTML tags and attributes). |
 | `csv.vlt` | `std/csv`: RFC 4180 `parseCsv parseCsvRecords stringifyCsv`, `CsvError`. |
 | `db.vlt` | `std/db`: `RowSource`, `readRows readRow`, `CellKind`, `RowError`: typed rows from any source. |
 | `cli.vlt` | `std/cli`: `ArgParser` (flags, options, positionals, help text), `ParsedArgs`, `CliError`. |
@@ -97,7 +97,7 @@ Std code is monomorphized and inlined like user code, so write plain index loops
   callback that pushes onto the array or pops it cannot leave its argument dangling).
 - Rearrange arrays with `__intrinsic_array_swap` / `__intrinsic_array_truncate`; moving an
   element out of an index is not allowed, and a swap avoids clones. Algorithms that need a
-  buffer (the stable sort, std/sort/stable.vlt) move raw elements with
+  buffer (the stable sort, std/lang/sort/stable.vlt) move raw elements with
   `__intrinsic_array_move` into an array sized with `__intrinsic_array_set_len`, keeping every
   element owned exactly once themselves, and set its length back to 0 before it is dropped.
   A callback may reach the caller's array through an alias, so while it runs that array must

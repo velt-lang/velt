@@ -1,4 +1,4 @@
-// velt:sqlite/sql/cursor — the parser's position in the tokens of one SQL text: lookahead,
+// velt/sqlite/sql/cursor — the parser's position in the tokens of one SQL text: lookahead,
 // keyword and operator matching, names, and SQLite's syntax error messages.
 
 import {
@@ -17,7 +17,7 @@ import {
   Token,
   Utf16Index,
   tokenize,
-} from "velt:sqlite/sql/lexer";
+} from "velt/sqlite/sql/lexer";
 
 /**
  * How deep the parser may recurse: each parenthesis, right operand, NOT, CASE or unary operand
@@ -26,7 +26,7 @@ import {
  * which every thread running Velt code has, worker threads included (frames differ a little
  * from one program to the next, as the inliner sees the whole program); the bound keeps a 2x
  * margin: 500. Expression trees are bounded separately at SQLite's 1000
- * (velt:sqlite/sql/expr); past this bound the error is SQLite's for its parser stack. SQLite
+ * (velt/sqlite/sql/expr); past this bound the error is SQLite's for its parser stack. SQLite
  * itself takes deeper nesting (its parser keeps its stack on the heap).
  */
 const MAX_DEPTH: usize = 500;

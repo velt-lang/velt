@@ -1,6 +1,6 @@
 # StringBuilder
 
-`StringBuilder` is a global (no import; the module is `velt:string_builder`). It is Velt's own:
+`StringBuilder` is a global (no import; the module is `velt/text/string_builder`). It is Velt's own:
 JavaScript has none. It builds a string by appending to one buffer that grows by doubling, so
 `n` appends cost O(total length), and `take()` hands that buffer over without a copy.
 `+=` on a string variable and template literals compile to the same builder, so a loop with

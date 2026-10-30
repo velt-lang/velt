@@ -11,7 +11,7 @@
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
 // `Number(s)` and `parseFloat(s)` are Velt code (#1658).
-import { toNumber, parseFloatOf } from "velt:number/parse";
+import { toNumber, parseFloatOf } from "velt/lang/number/parse";
 
 declare function velt_rt_str_slice(s: string, start: i64, end: i64): string;
 declare function velt_rt_str_index_of(s: string, needle: string, from: i64): i64;

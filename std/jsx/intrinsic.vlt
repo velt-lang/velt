@@ -5,8 +5,8 @@
 // `stroke-width`) are not checked. There are no event handler attributes: std/jsx renders HTML
 // on the server.
 
-import type { Child } from "velt:jsx/node";
-import type { HtmlAttrs } from "velt:jsx/attrs/global";
+import type { Child } from "velt/jsx/node";
+import type { HtmlAttrs } from "velt/jsx/attrs/global";
 import type {
   AnchorAttrs,
   AreaAttrs,
@@ -15,7 +15,7 @@ import type {
   MetaAttrs,
   ScriptAttrs,
   StyleAttrs,
-} from "velt:jsx/attrs/links";
+} from "velt/jsx/attrs/links";
 import type {
   AudioAttrs,
   VideoAttrs,
@@ -23,7 +23,7 @@ import type {
   SourceAttrs,
   TrackAttrs,
   CanvasAttrs,
-} from "velt:jsx/attrs/media";
+} from "velt/jsx/attrs/media";
 import type {
   IframeAttrs,
   EmbedAttrs,
@@ -31,8 +31,8 @@ import type {
   MapAttrs,
   SlotAttrs,
   TemplateAttrs,
-} from "velt:jsx/attrs/embedded";
-import type { ButtonAttrs, FieldsetAttrs, FormAttrs, InputAttrs } from "velt:jsx/attrs/forms";
+} from "velt/jsx/attrs/embedded";
+import type { ButtonAttrs, FieldsetAttrs, FormAttrs, InputAttrs } from "velt/jsx/attrs/forms";
 import type {
   LabelAttrs,
   MeterAttrs,
@@ -42,7 +42,7 @@ import type {
   ProgressAttrs,
   SelectAttrs,
   TextareaAttrs,
-} from "velt:jsx/attrs/controls";
+} from "velt/jsx/attrs/controls";
 import type {
   QuoteAttrs,
   EditAttrs,
@@ -52,8 +52,8 @@ import type {
   OlAttrs,
   DetailsAttrs,
   DialogAttrs,
-} from "velt:jsx/attrs/text";
-import type { ColAttrs, TdAttrs, ThAttrs } from "velt:jsx/attrs/tables";
+} from "velt/jsx/attrs/text";
+import type { ColAttrs, TdAttrs, ThAttrs } from "velt/jsx/attrs/tables";
 import type {
   AnimationAttrs,
   CircleAttrs,
@@ -82,7 +82,7 @@ import type {
   TextPathAttrs,
   UseAttrs,
   ViewAttrs,
-} from "velt:jsx/attrs/svg";
+} from "velt/jsx/attrs/svg";
 import type {
   AnnotationAttrs,
   MactionAttrs,
@@ -94,7 +94,7 @@ import type {
   MspaceAttrs,
   MtdAttrs,
   MunderoverAttrs,
-} from "velt:jsx/attrs/mathml";
+} from "velt/jsx/attrs/mathml";
 
 /**
  * Tag name → attribute type, for every element of the HTML standard, of SVG 2 and of MathML

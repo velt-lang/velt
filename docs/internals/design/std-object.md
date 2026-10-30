@@ -116,7 +116,7 @@ a build by reason):
 | One whose VIR in this program differs from the object's (next section) | Program, as today | The object's code would be wrong for this program |
 
 A fast path is marked with a statement at the top of its body, as gated functions use
-`__intrinsic_target("sha-arm")` (`std/crypto.vlt`):
+`__intrinsic_target("sha-arm")` (`std/crypto/index.vlt`):
 
 ```text
 export function numberToString(x: number): string {
@@ -223,7 +223,7 @@ state layout, even in its own code.
 - `f`, `f$poll` and `f$drop` link together or not at all: they are one unit in the fixpoint. A
   parent in the program that embeds `f`'s state compiles against the same layout, since its
   lowering reads the layout from the same lowered `f`, which matched.
-- Std's async I/O (`velt:fs`, `velt:http`) is then linked like the rest. `frame_slots`
+- Std's async I/O (`velt/fs`, `velt/http`) is then linked like the rest. `frame_slots`
   (`velt_opt`) promotes frame fields into locals but does not change the layout, so the object's
   optimizer cannot move it away from what programs embed.
 
@@ -250,7 +250,7 @@ pointer"), and the runtime compares some statics' addresses (type descriptors;
 So is the module state descriptor: `velt_rt_module_state` gives a different descriptor a block
 of its own (rt_abi.md "Module state"), so an object's std module-level `let` would live in a
 second block. Std has no module-level `let` today, so this is for later. Static atomics
-(`StaticData::mutable`, such as the four words of `std/sync/epoch.vlt`) are written by address,
+(`StaticData::mutable`, such as the four words of `std/sync/epoch/index.vlt`) are written by address,
 and a second copy would be a second word. Fingerprints compare statics by contents, so they do not
 catch any of this; `Canon::reaches_mutable_static` (`crates/velt_vir/src/fingerprint.rs`) finds
 the functions that reach a static atomic. A function that refers
@@ -334,7 +334,7 @@ and a debug link, which does not collect unused sections, pulls in no unused mod
 
 Std's file paths appear in panic messages (`lower/srcloc.rs`, `panic_suffix`). For the
 fingerprint, and a prebuilt object, to be the same in every install, the object and the
-program must write std paths relative to the std root (`std/json/scan.vlt:12:3`), not as the
+program must write std paths relative to the std root (`std/encoding/json/scan.vlt:12:3`), not as the
 absolute path of one machine. That is a small change of its own, first in the order of work.
 
 ## Cache key
@@ -433,7 +433,7 @@ variables, as Rust's std behaves. `VELT_STD_OBJECT=0` gives the old debuggable c
   rejects Cranelift for it), so its object is built with `opt` and `llc` (`velt_codegen_llvm/src/llc.rs`),
   like its programs, on first use. `wasm-ld` links object files as other linkers do. Without
   LLVM tools there is no wasm build at all, so no new requirement. Its object holds the prelude
-  and the std modules that compile for WebAssembly; modules that do not (sockets, `velt:http`;
+  and the std modules that compile for WebAssembly; modules that do not (sockets, `velt/http`;
   `wasm_goldens.rs`, `UNSUPPORTED`) are left out of its fill, and a program that imports one
   fails to build as today.
 - **Cross targets.** A non-host target's runtime and link kit come with its target pack

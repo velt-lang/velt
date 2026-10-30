@@ -6,17 +6,17 @@ use common::*;
 
 #[test]
 fn imports_and_exports() {
-    let m = parse_ok("import { a, b as c } from \"velt:fs\"; import \"./side\"; export function f() {} export const X = 1; function g() {}");
+    let m = parse_ok("import { a, b as c } from \"velt/fs\"; import \"./side\"; export function f() {} export const X = 1; function g() {}");
     let ItemKind::Import(i) = &m.items[0].kind else {
         panic!()
     };
-    assert_eq!(i.from, "velt:fs");
+    assert_eq!(i.from, "velt/fs");
     assert_eq!(i.names.len(), 2);
     assert_eq!(i.names[1].name.name, "b");
     assert_eq!(i.names[1].alias.as_ref().unwrap().name, "c");
     assert_eq!(
-        &"import { a, b as c } from \"velt:fs\";"[i.from_span.lo as usize..i.from_span.hi as usize],
-        "\"velt:fs\""
+        &"import { a, b as c } from \"velt/fs\";"[i.from_span.lo as usize..i.from_span.hi as usize],
+        "\"velt/fs\""
     );
     let ItemKind::Import(i) = &m.items[1].kind else {
         panic!()

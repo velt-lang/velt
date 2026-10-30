@@ -611,7 +611,7 @@ impl<'m> Ctx<'m> {
     }
 
     /// `msg` for a name `name` that nothing declares: with a note naming the import when it is
-    /// one of the SIMD types, which are not global (`velt:simd`).
+    /// one of the SIMD types, which are not global (`velt/simd`).
     pub fn not_found(&mut self, msg: String, name: &str, span: Span) {
         if !self.poisoned.is_empty() && self.poisoned.contains(&(span.file, name.to_string())) {
             return;
@@ -619,7 +619,7 @@ impl<'m> Ctx<'m> {
         let mut d = Diagnostic::error(msg, span);
         if crate::hir::SimdTy::named(name).is_some() {
             d = d.with_note(format!(
-                "import it: `import {{ {name} }} from \"velt:simd\";`"
+                "import it: `import {{ {name} }} from \"velt/simd\";`"
             ));
         }
         self.diags.push(d);

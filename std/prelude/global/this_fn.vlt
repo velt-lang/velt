@@ -1,4 +1,4 @@
 // Global (loaded when a module has a function expression with a `this` parameter whose body uses
 // `this` or `arguments`, crates/veltc/src/loader/globals.rs): the value such an expression makes
-// and the calls that pass it a `this` (velt:this_fn).
-export { __callOn, __callOptOn, __ThisFn } from "velt:this_fn";
+// and the calls that pass it a `this` (velt/lang/this_fn).
+export { __callOn, __callOptOn, __ThisFn } from "velt/lang/this_fn";

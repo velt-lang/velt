@@ -7,16 +7,16 @@
 // connection and the `Date` value once per second; text goes into the buffer without a copy in
 // between. Nothing on the request path is module state (#1487).
 
-import { IoError } from "velt:io";
-import { listen, listenTls, TcpListener, TcpStream, TlsListenOptions } from "velt:net";
-import { AbortController, AbortSignal } from "velt:task";
-import { delay } from "velt:timers";
-import { BadRequest, BODY_CHUNKED, BODY_LENGTH, Parser } from "velt:http/server/parse";
-import { HttpRequest } from "velt:http/server/request";
-import { HttpResponse, reason } from "velt:http/server/response";
+import { IoError } from "velt/io/error";
+import { listen, listenTls, TcpListener, TcpStream, TlsListenOptions } from "velt/net";
+import { AbortController, AbortSignal } from "velt/task";
+import { delay } from "velt/time/timers";
+import { BadRequest, BODY_CHUNKED, BODY_LENGTH, Parser } from "velt/http/server/parse";
+import { HttpRequest } from "velt/http/server/request";
+import { HttpResponse, reason } from "velt/http/server/response";
 
-export { BodyTooLarge, HttpRequest } from "velt:http/server/request";
-export { EventStream, HttpResponse, HttpStream } from "velt:http/server/response";
+export { BodyTooLarge, HttpRequest } from "velt/http/server/request";
+export { EventStream, HttpResponse, HttpStream } from "velt/http/server/response";
 
 const DEFAULT_HOST = "127.0.0.1";
 /// A request head (request line and headers) larger than this is refused (431), as Node's

@@ -212,7 +212,7 @@ fn ssr_blog_shared_components_render_the_same_under_node() {
     // The server side.
     std::fs::write(
         dir.join("samples_main.vlt"),
-        r#"import { renderToStringSync } from "velt:jsx";
+        r#"import { renderToStringSync } from "velt/jsx";
 import { samples } from "./src/shared/samples";
 
 function main() {

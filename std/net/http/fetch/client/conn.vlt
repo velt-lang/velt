@@ -1,0 +1,285 @@
+// std/fetch/client/conn (std-internal): one HTTP/1.1 connection of the client while a request
+// uses it: the stream, a read buffer, and the request's signal, which every wait races so an
+// abort stops the request at once (the stream is then closed, never pooled). Between requests a
+// keep-alive connection is parked in the runtime's pool under its origin (`TcpStream.park`,
+// crates/velt_rt/src/net/park.rs), which every task takes connections from.
+//
+// Reads go straight into the buffer (`tryRead`, nothing copied on the way for plain TCP). I/O
+// errors become `fetch failed: …` with the code of the error, as Node words them.
+
+import { IoError } from "velt/io/error";
+import { IoResult, unwrapIo } from "velt/native/result";
+import { TcpStream } from "velt/net";
+import { AbortController, AbortError, AbortSignal } from "velt/task";
+import { Target } from "velt/net/http/fetch/client/target";
+
+declare async function velt_rt_tcp_connect(addr: string): Promise<IoResult<u64>>;
+declare async function velt_rt_tcp_connect_tls(
+  addr: string,
+  serverName: string,
+  ca: string,
+  alpn: string,
+): Promise<IoResult<u64>>;
+
+/** How long connecting may take (milliseconds) before `ETIMEDOUT`, as undici's default. */
+const CONNECT_MS: i64 = 10000;
+/** The read buffer a connection starts with. */
+const INITIAL: i64 = 8192;
+/** Read at least this much at a time. */
+const MIN_READ: i64 = 4096;
+
+/** An error of a read or write as an `IoError` (a `RangeError` is a bug of the client's). */
+export function asIo(e: Error): IoError {
+  return e instanceof IoError ? e : new IoError("EINVAL", e.message);
+}
+
+/** `e` as `fetch` reports it: `fetch failed: …`, the same code. */
+export function failed(e: IoError): IoError {
+  if (e.message.startsWith("fetch failed")) {
+    return e;
+  }
+  return new IoError(e.code, `fetch failed: ${e.message}`);
+}
+
+/** A connection a request is using. */
+export class Conn {
+  stream: TcpStream;
+  /** The pool key it goes back to. */
+  key: string;
+  /** Whether it came from the pool (and so may have been closed by the server meanwhile). */
+  reused: bool;
+  signal: AbortSignal | null;
+  buf: u8[] = Buffer.allocUnsafe(INITIAL as usize);
+  /** What was read and not used yet: `buf[pos..end]`. */
+  pos: i64 = 0;
+  end: i64 = 0;
+  /** Whether any byte of a response has arrived on it. */
+  answered: bool = false;
+  /** Closed or pooled: it is no longer this request's. */
+  private gone: bool = false;
+
+  constructor(stream: TcpStream, key: string, reused: bool, signal: AbortSignal | null) {
+    this.stream = stream;
+    this.key = key;
+    this.reused = reused;
+    this.signal = signal;
+  }
+
+  /** Waits until a read may find something; throws the signal's `AbortError` when aborted. */
+  async wait(): Promise<void, IoError | AbortError> {
+    const signal = this.signal;
+    try {
+      if (signal == null) {
+        await this.stream.readable();
+        return;
+      }
+      while (!(await this.stream.readableWithin(86400000, signal))) {
+        if (signal.aborted) {
+          break;
+        }
+      }
+    } catch (e) {
+      this.close();
+      throw failed(e);
+    }
+    if (signal != null && signal.aborted) {
+      this.close();
+      signal.throwIfAborted();
+    }
+  }
+
+  /**
+   * Reads what arrives next into `buf[end..]`, moving unused input to the front or growing the
+   * buffer to make room: false at the end of the stream.
+   */
+  async fill(): Promise<bool, IoError | AbortError> {
+    if (this.pos == this.end) {
+      this.pos = 0;
+      this.end = 0;
+    }
+    if (this.end + MIN_READ > (this.buf.length as i64)) {
+      this.room();
+    }
+    while (true) {
+      let n: number | null = 0;
+      try {
+        n = this.stream.tryRead(this.buf, this.end as number);
+      } catch (e) {
+        this.close();
+        throw failed(asIo(e));
+      }
+      if (n == null) {
+        return false;
+      }
+      if (n > 0) {
+        this.end += n as i64;
+        this.answered = true;
+        return true;
+      }
+      await this.wait();
+    }
+  }
+
+  /** Room for `MIN_READ` more bytes after `end`. */
+  private room() {
+    const used = this.end - this.pos;
+    if (this.pos > 0 && used + MIN_READ <= (this.buf.length as i64)) {
+      this.buf.copyWithin(0, this.pos, this.end);
+    } else {
+      const bigger: u8[] = Buffer.allocUnsafe((this.buf.length * 2) as usize);
+      bigger.set(this.buf.slice(this.pos, this.end), 0);
+      this.buf = bigger;
+    }
+    this.pos = 0;
+    this.end = used;
+  }
+
+  /** Writes `data[start..end]` whole. */
+  async write(data: u8[], start: i64, end: i64): Promise<void, IoError | AbortError> {
+    let at = start;
+    try {
+      // Most requests are sent by the first try.
+      const n = this.stream.tryWrite(data, start as number, end as number);
+      if (n > 0) {
+        at += n;
+      }
+      if (at < end) {
+        const signal = this.signal;
+        if (signal == null) {
+          await this.stream.writeBytes(data, at as number, end as number);
+        } else {
+          await this.writeAbortable(data, at, end, signal);
+        }
+      }
+    } catch (e) {
+      this.close();
+      if (e instanceof IoError) {
+        throw failed(e);
+      }
+      throw e;
+    }
+  }
+
+  private async writeAbortable(
+    data: u8[],
+    at: i64,
+    end: i64,
+    signal: AbortSignal,
+  ): Promise<void, IoError | AbortError> {
+    const stream = this.stream;
+    const sent = stream.writeBytes(data, at as number, end as number);
+    await Promise.race([sent, signal.whenAborted()]);
+    if (signal.aborted) {
+      stream.abort();
+      signal.throwIfAborted();
+    }
+    await sent;
+  }
+
+  /** Gives the connection back to the pool (its response is complete), or closes it. */
+  release(keep: bool) {
+    if (this.gone) {
+      return;
+    }
+    if (keep && this.pos == this.end) {
+      this.gone = true;
+      this.stream.park(this.key);
+      return;
+    }
+    this.close();
+  }
+
+  /** Closes the connection (an unfinished or failed exchange). */
+  close() {
+    if (!this.gone) {
+      this.gone = true;
+      this.stream.close();
+    }
+  }
+}
+
+/** The pool key of `t`'s connections: its origin, and the extra CA a TLS connection trusts. */
+export function keyOf(t: Target, ca: string): string {
+  const origin = t.origin;
+  return t.https && ca.length > 0 ? `${origin} ${ca}` : origin;
+}
+
+/**
+ * A connection for a request to `t`: an idle pooled one, else a new one. A request that may not
+ * be sent twice (`once`) takes only a pooled connection whose server has had time to close it
+ * (`TcpStream.unpark`), since it cannot be sent again on another one.
+ */
+export async function open(
+  t: Target,
+  ca: string,
+  signal: AbortSignal | null,
+  once: bool,
+): Promise<Conn, IoError | AbortError> {
+  const key = keyOf(t, ca);
+  const idle = TcpStream.unpark(key, once);
+  if (idle != null) {
+    return new Conn(idle, key, true, signal);
+  }
+  return new Conn(await dial(t, ca, signal), key, false, signal);
+}
+
+/** A new connection to `t` (TLS for `https:`), within `CONNECT_MS` and before an abort. */
+async function dial(
+  t: Target,
+  ca: string,
+  signal: AbortSignal | null,
+): Promise<TcpStream, IoError | AbortError> {
+  const addr = `${t.hostname}:${t.port}`;
+  const stop = new AbortController();
+  // The runtime's connect itself races the limits: when it loses, it is dropped, which stops
+  // connecting (a function around it would go on and make a connection nobody closes).
+  const connecting =
+    t.https
+      ? velt_rt_tcp_connect_tls(addr, bare(t.hostname), ca, "http/1.1")
+      : velt_rt_tcp_connect(addr);
+  const racers: Promise<IoResult<u64>>[] = [connecting, expire(stop.signal)];
+  if (signal != null) {
+    racers.push(aborted(signal, stop.signal));
+  }
+  const r = await Promise.race(racers);
+  stop.abort();
+  if (r.code == GAVE_UP) {
+    if (signal != null) {
+      signal.throwIfAborted();
+    }
+    throw new IoError("ETIMEDOUT", `fetch failed: connect timeout to ${addr}`);
+  }
+  try {
+    return TcpStream.ofHandle(unwrapIo(r));
+  } catch (e) {
+    throw failed(e);
+  }
+}
+
+/** What `expire` and `aborted` give when they win the race. */
+const GAVE_UP: i32 = -1;
+
+function gaveUp(): IoResult<u64> {
+  return { code: GAVE_UP, message: "", value: 0 };
+}
+
+/** A host as the certificate names it: an IPv6 address without its brackets. */
+function bare(hostname: string): string {
+  return hostname.startsWith("[") ? hostname.slice(1, (hostname.length as i64) - 1) : hostname;
+}
+
+/**
+ * `GAVE_UP` after `CONNECT_MS`, unless `stop` ends it first. The runtime's `sleep` itself races
+ * `stop`, so it is dropped when it loses (a `delay` around it would keep the timer, and the
+ * process, alive for the rest of the 10 seconds).
+ */
+async function expire(stop: AbortSignal): Promise<IoResult<u64>> {
+  await Promise.race([sleep(CONNECT_MS), stop.whenAborted()]);
+  return gaveUp();
+}
+
+/** `GAVE_UP` once `signal` is aborted, unless `stop` ends it first. */
+async function aborted(signal: AbortSignal, stop: AbortSignal): Promise<IoResult<u64>> {
+  await Promise.race([signal.whenAborted(), stop.whenAborted()]);
+  return gaveUp();
+}

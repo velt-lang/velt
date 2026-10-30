@@ -3,7 +3,7 @@
 // takes them (as an interface value, or as a type argument bounded by `Iterable<T>`). An array
 // literal written where an `Iterable<T>` is expected holds `T`s. `Map.keys()`, `values()` and
 // `entries()` are arrays, so they are iterable too.
-import { Set } from "velt:collections/set";
+import { Set } from "velt/collections";
 
 function sum(xs: Iterable<number>): number {
   let total = 0.0;

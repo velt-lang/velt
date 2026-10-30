@@ -121,7 +121,7 @@ Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs
   `Intrinsic::Spawn` whose rejection the caller handles itself (`TaskScope.spawn`: the scope
   fails with it). A dropped `Spawn` handle reports its task's rejection as uncaught; a dropped
   `SpawnHandled` handle drops it quietly.
-- Error and value text (standard library only; `velt:test` and `assertEq` use them):
+- Error and value text (standard library only; `velt/test` and `assertEq` use them):
   `Intrinsic::ErrorText` (`__intrinsic_error_text(e)`, `e` borrowed, any type) is what an
   uncaught report writes for `e` between `Uncaught ` and the location; `Intrinsic::ThrowLoc`
   (`__intrinsic_throw_loc()`) is that location, ` at <path>:<line>:<col>` of the last `throw`
@@ -593,7 +593,7 @@ function itself there, instantiated (`FnRef`), so the values compare equal to ea
   `Intrinsic::NeedsTransfer(value)` (std only, value borrowed and not read): a constant `bool`,
   whether `Transfer` of a value of that type has anything to do (it can reach a counted object).
 - `Intrinsic::ArrayMove(dst, d, src, s, n)` and `Intrinsic::ArraySetLen(xs, len)` (std only,
-  std/sort/stable.vlt): the bits of `src[s..s + n)` copied into `dst[d..d + n)` of a different
+  std/lang/sort/stable.vlt): the bits of `src[s..s + n)` copied into `dst[d..d + n)` of a different
   array (both ranges bounds-checked; nothing dropped, nothing shared), and a length change that
   neither drops nor initializes (growing the capacity when it is smaller). They bypass
   ownership: the std code keeps every element owned by exactly one array, cuts stale copies off
@@ -690,7 +690,7 @@ function itself there, instantiated (`FnRef`), so the values compare equal to ea
   unions and tuples part by part; `!=` wraps it in `Not`). `Intrinsic::Eq` is structural
   (`__intrinsic_eq`, `deepEqual`, `assertEq`); an object value, array, `Map` or `Record` whose
   type can hold itself is compared under the same cycle rule as `DeepEq`'s (#1881). `Intrinsic::DeepEq` (`__intrinsic_deep_eq`, std
-  only: `velt:test`'s `toEqual`) is `Eq` with Vitest's rules: a class instance that isn't the
+  only: `velt/test`'s `toEqual`) is `Eq` with Vitest's rules: a class instance that isn't the
   same object compares by its fields, floats with SameValue (`NaN` equal to itself, `0` unequal
   to `-0`), an interface value or an object of a class in a hierarchy with a vtable pointer
   compares as its concrete type (the same object is equal, objects of two concrete types are
@@ -1209,7 +1209,7 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   `R | null` rest.
 
 ## any and unknown (issue #924, phase 1a)
-- `any` and `unknown` are interfaces of the prelude (`std/prelude/z_dynamic.vlt`), so their type is
+- `any` and `unknown` are interfaces of the prelude (`std/prelude/dynamic.vlt`), so their type is
   `TyKind::Dyn(any | unknown, [])`: an interface value `{ data, vtable }`. Sema adds one
   implementation for every type, `ImplDef { ty: Param(0), generics: 1, iface: any, methods: [] }`,
   whose index is `Program::any_impl` (`Program::unknown` names the `unknown` interface). Converting a value to either type is `ToDyn` with that
@@ -1305,7 +1305,7 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   them the tables and the VIR are unchanged. The `AnyCall` slot of a string, an array, a number
   or a boolean dispatches by name to the prelude's `__anyStr_<name>(s, args)`,
   `__anyArr_<name><T>(a, args)`, `__anyNum_<name>(n, args)` and `__anyBool_<name>(b, args)`
-  (std/prelude/zzzz_any_methods.vlt; the arguments packed into an `any[]`, the result an `any`),
+  (std/prelude/any_methods.vlt; the arguments packed into an `any[]`, the result an `any`),
   comparing only the names the program calls through `any` (`Boxing::any_call_keys`); another
   JavaScript built-in of that kind gives 1, any other name 2.
 - Member writes (phase 1b of #924): `x.f = v` / `x["f"] = v` / `x[k] = v` with a `string` or
@@ -1351,12 +1351,12 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   supported yet) only when the program has such a call; `null` / `undefined` are tested before
   the slot. An object literal spreading an `any` or `object` (`{ ...a }`) is a
   `Record<string, any>` literal whose spread is a call of the prelude's `__spreadAny(r, a)`
-  (std/prelude/zzz_adapt.vlt). `JSON.stringify` accepts dynamic types anywhere in its argument's
+  (std/prelude/adapt.vlt). `JSON.stringify` accepts dynamic types anywhere in its argument's
   type: the writer calls slot 14 `AnyJson (data, buf) -> u8` of the value's table (velt_vir
   `lower/json/any.rs`; present only when the program writes one), after testing the tag for
   `undefined`, a function or a symbol (left out as a member, `null` as an element, a
   `TypeError` at the top).
-- Proxy and Reflect (#823): the `Proxy` class (std/proxy.vlt; `#target: any`, `#handler:
+- Proxy and Reflect (#823): the `Proxy` class (std/lang/proxy/index.vlt; `#target: any`, `#handler:
   ProxyHandler<any>`) and `Reflect` (static methods), globals that a program loads when a module
   names one of them (std/prelude/global/proxy.vlt); a program that doesn't has no proxies, and
   sema calls the prelude's helpers below, which don't test for one. Sema converts `new
@@ -1370,11 +1370,11 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   `Intrinsic::AnyDelete`, std only, through slot 15 `AnyDelete (data, key: *string) -> u8` of
   its table, velt_vir `lower/any_delete.rs`), and the
   versions of the prelude's spread, `Object.hasOwn`, `Object.values` and `Object.entries`
-  helpers for `any` (std/prelude/zzz_adapt.vlt) in velt:proxy/ops (`__spreadAnyProxy`, …,
+  helpers for `any` (std/prelude/adapt.vlt) in velt/lang/proxy/ops (`__spreadAnyProxy`, …,
   called instead once `Proxy` is loaded) run a proxy's traps in Node's order. With a symbol constant as
   the key, `o[KEY]`, `o[KEY] = v`, `KEY in o`, `delete o[KEY]` and `Object.hasOwn(o, KEY)` of
   an `any` in a program that has loaded `Proxy` are calls of `__anyGetSym` / `__anySetSym` / `__anyHasSym` /
-  `__anyDeleteSym` / `__anyHasOwnSym(o, name, KEY)` (std/proxy/ops.vlt), which
+  `__anyDeleteSym` / `__anyHasOwnSym(o, name, KEY)` (std/lang/proxy/ops.vlt), which
   pass the symbol to a proxy and use the member name `name` on other values; `new Proxy(t, h)`
   with an `h` typed `any` is `__proxyNewAny(t, h)`. In a program whose own code has a `new
   Proxy`, `Object.keys(x)` of a class instance or object `x` is `IsTypedProxy(x) ?
@@ -1388,7 +1388,7 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   named `Proxy` is its own) and numbers them last among class ids, so programs without them
   keep theirs.
 - Traps that throw (#1174, stage 1): the function types of `ProxyHandler`'s traps
-  (std/proxy.vlt) are sites like the function types a user module writes without `throws`
+  (std/lang/proxy/index.vlt) are sites like the function types a user module writes without `throws`
   (sema `throws/fn_types.rs`): a closure stored into one adds its errors (`Error` classes) to it,
   so a call of a trap in `Proxy.__get` & co. throws them and the `Proxy` methods' error types are
   inferred as any function's. `Intrinsic::AnyGet` / `AnyIndex` (`__get`), `AnySet` /
@@ -1457,7 +1457,7 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   its traps (`JSON` as the `any` it converts to). The prelude's
   `__proxyKeysOf`, `__proxyHas`, `__proxyHasOwnOf` and `__proxyAny`, which sema calls behind
   `IsTypedProxy`, take such a value (no longer a proxy once in an `any`) as a plain one.
-- Array views (#1485, velt_vir `lower/array_view.rs`, std/prelude/zzz_adapt.vlt; additive): the
+- Array views (#1485, velt_vir `lower/array_view.rs`, std/prelude/adapt.vlt; additive): the
   array types that `AnyTo` targets in the program's own code (also as a union's array member),
   and the arrays their elements hold, are boxed *view types*. `AnyTo` to a view type of an `any`
   holding an array (or tuple) that is no such value is a box whose header is
@@ -1515,7 +1515,7 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   adapted in turn). The struct is in `Program::counted_objects`, so a share of the converted
   value shares the adapter and the one original it holds. A parameter of type `unknown[]`,
   `Map<unknown, unknown>` or `Set<unknown>` is passed as a `const` initialized by a call of the
-  prelude's `__unknownArrayIn` / `__unknownMapIn` (std/prelude/zzz_adapt.vlt) or
+  prelude's `__unknownArrayIn` / `__unknownMapIn` (std/prelude/adapt.vlt) or
   `__unknownSetIn` (std/collections/set.vlt) on the `unknown` argument, and after the slot call
   (its result kept in a temporary) the matching `…Out` writes the copy back; the helpers use
   `AnyCall` / `AnyIndex` / `AnySetIndex`, and such an adapter sets `Program::dyn_members`.

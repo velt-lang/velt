@@ -1,0 +1,87 @@
+// std/compress/brotli: Brotli decompression (RFC 7932), the `br` content coding of HTTP.
+//
+// `brotliDecompress` decodes a whole stream at once into one array that grows as the
+// meta-blocks' headers announce their lengths. `BrotliDecoder` takes the input in pieces and
+// hands out the output in chunks of at most the size asked for, keeping only the window that
+// back-references can reach and what has not been read, so a small input that expands
+// enormously never needs more memory than that. The decoder itself is in compress/brotli/.
+
+import { CompressError } from "velt/compress/errors";
+import { DONE, Decoder, HUNGRY } from "velt/compress/brotli/decoder";
+
+/** One-shot: the whole decoded stream. Throws CompressError on invalid or truncated input. */
+export function brotliDecompress(input: u8[]): u8[] throws CompressError {
+  const d = new Decoder();
+  const s = d.s;
+  s.keepAll = true;
+  s.br.append(input);
+  s.br.finished = true;
+  // With all of the input there and no output limit, `run` ends the stream or throws.
+  if (d.run(0xffffffffffff) != DONE) {
+    panic("ICE: brotli: the decoder stopped before the end of the stream");
+  }
+  const out = s.out;
+  __intrinsic_array_truncate(out, s.cur.outPos);
+  return out;
+}
+
+/** Streaming decoder: input arrives in pieces, output is pulled in bounded chunks. */
+export class BrotliDecoder {
+  private d: Decoder = new Decoder();
+  private ended: bool = false;
+  private failure: CompressError | null = null;
+
+  constructor() {}
+
+  /**
+   * Queue more compressed bytes (the decoder copies them; the caller may reuse the array).
+   */
+  feed(input: u8[]) {
+    this.d.s.br.append(input);
+  }
+
+  /** No more input will follow. */
+  finish() {
+    this.d.s.br.finished = true;
+  }
+
+  /**
+   * Up to `max` (> 0) decoded bytes. Returns [] when it needs more input before it can produce
+   * anything, or when the stream has ended (then `done` is true). Throws CompressError on
+   * invalid data, on data after the end of the stream, or when finish() was called and the
+   * stream is incomplete. Never returns more than `max` bytes, so a tiny input that expands
+   * hugely is produced in bounded chunks.
+   */
+  read(max: i64): u8[] throws CompressError {
+    const failure = this.failure;
+    if (failure != null) {
+      throw failure;
+    }
+    const s = this.d.s;
+    const want = max > 0 ? max as usize : 1;
+    if (s.cur.outPos - s.readPos < want && !this.ended) {
+      try {
+        this.ended = this.d.run(s.readPos + want) == DONE;
+      } catch (e) {
+        this.failure = e;
+        throw e;
+      }
+    } else if (this.ended && s.br.pos < s.br.avail) {
+      this.failure = new CompressError("brotli: data after the end of the stream");
+      throw this.failure!;
+    }
+    let n = s.cur.outPos - s.readPos;
+    if (n > want) {
+      n = want;
+    }
+    const chunk = s.out.slice(s.readPos as i64, (s.readPos + n) as i64);
+    s.readPos += n;
+    return chunk;
+  }
+
+  /** The stream's last meta-block has been decoded and all output read. */
+  get done(): bool {
+    const s = this.d.s;
+    return this.ended && s.readPos == s.cur.outPos;
+  }
+}

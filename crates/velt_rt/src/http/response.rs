@@ -1,4 +1,4 @@
-//! Server responses (`VeltResp*`): a handler's global `Response` (std/fetch/response.vlt) is
+//! Server responses (`VeltResp*`): a handler's global `Response` (std/net/http/fetch/response.vlt) is
 //! built into one with `velt_rt_http_resp_build` and returned as the handler's result (ownership
 //! goes back to the runtime), or freed with `velt_rt_http_resp_drop` if abandoned.
 //!
@@ -72,7 +72,7 @@ pub(crate) fn bodiless(status: StatusCode) -> bool {
         || status == StatusCode::NOT_MODIFIED
 }
 
-/// How `velt_rt_http_resp_build` receives the body (std/fetch/response.vlt says the same).
+/// How `velt_rt_http_resp_build` receives the body (std/net/http/fetch/response.vlt says the same).
 pub(super) mod kind {
     /// No body.
     pub const NONE: u32 = 0;
@@ -100,12 +100,12 @@ pub(super) unsafe fn append_headers(list: &VeltStrArray, map: &mut HeaderMap) ->
 }
 
 /// Drops what a streamed body makes wrong: its length is not known. (A fetched body that arrived
-/// decoded comes without its `content-encoding`: std/fetch/response.vlt leaves it out.)
+/// decoded comes without its `content-encoding`: std/net/http/fetch/response.vlt leaves it out.)
 fn strip_for_stream(headers: &mut HeaderMap) {
     headers.remove(CONTENT_LENGTH);
 }
 
-/// The `content-type` a body implies (`implied` of `velt_rt_http_resp_build`; std/fetch/body.vlt
+/// The `content-type` a body implies (`implied` of `velt_rt_http_resp_build`; std/net/http/fetch/body.vlt
 /// numbers them the same): 0 none, 1 a string's, 2 JSON's, 3 form fields'. The values are made
 /// at compile time (`HeaderValue::from_static` checks every byte when it runs, about 200
 /// instructions for a text response); cloning one over static bytes is a copy.
@@ -132,7 +132,7 @@ pub(super) unsafe fn body_of(kind: u32, text: *mut VeltStr, bytes: &VeltBytes) -
     }
 }
 
-/// A `Response` returned from a handler (std/fetch/response.vlt), as one response: `status`
+/// A `Response` returned from a handler (std/net/http/fetch/response.vlt), as one response: `status`
 /// (invalid ⇒ 500), the status text (`reason`; empty for the standard one), the headers
 /// `add_headers` appends, and `body` as `kind` says (`body_of`; a stream std opens next drops
 /// `content-length`). `implied` is the `content-type` the body implies (`implied_type`), added

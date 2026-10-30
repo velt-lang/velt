@@ -1,6 +1,6 @@
 // `new Promise` wrapping a callback API: the executor's `resolve` and `reject` are owned, so
 // they can be stored in a callback that runs later (a timer) and called from a spawned task.
-import { setTimeout } from "velt:timers";
+import { setTimeout } from "velt/time";
 
 class Failed extends Error {}
 

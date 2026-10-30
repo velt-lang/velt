@@ -1,7 +1,7 @@
 // std/collections/concurrent_map: `ConcurrentMap`, a map from `u64` or `string` keys to values
 // that many threads read and write at once, through a `shared` value: a B+ tree with optimistic
 // lock coupling (Leis et al., "The ART of Practical Synchronization"; bbtree's concurrent map
-// uses the same protocol). Built only on public std APIs: `Atomic<u64>`, velt:simd
+// uses the same protocol). Built only on public std APIs: `Atomic<u64>`, velt/simd
 // (`loadOptimistic`), `Atomic.fence`, array `prefetch`.
 //
 // Every node is 128 words of one `Atomic<u64>[]` arena (allocated whole by `create`), addressed
@@ -12,7 +12,7 @@
 // grows, through being freed and reused too, so a reader that read it before sees it changed.
 //
 // Node layout (words):
-//   0: latch (bit 0 exclusive, then shared holders, the version from bit 21: velt:sync's
+//   0: latch (bit 0 exclusive, then shared holders, the version from bit 21: velt/sync's
 //      `VersionLatch` word)
 //   1: meta: the number of keys | `LEAF_BIT` for a leaf | an inner node's level from bit 40
 //   leaf:  16-bit tags (hashes) of the keys, 4 to a word, at 2..16, tag 0 for an empty slot; key
@@ -47,9 +47,9 @@
 // while it holds their node (or before the node is linked), and moves as few as it can: each one
 // replaced is retired to the epoch.
 
-import { InlineKey } from "velt:collections/btree/inline_key";
-import { utf8Length } from "velt:encoding";
-import { u16x8, u64x2, u8x16 } from "velt:simd";
+import { InlineKey } from "velt/collections/btree/inline_key";
+import { utf8Length } from "velt/encoding";
+import { u16x8, u64x2, u8x16 } from "velt/simd";
 
 const NODE: u64 = 128;
 const LEAF_CAP: u64 = 56;

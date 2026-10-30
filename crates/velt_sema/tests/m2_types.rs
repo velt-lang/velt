@@ -507,9 +507,9 @@ fn imports_exports_and_intrinsics() {
         r.contains("intrinsics can only be called from the standard library"),
         "{r}"
     );
-    let r = err_src("import { nope } from \"velt:math\"; function main() {}");
+    let r = err_src("import { nope } from \"velt/math\"; function main() {}");
     assert!(r.contains("has no member `nope`"), "{r}");
-    ok_src("import { clamp as c } from \"velt:math\"; function main() { console.log(c(1, 2, 3), Math.PI); }");
+    ok_src("import { clamp as c } from \"velt/math\"; function main() { console.log(c(1, 2, 3), Math.PI); }");
     // A pure call may initialize a module constant (#383); one with effects makes it module
     // state, evaluated once (#802), and so does an array that is not a table.
     ok_src("const X: i64 = 1 + f(); function f(): i64 { return 1; } function main() {}");

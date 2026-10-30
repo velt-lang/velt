@@ -1,4 +1,4 @@
-// std/compress/brotli/decoder (internal to velt:compress/brotli): the decoder's driver: it runs
+// std/compress/brotli/decoder (internal to velt/compress/brotli/brotli_decoder): the decoder's driver: it runs
 // the stream's parts in order (headers, uncompressed and metadata blocks, commands) as far as
 // the input and the room for output allow, and keeps the output buffer.
 //
@@ -11,10 +11,10 @@
 // The output buffer keeps what back-references can still reach (the window) and what has not
 // been read; `brotliDecompress` keeps all of it, which is then the result.
 
-import { u8x16 } from "velt:simd";
-import { CompressError } from "velt:compress/error";
-import { decodeCommands, FAILED, META_DONE } from "velt:compress/brotli/commands";
-import { readHeader } from "velt:compress/brotli/header";
+import { u8x16 } from "velt/simd";
+import { CompressError } from "velt/compress/errors";
+import { decodeCommands, FAILED, META_DONE } from "velt/compress/brotli/commands";
+import { readHeader } from "velt/compress/brotli/header";
 import {
   Cursor,
   State,
@@ -26,7 +26,7 @@ import {
   STAGE_METADATA,
   STAGE_STREAM,
   STAGE_UNCOMPRESSED,
-} from "velt:compress/brotli/state";
+} from "velt/compress/brotli/state";
 
 /** `run` stopped because the output reached its limit. */
 export const FULL: i64 = 0;

@@ -12,7 +12,7 @@ single-threaded event loop. Your program is a native binary that uses every core
 
 ```ts
 // server.ts: run it with `velt run server.ts`
-import { serve } from "velt:http";
+import { serve } from "velt/http";
 
 interface User {
   id: string;
@@ -227,7 +227,7 @@ fn velt_zstd__compress(data: Vec<u8>, level: i32) -> Result<Vec<u8>, Error> {
 Declare it in the package's Velt code and give it the API you want, with a typed error:
 
 ```ts ignore
-import { IoResult } from "velt:io";
+import { IoResult } from "velt/native";
 
 declare async function velt_zstd__compress(data: u8[], level: i32): Promise<IoResult<u8[]>>;
 

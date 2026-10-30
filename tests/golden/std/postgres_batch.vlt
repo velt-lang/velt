@@ -3,7 +3,7 @@
 // surfaces, nothing of the batch stays), empty and single-set batches, batches mixed with
 // ordinary queries on one connection, inside a transaction, after a COPY, and on a pool.
 // requires-env: VELT_TEST_PG_URL
-import { connect, createPool, Client } from "velt:postgres";
+import { connect, createPool, Client } from "velt/postgres";
 
 class Item {
   id: i64;

@@ -420,7 +420,7 @@ mod tests {
     #[test]
     fn a_change_under_std_or_examples_runs_the_gates_velt_fmt() {
         for path in [
-            "std/json.vlt",
+            "std/encoding/json/index.vlt",
             "std/README.md",
             "examples/apps/chat/src/main.vlt",
             // `velt fmt` formats a package's .ts/.tsx sources too.

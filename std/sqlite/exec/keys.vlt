@@ -1,11 +1,11 @@
-// velt:sqlite/exec/keys — rows of values found again (DISTINCT, GROUP BY, count(DISTINCT x)):
+// velt/sqlite/exec/keys — rows of values found again (DISTINCT, GROUP BY, count(DISTINCT x)):
 // a hash of each value under its collation, then the values compared as SQLite compares them
 // (an integer and a REAL of the same value are one key, 'a' and 'A' under NOCASE, 'a ' and 'a'
 // under RTRIM). No text is built per row.
 
-import { NULL, INTEGER, REAL, TEXT } from "velt:sqlite/btree";
-import { NOCASE, RTRIM } from "velt:sqlite/record";
-import { Val, compareVals } from "velt:sqlite/exec/value";
+import { NULL, INTEGER, REAL, TEXT } from "velt/sqlite/btree";
+import { NOCASE, RTRIM } from "velt/sqlite/record";
+import { Val, compareVals } from "velt/sqlite/exec/value";
 
 const PRIME: u64 = 1099511628211;
 const OFFSET: u64 = 14695981039346656037;

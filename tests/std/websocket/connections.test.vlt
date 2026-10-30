@@ -1,16 +1,16 @@
-// velt:websocket's connections through its public API: messages as an async iterable, the order
+// velt/net/websocket's connections through its public API: messages as an async iterable, the order
 // frames go out in, and topics.
-import { channel, Channel } from "velt:channel";
-import { serve } from "velt:http";
-import { IoError } from "velt:io";
-import { afterAll, beforeAll, describe, expect, it } from "velt:test";
+import { channel, Channel } from "velt/sync";
+import { serve } from "velt/http";
+import { IoError } from "velt/io";
+import { afterAll, beforeAll, describe, expect, it } from "velt/test";
 import {
   WebSocket,
   connectWebSocket,
   publish,
   publishBytes,
   upgradeWebSocket,
-} from "velt:websocket";
+} from "velt/net/websocket";
 
 describe("a WebSocket as an async iterable", () => {
   // The server session iterates the messages with `for await` until the client closes; the

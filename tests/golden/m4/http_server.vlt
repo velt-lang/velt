@@ -1,5 +1,5 @@
 // check: no leaks
-import { serve } from "velt:http";
+import { serve } from "velt/http";
 
 async function main() {
   const hits = shared(0);

@@ -4,9 +4,9 @@
 // The servers velt/server.vlt (a template literal) and velt-tsx/server.vlt (TSX) differ only in
 // how they render the fortunes page: `startApp(render)`.
 
-import { serve } from "velt:http";
-import { Pool } from "velt:postgres";
-import { args } from "velt:process";
+import { serve } from "velt/http";
+import { Pool } from "velt/postgres";
+import { args } from "velt/process";
 import {
   Fortune,
   fortunesHtml,

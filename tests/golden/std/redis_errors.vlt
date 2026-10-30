@@ -1,6 +1,6 @@
 // requires-env: VELT_TEST_REDIS_URL
 // std/redis: RedisError codes for server errors, bad URLs and failed connections.
-import { connect, RedisError, RedisClient } from "velt:redis";
+import { connect, RedisError, RedisClient } from "velt/redis";
 import { redisUrl, redisHostPort, freshPrefix, cleanup } from "./_redis";
 
 async function tryConnect(url: string): Promise<string> {

@@ -1,0 +1,285 @@
+// velt/lang/record/symbols: the symbol keys and the defined accessors of a `Record`
+// (std/prelude/record.vlt, fields 2 and 3), as Node keeps them: symbol keys in a table of their
+// own, accessors that `Object.defineProperty` defines in another. Sema calls these methods for a
+// key that is a symbol or `string | symbol`, and in a program that defines accessors for every
+// key (`Objects::record_accessors`). A program loads this module only when it mentions symbols,
+// property definitions, `Proxy` or `Reflect` (std/prelude/global/record_symbols.vlt).
+
+/**
+ * A property key, as in TypeScript's lib: a string, a number (converted to its string) or a
+ * symbol. `Record<PropertyKey, V>` is a `Record<string, V>`, whose symbol keys are in a table
+ * of their own.
+ */
+export type PropertyKey = string | number | symbol;
+
+extend<K, V> Record<K, V> {
+  /** The accessor `key` names (getter, setter, configurable), if one was defined. */
+  __accessor(key: K | symbol): [(() => V) | null, ((value: V) => void) | null, bool] | undefined {
+    const t = this.accessors;
+    if (t == null) {
+      return undefined;
+    }
+    return t.get(key);
+  }
+
+  /**
+   * `Object.defineProperty(r, key, { get, set, configurable })`: the accessor replaces an entry
+   * with the key. Defining again a property that is not configurable is Node's `TypeError`.
+   * The getter and setter may throw, as in JavaScript: an error they throw leaves at the read or
+   * write that ran them, which no `try` catches yet (#1637), so it ends the process with Node's
+   * `Uncaught` report. `__defineGetter` and `__defineSetter` define an accessor with only one.
+   */
+  __defineAccessor<E, F>(
+    key: K | symbol,
+    get: () => V throws E,
+    set: (value: V) => void throws F,
+    configurable: bool,
+  ) {
+    this.__putAccessor(key, uncaughtGet(get), uncaughtSet(set), configurable);
+  }
+
+  /** `Object.defineProperty(r, key, { get, configurable })` (`__defineAccessor`). */
+  __defineGetter<E>(key: K | symbol, get: () => V throws E, configurable: bool) {
+    this.__putAccessor(key, uncaughtGet(get), null, configurable);
+  }
+
+  /** `Object.defineProperty(r, key, { set, configurable })` (`__defineAccessor`). */
+  __defineSetter<F>(key: K | symbol, set: (value: V) => void throws F, configurable: bool) {
+    this.__putAccessor(key, null, uncaughtSet(set), configurable);
+  }
+
+  /** The accessor `key` names set to `get` and `set` (`__defineAccessor`). */
+  __putAccessor(
+    key: K | symbol,
+    get: (() => V) | null,
+    set: ((value: V) => void) | null,
+    configurable: bool,
+  ) {
+    const old = this.__accessor(key);
+    if (old != null && !old[2]) {
+      panic(`TypeError: Cannot redefine property: ${keyText(key)}`);
+    }
+    this.__deleteKeyed(key);
+    const t = this.accessors;
+    if (t == null) {
+      const made: Map<K | symbol, [(() => V) | null, ((value: V) => void) | null, bool]> = new Map();
+      made.set(key, [get, set, configurable]);
+      this.accessors = made;
+    } else {
+      t.set(key, [get, set, configurable]);
+    }
+  }
+
+  /** `r[s]` with a symbol `s`: its entry in the symbol table. */
+  __getSym(key: symbol): V | undefined {
+    const t = this.symbols;
+    if (t == null) {
+      return undefined;
+    }
+    return t.get(key);
+  }
+
+  /** `r[s] = v` with a symbol `s`: the symbol table is made by the first write. */
+  __setSym(key: symbol, value: V) {
+    const t = this.symbols;
+    if (t == null) {
+      const made: Map<symbol, V> = new Map();
+      made.set(key, value);
+      this.symbols = made;
+    } else {
+      t.set(key, value);
+    }
+  }
+
+  /** `delete r[s]` with a symbol `s`: `true`, as JavaScript's `delete` is. */
+  __deleteSym(key: symbol): bool {
+    const t = this.symbols;
+    if (t != null) {
+      t.delete(key);
+    }
+    return true;
+  }
+
+  /** `s in r` / `Object.hasOwn(r, s)` with a symbol `s`. */
+  __hasSym(key: symbol): bool {
+    const t = this.symbols;
+    return t != null && t.has(key);
+  }
+
+  /** `r[k]` with a `string | symbol` key: an accessor's getter, else the entry. */
+  __getKeyed(key: K | symbol): V | undefined {
+    if (this.accessors != null) {
+      const a = this.__accessor(key);
+      if (a != null) {
+        const g = a[0];
+        if (g == null) {
+          return undefined;
+        }
+        return g();
+      }
+    }
+    if (typeof key === "symbol") {
+      return this.__getSym(key as symbol);
+    }
+    return this.entries.get(key as K);
+  }
+
+  /** `r[k] = v` with a `string | symbol` key: an accessor's setter, else the entry. */
+  __setKeyed(key: K | symbol, value: V) {
+    if (this.accessors != null) {
+      const a = this.__accessor(key);
+      if (a != null) {
+        const s = a[1];
+        if (s == null) {
+          panic(
+            `TypeError: Cannot set property ${keyText(key)} of #<Object> which has only a getter`,
+          );
+        }
+        s(value);
+        return;
+      }
+    }
+    if (typeof key === "symbol") {
+      this.__setSym(key as symbol, value);
+    } else {
+      this.__set(key as K, value);
+    }
+  }
+
+  /** `delete r[k]` with a `string | symbol` key. */
+  __deleteKeyed(key: K | symbol): bool {
+    const t = this.accessors;
+    if (t != null) {
+      const a = t.get(key);
+      if (a != null) {
+        // A property that is not configurable stays: `delete` is Node's `TypeError` (strict
+        // code).
+        if (!a[2]) {
+          panic(`TypeError: Cannot delete property '${keyText(key)}' of #<Object>`);
+        }
+        t.delete(key);
+        return true;
+      }
+    }
+    if (typeof key === "symbol") {
+      return this.__deleteSym(key as symbol);
+    }
+    return this.__delete(key as K);
+  }
+
+  /** `k in r` / `Object.hasOwn(r, k)` with a `string | symbol` key (own properties only). */
+  __hasKeyed(key: K | symbol): bool {
+    if (this.accessors != null && this.__accessor(key) != null) {
+      return true;
+    }
+    if (typeof key === "symbol") {
+      return this.__hasSym(key as symbol);
+    }
+    return this.entries.has(key as K);
+  }
+
+  /** `Object.getOwnPropertySymbols(r)`: the symbol keys in insertion order, accessors' after. */
+  __ownSymbols(): symbol[] {
+    const out: symbol[] = [];
+    const t = this.symbols;
+    if (t != null) {
+      for (const s of t.keys()) {
+        out.push(s);
+      }
+    }
+    const a = this.accessors;
+    if (a != null) {
+      for (const k of a.keys()) {
+        if (typeof k === "symbol") {
+          out.push(k as symbol);
+        }
+      }
+    }
+    return out;
+  }
+
+  /**
+   * `Reflect.ownKeys(r)`: the string keys in `Object.keys` order (array indices first,
+   * ascending, then insertion order), accessors' after them, then the symbol keys.
+   */
+  __ownKeys(): (string | symbol)[] {
+    const out: (string | symbol)[] = [];
+    for (const k of this.__keyNames()) {
+      out.push(k);
+    }
+    const a = this.accessors;
+    if (a != null) {
+      for (const k of a.keys()) {
+        if (typeof k !== "symbol") {
+          out.push(`${k as K}`);
+        }
+      }
+    }
+    for (const s of this.__ownSymbols()) {
+      out.push(s);
+    }
+    return out;
+  }
+
+  /**
+   * `k in r` with a `string | symbol` key (sema calls this): the record's own property, or for
+   * a string a member every object inherits from `Object.prototype`.
+   */
+  __inKeyed(key: K | symbol): bool {
+    if (this.__hasKeyed(key)) {
+      return true;
+    }
+    return typeof key === "string" && !this.__isNullProto() && __objectPrototypeKey(key);
+  }
+}
+
+/** A record key as Node's messages show it: a string as it is, a symbol as `Symbol(d)`. */
+function keyText<K>(key: K | symbol): string {
+  if (typeof key === "symbol") {
+    return String(key as symbol);
+  }
+  return String(key as K);
+}
+
+// An accessor `Object.defineProperty` defines, as the record holds it: an error it throws is
+// uncaught (`__defineAccessor`). An accessor that throws nothing is wrapped too: the record keeps
+// one function type for every accessor.
+function uncaughtGet<V, E>(get: () => V throws E): () => V {
+  return () => {
+    try {
+      return get();
+    } catch (e) {
+      return accessorUncaught<V, E>(e);
+    }
+  };
+}
+
+function uncaughtSet<V, E>(set: (value: V) => void throws E): (value: V) => void {
+  return (value: V) => {
+    try {
+      set(value);
+    } catch (e) {
+      accessorUncaught<void, E>(e);
+    }
+  };
+}
+
+declare function velt_rt_uncaught_now();
+
+// Reports `e` as uncaught and exits 1 at once, as Node does for an error nothing catches: the
+// rejection of a promise nothing awaits, reported when it is dropped (velt_rt_uncaught_now).
+function accessorUncaught<T, E>(e: E): T {
+  reportUncaught(e);
+  panic("ICE: an uncaught accessor error did not end the process");
+}
+
+// The report itself: dropping `p` reports it.
+function reportUncaught<E>(e: E) {
+  velt_rt_uncaught_now();
+  const p = rejectWith(e);
+}
+
+// Rejects with `e`.
+async function rejectWith<E>(e: E): Promise<void, E> {
+  throw e;
+}

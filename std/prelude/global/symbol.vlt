@@ -1,2 +1,2 @@
 // Global (loaded when a module names it): `Symbol` (docs/std/symbol.md).
-export { Symbol, SymbolConstructor } from "velt:symbol";
+export { Symbol, SymbolConstructor } from "velt/lang/symbol";

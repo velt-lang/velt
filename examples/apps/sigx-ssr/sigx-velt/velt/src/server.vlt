@@ -9,14 +9,14 @@
 // only documents (Vite serves the client modules and assets) and reads the template on each
 // request, so edits to index.html show up without a restart.
 
-import { serve, Server } from "velt:http";
-import { readFile, readFileBytes, exists } from "velt:fs";
-import { args, exit } from "velt:process";
-import { decodeURIComponent } from "velt:url";
-import { BodyStream } from "velt:fetch";
-import { utf8Encode } from "velt:encoding";
-import { IoError } from "velt:io";
-import { AbortError } from "velt:task";
+import { serve, Server } from "velt/http";
+import { readFile, readFileBytes, exists } from "velt/fs";
+import { args, exit } from "velt/process";
+import { decodeURIComponent } from "velt/net/url";
+import { BodyStream } from "velt/net/http";
+import { utf8Encode } from "velt/encoding";
+import { IoError } from "velt/io";
+import { AbortError } from "velt/task";
 import { Element, IslandsManifest, Renderer } from "./node";
 
 export struct Options {

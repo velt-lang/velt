@@ -51,7 +51,7 @@ roots ─▶ walk tasks (N) ─▶ channel<FileJob> ─▶ search tasks (N) ─�
 | `src/matcher.vlt` | a plain word uses `indexOf` (memchr/memmem in the runtime), anything else a `RegExp` (linear time). It finds the first match in the whole file before splitting out lines, so a file without a match costs one scan |
 | `src/ignore.vlt` | gitignore globs → regexes, nested files, `!` negation, directory-only rules |
 | `src/app.vlt` | the pipeline as `execute(argv, noColor, write, writeErr)`; the printer writes in 64 KiB batches |
-| `src/options.vlt` | the `velt:cli` parser |
+| `src/options.vlt` | the `velt/cli` parser |
 | `src/main.vlt` | process glue: args, `NO_COLOR`, stdout/stderr, exit code |
 | `tests/*.test.vlt` | `velt test` |
 | `demo.vlt` / `demo.out` | the pipeline on a generated tree; a golden in `cargo test --workspace --test golden` |

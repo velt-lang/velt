@@ -1,9 +1,9 @@
-# velt:compress
+# velt/compress
 
 Decompression, written in Velt: gzip (RFC 1952), zlib (RFC 1950) and raw DEFLATE (RFC 1951) in
-`velt:compress/inflate`, Brotli (RFC 7932) in `velt:compress/brotli`. They are what
+`velt/compress`, Brotli (RFC 7932) in `velt/compress`. They are what
 [`fetch`](fetch.md) decodes compressed bodies with. A stream that is not valid, or that ends
-before it should, throws `CompressError` (from `velt:compress/error`, also exported by both
+before it should, throws `CompressError` (from `velt/compress/errors`, also exported by both
 modules).
 
 ## Whole streams
@@ -17,7 +17,7 @@ and sizes its output from the trailer, so the output is written once. The gzip a
 `brotliDecompress`.
 
 ```ts
-import { gunzip } from "velt:compress/inflate";
+import { gunzip } from "velt/compress";
 
 function main() {
   // "hi\n", gzip-compressed.
@@ -37,7 +37,7 @@ expands, so a small body that decodes to gigabytes can be processed a piece at a
 window a stream may still refer back to is kept (32 KiB for DEFLATE, up to 16 MiB for Brotli).
 
 ```ts
-import { InflateDecoder } from "velt:compress/inflate";
+import { InflateDecoder } from "velt/compress";
 
 function main() {
   const gz: u8[] = [31, 139, 8, 0, 0, 0, 0, 0, 0, 3, 203, 200, 228, 2, 0, 122, 122, 111, 237, 3, 0, 0, 0];
@@ -59,4 +59,4 @@ function main() {
 Against the Rust crates the runtime used before ([bench/stdport](../../bench/stdport/README.md),
 instructions on x86-64): gzip decodes in 0.65 of `flate2`'s instructions, Brotli in 0.73 of
 `brotli-decompressor`'s. The gzip CRC-32 is folded with the CPU's carry-less multiplication
-([velt:simd](simd.md#carry-less-multiplication)) where it has it, tables elsewhere.
+([velt/simd](simd.md#carry-less-multiplication)) where it has it, tables elsewhere.

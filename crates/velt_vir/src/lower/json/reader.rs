@@ -1,4 +1,4 @@
-//! The decoders' pull reader is Velt code: `std/json/reader.vlt`'s `Reader` (#1668). The glue
+//! The decoders' pull reader is Velt code: `std/encoding/json/reader.vlt`'s `Reader` (#1668). The glue
 //! keeps the runtime reader's operations (`Rt::Json*`, rt_abi_async.md §12.3) as its vocabulary:
 //! [`FnLower::reader_rt`] lowers each one to direct calls of the `Reader` methods, with the
 //! same results (`u8` status, `u32` token kind, `u64` mark) and the same out-parameters
@@ -14,9 +14,9 @@ use crate::lower::{cint, ice, Cx, FnLower, ScopeKind};
 use crate::vir::{BinOp, BlockId, Local, Operand, Place, Proj, Rvalue, Ty};
 
 /// Qualified name of the reader class.
-const READER: &str = "std/json/reader::Reader";
+const READER: &str = "std/encoding/json/reader::Reader";
 /// The module of the number and string writers.
-const WRITER: &str = "std/json/writer";
+const WRITER: &str = "std/encoding/json/writer";
 
 impl Cx<'_> {
     /// The `Reader` method (or static function) `name`.
@@ -24,7 +24,7 @@ impl Cx<'_> {
         self.json_std_fn(&format!("{READER}.{name}"))
     }
 
-    /// The std function with the qualified name `full` (velt:json's Velt code).
+    /// The std function with the qualified name `full` (velt/encoding/json's Velt code).
     pub(in crate::lower) fn json_std_fn(&self, full: &str) -> DefId {
         let hir = self.hir;
         let fns = self.std_fns.get_or_init(|| {
@@ -50,7 +50,7 @@ impl Cx<'_> {
             .defs
             .iter()
             .position(|d| matches!(d, hir::Def::Adt(a) if a.name == READER))
-            .unwrap_or_else(|| ice("JSON.parse needs std/json/reader.vlt's `Reader`"));
+            .unwrap_or_else(|| ice("JSON.parse needs std/encoding/json/reader.vlt's `Reader`"));
         self.intern(TyKind::Adt(DefId(d as u32), vec![]))
     }
 }
@@ -90,7 +90,7 @@ impl FnLower<'_, '_> {
         self.json_std_call(def, pre)
     }
 
-    /// `velt:json/writer`'s `name(pre...)` (lowered arguments; the builder first, by address).
+    /// `velt/encoding/json/writer`'s `name(pre...)` (lowered arguments; the builder first, by address).
     pub(super) fn writer_call(&mut self, name: &str, pre: Vec<Operand>) {
         let def = self.cx.json_std_fn(&format!("{WRITER}::{name}"));
         self.builder_call(def, pre, 0);

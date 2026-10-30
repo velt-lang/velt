@@ -1,5 +1,5 @@
 // A sync callback assigning a captured variable, reached by an HTTP handler: a helper calls the field in a forEach callback (#873).
-import { serve } from "velt:http";
+import { serve } from "velt/http";
 
 type Fn = (v: string) => void;
 

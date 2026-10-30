@@ -8,9 +8,10 @@
 // sent `Expect: 100-continue` gets `100 Continue` when the handler first reads. What the handler
 // leaves unread is skipped before the connection's next request (`finish`).
 
-import { utf8DecodeLossy } from "velt:encoding";
-import { IoError, IoResult } from "velt:io";
-import { TcpStream } from "velt:net";
+import { utf8DecodeLossy } from "velt/encoding";
+import { IoError } from "velt/io/error";
+import { IoResult } from "velt/native/result";
+import { TcpStream } from "velt/net";
 import {
   BODY_BUFFERED,
   BODY_CHUNKED,
@@ -18,7 +19,7 @@ import {
   BODY_NONE,
   Head,
   Parser,
-} from "velt:http/server/parse";
+} from "velt/http/server/parse";
 
 const CR: u8 = 13;
 const LF: u8 = 10;

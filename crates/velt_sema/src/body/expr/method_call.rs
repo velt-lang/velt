@@ -495,7 +495,7 @@ impl FnCx<'_, '_> {
         } else if prop.name == "writeString" && self.is_std_stdout(recv.ty) {
             d = d.with_note(
                 "`writeString` was removed: write a string with `process.stdout.write(s)` (no \
-                 import); `stdout.write` of `velt:process` takes bytes",
+                 import); `stdout.write` of `velt/process` takes bytes",
             );
         }
         self.cx.error(d);
@@ -509,7 +509,7 @@ impl FnCx<'_, '_> {
             if self.cx.try_fn(*d).is_some_and(|f| f.name.ends_with("Record.__get")))
     }
 
-    /// Is `t` the `Stdout` of `velt:process` (the byte sink `stdout`)?
+    /// Is `t` the `Stdout` of `velt/process` (the byte sink `stdout`)?
     fn is_std_stdout(&self, t: TyId) -> bool {
         match self.cx.ty.kind(t) {
             TyKind::Adt(d, _) => self

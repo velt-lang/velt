@@ -2,7 +2,7 @@
 // failure, not the "transaction is aborted" ones after it), nests with savepoints, and
 // begin()/commit()/rollback() give explicit control.
 // requires-env: VELT_TEST_PG_URL
-import { connect, Client } from "velt:postgres";
+import { connect, Client } from "velt/postgres";
 
 class Count {
   n: i64;

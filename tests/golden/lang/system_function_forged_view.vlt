@@ -3,7 +3,7 @@
 // a system function read or write outside the buffer: lowering checks the byte range against
 // the buffer's own length without the wrapping addition a huge offset or length would exploit,
 // so the call stops the program instead of corrupting memory.
-import { ArrayBuffer as AB, BufferView } from "velt:typed_array/core";
+import { ArrayBuffer as AB, BufferView } from "velt/lang/typed_array/core";
 
 declare system function open(path: readonly u8[], oflag: i32, mode: u32): i32;
 declare system function pread(fd: i32, buf: u8[], offset: i64): isize;

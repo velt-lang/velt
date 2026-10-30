@@ -1,14 +1,14 @@
-// velt:sqlite/exec/order — whether the first FROM level's loop already yields the rows in the
+// velt/sqlite/exec/order — whether the first FROM level's loop already yields the rows in the
 // ORDER BY's order (a rowid scan, an index scan whose columns after the equalities match the
 // terms), so no sort is needed and LIMIT can stop the loops early.
 
-import { Index } from "velt:sqlite/schema";
-import { E_COLLATE, E_COLUMN, OrderTerm } from "velt:sqlite/sql/ast";
-import { ROWID, SRC_TABLE, Source } from "velt:sqlite/exec/source";
-import { Query, Scope } from "velt:sqlite/exec/scope";
-import { ExprCompiler } from "velt:sqlite/exec/expr";
-import { SortKey } from "velt:sqlite/exec/emit";
-import { ACC_INDEX, ACC_ROWID_EQ, ACC_ROWID_RANGE, ACC_SCAN, Access } from "velt:sqlite/exec/plan";
+import { Index } from "velt/sqlite/schema";
+import { E_COLLATE, E_COLUMN, OrderTerm } from "velt/sqlite/sql/ast";
+import { ROWID, SRC_TABLE, Source } from "velt/sqlite/exec/source";
+import { Query, Scope } from "velt/sqlite/exec/scope";
+import { ExprCompiler } from "velt/sqlite/exec/expr";
+import { SortKey } from "velt/sqlite/exec/emit";
+import { ACC_INDEX, ACC_ROWID_EQ, ACC_ROWID_RANGE, ACC_SCAN, Access } from "velt/sqlite/exec/plan";
 
 /** An ORDER BY term as a column of the first level: its column, collation and direction. */
 class OrderCol {

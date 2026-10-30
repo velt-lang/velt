@@ -1,6 +1,6 @@
-# velt:json
+# velt/encoding/json
 
-`import { Value } from "velt:json"`. `JSON` itself is a global, like the prelude's names: it needs
+`import { Value } from "velt/encoding/json"`. `JSON` itself is a global, like the prelude's names: it needs
 no import, and a program whose code never names `JSON`, `JsonValue`, `JsonError`,
 `JsonParseOptions` or `JsonReplacer` doesn't load it, so it costs that program no compile time.
 This module only exports `Value`, the dynamic JSON value (an alias of the global `JsonValue`).
@@ -311,7 +311,7 @@ console.log(text, m.cents); // {"cents":250} 250
   class cannot `extends` `JsonValue` (hold one in a field instead).
 
 ```ts
-import { Value } from "velt:json";
+import { Value } from "velt/encoding/json";
 
 struct User {
   name: string;

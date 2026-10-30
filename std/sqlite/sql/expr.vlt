@@ -1,12 +1,12 @@
-// velt:sqlite/sql/expr — the expressions of SQLite's grammar (parse.y),
-// by recursive descent. SELECT and the statements are in velt:sqlite/sql/parser, a subclass
+// velt/sqlite/sql/expr — the expressions of SQLite's grammar (parse.y),
+// by recursive descent. SELECT and the statements are in velt/sqlite/sql/parser, a subclass
 // (expressions hold subqueries, so they call its `select()`).
 //
 // Precedence, lowest first (https://sqlite.org/lang_expr.html#operators):
 // OR; AND; NOT; = == != <> IS IN LIKE GLOB MATCH REGEXP BETWEEN ISNULL NOTNULL;
 // < <= > >=; & | << >>; + -; * / %; || -> ->>; COLLATE; unary - + ~.
 // The binary levels are parsed by precedence climbing (`binaryFrom`), and nesting is bounded
-// (velt:sqlite/sql/cursor's `enter`), so deeply nested input fails with SQLite's error.
+// (velt/sqlite/sql/cursor's `enter`), so deeply nested input fails with SQLite's error.
 
 import {
   K_RESERVED,
@@ -21,7 +21,7 @@ import {
   SqlError,
   Token,
   dequote,
-} from "velt:sqlite/sql/lexer";
+} from "velt/sqlite/sql/lexer";
 import {
   E_BETWEEN,
   E_BLOB,
@@ -50,8 +50,8 @@ import {
   ResultColumn,
   Select,
   SelectCore,
-} from "velt:sqlite/sql/ast";
-import { TokenCursor } from "velt:sqlite/sql/cursor";
+} from "velt/sqlite/sql/ast";
+import { TokenCursor } from "velt/sqlite/sql/cursor";
 import {
   L_AND,
   L_CMP,
@@ -69,7 +69,7 @@ import {
   opLevel,
   prefix,
   sized,
-} from "velt:sqlite/sql/expr_tree";
+} from "velt/sqlite/sql/expr_tree";
 
 /** The expression grammar, on a token cursor. */
 export abstract class ExprParser extends TokenCursor {
@@ -82,10 +82,10 @@ export abstract class ExprParser extends TokenCursor {
     super(sql);
   }
 
-  /** A whole SELECT (velt:sqlite/sql/parser). */
+  /** A whole SELECT (velt/sqlite/sql/parser). */
   abstract select(): Select;
 
-  /** The window after OVER (velt:sqlite/sql/parser). */
+  /** The window after OVER (velt/sqlite/sql/parser). */
   abstract over(): Window;
 
   // Expressions, lowest precedence first.
@@ -492,7 +492,7 @@ export abstract class ExprParser extends TokenCursor {
         return this.call(t);
       }
       if (this.eatOp(".")) {
-        // `t.*` is a result column of its own, not an operand (velt:sqlite/sql/parser).
+        // `t.*` is a result column of its own, not an operand (velt/sqlite/sql/parser).
         const second = this.name();
         const c = new Expr(E_COLUMN, at);
         if (this.eatOp(".")) {
@@ -630,7 +630,7 @@ export abstract class ExprParser extends TokenCursor {
   /**
    * A type name (`typetoken`): words (names or strings), then an optional `(n)` or `(n, m)` of
    * signed numbers, as written in the source (a column keeps it so; SQLite dequotes it). Keywords that fall back to names are words of it, GENERATED ALWAYS included (a
-   * column definition strips those, velt:sqlite/sql/statement).
+   * column definition strips those, velt/sqlite/sql/statement).
    */
   typeName(): string {
     const first = this.peek();

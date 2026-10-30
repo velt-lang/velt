@@ -1,10 +1,10 @@
-// Helper for the velt:websocket tests: a WebSocket client that speaks the protocol by hand over
+// Helper for the velt/net/websocket tests: a WebSocket client that speaks the protocol by hand over
 // std/net, so a test can send what a correct peer never would and see the exact frames that
 // come back.
-import { connect, TcpStream } from "velt:net";
-import { utf8Decode } from "velt:encoding";
-import { maskKey } from "velt:websocket/bytes";
-import { Frame, PARTIAL, WHOLE, headSize, parse, writeHead } from "velt:websocket/frame";
+import { connect, TcpStream } from "velt/net";
+import { utf8Decode } from "velt/encoding";
+import { maskKey } from "velt/net/websocket/bytes";
+import { Frame, PARTIAL, WHOLE, headSize, parse, writeHead } from "velt/net/websocket/frame";
 
 /** A frame as it arrived. */
 export struct RawFrame {

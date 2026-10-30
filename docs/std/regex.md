@@ -1,7 +1,7 @@
-# velt:regex
+# velt/text
 
 `RegExp` is a global, as in Node, and so are regex literals (`/ab+c/gi`); `import { RegExp } from
-"velt:regex"` also works. JavaScript-flavoured regular expressions on Rust's `regex`
+"velt/text"` also works. JavaScript-flavoured regular expressions on Rust's `regex`
 engine. Matching is linear-time. Offsets (`index`, `end`, `from`) are UTF-16 code units, like
 every string position, so `s.slice(m.index, m.end)` is the match. `exec(s)` and `test(s)` of a
 regex with the `g` or `y` flag start at `lastIndex` and update it, as in JS; `exec(s, from)`
@@ -44,9 +44,9 @@ in JS (`/\u{2}/` matches `"uu"`); with it, `\p{…}` and `\P{…}` are Unicode p
 - `RegExp.escape(s)`, `clone()` (compiles the pattern again; it never throws, so a value
   holding a `RegExp` can be copied for another task, `spawn` or a channel).
 - `RegExp` implements `Pattern` (`source`, `flags` and `test(s, from?)`), also exported by
-  velt:regex/pattern, a module without the regex engine: code that only takes a regex (velt:test's
+  velt/text/regex/pattern, a module without the regex engine: code that only takes a regex (velt/test's
   `toMatch(expected: string | Pattern)`) imports that, so a program that has no regex doesn't
-  compile velt:regex.
+  compile velt/text.
 - `RegExpMatch { index; end; value; captures: (string | null)[]; names }` (`index` and `end`
   are `number`s, as JS's `m.index`), with `group(n)`,
   `named(name)` and `substitute(s, repl)` (`repl` expanded for the match). `m[n]` is group `n`
@@ -102,7 +102,7 @@ Unlike JS, the array of a match without `g` (`s.match(/(a)/)`) has no `index`, `
 the replacer function doesn't get the named-groups object.
 
 ```ts
-import { RegExp } from "velt:regex";
+import { RegExp } from "velt/text";
 
 function main() {
   const date = new RegExp("(?<y>\\d{4})-(?<m>\\d{2})-(?<d>\\d{2})", "g");

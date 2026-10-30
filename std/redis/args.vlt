@@ -1,7 +1,7 @@
 // std/redis/args: argument lists of std/redis commands that take options or maps. Internal:
-// import the public names from "velt:redis".
+// import the public names from "velt/redis".
 
-import { SetOptions } from "velt:redis";
+import { SetOptions } from "velt/redis";
 
 /** `SET key value [EX s] [PX ms] [NX] [XX]`. */
 export function setArgs(key: string, value: string, opts: SetOptions): string[] {

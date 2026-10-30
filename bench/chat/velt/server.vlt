@@ -4,13 +4,13 @@
 // Usage: server [port]; env PORT, HOST (127.0.0.1), DB (chat.db), TLS_CERT and TLS_KEY (PEM
 // files: serve HTTPS/WSS instead of HTTP/WS when both are set).
 
-import { serve, ServeOptions, TlsOptions } from "velt:http";
-import { WebSocket, WsMessage, isWebSocketRequest, upgradeWebSocket } from "velt:websocket";
-import { hmacSha256 } from "velt:crypto";
-import { hexEncode, utf8Encode } from "velt:encoding";
-import { open, Database } from "velt:sqlite";
-import { args } from "velt:process";
-import { existsSync, readFileSync, removeSync } from "velt:fs";
+import { serve, ServeOptions, TlsOptions } from "velt/http";
+import { WebSocket, WsMessage, isWebSocketRequest, upgradeWebSocket } from "velt/net/websocket";
+import { hmacSha256 } from "velt/crypto";
+import { hexEncode, utf8Encode } from "velt/encoding";
+import { open, Database } from "velt/sqlite";
+import { args } from "velt/process";
+import { existsSync, readFileSync, removeSync } from "velt/fs";
 
 const KEY = "chatbench-secret";
 

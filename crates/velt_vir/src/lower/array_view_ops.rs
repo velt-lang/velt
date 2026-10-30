@@ -17,8 +17,8 @@ use super::operand::proj;
 use super::{cint, ice, unit, FnLower};
 use crate::vir::{self, BinOp, Const, Operand, Place, Proj, Rvalue, Ty};
 
-/// The stable sort every `sort(cmp)` runs (std/sort/stable.vlt).
-const STABLE_SORT: &str = "std/sort/stable::stableSort";
+/// The stable sort every `sort(cmp)` runs (std/lang/sort/stable.vlt).
+const STABLE_SORT: &str = "std/lang/sort/stable::stableSort";
 
 impl FnLower<'_, '_> {
     /// The array intrinsic `i` on the array of the view type `aty` whose box pointer `bxp`

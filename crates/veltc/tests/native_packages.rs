@@ -110,7 +110,7 @@ const EXPECTED: &str = "sqlite true\n1 ada\n2 grace\nasync grace\nerror SQLITE_C
 
 fn server(version: &str) -> String {
     format!(
-        r#"import {{ serve }} from "velt:http";
+        r#"import {{ serve }} from "velt/http";
 import {{ Database }} from "sqlite";
 
 struct Count {{

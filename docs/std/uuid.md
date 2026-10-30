@@ -1,6 +1,6 @@
-# velt:uuid
+# velt/random/uuid
 
-`import { uuidv4, uuidv7 } from "velt:uuid"`. RFC 9562 UUIDs. The text form is lowercase
+`import { uuidv4, uuidv7 } from "velt/random/uuid"`. RFC 9562 UUIDs. The text form is lowercase
 `8-4-4-4-12`; the binary form is 16 bytes in network order.
 
 - `uuidv4()`: random. `uuidv7()`: starts with 48 bits of Unix milliseconds, so ids sort by
@@ -10,7 +10,7 @@
   `uuidVersion(s): i64`. `NIL_UUID`.
 
 ```ts
-import { uuidv4, uuidv7, uuidParse, uuidStringify, uuidValidate, uuidVersion } from "velt:uuid";
+import { uuidv4, uuidv7, uuidParse, uuidStringify, uuidValidate, uuidVersion } from "velt/random/uuid";
 
 function main() {
   const id = uuidv7();

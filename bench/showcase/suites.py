@@ -321,7 +321,7 @@ def sqlite_benchmarks(ctx):
         "category": "sqlite", "name": "db workloads (file database, WAL)", "check": "results",
         "parse": "results", "unit": "ops/s",
         "impls": [impl("Rust rusqlite", "rust", [os.path.join(target, "release", "sqlite"), *quick], rerr),
-                  impl("Velt velt:sqlite", "velt", [velt, *quick], verr),
+                  impl("Velt velt/sqlite", "velt", [velt, *quick], verr),
                   impl("Node better-sqlite3", "node", [ctx.node or "node", os.path.join(db, "node", "sqlite.mjs"), *quick],
                        nerr or (None if ctx.node else "node not found")),
                   impl("Bun bun:sqlite", "bun", [ctx.bun or "bun", bun_file, *quick],
@@ -400,7 +400,7 @@ def compile_benchmarks(ctx):
                       impl("rustc -C opt-level=3, fat LTO, x86-64-v2 (as the runtime rows)", "rust",
                            [*RUSTC, "-C", f"target-cpu={RUST_CPU}", "-o", o + "-rr", rsrc], env=nocache)],
         })
-    # The HTTP server: velt:http against axum. Cargo compiles axum, hyper and tokio from source
+    # The HTTP server: velt/http against axum. Cargo compiles axum, hyper and tokio from source
     # on a clean build (Velt's runtime, which holds its hyper and tokio, is prebuilt); the
     # rebuild row (main.rs touched, dependencies built) is the comparable edit-compile time.
     te = os.path.join(ctx.bench, "http", "techempower")
@@ -413,7 +413,7 @@ def compile_benchmarks(ctx):
     cargo_cmd = ["cargo", "build", "--release", "-q", "--offline", "--locked"]
     relenv = {**nocache, **rust_profile()}
     benches.append({
-        "category": "compile", "name": "HTTP server (techempower: velt:http vs axum)", "check": "none",
+        "category": "compile", "name": "HTTP server (techempower: velt/http vs axum)", "check": "none",
         "impls": [impl("velt build (debug, Cranelift)", "velt", [ctx.velt, "build", os.path.join(te, "server.vlt"), "-o", o + "-vd"], env=cold),
                   impl("velt build --release (LLVM -O3)", "velt", [ctx.velt, "build", "--release", os.path.join(te, "server.vlt"), "-o", o + "-vr"], env=cold),
                   impl("cargo build (debug), clean: axum + deps", "rust", ["cargo", "build", "-q", "--offline", "--locked", "--target-dir", clean_t],

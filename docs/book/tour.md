@@ -173,7 +173,7 @@ when each object can be freed. Assigning an object to a second variable refers t
 ## Async and I/O
 
 ```ts
-import { readFile, writeFile } from "velt:fs";
+import { readFile, writeFile } from "velt/fs";
 
 async function fetchUser(id: i64): Promise<string> {
   await sleep(10);
@@ -206,7 +206,7 @@ they can't modify captured variables, so they share state through `shared(...)` 
 ## An HTTP server
 
 ```ts
-import { serve } from "velt:http";
+import { serve } from "velt/http";
 
 async function main() {
   const hits = shared(0);
@@ -225,8 +225,8 @@ async function main() {
 Modules work like TypeScript's ES modules, with named exports only:
 
 ```ts
-import * as path from "velt:path";            // namespace import: path.join, path.basename, …
-import { gcd as greatestDivisor } from "velt:math";
+import * as path from "velt/path";            // namespace import: path.join, path.basename, …
+import { gcd as greatestDivisor } from "velt/math";
 
 export function describe(file: string): string {
   return `${path.basename(file)} (${greatestDivisor(12, 18)})`;

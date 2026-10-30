@@ -286,7 +286,7 @@ console.log(s.ends[1].x, s.length); // 3 5
 | Specifier | Resolves to |
 |---|---|
 | `"./file"`, `"../dir/file"` | relative to the importing file, without the extension: `file.vlt`, `file.ts` or `file.tsx` ([TypeScript files](#typescript-files-ts-and-tsx)). A folder is a module through its `index` file: `"./shapes"` is `shapes.vlt` (or `.ts`, `.tsx`), else `shapes/index.vlt` (or `.ts`, `.tsx`) |
-| `"velt:x"` | the [standard library](../std/README.md) module `x` (`"velt:fs"`, `"velt:collections/set"`) |
+| `"velt:x"` | the [standard library](../std/README.md) module `x` (`"velt/fs"`, `"velt/collections"`) |
 | an alias from `paths` in `package.vlt` | `"@app/*": "src/*"` makes `"@app/util/strings"` mean `src/util/strings.vlt` (or `.ts`, `.tsx`), resolved like a relative import ([`package.vlt`](../tooling/manifest.md)) |
 | `"pkg"`, `"pkg/sub"` | a dependency from `package.vlt`: its `src/lib.vlt`, or `src/sub.vlt` / `src/sub/index.vlt` (or `.ts`, `.tsx`, as for a relative import) ([Packages](../tooling/packages.md)) |
 | `"@scope/pkg"`, `"pkg/sub"` of an npm package | when no dependency has that name: the npm package in `node_modules` or the workspace, compiled from the TypeScript source its `package.json` `exports` point back to ([npm packages](../tooling/packages.md#npm-packages)) |
@@ -318,7 +318,7 @@ program may mix them freely, and `velt run app.ts` works like `velt run app.vlt`
 - JSX is allowed in `.tsx` and `.vlt` files. In a `.ts` file it is an error, as in TypeScript;
   rename the file to `.tsx`. The [JSX provider](../internals/contracts/jsx.md#choosing-the-provider) is chosen the same way for every file:
   the `/** @jsxImportSource x */` comment before the first token, else the package's
-  `jsx.importSource`, else `velt:jsx`. Velt also reads the comment as `// @jsxImportSource x`;
+  `jsx.importSource`, else `velt/jsx`. Velt also reads the comment as `// @jsxImportSource x`;
   `tsc` reads only the block comment, so code shared with TypeScript uses that form.
 - Two files in one directory whose names differ only in the extension (`dup.vlt` and
   `dup.ts`) have the same module path: an import without an extension can't tell them apart,
@@ -365,8 +365,8 @@ extensions scoped to the modules that import them.
 ## Examples
 
 ```ts
-import { join, basename } from "velt:path";
-import { gcd as greatestDivisor } from "velt:math";
+import { join, basename } from "velt/path";
+import { gcd as greatestDivisor } from "velt/math";
 
 export function describe(path: string): string {
   return `${basename(path)} in ${join("/srv", "app")}`;
@@ -376,8 +376,8 @@ console.log(describe("/tmp/a.txt"), greatestDivisor(12, 18));
 ```
 
 ```ts
-import * as path from "velt:path";
-import type { Stats } from "velt:fs";
+import * as path from "velt/path";
+import type { Stats } from "velt/fs";
 
 function size(s: Stats): u64 {
   return s.size;

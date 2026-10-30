@@ -3,8 +3,8 @@
 // resource's [Symbol.dispose]() runs (a store captured by the handler used to leak). The store is shared
 // (`shared(new Mutex(...))`) because calling an async closure currently clones its captured
 // class instances per call (tests/golden/bugs/async_closure_call_clones_class_capture.vlt).
-import { channel } from "velt:channel";
-import { serve } from "velt:http";
+import { channel } from "velt/sync";
+import { serve } from "velt/http";
 
 class Store {
   name: string;

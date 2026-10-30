@@ -1,10 +1,10 @@
-// Values an `Atomic` of a `shared` value replaces are retired to `velt:sync/epoch`, and a
+// Values an `Atomic` of a `shared` value replaces are retired to `velt/sync/epoch`, and a
 // function that loads one runs in an epoch section the compiler opens and closes: while a task
 // on another thread is inside such a function holding what it loaded, no value retired since is
 // dropped, however often the epoch is pushed; once it returns, they are. An async function's
 // loads are counted at once, so they survive its `await`s.
-import { availableParallelism } from "velt:os";
-import { collect, dropped, outstanding } from "velt:sync/epoch";
+import { availableParallelism } from "velt/os";
+import { collect, dropped, outstanding } from "velt/sync/epoch";
 
 interface Config {
   name: string;

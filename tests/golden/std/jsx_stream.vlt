@@ -5,14 +5,14 @@
 // In the logged run the components load only when told to: `second` once the client has seen
 // the head, `first` once `second` has loaded, and the server reports its lines over a channel
 // that `main` prints from, so the order of the lines doesn't depend on timing.
-import { jsx, Fragment, jsxAsyncComponent } from "velt:jsx/jsx-runtime";
-import { Element, renderToString, renderToStream } from "velt:jsx";
-import { BodyStream } from "velt:fetch";
-import { serve } from "velt:http";
-import { IoError } from "velt:io";
-import { AbortError } from "velt:task";
-import { connect } from "velt:net";
-import { channel, Channel } from "velt:channel";
+import { jsx, Fragment, jsxAsyncComponent } from "velt/jsx/jsx-runtime";
+import { Element, renderToString, renderToStream } from "velt/jsx";
+import { BodyStream } from "velt/net/http";
+import { serve } from "velt/http";
+import { IoError } from "velt/io";
+import { AbortError } from "velt/task";
+import { connect } from "velt/net";
+import { channel, Channel } from "velt/sync";
 
 // `wait`: load once it receives a value (else after `delay` ms); `then`: report there after;
 // `lines`: where to report that it loaded.

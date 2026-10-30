@@ -17,7 +17,7 @@
 // over-subscribed always, incomplete unless it is a single code of one bit (or no code at all,
 // for a block that uses no distances), whose missing entries stay 0 and fail if they are read.
 
-import { DIST_BASE, DIST_EXTRA, LENGTH_BASE, LENGTH_EXTRA } from "velt:compress/inflate/tables";
+import { DIST_BASE, DIST_EXTRA, LENGTH_BASE, LENGTH_EXTRA } from "velt/compress/inflate/tables";
 
 /** A literal byte (code lengths: a length or a repeat code). */
 export const LITERAL: u32 = 256;

@@ -1,9 +1,9 @@
-# velt:postgres
+# velt/postgres
 
 > This driver is moving from the standard library to a separately versioned package. The API
 > stays the same.
 
-`import { connect, createPool, Client, Pool, PgError } from "velt:postgres"`. A PostgreSQL
+`import { connect, createPool, Client, Pool, PgError } from "velt/postgres"`. A PostgreSQL
 client (tokio-postgres in the runtime) with an API close to node-postgres. Every call that talks
 to the server is async.
 
@@ -83,7 +83,7 @@ to the server is async.
 - `PgError { code, message, detail, constraint }`: `code` is the server's SQLSTATE (for
   example `"23505"` unique violation, `"42P01"` undefined table, `"42601"` syntax error,
   `"25P02"` statement in an aborted transaction). Failures outside the server use names:
-  `"ECONNREFUSED"` (and the other velt:io names), `"ECONNRESET"` (connection lost),
+  `"ECONNREFUSED"` (and the other velt/io names), `"ECONNRESET"` (connection lost),
   `"ECLOSED"` (closed client or ended pool), `"EINVAL"` (connection string or parameters),
   `"ETLS"`, `"ENOTSUP"` (a column type that can't be decoded) and `"EMISMATCH"` (a row that
   doesn't fit `T`).
@@ -95,7 +95,7 @@ to the server is async.
   unencrypted local servers; the modes were checked by hand against a server with a private CA.
 
 ```ts
-import { connect, createPool } from "velt:postgres";
+import { connect, createPool } from "velt/postgres";
 
 class User {
   id: i64;

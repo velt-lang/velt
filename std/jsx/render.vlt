@@ -6,9 +6,9 @@
 // awaited async component, then the other parts. Every async component started when its node was
 // created, so awaiting them one after the other still lets them load concurrently.
 
-import { Element, RenderError, markupOf, pushMarkup } from "velt:jsx/node";
-import { utf8Encode } from "velt:encoding";
-import { BodyStream } from "velt:fetch/body";
+import { Element, RenderError, markupOf, pushMarkup } from "velt/jsx/node";
+import { utf8Encode } from "velt/encoding";
+import { BodyStream } from "velt/net/http/fetch/body";
 
 /**
  * The HTML of `el`, after awaiting its async components. Throws the `RenderError` of the

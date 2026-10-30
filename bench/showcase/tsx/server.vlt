@@ -5,9 +5,9 @@
 // The rows are built once, in `main`, and shared with every request as `shared(...)` values,
 // which tasks on all cores read without a lock. (As module constants built by a call they would
 // be module state, and each request would take the module lock while it renders.)
-import { renderToStringSync } from "velt:jsx";
-import { serve } from "velt:http";
-import { args } from "velt:process";
+import { renderToStringSync } from "velt/jsx";
+import { serve } from "velt/http";
+import { args } from "velt/process";
 import { items, Page } from "./_page";
 
 function html(body: string): Response {

@@ -1,7 +1,7 @@
 # Streams
 
 `ReadableStream`, `ReadableStreamDefaultReader` and `ReadableStreamDefaultController` are
-globals, as in Node (no import; the module is `velt:streams`). A stream is made from a source
+globals, as in Node (no import; the module is `velt/io`). A stream is made from a source
 whose `start`, `pull` and `cancel` callbacks the stream calls in the order the WHATWG Streams
 standard gives, and is read with a reader, with `for await`, or as a `Response` body.
 

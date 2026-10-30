@@ -18,14 +18,14 @@ fn globals_load_when_a_user_module_names_them() {
     );
     t.write(
         "std/prelude/global/url.vlt",
-        "export { URL } from \"velt:url\";\n",
+        "export { URL } from \"velt/net/url\";\n",
     );
     // A std module that mentions a global's name does not load it.
     t.write(
         "std/web.vlt",
         "// URL\nexport function fetch() {}\nexport class Response {}\n",
     );
-    t.write("std/url.vlt", "export class URL {}\n");
+    t.write("std/net/url/index.vlt", "export class URL {}\n");
     t.write("std/server.vlt", "export class Response {}\n");
     let opts = || LoadOptions {
         std_root: Some(std.clone()),
@@ -133,7 +133,7 @@ fn std_modules(main: &str, prefixes: &[&str]) -> Vec<String> {
 /// The JSON modules of the repository's std a program loads (`JSON` and `JsonValue` are
 /// globals: std/prelude/global/json.vlt).
 fn json_modules(main: &str) -> Vec<String> {
-    std_modules(main, &["std/json", "std/prelude/json"])
+    std_modules(main, &["std/encoding/json", "std/prelude/json"])
 }
 
 #[test]
@@ -147,13 +147,13 @@ fn a_program_that_names_no_json_loads_no_json_modules() {
         "{loaded:?}"
     );
     assert!(
-        loaded.contains(&"std/json/reader".to_string()),
+        loaded.contains(&"std/encoding/json/reader".to_string()),
         "{loaded:?}"
     );
     // A type annotation names the global too; so does the std module that uses `JSON`.
     let typed = "function f(v: JsonValue): string { return v.stringify(); }\n";
     assert!(json_modules(typed).contains(&"std/prelude/json/json".to_string()));
-    let csv = "import { parseCsv } from \"velt:csv\";\nconsole.log(parseCsv(\"a\").length);\n";
+    let csv = "import { parseCsv } from \"velt/encoding/csv\";\nconsole.log(parseCsv(\"a\").length);\n";
     assert!(json_modules(csv).contains(&"std/prelude/json/json".to_string()));
 }
 
@@ -161,11 +161,11 @@ fn a_program_that_names_no_json_loads_no_json_modules() {
 /// regex engine only when it has a regex (#1889).
 #[test]
 fn a_test_file_without_a_regex_loads_no_regex_engine() {
-    let plain = "import { expect, it } from \"velt:test\";\n\
+    let plain = "import { expect, it } from \"velt/test\";\n\
                  it(\"m\", () => expect(\"hello\").toMatch(\"ll\"));\n";
-    assert_eq!(std_modules(plain, &["std/regex"]), ["std/regex/pattern"]);
-    let literal = "import { expect, it } from \"velt:test\";\n\
+    assert_eq!(std_modules(plain, &["std/text/regex/regexp"]), ["std/text/regex/pattern"]);
+    let literal = "import { expect, it } from \"velt/test\";\n\
                    it(\"m\", () => expect(\"hello\").toMatch(/^h/));\n";
-    let loaded = std_modules(literal, &["std/regex"]);
-    assert!(loaded.contains(&"std/regex".to_string()), "{loaded:?}");
+    let loaded = std_modules(literal, &["std/text/regex/regexp"]);
+    assert!(loaded.contains(&"std/text/regex/regexp".to_string()), "{loaded:?}");
 }

@@ -1,7 +1,7 @@
-# velt:url
+# velt/net/url
 
 A WHATWG-style `URL` and `URLSearchParams`, plus JS's URI encoding functions
-(`encodeURIComponent` and the others): globals, as in Node; `velt:url` exports them too.
+(`encodeURIComponent` and the others): globals, as in Node; `velt/net/url` exports them too.
 
 - `new URL(input, base: string | null = null)`: throws `UrlError` (`Invalid URL: …`, or
   `Invalid base URL: …` when `base` does not parse), a `TypeError` as in JS (its `name` is
@@ -22,7 +22,7 @@ A WHATWG-style `URL` and `URLSearchParams`, plus JS's URI encoding functions
   a bad escape or invalid UTF-8.
 
 ```ts
-import { URL, URLSearchParams, encodeURIComponent } from "velt:url";
+import { URL, URLSearchParams, encodeURIComponent } from "velt/net/url";
 
 function main() {
   const u = new URL("../api/items?page=2#top", "https://Example.com:443/app/v1/index.html");

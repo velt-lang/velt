@@ -1,9 +1,9 @@
 // std/sqlite on a file: WAL mode, a second connection, persistence across reopen; the files
 // are deleted afterwards.
-import { open } from "velt:sqlite";
-import { tmpdir } from "velt:os";
-import { uuidv4 } from "velt:uuid";
-import { existsSync, removeSync } from "velt:fs";
+import { open } from "velt/sqlite";
+import { tmpdir } from "velt/os";
+import { uuidv4 } from "velt/random/uuid";
+import { existsSync, removeSync } from "velt/fs";
 
 class Note {
   id: i64;

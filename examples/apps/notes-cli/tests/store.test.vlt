@@ -1,6 +1,6 @@
 // NoteStore: ids, search, tags, removal and the JSON round trip.
 import { NoteStore, NotFoundError } from "@notes/store";
-import { existsSync, removeSync } from "velt:fs";
+import { existsSync, removeSync } from "velt/fs";
 
 function sample(path: string): NoteStore {
   const s = new NoteStore(path);

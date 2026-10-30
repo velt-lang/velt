@@ -17,10 +17,10 @@
 //   `Parameters<F>` (#209);
 // - `Host` is a struct of channel handles, not a class holding the shards' promises: a promise
 //   has one owner (#212).
-import { Value } from "velt:json";
-import { channel, Channel } from "velt:channel";
-import { Ticker } from "velt:timers";
-import { fnv1a64 } from "velt:hash";
+import { Value } from "velt/encoding/json";
+import { channel, Channel } from "velt/sync";
+import { Ticker } from "velt/time";
+import { fnv1a64 } from "velt/hash";
 
 // ---------------------------------------------------------------------------------------------
 // Errors and replies
@@ -660,7 +660,7 @@ async function controlLoop(shard: Shard, control: Channel<Control>): Promise<voi
 // ---------------------------------------------------------------------------------------------
 // Routing: which shard owns an actor, and a call from any task.
 
-// FNV-1a over `type/key` (velt:hash).
+// FNV-1a over `type/key` (velt/hash).
 function shardOf(type: string, key: string, n: i64): i64 {
   return (fnv1a64(`${type}/${key}`) % (n as u64)) as i64;
 }

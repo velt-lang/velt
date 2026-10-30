@@ -1,15 +1,15 @@
-// velt:collections/btree/check: the invariants of a `Pool` (velt:collections/btree/pool), for
+// velt/collections/btree/check: the invariants of a `Pool` (velt/collections/btree/pool), for
 // tests. Walks the tree from the root with the range each node covers and reports the first
 // broken invariant: keys in order and inside their node's range, node fill, the leaf chain, each
 // node's prefix (at most the one its range gives, `Pool.prefixFor`), each word (two bytes of its
 // key past the prefix, `EMPTY` in unused slots), and the smallest and the largest key with their
-// windows (velt:collections/btree/edges), separators that are live keys, and unused slots that
+// windows (velt/collections/btree/edges), separators that are live keys, and unused slots that
 // hold the fillers.
 
-import { needsDrop } from "velt:mem";
-import { CAP, F, NONE, Pool, Range, wordOf, wordOfB } from "velt:collections/btree/pool";
-import { EMPTY, prefixOf, wordAt } from "velt:collections/btree/line";
-import { slotAtRank } from "velt:collections/btree/leaf";
+import { needsDrop } from "velt/mem";
+import { CAP, F, NONE, Pool, Range, wordOf, wordOfB } from "velt/collections/btree/pool";
+import { EMPTY, prefixOf, wordAt } from "velt/collections/btree/line";
+import { slotAtRank } from "velt/collections/btree/leaf";
 
 /** The first broken invariant of `p`, or `""`. */
 export function checkPool<K extends Comparable<K>, V>(p: Pool<K, V>): string {
@@ -110,7 +110,7 @@ function checkNode<K extends Comparable<K>, V>(
   if (p.inline()) {
     const pre = prefixOf(line);
     // At most what its range gives: an edge node keeps a shorter one after the smallest or the
-    // largest key goes (velt:collections/btree/edges), which still holds.
+    // largest key goes (velt/collections/btree/edges), which still holds.
     const want = p.prefixFor(range);
     if (pre > want) {
       return `${what}: prefix ${pre}, its range gives ${want}`;

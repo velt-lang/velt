@@ -1,8 +1,8 @@
-// velt:sqlite/exec/core — one SELECT core compiled into nested loops: the FROM items (tables,
+// velt/sqlite/exec/core — one SELECT core compiled into nested loops: the FROM items (tables,
 // subqueries, CTEs) with their joins, WHERE terms placed at the innermost level they read, and
 // the rows going to the output stage, through the groups of an aggregate query when it is one.
 
-import { BINARY } from "velt:sqlite/record";
+import { BINARY } from "velt/sqlite/record";
 import {
   E_BINARY,
   E_CALL,
@@ -14,13 +14,13 @@ import {
   J_RIGHT,
   OrderTerm,
   SelectCore,
-} from "velt:sqlite/sql/ast";
-import { SRC_ROWS, Source } from "velt:sqlite/exec/source";
-import { AggRestart, Ev, Pred, Query, Scope, Step } from "velt:sqlite/exec/scope";
-import { AG_COUNT_STAR, AggCtx } from "velt:sqlite/exec/agg";
-import { prepareError } from "velt:sqlite/exec/errors";
-import { ExprCompiler } from "velt:sqlite/exec/expr";
-import { hasWindow } from "velt:sqlite/exec/compiled";
+} from "velt/sqlite/sql/ast";
+import { SRC_ROWS, Source } from "velt/sqlite/exec/source";
+import { AggRestart, Ev, Pred, Query, Scope, Step } from "velt/sqlite/exec/scope";
+import { AG_COUNT_STAR, AggCtx } from "velt/sqlite/exec/agg";
+import { prepareError } from "velt/sqlite/exec/errors";
+import { ExprCompiler } from "velt/sqlite/exec/expr";
+import { hasWindow } from "velt/sqlite/exec/compiled";
 import {
   MAX_COLUMN,
   checkResultWidth,
@@ -29,13 +29,13 @@ import {
   rangeError,
   resultColumns,
   resultIndex,
-} from "velt:sqlite/exec/result";
-export { checkTerms, ordinal, rangeError, resultIndex } from "velt:sqlite/exec/result";
-import { WinCtx } from "velt:sqlite/exec/window";
-import { lastWindowCalls } from "velt:sqlite/exec/window_call";
-import { Pull } from "velt:sqlite/exec/pull";
-import { walkOf } from "velt:sqlite/exec/walk";
-import { ownsAggregate } from "velt:sqlite/exec/agg_owner";
+} from "velt/sqlite/exec/result";
+export { checkTerms, ordinal, rangeError, resultIndex } from "velt/sqlite/exec/result";
+import { WinCtx } from "velt/sqlite/exec/window";
+import { lastWindowCalls } from "velt/sqlite/exec/window_call";
+import { Pull } from "velt/sqlite/exec/pull";
+import { walkOf } from "velt/sqlite/exec/walk";
+import { ownsAggregate } from "velt/sqlite/exec/agg_owner";
 import {
   accessInOrder,
   coveringIndex,
@@ -47,8 +47,8 @@ import {
   minMaxIndex,
   orAsIn,
   orderJoins,
-} from "velt:sqlite/exec/core_plan";
-import { Emitter, limitValue } from "velt:sqlite/exec/emit";
+} from "velt/sqlite/exec/core_plan";
+import { Emitter, limitValue } from "velt/sqlite/exec/emit";
 import {
   ACC_INDEX,
   ACC_SCAN,
@@ -58,11 +58,11 @@ import {
   attachIndex,
   chooseAccess,
   levelOf,
-} from "velt:sqlite/exec/plan";
-import { allOf, levelLoop } from "velt:sqlite/exec/loop";
-import { GroupState, groupStepFor, outputGroups } from "velt:sqlite/exec/group";
-import { AFF_NONE } from "velt:sqlite/exec/ops";
-import { Val, intVal, nullVal } from "velt:sqlite/exec/value";
+} from "velt/sqlite/exec/plan";
+import { allOf, levelLoop } from "velt/sqlite/exec/loop";
+import { GroupState, groupStepFor, outputGroups } from "velt/sqlite/exec/group";
+import { AFF_NONE } from "velt/sqlite/exec/ops";
+import { Val, intVal, nullVal } from "velt/sqlite/exec/value";
 
 /** ORDER BY, LIMIT and OFFSET of the SELECT a core is the whole of. */
 export class Tail {
@@ -428,7 +428,7 @@ function compileCoreOnce(
       q.correlated = true;
     }
   }
-  // Rows that go out in the loops' order can also be read one at a time (velt:db's decoders).
+  // Rows that go out in the loops' order can also be read one at a time (velt/db's decoders).
   if (!isAgg && !hasWin && !em.distinct && !em.sorting) {
     const pl = pullOf(c, sc, access, terms, left, pre, em, q, limitEv, offsetEv);
     q.pull = pl;

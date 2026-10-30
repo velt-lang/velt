@@ -2,10 +2,10 @@
 // only once, the connection closing with the store, and bad data reported as 500 `db_error`.
 import { SqliteTodoStore } from "../src/sqlite_store";
 import { NewTodoBody, TodoPatchBody } from "../src/model";
-import { open } from "velt:sqlite";
-import { tmpdir } from "velt:os";
-import { uuidv4 } from "velt:uuid";
-import { existsSync, removeSync } from "velt:fs";
+import { open } from "velt/sqlite";
+import { tmpdir } from "velt/os";
+import { uuidv4 } from "velt/random/uuid";
+import { existsSync, removeSync } from "velt/fs";
 
 function tempDb(): string {
   return `${tmpdir()}/todo-api-${uuidv4()}.sqlite`;

@@ -28,17 +28,17 @@ fn unchecked(p: &Program) -> Vec<String> {
 fn what_no_code_reaches_stays_unchecked() {
     let p = ok_src("function main() {\n  console.log(\"hi\");\n}\n");
     let names = unchecked(&p);
-    // The prelude imports `velt:datetime/format`, whose `formatPattern` only `velt:datetime`
+    // The prelude imports `velt/time/format`, whose `formatPattern` only `velt/time`
     // calls, and hello world doesn't import that.
     for f in [
-        "std/datetime/format::formatPattern",
-        "std/datetime/civil::monthLong",
+        "std/time/format::formatPattern",
+        "std/time/civil::monthLong",
     ] {
         assert!(names.contains(&f.to_string()), "{f}: {names:?}");
     }
     // Modules lowering looks into by name are checked whole, and so are the prelude's helpers
     // and its types' methods.
-    let eager = ["std/sort", "std/proxy", "std/typed_array"];
+    let eager = ["std/lang/sort", "std/lang/proxy", "std/lang/typed_array"];
     for n in &names {
         assert!(n.starts_with("std/"), "{n}");
         assert!(!eager.iter().any(|e| n.starts_with(e)), "{n}");
@@ -56,17 +56,17 @@ fn what_no_code_reaches_stays_unchecked() {
 
 #[test]
 fn what_checked_code_calls_is_checked_with_what_it_calls() {
-    // `velt:datetime`, imported, is checked whole; its methods call `formatPattern`, which calls
+    // `velt/time`, imported, is checked whole; its methods call `formatPattern`, which calls
     // the module's private `token`, which calls `monthLong` of another lazy module.
     let p = ok_src(
-        "import * as dt from \"velt:datetime\";\n\
+        "import * as dt from \"velt/time\";\n\
          function main() {\n  console.log(\"hi\");\n}\n",
     );
     let names = unchecked(&p);
     for f in [
-        "std/datetime/format::formatPattern",
-        "std/datetime/format::token",
-        "std/datetime/civil::monthLong",
+        "std/time/format::formatPattern",
+        "std/time/format::token",
+        "std/time/civil::monthLong",
     ] {
         assert!(!names.contains(&f.to_string()), "{f} is checked: {names:?}");
         assert!(matches!(p.def(def_id(&p, f)), Def::Fn(f) if !f.body.block.stmts.is_empty()));
@@ -76,12 +76,12 @@ fn what_checked_code_calls_is_checked_with_what_it_calls() {
 #[test]
 fn a_module_the_program_imports_is_checked_whole() {
     let p = ok_src(
-        "import { formatPattern } from \"velt:datetime/format\";\n\
+        "import { formatPattern } from \"velt/time/format\";\n\
          function main() {\n  console.log(\"hi\");\n}\n",
     );
     let names = unchecked(&p);
     assert!(
-        !names.iter().any(|n| n.starts_with("std/datetime/format::")),
+        !names.iter().any(|n| n.starts_with("std/time/format::")),
         "{names:?}"
     );
 }
@@ -90,7 +90,7 @@ fn a_module_the_program_imports_is_checked_whole() {
 fn errors_in_user_code_are_reported_as_before() {
     // The program's own unreached function is checked: lazy checking is for std only.
     let e = err_src(
-        "import { parseIso } from \"velt:datetime/parse\";\n\
+        "import { parseIso } from \"velt/time/parse\";\n\
          function unused(): i64 { return parseIso(1); }\n\
          function main() {}\n",
     );
@@ -238,7 +238,7 @@ export class Holder {{
 fn a_decoder_checks_the_tape_only_for_a_type_with_a_json_value() {
     // The reader names no tape: `JsonValue.__fromReader` parses one, and is checked once the
     // decoded type holds a `JsonValue` (it is a method of a used `JsonValue`).
-    let tape = "std/json/tape::parseWith";
+    let tape = "std/encoding/json/tape::parseWith";
     let plain = ok_src(
         "function main() {\n  const p = JSON.parse<{ x: i64 }>(\"{}\");\n  console.log(p.x);\n}\n",
     );

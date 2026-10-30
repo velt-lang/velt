@@ -3,7 +3,7 @@
 // they render the same in the precompile and the generic lowering. Elements with no children
 // are written `<x></x>`, which the HTML parser accepts inside `<svg>` and `<math>`.
 
-import { renderToStringSync } from "velt:jsx";
+import { renderToStringSync } from "velt/jsx";
 import * as precompiled from "./_jsx_svg_page";
 import * as generic from "./_jsx_svg_page_generic";
 

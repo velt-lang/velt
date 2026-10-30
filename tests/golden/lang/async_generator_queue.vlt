@@ -4,8 +4,8 @@
 // call order, and a call whose promise nobody awaits (a `Promise.race` loser, a timed-out call)
 // still takes its turn. The steps are ordered by awaits, and every generator ends by running to
 // its end or by `return()`, so the output matches Node.
-import { timeout } from "velt:task";
-import { channel, ChannelClosed } from "velt:channel";
+import { timeout } from "velt/task";
+import { channel, ChannelClosed } from "velt/sync";
 
 class R {
   n: string;

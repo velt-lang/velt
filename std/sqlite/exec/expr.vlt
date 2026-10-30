@@ -1,15 +1,15 @@
-// velt:sqlite/exec/expr — expressions compiled into closures: names resolved against the FROM
+// velt/sqlite/exec/expr — expressions compiled into closures: names resolved against the FROM
 // items of the query and its enclosing queries, operators with SQLite's affinity, collation and
 // NULL rules (https://sqlite.org/lang_expr.html, https://sqlite.org/datatype3.html).
 //
 // Compiling happens once, at `prepare`; a compiled expression (`Ev`) reads the columns of the
 // rows the loops stand on each time it runs. Subqueries are compiled by the SELECT compiler
-// (velt:sqlite/exec/select, a subclass) and run again for each row only when correlated.
+// (velt/sqlite/exec/select, a subclass) and run again for each row only when correlated.
 
-import { DbFile } from "velt:sqlite/format";
-import { NULL } from "velt:sqlite/btree";
-import { BINARY } from "velt:sqlite/record";
-import { A_BLOB, A_INTEGER, Schema, affinityOf, collationOf } from "velt:sqlite/schema";
+import { DbFile } from "velt/sqlite/format";
+import { NULL } from "velt/sqlite/btree";
+import { BINARY } from "velt/sqlite/record";
+import { A_BLOB, A_INTEGER, Schema, affinityOf, collationOf } from "velt/sqlite/schema";
 import {
   E_BETWEEN,
   E_BINARY,
@@ -38,16 +38,16 @@ import {
   FromItem,
   Select,
   SelectCore,
-} from "velt:sqlite/sql/ast";
-import { ROWID, Source } from "velt:sqlite/exec/source";
-import { AggRestart, Ev, Params, Pred, Query, Scope } from "velt:sqlite/exec/scope";
-import { AggFn, aggregateKind } from "velt:sqlite/exec/agg";
-import { windowKind } from "velt:sqlite/exec/window";
-import { windowCall } from "velt:sqlite/exec/window_call";
-import { aggMisuse, aggOwner, aggregateCore, windowedMisuse } from "velt:sqlite/exec/agg_owner";
-import { prepareError } from "velt:sqlite/exec/errors";
-import { scalarFunction } from "velt:sqlite/exec/func";
-import { compileLike } from "velt:sqlite/exec/like";
+} from "velt/sqlite/sql/ast";
+import { ROWID, Source } from "velt/sqlite/exec/source";
+import { AggRestart, Ev, Params, Pred, Query, Scope } from "velt/sqlite/exec/scope";
+import { AggFn, aggregateKind } from "velt/sqlite/exec/agg";
+import { windowKind } from "velt/sqlite/exec/window";
+import { windowCall } from "velt/sqlite/exec/window_call";
+import { aggMisuse, aggOwner, aggregateCore, windowedMisuse } from "velt/sqlite/exec/agg_owner";
+import { prepareError } from "velt/sqlite/exec/errors";
+import { scalarFunction } from "velt/sqlite/exec/func";
+import { compileLike } from "velt/sqlite/exec/like";
 import {
   AFF_NONE,
   BIT_NOT,
@@ -61,7 +61,7 @@ import {
   holds,
   negate,
   truth,
-} from "velt:sqlite/exec/ops";
+} from "velt/sqlite/exec/ops";
 import {
   blobVal,
   concatOp,
@@ -70,7 +70,7 @@ import {
   realVal,
   textVal,
   toText,
-} from "velt:sqlite/exec/value";
+} from "velt/sqlite/exec/value";
 import {
   C,
   Found,
@@ -83,11 +83,11 @@ import {
   hasWindow,
   joinedColl,
   plain,
-} from "velt:sqlite/exec/compiled";
+} from "velt/sqlite/exec/compiled";
 
-export { C, binaryColl, comparisonOp, hasAggregate } from "velt:sqlite/exec/compiled";
-import { hexDecode } from "velt:encoding";
-import { byteSlice } from "velt:sqlite/sql/lexer";
+export { C, binaryColl, comparisonOp, hasAggregate } from "velt/sqlite/exec/compiled";
+import { hexDecode } from "velt/encoding";
+import { byteSlice } from "velt/sqlite/sql/lexer";
 
 /** Compiles expressions; the SELECT compiler extends it with subqueries. */
 export abstract class ExprCompiler {

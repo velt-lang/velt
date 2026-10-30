@@ -85,7 +85,7 @@ pub trait ProgramLoader: Send + Sync {
     ) -> Result<LoadedProgram, String>;
 
     /// The modules a file at `from` can import by a non-relative specifier: the standard
-    /// library's public modules (`velt:fs`) and the modules of the dependencies of the package
+    /// library's public modules (`velt/fs`) and the modules of the dependencies of the package
     /// containing `from`. Relative files are listed by the server itself. Used for specifier
     /// completion and auto-import; the default knows none.
     fn module_index(&self, from: &Path) -> Vec<ModuleEntry> {
@@ -114,7 +114,7 @@ pub trait ProgramLoader: Send + Sync {
 /// A module an import specifier can name ([`ProgramLoader::module_index`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModuleEntry {
-    /// The specifier as written in `from "…"`: `velt:fs`, `velt:collections/set`, `json`,
+    /// The specifier as written in `from "…"`: `velt/fs`, `velt/collections`, `json`,
     /// `json/parse`.
     pub spec: String,
     /// The module's file.

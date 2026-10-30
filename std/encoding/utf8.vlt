@@ -2,7 +2,7 @@
 // bytes at a time with SIMD vectors. `utf8Valid` (std/encoding) and the WebSocket reader's check
 // of text that arrives in pieces (std/websocket/bytes) use it.
 
-// The SIMD operations used below (`velt:simd`, std/simd/*.vlt, is the API; declared again here
+// The SIMD operations used below (`velt/simd`, std/simd/*.vlt, is the API; declared again here
 // so that this module does not load it). `load` does not check its range.
 declare function velt_simd_u8x16_splat(x: u8): u8x16;
 declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;

@@ -378,7 +378,7 @@ impl Ctx<'_> {
             Some(s) if s.is_std => self
                 .modules
                 .get(module)
-                .is_some_and(|m| m.path == "std/proxy"),
+                .is_some_and(|m| m.path == "std/lang/proxy"),
             Some(_) => true,
         }
     }

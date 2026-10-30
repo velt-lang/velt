@@ -3,7 +3,7 @@
 // every range in buffers up to 150 bytes around the 16- and 64-byte steps of the ASCII scan, with
 // a character placed in it whole, cut off by the range's end, or made invalid. The bytes outside
 // the range are 0xff, so a scan that reads past either end gives a wrong answer.
-import { validPrefix } from "velt:encoding/utf8";
+import { validPrefix } from "velt/encoding/utf8";
 
 // Whether `b` may follow `lead` as continuation byte `k` (Unicode Table 3-7).
 function continues(lead: u8, k: usize, b: u8): bool {

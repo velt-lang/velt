@@ -1,6 +1,6 @@
-# velt:collections/concurrent_map
+# velt/collections
 
-`import { ConcurrentMap } from "velt:collections/concurrent_map"`. A map from `u64` or `string`
+`import { ConcurrentMap } from "velt/collections"`. A map from `u64` or `string`
 keys to values that many threads read and write at once, `ConcurrentMap<K, V>` (`K` and `V` are
 `u64` when not written): create it, share it (`shared(ConcurrentMap.create(n))`), and call its
 methods from any task. A lookup writes no shared memory, so readers on many cores never slow
@@ -12,7 +12,7 @@ It is a B+ tree with optimistic lock coupling, as [bbtree](https://github.com/Xi
 concurrent map: a reader reads a node, then checks the node's version
 ([`VersionLatch`](../sync.md#versionlatch)) and starts over in the rare case a writer changed
 it meanwhile. It is written in Velt on the public API alone: its nodes are 1 KB blocks of one
-`Atomic<u64>[]`, read several words at a time with velt:simd's
+`Atomic<u64>[]`, read several words at a time with velt/simd's
 [`loadOptimistic`](../simd.md). Its keys are kept in key ranges, but a leaf's keys are unsorted
 and leaves are not linked, so it has no ordered walk, iteration or `size` yet (#1688).
 
@@ -83,7 +83,7 @@ thread's increment, where `m.add(k, 1)` cannot. Lookups are not lock-free: a loo
 that node's readers until it runs again.
 
 ```ts
-import { ConcurrentMap } from "velt:collections/concurrent_map";
+import { ConcurrentMap } from "velt/collections";
 
 async function count(m: shared<ConcurrentMap>, from: u64) {
   for (let i: u64 = from; i < from + 1000; i++) {

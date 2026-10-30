@@ -10,7 +10,7 @@
 // - `sort(cmp)` for any element type (and on numbers and strings too): **stable** like JS
 //   `Array.prototype.sort(cmp)`.
 //   The shape of Rust's driftsort through a scratch buffer of the array's length: natural
-//   runs, stable quicksort between them, merges (std/sort/stable.vlt). O(n log n), O(n) on
+//   runs, stable quicksort between them, merges (std/lang/sort/stable.vlt). O(n log n), O(n) on
 //   sorted or reversed input.
 //   `cmp(a, b)` returns < 0 when `a` goes first, > 0 when `b` goes first, 0 when equivalent
 //   (on `f64[]` a NaN result counts as 0). Any comparator, even an inconsistent one, gives
@@ -23,7 +23,7 @@
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
-import { stableSort } from "velt:sort/stable";
+import { stableSort } from "velt/lang/sort/stable";
 
 extend Array<i64> {
   /**

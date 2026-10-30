@@ -2,7 +2,7 @@
 // runs whichever function the value holds, and its result is the union of their results. A
 // `void` member makes it `T | null` (awaiting it then gives `void`).
 
-import { delay } from "velt:timers";
+import { delay } from "velt/time";
 
 type Handler = (() => void) | (() => Promise<void>);
 type Format = ((n: number) => string) | ((n: number) => number);

@@ -6,8 +6,8 @@
 //   typed <canada|citm|twitter> <file> <rounds> <parse|write>
 // parse: prints a checksum of the fields read (the same in every language);
 // write: parses once, stringifies `rounds` times and prints the last text.
-import { readFileSync } from "velt:fs";
-import { args } from "velt:process";
+import { readFileSync } from "velt/fs";
+import { args } from "velt/process";
 
 struct Geometry {
   type: string;

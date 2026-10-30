@@ -3,7 +3,7 @@
 // `process.env` read as an object: names in the order the OS keeps them, and a snapshot that
 // later `setEnv` / `removeEnv` calls don't change. The variables are set in name order, so the
 // output is the same on every OS.
-import { envAll, setEnv, removeEnv } from "velt:process";
+import { envAll, setEnv, removeEnv } from "velt/process";
 
 function ours(env: Record<string, string>): string[] {
   return Object.keys(env).filter((k: string) => k.startsWith("VELT_ENVALL_"));

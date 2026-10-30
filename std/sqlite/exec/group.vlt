@@ -1,14 +1,14 @@
-// velt:sqlite/exec/group — an aggregate query's groups: the GROUP BY keys compiled, each row
+// velt/sqlite/exec/group — an aggregate query's groups: the GROUP BY keys compiled, each row
 // stepped into its group, and the groups output in key order through HAVING.
 
-import { BINARY } from "velt:sqlite/record";
-import { E_COLLATE, E_STAR, SelectCore } from "velt:sqlite/sql/ast";
-import { KeySet } from "velt:sqlite/exec/keys";
-import { AggCtx, Group } from "velt:sqlite/exec/agg";
-import { Ev, Out, Pred, Query, Scope, Step } from "velt:sqlite/exec/scope";
-import { C, ExprCompiler } from "velt:sqlite/exec/expr";
-import { rangeError, resultIndex, termNumber } from "velt:sqlite/exec/result";
-import { Val, compareVals } from "velt:sqlite/exec/value";
+import { BINARY } from "velt/sqlite/record";
+import { E_COLLATE, E_STAR, SelectCore } from "velt/sqlite/sql/ast";
+import { KeySet } from "velt/sqlite/exec/keys";
+import { AggCtx, Group } from "velt/sqlite/exec/agg";
+import { Ev, Out, Pred, Query, Scope, Step } from "velt/sqlite/exec/scope";
+import { C, ExprCompiler } from "velt/sqlite/exec/expr";
+import { rangeError, resultIndex, termNumber } from "velt/sqlite/exec/result";
+import { Val, compareVals } from "velt/sqlite/exec/value";
 
 /** The groups of an aggregate query during one run. */
 export class GroupState {

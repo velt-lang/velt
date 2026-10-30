@@ -3,7 +3,7 @@
 // render as the generic lowering does, including empty lists, nested lists, lists next to text
 // and the formatting of `NaN`, `Infinity`, `-0`, `1e21` and `0.1 + 0.2`.
 
-import { renderToStringSync } from "velt:jsx";
+import { renderToStringSync } from "velt/jsx";
 import * as precompiled from "./_jsx_list_page";
 import * as generic from "./_jsx_list_page_generic";
 

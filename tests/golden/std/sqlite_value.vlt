@@ -1,8 +1,8 @@
-// SQLite's value rules in Velt (velt:sqlite/exec/value, #1720) against C SQLite (velt:sqlite) on
+// SQLite's value rules in Velt (velt/sqlite/exec/value, #1720) against C SQLite (velt/sqlite) on
 // the same values: a REAL's text (SQLite's own decimal conversion), numbers read from text,
 // column affinity, integer arithmetic that overflows to REAL, and comparison across storage
 // classes under BINARY, NOCASE and RTRIM.
-import { open, Database } from "velt:sqlite";
+import { open, Database } from "velt/sqlite";
 import {
   Val,
   applyAffinity,
@@ -15,11 +15,11 @@ import {
   realVal,
   textVal,
   toText,
-} from "velt:sqlite/exec/value";
-import { NULL, INTEGER, REAL, TEXT, BLOB } from "velt:sqlite/btree";
-import { A_BLOB, A_INTEGER, A_NUMERIC, A_REAL, A_TEXT } from "velt:sqlite/schema";
-import { BINARY, NOCASE, RTRIM } from "velt:sqlite/record";
-import { hexEncode } from "velt:encoding";
+} from "velt/sqlite/exec/value";
+import { NULL, INTEGER, REAL, TEXT, BLOB } from "velt/sqlite/btree";
+import { A_BLOB, A_INTEGER, A_NUMERIC, A_REAL, A_TEXT } from "velt/sqlite/schema";
+import { BINARY, NOCASE, RTRIM } from "velt/sqlite/record";
+import { hexEncode } from "velt/encoding";
 
 struct Real {
   v: number;

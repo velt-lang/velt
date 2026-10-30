@@ -1,7 +1,7 @@
 // An HTTP handler runs on several threads at once, and each call of it would share what it
 // captured: a resource without `clone()` cannot be captured (its count would be updated from
 // several threads).
-import { serve } from "velt:http";
+import { serve } from "velt/http";
 
 class Store {
   name: string;

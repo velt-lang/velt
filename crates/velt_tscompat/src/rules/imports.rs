@@ -92,9 +92,9 @@ fn jsx_provider(module: &ast::Module, cx: &mut Cx) {
     cx.error(
         "jsx-provider",
         span,
-        "this JSX uses `velt:jsx`, the default provider, which has no TypeScript runtime".into(),
+        "this JSX uses `velt/jsx`, the default provider, which has no TypeScript runtime".into(),
         &[
-            "`tsc` compiles JSX into calls of its `jsxImportSource`'s runtime; `velt:jsx` \
+            "`tsc` compiles JSX into calls of its `jsxImportSource`'s runtime; `velt/jsx` \
              exists only in Velt",
             "use a provider with both a Velt and a TypeScript runtime: `/** @jsxImportSource \
              <package> */` at the top of the file, or `jsx.importSource` in package.vlt",

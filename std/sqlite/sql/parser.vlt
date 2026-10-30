@@ -1,7 +1,7 @@
-// velt:sqlite/sql/parser — SELECT (with WITH, compound cores, joins, ORDER BY, LIMIT) of
-// SQLite's grammar (parse.y), on the expression grammar of velt:sqlite/sql/expr.
+// velt/sqlite/sql/parser — SELECT (with WITH, compound cores, joins, ORDER BY, LIMIT) of
+// SQLite's grammar (parse.y), on the expression grammar of velt/sqlite/sql/expr.
 
-import { ExprParser } from "velt:sqlite/sql/expr";
+import { ExprParser } from "velt/sqlite/sql/expr";
 import {
   K_JOIN,
   SqlError,
@@ -11,7 +11,7 @@ import {
   T_SEMI,
   Token,
   byteSlice,
-} from "velt:sqlite/sql/lexer";
+} from "velt/sqlite/sql/lexer";
 import {
   C_EXCEPT,
   C_INTERSECT,
@@ -40,7 +40,7 @@ import {
   BOUND_PRECEDING,
   BOUND_UNBOUNDED_FOLLOWING,
   BOUND_UNBOUNDED_PRECEDING,
-} from "velt:sqlite/sql/ast";
+} from "velt/sqlite/sql/ast";
 
 /** SQLite's limits: terms of a compound SELECT, FROM items, and tables in one join. */
 const MAX_COMPOUND: usize = 500;
@@ -107,7 +107,7 @@ function higher(h: i64, e: Expr | null): i64 {
   return e != null && e!.height > h ? e!.height : h;
 }
 
-/** The SQL parser: `new Parser(sql)`, then `select()` or (velt:sqlite/sql/statement) a statement. */
+/** The SQL parser: `new Parser(sql)`, then `select()` or (velt/sqlite/sql/statement) a statement. */
 export class Parser extends ExprParser {
   constructor(sql: string) {
     super(sql);

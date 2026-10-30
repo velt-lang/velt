@@ -1,6 +1,6 @@
-# velt:datetime
+# velt/time
 
-`import { DateTime, Duration } from "velt:datetime"`. `DateTime` is a UTC-first instant: epoch
+`import { DateTime, Duration } from "velt/time"`. `DateTime` is a UTC-first instant: epoch
 milliseconds in a small struct. **Months are 1-12.** Local time is opt-in and DST-aware, using
 the OS time zone. `TZ` overrides it: on macOS and Linux any value the C library understands; on
 Windows only UTC (`UTC`, `Etc/UTC`, `GMT`, ...) and fixed offsets (`Etc/GMT-2` is UTC+2), other
@@ -36,7 +36,7 @@ names keep the system zone. Node differs there: it understands region names like
   - `toString()`: ISO 8601, e.g. `P1DT12H`
 
 ```ts
-import { DateTime, Duration } from "velt:datetime";
+import { DateTime, Duration } from "velt/time";
 
 function main() {
   const d = DateTime.parse("2024-01-31T09:30:00+01:00");

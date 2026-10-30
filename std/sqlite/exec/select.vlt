@@ -1,11 +1,11 @@
-// velt:sqlite/exec/select — whole SELECT statements: WITH (common table expressions), compound
+// velt/sqlite/exec/select — whole SELECT statements: WITH (common table expressions), compound
 // selects (UNION [ALL], INTERSECT, EXCEPT) and the FROM items that read tables, subqueries and
-// CTEs. Each core is compiled by velt:sqlite/exec/core.
+// CTEs. Each core is compiled by velt/sqlite/exec/core.
 
-import { DbFile } from "velt:sqlite/format";
-import { INTEGER } from "velt:sqlite/btree";
-import { BINARY } from "velt:sqlite/record";
-import { A_NUMERIC, Schema, Table, View, collationOf } from "velt:sqlite/schema";
+import { DbFile } from "velt/sqlite/format";
+import { INTEGER } from "velt/sqlite/btree";
+import { BINARY } from "velt/sqlite/record";
+import { A_NUMERIC, Schema, Table, View, collationOf } from "velt/sqlite/schema";
 import {
   C_INTERSECT,
   C_NONE,
@@ -19,15 +19,15 @@ import {
   ResultColumn,
   Select,
   SelectCore,
-} from "velt:sqlite/sql/ast";
-import { SRC_ROWS, Source } from "velt:sqlite/exec/source";
-import { Ev, Params, Query, Scope } from "velt:sqlite/exec/scope";
-import { SqlRunError, prepareError } from "velt:sqlite/exec/errors";
-import { ExprCompiler, hasAggregate } from "velt:sqlite/exec/expr";
-import { hasWindow } from "velt:sqlite/exec/compiled";
-import { SortKey } from "velt:sqlite/exec/emit";
-import { KeySet } from "velt:sqlite/exec/keys";
-import { compoundRows } from "velt:sqlite/exec/compound";
+} from "velt/sqlite/sql/ast";
+import { SRC_ROWS, Source } from "velt/sqlite/exec/source";
+import { Ev, Params, Query, Scope } from "velt/sqlite/exec/scope";
+import { SqlRunError, prepareError } from "velt/sqlite/exec/errors";
+import { ExprCompiler, hasAggregate } from "velt/sqlite/exec/expr";
+import { hasWindow } from "velt/sqlite/exec/compiled";
+import { SortKey } from "velt/sqlite/exec/emit";
+import { KeySet } from "velt/sqlite/exec/keys";
+import { compoundRows } from "velt/sqlite/exec/compound";
 import {
   Tail,
   checkTerms,
@@ -35,9 +35,9 @@ import {
   ordinal,
   rangeError,
   resultIndex,
-} from "velt:sqlite/exec/core";
-import { forCompare } from "velt:sqlite/exec/ops";
-import { Val } from "velt:sqlite/exec/value";
+} from "velt/sqlite/exec/core";
+import { forCompare } from "velt/sqlite/exec/ops";
+import { Val } from "velt/sqlite/exec/value";
 
 /** A WITH clause's table: its SELECT, compiled where it is used. */
 class CteDef {

@@ -2,20 +2,20 @@
 
 `fetch`, `Request`, `Response` and `Headers` are global, as in Node: no import. They follow the
 WHATWG Fetch standard, which TypeScript's `lib.dom.d.ts` types. The client is written in Velt
-on [`velt:net`](net.md) (`std/fetch/client/`): HTTP/1.1 with keep-alive connections pooled per
+on [`velt/net`](net.md) (`std/fetch/client/`): HTTP/1.1 with keep-alive connections pooled per
 origin and shared by every task (HTTP/2 is not used, as in Node's `fetch`), TLS from the runtime
-for HTTPS, bodies decoded by [`velt:compress`](compress.md), and redirects followed as the
+for HTTPS, bodies decoded by [`velt/compress`](compress.md), and redirects followed as the
 standard says. A pooled connection idle for more than a second is checked before it is reused,
 and one idle for a minute is closed. A request sent on a *reused* pooled
 connection that the server had closed (it fails before any response) is sent once more, on
 another connection, when its method is idempotent (`GET`, `HEAD`, `OPTIONS`, `TRACE`, `PUT`,
 `DELETE`), as Go's client does; `POST` and `PATCH` are never sent twice, and neither is a request
-on a fresh connection (that server got the request and failed). Node fails such a request. A [`velt:http`](http.md) server's handlers
+on a fresh connection (that server got the request and failed). Node fails such a request. A [`velt/http`](http.md) server's handlers
 take and return the same `Request` and `Response`, as in Deno and Bun. The option types of their
 signatures (`RequestInit`, `RequestRedirect`, `ResponseInit`, `HeadersInit`, `BodyInit`) are
 global too, as in TypeScript, so an init object can be built before the call:
 `const init: RequestInit = { method: "POST" }; if (body != null) { init.body = body; }`.
-`velt:fetch` exports the same names and [`BodyStream`](#bodystream), a Velt body stream of
+`velt/net/http` exports the same names and [`BodyStream`](#bodystream), a Velt body stream of
 `u8[]` chunks.
 
 ```ts
@@ -37,13 +37,13 @@ AbortError>` sends a request and resolves once the response's status and headers
 the body is received when you read it. An HTTP error status (404, 500) is a response, not an
 error: check `res.ok`. `fetch` rejects when there is no response:
 
-- `IoError` (from [`velt:io`](io.md)) when the request fails: `code` is `"ECONNREFUSED"`,
+- `IoError` (from [`velt/io`](io.md)) when the request fails: `code` is `"ECONNREFUSED"`,
   `"ETIMEDOUT"` (connecting takes more than 10 s), `"ECONNRESET"`, … and the message starts with
   `fetch failed`, as Node's does. An invalid URL, header name or value, a GET or HEAD request
   with a body, and a scheme other than `http:` / `https:` fail with `"EINVAL"` / `"ENOTSUP"`
   before anything is sent. A redirect loop (more than 20) or a redirect with `redirect: "error"`
   fails with `fetch failed: …`.
-- The signal's `AbortError` (from [`velt:task`](task.md)) when `init.signal` is aborted: a
+- The signal's `AbortError` (from [`velt/task`](task.md)) when `init.signal` is aborted: a
   `TimeoutError`, which extends `AbortError`, for `AbortSignal.timeout(ms)`. Aborting stops
   the request where it waits (connecting, sending, waiting for the response or receiving its
   body) and closes its connection.
@@ -193,8 +193,8 @@ each chunk as it is made, and `for await (const chunk of stream)` reads it. A st
 an `IoError` (`"EIO"`) carrying its text.
 
 ```ts
-import { BodyStream } from "velt:fetch";
-import { utf8Encode } from "velt:encoding";
+import { BodyStream } from "velt/net/http";
+import { utf8Encode } from "velt/encoding";
 
 async function* lines(): AsyncGenerator<u8[]> {
   yield utf8Encode("one ");
@@ -239,7 +239,7 @@ console.log(res.status, new Headers({ a: "1" })); // 201 Headers { a: '1' }
 ## Timeouts and cancellation
 
 ```ts
-import { AbortError, TimeoutError } from "velt:task";
+import { AbortError, TimeoutError } from "velt/task";
 
 async function status(url: string): Promise<string> {
   try {
@@ -258,7 +258,7 @@ async function status(url: string): Promise<string> {
 ```
 
 `AbortController`, `AbortSignal` (with `AbortSignal.timeout` and `AbortSignal.any`) are global
-too; their error classes `AbortError` and `TimeoutError` come from [`velt:task`](task.md).
+too; their error classes `AbortError` and `TimeoutError` come from [`velt/task`](task.md).
 
 ## Differences from Node
 

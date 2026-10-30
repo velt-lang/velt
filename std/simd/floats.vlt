@@ -1,4 +1,4 @@
-// velt:simd/floats: 128-bit SIMD, float lanes. Programs import the types from `velt:simd`.
+// velt/simd/floats: 128-bit SIMD, float lanes. Programs import the types from `velt/simd`.
 //
 // A vector is a value like a number: sixteen `u8` lanes in a `u8x16`, four `f32` in an
 // `f32x4`. Every method is one instruction, or a few, on x86-64 (SSE2), arm64 (NEON) and

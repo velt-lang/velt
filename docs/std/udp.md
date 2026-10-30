@@ -1,6 +1,6 @@
-# velt:udp
+# velt/net/udp
 
-`import { bindUdp } from "velt:udp"`. UDP sockets. Addresses are `"host:port"` strings.
+`import { bindUdp } from "velt/net/udp"`. UDP sockets. Addresses are `"host:port"` strings.
 `UdpSocket` is a handle like `TcpStream`: it can be used from several tasks and is released
 by `close()`.
 
@@ -12,7 +12,7 @@ by `close()`.
 - `Datagram { data: u8[]; addr }`: `text()` decodes the payload as UTF-8.
 
 ```ts
-import { bindUdp } from "velt:udp";
+import { bindUdp } from "velt/net/udp";
 
 async function main() {
   const server = await bindUdp("127.0.0.1:0");

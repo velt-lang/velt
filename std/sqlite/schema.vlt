@@ -1,10 +1,10 @@
-// velt:sqlite/schema — the tables and indexes of a database, read from `sqlite_schema` (page 1)
+// velt/sqlite/schema — the tables and indexes of a database, read from `sqlite_schema` (page 1)
 // and parsed from the CREATE statements stored there
 // (https://sqlite.org/schematab.html, https://sqlite.org/datatype3.html#type_affinity).
 
-import { DbFile } from "velt:sqlite/format";
-import { Cursor } from "velt:sqlite/btree";
-import { parseOne } from "velt:sqlite/sql/statement";
+import { DbFile } from "velt/sqlite/format";
+import { Cursor } from "velt/sqlite/btree";
+import { parseOne } from "velt/sqlite/sql/statement";
 import {
   E_COLUMN,
   IndexedColumn,
@@ -13,9 +13,9 @@ import {
   S_CREATE_VIEW,
   Select,
   Statement,
-} from "velt:sqlite/sql/ast";
-import { BINARY, NOCASE, RTRIM } from "velt:sqlite/record";
-import { SqlError } from "velt:sqlite/sql/lexer";
+} from "velt/sqlite/sql/ast";
+import { BINARY, NOCASE, RTRIM } from "velt/sqlite/record";
+import { SqlError } from "velt/sqlite/sql/lexer";
 
 /** Column affinities. */
 export const A_BLOB: u8 = 0; // "none"

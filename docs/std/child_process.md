@@ -1,6 +1,6 @@
-# velt:child_process
+# velt/process/child
 
-`import { exec, execSync, spawn } from "velt:child_process"`. Runs other programs. Programs are
+`import { exec, execSync, spawn } from "velt/process/child"`. Runs other programs. Programs are
 found through `PATH` and arguments are passed as-is. A non-zero exit code is not an error;
 failing to start the program throws `IoError` (e.g. `ENOENT`).
 
@@ -23,7 +23,7 @@ failing to start the program throws `IoError` (e.g. `ENOENT`).
   - Errors from awaited methods propagate to `catch`.
 
 ```ts
-import { exec, execSync, spawn } from "velt:child_process";
+import { exec, execSync, spawn } from "velt/process/child";
 
 async function main() {
   const r = execSync("echo", ["hello", "world"]);

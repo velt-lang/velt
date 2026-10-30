@@ -1,9 +1,9 @@
-// Differential checks of the Velt SQLite engine (velt:sqlite/engine) against C SQLite
-// (velt:sqlite) on the same file: each query's rows, every value as `quote()` gives it, must be
+// Differential checks of the Velt SQLite engine (velt/sqlite/engine) against C SQLite
+// (velt/sqlite) on the same file: each query's rows, every value as `quote()` gives it, must be
 // the same, in the same order when the query orders them; an error must have the same message.
-import { Database as CDatabase } from "velt:sqlite";
-import { Database, SqliteError } from "velt:sqlite/engine";
-import { quote } from "velt:sqlite/exec/func";
+import { Database as CDatabase } from "velt/sqlite";
+import { Database, SqliteError } from "velt/sqlite/engine";
+import { quote } from "velt/sqlite/exec/func";
 
 struct Line {
   line: string;
@@ -46,7 +46,7 @@ export function cRows(db: CDatabase, sql: string, n: usize): string[] {
     const rows: Line[] = db.prepare(wrapped).all();
     return rows.map((r) => r.line);
   } catch (e) {
-    // velt:sqlite adds where in the SQL the error is.
+    // velt/sqlite adds where in the SQL the error is.
     const m = e.message;
     const at = m.indexOf(" in ");
     return [`error: ${at >= 0 ? m.slice(0, at) : m}`];
@@ -90,7 +90,7 @@ export function compare(c: CDatabase, v: Database, sql: string, ordered: bool): 
   const mineErr = mine.length == 1 && mine[0].startsWith("error: ");
   const theirErr = theirs.length == 1 && theirs[0].startsWith("error: ");
   if (mineErr && theirErr) {
-    // A failure while running (velt:sqlite reports it as a row that does not decode).
+    // A failure while running (velt/sqlite reports it as a row that does not decode).
     return "";
   }
   let a = mine;

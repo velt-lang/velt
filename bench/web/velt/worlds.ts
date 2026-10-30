@@ -1,11 +1,11 @@
 // The database side of the TechEmpower routes (bench/web/README.md), shared by the Velt servers:
-// velt/app.ts (std/http) and velt-native/server.vlt (velt:http/server). /db, /queries?queries=N,
+// velt/app.ts (std/http) and velt-native/server.vlt (velt/http/server). /db, /queries?queries=N,
 // /fortunes and /updates?queries=N on std/postgres.
 
-import { escapeHtml } from "velt:html";
-import { availableParallelism } from "velt:os";
-import { createPool, Client, Pool } from "velt:postgres";
-import { randomInt } from "velt:random";
+import { escapeHtml } from "velt/text";
+import { availableParallelism } from "velt/os";
+import { createPool, Client, Pool } from "velt/postgres";
+import { randomInt } from "velt/random";
 
 export const DEFAULT_URL = "postgres://benchmarkdbuser:benchmarkdbpass@127.0.0.1:5432/hello_world";
 const SELECT_WORLD = "SELECT id, randomnumber AS \"randomNumber\" FROM world WHERE id = $1";

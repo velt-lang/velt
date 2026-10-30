@@ -2,9 +2,9 @@
 // The standard library on non-ASCII text (#377 phase 2b): regex offsets, `Buffer.byteLength`,
 // CSV fields and URI encoding count UTF-16 code units like the string methods. Expected output
 // checked against node 22 (bench/strings_utf16 and tests/difftest cover more).
-import { RegExp } from "velt:regex";
-import { parseCsv } from "velt:csv";
-import { URL, encodeURIComponent, decodeURIComponent } from "velt:url";
+import { RegExp } from "velt/text";
+import { parseCsv } from "velt/encoding/csv";
+import { URL, encodeURIComponent, decodeURIComponent } from "velt/net/url";
 
 function regexOffsets() {
   const word = new RegExp("[a-zé]+", "g");

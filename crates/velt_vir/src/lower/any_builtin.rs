@@ -1,6 +1,6 @@
 //! Built-in methods of strings, arrays, numbers and booleans called through `any` (#924): the
 //! `AnyCall` slot of such a type (any_glue.rs) compares the key with the names of the prelude's
-//! functions for its kind (std/prelude/zzzz_any_methods.vlt: `__anyStr_<name>(s, args)`,
+//! functions for its kind (std/prelude/any_methods.vlt: `__anyStr_<name>(s, args)`,
 //! `__anyArr_<name><T>(a, args)` instantiated at the element type, `__anyNum_<name>(n, args)`,
 //! `__anyBool_<name>(b, args)`) and calls the one named, with the value borrowed and the
 //! arguments packed into an `any[]`; its `any` result is the call's. Another JavaScript
@@ -41,7 +41,7 @@ impl FnLower<'_, '_> {
         let mut out = vec![];
         for (i, d) in self.cx.hir.defs.iter().enumerate() {
             let hir::Def::Fn(f) = d else { continue };
-            let std_fn = ["std/prelude/", "std/record/", "std/collections/"]
+            let std_fn = ["std/prelude/", "std/lang/record/", "std/collections/"]
                 .iter()
                 .any(|r| f.name.starts_with(r));
             // `(value, args)`, or `(value, args, whole)` for a class's (`any_class_call`).

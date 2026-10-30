@@ -1,9 +1,9 @@
-// velt:sqlite/sql/statement — the statements of SQLite's grammar besides SELECT: INSERT (with
+// velt/sqlite/sql/statement — the statements of SQLite's grammar besides SELECT: INSERT (with
 // UPSERT and RETURNING), UPDATE, DELETE, CREATE TABLE / INDEX / VIEW, DROP, ALTER TABLE,
 // BEGIN / COMMIT / ROLLBACK / SAVEPOINT / RELEASE, PRAGMA and EXPLAIN. CREATE TABLE's
-// definitions are in velt:sqlite/sql/table.
+// definitions are in velt/sqlite/sql/table.
 
-import { Parser } from "velt:sqlite/sql/parser";
+import { Parser } from "velt/sqlite/sql/parser";
 import {
   SqlError,
   T_EOF,
@@ -13,7 +13,7 @@ import {
   T_REAL,
   T_SEMI,
   T_STRING,
-} from "velt:sqlite/sql/lexer";
+} from "velt/sqlite/sql/lexer";
 import {
   E_COLUMN,
   E_STAR,
@@ -35,7 +35,7 @@ import {
   S_UPDATE,
   Statement,
   Upsert,
-} from "velt:sqlite/sql/ast";
+} from "velt/sqlite/sql/ast";
 import {
   columnDef,
   columnNames,
@@ -46,7 +46,7 @@ import {
   literal,
   negated,
   qualified,
-} from "velt:sqlite/sql/table";
+} from "velt/sqlite/sql/table";
 
 /** Parses the statements of `sql` (separated by `;`; empty ones are skipped). */
 export function parseAll(sql: string): Statement[] {

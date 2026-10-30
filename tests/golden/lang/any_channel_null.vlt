@@ -1,7 +1,7 @@
 // check: no leaks
 // `Channel<any>.receive` gives an `any`: a sent `null` is `null`, a closed channel gives
 // `undefined` (#1103 review).
-import { channel } from "velt:channel";
+import { channel } from "velt/sync";
 async function main(): Promise<void> {
   const ch = channel<any>(4);
   await ch.send(null);

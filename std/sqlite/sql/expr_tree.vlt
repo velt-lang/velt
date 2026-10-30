@@ -1,9 +1,9 @@
-// velt:sqlite/sql/expr_tree — the expression parser's operator levels and the nodes it builds
-// (velt:sqlite/sql/expr): binary and prefix operators, IS and IS NULL, integer literals, and
+// velt/sqlite/sql/expr_tree — the expression parser's operator levels and the nodes it builds
+// (velt/sqlite/sql/expr): binary and prefix operators, IS and IS NULL, integer literals, and
 // SQLite's bounds on an expression's height and on parameter numbers.
 
-import { SqlError, Token } from "velt:sqlite/sql/lexer";
-import { E_BINARY, E_INT, E_IS, E_ISNULL, E_REAL, E_UNARY, Expr } from "velt:sqlite/sql/ast";
+import { SqlError, Token } from "velt/sqlite/sql/lexer";
+import { E_BINARY, E_INT, E_IS, E_ISNULL, E_REAL, E_UNARY, Expr } from "velt/sqlite/sql/ast";
 
 /** Binary operator levels, loosest first (L_NOT is NOT's operand: past AND and OR). */
 export const L_NONE: i64 = 0;

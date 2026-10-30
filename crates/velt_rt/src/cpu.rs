@@ -1,7 +1,7 @@
 //! The CPU extensions compiled Velt code asks about (rt_abi.md "SIMD", #1330): one byte per
 //! extension, 1 when this CPU has it, set by `init` before any Velt code runs and never changed
 //! after, so generated code reads it as invariant. `VELT_SIMD_DISABLE=sha` (or `clmul`, or
-//! `sha,clmul`) leaves those 0, which makes `velt:simd` emulate the instructions and std use its
+//! `sha,clmul`) leaves those 0, which makes `velt/simd` emulate the instructions and std use its
 //! portable code (to test those paths on a CPU that has the extension).
 
 use std::sync::atomic::AtomicU8;

@@ -1,4 +1,4 @@
-//! `isatty(fd)` and `process.stdout.isTTY` (std/process.vlt): is a file descriptor a terminal?
+//! `isatty(fd)` and `process.stdout.isTTY` (std/process/index.vlt): is a file descriptor a terminal?
 //!
 //! The answer for the standard streams is computed once and cached, as Node fixes `isTTY` when it
 //! creates `process.stdout`: a CLI may ask on every write (to colour its output) for the price of

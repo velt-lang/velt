@@ -3,7 +3,7 @@
 //! tests' loader, so both list the same modules.
 //!
 //! A std module is internal (not offered) when its header comment says so (`std/url/encode
-//! (std-internal): …`, `Internal: import the public names from "velt:redis"`), or when it sits
+//! (std-internal): …`, `Internal: import the public names from "velt/redis"`), or when it sits
 //! in the folder of a public module of the same name (`url/*.vlt` next to `url.vlt`); a JSX
 //! runtime (`jsx/jsx-runtime`) is public wherever it is. The prelude is imported implicitly and
 //! never listed.
@@ -20,7 +20,7 @@ const MAX_DOC_CHARS: usize = 160;
 /// The public modules of the standard library at `std_root`, sorted by specifier.
 pub fn std_module_entries(std_root: &Path) -> Vec<ModuleEntry> {
     let mut files = vec![];
-    // std modules are `.vlt` files; its `package.vlt` is the module `velt:package`.
+    // std modules are `.vlt` files; its `package.vlt` is the module `velt/package`.
     source_files(std_root, &|name| name.ends_with(".vlt"), &mut files);
     let mut out: Vec<ModuleEntry> = files
         .into_iter()
@@ -221,12 +221,12 @@ mod tests {
         assert_eq!(
             specs,
             [
-                "velt:collections/set",
-                "velt:fs",
-                "velt:jsx",
-                "velt:jsx/jsx-runtime",
-                "velt:package",
-                "velt:url"
+                "velt/collections",
+                "velt/fs",
+                "velt/jsx",
+                "velt/jsx/jsx-runtime",
+                "velt/package",
+                "velt/net/url"
             ]
         );
         assert_eq!(entries[1].doc, "file system access (docs/internals/x.md).");
@@ -240,8 +240,8 @@ mod tests {
         let std_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
         let entries = std_module_entries(&std_root);
         let specs: Vec<&str> = entries.iter().map(|e| e.spec.as_str()).collect();
-        assert!(specs.contains(&"velt:fs"), "{specs:?}");
-        for internal in ["velt:import_meta", "velt:net_bytes"] {
+        assert!(specs.contains(&"velt/fs"), "{specs:?}");
+        for internal in ["velt/lang/import_meta", "velt/net/bytes"] {
             assert!(!specs.contains(&internal), "{internal} offered: {specs:?}");
         }
     }

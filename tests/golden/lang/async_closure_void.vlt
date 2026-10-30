@@ -5,7 +5,7 @@
 // fits here), an async arrow by the promise one.
 
 // The two promises wait on channels, not timers, so the order holds on a loaded machine (#909).
-import { channel } from "velt:channel";
+import { channel } from "velt/sync";
 
 type Attrs = { id: string; onClick?: () => void };
 

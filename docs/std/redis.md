@@ -1,9 +1,9 @@
-# velt:redis
+# velt/redis
 
 > This driver is moving from the standard library to a separately versioned package. The API
 > stays the same.
 
-`import { connect, subscribe, psubscribe, RedisClient, RedisError, ZMember } from "velt:redis"`. A
+`import { connect, subscribe, psubscribe, RedisClient, RedisError, ZMember } from "velt/redis"`. A
 Redis client close to ioredis: strings with expiry, counters, hashes, lists, sets, sorted sets,
 pipelines, `MULTI`/`EXEC` transactions and pub/sub, over `redis://` or `rediss://` (TLS). One
 `RedisClient` is one multiplexed connection: commands from any number of tasks are pipelined on
@@ -59,7 +59,7 @@ it in order, so it already works as a connection pool (there is no separate `cre
   (`"ECONNREFUSED"`, `"ECONNRESET"`, `"ETIMEDOUT"`, `"EINVAL"` for a bad URL or argument).
 
 ```ts
-import { connect, subscribe } from "velt:redis";
+import { connect, subscribe } from "velt/redis";
 
 async function main() {
   const redis = await connect("redis://127.0.0.1:6379/0");

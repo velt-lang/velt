@@ -1,4 +1,4 @@
-// velt:sqlite/exec/window — window functions (https://sqlite.org/windowfunctions.html): the rows
+// velt/sqlite/exec/window — window functions (https://sqlite.org/windowfunctions.html): the rows
 // of a SELECT are collected with their partition and order keys, the window functions' arguments
 // and every other value the result reads; then sorted by partition and order, each window
 // function is computed over its frame, and the rows go to the output stage in that order.
@@ -8,8 +8,8 @@
 // group_concat. Frames: ROWS and GROUPS with any bounds, RANGE with UNBOUNDED and CURRENT ROW,
 // EXCLUDE.
 
-import { INTEGER, NULL, REAL } from "velt:sqlite/btree";
-import { A_NUMERIC } from "velt:sqlite/schema";
+import { INTEGER, NULL, REAL } from "velt/sqlite/btree";
+import { A_NUMERIC } from "velt/sqlite/schema";
 import {
   OrderTerm,
   BOUND_CURRENT,
@@ -20,7 +20,7 @@ import {
   FRAME_DEFAULT,
   FRAME_GROUPS,
   FRAME_ROWS,
-} from "velt:sqlite/sql/ast";
+} from "velt/sqlite/sql/ast";
 import {
   AG_AVG,
   AG_CONCAT,
@@ -35,10 +35,10 @@ import {
   finish,
   inverseValues,
   stepValues,
-} from "velt:sqlite/exec/agg";
-import { SqlRunError } from "velt:sqlite/exec/errors";
-import { SortKey, compareKeys } from "velt:sqlite/exec/emit";
-import { toI64 } from "velt:sqlite/exec/ops";
+} from "velt/sqlite/exec/agg";
+import { SqlRunError } from "velt/sqlite/exec/errors";
+import { SortKey, compareKeys } from "velt/sqlite/exec/emit";
+import { toI64 } from "velt/sqlite/exec/ops";
 
 type Ev = () => Val throws Error;
 
@@ -51,8 +51,8 @@ import {
   realVal,
   textVal,
   toText,
-} from "velt:sqlite/exec/value";
-import { Concat, MinMax } from "velt:sqlite/exec/window_state";
+} from "velt/sqlite/exec/value";
+import { Concat, MinMax } from "velt/sqlite/exec/window_state";
 
 /** Window function kinds. */
 export const W_ROW_NUMBER: u8 = 0;

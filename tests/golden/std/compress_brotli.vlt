@@ -1,11 +1,11 @@
 // check: no leaks
-// velt:compress/brotli: known streams (empty, metadata, uncompressed, static dictionary words
+// velt/compress: known streams (empty, metadata, uncompressed, static dictionary words
 // with transforms, a 16 MiB window), streaming with the input fed one byte at a time and read
 // in small chunks, a stream that expands a thousandfold read in bounded chunks, and the errors:
 // truncated, garbage, data after the end, a reserved bit set.
-import { brotliDecompress, BrotliDecoder } from "velt:compress/brotli";
-import { CompressError } from "velt:compress/error";
-import { hexDecode } from "velt:encoding";
+import { brotliDecompress, BrotliDecoder } from "velt/compress";
+import { CompressError } from "velt/compress/errors";
+import { hexDecode } from "velt/encoding";
 
 // Node's `zlib.brotliCompressSync("hello brotli")`.
 const HELLO = "8b058068656c6c6f2062726f746c6903";

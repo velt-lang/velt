@@ -1,10 +1,10 @@
 // What a server does with its connections: TLS, time limits, and many connecting at once.
-import { serve } from "velt:http";
-import { HttpRequest, HttpResponse, serve as serveRaw } from "velt:http/server";
-import { IoError } from "velt:io";
-import { connect, connectTls, TcpStream } from "velt:net";
-import { platform } from "velt:os";
-import { describe, expect, it } from "velt:test";
+import { serve } from "velt/http";
+import { HttpRequest, HttpResponse, serve as serveRaw } from "velt/http/server";
+import { IoError } from "velt/io";
+import { connect, connectTls, TcpStream } from "velt/net";
+import { platform } from "velt/os";
+import { describe, expect, it } from "velt/test";
 import { TEST_CA, TEST_CERT, TEST_KEY } from "../../golden/std/_tls";
 
 async function readAll(conn: TcpStream): Promise<string> {
@@ -18,8 +18,8 @@ async function readAll(conn: TcpStream): Promise<string> {
   }
 }
 
-describe("velt:http/server over TLS", () => {
-  // velt:http/server over TLS (`tls` in the options): requests, a request body, pipelining and a
+describe("velt/http/server over TLS", () => {
+  // velt/http/server over TLS (`tls` in the options): requests, a request body, pipelining and a
   // streamed response, as over plain TCP. (Was the golden std/http_server_tls.)
   it("answers pipelined requests, a body and a stream", async () => {
     const server = await serveRaw({ port: 0, tls: { cert: TEST_CERT, key: TEST_KEY } }, async (
@@ -67,7 +67,7 @@ async function exchange(port: number, raw: string): Promise<string> {
   return (all.match(/HTTP\/1\.1 \d\d\d [A-Za-z ]+/g) ?? []).join(" | ");
 }
 
-describe("velt:http/server's time limits", () => {
+describe("velt/http/server's time limits", () => {
   // A head not complete by `headersTimeout` (counted from its first byte, however the rest
   // trickles in), or a body that does not arrive by `requestTimeout`, gets 408 and the connection
   // closes, while the idle timeout (longer here) would have waited. (Was the golden

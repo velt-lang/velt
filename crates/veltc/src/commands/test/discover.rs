@@ -4,7 +4,7 @@
 //! A test is a top-level `export function test_*()` (or `export async function test_*()`) with no
 //! parameters and no generics. Tests must be exported because the generated harness imports them
 //! from a separate module; a `test_*` function that is not exported (or takes parameters) is
-//! reported and skipped. Tests registered with `describe`, `it` and `test` (`velt:test`, or
+//! reported and skipped. Tests registered with `describe`, `it` and `test` (`velt/test`, or
 //! `vitest`) are known only when the program runs; here they are counted ([`TestFunctions`]).
 
 use std::path::{Path, PathBuf};
@@ -80,14 +80,14 @@ pub struct TestFunctions {
     /// own instead of sharing one with the other test files.
     pub runs_code: bool,
     /// Its top-level statements that are `describe`, `it`, `test` and hook calls, each of
-    /// which queues one registration (`velt:test/suite`); they don't count as running code.
+    /// which queues one registration (`velt/test/suite`); they don't count as running code.
     pub queued: usize,
     /// It imports `describe`, `it`, `test` or a hook, so it may have tests that only running it
     /// lists (`--filter` can't rule it out).
     pub registers: bool,
 }
 
-/// The functions of `velt:test` that register tests and hooks.
+/// The functions of `velt/test` that register tests and hooks.
 const REGISTERING: [&str; 7] = [
     "describe",
     "it",
@@ -99,7 +99,7 @@ const REGISTERING: [&str; 7] = [
 ];
 
 /// The modules that export them.
-const TEST_MODULES: [&str; 2] = ["velt:test", "vitest"];
+const TEST_MODULES: [&str; 2] = ["velt/test", "vitest"];
 
 /// The local names `module` imports the [`REGISTERING`] functions under.
 fn registering_names(module: &ast::Module) -> Vec<String> {
@@ -506,7 +506,7 @@ mod tests {
             test_functions(&module)
         };
         let f = found(
-            "import { describe, it as spec } from \"velt:test\";\n\
+            "import { describe, it as spec } from \"velt/test\";\n\
              const log: string[] = [];\n\
              describe(`a ${1}`, () => { spec(\"x\", () => { log.push(\"x\"); }); });\n\
              spec(\"y\", async () => {});\n\
@@ -514,14 +514,14 @@ mod tests {
         );
         assert_eq!((f.queued, f.registers, f.runs_code), (2, true, false));
         assert_eq!(f.tests, ["test_z"]);
-        // Vitest's module is `velt:test`.
+        // Vitest's module is `velt/test`.
         let f = found("import { test } from \"vitest\";\ntest(\"t\", () => {});\n");
         assert_eq!((f.queued, f.registers, f.runs_code), (1, true, false));
         // Anything else at the top level runs code, and so does a registration whose arguments
         // do (or a `using`).
         for src in [
-            "import { it } from \"velt:test\";\nit(\"a\", () => {});\nconsole.log(1);\n",
-            "import { it } from \"velt:test\";\nit(name(), () => {});\nfunction name(): string { return \"a\"; }\n",
+            "import { it } from \"velt/test\";\nit(\"a\", () => {});\nconsole.log(1);\n",
+            "import { it } from \"velt/test\";\nit(name(), () => {});\nfunction name(): string { return \"a\"; }\n",
             "import { it } from \"./mine\";\nit(\"a\", () => {});\n",
         ] {
             let f = found(src);

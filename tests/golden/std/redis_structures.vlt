@@ -1,6 +1,6 @@
 // requires-env: VELT_TEST_REDIS_URL
 // std/redis: hashes, lists, sets and sorted sets.
-import { connect, ZMember } from "velt:redis";
+import { connect, ZMember } from "velt/redis";
 import { redisUrl, freshPrefix, cleanup } from "./_redis";
 
 async function main() {

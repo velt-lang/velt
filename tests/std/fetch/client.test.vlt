@@ -1,13 +1,13 @@
-// The global `fetch` against a velt:http server: responses and their bodies, requests, redirects,
+// The global `fetch` against a velt/http server: responses and their bodies, requests, redirects,
 // codings, cancelling and the "fetch safely" pattern. The client halves are valid TypeScript and
 // check what Node 22 gives for them (against an equivalent `node:http` server).
-import { utf8Encode } from "velt:encoding";
-import { BodyStream } from "velt:fetch";
-import { serve } from "velt:http";
-import { IoError } from "velt:io";
-import { AbortError, AbortSignal, TimeoutError } from "velt:task";
-import { afterAll, beforeAll, describe, expect, it } from "velt:test";
-import "velt:test/http";
+import { utf8Encode } from "velt/encoding";
+import { BodyStream } from "velt/net/http";
+import { serve } from "velt/http";
+import { IoError } from "velt/io";
+import { AbortError, AbortSignal, TimeoutError } from "velt/task";
+import { afterAll, beforeAll, describe, expect, it } from "velt/test";
+import "velt/test/http";
 
 type Info = { name: string; tags: string[] };
 

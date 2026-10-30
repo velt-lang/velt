@@ -1,14 +1,14 @@
-// velt:sqlite/exec/walk — the rows of one FROM level as a `Walk` stepped from outside, one row
-// at a time (velt:sqlite/exec/pull): the same access paths as velt:sqlite/exec/loop's loops (a
+// velt/sqlite/exec/walk — the rows of one FROM level as a `Walk` stepped from outside, one row
+// at a time (velt/sqlite/exec/pull): the same access paths as velt/sqlite/exec/loop's loops (a
 // full scan, a rowid lookup, list or range, an index scan with a prefix equality and a range on
 // the next column, an index lookup per IN value, the rows of a subquery).
 
-import { Cursor, NULL } from "velt:sqlite/btree";
-import { KeyRec } from "velt:sqlite/record";
-import "velt:sqlite/btree_back";
-import { Source } from "velt:sqlite/exec/source";
-import { Ev, Params, Query } from "velt:sqlite/exec/scope";
-import { ExprCompiler } from "velt:sqlite/exec/expr";
+import { Cursor, NULL } from "velt/sqlite/btree";
+import { KeyRec } from "velt/sqlite/record";
+import "velt/sqlite/btree_back";
+import { Source } from "velt/sqlite/exec/source";
+import { Ev, Params, Query } from "velt/sqlite/exec/scope";
+import { ExprCompiler } from "velt/sqlite/exec/expr";
 import {
   ACC_INDEX,
   ACC_ROWID_EQ,
@@ -19,10 +19,10 @@ import {
   addKeyField,
   beyondRowids,
   rowidKey,
-} from "velt:sqlite/exec/plan";
-import { inValues } from "velt:sqlite/exec/loop";
-import { forCompare } from "velt:sqlite/exec/ops";
-import { Val } from "velt:sqlite/exec/value";
+} from "velt/sqlite/exec/plan";
+import { inValues } from "velt/sqlite/exec/loop";
+import { forCompare } from "velt/sqlite/exec/ops";
+import { Val } from "velt/sqlite/exec/value";
 
 /** The rows of one level, in its access path's order: `start` for the first, `step` after. */
 export abstract class Walk {

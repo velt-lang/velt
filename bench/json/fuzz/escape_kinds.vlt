@@ -1,9 +1,9 @@
 // JSON string escaping by kind of string: `JSON.stringify` of an array of ten equal strings of
-// one kind, many times. The kinds are the ones a change to the escaping (velt:json/writer;
+// one kind, many times. The kinds are the ones a change to the escaping (velt/encoding/json/writer;
 // from #1066) must not make slower: short strings, escape-dense strings, text that is not
 // ASCII. Prints the bytes written, so runs can be compared. Usage: kinds [kind|all] [rounds]
 
-import { args } from "velt:process";
+import { args } from "velt/process";
 
 function kinds(): string[] {
   return [

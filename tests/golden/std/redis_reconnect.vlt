@@ -1,7 +1,7 @@
 // requires-env: VELT_TEST_REDIS_URL
 // std/redis: a client whose connection was killed reconnects on its next command instead of
 // failing with ECONNRESET from then on.
-import { connect, RedisClient, RedisError, RedisReply } from "velt:redis";
+import { connect, RedisClient, RedisError, RedisReply } from "velt/redis";
 import { redisUrl, freshPrefix, cleanup } from "./_redis";
 
 // Whether the server reports client `id` waiting in `BLPOP`.

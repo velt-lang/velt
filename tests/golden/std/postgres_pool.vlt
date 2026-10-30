@@ -3,8 +3,8 @@
 // schema named with a fresh UUID (connections of a pool share no temp tables), dropped at the
 // end.
 // requires-env: VELT_TEST_PG_URL
-import { connect, createPool, Client, PgError, Pool } from "velt:postgres";
-import { uuidv4 } from "velt:uuid";
+import { connect, createPool, Client, PgError, Pool } from "velt/postgres";
+import { uuidv4 } from "velt/random/uuid";
 
 class Count {
   n: i64;

@@ -329,9 +329,9 @@ keeps the settled value in Velt code). Thread-safe; no callbacks are stored (§1
 | `velt_rt_latch_wait` | `(u64 latch) -> VeltFut*` | completes (unit result) once the latch is open, and for a waiter queued by `velt_rt_latch_open`, once its queue reached that entry |
 | `velt_rt_task_id` | `() -> u64` | a unique id of the task being polled, never reused and kept by its local promises when they outlive it (0 outside a task; always 1 on single-threaded wasm): `resolve` copies a value settled from another task |
 
-### 2.2 Channels (`velt:channel`)
+### 2.2 Channels (`velt/sync`)
 
-`Channel<T>` (std/channel.vlt) is a Copy struct around a `u64` handle, a key into a runtime table
+`Channel<T>` (std/sync/channel.vlt) is a Copy struct around a `u64` handle, a key into a runtime table
 like the socket handles (§3.2): a channel leaves the table once it is closed and drained, and any
 later use of a copy sees a closed, empty channel. The runtime never sees a `T`, only its bytes:
 every call passes the item size (align <= 16). `receive` results are a `T | null` in the
@@ -374,9 +374,9 @@ ends. No suspension point may lie between lock and unlock.
 | `velt_rt_global_unlock` | `(u32 slot)` | unlocks it, on the thread that locked it |
 | `velt_rt_global_chan` | `(u32 slot) -> u64` | the slot's channel, made on first use; called with the slot locked |
 
-### 2.3 Abort signals (`velt:task`)
+### 2.3 Abort signals (`velt/task`)
 
-Each signal's `u64` handle (an `Arc`) is owned by a private `shared` cell in std/task.vlt and
+Each signal's `u64` handle (an `Arc`) is owned by a private `shared` cell in std/task/index.vlt and
 released once, at the cell's last reference; no handle is public. Aborting sets a flag, stores
 the reason and wakes the waiters; it never cancels anything itself. No code pointers are
 stored: `AbortSignal.timeout` is a runtime timer task holding a weak reference, aborted (freed with
@@ -398,7 +398,7 @@ by `any` holds strong references to its sources until it is aborted (they hold w
 
 ### 2.4 Task groups (`taskScope`)
 
-The live-children count of a `taskScope` (std/task.vlt), behind a registry key (a `TaskScope`
+The live-children count of a `taskScope` (std/task/index.vlt), behind a registry key (a `TaskScope`
 copy used after its scope ended finds no group). No code pointers are stored.
 
 | Symbol | Signature | Notes |
@@ -457,7 +457,7 @@ a parameter the declaration leaves out is `NULL`. Variadic arguments are 64-bit 
 (pointers converted), and on Apple arm64 come after zeros up to eight integer arguments, so
 they land in the stack slots a variadic callee reads. Right after each system call, the `int`
 that `__error()` (macOS) or `__errno_location()` (Linux) points to is stored into a
-thread-local value (`velt_tls_*_32_0` of `velt:os::lastOsError:I32`, crate::tls), and
+thread-local value (`velt_tls_*_32_0` of `velt/os::lastOsError:I32`, crate::tls), and
 `lastOsError()` reads that value; on Windows it is a call of `GetLastError`. One symbol has one signature, so the forms of `fcntl` share it.
 
 ### 3.2 Object handles
@@ -647,7 +647,7 @@ the body implies, added unless the headers have one: 0 none, 1 `text/plain;chars
 
 **Client**: the global `fetch` has no runtime symbols of its own. Its HTTP/1.1 client is Velt
 code (std/fetch/client/) on the §6 streams, which the runtime pools between requests
-(`velt_rt_tcp_park` / `velt_rt_tcp_unpark`, §6), and bodies are decoded by velt:compress (Velt).
+(`velt_rt_tcp_park` / `velt_rt_tcp_unpark`, §6), and bodies are decoded by velt/compress (Velt).
 
 ## 8. Process
 
@@ -679,7 +679,7 @@ object compiled against them no longer links.
 |---|---|---|
 | `velt_rt_rc_inc` | `(u64* rc)` | `shared.clone()`; Relaxed (like `Arc`); aborts on overflow |
 | `velt_rt_rc_dec` | `(u64* rc) -> u8` | Release; returns 1 (after an Acquire fence) when it reached zero: caller drops + frees |
-| `velt_rt_thread_yield` | `()` | `velt:sync`'s `Backoff.snooze` once spinning stops: let another thread run (`sched_yield`); nothing on wasm [additive] |
+| `velt_rt_thread_yield` | `()` | `velt/sync`'s `Backoff.snooze` once spinning stops: let another thread run (`sched_yield`); nothing on wasm [additive] |
 | `velt_rt_mutex_init` | `(u64* lock)` | the `Mutex<T>` lock word: 8 bytes, align 8, inside the shared object; no destroy needed |
 | `velt_rt_mutex_lock` / `velt_rt_mutex_unlock` | `(u64* lock)` | `m.with(f)` = lock; call f; unlock. Blocks the thread; bodies must not await. |
 | `velt_rt_mutex_lock_checked` | `(u64* lock)` | `velt_rt_mutex_lock` from code that may run in read mode (§9.1): there it stops the program before locking [additive, #708] |
@@ -880,8 +880,8 @@ buffer grows. An adopted string's head must not lie in its buffer.
 | `velt_rt_strbuf_adopt` | `(VeltStr* part, const VeltStr* head, u64 cap, VeltStrBuf* out) -> u8` | a builder holding `head + *part` in `part`'s own buffer, grown to `cap` (clamped like `new`'s hint): 1 when `part` is the only reference to a heap buffer of its own (not a slice, literal or inline string) whose layout fits the result, and `head` has no lone surrogate; `*out` is then the builder and `*part` empty. Otherwise 0 and nothing changes. `head` must not lie in `part`'s buffer. Template literals use it for a long fresh part |
 | `velt_rt_strbuf_push_str` | `(VeltStrBuf* b, const VeltStr* s)` | `s` may be `b` itself or lie in its buffer |
 | `velt_rt_strbuf_push_bytes` | `(VeltStrBuf* b, const u8* p, u64 len)` | static text chunks of a template; `len == 0` ⇒ `p` unused. The low 32 bits of `len` are the byte count; the high 32 bits may carry the UTF-16 unit count (as a string's `w1`): equal to the byte count, the text is ASCII and is not scanned; 0 means unknown (counted) |
-| `velt_rt_strbuf_push_u8s` | `(VeltStrBuf* b, const VeltBytes* bytes, u64 len, u64 units)` | the first `len` bytes of a `u8[]` (canonical WTF-8 Velt code built, e.g. std/json/writer.vlt); `units == len`: ASCII, not scanned; otherwise counted |
-| `velt_rt_bytes_put_f64` | `(VeltBytes* bytes, u64 at, f64 v) -> u64` | writes finite `v` as JS `String(v)` (`-0` is `0`) into the `u8[]`'s bytes from `at` and returns the position after it; needs 32 bytes of the array's length from `at`, else writes nothing and returns `at`. A writer that gathers text in a byte array (std/json/tape.vlt) prints a double there |
+| `velt_rt_strbuf_push_u8s` | `(VeltStrBuf* b, const VeltBytes* bytes, u64 len, u64 units)` | the first `len` bytes of a `u8[]` (canonical WTF-8 Velt code built, e.g. std/encoding/json/writer.vlt); `units == len`: ASCII, not scanned; otherwise counted |
+| `velt_rt_bytes_put_f64` | `(VeltBytes* bytes, u64 at, f64 v) -> u64` | writes finite `v` as JS `String(v)` (`-0` is `0`) into the `u8[]`'s bytes from `at` and returns the position after it; needs 32 bytes of the array's length from `at`, else writes nothing and returns `at`. A writer that gathers text in a byte array (std/encoding/json/tape.vlt) prints a double there |
 | `velt_rt_strbuf_push_i64` / `_u64` | `(VeltStrBuf* b, i64 / u64 v)` | decimal |
 | `velt_rt_strbuf_push_f64` | `(VeltStrBuf* b, f64 v)` | JS `String(v)` (`-0` is `0`) |
 | `velt_rt_strbuf_push_inspect_f64` | `(VeltStrBuf* b, f64 v)` | what `console.log` prints, as `velt_rt_write_f64` (`-0` is `-0`) [additive, #525] |
@@ -931,7 +931,7 @@ U+FFFD. "Omitted" JS arguments are passed as the value given in Notes.
 | Symbol | Signature | Notes |
 |---|---|---|
 | `velt_rt_str_slice` | `(const VeltStr* s, i64 start, i64 end, VeltStr* out)` | JS `slice`: negative = from end, clamped, empty if `start >= end`; omitted `end` = `i64::MAX` |
-| `velt_rt_str_byte_slice` | `(const VeltStr* s, u64 start, u64 end, VeltStr* out)` | bytes `start..end` of the WTF-8 (velt:encoding `utf8Substring`); the caller checks `start <= end <= len` and code point boundaries |
+| `velt_rt_str_byte_slice` | `(const VeltStr* s, u64 start, u64 end, VeltStr* out)` | bytes `start..end` of the WTF-8 (velt/encoding `utf8Substring`); the caller checks `start <= end <= len` and code point boundaries |
 | `velt_rt_str_index_of` | `(const VeltStr* s, const VeltStr* needle, i64 from) -> i64` | `from` clamped to `0..=len` (omitted = 0); -1 if absent; empty needle ⇒ clamped `from` |
 | `velt_rt_str_last_index_of` | `(const VeltStr* s, const VeltStr* needle, i64 from) -> i64` | last match starting `<= from`; omitted `from` = `i64::MAX` |
 | `velt_rt_str_includes` | `(const VeltStr* s, const VeltStr* needle) -> u8` | (a `position` arg ⇒ use `index_of(s, n, pos) >= 0`) |
@@ -984,12 +984,12 @@ typedef struct VeltJsonReader VeltJsonReader;   // opaque
 | `velt_rt_json_reader_skip_unknown` | `(r) -> u8` | the value of an object key the target type has no field for: `skip_value`, or a failure when the reader rejects unknown keys |
 | `velt_rt_json_reader_skip_value` | `(r) -> u8` | skips (and validates) any value — unknown keys; iterative (no recursion), but nesting past the reader's `max_depth` fails like `expect_*_start` |
 | `velt_rt_json_reader_skip_lookahead` | `(r) -> u8` | `skip_value` for a union decoder looking ahead for its discriminant: also remembers where each array/object it passes ends (by the offset of its opening bracket), and jumps over one already passed. So the lookahead of unions nested in the skipped value does not scan it again: nested unions stay linear in the input size. Memory: one entry per container skipped this way, freed with the reader |
-| `velt_rt_json_reader_read_value` | `(r, VeltJson* out) -> u8` | any one value as a `json.Value` tree (§12.5), an owned handle. Iterative (no recursion); nesting past the reader's `max_depth` fails like `expect_*_start`. Only the rows of a database driver read through it now (`std/json/reader.vlt` `readValue`); a typed decoder's `JsonValue` field from text is a tape the Velt reader builds |
+| `velt_rt_json_reader_read_value` | `(r, VeltJson* out) -> u8` | any one value as a `json.Value` tree (§12.5), an owned handle. Iterative (no recursion); nesting past the reader's `max_depth` fails like `expect_*_start`. Only the rows of a database driver read through it now (`std/encoding/json/reader.vlt` `readValue`); a typed decoder's `JsonValue` field from text is a tape the Velt reader builds |
 | `velt_rt_json_reader_mark` | `(const VeltJsonReader* r) -> u64` | the current position (opaque), for `reset` |
 | `velt_rt_json_reader_reset` | `(r, u64 mark)` | go back to a `mark` of the same reader and clear any error since: union decoders look ahead (for a discriminant key, or a number against literal members) and then decode from the start of the value |
 | `velt_rt_json_reader_end` | `(r) -> u8` | after the top-level value: 1 if only whitespace remains |
 | `velt_rt_json_error` | `(const VeltJsonReader* r, const VeltStr* expected, const VeltStr* path, VeltStr* out)` | builds the owned `JsonError.message` (§12.4) |
-| `velt_rt_json_node_syntax` | `(const VeltStr* src, VeltStr* out) -> u8` | Node's `SyntaxError` message for `src` if it is not JSON (1), else 0 and `out` untouched; the Velt reader (`std/json/reader.vlt`) asks after a failure |
+| `velt_rt_json_node_syntax` | `(const VeltStr* src, VeltStr* out) -> u8` | Node's `SyntaxError` message for `src` if it is not JSON (1), else 0 and `out` untouched; the Velt reader (`std/encoding/json/reader.vlt`) asks after a failure |
 
 Except where stated, `u8` results are 1 = ok, 0 = failed (outputs untouched). **The first failure
 is sticky**: every later call fails (`peek` returns 10), so a decoder can bail out on the first 0
@@ -1194,7 +1194,7 @@ of a Copy element type, built from a Rust `Vec<T>` (same allocator), like `VeltS
 | `velt_rt_random_u64` | `() -> u64` | uniform, OS CSPRNG |
 | `velt_rt_local_offset_minutes` | `(i64 epoch_ms) -> i32` | minutes to add to UTC for local time at that instant (DST-aware: the C library tz database on Unix; on Windows `TZ` when it names UTC or a fixed offset (`Etc/GMT±N`), else the system time zone with its dynamic per-year DST rules, `SystemTimeToTzSpecificLocalTimeEx`) |
 
-### 14.2 Regular expressions (`velt:regex`)
+### 14.2 Regular expressions (`velt/text`)
 
 `VeltRegex` is an `Arc` of a compiled Rust `regex::bytes::Regex`; a JS pattern is rewritten
 first (ASCII `\d \w \b`, JS class literals; `crates/velt_rt/src/regex/syntax.rs`). Matching runs
@@ -1217,10 +1217,10 @@ pair, and the offsets of a match are translated once per match.
 | `velt_rt_regex_split` | `(VeltRegex re, const VeltStr* s, u64 limit, VeltStrArray* out)` | JS `split` (captures spliced in, `""` for unmatched ones); `limit` 0 = none |
 | `velt_rt_regex_escape` | `(const VeltStr* s, VeltStr* out)` | metacharacters backslash-escaped |
 
-### 14.3 Child processes (`velt:child_process`)
+### 14.3 Child processes (`velt/process/child`)
 
 ```c
-typedef struct {                 // std/child_process.vlt `CommandSpec` (104 bytes)
+typedef struct {                 // std/process/child/index.vlt `CommandSpec` (104 bytes)
     VeltStr program;             // looked up in PATH when it has no separator
     VeltStrArray args;           // after the program name
     VeltStr cwd;                 // "" = the parent's
@@ -1250,7 +1250,7 @@ are `IoResult` errors whose message starts with `spawn <program>: `.
 | `velt_rt_child_output` | `(const VeltCommand* spec, const VeltStr* input) -> VeltFut*` | run to completion: stdout/stderr piped and drained concurrently, `input` (empty = none, stdin is then null) written then closed; `IoResult<VeltOutput>`, output decoded lossily; `spec.stdio` ignored |
 | `velt_rt_child_output_sync` | `(const VeltCommand* spec, const VeltStr* input, IoResult<VeltOutput>* out)` | same, blocking |
 
-### 14.4 Standard input (`velt:stdin`)
+### 14.4 Standard input (`velt/process`)
 
 `typedef struct { IoResult<VeltStr> line; u8 eof; } LineRead;` (64 bytes): a line without its
 `\n`/`\r\n`; at end of input `eof = 1` and the line is empty. One process-wide buffered stream
@@ -1263,7 +1263,7 @@ serves both forms; async reads run on the blocking pool; text is decoded lossily
 | `velt_rt_stdin_read_all` | `() -> VeltFut*` (result `IoResult<VeltStr>`) |
 | `velt_rt_stdin_read_all_sync` | `(IoResult<VeltStr>* out)` |
 
-### 14.5 Machine facts (`velt:os`)
+### 14.5 Machine facts (`velt/os`)
 
 | Symbol | Signature | Notes |
 |---|---|---|
@@ -1273,7 +1273,7 @@ serves both forms; async reads run on the blocking pool; text is decoded lossily
 | `velt_rt_os_tmpdir` | `(VeltStr* out)` | no trailing separator |
 | `velt_rt_os_hostname` | `(VeltStr* out)` | `""` if unknown |
 
-### 14.6 UDP and DNS (`velt:udp`, `velt:dns`)
+### 14.6 UDP and DNS (`velt/net/udp`, `velt/net/dns`)
 
 `VeltUdp` is an `Arc<tokio::net::UdpSocket>` (in-flight operations hold a clone).
 `typedef struct { VeltBytes data; VeltStr addr; } VeltDatagram;` (48 bytes; `addr` = `"ip:port"`).
@@ -1288,7 +1288,7 @@ serves both forms; async reads run on the blocking pool; text is decoded lossily
 | `velt_rt_udp_close` | `(VeltUdp u)` | |
 | `velt_rt_dns_lookup` | `(const VeltStr* host) -> VeltFut*` | `IoResult<VeltStrArray>` of IP strings (system resolver, duplicates removed); `ENOENT` if unresolvable |
 
-### 14.7 File streams (`velt:fs_stream`)
+### 14.7 File streams (`velt/fs`)
 
 `VeltFileReader` / `VeltFileWriter` are `Arc`s around a buffered (64 KiB) `std::fs::File`;
 every operation runs on the blocking pool. A writer's last release flushes (errors ignored).
@@ -1306,7 +1306,7 @@ every operation runs on the blocking pool. A writer's last release flushes (erro
 | `velt_rt_fs_writer_close` | `(VeltFileWriter w) -> VeltFut*` | `IoResult<()>`: flush + close; later writes fail `EPIPE`; idempotent |
 | `velt_rt_fs_writer_free` | `(VeltFileWriter w)` | releases the handle |
 
-### 14.8 HTTPS, HTTP/2 and response headers (`velt:http` additions)
+### 14.8 HTTPS, HTTP/2 and response headers (`velt/http` additions)
 
 TLS is rustls with the `ring` provider (`crates/velt_rt/src/tls.rs`). Clients trust Mozilla's
 root certificates (`webpki-roots`, compiled in) plus optional extra PEM CAs; servers offer
@@ -1320,9 +1320,9 @@ HTTP/1.1 server connections now support upgrades (`serve_connection_with_upgrade
 | `velt_rt_http_req_upgrade` | `(VeltReq r) -> u64` | key of the request's parked HTTP upgrade (0 = the request has no `Upgrade` header); an unclaimed upgrade is dropped when the handler's response is produced |
 | `velt_rt_http_req_take_upgrade` | `(VeltReq r) -> u64` | claims the request's parked upgrade (once) and returns its connection as a `VeltStream` (§6), 0 if there is none or it was claimed. The handler must return a `101` response; the stream's first operation waits until it is sent (what is written before goes out after it) and fails with `ECONNABORTED` if the upgrade does not happen. Over plain TCP the stream is the raw socket |
 
-### 14.9 WebSockets (`velt:websocket`)
+### 14.9 WebSockets (`velt/net/websocket`)
 
-`velt:websocket` is written in Velt (`std/websocket.vlt`, `std/websocket/`) on std/net streams
+`velt/net/websocket` is written in Velt (`std/net/websocket/index.vlt`, `std/websocket/`) on std/net streams
 (§6): a client connects with `velt_rt_tcp_connect` / `velt_rt_tcp_connect_tls`, a server takes
 the upgraded connection with `velt_rt_http_req_take_upgrade` (§14.8). A `WebSocket` is a struct
 of the `TcpStream` and a `shared` value holding the connection's send queue and reader (one
@@ -1334,21 +1334,21 @@ task started by whoever queues into an idle connection writes everything queued 
 (a reply by the connection's reading task, with no more input waiting, is written at once
 instead), and a send waits while more than 1 MiB is queued. No callbacks are stored (§13.5).
 
-### 14.10 HTML escaping (`velt:html`; stream std-2, additive)
+### 14.10 HTML escaping (`velt/text`; stream std-2, additive)
 
 | Symbol | Signature | Notes |
 |---|---|---|
 | `velt_rt_html_escape` | `(const VeltStr* s, VeltStr* out)` | owned `s` with `& < > " '` → `&amp; &lt; &gt; &quot; &#39;`, in one pass (output sized once); other bytes unchanged. Without any of them, `s` itself (as `velt_rt_str_own`: shared, no copy) |
 | `velt_rt_jsx_escape` | `(const VeltStr* s, VeltStr* out)` | as `velt_rt_html_escape`, but `'` → `&#x27;` (react-dom's; `std/jsx`) |
 
-Stable hash (`velt:hash`, additive):
+Stable hash (`velt/hash`, additive):
 
 | Symbol | Signature | Notes |
 |---|---|---|
-| `velt_rt_fnv1a64_str` | `(const VeltStr* s) -> u64` | `velt:hash`: 64-bit FNV-1a of the bytes; stable forever (std contract) |
+| `velt_rt_fnv1a64_str` | `(const VeltStr* s) -> u64` | `velt/hash`: 64-bit FNV-1a of the bytes; stable forever (std contract) |
 | `velt_rt_fnv1a64_bytes` | `(const VeltBytes* data) -> u64` | the same over a `u8[]` |
 
-### 14.11 SQLite (`velt:sqlite`; stream db, additive)
+### 14.11 SQLite (`velt/sqlite`; stream db, additive)
 
 The crate `velt_std_sqlite` over `rusqlite` (SQLite compiled in: `bundled`; also
 `column_decltype`), built on the native-package SDK only and linked into the runtime
@@ -1451,7 +1451,7 @@ RawMessage { kind: u32; channel: string; message: string; pattern: string }
 
 Not available on wasm (no sockets): the symbols are not defined by `velt_rt_wasm`.
 
-### 14.13 PostgreSQL (`velt:postgres`; stream db, additive)
+### 14.13 PostgreSQL (`velt/postgres`; stream db, additive)
 
 The crate `velt_std_postgres`, built on the native-package SDK only (`velt_native`, `velt_text`) and linked into the runtime (native_abi.md "Drivers in the runtime"); its functions are `velt_std_postgres__*` exports, with the signatures below. Over `tokio-postgres` (`default-features = false`), connected over the runtime's own sockets (`velt_native::net::TcpStream`) and wire stream (§14.18). Rows are written into the result string itself (`velt_native::StrBuf`); `sql` and `params` are kept by reference, not copied.
 TLS is a hand-written `TlsConnect` over tokio-rustls with the runtime's `ring` provider and
@@ -1549,7 +1549,7 @@ against the client.
 | `velt_std_postgres__copy_read` / `_read_bytes` | `(VeltPgCopyOut r) -> VeltFut*` | `IoResult<VeltStr / VeltBytes>`: every chunk received so far (≥ 1, up to ~64 KiB), empty at the end |
 | `velt_std_postgres__copy_close` | `(VeltPgCopyOut r)` | releases `r` (unread data is discarded) |
 
-### 14.16 Fast random numbers (`velt:random`; stream linux-servers, additive)
+### 14.16 Fast random numbers (`velt/random`; stream linux-servers, additive)
 | Symbol | Signature | Notes |
 |---|---|---|
 | `velt_rt_prng_f64` | `() -> f64` | uniform `[0, 1)`, 53 bits; per-thread wyrand seeded from §14.1 |

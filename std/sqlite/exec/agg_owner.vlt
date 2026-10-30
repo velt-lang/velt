@@ -1,13 +1,13 @@
-// velt:sqlite/exec/agg_owner — which query an aggregate call belongs to, as SQLite resolves it
+// velt/sqlite/exec/agg_owner — which query an aggregate call belongs to, as SQLite resolves it
 // (resolve.c): the innermost query whose columns its arguments read, so `(SELECT sum(t.a))`
 // in a query over t is an aggregate of that query; and where an aggregate may not be, with
 // SQLite's messages.
 
-import { E_CALL, E_COLUMN, E_EXISTS, E_IN_SELECT, E_SUBQUERY, Expr } from "velt:sqlite/sql/ast";
-import { Scope } from "velt:sqlite/exec/scope";
-import { aggregateKind } from "velt:sqlite/exec/agg";
-import { ExprCompiler } from "velt:sqlite/exec/expr";
-import { prepareError } from "velt:sqlite/exec/errors";
+import { E_CALL, E_COLUMN, E_EXISTS, E_IN_SELECT, E_SUBQUERY, Expr } from "velt/sqlite/sql/ast";
+import { Scope } from "velt/sqlite/exec/scope";
+import { aggregateKind } from "velt/sqlite/exec/agg";
+import { ExprCompiler } from "velt/sqlite/exec/expr";
+import { prepareError } from "velt/sqlite/exec/errors";
 
 /**
  * The query an aggregate call belongs to (resolve.c): the innermost scope from `sc` out that

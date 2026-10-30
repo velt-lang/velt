@@ -1,16 +1,16 @@
-// The schema the Velt SQLite engine reads (velt:sqlite/schema, #1720) against C SQLite's own
+// The schema the Velt SQLite engine reads (velt/sqlite/schema, #1720) against C SQLite's own
 // account of the same file (pragma table_info, index_list, index_xinfo): columns, the rowid
 // alias, automatic indexes numbered as SQLite numbers them (constraints in source order, a
 // repeated key making no second index), collations, directions, WITHOUT ROWID tables, keywords
 // as names, and an index over a collation the engine does not know.
-import { open, Database } from "velt:sqlite";
-import { DbFile } from "velt:sqlite/format";
-import { Cursor } from "velt:sqlite/btree";
-import { Index, Table, loadSchema } from "velt:sqlite/schema";
-import { BINARY, NOCASE } from "velt:sqlite/record";
-import { tmpdir } from "velt:os";
-import { uuidv4 } from "velt:uuid";
-import { readFileBytesSync, removeSync } from "velt:fs";
+import { open, Database } from "velt/sqlite";
+import { DbFile } from "velt/sqlite/format";
+import { Cursor } from "velt/sqlite/btree";
+import { Index, Table, loadSchema } from "velt/sqlite/schema";
+import { BINARY, NOCASE } from "velt/sqlite/record";
+import { tmpdir } from "velt/os";
+import { uuidv4 } from "velt/random/uuid";
+import { readFileBytesSync, removeSync } from "velt/fs";
 
 const TABLES: string[] = [
   "CREATE TABLE t1 (a, b, c, UNIQUE (c), PRIMARY KEY (a, b))",

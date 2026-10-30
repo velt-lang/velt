@@ -5,7 +5,7 @@ Tracking: #1726, with one sub-issue per step and per language feature.
 
 ## Where we are
 
-`velt:sqlite` ([docs](../../std/sqlite.md)) wraps C SQLite through `crates/velt_std_sqlite`
+`velt/sqlite` ([docs](../../std/sqlite.md)) wraps C SQLite through `crates/velt_std_sqlite`
 (rusqlite, bundled). Rows decode into typed values through `__intrinsic_read_rows`, which
 calls `sqlite3_column_*` once per value across the FFI. That is fast, but it can't get faster:
 every statement runs SQLite's bytecode interpreter (VDBE) behind an opaque call that LLVM can't
@@ -117,7 +117,7 @@ it, starting with positioned I/O for the pager.
 - Paths are `readonly u8[]` with exactly one 0, as the last byte (checked at the call), not `string`: no allocation or
   conversion is hidden in a call.
 - A target without a function accepts its declaration; calling it there is a compile error
-  (`velt:fs`'s fd API on Windows and WebAssembly for now).
+  (`velt/fs`'s fd API on Windows and WebAssembly for now).
 - `lastOsError()` adjacency is a compiler guarantee, not a convention: lowering captures `errno`
   (`*__error()` / `*__errno_location()`) into one hidden `i32` local per function, zero-filled in
   the entry block, right after every system call; `lastOsError()` reads that local when a call
@@ -136,7 +136,7 @@ it, starting with positioned I/O for the pager.
 
 ## Steps
 
-1. **Reading the file format** (`velt:sqlite/format`, `velt:sqlite/btree`): header, table and
+1. **Reading the file format** (`velt/sqlite/format`, `velt/sqlite/btree`): header, table and
    index b-tree cursors (first, next, seek by rowid), records, overflow chains, `sqlite_schema`.
    The whole file in one `u8[]`. Tested against files `sqlite3` writes.
 2. **The pager and the OS layer**: page cache over `pread`, locks, change counter; files larger
@@ -147,7 +147,7 @@ it, starting with positioned I/O for the pager.
    core functions, aggregates, subqueries. Typed row decoding replaces `__intrinsic_read_rows`
    for the Velt engine.
 4. **Writing**: INSERT, UPDATE, DELETE, b-tree balancing, the freelist, the rollback journal,
-   transactions, DDL. Then `velt:sqlite` switches to the Velt engine and `velt_std_sqlite` is
+   transactions, DDL. Then `velt/sqlite` switches to the Velt engine and `velt_std_sqlite` is
    deleted.
 5. **WAL and concurrent readers**: the WAL file and `-shm` index, snapshots per reader, a
    page cache shared between threads.
@@ -158,5 +158,5 @@ it, starting with positioned I/O for the pager.
 ## Decided
 
 - The engine may live in std or in a package: OS calls are a language feature for every
-  module (feature 1), not a std privilege. `velt:sqlite`'s planned move to a package needs no
+  module (feature 1), not a std privilege. `velt/sqlite`'s planned move to a package needs no
   native code once the engine is in Velt.

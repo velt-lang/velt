@@ -14,7 +14,7 @@
 // Lowering calls `pin` and `unpin` around a function that loads an `Atomic` of a `shared` value,
 // and `retire` for each reference such an `Atomic` gives up (velt_vir `epoch_sections.rs`,
 // `atomic_ref.rs`).
-import { pin, unpin, retire } from "velt:sync/epoch";
+import { pin, unpin, retire } from "velt/sync/epoch";
 
 /**
  * A lock around a value of type `T`, for sharing it between tasks and threads:

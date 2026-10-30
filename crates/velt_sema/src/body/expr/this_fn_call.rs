@@ -1,5 +1,5 @@
 //! Method calls that pass their object as `this` to a function expression with a `this: any`
-//! parameter (`this_fn_expr.rs`), in a program that has one (it loads std/this_fn.vlt). A call
+//! parameter (`this_fn_expr.rs`), in a program that has one (it loads std/lang/this_fn/index.vlt). A call
 //! `o.m(x)` on an `any` is a slot call that does so already (velt_vir this_fn.rs); the other
 //! member calls whose function is a dynamic value read here call
 //! `__callOn(<o.m>, o, [x])`, which passes `o` to such a function and calls any other one

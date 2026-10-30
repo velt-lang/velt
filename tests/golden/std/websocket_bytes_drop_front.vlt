@@ -1,6 +1,6 @@
 // ByteBuf.dropFront checks its count: dropping more bytes than there are (or a negative count)
 // stops the program instead of making the length wrap around.
-import { ByteBuf } from "velt:websocket/bytes";
+import { ByteBuf } from "velt/net/websocket/bytes";
 
 function main() {
   const buf = new ByteBuf();

@@ -20,7 +20,7 @@ declare function velt_rt_bytes_fill(b: u8[], byte: u8, start: i64, end: i64);
 declare function velt_rt_bytes_slice(b: u8[], start: i64, end: i64): u8[];
 declare function velt_rt_bytes_concat(a: u8[], b: u8[]): u8[];
 declare function velt_rt_bytes_range_to_str_lossy(b: u8[], start: i64, end: i64): string;
-// The SIMD operations used below (`velt:simd`, std/simd/*.vlt, is the API; declared again
+// The SIMD operations used below (`velt/simd`, std/simd/*.vlt, is the API; declared again
 // here so that the prelude does not load it). `load` does not check its range.
 declare function velt_simd_u8x16_splat(x: u8): u8x16;
 declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;

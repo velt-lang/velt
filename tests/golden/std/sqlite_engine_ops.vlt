@@ -1,12 +1,12 @@
-// The query engine's operators on values (velt:sqlite/exec/ops, velt:sqlite/exec/value) against
-// C SQLite (velt:sqlite): arithmetic, comparison, bitwise operators, unary minus, CAST and LIKE /
+// The query engine's operators on values (velt/sqlite/exec/ops, velt/sqlite/exec/value) against
+// C SQLite (velt/sqlite): arithmetic, comparison, bitwise operators, unary minus, CAST and LIKE /
 // GLOB, on every pair of a set of operands of each storage class, edge values included (the ends
 // of i64, -0.0, text with a numeric prefix, blobs). Each result is compared with what C SQLite
 // computes for the same SQL expression; the cases that differ are printed.
-import { open, Database } from "velt:sqlite";
-import { NULL, INTEGER, REAL, TEXT } from "velt:sqlite/btree";
-import { A_BLOB, A_INTEGER, A_NUMERIC, A_REAL, A_TEXT } from "velt:sqlite/schema";
-import { BINARY } from "velt:sqlite/record";
+import { open, Database } from "velt/sqlite";
+import { NULL, INTEGER, REAL, TEXT } from "velt/sqlite/btree";
+import { A_BLOB, A_INTEGER, A_NUMERIC, A_REAL, A_TEXT } from "velt/sqlite/schema";
+import { BINARY } from "velt/sqlite/record";
 import {
   Val,
   blobVal,
@@ -17,7 +17,7 @@ import {
   realVal,
   textVal,
   toText,
-} from "velt:sqlite/exec/value";
+} from "velt/sqlite/exec/value";
 import {
   BIT_AND,
   BIT_OR,
@@ -39,9 +39,9 @@ import {
   castTo,
   compareOp,
   negate,
-} from "velt:sqlite/exec/ops";
-import { compileLike } from "velt:sqlite/exec/like";
-import { hexEncode } from "velt:encoding";
+} from "velt/sqlite/exec/ops";
+import { compileLike } from "velt/sqlite/exec/like";
+import { hexEncode } from "velt/encoding";
 
 struct Operand {
   sql: string;

@@ -1,5 +1,5 @@
 // std/sqlite type mapping: exact i64, REAL, TEXT escapes, BLOB as u8[], NULL, BOOLEAN columns.
-import { open } from "velt:sqlite";
+import { open } from "velt/sqlite";
 
 class Value {
   i: i64;

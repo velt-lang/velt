@@ -25,11 +25,11 @@ cargo build --release -q -p veltc -p velt_rt --manifest-path "$ROOT/Cargo.toml"
 # The user-code copy: std's map as the program's own modules, imports made relative.
 USER="$OUT/user"
 rm -rf "$USER" && mkdir -p "$USER/btree"
-sed 's#"velt:collections/btree/#"./btree/#g' "$ROOT/std/collections/btree_map.vlt" >"$USER/btree_map.vlt"
+sed 's#"velt/collections/btree/#"./btree/#g' "$ROOT/std/collections/btree_map.vlt" >"$USER/btree_map.vlt"
 for f in "$ROOT"/std/collections/btree/*.vlt; do
-  sed 's#"velt:collections/btree/#"./#g' "$f" >"$USER/btree/$(basename "$f")"
+  sed 's#"velt/collections/btree/#"./#g' "$f" >"$USER/btree/$(basename "$f")"
 done
-sed 's#"velt:collections/btree_map"#"./btree_map"#' "$HERE/btree.vlt" >"$USER/main.vlt"
+sed 's#"velt/collections"#"./btree_map"#' "$HERE/btree.vlt" >"$USER/main.vlt"
 "$TARGET/release/velt" build --release --backend llvm "$USER/main.vlt" -o "$OUT/btree-velt-user"
 (cd "$HERE/rust" && cargo build --release -q --target-dir "$OUT/rust")
 cp "$OUT/rust/release/std" "$OUT/btree-std"

@@ -4,8 +4,8 @@
 // written, so runs can be compared. Usage: rows [feed|post|both] [rounds]
 // rust/ is the same program on rusqlite + serde_json.
 
-import { open } from "velt:sqlite";
-import { args } from "velt:process";
+import { open } from "velt/sqlite";
+import { args } from "velt/process";
 
 const POST_COLUMNS =
   "SELECT p.id, p.body, p.created_at, u.username AS author, (SELECT count(*) FROM likes l WHERE l.post_id = p.id) AS like_count FROM posts p JOIN users u ON u.id = p.user_id";

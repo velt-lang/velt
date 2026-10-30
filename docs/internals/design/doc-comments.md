@@ -142,7 +142,7 @@ reference built from the converted sources is byte for byte the same as before (
 were then corrected where they no longer matched the code). A test
 (`crates/velt_doc/tests/std_docs.rs`) keeps it that way: it fails when a declaration that
 `velt doc` documents has no doc comment while a plain comment ends right above it. `///` blocks
-(`std/package.vlt`, the `websocket` template) keep working unchanged; the `lib` template uses
+(`std/package/index.vlt`, the `websocket` template) keep working unchanged; the `lib` template uses
 `/** */` with tags.
 
 A package whose documentation is written in `//` loses it in `velt doc` until it is converted.

@@ -1,8 +1,8 @@
-// velt:http's requests as a handler sees them: url, method, headers, where it came from, and
+// velt/http's requests as a handler sees them: url, method, headers, where it came from, and
 // its body.
-import { serve, ServeInfo } from "velt:http";
-import { afterAll, beforeAll, describe, expect, it } from "velt:test";
-import "velt:test/http";
+import { serve, ServeInfo } from "velt/http";
+import { afterAll, beforeAll, describe, expect, it } from "velt/test";
+import "velt/test/http";
 
 describe("a handler's request", () => {
   // A handler's `Request` reads its properties from the runtime request on access: `url`,

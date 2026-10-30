@@ -1,10 +1,10 @@
-// velt:sqlite/exec/window_state — the states of min(), max() and group_concat() over a moving
-// window frame (velt:sqlite/exec/window), kept as SQLite keeps them so that a row leaving the
+// velt/sqlite/exec/window_state — the states of min(), max() and group_concat() over a moving
+// window frame (velt/sqlite/exec/window), kept as SQLite keeps them so that a row leaving the
 // frame takes out what SQLite takes out.
 
-import { NULL } from "velt:sqlite/btree";
-import { Val, compareVals, nullVal, textVal, toText } from "velt:sqlite/exec/value";
-import { utf8Encode } from "velt:encoding";
+import { NULL } from "velt/sqlite/btree";
+import { Val, compareVals, nullVal, textVal, toText } from "velt/sqlite/exec/value";
+import { utf8Encode } from "velt/encoding";
 
 /**
  * min() or max() over a frame that loses rows, with SQLite's answers: the result is the frame's

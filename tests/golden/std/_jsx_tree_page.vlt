@@ -1,7 +1,7 @@
 // The page of `jsx_tree`, under std/jsx's precompiling runtime. `_jsx_tree_page_generic.vlt` is
-// the same source under `velt:jsx/generic`.
+// the same source under `velt/jsx/generic`.
 
-import { raw } from "velt:jsx";
+import { raw } from "velt/jsx";
 
 function Item(props: { label: string }): JSX.Element {
   return <li title={props.label}>{props.label}</li>;

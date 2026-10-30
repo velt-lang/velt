@@ -1,6 +1,6 @@
 // A base class value whose dynamic class holds std private state (a `BigInt` handle) is written
 // as its static class: the handle never reaches JSON.
-import { BigInt } from "velt:bigint";
+import { BigInt } from "velt/math";
 
 class Base {
   name: string;

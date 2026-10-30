@@ -1,6 +1,6 @@
-# velt:http
+# velt/http
 
-`import { serve, ServeInfo, Server } from "velt:http"`. An HTTP server on hyper: HTTP/1.1
+`import { serve, ServeInfo, Server } from "velt/http"`. An HTTP server on hyper: HTTP/1.1
 keep-alive, HTTP/2 (h2c prior knowledge, or ALPN over TLS) and HTTPS (rustls). Handlers take the
 global [`Request`](fetch.md#request) and return the global [`Response`](fetch.md#response), the
 same classes `fetch` uses, as in Deno and Bun. Handlers run concurrently on every core. A
@@ -10,7 +10,7 @@ error, or a nonzero exit code) ends the process at once, servers or not. For a w
 [Building an HTTP server](../book/http-server.md).
 
 ```ts
-import { serve } from "velt:http";
+import { serve } from "velt/http";
 
 async function main() {
   const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
@@ -92,7 +92,7 @@ it throws.
   with `shared(...)` as the fix shows; the program then runs as in Node.
 
   ```ts
-  import { serve } from "velt:http";
+  import { serve } from "velt/http";
 
   class Input {
     onChange: (v: string) => void = (v) => {};
@@ -161,9 +161,9 @@ response `fetch` returned (a proxy: its body is passed on as it arrives).
   status sends none.
 
 ```ts
-import { serve } from "velt:http";
-import { BodyStream } from "velt:fetch";
-import { utf8Encode } from "velt:encoding";
+import { serve } from "velt/http";
+import { BodyStream } from "velt/net/http";
+import { utf8Encode } from "velt/encoding";
 
 async function* rows(n: i64): AsyncGenerator<u8[]> {
   yield utf8Encode("<!doctype html><ul>");
@@ -190,12 +190,12 @@ A handler can take over its connection for another protocol (an HTTP/1.1 `Upgrad
 `upgradeConnection(req: Request, protocol: string, headers?: HeadersInit): ConnectionUpgrade {
 stream: TcpStream; response: Response }` takes the connection. Return `response` (`101 Switching
 Protocols`, with `upgrade: protocol`, `connection: Upgrade` and `headers`) from the handler; from
-then on the connection is `stream`, a [`velt:net`](net.md) byte stream (over TLS if the server
+then on the connection is `stream`, a [`velt/net`](net.md) byte stream (over TLS if the server
 is), released with `close()`.
 
 ```ts
-import { serve, isUpgradeRequest, upgradeConnection } from "velt:http";
-import { TcpStream } from "velt:net";
+import { serve, isUpgradeRequest, upgradeConnection } from "velt/http";
+import { TcpStream } from "velt/net";
 
 async function session(conn: TcpStream): Promise<void> {
   await conn.write("hello\n");
@@ -221,7 +221,7 @@ what the session writes before goes out right after the response, and fails with
 `ECONNABORTED` if the handler returned something else. The client must wait for the `101`
 before it sends anything in the new protocol. `upgradeConnection` throws `IoError` `EINVAL` if
 `req` is not an upgrade request or its connection was taken already. Only HTTP/1.1 connections
-can be upgraded (HTTP/2 has no `Upgrade`). [`velt:websocket`](websocket.md) is built on this.
+can be upgraded (HTTP/2 has no `Upgrade`). [`velt/net/websocket`](websocket.md) is built on this.
 
 ## `Server`
 
@@ -230,7 +230,7 @@ connections; once the last request finished the handler closure is dropped, so v
 captured are released (their `[Symbol.dispose]()` runs). `await server.shutdown()` does the same
 and resolves only after that (it consumes the `Server`); a program that exits right after
 `close()` may exit before the handler is dropped. Dropping the `Server` value does not stop it.
-`serve` (or `velt:net` `listen`) on the port of a server just closed works: it waits (up to 5
+`serve` (or `velt/net` `listen`) on the port of a server just closed works: it waits (up to 5
 seconds) until the closed server has released the port. The listen backlog is the OS maximum, so a burst of connections
 waits to be accepted instead of being refused (macOS caps every listen queue at
 `kern.ipc.somaxconn`, 128 by default).
@@ -239,12 +239,12 @@ Servers are built only by `serve`: `new Server()` holds no runtime object (its `
 
 ## Migrating from the server's own `Request` and `Response`
 
-Before #638, `velt:http` had a `Request`, `Response` and `ResponseWriter` of its own. Handlers
+Before #638, `velt/http` had a `Request`, `Response` and `ResponseWriter` of its own. Handlers
 now take and return the globals; importing the old names is an error that says so.
 
 | Before | Now |
 |---|---|
-| `import { serve, Request, Response } from "velt:http"` | `import { serve } from "velt:http"` (`Request` and `Response` are global) |
+| `import { serve, Request, Response } from "velt/http"` | `import { serve } from "velt/http"` (`Request` and `Response` are global) |
 | `req.path`, `req.query` | `new URL(req.url).pathname`, `url.search.slice(1)` or `url.searchParams` |
 | `req.body` (a string) | `await req.text()` (or `req.json<T>()`, `req.bytes()`, `req.body` as a stream) |
 | `req.header(name)` | `req.headers.get(name)` |
@@ -255,4 +255,4 @@ now take and return the globals; importing the old names is an error that says s
 | `res.header(name, value)`, `res.setHeader(name, value)` | `res.headers.append(name, value)`, `res.headers.set(name, value)` |
 | `Response.stream(async (w) => { w.write(…); await w.flush(); })` | `new Response(BodyStream.from(gen()))` with an async generator yielding `u8[]` chunks |
 | `Response.text("", 204)` | `new Response(null, { status: 204 })` |
-| `renderToStream(el, w)` (`velt:jsx`) | `new Response(renderToStream(el), init)` |
+| `renderToStream(el, w)` (`velt/jsx`) | `new Response(renderToStream(el), init)` |

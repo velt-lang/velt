@@ -1,6 +1,6 @@
-# velt:channel
+# velt/sync
 
-`import { channel, Channel, ChannelClosed } from "velt:channel"`. Typed queues between tasks,
+`import { channel, Channel, ChannelClosed } from "velt/sync"`. Typed queues between tasks,
 for producer/consumer pipelines and worker pools. Any number of tasks may send and receive
 through one channel.
 
@@ -43,7 +43,7 @@ through one channel.
   channel that is never closed lives until the program ends.
 
 ```ts
-import { channel, Channel, ChannelClosed } from "velt:channel";
+import { channel, Channel, ChannelClosed } from "velt/sync";
 
 async function worker(jobs: Channel<string>, results: Channel<i64>): Promise<void> throws ChannelClosed {
   for await (const job of jobs) {     // ends once `jobs` is closed and drained

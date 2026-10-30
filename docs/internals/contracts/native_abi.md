@@ -49,7 +49,7 @@ first component is `rt`, `sig` or `native` (`rt`, `rt-str`, `native_init`) are r
 and init functions. Outside std, the compiler requires every `declare` to name one of
 the exports of **its own** package's library with **exactly** the recorded signature: a root
 program, a package without a library (`free`, `memcpy`) and another package's export are
-errors. `IoResult`/`IoStatus` are std's `velt:io` types, identified
+errors. `IoResult`/`IoStatus` are std's `velt/io` types, identified
 by definition (a look-alike struct is rejected). Violations are compile errors at the `declare`
 (`veltc/src/native/`). Separately, sema rejects a `velt_rt_*` runtime function declared outside
 std, in any package or the root program (`velt_sema` `collect/declare.rs`).
@@ -294,7 +294,7 @@ When the row type is an object of plain fields (numbers, bools, strings, `T | nu
 `u8[]`), the compiler reads the rows by column instead of through the JSON reader
 (`Glue::RowsRead`, rt_abi_async.md), with the same results and messages. std/sqlite and
 std/postgres use cursors. A driver written in Velt offers its rows as std/db' `RowSource`
-instead ([velt:db](../../std/db.md)), read the same way through its own methods.
+instead ([velt/db](../../std/db.md)), read the same way through its own methods.
 
 ## Parameter sinks
 
@@ -312,8 +312,8 @@ the binding never depends on which way the parameters went (std/sqlite: `bind_be
 
 ## Drivers in the runtime
 
-std's drivers (`velt:postgres`: crate `velt_std_postgres`; `velt:sqlite`: `velt_std_sqlite`;
-`velt:redis`: `velt_std_redis`) are crates on this SDK only
+std's drivers (`velt/postgres`: crate `velt_std_postgres`; `velt/sqlite`: `velt_std_sqlite`;
+`velt/redis`: `velt_std_redis`) are crates on this SDK only
 (`velt_native`, `velt_text`), linked into the runtime library instead of a package's own: their
 `#[export]` functions are std's `declare`s (named `velt_std_<driver>__…`, checked against their
 signature records like any package's, `veltc/src/native/` `check_std_driver`), and an

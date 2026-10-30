@@ -1,6 +1,6 @@
 // std/sqlite transactions: transaction(fn) commits or rolls back, nests with savepoints, and
 // begin()/commit()/rollback() for explicit control.
-import { open, Database, Statement } from "velt:sqlite";
+import { open, Database, Statement } from "velt/sqlite";
 
 class Count {
   n: i64;

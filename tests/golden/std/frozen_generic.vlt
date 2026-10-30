@@ -1,5 +1,5 @@
 // check: unfreed blocks at most 4
-// (The 4 blocks: `velt:sync/epoch`'s registry of thread slots, kept until the program exits.)
+// (The 4 blocks: `velt/sync/epoch`'s registry of thread slots, kept until the program exits.)
 // A type parameter bounded by `Frozen` reads a `shared<V>` as a `V` in generic code: in place,
 // as for a written type, checked where the generic is used. Here a generic store over an object,
 // a string and an array.

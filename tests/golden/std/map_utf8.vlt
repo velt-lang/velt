@@ -1,7 +1,7 @@
 // check: no leaks
 // `Map<string, V>` looked up by the UTF-8 bytes of a key: the same entries `get`, `has` and
 // `set` find with the bytes decoded (an invalid sequence reads as U+FFFD).
-import { utf8DecodeLossy, utf8Encode } from "velt:encoding";
+import { utf8DecodeLossy, utf8Encode } from "velt/encoding";
 
 function main() {
   const m = new Map<string, number>();

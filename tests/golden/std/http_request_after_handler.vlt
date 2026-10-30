@@ -1,9 +1,9 @@
 // A streamed body that reads the `Request` after its handler returned: the request is already
 // released, so this is a clear runtime error (exit 101), never a read of freed memory. Read what
 // the body needs before returning (tests/std/http/streams.test.vlt, "a BodyStream response").
-import { utf8Encode } from "velt:encoding";
-import { BodyStream } from "velt:fetch";
-import { serve } from "velt:http";
+import { utf8Encode } from "velt/encoding";
+import { BodyStream } from "velt/net/http";
+import { serve } from "velt/http";
 
 // Reads `req` while the response is sent, after its handler returned.
 async function* late(req: Request): AsyncGenerator<u8[]> {

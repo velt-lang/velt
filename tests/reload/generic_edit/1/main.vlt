@@ -1,6 +1,6 @@
 // Editing a generic function swaps its instances: their keys spell out the type arguments
 // (`wrap<i64>`), not type-table indices.
-import { serve } from "velt:http";
+import { serve } from "velt/http";
 
 function wrap<T>(value: T): string {
   return `[${value}]`;

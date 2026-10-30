@@ -1,4 +1,4 @@
-// velt:sqlite/exec/plan — how each FROM item is read: the planner splits WHERE into AND terms
+// velt/sqlite/exec/plan — how each FROM item is read: the planner splits WHERE into AND terms
 // and, per FROM level (in FROM order), picks a rowid lookup, a rowid range, an index prefix of
 // equalities with a range on the next column, or a full scan; then the loop of each level.
 //
@@ -6,10 +6,10 @@
 // range term still is, so the index only narrows the rows. A term is checked at the innermost
 // level it reads (a LEFT JOIN's ON terms at its own level, before the NULL row decision).
 
-import { NULL, INTEGER, REAL, TEXT, BLOB } from "velt:sqlite/btree";
-import { Cursor } from "velt:sqlite/btree";
-import { KeyRec } from "velt:sqlite/record";
-import { A_BLOB, A_INTEGER, A_NUMERIC, A_REAL, A_TEXT, Index } from "velt:sqlite/schema";
+import { NULL, INTEGER, REAL, TEXT, BLOB } from "velt/sqlite/btree";
+import { Cursor } from "velt/sqlite/btree";
+import { KeyRec } from "velt/sqlite/record";
+import { A_BLOB, A_INTEGER, A_NUMERIC, A_REAL, A_TEXT, Index } from "velt/sqlite/schema";
 import {
   E_BETWEEN,
   E_BINARY,
@@ -20,9 +20,9 @@ import {
   E_ISNULL,
   E_NULL,
   Expr,
-} from "velt:sqlite/sql/ast";
-import { ROWID, SRC_ROWS, Source } from "velt:sqlite/exec/source";
-import { Ev, Pred, Query, Scope } from "velt:sqlite/exec/scope";
+} from "velt/sqlite/sql/ast";
+import { ROWID, SRC_ROWS, Source } from "velt/sqlite/exec/source";
+import { Ev, Pred, Query, Scope } from "velt/sqlite/exec/scope";
 import {
   AFF_NONE,
   comparisonAffinity,
@@ -32,9 +32,9 @@ import {
   OP_GT,
   OP_LE,
   OP_LT,
-} from "velt:sqlite/exec/ops";
-import { C, ExprCompiler, binaryColl, comparisonOp } from "velt:sqlite/exec/expr";
-import { Val } from "velt:sqlite/exec/value";
+} from "velt/sqlite/exec/ops";
+import { C, ExprCompiler, binaryColl, comparisonOp } from "velt/sqlite/exec/expr";
+import { Val } from "velt/sqlite/exec/value";
 
 /** Access paths. */
 export const ACC_SCAN: u8 = 0;

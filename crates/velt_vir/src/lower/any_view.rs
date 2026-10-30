@@ -2,7 +2,7 @@
 //! program with typed proxies, an `any` holding an object of another type converted to a
 //! proxiable object type `P` (`x as VNode` of a class instance, or of an object literal with
 //! more fields) is a *view* of that object, where Node keeps the one object. The view is
-//! `Proxy.__view(x)` (std/proxy.vlt), a `Proxy` without traps, tagged as a typed proxy
+//! `Proxy.__view(x)` (std/lang/proxy/index.vlt), a `Proxy` without traps, tagged as a typed proxy
 //! (proxy_typed.rs): each field read and write goes to the object (`__get` / `__set`, the
 //! value checked as the field's type, so a missing or mistyped member is a `TypeError` where
 //! it is read), and nothing is copied. Converting the view back to `any` gives the object
@@ -31,7 +31,7 @@ use super::{cint, FnLower};
 use crate::vir::{self, BinOp, Callee, Operand, Place, Proj, Rvalue, Ty};
 
 /// The qualified name of the prelude function that makes a view.
-const PROXY_VIEW: &str = "std/proxy::Proxy.__view";
+const PROXY_VIEW: &str = "std/lang/proxy::Proxy.__view";
 
 impl FnLower<'_, '_> {
     /// In `AnyTo` to the proxiable `ty`, once the `any` at `p` (owned) holds neither a `ty` nor

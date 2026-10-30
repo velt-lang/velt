@@ -1,7 +1,7 @@
 //! Symbols as values and as member names (docs/reference/types.md "Symbols").
 //!
 //! A `symbol` is a pointer-sized value compared by identity (`TyKind::Symbol`); `Symbol(d)`,
-//! `Symbol.for(k)` and the well-known symbols live in std/symbol.vlt. Velt objects have fixed
+//! `Symbol.for(k)` and the well-known symbols live in std/lang/symbol/index.vlt. Velt objects have fixed
 //! fields, so a symbol names a member only when the compiler knows which symbol it is: a module
 //! constant initialized with `Symbol()`, `Symbol("d")` or `Symbol.for("k")` (TypeScript's
 //! `unique symbol`), or a well-known symbol (`[Symbol.iterator]`). Such a member is an ordinary
@@ -23,7 +23,7 @@ use crate::ctx::{Ctx, Item};
 use crate::defs::DefInfo;
 use crate::hir::{self, AdtKind, DefId, ExprKind as H, Intrinsic, TyId, TyKind};
 
-/// The first `SymbolStatic` id of the symbols of module constants (std/symbol.vlt numbers the
+/// The first `SymbolStatic` id of the symbols of module constants (std/lang/symbol/index.vlt numbers the
 /// well-known symbols below it).
 const CONSTANT_IDS: u128 = 64;
 
@@ -62,7 +62,7 @@ fn literal_text(e: &ast::Expr) -> Option<String> {
 }
 
 impl Ctx<'_> {
-    /// Does `Symbol` in `module` name the global `Symbol` (std/symbol.vlt), not a binding of
+    /// Does `Symbol` in `module` name the global `Symbol` (std/lang/symbol/index.vlt), not a binding of
     /// the module's own?
     pub(crate) fn names_global_symbol(&self, module: usize) -> bool {
         !self.scopes[module].items.contains_key("Symbol") && self.prelude.contains_key("Symbol")

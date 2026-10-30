@@ -1,6 +1,6 @@
 // A function value whose closure owns a WeakRef, sent on a channel: the message's transfer
 // panics.
-import { channel } from "velt:channel";
+import { channel } from "velt/sync";
 class V { n: number; constructor(n: number) { this.n = n; } }
 function mk(keep: V): () => number {
   const r = new WeakRef(keep);

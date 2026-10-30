@@ -10,7 +10,7 @@
 // makes for it (freed after).
 //
 // `JSON.parseValue` gives a `JsonValue` for data of unknown shape: a position on a tape (one
-// flat array per document, velt:json/tape), which its children share. A value built or edited
+// flat array per document, velt/encoding/json/tape), which its children share. A value built or edited
 // here is a tree of reference-counted runtime nodes behind an opaque `u64` handle
 // (rt_abi_async.md §3.2; 0 is the null handle, which a `JsonValue` holds for JSON null); an edit
 // turns a tape value into such a tree first.
@@ -24,9 +24,14 @@
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
 // The pull reader under every `JSON.parse<T>` decoder (Velt code; the compiler's glue calls it).
-import { FLAG_COMMENTS, FLAG_REJECT_UNKNOWN, FLAG_TRAILING_COMMAS, Reader } from "velt:json/reader";
+import {
+  FLAG_COMMENTS,
+  FLAG_REJECT_UNKNOWN,
+  FLAG_TRAILING_COMMAS,
+  Reader,
+} from "velt/encoding/json/reader";
 // What `JSON.stringify<T>` writes for numbers and strings (Velt code; the glue calls it).
-import "velt:json/writer";
+import "velt/encoding/json/writer";
 // `JSON.parseValue`'s documents: one flat tape each (Velt code).
 import {
   parseTape,
@@ -40,7 +45,7 @@ import {
   T_STRING,
   T_ARRAY,
   T_OBJECT,
-} from "velt:json/tape";
+} from "velt/encoding/json/tape";
 
 declare function velt_rt_strbuf_push_json_value(buf: string, h: u64);
 
@@ -117,7 +122,7 @@ export type JsonParseOptions = {
   trailingCommas?: bool;
 };
 
-// The reader's flags for `options` on top of `base` (std/json/reader.vlt `FLAG_*`).
+// The reader's flags for `options` on top of `base` (std/encoding/json/reader.vlt `FLAG_*`).
 function jsonFlags(options: JsonParseOptions | null, base: i64): i64 {
   let flags = base;
   if (options == null) {
@@ -201,12 +206,12 @@ export class JSON {
 }
 
 /**
- * A JSON value of any shape, as `JSON.parseValue` returns it (`velt:json` calls it `Value`). It
+ * A JSON value of any shape, as `JSON.parseValue` returns it (`velt/encoding/json` calls it `Value`). It
  * has value semantics: an edit never shows through a clone, a parent or a child. Accessors on
  * the wrong kind return null / 0. `JSON.stringify` and `JSON.parse<T>` read and write it. Only
  * std makes one: the constructor is private, so no class can extend `JsonValue`.
  *
- * Two forms (#1660). A parsed value is a position on a tape (velt:json/tape): reading it makes
+ * Two forms (#1660). A parsed value is a position on a tape (velt/encoding/json/tape): reading it makes
  * nothing, and its children share the tape. A value built or edited here (`object()`, `set`, …)
  * or read from a database driver is a tree of reference-counted runtime nodes behind `#handle`
  * (which stays the first field: compiled glue writes it); an edit turns a tape value into such

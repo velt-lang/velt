@@ -2,7 +2,7 @@
 // compiler reads (children are an error, templates write no end tag), and `isVoidElement`, which
 // the generic `jsx` uses.
 
-import { isVoidElement, jsxVoidElements } from "velt:jsx/void_elements";
+import { isVoidElement, jsxVoidElements } from "velt/jsx/void_elements";
 
 function main() {
   const tags = jsxVoidElements.split(" ");

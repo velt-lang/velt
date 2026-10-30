@@ -4,7 +4,7 @@ The package manifest is `package.vlt` at the package root, written in Velt and r
 compiling or running anything (design: [package-manifest.md](../design/package-manifest.md)).
 
 ```ts ignore
-import type { Package } from "velt:package";
+import type { Package } from "velt/package";
 
 export const pkg: Package = {
   name: "hello",                // [a-z][a-z0-9]* words joined by single - or _; not std, rt…, sig…, native…
@@ -28,9 +28,9 @@ export const pkg: Package = {
 };
 ```
 
-`velt:package` (`std/package.vlt`) declares the `Package` type (documentation, and the import
+`velt/package` (`std/package/index.vlt`) declares the `Package` type (documentation, and the import
 resolves). The reader below is the definition of a valid manifest; its fields are one table,
-`vpm::manifest::schema`, which a test checks against `std/package.vlt`. The language server
+`vpm::manifest::schema`, which a test checks against `std/package/index.vlt`. The language server
 does not analyze a file named `package.vlt` as a program: its diagnostics are the reader's, and
 completion and hover come from the schema (`vpm::manifest::ide`). With the package's registry
 (`$VELT_REGISTRY` when it is a URL, else `registry`, else the local one, as `velt install` picks
@@ -43,7 +43,7 @@ once, each within 5 s to connect and 15 s in all, kept five minutes); completion
 talk to hosts the checkout names); `$VELT_REGISTRY` is always asked.
 
 ## The data-only subset (`vpm::manifest::read`)
-- At most one import, `import type { … } from "velt:package"` naming at least one type; then
+- At most one import, `import type { … } from "velt/package"` naming at least one type; then
   exactly one `export const pkg: Package = <value>;`, and nothing else.
 - Values are string literals, number literals, `true`/`false`, array literals and object literals
   whose keys are identifiers or string literals. Everything else (`null`, template literals,
@@ -284,11 +284,11 @@ registry: "https://registry.example.com",
 
 ## JSX import source (additive)
 ```ts ignore
-jsx: { importSource: "sigx" },  // or "velt:jsx" (the default), an "@alias" from paths, or "./ui"
+jsx: { importSource: "sigx" },  // or "velt/jsx" (the default), an "@alias" from paths, or "./ui"
 ```
 - The JSX runtime of the package's modules ([jsx.md](jsx.md) "Choosing the provider"): a module
   containing JSX imports `<importSource>/jsx-runtime`. A `/** @jsxImportSource x */` comment in a
-  file (or `// @jsxImportSource x`, which `tsc` ignores) wins; without either the source is `velt:jsx`.
+  file (or `// @jsxImportSource x`, which `tsc` ignores) wins; without either the source is `velt/jsx`.
 - The value is a module specifier: a dependency (`"sigx"`), `"velt:x"`, a `paths` alias, or a
   path starting with `./` / `../`, which is relative to the package root (not to the importing
   file, unlike a pragma). Each package's `jsx` applies to its own modules only

@@ -3,7 +3,7 @@
 // message, every message escaped), as a sync tree (`renderToStringSync`) and with the rows in an
 // async component (`renderToString`, `renderToStream`).
 
-import { Element } from "velt:jsx";
+import { Element } from "velt/jsx";
 
 export class Fortune {
   id: i64;

@@ -1,5 +1,5 @@
 //! Epoch sections (docs/internals/design/atomics.md "Sections"): a function that loads an
-//! `Atomic` of a `shared` value (atomic_ref.rs) runs in a section of `velt:sync/epoch`, so a
+//! `Atomic` of a `shared` value (atomic_ref.rs) runs in a section of `velt/sync/epoch`, so a
 //! value another thread retires meanwhile is not dropped while this one may still read it. The
 //! section opens when the function starts (`pin`) and closes before each of its returns
 //! (`unpin`). Sections nest, so a callee with loads of its own costs a depth count. In an async
@@ -7,20 +7,20 @@
 //! a section of its own instead (atomic_ref.rs), so a section never spans an `await` or a
 //! `yield`: a thread whose task is parked is never in one.
 //!
-//! The functions of `velt:sync/epoch` get none: they open sections, and the registry words they
+//! The functions of `velt/sync/epoch` get none: they open sections, and the registry words they
 //! load are never retired.
 
 use super::FnLower;
 use crate::vir::{BlockId, Callee, Terminator};
 
-/// `velt:sync/epoch`'s functions, by their qualified names.
+/// `velt/sync/epoch`'s functions, by their qualified names.
 pub(super) const EPOCH_MODULE: &str = "std/sync/epoch::";
 pub(super) const PIN: &str = "std/sync/epoch::pin";
 pub(super) const UNPIN: &str = "std/sync/epoch::unpin";
 
 impl FnLower<'_, '_> {
     /// Opens a section at the entry and closes it before every return, when this function
-    /// loads a reference `Atomic` (`ref_loads`) and is not `velt:sync/epoch`'s own.
+    /// loads a reference `Atomic` (`ref_loads`) and is not `velt/sync/epoch`'s own.
     pub(super) fn place_sections(&mut self) {
         if !self.ref_loads || self.epoch_exempt {
             return;
@@ -64,7 +64,7 @@ impl FnLower<'_, '_> {
         self.loc = saved;
     }
 
-    /// A call of `velt:sync/epoch`'s `pin` or `unpin` here.
+    /// A call of `velt/sync/epoch`'s `pin` or `unpin` here.
     pub(super) fn epoch_call(&mut self, name: &str) {
         let f = self.epoch_fn(name);
         self.call(Callee::Func(f), vec![], None, false);

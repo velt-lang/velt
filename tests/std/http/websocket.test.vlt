@@ -1,11 +1,11 @@
-// velt:http/server's WebSocket handshake (`acceptWebSocket`, `res.upgrade`) and a client from
-// velt:websocket talking to it.
-import { utf8Encode } from "velt:encoding";
-import { HttpRequest, HttpResponse, serve as serveRaw } from "velt:http/server";
-import { connect } from "velt:net";
-import { afterAll, beforeAll, describe, expect, it } from "velt:test";
-import "velt:test/http";
-import { acceptWebSocket, connectWebSocket } from "velt:websocket";
+// velt/http/server's WebSocket handshake (`acceptWebSocket`, `res.upgrade`) and a client from
+// velt/net/websocket talking to it.
+import { utf8Encode } from "velt/encoding";
+import { HttpRequest, HttpResponse, serve as serveRaw } from "velt/http/server";
+import { connect } from "velt/net";
+import { afterAll, beforeAll, describe, expect, it } from "velt/test";
+import "velt/test/http";
+import { acceptWebSocket, connectWebSocket } from "velt/net/websocket";
 
 // Sends `head` (and `extra` right after it, in the same write), half-closes, reads everything.
 async function raw(port: number, head: string, extra: u8[] = []): Promise<string> {
@@ -33,8 +33,8 @@ function firstLine(text: string): string {
   return text.split("\r\n")[0];
 }
 
-describe("a WebSocket on velt:http/server", () => {
-  // velt:http/server switches a connection to WebSockets (`acceptWebSocket`, `res.upgrade`): a
+describe("a WebSocket on velt/http/server", () => {
+  // velt/http/server switches a connection to WebSockets (`acceptWebSocket`, `res.upgrade`): a
   // client from `connectWebSocket` talks to it, an ordinary request on the same server is still
   // answered, and a request that is not an upgrade is refused. A handshake that is not valid
   // (version, key, method) is answered 426 or 400; a frame sent along with the upgrade request is

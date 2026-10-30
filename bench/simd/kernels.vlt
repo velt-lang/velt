@@ -3,7 +3,7 @@
 // program in Rust. Prints `<kernel> <ms> <checksum>` per kernel; the checksums are what
 // `run.sh` compares.
 
-import { u8x16, f32x4, mask8x16 } from "velt:simd";
+import { u8x16, f32x4, mask8x16 } from "velt/simd";
 
 const N: usize = 16384;
 const REPS: i64 = 100000;

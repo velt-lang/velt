@@ -97,7 +97,7 @@ hello/
 ```
 
 ```ts ignore
-import type { Package } from "velt:package";
+import type { Package } from "velt/package";
 
 export const pkg: Package = { name: "hello", version: "0.1.0", velt: "0.1" };
 ```
@@ -112,7 +112,7 @@ fields, explains them on hover and reports the same errors `velt` would.
 standard library:
 
 ```ts ignore
-import { args } from "velt:process";
+import { args } from "velt/process";
 import { greet } from "./greet";
 
 function main() {

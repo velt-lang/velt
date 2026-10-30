@@ -1,8 +1,8 @@
 // NaN keys in the ordered maps (#1545 review): NaN is its own key, after every other number and
 // equal to itself, as `f64.compareTo` orders it. `<` alone found NaN equal to the key in its slot,
 // so `set(NaN)` overwrote that key's value and `delete(NaN)` deleted it.
-import { BTreeMap } from "velt:collections/btree_map";
-import { SortedMap } from "velt:collections/sorted_map";
+import { BTreeMap } from "velt/collections";
+import { SortedMap } from "velt/collections";
 
 function small() {
   const m = new BTreeMap<f64, string>();

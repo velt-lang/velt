@@ -1,4 +1,4 @@
-import { listen, connect } from "velt:net";
+import { listen, connect } from "velt/net";
 
 async function main() {
   const server = await listen("127.0.0.1:0");

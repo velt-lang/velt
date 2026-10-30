@@ -1,5 +1,5 @@
 //! The decoder generated for a union told apart by a discriminant skips the fields before the
-//! discriminant with the reader's `skipLookahead` (std/json/reader.vlt), which remembers where
+//! discriminant with the reader's `skipLookahead` (std/encoding/json/reader.vlt), which remembers where
 //! skipped objects end, so nested unions decode in linear time. A plain skip here would rescan
 //! every subtree once per enclosing level.
 

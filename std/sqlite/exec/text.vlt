@@ -1,8 +1,8 @@
-// velt:sqlite/exec/text — text as SQLite handles it: on UTF-8 bytes, with case folded for ASCII
+// velt/sqlite/exec/text — text as SQLite handles it: on UTF-8 bytes, with case folded for ASCII
 // letters only (no ICU), and the LIKE and GLOB matchers (patternCompare in SQLite's func.c).
 
-import { SqlRunError } from "velt:sqlite/exec/errors";
-import { utf8Encode } from "velt:encoding";
+import { SqlRunError } from "velt/sqlite/exec/errors";
+import { utf8Encode } from "velt/encoding";
 
 /** The byte length of `s`'s UTF-8. */
 export function byteLen(s: string): usize {

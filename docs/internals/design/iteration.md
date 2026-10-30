@@ -430,12 +430,12 @@ caller (section 4): no allocation per item, the same runtime calls as the pull l
 
 | Source | How | Yields | `E` |
 |---|---|---|---|
-| `Channel<T>` (std/channel.vlt) | `implements AsyncIterable<T>`, `async *[Symbol.asyncIterator]()` | values until closed and drained | `never` |
-| `FileReader` (std/fs_stream.vlt) | `async *lines(): AsyncGenerator<string, IoError>` | remaining lines | `IoError` |
-| velt:stdin | `export async function* lines()` | remaining lines | `IoError` |
-| `WebSocket` (std/websocket.vlt) | `implements AsyncIterable<WsMessage, IoError>` | messages until the peer closed | `IoError` |
+| `Channel<T>` (std/sync/channel.vlt) | `implements AsyncIterable<T>`, `async *[Symbol.asyncIterator]()` | values until closed and drained | `never` |
+| `FileReader` (std/fs/stream.vlt) | `async *lines(): AsyncGenerator<string, IoError>` | remaining lines | `IoError` |
+| velt/process | `export async function* lines()` | remaining lines | `IoError` |
+| `WebSocket` (std/net/websocket/index.vlt) | `implements AsyncIterable<WsMessage, IoError>` | messages until the peer closed | `IoError` |
 | `RedisSubscriber` (std/redis/pubsub.vlt) | `implements AsyncIterable<RedisMessage, RedisError>` | messages until `close()` | `RedisError` |
-| `Ticker` (std/timers.vlt) | `implements AsyncIterable<i64>` | tick numbers 1, 2, … per loop, until stopped | `never` |
+| `Ticker` (std/time/timers.vlt) | `implements AsyncIterable<i64>` | tick numbers 1, 2, … per loop, until stopped | `never` |
 | postgres `CopyReader` | `implements AsyncIterable<string, PgError>` | `read()` chunks to the end | `PgError` |
 
 `FileReader` and stdin get a `lines()` method rather than being iterable themselves: a reader

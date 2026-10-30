@@ -2,7 +2,7 @@
 // A value sent through a channel crosses to the receiver's task like a `spawn` argument: one the
 // sender still uses is copied, so changing it afterwards doesn't reach the receiver, and the two
 // tasks never share an object.
-import { Channel, ChannelClosed, channel } from "velt:channel";
+import { Channel, ChannelClosed, channel } from "velt/sync";
 
 class Order {
   items: string[] = [];

@@ -1,7 +1,7 @@
 // `hexEncode` and `hexDecode` against digit-at-a-time code, around the 16- and 32-byte steps
 // they take: every length up to 100, every byte value, both letter cases, and a character
 // that is not a digit at every position (the error names its offset).
-import { hexDecode, hexEncode } from "velt:encoding";
+import { hexDecode, hexEncode } from "velt/encoding";
 
 const DIGITS = "0123456789abcdef";
 

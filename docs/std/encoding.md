@@ -1,6 +1,6 @@
-# velt:encoding
+# velt/encoding
 
-`import { base64Encode, hexEncode } from "velt:encoding"`. Converts between bytes and text:
+`import { base64Encode, hexEncode } from "velt/encoding"`. Converts between bytes and text:
 Base64 (RFC 4648 standard and URL-safe alphabets), lowercase hex, and UTF-8. Decoders throw
 `EncodingError`. The functions work on `u8[]`, Velt's byte array; `Uint8Array.fromBytes(b)` and
 `xs.toBytes()` convert ([typed arrays](typed_array.md)).
@@ -21,7 +21,7 @@ Base64 (RFC 4648 standard and URL-safe alphabets), lowercase hex, and UTF-8. Dec
   a character.
 
 ```ts
-import { utf8ByteAt, utf8Length, utf8Substring } from "velt:encoding";
+import { utf8ByteAt, utf8Length, utf8Substring } from "velt/encoding";
 
 const line = "naïve=café";
 let eq: usize = 0;
@@ -71,7 +71,7 @@ function main() {
 ```
 
 ```ts
-import { base64Encode, base64DecodeString, hexEncode, hexDecode, utf8Encode, utf8Decode } from "velt:encoding";
+import { base64Encode, base64DecodeString, hexEncode, hexDecode, utf8Encode, utf8Decode } from "velt/encoding";
 
 function main() {
   const bytes = utf8Encode("héllo?");

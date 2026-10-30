@@ -1,7 +1,7 @@
 # Building an HTTP server
 
 This guide builds a small JSON API for todos: routing, request bodies, validation, errors as
-status codes, shared state, and tests. The server is [`velt:http`](../std/http.md), which runs
+status codes, shared state, and tests. The server is [`velt/http`](../std/http.md), which runs
 on hyper and tokio: HTTP/1.1 with keep-alive, HTTP/2, and HTTPS through rustls. Handlers run
 concurrently on every core.
 
@@ -11,7 +11,7 @@ modules, with tests.
 ## Hello, HTTP
 
 ```ts
-import { serve } from "velt:http";
+import { serve } from "velt/http";
 
 async function main() {
   const server = await serve({ port: 8080 }, async (req: Request): Promise<Response> => {
@@ -35,7 +35,7 @@ serializes any value with `JSON.stringify`, which is generated at compile time f
 ## A JSON API
 
 ```ts
-import { serve } from "velt:http";
+import { serve } from "velt/http";
 
 class ApiError extends Error {
   status: number;
@@ -170,7 +170,7 @@ What to notice:
 - `new Response(body, { status, headers })`, `Response.json(value, { status })`;
   `res.headers.set(name, value)` sets a header. A streamed body is `new
   Response(BodyStream.from(chunks))` with an async generator of `u8[]` chunks
-  ([velt:http](../std/http.md#the-response)).
+  ([velt/http](../std/http.md#the-response)).
 - The second handler argument, `info: ServeInfo`, says who connected (`info.remoteAddr`).
 - A handler that throws gets a `500 Internal Server Error`, and its error is printed to stderr.
 - `server.close()` stops accepting connections and lets in-flight requests finish;
@@ -210,12 +210,12 @@ const server = await serve({ port: 8443, tls: { cert: certPem, key: keyPem } }, 
 
 [`fetch`](../std/fetch.md) speaks `http://` and `https://` (trusting Mozilla's root
 certificates plus the PEM CAs you pass in `ca`), and uses HTTP/2 when the server offers it. WebSockets are in
-[`velt:websocket`](../std/websocket.md).
+[`velt/net/websocket`](../std/websocket.md).
 
 ## Databases
 
-[`velt:postgres`](../std/postgres.md) (async, with a connection pool), [`velt:sqlite`](../std/sqlite.md)
-(embedded) and [`velt:redis`](../std/redis.md) decode rows straight into your classes with the
+[`velt/postgres`](../std/postgres.md) (async, with a connection pool), [`velt/sqlite`](../std/sqlite.md)
+(embedded) and [`velt/redis`](../std/redis.md) decode rows straight into your classes with the
 same compile-time JSON machinery: `const users: User[] = await db.query("SELECT …", [id])`.
 
 ## Performance

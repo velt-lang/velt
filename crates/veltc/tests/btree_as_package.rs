@@ -14,8 +14,8 @@ mod test_dir;
 /// (`""` for the map's own directory, `"btree/"` for its parts).
 fn relative(src: &str, here: &str) -> String {
     let parts = if here.is_empty() { "./btree/" } else { "./" };
-    src.replace("\"velt:collections/btree/", &format!("\"{parts}"))
-        .replace("\"velt:collections/btree_map\"", "\"./btree_map\"")
+    src.replace("\"velt/collections/btree/", &format!("\"{parts}"))
+        .replace("\"velt/collections\"", "\"./btree_map\"")
 }
 
 #[test]

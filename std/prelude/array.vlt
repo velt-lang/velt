@@ -456,7 +456,7 @@ extend<T> Array<T> {
   /**
    * Removes and returns the first element, or `undefined` when the array is empty.
    * O(length): the other elements move down by one, as V8 does for large arrays. A queue that
-   * takes from the front belongs in a `Deque` (velt:collections/deque), which does it in O(1).
+   * takes from the front belongs in a `Deque` (velt/collections/deque), which does it in O(1).
    */
   shift(): T | undefined {
     if (this.length == 0) {

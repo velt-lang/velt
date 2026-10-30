@@ -1,4 +1,4 @@
-# velt:test
+# velt/test
 
 The test runner, written in Velt. `velt test` ([Testing](../book/testing.md)) compiles the test
 files into a program whose generated `main` registers their tests with this module and hands it
@@ -61,11 +61,11 @@ matchers, which are methods (the generic ones) and `extend` blocks (those for ar
 return a `Resolves<V, E>` or `Rejects<V, E>`, whose matchers are `async`; their `settled()` is
 the `Expect` of the value or the error, for a custom matcher that awaits.
 
-`toMatch` and `toThrow` take a `string | Pattern` (velt:regex/pattern), an interface `RegExp`
-implements, so `expect` doesn't import velt:regex: a test file compiles the regex engine only
+`toMatch` and `toThrow` take a `string | Pattern` (velt/text/regex/pattern), an interface `RegExp`
+implements, so `expect` doesn't import velt/text: a test file compiles the regex engine only
 when it has a regex (a literal such as `/^h/`, or `RegExp` named), as any program does.
 
-`velt:test/http` adds `toHaveStatus` and `toHaveHeader` to `Expect<Response>` (`velt:fetch`).
+`velt/test/http` adds `toHaveStatus` and `toHaveHeader` to `Expect<Response>` (`velt/net/http`).
 
 With `VELT_RC_STATS=1` (the debug runtime's block counters), the process for a file returns from
 `main` after its tests instead of exiting at once, so the runtime frees the module state and

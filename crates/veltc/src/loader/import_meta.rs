@@ -1,7 +1,7 @@
 //! `import.meta` (`ast::IMPORT_META`): the parser adds a module constant with placeholder fields
 //! to a module that mentions it, and the loader, which knows the module's file, fills them in as
 //! Node does: `url` is the file's `file:` URL, `filename` its absolute path and `dirname` its
-//! directory, `main` is true in the program's root module (`resolve` is std's, velt:import_meta).
+//! directory, `main` is true in the program's root module (`resolve` is std's, velt/lang/import_meta).
 //! They name the source file, fixed while compiling.
 
 use std::path::Path;

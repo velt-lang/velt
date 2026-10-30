@@ -8,9 +8,9 @@ the standard library's prelude ([prelude reference](../std/prelude.md)).
 | `console.log(a, b, …)`, `console.info(…)`, `console.debug(…)`; `console.error(…)`, `console.warn(…)` | print the arguments separated by spaces: `log`, `info` and `debug` to stdout, `error` and `warn` to stderr, as in Node. Values print like Node: `[ 1, 2 ]`, `{ k: 1, s: 'a' }`, `Map(1) { 'a' => 1 }` (a subclass `M` of `Map` or `Set` as `M(1) [Map] { 'a' => 1 }`, then its own fields: `M(1) [Map] { 'a' => 1, tag: 't' }`), `ClassName { field: value }`, a `JsonValue` like the parsed object, a promise as `Promise { <pending> }`, `Promise { 42 }` or `Promise { <rejected> … }` (its state now, without awaiting it or taking its value; unlike Node, a promise created outside an async function has not run yet, and one settled by `resolve`/`reject` shows it only once the task next waits, so both still print `<pending>`), numbers JS-style; an object graph that refers back to itself prints `<ref *1> Node { next: [Circular *1] }`, numbered per argument like Node (`[ <ref *1> …, <ref *2> … ]` for two cycles in one array). A value too long for one line (node's `breakLength` of 80 columns) prints one entry per line, indented by two spaces, and an array of more than six short entries in aligned columns, as Node does. Node's default limits apply: a container nested more than two levels deep prints as `[Object]`, `[Array]`, `[ClassName]`, `[Map]`, `[Set]` or `[Promise]` (an empty one in full, `{}` or `[]`; a reference back to an object being printed stays `[Circular *1]`), and an array, `Map` or `Set` prints its first 100 entries followed by `... 50 more items` (objects print every field) |
 | `process.exit(code: i32)` | exit immediately |
 | `process.stdout.write(s)`, `process.stderr.write(s)` | write a string without a newline, ordered with `console.log` / `console.error`; return `true` like Node |
-| `process.env.NAME`, `process.env[name]` | an environment variable as `string \| null` (`null` where Node has `undefined`); set one with `setEnv` and list them with `envAll()` of [`velt:process`](../std/process.md), which also has `cwd()` and byte writes |
-| `process.argv` | Node's `[runtime, script, ...args]` (`process.argv.slice(2)` is the arguments); a new array each read, so changing it in place is an error ([`velt:process`](../std/process.md)) |
-| `process.memoryUsage()` | `{ rss, heapUsed }` in bytes, a `MemoryUsage` ([`velt:process`](../std/process.md#memory-usage)) |
+| `process.env.NAME`, `process.env[name]` | an environment variable as `string \| null` (`null` where Node has `undefined`); set one with `setEnv` and list them with `envAll()` of [`velt/process`](../std/process.md), which also has `cwd()` and byte writes |
+| `process.argv` | Node's `[runtime, script, ...args]` (`process.argv.slice(2)` is the arguments); a new array each read, so changing it in place is an error ([`velt/process`](../std/process.md)) |
+| `process.memoryUsage()` | `{ rss, heapUsed }` in bytes, a `MemoryUsage` ([`velt/process`](../std/process.md#memory-usage)) |
 | `panic(msg)` | stop with a panic (exit code 101) |
 | `assert(cond, msg)`, `assertEq(a, b)` | panic when the check fails (`assertEq` compares contents) |
 | `assertThrows(() => f())` | the error `f` throws; panics if it returns normally |
@@ -20,24 +20,24 @@ the standard library's prelude ([prelude reference](../std/prelude.md)).
 | `String(x)`, `Number(x)`, `Boolean(x)`, `parseInt(s, radix)`, `parseFloat(s)`, `isNaN(x)`, `isFinite(x)`, `String.fromCharCode(...codes)`, `NaN`, `Infinity` | conversions and checks |
 | `Buffer.alloc(n)`, `Buffer.byteLength(s)` | byte arrays (`u8[]`) ([prelude](../std/prelude.md)) |
 | `Number.isInteger(x)`, `Number.isNaN`, `isFinite`, `isSafeInteger`, `parseInt`, `parseFloat`, `Number.MAX_SAFE_INTEGER`, `MIN_SAFE_INTEGER`, `EPSILON`, `MAX_VALUE`, `MIN_VALUE`, `NaN`, `POSITIVE_INFINITY`, `NEGATIVE_INFINITY` | JS's `Number` members, on `f64` |
-| `JSON.stringify` (also with an array replacer and `space`), `JSON.parse<T>`, `JSON.parseValue`, `JsonValue`, `JsonError` | JSON ([`velt:json`](../std/json.md)) |
+| `JSON.stringify` (also with an array replacer and `space`), `JSON.parse<T>`, `JSON.parseValue`, `JsonValue`, `JsonError` | JSON ([`velt/encoding/json`](../std/json.md)) |
 | `Error` | base class of thrown errors: `class Error { message: string }` |
 | `Comparable<T>` | ordering interface ([Comparable](classes.md#comparable)) |
 | `Map<K, V>` | insertion-ordered hash map ([Types](types.md#objects-arrays-tuples-and-maps)) |
 | `Object.keys/values/entries/fromEntries/is/assign/freeze/hasOwn/getPrototypeOf/create(null)`, `Object.prototype.hasOwnProperty.call`, `Object.prototype.toString.call`, `Array.isArray` | JavaScript's object built-ins, on Velt's objects ([Types](types.md#object-built-ins)) |
 | `sleep(ms)`, `yieldNow()`, `spawn(p, options?)`, `Promise.all/race/allSettled/any/withResolvers`, `new Promise((resolve, reject) => …)` | async ([Async](async.md)) |
-| `setTimeout(task, ms)`, `clearTimeout(t)`, `setInterval(task, ms)`, `clearInterval(t)`, `Timer` | timers, as in TypeScript; the callback may return a promise (`() => save(doc)`, `async () => { … }`) or nothing (`() => console.log("x")`) ([velt:timers](../std/timers.md)) |
+| `setTimeout(task, ms)`, `clearTimeout(t)`, `setInterval(task, ms)`, `clearInterval(t)`, `Timer` | timers, as in TypeScript; the callback may return a promise (`() => save(doc)`, `async () => { … }`) or nothing (`() => console.log("x")`) ([velt/time](../std/timers.md)) |
 | `shared(x)`, `shared<T>`, `Mutex<T>` | thread-safe shared state ([Async](async.md#thread-safety)) |
 | `performance.now(): f64`, `Date.now(): i64` | monotonic and wall-clock milliseconds |
 | `Date` | JavaScript's dates ([prelude](../std/prelude.md#date)) |
 | `fetch(input, init)`, `Request`, `Response`, `Headers` | the WHATWG Fetch API, as in Node ([fetch](../std/fetch.md)) |
-| `AbortController`, `AbortSignal` | cancellation, e.g. of a `fetch` ([velt:task](../std/task.md)) |
-| `URL`, `URLSearchParams` | WHATWG URLs ([velt:url](../std/url.md)) |
-| `Set<T>` | insertion-ordered hash set ([velt:collections/set](../std/collections/set.md)) |
-| `RegExp`, `/ab+c/gi` | regular expressions ([velt:regex](../std/regex.md)) |
-| `TextEncoder`, `TextDecoder` | UTF-8 text to bytes and back ([velt:encoding](../std/encoding.md)) |
+| `AbortController`, `AbortSignal` | cancellation, e.g. of a `fetch` ([velt/task](../std/task.md)) |
+| `URL`, `URLSearchParams` | WHATWG URLs ([velt/net/url](../std/url.md)) |
+| `Set<T>` | insertion-ordered hash set ([velt/collections](../std/collections/set.md)) |
+| `RegExp`, `/ab+c/gi` | regular expressions ([velt/text](../std/regex.md)) |
+| `TextEncoder`, `TextDecoder` | UTF-8 text to bytes and back ([velt/encoding](../std/encoding.md)) |
 | `ArrayBuffer`, `DataView`, `Uint8Array`, `Int8Array`, `Uint8ClampedArray`, `Int16Array`, `Uint16Array`, `Int32Array`, `Uint32Array`, `Float32Array`, `Float64Array` | bytes and the typed arrays that view them, as in Node ([typed arrays](../std/typed_array.md)) |
-| `btoa(s)`, `atob(s)` | Base64 of binary strings, as in Node ([velt:encoding](../std/encoding.md)) |
+| `btoa(s)`, `atob(s)` | Base64 of binary strings, as in Node ([velt/encoding](../std/encoding.md)) |
 | `DOMException` | the error web APIs throw, with `name` and `code` ([prelude](../std/prelude.md#errors)) |
 | `ReadableStream`, `ReadableStreamDefaultReader`, `ReadableStreamDefaultController` | WHATWG streams, as in Node ([streams](../std/streams.md)) |
 | `structuredClone(x)` | an independent deep copy, `x.clone()` ([Memory model](memory.md)); a function (at any depth) or an instance of a class of your own is a compile error, as JS throws or drops the class: write `x.clone()` |
@@ -52,5 +52,5 @@ declares such a name itself (`import { Response } from "./api"`) uses its own an
 doesn't load the global. Likewise a program that uses `Response` or `Request` loads the typed
 arrays behind `res.bytes()` and `res.arrayBuffer()` only when it mentions `bytes` or
 `arrayBuffer` (or names a typed array). Integer helpers (`gcd`,
-`clamp`, …) are in [`velt:math`](../std/math.md). Everything else is imported from the
+`clamp`, …) are in [`velt/math`](../std/math.md). Everything else is imported from the
 [standard library](../std/README.md).

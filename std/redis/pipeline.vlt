@@ -1,11 +1,11 @@
 // std/redis/pipeline: `RedisPipeline`, commands queued locally and sent together by `exec()`
-// (rt_abi_async.md §14.12). Internal: import the public names from "velt:redis".
+// (rt_abi_async.md §14.12). Internal: import the public names from "velt/redis".
 //
 // Queued commands travel as one flat `string[]` plus the argument count of each command, so the
 // runtime encodes the whole batch in one pass and writes it at once.
 
-import { IoResult } from "velt:io";
-import { RawReply, RedisReply, checkReply, replyItems, scoreArg } from "velt:redis/reply";
+import { IoResult } from "velt/native/result";
+import { RawReply, RedisReply, checkReply, replyItems, scoreArg } from "velt/redis/reply";
 
 declare async function velt_std_redis__pipeline(
   c: u64,

@@ -46,7 +46,7 @@ pub(super) fn resolve_imports(cx: &mut Ctx, m: usize) {
             bind_namespace(cx, m, t, ns);
         } else {
             for n in &imp.names {
-                if imp.from == "velt:process" && n.name.name == BUILTIN_PROCESS {
+                if imp.from == "velt/process" && n.name.name == BUILTIN_PROCESS {
                     import_builtin_process(cx, m, n, &mut process_imported);
                 } else {
                     import_name(cx, m, t, imp, n);
@@ -106,25 +106,25 @@ fn exported_item(
 /// What replaced an export the standard library removed.
 fn removed_export(from: &str, name: &str) -> Option<&'static str> {
     match (from, name) {
-        ("velt:process", "env") => Some(
+        ("velt/process", "env") => Some(
             "`env` was removed: read a variable with `process.env.NAME` or `process.env[name]` \
              (`string | null`, no import)",
         ),
-        ("velt:http", "fetch" | "Headers") => Some(
+        ("velt/http", "fetch" | "Headers") => Some(
             "`fetch`, `Request`, `Response` and `Headers` are global, as in Node: use them without \
              an import",
         ),
-        ("velt:http", "Request" | "Response") => Some(
-            "`velt:http` handlers take and return the global `Request` and `Response`, as in Deno \
+        ("velt/http", "Request" | "Response") => Some(
+            "`velt/http` handlers take and return the global `Request` and `Response`, as in Deno \
              and Bun: drop them from the import (`req.path` is `new URL(req.url).pathname`, \
              `Response.text(body, status)` is `new Response(body, { status })`; the migration \
              table is in docs/std/http.md)",
         ),
-        ("velt:http", "ResponseWriter") => Some(
-            "a streamed body is a `BodyStream` from `velt:fetch`: `new \
+        ("velt/http", "ResponseWriter") => Some(
+            "a streamed body is a `BodyStream` from `velt/net/http`: `new \
              Response(BodyStream.from(chunks))`, where `chunks` is an async generator of `u8[]`",
         ),
-        ("velt:http", "FetchResponse" | "FetchHeaders" | "FetchOptions") => Some(
+        ("velt/http", "FetchResponse" | "FetchHeaders" | "FetchOptions") => Some(
             "`fetch` is global now and returns the standard `Response` (`res.headers` is a \
              `Headers`, the options are a `RequestInit`), as in Node",
         ),
@@ -195,10 +195,10 @@ fn import_name(cx: &mut Ctx, m: usize, t: usize, imp: &ast::Import, n: &ast::Imp
     }
 }
 
-/// The builtin `process` namespace, which `velt:process` also exports (as `node:process` does).
+/// The builtin `process` namespace, which `velt/process` also exports (as `node:process` does).
 const BUILTIN_PROCESS: &str = "process";
 
-/// `import { process } from "velt:process"`: the builtin `process`, which every module already
+/// `import { process } from "velt/process"`: the builtin `process`, which every module already
 /// sees, so the import binds nothing and `process.argv` reads the builtin as without it. The
 /// builtin is resolved by its name, so it can't be renamed. `imported`: an earlier import of it
 /// in this module (a second one is a duplicate, as in TypeScript).
@@ -213,7 +213,7 @@ fn import_builtin_process(cx: &mut Ctx, m: usize, n: &ast::ImportName, imported:
             .with_note(
                 "TypeScript allows renaming it, but Velt's `process` is a builtin namespace \
                  that is only known by its name: write `import { process } from \
-                 \"velt:process\"` (or leave the import out) and use `process`",
+                 \"velt/process\"` (or leave the import out) and use `process`",
             ),
         );
         return;

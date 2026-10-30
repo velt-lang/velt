@@ -36,7 +36,7 @@
 //!   build inlined into its copy). And statics compared or written by address: statics are
 //!   equal by contents, but the object's copy of a static is another address than the
 //!   program's, so a static atomic (`StaticData::mutable`, such as the words of
-//!   std/sync/epoch.vlt) or a table compared by address would be two words or two tables
+//!   std/sync/epoch/index.vlt) or a table compared by address would be two words or two tables
 //!   ([`Canon::reaches_mutable_static`]; std-object.md "Identity of statics").
 //!
 //! Fingerprints are std's SipHash with fixed keys: the same for one compiler binary, which is all

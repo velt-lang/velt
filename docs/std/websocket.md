@@ -1,9 +1,9 @@
-# velt:websocket
+# velt/net/websocket
 
 `import { isWebSocketRequest, upgradeWebSocket, connectWebSocket, WebSocket } from
-"velt:websocket"`. WebSockets (RFC 6455): accepted by a velt:http server through an HTTP/1.1
+"velt/net/websocket"`. WebSockets (RFC 6455): accepted by a velt/http server through an HTTP/1.1
 upgrade, or opened as a client to `ws://` / `wss://` URLs. The protocol is written in Velt, on
-[`velt:net`](net.md) streams (`connect`, `connectTls`) and
+[`velt/net`](net.md) streams (`connect`, `connectTls`) and
 [`upgradeConnection`](http.md#upgradeconnectionreq-protocol-headers).
 
 - `isWebSocketRequest(req: Request): bool`.
@@ -11,7 +11,7 @@ upgrade, or opened as a client to `ws://` / `wss://` URLs. The protocol is writt
   return `response` (a `101`) from the handler and use `socket` from a spawned task. Throws
   `IoError` "EINVAL" if `req` is not an upgrade request.
 - `acceptWebSocket(req: HttpRequest, res: HttpResponse): WebSocket | null`: the same on a
-  [velt:http/server](http_server.md) server: answers the `101` itself and returns the socket
+  [velt/http/server](http_server.md) server: answers the `101` itself and returns the socket
   (with the frames the client sent along with the request). A request that is not a valid
   handshake (RFC 6455 §4.2.1: `GET`, HTTP/1.1, `Upgrade: websocket`, `Connection: upgrade`,
   `Sec-WebSocket-Version: 13`, a `Sec-WebSocket-Key` of 16 base64-encoded bytes) is answered
@@ -40,8 +40,8 @@ upgrade, or opened as a client to `ws://` / `wss://` URLs. The protocol is writt
   handler still holds the handle.
 
 ```ts
-import { serve } from "velt:http";
-import { WebSocket, isWebSocketRequest, upgradeWebSocket, connectWebSocket } from "velt:websocket";
+import { serve } from "velt/http";
+import { WebSocket, isWebSocketRequest, upgradeWebSocket, connectWebSocket } from "velt/net/websocket";
 
 async function echo(ws: WebSocket): Promise<void> {
   for await (const m of ws) {
@@ -70,8 +70,8 @@ async function main() {
 A chat room: every message a client sends goes to everyone else in the room.
 
 ```ts
-import { serve } from "velt:http";
-import { WebSocket, isWebSocketRequest, upgradeWebSocket } from "velt:websocket";
+import { serve } from "velt/http";
+import { WebSocket, isWebSocketRequest, upgradeWebSocket } from "velt/net/websocket";
 
 async function member(ws: WebSocket): Promise<void> {
   await ws.subscribe("room");
@@ -124,7 +124,7 @@ list you keep yourself, a plain loop is the fastest way
 (each `await` returns at once; `Promise.all` over the sends adds a promise per socket):
 
 ```ts
-import { WebSocket } from "velt:websocket";
+import { WebSocket } from "velt/net/websocket";
 
 async function broadcast(sockets: WebSocket[], text: string) {
   for (const s of sockets) {

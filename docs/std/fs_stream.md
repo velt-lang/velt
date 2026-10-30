@@ -1,6 +1,6 @@
-# velt:fs_stream
+# velt/fs
 
-`import { openRead, openWrite } from "velt:fs_stream"`. Reads and writes files in chunks, for
+`import { openRead, openWrite } from "velt/fs"`. Reads and writes files in chunks, for
 files too large to hold in memory or written incrementally. `FileReader` and `FileWriter` are
 handles like `TcpStream`: you can pass them to tasks and async methods, and `close()` releases
 the handle (closing again does nothing). Failures throw `IoError`.
@@ -22,9 +22,9 @@ the handle (closing again does nothing). Failures throw `IoError`.
   flush fails.
 
 ```ts
-import { openRead, openWrite } from "velt:fs_stream";
-import { removeSync } from "velt:fs";
-import { tmpdir } from "velt:os";
+import { openRead, openWrite } from "velt/fs";
+import { removeSync } from "velt/fs";
+import { tmpdir } from "velt/os";
 
 async function main() {
   const path = `${tmpdir()}/velt-doc-stream.log`;

@@ -1,6 +1,6 @@
 // A subclass that claims another kind (`__kind` is a method) gets a view of the bytes that were
 // copied, not of its element count: a view's elements lie in its buffer, which its element
-// reads rely on (std/typed_array/buffer.vlt `element*`, no range check).
+// reads rely on (std/lang/typed_array/buffer.vlt `element*`, no range check).
 class Evil extends Int16Array {
   constructor() {
     super(4);

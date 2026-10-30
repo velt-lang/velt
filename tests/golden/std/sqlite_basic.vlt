@@ -1,5 +1,5 @@
 // std/sqlite basics: open ":memory:", exec, prepare, run/get/all with and without params.
-import { open } from "velt:sqlite";
+import { open } from "velt/sqlite";
 
 class User {
   id: i64;

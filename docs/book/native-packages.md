@@ -17,7 +17,7 @@ greet/
 
 ```ts ignore
 // package.vlt
-import type { Package } from "velt:package";
+import type { Package } from "velt/package";
 
 export const pkg: Package = {
   name: "greet",
@@ -160,7 +160,7 @@ The package declares each function with exactly the signature the Rust side expo
 them in a Velt API:
 
 ```ts ignore
-import { IoResult } from "velt:io";
+import { IoResult } from "velt/native";
 
 declare function velt_greet__hello(name: string, excited: bool): string;
 declare function velt_greet__parse(text: string): IoResult<i64>;

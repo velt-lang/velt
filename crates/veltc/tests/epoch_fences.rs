@@ -1,4 +1,4 @@
-//! `velt:sync/epoch`'s ordering (docs/internals/design/atomics.md "Reclamation"): `pin` stores
+//! `velt/sync/epoch`'s ordering (docs/internals/design/atomics.md "Reclamation"): `pin` stores
 //! its announcement, then a `seqcst` fence; `retire` takes a `seqcst` fence before it reads the
 //! epoch; `collect`'s advance takes one before it scans the slots. A missing fence lets a value
 //! be dropped while a reader on a weakly ordered CPU can still reach it, which no test run can
@@ -28,7 +28,7 @@ fn seqcst_fences(src: &str) -> usize {
 
 #[test]
 fn pin_has_its_fence() {
-    let src = "import { pin, unpin } from \"velt:sync/epoch\";\nfunction main() {\n  pin();\n  unpin();\n}\n";
+    let src = "import { pin, unpin } from \"velt/sync/epoch\";\nfunction main() {\n  pin();\n  unpin();\n}\n";
     assert_eq!(seqcst_fences(src), 1);
 }
 
@@ -38,7 +38,7 @@ fn retire_and_advance_have_theirs() {
     // At least: other inlined copies of `retire` (the module's own stores of reference words,
     // once the compiler retires what they replace) add theirs; without `retire`'s fence only
     // the advance's is left.
-    let src = "import { retire } from \"velt:sync/epoch\";\ninterface B {\n  n: u64;\n}\nfunction main() {\n  retire(shared({ n: 1 }));\n}\n";
+    let src = "import { retire } from \"velt/sync/epoch\";\ninterface B {\n  n: u64;\n}\nfunction main() {\n  retire(shared({ n: 1 }));\n}\n";
     let n = seqcst_fences(src);
     assert!(n >= 2, "{n} seqcst fences");
 }

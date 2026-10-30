@@ -1,7 +1,7 @@
-// velt:encoding's utf8Substring: the text between two byte positions, at every kind of
+// velt/encoding's utf8Substring: the text between two byte positions, at every kind of
 // character boundary. The two RangeError paths are utf8_substring_bounds and
 // utf8_substring_split.
-import { utf8ByteAt, utf8Length, utf8Substring } from "velt:encoding";
+import { utf8ByteAt, utf8Length, utf8Substring } from "velt/encoding";
 
 function show(s: string): string {
   let out = "";

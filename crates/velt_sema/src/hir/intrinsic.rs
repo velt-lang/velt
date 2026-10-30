@@ -14,7 +14,7 @@ pub enum Intrinsic {
     ToString,
     /// `(e: borrow T) -> string` (`__intrinsic_error_text`): what the report of `e` thrown and
     /// not caught writes after `Uncaught ` and before the location: Node's header for an
-    /// `Error` (`ParseError: bad`), any other value as `console.log` prints it. `velt:test`
+    /// `Error` (`ParseError: bad`), any other value as `console.log` prints it. `velt/test`
     /// reports a failed test with it.
     ErrorText,
     /// `() -> string` (`__intrinsic_throw_loc`): ` at <path>:<line>:<col>` of the last `throw`
@@ -54,7 +54,7 @@ pub enum Intrinsic {
     /// bits of `src[s..s + n)` written to `dst[d..d + n)` (both ranges bounds-checked; `dst`
     /// and `src` are different arrays): what `dst` held there is not dropped, nothing is
     /// shared, and `src` keeps stale copies. A raw move for algorithms that keep every element
-    /// owned exactly once themselves (the stable sort's scratch buffer, std/sort/stable.vlt).
+    /// owned exactly once themselves (the stable sort's scratch buffer, std/lang/sort/stable.vlt).
     ArrayMove,
     /// std only: `(xs (modified), len: usize)` set the length to `len` (growing the capacity
     /// when it is smaller) without dropping or initializing any element: slots past the old
@@ -108,7 +108,7 @@ pub enum Intrinsic {
     /// `deepEqual`, `assertEq`
     Eq,
     /// `(a: borrow T, b: borrow T) -> bool` Vitest's `toEqual` (`__intrinsic_deep_eq`,
-    /// `velt:test`'s `expect`): as `Eq`, but a class instance that isn't the same object is
+    /// `velt/test`'s `expect`): as `Eq`, but a class instance that isn't the same object is
     /// compared by its fields (a `Date` by its time, a `Set` by its members), and floats with
     /// SameValue (`NaN` equals itself, `0` doesn't equal `-0`).
     DeepEq,
@@ -164,7 +164,7 @@ pub enum Intrinsic {
     /// bool`, a constant: can a `T` reach a counted object, so that `Transfer` has work to do
     /// (the value itself is not read)?
     NeedsTransfer,
-    /// std only (std/sort/stable.vlt): `__intrinsic_needs_drop<T>(value: borrow T) -> bool`,
+    /// std only (std/lang/sort/stable.vlt): `__intrinsic_needs_drop<T>(value: borrow T) -> bool`,
     /// a constant: does a `T` own anything that dropping it releases (strings, arrays,
     /// objects, closures with a heap environment)? A bit copy of a `T` that does not is an
     /// independent value. The value itself is not evaluated.
@@ -216,7 +216,7 @@ pub enum Intrinsic {
     /// class: the condition of the text of a `T` value in a string `+`, which asks a class
     /// instance for its `valueOf()` first. The probe is not evaluated.
     HoldsDynamicOrClass,
-    /// std only (std/sort/stable.vlt): `__intrinsic_fn_captures_nothing<F>(f: borrow F) ->
+    /// std only (std/lang/sort/stable.vlt): `__intrinsic_fn_captures_nothing<F>(f: borrow F) ->
     /// bool` for a function value: true when its environment is null, which only closures
     /// without captures and named functions have (a program that compares function values
     /// gives every closure an environment, so it is false there). Such a function reaches no
@@ -261,7 +261,7 @@ pub enum Intrinsic {
     /// std only: `__intrinsic_promise_any(ps: Promise<T, E>[]): Promise<T, E>` — the first to
     /// fulfill, or the last rejection when all reject (std/prelude/promise.vlt `promiseAny`).
     PromiseAny,
-    /// std only (std/channel.vlt): `__intrinsic_chan_send<T>(ch: u64, value: T):
+    /// std only (std/sync/channel.vlt): `__intrinsic_chan_send<T>(ch: u64, value: T):
     /// Promise<bool>` — moves `value` into the channel; false (and `value` dropped) if it is
     /// closed.
     ChanSend,
@@ -281,7 +281,7 @@ pub enum Intrinsic {
     /// literal, desc: string literal, described: bool literal) -> symbol`, the address of a
     /// read-only symbol record made at compile time (rt_abi.md "Symbols"): one record per `id`
     /// in a program, whatever the call site, so every evaluation gives the same symbol. Ids
-    /// below 64 are the well-known symbols (`Symbol.iterator`, std/symbol.vlt), ids from 64 the
+    /// below 64 are the well-known symbols (`Symbol.iterator`, std/lang/symbol/index.vlt), ids from 64 the
     /// module constants initialized with `Symbol()` / `Symbol("d")`, and ids from 2^40 the
     /// registry's symbols of module constants initialized with `Symbol.for("k")` (`desc` is the
     /// key; such a record is listed in [`Intrinsic::SymbolRegistry`]'s table). With `described`
@@ -562,12 +562,12 @@ pub enum Intrinsic {
     /// not supported yet. Sets `Program::dyn_members`.
     AnyHas,
     /// std only: `(x: borrow any, key: borrow string) -> bool`, `delete x[key]` of a value that
-    /// is not a proxy (std/proxy.vlt, `Reflect.deleteProperty`): a record's entry is
+    /// is not a proxy (std/lang/proxy/index.vlt, `Reflect.deleteProperty`): a record's entry is
     /// removed and an optional field made absent (`true`), a key the value does not have is
     /// `true`, an array's `length` is `false`; a `TypeError` for anything else (a fixed field).
     AnyDelete,
     /// std only: `(x: borrow any, op: i64) -> i64`, an array method running on a proxy of the
-    /// array `x` holds (velt:proxy/array; identified by its data pointer): `op` 1 starts it, -1
+    /// array `x` holds (velt/lang/proxy/array; identified by its data pointer): `op` 1 starts it, -1
     /// ends it and answers the first hole it leaves (or -1), 2 and -2 start and end a trap call
     /// of it (`velt_rt_proxy_array_call`, rt_abi.md "Array methods on a proxy").
     ProxyArrayCall,
@@ -597,7 +597,7 @@ pub enum Intrinsic {
     /// call through the descriptor. An object or a function held gives `NaN`: sema converts
     /// those with `ToPrimitive` first. Additive (#924).
     AnyToNumber,
-    /// `T.shuffle(a, b, i0, …)` of a SIMD vector type (`velt:simd`): `(a: T, b: T) -> T`, lane
+    /// `T.shuffle(a, b, i0, …)` of a SIMD vector type (`velt/simd`): `(a: T, b: T) -> T`, lane
     /// `k` of the result being lane `lanes[k]` of `a`'s lanes followed by `b`'s. The indices
     /// were integer literals in range (sema checks them), so they are part of the operation:
     /// lowering calls the `velt_simd_<T>_shuffle_<i0>_<i1>…` extern (`velt_vir::simd`).

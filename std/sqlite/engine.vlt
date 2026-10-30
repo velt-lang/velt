@@ -1,5 +1,5 @@
-// velt:sqlite/engine — the SQLite engine written in Velt: queries over a database file's bytes,
-// with the statement API of velt:sqlite (docs/std/sqlite_engine.md). Read-only for now: SELECT
+// velt/sqlite/engine — the SQLite engine written in Velt: queries over a database file's bytes,
+// with the statement API of velt/sqlite (docs/std/sqlite_engine.md). Read-only for now: SELECT
 // with joins, subqueries, CTEs, aggregates, compound selects; writing is step 4 of
 // docs/internals/design/sqlite-engine.md.
 //
@@ -7,21 +7,21 @@
 // again is a map lookup. A plan runs as closures composed at prepare time (no bytecode VM); rows
 // are read straight from the b-tree pages and decoded only for the columns a query uses.
 
-import { DbFile } from "velt:sqlite/format";
-import { NULL, INTEGER, REAL, TEXT } from "velt:sqlite/btree";
-import { Schema, loadSchema } from "velt:sqlite/schema";
-import { Parser } from "velt:sqlite/sql/parser";
-import { statement } from "velt:sqlite/sql/statement";
-import { T_EOF, T_SEMI } from "velt:sqlite/sql/lexer";
-import { S_SELECT } from "velt:sqlite/sql/ast";
-import { Out, Params, Query } from "velt:sqlite/exec/scope";
-import { Pull } from "velt:sqlite/exec/pull";
-import { SelectCompiler } from "velt:sqlite/exec/select";
-import { SqlRunError } from "velt:sqlite/exec/errors";
-import { bindJson } from "velt:sqlite/exec/bind";
-import { Val, blobVal, intVal, nullVal, realVal, textVal } from "velt:sqlite/exec/value";
-import { CellKind, RowSource, readRow, readRows } from "velt:db";
-import { readFileBytesSync } from "velt:fs";
+import { DbFile } from "velt/sqlite/format";
+import { NULL, INTEGER, REAL, TEXT } from "velt/sqlite/btree";
+import { Schema, loadSchema } from "velt/sqlite/schema";
+import { Parser } from "velt/sqlite/sql/parser";
+import { statement } from "velt/sqlite/sql/statement";
+import { T_EOF, T_SEMI } from "velt/sqlite/sql/lexer";
+import { S_SELECT } from "velt/sqlite/sql/ast";
+import { Out, Params, Query } from "velt/sqlite/exec/scope";
+import { Pull } from "velt/sqlite/exec/pull";
+import { SelectCompiler } from "velt/sqlite/exec/select";
+import { SqlRunError } from "velt/sqlite/exec/errors";
+import { bindJson } from "velt/sqlite/exec/bind";
+import { Val, blobVal, intVal, nullVal, realVal, textVal } from "velt/sqlite/exec/value";
+import { CellKind, RowSource, readRow, readRows } from "velt/db";
+import { readFileBytesSync } from "velt/fs";
 
 /**
  * A failed operation. `code` is SQLite's result code name: "SQLITE_ERROR" (bad SQL, an unknown
@@ -38,7 +38,7 @@ export class SqliteError extends Error {
   }
 }
 
-/** The rows of a run, read by velt:db's `readRows` into typed values. */
+/** The rows of a run, read by velt/db's `readRows` into typed values. */
 export class Rows implements RowSource {
   out: Out;
   names: string[];
@@ -115,7 +115,7 @@ export class Statement {
   names: string[];
   count: usize;
 
-  /** When the plan cache last handed it out (velt:sqlite/engine's LRU bound). */
+  /** When the plan cache last handed it out (velt/sqlite/engine's LRU bound). */
   used: i64 = 0;
 
   constructor(sql: string, query: Query, params: Params, names: string[], count: usize) {
@@ -262,7 +262,7 @@ export class Statement {
     }
   }
 
-  /** Every row as values (velt:sqlite/exec/value's `Val`), `columns().length` a row. */
+  /** Every row as values (velt/sqlite/exec/value's `Val`), `columns().length` a row. */
   values(): Val[] {
     this.noParams();
     this.exec(-1);
@@ -275,7 +275,7 @@ export class Statement {
     return this.query.out.vals;
   }
 
-  // Without parameters given: velt:sqlite's error when the statement has any.
+  // Without parameters given: velt/sqlite's error when the statement has any.
   private noParams() {
     if (this.count > 0) {
       throw new SqliteError(

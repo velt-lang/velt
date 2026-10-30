@@ -2,7 +2,7 @@
 // them over value by value (numbers, bools, strings, `T | null`, blobs in arrays and objects)
 // or as JSON text (any other type): an integral number is an INTEGER, NaN is NULL, a lone
 // surrogate becomes U+FFFD, a `u8[]` member is a BLOB.
-import { open } from "velt:sqlite";
+import { open } from "velt/sqlite";
 
 struct Stored {
   kind: string;

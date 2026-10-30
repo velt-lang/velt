@@ -3,7 +3,7 @@
 // waiting out the 300 s timer (the golden runner gives up after 120 s). When the timer wins, a
 // runtime wait raced as `p` is dropped like a `Promise.race` loser, and so is a
 // `whenAborted()` raced directly against work: nothing waits on the signals nobody aborts.
-import { AbortController, timeout } from "velt:task";
+import { AbortController, timeout } from "velt/task";
 
 async function fast(): Promise<string> {
   await sleep(5);

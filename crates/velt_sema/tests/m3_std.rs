@@ -10,15 +10,15 @@ use velt_sema::hir::{PassMode, TyKind};
 #[test]
 fn every_std_module_type_checks() {
     for (module, name) in [
-        ("velt:io", "IoError"),
-        ("velt:fs", "readFile"),
-        ("velt:net", "listen"),
-        ("velt:net_bytes", "writeBytesTo"),
-        ("velt:http", "serve"),
-        ("velt:process", "argv"),
-        ("velt:path", "join"),
-        ("velt:json", "Value"),
-        ("velt:math", "clamp"),
+        ("velt/io", "IoError"),
+        ("velt/fs", "readFile"),
+        ("velt/net", "listen"),
+        ("velt/net/bytes", "writeBytesTo"),
+        ("velt/http", "serve"),
+        ("velt/process", "argv"),
+        ("velt/path", "join"),
+        ("velt/encoding/json", "Value"),
+        ("velt/math", "clamp"),
     ] {
         ok_src(&format!(
             "import {{ {name} }} from \"{module}\";\nfunction main() {{}}"
@@ -28,7 +28,7 @@ fn every_std_module_type_checks() {
 
 #[test]
 fn std_async_functions_own_their_params() {
-    let p = ok_src("import { readFile } from \"velt:fs\";\nfunction main() {}");
+    let p = ok_src("import { readFile } from \"velt/fs\";\nfunction main() {}");
     let f = func(&p, "std/fs::readFile");
     assert!(f.is_async);
     assert_eq!(
@@ -42,15 +42,15 @@ fn std_async_functions_own_their_params() {
 #[test]
 fn std_handles_release_in_drop_hooks() {
     let p = ok_src(
-        "import { serve } from \"velt:http\";\nimport { fetch } from \"velt:fetch\";\nfunction main() {}",
+        "import { serve } from \"velt/http\";\nimport { fetch } from \"velt/net/http\";\nfunction main() {}",
     );
-    for class in ["std/http::Server", "std/fetch/response::Response"] {
+    for class in ["std/http::Server", "std/net/http/fetch/response::Response"] {
         assert!(
             adt(&p, class).dispose.is_some(),
             "{class} has no dispose hook"
         );
     }
-    let text = func(&p, "std/fetch/response::Response.text");
+    let text = func(&p, "std/net/http/fetch/response::Response.text");
     assert!(text.is_async);
     assert_eq!(
         text.params[0].mode,

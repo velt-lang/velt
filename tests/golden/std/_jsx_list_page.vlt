@@ -1,5 +1,5 @@
 // The page of `jsx_list`, under std/jsx's precompiling runtime. `_jsx_list_page_generic.vlt` is
-// the same source under `velt:jsx/generic`.
+// the same source under `velt/jsx/generic`.
 
 function Name(props: { name: string }): JSX.Element {
   return <b>{props.name}</b>;

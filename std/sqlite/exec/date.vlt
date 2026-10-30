@@ -1,15 +1,15 @@
-// velt:sqlite/exec/date — SQLite's date and time functions (date, time, datetime, julianday,
+// velt/sqlite/exec/date — SQLite's date and time functions (date, time, datetime, julianday,
 // unixepoch, strftime), ported from its date.c: times are a julian day number in milliseconds,
 // parsed from `YYYY-MM-DD HH:MM:SS.SSS[+HH:MM]`, `HH:MM[:SS]`, a number or 'now', and changed by
 // modifiers ('+N days', 'start of month', 'weekday N', 'unixepoch', 'subsec', ...).
 // 'localtime' and 'utc' need the system's time zone rules and fail for now.
 
-import { NULL, INTEGER, REAL } from "velt:sqlite/btree";
-import { SqlRunError } from "velt:sqlite/exec/errors";
-import { atof } from "velt:sqlite/exec/fp";
-import { cBytes } from "velt:sqlite/exec/text";
-import { hmsText, strftime, ymdText } from "velt:sqlite/exec/date_format";
-import { Val, nullVal, intVal, realVal, textVal, toText } from "velt:sqlite/exec/value";
+import { NULL, INTEGER, REAL } from "velt/sqlite/btree";
+import { SqlRunError } from "velt/sqlite/exec/errors";
+import { atof } from "velt/sqlite/exec/fp";
+import { cBytes } from "velt/sqlite/exec/text";
+import { hmsText, strftime, ymdText } from "velt/sqlite/exec/date_format";
+import { Val, nullVal, intVal, realVal, textVal, toText } from "velt/sqlite/exec/value";
 
 /**
  * A time as date.c's DateTime: a julian day in milliseconds (`iJD`) and/or its year, month,

@@ -13,7 +13,7 @@ velt dev server.vlt       # one file
 Take a server that counts requests:
 
 ```ts
-import { serve } from "velt:http";
+import { serve } from "velt/http";
 
 async function main() {
   const hits = shared(0);

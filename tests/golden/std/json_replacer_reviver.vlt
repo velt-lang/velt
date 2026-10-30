@@ -3,10 +3,10 @@
 // out, array elements as null, the root replaced. A callback written in place annotates its
 // value parameter `JsonValue` (#924). A root replaced by `undefined` throws a TypeError, where
 // Node returns `undefined`: Velt's `JSON.stringify` returns a string and `revive` a JsonValue.
-// The value parameter may name `JsonValue` through an alias (velt:json's `Value`, a local
+// The value parameter may name `JsonValue` through an alias (velt/encoding/json's `Value`, a local
 // type). Values nested deeper than the callbacks walk throw a RangeError, as Node runs out of
 // stack.
-import { Value } from "velt:json";
+import { Value } from "velt/encoding/json";
 
 type J = JsonValue;
 

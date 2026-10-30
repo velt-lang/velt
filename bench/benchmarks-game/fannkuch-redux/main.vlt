@@ -5,7 +5,7 @@
 // and the classic sequential algorithm (the permutations in the order of the benchmark's
 // reference program, counting flips by reversing prefixes). Follows the Node.js #8 program
 // (Isaac Gouy, after Rex Kerr's Scala program).
-import { argv } from "velt:process";
+import { argv } from "velt/process";
 
 function fannkuch(n: i64): { checksum: i64; maxFlips: i64 } {
   const perm1: i64[] = [];

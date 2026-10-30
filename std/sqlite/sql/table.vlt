@@ -1,9 +1,9 @@
-// velt:sqlite/sql/table — CREATE TABLE of SQLite's grammar (parse.y): column definitions with
+// velt/sqlite/sql/table — CREATE TABLE of SQLite's grammar (parse.y): column definitions with
 // their constraints and DEFAULT values, table constraints and options; and the pieces the other
-// statements (velt:sqlite/sql/statement) share with it: names, indexed columns, conflict
+// statements (velt/sqlite/sql/statement) share with it: names, indexed columns, conflict
 // resolutions, literals.
 
-import { Parser } from "velt:sqlite/sql/parser";
+import { Parser } from "velt/sqlite/sql/parser";
 import {
   SqlError,
   T_BLOB,
@@ -13,7 +13,7 @@ import {
   T_REAL,
   T_STRING,
   dequote,
-} from "velt:sqlite/sql/lexer";
+} from "velt/sqlite/sql/lexer";
 import {
   ColumnDef,
   E_COLLATE,
@@ -29,7 +29,7 @@ import {
   KeyConstraint,
   S_CREATE_TABLE,
   Statement,
-} from "velt:sqlite/sql/ast";
+} from "velt/sqlite/sql/ast";
 
 /** `schema.name` or `name` into the statement's `schema` and `name`. */
 export function qualified(p: Parser, s: Statement) {

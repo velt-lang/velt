@@ -489,7 +489,7 @@ fn std_string_tag(s: &FnCx<'_, '_>, d: DefId, name: &str) -> Option<&'static str
 }
 
 /// A prelude class whose objects never reach an `any`: an array view's state
-/// (std/prelude/zzz_adapt.vlt; a view converts to `any` as the array it views).
+/// (std/prelude/adapt.vlt; a view converts to `any` as the array it views).
 fn is_internal(name: &str) -> bool {
     matches!(
         name.rsplit("::").next(),

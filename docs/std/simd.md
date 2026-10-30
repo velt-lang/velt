@@ -1,7 +1,7 @@
 # SIMD
 
 ```ts
-import { u8x16, f32x4, mask8x16 } from "velt:simd";
+import { u8x16, f32x4, mask8x16 } from "velt/simd";
 ```
 
 The 128-bit vector types ([SIMD vectors](../reference/types.md#simd-vectors)) and their
@@ -20,8 +20,8 @@ browser, Node.js, wasmtime and wasmer do).
 | `T.fits(xs, at = 0)` | whether the `n` elements of the `L[]` from `at` are inside it: what `load` and `store` check |
 | `T.load(xs, at = 0)` | the `n` elements of the `L[]` from `at`; a RangeError panic unless all are inside the array |
 | `v.store(xs, at = 0)` | writes the lanes to the `L[]` from `at`; a RangeError panic unless they fit (the array does not grow) |
-| `u8x16.loadString(s, at = 0)` | the bytes of string `s` from byte `at`, up to 16, in the low lanes, 0 in the others: read where the string keeps them, without a copy (its UTF-8, a lone surrogate as its three-byte form; velt:encoding `utf8Length` counts them); `at` may be the byte length (all 0), a RangeError panic past it |
-| `T.loadOptimistic(words, at = 0)` | integer vectors: the `n` words of an `Atomic<L>[]` from `at`, read while other threads may be storing to them: a lane no thread wrote during the read is the word, a lane a store raced is some value (no undefined behaviour), so trust the lanes only after a `VersionLatch` check (velt:sync); one vector load where reading the words one by one takes `n` atomic loads; a RangeError panic unless all are inside the array |
+| `u8x16.loadString(s, at = 0)` | the bytes of string `s` from byte `at`, up to 16, in the low lanes, 0 in the others: read where the string keeps them, without a copy (its UTF-8, a lone surrogate as its three-byte form; velt/encoding `utf8Length` counts them); `at` may be the byte length (all 0), a RangeError panic past it |
+| `T.loadOptimistic(words, at = 0)` | integer vectors: the `n` words of an `Atomic<L>[]` from `at`, read while other threads may be storing to them: a lane no thread wrote during the read is the word, a lane a store raced is some value (no undefined behaviour), so trust the lanes only after a `VersionLatch` check (velt/sync); one vector load where reading the words one by one takes `n` atomic loads; a RangeError panic unless all are inside the array |
 | `T.loadPartial(xs, at = 0)` | the elements from `at` that exist, up to `n`, in the low lanes, 0 in the others; `at` may be the length (all 0), a RangeError panic past it |
 | `v.storePartial(xs, at = 0)` | writes the low lanes to the elements from `at` that exist; `at` may be the length (nothing written), a RangeError panic past it |
 | `T.index()` | each lane its own index: 0, 1, 2, … |
@@ -96,7 +96,7 @@ and there is no branch. With the shuffles above (`T.shuffle`, `reverseBytes`) th
 published SHA-1 / SHA-256 routines use:
 
 ```ts
-import { u32x4 } from "velt:simd";
+import { u32x4 } from "velt/simd";
 
 function main() {
   const abcd = u32x4.splat(0x6a09e667).withLane(1, 0xbb67ae85).withLane(2, 0x3c6ef372).withLane(3, 0xa54ff53a);
@@ -113,7 +113,7 @@ function main() {
 `u64x2` has the CPU's carry-less multiplication: x86's PCLMULQDQ and ARM's PMULL, which
 multiply two 64-bit lanes as polynomials over GF(2) (XOR instead of addition, so no carries)
 into a 128-bit product, its low 64 bits in lane 0. It is what CRC folding (std's gzip CRC-32,
-velt:compress) and GHASH are built on.
+velt/compress) and GHASH are built on.
 
 | Method | Instruction |
 |---|---|
@@ -126,11 +126,11 @@ velt:compress) and GHASH are built on.
 As with the SHA instructions, every method works everywhere: the instruction where the CPU has
 it, an exact emulation (a shift and XOR per set bit) elsewhere, on WebAssembly, in debug builds
 and with `VELT_SIMD_DISABLE=clmul`. The emulation is far slower than the instruction, so code
-with a table-driven alternative checks `u64x2.hasClmul()` first, as velt:compress's CRC-32 does
+with a table-driven alternative checks `u64x2.hasClmul()` first, as velt/compress's CRC-32 does
 (about 0.45 instructions per byte with the instruction, 3.4 with its tables).
 
 ```ts
-import { u64x2 } from "velt:simd";
+import { u64x2 } from "velt/simd";
 
 function main() {
   // (x + 1)(x + 1) = x^2 + 1 over GF(2): 3 times 3 is 5 without carries.
@@ -143,12 +143,12 @@ Generic code given a vector (`xs.includes(v)`, a `Map` key, `xs.join()`) compare
 all 128 bits (so NaN equals NaN and `0` differs from `-0` there) and prints the type's name,
 `[u8x16]`; `typeof v` is `"object"`. A vector cannot be the value of a module-level `const` yet.
 
-A module that does not import a name from `velt:simd` can use it for a type of its own (as
+A module that does not import a name from `velt/simd` can use it for a type of its own (as
 TypeScript code written before the SIMD types may); one that imports it and declares it too gets
 the usual "defined multiple times" error. `import { u8x16 as Bytes }` works as for any import.
 
 ```ts
-import { f32x4, u8x16 } from "velt:simd";
+import { f32x4, u8x16 } from "velt/simd";
 
 // The dot product, sixteen floats per step in four sums.
 function dot(a: f32[], b: f32[]): f32 {
@@ -216,7 +216,7 @@ x86-64, a count and an XOR of a 15-byte array took 0.4 times the instructions); 
 three, the loop is (about half the instructions for one byte; `bench/simd/partial.sh`):
 
 ```ts
-import { mask8x16, u8x16 } from "velt:simd";
+import { mask8x16, u8x16 } from "velt/simd";
 
 // The number of bytes equal to `b`.
 function count(d: u8[], b: u8): usize {

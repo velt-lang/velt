@@ -1,10 +1,10 @@
-// The routes of ./server.vlt on velt:http (hyper), to compare velt:http/server with
+// The routes of ./server.vlt on velt/http (hyper), to compare velt/http/server with
 // (bench/web/README.md, `velt-native`): /json, /plaintext and the TSX fortunes page whole, with
 // an async component and streamed. Usage: std_http [port]; env PORT, HOST (127.0.0.1).
 
-import { serve } from "velt:http";
-import { args } from "velt:process";
-import { renderToString, renderToStringSync, renderToStream } from "velt:jsx";
+import { serve } from "velt/http";
+import { args } from "velt/process";
+import { renderToString, renderToStringSync, renderToStream } from "velt/jsx";
 import { asyncPage, page } from "./page";
 
 class Message {

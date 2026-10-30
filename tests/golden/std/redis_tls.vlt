@@ -1,9 +1,9 @@
 // requires-env: VELT_TEST_REDISS_URL VELT_TEST_REDISS_CA
 // std/redis over TLS: `rediss://` against a real TLS Redis whose certificate is signed by the CA
 // in the file $VELT_TEST_REDISS_CA (scripts/linux-check.sh --services starts one).
-import { connect } from "velt:redis";
+import { connect } from "velt/redis";
 
-import { readFile } from "velt:fs";
+import { readFile } from "velt/fs";
 import { freshPrefix, cleanup } from "./_redis";
 
 async function main() {

@@ -2,7 +2,7 @@
 // A NaN key's value is released when NaN is deleted or its value replaced, also when NaN is the
 // fillers' entry (the first key stored): the map finds that entry by its own equality, as
 // `compareTo` orders keys, where `NaN == NaN` is false.
-import { BTreeMap } from "velt:collections/btree_map";
+import { BTreeMap } from "velt/collections";
 
 class Payload {
   n: i64;

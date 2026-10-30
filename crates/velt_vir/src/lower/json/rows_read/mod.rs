@@ -49,7 +49,7 @@ impl RowSrc {
     }
 }
 
-/// `RowSource` methods, in the interface's order (std/db.vlt).
+/// `RowSource` methods, in the interface's order (std/db/index.vlt).
 const COLUMN_COUNT: usize = 0;
 const COLUMN_NAME: usize = 1;
 const NEXT: usize = 2;
@@ -59,7 +59,7 @@ const GET_INT: usize = 5;
 const GET_FLOAT: usize = 6;
 const GET_TEXT: usize = 7;
 const GET_BLOB: usize = 8;
-/// `CellKind` values (std/db.vlt).
+/// `CellKind` values (std/db/index.vlt).
 const KIND_NULL: i128 = 0;
 const KIND_BOOL: i128 = 1;
 const KIND_INT: i128 = 2;

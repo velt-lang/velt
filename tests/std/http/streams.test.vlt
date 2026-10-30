@@ -1,13 +1,13 @@
-// Streamed bodies: a response written while the client reads it (velt:http's `BodyStream`, and
-// velt:http/server's `res.stream()` and Server-Sent Events), and an upload read piece by piece.
-import { channel } from "velt:channel";
-import { utf8Encode } from "velt:encoding";
-import { BodyStream } from "velt:fetch";
-import { serve } from "velt:http";
-import { HttpRequest, HttpResponse, serve as serveRaw } from "velt:http/server";
-import { connect } from "velt:net";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "velt:test";
-import "velt:test/http";
+// Streamed bodies: a response written while the client reads it (velt/http's `BodyStream`, and
+// velt/http/server's `res.stream()` and Server-Sent Events), and an upload read piece by piece.
+import { channel } from "velt/sync";
+import { utf8Encode } from "velt/encoding";
+import { BodyStream } from "velt/net/http";
+import { serve } from "velt/http";
+import { HttpRequest, HttpResponse, serve as serveRaw } from "velt/http/server";
+import { connect } from "velt/net";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "velt/test";
+import "velt/test/http";
 
 class RenderError extends Error {}
 
@@ -111,8 +111,8 @@ async function raw(port: number, text: string): Promise<string> {
   return all.replace(/Date: [^\r]*\r\n/g, "");
 }
 
-describe("velt:http/server streaming", () => {
-  // velt:http/server streaming: a response written piece by piece (chunked; to an HTTP/1.0
+describe("velt/http/server streaming", () => {
+  // velt/http/server streaming: a response written piece by piece (chunked; to an HTTP/1.0
   // client up to the connection's end), Server-Sent Events, a proxy piping an upstream body
   // through, an upload read piece by piece (chunked or Content-Length, 100 Continue), an unread
   // body skipped before the next request, and a client that goes away mid-stream (the write

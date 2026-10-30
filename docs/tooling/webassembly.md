@@ -41,11 +41,11 @@ The language and the standard library as on native targets, single-threaded:
 
 - `async`/`await`, `spawn`, `Promise.all`, `sleep` and `yieldNow` run on a current-thread
   executor (tasks interleave at `await` points; `shared` and `Mutex` work, with one thread);
-- `velt:fs` uses the WASI file system (`velt run` grants the current directory);
-  `velt:process` arguments and environment, `performance.now()` and `Date.now()` work on both
+- `velt/fs` uses the WASI file system (`velt run` grants the current directory);
+  `velt/process` arguments and environment, `performance.now()` and `Date.now()` work on both
   targets;
-- `Math.random()` and `velt:random` work (seeded from WASI's random source, or the clocks in the
-  browser); local time is UTC (`Date`'s local getters, `velt:datetime`'s `localParts()`), since
+- `Math.random()` and `velt/random` work (seeded from WASI's random source, or the clocks in the
+  browser); local time is UTC (`Date`'s local getters, `velt/time`'s `localParts()`), since
   there is no time zone;
 - panics print `panic: …` and exit with 101, like native programs.
 

@@ -1,9 +1,9 @@
-// velt:sqlite/exec/ops — SQLite's operators on values, as compiled expressions call them:
+// velt/sqlite/exec/ops — SQLite's operators on values, as compiled expressions call them:
 // comparison under an affinity and a collation, arithmetic, bitwise operators, CAST
 // (https://sqlite.org/lang_expr.html, https://sqlite.org/datatype3.html#comparisons).
 
-import { NULL, INTEGER, REAL, TEXT, BLOB } from "velt:sqlite/btree";
-import { A_BLOB, A_INTEGER, A_NUMERIC, A_REAL, A_TEXT } from "velt:sqlite/schema";
+import { NULL, INTEGER, REAL, TEXT, BLOB } from "velt/sqlite/btree";
+import { A_BLOB, A_INTEGER, A_NUMERIC, A_REAL, A_TEXT } from "velt/sqlite/schema";
 import {
   Val,
   applyAffinity,
@@ -20,7 +20,7 @@ import {
   toBlob,
   toNumber,
   toText,
-} from "velt:sqlite/exec/value";
+} from "velt/sqlite/exec/value";
 
 export {
   OP_ADD,
@@ -30,7 +30,7 @@ export {
   OP_SUB,
   arithOp,
   intValue as toI64,
-} from "velt:sqlite/exec/value";
+} from "velt/sqlite/exec/value";
 
 /** An expression with no affinity (a literal, a function's result, an operator's). */
 export const AFF_NONE: u8 = 255;
@@ -208,7 +208,7 @@ export function truth(v: Val): i64 {
   return toF64(v) != 0 ? 1 : 0;
 }
 
-/** CAST(v AS type), with `a` the type's affinity (velt:sqlite/schema's `affinityOf`). */
+/** CAST(v AS type), with `a` the type's affinity (velt/sqlite/schema's `affinityOf`). */
 export function castTo(v: Val, a: u8): Val {
   if (v.t == NULL) {
     return v;

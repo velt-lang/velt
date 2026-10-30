@@ -1,5 +1,5 @@
 // Streaming: read the log line by line (never the whole file) into `Stats`.
-import { openRead } from "velt:fs_stream";
+import { openRead } from "velt/fs";
 import { LineSplitter } from "./lines";
 
 const CHUNK: u64 = 1048576;

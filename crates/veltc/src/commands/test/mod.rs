@@ -285,7 +285,7 @@ impl Run<'_> {
         }))
     }
 
-    /// Build the harnesses for `planned` and run them: `velt:test` in a harness without test
+    /// Build the harnesses for `planned` and run them: `velt/test` in a harness without test
     /// files runs every file, as the plan it is handed says, prints the report and exits with
     /// the run's verdict. Returns whether every test passed.
     fn run(&mut self, planned: &[Planned]) -> Result<bool, String> {

@@ -16,7 +16,7 @@
 // Every failure throws `RedisError` with a `code`: the server's error code for error replies
 // ("WRONGTYPE", "ERR", "NOAUTH", …) or an I/O code ("ECONNREFUSED", "ECONNRESET", "EINVAL").
 
-import { IoResult } from "velt:io";
+import { IoResult } from "velt/native/result";
 import {
   RawReply,
   RedisReply as Reply_,
@@ -31,14 +31,14 @@ import {
   replyTree,
   parseScore,
   scoreArg,
-} from "velt:redis/reply";
-import { RedisPipeline as Pipeline_ } from "velt:redis/pipeline";
+} from "velt/redis/reply";
+import { RedisPipeline as Pipeline_ } from "velt/redis/pipeline";
 import {
   RedisSubscriber as Subscriber_,
   RedisMessage as Message_,
   openSubscriber,
-} from "velt:redis/pubsub";
-import { setArgs, withPairs } from "velt:redis/args";
+} from "velt/redis/pubsub";
+import { setArgs, withPairs } from "velt/redis/args";
 
 declare async function velt_std_redis__connect(url: string, ca: string): Promise<IoResult<u64>>;
 declare async function velt_std_redis__duplicate(c: u64): Promise<IoResult<u64>>;

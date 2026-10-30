@@ -1,7 +1,7 @@
 // The chat server: each WebSocket connection runs `session`, which joins the room and
 // broadcasts what the client says to everyone.
-import { serve, Server } from "velt:http";
-import { WebSocket, WsMessage, isWebSocketRequest, upgradeWebSocket } from "velt:websocket";
+import { serve, Server } from "velt/http";
+import { WebSocket, WsMessage, isWebSocketRequest, upgradeWebSocket } from "velt/net/websocket";
 import { Room } from "./room";
 import { decodeClient, ServerMessage } from "./protocol";
 

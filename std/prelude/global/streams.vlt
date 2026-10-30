@@ -7,4 +7,4 @@ export {
   ReadableStreamReadResult,
   UnderlyingSource,
   QueuingStrategy,
-} from "velt:streams";
+} from "velt/io/streams/streams";

@@ -1,17 +1,17 @@
-// velt:collections/btree/pool: the nodes of `BTreeMap` (velt:collections/btree_map), internal.
+// velt/collections/btree/pool: the nodes of `BTreeMap` (velt/collections/btree_map), internal.
 //
 // A B+tree whose nodes live in flat pools, a struct of arrays, nodes linked by `u32` index:
 // node `n`'s keys are slots `n * F .. n * F + F`. Leaves hold up to `CAP` entries and link to
 // both neighbors; inner nodes hold up to `CAP` separators and `CAP + 1` children, every key of
 // child `i` at least separator `i - 1` and below separator `i`. The leaf pools are in chunks of
 // 256 leaves, so they grow without copying (and hold at most a chunk unused). A freed node goes on
-// a free list. Leaf entries: velt:collections/btree/leaf; inserts: velt:collections/btree/insert;
-// deletes: velt:collections/btree/remove; the smallest and largest key:
-// velt:collections/btree/edges.
+// a free list. Leaf entries: velt/collections/btree/leaf; inserts: velt/collections/btree/insert;
+// deletes: velt/collections/btree/remove; the smallest and largest key:
+// velt/collections/btree/edges.
 //
 // A node's 32 `u16` words (`leafLines` / `innerLines`, 64 bytes, each in one cache line) are
 // what a search reads first: slot `HEAD` holds the node's count and prefix, and the slots below
-// it, for keys with an order-preserving encoding (velt:collections/btree/inline_key: numbers,
+// it, for keys with an order-preserving encoding (velt/collections/btree/inline_key: numbers,
 // `bool`, strings), two bytes of each key's encoding past the prefix all of the node's keys
 // share (`prefixFor`); strings keep the next two in a second line next to it, a four-byte
 // word in all. Vector compares count the words below the target's, which is its rank unless
@@ -20,14 +20,14 @@
 //
 // Unused key slots hold `fill[0]`, so that the pools stay arrays of plain `K`; value slots
 // likewise (`vals`, with `valFill[0]`); unused word slots are `EMPTY`. A filler is the type's
-// blank value (velt:mem `Blank`: `""`, a number), which owns no memory, or for a type without
+// blank value (velt/mem `Blank`: `""`, a number), which owns no memory, or for a type without
 // one a share of a live key or value. A deleted key or value is released: when a live
 // filler's entry is deleted or its value replaced, a live entry from the middle of the tree
 // gives new fillers (`refill`), a separator that is a deleted key that owns memory follows to
-// the next key, and the last delete drops the pools (velt:collections/btree/remove).
+// the next key, and the last delete drops the pools (velt/collections/btree/remove).
 
-import { Blank, needsDrop } from "velt:mem";
-import { InlineKey } from "velt:collections/btree/inline_key";
+import { Blank, needsDrop } from "velt/mem";
+import { InlineKey } from "velt/collections/btree/inline_key";
 import {
   countOf,
   EMPTY,
@@ -41,7 +41,7 @@ import {
   rankRange2,
   withCount,
   withWord,
-} from "velt:collections/btree/line";
+} from "velt/collections/btree/line";
 
 /**
  * A node's range: the separators on either side of it, `null` at the edge of the tree. An
@@ -80,7 +80,7 @@ export class Pool<K extends Comparable<K>, V> {
   vals: V[][] = [];
   valFill: V[] = [];
   /**
-   * Each leaf's words and header (velt:collections/btree/line), 64 bytes: leaf `l`'s line is
+   * Each leaf's words and header (velt/collections/btree/line), 64 bytes: leaf `l`'s line is
    * `leafLines[l >> LEAF_SHIFT][(l & LEAF_MASK) << lineShift]`. Keys with wide words
    * (`InlineKey.inlineWide`) keep the next two bytes of each key past the word in a second line
    * right after it (`lineShift` 1), so a search loads both as one 128-byte block (arrays of whole
@@ -91,14 +91,14 @@ export class Pool<K extends Comparable<K>, V> {
   /** 1 when nodes keep two lines (wide words), else 0: set with the first key. */
   lineShift: usize = 0;
   /**
-   * Each leaf's rank order (velt:collections/btree/line `Order`), chunked as the lines are. A
+   * Each leaf's rank order (velt/collections/btree/line `Order`), chunked as the lines are. A
    * leaf's keys and values sit in physical slots in the order they came; `leafOrder` gives the
-   * slot of each rank (velt:collections/btree/leaf).
+   * slot of each rank (velt/collections/btree/leaf).
    */
   leafOrder: Order[][] = [];
-  /** 32 bytes for reading an order by rank (velt:collections/btree_map `ranks`). */
+  /** 32 bytes for reading an order by rank (velt/collections/btree_map `ranks`). */
   orderScratch: u8[] = new Array<u8>(32).fill(0);
-  /** More lines' words for editing (velt:collections/btree/leaf `moveRanks`). */
+  /** More lines' words for editing (velt/collections/btree/leaf `moveRanks`). */
   scratch2: u16[] = new Array<u16>(32).fill(0);
   scratch3: u16[] = new Array<u16>(32).fill(0);
   scratch4: u16[] = new Array<u16>(32).fill(0);
@@ -107,7 +107,7 @@ export class Pool<K extends Comparable<K>, V> {
   innerKeys: K[] = [];
   /** Inner node `i`'s line is `innerLines[i << lineShift]`, a second as for leaves. */
   innerLines: Line[] = [];
-  /** 32 words for editing a line (velt:collections/btree/line `spill` / `fill`). */
+  /** 32 words for editing a line (velt/collections/btree/line `spill` / `fill`). */
   scratch: u16[] = new Array<u16>(32).fill(0);
   innerKids: u32[] = [];
   freeLeaves: u32[] = [];
@@ -116,10 +116,10 @@ export class Pool<K extends Comparable<K>, V> {
   /**
    * The smallest and the largest key (one each, or none while empty), the separators the edges
    * of the tree lack (`prefixFor`), and the first 16 bytes of their encodings for a quick check
-   * that a key lies between them (velt:collections/btree/edges).
+   * that a key lies between them (velt/collections/btree/edges).
    */
   minKey: K[] = [];
-  /** The windows of a `getMany` batch (velt:collections/btree/leaf `descendMany`), two words each. */
+  /** The windows of a `getMany` batch (velt/collections/btree/leaf `descendMany`), two words each. */
   batchWindows: u64[] = new Array<u64>(32).fill(0);
   /** Two slots for `keySwap`'s (and `valSwap`'s) raw moves across chunks, empty between them. */
   maxKey: K[] = [];
@@ -255,7 +255,7 @@ export class Pool<K extends Comparable<K>, V> {
    * The prefix of a node with range `fences`: the common prefix of the separators on either side
    * of it, the smallest or the largest key standing in for one the tree's edge lacks. Every key
    * between them has it, and so does every key a search brings to the node: a search first
-   * settles keys outside the smallest and the largest (velt:collections/btree/edges).
+   * settles keys outside the smallest and the largest (velt/collections/btree/edges).
    */
   prefixFor(fences: Range<K>): u32 {
     const [low, high] = fences;
@@ -590,7 +590,7 @@ export class Pool<K extends Comparable<K>, V> {
   }
 
   /**
-   * Whether a filler is a live key or value (a type without a blank value, velt:mem `Blank`):
+   * Whether a filler is a live key or value (a type without a blank value, velt/mem `Blank`):
    * then its entry (`fillOwner`) going, or its value being replaced, calls `refill`. The same
    * for every map of the types: a constant where they are known.
    */

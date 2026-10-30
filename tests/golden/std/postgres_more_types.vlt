@@ -1,7 +1,7 @@
 // requires-env: VELT_TEST_PG_URL
 // std/postgres: interval, money, inet/cidr and macaddr columns decode without a ::text cast
 // (to the text PostgreSQL prints for them), also inside arrays and as NULL.
-import { connect } from "velt:postgres";
+import { connect } from "velt/postgres";
 
 class Row {
   span: string;

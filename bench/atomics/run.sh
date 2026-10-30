@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Atomics: atomics.vlt (Velt `Atomic<T>` and velt:sync, LLVM release) against the same
+# Atomics: atomics.vlt (Velt `Atomic<T>` and velt/sync, LLVM release) against the same
 # workloads in Rust (rust/: `std::sync::atomic`, fat LTO, built for this CPU). Checks that both
 # print the same checksums (for the timing-dependent `latch_reads_4t`: no torn read, 0), and
 # prints a Markdown table of the best time (ms) over RUNS runs, interleaved so a busy machine

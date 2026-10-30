@@ -1,5 +1,5 @@
 // Commands against a Db directly (no sockets), with a fixed clock.
-import { utf8DecodeLossy, utf8Encode } from "velt:encoding";
+import { utf8DecodeLossy, utf8Encode } from "velt/encoding";
 import { execute, formatScore, globMatch, parseInt64, parseScore } from "../src/commands";
 import { Db } from "../src/db";
 import { Writer } from "../src/resp";

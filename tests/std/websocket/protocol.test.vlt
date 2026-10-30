@@ -1,12 +1,12 @@
-// velt:websocket's protocol (RFC 6455): against a peer that speaks it by hand (./_ws_raw), and
+// velt/net/websocket's protocol (RFC 6455): against a peer that speaks it by hand (./_ws_raw), and
 // its internal pieces, the opening handshake (std/websocket/handshake) and framing
 // (std/websocket/frame).
-import { channel, Channel } from "velt:channel";
-import { base64Decode, utf8Decode, utf8Encode } from "velt:encoding";
-import { serve } from "velt:http";
-import { afterAll, beforeAll, describe, expect, it } from "velt:test";
-import { WebSocket, connectWebSocket, upgradeWebSocket } from "velt:websocket";
-import { maskKey } from "velt:websocket/bytes";
+import { channel, Channel } from "velt/sync";
+import { base64Decode, utf8Decode, utf8Encode } from "velt/encoding";
+import { serve } from "velt/http";
+import { afterAll, beforeAll, describe, expect, it } from "velt/test";
+import { WebSocket, connectWebSocket, upgradeWebSocket } from "velt/net/websocket";
+import { maskKey } from "velt/net/websocket/bytes";
 import {
   Frame,
   OP_BINARY,
@@ -22,8 +22,8 @@ import {
   parse,
   validCloseCode,
   writeHead,
-} from "velt:websocket/frame";
-import { acceptKey, checkResponse, generateKey, target } from "velt:websocket/handshake";
+} from "velt/net/websocket/frame";
+import { acceptKey, checkResponse, generateKey, target } from "velt/net/websocket/handshake";
 import { RawClient, RawFrame, rawConnect } from "./_ws_raw";
 
 // Echoes until the connection ends, then reports how it ended.

@@ -1,8 +1,8 @@
-// velt:json/scan's sixteen-byte string scan (#1658): random strings long enough for whole
+// velt/encoding/json/scan's sixteen-byte string scan (#1658): random strings long enough for whole
 // blocks, mixing ASCII, two-, three- and four-byte characters, escapes and lone surrogates at
 // every offset. The UTF-16 length the scanner counts, and the text it decodes, must be the
 // string's own, and `JSON.parse<string>` must give the string back.
-import { Scanner } from "velt:json/scan";
+import { Scanner } from "velt/encoding/json/scan";
 
 let seed: u64 = 1658;
 

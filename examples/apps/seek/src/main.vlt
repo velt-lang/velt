@@ -1,5 +1,5 @@
 // Process glue: arguments in, output to stdout, messages to stderr, the exit code out.
-import { args, stdout } from "velt:process";
+import { args, stdout } from "velt/process";
 import { execute } from "./app";
 
 async function main(): Promise<i32> {

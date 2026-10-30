@@ -1,4 +1,4 @@
-// std/compress/brotli/command (internal to velt:compress/brotli): the insert-and-copy alphabet of
+// std/compress/brotli/command (internal to velt/compress/brotli/brotli_decoder): the insert-and-copy alphabet of
 // RFC 7932 section 5, one entry per symbol so that a command's lengths take one table lookup.
 //
 // `COMMANDS[symbol]` is the insert length's extra bits (bits 0-7) and the copy length's (8-15),

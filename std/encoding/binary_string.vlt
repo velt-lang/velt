@@ -7,9 +7,9 @@
 // decodes into one buffer of UTF-8 and turns it into a string with one runtime copy. Bad input
 // throws Node's `DOMException` (`InvalidCharacterError`, with Node's messages).
 
-import { IoResult } from "velt:io";
-import { base64Encode } from "velt:encoding";
-import { DOMException } from "velt:dom_exception";
+import { IoResult } from "velt/native/result";
+import { base64Encode } from "velt/encoding";
+import { DOMException } from "velt/lang/dom_exception";
 
 declare function velt_rt_bytes_from_str(s: string): u8[];
 declare function velt_rt_bytes_to_str(b: u8[]): IoResult<string>;

@@ -158,7 +158,7 @@ export function __anySet_forEach<T>(s: Set<T>, args: any[], whole: any): any {
   return undefined;
 }
 
-// The copy an interface adapter passes for a `Set<unknown>` parameter (std/prelude/zzz_adapt.vlt).
+// The copy an interface adapter passes for a `Set<unknown>` parameter (std/prelude/adapt.vlt).
 
 /** A set of any type held by `v`, as a `Set<unknown>` of its elements. */
 export function __unknownSetIn(v: unknown): Set<unknown> {

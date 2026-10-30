@@ -90,7 +90,7 @@ impl FnCx<'_, '_> {
             }
             _ => self.peek_ty(e),
         };
-        ty.is_some_and(|t| self.is_std_class(t, "std/regex::RegExp"))
+        ty.is_some_and(|t| self.is_std_class(t, "std/text/regex/regexp::RegExp"))
     }
 
     /// Is `t` the std class with the qualified name `qual`?
@@ -181,7 +181,7 @@ impl FnCx<'_, '_> {
         init: &ast::Expr,
         ty: TyId,
     ) -> Option<(usize, String)> {
-        if !self.is_std_class(ty, "std/regex::RegExp") {
+        if !self.is_std_class(ty, "std/text/regex/regexp::RegExp") {
             return None;
         }
         self.regex_shape(init)

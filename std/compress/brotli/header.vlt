@@ -1,4 +1,4 @@
-// std/compress/brotli/header (internal to velt:compress/brotli): the stream header and meta-block
+// std/compress/brotli/header (internal to velt/compress/brotli/brotli_decoder): the stream header and meta-block
 // headers of RFC 7932 (sections 9.1 and 9.2), and block switches (section 6).
 //
 // A compressed meta-block's header sets up everything its commands are decoded with: the block
@@ -6,9 +6,9 @@
 // of them back to back in `State.tables`. It is read in one go, as one step of the decoder
 // (decoder.vlt starts it over when the input runs out before its end).
 
-import { CompressError } from "velt:compress/error";
-import { Bits } from "velt:compress/brotli/bits";
-import { BLOCK_LENGTH_CODES, MAX_TABLE_SIZE } from "velt:compress/brotli/tables";
+import { CompressError } from "velt/compress/errors";
+import { Bits } from "velt/compress/brotli/bits";
+import { BLOCK_LENGTH_CODES, MAX_TABLE_SIZE } from "velt/compress/brotli/tables";
 import {
   State,
   STAGE_COMMAND,
@@ -16,7 +16,7 @@ import {
   STAGE_METADATA,
   STAGE_STREAM,
   STAGE_UNCOMPRESSED,
-} from "velt:compress/brotli/state";
+} from "velt/compress/brotli/state";
 
 // Block categories.
 const LITERALS: usize = 0;

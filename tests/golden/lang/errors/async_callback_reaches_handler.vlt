@@ -1,6 +1,6 @@
 // An async arrow stored where a `void` callback is expected (a field, an array) and then called
 // from an HTTP handler runs on several threads: modifying a capture is an error there.
-import { serve } from "velt:http";
+import { serve } from "velt/http";
 
 class Input {
   onChange: (v: string) => void = (v) => {};

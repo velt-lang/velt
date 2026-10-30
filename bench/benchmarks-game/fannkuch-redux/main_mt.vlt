@@ -5,7 +5,7 @@
 // program by the Rust Project Developers, TeXitoi and Cristi Cobzarenco); each block is a spawned
 // task that starts from the permutation with its first index, and `Promise.all` combines the
 // blocks' checksums and maximum flip counts.
-import { argv } from "velt:process";
+import { argv } from "velt/process";
 
 const BLOCKS = 24;
 

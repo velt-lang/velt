@@ -1,4 +1,4 @@
-// velt:collections/btree/leaf: entries of a leaf of a `Pool` (velt:collections/btree/pool),
+// velt/collections/btree/leaf: entries of a leaf of a `Pool` (velt/collections/btree/pool),
 // internal.
 //
 // A leaf keeps its keys and values in physical slots `0 .. n` in the order they came, its words
@@ -10,7 +10,7 @@
 // keys to compare. What works on ranks (walks, ranges, splits, merges) reads the order; entries
 // move between leaves by rank (`moveRanks`), so no leaf is ever sorted.
 
-import { F, Pool, Window, quadIn, windowOf, wordIn } from "velt:collections/btree/pool";
+import { F, Pool, Window, quadIn, windowOf, wordIn } from "velt/collections/btree/pool";
 import {
   EMPTY,
   HEAD,
@@ -29,7 +29,7 @@ import {
   withWord,
   wordsBelow,
   wordsBelow2,
-} from "velt:collections/btree/line";
+} from "velt/collections/btree/line";
 
 /** No physical slot: a key that is not in its leaf. */
 export const NO_SLOT: usize = 63;

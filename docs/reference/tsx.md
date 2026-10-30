@@ -2,14 +2,14 @@
 
 Velt compiles TSX, the JSX syntax of `.tsx` files, for **server-side rendering**: an element
 is a call into a *JSX provider*, which renders HTML (or builds whatever its client needs). The
-default provider is [`velt:jsx`](../std/jsx.md). The syntax and the typing are TypeScript's
+default provider is [`velt/jsx`](../std/jsx.md). The syntax and the typing are TypeScript's
 `jsx: "react-jsx"` mode; where Velt differs, this page says so. The provider interface is the
 [JSX provider contract](../internals/contracts/jsx.md); the design is
 [TSX for server-side rendering](../internals/design/tsx.md). For a walkthrough, see
 [Server-rendered pages](../book/ssr-pages.md).
 
 ```ts
-import { renderToStringSync } from "velt:jsx";
+import { renderToStringSync } from "velt/jsx";
 
 function Greeting(props: { name: string }): JSX.Element {
   return <p class="greeting">Hello, {props.name}!</p>;
@@ -34,7 +34,7 @@ The *import source* of a module decides its provider, in this order:
    (Velt also reads `// @jsxImportSource <source>`, but `tsc` reads only the block comment,
    so a file shared with TypeScript uses that one);
 2. `jsx: { importSource: "<source>" }` in the package's [`package.vlt`](../tooling/manifest.md#jsx);
-3. `velt:jsx`.
+3. `velt/jsx`.
 
 A module with JSX imports `<source>/jsx-runtime` implicitly. Its exports are the namespace
 `JSX` in that module's types (`JSX.Element`, `JSX.IntrinsicElements`, …), as if the module had
@@ -45,7 +45,7 @@ A module with JSX imports `<source>/jsx-runtime` implicitly. Its exports are the
 - `<div class="a">…</div>`, `<br />` and `<>…</>` (a fragment) are expressions of type
   `JSX.Element`.
 - A lower-case name (`div`, `my-widget`, `clipPath`) or a namespaced one (`svg:rect`) is an
-  **intrinsic element**: a tag of `JSX.IntrinsicElements` (`velt:jsx` lists the HTML, SVG 2 and
+  **intrinsic element**: a tag of `JSX.IntrinsicElements` (`velt/jsx` lists the HTML, SVG 2 and
   MathML Core elements).
 - A capitalized or dotted name (`Card`, `ui.Card`) is a **component**: a value in scope.
 - A generic component takes type arguments on the opening tag, `<List<number> items={xs} />`;
@@ -78,17 +78,17 @@ const link = <a hreff="/docs">Docs</a>;
   spaces within a line stay. Entities are decoded.
 - `{expr}` is one child, converted to `JSX.Child`. `{...xs}` is one child too: the array `xs`.
 - `{}` and `{/* comment */}` are no children.
-- What `true`, `false` and `null` render is the provider's choice (`velt:jsx`: nothing).
+- What `true`, `false` and `null` render is the provider's choice (`velt/jsx`: nothing).
 - A provider that writes some tags without an end tag lists them (`jsxVoidElements`;
-  `velt:jsx`: HTML's void elements `br`, `img`, `input`, …), and children of those tags are an
+  `velt/jsx`: HTML's void elements `br`, `img`, `input`, …), and children of those tags are an
   error. `{}`, comments and an explicit end tag (`<br></br>`) are allowed.
 - `&&` returns an operand, as in JavaScript ([truthiness](variables.md#conditions-truthiness)):
-  `{flag && <b>new</b>}` is the element or `false` (which `velt:jsx` renders as nothing), and
+  `{flag && <b>new</b>}` is the element or `false` (which `velt/jsx` renders as nothing), and
   `{user && <p>{user.name}</p>}` on a nullable object is the element or `null`. As in React,
   `{count && <b>n</b>}` renders `0` when `count` is `0`.
 
 ```ts
-import { renderToStringSync } from "velt:jsx";
+import { renderToStringSync } from "velt/jsx";
 
 const flag = true;
 const items = ["a", "b"];
@@ -117,7 +117,7 @@ several as an array, each checked against the field's type; children for props w
 field are an error.
 
 ```ts
-import { renderToStringSync } from "velt:jsx";
+import { renderToStringSync } from "velt/jsx";
 
 function Section(props: { title: string; children: string[] }): JSX.Element {
   return (
@@ -141,10 +141,10 @@ const s = <Section />;
 ```
 
 - The compiler does not call a component: it passes it, uncalled, to the provider with its
-  props and a name (`"<module path>#<Name>"`), as TypeScript's runtime does. `velt:jsx` calls
+  props and a name (`"<module path>#<Name>"`), as TypeScript's runtime does. `velt/jsx` calls
   it as the element is created; another provider may call it later, around something, or not
   on the server at all.
-- An **async component** returns `Promise<JSX.Element>`. With `velt:jsx` it starts when its
+- An **async component** returns `Promise<JSX.Element>`. With `velt/jsx` it starts when its
   element is created, so siblings load concurrently, and rendering awaits it
   ([`renderToString`, `renderToStream`](../std/jsx.md)). A provider without async support
   reports an error.
@@ -161,7 +161,7 @@ const s = <Section />;
   [`examples/apps/ssr-blog`](../../examples/apps/ssr-blog/README.md)'s `<Page>` does:
 
 ```ts
-import { renderToString } from "velt:jsx";
+import { renderToString } from "velt/jsx";
 
 function Layout(props: { title: string; children: JSX.Element[] }): JSX.Element {
   return (
@@ -190,7 +190,7 @@ An element becomes calls of the provider's functions, chosen by what it exports
 - **Generic:** `jsx(tag, names, values, children, key)` for an intrinsic element,
   `Fragment(children, key)` and `jsxComponent(C, props, key, name)` (or `jsxAsyncComponent`).
 - **Precompiled**, when the provider exports `jsxTemplate`, `jsxEscape` and `jsxAttr`
-  (`velt:jsx` does): a tree of intrinsic elements becomes one template. Static tags, attributes
+  (`velt/jsx` does): a tree of intrinsic elements becomes one template. Static tags, attributes
   and text are escaped at compile time into constant strings, dynamic text and attributes are
   folded into them, and components, fragments and other elements are its slots. A list such as
   `{rows.map((r) => <tr>…</tr>)}` whose rows are templates without slots is built from strings
@@ -206,10 +206,10 @@ An element becomes calls of the provider's functions, chosen by what it exports
   nullable object on the left it works as in TypeScript.
 - Children of a void element (`<br>x</br>`) are a compile error ("<br> is a void element and
   cannot have children"), where React fails at run time.
-- `velt:jsx` has no event-handler attributes: it renders on the server, so `onClick` is a
+- `velt/jsx` has no event-handler attributes: it renders on the server, so `onClick` is a
   compile error (a client-side provider declares its own handlers).
 - `{...xs}` as a child passes the array `xs` as one child.
 - `number` is JavaScript's number (`f64`). A provider whose `JSX.Child` and `JSX.AttrValue`
-  should also take Velt's integer types writes `i64 | f64`, as `velt:jsx` does.
+  should also take Velt's integer types writes `i64 | f64`, as `velt/jsx` does.
 - Class components and `ref` are not supported (compile errors); `JSX.LibraryManagedAttributes`
   is ignored.

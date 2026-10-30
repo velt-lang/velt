@@ -1,9 +1,9 @@
-// velt:sqlite/exec/result — a SELECT core's result columns (names, affinities, collations),
+// velt/sqlite/exec/result — a SELECT core's result columns (names, affinities, collations),
 // and the ORDER BY and GROUP BY terms that name them by number or alias, with SQLite's rules
 // for which terms are numbers and its messages for those out of range.
 
-import { BINARY } from "velt:sqlite/record";
-import { collationOf } from "velt:sqlite/schema";
+import { BINARY } from "velt/sqlite/record";
+import { collationOf } from "velt/sqlite/schema";
 import {
   E_BINARY,
   E_BLOB,
@@ -22,12 +22,12 @@ import {
   Expr,
   OrderTerm,
   ResultColumn,
-} from "velt:sqlite/sql/ast";
-import { ROWID, SRC_TABLE, Source } from "velt:sqlite/exec/source";
-import { Query, Scope } from "velt:sqlite/exec/scope";
-import { prepareError } from "velt:sqlite/exec/errors";
-import { C, ExprCompiler } from "velt:sqlite/exec/expr";
-import { Emitter, SortKey } from "velt:sqlite/exec/emit";
+} from "velt/sqlite/sql/ast";
+import { ROWID, SRC_TABLE, Source } from "velt/sqlite/exec/source";
+import { Query, Scope } from "velt/sqlite/exec/scope";
+import { prepareError } from "velt/sqlite/exec/errors";
+import { C, ExprCompiler } from "velt/sqlite/exec/expr";
+import { Emitter, SortKey } from "velt/sqlite/exec/emit";
 
 /** SQLITE_MAX_COLUMN: the most result columns, and ORDER BY and GROUP BY terms (2,000). */
 export const MAX_COLUMN: usize = 2000;

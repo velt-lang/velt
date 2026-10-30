@@ -1,6 +1,6 @@
 // A body's bytes become an `ArrayBuffer`'s only as a copy of their own: neither the array the
 // body was made from, nor a clone, nor a stream chunk the program holds shares them, so typed
-// arrays over them always read inside their buffer (std/typed_array/buffer.vlt `element*`).
+// arrays over them always read inside their buffer (std/lang/typed_array/buffer.vlt `element*`).
 async function main() {
   const src = new Uint8Array([0, 0, 0, 0, 0, 0, 0xf8, 0x3f]);
   const a = new Float64Array(await new Response(src).arrayBuffer());

@@ -1,11 +1,11 @@
 // Builds a small tree and runs seek's whole pipeline (parallel walk, search tasks, printer) on it
 // (golden: demo.out). Output lines are sorted: files are searched in parallel, so their order
 // varies from run to run.
-import { mkdirSync, removeSync, writeFileSync } from "velt:fs";
-import { tmpdir } from "velt:os";
-import { uuidv4 } from "velt:uuid";
-import { chdir, cwd } from "velt:process";
-import { RegExp } from "velt:regex";
+import { mkdirSync, removeSync, writeFileSync } from "velt/fs";
+import { tmpdir } from "velt/os";
+import { uuidv4 } from "velt/random/uuid";
+import { chdir, cwd } from "velt/process";
+import { RegExp } from "velt/text";
 import { execute } from "./src/app";
 
 // The tree: [path, contents].

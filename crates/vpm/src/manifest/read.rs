@@ -2,7 +2,7 @@
 //! (docs/internals/design/package-manifest.md):
 //!
 //! ```ts ignore
-//! import type { Package } from "velt:package";
+//! import type { Package } from "velt/package";
 //!
 //! export const pkg: Package = {
 //!   name: "hello",
@@ -17,7 +17,7 @@
 //! ```
 //!
 //! The file is parsed, never compiled or run: the reader accepts only a type import from
-//! `velt:package` and one `export const pkg: Package = <data>`, where the data is made of string,
+//! `velt/package` and one `export const pkg: Package = <data>`, where the data is made of string,
 //! number and boolean literals, arrays and object literals. It is the only definition of a valid
 //! manifest; the `Package` type only gives editors completion and errors. Manifests come from
 //! uploaded archives too, so the input's size, nesting and number of values are bounded.
@@ -41,7 +41,7 @@ pub const MAX_BYTES: usize = 64 * 1024;
 /// Most values (scalars, arrays, objects) one manifest may contain.
 pub const MAX_VALUES: usize = 10_000;
 
-const TYPES_MODULE: &str = "velt:package";
+const TYPES_MODULE: &str = "velt/package";
 
 /// What a data file declares: `package.vlt`'s `pkg`, or `velt.workspace.vlt`'s `workspace`.
 struct Shape {

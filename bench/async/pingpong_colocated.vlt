@@ -1,8 +1,8 @@
 // #211 step 2: `pingpong_pinned.vlt` with placement. Each owner is pinned to a worker and each
 // caller to its owner's worker (`spawn(p, { worker })`), so no call wakes another thread. Using
 // the placement API selects the per-core scheduler. The printed total equals pingpong_pinned's.
-import { channel, Channel } from "velt:channel";
-import { workerCount } from "velt:task";
+import { channel, Channel } from "velt/sync";
+import { workerCount } from "velt/task";
 
 type Call = { key: string; reply: (n: i64) => void };
 

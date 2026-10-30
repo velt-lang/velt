@@ -4,8 +4,8 @@
 // in a `try`, and a `taskScope` child nobody awaited (the scope fails with its error).
 // The losers wait for a channel the main task closes only after the combinator settled, so on a
 // loaded machine a loser can't settle first (a 30 ms timer could fire with a 5 ms one).
-import { Channel, channel } from "velt:channel";
-import { TaskScope, taskScope } from "velt:task";
+import { Channel, channel } from "velt/sync";
+import { TaskScope, taskScope } from "velt/task";
 
 class Failed extends Error {}
 

@@ -91,7 +91,7 @@ mod tests {
 
     #[test]
     fn std_imports_load_their_shims() {
-        let ts = to_typescript("import { URL } from \"velt:url\";\nconst a = \"from x\";\n");
+        let ts = to_typescript("import { URL } from \"velt/net/url\";\nconst a = \"from x\";\n");
         let line = ts.lines().next().unwrap_or_default();
         assert!(line.starts_with("import { URL } from \"file://"), "{line}");
         assert!(line.ends_with("/shims/std/url.ts\";"), "{line}");

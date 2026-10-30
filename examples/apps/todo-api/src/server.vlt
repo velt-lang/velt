@@ -1,8 +1,8 @@
 // The HTTP side: opens the store, serves `route`, and persists the store after each change.
 // The store is picked by the file name: `*.sqlite`, `*.sqlite3` and `*.db` are SQLite
 // databases, anything else is a JSON file.
-import { serve, Server } from "velt:http";
-import { readFile, writeFile, rename, exists } from "velt:fs";
+import { serve, Server } from "velt/http";
+import { readFile, writeFile, rename, exists } from "velt/fs";
 import { TodoStore } from "./store";
 import { SqliteTodoStore } from "./sqlite_store";
 import { TodoRepository, JsonRepository, SqliteRepository } from "./repository";

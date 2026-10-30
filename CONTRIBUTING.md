@@ -134,7 +134,7 @@ them in each.)
   that each test file's process frees every block it allocates (`VELT_RC_STATS=1`, the goldens'
   `// check: no leaks`) and uses the checking allocator as the goldens' debug runs do, so close
   every server and connection a test opens. Matchers for one
-  module's types go in `std/test/<module>.vlt` (`velt:test/http`'s `toHaveStatus`).
+  module's types go in `std/test/<module>.vlt` (`velt/test/http`'s `toHaveStatus`).
 
 Every bug fix comes with a regression test: an end-to-end test (`tests/golden/**`) or a unit
 test. A known bug without a fix can be added under `tests/golden/bugs/` (marked `.pending`: it is

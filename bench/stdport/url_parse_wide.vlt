@@ -2,7 +2,7 @@
 // in the path, the query or the fragment, a query of 500 characters, a path of 1000, a `data:`
 // URL of 1000, and an opaque URL that is not ASCII. 700 distinct URLs, 40 times. The Rust port
 // uses the `url` crate.
-import { URL } from "velt:url";
+import { URL } from "velt/net/url";
 
 function main() {
   const shapes = [

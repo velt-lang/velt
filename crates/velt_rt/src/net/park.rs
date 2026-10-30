@@ -1,5 +1,5 @@
 //! Idle streams parked for a later task: the keep-alive pool of the global `fetch`, whose client
-//! is Velt code (std/fetch/client/conn.vlt). A stream parked under a key (an origin) is handed to
+//! is Velt code (std/net/http/fetch/client/conn.vlt). A stream parked under a key (an origin) is handed to
 //! the next task that asks for that key, most recently parked first, which the server is least
 //! likely to have closed meanwhile.
 //!

@@ -80,22 +80,22 @@ server's whole process tree (all `node:cluster` workers, all Bun `reusePort` pro
 | `regex` | regex-redux on `fasta 5000000` (`bench/benchmarks-game/regex-redux`) | ✓ | ✓ (regex crate) | ✓ | ✓ |
 | `async` | 14 async programs: await chains, fan-out, channels, spawn, timers (`bench/async`; Rust on tokio multi-thread and current-thread, Velt on all cores and on 1 thread) | ✓ | ✓ | ✓ | ✓ |
 | `async` | the fetch client: seq, conc, big, json, gzip against one hyper server (`bench/http/fetch`) | ✓ | ✓ (reqwest) | ✓ (undici) | ✓ |
-| `async` | `concurrent_map`: velt:collections ConcurrentMap against bbtree's `BBTreeMap` (`bench/concurrent_map`) | ✓ | ✓ | | |
+| `async` | `concurrent_map`: velt/collections ConcurrentMap against bbtree's `BBTreeMap` (`bench/concurrent_map`) | ✓ | ✓ | | |
 | `json` | parse_typed, parse_union, parse_value, stringify, edit, navigate (`bench/json`) | ✓ | ✓ (serde_json) | ✓ | ✓ |
 | `json` | canada, citm_catalog, twitter, 50 rounds each (`bench/json/corpora`): parse to a value (Velt `JSON.parseValue`), write a parsed value back (Velt `JsonValue.stringify()`) | ✓ | ✓ (serde_json, sonic-rs, simd-json) | ✓ | ✓ |
 | `json` | the same corpora typed (`json/typed.vlt`): `JSON.parse<T>` into structs with the fields a program reads, and `JSON.stringify` of the typed value | ✓ | ✓ (serde derive on serde_json, sonic-rs, simd-json: `json/rust`) | ✓ (`JSON.parse` + the same field reads) | ✓ |
-| `tsx` | server-side rendering of one component tree (`tsx/_page.vlt`, `tsx/page.mjs`): a 10-row page × 20 000 and a 1000-row page × 500, renders per second; the HTML compared byte for byte once | ✓ (velt:jsx) | n/a | ✓ (React `renderToString`, Preact `preact-render-to-string`) | ✓ (the same) |
+| `tsx` | server-side rendering of one component tree (`tsx/_page.vlt`, `tsx/page.mjs`): a 10-row page × 20 000 and a 1000-row page × 500, renders per second; the HTML compared byte for byte once | ✓ (velt/jsx) | n/a | ✓ (React `renderToString`, Preact `preact-render-to-string`) | ✓ (the same) |
 | `core` | collections, strings, language features: `bench/typical` (19 TypeScript programs, each with a Rust port), `bench/iter`, `bench/strings_utf16`, `bench/key_order`, `bench/any_ops`, `bench/any_text`, `bench/typed_array`, `bench/structs`, `bench/btree`, `bench/atomics`, `bench/stdport` (below) | ✓ | most | most | most |
 | `sqlite` | insert in a transaction, point select, range select, autocommit insert (`bench/db`, file database, WAL) | ✓ | ✓ (rusqlite) | ✓ (better-sqlite3) | ✓ (bun:sqlite, `bun/sqlite.ts`) |
 | `sqlite` | rows to JSON: the feed and post queries of `bench/feed` (`bench/sqlite`) | ✓ | ✓ (rusqlite + serde_json) | | |
 | `compile` | hello world, nbody, the TechEmpower server: Velt debug and release (build cache off) beside `rustc` and `cargo build` (clean, with dependencies; and after touching `main.rs`) | ✓ | ✓ | | |
-| `http` | `/plaintext`, `/json`, `/fortunes` (sorted, escaped HTML table) with oha (`bench/http/techempower`; Bun.serve in `bun/techempower.ts`) | ✓ (velt:http) | ✓ (axum) | ✓ (node:http, 1 process and node:cluster) | ✓ (Bun.serve, 1 process and `reusePort` × cores) |
+| `http` | `/plaintext`, `/json`, `/fortunes` (sorted, escaped HTML table) with oha (`bench/http/techempower`; Bun.serve in `bun/techempower.ts`) | ✓ (velt/http) | ✓ (axum) | ✓ (node:http, 1 process and node:cluster) | ✓ (Bun.serve, 1 process and `reusePort` × cores) |
 | `http` | `TSX page /small`, `/large`: the `tsx` page rendered per request (`tsx/server.vlt`, `tsx/server.mjs`) | ✓ | n/a | ✓ (node:http + React or Preact, 1 process and node:cluster) | ✓ (Bun.serve + React or Preact, 1 process and `reusePort` × cores) |
 | `websocket` | the chat app under steady load: 2000 clients, 20 rooms, 1000 messages/s (`bench/chat`, load from `chat/load`) | ✓ | | ✓ (ws) | ✓ |
 | memory | peak RSS of every benchmark above, one table (`memory.md`) | | | | |
 
 The JSON rows say which Velt API they use; all of them run the JSON engine written in Velt
-(std/prelude/json and velt:json: the scanner and reader, the writer, the tape-backed
+(std/prelude/json and velt/encoding/json: the scanner and reader, the writer, the tape-backed
 `JsonValue`), and none goes through a Rust fallback. React runs with `NODE_ENV=production`, as
 it is deployed; the npm versions are pinned in `tsx/package.json` (and its lockfile).
 
@@ -145,7 +145,7 @@ review. A benchmark, category or server that raises an error is recorded as fail
 `results.json` and the run goes on; the tables are written at the end in any case.
 `results.json` also records the installed npm package versions (react, react-dom, preact,
 preact-render-to-string, better-sqlite3, ws), the SQLite version that better-sqlite3, bun:sqlite
-and velt:sqlite report (`sqlite_version()`), and for rusqlite the version of the
+and velt/sqlite report (`sqlite_version()`), and for rusqlite the version of the
 `libsqlite3-sys` crate, whose release fixes the SQLite it bundles.
 `test_report.py` (run by `run.sh` first) tests the list of losses on made-up results.
 

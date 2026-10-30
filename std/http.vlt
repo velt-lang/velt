@@ -10,7 +10,7 @@
 // the closure's heap environment (shared with in-flight requests; the runtime drops it once the
 // server is closed and its last request finished, so captured values' `[Symbol.dispose]()`
 // hooks run). `serve` wraps the user handler in such a closure, which hands it the raw request as
-// a `Request` that reads it lazily (std/fetch/request.vlt), releases the raw request once the
+// a `Request` that reads it lazily (std/net/http/fetch/request.vlt), releases the raw request once the
 // handler settled, and hands the returned `Response` to the request in one call (a complete
 // body), or builds it into a runtime response that a `BodyStream` body is then copied into
 // (std/http/stream.vlt), so the intrinsic only ever sees one closure type.
@@ -19,12 +19,13 @@
 // `[Symbol.dispose]()` drop hook, which zeroes the handle so it runs at most once. A `Server`
 // stops only on `close()`; dropping it releases the handle but keeps it serving (like Node).
 
-import { IoError, IoResult, unwrapIo } from "velt:io";
-import { Headers, HeadersInit } from "velt:fetch/headers";
-import { Request } from "velt:fetch/request";
-import { Response } from "velt:fetch/response";
-import { TcpStream } from "velt:net";
-import { pump } from "velt:http/stream";
+import { IoError } from "velt/io/error";
+import { IoResult, unwrapIo } from "velt/native/result";
+import { Headers, HeadersInit } from "velt/net/http/fetch/headers";
+import { Request } from "velt/net/http/fetch/request";
+import { Response } from "velt/net/http/fetch/response";
+import { TcpStream } from "velt/net";
+import { pump } from "velt/http/stream";
 
 // `VeltHandler` field by field: init, poll, drop, state_size, state_align, env (48 bytes).
 type RtHandler = [u64, u64, u64, u64, u64, u64];
@@ -210,7 +211,7 @@ export struct ConnectionUpgrade {
 /**
  * Takes over the connection of an upgrade request: return `response` (`101 Switching
  * Protocols` with `upgrade: protocol`, `connection: Upgrade` and `headers`) from the handler,
- * and from then on the connection is `stream`, a byte stream like any `velt:net` connection
+ * and from then on the connection is `stream`, a byte stream like any `velt/net` connection
  * (over TLS if the server is). The stream works once the response has been sent: its first
  * read or write waits for that (so what is written before goes out right after the response).
  * The client must wait for the response before it sends anything in the new protocol. Throws `IoError` "EINVAL" if `req` is not an upgrade request (`isUpgradeRequest`) or

@@ -5,7 +5,7 @@
 //!   signature the SDK recorded for that export exactly. Anything else (a root program or a
 //!   package without native code declaring `free`, another package's export, a mismatch) would
 //!   let ordinary code call arbitrary C symbols or corrupt memory, so it is a compile error.
-//!   `IoResult` and `IoStatus` are std's (`velt:io`) types, identified by definition, not by name.
+//!   `IoResult` and `IoStatus` are std's (`velt/io`) types, identified by definition, not by name.
 //! - [`inits`]: the libraries `velt_main` initializes before `main`.
 //! - [`links`]: what the linker adds per library.
 
@@ -16,7 +16,7 @@ use velt_common::{Diagnostic, Diagnostics, FileId, SourceMap};
 use velt_sema::hir::{self, Def, DefId, FloatTy, IntTy, TyId, TyKind};
 use vpm::PackageGraph;
 
-/// The definitions of std's `IoResult` and `IoStatus` (`velt:io`), if the program has them.
+/// The definitions of std's `IoResult` and `IoStatus` (`velt/io`), if the program has them.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct IoTypes {
     io_result: Option<DefId>,

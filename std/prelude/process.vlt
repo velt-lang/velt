@@ -1,7 +1,7 @@
 // std/prelude/process: the members of the builtin `process` namespace that the compiler turns
 // into calls: `process.stdout.write(s)` / `process.stderr.write(s)` (`__processWrite`),
 // `process.env.NAME` / `process.env[name]` (`__processEnv`) and `process.memoryUsage()`
-// (`processMemoryUsage`). The rest of Node's `process` is in `velt:process` (docs/std/process.md).
+// (`processMemoryUsage`). The rest of Node's `process` is in `velt/process` (docs/std/process.md).
 
 declare function velt_rt_write_str(stream: u32, s: string);
 declare function velt_rt_env_get(name: string, out: string): bool;

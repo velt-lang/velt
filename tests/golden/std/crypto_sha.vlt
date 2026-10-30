@@ -4,8 +4,8 @@
 // instructions (arm64 and x86-64 release builds) and with the portable rounds (debug, wasm,
 // VELT_SIMD_DISABLE=sha) alike. Lone surrogates in strings wait for #377.
 
-import { sha256, sha1, sha256Hex, sha1Hex, hmacSha256, hmacSha1 } from "velt:crypto";
-import { hexEncode } from "velt:encoding";
+import { sha256, sha1, sha256Hex, sha1Hex, hmacSha256, hmacSha1 } from "velt/crypto";
+import { hexEncode } from "velt/encoding";
 
 function bytes(n: usize, seed: usize): u8[] {
   const out: u8[] = [];

@@ -2,7 +2,7 @@
 //! filled by a `Function` field: a function expression using `this` (`function (this: any, …)
 //! { … }`, `body/expr/this_fn_expr.rs`), called with the object as `this`, as Node calls
 //! `o.m(…)`. The method is `__callOn(<the field>, <the object>, [<the arguments>])`
-//! (std/this_fn.vlt), its arguments and its result passed through `any`: so each parameter is
+//! (std/lang/this_fn/index.vlt), its arguments and its result passed through `any`: so each parameter is
 //! of a type that goes into an `any` as it is (a number, a string, a boolean, an object, an
 //! array, a function, an interface value or a dynamic value; no union, optional or literal type)
 //! and the result is `void`, a dynamic value or a number, string or boolean.

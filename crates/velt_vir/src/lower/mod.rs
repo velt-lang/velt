@@ -781,7 +781,7 @@ struct FnLower<'c, 'h> {
     /// The env param of the closure being lowered (`Intrinsic::ClosureSibling`).
     self_env: Option<Local>,
     /// This function loads an `Atomic` of a `shared` value, so it runs in an epoch section
-    /// (epoch_sections.rs), unless it is one of `velt:sync/epoch`'s own (`epoch_exempt`).
+    /// (epoch_sections.rs), unless it is one of `velt/sync/epoch`'s own (`epoch_exempt`).
     ref_loads: bool,
     epoch_exempt: bool,
     /// Lowering a method of the prelude's `Reflect`, where a proxy's reads reach their target:

@@ -15,8 +15,8 @@ use super::method_value::strip_parens;
 use crate::body::{FnCx, Want};
 use crate::hir::{self, ExprKind as H, IntTy, Intrinsic, TyId, TyKind};
 
-/// The class every typed array and `DataView` extends (std/typed_array/core.vlt).
-const BUFFER_VIEW: &str = "std/typed_array/core::BufferView";
+/// The class every typed array and `DataView` extends (std/lang/typed_array/core.vlt).
+const BUFFER_VIEW: &str = "std/lang/typed_array/core::BufferView";
 
 impl FnCx<'_, '_> {
     /// Is `t` `u8[]`?

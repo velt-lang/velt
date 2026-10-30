@@ -66,7 +66,7 @@ pub struct Item {
 
 #[derive(Clone, Debug)]
 pub enum ItemKind {
-    /// `import { a, b as c } from "velt:fs";`, `import * as ns from "./m";`. With `exported`
+    /// `import { a, b as c } from "velt/fs";`, `import * as ns from "./m";`. With `exported`
     /// set it is a re-export: `export { a, b as c } from "./m";`, `export * from "./m";`, or a
     /// local export list `export { a, b as c };` (empty `from`).
     Import(Import),

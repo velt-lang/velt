@@ -11,5 +11,5 @@ export {
   HeadersInit,
   BodyInit,
   RequestRedirect,
-} from "velt:fetch";
-export { AbortController, AbortSignal } from "velt:task";
+} from "velt/net/http/fetch/fetch";
+export { AbortController, AbortSignal } from "velt/task";

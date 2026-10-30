@@ -1,5 +1,5 @@
-// velt:fs/fd: Node's file-descriptor API (`openSync`, `readSync`, `writeSync`, ...), a module of
-// its own so that a program importing `velt:fs` does not compile it. It is Velt code over system functions (docs/reference/system-functions.md):
+// velt/fs/fd: Node's file-descriptor API (`openSync`, `readSync`, `writeSync`, ...), a module of
+// its own so that a program importing `velt/fs` does not compile it. It is Velt code over system functions (docs/reference/system-functions.md):
 // each call is one call of the C library, with nothing in between. On macOS and Linux; calling
 // it for another target is a compile error that names the system function it lacks.
 //
@@ -7,11 +7,11 @@
 // (`ENOENT: no such file or directory, open 'a.txt'`), and `RangeError`s and `TypeError`s with
 // Node's messages for arguments it rejects.
 
-import { IoError } from "velt:io";
-import { Stats } from "velt:fs";
-import { platform } from "velt:os";
-import { utf8Encode } from "velt:encoding";
-import { ArrayBufferView, BufferView } from "velt:typed_array/core";
+import { IoError } from "velt/io/error";
+import { Stats } from "velt/fs";
+import { platform } from "velt/os";
+import { utf8Encode } from "velt/encoding";
+import { ArrayBufferView, BufferView } from "velt/lang/typed_array/core";
 
 declare system function open(path: readonly u8[], oflag: i32, mode: u32): i32;
 declare system function close(fd: i32): i32;

@@ -23,7 +23,7 @@ install never runs package code.
 camelCase, like `package.json`:
 
 ```ts ignore
-import type { Package } from "velt:package";
+import type { Package } from "velt/package";
 
 // Comments are allowed anywhere.
 export const pkg: Package = {
@@ -37,7 +37,7 @@ export const pkg: Package = {
     util: { path: "../util" },                // local package
   },
   paths: { "@app/*": "src/*", "@config": "src/config" },
-  jsx: { importSource: "velt:jsx" },
+  jsx: { importSource: "velt/jsx" },
   native: { targets: ["x86_64-unknown-linux-gnu", "aarch64-apple-darwin"] },
 };
 ```
@@ -49,7 +49,7 @@ the top level, and the `[dependencies]`, `[paths]`, `[jsx]` and `[native]` table
 manifest contract (lowercase words joined by single `-` or `_`, since #314); scoped names such as
 `@velt/sqlite` are a separate issue.
 
-**Types.** `velt:package` (`std/package.vlt`) contains only types:
+**Types.** `velt/package` (`std/package/index.vlt`) contains only types:
 
 ```ts ignore
 export type Package = {
@@ -85,12 +85,12 @@ export type Native = {
   Adding an optional field doesn't break existing manifests.
 - **Prerequisite: `Record<K, V>` (#17).** The language doesn't have it yet. An object literal
   can't stand in for a `Map` (`Map` is built with `new Map()`), so `Map<string, …>` is no
-  alternative. Only `std/package.vlt` and the sync test below need `Record`; the reader doesn't,
+  alternative. Only `std/package/index.vlt` and the sync test below need `Record`; the reader doesn't,
   and can land first.
 
 **The data-only subset.** The reader checks the syntax tree and accepts only this:
 
-- **Imports.** At most one `import type { … } from "velt:package"`. Any other import, and any
+- **Imports.** At most one `import type { … } from "velt/package"`. Any other import, and any
   value import, is an error.
 - **The declaration.** Exactly one `export const pkg: Package = <value>;`. The binding is always
   named `pkg`, so docs and tools can say "`pkg` in `package.vlt`". The `: Package` annotation is
@@ -127,7 +127,7 @@ Errors are `velt_common::Diagnostics` with a file and a span, printed like compi
 
 The reader rejects everything the `Package` type rejects, so the command line, `vpm` and the
 registry never need the type checker. A test keeps the reader and the type in sync: a manifest
-that uses every field must type-check against `std/package.vlt` and must pass the reader.
+that uses every field must type-check against `std/package/index.vlt` and must pass the reader.
 
 **Untrusted input.** The registry server reads manifests from uploaded archives, so the reader
 assumes hostile input:
@@ -168,7 +168,7 @@ As today, the original text is restored if the install fails.
 ## Editors: the manifest document kind
 
 The first version of this design said that type-checking `package.vlt` against `Package` would
-give editors completion, hover and errors "for free". Building `std/package.vlt` showed that it
+give editors completion, hover and errors "for free". Building `std/package/index.vlt` showed that it
 does not:
 
 - **False errors.** Sema allows only constant expressions in a module-level `const` (literals,
@@ -196,7 +196,7 @@ So the language server treats `package.vlt` as a **document kind of its own**:
 4. **Schema.** `vpm` gets one table of the manifest's fields (key, kind, doc text, allowed
    values); the reader's lists of known keys become that table. Completion offers the keys valid
    at the cursor that are not written yet, and fixed values (`native.targets` triples,
-   `true`/`false`); hover shows a field's doc. A test checks that `std/package.vlt` declares the
+   `true`/`false`); hover shows a field's doc. A test checks that `std/package/index.vlt` declares the
    same fields.
 5. **Live registry data**, through `vpm` and the package's registry (`registry`,
    `VELT_REGISTRY`, or the local one), fetched off the request thread and cached per session:
@@ -241,7 +241,7 @@ the manifest written in the same language as the code.
 
 ## Compiler and tool changes
 
-- `std/package.vlt`: the `Package` types, plus a row in `std/README.md` (once #17 has landed).
+- `std/package/index.vlt`: the `Package` types, plus a row in `std/README.md` (once #17 has landed).
 - `vpm`:
   - `MANIFEST_FILE` becomes `package.vlt`.
   - The reader replaces `toml::from_str` and `Manifest::to_toml`.
@@ -272,7 +272,7 @@ Each error points at the text that caused it:
 - `the manifest is data only: calls are not allowed`. Identifiers, operators, template literals,
   spreads and computed keys get the same message with their own name.
 - `` `null` is not allowed; leave the key out ``. TypeScript users will write `registry: null`.
-- `` `package.vlt` may only import types from `velt:package` ``.
+- `` `package.vlt` may only import types from `velt/package` ``.
 - `` the manifest must be one `export const pkg: Package = { … }` ``.
 - `` unknown key `dependecies` in the manifest ``, with a "did you mean" when a key is close.
 - `` duplicate key `sqlite` ``.
@@ -310,7 +310,7 @@ Implementation order:
    steps 2 to 4 of the original plan cannot land separately. It moves `vpm`, `veltc`, the
    registry and the file watchers over, adds the migration error and `velt manifest --json`,
    makes `velt add` splice, and migrates the templates, examples, golden tests and docs.
-3. **Editors, part 1:** `std/package.vlt`, the field schema in `vpm`, and the language server's
+3. **Editors, part 1:** `std/package/index.vlt`, the field schema in `vpm`, and the language server's
    manifest document kind: the reader's diagnostics, key and value completion, hover; plus the
    package-graph refresh when `package.vlt` is saved, and no `pkg` in workspace symbols.
 4. **Editors, parts 2 and 3: live registry data:** version and package-name completion,
@@ -346,7 +346,7 @@ From the maintainer review on issue #128:
 4. **`velt.lock`, `index.toml` and `native.toml` stay TOML.** (Later revised by #188: they are
    JSON.)
 5. **Scoped package names (`@scope/name`) are a separate issue.**
-6. **`Record<K, V>` (#17) is a prerequisite** for `std/package.vlt` and the sync test, not for
+6. **`Record<K, V>` (#17) is a prerequisite** for `std/package/index.vlt` and the sync test, not for
    the reader.
 7. **The registry's limits:** at most 64 KiB, the parser's `MAX_DEPTH`, and at most 10,000
    values.

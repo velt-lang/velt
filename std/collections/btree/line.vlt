@@ -1,4 +1,4 @@
-// velt:collections/btree/line: `Line`, the 32 `u16` words of a B-tree node, internal.
+// velt/collections/btree/line: `Line`, the 32 `u16` words of a B-tree node, internal.
 //
 // A line is 64 bytes, four `u16x8` vectors: slots 0 to 30 hold a word per key (two bytes of the
 // key's encoding past the node's prefix, `EMPTY` past the last key) and slot 31 (`HEAD`) the
@@ -6,7 +6,7 @@
 // keeps each one in one cache line (an array buffer of elements that are whole lines is
 // line-aligned), so a node's search reads one line.
 
-import { mask8x16, mask16x8, u16x8, u8x16 } from "velt:simd";
+import { mask8x16, mask16x8, u16x8, u8x16 } from "velt/simd";
 
 /** A node's words and header. */
 export type Line = [u16x8, u16x8, u16x8, u16x8];
@@ -151,7 +151,7 @@ export function shiftDown(line: Line, at: usize, n: usize, scratch: u16[]): Line
 /**
  * A leaf's rank order: byte `r` is the physical slot of its `r`-th smallest key (32 bytes, slots
  * 0 to 30). A leaf appends a new entry at the next physical slot and inserts its slot here, so
- * its keys and values never move on an insert (velt:collections/btree/pool).
+ * its keys and values never move on an insert (velt/collections/btree/pool).
  */
 export type Order = [u8x16, u8x16];
 
@@ -233,7 +233,7 @@ export function slotsWithWord(line: Line, n: usize, w: u16): u64 {
   return bits & (((1 as u64) << (n as u64)) - 1);
 }
 
-// Wide words (velt:collections/btree/inline_key `inlineWide`): a node keeps a second line, `b`,
+// Wide words (velt/collections/btree/inline_key `inlineWide`): a node keeps a second line, `b`,
 // with the next two bytes of each key's encoding, so that a word is four bytes, compared as two
 // halves. The ones below are the ones above over such a pair.
 

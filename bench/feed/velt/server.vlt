@@ -3,10 +3,10 @@
 // and one for writes.
 // Env: SQLITE_PATH, JWT_SECRET, HOST (127.0.0.1), PORT (3000).
 
-import { hmacSha256, timingSafeEqual } from "velt:crypto";
-import { base64UrlDecode, utf8Decode, utf8Encode } from "velt:encoding";
-import { serve } from "velt:http";
-import { open, Database, SqliteError } from "velt:sqlite";
+import { hmacSha256, timingSafeEqual } from "velt/crypto";
+import { base64UrlDecode, utf8Decode, utf8Encode } from "velt/encoding";
+import { serve } from "velt/http";
+import { open, Database, SqliteError } from "velt/sqlite";
 
 const POST_COLUMNS =
   "SELECT p.id, p.body, p.created_at, u.username AS author, (SELECT count(*) FROM likes l WHERE l.post_id = p.id) AS like_count FROM posts p JOIN users u ON u.id = p.user_id";

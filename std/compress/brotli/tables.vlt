@@ -1,4 +1,4 @@
-// std/compress/brotli/tables (internal to velt:compress/brotli): the fixed tables of RFC 7932.
+// std/compress/brotli/tables (internal to velt/compress/brotli/brotli_decoder): the fixed tables of RFC 7932.
 // Module constants that are arrays of number literals, so each is read-only data that costs
 // nothing to reach (docs/reference/variables.md, "Tables").
 

@@ -1,5 +1,5 @@
 // The page of `jsx_svg_mathml`, under std/jsx's precompiling runtime (the default).
-// `_jsx_svg_page_generic.vlt` is the same source under `velt:jsx/generic`.
+// `_jsx_svg_page_generic.vlt` is the same source under `velt/jsx/generic`.
 
 export function icon(r: i64): JSX.Element {
   return <svg viewBox="0 0 10 10"><circle cx={5} cy={5} r={r} /></svg>;

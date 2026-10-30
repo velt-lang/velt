@@ -1,7 +1,7 @@
 //! `any` and `unknown`, the dynamic value (issue #924, design note on #823; hir_encodings.md
 //! "any and unknown").
 //!
-//! Both are interfaces of the prelude (`std/prelude/z_dynamic.vlt`) that every type implements
+//! Both are interfaces of the prelude (`std/prelude/dynamic.vlt`) that every type implements
 //! through one generic implementation sema adds here (`Program::any_impl`, `impl<T> any for
 //! T` with no methods). A value converted to either is an interface value (`ToDyn`): the
 //! value, boxed unless it is a class instance or a counted object, and the interface table

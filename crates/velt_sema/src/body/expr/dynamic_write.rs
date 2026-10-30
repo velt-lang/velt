@@ -22,7 +22,7 @@ pub(super) enum WriteKey {
     /// proxy's `set` trap sees the symbol).
     Sym(hir::Expr, hir::Expr),
     /// A key that is a symbol or `string | symbol` at run time, as an `any`, in a program with
-    /// proxies (`__anySetKey`, velt:proxy/ops: a proxy's traps and a record see the symbol).
+    /// proxies (`__anySetKey`, velt/lang/proxy/ops: a proxy's traps and a record see the symbol).
     Keyed(hir::Expr),
 }
 

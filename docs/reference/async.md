@@ -102,7 +102,7 @@ Promises behave like JavaScript's, at Rust's cost:
   that started it, nor before timers due earlier. `sleep`s of different tasks have no order
   between them, since the tasks run in parallel; `setTimeout`, `setInterval` and `setImmediate`
   callbacks do, whichever task created them: they run in Node's order, one list per delay
-  ([velt:timers](../std/timers.md)).
+  ([velt/time](../std/timers.md)).
 - **A dropped promise is not cancelled**: a stored promise that is never awaited still runs to
   completion (its result is dropped), and the program waits for it before exiting while it can
   still make progress, like Node waits for pending work. A synchronous `main` that starts promises, timers or microtasks runs
@@ -413,7 +413,7 @@ ending the stream is always an explicit `close()` (or `stop()`).
 | [postgres `CopyReader`](../std/postgres.md) | `for await (const chunk of reader)` | the end of the `COPY` |
 
 ```ts
-import { channel, Channel, ChannelClosed } from "velt:channel";
+import { channel, Channel, ChannelClosed } from "velt/sync";
 
 async function produce(out: Channel<i64>): Promise<void> throws ChannelClosed {
   for (let i = 1; i <= 3; i++) {
@@ -448,12 +448,12 @@ it (a promise it started still may), else a copy made where it was produced, so 
 use one object (also on single-threaded WebAssembly, where tasks share the one thread).
 
 `spawn(p, { worker: i })` pins the task to worker `i` (`0` to `workerCount() - 1`, from
-[`velt:task`](../std/task.md#task-placement)): it starts there and never moves. `p` must be a
+[`velt/task`](../std/task.md#task-placement)): it starts there and never moves. `p` must be a
 call or a task body (not a promise that already started); an index out of range is a panic at
 the spawn. Every task stays on the worker it started on unless that worker is busy enough to
 share its work, so a caller pinned next to the task it talks to never wakes another thread.
 
-Tasks exchange values through channels ([`velt:channel`](../std/channel.md)): typed,
+Tasks exchange values through channels ([`velt/sync`](../std/channel.md)): typed,
 bounded or unbounded queues where `send` waits while a bounded channel is full.
 
 Output from different tasks interleaves line by line: a `console.log` line is never split by
@@ -472,12 +472,12 @@ Hand-offs through shared state (`shared`, a `Mutex`) and through timers are not 
 such lines in order, print them from one task. Writing to stderr flushes stdout first.
 
 Built-ins: `sleep(ms)`, `yieldNow()`, `performance.now(): f64` (monotonic milliseconds) and
-`Date.now(): i64`. Timers and intervals are in [`velt:timers`](../std/timers.md).
+`Date.now(): i64`. Timers and intervals are in [`velt/time`](../std/timers.md).
 
 ## Cancellation
 
 Cancellation is cooperative, with TypeScript's `AbortController` / `AbortSignal`
-([`velt:task`](../std/task.md)): `abort()` marks the signal, and code that takes one checks it
+([`velt/task`](../std/task.md)): `abort()` marks the signal, and code that takes one checks it
 (`throwIfAborted()`) or races its work against `signal.whenAborted()` (put the wait itself in
 the `Promise.race`, so it is dropped when the work wins). A started promise is never cancelled
 behind the program's back, so `finally` blocks and `using` disposal run as usual.
@@ -587,7 +587,7 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   memory ordering such as `"relaxed"` or `"acquire"`) are single CPU instructions on the word
   inside the shared value (`s.hits.add(1)`). It is the one part of a `shared<T>` that changes.
   An `Atomic` is used where it is, never copied or shared, and binding a part of a `shared`
-  value that holds one to a variable is an error. See [Atomics and velt:sync](../std/sync.md),
+  value that holds one to a variable is an error. See [Atomics and velt/sync](../std/sync.md),
   which also has `Backoff` and `VersionLatch` (optimistic lock coupling) for lock-free data
   structures, and `ThreadLocal<T>`, a module constant with one value per thread.
 - `shared(new RwLock<T>(x))` for state read far more often than written: `rw.read((v) => …)`
@@ -919,7 +919,7 @@ async function main() {
   the program ends, as Node's does ([Promises](#promises)).
 
 ```ts
-import { setTimeout } from "velt:timers";
+import { setTimeout } from "velt/time";
 
 class Failed extends Error {}
 
@@ -960,7 +960,7 @@ the type arguments or from the expected type; without a written `E`
 A one-shot reply to a request handled on another task, without a channel per request:
 
 ```ts
-import { channel, Channel } from "velt:channel";
+import { channel, Channel } from "velt/sync";
 
 type Request = { n: i64; reply: (value: i64) => void };
 

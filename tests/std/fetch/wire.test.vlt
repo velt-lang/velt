@@ -1,13 +1,13 @@
-// The `fetch` client against servers that write HTTP/1.1 by hand (velt:net): framing, reason
+// The `fetch` client against servers that write HTTP/1.1 by hand (velt/net): framing, reason
 // phrases, pooled connections, what it refuses, when it sends a request again; and its URL check.
-import { Channel, channel } from "velt:channel";
-import { hexDecode } from "velt:encoding";
-import { target } from "velt:fetch/client/target";
-import { IoError } from "velt:io";
-import { listen, TcpListener, TcpStream } from "velt:net";
-import { afterAll, beforeAll, describe, expect, it } from "velt:test";
-import "velt:test/http";
-import { URL } from "velt:url";
+import { Channel, channel } from "velt/sync";
+import { hexDecode } from "velt/encoding";
+import { target } from "velt/net/http/fetch/client/target";
+import { IoError } from "velt/io";
+import { listen, TcpListener, TcpStream } from "velt/net";
+import { afterAll, beforeAll, describe, expect, it } from "velt/test";
+import "velt/test/http";
+import { URL } from "velt/net/url";
 
 // "hello gzip" in gzip.
 const GZIP = "1f8b08000000000002ffcb48cdc9c95748afca2c0000196ad2df0a000000";
@@ -514,11 +514,11 @@ const URLS = [
 ];
 
 describe("the client's URL check", () => {
-  // std/fetch/client/target.vlt takes a URL as it is only when WHATWG parsing would serialize it
+  // std/net/http/fetch/client/target.vlt takes a URL as it is only when WHATWG parsing would serialize it
   // unchanged: for each URL, the target's `href`, host, request-target and origin (its
-  // connection pool's key) agree with velt:url's, whichever way it was taken. (Was the golden
+  // connection pool's key) agree with velt/net/url's, whichever way it was taken. (Was the golden
   // std/fetch_target.)
-  it("agrees with velt:url", () => {
+  it("agrees with velt/net/url", () => {
     const differs: string[] = [];
     for (const u of URLS) {
       const t = target(u);

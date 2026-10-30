@@ -1,8 +1,8 @@
-// std/test/http: matchers for a `Response` (`velt:fetch`), for tests of HTTP servers and
-// clients (docs/book/testing.md): `import "velt:test/http"` adds them to `expect(response)`.
+// std/test/http: matchers for a `Response` (`velt/net/http/fetch/fetch`), for tests of HTTP servers and
+// clients (docs/book/testing.md): `import "velt/test/http"` adds them to `expect(response)`.
 
-import { Response } from "velt:fetch";
-import { Expect } from "velt:test/expect";
+import { Response } from "velt/net/http/fetch/fetch";
+import { Expect } from "velt/test/expect";
 
 extend Expect<Response> {
   /** The response's status is `status`. */

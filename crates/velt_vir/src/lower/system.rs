@@ -213,7 +213,7 @@ impl FnLower<'_, '_> {
     /// `lastOsError` is an `errno` pointer (Windows reads `GetLastError()` at the call).
     fn errno_tls(&self) -> Option<(TlsCall, TlsCall)> {
         system::overloads(&self.cx.target, "lastOsError").find(|f| matches!(f.ret, Ret::Errno))?;
-        let id = crate::tls::stable_id("velt:os::lastOsError:I32");
+        let id = crate::tls::stable_id("velt/os::lastOsError:I32");
         let (bits, init) = (32, 0);
         Some((
             TlsCall::Get { id, bits, init },
@@ -673,7 +673,7 @@ impl super::Cx<'_> {
 }
 
 /// A standard-library function as a program imports it: `std/fs/fd::openSync` is
-/// "`openSync` (velt:fs/fd)".
+/// "`openSync` (velt/fs/fd)".
 fn std_name(qualified: &str) -> String {
     match qualified.rsplit_once("::") {
         Some((module, name)) => {

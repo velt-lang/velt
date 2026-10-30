@@ -1,8 +1,8 @@
 // The search as a function of its arguments and two output sinks, so `src/main.vlt` can print
 // and `demo.vlt` can collect. seek: walk → (channel) → one search task per core → (channel) →
 // the caller's task, which writes.
-import { channel } from "velt:channel";
-import { RegExp } from "velt:regex";
+import { channel } from "velt/sync";
+import { RegExp } from "velt/text";
 import { Matcher } from "./matcher";
 import { parseOptions, parser, Options } from "./options";
 import { Report, searchWorker } from "./search";

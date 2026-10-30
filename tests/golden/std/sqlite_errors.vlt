@@ -1,7 +1,7 @@
 // std/sqlite errors: every failure throws SqliteError with SQLite's code name.
-import { open, Database, SqliteError } from "velt:sqlite";
-import { tmpdir } from "velt:os";
-import { uuidv4 } from "velt:uuid";
+import { open, Database, SqliteError } from "velt/sqlite";
+import { tmpdir } from "velt/os";
+import { uuidv4 } from "velt/random/uuid";
 
 class Row {
   id: i64;

@@ -1,10 +1,10 @@
 // std/collections: Set, Deque, PriorityQueue and SortedMap — semantics, ordering, wrap-around
 // growth, element ownership (string elements), and a randomized check against plain arrays.
 
-import { Set } from "velt:collections/set";
-import { Deque } from "velt:collections/deque";
-import { PriorityQueue } from "velt:collections/priority_queue";
-import { SortedMap } from "velt:collections/sorted_map";
+import { Set } from "velt/collections";
+import { Deque } from "velt/collections";
+import { PriorityQueue } from "velt/collections";
+import { SortedMap } from "velt/collections";
 
 class Job {
   name: string;

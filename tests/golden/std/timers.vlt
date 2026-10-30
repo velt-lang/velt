@@ -6,7 +6,7 @@
 // time or follows from the order of awaits, so the output doesn't depend on how fast anything
 // runs.
 
-import { channel, Channel } from "velt:channel";
+import { channel, Channel } from "velt/sync";
 import {
   setTimeout,
   setImmediate,
@@ -15,7 +15,7 @@ import {
   Ticker,
   TickerStop,
   Timer,
-} from "velt:timers";
+} from "velt/time";
 
 // The delay of timers that are cleared: far beyond the program's run time, so the clear always
 // comes first.

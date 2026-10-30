@@ -1,10 +1,10 @@
-// velt:encoding/text: the WHATWG `TextEncoder` and `TextDecoder` (globals, as in Node:
-// docs/std/encoding.md), apart from the rest of velt:encoding so that a program using only
+// velt/encoding/text: the WHATWG `TextEncoder` and `TextDecoder` (globals, as in Node:
+// docs/std/encoding.md), apart from the rest of velt/encoding so that a program using only
 // Base64 or hex does not load the typed arrays they take and give.
 
-import { EncodingError, firstInvalid, utf8DecodeLossy, validToString } from "velt:encoding";
-import { Uint8Array } from "velt:typed_array/uint8_array";
-import { ArrayBuffer, BufferView } from "velt:typed_array/core";
+import { EncodingError, firstInvalid, utf8DecodeLossy, validToString } from "velt/encoding";
+import { Uint8Array } from "velt/lang/typed_array/uint8_array";
+import { ArrayBuffer, BufferView } from "velt/lang/typed_array/core";
 
 // `(const VeltStr* s, VeltBytes* out)`: copies a string's bytes.
 declare function velt_rt_bytes_from_str(s: string): u8[];

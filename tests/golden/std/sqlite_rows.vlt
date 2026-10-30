@@ -1,6 +1,6 @@
 // Rows into typed objects: what each column fills and how a row that does not fit fails are
 // the same whether std reads the rows by column (plain fields) or through the JSON decoder.
-import { open } from "velt:sqlite";
+import { open } from "velt/sqlite";
 
 struct Row {
   id: i64;

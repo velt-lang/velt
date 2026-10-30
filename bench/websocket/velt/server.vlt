@@ -3,9 +3,9 @@
 //   /bcast  sends every message to every connection on /bcast (a chat room)
 // Usage: server [port]; env PORT, HOST (127.0.0.1).
 
-import { serve } from "velt:http";
-import { args } from "velt:process";
-import { WebSocket, WsMessage, isWebSocketRequest, upgradeWebSocket } from "velt:websocket";
+import { serve } from "velt/http";
+import { args } from "velt/process";
+import { WebSocket, WsMessage, isWebSocketRequest, upgradeWebSocket } from "velt/net/websocket";
 
 // The next message, or null once the client has gone (closed, or the connection broke).
 async function receive(ws: WebSocket): Promise<WsMessage | null> {

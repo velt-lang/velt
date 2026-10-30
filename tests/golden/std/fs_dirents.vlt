@@ -1,5 +1,5 @@
 // readDirEntries: Node's `readdir(path, { withFileTypes: true })`, types without a stat per entry.
-import { readDirEntries, readDirEntriesSync, readDir, mkdir, writeFile, remove } from "velt:fs";
+import { readDirEntries, readDirEntriesSync, readDir, mkdir, writeFile, remove } from "velt/fs";
 
 async function main() {
   const dir = "velt_fs_dirents_tmp";

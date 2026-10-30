@@ -13,7 +13,7 @@ import {
   utf8DecodeLossy,
   utf8Valid,
   EncodingError,
-} from "velt:encoding";
+} from "velt/encoding";
 
 function bytesUpTo(n: i64, mul: i64): u8[] {
   const out: u8[] = [];

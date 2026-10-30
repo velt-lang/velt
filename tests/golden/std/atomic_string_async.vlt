@@ -2,7 +2,7 @@
 // epoch section of its own: writers that replace it and collect at every step can never free
 // the box between the load and the copy. Async tasks on 4 threads read while 4 others replace
 // and collect; every string read is whole (its two halves agree).
-import { collect } from "velt:sync/epoch";
+import { collect } from "velt/sync/epoch";
 
 class Status {
   text: Atomic<string> = new Atomic<string>("0:0");

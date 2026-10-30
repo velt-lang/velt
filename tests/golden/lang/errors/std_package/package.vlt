@@ -1,4 +1,4 @@
-import type { Package } from "velt:package";
+import type { Package } from "velt/package";
 
 export const pkg: Package = {
   name: "uses-std",

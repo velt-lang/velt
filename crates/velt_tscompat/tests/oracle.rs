@@ -60,7 +60,7 @@ const CLAIMS: &[(&str, Claim)] = &[
     (
         "jsx-provider",
         Claim::Unprovable(
-            "`tsc` compiles JSX against the provider the client's tsconfig names; `velt:jsx`, \
+            "`tsc` compiles JSX against the provider the client's tsconfig names; `velt/jsx`, \
              the default when a file names none, has no JavaScript runtime, so the two sides \
              would render with different providers",
         ),

@@ -4,7 +4,7 @@ Every package has a `package.vlt` at its root: the manifest, written in Velt. `v
 `velt init` write one.
 
 ```ts ignore
-import type { Package } from "velt:package";
+import type { Package } from "velt/package";
 
 export const pkg: Package = {
   name: "hello",
@@ -131,7 +131,7 @@ Import aliases, like TypeScript's `compilerOptions.paths`, replace long `../../`
 jsx: { importSource: "sigx" },
 ```
 
-The module whose `jsx-runtime` compiles the package's JSX: a dependency, `"velt:jsx"` (the
+The module whose `jsx-runtime` compiles the package's JSX: a dependency, `"velt/jsx"` (the
 default), a `paths` alias, or `./dir` relative to the package root. A
 `/** @jsxImportSource x */` comment at the top of a file wins ([JSX](../std/jsx.md)); Velt also
 reads it from a `//` comment, `tsc` only from a block comment.

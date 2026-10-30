@@ -4,16 +4,16 @@
 // buffer (`Head`), valid until the connection reads the next one, so nothing is copied or
 // allocated per request unless the handler asks for a string. The body is not waited for: the
 // request's reader (http/server/request.vlt) reads it as the handler asks. The end of a head is
-// found 16 bytes at a time (`velt:simd`: lanes equal to LF), and the headers the server acts on
+// found 16 bytes at a time (`velt/simd`: lanes equal to LF), and the headers the server acts on
 // are recognised by their length and one vector compare, letters folded to lowercase. Every
 // header's ranges are kept (four numbers each) for `header(name)`.
 //
 // The byte strings the parser compares with are made per connection: module-level constants
 // that are not literals are module state, behind one process-wide lock (#1487).
 
-import { utf8Encode } from "velt:encoding";
-import { TcpStream } from "velt:net";
-import { u8x16, mask8x16 } from "velt:simd";
+import { utf8Encode } from "velt/encoding";
+import { TcpStream } from "velt/net";
+import { u8x16, mask8x16 } from "velt/simd";
 
 const CR: u8 = 13;
 const LF: u8 = 10;

@@ -323,7 +323,7 @@ impl FnCx<'_, '_> {
         let numbered = kind == KeyKind::Symbol && !symbolic && self.number_property_key(key_ty);
         let accessors = self.cx.objects.record_accessors && kind == KeyKind::Str;
         if open && (symbolic || numbered || accessors) && self.has_record_method("__inKeyed") {
-            // `r.__inKeyed(k)` (velt:record/symbols). The record is evaluated before the key,
+            // `r.__inKeyed(k)` (velt/lang/record/symbols). The record is evaluated before the key,
             // which only a key and a record that both have effects could tell apart.
             if numbered {
                 // The key first, as JavaScript evaluates it, then the record.

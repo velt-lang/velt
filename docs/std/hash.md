@@ -1,6 +1,6 @@
-# velt:hash
+# velt/hash
 
-`import { fnv1a64, fnv1a64Bytes } from "velt:hash"`. A stable, non-cryptographic hash for
+`import { fnv1a64, fnv1a64Bytes } from "velt/hash"`. A stable, non-cryptographic hash for
 sharding, bucketing and consistent hashing.
 
 - `fnv1a64(s: string): u64`: the 64-bit [FNV-1a](https://datatracker.ietf.org/doc/html/draft-eastlake-fnv)
@@ -11,11 +11,11 @@ sharding, bucketing and consistent hashing.
   platform, in every run and in every Velt version. It is safe to store, or to share between
   processes that must agree on where a key lives.
 - **Not DoS-resistant**: anyone can compute colliding keys. Don't use it for a hash table whose
-  keys an attacker chooses, and never for security; use [`velt:crypto`](crypto.md) there.
+  keys an attacker chooses, and never for security; use [`velt/crypto`](crypto.md) there.
   (The prelude `Map` hashes keys its own way; that hash is not part of any contract.)
 
 ```ts
-import { fnv1a64 } from "velt:hash";
+import { fnv1a64 } from "velt/hash";
 
 function shardOf(key: string, shards: u64): u64 {
   return fnv1a64(key) % shards;

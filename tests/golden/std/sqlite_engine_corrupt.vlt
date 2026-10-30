@@ -1,13 +1,13 @@
-// The Velt SQLite reader (velt:sqlite/format, velt:sqlite/btree, #1715) on damaged files: a file
+// The Velt SQLite reader (velt/sqlite/format, velt/sqlite/btree, #1715) on damaged files: a file
 // C SQLite wrote, with bytes changed the way a torn write or a hostile file would change them.
 // Every case either reads (with bounded work and memory) or throws CorruptError; none panics.
-import { open } from "velt:sqlite";
-import { CorruptError, DbFile, localSize, readU16, readU32, readVarint } from "velt:sqlite/format";
-import { Cursor } from "velt:sqlite/btree";
-import { RecordBuilder, pushVarint } from "velt:sqlite/record";
-import { tmpdir } from "velt:os";
-import { uuidv4 } from "velt:uuid";
-import { readFileBytesSync, removeSync } from "velt:fs";
+import { open } from "velt/sqlite";
+import { CorruptError, DbFile, localSize, readU16, readU32, readVarint } from "velt/sqlite/format";
+import { Cursor } from "velt/sqlite/btree";
+import { RecordBuilder, pushVarint } from "velt/sqlite/record";
+import { tmpdir } from "velt/os";
+import { uuidv4 } from "velt/random/uuid";
+import { readFileBytesSync, removeSync } from "velt/fs";
 
 const PAGE: usize = 1024;
 

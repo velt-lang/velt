@@ -1,12 +1,12 @@
-// velt:sqlite/exec/compiled — what the expression compiler knows about a compiled
+// velt/sqlite/exec/compiled — what the expression compiler knows about a compiled
 // expression (affinity, collation), and the small decisions made from it at compile time.
 
-import { NULL } from "velt:sqlite/btree";
-import { BINARY } from "velt:sqlite/record";
-import { E_CALL, Expr } from "velt:sqlite/sql/ast";
-import { Source } from "velt:sqlite/exec/source";
-import { Ev } from "velt:sqlite/exec/scope";
-import { aggregateKind } from "velt:sqlite/exec/agg";
+import { NULL } from "velt/sqlite/btree";
+import { BINARY } from "velt/sqlite/record";
+import { E_CALL, Expr } from "velt/sqlite/sql/ast";
+import { Source } from "velt/sqlite/exec/source";
+import { Ev } from "velt/sqlite/exec/scope";
+import { aggregateKind } from "velt/sqlite/exec/agg";
 import {
   AFF_NONE,
   BIT_AND,
@@ -26,8 +26,8 @@ import {
   OP_SUB,
   compareAff,
   holds,
-} from "velt:sqlite/exec/ops";
-import { Val } from "velt:sqlite/exec/value";
+} from "velt/sqlite/exec/ops";
+import { Val } from "velt/sqlite/exec/value";
 
 /** A compiled expression with what comparisons need to know about it. */
 export struct C {

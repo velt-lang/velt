@@ -1,26 +1,26 @@
-# velt:http/server
+# velt/http/server
 
 `import { serve, HttpRequest, HttpResponse, HttpServer, HttpStream, EventStream } from
-"velt:http/server"`. An HTTP/1.1 server written in Velt on [std/net](net.md), built to be fast:
+"velt/http/server"`. An HTTP/1.1 server written in Velt on [std/net](net.md), built to be fast:
 keep-alive and pipelining, each request parsed in place in its connection's read buffer (nothing
 is copied or allocated for a request unless the handler asks for a string), and every response
 to the requests one read brought written in one go. Request and response bodies can also be
 streamed, with backpressure and cancellation, for uploads, large downloads, proxies and
 Server-Sent Events. On the TechEmpower plaintext and JSON tests it is ahead of
-[velt:http](http.md) (hyper) and of Rust's axum (`bench/web`, `velt-native`).
+[velt/http](http.md) (hyper) and of Rust's axum (`bench/web`, `velt-native`).
 
 It uses only public APIs: [std/net](net.md)'s `TcpStream` (`tryRead` into its own buffer,
-`writeBytesLater`), SIMD vectors from [velt:simd](simd.md) to find line ends, and the byte-array
+`writeBytesLater`), SIMD vectors from [velt/simd](simd.md) to find line ends, and the byte-array
 text methods of the [prelude](prelude.md) (`write`, `utf8Slice`, `utf8Equals`, themselves Velt
 code on SIMD vectors). A package written in Velt can build a server, or another protocol, as fast
 in the same way.
 
-[velt:http](http.md) remains the server with HTTP/2 and the fetch-style `Request` and
+[velt/http](http.md) remains the server with HTTP/2 and the fetch-style `Request` and
 `Response`; this module is the lower-level one: a handler reads the request through
 `HttpRequest` and writes the response through `HttpResponse`.
 
 ```ts
-import { serve, HttpRequest, HttpResponse } from "velt:http/server";
+import { serve, HttpRequest, HttpResponse } from "velt/http/server";
 
 async function main() {
   const server = await serve({ port: 0 }, async (req: HttpRequest, res: HttpResponse) => {
@@ -141,7 +141,7 @@ HTTP/1.0 request's expectation is ignored.
   client that went away throws `IoError` and aborts `signal()`.
 - `sendStream(body: BodyStream, type = "text/html; charset=utf-8")`: streams a
   [`BodyStream`](fetch.md#bodystream) as the response, each chunk as it comes, for
-  `renderToStream` of [velt:jsx](jsx.md): the markup above a pending async component reaches
+  `renderToStream` of [velt/jsx](jsx.md): the markup above a pending async component reaches
   the client while it loads. A client that goes away ends it quietly: the source is closed, so
   rendering stops.
 - `sse(): Promise<EventStream>`: Server-Sent Events (`text/event-stream`, `Cache-Control:
@@ -155,7 +155,7 @@ HTTP/1.0 request's expectation is ignored.
   stream is the caller's, the server no longer reads, writes or closes it. The client waits for
   the 101 before it speaks the new protocol; what it sent already is `req.takeUnread()`. Names and
   values are checked as `header` checks them. For WebSockets, `acceptWebSocket(req, res)` of
-  [velt:websocket](websocket.md) does the handshake.
+  [velt/net/websocket](websocket.md) does the handshake.
 
 A `HEAD` request gets the head a `GET` would (with its `Content-Length`) and no body: what the
 handler writes, streamed or not, is not sent. Responses with status 1xx, 204 or 304 have no body
@@ -164,7 +164,7 @@ either (and 204 no `Content-Length` or default `Content-Type`).
 A proxy streams a body through without collecting it:
 
 ```ts
-import { serve, HttpRequest, HttpResponse } from "velt:http/server";
+import { serve, HttpRequest, HttpResponse } from "velt/http/server";
 
 async function main() {
   const server = await serve({ port: 0 }, async (req: HttpRequest, res: HttpResponse) => {
