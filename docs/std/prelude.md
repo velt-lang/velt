@@ -187,7 +187,11 @@ write past them does nothing (as one past a view's end in JS), and a method that
 missing elements (`join`, `fill`, …) panics. `slice`, `subarray`, `with`, `toReversed` and
 `toSorted` take the elements that are left, as they take `length` (a `subarray` of a view of
 which not even the start is left is empty, with a buffer of its own). Growing the array back
-brings the elements back.
+brings the elements back. The view's `buffer` follows the array's length (`byteLength`), though
+its `resizable` is `false` and its `maxByteLength` is its `byteLength` at each read. Each
+`subarray` of a `u8[]` has a `buffer` object of its own over the same array: they share the
+bytes, but unlike Node, where `b.subarray(0, 8).buffer === b.subarray(4, 12).buffer`, they are
+different objects (`!==`).
 
 ```ts
 const buf: u8[] = Buffer.alloc(8);
