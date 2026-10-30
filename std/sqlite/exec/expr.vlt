@@ -44,7 +44,7 @@ import { AggRestart, Ev, Params, Pred, Query, Scope } from "velt:sqlite/exec/sco
 import { AggFn, aggregateKind } from "velt:sqlite/exec/agg";
 import { windowKind } from "velt:sqlite/exec/window";
 import { windowCall } from "velt:sqlite/exec/window_call";
-import { aggMisuse, aggOwner, aggregateCore } from "velt:sqlite/exec/agg_owner";
+import { aggMisuse, aggOwner, aggregateCore, windowedMisuse } from "velt:sqlite/exec/agg_owner";
 import { prepareError } from "velt:sqlite/exec/errors";
 import { scalarFunction } from "velt:sqlite/exec/func";
 import { compileLike } from "velt:sqlite/exec/like";
@@ -701,6 +701,7 @@ export abstract class ExprCompiler {
       if (owner.groupBy) {
         aggMisuse(this, e, sc, "aggregate functions are not allowed in the GROUP BY clause");
       }
+      windowedMisuse(this, e, sc, owner, lname);
       if (owner.agg == null) {
         // Only from a result column: in ORDER BY it is too late (SQLite's misuse error).
         if (owner != sc && owner.results && owner.core != null && !owner.core!.aggFromInner) {

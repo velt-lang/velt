@@ -74,8 +74,25 @@ const QUERIES: string[] = [
   // sliding one (stepping each row in and out once, not scanning the frame for each row).
   "SELECT id, max(nick) OVER (ORDER BY id ROWS BETWEEN 4 PRECEDING AND CURRENT ROW), min(nick) OVER (ORDER BY id ROWS BETWEEN CURRENT ROW AND 4 FOLLOWING), max(nick) OVER (ORDER BY id ROWS BETWEEN 1 FOLLOWING AND 5 FOLLOWING) FROM users ORDER BY id",
   "WITH RECURSIVE c(p) AS (SELECT 1 UNION ALL SELECT p + 1 FROM c WHERE p < 20000) SELECT count(*), sum(w), sum(x) FROM (SELECT min((p * 7919) % 10007) OVER (ORDER BY p ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING) AS w, max((p * 7919) % 10007) OVER (ORDER BY p ROWS BETWEEN 2000 PRECEDING AND 2000 FOLLOWING) AS x FROM c)",
-  // A subquery's aggregate of a query with window functions does not make it an aggregate query.
+  // A subquery's aggregate of a query with window functions makes it an aggregate query only in
+  // the windows SQLite computes last (their terms, arguments and FILTER): the last group of
+  // equal windows in the result columns, after ORDER BY's (a term naming a column copies it).
   "SELECT (SELECT count(users.id) FROM posts), row_number() OVER () FROM users",
+  "SELECT id, count(*) OVER (PARTITION BY (SELECT count(users.id) FROM posts)) FROM users",
+  "SELECT id, count(*) OVER (ORDER BY (SELECT count(users.id) FROM posts)) FROM users",
+  "SELECT id, count(*) OVER (PARTITION BY (SELECT max(users.id))) FROM users",
+  "SELECT id, count(*) OVER w FROM users WINDOW w AS (PARTITION BY (SELECT count(users.id) FROM posts))",
+  "SELECT id, sum((SELECT count(users.id) FROM posts)) OVER (), count(*) FILTER (WHERE (SELECT max(users.id)) > 0) OVER () FROM users",
+  "SELECT id, sum(1) OVER (), count(*) OVER (PARTITION BY (SELECT max(users.id))) FROM users",
+  "SELECT id, count(*) OVER (PARTITION BY (SELECT max(users.id))), sum(1) OVER () FROM users",
+  "SELECT id, count(*) OVER (PARTITION BY (SELECT max(users.id))), count(*) OVER (PARTITION BY (SELECT max(users.id))) FROM users",
+  "SELECT id, count(*) OVER (ORDER BY id), sum(1) OVER (), max((SELECT max(users.id))) OVER (ORDER BY  ID) FROM users",
+  "SELECT id, count(*) OVER w, sum(1) OVER (ORDER BY id), max((SELECT max(users.id))) OVER w FROM users WINDOW w AS (ORDER BY id)",
+  "SELECT id, count(*) OVER (PARTITION BY (SELECT max(users.id))) FROM users ORDER BY 2",
+  "SELECT id FROM users ORDER BY count(*) OVER (PARTITION BY (SELECT max(users.id)))",
+  "SELECT count(*), (SELECT count(users.id) FROM posts), count(*) OVER () FROM users",
+  "SELECT age, count(*) OVER (), (SELECT count(users.id) FROM posts) FROM users GROUP BY age",
+  "SELECT age, count(*) OVER (ORDER BY (SELECT count(users.id) FROM posts)) FROM users GROUP BY age",
 ];
 
 /** A value as the shell's quote mode prints it: quote(), but blobs as x'…' and Inf. */

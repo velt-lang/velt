@@ -141,6 +141,16 @@ export class Scope {
   winBase: Scope | null = null;
   /** The named windows of the WINDOW clause. */
   windows: Window[] = [];
+  /**
+   * Set on a query with window functions while its result columns and ORDER BY compile. SQLite
+   * computes the windows in a query around the rest (sqlite3WindowRewrite), so a subquery's
+   * aggregate of this query is allowed only where `winAgg` is set.
+   */
+  windowed: bool = false;
+  /** Set while the terms, arguments and FILTER of a window function computed last compile. */
+  winAgg: bool = false;
+  /** The window function calls among the result columns whose windows are computed last. */
+  lastWins: Expr[] = [];
   /** The core whose FROM items these are, and whether its output (result columns on) compiles. */
   core: SelectCore | null = null;
   output: bool = false;

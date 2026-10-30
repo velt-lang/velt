@@ -144,3 +144,14 @@ export function aggregateCore(c: ExprCompiler, sc: Scope): bool {
   }
   return false;
 }
+
+/**
+ * A subquery's aggregate `e` of a query with window functions (`owner`): SQLite computes the
+ * windows in a query around the aggregate query, and the aggregate is that query's only in the
+ * windows computed last (Scope.windowed); elsewhere it is the code generator's misuse error.
+ */
+export function windowedMisuse(c: ExprCompiler, e: Expr, sc: Scope, owner: Scope, lname: string) {
+  if (owner != sc && owner.windowed && !owner.winAgg) {
+    aggMisuse(c, e, sc, `misuse of aggregate: ${lname}()`);
+  }
+}

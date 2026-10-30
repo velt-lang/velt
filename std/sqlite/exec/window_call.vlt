@@ -10,10 +10,17 @@ import {
   BOUND_PRECEDING,
   BOUND_UNBOUNDED_FOLLOWING,
   BOUND_UNBOUNDED_PRECEDING,
+  E_COLLATE,
+  E_COLUMN,
+  E_EXISTS,
+  E_IN_SELECT,
+  E_STAR,
+  E_SUBQUERY,
   Expr,
   FRAME_DEFAULT,
   FRAME_RANGE,
   OrderTerm,
+  ResultColumn,
   Window,
 } from "velt:sqlite/sql/ast";
 import { Ev, Scope } from "velt:sqlite/exec/scope";
@@ -23,7 +30,7 @@ import { scalarFunction } from "velt:sqlite/exec/func";
 import { C, ExprCompiler } from "velt:sqlite/exec/expr";
 import { SortKey } from "velt:sqlite/exec/emit";
 import { plain } from "velt:sqlite/exec/compiled";
-import { MAX_COLUMN } from "velt:sqlite/exec/result";
+import { MAX_COLUMN, termNumber } from "velt:sqlite/exec/result";
 import {
   W_AGG,
   W_FIRST,
@@ -32,6 +39,7 @@ import {
   W_LEAD,
   W_NTH,
   W_NTILE,
+  WinCtx,
   WinFn,
   windowKind,
 } from "velt:sqlite/exec/window";
@@ -135,6 +143,163 @@ function checkFrame(w: Window) {
   }
 }
 
+/**
+ * The window function calls among `columns` whose windows SQLite computes last. Its rewrite
+ * (sqlite3WindowRewrite) groups the calls by window, in the order the result columns and then
+ * ORDER BY hold them (a term naming a result column copies it; windows with a subquery are
+ * never the same), computes the first call's group over a subquery that computes the next,
+ * and so on. A subquery there holding an aggregate of the query makes it an aggregate query
+ * only in the last group's windows, arguments and FILTER; elsewhere the aggregate is misused.
+ */
+export function lastWindowCalls(
+  columns: ResultColumn[],
+  orderBy: OrderTerm[],
+  named: Window[],
+): Expr[] {
+  const calls: Expr[] = [];
+  for (const rc of columns) {
+    windowCalls(rc.expr, calls);
+  }
+  const inResults = calls.length;
+  let star = false;
+  for (const rc of columns) {
+    star = star || rc.expr.kind == E_STAR;
+  }
+  for (const t of orderBy) {
+    let x = t.expr;
+    while (x.kind == E_COLLATE) {
+      x = x.a!;
+    }
+    const num = termNumber(x);
+    let at: i64 = -1;
+    if (!star && num >= 1 && num <= (columns.length as i64)) {
+      at = num - 1;
+    } else if (x.kind == E_COLUMN && x.table == "") {
+      for (let i: usize = 0; i < columns.length; i++) {
+        if (columns[i].alias != "" && columns[i].alias.toUpperCase() == x.name.toUpperCase()) {
+          at = i as i64;
+          break;
+        }
+      }
+    }
+    windowCalls(at >= 0 ? columns[at as usize].expr : t.expr, calls);
+  }
+  // Each call's window as SQLite compares it, "" for one that is never the same as another.
+  const keys: string[] = [];
+  for (const e of calls) {
+    let key = "";
+    try {
+      key = windowKey(resolveWindow(e.over!, named).w);
+    } catch (err) {
+      // Reported when the call compiles.
+    }
+    keys.push(key);
+  }
+  // The group of each call is its first equal call; the last group starts last.
+  const first: usize[] = [];
+  let last: usize = 0;
+  for (let i: usize = 0; i < calls.length; i++) {
+    let f = i;
+    if (keys[i] != "") {
+      for (let j: usize = 0; j < i; j++) {
+        if (keys[j] == keys[i]) {
+          f = j;
+          break;
+        }
+      }
+    }
+    first.push(f);
+    if (f > last) {
+      last = f;
+    }
+  }
+  const out: Expr[] = [];
+  for (let i: usize = 0; i < inResults; i++) {
+    if (first[i] == last) {
+      out.push(calls[i]);
+    }
+  }
+  return out;
+}
+
+// The window function calls of `e`, outside subqueries, in the order SQLite resolves them.
+function windowCalls(e: Expr | null, out: Expr[]) {
+  if (e == null) {
+    return;
+  }
+  const x = e!;
+  if (x.over != null) {
+    out.push(x);
+    return;
+  }
+  windowCalls(x.a, out);
+  windowCalls(x.b, out);
+  windowCalls(x.c, out);
+  for (const a of x.args) {
+    windowCalls(a, out);
+  }
+}
+
+// A window as SQLite compares two (sqlite3WindowCompare: the terms as trees, names in any case,
+// and the frame): equal windows give equal keys. "" when it holds a subquery, which SQLite
+// never finds the same as another.
+function windowKey(w: Window): string {
+  const parts: string[] = [];
+  for (const p of w.partition) {
+    if (hasSubquery(p)) {
+      return "";
+    }
+    parts.push(exprKey(p));
+  }
+  parts.push("|");
+  for (const t of w.orderBy) {
+    if (hasSubquery(t.expr)) {
+      return "";
+    }
+    parts.push(`${exprKey(t.expr)} ${t.desc} ${t.nulls}`);
+  }
+  if (hasSubquery(w.startExpr) || hasSubquery(w.endExpr)) {
+    return "";
+  }
+  parts.push(`|${w.frame} ${w.start} ${exprKey(w.startExpr)} ${w.end} ${exprKey(w.endExpr)}`);
+  parts.push(w.exclude);
+  return "=" + parts.join(" ");
+}
+
+// An expression tree as a key (no subquery in it).
+function exprKey(e: Expr | null): string {
+  if (e == null) {
+    return "-";
+  }
+  const x = e!;
+  const kids: string[] = [exprKey(x.a), exprKey(x.b), exprKey(x.c), exprKey(x.filter)];
+  for (const a of x.args) {
+    kids.push(exprKey(a));
+  }
+  const head = `${x.kind} ${x.op} ${x.ival} ${x.rval} ${x.not} ${x.distinct} ${x.star}`;
+  const names = `${x.table.toUpperCase()}.${x.name.toUpperCase()}`;
+  return `(${head} ${JSON.stringify(x.text)} ${names} ${kids.join(" ")})`;
+}
+
+function hasSubquery(e: Expr | null): bool {
+  if (e == null) {
+    return false;
+  }
+  const x = e!;
+  if (x.kind == E_SUBQUERY || x.kind == E_EXISTS || x.kind == E_IN_SELECT) {
+    return true;
+  }
+  if (hasSubquery(x.a) || hasSubquery(x.b) || hasSubquery(x.c) || hasSubquery(x.filter)) {
+    return true;
+  }
+  for (const a of x.args) {
+    if (hasSubquery(a)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /** A window function call (`... OVER ...`) in the output of a query. */
 export function windowCall(c: ExprCompiler, e: Expr, sc: Scope, lname: string): C {
   const w = sc.win!;
@@ -144,6 +309,34 @@ export function windowCall(c: ExprCompiler, e: Expr, sc: Scope, lname: string): 
   if (r.w.partition.length + r.w.orderBy.length > MAX_COLUMN) {
     w.tooManyTerms = true;
   }
+  // In a window computed last, a subquery's aggregate of the query makes it an aggregate
+  // query, as in the result columns of a query without window functions.
+  let last = false;
+  for (const x of sc.lastWins) {
+    last = last || x == e;
+  }
+  const wasResults = base.results;
+  const wasWinAgg = base.winAgg;
+  if (last) {
+    base.results = true;
+    base.winAgg = true;
+  }
+  try {
+    return windowCallIn(c, e, r, w, base, lname);
+  } finally {
+    base.results = wasResults;
+    base.winAgg = wasWinAgg;
+  }
+}
+
+function windowCallIn(
+  c: ExprCompiler,
+  e: Expr,
+  r: Resolved,
+  w: WinCtx,
+  base: Scope,
+  lname: string,
+): C {
   let wk = windowKind(e.name);
   let ak: i64 = -1;
   if (wk < 0) {
