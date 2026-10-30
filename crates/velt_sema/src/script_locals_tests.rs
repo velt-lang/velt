@@ -29,7 +29,7 @@ fn run(src: &str) -> Run {
                 let (_, diags) = super::check(modules, root, |m| {
                     checks += 1;
                     let opts = CheckOptions::default();
-                    let out = crate::check_timed(m, root, opts, &[], SEMA_STACK_BUDGET);
+                    let out = crate::check_timed(m, root, opts, &[], None, SEMA_STACK_BUDGET);
                     first.get_or_insert_with(|| out.1.vars.clone());
                     out
                 });

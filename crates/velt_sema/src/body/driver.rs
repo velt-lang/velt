@@ -635,6 +635,11 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
         &mut stmts,
     );
     fcx.stmts_into(&body.stmts, &mut stmts);
+    if let FnSource::Decl(d) = src {
+        if d.sig.generator.is_some() {
+            fcx.generated_placeholder(&f, &mut stmts);
+        }
+    }
     let mut block = hir::Block {
         stmts,
         value: None,

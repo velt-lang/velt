@@ -288,6 +288,9 @@ impl Ctx<'_> {
         if name == "this" {
             return self.resolve_this_type(t, args, env);
         }
+        if name == crate::generated::QUALIFIED && self.in_generated_file(t.span) {
+            return self.resolve_qualified(t, args, env);
+        }
         if let Some(i) = env.params.iter().rposition(|p| p == name) {
             if !args.is_empty() {
                 self.err(

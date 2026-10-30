@@ -4,7 +4,7 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
 
-use velt_sema::hir::{self, DefId};
+use velt_sema::hir::{self, DefId, TyId};
 
 use super::layout::Layouts;
 use super::rt::Rt;
@@ -180,6 +180,7 @@ impl<'h> Cx<'h> {
                 | Work::ArrayTooLong
                 | Work::Oob(_)
         ) || !self.has_lock_set();
+        let work = self.generated_instance(work);
         let work = match (fixed, mode) {
             (true, _) | (false, M::Plain) => work,
             (false, M::Read) => Work::Read(Box::new(work)),
@@ -197,6 +198,26 @@ impl<'h> Cx<'h> {
         }
         self.queue.push_back((id, work));
         id
+    }
+
+    /// `work` for an instance of a generated function built from its generated definition
+    /// instead (`hir::Program::generated`; docs/internals/design/source-generators.md).
+    fn generated_instance(&self, mut work: Work) -> Work {
+        if self.hir.generated.is_empty() {
+            return work;
+        }
+        if let Some((d, targs)) = work_target(&mut work) {
+            if let Some(&body) = self.hir.generated.get(&(*d, targs.clone())) {
+                *d = body;
+                targs.clear();
+            } else if self.hir.generated.keys().any(|(g, _)| g == d) {
+                let name = &self.fn_def(*d).name;
+                ice(format_args!(
+                    "no generated code for an instance of `{name}`"
+                ));
+            }
+        }
+        work
     }
 
     /// Build the function for `work` now unless it is already built or being built (in which
@@ -345,6 +366,30 @@ impl<'h> Cx<'h> {
 }
 
 /// The function `work` builds an instance (or a part) of.
+/// The function and type arguments `work` builds code for.
+fn work_target(work: &mut Work) -> Option<(&mut DefId, &mut Vec<TyId>)> {
+    match work {
+        Work::Checked(w) | Work::Read(w) | Work::ReadOwn(w) | Work::Deferred(w) => work_target(w),
+        Work::Fn(d, a)
+        | Work::Thunk(_, d, a)
+        | Work::EnvDrop(d, a)
+        | Work::EnvDropFrame(d, a)
+        | Work::EnvClone(d, a)
+        | Work::EnvTransfer(d, a)
+        | Work::Tracked(d, a, _)
+        | Work::Frozen(d, a, _, _, _)
+        | Work::Poll(d, a)
+        | Work::AsyncDrop(d, a)
+        | Work::AsyncCloseStart(d, a)
+        | Work::GenThrow(d, a)
+        | Work::ValuePoll(d, a)
+        | Work::ValueDrop(d, a)
+        | Work::GenNew(d, a)
+        | Work::GenFree(d, a) => Some((d, a)),
+        _ => None,
+    }
+}
+
 fn work_def(work: &Work) -> Option<DefId> {
     match work {
         Work::Checked(w) | Work::Read(w) | Work::ReadOwn(w) | Work::Deferred(w) => work_def(w),

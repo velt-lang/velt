@@ -45,6 +45,11 @@ pub(crate) type ClassesBelow = std::rc::Rc<[(DefId, DefId)]>;
 pub(crate) struct Ctx<'m> {
     pub modules: &'m [SourceModule],
     pub root: usize,
+    /// The instances of generated functions the driver generated so far (`crate::generated`).
+    pub gen: Option<&'m crate::generated::GenInput>,
+    /// Those instances bound to their generated definitions (`crate::generated::bind`), once
+    /// the bodies are checked.
+    pub gen_bound: crate::generated::bind::Bound,
     pub ty: Types,
     /// Final HIR definitions, indexed by `DefId` (filled at the end).
     pub defs: Vec<Option<Def>>,
@@ -424,6 +429,8 @@ impl<'m> Ctx<'m> {
         Ctx {
             modules,
             root,
+            gen: None,
+            gen_bound: Default::default(),
             export_memo: Default::default(),
             import_targets: crate::collect::exports::import_targets(modules),
             ty: Types::new(),

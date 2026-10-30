@@ -231,6 +231,11 @@ pub struct Program {
     /// The functions `(f: any) => T` converting a function held as `any` to the function type
     /// `T` (their result type) inside a conversion lowering makes (hir_encodings.md). Additive.
     pub any_fn_views: Vec<DefId>,
+    /// The instances of generated functions (`declare generated(…) function`,
+    /// docs/internals/design/source-generators.md): `(function, concrete type arguments)` →
+    /// the generated, non-generic definition lowering builds for that instance instead of the
+    /// function's own body (which it never builds). Additive.
+    pub generated: HashMap<(DefId, Vec<TyId>), DefId>,
 }
 
 impl Program {

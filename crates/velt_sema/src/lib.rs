@@ -59,6 +59,7 @@ mod finalize;
 mod flow;
 mod fn_types;
 mod fresh_returns;
+pub mod generated;
 mod generic_arrows;
 mod generic_fns;
 mod generic_override_sites;
@@ -202,15 +203,76 @@ pub fn check_with(
             .name("velt-sema".into())
             .stack_size(SEMA_STACK_BYTES)
             .spawn_scoped(s, || {
-                check_on_current_thread(modules, root, opts, &[], SEMA_STACK_BUDGET)
+                check_on_current_thread(modules, root, opts, &[], None, SEMA_STACK_BUDGET)
+            });
+        let (out, diags) = match spawned {
+            Ok(handle) => handle
+                .join()
+                .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
+            Err(_) => {
+                check_on_current_thread(modules, root, opts, &[], None, FALLBACK_STACK_BUDGET)
+            }
+        };
+        program_or_demand_error(out, diags)
+    })
+}
+
+/// What [`check_generating`] gives: the program, or the instances of generated functions that
+/// have no generated code yet (docs/internals/design/source-generators.md "Rounds").
+#[derive(Debug)]
+pub enum Checked {
+    Program(Box<hir::Program>),
+    Demand(generated::Demand),
+}
+
+/// [`check_with`] of a program that may use generated functions, with the code generated for
+/// them so far (`gen`): the driver runs the generators for a [`Checked::Demand`] and checks
+/// again with their code added.
+pub fn check_generating(
+    modules: &[SourceModule],
+    root: usize,
+    opts: CheckOptions,
+    gen: &generated::GenInput,
+) -> (Option<Checked>, Diagnostics) {
+    std::thread::scope(|s| {
+        let spawned = std::thread::Builder::new()
+            .name("velt-sema".into())
+            .stack_size(SEMA_STACK_BYTES)
+            .spawn_scoped(s, || {
+                check_on_current_thread(modules, root, opts, &[], Some(gen), SEMA_STACK_BUDGET)
             });
         match spawned {
             Ok(handle) => handle
                 .join()
                 .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
-            Err(_) => check_on_current_thread(modules, root, opts, &[], FALLBACK_STACK_BUDGET),
+            Err(_) => {
+                check_on_current_thread(modules, root, opts, &[], Some(gen), FALLBACK_STACK_BUDGET)
+            }
         }
     })
+}
+
+/// The program of a check whose caller runs no generators: demand is an error at each call.
+fn program_or_demand_error(
+    out: Option<Checked>,
+    mut diags: Diagnostics,
+) -> (Option<hir::Program>, Diagnostics) {
+    match out {
+        Some(Checked::Program(p)) => (Some(*p), diags),
+        Some(Checked::Demand(d)) => {
+            for r in &d.requests {
+                diags.push(Diagnostic::error(
+                    format!(
+                        "`{}` is a generated function, and this command does not run generators",
+                        r.function
+                    ),
+                    r.at,
+                ));
+            }
+            (None, diags)
+        }
+        None => (None, diags),
+    }
 }
 
 /// [`check_with`] of modules some of which the parser had to recover (`recovered`: their
@@ -230,14 +292,15 @@ pub fn check_recovered(
             .name("velt-sema".into())
             .stack_size(SEMA_STACK_BYTES)
             .spawn_scoped(s, || {
-                check_on_current_thread(modules, root, opts, recovered, SEMA_STACK_BUDGET).1
+                check_on_current_thread(modules, root, opts, recovered, None, SEMA_STACK_BUDGET).1
             });
         match spawned {
             Ok(handle) => handle
                 .join()
                 .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
             Err(_) => {
-                check_on_current_thread(modules, root, opts, recovered, FALLBACK_STACK_BUDGET).1
+                let budget = FALLBACK_STACK_BUDGET;
+                check_on_current_thread(modules, root, opts, recovered, None, budget).1
             }
         }
     })
@@ -248,12 +311,13 @@ fn check_on_current_thread(
     root: usize,
     opts: CheckOptions,
     recovered: &[(usize, &str)],
+    gen: Option<&generated::GenInput>,
     stack_budget: usize,
-) -> (Option<hir::Program>, Diagnostics) {
+) -> (Option<Checked>, Diagnostics) {
     timings::start();
     let out = timings::pass("check", || {
         script_locals::check(modules, root, |m| {
-            check_timed(m, root, opts, recovered, stack_budget)
+            check_timed(m, root, opts, recovered, gen, stack_budget)
         })
     });
     timings::finish();
@@ -266,6 +330,7 @@ fn check_timed(
     root: usize,
     opts: CheckOptions,
     recovered: &[(usize, &str)],
+    gen: Option<&generated::GenInput>,
     stack_budget: usize,
 ) -> script_locals::Checked {
     let rewrite_start = std::time::Instant::now();
@@ -321,6 +386,7 @@ fn check_timed(
         if opts.eager_std {
             cx.lazy.on = false;
         }
+        cx.gen = gen;
         cx.union_views.assumed = views.clone();
         cx.fn_sites = throws::FnSites::new(seeds.clone(), last);
         cx.stack_budget = stack_budget;
@@ -413,6 +479,13 @@ fn check_timed(
         let refused = script_locals::refused(&cx, root);
         return ((None, cx.diags), refused);
     }
+    let generated = match generated::instances(&mut cx) {
+        Ok(bound) => bound,
+        Err(demand) => return ((Some(Checked::Demand(demand)), cx.diags), Default::default()),
+    };
+    if cx.diags.iter().any(|d| d.is_error()) {
+        return ((None, cx.diags), Default::default());
+    }
     let unchecked = finalize::build_defs(&mut cx);
     layout_merge::merge(&mut cx);
     let type_names = readonly::erase(&mut cx);
@@ -475,8 +548,9 @@ fn check_timed(
         lock_free_callbacks: lock_free_callbacks.into_iter().collect(),
         unchecked: unchecked.into_iter().collect(),
         any_fn_views,
+        generated: generated.into_iter().collect(),
     };
-    ((Some(program), diags), Default::default())
+    ((Some(Checked::Program(Box::new(program))), diags), Default::default())
 }
 
 /// How many times at most a program is checked again for the error types of function types
@@ -562,6 +636,9 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     });
     timings::pass("hooks::check_shapes", || hooks::check_shapes(cx));
     let before = error_count(cx);
+    if cx.gen.is_some() && cx.has_generated_fns() {
+        cx.gen_bound = generated::bind::bind(cx);
+    }
     timings::pass("ownership_passes", || ownership_passes(cx));
     if cx.fn_sites.again() {
         return;
