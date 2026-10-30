@@ -1317,7 +1317,8 @@ export class ConcurrentMap<K = u64, V extends Frozen = u64> {
     if (typeIs<K, string>()) {
       // Separator 0 goes with child 0: its string is the fence of child 1, which becomes the
       // first child, whose fence is never read. Cleared (retired to the epoch: a reader of the
-      // version before may still read it), so it keeps no deleted key's string alive.
+      // version before may still read it). Any other removed child's fence goes with it as the
+      // child is freed; a separator that stays keeps its string alive, deleted key or not.
       if (i == 0) {
         const c = this.w[b + childAt(1)].load("relaxed");
         if (c < this.nodes) {

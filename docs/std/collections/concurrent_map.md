@@ -61,16 +61,18 @@ an object of plain fields) is boxed once by `set`, as a `shared<V>` beside the l
 copies it, `read` reads it in place, and one that `set` replaces or `delete` removes is dropped
 once no reader can still be reading it.
 
-A `string` key is ordered in the tree by its first 8 bytes (its UTF-16 code units as CESU-8,
-the order of `<`), a word that sits where a `u64` key would, and kept whole beside its leaf:
-`set` copies a new key there once, and `delete` drops it once no reader can still be reading
-it. Keys whose first 8 bytes are the same (`"user:000123"` and `"user:000456"`) tie on that
-word, and the map tells them apart by comparing the strings: in a leaf, the slot whose tag (a
-hash of the whole string, so keys with a common prefix do not share tags) and word match is
-compared in full; in an inner node, a binary search over the strings of the separators that tie
-with the key finds its child. So a lookup of a string key costs a hash of the key, its first 8
-bytes and one string compare in the leaf, which reads the kept string (a few cache lines more
-than a `u64` key's lookup), and inner nodes read strings only where words tie: keys that share
+A `string` key is ordered in the tree by its first 8 bytes (its UTF-16 code units as CESU-8, the
+order of `<`), a word that sits where a `u64` key would, and kept whole beside its leaf: `set`
+copies a new key there once, and `delete` drops it once no reader can still be reading it, unless
+the key is still a separator in an inner node (about one key in 28 is: the least key of the upper
+half when a leaf splits): then its string is kept as long as the separator is, as in any B+ tree,
+which matters with long keys. Keys whose first 8 bytes are the same (`"user:000123"` and
+`"user:000456"`) tie on that word, and the map tells them apart by comparing the strings: in a leaf,
+the slot whose tag (a hash of the whole string, so keys with a common prefix do not share tags) and
+word match is compared in full; in an inner node, a binary search over the strings of the separators
+that tie with the key finds its child. So a lookup of a string key costs a hash of the key, its
+first 8 bytes and one string compare in the leaf, which reads the kept string (a few cache lines
+more than a `u64` key's lookup), and inner nodes read strings only where words tie: keys that share
 their first 8 bytes (URLs that all start `https://`) cost up to 6 string compares more per inner
 node, as in any ordered map.
 
