@@ -741,6 +741,8 @@ impl FnLower<'_, '_> {
         self.any_record_fill(p, from, ty, &out, done);
         // A generic function value held as `unknown` (glue/vtable.rs `ClosureAny`).
         self.any_to_generic_fn(p, ty, desc.clone(), &out, done);
+        // A function of another type (`Program::any_fn_views`, any_generic_fn.rs).
+        self.any_to_fn_view(p, ty, desc.clone(), &out, done);
         // An object implementing the interface, or the interface at other type arguments.
         self.any_to_iface(p, ty, &out, done);
         if self.cx.proxiable(ty) {

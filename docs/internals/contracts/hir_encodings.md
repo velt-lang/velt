@@ -1572,6 +1572,13 @@ one; an error type that was only variables solved empty is no error type (`FnDef
 - Not yet (each a compile error, phase 1b and 2 of #924): compound assignments and updates of
   members of an `any`, other operators, template literals and `String(x)`, `JSON.parse` into an
   `any`, iteration.
+- `Program::any_fn_views` (additive, #1935) lists functions `(f: any) => F` (one `Owned`
+  parameter), one per function type `F`, their result type, with no other function of that
+  result type. Each returns the closure calling `f` through `any` that a conversion of an `any`
+  to `F` makes in sema. Lowering calls the one whose result is the target when an `AnyTo` it
+  makes inside another conversion (a field of an object type filled from a record or object, an
+  array view's element) meets a function of another type than `F`; it passes the `any`, which
+  the function takes. Empty in a program without such conversions.
 
 ## Object built-ins (issue #925)
 

@@ -3147,6 +3147,31 @@ const s = setup as (c: Ctx<any>) => string;
 console.log(s({ v: 1 })); // x1
 ```
 
+The same holds for a function that is a member of the value converted: a field of function type
+read from a record (`Object.create(null)`) or an object converted to an object type, and an
+element of an array of functions (#1935). A function of another type than the member's converts
+as above, as TypeScript lets a function with optional parameters stand for one with fewer and
+`any[]` for any array: `slots as { default: () => VNode[] }` where `slots.default` holds
+`(scopedProps?: any) => any[]` gives a `default` that calls the held function with no
+arguments and converts each element of its result to `VNode`. Extra arguments are dropped and
+missing ones are `undefined`, as in Node, and a rest parameter of the target type
+(`(...xs: number[]) => string`) passes its elements as separate arguments. The function is made
+once, at the conversion, so each call costs one call through `any`. An async function of another
+type than the member's (`async (x?: any): Promise<any>` as `() => Promise<any>`) converts, but
+calling it stops with ``TypeError: calling this function through `any` is not supported yet``,
+as an async function is not called through `any` yet (#1674); one of the member's own type is
+that function.
+
+```ts
+interface Slots {
+  default: () => string[];
+}
+const store: any = Object.create(null);
+store.default = (props?: any): any[] => ["a", props === undefined ? "none" : "some"];
+const slots = store as Slots;
+console.log(slots.default().join(",")); // a,none
+```
+
 An object of another type converted to an object type (`a as Item` where `a` holds a class
 instance with `Item`'s fields, or an object literal with more fields than `Item`) is, in a program
 that makes proxies (`new Proxy` anywhere in its own code, as a reactive framework does), a *view*
