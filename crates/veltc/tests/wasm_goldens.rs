@@ -22,8 +22,7 @@ mod work_dir;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-/// Goldens that cannot run on WebAssembly: the runtime has no sockets (nor `velt:http`) and the
-/// target no system functions, a
+/// Goldens that cannot run on WebAssembly: the runtime has no sockets (nor `velt:http`), a
 /// `resolve` called later, or a shared promise settling, resumes its waiters at the executor's
 /// next step instead of queueing them as microtasks (docs/reference/async.md), and the tasks a
 /// synchronous `main` spawns never run (its executor runs only under an `async main`).
@@ -49,19 +48,6 @@ const UNSUPPORTED: &[&str] = &[
     "promise_identity_defer_rejects",
     "promise_identity_defer_twice",
     "promise_identity_rejection",
-    // System functions: WebAssembly has none (calling one is a compile error there).
-    "system_functions",
-    "system_function_buffer_owner",
-    "system_function_errno_adjacency",
-    "system_function_errno_await",
-    "system_function_forged_view",
-    "system_function_guard",
-    "system_function_interior_nul",
-    "system_function_subarray_owner",
-    "system_function_subarray_shared",
-    "system_function_views",
-    "system_function_unterminated",
-    "system_function_windows",
 ];
 /// Goldens that need a file system (not available to browser modules).
 const NEEDS_FS: &[&str] = &["fs"];
@@ -157,6 +143,7 @@ fn programs(root: &Path, dirs: &[&str], skip: &[&str]) -> Vec<PathBuf> {
             p.extension().is_some_and(|e| e == "vlt")
                 && p.with_extension("out").exists()
                 && !skip.contains(&stem.as_ref())
+                && !declares_system_function(p)
                 && {
                     // The path in the checkout, as in tests/golden.rs.
                     let rel = p.strip_prefix(root).unwrap_or(p);
@@ -167,6 +154,12 @@ fn programs(root: &Path, dirs: &[&str], skip: &[&str]) -> Vec<PathBuf> {
     }
     files.sort();
     files
+}
+
+/// Whether a golden declares a system function: WebAssembly has none (calling one is a compile
+/// error there), so such goldens are skipped without having to be listed one by one.
+fn declares_system_function(file: &Path) -> bool {
+    std::fs::read_to_string(file).is_ok_and(|src| src.contains("declare system function"))
 }
 
 /// Run one golden; `Err` describes the mismatch.
