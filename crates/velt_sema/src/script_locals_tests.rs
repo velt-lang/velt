@@ -82,3 +82,31 @@ fn a_with_callback_calling_a_closure_moves_what_the_closure_uses() {
     assert_eq!(r.errors, Vec::<String>::new());
     assert_eq!(r.checks, 2);
 }
+
+/// A `with` callback that calls a function value that comes from elsewhere than a variable's
+/// initializer: a parameter of a function it calls, a closure made inside another closure, a
+/// loop variable over an array of closures, the locked value. The variables of the closures
+/// the code around the callback makes move.
+#[test]
+fn a_with_callback_calling_a_function_value_from_elsewhere_moves_what_closures_use() {
+    let head = "const m = shared(new Mutex<number>(0));
+        let c = 1;
+        const b = () => { c++; };
+        b();
+        ";
+    let calls = [
+        "function apply(f: () => number): number { return f(); }
+         const add = () => c * 10;
+         m.with((v) => { v += apply(add); });",
+        "const mk = () => { const add = () => c + 100; m.with((v) => { v += add(); }); };
+         mk();",
+        "const fs = [() => c, () => c * 3];
+         m.with((v) => { for (const f of fs) { v += f(); } });",
+        "const n = shared(new Mutex<(() => number)>(() => c));
+         console.log(n.with((f) => f()));",
+    ];
+    for call in calls {
+        let r = run(&format!("{head}{call}"));
+        assert_eq!((r.checks, r.errors), (2, Vec::<String>::new()), "{call}");
+    }
+}

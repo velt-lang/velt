@@ -55,21 +55,55 @@ pub(super) fn propagate(facts: &FxHashMap<DefId, Facts>) -> FxHashMap<DefId, Rea
 /// Every module state variable the code from `todo` may reach (along the edges), so a
 /// refused variable moves in one extra check however many a callback reaches (`script_locals`);
 /// and the names of the variables whose function values that code calls, whose initializers'
-/// variables move too: a call through a function value has no edges.
+/// variables move too: a call through a function value has no edges. Such a value may also
+/// come from elsewhere (a parameter, a loop variable, the locked value, a variable of another
+/// closure): from what the callback sees, the closures and functions that the code making the
+/// callback makes, and the code making that code, out to a named function. Their variables count.
 pub(super) fn vars_reached(
     facts: &FxHashMap<DefId, Facts>,
     mut todo: Vec<DefId>,
 ) -> (Vec<DefId>, Vec<String>) {
     let (mut seen, mut vars, mut called) = (FxHashSet::default(), vec![], vec![]);
-    while let Some(d) = todo.pop() {
-        let Some(f) = facts.get(&d).filter(|_| seen.insert(d)) else {
-            continue;
-        };
-        vars.extend(&f.vars);
-        called.extend(f.called.iter().cloned());
-        todo.extend(&f.edges);
+    // The bodies whose makers' values count: the callbacks, and the bodies that call a value.
+    let (mut origins, mut values) = (todo.clone(), false);
+    let (mut makers, mut up) = (None::<FxHashMap<DefId, Vec<DefId>>>, FxHashSet::default());
+    loop {
+        while let Some(d) = todo.pop() {
+            let Some(f) = facts.get(&d).filter(|_| seen.insert(d)) else {
+                continue;
+            };
+            vars.extend(&f.vars);
+            called.extend(f.called.iter().cloned());
+            todo.extend(&f.edges);
+            if f.values {
+                values = true;
+                origins.push(d);
+            }
+        }
+        if !values {
+            return (vars, called);
+        }
+        let makers = makers.get_or_insert_with(|| {
+            let mut by: FxHashMap<DefId, Vec<DefId>> = FxHashMap::default();
+            for (&d, f) in facts {
+                for &c in &f.made {
+                    by.entry(c).or_default().push(d);
+                }
+            }
+            by
+        });
+        while let Some(d) = origins.pop() {
+            for &m in makers.get(&d).map(Vec::as_slice).unwrap_or(&[]) {
+                if up.insert(m) {
+                    todo.extend(&facts[&m].made);
+                    origins.push(m);
+                }
+            }
+        }
+        if todo.is_empty() {
+            return (vars, called);
+        }
     }
-    (vars, called)
 }
 
 /// The variable a call through a function value reads it from: `f()`, `o.f()`, `fs[0]()`.

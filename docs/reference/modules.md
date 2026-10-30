@@ -78,7 +78,10 @@ checks narrow (`const m: object = new Map()`): those stay locals of `main`, whic
 captures as a copy. So does one that module state can't hold: a promise (`let p =
 Promise.resolve(1)` that a closure assigns), or one a `Mutex` `with` callback uses, also
 through a closure it calls ([module state](variables.md#module-state)), with the variables below it whose initializers
-read it (`let ok = p !== undefined;`).
+read it (`let ok = p !== undefined;`). A callback that calls a function value from elsewhere
+(a parameter, a loop variable, the locked value, a variable of the closure that makes the
+callback) may run any closure the code around it makes, so the variables those closures use
+stay locals of `main` then.
 
 ```ts
 const GREETING = "hello";               // a function uses it: a module constant

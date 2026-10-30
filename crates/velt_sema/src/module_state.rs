@@ -360,6 +360,8 @@ struct Facts {
     direct: Option<String>,
     vars: Vec<DefId>,    // every module state variable it uses (`script_locals`)
     called: Vec<String>, // the root file's variables whose function values it calls (same)
+    made: Vec<DefId>,    // the closures and functions it makes as values (same)
+    values: bool,        // it calls a function value whose body is not known (same)
     edges: Vec<DefId>,
     tys: FxHashSet<TyId>,
     /// It resumes a generator: any generator body may run.
@@ -576,6 +578,8 @@ impl<'a, 'm> FactsOf<'a, 'm> {
                 direct: None,
                 vars: vec![],
                 called: vec![],
+                made: vec![],
+                values: false,
                 edges: vec![],
                 tys: FxHashSet::default(),
                 resumes: false,
@@ -594,6 +598,7 @@ impl<'a, 'm> FactsOf<'a, 'm> {
         // taken as values, by the code that passes them, where they count (`passed`).
         if !self.std {
             self.facts.props = true;
+            self.facts.values = true;
             if self.facts.direct.is_none() {
                 self.facts.direct = Some(what.into());
             }
@@ -693,7 +698,10 @@ impl crate::visit::VisitMut for FactsOf<'_, '_> {
                 }
                 _ => {}
             },
-            E::Closure(c) | E::FnRef(c, _) => self.facts.edges.push(*c),
+            E::Closure(c) | E::FnRef(c, _) => {
+                self.facts.edges.push(*c);
+                self.facts.made.push(*c);
+            }
             E::New { def, args, .. } => {
                 let ctor = self.cx.adt(*def).and_then(|a| a.ctor);
                 self.facts.edges.extend(ctor);
