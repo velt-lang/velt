@@ -107,7 +107,7 @@ fn inputs_for_path(path: &Path) -> Result<Vec<Input>, String> {
             .file_name()
             .map_or(String::new(), |n| n.to_string_lossy().into_owned());
         let inputs = velt_doc::inputs_from_dir(path, &prefix)?;
-        return Ok(under(&path.to_string_lossy(), inputs));
+        return Ok(under(&shown(path, &cwd()), inputs));
     }
     let source = std::fs::read_to_string(path)
         .map_err(|e| format!("cannot read `{}`: {e}", path.display()))?;
@@ -117,8 +117,33 @@ fn inputs_for_path(path: &Path) -> Result<Vec<Input>, String> {
     Ok(vec![Input {
         module,
         source,
-        file: path.to_string_lossy().replace('\\', "/"),
+        file: shown(path, &cwd()),
     }])
+}
+
+fn cwd() -> PathBuf {
+    std::env::current_dir().unwrap_or_default()
+}
+
+/// How `path`, given on the command line, is shown as a source file in the docs: relative to
+/// `cwd` when it is under it (`src/lib.vlt` for `./src/lib.vlt`, or for `D:/pkg/src/lib.vlt`
+/// run in `D:/pkg`), so the output does not depend on the machine or on how the path was
+/// spelled; otherwise as given, normalized. `/`-separated; `""` for `cwd` itself.
+fn shown(path: &Path, cwd: &Path) -> String {
+    use vpm::relpath::normalize;
+    let abs = normalize(&cwd.join(path));
+    let base = normalize(cwd);
+    let rel = match abs.strip_prefix(&base) {
+        Ok(rel) => Some(rel.to_path_buf()),
+        // Another spelling of the same directory (drive letter case, a link).
+        Err(_) => match (std::fs::canonicalize(&abs), std::fs::canonicalize(&base)) {
+            (Ok(a), Ok(b)) => a.strip_prefix(&b).ok().map(Path::to_path_buf),
+            _ => None,
+        },
+    };
+    rel.unwrap_or_else(|| normalize(path))
+        .to_string_lossy()
+        .replace('\\', "/")
 }
 
 #[cfg(test)]
@@ -174,6 +199,33 @@ mod tests {
         })
         .unwrap();
         assert!(file.is_file() && !tmp.path().join("one.json/api.json").exists());
+    }
+
+    #[test]
+    fn paths_are_shown_relative_to_the_current_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path().join("pkg");
+        std::fs::create_dir_all(cwd.join("src")).unwrap();
+        std::fs::write(cwd.join("src/lib.vlt"), "").unwrap();
+        // Under the current directory: relative, however it is spelled.
+        for given in [
+            cwd.join("src"),
+            PathBuf::from("src"),
+            PathBuf::from("./src"),
+            PathBuf::from("./src/"),
+            PathBuf::from("src/../src"),
+        ] {
+            assert_eq!(shown(&given, &cwd), "src", "{}", given.display());
+        }
+        assert_eq!(shown(&cwd.join("src/lib.vlt"), &cwd), "src/lib.vlt");
+        assert_eq!(shown(Path::new("./src/lib.vlt"), &cwd), "src/lib.vlt");
+        assert_eq!(shown(&cwd, &cwd), "");
+        assert_eq!(shown(Path::new("."), &cwd), "");
+        // Elsewhere: as given, normalized.
+        assert_eq!(shown(Path::new("../other/x.vlt"), &cwd), "../other/x.vlt");
+        let outside = tmp.path().join("other");
+        let want = outside.to_string_lossy().replace('\\', "/");
+        assert_eq!(shown(&outside, &cwd), want);
     }
 
     #[test]
