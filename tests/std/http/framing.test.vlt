@@ -1,5 +1,5 @@
-// velt/http/server's request framing, seen from a raw socket.
-import { HttpRequest, HttpResponse, serve } from "velt/http/server";
+// velt/net/http's request framing, seen from a raw socket.
+import { HttpRequest, HttpResponse, serveHttp } from "velt/net/http";
 import { connect, TcpStream } from "velt/net";
 import { afterAll, beforeAll, describe, expect, it } from "velt/test";
 
@@ -36,7 +36,7 @@ function summary(text: string): string {
 const H = "Host: x\r\n";
 
 describe("request framing", () => {
-  // velt/http/server frames requests as RFC 9112 asks, so a proxy in front of it cannot see
+  // velt/net/http frames requests as RFC 9112 asks, so a proxy in front of it cannot see
   // other request boundaries than it does (request smuggling): Transfer-Encoding with
   // Content-Length, a coding other than chunked last, Transfer-Encoding in HTTP/1.0, two
   // Content-Lengths, bytes that are not allowed in the request line or a header, bare LF in
@@ -49,7 +49,7 @@ describe("request framing", () => {
   const sendThenReadGot = shared(-1 as i64);
   beforeAll(async () => {
     // A long idle timeout: nothing here may wait for one to answer.
-    const server = await serve({ port: 0, idleTimeout: 120000 }, async (
+    const server = await serveHttp({ port: 0, idleTimeout: 120000 }, async (
       req: HttpRequest,
       res: HttpResponse,
     ) => {

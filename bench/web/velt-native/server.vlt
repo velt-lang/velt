@@ -1,10 +1,10 @@
-// The TechEmpower tests on velt/http/server, the HTTP/1.1 server written in Velt on std/net (not
+// The TechEmpower tests on velt/net/http, the HTTP/1.1 server written in Velt on std/net (not
 // std/http, which is hyper): bench/web/README.md, `velt-native`. Every route of velt/app.ts
 // (/plaintext, /json, /db, /queries, /fortunes, /updates, the database side shared through
 // velt/worlds.ts) and the TSX pages.
 // Usage: server [port]; env PORT, HOST (127.0.0.1), DATABASE_URL, DB_POOL (default 2 × cores).
 
-import { HttpRequest, HttpResponse, serve } from "velt/http/server";
+import { HttpRequest, HttpResponse, serveHttp } from "velt/net/http";
 import { args } from "velt/process";
 import { renderToString, renderToStringSync, renderToStream } from "velt/jsx";
 import {
@@ -23,7 +23,7 @@ async function main() {
   const port = Number(argv.length > 0 ? argv[0] : process.env.PORT ?? "8080");
   const host = process.env.HOST ?? "127.0.0.1";
   const pool = worldPool();
-  await serve({ port: port, host: host }, async (req: HttpRequest, res: HttpResponse) => {
+  await serveHttp({ port: port, host: host }, async (req: HttpRequest, res: HttpResponse) => {
     if (req.pathIs("/plaintext")) {
       res.send("Hello, World!");
     } else if (req.pathIs("/json")) {

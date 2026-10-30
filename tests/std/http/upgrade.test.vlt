@@ -1,5 +1,5 @@
 // Taking a connection over from HTTP: velt/http's `upgradeConnection` for a protocol of one's
-// own (velt/http/server's WebSocket handshake is websocket.test.vlt's).
+// own (velt/net/http's WebSocket handshake is websocket.test.vlt's).
 import { isUpgradeRequest, serve, upgradeConnection } from "velt/http";
 import { connect, connectTls, TcpStream } from "velt/net";
 import { afterAll, beforeAll, describe, expect, it } from "velt/test";

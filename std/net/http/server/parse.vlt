@@ -1,4 +1,4 @@
-// std/http/server/parse: HTTP/1.1 request heads parsed in place (internal to std/http/server).
+// velt/net/http (internal): HTTP/1.1 request heads parsed in place (internal to std/http/server).
 //
 // A connection reads into one buffer of its own (`Parser`); a request's head is ranges of that
 // buffer (`Head`), valid until the connection reads the next one, so nothing is copied or

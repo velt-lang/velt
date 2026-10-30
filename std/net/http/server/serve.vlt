@@ -1,4 +1,4 @@
-// std/http/server: an HTTP/1.1 server written in Velt on std/net (docs/std/http_server.md).
+// velt/net/http (internal): an HTTP/1.1 server written in Velt on std/net (docs/std/http_server.md).
 //
 // One task per connection. The connection reads into a buffer of its own; each request is parsed
 // in place there (http/server/parse.vlt) and handed to the handler with a response writer whose
@@ -11,12 +11,9 @@ import { IoError } from "velt/io/error";
 import { listen, listenTls, TcpListener, TcpStream, TlsListenOptions } from "velt/net";
 import { AbortController, AbortSignal } from "velt/task";
 import { delay } from "velt/time/timers";
-import { BadRequest, BODY_CHUNKED, BODY_LENGTH, Parser } from "velt/http/server/parse";
-import { HttpRequest } from "velt/http/server/request";
-import { HttpResponse, reason } from "velt/http/server/response";
-
-export { BodyTooLarge, HttpRequest } from "velt/http/server/request";
-export { EventStream, HttpResponse, HttpStream } from "velt/http/server/response";
+import { BadRequest, BODY_CHUNKED, BODY_LENGTH, Parser } from "velt/net/http/server/parse";
+import { HttpRequest } from "velt/net/http/server/request";
+import { HttpResponse, reason } from "velt/net/http/server/response";
 
 const DEFAULT_HOST = "127.0.0.1";
 /// A request head (request line and headers) larger than this is refused (431), as Node's
@@ -83,7 +80,7 @@ export class HttpServer {
  * the background: an `async` handler answers each request through `res` (`res.send(...)`). A
  * handler that throws, or returns without sending, gets a 500 or an empty 200.
  */
-export async function serve<E>(
+export async function serveHttp<E>(
   opts: HttpServeOptions,
   handler: (req: HttpRequest, res: HttpResponse) => Promise<void, E> throws E,
 ): Promise<HttpServer> {

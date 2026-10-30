@@ -8,7 +8,7 @@
 
 import { IoError } from "velt/io/error";
 import { AbortError } from "velt/task";
-import { reason } from "velt/http/server/response";
+import { reason } from "velt/net/http/server/response";
 import { BodyReader } from "velt/net/http/fetch/client/body";
 import { Chain, CHUNK, codingsOf, decodeAll, tooMany } from "velt/net/http/fetch/client/decode";
 import { Head } from "velt/net/http/fetch/client/wire";

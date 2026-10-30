@@ -1,6 +1,6 @@
 // velt/http's responses as the client sees them: status, headers and body.
 import { serve, ServeInfo } from "velt/http";
-import { HttpRequest, HttpResponse, serve as serveRaw } from "velt/http/server";
+import { HttpRequest, HttpResponse, serveHttp } from "velt/net/http";
 import { connect } from "velt/net";
 import { afterAll, beforeAll, describe, expect, it } from "velt/test";
 import "velt/test/http";
@@ -156,8 +156,8 @@ function attempt(label: string, f: () => void throws Error): string {
   }
 }
 
-describe("velt/http/server's response checks", () => {
-  // velt/http/server's response checks, as Node's: a header name must be a token and a value
+describe("velt/net/http's response checks", () => {
+  // velt/net/http's response checks, as Node's: a header name must be a token and a value
   // must not hold CR, LF or NUL (TypeError: a value from the client cannot add a header), the
   // status must be 100–999 (RangeError) and gets Node's reason phrase. Content-Length and
   // Transfer-Encoding are the server's: a handler's are not sent, except a Content-Length for
@@ -167,7 +167,7 @@ describe("velt/http/server's response checks", () => {
   // The body of /checks: one line per `attempt`.
   let checks: string[] = [];
   beforeAll(async () => {
-    const server = await serveRaw({ port: 0 }, async (req: HttpRequest, res: HttpResponse) => {
+    const server = await serveHttp({ port: 0 }, async (req: HttpRequest, res: HttpResponse) => {
       if (req.pathIs("/checks")) {
         const out = [
           attempt("CR LF in a value", () => res.header("X-A", "a\r\nX-Injected: 1")),
@@ -291,14 +291,14 @@ describe("velt/http/server's response checks", () => {
 });
 
 describe("HEAD, 204 and 304", () => {
-  // velt/http/server: a HEAD request gets the head a GET would (Content-Length included) and no
+  // velt/net/http: a HEAD request gets the head a GET would (Content-Length included) and no
   // body, for plain and streamed responses; 204 and 304 responses have no body and 204 no
   // Content-Length. The connection goes on after each (pipelined requests answered in order).
   // (Was the golden std/http_server_head.)
   let port = 0;
   let close = () => {};
   beforeAll(async () => {
-    const server = await serveRaw({ port: 0 }, async (req: HttpRequest, res: HttpResponse) => {
+    const server = await serveHttp({ port: 0 }, async (req: HttpRequest, res: HttpResponse) => {
       if (req.pathIs("/page")) {
         res.html("<p>hello</p>");
       } else if (req.pathIs("/stream")) {

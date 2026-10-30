@@ -1,4 +1,4 @@
-// std/http/server/request: `HttpRequest`, a request's head (parsed in place, http/server/parse.vlt)
+// velt/net/http (internal): `HttpRequest`, a request's head (parsed in place, http/server/parse.vlt)
 // and its body, read as the handler asks (internal to std/http/server, which exports the class).
 //
 // The handler runs once the head has arrived; the body comes through `read()` (the next piece,
@@ -19,7 +19,7 @@ import {
   BODY_NONE,
   Head,
   Parser,
-} from "velt/http/server/parse";
+} from "velt/net/http/server/parse";
 
 const CR: u8 = 13;
 const LF: u8 = 10;

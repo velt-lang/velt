@@ -1,6 +1,6 @@
-// TSX pages (velt/jsx) served by velt/http/server.
+// TSX pages (velt/jsx) served by velt/net/http.
 import { channel } from "velt/sync";
-import { HttpRequest, HttpResponse, serve } from "velt/http/server";
+import { HttpRequest, HttpResponse, serveHttp } from "velt/net/http";
 import { renderToStream, renderToString } from "velt/jsx";
 import { connect } from "velt/net";
 import { afterAll, beforeAll, describe, expect, it } from "velt/test";
@@ -25,7 +25,7 @@ describe("TSX pages", () => {
   let port = 0;
   let close = () => {};
   beforeAll(async () => {
-    const server = await serve({ port: 0 }, async (req: HttpRequest, res: HttpResponse) => {
+    const server = await serveHttp({ port: 0 }, async (req: HttpRequest, res: HttpResponse) => {
       if (req.pathIs("/page")) {
         const html = await renderToString(page(null, posts()));
         res.html(html);

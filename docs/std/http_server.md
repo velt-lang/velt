@@ -1,7 +1,7 @@
-# velt/http/server
+# velt/net/http
 
-`import { serve, HttpRequest, HttpResponse, HttpServer, HttpStream, EventStream } from
-"velt/http/server"`. An HTTP/1.1 server written in Velt on [std/net](net.md), built to be fast:
+`import { serveHttp, HttpRequest, HttpResponse, HttpServer, HttpStream, EventStream } from
+"velt/net/http"`. An HTTP/1.1 server written in Velt on [std/net](net.md), built to be fast:
 keep-alive and pipelining, each request parsed in place in its connection's read buffer (nothing
 is copied or allocated for a request unless the handler asks for a string), and every response
 to the requests one read brought written in one go. Request and response bodies can also be
@@ -20,10 +20,10 @@ in the same way.
 `HttpRequest` and writes the response through `HttpResponse`.
 
 ```ts
-import { serve, HttpRequest, HttpResponse } from "velt/http/server";
+import { serveHttp, HttpRequest, HttpResponse } from "velt/net/http";
 
 async function main() {
-  const server = await serve({ port: 0 }, async (req: HttpRequest, res: HttpResponse) => {
+  const server = await serveHttp({ port: 0 }, async (req: HttpRequest, res: HttpResponse) => {
     if (req.pathIs("/hello")) {
       res.send(`hello ${req.query()}`);
     } else if (req.pathIs("/echo") && req.isMethod("POST")) {
@@ -47,7 +47,7 @@ async function main() {
 }
 ```
 
-## `serve(opts, handler)`
+## `serveHttp(opts, handler)`
 
 `serve<E>(opts: HttpServeOptions, handler: (req: HttpRequest, res: HttpResponse) =>
 Promise<void, E> throws E): Promise<HttpServer>`. `HttpServeOptions { port: number; host?;
@@ -164,10 +164,10 @@ either (and 204 no `Content-Length` or default `Content-Type`).
 A proxy streams a body through without collecting it:
 
 ```ts
-import { serve, HttpRequest, HttpResponse } from "velt/http/server";
+import { serveHttp, HttpRequest, HttpResponse } from "velt/net/http";
 
 async function main() {
-  const server = await serve({ port: 0 }, async (req: HttpRequest, res: HttpResponse) => {
+  const server = await serveHttp({ port: 0 }, async (req: HttpRequest, res: HttpResponse) => {
     const upstream = await fetch(`https://example.com${req.target()}`, { signal: res.signal() });
     const out = await res.stream(upstream.headers.get("content-type") ?? "application/octet-stream");
     for await (const chunk of upstream.body!) {

@@ -22,7 +22,8 @@
 import { IoError } from "velt/io/error";
 import { IoResult, ioError } from "velt/native/result";
 import { isUpgradeRequest, upgradeConnection } from "velt/http";
-import { HttpRequest, HttpResponse } from "velt/http/server";
+import { HttpRequest } from "velt/net/http/server/request";
+import { HttpResponse } from "velt/net/http/server/response";
 import { Request } from "velt/net/http/fetch/request";
 import { Response } from "velt/net/http/fetch/response";
 import { TcpStream } from "velt/net";
@@ -345,7 +346,7 @@ export function upgradeWebSocket(req: Request): WebSocketUpgrade {
 }
 
 /**
- * Accepts a WebSocket upgrade request on a `velt/http/server` server: answers `101 Switching
+ * Accepts a WebSocket upgrade request on a `velt/net/http` server: answers `101 Switching
  * Protocols` with the handshake's accept key and returns the socket (the connection is the
  * socket's from then on). A request that is not a valid handshake (RFC 6455 §4.2.1: `GET`,
  * HTTP/1.1, `Upgrade: websocket`, `Connection: upgrade`, `Sec-WebSocket-Version: 13`, a key of 16

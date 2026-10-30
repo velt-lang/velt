@@ -1,5 +1,5 @@
 // The database side of the TechEmpower routes (bench/web/README.md), shared by the Velt servers:
-// velt/app.ts (std/http) and velt-native/server.vlt (velt/http/server). /db, /queries?queries=N,
+// velt/app.ts (std/http) and velt-native/server.vlt (velt/net/http). /db, /queries?queries=N,
 // /fortunes and /updates?queries=N on std/postgres.
 
 import { escapeHtml } from "velt/text";

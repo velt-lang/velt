@@ -1,8 +1,8 @@
 // velt/http request handlers: one that throws, sync handlers, what a handler captures and how
 // each request gets its own copy, module state shared by every request, and the handlers of
-// velt/http/server.
+// velt/net/http.
 import { serve, Server, ServeInfo } from "velt/http";
-import { HttpRequest, HttpResponse, serve as serveRaw } from "velt/http/server";
+import { HttpRequest, HttpResponse, serveHttp } from "velt/net/http";
 import { IoError } from "velt/io";
 import { connect } from "velt/net";
 import { AbortError } from "velt/task";
@@ -454,7 +454,7 @@ function statusLines(t: string): string {
   return (t.match(/HTTP\/1\.1 \d\d\d [A-Za-z ]+/g) ?? []).join(" | ");
 }
 
-describe("velt/http/server", () => {
+describe("velt/net/http", () => {
   // Requests parsed in place, responses written per batch. Routes, the method, path, query,
   // headers and body of a request, response headers and types, pipelined requests answered in
   // order, a request that arrives in pieces, HTTP/1.0 and Connection: close, and input that is
@@ -464,7 +464,7 @@ describe("velt/http/server", () => {
   let base = "";
   let close = () => {};
   beforeAll(async () => {
-    const server = await serveRaw({ port: 0, maxBodySize: 64 }, async (
+    const server = await serveHttp({ port: 0, maxBodySize: 64 }, async (
       req: HttpRequest,
       res: HttpResponse,
     ) => {

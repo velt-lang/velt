@@ -11,7 +11,7 @@ upgrade, or opened as a client to `ws://` / `wss://` URLs. The protocol is writt
   return `response` (a `101`) from the handler and use `socket` from a spawned task. Throws
   `IoError` "EINVAL" if `req` is not an upgrade request.
 - `acceptWebSocket(req: HttpRequest, res: HttpResponse): WebSocket | null`: the same on a
-  [velt/http/server](http_server.md) server: answers the `101` itself and returns the socket
+  [velt/net/http](http_server.md) server: answers the `101` itself and returns the socket
   (with the frames the client sent along with the request). A request that is not a valid
   handshake (RFC 6455 §4.2.1: `GET`, HTTP/1.1, `Upgrade: websocket`, `Connection: upgrade`,
   `Sec-WebSocket-Version: 13`, a `Sec-WebSocket-Key` of 16 base64-encoded bytes) is answered

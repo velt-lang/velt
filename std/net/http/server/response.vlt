@@ -1,4 +1,4 @@
-// std/http/server/response: `HttpResponse`, `HttpStream` and `EventStream` (internal to
+// velt/net/http (internal): `HttpResponse`, `HttpStream` and `EventStream` (internal to
 // std/http/server, which exports them).
 //
 // A response written at once (`send` and the like) goes into one buffer per connection, so the
@@ -13,7 +13,7 @@
 
 import { utf8Encode } from "velt/encoding";
 import { BodyStream } from "velt/net/http/fetch/body";
-import { Head, isTchar } from "velt/http/server/parse";
+import { Head, isTchar } from "velt/net/http/server/parse";
 import { TcpStream } from "velt/net";
 import { AbortController, AbortSignal } from "velt/task";
 import { Uint8Array } from "velt/lang/typed_array/uint8_array";

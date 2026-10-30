@@ -1,10 +1,10 @@
 // check: no leaks
-// velt/http/server: a handler that throws gets a 500, and its error is printed to stderr. (The
-// rest of what velt/http/server does is tested in tests/std/http/handlers.test.vlt.)
-import { HttpRequest, HttpResponse, serve } from "velt/http/server";
+// velt/net/http: a handler that throws gets a 500, and its error is printed to stderr. (The
+// rest of what velt/net/http does is tested in tests/std/http/handlers.test.vlt.)
+import { HttpRequest, HttpResponse, serveHttp } from "velt/net/http";
 
 async function main() {
-  const server = await serve({ port: 0 }, async (req: HttpRequest, res: HttpResponse) => {
+  const server = await serveHttp({ port: 0 }, async (req: HttpRequest, res: HttpResponse) => {
     if (req.pathIs("/fail")) {
       throw new Error("handler failed");
     }

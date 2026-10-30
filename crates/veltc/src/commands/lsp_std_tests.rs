@@ -27,7 +27,7 @@ fn std_files_are_checked_as_std() {
     );
     conn.sender.send(init.into()).unwrap();
     notify(&conn, "initialized", json!({}));
-    for rel in ["http/server.vlt", "http/stream.vlt", "prelude/date.vlt"] {
+    for rel in ["net/http/server/serve.vlt", "net/http/server/response.vlt", "prelude/date.vlt"] {
         let path = std.join(rel);
         let uri = lsp_types::Url::from_file_path(path.canonicalize().unwrap()).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
