@@ -147,6 +147,30 @@ describe("HTTP/2 limits", () => {
     c.close();
   });
 
+  it("closes without resetting a client that is still sending when it stops", async () => {
+    // A socket closed with input unread is reset (RST), and the client then loses what it had
+    // not read yet: here the GOAWAY and the response. The connection lingers instead: it
+    // shuts its sending side and reads (and drops) what still comes, for a bounded time.
+    const server = await startServer(async (req: HttpRequest, res: HttpResponse) => {
+      await delay(100);
+      res.send("finished");
+    });
+    const c = await Client.open(server.port);
+    c.get(1, "/");
+    await c.flush();
+    await delay(20);
+    server.close();
+    // PINGs while the stream finishes and the connection closes; nothing is read meanwhile.
+    for (let i = 0; i < 60; i++) {
+      c.frame(6, 0, 0, [0, 0, 0, 0, 0, 0, 0, i as u8]);
+      await c.flush();
+      await delay(5);
+    }
+    const out = await timeout(c.until((f) => false), 5000);
+    expect(out).toBe("GOAWAY 1 NO_ERROR\nHEADERS 1 :status=200\nDATA 1 es 8:finished\nEOF");
+    c.close();
+  });
+
   it("ignores a request the client sent after the GOAWAY, and its body", async () => {
     const server = await startServer(async (req: HttpRequest, res: HttpResponse) => {
       await delay(100);

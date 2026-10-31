@@ -110,9 +110,6 @@ export class H2Connection {
   goingAway: bool = false;
   /// The connection is finished: nothing more is read.
   done: bool = false;
-  /// It ended with a connection error: what the peer still sends is read for a while, so the
-  /// GOAWAY reaches it before the socket closes.
-  failed: bool = false;
   /// Frames are being processed for a read: output is flushed after them.
   inBatch: bool = false;
   // The `Date` value of this second.
@@ -249,9 +246,11 @@ export class H2Connection {
     try {
       this.flush();
       this.conn.shutdown();
-      if (this.failed) {
-        await linger(this.conn, this.rbuf);
-      }
+      // A lingering close (after a GOAWAY, graceful or for an error; at once if the client
+      // closed first): what the client still sends is read and dropped, within bounds, so the
+      // socket does not close with unread input, which resets the connection (RST) and can
+      // take the GOAWAY and the last responses, still unread on the client's side, with it.
+      await linger(this.conn, this.rbuf);
     } catch (e) {
       // Already gone.
     }
@@ -292,7 +291,6 @@ export class H2Connection {
   fail(code: i64, debug: string) {
     this.goaway(code, debug);
     this.done = true;
-    this.failed = true;
   }
 
   /// One unit of abuse allowance spent (see `budget`).

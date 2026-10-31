@@ -254,10 +254,14 @@ write. What differs from HTTP/1.1, for a handler:
 Limits: a request head larger than `maxHeadSize` gets 431, a malformed request (an uppercase
 header name, a connection-specific header, a missing `:path`, a `:method` that is not a token,
 a `:path` with spaces or control bytes, an `:authority` with userinfo or characters a host and
-port do not have, a `content-length` that does not match the body) is reset without reaching the handler, and a connection that resets or opens
-streams it may not, sends empty DATA frames, or floods CONTINUATION frames is closed with
-`ENHANCE_YOUR_CALM` (rapid reset, CVE-2023-44487, and its relatives). `close()` sends GOAWAY:
-streams in flight finish, then each connection closes. The design and its benchmarks are in
+port do not have, a `content-length` that does not match the body) is reset without reaching
+the handler, and a connection that resets or opens streams it may not, sends empty DATA frames,
+or floods CONTINUATION frames is closed with `ENHANCE_YOUR_CALM` (rapid reset, CVE-2023-44487,
+and its relatives). `close()` sends GOAWAY: streams in flight finish, then each connection
+closes. Every connection closes lingering: it stops sending, then reads and drops what the
+client still sends (up to 1 MiB, for at most 2 s, or until the client closes), so a client
+still sending is not reset before it has read the GOAWAY and its last responses. The design and
+its benchmarks are in
 [docs/internals/design/http2.md](../../../docs/internals/design/http2.md).
 
 ## Writing fast handlers

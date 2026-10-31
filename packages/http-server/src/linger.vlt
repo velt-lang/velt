@@ -1,5 +1,7 @@
 // http-server (internal): the lingering close after an error response to input the server did
-// not read (a head or body too large, an HTTP/2 connection error), as nginx's and Kestrel's.
+// not read (a head or body too large) and at the end of every HTTP/2 connection (a GOAWAY, for
+// an error or a graceful stop, with the client's frames still arriving), as nginx's and
+// Kestrel's.
 
 import { TcpStream } from "velt/net";
 
