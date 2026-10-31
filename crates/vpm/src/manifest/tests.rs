@@ -291,6 +291,34 @@ fn windows_device_names_are_not_package_names() {
     }
 }
 
+/// `velt/…` (and `std/…`) are the standard library's modules: no package or dependency may be
+/// named `velt` or `std`.
+#[test]
+fn the_standard_library_names_are_reserved() {
+    for name in ["velt", "std"] {
+        let text =
+            format!("export const pkg: Package = {{ name: \"{name}\", version: \"1.0.0\" }};");
+        let err = Manifest::parse(&text).unwrap_err();
+        assert!(
+            err.contains(&format!("`{name}` is reserved for the standard library")),
+            "{err}"
+        );
+        assert!(!is_valid_package_name(name));
+        let dep = format!(
+            "export const pkg: Package = {{ name: \"a\", version: \"1.0.0\", dependencies: {{ {name}: \"1\" }} }};"
+        );
+        let err = Manifest::parse(&dep).unwrap_err();
+        assert!(
+            err.contains(&format!("`{name}` is reserved for the standard library")),
+            "{err}"
+        );
+    }
+    // Only the names themselves.
+    for name in ["velt-utils", "my-velt", "veltx"] {
+        assert!(is_valid_package_name(name), "{name}");
+    }
+}
+
 #[test]
 fn names_whose_native_prefix_is_velts_own_are_reserved() {
     for name in NATIVE_PREFIX_NAMES {

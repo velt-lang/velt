@@ -43,8 +43,8 @@ file and reports these errors without building anything.
 
 - `name`: lowercase letters and digits, starting with a letter, with single `-` or `_` between
   words (`text-kit`, `text_kit`; not `text--kit`, `text_-kit` or `textkit-`). Names that differ
-  only in `-` versus `_` count as the same in a registry. `std` is reserved for the standard
-  library, and names whose first word is `rt`, `sig` or `native` (`rt`, `rt-str`) because a
+  only in `-` versus `_` count as the same in a registry. `velt` and `std` are reserved for the
+  standard library (its modules are `velt/…`), and names whose first word is `rt`, `sig` or `native` (`rt`, `rt-str`) because a
   package's native functions are named `velt_<name>__…` and those prefixes are Velt's own
   (`velt_rt_…` is the runtime).
 - A name can also be scoped, as on npm: `@scope/name`, each part lowercase words as above
