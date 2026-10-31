@@ -1,0 +1,11 @@
+// Writing a standard library class's private field through `any` is writing a property the
+// object does not have: an `ArrayBuffer` keeps its bytes, and its views their length.
+function main() {
+  const ab = new ArrayBuffer(1 << 20);
+  const u = new Uint8Array(ab);
+  const f = new Float64Array(ab);
+  console.log(ab.byteLength, u.length, f.length);
+  const a: any = ab;
+  a.bytes = [1, 2, 3];
+  console.log(ab.byteLength, u.length, f.length);
+}

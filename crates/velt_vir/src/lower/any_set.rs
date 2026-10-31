@@ -227,12 +227,25 @@ impl FnLower<'_, '_> {
 
     /// The names of struct `d`'s fields as members through `any`, in order: a field holding an
     /// accessor (`accessor_fields`) is named `#` first, as a private field is, so it is no member
-    /// of its own and the accessor is found instead.
+    /// of its own and the accessor is found instead. So is a private field that a standard
+    /// library class declares (as `in` leaves it out, any_has.rs): it is the implementation, not
+    /// a property of the JavaScript built-in, and a program that read or replaced it through
+    /// `any` could break what the class relies on (an `ArrayBuffer`'s `bytes` and `fixed`, whose
+    /// views read their elements without a check of their own). Such a read gives `undefined`
+    /// and such a write is one of a property the object does not have.
     pub(super) fn member_fields(&mut self, d: velt_sema::hir::DefId) -> Vec<String> {
         let shadowed = self.accessor_fields(d);
-        let fields = self.cx.adt_def(d).fields.iter().map(|f| f.name.clone());
+        let std_prefix = match self.std_class(d) {
+            true => self.cx.adt_def(d).fields.len(),
+            false => self.std_base_fields(d),
+        };
+        let fields = self.cx.adt_def(d).fields.iter().enumerate();
+        let fields: Vec<(String, bool)> = fields
+            .map(|(i, f)| (f.name.clone(), f.private && i < std_prefix))
+            .collect();
         fields
-            .map(|n| match shadowed.contains(&n) {
+            .into_iter()
+            .map(|(n, internal)| match internal || shadowed.contains(&n) {
                 true => format!("#{n}"),
                 false => n,
             })

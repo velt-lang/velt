@@ -298,10 +298,7 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
                     t.time("simplify_cfg", || simplify_cfg::run(func));
                 }
             }
-            let exits = null_exits::NullExits::find(program);
-            for func in with_bodies(&mut program.funcs) {
-                t.time("null_exits", || null_exits::run(&exits, func));
-            }
+            t.time("null_exits", || null_exits::run(program));
         }
     }
     t.time("dead_funcs", || dead_funcs::run(program));
