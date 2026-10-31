@@ -23,9 +23,11 @@ pub(crate) type Instance = (DefId, Vec<TyId>, Span);
 /// interface methods' type arguments. A checked body does not change, so a later computation
 /// (after generated code is added, `super::phase`) walks only the definitions made since.
 ///
-/// The uses are walked without the types bodies mention as long as no method needs instances:
-/// those types only say which methods a body may dispatch to (`Dispatch`), and the calls of a
-/// method that needs none add nothing. When one does, everything is walked again with them.
+/// The uses are walked without the types bodies mention as long as no method that a dynamic
+/// call may run (a vtable entry, an interface implementation's or default method) needs
+/// instances: those types only say which methods a body may dispatch to (`Dispatch`), and the
+/// calls of a method that needs none add nothing. When one does, everything is walked again
+/// with them.
 #[derive(Default)]
 pub(crate) struct Walked {
     full: bool,
@@ -56,11 +58,15 @@ pub(crate) fn compute(cx: &mut Ctx) -> Vec<Instance> {
 }
 
 fn compute_with(cx: &mut Ctx, walked: &mut Walked) -> Vec<Instance> {
-    let generated: FxHashSet<DefId> = (0..cx.info.len() as u32)
-        .map(DefId)
-        .filter(|d| cx.generator_of(*d).is_some())
-        .collect();
-    if generated.is_empty() || (walked.uses.is_empty() && !names_any(cx, &generated)) {
+    let generated: FxHashSet<DefId> = crate::timings::pass("demand::generated", || {
+        (0..cx.info.len() as u32)
+            .map(DefId)
+            .filter(|d| cx.generator_of(*d).is_some())
+            .collect()
+    });
+    let unnamed =
+        |cx: &mut Ctx| crate::timings::pass("demand::names_any", || !names_any(cx, &generated));
+    if generated.is_empty() || (walked.uses.is_empty() && unnamed(cx)) {
         return vec![];
     }
     loop {
@@ -74,7 +80,9 @@ fn compute_with(cx: &mut Ctx, walked: &mut Walked) -> Vec<Instance> {
                 }
             }
         }
-        let mut new = crate::inst_sites::collect_from(cx, false, from, full);
+        let mut new = crate::timings::pass("demand::collect", || {
+            crate::inst_sites::collect_from(cx, false, from, full)
+        });
         let mut dispatch = Dispatch::default();
         for (_, u) in &mut new {
             for (t, span) in &u.types {
@@ -85,8 +93,9 @@ fn compute_with(cx: &mut Ctx, walked: &mut Walked) -> Vec<Instance> {
         }
         walked.uses.extend(new);
         let mut sites = FxHashMap::default();
-        let (found, method_needs) =
-            propagate(cx, &walked.uses, &walked.margs, &generated, &mut sites);
+        let (found, method_needs) = crate::timings::pass("demand::propagate", || {
+            propagate(cx, &walked.uses, &walked.margs, &generated, &mut sites)
+        });
         walked.sites = sites;
         if full || !method_needs {
             return found;
@@ -242,16 +251,37 @@ fn propagate(
             rounds.changed(*f);
         }
     }
-    // Only an instance method or an interface's default one is dispatched to (a need may
-    // also be a class's, from a field initializer).
-    let method_needs = (needs.keys()).any(|d| {
+    // Only a method some class's vtable or some interface implementation holds is dispatched
+    // to, or an interface's default one (a need may also be a class's, from a field
+    // initializer, or a method only ever called directly, as `expect(x).toEqual` and `Map`'s
+    // comparison are): only then can the types bodies mention add instances.
+    let method_needs = {
         use crate::defs::{DefInfo, FnKind};
-        matches!(
-            cx.info.get(d.0 as usize),
-            Some(DefInfo::Fn(f)) if matches!(f.kind, FnKind::Method | FnKind::IfaceDefault)
-        )
-    });
+        let mut targets: Option<FxHashSet<DefId>> = None;
+        (needs.keys()).any(|d| match cx.info.get(d.0 as usize) {
+            Some(DefInfo::Fn(f)) if f.kind == FnKind::IfaceDefault => true,
+            Some(DefInfo::Fn(f)) if f.kind == FnKind::Method => targets
+                .get_or_insert_with(|| dispatch_targets(cx))
+                .contains(d),
+            _ => false,
+        })
+    };
     (found, method_needs)
+}
+
+/// Every method a dynamic call may run: the vtable entries of the classes and the methods of
+/// the interface implementations (what `Dispatch::targets` draws from).
+fn dispatch_targets(cx: &Ctx) -> FxHashSet<DefId> {
+    let mut out: FxHashSet<DefId> = FxHashSet::default();
+    for info in &cx.info {
+        if let crate::defs::DefInfo::Adt(a) = info {
+            out.extend(a.vtable.iter().copied());
+        }
+    }
+    for imp in &cx.impls {
+        out.extend(imp.methods.iter().copied());
+    }
+    out
 }
 
 /// The concrete type arguments of the generic interface methods the program calls through an

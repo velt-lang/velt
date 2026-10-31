@@ -706,8 +706,9 @@ goldens:
   generated in the same run and checked in the same round.
 - The demand (`generated::demand`) walks each body once per check (`Walked`: a later
   computation, after generated code is added, walks only the new definitions), without the
-  types bodies mention unless an instance or interface method needs instances (only then do
-  they matter, through `Dispatch`), and the end of the check reuses the phase's result while no
+  types bodies mention unless a method a dynamic call may run (a vtable entry, an interface
+  implementation's or default method) needs instances (only then do they matter, through
+  `Dispatch`; `expect(x).toEqual` and `Map`'s comparison are only called directly), and the end of the check reuses the phase's result while no
   definition was added since. Generated modules do not make the std modules their declaring
   module imports checked whole (`lazy_std::plan`), and lazy std's reach scans each
   definition's defaults once. The demand walks nothing when no checked code calls or names a

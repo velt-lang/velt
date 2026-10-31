@@ -135,3 +135,57 @@ fn fingerprints_cover_the_types_a_request_reaches() {
     // Nor is another signature the same request.
     assert_ne!(fp, d.model.fingerprint(&user, "describe(): number"));
 }
+
+/// A method that needs instances and is called dynamically (an override through its base
+/// class, an interface method through the interface) reaches them through the class types the
+/// program mentions; a method only ever called directly needs no such walk.
+#[test]
+fn demand_reaches_instances_through_dynamic_dispatch() {
+    let d = demand(
+        r#"
+declare generated("./gen") function describe<T>(): string;
+
+class Base<T> {
+  show(): string {
+    return "base";
+  }
+}
+
+class Shown<T> extends Base<T> {
+  override show(): string {
+    return describe<T>();
+  }
+}
+
+interface Named {
+  name(): string;
+}
+
+class Tag<T> implements Named {
+  name(): string {
+    return describe<T[]>();
+  }
+}
+
+class Direct<T> {
+  text(): string {
+    return describe<[T, T]>();
+  }
+}
+
+function main() {
+  const b: Base<i32> = new Shown<i32>();
+  console.log(b.show());
+  const n: Named = new Tag<bool>();
+  console.log(n.name());
+  console.log(new Direct<string>().text());
+}
+"#,
+    );
+    let mut shown: Vec<String> = (d.requests.iter())
+        .filter(|r| d.functions[r.function].generator == "./gen")
+        .map(|r| d.model.types[r.type_args[0] as usize].display.clone())
+        .collect();
+    shown.sort();
+    assert_eq!(shown, ["[string, string]", "boolean[]", "i32"]);
+}
