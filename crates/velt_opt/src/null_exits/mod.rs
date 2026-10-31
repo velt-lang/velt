@@ -51,9 +51,11 @@ fn null_exit(f: &Function) -> Option<usize> {
     if !c.proj.is_empty() {
         return None;
     }
-    // The test: `t = *param`, `c = ne t, 0` (or `eq`), and the rest constants into other locals.
+    // The test: `t = *param`, then `c = ne t, 0` (or `eq`), and the rest constants into other
+    // locals (not a parameter, `t` or `c`, which would change what is read or tested).
     let mut read = None;
     let mut test = None;
+    let mut consts = vec![];
     for s in &entry.stmts {
         let Stmt::Assign(pl, rv) = s else {
             return None;
@@ -62,7 +64,7 @@ fn null_exit(f: &Function) -> Option<usize> {
             return None;
         }
         match rv {
-            Rvalue::Use(Operand::Const(..)) => {}
+            Rvalue::Use(Operand::Const(..)) => consts.push(pl.local),
             Rvalue::Use(Operand::Copy(src))
                 if read.is_none()
                     && src.proj == [Proj::Deref(Ty::Ptr)]
@@ -71,7 +73,10 @@ fn null_exit(f: &Function) -> Option<usize> {
             {
                 read = Some((pl.local, src.local.0 as usize));
             }
-            Rvalue::Binary(op @ (BinOp::Ne | BinOp::Eq), a, b) if test.is_none() => {
+            // The comparison comes after the read: it tests the value read.
+            Rvalue::Binary(op @ (BinOp::Ne | BinOp::Eq), a, b)
+                if test.is_none() && read.is_some() =>
+            {
                 let null = |o: &Operand| matches!(o, Operand::Const(Const::Int(0), Ty::Ptr));
                 let t = match (a, b) {
                     (Operand::Copy(x), y) | (y, Operand::Copy(x))
@@ -88,6 +93,10 @@ fn null_exit(f: &Function) -> Option<usize> {
     }
     let ((t, k), (cl, tested, op)) = (read?, test?);
     if tested != t || cl != c.local {
+        return None;
+    }
+    let overwrites = |l: velt_vir::vir::Local| (l.0 as usize) < f.params.len() || l == t || l == cl;
+    if consts.into_iter().any(overwrites) {
         return None;
     }
     // Every other statement assigns a constant; none may overwrite the test's locals after it.

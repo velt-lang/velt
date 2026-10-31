@@ -59,13 +59,13 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
    typed array's buffer and its bytes' length, is made once in front of the outermost such
    loop, each pointer tested for null first: LLVM cannot move such a chain out of an outer loop
    when the inner loop may run no iteration, and then keeps the inner loop's bounds check);
-   `dead_funcs` again at the end, and `cold_calls`
-   last: a function's calls of one callee that never returns (a bounds check's report) become
-   one call, reached from every site. The panic text keeps each site's location (an argument),
-   but the merged call instruction carries the first site's debug location, so a debugger or a
-   backtrace shows that line for every merged check; then `null_exits`: a call of a function
-   that returns at once when a pointer it is passed points at null (every drop glue) tests
-   that pointer first, so dropping a null field costs no call. Five change how objects and numbers are
+   `cold_calls` (a function's calls of one callee that never returns, a bounds check's report,
+   become one call, reached from every site; the panic text keeps each site's location, an
+   argument, but the merged call instruction carries the first site's debug location, so a
+   debugger or a backtrace shows that line for every merged check); `null_exits` (a call of a
+   function that returns at once when a pointer it is passed points at null, as every drop
+   glue does, tests that pointer first, so dropping a null field costs no call); and
+   `dead_funcs` again at the end. Five change how objects and numbers are
    represented or reached:
    - `heap_sroa` keeps a class instance that never escapes its function (after inlining) in
      locals instead of on the heap: no allocation, zero fill or free. Each name of the object
