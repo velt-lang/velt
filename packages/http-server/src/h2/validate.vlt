@@ -71,6 +71,64 @@ function connectionSpecific(f: FieldList, i: i64): bool {
     (n == 17 && f.nameIs(i, "transfer-encoding"));
 }
 
+/// Whether byte `c` is a letter or a digit.
+function alnum(c: u8): bool {
+  return (c >= 0x30 && c <= 0x39) || (c >= 0x41 && c <= 0x5a) || (c >= 0x61 && c <= 0x7a);
+}
+
+/// Whether byte `c` may be in a token (`tchar`, RFC 9110 §5.6.2), as a method is.
+function tokenByte(c: u8): bool {
+  return alnum(c) ||
+    c == 0x21 ||
+    (c >= 0x23 && c <= 0x27) ||
+    c == 0x2a ||
+    c == 0x2b ||
+    c == 0x2d ||
+    c == 0x2e ||
+    (c >= 0x5e && c <= 0x60) ||
+    c == 0x7c ||
+    c == 0x7e;
+}
+
+/// Whether byte `c` may be in `:authority`: a host (a name, or an IP literal in brackets) and a
+/// port, as RFC 3986 §3.2 has them (unreserved, `%`, sub-delims, `:`, `[`, `]`), without the
+/// userinfo RFC 9113 §8.3.1 forbids (no `@`).
+function authorityByte(c: u8): bool {
+  return alnum(c) ||
+    c == 0x2d ||
+    c == 0x2e ||
+    c == 0x5f ||
+    c == 0x7e ||
+    c == 0x25 ||
+    c == 0x21 ||
+    c == 0x24 ||
+    (c >= 0x26 && c <= 0x2c) ||
+    c == 0x3b ||
+    c == 0x3d ||
+    c == 0x3a ||
+    c == 0x5b ||
+    c == 0x5d;
+}
+
+/// Whether field `i`'s value is not empty and every byte of it passes `kind`'s check: 0 a
+/// token (`:method`), 1 a path (no control bytes, space or DEL: RFC 3986 has none), 2 an
+/// authority.
+function valueOf(f: FieldList, i: i64, kind: i64): bool {
+  const start = f.heads[i * 4 + 2];
+  const end = f.heads[i * 4 + 3];
+  if (start == end) {
+    return false;
+  }
+  for (let k = start; k < end; k++) {
+    const c = f.buf[k];
+    const ok = kind == 0 ? tokenByte(c) : kind == 1 ? c > 0x20 && c != 0x7f : authorityByte(c);
+    if (!ok) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /// A decimal `content-length` value, or -2 when it is not one.
 function lengthOf(f: FieldList, i: i64): i64 {
   const start = f.heads[i * 4 + 2];
@@ -92,7 +150,8 @@ function lengthOf(f: FieldList, i: i64): i64 {
 /**
  * Checks a request head (RFC 9113 §8.3.1): pseudo-headers first, each known one once, the ones
  * a request needs present (`:method`, `:scheme` and a non-empty `:path`; a CONNECT only
- * `:method` and `:authority`), names lowercase, values without CR, LF or NUL, no
+ * `:method` and `:authority`), `:method` a token, `:path` without spaces or control bytes,
+ * `:authority` a host and port, names lowercase, values without CR, LF or NUL, no
  * connection-specific fields, at most one `content-length` value. `out` gets the positions.
  */
 export function checkRequest(f: FieldList, out: RequestFields): bool {
@@ -145,7 +204,10 @@ export function checkRequest(f: FieldList, out: RequestFields): bool {
       out.contentLength = n;
     }
   }
-  if (out.method < 0) {
+  if (out.method < 0 || !valueOf(f, out.method, 0)) {
+    return false;
+  }
+  if (out.authority >= 0 && !valueOf(f, out.authority, 2)) {
     return false;
   }
   const connect = f.value(out.method) == "CONNECT";
@@ -157,14 +219,11 @@ export function checkRequest(f: FieldList, out: RequestFields): bool {
   if (out.protocol >= 0 && (!connect || out.authority < 0)) {
     return false;
   }
-  if (out.scheme < 0 || out.path < 0) {
+  if (out.scheme < 0 || out.path < 0 || !valueOf(f, out.path, 1)) {
     return false;
   }
   const pathStart = f.heads[out.path * 4 + 2];
   const pathEnd = f.heads[out.path * 4 + 3];
-  if (pathStart == pathEnd) {
-    return false;
-  }
   // An origin-form path, or `*` (OPTIONS).
   const c = f.buf[pathStart];
   return c == 0x2f || (c == 0x2a && pathEnd - pathStart == 1);

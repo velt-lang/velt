@@ -117,6 +117,39 @@ describe("HTTP/2 connection rules", () => {
     c.close();
   });
 
+  it("resets requests whose method, path or authority a proxy could pass on wrongly", async () => {
+    // RFC 9113 §8.3.1: `:method` a token, `:path` without spaces or control bytes, and
+    // `:authority` without userinfo.
+    const c = await Client.open(port);
+    const bad: string[][] = [
+      ["G T", "/", "x"],
+      ["GET\t", "/", "x"],
+      ["GET", "/a b", "x"],
+      ["GET", "/a\u007fb", "x"],
+      ["GET", "/a\tb", "x"],
+      ["GET", "/", "user@x"],
+      ["GET", "/", "x/y"],
+      ["GET", "/", "x y"],
+      ["GET", "/", ""],
+    ];
+    let id: i64 = 1;
+    for (const b of bad) {
+      c.headers(id, [":method", b[0], ":scheme", "http", ":path", b[1], ":authority", b[2]], true);
+      id += 2;
+    }
+    // Still served: a method of tchars, a path with `%`, `?`, `'`, an IPv6 authority and port.
+    const good = [":method", "M-1!", ":scheme", "http", ":path", "/a%20b?c='d'&e"];
+    c.headers(id, good.concat([":authority", "[::1]:8080"]), true);
+    await c.flush();
+    const want: string[] = [];
+    for (let k: i64 = 1; k < id; k += 2) {
+      want.push(`RST ${k} PROTOCOL_ERROR`);
+    }
+    want.push(`HEADERS ${id} :status=200`, `DATA ${id} es 2:ok`);
+    expect(await c.until(endOf(id))).toBe(want.join("\n"));
+    c.close();
+  });
+
   it("answers a head larger than SETTINGS_MAX_HEADER_LIST_SIZE with 431", async () => {
     const c = await Client.open(port);
     c.get(1, "/", ["x-big", "v".repeat(20000)]);

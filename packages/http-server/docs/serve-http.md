@@ -252,8 +252,9 @@ write. What differs from HTTP/1.1, for a handler:
   Server push is not offered.
 
 Limits: a request head larger than `maxHeadSize` gets 431, a malformed request (an uppercase
-header name, a connection-specific header, a missing `:path`, a `content-length` that does not
-match the body) is reset without reaching the handler, and a connection that resets or opens
+header name, a connection-specific header, a missing `:path`, a `:method` that is not a token,
+a `:path` with spaces or control bytes, an `:authority` with userinfo or characters a host and
+port do not have, a `content-length` that does not match the body) is reset without reaching the handler, and a connection that resets or opens
 streams it may not, sends empty DATA frames, or floods CONTINUATION frames is closed with
 `ENHANCE_YOUR_CALM` (rapid reset, CVE-2023-44487, and its relatives). `close()` sends GOAWAY:
 streams in flight finish, then each connection closes. The design and its benchmarks are in
