@@ -17,6 +17,9 @@ pub enum Moved {
     Package(&'static str, &'static str),
     /// The hyper HTTP server: the `http-server` package serves, `velt/net/http` has `fetch`.
     HttpServer,
+    /// Internal to std now (the compiler's helpers, parts of the language), with what a program
+    /// uses instead.
+    Internal(&'static str),
 }
 
 /// Old module (as written after `velt:`, or after `velt/` once) → where it went.
@@ -26,6 +29,7 @@ const MOVED: &[(&str, Moved)] = &[
     ("channel", Moved::Module("velt/sync")),
     ("child_process", Moved::Module("velt/process/child")),
     ("cli", Moved::Module("velt/cli")),
+    ("collections", Moved::Module("velt/collections")),
     ("collections/btree_map", Moved::Module("velt/collections")),
     (
         "collections/concurrent_map",
@@ -38,6 +42,7 @@ const MOVED: &[(&str, Moved)] = &[
     ),
     ("collections/set", Moved::Module("velt/collections")),
     ("collections/sorted_map", Moved::Module("velt/collections")),
+    ("compress", Moved::Module("velt/compress")),
     ("compress/brotli", Moved::Module("velt/compress")),
     ("compress/inflate", Moved::Module("velt/compress")),
     ("crypto", Moved::Module("velt/crypto")),
@@ -54,6 +59,10 @@ const MOVED: &[(&str, Moved)] = &[
     ("hash", Moved::Module("velt/hash")),
     ("html", Moved::Module("velt/text")),
     ("http", Moved::HttpServer),
+    (
+        "import_meta",
+        Moved::Internal("`import.meta` needs no import"),
+    ),
     ("io", Moved::Module("velt/io")),
     ("json", Moved::Module("velt/encoding/json")),
     ("jsx", Moved::Module("velt/jsx")),
@@ -61,6 +70,14 @@ const MOVED: &[(&str, Moved)] = &[
     ("math", Moved::Module("velt/math")),
     ("mem", Moved::Module("velt/mem")),
     ("net", Moved::Module("velt/net")),
+    (
+        "net_bytes",
+        Moved::Internal("`velt/net`'s sockets write bytes"),
+    ),
+    (
+        "number",
+        Moved::Internal("`Number(s)` and `parseFloat` parse numbers"),
+    ),
     ("os", Moved::Module("velt/os")),
     ("package", Moved::Module("velt/package")),
     ("path", Moved::Module("velt/path")),
@@ -71,9 +88,11 @@ const MOVED: &[(&str, Moved)] = &[
     ("process", Moved::Module("velt/process")),
     ("proxy", Moved::Globals),
     ("random", Moved::Module("velt/random")),
+    ("record", Moved::Internal("`Record` is a global")),
     ("redis", Moved::Package("redis", "the Redis client")),
     ("regex", Moved::Module("velt/text")),
     ("simd", Moved::Module("velt/simd")),
+    ("sort", Moved::Internal("an array's `sort` is stable")),
     ("sqlite", Moved::Package("sqlite", "SQLite")),
     ("stdin", Moved::Module("velt/process")),
     ("streams", Moved::Module("velt/io")),
@@ -83,6 +102,10 @@ const MOVED: &[(&str, Moved)] = &[
     ("sync/epoch", Moved::Module("velt/sync/epoch")),
     ("task", Moved::Module("velt/task")),
     ("test", Moved::Module("velt/test")),
+    (
+        "this_fn",
+        Moved::Internal("it held the compiler's helpers for `this` in functions"),
+    ),
     ("timers", Moved::Module("velt/time")),
     ("typed_array", Moved::Globals),
     ("udp", Moved::Module("velt/net/udp")),
@@ -91,9 +114,19 @@ const MOVED: &[(&str, Moved)] = &[
     ("websocket", Moved::Module("velt/net/websocket")),
 ];
 
-/// Where old module `old` went.
-pub fn moved(old: &str) -> Option<Moved> {
-    MOVED.iter().find(|(o, _)| *o == old).map(|(_, m)| *m)
+/// Where old module `old` went, and whether `old` is a file inside the module the table names
+/// (`fetch/response` went with `fetch`).
+pub fn moved(old: &str) -> Option<(Moved, bool)> {
+    if let Some((_, m)) = MOVED.iter().find(|(o, _)| *o == old) {
+        return Some((*m, false));
+    }
+    (MOVED.iter())
+        .filter(|(o, _)| {
+            old.strip_prefix(o)
+                .is_some_and(|rest| rest.starts_with('/'))
+        })
+        .max_by_key(|(o, _)| o.len())
+        .map(|(_, m)| (*m, true))
 }
 
 /// Where a package of the Velt repository is, with how to depend on it.
@@ -102,15 +135,23 @@ fn package_url(name: &str) -> String {
 }
 
 /// What became of old module `old`, as a sentence about `written` (the specifier as written):
-/// `None` when `old` was no module, or still is `velt/<old>`.
+/// `None` when `old` was no module, or still is `velt/<old>` (or a file of that module, which
+/// a `velt/` specifier that is not found names wrongly, not an old one).
 pub fn now(old: &str, written: &str) -> Option<String> {
-    Some(match moved(old)? {
-        Moved::Module(m)
-            if m.strip_prefix("velt/") == Some(old) && written.starts_with("velt/") =>
-        {
-            return None
-        }
+    let (moved, nested) = moved(old)?;
+    let stayed = |m: &str| {
+        let rel = m.strip_prefix("velt/").unwrap_or(m);
+        old == rel || old.strip_prefix(rel).is_some_and(|r| r.starts_with('/'))
+    };
+    Some(match moved {
+        Moved::Module(m) if stayed(m) && written.starts_with("velt/") => return None,
+        Moved::Module(m) if nested => format!("`{written}` is part of `{m}` now"),
         Moved::Module(m) => format!("`{written}` is now `{m}`"),
+        Moved::Internal(instead) => {
+            format!(
+                "`{written}` was removed: it is internal to the standard library now ({instead})"
+            )
+        }
         Moved::Globals => {
             format!("`{written}` was removed: its names are globals, used without an import")
         }
@@ -166,5 +207,14 @@ mod tests {
         );
         assert!(now("sqlite", "velt/sqlite").is_some_and(|s| s.contains("`sqlite` package")));
         assert_eq!(now("nothing", "velt/nothing"), None);
+        // A file of an old module: the module it is part of now.
+        assert_eq!(
+            now("fetch/response", "velt:fetch/response").as_deref(),
+            Some("`velt:fetch/response` is part of `velt/net/http` now")
+        );
+        // A file missing from a module that did not move is no old name.
+        assert_eq!(now("fs/promises", "velt/fs/promises"), None);
+        assert!(now("sort", "velt:sort").is_some_and(|s| s.contains("internal")));
+        assert!(now("sort/merge", "velt:sort/merge").is_some_and(|s| s.contains("internal")));
     }
 }

@@ -101,9 +101,19 @@ impl Loader<'_, '_> {
             Origin::Std(_) => Ok(()),
             _ if inside => {
                 let rel = vpm::relpath::relative(key, std_key);
-                let rel = module_path(&rel);
+                let module = module_path(&rel);
+                if std_modules::importable(&rel) {
+                    return Err(format!(
+                        "module `{spec}` is a file of the standard library: import it as `velt/{module}`"
+                    ));
+                }
+                // An internal file: name what a program imports instead, not the file.
+                let std = self.opts.std_root.as_deref().unwrap_or(std_key);
+                let has_index = |dir: &str| vpm::probe::is_file(&std.join(dir).join("index.vlt"));
+                let (what, notes) = internal(&rel, &format!("velt/{module}"), &has_index);
                 Err(format!(
-                    "module `{spec}` is a file of the standard library: import it as `velt/{rel}`"
+                    "module `{spec}` is a file of the standard library: {what}; {}",
+                    notes.join("; ")
                 ))
             }
             _ => Ok(()),
@@ -136,7 +146,7 @@ fn internal(rel: &str, spec: &str, has_index: &dyn Fn(&str) -> bool) -> (String,
         "lang" => (
             format!("`{spec}` is internal to the standard library: `lang/` implements the language"),
             vec![
-                "its classes and functions are globals (`Symbol`, `Proxy`, `Uint8Array`, …): use them without an import"
+                "what a program uses of it is global (`Symbol`, `Proxy`, `Uint8Array`, …) or syntax (`import.meta`), used without an import; the rest is the compiler's"
                     .into(),
             ],
         ),

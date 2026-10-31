@@ -13,3 +13,8 @@ std_moved_modules.vlt:10:25: error: `velt:postgres` was removed: the PostgreSQL 
 std_moved_modules.vlt:11:23: error: cannot find module `velt/http`
   = note: `velt/http` was removed: the HTTP server is the `http-server` package now, imported as `"http-server"` once package.vlt lists it in `dependencies` (https://github.com/velt-lang/velt/tree/main/packages/http-server), and `fetch` and the HTTP types are in `velt/net/http`
 std_moved_modules.vlt:12:26: error: `velt:fs` is now `velt/fs` (`velt:` specifiers were removed; the modules: https://veltlang.com/docs/std/)
+std_moved_modules.vlt:13:28: error: `velt:sort` was removed: it is internal to the standard library now (an array's `sort` is stable) (`velt:` specifiers were removed; the modules: https://veltlang.com/docs/std/)
+std_moved_modules.vlt:14:26: error: `velt:fetch/response` is part of `velt/net/http` now (`velt:` specifiers were removed; the modules: https://veltlang.com/docs/std/)
+std_moved_modules.vlt:15:25: error: cannot find module `velt/fetch/headers`
+  = note: `velt/fetch/headers` is part of `velt/net/http` now (https://veltlang.com/docs/std/)
+std_moved_modules.vlt:16:28: error: `velt:import_meta` was removed: it is internal to the standard library now (`import.meta` needs no import) (`velt:` specifiers were removed; the modules: https://veltlang.com/docs/std/)

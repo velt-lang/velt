@@ -53,7 +53,10 @@ fn std_test_files_are_std_code_wherever_they_are_imported_from() {
     );
     assert_eq!(
         messages(&d),
-        ["module `./x/inner` is a file of the standard library: import it as `velt/x/inner`"]
+        [
+            "module `./x/inner` is a file of the standard library: `velt/x/inner` is internal to \
+          `velt/x`; import what you need from \"velt/x\", the module's public API"
+        ]
     );
 }
 
@@ -203,8 +206,8 @@ fn user_code_imports_only_public_std_modules() {
         errors(&t, &std, "import { Symbol } from \"velt/lang/symbol\";\n"),
         [
             "`velt/lang/symbol` is internal to the standard library: `lang/` implements the \
-          language / its classes and functions are globals (`Symbol`, `Proxy`, `Uint8Array`, …): \
-          use them without an import"
+          language / what a program uses of it is global (`Symbol`, `Proxy`, `Uint8Array`, …) or \
+          syntax (`import.meta`), used without an import; the rest is the compiler's"
         ]
     );
     // The intrinsics are std's own, whichever file of theirs is named.
