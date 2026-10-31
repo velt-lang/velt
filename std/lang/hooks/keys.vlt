@@ -1,0 +1,36 @@
+// velt/lang/hooks (internal): the keys of std's methods the compiler calls (std-layout.md §10b).
+// A method keyed by one of these symbols (`[MAP_CURSOR](): MapCursor`) is a member no program can
+// name: the symbols are never exported to programs. The compiler names such a method by its
+// member name, which velt_common's `std_hooks.rs` spells (`std_key!(map_cursor)`), and which
+// sema gives std's symbols before any program's (`name_symbol_keys`).
+
+import { Symbol } from "velt/lang/symbol";
+
+/** `Map`: a cursor before the first entry of a live `for...of` loop. */
+export const MAP_CURSOR = Symbol("mapCursor");
+/** `Map`: moves a cursor to the next live entry. */
+export const MAP_ADVANCE = Symbol("mapAdvance");
+/** `Map`: the key of the entry a cursor is at. */
+export const MAP_KEY_AT = Symbol("mapKeyAt");
+/** `Map`: the value of the entry a cursor is at. */
+export const MAP_VALUE_AT = Symbol("mapValueAt");
+/** `Map`: the entry a cursor is at. */
+export const MAP_ENTRY_AT = Symbol("mapEntryAt");
+/** `Map`: equal by content (deep equality). */
+export const MAP_DEEP_EQUALS = Symbol("mapDeepEquals");
+/** `Map`: is the entry at a position live? */
+export const MAP_LIVE_AT = Symbol("mapLiveAt");
+/** `Map`: the value of a key known to be present. */
+export const MAP_AT = Symbol("mapAt");
+/** `Map`: marks a record's map as made by `Object.create(null)`. */
+export const MAP_MARK_NULL_PROTO = Symbol("mapMarkNullProto");
+/** `Map`: was the map marked by `MAP_MARK_NULL_PROTO`? */
+export const MAP_IS_NULL_PROTO = Symbol("mapIsNullProto");
+/** `Map`: does the newest key start with a digit? */
+export const MAP_NEWEST_KEY_DIGIT = Symbol("mapNewestKeyDigit");
+/** `Map`: the positions of the live entries. */
+export const MAP_LIVE_POSITIONS = Symbol("mapLivePositions");
+/** `ThisFn`: the call with a `this` and the arguments as an array. */
+export const THIS_FN_APPLY = Symbol("thisFnApply");
+/** `ThisFn`: `bind(thisArg, ...args)` with the arguments as an array. */
+export const THIS_FN_BIND = Symbol("thisFnBind");

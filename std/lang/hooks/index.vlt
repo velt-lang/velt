@@ -15,6 +15,7 @@ import "./async_iter";
 import "./class_object";
 import "./error";
 import "./iter";
+import "./keys";
 import "./number";
 import "./process";
 import "./record";

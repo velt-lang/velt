@@ -4,8 +4,10 @@
 // closure `(this, arguments) => { let a: A = arguments[0]; body }`, held as a `Function`. A call
 // passes the receiver: a method call through a proxy or an `any` (velt_vir's call slots), a call
 // of a member read some other way (`o[k](x)`, `o.f?.(x)`, `o.f(x)` with `f: Function`) through
-// `callOn`, and `call` (`__apply`), `apply` and `bind` (`__bind`) below; a plain call `f(x)`
+// `callOn`, and `call` (`[THIS_FN_APPLY]`), `apply` and `bind` (`[THIS_FN_BIND]`) below; a plain call `f(x)`
 // passes `undefined`. `typeof` is `"function"`.
+
+import { THIS_FN_APPLY, THIS_FN_BIND } from "velt/lang/hooks/keys";
 
 /** A function value whose `this` is bound at the call (module docs). */
 export class ThisFn {
@@ -16,7 +18,7 @@ export class ThisFn {
   }
 
   /** The call with `self` as `this` and `args` as the arguments. */
-  __apply(self: any, args: any[]): any {
+  [THIS_FN_APPLY](self: any, args: any[]): any {
     const f: any = this.#f;
     return f(self, args);
   }
@@ -24,18 +26,18 @@ export class ThisFn {
   /** `f.apply(thisArg, args)`: `null` or `undefined` passes no arguments. */
   apply(self: any, args?: any): any {
     if (args == null) {
-      return this.__apply(self, []);
+      return this[THIS_FN_APPLY](self, []);
     }
     const list: any[] = args;
-    return this.__apply(self, list);
+    return this[THIS_FN_APPLY](self, list);
   }
 
   /**
    * `f.bind(thisArg, ...bound)`: a function whose `this` is `self`, whatever the call passes,
-   * and whose arguments start with `bound`. (`f.call(thisArg, ...args)` is `__apply`: velt_vir's
+   * and whose arguments start with `bound`. (`f.call(thisArg, ...args)` is `[THIS_FN_APPLY]`: velt_vir's
    * `this_fn_call_keys` passes the arguments of both as one array.)
    */
-  __bind(self: any, bound: any[]): Function {
+  [THIS_FN_BIND](self: any, bound: any[]): Function {
     const f: any = this.#f;
     const g = (_ignored: any, args: any[]): any => {
       const all: any[] = [];
@@ -59,7 +61,7 @@ export class ThisFn {
  */
 export function callOn(f: any, self: any, args: any[]): any {
   if (f instanceof ThisFn) {
-    return f.__apply(self, args);
+    return f[THIS_FN_APPLY](self, args);
   }
   return f(...args);
 }

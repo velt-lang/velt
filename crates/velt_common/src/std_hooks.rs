@@ -284,6 +284,51 @@ hooks! {
     view_bytes => lang_typed_array_core, "viewBytes", "(BufferView) -> usize", lowered;
 }
 
+/// One key of a std method the compiler calls: a symbol constant of std/lang/hooks/keys.vlt.
+#[derive(Clone, Copy, Debug)]
+pub struct Key {
+    /// The entry's name (`map_cursor`).
+    pub name: &'static str,
+    /// The constant in std/lang/hooks/keys.vlt (`MAP_CURSOR`).
+    pub constant: &'static str,
+    /// The symbol's description (`mapCursor`).
+    pub description: &'static str,
+}
+
+macro_rules! keys {
+    ($($(#[doc = $doc:literal])* $name:ident => $constant:literal, $desc:literal;)*) => {
+        /// The member name of the std method keyed by entry `name` of the key table: what sema
+        /// names a member `[KEY]` declared with that symbol (`"\u{FFFF}Symbol(mapCursor)"`;
+        /// velt_sema's `property_order::symbol_key_name`, which names std's symbols first).
+        #[macro_export]
+        macro_rules! std_key {
+            $( ($name) => { concat!("\u{FFFF}Symbol(", $desc, ")") }; )*
+        }
+
+        /// Every key, in table order.
+        pub const KEYS: &[Key] = &[$(Key {
+            name: stringify!($name),
+            constant: $constant,
+            description: $desc,
+        }),*];
+    };
+}
+
+keys! {
+    // Map: what a `for...of` over a map reads (`velt_sema` `for_map.rs`, `velt_vir` `frozen.rs`),
+    // what deep equality and `console.log` call (`velt_vir` `glue/eq.rs`, `glue/format_map.rs`).
+    map_cursor => "MAP_CURSOR", "mapCursor";
+    map_advance => "MAP_ADVANCE", "mapAdvance";
+    map_key_at => "MAP_KEY_AT", "mapKeyAt";
+    map_value_at => "MAP_VALUE_AT", "mapValueAt";
+    map_entry_at => "MAP_ENTRY_AT", "mapEntryAt";
+    map_deep_equals => "MAP_DEEP_EQUALS", "mapDeepEquals";
+    map_live_at => "MAP_LIVE_AT", "mapLiveAt";
+    // ThisFn: a call with a `this` and `bind` (`velt_vir` `this_fn.rs`).
+    this_fn_apply => "THIS_FN_APPLY", "thisFnApply";
+    this_fn_bind => "THIS_FN_BIND", "thisFnBind";
+}
+
 /// The hook whose qualified name is `qualified` (`std/lang/hooks/number::f64ToString`).
 pub fn find(qualified: &str) -> Option<&'static Hook> {
     let (module, item) = qualified.rsplit_once("::")?;
@@ -322,6 +367,21 @@ mod tests {
         items.sort();
         items.dedup();
         assert_eq!(items.len(), HOOKS.len(), "two entries name one definition");
+    }
+
+    #[test]
+    fn every_key_is_a_constant_of_keys_vlt() {
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std/lang/hooks/keys.vlt");
+        let src = std::fs::read_to_string(path).expect("std/lang/hooks/keys.vlt");
+        for k in KEYS {
+            let decl = format!(
+                "export const {} = Symbol(\"{}\");",
+                k.constant, k.description
+            );
+            assert!(src.contains(&decl), "keys.vlt lacks `{decl}`");
+        }
+        assert_eq!(std_key!(map_cursor), "\u{FFFF}Symbol(mapCursor)");
     }
 
     #[test]

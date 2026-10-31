@@ -167,3 +167,28 @@ fn a_program_cannot_call_a_hook_by_its_old_name_or_its_new_one() {
     // What the hook implements still works.
     ok_src("function main() {\n  console.log((255).toString(16));\n}\n");
 }
+
+/// Each key of the table (std/lang/hooks/keys.vlt) names a std method under the member name
+/// `std_key!` spells: sema names std's symbols first, so a program's own symbol of the same
+/// description cannot take the name.
+#[test]
+fn every_key_names_a_method_of_std() {
+    let src = format!("const MINE = Symbol(\"mapCursor\");\n{LOADS_ALL}");
+    let p = ok_src(&src);
+    for k in velt_common::std_hooks::KEYS {
+        let member = format!(".\u{FFFF}Symbol({})", k.description);
+        let found = p.defs.iter().any(|d| match d {
+            Def::Fn(f) => f.name.starts_with("std/") && f.name.ends_with(&member),
+            _ => false,
+        });
+        assert!(
+            found,
+            "no std method keyed by `{}` ({})",
+            k.constant, k.name
+        );
+    }
+    assert_eq!(
+        velt_common::std_key!(map_cursor),
+        velt_sema::property_order::symbol_key_name("mapCursor", 1)
+    );
+}

@@ -9,12 +9,13 @@
 // index marks the record `unordered`; then the readers (`__keyNames`, `__values`, `__entries`,
 // and the JSON and formatting glue through `__positions`) sort the entries they read, without
 // changing the record (they borrow it). A record without such keys pays one byte test per new
-// key (`Map.__newestKeyDigit`, then `arrayIndex` for a key that starts with a digit). JSON reads
+// key (`Map[MAP_NEWEST_KEY_DIGIT]`, then `arrayIndex` for a key that starts with a digit). JSON reads
 // and writes a record as an object (a decoded record is checked for such keys once,
 // `__decoded`), and `console.log` shows it like one.
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
+import { MAP_AT, MAP_IS_NULL_PROTO, MAP_LIVE_POSITIONS, MAP_MARK_NULL_PROTO, MAP_NEWEST_KEY_DIGIT } from "velt/lang/hooks/keys";
 import { arrayIndex, objectPrototypeKey } from "velt/lang/hooks/record";
 
 // The rank of a key that is not an array index: after every index.
@@ -62,14 +63,14 @@ export class Record<K, V> {
 
   /** A literal-key record holds every key (sema checks literals; JSON checks documents). */
   __at(key: K): V {
-    return this.entries.__at(key);
+    return this.entries[MAP_AT](key);
   }
 
   __set(key: K, value: V) {
     const n = this.entries.size;
     this.entries.set(key, value);
     if (this.entries.size != n && !this.unordered) {
-      this.unordered = this.entries.__newestKeyDigit() && arrayIndex(`${key}`) >= 0;
+      this.unordered = this.entries[MAP_NEWEST_KEY_DIGIT]() && arrayIndex(`${key}`) >= 0;
     }
   }
 
@@ -128,7 +129,7 @@ export class Record<K, V> {
     if (at.length == 0) {
       return at;
     }
-    const live = this.entries.__livePositions();
+    const live = this.entries[MAP_LIVE_POSITIONS]();
     const out: usize[] = [];
     for (const i of at) {
       out.push(live[i]);
@@ -202,12 +203,12 @@ export class Record<K, V> {
 
   /** `Object.create(null)`: this record has no prototype (marked in its map). */
   __markNullProto() {
-    this.entries.__markNullProto();
+    this.entries[MAP_MARK_NULL_PROTO]();
   }
 
   /** Was this record made by `Object.create(null)`? */
   __isNullProto(): bool {
-    return this.entries.__isNullProto();
+    return this.entries[MAP_IS_NULL_PROTO]();
   }
 
   /**

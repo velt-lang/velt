@@ -56,6 +56,7 @@ import {
   nullAs,
   share,
 } from "velt/lang/intrinsics";
+import { MAP_ADVANCE, MAP_AT, MAP_CURSOR, MAP_DEEP_EQUALS, MAP_ENTRY_AT, MAP_IS_NULL_PROTO, MAP_KEY_AT, MAP_LIVE_AT, MAP_LIVE_POSITIONS, MAP_MARK_NULL_PROTO, MAP_NEWEST_KEY_DIGIT, MAP_VALUE_AT } from "velt/lang/hooks/keys";
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
@@ -81,7 +82,7 @@ const POS_MASK: u64 = 0xffffffff;
 const MAX_ENTRIES: usize = 0x80000000;
 
 // The top bit of `edits` marks the entries of a record made by `Object.create(null)`, which has
-// no prototype (`__markNullProto`). `edits` is only ever compared for equality and incremented,
+// no prototype (`[MAP_MARK_NULL_PROTO]`). `edits` is only ever compared for equality and incremented,
 // which keeps the bit; no map reaches 2^63 edits.
 const NULL_PROTO: u64 = 0x8000000000000000;
 
@@ -164,10 +165,10 @@ export class Map<K, V> {
    * The value stored for `key`, which is present (a literal-key `Record` reads its keys with it);
    * unlike `get(key)!` it reads a live entry holding null as that null.
    */
-  __at(key: K): V {
+  [MAP_AT](key: K): V {
     const e = this.lookup(key, hash(key) * FIB);
     if (e < 0) {
-      panic("ICE: Map.__at of a missing key");
+      panic("ICE: Map[MAP_AT] of a missing key");
     }
     return sharedValue(this.entryValues[e as usize]);
   }
@@ -314,12 +315,12 @@ export class Map<K, V> {
   }
 
   /** Marks this map as a prototype-less record's entries (`Object.create(null)`). */
-  __markNullProto() {
+  [MAP_MARK_NULL_PROTO]() {
     this.edits = this.edits | NULL_PROTO;
   }
 
-  /** Was this map marked by `__markNullProto`? */
-  __isNullProto(): bool {
+  /** Was this map marked by `[MAP_MARK_NULL_PROTO]`? */
+  [MAP_IS_NULL_PROTO](): bool {
     return (this.edits & NULL_PROTO) != 0;
   }
 
@@ -327,7 +328,7 @@ export class Map<K, V> {
    * Whether the newest entry's key starts with a digit (a `Record` key that may be an array
    * index): `${key}` reads a string or a string enum member's value.
    */
-  __newestKeyDigit(): bool {
+  [MAP_NEWEST_KEY_DIGIT](): bool {
     const n = this.entryKeys.length;
     if (n == 0) {
       return false;
@@ -337,7 +338,7 @@ export class Map<K, V> {
   }
 
   /** The positions of the live entries in `entryKeys` / `entryValues` (a record's glue). */
-  __livePositions(): usize[] {
+  [MAP_LIVE_POSITIONS](): usize[] {
     if (holdsNull(nullAs<V>()) && this.dead > 0) {
       return this.livePositionsBits();
     }
@@ -421,8 +422,8 @@ export class Map<K, V> {
 
   // ─────────────── live `for...of` (the compiler's loop over a map calls these) ───────────────
 
-  /** A cursor before the first entry, for `__advance`. */
-  __cursor(): MapCursor {
+  /** A cursor before the first entry, for `[MAP_ADVANCE]`. */
+  [MAP_CURSOR](): MapCursor {
     return MapCursor { pos: 0, at: 0, next: 0, renumbers: this.renumbers, off: 0, segEnd: 0 };
   }
 
@@ -430,7 +431,7 @@ export class Map<K, V> {
    * Moves `c` to the next entry (in insertion order, including entries added since the loop
    * started); false at the end.
    */
-  __advance(c: MapCursor): bool {
+  [MAP_ADVANCE](c: MapCursor): bool {
     if (c.renumbers != this.renumbers) {
       c.renumbers = this.renumbers;
       c.pos = this.positionOfSeq(c.next);
@@ -458,18 +459,18 @@ export class Map<K, V> {
     return true;
   }
 
-  /** The key of the entry `c` is at (after `__advance` returned true). */
-  __keyAt(c: MapCursor): K {
+  /** The key of the entry `c` is at (after `[MAP_ADVANCE]` returned true). */
+  [MAP_KEY_AT](c: MapCursor): K {
     return share(this.entryKeys[c.at]);
   }
 
   /** The value of the entry `c` is at. */
-  __valueAt(c: MapCursor): V {
+  [MAP_VALUE_AT](c: MapCursor): V {
     return sharedValue(this.entryValues[c.at]);
   }
 
   /** The `[key, value]` pair of the entry `c` is at. */
-  __entryAt(c: MapCursor): [K, V] {
+  [MAP_ENTRY_AT](c: MapCursor): [K, V] {
     const key = share(this.entryKeys[c.at]);
     const pair: [K, V] = [key, sharedValue(this.entryValues[c.at])];
     return pair;
@@ -483,7 +484,7 @@ export class Map<K, V> {
    * `deep`: the values (and unmatched keys) compare as Vitest's `toEqual` does
    * (`deepEq`: class instances by their fields).
    */
-  __deepEquals(other: Map<K, V>, deep: bool): bool {
+  [MAP_DEEP_EQUALS](other: Map<K, V>, deep: bool): bool {
     if (this._size != other._size) {
       return false;
     }
@@ -510,7 +511,7 @@ export class Map<K, V> {
     return deep ? deepEq(a, b) : eq(a, b);
   }
 
-  // `__deepEquals` once a key of this map is not a key of `other`: an object key is matched by
+  // `[MAP_DEEP_EQUALS]` once a key of this map is not a key of `other`: an object key is matched by
   // identity, so, as in Node's `isDeepStrictEqual`, each such entry is paired with a distinct
   // entry of `other` whose key and value are deeply equal.
   private deepEqualsByContent(other: Map<K, V>, deep: bool): bool {
@@ -520,7 +521,7 @@ export class Map<K, V> {
     }
     const misses: usize[] = [];
     for (let e: usize = 0; e < this.entryKeys.length; e++) {
-      if (this.__liveAt(e)) {
+      if (this[MAP_LIVE_AT](e)) {
         const o = other.lookup(this.entryKeys[e], hash(this.entryKeys[e]) * FIB);
         if (o < 0) {
           misses.push(e);
@@ -536,7 +537,7 @@ export class Map<K, V> {
       for (let o: usize = 0; o < other.entryKeys.length && !found; o++) {
         if (
           !used[o] &&
-          other.__liveAt(o) &&
+          other[MAP_LIVE_AT](o) &&
           Map.entriesEqual(this.entryKeys[e], other.entryKeys[o], deep) &&
           Map.entriesEqual(this.entryValues[e], other.entryValues[o], deep)
         ) {
@@ -555,7 +556,7 @@ export class Map<K, V> {
    * Whether entry position `e` holds a live entry, not a deleted one (the formatting and JSON
    * glue ask it for maps whose `V` includes null; for the others a null value answers).
    */
-  __liveAt(e: usize): bool {
+  [MAP_LIVE_AT](e: usize): bool {
     return this.entryValues[e] != null || (holdsNull(nullAs<V>()) && this.liveNull(e));
   }
 
@@ -580,7 +581,7 @@ export class Map<K, V> {
     return bits;
   }
 
-  // `__livePositions`, `keys()`, `values()`, `entries()` and `__deepEquals` with `liveBits`.
+  // `[MAP_LIVE_POSITIONS]`, `keys()`, `values()`, `entries()` and `[MAP_DEEP_EQUALS]` with `liveBits`.
   // They are methods of their own so that the code of maps whose `V` excludes null declares no
   // more locals.
   private livePositionsBits(): usize[] {
@@ -956,7 +957,7 @@ export class Map<K, V> {
   }
 }
 
-/** A live `for...of` loop's place in a map (`Map.__advance`). */
+/** A live `for...of` loop's place in a map (`Map.[MAP_ADVANCE]`). */
 struct MapCursor {
   // The next position to look at.
   pos: usize;

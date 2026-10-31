@@ -206,14 +206,21 @@ impl Ctx<'_> {
 
     /// Gives every symbol constant of the program its key name, in declaration order, before
     /// any member is collected, so [`Self::resolve_key`] needs no `&mut`.
+    /// std's first: the keys of std's methods the compiler calls (std/lang/hooks/keys.vlt) get
+    /// their descriptions' first names, which velt_common's `std_key!` spells.
     pub(crate) fn name_symbol_keys(&mut self) {
-        for i in 0..self.info.len() {
-            let d = DefId(i as u32);
-            if !matches!(self.info[i], DefInfo::Global(_)) {
-                continue;
-            }
-            if let Some(sym) = self.known_symbol(d) {
-                self.key_name(sym);
+        for std in [true, false] {
+            for i in 0..self.info.len() {
+                let d = DefId(i as u32);
+                let Some(g) = self.global(d) else {
+                    continue;
+                };
+                if self.modules[g.module].is_std != std {
+                    continue;
+                }
+                if let Some(sym) = self.known_symbol(d) {
+                    self.key_name(sym);
+                }
             }
         }
     }
