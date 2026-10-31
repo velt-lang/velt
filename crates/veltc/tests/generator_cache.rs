@@ -303,3 +303,40 @@ fn comparisons_of_maps_are_generated_in_one_run() {
     runs.sort();
     assert_eq!(runs, ["1.vlt"], "one run of the generator");
 }
+
+/// Generated comparisons report no call site (they never panic): each is one function, not a
+/// copy per call site as a std function that panics gets (velt_vir `track_caller`). An array
+/// loop counts in `usize`: a `number` index would call `floatIndex`, which panics.
+#[test]
+fn generated_comparisons_are_not_copied_per_call_site() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let main = tmp.path().join("main.vlt");
+    std::fs::write(
+        &main,
+        "function main() {\n\
+         \x20 const a: number[] = [1, 2, 3];\n\
+         \x20 const b: number[] = [1, 2, 3];\n\
+         \x20 console.log(deepEqual(a, b));\n\
+         \x20 console.log(deepEqual([a], [b]));\n\
+         }\n",
+    )
+    .expect("main");
+    let out = Command::new(env!("CARGO_BIN_EXE_velt"))
+        .args(["build", "--emit", "vir"])
+        .arg(&main)
+        .current_dir(tmp.path())
+        .env("VELT_BUILD_CACHE", tmp.path().join("cache"))
+        .output()
+        .expect("run velt");
+    let vir = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(vir.contains("equalByContent"), "{vir}");
+    let copies: Vec<&str> = (vir.lines())
+        .filter(|l| l.contains("equalBy") && l.contains("_L"))
+        .collect();
+    assert!(copies.is_empty(), "{copies:#?}");
+}

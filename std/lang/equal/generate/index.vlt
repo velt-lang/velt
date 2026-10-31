@@ -248,7 +248,7 @@ function content(
   if (k == "array") {
     w.line(`const n = ${a}.length;`);
     w.line(`if (n != ${b}.length) { return false; }`);
-    w.line(`for (let i = 0; i < n; i++) {`);
+    w.line(`for (let i: usize = 0; i < n; i++) {`);
     require(w, compare(out, model, t.args[0], `${a}[i]`, `${b}[i]`, deep));
     w.line(`}`);
     w.line(`return true;`);
