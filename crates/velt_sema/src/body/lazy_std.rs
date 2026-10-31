@@ -178,16 +178,6 @@ enum Mode {
 }
 
 /// What is checked on demand in one check.
-impl Lazy {
-    /// A module added during the check (a generated one, `Ctx::add_module`): checked eagerly,
-    /// as any non-std module.
-    pub(crate) fn add_module(&mut self) {
-        if !self.modules.is_empty() {
-            self.modules.push(Mode::Eager);
-        }
-    }
-}
-
 pub(crate) struct Lazy {
     /// Off for the editor's analysis (`ide`), which checks everything.
     pub on: bool,
@@ -205,6 +195,8 @@ pub(crate) struct Lazy {
     subclasses: FxHashMap<DefId, Vec<DefId>>,
     /// When the [`JSON_GLUE`] modules are reached.
     json: json::JsonReach,
+    /// The definitions below this one had their defaults scanned ([`reach`]).
+    defaults_scanned: usize,
 }
 
 impl Lazy {
@@ -219,6 +211,15 @@ impl Lazy {
             methods: FxHashMap::default(),
             subclasses: FxHashMap::default(),
             json: json::JsonReach::default(),
+            defaults_scanned: 0,
+        }
+    }
+
+    /// A module added during the check (a generated one, `Ctx::add_module`): checked eagerly,
+    /// as any non-std module.
+    pub(crate) fn add_module(&mut self) {
+        if !self.modules.is_empty() {
+            self.modules.push(Mode::Eager);
         }
     }
 }
@@ -329,7 +330,10 @@ pub(crate) fn reach(cx: &mut Ctx) {
     // field defaults of a class whose methods are deferred, scanned once the class is used (the
     // type of `#tape: Tape | null = null` would make `Tape` used in every program).
     let mut sc = Scan::default();
-    for i in 0..cx.info.len() {
+    // Those of the definitions made since the last time (generated code checked later,
+    // `generated::phase`).
+    let from = std::mem::replace(&mut cx.lazy.defaults_scanned, cx.info.len());
+    for i in from..cx.info.len() {
         let lazy_class = cx.lazy.methods.contains_key(&DefId(i as u32));
         // A deferred function's parameter defaults are scanned with its body, once reached.
         let deferred_fn = deferred(cx, DefId(i as u32));

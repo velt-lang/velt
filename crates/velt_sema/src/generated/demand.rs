@@ -16,9 +16,40 @@ use crate::types::children;
 /// A concrete instance of a generated function, with the span of the first call reaching it.
 pub(crate) type Instance = (DefId, Vec<TyId>, Span);
 
+/// What the demand computations of one check walked: the definitions' uses and the generic
+/// interface methods' type arguments. A checked body does not change, so a later computation
+/// (after generated code is added, `super::phase`) walks only the definitions made since.
+///
+/// The uses are walked without the types bodies mention as long as no method needs instances:
+/// those types only say which methods a body may dispatch to (`Dispatch`), and the calls of a
+/// method that needs none add nothing. When one does, everything is walked again with them.
+#[derive(Default)]
+pub(crate) struct Walked {
+    full: bool,
+    upto: usize,
+    uses: Vec<(DefId, crate::inst_sites::Uses)>,
+    margs: Vec<(String, Vec<TyId>)>,
+    /// The last result, and how many definitions there were then: the same while there are.
+    found: Option<(usize, Vec<Instance>)>,
+}
+
 /// Every concrete instance of a generated function the checked program reaches, in the order
 /// they were found.
 pub(crate) fn compute(cx: &mut Ctx) -> Vec<Instance> {
+    let mut walked = std::mem::take(&mut cx.gen_binding.walked);
+    let found = match &walked.found {
+        Some((n, found)) if *n == cx.defs.len() => found.clone(),
+        _ => {
+            let found = compute_with(cx, &mut walked);
+            walked.found = Some((cx.defs.len(), found.clone()));
+            found
+        }
+    };
+    cx.gen_binding.walked = walked;
+    found
+}
+
+fn compute_with(cx: &mut Ctx, walked: &mut Walked) -> Vec<Instance> {
     let generated: FxHashSet<DefId> = (0..cx.info.len() as u32)
         .map(DefId)
         .filter(|d| cx.generator_of(*d).is_some())
@@ -26,16 +57,45 @@ pub(crate) fn compute(cx: &mut Ctx) -> Vec<Instance> {
     if generated.is_empty() {
         return vec![];
     }
-    let margs = dyn_method_args(cx);
-    let mut uses = crate::inst_sites::collect(cx, false);
-    let mut dispatch = Dispatch::default();
-    for (_, u) in &mut uses {
-        for (t, span) in &u.types {
-            for (m, args) in dispatch.targets(cx, *t) {
-                u.dyn_calls.push((m, args, *span));
+    loop {
+        let from = walked.upto;
+        walked.upto = cx.defs.len();
+        let full = walked.full;
+        if full {
+            for m in dyn_method_args(cx, from) {
+                if !walked.margs.contains(&m) {
+                    walked.margs.push(m);
+                }
             }
         }
+        let mut new = crate::inst_sites::collect_from(cx, false, from, full);
+        let mut dispatch = Dispatch::default();
+        for (_, u) in &mut new {
+            for (t, span) in &u.types {
+                for (m, args) in dispatch.targets(cx, *t) {
+                    u.dyn_calls.push((m, args, *span));
+                }
+            }
+        }
+        walked.uses.extend(new);
+        let (found, method_needs) = propagate(cx, &walked.uses, &walked.margs, &generated);
+        if full || !method_needs {
+            return found;
+        }
+        *walked = Walked {
+            full: true,
+            ..Walked::default()
+        };
     }
+}
+
+/// The concrete instances `uses` reach, and whether a method needs instances.
+fn propagate(
+    cx: &mut Ctx,
+    uses: &[(DefId, crate::inst_sites::Uses)],
+    margs: &[(String, Vec<TyId>)],
+    generated: &FxHashSet<DefId>,
+) -> (Vec<Instance>, bool) {
     let reads = uses
         .iter()
         .enumerate()
@@ -118,17 +178,22 @@ pub(crate) fn compute(cx: &mut Ctx) -> Vec<Instance> {
             rounds.changed(*f);
         }
     }
-    found
+    // Only an instance method or an interface's default one is dispatched to.
+    let method_needs = (needs.keys()).any(|d| {
+        use crate::defs::FnKind;
+        matches!(cx.fn_info(*d).kind, FnKind::Method | FnKind::IfaceDefault)
+    });
+    (found, method_needs)
 }
 
 /// The concrete type arguments of the generic interface methods the program calls through an
 /// interface value or a bounded type parameter (`Callee::Dyn`, `Callee::ParamMethod`), by the
 /// method's name.
-fn dyn_method_args(cx: &mut Ctx) -> Vec<(String, Vec<TyId>)> {
+fn dyn_method_args(cx: &mut Ctx, from: usize) -> Vec<(String, Vec<TyId>)> {
     let mut calls: Vec<(DefId, u32, Vec<TyId>)> = vec![];
     let mut defs = std::mem::take(&mut cx.defs);
     let tys = &cx.ty;
-    for d in defs.iter_mut() {
+    for d in defs.iter_mut().skip(from) {
         let Some(crate::hir::Def::Fn(f)) = d else {
             continue;
         };

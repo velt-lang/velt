@@ -33,6 +33,7 @@ fn demand(src: &str) -> Demand {
         l.root,
         CheckOptions::default(),
         &GenInput::default(),
+        &[],
         None,
     );
     assert!(diags.iter().all(|d| !d.is_error()), "{}", l.render(&diags));

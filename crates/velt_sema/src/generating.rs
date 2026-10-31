@@ -29,10 +29,12 @@ pub fn check_generating(
     root: usize,
     opts: CheckOptions,
     gen: &generated::GenInput,
+    sources: &[SourceModule],
     generate: Option<&generated::GenerateFn>,
 ) -> (Option<Checked>, Diagnostics) {
     let args = generated::GenArgs {
         input: gen,
+        sources,
         generate,
     };
     on_sema_thread(|budget| check_on_current_thread(modules, root, opts, &[], Some(args), budget))

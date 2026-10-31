@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use velt_common::{Diagnostic, Diagnostics, FileId, Span};
-use velt_sema::generated::{GenBatch, GenInput, GenInstance, GenModule};
+use velt_sema::generated::{needs_rewrite, GenBatch, GenInput, GenInstance, GenModule};
 use velt_sema::{hir, CheckOptions, Checked, SourceModule};
 use velt_syntax::ast::ItemKind;
 
@@ -78,7 +78,7 @@ fn check_offered(
     opts: CheckOptions,
     offer: cache::Offer,
 ) -> Option<hir::Program> {
-    let mut next: Vec<SourceModule> = modules.iter().map(copy_module).collect();
+    let mut sources: Vec<SourceModule> = vec![];
     let mut input = GenInput::default();
     for f in offer.files {
         let file = sess
@@ -88,8 +88,7 @@ fn check_offered(
         if !errors.is_empty() {
             return None;
         }
-        let gm = generated_module(&next, &f.module, &f.path, file, ast)?;
-        next.push(gm);
+        sources.push(generated_module(modules, &f.module, &f.path, file, ast)?);
         input.files.push(file);
         input.modules.push(GenModule {
             path: f.path,
@@ -98,8 +97,17 @@ fn check_offered(
         });
     }
     input.instances = offer.instances;
+    // Generated code a check would rewrite (`needs_rewrite`) is checked as a program module.
+    let rewritten: Vec<SourceModule>;
+    let (all, sources) = match sources.iter().any(|m| needs_rewrite(&m.ast)) {
+        true => {
+            rewritten = modules.iter().chain(&sources).map(copy_module).collect();
+            (&rewritten[..], &[][..])
+        }
+        false => (modules, &sources[..]),
+    };
     let t = Instant::now();
-    let (out, diags) = velt_sema::check_generating(&next, root, opts, &input, None);
+    let (out, diags) = velt_sema::check_generating(all, root, opts, &input, sources, None);
     sess.timings.push(("sema", t.elapsed()));
     match out {
         Some(Checked::Program(p)) if !diags.iter().any(Diagnostic::is_error) => {
@@ -114,8 +122,10 @@ fn check_offered(
 #[derive(Default)]
 struct Rounds {
     input: GenInput,
-    /// The generated modules, parsed (what `input` holds the paths of).
+    /// The generated modules, parsed (what `input` holds the paths of): those checked as they
+    /// are, and those a check rewrites first, checked as program modules (`needs_rewrite`).
     sources: Vec<SourceModule>,
+    rewritten: Vec<SourceModule>,
     /// How many times the generators ran (each run's modules are paths of their own).
     batches: u32,
     /// Per generated file: what it holds and the call that needed it, for errors in it.
@@ -147,12 +157,18 @@ fn rounds(
             *spent += t.elapsed();
             batch
         };
-        let (out, diags) = velt_sema::check_generating(current, root, opts, &input, Some(&generate));
-        let (_, _, spent) = shared.into_inner().ok()?;
+        let sources = std::mem::take(&mut shared.lock().ok()?.1.sources);
+        let (out, diags) =
+            velt_sema::check_generating(current, root, opts, &input, &sources, Some(&generate));
+        let (_, st, spent) = shared.into_inner().ok()?;
+        let mut sources = sources;
+        sources.append(&mut st.sources);
+        st.sources = sources;
         let diags = blame_generators(&sess.sm, diags, &st.files);
         sess.diagnostics.extend(diags);
         let sema = t.elapsed().saturating_sub(spent);
-        sess.timings.push((if round == 1 { "sema" } else { "sema (again)" }, sema));
+        sess.timings
+            .push((if round == 1 { "sema" } else { "sema (again)" }, sema));
         if !spent.is_zero() {
             sess.timings.push(("generate", spent));
         }
@@ -160,7 +176,9 @@ fn rounds(
             Some(Checked::Program(p)) => return Some(*p),
             Some(Checked::Demand(d)) => d,
             Some(Checked::Again) => {
-                owned = Some(with_generated(current, st));
+                if let Some(next) = with_generated(current, st) {
+                    owned = Some(next);
+                }
                 continue;
             }
             None => return None,
@@ -180,20 +198,26 @@ fn rounds(
         let generated = generate_now(sess, st, current, &demand, packages);
         sess.timings.push(("generate", t.elapsed()));
         generated?;
-        owned = Some(with_generated(current, st));
+        if let Some(next) = with_generated(current, st) {
+            owned = Some(next);
+        }
     }
     None
 }
 
-/// `current` with the generated modules of `st` not in it yet.
-fn with_generated(current: &[SourceModule], st: &Rounds) -> Vec<SourceModule> {
-    let mut next: Vec<SourceModule> = current.iter().map(copy_module).collect();
-    for m in &st.sources {
-        if !next.iter().any(|n| n.path == m.path) {
-            next.push(copy_module(m));
-        }
+/// `current` with the generated modules of `st` that a check rewrites (`needs_rewrite`), which
+/// are checked as program modules, not in it yet.
+/// `None` when there are none.
+fn with_generated(current: &[SourceModule], st: &Rounds) -> Option<Vec<SourceModule>> {
+    let new: Vec<&SourceModule> = (st.rewritten.iter())
+        .filter(|m| !current.iter().any(|n| n.path == m.path))
+        .collect();
+    if new.is_empty() {
+        return None;
     }
-    next
+    let mut next: Vec<SourceModule> = current.iter().map(copy_module).collect();
+    next.extend(new.into_iter().map(copy_module));
+    Some(next)
 }
 
 /// Run the generators for `demand` and take in what they wrote: the generated modules, parsed,
@@ -257,7 +281,10 @@ fn generate_now(
             declaring: g.declaring.clone(),
             access: g.access.clone(),
         };
-        st.sources.push(copy_module(&gm));
+        match needs_rewrite(&gm.ast) {
+            true => st.rewritten.push(copy_module(&gm)),
+            false => st.sources.push(copy_module(&gm)),
+        }
         out.sources.push(gm);
         out.input.files.push(file);
         out.input.modules.push(module);
@@ -271,7 +298,9 @@ fn generate_now(
     for inst in &mut generated.instances {
         inst.body_module = module_path(&inst.module, batch_no);
     }
-    st.offer.instances.extend(generated.instances.iter().cloned());
+    st.offer
+        .instances
+        .extend(generated.instances.iter().cloned());
     for f in generated.generator_files {
         if !st.offer.generator_files.contains(&f) {
             st.offer.generator_files.push(f);

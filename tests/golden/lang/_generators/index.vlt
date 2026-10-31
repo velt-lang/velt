@@ -13,6 +13,9 @@ export declare generated("./gen") function armOf<T>(value: T): string;
 /** What a body that keeps its parameter (as an `any`) makes of `value`. */
 export declare generated("./gen") function hold<T>(value: T): string;
 
+/** The field names of `T`, each with a `!`, written with a closure. */
+export declare generated("./gen") function marked<T>(): string;
+
 /** A generated function whose generator writes code that does not compile. */
 export declare generated("./gen") function broken<T>(value: T): string;
 

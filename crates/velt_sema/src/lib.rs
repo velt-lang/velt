@@ -309,6 +309,15 @@ fn check_timed(
         }
         if let Some(g) = gen {
             let mut input = g.input.clone();
+            // The generated modules given apart from the program's.
+            for m in g.sources {
+                let declaring = (input.modules.iter())
+                    .find(|gm| gm.path == m.path)
+                    .and_then(|gm| cx.modules.iter().position(|d| d.path == gm.declaring));
+                if let Some(d) = declaring {
+                    cx.add_module(m, d);
+                }
+            }
             if let Some(generator) = &generator {
                 // Modules generated during an earlier `Ctx` of this check.
                 let state = generator.state.borrow();

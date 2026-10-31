@@ -142,11 +142,13 @@ output, and what makes running a dependency's generator at compile time safe.
 
 ## How it runs
 
-The compiler checks the program, collects the instances that need code, builds the generators
-into a program of their own and runs it in a separate process, then checks the program again
-with the generated code. A generator that throws, or code it writes that does not compile, is
-reported at the call that needed it; the second names the line of the generated code in a note.
+While the compiler checks the program, it collects the instances that need code, builds the
+generators into a program of their own and runs it in a separate process, and checks the code
+they write as part of the same check: a program is checked once, with or without generators
+(generated code that uses a closure is checked in a second check). A generator that throws, or
+code it writes that does not compile, is reported at the call that needed it; the second names
+the line of the generated code in a note.
 
 Generators are built once and cached, and so is what they write: a build that needs the same
-code for the same types reuses the last build's, and checks the program once, as a program
-without generators. Changing a generator, or a type it was given, runs it again.
+code for the same types reuses it without running the generator. Changing a generator, or a
+type it was given, runs it again.

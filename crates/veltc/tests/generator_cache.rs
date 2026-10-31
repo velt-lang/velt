@@ -105,3 +105,34 @@ fn offered_code_is_used_only_while_it_fits() {
     ));
     assert_eq!(run(&dir, &cache), "User: name,age\nTeam: size\n");
 }
+
+/// Instances that need code are generated during the check that finds them, and their code is
+/// added to that check: a program with generated functions is checked once, as one without
+/// (docs/internals/design/source-generators.md "As built so far").
+#[test]
+fn generated_code_is_added_to_the_check_that_needs_it() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let dir = tmp.path().join("prog");
+    std::fs::create_dir_all(&dir).expect("dir");
+    std::fs::write(dir.join("gen.vlt"), FIELDS).expect("gen");
+    std::fs::write(
+        dir.join("main.vlt"),
+        program(
+            "class User { name = \"\"; }",
+            "console.log(fields<User>()); console.log(fields<User[]>());",
+        ),
+    )
+    .expect("main");
+    let out = Command::new(env!("CARGO_BIN_EXE_velt"))
+        .args(["check", "-v"])
+        .arg(dir.join("main.vlt"))
+        .current_dir(&dir)
+        .env("VELT_BUILD_CACHE", tmp.path().join("cache"))
+        .output()
+        .expect("run velt");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    let checks = stderr.lines().filter(|l| l.starts_with("velt: sema")).count();
+    assert_eq!(checks, 1, "one check, the generators run inside it:\n{stderr}");
+    assert!(stderr.lines().any(|l| l.starts_with("velt: generate")), "{stderr}");
+}

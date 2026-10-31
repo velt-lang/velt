@@ -290,9 +290,9 @@ impl Ctx<'_> {
         let Some(family) = layouts.families.get(&base).filter(|f| f.used) else {
             return vec![];
         };
-        let own: Vec<&str> = self
-            .adt(d)
-            .map_or(vec![], |a| a.fields.iter().map(|f| f.name.as_str()).collect());
+        let own: Vec<&str> = self.adt(d).map_or(vec![], |a| {
+            a.fields.iter().map(|f| f.name.as_str()).collect()
+        });
         (family.added.iter().zip(&family.from))
             .filter(|(f, _)| !own.contains(&f.name.as_str()))
             .map(|(f, e)| (f.clone(), *e))

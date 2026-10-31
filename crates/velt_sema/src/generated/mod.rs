@@ -134,14 +134,20 @@ impl<'a> Generator<'a> {
     pub fn new(run: &'a GenerateFn<'a>) -> Self {
         Generator {
             run,
-            slots: (0..GENERATED_SLOTS).map(|_| std::sync::OnceLock::new()).collect(),
+            slots: (0..GENERATED_SLOTS)
+                .map(|_| std::sync::OnceLock::new())
+                .collect(),
             state: Default::default(),
         }
     }
 
     /// Keep module `m`, generated for module `declaring`, for the rest of the check: `None`
     /// when no slot is left.
-    pub(crate) fn keep(&self, m: crate::SourceModule, declaring: usize) -> Option<&crate::SourceModule> {
+    pub(crate) fn keep(
+        &self,
+        m: crate::SourceModule,
+        declaring: usize,
+    ) -> Option<&crate::SourceModule> {
         let i = self.state.borrow().filled.len();
         let slot = self.slots.get(i)?;
         slot.set(m).ok()?;
@@ -160,8 +166,13 @@ impl<'a> Generator<'a> {
 #[derive(Clone, Copy)]
 pub struct GenArgs<'a> {
     pub input: &'a GenInput,
+    /// The generated modules of `input` that are not among the program's modules: added to the
+    /// check as they are, without the source rewrites (each passes [`phase::needs_rewrite`]).
+    pub sources: &'a [crate::SourceModule],
     pub generate: Option<&'a GenerateFn<'a>>,
 }
+
+pub use phase::needs_rewrite;
 
 /// What a check that found instances without generated code returns instead of a program.
 #[derive(Clone, Debug, Default)]
@@ -218,6 +229,8 @@ pub(crate) struct Binding {
     pub bound: bind::Bound,
     /// The types handles in generated code name ([`handles`]).
     pub handles: handles::Handles,
+    /// What computing the demand walked so far ([`demand::compute`]).
+    pub walked: demand::Walked,
     /// Some instance offered from an earlier build was not bound: its types changed.
     pub stale: bool,
     /// Top-level non-generic aliases by their type (module, name, without its nothing): how
@@ -312,7 +325,8 @@ pub(crate) fn instances(cx: &mut Ctx) -> Result<bind::Bound, Demand> {
         cx.fn_info(d).module < cx.modules.len() && cx.modules[cx.fn_info(d).module].is_std
     };
     let missing: Vec<&demand::Instance> = found.iter().filter(|i| is_missing(i)).collect();
-    if cx.gen.is_none() && cx.generate.is_none() && missing.iter().all(|(d, _, _)| std_decl(cx, *d)) {
+    if cx.gen.is_none() && cx.generate.is_none() && missing.iter().all(|(d, _, _)| std_decl(cx, *d))
+    {
         return Ok(bound);
     }
     match demand_of(cx, &found, &bound) {
@@ -454,7 +468,10 @@ impl Ctx<'_> {
             let (Lit::Str(fp), Lit::Int { value, .. }) = (&fp.lit, &i.lit) else {
                 return None;
             };
-            let ty = self.gen_binding.handles.get(fp, u32::try_from(*value).ok()?)?;
+            let ty = self
+                .gen_binding
+                .handles
+                .get(fp, u32::try_from(*value).ok()?)?;
             return match self.ty.kind(ty) {
                 crate::hir::TyKind::Adt(d, _)
                     if self.adt(*d).is_some_and(|a| a.kind == AdtKind::Class) =>

@@ -87,6 +87,18 @@ export function show(req: InstanceRequest, out: Output): void {
   }
 }
 
+// Code with a closure, which the checker rewrites before a check starts: checked in a check of
+// its own rather than added to the check that asked for it.
+export function marked(req: InstanceRequest, out: Output): void {
+  const t = req.model.type(req.args[0]);
+  const names: string[] = [];
+  for (const f of t.fields) {
+    names.push(out.literal(f.name));
+  }
+  out.line(`const names: string[] = [${names.join(", ")}];`);
+  out.line(`return names.map((n) => n + "!").join(",");`);
+}
+
 export function broken(req: InstanceRequest, out: Output): void {
   out.line(`return ${req.params[0]}.noSuchField;`);
 }

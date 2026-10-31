@@ -678,23 +678,51 @@ goldens:
   (`(v as E).name`); `mayBeProxy` says whether a typed `Proxy` may stand for a value of a type
   (so a generator writes the proxy path only then).
 
+- **Generated during the check** (compile time): the driver gives the check a generator
+  (`velt_sema::generated::Generator`, a callback over `Demand`), and the generated phase asks it
+  for the code of the instances still missing, adds the modules it returns to the same `Ctx`
+  (`Ctx::add_module`; their `SourceModule`s live in the `Generator`'s slots, which outlive every
+  `Ctx` of the check) and collects them like the others. A program with generated functions is
+  checked once, cold or warm; the driver's rounds remain for code that the source rewrites a
+  check makes before it starts would change (`phase::needs_rewrite`: a closure, a nested
+  declaration, `globalThis`, `Object.defineProperty`), which returns `Checked::Again`, and for
+  a check without a generator (`Checked::Demand`). Generated modules reach the check apart from
+  the program's (`GenArgs::sources`), so no module is copied for it.
+- The demand (`generated::demand`) walks each body once per check (`Walked`: a later
+  computation, after generated code is added, walks only the new definitions), without the
+  types bodies mention unless an instance or interface method needs instances (only then do
+  they matter, through `Dispatch`), and the end of the check reuses the phase's result while no
+  definition was added since. Generated modules do not make the std modules their declaring
+  module imports checked whole (`lazy_std::plan`), and lazy std's reach scans each
+  definition's defaults once.
+
 ### Left for the port of `JSON.stringify` and `JSON.parse`
 
 Done: the reflection API (velt/reflect), the model's gaps, `__arm`, `JSON.stringify` on the
-generator, and types generated code could not name (above). Left, in the json port's order:
+generator, types generated code could not name, and the second check (above). Left, in the json
+port's order:
 
+- **Compile time, warm.** `bench/json/stringify.vlt` is checked in +3.8% instructions warm
+  (+4.9% for `velt build`), against 3% (measured below). What is left over the glue: the demand
+  pass (about 7 M instructions; `json::check_json_types` walks the same bodies for the glue's
+  checks and goes with step 5), the std modules of the dynamic path that velt/encoding/json's
+  generated.vlt imports for its generated code (any.vlt, velt/reflect: about 9 M to load, also
+  for a program whose types have no dynamic part; loading them only when generated code calls
+  them needs the loader to run again for generated code), and the generated functions' check
+  and lowering (about 5 M and 14 M, the glue built VIR directly).
 - **A cycle through a recursive object type held by an `any`** is reported with the `any`
   path's message (`TypeError: Converting circular structure to JSON`), where the glue's typed
   writer of that type reported its own; no golden has one.
 - **`JSON.parse` / `parse<T>` / `as T`** (json port step 4): the decoders of `lower/json`
   (`read.rs`, `object.rs`, `union*.rs`, `literal.rs`, `map.rs`, `key.rs`, `reader.rs`), the
-  rows and cursors of std/db (`rows_read/`, `__intrinsic_json_parse_rows`/`_cursor`,
-  `ReadRows`/`ReadRow`) and the parameter binding (`db_bind.rs`) still run in the compiler.
+  rows and cursors of std/db (`rows_read/`, `jsonParseCursor`, `readRowsByColumn` /
+  `readRowByColumn`) and the parameter binding (`dbBind`, `db_bind.rs`) still run in the
+  compiler; packages reach `dbBind` and `jsonParseCursor` through std's `velt/db`.
 - **Diagnostics from the generator** (step 5): `sema/json` still reports what `JSON.stringify`
   cannot write, from the calls of `writeJsonTop`; generators run only for a program without
   errors.
-- **Compile time** (step 6): unchanged from the measurements below (a second check of the whole
-  program after generating, the offered modules checked with it).
+- **Incremental recheck** (step 6): generated code is checked inside the check that needs it
+  (above); what is left is the editor's and `velt dev`'s reuse of a check across edits.
 - **Deleting the glue** (step 7), which needs 4–6.
 
 ### Measured (Apple M4, a shared machine)

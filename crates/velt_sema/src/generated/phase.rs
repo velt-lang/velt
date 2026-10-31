@@ -85,7 +85,9 @@ pub(crate) fn run(cx: &mut Ctx) {
             let defs = crate::timings::pass("generated::collect", || {
                 crate::collect::collect_generated(cx, &ms)
             });
-            crate::timings::pass("generated::check", || crate::body::check_generated(cx, &defs));
+            crate::timings::pass("generated::check", || {
+                crate::body::check_generated(cx, &defs)
+            });
             for (_, path) in &ready {
                 for inst in gen.instances.iter().filter(|i| i.body_module == *path) {
                     bind(cx, inst);
@@ -161,7 +163,7 @@ fn generate<'m>(
 /// it starts would change (`crate::check_timed`): a closure, a nested declaration, `globalThis`,
 /// `Object.defineProperty`, an item other than a function, a constant or a type alias, or two
 /// declarations of one name. Such code is checked in a check of its own.
-pub(crate) fn needs_rewrite(m: &velt_syntax::ast::Module) -> bool {
+pub fn needs_rewrite(m: &velt_syntax::ast::Module) -> bool {
     use velt_syntax::ast::{ExprKind, ItemKind, StmtKind};
     use velt_syntax::visit::{walk_module, Visit};
     struct Finder(bool);
