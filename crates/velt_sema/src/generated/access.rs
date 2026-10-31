@@ -23,7 +23,7 @@ pub const CONSTRUCT: &str = "__construct";
 /// Give generated modules `ms` the names of their declaring module's scope that they do not
 /// declare themselves (after their own items are declared).
 pub(crate) fn inherit_scopes(cx: &mut Ctx, ms: &[usize]) {
-    let Some(gen) = cx.gen.clone() else {
+    let Some(gen) = cx.gen.input.clone() else {
         return;
     };
     for gm in &gen.modules {
@@ -65,7 +65,7 @@ impl Ctx<'_> {
     /// Whether code of `module` has the access of type `owner`: `module` is a generated module
     /// whose requests' models hold `owner`.
     pub(crate) fn generated_access(&self, module: usize, owner: DefId) -> bool {
-        let Some(gen) = self.gen.as_ref() else {
+        let Some(gen) = self.gen.input.as_ref() else {
             return false;
         };
         let path = &self.modules[module].path;

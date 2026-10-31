@@ -13,6 +13,9 @@ use crate::dispatch::{instantiate, Dispatch, Rounds};
 use crate::hir::{DefId, TyId, TyKind};
 use crate::types::children;
 
+/// How deeply the type arguments of an instance may nest types (no program's type gets near).
+const MAX_DEPTH: u32 = 32;
+
 /// A concrete instance of a generated function, with the span of the first call reaching it.
 pub(crate) type Instance = (DefId, Vec<TyId>, Span);
 
@@ -36,7 +39,7 @@ pub(crate) struct Walked {
 /// Every concrete instance of a generated function the checked program reaches, in the order
 /// they were found.
 pub(crate) fn compute(cx: &mut Ctx) -> Vec<Instance> {
-    let mut walked = std::mem::take(&mut cx.gen_binding.walked);
+    let mut walked = std::mem::take(&mut cx.gen.binding.walked);
     let found = match &walked.found {
         Some((n, found)) if *n == cx.defs.len() => found.clone(),
         _ => {
@@ -45,7 +48,7 @@ pub(crate) fn compute(cx: &mut Ctx) -> Vec<Instance> {
             found
         }
     };
-    cx.gen_binding.walked = walked;
+    cx.gen.binding.walked = walked;
     found
 }
 
@@ -107,6 +110,7 @@ fn propagate(
     let mut needs: FxHashMap<DefId, Vec<(DefId, Vec<TyId>, u64)>> = FxHashMap::default();
     let mut found: Vec<Instance> = vec![];
     let mut seen: FxHashSet<(DefId, Vec<TyId>)> = FxHashSet::default();
+    let mut depths: FxHashMap<TyId, u32> = FxHashMap::default();
     while let Some(i) = rounds.pop() {
         let (f, u) = &uses[i];
         let mut reqs: Vec<(DefId, Vec<TyId>, Span, u64)> = vec![];
@@ -164,6 +168,11 @@ fn propagate(
         }
         let mut grew = false;
         for (g, gt, span, bits) in reqs {
+            // Growing generic recursion (`f<T[]>` in `f<T>`) has endless instances, which
+            // `instantiation_cycles` reports after this ran (`super::phase`): carried no deeper.
+            if gt.iter().any(|t| depth(cx, *t, &mut depths) > MAX_DEPTH) {
+                continue;
+            }
             if gt.iter().any(|t| has_param(cx, *t)) {
                 let n = needs.entry(*f).or_default();
                 if !n.iter().any(|(d, a, b)| *d == g && *a == gt && *b == bits) {
@@ -242,6 +251,36 @@ fn dyn_method_args(cx: &mut Ctx, from: usize) -> Vec<(String, Vec<TyId>)> {
         }
     }
     out
+}
+
+/// How deeply `t` nests types (at most [`MAX_DEPTH`] + 1), an object type through its fields;
+/// a type met again on the way (a recursive type) adds nothing. `memo` holds what is known.
+fn depth(cx: &mut Ctx, t: TyId, memo: &mut FxHashMap<TyId, u32>) -> u32 {
+    if let Some(&d) = memo.get(&t) {
+        return d;
+    }
+    memo.insert(t, 0);
+    let mut kids = children(cx.ty.kind(t));
+    if let TyKind::Adt(o, args) = cx.ty.kind(t).clone() {
+        if cx.is_object_type(t) {
+            let fields: Vec<TyId> = (cx.adt(o).into_iter())
+                .flat_map(|a| a.fields.iter().map(|f| f.ty))
+                .collect();
+            kids.extend(fields.into_iter().map(|f| match args.is_empty() {
+                true => f,
+                false => cx.subst(f, &args),
+            }));
+        }
+    }
+    let mut most = 0;
+    for k in kids {
+        most = most.max(depth(cx, k, memo) + 1);
+        if most > MAX_DEPTH {
+            break;
+        }
+    }
+    memo.insert(t, most);
+    most
 }
 
 fn has_param(cx: &Ctx, t: TyId) -> bool {

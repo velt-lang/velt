@@ -132,7 +132,16 @@ fn generated_code_is_added_to_the_check_that_needs_it() {
         .expect("run velt");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "{stderr}");
-    let checks = stderr.lines().filter(|l| l.starts_with("velt: sema")).count();
-    assert_eq!(checks, 1, "one check, the generators run inside it:\n{stderr}");
-    assert!(stderr.lines().any(|l| l.starts_with("velt: generate")), "{stderr}");
+    let checks = stderr
+        .lines()
+        .filter(|l| l.starts_with("velt: sema"))
+        .count();
+    assert_eq!(
+        checks, 1,
+        "one check, the generators run inside it:\n{stderr}"
+    );
+    assert!(
+        stderr.lines().any(|l| l.starts_with("velt: generate")),
+        "{stderr}"
+    );
 }

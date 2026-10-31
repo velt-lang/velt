@@ -129,7 +129,7 @@ fn spell_depth(cx: &mut Ctx, t: TyId, depth: u32, params: bool) -> Option<String
         TyKind::Adt(d, args) => match &cx.info[d.0 as usize] {
             // An object type a top-level alias declared: by the alias (it may name itself).
             DefInfo::Adt(a)
-                if a.kind == AdtKind::Anon && cx.gen_binding.alias_homes.contains_key(&t) =>
+                if a.kind == AdtKind::Anon && cx.gen.binding.alias_homes.contains_key(&t) =>
             {
                 alias_spelling(cx, t)?
             }
@@ -166,7 +166,7 @@ fn spell_depth(cx: &mut Ctx, t: TyId, depth: u32, params: bool) -> Option<String
                 }
             }
             // A union a top-level alias declared: by the alias (it may name itself).
-            DefInfo::Enum(e) if e.is_union && cx.gen_binding.alias_homes.contains_key(&t) => {
+            DefInfo::Enum(e) if e.is_union && cx.gen.binding.alias_homes.contains_key(&t) => {
                 alias_spelling(cx, t)?
             }
             // A generic union at its type arguments (`T | Mod<T>` at `T = unknown`, which
@@ -227,7 +227,7 @@ fn spell_depth(cx: &mut Ctx, t: TyId, depth: u32, params: bool) -> Option<String
 
 /// `__qualified<"<module>", "<alias>">` for an object type a top-level alias declared.
 fn alias_spelling(cx: &mut Ctx, t: TyId) -> Option<String> {
-    let (m, name, non_null) = cx.gen_binding.alias_homes.get(&t)?.clone();
+    let (m, name, non_null) = cx.gen.binding.alias_homes.get(&t)?.clone();
     let path = cx.modules[m].path.clone();
     let q = qualified(cx, &format!("{path}::{name}"), &[])?;
     Some(match non_null {

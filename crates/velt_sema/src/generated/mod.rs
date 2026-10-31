@@ -222,6 +222,16 @@ impl GenFunction {
     }
 }
 
+/// A check's generated code (`Ctx::gen`): what the driver generated so far, with what this check
+/// generated (`input`), the driver's generator when it generates during the check, and the
+/// binding of the instances.
+#[derive(Default)]
+pub(crate) struct Gen<'m> {
+    pub input: Option<std::rc::Rc<GenInput>>,
+    pub generate: Option<&'m Generator<'m>>,
+    pub binding: Binding,
+}
+
 /// What binding the instances to their generated definitions found ([`phase::run`]).
 #[derive(Default)]
 pub(crate) struct Binding {
@@ -275,12 +285,12 @@ impl Ctx<'_> {
 
     /// Is module `m` a generated module?
     pub(crate) fn is_generated_module(&self, m: usize) -> bool {
-        (self.gen.as_ref()).is_some_and(|g| g.files.contains(&self.modules[m].file))
+        (self.gen.input.as_ref()).is_some_and(|g| g.files.contains(&self.modules[m].file))
     }
 
     /// Is `span` in a generated source file?
     pub(crate) fn in_generated_file(&self, span: Span) -> bool {
-        (self.gen.as_ref()).is_some_and(|g| g.files.contains(&span.file))
+        (self.gen.input.as_ref()).is_some_and(|g| g.files.contains(&span.file))
     }
 }
 
@@ -315,7 +325,7 @@ pub(crate) fn instances(cx: &mut Ctx) -> Result<bind::Bound, Demand> {
     if !cx.has_generated_fns() {
         return Ok(bind::Bound::default());
     }
-    let bound = std::mem::take(&mut cx.gen_binding.bound);
+    let bound = std::mem::take(&mut cx.gen.binding.bound);
     check_throws(cx, &bound);
     let found = demand::compute(cx);
     let is_missing = |(d, a, _): &demand::Instance| !bound.contains_key(&(*d, a.clone()));
@@ -325,7 +335,9 @@ pub(crate) fn instances(cx: &mut Ctx) -> Result<bind::Bound, Demand> {
         cx.fn_info(d).module < cx.modules.len() && cx.modules[cx.fn_info(d).module].is_std
     };
     let missing: Vec<&demand::Instance> = found.iter().filter(|i| is_missing(i)).collect();
-    if cx.gen.is_none() && cx.generate.is_none() && missing.iter().all(|(d, _, _)| std_decl(cx, *d))
+    if cx.gen.input.is_none()
+        && cx.gen.generate.is_none()
+        && missing.iter().all(|(d, _, _)| std_decl(cx, *d))
     {
         return Ok(bound);
     }
@@ -373,7 +385,7 @@ pub(crate) fn demand_of(
         functions,
         requests,
         model,
-        stale: cx.gen_binding.stale,
+        stale: cx.gen.binding.stale,
     })
 }
 
@@ -469,7 +481,8 @@ impl Ctx<'_> {
                 return None;
             };
             let ty = self
-                .gen_binding
+                .gen
+                .binding
                 .handles
                 .get(fp, u32::try_from(*value).ok()?)?;
             return match self.ty.kind(ty) {

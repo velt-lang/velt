@@ -83,7 +83,7 @@ impl Ctx<'_> {
         let found = match (lit(args.first()), lit(args.get(1)), args.len()) {
             (Some(Lit::Str(fp)), Some(Lit::Int { value, .. }), 2) => u32::try_from(value)
                 .ok()
-                .and_then(|i| self.gen_binding.handles.get(&fp, i)),
+                .and_then(|i| self.gen.binding.handles.get(&fp, i)),
             _ => None,
         };
         match found {

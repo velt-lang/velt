@@ -14,7 +14,7 @@ pub(crate) type Bound = FxHashMap<(DefId, Vec<TyId>), DefId>;
 /// against before the bodies were known: no body takes a parameter as its own (one that keeps or
 /// moves its argument takes a share of it instead), as for a method in a vtable slot.
 pub(crate) fn fix_modes(cx: &mut Ctx) {
-    let defs: Vec<DefId> = (cx.gen_binding.bound.iter())
+    let defs: Vec<DefId> = (cx.gen.binding.bound.iter())
         .flat_map(|((g, _), body)| [*g, *body])
         .collect();
     for d in defs {

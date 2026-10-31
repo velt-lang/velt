@@ -43,18 +43,11 @@ pub(crate) struct ModuleScope {
 pub(crate) type ClassesBelow = std::rc::Rc<[(DefId, DefId)]>;
 
 pub(crate) struct Ctx<'m> {
-    /// The program's modules, then the generated modules added during the check
-    /// ([`Ctx::add_module`]).
+    /// The program's modules, then the generated ones added during the check (`add_module`).
     pub modules: Vec<&'m SourceModule>,
     pub root: usize,
-    /// The instances of generated functions the driver generated so far (`crate::generated`),
-    /// with those generated during this check.
-    pub gen: Option<std::rc::Rc<crate::generated::GenInput>>,
-    /// Asked for the code of instances that have none (`generated::phase`), when the driver
-    /// generates during the check.
-    pub generate: Option<&'m crate::generated::Generator<'m>>,
-    /// What binding them to their generated definitions found (`crate::generated::bind`).
-    pub gen_binding: crate::generated::Binding,
+    /// Generated functions' code and its binding in this check (`crate::generated::Gen`).
+    pub gen: crate::generated::Gen<'m>,
     pub ty: Types,
     /// Final HIR definitions, indexed by `DefId` (filled at the end).
     pub defs: Vec<Option<Def>>,
@@ -434,9 +427,7 @@ impl<'m> Ctx<'m> {
         Ctx {
             modules: modules.iter().collect(),
             root,
-            gen: None,
-            generate: None,
-            gen_binding: Default::default(),
+            gen: Default::default(),
             export_memo: Default::default(),
             import_targets: crate::collect::exports::import_targets(modules),
             ty: Types::new(),
@@ -639,22 +630,6 @@ impl<'m> Ctx<'m> {
         self.defs[id.0 as usize] = None;
         self.info[id.0 as usize] = info;
         self.def_spans[id.0 as usize] = span;
-    }
-
-    /// Add module `m`, a generated module made during the check (`generated::phase`), with the
-    /// import targets of the module it was generated for (`declaring`): its index.
-    pub(crate) fn add_module(&mut self, m: &'m SourceModule, declaring: usize) -> usize {
-        let i = self.modules.len();
-        self.modules.push(m);
-        self.scopes.push(ModuleScope {
-            is_std: m.is_std,
-            is_library: m.is_std || m.is_dependency,
-            ..Default::default()
-        });
-        let targets = self.import_targets[declaring].clone();
-        self.import_targets.push(targets);
-        self.lazy.add_module();
-        i
     }
 
     pub fn alloc_def(&mut self, span: Span, info: DefInfo<'m>) -> DefId {

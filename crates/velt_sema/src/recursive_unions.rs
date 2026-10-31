@@ -234,11 +234,13 @@ impl Ctx<'_> {
         self.alias_names.insert(own, name.clone());
         let top = matches!(self.scopes[module].items.get(name), Some(crate::ctx::Item::Alias(x)) if *x == a);
         if top && args.is_empty() {
-            self.gen_binding
+            self.gen
+                .binding
                 .alias_homes
                 .insert(own, (module, name.clone(), false));
             if own != core {
-                self.gen_binding
+                self.gen
+                    .binding
                     .alias_homes
                     .insert(core, (module, name.clone(), true));
             }

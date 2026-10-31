@@ -677,7 +677,6 @@ goldens:
   layout (`collect::extended_layouts`), each with `via`, the extension's type to read it through
   (`(v as E).name`); `mayBeProxy` says whether a typed `Proxy` may stand for a value of a type
   (so a generator writes the proxy path only then).
-
 - **Generated during the check** (compile time): the driver gives the check a generator
   (`velt_sema::generated::Generator`, a callback over `Demand`), and the generated phase asks it
   for the code of the instances still missing, adds the modules it returns to the same `Ctx`
@@ -704,7 +703,7 @@ port's order:
 
 - **Compile time, warm.** `bench/json/stringify.vlt` is checked in +3.8% instructions warm
   (+4.9% for `velt build`), against 3% (measured below). What is left over the glue: the demand
-  pass (about 7 M instructions; `json::check_json_types` walks the same bodies for the glue's
+  pass (a walk of every body; `json::check_json_types` walks the same bodies for the glue's
   checks and goes with step 5), the std modules of the dynamic path that velt/encoding/json's
   generated.vlt imports for its generated code (any.vlt, velt/reflect: about 9 M to load, also
   for a program whose types have no dynamic part; loading them only when generated code calls
@@ -726,6 +725,18 @@ port's order:
 - **Deleting the glue** (step 7), which needs 4–6.
 
 ### Measured (Apple M4, a shared machine)
+
+- **`JSON.stringify` on the generator against the glue** (json port, after the handles and the
+  generation during the check; debug `velt`, instructions retired, `/usr/bin/time -l`, best of
+  8, interleaved; the glue is the commit before the port, with its std): `velt check
+  bench/json/stringify.vlt` warm (the last build's code offered, the file edited) 621.7 M
+  against 598.3 M (+3.8%), cold (a new root path: no offer, the generator's output cached)
+  634.1 M against 597.0 M (+6.2%); `velt build` warm 755.7 M against 719.9 M (+4.9%), cold
+  774.8 M against 722.6 M (+7.2%). Before (the port as first written): warm 1069 M against
+  652 M (+64%), cold 1400 M (+115%): the second check of the whole program, every module of the
+  program copied for it, the proxy path of the writer (`isProxy`, which pulled the `any` writer
+  and velt/reflect into every program), and the std modules generated code sees made checked
+  whole. Hello world is unchanged.
 
 - **No generators:** no demand, one check; the only new work is a scan of the modules' items
   for `generated` declarations.

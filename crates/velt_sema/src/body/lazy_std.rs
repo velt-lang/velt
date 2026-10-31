@@ -233,8 +233,12 @@ pub(crate) fn plan(cx: &mut Ctx) {
     let mut direct: FxHashSet<&str> = FxHashSet::default();
     // A generated module sees what its declaring module imports without importing it: it makes
     // no std module checked whole (the declaring module, a user's, already does for its own).
-    let generated =
-        |m: &crate::SourceModule| cx.gen.as_ref().is_some_and(|g| g.files.contains(&m.file));
+    let generated = |m: &crate::SourceModule| {
+        cx.gen
+            .input
+            .as_ref()
+            .is_some_and(|g| g.files.contains(&m.file))
+    };
     for m in mods.iter().filter(|m| !m.is_std && !generated(m)) {
         direct.extend(m.imports.iter().map(|(_, p)| p.as_str()));
         direct.extend(m.jsx_runtime.as_deref());

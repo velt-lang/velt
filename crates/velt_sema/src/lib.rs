@@ -252,7 +252,7 @@ fn check_timed(
     gen: Option<generated::GenArgs>,
     stack_budget: usize,
 ) -> script_locals::Checked {
-    // Outlives every `Ctx` below: the modules the driver generates during the check.
+    // Outlives every `Ctx` below, with the modules the driver generates during the check.
     let generator = gen.and_then(|g| g.generate).map(generated::Generator::new);
     let rewrite_start = std::time::Instant::now();
     let chunks = module_chunks::split(modules, root);
@@ -307,30 +307,7 @@ fn check_timed(
         if opts.eager_std {
             cx.lazy.on = false;
         }
-        if let Some(g) = gen {
-            let mut input = g.input.clone();
-            // The generated modules given apart from the program's.
-            for m in g.sources {
-                let declaring = (input.modules.iter())
-                    .find(|gm| gm.path == m.path)
-                    .and_then(|gm| cx.modules.iter().position(|d| d.path == gm.declaring));
-                if let Some(d) = declaring {
-                    cx.add_module(m, d);
-                }
-            }
-            if let Some(generator) = &generator {
-                // Modules generated during an earlier `Ctx` of this check.
-                let state = generator.state.borrow();
-                input.extend(state.input.clone());
-                let declaring = state.filled.clone();
-                drop(state);
-                for (m, d) in generator.kept().zip(declaring) {
-                    cx.add_module(m, d);
-                }
-            }
-            cx.gen = Some(std::rc::Rc::new(input));
-            cx.generate = generator.as_ref();
-        }
+        generating::install(&mut cx, gen, generator.as_ref());
         cx.union_views.assumed = views.clone();
         cx.fn_sites = throws::FnSites::new(seeds.clone(), last);
         cx.stack_budget = stack_budget;
@@ -423,31 +400,24 @@ fn check_timed(
         let refused = script_locals::refused(&cx, root);
         return ((None, cx.diags), refused);
     }
-    if let Some(state) = generator.as_ref().map(|g| g.state.borrow()) {
-        // The generator reported why it failed; code it made that this check could not add
-        // is checked from scratch by the driver.
-        if state.failed {
-            return ((None, cx.diags), Default::default());
-        }
-        if state.restart {
-            return ((Some(Checked::Again), cx.diags), Default::default());
-        }
+    if let Some(out) = generating::stopped(generator.as_ref()) {
+        return ((out, cx.diags), Default::default());
     }
-    let generated = match timings::pass("generated::instances", || generated::instances(&mut cx)) {
-        Ok(bound) => bound,
-        Err(demand) => {
-            return (
-                (Some(Checked::Demand(demand)), cx.diags),
-                Default::default(),
-            )
-        }
-    };
+    let mut generated =
+        match timings::pass("generated::instances", || generated::instances(&mut cx)) {
+            Ok(bound) => bound,
+            Err(demand) => {
+                return (
+                    (Some(Checked::Demand(demand)), cx.diags),
+                    Default::default(),
+                )
+            }
+        };
     if cx.diags.iter().any(|d| d.is_error()) {
         return ((None, cx.diags), Default::default());
     }
     let unchecked = finalize::build_defs(&mut cx);
     layout_merge::merge(&mut cx);
-    let mut generated = generated;
     let type_names = readonly::erase(&mut cx, &mut generated);
     let module_state = module_state::build(&mut cx, entry);
     let type_ops = type_level::lowered_ops(&mut cx);
@@ -567,7 +537,6 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
         body::expr::virtual_defaults::build_fill_bodies(cx)
     });
     timings::pass("body::check_bodies", || body::check_bodies(cx));
-    // The code generated so far, collected now that the instances it is for can be found.
     timings::pass("generated::phase", || generated::phase::run(cx));
     timings::pass("global_this::check_sites", || global_this::check_sites(cx));
     timings::pass("module_scripts::declare", || module_scripts::declare(cx));

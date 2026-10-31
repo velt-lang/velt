@@ -50,14 +50,14 @@ pub(crate) fn keys(
     out
 }
 
-/// Collect, check and bind the generated modules of `cx.gen`, and, when the driver generates
+/// Collect, check and bind the generated modules of `cx.gen.input`, and, when the driver generates
 /// during the check (`Ctx::generate`), the code of the instances still missing then.
 pub(crate) fn run(cx: &mut Ctx) {
-    let has_modules = cx.gen.as_ref().is_some_and(|g| !g.modules.is_empty());
-    if !(has_modules || cx.generate.is_some()) || !cx.has_generated_fns() {
+    let has_modules = cx.gen.input.as_ref().is_some_and(|g| !g.modules.is_empty());
+    if !(has_modules || cx.gen.generate.is_some()) || !cx.has_generated_fns() {
         return;
     }
-    let mut pending: Vec<(usize, String)> = match &cx.gen {
+    let mut pending: Vec<(usize, String)> = match &cx.gen.input {
         Some(gen) => (gen.modules.iter())
             .filter_map(|gm| Some((index(cx, &gm.path)?, gm.path.clone())))
             .collect(),
@@ -68,10 +68,10 @@ pub(crate) fn run(cx: &mut Ctx) {
         let found = crate::timings::pass("generated::demand", || demand::compute(cx));
         let keyed = crate::timings::pass("generated::keys", || keys(cx, &mut builder, &found));
         for (key, _, tys) in keyed {
-            cx.gen_binding.handles.walks.entry(key).or_insert(tys);
+            cx.gen.binding.handles.walks.entry(key).or_insert(tys);
         }
-        let gen = cx.gen.clone().unwrap_or_default();
-        let walks = &cx.gen_binding.handles.walks;
+        let gen = cx.gen.input.clone().unwrap_or_default();
+        let walks = &cx.gen.binding.handles.walks;
         let demanded =
             |i: &&GenInstance| i.fingerprint.is_empty() || walks.contains_key(&i.fingerprint);
         let (ready, waiting): (Vec<_>, Vec<_>) = pending.into_iter().partition(|(_, path)| {
@@ -96,12 +96,12 @@ pub(crate) fn run(cx: &mut Ctx) {
             continue;
         }
         // Nothing more to collect: the driver generates what is still missing, if it can now.
-        let Some(generator) = cx.generate else {
+        let Some(generator) = cx.gen.generate else {
             break;
         };
-        let bound = std::mem::take(&mut cx.gen_binding.bound);
+        let bound = std::mem::take(&mut cx.gen.binding.bound);
         let demand = super::demand_of(cx, &found, &bound);
-        cx.gen_binding.bound = bound;
+        cx.gen.binding.bound = bound;
         match demand {
             Some(d) if !d.requests.is_empty() => {
                 if !generate(cx, generator, &d, &mut pending) {
@@ -112,7 +112,7 @@ pub(crate) fn run(cx: &mut Ctx) {
         }
     }
     if !pending.is_empty() {
-        cx.gen_binding.stale = true;
+        cx.gen.binding.stale = true;
     }
 }
 
@@ -153,7 +153,7 @@ fn generate<'m>(
         let m = cx.add_module(kept, declaring);
         pending.push((m, path));
     }
-    let gen = std::rc::Rc::make_mut(cx.gen.get_or_insert_with(Default::default));
+    let gen = std::rc::Rc::make_mut(cx.gen.input.get_or_insert_with(Default::default));
     gen.extend(batch.input.clone());
     generator.state.borrow_mut().input.extend(batch.input);
     true
@@ -221,13 +221,13 @@ fn bind(cx: &mut Ctx, inst: &GenInstance) {
     let targs: Option<Vec<TyId>> = (inst.type_args.iter())
         .map(|h| {
             let (key, i) = handles::parse(h)?;
-            cx.gen_binding.handles.get(&key, i)
+            cx.gen.binding.handles.get(&key, i)
         })
         .collect();
     match targs {
         Some(targs) => {
-            cx.gen_binding.bound.insert((f, targs), body);
+            cx.gen.binding.bound.insert((f, targs), body);
         }
-        None => cx.gen_binding.stale = true,
+        None => cx.gen.binding.stale = true,
     }
 }
