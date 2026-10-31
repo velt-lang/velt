@@ -696,6 +696,14 @@ goldens:
   declaration, `globalThis`, `Object.defineProperty`), which returns `Checked::Again`, and for
   a check without a generator (`Checked::Demand`). Generated modules reach the check apart from
   the program's (`GenArgs::sources`), so no module is copied for it.
+  Within the check, generated code is collected and checked in one round when it needs nothing
+  more: the demand is computed again only after generated code was checked (the modules
+  generated for a demand are demanded by it), and not at all after the last module was checked
+  without a generator (the final check computes it anyway). A generator whose code calls
+  library code that needs more instances asks for them itself (`Output.instance`):
+  std/lang/equal/generate asks for both comparisons of a map's or record's keys and values,
+  which `Map`'s `deepEquals` calls (at `V`, not `V | null`: `valuesEqual`), so their code is
+  generated in the same run and checked in the same round.
 - The demand (`generated::demand`) walks each body once per check (`Walked`: a later
   computation, after generated code is added, walks only the new definitions), without the
   types bodies mention unless an instance or interface method needs instances (only then do

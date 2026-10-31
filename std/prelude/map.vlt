@@ -510,7 +510,7 @@ export class Map<K, V> {
         if (o < 0) {
           return this.deepEqualsByContent(other, deep);
         }
-        if (!Map.entriesEqual(this.entryValues[e], other.entryValues[o as usize], deep)) {
+        if (!Map.valuesEqual<V>(this.entryValues[e], other.entryValues[o as usize], deep)) {
           return false;
         }
       }
@@ -521,6 +521,18 @@ export class Map<K, V> {
   /** Two keys or values, as `deepEqual` compares them, or (`deep`) as Vitest's `toEqual`. */
   private static entriesEqual<T>(a: T, b: T, deep: bool): bool {
     return deep ? equalByFields(a, b) : equalByContent(a, b);
+  }
+
+  /**
+   * Two entries' values as `entriesEqual` compares them, at `V` (not `V | null`): so the
+   * generated comparisons it needs are at the map's own type arguments, which the generator
+   * asks for with the map's (velt/lang/equal/generate `entryInstances`).
+   */
+  private static valuesEqual<T>(a: T | null, b: T | null, deep: bool): bool {
+    if (a != null && b != null) {
+      return Map.entriesEqual<T>(a, b, deep);
+    }
+    return a == null && b == null;
   }
 
   // `deepEquals` once a key of this map is not a key of `other`: an object key is matched by
@@ -537,7 +549,7 @@ export class Map<K, V> {
         const o = other.lookup(this.entryKeys[e], hash(this.entryKeys[e]) * FIB);
         if (o < 0) {
           misses.push(e);
-        } else if (Map.entriesEqual(this.entryValues[e], other.entryValues[o as usize], deep)) {
+        } else if (Map.valuesEqual<V>(this.entryValues[e], other.entryValues[o as usize], deep)) {
           used[o as usize] = true;
         } else {
           return false;
@@ -551,7 +563,7 @@ export class Map<K, V> {
           !used[o] &&
           other[MAP_LIVE_AT](o) &&
           Map.entriesEqual(this.entryKeys[e], other.entryKeys[o], deep) &&
-          Map.entriesEqual(this.entryValues[e], other.entryValues[o], deep)
+          Map.valuesEqual<V>(this.entryValues[e], other.entryValues[o], deep)
         ) {
           used[o] = true;
           found = true;
@@ -652,7 +664,7 @@ export class Map<K, V> {
         if (o < 0) {
           return this.deepEqualsByContent(other, deep);
         }
-        if (!Map.entriesEqual(this.entryValues[e], other.entryValues[o as usize], deep)) {
+        if (!Map.valuesEqual<V>(this.entryValues[e], other.entryValues[o as usize], deep)) {
           return false;
         }
       }

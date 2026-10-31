@@ -265,3 +265,41 @@ fn generated_code_is_added_to_the_check_that_needs_it() {
         "{stderr}"
     );
 }
+
+/// What std code that generated code calls needs is generated with it: `deepEqual` of maps and
+/// records (through `Map`'s `deepEquals`, which compares keys and values with generated
+/// functions) is generated in one run of the generator, and so checked in one round.
+#[test]
+fn comparisons_of_maps_are_generated_in_one_run() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let dir = tmp.path().join("prog");
+    let emitted = tmp.path().join("emitted");
+    std::fs::create_dir_all(&dir).expect("dir");
+    std::fs::write(
+        dir.join("main.vlt"),
+        "type Inner = { x: number; m: Map<string, number>; r: Record<string, boolean[]> };\n\
+         function main() {\n\
+         \x20 const a: Inner = { x: 1, m: new Map([[\"a\", 1]]), r: { k: [true] } };\n\
+         \x20 const b: Inner = { x: 1, m: new Map([[\"a\", 1]]), r: { k: [true] } };\n\
+         \x20 console.log(deepEqual(a, b));\n\
+         }\n",
+    )
+    .expect("main");
+    let out = Command::new(env!("CARGO_BIN_EXE_velt"))
+        .arg("run")
+        .arg(dir.join("main.vlt"))
+        .current_dir(&dir)
+        .env("VELT_BUILD_CACHE", tmp.path().join("cache"))
+        .env("VELT_EMIT_GENERATED", &emitted)
+        .output()
+        .expect("run velt");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "true\n");
+    let mut runs: Vec<String> = std::fs::read_dir(emitted.join("std/lang/equal/generated"))
+        .expect("emitted modules")
+        .map(|e| e.expect("entry").file_name().to_string_lossy().into_owned())
+        .collect();
+    runs.sort();
+    assert_eq!(runs, ["1.vlt"], "one run of the generator");
+}

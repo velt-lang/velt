@@ -134,6 +134,18 @@ function inlineable(model: Model, t: Type): bool {
   return true;
 }
 
+/**
+ * Ask for the instances `Map`'s `deepEquals` calls for a map or record `t` (both comparisons
+ * of its keys and of its values), so they are generated with `t`'s: else the code calling it
+ * would need another round (docs/internals/design/source-generators.md §6).
+ */
+function entryInstances(out: Output, t: Type): void {
+  for (const arg of t.args) {
+    out.instance("equalByContent", [arg]);
+    out.instance("equalByFields", [arg]);
+  }
+}
+
 /** Writes `if (!(cond)) { return false; }`. */
 function require(w: Lines, cond: string): void {
   if (cond != "true") {
@@ -247,8 +259,10 @@ function content(
     w.line(`return true;`);
   } else if (k == "map") {
     // `Map`'s private `deepEquals`, with the access of the collection's type.
+    entryInstances(out, t);
     w.line(`return ${a}.deepEquals(${b}, ${d});`);
   } else if (k == "record") {
+    entryInstances(out, t);
     const ea = `Record.__entriesOf(${a})`;
     w.line(`return ${ea}.deepEquals(Record.__entriesOf(${b}), ${d});`);
   } else if (k == "set") {

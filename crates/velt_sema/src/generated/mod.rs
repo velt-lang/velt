@@ -364,9 +364,23 @@ pub(crate) fn demand_of(
     if !found.iter().any(is_missing) {
         return None;
     }
-    // Every demanded instance's key (a key's rank counts the bound ones too), then a model of
-    // what the missing ones reach.
+    // Every demanded instance's key (a key's rank counts the bound ones too).
     let keys = phase::keys(cx, &mut model::Builder::new(), found);
+    demand_with_keys(cx, found, bound, &keys)
+}
+
+/// [`demand_of`] with the keys of `found` computed already ([`phase::keys`]).
+pub(crate) fn demand_with_keys(
+    cx: &mut Ctx,
+    found: &[demand::Instance],
+    bound: &bind::Bound,
+    keys: &[phase::Key],
+) -> Option<Demand> {
+    let is_missing = |(d, a, _): &demand::Instance| !bound.contains_key(&(*d, a.clone()));
+    if !found.iter().any(is_missing) {
+        return None;
+    }
+    // A model of what the missing ones reach.
     let mut model = model::Builder::new();
     let (functions, index) = functions(cx);
     let mut requests = vec![];
@@ -386,7 +400,7 @@ pub(crate) fn demand_of(
             at: *at,
             sites,
             type_args,
-            fingerprint: key,
+            fingerprint: key.clone(),
         });
     }
     let mut model = model.model;

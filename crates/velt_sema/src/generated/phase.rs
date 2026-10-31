@@ -17,13 +17,16 @@ use super::{demand, handles, model, GenInstance};
 use crate::ctx::{Ctx, Item};
 use crate::hir::{DefId, TyId};
 
+/// An instance's key, the model ids of its type arguments and its walk's types ([`keys`]).
+pub(crate) type Key = (String, Vec<u32>, Vec<TyId>);
+
 /// The key of each instance in `found` (its fingerprint, with `-<n>` for the `n`th other
 /// instance of the same fingerprint, in demand order), with its walk's types.
 pub(crate) fn keys(
     cx: &mut Ctx,
     builder: &mut model::Builder,
     found: &[demand::Instance],
-) -> Vec<(String, Vec<u32>, Vec<TyId>)> {
+) -> Vec<Key> {
     let mut sigs: FxHashMap<DefId, String> = FxHashMap::default();
     let mut seen: FxHashMap<String, u32> = FxHashMap::default();
     let mut out = vec![];
@@ -64,12 +67,24 @@ pub(crate) fn run(cx: &mut Ctx) {
         None => vec![],
     };
     let mut builder = model::Builder::new();
+    // The demand and its keys, computed again only once checked code may have added to them:
+    // the modules generated for a demand are demanded by it.
+    let mut known: Option<(Vec<demand::Instance>, Vec<Key>)> = None;
     loop {
-        let found = crate::timings::pass("generated::demand", || demand::compute(cx));
-        let keyed = crate::timings::pass("generated::keys", || keys(cx, &mut builder, &found));
-        for (key, _, tys) in keyed {
-            cx.gen.binding.handles.walks.entry(key).or_insert(tys);
-        }
+        let (found, keyed) = match known.take() {
+            Some(k) => k,
+            None => {
+                let found = crate::timings::pass("generated::demand", || demand::compute(cx));
+                let keyed =
+                    crate::timings::pass("generated::keys", || keys(cx, &mut builder, &found));
+                for (key, _, tys) in &keyed {
+                    (cx.gen.binding.handles.walks)
+                        .entry(key.clone())
+                        .or_insert_with(|| tys.clone());
+                }
+                (found, keyed)
+            }
+        };
         let gen = cx.gen.input.clone().unwrap_or_default();
         let walks = &cx.gen.binding.handles.walks;
         let demanded =
@@ -93,6 +108,11 @@ pub(crate) fn run(cx: &mut Ctx) {
                     bind(cx, inst);
                 }
             }
+            // Without a generator and nothing waiting, what the checked code demands is the
+            // final check's (`super::instances`): nothing here can use it.
+            if pending.is_empty() && cx.gen.generate.is_none() {
+                break;
+            }
             continue;
         }
         // Nothing more to collect: the driver generates what is still missing, if it can now.
@@ -100,13 +120,14 @@ pub(crate) fn run(cx: &mut Ctx) {
             break;
         };
         let bound = std::mem::take(&mut cx.gen.binding.bound);
-        let demand = super::demand_of(cx, &found, &bound);
+        let demand = super::demand_with_keys(cx, &found, &bound, &keyed);
         cx.gen.binding.bound = bound;
         match demand {
             Some(d) if !d.requests.is_empty() => {
                 if !generate(cx, generator, &d, &mut pending) {
                     break;
                 }
+                known = Some((found, keyed));
             }
             _ => break,
         }
