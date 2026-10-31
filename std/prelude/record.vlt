@@ -15,7 +15,13 @@
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
-import { MAP_AT, MAP_IS_NULL_PROTO, MAP_LIVE_POSITIONS, MAP_MARK_NULL_PROTO, MAP_NEWEST_KEY_DIGIT } from "velt/lang/hooks/keys";
+import {
+  MAP_AT,
+  MAP_IS_NULL_PROTO,
+  MAP_LIVE_POSITIONS,
+  MAP_MARK_NULL_PROTO,
+  MAP_NEWEST_KEY_DIGIT,
+} from "velt/lang/hooks/keys";
 import { arrayIndex, objectPrototypeKey } from "velt/lang/hooks/record";
 
 // The rank of a key that is not an array index: after every index.

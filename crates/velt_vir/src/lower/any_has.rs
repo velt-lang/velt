@@ -3,7 +3,7 @@
 //! *string) -> u8`, present only when the program has such a test (`Boxing::any_has`). The
 //! slot answers `HAS_NO`, `HAS_YES` or `HAS_UNSUPPORTED` (a `TypeError`):
 //!
-//! - a proxy: its `has` trap (`Proxy.__has`, std/lang/proxy/index.vlt), or the target's answer;
+//! - a proxy: its `has` trap (`Proxy[PROXY_HAS]`, std/lang/proxy/index.vlt), or the target's answer;
 //! - class instances and object types: their fields, methods and accessors, and what every
 //!   object has from `Object.prototype` (an optional field of an object type by its presence
 //!   flag, `a?: T | null`, or while it holds a value; a class declares every field it has);
@@ -86,12 +86,17 @@ impl FnLower<'_, '_> {
             self.addr(kp)
         };
         self.any_in_nullish_check(&desc, &ka);
-        let done = self.proxy_branch("__has", &data, &desc, |lw, obj, pty, r| {
-            let v = lw.proxy_has_direct((obj, pty, r), ka.clone());
-            let res = Place::local(lw.temp(Ty::Bool));
-            lw.assign(res.clone(), Rvalue::Use(v));
-            res
-        });
+        let done = self.proxy_branch(
+            velt_common::std_key!(proxy_has),
+            &data,
+            &desc,
+            |lw, obj, pty, r| {
+                let v = lw.proxy_has_direct((obj, pty, r), ka.clone());
+                let res = Place::local(lw.temp(Ty::Bool));
+                lw.assign(res.clone(), Rvalue::Use(v));
+                res
+            },
+        );
         let args = vec![data, ka];
         let st = self.any_slot(desc, SLOT_HAS, args, vec![Ty::Ptr; 2]);
         let bad = self.rvalue_temp(
@@ -327,13 +332,19 @@ impl FnLower<'_, '_> {
         self.terminate(Terminator::Return(st));
     }
 
-    /// The `has` slot of a proxy: `__has(key)`.
+    /// The `has` slot of a proxy: `[PROXY_HAS](key)`.
     fn proxy_has_body(&mut self, data: vir::Local, key: vir::Local, ty: TyId) {
         let any = self.cx.any_ty();
         let avt = self.cx.ty(any);
         let out = Place::local(self.temp(avt));
         let k = self.proxy_key(ProxyKey::Str(key));
-        if !self.proxy_invoke("__has", data, ty, vec![(k, any)], &out) {
+        if !self.proxy_invoke(
+            velt_common::std_key!(proxy_has),
+            data,
+            ty,
+            vec![(k, any)],
+            &out,
+        ) {
             return self.ret_status(HAS_UNSUPPORTED);
         }
         self.has_result(&out);

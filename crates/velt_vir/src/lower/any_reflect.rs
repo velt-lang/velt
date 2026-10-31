@@ -10,7 +10,7 @@
 //! | `OP_COUNT` | | the number of entries, or `u64::MAX` when they cannot be listed |
 //! | `OP_NAME` | `*text` = the name of entry `index` | 0 |
 //! | `OP_VALUE` | `*value` = the value of entry `index` | 0 |
-//! | `OP_HOOK` | `*value` = what the class's `toJSON(*text)` returns (`undefined` without one); for a proxy, the value its traps give (`Proxy.__json`) | 0 |
+//! | `OP_HOOK` | `*value` = what the class's `toJSON(*text)` returns (`undefined` without one); for a proxy, the value its traps give (`Proxy[PROXY_JSON]`) | 0 |
 //!
 //! Entries: the fields of an object, class or struct in JavaScript's key order (ES private
 //! fields, symbol keys and functions left out; an object literal's getter is run for its
@@ -216,10 +216,16 @@ impl FnLower<'_, '_> {
         // Hook.
         self.switch_to(blocks[OP_HOOK as usize]);
         if self.is_proxy(ty) {
-            // A proxy: the value its traps give in Node's order (`Proxy.__json`).
+            // A proxy: the value its traps give in Node's order (`Proxy[PROXY_JSON]`).
             let r = self.proxy_receiver(data, ty);
             let any = self.cx.any_ty();
-            if !self.proxy_invoke("__json", data, ty, vec![(r, any)], &vp) {
+            if !self.proxy_invoke(
+                velt_common::std_key!(proxy_json),
+                data,
+                ty,
+                vec![(r, any)],
+                &vp,
+            ) {
                 self.any_nothing_into(Nothing::Undefined, &vp);
             }
             return self.ret_u64(0);

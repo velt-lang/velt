@@ -56,7 +56,13 @@ impl FnLower<'_, '_> {
                 self.key_sym_proxy(&data, &desc, |lw, obj, pty| {
                     let k = lw.proxy_key(ProxyKey::Sym(l));
                     let r = lw.proxy_receiver(obj, pty);
-                    lw.proxy_invoke("__get", obj, pty, vec![(k, any), (r, any)], &outp);
+                    lw.proxy_invoke(
+                        velt_common::std_key!(proxy_get),
+                        obj,
+                        pty,
+                        vec![(k, any), (r, any)],
+                        &outp,
+                    );
                 });
             }
             AnyKey::Other => self.key_any_stop(KEY_OTHER),
@@ -91,7 +97,7 @@ impl FnLower<'_, '_> {
                     let r = lw.proxy_receiver(obj, pty);
                     let res = Place::local(lw.temp(avt));
                     let args = vec![(k, any), (v, any), (r, any)];
-                    if !lw.proxy_invoke("__set", obj, pty, args, &res) {
+                    if !lw.proxy_invoke(velt_common::std_key!(proxy_set), obj, pty, args, &res) {
                         return;
                     }
                     let b = lw.cx.intern(TyKind::Bool);

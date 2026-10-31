@@ -56,7 +56,20 @@ import {
   nullAs,
   share,
 } from "velt/lang/intrinsics";
-import { MAP_ADVANCE, MAP_AT, MAP_CURSOR, MAP_DEEP_EQUALS, MAP_ENTRY_AT, MAP_IS_NULL_PROTO, MAP_KEY_AT, MAP_LIVE_AT, MAP_LIVE_POSITIONS, MAP_MARK_NULL_PROTO, MAP_NEWEST_KEY_DIGIT, MAP_VALUE_AT } from "velt/lang/hooks/keys";
+import {
+  MAP_ADVANCE,
+  MAP_AT,
+  MAP_CURSOR,
+  MAP_DEEP_EQUALS,
+  MAP_ENTRY_AT,
+  MAP_IS_NULL_PROTO,
+  MAP_KEY_AT,
+  MAP_LIVE_AT,
+  MAP_LIVE_POSITIONS,
+  MAP_MARK_NULL_PROTO,
+  MAP_NEWEST_KEY_DIGIT,
+  MAP_VALUE_AT,
+} from "velt/lang/hooks/keys";
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 

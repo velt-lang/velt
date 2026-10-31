@@ -153,7 +153,7 @@ macro_rules! std_module {
 }
 
 /// The qualified name of definition `item` of table entry `name`: `std_item!(lang_proxy,
-/// "Proxy")` is `"std/lang/proxy::Proxy"` (a method: `"Proxy.__view"`).
+/// "Proxy")` is `"std/lang/proxy::Proxy"` (a method: `"Proxy.from"`).
 #[macro_export]
 macro_rules! std_item {
     ($name:ident, $item:literal) => {

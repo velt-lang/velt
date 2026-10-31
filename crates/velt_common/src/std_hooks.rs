@@ -327,6 +327,30 @@ keys! {
     // ThisFn: a call with a `this` and `bind` (`velt_vir` `this_fn.rs`).
     this_fn_apply => "THIS_FN_APPLY", "thisFnApply";
     this_fn_bind => "THIS_FN_BIND", "thisFnBind";
+    // Proxy: what an operation on `any` asks a proxy (`velt_vir` `any_proxy.rs` & co.).
+    proxy_get_getter => "PROXY_GET_GETTER", "proxyGetGetter";
+    proxy_reads_getter => "PROXY_READS_GETTER", "proxyReadsGetter";
+    proxy_view => "PROXY_VIEW", "proxyView";
+    proxy_is_view => "PROXY_IS_VIEW", "proxyIsView";
+    proxy_plain => "PROXY_PLAIN", "proxyPlain";
+    proxy_has_get => "PROXY_HAS_GET", "proxyHasGet";
+    proxy_is_array => "PROXY_IS_ARRAY", "proxyIsArray";
+    proxy_self => "PROXY_SELF", "proxySelf";
+    proxy_target => "PROXY_TARGET", "proxyTarget";
+    proxy_get => "PROXY_GET", "proxyGet";
+    proxy_set => "PROXY_SET", "proxySet";
+    proxy_has => "PROXY_HAS", "proxyHas";
+    proxy_delete_property => "PROXY_DELETE_PROPERTY", "proxyDeleteProperty";
+    proxy_delete => "PROXY_DELETE", "proxyDelete";
+    proxy_own_keys => "PROXY_OWN_KEYS", "proxyOwnKeys";
+    proxy_get_own_property_descriptor => "PROXY_GET_OWN_PROPERTY_DESCRIPTOR", "proxyGetOwnPropertyDescriptor";
+    proxy_define_property => "PROXY_DEFINE_PROPERTY", "proxyDefineProperty";
+    proxy_keys => "PROXY_KEYS", "proxyKeys";
+    proxy_defines => "PROXY_DEFINES", "proxyDefines";
+    proxy_receive => "PROXY_RECEIVE", "proxyReceive";
+    proxy_json => "PROXY_JSON", "proxyJson";
+    proxy_array_call => "PROXY_ARRAY_CALL", "proxyArrayCall";
+    proxy_has_own => "PROXY_HAS_OWN", "proxyHasOwn";
 }
 
 /// The hook whose qualified name is `qualified` (`std/lang/hooks/number::f64ToString`).

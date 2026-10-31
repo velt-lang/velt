@@ -49,15 +49,16 @@ impl FnCx<'_, '_> {
     }
 
     /// The `Proxy` method an operation on `any` runs on a proxy, whose errors (its trap's) the
-    /// operation throws: `__get` for a read, `__set` for a write, `__has` for `in` and `__keys`
-    /// for `Object.keys`. `None` for another intrinsic.
+    /// operation throws: `[PROXY_GET]` for a read, `[PROXY_SET]` for a write, `[PROXY_HAS]` for
+    /// `in` and `[PROXY_KEYS]` for `Object.keys` (std/lang/hooks/keys.vlt). `None` for another
+    /// intrinsic.
     pub(crate) fn proxy_method_of(i: hir::Intrinsic) -> Option<&'static str> {
         use hir::Intrinsic as I;
         Some(match i {
-            I::AnyGet | I::AnyIndex => "__get",
-            I::AnySet | I::AnySetIndex => "__set",
-            I::AnyHas => "__has",
-            I::AnyKeys => "__keys",
+            I::AnyGet | I::AnyIndex => velt_common::std_key!(proxy_get),
+            I::AnySet | I::AnySetIndex => velt_common::std_key!(proxy_set),
+            I::AnyHas => velt_common::std_key!(proxy_has),
+            I::AnyKeys => velt_common::std_key!(proxy_keys),
             _ => return None,
         })
     }

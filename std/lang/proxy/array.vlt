@@ -6,11 +6,12 @@
 // `p.push(x)` on a proxy reads `push` through the `get` trap. When the trap forwards to an array
 // (`Reflect.get(target, key, receiver)`), the method it reads is an `ArrayMethod`, and the call
 // runs the method's generic algorithm from the ECMAScript specification with the proxy as `this`
-// (`Proxy.__arrayCall`, which velt_vir's proxy call slot calls): every read of `length` or of an
+// (`Proxy[PROXY_ARRAY_CALL]`, which velt_vir's proxy call slot calls): every read of `length` or of an
 // element, every write, `in` test and delete goes through the traps, in Node's order.
 
 import { Proxy } from "velt/lang/proxy";
 import { proxyArrayCall, proxyArrayHole } from "velt/lang/intrinsics";
+import { PROXY_DELETE, PROXY_GET, PROXY_HAS, PROXY_SET, PROXY_TARGET } from "velt/lang/hooks/keys";
 
 /**
  * An array method read through a proxy (`Reflect.get(array, "push")`), or `constructor`
@@ -72,9 +73,9 @@ function arraySet(p: Proxy, o: any, key: string, v: any): void {
  * holes are recorded in (velt_rt's `proxy_array`).
  */
 function arrayTarget(p: Proxy): any {
-  let t = p.__target();
+  let t = p[PROXY_TARGET]();
   while (t instanceof Proxy) {
-    t = t.__target();
+    t = t[PROXY_TARGET]();
   }
   return t;
 }
@@ -87,34 +88,34 @@ function arrayTarget(p: Proxy): any {
 function trapGet(p: Proxy, key: string, o: any): any {
   const t = arrayTarget(p);
   proxyArrayCall(t, 2);
-  const v = p.__get(key, o);
+  const v = p[PROXY_GET](key, o);
   proxyArrayCall(t, -2);
   return v;
 }
 
-/** `p.__set(key, v, o)` (see `trapGet`). */
+/** `p[PROXY_SET](key, v, o)` (see `trapGet`). */
 function trapSet(p: Proxy, key: string, v: any, o: any): boolean {
   const t = arrayTarget(p);
   proxyArrayCall(t, 2);
-  const ok = p.__set(key, v, o);
+  const ok = p[PROXY_SET](key, v, o);
   proxyArrayCall(t, -2);
   return ok;
 }
 
-/** `p.__has(key)` (see `trapGet`). */
+/** `p[PROXY_HAS](key)` (see `trapGet`). */
 function trapHas(p: Proxy, key: string): boolean {
   const t = arrayTarget(p);
   proxyArrayCall(t, 2);
-  const yes = p.__has(key);
+  const yes = p[PROXY_HAS](key);
   proxyArrayCall(t, -2);
   return yes;
 }
 
-/** `p.__delete(key)` (see `trapGet`). */
+/** `p[PROXY_DELETE](key)` (see `trapGet`). */
 function trapDelete(p: Proxy, key: string): void {
   const t = arrayTarget(p);
   proxyArrayCall(t, 2);
-  p.__delete(key);
+  p[PROXY_DELETE](key);
   proxyArrayCall(t, -2);
 }
 

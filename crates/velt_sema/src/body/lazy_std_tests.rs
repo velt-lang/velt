@@ -8,7 +8,7 @@ const LAZY_PRELUDE_METHODS: &[&str] = &["__fromReader", "__runtimeHandle", "__wr
 
 /// The definitions named by `std_item!(<entry>, "<item>")` in `src` (velt_common's std module
 /// table): per use, the byte offset of the item's text, its module's canonical path and the
-/// item (`"Proxy.__view"`).
+/// item (`"Proxy.from"`).
 fn std_items(src: &str) -> Vec<(usize, String, String)> {
     let mut out = vec![];
     for (i, m) in src.match_indices("std_item!(") {
@@ -52,7 +52,7 @@ fn helper_literals(dir: &std::path::Path, out: &mut Vec<String>) {
             if !matches!(before, Some('"') | Some(':') | Some('.')) {
                 continue;
             }
-            // A definition of a std module outside the prelude (`"std/lang/proxy::Proxy.__view"`):
+            // A definition of a std module outside the prelude (`"std/lang/proxy::Proxy.from"`):
             // `every_std_definition_lowering_names_stays_checked` checks those.
             let item = items
                 .iter()

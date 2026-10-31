@@ -34,3 +34,49 @@ export const MAP_LIVE_POSITIONS = Symbol("mapLivePositions");
 export const THIS_FN_APPLY = Symbol("thisFnApply");
 /** `ThisFn`: `bind(thisArg, ...args)` with the arguments as an array. */
 export const THIS_FN_BIND = Symbol("thisFnBind");
+/** `Proxy`: what `getGetter` does for the compiler and `Reflect`. */
+export const PROXY_GET_GETTER = Symbol("proxyGetGetter");
+/** `Proxy`: what `readsGetter` does for the compiler and `Reflect`. */
+export const PROXY_READS_GETTER = Symbol("proxyReadsGetter");
+/** `Proxy`: what `view` does for the compiler and `Reflect`. */
+export const PROXY_VIEW = Symbol("proxyView");
+/** `Proxy`: what `isView` does for the compiler and `Reflect`. */
+export const PROXY_IS_VIEW = Symbol("proxyIsView");
+/** `Proxy`: what `plain` does for the compiler and `Reflect`. */
+export const PROXY_PLAIN = Symbol("proxyPlain");
+/** `Proxy`: what `hasGet` does for the compiler and `Reflect`. */
+export const PROXY_HAS_GET = Symbol("proxyHasGet");
+/** `Proxy`: what `isArray` does for the compiler and `Reflect`. */
+export const PROXY_IS_ARRAY = Symbol("proxyIsArray");
+/** `Proxy`: what `self` does for the compiler and `Reflect`. */
+export const PROXY_SELF = Symbol("proxySelf");
+/** `Proxy`: what `target` does for the compiler and `Reflect`. */
+export const PROXY_TARGET = Symbol("proxyTarget");
+/** `Proxy`: what `get` does for the compiler and `Reflect`. */
+export const PROXY_GET = Symbol("proxyGet");
+/** `Proxy`: what `set` does for the compiler and `Reflect`. */
+export const PROXY_SET = Symbol("proxySet");
+/** `Proxy`: what `has` does for the compiler and `Reflect`. */
+export const PROXY_HAS = Symbol("proxyHas");
+/** `Proxy`: what `deleteProperty` does for the compiler and `Reflect`. */
+export const PROXY_DELETE_PROPERTY = Symbol("proxyDeleteProperty");
+/** `Proxy`: what `delete` does for the compiler and `Reflect`. */
+export const PROXY_DELETE = Symbol("proxyDelete");
+/** `Proxy`: what `ownKeys` does for the compiler and `Reflect`. */
+export const PROXY_OWN_KEYS = Symbol("proxyOwnKeys");
+/** `Proxy`: what `getOwnPropertyDescriptor` does for the compiler and `Reflect`. */
+export const PROXY_GET_OWN_PROPERTY_DESCRIPTOR = Symbol("proxyGetOwnPropertyDescriptor");
+/** `Proxy`: what `defineProperty` does for the compiler and `Reflect`. */
+export const PROXY_DEFINE_PROPERTY = Symbol("proxyDefineProperty");
+/** `Proxy`: what `keys` does for the compiler and `Reflect`. */
+export const PROXY_KEYS = Symbol("proxyKeys");
+/** `Proxy`: what `defines` does for the compiler and `Reflect`. */
+export const PROXY_DEFINES = Symbol("proxyDefines");
+/** `Proxy`: what `receive` does for the compiler and `Reflect`. */
+export const PROXY_RECEIVE = Symbol("proxyReceive");
+/** `Proxy`: what `json` does for the compiler and `Reflect`. */
+export const PROXY_JSON = Symbol("proxyJson");
+/** `Proxy`: what `arrayCall` does for the compiler and `Reflect`. */
+export const PROXY_ARRAY_CALL = Symbol("proxyArrayCall");
+/** `Proxy`: what `hasOwn` does for the compiler and `Reflect`. */
+export const PROXY_HAS_OWN = Symbol("proxyHasOwn");

@@ -17,6 +17,31 @@ import { ArrayMethod, proxyArrayInvoke, proxyArrayMethod } from "velt/lang/proxy
 import { proxyArrayHole } from "velt/lang/intrinsics";
 import { anyDeletePlain } from "velt/lang/hooks/any_object";
 import { arrayIndex } from "velt/lang/hooks/record";
+import {
+  PROXY_ARRAY_CALL,
+  PROXY_DEFINES,
+  PROXY_DEFINE_PROPERTY,
+  PROXY_DELETE,
+  PROXY_DELETE_PROPERTY,
+  PROXY_GET,
+  PROXY_GET_GETTER,
+  PROXY_GET_OWN_PROPERTY_DESCRIPTOR,
+  PROXY_HAS,
+  PROXY_HAS_GET,
+  PROXY_HAS_OWN,
+  PROXY_IS_ARRAY,
+  PROXY_IS_VIEW,
+  PROXY_JSON,
+  PROXY_KEYS,
+  PROXY_OWN_KEYS,
+  PROXY_PLAIN,
+  PROXY_READS_GETTER,
+  PROXY_RECEIVE,
+  PROXY_SELF,
+  PROXY_SET,
+  PROXY_TARGET,
+  PROXY_VIEW,
+} from "velt/lang/hooks/keys";
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
@@ -279,7 +304,7 @@ export class Proxy {
   #handler: ProxyHandler<any>;
   #view: boolean;
   // Whether this proxy's `get` trap is answering a class getter read on a class instance brand
-  // (`__getGetter`), and the getter's key then.
+  // (`[PROXY_GET_GETTER]`), and the getter's key then.
   #getterMarked: boolean;
   #getterKey: string;
 
@@ -300,7 +325,7 @@ export class Proxy {
    * the getter with `this` the proxy, Velt runs it on the target. Without a `get` trap nothing
    * forwards a receiver, and the read is the target's, as in Node.
    */
-  __getGetter(key: string): any {
+  [PROXY_GET_GETTER](key: string): any {
     const me: any = this;
     const trap = this.#handler.get;
     if (trap == null) {
@@ -319,7 +344,7 @@ export class Proxy {
   }
 
   /** Whether this proxy's `get` trap is answering a brand's class getter read of `key`. */
-  __readsGetter(key: any): boolean {
+  [PROXY_READS_GETTER](key: any): boolean {
     return this.#getterMarked && this.#getterKey === key;
   }
 
@@ -330,57 +355,57 @@ export class Proxy {
    * to the program the view is the target, as in Node. The conversion calls this only for an
    * object without a live view: it asks the runtime's table of views first (`any_view.rs`).
    */
-  static __view(target: any): Proxy {
+  static [PROXY_VIEW](target: any): Proxy {
     const p = new Proxy(target, {});
     p.#view = true;
     return p;
   }
 
-  /** Whether this proxy is a view (`__view`). */
-  __isView(): boolean {
+  /** Whether this proxy is a view (`[PROXY_VIEW]`). */
+  [PROXY_IS_VIEW](): boolean {
     return this.#view;
   }
 
   /**
    * Whether the handler has no `get`, `set` or `has` trap: then a method call through this
-   * proxy is the call on the target (`__target`), since the method's reads and writes of `this`
+   * proxy is the call on the target (`[PROXY_TARGET]`), since the method's reads and writes of `this`
    * could not tell the difference. (The key traps, `ownKeys`, `deleteProperty`, ..., don't run
-   * for a method call.) An array target's methods run through the proxy (`__arrayCall`).
+   * for a method call.) An array target's methods run through the proxy (`[PROXY_ARRAY_CALL]`).
    */
-  __plain(): boolean {
+  [PROXY_PLAIN](): boolean {
     const h = this.#handler;
-    return h.get == null && h.set == null && h.has == null && !this.__isArray();
+    return h.get == null && h.set == null && h.has == null && !this[PROXY_IS_ARRAY]();
   }
 
   /**
    * Whether the handler has a `get` trap: a method called on a typed proxy needs it to read
    * the method (not supported yet, #823).
    */
-  __hasGet(): boolean {
+  [PROXY_HAS_GET](): boolean {
     return this.#handler.get != null;
   }
 
   /** `Array.isArray(p)`: whether the target, through proxies of proxies, is an array. */
-  __isArray(): boolean {
+  [PROXY_IS_ARRAY](): boolean {
     const t = this.#target;
     if (t instanceof Proxy) {
-      return t.__isArray();
+      return t[PROXY_IS_ARRAY]();
     }
     return Array.isArray(t);
   }
 
   /** This proxy, as an `any`. */
-  __self(): any {
+  [PROXY_SELF](): any {
     return this;
   }
 
   /** The target. */
-  __target(): any {
+  [PROXY_TARGET](): any {
     return this.#target;
   }
 
   /** `receiver[key]` where the read reached this proxy: the `get` trap. */
-  __get(key: any, receiver: any): any {
+  [PROXY_GET](key: any, receiver: any): any {
     const trap = this.#handler.get;
     if (trap == null) {
       return Reflect.get(this.#target, key, receiver);
@@ -394,7 +419,7 @@ export class Proxy {
     return trap(this.#target, proxyKey(key), receiver);
   }
 
-  // `__get` while a brand's getter read is marked (`__getGetter`): this read is another one, so
+  // `[PROXY_GET]` while a brand's getter read is marked (`[PROXY_GET_GETTER]`): this read is another one, so
   // the mark is off while its trap runs.
   #getWhileMarked(key: any, receiver: any): any {
     const trap = this.#handler.get!;
@@ -409,7 +434,7 @@ export class Proxy {
   }
 
   /** `receiver[key] = value` where the write reached this proxy: the `set` trap. */
-  __set(key: any, value: any, receiver: any): boolean {
+  [PROXY_SET](key: any, value: any, receiver: any): boolean {
     const trap = this.#handler.set;
     if (trap == null) {
       return Reflect.set(this.#target, key, value, receiver);
@@ -421,7 +446,7 @@ export class Proxy {
   }
 
   /** `key in` this proxy: the `has` trap. */
-  __has(key: any): boolean {
+  [PROXY_HAS](key: any): boolean {
     const trap = this.#handler.has;
     if (trap == null) {
       return Reflect.has(this.#target, key);
@@ -433,7 +458,7 @@ export class Proxy {
   }
 
   /** `Reflect.deleteProperty(p, key)`: the `deleteProperty` trap; whether the key is gone. */
-  __deleteProperty(key: any): boolean {
+  [PROXY_DELETE_PROPERTY](key: any): boolean {
     const trap = this.#handler.deleteProperty;
     if (trap == null) {
       return Reflect.deleteProperty(this.#target, key);
@@ -443,7 +468,7 @@ export class Proxy {
     if (!trap(target, k)) {
       return false;
     }
-    // Node checks that the target's property may go (see `__getOwnPropertyDescriptor`).
+    // Node checks that the target's property may go (see `[PROXY_GET_OWN_PROPERTY_DESCRIPTOR]`).
     if (target instanceof Proxy || Array.isArray(target)) {
       const t = Reflect.getOwnPropertyDescriptor(target, k);
       if (t !== undefined && t.configurable !== true) {
@@ -455,9 +480,9 @@ export class Proxy {
     return true;
   }
 
-  /** `delete p[key]` (strict code): `__deleteProperty`, and Node's `TypeError` on `false`. */
-  __delete(key: any): boolean {
-    if (!this.__deleteProperty(key)) {
+  /** `delete p[key]` (strict code): `[PROXY_DELETE_PROPERTY]`, and Node's `TypeError` on `false`. */
+  [PROXY_DELETE](key: any): boolean {
+    if (!this[PROXY_DELETE_PROPERTY](key)) {
       const k = proxyKeyText(proxyKey(key));
       panic(`TypeError: 'deleteProperty' on proxy: trap returned falsish for property '${k}'`);
     }
@@ -468,7 +493,7 @@ export class Proxy {
    * The own keys of this proxy (`[[OwnPropertyKeys]]`): the `ownKeys` trap's answer, checked as
    * Node checks it (an array of strings and symbols, each at most once).
    */
-  __ownKeys(): (string | symbol)[] {
+  [PROXY_OWN_KEYS](): (string | symbol)[] {
     const trap = this.#handler.ownKeys;
     if (trap == null) {
       return Reflect.ownKeys(this.#target);
@@ -520,7 +545,7 @@ export class Proxy {
    * trap's answer, completed (an attribute left out is `false`). A target's properties are all
    * configurable, so a trap may not report one that is not (Node's `TypeError`).
    */
-  __getOwnPropertyDescriptor(key: any): PropertyDescriptor | undefined {
+  [PROXY_GET_OWN_PROPERTY_DESCRIPTOR](key: any): PropertyDescriptor | undefined {
     const trap = this.#handler.getOwnPropertyDescriptor;
     if (trap == null) {
       return Reflect.getOwnPropertyDescriptor(this.#target, key);
@@ -568,7 +593,7 @@ export class Proxy {
   }
 
   /** `Reflect.defineProperty(p, key, attributes)`: the `defineProperty` trap. */
-  __defineProperty(key: any, attributes: PropertyDescriptor): boolean {
+  [PROXY_DEFINE_PROPERTY](key: any, attributes: PropertyDescriptor): boolean {
     const trap = this.#handler.defineProperty;
     if (trap == null) {
       return Reflect.defineProperty(this.#target, key, attributes);
@@ -578,7 +603,7 @@ export class Proxy {
     if (!trap(target, k, attributes)) {
       return false;
     }
-    // The checks Node makes against the target's own property (see `__getOwnPropertyDescriptor`).
+    // The checks Node makes against the target's own property (see `[PROXY_GET_OWN_PROPERTY_DESCRIPTOR]`).
     const fixed = attributes.configurable === false;
     if (fixed || target instanceof Proxy || Array.isArray(target)) {
       const t = Reflect.getOwnPropertyDescriptor(target, k);
@@ -603,14 +628,14 @@ export class Proxy {
   }
 
   /**
-   * `Object.keys(p)`: the string keys `__ownKeys` lists whose property
-   * (`__getOwnPropertyDescriptor`) exists and is enumerable, in that order.
+   * `Object.keys(p)`: the string keys `[PROXY_OWN_KEYS]` lists whose property
+   * (`[PROXY_GET_OWN_PROPERTY_DESCRIPTOR]`) exists and is enumerable, in that order.
    */
-  __keys(): string[] {
+  [PROXY_KEYS](): string[] {
     const out: string[] = [];
-    for (const k of this.__ownKeys()) {
+    for (const k of this[PROXY_OWN_KEYS]()) {
       if (typeof k === "string") {
-        const d = this.__getOwnPropertyDescriptor(k);
+        const d = this[PROXY_GET_OWN_PROPERTY_DESCRIPTOR](k);
         if (d !== undefined && d.enumerable === true) {
           out.push(k);
         }
@@ -620,7 +645,7 @@ export class Proxy {
   }
 
   /** Whether the handler has a `getOwnPropertyDescriptor` or `defineProperty` trap. */
-  __defines(): boolean {
+  [PROXY_DEFINES](): boolean {
     return this.#handler.getOwnPropertyDescriptor != null || this.#handler.defineProperty != null;
   }
 
@@ -629,15 +654,15 @@ export class Proxy {
    * (JavaScript's OrdinarySet): the property is described (`getOwnPropertyDescriptor`) and then
    * defined (`defineProperty`) on this proxy; an existing one that is not writable is not.
    */
-  __receive(key: any, value: any): boolean {
-    const d = this.__getOwnPropertyDescriptor(key);
+  [PROXY_RECEIVE](key: any, value: any): boolean {
+    const d = this[PROXY_GET_OWN_PROPERTY_DESCRIPTOR](key);
     if (d !== undefined) {
       if (d.writable !== true) {
         return false;
       }
-      return this.__defineProperty(key, { value: value });
+      return this[PROXY_DEFINE_PROPERTY](key, { value: value });
     }
-    return this.__defineProperty(key, {
+    return this[PROXY_DEFINE_PROPERTY](key, {
       value: value,
       writable: true,
       enumerable: true,
@@ -651,25 +676,25 @@ export class Proxy {
    * target `length` and each element, else the keys (`ownKeys`), whether each is enumerable
    * (`getOwnPropertyDescriptor`) and then their values. `self` is this proxy, the receiver.
    */
-  __json(self: any): any {
-    const toJSON = this.__get("toJSON", self);
+  [PROXY_JSON](self: any): any {
+    const toJSON = this[PROXY_GET]("toJSON", self);
     if (typeof toJSON === "function") {
       panic(
         "TypeError: `JSON.stringify` of a proxy whose `toJSON` is a function is not supported yet (#823)",
       );
     }
-    if (this.__isArray()) {
+    if (this[PROXY_IS_ARRAY]()) {
       const items: any[] = [];
-      const len = this.__get("length", self);
+      const len = this[PROXY_GET]("length", self);
       const n = typeof len === "number" ? (len as number) : 0;
       for (let i = 0; i < n; i++) {
-        items.push(this.__get(`${i}`, self));
+        items.push(this[PROXY_GET](`${i}`, self));
       }
       return items;
     }
     const out: Record<string, any> = {};
-    for (const k of this.__keys()) {
-      out[k] = this.__get(k, self);
+    for (const k of this[PROXY_KEYS]()) {
+      out[k] = this[PROXY_GET](k, self);
     }
     return out;
   }
@@ -678,16 +703,16 @@ export class Proxy {
    * `p.m(...args)` where the `get` trap answered an array method `m` (`ArrayMethod`, velt_vir's
    * proxy call slot): the method's generic algorithm with `receiver` (the proxy) as `this`.
    */
-  __arrayCall(m: any, args: any[], receiver: any): any {
+  [PROXY_ARRAY_CALL](m: any, args: any[], receiver: any): any {
     if (m instanceof ArrayMethod) {
       return proxyArrayInvoke(this, m.name, args, receiver);
     }
     return undefined;
   }
 
-  /** `Object.hasOwn(p, key)`: whether `__getOwnPropertyDescriptor` finds the property. */
-  __hasOwn(key: any): boolean {
-    return this.__getOwnPropertyDescriptor(key) !== undefined;
+  /** `Object.hasOwn(p, key)`: whether `[PROXY_GET_OWN_PROPERTY_DESCRIPTOR]` finds the property. */
+  [PROXY_HAS_OWN](key: any): boolean {
+    return this[PROXY_GET_OWN_PROPERTY_DESCRIPTOR](key) !== undefined;
   }
 }
 
@@ -697,11 +722,11 @@ export class Reflect {
   static get(target: any, key: any, receiver?: any): any {
     if (receiver != null) {
       if (target instanceof Proxy) {
-        return target.__get(key, receiver);
+        return target[PROXY_GET](key, receiver);
       }
       if (receiver instanceof Proxy) {
-        if (receiver.__readsGetter(key)) {
-          // A brand's getter read (`Proxy.__getGetter`) forwarded with its receiver.
+        if (receiver[PROXY_READS_GETTER](key)) {
+          // A brand's getter read (`Proxy[PROXY_GET_GETTER]`) forwarded with its receiver.
           const value = Reflect.get(target, key);
           if (classGetterValue(target, key, value)) {
             // Node runs the getter with `this` = the receiver (the proxy): not supported yet.
@@ -723,7 +748,7 @@ export class Reflect {
       if (key === "toJSON") {
         return undefined;
       }
-      // A method that a call on a proxy runs through the proxy (`__arrayCall`).
+      // A method that a call on a proxy runs through the proxy (`[PROXY_ARRAY_CALL]`).
       if (proxyArrayMethod(key)) {
         return new ArrayMethod(key);
       }
@@ -735,7 +760,7 @@ export class Reflect {
     if (typeof key === "symbol") {
       const self: any = target;
       if (target instanceof Proxy) {
-        return target.__get(key, self);
+        return target[PROXY_GET](key, self);
       }
       if (target instanceof Record) {
         // A record's symbol table (std/lang/record/reflect.vlt).
@@ -751,14 +776,14 @@ export class Reflect {
     if (target instanceof Proxy) {
       // The `set` trap's answer, `false` included (a write `p.k = v` throws on it instead).
       const self: any = target;
-      return target.__set(key, value, receiver != null ? receiver : self);
+      return target[PROXY_SET](key, value, receiver != null ? receiver : self);
     }
     if (receiver != null) {
       if (receiver instanceof Proxy) {
         // JavaScript's OrdinarySet: the property is defined on a proxy receiver, whose traps
         // see that when it has them.
-        if (receiver.__defines()) {
-          return receiver.__receive(key, value);
+        if (receiver[PROXY_DEFINES]()) {
+          return receiver[PROXY_RECEIVE](key, value);
         }
       } else if (receiver !== target) {
         proxyReceiverUnsupported("set");
@@ -811,7 +836,7 @@ export class Reflect {
   static has(target: any, key: any): boolean {
     if (typeof key === "symbol") {
       if (target instanceof Proxy) {
-        return target.__has(key);
+        return target[PROXY_HAS](key);
       }
       if (target instanceof Record) {
         return target.__symHas(key) as boolean;
@@ -833,7 +858,7 @@ export class Reflect {
   static ownKeys(target: any): (string | symbol)[] {
     reflectTarget("ownKeys", target);
     if (target instanceof Proxy) {
-      return target.__ownKeys();
+      return target[PROXY_OWN_KEYS]();
     }
     const out: (string | symbol)[] = [];
     if (Array.isArray(target)) {
@@ -870,7 +895,7 @@ export class Reflect {
   static deleteProperty(target: any, key: any): boolean {
     reflectTarget("deleteProperty", target);
     if (target instanceof Proxy) {
-      return target.__deleteProperty(key);
+      return target[PROXY_DELETE_PROPERTY](key);
     }
     if (Array.isArray(target) && arrayElement(key) >= 0) {
       // Node leaves a hole and keeps the length. Velt's arrays have no holes: in a trap call of
@@ -900,7 +925,7 @@ export class Reflect {
   static getOwnPropertyDescriptor(target: any, key: any): PropertyDescriptor | undefined {
     reflectTarget("getOwnPropertyDescriptor", target);
     if (target instanceof Proxy) {
-      return target.__getOwnPropertyDescriptor(key);
+      return target[PROXY_GET_OWN_PROPERTY_DESCRIPTOR](key);
     }
     const k = proxyKey(key);
     if (target instanceof Record) {
@@ -941,7 +966,7 @@ export class Reflect {
   static defineProperty(target: any, key: any, attributes: PropertyDescriptor): boolean {
     reflectTarget("defineProperty", target);
     if (target instanceof Proxy) {
-      return target.__defineProperty(key, attributes);
+      return target[PROXY_DEFINE_PROPERTY](key, attributes);
     }
     if (attributes.get !== undefined || attributes.set !== undefined) {
       panic(
