@@ -28,6 +28,7 @@ import {
 } from "velt/encoding/json/scan";
 import { utf8Substring } from "velt/encoding";
 import { decimalValue } from "velt/lang/number/parse";
+import { strByteAt, strByteLen } from "velt/lang/intrinsics";
 
 declare function velt_rt_json_reader_free(r: u64);
 declare function velt_rt_json_reader_peek(r: u64): u32;
@@ -291,7 +292,7 @@ export class Reader extends Scanner {
     this.keyLen = this.end - this.start;
     if (this.escaped) {
       this.keyDecoded = this.decoded;
-      this.keyLen = __intrinsic_str_byte_len(this.decoded);
+      this.keyLen = strByteLen(this.decoded);
     }
     if (this.peekNonWs() != 58) {
       this.fail(EXPECTED_COLON);
@@ -335,15 +336,12 @@ export class Reader extends Scanner {
 
   // Whether bytes `start` to `end` of the source are `s`'s.
   private rangeIs(start: usize, end: usize, s: string): bool {
-    const n = __intrinsic_str_byte_len(s);
+    const n = strByteLen(s);
     if (end - start != n) {
       return false;
     }
     for (let i: usize = 0; i < n; i++) {
-      if (
-        __intrinsic_str_byte_at(this.src, (start + i) as u64) !=
-        __intrinsic_str_byte_at(s, i as u64)
-      ) {
+      if (strByteAt(this.src, (start + i) as u64) != strByteAt(s, i as u64)) {
         return false;
       }
     }
@@ -453,7 +451,7 @@ export class Reader extends Scanner {
       }
       return false;
     }
-    const t = __intrinsic_str_byte_at(this.src, this.pos as u64) == 116;
+    const t = strByteAt(this.src, this.pos as u64) == 116;
     if (!this.literal(t ? "true" : "false")) {
       return this.syntaxFailed();
     }
@@ -491,7 +489,7 @@ export class Reader extends Scanner {
         this.failed == ROWS &&
         velt_rt_json_reader_skip_value(this.rows) == 1;
     }
-    const b = __intrinsic_str_byte_at(this.src, this.pos as u64);
+    const b = strByteAt(this.src, this.pos as u64);
     if (b != 123 && b != 91) {
       return (this.walk(this.depthLeft(), false) || this.syntaxFailed());
     }
@@ -848,7 +846,7 @@ export class Reader extends Scanner {
     }
     let key = "";
     const step = velt_rt_json_reader_next_key(this.rows, key);
-    this.keyLen = __intrinsic_str_byte_len(key);
+    this.keyLen = strByteLen(key);
     this.keyEscaped = true;
     this.keyDecoded = key;
     return step;
@@ -860,17 +858,15 @@ export class Reader extends Scanner {
     if (this.code != UNEXPECTED_CHAR || this.at >= this.len) {
       return this.what;
     }
-    const lead = __intrinsic_str_byte_at(this.src, this.at as u64);
+    const lead = strByteAt(this.src, this.at as u64);
     // A lone surrogate is no character to show.
     if (
-      lead == 0xed &&
-      this.at + 1 < this.len &&
-      __intrinsic_str_byte_at(this.src, (this.at + 1) as u64) >= 0xa0
+      lead == 0xed && this.at + 1 < this.len && strByteAt(this.src, (this.at + 1) as u64) >= 0xa0
     ) {
       return this.what;
     }
     let end = this.at + 1;
-    while (end < this.len && (__intrinsic_str_byte_at(this.src, end as u64) & 0xc0) == 0x80) {
+    while (end < this.len && (strByteAt(this.src, end as u64) & 0xc0) == 0x80) {
       end++;
     }
     const ch = utf8Substring(this.src, this.at, end);
@@ -879,7 +875,7 @@ export class Reader extends Scanner {
     if (end - this.at > 1) {
       code = (lead as u32) & (0xff >> (end - this.at + 1) as u32);
       for (let i = this.at + 1; i < end; i++) {
-        code = (code << 6) | ((__intrinsic_str_byte_at(this.src, i as u64) & 0x3f) as u32);
+        code = (code << 6) | ((strByteAt(this.src, i as u64) & 0x3f) as u32);
       }
     }
     if (code < 0x20 || (code >= 0x7f && code < 0xa0)) {
@@ -899,10 +895,10 @@ function numberI64Of(r: Reader): i64 | null {
  * keeps its first and last `PATH_KEEP` with `…` between.
  */
 export function shortPath(path: string): string {
-  const n = __intrinsic_str_byte_len(path);
+  const n = strByteLen(path);
   const starts: usize[] = [];
   for (let i: usize = 0; i < n; i++) {
-    const b = __intrinsic_str_byte_at(path, i as u64);
+    const b = strByteAt(path, i as u64);
     if (b == 46 || b == 91) {
       starts.push(i);
     }

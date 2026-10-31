@@ -39,6 +39,7 @@ import {
   openSubscriber,
 } from "velt/redis/pubsub";
 import { setArgs, withPairs } from "velt/redis/args";
+import { arrayWithCapacity } from "velt/lang/intrinsics";
 
 declare async function velt_std_redis__connect(url: string, ca: string): Promise<IoResult<u64>>;
 declare async function velt_std_redis__duplicate(c: u64): Promise<IoResult<u64>>;
@@ -300,7 +301,7 @@ export struct RedisClient {
     const xs = replyStrings(
       await run(this.handle, ["ZRANGE", key, `${start}`, `${stop}`, "WITHSCORES"]),
     );
-    const out: ZMember[] = __intrinsic_array_with_capacity(xs.length / 2);
+    const out: ZMember[] = arrayWithCapacity(xs.length / 2);
     for (let i: usize = 0; i + 1 < xs.length; i += 2) {
       out.push(ZMember { member: xs[i], score: parseScore(xs[i + 1]) });
     }

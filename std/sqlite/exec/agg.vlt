@@ -23,6 +23,7 @@ import {
   toText,
 } from "velt/sqlite/exec/value";
 import { KeySet } from "velt/sqlite/exec/keys";
+import { arrayTruncate, strByteLen } from "velt/lang/intrinsics";
 
 /** Aggregate kinds. */
 export const AG_COUNT_STAR: u8 = 0;
@@ -186,7 +187,7 @@ export class AggCtx {
 
   /** Computes every aggregate of `g` (all of them, before HAVING, as SQLite's AggFinal). */
   finishGroup(g: Group) {
-    __intrinsic_array_truncate(g.done, 0);
+    arrayTruncate(g.done, 0);
     for (let k: usize = 0; k < this.fns.length; k++) {
       g.done.push(finish(this.fns[k], g.accs[k]));
     }
@@ -263,8 +264,7 @@ export function stepValues(f: AggFn, a: Acc, v: Val, sep: Val, hasSep: bool): bo
   const s = a.cnt == 0 ? "" : !hasSep ? "," : sep.t == NULL ? "" : toText(sep);
   const t = toText(v);
   // SQLite's buffer holds the text and a NUL within its length limit.
-  const n =
-    __intrinsic_str_byte_len(a.text) + __intrinsic_str_byte_len(s) + __intrinsic_str_byte_len(t);
+  const n = strByteLen(a.text) + strByteLen(s) + strByteLen(t);
   checkLength((n + 1) as u64);
   a.text += s;
   a.text += t;

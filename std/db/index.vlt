@@ -7,11 +7,12 @@
 //
 // For a row type of plain fields (numbers, bools, strings, `T | null` of those, `u8[]`) and a
 // source class whose methods do not throw, the compiler reads the rows column by column from
-// the source itself (`__intrinsic_read_rows`, null for any other type: nothing read): no text, no
+// the source itself (`readRowsByColumn`, null for any other type: nothing read): no text, no
 // copy beyond the values kept. Any other row type is read through the JSON text of the rows
 // (`rowsJson`), with the same result.
 
 import { JSON } from "velt/prelude/json/json";
+import { readRowByColumn, readRowsByColumn } from "velt/lang/intrinsics";
 
 /** What a column of the current row holds. */
 export enum CellKind {
@@ -58,7 +59,7 @@ export class RowError extends Error {
 /** Every remaining row of `src` as a `T`. Throws `RowError` for a row that does not fit. */
 export function readRows<T, S extends RowSource>(src: S): T[] {
   try {
-    const direct: T[] | null = __intrinsic_read_rows<T, S>(src);
+    const direct: T[] | null = readRowsByColumn<T, S>(src);
     if (direct != null) {
       return direct;
     }
@@ -79,7 +80,7 @@ export function readRow<T, S extends RowSource>(src: S): T | null {
     return null;
   }
   try {
-    const direct: T | null = __intrinsic_read_row<T, S>(src);
+    const direct: T | null = readRowByColumn<T, S>(src);
     if (direct != null) {
       return direct;
     }

@@ -25,6 +25,7 @@
 import { JSON } from "velt/prelude/json/json";
 import { IoResult } from "velt/native/result";
 import { IoStatus } from "velt/native/status";
+import { dbBind, jsonParseCursor } from "velt/lang/intrinsics";
 
 // `RunResult` as the driver returns it (`velt_std_sqlite::statement::RunInfo`).
 struct RunSlot {
@@ -56,7 +57,7 @@ declare function velt_std_sqlite__open_rows(
   firstOnly: bool,
 ): IoResult<u64>;
 declare function velt_std_sqlite__close_rows(cursor: u64): IoStatus;
-// A parameter sink (`velt_text::rows_cursor`): `__intrinsic_db_bind` hands it the parameters
+// A parameter sink (`velt_text::rows_cursor`): `dbBind` hands it the parameters
 // value by value, for the types it can (else they go as JSON text); then it runs the statement.
 declare function velt_std_sqlite__bind_begin(stmt: u64): IoResult<u64>;
 declare function velt_std_sqlite__open_rows_bound(sink: u64, firstOnly: bool): IoResult<u64>;
@@ -234,7 +235,7 @@ export class Statement {
 
   runWith<P>(params: P): RunResult {
     const sink = unwrap(velt_std_sqlite__bind_begin(this.#handle));
-    if (__intrinsic_db_bind<P>(sink, params)) {
+    if (dbBind<P>(sink, params)) {
       const r = unwrap(velt_std_sqlite__run_bound(sink));
       return new RunResult(r.changes, r.lastInsertRowid);
     }
@@ -276,7 +277,7 @@ export class Statement {
   // type allows (the same binding as their JSON text), else as JSON text.
   private openWith<P>(params: P, firstOnly: bool): u64 {
     const sink = unwrap(velt_std_sqlite__bind_begin(this.#handle));
-    if (__intrinsic_db_bind<P>(sink, params)) {
+    if (dbBind<P>(sink, params)) {
       return unwrap(velt_std_sqlite__open_rows_bound(sink, firstOnly));
     }
     velt_std_sqlite__bind_abort(sink);
@@ -298,7 +299,7 @@ export class Statement {
     let row: T | null = null;
     let failure: string | null = null;
     try {
-      row = __intrinsic_json_parse_cursor<T>(cursor, 0, 0);
+      row = jsonParseCursor<T>(cursor, 0, 0);
     } catch (e) {
       failure = e.message;
     }
@@ -313,7 +314,7 @@ export class Statement {
     let rows: T[] = [];
     let failure: string | null = null;
     try {
-      rows = __intrinsic_json_parse_cursor<T[]>(cursor, 0, 0);
+      rows = jsonParseCursor<T[]>(cursor, 0, 0);
     } catch (e) {
       failure = e.message;
     }

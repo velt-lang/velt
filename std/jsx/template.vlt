@@ -5,6 +5,7 @@ import { escapeText } from "velt/jsx/escape";
 import { appendElement, appendHtml, formatNumber } from "velt/jsx/append";
 import { Child, Element } from "velt/jsx/node";
 import { treeNode } from "velt/jsx/tree";
+import { arrayWithCapacity } from "velt/lang/intrinsics";
 
 /**
  * A precompiled subtree: `strings[0] slots[0] strings[1] … strings[n]`. `strings` are the
@@ -117,7 +118,7 @@ export function childrenText(children: Child[]): string | null {
   if (children.length == 1) {
     return childText(children[0]);
   }
-  const pieces: string[] = __intrinsic_array_with_capacity(children.length);
+  const pieces: string[] = arrayWithCapacity(children.length);
   for (const child of children) {
     const text = childText(child);
     if (text == null) {
@@ -140,7 +141,7 @@ function childText(child: Child): string | null {
   }
   if (typeof child === "object") {
     // An array of nodes of one string: joined (copying short markup costs less than slots).
-    const pieces: string[] = __intrinsic_array_with_capacity(child.length);
+    const pieces: string[] = arrayWithCapacity(child.length);
     for (const e of child) {
       if (e.tree != null || !e.isComplete) {
         return null;

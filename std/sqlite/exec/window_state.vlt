@@ -5,6 +5,7 @@
 import { NULL } from "velt/sqlite/btree";
 import { Val, compareVals, nullVal, textVal, toText } from "velt/sqlite/exec/value";
 import { utf8Encode } from "velt/encoding";
+import { arrayTruncate } from "velt/lang/intrinsics";
 
 /**
  * min() or max() over a frame that loses rows, with SQLite's answers: the result is the frame's
@@ -151,7 +152,7 @@ export class Concat {
       n += this.firstSep;
     }
     if (n >= (this.buf.length as i64)) {
-      __intrinsic_array_truncate(this.buf, 0);
+      arrayTruncate(this.buf, 0);
     } else {
       this.buf = this.buf.slice(n);
     }

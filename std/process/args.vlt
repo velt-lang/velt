@@ -1,6 +1,7 @@
 // velt/process (internal): the command-line arguments (`argv`, `args`).
 
 import { velt_rt_process_args } from "velt/process/rt";
+import { arrayRemove } from "velt/lang/intrinsics";
 
 /** Every command-line argument, starting with the program path (like C's `argv`). */
 export function argv(): string[] {
@@ -11,7 +12,7 @@ export function argv(): string[] {
 export function args(): string[] {
   let all = velt_rt_process_args();
   if (all.length > 0) {
-    __intrinsic_array_remove(all, 0);
+    arrayRemove(all, 0);
   }
   return all;
 }

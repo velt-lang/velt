@@ -78,6 +78,7 @@ pub(crate) fn fn_placeholder<'m>(
         owner: None,
         is_async: false,
         system: None,
+        intrinsic: None,
         is_generator: false,
         is_async_gen: false,
         soft_moves: vec![],
@@ -161,7 +162,7 @@ pub(super) fn new_def<'m>(
                     s.name.span,
                 );
             }
-            let info = fn_placeholder(
+            let mut info = fn_placeholder(
                 s.name.name.clone(),
                 s.name.span,
                 s.span,
@@ -169,6 +170,9 @@ pub(super) fn new_def<'m>(
                 FnKind::Extern,
                 None,
             );
+            if s.is_intrinsic {
+                info.intrinsic = Some(crate::intrinsic_decls::declare(cx, m, s));
+            }
             (&s.name, DefInfo::Fn(Box::new(info)))
         }
         ast::ItemKind::Struct(t) => (&t.name, adt_info(m, t, AdtKind::Struct, q)),

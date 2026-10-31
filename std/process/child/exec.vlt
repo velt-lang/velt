@@ -7,6 +7,7 @@ import { ExecOptions } from "velt/process/child/exec_options";
 import { ExecResult } from "velt/process/child/exec_result";
 import { resultOf, velt_rt_child_output, velt_rt_child_output_sync } from "velt/process/child/rt";
 import { specOf } from "velt/process/child/spec";
+import { arrayRemove } from "velt/lang/intrinsics";
 
 /** Runs `program` with `args` to completion; resolves with its exit code and output. */
 export async function exec(
@@ -38,7 +39,7 @@ function shellArgs(command: string): string[] {
 export async function execShell(command: string, opts: ExecOptions = {}): Promise<ExecResult> {
   const argv = shellArgs(command);
   const program = argv[0].clone();
-  __intrinsic_array_remove(argv, 0);
+  arrayRemove(argv, 0);
   return await exec(program, argv, opts);
 }
 
@@ -46,6 +47,6 @@ export async function execShell(command: string, opts: ExecOptions = {}): Promis
 export function execShellSync(command: string, opts: ExecOptions = {}): ExecResult {
   const argv = shellArgs(command);
   const program = argv[0].clone();
-  __intrinsic_array_remove(argv, 0);
+  arrayRemove(argv, 0);
   return execSync(program, argv, opts);
 }

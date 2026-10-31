@@ -35,6 +35,7 @@ import {
   tooBig,
 } from "velt/sqlite/exec/value";
 import { utf8Encode } from "velt/encoding";
+import { arrayWithCapacity, strByteLen } from "velt/lang/intrinsics";
 
 type Ev = () => Val throws Error;
 
@@ -100,7 +101,7 @@ export function scalarFunction(name: string, shown: string, a: Ev[], coll: u8): 
         return intVal(v.b.length as i64);
       }
       const s = text(v);
-      return intVal(octets ? __intrinsic_str_byte_len(s) as i64 : charLength(s));
+      return intVal(octets ? strByteLen(s) as i64 : charLength(s));
     };
   }
   if (name == "LOWER" || name == "UPPER") {
@@ -114,7 +115,7 @@ export function scalarFunction(name: string, shown: string, a: Ev[], coll: u8): 
       }
       const s = text(v);
       // contextMalloc(n + 1): the text and its NUL.
-      checkLength((__intrinsic_str_byte_len(s) + 1) as u64);
+      checkLength((strByteLen(s) + 1) as u64);
       return textVal(up ? asciiUpper(s) : asciiLower(s));
     };
   }
@@ -257,7 +258,7 @@ export function scalarFunction(name: string, shown: string, a: Ev[], coll: u8): 
         }
         s += String.fromCodePoint(c as f64);
       }
-      checkLength(__intrinsic_str_byte_len(s) as u64);
+      checkLength(strByteLen(s) as u64);
       return textVal(s);
     };
   }
@@ -282,7 +283,7 @@ export function scalarFunction(name: string, shown: string, a: Ev[], coll: u8): 
       if (k > (MAX_LENGTH as i64)) {
         tooBig();
       }
-      const b: u8[] = __intrinsic_array_with_capacity(k < 0 ? 0 : k as usize);
+      const b: u8[] = arrayWithCapacity(k < 0 ? 0 : k as usize);
       for (let i: i64 = 0; i < k; i++) {
         b.push(0);
       }
@@ -316,10 +317,10 @@ export function scalarFunction(name: string, shown: string, a: Ev[], coll: u8): 
       // The result's size before it is built (sqlite3_result_text64 checks it).
       let size: u64 = 0;
       for (const t of texts) {
-        size += __intrinsic_str_byte_len(t) as u64;
+        size += strByteLen(t) as u64;
       }
       if (texts.length > 1) {
-        size += ((texts.length - 1) as u64) * (__intrinsic_str_byte_len(sep) as u64);
+        size += ((texts.length - 1) as u64) * (strByteLen(sep) as u64);
       }
       checkLength(size);
       return textVal(texts.join(sep));
@@ -474,13 +475,13 @@ function replace(x: Val, y: Val, z: Val): Val {
   if (s == "") {
     return textVal(s);
   }
-  const nStr = __intrinsic_str_byte_len(s) as u64;
+  const nStr = strByteLen(s) as u64;
   // contextMalloc(nStr + 1), then the result's size before it is built.
   checkLength(nStr + 1);
   const parts = s.split(pat);
   const rep = text(z);
-  const nPat = __intrinsic_str_byte_len(pat) as u64;
-  const nRep = __intrinsic_str_byte_len(rep) as u64;
+  const nPat = strByteLen(pat) as u64;
+  const nRep = strByteLen(rep) as u64;
   if (nRep > nPat) {
     checkLength(nStr + ((parts.length - 1) as u64) * (nRep - nPat));
   }
@@ -571,7 +572,7 @@ export function quote(v: Val): string {
   }
   const parts = t.split("'");
   // The text, a quote more for each quote, the two around it and the NUL.
-  checkLength((__intrinsic_str_byte_len(t) + parts.length + 2) as u64);
+  checkLength((strByteLen(t) + parts.length + 2) as u64);
   return "'" + parts.join("''") + "'";
 }
 

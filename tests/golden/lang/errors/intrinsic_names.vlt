@@ -1,0 +1,9 @@
+// The old spelling of an intrinsic is no name at all, and only std declares intrinsics.
+declare intrinsic function arraySwap<T>(xs: T[], i: usize, j: usize): void;
+
+function main() {
+  const xs: i64[] = [1, 2];
+  __intrinsic_array_swap(xs, 0, 1);
+  arraySwap(xs, 0, 1);
+  console.log(xs);
+}

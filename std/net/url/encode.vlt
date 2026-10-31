@@ -8,6 +8,7 @@
 // public API throws (std/url owns the error class), so this module has no dependency on it.
 
 import { IoResult } from "velt/native/result";
+import { arrayWithCapacity, strByteLen } from "velt/lang/intrinsics";
 
 declare function velt_rt_bytes_from_str(s: string): u8[];
 declare function velt_rt_bytes_to_str(b: u8[]): IoResult<string>;
@@ -37,7 +38,7 @@ const SPACE: u8 = 32;
  * scanners below and in std/url/record look unit by unit only at ASCII text.
  */
 export function isAscii(s: string): bool {
-  return __intrinsic_str_byte_len(s) == s.length;
+  return strByteLen(s) == s.length;
 }
 
 /** The bytes of `s` (a copy). */
@@ -62,7 +63,7 @@ export function lossyUtf8(bytes: u8[]): string {
   if (direct != null) {
     return direct;
   }
-  const fixed: u8[] = __intrinsic_array_with_capacity(bytes.length + 8);
+  const fixed: u8[] = arrayWithCapacity(bytes.length + 8);
   let i: usize = 0;
   while (i < bytes.length) {
     const n = validSequenceLength(bytes, i);
@@ -218,7 +219,7 @@ export function encodeSet(s: string, set: i64): string {
   if (first == b.length) {
     return s.clone();
   }
-  const out: u8[] = __intrinsic_array_with_capacity(b.length + 16);
+  const out: u8[] = arrayWithCapacity(b.length + 16);
   for (let i: usize = 0; i < b.length; i++) {
     if (!inSet(b[i], set)) {
       out.push(b[i]);
@@ -240,7 +241,7 @@ export function encodeUri(s: string, keepReserved: bool): string | null {
     return null;
   }
   const b = bytesOf(s);
-  const out: u8[] = __intrinsic_array_with_capacity(b.length + 16);
+  const out: u8[] = arrayWithCapacity(b.length + 16);
   for (let i: usize = 0; i < b.length; i++) {
     const c = b[i] as i64;
     if (uriUnreserved(c) || (keepReserved && uriReserved(c))) {
@@ -294,7 +295,7 @@ function escapeAt(b: u8[], i: usize): i64 {
  */
 export function decodeLenient(s: string, plusAsSpace: bool): string {
   const b = bytesOf(s);
-  const out: u8[] = __intrinsic_array_with_capacity(b.length);
+  const out: u8[] = arrayWithCapacity(b.length);
   let i: usize = 0;
   while (i < b.length) {
     const e = escapeAt(b, i);
@@ -315,7 +316,7 @@ export function decodeLenient(s: string, plusAsSpace: bool): string {
  */
 export function decodeUri(s: string, keepReserved: bool): string | null {
   const b = bytesOf(s);
-  const out: u8[] = __intrinsic_array_with_capacity(b.length);
+  const out: u8[] = arrayWithCapacity(b.length);
   let i: usize = 0;
   while (i < b.length) {
     if (b[i] != PERCENT) {

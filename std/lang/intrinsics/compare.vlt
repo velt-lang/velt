@@ -1,0 +1,31 @@
+// velt/lang/intrinsics (internal): equality and hashing the compiler generates per type: numbers,
+// bools and strings by value, the parts of unions, options and tuples one by one.
+
+/**
+ * A hash agreeing with `keyEq` (`Map` and `Set` keys): numbers, bool and strings by value,
+ * objects by identity, unions, options and tuples part by part.
+ */
+export declare intrinsic function hash<T>(value: T): u64;
+
+/** Structural (deep) equality: what `deepEqual` and `assertEq` compare. */
+export declare intrinsic function eq<T>(a: T, b: T): bool;
+
+/**
+ * Vitest's `toEqual`: as `eq`, but a class instance that isn't the same object is compared by
+ * its fields (a `Date` by its time, a `Set` by its members), and floats with SameValue (`NaN`
+ * equals itself, `0` doesn't equal `-0`).
+ */
+export declare intrinsic function deepEq<T>(a: T, b: T): bool;
+
+/**
+ * JavaScript's SameValueZero, the `Map` and `Set` key comparison: `===` with floats compared so
+ * that `NaN` equals itself and `0` equals `-0`. Objects compare by identity, as `hash` hashes
+ * them.
+ */
+export declare intrinsic function keyEq<T>(a: T, b: T): bool;
+
+/**
+ * JavaScript's `Array.prototype.includes` comparison: `===`, except that a number `NaN` equals
+ * `NaN` (a number held by an `any` or an option too).
+ */
+export declare intrinsic function includesEq<T>(a: T, b: T): bool;

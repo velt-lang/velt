@@ -9,6 +9,7 @@ import { Ev, Out, Pred, Query, Scope, Step } from "velt/sqlite/exec/scope";
 import { C, ExprCompiler } from "velt/sqlite/exec/expr";
 import { rangeError, resultIndex, termNumber } from "velt/sqlite/exec/result";
 import { Val, compareVals } from "velt/sqlite/exec/value";
+import { arrayTruncate } from "velt/lang/intrinsics";
 
 /** The groups of an aggregate query during one run. */
 export class GroupState {
@@ -28,7 +29,7 @@ export class GroupState {
       } else {
         agg.resetGroup(this.single!);
       }
-      __intrinsic_array_truncate(this.list, 0);
+      arrayTruncate(this.list, 0);
       this.list.push(this.single!);
       return;
     }

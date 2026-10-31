@@ -17,6 +17,7 @@ import {
   STAGE_STREAM,
   STAGE_UNCOMPRESSED,
 } from "velt/compress/brotli/cursor";
+import { arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
 
 // Block categories.
 const LITERALS: usize = 0;
@@ -123,8 +124,8 @@ function reserve(s: State, at: usize, n: usize) {
   if (need > s.tables.length) {
     // Left unfilled: a table is written whole before it is read.
     const size = need * 2;
-    const grown: u32[] = __intrinsic_array_with_capacity(size);
-    __intrinsic_array_set_len(grown, size);
+    const grown: u32[] = arrayWithCapacity(size);
+    arraySetLen(grown, size);
     const old = s.tables;
     for (let i: usize = 0; i < at; i++) {
       grown[i] = old[i];

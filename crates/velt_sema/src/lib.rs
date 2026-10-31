@@ -82,6 +82,7 @@ mod intersection_class_parts;
 mod intersection_members;
 mod intersection_records;
 mod intersections;
+mod intrinsic_decls;
 mod js_api;
 mod json;
 mod kept_consts;

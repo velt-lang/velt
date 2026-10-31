@@ -13,6 +13,8 @@
 // use dynamic operations without making the program pay for them: sema counts a program as
 // using `any` members only when it converts such a value (`body/expr/iface_adapt.rs`).
 
+import { anyDelete } from "velt/lang/intrinsics";
+
 /** Stops with the `TypeError` of an argument `v` that is not the `want` a method expects. */
 export function __adaptMismatch(v: unknown, want: string): never {
   let found = "an object";
@@ -528,7 +530,7 @@ export function __anyDeletePlain(o: any, key: any): boolean {
       );
     }
   }
-  return __intrinsic_any_delete(o, k);
+  return anyDelete(o, k);
 }
 
 /**

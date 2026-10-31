@@ -288,6 +288,9 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        if let Some(decl) = self.cx.fn_info(d).intrinsic {
+            return self.intrinsic_call(d, decl, type_args, args, exp, span);
+        }
         if self.takes_this(d) {
             return self.this_fn_call(d, name, None, type_args, args, exp, span);
         }

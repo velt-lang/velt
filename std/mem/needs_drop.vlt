@@ -1,5 +1,7 @@
 // velt/mem (internal): `needsDrop`, whether a type's values own memory.
 
+import { needsDrop as typeNeedsDrop } from "velt/lang/intrinsics";
+
 /**
  * Whether values of `value`'s type own memory that dropping one releases: strings, arrays,
  * objects and class instances (and structs or unions holding any) do; numbers, `bool` and
@@ -8,5 +10,5 @@
  * only matters for values that hold memory (Rust's `std::mem::needs_drop`).
  */
 export function needsDrop<T>(value: T): bool {
-  return __intrinsic_needs_drop(value);
+  return typeNeedsDrop(value);
 }

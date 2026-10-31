@@ -5,6 +5,7 @@ import { escapeText } from "velt/jsx/escape";
 import { Deferred } from "velt/jsx/deferred";
 import { Child, Element } from "velt/jsx/node";
 import { markupOf } from "velt/jsx/tree";
+import { arrayWithCapacity } from "velt/lang/intrinsics";
 
 /** Appends finished markup after everything `node` holds. */
 export function appendHtml(node: Element, html: string) {
@@ -89,7 +90,7 @@ function childHtml(child: Child): string | null {
     return child.isComplete ? markupOf(child) : null;
   }
   if (typeof child === "object") {
-    const pieces: string[] = __intrinsic_array_with_capacity(child.length);
+    const pieces: string[] = arrayWithCapacity(child.length);
     for (const e of child) {
       if (!e.isComplete) {
         return null;

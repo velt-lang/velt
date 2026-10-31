@@ -88,6 +88,7 @@ import {
 export { C, binaryColl, comparisonOp, hasAggregate } from "velt/sqlite/exec/compiled";
 import { hexDecode } from "velt/encoding";
 import { byteSlice } from "velt/sqlite/sql/lexer";
+import { arrayTruncate, strByteLen } from "velt/lang/intrinsics";
 
 /** Compiles expressions; the SELECT compiler extends it with subqueries. */
 export abstract class ExprCompiler {
@@ -108,8 +109,8 @@ export abstract class ExprCompiler {
 
   /** A function name as the statement spells it. */
   written(e: Expr): string {
-    const n = __intrinsic_str_byte_len(e.name);
-    if (e.at + n <= __intrinsic_str_byte_len(this.sql)) {
+    const n = strByteLen(e.name);
+    if (e.at + n <= strByteLen(this.sql)) {
       const s = byteSlice(this.sql, e.at, e.at + n);
       if (s.toUpperCase() == e.name) {
         return s;
@@ -140,8 +141,8 @@ export abstract class ExprCompiler {
    */
   rewind(refs: usize, rows: usize) {
     this.rewindRefs(refs);
-    __intrinsic_array_truncate(this.rowsSrc, rows);
-    __intrinsic_array_truncate(this.rowsQ, rows);
+    arrayTruncate(this.rowsSrc, rows);
+    arrayTruncate(this.rowsQ, rows);
   }
 
   /** Takes back the table references counted after `mark`. */

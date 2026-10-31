@@ -16,6 +16,7 @@ import { Channel } from "velt/sync/channel";
 import { TcpStream } from "velt/net";
 import { START } from "velt/net/websocket/queue";
 import { Tx, writeDirect } from "velt/net/websocket/writer";
+import { arrayRemove } from "velt/lang/intrinsics";
 
 class Sub {
   /** The connection's stream, which the publishing task may write to. */
@@ -46,7 +47,7 @@ class Topic {
   leave(tx: Tx): bool {
     for (let i = 0; i < this.subs.length; i++) {
       if (this.subs[i].tx === tx) {
-        __intrinsic_array_remove(this.subs, i);
+        arrayRemove(this.subs, i);
         break;
       }
     }
@@ -135,7 +136,7 @@ export function unsubscribe(tx: Tx, topic: string) {
   tx.with((q) => {
     const at = q.topics.indexOf(topic);
     if (at >= 0) {
-      __intrinsic_array_remove(q.topics, at as usize);
+      arrayRemove(q.topics, at as usize);
     }
   });
   leave(tx, topic);

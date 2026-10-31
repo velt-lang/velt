@@ -26,6 +26,7 @@ import { KeyRec, compareRecords } from "velt/sqlite/record";
 import { realText } from "velt/sqlite/real";
 import { utf8DecodeLossy } from "velt/encoding";
 import "velt/sqlite/btree_seek";
+import { arrayTruncate } from "velt/lang/intrinsics";
 
 /** A b-tree is at most this deep: SQLite's own limit (BTCURSOR_MAX_DEPTH). */
 const MAX_DEPTH: usize = 20;
@@ -94,8 +95,8 @@ export class Cursor {
 
   /** Moves to the first entry; false if the tree is empty. */
   first(): bool {
-    __intrinsic_array_truncate(this.pages, 0);
-    __intrinsic_array_truncate(this.cells, 0);
+    arrayTruncate(this.pages, 0);
+    arrayTruncate(this.cells, 0);
     return this.descendLeft(this.root);
   }
 
@@ -363,7 +364,7 @@ export class Cursor {
   gather(at: usize, keep: usize) {
     const data = this.db.data;
     const out = this.scratch;
-    __intrinsic_array_truncate(out, 0);
+    arrayTruncate(out, 0);
     for (let i: usize = 0; i < keep; i++) {
       out.push(data[at + i]);
     }
@@ -394,16 +395,16 @@ export class Cursor {
     if (this.parsed) {
       return;
     }
-    __intrinsic_array_truncate(this.types, 0);
-    __intrinsic_array_truncate(this.offsets, 0);
+    arrayTruncate(this.types, 0);
+    arrayTruncate(this.offsets, 0);
     // The common record in place: a one-byte header size, serial types of one or two bytes.
     // Anything else (and any damage) goes through decodeHeader, which reports it.
     if (this.local && this.parseFast()) {
       this.parsed = true;
       return;
     }
-    __intrinsic_array_truncate(this.types, 0);
-    __intrinsic_array_truncate(this.offsets, 0);
+    arrayTruncate(this.types, 0);
+    arrayTruncate(this.offsets, 0);
     if (this.local) {
       decodeHeader(this.db.data, this.start, this.size, this.types, this.offsets);
     } else {

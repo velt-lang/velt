@@ -19,6 +19,7 @@ import {
 } from "velt/crypto/rt";
 import { H1 } from "velt/crypto/tables";
 import { blockWords, keyWords, newBytes, Pair, tailBlock, tailBlocks } from "velt/crypto/vectors";
+import { targetFeature } from "velt/lang/intrinsics";
 
 // SHA-1's state on ARM: ABCD (A in lane 0) and E.
 struct Sha1State {
@@ -28,7 +29,7 @@ struct Sha1State {
 
 // One SHA-1 block on ARMv8: 80 rounds, four per SHA1C / SHA1P / SHA1M.
 function rounds1Arm(s: Sha1State, w0: u32x4, w1: u32x4, w2: u32x4, w3: u32x4): Sha1State {
-  __intrinsic_target("sha-arm");
+  targetFeature("sha-arm");
   const k0 = u32x4.splat(0x5a827999);
   const k1 = u32x4.splat(0x6ed9eba1);
   const k2 = u32x4.splat(0x8f1bbcdc);
@@ -90,14 +91,14 @@ function rounds1Arm(s: Sha1State, w0: u32x4, w1: u32x4, w2: u32x4, w3: u32x4): S
 }
 
 export function sha1Arm(key: u8[], pad: u8, keyed: bool, data: u8[]): u8[] {
-  __intrinsic_target("sha-arm");
+  targetFeature("sha-arm");
   const s = state1Arm(key, pad, keyed, data);
   return sha1Digest(s.abcd, s.e);
 }
 
 /** HMAC-SHA1 on ARMv8 (`k` at most a block): the outer block is made from the inner state. */
 export function hmac1Arm(k: u8[], data: u8[]): u8[] {
-  __intrinsic_target("sha-arm");
+  targetFeature("sha-arm");
   const inner = state1Arm(k, 0x36, true, data);
   let s: Sha1State = { abcd: u32x4.load(H1, 0), e: H1[4] };
   const p = u8x16.splat(0x5c);
@@ -111,7 +112,7 @@ export function hmac1Arm(k: u8[], data: u8[]): u8[] {
 
 // The state after SHA-1 (ARMv8) of `data`, after a keyed first block (see `sha256Of`).
 function state1Arm(key: u8[], pad: u8, keyed: bool, data: u8[]): Sha1State {
-  __intrinsic_target("sha-arm");
+  targetFeature("sha-arm");
   let s: Sha1State = { abcd: u32x4.load(H1, 0), e: H1[4] };
   if (keyed) {
     const p = u8x16.splat(pad);
@@ -146,7 +147,7 @@ function state1Arm(key: u8[], pad: u8, keyed: bool, data: u8[]): Sha1State {
 // One SHA-1 block with x86 SHA-NI: ABCD with A in lane 3, E (in lane 3) carried by SHA1NEXTE.
 // The message words come in ARM's order (word 0 in lane 0) and are turned around here.
 function rounds1X86(s: Pair, w0: u32x4, w1: u32x4, w2: u32x4, w3: u32x4): Pair {
-  __intrinsic_target("sha-x86");
+  targetFeature("sha-x86");
   let m0 = u32x4.shuffle(w0, w0, 3, 2, 1, 0);
   let m1 = u32x4.shuffle(w1, w1, 3, 2, 1, 0);
   let m2 = u32x4.shuffle(w2, w2, 3, 2, 1, 0);
@@ -199,21 +200,21 @@ function rounds1X86(s: Pair, w0: u32x4, w1: u32x4, w2: u32x4, w3: u32x4): Pair {
 }
 
 export function sha1X86(key: u8[], pad: u8, keyed: bool, data: u8[]): u8[] {
-  __intrinsic_target("sha-x86");
+  targetFeature("sha-x86");
   const s = state1X86(key, pad, keyed, data);
   return sha1Digest(u32x4.shuffle(s.a, s.a, 3, 2, 1, 0), s.b.lane(3));
 }
 
 // SHA-1's initial state for SHA-NI: ABCD with A in lane 3, E in lane 3.
 function initial1X86(): Pair {
-  __intrinsic_target("sha-x86");
+  targetFeature("sha-x86");
   const dcba = u32x4.load(H1, 0);
   return { a: u32x4.shuffle(dcba, dcba, 3, 2, 1, 0), b: u32x4.splat(0).withLane(3, H1[4]) };
 }
 
 /** HMAC-SHA1 with x86 SHA-NI (`k` at most a block); see `hmac1Arm`. */
 export function hmac1X86(k: u8[], data: u8[]): u8[] {
-  __intrinsic_target("sha-x86");
+  targetFeature("sha-x86");
   const inner = state1X86(k, 0x36, true, data);
   let s = initial1X86();
   const p = u8x16.splat(0x5c);
@@ -229,7 +230,7 @@ export function hmac1X86(k: u8[], data: u8[]): u8[] {
 // The state (ABCD with A in lane 3, E in lane 3) after SHA-1 with SHA-NI of `data`, after a
 // keyed first block.
 function state1X86(key: u8[], pad: u8, keyed: bool, data: u8[]): Pair {
-  __intrinsic_target("sha-x86");
+  targetFeature("sha-x86");
   let s = initial1X86();
   if (keyed) {
     const p = u8x16.splat(pad);

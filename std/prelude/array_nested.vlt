@@ -3,6 +3,8 @@
 // any depth, `null` as ""), and `null` elements join as "". These targets are more specific
 // than `extend<T> Array<T>` (array.vlt), so their `join` wins.
 
+import { arraySwapNested, arrayWithCapacity, share } from "velt/lang/intrinsics";
+
 extend<T> Array<T[]> {
   /**
    * Exchanges `this[a][i]` and `this[b][j]` (every index must be in range), also between two
@@ -10,7 +12,7 @@ extend<T> Array<T[]> {
    * bits change places, nothing is copied or dropped. For data kept in chunks (`T[][]`).
    */
   swapIn(a: usize, i: usize, b: usize, j: usize) {
-    __intrinsic_array_swap_nested(this, a, i, b, j);
+    arraySwapNested(this, a, i, b, j);
   }
 
   /** The inner arrays' elements, one level deep (JS `flat()`; deeper levels are not supported). */
@@ -19,11 +21,11 @@ extend<T> Array<T[]> {
     for (let i: usize = 0; i < this.length; i++) {
       total += this[i].length;
     }
-    const out: T[] = __intrinsic_array_with_capacity(total);
+    const out: T[] = arrayWithCapacity(total);
     for (let i: usize = 0; i < this.length; i++) {
       const inner = this[i];
       for (let j: usize = 0; j < inner.length; j++) {
-        out.push(__intrinsic_share(inner[j]));
+        out.push(share(inner[j]));
       }
     }
     return out;
@@ -54,7 +56,7 @@ extend<T> Array<T | null> {
         s += sep;
       }
       // A one-element tuple is written as its element is written in an array: `null` as "".
-      const one: [T | null] = [__intrinsic_share(this[i])];
+      const one: [T | null] = [share(this[i])];
       s += `${one}`;
     }
     return s;

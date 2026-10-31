@@ -14,7 +14,7 @@
 // the elements equal to it, which are then done: inputs with many duplicates take O(n log k).
 // Too many unbalanced partitions switch to merge sort (`mergeSortRange`).
 //
-// Elements move with `__intrinsic_array_move` (raw bits, no clone, no drop): each one is
+// Elements move with `arrayMove` (raw bits, no clone, no drop): each one is
 // owned by exactly one array at any time, the slots it left keep stale copies, and the
 // buffers' lengths go back to 0 before they are dropped. Every partition and merge moves each
 // element exactly once whatever the comparator answers, and the depth is bounded, so an
@@ -44,6 +44,13 @@ import {
   mergeRuns,
   mergeSortRange,
 } from "velt/lang/sort/merge";
+import {
+  arrayMove,
+  arraySetLen,
+  arrayWithCapacity,
+  fnCapturesNothing,
+  needsDrop,
+} from "velt/lang/intrinsics";
 
 // Ranges at most this long are insertion sorted.
 const SMALL_SORT: usize = 20;
@@ -58,10 +65,10 @@ const PSEUDO_MEDIAN_MIN: usize = 64;
 export function stableSort<T, C>(xs: T[], cmp: (x: T, y: T) => C, neg: (c: C) => bool) {
   const n = xs.length;
   // `xs[0]` only names the element type: it is not evaluated.
-  const plain = !__intrinsic_needs_drop(xs[0]);
+  const plain = !needsDrop(xs[0]);
   // In place only for elements without drop and a comparator that captures nothing: such a
   // comparator reaches no array, through its environment or its arguments.
-  if (n <= SMALL_SORT && plain && __intrinsic_fn_captures_nothing(cmp)) {
+  if (n <= SMALL_SORT && plain && fnCapturesNothing(cmp)) {
     insertionTail(xs, 0, 1, n, cmp, neg);
     return;
   }
@@ -69,33 +76,33 @@ export function stableSort<T, C>(xs: T[], cmp: (x: T, y: T) => C, neg: (c: C) =>
     return;
   }
   // One path for the rest, so that `xs` itself is never passed to a call the optimizer keeps.
-  const work: T[] = __intrinsic_array_with_capacity(n);
-  __intrinsic_array_set_len(work, n);
-  __intrinsic_array_move(work, 0, xs, 0, n);
+  const work: T[] = arrayWithCapacity(n);
+  arraySetLen(work, n);
+  arrayMove(work, 0, xs, 0, n);
   if (!plain) {
-    __intrinsic_array_set_len(xs, 0);
+    arraySetLen(xs, 0);
   }
   driftsort(work, cmp, neg);
   if (plain) {
     // Written back over the first n slots (the array grows back to n if the comparator
     // shortened it; what it pushed stays after them).
     if (xs.length < n) {
-      __intrinsic_array_set_len(xs, n);
+      arraySetLen(xs, n);
     }
-    __intrinsic_array_move(xs, 0, work, 0, n);
+    arrayMove(xs, 0, work, 0, n);
     return;
   }
   // Elements the comparator added to `xs` meanwhile go after the sorted ones.
   const added = xs.length;
   if (added > 0) {
-    __intrinsic_array_set_len(work, n + added);
-    __intrinsic_array_move(work, n, xs, 0, added);
-    __intrinsic_array_set_len(xs, 0);
+    arraySetLen(work, n + added);
+    arrayMove(work, n, xs, 0, added);
+    arraySetLen(xs, 0);
   }
   const total = work.length;
-  __intrinsic_array_set_len(xs, total);
-  __intrinsic_array_move(xs, 0, work, 0, total);
-  __intrinsic_array_set_len(work, 0);
+  arraySetLen(xs, total);
+  arrayMove(xs, 0, work, 0, total);
+  arraySetLen(work, 0);
 }
 
 // The sort itself, on an array no comparator can reach (`stableSort`'s buffer).
@@ -136,12 +143,12 @@ function driftsort<T, C>(xs: T[], cmp: (x: T, y: T) => C, neg: (c: C) => bool) {
   if (unsorted.length == 1 && !unsorted[0]) {
     return;
   }
-  const scratch: T[] = __intrinsic_array_with_capacity(n);
-  __intrinsic_array_set_len(scratch, n);
+  const scratch: T[] = arrayWithCapacity(n);
+  arraySetLen(scratch, n);
   // One slot per partition level for the copy of its pivot (`limit` indexes it).
   const depth = 2 * log2(n) + 1;
-  const pivots: T[] = __intrinsic_array_with_capacity(depth);
-  __intrinsic_array_set_len(pivots, depth);
+  const pivots: T[] = arrayWithCapacity(depth);
+  arraySetLen(pivots, depth);
   for (let k: usize = 0; k < unsorted.length; k++) {
     if (unsorted[k]) {
       const a = bounds[k];
@@ -151,8 +158,8 @@ function driftsort<T, C>(xs: T[], cmp: (x: T, y: T) => C, neg: (c: C) => bool) {
   }
   mergeRuns(xs, scratch, bounds, cmp, neg);
   // Every slot of the buffers is a stale copy now: cut them off without dropping.
-  __intrinsic_array_set_len(pivots, 0);
-  __intrinsic_array_set_len(scratch, 0);
+  arraySetLen(pivots, 0);
+  arraySetLen(scratch, 0);
 }
 
 // Length of the natural run at xs[lo..n): ascending (non-descending), or strictly descending,
@@ -205,7 +212,7 @@ function quicksort<T, C>(
     }
     limit--;
     const p = choosePivot(xs, lo, hi, cmp, neg);
-    __intrinsic_array_move(pivots, limit, xs, p, 1);
+    arrayMove(pivots, limit, xs, p, 1);
     // A pivot not above the ancestor pivot equals it: the elements equal to it go left and
     // are done.
     if (ancestor >= 0 && !neg(cmp(pivots[ancestor as usize], pivots[limit]))) {
@@ -238,8 +245,8 @@ function partitionLess<T, C>(
   let back = hi;
   for (let i = lo; i < hi; i++) {
     const left = neg(cmp(xs[i], pivot)) as usize;
-    __intrinsic_array_move(scratch, front, xs, i, 1);
-    __intrinsic_array_move(scratch, back - 1, xs, i, 1);
+    arrayMove(scratch, front, xs, i, 1);
+    arrayMove(scratch, back - 1, xs, i, 1);
     front += left;
     back -= 1 - left;
   }
@@ -261,8 +268,8 @@ function partitionEqual<T, C>(
   let back = hi;
   for (let i = lo; i < hi; i++) {
     const left = (!neg(cmp(pivot, xs[i]))) as usize;
-    __intrinsic_array_move(scratch, front, xs, i, 1);
-    __intrinsic_array_move(scratch, back - 1, xs, i, 1);
+    arrayMove(scratch, front, xs, i, 1);
+    arrayMove(scratch, back - 1, xs, i, 1);
     front += left;
     back -= 1 - left;
   }
@@ -276,7 +283,7 @@ function gather<T>(xs: T[], scratch: T[], lo: usize, mid: usize, hi: usize): usi
   checkRange(xs, scratch, hi);
   const count = hi - mid;
   for (let r: usize = 0; r < count; r++) {
-    __intrinsic_array_move(xs, mid + r, scratch, hi - 1 - r, 1);
+    arrayMove(xs, mid + r, scratch, hi - 1 - r, 1);
   }
   return mid;
 }

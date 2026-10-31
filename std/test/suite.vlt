@@ -7,6 +7,7 @@
 // calls register into their suite at once.
 
 import { Body, Case } from "velt/test/case";
+import { errorText, throwLoc } from "velt/lang/intrinsics";
 
 /**
  * What a test or hook callback returns: nothing, or a promise, which is awaited. `it`'s callback
@@ -163,7 +164,7 @@ export function describe<R extends Settles>(name: string, fn: () => R throws unk
         r.__settle().catch((e) => {});
       }
     } catch (e) {
-      error = `${__intrinsic_error_text(e)}${__intrinsic_throw_loc()}`;
+      error = `${errorText(e)}${throwLoc()}`;
     }
     collecting = outer;
     if (error != null) {

@@ -1,7 +1,9 @@
-// A user module in a directory named `std` is not the standard library: compiler intrinsics
-// stay out of reach (built on its own here, it is the root module).
+// A user module in a directory named `std` is not the standard library: it may not declare a
+// compiler intrinsic (built on its own here, it is the root module).
+declare intrinsic function arrayWithCapacity<T>(capacity: usize): T[];
+
 export function grow(n: i64): i64[] {
-  return __intrinsic_array_with_capacity<i64>(n);
+  return arrayWithCapacity<i64>(n as usize);
 }
 
 function main() {

@@ -9,6 +9,8 @@
 // cloned or copied. A `T` holding `null` (`Deque<i64 | null>`) keeps its `null` apart from an
 // empty slot; a `T` holding `undefined` is a compile error (it could not be told from one).
 
+import { arraySwap, arrayWithCapacity, holdsNull, nullAs } from "velt/lang/intrinsics";
+
 // First ring capacity once a deque receives its first element.
 const INITIAL_CAPACITY: usize = 8;
 
@@ -119,7 +121,7 @@ export class Deque<T> {
 
   /** Clones of the elements, front to back. */
   toArray(): T[] {
-    const out: T[] = __intrinsic_array_with_capacity(this.count);
+    const out: T[] = arrayWithCapacity(this.count);
     for (let i: usize = 0; i < this.count; i++) {
       pushClone(out, this.slots[(this.head + i) & (this.capacity() - 1)]);
     }
@@ -142,7 +144,7 @@ export class Deque<T> {
   // Moves the element out of ring slot `s`, leaving it empty (see the module comment).
   private take(s: usize): T | undefined {
     const spare = this.slots.length - 1;
-    __intrinsic_array_swap(this.slots, s, spare);
+    arraySwap(this.slots, s, spare);
     const value = this.slots.pop();
     this.slots.push(undefined);
     return value;
@@ -166,7 +168,7 @@ export class Deque<T> {
       this.slots.push(undefined);
     }
     for (let i: usize = 0; i < this.head; i++) {
-      __intrinsic_array_swap(this.slots, i, cap + i);
+      arraySwap(this.slots, i, cap + i);
     }
   }
 }
@@ -175,15 +177,15 @@ export class Deque<T> {
 function pushClone<T>(out: T[], slot: T | undefined) {
   if (slot !== undefined) {
     out.push(slot.clone());
-  } else if (__intrinsic_holds_null(__intrinsic_null_as<T>())) {
-    out.push(__intrinsic_null_as<T>());
+  } else if (holdsNull(nullAs<T>())) {
+    out.push(nullAs<T>());
   }
 }
 
 function visit<T, E>(slot: T | undefined, f: (value: T) => void throws E) throws E {
   if (slot !== undefined) {
     f(slot);
-  } else if (__intrinsic_holds_null(__intrinsic_null_as<T>())) {
-    f(__intrinsic_null_as<T>());
+  } else if (holdsNull(nullAs<T>())) {
+    f(nullAs<T>());
   }
 }

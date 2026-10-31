@@ -18,6 +18,7 @@ import {
   velt_rt_chan_len,
   velt_rt_chan_new,
 } from "velt/sync/rt";
+import { chanReceive, chanSend, chanTryReceive, chanTrySend } from "velt/lang/intrinsics";
 
 /**
  * A channel of `T` values. `channel<T>()` is unbounded; `channel<T>(capacity)` holds at most
@@ -31,7 +32,7 @@ export struct Channel<T> implements AsyncIterable<T> {
    * `value`) if the channel is closed, also while waiting.
    */
   async send(value: T): Promise<void> throws ChannelClosed {
-    if (!(await __intrinsic_chan_send<T>(this.handle, value))) {
+    if (!(await chanSend<T>(this.handle, value))) {
       throw new ChannelClosed();
     }
   }
@@ -42,17 +43,17 @@ export struct Channel<T> implements AsyncIterable<T> {
    * it may be called inside `Mutex.with`.
    */
   trySend(value: T): bool {
-    return __intrinsic_chan_try_send<T>(this.handle, value);
+    return chanTrySend<T>(this.handle, value);
   }
 
   /** The oldest value, waiting for one; `null` once the channel is closed and empty. */
   async receive(): Promise<T | null> {
-    return await __intrinsic_chan_receive<T>(this.handle);
+    return await chanReceive<T>(this.handle);
   }
 
   /** The oldest value if one is queued, else `null` (never waits). */
   tryReceive(): T | null {
-    return __intrinsic_chan_try_receive<T>(this.handle);
+    return chanTryReceive<T>(this.handle);
   }
 
   /**
@@ -61,7 +62,7 @@ export struct Channel<T> implements AsyncIterable<T> {
    */
   async *[Symbol.asyncIterator](): AsyncIterator<T> {
     while (true) {
-      const v = await __intrinsic_chan_receive<T>(this.handle);
+      const v = await chanReceive<T>(this.handle);
       if (v == null) {
         return;
       }

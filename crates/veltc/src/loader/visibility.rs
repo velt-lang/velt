@@ -101,6 +101,12 @@ impl Loader<'_, '_> {
     }
 }
 
+/// Is `rel` (below the std root) the module `folder` or a file in it?
+fn in_folder(rel: &str, folder: &str) -> bool {
+    rel.strip_prefix(folder)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+}
+
 /// The error for a user module's import of the internal std file `rel` (below the std root)
 /// written as `spec`; `has_index` says whether a folder below the std root is a module.
 fn internal(rel: &str, spec: &str, has_index: &dyn Fn(&str) -> bool) -> (String, Vec<String>) {
@@ -109,6 +115,13 @@ fn internal(rel: &str, spec: &str, has_index: &dyn Fn(&str) -> bool) -> (String,
         "prelude" => (
             format!("`{spec}` is part of the prelude, which no module imports"),
             vec!["its names are in scope in every module without an import".into()],
+        ),
+        "lang" if in_folder(rel, velt_common::std_rel!(lang_intrinsics)) => (
+            format!("`{spec}` is internal to the standard library: the compiler's intrinsics are std's own building blocks"),
+            vec![
+                "use the public API std builds on them (an array's `reserve`, `truncate` and `swap`, velt/encoding's `utf8ByteAt`, …)"
+                    .into(),
+            ],
         ),
         "lang" => (
             format!("`{spec}` is internal to the standard library: `lang/` implements the language"),

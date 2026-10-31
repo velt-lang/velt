@@ -17,6 +17,7 @@ import {
 } from "velt/sqlite/format";
 import { Cursor, intValue } from "velt/sqlite/btree";
 import { KeyRec, compareToKey } from "velt/sqlite/record";
+import { arrayTruncate } from "velt/lang/intrinsics";
 
 /** A b-tree is at most this deep (btree.vlt's limit). */
 const MAX_DEPTH: usize = 20;
@@ -55,8 +56,8 @@ extend Cursor {
    */
   findLeaf(rowid: i64): usize {
     const data = this.db.data;
-    __intrinsic_array_truncate(this.pages, 0);
-    __intrinsic_array_truncate(this.cells, 0);
+    arrayTruncate(this.pages, 0);
+    arrayTruncate(this.cells, 0);
     let page = this.root;
     while (true) {
       if (this.pages.length >= MAX_DEPTH) {
@@ -193,8 +194,8 @@ extend Cursor {
   /** The first entry >= `k` (> `k` when `after`). */
   seekKeyIn(k: KeyRec, fields: usize, colls: u8[], desc: bool[], after: bool): bool {
     const data = this.db.data;
-    __intrinsic_array_truncate(this.pages, 0);
-    __intrinsic_array_truncate(this.cells, 0);
+    arrayTruncate(this.pages, 0);
+    arrayTruncate(this.cells, 0);
     let page = this.root;
     while (true) {
       if (this.pages.length >= MAX_DEPTH) {

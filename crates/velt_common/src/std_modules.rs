@@ -79,6 +79,8 @@ table! {
     // What implements the language and its globals (never imported by user code).
     lang => "lang",
     lang_import_meta => "lang/import_meta",
+    /// The compiler's intrinsics, declared (`declare intrinsic function`; std-layout.md §10).
+    lang_intrinsics => "lang/intrinsics",
     lang_proxy => "lang/proxy",
     lang_proxy_array => "lang/proxy/array",
     lang_proxy_ops => "lang/proxy/ops",

@@ -17,6 +17,7 @@ import {
   velt_simd_u8x16_or,
   velt_simd_u8x16_splat,
 } from "velt/encoding/rt";
+import { arrayWithCapacity } from "velt/lang/intrinsics";
 
 /** The UTF-8 bytes of `s` (a copy). */
 export function utf8Encode(s: string): u8[] {
@@ -44,7 +45,7 @@ export function utf8DecodeLossy(data: u8[]): string {
   if (bad < 0) {
     return validToString(data);
   }
-  const out: u8[] = __intrinsic_array_with_capacity(data.length + 8);
+  const out: u8[] = arrayWithCapacity(data.length + 8);
   let i: usize = 0;
   while (i < data.length) {
     const len = sequenceAt(data, i);

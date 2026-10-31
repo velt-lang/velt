@@ -22,6 +22,7 @@ import { bindJson } from "velt/sqlite/exec/bind";
 import { Val, blobVal, intVal, nullVal, realVal, textVal } from "velt/sqlite/exec/value";
 import { CellKind, RowSource, readRow, readRows } from "velt/db";
 import { readFileBytesSync } from "velt/fs";
+import { arrayTruncate } from "velt/lang/intrinsics";
 
 /**
  * A failed operation. `code` is SQLite's result code name: "SQLITE_ERROR" (bad SQL, an unknown
@@ -245,7 +246,7 @@ export class Statement {
   // After a pulled run: the parameters dropped, and its error (a failure while running comes
   // first: a row the decoder rejected may only be its consequence).
   private pulled(p: Pull, mismatch: string) {
-    __intrinsic_array_truncate(this.params.vals, 0);
+    arrayTruncate(this.params.vals, 0);
     if (p.err != null) {
       const e = p.err!;
       p.err = null;
@@ -304,7 +305,7 @@ export class Statement {
       }
       throw new SqliteError("SQLITE_CORRUPT", e.message);
     }
-    __intrinsic_array_truncate(this.params.vals, 0);
+    arrayTruncate(this.params.vals, 0);
   }
 
   private decodeAll<T>(): T[] {

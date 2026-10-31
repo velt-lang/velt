@@ -5,6 +5,7 @@
 
 import { randomBytes } from "velt/crypto";
 import { validPrefix } from "velt/encoding/utf8";
+import { arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
 
 /** A fresh masking key (RFC 6455 §5.3: from the OS random source), drawn on its own. */
 export function maskKey(): u32 {
@@ -105,15 +106,15 @@ export class ByteBuf {
       if (cap < 256) {
         cap = 256;
       }
-      const next: u8[] = __intrinsic_array_with_capacity(cap as usize);
-      __intrinsic_array_set_len(next, at as usize);
+      const next: u8[] = arrayWithCapacity(cap as usize);
+      arraySetLen(next, at as usize);
       if (at > 0) {
         next.set(this.data, 0);
       }
       this.data = next;
       this.cap = cap;
     }
-    __intrinsic_array_set_len(this.data, need as usize);
+    arraySetLen(this.data, need as usize);
     return at;
   }
 
@@ -129,7 +130,7 @@ export class ByteBuf {
       panic(`ByteBuf.dropFront(${n}) on ${this.data.length} bytes`);
     }
     this.data.copyWithin(0, n);
-    __intrinsic_array_set_len(this.data, rest as usize);
+    arraySetLen(this.data, rest as usize);
   }
 
   /** Replaces the contents with `bytes`. */

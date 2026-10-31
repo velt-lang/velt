@@ -36,6 +36,7 @@ import {
   decodeUri,
   decodeLenient,
 } from "velt/net/url/encode";
+import { arraySwap, arrayTruncate } from "velt/lang/intrinsics";
 
 /**
  * Thrown for invalid URLs (`Invalid URL: <input>`, `Invalid base URL: <base>`): a `TypeError`, as
@@ -425,12 +426,12 @@ export class URLSearchParams {
         found = true;
         this.vals[i] = value.clone();
       }
-      __intrinsic_array_swap(this.names, w, i);
-      __intrinsic_array_swap(this.vals, w, i);
+      arraySwap(this.names, w, i);
+      arraySwap(this.vals, w, i);
       w++;
     }
-    __intrinsic_array_truncate(this.names, w);
-    __intrinsic_array_truncate(this.vals, w);
+    arrayTruncate(this.names, w);
+    arrayTruncate(this.vals, w);
     if (!found) {
       this.append(name, value);
     }
@@ -443,12 +444,12 @@ export class URLSearchParams {
       if (this.names[i] == name && (value == null || this.vals[i] == value)) {
         continue;
       }
-      __intrinsic_array_swap(this.names, w, i);
-      __intrinsic_array_swap(this.vals, w, i);
+      arraySwap(this.names, w, i);
+      arraySwap(this.vals, w, i);
       w++;
     }
-    __intrinsic_array_truncate(this.names, w);
-    __intrinsic_array_truncate(this.vals, w);
+    arrayTruncate(this.names, w);
+    arrayTruncate(this.vals, w);
   }
 
   /** Stable sort by name, in UTF-16 code-unit order as in JS. */

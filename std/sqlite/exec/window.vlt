@@ -53,6 +53,7 @@ import {
   toText,
 } from "velt/sqlite/exec/value";
 import { Concat, MinMax } from "velt/sqlite/exec/window_state";
+import { arrayTruncate } from "velt/lang/intrinsics";
 
 /** Window function kinds. */
 export const W_ROW_NUMBER: u8 = 0;
@@ -207,7 +208,7 @@ export class WinCtx {
       f.startOff = offsetOf(f.startN, f.start, true);
       f.endOff = offsetOf(f.endN, f.end, false);
     }
-    __intrinsic_array_truncate(this.results, 0);
+    arrayTruncate(this.results, 0);
     for (let i: usize = 0; i < n * this.fns.length; i++) {
       this.results.push(nullVal());
     }
@@ -246,9 +247,9 @@ export class WinCtx {
   /** Drops the collected rows. */
   reset() {
     for (const sp of this.specs) {
-      __intrinsic_array_truncate(sp.keys, 0);
+      arrayTruncate(sp.keys, 0);
     }
-    __intrinsic_array_truncate(this.rows, 0);
+    arrayTruncate(this.rows, 0);
     this.count = 0;
   }
 

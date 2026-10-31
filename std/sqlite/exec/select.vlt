@@ -38,6 +38,7 @@ import {
 } from "velt/sqlite/exec/core";
 import { forCompare } from "velt/sqlite/exec/ops";
 import { Val } from "velt/sqlite/exec/value";
+import { arrayTruncate } from "velt/lang/intrinsics";
 
 /** A WITH clause's table: its SELECT, compiled where it is used. */
 class CteDef {
@@ -267,7 +268,7 @@ export class SelectCompiler extends ExprCompiler {
     } else {
       q = this.compound(s, outer);
     }
-    __intrinsic_array_truncate(this.ctes, mark);
+    arrayTruncate(this.ctes, mark);
     return q;
   }
 
@@ -542,8 +543,8 @@ export class SelectCompiler extends ExprCompiler {
       const key = this.refNames[r].toLowerCase();
       this.tableRefs.set(key, this.tableRefs.get(key)! - this.refCounts[r]);
     }
-    __intrinsic_array_truncate(this.refNames, mark);
-    __intrinsic_array_truncate(this.refCounts, mark);
+    arrayTruncate(this.refNames, mark);
+    arrayTruncate(this.refCounts, mark);
   }
 
   /** Counts `n` more references to a table or view: SQLite's limit is 65535 a statement. */

@@ -14,6 +14,7 @@
 // test for a proxy (velt/lang/proxy/ops).
 
 import { __ArrayMethod, __proxyArrayCall, __proxyArrayMethod } from "velt/lang/proxy/array";
+import { proxyArrayHole } from "velt/lang/intrinsics";
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
@@ -67,7 +68,7 @@ function proxyIndex(s: string): number {
  * (velt/lang/proxy/array: Node's holes, which Velt's arrays don't have)?
  */
 function arrayHole(a: any, i: number): boolean {
-  return __intrinsic_proxy_array_hole(a, i as i64, 0) == 1;
+  return proxyArrayHole(a, i as i64, 0) == 1;
 }
 
 /** The element of an array that `key` (a string or a number) names, or -1. */
@@ -770,17 +771,17 @@ export class Reflect {
           // right after: Velt's arrays have none, so the gap holds the value meanwhile and is
           // recorded as holes. Elsewhere they would stay, which is not supported yet.
           // Only in a trap call of such a method on this array (velt_rt's `proxy_array`).
-          if (__intrinsic_proxy_array_hole(target, n as i64, 1) < 0) {
+          if (proxyArrayHole(target, n as i64, 1) < 0) {
             panic(
               `TypeError: writing element ${i} past the end of an array of ${n} through \`any\` is not supported yet (#924): Velt's arrays have no holes`,
             );
           }
           for (let j = n; j < i; j++) {
-            __intrinsic_proxy_array_hole(target, j as i64, 1);
+            proxyArrayHole(target, j as i64, 1);
             target[j] = value;
           }
         } else {
-          __intrinsic_proxy_array_hole(target, i as i64, 2);
+          proxyArrayHole(target, i as i64, 2);
         }
         target[i] = value;
         return true;
@@ -788,7 +789,7 @@ export class Reflect {
       if (key === "length") {
         target.length = value;
         // A shorter length cuts holes off.
-        __intrinsic_proxy_array_hole(target, (target.length as number) as i64, 3);
+        proxyArrayHole(target, (target.length as number) as i64, 3);
         return true;
       }
     }
@@ -879,7 +880,7 @@ export class Reflect {
       if (i >= n || arrayHole(target, i)) {
         return true;
       }
-      if (__intrinsic_proxy_array_hole(target, i as i64, 1) >= 0) {
+      if (proxyArrayHole(target, i as i64, 1) >= 0) {
         return true;
       }
     }

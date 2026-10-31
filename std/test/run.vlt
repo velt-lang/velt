@@ -8,6 +8,7 @@ import { Suite } from "velt/test/suite";
 import { Plan, runPlan } from "velt/test/plan";
 import { files, TestFile } from "velt/test/registry";
 import { velt_rt_clear_throw_loc, velt_rt_flush } from "velt/test/rt";
+import { errorText, throwLoc } from "velt/lang/intrinsics";
 
 /**
  * Prefix of the lines a test process writes for the runner: this, then the run's token
@@ -129,8 +130,8 @@ async function attempt(bodies: Body[]): Promise<string | null> {
     } catch (e) {
       // Where it was thrown, before anything else throws: after the whole message, on its last
       // line, as Vitest puts the location after a message of several lines.
-      const at = __intrinsic_throw_loc();
-      return `${__intrinsic_error_text(e)}${at}`;
+      const at = throwLoc();
+      return `${errorText(e)}${at}`;
     }
   }
   return null;

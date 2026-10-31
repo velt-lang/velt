@@ -18,6 +18,7 @@ import {
 } from "velt/sqlite/format";
 import { Cursor } from "velt/sqlite/btree";
 import { KeyRec } from "velt/sqlite/record";
+import { arrayTruncate } from "velt/lang/intrinsics";
 
 /** A b-tree is at most this deep (btree.vlt's limit). */
 const MAX_DEPTH: usize = 20;
@@ -25,8 +26,8 @@ const MAX_DEPTH: usize = 20;
 extend Cursor {
   /** Moves to the last entry; false if the tree is empty. */
   last(): bool {
-    __intrinsic_array_truncate(this.pages, 0);
-    __intrinsic_array_truncate(this.cells, 0);
+    arrayTruncate(this.pages, 0);
+    arrayTruncate(this.cells, 0);
     return this.descendRight(this.root);
   }
 

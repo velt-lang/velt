@@ -2,6 +2,8 @@
 // `toExponential` and `toPrecision` on f64, and
 // the static members of `Number` (`Number.isInteger`, `Number.MAX_SAFE_INTEGER`, …).
 
+import { trunc } from "velt/lang/intrinsics";
+
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
 declare function velt_rt_f64_to_fixed(x: f64, digits: i64): string;
@@ -168,7 +170,7 @@ export class NumberConstructor {
 
   /** Whether `x` is a finite number without a fractional part (`5.0` is an integer). */
   static isInteger(x: f64): bool {
-    return x - x == 0.0 && __intrinsic_trunc(x) == x;
+    return x - x == 0.0 && trunc(x) == x;
   }
 
   /** An integer with |x| <= 2^53 - 1. */

@@ -9,6 +9,7 @@ import { realText } from "velt/sqlite/real";
 import { utf8Encode, utf8DecodeLossy } from "velt/encoding";
 import { atof } from "velt/sqlite/exec/fp";
 import { SqlRunError } from "velt/sqlite/exec/errors";
+import { strByteAt, strByteLen } from "velt/lang/intrinsics";
 
 /** A BLOB's bytes, boxed: a value that is no BLOB holds none (no empty array to make). */
 export class Blob {
@@ -119,7 +120,7 @@ export function checkLength(n: u64) {
 /** A value's size in bytes as `sqlite3_value_bytes` counts it: its text's UTF-8, or a blob's. */
 export function valueBytes(v: Val): usize {
   if (v.t == TEXT) {
-    return __intrinsic_str_byte_len(v.s);
+    return strByteLen(v.s);
   }
   if (v.t == BLOB) {
     return v.b.length;
@@ -127,7 +128,7 @@ export function valueBytes(v: Val): usize {
   if (v.t == NULL) {
     return 0;
   }
-  return __intrinsic_str_byte_len(toText(v));
+  return strByteLen(toText(v));
 }
 
 /** `x || y`: the texts joined, NULL if either is NULL, an error past `MAX_LENGTH`. */
@@ -137,7 +138,7 @@ export function concatOp(x: Val, y: Val): Val {
   }
   const a = toText(x);
   const b = toText(y);
-  checkLength((__intrinsic_str_byte_len(a) + __intrinsic_str_byte_len(b)) as u64);
+  checkLength((strByteLen(a) + strByteLen(b)) as u64);
   return textVal(a + b);
 }
 
@@ -372,12 +373,12 @@ export function compareText(a: string, b: string, coll: u8): i64 {
   if (x == y) {
     return 0;
   }
-  const nx = __intrinsic_str_byte_len(x);
-  const ny = __intrinsic_str_byte_len(y);
+  const nx = strByteLen(x);
+  const ny = strByteLen(y);
   const n = nx < ny ? nx : ny;
   for (let i: usize = 0; i < n; i++) {
-    let p = __intrinsic_str_byte_at(x, i as u64);
-    let q = __intrinsic_str_byte_at(y, i as u64);
+    let p = strByteAt(x, i as u64);
+    let q = strByteAt(y, i as u64);
     if (fold) {
       p = p >= 65 && p <= 90 ? p + 32 : p;
       q = q >= 65 && q <= 90 ? q + 32 : q;

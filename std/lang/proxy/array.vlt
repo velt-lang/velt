@@ -10,6 +10,7 @@
 // element, every write, `in` test and delete goes through the traps, in Node's order.
 
 import { Proxy } from "velt/lang/proxy";
+import { proxyArrayCall, proxyArrayHole } from "velt/lang/intrinsics";
 
 /**
  * An array method read through a proxy (`Reflect.get(array, "push")`), or `constructor`
@@ -85,36 +86,36 @@ function arrayTarget(p: Proxy): any {
  */
 function trapGet(p: Proxy, key: string, o: any): any {
   const t = arrayTarget(p);
-  __intrinsic_proxy_array_call(t, 2);
+  proxyArrayCall(t, 2);
   const v = p.__get(key, o);
-  __intrinsic_proxy_array_call(t, -2);
+  proxyArrayCall(t, -2);
   return v;
 }
 
 /** `p.__set(key, v, o)` (see `trapGet`). */
 function trapSet(p: Proxy, key: string, v: any, o: any): boolean {
   const t = arrayTarget(p);
-  __intrinsic_proxy_array_call(t, 2);
+  proxyArrayCall(t, 2);
   const ok = p.__set(key, v, o);
-  __intrinsic_proxy_array_call(t, -2);
+  proxyArrayCall(t, -2);
   return ok;
 }
 
 /** `p.__has(key)` (see `trapGet`). */
 function trapHas(p: Proxy, key: string): boolean {
   const t = arrayTarget(p);
-  __intrinsic_proxy_array_call(t, 2);
+  proxyArrayCall(t, 2);
   const yes = p.__has(key);
-  __intrinsic_proxy_array_call(t, -2);
+  proxyArrayCall(t, -2);
   return yes;
 }
 
 /** `p.__delete(key)` (see `trapGet`). */
 function trapDelete(p: Proxy, key: string): void {
   const t = arrayTarget(p);
-  __intrinsic_proxy_array_call(t, 2);
+  proxyArrayCall(t, 2);
   p.__delete(key);
-  __intrinsic_proxy_array_call(t, -2);
+  proxyArrayCall(t, -2);
 }
 
 /** Moves element `from` to `to` (`has`, then `get` and `set`, or `deleteProperty`). */
@@ -137,14 +138,14 @@ export function __proxyArrayCall(p: Proxy, name: string, args: any[], o: any): a
   // While it runs, `Reflect` records the holes Node's algorithm makes in the target during the
   // algorithm's trap calls (`trapGet`), and reports them: velt_rt's `proxy_array`.
   const t = arrayTarget(p);
-  __intrinsic_proxy_array_call(t, 1);
-  const r = proxyArrayCall(p, name, args, o);
+  proxyArrayCall(t, 1);
+  const r = callArrayMethod(p, name, args, o);
   // A shorter length written another way than `Reflect.set` (`t[k] = v` in a trap) cuts the
   // holes off too.
   if (Array.isArray(t)) {
-    __intrinsic_proxy_array_hole(t, (t.length as number) as i64, 3);
+    proxyArrayHole(t, (t.length as number) as i64, 3);
   }
-  const h = __intrinsic_proxy_array_call(t, -1);
+  const h = proxyArrayCall(t, -1);
   if (h >= 0) {
     // A trap didn't write the shorter length after a delete, or the gap before an element
     // written past the end: Node keeps the holes.
@@ -155,7 +156,7 @@ export function __proxyArrayCall(p: Proxy, name: string, args: any[], o: any): a
   return r;
 }
 
-function proxyArrayCall(p: Proxy, name: string, args: any[], o: any): any {
+function callArrayMethod(p: Proxy, name: string, args: any[], o: any): any {
   const n = arrayInt(trapGet(p, "length", o));
   const len = n < 0 ? 0 : n;
   const none: any[] = [];

@@ -2,12 +2,13 @@
 // out of blocks, the final padding, HMAC's keyed first block.
 
 import { u8x16 } from "velt/simd";
+import { arrayWithCapacity } from "velt/lang/intrinsics";
 
 /** Bytes per compression block of both hashes (and the HMAC key block). */
 export const BLOCK: usize = 64;
 
 export function zeroWords(n: usize): u32[] {
-  const w: u32[] = __intrinsic_array_with_capacity(n);
+  const w: u32[] = arrayWithCapacity(n);
   for (let i: usize = 0; i < n; i++) {
     w.push(0);
   }
@@ -47,7 +48,7 @@ export function finalBlocks(data: u8[], full: usize, before: usize): u8[] {
 }
 
 export function wordsToBytes(h: u32[]): u8[] {
-  const out: u8[] = __intrinsic_array_with_capacity(h.length * 4);
+  const out: u8[] = arrayWithCapacity(h.length * 4);
   for (let i: usize = 0; i < h.length; i++) {
     const x = h[i];
     out.push((x >>> 24) as u8);

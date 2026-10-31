@@ -2,9 +2,11 @@
 // run reversal and merging sorted runs through a scratch buffer.
 //
 // `x` goes before `y` when `neg(cmp(x, y))`. Elements move between an array and a scratch
-// buffer of the same length with `__intrinsic_array_move` (raw bits: no clone, no drop), so
+// buffer of the same length with `arrayMove` (raw bits: no clone, no drop), so
 // at any time each element is owned by exactly one of the two arrays and the slot it left
 // holds a stale copy that is only ever overwritten.
+
+import { arrayMove, arraySwap, arrayTruncate, arrayWithCapacity } from "velt/lang/intrinsics";
 
 // Runs shorter than this are insertion sorted before merging.
 const MERGE_BLOCK: usize = 16;
@@ -21,7 +23,7 @@ export function insertionTail<T, C>(
   for (let i = start; i < hi; i++) {
     let j = i;
     while (j > lo && neg(cmp(xs[j], xs[j - 1]))) {
-      __intrinsic_array_swap(xs, j, j - 1);
+      arraySwap(xs, j, j - 1);
       j--;
     }
   }
@@ -34,7 +36,7 @@ export function reverseRange<T>(xs: T[], lo: usize, hi: usize) {
   let a = lo;
   let b = hi - 1;
   while (a < b) {
-    __intrinsic_array_swap(xs, a, b);
+    arraySwap(xs, a, b);
     a++;
     b--;
   }
@@ -43,7 +45,7 @@ export function reverseRange<T>(xs: T[], lo: usize, hi: usize) {
 /** Moves src[lo..hi) to dst[lo..hi). */
 export function moveRange<T>(dst: T[], src: T[], lo: usize, hi: usize) {
   if (lo < hi) {
-    __intrinsic_array_move(dst, lo, src, lo, hi - lo);
+    arrayMove(dst, lo, src, lo, hi - lo);
   }
 }
 
@@ -88,7 +90,7 @@ export function mergeSortRange<T, C>(
   cmp: (x: T, y: T) => C,
   neg: (c: C) => bool,
 ) {
-  const runs: usize[] = __intrinsic_array_with_capacity((hi - lo) / MERGE_BLOCK + 2);
+  const runs: usize[] = arrayWithCapacity((hi - lo) / MERGE_BLOCK + 2);
   runs.push(lo);
   let a = lo;
   while (a < hi) {
@@ -123,7 +125,7 @@ function mergePass<T, C>(
     runs[w] = runs[last];
     w++;
   }
-  __intrinsic_array_truncate(runs, w);
+  arrayTruncate(runs, w);
 }
 
 // Merges the sorted runs src[a..m) and src[m..b) into dst[a..b); on ties the left run goes
@@ -144,7 +146,7 @@ function mergeTwo<T, C>(
   if (neg(cmp(src[m], src[m - 1]))) {
     while (i < m && j < b) {
       const right = neg(cmp(src[j], src[i]));
-      __intrinsic_array_move(dst, k, src, right ? j : i, 1);
+      arrayMove(dst, k, src, right ? j : i, 1);
       const step = right as usize;
       j += step;
       i += 1 - step;
@@ -152,7 +154,7 @@ function mergeTwo<T, C>(
     }
   }
   if (i < m) {
-    __intrinsic_array_move(dst, k, src, i, m - i);
+    arrayMove(dst, k, src, i, m - i);
   }
   // The rest of the right run is already in place (k == j once the left run is used up, and
   // nothing is left of it otherwise).

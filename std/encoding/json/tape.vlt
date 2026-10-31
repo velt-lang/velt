@@ -30,6 +30,13 @@ import {
   writeString,
 } from "velt/encoding/json/writer";
 import { FLAG_COMMENTS, FLAG_TRAILING_COMMAS, shortPath } from "velt/encoding/json/reader";
+import {
+  arraySetLen,
+  arrayWithCapacity,
+  strByteAt,
+  strByteLen,
+  strLoadPartialU8x16,
+} from "velt/lang/intrinsics";
 
 declare function velt_rt_json_node_syntax(src: string, out: string): bool;
 declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
@@ -125,7 +132,7 @@ export class Tape {
       return -1;
     }
     const n = (w >> 32) as usize;
-    const len = __intrinsic_str_byte_len(name);
+    const len = strByteLen(name);
     if (n > INDEX_THRESHOLD || len > 16 || (w & (REPEATED | ESCAPED_KEY)) != 0) {
       return this.findOther(v, name);
     }
@@ -133,12 +140,12 @@ export class Tape {
     // compare when the lengths match (both sides' bytes in the low lanes, zeros in the others;
     // `name`'s side loaded once).
     const first = this.words[2 * (v as usize) + 1] as usize;
-    const nv = __intrinsic_str_load_partial_u8x16(name, 0, len as u64);
+    const nv = strLoadPartialU8x16(name, 0, len as u64);
     for (let i: usize = 0; i < n; i++) {
       const k = this.kids[first + i];
       const p = this.words[2 * (k as usize) + 1];
       if ((p >> 32) - (p & 0xffffffff) == len as u64) {
-        const kv = __intrinsic_str_load_partial_u8x16(this.src, p & 0xffffffff, len as u64);
+        const kv = strLoadPartialU8x16(this.src, p & 0xffffffff, len as u64);
         if (velt_simd_mask8x16_all(velt_simd_u8x16_eq(kv, nv))) {
           return (k + 1) as i64;
         }
@@ -186,15 +193,12 @@ export class Tape {
       return this.decoded[p as usize] == name;
     }
     const start = (p & 0xffffffff) as usize;
-    const n = __intrinsic_str_byte_len(name);
+    const n = strByteLen(name);
     if ((p >> 32) as usize - start != n) {
       return false;
     }
     for (let i: usize = 0; i < n; i++) {
-      if (
-        __intrinsic_str_byte_at(this.src, (start + i) as u64) !=
-        __intrinsic_str_byte_at(name, i as u64)
-      ) {
+      if (strByteAt(this.src, (start + i) as u64) != strByteAt(name, i as u64)) {
         return false;
       }
     }
@@ -217,10 +221,7 @@ export class Tape {
       return false;
     }
     for (let i: usize = 0; i < n; i++) {
-      if (
-        __intrinsic_str_byte_at(this.src, (sa + i) as u64) !=
-        __intrinsic_str_byte_at(this.src, (sb + i) as u64)
-      ) {
+      if (strByteAt(this.src, (sa + i) as u64) != strByteAt(this.src, (sb + i) as u64)) {
         return false;
       }
     }
@@ -236,7 +237,7 @@ export class Tape {
       return d.length > 0 && d.charCodeAt(0) - 48 >= 0 && d.charCodeAt(0) - 48 <= 9;
     }
     const start = (p & 0xffffffff) as usize;
-    return (p >> 32) as usize > start && __intrinsic_str_byte_at(this.src, start as u64) - 48 <= 9;
+    return (p >> 32) as usize > start && strByteAt(this.src, start as u64) - 48 <= 9;
   }
 
   /** An object's member list (`ordered`), or null when its members are its keys in order. */
@@ -298,12 +299,12 @@ export class Tape {
     const words = this.words;
     const kids = this.kids;
     const src = this.src;
-    const srcLen = __intrinsic_str_byte_len(src);
+    const srcLen = strByteLen(src);
     // The text so far: `n` bytes of `buf`, `extra` of them beyond their UTF-16 units (non-ASCII
     // text copied in). Each round of the loop starts at most `OUT_CAP` bytes in and writes at
     // most `OUT_ROOM` more, but for strings, which check their own length.
-    const buf: u8[] = __intrinsic_array_with_capacity(OUT_CAP + OUT_ROOM);
-    __intrinsic_array_set_len(buf, OUT_CAP + OUT_ROOM);
+    const buf: u8[] = arrayWithCapacity(OUT_CAP + OUT_ROOM);
+    arraySetLen(buf, OUT_CAP + OUT_ROOM);
     let n: usize = 0;
     let extra: u64 = 0;
     // The innermost open container: `info` (its position, `IS_OPEN`, `IS_OBJECT`,
@@ -696,7 +697,7 @@ export function parseWith(sc: Scanner, maxDepth: u32, whole: boolean): Tape | Ta
     if (sc.code == UNEXPECTED_CHAR && sc.at < sc.len) {
       // The character, as the reader names it.
       let end = sc.at + 1;
-      while (end < sc.len && (__intrinsic_str_byte_at(sc.src, end as u64) & 0xc0) == 0x80) {
+      while (end < sc.len && (strByteAt(sc.src, end as u64) & 0xc0) == 0x80) {
         end++;
       }
       detail = `${detailText(UNEXPECTED_CHAR)} '${utf8Substring(sc.src, sc.at, end)}'`;
@@ -895,14 +896,14 @@ function indexKey(t: Tape, k: u32): i64 {
   const escaped = (w & ESCAPED) != 0;
   const s = escaped ? t.decoded[p as usize] : t.src;
   const start = escaped ? 0 : (p & 0xffffffff) as usize;
-  const end = escaped ? __intrinsic_str_byte_len(s) : (p >> 32) as usize;
+  const end = escaped ? strByteLen(s) : (p >> 32) as usize;
   const n = end - start;
   if (n == 0 || n > 10) {
     return -1;
   }
   let v: i64 = 0;
   for (let i: usize = 0; i < n; i++) {
-    const d = (__intrinsic_str_byte_at(s, (start + i) as u64) as i64) - 48;
+    const d = (strByteAt(s, (start + i) as u64) as i64) - 48;
     if (d < 0 || d > 9 || (i == 0 && d == 0 && n > 1)) {
       return -1;
     }

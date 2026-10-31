@@ -198,6 +198,9 @@ fn fill_sig(cx: &mut Ctx, d: DefId, sig: &ast::FnSig, owner: &Generics, module: 
         cx.fn_info_mut(d).this = Some(method_this(ty, false, resumable));
     }
     let mut ps = params(cx, &sig.params, &env);
+    if sig.is_intrinsic {
+        crate::intrinsic_decls::param_modes(cx, module, sig, &mut ps);
+    }
     if let Some(f) = cx.sigq.filling_sigs.last_mut().filter(|f| f.0 == d) {
         f.1.clone_from(&sig.name.name);
     }
@@ -239,7 +242,7 @@ fn fill_sig(cx: &mut Ctx, d: DefId, sig: &ast::FnSig, owner: &Generics, module: 
     // "Runtime declarations"). Its argument is a mutable borrow, so the owner of the place is
     // modified too: a `StringBuilder` param of a function that appends to it is no read-only
     // (`frozen`) one whose fields the optimizer may read once.
-    if kind == FnKind::Extern && !sig.is_system && cx.scopes[module].is_std {
+    if kind == FnKind::Extern && !sig.is_system && !sig.is_intrinsic && cx.scopes[module].is_std {
         for p in &mut ps {
             let written = p.name == "out" || p.name == "buf";
             if written && p.mode == PassMode::Borrow && matches!(cx.ty.kind(p.ty), TyKind::Str) {

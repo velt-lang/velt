@@ -9,6 +9,7 @@ import { forCompare } from "velt/sqlite/exec/ops";
 import { A_NUMERIC } from "velt/sqlite/schema";
 import { Ev, Out } from "velt/sqlite/exec/scope";
 import { Val, compareVals } from "velt/sqlite/exec/value";
+import { arrayTruncate, arrayWithCapacity } from "velt/lang/intrinsics";
 
 /** One ORDER BY term: a result column (`col`) or an expression of its own. */
 export class SortKey {
@@ -59,7 +60,7 @@ export function compareKeys(keys: Val[], sk: SortKey[], a: usize, b: usize): i64
 
 /** Sorts row numbers 0..n by their keys (stable). */
 export function sortRows(keys: Val[], sk: SortKey[], n: usize): i64[] {
-  const idx: i64[] = __intrinsic_array_with_capacity(n);
+  const idx: i64[] = arrayWithCapacity(n);
   for (let i: usize = 0; i < n; i++) {
     idx.push(i as i64);
   }
@@ -98,8 +99,8 @@ export class Emitter {
       this.seen = new KeySet(this.results.length, this.colls);
     }
     if (this.sorting) {
-      __intrinsic_array_truncate(this.sortKeys, 0);
-      __intrinsic_array_truncate(this.sortVals, 0);
+      arrayTruncate(this.sortKeys, 0);
+      arrayTruncate(this.sortVals, 0);
       this.sorted = 0;
     }
     if (limit == 0) {
@@ -122,7 +123,7 @@ export class Emitter {
       return;
     }
     const tmp = this.tmp;
-    __intrinsic_array_truncate(tmp, 0);
+    arrayTruncate(tmp, 0);
     for (const r of this.results) {
       tmp.push(r());
     }

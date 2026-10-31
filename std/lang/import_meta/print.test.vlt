@@ -6,12 +6,13 @@
 // lang/import_meta_print.)
 import { describe, expect, it } from "velt/test";
 import { ImportMeta } from "velt/lang/import_meta";
+import { inspect } from "velt/lang/intrinsics";
 
 describe("import.meta", () => {
-  // `__intrinsic_inspect` is what `console.log` and `util.inspect` write.
+  // `inspect` is what `console.log` and `util.inspect` write.
   it("prints as Node's null-prototype object", () => {
     const m = new ImportMeta("/srv/app", "/srv/app/main.ts", true, "file:///srv/app/main.ts");
-    expect(__intrinsic_inspect(m)).toBe(
+    expect(inspect(m)).toBe(
       "[Object: null prototype] {\n  dirname: '/srv/app',\n  filename: '/srv/app/main.ts',\n  main: true,\n  resolve: [Function: resolve],\n  url: 'file:///srv/app/main.ts'\n}",
     );
     expect(JSON.stringify(m)).toBe(
@@ -21,7 +22,7 @@ describe("import.meta", () => {
 
   it("quotes paths with a quote in them as Node does", () => {
     const q = new ImportMeta("/it's", "/it's/a\\b.ts", false, "file:///it's/a%5Cb.ts");
-    expect(__intrinsic_inspect(q)).toBe(
+    expect(inspect(q)).toBe(
       "[Object: null prototype] {\n  dirname: \"/it's\",\n  filename: \"/it's/a\\\\b.ts\",\n  main: false,\n  resolve: [Function: resolve],\n  url: \"file:///it's/a%5Cb.ts\"\n}",
     );
   });

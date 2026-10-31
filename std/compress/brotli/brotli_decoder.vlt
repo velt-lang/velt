@@ -8,6 +8,7 @@
 
 import { CompressError } from "velt/compress/errors";
 import { DONE, Decoder, HUNGRY } from "velt/compress/brotli/decoder";
+import { arrayTruncate } from "velt/lang/intrinsics";
 
 /** One-shot: the whole decoded stream. Throws CompressError on invalid or truncated input. */
 export function brotliDecompress(input: u8[]): u8[] throws CompressError {
@@ -21,7 +22,7 @@ export function brotliDecompress(input: u8[]): u8[] throws CompressError {
     panic("ICE: brotli: the decoder stopped before the end of the stream");
   }
   const out = s.out;
-  __intrinsic_array_truncate(out, s.cur.outPos);
+  arrayTruncate(out, s.cur.outPos);
   return out;
 }
 

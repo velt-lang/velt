@@ -1,6 +1,7 @@
 // velt/encoding/csv (internal): writing (`stringifyCsv`), quoting only the fields that need it.
 
 import { delimiterUnit } from "velt/encoding/csv/delimiter";
+import { arrayWithCapacity } from "velt/lang/intrinsics";
 
 /** Options for `stringifyCsv`. */
 export struct CsvWriteOptions {
@@ -26,9 +27,9 @@ export function stringifyCsv(rows: string[][], opts: CsvWriteOptions = {}): stri
   const delim = opts.delimiter ?? ",";
   delimiterUnit(delim);
   const eol = (opts.crlf ?? false) ? "\r\n" : "\n";
-  const lines: string[] = __intrinsic_array_with_capacity(rows.length + 1);
+  const lines: string[] = arrayWithCapacity(rows.length + 1);
   for (const row of rows) {
-    const fields: string[] = __intrinsic_array_with_capacity(row.length);
+    const fields: string[] = arrayWithCapacity(row.length);
     for (const f of row) {
       fields.push(needsQuotes(f, delim) ? `"${f.replaceAll("\"", "\"\"")}"` : f.clone());
     }

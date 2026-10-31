@@ -70,6 +70,7 @@ import {
   prefix,
   sized,
 } from "velt/sqlite/sql/expr_tree";
+import { strByteAt } from "velt/lang/intrinsics";
 
 /** The expression grammar, on a token cursor. */
 export abstract class ExprParser extends TokenCursor {
@@ -538,7 +539,7 @@ export abstract class ExprParser extends TokenCursor {
     if (t.text == "?") {
       this.params++;
       e.ival = this.params;
-    } else if (__intrinsic_str_byte_at(t.text, 0) == 63) {
+    } else if (strByteAt(t.text, 0) == 63) {
       const n = parseInt(t.text.slice(1), 10) as i64;
       if (n < 1 || n > MAX_VARIABLE) {
         throw new SqlError(`variable number must be between ?1 and ?32766`, t.start);
@@ -558,7 +559,7 @@ export abstract class ExprParser extends TokenCursor {
       this.names.set(t.text, this.params);
       e.ival = this.params;
     }
-    if (t.text == "?" || __intrinsic_str_byte_at(t.text, 0) != 63) {
+    if (t.text == "?" || strByteAt(t.text, 0) != 63) {
       // A new `?` or name past SQLite's SQLITE_MAX_VARIABLE_NUMBER.
       if (e.ival > MAX_VARIABLE) {
         throw new SqlError("too many SQL variables", t.start);

@@ -10,6 +10,7 @@ import { Channel, channel } from "velt/sync/channel";
 import { MaskKeys, setText } from "velt/net/websocket/bytes";
 import { OP_CLOSE, OP_PONG, headSize, writeHead } from "velt/net/websocket/frame";
 import { BINARY, Reader, Step, TEXT } from "velt/net/websocket/reader";
+import { arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
 
 /** Queued bytes past which a `send` completes only once the flusher has caught up. */
 export const HIGH_WATER: i64 = 1048576;
@@ -146,15 +147,15 @@ export class SendQueue {
       if (cap < 256) {
         cap = 256;
       }
-      const next: u8[] = __intrinsic_array_with_capacity(cap as usize);
-      __intrinsic_array_set_len(next, at as usize);
+      const next: u8[] = arrayWithCapacity(cap as usize);
+      arraySetLen(next, at as usize);
       if (at > 0) {
         next.set(this.out, 0);
       }
       this.out = next;
       this.cap = cap;
     }
-    __intrinsic_array_set_len(this.out, need as usize);
+    arraySetLen(this.out, need as usize);
     return at;
   }
 

@@ -10,6 +10,7 @@
 import { DOMException } from "velt/lang/dom_exception";
 import { base64Encode, PAD } from "velt/encoding/base64";
 import { velt_rt_bytes_from_str, velt_rt_bytes_to_str } from "velt/encoding/rt";
+import { arraySetLen, arrayTruncate, arrayWithCapacity } from "velt/lang/intrinsics";
 
 /**
  * The Base64 (standard alphabet, `=` padded) of `data`, whose code units are bytes, as Node's
@@ -39,7 +40,7 @@ export function btoa(data: string): string {
     }
     o++;
   }
-  __intrinsic_array_truncate(bytes, o);
+  arrayTruncate(bytes, o);
   return base64Encode(bytes);
 }
 
@@ -116,7 +117,7 @@ export function atob(data: string): string {
   if (equals > 0 && (digits + equals) % 4 != 0) {
     throw invalidCharacter("Invalid character");
   }
-  __intrinsic_array_truncate(out, o);
+  arrayTruncate(out, o);
   const r = velt_rt_bytes_to_str(out);
   if (r.code != 0) {
     panic("ICE: atob produced invalid UTF-8");
@@ -144,8 +145,8 @@ const SPACE_CLASS: i64 = -3;
 // TAB, LF, FF, CR and SPACE, and -1 for the others. Signed, so that one sign test finds a byte
 // that is not a digit among four.
 function classTable(): i8[] {
-  const table: i8[] = __intrinsic_array_with_capacity(256);
-  __intrinsic_array_set_len(table, 256);
+  const table: i8[] = arrayWithCapacity(256);
+  arraySetLen(table, 256);
   for (let c: usize = 0; c < 256; c++) {
     table[c] = -1;
   }

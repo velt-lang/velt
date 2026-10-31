@@ -8,6 +8,7 @@
 import { Params } from "velt/sqlite/exec/scope";
 import { Val, blobVal, intVal, nullVal, realVal, textVal } from "velt/sqlite/exec/value";
 import { utf8Encode } from "velt/encoding";
+import { arrayTruncate, strByteAt, strByteLen } from "velt/lang/intrinsics";
 
 class Reader {
   b: u8[];
@@ -172,10 +173,10 @@ function exactInt(b: u8[], from: usize, to: usize): Exact {
  * parameter, or one integer. False (nothing bound) for anything else.
  */
 function bindInts(json: string, p: Params, count: usize): bool {
-  const n = __intrinsic_str_byte_len(json);
+  const n = strByteLen(json);
   let i: usize = 0;
   let array = false;
-  if (n > 0 && __intrinsic_str_byte_at(json, 0) == 91) {
+  if (n > 0 && strByteAt(json, 0) == 91) {
     array = true;
     i = 1;
   }
@@ -184,7 +185,7 @@ function bindInts(json: string, p: Params, count: usize): bool {
   let digits = 0;
   let neg = false;
   while (i < n) {
-    const c = __intrinsic_str_byte_at(json, i as u64);
+    const c = strByteAt(json, i as u64);
     if (c >= 48 && c <= 57) {
       if (digits >= 18) {
         return false;
@@ -220,7 +221,7 @@ function bindInts(json: string, p: Params, count: usize): bool {
   if (vals.length != count) {
     return false;
   }
-  __intrinsic_array_truncate(p.vals, 0);
+  arrayTruncate(p.vals, 0);
   for (const x of vals) {
     p.vals.push(intVal(x));
   }
@@ -240,7 +241,7 @@ export function bindJson(json: string, p: Params, names: string[], count: usize)
     return "";
   }
   const r = new Reader(utf8Encode(json));
-  __intrinsic_array_truncate(p.vals, 0);
+  arrayTruncate(p.vals, 0);
   for (let i: usize = 0; i < count; i++) {
     p.vals.push(nullVal());
   }

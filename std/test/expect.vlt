@@ -7,6 +7,7 @@
 import { Pattern } from "velt/text/regex/pattern";
 // The matchers of arrays, strings, numbers, throwing functions and promises: `extend` blocks.
 import "velt/test/matchers";
+import { deepEq, inspect } from "velt/lang/intrinsics";
 
 /** What `expect(actual)` returns: the matchers for `actual`. */
 export class Expect<T> {
@@ -52,7 +53,7 @@ export class Expect<T> {
    */
   toEqual(expected: T) {
     this.check(
-      __intrinsic_deep_eq(this.actual, expected),
+      deepEq(this.actual, expected),
       `expected ${show(this.actual)} to deeply equal ${show(expected)}`,
       `expected ${show(this.actual)} to not deeply equal ${show(expected)}`,
     );
@@ -104,7 +105,7 @@ export function expect<T>(actual: T): Expect<T> {
 
 /** `value` as the messages show it (Node's `util.inspect`). */
 export function show<T>(value: T): string {
-  return __intrinsic_inspect(value);
+  return inspect(value);
 }
 
 /** A string as the messages show it (`'x'`), a `RegExp` as written (`/x/i`). */

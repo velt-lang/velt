@@ -8,6 +8,7 @@ import { spawn } from "velt/process/child/child_process";
 import { writeFileSync } from "velt/fs/files";
 import { Paint } from "velt/test/paint";
 import { MARK } from "velt/test/run";
+import { errorText } from "velt/lang/intrinsics";
 
 /** What `velt test` hands the runner (`$VELT_TEST_PLAN`). */
 export struct Plan {
@@ -223,7 +224,7 @@ async function runFrom(run: FileRun, from: usize, report: Report, paint: Paint):
       r = await exec(run.exe, [], { env: env });
     }
   } catch (e) {
-    const text = __intrinsic_error_text(e);
+    const text = errorText(e);
     report.lines.push(`${paint.error("error:")} cannot run \`${run.exe}\`: ${text}`);
     const left = (run.tests?.length ?? f.tests.length) - from;
     report.failed += left > 0 ? left : 1;

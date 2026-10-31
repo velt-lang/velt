@@ -3,15 +3,16 @@
 
 import { SqlRunError } from "velt/sqlite/exec/errors";
 import { utf8Encode } from "velt/encoding";
+import { arrayTruncate, arrayWithCapacity, strByteAt, strByteLen } from "velt/lang/intrinsics";
 
 /** The byte length of `s`'s UTF-8. */
 export function byteLen(s: string): usize {
-  return __intrinsic_str_byte_len(s);
+  return strByteLen(s);
 }
 
 /** Byte `i` of `s`'s UTF-8 (in range). */
 export function byteAt(s: string, i: usize): u8 {
-  return __intrinsic_str_byte_at(s, i as u64);
+  return strByteAt(s, i as u64);
 }
 
 /** `s` with ASCII letters in lower case. */
@@ -286,7 +287,7 @@ function classEnd(p: u8[], at: usize, c: i64): i64 {
 /** Uppercase hex of bytes. */
 export function hexUpper(b: u8[]): string {
   const digits = "0123456789ABCDEF";
-  const out: u8[] = __intrinsic_array_with_capacity(b.length * 2);
+  const out: u8[] = arrayWithCapacity(b.length * 2);
   for (const x of b) {
     out.push(byteAt(digits, (x >> 4) as usize));
     out.push(byteAt(digits, (x & 15) as usize));
@@ -325,7 +326,7 @@ export function cBytes(s: string): u8[] {
   const b = utf8Encode(s);
   for (let i: usize = 0; i < b.length; i++) {
     if (b[i] == 0) {
-      __intrinsic_array_truncate(b, i);
+      arrayTruncate(b, i);
       break;
     }
   }

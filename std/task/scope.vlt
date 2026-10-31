@@ -14,6 +14,7 @@ import {
   velt_rt_signal_retain,
 } from "velt/task/rt";
 import { AbortSignal, signalCell } from "velt/task/signal";
+import { spawnHandled } from "velt/lang/intrinsics";
 
 /**
  * `taskScope`'s options. `cancelOnError`: abort `scope.signal` when the body or a child fails
@@ -120,9 +121,7 @@ export class TaskScope<E> {
     // `scope.spawn(work(scope.signal))` doesn't hand the task anything reachable from `scope`.
     const sig = velt_rt_signal_retain(this.#sigH);
     // The scope fails with the child's error, so a handle nobody awaits drops it quietly.
-    return __intrinsic_spawn_handled(
-      scopeChild<T, E>(this.#g, sig, this.#errors, this.#cancelOnError, p),
-    );
+    return spawnHandled(scopeChild<T, E>(this.#g, sig, this.#errors, this.#cancelOnError, p));
   }
 
   /** Aborts the scope's signal. */

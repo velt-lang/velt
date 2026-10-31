@@ -2,21 +2,22 @@
 // text of a range of them, and whether the string is ASCII.
 
 import { velt_rt_str_byte_slice } from "velt/encoding/rt";
+import { strByteAt, strByteLen, strLen } from "velt/lang/intrinsics";
 
 /**
  * The number of bytes `s` keeps its text in: UTF-8, a lone surrogate as its three-byte form
  * (`Buffer.byteLength(s)` for well-formed text). O(1).
  */
 export function utf8Length(s: string): usize {
-  return __intrinsic_str_byte_len(s);
+  return strByteLen(s);
 }
 
 /** Byte `i` of `s`'s UTF-8 (as `utf8Length` counts them), read in place; a RangeError past it. */
 export function utf8ByteAt(s: string, i: usize): u8 {
-  if (i >= __intrinsic_str_byte_len(s)) {
-    panic(`RangeError: byte ${i} is past the end of a string of ${__intrinsic_str_byte_len(s)}`);
+  if (i >= strByteLen(s)) {
+    panic(`RangeError: byte ${i} is past the end of a string of ${strByteLen(s)}`);
   }
-  return __intrinsic_str_byte_at(s, i as u64);
+  return strByteAt(s, i as u64);
 }
 
 /**
@@ -25,7 +26,7 @@ export function utf8ByteAt(s: string, i: usize): u8 {
  * are at the start of a character (or the end).
  */
 export function utf8Substring(s: string, start: usize, end: usize): string {
-  const n = __intrinsic_str_byte_len(s);
+  const n = strByteLen(s);
   if (start > end || end > n) {
     panic(`RangeError: bytes ${start} to ${end} are not inside a string of ${n}`);
   }
@@ -37,10 +38,10 @@ export function utf8Substring(s: string, start: usize, end: usize): string {
 
 // Whether byte `i` of `s` (`n` bytes) starts a character, or is its end.
 function charStart(s: string, i: usize, n: usize): bool {
-  return i == n || (__intrinsic_str_byte_at(s, i as u64) & 0xc0) != 0x80;
+  return i == n || (strByteAt(s, i as u64) & 0xc0) != 0x80;
 }
 
 /** Whether every character of `s` is ASCII (so its bytes are its UTF-16 code units). O(1). */
 export function isAscii(s: string): bool {
-  return __intrinsic_str_len(s) == __intrinsic_str_byte_len(s);
+  return strLen(s) == strByteLen(s);
 }

@@ -1,0 +1,23 @@
+// velt/lang/intrinsics (internal): database rows and parameters the compiler reads and binds per
+// type (velt/db and the native drivers; native_abi.md "Row cursors" and "Parameter sinks").
+
+/**
+ * Hands `params` to a driver's parameter sink (the address of a
+ * `velt_text::rows_cursor::RawSink`) value by value, as their JSON text would bind; false
+ * (nothing done) for a type that is bound as JSON text instead.
+ */
+export declare intrinsic function dbBind<P>(sink: u64, params: P): bool;
+
+/**
+ * Every remaining row of the velt/db `RowSource` `source`, read by column when `T` is an object
+ * of plain fields and `S` a class whose row methods do not throw; throws `JsonError` for a row
+ * that does not fit. `null` (nothing read) for any other `T` or `S`: velt/db then reads the
+ * rows as JSON.
+ */
+export declare intrinsic function readRowsByColumn<T, S>(source: S): T[] | null;
+
+/**
+ * The current row of `source` (`next()` returned true), as `readRowsByColumn` reads each; `null`
+ * as for `readRowsByColumn`.
+ */
+export declare intrinsic function readRowByColumn<T, S>(source: S): T | null;

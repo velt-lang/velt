@@ -13,6 +13,16 @@
 // the key and value types there and passes their glue. Maps and refs are bound to the thread
 // that made them: sema keeps them out of `spawn`, channels and `shared`.
 
+import {
+  weakMapDelete,
+  weakMapGet,
+  weakMapHas,
+  weakMapSet,
+  weakMapValue,
+  weakRefDeref,
+  weakRefNew,
+} from "velt/lang/intrinsics";
+
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
 declare function velt_rt_weakmap_drop(m: u32);
@@ -35,27 +45,27 @@ export class WeakMap<K, V> {
     if (this.#id == 0) {
       return undefined;
     }
-    const w = __intrinsic_weakmap_get(this.#id, key);
-    if (w == 0 && !__intrinsic_weakmap_has(this.#id, key)) {
+    const w = weakMapGet(this.#id, key);
+    if (w == 0 && !weakMapHas(this.#id, key)) {
       return undefined;
     }
-    return __intrinsic_weakmap_value<V>(w);
+    return weakMapValue<V>(w);
   }
 
   /** Stores `value` for `key` (replacing a value stored before). */
   set(key: K, value: V): WeakMap<K, V> {
-    this.#id = __intrinsic_weakmap_set(this.#id, key, value);
+    this.#id = weakMapSet(this.#id, key, value);
     return this;
   }
 
   /** Whether `key` has an entry. */
   has(key: K): bool {
-    return this.#id != 0 && __intrinsic_weakmap_has(this.#id, key);
+    return this.#id != 0 && weakMapHas(this.#id, key);
   }
 
   /** Removes `key`'s entry: true if there was one. */
   delete(key: K): bool {
-    return this.#id != 0 && __intrinsic_weakmap_delete(this.#id, key);
+    return this.#id != 0 && weakMapDelete(this.#id, key);
   }
 
   /** Drop hook: releases every value. */
@@ -81,18 +91,18 @@ export class WeakSet<T> {
 
   /** Adds `value` to the set. */
   add(value: T): WeakSet<T> {
-    this.#id = __intrinsic_weakmap_set(this.#id, value, true);
+    this.#id = weakMapSet(this.#id, value, true);
     return this;
   }
 
   /** Whether `value` is in the set. */
   has(value: T): bool {
-    return this.#id != 0 && __intrinsic_weakmap_has(this.#id, value);
+    return this.#id != 0 && weakMapHas(this.#id, value);
   }
 
   /** Removes `value`: true if it was in the set. */
   delete(value: T): bool {
-    return this.#id != 0 && __intrinsic_weakmap_delete(this.#id, value);
+    return this.#id != 0 && weakMapDelete(this.#id, value);
   }
 
   /** Drop hook: forgets the members. */
@@ -114,12 +124,12 @@ export class WeakRef<T> {
 
   /** A reference to `target` that does not keep it alive. */
   constructor(target: T) {
-    this.#id = __intrinsic_weakref_new(target);
+    this.#id = weakRefNew(target);
   }
 
   /** The target, or `undefined` once it was freed. */
   deref(): T | undefined {
-    return __intrinsic_weakref_deref<T>(this.#id) ?? undefined;
+    return weakRefDeref<T>(this.#id) ?? undefined;
   }
 
   /** Drop hook: releases the slot. */

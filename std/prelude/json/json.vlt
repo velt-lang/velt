@@ -46,6 +46,7 @@ import {
   T_ARRAY,
   T_OBJECT,
 } from "velt/encoding/json/tape";
+import { jsonParse, jsonStringify } from "velt/lang/intrinsics";
 
 declare function velt_rt_strbuf_push_json_value(buf: string, h: u64);
 
@@ -172,7 +173,7 @@ export class JSON {
    * JS `JSON.stringify`: no whitespace, fields in declaration order, null optional fields omitted.
    */
   static stringify<T>(value: T): string {
-    return __intrinsic_json_stringify(value);
+    return jsonStringify(value);
   }
   // `JSON.stringify(value, replacer, space)` is written by the compiler: the text above, laid
   // out again by `jsonRelayout` (below).
@@ -182,7 +183,7 @@ export class JSON {
    * `options.unknownKeys` is "reject".
    */
   static parse<T>(text: string, options: JsonParseOptions | null = null): T {
-    return __intrinsic_json_parse<T>(text, jsonFlags(options, 0), jsonMaxDepth(options));
+    return jsonParse<T>(text, jsonFlags(options, 0), jsonMaxDepth(options));
   }
 
   /**
@@ -193,7 +194,7 @@ export class JSON {
    * field a `null` its type can't hold).
    */
   static __parseFromContext<T>(text: string, options: JsonParseOptions | null = null): T {
-    return __intrinsic_json_parse<T>(text, jsonFlags(options, 2), jsonMaxDepth(options));
+    return jsonParse<T>(text, jsonFlags(options, 2), jsonMaxDepth(options));
   }
 
   /**

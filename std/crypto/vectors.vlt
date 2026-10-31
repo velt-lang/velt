@@ -5,6 +5,7 @@
 // read-only data, the padding is built in registers, and only the digest is allocated.
 
 import { u32x4, u8x16 } from "velt/simd";
+import { arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
 
 //
 // Where the CPU has them, a hash is one call of a function gated on the extension: the state
@@ -72,8 +73,8 @@ export function tailBlock(data: u8[], full: usize, total: usize, b: usize, last:
 
 /** A new array of `n` bytes, uninitialized: the caller writes every byte before anything reads it. */
 export function newBytes(n: usize): u8[] {
-  const out: u8[] = __intrinsic_array_with_capacity(n);
-  __intrinsic_array_set_len(out, n);
+  const out: u8[] = arrayWithCapacity(n);
+  arraySetLen(out, n);
   return out;
 }
 

@@ -6,6 +6,7 @@ import { Pattern } from "velt/text/regex/pattern";
 import { Expect, pattern, show } from "velt/test/expect";
 import { Rejects } from "velt/test/rejects";
 import { Resolves } from "velt/test/resolves";
+import { errorText } from "velt/lang/intrinsics";
 
 extend<E> Expect<E[]> {
   /** `actual.length` is `n`. */
@@ -113,7 +114,7 @@ extend<R, E> Expect<() => R throws E> {
     } catch (e) {
       thrown = true;
       message = errorMessage(e);
-      text = __intrinsic_error_text(e);
+      text = errorText(e);
     }
     const why = thrownWhy(thrown, message, text, expected, this.negated);
     if (why != null) {
@@ -167,7 +168,7 @@ export function thrownWhy(
  * string or a number as it is, anything else as `console.log` writes it.
  */
 export function errorMessage<E>(e: E): string {
-  const text = __intrinsic_error_text(e);
+  const text = errorText(e);
   if (typeof e != "object") {
     return text;
   }

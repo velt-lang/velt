@@ -23,6 +23,7 @@ import {
 import { inValues } from "velt/sqlite/exec/loop";
 import { forCompare } from "velt/sqlite/exec/ops";
 import { Val } from "velt/sqlite/exec/value";
+import { arrayTruncate } from "velt/lang/intrinsics";
 
 /** The rows of one level, in its access path's order: `start` for the first, `step` after. */
 export abstract class Walk {
@@ -415,7 +416,7 @@ class IndexInWalk extends Walk {
   }
 
   start(): bool {
-    __intrinsic_array_truncate(this.fixed, 0);
+    arrayTruncate(this.fixed, 0);
     this.vals = [];
     this.vi = 0;
     for (let i: usize = 0; i < this.nEq; i++) {

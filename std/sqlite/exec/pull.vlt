@@ -14,6 +14,7 @@ import { Walk } from "velt/sqlite/exec/walk";
 import { Val, nullVal } from "velt/sqlite/exec/value";
 import { limitValue } from "velt/sqlite/exec/emit";
 import { A_REAL } from "velt/sqlite/schema";
+import { arrayTruncate } from "velt/lang/intrinsics";
 
 const FRESH: u8 = 0;
 const ACTIVE: u8 = 1;
@@ -75,14 +76,14 @@ export class Pull implements RowSource {
     this.done = false;
     this.emitted = 0;
     this.err = null;
-    __intrinsic_array_truncate(this.state, 0);
-    __intrinsic_array_truncate(this.matched, 0);
+    arrayTruncate(this.state, 0);
+    arrayTruncate(this.matched, 0);
     for (let i: usize = 0; i < this.walks.length; i++) {
       this.state.push(FRESH);
       this.matched.push(false);
     }
-    __intrinsic_array_truncate(this.cache, 0);
-    __intrinsic_array_truncate(this.seen, 0);
+    arrayTruncate(this.cache, 0);
+    arrayTruncate(this.seen, 0);
     for (let i: usize = 0; i < this.evs.length; i++) {
       this.cache.push(nullVal());
       this.seen.push(false);

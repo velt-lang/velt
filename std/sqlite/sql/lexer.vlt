@@ -4,6 +4,8 @@
 // :name, @name, $name), operators and comments. Keywords are identifiers here; the parser
 // decides by context, as SQLite's fallback rules let most keywords name things.
 
+import { strByteAt, strByteLen } from "velt/lang/intrinsics";
+
 /** Token kinds. */
 export const T_EOF: u8 = 0;
 export const T_IDENT: u8 = 1; // bare word (keyword or name)
@@ -264,7 +266,7 @@ export class Utf16Index {
         // Back over characters: a lead byte (not 10xxxxxx) starts one; four bytes are two units.
         while (this.byte > at) {
           this.byte--;
-          const b = __intrinsic_str_byte_at(this.s, this.byte as u64);
+          const b = strByteAt(this.s, this.byte as u64);
           if ((b & 0xc0) != 0x80) {
             this.unit -= b >= 0xf0 ? 2 : 1;
           }
@@ -275,7 +277,7 @@ export class Utf16Index {
     let i = this.byte;
     let units = this.unit;
     while (i < at) {
-      const b = __intrinsic_str_byte_at(this.s, i as u64);
+      const b = strByteAt(this.s, i as u64);
       if (b < 0x80) {
         i += 1;
         units += 1;
@@ -330,32 +332,28 @@ export function asciiUpper(s: string): string {
 
 /** Splits `sql` into tokens; the last is T_EOF. Throws `SqlError` on an unclosed token. */
 export function tokenize(sql: string): Token[] {
-  const n = __intrinsic_str_byte_len(sql) as usize;
+  const n = strByteLen(sql) as usize;
   const u = new Utf16Index(sql);
   const out: Token[] = [];
   let i: usize = 0;
   while (i < n) {
-    const b = __intrinsic_str_byte_at(sql, i as u64);
+    const b = strByteAt(sql, i as u64);
     // Whitespace and comments.
     if (b == 32 || b == 9 || b == 10 || b == 13 || b == 12) {
       i++;
       continue;
     }
-    if (b == 45 && i + 1 < n && __intrinsic_str_byte_at(sql, (i + 1) as u64) == 45) {
-      while (i < n && __intrinsic_str_byte_at(sql, i as u64) != 10) {
+    if (b == 45 && i + 1 < n && strByteAt(sql, (i + 1) as u64) == 45) {
+      while (i < n && strByteAt(sql, i as u64) != 10) {
         i++;
       }
       continue;
     }
     // `/*` at the very end is `/` and then `*`, as in tokenize.c.
-    if (b == 47 && i + 2 < n && __intrinsic_str_byte_at(sql, (i + 1) as u64) == 42) {
+    if (b == 47 && i + 2 < n && strByteAt(sql, (i + 1) as u64) == 42) {
       i += 2;
       while (
-        i + 1 < n &&
-        !(
-          __intrinsic_str_byte_at(sql, i as u64) == 42 &&
-          __intrinsic_str_byte_at(sql, (i + 1) as u64) == 47
-        )
+        i + 1 < n && !(strByteAt(sql, i as u64) == 42 && strByteAt(sql, (i + 1) as u64) == 47)
       ) {
         i++;
       }
@@ -365,15 +363,15 @@ export function tokenize(sql: string): Token[] {
     }
     const start = i;
     // Blob literal X'…'.
-    if ((b == 120 || b == 88) && i + 1 < n && __intrinsic_str_byte_at(sql, (i + 1) as u64) == 39) {
+    if ((b == 120 || b == 88) && i + 1 < n && strByteAt(sql, (i + 1) as u64) == 39) {
       i += 2;
       const from = i;
-      while (i < n && isHex(__intrinsic_str_byte_at(sql, i as u64))) {
+      while (i < n && isHex(strByteAt(sql, i as u64))) {
         i++;
       }
-      if (i >= n || __intrinsic_str_byte_at(sql, i as u64) != 39 || (i - from) % 2 != 0) {
+      if (i >= n || strByteAt(sql, i as u64) != 39 || (i - from) % 2 != 0) {
         // The bad token runs to its closing quote, or to the end.
-        while (i < n && __intrinsic_str_byte_at(sql, i as u64) != 39) {
+        while (i < n && strByteAt(sql, i as u64) != 39) {
           i++;
         }
         throw new SqlError(
@@ -387,7 +385,7 @@ export function tokenize(sql: string): Token[] {
       continue;
     }
     if (isIdentStart(b)) {
-      while (i < n && isIdentPart(__intrinsic_str_byte_at(sql, i as u64))) {
+      while (i < n && isIdentPart(strByteAt(sql, i as u64))) {
         i++;
       }
       const word = u.slice(start, i);
@@ -402,9 +400,7 @@ export function tokenize(sql: string): Token[] {
       });
       continue;
     }
-    if (
-      isDigit(b) || (b == 46 && i + 1 < n && isDigit(__intrinsic_str_byte_at(sql, (i + 1) as u64)))
-    ) {
+    if (isDigit(b) || (b == 46 && i + 1 < n && isDigit(strByteAt(sql, (i + 1) as u64)))) {
       out.push(number(u, n, start));
       i = out[out.length - 1].end;
       continue;
@@ -422,7 +418,7 @@ export function tokenize(sql: string): Token[] {
     if (b == 91) {
       // [name]: no escapes.
       i++;
-      while (i < n && __intrinsic_str_byte_at(sql, i as u64) != 93) {
+      while (i < n && strByteAt(sql, i as u64) != 93) {
         i++;
       }
       if (i >= n) {
@@ -442,7 +438,7 @@ export function tokenize(sql: string): Token[] {
     }
     if (b == 63) {
       i++;
-      while (i < n && isDigit(__intrinsic_str_byte_at(sql, i as u64))) {
+      while (i < n && isDigit(strByteAt(sql, i as u64))) {
         i++;
       }
       out.push(Token {
@@ -457,7 +453,7 @@ export function tokenize(sql: string): Token[] {
     }
     if (b == 58 || b == 64 || b == 36) {
       i++;
-      while (i < n && isIdentPart(__intrinsic_str_byte_at(sql, i as u64))) {
+      while (i < n && isIdentPart(strByteAt(sql, i as u64))) {
         i++;
       }
       if (i == start + 1) {
@@ -493,7 +489,7 @@ export function tokenize(sql: string): Token[] {
         two == "->"
       ) {
         i += 2;
-        if (two == "->" && i < n && __intrinsic_str_byte_at(sql, i as u64) == 62) {
+        if (two == "->" && i < n && strByteAt(sql, i as u64) == 62) {
           i++;
           out.push(Token { kind: T_OP, start: start, end: i, text: "->>", upper: "->>", kw: K_ID });
           continue;
@@ -581,9 +577,9 @@ function quoted(u: Utf16Index, n: usize, start: usize, q: u8, kind: u8): Token {
     if (i >= n) {
       throw new SqlError(`unrecognized token: "${byteSlice(sql, start, n)}"`, start);
     }
-    const b = __intrinsic_str_byte_at(sql, i as u64);
+    const b = strByteAt(sql, i as u64);
     if (b == q) {
-      if (i + 1 < n && __intrinsic_str_byte_at(sql, (i + 1) as u64) == q) {
+      if (i + 1 < n && strByteAt(sql, (i + 1) as u64) == q) {
         text += u.slice(from, i + 1);
         i += 2;
         from = i;
@@ -612,30 +608,30 @@ function quoted(u: Utf16Index, n: usize, start: usize, q: u8, kind: u8): Token {
 function number(u: Utf16Index, n: usize, start: usize): Token {
   const sql = u.s;
   let i = start;
-  if (__intrinsic_str_byte_at(sql, i as u64) == 48 && i + 2 < n) {
-    const x = __intrinsic_str_byte_at(sql, (i + 1) as u64);
-    if ((x == 120 || x == 88) && isHex(__intrinsic_str_byte_at(sql, (i + 2) as u64))) {
+  if (strByteAt(sql, i as u64) == 48 && i + 2 < n) {
+    const x = strByteAt(sql, (i + 1) as u64);
+    if ((x == 120 || x == 88) && isHex(strByteAt(sql, (i + 2) as u64))) {
       i = digits(sql, n, i + 2, true);
       return finishNumber(u, n, start, i, T_INTEGER, true);
     }
   }
   let kind = T_INTEGER;
   i = digits(sql, n, i, false);
-  if (i < n && __intrinsic_str_byte_at(sql, i as u64) == 46) {
+  if (i < n && strByteAt(sql, i as u64) == 46) {
     kind = T_REAL;
     i = digits(sql, n, i + 1, false);
   }
   if (i < n) {
-    const e = __intrinsic_str_byte_at(sql, i as u64);
+    const e = strByteAt(sql, i as u64);
     if (e == 101 || e == 69) {
       let j = i + 1;
       if (j < n) {
-        const s = __intrinsic_str_byte_at(sql, j as u64);
+        const s = strByteAt(sql, j as u64);
         if (s == 43 || s == 45) {
           j++;
         }
       }
-      if (j < n && isDigit(__intrinsic_str_byte_at(sql, j as u64))) {
+      if (j < n && isDigit(strByteAt(sql, j as u64))) {
         kind = T_REAL;
         i = digits(sql, n, j, false);
       }
@@ -648,7 +644,7 @@ function number(u: Utf16Index, n: usize, start: usize): Token {
 function digits(sql: string, n: usize, from: usize, hex: bool): usize {
   let i = from;
   while (i < n) {
-    const b = __intrinsic_str_byte_at(sql, i as u64);
+    const b = strByteAt(sql, i as u64);
     if (!(hex ? isHex(b) : isDigit(b)) && b != 95) {
       break;
     }
@@ -667,9 +663,9 @@ function finishNumber(
 ): Token {
   const sql = u.s;
   /** A number running into a name (`12abc`) is one bad token in SQLite. */
-  if (end < n && isIdentPart(__intrinsic_str_byte_at(sql, end as u64))) {
+  if (end < n && isIdentPart(strByteAt(sql, end as u64))) {
     let bad = end;
-    while (bad < n && isIdentPart(__intrinsic_str_byte_at(sql, bad as u64))) {
+    while (bad < n && isIdentPart(strByteAt(sql, bad as u64))) {
       bad++;
     }
     throw new SqlError(`unrecognized token: "${byteSlice(sql, start, bad)}"`, start);
@@ -678,11 +674,11 @@ function finishNumber(
   if (text.includes("_")) {
     // Each separator stands between two digits (hex digits in a hex literal).
     for (let i = start; i < end; i++) {
-      if (__intrinsic_str_byte_at(sql, i as u64) != 95) {
+      if (strByteAt(sql, i as u64) != 95) {
         continue;
       }
-      const before = __intrinsic_str_byte_at(sql, (i - 1) as u64);
-      const after = i + 1 < end ? __intrinsic_str_byte_at(sql, (i + 1) as u64) : 0;
+      const before = strByteAt(sql, (i - 1) as u64);
+      const after = i + 1 < end ? strByteAt(sql, (i + 1) as u64) : 0;
       if (!(hex ? isHex(before) && isHex(after) : isDigit(before) && isDigit(after))) {
         throw new SqlError(`unrecognized token: "${text}"`, start);
       }

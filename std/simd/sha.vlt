@@ -11,7 +11,7 @@
 //
 // The instructions are as fast as the checks around them allow: in a loop of them the flag is
 // read once, before the loop, and tested in every iteration. In a function gated on the
-// extension (`__intrinsic_target`, std only, as std/crypto/index.vlt's) the check is true and the
+// extension (`targetFeature`, std only, as std/crypto/index.vlt's) the check is true and the
 // methods are the bare instructions.
 
 // Whether the CPU has the ARMv8 SHA instructions (the runtime's `velt_cpu_sha_arm`).

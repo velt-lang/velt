@@ -63,6 +63,7 @@ import { allOf, levelLoop } from "velt/sqlite/exec/loop";
 import { GroupState, groupStepFor, outputGroups } from "velt/sqlite/exec/group";
 import { AFF_NONE } from "velt/sqlite/exec/ops";
 import { Val, intVal, nullVal } from "velt/sqlite/exec/value";
+import { arrayTruncate } from "velt/lang/intrinsics";
 
 /** ORDER BY, LIMIT and OFFSET of the SELECT a core is the whole of. */
 export class Tail {
@@ -685,7 +686,7 @@ function valuesCore(
       if (out.stop) {
         break;
       }
-      __intrinsic_array_truncate(tmp, 0);
+      arrayTruncate(tmp, 0);
       for (const e of r) {
         tmp.push(e());
       }

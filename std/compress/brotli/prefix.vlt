@@ -11,6 +11,7 @@ import { u32x4 } from "velt/simd";
 import { CompressError } from "velt/compress/errors";
 import { Bits } from "velt/compress/brotli/bits";
 import { CODE_LENGTH_CODE, CODE_LENGTH_ORDER } from "velt/compress/brotli/tables";
+import { arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
 
 // Bits indexed by a table's root.
 const ROOT_BITS: usize = 8;
@@ -29,8 +30,8 @@ function reverse(x: u32, n: u32): u32 {
 
 // `n` elements, left as they are: each is written before it is read.
 function unfilled(n: usize): u16[] {
-  const out: u16[] = __intrinsic_array_with_capacity(n);
-  __intrinsic_array_set_len(out, n);
+  const out: u16[] = arrayWithCapacity(n);
+  arraySetLen(out, n);
   return out;
 }
 

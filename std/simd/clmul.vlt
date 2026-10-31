@@ -8,7 +8,7 @@
 // emulation, a shift and XOR per bit. The checks are false on WebAssembly, in debug (Cranelift)
 // builds and with `VELT_SIMD_DISABLE=clmul`. Code that would be slower on the emulation than
 // without the instruction (a table-driven CRC) checks `u64x2.hasClmul()` first; in a function
-// gated on the extension (`__intrinsic_target("clmul-x86")`, std only) the methods are the bare
+// gated on the extension (`targetFeature("clmul-x86")`, std only) the methods are the bare
 // instructions.
 
 declare function velt_simd_has_clmul_x86(): bool;

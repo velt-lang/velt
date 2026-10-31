@@ -1,6 +1,7 @@
 // velt/test (internal): `Resolves`, the matchers of `expect(p).resolves`.
 
 import { Expect } from "velt/test/expect";
+import { errorText } from "velt/lang/intrinsics";
 
 /** `expect(p).resolves`: each matcher awaits `p` and checks its value; fails if it rejects. */
 export class Resolves<V, E> {
@@ -23,9 +24,7 @@ export class Resolves<V, E> {
     try {
       value = await this.promise;
     } catch (e) {
-      throw new AssertionError(
-        `promise rejected "${__intrinsic_error_text(e)}" instead of resolving`,
-      );
+      throw new AssertionError(`promise rejected "${errorText(e)}" instead of resolving`);
     }
     return new Expect<V>(value, this.negated);
   }

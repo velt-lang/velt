@@ -1,0 +1,20 @@
+// velt/lang/intrinsics (internal): JSON encoders and decoders the compiler generates per type
+// (velt/encoding/json). They write private fields and build classes without running their
+// constructor, which no Velt code can do yet (docs/internals/design/std-layout.md §11).
+
+/** `JSON.stringify(value)`, by the encoder generated for `T`. */
+export declare intrinsic function jsonStringify<T>(value: T): string;
+
+/**
+ * Decodes `text` as a `T` with the reader options of `velt_rt_json_reader_new_with` (flag 1:
+ * reject unknown keys; `maxDepth` 0: no limit): the body of `JSON.parse<T>(text, options)`.
+ * Throws `JsonError`.
+ */
+export declare intrinsic function jsonParse<T>(text: string, flags: i64, maxDepth: i64): T;
+
+/**
+ * As `jsonParse`, over a native driver's live rows: the address of a
+ * `velt_text::rows_cursor::RawCursor`, which the caller keeps and releases afterwards
+ * (native_abi.md "Row cursors").
+ */
+export declare intrinsic function jsonParseCursor<T>(cursor: u64, flags: i64, maxDepth: i64): T;

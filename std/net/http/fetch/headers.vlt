@@ -24,6 +24,7 @@
 
 import { impliedType } from "velt/net/http/fetch/body";
 import { RequestSource } from "velt/net/http/fetch/source";
+import { arraySwap, arrayTruncate } from "velt/lang/intrinsics";
 
 // HTTP whitespace (tab, LF, CR, space) around `v` removed; other spaces (U+00A0, …) stay.
 function trimHttp(v: string): string {
@@ -426,10 +427,10 @@ export class Headers {
       if (list[i] == key) {
         continue;
       }
-      __intrinsic_array_swap(list, w, i);
-      __intrinsic_array_swap(list, w + 1, i + 1);
+      arraySwap(list, w, i);
+      arraySwap(list, w + 1, i + 1);
       w += 2;
     }
-    __intrinsic_array_truncate(list, w);
+    arrayTruncate(list, w);
   }
 }

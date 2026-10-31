@@ -27,6 +27,7 @@ import {
   STAGE_UNCOMPRESSED,
 } from "velt/compress/brotli/cursor";
 import { State } from "velt/compress/brotli/state";
+import { arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
 
 /** `run` stopped because the output reached its limit. */
 export const FULL: i64 = 0;
@@ -243,8 +244,8 @@ export class Decoder {
         const half = s.out.length + s.out.length / 2;
         size = end + SLACK > half ? end + SLACK : half;
       }
-      const grown: u8[] = __intrinsic_array_with_capacity(size);
-      __intrinsic_array_set_len(grown, size);
+      const grown: u8[] = arrayWithCapacity(size);
+      arraySetLen(grown, size);
       grown.set(s.out);
       s.out = grown;
     }

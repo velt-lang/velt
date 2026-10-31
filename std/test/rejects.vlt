@@ -3,6 +3,7 @@
 import { Pattern } from "velt/text/regex/pattern";
 import { Expect } from "velt/test/expect";
 import { errorMessage, thrownWhy } from "velt/test/matchers";
+import { errorText } from "velt/lang/intrinsics";
 
 /** `expect(p).rejects`: each matcher awaits `p` and checks its error; fails if it resolves. */
 export class Rejects<V, E> {
@@ -27,9 +28,7 @@ export class Rejects<V, E> {
     } catch (e) {
       return new Expect<E>(e, this.negated);
     }
-    throw new AssertionError(
-      `promise resolved "${__intrinsic_error_text(value)}" instead of rejecting`,
-    );
+    throw new AssertionError(`promise resolved "${errorText(value)}" instead of rejecting`);
   }
 
   /**
@@ -42,11 +41,11 @@ export class Rejects<V, E> {
     let text = "";
     let value = "";
     try {
-      value = __intrinsic_error_text(await this.promise);
+      value = errorText(await this.promise);
     } catch (e) {
       rejected = true;
       message = errorMessage(e);
-      text = __intrinsic_error_text(e);
+      text = errorText(e);
     }
     if (!rejected && !this.negated) {
       throw new AssertionError(`promise resolved "${value}" instead of rejecting`);

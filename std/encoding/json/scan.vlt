@@ -9,6 +9,7 @@
 
 import { utf8Substring } from "velt/encoding";
 import { decimalValue } from "velt/lang/number/parse";
+import { strByteAt, strByteLen, strLoadU8x16 } from "velt/lang/intrinsics";
 
 declare function velt_simd_u8x16_splat(x: u8): u8x16;
 declare function velt_simd_u8x16_eq(a: u8x16, b: u8x16): mask8x16;
@@ -129,7 +130,7 @@ export class Scanner {
 
   constructor(src: string) {
     this.src = src;
-    this.len = __intrinsic_str_byte_len(src);
+    this.len = strByteLen(src);
   }
 
   /** Skips whitespace; the next byte, not consumed, or -1 at the end. */
@@ -140,7 +141,7 @@ export class Scanner {
     const len = this.len;
     let pos = this.pos;
     while (pos < len) {
-      const b = __intrinsic_str_byte_at(this.src, pos as u64);
+      const b = strByteAt(this.src, pos as u64);
       if (b != 32 && b != 10 && b != 13 && b != 9) {
         this.pos = pos;
         return b as i32;
@@ -192,9 +193,9 @@ export class Scanner {
 
   /** Consumes exactly `word` (`true`, `false`, `null`). */
   literal(word: string): bool {
-    const n = __intrinsic_str_byte_len(word);
+    const n = strByteLen(word);
     for (let i: usize = 0; i < n; i++) {
-      if (!this.byteIs(__intrinsic_str_byte_at(word, i as u64))) {
+      if (!this.byteIs(strByteAt(word, i as u64))) {
         return this.unexpected();
       }
       this.pos++;
@@ -207,18 +208,18 @@ export class Scanner {
     const start = this.pos;
     const len = this.len;
     let pos = start;
-    const negative = pos < len && __intrinsic_str_byte_at(this.src, pos as u64) == MINUS;
+    const negative = pos < len && strByteAt(this.src, pos as u64) == MINUS;
     if (negative) {
       pos++;
     }
     // The digits accumulate into `w` (wrapping past 19 of them: `exact` is false then).
     const first = pos;
     let w: u64 = 0;
-    if (pos < len && __intrinsic_str_byte_at(this.src, pos as u64) == ZERO) {
+    if (pos < len && strByteAt(this.src, pos as u64) == ZERO) {
       pos++;
     } else {
       while (pos < len) {
-        const d = __intrinsic_str_byte_at(this.src, pos as u64) - ZERO;
+        const d = strByteAt(this.src, pos as u64) - ZERO;
         if (d > 9) {
           break;
         }
@@ -233,11 +234,11 @@ export class Scanner {
     const whole = pos - first;
     let q: i64 = 0;
     let integer = true;
-    if (pos < len && __intrinsic_str_byte_at(this.src, pos as u64) == DOT) {
+    if (pos < len && strByteAt(this.src, pos as u64) == DOT) {
       pos++;
       const fraction = pos;
       while (pos < len) {
-        const d = __intrinsic_str_byte_at(this.src, pos as u64) - ZERO;
+        const d = strByteAt(this.src, pos as u64) - ZERO;
         if (d > 9) {
           break;
         }
@@ -253,12 +254,12 @@ export class Scanner {
     }
     let exact = whole + ((-q) as usize) <= 19;
     if (pos < len) {
-      const e = __intrinsic_str_byte_at(this.src, pos as u64);
+      const e = strByteAt(this.src, pos as u64);
       if (e == 101 || e == 69) {
         pos++;
         let eneg = false;
         if (pos < len) {
-          const sign = __intrinsic_str_byte_at(this.src, pos as u64);
+          const sign = strByteAt(this.src, pos as u64);
           if (sign == PLUS || sign == MINUS) {
             eneg = sign == MINUS;
             pos++;
@@ -267,7 +268,7 @@ export class Scanner {
         const digits = pos;
         let x: i64 = 0;
         while (pos < len) {
-          const d = __intrinsic_str_byte_at(this.src, pos as u64) - ZERO;
+          const d = strByteAt(this.src, pos as u64) - ZERO;
           if (d > 9) {
             break;
           }
@@ -324,7 +325,7 @@ export class Scanner {
       // (0xF0 and up). A block with a stop ends at its first one, counted the same way over
       // the bytes before it. The rest, and what follows an escape, goes byte by byte below.
       while (pos + 16 <= len) {
-        const v = __intrinsic_str_load_u8x16(this.src, pos as u64);
+        const v = strLoadU8x16(this.src, pos as u64);
         const stop = velt_simd_mask8x16_or(
           velt_simd_mask8x16_or(
             velt_simd_u8x16_eq(v, velt_simd_u8x16_splat(QUOTE)),
@@ -349,7 +350,7 @@ export class Scanner {
       }
       while (true) {
         while (pos < len) {
-          const b = __intrinsic_str_byte_at(this.src, pos as u64);
+          const b = strByteAt(this.src, pos as u64);
           if (b == QUOTE || b == BACKSLASH || b - 32 >= 96) {
             break;
           }
@@ -357,7 +358,7 @@ export class Scanner {
         }
         const ascii = pos;
         while (pos < len) {
-          const b = __intrinsic_str_byte_at(this.src, pos as u64);
+          const b = strByteAt(this.src, pos as u64);
           if (b < 0x80) {
             break;
           }
@@ -377,7 +378,7 @@ export class Scanner {
       if (this.pos >= this.len) {
         return this.fail(UNEXPECTED_EOF);
       }
-      const b = __intrinsic_str_byte_at(this.src, this.pos as u64);
+      const b = strByteAt(this.src, this.pos as u64);
       if (b == QUOTE) {
         this.start = start;
         this.end = this.pos;
@@ -424,7 +425,7 @@ export class Scanner {
       this.fail(UNEXPECTED_EOF);
       return -1;
     }
-    const c = __intrinsic_str_byte_at(this.src, this.pos as u64);
+    const c = strByteAt(this.src, this.pos as u64);
     let unit: u32 = 0;
     if (c == QUOTE || c == BACKSLASH || c == 47) {
       unit = c as u32;
@@ -475,8 +476,8 @@ export class Scanner {
     }
     if (
       this.pos + 1 < this.len &&
-      __intrinsic_str_byte_at(this.src, this.pos as u64) == BACKSLASH &&
-      __intrinsic_str_byte_at(this.src, (this.pos + 1) as u64) == 117
+      strByteAt(this.src, this.pos as u64) == BACKSLASH &&
+      strByteAt(this.src, (this.pos + 1) as u64) == 117
     ) {
       const save = this.pos;
       this.pos += 2;
@@ -496,8 +497,7 @@ export class Scanner {
   private hex4(): i64 {
     let v: i64 = 0;
     for (let i = 0; i < 4; i++) {
-      const d =
-        this.pos < this.len ? hexValue(__intrinsic_str_byte_at(this.src, this.pos as u64)) : -1;
+      const d = this.pos < this.len ? hexValue(strByteAt(this.src, this.pos as u64)) : -1;
       if (d < 0) {
         this.fail(INVALID_U_ESCAPE);
         return -1;
@@ -509,7 +509,7 @@ export class Scanner {
   }
 
   private byteIs(b: u8): bool {
-    return this.pos < this.len && __intrinsic_str_byte_at(this.src, this.pos as u64) == b;
+    return this.pos < this.len && strByteAt(this.src, this.pos as u64) == b;
   }
 }
 
@@ -539,7 +539,7 @@ function hexValue(b: u8): i64 {
 /** The value of the number token `start`..`end` of `src` (correctly rounded, like `JSON.parse`). */
 export function numberF64(src: string, start: usize, end: usize, integer: bool): f64 {
   let i = start;
-  const neg = __intrinsic_str_byte_at(src, i as u64) == MINUS;
+  const neg = strByteAt(src, i as u64) == MINUS;
   if (neg) {
     i++;
   }
@@ -547,7 +547,7 @@ export function numberF64(src: string, start: usize, end: usize, integer: bool):
     // Exact: below 2^53.
     let v: u64 = 0;
     while (i < end) {
-      v = v * 10 + ((__intrinsic_str_byte_at(src, i as u64) - ZERO) as u64);
+      v = v * 10 + ((strByteAt(src, i as u64) - ZERO) as u64);
       i++;
     }
     return neg ? -(v as f64) : v as f64;
@@ -578,7 +578,7 @@ struct Significand {
 
 function significand(src: string, start: usize, end: usize): Significand {
   let i = start;
-  if (__intrinsic_str_byte_at(src, i as u64) == MINUS) {
+  if (strByteAt(src, i as u64) == MINUS) {
     i++;
   }
   let w: u64 = 0;
@@ -586,7 +586,7 @@ function significand(src: string, start: usize, end: usize): Significand {
   let q: i64 = 0;
   let fraction = false;
   while (i < end) {
-    const b = __intrinsic_str_byte_at(src, i as u64);
+    const b = strByteAt(src, i as u64);
     if (b == DOT) {
       fraction = true;
       i++;
@@ -611,7 +611,7 @@ function significand(src: string, start: usize, end: usize): Significand {
     // `e` or `E`, a sign, digits (a long exponent: the general parser).
     i++;
     let eneg = false;
-    const s = __intrinsic_str_byte_at(src, i as u64);
+    const s = strByteAt(src, i as u64);
     if (s == MINUS || s == PLUS) {
       eneg = s == MINUS;
       i++;
@@ -621,7 +621,7 @@ function significand(src: string, start: usize, end: usize): Significand {
     }
     let e: i64 = 0;
     while (i < end) {
-      e = e * 10 + ((__intrinsic_str_byte_at(src, i as u64) - ZERO) as i64);
+      e = e * 10 + ((strByteAt(src, i as u64) - ZERO) as i64);
       i++;
     }
     q += eneg ? -e : e;
@@ -637,14 +637,14 @@ export function numberU64(src: string, start: usize, end: usize, integer: bool):
     return x.ok && (!x.neg || x.mag == 0) ? x.mag : null;
   }
   let i = start;
-  const neg = __intrinsic_str_byte_at(src, i as u64) == MINUS;
+  const neg = strByteAt(src, i as u64) == MINUS;
   if (neg) {
     i++;
   }
   const max: u64 = 18446744073709551615;
   let acc: u64 = 0;
   while (i < end) {
-    const d = (__intrinsic_str_byte_at(src, i as u64) - ZERO) as u64;
+    const d = (strByteAt(src, i as u64) - ZERO) as u64;
     if (acc > (max - d) / 10) {
       return null;
     }
@@ -671,7 +671,7 @@ function exactInteger(src: string, start: usize, end: usize): ExactInteger {
   const none = ExactInteger { ok: false, neg: false, mag: 0 };
   const max: u64 = 18446744073709551615;
   let i = start;
-  const neg = __intrinsic_str_byte_at(src, i as u64) == MINUS;
+  const neg = strByteAt(src, i as u64) == MINUS;
   if (neg) {
     i++;
   }
@@ -679,7 +679,7 @@ function exactInteger(src: string, start: usize, end: usize): ExactInteger {
   let q: i64 = 0;
   let fraction = false;
   while (i < end) {
-    const b = __intrinsic_str_byte_at(src, i as u64);
+    const b = strByteAt(src, i as u64);
     if (b == DOT) {
       fraction = true;
       i++;
@@ -709,7 +709,7 @@ function exactInteger(src: string, start: usize, end: usize): ExactInteger {
     // The exponent: `e` or `E`, an optional sign, digits (the scanner checked the token).
     i++;
     let eneg = false;
-    const sign = __intrinsic_str_byte_at(src, i as u64);
+    const sign = strByteAt(src, i as u64);
     if (sign == MINUS || sign == PLUS) {
       eneg = sign == MINUS;
       i++;
@@ -718,7 +718,7 @@ function exactInteger(src: string, start: usize, end: usize): ExactInteger {
     while (i < end) {
       // Past 10^6 the result is 0, too large, or not an integer whatever the digits.
       if (e < 1000000) {
-        e = e * 10 + ((__intrinsic_str_byte_at(src, i as u64) - ZERO) as i64);
+        e = e * 10 + ((strByteAt(src, i as u64) - ZERO) as i64);
       }
       i++;
     }
@@ -758,7 +758,7 @@ export function numberI64(src: string, start: usize, end: usize, integer: bool):
     return x.neg ? -(x.mag as i64) : x.mag as i64;
   }
   let i = start;
-  const neg = __intrinsic_str_byte_at(src, i as u64) == MINUS;
+  const neg = strByteAt(src, i as u64) == MINUS;
   if (neg) {
     i++;
   }
@@ -766,7 +766,7 @@ export function numberI64(src: string, start: usize, end: usize, integer: bool):
   let acc: i64 = 0;
   const min: i64 = -9223372036854775807 - 1;
   while (i < end) {
-    const d = (__intrinsic_str_byte_at(src, i as u64) - ZERO) as i64;
+    const d = (strByteAt(src, i as u64) - ZERO) as i64;
     if (acc < (min + d) / 10) {
       return null;
     }
@@ -786,17 +786,17 @@ export function numberI64(src: string, start: usize, end: usize, integer: bool):
  * stay, so the scan fails at that byte, as it did when the scanner skipped comments itself.
  */
 export function blankComments(src: string): string {
-  const n = __intrinsic_str_byte_len(src);
+  const n = strByteLen(src);
   let i: usize = 0;
   let from: usize = 0;
   let out = "";
   while (i < n) {
-    const b = __intrinsic_str_byte_at(src, i as u64);
+    const b = strByteAt(src, i as u64);
     if (b == QUOTE) {
       // A string: skip to its closing quote, past escapes.
       i++;
       while (i < n) {
-        const c = __intrinsic_str_byte_at(src, i as u64);
+        const c = strByteAt(src, i as u64);
         if (c == BACKSLASH) {
           i += 2;
           continue;
@@ -812,21 +812,17 @@ export function blankComments(src: string): string {
       i++;
       continue;
     }
-    const next = __intrinsic_str_byte_at(src, (i + 1) as u64);
+    const next = strByteAt(src, (i + 1) as u64);
     let end = i;
     if (next == 47) {
       end = i + 2;
-      while (end < n && __intrinsic_str_byte_at(src, end as u64) != 10) {
+      while (end < n && strByteAt(src, end as u64) != 10) {
         end++;
       }
     } else if (next == 42) {
       let j = i + 2;
       while (
-        j + 1 < n &&
-        !(
-          __intrinsic_str_byte_at(src, j as u64) == 42 &&
-          __intrinsic_str_byte_at(src, (j + 1) as u64) == 47
-        )
+        j + 1 < n && !(strByteAt(src, j as u64) == 42 && strByteAt(src, (j + 1) as u64) == 47)
       ) {
         j++;
       }
@@ -841,7 +837,7 @@ export function blankComments(src: string): string {
     }
     out += utf8Substring(src, from, i);
     for (let k = i; k < end; k++) {
-      out += __intrinsic_str_byte_at(src, k as u64) == 10 ? "\n" : " ";
+      out += strByteAt(src, k as u64) == 10 ? "\n" : " ";
     }
     i = end;
     from = end;

@@ -6,6 +6,7 @@ import {
   velt_rt_bytes_to_str,
   velt_rt_random_bytes,
 } from "velt/random/uuid/rt";
+import { arrayWithCapacity } from "velt/lang/intrinsics";
 
 /** The all-zero UUID (RFC 9562 §5.9). */
 export const NIL_UUID = "00000000-0000-0000-0000-000000000000";
@@ -46,7 +47,7 @@ export function uuidParse(s: string): u8[] {
   // A non-ASCII character makes the bytes longer, but it fails as a bad digit or dash first, at
   // its own position (everything before it is ASCII, so byte and code-unit offsets agree).
   const text = velt_rt_bytes_from_str(s);
-  const out: u8[] = __intrinsic_array_with_capacity(16);
+  const out: u8[] = arrayWithCapacity(16);
   let i: usize = 0;
   while (i < TEXT_LEN) {
     if (i == 8 || i == 13 || i == 18 || i == 23) {
@@ -135,7 +136,7 @@ function hexValue(c: u8): u8 {
 // Text form of exactly 16 bytes.
 function format(b: u8[]): string {
   const digits = velt_rt_bytes_from_str(HEX_DIGITS);
-  const out: u8[] = __intrinsic_array_with_capacity(TEXT_LEN);
+  const out: u8[] = arrayWithCapacity(TEXT_LEN);
   for (let i: usize = 0; i < 16; i++) {
     if (i == 4 || i == 6 || i == 8 || i == 10) {
       out.push(DASH);

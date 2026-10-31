@@ -8,6 +8,8 @@
 // tuples part by part. `add` takes ownership of the element; `values()` and the algebra results
 // hold the stored elements (objects shared, as in JS); `forEach` borrows.
 
+import { share } from "velt/lang/intrinsics";
+
 /** An insertion-ordered set of unique values. */
 export class Set<T> implements Iterable<T> {
   private items: Map<T, bool> = new Map<T, bool>();
@@ -79,7 +81,7 @@ export class Set<T> implements Iterable<T> {
     const out = new Set<T>(this.values());
     other.forEach((x) => {
       if (!out.has(x)) {
-        out.add(__intrinsic_share(x));
+        out.add(share(x));
       }
     });
     return out;
@@ -90,7 +92,7 @@ export class Set<T> implements Iterable<T> {
     const out = new Set<T>();
     this.forEach((x) => {
       if (other.has(x)) {
-        out.add(__intrinsic_share(x));
+        out.add(share(x));
       }
     });
     return out;
@@ -101,7 +103,7 @@ export class Set<T> implements Iterable<T> {
     const out = new Set<T>();
     this.forEach((x) => {
       if (!other.has(x)) {
-        out.add(__intrinsic_share(x));
+        out.add(share(x));
       }
     });
     return out;
@@ -112,7 +114,7 @@ export class Set<T> implements Iterable<T> {
     const out = this.difference(other);
     other.forEach((x) => {
       if (!this.has(x)) {
-        out.add(__intrinsic_share(x));
+        out.add(share(x));
       }
     });
     return out;

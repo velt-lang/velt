@@ -9,6 +9,7 @@
 
 import { u8x16, u64x2 } from "velt/simd";
 import { CRC_TABLE } from "velt/compress/inflate/crc_table";
+import { targetFeature } from "velt/lang/intrinsics";
 
 // The vector load without its range check: `crc32` loads only where 16 bytes are left.
 declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
@@ -45,7 +46,7 @@ export function crc32(crc: u32, bytes: u8[], start: i64, end: i64): u32 {
  * no check of the CPU around each.
  */
 function foldX86(c: u64, bytes: u8[], start: i64, end: i64): u64 {
-  __intrinsic_target("clmul-x86");
+  targetFeature("clmul-x86");
   return fold(c, bytes, start, end);
 }
 

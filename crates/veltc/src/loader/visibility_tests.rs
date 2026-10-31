@@ -84,6 +84,14 @@ fn std_tree(t: &Tree) -> PathBuf {
         "export function id(): i64 { return 0; }\n",
     );
     t.write("std/lang/symbol/index.vlt", "export class Symbol {}\n");
+    t.write(
+        "std/lang/intrinsics/index.vlt",
+        "export { strLen } from \"velt/lang/intrinsics/string\";\n",
+    );
+    t.write(
+        "std/lang/intrinsics/string.vlt",
+        "export declare intrinsic function strLen(s: string): usize;\n",
+    );
     t.path("std")
 }
 
@@ -141,6 +149,17 @@ fn user_code_imports_only_public_std_modules() {
           use them without an import"
         ]
     );
+    // The intrinsics are std's own, whichever file of theirs is named.
+    for spec in ["velt/lang/intrinsics", "velt/lang/intrinsics/string"] {
+        assert_eq!(
+            errors(&t, &std, &format!("import {{ strLen }} from \"{spec}\";\n")),
+            [format!(
+                "`{spec}` is internal to the standard library: the compiler's intrinsics are \
+                 std's own building blocks / use the public API std builds on them (an array's \
+                 `reserve`, `truncate` and `swap`, velt/encoding's `utf8ByteAt`, …)"
+            )]
+        );
+    }
     assert_eq!(
         errors(&t, &std, "import { id } from \"velt/prelude/core\";\n"),
         ["`velt/prelude/core` is part of the prelude, which no module imports / its names are in \

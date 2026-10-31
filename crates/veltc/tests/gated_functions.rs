@@ -1,8 +1,9 @@
-//! Gated functions (#1330, `__intrinsic_target`, std only): every call sits behind the check of
-//! the function's CPU extension or in a function gated on the same target; a gated function is
-//! never a value; a closure inside one does not inherit its target. Gating is std-only, so a
-//! golden file cannot declare one: std is copied to a temp directory with a probe module added,
-//! and `velt check` / `velt run` use it through `$VELT_STD` (as std_simd_import.rs does).
+//! Gated functions (#1330, the intrinsic `targetFeature` of velt/lang/intrinsics, std only):
+//! every call sits behind the check of the function's CPU extension or in a function gated on
+//! the same target; a gated function is never a value; a closure inside one does not inherit its
+//! target. Gating is std-only, so a golden file cannot declare one: std is copied to a temp
+//! directory with a probe module added, and `velt check` / `velt run` use it through `$VELT_STD`
+//! (as std_simd_import.rs does).
 
 use std::path::{Path, PathBuf};
 use std::process::Output;
@@ -33,6 +34,8 @@ fn velt(dir: &test_dir::TestDir, probe: &str, main: &str, args: &[&str]) -> Outp
     }
     // A module of its own (a folder's index.vlt): user code imports only modules.
     std::fs::create_dir_all(std.join("zz_gated")).unwrap();
+    // Each probe gates its functions with the intrinsic, which std imports like any function.
+    let probe = format!("import {{ targetFeature }} from \"velt/lang/intrinsics\";\n{probe}");
     std::fs::write(std.join("zz_gated/index.vlt"), probe).unwrap();
     let file = dir.path().join("main.vlt");
     std::fs::write(&file, main).unwrap();
@@ -52,12 +55,12 @@ const GOOD: &str = r#"
 import { u32x4 } from "velt/simd";
 
 function twice(v: u32x4): u32x4 {
-  __intrinsic_target("sha-arm");
+  targetFeature("sha-arm");
   return v.add(v);
 }
 
 function four(v: u32x4): u32x4 {
-  __intrinsic_target("sha-arm");
+  targetFeature("sha-arm");
   return twice(twice(v));
 }
 
@@ -109,7 +112,7 @@ fn a_call_needs_the_check_of_its_target() {
 import { u32x4 } from "velt/simd";
 
 function gated(): i64 {
-  __intrinsic_target("sha-x86");
+  targetFeature("sha-x86");
   return 1;
 }
 
@@ -136,7 +139,7 @@ fn a_gated_function_is_not_a_value() {
 import { u32x4 } from "velt/simd";
 
 function gated(): i64 {
-  __intrinsic_target("sha-arm");
+  targetFeature("sha-arm");
   return 1;
 }
 
@@ -161,12 +164,12 @@ fn a_closure_does_not_inherit_the_target() {
 import { u32x4 } from "velt/simd";
 
 function inner(): i64 {
-  __intrinsic_target("sha-arm");
+  targetFeature("sha-arm");
   return 1;
 }
 
 function outer(): i64 {
-  __intrinsic_target("sha-arm");
+  targetFeature("sha-arm");
   const f = (): i64 => inner();
   return f();
 }
@@ -190,18 +193,18 @@ fn the_statement_is_first_named_and_not_in_a_method() {
     let probe = r#"
 function late(): i64 {
   const x = 1;
-  __intrinsic_target("sha-arm");
+  targetFeature("sha-arm");
   return x;
 }
 
 function unknown(): i64 {
-  __intrinsic_target("sha-mips");
+  targetFeature("sha-mips");
   return 1;
 }
 
 class Box {
   get(): i64 {
-    __intrinsic_target("sha-arm");
+    targetFeature("sha-arm");
     return 1;
   }
 }
@@ -214,8 +217,8 @@ export function probe(): i64 {
         probe,
         MAIN_PROBE,
         &[
-            "`__intrinsic_target` must be the first statement of a function (not a method or closure)",
-            "`__intrinsic_target` takes the target as a string literal: one of sha-arm, sha-x86, clmul-x86, clmul-arm",
+            "`targetFeature` must be the first statement of a function (not a method or closure)",
+            "`targetFeature` takes the target as a string literal: one of sha-arm, sha-x86, clmul-x86, clmul-arm",
         ],
     );
 }
@@ -224,7 +227,7 @@ export function probe(): i64 {
 fn user_code_calls_an_exported_gated_function_only_behind_the_check() {
     let probe = r#"
 export function gated(): i64 {
-  __intrinsic_target("sha-arm");
+  targetFeature("sha-arm");
   return 1;
 }
 "#;
@@ -241,7 +244,7 @@ export function gated(): i64 {
 
 const ONE_GATED: &str = r#"
 export function gated(x: i64): i64 {
-  __intrinsic_target("sha-arm");
+  targetFeature("sha-arm");
   return x + 1;
 }
 "#;
@@ -295,7 +298,7 @@ const SHA_PROBE: &str = r#"
 import { u32x4 } from "velt/simd";
 
 export function roundsArm(a: u32x4, n: i64): u32x4 {
-  __intrinsic_target("sha-arm");
+  targetFeature("sha-arm");
   let x = a;
   for (let i = 0; i < n; i++) {
     x = x.sha256h(a, x).sha256h(x, a).sha256h2(a, x).sha256h2(x, a);
@@ -307,7 +310,7 @@ export function roundsArm(a: u32x4, n: i64): u32x4 {
 }
 
 export function roundsX86(a: u32x4, n: i64): u32x4 {
-  __intrinsic_target("sha-x86");
+  targetFeature("sha-x86");
   let x = a;
   for (let i = 0; i < n; i++) {
     x = x.sha256rnds2(a, x).sha256rnds2(x, a).sha256msg1(a).sha256msg1(x);
@@ -436,7 +439,7 @@ const CLMUL_PROBE: &str = r#"
 import { u64x2 } from "velt/simd";
 
 export function foldX86(a: u64x2, n: i64): u64x2 {
-  __intrinsic_target("clmul-x86");
+  targetFeature("clmul-x86");
   let x = a;
   for (let i = 0; i < n; i++) {
     x = x.clmulLow(a).xor(x.clmulHigh(a)).xor(x.clmulLowHigh(a)).xor(x.clmulHighLow(a));
@@ -445,7 +448,7 @@ export function foldX86(a: u64x2, n: i64): u64x2 {
 }
 
 export function foldArm(a: u64x2, n: i64): u64x2 {
-  __intrinsic_target("clmul-arm");
+  targetFeature("clmul-arm");
   let x = a;
   for (let i = 0; i < n; i++) {
     x = x.clmulLow(a).xor(x.clmulHigh(a)).xor(x.clmulLowHigh(a)).xor(x.clmulHighLow(a));

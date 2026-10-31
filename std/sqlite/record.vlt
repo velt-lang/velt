@@ -7,6 +7,7 @@
 
 import { corrupt, fieldSize, readBe, readVarint, serialSize } from "velt/sqlite/format";
 import { utf8Encode } from "velt/encoding";
+import { arrayTruncate, arrayWithCapacity } from "velt/lang/intrinsics";
 
 /** Collations of index columns. */
 export const BINARY: u8 = 0;
@@ -72,8 +73,8 @@ export class RecordBuilder {
 
   /** Empties the builder for the next record. */
   reset() {
-    __intrinsic_array_truncate(this.types, 0);
-    __intrinsic_array_truncate(this.body, 0);
+    arrayTruncate(this.types, 0);
+    arrayTruncate(this.body, 0);
   }
 
   /** The record's bytes: the header (its size, then the serial types) and the body. */
@@ -87,7 +88,7 @@ export class RecordBuilder {
     while (head.length + varintLen(size as u64) != size) {
       size = head.length + varintLen(size as u64);
     }
-    const out: u8[] = __intrinsic_array_with_capacity(size + this.body.length);
+    const out: u8[] = arrayWithCapacity(size + this.body.length);
     pushVarint(out, size as u64);
     for (const b of head) {
       out.push(b);
@@ -311,11 +312,11 @@ export class KeyRec {
 
   /** Empties the key, to build it field by field (`addInt`…) without encoding a record. */
   clear() {
-    __intrinsic_array_truncate(this.bytes, 0);
-    __intrinsic_array_truncate(this.types, 0);
-    __intrinsic_array_truncate(this.offs, 0);
-    __intrinsic_array_truncate(this.ints, 0);
-    __intrinsic_array_truncate(this.reals, 0);
+    arrayTruncate(this.bytes, 0);
+    arrayTruncate(this.types, 0);
+    arrayTruncate(this.offs, 0);
+    arrayTruncate(this.ints, 0);
+    arrayTruncate(this.reals, 0);
     this.firstInt = false;
   }
 
@@ -359,10 +360,10 @@ export class KeyRec {
   /** Decodes `bytes` (a record) in place of the key held. */
   load(bytes: u8[]) {
     this.bytes = bytes;
-    __intrinsic_array_truncate(this.types, 0);
-    __intrinsic_array_truncate(this.offs, 0);
-    __intrinsic_array_truncate(this.ints, 0);
-    __intrinsic_array_truncate(this.reals, 0);
+    arrayTruncate(this.types, 0);
+    arrayTruncate(this.offs, 0);
+    arrayTruncate(this.ints, 0);
+    arrayTruncate(this.reals, 0);
     this.decode();
   }
 

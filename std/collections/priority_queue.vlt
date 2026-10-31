@@ -6,6 +6,8 @@
 // Elements that compare equal come out in unspecified order (a heap is not stable). The queue
 // keeps `cmp`, and a comparator may capture variables.
 
+import { arraySwap, arrayTruncate } from "velt/lang/intrinsics";
+
 /** A priority queue (binary heap); `pop` returns the element that `cmp` orders first. */
 export class PriorityQueue<T> {
   private heap: T[] = [];
@@ -43,7 +45,7 @@ export class PriorityQueue<T> {
     if (n == 0) {
       return undefined;
     }
-    __intrinsic_array_swap(this.heap, 0, n - 1);
+    arraySwap(this.heap, 0, n - 1);
     const top = this.heap.pop();
     this.siftDown(0);
     return top;
@@ -59,7 +61,7 @@ export class PriorityQueue<T> {
 
   /** Removes every element. */
   clear() {
-    __intrinsic_array_truncate(this.heap, 0);
+    arrayTruncate(this.heap, 0);
   }
 
   /**
@@ -84,7 +86,7 @@ export class PriorityQueue<T> {
       if (this.cmp(this.heap[i], this.heap[parent]) >= 0) {
         return;
       }
-      __intrinsic_array_swap(this.heap, i, parent);
+      arraySwap(this.heap, i, parent);
       i = parent;
     }
   }
@@ -103,7 +105,7 @@ export class PriorityQueue<T> {
       if (this.cmp(this.heap[child], this.heap[i]) >= 0) {
         return;
       }
-      __intrinsic_array_swap(this.heap, i, child);
+      arraySwap(this.heap, i, child);
       i = child;
     }
   }

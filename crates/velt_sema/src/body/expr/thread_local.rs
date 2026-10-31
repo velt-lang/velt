@@ -21,11 +21,7 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
-        // `(x: T) -> ThreadLocal<T>`: `ThreadLocalSet`'s value parameter, and its receiver type.
-        let mut c = self.intrinsic_sig(Intrinsic::ThreadLocalSet, span);
-        c.what = "`ThreadLocal` constructor".into();
-        c.ret = c.params[0].ty;
-        c.params = vec![c.params[1].clone()];
+        let c = self.value_cell_ctor(d, "`ThreadLocal` constructor", span);
         let mut slots = vec![None];
         match targs {
             [] => {}

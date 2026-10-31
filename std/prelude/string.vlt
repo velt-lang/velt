@@ -12,6 +12,7 @@
 
 // `Number(s)` and `parseFloat(s)` are Velt code (#1658).
 import { toNumber, parseFloatOf } from "velt/lang/number/parse";
+import { strCharCodeAt } from "velt/lang/intrinsics";
 
 declare function velt_rt_str_slice(s: string, start: i64, end: i64): string;
 declare function velt_rt_str_index_of(s: string, needle: string, from: i64): i64;
@@ -237,7 +238,7 @@ extend string {
    * (JS: NaN). Reads an ASCII string inline.
    */
   charCodeAt(i: i64 = 0): i64 {
-    return __intrinsic_str_char_code_at(this, i);
+    return strCharCodeAt(this, i);
   }
 
   /**
@@ -246,12 +247,12 @@ extend string {
    * `i` is out of range, as in JS.
    */
   codePointAt(i: i64 = 0): number | undefined {
-    const high = __intrinsic_str_char_code_at(this, i);
+    const high = strCharCodeAt(this, i);
     if (high < 0) {
       return undefined;
     }
     if (high >= 0xd800 && high < 0xdc00) {
-      const low = __intrinsic_str_char_code_at(this, i + 1);
+      const low = strCharCodeAt(this, i + 1);
       if (low >= 0xdc00 && low < 0xe000) {
         return (0x10000 + ((high - 0xd800) << 10) + (low - 0xdc00)) as number;
       }

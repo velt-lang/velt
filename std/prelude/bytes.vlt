@@ -8,6 +8,8 @@
 // `Buffer.alloc(n)` makes a zeroed array in one allocation (calloc: large arrays cost no
 // memset). Positions follow JS: negative ones count from the end.
 
+import { strByteAt, strByteLen, strLoadPartialU8x16, strLoadU8x16 } from "velt/lang/intrinsics";
+
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
 declare function velt_rt_bytes_zeroed(n: u64): u8[];
@@ -219,7 +221,7 @@ function indexOfByte(d: u8[], byte: u8, start: usize): i64 {
 // `Buffer.byteLength` in a named encoding (kept out of the inlined default, UTF-8).
 function byteLengthIn(s: string, encoding: string): usize {
   if (encoding == "utf8") {
-    return __intrinsic_str_byte_len(s);
+    return strByteLen(s);
   }
   const e = encoding.toLowerCase();
   if (e == "utf16le" || e == "utf-16le" || e == "ucs2" || e == "ucs-2") {
@@ -242,7 +244,7 @@ function byteLengthIn(s: string, encoding: string): usize {
     }
     return n * 3 / 4;
   }
-  return __intrinsic_str_byte_len(s);
+  return strByteLen(s);
 }
 
 /** Node's `Buffer` constructors (static only; buffers are `u8[]`). */
@@ -270,7 +272,7 @@ export class Buffer {
    */
   static byteLength(s: string, encoding?: string): usize {
     if (encoding == null) {
-      return __intrinsic_str_byte_len(s);
+      return strByteLen(s);
     }
     return byteLengthIn(s, encoding);
   }
@@ -289,17 +291,17 @@ function writeOutOfBounds(): never {
 function copyText(d: u8[], s: string, at: usize, n: usize): bool {
   const ed = velt_simd_u8x16_splat(0xed);
   if (n < 16) {
-    const v = __intrinsic_str_load_partial_u8x16(s, 0, n as u64);
+    const v = strLoadPartialU8x16(s, 0, n as u64);
     velt_simd_u8x16_store_partial(v, d, at as u64, n as u64);
     return velt_simd_mask8x16_any(velt_simd_u8x16_eq(v, ed));
   }
   let seen = velt_simd_u8x16_eq(ed, velt_simd_u8x16_splat(0));
   let i: usize = 0;
   while (i + 64 <= n) {
-    const a = __intrinsic_str_load_u8x16(s, i as u64);
-    const b = __intrinsic_str_load_u8x16(s, (i + 16) as u64);
-    const c = __intrinsic_str_load_u8x16(s, (i + 32) as u64);
-    const e = __intrinsic_str_load_u8x16(s, (i + 48) as u64);
+    const a = strLoadU8x16(s, i as u64);
+    const b = strLoadU8x16(s, (i + 16) as u64);
+    const c = strLoadU8x16(s, (i + 32) as u64);
+    const e = strLoadU8x16(s, (i + 48) as u64);
     const to = (at + i) as u64;
     velt_simd_u8x16_store(a, d, to);
     velt_simd_u8x16_store(b, d, to + 16);
@@ -311,13 +313,13 @@ function copyText(d: u8[], s: string, at: usize, n: usize): bool {
     i += 64;
   }
   while (i + 16 < n) {
-    const v = __intrinsic_str_load_u8x16(s, i as u64);
+    const v = strLoadU8x16(s, i as u64);
     velt_simd_u8x16_store(v, d, (at + i) as u64);
     seen = velt_simd_mask8x16_or(seen, velt_simd_u8x16_eq(v, ed));
     i += 16;
   }
   const last = (n - 16) as u64;
-  const v = __intrinsic_str_load_u8x16(s, last);
+  const v = strLoadU8x16(s, last);
   velt_simd_u8x16_store(v, d, (at as u64) + last);
   return velt_simd_mask8x16_any(velt_simd_mask8x16_or(seen, velt_simd_u8x16_eq(v, ed)));
 }
@@ -358,7 +360,7 @@ function writeText(d: u8[], s: string, offset: usize, n: usize): usize {
   if (k > d.length - offset) {
     // Back to the start of the character that does not fit (continuation bytes are 10xxxxxx).
     k = d.length - offset;
-    while (k > 0 && (__intrinsic_str_byte_at(s, k as u64) & 0xc0) == 0x80) {
+    while (k > 0 && (strByteAt(s, k as u64) & 0xc0) == 0x80) {
       k--;
     }
   }
@@ -386,7 +388,7 @@ function lowerAscii(v: u8x16): u8x16 {
 function textEquals(d: u8[], at: usize, s: string, n: usize, ci: bool): bool {
   if (n < 16) {
     let a = velt_simd_u8x16_load_partial(d, at as u64, n as u64);
-    let b = __intrinsic_str_load_partial_u8x16(s, 0, n as u64);
+    let b = strLoadPartialU8x16(s, 0, n as u64);
     if (ci) {
       a = lowerAscii(a);
       b = lowerAscii(b);
@@ -397,7 +399,7 @@ function textEquals(d: u8[], at: usize, s: string, n: usize, ci: bool): bool {
   while (true) {
     const j = i + 16 < n ? i : n - 16;
     let a = velt_simd_u8x16_load(d, (at + j) as u64);
-    let b = __intrinsic_str_load_u8x16(s, j as u64);
+    let b = strLoadU8x16(s, j as u64);
     if (ci) {
       a = lowerAscii(a);
       b = lowerAscii(b);
@@ -516,7 +518,7 @@ extend Array<u8> {
    * end, as Node throws. One copy, no intermediate array.
    */
   write(s: string, offset: usize = 0): usize {
-    const n = __intrinsic_str_byte_len(s);
+    const n = strByteLen(s);
     // Room for all of it (the usual case): one pass, and a second only over text holding a
     // byte `ED` (never ASCII).
     if (offset <= this.length && n <= this.length - offset) {
@@ -550,7 +552,7 @@ extend Array<u8> {
     const n = this.length;
     const from = clamped(start, n);
     const to = clamped(end, n);
-    const len = __intrinsic_str_byte_len(s);
+    const len = strByteLen(s);
     return (to > from ? to - from : 0) == len &&
       (len == 0 || textEquals(this, from, s, len, false));
   }
@@ -560,7 +562,7 @@ extend Array<u8> {
     const n = this.length;
     const from = clamped(start, n);
     const to = clamped(end, n);
-    const len = __intrinsic_str_byte_len(s);
+    const len = strByteLen(s);
     return (to > from ? to - from : 0) == len && (len == 0 || textEquals(this, from, s, len, true));
   }
 

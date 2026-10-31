@@ -8,6 +8,7 @@ import { FMT_EXP, FMT_FLOAT, FMT_GENERIC, formatReal } from "velt/sqlite/exec/fp
 import { toF64, toI64 } from "velt/sqlite/exec/ops";
 import { cBytes, charAt } from "velt/sqlite/exec/text";
 import { MAX_LENGTH, Val, nullVal, textVal, toText, tooBig } from "velt/sqlite/exec/value";
+import { strByteAt, strByteLen } from "velt/lang/intrinsics";
 
 class Args {
   vals: Val[];
@@ -43,10 +44,10 @@ function fits(n: i64, room: i64) {
 
 // The number of characters of UTF-8 text.
 function charCount(s: string): i64 {
-  const n = __intrinsic_str_byte_len(s);
+  const n = strByteLen(s);
   let k: i64 = 0;
   for (let i: usize = 0; i < n; i++) {
-    if ((__intrinsic_str_byte_at(s, i as u64) & 0xc0) != 0x80) {
+    if ((strByteAt(s, i as u64) & 0xc0) != 0x80) {
       k++;
     }
   }
@@ -70,7 +71,7 @@ function prefixOf(b: u8[], n: i64, chars: bool): u8[] {
 // Pads to `width` (in characters with `!`, else bytes): spaces before, or after with `-`; an
 // error if the result does not fit in `room` bytes.
 function padded(s: string, width: i64, left: bool, chars: bool, room: i64): string {
-  const bytes = __intrinsic_str_byte_len(s) as i64;
+  const bytes = strByteLen(s) as i64;
   const len = chars ? charCount(s) : bytes;
   if (len >= width) {
     fits(bytes, room);
@@ -91,7 +92,7 @@ export function printf(vals: Val[]): Val {
   let i: usize = 0;
   while (i < f.length) {
     // The bytes the result can still take: SQLite's StrAccum keeps one of MAX_LENGTH for the NUL.
-    const room = (MAX_LENGTH as i64) - 1 - (__intrinsic_str_byte_len(out) as i64);
+    const room = (MAX_LENGTH as i64) - 1 - (strByteLen(out) as i64);
     if (f[i] != 37) {
       let j = i;
       while (j < f.length && f[j] != 37) {
@@ -205,7 +206,7 @@ export function printf(vals: Val[]): Val {
         ch = b.utf8Slice(0, one.len as i64);
       }
       const times = precision > 1 ? precision : 1;
-      fits(times * (__intrinsic_str_byte_len(ch) as i64), room);
+      fits(times * (strByteLen(ch) as i64), room);
       // %c's width counts characters (SQLite sets the `!` flag for it).
       out += padded(repeat(ch, times), width, left, true, room);
     } else if (c == 37) {

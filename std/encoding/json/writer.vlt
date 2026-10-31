@@ -10,6 +10,15 @@
 //
 // Port of velt_text's json_escape.rs and the JSON number path of fmt.rs.
 
+import {
+  arraySetLen,
+  arrayWithCapacity,
+  strByteAt,
+  strByteLen,
+  strLen,
+  strLoadU8x16,
+} from "velt/lang/intrinsics";
+
 declare function velt_rt_strbuf_push_str(out: string, s: string);
 declare function velt_rt_strbuf_push_byte(out: string, byte: u8);
 declare function velt_rt_strbuf_push_u64(out: string, v: u64);
@@ -23,7 +32,7 @@ const BACKSLASH: u8 = 92;
 const LONE_LEAD: u8 = 1;
 
 // For each byte: 0 = copied as it is, otherwise the letter after the backslash (`u`: `\u00xx`),
-// or `LONE_LEAD`; one character per byte value, read with `__intrinsic_str_byte_at` (a string
+// or `LONE_LEAD`; one character per byte value, read with `strByteAt` (a string
 // literal is static data: an array constant would be built at each use).
 const ESCAPE =
   "\u0075\u0075\u0075\u0075\u0075\u0075\u0075\u0075\u0062\u0074\u006e\u0075\u0066\u0072\u0075\u0075" +
@@ -131,9 +140,9 @@ function writeDecimal(out: string, neg: bool, m: u64, k: usize) {
 
 // Appends ASCII text `s` byte by byte.
 function writeAscii(out: string, s: string) {
-  const n = __intrinsic_str_byte_len(s);
+  const n = strByteLen(s);
   for (let i: usize = 0; i < n; i++) {
-    velt_rt_strbuf_push_byte(out, __intrinsic_str_byte_at(s, i as u64));
+    velt_rt_strbuf_push_byte(out, strByteAt(s, i as u64));
   }
 }
 
@@ -247,7 +256,7 @@ function putFixed(buf: u8[], o: usize, v: u64, w: usize) {
 
 /** Appends `s` as a quoted, escaped JSON string literal, as `JSON.stringify(s)` writes it. */
 export function writeString(out: string, s: string): void {
-  const n = __intrinsic_str_byte_len(s);
+  const n = strByteLen(s);
   const i = nextEscape(s, 0, n);
   if (i == n) {
     velt_rt_strbuf_push_byte(out, QUOTE);
@@ -272,7 +281,7 @@ export function nextEscape(s: string, from: usize, n: usize): usize {
   let i = from;
   if (n - from >= 16) {
     while (i + 16 <= n) {
-      const v = __intrinsic_str_load_u8x16(s, i as u64);
+      const v = strLoadU8x16(s, i as u64);
       if (velt_simd_mask8x16_any(marks(v))) {
         const j = blockEscape(s, i, i, n, v);
         if (j < n) {
@@ -283,7 +292,7 @@ export function nextEscape(s: string, from: usize, n: usize): usize {
     }
     if (i < n) {
       // The bytes after the last whole block, as the string's last sixteen.
-      const v = __intrinsic_str_load_u8x16(s, (n - 16) as u64);
+      const v = strLoadU8x16(s, (n - 16) as u64);
       if (velt_simd_mask8x16_any(marks(v))) {
         return blockEscape(s, n - 16, i, n, v);
       }
@@ -292,7 +301,7 @@ export function nextEscape(s: string, from: usize, n: usize): usize {
   }
   // Shorter than a block: by the table, the next byte checked only after 0xED.
   while (i < n) {
-    const e = __intrinsic_str_byte_at(ESCAPE, __intrinsic_str_byte_at(s, i as u64) as u64);
+    const e = strByteAt(ESCAPE, strByteAt(s, i as u64) as u64);
     if (e != 0 && (e != LONE_LEAD || escapes(s, i, n))) {
       return i;
     }
@@ -332,7 +341,7 @@ function stops(s: string, at: usize, n: usize, v: u8x16): mask8x16 {
       velt_simd_u8x16_eq(v, velt_simd_u8x16_splat(BACKSLASH)),
     ),
   );
-  const next = __intrinsic_str_load_u8x16(s, (at + 1) as u64);
+  const next = strLoadU8x16(s, (at + 1) as u64);
   return velt_simd_mask8x16_or(
     special,
     velt_simd_mask8x16_and(eds, velt_simd_u8x16_ge(next, velt_simd_u8x16_splat(0xa0))),
@@ -358,9 +367,9 @@ function blockEscape(s: string, at: usize, from: usize, n: usize, v: u8x16): usi
 
 // Whether byte `i` of `s` (`n` bytes) starts something to escape.
 function escapes(s: string, i: usize, n: usize): bool {
-  const b = __intrinsic_str_byte_at(s, i as u64);
+  const b = strByteAt(s, i as u64);
   if (b == 0xed) {
-    return i + 1 < n && __intrinsic_str_byte_at(s, (i + 1) as u64) >= 0xa0;
+    return i + 1 < n && strByteAt(s, (i + 1) as u64) >= 0xa0;
   }
   return b < 32 || b == QUOTE || b == BACKSLASH;
 }
@@ -378,23 +387,23 @@ function escapes(s: string, i: usize, n: usize): bool {
 function writeEscaped(out: string, s: string, first: usize, n: usize) {
   // At most six bytes per byte (`\u00xx`), and the quotes: a block stored at `o` while
   // sixteen bytes of `s` are left (at most `6 * (n - 16) + 1 + 16` bytes written) fits.
-  const buf: u8[] = __intrinsic_array_with_capacity(n * 6 + 2);
-  __intrinsic_array_set_len(buf, n * 6 + 2);
+  const buf: u8[] = arrayWithCapacity(n * 6 + 2);
+  arraySetLen(buf, n * 6 + 2);
   buf[0] = QUOTE;
   let o = copyRun(buf, 1, s, 0, first, n);
   let i = first;
   let lone: usize = 0;
   while (i < n) {
     // `i` is at a byte with an `ESCAPE` mark.
-    const b = __intrinsic_str_byte_at(s, i as u64);
-    const e = __intrinsic_str_byte_at(ESCAPE, b as u64);
+    const b = strByteAt(s, i as u64);
+    const e = strByteAt(ESCAPE, b as u64);
     if (e == LONE_LEAD) {
       if (escapes(s, i, n)) {
         // A lone surrogate: `\udxxx`.
         const unit: u32 =
           0xd000 |
-          (((__intrinsic_str_byte_at(s, (i + 1) as u64) & 0x3f) as u32) << 6) |
-          ((__intrinsic_str_byte_at(s, (i + 2) as u64) & 0x3f) as u32);
+          (((strByteAt(s, (i + 1) as u64) & 0x3f) as u32) << 6) |
+          ((strByteAt(s, (i + 2) as u64) & 0x3f) as u32);
         buf[o] = BACKSLASH;
         buf[o + 1] = 117;
         putHex4(buf, o + 2, unit);
@@ -428,8 +437,8 @@ function writeEscaped(out: string, s: string, first: usize, n: usize) {
     let found = false;
     const scalarEnd = i + 4 < n ? i + 4 : n;
     while (i < scalarEnd) {
-      const c = __intrinsic_str_byte_at(s, i as u64);
-      if (__intrinsic_str_byte_at(ESCAPE, c as u64) != 0) {
+      const c = strByteAt(s, i as u64);
+      if (strByteAt(ESCAPE, c as u64) != 0) {
         found = true;
         break;
       }
@@ -438,7 +447,7 @@ function writeEscaped(out: string, s: string, first: usize, n: usize) {
       i++;
     }
     while (!found && i + 16 <= n) {
-      const v = __intrinsic_str_load_u8x16(s, i as u64);
+      const v = strLoadU8x16(s, i as u64);
       const k = velt_simd_mask8x16_any(marks(v)) ? firstLane(stops(s, i, n, v)) : 16;
       if (k < 16) {
         if (k >= 4) {
@@ -447,7 +456,7 @@ function writeEscaped(out: string, s: string, first: usize, n: usize) {
           o += k;
         } else {
           for (let j: usize = 0; j < k; j++) {
-            buf[o] = __intrinsic_str_byte_at(s, i as u64);
+            buf[o] = strByteAt(s, i as u64);
             o++;
             i++;
           }
@@ -461,8 +470,8 @@ function writeEscaped(out: string, s: string, first: usize, n: usize) {
     }
     if (!found) {
       while (i < n) {
-        const c = __intrinsic_str_byte_at(s, i as u64);
-        if (__intrinsic_str_byte_at(ESCAPE, c as u64) != 0) {
+        const c = strByteAt(s, i as u64);
+        if (strByteAt(ESCAPE, c as u64) != 0) {
           break;
         }
         buf[o] = c;
@@ -477,7 +486,7 @@ function writeEscaped(out: string, s: string, first: usize, n: usize) {
   // per byte added and two more per lone surrogate. The literal has no lone surrogates (they are
   // escaped), so the builder takes this count as it is and scans nothing.
   const len = (o + 1) as u64;
-  const units = (__intrinsic_str_len(s) + (o + 1 - n) + 2 * lone) as u64;
+  const units = (strLen(s) + (o + 1 - n) + 2 * lone) as u64;
   velt_rt_strbuf_push_u8s(out, buf, len, units);
 }
 
@@ -503,7 +512,7 @@ function firstLane(m: mask8x16): usize {
 export function copyRun(buf: u8[], o: usize, s: string, start: usize, end: usize, n: usize): usize {
   let i = start;
   while (i < end && i + 16 <= n) {
-    velt_simd_u8x16_store(__intrinsic_str_load_u8x16(s, i as u64), buf, (o + i - start) as u64);
+    velt_simd_u8x16_store(strLoadU8x16(s, i as u64), buf, (o + i - start) as u64);
     i += 16;
   }
   if (i >= end) {
@@ -511,7 +520,7 @@ export function copyRun(buf: u8[], o: usize, s: string, start: usize, end: usize
   }
   let at = o + i - start;
   while (i < end) {
-    buf[at] = __intrinsic_str_byte_at(s, i as u64);
+    buf[at] = strByteAt(s, i as u64);
     i++;
     at++;
   }

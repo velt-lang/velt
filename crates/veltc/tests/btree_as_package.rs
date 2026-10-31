@@ -1,9 +1,9 @@
 //! Anyone can write `BTreeMap`: its sources (std/collections/btree_map.vlt and btree/*.vlt) use
 //! only what any program can use, no std-only intrinsics or runtime declarations. The test
 //! copies them out of std as plain modules of a program (imports made relative), and runs the
-//! map's golden (tests/golden/std/btree_map.vlt) against the copy: a program may not use
-//! `__intrinsic_*` or declare runtime functions, so it builds only if the map does neither, and
-//! it prints the golden's output only if the copy is the same map.
+//! map's golden (tests/golden/std/btree_map.vlt) against the copy: a program may not import the
+//! intrinsics (`velt/lang/intrinsics`) or declare runtime functions, so it builds only if the
+//! map does neither, and it prints the golden's output only if the copy is the same map.
 
 use std::path::Path;
 

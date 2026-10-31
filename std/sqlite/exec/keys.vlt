@@ -6,6 +6,7 @@
 import { NULL, INTEGER, REAL, TEXT } from "velt/sqlite/btree";
 import { NOCASE, RTRIM } from "velt/sqlite/record";
 import { Val, compareVals } from "velt/sqlite/exec/value";
+import { arrayTruncate, strByteAt, strByteLen } from "velt/lang/intrinsics";
 
 const PRIME: u64 = 1099511628211;
 const OFFSET: u64 = 14695981039346656037;
@@ -27,8 +28,8 @@ export class KeySet {
 
   clear() {
     this.heads = new Map();
-    __intrinsic_array_truncate(this.prev, 0);
-    __intrinsic_array_truncate(this.vals, 0);
+    arrayTruncate(this.prev, 0);
+    arrayTruncate(this.vals, 0);
     this.count = 0;
   }
 
@@ -94,15 +95,15 @@ export function valueHash(v: Val, coll: u8): u64 {
   }
   if (v.t == TEXT) {
     const s = v.s;
-    let n = __intrinsic_str_byte_len(s);
+    let n = strByteLen(s);
     if (coll == RTRIM) {
-      while (n > 0 && __intrinsic_str_byte_at(s, (n - 1) as u64) == 32) {
+      while (n > 0 && strByteAt(s, (n - 1) as u64) == 32) {
         n--;
       }
     }
     let h: u64 = OFFSET ^ 3;
     for (let i: usize = 0; i < n; i++) {
-      let c = __intrinsic_str_byte_at(s, i as u64);
+      let c = strByteAt(s, i as u64);
       if (coll == NOCASE && c >= 65 && c <= 90) {
         c += 32;
       }

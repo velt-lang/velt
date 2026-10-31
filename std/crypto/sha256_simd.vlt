@@ -13,13 +13,14 @@ import {
 } from "velt/crypto/rt";
 import { H256, K256 } from "velt/crypto/tables";
 import { blockWords, keyWords, newBytes, Pair, tailBlock, tailBlocks } from "velt/crypto/vectors";
+import { targetFeature } from "velt/lang/intrinsics";
 
 // One SHA-256 block on ARMv8: 64 rounds, four per SHA256H + SHA256H2, in four batches of four
 // with the next sixteen message words made after each batch (but the last). The schedule
 // instructions share the crypto pipes with the rounds: made between batches, they stay off the
 // rounds' dependency chain.
 function rounds256Arm(s: Pair, w0: u32x4, w1: u32x4, w2: u32x4, w3: u32x4): Pair {
-  __intrinsic_target("sha-arm");
+  targetFeature("sha-arm");
   let m0 = w0;
   let m1 = w1;
   let m2 = w2;
@@ -42,12 +43,12 @@ function rounds256Arm(s: Pair, w0: u32x4, w1: u32x4, w2: u32x4, w3: u32x4): Pair
 
 // Four rounds on ARMv8 with message words plus constants `wk`.
 function group256Arm(s: Pair, wk: u32x4): Pair {
-  __intrinsic_target("sha-arm");
+  targetFeature("sha-arm");
   return { a: velt_simd_u32x4_sha256h(s.a, s.b, wk), b: velt_simd_u32x4_sha256h2(s.b, s.a, wk) };
 }
 
 export function sha256Arm(key: u8[], pad: u8, keyed: bool, data: u8[]): u8[] {
-  __intrinsic_target("sha-arm");
+  targetFeature("sha-arm");
   const s = state256Arm(key, pad, keyed, data);
   const out = newBytes(32);
   s.a.reverseBytes().asU8x16().store(out, 0);
@@ -61,7 +62,7 @@ export function sha256Arm(key: u8[], pad: u8, keyed: bool, data: u8[]): u8[] {
  * the digest.
  */
 export function hmac256Arm(k: u8[], data: u8[]): u8[] {
-  __intrinsic_target("sha-arm");
+  targetFeature("sha-arm");
   const inner = state256Arm(k, 0x36, true, data);
   let s: Pair = { a: u32x4.load(H256, 0), b: u32x4.load(H256, 4) };
   const p = u8x16.splat(0x5c);
@@ -78,7 +79,7 @@ export function hmac256Arm(k: u8[], data: u8[]): u8[] {
 
 // The state after SHA-256 (ARMv8) of `data`, after a keyed first block (see `sha256Of`).
 function state256Arm(key: u8[], pad: u8, keyed: bool, data: u8[]): Pair {
-  __intrinsic_target("sha-arm");
+  targetFeature("sha-arm");
   let s: Pair = { a: u32x4.load(H256, 0), b: u32x4.load(H256, 4) };
   if (keyed) {
     const p = u8x16.splat(pad);
@@ -113,7 +114,7 @@ function state256Arm(key: u8[], pad: u8, keyed: bool, data: u8[]): Pair {
 
 // One SHA-256 block with x86 SHA-NI: state ABEF / CDGH (A in lane 3), two rounds per SHA256RNDS2.
 function rounds256X86(s: Pair, w0: u32x4, w1: u32x4, w2: u32x4, w3: u32x4): Pair {
-  __intrinsic_target("sha-x86");
+  targetFeature("sha-x86");
   let m0 = w0;
   let m1 = w1;
   let m2 = w2;
@@ -144,13 +145,13 @@ function rounds256X86(s: Pair, w0: u32x4, w1: u32x4, w2: u32x4, w3: u32x4): Pair
 }
 
 export function sha256X86(key: u8[], pad: u8, keyed: bool, data: u8[]): u8[] {
-  __intrinsic_target("sha-x86");
+  targetFeature("sha-x86");
   return digest256X86(state256X86(key, pad, keyed, data));
 }
 
 // SHA-256's initial state as ABEF / CDGH (A in lane 3).
 function initial256X86(): Pair {
-  __intrinsic_target("sha-x86");
+  targetFeature("sha-x86");
   const dcba = u32x4.load(H256, 0);
   const hgfe = u32x4.load(H256, 4);
   const cdab = u32x4.shuffle(dcba, dcba, 1, 0, 3, 2);
@@ -160,7 +161,7 @@ function initial256X86(): Pair {
 
 // State ABEF / CDGH back as ABCD / EFGH (A in lane 0).
 function unswapped256X86(s: Pair): Pair {
-  __intrinsic_target("sha-x86");
+  targetFeature("sha-x86");
   const feba = u32x4.shuffle(s.a, s.a, 3, 2, 1, 0);
   const dchg = u32x4.shuffle(s.b, s.b, 1, 0, 3, 2);
   return { a: u32x4.shuffle(feba, dchg, 0, 1, 6, 7), b: u32x4.shuffle(feba, dchg, 2, 3, 4, 5) };
@@ -168,7 +169,7 @@ function unswapped256X86(s: Pair): Pair {
 
 // The 32 bytes of the digest of state ABEF / CDGH.
 function digest256X86(s: Pair): u8[] {
-  __intrinsic_target("sha-x86");
+  targetFeature("sha-x86");
   const abcd = unswapped256X86(s);
   const out = newBytes(32);
   abcd.a.reverseBytes().asU8x16().store(out, 0);
@@ -178,7 +179,7 @@ function digest256X86(s: Pair): u8[] {
 
 /** HMAC-SHA256 with x86 SHA-NI (`k` at most a block); see `hmac256Arm`. */
 export function hmac256X86(k: u8[], data: u8[]): u8[] {
-  __intrinsic_target("sha-x86");
+  targetFeature("sha-x86");
   const inner = unswapped256X86(state256X86(k, 0x36, true, data));
   let s = initial256X86();
   const p = u8x16.splat(0x5c);
@@ -190,7 +191,7 @@ export function hmac256X86(k: u8[], data: u8[]): u8[] {
 
 // The state (ABEF / CDGH) after SHA-256 with SHA-NI of `data`, after a keyed first block.
 function state256X86(key: u8[], pad: u8, keyed: bool, data: u8[]): Pair {
-  __intrinsic_target("sha-x86");
+  targetFeature("sha-x86");
   let s = initial256X86();
   if (keyed) {
     const p = u8x16.splat(pad);

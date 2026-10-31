@@ -4,6 +4,7 @@ import { STD_DIGITS, STD_VALUES, URL_DIGITS, URL_VALUES } from "velt/encoding/ta
 import { EncodingError } from "velt/encoding/errors";
 import { velt_rt_bytes_from_str } from "velt/encoding/rt";
 import { utf8Decode, validToString } from "velt/encoding/utf8";
+import { arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
 
 /** `=` */
 export const PAD: u8 = 61;
@@ -160,8 +161,8 @@ function decode64(s: string, url: bool): u8[] {
  * the array, and throws it away otherwise. Cheaper than `Buffer.alloc`, which zeroes them first.
  */
 export function unfilled(n: usize): u8[] {
-  const out: u8[] = __intrinsic_array_with_capacity(n);
-  __intrinsic_array_set_len(out, n);
+  const out: u8[] = arrayWithCapacity(n);
+  arraySetLen(out, n);
   return out;
 }
 

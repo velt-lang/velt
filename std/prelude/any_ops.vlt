@@ -5,6 +5,8 @@
 //
 // The file name sorts after the other prelude modules, so their indexes stay the same.
 
+import { anyToPrimitive } from "velt/lang/intrinsics";
+
 /**
  * JavaScript's `ToPrimitive(v, hint)` of an `any` holding an object or a function (`hint` is
  * `"string"`, `"default"` or `"number"`; a primitive is its own, which the callers keep, so
@@ -21,7 +23,7 @@ export function __anyToPrimitive(v: any, hint: string, at: string): any {
     }
     return (v as Date).toString();
   }
-  return __intrinsic_any_to_primitive(v, hint, at);
+  return anyToPrimitive(v, hint, at);
 }
 
 /**
