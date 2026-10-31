@@ -132,24 +132,50 @@ enum Ctx {
     JsxChildren,
 }
 
+/// The byte after the template literal starting with the backtick at `i`: its `${ … }`
+/// substitutions are followed to their closing brace, past strings and the templates nested in
+/// them (`${f(`${x}`)}`), whose backticks don't end the outer one.
+fn template_end(bytes: &[u8], mut i: usize) -> usize {
+    i += 1;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => i += 2,
+            b'`' => return i + 1,
+            b'$' if bytes.get(i + 1) == Some(&b'{') => {
+                i += 2;
+                let mut depth = 1usize;
+                while i < bytes.len() && depth > 0 {
+                    match bytes[i] {
+                        b'{' => depth += 1,
+                        b'}' => depth -= 1,
+                        b'`' => {
+                            i = template_end(bytes, i);
+                            continue;
+                        }
+                        q @ (b'"' | b'\'') => {
+                            i += 1;
+                            while i < bytes.len() && bytes[i] != q && bytes[i] != b'\n' {
+                                i += if bytes[i] == b'\\' { 2 } else { 1 };
+                            }
+                        }
+                        _ => {}
+                    }
+                    i += 1;
+                }
+            }
+            _ => i += 1,
+        }
+    }
+    i
+}
+
 /// Marks bytes that are plain code (not inside strings, templates, regular expressions,
 /// comments, JSX text or JSX attribute strings).
 fn mark_code(bytes: &[u8], code: &mut [bool], comment_start: &mut [bool]) {
     let mut i = 0;
-    let mut template_depth = 0usize;
     let mut stack: Vec<Ctx> = vec![];
     while i < bytes.len() {
         let c = bytes[i];
-        if template_depth > 0 {
-            // Templates (with their substitutions) are opaque.
-            match c {
-                b'\\' => i += 1,
-                b'`' => template_depth -= 1,
-                _ => {}
-            }
-            i += 1;
-            continue;
-        }
         match stack.last() {
             Some(Ctx::JsxChildren) => {
                 i = jsx_children_byte(bytes, i, code, &mut stack);
@@ -169,10 +195,8 @@ fn mark_code(bytes: &[u8], code: &mut [bool], comment_start: &mut [bool]) {
                 }
                 i += 1;
             }
-            b'`' => {
-                template_depth += 1;
-                i += 1;
-            }
+            // Templates (with their substitutions) are opaque.
+            b'`' => i = template_end(bytes, i),
             b'/' if is_comment_start(bytes, i) => {
                 comment_start[i] = true;
                 let (close, extra): (&[u8], usize) = if bytes[i + 1] == b'*' {
