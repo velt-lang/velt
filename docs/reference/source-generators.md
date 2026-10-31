@@ -135,6 +135,15 @@ for (let i: i64 = 0; i < (t.arms.length as i64); i++) {
 }
 ```
 
+An enum value is made with `__member<E>(i)`, member `i` of the enum `E` (the index into the
+model's `members`; `i` is an integer literal): Velt has no conversion from a number or a
+string to an enum, and generated code cannot name the enum's members.
+
+```ts ignore
+// in a generator, for an enum `t` of the model whose member `i` was matched:
+out.line(`return __member<${out.typeName(t.id)}>(${i});`);
+```
+
 `__construct<T>({ … })` takes the fields as an object literal. A field with an initializer that
 is left out gets the initializer's value, an optional field left out is absent, and any other
 field must be given. Neither `__construct` nor the private members of other types are available

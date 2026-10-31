@@ -1,0 +1,226 @@
+// velt/encoding/json (internal): the code the generator of `readJson` (read.vlt) writes to read
+// one value into a local: scalars inline, options, values chosen from a fixed set, and a call
+// of the decoder of any other type.
+
+import { Model, Output, Type } from "velt/generate";
+import { Choice, choices, choicesExpected } from "velt/encoding/json/generate/choice";
+
+/** The prelude's dynamic JSON value, decoded by its `__fromReader`. */
+const JSON_VALUE = "std/prelude/json/json::JsonValue";
+
+/** Is `t` a `JsonValue`? */
+export function isJsonValue(t: Type): bool {
+  return t.kind == "opaque" && t.qualifiedName == JSON_VALUE;
+}
+
+/**
+ * The range an integer type checks, as `[min, max]` source text ("" for no bound); empty for
+ * a type that is not one read as an `i64` (`u64` is read by `readU64`).
+ */
+export function intRange(repr: string): string[] {
+  if (repr == "i8") {
+    return ["-128", "127"];
+  }
+  if (repr == "i16") {
+    return ["-32768", "32767"];
+  }
+  if (repr == "i32") {
+    return ["-2147483648", "2147483647"];
+  }
+  if (repr == "i64" || repr == "isize") {
+    return ["", ""];
+  }
+  if (repr == "u8") {
+    return ["0", "255"];
+  }
+  if (repr == "u16") {
+    return ["0", "65535"];
+  }
+  if (repr == "u32") {
+    return ["0", "4294967295"];
+  }
+  if (repr == "u64" || repr == "usize") {
+    return ["0", ""];
+  }
+  return [];
+}
+
+/**
+ * Writes the code that reads a value of type `id` into a new local `name`, throwing a
+ * `JsonFail` for the value itself (the code around it adds the value's path segment).
+ */
+export function readInto(out: Output, model: Model, id: i64, name: string): void {
+  const t = model.type(id);
+  const k = t.kind;
+  if (k == "number") {
+    const repr = t.repr;
+    const what = out.literal(repr);
+    if (repr == "f64" || repr == "f32") {
+      out.line(`if (!r.readF64()) { throw jsonFailed("number"); }`);
+      out.line(`const ${name} = r.lastF64()${repr == "f32" ? " as f32" : ""};`);
+    } else if (repr == "u64") {
+      // `readU64` checks `[0, 2^64)` and leaves the bits in `lastI64`.
+      out.line(`if (!r.readU64()) { throw jsonFailed("u64"); }`);
+      out.line(`const ${name} = r.lastI64() as u64;`);
+    } else {
+      const [min, max] = intRange(repr);
+      const tests: string[] = [`!r.readI64()`];
+      if (min.length > 0) {
+        tests.push(`r.lastI64() < ${min}`);
+      }
+      if (max.length > 0) {
+        tests.push(`r.lastI64() > ${max}`);
+      }
+      out.line(`if (${tests.join(" || ")}) { throw jsonFailed(${what}); }`);
+      out.line(`const ${name} = r.lastI64()${repr == "i64" ? "" : ` as ${repr}`};`);
+    }
+  } else if (k == "boolean") {
+    out.line(`if (!r.readBool()) { throw jsonFailed("boolean"); }`);
+    out.line(`const ${name} = r.lastI64() != 0;`);
+  } else if (k == "string") {
+    out.line(`if (!r.readString()) { throw jsonFailed("string"); }`);
+    out.line(`const ${name} = r.value();`);
+  } else if (k == "option") {
+    readOption(out, model, t, name);
+  } else if (k == "literal" || k == "enum" || (k == "union" && choices(model, t).length > 0)) {
+    readChoice(out, model, t, name);
+  } else if (isJsonValue(t)) {
+    // A tape over the reader's text, or a driver's runtime tree; null when the reader failed.
+    const v = out.fresh("v");
+    out.line(`const ${v} = JsonValue.__fromReader(r);`);
+    out.line(`if (${v} == null) { throw jsonFailed("value"); }`);
+    out.line(`const ${name} = ${v};`);
+  } else {
+    const reader = out.instance("readJson", [id]);
+    out.line(`const ${name} = ${reader}(r);`);
+  }
+}
+
+/**
+ * An option: JSON `null` is the option's nothing, anything else its value. For `a?: T` (a
+ * `T | undefined`), `null` leaves the field absent, unless the reader says no (`JSON.parse(text)
+ * as T`: then the value is read as a `T`, which fails); for `T | null | undefined` it is `null`.
+ */
+export function readOption(out: Output, model: Model, t: Type, name: string): void {
+  readNullable(out, model, t.args[0], t.literal == "undefined", out.typeName(t.id), name);
+}
+
+/**
+ * A value of type `id` or JSON `null` into a new local `name` of type `spelled`: `null` is
+ * `undefined` when `absent` (unless the reader says no: then the value is read as an `id`),
+ * else `null`.
+ */
+export function readNullable(
+  out: Output,
+  model: Model,
+  id: i64,
+  absent: bool,
+  spelled: string,
+  name: string,
+): void {
+  out.line(`let ${name}: ${spelled};`);
+  if (absent) {
+    out.line(`if (r.peek() == 1 && r.nullAbsent()) {`);
+  } else {
+    out.line(`if (r.peek() == 1) {`);
+  }
+  out.line(`if (!r.readNull()) { throw jsonFailed("null"); }`);
+  out.line(`${name} = ${absent ? "undefined" : "null"};`);
+  out.line(`} else {`);
+  const x = out.fresh("x");
+  readInto(out, model, id, x);
+  out.line(`${name} = ${x};`);
+  out.line(`}`);
+}
+
+/**
+ * A value chosen from a fixed set (a literal type, an enum, a union of literal types) into a
+ * new local `name`.
+ */
+export function readChoice(out: Output, model: Model, t: Type, name: string): void {
+  const cs = choices(model, t);
+  const tn = out.typeName(t.id);
+  const values: string[] = [];
+  for (const c of cs) {
+    values.push(c.member >= 0 ? `__member<${tn}>(${c.member})` : c.source);
+  }
+  out.line(`let ${name}: ${tn};`);
+  const fail = `jsonFailed(${out.literal(choicesExpected(cs))})`;
+  matchChoices(out, cs, values, name, fail);
+}
+
+/**
+ * Reads a JSON scalar and sets `target` to `values[i]` for the choice `cs[i]` it is: the next
+ * token's kind picks the choices to compare with (a string in place in the reader, a number as
+ * an `f64`); anything else throws `fail` (another kind of value is skipped first, so a
+ * malformed one fails as such).
+ */
+export function matchChoices(
+  out: Output,
+  cs: Choice[],
+  values: string[],
+  target: string,
+  fail: string,
+): void {
+  const tok = out.fresh("tok");
+  out.line(`const ${tok} = r.peek();`);
+  let first = true;
+  for (const kind of ["string", "number", "boolean"]) {
+    const of: i64[] = [];
+    for (let i: i64 = 0; i < (cs.length as i64); i++) {
+      if (cs[i].kind == kind) {
+        of.push(i);
+      }
+    }
+    if (of.length == 0) {
+      continue;
+    }
+    const test =
+      kind == "string"
+        ? `${tok} == 5`
+        : kind == "number" ? `${tok} == 4` : `(${tok} == 2 || ${tok} == 3)`;
+    out.line(`${first ? "" : "} else "}if (${test}) {`);
+    first = false;
+    const read = kind == "string" ? "readString" : kind == "number" ? "readF64" : "readBool";
+    out.line(`if (!r.${read}()) { throw ${fail}; }`);
+    for (let j: i64 = 0; j < (of.length as i64); j++) {
+      const c = cs[of[j]];
+      const cond =
+        kind == "string"
+          ? `r.textIs(${c.source})`
+          : kind == "number"
+            ? `r.lastF64() == ${c.source}`
+            : `r.lastI64() ${c.source == "true" ? "!=" : "=="} 0`;
+      out.line(`${j == 0 ? "" : "} else "}if (${cond}) {`);
+      out.line(`${target} = ${values[of[j]]};`);
+    }
+    out.line(`} else {`);
+    out.line(`throw ${fail};`);
+    out.line(`}`);
+  }
+  out.line(`} else {`);
+  out.line(`r.skipValue();`);
+  out.line(`throw ${fail};`);
+  out.line(`}`);
+}
+
+/** The length of `s` in UTF-8 bytes. */
+export function utf8Length(s: string): i64 {
+  let n: i64 = 0;
+  const units = s.length as i64;
+  for (let i: i64 = 0; i < units; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 0x80) {
+      n += 1;
+    } else if (c < 0x800) {
+      n += 2;
+    } else if (c >= 0xd800 && c <= 0xdbff && i + 1 < units) {
+      // A surrogate pair: one code point of 4 bytes.
+      n += 4;
+      i++;
+    } else {
+      n += 3;
+    }
+  }
+  return n;
+}

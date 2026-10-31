@@ -80,6 +80,18 @@ export class Record<K, V> {
     }
   }
 
+  /**
+   * A record of the entries of `m`, in its order (a JSON object's members in document order:
+   * the decoders velt/encoding/json generates make records with it), `unordered` when a key is
+   * an array index. Internal, not part of the API.
+   */
+  static __fromMap<RK, RV>(m: Map<RK, RV>): Record<RK, RV> {
+    const r = new Record<RK, RV>();
+    r.entries = m;
+    r.__decoded();
+    return r;
+  }
+
   /** After JSON decoding (in document order): `unordered` when a key is an array index. */
   __decoded() {
     for (const k of this.entries.keys()) {

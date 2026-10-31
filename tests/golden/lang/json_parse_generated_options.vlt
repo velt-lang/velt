@@ -1,0 +1,46 @@
+// `JSON.parse<T>` of literal types and enums inside options, arrays, tuples and maps, decoded by
+// the code velt/encoding/json's generator writes.
+enum E {
+  A,
+  B = 7,
+}
+
+type P = { k: "x" | null; e?: E; arr: "y"[]; t: [1, E | null]; n: null | i8 };
+for (const s of [
+  `{"k":"x","e":7,"arr":["y"],"t":[1,null],"n":null}`,
+  `{"k":null,"arr":[],"t":[1,0],"n":3}`,
+  `{"k":"z","arr":[],"t":[1,0],"n":3}`,
+  `{"k":null,"arr":["q"],"t":[1,0],"n":3}`,
+  `{"k":null,"arr":[],"t":[2,0],"n":3}`,
+  `{"k":null,"e":null,"arr":[],"t":[1,0]}`,
+]) {
+  try {
+    console.log(JSON.stringify(JSON.parse<P>(s)));
+  } catch (e) {
+    console.log(e.message);
+  }
+  try {
+    console.log(JSON.stringify(JSON.parse(s) as P));
+  } catch (e) {
+    console.log(e.message);
+  }
+}
+console.log(
+  JSON.parse<"x" | null>(`"x"`),
+  JSON.parse<E | null>("7"),
+  JSON.parse<Map<string, E | null>>(`{"a":null,"b":0}`),
+);
+
+// An optional field left out of the document is absent from a struct and an object.
+struct Opt {
+  a?: string;
+  b?: i32 | null;
+  x: i64;
+}
+
+type Obj = { a?: string; "q r"?: i8; x: i64 };
+for (const d of [`{"x":1}`, `{"x":1,"a":"s","b":null,"q r":2}`, `{"x":1,"a":null,"b":3}`]) {
+  const s = JSON.parse<Opt>(d);
+  const o = JSON.parse<Obj>(d);
+  console.log(s, JSON.stringify(s), o, JSON.stringify(o), "a" in o);
+}

@@ -733,6 +733,26 @@ goldens:
   a std generator wrote for a std module (`<generated>/std/…`) is reported at the user's
   call, as one from std is (velt_vir `srcloc`). `JsonValue.__fromReader` is no longer
   `private`: generated code calls it, and std's opaque types are not in the access rule.
+  Step (b): options (`T | null`; `a?: T`, whose `null` leaves it absent unless the reader says
+  no, for `as T`; `a?: T | null`, whose `null` is a present `null`), literal types, enums and
+  unions of literal types (one comparison per value of the next token's kind, strings in place
+  in the reader), `Map<string, V>` and `Record<K, V>` (string, literal and string enum keys;
+  a record made from a map in document order by `Record.__fromMap`, since a literal-key record
+  cannot be made empty) are generated too. Generated code makes an enum value with
+  `__member<E>(i)` (`generated/member.rs`). A required field of a literal type is a flag, not
+  a `"x" | null` local: lowering a narrowed option of a zero-sized type into a struct field
+  failed VIR verification (left for a fix in lowering). An object's or struct's optional
+  field is set after the value is built, when its key was read (an object literal's `a:
+  undefined` would make it present), so a readonly optional field is left to the glue. The
+  generator is split by concern (`read.vlt`, `read_value.vlt`, `read_object.vlt`,
+  `choice.vlt`). Measured against step (a) (same method; base: http2 at f946b85b6):
+  `parse_typed` and `parse_union` run time unchanged (-0.1%, +0.0%), their compile time
+  within 1%; a program decoding 11 types of the new kinds (the options golden's test program,
+  every field an option, a literal union, an enum, a map or a record) `velt check` +9.0%
+  edited, +8.2% cold, `velt build` +8.1% both: the generated decoders (about 780 lines for
+  it) are checked with the program, most of it in the ownership passes, where the glue was
+  lowered directly. The generated phase's own cost (one check round, ownership of generated
+  modules cached) is being worked on separately; hello world unchanged (-0.6%).
   Fixed on the way: the demand walks the initializers of module variables (a module constant
   made by `JSON.parse` had no generated code, and ran the placeholder), and a need recorded
   for a class (a field initializer) no longer stops it with an ICE; only a generated function
@@ -770,8 +790,8 @@ port's order:
 - **A cycle through a recursive object type held by an `any`** is reported with the `any`
   path's message (`TypeError: Converting circular structure to JSON`), where the glue's typed
   writer of that type reported its own; no golden has one.
-- **`JSON.parse` / `parse<T>` / `as T`** (json port step 4; step (a) above ports records,
-  structs, classes, arrays, tuples, `JsonValue` and the scalars): the decoders of `lower/json`
+- **`JSON.parse` / `parse<T>` / `as T`** (json port step 4; steps (a) and (b) above port all
+  but unions with members other than literals): the decoders of `lower/json`
   (`read.rs`, `object.rs`, `union*.rs`, `literal.rs`, `map.rs`, `key.rs`, `reader.rs`), the
   rows and cursors of std/db (`rows_read/`, `jsonParseCursor`, `readRowsByColumn` /
   `readRowByColumn`) and the parameter binding (`dbBind`, `db_bind.rs`) still run in the

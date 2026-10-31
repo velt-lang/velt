@@ -1,0 +1,246 @@
+// velt/encoding/json (internal): the bodies the generator of `readJson` (read.vlt) writes for
+// arrays, tuples, objects, structs and classes, `Map<string, V>` and `Record<K, V>`.
+
+import { Model, Output, Type } from "velt/generate";
+import { isIdentifier } from "velt/encoding/json/generate/facts";
+import { choices, messageQuote, recordKeys } from "velt/encoding/json/generate/choice";
+import { readInto, readNullable, utf8Length } from "velt/encoding/json/generate/read_value";
+
+/** The body of `readJson<T>` for a `Map<string, V>`: each member `set` in document order. */
+export function readMap(out: Output, model: Model, t: Type): void {
+  out.line(`if (!r.openObject()) { throw jsonFailed("object"); }`);
+  out.line(`const out: ${out.typeName(t.id)} = new Map();`);
+  readEntries(out, model, t.args[1], (k: string, x: string): string => `out.set(${k}, ${x});`);
+  out.line(`return out;`);
+}
+
+/**
+ * The body of `readJson<T>` for a `Record<K, V>`: with `string` keys every member, with
+ * literal keys (`"cpu" | "mem"`, a string enum) the members it names (others are skipped), all
+ * of them required.
+ */
+export function readRecord(out: Output, model: Model, t: Type): void {
+  // The entries go into a map in document order (a literal-key record cannot be made empty),
+  // which becomes the record (`Record.__fromMap` checks it for array-index keys, as the glue
+  // did).
+  out.line(`if (!r.openObject()) { throw jsonFailed("object"); }`);
+  const kn = out.typeName(t.args[0]);
+  const vn = out.typeName(t.args[1]);
+  out.line(`const m: Map<${kn}, ${vn}> = new Map();`);
+  const key = model.type(t.args[0]);
+  const done = `return Record.__fromMap(m);`;
+  if (key.kind == "string") {
+    readEntries(out, model, t.args[1], (k: string, x: string): string => `m.set(${k}, ${x});`);
+    out.line(done);
+    return;
+  }
+  const keys = recordKeys(model, key);
+  const cs = choices(model, key);
+  const n = keys.length as i64;
+  // Up to 64 keys are required, as the compiler's decoder tracked them.
+  const required = n <= 64;
+  if (required) {
+    for (let i: i64 = 0; i < n; i++) {
+      out.line(`let seen${i} = false;`);
+    }
+  }
+  out.line(`while (true) {`);
+  out.line(`const step = r.nextKey();`);
+  out.line(`if (step == 0) { break; }`);
+  out.line(`if (step != 1) { throw jsonFailed("object"); }`);
+  out.line(`const len = r.keyLength();`);
+  for (let i: i64 = 0; i < n; i++) {
+    const lit = out.literal(keys[i]);
+    const value = cs[i].member >= 0 ? `__member<${kn}>(${cs[i].member})` : cs[i].source;
+    out.line(`if (len == ${utf8Length(keys[i])} && r.keyIs(${lit})) {`);
+    out.line(`try {`);
+    readInto(out, model, t.args[1], "x");
+    out.line(`m.set(${value}, x);`);
+    out.line(`} catch (fail) { fail.at(${out.literal("." + keys[i])}); throw fail; }`);
+    if (required) {
+      out.line(`seen${i} = true;`);
+    }
+    out.line(`continue;`);
+    out.line(`}`);
+  }
+  out.line(`if (!r.skipUnknown()) { throw new JsonFail("value", "." + r.key()); }`);
+  out.line(`}`);
+  if (required) {
+    for (let i: i64 = 0; i < n; i++) {
+      const missing = out.literal(`field ${messageQuote(keys[i])}`);
+      out.line(`if (!seen${i}) { throw jsonFailed(${missing}); }`);
+    }
+  }
+  out.line(done);
+}
+
+/**
+ * The members of an object read as entries (a map's, a record's with `string` keys): the key,
+ * the value of type `vid`, and `put(key, value)`'s statement storing them.
+ */
+export function readEntries(
+  out: Output,
+  model: Model,
+  vid: i64,
+  put: (k: string, x: string) => string,
+): void {
+  out.line(`while (true) {`);
+  out.line(`const step = r.nextKey();`);
+  out.line(`if (step == 0) { break; }`);
+  out.line(`if (step != 1) { throw jsonFailed("object"); }`);
+  out.line(`const k = r.key();`);
+  out.line(`try {`);
+  readInto(out, model, vid, "x");
+  out.line(put("k", "x"));
+  out.line(`} catch (fail) { fail.at("." + k); throw fail; }`);
+  out.line(`}`);
+}
+
+/** The body of `readJson<T>` for an array (`T` is `E[]`). */
+export function readArray(out: Output, model: Model, t: Type): void {
+  out.line(`if (!r.openArray()) { throw jsonFailed("array"); }`);
+  out.line(`const out: ${out.typeName(t.id)} = [];`);
+  out.line(`let i: i64 = 0;`);
+  out.line(`while (true) {`);
+  out.line(`const step = r.arrayNext();`);
+  out.line(`if (step == 0) { break; }`);
+  out.line(`if (step != 1) { throw jsonFailed("array"); }`);
+  out.line(`try {`);
+  readInto(out, model, t.args[0], "x");
+  out.line(`out.push(x);`);
+  out.line("} catch (fail) { fail.at(`[${i}]`); throw fail; }");
+  out.line(`i++;`);
+  out.line(`}`);
+  out.line(`return out;`);
+}
+
+/** The body of `readJson<T>` for a tuple: an array of exactly its length. */
+export function readTuple(out: Output, model: Model, t: Type): void {
+  const n = t.args.length as i64;
+  const expected = out.literal(`array of length ${n}`);
+  out.line(`if (!r.openArray()) { throw jsonFailed(${expected}); }`);
+  // The element being read (-1: none), whose index a failure's path starts with.
+  out.line(`let at: i64 = -1;`);
+  out.line(`try {`);
+  const names: string[] = [];
+  for (let i: i64 = 0; i < n; i++) {
+    out.line(`if (r.arrayNext() != 1) { throw jsonFailed(${expected}); }`);
+    out.line(`at = ${i};`);
+    const name = `e${i}`;
+    readInto(out, model, t.args[i], name);
+    out.line(`at = -1;`);
+    names.push(name);
+  }
+  out.line(`if (r.arrayNext() != 0) { throw jsonFailed(${expected}); }`);
+  out.line(`return [${names.join(", ")}];`);
+  out.line("} catch (fail) { if (at >= 0) { fail.at(`[${at}]`); } throw fail; }");
+}
+
+/**
+ * The body of `readJson<T>` for an object, a struct or a class: keys matched against the
+ * field names (by length first, then in place in the reader), a repeated key replacing the
+ * earlier value, unknown keys skipped (or rejected), every field required; the value built at
+ * the end, a class or struct without running its constructor. One `try` adds the path of the
+ * field being read (`at`) to any failure.
+ */
+export function readObject(out: Output, model: Model, t: Type): void {
+  out.line(`if (!r.openObject()) { throw jsonFailed("object"); }`);
+  const fields = t.fields;
+  const n = fields.length as i64;
+  // A required field's local is empty (`null`) until its key is read; an option's starts as
+  // the option's nothing, the value it keeps when the key is absent (an absent `a?: T`).
+  const empty: string[] = [];
+  for (let i: i64 = 0; i < n; i++) {
+    const ft = model.type(fields[i].type);
+    if (fields[i].optional) {
+      // `a?: T` (absent until its key is read; `null` leaves it absent) and `a?: T | null`
+      // (`null` is a present `null`).
+      out.line(`let f${i}: ${out.typeName(ft.id)} | undefined = undefined;`);
+      empty.push("");
+    } else if (ft.kind == "literal") {
+      // A literal type holds no data: whether its key was read.
+      out.line(`let f${i} = false;`);
+      empty.push("seen");
+    } else if (ft.kind == "option") {
+      const nothing = ft.literal == "null" ? "null" : "undefined";
+      out.line(`let f${i}: ${out.typeName(ft.id)} = ${nothing};`);
+      empty.push("");
+    } else {
+      out.line(`let f${i}: ${out.typeName(ft.id)} | null = null;`);
+      empty.push("null");
+    }
+  }
+  if (n > 0) {
+    out.line(`let at: i64 = -1;`);
+  }
+  out.line(`try {`);
+  out.line(`while (true) {`);
+  if (n > 0) {
+    out.line(`at = -1;`);
+  }
+  out.line(`const step = r.nextKey();`);
+  out.line(`if (step == 0) { break; }`);
+  out.line(`if (step != 1) { throw jsonFailed("object"); }`);
+  if (n > 0) {
+    out.line(`const len = r.keyLength();`);
+  }
+  for (let i: i64 = 0; i < n; i++) {
+    const f = fields[i];
+    const name = out.literal(f.name);
+    // The key's length in UTF-8 bytes, as the reader counts it.
+    const bytes = utf8Length(f.name);
+    out.line(`if (len == ${bytes} && r.keyIs(${name})) {`);
+    out.line(`at = ${i};`);
+    if (f.optional && model.type(f.type).kind != "option") {
+      readNullable(out, model, f.type, true, `${out.typeName(f.type)} | undefined`, "v");
+    } else {
+      readInto(out, model, f.type, "v");
+    }
+    out.line(empty[i] == "seen" ? `f${i} = true;` : `f${i} = v;`);
+    out.line(`continue;`);
+    out.line(`}`);
+  }
+  // An unknown key: its value is skipped (a malformed one fails at `.<key>`; with unknown keys
+  // rejected, any does).
+  out.line(`if (!r.skipUnknown()) { throw new JsonFail("value", "." + r.key()); }`);
+  out.line(`}`);
+  const props: string[] = [];
+  const segs: string[] = [];
+  const later: i64[] = [];
+  for (let i: i64 = 0; i < n; i++) {
+    const f = fields[i];
+    const missing = out.literal(`field "${f.name}"`);
+    if (empty[i] == "null") {
+      out.line(`if (f${i} == null) { throw jsonFailed(${missing}); }`);
+    } else if (empty[i] == "seen") {
+      out.line(`if (!f${i}) { throw jsonFailed(${missing}); }`);
+    }
+    const key = isIdentifier(f.name) ? f.name : out.literal(f.name);
+    const value = empty[i] == "seen" ? model.type(f.type).literal : `f${i}`;
+    segs.push(out.literal(`.${f.name}`));
+    if (f.optional && t.kind != "class") {
+      // Set below only when its key was read: an object's `a?: T` left out is absent.
+      later.push(i);
+      continue;
+    }
+    props.push(`${key}: ${value}`);
+  }
+  const obj = `{ ${props.join(", ")} }`;
+  const made = t.kind == "object" ? obj : `__construct<${out.typeName(t.id)}>(${obj})`;
+  if (later.length == 0) {
+    out.line(`return ${made};`);
+  } else {
+    out.line(`let o: ${out.typeName(t.id)} = ${made};`);
+    for (const i of later) {
+      const f = fields[i];
+      const target = isIdentifier(f.name) ? `o.${f.name}` : `o[${out.literal(f.name)}]`;
+      out.line(`if (f${i} !== undefined) { ${target} = f${i}; }`);
+    }
+    out.line(`return o;`);
+  }
+  if (n > 0) {
+    out.line(`} catch (fail) { if (at >= 0) { fail.at([${segs.join(", ")}][at]); } throw fail; }`);
+  } else {
+    out.line(`} catch (fail) { throw fail; }`);
+  }
+}

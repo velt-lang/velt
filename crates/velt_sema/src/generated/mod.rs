@@ -19,6 +19,7 @@ pub mod arm;
 pub(crate) mod bind;
 pub(crate) mod demand;
 pub mod handles;
+pub mod member;
 pub mod model;
 pub(crate) mod phase;
 pub mod spell;

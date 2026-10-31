@@ -1,0 +1,145 @@
+// velt/encoding/json (internal): the values a literal type, an enum or a union of literal types
+// is chosen from, and how the messages of the decoders generate/read.vlt writes show them.
+
+import { Model, Type } from "velt/generate";
+
+/** A value a literal type, an enum or a union of literal types is chosen from. */
+export class Choice {
+  /** `string`, `number` or `boolean`. */
+  kind: string = "";
+  /** As JavaScript (and Velt) source: a JSON string, a number, `true` or `false`. */
+  source: string = "";
+  /** The enum member it is (-1: a literal). */
+  member: i64 = -1;
+}
+
+/**
+ * The values of a literal type, an enum or a union of literal types, in member order; empty
+ * for any other type.
+ */
+export function choices(model: Model, t: Type): Choice[] {
+  const out: Choice[] = [];
+  if (t.kind == "literal") {
+    out.push(literalChoice(t.literal));
+  } else if (t.kind == "enum") {
+    for (let i: i64 = 0; i < (t.members.length as i64); i++) {
+      const c = literalChoice(t.members[i].value);
+      c.member = i;
+      out.push(c);
+    }
+  } else if (t.kind == "union") {
+    for (const a of t.arms) {
+      const at = model.type(a);
+      if (at.kind != "literal") {
+        return [];
+      }
+      out.push(literalChoice(at.literal));
+    }
+  }
+  return out;
+}
+
+export function literalChoice(source: string): Choice {
+  const c = new Choice();
+  c.source = source;
+  if (source.startsWith("\"")) {
+    c.kind = "string";
+  } else if (source == "true" || source == "false") {
+    c.kind = "boolean";
+  } else {
+    c.kind = "number";
+  }
+  return c;
+}
+
+/** The text of a JSON string literal (`"a\"b"`). */
+export function unquote(source: string): string {
+  let out = "";
+  const n = (source.length as i64) - 1;
+  for (let i: i64 = 1; i < n; i++) {
+    const c = source.charAt(i);
+    if (c != "\\") {
+      out += c;
+      continue;
+    }
+    i++;
+    const e = source.charAt(i);
+    if (e == "n") {
+      out += "\n";
+    } else if (e == "r") {
+      out += "\r";
+    } else if (e == "t") {
+      out += "\t";
+    } else if (e == "b") {
+      out += "\b";
+    } else if (e == "f") {
+      out += "\f";
+    } else if (e == "u") {
+      out += String.fromCharCode(Number.parseInt(source.slice(i + 1, i + 5), 16));
+      i += 4;
+    } else {
+      out += e;
+    }
+  }
+  return out;
+}
+
+/** `s` quoted as messages show a string value (`"a\"b"`, a control character as `\u000a`). */
+export function messageQuote(s: string): string {
+  let out = "\"";
+  const n = s.length as i64;
+  for (let i: i64 = 0; i < n; i++) {
+    const c = s.charCodeAt(i);
+    if (c == 34) {
+      out += "\\\"";
+    } else if (c == 92) {
+      out += "\\\\";
+    } else if (c == 10) {
+      out += "\\n";
+    } else if (c < 32) {
+      out += "\\u" + c.toString(16).padStart(4, "0");
+    } else {
+      out += s.charAt(i);
+    }
+  }
+  return out + "\"";
+}
+
+/** A choice as messages show it: a string quoted, a number as JavaScript writes it. */
+export function choiceText(c: Choice): string {
+  if (c.kind == "string") {
+    return messageQuote(unquote(c.source));
+  }
+  if (c.kind == "number") {
+    return `${Number(c.source)}`;
+  }
+  return c.source;
+}
+
+/**
+ * What a value chosen from `cs` was expected to be: `"low"`, or `one of "low", 2, true`
+ * (strings, then numbers, then booleans, each in member order).
+ */
+export function choicesExpected(cs: Choice[]): string {
+  const texts: string[] = [];
+  for (const kind of ["string", "number", "boolean"]) {
+    for (const c of cs) {
+      if (c.kind == kind) {
+        texts.push(choiceText(c));
+      }
+    }
+  }
+  return texts.length == 1 ? texts[0] : `one of ${texts.join(", ")}`;
+}
+
+/** The key strings of a record whose keys are literal types or a string enum (else none). */
+export function recordKeys(model: Model, key: Type): string[] {
+  const out: string[] = [];
+  for (const c of choices(model, key)) {
+    if (c.kind != "string") {
+      return [];
+    }
+    out.push(unquote(c.source));
+  }
+  return out;
+}

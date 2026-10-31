@@ -34,6 +34,9 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.generated_construct(callee, type_args, args, span) {
             return h;
         }
+        if let Some(h) = self.generated_member(callee, type_args, args, span) {
+            return h;
+        }
         if let Some(callee) = self.without_namespace(callee) {
             return self.call(&callee, type_args, args, false, exp, span);
         }
