@@ -32,7 +32,8 @@ import {
   RETRY_NEVER,
 } from "velt/net/http/fetch/client/h2/event";
 import { ClientStream } from "velt/net/http/fetch/client/h2/stream";
-import { frames, pump, pumpAll, startCall } from "velt/net/http/fetch/client/h2/frames";
+import { frames } from "velt/net/http/fetch/client/h2/frames";
+import { startCall } from "velt/net/http/fetch/client/h2/outbound";
 
 /// A session without streams for this long closes (undici's keep-alive default is 4 s).
 const IDLE_MS: number = 4000;
