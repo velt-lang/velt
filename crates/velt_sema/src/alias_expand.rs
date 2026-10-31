@@ -106,9 +106,10 @@ impl Ctx<'_> {
         }
         let top = matches!(self.scopes[module].items.get(&decl.name.name), Some(crate::ctx::Item::Alias(x)) if *x == a);
         if names.is_empty() && top {
-            self.alias_homes
+            self.gen_binding
+                .alias_homes
                 .entry(body)
-                .or_insert_with(|| (module, decl.name.name.clone()));
+                .or_insert_with(|| (module, decl.name.name.clone(), false));
         }
         if names.is_empty() && self.is_structural(body) {
             // `type Shape = { ... } | { ... }`: messages call the union `Shape`.

@@ -43,7 +43,9 @@ base class type.
   and value. An absent optional field (`label?: string`), a deleted entry and an `i` out of
   range read as `undefined`; a field `n?: number | null` that holds `null` is `null`.
 - `callToJSON(v: any, key: string): any`: what the class's `toJSON(key)` returns
-  (`undefined` when it has none).
+  (`undefined` when it has none). For a proxy, the plain value Node's `JSON.stringify` reads
+  through its traps: an array of its elements for an array target, else an object of its own
+  enumerable keys and their values.
 
 ```ts
 import { entryCount, entryName, entryValue, kindOf, typeOf } from "velt/reflect";
@@ -73,6 +75,8 @@ function main() {
   itself (Node's "Converting circular structure to JSON"); each `true` needs an `endVisit`.
 - `isProxy<T>(v: T): bool`: whether `v`, of a class or object type, is a typed `Proxy`, which
   a walk should treat as the `any` it converts to.
+- `dynamicOf<T>(v: T): any`: `v` as an `any`, converted when it runs (a typed proxy as the
+  proxy). Unlike `v as any`, it asks nothing more of `T`'s values than reading them.
 
 ```ts
 import { beginVisit, endVisit, identity } from "velt/reflect";

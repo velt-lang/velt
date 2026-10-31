@@ -14,18 +14,28 @@ use crate::{FALLBACK_STACK_BUDGET, SEMA_STACK_BUDGET, SEMA_STACK_BYTES};
 pub enum Checked {
     Program(Box<hir::Program>),
     Demand(generated::Demand),
+    /// Code generated during the check needs a check of its own (`generated::phase`
+    /// `needs_rewrite`): the driver checks again with everything generated so far.
+    Again,
 }
 
 /// [`crate::check_with`] of a program that may use generated functions, with the code generated
-/// for them so far (`gen`): the driver runs the generators for a [`Checked::Demand`] and checks
-/// again with their code added.
+/// for them so far (`gen`). With `generate`, the check asks the driver for the code of the
+/// instances that have none and adds it to itself (docs/internals/design/source-generators.md
+/// §6); without, or when that code needs a check of its own, it returns a [`Checked::Demand`]
+/// (or [`Checked::Again`]) and the driver checks again with the code added.
 pub fn check_generating(
     modules: &[SourceModule],
     root: usize,
     opts: CheckOptions,
     gen: &generated::GenInput,
+    generate: Option<&generated::GenerateFn>,
 ) -> (Option<Checked>, Diagnostics) {
-    on_sema_thread(|budget| check_on_current_thread(modules, root, opts, &[], Some(gen), budget))
+    let args = generated::GenArgs {
+        input: gen,
+        generate,
+    };
+    on_sema_thread(|budget| check_on_current_thread(modules, root, opts, &[], Some(args), budget))
 }
 
 /// The program of a check whose caller runs no generators: demand is an error at each call.
@@ -35,6 +45,7 @@ pub(crate) fn program_or_demand_error(
 ) -> (Option<hir::Program>, Diagnostics) {
     match out {
         Some(Checked::Program(p)) => (Some(*p), diags),
+        Some(Checked::Again) => (None, diags),
         Some(Checked::Demand(d)) => {
             for r in &d.requests {
                 diags.push(Diagnostic::error(

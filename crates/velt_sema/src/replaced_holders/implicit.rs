@@ -575,6 +575,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::AnyTruthy
         | I::AnyTag
         | I::Identity
+        | I::ToAny
         | I::AnyReflectInfo
         | I::AnyReflectCount
         | I::AnyReflectName

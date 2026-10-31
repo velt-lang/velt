@@ -29,7 +29,8 @@ pub struct ModelType {
     pub display: String,
     /// `<module path>::<name>` of a declared type, else empty.
     pub qualified_name: String,
-    /// How generated code writes the type (empty when it cannot: a local class).
+    /// How generated code writes the type: a handle (`__type<"<instance>", <index>>`,
+    /// [`super::handles`]) that names it in any check of the same program.
     pub spelling: String,
     /// `f64`, `i32`, … for numbers.
     pub repr: String,
@@ -53,6 +54,9 @@ pub struct ModelType {
     /// The methods of a class that std's operations call by name (`toJSON`, `toString`,
     /// `__inspect`), with their parameter count and result type, when callable as such.
     pub methods: Vec<ModelMethod>,
+    /// Whether a value of the type may be a typed `Proxy` standing for it: a class or object
+    /// type in a program that uses `Proxy` (velt_vir's `proxiable` decides which exactly).
+    pub may_be_proxy: bool,
     pub at: Option<u32>,
 }
 
@@ -77,6 +81,9 @@ pub struct ModelField {
     pub has_default: bool,
     /// An object literal's getter (`get k() { … }`): `ty` is what it returns.
     pub getter: bool,
+    /// A field the layout holds for an extension of the type (an `interface E extends T` with
+    /// optional fields that shares `T`'s objects): read through the value seen as this type.
+    pub via: Option<u32>,
     pub at: u32,
 }
 
@@ -91,6 +98,8 @@ pub struct ModelMember {
 pub(crate) struct Builder {
     pub model: Model,
     ids: FxHashMap<TyId, u32>,
+    /// The sema type of each model type.
+    tys: Vec<TyId>,
     queue: Vec<TyId>,
 }
 
@@ -99,6 +108,7 @@ impl Builder {
         Builder {
             model: Model::default(),
             ids: FxHashMap::default(),
+            tys: vec![],
             queue: vec![],
         }
     }
@@ -113,6 +123,11 @@ impl Builder {
         id
     }
 
+    /// The sema type of model type `i`.
+    pub fn ty_of(&self, i: u32) -> TyId {
+        self.tys[i as usize]
+    }
+
     fn id(&mut self, t: TyId) -> u32 {
         if let Some(&id) = self.ids.get(&t) {
             return id;
@@ -120,6 +135,7 @@ impl Builder {
         let id = self.model.types.len() as u32;
         self.model.types.push(ModelType::default());
         self.ids.insert(t, id);
+        self.tys.push(t);
         self.queue.push(t);
         id
     }
@@ -130,9 +146,15 @@ impl Builder {
     }
 
     fn describe(&mut self, cx: &mut Ctx, t: TyId) -> ModelType {
+        // A class instance brand (`crate::brands`) is its class, a primitive's brand that
+        // primitive: described as what it is, named as written.
+        if let Some(b) = cx.brand_base(t).filter(|b| *b != t) {
+            let mut m = self.describe(cx, b);
+            m.display = cx.display(t);
+            return m;
+        }
         let mut m = ModelType {
             display: cx.display(t),
-            spelling: super::spell::spell(cx, t).unwrap_or_default(),
             ..ModelType::default()
         };
         match cx.ty.kind(t).clone() {
@@ -244,9 +266,14 @@ impl Builder {
                 } else {
                     a.qual_name.clone()
                 };
-                let fields: Vec<_> = (a.fields.iter())
-                    .map(|f| {
+                // An object type whose layout its extensions widen holds their fields too.
+                let added = cx.layout_added_fields(d);
+                let declared = a.fields.iter().map(|f| (f, None));
+                let fields: Vec<_> = (declared.chain(added.iter().map(|(f, e)| (f, Some(*e)))))
+                    .map(|(f, via)| {
                         let private = f.private_to.is_some() || f.name.starts_with('#');
+                        // The prelude `Error`'s `#name` is no runtime handle.
+                        let private = private && !cx.plain_private(f.private_to, &f.name);
                         (
                             f.name.clone(),
                             f.declared,
@@ -255,6 +282,7 @@ impl Builder {
                             private,
                             f.has_default,
                             f.span,
+                            via,
                         )
                     })
                     .collect();
@@ -272,7 +300,9 @@ impl Builder {
                         "opaque"
                     };
                 } else {
-                    for (name, declared, optional, readonly, private, has_default, at) in fields {
+                    for (name, declared, optional, readonly, private, has_default, at, via) in
+                        fields
+                    {
                         let getter = getters.iter().find(|(n, _)| *n == name).map(|(_, r)| *r);
                         let ty = cx.subst(getter.unwrap_or(declared), args);
                         let es_private = name.starts_with('#');
@@ -284,6 +314,10 @@ impl Builder {
                             es_private,
                             has_default,
                             getter: getter.is_some(),
+                            via: via.map(|e| {
+                                let t = cx.ty.intern(TyKind::Adt(e, vec![]));
+                                self.id(t)
+                            }),
                             at: self.span(at),
                             name,
                         };
@@ -291,6 +325,7 @@ impl Builder {
                     }
                 }
                 m.at = Some(self.span(span));
+                m.may_be_proxy = kind != AdtKind::Struct && cx.prelude_adt("Proxy").is_some();
                 m.args = args.iter().map(|t| self.id(*t)).collect();
                 if let Some(b) = base {
                     let b = cx.subst(b, args);
@@ -298,6 +333,14 @@ impl Builder {
                 }
                 if kind == AdtKind::Class {
                     for name in [hooks::TO_JSON, hooks::TO_STRING, hooks::INSPECT] {
+                        let Some((def, _)) = hooks::hook(cx, d, args, name) else {
+                            continue;
+                        };
+                        // A result the body gives is known once the body is checked: checked now
+                        // (a deferred std method may not be yet), so that the model, and the
+                        // fingerprints it gives, are the same whenever they are taken.
+                        let at = cx.fn_info(def).name_span;
+                        crate::body::returns::ret_of(cx, def, at);
                         let Some((def, ret)) = hooks::hook(cx, d, args, name) else {
                             continue;
                         };
@@ -310,9 +353,8 @@ impl Builder {
                         });
                     }
                 }
-                if kind == AdtKind::Class && args.is_empty() {
-                    for c in subclasses(cx, d) {
-                        let t = cx.ty.intern(TyKind::Adt(c, vec![]));
+                if kind == AdtKind::Class {
+                    for t in subclasses(cx, d, args) {
                         let id = self.id(t);
                         m.subclasses.push(id);
                     }
@@ -386,27 +428,62 @@ fn literal_getters(cx: &mut Ctx, d: DefId) -> Vec<(String, TyId)> {
     out
 }
 
-/// The non-generic classes of the program that extend class `d`, directly or not, in
-/// definition order.
-fn subclasses(cx: &Ctx, d: DefId) -> Vec<DefId> {
+/// The classes of the program that extend class `d<args>`, directly or not, in definition
+/// order, at the type arguments `d<args>` gives them (`class Mid<T> extends Base<T>` is
+/// `Mid<i64>` under `Base<i64>`); a class whose type arguments do not follow from them
+/// (`class Box<T> extends Base<i64>`) is left out.
+fn subclasses(cx: &mut Ctx, d: DefId, args: &[TyId]) -> Vec<TyId> {
     let mut out = vec![];
-    for (i, info) in cx.info.iter().enumerate() {
-        let DefInfo::Adt(a) = info else { continue };
-        if a.kind != AdtKind::Class || !a.generics.names.is_empty() || i == d.0 as usize {
-            continue;
-        }
-        let mut base = a.base;
+    for i in 0..cx.info.len() {
+        let c = DefId(i as u32);
+        let n = match &cx.info[i] {
+            DefInfo::Adt(a) if a.kind == AdtKind::Class && c != d => a.generics.names.len(),
+            _ => continue,
+        };
+        let own: Vec<TyId> = (0..n as u32)
+            .map(|k| cx.ty.intern(TyKind::Param(k)))
+            .collect();
+        let (mut cur, mut cur_args) = (c, own);
         let mut depth = 0;
-        while let (Some(b), true) = (base, depth < 64) {
+        let pattern = loop {
             depth += 1;
-            let TyKind::Adt(bd, _) = *cx.ty.kind(b) else {
-                break;
+            let Some(b) = cx.adt(cur).and_then(|a| a.base) else {
+                break None;
+            };
+            let b = cx.subst(b, &cur_args);
+            let TyKind::Adt(bd, bargs) = cx.ty.kind(b).clone() else {
+                break None;
             };
             if bd == d {
-                out.push(DefId(i as u32));
-                break;
+                break Some(bargs);
             }
-            base = cx.adt(bd).and_then(|x| x.base);
+            if depth > 64 {
+                break None;
+            }
+            (cur, cur_args) = (bd, bargs);
+        };
+        let Some(pattern) = pattern else {
+            continue;
+        };
+        // Each of `c`'s type parameters as the argument of `d` it stands for.
+        let mut solved: Vec<Option<TyId>> = vec![None; n];
+        for (p, a) in pattern.iter().zip(args) {
+            if let TyKind::Param(k) = *cx.ty.kind(*p) {
+                if let Some(s) = solved.get_mut(k as usize) {
+                    *s = Some(*a);
+                }
+            }
+        }
+        let Some(solved) = solved.into_iter().collect::<Option<Vec<TyId>>>() else {
+            continue;
+        };
+        let same = pattern.len() == args.len()
+            && pattern
+                .iter()
+                .zip(args)
+                .all(|(p, a)| cx.subst(*p, &solved) == *a);
+        if same {
+            out.push(cx.ty.intern(TyKind::Adt(c, solved)));
         }
     }
     out
@@ -419,55 +496,40 @@ impl Model {
     /// (docs/internals/design/source-generators.md §9, the offered modules). `extra` is mixed in
     /// (the generated function's signature).
     pub fn fingerprint(&self, roots: &[u32], extra: &str) -> String {
-        let mut order: Vec<u32> = vec![];
-        let mut index: FxHashMap<u32, u32> = FxHashMap::default();
-        let mut visit = |t: u32, order: &mut Vec<u32>| -> u32 {
-            *index.entry(t).or_insert_with(|| {
-                order.push(t);
-                order.len() as u32 - 1
-            })
-        };
+        let order = self.canonical_order(roots);
+        let index: FxHashMap<u32, u32> = (order.iter().enumerate())
+            .map(|(i, &t)| (t, i as u32))
+            .collect();
+        let n = |t: u32| index.get(&t).copied().unwrap_or(u32::MAX);
         let mut h = Fnv128::new();
         h.str(extra);
         for &r in roots {
-            let n = visit(r, &mut order);
-            h.u32(n);
+            h.u32(n(r));
         }
-        let mut next = 0;
-        while next < order.len() {
-            let Some(t) = self.types.get(order[next] as usize) else {
+        for &t in &order {
+            let Some(t) = self.types.get(t as usize) else {
                 h.str("?");
-                next += 1;
                 continue;
             };
-            next += 1;
             h.str(t.kind);
             h.str(&t.display);
             h.str(&t.qualified_name);
-            h.str(&t.spelling);
             h.str(&t.repr);
             h.str(&t.literal);
+            h.u32(u32::from(t.may_be_proxy));
             for (tag, list) in [("a", &t.args), ("u", &t.arms), ("s", &t.subclasses)] {
                 h.str(tag);
                 h.u32(list.len() as u32);
                 for &x in list {
-                    let n = visit(x, &mut order);
-                    h.u32(n);
+                    h.u32(n(x));
                 }
             }
             h.str("b");
-            match t.base {
-                Some(b) => {
-                    let n = visit(b, &mut order);
-                    h.u32(n + 1);
-                }
-                None => h.u32(0),
-            }
+            h.u32(t.base.map_or(0, |b| n(b).wrapping_add(1)));
             h.u32(t.fields.len() as u32);
             for f in &t.fields {
                 h.str(&f.name);
-                let n = visit(f.ty, &mut order);
-                h.u32(n);
+                h.u32(n(f.ty));
                 let flags = [
                     f.optional,
                     f.readonly,
@@ -477,13 +539,13 @@ impl Model {
                     f.getter,
                 ];
                 h.u32(flags.iter().fold(0, |acc, &b| acc << 1 | u32::from(b)));
+                h.u32(f.via.map_or(0, |v| n(v).wrapping_add(1)));
             }
             h.u32(t.methods.len() as u32);
             for m in &t.methods {
                 h.str(&m.name);
                 h.u32(m.params);
-                let n = visit(m.ret, &mut order);
-                h.u32(n);
+                h.u32(n(m.ret));
             }
             h.u32(t.members.len() as u32);
             for m in &t.members {
@@ -492,6 +554,40 @@ impl Model {
             }
         }
         format!("{:032x}", h.0)
+    }
+
+    /// The types `roots` reach, in the order a walk from them meets them (the roots first, then
+    /// each type's arguments, arms, subclasses, base, field types and method results): the same
+    /// in any model that holds them, so a position in it names a type across checks
+    /// ([`super::handles`]).
+    pub fn canonical_order(&self, roots: &[u32]) -> Vec<u32> {
+        let mut order: Vec<u32> = vec![];
+        let mut seen: rustc_hash::FxHashSet<u32> = rustc_hash::FxHashSet::default();
+        let mut visit = |t: u32, order: &mut Vec<u32>| {
+            if seen.insert(t) {
+                order.push(t);
+            }
+        };
+        for &r in roots {
+            visit(r, &mut order);
+        }
+        let mut next = 0;
+        while next < order.len() {
+            let Some(t) = self.types.get(order[next] as usize) else {
+                next += 1;
+                continue;
+            };
+            next += 1;
+            let refs = (t.args.iter().chain(&t.arms).chain(&t.subclasses))
+                .copied()
+                .chain(t.base)
+                .chain(t.fields.iter().flat_map(|f| [Some(f.ty), f.via]).flatten())
+                .chain(t.methods.iter().map(|m| m.ret));
+            for r in refs {
+                visit(r, &mut order);
+            }
+        }
+        order
     }
 }
 

@@ -18,6 +18,23 @@ use crate::hir::{DefId, PassMode, TyId, TyKind};
 use crate::resolve::TyEnv;
 
 pub(super) fn resolve_sigs(cx: &mut Ctx, items: &ItemDefs) {
+    resolve_def_sigs(cx, items);
+    let mut used = FxHashSet::default();
+    for m in 0..cx.modules.len() {
+        if cx.is_generated_module(m) {
+            continue;
+        }
+        let module = &cx.modules[m];
+        for item in &module.ast.items {
+            if let ast::ItemKind::Extend(e) = &item.kind {
+                extension(cx, m, e, &mut used);
+            }
+        }
+    }
+}
+
+/// The signatures of the definitions `items`.
+pub(super) fn resolve_def_sigs(cx: &mut Ctx, items: &ItemDefs) {
     let mut defs: Vec<DefId> = items.clone();
     defs.sort();
     for d in defs {
@@ -43,15 +60,6 @@ pub(super) fn resolve_sigs(cx: &mut Ctx, items: &ItemDefs) {
             DefInfo::Adt(_) => adt_methods(cx, d),
             DefInfo::Iface(_) => iface_methods(cx, d),
             _ => {}
-        }
-    }
-    let mut used = FxHashSet::default();
-    for m in 0..cx.modules.len() {
-        let module = &cx.modules[m];
-        for item in &module.ast.items {
-            if let ast::ItemKind::Extend(e) = &item.kind {
-                extension(cx, m, e, &mut used);
-            }
         }
     }
 }

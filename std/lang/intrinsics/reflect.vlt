@@ -28,3 +28,9 @@ export declare intrinsic function identity<T>(value: T): u64;
 
 /** Whether `value`, of a class or object type, is a typed `Proxy` (false for other types). */
 export declare intrinsic function isTypedProxy<T>(value: T): bool;
+
+/**
+ * A share of `value` as an `any`, boxed when it runs (a typed proxy as the proxy), without a
+ * conversion's effect on the checks of `T` (velt/reflect `dynamicOf`).
+ */
+export declare intrinsic function toAny<T>(value: T): any;

@@ -582,6 +582,10 @@ pub enum Intrinsic {
     /// holds an object, an array or a function; 0 for a value without one (a number, a string,
     /// a struct copied by value). A typed proxy's tag bit is cleared. Additive.
     Identity,
+    /// `(x: borrow T) -> any`: a share of `x` as an `any`, boxed at run time as `ToDyn` boxes it
+    /// (a typed proxy as the proxy), without the conversion's effect on the checks of `T`
+    /// (velt/reflect `dynamicOf`). Additive.
+    ToAny,
     /// `(x: borrow any) -> string`: what the value `x` holds is, from its descriptor (velt/reflect
     /// `typeOf`): `"<kind>|<repr>|<name>|<hooks>"`, a static string (`any_reflect.rs`). Additive.
     AnyReflectInfo,

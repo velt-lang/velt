@@ -12,5 +12,11 @@ export class Field {
   hasDefault: bool = false;
   /** An object literal's getter (`get k() { … }`): `type` is what it returns. */
   isGetter: bool = false;
+  /**
+   * A field the type's objects hold for an extension (`interface E extends T` with optional
+   * fields, whose objects are `T`'s): code reads it from the value seen as type `via` (`-1`:
+   * a field of the type itself).
+   */
+  via: i64 = -1;
   at: i64 = -1;
 }

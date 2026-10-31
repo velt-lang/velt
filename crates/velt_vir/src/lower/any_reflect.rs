@@ -10,7 +10,7 @@
 //! | `OP_COUNT` | | the number of entries, or `u64::MAX` when they cannot be listed |
 //! | `OP_NAME` | `*text` = the name of entry `index` | 0 |
 //! | `OP_VALUE` | `*value` = the value of entry `index` | 0 |
-//! | `OP_HOOK` | `*value` = what the class's `toJSON(*text)` returns (`undefined` without one) | 0 |
+//! | `OP_HOOK` | `*value` = what the class's `toJSON(*text)` returns (`undefined` without one); for a proxy, the value its traps give (`Proxy.__json`) | 0 |
 //!
 //! Entries: the fields of an object, class or struct in JavaScript's key order (ES private
 //! fields, symbol keys and functions left out; an object literal's getter is run for its
@@ -116,6 +116,23 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// `ToAny(x)` (`boxed_any`): a share of `x` boxed into a new `any`.
+    pub(super) fn boxed_any(&mut self, x: &hir::Expr) -> Operand {
+        let t = self.sub(x.ty);
+        let v = self.expr(x);
+        let any = self.cx.any_ty();
+        if self.dead() {
+            return super::unit();
+        }
+        let s = self.share_value(v, t);
+        let avt = self.cx.ty(any);
+        let out = self.temp(avt);
+        let zero = self.zero_value(avt);
+        self.assign(Place::local(out), Rvalue::Use(zero));
+        self.any_into(s, t, any, &Place::local(out));
+        self.owned_result(Some(out), any)
+    }
+
     /// `Identity(x)`: the address of the object, box or array `x` is, else 0.
     pub(super) fn identity_of(&mut self, x: &hir::Expr) -> Operand {
         let t = self.sub(x.ty);
@@ -198,6 +215,15 @@ impl FnLower<'_, '_> {
         self.reflect_entry(data, index, ty, &entries, None, Some(&vp));
         // Hook.
         self.switch_to(blocks[OP_HOOK as usize]);
+        if self.is_proxy(ty) {
+            // A proxy: the value its traps give in Node's order (`Proxy.__json`).
+            let r = self.proxy_receiver(data, ty);
+            let any = self.cx.any_ty();
+            if !self.proxy_invoke("__json", data, ty, vec![(r, any)], &vp) {
+                self.any_nothing_into(Nothing::Undefined, &vp);
+            }
+            return self.ret_u64(0);
+        }
         match self.hook(ty, Hook::ToJson) {
             Some(m) => {
                 let obj = self.any_value_place(data, ty);
@@ -270,7 +296,9 @@ impl FnLower<'_, '_> {
         let name = match kind {
             "null" | "undefined" => kind.to_string(),
             _ => match self.cx.type_name(ty) {
-                n if n.contains(['{', '}']) || kind == "object" => {
+                n if kind == "object"
+                    || (n.contains(['{', '}']) && matches!(kind, "struct" | "class")) =>
+                {
                     kind = "object";
                     "Object".to_string()
                 }
@@ -286,7 +314,8 @@ impl FnLower<'_, '_> {
             || self.cx.any_boxable(t)
             || self.union_like(t)
             || self.is_enum(t)
-            || matches!(self.cx.kind(t), TyKind::Shared(_))
+            || matches!(self.cx.kind(t), TyKind::Shared(_) | TyKind::Never)
+            || matches!(self.cx.kind(t), TyKind::Option(e, _) if matches!(self.cx.kind(e), TyKind::Never))
             || matches!(self.cx.kind(t), TyKind::Option(e, _) if self.is_enum(e) || matches!(self.cx.kind(e), TyKind::Shared(_)))
     }
 

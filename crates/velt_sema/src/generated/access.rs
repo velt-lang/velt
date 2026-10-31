@@ -20,10 +20,10 @@ use crate::hir::{self, AdtKind, DefId};
 /// The name of the constructor-free builder of generated code.
 pub const CONSTRUCT: &str = "__construct";
 
-/// Give every generated module the names of its declaring module's scope that it does not
-/// declare itself (after imports are bound, before any type is resolved).
-pub(crate) fn inherit_scopes(cx: &mut Ctx) {
-    let Some(gen) = cx.gen else {
+/// Give generated modules `ms` the names of their declaring module's scope that they do not
+/// declare themselves (after their own items are declared).
+pub(crate) fn inherit_scopes(cx: &mut Ctx, ms: &[usize]) {
+    let Some(gen) = cx.gen.clone() else {
         return;
     };
     for gm in &gen.modules {
@@ -31,6 +31,9 @@ pub(crate) fn inherit_scopes(cx: &mut Ctx) {
         let (Some(g), Some(d)) = (index(&gm.path), index(&gm.declaring)) else {
             continue;
         };
+        if !ms.contains(&g) {
+            continue;
+        }
         let decl = &cx.scopes[d];
         let items: Vec<_> = decl.items.iter().map(|(n, i)| (n.clone(), *i)).collect();
         let namespaces: Vec<_> = (decl.namespaces.iter())
@@ -62,7 +65,7 @@ impl Ctx<'_> {
     /// Whether code of `module` has the access of type `owner`: `module` is a generated module
     /// whose requests' models hold `owner`.
     pub(crate) fn generated_access(&self, module: usize, owner: DefId) -> bool {
-        let Some(gen) = self.gen else {
+        let Some(gen) = self.gen.as_ref() else {
             return false;
         };
         let path = &self.modules[module].path;

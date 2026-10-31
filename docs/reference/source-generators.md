@@ -75,7 +75,10 @@ export function show(req: InstanceRequest, out: Output): void {
   signature. `out.helper(code)` adds a top-level declaration, named with `out.fresh("name")`.
 - `out.instance(fn, [typeIds])` is the name of the function generated for another instance of a
   generated function of the same generator module; it is generated in the same run.
-- `out.typeName(id)` writes a type in generated code, also one that is not exported.
+- `out.typeName(id)` writes a type in generated code: any type of the model, also one that is
+  not exported, is declared inside a function or has no name at all (an intersection, an object
+  type with a symbol key). It is a handle the compiler resolves (`__type<…>`), not the type's
+  name; `instanceof` takes a class's.
 - `out.literal(s)` writes a string as a Velt string literal.
 - `out.error(message, at)` reports an error at a type's or a field's `at` (`-1`: at the call that
   needed the instance).
@@ -85,7 +88,11 @@ An optional field (`legs?: i32`) reads as `T | undefined`: the model gives `T` a
 `null`. The prelude's `Map<K, V>`, `Record<K, V>` and `Set<T>` are the kinds `map`, `record` and
 `set` (their `args` are the key and value types, or the element type), a `shared<T>` cell is
 `shared`, and a function with properties is a `function`. An object literal's getter
-(`get b() { … }`) is a field with `isGetter: true` whose `type` is what it returns. Compute names from `out` into variables before writing a line that uses them
+(`get b() { … }`) is a field with `isGetter: true` whose `type` is what it returns. When an
+interface with optional fields extends an object type and the program converts between the two,
+they share objects, and the base's model lists the extension's fields too, each with `via` (the
+extension's type id): read one as `(v as ${out.typeName(f.via)}).name`. A class or object type
+whose values may be a typed `Proxy` (the program uses `Proxy`) has `mayBeProxy: true`. Compute names from `out` into variables before writing a line that uses them
 (`const field = out.instance(…); out.line(…)`): one call cannot both modify `out` and read it in
 an argument.
 

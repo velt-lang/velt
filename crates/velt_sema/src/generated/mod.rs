@@ -18,7 +18,9 @@ pub(crate) mod access;
 pub mod arm;
 pub(crate) mod bind;
 pub(crate) mod demand;
+pub mod handles;
 pub mod model;
+pub(crate) mod phase;
 pub mod spell;
 
 use velt_common::{FileId, Span};
@@ -32,6 +34,11 @@ use crate::hir::{AdtKind, DefId};
 /// generated files.
 pub const QUALIFIED: &str = "__qualified";
 
+/// `__union<[<members>], …type arguments>` in generated code: a generic union at those type
+/// arguments, its members naming its type parameters `__T0`, `__T1`, … (written by the driver
+/// from [`spell`]: written out, `T | Mod<T>` at `T = unknown` would be `unknown`).
+pub const UNION: &str = "__union";
+
 /// What the driver generated so far: generated modules it added to the program
 /// (docs/internals/design/source-generators.md §7), and the instances in them.
 #[derive(Clone, Debug, Default)]
@@ -41,6 +48,14 @@ pub struct GenInput {
     /// The generated source files (their items are generated code: `__qualified` and
     /// `__construct` resolve there).
     pub files: Vec<FileId>,
+}
+
+impl GenInput {
+    pub fn extend(&mut self, other: GenInput) {
+        self.instances.extend(other.instances);
+        self.modules.extend(other.modules);
+        self.files.extend(other.files);
+    }
 }
 
 /// A generated module: never a std module, checked in the scope of the module declaring the
@@ -59,8 +74,8 @@ pub struct GenModule {
 }
 
 /// One generated instance: of the generated function `function` declared in module `module`,
-/// at the types the type aliases `type_args` name, whose body is the function item `body` of the
-/// generated module `body_module` (where the aliases are declared too).
+/// at the types the handles `type_args` name ([`handles`]), whose body is the function item
+/// `body` of the generated module `body_module`.
 #[derive(Clone, Debug)]
 pub struct GenInstance {
     pub module: String,
@@ -68,11 +83,84 @@ pub struct GenInstance {
     pub type_args: Vec<String>,
     pub body: String,
     pub body_module: String,
-    /// The [`model::Model::fingerprint`] of the request the code was generated for, with the
-    /// function's [`GenFunction::signature`]: an instance offered from an earlier build
-    /// (docs/internals/design/source-generators.md §9) is bound only while the types it was
-    /// generated for are still the same. Empty: not checked (generated in this build).
+    /// The key of the demanded instance the code was generated for ([`Request::fingerprint`]:
+    /// the [`model::Model::fingerprint`] of its types, with the function's
+    /// [`GenFunction::signature`]): its module is checked once that instance is demanded, so
+    /// code offered from an earlier build (docs/internals/design/source-generators.md §9) is
+    /// used only while the types it was generated for are still the same. Empty for an
+    /// instance a generator asked for itself (`Output.instance`), which is checked with the
+    /// module of the instance that asked.
     pub fingerprint: String,
+}
+
+/// What the driver generated for a [`Demand`] during a check: the generated modules, parsed,
+/// and what they hold.
+#[derive(Default)]
+pub struct GenBatch {
+    pub input: GenInput,
+    pub sources: Vec<crate::SourceModule>,
+}
+
+/// How the driver generates during a check: given the requests of the instances without code,
+/// it runs their generators and returns the code (`None` when it could not, with the errors
+/// reported on its side). Called on sema's thread.
+pub type GenerateFn<'a> = dyn Fn(&Demand) -> Option<GenBatch> + Sync + 'a;
+
+/// The most generated modules one check adds itself (`phase`); more start a check again.
+const GENERATED_SLOTS: usize = 64;
+
+/// The driver's generator during one check, and the modules it made, which outlive every
+/// `Ctx` of the check (sema may check again from scratch, with them, `crate::check_timed`).
+pub struct Generator<'a> {
+    pub run: &'a GenerateFn<'a>,
+    slots: Vec<std::sync::OnceLock<crate::SourceModule>>,
+    pub(crate) state: std::cell::RefCell<GenState>,
+}
+
+/// What a [`Generator`] added during the check.
+#[derive(Default)]
+pub(crate) struct GenState {
+    /// Slots filled, each with the index of its module's declaring module.
+    pub filled: Vec<usize>,
+    /// What the added modules hold.
+    pub input: GenInput,
+    /// The generator failed (its errors are the driver's), or made code a check cannot add to
+    /// itself (`restart`): the check stops and the driver checks again.
+    pub failed: bool,
+    pub restart: bool,
+}
+
+impl<'a> Generator<'a> {
+    pub fn new(run: &'a GenerateFn<'a>) -> Self {
+        Generator {
+            run,
+            slots: (0..GENERATED_SLOTS).map(|_| std::sync::OnceLock::new()).collect(),
+            state: Default::default(),
+        }
+    }
+
+    /// Keep module `m`, generated for module `declaring`, for the rest of the check: `None`
+    /// when no slot is left.
+    pub(crate) fn keep(&self, m: crate::SourceModule, declaring: usize) -> Option<&crate::SourceModule> {
+        let i = self.state.borrow().filled.len();
+        let slot = self.slots.get(i)?;
+        slot.set(m).ok()?;
+        self.state.borrow_mut().filled.push(declaring);
+        slot.get()
+    }
+
+    /// The modules kept so far, in order.
+    pub(crate) fn kept(&self) -> impl Iterator<Item = &crate::SourceModule> {
+        self.slots.iter().map_while(|s| s.get())
+    }
+}
+
+/// What a check that may use generated functions is given: the code generated so far, and the
+/// driver's generator when it generates during the check.
+#[derive(Clone, Copy)]
+pub struct GenArgs<'a> {
+    pub input: &'a GenInput,
+    pub generate: Option<&'a GenerateFn<'a>>,
 }
 
 /// What a check that found instances without generated code returns instead of a program.
@@ -123,13 +211,18 @@ impl GenFunction {
     }
 }
 
-/// What binding the instances to their generated definitions found ([`bind::bind`]).
+/// What binding the instances to their generated definitions found ([`phase::run`]).
 #[derive(Default)]
 pub(crate) struct Binding {
     /// The instances bound, once the bodies are checked.
     pub bound: bind::Bound,
+    /// The types handles in generated code name ([`handles`]).
+    pub handles: handles::Handles,
     /// Some instance offered from an earlier build was not bound: its types changed.
     pub stale: bool,
+    /// Top-level non-generic aliases by their type (module, name, without its nothing): how
+    /// generated code names a type it cannot write out ([`spell`]).
+    pub alias_homes: rustc_hash::FxHashMap<crate::hir::TyId, (usize, String, bool)>,
 }
 
 /// A request for the body of one instance of a generated function.
@@ -141,6 +234,9 @@ pub struct Request {
     pub at: Span,
     /// The type arguments, as ids into the model.
     pub type_args: Vec<u32>,
+    /// The instance's key ([`phase::keys`]): what the handles of the types its code names
+    /// start with, and how the next check finds it again.
+    pub fingerprint: String,
 }
 
 impl Ctx<'_> {
@@ -164,9 +260,14 @@ impl Ctx<'_> {
         })
     }
 
+    /// Is module `m` a generated module?
+    pub(crate) fn is_generated_module(&self, m: usize) -> bool {
+        (self.gen.as_ref()).is_some_and(|g| g.files.contains(&self.modules[m].file))
+    }
+
     /// Is `span` in a generated source file?
     pub(crate) fn in_generated_file(&self, span: Span) -> bool {
-        self.gen.is_some_and(|g| g.files.contains(&span.file))
+        (self.gen.as_ref()).is_some_and(|g| g.files.contains(&span.file))
     }
 }
 
@@ -204,46 +305,60 @@ pub(crate) fn instances(cx: &mut Ctx) -> Result<bind::Bound, Demand> {
     let bound = std::mem::take(&mut cx.gen_binding.bound);
     check_throws(cx, &bound);
     let found = demand::compute(cx);
-    let missing: Vec<demand::Instance> = (found.into_iter())
-        .filter(|(d, a, _)| !bound.contains_key(&(*d, a.clone())))
-        .collect();
-    if missing.is_empty() {
+    let is_missing = |(d, a, _): &demand::Instance| !bound.contains_key(&(*d, a.clone()));
+    // A check that runs no generators (sema's own API, its tests and tools) does not need
+    // std's generated code (`JSON.stringify`): it is only built by the driver, which runs them.
+    let std_decl = |cx: &Ctx, d: DefId| {
+        cx.fn_info(d).module < cx.modules.len() && cx.modules[cx.fn_info(d).module].is_std
+    };
+    let missing: Vec<&demand::Instance> = found.iter().filter(|i| is_missing(i)).collect();
+    if cx.gen.is_none() && cx.generate.is_none() && missing.iter().all(|(d, _, _)| std_decl(cx, *d)) {
         return Ok(bound);
     }
+    match demand_of(cx, &found, &bound) {
+        Some(d) => Err(d),
+        None => Ok(bound),
+    }
+}
+
+/// The requests for the instances of `found` that `bound` has no code for, with the model they
+/// read; `None` when there are none.
+pub(crate) fn demand_of(
+    cx: &mut Ctx,
+    found: &[demand::Instance],
+    bound: &bind::Bound,
+) -> Option<Demand> {
+    let is_missing = |(d, a, _): &demand::Instance| !bound.contains_key(&(*d, a.clone()));
+    if !found.iter().any(is_missing) {
+        return None;
+    }
+    // Every demanded instance's key (a key's rank counts the bound ones too), then a model of
+    // what the missing ones reach.
+    let keys = phase::keys(cx, &mut model::Builder::new(), found);
     let mut model = model::Builder::new();
     let (functions, index) = functions(cx);
     let mut requests = vec![];
-    for (g, targs, at) in missing {
-        let Some(&function) = index.get(&g) else {
+    let mut roots = vec![];
+    for (inst, (key, _, _)) in found.iter().zip(keys) {
+        let (g, targs, at) = inst;
+        let Some(&function) = index.get(g).filter(|_| is_missing(inst)) else {
             continue;
         };
-        let mut unnamed = None;
-        let mut type_args = vec![];
-        for t in &targs {
-            let id = model.add(cx, *t);
-            if model.model.types[id as usize].spelling.is_empty() {
-                unnamed = Some(*t);
-            }
-            type_args.push(id);
-        }
-        if let Some(t) = unnamed {
-            let tn = cx.display(t);
-            cx.error(velt_common::Diagnostic::error(
-                format!("generated code cannot name the type `{tn}` (a type declared inside a function?)"),
-                at,
-            ));
-            continue;
-        }
+        let type_args: Vec<u32> = targs.iter().map(|t| model.add(cx, *t)).collect();
+        roots.push((key.clone(), type_args.clone()));
         requests.push(Request {
             function,
-            at,
+            at: *at,
             type_args,
+            fingerprint: key,
         });
     }
-    Err(Demand {
+    let mut model = model.model;
+    handles::assign(&mut model, &roots);
+    Some(Demand {
         functions,
         requests,
-        model: model.model,
+        model,
         stale: cx.gen_binding.stale,
     })
 }
@@ -286,14 +401,70 @@ impl Ctx<'_> {
 }
 
 impl Ctx<'_> {
-    /// The class `__qualified<"<module path>", "<name>">` names in generated code (no type
-    /// arguments, no diagnostics): what `instanceof` tests and narrows to there.
+    /// `__union<[members], …args>` in generated code ([`UNION`]).
+    pub(crate) fn resolve_generated_union(
+        &mut self,
+        t: &velt_syntax::ast::TypeExpr,
+        args: &[velt_syntax::ast::TypeExpr],
+        env: &crate::resolve::TyEnv,
+    ) -> crate::hir::TyId {
+        use velt_syntax::ast::TypeExprKind;
+        let members = match args.first().map(|a| &a.kind) {
+            Some(TypeExprKind::Tuple(ms)) => ms.clone(),
+            _ => {
+                self.err(
+                    format!("`{UNION}` takes the members as a tuple type, then the type arguments"),
+                    t.span,
+                );
+                return self.ty.error;
+            }
+        };
+        let rest = &args[1..];
+        let names: Vec<String> = (0..rest.len())
+            .map(|i| format!("{}{i}", spell::UNION_PARAM))
+            .collect();
+        let mut inner = crate::resolve::TyEnv::new(env.module, &names);
+        inner.this_ty = env.this_ty;
+        let ms: Vec<crate::hir::TyId> = members
+            .iter()
+            .map(|m| self.resolve_type(m, &inner))
+            .collect();
+        let generic = self.union_of(&ms, false, t.span);
+        let targs: Vec<crate::hir::TyId> = rest.iter().map(|a| self.resolve_type(a, env)).collect();
+        self.subst(generic, &targs)
+    }
+
+    /// The class `__qualified<"<module path>", "<name>">` or a handle (`__type<…>`) names in
+    /// generated code (without its type arguments, no diagnostics): what `instanceof` tests and
+    /// narrows to there.
     pub(crate) fn qualified_class(&self, t: &velt_syntax::ast::TypeExpr) -> Option<DefId> {
         use velt_syntax::ast::{Lit, TypeExprKind};
         let TypeExprKind::Named { path, args } = &t.kind else {
             return None;
         };
-        if path.len() != 1 || path[0].name != QUALIFIED || !self.in_generated_file(t.span) {
+        if path.len() != 1 || !self.in_generated_file(t.span) {
+            return None;
+        }
+        if path[0].name == handles::TYPE {
+            let (Some(TypeExprKind::Literal(fp)), Some(TypeExprKind::Literal(i))) =
+                (args.first().map(|a| &a.kind), args.get(1).map(|a| &a.kind))
+            else {
+                return None;
+            };
+            let (Lit::Str(fp), Lit::Int { value, .. }) = (&fp.lit, &i.lit) else {
+                return None;
+            };
+            let ty = self.gen_binding.handles.get(fp, u32::try_from(*value).ok()?)?;
+            return match self.ty.kind(ty) {
+                crate::hir::TyKind::Adt(d, _)
+                    if self.adt(*d).is_some_and(|a| a.kind == AdtKind::Class) =>
+                {
+                    Some(*d)
+                }
+                _ => None,
+            };
+        }
+        if path[0].name != QUALIFIED {
             return None;
         }
         let text = |a: &velt_syntax::ast::TypeExpr| match &a.kind {

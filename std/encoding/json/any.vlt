@@ -1,0 +1,220 @@
+// velt/encoding/json (internal): `JSON.stringify` of a dynamic value (`any`, `unknown`, and an
+// interface value, written as the `any` it converts to), in Velt over velt/reflect: what the
+// value holds at run time, and its entries. Typed values are written by the code velt/encoding/
+// json/generate/write generates per type, which calls these for the dynamic parts.
+//
+// As in Node, `undefined`, a function and a symbol are left out as an object member and written
+// as `null` as an array element; `JSON.stringify` of one itself is a `TypeError` (Velt's
+// returns a string). An object, an array, a tuple or a `shared` cell seen again while it is
+// being written is Node's `TypeError: Converting circular structure to JSON`.
+
+import { StringBuilder } from "velt/text/string_builder";
+import { appendJsonNumber, appendJsonString, appendJsonUint } from "velt/encoding/json/append";
+import { JsonValue } from "velt/prelude/json/json";
+import {
+  beginVisit,
+  callToJSON,
+  endVisit,
+  entryCount,
+  entryName,
+  entryValue,
+  identity,
+  typeOf,
+  RuntimeType,
+} from "velt/reflect";
+
+/** Whether the dynamic value `v` has a JSON form: not `undefined`, a function or a symbol. */
+export function jsonPresent(v: any): bool {
+  const t = typeof v;
+  return t != "undefined" && t != "function" && t != "symbol";
+}
+
+/** `JSON.stringify` of a dynamic value itself: one without a JSON form is a `TypeError`. */
+export function checkJsonTop(v: any): void {
+  if (!jsonPresent(v)) {
+    panic(
+      "TypeError: `JSON.stringify` of `undefined`, a function or a symbol returns `undefined`, which is not supported through `any` yet (#924)",
+    );
+  }
+}
+
+function unsupported(): never {
+  panic("TypeError: `JSON.stringify` through `any` is not supported for this value yet (#924)");
+}
+
+function circular(): never {
+  panic("TypeError: Converting circular structure to JSON");
+}
+
+/**
+ * Appends the dynamic value `v`, whose key in its parent is `key` (what a `toJSON(key)` gets),
+ * to `w`: `null` for a value without a JSON form.
+ */
+export function writeJsonAny(w: StringBuilder, v: any, key: string): void {
+  if (!jsonPresent(v)) {
+    w.append("null");
+    return;
+  }
+  const t = typeOf(v);
+  const kind = t.kind;
+  if (kind == "null") {
+    w.append("null");
+  } else if (kind == "boolean") {
+    w.append((v as bool) ? "true" : "false");
+  } else if (kind == "number") {
+    writeNumber(w, v, t.repr);
+  } else if (kind == "string") {
+    appendJsonString(w, v as string);
+  } else if (kind == "proxy") {
+    writeJsonAny(w, callToJSON(v, key), key);
+  } else if (v instanceof JsonValue) {
+    w.append((v as JsonValue).stringify());
+  } else if (kind == "array" || kind == "tuple") {
+    enter(v);
+    writeElements(w, v);
+    endVisit();
+  } else if (kind == "shared") {
+    enter(v);
+    writeJsonAny(w, entryValue(v, 0), key);
+    endVisit();
+  } else if (kind == "class" && t.hasHook("toJSON")) {
+    writeHooked(w, v, t, key);
+  } else if (kind == "object" || kind == "class" || kind == "struct" || kind == "map") {
+    enter(v);
+    writeMembers(w, v, null);
+    endVisit();
+  } else if (kind == "record") {
+    enter(v);
+    writeMembers(w, v, recordOrder(v));
+    endVisit();
+  } else {
+    unsupported();
+  }
+}
+
+/** Starts writing `v`, which is a cycle when it is being written already. */
+function enter(v: any): void {
+  if (!beginVisit(identity(v))) {
+    circular();
+  }
+}
+
+/** A number as its type writes it: an integer exactly, a float as JavaScript does. */
+function writeNumber(w: StringBuilder, v: any, repr: string): void {
+  if (repr == "f64" || repr == "f32") {
+    appendJsonNumber(w, v as f64);
+  } else if (repr.startsWith("u")) {
+    appendJsonUint(w, v as u64);
+  } else {
+    w.appendInt(v as i64);
+  }
+}
+
+/** What a class instance's `toJSON(key)` returns, written; its fields when that is itself. */
+function writeHooked(w: StringBuilder, v: any, t: RuntimeType, key: string): void {
+  const r = callToJSON(v, key);
+  const rt = typeOf(r);
+  if (rt.kind == t.kind && rt.name == t.name) {
+    // `toJSON() { return this; }`: the fields of the result, as JavaScript writes them.
+    enter(r);
+    writeMembers(w, r, null);
+    endVisit();
+    return;
+  }
+  writeJsonAny(w, r, key);
+}
+
+function writeElements(w: StringBuilder, v: any): void {
+  const n = entryCount(v);
+  if (n < 0) {
+    unsupported();
+  }
+  w.append("[");
+  for (let i: i64 = 0; i < n; i++) {
+    if (i > 0) {
+      w.append(",");
+    }
+    writeJsonAny(w, entryValue(v, i), `${i}`);
+  }
+  w.append("]");
+}
+
+/** The members of an object, a class instance, a struct, a `Map` or a record, in `order`. */
+function writeMembers(w: StringBuilder, v: any, order: i64[] | null): void {
+  const n = entryCount(v);
+  if (n < 0) {
+    unsupported();
+  }
+  w.append("{");
+  let first = true;
+  const count = order == null ? n : (order.length as i64);
+  for (let k: i64 = 0; k < count; k++) {
+    const i = order == null ? k : order[k];
+    const x = entryValue(v, i);
+    if (!jsonPresent(x)) {
+      continue;
+    }
+    if (!first) {
+      w.append(",");
+    }
+    first = false;
+    const name = entryName(v, i);
+    appendJsonString(w, name);
+    w.append(":");
+    writeJsonAny(w, x, name);
+  }
+  w.append("}");
+}
+
+/** The array index `s` names (canonical decimal, 0 to 2^32 - 2), or -1. */
+function arrayIndex(s: string): i64 {
+  const n = s.length as i64;
+  if (n == 0 || n > 10 || (n > 1 && s.charCodeAt(0) == 48)) {
+    return -1;
+  }
+  let v: i64 = 0;
+  for (let i: i64 = 0; i < n; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 48 || c > 57) {
+      return -1;
+    }
+    v = v * 10 + (c - 48);
+  }
+  return v <= 4294967294 ? v : -1;
+}
+
+/**
+ * The entry positions of the record `v` in JavaScript's key order (array indices first,
+ * ascending, then the other keys in insertion order), or null for insertion order.
+ */
+function recordOrder(v: any): i64[] | null {
+  const n = entryCount(v);
+  const idx: i64[] = [];
+  const rank: i64[] = [];
+  const rest: i64[] = [];
+  for (let i: i64 = 0; i < n; i++) {
+    const r = arrayIndex(entryName(v, i));
+    if (r >= 0) {
+      idx.push(i);
+      rank.push(r);
+    } else {
+      rest.push(i);
+    }
+  }
+  if (idx.length == 0) {
+    return null;
+  }
+  const at: i64[] = [];
+  for (let k: i64 = 0; k < (idx.length as i64); k++) {
+    at.push(k);
+  }
+  at.sort((a, b) => rank[a] - rank[b]);
+  const out: i64[] = [];
+  for (const k of at) {
+    out.push(idx[k]);
+  }
+  for (const i of rest) {
+    out.push(i);
+  }
+  return out;
+}

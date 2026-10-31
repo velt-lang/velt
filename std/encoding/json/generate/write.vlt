@@ -1,225 +1,75 @@
-// velt/encoding/json (internal): the generator of `writeJson<T>` (generated.vlt), run at
-// compile time (docs/internals/design/source-generators.md): one function per type that
-// appends what `JSON.stringify` writes for a value of that type, with each object's constant
-// text (`{"id":`, `,"name":`) appended as one literal. It uses nothing a package could not:
-// the model of `velt/generate`, and `StringBuilder` and the `appendJson*` functions in the code
-// it writes.
+// velt/encoding/json (internal): the generator of `writeJson<T>` and `writeJsonKeyed<T>`
+// (generated.vlt), run at compile time (docs/internals/design/source-generators.md): one
+// function per type that appends what `JSON.stringify` writes for a value of that type, with
+// each object's constant text (`{"id":`, `,"name":`) appended as one literal. It uses nothing a
+// package could not: the model of `velt/generate`, `__arm` for a union's members, and in the
+// code it writes `StringBuilder`, the `appendJson*` functions, velt/reflect and the writer of
+// dynamic values (any.vlt).
+//
+// What it writes, as Node does: numbers, booleans, strings, literal types, enums (numeric and
+// string), arrays, tuples, options, objects, structs and classes (JavaScript's key order, array
+// indexes first; optional and `T | undefined` fields left out when empty, a present `null` of
+// `a?: T | null` written; ES private fields and functions left out, `private` fields written),
+// a class value as its dynamic class (an `instanceof` chain, most derived first) and through
+// its `toJSON(key)`, `Map<string, V>` and `Record<K, V>` as objects, `JsonValue` as its text,
+// a `shared<T>` as the `T` it holds, a union as its active member, a function as `null` (an
+// array element; a member holding one is left out), and dynamic values (`any`, interface
+// values, typed proxies) through any.vlt. A recursive object type that meets itself is an
+// error, as in Node.
 
-import { InstanceRequest, Model, Output, Type, Field } from "velt/generate";
+import { InstanceRequest, Output } from "velt/generate";
+import {
+  className,
+  dynamicArms,
+  isDynamic,
+  isRecursive,
+  toJsonMethod,
+  writable,
+} from "velt/encoding/json/generate/facts";
+import {
+  writeEntries,
+  writeFields,
+  writerOf,
+  writeValue,
+} from "velt/encoding/json/generate/values";
 
-/** `s` as JSON string text: quoted, with `"`, `\` and control characters escaped. */
-function jsonQuote(s: string): string {
-  let out = "\"";
-  const n = s.length as i64;
-  for (let i: i64 = 0; i < n; i++) {
-    const c = s.charCodeAt(i);
-    if (c == 34) {
-      out += "\\\"";
-    } else if (c == 92) {
-      out += "\\\\";
-    } else if (c < 32) {
-      out += "\\u" + c.toString(16).padStart(4, "0");
-    } else {
-      out += s.charAt(i);
-    }
-  }
-  return out + "\"";
-}
-
-/** Is `name` an array index (`"0"`, `"404"`, not `"01"`)? JavaScript writes those first. */
-function isIndex(name: string): bool {
-  const n = name.length as i64;
-  if (n == 0 || n > 10 || (n > 1 && name.charCodeAt(0) == 48)) {
-    return false;
-  }
-  for (let i: i64 = 0; i < n; i++) {
-    const c = name.charCodeAt(i);
-    if (c < 48 || c > 57) {
-      return false;
-    }
-  }
-  return Number(name) < 4294967295;
-}
-
-/** The fields of `t` in the order JavaScript writes an object's keys: indexes, ascending, first. */
-function keyOrder(t: Type): Field[] {
-  const idx: Field[] = [];
-  const rest: Field[] = [];
-  for (const f of t.fields) {
-    if (isIndex(f.name)) {
-      idx.push(f);
-    } else {
-      rest.push(f);
-    }
-  }
-  idx.sort((a, b) => Number(a.name) - Number(b.name));
-  for (const f of rest) {
-    idx.push(f);
-  }
-  return idx;
-}
-
-/** Is `name` written as `v.name` (an identifier), not `v["name"]`? */
-function isIdentifier(name: string): bool {
-  const n = name.length as i64;
-  if (n == 0) {
-    return false;
-  }
-  for (let i: i64 = 0; i < n; i++) {
-    const c = name.charCodeAt(i);
-    const letter = (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95 || c == 36;
-    if (!letter && !(i > 0 && c >= 48 && c <= 57)) {
-      return false;
-    }
-  }
-  return true;
-}
-
-/** The expression reading field `name` of `v`. */
-function member(out: Output, v: string, name: string): string {
-  return isIdentifier(name) ? `${v}.${name}` : `${v}[${out.literal(name)}]`;
-}
-
-/** Is the field left out of every object: an ES private field, a symbol key or a function? */
-function hidden(model: Model, f: Field): bool {
-  if (f.isEsPrivate || f.name.startsWith("[")) {
-    return true;
-  }
-  let t = model.type(f.type);
-  if (t.kind == "option") {
-    t = model.type(t.args[0]);
-  }
-  return t.kind == "function";
-}
-
-/** The `toJSON` method of `t`, if it has one a generator can call. */
-function toJsonMethod(t: Type): i64 {
-  for (let i: i64 = 0; i < (t.methods.length as i64); i++) {
-    if (t.methods[i].name == "toJSON") {
-      return i;
-    }
-  }
-  return -1;
-}
-
-/** Writes the code that appends `v`, of model type `id`, to the builder `w`. */
-function writeValue(out: Output, model: Model, id: i64, v: string): void {
-  const t = model.type(id);
-  if (t.kind == "number") {
-    if (t.repr == "f64" || t.repr == "f32") {
-      out.line(`appendJsonNumber(w, ${v} as f64);`);
-    } else if (t.repr.startsWith("u")) {
-      out.line(`appendJsonUint(w, ${v} as u64);`);
-    } else {
-      out.line(`w.appendInt(${v} as i64);`);
-    }
-  } else if (t.kind == "string") {
-    out.line(`appendJsonString(w, ${v});`);
-  } else if (t.kind == "boolean") {
-    out.line(`if (${v}) { w.append("true"); } else { w.append("false"); }`);
-  } else if (t.kind == "void" || t.kind == "never") {
-    out.line(`w.append("null");`);
-  } else if (t.kind == "literal") {
-    // A string literal is JSON text already; numbers and booleans are written as they read.
-    const lit = out.literal(t.literal);
-    out.line(`w.append(${lit});`);
-  } else {
-    const name = out.instance("writeJson", [id]);
-    out.line(`${name}(w, ${v});`);
-  }
-}
-
-/** The body for an enum: its value, a number or a string. */
-function writeEnum(out: Output, t: Type, v: string): void {
-  const strings = t.members.length > 0 && t.members[0].value.startsWith("\"");
-  if (!strings) {
-    out.line(`w.appendInt(${v} as i64);`);
-    return;
-  }
-  out.line(`appendJsonString(w, ${v} as string);`);
-}
-
-/** The body for an object, a struct or a class written with its fields. */
-function writeFields(out: Output, model: Model, t: Type, v: string): void {
-  // Constant text is gathered and appended as one literal before each value; after a field
-  // that may be left out, a flag says whether a `,` is needed.
-  let pending = "{";
-  let maybe = false;
-  let wrote = false;
-  for (const f of keyOrder(t)) {
-    if (hidden(model, f)) {
-      continue;
-    }
-    const ft = model.type(f.type);
-    const key = jsonQuote(f.name) + ":";
-    // `x?: T` and `x: T | undefined` are left out when absent, as JavaScript leaves out an
-    // absent or `undefined` property.
-    const omit = f.optional || (ft.kind == "option" && ft.literal == "undefined");
-    const read = member(out, v, f.name);
-    if (omit) {
-      if (pending.length > 0) {
-        const lit = out.literal(pending);
-        out.line(`w.append(${lit});`);
-        pending = "";
-      }
-      if (!maybe) {
-        out.line(`let sep = ${wrote ? "true" : "false"};`);
-        maybe = true;
-      }
-      const local = out.fresh("f");
-      const k = out.literal(key);
-      out.line(`const ${local} = ${read};`);
-      out.line(`if (${local} != null) {`);
-      out.line(`if (sep) { w.append(","); }`);
-      out.line(`sep = true;`);
-      out.line(`w.append(${k});`);
-      writeValue(out, model, ft.kind == "option" ? ft.args[0] : f.type, local);
-      out.line(`}`);
-      continue;
-    }
-    if (maybe) {
-      const k = out.literal(key);
-      out.line(`if (sep) { w.append(","); }`);
-      out.line(`sep = true;`);
-      out.line(`w.append(${k});`);
-    } else {
-      const lit = out.literal(pending + (wrote ? "," : "") + key);
-      out.line(`w.append(${lit});`);
-    }
-    pending = "";
-    wrote = true;
-    writeValue(out, model, f.type, read);
-  }
-  const end = out.literal(pending + "}");
-  out.line(`w.append(${end});`);
-}
-
-/** The generator of `writeJson<T>(w: StringBuilder, value: T)`. */
-export function writeJson(req: InstanceRequest, out: Output): void {
+/** The body of `writeJson` (`keyed`: of `writeJsonKeyed`, whose third parameter is the key). */
+function body(req: InstanceRequest, out: Output, keyed: bool): void {
   const model = req.model;
   const id = req.args[0];
   const t = model.type(id);
   const v = req.params[1];
+  const key = keyed ? req.params[2] : `""`;
   if (
     t.kind == "number" ||
     t.kind == "string" ||
     t.kind == "boolean" ||
     t.kind == "literal" ||
     t.kind == "void" ||
-    t.kind == "never"
+    t.kind == "never" ||
+    t.kind == "function" ||
+    t.kind == "enum" ||
+    t.kind == "interface" ||
+    isDynamic(t)
   ) {
-    writeValue(out, model, id, v);
-  } else if (t.kind == "enum") {
-    writeEnum(out, t, v);
+    writeValue(out, model, id, v, key);
   } else if (t.kind == "option") {
     out.line(`if (${v} == null) { w.append("null"); return; }`);
-    writeValue(out, model, t.args[0], v);
+    writeValue(out, model, t.args[0], v, key);
+  } else if (t.kind == "shared") {
+    // Read in place, like the `T` it holds.
+    writeValue(out, model, t.args[0], v, key);
   } else if (t.kind == "array") {
+    const et = model.type(t.args[0]);
     out.line(`w.append("[");`);
     out.line(`const n = ${v}.length;`);
     out.line(`for (let i = 0; i < n; i++) {`);
     out.line(`if (i > 0) { w.append(","); }`);
-    writeValue(out, model, t.args[0], `${v}[i]`);
+    if (et.kind == "function") {
+      out.line(`w.append("null");`);
+    } else {
+      writeValue(out, model, t.args[0], `${v}[i]`, "`${i}`");
+    }
     out.line(`}`);
     out.line(`w.append("]");`);
   } else if (t.kind == "tuple") {
@@ -228,31 +78,96 @@ export function writeJson(req: InstanceRequest, out: Output): void {
       if (i > 0) {
         out.line(`w.append(",");`);
       }
-      writeValue(out, model, t.args[i], `${v}[${i}]`);
+      writeValue(out, model, t.args[i], `${v}[${i}]`, out.literal(`${i}`));
     }
     out.line(`w.append("]");`);
-  } else if (t.kind == "object" || t.kind == "struct" || t.kind == "class") {
+  } else if (t.kind == "union") {
+    for (let i: i64 = 0; i < (t.arms.length as i64); i++) {
+      out.line(`if (__arm(${v}, ${i})) {`);
+      writeValue(out, model, t.arms[i], v, key);
+      out.line(`return;`);
+      out.line(`}`);
+    }
+  } else if (t.kind == "map") {
+    writeEntries(out, model, model.type(t.args[0]), t.args[1], v);
+  } else if (t.kind == "record") {
+    writeEntries(out, model, model.type(t.args[0]), t.args[1], `Object.entries(${v})`);
+  } else if (t.kind == "opaque" && t.qualifiedName == "std/prelude/json/json::JsonValue") {
+    out.line(`appendJsonValue(w, ${v});`);
+  } else if (
+    t.kind == "object" ||
+    t.kind == "struct" ||
+    t.kind == "class" ||
+    t.kind == "date" ||
+    (t.kind == "opaque" && toJsonMethod(t) >= 0)
+  ) {
+    // A typed proxy is written as the `any` it converts to, where one may stand for the type.
+    if (t.mayBeProxy) {
+      out.line(`if (isProxy(${v})) { writeJsonAny(w, dynamicOf(${v}), ${key}); return; }`);
+    }
     // A class value is written as its dynamic class, most derived first.
     for (let i = (t.subclasses.length as i64) - 1; i >= 0; i--) {
       const s = model.type(t.subclasses[i]);
-      const name = out.instance("writeJson", [s.id]);
-      out.line(`if (${v} instanceof ${s.spelling}) { ${name}(w, ${v}); return; }`);
+      if (!writable(model, s.id, [])) {
+        continue;
+      }
+      const [name, sk] = writerOf(out, model, s.id);
+      const call = sk ? `${name}(w, ${v}, ${key})` : `${name}(w, ${v})`;
+      out.line(`if (${v} instanceof ${className(s)}) { ${call}; return; }`);
     }
     const m = toJsonMethod(t);
     if (m >= 0) {
       const ret = t.methods[m].ret;
-      const arg = t.methods[m].params > 0 ? `""` : "";
+      const arg = t.methods[m].params > 0 ? key : "";
+      out.line(`const j = ${v}.toJSON(${arg});`);
       if (ret == id) {
-        out.line(`const j = ${v}.toJSON(${arg});`);
+        // `toJSON() { return this; }`: JavaScript writes the fields of the result.
         writeFields(out, model, t, "j");
       } else {
-        out.line(`const j = ${v}.toJSON(${arg});`);
-        writeValue(out, model, ret, "j");
+        writeValue(out, model, ret, "j", key);
       }
       return;
     }
+    const recursive = isRecursive(model, t);
+    if (recursive) {
+      out.line(`if (!beginVisit(identity(${v}))) { jsonCircular(); }`);
+    }
     writeFields(out, model, t, v);
+    if (recursive) {
+      out.line(`endVisit();`);
+    }
   } else {
-    out.error(`writeJson cannot write a ${t.kind} (\`${t.display}\`) yet`, t.at);
+    // No JSON form: sema reports the call that needs it (the code is never run).
+    const msg = out.literal(`JSON.stringify of \`${t.display}\``);
+    out.line(`panic(${msg});`);
   }
+}
+
+/**
+ * The generator of `writeJsonTop<T>(w: StringBuilder, value: T)`, what `JSON.stringify(value)`
+ * calls: `writeJson`, except that a dynamic value without a JSON form (also a union's member) is
+ * a `TypeError` there, where Node returns `undefined` (an array element is `null`).
+ */
+export function writeJsonTop(req: InstanceRequest, out: Output): void {
+  const model = req.model;
+  const id = req.args[0];
+  const t = model.type(id);
+  const v = req.params[1];
+  if (isDynamic(t)) {
+    out.line(`checkJsonTop(${v});`);
+  }
+  for (const i of dynamicArms(model, t)) {
+    out.line(`if (__arm(${v}, ${i})) { checkJsonTop(${v}); }`);
+  }
+  writeValue(out, model, id, v, `""`);
+}
+
+/** The generator of `writeJson<T>(w: StringBuilder, value: T)`. */
+export function writeJson(req: InstanceRequest, out: Output): void {
+  body(req, out, false);
+}
+
+/** The generator of `writeJsonKeyed<T>(w: StringBuilder, value: T, key: string)`. */
+export function writeJsonKeyed(req: InstanceRequest, out: Output): void {
+  body(req, out, true);
 }

@@ -13,8 +13,7 @@
 //! - Drop elaboration: a droppable local whose ownership state changes inside a conditional region
 //!   (relative to its declaration) gets a Bool drop flag (flags.rs); all others are tracked
 //!   statically during lowering.
-//! - Async functions (M3) become poll/drop state machines (async_fn/); JSON glue (M4) lives in
-//!   json/.
+//! - Async functions (M3) become poll/drop state machines (async_fn/); JSON glue lives in json/.
 //! - Source locations (srcloc.rs): with a source map every statement records the location of
 //!   the HIR expression/statement being lowered, and panics name their location
 //!   (track_caller.rs for standard-library helpers such as `unwrap`).
@@ -505,6 +504,9 @@ struct Cx<'h> {
     json_key_memo: Option<(bool, FxHashMap<TyId, bool>)>,
     /// One type per anonymous object shape (types.rs `canon`).
     anon: types::AnonShapes,
+    /// `hir::Program::generated` by the canonical type arguments work items carry (`canon`),
+    /// made on first use.
+    generated_canon: Option<FxHashMap<(DefId, Vec<TyId>), DefId>>,
     /// The function whose instance is being built (for `nothing_clashes`).
     cur_def: Option<DefId>,
     /// The read mode of the function being built (`Work::Checked`, `Work::Read`).

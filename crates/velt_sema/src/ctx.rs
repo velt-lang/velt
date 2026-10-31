@@ -43,10 +43,16 @@ pub(crate) struct ModuleScope {
 pub(crate) type ClassesBelow = std::rc::Rc<[(DefId, DefId)]>;
 
 pub(crate) struct Ctx<'m> {
-    pub modules: &'m [SourceModule],
+    /// The program's modules, then the generated modules added during the check
+    /// ([`Ctx::add_module`]).
+    pub modules: Vec<&'m SourceModule>,
     pub root: usize,
-    /// The instances of generated functions the driver generated so far (`crate::generated`).
-    pub gen: Option<&'m crate::generated::GenInput>,
+    /// The instances of generated functions the driver generated so far (`crate::generated`),
+    /// with those generated during this check.
+    pub gen: Option<std::rc::Rc<crate::generated::GenInput>>,
+    /// Asked for the code of instances that have none (`generated::phase`), when the driver
+    /// generates during the check.
+    pub generate: Option<&'m crate::generated::Generator<'m>>,
     /// What binding them to their generated definitions found (`crate::generated::bind`).
     pub gen_binding: crate::generated::Binding,
     pub ty: Types,
@@ -194,10 +200,6 @@ pub(crate) struct Ctx<'m> {
     pub generic_recursive: FxHashMap<u32, bool>,
     pub recursive_union_insts: FxHashMap<(u32, Vec<TyId>), TyId>,
     pub alias_names: FxHashMap<TyId, String>, // structural type aliases' names, for messages
-    /// Top-level, non-generic aliases of object types, by the type: their module and name, so
-    /// generated code can name a type it cannot write out (a function with properties, an
-    /// object literal type with accessors: `generated::spell`).
-    pub alias_homes: FxHashMap<TyId, (usize, String)>,
     /// (class, method key) of every `override` of a generic method (no vtable slot).
     pub generic_overrides: Vec<(DefId, String)>,
     /// The throwing setters a getter-only override gets (`collect::classes`): a write through
@@ -430,9 +432,10 @@ pub(crate) struct Ctx<'m> {
 impl<'m> Ctx<'m> {
     pub fn new(modules: &'m [SourceModule], root: usize) -> Self {
         Ctx {
-            modules,
+            modules: modules.iter().collect(),
             root,
             gen: None,
+            generate: None,
             gen_binding: Default::default(),
             export_memo: Default::default(),
             import_targets: crate::collect::exports::import_targets(modules),
@@ -514,7 +517,6 @@ impl<'m> Ctx<'m> {
             generic_recursive: FxHashMap::default(),
             recursive_union_insts: FxHashMap::default(),
             alias_names: FxHashMap::default(),
-            alias_homes: FxHashMap::default(),
             generic_overrides: vec![],
             getter_only_setters: FxHashSet::default(),
             primitive_statics: None,
@@ -637,6 +639,22 @@ impl<'m> Ctx<'m> {
         self.defs[id.0 as usize] = None;
         self.info[id.0 as usize] = info;
         self.def_spans[id.0 as usize] = span;
+    }
+
+    /// Add module `m`, a generated module made during the check (`generated::phase`), with the
+    /// import targets of the module it was generated for (`declaring`): its index.
+    pub(crate) fn add_module(&mut self, m: &'m SourceModule, declaring: usize) -> usize {
+        let i = self.modules.len();
+        self.modules.push(m);
+        self.scopes.push(ModuleScope {
+            is_std: m.is_std,
+            is_library: m.is_std || m.is_dependency,
+            ..Default::default()
+        });
+        let targets = self.import_targets[declaring].clone();
+        self.import_targets.push(targets);
+        self.lazy.add_module();
+        i
     }
 
     pub fn alloc_def(&mut self, span: Span, info: DefInfo<'m>) -> DefId {

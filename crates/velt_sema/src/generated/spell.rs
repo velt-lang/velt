@@ -7,13 +7,11 @@ use crate::ctx::Ctx;
 use crate::defs::DefInfo;
 use crate::hir::{AdtKind, FloatTy, IntTy, LitValue, Nothing, TyId, TyKind};
 
-/// `t` as generated code writes it; `None` for a type it cannot name (a closure's own type, a
-/// type parameter, a local class).
-pub(crate) fn spell(cx: &mut Ctx, t: TyId) -> Option<String> {
-    spell_depth(cx, t, 0, false)
-}
-
 /// The placeholder [`spell_template`] writes for type parameter `i`.
+/// How the members of a generic union in `__union<[members], …>` name its type parameter `i`
+/// (`__T0`).
+pub const UNION_PARAM: &str = "__T";
+
 pub fn param_placeholder(i: u32) -> String {
     format!("@@T{i}@@")
 }
@@ -129,6 +127,12 @@ fn spell_depth(cx: &mut Ctx, t: TyId, depth: u32, params: bool) -> Option<String
             )
         }
         TyKind::Adt(d, args) => match &cx.info[d.0 as usize] {
+            // An object type a top-level alias declared: by the alias (it may name itself).
+            DefInfo::Adt(a)
+                if a.kind == AdtKind::Anon && cx.gen_binding.alias_homes.contains_key(&t) =>
+            {
+                alias_spelling(cx, t)?
+            }
             DefInfo::Adt(a) if a.kind == AdtKind::Anon => {
                 let fields: Vec<(String, TyId, bool, bool)> = (a.fields.iter())
                     .map(|f| (f.name.clone(), f.declared, f.optional, f.readonly))
@@ -138,7 +142,9 @@ fn spell_depth(cx: &mut Ctx, t: TyId, depth: u32, params: bool) -> Option<String
                     let ty = cx.subst(declared, &args);
                     // A function with properties: a type literal would be another type; the
                     // alias that declared it names it.
-                    if name.starts_with('#') {
+                    if name.starts_with('#')
+                        || name.starts_with(crate::property_order::SYMBOL_KEY_PREFIX)
+                    {
                         return alias_spelling(cx, t);
                     }
                     let opt = if optional { "?" } else { "" };
@@ -158,6 +164,28 @@ fn spell_depth(cx: &mut Ctx, t: TyId, depth: u32, params: bool) -> Option<String
                     Some(s) => s,
                     None => alias_spelling(cx, t)?,
                 }
+            }
+            // A union a top-level alias declared: by the alias (it may name itself).
+            DefInfo::Enum(e) if e.is_union && cx.gen_binding.alias_homes.contains_key(&t) => {
+                alias_spelling(cx, t)?
+            }
+            // A generic union at its type arguments (`T | Mod<T>` at `T = unknown`, which
+            // written out would be `unknown`): `__union<[members], …arguments>`.
+            DefInfo::Enum(e) if e.is_union && !args.is_empty() => {
+                let payloads: Option<Vec<TyId>> = (e.variants.iter())
+                    .map(|v| v.payload.first().copied())
+                    .collect();
+                let mut arms = vec![];
+                for p in payloads? {
+                    let s = spell_depth(cx, p, d1, true)?;
+                    let mut s = s;
+                    for i in 0..args.len() {
+                        s = s.replace(&param_placeholder(i as u32), &format!("{UNION_PARAM}{i}"));
+                    }
+                    arms.push(s);
+                }
+                let a = all(cx, &args, depth, params)?;
+                format!("{}<[{}], {}>", super::UNION, arms.join(", "), a.join(", "))
             }
             DefInfo::Enum(e) if e.is_union => {
                 let payloads: Option<Vec<TyId>> = e
@@ -199,7 +227,11 @@ fn spell_depth(cx: &mut Ctx, t: TyId, depth: u32, params: bool) -> Option<String
 
 /// `__qualified<"<module>", "<alias>">` for an object type a top-level alias declared.
 fn alias_spelling(cx: &mut Ctx, t: TyId) -> Option<String> {
-    let (m, name) = cx.alias_homes.get(&t)?.clone();
+    let (m, name, non_null) = cx.gen_binding.alias_homes.get(&t)?.clone();
     let path = cx.modules[m].path.clone();
-    qualified(cx, &format!("{path}::{name}"), &[])
+    let q = qualified(cx, &format!("{path}::{name}"), &[])?;
+    Some(match non_null {
+        true => format!("NonNullable<{q}>"),
+        false => q,
+    })
 }

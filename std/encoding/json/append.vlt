@@ -7,6 +7,7 @@
 
 import { StringBuilder } from "velt/text/string_builder";
 import { writeF64, writeString } from "velt/encoding/json/writer";
+import { JsonValue } from "velt/prelude/json/json";
 
 declare function velt_rt_strbuf_push_u64(out: string, v: u64);
 
@@ -23,4 +24,9 @@ export function appendJsonNumber(out: StringBuilder, x: f64): void {
 /** Appends the decimal digits of an unsigned integer (every `u64`, unlike an `f64`). */
 export function appendJsonUint(out: StringBuilder, n: u64): void {
   velt_rt_strbuf_push_u64(out.buf, n);
+}
+
+/** Appends the JSON text of `v` (what `v.stringify()` returns), without making a string of it. */
+export function appendJsonValue(out: StringBuilder, v: JsonValue): void {
+  v.__writeJson(out.buf);
 }

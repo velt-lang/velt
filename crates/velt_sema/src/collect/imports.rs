@@ -21,7 +21,7 @@ use crate::type_meanings::{type_key, type_only_key};
 
 /// Resolve every import and export list of module `m`.
 pub(super) fn resolve_imports(cx: &mut Ctx, m: usize) {
-    let modules = cx.modules;
+    let modules = cx.modules.clone();
     let mut process_imported = false;
     for item in &modules[m].ast.items {
         let ast::ItemKind::Import(imp) = &item.kind else {
@@ -232,7 +232,7 @@ fn bind_namespace(cx: &mut Ctx, m: usize, t: usize, ns: &ast::Ident) {
 /// A module containing JSX sees its runtime's exports as `JSX.x` (`JSX.Element`, …), as if it
 /// imported `* as JSX` from it; a name `JSX` the module defines or imports itself wins.
 pub(super) fn bind_jsx_runtime(cx: &mut Ctx, m: usize) {
-    let modules = cx.modules;
+    let modules = cx.modules.clone();
     let Some(path) = &modules[m].jsx_runtime else {
         return;
     };

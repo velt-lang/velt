@@ -230,7 +230,7 @@ fn check_on_current_thread(
     root: usize,
     opts: CheckOptions,
     recovered: &[(usize, &str)],
-    gen: Option<&generated::GenInput>,
+    gen: Option<generated::GenArgs>,
     stack_budget: usize,
 ) -> (Option<Checked>, Diagnostics) {
     timings::start();
@@ -249,9 +249,11 @@ fn check_timed(
     root: usize,
     opts: CheckOptions,
     recovered: &[(usize, &str)],
-    gen: Option<&generated::GenInput>,
+    gen: Option<generated::GenArgs>,
     stack_budget: usize,
 ) -> script_locals::Checked {
+    // Outlives every `Ctx` below: the modules the driver generates during the check.
+    let generator = gen.and_then(|g| g.generate).map(generated::Generator::new);
     let rewrite_start = std::time::Instant::now();
     let chunks = module_chunks::split(modules, root);
     let modules = chunks.modules.as_deref().unwrap_or(modules);
@@ -305,7 +307,21 @@ fn check_timed(
         if opts.eager_std {
             cx.lazy.on = false;
         }
-        cx.gen = gen;
+        if let Some(g) = gen {
+            let mut input = g.input.clone();
+            if let Some(generator) = &generator {
+                // Modules generated during an earlier `Ctx` of this check.
+                let state = generator.state.borrow();
+                input.extend(state.input.clone());
+                let declaring = state.filled.clone();
+                drop(state);
+                for (m, d) in generator.kept().zip(declaring) {
+                    cx.add_module(m, d);
+                }
+            }
+            cx.gen = Some(std::rc::Rc::new(input));
+            cx.generate = generator.as_ref();
+        }
         cx.union_views.assumed = views.clone();
         cx.fn_sites = throws::FnSites::new(seeds.clone(), last);
         cx.stack_budget = stack_budget;
@@ -398,7 +414,17 @@ fn check_timed(
         let refused = script_locals::refused(&cx, root);
         return ((None, cx.diags), refused);
     }
-    let generated = match generated::instances(&mut cx) {
+    if let Some(state) = generator.as_ref().map(|g| g.state.borrow()) {
+        // The generator reported why it failed; code it made that this check could not add
+        // is checked from scratch by the driver.
+        if state.failed {
+            return ((None, cx.diags), Default::default());
+        }
+        if state.restart {
+            return ((Some(Checked::Again), cx.diags), Default::default());
+        }
+    }
+    let generated = match timings::pass("generated::instances", || generated::instances(&mut cx)) {
         Ok(bound) => bound,
         Err(demand) => {
             return (
@@ -412,7 +438,8 @@ fn check_timed(
     }
     let unchecked = finalize::build_defs(&mut cx);
     layout_merge::merge(&mut cx);
-    let type_names = readonly::erase(&mut cx);
+    let mut generated = generated;
+    let type_names = readonly::erase(&mut cx, &mut generated);
     let module_state = module_state::build(&mut cx, entry);
     let type_ops = type_level::lowered_ops(&mut cx);
     let anon_shapes = anon::concrete_shapes(&cx);
@@ -531,6 +558,8 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
         body::expr::virtual_defaults::build_fill_bodies(cx)
     });
     timings::pass("body::check_bodies", || body::check_bodies(cx));
+    // The code generated so far, collected now that the instances it is for can be found.
+    timings::pass("generated::phase", || generated::phase::run(cx));
     timings::pass("global_this::check_sites", || global_this::check_sites(cx));
     timings::pass("module_scripts::declare", || module_scripts::declare(cx));
     timings::pass("make_dynamic_impls", || {
@@ -563,9 +592,7 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     });
     timings::pass("hooks::check_shapes", || hooks::check_shapes(cx));
     let before = error_count(cx);
-    if cx.gen.is_some() && cx.has_generated_fns() {
-        cx.gen_binding.bound = generated::bind::bind(cx);
-    }
+    generated::bind::fix_modes(cx);
     timings::pass("ownership_passes", || ownership_passes(cx));
     if cx.fn_sites.again() {
         return;

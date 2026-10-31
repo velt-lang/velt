@@ -6,15 +6,16 @@ no import, and a program whose code never names `JSON`, `JsonValue`, `JsonError`
 This module exports `Value`, the dynamic JSON value (an alias of the global `JsonValue`), and
 what code that writes JSON itself builds on:
 
-- `writeJson<T>(w: StringBuilder, value: T)` appends what `JSON.stringify(value)` writes. Its
+- `writeJson<T>(w: StringBuilder, value: T)` appends what `JSON.stringify(value)` writes, for
+  every type `JSON.stringify` takes (`JSON.stringify` is `writeJson` into a new builder). Its
   body is generated for each type at compile time by a source generator written in Velt, which
-  uses nothing a package could not use ([source generators](../../reference/source-generators.md)).
-  It writes numbers, booleans, strings, literal types, enums, arrays, tuples, `T | null`,
-  objects, structs and classes (a class value as its dynamic class, and through its `toJSON()`)
-  for now; other types are a compile error at the call.
+  uses nothing a package could not use ([source generators](../../reference/source-generators.md));
+  the dynamic parts of a value (`any`, `unknown`, interface values) are written by Velt code
+  over [velt/reflect](../reflect.md).
 - `appendJsonString(w, s)`, `appendJsonNumber(w, x)` and `appendJsonUint(w, n)` append a string,
-  an `f64` and a `u64` as `JSON.stringify` writes them; the caller appends the punctuation and
-  the keys (a literal `w.append("{\"id\":")` is appended inline).
+  an `f64` and a `u64` as `JSON.stringify` writes them, and `appendJsonValue(w, v)` a `Value`;
+  the caller appends the punctuation and the keys (a literal `w.append("{\"id\":")` is appended
+  inline).
 
 ```ts
 import { writeJson } from "velt/encoding/json";

@@ -40,7 +40,7 @@ impl<'m> Ctx<'m> {
     }
 
     fn js_api_modules(&self) -> &FxHashMap<usize, Option<FxHashSet<String>>> {
-        let modules = self.modules;
+        let modules = self.modules.clone();
         self.js_api_modules.get_or_init(|| {
             // For each module path a global re-exports from: the names it re-exports.
             let mut reexported: FxHashMap<&str, FxHashSet<String>> = FxHashMap::default();
@@ -61,7 +61,7 @@ impl<'m> Ctx<'m> {
                     // And the module that defines each name, through std's own re-exports
                     // (`fetch` → velt/net/http/fetch/fetch → `Response` from fetch/response).
                     for n in &imp.names {
-                        if let Some(def) = defining_module(modules, path, &n.name.name) {
+                        if let Some(def) = defining_module(&modules, path, &n.name.name) {
                             reexported
                                 .entry(def)
                                 .or_default()
@@ -100,7 +100,7 @@ impl<'m> Ctx<'m> {
 
 /// The std module that defines `name`, starting at the module `path` and following its
 /// re-exports (`export { name } from "…"`); `None` when that module is not loaded.
-fn defining_module<'m>(modules: &'m [SourceModule], path: &'m str, name: &str) -> Option<&'m str> {
+fn defining_module<'m>(modules: &[&'m SourceModule], path: &'m str, name: &str) -> Option<&'m str> {
     let mut path = path;
     let mut name = name.to_string();
     // A re-export chain is short; the bound only stops a cycle.

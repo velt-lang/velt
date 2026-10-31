@@ -1,13 +1,45 @@
 // velt/encoding/json (internal): `writeJson<T>`, which appends a value's JSON text to a
 // `StringBuilder`; its body is generated per type at compile time by
 // velt/encoding/json/generate/write (docs/internals/design/source-generators.md). The code it
-// generates calls the functions imported here.
+// generates calls the functions imported here. `JSON.stringify` is `writeJson` into a new
+// builder (std/prelude/json/json.vlt).
 
 import { StringBuilder } from "velt/text/string_builder";
-import { appendJsonNumber, appendJsonString, appendJsonUint } from "velt/encoding/json/append";
+import {
+  appendJsonNumber,
+  appendJsonString,
+  appendJsonUint,
+  appendJsonValue,
+} from "velt/encoding/json/append";
+import { checkJsonTop, jsonPresent, writeJsonAny } from "velt/encoding/json/any";
+import { beginVisit, dynamicOf, endVisit, identity, isProxy } from "velt/reflect";
 
 /** Appends what `JSON.stringify(value)` writes to `w` (one function per type, generated). */
 export declare generated("velt/encoding/json/generate/write") function writeJson<T>(
   w: StringBuilder,
   value: T,
 ): void;
+
+/**
+ * `writeJson` of the value `JSON.stringify` is given: a dynamic value without a JSON form is a
+ * `TypeError` there, where it is `null` in an array.
+ */
+export declare generated("velt/encoding/json/generate/write") function writeJsonTop<T>(
+  w: StringBuilder,
+  value: T,
+): void;
+
+/**
+ * `writeJson` of a value whose key in its parent is `key`: what a `toJSON(key)` method in it
+ * gets (generated only for the types that reach such a method).
+ */
+export declare generated("velt/encoding/json/generate/write") function writeJsonKeyed<T>(
+  w: StringBuilder,
+  value: T,
+  key: string,
+): void;
+
+/** A recursive object type's value seen again while it is being written. */
+function jsonCircular(): never {
+  panic("JSON.stringify: converting circular structure to JSON (an object contains itself)");
+}

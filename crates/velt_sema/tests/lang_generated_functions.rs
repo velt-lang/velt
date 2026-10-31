@@ -33,11 +33,13 @@ fn demand(src: &str) -> Demand {
         l.root,
         CheckOptions::default(),
         &GenInput::default(),
+        None,
     );
     assert!(diags.iter().all(|d| !d.is_error()), "{}", l.render(&diags));
     match out {
         Some(Checked::Demand(d)) => d,
         Some(Checked::Program(_)) => panic!("a program without generated code"),
+        Some(Checked::Again) => panic!("checked again without a generator"),
         None => panic!("no outcome"),
     }
 }

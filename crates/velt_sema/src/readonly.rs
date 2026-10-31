@@ -21,7 +21,10 @@ use crate::visit;
 /// Replace every readonly object type in the finished program by its plain twin. The result
 /// names the erased types messages call by a name (`Program::type_names`): type aliases'
 /// structural types and field-only interfaces' object types, left out where two names meet.
-pub(crate) fn erase(cx: &mut Ctx) -> HashMap<TyId, String> {
+pub(crate) fn erase(
+    cx: &mut Ctx,
+    generated: &mut crate::generated::bind::Bound,
+) -> HashMap<TyId, String> {
     let mut named: Vec<(TyId, String)> = (cx.alias_names.iter())
         .map(|(t, n)| (*t, crate::namespaces::written(n).into_owned()))
         .collect();
@@ -179,6 +182,11 @@ pub(crate) fn erase(cx: &mut Ctx) -> HashMap<TyId, String> {
     for t in counted_objects.iter_mut() {
         *t = e(*t);
     }
+    // The instances of generated functions, by the type arguments lowering sees.
+    *generated = std::mem::take(generated)
+        .into_iter()
+        .map(|((g, targs), body)| ((g, targs.into_iter().map(&mut e).collect()), body))
+        .collect();
     type_level.reduced = std::mem::take(&mut type_level.reduced)
         .into_iter()
         .map(|(k, v)| (e(k), e(v)))

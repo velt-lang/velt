@@ -16,10 +16,10 @@ mod host;
 mod run;
 
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use velt_common::{Diagnostic, Diagnostics, FileId, Span};
-use velt_sema::generated::{GenInput, GenInstance, GenModule};
+use velt_sema::generated::{GenBatch, GenInput, GenInstance, GenModule};
 use velt_sema::{hir, CheckOptions, Checked, SourceModule};
 use velt_syntax::ast::ItemKind;
 
@@ -99,7 +99,7 @@ fn check_offered(
     }
     input.instances = offer.instances;
     let t = Instant::now();
-    let (out, diags) = velt_sema::check_generating(&next, root, opts, &input);
+    let (out, diags) = velt_sema::check_generating(&next, root, opts, &input, None);
     sess.timings.push(("sema", t.elapsed()));
     match out {
         Some(Checked::Program(p)) if !diags.iter().any(Diagnostic::is_error) => {
@@ -114,6 +114,10 @@ fn check_offered(
 #[derive(Default)]
 struct Rounds {
     input: GenInput,
+    /// The generated modules, parsed (what `input` holds the paths of).
+    sources: Vec<SourceModule>,
+    /// How many times the generators ran (each run's modules are paths of their own).
+    batches: u32,
     /// Per generated file: what it holds and the call that needed it, for errors in it.
     files: Vec<(FileId, Vec<Described>)>,
     /// What to offer the next build.
@@ -131,20 +135,34 @@ fn rounds(
     for round in 1..=MAX_ROUNDS + 1 {
         let current = owned.as_deref().unwrap_or(modules);
         let t = Instant::now();
-        let (out, diags) = velt_sema::check_generating(current, root, opts, &st.input);
+        let input = st.input.clone();
+        // The check asks for the code it misses and adds it to itself (one check in all, as a
+        // program without generators has), unless that code needs a check of its own.
+        let shared = std::sync::Mutex::new((&mut *sess, &mut *st, Duration::ZERO));
+        let generate = |demand: &velt_sema::generated::Demand| {
+            let mut guard = shared.lock().ok()?;
+            let (sess, st, spent) = &mut *guard;
+            let t = Instant::now();
+            let batch = generate_now(sess, st, current, demand, packages);
+            *spent += t.elapsed();
+            batch
+        };
+        let (out, diags) = velt_sema::check_generating(current, root, opts, &input, Some(&generate));
+        let (_, _, spent) = shared.into_inner().ok()?;
         let diags = blame_generators(&sess.sm, diags, &st.files);
         sess.diagnostics.extend(diags);
-        sess.timings.push((
-            if round == 1 {
-                "sema"
-            } else {
-                "sema (generated)"
-            },
-            t.elapsed(),
-        ));
+        let sema = t.elapsed().saturating_sub(spent);
+        sess.timings.push((if round == 1 { "sema" } else { "sema (again)" }, sema));
+        if !spent.is_zero() {
+            sess.timings.push(("generate", spent));
+        }
         let demand = match out {
             Some(Checked::Program(p)) => return Some(*p),
             Some(Checked::Demand(d)) => d,
+            Some(Checked::Again) => {
+                owned = Some(with_generated(current, st));
+                continue;
+            }
             None => return None,
         };
         if round > MAX_ROUNDS {
@@ -159,87 +177,109 @@ fn rounds(
             return None;
         }
         let t = Instant::now();
-        let generated = run::run(sess, current, &demand, round, packages);
+        let generated = generate_now(sess, st, current, &demand, packages);
         sess.timings.push(("generate", t.elapsed()));
-        let mut generated = generated?;
-        let mut next: Vec<SourceModule> = current.iter().map(copy_module).collect();
-        for g in generated.modules {
-            let path = module_path(&g.declaring, round);
-            let file_path = PathBuf::from(&path).with_extension("vlt");
-            emit(&file_path, &g.text);
-            let file = sess.sm.add(file_path, g.text.clone());
-            let described = (generated.described.iter())
-                .filter(|d| d.module == g.declaring)
-                .cloned()
-                .collect();
-            st.files.push((file, described));
-            let at = demand.requests.first().map_or(Span::DUMMY, |r| r.at);
-            let (ast, errors) = velt_syntax::parse_file(file, &g.text);
-            if !errors.is_empty() {
-                let mut d = Diagnostic::error(
-                    "the code a generator wrote does not parse (a bug in the generator)",
-                    at,
-                );
-                for e in &errors {
-                    d = d.with_note(e.message.clone());
-                }
-                sess.diagnostics.push(d);
-                sess.diagnostics.extend(errors);
-                return None;
-            }
-            if let Some(i) = ast
-                .items
-                .iter()
-                .find(|i| matches!(i.kind, ItemKind::Import(_)))
-            {
-                let d =
-                    Diagnostic::error("generated code cannot import (a bug in the generator)", at)
-                        .with_note(format!(
-                            "it sees what `{}` imports and declares; an import at {}:{}",
-                            g.declaring,
-                            file_path_of(&sess.sm, file),
-                            sess.sm.line_col(file, i.span.lo).0
-                        ));
-                sess.diagnostics.push(d);
-                return None;
-            }
-            let Some(gm) = generated_module(&next, &g.declaring, &path, file, ast) else {
-                continue;
-            };
-            next.push(gm);
-            st.input.files.push(file);
-            let module = GenModule {
-                path: path.clone(),
-                declaring: g.declaring.clone(),
-                access: g.access.clone(),
-            };
-            st.input.modules.push(module);
-            st.offer.files.push(cache::OfferFile {
-                module: g.declaring,
-                path,
-                text: g.text,
-                access: g.access,
-            });
-        }
-        for (inst, fp) in generated.instances.iter().zip(generated.fingerprints) {
-            st.offer.instances.push(GenInstance {
-                fingerprint: fp,
-                body_module: module_path(&inst.module, round),
-                ..inst.clone()
-            });
-        }
-        for inst in &mut generated.instances {
-            inst.body_module = module_path(&inst.module, round);
-        }
-        for f in generated.generator_files {
-            if !st.offer.generator_files.contains(&f) {
-                st.offer.generator_files.push(f);
-            }
-        }
-        st.input.instances.extend(generated.instances);
-        owned = Some(next);
+        generated?;
+        owned = Some(with_generated(current, st));
     }
     None
+}
+
+/// `current` with the generated modules of `st` not in it yet.
+fn with_generated(current: &[SourceModule], st: &Rounds) -> Vec<SourceModule> {
+    let mut next: Vec<SourceModule> = current.iter().map(copy_module).collect();
+    for m in &st.sources {
+        if !next.iter().any(|n| n.path == m.path) {
+            next.push(copy_module(m));
+        }
+    }
+    next
+}
+
+/// Run the generators for `demand` and take in what they wrote: the generated modules, parsed,
+/// recorded in `st` (for the next check, errors in them and the next build's offer) and
+/// returned. `None` with the errors in `sess`.
+fn generate_now(
+    sess: &mut Session,
+    st: &mut Rounds,
+    current: &[SourceModule],
+    demand: &velt_sema::generated::Demand,
+    packages: Option<&vpm::PackageGraph>,
+) -> Option<GenBatch> {
+    st.batches += 1;
+    let batch_no = st.batches;
+    let mut generated = run::run(sess, current, demand, batch_no, packages)?;
+    let mut out = GenBatch::default();
+    for g in generated.modules {
+        let path = module_path(&g.declaring, batch_no);
+        let file_path = PathBuf::from(&path).with_extension("vlt");
+        emit(&file_path, &g.text);
+        let file = sess.sm.add(file_path.clone(), g.text.clone());
+        let described = (generated.described.iter())
+            .filter(|d| d.module == g.declaring)
+            .cloned()
+            .collect();
+        st.files.push((file, described));
+        let at = demand.requests.first().map_or(Span::DUMMY, |r| r.at);
+        let (ast, errors) = velt_syntax::parse_file(file, &g.text);
+        if !errors.is_empty() {
+            let mut d = Diagnostic::error(
+                "the code a generator wrote does not parse (a bug in the generator)",
+                at,
+            );
+            for e in &errors {
+                d = d.with_note(e.message.clone());
+            }
+            sess.diagnostics.push(d);
+            sess.diagnostics.extend(errors);
+            return None;
+        }
+        if let Some(i) = ast
+            .items
+            .iter()
+            .find(|i| matches!(i.kind, ItemKind::Import(_)))
+        {
+            let d = Diagnostic::error("generated code cannot import (a bug in the generator)", at)
+                .with_note(format!(
+                    "it sees what `{}` imports and declares; an import at {}:{}",
+                    g.declaring,
+                    file_path_of(&sess.sm, file),
+                    sess.sm.line_col(file, i.span.lo).0
+                ));
+            sess.diagnostics.push(d);
+            return None;
+        }
+        let Some(gm) = generated_module(current, &g.declaring, &path, file, ast) else {
+            continue;
+        };
+        let module = GenModule {
+            path: path.clone(),
+            declaring: g.declaring.clone(),
+            access: g.access.clone(),
+        };
+        st.sources.push(copy_module(&gm));
+        out.sources.push(gm);
+        out.input.files.push(file);
+        out.input.modules.push(module);
+        st.offer.files.push(cache::OfferFile {
+            module: g.declaring,
+            path,
+            text: g.text,
+            access: g.access,
+        });
+    }
+    for inst in &mut generated.instances {
+        inst.body_module = module_path(&inst.module, batch_no);
+    }
+    st.offer.instances.extend(generated.instances.iter().cloned());
+    for f in generated.generator_files {
+        if !st.offer.generator_files.contains(&f) {
+            st.offer.generator_files.push(f);
+        }
+    }
+    out.input.instances = generated.instances;
+    st.input.extend(out.input.clone());
+    Some(out)
 }
 
 /// The path of the module generated for declaring module `declaring` in round `round` (its file
@@ -314,8 +354,6 @@ fn copy_module(m: &SourceModule) -> SourceModule {
 struct Generated {
     modules: Vec<GeneratedText>,
     instances: Vec<GenInstance>,
-    /// Per instance: its fingerprint, for offers.
-    fingerprints: Vec<String>,
     described: Vec<Described>,
     /// What the host's build read (build-stamp entries).
     generator_files: Vec<String>,
@@ -386,13 +424,12 @@ fn blame_generators(
         .collect()
 }
 
-/// Generator hosts being built by this process, to report generators that need each other
-/// instead of waiting for themselves. A JIT host (a child process) inherits the depth.
+/// Generators that need generated code to be built: a host's own build that reaches a generated
+/// function is a cycle (std's generators use none). Builds of hosts in other threads of this
+/// process (parallel builds) are not. A JIT host (a child process) inherits the depth.
 mod guard {
     use std::process::Command;
-    use std::sync::Mutex;
 
-    static BUILDING: Mutex<Vec<String>> = Mutex::new(vec![]);
     const DEPTH_ENV: &str = "VELT_GENERATE_DEPTH";
     const MAX_DEPTH: usize = 4;
 
@@ -403,29 +440,13 @@ mod guard {
             .unwrap_or(0)
     }
 
-    /// Whether host `src` is being built already (so building it again is a cycle).
-    pub fn building(src: &str) -> bool {
-        let b = BUILDING.lock().unwrap_or_else(|e| e.into_inner());
-        b.iter().any(|s| s == src) || b.len() + depth_from_env() >= MAX_DEPTH
+    /// Whether running a host now is a cycle: `nested` (this build is a host's own) or too deep.
+    pub fn building(nested: bool) -> bool {
+        nested || depth_from_env() >= MAX_DEPTH
     }
 
-    /// Run `f` while host `src` is being built.
-    pub fn with<T>(src: &str, f: impl FnOnce() -> T) -> T {
-        BUILDING
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push(src.to_string());
-        let out = f();
-        let mut b = BUILDING.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(i) = b.iter().rposition(|s| s == src) {
-            b.remove(i);
-        }
-        out
-    }
-
-    /// Give a JIT host process the current depth.
+    /// Give a JIT host process the depth of its build.
     pub fn pass_depth(cmd: &mut Command) {
-        let b = BUILDING.lock().unwrap_or_else(|e| e.into_inner());
-        cmd.env(DEPTH_ENV, (b.len() + depth_from_env()).to_string());
+        cmd.env(DEPTH_ENV, (depth_from_env() + 1).to_string());
     }
 }

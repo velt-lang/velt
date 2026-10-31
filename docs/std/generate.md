@@ -11,9 +11,10 @@ come: [the design notes](../internals/design/source-generators.md).
 - `InstanceRequest`: the instance asked for, and `req.model`.
 - `Model`: every type the instance reaches, as `Type`s (a `kind`, `display`, `fields`, union
   `arms`, enum `members` as `EnumMember`s, a class's `base` and `subclasses`, and the `Method`s
-  std's operations call by name, such as `toJSON` and `toString`) and `Field`s (`name`, `type`,
-  `optional`, `readonly`, `isPrivate`). Types refer to each other by id, so recursive types are
-  fine. Code generated for a type has that type's access: its `private` members and private
+  std's operations call by name, such as `toJSON` and `toString`; `mayBeProxy` when a typed
+  `Proxy` may stand for a value of it) and `Field`s (`name`, `type`, `optional`, `readonly`,
+  `isPrivate`, and `via` for a field an extension of the type adds to its objects). Types refer
+  to each other by id, so recursive types are fine. Code generated for a type has that type's access: its `private` members and private
   constructor ([What generated code sees](../reference/source-generators.md#what-generated-code-sees)).
 - `Output`: where the body goes (`line`, `body`), with top-level helpers (`helper`, named with
   `fresh`), the name of another instance of the same generator (`instance`), type names and

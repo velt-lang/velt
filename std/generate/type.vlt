@@ -43,6 +43,11 @@ export class Type {
   literal: string = "";
   /** The methods std's operations call by name (`toJSON`, `toString`, `__inspect`). */
   methods: Method[] = [];
+  /**
+   * Whether a value of this type may be a typed `Proxy` standing for it (a class or object type
+   * in a program that uses `Proxy`): only then does a generator need a path for proxies.
+   */
+  mayBeProxy: bool = false;
   /** Where it is declared, for `Output.error` (-1: nowhere). */
   at: i64 = -1;
 }

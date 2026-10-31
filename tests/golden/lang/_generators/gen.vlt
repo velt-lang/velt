@@ -137,3 +137,23 @@ export function armOf(req: InstanceRequest, out: Output): void {
   }
   out.line(`return "none";`);
 }
+
+// A body that keeps its parameter (converts it to `any`) next to bodies that only read theirs:
+// they share one ABI, so it keeps a share of its argument, not the caller's value.
+export function hold(req: InstanceRequest, out: Output): void {
+  const t = req.model.type(req.args[0]);
+  const v = req.params[0];
+  if (t.kind == "class") {
+    out.line(`const kept: any = ${v};`);
+    out.line(`let s = typeof kept;`);
+    for (const f of t.fields) {
+      const inner = out.instance("hold", [f.type]);
+      out.line(`s += " " + ${inner}(${v}.${f.name});`);
+    }
+    out.line(`return s;`);
+  } else if (t.kind == "array") {
+    out.line(`return \`\${${v}.length}\`;`);
+  } else {
+    out.line(`return "";`);
+  }
+}

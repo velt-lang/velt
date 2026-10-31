@@ -67,6 +67,10 @@ impl FnCx<'_, '_> {
         let core = self.cx.ty.core(x.ty).filter(|c| *c != x.ty);
         let u = core.unwrap_or(x.ty);
         let members = self.cx.union_members(u).map(|m| m.len());
+        let payload = self
+            .cx
+            .union_members(u)
+            .and_then(|m| m.get(i as usize).copied());
         let def = match (self.cx.ty.kind(u), members) {
             (crate::hir::TyKind::Adt(d, _), Some(n)) if (i as usize) < n => *d,
             _ => {
@@ -77,11 +81,16 @@ impl FnCx<'_, '_> {
             }
         };
         let b = self.cx.ty.bool_;
+        // The payload as a wildcard (a merged union's member may be the whole value).
+        let args = match payload {
+            Some(p) => vec![self.pat(hir::PatKind::Wildcard, p, span)],
+            None => vec![],
+        };
         let member = self.pat(
             hir::PatKind::Variant {
                 def,
                 variant: i,
-                args: vec![],
+                args,
             },
             u,
             span,

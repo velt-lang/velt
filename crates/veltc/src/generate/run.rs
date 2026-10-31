@@ -155,7 +155,6 @@ pub(super) fn run(
     let mut modules_out: Vec<(String, String)> = vec![];
     let mut accesses: Vec<(String, Vec<String>)> = vec![];
     let mut instances = vec![];
-    let mut fingerprints = vec![];
     let mut described = vec![];
     for (name, w) in &written {
         let Some(fi) = (demand.functions.iter().zip(&fn_keys))
@@ -176,18 +175,16 @@ pub(super) fn run(
         };
         let module_text = modules_out.iter().find(|(m, _)| *m == f.module);
         let start = module_text.map_or(0, |(_, t)| t.len()) as u32;
+        let displays: Vec<&str> = (w.args.iter())
+            .map(|a| demand.model.types[*a as usize].display.as_str())
+            .collect();
         let mut text = format!(
             "\n// {} for {}<{}>\n",
             f.generator,
             f.function,
-            spellings.join(", ")
+            displays.join(", ")
         );
-        let mut type_args = vec![];
-        for (i, s) in spellings.iter().enumerate() {
-            let alias = format!("{name}_T{i}");
-            text.push_str(&format!("type {alias} = {s};\n"));
-            type_args.push(alias);
-        }
+        let type_args: Vec<String> = spellings.iter().map(|s| s.to_string()).collect();
         let params: Vec<String> = (f.params.iter())
             .map(|(p, t)| format!("{p}: {}", subst(t)))
             .collect();
@@ -213,13 +210,10 @@ pub(super) fn run(
         let at = (demand.requests.iter().zip(&request_names))
             .find(|(_, n)| *n == name)
             .map_or(first_at, |(r, _)| r.at);
-        let types: Vec<&str> = (w.args.iter())
-            .map(|a| demand.model.types[*a as usize].display.as_str())
-            .collect();
         let desc = format!(
             "`{}<{}>` by `{}`",
             f.function,
-            types.join(", "),
+            displays.join(", "),
             f.generator
         );
         let end = modules_out
@@ -232,7 +226,11 @@ pub(super) fn run(
             what: desc,
             at,
         });
-        fingerprints.push(demand.model.fingerprint(&w.args, &f.signature()));
+        // A requested instance is found again by its key; one a generator asked for, with
+        // the module of the instance that asked.
+        let fingerprint = (demand.requests.iter().zip(&request_names))
+            .find(|(_, n)| *n == name)
+            .map_or(String::new(), |(r, _)| r.fingerprint.clone());
         instances.push(GenInstance {
             module: f.module.clone(),
             function: f.function.clone(),
@@ -240,7 +238,7 @@ pub(super) fn run(
             body: name.clone(),
             // Set by the driver, which names the generated module.
             body_module: String::new(),
-            fingerprint: String::new(),
+            fingerprint,
         });
         let access = reachable_types(&demand.model, &w.args);
         match accesses.iter_mut().find(|(m, _)| *m == f.module) {
@@ -268,7 +266,6 @@ pub(super) fn run(
             })
             .collect(),
         instances,
-        fingerprints,
         described,
         generator_files,
     })
@@ -368,16 +365,14 @@ fn run_host(
     if let Some(hit) = key.as_ref().and_then(cache::cached_output) {
         return Some(hit);
     }
-    if super::guard::building(src) {
+    if super::guard::building(sess.generator_build) {
         let msg = "generators need generated code to be built, in a cycle";
         sess.diagnostics.push(Diagnostic::error(msg, at));
         return None;
     }
-    let ran = super::guard::with(src, || {
-        host::prepare(&host_root, src, packages).and_then(|h| {
-            let files = h.files.clone();
-            h.run(input).map(|out| (out, files))
-        })
+    let ran = host::prepare(&host_root, src, packages).and_then(|h| {
+        let files = h.files.clone();
+        h.run(input).map(|out| (out, files))
     });
     match ran {
         Ok((out, files)) => {
@@ -418,6 +413,7 @@ fn model_json(m: &velt_sema::generated::model::Model) -> Value {
                         "esPrivate": f.es_private,
                         "hasDefault": f.has_default,
                         "isGetter": f.getter,
+                        "via": f.via.map_or(-1, i64::from),
                         "at": f.at,
                     })).collect::<Vec<_>>(),
                     "base": opt(t.base),
@@ -427,6 +423,7 @@ fn model_json(m: &velt_sema::generated::model::Model) -> Value {
                         "value": m.value,
                     })).collect::<Vec<_>>(),
                     "literal": t.literal,
+                    "mayBeProxy": t.may_be_proxy,
                     "methods": t.methods.iter().map(|m| json!({
                         "name": m.name,
                         "params": m.params,

@@ -1,0 +1,29 @@
+// Generated code names the types of its request by handles (`__type<…>`,
+// docs/internals/design/source-generators.md "As built so far"), so it can name types Velt
+// syntax cannot write where the code is: a class declared inside a function, an intersection
+// with an object part, an object type made by a spread, and a generic object type at its
+// arguments.
+import { peek, rebuild, show } from "./_generators";
+
+type Named = { name: string };
+type Tagged<T> = { tag: T; n: i32 };
+
+function local(): string {
+  class Inner {
+    id: i32 = 3;
+    label: string = "in";
+  }
+  const x = new Inner();
+  return show(x) + " " + peek(rebuild(x));
+}
+
+function main() {
+  console.log(local());
+  const both: Named & { age: i32 } = { name: "ann", age: 4 };
+  console.log(show(both));
+  const base = { a: 1i32, b: "two" };
+  const spread = { ...base, c: true };
+  console.log(show(spread));
+  const t: Tagged<string> = { tag: "t", n: 5 };
+  console.log(show(t), show<Tagged<f64>>({ tag: 1.5, n: 6 }));
+}

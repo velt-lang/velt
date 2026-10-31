@@ -77,6 +77,7 @@ impl<'h> Cx<'h> {
             dyn_modes_memo: FxHashMap::default(),
             json_key_memo: None,
             anon: Default::default(),
+            generated_canon: None,
             cur_def: None,
             cur_mode: super::LkMode::Plain,
             cur_own: false,
@@ -202,15 +203,28 @@ impl<'h> Cx<'h> {
 
     /// `work` for an instance of a generated function built from its generated definition
     /// instead (`hir::Program::generated`; docs/internals/design/source-generators.md).
-    fn generated_instance(&self, mut work: Work) -> Work {
+    fn generated_instance(&mut self, mut work: Work) -> Work {
         if self.hir.generated.is_empty() {
             return work;
         }
+        if self.generated_canon.is_none() {
+            // Work items carry canonical type arguments (one type per anonymous shape), which
+            // the instances' own may not be (a generic object type at its arguments).
+            let hir = self.hir;
+            let canon = (hir.generated.iter())
+                .map(|((g, targs), body)| {
+                    let targs = targs.iter().map(|t| self.canon(*t)).collect();
+                    ((*g, targs), *body)
+                })
+                .collect();
+            self.generated_canon = Some(canon);
+        }
+        let map = self.generated_canon.as_ref().expect("ICE: made above");
         if let Some((d, targs)) = work_target(&mut work) {
-            if let Some(&body) = self.hir.generated.get(&(*d, targs.clone())) {
+            if let Some(&body) = map.get(&(*d, targs.clone())) {
                 *d = body;
                 targs.clear();
-            } else if self.hir.generated.keys().any(|(g, _)| g == d) {
+            } else if map.keys().any(|(g, _)| g == d) {
                 let name = &self.fn_def(*d).name;
                 ice(format_args!(
                     "no generated code for an instance of `{name}`"

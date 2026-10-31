@@ -1,0 +1,279 @@
+// velt/encoding/json (internal): what the generator of `writeJson` (write.vlt) reads off the
+// model: key order and names, which members are left out, which types need the key of a
+// `toJSON(key)`, which can contain themselves, which subclasses can be written.
+
+import { Model, Output, Type, Field } from "velt/generate";
+
+/** `s` as JSON string text: quoted, with `"`, `\` and control characters escaped. */
+export function jsonQuote(s: string): string {
+  let out = "\"";
+  const n = s.length as i64;
+  for (let i: i64 = 0; i < n; i++) {
+    const c = s.charCodeAt(i);
+    if (c == 34) {
+      out += "\\\"";
+    } else if (c == 92) {
+      out += "\\\\";
+    } else if (c < 32) {
+      out += "\\u" + c.toString(16).padStart(4, "0");
+    } else {
+      out += s.charAt(i);
+    }
+  }
+  return out + "\"";
+}
+
+/** Is `name` an array index (`"0"`, `"404"`, not `"01"`)? JavaScript writes those first. */
+export function isIndex(name: string): bool {
+  const n = name.length as i64;
+  if (n == 0 || n > 10 || (n > 1 && name.charCodeAt(0) == 48)) {
+    return false;
+  }
+  for (let i: i64 = 0; i < n; i++) {
+    const c = name.charCodeAt(i);
+    if (c < 48 || c > 57) {
+      return false;
+    }
+  }
+  return Number(name) < 4294967295;
+}
+
+/** The fields of `t` in the order JavaScript writes an object's keys: indexes, ascending, first. */
+export function keyOrder(t: Type): Field[] {
+  const idx: Field[] = [];
+  const rest: Field[] = [];
+  for (const f of t.fields) {
+    if (isIndex(f.name)) {
+      idx.push(f);
+    } else {
+      rest.push(f);
+    }
+  }
+  idx.sort((a, b) => Number(a.name) - Number(b.name));
+  for (const f of rest) {
+    idx.push(f);
+  }
+  return idx;
+}
+
+/** Is `name` written as `v.name` (an identifier), not `v["name"]`? */
+export function isIdentifier(name: string): bool {
+  const n = name.length as i64;
+  if (n == 0) {
+    return false;
+  }
+  for (let i: i64 = 0; i < n; i++) {
+    const c = name.charCodeAt(i);
+    const letter = (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95 || c == 36;
+    if (!letter && !(i > 0 && c >= 48 && c <= 57)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** The expression reading field `name` of `v`. */
+export function member(out: Output, v: string, name: string): string {
+  return isIdentifier(name) ? `${v}.${name}` : `${v}[${out.literal(name)}]`;
+}
+
+/** Is model type `t` a dynamic value (`any`, `unknown`)? */
+export function isDynamic(t: Type): bool {
+  return t.kind == "any" || t.kind == "unknown";
+}
+
+/** The members of union `t` that are dynamic values (indexes into `arms`). */
+export function dynamicArms(model: Model, t: Type): i64[] {
+  const out: i64[] = [];
+  if (t.kind != "union") {
+    return out;
+  }
+  for (let i: i64 = 0; i < (t.arms.length as i64); i++) {
+    if (isDynamic(model.type(t.arms[i]))) {
+      out.push(i);
+    }
+  }
+  return out;
+}
+
+/** Is the field's key never written: an ES private field (`#x`) or a symbol key? */
+export function hiddenKey(f: Field): bool {
+  return (
+    f.isEsPrivate ||
+    f.name.startsWith("#") ||
+    (f.name.startsWith("[Symbol.") && f.name.endsWith("]")) ||
+    f.name.startsWith("\u{ffff}")
+  );
+}
+
+/** Is the field left out of every object: an ES private field, a symbol key or a function? */
+export function hidden(model: Model, f: Field): bool {
+  if (hiddenKey(f)) {
+    return true;
+  }
+  let t = model.type(f.type);
+  if (t.kind == "option") {
+    t = model.type(t.args[0]);
+  }
+  return t.kind == "function";
+}
+
+/** The `toJSON` method of `t`, if it has one a generator can call. */
+export function toJsonMethod(t: Type): i64 {
+  for (let i: i64 = 0; i < (t.methods.length as i64); i++) {
+    if (t.methods[i].name == "toJSON") {
+      return i;
+    }
+  }
+  return -1;
+}
+
+/** Does writing a value of type `id` call a `toJSON(key)`, so that its writer needs the key? */
+export function needsKey(model: Model, id: i64, seen: i64[]): bool {
+  if (seen.includes(id)) {
+    return false;
+  }
+  seen.push(id);
+  const t = model.type(id);
+  if (t.kind == "option" || t.kind == "shared") {
+    return needsKey(model, t.args[0], seen);
+  }
+  if (t.kind == "union") {
+    for (const a of t.arms) {
+      if (needsKey(model, a, seen)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (t.kind != "class") {
+    return false;
+  }
+  if (keyedHook(t)) {
+    return true;
+  }
+  for (const s of t.subclasses) {
+    if (keyedHook(model.type(s))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Has class `t` a `toJSON` that takes the key? */
+export function keyedHook(t: Type): bool {
+  const m = toJsonMethod(t);
+  return m >= 0 && t.methods[m].params > 0;
+}
+
+/** Does a value of type `id` hold an object of type `target` inline (not behind a class, an array or a collection)? */
+export function reaches(model: Model, id: i64, target: i64, seen: i64[]): bool {
+  if (seen.includes(id)) {
+    return false;
+  }
+  seen.push(id);
+  const t = model.type(id);
+  if (t.kind == "object" || t.kind == "struct") {
+    if (id == target) {
+      return true;
+    }
+    for (const f of t.fields) {
+      if (reaches(model, f.type, target, seen)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (t.kind == "option") {
+    return reaches(model, t.args[0], target, seen);
+  }
+  if (t.kind == "tuple") {
+    for (const a of t.args) {
+      if (reaches(model, a, target, seen)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (t.kind == "union") {
+    for (const a of t.arms) {
+      if (reaches(model, a, target, seen)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/** Is `t` an object type that can contain itself (`n.next = n`)? Writing it checks for cycles. */
+export function isRecursive(model: Model, t: Type): bool {
+  // A field-only interface is an object type too (the model calls it a struct).
+  if (t.kind != "object" && t.kind != "struct") {
+    return false;
+  }
+  for (const f of t.fields) {
+    if (reaches(model, f.type, t.id, [])) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * How `instanceof` names class `t`: its handle, which `instanceof` takes without the type
+ * arguments (narrowing infers them).
+ */
+export function className(t: Type): string {
+  return t.spelling;
+}
+
+/**
+ * Can a value of type `id` be written (`seen`: the types being looked at)? A subclass that
+ * cannot (a function or a dynamic value in a field, std's private state) is written as the
+ * class it is seen as.
+ */
+export function writable(model: Model, id: i64, seen: i64[]): bool {
+  if (seen.includes(id)) {
+    return true;
+  }
+  const t = model.type(id);
+  const k = t.kind;
+  if (k == "number" || k == "boolean" || k == "string" || k == "literal" || k == "enum") {
+    return true;
+  }
+  if (k == "opaque" && t.qualifiedName == "std/prelude/json/json::JsonValue") {
+    return true;
+  }
+  seen.push(id);
+  if (k == "array" || k == "option") {
+    return writable(model, t.args[0], seen);
+  }
+  if (k == "tuple") {
+    return t.args.every((a) => writable(model, a, seen));
+  }
+  if (k == "union") {
+    return t.arms.every((a) => writable(model, a, seen));
+  }
+  if (k == "record") {
+    return writable(model, t.args[1], seen);
+  }
+  if (k == "map") {
+    return model.type(t.args[0]).kind == "string" && writable(model, t.args[1], seen);
+  }
+  const m = toJsonMethod(t);
+  if (m >= 0) {
+    return writable(model, t.methods[m].ret, seen);
+  }
+  if (k == "object" || k == "struct" || k == "class") {
+    for (const f of t.fields) {
+      if (hiddenKey(f)) {
+        continue;
+      }
+      if (!writable(model, f.type, seen)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return false;
+}

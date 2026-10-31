@@ -32,6 +32,9 @@ import {
 } from "velt/encoding/json/reader";
 // What `JSON.stringify<T>` writes for numbers and strings (Velt code; the glue calls it).
 import "velt/encoding/json/writer";
+// `JSON.stringify<T>`: the writer generated per type, and the check of a dynamic value at the top.
+import { StringBuilder } from "velt/text/string_builder";
+import { writeJsonTop } from "velt/encoding/json/generated";
 // `JSON.parseValue`'s documents: one flat tape each (Velt code).
 import {
   parseTape,
@@ -46,7 +49,7 @@ import {
   T_ARRAY,
   T_OBJECT,
 } from "velt/encoding/json/tape";
-import { jsonParse, jsonStringify } from "velt/lang/intrinsics";
+import { jsonParse } from "velt/lang/intrinsics";
 
 declare function velt_rt_strbuf_push_json_value(buf: string, h: u64);
 
@@ -173,7 +176,9 @@ export class JSON {
    * JS `JSON.stringify`: no whitespace, fields in declaration order, null optional fields omitted.
    */
   static stringify<T>(value: T): string {
-    return jsonStringify(value);
+    const w = new StringBuilder();
+    writeJsonTop<T>(w, value);
+    return w.take();
   }
   // `JSON.stringify(value, replacer, space)` is written by the compiler: the text above, laid
   // out again by `jsonRelayout` (below).

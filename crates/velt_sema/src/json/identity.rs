@@ -100,3 +100,31 @@ impl Looks<'_> {
         }
     }
 }
+
+/// `writeJsonTop<T>` of velt/encoding/json (what `JSON.stringify<T>` calls): its type argument
+/// is what `JSON.stringify` writes.
+pub(super) fn json_top_writer(cx: &crate::ctx::Ctx) -> Option<crate::hir::DefId> {
+    let m = (cx.modules.iter())
+        .position(|m| m.is_std && m.path == velt_common::std_module!(encoding_json_generated))?;
+    match cx.scopes[m].items.get("writeJsonTop") {
+        Some(crate::ctx::Item::Def(d)) => Some(*d),
+        _ => None,
+    }
+}
+
+/// What a call of `writeJsonTop` (`top`) writes: a requirement of its type argument.
+pub(super) fn top_write(
+    top: Option<crate::hir::DefId>,
+    e: &crate::hir::Expr,
+    direct: &mut Vec<(crate::hir::TyId, velt_common::Span, super::Need)>,
+) {
+    if let crate::hir::ExprKind::Call {
+        callee: crate::hir::Callee::Def(d, targs),
+        ..
+    } = &e.kind
+    {
+        if let (true, Some(t)) = (Some(*d) == top, targs.first()) {
+            direct.push((*t, e.span, super::Need::Json(false)));
+        }
+    }
+}

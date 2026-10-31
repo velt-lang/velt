@@ -50,6 +50,7 @@ import * as std_process from "velt/process";
 import * as std_process_child from "velt/process/child";
 import * as std_random from "velt/random";
 import * as std_random_uuid from "velt/random/uuid";
+import * as std_reflect from "velt/reflect";
 import * as std_simd from "velt/simd";
 import * as std_sync from "velt/sync";
 import * as std_sync_epoch from "velt/sync/epoch";

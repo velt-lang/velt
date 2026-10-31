@@ -190,6 +190,7 @@ fn requirements(cx: &mut Ctx, u: &Uses, needs: &Needs) -> Vec<(TyId, Span, Need,
 
 fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
     let mut out = vec![];
+    let top_writer = identity::json_top_writer(cx);
     // Looks at values matter only for object copies; most programs make none.
     let looks = !cx.object_copies.copies.is_empty();
     let copies: Vec<(Span, TyId)> = cx
@@ -233,6 +234,7 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
                 }
             }
             uses_of(ids.tys, &mut u, e, looks);
+            identity::top_write(top_writer, e, &mut u.direct);
             if u.calls.len() > calls {
                 let guard = guards.get(&(e as *const Expr)).copied().unwrap_or(0);
                 u.guards.push(guard);

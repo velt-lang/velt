@@ -1,0 +1,221 @@
+// velt/encoding/json (internal): the code the generator of `writeJson` (write.vlt) writes for
+// a value of each type, and for the members of an object, a `Map` and a record.
+
+import { Model, Output, Type } from "velt/generate";
+import {
+  dynamicArms,
+  hidden,
+  isDynamic,
+  jsonQuote,
+  keyOrder,
+  member,
+  needsKey,
+} from "velt/encoding/json/generate/facts";
+
+/** The function that writes a value of type `id`, and whether it takes the key. */
+export function writerOf(out: Output, model: Model, id: i64): [string, bool] {
+  if (needsKey(model, id, [])) {
+    return [out.instance("writeJsonKeyed", [id]), true];
+  }
+  return [out.instance("writeJson", [id]), false];
+}
+
+/** A literal type's value as JSON text (a string literal is JSON text already). */
+export function writeLiteral(out: Output, t: Type): void {
+  const text = t.literal;
+  let plain = true;
+  for (let i: i64 = 0; i < (text.length as i64); i++) {
+    const c = text.charCodeAt(i);
+    if (!(c == 45 || (c >= 48 && c <= 57))) {
+      plain = false;
+    }
+  }
+  if (plain || text.startsWith("\"") || text == "true" || text == "false") {
+    const lit = out.literal(text);
+    out.line(`w.append(${lit});`);
+  } else {
+    out.line(`appendJsonNumber(w, ${text});`);
+  }
+}
+
+/** Writes the code that appends `v`, of model type `id`, whose key is the expression `key`. */
+export function writeValue(out: Output, model: Model, id: i64, v: string, key: string): void {
+  const t = model.type(id);
+  if (t.kind == "number") {
+    if (t.repr == "f64" || t.repr == "f32") {
+      out.line(`appendJsonNumber(w, ${v} as f64);`);
+    } else if (t.repr.startsWith("u")) {
+      out.line(`appendJsonUint(w, ${v} as u64);`);
+    } else {
+      out.line(`w.appendInt(${v} as i64);`);
+    }
+  } else if (t.kind == "string") {
+    out.line(`appendJsonString(w, ${v});`);
+  } else if (t.kind == "boolean") {
+    out.line(`if (${v}) { w.append("true"); } else { w.append("false"); }`);
+  } else if (t.kind == "void" || t.kind == "never" || t.kind == "function") {
+    out.line(`w.append("null");`);
+  } else if (t.kind == "literal") {
+    writeLiteral(out, t);
+  } else if (t.kind == "enum") {
+    writeEnum(out, t, v);
+  } else if (isDynamic(t)) {
+    out.line(`writeJsonAny(w, ${v}, ${key});`);
+  } else if (t.kind == "interface") {
+    out.line(`writeJsonAny(w, dynamicOf(${v}), ${key});`);
+  } else {
+    const [name, keyed] = writerOf(out, model, id);
+    if (keyed) {
+      out.line(`${name}(w, ${v}, ${key});`);
+    } else {
+      out.line(`${name}(w, ${v});`);
+    }
+  }
+}
+
+/** The code for an enum value: its number, or its string. */
+export function writeEnum(out: Output, t: Type, v: string): void {
+  const strings = t.members.length > 0 && t.members[0].value.startsWith("\"");
+  if (!strings) {
+    out.line(`w.appendInt(${v} as i64);`);
+    return;
+  }
+  out.line(`appendJsonString(w, ${v} as string);`);
+}
+
+/**
+ * The condition under which the dynamic value of type `t` in the local `x` is written as a
+ * member (not `undefined`, a function or a symbol), or "" when it always is.
+ */
+export function presentTest(out: Output, model: Model, t: Type, x: string): string {
+  if (isDynamic(t)) {
+    return `jsonPresent(${x})`;
+  }
+  const arms = dynamicArms(model, t);
+  if (arms.length == 0) {
+    return "";
+  }
+  const p = out.fresh("p");
+  out.line(`let ${p} = true;`);
+  for (const i of arms) {
+    out.line(`if (__arm(${x}, ${i})) { ${p} = jsonPresent(${x}); }`);
+  }
+  return p;
+}
+
+/** The members of an object, a struct or a class written with its fields (`v` holds it). */
+export function writeFields(out: Output, model: Model, t: Type, v: string): void {
+  // Constant text is gathered and appended as one literal before each value; after a member
+  // that may be left out, a flag says whether a `,` is needed.
+  let pending = "{";
+  let maybe = false;
+  let wrote = false;
+  for (const f of keyOrder(t)) {
+    if (hidden(model, f) && !f.isGetter) {
+      continue;
+    }
+    const ft = model.type(f.type);
+    const key = jsonQuote(f.name) + ":";
+    const name = out.literal(f.name);
+    // A field an extension adds to the type's objects is read through the extension's type.
+    const holder = f.via >= 0 ? `(${v} as ${model.type(f.via).spelling})` : v;
+    const read = member(out, holder, f.name);
+    // What decides whether the member is written, and the type and expression written.
+    let test = "";
+    let wid = f.type;
+    let x = read;
+    const dynamic = isDynamic(ft) || dynamicArms(model, ft).length > 0;
+    // `x?: T` and `x: T | undefined` are left out when absent, as JavaScript leaves out an
+    // absent or `undefined` property; `x?: T | null` is written when present, `null` too.
+    const omit = f.optional || (ft.kind == "option" && ft.literal.endsWith("undefined"));
+    if (pending.length > 0 && (f.isGetter || dynamic || omit)) {
+      const lit = out.literal(pending);
+      out.line(`w.append(${lit});`);
+      pending = "";
+    }
+    if (f.isGetter) {
+      // An object literal's getter: what it returns, written as a dynamic member.
+      x = out.fresh("g");
+      out.line(`const ${x} = dynamicOf(${v})[${name}];`);
+      test = `jsonPresent(${x})`;
+      wid = -1;
+    } else if (dynamic) {
+      x = out.fresh("f");
+      out.line(`const ${x} = ${read};`);
+      test = presentTest(out, model, ft, x);
+    } else if (omit) {
+      x = out.fresh("f");
+      out.line(`const ${x} = ${read};`);
+      if (ft.kind == "option" && ft.literal != "undefined") {
+        // `x?: T | null` and `x: T | null | undefined`: written when not `undefined`.
+        test = `${x} !== undefined`;
+      } else {
+        test = `${x} != null`;
+        if (ft.kind == "option") {
+          wid = ft.args[0];
+        }
+      }
+    }
+    if (test.length > 0) {
+      if (!maybe) {
+        out.line(`let sep = ${wrote ? "true" : "false"};`);
+        maybe = true;
+      }
+      const k = out.literal(key);
+      out.line(`if (${test}) {`);
+      out.line(`if (sep) { w.append(","); }`);
+      out.line(`sep = true;`);
+      out.line(`w.append(${k});`);
+      if (wid < 0) {
+        out.line(`writeJsonAny(w, ${x}, ${name});`);
+      } else {
+        writeValue(out, model, wid, x, name);
+      }
+      out.line(`}`);
+      continue;
+    }
+    if (maybe) {
+      const k = out.literal(key);
+      out.line(`if (sep) { w.append(","); }`);
+      out.line(`sep = true;`);
+      out.line(`w.append(${k});`);
+    } else {
+      const lit = out.literal(pending + (wrote ? "," : "") + key);
+      out.line(`w.append(${lit});`);
+    }
+    pending = "";
+    wrote = true;
+    writeValue(out, model, f.type, x, name);
+  }
+  const end = out.literal(pending + "}");
+  out.line(`w.append(${end});`);
+}
+
+/** The members of a `Map` or record whose entries the loop's `k` and `x` hold. */
+export function writeEntries(out: Output, model: Model, kt: Type, vid: i64, iter: string): void {
+  const vt = model.type(vid);
+  out.line(`w.append("{");`);
+  out.line(`let first = true;`);
+  out.line(`for (const [k, x] of ${iter}) {`);
+  // A key of a literal union or a string enum is its string.
+  const ks = kt.kind == "string" ? "k" : "`${k}`";
+  let wid = vid;
+  const test = presentTest(out, model, vt, "x");
+  if (test.length > 0) {
+    out.line(`if (!(${test})) { continue; }`);
+  } else if (vt.kind == "option" && vt.literal != "null") {
+    // A value holding `undefined` is left out, as JavaScript leaves out such a property (a
+    // `null` of a `V | null | undefined` is written).
+    out.line(`if (x === undefined) { continue; }`);
+    if (vt.literal == "undefined") {
+      wid = vt.args[0];
+    }
+  }
+  out.line(`if (!first) { w.append(","); }`);
+  out.line(`first = false;`);
+  out.line(`appendJsonString(w, ${ks});`);
+  out.line(`w.append(":");`);
+  writeValue(out, model, wid, "x", ks);
+  out.line(`}`);
+  out.line(`w.append("}");`);
+}

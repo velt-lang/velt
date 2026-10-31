@@ -98,6 +98,7 @@ table! {
     db_row_source => "db/row_source",
     encoding_json_reader => "encoding/json/reader",
     encoding_json_writer => "encoding/json/writer",
+    encoding_json_generated => "encoding/json/generated",
     /// The default JSX provider (`jsxImportSource`).
     jsx => "jsx",
     net_http_fetch_response => "net/http/fetch/response",

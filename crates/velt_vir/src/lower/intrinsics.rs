@@ -248,6 +248,7 @@ impl FnLower<'_, '_> {
             (I::AnyHas, [o, k]) => self.any_has(o, k),
             (I::AnyDelete, [o, k]) => self.any_delete(o, k),
             (I::Identity, [x]) => self.identity_of(x),
+            (I::ToAny, [x]) => self.boxed_any(x),
             (I::AnyReflectInfo, [a]) => self.any_reflect(a, super::any_reflect::OP_INFO, None, ty),
             (I::AnyReflectCount, [a]) => {
                 self.any_reflect(a, super::any_reflect::OP_COUNT, None, ty)

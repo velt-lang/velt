@@ -291,6 +291,12 @@ impl Ctx<'_> {
         if name == crate::generated::QUALIFIED && self.in_generated_file(t.span) {
             return self.resolve_qualified(t, args, env);
         }
+        if name == crate::generated::handles::TYPE && self.in_generated_file(t.span) {
+            return self.resolve_handle(t, args);
+        }
+        if name == crate::generated::UNION && self.in_generated_file(t.span) {
+            return self.resolve_generated_union(t, args, env);
+        }
         if let Some(i) = env.params.iter().rposition(|p| p == name) {
             if !args.is_empty() {
                 self.err(

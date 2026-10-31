@@ -178,6 +178,16 @@ enum Mode {
 }
 
 /// What is checked on demand in one check.
+impl Lazy {
+    /// A module added during the check (a generated one, `Ctx::add_module`): checked eagerly,
+    /// as any non-std module.
+    pub(crate) fn add_module(&mut self) {
+        if !self.modules.is_empty() {
+            self.modules.push(Mode::Eager);
+        }
+    }
+}
+
 pub(crate) struct Lazy {
     /// Off for the editor's analysis (`ide`), which checks everything.
     pub on: bool,
@@ -218,9 +228,13 @@ pub(crate) fn plan(cx: &mut Ctx) {
     if !cx.lazy.on {
         return;
     }
-    let mods = cx.modules;
+    let mods = cx.modules.clone();
     let mut direct: FxHashSet<&str> = FxHashSet::default();
-    for m in mods.iter().filter(|m| !m.is_std) {
+    // A generated module sees what its declaring module imports without importing it: it makes
+    // no std module checked whole (the declaring module, a user's, already does for its own).
+    let generated =
+        |m: &crate::SourceModule| cx.gen.as_ref().is_some_and(|g| g.files.contains(&m.file));
+    for m in mods.iter().filter(|m| !m.is_std && !generated(m)) {
         direct.extend(m.imports.iter().map(|(_, p)| p.as_str()));
         direct.extend(m.jsx_runtime.as_deref());
     }

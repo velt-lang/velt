@@ -21,19 +21,45 @@ pub(crate) const DISPOSE: &str = ast::SYMBOL_DISPOSE;
 pub(crate) const ASYNC_DISPOSE: &str = ast::SYMBOL_ASYNC_DISPOSE;
 
 pub(super) fn declare_all(cx: &mut Ctx, items: &mut ItemDefs) {
-    for m in 0..cx.modules.len() {
+    // Generated modules are collected after the program's bodies are checked
+    // (`collect_generated`): their code names the program's types by the instances they were
+    // generated for, which only the checked program can tell.
+    let ms: Vec<usize> = (0..cx.modules.len())
+        .filter(|&m| !cx.is_generated_module(m))
+        .collect();
+    for &m in &ms {
         let module = &cx.modules[m];
         for item in &module.ast.items {
             declare_item(cx, m, item, items);
         }
     }
-    super::nested::declare_nested(cx, items);
+    super::nested::declare_nested(cx, items, &ms);
     for m in 0..cx.modules.len() {
         super::imports::resolve_imports(cx, m);
         super::imports::bind_jsx_runtime(cx, m);
     }
-    crate::generated::access::inherit_scopes(cx);
     collect_prelude(cx);
+}
+
+/// Declare the items of generated modules `ms`: functions, constants and type aliases (what a
+/// generator's body and helpers declare); any other item is the generator's error.
+pub(super) fn declare_generated(cx: &mut Ctx, ms: &[usize], items: &mut ItemDefs) {
+    for &m in ms {
+        let module = &cx.modules[m];
+        for item in &module.ast.items {
+            match &item.kind {
+                ast::ItemKind::Function(_) | ast::ItemKind::TypeAlias(_) | ast::ItemKind::Var(_) => {
+                    declare_item(cx, m, item, items)
+                }
+                _ => cx.err(
+                    "generated code declares only functions, constants and type aliases (a bug in the generator)",
+                    item.span,
+                ),
+            }
+        }
+    }
+    super::nested::declare_nested(cx, items, ms);
+    crate::generated::access::inherit_scopes(cx, ms);
 }
 
 pub(super) fn generic_names(gs: &[ast::GenericParam]) -> Generics {

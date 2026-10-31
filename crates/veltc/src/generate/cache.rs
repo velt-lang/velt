@@ -26,7 +26,7 @@ const OFFER_KIND: &str = "generated-offer";
 pub(super) fn output_key(root: &Path, src: &str, input: &str) -> Option<Key> {
     crate::build_cache::cache()?;
     let mut h = KeyHasher::new();
-    h.part(b"generate-output-v3");
+    h.part(b"generate-output-v4");
     h.part(&crate::build_cache::compiler_identity().0);
     h.part(root.as_os_str().as_encoded_bytes());
     h.part(src.as_bytes());
@@ -109,7 +109,7 @@ pub(super) struct OfferFile {
 pub(super) fn offer_key(root: &Path, require_main: bool) -> Option<Key> {
     crate::build_cache::cache()?;
     let mut h = KeyHasher::new();
-    h.part(b"generate-offer-v2");
+    h.part(b"generate-offer-v3");
     h.part(&crate::build_cache::compiler_identity().0);
     h.part(root.as_os_str().as_encoded_bytes());
     h.part(&[u8::from(require_main)]);
@@ -157,8 +157,7 @@ pub(super) fn store_offer(key: &Key, offer: &Offer) {
     let Some(cache) = crate::build_cache::cache() else {
         return;
     };
-    if offer.generator_files.is_empty() || offer.instances.iter().any(|i| i.fingerprint.is_empty())
-    {
+    if offer.generator_files.is_empty() {
         return;
     }
     let v = json!({
