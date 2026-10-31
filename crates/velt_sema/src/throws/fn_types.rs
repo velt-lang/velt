@@ -384,16 +384,15 @@ impl Ctx<'_> {
     }
 
     /// Are the function types written without `throws` in module `module` sites: those of a
-    /// user module, and the traps of std/proxy's `ProxyHandler` (the only function types that
-    /// module writes), so a trap may throw: a proxy operation throws what its trap throws
+    /// user module, and the traps of std/lang/proxy's `ProxyHandler` (the only function types
+    /// those modules write), so a trap may throw: a proxy operation throws what its trap throws
     /// (hir_encodings.md "Proxy and Reflect").
     fn site_module(&self, module: usize) -> bool {
         match self.scopes.get(module) {
             None => false,
-            Some(s) if s.is_std => self
-                .modules
-                .get(module)
-                .is_some_and(|m| m.path == velt_common::std_module!(lang_proxy)),
+            Some(s) if s.is_std => self.modules.get(module).is_some_and(|m| {
+                crate::body::expr::proxy::PROXY_MODULES.contains(&m.path.as_str())
+            }),
             Some(_) => true,
         }
     }

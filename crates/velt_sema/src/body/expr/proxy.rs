@@ -19,6 +19,8 @@
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
+pub(crate) use velt_common::std_modules::PROXY_MODULES;
+
 use crate::body::FnCx;
 use crate::hir::{self, DefId, ExprKind as H};
 
@@ -63,7 +65,7 @@ impl FnCx<'_, '_> {
         })
     }
 
-    /// Operation `i` on an `any` (`Intrinsic::AnyGet`, ...): in a user module (or std/proxy,
+    /// Operation `i` on an `any` (`Intrinsic::AnyGet`, ...): in a user module (or std/lang/proxy,
     /// whose `Reflect` functions forward to a target that may be a proxy) of a program that has
     /// loaded `Proxy`, it throws what the `Proxy` method it runs on a proxy throws
     /// (`proxy_method_of`; what the handler's traps throw), as in JavaScript, where an error
@@ -79,7 +81,7 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let std = self.cx.scopes[self.module].is_std;
-        if !std || self.cx.modules[self.module].path == velt_common::std_module!(lang_proxy) {
+        if !std || PROXY_MODULES.contains(&self.cx.modules[self.module].path.as_str()) {
             let m = Self::proxy_method_of(i).and_then(|name| {
                 let p = self.cx.prelude_adt("Proxy")?;
                 let a = self.cx.adt(p)?;

@@ -1,0 +1,110 @@
+// velt/lang/proxy (internal): `PropertyDescriptor` and the traps of a proxy (`ProxyHandler`),
+// and how a trap's descriptor is completed and checked against the target's.
+
+import { Reflect } from "velt/lang/proxy/reflect";
+
+// Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
+
+/**
+ * A property's attributes (TypeScript's `PropertyDescriptor`), as a `getOwnPropertyDescriptor`
+ * trap answers them and `Reflect.getOwnPropertyDescriptor` gives them. A data property has
+ * `value` and `writable`, an accessor property `get` and `set`; an attribute left out is
+ * `false` (`value`, `get` and `set`: `undefined`). The fields are in the order Node prints a
+ * descriptor's.
+ */
+export type PropertyDescriptor = {
+  value?: any;
+  writable?: boolean;
+  get?: any;
+  set?: any;
+  enumerable?: boolean;
+  configurable?: boolean;
+};
+
+/**
+ * The traps of a proxy (TypeScript's `ProxyHandler<T>`). Each is optional: an absent trap
+ * forwards the operation to the target.
+ */
+export type ProxyHandler<T> = {
+  /** `p[key]`: the value read. `receiver` is the proxy (or the object the read started on). */
+  get?: (target: any, p: string | symbol, receiver: any) => any;
+  /** `p[key] = value`: `false` makes the assignment throw a `TypeError` (strict code). */
+  set?: (target: any, p: string | symbol, newValue: any, receiver: any) => boolean;
+  /** `key in p`. */
+  has?: (target: any, p: string | symbol) => boolean;
+  /** `delete p[key]`: `false` makes the `delete` throw a `TypeError` (strict code). */
+  deleteProperty?: (target: any, p: string | symbol) => boolean;
+  /**
+   * The own keys of `p` (`Object.keys`, spreads, `Reflect.ownKeys`): an array of strings and
+   * symbols, each at most once.
+   */
+  ownKeys?: (target: any) => any;
+  /** The own property `key` of `p`, or `undefined` when it has none. */
+  getOwnPropertyDescriptor?: (target: any, p: string | symbol) => PropertyDescriptor | undefined;
+  /** `Reflect.defineProperty(p, key, attributes)`: whether the property was defined. */
+  defineProperty?: (target: any, p: string | symbol, attributes: PropertyDescriptor) => boolean;
+};
+
+/**
+ * The descriptor a `getOwnPropertyDescriptor` trap answered, completed as JavaScript's
+ * ToPropertyDescriptor and CompletePropertyDescriptor do: an accessor property (`get` or `set`)
+ * or a data property, an attribute left out `false`.
+ */
+export function proxyComplete(d: PropertyDescriptor): PropertyDescriptor {
+  const enumerable = d.enumerable === true;
+  const configurable = d.configurable === true;
+  if (d.get !== undefined || d.set !== undefined) {
+    if (d.value !== undefined || d.writable !== undefined) {
+      panic(
+        "TypeError: Invalid property descriptor. Cannot both specify accessors and a value or writable attribute, #<Object>",
+      );
+    }
+    return { get: d.get, set: d.set, enumerable: enumerable, configurable: configurable };
+  }
+  if (!("value" in d)) {
+    // A data property's value left out is `undefined`, which Node lists.
+    return {
+      value: undefined,
+      writable: d.writable === true,
+      enumerable: enumerable,
+      configurable: configurable,
+    };
+  }
+  return {
+    value: d.value,
+    writable: d.writable === true,
+    enumerable: enumerable,
+    configurable: configurable,
+  };
+}
+
+/**
+ * JavaScript's IsCompatiblePropertyDescriptor for an extensible target: may a property described
+ * by `d` (an attribute left out keeps the current one) stand for the target's own property `t`?
+ */
+export function proxyCompatible(d: PropertyDescriptor, t: PropertyDescriptor | undefined): boolean {
+  if (t === undefined || t.configurable === true) {
+    return true;
+  }
+  if (d.configurable === true) {
+    return false;
+  }
+  if (d.enumerable !== undefined && d.enumerable !== t.enumerable) {
+    return false;
+  }
+  const accessor = d.get !== undefined || d.set !== undefined;
+  const data = d.value !== undefined || d.writable !== undefined;
+  const tAccessor = t.get !== undefined || t.set !== undefined;
+  if ((accessor && !tAccessor) || (data && tAccessor)) {
+    return false;
+  }
+  if (!tAccessor && t.writable !== true) {
+    if (d.writable === true) {
+      return false;
+    }
+    if (d.value !== undefined && d.value !== t.value) {
+      return false;
+    }
+  }
+  return true;
+}

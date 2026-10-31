@@ -10,8 +10,6 @@ export const allow: Allow = {
     "encoding/json/scan.vlt",
     "encoding/json/tape.vlt",
     "encoding/json/writer.vlt",
-    "lang/proxy/array.vlt",
-    "lang/proxy/index.vlt",
     "prelude/array.vlt",
     "prelude/bytes.vlt",
     "prelude/iter.vlt",
@@ -22,7 +20,6 @@ export const allow: Allow = {
   ],
   multiClass: [
     "encoding/json/tape.vlt",
-    "lang/proxy/index.vlt",
     "prelude/error.vlt",
     "prelude/iter.vlt",
     "prelude/json/json.vlt",

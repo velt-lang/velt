@@ -100,6 +100,10 @@ table! {
     lang_intrinsics => "lang/intrinsics",
     lang_proxy => "lang/proxy",
     lang_proxy_array => "lang/proxy/array",
+    lang_proxy_descriptor => "lang/proxy/descriptor",
+    lang_proxy_keys => "lang/proxy/keys",
+    lang_proxy_reflect => "lang/proxy/reflect",
+    lang_proxy_traps => "lang/proxy/traps",
     lang_record => "lang/record",
     lang_sort => "lang/sort",
     lang_sort_stable => "lang/sort/stable",
@@ -107,7 +111,9 @@ table! {
     lang_this_fn => "lang/this_fn",
     lang_typed_array => "lang/typed_array",
     lang_typed_array_buffer_view => "lang/typed_array/buffer_view",
+    lang_typed_array_buffer_view => "lang/typed_array/buffer_view",
     lang_typed_array_core => "lang/typed_array/core",
+    lang_typed_array_native_inspect => "lang/typed_array/native_inspect",
     lang_typed_array_native_inspect => "lang/typed_array/native_inspect",
 
     // Modules and their files that lowering and the checks know.
@@ -172,6 +178,18 @@ macro_rules! std_dir {
         concat!("std/", $crate::std_rel!($name), "/")
     };
 }
+
+/// The modules that implement `Proxy` and `Reflect` (std/lang/proxy, apart from the array
+/// methods of array.vlt): their operations on `any` throw what a proxy's traps throw, as a user
+/// module's do (sema `proxy.rs`, lowering's `proxy_routes`), and their function types are trap
+/// sites (`ProxyHandler`).
+pub const PROXY_MODULES: [&str; 5] = [
+    "std/lang/proxy",
+    "std/lang/proxy/descriptor",
+    "std/lang/proxy/keys",
+    "std/lang/proxy/reflect",
+    "std/lang/proxy/traps",
+];
 
 /// The import specifier of table entry `name`: `std_specifier!(jsx)` is `"velt/jsx"`.
 #[macro_export]
@@ -274,6 +292,22 @@ mod tests {
         assert_eq!(sorted.len(), ENTRIES.len(), "an entry is listed twice");
         assert_eq!(rel("lang_proxy"), Some("lang/proxy"));
         assert_eq!(rel("nothing"), None);
+    }
+
+    #[test]
+    fn the_proxy_modules_are_table_entries() {
+        let names = [
+            "lang_proxy",
+            "lang_proxy_descriptor",
+            "lang_proxy_keys",
+            "lang_proxy_reflect",
+            "lang_proxy_traps",
+        ];
+        let paths: Vec<String> = names
+            .iter()
+            .map(|n| format!("{CANONICAL_PREFIX}{}", rel(n).unwrap()))
+            .collect();
+        assert_eq!(paths, PROXY_MODULES);
     }
 
     #[test]

@@ -24,9 +24,10 @@ use crate::vir::{self, BinOp, Operand, Place, Rvalue, Terminator, Ty, STR_AGG};
 /// The qualified names of the prelude's `Proxy` and `Reflect` classes: a program's own
 /// classes are named after their modules, which are never under `std/`.
 pub(super) const PRELUDE_PROXY: &str = velt_common::std_item!(lang_proxy, "Proxy");
-pub(super) const PRELUDE_REFLECT: &str = velt_common::std_item!(lang_proxy, "Reflect");
+pub(super) const PRELUDE_REFLECT: &str = velt_common::std_item!(lang_proxy_reflect, "Reflect");
 /// The start of the names of `Reflect`'s methods.
-pub(super) const PRELUDE_REFLECT_METHODS: &str = velt_common::std_item!(lang_proxy, "Reflect.");
+pub(super) const PRELUDE_REFLECT_METHODS: &str =
+    velt_common::std_item!(lang_proxy_reflect, "Reflect.");
 /// The prelude's array method read through a proxy (std/lang/proxy/array.vlt).
 pub(super) const PRELUDE_ARRAY_METHOD: &str = velt_common::std_hook!(array_method);
 

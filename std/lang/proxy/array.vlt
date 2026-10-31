@@ -12,6 +12,7 @@
 import { Proxy } from "velt/lang/proxy";
 import { proxyArrayCall, proxyArrayHole } from "velt/lang/intrinsics";
 import { PROXY_DELETE, PROXY_GET, PROXY_HAS, PROXY_SET, PROXY_TARGET } from "velt/lang/hooks/keys";
+import { proxyReverse, proxySort } from "velt/lang/proxy/array_order";
 
 /**
  * An array method read through a proxy (`Reflect.get(array, "push")`), or `constructor`
@@ -62,7 +63,7 @@ function arrayInt(v: any): number {
 }
 
 /** `Set(O, key, v, true)` through the proxy `p`: a trap answering `false` is Node's `TypeError`. */
-function arraySet(p: Proxy, o: any, key: string, v: any): void {
+export function arraySet(p: Proxy, o: any, key: string, v: any): void {
   if (!trapSet(p, key, v, o)) {
     panic(`TypeError: 'set' on proxy: trap returned falsish for property '${key}'`);
   }
@@ -85,7 +86,7 @@ function arrayTarget(p: Proxy): any {
  * on `p`'s target: holes are recorded in the target (velt_rt's `proxy_array`) only during one,
  * not during the user callbacks the algorithm calls between them.
  */
-function trapGet(p: Proxy, key: string, o: any): any {
+export function trapGet(p: Proxy, key: string, o: any): any {
   const t = arrayTarget(p);
   proxyArrayCall(t, 2);
   const v = p[PROXY_GET](key, o);
@@ -103,7 +104,7 @@ function trapSet(p: Proxy, key: string, v: any, o: any): boolean {
 }
 
 /** `p[PROXY_HAS](key)` (see `trapGet`). */
-function trapHas(p: Proxy, key: string): boolean {
+export function trapHas(p: Proxy, key: string): boolean {
   const t = arrayTarget(p);
   proxyArrayCall(t, 2);
   const yes = p[PROXY_HAS](key);
@@ -112,7 +113,7 @@ function trapHas(p: Proxy, key: string): boolean {
 }
 
 /** `p[PROXY_DELETE](key)` (see `trapGet`). */
-function trapDelete(p: Proxy, key: string): void {
+export function trapDelete(p: Proxy, key: string): void {
   const t = arrayTarget(p);
   proxyArrayCall(t, 2);
   p[PROXY_DELETE](key);
@@ -358,70 +359,4 @@ function proxyArrayRead(p: Proxy, name: string, args: any[], o: any, len: number
     return undefined;
   }
   return out;
-}
-
-/** `reverse` of the proxy `p`: each pair of elements from the ends, through the traps. */
-function proxyReverse(p: Proxy, o: any, len: number): void {
-  const middle = Math.floor(len / 2);
-  for (let lower = 0; lower < middle; lower++) {
-    const lk = `${lower}`;
-    const uk = `${len - lower - 1}`;
-    const lowerExists = trapHas(p, lk);
-    const lowerValue = lowerExists ? trapGet(p, lk, o) : undefined;
-    const upperExists = trapHas(p, uk);
-    const upperValue = upperExists ? trapGet(p, uk, o) : undefined;
-    if (upperExists) {
-      arraySet(p, o, lk, upperValue);
-    } else if (lowerExists) {
-      trapDelete(p, lk);
-    }
-    if (lowerExists) {
-      arraySet(p, o, uk, lowerValue);
-    } else if (upperExists) {
-      trapDelete(p, uk);
-    }
-  }
-}
-
-/**
- * `sort` of the proxy `p`: reads the elements it has, sorts them (`undefined` last; by the
- * comparison function, else by their strings), writes them back and deletes the rest.
- */
-function proxySort(p: Proxy, o: any, len: number, cmp: any): any {
-  if (cmp !== undefined && typeof cmp !== "function") {
-    panic("TypeError: The comparison function must be either a function or undefined");
-  }
-  const items: any[] = [];
-  let undefs = 0;
-  for (let k = 0; k < len; k++) {
-    const key = `${k}`;
-    if (trapHas(p, key)) {
-      const v = trapGet(p, key, o);
-      if (v === undefined) {
-        undefs++;
-      } else {
-        items.push(v);
-      }
-    }
-  }
-  items.sort((a: any, b: any): number => {
-    if (cmp === undefined) {
-      const x = String(a);
-      const y = String(b);
-      return x < y ? -1 : x > y ? 1 : 0;
-    }
-    const r = cmp(a, b);
-    return typeof r === "number" ? (r as number) : 0;
-  });
-  const n = items.length as number;
-  for (let j = 0; j < n; j++) {
-    arraySet(p, o, `${j}`, items[j]);
-  }
-  for (let j = n; j < n + undefs; j++) {
-    arraySet(p, o, `${j}`, undefined);
-  }
-  for (let j = n + undefs; j < len; j++) {
-    trapDelete(p, `${j}`);
-  }
-  return o;
 }

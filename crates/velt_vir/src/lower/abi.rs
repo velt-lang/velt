@@ -415,8 +415,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.proxy_routes = !f
             .name
             .starts_with(velt_common::std_modules::CANONICAL_PREFIX)
-            || f.name
-                .starts_with(concat!(velt_common::std_module!(lang_proxy), "::"));
+            || velt_common::std_modules::PROXY_MODULES.iter().any(|m| {
+                f.name
+                    .strip_prefix(m)
+                    .is_some_and(|rest| rest.starts_with("::"))
+            });
         // Outermost scope: owned params, dropped on every return.
         self.push_scope(ScopeKind::Block);
         for p in &f.params[f.captures.len()..] {

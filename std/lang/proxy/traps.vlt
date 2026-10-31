@@ -1,0 +1,244 @@
+// velt/lang/proxy (internal): the larger operations of a `Proxy` (velt/lang/proxy): own keys and
+// descriptors, definitions, deletes, the receiver of a write, and JSON.
+
+import {
+  PROXY_DEFINE_PROPERTY,
+  PROXY_GET,
+  PROXY_GET_OWN_PROPERTY_DESCRIPTOR,
+  PROXY_IS_ARRAY,
+  PROXY_KEYS,
+  PROXY_OWN_KEYS,
+  PROXY_TARGET,
+} from "velt/lang/hooks/keys";
+import { PropertyDescriptor, proxyCompatible, proxyComplete } from "velt/lang/proxy/descriptor";
+import { proxyKey, proxyKeyText, proxyNameText } from "velt/lang/proxy/keys";
+import { Reflect } from "velt/lang/proxy/reflect";
+import { Proxy } from "velt/lang/proxy";
+
+/**
+ * The own keys of this proxy (`[[OwnPropertyKeys]]`): the `ownKeys` trap's answer, checked as
+ * Node checks it (an array of strings and symbols, each at most once).
+ */
+export function proxyOwnKeys(p: Proxy): (string | symbol)[] {
+  const trap = p.handlerOf().ownKeys;
+  if (trap == null) {
+    return Reflect.ownKeys(p[PROXY_TARGET]());
+  }
+  const res = trap(p[PROXY_TARGET]());
+  if (res === null || typeof res !== "object") {
+    panic("TypeError: CreateListFromArrayLike called on non-object");
+  }
+  if (!Array.isArray(res)) {
+    panic(
+      "TypeError: an `ownKeys` trap answering an array-like object is not supported yet (#823)",
+    );
+  }
+  const out: (string | symbol)[] = [];
+  for (const k of res) {
+    let key: string | symbol = "";
+    if (typeof k === "string") {
+      key = k as string;
+    } else if (typeof k === "symbol") {
+      key = k as symbol;
+    } else {
+      panic(`TypeError: ${proxyNameText(k)} is not a valid property name`);
+    }
+    if (out.includes(key)) {
+      panic("TypeError: 'ownKeys' on proxy: trap returned duplicate entries");
+    }
+    out.push(key);
+  }
+  // The target's keys that are not configurable must be listed (an array's `length`); Node
+  // reads them all after the trap, observably when the target is a proxy.
+  const target = p[PROXY_TARGET]();
+  if (target instanceof Proxy || Array.isArray(target)) {
+    let missing: string | null = null;
+    for (const tk of Reflect.ownKeys(target)) {
+      const t = Reflect.getOwnPropertyDescriptor(target, tk);
+      if (missing === null && t !== undefined && t.configurable !== true && !out.includes(tk)) {
+        missing = proxyKeyText(tk);
+      }
+    }
+    if (missing !== null) {
+      panic(`TypeError: 'ownKeys' on proxy: trap result did not include '${missing}'`);
+    }
+  }
+  return out;
+}
+
+/**
+ * The own property `key` of this proxy (`[[GetOwnProperty]]`): the `getOwnPropertyDescriptor`
+ * trap's answer, completed (an attribute left out is `false`). A target's properties are all
+ * configurable, so a trap may not report one that is not (Node's `TypeError`).
+ */
+export function proxyOwnDescriptor(p: Proxy, key: any): PropertyDescriptor | undefined {
+  const trap = p.handlerOf().getOwnPropertyDescriptor;
+  if (trap == null) {
+    return Reflect.getOwnPropertyDescriptor(p[PROXY_TARGET](), key);
+  }
+  const k = proxyKey(key);
+  const target = p[PROXY_TARGET]();
+  const d = trap(target, k);
+  // The target's own property, which Node reads after the trap: observable only when the
+  // target is a proxy, and needed only for a property that is not configurable (an array's
+  // `length`; Velt's other properties are configurable).
+  const deep = target instanceof Proxy || Array.isArray(target);
+  if (d === undefined) {
+    if (deep) {
+      const t = Reflect.getOwnPropertyDescriptor(target, k);
+      if (t !== undefined && t.configurable !== true) {
+        panic(
+          `TypeError: 'getOwnPropertyDescriptor' on proxy: trap returned undefined for property '${proxyKeyText(k)}' which is non-configurable in the proxy target`,
+        );
+      }
+    }
+    return undefined;
+  }
+  const r = proxyComplete(d);
+  if (deep || r.configurable !== true) {
+    const t = Reflect.getOwnPropertyDescriptor(target, k);
+    if (!proxyCompatible(r, t)) {
+      panic(
+        `TypeError: 'getOwnPropertyDescriptor' on proxy: trap returned descriptor for property '${proxyKeyText(k)}' that is incompatible with the existing property in the proxy target`,
+      );
+    }
+    if (r.configurable !== true) {
+      if (t === undefined || t.configurable === true) {
+        panic(
+          `TypeError: 'getOwnPropertyDescriptor' on proxy: trap reported non-configurability for property '${proxyKeyText(k)}' which is either non-existent or configurable in the proxy target`,
+        );
+      }
+      if (r.writable === false && t.writable === true) {
+        panic(
+          `TypeError: 'getOwnPropertyDescriptor' on proxy: trap reported non-configurable and writable for property '${proxyKeyText(k)}' which is non-configurable, non-writable in the proxy target`,
+        );
+      }
+    }
+  }
+  return r;
+}
+
+/** `Reflect.defineProperty(p, key, attributes)`: the `defineProperty` trap. */
+export function proxyDefine(p: Proxy, key: any, attributes: PropertyDescriptor): boolean {
+  const trap = p.handlerOf().defineProperty;
+  if (trap == null) {
+    return Reflect.defineProperty(p[PROXY_TARGET](), key, attributes);
+  }
+  const k = proxyKey(key);
+  const target = p[PROXY_TARGET]();
+  if (!trap(target, k, attributes)) {
+    return false;
+  }
+  // The checks Node makes against the target's own property (see `[PROXY_GET_OWN_PROPERTY_DESCRIPTOR]`).
+  const fixed = attributes.configurable === false;
+  if (fixed || target instanceof Proxy || Array.isArray(target)) {
+    const t = Reflect.getOwnPropertyDescriptor(target, k);
+    const shown = proxyKeyText(k);
+    if (t === undefined || (fixed && t.configurable === true)) {
+      if (fixed) {
+        panic(
+          `TypeError: 'defineProperty' on proxy: trap returned truish for defining non-configurable property '${shown}' which is either non-existent or configurable in the proxy target`,
+        );
+      }
+    } else if (!proxyCompatible(attributes, t)) {
+      panic(
+        `TypeError: 'defineProperty' on proxy: trap returned truish for adding property '${shown}'  that is incompatible with the existing property in the proxy target`,
+      );
+    } else if (fixed && attributes.writable === false && t.writable === true) {
+      panic(
+        `TypeError: 'defineProperty' on proxy: trap returned truish for defining non-configurable property '${shown}' which cannot be non-writable, unless there exists a corresponding non-configurable, non-writable own property of the target object.`,
+      );
+    }
+  }
+  return true;
+}
+
+/** `Reflect.deleteProperty(p, key)`: the `deleteProperty` trap; whether the key is gone. */
+export function proxyDeleteProperty(p: Proxy, key: any): boolean {
+  const trap = p.handlerOf().deleteProperty;
+  if (trap == null) {
+    return Reflect.deleteProperty(p[PROXY_TARGET](), key);
+  }
+  const k = proxyKey(key);
+  const target = p[PROXY_TARGET]();
+  if (!trap(target, k)) {
+    return false;
+  }
+  // Node checks that the target's property may go (see `[PROXY_GET_OWN_PROPERTY_DESCRIPTOR]`).
+  if (target instanceof Proxy || Array.isArray(target)) {
+    const t = Reflect.getOwnPropertyDescriptor(target, k);
+    if (t !== undefined && t.configurable !== true) {
+      panic(
+        `TypeError: 'deleteProperty' on proxy: trap returned truish for property '${proxyKeyText(k)}' which is non-configurable in the proxy target`,
+      );
+    }
+  }
+  return true;
+}
+
+/**
+ * `Reflect.set(target, key, value, p)` of a plain target with this proxy as the receiver
+ * (JavaScript's OrdinarySet): the property is described (`getOwnPropertyDescriptor`) and then
+ * defined (`defineProperty`) on this proxy; an existing one that is not writable is not.
+ */
+export function proxyReceive(p: Proxy, key: any, value: any): boolean {
+  const d = p[PROXY_GET_OWN_PROPERTY_DESCRIPTOR](key);
+  if (d !== undefined) {
+    if (d.writable !== true) {
+      return false;
+    }
+    return p[PROXY_DEFINE_PROPERTY](key, { value: value });
+  }
+  return p[PROXY_DEFINE_PROPERTY](key, {
+    value: value,
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  });
+}
+
+/**
+ * `JSON.stringify` of this proxy: the value Node serializes in its place, read through the
+ * traps in Node's order: `toJSON` (a function there is not supported yet), then for an array
+ * target `length` and each element, else the keys (`ownKeys`), whether each is enumerable
+ * (`getOwnPropertyDescriptor`) and then their values. `self` is this proxy, the receiver.
+ */
+export function proxyJson(p: Proxy, self: any): any {
+  const toJSON = p[PROXY_GET]("toJSON", self);
+  if (typeof toJSON === "function") {
+    panic(
+      "TypeError: `JSON.stringify` of a proxy whose `toJSON` is a function is not supported yet (#823)",
+    );
+  }
+  if (p[PROXY_IS_ARRAY]()) {
+    const items: any[] = [];
+    const len = p[PROXY_GET]("length", self);
+    const n = typeof len === "number" ? (len as number) : 0;
+    for (let i = 0; i < n; i++) {
+      items.push(p[PROXY_GET](`${i}`, self));
+    }
+    return items;
+  }
+  const out: Record<string, any> = {};
+  for (const k of p[PROXY_KEYS]()) {
+    out[k] = p[PROXY_GET](k, self);
+  }
+  return out;
+}
+
+/**
+ * `Object.keys(p)`: the string keys `[PROXY_OWN_KEYS]` lists whose property
+ * (`[PROXY_GET_OWN_PROPERTY_DESCRIPTOR]`) exists and is enumerable, in that order.
+ */
+export function proxyKeys(p: Proxy): string[] {
+  const out: string[] = [];
+  for (const k of p[PROXY_OWN_KEYS]()) {
+    if (typeof k === "string") {
+      const d = p[PROXY_GET_OWN_PROPERTY_DESCRIPTOR](k);
+      if (d !== undefined && d.enumerable === true) {
+        out.push(k);
+      }
+    }
+  }
+  return out;
+}
