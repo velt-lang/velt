@@ -1,0 +1,42 @@
+// A class prints through its method keyed by Node's `util.inspect.custom`
+// (`Symbol.for("nodejs.util.inspect.custom")`, held in a module constant or written in place),
+// in `console.log`, in containers and through a subclass that overrides it. Expected output
+// from node.
+const custom = Symbol.for("nodejs.util.inspect.custom");
+
+class Point {
+  x: number;
+  y: number;
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+  [custom](): string {
+    return `Point(${this.x}, ${this.y})`;
+  }
+}
+
+class Origin extends Point {
+  constructor() {
+    super(0, 0);
+  }
+  override [custom](): string {
+    return "Origin";
+  }
+}
+
+class Inline {
+  [Symbol.for("nodejs.util.inspect.custom")](): string {
+    return "Inline!";
+  }
+}
+
+class Plain {
+  n = 1;
+}
+
+function main() {
+  console.log(new Point(1, 2));
+  console.log([new Point(3, 4), new Origin()]);
+  console.log({ p: new Point(5, 6) }, new Plain(), new Inline());
+}

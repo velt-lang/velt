@@ -228,6 +228,15 @@ impl Ctx<'_> {
     /// [`Self::member_key`] without reporting: `Err(NAME)` for a `[NAME]` that names nothing.
     pub(crate) fn resolve_key(&self, module: usize, k: &ast::Ident) -> Result<String, String> {
         let name = k.name.as_str();
+        // `[Symbol.for("key")]` written in place (the parser's name for it): the registered
+        // symbol's name, as a constant holding it has (std's keys name theirs first).
+        if let Some(key) = registered_key(name) {
+            let sym = KnownSymbol::Registered(key.clone());
+            return Ok(match self.symbol_keys.names.get(&sym) {
+                Some(n) => n.clone(),
+                None => crate::property_order::symbol_key_name(&key, 1),
+            });
+        }
         let inner = match name.strip_prefix('[').and_then(|n| n.strip_suffix(']')) {
             Some(inner) if is_computed_key(k) => inner,
             _ => return Ok(name.to_string()),
@@ -339,6 +348,14 @@ impl Ctx<'_> {
 
 /// Is `k` a computed key `[NAME]` the parser built (not a quoted key `"[NAME]"`)? Its span is
 /// `NAME` alone, two bytes shorter than its name; a quoted key's spans the quotes too.
+/// The key of a member name `[Symbol.for("key")]` (the parser's name for a registered symbol
+/// written in place).
+fn registered_key(name: &str) -> Option<String> {
+    let quoted = name.strip_prefix("[Symbol.for(")?.strip_suffix(")]")?;
+    let inner = quoted.strip_prefix('"')?.strip_suffix('"')?;
+    Some(inner.replace("\\\"", "\"").replace("\\\\", "\\"))
+}
+
 pub(crate) fn is_computed_key(k: &ast::Ident) -> bool {
     k.name.starts_with('[')
         && !k.name.starts_with("[Symbol.")
