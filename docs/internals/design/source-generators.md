@@ -846,6 +846,23 @@ goldens:
   an interface value, in a program that later builds an object holding itself, crashes at exit
   (`velt run` exit 139, or a hang in mimalloc's `mi_process_done`); `v as any` does not. The
   generated code converts interface values with `as any`.
+  Since then (base http2 at bf4542a5e, same method): the generated phase checks generated code
+  in one round, `std/lang/equal`'s helpers are inlined in debug builds, and array loops count in
+  `usize` (a `number` index read through `floatIndex`, which panics, so every comparison reaching
+  one was copied per call site once generated std code counted as std for error locations).
+  eq_compile: `velt check` warm (edited) +22.2%, cold +32.4%; `velt build` warm +15.9%, cold
+  +17.9%, `--release` warm +12.4%; hello world within 1.5% (check and build, cold). Run time of
+  the comparison program: release -2.6%, debug +1.0%. Typical programs generate a few
+  functions (the http-server tests one, `equalByFields<string[]>`): the tests of
+  packages/sqlite (22 files) `velt check` warm +0.7%, `velt test --no-run` warm -1.0%, cold
+  (an empty build cache) -0.2%; packages/http-server (20 files) check warm -1.3%, cold +2.4%,
+  `test --no-run` warm -0.6%, cold +0.6%; std's white-box tests (11 files) `test --no-run`
+  warm +0.8%, cold +5.7%; the 11 goldens that compare with `deepEqual`, `assertEq` or
+  `toEqual` (small programs) check cold +8.1%, warm +5.0%, build cold +14.0%, warm +12.6%. A
+  `check` with an empty build cache pays once for building the equality generator's host
+  (about 3 G instructions: sqlite check cold +8.5%, std's tests cold). What a small program
+  pays is mostly fixed: the demand walk over every body (`generated::demand`, about 2.5 ms in a
+  60 ms check) and the std code generated code reaches.
 
 ### Left for the port of `JSON.stringify` and `JSON.parse`
 
