@@ -59,7 +59,13 @@ impl Uses {
 /// in definition order, followed by those of the field initializers of each struct and class (a
 /// unit of their own, keyed by the type, which `new` and literals of the type instantiate).
 pub(crate) fn collect(cx: &mut Ctx, signature: bool) -> Vec<(DefId, Uses)> {
-    collect_with(cx, signature, 0, true, false)
+    collect_with(cx, signature, 0, true, false, None)
+}
+
+/// [`collect_from`] of the function bodies and module constants' initializers in `units` alone
+/// (without [`Uses::types`]).
+pub(crate) fn collect_units(cx: &mut Ctx, units: &FxHashSet<DefId>) -> Vec<(DefId, Uses)> {
+    collect_with(cx, false, 0, false, true, Some(units))
 }
 
 /// [`collect`] of the definitions from `from` on (those made since an earlier collection);
@@ -72,7 +78,7 @@ pub(crate) fn collect_from(
     from: usize,
     types: bool,
 ) -> Vec<(DefId, Uses)> {
-    collect_with(cx, signature, from, types, true)
+    collect_with(cx, signature, from, types, true, None)
 }
 
 fn collect_with(
@@ -81,7 +87,9 @@ fn collect_with(
     from: usize,
     types: bool,
     globals: bool,
+    only: Option<&FxHashSet<DefId>>,
 ) -> Vec<(DefId, Uses)> {
+    let wanted = |d: DefId| only.is_none_or(|u| u.contains(&d));
     type News = Vec<(DefId, Vec<TyId>, Span, u64)>;
     let mut out: Vec<(DefId, Uses, News)> = vec![];
     let mut converts = cx.type_level.converts.clone();
@@ -89,6 +97,9 @@ fn collect_with(
     let tys = &cx.ty;
     for (i, d) in cx.defs.iter_mut().enumerate().skip(from) {
         let Some(Def::Fn(f)) = d else { continue };
+        if !wanted(DefId(i as u32)) {
+            continue;
+        }
         let mut u = Uses::default();
         let mut news = vec![];
         let mut seen: FxHashSet<TyId> = FxHashSet::default();
@@ -117,7 +128,7 @@ fn collect_with(
     }
     let mut inits: FxHashMap<DefId, (Uses, News, FxHashSet<TyId>)> = FxHashMap::default();
     for_each_init(cx, globals, &mut |tys, d, e| {
-        if (d.0 as usize) < from {
+        if (d.0 as usize) < from || !wanted(d) {
             return;
         }
         let (u, news, seen) = inits.entry(d).or_default();
@@ -130,6 +141,9 @@ fn collect_with(
     // (`hir::GlobalDef::init`), in whichever function reads it, so it is a unit of its own.
     for (i, info) in cx.info.iter_mut().enumerate().skip(from) {
         let DefInfo::Global(g) = info else { continue };
+        if !wanted(DefId(i as u32)) {
+            continue;
+        }
         let Some(init) = g.init.as_mut() else {
             continue;
         };
