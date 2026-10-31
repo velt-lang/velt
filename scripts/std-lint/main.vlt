@@ -18,6 +18,32 @@ import { docsProblems } from "./docs";
 
 const MAX_LINES = 400;
 
+/**
+ * The lines of `text` a reader follows: all but the doc comments (the blocks that open with
+ * slash, star, star: the TypeScript-style docs of a public API). Ordinary `//` comments count.
+ */
+function codeLines(text: string): i64 {
+  let n: i64 = 0;
+  let inDoc = false;
+  const lines = text.split("\n");
+  // The text ends with a newline: the last element is empty.
+  for (let i = 0; i < lines.length - 1; i++) {
+    const line = lines[i].trim();
+    if (!inDoc && line.startsWith("/**")) {
+      inDoc = !line.endsWith("*/") || line == "/**";
+      continue;
+    }
+    if (inDoc) {
+      if (line.endsWith("*/")) {
+        inDoc = false;
+      }
+      continue;
+    }
+    n++;
+  }
+  return n;
+}
+
 function git(argv: string[]): string {
   const r = execSync("git", argv);
   if (r.code != 0) {
@@ -221,13 +247,13 @@ function lintPackages(): Problem[] {
       continue;
     }
     const text = readFileSync(path);
-    const lines = text.split("\n").length - 1;
+    const lines = codeLines(text);
     if (lines > MAX_LINES && !generated(text)) {
       problems.push(
         new Problem(
           path,
           "oversize",
-          `${lines} lines (limit ${MAX_LINES}): split it by type, one exported class per file, helpers in files of their own`,
+          `${lines} lines besides doc comments (limit ${MAX_LINES}): split it by type, one exported class per file, helpers in files of their own`,
         ),
       );
     }
@@ -283,13 +309,13 @@ function lint(std: Std): Problem[] {
         ),
       );
     }
-    const lines = text.split("\n").length - 1;
+    const lines = codeLines(text);
     if (lines > MAX_LINES && !generated(text) && !isTest(file)) {
       problems.push(
         new Problem(
           file,
           "oversize",
-          `${lines} lines (limit ${MAX_LINES}): split it by type, one exported class per file, helpers in files of their own`,
+          `${lines} lines besides doc comments (limit ${MAX_LINES}): split it by type, one exported class per file, helpers in files of their own`,
         ),
       );
     }
