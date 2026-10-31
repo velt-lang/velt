@@ -1,5 +1,5 @@
-//! `WeakMap`, `WeakSet` and `WeakRef` (std/prelude/weak.vlt) on velt_rt's weak-reference core
-//! (rt_abi.md "Weak references"; docs/internals/design/weak-refs.md).
+//! `WeakMap`, `WeakSet` and `WeakRef` (std/prelude/weak.vlt, weak_set.vlt, weak_ref.vlt) on
+//! velt_rt's weak-reference core (rt_abi.md "Weak references"; docs/internals/design/weak-refs.md).
 //!
 //! Keys and `WeakRef` targets are counted objects passed by address (the map does not count
 //! them). A map value is one `u64` word ([`WordKind`]): the bits of a small plain value, a
@@ -29,8 +29,8 @@ pub(in crate::lower) enum WordKind {
 /// The prelude's weak classes, by qualified name.
 const WEAK_CLASSES: [&str; 3] = [
     velt_common::std_item!(prelude_weak, "WeakMap"),
-    velt_common::std_item!(prelude_weak, "WeakSet"),
-    velt_common::std_item!(prelude_weak, "WeakRef"),
+    velt_common::std_item!(prelude_weak_set, "WeakSet"),
+    velt_common::std_item!(prelude_weak_ref, "WeakRef"),
 ];
 
 impl super::Cx<'_> {

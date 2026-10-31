@@ -141,7 +141,7 @@ fn generic_std_callbacks_are_lock_free() {
         "async function main() { const n = await new Promise<number>((r) => r(1)); console.log(n); }",
     );
     assert_eq!(
-        lock_free(&p, "std/prelude/promise::takeSettlement"),
+        lock_free(&p, "std/lang/promise/settle::takeSettlement"),
         Some(true)
     );
 }

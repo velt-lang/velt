@@ -1,4 +1,4 @@
-//! `ThreadLocal<T>` (std/prelude/sync.vlt, docs/std/sync.md): one value per thread, of a number
+//! `ThreadLocal<T>` (std/prelude/thread_local.vlt, docs/std/sync.md): one value per thread, of a number
 //! type or `bool`. `new ThreadLocal<T>(literal)` is the struct holding the starting value, and a
 //! call of `get` or `set` is a `ThreadLocal*` intrinsic on the module constant holding it, which
 //! lowering names by its `DefId` (velt_vir `lower/thread_local.rs`). Whether the receiver is such

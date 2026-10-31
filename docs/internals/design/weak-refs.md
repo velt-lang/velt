@@ -3,7 +3,7 @@
 Status: `WeakMap`, `WeakSet` and `WeakRef` are in the language (#823 step B); `weak T` fields
 (#11) are not yet. The core is in `velt_rt` (`crates/velt_rt/src/weak/`) with unit tests and a
 leak soak test; the ABI is in [rt_abi.md](../contracts/rt_abi.md#weak-references). The compiler's
-side is `std/prelude/weak.vlt` (the classes), `velt_vir` `lower/boxing/weak.rs` (which types are
+side is `std/prelude/weak.vlt`, `weak_set.vlt` and `weak_ref.vlt` (the classes), `velt_vir` `lower/boxing/weak.rs` (which types are
 weak-capable), `lower/weak.rs` (the intrinsics and map value words) and `lower/glue/trace.rs`
 (trace, retain and release glue).
 

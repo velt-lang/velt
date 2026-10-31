@@ -113,7 +113,7 @@ word's address first; `velt_vir::atomic::AtomicCall` says what each symbol means
 rejects one that means nothing, and both backends emit every call inline. **No runtime function
 exists behind them.**
 
-The methods are declared in the prelude (`std/prelude/sync.vlt`), so a call is checked as any
+The methods are declared in the prelude (`std/prelude/atomic.vlt`), so a call is checked as any
 method call: the orderings are parameters of string literal union types, which makes
 `load("release")` a type error, and defaults are placed at the call. Sema then rewrites a call
 that resolves to one of `Atomic`'s methods (`body/expr/atomic.rs`) into an `Atomic*` intrinsic
@@ -620,7 +620,7 @@ and a `VersionLatch` for writers.
 ## Generic `Atomic<T>` (#1696 step 4.1)
 
 `Atomic<T>` with `T` a type parameter is allowed when `T` is bounded by the prelude's marker
-interface `AtomicValue` (std/prelude/sync.vlt). The compiler knows its implementations (no
+interface `AtomicValue` (std/prelude/atomic.vlt). The compiler knows its implementations (no
 `extend` declares them): `Ctx::satisfies` takes the integer types, `f32`, `f64`, `bool`,
 `string`, `shared<U>` and `shared<U> | null`. The bound is checked where the generic is
 instantiated, as any interface bound is; lowering instantiates per type already, so `atomic_word` and

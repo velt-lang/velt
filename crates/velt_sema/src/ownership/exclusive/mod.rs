@@ -602,7 +602,7 @@ fn identity_key_call(cx: &Ctx, callee: &Callee) -> bool {
         velt_common::std_item!(prelude_map, "Map."),
         velt_common::std_item!(collections_set, "Set."),
         velt_common::std_item!(prelude_weak, "WeakMap."),
-        velt_common::std_item!(prelude_weak, "WeakSet."),
+        velt_common::std_item!(prelude_weak_set, "WeakSet."),
     ];
     let Callee::Def(d, _) = callee else {
         return false;

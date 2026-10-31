@@ -61,7 +61,7 @@ table! {
     prelude_array => "prelude/array",
     prelude_bits => "prelude/bits",
     prelude_compare => "prelude/compare",
-    prelude_error => "prelude/error",
+    prelude_error => "prelude/errors",
     /// The globals loaded on demand (`prelude/global/*.vlt`).
     prelude_global => "prelude/global",
     prelude_iter => "prelude/iter",
@@ -71,8 +71,12 @@ table! {
     prelude_process => "prelude/process",
     prelude_promise => "prelude/promise",
     prelude_record => "prelude/record",
+    prelude_async_generator => "prelude/async_generator",
+    prelude_atomic => "prelude/atomic",
     prelude_sync => "prelude/sync",
     prelude_weak => "prelude/weak",
+    prelude_weak_ref => "prelude/weak_ref",
+    prelude_weak_set => "prelude/weak_set",
 
     // What implements the language and its globals (never imported by user code).
     lang => "lang",
@@ -111,9 +115,7 @@ table! {
     lang_this_fn => "lang/this_fn",
     lang_typed_array => "lang/typed_array",
     lang_typed_array_buffer_view => "lang/typed_array/buffer_view",
-    lang_typed_array_buffer_view => "lang/typed_array/buffer_view",
     lang_typed_array_core => "lang/typed_array/core",
-    lang_typed_array_native_inspect => "lang/typed_array/native_inspect",
     lang_typed_array_native_inspect => "lang/typed_array/native_inspect",
 
     // Modules and their files that lowering and the checks know.
