@@ -341,7 +341,12 @@ pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Pr
 
     let t = Instant::now();
     let std_root = loader::std_root();
-    let native_inits = crate::native::inits(opts.packages.as_ref());
+    // A generator host reaches no native code (`check_generator_host`): it starts none of the
+    // program's native packages and links none of their libraries.
+    let native_inits = match sess.generator_build {
+        true => vec![],
+        false => crate::native::inits(opts.packages.as_ref()),
+    };
     let target = opts.target();
     let line_info = opts.has_line_info();
     let lower_opts = velt_vir::LowerOptions {
@@ -681,7 +686,10 @@ fn link_stage(
         opts.release,
         // Release settings strip debug info (and PDB generation on Windows).
         opts.release && !opts.debug_info,
-        &crate::native::links(opts.packages.as_ref(), opts.release),
+        &match sess.generator_build {
+            true => vec![],
+            false => crate::native::links(opts.packages.as_ref(), opts.release),
+        },
     )
     .map_err(BuildError::Failed)?;
     sess.record("link", t);

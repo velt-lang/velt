@@ -453,8 +453,7 @@ struct Cx<'h> {
     work_map: FxHashMap<Work, FuncId>,
     queue: VecDeque<(FuncId, Work)>,
     /// The glues that depend on the types `any` values hold (`AnyIface`, any_iface.rs, and
-    /// `AnyNumeric`, any_number.rs), built last: each with the number of such types when it
-    /// was built.
+    /// `AnyNumeric`, any_number.rs), built last, each with the number of such types then.
     iface_glues: Vec<(FuncId, Work, Option<usize>)>,
     /// Params given `noalias` or `frozen`, with their types, for `unfreeze_module_reach`
     /// (boxing/module_reach.rs); those of the function being declared until it is built.
@@ -504,8 +503,7 @@ struct Cx<'h> {
     json_key_memo: Option<(bool, FxHashMap<TyId, bool>)>,
     /// One type per anonymous object shape (types.rs `canon`).
     anon: types::AnonShapes,
-    /// `hir::Program::generated` by the canonical type arguments work items carry (`canon`),
-    /// made on first use.
+    /// `hir::Program::generated` by work items' canonical type arguments (made on first use).
     generated_canon: Option<FxHashMap<(DefId, Vec<TyId>), DefId>>,
     /// The function whose instance is being built (for `nothing_clashes`).
     cur_def: Option<DefId>,
@@ -778,8 +776,7 @@ struct FnLower<'c, 'h> {
     /// Classes whose initializers a `new` is inlining here (ctor_init.rs): a `new` of one of
     /// them inside them calls an out-of-line initializer function instead.
     init_stack: Vec<TyId>,
-    /// Closures of this body only ever called here: their envs live in the frame
-    /// (frame_envs.rs).
+    /// Closures of this body only ever called here: their envs live in the frame (frame_envs.rs).
     frame_closures: FxHashSet<DefId>,
     /// `Intrinsic::ClosureSibling` locals only ever called: calls go straight to the member
     /// (frame_envs.rs).

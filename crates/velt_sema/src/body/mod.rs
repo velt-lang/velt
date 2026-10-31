@@ -45,6 +45,7 @@ mod consume;
 mod ctor;
 pub(crate) mod defaults;
 mod driver;
+mod generated_bodies;
 pub(crate) mod expr;
 mod field_narrow;
 mod for_any;
@@ -105,11 +106,12 @@ use crate::resolve::TyEnv;
 
 pub(crate) use defaults::param_defaults;
 pub(crate) use driver::{
-    check_bodies, check_generated, ensure_body, ensure_global, field_defaults,
+    check_bodies, ensure_body, ensure_global, field_defaults,
     holds_promise_by_value, printable, promise_in_state,
 };
 pub(crate) use expr::REPORTED;
 pub(crate) use frame::Frame;
+pub(crate) use generated_bodies::check_generated;
 pub(crate) use pattern_defaults::UNDEFINED_OR;
 
 /// What the consumer of an expression's value does with it (only matters for non-Copy types).

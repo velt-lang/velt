@@ -80,7 +80,11 @@ fn the_model_describes_fields_and_spells_types() {
         .expect("User in the model");
     assert_eq!(user.kind, "class");
     // Generated code names a type by a handle: its position in an instance's walk.
-    assert!(user.spelling.starts_with(r#"__type<""#), "{}", user.spelling);
+    assert!(
+        user.spelling.starts_with(r#"__type<""#),
+        "{}",
+        user.spelling
+    );
     let fields: Vec<(&str, bool, bool)> = (user.fields.iter())
         .map(|f| (f.name.as_str(), f.private, f.optional))
         .collect();

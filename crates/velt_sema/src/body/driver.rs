@@ -45,28 +45,6 @@ pub(crate) fn check_bodies(cx: &mut Ctx) {
     super::expr::iface_from_object::check_unwraps(cx);
 }
 
-/// Check the definitions of generated modules collected after the other bodies
-/// (`collect::collect_generated`), and what they reach of std's deferred definitions.
-pub(crate) fn check_generated(cx: &mut Ctx, defs: &[DefId]) {
-    for &d in defs {
-        if cx.global(d).is_some() {
-            ensure_global(cx, d);
-        }
-    }
-    for &d in defs {
-        if matches!(cx.info[d.0 as usize], DefInfo::Fn(_)) {
-            super::defaults::param_defaults(cx, d);
-        }
-    }
-    for &d in defs {
-        if matches!(cx.info[d.0 as usize], DefInfo::Fn(_)) {
-            ensure_body(cx, d);
-        }
-    }
-    super::lazy_std::reach(cx);
-    super::returns::check_deferred(cx);
-}
-
 /// The errors of copies of static methods (`Ctx::copy_diags`) whose copy the program uses: one
 /// named by a function that is no copy, or by a used copy. Each is reported once.
 fn static_copy_uses(cx: &mut Ctx) {
