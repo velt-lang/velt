@@ -243,6 +243,9 @@ write. What differs from HTTP/1.1, for a handler:
 - A client that resets its stream aborts `res.signal()`, and a write to it throws `IoError`;
   the handler's slot stays taken until it returns, so resetting streams never runs more
   handlers at once than the limit.
+- A handler that answers before reading the request body (401, 413) completes the response,
+  then resets the stream (NO_ERROR): the rest of the upload, which the client may have sent
+  before it saw the reset, is ignored (RFC 9113 §5.1).
 - Header names a response may not have over HTTP/2 (`Connection`, `Keep-Alive`,
   `Transfer-Encoding`, `Upgrade`) are not sent.
 - Request trailers are read and dropped; response trailers (`addTrailers`) are always sent.

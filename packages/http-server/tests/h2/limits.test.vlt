@@ -174,4 +174,44 @@ describe("HTTP/2 limits", () => {
     c.close();
     server.close();
   });
+
+  it("ignores the rest of uploads it answered early: no resets, no GOAWAY", async () => {
+    // A handler answering before it reads (401, 413) resets the stream once the response is
+    // out; the client sent (part of) its upload before it saw the reset. RFC 9113 §5.1: those
+    // frames are ignored, and cost the client none of its abuse allowance.
+    const server = await startServer(async (req: HttpRequest, res: HttpResponse) => {
+      res.status(401);
+      res.send("no");
+    });
+    const c = await Client.open(server.port);
+    const chunk: u8[] = new Array<u8>(16384).fill(120);
+    const seen: string[] = [];
+    let id: i64 = 1;
+    // 80 x 16 KiB: past the connection's 1 MiB window, given back for the ignored frames.
+    for (let i = 0; i < 80; i++) {
+      const sid = id;
+      const head = [":method", "POST", ":scheme", "http", ":path", "/up", ":authority", "x"];
+      c.headers(sid, head, false);
+      await c.flush();
+      seen.push(await timeout(c.until((f) => f.id == sid && f.type == 3), 5000));
+      if (i % 2 == 0) {
+        c.frame(0, 1, sid, chunk);
+      } else {
+        // The body, then trailers ending it.
+        c.frame(0, 0, sid, chunk);
+        c.headers(sid, ["x-check", "1"], true);
+      }
+      id += 2;
+    }
+    c.get(id, "/after");
+    await c.flush();
+    seen.push(await timeout(c.until(endOf(id)), 5000));
+    const all = seen.join("\n");
+    expect(all.includes("GOAWAY")).toBe(false);
+    expect(all.includes("STREAM_CLOSED")).toBe(false);
+    expect(seen[0]).toBe("HEADERS 1 :status=401\nDATA 1 es 2:no\nRST 1 NO_ERROR");
+    expect(seen[80]).toBe(`HEADERS ${id} :status=401\nDATA ${id} es 2:no`);
+    c.close();
+    server.close();
+  });
 });

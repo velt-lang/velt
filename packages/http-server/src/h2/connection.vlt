@@ -60,8 +60,10 @@ export class H2Connection {
   streams: Map<i64, H2Stream> = new Map();
   /// Streams done with, for the next ones (their buffers are reused).
   pool: H2Stream[] = [];
-  /// The ids of the last 64 streams closed (`wasOpen`).
+  /// The ids of the last 64 streams closed (`wasOpen`), and which of them the server reset
+  /// (`wasReset`).
   private closed: i64[] = new Array<i64>(64).fill(0);
+  private closedReset: bool[] = new Array<bool>(64).fill(false);
   private closedAt: i64 = 0;
   /// Streams opened by the frames being processed, whose handlers start after them.
   starting: H2Stream[] = [];
@@ -311,8 +313,7 @@ export class H2Connection {
   release(s: H2Stream) {
     if (this.streams.get(s.id) === s) {
       this.streams.delete(s.id);
-      this.closed[this.closedAt] = s.id;
-      this.closedAt = (this.closedAt + 1) & 63;
+      this.remember(s.id, s.reset);
       s.state = CLOSED;
       if (!s.running) {
         this.recycle(s);
@@ -324,6 +325,21 @@ export class H2Connection {
   /// id below `lastStreamId` PROTOCOL_ERROR).
   wasOpen(id: i64): bool {
     return this.closed.includes(id);
+  }
+
+  /// Whether stream `id` is one of the last ones closed with a reset (by either side, or
+  /// refused): frames the client sent before it saw the reset may still arrive, and are ignored
+  /// (RFC 9113 §5.1, "closed").
+  wasReset(id: i64): bool {
+    const i = this.closed.indexOf(id);
+    return i >= 0 && this.closedReset[i];
+  }
+
+  /// Notes stream `id` as closed (`reset`: with RST_STREAM) for `wasOpen` and `wasReset`.
+  remember(id: i64, reset: bool) {
+    this.closed[this.closedAt] = id;
+    this.closedReset[this.closedAt] = reset;
+    this.closedAt = (this.closedAt + 1) & 63;
   }
 
   /// A stream neither the protocol nor a handler uses any more.
