@@ -308,6 +308,23 @@ mod tests {
         assert!(tag.is_empty() || tag == format!("v{}", env!("CARGO_PKG_VERSION")));
     }
 
+    /// The server templates' manifests are in `velt fmt`'s form whichever way they take the
+    /// server, with names as long as a package name can be.
+    #[test]
+    fn the_server_manifests_are_formatted_in_both_forms() {
+        for name in ["api", &"a".repeat(64)] {
+            for dep in [
+                http_server_at("v0.5.0"),
+                http_server_at("v10.20.30-rc.1"),
+                http_server_at(""),
+            ] {
+                let text =
+                    vpm::scaffold::manifest_text_depending(name, None, &[("http-server", dep)]);
+                assert_eq!(velt_fmt::format_source(&text).unwrap(), text, "{text}");
+            }
+        }
+    }
+
     #[test]
     fn vscode_files_are_kept_json() {
         assert_eq!(Editor::parse("code"), Ok(Editor::VsCode));

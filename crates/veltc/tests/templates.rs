@@ -100,6 +100,9 @@ fn check_template(template: &str, has_main: bool) {
         ] {
             assert!(text.contains(field), "{text}");
         }
+        // The manifest as generated is formatted; the one rewritten below is formatted again,
+        // since whether its dependencies fit on a line depends on where the checkout is.
+        assert_eq!(velt_fmt::format_source(&text).unwrap(), text);
         let start = text.find("\"http-server\": {").unwrap();
         let end = start + text[start..].find('}').unwrap() + 1;
         let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -111,11 +114,9 @@ fn check_template(template: &str, has_main: bool) {
             "\"http-server\": {{ path: \"{}\" }}",
             local.display().to_string().replace('\\', "/")
         );
-        std::fs::write(
-            &manifest,
-            format!("{}{local}{}", &text[..start], &text[end..]),
-        )
-        .unwrap();
+        let rewritten = format!("{}{local}{}", &text[..start], &text[end..]);
+        let rewritten = velt_fmt::format_source(&rewritten).unwrap();
+        std::fs::write(&manifest, rewritten).unwrap();
     }
     assert!(out.contains(&format!("({template} template)")), "{out}");
     let root = s.path(&name);
