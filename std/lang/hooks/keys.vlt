@@ -101,3 +101,89 @@ export const PROXY_JSON = Symbol("proxyJson");
 export const PROXY_ARRAY_CALL = Symbol("proxyArrayCall");
 /** `Proxy`: what `hasOwn` does for the compiler and `Reflect`. */
 export const PROXY_HAS_OWN = Symbol("proxyHasOwn");
+/** `Record`: what `at` does for the compiler. */
+export const RECORD_AT = Symbol("recordAt");
+/** `Record`: what `decoded` does for the compiler. */
+export const RECORD_DECODED = Symbol("recordDecoded");
+/** `Record`: what `delete` does for the compiler. */
+export const RECORD_DELETE = Symbol("recordDelete");
+/** `Record`: what `entries` does for the compiler. */
+export const RECORD_ENTRIES = Symbol("recordEntries");
+/** `Record`: what `extend` does for the compiler. */
+export const RECORD_EXTEND = Symbol("recordExtend");
+/** `Record`: what `extendFrom` does for the compiler. */
+export const RECORD_EXTEND_FROM = Symbol("recordExtendFrom");
+/** `Record`: what `extendMaybe` does for the compiler. */
+export const RECORD_EXTEND_MAYBE = Symbol("recordExtendMaybe");
+/** `Record`: what `get` does for the compiler. */
+export const RECORD_GET = Symbol("recordGet");
+/** `Record`: what `has` does for the compiler. */
+export const RECORD_HAS = Symbol("recordHas");
+/** `Record`: what `inAny` does for the compiler. */
+export const RECORD_IN_ANY = Symbol("recordInAny");
+/** `Record`: what `isNullProto` does for the compiler. */
+export const RECORD_IS_NULL_PROTO = Symbol("recordIsNullProto");
+/** `Record`: what `keyNames` does for the compiler. */
+export const RECORD_KEY_NAMES = Symbol("recordKeyNames");
+/** `Record`: what `markNullProto` does for the compiler. */
+export const RECORD_MARK_NULL_PROTO = Symbol("recordMarkNullProto");
+/** `Record`: what `perm` does for the compiler. */
+export const RECORD_PERM = Symbol("recordPerm");
+/** `Record`: what `positions` does for the compiler. */
+export const RECORD_POSITIONS = Symbol("recordPositions");
+/** `Record`: what `set` does for the compiler. */
+export const RECORD_SET = Symbol("recordSet");
+/** `Record`: what `size` does for the compiler. */
+export const RECORD_SIZE = Symbol("recordSize");
+/** `Record`: what `values` does for the compiler. */
+export const RECORD_VALUES = Symbol("recordValues");
+/** `Record`: what `accessor` does for the compiler. */
+export const RECORD_ACCESSOR = Symbol("recordAccessor");
+/** `Record`: what `defineAccessor` does for the compiler. */
+export const RECORD_DEFINE_ACCESSOR = Symbol("recordDefineAccessor");
+/** `Record`: what `defineGetter` does for the compiler. */
+export const RECORD_DEFINE_GETTER = Symbol("recordDefineGetter");
+/** `Record`: what `defineSetter` does for the compiler. */
+export const RECORD_DEFINE_SETTER = Symbol("recordDefineSetter");
+/** `Record`: what `deleteKeyed` does for the compiler. */
+export const RECORD_DELETE_KEYED = Symbol("recordDeleteKeyed");
+/** `Record`: what `deleteSym` does for the compiler. */
+export const RECORD_DELETE_SYM = Symbol("recordDeleteSym");
+/** `Record`: what `getKeyed` does for the compiler. */
+export const RECORD_GET_KEYED = Symbol("recordGetKeyed");
+/** `Record`: what `getSym` does for the compiler. */
+export const RECORD_GET_SYM = Symbol("recordGetSym");
+/** `Record`: what `hasKeyed` does for the compiler. */
+export const RECORD_HAS_KEYED = Symbol("recordHasKeyed");
+/** `Record`: what `hasSym` does for the compiler. */
+export const RECORD_HAS_SYM = Symbol("recordHasSym");
+/** `Record`: what `inKeyed` does for the compiler. */
+export const RECORD_IN_KEYED = Symbol("recordInKeyed");
+/** `Record`: what `ownKeys` does for the compiler. */
+export const RECORD_OWN_KEYS = Symbol("recordOwnKeys");
+/** `Record`: what `ownSymbols` does for the compiler. */
+export const RECORD_OWN_SYMBOLS = Symbol("recordOwnSymbols");
+/** `Record`: what `putAccessor` does for the compiler. */
+export const RECORD_PUT_ACCESSOR = Symbol("recordPutAccessor");
+/** `Record`: what `setKeyed` does for the compiler. */
+export const RECORD_SET_KEYED = Symbol("recordSetKeyed");
+/** `Record`: what `setSym` does for the compiler. */
+export const RECORD_SET_SYM = Symbol("recordSetSym");
+/** `Record`: what `descriptor` does for the compiler. */
+export const RECORD_DESCRIPTOR = Symbol("recordDescriptor");
+/** `Record`: what `putSym` does for the compiler. */
+export const RECORD_PUT_SYM = Symbol("recordPutSym");
+/** `Record`: what `symGet` does for the compiler. */
+export const RECORD_SYM_GET = Symbol("recordSymGet");
+/** `Record`: what `symSet` does for the compiler. */
+export const RECORD_SYM_SET = Symbol("recordSymSet");
+/** `Record`: what `symHas` does for the compiler. */
+export const RECORD_SYM_HAS = Symbol("recordSymHas");
+/** `Record`: what `symDelete` does for the compiler. */
+export const RECORD_SYM_DELETE = Symbol("recordSymDelete");
+/** `ObjectPrototype`: `key in p`. */
+export const PROTOTYPE_HAS_KEY = Symbol("prototypeHasKey");
+/** `ObjectPrototype`: `===`. */
+export const PROTOTYPE_SAME_AS = Symbol("prototypeSameAs");
+/** `Record`: a record of a map's entries in its order (the hook `recordFromMap`). */
+export const RECORD_FROM_MAP = Symbol("recordFromMap");

@@ -6,6 +6,7 @@
 
 import { anyDelete } from "velt/lang/intrinsics";
 import { arrayIndex } from "./record";
+import { RECORD_SET } from "velt/lang/hooks/keys";
 
 /**
  * `{ ...o }` of an `any` (or `object`) `o` in an object literal: the record `r` the literal
@@ -17,7 +18,7 @@ export function spreadAny(r: Record<string, any>, o: any): void {
     return;
   }
   for (const k of Object.keys(o)) {
-    r.__set(k, anyMember(o, k));
+    r[RECORD_SET](k, anyMember(o, k));
   }
 }
 

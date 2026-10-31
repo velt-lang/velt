@@ -518,10 +518,10 @@ impl FnCx<'_, '_> {
         self.error_expr(span)
     }
 
-    /// Is `h` a read of a `Record` key (`r[k]`, `r.name`: `Record.__get`)?
+    /// Is `h` a read of a `Record` key (`r[k]`, `r.name`: `Record[RECORD_GET]`)?
     fn is_record_read(&self, h: &hir::Expr) -> bool {
         matches!(&h.kind, H::Call { callee: hir::Callee::Def(d, _), .. }
-            if self.cx.try_fn(*d).is_some_and(|f| f.name.ends_with("Record.__get")))
+            if self.cx.try_fn(*d).is_some_and(|f| f.name.ends_with(concat!("Record.", velt_common::std_key!(record_get)))))
     }
 
     /// Is `t` the `Stdout` of `velt/process` (the byte sink `stdout`)?

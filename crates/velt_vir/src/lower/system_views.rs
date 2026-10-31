@@ -103,8 +103,8 @@ impl FnLower<'_, '_> {
         let (buf, bt) = buf;
         let (bytes, at) = self.class_field(&buf, bt, "bytes");
         let (data, blen) = self.header_parts(&bytes, at);
-        // `len * __size()`, through std (a typed array's element size is a method). A view the
-        // program forged by overriding `__size()` or with a constructor of its own can make
+        // `len * [RECORD_SIZE]()`, through std (a typed array's element size is a method). A view the
+        // program forged by overriding `[RECORD_SIZE]()` or with a constructor of its own can make
         // this huge or `off` wrap; the two checks below are non-wrapping, so the range stays
         // inside the buffer's own bytes whatever the view claims.
         let d = self

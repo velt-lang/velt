@@ -4,7 +4,7 @@
 //! the value type includes null, `map_entry_live` asks the map's `[MAP_LIVE_AT]`).
 //! A prelude `Record` (std/prelude/record.vlt, a `Map` in field 0) prints like the object it
 //! stands for, in JavaScript's key order (array indices first: the entry positions its
-//! `__positions` gives, json/map.rs): `{ a: 1, 'b c': 2 }` (empty: `{}`), and std's `Set` (std/collections/set.vlt, a
+//! `[RECORD_POSITIONS]` gives, json/map.rs): `{ a: 1, 'b c': 2 }` (empty: `{}`), and std's `Set` (std/collections/set.vlt, a
 //! `Map<T, bool>` in field 0) like node's: `Set(2) { 1, 2 }` (empty: `Set(0) {}`). Past node's
 //! depth limit they print as `[Map]`, `[Object]` and `[Set]`; a `Map` or `Set` shows its first
 //! 100 entries, then `... n more items`, and stops reading there.
@@ -312,7 +312,7 @@ impl FnLower<'_, '_> {
     }
 
     /// Is the prelude `Map` at `map` (of type `map_ty`) marked as a prototype-less record's
-    /// entries (the top bit of its `edits`, std/prelude/map.vlt `__markNullProto`)? A Bool
+    /// entries (the top bit of its `edits`, std/prelude/map.vlt `[RECORD_MARK_NULL_PROTO]`)? A Bool
     /// operand.
     pub(in crate::lower) fn null_proto_mark(&mut self, map: &Place, map_ty: TyId) -> Operand {
         let TyKind::Adt(d, _) = self.cx.kind(map_ty) else {
@@ -463,7 +463,7 @@ impl FnLower<'_, '_> {
     /// The live entries of the `Map` at `obj` (of types `(map, key, value)`) with `size` of
     /// them, comma-separated, each part at node's depth `child`; a `Map` or `Set` stops after
     /// the first 100 and adds `... n more items`. A record's entries come in `order` (its
-    /// `__positions`).
+    /// `[RECORD_POSITIONS]`).
     fn format_map_entries(
         &mut self,
         buf: &Operand,

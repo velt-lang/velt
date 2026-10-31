@@ -17,6 +17,7 @@ import { beginVisit, dynamicOf, endVisit, identity, isProxy } from "velt/reflect
 import { Reader } from "velt/encoding/json/reader";
 import { JsonFail, jsonFailed } from "velt/encoding/json/fail";
 import { jsonParse } from "velt/lang/intrinsics";
+import { recordFromMap } from "velt/lang/hooks/record";
 
 /** Appends what `JSON.stringify(value)` writes to `w` (one function per type, generated). */
 export declare generated("velt/encoding/json/generate/write") function writeJson<T>(

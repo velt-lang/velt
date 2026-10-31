@@ -1327,7 +1327,7 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   1 yes, 2 not supported yet) only when the program has such a test.
 - `Intrinsic::AnyDelete(x, key)` (std only, `anyDelete`) is `delete x[key]` with a
   `string` key on an `any` `x` that is not a proxy (borrowed), of type `bool`: a record's entry
-  is removed (its `__delete`), an optional field made absent, a key the value does not have as
+  is removed (its `[RECORD_DELETE]`), an optional field made absent, a key the value does not have as
   its own is `true`, an array's `length` `false`. It changes memory (`effects`,
   `replaced_holders::implicit::glue_args`). The `any` tables get slot 15 `AnyDelete (data,
   key) -> u8` (velt_vir `lower/any_delete.rs`; 0 false, 1 true, 2 not supported yet, a
@@ -1340,7 +1340,7 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   (rt_abi.md "Array methods on a proxy"). They run no user code.
 - `Intrinsic::AnyKeys(x)` is `Object.keys(x)` on an `any`, `object` or `Function` `x` (borrowed),
   of type `string[]`: the own enumerable string keys of the value held, in JavaScript's order.
-  It sets `Program::dyn_members` (a record's keys are its `__keyNames()`). The `any` tables get
+  It sets `Program::dyn_members` (a record's keys are its `[RECORD_KEY_NAMES]()`). The `any` tables get
   slot 13 `AnyKeys (data, out: *string[]) -> u8` (velt_vir `lower/any_keys.rs`; 0 written, 1 not
   supported yet) only when the program has such a call; `null` / `undefined` are tested before
   the slot. An object literal spreading an `any` or `object` (`{ ...a }`) is a
@@ -1356,8 +1356,8 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   sema calls the prelude's helpers below, which don't test for one. Sema converts `new
   Proxy(...)` (written outside the standard library; type arguments dropped) to `any` at once
   (`ToDyn`); `AnyTo` converts it to a typed value like any other `any`. The member slots of the
-  `Proxy` class's `any` table call its `__get(key, receiver)`, `__set(key, value, receiver)`
-  and `__has(key)` (velt_vir `lower/any_proxy.rs`), which run the handler's traps or forward
+  `Proxy` class's `any` table call its `[RECORD_GET](key, receiver)`, `[RECORD_SET](key, value, receiver)`
+  and `[RECORD_HAS](key)` (velt_vir `lower/any_proxy.rs`), which run the handler's traps or forward
   to the target; its keys slot (`AnyKeys`) calls `__keys()` (the `ownKeys` and
   `getOwnPropertyDescriptor` traps). `delete o.k` / `delete o[k]` of an `any` or `object` is a
   call of the hook `anyDeleteMember(o, k)` (`anyDeleteProxy` once `Proxy` is loaded: a proxy's `deleteProperty` trap; another value's
@@ -1384,9 +1384,9 @@ one; an error type that was only variables solved empty is no error type (`FnDef
 - Traps that throw (#1174, stage 1): the function types of `ProxyHandler`'s traps
   (std/lang/proxy/index.vlt) are sites like the function types a user module writes without `throws`
   (sema `throws/fn_types.rs`): a closure stored into one adds its errors (`Error` classes) to it,
-  so a call of a trap in `Proxy.__get` & co. throws them and the `Proxy` methods' error types are
-  inferred as any function's. `Intrinsic::AnyGet` / `AnyIndex` (`__get`), `AnySet` /
-  `AnySetIndex` (`__set`), `AnyHas` (`__has`) and `AnyKeys` (`__keys`) in a user module or in
+  so a call of a trap in `Proxy[RECORD_GET]` & co. throws them and the `Proxy` methods' error types are
+  inferred as any function's. `Intrinsic::AnyGet` / `AnyIndex` (`[RECORD_GET]`), `AnySet` /
+  `AnySetIndex` (`[RECORD_SET]`), `AnyHas` (`[RECORD_HAS]`) and `AnyKeys` (`__keys`) in a user module or in
   std/proxy (whose `Reflect` functions reach a target that may be a proxy) of a program that has
   loaded `Proxy` are a throw source `ThrowSrc::Call` of that `Proxy` method at the operation
   (sema `any_op`): the operation throws what the method throws, empty when no trap throws. The
@@ -1423,7 +1423,7 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   (velt_vir `lower/proxy_method.rs`): in a program with proxiable types, `AnyGet` of a method
   name on a class object gives the method read as a value, a function value whose code is the
   method's unbound thunk (env null; called on its own it throws a `TypeError`). A method call on
-  a proxiable class whose receiver holds such a proxy first runs `__get(name, receiver)` (after
+  a proxiable class whose receiver holds such a proxy first runs `[RECORD_GET](name, receiver)` (after
   the receiver, before the other arguments) and checks that the answer is the method about to
   run read as a value (for a virtual call, the instance in the target's vtable entry); the call
   then runs with `this` the proxy. A `super.m()` call (`Program::super_calls`) does not read
@@ -1431,7 +1431,7 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   async method, or one that owns its receiver, cannot be read as a value yet: a call of one
   through a proxy with a `get` trap is a `TypeError` naming #823. A call of a function-typed field of a proxiable object
   type (`Callee::Indirect` of a `Field`) whose base holds a proxy reads the field with
-  `__get` (before the arguments) and calls the answer through its `AnyApply` slot with the
+  `[RECORD_GET]` (before the arguments) and calls the answer through its `AnyApply` slot with the
   arguments boxed, its result converted to the field's result type (velt_vir
   `lower/proxy_call.rs`). Object conversions keep a proxy's identity: `AdtLit` has
   `converted` ("Object conversions" below), and a converted literal whose source has a proxiable type gives the
@@ -1439,7 +1439,7 @@ one; an error type that was only variables solved empty is no error type (`FnDef
 - Views (#1485, velt_vir `lower/any_view.rs`): in a program with typed proxies, `AnyTo` to a
   proxiable object type (not a class) of an `any` holding an object or function of another type
   (and not a proxy) is the tagged result of the prelude's `Proxy.__view(x)`, a `Proxy` without traps whose
-  `#view` is set: field reads and writes run its forwarding `__get` / `__set` and check the value
+  `#view` is set: field reads and writes run its forwarding `[RECORD_GET]` / `[RECORD_SET]` and check the value
   as the field's type. A tagged value whose `Proxy` is a view converts to `any` as the `any` it
   holds (`__target()`, the view released), so the view is the object to every dynamic
   operation. The conversion gives the object's live view when it has one (the runtime's table of
@@ -1584,7 +1584,7 @@ one; an error type that was only variables solved empty is no error type (`FnDef
 - `Program::null_proto_records` (additive): the program calls `Object.create(null)` (sema's scan
   of the user modules, `null` in any parentheses; sema accepts the call only when the scan found
   it). Such a call is an empty `Record<string, V>` whose map is marked with the top bit of its
-  `edits` counter (`__markNullProto`, std/prelude/map.vlt). Only when the flag is set does sema
+  `edits` counter (`[RECORD_MARK_NULL_PROTO]`, std/prelude/map.vlt). Only when the flag is set does sema
   test the mark (`in` on a record with a key known only at run time or one `Object.prototype`
   has; `structuredClone` of a record is an error then) and lowering print a marked record as `[Object: null prototype] { … }`;
   other programs are unchanged.

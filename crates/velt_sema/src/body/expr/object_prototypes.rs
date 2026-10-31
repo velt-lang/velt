@@ -1,5 +1,5 @@
 //! Prototypes as values (object_builtins.rs): `Object.getPrototypeOf(v)`, `Object.prototype` and
-//! `C.prototype` are `ObjectPrototype`s (std/prelude/record.vlt) naming the prototype by a tag,
+//! `C.prototype` are `ObjectPrototype`s (std/prelude/object_prototype.vlt) naming the prototype by a tag,
 //! which `===` compares (`prototypeSame`, called from `binary`), and which print, convert to a
 //! string and to JSON as Node does. A record made by `Object.create(null)` has none (`null`,
 //! tested at run time), a class with subclasses the one of the class it holds.
@@ -334,9 +334,10 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         match how {
             ProtoOf::Static(p) if self.record_args(t).is_some() => {
-                // `r.__isNullProto() ? null : Object.prototype`.
+                // `r[RECORD_IS_NULL_PROTO]() ? null : Object.prototype`.
                 let obj = self.mk(H::Local(l, hir::UseMode::Borrow), t, span);
-                let test = self.record_call(obj, "__isNullProto", &[], span);
+                let test =
+                    self.record_call(obj, velt_common::std_key!(record_is_null_proto), &[], span);
                 let none = self.mk(H::Lit(hir::Lit::Null), ret, span);
                 let some = self.new_prototype(&p, ret, span);
                 self.mk(

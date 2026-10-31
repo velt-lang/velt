@@ -3,9 +3,9 @@
 //! replaces the value, like `JSON.parse`). Sema only lets maps with `string` keys through. A
 //! record keeps a `Map<K, V>` in field 0; with literal keys (`"cpu" | "mem"`, a string enum) a
 //! member whose key is not one of them is skipped, and every key is required. A record is written
-//! in JavaScript's key order (array indices first), walking the positions its `__positions`
+//! in JavaScript's key order (array indices first), walking the positions its `[RECORD_POSITIONS]`
 //! method gives; a decoded one is in document order, so it is marked `unordered` (field 1) when
-//! a key is an array index (`Record.__decoded`).
+//! a key is an array index (`Record[RECORD_DECODED]`).
 
 use velt_sema::hir::{self, DefId, LitValue, PassMode, TyId, TyKind};
 
@@ -295,21 +295,21 @@ impl FnLower<'_, '_> {
     }
 
     /// The order in which to walk the entries of the record at `place` (of the prelude `Record`
-    /// type `ty`): its `__positions()`, the entry positions in JavaScript's key order, or empty
+    /// type `ty`): its `[RECORD_POSITIONS]()`, the entry positions in JavaScript's key order, or empty
     /// for insertion order (always, unless a key that may be an array index was added).
     pub(in crate::lower) fn record_order(&mut self, place: &Place, ty: TyId) -> RecordOrder {
         let TyKind::Adt(d, targs) = self.cx.kind(ty) else {
             ice("Record method on a non-ADT type")
         };
-        let def = self.class_method(d, "__positions");
+        let def = self.class_method(d, velt_common::std_key!(record_positions));
         let ret = match self.cx.hir.def(def) {
             hir::Def::Fn(f) => f.ret,
-            _ => ice("Record.__positions is not a function"),
+            _ => ice("Record[RECORD_POSITIONS] is not a function"),
         };
         let f = self.cx.func_for_direct(def, targs.clone(), self.mode);
         let arr_ty = self.cx.subst(ret, &targs);
         let TyKind::Array(elem) = self.cx.kind(arr_ty) else {
-            ice("Record.__positions does not return an array")
+            ice("Record[RECORD_POSITIONS] does not return an array")
         };
         let vt = self.cx.ty(arr_ty);
         let arr = self.temp(vt);
@@ -408,7 +408,7 @@ impl FnLower<'_, '_> {
         let TyKind::Adt(d, targs) = self.cx.kind(ty) else {
             ice("Record decoded into a non-ADT type")
         };
-        let def = self.class_method(d, "__decoded");
+        let def = self.class_method(d, velt_common::std_key!(record_decoded));
         let f = self.cx.func_for_direct(def, targs, self.mode);
         let recv = vec![Operand::Copy(place.clone())];
         self.call(vir::Callee::Func(f), recv, None, false);
@@ -417,7 +417,7 @@ impl FnLower<'_, '_> {
 
 /// The order of a record's entries for a loop over its map (`FnLower::record_order`).
 pub(in crate::lower) struct RecordOrder {
-    /// The `usize[]` of `__positions()`, owned by the loop's caller.
+    /// The `usize[]` of `[RECORD_POSITIONS]()`, owned by the loop's caller.
     arr: Local,
     arr_ty: TyId,
     elem: TyId,

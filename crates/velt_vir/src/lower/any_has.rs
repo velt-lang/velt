@@ -296,16 +296,16 @@ impl FnLower<'_, '_> {
         self.ret_status(HAS_NO)
     }
 
-    /// `key in r` for a `Record<string, V>`: its `__inAny` (its entries, and what it inherits
+    /// `key in r` for a `Record<string, V>`: its `[RECORD_IN_ANY]` (its entries, and what it inherits
     /// from `Object.prototype` unless `Object.create(null)` made it).
     fn any_has_record(&mut self, data: vir::Local, key: vir::Local, ty: TyId) {
         let (k, _) = self
             .prelude_record(ty)
             .unwrap_or_else(|| super::ice("record"));
         let has = self.plain_adt(ty).and_then(|(d, _)| {
-            self.dyn_members_of(d)
-                .into_iter()
-                .find(|m| m.name == "__inAny" && m.kind == DynMemberKind::Method)
+            self.dyn_members_of(d).into_iter().find(|m| {
+                m.name == velt_common::std_key!(record_in_any) && m.kind == DynMemberKind::Method
+            })
         });
         let ready = has.and_then(|m| self.ready(ty, &m));
         let Some(r) = ready.filter(|_| matches!(self.cx.kind(k), TyKind::Str)) else {

@@ -3,7 +3,7 @@
 //! (`symbol_keys.rs`): a declared member is always there, an optional one is tested at run
 //! time, and the members every object inherits from `Object.prototype` (`"toString"`) are
 //! always there. A record (`Record<string, V>`) is a dictionary: its keys are tested at run
-//! time (`r.__has(k)`), so a deleted key is gone, as in JavaScript. A key known only at run
+//! time (`r[RECORD_HAS](k)`), so a deleted key is gone, as in JavaScript. A key known only at run
 //! time works on such a record; anywhere else it is an error, since Velt objects have fixed
 //! fields and nothing to look a name up in.
 
@@ -326,8 +326,11 @@ impl FnCx<'_, '_> {
         // `PropertyKey` (`string | number | symbol`): through `__propertyKey(k)`.
         let numbered = kind == KeyKind::Symbol && !symbolic && self.number_property_key(key_ty);
         let accessors = self.cx.objects.record_accessors && kind == KeyKind::Str;
-        if open && (symbolic || numbered || accessors) && self.has_record_method("__inKeyed") {
-            // `r.__inKeyed(k)` (velt/lang/record/symbols). The record is evaluated before the key,
+        if open
+            && (symbolic || numbered || accessors)
+            && self.has_record_method(velt_common::std_key!(record_in_keyed))
+        {
+            // `r[RECORD_IN_KEYED](k)` (velt/lang/record/symbols). The record is evaluated before the key,
             // which only a key and a record that both have effects could tell apart.
             if numbered {
                 // The key first, as JavaScript evaluates it, then the record.
@@ -335,11 +338,21 @@ impl FnCx<'_, '_> {
                 let kh = self.property_key_of(kh);
                 return self.with_temp("<key>", kh, lhs.span, span, |cx, k| {
                     let obj = cx.expr(rhs, None, Want::Borrow);
-                    cx.record_call(obj, "__inKeyed", std::slice::from_ref(k), span)
+                    cx.record_call(
+                        obj,
+                        velt_common::std_key!(record_in_keyed),
+                        std::slice::from_ref(k),
+                        span,
+                    )
                 });
             }
             let obj = self.expr(rhs, None, Want::Borrow);
-            return self.record_call(obj, "__inKeyed", std::slice::from_ref(lhs), span);
+            return self.record_call(
+                obj,
+                velt_common::std_key!(record_in_keyed),
+                std::slice::from_ref(lhs),
+                span,
+            );
         }
         if !open || !matches!(kind, KeyKind::Str | KeyKind::Converted) {
             let k = self.expr(lhs, None, Want::Borrow);

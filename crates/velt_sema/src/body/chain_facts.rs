@@ -30,7 +30,7 @@ impl FnCx<'_, '_> {
         (t, f)
     }
 
-    /// `r.__has(k)` (the test `for (const k in r)` starts its body with, `object_keys`): `r[k]`
+    /// `r[RECORD_HAS](k)` (the test `for (const k in r)` starts its body with, `object_keys`): `r[k]`
     /// is present (`key_narrow`), so not nullish when the record's values never are.
     fn has_key_facts(&mut self, callee: &ast::Expr, args: &[ast::Expr]) -> Vec<Fact> {
         let (
@@ -44,7 +44,7 @@ impl FnCx<'_, '_> {
         else {
             return vec![];
         };
-        if prop.name != "__has" || self.key_prop(k).is_none() {
+        if prop.name != velt_common::std_key!(record_has) || self.key_prop(k).is_none() {
             return vec![];
         }
         // A present key of a `Record<string, V | null>` may still hold `null`.

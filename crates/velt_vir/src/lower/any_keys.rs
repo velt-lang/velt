@@ -9,7 +9,7 @@
 //!   optional field of a struct or object type only while present; no `#` or symbol fields;
 //!   none a standard library base class declares); a class object seen through a base class's
 //!   table is handed to its own class's glue;
-//! - a `Record<string, V>`: its `__keyNames()` (insertion order);
+//! - a `Record<string, V>`: its `[RECORD_KEY_NAMES]()` (insertion order);
 //! - arrays, tuples and strings: their indexes as strings;
 //! - booleans, numbers, symbols, functions and the standard library's classes (a `Map`, a
 //!   `Set`, an `Error`): none;
@@ -260,12 +260,12 @@ impl FnLower<'_, '_> {
         0
     }
 
-    /// `Object.keys(r)` of a `Record<string, V>`: its `__keyNames()`.
+    /// `Object.keys(r)` of a `Record<string, V>`: its `[RECORD_KEY_NAMES]()`.
     fn any_keys_record(&mut self, data: vir::Local, out: &Place, ty: TyId) {
         let names = self.plain_adt(ty).and_then(|(d, _)| {
-            self.dyn_members_of(d)
-                .into_iter()
-                .find(|m| m.name == "__keyNames" && m.kind == DynMemberKind::Method)
+            self.dyn_members_of(d).into_iter().find(|m| {
+                m.name == velt_common::std_key!(record_key_names) && m.kind == DynMemberKind::Method
+            })
         });
         let Some(r) = names.and_then(|m| self.ready(ty, &m)) else {
             return self.ret_status(ST_UNSUPPORTED);

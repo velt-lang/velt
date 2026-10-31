@@ -147,7 +147,13 @@ impl FnCx<'_, '_> {
             }),
             span,
         );
-        let call = self.record_call_keyed(recv, "__set", key, std::slice::from_ref(&new_ref), span);
+        let call = self.record_call_keyed(
+            recv,
+            velt_common::std_key!(record_set),
+            key,
+            std::slice::from_ref(&new_ref),
+            span,
+        );
         set.push(stmt(hir::StmtKind::Expr(call), span));
         let then_val = self.read_temp(new, v, span);
         let then_val = self.coerce(then_val, ty);

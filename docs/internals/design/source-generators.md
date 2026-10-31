@@ -745,7 +745,7 @@ goldens:
   no, for `as T`; `a?: T | null`, whose `null` is a present `null`), literal types, enums and
   unions of literal types (one comparison per value of the next token's kind, strings in place
   in the reader), `Map<string, V>` and `Record<K, V>` (string, literal and string enum keys;
-  a record made from a map in document order by `Record.__fromMap`, since a literal-key record
+  a record made from a map in document order by the hook `recordFromMap` (std/lang/hooks/record.vlt), since a literal-key record
   cannot be made empty) are generated too. Generated code makes an enum value with
   `__member<E>(i)` (`generated/member.rs`). A required field of a literal type is a flag, not
   a `"x" | null` local: lowering a narrowed option of a zero-sized type into a struct field

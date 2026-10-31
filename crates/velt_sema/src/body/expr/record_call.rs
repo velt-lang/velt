@@ -62,8 +62,9 @@ fn record_method_fix(name: &str) -> &'static str {
 }
 
 impl FnCx<'_, '_> {
-    /// `r.__name(...)` written in user code: the record's internal methods are reserved for the
-    /// record syntax (and the prelude). Reports and returns `true` if `recv` is such a call.
+    /// `r.__name(...)` written in user code, as a record's methods were once named: a record has
+    /// none (its own are keyed by std's symbols, std/lang/hooks/keys.vlt). Reports and returns
+    /// `true` if `recv` is such a call; the note says what does what the user meant.
     pub(super) fn record_internal_call(&mut self, recv: &hir::Expr, prop: &ast::Ident) -> bool {
         // A call the compiler wrote (a `for...in` loop's key test) has an empty span.
         if !prop.name.starts_with("__")
@@ -75,10 +76,9 @@ impl FnCx<'_, '_> {
         }
         self.cx.error(
             Diagnostic::error(
-                format!(
-                    "`{}` is internal to `Record`: a record has no methods of its own",
-                    prop.name
-                ),
+                "a record has no methods of its own: its keys are read, written and listed with the \
+                 record syntax and `Object`'s functions"
+                    .to_string(),
                 prop.span,
             )
             .with_note(record_method_fix(&prop.name)),
@@ -122,7 +122,14 @@ impl FnCx<'_, '_> {
         value: hir::Expr,
         span: Span,
     ) -> hir::Expr {
-        self.record_call_keyed_with(obj, "__set", key, &[], Some(value), span)
+        self.record_call_keyed_with(
+            obj,
+            velt_common::std_key!(record_set),
+            key,
+            &[],
+            Some(value),
+            span,
+        )
     }
 
     /// [`Self::record_call_keyed`], with the parameter after the key given as a `checked`
@@ -387,10 +394,10 @@ impl FnCx<'_, '_> {
 /// The `Record` method that takes a `string | symbol` key for `method`, if it has one.
 pub(super) fn keyed_method(method: &str) -> Option<&'static str> {
     match method {
-        "__get" => Some("__getKeyed"),
-        "__set" => Some("__setKeyed"),
-        "__delete" => Some("__deleteKeyed"),
-        "__has" => Some("__hasKeyed"),
+        velt_common::std_key!(record_get) => Some(velt_common::std_key!(record_get_keyed)),
+        velt_common::std_key!(record_set) => Some(velt_common::std_key!(record_set_keyed)),
+        velt_common::std_key!(record_delete) => Some(velt_common::std_key!(record_delete_keyed)),
+        velt_common::std_key!(record_has) => Some(velt_common::std_key!(record_has_keyed)),
         _ => None,
     }
 }

@@ -9,10 +9,11 @@ use velt_common::std_hooks::HOOKS;
 use velt_sema::hir::{Def, FloatTy, IntTy, Nothing, Program, TyId, TyKind};
 
 /// A program that loads every module defining a hook: the prelude loads `velt/lang/hooks`, and
-/// the others come with what they implement (`Proxy`, `Set`, `Uint8Array`, `RegExp`; velt/lang/this_fn,
-/// which the driver's loader adds for a function with `this`, and this test's loader does not).
-const LOADS_ALL: &str =
-    "import \"velt/lang/this_fn\";\nimport \"velt/test/registry\";\nimport \"velt/test/run\";\n\
+/// the others come with what they implement (`Proxy`, `Set`, `Uint8Array`, `RegExp`; the globals
+/// velt/lang/this_fn and velt/lang/record/reflect, which the driver's loader adds for what a
+/// module uses, and this test's loader does not).
+const LOADS_ALL: &str = "import \"velt/lang/this_fn\";\nimport \"velt/lang/record/reflect\";\n\
+    import \"velt/test/registry\";\nimport \"velt/test/run\";\n\
     function main() {\n  const p = new Proxy({}, {});\n  const s = new Set<number>();\n  \
     const b = new Uint8Array(1);\n  const r = new RegExp(\"a\");\n}\n";
 

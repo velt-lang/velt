@@ -47,7 +47,7 @@ impl FnLower<'_, '_> {
     }
 
     /// The place of field `index` of the `ty` value at `place` for an object pattern: on a
-    /// proxiable type a typed proxy or a view (any_view.rs) reads it through `__get`, as
+    /// proxiable type a typed proxy or a view (any_view.rs) reads it through `[RECORD_GET]`, as
     /// `place.f` does (`proxy_read_at`; the value is borrowed from a slot of the scope).
     fn pat_field(&mut self, place: &Place, ty: TyId, index: u32) -> Place {
         if !self.cx.proxiable(ty) || self.is_unit_field(ty, index) {

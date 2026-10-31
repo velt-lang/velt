@@ -19,7 +19,7 @@
 //!   test, or for other objects whether `Object.keys(o)` lists `k`.
 //! - `Object.prototype.toString.call(v)`: the `[object Tag]` string of each member type.
 //! - `Object.getPrototypeOf(v)`, `Object.prototype`, `C.prototype`: an `ObjectPrototype` value
-//!   naming the prototype (std/prelude/record.vlt), which `===` compares by what it names
+//!   naming the prototype (std/prelude/object_prototype.vlt), which `===` compares by what it names
 //!   (`prototypeSame`, from `binary`).
 //!
 //! What Velt's fixed object layouts can't do exactly is an error saying it is not supported yet,
@@ -86,7 +86,9 @@ impl FnCx<'_, '_> {
         };
         if ns.name == "Reflect" && prop.name == "ownKeys" && !self.is_local_name("Reflect") {
             // `Reflect.ownKeys(r)` of a record: its string keys, then its symbol keys.
-            if let Some(h) = self.record_own_keys(args, "__ownKeys", span) {
+            if let Some(h) =
+                self.record_own_keys(args, velt_common::std_key!(record_own_keys), span)
+            {
                 return Some(h);
             }
         }
@@ -134,7 +136,9 @@ impl FnCx<'_, '_> {
         // A string-keyed record's symbol keys and accessors (`record_props.rs`).
         let on_record = match name {
             "defineProperty" => self.record_define_property(args, span),
-            "getOwnPropertySymbols" => self.record_own_keys(args, "__ownSymbols", span),
+            "getOwnPropertySymbols" => {
+                self.record_own_keys(args, velt_common::std_key!(record_own_symbols), span)
+            }
             "getOwnPropertyDescriptor" => self.record_descriptor(args, span),
             _ => None,
         };
@@ -594,7 +598,12 @@ impl FnCx<'_, '_> {
         let h = self.expr(&empty, Some(record), Want::Move);
         let mut lets = vec![];
         let r = self.temp(&format!("<create@{}>", span.lo), h, &mut lets);
-        let mark = self.record_call(r.clone(), "__markNullProto", &[], span);
+        let mark = self.record_call(
+            r.clone(),
+            velt_common::std_key!(record_mark_null_proto),
+            &[],
+            span,
+        );
         lets.push(hir::Stmt {
             span,
             kind: hir::StmtKind::Expr(mark),

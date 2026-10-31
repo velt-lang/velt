@@ -22,6 +22,7 @@ import "./map";
 import "./math";
 import "./nullable";
 import "./number";
+import "./object_prototype";
 import "./process";
 import "./promise";
 import "./record";

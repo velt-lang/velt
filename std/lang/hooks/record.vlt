@@ -1,6 +1,15 @@
 // velt/lang/hooks (internal): the compiler's hooks for records and prototypes (std-layout.md
 // §10b): `k in r` for a key known only at run time (velt_sema `in_keys.rs`), `===` on
-// prototypes, and the array index a key names, which the prelude's `Record` orders its keys by.
+// prototypes, the array index a key names, which the prelude's `Record` orders its keys by, and
+// the record a JSON decoder makes of a map.
+
+import {
+  PROTOTYPE_HAS_KEY,
+  PROTOTYPE_SAME_AS,
+  RECORD_FROM_MAP,
+  RECORD_HAS,
+  RECORD_IS_NULL_PROTO,
+} from "velt/lang/hooks/keys";
 
 /** `a === b` on prototypes (or `null`, a prototype-less object's). */
 export function prototypeSame(a: ObjectPrototype | null, b: ObjectPrototype | null): bool {
@@ -10,12 +19,12 @@ export function prototypeSame(a: ObjectPrototype | null, b: ObjectPrototype | nu
   if (b == null) {
     return false;
   }
-  return a.__sameAs(b);
+  return a[PROTOTYPE_SAME_AS](b);
 }
 
 /** `key in p` of a prototype `p` for a key known only at run time. */
 export function prototypeIn(key: string, p: ObjectPrototype): bool {
-  return p.__hasKey(key);
+  return p[PROTOTYPE_HAS_KEY](key);
 }
 
 /**
@@ -47,7 +56,7 @@ export function objectPrototypeKey(key: string): bool {
  * `key`, or `key` names a member every object inherits from `Object.prototype`.
  */
 export function recordIn<V>(key: string, r: Record<string, V>): bool {
-  return r.__has(key) || objectPrototypeKey(key);
+  return r[RECORD_HAS](key) || objectPrototypeKey(key);
 }
 
 /**
@@ -55,7 +64,7 @@ export function recordIn<V>(key: string, r: Record<string, V>): bool {
  * `recordIn` there): a record made by it inherits nothing from `Object.prototype`.
  */
 export function recordInMaybeNullProto<V>(key: string, r: Record<string, V>): bool {
-  return r.__has(key) || (!r.__isNullProto() && objectPrototypeKey(key));
+  return r[RECORD_HAS](key) || (!r[RECORD_IS_NULL_PROTO]() && objectPrototypeKey(key));
 }
 
 /** The array index `s` names (canonical decimal, 0 to 2^32 - 2), or -1. */
@@ -73,4 +82,12 @@ export function arrayIndex(s: string): i64 {
     v = v * 10 + (c - 48);
   }
   return v <= 4294967294 ? v : -1;
+}
+
+/**
+ * A record of the entries of `m`, in its order (a JSON object's members in document order: the
+ * decoders velt/encoding/json generates make records with it, std/encoding/json/generated.vlt).
+ */
+export function recordFromMap<K, V>(m: Map<K, V>): Record<K, V> {
+  return Record[RECORD_FROM_MAP](m);
 }

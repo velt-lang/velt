@@ -1,9 +1,21 @@
 // velt/lang/record (internal): what `Reflect` and `Object.getOwnPropertyDescriptor` do to a
 // record's symbol keys and accessors (velt/lang/record/symbols). `Reflect`, given a record as an
-// `any`, calls the `anyRec_` functions through `any` (velt_vir `any_builtin.rs`), which reach the
+// `any`, calls the `anyRec_` functions through `any` with the keys of std/lang/hooks/keys.vlt
+// (`r[RECORD_SYM_GET](s)`: velt_vir `any_builtin.rs`), which reach the
 // record's own methods at its value type. Loaded by std/prelude/global/record_reflect.vlt.
 
 import "velt/lang/record/symbols";
+import {
+  RECORD_ACCESSOR,
+  RECORD_DELETE_SYM,
+  RECORD_DESCRIPTOR,
+  RECORD_GET_KEYED,
+  RECORD_GET_SYM,
+  RECORD_HAS_KEYED,
+  RECORD_HAS_SYM,
+  RECORD_OWN_KEYS,
+  RECORD_SET_SYM,
+} from "velt/lang/hooks/keys";
 
 /**
  * A property's attributes as `Object.getOwnPropertyDescriptor` gives them for a record (the
@@ -21,8 +33,8 @@ export type RecordDescriptor = {
 
 extend<K, V> Record<K, V> {
   /** `Object.getOwnPropertyDescriptor(r, key)`: the property `key`, or `undefined`. */
-  __descriptor(key: K | symbol): RecordDescriptor | undefined {
-    const a = this.__accessor(key);
+  [RECORD_DESCRIPTOR](key: K | symbol): RecordDescriptor | undefined {
+    const a = this[RECORD_ACCESSOR](key);
     if (a != null) {
       const g = a[0];
       const s = a[1];
@@ -30,45 +42,45 @@ extend<K, V> Record<K, V> {
       const set: any = s == null ? undefined : s;
       return { get: get, set: set, enumerable: false, configurable: a[2] };
     }
-    if (!this.__hasKeyed(key)) {
+    if (!this[RECORD_HAS_KEYED](key)) {
       return undefined;
     }
-    const v: any = this.__getKeyed(key);
+    const v: any = this[RECORD_GET_KEYED](key);
     return { value: v, writable: true, enumerable: true, configurable: true };
   }
 }
 
 /** `Reflect.get(r, s)` of a record with a symbol `s`. */
-export function anyRec___symGet<V>(r: Record<string, V>, args: any[]): any {
-  return r.__getSym(args[0] as symbol);
+export function anyRec_symGet<V>(r: Record<string, V>, args: any[]): any {
+  return r[RECORD_GET_SYM](args[0] as symbol);
 }
 
 /** `Reflect.set(r, s, v)` of a record with a symbol `s`. */
-export function anyRec___symSet<V>(r: Record<string, V>, args: any[]): any {
-  r.__setSym(args[0] as symbol, args[1] as V);
+export function anyRec_symSet<V>(r: Record<string, V>, args: any[]): any {
+  r[RECORD_SET_SYM](args[0] as symbol, args[1] as V);
   return true;
 }
 
 /** `Reflect.has(r, s)` of a record with a symbol `s`. */
-export function anyRec___symHas<V>(r: Record<string, V>, args: any[]): any {
-  return r.__hasSym(args[0] as symbol);
+export function anyRec_symHas<V>(r: Record<string, V>, args: any[]): any {
+  return r[RECORD_HAS_SYM](args[0] as symbol);
 }
 
 /** `Reflect.deleteProperty(r, s)` of a record with a symbol `s`. */
-export function anyRec___symDelete<V>(r: Record<string, V>, args: any[]): any {
-  return r.__deleteSym(args[0] as symbol);
+export function anyRec_symDelete<V>(r: Record<string, V>, args: any[]): any {
+  return r[RECORD_DELETE_SYM](args[0] as symbol);
 }
 
 /** `Reflect.ownKeys(r)` of a record: its string keys, then its symbol keys. */
-export function anyRec___ownKeys<V>(r: Record<string, V>, args: any[]): any {
-  return r.__ownKeys();
+export function anyRec_ownKeys<V>(r: Record<string, V>, args: any[]): any {
+  return r[RECORD_OWN_KEYS]();
 }
 
 /** `Reflect.getOwnPropertyDescriptor(r, k)` of a record. */
-export function anyRec___descriptor<V>(r: Record<string, V>, args: any[]): any {
+export function anyRec_descriptor<V>(r: Record<string, V>, args: any[]): any {
   const k = args[0];
   if (typeof k === "symbol") {
-    return r.__descriptor(k as symbol);
+    return r[RECORD_DESCRIPTOR](k as symbol);
   }
-  return r.__descriptor(`${k}`);
+  return r[RECORD_DESCRIPTOR](`${k}`);
 }

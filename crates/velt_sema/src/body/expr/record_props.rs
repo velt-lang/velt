@@ -2,7 +2,7 @@
 //! symbol keys in a table of their own and the accessors `Object.defineProperty` defines in
 //! another, as Node keeps them:
 //!
-//! - `Object.defineProperty(r, key, { get, set, configurable })`: `r.__defineAccessor(...)`, an
+//! - `Object.defineProperty(r, key, { get, set, configurable })`: `r[RECORD_DEFINE_ACCESSOR](...)`, an
 //!   accessor that is not enumerable (`Object.keys`, `JSON.stringify`, spreads and
 //!   `console.log` skip it). Every record operation of a program that defines accessors goes
 //!   through the `Keyed` methods, which look at them (`Ctx::objects.record_accessors`).
@@ -22,7 +22,7 @@ use crate::hir;
 impl FnCx<'_, '_> {
     /// Is `e` a string-keyed record (checked on trial)?
     fn string_record(&mut self, e: &ast::Expr) -> bool {
-        if !self.has_record_method("__ownKeys") {
+        if !self.has_record_method(velt_common::std_key!(record_own_keys)) {
             return false;
         }
         let str_ = self.cx.ty.str_;
@@ -124,15 +124,29 @@ impl FnCx<'_, '_> {
             // The getter and setter may throw (std/lang/record/symbols.vlt): each is a call's own
             // argument, so what it throws is inferred from it.
             let (method, call_args) = match (get, set) {
-                (Some(g), Some(s)) => ("__defineAccessor", vec![key.clone(), g, s, conf]),
-                (Some(g), None) => ("__defineGetter", vec![key.clone(), g, conf]),
-                (None, Some(s)) => ("__defineSetter", vec![key.clone(), s, conf]),
+                (Some(g), Some(s)) => (
+                    velt_common::std_key!(record_define_accessor),
+                    vec![key.clone(), g, s, conf],
+                ),
+                (Some(g), None) => (
+                    velt_common::std_key!(record_define_getter),
+                    vec![key.clone(), g, conf],
+                ),
+                (None, Some(s)) => (
+                    velt_common::std_key!(record_define_setter),
+                    vec![key.clone(), s, conf],
+                ),
                 (None, None) => unreachable!("ICE: an accessor descriptor without an accessor"),
             };
             self.record_call(obj, method, &call_args, span)
         } else {
             let v = value.unwrap_or_else(|| synth(ast::ExprKind::Ident(undefined(span)), span));
-            self.record_call(obj, "__setKeyed", &[key.clone(), v], span)
+            self.record_call(
+                obj,
+                velt_common::std_key!(record_set_keyed),
+                &[key.clone(), v],
+                span,
+            )
         };
         Some(call)
     }
@@ -147,15 +161,22 @@ impl FnCx<'_, '_> {
         let [r, k] = args else {
             return None;
         };
-        if !self.has_record_method("__descriptor") || !self.string_record(r) {
+        if !self.has_record_method(velt_common::std_key!(record_descriptor))
+            || !self.string_record(r)
+        {
             return None;
         }
         let obj = self.expr(r, None, Want::Borrow);
-        Some(self.record_call(obj, "__descriptor", std::slice::from_ref(k), span))
+        Some(self.record_call(
+            obj,
+            velt_common::std_key!(record_descriptor),
+            std::slice::from_ref(k),
+            span,
+        ))
     }
 
-    /// `Object.getOwnPropertySymbols(r)` / `Reflect.ownKeys(r)` (`method`: `__ownSymbols`,
-    /// `__ownKeys`) on a string-keyed record (`None`: another argument).
+    /// `Object.getOwnPropertySymbols(r)` / `Reflect.ownKeys(r)` (`method`: `[RECORD_OWN_SYMBOLS]`,
+    /// `[RECORD_OWN_KEYS]`) on a string-keyed record (`None`: another argument).
     pub(super) fn record_own_keys(
         &mut self,
         args: &[ast::Expr],

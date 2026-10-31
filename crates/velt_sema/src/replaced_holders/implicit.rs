@@ -50,7 +50,7 @@
 //!    nothing they could drop.
 //!
 //! Lowering also calls std methods from glue (`Map` methods for equality and hashing of
-//! dictionaries, `Record.__positions` / `__decoded` / `set` for JSON): std code that runs no
+//! dictionaries, `Record[RECORD_POSITIONS]` / `[RECORD_DECODED]` / `set` for JSON): std code that runs no
 //! user code. Equality, hashing, sharing and truthiness are generated and call nothing.
 
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -557,7 +557,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::AnySetIndex
         // `key in p` runs a proxy's `has` trap (and a proxy's `get` / `set` slots its traps).
         | I::AnyHas
-        // A record's `__delete` removes an entry.
+        // A record's `[RECORD_DELETE]` removes an entry.
         | I::AnyDelete
         // Reading an entry runs an object literal's getter; a hook is a method.
         | I::AnyReflectValue

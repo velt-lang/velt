@@ -309,10 +309,10 @@ impl FnCx<'_, '_> {
                             };
                             // A record's accessors too, in a program that defines them.
                             let keyed = self.cx.objects.record_accessors
-                                && self.has_record_method("__hasKeyed");
+                                && self.has_record_method(velt_common::std_key!(record_has_keyed));
                             let has = match keyed {
-                                true => "__hasKeyed",
-                                false => "__has",
+                                true => velt_common::std_key!(record_has_keyed),
+                                false => velt_common::std_key!(record_has),
                             };
                             self.record_call(obj, has, &[lit], span)
                         }

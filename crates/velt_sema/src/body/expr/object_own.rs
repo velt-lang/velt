@@ -135,7 +135,7 @@ impl FnCx<'_, '_> {
                 let symbolic = kt.is_some_and(|t| self.symbolic_key_type(t));
                 // `PropertyKey` (`string | number | symbol`): through `__propertyKey(k)`.
                 let numbered = !symbolic && kt.is_some_and(|t| self.number_property_key(t));
-                if numbered && self.has_record_method("__hasKeyed") {
+                if numbered && self.has_record_method(velt_common::std_key!(record_has_keyed)) {
                     // The record first, then the key, as JavaScript evaluates the arguments.
                     let obj = self.expr(o, None, Want::Borrow);
                     return self.with_temp("<record>", obj, o.span, span, |cx, r| {
@@ -143,13 +143,22 @@ impl FnCx<'_, '_> {
                         let kh = cx.property_key_of(kh);
                         cx.with_temp("<key>", kh, k.span, span, |cx, key| {
                             let obj = cx.expr(r, None, Want::Borrow);
-                            cx.record_call(obj, "__hasKeyed", std::slice::from_ref(key), span)
+                            cx.record_call(
+                                obj,
+                                velt_common::std_key!(record_has_keyed),
+                                std::slice::from_ref(key),
+                                span,
+                            )
                         })
                     });
                 }
                 let keyed = (symbolic || self.cx.objects.record_accessors)
-                    && self.has_record_method("__hasKeyed");
-                let method = if keyed { "__hasKeyed" } else { "__has" };
+                    && self.has_record_method(velt_common::std_key!(record_has_keyed));
+                let method = if keyed {
+                    velt_common::std_key!(record_has_keyed)
+                } else {
+                    velt_common::std_key!(record_has)
+                };
                 let obj = self.expr(o, None, Want::Borrow);
                 return self.record_call(obj, method, std::slice::from_ref(k), span);
             }

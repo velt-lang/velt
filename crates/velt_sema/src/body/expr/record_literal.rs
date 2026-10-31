@@ -1,5 +1,5 @@
 //! Object literals where a `Record<K, V>` is expected (docs/internals/design/record.md):
-//! `{ let t = new Record(); t.__set("a", ..); t.__extend(spread); t }`. A closed record's literal
+//! `{ let t = new Record(); t[RECORD_SET]("a", ..); t[RECORD_EXTEND](spread); t }`. A closed record's literal
 //! must have every key. Where the expected record's type arguments are not known yet (a generic
 //! callee such as `Object.values({ a: 1 })`), an unknown key type is `string`, as in TypeScript
 //! (an object's keys are strings), and an unknown value type is the first value's (widened), which
@@ -95,7 +95,7 @@ impl FnCx<'_, '_> {
             );
             return self.error_expr(span);
         }
-        // The value type is the first value's; the spreads must have it too (`__extend`).
+        // The value type is the first value's; the spreads must have it too (`[RECORD_EXTEND]`).
         let (v, pre) = self.record_literal_values(props, span);
         self.record_literal_with(d, k, v, props, pre, span)
     }
@@ -224,7 +224,7 @@ impl FnCx<'_, '_> {
                         Some(h) => self.record_set_checked(recv, key, h, e.span),
                         None => self.record_call_keyed(
                             recv,
-                            "__set",
+                            velt_common::std_key!(record_set),
                             key,
                             std::slice::from_ref(value),
                             e.span,
@@ -248,12 +248,17 @@ impl FnCx<'_, '_> {
                     complete = !nullable;
                     if spread.is_some_and(|t| self.spreads_other_values(t, ty)) {
                         let args = [e.clone(), identity_arrow(e.span), identity_arrow(e.span)];
-                        self.record_call(recv, "__extendFrom", &args, e.span)
+                        self.record_call(
+                            recv,
+                            velt_common::std_key!(record_extend_from),
+                            &args,
+                            e.span,
+                        )
                     } else {
                         let m = if nullable {
-                            "__extendMaybe"
+                            velt_common::std_key!(record_extend_maybe)
                         } else {
-                            "__extend"
+                            velt_common::std_key!(record_extend)
                         };
                         self.record_call(recv, m, std::slice::from_ref(e), e.span)
                     }
@@ -295,7 +300,7 @@ impl FnCx<'_, '_> {
         );
     }
 
-    /// The `__set` call for key `name` of a record literal (`None`: reported, or not a key of a
+    /// The `[RECORD_SET]` call for key `name` of a record literal (`None`: reported, or not a key of a
     /// closed record); `pre`: its value, already checked.
     #[allow(clippy::too_many_arguments)] // the entry, its literal and the keys seen so far
     fn record_literal_entry(
@@ -342,9 +347,13 @@ impl FnCx<'_, '_> {
             let key = RecordKey::Index(&sym);
             return Some(match pre {
                 Some(h) => self.record_set_checked(recv, key, h, span),
-                None => {
-                    self.record_call_keyed(recv, "__set", key, std::slice::from_ref(value), span)
-                }
+                None => self.record_call_keyed(
+                    recv,
+                    velt_common::std_key!(record_set),
+                    key,
+                    std::slice::from_ref(value),
+                    span,
+                ),
             });
         }
         if self.record_keys(k).is_some() && !self.record_has_key(k, &name.name, name.span) {
@@ -370,7 +379,13 @@ impl FnCx<'_, '_> {
         // stored into, as `r[k] = p` does (`throws::promise_sites`).
         let pushed = self.cx.fn_sites.target.map(|s| (value.span, s));
         let outer = std::mem::replace(&mut self.cx.fn_sites.push, pushed);
-        let set = self.record_call_keyed(recv, "__set", key, std::slice::from_ref(&value), span);
+        let set = self.record_call_keyed(
+            recv,
+            velt_common::std_key!(record_set),
+            key,
+            std::slice::from_ref(&value),
+            span,
+        );
         self.cx.fn_sites.push = outer;
         Some(set)
     }
@@ -378,7 +393,7 @@ impl FnCx<'_, '_> {
     /// Is `t` (or it or nothing) a record of `to`'s key type with another value type (`...r` of
     /// a `Record<string, string>` into a `Record<string, any>`), or one keyed by string literals
     /// into a record keyed by `string` (`Record<"a" | "b", string>`)? Its keys and values are
-    /// converted one by one into the new record (`__extendFrom`), which is a new object, as in
+    /// converted one by one into the new record (`[RECORD_EXTEND_FROM]`), which is a new object, as in
     /// JavaScript.
     fn spreads_other_values(&mut self, t: TyId, to: TyId) -> bool {
         let t = self.cx.ty.core(t).unwrap_or(t);

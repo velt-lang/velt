@@ -31,12 +31,19 @@ import {
   PROXY_SELF,
   PROXY_SET,
 } from "velt/lang/hooks/keys";
+import {
+  RECORD_SET,
+  RECORD_SYM_DELETE,
+  RECORD_SYM_GET,
+  RECORD_SYM_HAS,
+  RECORD_SYM_SET,
+} from "velt/lang/hooks/keys";
 
 /** `{ ...o }` of an `any` `o` into `r`: a proxy's enumerable own entries, else `spreadAny`. */
 export function spreadAnyProxy(r: Record<string, any>, o: any): void {
   if (o instanceof Proxy) {
     for (const [k, v] of proxyEntries(o)) {
-      r.__set(k, v);
+      r[RECORD_SET](k, v);
     }
     return;
   }
@@ -138,7 +145,7 @@ export function anyGetSym(o: any, name: string, key: symbol): any {
   }
   if (o instanceof Record) {
     // A record's symbol table (std/lang/record/reflect.vlt).
-    return o.__symGet(key);
+    return o[RECORD_SYM_GET](key);
   }
   return o[name];
 }
@@ -193,7 +200,7 @@ export function anySetSym(o: any, name: string, key: symbol, v: any): void {
     return;
   }
   if (o instanceof Record) {
-    o.__symSet(key, v);
+    o[RECORD_SYM_SET](key, v);
     return;
   }
   o[name] = v;
@@ -205,7 +212,7 @@ export function anyHasSym(o: any, name: string, key: symbol): boolean {
     return o[PROXY_HAS](key);
   }
   if (o instanceof Record) {
-    return o.__symHas(key) as boolean;
+    return o[RECORD_SYM_HAS](key) as boolean;
   }
   return name in o;
 }
@@ -216,7 +223,7 @@ export function anyDeleteSym(o: any, name: string, key: symbol): boolean {
     return o[PROXY_DELETE](key);
   }
   if (o instanceof Record) {
-    return o.__symDelete(key) as boolean;
+    return o[RECORD_SYM_DELETE](key) as boolean;
   }
   return anyDeleteMember(o, name);
 }
@@ -358,7 +365,7 @@ export function proxyAny(o: any): any {
 
 /**
  * The keys `for (const k in o)` of an `any` `o` visits, each tested just before its turn
- * (`__anyForInHasProxy`): a proxy's string keys from its `ownKeys` trap, else `Object.keys(o)`.
+ * (`anyForInHas`): a proxy's string keys from its `ownKeys` trap, else `Object.keys(o)`.
  */
 export function anyForInKeys(o: any): string[] {
   if (o instanceof Proxy) {

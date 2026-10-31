@@ -126,10 +126,10 @@ impl FnLower<'_, '_> {
 }
 
 impl FnLower<'_, '_> {
-    /// The `AnyCall` slot body of a `Record<string, V>`: the prelude's functions named
-    /// `anyRec_<name>` (`<name>` starts with `__`, which no record key the program calls
-    /// through `any` is meant to reach), each given the record and the arguments; any other
-    /// name is not supported yet, as before.
+    /// The `AnyCall` slot body of a `Record<string, V>`: std's functions named `anyRec_<name>`
+    /// (std/lang/record/reflect.vlt), each called for the key of std's symbol `record<Name>`
+    /// (std/lang/hooks/keys.vlt: `r[RECORD_SYM_GET](s)`, which no program's key reaches), given
+    /// the record and the arguments; any other name is not supported yet, as before.
     pub(super) fn any_record_call(
         &mut self,
         (data, key, argv, argc, out): (vir::Local, vir::Local, vir::Local, vir::Local, vir::Local),
@@ -139,7 +139,8 @@ impl FnLower<'_, '_> {
         let methods: Vec<(String, DefId)> = self
             .builtin_methods("anyRec_")
             .into_iter()
-            .filter(|(name, _)| name.starts_with("__") && keys.contains(name))
+            .map(|(name, d)| (record_key(&name), d))
+            .filter(|(key, _)| keys.contains(key))
             .collect();
         let Some((k, v)) = self.prelude_record(ty) else {
             crate::lower::ice("a record");
@@ -276,6 +277,14 @@ impl FnLower<'_, '_> {
             self.switch_to(next);
         }
     }
+}
+
+/// The member name of std's symbol `record<Name>` (std/lang/hooks/keys.vlt) that std calls a
+/// record's `anyRec_<name>` function by (`std_key!(record_sym_get)` for `symGet`).
+fn record_key(name: &str) -> String {
+    let mut c = name.chars();
+    let first = c.next().map(|f| f.to_ascii_uppercase()).unwrap_or_default();
+    format!("\u{FFFF}Symbol(record{first}{})", c.as_str())
 }
 
 /// The methods of JavaScript's `String`, `Array`, `Number`, `Boolean` and `Function`

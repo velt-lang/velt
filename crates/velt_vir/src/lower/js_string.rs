@@ -70,7 +70,7 @@ impl FnLower<'_, '_> {
         };
         if self.prelude_record(ty).is_some() && self.cx.hir.null_proto_records {
             // A record made by `Object.create(null)` has no `toString` or `valueOf`: Node's
-            // `TypeError` (its map is marked, std/prelude/map.vlt `__markNullProto`).
+            // `TypeError` (its map is marked, std/prelude/map.vlt `[RECORD_MARK_NULL_PROTO]`).
             let map_ty = self.cx.adt_field_tys(ty)[0];
             let map = self.field_place(place, ty, 0);
             let np = self.null_proto_mark(&map, map_ty);

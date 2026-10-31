@@ -21,14 +21,14 @@ export function readMap(out: Output, model: Model, t: Type): void {
  */
 export function readRecord(out: Output, model: Model, t: Type): void {
   // The entries go into a map in document order (a literal-key record cannot be made empty),
-  // which becomes the record (`Record.__fromMap` checks it for array-index keys, as the glue
-  // did).
+  // which becomes the record (the hook `recordFromMap`, std/lang/hooks/record.vlt, checks it for
+  // array-index keys, as the glue did).
   out.line(`if (!r.openObject()) { throw jsonFailed("object"); }`);
   const kn = out.typeName(t.args[0]);
   const vn = out.typeName(t.args[1]);
   out.line(`const m: Map<${kn}, ${vn}> = new Map();`);
   const key = model.type(t.args[0]);
-  const done = `return Record.__fromMap(m);`;
+  const done = `return recordFromMap(m);`;
   if (key.kind == "string") {
     readEntries(out, model, t.args[1], (k: string, x: string): string => `m.set(${k}, ${x});`);
     out.line(done);

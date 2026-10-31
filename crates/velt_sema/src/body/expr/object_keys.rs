@@ -2,7 +2,7 @@
 //! std/prelude/record.vlt), checked here rather than as ordinary generic calls:
 //!
 //! - `Object.keys(x)` accepts any object, as in TypeScript (issue #230), and returns a
-//!   `string[]`: a record's keys in insertion order (`r.__keyNames()`), or the field names of an
+//!   `string[]`: a record's keys in insertion order (`r[RECORD_KEY_NAMES]()`), or the field names of an
 //!   object type, struct or class instance in declaration order (base class fields first, as
 //!   JS defines them). The names are known statically; only an optional field of a struct or
 //!   object type (`b?: T`) is tested at run time, and listed while it is present, as
@@ -43,7 +43,7 @@ pub(super) struct Key {
 impl FnCx<'_, '_> {
     /// `for (const k in r) body` over an open record (`Record<string, V>`, the only kind of
     /// object `delete` removes keys from), written with an object expression that is safe to
-    /// evaluate again: the body starting with `if (!r.__has(k)) continue;`, so that a key
+    /// evaluate again: the body starting with `if (!r[RECORD_HAS](k)) continue;`, so that a key
     /// deleted during the loop is not visited, as in JavaScript. `None` for any other loop.
     pub(crate) fn for_in_presence_test(
         &mut self,
@@ -86,7 +86,7 @@ impl FnCx<'_, '_> {
             callee: Box::new(e(ast::ExprKind::Member {
                 object: Box::new(obj.clone()),
                 prop: ast::Ident {
-                    name: "__has".to_string(),
+                    name: velt_common::std_key!(record_has).to_string(),
                     span: empty,
                 },
                 optional: false,
@@ -219,7 +219,11 @@ impl FnCx<'_, '_> {
     /// `Object.values(r)` / `Object.entries(r)` (`helper`) of a checked value.
     fn record_values(&mut self, obj: hir::Expr, helper: &str, span: Span) -> hir::Expr {
         if self.record_args(obj.ty).is_some() {
-            return self.record_call(obj, &format!("__{helper}"), &[], span);
+            let method = match helper {
+                "values" => velt_common::std_key!(record_values),
+                _ => velt_common::std_key!(record_entries),
+            };
+            return self.record_call(obj, method, &[], span);
         }
         let tn = self.cx.display(obj.ty);
         self.cx.error(
@@ -235,7 +239,7 @@ impl FnCx<'_, '_> {
     /// `Object.keys(obj)` of a checked value.
     fn object_keys(&mut self, obj: hir::Expr, span: Span) -> hir::Expr {
         if self.record_args(obj.ty).is_some() {
-            return self.record_call(obj, "__keyNames", &[], span);
+            return self.record_call(obj, velt_common::std_key!(record_key_names), &[], span);
         }
         match self.cx.dynamic(obj.ty) {
             // TypeScript takes `{}`, which an `unknown` is not (TS2345).
@@ -311,7 +315,7 @@ impl FnCx<'_, '_> {
     /// `Object.keys(x)` of an `any`, `object` or `Function` `x`.
     fn any_keys(&mut self, mut obj: hir::Expr, span: Span) -> hir::Expr {
         crate::body::places::set_place_mode(&mut obj, hir::UseMode::Borrow);
-        // A record's keys are its `__keyNames()`, called through the member slots.
+        // A record's keys are its `[RECORD_KEY_NAMES]()`, called through the member slots.
         self.note_dyn_members();
         let str_array = self.cx.ty.array(self.cx.ty.str_);
         self.any_op(hir::Intrinsic::AnyKeys, vec![obj], str_array, span)

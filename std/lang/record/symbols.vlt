@@ -6,6 +6,28 @@
 // property definitions, `Proxy` or `Reflect` (std/prelude/global/record_symbols.vlt).
 
 import { objectPrototypeKey } from "velt/lang/hooks/record";
+import {
+  RECORD_ACCESSOR,
+  RECORD_DEFINE_ACCESSOR,
+  RECORD_DEFINE_GETTER,
+  RECORD_DEFINE_SETTER,
+  RECORD_DELETE,
+  RECORD_DELETE_KEYED,
+  RECORD_DELETE_SYM,
+  RECORD_GET_KEYED,
+  RECORD_GET_SYM,
+  RECORD_HAS_KEYED,
+  RECORD_HAS_SYM,
+  RECORD_IN_KEYED,
+  RECORD_IS_NULL_PROTO,
+  RECORD_KEY_NAMES,
+  RECORD_OWN_KEYS,
+  RECORD_OWN_SYMBOLS,
+  RECORD_PUT_ACCESSOR,
+  RECORD_SET,
+  RECORD_SET_KEYED,
+  RECORD_SET_SYM,
+} from "velt/lang/hooks/keys";
 
 /**
  * A property key, as in TypeScript's lib: a string, a number (converted to its string) or a
@@ -16,7 +38,9 @@ export type PropertyKey = string | number | symbol;
 
 extend<K, V> Record<K, V> {
   /** The accessor `key` names (getter, setter, configurable), if one was defined. */
-  __accessor(key: K | symbol): [(() => V) | null, ((value: V) => void) | null, bool] | undefined {
+  [RECORD_ACCESSOR](
+    key: K | symbol,
+  ): [(() => V) | null, ((value: V) => void) | null, bool] | undefined {
     const t = this.accessors;
     if (t == null) {
       return undefined;
@@ -29,39 +53,39 @@ extend<K, V> Record<K, V> {
    * with the key. Defining again a property that is not configurable is Node's `TypeError`.
    * The getter and setter may throw, as in JavaScript: an error they throw leaves at the read or
    * write that ran them, which no `try` catches yet (#1637), so it ends the process with Node's
-   * `Uncaught` report. `__defineGetter` and `__defineSetter` define an accessor with only one.
+   * `Uncaught` report. `[RECORD_DEFINE_GETTER]` and `[RECORD_DEFINE_SETTER]` define an accessor with only one.
    */
-  __defineAccessor<E, F>(
+  [RECORD_DEFINE_ACCESSOR]<E, F>(
     key: K | symbol,
     get: () => V throws E,
     set: (value: V) => void throws F,
     configurable: bool,
   ) {
-    this.__putAccessor(key, uncaughtGet(get), uncaughtSet(set), configurable);
+    this[RECORD_PUT_ACCESSOR](key, uncaughtGet(get), uncaughtSet(set), configurable);
   }
 
-  /** `Object.defineProperty(r, key, { get, configurable })` (`__defineAccessor`). */
-  __defineGetter<E>(key: K | symbol, get: () => V throws E, configurable: bool) {
-    this.__putAccessor(key, uncaughtGet(get), null, configurable);
+  /** `Object.defineProperty(r, key, { get, configurable })` (`[RECORD_DEFINE_ACCESSOR]`). */
+  [RECORD_DEFINE_GETTER]<E>(key: K | symbol, get: () => V throws E, configurable: bool) {
+    this[RECORD_PUT_ACCESSOR](key, uncaughtGet(get), null, configurable);
   }
 
-  /** `Object.defineProperty(r, key, { set, configurable })` (`__defineAccessor`). */
-  __defineSetter<F>(key: K | symbol, set: (value: V) => void throws F, configurable: bool) {
-    this.__putAccessor(key, null, uncaughtSet(set), configurable);
+  /** `Object.defineProperty(r, key, { set, configurable })` (`[RECORD_DEFINE_ACCESSOR]`). */
+  [RECORD_DEFINE_SETTER]<F>(key: K | symbol, set: (value: V) => void throws F, configurable: bool) {
+    this[RECORD_PUT_ACCESSOR](key, null, uncaughtSet(set), configurable);
   }
 
-  /** The accessor `key` names set to `get` and `set` (`__defineAccessor`). */
-  __putAccessor(
+  /** The accessor `key` names set to `get` and `set` (`[RECORD_DEFINE_ACCESSOR]`). */
+  [RECORD_PUT_ACCESSOR](
     key: K | symbol,
     get: (() => V) | null,
     set: ((value: V) => void) | null,
     configurable: bool,
   ) {
-    const old = this.__accessor(key);
+    const old = this[RECORD_ACCESSOR](key);
     if (old != null && !old[2]) {
       panic(`TypeError: Cannot redefine property: ${keyText(key)}`);
     }
-    this.__deleteKeyed(key);
+    this[RECORD_DELETE_KEYED](key);
     const t = this.accessors;
     if (t == null) {
       const made: Map<K | symbol, [(() => V) | null, ((value: V) => void) | null, bool]> = new Map();
@@ -73,7 +97,7 @@ extend<K, V> Record<K, V> {
   }
 
   /** `r[s]` with a symbol `s`: its entry in the symbol table. */
-  __getSym(key: symbol): V | undefined {
+  [RECORD_GET_SYM](key: symbol): V | undefined {
     const t = this.symbols;
     if (t == null) {
       return undefined;
@@ -82,7 +106,7 @@ extend<K, V> Record<K, V> {
   }
 
   /** `r[s] = v` with a symbol `s`: the symbol table is made by the first write. */
-  __setSym(key: symbol, value: V) {
+  [RECORD_SET_SYM](key: symbol, value: V) {
     const t = this.symbols;
     if (t == null) {
       const made: Map<symbol, V> = new Map();
@@ -94,7 +118,7 @@ extend<K, V> Record<K, V> {
   }
 
   /** `delete r[s]` with a symbol `s`: `true`, as JavaScript's `delete` is. */
-  __deleteSym(key: symbol): bool {
+  [RECORD_DELETE_SYM](key: symbol): bool {
     const t = this.symbols;
     if (t != null) {
       t.delete(key);
@@ -103,15 +127,15 @@ extend<K, V> Record<K, V> {
   }
 
   /** `s in r` / `Object.hasOwn(r, s)` with a symbol `s`. */
-  __hasSym(key: symbol): bool {
+  [RECORD_HAS_SYM](key: symbol): bool {
     const t = this.symbols;
     return t != null && t.has(key);
   }
 
   /** `r[k]` with a `string | symbol` key: an accessor's getter, else the entry. */
-  __getKeyed(key: K | symbol): V | undefined {
+  [RECORD_GET_KEYED](key: K | symbol): V | undefined {
     if (this.accessors != null) {
-      const a = this.__accessor(key);
+      const a = this[RECORD_ACCESSOR](key);
       if (a != null) {
         const g = a[0];
         if (g == null) {
@@ -121,15 +145,15 @@ extend<K, V> Record<K, V> {
       }
     }
     if (typeof key === "symbol") {
-      return this.__getSym(key as symbol);
+      return this[RECORD_GET_SYM](key as symbol);
     }
     return this.entries.get(key as K);
   }
 
   /** `r[k] = v` with a `string | symbol` key: an accessor's setter, else the entry. */
-  __setKeyed(key: K | symbol, value: V) {
+  [RECORD_SET_KEYED](key: K | symbol, value: V) {
     if (this.accessors != null) {
-      const a = this.__accessor(key);
+      const a = this[RECORD_ACCESSOR](key);
       if (a != null) {
         const s = a[1];
         if (s == null) {
@@ -142,14 +166,14 @@ extend<K, V> Record<K, V> {
       }
     }
     if (typeof key === "symbol") {
-      this.__setSym(key as symbol, value);
+      this[RECORD_SET_SYM](key as symbol, value);
     } else {
-      this.__set(key as K, value);
+      this[RECORD_SET](key as K, value);
     }
   }
 
   /** `delete r[k]` with a `string | symbol` key. */
-  __deleteKeyed(key: K | symbol): bool {
+  [RECORD_DELETE_KEYED](key: K | symbol): bool {
     const t = this.accessors;
     if (t != null) {
       const a = t.get(key);
@@ -164,24 +188,24 @@ extend<K, V> Record<K, V> {
       }
     }
     if (typeof key === "symbol") {
-      return this.__deleteSym(key as symbol);
+      return this[RECORD_DELETE_SYM](key as symbol);
     }
-    return this.__delete(key as K);
+    return this[RECORD_DELETE](key as K);
   }
 
   /** `k in r` / `Object.hasOwn(r, k)` with a `string | symbol` key (own properties only). */
-  __hasKeyed(key: K | symbol): bool {
-    if (this.accessors != null && this.__accessor(key) != null) {
+  [RECORD_HAS_KEYED](key: K | symbol): bool {
+    if (this.accessors != null && this[RECORD_ACCESSOR](key) != null) {
       return true;
     }
     if (typeof key === "symbol") {
-      return this.__hasSym(key as symbol);
+      return this[RECORD_HAS_SYM](key as symbol);
     }
     return this.entries.has(key as K);
   }
 
   /** `Object.getOwnPropertySymbols(r)`: the symbol keys in insertion order, accessors' after. */
-  __ownSymbols(): symbol[] {
+  [RECORD_OWN_SYMBOLS](): symbol[] {
     const out: symbol[] = [];
     const t = this.symbols;
     if (t != null) {
@@ -204,9 +228,9 @@ extend<K, V> Record<K, V> {
    * `Reflect.ownKeys(r)`: the string keys in `Object.keys` order (array indices first,
    * ascending, then insertion order), accessors' after them, then the symbol keys.
    */
-  __ownKeys(): (string | symbol)[] {
+  [RECORD_OWN_KEYS](): (string | symbol)[] {
     const out: (string | symbol)[] = [];
-    for (const k of this.__keyNames()) {
+    for (const k of this[RECORD_KEY_NAMES]()) {
       out.push(k);
     }
     const a = this.accessors;
@@ -217,7 +241,7 @@ extend<K, V> Record<K, V> {
         }
       }
     }
-    for (const s of this.__ownSymbols()) {
+    for (const s of this[RECORD_OWN_SYMBOLS]()) {
       out.push(s);
     }
     return out;
@@ -227,11 +251,11 @@ extend<K, V> Record<K, V> {
    * `k in r` with a `string | symbol` key (sema calls this): the record's own property, or for
    * a string a member every object inherits from `Object.prototype`.
    */
-  __inKeyed(key: K | symbol): bool {
-    if (this.__hasKeyed(key)) {
+  [RECORD_IN_KEYED](key: K | symbol): bool {
+    if (this[RECORD_HAS_KEYED](key)) {
       return true;
     }
-    return typeof key === "string" && !this.__isNullProto() && objectPrototypeKey(key);
+    return typeof key === "string" && !this[RECORD_IS_NULL_PROTO]() && objectPrototypeKey(key);
   }
 }
 
@@ -244,7 +268,7 @@ function keyText<K>(key: K | symbol): string {
 }
 
 // An accessor `Object.defineProperty` defines, as the record holds it: an error it throws is
-// uncaught (`__defineAccessor`). An accessor that throws nothing is wrapped too: the record keeps
+// uncaught (`[RECORD_DEFINE_ACCESSOR]`). An accessor that throws nothing is wrapped too: the record keeps
 // one function type for every accessor.
 function uncaughtGet<V, E>(get: () => V throws E): () => V {
   return () => {

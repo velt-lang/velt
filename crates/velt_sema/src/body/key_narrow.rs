@@ -1,6 +1,6 @@
 //! Narrowing of `r[k]` with a `const` key (`field_narrow`), as TypeScript narrows an element
 //! access whose key is a `const`: after `if (!slots[name]) slots[name] = [];`, `slots[name]` is
-//! not `undefined`, and in `for (const k in r)` neither is `r[k]` (the loop tests `r.__has(k)`
+//! not `undefined`, and in `for (const k in r)` neither is `r[k]` (the loop tests `r[RECORD_HAS](k)`
 //! first, `object_keys`). The key is part of the field path (`\0` and the key local's index,
 //! which no property name written in a program has), so the path is narrowed, joined and
 //! dropped like `r.name`: assigning `r` or `r[k]`, or `delete r[k]`, drops it. A narrowed read
