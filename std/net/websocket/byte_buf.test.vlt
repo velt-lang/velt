@@ -1,0 +1,43 @@
+// velt/net/websocket (tests): white-box tests, run by `velt test std/`.
+//
+// `ByteBuf.dropFront` checks its count: dropping more bytes than there are (or a negative count)
+// stops the program instead of making the length wrap around. The panic ends the process, so the
+// test runs itself again in a child process that takes the panicking path, and checks the
+// child's exit code and message. (Was the golden std/websocket_bytes_drop_front.)
+import { argv } from "velt/process";
+import { exec } from "velt/process/child";
+import { timeout } from "velt/task";
+import { describe, expect, it } from "velt/test";
+import { ByteBuf } from "velt/net/websocket/byte_buf";
+
+describe("ByteBuf", () => {
+  it("dropFront past its length panics", async () => {
+    const mode = process.env.VELT_BYTEBUF_DROP;
+    if (mode != null) {
+      // The child: the call that panics.
+      const buf = new ByteBuf();
+      buf.append([1u8, 2u8]);
+      buf.dropFront(1);
+      console.log(`${buf.data}`);
+      buf.dropFront(mode == "negative" ? -1 : 5);
+      console.log("not reached");
+      return;
+    }
+    const env = new Map<string, string>([
+      ["VELT_BYTEBUF_DROP", "past"],
+      ["VELT_TEST_FROM", "0"],
+      ["VELT_TEST_FILTER", "dropFront past its length panics"],
+      ["VELT_TEST_EXACT", "0"],
+    ]);
+    // A bounded wait: a child that does not stop fails the test instead of hanging it.
+    const past = await timeout(exec(argv()[0], [], { env: env }), 60000);
+    expect(past.code).toBe(101);
+    expect(past.stderr.includes("panic: ByteBuf.dropFront(5) on 1 bytes")).toBe(true);
+    expect(past.stdout.includes("2")).toBe(true);
+    expect(past.stdout.includes("not reached")).toBe(false);
+    env.set("VELT_BYTEBUF_DROP", "negative");
+    const negative = await timeout(exec(argv()[0], [], { env: env }), 60000);
+    expect(negative.code).toBe(101);
+    expect(negative.stderr.includes("panic: ByteBuf.dropFront(-1) on 1 bytes")).toBe(true);
+  });
+});

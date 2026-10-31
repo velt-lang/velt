@@ -1,8 +1,10 @@
 // A velt/http server's life: serving again after `close()`, a `serve` that fails, and what
 // happens to the handler it was given.
-import { serve } from "../src/lib";
-import { listen } from "velt/net";
+import { HttpRequest, HttpResponse, serve, serveHttp } from "../src/lib";
+import { connect, listen, TcpStream } from "velt/net";
+import { timeout } from "velt/task";
 import { describe, expect, it } from "velt/test";
+import { delay } from "velt/time";
 import { TEST_CERT } from "./_tls";
 
 async function hello(req: Request): Promise<Response> {
@@ -132,4 +134,86 @@ describe("a serve that fails", () => {
     expect(code).toBe("EADDRINUSE");
     expect(released.get()).toBe(1);
   });
+});
+
+// What `c` sends until it closes, or until it has sent `until`.
+async function readUntil(c: TcpStream, until: string | null = null): Promise<string> {
+  let got = "";
+  while (until == null || !got.includes(until)) {
+    const more = await c.read();
+    if (more.length == 0) {
+      break;
+    }
+    got += more.utf8Slice(0, more.length);
+  }
+  return got;
+}
+
+// Counts the drops of the value itself, not of the copies each request gets (`clone()`).
+class Owner {
+  name: string = "kept";
+  released: shared<i64>;
+  original: bool = true;
+
+  constructor(released: shared<i64>) {
+    this.released = released;
+  }
+
+  clone(): Owner {
+    const copy = new Owner(this.released.clone());
+    copy.original = false;
+    return copy;
+  }
+
+  [Symbol.dispose]() {
+    if (this.original) {
+      this.released.add(1);
+    }
+  }
+}
+
+describe("shutdown", () => {
+  // `shutdown()` lets a request in flight finish, closes an idle keep-alive connection instead
+  // of waiting for its client, and resolves once the handler, with what it captured, was
+  // dropped. (Was the runtime test shutdown_waits_for_requests_then_releases_the_handler.)
+  it(
+    "waits for requests in flight, closes idle connections, then releases the handler",
+    async () => {
+      const released = shared<i64>(0);
+      const started = shared<i64>(0);
+      const finished = shared<i64>(0);
+      const store = new Owner(released.clone());
+      const server = await serveHttp({ port: 0 }, async (req: HttpRequest, res: HttpResponse) => {
+        if (req.pathIs("/slow")) {
+          started.set(1);
+          await delay(300);
+          finished.set(1);
+        }
+        res.send(store.name);
+      });
+      const port = server.port;
+      // A keep-alive connection, idle after its answer: the client never closes it.
+      const idle = await connect(`127.0.0.1:${port}`);
+      await idle.write("GET /x HTTP/1.1\r\nHost: x\r\n\r\n");
+      expect((await readUntil(idle, "kept")).startsWith("HTTP/1.1 200")).toBe(true);
+      // A request in flight when shutdown starts.
+      const busy = await connect(`127.0.0.1:${port}`);
+      await busy.write("GET /slow HTTP/1.1\r\nHost: x\r\n\r\n");
+      for (let i = 0; i < 1000 && started.get() == 0; i++) {
+        await delay(5);
+      }
+      expect(started.get()).toBe(1);
+      expect(released.get()).toBe(0);
+      await timeout(server.shutdown(), 10000);
+      expect(finished.get()).toBe(1);
+      expect(released.get()).toBe(1);
+      const answer = await timeout(readUntil(busy), 5000);
+      expect(answer.startsWith("HTTP/1.1 200")).toBe(true);
+      expect(answer.includes("kept")).toBe(true);
+      // The idle connection was closed by the server.
+      expect(await timeout(readUntil(idle), 5000)).toBe("");
+      idle.close();
+      busy.close();
+    },
+  );
 });
