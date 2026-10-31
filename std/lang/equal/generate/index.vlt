@@ -9,8 +9,9 @@
 // and literal types by value; arrays, tuples, options, object values and structs by content;
 // a union by its active member (two number members by their numbers, exactly); `Map` and
 // `Record` by their entries in any order (`Map`'s private `deepEquals`, with the access of the
-// collection's type); class instances, `Set`, `Date`, `shared` cells, interface, function and
-// promise values by identity. `toEqual` compares class instances by the fields of their own
+// collection's type); a `JsonValue` by its JSON content (an object's members in any order);
+// class instances, `Set`, `Date`, `shared` cells, interface, function and promise values by
+// identity. An optional field left out differs from one set to `undefined`. `toEqual` compares class instances by the fields of their own
 // class (an `instanceof` chain, most derived first: objects of two classes differ), a `Set` by
 // its members, a `Date` by its time, and an interface value or a std type whose state is
 // private by what its dynamic type lists (`equalDynamic`). A type whose values can hold
@@ -25,6 +26,7 @@ import {
   member,
   numberClass,
   numbersEqual,
+  presence,
   unreadable,
 } from "velt/lang/equal/generate/facts";
 
@@ -76,6 +78,10 @@ function compare(out: Output, model: Model, id: i64, x: string, y: string, deep:
   if (!deep && (k == "class" || k == "set" || k == "date")) {
     return `${x} === ${y}`;
   }
+  if (k == "opaque" && t.qualifiedName == "std/prelude/json/json::JsonValue") {
+    // Its private `deepEquals`, with the access of its type.
+    return `${x}.deepEquals(${y}, ${d})`;
+  }
   if (k == "opaque") {
     return `equalOpaque(${x}, ${y}, ${d})`;
   }
@@ -110,6 +116,9 @@ function fieldsExpr(out: Output, model: Model, t: Type, a: string, b: string, de
     }
     if (fld.optional && model.type(fld.type).kind != "option") {
       return "";
+    }
+    if (fld.optional) {
+      parts.push(presence(out, fld.name, a, b));
     }
     const xa = member(out, model, fld, a);
     const xb = member(out, model, fld, b);
@@ -170,6 +179,9 @@ function fields(
     const ft = model.type(f.type);
     const xa = member(out, model, f, a);
     const xb = member(out, model, f, b);
+    if (f.optional) {
+      require(w, presence(out, f.name, a, b));
+    }
     if (f.optional && ft.kind != "option") {
       const fa = out.fresh("fa");
       const fb = out.fresh("fb");

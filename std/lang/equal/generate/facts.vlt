@@ -162,3 +162,13 @@ export function numbersEqual(cx: string, x: string, cy: string, y: string, deep:
     ? `intUintEqual(${x} as i64, ${y} as u64)`
     : `intUintEqual(${y} as i64, ${x} as u64)`;
 }
+
+/**
+ * Whether optional field `name` is present in both `a` and `b` or in neither: a field left out
+ * differs from one set to `undefined` (`"a" in x`), in `util.isDeepStrictEqual` and here in
+ * `toEqual` too (Vitest's ignores `undefined` members).
+ */
+export function presence(out: Output, name: string, a: string, b: string): string {
+  const key = out.literal(name);
+  return `((${key} in ${a}) == (${key} in ${b}))`;
+}

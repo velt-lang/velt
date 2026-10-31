@@ -296,7 +296,11 @@ fn reachable_types(model: &velt_sema::generated::model::Model, roots: &[u32]) ->
         next += 1;
         // The prelude's collections are declared classes too (their entries are their structure);
         // a `Record` and a `Set` hold theirs in a `Map`.
-        let declared = matches!(t.kind, "class" | "struct" | "map" | "record" | "set");
+        // So is `JsonValue`, whose structure is private (its JSON content: its private
+        // `deepEquals` compares it).
+        let json_value = velt_common::std_item!(prelude_json, "JsonValue");
+        let declared = matches!(t.kind, "class" | "struct" | "map" | "record" | "set")
+            || (t.kind == "opaque" && t.qualified_name == json_value);
         if declared && !t.qualified_name.is_empty() {
             out.push(t.qualified_name.clone());
         }
