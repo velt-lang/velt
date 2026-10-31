@@ -110,8 +110,16 @@ fn velt_declarations() -> BTreeMap<String, (Sig, PathBuf)> {
             rest = &decl[end..];
             let decl = &decl[..end];
             // A system function binds the C library, not the runtime
-            // (docs/reference/system-functions.md).
-            if decl.starts_with("declare system ") {
+            // (docs/reference/system-functions.md), an intrinsic is the compiler's
+            // (std/lang/intrinsics) and a generated function's body is a source generator's.
+            if [
+                "declare system ",
+                "declare intrinsic ",
+                "declare generated(",
+            ]
+            .iter()
+            .any(|kw| decl.starts_with(kw))
+            {
                 continue;
             }
             let Some(f) = decl.find("function ") else {
