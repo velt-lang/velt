@@ -589,6 +589,11 @@ impl FnCx<'_, '_> {
         {
             self.f.const_lits.insert(local, l);
         }
+        if let (LocalKind::Const, Some(h)) = (kind, &init) {
+            if matches!(h.kind, hir::ExprKind::AdtLit { .. }) && self.cx.in_generated_file(span) {
+                self.f.built_locals.insert(local);
+            }
+        }
         if let (LocalKind::Const, Some(e), Some(h)) = (kind, &v.init, &init) {
             if let Some(shape) = self.regex_const_shape(e, h.ty) {
                 self.f.regex_consts.insert(local, shape);

@@ -751,7 +751,7 @@ goldens:
   a `"x" | null` local: lowering a narrowed option of a zero-sized type into a struct field
   failed VIR verification (left for a fix in lowering). An object's or struct's optional
   field is set after the value is built, when its key was read (an object literal's `a:
-  undefined` would make it present), so a readonly optional field is left to the glue. The
+  undefined` would make it present). The
   generator is split by concern (`read.vlt`, `read_value.vlt`, `read_object.vlt`,
   `choice.vlt`). Measured against step (a) (same method; base: http2 at f946b85b6):
   `parse_typed` and `parse_union` run time unchanged (-0.1%, +0.0%), their compile time
@@ -786,6 +786,13 @@ goldens:
   method; base: http2 at 4fe053dd9): `velt check` of `parse_typed`, `parse_union` and the
   options program -0.1% to -0.6% (the sema pass's checks are gone), `velt build` +0.5% to
   +1.5%; run time unchanged; hello world -0.6%.
+  Step (e), first part: generated code may set a readonly field of the value it is building, a
+  `const` it initialized with an object or struct literal in the same function (velt_sema
+  `assign_paths.rs`, `built_locals`), as a constructor sets `this`'s: building a value field by
+  field is what the glue did. A readonly field of a value given to it (generators may be any
+  package's) stays readonly (goldens `generated_readonly_param` and `_built`). An object's or
+  struct's readonly optional field is then set after the value is built, when its key was
+  read, like the others; `JSON.parse` no longer falls back to the glue for any type.
   Fixed on the way: the demand walks the initializers of module variables (a module constant
   made by `JSON.parse` had no generated code, and ran the placeholder), and a need recorded
   for a class (a field initializer) no longer stops it with an ICE; only a generated function
@@ -884,7 +891,7 @@ port's order:
   path's message (`TypeError: Converting circular structure to JSON`), where the glue's typed
   writer of that type reported its own; no golden has one.
 - **`JSON.parse` / `parse<T>` / `as T`** (json port step 4; steps (a)–(c) above port every
-  type the compiler accepts, the glue only kept for what it rejects): the decoders of `lower/json`
+  type the compiler accepts): the decoders of `lower/json`
   (`read.rs`, `object.rs`, `union*.rs`, `literal.rs`, `map.rs`, `key.rs`, `reader.rs`), the
   rows and cursors of std/db (`rows_read/`, `jsonParseCursor`, `readRowsByColumn` /
   `readRowByColumn`) and the parameter binding (`dbBind`, `db_bind.rs`) still run in the

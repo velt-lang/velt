@@ -172,6 +172,9 @@ pub(crate) struct Frame {
     /// `const k = "a"` without a type: the literal each such local holds, which a `case k:`
     /// selects like the literal itself (TypeScript gives the constant the literal type).
     pub const_lits: FxHashMap<LocalId, velt_syntax::ast::SignedLit>,
+    /// Generated code's `const` locals initialized by an object or struct literal (also
+    /// `__construct<T>(…)`): values it is building, whose readonly fields it may set.
+    pub built_locals: rustc_hash::FxHashSet<LocalId>,
     /// `const re = /…/` (or `new RegExp` of literals, or another such local): the number of
     /// capturing groups and the flags of the regex each such local holds (`regex_args`).
     pub regex_consts: FxHashMap<LocalId, (usize, String)>,
@@ -267,6 +270,7 @@ impl Frame {
             checked_predicates: FxHashMap::default(),
             truthy_returns: false,
             const_lits: FxHashMap::default(),
+            built_locals: Default::default(),
             regex_consts: FxHashMap::default(),
             untyped_lets: FxHashMap::default(),
             late_lets: Default::default(),

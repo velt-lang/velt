@@ -219,7 +219,8 @@ export function readObject(out: Output, model: Model, t: Type): void {
     const value = empty[i] == "seen" ? model.type(f.type).literal : `f${i}`;
     segs.push(out.literal(`.${f.name}`));
     if (f.optional && t.kind != "class") {
-      // Set below only when its key was read: an object's `a?: T` left out is absent.
+      // Set below only when its key was read: an object's `a?: T` left out is absent
+      // (generated code may set a readonly field of a value it built).
       later.push(i);
       continue;
     }
@@ -230,7 +231,7 @@ export function readObject(out: Output, model: Model, t: Type): void {
   if (later.length == 0) {
     out.line(`return ${made};`);
   } else {
-    out.line(`let o: ${out.typeName(t.id)} = ${made};`);
+    out.line(`const o: ${out.typeName(t.id)} = ${made};`);
     for (const i of later) {
       const f = fields[i];
       const target = isIdentifier(f.name) ? `o.${f.name}` : `o[${out.literal(f.name)}]`;

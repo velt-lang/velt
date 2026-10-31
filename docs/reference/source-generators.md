@@ -148,6 +148,11 @@ string to an enum, and generated code cannot name the enum's members.
 out.line(`return __member<${out.typeName(t.id)}>(${i});`);
 ```
 
+Generated code may also set a readonly field of the value it is building, as a constructor sets
+its own: a `const` it initialized with an object or struct literal (or `__construct<T>(…)`) in
+the same function (a decoder that sets an optional field only when the document has it). A
+readonly field of a value given to it, or of a local that holds one, stays readonly.
+
 `__construct<T>({ … })` takes the fields as an object literal. A field with an initializer that
 is left out gets the initializer's value, an optional field left out is absent, and any other
 field must be given. Neither `__construct` nor the private members of other types are available

@@ -93,11 +93,8 @@ function decodes(model: Model, id: i64, seen: i64[]): bool {
       ) {
         return false;
       }
-      // An object's or a struct's optional field is set after the value is built, when its
-      // key was read: not possible for a readonly one (left to `jsonParse<T>`).
-      if (f.optional && f.readonly && k != "class") {
-        return false;
-      }
+    }
+    for (const f of t.fields) {
       if (!decodes(model, f.type, seen)) {
         return false;
       }
