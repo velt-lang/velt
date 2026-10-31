@@ -211,24 +211,34 @@ fn finds_enclosing_package() {
     );
 }
 
-/// `std/package/index.vlt` (the type editors and `velt doc` show) declares exactly the schema's fields,
-/// with the same optionality and types.
+/// `std/package/` (`manifest.vlt` and `workspace.vlt`, which velt/package re-exports: the types
+/// editors and `velt doc` show) declares exactly the schema's fields, with the same optionality
+/// and types.
 #[test]
 fn std_package_types_match_the_schema() {
     use velt_syntax::ast::{ItemKind, TypeExprKind};
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std/package/index.vlt");
-    let src = std::fs::read_to_string(&path).unwrap();
-    let (module, diags) = velt_syntax::parse_file(FileId(0), &src);
-    assert!(diags.is_empty(), "{diags:?}");
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std/package");
+    let sources: Vec<(String, velt_syntax::ast::Module)> = ["manifest.vlt", "workspace.vlt"]
+        .iter()
+        .map(|file| {
+            let src = std::fs::read_to_string(dir.join(file)).unwrap();
+            let (module, diags) = velt_syntax::parse_file(FileId(0), &src);
+            assert!(diags.is_empty(), "{file}: {diags:?}");
+            (src, module)
+        })
+        .collect();
     let declared = |name: &str| -> Vec<String> {
-        let alias = module
-            .items
+        let (src, alias) = sources
             .iter()
-            .find_map(|item| match &item.kind {
-                ItemKind::TypeAlias(a) if a.name.name == name && item.exported => Some(a),
-                _ => None,
+            .find_map(|(src, module)| {
+                module.items.iter().find_map(|item| match &item.kind {
+                    ItemKind::TypeAlias(a) if a.name.name == name && item.exported => {
+                        Some((src, a))
+                    }
+                    _ => None,
+                })
             })
-            .unwrap_or_else(|| panic!("std/package/index.vlt exports no type `{name}`"));
+            .unwrap_or_else(|| panic!("std/package/ exports no type `{name}`"));
         let TypeExprKind::Object(fields) = &alias.ty.kind else {
             panic!("`{name}` is not an object type");
         };
@@ -257,11 +267,7 @@ fn std_package_types_match_the_schema() {
         ("Build", schema::BUILD),
         ("Workspace", schema::WORKSPACE),
     ] {
-        assert_eq!(
-            declared(name),
-            expected(fields),
-            "`{name}` in std/package/index.vlt"
-        );
+        assert_eq!(declared(name), expected(fields), "`{name}` in std/package/");
     }
 }
 

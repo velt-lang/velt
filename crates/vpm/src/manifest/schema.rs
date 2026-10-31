@@ -1,5 +1,5 @@
 //! The fields of `package.vlt`, in one table: the reader's known keys, and what editors complete
-//! and explain ([`super::ide`]). `std/package/index.vlt` declares the same fields as Velt types (a test
+//! and explain ([`super::ide`]). `std/package/` (manifest.vlt, workspace.vlt) declares the same fields as Velt types (a test
 //! keeps them in line).
 
 use super::NATIVE_TARGETS;
@@ -9,7 +9,7 @@ use super::NATIVE_TARGETS;
 pub struct Field {
     pub key: &'static str,
     pub kind: Kind,
-    /// Its type as `std/package/index.vlt` writes it.
+    /// Its type as `std/package/manifest.vlt` writes it.
     pub ty: &'static str,
     /// Whether the field must be written.
     pub required: bool,

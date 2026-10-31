@@ -28,7 +28,7 @@ export const pkg: Package = {
 };
 ```
 
-`velt/package` (`std/package/index.vlt`) declares the `Package` type (documentation, and the import
+`velt/package` (`std/package/manifest.vlt` and `workspace.vlt`, re-exported by its index.vlt) declares the `Package` type (documentation, and the import
 resolves). The reader below is the definition of a valid manifest; its fields are one table,
 `vpm::manifest::schema`, which a test checks against `std/package/index.vlt`. The language server
 does not analyze a file named `package.vlt` as a program: its diagnostics are the reader's, and

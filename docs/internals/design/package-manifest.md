@@ -49,7 +49,7 @@ the top level, and the `[dependencies]`, `[paths]`, `[jsx]` and `[native]` table
 manifest contract (lowercase words joined by single `-` or `_`, since #314); scoped names such as
 `@velt/sqlite` are a separate issue.
 
-**Types.** `velt/package` (`std/package/index.vlt`) contains only types:
+**Types.** `velt/package` (`std/package/manifest.vlt` and `workspace.vlt`) contains only types:
 
 ```ts ignore
 export type Package = {
@@ -196,7 +196,7 @@ So the language server treats `package.vlt` as a **document kind of its own**:
 4. **Schema.** `vpm` gets one table of the manifest's fields (key, kind, doc text, allowed
    values); the reader's lists of known keys become that table. Completion offers the keys valid
    at the cursor that are not written yet, and fixed values (`native.targets` triples,
-   `true`/`false`); hover shows a field's doc. A test checks that `std/package/index.vlt` declares the
+   `true`/`false`); hover shows a field's doc. A test checks that `std/package/` declares the
    same fields.
 5. **Live registry data**, through `vpm` and the package's registry (`registry`,
    `VELT_REGISTRY`, or the local one), fetched off the request thread and cached per session:

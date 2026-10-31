@@ -43,7 +43,6 @@ export const allow: Allow = {
   ],
   indexCode: [
     "encoding/json/index.vlt",
-    "package/index.vlt",
   ],
   unowned: [
   ],
