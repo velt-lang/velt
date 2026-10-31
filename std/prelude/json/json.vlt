@@ -583,6 +583,14 @@ export class JsonValue {
     return out;
   }
 
+  /**
+   * Its JSON text, as `stringify()`: what `JSON.stringify` writes for a `JsonValue` that an
+   * `any` holds (the text itself, not a JSON string of it).
+   */
+  toJSON(): string {
+    return this.stringify();
+  }
+
   /** Same as `JSON.stringify(this)`. */
   stringify(): string {
     const t = this.#tape;

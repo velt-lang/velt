@@ -171,6 +171,43 @@ pub(crate) fn run_helpers(program: &mut Program, helpers: &[bool]) -> bool {
     changed
 }
 
+/// Add to `helpers` (debug builds, [`run_helpers`]) the standard library's trivial functions
+/// (cost at most `TRIVIAL_COST`: a forwarder such as `appendJsonString(out, s)` or a builder's
+/// one-call method, and the forwarders generated code for std writes): each is a function the
+/// backend would compile, for a call that stepping through user code never enters. Those that
+/// call a helper stay functions (helpers do not call each other), and so do std/lang's (the
+/// compiler's hooks and the language's runtime code).
+pub(crate) fn std_forwarders(funcs: &[Function], helpers: &mut [bool]) {
+    let candidate: Vec<bool> = (funcs.iter().enumerate())
+        .map(|(i, f)| {
+            // Not std/lang: the compiler's hooks and the language's runtime code, whose calls
+            // stay visible in a debug build's code.
+            let lang = f.symbol.starts_with("_V3stdP4lang");
+            let std =
+                (f.symbol.starts_with("_V3std") && !lang) || f.symbol.starts_with(GENERATED_STD);
+            std && !helpers[i]
+                && !f.blocks.is_empty()
+                && f.linkage == velt_vir::vir::Linkage::Internal
+                && !never_returns(f)
+                && f.target.is_none()
+                && cost(f) <= TRIVIAL_COST
+        })
+        .collect();
+    for (i, f) in funcs.iter().enumerate() {
+        let calls_helper = direct_calls(f).any(|c| {
+            let c = c.0 as usize;
+            c == i || candidate.get(c) == Some(&true) || helpers.get(c) == Some(&true)
+        });
+        if candidate[i] && !calls_helper {
+            helpers[i] = true;
+        }
+    }
+}
+
+/// The symbol prefix of the code generated for std's generated functions
+/// (`<generated>/std/…`, velt_sema `generated`).
+const GENERATED_STD: &str = "_V15_3cgenerated_3eP3std";
+
 struct State {
     recursive: Vec<bool>,
     /// Per function, whether it calls itself directly.

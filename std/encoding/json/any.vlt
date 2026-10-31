@@ -67,8 +67,11 @@ export function writeJsonAny(w: StringBuilder, v: any, key: string): void {
     appendJsonString(w, v as string);
   } else if (kind == "proxy") {
     writeJsonAny(w, callToJSON(v, key), key);
-  } else if (v instanceof JsonValue) {
-    w.append((v as JsonValue).stringify());
+  } else if (holdsJsonValue(v)) {
+    // Its text, through its `toJSON()` hook: a `JsonValue` here (narrowed by `instanceof`)
+    // would check all of its methods in every program that writes an `any`, where one holds
+    // a `JsonValue` only in a program that has some.
+    w.append(callToJSON(v, key) as string);
   } else if (kind == "array" || kind == "tuple") {
     enter(v);
     writeElements(w, v);
@@ -90,6 +93,11 @@ export function writeJsonAny(w: StringBuilder, v: any, key: string): void {
   } else {
     unsupported();
   }
+}
+
+/** Whether `v` holds a `JsonValue` (a test that leaves the caller's `v` an `any`). */
+function holdsJsonValue(v: any): bool {
+  return v instanceof JsonValue;
 }
 
 /** Starts writing `v`, which is a cycle when it is being written already. */
@@ -208,7 +216,17 @@ function recordOrder(v: any): i64[] | null {
   for (let k: i64 = 0; k < (idx.length as i64); k++) {
     at.push(k);
   }
-  at.sort((a, b) => rank[a] - rank[b]);
+  // An insertion sort by rank: records seldom have many index keys, and `Array.sort` would be
+  // checked in every program that writes an `any`.
+  for (let k: i64 = 1; k < (at.length as i64); k++) {
+    const x = at[k];
+    let j = k - 1;
+    while (j >= 0 && rank[at[j]] > rank[x]) {
+      at[j + 1] = at[j];
+      j--;
+    }
+    at[j + 1] = x;
+  }
   const out: i64[] = [];
   for (const k of at) {
     out.push(idx[k]);
