@@ -35,6 +35,7 @@ struct Shape {
     entry: Entry,
     op: BinOp,
     exit_work: bool,
+    loops: bool,
     arg: Arg,
     dest: bool,
 }
@@ -54,6 +55,7 @@ impl Default for Shape {
             entry: usual,
             op: BinOp::Ne,
             exit_work: false,
+            loops: false,
             arg: Arg::Local,
             dest: false,
         }
@@ -96,7 +98,11 @@ fn program(s: &Shape) -> (Program, FuncId, usize) {
         vec![copy_local(fb.param(0))],
         None,
     );
-    fb.ret(n, done);
+    match s.loops {
+        // Back to the test: `while (*slot != null) free(slot)`.
+        true => fb.goto(n, entry),
+        false => fb.ret(n, done),
+    }
     let drop = pb.add(fb.finish());
     let mut fb = FuncBuilder::new("user", &[Ty::Ptr], Ty::Unit, Linkage::Export);
     let r = fb.local(s.ret);
@@ -263,4 +269,38 @@ fn calls_that_do_not_fit_are_left() {
         dest: true,
         ..Shape::default()
     }));
+}
+
+#[test]
+fn a_callee_that_loops_back_to_its_test_is_called_as_it_is() {
+    // Its clone without the test would never leave the loop.
+    assert!(!rewrites(&Shape {
+        loops: true,
+        ..Shape::default()
+    }));
+}
+
+#[test]
+fn a_clone_made_before_is_called_again() {
+    // The program optimized again: a call that fits only now goes to the clone the first run
+    // made, not to a second one of the same name.
+    let (mut p, drop, _) = program(&Shape::default());
+    assert!(run(&mut p));
+    let mut fb = FuncBuilder::new("later", &[Ty::Ptr], Ty::Unit, Linkage::Export);
+    let b = fb.block();
+    let n = fb.call(b, Callee::Func(drop), vec![copy_local(fb.param(0))], None);
+    fb.ret(n, Operand::Const(Const::Unit, Ty::Unit));
+    p.funcs.push(fb.finish());
+    let later = p.funcs.len() - 1;
+    assert!(run(&mut p));
+    assert_valid(&p);
+    let clones: Vec<usize> = (p.funcs.iter().enumerate())
+        .filter(|(_, g)| g.symbol == "drop$present")
+        .map(|(i, _)| i)
+        .collect();
+    assert_eq!(clones.len(), 1, "one clone");
+    let calls_clone = p.funcs[later].blocks.iter().any(|b| {
+        matches!(&b.term, Terminator::Call { callee: Callee::Func(d), .. } if d.0 as usize == clones[0])
+    });
+    assert!(calls_clone, "the later call goes to the first clone");
 }

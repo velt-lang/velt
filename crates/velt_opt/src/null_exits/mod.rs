@@ -32,7 +32,17 @@ use crate::srclocs::push_stmt;
 /// callee's clone without the test where it is not null; returns whether any call changed.
 pub(crate) fn run(program: &mut Program) -> bool {
     let exits: Vec<Option<(usize, BlockId)>> = program.funcs.iter().map(null_exit).collect();
-    let mut present: Vec<Option<FuncId>> = vec![None; exits.len()];
+    // A clone an earlier run made (the program optimized again) is called again, not made twice.
+    let by_name: rustc_hash::FxHashMap<&str, usize> = (program.funcs.iter().enumerate())
+        .map(|(i, g)| (g.symbol.as_str(), i))
+        .collect();
+    let mut present: Vec<Option<FuncId>> = (program.funcs.iter())
+        .zip(&exits)
+        .map(|(g, e)| {
+            let found = e.and_then(|_| by_name.get(present_name(&g.symbol).as_str()).copied());
+            found.map(|id| FuncId(id as u32))
+        })
+        .collect();
     let mut changed = false;
     // The clones are visited too: their calls of other glue are tested the same way.
     let mut i = 0;
@@ -85,7 +95,7 @@ fn sites(exits: &[Option<(usize, BlockId)>], func: &Function) -> Vec<(usize, usi
 fn clone_present(program: &mut Program, f: usize, body: Option<BlockId>) -> FuncId {
     let body = body.unwrap_or_else(|| panic!("ICE: null_exits: no body block"));
     let mut g = program.funcs[f].clone();
-    g.symbol = format!("{}$present", g.symbol);
+    g.symbol = present_name(&g.symbol);
     g.linkage = Linkage::Internal;
     g.blocks[0].term = Terminator::Goto(body);
     // The early return is now unreachable.
@@ -95,10 +105,21 @@ fn clone_present(program: &mut Program, f: usize, body: Option<BlockId>) -> Func
     id
 }
 
+/// The symbol of the clone of the function named `symbol` without its null test.
+fn present_name(symbol: &str) -> String {
+    format!("{symbol}$present")
+}
+
 /// The parameter `k` such that `f` returns `()` at once, doing nothing, when `*param k` is null,
 /// and the block it goes on to when it is not.
 fn null_exit(f: &Function) -> Option<(usize, BlockId)> {
     if f.ret != Ty::Unit || f.cold || f.is_poll || f.blocks.is_empty() {
+        return None;
+    }
+    // The test must run once, on entry: a block that jumps back to the entry block (a loop
+    // whose header it is) would make the clone without the test loop for good.
+    let back = (f.blocks.iter()).any(|b| crate::visit::successors(&b.term).contains(&BlockId(0)));
+    if back {
         return None;
     }
     let entry = &f.blocks[0];
