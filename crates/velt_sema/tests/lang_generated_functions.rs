@@ -71,7 +71,7 @@ fn demand_reaches_instances_through_generic_code() {
     assert_eq!(shown, ["User", "f64[]"]);
 }
 
-/// The model describes fields (privacy, optional) and spells types for generated code.
+/// The model describes fields (privacy, optional) and names types for generated code.
 #[test]
 fn the_model_describes_fields_and_spells_types() {
     let d = demand(PROGRAM);
@@ -79,7 +79,8 @@ fn the_model_describes_fields_and_spells_types() {
         .find(|t| t.display == "User")
         .expect("User in the model");
     assert_eq!(user.kind, "class");
-    assert_eq!(user.spelling, r#"__qualified<"main", "User">"#);
+    // Generated code names a type by a handle: its position in an instance's walk.
+    assert!(user.spelling.starts_with(r#"__type<""#), "{}", user.spelling);
     let fields: Vec<(&str, bool, bool)> = (user.fields.iter())
         .map(|f| (f.name.as_str(), f.private, f.optional))
         .collect();
@@ -96,7 +97,7 @@ fn the_model_describes_fields_and_spells_types() {
     let arr = (d.model.types.iter())
         .find(|t| t.kind == "array")
         .expect("an array");
-    assert_eq!(arr.spelling, "(f64)[]");
+    assert!(arr.spelling.starts_with(r#"__type<""#), "{}", arr.spelling);
     assert_eq!(d.model.types[arr.args[0] as usize].repr, "f64");
 }
 
