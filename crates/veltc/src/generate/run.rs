@@ -47,7 +47,9 @@ pub(super) fn run(
             fn_keys.push(String::new());
             continue;
         };
-        let decl_path = sess.sm.get(decl.file).path.clone();
+        // Absolute: the host's root is put beside it, and the caches key hosts by that root, so
+        // two projects' `main.vlt` run from their own directories never share a host.
+        let decl_path = vpm::relpath::absolute(&sess.sm.get(decl.file).path);
         let Some((file, dir, spec)) = locate_generator(&decl_path, &f.generator, packages) else {
             let msg = format!("cannot find the generator module `{}`", f.generator);
             sess.diagnostics

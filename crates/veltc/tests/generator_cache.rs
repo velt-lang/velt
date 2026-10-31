@@ -21,6 +21,20 @@ fn run(dir: &Path, cache: &Path) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
+/// `velt run main.vlt` in `dir` (the path as typed: relative): its output, or its errors.
+fn run_relative(dir: &Path, cache: &Path) -> Result<String, String> {
+    let out = Command::new(env!("CARGO_BIN_EXE_velt"))
+        .args(["run", "main.vlt"])
+        .current_dir(dir)
+        .env("VELT_BUILD_CACHE", cache)
+        .output()
+        .expect("run velt");
+    match out.status.success() {
+        true => Ok(String::from_utf8_lossy(&out.stdout).into_owned()),
+        false => Err(String::from_utf8_lossy(&out.stderr).into_owned()),
+    }
+}
+
 fn generator(text: &str) -> String {
     format!(
         "import {{ InstanceRequest, Output }} from \"velt/generate\";\n\
@@ -50,6 +64,56 @@ fn a_changed_generator_is_run_again() {
     // The generator changed: its output must not come from the cache.
     std::fs::write(dir.join("gen.vlt"), generator("goodbye")).expect("gen");
     assert_eq!(run(&dir, &cache), "goodbye User\n");
+}
+
+/// Programs run by the same relative path (`velt run main.vlt`) from their own directories are
+/// different programs to the caches: each gets its own generators' output, and a generator that
+/// reads the clock is rejected as when run by its full path.
+#[test]
+fn programs_at_the_same_relative_path_have_their_own_generators() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let cache = tmp.path().join("cache");
+    let main = "declare generated(\"./gen\") function hello<T>(): string;
+                class User {}
+                function main() { console.log(hello<User>()); }
+";
+    for (name, text) in [("a", "hello"), ("b", "goodbye"), ("c", "welcome")] {
+        let dir = tmp.path().join(name);
+        std::fs::create_dir_all(&dir).expect("dir");
+        std::fs::write(dir.join("main.vlt"), main).expect("main");
+        std::fs::write(dir.join("gen.vlt"), generator(text)).expect("gen");
+        assert_eq!(
+            run_relative(&dir, &cache),
+            Ok(format!(
+                "{text} User
+"
+            ))
+        );
+        // Cached: still this program's.
+        assert_eq!(
+            run_relative(&dir, &cache),
+            Ok(format!(
+                "{text} User
+"
+            ))
+        );
+    }
+    let dir = tmp.path().join("clock");
+    std::fs::create_dir_all(&dir).expect("dir");
+    std::fs::write(dir.join("main.vlt"), main).expect("main");
+    std::fs::write(
+        dir.join("gen.vlt"),
+        "import { InstanceRequest, Output } from \"velt/generate\";
+         export function hello(req: InstanceRequest, out: Output): void {
+           out.line(`return ${out.literal(Date.now().toString())};`);
+         }
+",
+    )
+    .expect("gen");
+    for _ in 0..2 {
+        let err = run_relative(&dir, &cache).expect_err("a generator reading the clock");
+        assert!(err.contains("cannot reach the clock"), "{err}");
+    }
 }
 
 /// A generator that lists a type's fields: its output changes when the type does.

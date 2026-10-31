@@ -28,7 +28,8 @@ pub(super) fn output_key(root: &Path, src: &str, input: &str) -> Option<Key> {
     let mut h = KeyHasher::new();
     h.part(b"generate-output-v4");
     h.part(&crate::build_cache::compiler_identity().0);
-    h.part(root.as_os_str().as_encoded_bytes());
+    // Absolute: the same relative path in another directory is another program.
+    h.part(vpm::relpath::absolute(root).as_os_str().as_encoded_bytes());
     h.part(src.as_bytes());
     h.part(input.as_bytes());
     Some(h.finish())
@@ -111,7 +112,8 @@ pub(super) fn offer_key(root: &Path, require_main: bool) -> Option<Key> {
     let mut h = KeyHasher::new();
     h.part(b"generate-offer-v3");
     h.part(&crate::build_cache::compiler_identity().0);
-    h.part(root.as_os_str().as_encoded_bytes());
+    // Absolute: the same relative path in another directory is another program.
+    h.part(vpm::relpath::absolute(root).as_os_str().as_encoded_bytes());
     h.part(&[u8::from(require_main)]);
     Some(h.finish())
 }

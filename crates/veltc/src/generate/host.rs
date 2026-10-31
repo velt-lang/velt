@@ -52,6 +52,9 @@ fn executable(
     packages: Option<&vpm::PackageGraph>,
 ) -> Option<Result<Host, String>> {
     let dir = crate::build_cache::root()?;
+    // Absolute: hosts of the same relative root in two directories import different generators.
+    let root = vpm::relpath::absolute(root);
+    let root = root.as_path();
     let key = velt_build_cache::Key::of(&[
         b"generate-host-v1",
         &crate::build_cache::compiler_identity().0,

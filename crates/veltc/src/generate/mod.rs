@@ -46,7 +46,9 @@ pub(crate) fn check(
     packages: Option<&vpm::PackageGraph>,
 ) -> Option<hir::Program> {
     let declares = modules.iter().any(declares_generated);
-    let root_path = modules.get(root).map(|m| sess.sm.get(m.file).path.clone());
+    // Absolute: the offer is the program's, not that of whichever program has the same path
+    // relative to its working directory.
+    let root_path = (modules.get(root)).map(|m| vpm::relpath::absolute(&sess.sm.get(m.file).path));
     let offer_key = (declares.then_some(root_path).flatten())
         .and_then(|p| cache::offer_key(&p, opts.require_main));
     if let Some(offer) = offer_key.as_ref().and_then(cache::load_offer) {
