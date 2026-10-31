@@ -141,14 +141,20 @@ fn the_formatter_reaches_its_dependents_and_the_vlt_format_check() {
     assert!(binaries.contains("templates") && binaries.contains("native_packages"));
 }
 
-/// A change in packages/ runs `velt test` in the packages, the registry flow of packages/sqlite
-/// and the example apps (which depend on packages by path), not the goldens.
+/// A change in packages/ runs `velt test` in the packages, the registry flow of packages/sqlite,
+/// the example apps (which depend on packages by path) and the benchmarks using the package; the
+/// goldens only when some depend on the package.
 #[test]
 fn a_changed_package_runs_the_package_tests() {
     let p = plan(&["packages/redis/src/client.vlt"]);
     assert_eq!(
         p.veltc,
-        Veltc::Some(set(&["packages", "native_packages", "example_apps"]))
+        Veltc::Some(set(&[
+            "packages",
+            "native_packages",
+            "example_apps",
+            "bench_programs"
+        ]))
     );
     assert_eq!(p.goldens, Goldens::None);
     assert!(p.filterset().unwrap().contains("binary(packages)"));
@@ -157,6 +163,31 @@ fn a_changed_package_runs_the_package_tests() {
     let p = plan(&["packages/redis/native/src/resp.rs"]);
     assert!(p.native_crates);
     assert!(!p.rust, "no workspace crate changed");
+}
+
+/// packages/http-server is used by goldens, the standard library's tests, benchmarks and the
+/// documentation: a change to it runs all of them.
+#[test]
+fn a_changed_http_server_runs_what_depends_on_it() {
+    let p = plan(&["packages/http-server/src/h2/request.vlt"]);
+    assert_eq!(
+        p.golden_env().unwrap(),
+        "tests/golden/lang/errors/http_server/,tests/golden/std/http_server/"
+    );
+    let Veltc::Some(binaries) = &p.veltc else {
+        panic!("{:?}", p.veltc)
+    };
+    for b in [
+        "packages",
+        "example_apps",
+        "std_tests",
+        "bench_programs",
+        "docs",
+    ] {
+        assert!(binaries.contains(b), "{b}: {binaries:?}");
+    }
+    let p = plan(&["packages/http-server/README.md"]);
+    assert!(matches!(&p.veltc, Veltc::Some(b) if b.contains("docs")));
 }
 
 #[test]

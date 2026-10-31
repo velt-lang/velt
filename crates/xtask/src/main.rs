@@ -23,6 +23,7 @@ mod graph;
 mod hooks;
 mod junit;
 mod os;
+mod package_users;
 mod plan;
 mod pr_lint;
 mod pr_size;

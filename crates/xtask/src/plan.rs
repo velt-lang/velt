@@ -9,6 +9,7 @@ use std::collections::BTreeSet;
 
 use crate::graph::Graph;
 use crate::os;
+use crate::package_users;
 
 /// Crates whose change can change what any compiled Velt program does: every end-to-end test
 /// runs. (A crate not listed here or in [`TOOLING`] is treated like these.)
@@ -144,7 +145,8 @@ const READ_BY_TESTS: &[(&str, &[&str], &[&str])] = &[
     ("tests/std/", &[], &["std_tests"]),
     // `packages` runs `velt test` in every packages/<name>/ (building its native crate);
     // `native_packages` publishes packages/sqlite through a local registry; example apps depend
-    // on packages by path.
+    // on packages by path. What else uses a package adds its tests
+    // (crates/xtask/src/package_users.rs).
     (
         "packages/",
         &[],
@@ -402,6 +404,12 @@ impl Plan {
                     }
                     if path.starts_with("packages/") && path.contains("/native/") {
                         plan.native_crates = true;
+                    }
+                    if let Some(users) = package_users::of_path(path) {
+                        plan.add_veltc(users.binaries);
+                        for dir in users.goldens {
+                            plan.add_golden(dir.to_string());
+                        }
                     }
                 }
             }
