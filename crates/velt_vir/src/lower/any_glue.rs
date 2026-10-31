@@ -72,6 +72,19 @@ impl FnLower<'_, '_> {
         d: DefId,
         params: &[vir::Local],
     ) {
+        self.any_subclass_dispatch_as(g, ty, d, params, (Ty::U8, ST_UNSUPPORTED));
+    }
+
+    /// [`any_subclass_dispatch`](Self::any_subclass_dispatch) of a glue whose result has VIR
+    /// type `ret`, answering `unsupported` for an object of a generic subclass.
+    pub(super) fn any_subclass_dispatch_as(
+        &mut self,
+        g: Glue,
+        ty: TyId,
+        d: DefId,
+        params: &[vir::Local],
+        (ret, unsupported): (Ty, i128),
+    ) {
         if !self.cx.is_class(ty) || !self.cx.has_header(d) {
             return;
         }
@@ -109,12 +122,12 @@ impl FnLower<'_, '_> {
         for ((_, s, generics), b) in subs.into_iter().zip(blocks) {
             self.switch_to(b);
             if generics != 0 {
-                self.ret_status(ST_UNSUPPORTED);
+                self.terminate(Terminator::Return(cint(unsupported, ret)));
                 continue;
             }
             let sty = self.cx.intern(TyKind::Adt(s, vec![]));
             let f = self.cx.func(Work::Glue(g, sty));
-            let out = Place::local(self.temp(Ty::U8));
+            let out = Place::local(self.temp(ret));
             let args = params
                 .iter()
                 .map(|&p| Operand::Copy(Place::local(p)))
@@ -189,7 +202,11 @@ impl FnLower<'_, '_> {
         args: Vec<(Place, TyId)>,
         out: &Place,
     ) {
-        let std_result = self.cx.fn_def(r.def).name.starts_with("std/");
+        let std_result = self
+            .cx
+            .fn_def(r.def)
+            .name
+            .starts_with(velt_common::std_modules::CANONICAL_PREFIX);
         let v = self.invoke_ready(r, this, args);
         self.any_box_with(v, r.ret, out, std_result);
     }
@@ -616,7 +633,7 @@ impl FnLower<'_, '_> {
         }
         self.this_fn_call_keys((data, key, argv, argc, out), ty);
         if self.prelude_record(ty).is_some() {
-            // The prelude's `__anyRec_` functions (std/record/reflect.vlt: what
+            // The prelude's `__anyRec_` functions (std/lang/record/reflect.vlt: what
             // `Reflect` does to a record's symbol keys); a record's function values come later.
             return self.any_record_call((data, key, argv, argc, out), ty);
         }

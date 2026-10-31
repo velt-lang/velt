@@ -1,6 +1,4 @@
-// check: unfreed blocks at most 8
-// (The 8 blocks, kept until the program exits: `velt:sync/epoch`'s registry of thread slots, 4,
-// and this thread's list of retired values, 4.)
+// check: no leaks
 // A `ConcurrentMap` whose string keys nearly all share their first 8 bytes ("https://"), so every
 // separator of every inner node ties with every key on its word, and the map finds a key's child
 // by a binary search over the strings of whole nodes of tied separators: on lookups (present
@@ -10,8 +8,8 @@
 // with keys in groups of 100 that share their first 8 bytes, so runs of tied separators sit
 // between separators with other words.
 
-import { ConcurrentMap } from "velt:collections/concurrent_map";
-import { collect, outstanding } from "velt:sync/epoch";
+import { ConcurrentMap } from "velt/collections";
+import { collect, outstanding } from "velt/sync/epoch";
 
 const N: u64 = 12000;
 

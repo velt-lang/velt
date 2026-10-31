@@ -1,6 +1,6 @@
 // Field defaults that construct each other in a cycle (#266): `new B()` throws what A's
 // defaults throw although A's throwing field comes after the one that closes the cycle.
-import { random } from "velt:random";
+import { random } from "velt/random";
 
 class Oops {
   constructor(public msg: string) {}

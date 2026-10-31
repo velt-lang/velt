@@ -1,0 +1,74 @@
+// sqlite/engine/rows (internal): the rows of a statement's run, read by velt/db's `readRows` into typed
+// values.
+
+import { NULL, INTEGER, REAL, TEXT } from "./storage_class";
+import { Out } from "./exec/out";
+import { CellKind, RowSource } from "velt/db";
+
+/** The rows of a run, read by velt/db's `readRows` into typed values. */
+export class Rows implements RowSource {
+  out: Out;
+  names: string[];
+  row: i64 = -1;
+
+  constructor(out: Out, names: string[]) {
+    this.out = out;
+    this.names = names;
+  }
+
+  columnCount(): i64 {
+    return this.names.length as i64;
+  }
+
+  columnName(i: i64): string {
+    return this.names[i as usize];
+  }
+
+  next(): bool {
+    this.row++;
+    return this.row < (this.out.rows as i64);
+  }
+
+  /** The value's position in the output (fields are read in place: no copy of the value). */
+  pos(i: i64): usize {
+    return (this.row as usize) * this.out.width + (i as usize);
+  }
+
+  kind(i: i64): CellKind {
+    const t = this.out.vals[this.pos(i)].t;
+    if (t == NULL) {
+      return CellKind.Null;
+    }
+    if (t == INTEGER) {
+      return CellKind.Int;
+    }
+    if (t == REAL) {
+      return CellKind.Float;
+    }
+    return t == TEXT ? CellKind.Text : CellKind.Blob;
+  }
+
+  bool(i: i64): bool {
+    return this.out.vals[this.pos(i)].i != 0;
+  }
+
+  int(i: i64): i64 {
+    return this.out.vals[this.pos(i)].i;
+  }
+
+  float(i: i64): f64 {
+    return this.out.vals[this.pos(i)].r;
+  }
+
+  text(i: i64): string {
+    return this.out.vals[this.pos(i)].s;
+  }
+
+  blob(i: i64): u8[] {
+    return this.out.vals[this.pos(i)].b;
+  }
+
+  json(i: i64): string {
+    return "null";
+  }
+}

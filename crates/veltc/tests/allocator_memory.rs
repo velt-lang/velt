@@ -9,7 +9,7 @@ mod no_window;
 mod test_dir;
 
 /// A program allocating a little on each worker, then printing its resident set size.
-const PROGRAM: &str = "import { workerCount } from \"velt:task\";
+const PROGRAM: &str = "import { workerCount } from \"velt/task\";
 
 async function fill(i: i64): Promise<i64> {
   const kept: i64[][] = [];

@@ -23,9 +23,6 @@ bytes = "1.12.1"
 dashu-int = "0.6.1"
 futures-util = { version = "0.3.34", default-features = false, features = ["std", "sink"] }
 getrandom = "0.4.3"
-http-body-util = "0.1.5"
-hyper = { version = "1.11.1", features = ["http1", "http2", "server"] }
-hyper-util = { version = "0.1.21", features = ["tokio", "server", "server-auto", "http1", "http2", "server-graceful"] }
 itoa = "1.0.18"
 libm = "0.2.16"
 # The same C library mimalloc wraps, called directly by mem.rs for the small-alignment fast path.
@@ -41,14 +38,6 @@ rustls = { version = "0.23.45", default-features = false, features = ["ring", "s
 ryu = "1.0.23"
 velt_text = { path = "../velt_text" }
 velt_tls = { path = "../velt_tls" }
-# std/postgres's driver (an SDK-only crate, linked in: its exports are std's externs).
-velt_std_postgres = { path = "../velt_std_postgres" }
-# std/sqlite's driver (the same: an SDK-only crate, linked in).
-velt_std_sqlite = { path = "../velt_std_sqlite" }
-# std/redis's driver (the same).
-velt_std_redis = { path = "../velt_std_redis" }
-# The SDK the drivers are built on: the runtime hands it its function table at start-up.
-velt_native = { path = "../velt_native" }
 socket2 = "0.6.5"
 tokio = { version = "1.53.1", default-features = false, features = ["rt-multi-thread", "net", "fs", "time", "io-util", "sync", "signal", "process"] }
 tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12"] }

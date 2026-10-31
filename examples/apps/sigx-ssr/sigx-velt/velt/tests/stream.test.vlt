@@ -3,7 +3,7 @@
 
 import { component, Renderer, renderToString } from "../src/lib";
 import { useData } from "../src/data";
-import { delay } from "velt:timers";
+import { delay } from "velt/time";
 
 type Box = { n: number };
 

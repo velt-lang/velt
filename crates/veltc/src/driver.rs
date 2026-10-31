@@ -32,6 +32,9 @@ pub struct BuildOptions {
     pub input: PathBuf,
     /// Root module source instead of reading `input` (generated `velt test` harnesses).
     pub root_source: Option<String>,
+    /// The root is `velt test`'s generated harness, which imports the test runner's hooks from
+    /// velt/test's internal files ([`loader::LoadOptions::test_harness`]).
+    pub test_harness: bool,
     /// Installed packages when building inside a package (`None` → package imports fail).
     pub packages: Option<vpm::PackageGraph>,
     /// `-o`; `None` → `./target/velt/<stem>[.exe]`.
@@ -107,6 +110,9 @@ pub struct CheckScope {
     /// Further modules checked as library modules in the same run (`velt check` in a package:
     /// every module under `src/` and `tests/`); modules they share are loaded and checked once.
     pub extra_roots: Vec<PathBuf>,
+    /// Check every definition of std the loaded modules hold, reached or not (`velt check
+    /// --std`).
+    pub eager_std: bool,
 }
 
 /// What a successful build produced.
@@ -153,6 +159,12 @@ pub struct Session {
     pub cached: Option<(usize, usize, &'static str)>,
     /// Objects of std functions the program links instead of compiling (`std_cache`).
     pub std_objects: Vec<PathBuf>,
+    /// What the source generators the build ran read, as build-stamp `file` entries
+    /// (`crate::generate`): a changed generator rebuilds the program.
+    pub generator_inputs: Vec<String>,
+    /// This builds a source generator host, whose generators must not reach outside the
+    /// program (no I/O, clock, randomness or native code: [`check_generator_host`]).
+    pub generator_build: bool,
 }
 
 impl Session {
@@ -267,8 +279,11 @@ fn load_modules(
             .as_ref()
             .map(|g| g as &dyn loader::PackageResolver),
         root_source: opts.root_source.clone(),
+        test_harness: opts.test_harness,
         overlay: None,
-        std_root_as_std: false,
+        // A source generator host for std's generators sits in the std root and imports their
+        // internal files: it is std code (docs/internals/design/source-generators.md §5).
+        std_root_as_std: sess.generator_build,
     };
     let loaded = loader::load_with_roots(
         &mut sess.sm,
@@ -292,9 +307,10 @@ fn sema_stage(
     let t = Instant::now();
     let sema_opts = velt_sema::CheckOptions {
         require_main: scope.require_main,
+        eager_std: scope.eager_std,
     };
-    let (hir, diags) = velt_sema::check_with(&loaded.modules, loaded.root, sema_opts);
-    sess.diagnostics.extend(diags);
+    let packages = opts.packages.as_ref();
+    let hir = crate::generate::check(sess, &loaded.modules, loaded.root, sema_opts, packages);
     if let Some(hir) = &hir {
         let std_root = loader::std_root();
         let std_files = loaded
@@ -313,7 +329,7 @@ fn sema_stage(
             &mut sess.diagnostics,
         );
     }
-    sess.record("sema", t);
+    let _ = t;
     sess.stop_if_errors()?;
     hir.ok_or_else(|| BuildError::Ice("sema returned no program but reported no errors".into()))
 }
@@ -323,12 +339,18 @@ pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Pr
     let scope = CheckScope {
         require_main: true,
         extra_roots: vec![],
+        eager_std: false,
     };
     let hir = check_program(sess, opts, &scope)?;
 
     let t = Instant::now();
     let std_root = loader::std_root();
-    let native_inits = crate::native::inits(opts.packages.as_ref());
+    // A generator host reaches no native code (`check_generator_host`): it starts none of the
+    // program's native packages and links none of their libraries.
+    let native_inits = match sess.generator_build {
+        true => vec![],
+        false => crate::native::inits(opts.packages.as_ref()),
+    };
     let target = opts.target();
     let line_info = opts.has_line_info();
     let lower_opts = velt_vir::LowerOptions {
@@ -539,6 +561,7 @@ fn build_on_current_thread(
         None => (compile_to_vir(sess, opts), vpm::probe::Seen::default()),
     };
     let mut program = program?;
+    check_generator_host(sess, &program)?;
     // For the stamp: what the program reaches outside itself (`velt test` keeps a result only
     // for a program that reaches nothing).
     let reaches = outside::reaches(&program);
@@ -626,11 +649,29 @@ fn build_on_current_thread(
             link_inputs: &outputs,
             std_objects: &sess.std_objects,
             outside: &reaches,
+            generator_inputs: &sess.generator_inputs,
         };
         // Best effort: without a stamp the next build compiles again.
         let _ = stamp::write(&stamp_path, &stamp::render(&key, &sess.sm, &built));
     }
     Ok(Artifact::Executable(paths.executable))
+}
+
+/// In a source generator host ([`Session::generator_build`]): an error when the generators reach
+/// outside the program. A generator is a pure function of its request, which makes its output
+/// cacheable and running it at compile time safe (docs/internals/design/source-generators.md §5).
+pub fn check_generator_host(sess: &mut Session, program: &vir::Program) -> Result<(), BuildError> {
+    if !sess.generator_build {
+        return Ok(());
+    }
+    let reaches = outside::generator_reaches(program);
+    if reaches == "-" {
+        return Ok(());
+    }
+    Err(BuildError::Failed(format!(
+        "a source generator cannot reach {reaches}: it runs at compile time and gets everything \
+         from its request"
+    )))
 }
 
 /// Link `objects` into `paths.executable` (nothing to do when its link stamp matches).
@@ -649,7 +690,10 @@ fn link_stage(
         opts.release,
         // Release settings strip debug info (and PDB generation on Windows).
         opts.release && !opts.debug_info,
-        &crate::native::links(opts.packages.as_ref(), opts.release),
+        &match sess.generator_build {
+            true => vec![],
+            false => crate::native::links(opts.packages.as_ref(), opts.release),
+        },
     )
     .map_err(BuildError::Failed)?;
     sess.record("link", t);

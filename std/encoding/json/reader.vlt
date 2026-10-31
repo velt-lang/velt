@@ -1,0 +1,910 @@
+// velt/encoding/json (internal): the pull reader under the decoders `JSON.parse<T>` compiles for
+// each type.
+//
+// The reader lexes its source on demand. The first failure is sticky: every later call fails
+// too, and `message` turns it into the `JsonError` message. Commas and colons are handled by
+// `nextKey` / `arrayNext`: the reader only needs to know whether the last token it consumed
+// was an opening bracket.
+//
+// A driver's rows (std/db) are read by the runtime's row reader: such a reader starts out
+// failed (`ROWS`), so every method takes its failure branch, which forwards to the row reader;
+// reading text pays nothing for it.
+//
+// Port of crates/velt_rt/src/json/reader.rs and error.rs (#1668), with the same results and
+// messages.
+
+import {
+  blankComments,
+  EXPECTED_COLON,
+  EXPECTED_COMMA_BRACE,
+  EXPECTED_COMMA_BRACKET,
+  EXPECTED_KEY,
+  Scanner,
+  TOO_DEEP,
+  TRAILING,
+  UNEXPECTED_CHAR,
+  numberI64,
+  numberU64,
+} from "velt/encoding/json/scan";
+import { utf8Substring } from "velt/encoding";
+import { decimalValue } from "velt/lang/number/parse";
+import { strByteAt, strByteLen } from "velt/lang/intrinsics";
+
+declare function velt_rt_json_reader_free(r: u64);
+declare function velt_rt_json_reader_peek(r: u64): u32;
+declare function velt_rt_json_reader_expect_object_start(r: u64): u8;
+declare function velt_rt_json_reader_expect_array_start(r: u64): u8;
+declare function velt_rt_json_reader_next_key(r: u64, out: string): u8;
+declare function velt_rt_json_reader_array_next(r: u64): u8;
+declare function velt_rt_json_reader_read_string(r: u64, out: string): u8;
+declare function velt_rt_json_reader_read_f64(r: u64, out: ReaderF64): u8;
+declare function velt_rt_json_reader_read_i64(r: u64, out: ReaderI64): u8;
+declare function velt_rt_json_reader_read_bool(r: u64, out: ReaderBool): u8;
+declare function velt_rt_json_reader_read_null(r: u64): u8;
+declare function velt_rt_json_reader_skip_value(r: u64): u8;
+declare function velt_rt_json_reader_skip_lookahead(r: u64): u8;
+declare function velt_rt_json_reader_skip_unknown(r: u64): u8;
+declare function velt_rt_json_reader_mark(r: u64): u64;
+declare function velt_rt_json_reader_reset(r: u64, mark: u64);
+declare function velt_rt_json_reader_read_value(r: u64, out: ReaderHandle): u8;
+declare function velt_rt_json_reader_end(r: u64): u8;
+declare function velt_rt_json_reader_null_absent(r: u64): u8;
+declare function velt_rt_json_error(r: u64, expected: string, path: string): string;
+declare function velt_rt_json_parse_value_with(
+  src: string,
+  maxDepth: u32,
+  out: ReaderHandle,
+  err: string,
+): bool;
+declare function velt_rt_json_node_syntax(src: string, out: string): bool;
+
+// Out-parameters of the row reader's calls.
+struct ReaderF64 {
+  v: f64;
+}
+
+struct ReaderI64 {
+  v: i64;
+}
+
+struct ReaderBool {
+  v: u8;
+}
+
+struct ReaderHandle {
+  v: u64;
+}
+
+/** `peek` results. */
+export const TOKEN_EOF: u32 = 0;
+export const TOKEN_NULL: u32 = 1;
+export const TOKEN_TRUE: u32 = 2;
+export const TOKEN_FALSE: u32 = 3;
+export const TOKEN_NUMBER: u32 = 4;
+export const TOKEN_STRING: u32 = 5;
+export const TOKEN_ARRAY_START: u32 = 6;
+export const TOKEN_ARRAY_END: u32 = 7;
+export const TOKEN_OBJECT_START: u32 = 8;
+export const TOKEN_OBJECT_END: u32 = 9;
+export const TOKEN_ERROR: u32 = 10;
+
+/** `nextKey` / `arrayNext` results. */
+export const STEP_END: u8 = 0;
+export const STEP_MORE: u8 = 1;
+export const STEP_ERROR: u8 = 2;
+
+/** `Reader` flags (`JSON.parse` options). */
+export const FLAG_REJECT_UNKNOWN: u32 = 1;
+export const FLAG_NULL_NOT_ABSENT: u32 = 2;
+/** JSONC: comments are whitespace; a comma may come before `]` and `}`. (4 and 8 are the
+ *  runtime's row flags.) */
+export const FLAG_COMMENTS: u32 = 16;
+export const FLAG_TRAILING_COMMAS: u32 = 32;
+
+// Why the reader stopped (`failed`).
+const NONE: u8 = 0;
+/** Well-formed so far, but not the kind the decoder asked for. */
+const MISMATCH: u8 = 1;
+/** An object key the target type does not have, with unknown keys rejected. */
+const UNKNOWN: u8 = 2;
+const SYNTAX: u8 = 3;
+/** Reading a driver's rows: the row reader at `rows` answers. */
+const ROWS: u8 = 4;
+
+// Bits of a mark: position, open containers, `afterOpen`.
+const MARK_DEPTH_BITS: u64 = 21;
+
+/** Path segments kept at each end of a shortened path. */
+const PATH_KEEP: usize = 10;
+
+/** The pull reader. Failing methods return false (0, `STEP_ERROR`). */
+export class Reader extends Scanner {
+  /** The last consumed token was `{` or `[` (so no comma comes before the next item). */
+  afterOpen: bool = false;
+  failed: u8 = NONE;
+  rejectUnknown: bool;
+  /** A JSON `null` for an optional field whose type has no `null` is an error, not absent. */
+  nullNotAbsent: bool;
+  /** The deepest nesting allowed, and the arrays and objects open now. */
+  maxDepth: usize;
+  depth: usize = 0;
+  /** Where each array or object `skipLookahead` walked ends, by the offset of its bracket. */
+  ends: Map<usize, usize> | null = null;
+  /** The runtime's row reader, when reading a driver's rows (0 otherwise). */
+  rows: u64 = 0;
+  /** The last number read. */
+  num: f64 = 0;
+  int: i64 = 0;
+  /**
+   * The value `valueLimit` read from a driver's rows: a runtime `JsonValue` handle. (A value
+   * read from text is the tape `JsonValue.__fromReader` parses: no field of the reader holds a
+   * tape, so a program that decodes no `JsonValue` does not carry the tape's drop and copy code.)
+   */
+  handle: u64 = 0;
+  /** `valueLimit` read a value from a driver's rows (`handle`; 0 is JSON null). */
+  rowsValue: bool = false;
+  /**
+   * The last key of `nextKey`: its raw bytes, or its text when it had escapes. Kept apart from
+   * the last token, so that a decoder can still name the key after reading or skipping its value.
+   */
+  keyStart: usize = 0;
+  keyEnd: usize = 0;
+  keyEscaped: bool = false;
+  keyDecoded: string = "";
+  /** The last key's length in bytes (of `keyDecoded` if escaped, else of the raw bytes). */
+  keyLen: usize = 0;
+
+  /** A reader over JSON text, with `FLAG_*` options and a nesting limit (0: none). */
+  constructor(src: string, flags: u32, maxDepth: u32) {
+    super((flags & FLAG_COMMENTS) != 0 ? blankComments(src) : src);
+    this.rejectUnknown = (flags & FLAG_REJECT_UNKNOWN) != 0;
+    this.comments = (flags & FLAG_COMMENTS) != 0;
+    this.trailingCommas = (flags & FLAG_TRAILING_COMMAS) != 0;
+    this.nullNotAbsent = (flags & FLAG_NULL_NOT_ABSENT) != 0;
+    this.maxDepth = maxDepth == 0 ? ~(0 as usize) : maxDepth as usize;
+  }
+
+  /** `new Reader(src, flags, maxDepth)`, for the decoders the compiler generates. */
+  static of(src: string, flags: u32, maxDepth: u32): Reader {
+    return new Reader(src, flags, maxDepth);
+  }
+
+  /** A reader over the runtime's row reader `rows` (owned: `close` frees it). */
+  static overRows(rows: u64): Reader {
+    const r = new Reader("", 0, 0);
+    r.rows = rows;
+    r.failed = ROWS;
+    return r;
+  }
+
+  /** Frees the row reader, if any. */
+  close() {
+    if (this.rows != 0) {
+      velt_rt_json_reader_free(this.rows);
+      this.rows = 0;
+    }
+  }
+
+  /** The last number `readF64` read. */
+  lastF64(): f64 {
+    return this.num;
+  }
+
+  /** The last integer `readI64` read, or 1 / 0 for the last `readBool`. */
+  lastI64(): i64 {
+    return this.int;
+  }
+
+  /** The handle of the last `valueLimit` from rows. */
+  lastHandle(): u64 {
+    return this.handle;
+  }
+
+  /** May a JSON `null` stand for an absent optional field whose type has no `null`? */
+  nullAbsent(): bool {
+    if (this.rows != 0) {
+      return velt_rt_json_reader_null_absent(this.rows) == 1;
+    }
+    return !this.nullNotAbsent;
+  }
+
+  /** The kind of the next value (`TOKEN_*`); consumes only whitespace. */
+  peek(): u32 {
+    if (this.failed != NONE) {
+      return this.rows != 0 ? velt_rt_json_reader_peek(this.rows) : TOKEN_ERROR;
+    }
+    const b = this.peekNonWs();
+    if (b == 34) {
+      return TOKEN_STRING;
+    }
+    if (b == 45 || (b >= 48 && b <= 57)) {
+      return TOKEN_NUMBER;
+    }
+    if (b == 110) {
+      return TOKEN_NULL;
+    }
+    if (b == 116) {
+      return TOKEN_TRUE;
+    }
+    if (b == 102) {
+      return TOKEN_FALSE;
+    }
+    if (b == 91) {
+      return TOKEN_ARRAY_START;
+    }
+    if (b == 93) {
+      return TOKEN_ARRAY_END;
+    }
+    if (b == 123) {
+      return TOKEN_OBJECT_START;
+    }
+    if (b == 125) {
+      return TOKEN_OBJECT_END;
+    }
+    return b < 0 ? TOKEN_EOF : TOKEN_ERROR;
+  }
+
+  /** Consumes `{`. */
+  openObject(): bool {
+    if (!this.valueStart(123, 123)) {
+      return this.rows != 0 &&
+        this.failed == ROWS &&
+        velt_rt_json_reader_expect_object_start(this.rows) == 1;
+    }
+    return this.open();
+  }
+
+  /** Consumes `[`. */
+  openArray(): bool {
+    if (!this.valueStart(91, 91)) {
+      return this.rows != 0 &&
+        this.failed == ROWS &&
+        velt_rt_json_reader_expect_array_start(this.rows) == 1;
+    }
+    return this.open();
+  }
+
+  /**
+   * The next key of an object and its `:`: `STEP_MORE` (the key is the string token, `text()`
+   * or `keyIs`; its value follows), `STEP_END` after the closing `}`, or `STEP_ERROR`. A row
+   * reader's key counts as escaped (`keyDecoded`).
+   */
+  nextKey(): u8 {
+    if (this.failed != NONE) {
+      return this.rowsNextKey();
+    }
+    const step = this.step(125, EXPECTED_COMMA_BRACE);
+    if (step != STEP_MORE) {
+      return step;
+    }
+    if (this.peekNonWs() != 34) {
+      this.fail(EXPECTED_KEY);
+      this.syntaxFailed();
+      return STEP_ERROR;
+    }
+    if (!this.string(true)) {
+      this.failed = SYNTAX;
+      return STEP_ERROR;
+    }
+    this.keyStart = this.start;
+    this.keyEnd = this.end;
+    this.keyEscaped = this.escaped;
+    this.keyLen = this.end - this.start;
+    if (this.escaped) {
+      this.keyDecoded = this.decoded;
+      this.keyLen = strByteLen(this.decoded);
+    }
+    if (this.peekNonWs() != 58) {
+      this.fail(EXPECTED_COLON);
+      this.syntaxFailed();
+      return STEP_ERROR;
+    }
+    this.pos++;
+    return STEP_MORE;
+  }
+
+  /** The last key, as a string. */
+  key(): string {
+    return this.keyEscaped ? this.keyDecoded : utf8Substring(this.src, this.keyStart, this.keyEnd);
+  }
+
+  /** The last string value (`readString`), as a string. */
+  value(): string {
+    return this.text();
+  }
+
+  /** The last key's length in bytes (decoders compare it with each field name's first). */
+  keyLength(): u64 {
+    return this.keyLen as u64;
+  }
+
+  /** Whether the last key is `name` (compared in place, without making a string). */
+  keyIs(name: string): bool {
+    if (this.keyEscaped) {
+      return this.keyDecoded == name;
+    }
+    return this.rangeIs(this.keyStart, this.keyEnd, name);
+  }
+
+  /** Whether the last string value (`readString`) is `text`, compared in place. */
+  textIs(text: string): bool {
+    if (this.escaped) {
+      return this.decoded == text;
+    }
+    return this.rangeIs(this.start, this.end, text);
+  }
+
+  // Whether bytes `start` to `end` of the source are `s`'s.
+  private rangeIs(start: usize, end: usize, s: string): bool {
+    const n = strByteLen(s);
+    if (end - start != n) {
+      return false;
+    }
+    for (let i: usize = 0; i < n; i++) {
+      if (strByteAt(this.src, (start + i) as u64) != strByteAt(s, i as u64)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /** `STEP_MORE` if another array element follows, `STEP_END` after the closing `]`. */
+  arrayNext(): u8 {
+    if (this.failed != NONE) {
+      return this.rows != 0 && this.failed == ROWS
+        ? velt_rt_json_reader_array_next(this.rows)
+        : STEP_ERROR;
+    }
+    return this.step(93, EXPECTED_COMMA_BRACKET);
+  }
+
+  /** A string value (decoded): `text()` after true. A row reader's counts as escaped. */
+  readString(): bool {
+    if (!this.valueStart(34, 34)) {
+      if (this.rows != 0 && this.failed == ROWS) {
+        let s = "";
+        const ok = velt_rt_json_reader_read_string(this.rows, s) == 1;
+        this.escaped = true;
+        this.decoded = s;
+        return ok;
+      }
+      return false;
+    }
+    if (!this.string(true)) {
+      this.failed = SYNTAX;
+      return false;
+    }
+    return true;
+  }
+
+  /** A number value: `num` after true. */
+  readF64(): bool {
+    if (!this.numberStart()) {
+      if (this.rows != 0 && this.failed == ROWS) {
+        let out = ReaderF64 { v: 0 };
+        const ok = velt_rt_json_reader_read_f64(this.rows, out) == 1;
+        this.num = out.v;
+        return ok;
+      }
+      return false;
+    }
+    this.num = this.numberValue();
+    return true;
+  }
+
+  /** A number value that is an integer exactly representable as `i64`: `int` after true. */
+  readI64(): bool {
+    if (!this.numberStart()) {
+      if (this.rows != 0 && this.failed == ROWS) {
+        let out = ReaderI64 { v: 0 };
+        const ok = velt_rt_json_reader_read_i64(this.rows, out) == 1;
+        this.int = out.v;
+        return ok;
+      }
+      return false;
+    }
+    if (this.small) {
+      const m = this.digitsValue as i64;
+      this.int = this.negative ? -m : m;
+      return true;
+    }
+    const v = numberI64Of(this);
+    if (v == null) {
+      this.failed = MISMATCH;
+      return false;
+    }
+    this.int = v;
+    return true;
+  }
+
+  /**
+   * A number value that is an integer in `u64`'s range, `[0, 2^64)`: its bits are `int` after
+   * true (the glue reinterprets them). A driver's rows give `i64`s, so there it is `[0, 2^63)`.
+   */
+  readU64(): bool {
+    if (!this.numberStart()) {
+      if (this.rows != 0 && this.failed == ROWS) {
+        let out = ReaderI64 { v: 0 };
+        const ok = velt_rt_json_reader_read_i64(this.rows, out) == 1 && out.v >= 0;
+        this.int = out.v;
+        return ok;
+      }
+      return false;
+    }
+    const v = numberU64(this.src, this.start, this.end, this.integer);
+    if (v == null) {
+      this.failed = MISMATCH;
+      return false;
+    }
+    this.int = v as i64;
+    return true;
+  }
+
+  /** `true` or `false`: `int` is 1 or 0 after true. */
+  readBool(): bool {
+    if (!this.valueStart(116, 102)) {
+      if (this.rows != 0 && this.failed == ROWS) {
+        let out = ReaderBool { v: 0 };
+        const ok = velt_rt_json_reader_read_bool(this.rows, out) == 1;
+        this.int = out.v as i64;
+        return ok;
+      }
+      return false;
+    }
+    const t = strByteAt(this.src, this.pos as u64) == 116;
+    if (!this.literal(t ? "true" : "false")) {
+      return this.syntaxFailed();
+    }
+    this.int = t ? 1 : 0;
+    return true;
+  }
+
+  /** `null`. */
+  readNull(): bool {
+    if (!this.valueStart(110, 110)) {
+      return this.rows != 0 && this.failed == ROWS && velt_rt_json_reader_read_null(this.rows) == 1;
+    }
+    return (this.literal("null") || this.syntaxFailed());
+  }
+
+  /** Skips one complete value of any kind, checking it. */
+  skipValue(): bool {
+    if (!this.valueStart(0, 0)) {
+      return this.rows != 0 &&
+        this.failed == ROWS &&
+        velt_rt_json_reader_skip_value(this.rows) == 1;
+    }
+    return (this.walk(this.depthLeft(), false) || this.syntaxFailed());
+  }
+
+  /**
+   * Skips one value like `skipValue`, for a union decoder looking ahead for its discriminant:
+   * the end of every array and object passed is remembered, so nested unions' lookahead jumps
+   * over each in O(1) (without it, nested unions with the discriminant last rescan every
+   * subtree once per enclosing level).
+   */
+  skipLookahead(): bool {
+    if (!this.valueStart(0, 0)) {
+      return this.rows != 0 &&
+        this.failed == ROWS &&
+        velt_rt_json_reader_skip_value(this.rows) == 1;
+    }
+    const b = strByteAt(this.src, this.pos as u64);
+    if (b != 123 && b != 91) {
+      return (this.walk(this.depthLeft(), false) || this.syntaxFailed());
+    }
+    // A container at a given offset always has the same depth, so an earlier walk over it
+    // already checked the limit.
+    const ends = this.endsMap();
+    const known = ends.get(this.pos);
+    if (known != null) {
+      this.pos = known;
+      return true;
+    }
+    return (this.walk(this.depthLeft(), true) || this.syntaxFailed());
+  }
+
+  /** Skips the value of a key the target type does not have (fails if unknown keys are rejected). */
+  skipUnknown(): bool {
+    if (this.rows != 0 && this.failed == ROWS) {
+      return velt_rt_json_reader_skip_unknown(this.rows) == 1;
+    }
+    if (this.rejectUnknown) {
+      if (this.failed == NONE) {
+        this.failed = UNKNOWN;
+      }
+      return false;
+    }
+    return this.skipValue();
+  }
+
+  /** The current position, to come back to with `reset` (a decoder looking ahead). */
+  mark(): u64 {
+    if (this.rows != 0 && this.failed == ROWS) {
+      return velt_rt_json_reader_mark(this.rows);
+    }
+    const max: u64 = (1 << MARK_DEPTH_BITS) - 1;
+    const depth = this.depth as u64 < max ? this.depth as u64 : max;
+    return ((this.pos as u64) << (MARK_DEPTH_BITS + 1)) | (depth << 1) | (this.afterOpen ? 1 : 0);
+  }
+
+  /** Goes back to `mark` and forgets any failure since. */
+  reset(mark: u64) {
+    if (this.rows != 0 && this.failed == ROWS) {
+      velt_rt_json_reader_reset(this.rows, mark);
+      return;
+    }
+    this.pos = (mark >> (MARK_DEPTH_BITS + 1)) as usize;
+    this.depth = ((mark >> 1) & ((1 << MARK_DEPTH_BITS) - 1)) as usize;
+    this.afterOpen = (mark & 1) == 1;
+    this.failed = NONE;
+  }
+
+  /**
+   * The start of one complete value of any kind, for a `JsonValue` (`JsonValue.__fromReader`
+   * parses it into a tape over this reader's source with `parseWith`): the depth limit to give
+   * `parseWith` (0: none), or -1 when no text value is to be parsed: on failure, or for a
+   * driver's rows, which set `rowsValue` and leave the runtime tree in `handle`. The tape is not
+   * named here, so a program that decodes no `JsonValue` checks none of its code.
+   */
+  valueLimit(): i64 {
+    // A failed read leaves `handle` 0 and `rowsValue` false: the value before is not the
+    // decoder's to own (its out-parameter must own nothing on failure).
+    this.handle = 0;
+    this.rowsValue = false;
+    if (!this.valueStart(0, 0)) {
+      if (this.rows != 0 && this.failed == ROWS) {
+        let out = ReaderHandle { v: 0 };
+        this.rowsValue = velt_rt_json_reader_read_value(this.rows, out) == 1;
+        if (this.rowsValue) {
+          this.handle = out.v;
+        }
+      }
+      return -1;
+    }
+    const limit = this.depthLeft();
+    if (limit == 0) {
+      // No container fits; `parseWith` takes a limit of 0 as none.
+      const c = this.peekNonWs();
+      if (c == 123 || c == 91) {
+        this.fail(TOO_DEEP);
+        this.syntaxFailed();
+        return -1;
+      }
+      return 1;
+    }
+    return limit > 0xffffffff ? 0 : limit as i64;
+  }
+
+  /** `parseWith` failed on the value `valueLimit` started: the reader fails as a syntax error. */
+  valueFailed(): void {
+    this.syntaxFailed();
+  }
+
+  /** Only whitespace may follow the top-level value. */
+  finish(): bool {
+    if (this.failed != NONE) {
+      return this.rows != 0 && this.failed == ROWS && velt_rt_json_reader_end(this.rows) == 1;
+    }
+    if (this.peekNonWs() >= 0) {
+      this.fail(TRAILING);
+      return this.syntaxFailed();
+    }
+    return true;
+  }
+
+  /** The `JsonError.message` for the current state: the decoder expected `expected` at `path`. */
+  message(expected: string, path: string): string {
+    if (this.rows != 0) {
+      return velt_rt_json_error(this.rows, expected, path);
+    }
+    // Text that is not JSON fails as in Node, wherever the decoder stopped (not JSONC, which
+    // Node does not read).
+    let node = "";
+    if (!this.comments && !this.trailingCommas && velt_rt_json_node_syntax(this.src, node)) {
+      return node;
+    }
+    const where = shortPath(path);
+    if (this.failed == SYNTAX) {
+      if (this.code == TOO_DEEP) {
+        return `JSON nested deeper than ${this.maxDepth} levels at ${where} (byte ${this.at})`;
+      }
+      return `invalid JSON at ${where}: ${this.detail()} (byte ${this.at})`;
+    }
+    if (this.failed == UNKNOWN) {
+      return `unknown field at ${where}`;
+    }
+    return `expected ${expected} at ${where}`;
+  }
+
+  // The start of the next value if its first byte is `a` or `b` (0: any); otherwise records a
+  // mismatch (another valid value starts here) or a syntax error.
+  private valueStart(a: u8, b: u8): bool {
+    if (this.failed != NONE) {
+      return false;
+    }
+    this.afterOpen = false;
+    const c = this.peekNonWs();
+    if (c >= 0 && (a == 0 || c == a as i32 || c == b as i32)) {
+      return true;
+    }
+    if (
+      c == 123 ||
+      c == 91 ||
+      c == 34 ||
+      c == 116 ||
+      c == 102 ||
+      c == 110 ||
+      c == 45 ||
+      (c >= 48 && c <= 57)
+    ) {
+      this.failed = MISMATCH;
+    } else {
+      this.unexpected();
+      this.syntaxFailed();
+    }
+    return false;
+  }
+
+  private numberStart(): bool {
+    if (this.failed != NONE) {
+      return false;
+    }
+    this.afterOpen = false;
+    const c = this.peekNonWs();
+    if (c == 45 || (c >= 48 && c <= 57)) {
+      return (this.number() || this.syntaxFailed());
+    }
+    if (c == 123 || c == 91 || c == 34 || c == 116 || c == 102 || c == 110) {
+      this.failed = MISMATCH;
+    } else {
+      this.unexpected();
+      this.syntaxFailed();
+    }
+    return false;
+  }
+
+  private open(): bool {
+    if (this.depth >= this.maxDepth) {
+      this.fail(TOO_DEEP);
+      return this.syntaxFailed();
+    }
+    this.pos++;
+    this.afterOpen = true;
+    this.depth++;
+    return true;
+  }
+
+  // Before the next member or element: consumes the comma or the closing bracket `close`.
+  private step(close: i32, expected: u8): u8 {
+    const first = this.afterOpen;
+    this.afterOpen = false;
+    const b = this.peekNonWs();
+    if (b == close) {
+      this.pos++;
+      if (this.depth > 0) {
+        this.depth--;
+      }
+      return STEP_END;
+    }
+    if (b == 44 && !first) {
+      this.pos++;
+      if (this.trailingCommas && this.peekNonWs() == close) {
+        // JSONC: a comma before the closing bracket.
+        this.pos++;
+        if (this.depth > 0) {
+          this.depth--;
+        }
+        return STEP_END;
+      }
+      return STEP_MORE;
+    }
+    if (first) {
+      return STEP_MORE;
+    }
+    this.fail(expected);
+    this.syntaxFailed();
+    return STEP_ERROR;
+  }
+
+  // Records a syntax error (the scanner's `what` and `at`) unless the reader failed already;
+  // false.
+  private syntaxFailed(): bool {
+    if (this.failed == NONE) {
+      this.failed = SYNTAX;
+    }
+    return false;
+  }
+
+  private depthLeft(): usize {
+    return this.maxDepth > this.depth ? this.maxDepth - this.depth : 0;
+  }
+
+  private endsMap(): Map<usize, usize> {
+    if (this.ends == null) {
+      this.ends = new Map<usize, usize>();
+    }
+    return this.ends!;
+  }
+
+  // Walks exactly one value at the current position, failing with `TOO_DEEP` at an array or
+  // object nested more than `limit` deep. With `memo`, remembers where each container ends.
+  private walk(limit: usize, memo: bool): bool {
+    // The open containers (1 = object): one word, spilling past 64.
+    let inline: u64 = 0;
+    const spill: bool[] = [];
+    let depth: usize = 0;
+    const open: usize[] = [];
+    while (true) {
+      // At a value position.
+      const c = this.peekNonWs();
+      if (c == 123 || c == 91) {
+        if (depth >= limit) {
+          return this.fail(TOO_DEEP);
+        }
+        const at = this.pos;
+        this.pos++;
+        const object = c == 123;
+        if (memo) {
+          open.push(at);
+        }
+        if (this.peekNonWs() == (object ? 125 : 93)) {
+          this.pos++;
+          if (memo) {
+            this.endsMap().set(open.pop()!, this.pos);
+          }
+        } else {
+          if (depth < 64) {
+            const bit: u64 = 1 << (depth as u64);
+            inline = object ? inline | bit : inline & ~bit;
+          } else {
+            spill.push(object);
+          }
+          depth++;
+          if (object && !this.keyColon()) {
+            return false;
+          }
+          continue;
+        }
+      } else if (!this.scalar(c)) {
+        return false;
+      }
+      // A value just completed: close containers until one expects another element.
+      while (true) {
+        if (depth == 0) {
+          return true;
+        }
+        const d = depth - 1;
+        const object = d < 64 ? ((inline >> (d as u64)) & 1) == 1 : spill[d - 64];
+        const b = this.peekNonWs();
+        if (b == 44) {
+          this.pos++;
+          if (this.trailingCommas && this.peekNonWs() == (object ? 125 : 93)) {
+            // JSONC: the comma before the closing bracket; it closes below.
+            continue;
+          }
+          if (object && !this.keyColon()) {
+            return false;
+          }
+          break;
+        }
+        if (b == (object ? 125 : 93)) {
+          this.pos++;
+          depth--;
+          if (depth >= 64) {
+            spill.pop();
+          }
+          if (memo) {
+            this.endsMap().set(open.pop()!, this.pos);
+          }
+          continue;
+        }
+        return this.fail(object ? EXPECTED_COMMA_BRACE : EXPECTED_COMMA_BRACKET);
+      }
+    }
+    return false;
+  }
+
+  // `"key" :` inside an object being walked.
+  private keyColon(): bool {
+    if (this.peekNonWs() != 34) {
+      return this.fail(EXPECTED_KEY);
+    }
+    if (!this.string(false)) {
+      return false;
+    }
+    if (this.peekNonWs() != 58) {
+      return this.fail(EXPECTED_COLON);
+    }
+    this.pos++;
+    return true;
+  }
+
+  // One scalar whose first byte is `c`.
+  private scalar(c: i32): bool {
+    if (c == 34) {
+      return this.string(false);
+    }
+    if (c == 116) {
+      return this.literal("true");
+    }
+    if (c == 102) {
+      return this.literal("false");
+    }
+    if (c == 110) {
+      return this.literal("null");
+    }
+    if (c == 45 || (c >= 48 && c <= 57)) {
+      return this.number();
+    }
+    return this.unexpected();
+  }
+
+  private rowsNextKey(): u8 {
+    if (this.rows == 0 || this.failed != ROWS) {
+      return STEP_ERROR;
+    }
+    let key = "";
+    const step = velt_rt_json_reader_next_key(this.rows, key);
+    this.keyLen = strByteLen(key);
+    this.keyEscaped = true;
+    this.keyDecoded = key;
+    return step;
+  }
+
+  // The detail of a syntax error: the offending character for `UNEXPECTED_CHAR` (`U+XXXX` if
+  // it is a control character).
+  private detail(): string {
+    if (this.code != UNEXPECTED_CHAR || this.at >= this.len) {
+      return this.what;
+    }
+    const lead = strByteAt(this.src, this.at as u64);
+    // A lone surrogate is no character to show.
+    if (
+      lead == 0xed && this.at + 1 < this.len && strByteAt(this.src, (this.at + 1) as u64) >= 0xa0
+    ) {
+      return this.what;
+    }
+    let end = this.at + 1;
+    while (end < this.len && (strByteAt(this.src, end as u64) & 0xc0) == 0x80) {
+      end++;
+    }
+    const ch = utf8Substring(this.src, this.at, end);
+    // The character's code point, from its UTF-8.
+    let code: u32 = lead as u32;
+    if (end - this.at > 1) {
+      code = (lead as u32) & (0xff >> (end - this.at + 1) as u32);
+      for (let i = this.at + 1; i < end; i++) {
+        code = (code << 6) | ((strByteAt(this.src, i as u64) & 0x3f) as u32);
+      }
+    }
+    if (code < 0x20 || (code >= 0x7f && code < 0xa0)) {
+      return `${this.what} U+${code.toString(16).toUpperCase().padStart(4, "0")}`;
+    }
+    return `${this.what} '${ch}'`;
+  }
+}
+
+// The number token's value.
+function numberI64Of(r: Reader): i64 | null {
+  return numberI64(r.src, r.start, r.end, r.integer);
+}
+
+/**
+ * `path` with at most `2 * PATH_KEEP` segments (each starts at a `.` or a `[`): a longer one
+ * keeps its first and last `PATH_KEEP` with `…` between.
+ */
+export function shortPath(path: string): string {
+  const n = strByteLen(path);
+  const starts: usize[] = [];
+  for (let i: usize = 0; i < n; i++) {
+    const b = strByteAt(path, i as u64);
+    if (b == 46 || b == 91) {
+      starts.push(i);
+    }
+  }
+  if (starts.length <= 2 * PATH_KEEP) {
+    return path;
+  }
+  return `${utf8Substring(path, 0, starts[PATH_KEEP])}…${utf8Substring(path, starts[starts.length - PATH_KEEP], n)}`;
+}

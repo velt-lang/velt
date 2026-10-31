@@ -20,7 +20,7 @@ prints every command's options and examples.
 | `velt manifest [--json]` | check the package's manifest, or print it as JSON for other tools ([`package.vlt`](manifest.md#other-tools)) |
 | `velt search`, `yank`, `owner` | find and manage published packages ([Registries](packages.md#registries)) |
 | `velt login`, `logout` | store or forget your token for a registry server ([Users, owners and yanking](packages.md#users-owners-and-yanking)) |
-| `velt doc` | generate HTML API documentation, or JSON for other tools ([`velt doc`](#velt-doc)) |
+| `velt doc` | generate HTML API documentation, JSON for other tools, or the standard library's TypeScript declarations ([`velt doc`](#velt-doc)) |
 | `velt lsp` | the language server ([Editors](editors.md)) |
 | `velt playground` | write and run programs in the browser ([WebAssembly](webassembly.md#the-playground)) |
 | `velt registry serve`, `registry user`, `registry owner` | serve a package registry over HTTP, and manage its users and owners ([Packages](packages.md#registries)) |
@@ -180,6 +180,7 @@ A build never compiles the same thing twice:
 ```
 velt check [<file.vlt>] [--json] [--locked] [-v]
 velt check --ts-compat [<file|dir>...] [--json] [--locked] [-v]
+velt check --std [--json] [-v]
 ```
 
 Parses and type-checks a file with every file it imports, or the whole current package, and prints
@@ -212,6 +213,10 @@ It exits with 0 when there are no errors (warnings are allowed) and with 1 when 
   `message`, `location` (`file`, 1-based `line`/`column`, `endLine`/`endColumn`), further
   `labels` and `notes`, plus `code` and `fix` (`null` except for `--ts-compat` findings).
 - `-v` prints per-stage timings.
+- `--std` checks the whole standard library (`$VELT_STD`, else the toolchain's): every file
+  but its tests, every definition, also those no program reaches. A program checks only the std
+  code it uses, and may import only std's public modules, so this is what the standard
+  library's own development (and its CI) runs.
 
 ### Code shared with TypeScript: `--ts-compat`
 
@@ -248,6 +253,9 @@ src/models/user.ts:3:14: error: `f64` is not a TypeScript type
   and, when the replacement is mechanical, a `fix`: `{"location", "replacement", "title"}`.
 - A relative import must stay among the files passed (or in the `tsCompat` folders): `tsc`
   compiles every file a shared file imports.
+- An import of a std module (`velt/fs`) is an error, as std has no JavaScript runtime, except
+  `import type { … }`: TypeScript erases it, and the [`velt` type
+  package](#typescript-declarations-the-velt-type-package) declares the types for `tsc`.
 - Some rules need types: they ask the checker about what a name refers to and what type a
   value has (`=== null` on a `Map.get`, `${xs}` of an array, `sort()` of numbers), so the
   files are checked once more for them. That about doubles the time of the check and grows
@@ -273,10 +281,15 @@ velt init --editor vscode [--dir <dir>]
 | Template | What you get |
 |---|---|
 | `app` (default) | hello world split into a module, with a test |
-| `cli` | a command-line tool: `velt:cli` argument parsing, subcommands, `--help`, exit codes, tests |
+| `cli` | a command-line tool: `velt/cli` argument parsing, subcommands, `--help`, exit codes, tests |
 | `api` | a JSON HTTP API: routes, validation, typed errors as status codes, tests with `fetch` against a live server |
 | `websocket` | a WebSocket chat server and terminal client, with an end-to-end test |
 | `lib` | a library: exports with `/** */` doc comments for `velt doc`, tests, ready for `velt publish` |
+
+The `api` and `websocket` projects depend on the `http-server` package from the Velt repository
+on GitHub, at the tag of the toolchain's release (`tag: "v0.5.0"`), so a project gets the server
+its toolchain was released with; a toolchain built from any other commit takes it from the
+`main` branch.
 
 Every template builds, passes `velt test` and is formatted. `velt init` writes the same files
 into the current directory; it never overwrites files without `--force`, always keeps an
@@ -295,7 +308,7 @@ a package, or to `--dir`), and never overwrites one.
 ## `velt doc`
 
 ```
-velt doc [<file|dir>...] [--std] [--format html|json] [-o <dir|file>]
+velt doc [<file|dir>...] [--std] [--format html|json|types] [-o <dir|file>]
 ```
 
 Generates HTML documentation for exported items: their signatures and the doc comment right
@@ -344,8 +357,8 @@ always present (`null` or `[]` when empty). A module's record:
 | Field | |
 |---|---|
 | `module` | its name in the docs (`std/fs`, `mypkg/util`); targets refer to modules by it |
-| `specifier` | how it is imported (`velt:fs`, `mypkg/util`) |
-| `file` | its source file (`std/fs.vlt`, `src/util.vlt`); for files and directories given on the command line, relative to the current directory when they are under it (`velt doc ./lib` and `velt doc D:/pkg/lib` run in `D:/pkg` both give `lib/util.vlt`), otherwise the path as given |
+| `specifier` | how it is imported (`velt/fs`, `mypkg/util`) |
+| `file` | its source file (`std/fs/index.vlt`, `src/util.vlt`); for files and directories given on the command line, relative to the current directory when they are under it (`velt doc ./lib` and `velt doc D:/pkg/lib` run in `D:/pkg` both give `lib/util.vlt`), otherwise the path as given |
 | `doc`, `summary` | the module doc (Markdown) and its first sentence |
 | `links` | the `{@link}`s in the module doc (as for items, below) |
 | `exports` | its exported items, in source order, then the re-exported ones |
@@ -354,7 +367,7 @@ An item (an export, or a member in `members`, which has the same shape):
 
 | Field | |
 |---|---|
-| `id` | a key unique in the document: `<specifier>#<name>` (`velt:http#serve`), `#<Type>.<member>` for a member (`velt:http#Server.close`); a setter is `<member>:set`, a static member whose name an instance member has too `static:<member>`, a type whose module exports a value of the same name (`export type Color = …; export const Color = …`) `type:<name>` (`pkg#type:Color`; the value is `pkg#Color`), an `extend` block `extend:<type>` (`~2` for a second one on the same type) |
+| `id` | a key unique in the document: `<specifier>#<name>` (`velt/fs#readFile`), `#<Type>.<member>` for a member (`velt/fs#FileWriter.close`); a setter is `<member>:set`, a static member whose name an instance member has too `static:<member>`, a type whose module exports a value of the same name (`export type Color = …; export const Color = …`) `type:<name>` (`pkg#type:Color`; the value is `pkg#Color`), an `extend` block `extend:<type>` (`~2` for a second one on the same type) |
 | `name` | its exported name |
 | `kind` | `function`, `class`, `struct`, `interface`, `enum`, `type`, `const`, `extend` (an `extend` block, named after its type), `re-export` (from a module not documented alongside); members: `field`, `method`, `getter`, `setter`, `constructor`, `member` (of an enum) |
 | `modifiers` | `static`, `async`, `readonly`, `abstract`, `protected`, `public`, `mut` as written, and `deprecated` |
@@ -402,6 +415,44 @@ cards and backlinks can key on it. For example, a method of a class in a package
   "members": []
 }
 ```
+
+### TypeScript declarations: the `velt` type package
+
+`velt doc --std --format types` writes the standard library's declarations as an npm package
+named `velt` (into `-o`, default `target/velt-types`), so that `tsc`, editors and bundlers
+resolve `velt/*` imports in TypeScript: code shared with a client
+([`--ts-compat`](#code-shared-with-typescript---ts-compat)) can `import type` std's types.
+
+```
+velt doc --std --format types -o node_modules/velt
+```
+
+```ts
+import type { Deque } from "velt/collections";
+
+export function oldest(queue: Deque<string>): string | undefined {
+  return queue.peekFront();
+}
+```
+
+- `package.json` maps each public module to its declarations (`"./fs": { "types":
+  "./fs/index.d.ts" }`). The prelude's types that TypeScript lacks (`Mutex`, `Atomic`,
+  `StringBuilder`, …) are exported by the package's `globals.d.ts`, which the modules import
+  them from: an `import type` from `velt/…` adds nothing to the client's globals.
+- The declarations are std's in TypeScript's types: the integer and float types are
+  `number`, `bool` is `boolean`, `shared<T>` is `T`, and the error type of `Promise<T, E>` and
+  of the iterators is left out (TypeScript has no `throws`). A parameter with a default is
+  optional. Doc comments come along, for editors' hovers.
+- An `extend` block of a std type adds its methods to the type's interface; one of a narrower
+  type (`extend Box<string>`) gives each method a `this` parameter of that type, as
+  TypeScript's own `flat` does. Extensions of TypeScript's own types (`Array`, `string`,
+  numbers) are left out, since declaring them would change the client's globals; a bound that
+  such a type meets through one (`K extends Comparable<K>`, which `string` and the numbers
+  implement by extensions) takes it in: `K extends Comparable<K> | boolean | number | string`.
+- A type std uses in a public signature but doesn't export (an internal class in a constructor
+  only std calls) is opaque: `unknown`.
+- The package declares types only; the modules run in Velt. It needs a `lib` with
+  `esnext.disposable` (`"lib": ["esnext"]`, TypeScript 5.2 or newer) for `Symbol.dispose`.
 
 ## `velt toolchain`
 

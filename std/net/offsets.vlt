@@ -1,0 +1,13 @@
+// velt/net (internal): offsets into a stream's byte arguments, as JS takes them.
+
+/** `i` as an offset into `len` bytes, as `subarray` takes it: from the end when negative. */
+export function clampTo(i: number, len: number): u64 {
+  const t = toIndex(i);
+  const at = t < 0 ? len + t : t;
+  return at <= 0 ? 0 : at >= len ? len as u64 : at as u64;
+}
+
+/** An index argument as JS takes it: truncated toward zero, NaN as 0. */
+export function toIndex(i: number): number {
+  return Number.isNaN(i) ? 0 : Math.trunc(i);
+}

@@ -1,0 +1,131 @@
+// A type parameter bounded by a class (`T extends Base`, `E extends Error`), as in TypeScript: a
+// subclass satisfies the bound, the body reads and writes the class's fields and calls its
+// getters, setters and methods on a `T`, and passes a `T` where the class is expected. Each
+// instantiation runs its own class's overrides and keeps its own type. A standard class bounds
+// as any other (`M extends Map<string, number>`).
+// check: no leaks
+class Base {
+  tag: string = "base";
+  count: number = 0;
+  get loud(): string {
+    return this.tag.toUpperCase();
+  }
+  set name(v: string) {
+    this.tag = v;
+  }
+  hello(): string {
+    return "hi " + this.tag;
+  }
+}
+
+class Sub extends Base {
+  extra: number = 41;
+  override hello(): string {
+    return "sub " + this.tag;
+  }
+}
+
+class Deeper extends Sub {
+  more: string[] = ["m"];
+}
+
+class Box<V> {
+  v: V;
+  constructor(v: V) {
+    this.v = v;
+  }
+  get(): V {
+    return this.v;
+  }
+}
+
+class NumBox extends Box<number> {
+  constructor() {
+    super(5);
+  }
+}
+
+class NotFound extends Error {
+  constructor(what: string) {
+    super(`no ${what}`);
+    this.name = "NotFound";
+  }
+}
+
+function show(b: Base): string {
+  return b.tag;
+}
+
+function touch<T extends Base>(x: T): T {
+  x.tag = x.tag + "!";
+  x.count++;
+  x.count += 2;
+  x.name = x.loud;
+  console.log(show(x), x.hello(), x.count);
+  const b: Base = x;
+  console.log(b.tag);
+  return x;
+}
+
+function viaSub<U extends Sub>(u: U): string {
+  return touch(u).tag + u.extra;
+}
+
+class Holder<T extends Base> {
+  items: T[] = [];
+  add(t: T): void {
+    this.items.push(t);
+  }
+  tags(): string[] {
+    return this.items.map((t) => t.tag + ":" + t.hello());
+  }
+}
+
+function unbox<B extends Box<number>>(b: B): number {
+  return b.get() + b.v;
+}
+
+function sz<M extends Map<string, number>>(m: M): number {
+  return m.size + (m.get("a") ?? 0);
+}
+
+function describe<E extends Error>(e: E): string {
+  return `${e.name}: ${e.message}`;
+}
+
+async function later<T extends Base>(x: T): Promise<string> {
+  await Promise.resolve(0);
+  return x.hello();
+}
+
+function pick<T extends Base>(xs: T[], tag: string): T | null {
+  for (const x of xs) {
+    if (x.tag == tag) {
+      return x;
+    }
+  }
+  return null;
+}
+
+async function main() {
+  const s = touch(new Sub());
+  console.log(s.extra, s.tag);
+  const d = touch<Deeper>(new Deeper());
+  console.log(d.more[0], d.extra);
+  console.log(touch(new Base()).tag);
+  console.log(viaSub(new Deeper()));
+  const h = new Holder<Base>();
+  h.add(new Sub());
+  h.add(new Base());
+  h.add(new Deeper());
+  console.log(h.tags().join(","));
+  const hs = new Holder<Sub>();
+  hs.add(new Deeper());
+  console.log(hs.tags().join(","));
+  console.log(unbox(new NumBox()), unbox(new Box<number>(1)));
+  console.log(sz(new Map<string, number>([["a", 2]])));
+  console.log(describe(new NotFound("user")));
+  console.log(describe(new Error("plain")), describe(new RangeError("range")));
+  console.log(await later(new Sub()));
+  console.log(pick([new Sub(), new Deeper()], "base")?.extra);
+}

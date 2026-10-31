@@ -1,0 +1,21 @@
+// velt/net: TCP, and TLS over TCP, over the runtime (docs/internals/contracts/rt_abi_async.md
+// §6). A TLS connection (`connectTls`, a `listenTls` listener) is a `TcpStream` like any other.
+//
+// Handles: the runtime's `VeltListener` / `VeltStream` are opaque `u64` handles (rt_abi_async.md
+// §3.2), declared and defined as `u64` on every target.
+// `TcpListener` and `TcpStream` are Copy structs around that handle, like file descriptors:
+// - async methods take `this` by copy, so `await conn.readString()` never moves `conn` and a
+//   listener can be moved into a spawned task while its `port` is still read outside;
+// - the handle is released only by `close()`: an unclosed handle leaks until process exit. The
+//   handle is a key into a runtime table, not an address: after `close()` through any copy,
+//   every copy is dead: its operations throw `IoError` `EBADF` ("handle is closed") and closing
+//   again does nothing. They cannot use a `[Symbol.dispose]()` drop hook: a type with one is
+//   never Copy, and an async method owns (moves) its `this`, so `await conn.readString(); await
+//   conn.write(...)` would not compile. The runtime keeps a socket alive while an operation is
+//   in flight, so `close()` may be called at any time.
+
+export { connect, connectTls, TlsConnectOptions } from "velt/net/connect";
+export { listen, listenTls, TlsListenOptions } from "velt/net/listen";
+export { streamPair } from "velt/net/pair";
+export { TcpListener } from "velt/net/tcp_listener";
+export { TcpStream } from "velt/net/tcp_stream";

@@ -1,12 +1,12 @@
-// TechEmpower Framework Benchmarks server on std/http + std/postgres: /json, /plaintext, /db,
-// /queries?queries=N, /fortunes and /updates?queries=N (bench/web/README.md has the rules).
+// TechEmpower Framework Benchmarks server on std/http + the postgres package: /json, /plaintext,
+// /db, /queries?queries=N, /fortunes and /updates?queries=N (bench/web/README.md has the rules).
 // Usage: server [port]; env PORT, HOST (127.0.0.1), DATABASE_URL, DB_POOL (default 2 × cores).
 // The servers velt/server.vlt (a template literal) and velt-tsx/server.vlt (TSX) differ only in
 // how they render the fortunes page: `startApp(render)`.
 
-import { serve } from "velt:http";
-import { Pool } from "velt:postgres";
-import { args } from "velt:process";
+import { serve } from "http-server";
+import { Pool } from "postgres";
+import { args } from "velt/process";
 import {
   Fortune,
   fortunesHtml,

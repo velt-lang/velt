@@ -227,7 +227,7 @@ mod tests {
     fn a_pin_this_velt_does_not_satisfy_is_a_warning() {
         let manifest = |pin: &str| {
             let src = format!(
-                "import type {{ Package }} from \"velt:package\";\nexport const pkg: Package = \
+                "import type {{ Package }} from \"velt/package\";\nexport const pkg: Package = \
                  {{ name: \"a\", version: \"1.0.0\"{pin} }};\n"
             );
             Manifest::read(velt_common::FileId(0), &src).unwrap()

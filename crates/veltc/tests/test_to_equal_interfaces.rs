@@ -22,7 +22,7 @@ fn velt_test(dir: &Path, args: &[&str]) -> Output {
     command.output().unwrap()
 }
 
-const INTERFACES: &str = r#"import { describe, expect, it } from "velt:test";
+const INTERFACES: &str = r#"import { describe, expect, it } from "velt/test";
 
 interface I {
   v: number;

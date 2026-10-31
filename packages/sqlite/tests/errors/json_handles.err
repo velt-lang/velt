@@ -1,0 +1,8 @@
+json_handles.vlt:6:13: error: cannot convert to or from JSON: `Database` has a private field `handle`, which decoding cannot set
+json_handles.vlt:7:13: error: cannot convert to or from JSON: `Statement` has a private field `#handle`, which decoding cannot set
+json_handles.vlt:8:13: error: cannot convert to or from JSON: `Transaction` has a private field `db`, which decoding cannot set
+json_handles.vlt:13:15: error: cannot convert to or from JSON: `Database` has a private field `handle`, so it has no JSON form
+json_handles.vlt:14:15: error: cannot convert to or from JSON: `Statement` has a private field `#handle`, so it has no JSON form
+json_handles.vlt:15:15: error: cannot convert to or from JSON: `Transaction` has a private field `db`, so it has no JSON form
+json_handles.vlt:25:15: error: cannot convert to or from JSON: `Wrapped` has a private field `handle`, so it has no JSON form
+json_handles.vlt:26:16: error: cannot convert to or from JSON: `Wrapped` has a private field `handle`, which decoding cannot set

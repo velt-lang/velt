@@ -1,0 +1,27 @@
+// velt/generate (internal): a field of a model type (`Field`).
+
+/** A field of an object, class or struct type. */
+export class Field {
+  name: string = "";
+  type: i64 = 0;
+  optional: bool = false;
+  readonly: bool = false;
+  /** `private`, or an ES private field (`#x`, whose name keeps the `#`). */
+  isPrivate: bool = false;
+  isEsPrivate: bool = false;
+  hasDefault: bool = false;
+  /** An object literal's getter (`get k() { … }`): `type` is what it returns. */
+  isGetter: bool = false;
+  /**
+   * A private field a std type, or a type of a package with a native library, declares (its
+   * runtime state: a handle), also in a class extending it.
+   */
+  stdPrivate: bool = false;
+  /**
+   * A field the type's objects hold for an extension (`interface E extends T` with optional
+   * fields, whose objects are `T`'s): code reads it from the value seen as type `via` (`-1`:
+   * a field of the type itself).
+   */
+  via: i64 = -1;
+  at: i64 = -1;
+}

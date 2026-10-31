@@ -1,0 +1,16 @@
+// velt/lang/intrinsics (internal): tasks and promises below velt/task and the prelude's
+// `Promise` statics.
+
+import type { Owned } from "./modes";
+
+/**
+ * `spawn(p)` whose rejection the caller handles itself (a `taskScope` child): a dropped handle
+ * never reports it.
+ */
+export declare intrinsic function spawnHandled<T, E>(p: Owned<Promise<T, E>>): Promise<T, E>;
+
+/**
+ * The first of `ps` to fulfill, or the last rejection when all reject (the prelude's
+ * `promiseAny`, behind `Promise.any`).
+ */
+export declare intrinsic function firstFulfilled<T, E>(ps: Owned<Promise<T, E>[]>): Promise<T, E>;

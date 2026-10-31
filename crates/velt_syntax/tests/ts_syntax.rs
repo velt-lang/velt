@@ -32,7 +32,9 @@ fn satisfies_is_a_call_of_the_prelude_function() {
     else {
         panic!("expected a call, got {:?}", value.kind)
     };
-    assert!(matches!(&callee.kind, ExprKind::Ident(i) if i.name == "__satisfies"));
+    assert!(
+        matches!(&callee.kind, ExprKind::Ident(i) if i.name == velt_common::std_hook!(satisfies))
+    );
     assert_eq!(ty(&type_args[0]), "T");
 }
 

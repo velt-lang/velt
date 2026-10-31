@@ -54,7 +54,7 @@ pub(crate) fn is_root_script(cx: &Ctx, m: usize) -> bool {
 /// Give each imported module's top-level statements a module state slot (module docs); after
 /// the bodies are checked, so the generated function's result type is known.
 pub(crate) fn declare(cx: &mut Ctx) {
-    let (modules, root) = (cx.modules, cx.root);
+    let (modules, root) = (cx.modules.clone(), cx.root);
     for (m, module) in modules.iter().enumerate() {
         if m == root {
             continue;

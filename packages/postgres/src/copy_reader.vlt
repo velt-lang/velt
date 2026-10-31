@@ -1,0 +1,60 @@
+// postgres (internal): `CopyReader`, the data side of `COPY … TO STDOUT`.
+
+import {
+  velt_postgres__copy_close,
+  velt_postgres__copy_read,
+  velt_postgres__copy_read_bytes,
+} from "./native";
+import { PgError, unwrap } from "./errors";
+
+/**
+ * The data side of `client.copyTo(sql)`, as it arrives: each `read()` returns what has been
+ * received so far (whole rows in the text and CSV formats), null at the end.
+ */
+export struct CopyReader implements AsyncIterable<string, PgError> {
+  private handle: u64;
+
+  /** The package's own: the reader of a handle its native library returned. */
+  static fromHandle(handle: u64): CopyReader {
+    return CopyReader { handle: handle };
+  }
+
+  /** The next rows as text, or null at the end (then the reader is released). */
+  async read(): Promise<string | null> {
+    const chunk = unwrap(await velt_postgres__copy_read(this.handle));
+    if (chunk.length == 0) {
+      this.close();
+      return null;
+    }
+    return chunk;
+  }
+
+  /**
+   * `for await (const chunk of r)`: the text chunks `read()` returns, until the end. Leaving
+   * the loop early keeps the reader open: `close()` it.
+   */
+  async *[Symbol.asyncIterator](): AsyncIterator<string, PgError> {
+    while (true) {
+      const chunk = await this.read();
+      if (chunk == null) {
+        return;
+      }
+      yield chunk;
+    }
+  }
+
+  /** The next bytes (the binary format), or null at the end (then the reader is released). */
+  async readBytes(): Promise<u8[] | null> {
+    const chunk = unwrap(await velt_postgres__copy_read_bytes(this.handle));
+    if (chunk.length == 0) {
+      this.close();
+      return null;
+    }
+    return chunk;
+  }
+
+  /** Stops reading (the rest is discarded) and releases the reader. */
+  close() {
+    velt_postgres__copy_close(this.handle);
+  }
+}

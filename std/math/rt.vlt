@@ -1,0 +1,29 @@
+// velt/math (internal): the runtime functions behind `BigInt` (crates/velt_rt/src/bigint.rs, dashu-int).
+
+export declare function velt_rt_bigint_from_i64(v: i64): u64;
+
+export declare function velt_rt_bigint_from_f64(v: f64): u64;
+
+export declare function velt_rt_bigint_parse(s: string, radix: i64): u64;
+
+export declare function velt_rt_bigint_clone(h: u64): u64;
+
+export declare function velt_rt_bigint_free(h: u64);
+
+export declare function velt_rt_bigint_op(dst: u64, a: u64, b: u64, op: u32): bool;
+
+export declare function velt_rt_bigint_op_i64(dst: u64, a: u64, k: i64, op: u32): bool;
+
+export declare function velt_rt_bigint_assign(dst: u64, a: u64);
+
+export declare function velt_rt_bigint_neg(dst: u64, a: u64);
+
+export declare function velt_rt_bigint_cmp(a: u64, b: u64): i64;
+
+export declare function velt_rt_bigint_cmp_i64(a: u64, k: i64): i64;
+
+export declare function velt_rt_bigint_to_f64(a: u64): f64;
+
+export declare function velt_rt_bigint_to_i64(a: u64): i64;
+
+export declare function velt_rt_bigint_to_string(a: u64, radix: i64): string;

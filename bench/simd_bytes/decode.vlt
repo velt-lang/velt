@@ -2,7 +2,7 @@
 // <calls>`. Kinds: `ascii`; `cyrillic`, words of five two-byte letters and a space; `comma`,
 // the same words separated by ", "; `latin`, ASCII with a two-byte letter in every six bytes.
 // Every call changes a byte first, so no call repeats the one before.
-import { args } from "velt:process";
+import { args } from "velt/process";
 
 function fill(kind: string, n: usize): u8[] {
   const d: u8[] = [];

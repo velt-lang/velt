@@ -23,7 +23,7 @@ velt native build [--target <triple>]
 velt fmt [<file|dir>...] [--check]
 velt lsp [--stdio]                     # language server (VS Code extension: editors/vscode)
 velt playground [--port <n>] [--host <addr>]   # browser playground (default 127.0.0.1:8090)
-velt doc [<file|dir>...] [--std] [--format html|json] [-o <dir|file|->]     # API docs (HTML, or JSON for the docs website)
+velt doc [<file|dir>...] [--std] [--format html|json|types] [-o <dir|file|->]     # API docs (HTML, or JSON for the docs website), std's TypeScript declarations
 velt registry serve [--dir <d>] [--port <n>] [--host <addr>]   # package registry server (default 127.0.0.1:8091)
 velt doctor                            # checks toolchain setup + smoke test
 velt toolchain list [--available] | install <v> [--default] | remove <t> [--force] | self-update | prune [--dry-run] | default [<t>] | which | link <name> <prefix> | unlink <name> | --version   # the launcher's (#948)
@@ -153,6 +153,10 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `{ schemaVersion, title, modules }`; `schemaVersion` (1) goes up when a field changes meaning
   or goes away, and fields may be added without it. The fields are in docs/tooling/cli.md
   "JSON output"; the docs website renders its API pages, search index and std catalog from it.
+  `--format types` (additive, with `--std` only): the standard library's TypeScript
+  declarations as the npm package `velt` (`package.json` with an `exports` map, an
+  `index.d.ts` per public module, `globals.d.ts`) into `-o` (default `target/velt-types`);
+  docs/tooling/cli.md "TypeScript declarations".
 - `registry serve` (additive): serves a registry directory (default: the
   local registry) over HTTP (protocol in manifest.md "Remote registries"). `publish`
   uploads when the package's `registry` (or `$VELT_REGISTRY`) is a URL.
@@ -574,7 +578,7 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   files, plus `.ts`/`.tsx` (not `.d.ts`) under a package's `src/` and `tests/`; skips
   `target/`, `node_modules/`, hidden dirs). `--check` writes nothing, lists unformatted files,
   exit 1 if any. Unparsable files → exit 1.
-- Imports: `velt:x` → `<std root>/x.vlt` or `x/index.vlt`; `./x`, `../x` → relative `x.vlt`,
+- Imports: `velt/x` → `<std root>/x.vlt` or `x/index.vlt`; `./x`, `../x` → relative `x.vlt`,
   `x.ts` or `x.tsx`, else folder module `x/index.vlt`, `x/index.ts` or `x/index.tsx` (two
   existing files among one of these triples: an error at the specifier naming them); `./x.vlt`,
   `./x.ts`, `./x.tsx` → exactly that file; `./x.js` → `x.ts` or `x.tsx`, `./x.jsx` → `x.tsx`

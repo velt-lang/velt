@@ -1,0 +1,5 @@
+// velt/net/udp: UDP sockets (rt_abi_async.md §14.6). Addresses are "host:port" strings, like
+// std/net; a received datagram names its sender as "ip:port".
+
+export { Datagram } from "velt/net/udp/datagram";
+export { bindUdp, UdpSocket } from "velt/net/udp/udp_socket";

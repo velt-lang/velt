@@ -275,8 +275,12 @@ fn natives<'r>(
                 )?
             }
             Source::Path { dir } => {
-                let m = Manifest::from_dir(dir)?;
-                native_from_source(dir, &m, target)?
+                // Built where the package really is: through a symlinked path (a test's copy of an
+                // app linking the repository's packages), its crate's own relative paths and its
+                // build directory are the package's, not the link's.
+                let real = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.clone());
+                let m = Manifest::from_dir(&real)?;
+                native_from_source(&real, &m, target)?
             }
             // npm packages from git have no native code.
             Source::Git { npm, .. } if !npm.is_empty() => None,

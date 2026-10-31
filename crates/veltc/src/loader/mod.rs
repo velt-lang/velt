@@ -1,6 +1,7 @@
 //! Module loading: root file → every module the program needs, parsed, as [`SourceModule`]s for sema.
 //!
-//! Order of the result: the prelude (`std/prelude/*.vlt`, canonical `"std/prelude/<name>"`), then
+//! Order of the result: the prelude (`std/prelude/*.vlt` in the order `std/prelude/index.vlt`
+//! lists them, canonical `"std/prelude/<name>"`), then
 //! the root (`"main"`), then imported modules in breadth-first discovery order, then any extra
 //! roots ([`load_with_roots`]) not loaded yet, each followed by what it imports. A global loaded on
 //! demand (`std/prelude/global/*.vlt`, [`globals`]) joins that order where a module first
@@ -44,15 +45,18 @@ mod globals;
 mod import_meta;
 mod jsx;
 mod locate;
+mod moved;
 mod pick;
 mod resolve;
 mod spec;
 mod std_root;
+mod visibility;
+mod wanted;
 
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 
-use velt_common::{Diagnostic, Diagnostics, SourceMap, Span};
+use velt_common::{std_modules, Diagnostic, Diagnostics, SourceMap, Span};
 use velt_sema::SourceModule;
 use velt_syntax::ast;
 
@@ -73,10 +77,13 @@ pub struct LoadOptions<'a> {
     /// Unsaved file contents by path (the language server's open documents); consulted before
     /// the disk for every module, prelude included.
     pub overlay: Option<&'a HashMap<PathBuf, String>>,
-    /// A root inside [`LoadOptions::std_root`] is loaded as the std module it is (`velt:fs`), not
+    /// A root inside [`LoadOptions::std_root`] is loaded as the std module it is (`velt/fs`), not
     /// as `main`: the language server, for a std file opened in the editor, so it is checked like
     /// std code (runtime declarations, std's own types) instead of as a user program.
     pub std_root_as_std: bool,
+    /// The root is `velt test`'s generated harness: its imports of velt/test's internal files
+    /// (the runner's hooks, velt_common `std_hooks.rs`) are the compiler's, not the user's.
+    pub test_harness: bool,
 }
 
 /// Result of loading a program: the modules and the index of the root (`main`).
@@ -132,10 +139,20 @@ pub fn load_with_roots(
         npm: vpm::npm::NpmResolver::default(),
         ambient: ambient::Ambients::new(opts.packages),
         global_vars: vec![],
+        wanted: wanted::WantedByModule::default(),
+        resolved: std::collections::HashSet::new(),
+        effects: HashMap::new(),
+        skipped: HashMap::new(),
+        harness: None,
     };
     if let Some(std) = &opts.std_root {
-        for file in prelude_files(std) {
-            loader.load_prelude(&file, std);
+        match prelude_files(std) {
+            Ok(files) => {
+                for file in files {
+                    loader.load_prelude(&file, std);
+                }
+            }
+            Err(e) => loader.diags.push(Diagnostic::error(e, Span::DUMMY)),
         }
         loader.globals = globals::global_modules(std);
     }
@@ -163,6 +180,9 @@ pub fn load_with_roots(
         }
         None => loader.add(root, key, src, "main".into(), origin.clone()),
     };
+    if opts.test_harness {
+        loader.harness = Some(root_index);
+    }
     let mut queue: VecDeque<usize> = (0..loader.modules.len()).collect();
     loader.resolve_all(&mut queue);
     loader.extra_phase = true;
@@ -204,6 +224,22 @@ struct Loader<'a, 'o> {
     /// The typed `var`s of each module's `declare global { … }`, by module index
     /// ([`ambient::global_vars`]).
     global_vars: Vec<(usize, Vec<velt_syntax::Ambient>)>,
+    /// What importers ask of each module, so a std module's re-exports load only for the names
+    /// a program imports ([`wanted`]).
+    wanted: wanted::WantedByModule,
+    /// The modules whose imports were resolved (a std module asked for more names later is
+    /// resolved again, for the re-exports that adds).
+    resolved: std::collections::HashSet<usize>,
+    /// Per std file not loaded: whether it has effects beyond its exports ([`wanted::has_effects`]).
+    effects: HashMap<PathBuf, bool>,
+    /// Per module and specifier of a re-export it skipped: the [`file_key`] and the path of the
+    /// file it names (`wanted::pure` asks again each time the module is resolved again, and
+    /// resolving costs filesystem round trips).
+    skipped: HashMap<(usize, String), Option<(PathBuf, PathBuf)>>,
+    /// The root module when it is `velt test`'s harness ([`LoadOptions::test_harness`]): the only
+    /// module outside std that may import std's test files and the test runner's hooks
+    /// ([`visibility`]).
+    harness: Option<usize>,
 }
 
 impl Loader<'_, '_> {
@@ -303,9 +339,11 @@ impl Loader<'_, '_> {
         import_meta::fill(&mut ast, path, canonical == "main");
         let index = self.modules.len();
         self.by_file.insert(key, index);
+        let is_dependency = matches!(origin, Origin::Package { .. });
         self.modules.push(SourceModule {
             path: canonical,
             is_std,
+            is_dependency,
             file,
             ast,
             imports: vec![],
@@ -363,6 +401,28 @@ impl Loader<'_, '_> {
         let key = file_key(file);
         if self.by_file.contains_key(&key) {
             return;
+        }
+        // A file of the standard library (`velt check --std`) is std code, at its std path.
+        if let (Some(std), Some(std_key)) = (&self.opts.std_root, &self.std_key) {
+            if key.starts_with(std_key) {
+                let std = Origin::Std(std.clone());
+                match self.read(file) {
+                    Ok(src) => {
+                        let canonical = std.canonical(file);
+                        let index = self.add(file, key, src, canonical, std);
+                        queue.push_back(index);
+                    }
+                    Err(e) => {
+                        let span = Span::new(self.sm.add(file, String::new()), 0, 0);
+                        self.error(
+                            format!("cannot read `{}`: {e}", file.display()),
+                            vec![],
+                            span,
+                        );
+                    }
+                }
+                return;
+            }
         }
         let natural = origin.canonical(file);
         let canonical = if is_std_path(&natural) || self.is_taken(&natural) {
@@ -441,86 +501,72 @@ impl Loader<'_, '_> {
     }
 
     /// Resolve every import of module `index`, loading new modules (queued for their own imports).
+    /// A std module's re-exports are followed only for the names asked of it ([`wanted`]).
     fn resolve_imports(&mut self, index: usize, queue: &mut VecDeque<usize>) {
-        let imports: Vec<(String, Span)> = self.modules[index]
-            .ast
-            .items
-            .iter()
+        let is_std = self.modules[index].is_std;
+        let items: Vec<(ast::Import, bool)> = (self.modules[index].ast.items.iter())
             .filter_map(|item| match &item.kind {
                 ast::ItemKind::Import(imp) if !imp.from.is_empty() => {
-                    Some((imp.from.clone(), imp.from_span))
+                    Some((imp.clone(), item.exported))
                 }
                 // `declare module "spec" { … }` augments that module: it is loaded as an import.
                 ast::ItemKind::Augment(ast::Augment {
                     module: Some((spec, span)),
                     ..
-                }) => Some((spec.clone(), *span)),
+                }) => Some((wanted::augmented(spec, *span), false)),
                 _ => None,
             })
             .collect();
-        for (spec, span) in imports {
-            if self.modules[index].imports.iter().any(|(s, _)| *s == spec) {
+        let mut imports: Vec<(String, Span, Option<Vec<String>>, bool)> = vec![];
+        for (imp, exported) in items {
+            let skip = exported && is_std && !self.wanted.needs(index, &imp);
+            if skip && self.pure(index, &imp.from) {
                 continue;
             }
-            if let Some(target) = self.import(index, &spec, span, queue) {
-                let canonical = self.modules[target].path.clone();
-                self.modules[index].imports.push((spec, canonical));
-            }
+            let runner = self.harness == Some(index)
+                && imp.from.starts_with(velt_common::std_specifier!(test));
+            let written = !velt_syntax::is_synthesized_import(&imp) && !runner;
+            imports.push((
+                imp.from.clone(),
+                imp.from_span,
+                wanted::names_taken(&imp),
+                written,
+            ));
         }
-        self.jsx_runtime(index, queue);
-        self.load_globals(index, queue);
-    }
-
-    /// Load the JSX runtime of module `index` if it contains JSX.
-    fn jsx_runtime(&mut self, index: usize, queue: &mut VecDeque<usize>) {
-        let Some(span) = jsx::first_jsx(&self.modules[index].ast) else {
-            return;
-        };
-        let file = &self.origins[index].0;
-        if vpm::sources::is_plain_ts(file) {
-            let tsx = file.with_extension("tsx");
-            let note = format!(
-                "TypeScript allows JSX only in `.tsx` files: rename it to `{}`",
-                tsx.file_name().unwrap_or_default().to_string_lossy()
-            );
-            self.error(
-                "JSX is not allowed in a `.ts` file".to_string(),
-                vec![note],
-                span,
-            );
-        }
-        let (source, from) = match &self.modules[index].ast.jsx_import_source {
-            Some(s) => (s.clone(), "its `// @jsxImportSource` comment"),
-            None => match self
-                .opts
-                .packages
-                .and_then(|p| p.jsx_import_source(&self.origins[index].0))
-            {
-                Some(s) => (s, "`jsx.importSource` in package.vlt"),
-                None => (jsx::DEFAULT_IMPORT_SOURCE.to_string(), "the default"),
-            },
-        };
-        let spec = jsx::runtime_spec(&source);
-        match self.import(index, &spec, span, queue) {
-            Some(target) => {
-                self.modules[index].jsx_runtime = Some(self.modules[target].path.clone())
-            }
-            None => {
-                if let Some(d) = self.diags.pop() {
-                    let note =
-                        format!("this module contains JSX: its runtime is `{spec}`, from {from}");
-                    self.diags.push(d.with_note(note));
+        let first = self.resolved.insert(index);
+        for (spec, span, names, written) in imports {
+            let known = self.modules[index].imports.iter().find(|(s, _)| *s == spec);
+            let target = match known {
+                Some((_, path)) => self.modules.iter().position(|m| m.path == *path),
+                None => {
+                    let target = self.import(index, &spec, span, written, queue);
+                    if let Some(t) = target {
+                        let canonical = self.modules[t].path.clone();
+                        self.modules[index].imports.push((spec, canonical));
+                    }
+                    target
+                }
+            };
+            if let Some(t) = target {
+                if self.wanted.request(t, names) && self.resolved.contains(&t) && t != index {
+                    queue.push_back(t);
                 }
             }
         }
+        if first {
+            self.jsx_runtime(index, queue);
+            self.load_globals(index, queue);
+        }
     }
 
-    /// Locate (and load if new) the module `spec` imported by module `index`.
+    /// Locate (and load if new) the module `spec` imported by module `index`; `written`: the
+    /// import is the source's, so std's visibility rule applies ([`visibility`]).
     fn import(
         &mut self,
         index: usize,
         spec: &str,
         span: Span,
+        written: bool,
         queue: &mut VecDeque<usize>,
     ) -> Option<usize> {
         let (importer, from) = self.origins[index].clone();
@@ -580,6 +626,13 @@ impl Loader<'_, '_> {
         };
         let file = self.pick_file(spec, span, &target, &shown)?;
         let key = file_key(&file);
+        let harness = self.harness == Some(index);
+        let target = self.std_test_origin(target, &file, &key, harness);
+        if written {
+            if let Err((msg, notes)) = self.visible(&from, &target, &key, spec, harness) {
+                return self.error(msg, notes, span);
+            }
+        }
         if let Err(msg) = self.std_membership(&target.origin, &key, spec) {
             return self.error(msg, vec![], span);
         }
@@ -627,35 +680,13 @@ impl Loader<'_, '_> {
         Some(new)
     }
 
-    /// A module is std exactly when its file lies below the std root (`key`: its [`file_key`],
-    /// so symlinks and junctions are resolved): a `velt:` path must not leave the root, and user
-    /// code must not load a std file under a non-std origin (deduplication would hand that copy
-    /// to std's own imports).
-    fn std_membership(&self, origin: &Origin, key: &Path, spec: &str) -> Result<(), String> {
-        let Some(std_key) = &self.std_key else {
-            return Ok(());
-        };
-        let inside = key.starts_with(std_key);
-        match origin {
-            Origin::Std(_) if !inside => Err(format!(
-                "module `{spec}` resolves to a file outside the standard library"
-            )),
-            Origin::Std(_) => Ok(()),
-            _ if inside => {
-                let rel = vpm::relpath::relative(key, std_key);
-                let rel = module_path(&rel);
-                Err(format!(
-                    "module `{spec}` is a file of the standard library: import it as `velt:{rel}`"
-                ))
-            }
-            _ => Ok(()),
-        }
-    }
-
     /// The path a `paths` alias maps `spec` to, resolved like a relative import's (bare
-    /// specifiers only: relative and `velt:` imports are never aliased).
+    /// specifiers only: relative and `velt/` imports are never aliased).
     fn path_alias(&self, importer: &Path, spec: &str) -> Option<PathBuf> {
-        if spec.starts_with("./") || spec.starts_with("../") || spec.starts_with("velt:") {
+        if spec.starts_with("./")
+            || spec.starts_with("../")
+            || spec.starts_with(std_modules::SPECIFIER_PREFIX)
+        {
             return None;
         }
         let file = self.opts.packages?.path_alias(importer, spec)?;
@@ -686,7 +717,11 @@ fn npm_module(
             packages.is_none_or(|p| p.dependency_root(importer, name).is_err())
         }
         Ok(_) => false,
-        Err(_) => spec != "std" && !spec.starts_with("std/") && !spec.starts_with("velt:"),
+        Err(_) => {
+            spec != "std"
+                && !std_modules::is_std(spec)
+                && !spec.starts_with(std_modules::SPECIFIER_PREFIX)
+        }
     };
     if !bare {
         return None;
@@ -702,7 +737,7 @@ fn npm_module(
 
 /// Whether canonical module path `path` is in the standard library's namespace (`std`, `std/…`).
 fn is_std_path(path: &str) -> bool {
-    path == "std" || path.starts_with("std/")
+    path == "std" || std_modules::is_std(path)
 }
 
 /// `file` as shown in a message: relative to its package's root (the directory with
@@ -738,3 +773,5 @@ mod globals_tests;
 mod tests;
 #[cfg(test)]
 mod ts_tests;
+#[cfg(test)]
+mod visibility_tests;

@@ -1,6 +1,6 @@
 // Two clients on a real server (port 0 = any free port). Each step waits for the broadcasts it
 // caused, so the order is deterministic.
-import { connectWebSocket } from "velt:websocket";
+import { connectWebSocket } from "velt/net/websocket";
 import { startChat } from "../src/server";
 import { nextLine, sendJoin, sendSay, sendLeave } from "../src/client";
 

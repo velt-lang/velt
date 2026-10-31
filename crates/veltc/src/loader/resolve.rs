@@ -22,7 +22,7 @@ pub fn resolve_module(
 ) -> Option<PathBuf> {
     let dir = importer.parent()?;
     let aliased =
-        (!spec.starts_with("./") && !spec.starts_with("../") && !spec.starts_with("velt:"))
+        (!spec.starts_with("./") && !spec.starts_with("../") && !spec.starts_with("velt/"))
             .then(|| packages?.path_alias(importer, spec))
             .flatten();
     let module = match aliased {
@@ -83,8 +83,8 @@ mod tests {
         let root = tmp.path().canonicalize().unwrap();
         let std = root.join("std");
         for f in [
-            "std/fs.vlt",
-            "std/net.vlt",
+            "std/fs/index.vlt",
+            "std/net/index.vlt",
             "std/net/bytes.vlt",
             "app/std/x.vlt",
             "std/collections/set.vlt",
@@ -98,9 +98,9 @@ mod tests {
         }
         let main = root.join("app/main.vlt");
         let resolve = |spec: &str| resolve_module(spec, &main, Some(&std), None);
-        assert_eq!(resolve("velt:fs"), Some(std.join("fs.vlt")));
+        assert_eq!(resolve("velt/fs"), Some(std.join("fs/index.vlt")));
         assert_eq!(
-            resolve("velt:collections/set"),
+            resolve("velt/collections/set"),
             Some(std.join("collections/set.vlt"))
         );
         assert_eq!(resolve("./util"), Some(root.join("app/util.vlt")));
@@ -120,7 +120,7 @@ mod tests {
             "velt:../secret",
             "velt:..\\secret",
             "velt:C:/secret",
-            "velt:fs\\..\\..\\secret",
+            "velt/fs\\..\\..\\secret",
             ".\\util",
             "../std/fs",
             "./std/x",

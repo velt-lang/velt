@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 
 use super::client::{at, pos_of, uri, Client};
 
-const MANIFEST: &str = r#"import type { Package } from "velt:package";
+const MANIFEST: &str = r#"import type { Package } from "velt/package";
 
 export const pkg: Package = {
   name: "app",

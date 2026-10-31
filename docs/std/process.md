@@ -1,4 +1,4 @@
-# velt:process
+# velt/process
 
 Write to standard output and read environment variables on the builtin `process`, with no
 import, as in Node:
@@ -18,13 +18,13 @@ import, as in Node:
   first (`const argv = process.argv`).
 - `process.exit(code: i32)`, `process.memoryUsage()` (below).
 
-`process` is a global, and `velt:process` exports it too: `import { process } from
-"velt:process"` names the same builtin, for code that imports it explicitly as Node code does
+`process` is a global, and `velt/process` exports it too: `import { process } from
+"velt/process"` names the same builtin, for code that imports it explicitly as Node code does
 (`import process from "node:process"`; Velt has named exports only, so the import takes braces).
 The builtin is known by its name, so it can't be imported under another one
 (`import { process as p }` is an error).
 
-`import { args, cwd } from "velt:process"` for the rest: command-line arguments, listing and
+`import { args, cwd } from "velt/process"` for the rest: command-line arguments, listing and
 changing variables, the working directory and byte writes.
 
 - `args()`: the arguments only (`process.argv.slice(2)`). `argv()`: every argument, starting with
@@ -44,13 +44,13 @@ changing variables, the working directory and byte writes.
   Windows only 0, 1 and 2 can be terminals. The answer for a standard stream is computed once,
   so asking on every write costs nothing. Where Velt differs from Node:
   - `isTTY` is `false` for a stream that isn't a terminal, where Node's is `undefined`.
-  - `isatty` is in `velt:process`; Node has it in `node:tty`.
+  - `isatty` is in `velt/process`; Node has it in `node:tty`.
   - On Windows, a mintty or MSYS terminal (Git Bash) counts as a terminal; in Node it doesn't.
   - The builtin `process.stdout` has only `write` so far (`process.stdout.isTTY` is #729):
     import `stdout` for `isTTY`.
 
 ```ts
-import { stdout } from "velt:process";
+import { stdout } from "velt/process";
 
 function main() {
   const color = stdout.isTTY && process.env.NO_COLOR == null;
@@ -59,7 +59,7 @@ function main() {
 ```
 
 ```ts
-import { args, envAll, setEnv, cwd } from "velt:process";
+import { args, envAll, setEnv, cwd } from "velt/process";
 
 function main(): i32 {
   setEnv("GREETING", "hej");

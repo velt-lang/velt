@@ -1,0 +1,133 @@
+// What velt/net/http gives a server written in Velt, without one: a `Request` over a
+// `RequestSource` of the server's own, read when first asked for (`serverRequest`), the source
+// back from the request (`requestSource`), a response's parts to write (`responseParts`), and
+// `101 Switching Protocols` (`switchingProtocols`).
+import { utf8Encode } from "velt/encoding";
+import { IoError } from "velt/io";
+import { BodyKind, RequestSource, requestSource, responseParts, serverRequest, statusText, switchingProtocols } from "velt/net/http";
+import { describe, expect, it } from "velt/test";
+
+/** A request held in memory, counting what the `Request` asked it for. */
+class Memory implements RequestSource {
+  asked: string[] = [];
+  private pieces: u8[][];
+
+  constructor(pieces: u8[][]) {
+    this.pieces = pieces;
+  }
+
+  method(): string {
+    this.asked.push("method");
+    return "POST";
+  }
+  url(): string {
+    this.asked.push("url");
+    return "http://example.test/items?x=1";
+  }
+  header(name: string): string | null {
+    this.asked.push(`header ${name}`);
+    return name == "x-two" ? "a, b" : null;
+  }
+  hasHeader(name: string): bool {
+    return name == "x-two";
+  }
+  headers(): [string, string][] {
+    this.asked.push("headers");
+    return [
+      ["x-two", "a"],
+      ["x-two", "b"],
+    ];
+  }
+  hasBody(): bool {
+    return this.pieces.length > 0;
+  }
+  async read(): Promise<u8[] | null, IoError> {
+    this.asked.push("read");
+    return this.pieces.length > 0 ? this.pieces.shift()! : null;
+  }
+  async body(): Promise<u8[], IoError> {
+    this.asked.push("body");
+    const out: u8[] = [];
+    while (this.pieces.length > 0) {
+      for (const b of this.pieces.shift()!) {
+        out.push(b);
+      }
+    }
+    return out;
+  }
+}
+
+function bytes(s: string): u8[] {
+  return utf8Encode(s);
+}
+
+async function* parts(): AsyncGenerator<u8[]> {
+  yield bytes("a");
+  yield bytes("b");
+}
+
+describe("serverRequest", () => {
+  it("reads only what the handler asks for, when it asks", async () => {
+    const source = new Memory([bytes("hel"), bytes("lo")]);
+    const req = serverRequest(source);
+    expect(source.asked.join(",")).toBe("");
+    expect(req.method).toBe("POST");
+    expect(req.headers.get("x-two")).toBe("a, b");
+    expect(source.asked.join(",")).toBe("method,header x-two");
+    expect(req.url).toBe("http://example.test/items?x=1");
+    expect(await req.text()).toBe("hello");
+    expect(source.asked.join(",")).toBe("method,header x-two,url,body");
+  });
+
+  it("gives the source back, and none for a request made here", () => {
+    const source = new Memory([]);
+    expect(requestSource(serverRequest(source)) === source).toBe(true);
+    expect(requestSource(new Request("http://example.test/")) == null).toBe(true);
+  });
+});
+
+describe("responseParts", () => {
+  it("gives a text body as it is, and the type it implies apart while it has no headers", () => {
+    const plain = responseParts(new Response("hi"));
+    expect([plain.status, plain.kind == BodyKind.Text, plain.text, plain.type]).toEqual([
+      200,
+      true,
+      "hi",
+      "text/plain;charset=UTF-8",
+    ]);
+    expect(plain.headers.length).toBe(0);
+    const p = responseParts(new Response("hi", { status: 201, headers: { "x-a": "1" } }));
+    expect(p.status).toBe(201);
+    expect(p.type == null).toBe(true);
+    expect(p.headers.join(",")).toBe("x-a,1,content-type,text/plain;charset=UTF-8");
+  });
+
+  it("gives bytes, a stream, or nothing", async () => {
+    expect(responseParts(new Response(new Uint8Array([1, 2]))).kind == BodyKind.Bytes).toBe(true);
+    expect(responseParts(new Response(null)).kind == BodyKind.None).toBe(true);
+    const streamed = new Response(ReadableStream.from(parts()));
+    const p = responseParts(streamed);
+    expect(p.kind == BodyKind.Stream && p.stream != null).toBe(true);
+    // Sending it used it up.
+    expect(() => responseParts(streamed)).toThrow("Body is unusable");
+  });
+});
+
+describe("switchingProtocols", () => {
+  it("is a 101 with the headers given", () => {
+    const res = switchingProtocols({ upgrade: "websocket" });
+    expect(res.status).toBe(101);
+    expect(res.headers.get("upgrade")).toBe("websocket");
+  });
+});
+
+describe("statusText", () => {
+  it("is Node's reason phrase, Unknown for a status it does not list", () => {
+    expect([statusText(200), statusText(404), statusText(418), statusText(599)]).toEqual([
+      "OK",
+      "Not Found",
+      "I'm a Teapot",
+      "Unknown",
+    ]);
+  });
+});

@@ -1,0 +1,163 @@
+// http-server (internal): `Http1Request`, an HTTP/1.1 request as `HttpRequest` (request.vlt):
+// its head, parsed in place in its connection's buffer (`Head`, http1/head_parser.vlt), and its
+// body, read as the handler asks (`BodyReader`). One per connection, reused for its requests.
+
+import { IoError } from "velt/io";
+import { TcpStream } from "velt/net";
+import { BodyTooLarge } from "../errors";
+import { hasToken } from "../fields";
+import { HttpRequest } from "../request";
+import { BodyReader } from "./body_reader";
+import { Head } from "./head";
+import { Parser } from "./parser";
+
+/// A request on an HTTP/1.1 connection (the methods are documented on `HttpRequest`). Valid
+/// while the handler runs.
+export class Http1Request extends HttpRequest {
+  /// The head.
+  head: Head = new Head();
+  // The connection and its parser. Nothing here is shared with the response, so a handler may
+  // pass what it reads from one to the other.
+  private parser: Parser;
+  private conn: TcpStream;
+  private reader: BodyReader;
+
+  constructor(parser: Parser, conn: TcpStream, idle: i64, requestMs: i64 = 300000) {
+    super();
+    this.parser = parser;
+    this.conn = conn;
+    this.reader = new BodyReader(this.head, parser, conn, idle, requestMs);
+  }
+
+  /// A new request's head was parsed into `head`.
+  begin(now: i64) {
+    this.reader.begin(now);
+  }
+
+  get keepAlive(): bool {
+    return this.head.keepAlive;
+  }
+
+  isMethod(m: string): bool {
+    const h = this.head;
+    return h.buf.utf8Equals(m, h.methodStart, h.methodEnd);
+  }
+
+  method(): string {
+    return this.head.text(this.head.methodStart, this.head.methodEnd);
+  }
+
+  pathIs(p: string): bool {
+    const h = this.head;
+    return h.buf.utf8Equals(p, h.targetStart, h.pathEnd);
+  }
+
+  path(): string {
+    return this.head.text(this.head.targetStart, this.head.pathEnd);
+  }
+
+  query(): string {
+    const h = this.head;
+    return h.pathEnd < h.targetEnd ? h.text(h.pathEnd + 1, h.targetEnd) : "";
+  }
+
+  target(): string {
+    return this.head.text(this.head.targetStart, this.head.targetEnd);
+  }
+
+  header(name: string): string | null {
+    const i = this.head.find(name);
+    return i < 0 ? null : this.head.value(i);
+  }
+
+  headerValues(name: string): string | null {
+    const h = this.head;
+    let i = h.find(name);
+    if (i < 0) {
+      return null;
+    }
+    let out = h.value(i);
+    i = h.findFrom(name, i + 4);
+    while (i >= 0) {
+      out = `${out}, ${h.value(i)}`;
+      i = h.findFrom(name, i + 4);
+    }
+    return out;
+  }
+
+  hasHeader(name: string): bool {
+    return this.head.find(name) >= 0;
+  }
+
+  headers(): [string, string][] {
+    const out: [string, string][] = [];
+    const h = this.head;
+    for (let i: i64 = 0; i < (h.heads.length as i64); i += 4) {
+      out.push([h.text(h.heads[i], h.heads[i + 1]), h.value(i)]);
+    }
+    return out;
+  }
+
+  /// HTTP/1.1, an `Upgrade` header naming `protocol` and `Connection: upgrade` (any case, among
+  /// other tokens).
+  isUpgrade(protocol: string): bool {
+    if (!this.head.http11) {
+      return false;
+    }
+    return this.anyHasToken("upgrade", protocol) && this.anyHasToken("connection", "upgrade");
+  }
+
+  remoteAddr(): string {
+    return this.conn.peerAddr();
+  }
+
+  async read(): Promise<u8[] | null, IoError | RangeError> {
+    return await this.reader.read();
+  }
+
+  async body(): Promise<u8[], IoError | BodyTooLarge | RangeError> {
+    return await this.reader.all();
+  }
+
+  bodyRead(): bool {
+    return this.reader.ended;
+  }
+
+  takeUnread(): u8[] {
+    return this.parser.take(this.parser.available());
+  }
+
+  /// Whether the body did not arrive in time (answered 408).
+  timedOut(): bool {
+    return this.reader.late;
+  }
+
+  /// Whether `body()` found the body larger than the server's limit (answered 413).
+  bodyTooLarge(): bool {
+    return this.reader.overLimit;
+  }
+
+  /// Whether the body was not framed right, or cut short (answered 400, not logged).
+  bodyMalformed(): bool {
+    return this.reader.malformed;
+  }
+
+  /// Skips what the handler did not read: true when the connection can go on to its next
+  /// request, false when the rest is too large to skip (the connection then closes).
+  async finish(): Promise<bool> {
+    return await this.reader.finish();
+  }
+
+  /// Whether any header `name` holds `token` in its comma-separated value (any case).
+  private anyHasToken(name: string, token: string): bool {
+    const h = this.head;
+    let i = h.find(name);
+    while (i >= 0) {
+      if (hasToken(h.value(i), token)) {
+        return true;
+      }
+      i = h.findFrom(name, i + 4);
+    }
+    return false;
+  }
+}

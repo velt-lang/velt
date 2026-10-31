@@ -1,0 +1,17 @@
+// velt/lang/intrinsics (internal): references and moves the compiler otherwise inserts itself
+// (docs/internals/contracts/hir_encodings.md "Sharing").
+
+import type { Owned } from "./modes";
+
+/**
+ * Another reference to the same value (JavaScript's reference copy): a count increment for
+ * counted objects, a copy for Copy types and strings, a field-wise share for immutable value
+ * types.
+ */
+export declare intrinsic function share<T>(value: T): T;
+
+/**
+ * `value` made safe for another task, as a `spawn` argument is: moved where this task held the
+ * only reference, deep-copied where it is still shared.
+ */
+export declare intrinsic function transfer<T>(value: Owned<T>): T;

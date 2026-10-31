@@ -1,13 +1,15 @@
 //! The JSX runtime import (docs/internals/contracts/jsx.md "Choosing the provider"): a module
 //! containing JSX implicitly imports `<source>/jsx-runtime`, where the source is the file's `//
-//! @jsxImportSource` pragma, else its package's `jsx.importSource` (package.vlt), else `std/jsx`. A
+//! @jsxImportSource` pragma, else its package's `jsx.importSource` (package.vlt), else `velt/jsx`. A
 //! module without JSX loads no runtime.
+
+use std::collections::VecDeque;
 
 use velt_common::Span;
 use velt_syntax::ast::{self, ExprKind as E, StmtKind as S};
 
 /// The import source of modules that name none.
-pub const DEFAULT_IMPORT_SOURCE: &str = "velt:jsx";
+pub const DEFAULT_IMPORT_SOURCE: &str = velt_common::std_specifier!(jsx);
 
 /// The module a JSX import source provides its factories from.
 pub fn runtime_spec(source: &str) -> String {
@@ -133,6 +135,58 @@ fn expr(e: &ast::Expr) -> Option<Span> {
             ast::ObjectProp::Shorthand(_) => None,
             ast::ObjectProp::Method(f) => block(&f.body),
         }),
+    }
+}
+
+impl super::Loader<'_, '_> {
+    /// Load the JSX runtime of module `index` if it contains JSX.
+    pub(super) fn jsx_runtime(&mut self, index: usize, queue: &mut VecDeque<usize>) {
+        let Some(span) = first_jsx(&self.modules[index].ast) else {
+            return;
+        };
+        let file = &self.origins[index].0;
+        if vpm::sources::is_plain_ts(file) {
+            let tsx = file.with_extension("tsx");
+            let note = format!(
+                "TypeScript allows JSX only in `.tsx` files: rename it to `{}`",
+                tsx.file_name().unwrap_or_default().to_string_lossy()
+            );
+            self.error(
+                "JSX is not allowed in a `.ts` file".to_string(),
+                vec![note],
+                span,
+            );
+        }
+        let (source, from) = match &self.modules[index].ast.jsx_import_source {
+            Some(s) => (s.clone(), "its `// @jsxImportSource` comment"),
+            None => match self
+                .opts
+                .packages
+                .and_then(|p| p.jsx_import_source(&self.origins[index].0))
+            {
+                Some(s) => (s, "`jsx.importSource` in package.vlt"),
+                None => (DEFAULT_IMPORT_SOURCE.to_string(), "the default"),
+            },
+        };
+        let spec = runtime_spec(&source);
+        match self.import(index, &spec, span, true, queue) {
+            Some(target) => {
+                self.modules[index].jsx_runtime = Some(self.modules[target].path.clone());
+                // The module's JSX uses the runtime as the namespace `JSX`: all of it, also
+                // when an import took one name of it before (`import { jsxEscape } from
+                // "velt/jsx/jsx-runtime"`), which followed only that re-export.
+                if self.wanted.request(target, None) && self.resolved.contains(&target) {
+                    queue.push_back(target);
+                }
+            }
+            None => {
+                if let Some(d) = self.diags.pop() {
+                    let note =
+                        format!("this module contains JSX: its runtime is `{spec}`, from {from}");
+                    self.diags.push(d.with_note(note));
+                }
+            }
+        }
     }
 }
 

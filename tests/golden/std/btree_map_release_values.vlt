@@ -1,7 +1,7 @@
 // check: no leaks
 // A replaced or deleted value is released: unused value slots hold a share of a live entry's
 // value (the fillers), which moves to another entry when its own is deleted or replaced.
-import { BTreeMap } from "velt:collections/btree_map";
+import { BTreeMap } from "velt/collections";
 
 class Payload {
   n: i64;

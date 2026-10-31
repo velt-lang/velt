@@ -1,9 +1,9 @@
-// velt:sync/epoch across threads: while a task on another thread is in a section, no value
+// velt/sync/epoch across threads: while a task on another thread is in a section, no value
 // retired since is dropped, however often the epoch is pushed; once it leaves, they are.
 // Then tasks on 8 threads enter sections and retire values at once: once all are done, a few
 // collects drop the rest, and every value retired was dropped exactly once.
-import { availableParallelism } from "velt:os";
-import { pin, unpin, retire, collect, pending, dropped, outstanding } from "velt:sync/epoch";
+import { availableParallelism } from "velt/os";
+import { pin, unpin, retire, collect, pending, dropped, outstanding } from "velt/sync/epoch";
 
 interface Item {
   n: u64;

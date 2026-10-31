@@ -4,7 +4,7 @@
 // clearTimeout an interval, like Node. Events are ordered by channels, not by time: a run that
 // is due before the clear does nothing after the third.
 
-import { channel, Channel } from "velt:channel";
+import { channel, Channel } from "velt/sync";
 
 async function tick(runs: shared<i64>, out: Channel<i64>, ack: Channel<bool>): Promise<void> {
   // A run that came due before `main` cleared the interval (a loaded machine) does nothing

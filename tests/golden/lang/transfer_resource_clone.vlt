@@ -3,7 +3,7 @@
 // resource in it is copied by its type's own `clone()`, so each copy releases its own
 // resource once (#122): a `spawn` argument, a part of one, a capture of a spawned closure, a
 // channel send, and `x.clone()` of an array of resources.
-import { channel, Channel } from "velt:channel";
+import { channel, Channel } from "velt/sync";
 
 class Handle {
   id: i64;

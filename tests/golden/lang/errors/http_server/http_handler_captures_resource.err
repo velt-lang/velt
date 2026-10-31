@@ -1,0 +1,3 @@
+http_handler_captures_resource.vlt:18:43: error: this function captures `store`, and it runs on other threads, each with a copy of it: each copy would copy `store`, but `Store` owns a resource (`[Symbol.dispose]`) and has no `clone()`
+http_handler_captures_resource.vlt:18:24: but it is passed here to a function that runs it on other threads
+  = note: give `Store` a `clone()` method that duplicates the resource (each copy then gets its own), or capture a shared one: `shared(new Mutex(…))`

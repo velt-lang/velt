@@ -1,0 +1,88 @@
+// sqlite/engine/sql/types (internal): the syntax tree of SQLite's SQL, as engine/sql/parser builds it.
+// One class per node family with a `kind` tag (an expression's operator, a statement's verb),
+// so the planner switches on a byte instead of testing types.
+
+/** Expression kinds. */
+export const E_NULL: u8 = 0;
+export const E_INT: u8 = 1; // ival
+export const E_REAL: u8 = 2; // rval
+export const E_STRING: u8 = 3; // text
+export const E_BLOB: u8 = 4; // text: hex digits
+export const E_PARAM: u8 = 5; // text: "?", "?3", ":name"; ival: its 1-based index
+export const E_COLUMN: u8 = 6; // table (may be ""), name
+export const E_UNARY: u8 = 7; // op: "-", "+", "~", "NOT"; a
+export const E_BINARY: u8 = 8; // op; a, b
+export const E_CALL: u8 = 9; // name (upper case), args, distinct, star (count(*)), filter
+export const E_CASE: u8 = 10; // a: operand or null; args: when, then, when, then…; b: else or null
+export const E_CAST: u8 = 11; // a; name: type
+export const E_IN_LIST: u8 = 12; // a; args; not
+export const E_IN_SELECT: u8 = 13; // a; select; not
+export const E_BETWEEN: u8 = 14; // a; b: low; c: high; not
+export const E_LIKE: u8 =
+  15; // op: "LIKE" | "GLOB" | "REGEXP" | "MATCH"; a; b; c: escape or null; not
+export const E_IS: u8 = 16; // a; b; not (IS NOT, IS NOT DISTINCT FROM is IS)
+export const E_ISNULL: u8 = 17; // a; not (NOTNULL / NOT NULL)
+export const E_EXISTS: u8 = 18; // select; not
+export const E_SUBQUERY: u8 = 19; // select (scalar)
+export const E_COLLATE: u8 = 20; // a; name: collation (upper case)
+export const E_STAR: u8 = 21; // result column `*` or `table.*` (table)
+export const E_ROW: u8 = 22; // (a, b, …): args
+export const E_TRUE: u8 = 23;
+export const E_FALSE: u8 = 24;
+
+/** Window frame kinds and bound kinds. */
+export const FRAME_DEFAULT: u8 = 0;
+export const FRAME_ROWS: u8 = 1;
+export const FRAME_RANGE: u8 = 2;
+export const FRAME_GROUPS: u8 = 3;
+export const BOUND_UNBOUNDED_PRECEDING: u8 = 0;
+export const BOUND_PRECEDING: u8 = 1;
+export const BOUND_CURRENT: u8 = 2;
+export const BOUND_FOLLOWING: u8 = 3;
+export const BOUND_UNBOUNDED_FOLLOWING: u8 = 4;
+
+/** Join kinds. */
+export const J_INNER: u8 = 0;
+export const J_LEFT: u8 = 1;
+export const J_RIGHT: u8 = 2;
+export const J_FULL: u8 = 3;
+export const J_CROSS: u8 = 4;
+
+/** Compound operators joining a select core to the one before it. */
+export const C_NONE: u8 = 0;
+export const C_UNION: u8 = 1;
+export const C_UNION_ALL: u8 = 2;
+export const C_INTERSECT: u8 = 3;
+export const C_EXCEPT: u8 = 4;
+
+/** Statement kinds. */
+export const S_SELECT: u8 = 0;
+export const S_INSERT: u8 = 1;
+export const S_UPDATE: u8 = 2;
+export const S_DELETE: u8 = 3;
+export const S_CREATE_TABLE: u8 = 4;
+export const S_CREATE_INDEX: u8 = 5;
+export const S_DROP: u8 = 6;
+export const S_BEGIN: u8 = 7;
+export const S_COMMIT: u8 = 8;
+export const S_ROLLBACK: u8 = 9;
+export const S_PRAGMA: u8 = 10;
+export const S_SAVEPOINT: u8 = 11;
+export const S_RELEASE: u8 = 12;
+export const S_ALTER: u8 = 13;
+export const S_CREATE_VIEW: u8 = 14;
+export const S_EXPLAIN: u8 = 15;
+
+export { Expr } from "./ast/expr";
+export { Window } from "./ast/window";
+export { ResultColumn } from "./ast/result_column";
+export { FromItem } from "./ast/from_item";
+export { OrderTerm } from "./ast/order_term";
+export { Cte } from "./ast/cte";
+export { SelectCore } from "./ast/select_core";
+export { Select } from "./ast/select";
+export { ColumnDef } from "./ast/column_def";
+export { IndexedColumn } from "./ast/indexed_column";
+export { KeyConstraint } from "./ast/key_constraint";
+export { Upsert } from "./ast/upsert";
+export { Statement } from "./ast/statement";

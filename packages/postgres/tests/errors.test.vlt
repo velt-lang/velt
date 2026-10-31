@@ -1,0 +1,195 @@
+// postgres errors: PgError with the server's SQLSTATE (plus detail and constraint), and
+// Node-style codes for failures outside the server (connection, parameters, decoding, closed
+// handles). The connection stays usable after each of them. Needs VELT_TEST_PG_URL
+// (tests/support/pg.vlt).
+import { connect, createPool, Client } from "../src/lib";
+import { pgUrl } from "./support/pg";
+
+class Item {
+  id: i64;
+  name: string;
+
+  constructor(id: i64, name: string) {
+    this.id = id;
+    this.name = name;
+  }
+}
+
+class Span {
+  d: string;
+
+  constructor(d: string) {
+    this.d = d;
+  }
+}
+
+// A connection with a TEMP table of items holding (1, 'a').
+async function itemsDb(url: string): Promise<Client> {
+  const db = await connect(url);
+  await db.batch("CREATE TEMP TABLE items (id int PRIMARY KEY, name text NOT NULL)");
+  await db.run("INSERT INTO items VALUES (1, 'a')");
+  return db;
+}
+
+// "code message" of the error running `sql` throws, or "ok".
+async function attempt(db: Client, sql: string): Promise<string> {
+  try {
+    await db.run(sql);
+  } catch (e) {
+    return `${e.code} ${e.message}`;
+  }
+  return "ok";
+}
+
+// "code message" of the error `execute(sql, params)` throws, or "ok".
+async function executeError<P>(db: Client, sql: string, params: P): Promise<string> {
+  try {
+    await db.execute(sql, params);
+  } catch (e) {
+    return `${e.code} ${e.message}`;
+  }
+  return "ok";
+}
+
+// The code of the error connecting to `url` throws, or "connected".
+async function connectError(url: string): Promise<string> {
+  try {
+    const c = await connect(url);
+    c.close();
+  } catch (e) {
+    return e.code.clone();
+  }
+  return "connected";
+}
+
+// The rows the items table has: the connection is still usable.
+async function itemCount(db: Client): Promise<i64> {
+  const items: Item[] = await db.select("SELECT * FROM items");
+  return items.length;
+}
+
+export async function test_server_errors() {
+  const url = pgUrl();
+  if (url == null) {
+    return;
+  }
+  const db = await itemsDb(url);
+  // Server errors: SQLSTATE, message, detail, constraint.
+  assertEq(await attempt(db, "SELEC 1"), "42601 syntax error at or near \"SELEC\"");
+  assertEq(
+    await attempt(db, "SELECT * FROM no_such_table"),
+    "42P01 relation \"no_such_table\" does not exist",
+  );
+  let unique = "";
+  try {
+    await db.execute("INSERT INTO items VALUES ($1, $2)", ["1", "dup"]);
+  } catch (e) {
+    unique = `${e.code} ${e.constraint} ${e.detail}`;
+  }
+  assertEq(unique, "23505 items_pkey Key (id)=(1) already exists.");
+  assertEq(
+    await attempt(db, "INSERT INTO items VALUES (2, NULL)"),
+    "23502 null value in column \"name\" of relation \"items\" violates not-null constraint",
+  );
+  assertEq(await attempt(db, "SELECT 1 / 0"), "22012 division by zero");
+  assertEq(await itemCount(db), 1);
+  db.close();
+}
+
+export async function test_parameter_problems() {
+  const url = pgUrl();
+  if (url == null) {
+    return;
+  }
+  const db = await itemsDb(url);
+  // Parameter problems.
+  assertEq(
+    await executeError(db, "INSERT INTO items VALUES (:id, :name)", { id: 3 }),
+    "EINVAL missing parameter \"name\" (placeholder $2)",
+  );
+  assertEq(
+    await executeError(db, "INSERT INTO items VALUES ($1, $2)", [3]),
+    "EINVAL the statement takes 2 parameter(s) but 1 were given",
+  );
+  assertEq(
+    await executeError(db, "SELECT $1::int2", [70000]),
+    "EINVAL parameter $1: 70000 is out of range for int2",
+  );
+  assertEq(
+    await executeError(db, "SELECT $1::int4", [true]),
+    "EINVAL parameter $1: cannot bind a bool to a parameter of type int4",
+  );
+  assertEq(
+    await executeError(db, "SELECT $1::int4", ["seven"]),
+    "22P02 invalid input syntax for type integer: \"seven\"",
+  );
+  let mixed = "";
+  try {
+    await db.execute("SELECT :a + $1", { a: 1 });
+  } catch (e) {
+    mixed = e.code.clone();
+  }
+  assertEq(mixed, "EINVAL");
+  assertEq(await itemCount(db), 1);
+  db.close();
+}
+
+export async function test_decoding_problems() {
+  const url = pgUrl();
+  if (url == null) {
+    return;
+  }
+  const db = await itemsDb(url);
+  // Decoding problems.
+  let unsupported = "";
+  try {
+    const s: Span[] = await db.select("SELECT point '(1,2)' AS d");
+    unsupported = `${s.length} rows`;
+  } catch (e) {
+    unsupported = `${e.code} ${e.message}`;
+  }
+  assertEq(
+    unsupported,
+    "ENOTSUP column \"d\" has type point, which the postgres package cannot decode; cast it, e.g. \"d\"::text",
+  );
+  const cast: Span[] = await db.select("SELECT (point '(1,2)')::text AS d");
+  assertEq(cast[0].d, "(1,2)");
+  let mismatch = "";
+  try {
+    const wrong: Item[] = await db.select("SELECT id, 5 AS name FROM items");
+    mismatch = `${wrong.length} rows`;
+  } catch (e) {
+    mismatch = `${e.code} ${e.message}`;
+  }
+  assertEq(
+    mismatch,
+    "EMISMATCH row does not match the requested type: expected string at $[0].name",
+  );
+
+  // Still usable.
+  assertEq(await itemCount(db), 1);
+  db.close();
+  assertEq(await attempt(db, "SELECT 1"), "ECLOSED the client is closed");
+}
+
+export async function test_connection_failures() {
+  const url = pgUrl();
+  if (url == null) {
+    return;
+  }
+  // Connection failures.
+  assertEq(await connectError("postgres://nobody@127.0.0.1:1/x?connect_timeout=5"), "ECONNREFUSED");
+  assertEq(await connectError("postgres://[bad"), "EINVAL");
+  const sep = url.includes("?") ? "&" : "?";
+  assertEq(await connectError(`${url}${sep}sslmode=sometimes`), "EINVAL");
+  assertEq(await connectError(`${url}${sep}sslrootcert=/no/such/file.pem`), "ETLS");
+  let pool = "";
+  try {
+    const p = createPool({ url: "nonsense=1" });
+    p.end();
+    pool = "created";
+  } catch (e) {
+    pool = e.code.clone();
+  }
+  assertEq(pool, "EINVAL");
+}

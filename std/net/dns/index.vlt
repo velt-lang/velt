@@ -1,0 +1,3 @@
+// velt/net/dns: host name resolution through the system resolver (rt_abi_async.md §14.6).
+
+export { lookup, lookupOne } from "velt/net/dns/lookup";

@@ -1,0 +1,6 @@
+// http-server/websocket: accepting WebSockets (RFC 6455) on the server, each a velt/net/websocket
+// `WebSocket` once its handshake is answered: `upgradeWebSocket` in a `serve` handler (an
+// HTTP/1.1 `Upgrade`, or HTTP/2's extended CONNECT, RFC 8441), `acceptWebSocket` in a
+// `serveHttp` one.
+
+export { acceptWebSocket, isWebSocketRequest, upgradeWebSocket, WebSocketUpgrade } from "./accept";

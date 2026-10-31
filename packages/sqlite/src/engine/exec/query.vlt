@@ -1,0 +1,98 @@
+// sqlite/engine/exec/query (internal): a compiled SELECT (`Query`) as expressions and FROM items
+// see it: its result columns, its rows, run once per statement run unless correlated, or made on
+// demand.
+
+import { Expr } from "../sql/types";
+import { Out } from "./out";
+import { Source } from "./source";
+import { Pull } from "./loop/pull";
+import { Val, nullVal } from "./value/val";
+import { Params } from "./params";
+import { Step } from "./types";
+import { RowNeed } from "./row_need";
+
+/** A compiled SELECT: `run()` fills `out`. */
+export class Query {
+  out: Out = new Out();
+  body: Step = () => {};
+  names: string[] = [];
+  affs: u8[] = [];
+  colls: i64[] = [];
+  /** For each result column that is a plain column: its source and column (else null, -2). */
+  refSrc: (Source | null)[] = [];
+  refCol: i64[] = [];
+  /** Each result column's expression (null for one `*` expanded to). */
+  exprOf: (Expr | null)[] = [];
+  /** Reads columns of an enclosing query, so it runs again for each of its rows. */
+  correlated: bool = false;
+  /** The run (`Params.epoch`) whose rows `out` holds, for uncorrelated subqueries. */
+  ranEpoch: i64 = -1;
+  /** How the loops read each FROM item (EXPLAIN QUERY PLAN's words). */
+  plan: string[] = [];
+  /** The rows read one at a time, when they go out in the loops' order (engine/exec/loop/pull). */
+  pull: Pull | null = null;
+  /** At most this many rows are needed (`n`, -1: all): EXISTS and scalar subqueries need one. */
+  need: RowNeed = new RowNeed();
+
+  /** Rows set from outside (a recursive CTE's current row): `run` leaves them. */
+  fixed: bool = false;
+
+  run() {
+    if (this.fixed) {
+      return;
+    }
+    this.out.reset();
+    this.body();
+  }
+
+  /** Runs unless the rows of this statement run are already there. */
+  runFor(p: Params) {
+    if (this.correlated || this.ranEpoch != p.epoch) {
+      this.run();
+      this.ranEpoch = p.epoch;
+    }
+  }
+
+  /**
+   * Rows made on demand, as SQLite's co-routines make them: `lazyStart` begins a run,
+   * `lazyMore` adds one more row to `out` (false when there is none). A FROM item reads
+   * through `open` and `has`, so a LIMIT outside stops the rows being made (an endless
+   * recursive CTE included).
+   */
+  lazyStart: Step | null = null;
+  lazyMore: (() => bool throws Error) | null = null;
+  ended: bool = false;
+
+  /** For a reader of the rows from the start: begins the run unless it is this statement run's. */
+  open(p: Params) {
+    if (this.lazyMore == null) {
+      this.runFor(p);
+      return;
+    }
+    if (this.correlated || this.ranEpoch != p.epoch) {
+      this.out.reset();
+      this.ended = false;
+      this.lazyStart!();
+      this.ranEpoch = p.epoch;
+    }
+  }
+
+  /** Whether row `r` is there (made now if it is still to come). */
+  has(r: usize): bool {
+    while (r >= this.out.rows) {
+      if (this.lazyMore == null || this.ended) {
+        return false;
+      }
+      if (!this.lazyMore!()) {
+        this.ended = true;
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /** The first value of the first row, or NULL. */
+  first(): Val {
+    return this.out.rows > 0 ? this.out.vals[0] : nullVal();
+  }
+}

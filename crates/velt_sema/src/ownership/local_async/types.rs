@@ -7,7 +7,7 @@
 //! Generic parameters are not followed: where a generic function passes on a value of type
 //! `T`, the value came from a caller, where the graph follows it with its concrete type.
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
@@ -24,32 +24,34 @@ pub(super) fn fn_like(cx: &Ctx, t: TyId) -> bool {
     }
 }
 
-/// The function types reachable from the crossing types `roots`, each with the root that
-/// reaches it first. `seen` carries over between calls (the roots only grow).
+/// The function types reachable from the crossing types `roots`, each with the preferred root
+/// that reaches it (`Why::rank`). `seen` (each type walked, with the reason it was walked for)
+/// carries over between calls (the roots only grow); a type is walked again for a better reason,
+/// so a function type a library type happens to hold first keeps the program's reason found
+/// after it.
 pub(super) fn crossing_fns(
     cx: &mut Ctx,
     roots: &[(TyId, Why)],
-    seen: &mut FxHashSet<TyId>,
+    seen: &mut FxHashMap<TyId, Why>,
     out: &mut FxHashMap<TyId, Why>,
 ) {
     for &(root, why) in roots {
+        let w = Why {
+            via: Some(root),
+            ..why
+        };
         let mut work = vec![root];
         while let Some(t) = work.pop() {
             if matches!(cx.ty.kind(t), TyKind::FnPtr { .. } | TyKind::Closure(_)) {
-                // Reached from several roots: the preferred one (`Why::rank`), whatever the
-                // order the roots come in.
-                let w = Why {
-                    via: Some(root),
-                    ..why
-                };
-                if out.get(&t).is_none_or(|old| w.rank(cx) < old.rank(cx)) {
+                if out.get(&t).is_none_or(|old| w.before(old, cx)) {
                     out.insert(t, w);
                 }
                 continue;
             }
-            if !seen.insert(t) {
+            if seen.get(&t).is_some_and(|old| !w.before(old, cx)) {
                 continue;
             }
+            seen.insert(t, w);
             match cx.ty.kind(t).clone() {
                 TyKind::FnPtr { .. } | TyKind::Closure(_) => {}
                 TyKind::Param(_) => {}

@@ -1,6 +1,6 @@
 //! Clones of checked callees for gated functions (#1330). A gated function (`Function::target`)
 //! runs only where the CPU has its extension, so in an ordinary function it calls, the check of
-//! that extension (`velt_simd_has_<ext>`) is true. Such a callee (a `velt:simd` method: the
+//! that extension (`velt_simd_has_<ext>`) is true. Such a callee (a `velt/simd` method: the
 //! instruction behind the check, the emulation after it) is cloned for the extension with the
 //! check replaced by `true` and folded, so the clone is the bare instruction and inlines as a
 //! trivial callee. Without the clone, the method inlines only while it is small or called once,

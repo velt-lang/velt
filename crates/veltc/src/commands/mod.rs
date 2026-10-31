@@ -17,7 +17,7 @@ mod fmt;
 pub mod lsp;
 pub mod members;
 mod package;
-mod project;
+pub(crate) mod project;
 mod registry;
 mod target;
 pub mod test;

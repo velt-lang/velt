@@ -1,0 +1,12 @@
+// velt/generate (internal): a method of a model type (`Method`).
+
+/**
+ * A method of a class that std's operations call by name (`toJSON`, `toString`, the inspect
+ * hook keyed by `Symbol.for("nodejs.util.inspect.custom")`),
+ * when it can be called that way: its name, how many parameters it takes and its result type.
+ */
+export class Method {
+  name: string = "";
+  params: i64 = 0;
+  ret: i64 = 0;
+}

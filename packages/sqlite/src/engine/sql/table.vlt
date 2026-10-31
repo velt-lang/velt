@@ -1,0 +1,139 @@
+// sqlite/engine/sql/table (internal): CREATE TABLE of SQLite's grammar (parse.y): its column definitions
+// (engine/sql/column_def), table constraints and options.
+
+import { Parser } from "./parser";
+import { SqlError } from "./errors";
+import {
+  ColumnDef,
+  E_COLUMN,
+  Expr,
+  IndexedColumn,
+  KeyConstraint,
+  S_CREATE_TABLE,
+  Statement,
+} from "./types";
+import { columnNames, ifNotExists, indexedColumns, keyColumns, qualified } from "./clauses";
+import { conflictClause, deferrable, references } from "./constraint";
+import { columnDef } from "./column_def";
+
+/** CREATE TABLE after TABLE: `[IF NOT EXISTS] name (columns, constraints) options`, or AS SELECT. */
+export function createTable(p: Parser): Statement {
+  const s = new Statement(S_CREATE_TABLE);
+  s.ifNotExists = ifNotExists(p);
+  qualified(p, s);
+  if (p.eatKw("AS")) {
+    s.select = p.select();
+    return s;
+  }
+  // Columns first, then table constraints (commas between those are optional): no column
+  // after a table constraint.
+  p.expectOp("(");
+  while (true) {
+    const c = columnDef(p);
+    s.columnDefs.push(c);
+    columnKeys(s, c);
+    if (!p.eatOp(",")) {
+      break;
+    }
+    if (startsTableConstraint(p)) {
+      while (true) {
+        tableConstraint(p, s);
+        if (!p.eatOp(",") && !startsTableConstraint(p)) {
+          break;
+        }
+      }
+      break;
+    }
+  }
+  p.expectOp(")");
+  tableOptions(p, s);
+  return s;
+}
+
+/** Table options after the definition: WITHOUT ROWID and STRICT, separated by commas. */
+function tableOptions(p: Parser, s: Statement) {
+  if (!p.isName()) {
+    return;
+  }
+  while (true) {
+    if (p.eatKw("WITHOUT")) {
+      const t = p.peek();
+      p.name();
+      if (p.raw(t).toUpperCase() != "ROWID") {
+        throw new SqlError(`unknown table option: ${p.raw(t)}`, t.start);
+      }
+      s.withoutRowid = true;
+    } else {
+      const t = p.peek();
+      p.name();
+      if (p.raw(t).toUpperCase() != "STRICT") {
+        throw new SqlError(`unknown table option: ${p.raw(t)}`, t.start);
+      }
+      s.strict = true;
+    }
+    if (!p.eatOp(",")) {
+      return;
+    }
+  }
+}
+
+/** A column's PRIMARY KEY and UNIQUE constraints, as single-column keys. */
+function columnKeys(s: Statement, c: ColumnDef) {
+  const e = new Expr(E_COLUMN, 0);
+  e.name = c.name;
+  if (c.primaryKey) {
+    const k = IndexedColumn { expr: e, collate: "", desc: c.desc };
+    s.keys.push(KeyConstraint { primary: true, columns: [k] });
+  }
+  if (c.unique) {
+    const k = IndexedColumn { expr: e, collate: "", desc: false };
+    s.keys.push(KeyConstraint { primary: false, columns: [k] });
+  }
+}
+
+function startsTableConstraint(p: Parser): bool {
+  return p.isKw("CONSTRAINT") ||
+    p.isKw("PRIMARY") ||
+    p.isKw("UNIQUE") ||
+    p.isKw("CHECK") ||
+    p.isKw("FOREIGN");
+}
+
+/** One table constraint (`tcons`; CONSTRAINT name is one of its own). */
+function tableConstraint(p: Parser, s: Statement) {
+  if (p.eatKw("CONSTRAINT")) {
+    p.name();
+  } else if (p.eatKw("PRIMARY")) {
+    p.expectKw("KEY");
+    p.expectOp("(");
+    s.primaryKey = keyColumns(p);
+    const auto = p.eatKw("AUTOINCREMENT");
+    p.expectOp(")");
+    s.keys.push(KeyConstraint { primary: true, columns: s.primaryKey });
+    if (auto && s.primaryKey.length == 1) {
+      for (const c of s.columnDefs) {
+        if (s.primaryKey[0].expr.kind == E_COLUMN && c.name == s.primaryKey[0].expr.name) {
+          c.autoincrement = true;
+        }
+      }
+    }
+    conflictClause(p);
+  } else if (p.eatKw("UNIQUE")) {
+    const u = indexedColumns(p);
+    s.uniques.push(u);
+    s.keys.push(KeyConstraint { primary: false, columns: u });
+    conflictClause(p);
+  } else if (p.eatKw("CHECK")) {
+    p.expectOp("(");
+    s.checks.push(p.expr());
+    p.expectOp(")");
+    conflictClause(p);
+  } else if (p.eatKw("FOREIGN")) {
+    p.expectKw("KEY");
+    columnNames(p);
+    references(p);
+    deferrable(p);
+  } else {
+    p.fail();
+  }
+}

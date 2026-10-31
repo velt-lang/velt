@@ -3,7 +3,7 @@
 // channel whole and in order: through a small bounded channel whose queue wraps around many
 // times, and through an unbounded one that grows while items are queued and is closed before it
 // is drained.
-import { Channel, ChannelClosed, channel } from "velt:channel";
+import { Channel, ChannelClosed, channel } from "velt/sync";
 
 struct Reading {
   a: f64;

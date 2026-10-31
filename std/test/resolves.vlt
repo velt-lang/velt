@@ -1,0 +1,59 @@
+// velt/test (internal): `Resolves`, the matchers of `expect(p).resolves`.
+
+import { Expect } from "velt/test/expect";
+import { errorText } from "velt/lang/intrinsics";
+
+/** `expect(p).resolves`: each matcher awaits `p` and checks its value; fails if it rejects. */
+export class Resolves<V, E> {
+  readonly promise: Promise<V, E>;
+  readonly negated: bool;
+
+  constructor(promise: Promise<V, E>, negated: bool) {
+    this.promise = promise;
+    this.negated = negated;
+  }
+
+  /** The same matchers, each checking the opposite. */
+  get not(): Resolves<V, E> {
+    return new Resolves<V, E>(this.promise, !this.negated);
+  }
+
+  /** The matchers for the value, once the promise resolves (for matchers added with `extend`). */
+  async settled(): Promise<Expect<V>, unknown> {
+    let value: V;
+    try {
+      value = await this.promise;
+    } catch (e) {
+      throw new AssertionError(`promise rejected "${errorText(e)}" instead of resolving`);
+    }
+    return new Expect<V>(value, this.negated);
+  }
+
+  async toBe(expected: V): Promise<void, unknown> {
+    (await this.settled()).toBe(expected);
+  }
+
+  async toEqual(expected: V): Promise<void, unknown> {
+    (await this.settled()).toEqual(expected);
+  }
+
+  async toBeNull(): Promise<void, unknown> {
+    (await this.settled()).toBeNull();
+  }
+
+  async toBeUndefined(): Promise<void, unknown> {
+    (await this.settled()).toBeUndefined();
+  }
+
+  async toBeDefined(): Promise<void, unknown> {
+    (await this.settled()).toBeDefined();
+  }
+
+  async toBeTruthy(): Promise<void, unknown> {
+    (await this.settled()).toBeTruthy();
+  }
+
+  async toBeFalsy(): Promise<void, unknown> {
+    (await this.settled()).toBeFalsy();
+  }
+}

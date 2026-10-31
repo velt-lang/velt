@@ -1,0 +1,161 @@
+// sqlite/engine/exec/loop/pull_cells (internal): the cells of a pulled query's current row
+// (engine/exec/loop/pull), read as velt/db's decoder asks for them: a plain column straight from
+// the record as the type the decoder wants, a computed one from its value.
+
+import { NULL, INTEGER, REAL, TEXT } from "../../storage_class";
+import { CellKind } from "velt/db";
+import { cursorText } from "../cursor_values";
+import { Pull } from "./pull";
+
+/** Column `k` of a table's current row (H_COL): its storage class. */
+export function cellType(p: Pull, k: usize): u8 {
+  const x = p.at[k];
+  if (p.tsrc[x].nullRow) {
+    return NULL;
+  }
+  const c = p.tcur[x];
+  const col = p.tcol[x] as usize;
+  if (col >= c.columnCount()) {
+    return p.tsrc[x].typeAt(p.tcol[x]);
+  }
+  const t = c.columnType(col);
+  return t == INTEGER && p.treal[x] ? REAL : t;
+}
+
+export function cellKindOf(p: Pull, i: i64): CellKind {
+  const k = i as usize;
+  let t: u8 = NULL;
+  const h = p.how[k];
+  if (h == H_COL) {
+    try {
+      t = p.colType(k);
+    } catch (e) {
+      p.fail(e);
+    }
+    return cellKind(t);
+  }
+  if (h == H_ROWID) {
+    return p.tsrc[p.at[k]].nullRow ? CellKind.Null : CellKind.Int;
+  }
+  const src = p.plain[k];
+  if (src != null) {
+    try {
+      t = src!.typeAt(p.cols[k]);
+    } catch (e) {
+      p.fail(e);
+    }
+  } else {
+    t = p.value(k).t;
+  }
+  if (t == INTEGER) {
+    return CellKind.Int;
+  }
+  if (t == TEXT) {
+    return CellKind.Text;
+  }
+  if (t == NULL) {
+    return CellKind.Null;
+  }
+  return t == REAL ? CellKind.Float : CellKind.Blob;
+}
+
+export function cellInt(p: Pull, i: i64): i64 {
+  const k = i as usize;
+  const h = p.how[k];
+  if (h == H_ROWID) {
+    return p.tcur[p.at[k]].rowid;
+  }
+  if (h == H_COL) {
+    const x = p.at[k];
+    const col = p.tcol[x] as usize;
+    try {
+      const c = p.tcur[x];
+      return col < c.columnCount() ? c.int(col) : p.tsrc[x].intAt(p.tcol[x]);
+    } catch (e) {
+      p.fail(e);
+      return 0;
+    }
+  }
+  const src = p.plain[k];
+  if (src != null) {
+    try {
+      return src!.intAt(p.cols[k]);
+    } catch (e) {
+      p.fail(e);
+      return 0;
+    }
+  }
+  return p.value(k).i;
+}
+
+export function cellFloat(p: Pull, i: i64): f64 {
+  const k = i as usize;
+  const src = p.plain[k];
+  if (src != null) {
+    try {
+      return src!.realAt(p.cols[k]);
+    } catch (e) {
+      p.fail(e);
+      return 0;
+    }
+  }
+  return p.value(k).r;
+}
+
+export function cellText(p: Pull, i: i64): string {
+  const k = i as usize;
+  if (p.how[k] == H_COL) {
+    const x = p.at[k];
+    const col = p.tcol[x] as usize;
+    try {
+      const c = p.tcur[x];
+      return col < c.columnCount() ? cursorText(c, col) : p.tsrc[x].textAt(p.tcol[x]);
+    } catch (e) {
+      p.fail(e);
+      return "";
+    }
+  }
+  const src = p.plain[k];
+  if (src != null) {
+    try {
+      return src!.textAt(p.cols[k]);
+    } catch (e) {
+      p.fail(e);
+      return "";
+    }
+  }
+  return p.value(k).s;
+}
+
+export function cellBlob(p: Pull, i: i64): u8[] {
+  const k = i as usize;
+  const src = p.plain[k];
+  if (src != null) {
+    try {
+      return src!.col(p.cols[k]).b;
+    } catch (e) {
+      p.fail(e);
+      return [];
+    }
+  }
+  return p.value(k).b;
+}
+
+/** How a column is read. */
+export const H_EXPR: u8 = 0;
+export const H_PLAIN: u8 = 1;
+export const H_ROWID: u8 = 2;
+export const H_COL: u8 = 3;
+
+function cellKind(t: u8): CellKind {
+  if (t == INTEGER) {
+    return CellKind.Int;
+  }
+  if (t == TEXT) {
+    return CellKind.Text;
+  }
+  if (t == NULL) {
+    return CellKind.Null;
+  }
+  return t == REAL ? CellKind.Float : CellKind.Blob;
+}

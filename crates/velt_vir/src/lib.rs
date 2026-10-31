@@ -102,12 +102,6 @@
 //! is the `T[]`. Each call of an async closure clones its owned captures into the new state.
 //! `async main`: `velt_main` builds the state on its stack and calls `velt_rt_block_on`.
 //!
-//! `__intrinsic_http_handler(async (raw) => …)` (std/http) is the `VeltHandler` 6-tuple
-//! `{ init, poll, drop, state_size, state_align, env }`: the closure's state machine is the
-//! per-request state, lowered to *borrow* its captures from the environment that concurrent
-//! requests share and the runtime releases once the server is closed and its last request
-//! finished (`async_fn/handler.rs`).
-//!
 //! # Source locations (`lower_with`)
 //! With a source map, every VIR statement and terminator records the location of the HIR
 //! statement/expression it came from (`Function::locs`, `Program::files`; vir.rs invariant 8),
@@ -119,9 +113,9 @@
 //! `velt_rt_throw_loc()`. Plain `lower` emits none of this (no locations, empty suffixes).
 //!
 //! # JSON (M4, `lower/json/`)
-//! `JSON.stringify`/`JSON.parse<T>` call one generated function per type (`Glue::JsonWrite` over
-//! the rt string builder, `Glue::JsonRead` over the rt pull reader, `Glue::JsonParse` for the
-//! document); a failed parse throws the prelude's `JsonError { message }` with a
+//! `JSON.parse<T>` calls one generated function per type (`Glue::JsonRead` over the rt pull
+//! reader, `Glue::JsonParse` for the document; `JSON.stringify` is Velt code a source generator
+//! writes, velt/encoding/json); a failed parse throws the prelude's `JsonError { message }` with a
 //! `$.field[3]`-style path built only on the failure path.
 
 pub mod vir;
@@ -144,7 +138,7 @@ pub const ARRAY_LEN_MESSAGE: &str =
     "RangeError: Invalid array length: an array holds at most 2^52 - 1 elements, and its elements at most 2^52 - 1 bytes";
 
 /// The name of the one-byte aggregate (`{ byte: U8 }`) that lowering reads a string's UTF-8
-/// bytes through (`(*p as string text).0`, `__intrinsic_str_byte_at` and `charCodeAt`'s ASCII
+/// bytes through (`(*p as string text).0`, `strByteAt` and `charCodeAt`'s ASCII
 /// path), which no user type can have: the LLVM backend tags those loads as array element
 /// reads for alias analysis (velt_codegen_llvm `tbaa.rs`, #1669). A string's text lives in its
 /// own buffer or inline in the string value, never in a class object's scalar field or an

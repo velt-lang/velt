@@ -2,7 +2,7 @@
 // `trySend` queues a value only if the channel has room now: false (and the value dropped) when a
 // bounded channel is full or the channel is closed. It is synchronous, so it works inside
 // `Mutex.with`, where `await` is not allowed.
-import { channel, Channel } from "velt:channel";
+import { channel, Channel } from "velt/sync";
 
 class Job {
   name: string;

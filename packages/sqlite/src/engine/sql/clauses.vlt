@@ -1,0 +1,158 @@
+// sqlite/engine/sql/clauses (internal): the pieces of SQLite's grammar several statements share
+// (engine/sql/table, dml, ddl, pragma): qualified names, IF NOT EXISTS, conflict resolutions,
+// column name lists, indexed columns, and literals.
+
+import { Parser } from "./parser";
+import { SqlError } from "./errors";
+import { T_BLOB, T_IDENT, T_INTEGER, T_REAL, T_STRING } from "./token";
+import {
+  E_COLLATE,
+  E_INT,
+  E_REAL,
+  E_STRING,
+  E_UNARY,
+  Expr,
+  IndexedColumn,
+  Statement,
+} from "./types";
+
+/** `schema.name` or `name` into the statement's `schema` and `name`. */
+export function qualified(p: Parser, s: Statement) {
+  s.name = p.name();
+  if (p.eatOp(".")) {
+    s.schema = s.name;
+    s.name = p.name();
+  }
+}
+
+/** ROLLBACK, ABORT, REPLACE, FAIL or IGNORE (after OR, or ON CONFLICT). */
+export function conflictResolution(p: Parser): string {
+  const w = p.peek().upper;
+  if (
+    p.peek().kind != T_IDENT ||
+    (w != "ROLLBACK" && w != "ABORT" && w != "REPLACE" && w != "FAIL" && w != "IGNORE")
+  ) {
+    p.fail();
+  }
+  p.advance();
+  return w;
+}
+
+/** `IF NOT EXISTS`, if there. */
+export function ifNotExists(p: Parser): bool {
+  if (p.isKw("IF")) {
+    p.advance();
+    p.expectKw("NOT");
+    p.expectKw("EXISTS");
+    return true;
+  }
+  return false;
+}
+
+/**
+ * `(name, …)` of a view, a foreign key or REFERENCES (`eidlist`): SQLite's grammar lets each
+ * name take COLLATE and ASC/DESC only to report "syntax error after column name".
+ */
+export function columnNames(p: Parser): string[] {
+  p.expectOp("(");
+  const out: string[] = [];
+  while (true) {
+    const t = p.peek();
+    out.push(p.name());
+    if (p.isKw("COLLATE") || p.isKw("ASC") || p.isKw("DESC")) {
+      throw new SqlError(`syntax error after column name "${p.raw(t)}"`, t.start);
+    }
+    if (!p.eatOp(",")) {
+      break;
+    }
+  }
+  p.expectOp(")");
+  return out;
+}
+
+/** `(col [COLLATE c] [ASC|DESC], …)` of an index, a key or an upsert target. */
+export function indexedColumns(p: Parser): IndexedColumn[] {
+  p.expectOp("(");
+  const out = keyColumns(p);
+  p.expectOp(")");
+  return out;
+}
+
+/** The columns of `indexedColumns`, without the parentheses (`sortlist`). */
+export function keyColumns(p: Parser): IndexedColumn[] {
+  const out: IndexedColumn[] = [];
+  while (true) {
+    let e = p.expr();
+    let collate = "";
+    // `x COLLATE c` parses as an expression; keep the column and the collation apart.
+    if (e.kind == E_COLLATE && e.a != null) {
+      collate = e.name;
+      e = e.a!;
+    }
+    let desc = false;
+    if (p.eatKw("DESC")) {
+      desc = true;
+    } else {
+      p.eatKw("ASC");
+    }
+    if (p.isKw("NULLS")) {
+      // The grammar's sortlist allows it; SQLite rejects it here.
+      const at = p.advance().start;
+      const where = p.isKw("FIRST") || p.isKw("LAST") ? p.advance().upper : "";
+      if (where == "") {
+        p.fail();
+      }
+      throw new SqlError(`unsupported use of NULLS ${where}`, at);
+    }
+    out.push(IndexedColumn { expr: e, collate: collate, desc: desc });
+    if (!p.eatOp(",")) {
+      return out;
+    }
+  }
+}
+
+/** CURRENT_TIME, CURRENT_DATE and CURRENT_TIMESTAMP: literals, not names, after DEFAULT. */
+export function isLiteralWord(w: string): bool {
+  return w == "CURRENT_TIME" || w == "CURRENT_DATE" || w == "CURRENT_TIMESTAMP";
+}
+
+/** One literal token (`term`): a number, a string, a blob, NULL or CURRENT_TIME and kin. */
+export function literal(p: Parser): Expr {
+  const t = p.peek();
+  if (t.kind == T_STRING) {
+    p.advance();
+    const e = new Expr(E_STRING, t.start);
+    e.text = t.text;
+    return e;
+  }
+  if (
+    t.kind == T_INTEGER ||
+    t.kind == T_REAL ||
+    t.kind == T_BLOB ||
+    (t.kind == T_IDENT && (t.upper == "NULL" || isLiteralWord(t.upper)))
+  ) {
+    return p.primary();
+  }
+  p.fail();
+}
+
+/** `-e` of a DEFAULT or PRAGMA value: a number folds (as SQLite's value), anything else not. */
+export function negated(e: Expr, at: usize): Expr {
+  if (e.kind == E_REAL) {
+    e.rval = -e.rval;
+    return e;
+  }
+  if (e.kind == E_INT && e.text == "" && e.ival != -9223372036854775807 - 1) {
+    e.ival = -e.ival;
+    return e;
+  }
+  if (e.kind == E_INT && e.text == "9223372036854775808") {
+    e.ival = -9223372036854775807 - 1;
+    e.text = "";
+    return e;
+  }
+  const u = new Expr(E_UNARY, at);
+  u.op = "-";
+  u.a = e;
+  return u;
+}

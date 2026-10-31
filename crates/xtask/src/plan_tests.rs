@@ -141,6 +141,57 @@ fn the_formatter_reaches_its_dependents_and_the_vlt_format_check() {
     assert!(binaries.contains("templates") && binaries.contains("native_packages"));
 }
 
+/// A change in packages/ runs `velt test` in the packages, the registry flow of packages/sqlite,
+/// the example apps (which depend on packages by path) and the benchmarks using the package; the
+/// goldens only when some depend on the package.
+#[test]
+fn a_changed_package_runs_the_package_tests() {
+    let p = plan(&["packages/redis/src/client.vlt"]);
+    assert_eq!(
+        p.veltc,
+        Veltc::Some(set(&[
+            "packages",
+            "native_packages",
+            "example_apps",
+            "bench_programs"
+        ]))
+    );
+    assert_eq!(p.goldens, Goldens::None);
+    assert!(p.filterset().unwrap().contains("binary(packages)"));
+    // Its Velt files are formatted like std's; its native crate is linted only when it changed.
+    assert!(p.vlt_fmt && !p.native_crates);
+    let p = plan(&["packages/redis/native/src/resp.rs"]);
+    assert!(p.native_crates);
+    assert!(!p.rust, "no workspace crate changed");
+}
+
+/// packages/http-server is used by goldens, the standard library's tests, benchmarks and the
+/// documentation: a change to it runs all of them.
+#[test]
+fn a_changed_http_server_runs_what_depends_on_it() {
+    let p = plan(&["packages/http-server/src/h2/request.vlt"]);
+    assert_eq!(
+        p.golden_env().unwrap(),
+        "tests/golden/lang/errors/http_server/,tests/golden/std/http_server/"
+    );
+    let Veltc::Some(binaries) = &p.veltc else {
+        panic!("{:?}", p.veltc)
+    };
+    for b in [
+        "packages",
+        "example_apps",
+        "std_tests",
+        "bench_programs",
+        "docs",
+        "reload",
+        "templates",
+    ] {
+        assert!(binaries.contains(b), "{b}: {binaries:?}");
+    }
+    let p = plan(&["packages/http-server/README.md"]);
+    assert!(matches!(&p.veltc, Veltc::Some(b) if b.contains("docs")));
+}
+
 #[test]
 fn a_changed_golden_runs_that_golden_and_the_tests_reading_goldens() {
     let p = plan(&[
@@ -194,7 +245,7 @@ fn shared_golden_files_select_their_directory() {
 
 #[test]
 fn the_standard_library_runs_every_test_but_no_clippy() {
-    let p = plan(&["std/json.vlt"]);
+    let p = plan(&["std/encoding/json/index.vlt"]);
     assert!(!p.full && !p.rust);
     assert!(p.packages.contains("velt_rt") && p.packages.contains("velt_fmt"));
     assert!(!p.packages.contains("veltc"));
@@ -225,7 +276,7 @@ fn benchmarks_are_compiled_when_they_the_compiler_or_std_change() {
     assert_eq!(p.goldens, Goldens::None);
     assert!(p.filterset().unwrap().contains("binary(bench_programs)"));
     // Every veltc test binary, `bench_programs` among them, runs for these.
-    assert_eq!(plan(&["std/postgres.vlt"]).veltc, Veltc::All);
+    assert_eq!(plan(&["std/db/index.vlt"]).veltc, Veltc::All);
     assert_eq!(plan(&["crates/velt_sema/src/check.rs"]).veltc, Veltc::All);
 }
 
@@ -312,7 +363,7 @@ fn os_specific_changes_check_windows_and_macos_in_the_queue() {
         "crates/veltc/src/commands/registry.rs",
         "crates/vpm/src/credentials.rs",
         "crates/vpm/src/json_file.rs",
-        "std/fs.vlt",
+        "std/fs/index.vlt",
         "tests/golden/lang/foo.out",
         // The standard library's `velt test` suites run servers, sockets and files (#1892).
         "tests/std/http/responses.test.vlt",
@@ -463,7 +514,7 @@ fn example_apps_run_their_velt_tests() {
     for path in [
         "crates/velt_sema/src/lib.rs",
         "crates/velt_rt/src/lib.rs",
-        "std/fs.vlt",
+        "std/fs/index.vlt",
     ] {
         assert_eq!(plan(&[path]).veltc, Veltc::All, "{path}");
     }
@@ -476,11 +527,18 @@ fn example_apps_run_their_velt_tests() {
 
 #[test]
 fn std_suites_run_with_std_tests() {
-    let p = plan(&["tests/std/http/server.test.vlt"]);
+    let p = plan(&["tests/std/fetch/client.test.vlt"]);
     assert_eq!(p.veltc, Veltc::Some(set(&["std_tests"])));
     assert!(p.filterset().unwrap().contains("binary(std_tests)"));
     // A change to std or the runner runs every `veltc` test, `std_tests` with them.
-    assert_eq!(plan(&["std/test.vlt"]).veltc, Veltc::All);
+    assert_eq!(plan(&["std/test/index.vlt"]).veltc, Veltc::All);
+    // std's white-box tests run only with `std_tests` (`velt test std/`), no goldens.
+    let p = plan(&["std/encoding/json/scan.test.vlt"]);
+    assert_eq!(p.veltc, Veltc::Some(set(&["std_tests"])));
+    assert_eq!(p.goldens, Goldens::None);
+    // They are formatted and linted with std.
+    assert!(p.vlt_fmt);
+    assert!(!plan(&["tests/std/fetch/client.test.vlt"]).vlt_fmt);
 }
 
 #[test]
@@ -602,7 +660,7 @@ fn the_webassembly_goldens_run_only_for_webassembly_code() {
     for paths in [
         &["crates/velt_sema/src/check.rs"][..],
         &["crates/velt_rt/src/http.rs"],
-        &["std/json.vlt"],
+        &["std/encoding/json/index.vlt"],
         // Changes that select everything else leave them to the nightly too.
         &["Cargo.lock"],
         &[".github/workflows/ci.yml"],
@@ -648,7 +706,7 @@ fn main_skips_the_windows_and_macos_gate_the_queue_already_ran() {
     for path in [
         "crates/velt_rt/src/http.rs",
         "crates/veltc/src/main.rs",
-        "std/fs.vlt",
+        "std/fs/index.vlt",
         "tests/golden/lang/foo.out",
         ".github/workflows/ci.yml",
         "scripts/check-all.sh",

@@ -297,7 +297,7 @@ pub(crate) fn imports_of<'m>(
     cx: &Ctx<'m>,
     m: usize,
 ) -> impl Iterator<Item = (&'m ast::Import, bool)> + 'm {
-    let modules = cx.modules;
+    let modules = cx.modules.clone();
     modules[m].ast.items.iter().filter_map(|item| {
         // The items looked at, for the scaling tests (`check_work`).
         add_export_work(1);

@@ -1,0 +1,31 @@
+// velt/encoding/json (internal): `JsonFail`, why a decoder generated for `JSON.parse<T>`
+// (velt/encoding/json/generate/read) stopped, and `jsonFailed`, which makes one.
+
+/**
+ * Why a decoder generated for `JSON.parse<T>` (velt/encoding/json/generate/read) stopped: what
+ * it expected, and the path below the value that failed (`.name`, `[3]`), which each level adds
+ * its segment to while the failure passes through it. `JsonError`'s message is made from it
+ * with `Reader.message`.
+ */
+export class JsonFail {
+  expected: string;
+  path: string;
+
+  constructor(expected: string, path: string) {
+    this.expected = expected;
+    this.path = path;
+  }
+
+  /** Makes this failure one level up: `seg` (`.name`, `[3]`) in front of its path. */
+  at(seg: string): void {
+    this.path = seg + this.path;
+  }
+}
+
+/**
+ * A decoder's failure at the value it reads: it expected `expected` (a function, so that each
+ * place a generated decoder fails at is a call, not an allocation).
+ */
+export function jsonFailed(expected: string): JsonFail {
+  return new JsonFail(expected, "");
+}

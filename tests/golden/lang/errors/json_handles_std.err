@@ -1,0 +1,4 @@
+json_handles_std.vlt:9:10: error: cannot convert to or from JSON: `TcpStream` has a private field `handle`, so it has no JSON form
+json_handles_std.vlt:13:13: error: cannot convert to or from JSON: `TcpStream` has a private field `handle`, which decoding cannot set
+json_handles_std.vlt:14:13: error: cannot convert to or from JSON: `FileReader` has a private field `handle`, which decoding cannot set
+json_handles_std.vlt:15:13: error: cannot convert to or from JSON: `WebSocket` has a private field `handle`, which decoding cannot set

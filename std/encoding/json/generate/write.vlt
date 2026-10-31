@@ -1,0 +1,186 @@
+// velt/encoding/json (internal): the generator of `writeJson<T>` and `writeJsonKeyed<T>`
+// (generated.vlt), run at compile time (docs/internals/design/source-generators.md): one
+// function per type that appends what `JSON.stringify` writes for a value of that type, with
+// each object's constant text (`{"id":`, `,"name":`) appended as one literal. It uses nothing a
+// package could not: the model of `velt/generate`, `__arm` for a union's members, and in the
+// code it writes `StringBuilder`, the `appendJson*` functions, velt/reflect and the writer of
+// dynamic values (any.vlt).
+//
+// What it writes, as Node does: numbers, booleans, strings, literal types, enums (numeric and
+// string), arrays, tuples, options, objects, structs and classes (JavaScript's key order, array
+// indexes first; optional and `T | undefined` fields left out when empty, a present `null` of
+// `a?: T | null` written; ES private fields and functions left out, `private` fields written),
+// a class value as its dynamic class (an `instanceof` chain, most derived first) and through
+// its `toJSON(key)`, `Map<string, V>` and `Record<K, V>` as objects, `JsonValue` as its text,
+// a `shared<T>` as the `T` it holds, a union as its active member, a function as `null` (an
+// array element; a member holding one is left out), and dynamic values (`any`, interface
+// values, typed proxies) through any.vlt. A recursive object type that meets itself is an
+// error, as in Node.
+
+import { InstanceRequest, Output } from "velt/generate";
+import {
+  className,
+  dynamicArms,
+  isDynamic,
+  isRecursive,
+  toJsonMethod,
+  writable,
+} from "velt/encoding/json/generate/facts";
+import { stringifyProblem } from "velt/encoding/json/generate/check";
+import {
+  writeEntries,
+  writeFields,
+  writerOf,
+  writeValue,
+} from "velt/encoding/json/generate/values";
+
+/** The body of `writeJson` (`keyed`: of `writeJsonKeyed`, whose third parameter is the key). */
+function body(req: InstanceRequest, out: Output, keyed: bool): void {
+  const model = req.model;
+  const id = req.args[0];
+  const t = model.type(id);
+  const v = req.params[1];
+  const key = keyed ? req.params[2] : `""`;
+  if (
+    t.kind == "number" ||
+    t.kind == "string" ||
+    t.kind == "boolean" ||
+    t.kind == "literal" ||
+    t.kind == "void" ||
+    t.kind == "never" ||
+    t.kind == "function" ||
+    t.kind == "enum" ||
+    t.kind == "interface" ||
+    isDynamic(t)
+  ) {
+    writeValue(out, model, id, v, key);
+  } else if (t.kind == "option") {
+    out.line(`if (${v} == null) { w.append("null"); return; }`);
+    writeValue(out, model, t.args[0], v, key);
+  } else if (t.kind == "shared") {
+    const held = model.type(t.args[0]).kind;
+    if (held == "object" || held == "struct" || held == "class" || held == "array") {
+      // Read in place, like the `T` it holds.
+      writeValue(out, model, t.args[0], v, key);
+    } else {
+      // A scalar is passed where its `T` is expected (it has no cast from `shared<T>`).
+      const [name, keyed] = writerOf(out, model, t.args[0]);
+      out.line(keyed ? `${name}(w, ${v}, ${key});` : `${name}(w, ${v});`);
+    }
+  } else if (t.kind == "array") {
+    const et = model.type(t.args[0]);
+    out.line(`w.append("[");`);
+    out.line(`const n = ${v}.length;`);
+    out.line(`for (let i = 0; i < n; i++) {`);
+    out.line(`if (i > 0) { w.append(","); }`);
+    if (et.kind == "function") {
+      out.line(`w.append("null");`);
+    } else {
+      writeValue(out, model, t.args[0], `${v}[i]`, "`${i}`");
+    }
+    out.line(`}`);
+    out.line(`w.append("]");`);
+  } else if (t.kind == "tuple") {
+    out.line(`w.append("[");`);
+    for (let i: i64 = 0; i < (t.args.length as i64); i++) {
+      if (i > 0) {
+        out.line(`w.append(",");`);
+      }
+      writeValue(out, model, t.args[i], `${v}[${i}]`, out.literal(`${i}`));
+    }
+    out.line(`w.append("]");`);
+  } else if (t.kind == "union") {
+    for (let i: i64 = 0; i < (t.arms.length as i64); i++) {
+      out.line(`if (__arm(${v}, ${i})) {`);
+      writeValue(out, model, t.arms[i], v, key);
+      out.line(`return;`);
+      out.line(`}`);
+    }
+  } else if (t.kind == "map") {
+    writeEntries(out, model, model.type(t.args[0]), t.args[1], v);
+  } else if (t.kind == "record") {
+    writeEntries(out, model, model.type(t.args[0]), t.args[1], `Object.entries(${v})`);
+  } else if (t.kind == "opaque" && t.qualifiedName == "std/prelude/json/json::JsonValue") {
+    out.line(`appendJsonValue(w, ${v});`);
+  } else if (
+    t.kind == "object" ||
+    t.kind == "struct" ||
+    t.kind == "class" ||
+    t.kind == "date" ||
+    (t.kind == "opaque" && toJsonMethod(t) >= 0)
+  ) {
+    // A typed proxy is written as the `any` it converts to, where one may stand for the type.
+    if (t.mayBeProxy) {
+      out.line(`if (isProxy(${v})) { writeJsonAny(w, dynamicOf(${v}), ${key}); return; }`);
+    }
+    // A class value is written as its dynamic class, most derived first.
+    for (let i = (t.subclasses.length as i64) - 1; i >= 0; i--) {
+      const s = model.type(t.subclasses[i]);
+      if (!writable(model, s.id, [])) {
+        continue;
+      }
+      const [name, sk] = writerOf(out, model, s.id);
+      const call = sk ? `${name}(w, ${v}, ${key})` : `${name}(w, ${v})`;
+      out.line(`if (${v} instanceof ${className(s)}) { ${call}; return; }`);
+    }
+    const m = toJsonMethod(t);
+    if (m >= 0) {
+      const ret = t.methods[m].ret;
+      const arg = t.methods[m].params > 0 ? key : "";
+      out.line(`const j = ${v}.toJSON(${arg});`);
+      if (ret == id) {
+        // `toJSON() { return this; }`: JavaScript writes the fields of the result.
+        writeFields(out, model, t, "j");
+      } else {
+        writeValue(out, model, ret, "j", key);
+      }
+      return;
+    }
+    const recursive = isRecursive(model, t);
+    if (recursive) {
+      out.line(`if (!beginVisit(identity(${v}))) { jsonCircular(); }`);
+    }
+    writeFields(out, model, t, v);
+    if (recursive) {
+      out.line(`endVisit();`);
+    }
+  } else {
+    // No JSON form: sema reports the call that needs it (the code is never run).
+    const msg = out.literal(`JSON.stringify of \`${t.display}\``);
+    out.line(`panic(${msg});`);
+  }
+}
+
+/**
+ * The generator of `writeJsonTop<T>(w: StringBuilder, value: T)`, what `JSON.stringify(value)`
+ * calls: `writeJson`, except that a dynamic value without a JSON form (also a union's member) is
+ * a `TypeError` there, where Node returns `undefined` (an array element is `null`).
+ */
+export function writeJsonTop(req: InstanceRequest, out: Output): void {
+  const model = req.model;
+  const id = req.args[0];
+  const t = model.type(id);
+  const v = req.params[1];
+  const problem = stringifyProblem(model, id);
+  if (problem.length > 0) {
+    out.error(problem, -1);
+    return;
+  }
+  if (isDynamic(t)) {
+    out.line(`checkJsonTop(${v});`);
+  }
+  for (const i of dynamicArms(model, t)) {
+    out.line(`if (__arm(${v}, ${i})) { checkJsonTop(${v}); }`);
+  }
+  writeValue(out, model, id, v, `""`);
+}
+
+/** The generator of `writeJson<T>(w: StringBuilder, value: T)`. */
+export function writeJson(req: InstanceRequest, out: Output): void {
+  body(req, out, false);
+}
+
+/** The generator of `writeJsonKeyed<T>(w: StringBuilder, value: T, key: string)`. */
+export function writeJsonKeyed(req: InstanceRequest, out: Output): void {
+  body(req, out, true);
+}

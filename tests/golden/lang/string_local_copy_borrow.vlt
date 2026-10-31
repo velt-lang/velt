@@ -3,7 +3,7 @@
 // change, #1670), and keeps its own reference whenever the field may change while the copy is
 // still read: then the copy must keep the old text, also after the old text's memory is
 // reused.
-import { utf8ByteAt } from "velt:encoding";
+import { utf8ByteAt } from "velt/encoding";
 
 class Scanner {
   src: string;

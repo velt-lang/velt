@@ -3,7 +3,7 @@
 //! and function values by identity (JS reference semantics: an interface value by its data
 //! pointer, a function value by its code and environment), everything else by content; the
 //! prelude `Map` and `Record` classes compare by content in any key order (Node's
-//! `isDeepStrictEqual`) through `Map.__deepEquals` (std/prelude/map.vlt); a record compares its
+//! `isDeepStrictEqual`) through `Map[MAP_DEEP_EQUALS]` (std/prelude/map.vlt); a record compares its
 //! map. The hash agrees with the key comparison, `Intrinsic::KeyEq` (same.rs): objects (class
 //! instances, object types, arrays, interface and function values, promises) hash their identity, a type
 //! declared with `struct` its fields, the rest by value. Hashes combine parts FxHash-style: `h = (rotl(h, 5) ^ part) * 0x517cc1b727220a95`;
@@ -455,13 +455,18 @@ impl FnLower<'_, '_> {
     }
 
     /// The `Map`s or `Record`s at `a` and `b` (of type `ty`) by content, in any key order
-    /// (`Map.__deepEquals`); jumps to `no` when they differ.
+    /// (`Map[MAP_DEEP_EQUALS]`, std/lang/hooks/keys.vlt); jumps to `no` when they differ.
     pub(super) fn dictionary_eq(&mut self, a: &Place, b: &Place, ty: TyId, no: vir::BlockId) {
         let (map_ty, ma) = self.dictionary_map(a, ty);
         let (_, mb) = self.dictionary_map(b, ty);
         let deep = Operand::Const(Const::Bool(self.deep_mode), Ty::Bool);
         let args = vec![Operand::Copy(ma), Operand::Copy(mb), deep];
-        let r = self.call_map_method(map_ty, "__deepEquals", args, Ty::Bool);
+        let r = self.call_map_method(
+            map_ty,
+            velt_common::std_key!(map_deep_equals),
+            args,
+            Ty::Bool,
+        );
         self.when(r, no);
     }
 

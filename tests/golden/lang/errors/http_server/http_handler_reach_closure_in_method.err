@@ -1,0 +1,4 @@
+http_handler_reach_closure_in_method.vlt:48:33: error: this function can be called on another thread, and it changes `last`
+http_handler_reach_closure_in_method.vlt:49:19: but it is stored in an `Input`, which is passed here to a function that runs it on other threads
+  = note: fix: const last = shared(new Mutex<{ value: string }>({ value: "" }))  // one value every thread shares, as in Node
+  = note: then read it with `last.with((v) => v.value)` and change it with `last.with((v) => { v.value = … })`

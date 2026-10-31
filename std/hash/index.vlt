@@ -1,0 +1,6 @@
+// velt/hash: a stable, non-cryptographic hash (docs/std/hash.md) for sharding, bucketing and
+// consistent hashing. 64-bit FNV-1a: the same input gives the same hash on every platform, run
+// and version. It is not seeded, so it does not resist hash flooding (an attacker can choose
+// keys that collide); use `velt/crypto` where an adversary picks the input.
+
+export { fnv1a64, fnv1a64Bytes } from "velt/hash/fnv";

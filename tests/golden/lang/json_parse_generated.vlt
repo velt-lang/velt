@@ -1,0 +1,84 @@
+// `JSON.parse<T>` of numbers, strings, booleans, arrays, tuples, `JsonValue` and records,
+// structs and classes of those, decoded by the code velt/encoding/json's generator writes:
+// values, integer ranges, repeated and unknown keys, and the messages and paths of errors.
+
+struct Inner {
+  n: u16;
+  s: string[];
+}
+
+class Outer {
+  a: i32 = 0;
+  inners: Inner[] = [];
+  pair: [string, u64] = ["", 0];
+  extra: JsonValue = JSON.parseValue("null");
+}
+
+type Point = { x: f64; y: f32; on: bool; "the key": i8 };
+
+const ok = JSON.parse<Outer>(
+  `{"a":-5,"inners":[{"n":65535,"s":["é","\\u00e9"]}],"pair":["p",18446744073709551615],"extra":{"k":[1,true]}}`,
+);
+console.log(ok.a, ok.inners[0].n, ok.inners[0].s, ok.pair, ok.extra.stringify());
+console.log(JSON.parse<Point>(`{"x":1.5,"y":2.25,"on":false,"the key":-128}`));
+console.log(JSON.parse<[i64, string, bool]>(`[9007199254740993, "s", true]`));
+console.log(
+  JSON.parse<i8[][]>(`[[1,2],[],[-3]]`),
+  JSON.parse<usize>("0"),
+  JSON.parse<string>(`"x"`),
+);
+// A repeated key: the later value wins.
+console.log(JSON.parse<Point>(`{"x":1,"x":2,"y":0,"on":true,"the key":0}`).x);
+
+const bad = [
+  `{"a":1,"inners":[{"n":1,"s":[]},{"n":70000,"s":[]}],"pair":["q",1],"extra":1}`,
+  `{"a":1,"inners":[{"n":1,"s":["a",2]}],"pair":["q",1],"extra":1}`,
+  `{"a":1,"inners":[],"pair":["q",-1],"extra":1}`,
+  `{"a":1,"inners":[],"pair":["q"],"extra":1}`,
+  `{"a":1,"inners":[],"pair":["q",1,2],"extra":1}`,
+  `{"a":2147483648,"inners":[],"pair":["q",1],"extra":1}`,
+  `{"a":1.5,"inners":[],"pair":["q",1],"extra":1}`,
+  `{"a":1,"inners":[{"n":1}],"pair":["q",1],"extra":1}`,
+  `{"a":1,"inners":[],"pair":["q",1]}`,
+  `{"a":1,"inners":{},"pair":["q",1],"extra":1}`,
+  `{"a":1,"inners":[],"pair":["q",1],"extra":1,"zz":[1,}`,
+  `{"a":1,"inners":[],"pair":["q",1],"extra":1} x`,
+  `{"a":1,"inners":[],"pair":["q",1],"extra":1,"zz":0} // done`,
+  `[1]`,
+];
+for (const text of bad) {
+  try {
+    const o = JSON.parse<Outer>(text, { comments: "skip" });
+    console.log("ok", o.a);
+  } catch (e) {
+    console.log(e.name, e.message);
+  }
+  try {
+    JSON.parse<Outer>(text, { comments: "skip", unknownKeys: "reject", maxDepth: 2 });
+  } catch (e) {
+    console.log(e.message);
+  }
+}
+for (const text of [
+  `{"x":1,"y":2,"on":1,"the key":0}`,
+  `{"x":1,"y":2,"on":true,"the key":128}`,
+  `{"x":1,"on":true,"the key":0}`,
+]) {
+  try {
+    JSON.parse<Point>(text);
+  } catch (e) {
+    console.log(e.message);
+  }
+}
+for (const text of [`[1, "s"]`, `[1, 2, true]`, `["1", "s", true]`]) {
+  try {
+    JSON.parse<[i64, string, bool]>(text, { comments: "skip" });
+  } catch (e) {
+    console.log(e.message);
+  }
+}
+try {
+  JSON.parse<i8[][]>(`[[1],[2,300]]`, { comments: "skip" });
+} catch (e) {
+  console.log(e.message);
+}

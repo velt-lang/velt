@@ -1,5 +1,5 @@
 // `velt run [-- port]`: a Redis-compatible server on 127.0.0.1 (default port 6380).
-import { args } from "velt:process";
+import { args } from "velt/process";
 import { keyspace, serve, start } from "./server";
 
 async function main() {

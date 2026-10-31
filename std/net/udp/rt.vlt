@@ -1,0 +1,24 @@
+// velt/net/udp (internal): the runtime's UDP functions (rt_abi_async.md §14.6).
+
+import { IoResult } from "velt/native/result";
+import { IoStatus } from "velt/native/status";
+
+/** The runtime's `VeltDatagram`. */
+struct RawDatagram {
+  data: u8[];
+  addr: string;
+}
+
+export declare async function velt_rt_udp_bind(addr: string): Promise<IoResult<u64>>;
+export declare function velt_rt_udp_port(u: u64): u32;
+export declare async function velt_rt_udp_send_to(
+  u: u64,
+  data: u8[],
+  addr: string,
+): Promise<IoResult<u64>>;
+export declare async function velt_rt_udp_recv_from(
+  u: u64,
+  max: u64,
+): Promise<IoResult<RawDatagram>>;
+export declare function velt_rt_udp_set_broadcast(u: u64, on: bool): IoStatus;
+export declare function velt_rt_udp_close(u: u64);

@@ -2,8 +2,8 @@
 // Task placement (#211): `spawn(p, { worker })` pins a task to a worker, and using the placement
 // API selects the per-core scheduler. A caller pinned next to its shard makes request/reply calls
 // that stay on one worker.
-import { workerCount, currentWorker } from "velt:task";
-import { channel, Channel } from "velt:channel";
+import { workerCount, currentWorker } from "velt/task";
+import { channel, Channel } from "velt/sync";
 
 async function where(): Promise<i64> {
   return currentWorker();

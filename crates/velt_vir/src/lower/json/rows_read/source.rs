@@ -188,6 +188,9 @@ impl FnLower<'_, '_> {
         let Some(methods) = self
             .rows_source_methods(cls)
             .filter(|_| self.rows_row_ok(row_ty))
+            // A boxed array (shared elsewhere as the same type) is read as JSON (rows_read.rs
+            // fills an inline one).
+            .filter(|_| !(many && self.cx.boxed(t)))
         else {
             // Read as JSON by std/db.
             return self.zero_value(ovt);

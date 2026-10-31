@@ -1,0 +1,65 @@
+// sqlite/engine/exec/sort_key (internal): one ORDER BY term of a sort (`SortKey`), and rows
+// compared and sorted by their keys.
+
+import { NULL } from "../storage_class";
+import { Ev } from "./types";
+import { Val } from "./value/val";
+import { compareVals } from "./value/compare";
+
+/** One ORDER BY term: a result column (`col`) or an expression of its own. */
+export class SortKey {
+  col: i64;
+  ev: Ev | null;
+  desc: bool;
+  /** 0: default, 1: NULLS FIRST, 2: NULLS LAST. */
+  nulls: u8;
+  coll: u8;
+
+  constructor(col: i64, ev: Ev | null, desc: bool, nulls: u8, coll: u8) {
+    this.col = col;
+    this.ev = ev;
+    this.desc = desc;
+    this.nulls = nulls;
+    this.coll = coll;
+  }
+}
+
+/** Compares two rows' sort keys (`a` and `b` index rows of `keys`, `n` keys a row). */
+export function compareKeys(keys: Val[], sk: SortKey[], a: usize, b: usize): i64 {
+  const n: usize = sk.length;
+  for (let k: usize = 0; k < n; k++) {
+    const x = keys[a * n + k];
+    const y = keys[b * n + k];
+    const s = sk[k];
+    let c: i64 = 0;
+    if (s.nulls != 0 && (x.t == NULL || y.t == NULL)) {
+      if (x.t == NULL && y.t == NULL) {
+        c = 0;
+      } else {
+        // NULLS FIRST puts the NULL first whatever the direction.
+        const first = s.nulls == 1;
+        c = x.t == NULL ? (first ? -1 : 1) : (first ? 1 : -1);
+      }
+    } else {
+      c = compareVals(x, y, s.coll);
+      if (s.desc) {
+        c = -c;
+      }
+    }
+    if (c != 0) {
+      return c;
+    }
+  }
+  return 0;
+}
+
+/** Sorts row numbers 0..n by their keys (stable). */
+export function sortRows(keys: Val[], sk: SortKey[], n: usize): i64[] {
+  const idx: i64[] = [];
+  idx.reserve(n);
+  for (let i: usize = 0; i < n; i++) {
+    idx.push(i as i64);
+  }
+  idx.sort((a, b) => compareKeys(keys, sk, a as usize, b as usize));
+  return idx;
+}

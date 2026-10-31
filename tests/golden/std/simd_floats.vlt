@@ -1,7 +1,7 @@
 // `f32x4` and `f64x2`: arithmetic, comparisons with NaN, `min`/`max` as `Math.min`/`Math.max`
 // (NaN wins, -0 is below +0), reinterpretation as integers.
 
-import { i32x4, u32x4, u64x2, f32x4, f64x2 } from "velt:simd";
+import { i32x4, u32x4, u64x2, f32x4, f64x2 } from "velt/simd";
 
 function show4(what: string, v: f32x4) {
   console.log(what, v.lane(0), v.lane(1), v.lane(2), v.lane(3));

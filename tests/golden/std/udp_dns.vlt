@@ -1,5 +1,5 @@
-import { bindUdp, Datagram } from "velt:udp";
-import { lookup, lookupOne } from "velt:dns";
+import { bindUdp, Datagram } from "velt/net/udp";
+import { lookup, lookupOne } from "velt/net/dns";
 
 async function main() {
   const server = await bindUdp("127.0.0.1:0");

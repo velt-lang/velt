@@ -1,0 +1,160 @@
+// velt/encoding/json (internal): the generator of `parseJsonTop<T>` and `readJson<T>`
+// (generated.vlt), run at compile time (docs/internals/design/source-generators.md): one
+// function per type that decodes a value of that type with the pull reader (reader.vlt), as
+// `JSON.parse<T>` does, with the messages and paths of its errors (`expected string at
+// $.items[3].name`). It uses nothing a package could not: the model of `velt/generate` and, in
+// the code it writes, the public `Reader`, `JsonFail`, `JsonError` and `__construct<T>`.
+//
+// A decoder reads its value or throws a `JsonFail` saying what it expected; each level the
+// failure passes through puts its path segment (`.name`, `[3]`) in front, so paths cost
+// nothing on success. `parseJsonTop` turns the failure into the `JsonError` the reader's
+// `message` words.
+//
+// What it decodes: numbers (integers range-checked, as their type is named in the message),
+// booleans, strings, literal types, enums, options, arrays, tuples, unions (read_union.vlt),
+// `Map<string, V>`, `Record<K, V>`, `JsonValue`, and objects, structs and classes of those
+// (public fields, built without running a constructor). Any other type is decoded, as a whole
+// document, by the compiler's `jsonParse<T>`, which also reports a type that has no JSON form.
+
+import { InstanceRequest, Model, Output, Type } from "velt/generate";
+import { hiddenKey } from "velt/encoding/json/generate/facts";
+import { choices, recordKeys } from "velt/encoding/json/generate/choice";
+import { intRange, isJsonValue, readInto } from "velt/encoding/json/generate/read_value";
+import { readUnion, unionDecodable } from "velt/encoding/json/generate/read_union";
+import { parseProblem } from "velt/encoding/json/generate/parse_check";
+import {
+  readArray,
+  readMap,
+  readObject,
+  readRecord,
+  readTuple,
+} from "velt/encoding/json/generate/read_object";
+
+/**
+ * Does this generator decode a value of type `id` (`seen`: the types being looked at, so
+ * recursive types end)? Otherwise the whole document is decoded by `jsonParse<T>`.
+ */
+function decodes(model: Model, id: i64, seen: i64[]): bool {
+  const t = model.type(id);
+  const k = t.kind;
+  if (k == "number") {
+    return intRange(t.repr).length > 0 || t.repr == "f64" || t.repr == "f32";
+  }
+  if (k == "boolean" || k == "string" || k == "literal" || k == "enum" || isJsonValue(t)) {
+    return true;
+  }
+  if (k == "union" && choices(model, t).length > 0) {
+    // A union of literal types is one of their values.
+    return true;
+  }
+  if (seen.includes(id)) {
+    return true;
+  }
+  seen.push(id);
+  if (k == "array" || k == "option") {
+    return decodes(model, t.args[0], seen);
+  }
+  if (k == "union") {
+    // Its members told apart by the kind of JSON value, literals by value, objects by a
+    // discriminant or a key only one of them requires.
+    if (!unionDecodable(model, t)) {
+      return false;
+    }
+    for (const a of t.arms) {
+      if (!decodes(model, a, seen)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if (k == "map") {
+    return model.type(t.args[0]).kind == "string" && decodes(model, t.args[1], seen);
+  }
+  if (k == "record") {
+    const key = model.type(t.args[0]);
+    const keys = key.kind == "string" || recordKeys(model, key).length > 0;
+    return keys && decodes(model, t.args[1], seen);
+  }
+  if (k == "tuple") {
+    for (const a of t.args) {
+      if (!decodes(model, a, seen)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if (k == "object" || k == "struct" || k == "class") {
+    if (t.dynamic || t.ctorAccess.length > 0) {
+      return false;
+    }
+    for (const f of t.fields) {
+      if (
+        f.isPrivate || f.isEsPrivate || f.isGetter || f.stdPrivate || f.via >= 0 || hiddenKey(f)
+      ) {
+        return false;
+      }
+      // An object's or a struct's optional field is set after the value is built, when its
+      // key was read: not possible for a readonly one (left to `jsonParse<T>`).
+      if (f.optional && f.readonly && k != "class") {
+        return false;
+      }
+      if (!decodes(model, f.type, seen)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return false;
+}
+
+/** The generator of `readJson<T>(r: Reader): T throws JsonFail`. */
+export function readJson(req: InstanceRequest, out: Output): void {
+  const model = req.model;
+  const t = model.type(req.args[0]);
+  const k = t.kind;
+  if (k == "array") {
+    readArray(out, model, t);
+  } else if (k == "tuple") {
+    readTuple(out, model, t);
+  } else if (k == "object" || k == "struct" || k == "class") {
+    readObject(out, model, t);
+  } else if (k == "union" && choices(model, t).length == 0) {
+    readUnion(out, model, t);
+  } else if (k == "map") {
+    readMap(out, model, t);
+  } else if (k == "record") {
+    readRecord(out, model, t);
+  } else {
+    readInto(out, model, t.id, "v");
+    out.line(`return v;`);
+  }
+}
+
+/**
+ * The generator of `parseJsonTop<T>(text: string, flags: i64, maxDepth: i64): T throws
+ * JsonError`: the reader over `text`, the value, nothing but whitespace after it, and the
+ * `JsonError` of a failure.
+ */
+export function parseJsonTop(req: InstanceRequest, out: Output): void {
+  const model = req.model;
+  const id = req.args[0];
+  const [text, flags, depth] = [req.params[0], req.params[1], req.params[2]];
+  const problem = parseProblem(model, id);
+  if (problem != null) {
+    const labels: [i64, string][] = problem.labelAt >= 0 ? [[problem.labelAt, problem.label]] : [];
+    out.error(problem.message, -1, labels);
+    return;
+  }
+  if (!decodes(model, id, [])) {
+    out.line(`return jsonParse<${out.typeName(id)}>(${text}, ${flags}, ${depth});`);
+    return;
+  }
+  out.line(`const r = Reader.of(${text}, ${flags} as u32, ${depth} as u32);`);
+  out.line(`try {`);
+  readInto(out, model, id, "v");
+  out.line(`if (!r.finish()) { throw jsonFailed("end of input"); }`);
+  out.line(`return v;`);
+  out.line(`} catch (e) {`);
+  out.line(`throw new JsonError(r.message(e.expected, "$" + e.path));`);
+  out.line(`}`);
+}

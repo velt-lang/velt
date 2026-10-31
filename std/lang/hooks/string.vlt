@@ -1,0 +1,11 @@
+// velt/lang/hooks (internal): the compiler's hooks for strings (std-layout.md §10b).
+
+declare function velt_rt_str_code_points(s: string): string[];
+
+/**
+ * The characters of `s` (code points, a surrogate pair as one string), as JS's string iterator:
+ * what `for (const c of s)` iterates (velt_sema `loops.rs`).
+ */
+export function stringCodePoints(s: string): string[] {
+  return velt_rt_str_code_points(s);
+}

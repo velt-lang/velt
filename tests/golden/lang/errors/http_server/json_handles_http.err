@@ -1,0 +1,10 @@
+json_handles_http.vlt:6:10: error: cannot convert to or from JSON: `Response` has a private field `#code`, so it has no JSON form
+  = note: a type of std or of a native library keeps its handles in private fields, so it has no JSON form; convert it to a type with public fields first
+json_handles_http.vlt:6:30: error: cannot convert to or from JSON: `Request` has a private field `#fields`, so it has no JSON form
+  = note: a type of std or of a native library keeps its handles in private fields, so it has no JSON form; convert it to a type with public fields first
+json_handles_http.vlt:10:13: error: cannot convert to or from JSON: `HttpServer` has a private field `listener`, which decoding cannot set
+  = note: decoding fills fields without running the constructor, so it cannot build a type with private fields; decode into a type with public fields and construct it from that
+json_handles_http.vlt:11:13: error: cannot convert to or from JSON: `Response` has a private field `#code`, which decoding cannot set
+  = note: decoding fills fields without running the constructor, so it cannot build a type with private fields; decode into a type with public fields and construct it from that
+json_handles_http.vlt:12:14: error: cannot convert to or from JSON: `WebSocket` has a private field `handle`, which decoding cannot set
+  = note: decoding fills fields without running the constructor, so it cannot build a type with private fields; decode into a type with public fields and construct it from that

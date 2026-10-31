@@ -1,7 +1,7 @@
 //! `String(x)`, template literals and string `+` of an `any`, `unknown` or `object` `x`
 //! (issues #924, #1435): the text of the value held, as JavaScript's `ToString(ToPrimitive(x))`
-//! writes it. Each site is one call of a prelude function, `__anyString` (`String(x)` and
-//! templates: hint `"string"`) or `__anyConcatText` (`+`: hint `"default"`), which keep one
+//! writes it. Each site is one call of a prelude function, `anyString` (`String(x)` and
+//! templates: hint `"string"`) or `anyConcatText` (`+`: hint `"default"`), which keep one
 //! instance each (velt_vir `track_caller.rs`); sema writes the dispatch over the program's
 //! classes into their bodies, once per program:
 //! - hint `"string"`: a class's `[Symbol.toPrimitive]("string")`, else its `toString()`, else
@@ -14,7 +14,7 @@
 //! The helpers take the user's call site as their last argument (`at`, `"path:line:col"`), which
 //! their stops report (velt_vir `track_caller.rs`).
 //!
-//! Every other value goes to the prelude's `__anyText` (`__anyConcatPlain` for `+`), which
+//! Every other value goes to the hook `anyText` (`anyConcatPlain` for `+`), which
 //! writes an array as `Array.prototype.join` does, an object literal by its own `toString` /
 //! `valueOf`, and another object as `Object.prototype.toString` does (`[object Object]`).
 
@@ -73,16 +73,16 @@ impl Hint {
     /// The prelude function writing a value with this hint, whose body holds the dispatch.
     fn helper(self) -> &'static str {
         match self {
-            Hint::String => "__anyString",
-            Hint::Default => "__anyConcatText",
+            Hint::String => velt_common::std_hook!(any_string),
+            Hint::Default => velt_common::std_hook!(any_concat_text),
         }
     }
 
     /// The prelude function for values that are no class instances with such a method.
     fn fallback(self) -> &'static str {
         match self {
-            Hint::String => "__anyText",
-            Hint::Default => "__anyConcatPlain",
+            Hint::String => velt_common::std_hook!(any_text),
+            Hint::Default => velt_common::std_hook!(any_concat_plain),
         }
     }
 
@@ -97,12 +97,12 @@ impl Hint {
 /// The prelude functions whose `String(x)` of an `any` is the dynamic text (std code otherwise
 /// writes an `any` as `console.log` prints it).
 const TEXT_FNS: [&str; 6] = [
-    "__anyText",
-    "__anyString",
-    "__anyConcatText",
-    "__anyConcatPlain",
-    "__anyPrimText",
-    "__anyJoinSeen",
+    velt_common::std_hook!(any_text),
+    velt_common::std_hook!(any_string),
+    velt_common::std_hook!(any_concat_text),
+    velt_common::std_hook!(any_concat_plain),
+    velt_common::std_hook!(any_prim_text),
+    velt_common::std_hook!(any_join_seen),
 ];
 
 /// How a class instance is written.
@@ -219,7 +219,7 @@ impl FnCx<'_, '_> {
                 ..
             } => TEXT_FNS
                 .iter()
-                .chain(&["__anyJoin"])
+                .chain(&[velt_common::std_hook!(any_join)])
                 .any(|f| self.cx.prelude_fn(f) == Some(*d)),
             H::Block(b) => b.value.as_ref().is_some_and(|v| self.fresh_dynamic_text(v)),
             H::Match { arms, .. } => arms.iter().all(|a| self.fresh_dynamic_text(&a.body)),
@@ -250,7 +250,7 @@ impl FnCx<'_, '_> {
 
     /// The text of the class instance `read` (inside a text helper, whose `at` its stops
     /// report) as `m` says: `read[Symbol.toPrimitive](hint)`, or its `OrdinaryToPrimitive`
-    /// methods in turn (`__anyPrimTry(read.valueOf(), at) ?? __anyPrimText(read.toString(), at)`),
+    /// methods in turn (`anyPrimTry(read.valueOf(), at) ?? anyPrimText(read.toString(), at)`),
     /// the result written with `ToString`.
     fn text_method_call(&mut self, m: &TextMethod, read: ast::Expr, span: Span) -> hir::Expr {
         let at = || site_param(span);
@@ -267,7 +267,10 @@ impl FnCx<'_, '_> {
         let text = match m {
             TextMethod::Proxy => {
                 let lit = synth(ast::ExprKind::Lit(ast::Lit::Str("Proxy".into())), span);
-                call_fn("__anyTextUnsupported", vec![lit, at()])
+                call_fn(
+                    velt_common::std_hook!(any_text_unsupported),
+                    vec![lit, at()],
+                )
             }
             TextMethod::Record(f) => call_fn(f, vec![read, at()]),
             TextMethod::ToPrimitive(hint) => {
@@ -276,7 +279,7 @@ impl FnCx<'_, '_> {
                     .into_iter()
                     .collect();
                 let call = method_call(read, "[Symbol.toPrimitive]", args, span);
-                call_fn("__anyPrimText", vec![call, at()])
+                call_fn(velt_common::std_hook!(any_prim_text), vec![call, at()])
             }
             TextMethod::Ordinary { methods, inherited } => {
                 let mut parts = vec![];
@@ -284,14 +287,20 @@ impl FnCx<'_, '_> {
                 for (i, &(name, primitive)) in methods.iter().enumerate() {
                     let call = method_call(read.clone(), name, vec![], span);
                     if primitive || (i + 1 == methods.len() && !inherited) {
-                        parts.push(call_fn("__anyPrimText", vec![call, at()]));
+                        parts.push(call_fn(
+                            velt_common::std_hook!(any_prim_text),
+                            vec![call, at()],
+                        ));
                         ended = true;
                         break;
                     }
-                    parts.push(call_fn("__anyPrimTry", vec![call, at()]));
+                    parts.push(call_fn(
+                        velt_common::std_hook!(any_prim_try),
+                        vec![call, at()],
+                    ));
                 }
                 if !ended {
-                    parts.push(call_fn("__anyText", vec![read, at()]));
+                    parts.push(call_fn(velt_common::std_hook!(any_text), vec![read, at()]));
                 }
                 let mut parts = parts.into_iter().rev();
                 let Some(mut text) = parts.next() else {
@@ -321,8 +330,8 @@ impl FnCx<'_, '_> {
         // other values never pay for the test.
         if self.cx.objects.null_proto_records && self.cx.prelude_adt("Record") == Some(c) {
             return Some(TextMethod::Record(match hint {
-                Hint::String => "__anyRecordText",
-                Hint::Default => "__anyRecordConcat",
+                Hint::String => velt_common::std_hook!(any_record_text),
+                Hint::Default => velt_common::std_hook!(any_record_concat),
             }));
         }
         let n = self.cx.adt(c).map_or(0, |a| a.generics.len());
@@ -479,7 +488,7 @@ impl FnCx<'_, '_> {
     }
 
     /// `xs.join(sep)` of an array holding `any`, `unknown` or `object` values (`joins_dynamic`):
-    /// the prelude's `__anyJoin(xs, sep)`, which writes each element as `String(x)` writes it.
+    /// the hook `anyJoin(xs, sep)`, which writes each element as `String(x)` writes it.
     pub(crate) fn dynamic_list_join(
         &mut self,
         recv: hir::Expr,
@@ -495,13 +504,13 @@ impl FnCx<'_, '_> {
         self.with_temp("<list>", init, span, span, |lw, v| {
             let comma = || synth(ast::ExprKind::Lit(ast::Lit::Str(",".into())), span);
             let sep = args.first().cloned().unwrap_or_else(comma);
-            lw.text_helper_call("__anyJoin", vec![v.clone(), sep], span)
+            lw.text_helper_call(velt_common::std_hook!(any_join), vec![v.clone(), sep], span)
         })
     }
 
     /// Does `t` hold `any`, `unknown` or `object` values in its arrays or tuples (`any[]`,
     /// `object[][]`, `[any, number]`, also `any[] | null`)? Such a list is written as
-    /// JavaScript's `join` writes it (`__anyJoin`), each element as `String(x)` writes it, not
+    /// JavaScript's `join` writes it (`anyJoin`), each element as `String(x)` writes it, not
     /// as `console.log` prints it.
     pub(crate) fn holds_dynamic_elems(&mut self, t: TyId) -> bool {
         self.holds_dynamic_depth(t, 0)

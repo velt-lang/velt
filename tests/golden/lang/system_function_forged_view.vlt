@@ -3,13 +3,13 @@
 // a system function read or write outside the buffer: lowering checks the byte range against
 // the buffer's own length without the wrapping addition a huge offset or length would exploit,
 // so the call stops the program instead of corrupting memory.
-import { ArrayBuffer as AB, BufferView } from "velt:typed_array/core";
+// `ArrayBufferView` (a global type) is the class of every view.
 
 declare system function open(path: readonly u8[], oflag: i32, mode: u32): i32;
 declare system function pread(fd: i32, buf: u8[], offset: i64): isize;
 
-class Evil extends BufferView {
-  constructor(b: AB) {
+class Evil extends ArrayBufferView {
+  constructor(b: ArrayBuffer) {
     // A byte offset that wraps past the end of a 64-bit address.
     const off: usize = 0 - (16 as usize);
     super(b, off, 18);
@@ -21,6 +21,6 @@ function main() {
   const fd = open(name, 0, 0);
   const victim: u8[] = Buffer.alloc(64);
   victim.fill(9);
-  const e = new Evil(new AB(4));
+  const e = new Evil(new ArrayBuffer(4));
   console.log(pread(fd, e, 0));
 }

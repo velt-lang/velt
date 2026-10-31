@@ -1,0 +1,8 @@
+import type { Package } from "velt/package";
+
+// These goldens use the HTTP server written in Velt (packages/http-server).
+export const pkg: Package = {
+  name: "std-server-goldens",
+  version: "0.0.0",
+  dependencies: { "http-server": { path: "../../../../packages/http-server" } },
+};

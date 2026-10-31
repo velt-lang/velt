@@ -1,0 +1,20 @@
+// velt/lang/intrinsics (internal): `f64` operations that are one instruction. The public surface
+// is `Math` (std/prelude/math.vlt).
+
+/** The square root. */
+export declare intrinsic function sqrt(x: f64): f64;
+
+/** The largest whole number not above `x`. */
+export declare intrinsic function floor(x: f64): f64;
+
+/** The smallest whole number not below `x`. */
+export declare intrinsic function ceil(x: f64): f64;
+
+/** The nearest whole number, halves rounded up (towards +Infinity), as JavaScript's. */
+export declare intrinsic function round(x: f64): f64;
+
+/** `x` without its fraction (rounded towards 0). */
+export declare intrinsic function trunc(x: f64): f64;
+
+/** The absolute value. */
+export declare intrinsic function abs(x: f64): f64;

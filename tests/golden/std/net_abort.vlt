@@ -1,8 +1,8 @@
 // check: no leaks
 // Raw TCP streams: `abort` fails a waiting read (it does not read as the end of the stream),
 // and bytes go out in call order when a large write cannot finish at the call.
-import { channel } from "velt:channel";
-import { connect, listen } from "velt:net";
+import { channel } from "velt/sync";
+import { connect, listen } from "velt/net";
 
 async function main() {
   const server = await listen("127.0.0.1:0");

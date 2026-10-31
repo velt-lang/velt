@@ -1,0 +1,97 @@
+// velt/crypto (internal): SHA-256 (FIPS 180-4): the digest, and the portable rounds over `u32`
+// words for CPUs without SHA instructions.
+
+import { utf8Encode } from "velt/encoding/utf8";
+import { hexEncode } from "velt/encoding/hex";
+import { u32x4 } from "velt/simd";
+import {
+  BLOCK,
+  finalBlocks,
+  keyBlock,
+  loadWords,
+  wordsToBytes,
+  zeroWords,
+} from "velt/crypto/blocks";
+import { sha256Arm, sha256X86 } from "velt/crypto/sha256_simd";
+import { H256, K256 } from "velt/crypto/tables";
+
+/** SHA-256 digest (32 bytes) of `data`. */
+export function sha256(data: u8[]): u8[] {
+  return sha256Of([], 0, false, data);
+}
+
+/**
+ * SHA-256 of `data`, after a first block when `keyed`: `key` (at most a block) zero-padded and
+ * XORed with `pad`, as HMAC's K ^ ipad / K ^ opad, so nothing is joined.
+ */
+export function sha256Of(key: u8[], pad: u8, keyed: bool, data: u8[]): u8[] {
+  if (u32x4.hasShaArm()) {
+    return sha256Arm(key, pad, keyed, data);
+  }
+  if (u32x4.hasShaX86()) {
+    return sha256X86(key, pad, keyed, data);
+  }
+  const h = H256.slice();
+  const w = zeroWords(64);
+  let before: usize = 0;
+  if (keyed) {
+    sha256Block(h, w, keyBlock(key, pad), 0);
+    before = BLOCK;
+  }
+  const full = data.length - data.length % BLOCK;
+  for (let off: usize = 0; off < full; off += BLOCK) {
+    sha256Block(h, w, data, off);
+  }
+  const tail = finalBlocks(data, full, before);
+  for (let off: usize = 0; off < tail.length; off += BLOCK) {
+    sha256Block(h, w, tail, off);
+  }
+  return wordsToBytes(h);
+}
+
+/** Lowercase hex SHA-256 of the UTF-8 bytes of `s`. */
+export function sha256Hex(s: string): string {
+  return hexEncode(sha256(utf8Encode(s)));
+}
+
+function sha256Block(h: u32[], w: u32[], data: u8[], off: usize) {
+  loadWords(w, data, off);
+  for (let t: usize = 16; t < 64; t++) {
+    const x = w[t - 15];
+    const y = w[t - 2];
+    const s0 = ((x >>> 7) | (x << 25)) ^ ((x >>> 18) | (x << 14)) ^ (x >>> 3);
+    const s1 = ((y >>> 17) | (y << 15)) ^ ((y >>> 19) | (y << 13)) ^ (y >>> 10);
+    w[t] = w[t - 16] + s0 + w[t - 7] + s1;
+  }
+  let a = h[0];
+  let b = h[1];
+  let c = h[2];
+  let d = h[3];
+  let e = h[4];
+  let f = h[5];
+  let g = h[6];
+  let hh = h[7];
+  for (let t: usize = 0; t < 64; t++) {
+    const s1 = ((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7));
+    const ch = (e & f) ^ (~e & g);
+    const t1 = hh + s1 + ch + K256[t] + w[t];
+    const s0 = ((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10));
+    const maj = (a & b) ^ (a & c) ^ (b & c);
+    hh = g;
+    g = f;
+    f = e;
+    e = d + t1;
+    d = c;
+    c = b;
+    b = a;
+    a = t1 + s0 + maj;
+  }
+  h[0] = h[0] + a;
+  h[1] = h[1] + b;
+  h[2] = h[2] + c;
+  h[3] = h[3] + d;
+  h[4] = h[4] + e;
+  h[5] = h[5] + f;
+  h[6] = h[6] + g;
+  h[7] = h[7] + hh;
+}

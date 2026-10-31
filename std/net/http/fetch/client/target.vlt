@@ -1,0 +1,371 @@
+// velt/net/http (internal): a request's URL as the client uses it: its WHATWG
+// serialization (what `res.url` reports), where to connect, the `host` header and the
+// request-target.
+//
+// WHATWG URL parsing costs more than the rest of making a request. Most URLs a program fetches
+// are already in the form the parser serializes them to (`http://host:port/path?query`, a
+// lowercase ASCII host), so `target` first checks for that form, in one pass over the text, and
+// takes such a URL as it is; anything else goes through `velt/net/url`. The check accepts only what
+// it can tell the parser leaves unchanged: a lowercase scheme, a host of lowercase letters,
+// digits, `-` and `.` (no IDNA label, and a dotted-decimal IPv4 address if its last label is a
+// number), a port only when it is not the default one and has no leading zero, and a path and
+// query of bytes the parser neither percent-encodes nor rewrites, without dot segments.
+
+import { IoError } from "velt/io/error";
+import { URL } from "velt/net/url";
+
+/** An `http:` or `https:` URL without a fragment, taken apart for a request. */
+export class Target {
+  /** The WHATWG serialization. */
+  href: string;
+  https: bool;
+  /** The host to connect to and to check the certificate for (IPv6 in brackets). */
+  hostname: string;
+  port: i64;
+  /** The `host` header: the host, and the port unless it is the scheme's default. */
+  host: string;
+  /** The request-target: the path and the query. */
+  path: string;
+  /**
+   * The connections a request to this URL may share: `scheme://host[:port]`, the port only when
+   * it is not the scheme's default (as `host` has it), so one origin has one spelling.
+   */
+  origin: string;
+
+  constructor(
+    href: string,
+    https: bool,
+    hostname: string,
+    port: i64,
+    host: string,
+    path: string,
+    origin: string,
+  ) {
+    this.href = href;
+    this.https = https;
+    this.hostname = hostname;
+    this.port = port;
+    this.host = host;
+    this.path = path;
+    this.origin = origin;
+  }
+}
+
+/**
+ * `url` parsed as WHATWG URL (as Node's `fetch` does): `EINVAL` when it is not a URL, `ENOTSUP`
+ * when its scheme is not `http:` or `https:`.
+ */
+export function target(url: string): Target throws IoError {
+  const fast = canonical(url);
+  if (fast != null) {
+    return fast;
+  }
+  const u = URL.parse(url);
+  if (u == null) {
+    throw new IoError("EINVAL", `Invalid URL: ${url}`);
+  }
+  return ofUrl(u);
+}
+
+/** The target of a parsed URL (a redirect's `location`). */
+export function ofUrl(u: URL): Target throws IoError {
+  const protocol = u.protocol;
+  if (protocol != "http:" && protocol != "https:") {
+    throw new IoError(
+      "ENOTSUP",
+      `fetch supports http: and https: URLs, not ${protocol.slice(0, (protocol.length as i64) - 1)}`,
+    );
+  }
+  u.hash = "";
+  const https = protocol == "https:";
+  const port = u.port;
+  let n: i64 = https ? 443 : 80;
+  if (port.length > 0) {
+    n = 0;
+    for (let i: i64 = 0; i < (port.length as i64); i++) {
+      n = n * 10 + port.charCodeAt(i) - 48;
+    }
+  }
+  const host = u.host;
+  return new Target(
+    u.href,
+    https,
+    u.hostname,
+    n,
+    host,
+    `${u.pathname}${u.search}`,
+    `${protocol}//${host}`,
+  );
+}
+
+/** The target of `url` when the parser would keep it as it is, else null. */
+function canonical(url: string): Target | null {
+  const n = url.length as i64;
+  let start: i64 = 0;
+  let https = false;
+  if (url.startsWith("http://")) {
+    start = 7;
+  } else if (url.startsWith("https://")) {
+    start = 8;
+    https = true;
+  } else {
+    return null;
+  }
+  const hostEnd = hostLength(url, start);
+  if (hostEnd < 0) {
+    return null;
+  }
+  let i = hostEnd;
+  let port: i64 = https ? 443 : 80;
+  if (i < n && url.charCodeAt(i) == 58) {
+    let p: i64 = 0;
+    let digits: i64 = 0;
+    i += 1;
+    while (i < n && isDigit(url.charCodeAt(i)) && digits < 6) {
+      p = p * 10 + url.charCodeAt(i) - 48;
+      digits += 1;
+      i += 1;
+    }
+    const leadingZero = digits > 1 && url.charCodeAt(hostEnd + 1) == 48;
+    if (digits == 0 || digits > 5 || leadingZero || p > 65535 || p == port) {
+      return null;
+    }
+    port = p;
+  }
+  if (i >= n || url.charCodeAt(i) != 47 || !plainTail(url, i)) {
+    return null;
+  }
+  return new Target(
+    url,
+    https,
+    url.slice(start, hostEnd),
+    port,
+    url.slice(start, i),
+    url.slice(i),
+    url.slice(0, i),
+  );
+}
+
+function isDigit(c: i64): bool {
+  return c >= 48 && c <= 57;
+}
+
+/**
+ * Where the host starting at `url[start]` ends, when the parser keeps it as it is: non-empty
+ * dot-separated labels of `a-z`, `0-9` and `-`, none an IDNA `xn--` label; a host whose last
+ * label starts with a digit must be four canonical decimal numbers up to 255 (another form,
+ * `127.1` or `0x7f.0.0.1`, is an IPv4 address the parser rewrites). -1 otherwise.
+ */
+function hostLength(url: string, start: i64): i64 {
+  const n = url.length as i64;
+  let i = start;
+  let labels: i64 = 0;
+  let ipv4 = true;
+  while (true) {
+    const from = i;
+    let value: i64 = 0;
+    while (i < n) {
+      const c = url.charCodeAt(i);
+      if (isDigit(c)) {
+        value = value * 10 + c - 48;
+        if (value > 256) {
+          value = 256;
+        }
+      } else if ((c >= 97 && c <= 122) || c == 45) {
+        ipv4 = false;
+      } else {
+        break;
+      }
+      i += 1;
+    }
+    const len = i - from;
+    if (len == 0 || (len >= 4 && url.slice(from, from + 4) == "xn--")) {
+      return -1;
+    }
+    labels += 1;
+    ipv4 = ipv4 && value <= 255 && (len == 1 || url.charCodeAt(from) != 48);
+    if (i >= n || url.charCodeAt(i) != 46) {
+      const numeric = isDigit(url.charCodeAt(from));
+      return !numeric || (ipv4 && labels == 4) ? i : -1;
+    }
+    i += 1;
+  }
+}
+
+/**
+ * What each ASCII character is in a path or query the parser keeps: 0 one it rewrites (a
+ * control character, a space, `"`, `#`, `<`, `>`, `` ` ``, `{`, `}`, `^`, `'`, `\\`, `|`), 2 one
+ * that may start or end a dot segment (`/`, `?`, `%`), 1 any other.
+ */
+const TAIL: u8[] = [
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  1,
+  0,
+  0,
+  1,
+  2,
+  1,
+  0,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  2,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  0,
+  1,
+  0,
+  2,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  0,
+  1,
+  0,
+  1,
+  0,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  0,
+  0,
+  0,
+  1,
+  0,
+];
+
+/**
+ * Whether the path and query `url[at..]` (which starts with `/`) stay as they are: printable
+ * ASCII the parser does not percent-encode (`"`, `#`, `<`, `>`, `` ` ``, `{`, `}`, `^`, `'`),
+ * nor `\` or `|`, and no dot segment in the path (`.`, `..`, or one spelled `%2e`).
+ */
+function plainTail(url: string, at: i64): bool {
+  const n = url.length as i64;
+  let inPath = true;
+  let segment = at + 1;
+  for (let i = at; i < n; i++) {
+    const c = url.charCodeAt(i);
+    const kind = c < 128 ? TAIL[c] : 0;
+    if (kind == 0) {
+      return false;
+    }
+    if (kind == 1 || !inPath) {
+      continue;
+    }
+    if ((c == 47 || c == 63) && i > at) {
+      if (dotSegment(url, segment, i)) {
+        return false;
+      }
+      segment = i + 1;
+      inPath = c == 47;
+    } else if (c == 37 && i + 2 < n && url.charCodeAt(i + 1) == 50) {
+      const e = url.charCodeAt(i + 2) | 32;
+      if (e == 101) {
+        return false;
+      }
+    }
+  }
+  return !(inPath && dotSegment(url, segment, n));
+}
+
+function dotSegment(url: string, from: i64, to: i64): bool {
+  const len = to - from;
+  if (len == 1) {
+    return url.charCodeAt(from) == 46;
+  }
+  return len == 2 && url.charCodeAt(from) == 46 && url.charCodeAt(from + 1) == 46;
+}

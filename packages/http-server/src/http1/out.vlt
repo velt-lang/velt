@@ -1,0 +1,137 @@
+// http-server (internal): `Out`, an HTTP/1.1 connection's response bytes: every response to the
+// requests one read brought is encoded here, text without a copy in between, and leaves in one
+// write (`Http1Response.flush`). Also the encoding of a chunked body's framing.
+
+import { checkField } from "../fields";
+
+const CR: u8 = 13;
+const LF: u8 = 10;
+/// The response buffer a connection starts with.
+const INITIAL_OUT: i64 = 16384;
+
+/// The responses not yet written to the connection: `buf[0..length)`.
+export class Out {
+  buf: u8[] = Buffer.alloc(INITIAL_OUT as usize);
+  length: i64 = 0;
+
+  /// Room for `n` more bytes.
+  reserve(n: i64) {
+    if (this.length + n <= (this.buf.length as i64)) {
+      return;
+    }
+    let size = (this.buf.length as i64) * 2;
+    while (size < this.length + n) {
+      size *= 2;
+    }
+    const grown: u8[] = Buffer.alloc(size as usize);
+    grown.set(this.buf.slice(0, this.length), 0);
+    this.buf = grown;
+  }
+
+  /// The UTF-8 bytes of `s`.
+  text(s: string) {
+    this.textOf(s, Buffer.byteLength(s) as i64);
+  }
+
+  /// The UTF-8 bytes of `s`, `n` of them (`Buffer.byteLength(s)`).
+  textOf(s: string, n: i64) {
+    this.reserve(n);
+    this.buf.write(s, this.length as usize);
+    this.length += n;
+  }
+
+  /// The bytes of `b` (pass a field through a local: one argument, not two).
+  bytes(b: u8[]) {
+    const n = b.length as i64;
+    this.reserve(n);
+    this.buf.set(b, this.length as usize);
+    this.length += n;
+  }
+
+  /// The first `n` bytes of `b`.
+  bytesOf(b: u8[], n: i64) {
+    this.reserve(n);
+    b.copy(this.buf, this.length, 0, n);
+    this.length += n;
+  }
+
+  /// The bytes of `data`, a `Uint8Array`.
+  view(data: Uint8Array) {
+    const n = data.length as i64;
+    this.reserve(n);
+    for (let i = 0; i < data.length; i++) {
+      this.buf[this.length + (i as i64)] = data[i] as u8;
+    }
+    this.length += n;
+  }
+
+  /// One byte.
+  byte(c: u8) {
+    this.reserve(1);
+    this.buf[this.length] = c;
+    this.length++;
+  }
+
+  /// CR LF.
+  crlf() {
+    this.reserve(2);
+    this.buf[this.length] = CR;
+    this.buf[this.length + 1] = LF;
+    this.length += 2;
+  }
+
+  /// `n` in decimal.
+  number(n: i64) {
+    this.reserve(20);
+    const start = this.length;
+    let v = n;
+    do {
+      this.buf[this.length] = (48 + v % 10) as u8;
+      this.length++;
+      v = v / 10;
+    } while (v > 0);
+    this.reverse(start);
+  }
+
+  /// A chunk's size line, before `n` bytes of data: `n` in hex, CR LF.
+  chunkSize(n: i64) {
+    this.reserve(20);
+    const start = this.length;
+    let v = n;
+    do {
+      const d = v % 16;
+      this.buf[this.length] = (d < 10 ? 48 + d : 87 + d) as u8;
+      this.length++;
+      v = v / 16;
+    } while (v > 0);
+    this.reverse(start);
+    this.buf[this.length] = CR;
+    this.buf[this.length + 1] = LF;
+    this.length += 2;
+  }
+
+  /// Header `name: value` and its CR LF, checked as `HttpResponse.header` checks them.
+  field(name: string, value: string) {
+    const start = this.length;
+    this.text(name);
+    const nameEnd = this.length;
+    this.text(": ");
+    const valueStart = this.length;
+    this.text(value);
+    checkField(this.buf, start, nameEnd, valueStart, this.length);
+    this.text("\r\n");
+  }
+
+  /// Reverses the bytes written since `start` (digits come least significant first).
+  private reverse(start: i64) {
+    let i = start;
+    let j = this.length - 1;
+    while (i < j) {
+      const t = this.buf[i];
+      this.buf[i] = this.buf[j];
+      this.buf[j] = t;
+      i++;
+      j--;
+    }
+  }
+}

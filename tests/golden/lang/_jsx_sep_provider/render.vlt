@@ -4,7 +4,7 @@
 // `<!---->` placeholder for `true`, `false` and `null` children. Elements are lists of parts;
 // components run when the renderer reaches them.
 
-import { escapeHtml } from "velt:html";
+import { escapeHtml } from "velt/text";
 
 export const SEPARATOR = "<!--t-->";
 export const PLACEHOLDER = "<!---->";

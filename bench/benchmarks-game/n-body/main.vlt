@@ -3,7 +3,7 @@
 //
 // Idiomatic Velt, written the way a TypeScript developer would: a `Body` class, an array of
 // bodies and plain f64 arithmetic. Follows the Node.js #6 program (Isaac Gouy, Andrey Filatkin).
-import { argv } from "velt:process";
+import { argv } from "velt/process";
 
 const SOLAR_MASS: f64 = 4.0 * Math.PI * Math.PI;
 const DAYS_PER_YEAR: f64 = 365.24;

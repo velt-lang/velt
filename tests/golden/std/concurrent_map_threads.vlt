@@ -1,8 +1,8 @@
-// velt:collections/concurrent_map on worker threads: writers adding their own keys, a deleter
+// velt/collections on worker threads: writers adding their own keys, a deleter
 // removing a known set while they run, and readers checking that every key they find has its
 // own value. At the end every key is where it should be.
 
-import { ConcurrentMap } from "velt:collections/concurrent_map";
+import { ConcurrentMap } from "velt/collections";
 
 const N: u64 = 40000;
 

@@ -1,6 +1,4 @@
-// check: unfreed blocks at most 4
-// (The 4 blocks: `velt:sync/epoch`'s registry of thread slots, made at the first load's section
-// and kept until the program exits.)
+// check: no leaks
 // What an `Atomic` of a `shared` value owns is freed when nothing replaces it: loads, failed
 // compare-and-swaps (with `expected` a variable, a temporary and `null`), an exchange of null
 // for null, and the `Atomic` dropped as a local, as a class field and in an array.

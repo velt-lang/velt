@@ -59,19 +59,3 @@ fn udp_send_publishes_first() {
         super::udp::velt_rt_udp_send_to(Key::NULL, &bytes, &addr)
     });
 }
-
-#[test]
-fn a_response_body_chunk_publishes_first() {
-    use crate::http::stream::*;
-    let closed = Key::NULL;
-    let bytes = VeltBytes::from_vec(b"x".to_vec());
-    // SAFETY: valid values; the writer is never open.
-    unsafe {
-        publishes_now("a body chunk", || {
-            velt_rt_http_resp_stream_write_bytes(closed, &bytes);
-        });
-        publishes("flush", || velt_rt_http_resp_stream_flush(closed));
-        publishes("close", || velt_rt_http_resp_stream_close(closed));
-        publishes_now("abort", || velt_rt_http_resp_stream_abort(closed));
-    }
-}

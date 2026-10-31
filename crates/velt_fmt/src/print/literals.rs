@@ -93,7 +93,7 @@ impl<'a> Printer<'a> {
                         self.fn_decl(&f, "")
                     }
                     // `get name() { body }` / `set name(v) { body }`, which the parser gives as
-                    // a call of `__object_get` / `__object_set` (callee span: the keyword) of
+                    // a call of `objectGet` / `objectSet` (callee span: the keyword) of
                     // the accessor as an arrow.
                     ExprKind::Call { callee, args, .. } if self.accessor_kw(callee).is_some() => {
                         let kw = self.accessor_kw(callee).expect("ICE: checked above");
@@ -126,7 +126,7 @@ impl<'a> Printer<'a> {
             ObjectProp::Shorthand(key) => self.prop_key(key),
             ObjectProp::Spread(value) => match self.computed_entry(value) {
                 // `[key]: value`, which the parser gives as a spread of a call of
-                // `__computed_key` whose callee's span is the bracketed key.
+                // `computedKey` whose callee's span is the bracketed key.
                 Some((key, v)) => {
                     let key = cat!["[", self.expr(key), "]"];
                     self.property(key, v)
@@ -137,7 +137,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    /// `"get"` / `"set"` if `callee` is the `__object_get` / `__object_set` of an accessor
+    /// `"get"` / `"set"` if `callee` is the `objectGet` / `objectSet` of an accessor
     /// (its span is the keyword, not a written name).
     fn accessor_kw(&self, callee: &Expr) -> Option<&'static str> {
         let ExprKind::Ident(f) = &callee.kind else {
@@ -152,7 +152,7 @@ impl<'a> Printer<'a> {
     }
 
     /// The key and value of `[key]: value` (a computed key known only at run time), if `e` is
-    /// the call the parser writes it as (not a written `__computed_key(...)`).
+    /// the call the parser writes it as (not a written `computedKey(...)`).
     fn computed_entry<'e>(&self, e: &'e Expr) -> Option<(&'e Expr, &'e Expr)> {
         let ExprKind::Call { callee, args, .. } = &e.kind else {
             return None;

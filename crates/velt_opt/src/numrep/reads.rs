@@ -109,7 +109,7 @@ impl Reads<'_> {
         crate::visit::stmt_operands(s, &mut |op| self.push(op, at, false, None, IntUse::No));
     }
 
-    /// Reads in a terminator: ToInt32 and `__floatIndex` take integers and cannot see `-0`;
+    /// Reads in a terminator: ToInt32 and `floatIndex` take integers and cannot see `-0`;
     /// other calls and returns can.
     pub fn terminator(&mut self, env: &Env, t: &Terminator, at: (usize, usize)) {
         let int = match t {

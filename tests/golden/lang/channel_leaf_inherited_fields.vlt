@@ -2,7 +2,7 @@
 // A class nothing extends, whose counted fields all come from its base classes, crosses a
 // `Channel<Leaf>` with those fields (#1057): what the sender still shares is copied for the
 // receiver, never shared between the tasks.
-import { channel, Channel, ChannelClosed } from "velt:channel";
+import { channel, Channel, ChannelClosed } from "velt/sync";
 
 class Base {
   xs: number[];

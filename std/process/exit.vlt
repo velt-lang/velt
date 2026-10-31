@@ -1,0 +1,6 @@
+// velt/process (internal): `exit`, ending the process.
+
+/** Flushes stdout/stderr and ends the process with `code` (same as `process.exit`). */
+export function exit(code: i32) {
+  process.exit(code);
+}

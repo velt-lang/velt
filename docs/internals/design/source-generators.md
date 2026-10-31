@@ -1,0 +1,896 @@
+# Design: source generators (compile-time code written in Velt, for any library)
+
+Status: in progress on branch `source-generators`: steps 1–6 of "Order of work" are built
+("As built so far" at the end). Owners: `velt_syntax` (the declaration), `velt_sema` (demand, the type model, checking
+generated code, the access rule), `velt_vir` (instantiating a generated function), `veltc` (the
+generation loop, the generator host, caching), std (`velt/generate`, and each generator).
+Related: [the JSON engine](json-engine.md) (whose steps 9–10, decorators, become generator input),
+[standard library checked on demand](lazy-std.md), [hot reload](hot-reload.md) (the JIT host
+reused here), [compiling std's Velt code once](std-object.md) (the build cache).
+
+## Problem
+
+`JSON.parse<T>` and `JSON.stringify` compile to one decoder or writer per type. The code that
+builds them is Rust inside the compiler: `crates/velt_sema/src/json/` (about 1,150 lines: which
+types have a JSON form, propagated through generic code) and `crates/velt_vir/src/lower/json/`
+(about 4,350 lines of VIR built by hand). That code has powers no library has:
+
+- it writes private fields and builds class instances without running a constructor
+  (`alloc_object_raw` in `object.rs`);
+- it dispatches over every subclass in the program (`json_descendants`), and over typed proxies
+  and `any` values through runtime tags;
+- sema infers a "has a JSON form" requirement on type parameters and reports a missing one at
+  the concrete call site (`json::check_json_types`);
+- lowering calls std's reader and writer by hard-coded qualified names
+  (`"std/encoding/json/reader::Reader"`, `PRELUDE_JSON_VALUE`), and lazy std has a special case
+  so that those modules are checked only when an intrinsic is instantiated (`JSON_GLUE`,
+  `body/lazy_std_json.rs`).
+
+The same std-only scheme generates, per type, structural equality (`Intrinsic::Eq`, `DeepEq`),
+`structuredClone` (`Clone`), `inspect` and `console.log` of objects (`glue/format*.rs`), database
+rows (`jsonParseCursor`, `ReadRows`, `ReadRow`) and parameter binding
+(`dbBind`, `json/db_bind.rs`): about 6,500 lines of glue in `lower/glue/` besides
+JSON.
+
+So a third-party JSON, MessagePack, CBOR, ORM, validation or deep-equal library cannot match std:
+it has no way to see a type's fields at compile time, and no way to produce code per type. The
+best it can do is ask its users to write codecs by hand. And every new format std wants needs
+more Rust in the compiler.
+
+The decision (the owner's, on this branch's task): do it the way .NET does with source
+generators. Per-type code generation becomes a library feature, written in Velt, and std's JSON
+is the first library to use it.
+
+## Goals
+
+1. A library written in Velt can generate code per type at compile time, with what std's JSON
+   needs: the fields (optional, private, readonly), unions and their discriminants, classes and
+   their subclasses, enums, arrays, maps, records, tuples, and decorators.
+2. No annotations for the common case: `JSON.stringify(user)` and `JSON.parse(text) as User`
+   keep working as in TypeScript. Generation is driven by use.
+3. One documented rule replaces the privileges: code generated *for* a type has that type's
+   access. Std's generators use nothing a package cannot.
+4. Generated code is as fast as today's glue (performance is a published claim of the JSON
+   engine), and compile time does not regress for programs that use no generator.
+5. Generated code is ordinary Velt: type-checked, inspectable, and debuggable.
+
+Non-goals: macros that rewrite user syntax; generators that add declarations users call by name
+(.NET's `partial` method stubs, Rust's attribute macros); runtime reflection.
+
+## Design
+
+### 1. A generated function
+
+A library declares a generic function whose body is generated:
+
+```ts ignore
+// velt/encoding/json/index.vlt
+import { StringBuilder } from "velt/string_builder";
+import { writeString, writeF64 } from "./writer";
+
+/** Appends the JSON text of `value` (one function per type, generated). */
+export declare generated("./generate/write") function write<T>(out: StringBuilder, value: T): void;
+```
+
+- `declare generated("<specifier>") function` follows `declare system function`: a declaration
+  without a body, here generic. The specifier names the **generator module**, resolved like an
+  import of the declaring module. It is not loaded into the program; it is loaded into the
+  generator's own build (§5).
+- The signature is the contract. Callers are checked against it like any generic function.
+  Its return type must be written.
+- When the program instantiates the function with concrete types (`write<User>`, directly or
+  through generic code: `JSON.stringify<T>` calls `write<T>`), the compiler asks the generator
+  for the body of that instance (§3), checks it, and uses it for that instance.
+- The function stays an ordinary function for everything else: a value of it, a call through a
+  type parameter, a `throws` clause.
+
+The public API stays as it is. `JSON.stringify<T>(value: T): string` is a written function in
+std that makes a builder, calls `write<T>` and returns the text. Users never see the generated
+function.
+
+### 2. Generators are Velt functions
+
+The generator module exports a function with the same name as the declaration. It is given a
+**request** and writes to an **output**:
+
+```ts ignore
+// velt/encoding/json/generate/write.vlt
+import { InstanceRequest, Output, Type } from "velt/generate";
+import { jsonQuote } from "../quote";   // the key as JSON text, computed at compile time
+
+export function write(req: InstanceRequest, out: Output): void {
+  const t = req.model.type(req.args[0]);
+  switch (t.kind) {
+    case "number":
+      out.body(`writeF64(out, ${req.params[1]} as f64);`);
+      break;
+    case "object":
+      out.line(`out.append("{");`);
+      let first = true;
+      for (const f of t.fields) {
+        if (f.isEsPrivate) continue;
+        const key = (first ? "" : ",") + jsonQuote(f.name) + ":";   // literal key text
+        out.line(`out.append(${out.literal(key)});`);
+        out.line(`${out.instance("write", [f.type])}(out, value.${f.name});`);
+        first = false;
+      }
+      out.line(`out.append("}");`);
+      break;
+    // …
+  }
+}
+```
+
+- `InstanceRequest` carries: the function's name, the instance's type arguments (as ids into the model),
+  the names of the parameters, and the **type model** (§4).
+- `Output.body(code)` / `line(code)` write the body, `literal(s)` spells a string as a Velt
+  string literal; `helper(code)` adds a top-level function or
+  constant next to it (named by `out.fresh("name")`, so two instances never clash).
+- `Output.instance(fn, args)` returns the name of another instance to call, of this or another
+  generated function of the same generator module, and queues it. That is how a generator
+  recurses into field types without a round trip through the compiler (§6).
+- `Output.typeName(id)` returns a type expression for a model type, usable in the generated code
+  even where the type is not exported or has no name (`{ a: number }[]`, a local class).
+- `Output.error(message, at)` / `warning` report a diagnostic at a span the model holds (a field,
+  a type's declaration, the call site), with notes. This is how a generator says "`User.save` is a
+  function; functions have no JSON form" at the user's code.
+- The compiler writes the function's header itself (name, the signature with the type arguments
+  substituted), so the generated code cannot get the signature wrong; the generator writes the
+  body.
+
+### 3. Demand: which instances to generate
+
+Sema already carries requirements of type parameters through generic code to concrete call
+sites, with dynamic dispatch and closures (`inst_sites`, `dispatch::Rounds`; used by
+`json::check_json_types`, `record_keys`, `type_level::instances::reach`). A new pass,
+`generated::demand`, runs the same propagation for calls of generated functions: a call
+`write<T>` in `stringify<T>` makes `stringify` need `write<T>`; a call `JSON.stringify<User>`
+then needs `write<User>`, which is concrete: an instance to generate. The concrete instances,
+with the span of the call that first reached each (for diagnostics), are the **demand**.
+
+Why demand-driven, and not "generate for every type a program declares" (STJ's
+`[JsonSerializable(typeof(T))]` contexts, Rust's `#[derive]`): TypeScript code doesn't annotate
+types for JSON, and Velt promises that `JSON.parse(text) as User` just works. Generating for
+every type would cost compile time for types never serialized and need either annotations or a
+generator run per declared type. Demand is what today's intrinsics already compute.
+
+### 4. The type model
+
+`velt/generate` defines the model as Velt classes. It is a read-only description of the types a
+request can reach, computed by sema and sent to the generator. Types refer to each other by
+index (`TypeId`, a `u32`), so recursive types are a graph, not infinite trees.
+
+```ts ignore
+export type TypeId = u32;
+export type Kind =
+  | "number" | "bigint" | "boolean" | "string" | "null" | "undefined" | "void" | "never"
+  | "literal" | "enum" | "array" | "tuple" | "option" | "union"
+  | "object" | "class" | "struct" | "interface"
+  | "map" | "set" | "record" | "date" | "function" | "any" | "unknown" | "opaque";
+
+export class Type {
+  id: TypeId;
+  kind: Kind;
+  /** As the user would write it (`User`, `Map<string, User[]>`): for messages. */
+  display: string;
+  /** Qualified name of a declared type (`velt/encoding/json::JsonValue`), "" otherwise. */
+  qualifiedName: string;
+  /** "f64", "i32", "u8", … for numbers. */
+  repr: string;
+  /** Element, option payload, map key and value, …: in a fixed order per kind. */
+  args: TypeId[];
+  /** Union arms, in declaration order. */
+  arms: TypeId[];
+  /** The discriminant of a discriminated union: the field name, and per arm its literal value. */
+  discriminant: Discriminant | null;
+  /** Fields of objects, classes and structs, own and inherited, in JavaScript's order. */
+  fields: Field[];
+  /** For a class: its base class, and every class in the program that extends it (the program
+   *  is compiled as a whole, so the list is closed). */
+  base: TypeId | null;
+  subclasses: TypeId[];
+  /** Methods by name that a generator commonly looks for (`toJSON`, `[util.inspect.custom]`): name, number of
+   *  parameters, return type. Not bodies. */
+  methods: Method[];
+  /** The constructor's visibility, and whether the class may be built without it (§7). */
+  constructible: "public" | "protected" | "private" | "none";
+  /** Enum members: name and value (number or string). Literal value of a literal type. */
+  members: EnumMember[];
+  literal: string;
+  /** Decorators on the declaration (§8). */
+  decorators: Decorator[];
+  /** Where it is declared, for diagnostics. */
+  at: SpanRef;
+}
+
+export class Field {
+  name: string;
+  type: TypeId;
+  optional: boolean;      // `x?: T`
+  readonly: boolean;
+  visibility: "public" | "protected" | "private";
+  isEsPrivate: boolean;   // `#x`
+  isGetter: boolean;      // an accessor of an object literal type
+  hasDefault: boolean;    // a field initializer
+  decorators: Decorator[];
+  at: SpanRef;
+}
+```
+
+- The model is **closed**: it holds every type reachable from the request's type arguments
+  through fields, arms, elements, bases and subclasses. A generator never needs another round
+  trip to learn about a type.
+- Kinds hide what a library has no business depending on: layouts, boxing, whether a class is
+  counted, VIR types. Std types with no structure the generator may see (a `Mutex`, a socket)
+  are `"opaque"` with their `qualifiedName`, so a generator can still special-case them
+  (`JsonValue`), or reject them with a message.
+- The model is versioned with `velt/generate`: fields are only added. It is a public API, held to
+  the same compatibility rules as the rest of std.
+- It is also how a generator learns about **decorators**: data, never code (§8).
+
+### 5. Generators are built and run by the compiler
+
+**Packaging.** A generator is a module in a package (or in std) like any other; nothing in the
+manifest declares it. The declaration `declare generated("./generate/write")` is what makes it a
+generator. Its dependencies are the package's.
+
+**Its own build.** The compiler builds the generator module, its imports and std as a separate
+program (the *generator build*), whose `main` is std's `velt/generate/host` loop over the
+generators the program needs. The generator build is ordinary Velt, compiled by the same
+compiler, so generator authors get the whole language and std, with three restrictions that make
+generators pure functions of their input (needed for caching, §9, and for security, §11):
+
+- no I/O: the files, the network, the environment, child processes, standard input;
+- no code outside Velt: no `declare function` externs of its own, no native packages;
+- no clock and no randomness.
+
+These are checked when the generator build is compiled, from what its generators can reach (the
+runtime functions and externs reachable from the functions the host registers, as `velt test`
+decides whether a test reaches outside, `driver/outside.rs`), with the host's own plumbing in
+`velt/generate` left out: "a source generator cannot reach the clock: it runs at compile time and
+gets everything from its request". Checking reachability rather than imports catches a std module
+that reads the clock as surely as an import of `velt/fs`, and needs no list of modules to keep up
+to date. (An earlier draft gave the clock and randomness fixed values; rejecting them is simpler
+and keeps generators obviously deterministic.)
+
+**Running it.** The generator build is compiled once into an executable kept in the build cache
+(with a build stamp of its own, so a host whose generators did not change is neither compiled
+nor linked again) and run as a child process; without a build cache it is JIT-compiled and run
+by `velt __generate-host`, as `velt dev --host` runs a program ([hot-reload.md](hot-reload.md)).
+The compiler writes requests to its stdin and reads results from its stdout. One host is built
+per directory its generator modules are imported from: its root sits beside the declaring module
+and imports the generator module by the specifier the declaration wrote, so a relative path, a
+package's module and a std module (imported as `velt/…`) resolve as imports of the declaring
+module do, with the program's packages. A child process rather than the compiler's own:
+
+- a crash, a stack overflow, an uncaught `throw`, an endless loop (a timeout) or
+  `process.exit` ends the host, not the compiler, which reports it as a diagnostic at the
+  generator's declaration, with the host's stderr;
+- the runtime keeps process-wide state (the allocator, stdout buffers, the panic hook, the tokio
+  runtime) that the compiler must not share;
+- the process can be sandboxed by the OS later (§11), and runs in parallel with the compiler.
+
+In `velt dev` the host stays up between reloads, so its JIT cost is paid once per session.
+
+**Bootstrapping.** A generator build that itself instantiates generated functions (a generator
+that calls `JSON.stringify`, `console.log` of an object once `inspect` is a generator) needs
+their generators first: the compiler builds those generator builds first. A generator that needs
+itself, directly or through another, is a compile error that lists the cycle. Std's generators
+avoid generated functions in their own code (they build strings with `StringBuilder` and read the
+model by its methods), so std has no cycle.
+
+### 6. Rounds and the fixed point
+
+Generated code is Velt, so it must be type-checked like the rest of the program, and it can
+demand more instances. Sema checks a program as a whole, with passes after body checking that
+need every body (ownership, throws inference, the instance propagation itself). And demand
+depends on the whole program: an instance demanded inside generic code is known only once its
+callers are. So generation runs between whole-program checks, in **rounds**, as sema already
+re-checks a program when the throws sets of function types grow (`check_timed`'s rounds):
+
+1. The driver loads the program and checks it. Generated functions have no bodies yet; calls to
+   them are checked against their signatures. Sema returns the demand instead of a program when
+   an instance has no generated body.
+2. The driver groups the demand by generator, runs the generators (each request queues the
+   further instances it asks for with `Output.instance`, so a nested type is generated in the
+   same host session), and gets one generated module per declaring module.
+3. The driver checks the program again with the generated modules added. Sema binds each
+   instance to its generated function (`hir::Program::generated`). Demand that is still missing
+   (generated code called another library's generated function without `Output.instance`) starts
+   another round.
+4. When no demand is missing, lowering builds the program; an instance of a generated function
+   is built from its generated definition.
+
+**Termination.** Every instance's type arguments are types of the model, and the model is
+finite: sema already rejects instantiation cycles that would grow types without bound
+(`instantiation_cycles`). So the set of instances is finite and the queue drains. The number of
+rounds is bounded anyway (8, like `FN_SITE_ROUNDS`), with an error that names the instances
+still missing after the last one.
+
+**Cost.** A program that uses no generated function pays nothing: no demand, one check, as
+today. A program that does pays a second check, plus the generators. §9 removes both in the
+common case.
+
+### 7. Access: code generated for a type has that type's access
+
+One rule replaces the special cases. In a generated module, for every type in the request's
+model:
+
+- its `private` fields and methods may be read and written, and its private constructor called
+  (as code in the class could);
+- a class may be built **without running its constructor**, with the sanctioned form
+  `__construct<T>({ …fields })`. Every field without an initializer must be given; a field with
+  an initializer that is left out gets the initializer's value, an optional one is absent.
+  `__construct` means nothing outside generated code, and in it only for the types of its
+  requests.
+
+This is what .NET's partial classes give a generator, and what today's JSON glue does. A library
+does not get access to a type the program never hands it: the model of a request holds only
+types reachable from the instance's type arguments. A user who wants a type kept out of a
+generator's reach declares the field `#private`, or the class with a private constructor; the
+model reports both (`isEsPrivate`, `constructible`), and std's JSON generator keeps today's
+rules (ES private fields are skipped, a class with a private constructor is written but not
+decoded).
+
+Generated modules are never std modules (`SourceModule::is_std` is false even for std's
+generators).
+
+The access is granted per generated module: its code has the access of every declared class and
+struct that its requests' models reach (`GenModule::access`). ES private fields (`#x`) are not
+included: as in JavaScript, nothing outside the class sees them, and no std generator needs them
+(Node's `JSON.stringify`, `util.inspect`, `assert.deepStrictEqual` and `structuredClone` all skip
+them). The sanctioned form is `__construct<T>({ … })`, a name only generated code resolves (as
+`__qualified` is), so that generated code needs no import. They cannot call compiler intrinsics. What std's generated code needs is a public,
+documented API that a package can call too: the JSON reader and writer (json-engine.md step 12
+makes them public anyway), and a small `velt/generate/runtime` for what only the compiler knows
+at run time (a typed proxy's tag, an object's class for subclass dispatch, the cycle guard of
+the writer). That is the test of "std stops being special": std's generators compile with the
+same powers as any package's.
+
+**Scope.** A generated module is checked in the scope of the module that declares the generated
+function: its imports and top-level declarations, exported or not, are visible, as if the
+generated code were appended to it. It cannot import: what its code needs, the declaring module
+imports (a generated module is added after the program is loaded, and the loader is not run
+again for it). The types `Output.typeName` returns are handles the compiler resolves
+(`__type<"<instance>", <index>>`, "As built so far"), so no import of the user's types is needed,
+and a type no name reaches can be written too.
+
+### 8. Decorators are generator input
+
+The JSON engine's decorators (json-engine.md steps 9–10) need TypeScript's syntax (`@json.name`)
+in the parser and sema; that design stands with one change: a decorator is declared by a library
+next to its generator, not by a `@decorator` tag that only std may use.
+
+```ts ignore
+// velt/encoding/json/index.vlt
+export declare decorator function name(key: string): FieldDecorator;
+```
+
+`declare decorator function` declares a decorator: a name, and the constant arguments it takes
+(literals, arrays and object literals of them, enum members, type names). Sema checks uses of it
+against the declaration and records them, with their arguments as constants, in the model
+(`Type.decorators`, `Field.decorators`: name, arguments as a constant tree, span). Nothing runs
+at run time and the decorated program pays nothing. A generator validates what the declaration
+cannot ("two fields with the same JSON name after `@json.naming`") and reports it with
+`Output.error` at the decorator's span.
+
+### 9. Caching
+
+A generator is a pure function of its request (§5). So its output can be cached by content, in
+the build cache (`velt_build_cache`, kind `generated`):
+
+- key: the toolchain version, the content hash of the generator build (the generator module and
+  everything it imports), and the request: function name, type arguments and the part of the
+  model reachable from them, serialized in a canonical order without file positions (spans are
+  sent separately and mapped back, so moving a type in its file does not miss the cache);
+- value: the generated body, its helpers, and the further instances it asked for (each looked up
+  the same way).
+
+Second, the driver remembers per program (keyed by the root module's path and the build
+options) which generated modules the last build used, and offers them to the first check. When
+the first check's demand is covered by them, there is one check, as for a program without
+generators. A stale offered module (a renamed type) is dropped, not reported: the demand then
+runs a second round as usual.
+
+So the steady state (an edit that changes no serialized type) costs one check and no generator
+run. An edit to a serialized type costs one generator request for that type, from the cache for
+the others.
+
+The compiled generator build is cached too: as an executable in the build cache (`put_file`),
+once the JIT host's cost shows in measurements (each generator build is compiled once per
+toolchain and generator version, and linked once).
+
+### 10. Diagnostics and inspecting generated code
+
+Generated modules are real source files in the session's source map, with paths such as
+`<generated>/velt/encoding/json/index/write.vlt`, so every diagnostic, panic location, stack
+trace and debugger line in generated code points at real text.
+
+- An error the generator reports (`Output.error`) is the user's error: it is shown at the span
+  the generator chose, usually the user's field or type.
+- An error in generated code (it does not type-check) is a bug in the generator. It is reported at
+  the call site that demanded the instance, as `the code generated for write<User> by
+  velt/encoding/json does not compile`, with a note giving the error at its line in the
+  generated file and a note naming the generator module.
+- `velt build --emit-generated <dir>` writes every generated module to disk; the editor's "Show
+  generated source" (an LSP command on a call of a generated function) opens the module the
+  instance came from. The editor gets generated modules from the cache, so analysis never waits
+  for a generator run (a missing one shows the call as checked against the signature only).
+
+### 11. Security: running package code at compile time
+
+Running a dependency's code while compiling is what Rust's build scripts and procedural macros,
+.NET's analyzers and generators, and npm's install scripts do; it is a known supply-chain risk.
+Velt's generators are narrower than all of those:
+
+- they get no I/O: no file, network, process, environment or native code (§5). This is enforced
+  when the generator build is compiled, from the module graph, not by a runtime sandbox that a
+  bug could open;
+- they run in a separate process, which a later step confines with the OS's sandbox (seccomp on
+  Linux, a sandbox profile on macOS, a job object with restricted tokens on Windows) for defence
+  in depth;
+- their output is source code that the compiler checks like any other: it cannot do anything a
+  library's ordinary code could not, except the access of §7, which is limited to types the
+  program hands it;
+- `velt build --no-generators` makes demand an error that lists the generators that would run,
+  for audits.
+
+### 12. Performance: generated Velt must compile to code as good as today's glue
+
+The generated code calls the same std code today's glue calls (the Velt reader and writer of
+json-engine.md step 0), so what changes is how the per-type part is written: Velt source instead
+of VIR built in Rust. What keeps it as fast:
+
+- **Literal key text.** A generator writes each object's constant parts as one string literal
+  (`out.append(",\"name\":")`), which the string builder appends inline (string-building.md).
+- **Key matching.** json-engine.md step 1's length switch and word compares are written as Velt
+  over the reader's borrowed key bytes (`key.length == 4 && key.u32At(0) == 0x656d616e`); the
+  generator computes the constants. A switch on an integer and loads from a byte view are
+  ordinary code that both backends compile without calls.
+- **SIMD scanning** stays in the reader, which generated code calls.
+- **Inlining.** Generated functions are ordinary functions: LLVM inlines small ones into their
+  callers, as today's glue is inlined. A gap found here (a bounds check not removed, a copy of a
+  builder, an inlining threshold) is fixed in the compiler, where it speeds up every program,
+  as json-engine.md's rule asks.
+
+### Acceptance criteria
+
+The port of each operation is merged only when, against `main` at its merge base:
+
+- **run time:** instructions retired (cachegrind on Linux, `/usr/bin/time -l` on macOS), at most
+  3% worse per row, for `bench/json/run.sh` (`stringify`, `parse_typed`, `parse_union`), the JSON
+  corpora (`bench/json/corpora/run.sh`), `bench/typical` and the web server benchmark; debug
+  builds measured too (generated code is compiled into each program, as the engine is);
+- **compile time:** hello world unchanged (it has no demand; measured by instructions retired of
+  `velt build`); a JSON-heavy program (`bench/json/stringify.vlt`, `parse_union.vlt`) at most 10%
+  slower to build cold and at most 3% warm (the cache hit path), with `--timings` showing the
+  rounds and the generator host separately;
+- **behaviour:** every JSON golden and the Node-differential fuzz (`bench/json/fuzz/run.sh`) pass
+  unchanged; error messages and paths stay the same.
+
+## Migration
+
+| Step | What | Removes |
+|---|---|---|
+| 1 | `declare generated`, demand, rounds, the host, the model, `Output`, a test generator; goldens | — |
+| 2 | Caching of generator output; the offered modules; `--emit-generated`; `--timings` rows | — |
+| 3 | The access rule and `construct<T>` | — |
+| 4 | `JSON.stringify` as a generator in `velt/encoding/json` (with `velt/generate/runtime` for proxies, `any` and subclass dispatch) | `lower/json/write.rs`, `dynamic.rs`, `literal.rs`, the stringify half of `sema/json`, `JSON_GLUE`'s writer |
+| 5 | `JSON.parse<T>`, then `JSON.parse` of rows and cursors (`velt/db`) and `dbBind` | the rest of `lower/json/`, `sema/json/`, `JSON_GLUE`, `lazy_std_json.rs`, the intrinsics |
+| 6 | Decorators (json-engine.md steps 9–10, declared with `declare decorator function`) | — |
+| 7 | `deepEqual`/`toEqual` (`Eq`, `DeepEq`), `structuredClone` (`Clone`), `inspect` and `console.log` of objects | `glue/eq*.rs`, `clone.rs`, `format*.rs` |
+
+What stays in the compiler: the operators of the language on its built-in types. `===`,
+`Object.is`, SameValueZero for `Map` keys (`Same`, `SameValue`, `KeyEq`, `IncludesEq`) and
+hashing (`Hash`) compare objects by identity and never walk a user type's fields; they are
+`===`, not a library. The line: an operation that walks the structure of user types is a
+generator; an operator of the language is the compiler's.
+
+Each step keeps its golden tests unchanged and meets the acceptance criteria above. The Rust it
+replaces is deleted in the same pull request.
+
+## Alternatives considered
+
+**.NET source generators** (the model). Roslyn runs generators in the compiler process, on the
+syntax trees and the semantic model, and adds source files to the compilation; incremental
+generators cache per pipeline step. Taken: generators are code in the language, output is
+source, type-checked with the program, inspectable; partial classes as the access model;
+attributes as input. Not taken: .NET generators are driven by syntax (a generator finds
+`[JsonSerializable]` attributes and generates for the types they list), because C# needs a
+declared context to know what to generate. Velt has whole-program demand, so no context type is
+needed, and `JSON.parse(text) as User` stays TypeScript. And Roslyn runs generators in-process,
+trusting them; Velt runs them in a separate, I/O-free process.
+
+**Rust: `#[derive]` procedural macros and serde.** A derive runs on one type's tokens, before
+type checking: it sees syntax, not types (a field of type `Id` is a path, it cannot know `Id` is
+a `u64` or a union), and it must be written on every type. serde puts a generic data model
+(`Serializer` with 29 methods) between types and formats, which costs nothing in Rust thanks to
+monomorphization and inlining, and lets one derive serve every format. Taken: the idea that the
+per-type code is ordinary code monomorphized and inlined, and the format-independent model
+(§4 serves every format the way serde's data model does). Not taken: annotations on each type
+(TypeScript code has none), syntax-only input, and the trait boilerplate.
+
+**Zig `comptime`.** Zig interprets ordinary code at compile time inside the type checker
+(`@typeInfo` gives a type's fields; `inline for` over them generates code). It is the most
+elegant: no separate generator language or process, no text. Not taken now: it requires an
+interpreter of checked code inside sema and generics checked per instance; Velt checks a generic
+body once and monomorphizes in lowering, and its compile-time evaluator would be a second
+implementation of the language next to the backends. A source generator reuses the whole
+compiler (the generator is compiled and run like a program), and its output can be read. If Velt
+grows `comptime` later, a generator can become a comptime function behind the same
+`declare generated` declaration.
+
+**Compile-time reflection** (C++26 `^^T` and `std::meta`, Swift macros, Scala 3 `inline` and
+`Mirror`). A library calls `fieldsOf<T>()` in a generic function, and the compiler unrolls loops
+over the result per instance. This keeps generated code invisible (no text), and needs the
+language to evaluate the reflection queries and unroll at compile time in the checker: the same
+interpreter Zig needs, plus new constructs (`for` over fields, member access by computed name)
+that TypeScript does not have. Generators keep the language as it is; reflection would extend
+it.
+
+**Runtime reflection** (Go's `encoding/json`, Java's Jackson). Cheap to build and slow to run
+(Go's reflection-based JSON is several times slower than generated code), and it needs type
+metadata in every binary. It contradicts the speed claim.
+
+**Keep the intrinsics, make them pluggable** (a hook trait in the Rust compiler). It would still
+need generator authors to write Rust against compiler internals (VIR), which is neither
+Velt-first nor a stable API.
+
+**Generators run in-process by the JIT.** Fastest to start (no process), and possible: `velt`
+links the runtime. Rejected for now for the isolation reasons of §5; measurements decide whether
+an in-process mode is worth it later (the protocol is the same).
+
+**Generate at lowering time instead of rounds of checking.** Lowering already knows every
+concrete instance, so the generator could run there with no extra check. But generated code
+must be type-checked, ownership-checked and throws-inferred with its callers (a generated
+function's `throws` set is part of its callers' types), which only sema does, and sema cannot be
+resumed after lowering started. Rounds use the structure sema already has.
+
+## Open questions
+
+1. **Generating methods.** Subclass dispatch (writing a class value as its dynamic class) is an
+   `instanceof` chain in generated code (most-derived first), where today's glue switches on the
+   class. If measurements show a cost for deep hierarchies, generators could add a method to a
+   class (`write` as a hidden virtual method, dispatched through the vtable). That is a bigger
+   power (it changes layouts) and is left out of v1.
+2. **Instances inside generic code that the program never instantiates concretely** (a library
+   checked on its own, `velt check` of a library without `main`): no demand, so the generator's
+   errors only appear in a program that uses the library. Should `velt check` of a library run the
+   generator for its own concrete uses only (the proposal), or not at all?
+3. **Per-program options** (STJ's `JsonSerializerOptions`): a generator gets no settings from the
+   program today. A manifest section per generator would make a dependency's output depend on the
+   program that imports it (json-engine.md's open question 2); the proposal is none in v1.
+4. **The model's span references** across rounds and the cache: spans are mapped by
+   (file, declaration path) so a cached result stays valid when a type moves within its file. Is
+   that enough for the editor, which changes files without saving?
+5. **Debug builds.** The JSON engine's gate measures debug speed because std's JSON is compiled
+   into each program; generated code is too. If debug speed regresses, should generated modules
+   be optimized in debug builds (as std's cached functions are, std-object.md)?
+
+## Order of work
+
+Each row is a commit or pull request that builds, passes its crates' tests and clippy, and adds
+goldens:
+
+1. Parser and AST: `declare generated("…") function` (`FnSig::generator`, a contract change:
+   `ast.rs`, additive).
+2. Sema: generated functions checked by signature; `generated::demand`; the type model built from
+   the checked program; generated modules checked in the declaring module's scope with the bound
+   type names; `hir::Program::generated` (additive) mapping `(function, type arguments)` to the
+   generated definition.
+3. Lowering: an instance of a generated function is built from its generated definition.
+4. `velt/generate` (the model, `InstanceRequest`, `Output`, the host loop) and `velt generate --host`;
+   the driver's rounds; a test generator and goldens (a generated `describe<T>()` that lists a
+   type's fields), including errors reported by the generator and errors in generated code.
+5. Caching and the offered modules (§9); compile-time measurements.
+6. The access rule (§7).
+7. `JSON.stringify` (§Migration step 4) with benchmarks before and after; then `JSON.parse`.
+
+## As built so far
+
+- `declare generated("<spec>") function` (`FnSig::generator`), the demand pass
+  (`velt_sema/src/generated/demand.rs`), the model (`model.rs`), spellings with
+  `__qualified<"module", "Name">` (`spell.rs`), binding (`bind.rs`, `hir::Program::generated`),
+  the redirect in lowering (`velt_vir` `generated_instance`), the driver's rounds and the host
+  (`veltc/src/generate/`), `velt/generate` (`std/generate/index.vlt`).
+- Generated code is a module of its own per declaring module and round
+  (`<generated>/<module>/<round>`, never std), checked in the declaring module's scope
+  (`generated/access.rs` `inherit_scopes`); `VELT_EMIT_GENERATED=<dir>` writes the modules out
+  until `--emit-generated` exists.
+- The access rule (`generated/access.rs`): `private` members and `__construct<T>` for the
+  declared types its requests reach.
+- A generated function and its generated bodies share pass modes: they are joined like a vtable
+  slot's (`ownership/mutation.rs`), so callers checked against the declaration call the bodies
+  with the same ABI. A body throws only what the declaration's `throws` lists.
+- Caching (§9): the output of each host run by its input (`generate/cache.rs`), the offered
+  modules with a fingerprint per instance (`Model::fingerprint`: the model closure of its type
+  arguments renumbered from them, without positions, and the function's signature), the host
+  executable in the build cache (`generate/host.rs`), and the generators' files in the
+  program's build stamp.
+- The no-I/O rule (§5): `driver::check_generator_host`, from what the generators reach.
+- Generator modules resolved as imports of the declaring module: relative, package, std.
+- The model's methods (§4): `Type.methods` lists the hooks std's operations call by name
+  (`toJSON`, `toString`, `[util.inspect.custom]`) when a class has one callable that way (velt_sema
+  `hooks::hook`: no type parameters of its own, not async, `toJSON` with no parameter or a
+  `key: string`), with its parameter count and result type. An `option`'s `literal` says what
+  it holds when empty (`null`, `undefined` or `null | undefined`: a field of type
+  `T | undefined` is left out of JSON when empty, one of type `T | null` is written `null`), and
+  a string literal or a string enum's value is JSON text (it is also JavaScript source).
+
+- `JSON.stringify` on generators (json port, step 3): `JSON.stringify<T>(value)` is
+  `writeJsonTop<T>` into a `StringBuilder` (std/prelude/json/json.vlt); `writeJsonTop`,
+  `writeJson` and `writeJsonKeyed` (velt/encoding/json `generated.vlt`) are generated by
+  std/encoding/json/generate/write.vlt for every type `JSON.stringify` writes: numbers,
+  booleans, strings, literal types, enums, arrays, tuples, options, objects, structs and classes
+  (JavaScript's key order; optional and `T | undefined` members left out when empty, a present
+  `null` of `a?: T | null` written, ES private fields and functions left out, `private` fields
+  written), a class value as its dynamic class (an `instanceof` chain over the model's
+  `subclasses`, which lists generic subclasses at the arguments the base gives them; one that
+  cannot be written is left out, as the glue did) and through its `toJSON(key)`
+  (`writeJsonKeyed` carries the key to the types that reach such a method), `Map<string, V>`
+  and `Record<K, V>`, `JsonValue`, `shared<T>`, unions (`__arm`), functions (`null` in an
+  array), recursive object types (a cycle is an error, through velt/reflect's visit stack), and
+  dynamic values: `any`, `unknown`, interface values and typed proxies are written by
+  std/encoding/json/any.vlt over velt/reflect. `writeJsonTop` adds the check of a dynamic value
+  at the top (Node returns `undefined` there; an array element is `null`).
+- What `JSON.stringify` cannot write is reported by the generator (step 5:
+  std/encoding/json/generate/check.vlt, from the model, at the call), with the messages sema
+  gave; sema names no JSON function. Generators run during the check whatever else it reports,
+  so their errors come with the program's others; a check without a generator (the editor's)
+  does not report them. The model grew what the check needs: the kind `generator`,
+  `hasProperties`, `classValue`, `dynamic`, a std type's `privateField` and a field's
+  `stdPrivate`; `Output.error` takes notes (the lines after the first). A call of any generated
+  function looks at its type arguments' shapes for `object_copies` (`Seen::Serialized`). The
+  `jsonStringify` intrinsic and the writer glue of velt_vir `lower/json` (`write.rs`,
+  `key.rs`, `dynamic.rs`, `any.rs`, the `JsonWrite`, `JsonWriteKey` and `AnyJson` glue) are
+  deleted.
+- Fixed on the way: a generated function's bodies take no parameter as their own
+  (`bind::fix_modes`: their pass modes are fixed, as a vtable slot's, since callers were checked
+  against the declaration; a body that converted its parameter to `any` took it owned, and a
+  caller passing a field lost it); the instances' type arguments are erased with the program's
+  (`readonly::erase`), so an instance of a type the erasure renames is found by lowering; a
+  recursive object or union type is spelled by its alias (`NonNullable<A>` for one without its
+  `null`), and a generic union at its arguments as `__union<[members], …arguments>` (written
+  out, `T | Mod<T>` at `T = unknown` would be `unknown`).
+
+- The model's kinds for what the JSON port needs (json port, step 2): the prelude's `Map`,
+  `Record` and `Set` are `map`, `record` and `set` (`args`: key and value, or element), not
+  `opaque`; `shared<T>` is `shared`; a function with properties is a `function`; an object
+  literal's getter is a field with `isGetter` (its `type` is the getter's result). A type that
+  generated code cannot write out (a function with properties, an object literal type with
+  accessors) is spelled by the top-level alias that declared it (`Ctx::alias_homes`).
+- `__arm(v, i)` in generated code (`generated/arm.rs`): whether the union `v` holds its model
+  member `i`, a test narrowing understands (`Fact::Members`), so a generator writes a union as
+  its active member without a JavaScript test per member (none tells `i32 | f64` apart).
+- `velt/reflect` (docs/std/reflect.md, json port step 1): reflection on `any` values from the
+  descriptor (slot 18, velt_vir `any_reflect.rs`), the identity of a value, `isProxy` and a
+  per-thread visit stack. It is the public runtime API the `any` path of `JSON.stringify` is
+  written on, replacing the descriptor's JSON slot.
+
+- Generated code names types by **handles** (`generated/handles.rs`): `__type<"<instance>",
+  <index>>` is the type at position `index` of the walk from the type arguments of the demanded
+  instance with that key (`Model::canonical_order`; the key is the instance's
+  `Model::fingerprint`, with `-<n>` for the `n`th other instance of the same fingerprint). The
+  model's `spelling` and `Output.typeName` give handles, and the header the driver writes uses
+  them for the type arguments. Generated modules are therefore collected and checked after the
+  program's bodies (`generated::phase`): the phase computes the demand, walks each demanded
+  instance's types, then collects the modules whose instances are all demanded, and repeats for
+  the instances their code demands. An instance is bound by its handles, not by a spelling that
+  must resolve to the same type, so a type Velt syntax cannot write where generated code is (an
+  object type with a symbol key, an intersection with an object part, a type declared inside a
+  function, a generic union at its arguments, a union layout merged after the check) has
+  instances like any other; lowering looks them up by canonical type arguments (velt_vir
+  `generated_instance`). An offered module whose instances are no longer demanded is left out
+  (stale). `instanceof` takes a class's handle.
+- The model lists the fields an extension adds to an object type's objects when they share a
+  layout (`collect::extended_layouts`), each with `via`, the extension's type to read it through
+  (`(v as E).name`); `mayBeProxy` says whether a typed `Proxy` may stand for a value of a type
+  (so a generator writes the proxy path only then).
+- **Generated during the check** (compile time): the driver gives the check a generator
+  (`velt_sema::generated::Generator`, a callback over `Demand`), and the generated phase asks it
+  for the code of the instances still missing, adds the modules it returns to the same `Ctx`
+  (`Ctx::add_module`; their `SourceModule`s live in the `Generator`'s slots, which outlive every
+  `Ctx` of the check) and collects them like the others. A program with generated functions is
+  checked once, cold or warm; the driver's rounds remain for code that the source rewrites a
+  check makes before it starts would change (`phase::needs_rewrite`: a closure, a nested
+  declaration, `globalThis`, `Object.defineProperty`), which returns `Checked::Again`, and for
+  a check without a generator (`Checked::Demand`). Generated modules reach the check apart from
+  the program's (`GenArgs::sources`), so no module is copied for it.
+- The demand (`generated::demand`) walks each body once per check (`Walked`: a later
+  computation, after generated code is added, walks only the new definitions), without the
+  types bodies mention unless an instance or interface method needs instances (only then do
+  they matter, through `Dispatch`), and the end of the check reuses the phase's result while no
+  definition was added since. Generated modules do not make the std modules their declaring
+  module imports checked whole (`lazy_std::plan`), and lazy std's reach scans each
+  definition's defaults once. The demand walks nothing when no checked code calls or names a
+  generated function (`demand::names_any`: a program that loads velt/encoding/json's
+  generated.vlt through the JSON prelude for `JSON.parse` only).
+- Loading the modules generated code needs: the loader keeps, per module and specifier, the
+  file each re-export it skips names (`wanted::pure`), so a std module asked for more names
+  later (velt/lang/intrinsics' index, asked by velt/reflect for the reflection intrinsics) does
+  not resolve its skipped re-exports from scratch again. Loading costs less than before the port
+  although a JSON program loads 8 more std modules (measured below).
+- A generator host starts and links none of the program's native packages
+  (`driver::build`): it reaches no native code (`check_generator_host`), and with a native
+  package in the graph (examples/apps/todo-api and sqlite) it was refused for reaching it.
+
+- `JSON.parse` on generators, step (a) of the parse port: `JSON.parse<T>` and
+  `JSON.__parseFromContext<T>` (`as T`) call `parseJsonTop<T>` (velt/encoding/json
+  `generated.vlt`), generated by std/encoding/json/generate/read.vlt, which writes a decoder
+  over the Velt `Reader` (`readJson<T>`, one function per type) for numbers (integers
+  range-checked), booleans, strings, arrays, tuples, `JsonValue` and objects, structs and
+  classes whose fields are all those (required, public, a public constructor; built with
+  `__construct<T>`). Every other type is decoded as a whole document by the old
+  `jsonParse<T>` glue, which the generated `parseJsonTop` calls: the old glue decodes only a
+  document, so the choice is made for the whole top-level type. A decoder throws a `JsonFail`
+  (fail.vlt: what it expected, and the path below it); one `try` per object or tuple (the
+  field being read in a local `at`) and one per array element put the path segment in front,
+  and `parseJsonTop` turns it into the `JsonError` that `Reader.message` words, so messages
+  and paths are the glue's. Sema's checks of what `JSON.parse` can decode still run (step d
+  moves them into the generator): a call of the generated `parseJsonTop` needs its `T`
+  decoded, as the intrinsic did, and the intrinsic's calls in generated code are not looked
+  at again. The model has `ctorAccess` (a constructor that is not public); a throw from code
+  a std generator wrote for a std module (`<generated>/std/…`) is reported at the user's
+  call, as one from std is (velt_vir `srcloc`). `JsonValue.__fromReader` is no longer
+  `private`: generated code calls it, and std's opaque types are not in the access rule.
+  Step (b): options (`T | null`; `a?: T`, whose `null` leaves it absent unless the reader says
+  no, for `as T`; `a?: T | null`, whose `null` is a present `null`), literal types, enums and
+  unions of literal types (one comparison per value of the next token's kind, strings in place
+  in the reader), `Map<string, V>` and `Record<K, V>` (string, literal and string enum keys;
+  a record made from a map in document order by `Record.__fromMap`, since a literal-key record
+  cannot be made empty) are generated too. Generated code makes an enum value with
+  `__member<E>(i)` (`generated/member.rs`). A required field of a literal type is a flag, not
+  a `"x" | null` local: lowering a narrowed option of a zero-sized type into a struct field
+  failed VIR verification (left for a fix in lowering). An object's or struct's optional
+  field is set after the value is built, when its key was read (an object literal's `a:
+  undefined` would make it present), so a readonly optional field is left to the glue. The
+  generator is split by concern (`read.vlt`, `read_value.vlt`, `read_object.vlt`,
+  `choice.vlt`). Measured against step (a) (same method; base: http2 at f946b85b6):
+  `parse_typed` and `parse_union` run time unchanged (-0.1%, +0.0%), their compile time
+  within 1%; a program decoding 11 types of the new kinds (the options golden's test program,
+  every field an option, a literal union, an enum, a map or a record) `velt check` +9.0%
+  edited, +8.2% cold, `velt build` +8.1% both: the generated decoders (about 780 lines for
+  it) are checked with the program, most of it in the ownership passes, where the glue was
+  lowered directly. The generated phase's own cost (one check round, ownership of generated
+  modules cached) is being worked on separately; hello world unchanged (-0.6%).
+  Step (c): unions (`read_union.vlt`): the next token's kind picks the members (string and
+  number literals and enum members by value, a number read again for the number member after
+  a `mark`; the array member; the object member, or among several the one a discriminant or a
+  key only it requires names, looked ahead with `skipLookahead` and read after `reset`), as
+  velt_vir's `union.rs` and `union_object.rs` did, with their messages (`expected one of
+  string, number`). Only what the compiler rejects, and readonly optional fields of object
+  types, are left to the glue. Measured against step (b) (same method): `parse_union.vlt`
+  release 3635.1 M against 3668.5 M (-0.9%), debug build 9820.2 M against 9674.4 M (+1.5%);
+  `parse_typed.vlt` unchanged.
+  Step (d): what `JSON.parse` cannot decode is reported by its generator
+  (`parse_check.vlt`, from the model, with the messages sema gave): a value that may be
+  `undefined`, a function with properties or a class used as a value, a union whose members a
+  document cannot tell apart (the same rules, and the same wording, as the decoder's), a class
+  whose constructor is not public (naming the model's new `factories`), a generator, a dynamic
+  value and a private field (with a label at its declaration). Sema's JSON pass keeps only the
+  propagation of the types `JSON.parse` decodes, which extended layouts need; its checks,
+  `union.rs` and their helpers are deleted. Two generator features came with it: an error a
+  generator reports at the call (`at` -1) is reported at every call that reaches the instance
+  (the demand keeps them all, `Walked::sites`, `Request::sites`), as sema reported each place
+  (stringify's errors are back to one per call too); and `Output.error` takes labels, `[at,
+  text]` at places of the model (a `#label` record after the error). A check without
+  generators (the editor's) does not report these errors. Measured against step (c) (same
+  method; base: http2 at 4fe053dd9): `velt check` of `parse_typed`, `parse_union` and the
+  options program -0.1% to -0.6% (the sema pass's checks are gone), `velt build` +0.5% to
+  +1.5%; run time unchanged; hello world -0.6%.
+  Fixed on the way: the demand walks the initializers of module variables (a module constant
+  made by `JSON.parse` had no generated code, and ran the placeholder), and a need recorded
+  for a class (a field initializer) no longer stops it with an ICE; only a generated function
+  given values of its type arguments looks at them for `object_copies` (`parseJsonTop<T>`
+  makes its `T`), and the object literals of generated code are not ones the program builds
+  (a decoded object, as the glue's, is no proxy).
+  Measured (Apple M4, shared; instructions retired, `/usr/bin/time -l`, `VELT_THREADS=1`,
+  median of 5, base and head interleaved; base: http2 at af087b039): run time of
+  `bench/json/parse_typed.vlt` (release, the same release runtime) 2517.4 M against 2494.7 M
+  (+0.9%), debug build 7843.8 M against 7798.0 M (+0.6%); `parse_union.vlt` (still the glue)
+  +0.1%. `velt check bench/json/parse_typed.vlt` edited 681.0 M against 663.9 M (+2.6%),
+  cold 691.9 M against 663.8 M (+4.2%); `velt build` (debug) edited 1079.9 M against
+  1037.1 M (+4.1%), cold +5.0%; `velt build --release` edited 1964.9 M against 2007.7 M
+  (-2.1%), cold -1.7%; hello world -0.5% (check), -0.6% (build). The debug build's warm
+  cost is over the 3% criterion: checking the generated decoders (a second generator's
+  bodies in the check) and their throw paths in Cranelift, where the glue was VIR built
+  directly; the VIR of the program is smaller than the glue's (17178 lines against 17318).
+
+### Left for the port of `JSON.stringify` and `JSON.parse`
+
+Done: the reflection API (velt/reflect), the model's gaps, `__arm`, `JSON.stringify` on the
+generator, types generated code could not name, and the second check (above). Left, in the json
+port's order:
+
+- **Compile time** (measured below). `velt check` of a typed JSON program is within the
+  criteria (the JSON goldens without dynamic values +0.9%, `bench/json/stringify.vlt` +1.5%
+  warm, +3.2% cold). Left over the glue: `velt build` of `bench/json/stringify.vlt` is +6.7%
+  (debug) and +12.5% (release) with the code generator's output cached: velt_opt's inliner,
+  `sroa` and `constfold` work through the generated functions' calls (`w.append`,
+  `appendJsonNumber` into the writer), which the glue emitted inline; and a program that
+  writes a dynamic value (`any`, `unknown`, an interface value, a typed proxy) checks the
+  `any` writer and velt/reflect's bodies (any.vlt), +20% for `velt check` (the 11 such JSON
+  goldens), where the glue's dynamic path was runtime code. The demand pass (about 4 M) and
+  `json::check_json_types` (about 7 M, the glue's checks, step 5) both walk every body.
+- **A cycle through a recursive object type held by an `any`** is reported with the `any`
+  path's message (`TypeError: Converting circular structure to JSON`), where the glue's typed
+  writer of that type reported its own; no golden has one.
+- **`JSON.parse` / `parse<T>` / `as T`** (json port step 4; steps (a)–(c) above port every
+  type the compiler accepts, the glue only kept for what it rejects): the decoders of `lower/json`
+  (`read.rs`, `object.rs`, `union*.rs`, `literal.rs`, `map.rs`, `key.rs`, `reader.rs`), the
+  rows and cursors of std/db (`rows_read/`, `jsonParseCursor`, `readRowsByColumn` /
+  `readRowByColumn`) and the parameter binding (`dbBind`, `db_bind.rs`) still run in the
+  compiler; packages reach `dbBind` and `jsonParseCursor` through std's `velt/db`.
+- **Incremental recheck** (step 6): generated code is checked inside the check that needs it
+  (above); what is left is the editor's and `velt dev`'s reuse of a check across edits.
+- **Deleting the glue** (step 7), which needs 4–6.
+
+### Measured (Apple M4, a shared machine)
+
+- **`JSON.stringify` on the generator against the glue, after the rebase on the std layout**
+  (debug `velt`, instructions retired, `/usr/bin/time -l`, `VELT_THREADS=1`, median of 5,
+  base and head interleaved; base: the std-layout branch the port is rebased on). `velt check
+  bench/json/stringify.vlt`: warm (the last build's code offered) 608.6 M against 599.8 M
+  (+1.5%), cold (a new root path; the generators' output cached) 620.2 M against 601.0 M
+  (+3.2%); hello world 488.6 M against 491.2 M, a program with `JSON.parse` only 639.5 M
+  against 641.1 M. `velt build` (debug, the file edited) 768.0 M against 720.0 M (+6.7%),
+  cold 783.0 M against 731.8 M (+7.0%); `velt build --release` (the codegen unit from the build
+  cache) 1148.8 M against 1021.5 M (+12.5%), cold 1158.7 M against 1021.6 M (+13.4%): the
+  `optimize` stage is 48 ms against 35 ms. The 50 JSON goldens (`velt check`, median of 3
+  each): +4.95% in all; the 39 without dynamic values +0.9%, the 11 with them +20.7%. Loading
+  (`load_modules`, best of 7): 182.6 M against 191.4 M with 8 more std modules
+  (generated.vlt, append.vlt, any.vlt, velt/reflect, the string builder), hello world 120.5 M
+  against 127.0 M, after the loader stopped resolving skipped re-exports again
+  (`wanted::pure`); before that, the 8 modules cost about 18 M, 14 M of it velt/reflect's
+  import of the reflection intrinsics from velt/lang/intrinsics' index. LLVM IR of
+  `bench/json/stringify.vlt` 8060 lines against 7669, the release executable 1457696 bytes
+  against 1458864.
+- **Run time of the generated writer** (same programs, release runtime, median of 7):
+  `bench/json/stringify.vlt` 1050.2 M instructions against 1090.0 M (-3.7%), 0.07-0.08 s
+  both; debug build 4272.8 M against 4271.7 M (0.0%).
+
+- **`JSON.stringify` on the generator against the glue** (json port, after the handles and the
+  generation during the check; debug `velt`, instructions retired, `/usr/bin/time -l`, best of
+  8, interleaved; the glue is the commit before the port, with its std): `velt check
+  bench/json/stringify.vlt` warm (the last build's code offered, the file edited) 621.7 M
+  against 598.3 M (+3.8%), cold (a new root path: no offer, the generator's output cached)
+  634.1 M against 597.0 M (+6.2%); `velt build` warm 755.7 M against 719.9 M (+4.9%), cold
+  774.8 M against 722.6 M (+7.2%). Before (the port as first written): warm 1069 M against
+  652 M (+64%), cold 1400 M (+115%): the second check of the whole program, every module of the
+  program copied for it, the proxy path of the writer (`isProxy`, which pulled the `any` writer
+  and velt/reflect into every program), and the std modules generated code sees made checked
+  whole. Hello world is unchanged.
+
+- **No generators:** no demand, one check; the only new work is a scan of the modules' items
+  for `generated` declarations.
+- **With generators, no cache:** `bench/json/generated/stringify.vlt` builds in 1.48 G
+  instructions against 1.07 G for `bench/json/stringify.vlt` (+39%): a second check (31 ms) and
+  the host (116–400 ms wall, almost all of it the host compiling `velt/generate` and the
+  generators and JIT-compiling them). Far over the 10% criterion: caching the output (§9) and the
+  compiled host are required before any std operation moves onto generators.
+- **With generators, cached** (the steady state: the last build's modules offered): 679 M
+  instructions against 629 M (+8%; one check, the offered module parsed and checked with the
+  program, the offer and the generators' files read from the cache).
+- **Run time:** the prototype `JSON.stringify` generator (`bench/json/generated`, public APIs
+  only: `StringBuilder` and `velt/encoding/json`'s `appendJson*`) writes byte-identical text.
+  Before string-building.md step 2 it cost 1.57 G instructions against the glue's 1.01 G
+  (+55%): a literal append was a runtime call. With literal appends inline it cost 1.36 G
+  against 1.10 G (+23%). The rest was a miscompile, not a cost of generated code: sema took a
+  `StringBuilder` parameter that the function appends to for a read-only one (the runtime
+  writes the builder's string, which sema did not know), so it got `frozen`, and `velt_opt`
+  read the buffer's address and capacity once, at the function's entry. Every inline append
+  after the buffer's first growth then saw no room and took the runtime call (and
+  `b.length` in a loop read a stale length). With std's runtime declarations writing their
+  `out`/`buf` strings (a mutable borrow), the generated writer costs 1.07 G against the glue's
+  1.10 G (-3%, `compare.sh`, release runtime, best of 3).
+- **`writeJson` against the glue** (bench/json/generated/compare.sh, release runtime, best of
+  5): 1.060 G instructions against 1.100 G (-3.6%). Compile time of
+  `bench/json/generated/stringify.vlt` against `bench/json/stringify.vlt` (debug `velt`, best of
+  5, interleaved): warm (the last build's code offered) 682 M against 621 M (+9.8%); cold (no
+  output cache and no offer, the host executable cached) 1.04 G against 624 M (+66%: the host
+  run, 41 ms, and the second check, 30 ms, of a 157 ms build). Both are over the criteria
+  (3% warm, 10% cold): the second round checks the whole program again, and the offered module
+  is checked with it.
+- **Ergonomics:** `out.line(… out.instance(…) …)` is rejected by Velt's rule that one call
+  cannot modify a value and read it in another argument; generators compute names into locals
+  first. `Output` could keep its state outside the object the generator holds to lift that.

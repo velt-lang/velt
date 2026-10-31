@@ -3,7 +3,7 @@
 // `DataView` (its bytes, whatever its element type), a `subarray` of either, and
 // `xs.subarray(begin, end)` of a `u8[]`, with JS's positions (negative counts from the end,
 // clamped). The call gets the address and length of those bytes: no copy.
-import { platform } from "velt:os";
+import { platform } from "velt/os";
 
 declare system function open(path: readonly u8[], oflag: i32, mode: u32): i32;
 declare system function close(fd: i32): i32;

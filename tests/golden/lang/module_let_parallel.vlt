@@ -3,7 +3,7 @@
 // module Map and objects stored in it by other tasks, with an await between updates. Every
 // update is counted, as in Node's single thread (the run with VELT_SCHEDULER=per-core repeats
 // this in crates/veltc/tests/module_state_races.rs).
-import { workerCount } from "velt:task";
+import { workerCount } from "velt/task";
 
 class Tally {
   n = 0;

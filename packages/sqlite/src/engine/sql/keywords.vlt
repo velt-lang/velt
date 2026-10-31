@@ -1,0 +1,187 @@
+// sqlite/engine/sql/keywords (internal): the classes of SQLite's keywords where a name could stand
+// (https://sqlite.org/lang_keywords.html, parse.y's `%fallback ID` list).
+
+// Keyword classes: how SQLite's grammar (parse.y, its `%fallback ID` list and the `nm`, `ids`
+// and `idj` token classes) and tokenizer (tokenize.c) treat its 147 keywords where a name
+// could stand. Each bare word's class is in its token (`kw`). The keyword sweep of the sqlite_sql_parse golden checks them against sqlite3.
+
+/** Not a keyword: a name anywhere. */
+export const K_ID: u8 = 0;
+/**
+ * A keyword with `%fallback ID`: a name wherever the keyword itself has no meaning (`end`,
+ * `offset`, `like`, `with` name columns and tables; CAST, RAISE and CURRENT_TIME do not start
+ * an operand that is a name, as they start their own expressions there).
+ */
+export const K_FALLBACK: u8 = 1;
+/** A join word (JOIN_KW: LEFT RIGHT FULL INNER OUTER CROSS NATURAL): a name (`nm`) and an
+ *  operand, but not a bare alias or a type name. */
+export const K_JOIN: u8 = 2;
+/** INDEXED: like a join word. */
+export const K_INDEXED: u8 = 3;
+/** A reserved word: never a bare name. */
+export const K_RESERVED: u8 = 4;
+/**
+ * FILTER, OVER and WINDOW: keywords only where tokenize.c's look-around makes them so
+ * (engine/sql/token_cursor's `classAt` decides).
+ */
+export const K_CONTEXT: u8 = 5;
+
+/** The class of upper-case word `w`, before FILTER, OVER and WINDOW are decided by context. */
+export function keywordClass(w: string): u8 {
+  switch (w) {
+    case "ABORT":
+    case "ACTION":
+    case "AFTER":
+    case "ALWAYS":
+    case "ANALYZE":
+    case "ASC":
+    case "ATTACH":
+    case "BEFORE":
+    case "BEGIN":
+    case "BY":
+    case "CASCADE":
+    case "CAST":
+    case "COLUMN":
+    case "CONFLICT":
+    case "CURRENT":
+    case "CURRENT_DATE":
+    case "CURRENT_TIME":
+    case "CURRENT_TIMESTAMP":
+    case "DATABASE":
+    case "DEFERRED":
+    case "DESC":
+    case "DETACH":
+    case "DO":
+    case "EACH":
+    case "END":
+    case "EXCLUDE":
+    case "EXCLUSIVE":
+    case "EXPLAIN":
+    case "FAIL":
+    case "FIRST":
+    case "FOLLOWING":
+    case "FOR":
+    case "GENERATED":
+    case "GLOB":
+    case "GROUPS":
+    case "IF":
+    case "IGNORE":
+    case "IMMEDIATE":
+    case "INITIALLY":
+    case "INSTEAD":
+    case "KEY":
+    case "LAST":
+    case "LIKE":
+    case "MATCH":
+    case "MATERIALIZED":
+    case "NO":
+    case "NULLS":
+    case "OF":
+    case "OFFSET":
+    case "OTHERS":
+    case "PARTITION":
+    case "PLAN":
+    case "PRAGMA":
+    case "PRECEDING":
+    case "QUERY":
+    case "RAISE":
+    case "RANGE":
+    case "RECURSIVE":
+    case "REGEXP":
+    case "REINDEX":
+    case "RELEASE":
+    case "RENAME":
+    case "REPLACE":
+    case "RESTRICT":
+    case "ROLLBACK":
+    case "ROW":
+    case "ROWS":
+    case "SAVEPOINT":
+    case "TEMP":
+    case "TEMPORARY":
+    case "TIES":
+    case "TRIGGER":
+    case "UNBOUNDED":
+    case "VACUUM":
+    case "VIEW":
+    case "VIRTUAL":
+    case "WITH":
+    case "WITHOUT":
+      return K_FALLBACK;
+    case "ADD":
+    case "ALL":
+    case "ALTER":
+    case "AND":
+    case "AS":
+    case "AUTOINCREMENT":
+    case "BETWEEN":
+    case "CASE":
+    case "CHECK":
+    case "COLLATE":
+    case "COMMIT":
+    case "CONSTRAINT":
+    case "CREATE":
+    case "DEFAULT":
+    case "DEFERRABLE":
+    case "DELETE":
+    case "DISTINCT":
+    case "DROP":
+    case "ELSE":
+    case "ESCAPE":
+    case "EXCEPT":
+    case "EXISTS":
+    case "FOREIGN":
+    case "FROM":
+    case "GROUP":
+    case "HAVING":
+    case "IN":
+    case "INDEX":
+    case "INSERT":
+    case "INTERSECT":
+    case "INTO":
+    case "IS":
+    case "ISNULL":
+    case "JOIN":
+    case "LIMIT":
+    case "NOT":
+    case "NOTHING":
+    case "NOTNULL":
+    case "NULL":
+    case "ON":
+    case "OR":
+    case "ORDER":
+    case "PRIMARY":
+    case "REFERENCES":
+    case "RETURNING":
+    case "SELECT":
+    case "SET":
+    case "TABLE":
+    case "THEN":
+    case "TO":
+    case "TRANSACTION":
+    case "UNION":
+    case "UNIQUE":
+    case "UPDATE":
+    case "USING":
+    case "VALUES":
+    case "WHEN":
+    case "WHERE":
+      return K_RESERVED;
+    case "CROSS":
+    case "FULL":
+    case "INNER":
+    case "LEFT":
+    case "NATURAL":
+    case "OUTER":
+    case "RIGHT":
+      return K_JOIN;
+    case "INDEXED":
+      return K_INDEXED;
+    case "FILTER":
+    case "OVER":
+    case "WINDOW":
+      return K_CONTEXT;
+    default:
+      return K_ID;
+  }
+}

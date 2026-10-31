@@ -1,4 +1,4 @@
-import { IoResult } from "velt:io";
+import { IoResult } from "velt/native";
 
 export struct Row {
   id: i64;

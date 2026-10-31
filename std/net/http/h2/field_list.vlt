@@ -1,0 +1,94 @@
+// velt/net/http/h2 (internal): `FieldList`, the header fields of one HTTP/2 header block as
+// the HPACK decoder wrote them: their bytes one after another in `buf`, four offsets each in
+// `heads` (name start, name end, value start, value end), as h1's `Head` keeps a request's
+// headers, so a request's accessors read either the same way.
+
+/// Decoded header fields: bytes and ranges.
+export class FieldList {
+  buf: u8[] = Buffer.alloc(512);
+  /// The bytes of `buf` in use.
+  length: i64 = 0;
+  /// Four offsets per field.
+  heads: i64[] = [];
+  /// The list's size as SETTINGS_MAX_HEADER_LIST_SIZE counts it (each field + 32).
+  size: i64 = 0;
+  /// A field did not fit within the limit: the later ones were decoded but not kept.
+  overflow: bool = false;
+
+  /// Empties the list for the next block.
+  clear() {
+    this.length = 0;
+    this.heads.length = 0;
+    this.size = 0;
+    this.overflow = false;
+  }
+
+  /// The number of fields.
+  get count(): i64 {
+    return (this.heads.length as i64) >> 2;
+  }
+
+  /// Room for `n` more bytes.
+  reserve(n: i64) {
+    if (this.length + n <= (this.buf.length as i64)) {
+      return;
+    }
+    let size = (this.buf.length as i64) * 2;
+    while (size < this.length + n) {
+      size *= 2;
+    }
+    const grown: u8[] = Buffer.alloc(size as usize);
+    grown.set(this.buf.slice(0, this.length), 0);
+    this.buf = grown;
+  }
+
+  /// Appends the bytes of `s`.
+  text(s: string) {
+    const n = Buffer.byteLength(s) as i64;
+    this.reserve(n);
+    this.buf.write(s, this.length as usize);
+    this.length += n;
+  }
+
+  /// Appends `b`.
+  bytes(b: u8[]) {
+    const n = b.length as i64;
+    this.reserve(n);
+    this.buf.set(b, this.length as usize);
+    this.length += n;
+  }
+
+  /// Field `i`'s name as text.
+  name(i: i64): string {
+    return this.buf.utf8Slice(this.heads[i * 4], this.heads[i * 4 + 1]);
+  }
+
+  /// Field `i`'s value as text.
+  value(i: i64): string {
+    return this.buf.utf8Slice(this.heads[i * 4 + 2], this.heads[i * 4 + 3]);
+  }
+
+  /// Whether field `i`'s name is `s` (lowercase, as HTTP/2 sends names).
+  nameIs(i: i64, s: string): bool {
+    return this.buf.utf8Equals(s, this.heads[i * 4], this.heads[i * 4 + 1]);
+  }
+
+  /// The length of field `i`'s name.
+  nameLength(i: i64): i64 {
+    return this.heads[i * 4 + 1] - this.heads[i * 4];
+  }
+
+  /// The first byte of field `i`'s name.
+  nameByte(i: i64): u8 {
+    return this.buf[this.heads[i * 4]];
+  }
+
+  /// Field `i` as `name: value` pairs, for tests and errors.
+  pairs(): [string, string][] {
+    const out: [string, string][] = [];
+    for (let i: i64 = 0; i < this.count; i++) {
+      out.push([this.name(i), this.value(i)]);
+    }
+    return out;
+  }
+}

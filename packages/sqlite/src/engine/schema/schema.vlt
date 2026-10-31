@@ -1,0 +1,52 @@
+// sqlite/engine/schema/schema (internal): the schema of one database file: the rows of `sqlite_schema`
+// as stored, and the tables, indexes and views read from them (engine/schema/load).
+
+import { SqlError } from "../sql/errors";
+import { Table } from "./table";
+import { View } from "./view";
+import { SchemaRow } from "./schema_row";
+
+/** The schema of one database file. */
+export class Schema {
+  /** Tables and virtual tables, usable or not (`Table.unsupported`), and unusable views. */
+  tables: Table[] = [];
+  /** Every row of sqlite_schema (tables, indexes, views, triggers), in its order. */
+  rows: SchemaRow[] = [];
+  /** The views this engine can read (one it cannot is in `tables`, unsupported, with why). */
+  views: View[] = [];
+  cookie: u32 = 0;
+
+  /** The view `name` (case-insensitive), or null. */
+  view(name: string): View | null {
+    const n = name.toUpperCase();
+    for (const v of this.views) {
+      if (v.name.toUpperCase() == n) {
+        return v;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * The table `name` (case-insensitive), or null if there is none. One this engine cannot use
+   * throws why (SqlError), so it never reads as missing.
+   */
+  table(name: string): Table | null {
+    const t = this.find(name);
+    if (t != null && t!.unsupported != "") {
+      throw new SqlError(`${t!.name}: ${t!.unsupported}`, 0);
+    }
+    return t;
+  }
+
+  /** The table, view or virtual table `name` (case-insensitive), usable or not, or null. */
+  find(name: string): Table | null {
+    const n = name.toUpperCase();
+    for (const t of this.tables) {
+      if (t.name.toUpperCase() == n) {
+        return t;
+      }
+    }
+    return null;
+  }
+}

@@ -1,4 +1,4 @@
-//! `velt_rt_signal_*`: the runtime half of `AbortController` / `AbortSignal` (std/task.vlt,
+//! `velt_rt_signal_*`: the runtime half of `AbortController` / `AbortSignal` (std/task/signal.vlt,
 //! docs/std/task.md). A signal is a reference-counted object: a flag, the abort reason, the tasks
 //! waiting for it, and the signals derived from it (`AbortSignal.any`). Cancellation is
 //! cooperative: aborting only sets the flag and wakes the waiters; Velt code reacts. No code
@@ -57,6 +57,14 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 impl Signal {
+    /// Aborts with reason `text` (for the runtime's own signals: a no-op if aborted already).
+    pub(crate) fn abort_with(&self, text: &str) {
+        self.abort(&Reason {
+            text: text.to_string(),
+            timeout_ms: None,
+        });
+    }
+
     fn abort(&self, reason: &Reason) {
         crate::io::publish_before_handoff();
         {

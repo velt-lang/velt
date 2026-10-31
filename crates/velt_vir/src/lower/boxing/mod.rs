@@ -64,9 +64,9 @@ pub(super) struct Boxing {
     /// The program lists the keys of an `any` (`AnyKeys`): the `any` tables have the keys slot
     /// (any_keys.rs).
     pub(super) any_keys: bool,
-    /// The program writes a dynamic value as JSON: the `any` tables have the JSON slot
-    /// (json/any.rs).
-    pub(super) any_json: bool,
+    /// The program reflects on `any` values (velt/reflect): the `any` tables have the
+    /// reflection slot (any_reflect.rs).
+    pub(super) any_reflect: bool,
     /// The program converts an `any` to a number (`Intrinsic::AnyToNumber`, an operator on
     /// `any`): every `any` table has the `ToNumber` slot, not only those of primitives
     /// (any_number.rs).
@@ -104,7 +104,7 @@ pub(super) struct Boxing {
     /// concrete `AnyTo` targets and `Proxy` itself. Others are opaque (a leak at worst).
     pub(super) proxy_traced: BTreeSet<TyId>,
     /// Array views (#1485, array_view.rs): the boxed array types whose header may point at an
-    /// `__ArrayView`. Empty in a program that converts no `any` to an array type.
+    /// `ArrayView`. Empty in a program that converts no `any` to an array type.
     pub(super) array_views: FxHashSet<TyId>,
     /// The value types of the program's `RwLock`s, the lock set they reach (class hierarchies
     /// by root, other counted types), and those whose `read` is exclusive (locks.rs).
@@ -236,8 +236,8 @@ pub(super) struct Facts {
     any_delete: bool,
     /// `Object.keys` of an `any` is listed.
     any_keys: bool,
-    /// A dynamic value is written as JSON.
-    any_json: bool,
+    /// An `any` is reflected on.
+    any_reflect: bool,
     /// An `any` is converted to a number.
     any_number: bool,
     /// Method names called through `any`.
@@ -346,9 +346,9 @@ impl Cx<'_> {
         self.facts.any_keys = true;
     }
 
-    /// Record that a dynamic value is written as JSON.
-    pub(super) fn note_any_json(&mut self) {
-        self.facts.any_json = true;
+    /// Record that an `any` is reflected on (velt/reflect).
+    pub(super) fn note_any_reflect(&mut self) {
+        self.facts.any_reflect = true;
     }
 
     /// Record that a method named `name` (`""`: any name) is called through `any`.
@@ -487,7 +487,7 @@ impl Cx<'_> {
         next.any_has |= self.facts.any_has;
         next.any_delete |= self.facts.any_delete;
         next.any_keys |= self.facts.any_keys;
-        next.any_json |= self.facts.any_json;
+        next.any_reflect |= self.facts.any_reflect;
         next.any_number |= self.facts.any_number;
         next.any_call_keys
             .extend(self.facts.any_call_keys.iter().cloned());

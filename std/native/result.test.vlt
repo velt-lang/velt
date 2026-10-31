@@ -1,0 +1,34 @@
+// velt/native (tests): white-box tests, run by `velt test std/`.
+//
+// `unwrapIo` and `checkIo` on results built as a native function would return them: a success
+// gives its value, a failure throws the `IoError` its code names, with its message.
+import { describe, expect, it } from "velt/test";
+import { checkIo, IoResult, IoStatus, unwrapIo } from "velt/native";
+
+describe("velt/native results", () => {
+  it("a success gives its value", () => {
+    const ok: IoResult<i64> = { code: 0, message: "", value: 5 };
+    expect(unwrapIo(ok)).toBe(5);
+    const done: IoStatus = { code: 0, message: "" };
+    checkIo(done);
+  });
+
+  it("a failure throws an IoError", () => {
+    const failed: IoResult<i64> = { code: 2, message: "no such file", value: 0 };
+    let caught = "";
+    try {
+      unwrapIo(failed);
+    } catch (e) {
+      caught = `${e.code.length > 0} ${e.message}`;
+    }
+    expect(caught).toBe("true no such file");
+    const gone: IoStatus = { code: 2, message: "gone" };
+    caught = "";
+    try {
+      checkIo(gone);
+    } catch (e) {
+      caught = e.message;
+    }
+    expect(caught).toBe("gone");
+  });
+});

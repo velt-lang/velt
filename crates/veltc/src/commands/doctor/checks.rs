@@ -134,13 +134,16 @@ fn std_lib() -> Check {
             format!("`{}` is not a directory", root.display()),
             hint,
         ),
-        Some(root) if loader::prelude_files(&root).is_empty() => Check::bad(
-            "std",
-            Status::Warn,
-            format!("{} (no prelude/*.vlt found)", root.display()),
-            "the prelude (Array/Map methods, assert...) will be unavailable; reinstall the std sources",
-        ),
-        Some(root) => Check::ok("std", root.display().to_string()),
+        Some(root) => match loader::prelude_files(&root) {
+            Ok(files) if files.is_empty() => Check::bad(
+                "std",
+                Status::Warn,
+                format!("{} (no prelude/*.vlt found)", root.display()),
+                "the prelude (Array/Map methods, assert...) will be unavailable; reinstall the std sources",
+            ),
+            Ok(_) => Check::ok("std", root.display().to_string()),
+            Err(e) => Check::bad("std", Status::Fail, e, "reinstall the std sources"),
+        },
         None => Check::bad("std", Status::Fail, "standard library not found", hint),
     }
 }

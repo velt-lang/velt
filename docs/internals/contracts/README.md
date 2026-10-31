@@ -8,8 +8,10 @@ helper), and explain it in your final report.
 | Contract | File | Producer → Consumer |
 |---|---|---|
 | Spans & diagnostics | `crates/velt_common/src/lib.rs` | everyone |
+| Well-known std modules | `crates/velt_common/src/std_modules.rs`: the std modules the compiler names (`std_module!`, `std_item!`, …; docs/internals/design/std-layout.md §5) | std ↔ every compiler crate |
+| Compiler hooks | `crates/velt_common/src/std_hooks.rs`: the std functions and classes the compiler calls (`std_hook!`), with their signatures (docs/internals/design/std-layout.md §10b) | std ↔ sema, lowering |
 | AST | `crates/velt_syntax/src/ast.rs` (with `ast/blocks.rs`, `ast/type_parts.rs`, `ast/type_level.rs`, `ast/jsx.rs`) + `parse_file` (`parse_with` for the loader: `define`, ambient declarations) | frontend → sema |
-| HIR | `crates/velt_sema/src/hir/mod.rs`, `hir/intrinsic.rs`, `hir/module_state.rs` + `hir_encodings.md` + `check`, `SourceModule` (`is_std`: loaded from the std root; drivers set it, sema never derives it from the path), `effects::may_change_memory` (can evaluating an expression run code that changes memory: a call other than an intrinsic, an intrinsic handed a place to modify or move, an assignment, `new`, `await`; IR lowering holds earlier operands and re-forms element addresses on it) | sema → IR |
+| HIR | `crates/velt_sema/src/hir/mod.rs`, `hir/intrinsic.rs`, `hir/module_state.rs` + `hir_encodings.md` + `check`, `SourceModule` (`is_std`: loaded from the std root; `is_dependency`: loaded from a package the program depends on, a library like std for the analyses that report at the program's call into one, with no privilege; drivers set both, sema never derives them from the path), `effects::may_change_memory` (can evaluating an expression run code that changes memory: a call other than an intrinsic, an intrinsic handed a place to modify or move, an assignment, `new`, `await`; IR lowering holds earlier operands and re-forms element addresses on it) | sema → IR |
 | VIR | `crates/velt_vir/src/vir.rs` + `lower`, `verify`, `fingerprint::{Canon, Mode, Fingerprint, fingerprint, attrs_hold, is_state_layout}` (function fingerprints for `velt dev` and the cached std object; `Canon::reaches_mutable_static`); values are built with `Function::new`, `LocalDecl::new` and `Program::default()` (struct update for the rest), where a new field gets its "no information" default | IR → codegen |
 | Codegen API | `crates/velt_codegen_cl/src/lib.rs` (`emit_object`, `host_triple`) | codegen → driver |
 | Link API | `crates/velt_link/src/lib.rs` (`link`, `find_runtime_lib`) | tooling → driver |
@@ -73,6 +75,16 @@ Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exi
   `Object` or `IndexSig` of its other members). Sema gives them TypeScript's type: one
   signature alone is that function type, otherwise the intersection of the signatures and the
   members (and an interface's bases).
+
+## Declared intrinsics (additive AST extension)
+- `FnSig::is_intrinsic` (`ast.rs`): `declare intrinsic function name<T>(…): R;`, an
+  `ItemKind::ExternFn` like `declare system function` (`intrinsic` is a word only between
+  `declare` and `function`; never `async`). Only std declares them, in `std/lang/intrinsics/`
+  (`std_modules`: `lang_intrinsics`); elsewhere sema reports the declaration. A call is checked
+  against the declaration and is the same HIR `Call { Intrinsic(..) }` as before
+  (hir_encodings.md); the name maps to the `Intrinsic` in `velt_sema::intrinsic_decls`, whose
+  test fails on a declaration without a table entry or an entry without a declaration
+  (docs/internals/design/std-layout.md §10).
 
 ## Who owns what
 | Area | Crates / files |

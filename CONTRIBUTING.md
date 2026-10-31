@@ -36,8 +36,9 @@ set `CARGO_PROFILE_DEV_DEBUG=full` when you want to inspect local variables in a
 |---|---|
 | `cargo test -p <crate>` | one crate's unit and integration tests |
 | `cargo test --workspace --test golden` | the end-to-end tests: every `tests/golden/**/*.vlt` with an expected `.out`, built and run in debug and release mode (filter with `VELT_GOLDEN=m1/strings`) |
-| `cargo test -p veltc --test std_tests` | the standard library's behaviour tests: `velt test` over each `tests/std/<module>/`, in debug mode with a leak check and in release mode (filter with `VELT_STD_TESTS=http`) |
+| `cargo test -p veltc --test std_tests` | the standard library's tests: `velt test` over each `tests/std/<module>/` (black-box) and over `std/` (its white-box `*.test.vlt` files), in debug mode with a leak check and in release mode (filter with `VELT_STD_TESTS=http`, `VELT_STD_TESTS=std` for the white-box ones) |
 | `cargo test -p veltc --test docs` | the documentation tests: every `ts` code block under `README.md`, `docs/book`, `docs/reference`, `docs/std` and `docs/tooling` must compile (filter with `VELT_DOCS=<file:line>`) |
+| `cargo test -p veltc --test packages` | `velt test` in each of the repository's packages (`packages/<name>/`, the database drivers), in debug and release mode, after building a package's native crate, whose `cargo test` runs too; the database tests need `VELT_TEST_PG_URL`, `VELT_TEST_REDIS_URL` (and `VELT_TEST_REDISS_URL` + `_CA`), which `scripts/linux-check.sh --services` sets (filter with `VELT_PACKAGES=sqlite`) |
 | `cargo test -p veltc --test example_apps` | `velt test --locked` for every example application with tests (`examples/apps/<app>/tests/`), each in a copy of the app (filter with `VELT_EXAMPLE_APPS=chat,seek`) |
 | `cargo test -p veltc --test standards` | the coding standards below (file sizes) |
 | `cargo clippy -p <crate> --all-targets -- -D warnings` | lints |
@@ -106,8 +107,8 @@ compilation on (CI turns it off).
 
 **Before pushing**, `cargo xtask precheck` runs the checks behind most avoidable CI failures, on the
 files changed since the merge base with `origin/main` (plus uncommitted and untracked ones) only:
-`cargo fmt --check` of the changed crates, the gate's `velt fmt --check std examples` when
-anything under `std/` or `examples/` changed or the formatter (`velt_fmt`) or a crate it depends on
+`cargo fmt --check` of the changed crates, the gate's `velt fmt --check std examples packages`
+when anything under `std/`, `examples/` or `packages/` changed or the formatter (`velt_fmt`) or a crate it depends on
 did, the file-size rule (below) on the changed Rust files, and clippy with
 `-D warnings` on the changed crates and the crates depending on them (`tests/difftest` too when
 it changed). It runs every check and then lists what failed with how to fix it; warm, it takes
@@ -134,7 +135,16 @@ them in each.)
   that each test file's process frees every block it allocates (`VELT_RC_STATS=1`, the goldens'
   `// check: no leaks`) and uses the checking allocator as the goldens' debug runs do, so close
   every server and connection a test opens. Matchers for one
-  module's types go in `std/test/<module>.vlt` (`velt:test/http`'s `toHaveStatus`).
+  module's types go in a submodule of `velt/test` (`velt/test/http`'s `toHaveStatus`).
+- **A white-box test next to the code** (`std/<module>/<name>.test.vlt`) when a test needs a
+  module's internals (the B+ tree's invariant checks, the JSON scanner's offsets): tests outside
+  std import only public modules (docs/internals/design/std-layout.md §9). They are std code,
+  so they import internals by their `velt/` path, start with `// velt/<module> (tests): …`, and
+  depend on nothing outside std. `velt test std/` runs them, as does `std_tests`; the toolchain's
+  packaged std leaves them out (`scripts/package.sh`).
+- **A package's own tests** (`packages/<name>/tests/*.test.vlt`) for the libraries in
+  `packages/`, which move to repositories of their own later: they test the package through its
+  API (white-box tests import `../src/...`) and run with `cargo test -p veltc --test packages`.
 
 Every bug fix comes with a regression test: an end-to-end test (`tests/golden/**`) or a unit
 test. A known bug without a fix can be added under `tests/golden/bugs/` (marked `.pending`: it is
@@ -183,6 +193,90 @@ Enforced by review, clippy and `cargo test -p veltc --test standards`:
 - **Dependencies**: few and mainstream; add them with `cargo add -p <crate> <dep>`.
 - **Platforms**: Windows (MSVC), macOS and Linux, x86_64 and aarch64. No platform-specific code
   outside `velt_link` and `velt_rt` without `cfg`.
+
+### The standard library
+
+The layout and its reasons: [docs/internals/design/std-layout.md](docs/internals/design/std-layout.md).
+`scripts/std-lint` checks the rules marked (lint); `cargo xtask precheck` runs it on the std files
+you changed, and the gate on all of std. Its allow list (`scripts/std-lint/allow.vlt`) only
+shrinks.
+
+- **Modules are folders** (lint). A folder with an `index.vlt` is the module `velt/<folder>`;
+  every other file belongs to the nearest module above it and is internal. No files directly in
+  `std/`, and no `x.vlt` next to an `x/` folder. `prelude/` (implicit) and `lang/` (what
+  implements the language and its globals) are never imported.
+- **`index.vlt` is the API** (lint): named re-exports only (`export { Deque } from
+  "velt/collections/deque";`), no `export *`, no code; every name it exports has a doc comment.
+  Every public name has one import path (lint).
+- **One exported class per file** (lint), named after it (`Deque` in `deque.vlt`), with its small
+  companions; free functions grouped by the operation family they implement; native bindings
+  (`declare function velt_rt_*`, `declare system function`) in one file per module; tables in
+  files of their own. At most 400 lines (lint), except files generated by a script, which say
+  so in their header.
+- **Headers** (lint): the first line is `// velt/<module>: <role>` in an `index.vlt` and
+  `// velt/<module> (internal): <role>` elsewhere (`// Prelude: …`, `// Global …` in the
+  prelude); `velt run scripts/std-lint/main.vlt --fix-headers` writes the module part.
+- **Imports**: std code imports from the file that defines a name (`velt/io/error`), user code
+  and tests from the module (`velt/io`). The loader enforces it: from outside std (programs,
+  packages, tests under `tests/`), a `velt/…` import must name a module's `index.vlt` outside
+  `prelude/` and `lang/`, else it is an error naming the module the file belongs to. A test that
+  needs internals is a white-box test next to the code (below).
+- **The compiler names std modules in one table**, `velt_common::std_modules`
+  (`std_module!(lang_proxy)`, `std_item!(lang_proxy, "Proxy")`): a std file the compiler looks
+  into moves with its entry there, never with a string literal elsewhere.
+- **The std code the compiler calls** (its hooks: `n.toString(16)` calls `f64ToString`) lives in
+  `std/lang/hooks/`, never exported to programs, and is named only through
+  `velt_common::std_hooks` (`std_hook!(f64_to_string)`), whose entries give each hook's
+  signature; `cargo test -p velt_sema --test std_hooks` checks them against std. No new `__`
+  names in std.
+- **The prelude's load order** is the list in `std/prelude/index.vlt`; a new prelude file is
+  added there.
+- **A new module**: its folder and `index.vlt`, a row in the areas of std-layout.md §3, its page
+  under `docs/std/`, and end-to-end tests under `tests/golden/std/` or `tests/std/`.
+- Callbacks rethrow what they throw (`map<U, E>(f: (x: T) => U throws E): U[] throws E`);
+  element-returning methods clone, iteration and callbacks borrow.
+- Only `export` the public surface; helpers stay module-private. `extend` blocks apply wherever
+  their module is loaded (they cannot be exported).
+- Compiler intrinsics are declared in `std/lang/intrinsics/` (`export declare intrinsic function
+  arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void;`, grouped by area, each with a doc
+  comment) and std code imports them like any function (`import { arraySwap } from
+  "velt/lang/intrinsics";`). `velt/lang` is internal, so programs and packages cannot: what they
+  legitimately need gets a public API (`xs.reserve(n)`, `xs.truncate(n)`, velt/encoding's
+  `utf8ByteAt`). A new intrinsic is a declaration there plus its row in the table of
+  `crates/velt_sema/src/intrinsic_decls.rs` (a test checks that both name the same ones); the
+  declaration is the signature calls are checked against.
+
+#### Runtime bindings
+
+std binds `velt_rt_*` symbols (docs/internals/contracts/rt_abi_async.md) with `declare function` /
+`declare async function`. Lowering passes `string`/struct/array params as `const T*` and returns
+struct results through a trailing out-pointer; a C out-parameter next to a scalar result is an
+ordinary param that std always passes as a fresh local (`let out = "";` / a zeroed value, which
+the runtime overwrites): sema cannot see foreign writes, so an out-parameter must never be a
+param, field or element of the calling function. Opaque runtime
+handles are `u64`. Handle-owning classes release them in their `[Symbol.dispose]()` drop hook (http
+`Server`/`Response`, fetch's `Response`, `JsonValue`); the Copy handle structs of std/net
+(`TcpListener`, `TcpStream`) are released by an explicit `close()` (see net.vlt).
+
+#### Performance
+
+Std code is monomorphized and inlined like user code, so write plain index loops.
+- Reserve capacity (`arrayWithCapacity`) when the final length is known.
+- Never clone to read: pass `xs[i]` straight to callbacks and comparisons (they borrow; when
+  other references may reach the array, lowering passes a share of the element instead, so a
+  callback that pushes onto the array or pops it cannot leave its argument dangling).
+- Rearrange arrays with `arraySwap` / `arrayTruncate`; moving an
+  element out of an index is not allowed, and a swap avoids clones. Algorithms that need a
+  buffer (the stable sort, std/lang/sort/stable.vlt) move raw elements with
+  `arrayMove` into an array sized with `arraySetLen`, keeping every
+  element owned exactly once themselves, and set its length back to 0 before it is dropped.
+  A callback may reach the caller's array through an alias, so while it runs that array must
+  hold only elements it owns: the stable sort copies elements that need no drop
+  (`needsDrop`; short arrays in place when `fnCapturesNothing(cmp)`)
+  and moves the others out at any length, leaving the array empty.
+- Keep algorithms allocation-free where possible (`sort()` is in place; `sort(cmp)` needs
+  two buffers as long as the array).
+
 
 ## Interfaces between stages
 
@@ -334,6 +428,8 @@ go through this list:
 6. **Timing**: tests and goldens order events by awaits, channels or observed state, not by
    sleeps or wall-clock limits.
 7. **Size**: under about 1,500 changed lines, or split into a stack.
+8. **std**: a changed std API has its `index.vlt` re-export with a doc comment, its docs page
+   and a test; `std-lint` passes (`cargo xtask precheck` runs it).
 
 Post the result as the first comment on the pull request: each item with what you did (or "n/a"),
 and the gate you ran. Keep it out of the description: the description becomes the commit message

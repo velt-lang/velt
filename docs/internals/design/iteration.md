@@ -178,7 +178,7 @@ function* range(n: i64): Generator<i64> {
   `Iterator<T, E>` and `Iterable<T, E>`: `next()`, `return()`, `[Symbol.iterator]()` (returns
   `this` as an `Iterator<T, E>`) and `[Symbol.dispose]()` (closes it, so `using g = gen()`
   works and dropping it closes it). Its methods use the std-only intrinsics
-  `__intrinsic_generator_resume` (throws `E`), `_value` and `_return`. `new Generator` and
+  `generatorResume` (throws `E`), `generatorValue` and `generatorReturn` (velt/lang/intrinsics). `new Generator` and
   `extends Generator` are errors.
 - `yield* src` is `for (const <yield@N> of src) { yield <yield@N>; }`: any iterable, and a
   direct generator call takes the embedded path below. Closing the outer generator while it is
@@ -430,12 +430,12 @@ caller (section 4): no allocation per item, the same runtime calls as the pull l
 
 | Source | How | Yields | `E` |
 |---|---|---|---|
-| `Channel<T>` (std/channel.vlt) | `implements AsyncIterable<T>`, `async *[Symbol.asyncIterator]()` | values until closed and drained | `never` |
-| `FileReader` (std/fs_stream.vlt) | `async *lines(): AsyncGenerator<string, IoError>` | remaining lines | `IoError` |
-| velt:stdin | `export async function* lines()` | remaining lines | `IoError` |
-| `WebSocket` (std/websocket.vlt) | `implements AsyncIterable<WsMessage, IoError>` | messages until the peer closed | `IoError` |
-| `RedisSubscriber` (std/redis/pubsub.vlt) | `implements AsyncIterable<RedisMessage, RedisError>` | messages until `close()` | `RedisError` |
-| `Ticker` (std/timers.vlt) | `implements AsyncIterable<i64>` | tick numbers 1, 2, … per loop, until stopped | `never` |
+| `Channel<T>` (std/sync/channel.vlt) | `implements AsyncIterable<T>`, `async *[Symbol.asyncIterator]()` | values until closed and drained | `never` |
+| `FileReader` (std/fs/file_reader.vlt) | `async *lines(): AsyncGenerator<string, IoError>` | remaining lines | `IoError` |
+| velt/process | `export async function* lines()` | remaining lines | `IoError` |
+| `WebSocket` (std/net/websocket/index.vlt) | `implements AsyncIterable<WsMessage, IoError>` | messages until the peer closed | `IoError` |
+| `RedisSubscriber` (packages/redis/src/subscriber.vlt) | `implements AsyncIterable<RedisMessage, RedisError>` | messages until `close()` | `RedisError` |
+| `Ticker` (std/time/ticker.vlt) | `implements AsyncIterable<i64>` | tick numbers 1, 2, … per loop, until stopped | `never` |
 | postgres `CopyReader` | `implements AsyncIterable<string, PgError>` | `read()` chunks to the end | `PgError` |
 
 `FileReader` and stdin get a `lines()` method rather than being iterable themselves: a reader
@@ -689,15 +689,15 @@ return ... }`, or `async *[Symbol.asyncIterator]()`): object literal methods par
 `ast::ObjectProp::Method` (a contract change). Velt's object literals are plain data, so the
 closest workable form is a literal whose *one* member is the iterator method: sema
 (`expr/object_method.rs`) makes the method a function value (a generator expression returning
-`Iterator<T, E>`, or an arrow) and the object `new __IterableObject(f)`, a prelude class
-(`std/prelude/iter.vlt`) implementing `Iterable<T, E>` by calling `f`
-(`__AsyncIterableObject` for `AsyncIterable`). Each loop calls the method again, as in JS.
+`Iterator<T, E>`, or an arrow) and the object `new IterableObject(f)`, a compiler hook
+(`std/lang/hooks/iter.vlt`) implementing `Iterable<T, E>` by calling `f`
+(`AsyncIterableObject` for `AsyncIterable`). Each loop calls the method again, as in JS.
 
 ### Deviations
 
 - Object literals: other members next to the iterator method, `this` in it (TS: the object),
   and any other method are errors with the fix (variables, a class implementing `Iterable<T>`,
-  or a property holding an arrow). The value is an `__IterableObject<T, E>`, not an object type.
+  or a property holding an arrow). The value is an `IterableObject<T, E>`, not an object type.
 - Generator expressions: no recursion through the name, no type parameters or rest parameters
   (above).
 - Spread: array sources are evaluated before the other elements (unchanged); an iterable source

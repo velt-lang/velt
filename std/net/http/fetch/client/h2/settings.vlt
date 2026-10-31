@@ -1,0 +1,55 @@
+// velt/net/http (internal): an HTTP/2 client session applying the server's SETTINGS (RFC 9113
+// §6.5): its concurrency limit, initial window (moving the open streams' windows, §6.9.2),
+// frame size and HPACK table size; then the acknowledgement.
+
+import {
+  FLOW_CONTROL_ERROR,
+  MAX_MAX_FRAME_SIZE,
+  MAX_WINDOW,
+  MIN_MAX_FRAME_SIZE,
+  PROTOCOL_ERROR,
+  SETTINGS_HEADER_TABLE_SIZE,
+  SETTINGS_INITIAL_WINDOW_SIZE,
+  SETTINGS_MAX_CONCURRENT_STREAMS,
+  SETTINGS_MAX_FRAME_SIZE,
+  readU32,
+} from "velt/net/http/h2";
+import { ClientSession } from "velt/net/http/fetch/client/h2/session";
+
+/// Applies the settings at `s.rbuf[at..at + length)`: false after a connection error.
+export function applySettings(s: ClientSession, at: i64, length: i64): bool {
+  const b = s.rbuf;
+  for (let i = at; i < at + length; i += 6) {
+    const id = ((b[i] as i64) << 8) | (b[i + 1] as i64);
+    const v = readU32(b, i + 2);
+    if (id == SETTINGS_HEADER_TABLE_SIZE) {
+      s.encoder.setMaxSize(v);
+    } else if (id == SETTINGS_MAX_CONCURRENT_STREAMS) {
+      s.maxStreams = v;
+    } else if (id == SETTINGS_INITIAL_WINDOW_SIZE) {
+      if (v > MAX_WINDOW) {
+        bad(s, FLOW_CONTROL_ERROR, "SETTINGS_INITIAL_WINDOW_SIZE above 2^31-1");
+        return false;
+      }
+      const delta = v - s.peerInitialWindow;
+      s.peerInitialWindow = v;
+      for (const st of s.streams.values()) {
+        st.sendWindow += delta;
+      }
+    } else if (id == SETTINGS_MAX_FRAME_SIZE) {
+      if (v < MIN_MAX_FRAME_SIZE || v > MAX_MAX_FRAME_SIZE) {
+        bad(s, PROTOCOL_ERROR, "SETTINGS_MAX_FRAME_SIZE out of range");
+        return false;
+      }
+      s.peerMaxFrame = v;
+    }
+  }
+  s.out.settingsAck();
+  s.startWaiting();
+  return true;
+}
+
+function bad(s: ClientSession, code: i64, debug: string) {
+  s.out.goaway(0, code, debug);
+  s.finish(`HTTP/2: ${debug}`);
+}

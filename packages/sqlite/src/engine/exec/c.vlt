@@ -1,0 +1,62 @@
+// sqlite/engine/exec/c (internal): a compiled expression (`C`) with what the expression compiler
+// knows about it: its affinity and collation, and the collation a comparison or operator of two of
+// them uses.
+
+import { BINARY } from "../collation";
+import { Ev } from "./types";
+import { AFF_NONE } from "./value/ops";
+import { Val } from "./value/val";
+
+/** A compiled expression with what comparisons need to know about it. */
+export struct C {
+  ev: Ev;
+  /** Its affinity (a column's, a CAST's), or AFF_NONE. */
+  aff: u8;
+  /** Its collation, or -1; `explicit` when a COLLATE clause gave it. */
+  coll: i64;
+  explicit: bool;
+}
+
+/** An expression without affinity or collation. */
+export function plain(ev: Ev): C {
+  return C { ev: ev, aff: AFF_NONE, coll: -1, explicit: false };
+}
+
+/** The value of a constant expression. */
+export function constant(v: Val): C {
+  // Made afresh on each call from its parts: a Val captured whole costs a copy of its fields.
+  const t = v.t;
+  const i = v.i;
+  const r = v.r;
+  const s = v.s;
+  const o = v.o;
+  return plain(() => Val { t: t, i: i, r: r, s: s, o: o });
+}
+
+/** The collation a comparison of `x` and `y` uses (sqlite3BinaryCompareCollSeq). */
+export function binaryColl(x: C, y: C): u8 {
+  if (x.explicit) {
+    return x.coll as u8;
+  }
+  if (y.explicit) {
+    return y.coll as u8;
+  }
+  if (x.coll >= 0) {
+    return x.coll as u8;
+  }
+  if (y.coll >= 0) {
+    return y.coll as u8;
+  }
+  return BINARY;
+}
+
+/** An operator's result: it keeps an explicit COLLATE of an operand (SQLite's EP_Collate). */
+export function joinedColl(ev: Ev, x: C, y: C): C {
+  if (x.explicit) {
+    return C { ev: ev, aff: AFF_NONE, coll: x.coll, explicit: true };
+  }
+  if (y.explicit) {
+    return C { ev: ev, aff: AFF_NONE, coll: y.coll, explicit: true };
+  }
+  return plain(ev);
+}

@@ -1,0 +1,105 @@
+// velt/lang/hooks (internal): the keys of std's methods the compiler calls (std-layout.md §10b).
+// A method keyed by one of these symbols (`[MAP_CURSOR](): MapCursor`) is a member no program can
+// name: the symbols are never exported to programs. The compiler names such a method by its
+// member name, which velt_common's `std_hooks.rs` spells (`std_key!(map_cursor)`), and which
+// sema gives std's symbols before any program's (`name_symbol_keys`).
+
+import { Symbol } from "velt/lang/symbol";
+
+/**
+ * What `console.log` and `util.inspect` call to show a class instance: Node's
+ * `util.inspect.custom`, which a program's class implements with
+ * `const custom = Symbol.for("nodejs.util.inspect.custom")` and `[custom]()`.
+ */
+export const INSPECT = Symbol.for("nodejs.util.inspect.custom");
+/** Typed arrays: the kind of a class's elements, which a subclass may override. */
+export const TYPED_ARRAY_KIND = Symbol.for("velt.typedArray.kind");
+/** `xs[i]` of a std class indexed like an array (a typed array, a regex match). */
+export const INDEX = Symbol("index");
+/** `xs[i] = v` of a std class indexed like an array. */
+export const SET_INDEX = Symbol("setIndex");
+/** `xs[i]` of an array where JS reads `undefined` past the end. */
+export const ARRAY_GET = Symbol("arrayGet");
+/** Typed arrays: element `i` as a number (in range). */
+export const TYPED_ARRAY_GET = Symbol("typedArrayGet");
+/** Typed arrays: writes element `i` (in range). */
+export const TYPED_ARRAY_PUT = Symbol("typedArrayPut");
+/** Buffer views: the size of an element in bytes. */
+export const VIEW_SIZE = Symbol("viewSize");
+/** Buffer views: how an empty one prints. */
+export const VIEW_EMPTY_TEXT = Symbol("viewEmptyText");
+
+/** `Map`: a cursor before the first entry of a live `for...of` loop. */
+export const MAP_CURSOR = Symbol("mapCursor");
+/** `Map`: moves a cursor to the next live entry. */
+export const MAP_ADVANCE = Symbol("mapAdvance");
+/** `Map`: the key of the entry a cursor is at. */
+export const MAP_KEY_AT = Symbol("mapKeyAt");
+/** `Map`: the value of the entry a cursor is at. */
+export const MAP_VALUE_AT = Symbol("mapValueAt");
+/** `Map`: the entry a cursor is at. */
+export const MAP_ENTRY_AT = Symbol("mapEntryAt");
+/** `Map`: equal by content (deep equality). */
+export const MAP_DEEP_EQUALS = Symbol("mapDeepEquals");
+/** `Map`: is the entry at a position live? */
+export const MAP_LIVE_AT = Symbol("mapLiveAt");
+/** `Map`: the value of a key known to be present. */
+export const MAP_AT = Symbol("mapAt");
+/** `Map`: marks a record's map as made by `Object.create(null)`. */
+export const MAP_MARK_NULL_PROTO = Symbol("mapMarkNullProto");
+/** `Map`: was the map marked by `MAP_MARK_NULL_PROTO`? */
+export const MAP_IS_NULL_PROTO = Symbol("mapIsNullProto");
+/** `Map`: does the newest key start with a digit? */
+export const MAP_NEWEST_KEY_DIGIT = Symbol("mapNewestKeyDigit");
+/** `Map`: the positions of the live entries. */
+export const MAP_LIVE_POSITIONS = Symbol("mapLivePositions");
+/** `ThisFn`: the call with a `this` and the arguments as an array. */
+export const THIS_FN_APPLY = Symbol("thisFnApply");
+/** `ThisFn`: `bind(thisArg, ...args)` with the arguments as an array. */
+export const THIS_FN_BIND = Symbol("thisFnBind");
+/** `Proxy`: what `getGetter` does for the compiler and `Reflect`. */
+export const PROXY_GET_GETTER = Symbol("proxyGetGetter");
+/** `Proxy`: what `readsGetter` does for the compiler and `Reflect`. */
+export const PROXY_READS_GETTER = Symbol("proxyReadsGetter");
+/** `Proxy`: what `view` does for the compiler and `Reflect`. */
+export const PROXY_VIEW = Symbol("proxyView");
+/** `Proxy`: what `isView` does for the compiler and `Reflect`. */
+export const PROXY_IS_VIEW = Symbol("proxyIsView");
+/** `Proxy`: what `plain` does for the compiler and `Reflect`. */
+export const PROXY_PLAIN = Symbol("proxyPlain");
+/** `Proxy`: what `hasGet` does for the compiler and `Reflect`. */
+export const PROXY_HAS_GET = Symbol("proxyHasGet");
+/** `Proxy`: what `isArray` does for the compiler and `Reflect`. */
+export const PROXY_IS_ARRAY = Symbol("proxyIsArray");
+/** `Proxy`: what `self` does for the compiler and `Reflect`. */
+export const PROXY_SELF = Symbol("proxySelf");
+/** `Proxy`: what `target` does for the compiler and `Reflect`. */
+export const PROXY_TARGET = Symbol("proxyTarget");
+/** `Proxy`: what `get` does for the compiler and `Reflect`. */
+export const PROXY_GET = Symbol("proxyGet");
+/** `Proxy`: what `set` does for the compiler and `Reflect`. */
+export const PROXY_SET = Symbol("proxySet");
+/** `Proxy`: what `has` does for the compiler and `Reflect`. */
+export const PROXY_HAS = Symbol("proxyHas");
+/** `Proxy`: what `deleteProperty` does for the compiler and `Reflect`. */
+export const PROXY_DELETE_PROPERTY = Symbol("proxyDeleteProperty");
+/** `Proxy`: what `delete` does for the compiler and `Reflect`. */
+export const PROXY_DELETE = Symbol("proxyDelete");
+/** `Proxy`: what `ownKeys` does for the compiler and `Reflect`. */
+export const PROXY_OWN_KEYS = Symbol("proxyOwnKeys");
+/** `Proxy`: what `getOwnPropertyDescriptor` does for the compiler and `Reflect`. */
+export const PROXY_GET_OWN_PROPERTY_DESCRIPTOR = Symbol("proxyGetOwnPropertyDescriptor");
+/** `Proxy`: what `defineProperty` does for the compiler and `Reflect`. */
+export const PROXY_DEFINE_PROPERTY = Symbol("proxyDefineProperty");
+/** `Proxy`: what `keys` does for the compiler and `Reflect`. */
+export const PROXY_KEYS = Symbol("proxyKeys");
+/** `Proxy`: what `defines` does for the compiler and `Reflect`. */
+export const PROXY_DEFINES = Symbol("proxyDefines");
+/** `Proxy`: what `receive` does for the compiler and `Reflect`. */
+export const PROXY_RECEIVE = Symbol("proxyReceive");
+/** `Proxy`: what `json` does for the compiler and `Reflect`. */
+export const PROXY_JSON = Symbol("proxyJson");
+/** `Proxy`: what `arrayCall` does for the compiler and `Reflect`. */
+export const PROXY_ARRAY_CALL = Symbol("proxyArrayCall");
+/** `Proxy`: what `hasOwn` does for the compiler and `Reflect`. */
+export const PROXY_HAS_OWN = Symbol("proxyHasOwn");

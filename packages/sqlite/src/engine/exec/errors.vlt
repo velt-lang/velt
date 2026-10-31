@@ -1,0 +1,37 @@
+// sqlite/engine/exec/errors (internal): errors of preparing and running SQL, with SQLite's
+// messages.
+
+import { SelectCore } from "../sql/types";
+
+/** SQL that cannot be prepared: a syntax error, an unknown table, column or function. */
+export class SqlPrepareError extends Error {
+  constructor(message: string) {
+    super(message);
+  }
+}
+
+/** A statement failed while running (integer overflow in sum(), a bad argument). */
+export class SqlRunError extends Error {
+  constructor(message: string) {
+    super(message);
+  }
+}
+
+/** Throws a `SqlPrepareError`: out of line, so the compiler's checks stay small. */
+export function prepareError(message: string): never {
+  throw new SqlPrepareError(message);
+}
+
+/**
+ * Thrown while compiling a subquery that holds an aggregate of `core` (SQLite's rule: the
+ * innermost query whose columns it reads owns it), when `core` was compiled as not aggregate:
+ * `core` compiles again, as an aggregate query.
+ */
+export class AggRestart extends Error {
+  core: SelectCore;
+
+  constructor(core: SelectCore) {
+    super("ICE: aggregate restart");
+    this.core = core;
+  }
+}

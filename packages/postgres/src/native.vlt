@@ -1,0 +1,103 @@
+// postgres (internal): the native library's functions (native/src, the ABI is
+// docs/native_abi.md). Every other file of the package is plain Velt.
+
+import { IoResult, IoStatus } from "velt/native";
+
+export declare async function velt_postgres__connect(url: string): Promise<IoResult<u64>>;
+export declare async function velt_postgres__execute(
+  client: u64,
+  sql: string,
+  params: string,
+): Promise<IoResult<i64>>;
+export declare async function velt_postgres__batch(client: u64, sql: string): Promise<IoStatus>;
+// Rows as a row cursor (`velt_text::rows_cursor`), decoded where the driver has them, and
+// parameters handed to a sink value by value for the types velt/db's `bindParams` takes.
+export declare async function velt_postgres__query_rows(
+  client: u64,
+  sql: string,
+  params: string,
+  firstOnly: bool,
+): Promise<IoResult<u64>>;
+export declare async function velt_postgres__query_bound(
+  client: u64,
+  sql: string,
+  sink: u64,
+  firstOnly: bool,
+): Promise<IoResult<u64>>;
+export declare async function velt_postgres__execute_bound(
+  client: u64,
+  sql: string,
+  sink: u64,
+): Promise<IoResult<i64>>;
+export declare async function velt_postgres__pool_query_rows(
+  pool: u64,
+  sql: string,
+  params: string,
+  firstOnly: bool,
+): Promise<IoResult<u64>>;
+export declare async function velt_postgres__pool_query_bound(
+  pool: u64,
+  sql: string,
+  sink: u64,
+  firstOnly: bool,
+): Promise<IoResult<u64>>;
+export declare async function velt_postgres__pool_execute_bound(
+  pool: u64,
+  sql: string,
+  sink: u64,
+): Promise<IoResult<i64>>;
+export declare function velt_postgres__bind_begin(): u64;
+export declare function velt_postgres__bind_abort(sink: u64);
+export declare function velt_postgres__close_rows(cursor: u64): IoStatus;
+export declare async function velt_postgres__query_batch(
+  client: u64,
+  sql: string,
+  sets: string,
+  mode: u8,
+): Promise<IoResult<string>>;
+export declare async function velt_postgres__begin(client: u64): Promise<IoResult<u32>>;
+export declare async function velt_postgres__end(
+  client: u64,
+  depth: u32,
+  commit: bool,
+): Promise<IoStatus>;
+export declare function velt_postgres__depth(client: u64): u32;
+export declare function velt_postgres__error_count(client: u64): u64;
+export declare function velt_postgres__reset_error_count(client: u64, count: u64);
+export declare function velt_postgres__error_after(client: u64, count: u64): IoStatus;
+export declare function velt_postgres__note_error(client: u64, code: string, message: string);
+export declare function velt_postgres__close(client: u64);
+export declare function velt_postgres__pool_new(url: string, max: u32): IoResult<u64>;
+export declare async function velt_postgres__pool_connect(pool: u64): Promise<IoResult<u64>>;
+export declare async function velt_postgres__pool_execute(
+  pool: u64,
+  sql: string,
+  params: string,
+): Promise<IoResult<i64>>;
+export declare async function velt_postgres__pool_batch(pool: u64, sql: string): Promise<IoStatus>;
+export declare async function velt_postgres__pool_query_batch(
+  pool: u64,
+  sql: string,
+  sets: string,
+  mode: u8,
+): Promise<IoResult<string>>;
+export declare function velt_postgres__pool_idle(pool: u64): u32;
+export declare function velt_postgres__pool_end(pool: u64);
+export declare async function velt_postgres__copy_from(
+  client: u64,
+  sql: string,
+): Promise<IoResult<u64>>;
+export declare async function velt_postgres__copy_write(w: u64, data: string): Promise<IoStatus>;
+export declare async function velt_postgres__copy_write_bytes(
+  w: u64,
+  data: u8[],
+): Promise<IoStatus>;
+export declare async function velt_postgres__copy_end(w: u64): Promise<IoResult<i64>>;
+export declare function velt_postgres__copy_abort(w: u64);
+export declare async function velt_postgres__copy_to(
+  client: u64,
+  sql: string,
+): Promise<IoResult<u64>>;
+export declare async function velt_postgres__copy_read(r: u64): Promise<IoResult<string>>;
+export declare async function velt_postgres__copy_read_bytes(r: u64): Promise<IoResult<u8[]>>;
+export declare function velt_postgres__copy_close(r: u64);

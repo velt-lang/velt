@@ -1,6 +1,8 @@
 // Prelude: `Promise.allSettled` and `Promise.any` (docs/reference/async.md). The compiler compiles
 // `Promise.allSettled(ps)` and `Promise.any(ps)` to calls of `promiseAllSettled` / `promiseAny`.
 
+import { firstFulfilled, needsTransfer, transfer } from "velt/lang/intrinsics";
+
 /** How `Promise.allSettled` reports one promise (`E`: what the promise rejects with). */
 export type PromiseSettledResult<T, E> =
   | { status: "fulfilled"; value: T }
@@ -52,7 +54,7 @@ export async function promiseAny<T, E>(ps: Promise<T, E>[]): Promise<T> throws A
   }
   // Node settles in the callback it runs for the deciding promise: one microtask later.
   try {
-    const v = await __intrinsic_promise_any(ps);
+    const v = await firstFulfilled(ps);
     await velt_rt_microtask();
     return v;
   } catch (e) {
@@ -149,8 +151,8 @@ function settlers<T, E>(slot: shared<Mutex<PromiseSlot<T, E>>>): Settlers<T, E> 
   const guardReject = guard.clone();
   const resolve = (value: T) => {
     const here = velt_rt_task_id();
-    if (here == home || here == 0 || !__intrinsic_needs_transfer(value)) {
-      const v = here == home ? value : __intrinsic_transfer(value);
+    if (here == home || here == 0 || !needsTransfer(value)) {
+      const v = here == home ? value : transfer(value);
       openLatch(
         guard.with((g) => forResolve.with((s) => s.settle({ status: "fulfilled", value: v }))),
       );
@@ -160,8 +162,8 @@ function settlers<T, E>(slot: shared<Mutex<PromiseSlot<T, E>>>): Settlers<T, E> 
   };
   const reject = (reason: E) => {
     const here = velt_rt_task_id();
-    if (here == home || here == 0 || !__intrinsic_needs_transfer(reason)) {
-      const r = here == home ? reason : __intrinsic_transfer(reason);
+    if (here == home || here == 0 || !needsTransfer(reason)) {
+      const r = here == home ? reason : transfer(reason);
       openLatch(
         guardReject.with((g) => forReject.with((s) => s.settle({ status: "rejected", reason: r }))),
       );
@@ -182,7 +184,7 @@ async function fulfillLater<T, E>(
   value: T,
 ): Promise<void> {
   await yieldNow();
-  const v = __intrinsic_transfer(value);
+  const v = transfer(value);
   openLatch(guard.with((g) => slot.with((s) => s.settle({ status: "fulfilled", value: v }))));
 }
 
@@ -193,7 +195,7 @@ async function rejectLater<T, E>(
   reason: E,
 ): Promise<void> {
   await yieldNow();
-  const r = __intrinsic_transfer(reason);
+  const r = transfer(reason);
   openLatch(guard.with((g) => slot.with((s) => s.settle({ status: "rejected", reason: r }))));
 }
 
@@ -235,7 +237,7 @@ export function promiseNew<T, E>(
 // transferred when it was settled.
 function takeSettlement<T, E>(slot: shared<Mutex<PromiseSlot<T, E>>>): Settlement<T, E> {
   const probe = { status: "pending" } as Settlement<T, E>; // the whole type, not `pending`
-  if (!__intrinsic_needs_transfer(probe)) {
+  if (!needsTransfer(probe)) {
     return slot.with((s) => s.takeOutcome());
   }
   const taken: Settlement<T, E>[] = [];

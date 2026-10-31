@@ -3,7 +3,7 @@
 // every input itself. Losing started promises keep running to completion. The losers reject
 // only when `main` releases them after their race, and `main` waits until they did, so the
 // order of the output doesn't depend on timing.
-import { channel, Channel } from "velt:channel";
+import { channel, Channel } from "velt/sync";
 
 class Boom extends Error {}
 

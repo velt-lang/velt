@@ -8,7 +8,7 @@ import {
   remove,
   exists,
   readFileSync,
-} from "velt:fs";
+} from "velt/fs";
 
 async function main() {
   const dir = "velt_fs_golden_tmp";

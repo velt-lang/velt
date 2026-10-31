@@ -1,7 +1,7 @@
 // std/datetime: civil conversions, ISO / HTTP parsing and formatting, calendar arithmetic,
 // comparisons and Duration. Expected values checked against Node 24's Date. Local time is
 // printed only as properties (the machine's time zone varies).
-import { DateTime, DateTimeError, Duration, DateParts } from "velt:datetime";
+import { DateTime, DateTimeError, Duration, DateParts } from "velt/time";
 
 function maxOf<T extends Comparable<T>>(a: T, b: T): T {
   return a > b ? a : b;

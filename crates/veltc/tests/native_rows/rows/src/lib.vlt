@@ -1,0 +1,58 @@
+// A test package: velt/db's native API over this package's row cursor and parameter sink.
+
+import { bindParams, decodeRow, decodeRows } from "velt/db";
+
+declare function velt_rows__cursor(n: u32, single: bool): u64;
+declare function velt_rows__close(cursor: u64): u32;
+declare function velt_rows__sink(): u64;
+declare function velt_rows__taken(sink: u64): string;
+
+/** The `n` rows of a cursor as `T`s; the cursor is given back whatever happens. */
+export function all<T>(n: u32): T[] {
+  const cursor = velt_rows__cursor(n, false);
+  try {
+    return decodeRows<T>(cursor);
+  } finally {
+    velt_rows__close(cursor);
+  }
+}
+
+/** The row of a one-row cursor as a `T`. */
+export function one<T>(): T {
+  const cursor = velt_rows__cursor(1, true);
+  try {
+    return decodeRow<T>(cursor);
+  } finally {
+    velt_rows__close(cursor);
+  }
+}
+
+/** What a sink was handed for `params`, or "json: <text>" when they went as JSON. */
+export function bound<P>(params: P): string {
+  const sink = velt_rows__sink();
+  const direct = bindParams<P>(sink, params);
+  const taken = velt_rows__taken(sink);
+  return direct ? taken : `json: ${JSON.stringify(params)}`;
+}
+
+/** A cursor's handle after the cursor was given back (any copy of a handle dies with it). */
+export function closedCursor(): u64 {
+  const cursor = velt_rows__cursor(2, false);
+  velt_rows__close(cursor);
+  return cursor;
+}
+
+/** A sink's handle (open: give it back with `takeSink`). */
+export function openSink(): u64 {
+  return velt_rows__sink();
+}
+
+/** Gives a sink back: what it was handed. */
+export function takeSink(sink: u64): string {
+  return velt_rows__taken(sink);
+}
+
+/** What closing `handle` as a cursor stepped over (0: it is no open cursor). */
+export function closeCursor(handle: u64): u32 {
+  return velt_rows__close(handle);
+}

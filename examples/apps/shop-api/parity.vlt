@@ -3,7 +3,7 @@
 // JSON.parse<T> and node's decoders word their messages differently).
 //
 //   velt run parity.vlt -- http://127.0.0.1:8080 http://127.0.0.1:8081
-import { args, exit } from "velt:process";
+import { args, exit } from "velt/process";
 
 type Call = { method: string; path: string; body: string };
 type Reply = { status: i64; body: string };

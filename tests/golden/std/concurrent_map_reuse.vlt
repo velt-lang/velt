@@ -1,8 +1,8 @@
-// velt:collections/concurrent_map gives room back: a leaf whose last key is deleted is unlinked
+// velt/collections gives room back: a leaf whose last key is deleted is unlinked
 // and reused, with inner nodes left without children, so a map of fixed capacity holds keys that
 // keep moving to new ranges (#1689). Checked against a `Map` as keys come and go in blocks.
 
-import { ConcurrentMap } from "velt:collections/concurrent_map";
+import { ConcurrentMap } from "velt/collections";
 
 function mix(x: u64): u64 {
   let z = x + 0x9E3779B97F4A7C15;

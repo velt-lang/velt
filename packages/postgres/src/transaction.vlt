@@ -1,0 +1,25 @@
+// postgres (internal): `Transaction`, a transaction (or a savepoint) from `Client.begin()`.
+
+import { velt_postgres__end } from "./native";
+import { check } from "./errors";
+
+/** A transaction from `Client.begin()`. */
+export struct Transaction {
+  private handle: u64;
+  /** 1 for a transaction, 2 and up for savepoints inside one. */
+  depth: u32;
+
+  /** The package's own: the transaction `begin()` opened on connection `handle`. */
+  static fromHandle(handle: u64, depth: u32): Transaction {
+    return Transaction { handle: handle, depth: depth };
+  }
+
+  async commit(): Promise<void> {
+    check(await velt_postgres__end(this.handle, this.depth, true));
+  }
+
+  /** Undoes everything since `begin()`. */
+  async rollback(): Promise<void> {
+    check(await velt_postgres__end(this.handle, this.depth, false));
+  }
+}

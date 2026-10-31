@@ -1,0 +1,873 @@
+// The SQL parser of the Velt SQLite engine (src/engine/sql, #1720), a test of the package:
+// expressions with SQLite's precedence, SELECT with joins, CTEs, compound cores, parameters, and
+// SQLite's error messages.
+import { Parser } from "../src/engine/sql/parser";
+import { utf8Length } from "velt/encoding";
+import {
+  Expr,
+  FromItem,
+  OrderTerm,
+  Select,
+  E_NULL,
+  E_INT,
+  E_REAL,
+  E_STRING,
+  E_BLOB,
+  E_PARAM,
+  E_COLUMN,
+  E_UNARY,
+  E_BINARY,
+  E_CALL,
+  E_CASE,
+  E_CAST,
+  E_IN_LIST,
+  E_IN_SELECT,
+  E_BETWEEN,
+  E_LIKE,
+  E_IS,
+  E_ISNULL,
+  E_EXISTS,
+  E_SUBQUERY,
+  E_COLLATE,
+  E_STAR,
+  E_ROW,
+  E_TRUE,
+  E_FALSE,
+} from "../src/engine/sql/types";
+import { SqlError } from "../src/engine/sql/errors";
+
+function list(xs: Expr[]): string {
+  return xs.map((x) => show(x)).join(" ");
+}
+
+function show(e: Expr | null): string {
+  if (e == null) {
+    return "_";
+  }
+  const k = e.kind;
+  if (k == E_NULL) {
+    return "NULL";
+  }
+  if (k == E_TRUE) {
+    return "TRUE";
+  }
+  if (k == E_FALSE) {
+    return "FALSE";
+  }
+  if (k == E_INT) {
+    return e.text != "" ? `int!${e.text}` : `${e.ival}`;
+  }
+  if (k == E_REAL) {
+    return `${e.rval}r`;
+  }
+  if (k == E_STRING) {
+    return `'${e.text}'`;
+  }
+  if (k == E_BLOB) {
+    return `x'${e.text}'`;
+  }
+  if (k == E_PARAM) {
+    return `${e.text}#${e.ival}`;
+  }
+  if (k == E_COLUMN) {
+    return e.table != "" ? `${e.table}.${e.name}` : e.name;
+  }
+  if (k == E_STAR) {
+    return e.table != "" ? `${e.table}.*` : "*";
+  }
+  if (k == E_UNARY) {
+    return `(${e.op} ${show(e.a)})`;
+  }
+  if (k == E_BINARY) {
+    return `(${e.op} ${show(e.a)} ${show(e.b)})`;
+  }
+  if (k == E_CALL) {
+    return `${e.name}(${e.distinct ? "DISTINCT " : ""}${e.star ? "*" : list(e.args)})${e.filter != null ? " FILTER " + show(e.filter) : ""}`;
+  }
+  if (k == E_CASE) {
+    return `(CASE ${show(e.a)} [${list(e.args)}] ELSE ${show(e.b)})`;
+  }
+  if (k == E_CAST) {
+    return `(CAST ${show(e.a)} AS ${e.name})`;
+  }
+  if (k == E_IN_LIST) {
+    return `(${e.not ? "NOT " : ""}IN ${show(e.a)} [${list(e.args)}])`;
+  }
+  if (k == E_IN_SELECT) {
+    return `(${e.not ? "NOT " : ""}IN ${show(e.a)} ${sel(e.select!)})`;
+  }
+  if (k == E_BETWEEN) {
+    return `(${e.not ? "NOT " : ""}BETWEEN ${show(e.a)} ${show(e.b)} ${show(e.c)})`;
+  }
+  if (k == E_LIKE) {
+    return `(${e.not ? "NOT " : ""}${e.op} ${show(e.a)} ${show(e.b)} ${show(e.c)})`;
+  }
+  if (k == E_IS) {
+    return `(IS${e.not ? " NOT" : ""} ${show(e.a)} ${show(e.b)})`;
+  }
+  if (k == E_ISNULL) {
+    return `(${e.not ? "NOTNULL" : "ISNULL"} ${show(e.a)})`;
+  }
+  if (k == E_EXISTS) {
+    return `(${e.not ? "NOT " : ""}EXISTS ${sel(e.select!)})`;
+  }
+  if (k == E_SUBQUERY) {
+    return sel(e.select!);
+  }
+  if (k == E_COLLATE) {
+    return `(COLLATE ${show(e.a)} ${e.name})`;
+  }
+  if (k == E_ROW) {
+    return `(ROW ${list(e.args)})`;
+  }
+  return "?";
+}
+
+function order(o: OrderTerm): string {
+  return show(o.expr) + (o.desc ? " DESC" : "") + (o.nulls != 0 ? " N" + String(o.nulls) : "");
+}
+
+function fromItem(f: FromItem): string {
+  let out = "j" + String(f.join) + (f.natural ? "n" : "") + ":";
+  out += f.subquery != null ? sel(f.subquery!) : (f.schema != "" ? f.schema + "." : "") + f.name;
+  if (f.args.length > 0) {
+    out += "(" + list(f.args) + ")";
+  }
+  if (f.alias != "") {
+    out += " " + f.alias;
+  }
+  if (f.on != null) {
+    out += " ON " + show(f.on);
+  }
+  if (f.using.length > 0) {
+    out += " USING " + f.using.join(",");
+  }
+  if (f.indexedBy != "") {
+    out += " INDEXED " + f.indexedBy;
+  }
+  if (f.notIndexed) {
+    out += " NOT INDEXED";
+  }
+  return out;
+}
+
+function sel(s: Select): string {
+  let out = "{";
+  if (s.with.length > 0) {
+    out += `WITH${s.recursive ? " RECURSIVE" : ""} ${s.with.map((c) => c.name + "(" + c.columns.join(",") + ") AS " + sel(c.select)).join(", ")} `;
+  }
+  for (const c of s.cores) {
+    if (c.op != 0) {
+      out += ` op${c.op} `;
+    }
+    if (c.values.length > 0) {
+      out += `VALUES ${c.values.map((r) => "[" + list(r) + "]").join(" ")}`;
+      continue;
+    }
+    out += `SELECT${c.distinct ? " DISTINCT" : ""} ${c.columns.map((r) => show(r.expr) + (r.alias != "" ? " AS " + r.alias : "")).join(", ")}`;
+    if (c.from.length > 0) {
+      out += " FROM " + c.from.map((f) => fromItem(f)).join(", ");
+    }
+    if (c.where != null) {
+      out += ` WHERE ${show(c.where)}`;
+    }
+    if (c.groupBy.length > 0) {
+      out += ` GROUP ${list(c.groupBy)}`;
+    }
+    if (c.having != null) {
+      out += ` HAVING ${show(c.having)}`;
+    }
+  }
+  if (s.orderBy.length > 0) {
+    out += ` ORDER ${s.orderBy.map((o) => order(o)).join(", ")}`;
+  }
+  if (s.limit != null) {
+    out += ` LIMIT ${show(s.limit)}`;
+  }
+  if (s.offset != null) {
+    out += ` OFFSET ${show(s.offset)}`;
+  }
+  return out + "}";
+}
+
+/** `sql` parsed as one SELECT and shown as a tree, or SQLite's error for it. */
+function parsed(sql: string): string {
+  try {
+    const p = new Parser(sql);
+    const s = p.select();
+    if (p.peek().kind != 0) {
+      p.fail();
+    }
+    return sel(s);
+  } catch (e) {
+    if (e instanceof SqlError) {
+      return `error at ${e.at}: ${e.message}`;
+    }
+    throw e;
+  }
+}
+
+/** A deep input's outcome: its height and cores, or the error; the input shortened. */
+function depth(sql: string): string {
+  const head = sql.length > 24 ? sql.slice(0, 24) + "…" : sql;
+  try {
+    const s = new Parser(sql).select();
+    return `${head} (${sql.length} bytes): height ${s.height}, ${s.cores.length} cores`;
+  } catch (e) {
+    if (e instanceof SqlError) {
+      return `${head} (${sql.length} bytes): error at ${e.at}: ${e.message}`;
+    }
+    throw e;
+  }
+}
+
+/** Every SQLite keyword (and some words that are not keywords), lower case. */
+const KEYWORDS: string[] = (
+  "abort action add after all alter always analyze and as asc attach autoincrement before " +
+  "begin between by cascade case cast check collate column commit conflict constraint create " +
+  "cross current current_date current_time current_timestamp database default deferrable " +
+  "deferred delete desc detach distinct do drop each else end escape except exclude exclusive " +
+  "exists explain fail filter first following for foreign from full generated glob group " +
+  "groups having if ignore immediate in index indexed initially inner insert instead " +
+  "intersect into is isnull join key last left like limit match materialized natural no not " +
+  "nothing notnull null nulls of offset on or order others outer over partition plan pragma " +
+  "preceding primary query raise range recursive references regexp reindex release rename " +
+  "replace restrict returning right rollback row rows savepoint select set table temp " +
+  "temporary then ties to transaction trigger unbounded union unique update using vacuum " +
+  "values view virtual when where window with without rowid strict true false"
+).split(" ");
+
+/**
+ * Where each keyword is tried: a column, a qualified column, a table, a table alias with AS and
+ * bare, a column alias with AS and bare, an operand, a call, a CTE, an ORDER BY term, a type.
+ */
+const FORMS: string[] = [
+  "SELECT % FROM t",
+  "SELECT t.% FROM t",
+  "SELECT * FROM %",
+  "SELECT * FROM t AS %",
+  "SELECT * FROM t %",
+  "SELECT 1 AS %",
+  "SELECT 1 %",
+  "SELECT 1 + %",
+  "SELECT %(1)",
+  "WITH % AS (SELECT 1) SELECT 1",
+  "SELECT 1 FROM t ORDER BY %",
+  "SELECT CAST(1 AS %)",
+];
+
+/** Whether `sql` parses as one SELECT. */
+function accepts(sql: string): bool {
+  try {
+    const p = new Parser(sql);
+    p.select();
+    return p.peek().kind == 0;
+  } catch (e) {
+    if (e instanceof SqlError) {
+      return false;
+    }
+    throw e;
+  }
+}
+
+// Expression trees up to SQLite's height limit (1000), and past it: chains of binary
+// operators, prefix operators, nesting; parentheses and COLLATE add no level. The parser's
+// own recursion is bounded too ("Recursion limit"), so deep input is an error, never a stack
+// overflow. Compound SELECTs and FROM lists have SQLite's limits. Trees this deep are not
+// printed: only the height.
+export function test_expression_height_and_select_limits() {
+  const sqls: string[] = [
+    "SELECT 1" + "+1".repeat(999),
+    "SELECT 1" + "+1".repeat(1000),
+    "SELECT 1" + "+1".repeat(5000),
+    "SELECT 1" + " AND 1".repeat(999),
+    "SELECT 1" + " OR 1".repeat(1000),
+    "SELECT 'a'" + " || 'a'".repeat(1000),
+    "SELECT 1" + " BETWEEN 1 AND 1".repeat(1000),
+    "SELECT a" + " ISNULL".repeat(999) + " FROM t",
+    "SELECT a" + " ISNULL".repeat(1000) + " FROM t",
+    "SELECT 1" + " COLLATE x".repeat(5000),
+    "SELECT " + "NOT ".repeat(999) + "1",
+    "SELECT " + "NOT ".repeat(1000) + "1",
+    "SELECT " + "- ".repeat(999) + "1",
+    "SELECT " + "- ".repeat(1000) + "1",
+    "SELECT " + "CAST(".repeat(999) + "1" + " AS INT)".repeat(999),
+    "SELECT " + "1+(".repeat(999) + "1" + ")".repeat(999),
+    "SELECT " + "(".repeat(1000) + "1" + ")".repeat(1000),
+    "SELECT " + "(".repeat(5000) + "1" + ")".repeat(5000),
+    "SELECT " + "f(".repeat(500) + "1" + ")".repeat(500),
+    "SELECT " + "f(".repeat(3000) + "1" + ")".repeat(3000),
+    "SELECT " + "(SELECT ".repeat(500) + "1" + ")".repeat(500),
+    "SELECT " + "(SELECT ".repeat(3000) + "1" + ")".repeat(3000),
+    "SELECT " + "(".repeat(5000),
+    "SELECT 1" + " UNION SELECT 1".repeat(499),
+    "SELECT 1" + " UNION SELECT 1".repeat(500),
+    "SELECT 1 FROM t" + " JOIN t".repeat(63),
+    "SELECT 1 FROM t" + " JOIN t".repeat(64),
+    "SELECT 1 FROM t" + ", t".repeat(200),
+  ];
+  assertEq(sqls.map((s) => depth(s)), [
+    "SELECT 1+1+1+1+1+1+1+1+1… (2006 bytes): height 1000, 1 cores",
+    "SELECT 1+1+1+1+1+1+1+1+1… (2008 bytes): error at 2006: Expression tree is too large (maximum depth 1000)",
+    "SELECT 1+1+1+1+1+1+1+1+1… (10008 bytes): error at 2006: Expression tree is too large (maximum depth 1000)",
+    "SELECT 1 AND 1 AND 1 AND… (6002 bytes): height 1000, 1 cores",
+    "SELECT 1 OR 1 OR 1 OR 1 … (5008 bytes): error at 5004: Expression tree is too large (maximum depth 1000)",
+    "SELECT 'a' || 'a' || 'a'… (7010 bytes): error at 7004: Expression tree is too large (maximum depth 1000)",
+    "SELECT 1 BETWEEN 1 AND 1… (16008 bytes): error at 15993: Expression tree is too large (maximum depth 1000)",
+    "SELECT a ISNULL ISNULL I… (7008 bytes): height 1000, 1 cores",
+    "SELECT a ISNULL ISNULL I… (7015 bytes): error at 7002: Expression tree is too large (maximum depth 1000)",
+    "SELECT 1 COLLATE x COLLA… (50008 bytes): height 1, 1 cores",
+    "SELECT NOT NOT NOT NOT N… (4004 bytes): height 1000, 1 cores",
+    "SELECT NOT NOT NOT NOT N… (4008 bytes): error at 7: Expression tree is too large (maximum depth 1000)",
+    "SELECT - - - - - - - - -… (2006 bytes): height 1000, 1 cores",
+    "SELECT - - - - - - - - -… (2008 bytes): error at 2007: Expression tree is too large (maximum depth 1000)",
+    "SELECT CAST(CAST(CAST(CA… (12995 bytes): error at 1257: Recursion limit",
+    "SELECT 1+(1+(1+(1+(1+(1+… (4004 bytes): error at 756: Recursion limit",
+    "SELECT (((((((((((((((((… (2008 bytes): error at 506: Recursion limit",
+    "SELECT (((((((((((((((((… (10008 bytes): error at 506: Recursion limit",
+    "SELECT f(f(f(f(f(f(f(f(f… (1508 bytes): error at 506: Recursion limit",
+    "SELECT f(f(f(f(f(f(f(f(f… (9008 bytes): error at 506: Recursion limit",
+    "SELECT (SELECT (SELECT (… (4508 bytes): error at 2000: Recursion limit",
+    "SELECT (SELECT (SELECT (… (27008 bytes): error at 2000: Recursion limit",
+    "SELECT (((((((((((((((((… (5007 bytes): error at 506: Recursion limit",
+    "SELECT 1 UNION SELECT 1 … (7493 bytes): height 1, 500 cores",
+    "SELECT 1 UNION SELECT 1 … (7508 bytes): error at 7500: too many terms in compound SELECT",
+    "SELECT 1 FROM t JOIN t J… (456 bytes): height 1, 1 cores",
+    "SELECT 1 FROM t JOIN t J… (463 bytes): error at 16: at most 64 tables in a join",
+    "SELECT 1 FROM t, t, t, t… (615 bytes): error at 615: too many FROM clause terms, max: 200",
+  ]);
+}
+
+export function test_every_nesting_production_is_bounded() {
+  const sqls: string[] = [];
+  // A chain of BETWEEN low bounds nests (`a BETWEEN b BETWEEN c AND d AND e` is valid): it is
+  // bounded like any nesting, never a stack overflow.
+  sqls.push("SELECT 1" + " BETWEEN 1".repeat(10000) + " AND 1".repeat(10000));
+  sqls.push("SELECT 1" + " NOT BETWEEN 1".repeat(10000) + " AND 1".repeat(10000));
+  // Every production that nests, 10,000 deep: bounded, never a stack overflow (a level of
+  // each costs the stack it measures, src/engine/sql/token_cursor's MAX_DEPTH).
+  sqls.push("WITH a AS (".repeat(10000) + "SELECT 1" + ") SELECT 1".repeat(10000));
+  sqls.push("SELECT * FROM " + "(SELECT * FROM ".repeat(10000) + "t" + ")".repeat(10000));
+  sqls.push("SELECT " + "CASE WHEN ".repeat(10000) + "1" + " THEN 1 END".repeat(10000));
+  sqls.push("SELECT " + "EXISTS (SELECT ".repeat(10000) + "1" + ")".repeat(10000));
+  sqls.push("SELECT " + "1 IN (".repeat(10000) + "1" + ")".repeat(10000));
+  sqls.push("SELECT " + "1 IN f(".repeat(10000) + "1" + ")".repeat(10000));
+  sqls.push("SELECT " + "f(1) FILTER (WHERE ".repeat(10000) + "1" + ")".repeat(10000));
+  sqls.push("SELECT 1 LIMIT " + "(SELECT 1 LIMIT ".repeat(10000) + "1" + ")".repeat(10000));
+  sqls.push("SELECT " + "(VALUES (".repeat(10000) + "1" + "))".repeat(10000));
+  sqls.push("SELECT " + "CAST(".repeat(10000) + "1" + " AS INT)".repeat(10000));
+  assertEq(sqls.map((s) => depth(s)), [
+    "SELECT 1 BETWEEN 1 BETWE… (160008 bytes): error at 2499: Recursion limit",
+    "SELECT 1 NOT BETWEEN 1 N… (200008 bytes): error at 3495: Recursion limit",
+    "WITH a AS (WITH a AS (WI… (210008 bytes): error at 2750: Recursion limit",
+    "SELECT * FROM (SELECT * … (160015 bytes): error at 3750: Recursion limit",
+    "SELECT CASE WHEN CASE WH… (210008 bytes): error at 4997: Recursion limit",
+    "SELECT EXISTS (SELECT EX… (160008 bytes): error at 3750: Recursion limit",
+    "SELECT 1 IN (1 IN (1 IN … (70008 bytes): error at 1503: Recursion limit",
+    "SELECT 1 IN f(1 IN f(1 I… (80008 bytes): error at 1171: Recursion limit",
+    "SELECT f(1) FILTER (WHER… (200008 bytes): error at 4739: Recursion limit",
+    "SELECT 1 LIMIT (SELECT 1… (170016 bytes): error at 4000: Recursion limit",
+    "SELECT (VALUES ((VALUES … (110008 bytes): error at 2249: Recursion limit",
+    "SELECT CAST(CAST(CAST(CA… (130008 bytes): error at 1257: Recursion limit",
+  ]);
+}
+
+export function test_parameter_limit() {
+  const sqls: string[] = [];
+  // SQLite's 32766 parameters: `?`, `?NNN` and names alike.
+  sqls.push("SELECT ?32766, ?");
+  sqls.push("SELECT " + "?, ".repeat(32766) + "?");
+  const names: string[] = [];
+  for (let i = 0; i < 32767; i++) {
+    names.push(`:p${i}`);
+  }
+  sqls.push("SELECT " + names.slice(0, 32766).join(", ") + ", :p0, ?1");
+  sqls.push("SELECT " + names.join(", "));
+  assertEq(sqls.map((s) => depth(s)), [
+    "SELECT ?32766, ? (16 bytes): error at 15: too many SQL variables",
+    "SELECT ?, ?, ?, ?, ?, ?,… (98306 bytes): error at 98305: too many SQL variables",
+    "SELECT :p0, :p1, :p2, :p… (283798 bytes): height 1, 1 cores",
+    "SELECT :p0, :p1, :p2, :p… (283798 bytes): error at 283791: too many SQL variables",
+  ]);
+}
+
+export function test_a_collate_run_is_one_node() {
+  // A run of COLLATE is one node, however long: the tree can be walked.
+  assertEq(
+    sel(new Parser("SELECT 1" + " COLLATE x".repeat(5000) + " COLLATE y").select()),
+    "{SELECT (COLLATE 1 Y)}",
+  );
+}
+
+// The keyword sweep: + where the keyword is accepted, - where it is a syntax error, in the
+// order of FORMS; the expected marks are /usr/bin/sqlite3 3.54's.
+export function test_keyword_sweep() {
+  const marks: string[] = KEYWORDS.map(
+    (kw) => `${kw} ${FORMS.map((f) => (accepts(f.replaceAll("%", kw)) ? "+" : "-")).join("")}`,
+  );
+  assertEq(marks, [
+    "abort ++++++++++++",
+    "action ++++++++++++",
+    "add ------------",
+    "after ++++++++++++",
+    "all --------+---",
+    "alter ------------",
+    "always ++++++++++++",
+    "analyze ++++++++++++",
+    "and ------------",
+    "as ------------",
+    "asc ++++++++++++",
+    "attach ++++++++++++",
+    "autoincrement ------------",
+    "before ++++++++++++",
+    "begin ++++++++++++",
+    "between ------------",
+    "by ++++++++++++",
+    "cascade ++++++++++++",
+    "case ------------",
+    "cast -++++++--+-+",
+    "check ------------",
+    "collate ------------",
+    "column ++++++++++++",
+    "commit ------------",
+    "conflict ++++++++++++",
+    "constraint ------------",
+    "create ------------",
+    "cross ++++-+-++++-",
+    "current ++++++++++++",
+    "current_date ++++++++-+++",
+    "current_time ++++++++-+++",
+    "current_timestamp ++++++++-+++",
+    "database ++++++++++++",
+    "default ------------",
+    "deferrable ------------",
+    "deferred ++++++++++++",
+    "delete ------------",
+    "desc ++++++++++++",
+    "detach ++++++++++++",
+    "distinct --------+---",
+    "do ++++++++++++",
+    "drop ------------",
+    "each ++++++++++++",
+    "else ------------",
+    "end ++++++++++++",
+    "escape ------------",
+    "except ------------",
+    "exclude ++++++++++++",
+    "exclusive ++++++++++++",
+    "exists ------------",
+    "explain ++++++++++++",
+    "fail ++++++++++++",
+    "filter ++++++++++++",
+    "first ++++++++++++",
+    "following ++++++++++++",
+    "for ++++++++++++",
+    "foreign ------------",
+    "from ------------",
+    "full ++++-+-++++-",
+    "generated ++++++++++++",
+    "glob ++++++-+++++",
+    "group ------------",
+    "groups ++++++++++++",
+    "having ------------",
+    "if ++++++++++++",
+    "ignore ++++++++++++",
+    "immediate ++++++++++++",
+    "in ------------",
+    "index ------------",
+    "indexed ++++-+-++++-",
+    "initially ++++++++++++",
+    "inner ++++-+-++++-",
+    "insert ------------",
+    "instead ++++++++++++",
+    "intersect ------------",
+    "into ------------",
+    "is ------------",
+    "isnull ------+-----",
+    "join ------------",
+    "key ++++++++++++",
+    "last ++++++++++++",
+    "left ++++-+-++++-",
+    "like ++++++-+++++",
+    "limit ------------",
+    "match ++++++-+++++",
+    "materialized ++++++++++++",
+    "natural ++++-+-++++-",
+    "no ++++++++++++",
+    "not --------+---",
+    "nothing ------------",
+    "notnull ------+-----",
+    "null +------+--+-",
+    "nulls ++++++++++++",
+    "of ++++++++++++",
+    "offset ++++++++++++",
+    "on ------------",
+    "or ------------",
+    "order ------------",
+    "others ++++++++++++",
+    "outer ++++-+-++++-",
+    "over ++++++++++++",
+    "partition ++++++++++++",
+    "plan ++++++++++++",
+    "pragma ++++++++++++",
+    "preceding ++++++++++++",
+    "primary ------------",
+    "query ++++++++++++",
+    "raise -++++++--+-+",
+    "range ++++++++++++",
+    "recursive +++++++++-++",
+    "references ------------",
+    "regexp ++++++-+++++",
+    "reindex ++++++++++++",
+    "release ++++++++++++",
+    "rename ++++++++++++",
+    "replace ++++++++++++",
+    "restrict ++++++++++++",
+    "returning ------------",
+    "right ++++-+-++++-",
+    "rollback ++++++++++++",
+    "row ++++++++++++",
+    "rows ++++++++++++",
+    "savepoint ++++++++++++",
+    "select ------------",
+    "set ------------",
+    "table ------------",
+    "temp ++++++++++++",
+    "temporary ++++++++++++",
+    "then ------------",
+    "ties ++++++++++++",
+    "to ------------",
+    "transaction ------------",
+    "trigger ++++++++++++",
+    "unbounded ++++++++++++",
+    "union ------------",
+    "unique ------------",
+    "update ------------",
+    "using ------------",
+    "vacuum ++++++++++++",
+    "values ------------",
+    "view ++++++++++++",
+    "virtual ++++++++++++",
+    "when ------------",
+    "where ------------",
+    "window ++++++++++++",
+    "with ++++++++++++",
+    "without ++++++++++++",
+    "rowid ++++++++++++",
+    "strict ++++++++++++",
+    "true ++++++++++++",
+    "false ++++++++++++",
+  ]);
+}
+
+export function test_expressions_and_selects() {
+  assertEq(parsed("SELECT 1 + 2 * 3 - 4 / 5 % 6"), "{SELECT (- (+ 1 (* 2 3)) (% (/ 4 5) 6))}");
+  assertEq(
+    parsed(
+      "SELECT a || b || c, -x, - -1, ~5, +y, -9223372036854775808, 9223372036854775808, 0x7fffffffffffffff, 0xffffffffffffffff, 1e3, .5, 1.5e-3, 99999999999999999999",
+    ),
+    "{SELECT (|| (|| a b) c), (- x), 1, (~ 5), (+ y), -9223372036854775808, int!9223372036854775808, 9223372036854775807, -1, 1000r, 0.5r, 0.0015r, 100000000000000000000r}",
+  );
+  assertEq(
+    parsed("SELECT * FROM t WHERE a = 1 AND b != 2 OR NOT c <> 3 AND d == 4"),
+    "{SELECT * FROM j0:t WHERE (OR (AND (= a 1) (!= b 2)) (AND (NOT (!= c 3)) (= d 4)))}",
+  );
+  assertEq(
+    parsed(
+      "SELECT a FROM t WHERE x IS NULL AND y IS NOT NULL AND z ISNULL AND w NOTNULL AND v NOT NULL AND u IS NOT DISTINCT FROM 1",
+    ),
+    "{SELECT a FROM j0:t WHERE (AND (AND (AND (AND (AND (IS x NULL) (IS NOT y NULL)) (ISNULL z)) (NOTNULL w)) (NOTNULL v)) (IS u 1))}",
+  );
+  assertEq(
+    parsed(
+      "SELECT a BETWEEN 1 AND 2 AND b NOT BETWEEN c AND d, e IN (1, 2, 3), f NOT IN (SELECT g FROM h), i IN t2, j IN ()",
+    ),
+    "{SELECT (AND (BETWEEN a 1 2) (NOT BETWEEN b c d)), (IN e [1 2 3]), (NOT IN f {SELECT g FROM j0:h}), (IN i {SELECT * FROM j0:t2}), (IN j [])}",
+  );
+  assertEq(
+    parsed(
+      "SELECT name LIKE 'a%' ESCAPE '\\', name NOT GLOB '*x*', CASE WHEN a THEN 1 WHEN b THEN 2 ELSE 3 END, CASE x WHEN 1 THEN 'one' END",
+    ),
+    "{SELECT (LIKE name 'a%' '\\'), (NOT GLOB name '*x*' _), (CASE _ [a 1 b 2] ELSE 3), (CASE x [1 'one'] ELSE _)}",
+  );
+  assertEq(
+    parsed(
+      "SELECT CAST(x AS INTEGER), CAST(y AS VARCHAR(10)), CAST(z AS DOUBLE PRECISION), count(*), count(DISTINCT a), sum(b) FILTER (WHERE b > 0), max(a, b, c)",
+    ),
+    "{SELECT (CAST x AS INTEGER), (CAST y AS VARCHAR(10)), (CAST z AS DOUBLE PRECISION), COUNT(*), COUNT(DISTINCT a), SUM(b) FILTER (> b 0), MAX(a b c)}",
+  );
+  assertEq(
+    parsed(
+      "SELECT p.id, p.body, u.username AS author, (SELECT count(*) FROM likes l WHERE l.post_id = p.id) AS like_count FROM posts p JOIN users u ON u.id = p.user_id ORDER BY p.created_at DESC, p.id DESC LIMIT 20",
+    ),
+    "{SELECT p.id, p.body, u.username AS author, {SELECT COUNT(*) FROM j0:likes l WHERE (= l.post_id p.id)} AS like_count FROM j0:posts p, j0:users u ON (= u.id p.user_id) ORDER p.created_at DESC, p.id DESC LIMIT 20}",
+  );
+  assertEq(
+    parsed(
+      "SELECT a, b c, d 'e', \"f g\", [h i], `j` FROM t1 AS x LEFT OUTER JOIN t2 y USING (k, l) NATURAL JOIN t3 CROSS JOIN t4, t5 INDEXED BY i5 WHERE EXISTS (SELECT 1) AND NOT EXISTS (SELECT 2)",
+    ),
+    "{SELECT a, b AS c, d AS e, f g, h i, j FROM j0:t1 x, j1:t2 y USING k,l, j0n:t3, j4:t4, j0:t5 INDEXED i5 WHERE (AND (EXISTS {SELECT 1}) (NOT (EXISTS {SELECT 2})))}",
+  );
+  assertEq(
+    parsed(
+      "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 10) SELECT i FROM n",
+    ),
+    "{WITH RECURSIVE n(i) AS {SELECT 1 op2 SELECT (+ i 1) FROM j0:n WHERE (< i 10)} SELECT i FROM j0:n}",
+  );
+  assertEq(
+    parsed(
+      "SELECT a FROM t UNION SELECT b FROM u INTERSECT SELECT c FROM v EXCEPT SELECT d FROM w ORDER BY 1 NULLS LAST LIMIT 5, 10",
+    ),
+    "{SELECT a FROM j0:t op1 SELECT b FROM j0:u op3 SELECT c FROM j0:v op4 SELECT d FROM j0:w ORDER 1 N2 LIMIT 10 OFFSET 5}",
+  );
+  assertEq(parsed("VALUES (1, 'a'), (2, 'b')"), "{VALUES [1 'a'] [2 'b']}");
+  assertEq(
+    parsed("SELECT ?, ?, ?5, ?, :name, @name, $x, :name, ?2"),
+    "{SELECT ?#1, ?#2, ?5#5, ?#6, :name#7, @name#8, $x#9, :name#7, ?2#2}",
+  );
+  assertEq(
+    parsed(
+      "SELECT a COLLATE NOCASE = b, (1, 2) = (3, 4), x -> '$.a', x ->> '$.b', a & b | c << 2 >> 1, a < b = c > d",
+    ),
+    "{SELECT (= (COLLATE a NOCASE) b), (= (ROW 1 2) (ROW 3 4)), (-> x '$.a'), (->> x '$.b'), (>> (<< (| (& a b) c) 2) 1), (= (< a b) (> c d))}",
+  );
+  assertEq(
+    parsed("SELECT DISTINCT a FROM t GROUP BY a, b HAVING count(*) > 1 LIMIT 10 OFFSET 5"),
+    "{SELECT DISTINCT a FROM j0:t GROUP a b HAVING (> COUNT(*) 1) LIMIT 10 OFFSET 5}",
+  );
+  assertEq(
+    parsed("SELECT * FROM (SELECT 1 AS x) s, json_each('[1]') j, generate_series(1, 9)"),
+    "{SELECT * FROM j0:{SELECT 1 AS x} s, j0:json_each('[1]') j, j0:generate_series(1 9)}",
+  );
+  assertEq(
+    parsed(
+      "SELECT 'it''s', \"say \"\"hi\"\"\", x'00FF', TRUE, FALSE, true(), CURRENT_TIMESTAMP -- comment\n /* block */",
+    ),
+    "{SELECT 'it's', say \"hi\", x'00FF', TRUE, FALSE, TRUE(), CURRENT_TIMESTAMP()}",
+  );
+}
+
+export function test_syntax_errors() {
+  assertEq(parsed("SELECT 1 +"), "error at 10: incomplete input");
+  assertEq(parsed("SELECT a FROM WHERE"), "error at 14: near \"WHERE\": syntax error");
+  assertEq(parsed("SELECT 'abc"), "error at 7: unrecognized token: \"'abc\"");
+  assertEq(parsed("SELECT 12abc"), "error at 7: unrecognized token: \"12abc\"");
+  assertEq(parsed("SELECT x'0'"), "error at 7: unrecognized token: \"x'0'\"");
+  assertEq(parsed("SELECT a FROM t ORDER BY"), "error at 24: incomplete input");
+  assertEq(parsed("SELECT ?0"), "error at 7: variable number must be between ?1 and ?32766");
+  assertEq(parsed("SELECT f(x) OVER ()"), "{SELECT F(x)}");
+}
+
+export function test_operators_and_numeric_literals() {
+  assertEq(
+    parsed("SELECT 1 = NOT 0, 1 = NOT 0 AND 0, 0 = NOT 0 = 0, 1 + NOT 0, NOT EXISTS (SELECT 1)"),
+    "{SELECT (= 1 (NOT 0)), (AND (= 1 (NOT 0)) 0), (= 0 (NOT (= 0 0))), (+ 1 (NOT 0)), (NOT (EXISTS {SELECT 1}))}",
+  );
+  assertEq(
+    parsed("SELECT like(1, 2), glob('a', 'a'), match(1, 2), regexp(1, 2), a LIKE b"),
+    "{SELECT LIKE(1 2), GLOB('a' 'a'), MATCH(1 2), REGEXP(1 2), (LIKE a b _)}",
+  );
+  assertEq(
+    parsed("SELECT 0x00000000000000001, 0x000000000000000000000000000ff, 0x00000000000000000"),
+    "{SELECT 1, 255, 0}",
+  );
+  assertEq(
+    parsed("SELECT - -9223372036854775808, -(-9223372036854775808), - - 5"),
+    "{SELECT (- -9223372036854775808), (- -9223372036854775808), 5}",
+  );
+  assertEq(
+    parsed("SELECT 123456789012345678, 999999999999999999, -123456789012345678"),
+    "{SELECT 123456789012345678, 999999999999999999, -123456789012345678}",
+  );
+  assertEq(parsed("ſelect 1"), "error at 0: near \"ſelect\": syntax error");
+  assertEq(
+    parsed("SELECT 2 BETWEEN 1 = 1 AND 3, 5 BETWEEN 1 AND 3 = 0"),
+    "{SELECT (BETWEEN 2 (= 1 1) 3), (= (BETWEEN 5 1 3) 0)}",
+  );
+  assertEq(
+    parsed("SELECT 1_000, 1_000.5, 0x1_0, 1e1_0, 1.5_0, 0xf_f"),
+    "{SELECT 1000, 1000.5r, 16, 10000000000r, 1.5r, 255}",
+  );
+  assertEq(parsed("SELECT 1__0"), "error at 7: unrecognized token: \"1__0\"");
+  assertEq(parsed("SELECT 1_"), "error at 7: unrecognized token: \"1_\"");
+  assertEq(parsed("SELECT 1._5"), "error at 7: unrecognized token: \"1._5\"");
+  assertEq(
+    parsed("SELECT a COLLATE x COLLATE y = b COLLATE z"),
+    "{SELECT (= (COLLATE a Y) (COLLATE b Z))}",
+  );
+}
+
+export function test_an_unclosed_comment_at_the_end() {
+  // `/*` at the very end is `/` then `*` (tokenize.c); any longer unclosed comment runs to the end.
+  assertEq(parsed("SELECT 1/*"), "error at 9: near \"*\": syntax error");
+  assertEq(parsed("SELECT 1/**"), "{SELECT 1}");
+}
+
+export function test_in_a_table_or_table_valued_function() {
+  // IN [schema.]table and IN a table-valued function.
+  assertEq(
+    parsed(
+      "SELECT 1 IN main.t, 2 NOT IN json_each('[1]'), 3 IN main.json_each('[1]', 2), 4 IN t(), 5 IN 't', 6 IN left",
+    ),
+    "{SELECT (IN 1 {SELECT * FROM j0:main.t}), (NOT IN 2 {SELECT * FROM j0:json_each('[1]')}), (IN 3 {SELECT * FROM j0:main.json_each('[1]' 2)}), (IN 4 {SELECT * FROM j0:t}), (IN 5 {SELECT * FROM j0:t}), (IN 6 {SELECT * FROM j0:left})}",
+  );
+}
+
+export function test_type_names() {
+  // Type names: words or strings, then (n) or (n, m) of signed numbers only.
+  assertEq(
+    parsed(
+      "SELECT CAST(x AS 'int'), CAST(x AS INT 'x' y), CAST(x AS INT(+1)), CAST(x AS NUMERIC(-1, 2.5)), CAST(x AS generated), CAST(x AS \"int\")",
+    ),
+    "{SELECT (CAST x AS int), (CAST x AS INT 'x' y), (CAST x AS INT(+1)), (CAST x AS NUMERIC(-1, 2.5)), (CAST x AS generated), (CAST x AS int)}",
+  );
+  assertEq(parsed("SELECT CAST(x AS INT(foo))"), "error at 21: near \"foo\": syntax error");
+  assertEq(parsed("SELECT CAST(x AS INT(1_0))"), "error at 21: near \"1_0\": syntax error");
+  assertEq(parsed("SELECT CAST(x AS INT(1, 2, 3))"), "error at 25: near \",\": syntax error");
+  assertEq(parsed("SELECT CAST(x AS INT((1)))"), "error at 21: near \"(\": syntax error");
+  assertEq(parsed("SELECT CAST(x AS left)"), "error at 17: near \"left\": syntax error");
+}
+
+export function test_table_star_stands_alone() {
+  // `t.*` is a result column on its own: no alias, no operand, no argument.
+  assertEq(
+    parsed("SELECT t.*, 't'.*, left.*, 't'.a FROM t AS left"),
+    "{SELECT t.*, t.*, left.*, t.a FROM j0:t left}",
+  );
+  assertEq(parsed("SELECT t.* AS x FROM t"), "error at 11: near \"AS\": syntax error");
+  assertEq(parsed("SELECT t.* + 1 FROM t"), "error at 11: near \"+\": syntax error");
+  assertEq(parsed("SELECT count(t.*) FROM t"), "error at 15: near \"*\": syntax error");
+}
+
+export function test_join_types_and_constraints() {
+  // A string alias; ON and USING after a comma join; join words in any order (sqlite3JoinType).
+  assertEq(
+    parsed(
+      "SELECT * FROM t 'x', u, v ON 1, w USING (a) LEFT NATURAL JOIN y OUTER LEFT JOIN z INNER CROSS JOIN q LEFT RIGHT JOIN r NATURAL FULL OUTER JOIN s",
+    ),
+    "{SELECT * FROM j0:t x, j0:u, j0:v ON 1, j0:w USING a, j1n:y, j1:z, j4:q, j3:r, j3n:s}",
+  );
+  assertEq(
+    parsed("SELECT * FROM t LEFT INNER JOIN u"),
+    "error at 16: unknown join type: LEFT INNER",
+  );
+  assertEq(parsed("SELECT * FROM t OUTER JOIN u"), "error at 16: unknown join type: OUTER");
+  assertEq(parsed("SELECT * FROM t LEFT foo JOIN u"), "error at 16: unknown join type: LEFT foo");
+  assertEq(
+    parsed("SELECT * FROM t left \"outer\" JOIN u"),
+    "error at 16: unknown join type: left \"outer\"",
+  );
+  assertEq(
+    parsed("SELECT * FROM t LEFT OUTER NATURAL INNER JOIN u"),
+    "error at 35: near \"INNER\": syntax error",
+  );
+  assertEq(parsed("SELECT * FROM t ON 1"), "error at 16: a JOIN clause is required before ON");
+  assertEq(
+    parsed("SELECT * FROM t USING (a)"),
+    "error at 16: a JOIN clause is required before USING",
+  );
+  assertEq(
+    parsed("SELECT * FROM t ON 1 WHERE 1"),
+    "error at 16: a JOIN clause is required before ON",
+  );
+  assertEq(parsed("SELECT * FROM t ON a DO"), "error at 21: near \"DO\": syntax error");
+}
+
+export function test_collation_names() {
+  // A collation is a name or a string, not a join word.
+  assertEq(
+    parsed("SELECT 1 COLLATE 'x', 1 COLLATE end"),
+    "{SELECT (COLLATE 1 X), (COLLATE 1 END)}",
+  );
+  assertEq(parsed("SELECT 1 COLLATE left"), "error at 17: near \"left\": syntax error");
+  assertEq(
+    parsed("SELECT * FROM t NOT INDEXED, json_each('[1]') NOT INDEXED"),
+    "error at 46: near \"NOT\": syntax error",
+  );
+}
+
+export function test_values_rows() {
+  // VALUES rows have one length; ORDER BY and LIMIT follow a SELECT core, not VALUES.
+  assertEq(
+    parsed("VALUES (1, 2), (3)"),
+    "error at 15: all VALUES must have the same number of terms",
+  );
+  assertEq(
+    parsed("SELECT 1 UNION VALUES (1), (2, 3)"),
+    "error at 27: all VALUES must have the same number of terms",
+  );
+  assertEq(parsed("VALUES (1) ORDER BY 1"), "error at 11: near \"ORDER\": syntax error");
+  assertEq(
+    parsed("SELECT 1 UNION VALUES (1) LIMIT 1"),
+    "error at 26: near \"LIMIT\": syntax error",
+  );
+  assertEq(parsed("VALUES (1) UNION SELECT 1 ORDER BY 1"), "{VALUES [1] op1 SELECT 1 ORDER 1}");
+}
+
+export function test_escape_binds_like_a_comparison() {
+  // ESCAPE's operand binds like `<` (parse.y's %right ESCAPE above the comparisons): the
+  // escape is `c < d`, and `=` ends it.
+  assertEq(
+    parsed("SELECT a LIKE b ESCAPE c < d, a LIKE b ESCAPE c = d, a NOT GLOB b ESCAPE c & d"),
+    "{SELECT (LIKE a b (< c d)), (= (LIKE a b c) d), (NOT GLOB a b (& c d))}",
+  );
+}
+
+export function test_not_and_raise() {
+  // NOT after an operand must start NOT IN / LIKE / BETWEEN / NULL; RAISE only in a trigger.
+  assertEq(parsed("SELECT 1 NOT x"), "error at 13: near \"x\": syntax error");
+  assertEq(parsed("SELECT 1 NOT"), "error at 12: incomplete input");
+  assertEq(
+    parsed("SELECT raise(ABORT, 'x')"),
+    "error at 7: RAISE() may only be used within a trigger-program",
+  );
+  assertEq(parsed("SELECT raise(1)"), "error at 13: near \"1\": syntax error");
+}
+
+export function test_keywords_as_names_in_context() {
+  // Keywords that are names here (SQLite's %fallback ID, join words, FILTER/OVER/WINDOW by
+  // context): columns, tables, aliases, calls.
+  assertEq(
+    parsed(
+      "SELECT end, offset, left, by, with, glob(1, 2), like, indexed, x FROM cast, raise, left AS right, t end",
+    ),
+    "{SELECT end, offset, left, by, with, GLOB(1 2), like, indexed, x FROM j0:cast, j0:raise, j0:left right, j0:t end}",
+  );
+  assertEq(
+    parsed("SELECT count(*) filter, count(*) over, 1 window, count(*) FILTER (WHERE 1) FROM t"),
+    "{SELECT COUNT(*) AS filter, COUNT(*) AS over, 1 AS window, COUNT(*) FILTER 1 FROM j0:t}",
+  );
+  assertEq(parsed("SELECT 1 LIMIT offset OFFSET 1"), "{SELECT 1 LIMIT offset OFFSET 1}");
+  assertEq(parsed("SELECT \"count\"(*), [abs](1)"), "{SELECT COUNT(*), ABS(1)}");
+}
+
+// The text of each result column and window is cut out of the SQL with the parser's running
+// index, so a SELECT of many walks the text about once: cutting each from the start made
+// `prepare` quadratic (2,000 columns took ten times as long as now).
+export function test_result_column_text_is_linear() {
+  const cols: string[] = [];
+  const wins: string[] = [];
+  for (let i: i64 = 0; i < 1000; i++) {
+    cols.push(`x + ${i} AS c${i}`);
+    wins.push(`w${i} AS (ORDER BY x + ${i})`);
+  }
+  const p = assertWalksOnce(`SELECT ${cols.join(", ")} FROM t`);
+  assertEq(p.cores[0].columns.length, 1000);
+  assertEq(p.cores[0].columns[999].span, "x + 999");
+  const w = assertWalksOnce(`SELECT 1 FROM t WINDOW ${wins.join(", ")}`);
+  assertEq(w.cores[0].windows.length, 1000);
+  assertEq(w.cores[0].windows[999].text, "ORDER BY x + 999");
+}
+
+/**
+ * Parses `sql`, a SELECT: the parser's own index walked the text (cutting each piece from the
+ * start goes around it) and walked it about once.
+ */
+function assertWalksOnce(sql: string): Select {
+  const p = new Parser(sql);
+  const s = p.select();
+  const bytes = utf8Length(sql) as usize;
+  assert(p.index.walked >= bytes / 2, `walked ${p.index.walked} bytes of ${bytes}`);
+  assert(p.index.walked <= 2 * bytes, `walked ${p.index.walked} bytes of ${bytes}`);
+  return s;
+}

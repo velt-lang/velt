@@ -121,7 +121,7 @@ impl FnCx<'_, '_> {
                 ast::ExprKind::Lit(ast::Lit::Bool(configurable == Some(true))),
                 span,
             );
-            // The getter and setter may throw (std/record/symbols.vlt): each is a call's own
+            // The getter and setter may throw (std/lang/record/symbols.vlt): each is a call's own
             // argument, so what it throws is inferred from it.
             let (method, call_args) = match (get, set) {
                 (Some(g), Some(s)) => ("__defineAccessor", vec![key.clone(), g, s, conf]),
@@ -138,7 +138,7 @@ impl FnCx<'_, '_> {
     }
 
     /// `Object.getOwnPropertyDescriptor(r, k)` on a string-keyed record: its property `k` as
-    /// Node describes it (std/record/reflect.vlt), or `undefined`.
+    /// Node describes it (std/lang/record/reflect.vlt), or `undefined`.
     pub(super) fn record_descriptor(
         &mut self,
         args: &[ast::Expr],

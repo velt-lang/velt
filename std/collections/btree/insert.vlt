@@ -1,4 +1,4 @@
-// velt:collections/btree/insert: inserts into a `Pool` (velt:collections/btree/pool), internal.
+// velt/collections (internal): inserts into a `Pool` (velt/collections/btree/pool), internal.
 //
 // An entry goes into the leaf its key belongs to; a full leaf moves entries to a sibling with
 // room (`shiftToSibling`), and only when both are full splits in two, the new leaf going right
@@ -6,17 +6,17 @@
 // to a sibling instead of splitting keeps leaves fuller (B*-trees): about 85% instead of 70%
 // for random keys, so fewer leaves, less memory and fewer cache lines per entry.
 
-import { Blank } from "velt:mem";
-import { CAP, F, NONE, Pool, commonPrefix, windowOf } from "velt:collections/btree/pool";
-import { noteEdges } from "velt:collections/btree/edges";
-import { prefixOf, shiftUp, withPrefix } from "velt:collections/btree/line";
+import { Blank } from "velt/mem/blank";
+import { CAP, F, NONE, Pool, commonPrefix, windowOf } from "velt/collections/btree/pool";
+import { noteEdges } from "velt/collections/btree/edges";
+import { prefixOf, shiftUp, withPrefix } from "velt/collections/btree/line";
 import {
   NO_SLOT,
   appendEntry,
   leafLocate,
   moveRanks,
   slotAtRank,
-} from "velt:collections/btree/leaf";
+} from "velt/collections/btree/leaf";
 
 /** Stores `value` under `key` in `p`, replacing the value already there. */
 export function insert<K extends Comparable<K>, V>(p: Pool<K, V>, key: K, value: V) {

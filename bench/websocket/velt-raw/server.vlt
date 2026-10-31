@@ -5,13 +5,13 @@
 //           each connection's writer task sends everything queued for it in one write (corking)
 // Usage: server [port]; env PORT, HOST (127.0.0.1), READ_MAX (bytes per read, default 16384).
 
-import { listen, TcpListener, TcpStream } from "velt:net";
-import { availableParallelism } from "velt:os";
-import { IoError } from "velt:io";
-import { args } from "velt:process";
-import { sha1 } from "velt:crypto";
-import { base64Encode, utf8Encode, utf8Decode, utf8Valid } from "velt:encoding";
-import { channel, Channel } from "velt:channel";
+import { listen, TcpListener, TcpStream } from "velt/net";
+import { availableParallelism } from "velt/os";
+import { IoError } from "velt/io";
+import { args } from "velt/process";
+import { sha1 } from "velt/crypto";
+import { base64Encode, utf8Encode, utf8Decode, utf8Valid } from "velt/encoding";
+import { channel, Channel } from "velt/sync";
 
 const GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const MAX_MESSAGE: i64 = 16 * 1024 * 1024;

@@ -1,14 +1,14 @@
-// velt:simd/clmul: carry-less multiplication of 64-bit lanes as methods of `u64x2` (docs/std/simd.md
-// "Carry-less multiplication"): x86's PCLMULQDQ and ARM's PMULL, the instruction behind CRC
-// folding and GHASH. `a.clmulLow(b)` is the 128-bit product of the low lanes as polynomials over
-// GF(2) (XOR instead of addition, no carries), its low 64 bits in lane 0.
+// velt/simd (internal): carry-less multiplication of 64-bit lanes as methods of `u64x2`
+// (docs/std/simd.md "Carry-less multiplication"): x86's PCLMULQDQ and ARM's PMULL, the instruction
+// behind CRC folding and GHASH. `a.clmulLow(b)` is the 128-bit product of the low lanes as
+// polynomials over GF(2) (XOR instead of addition, no carries), its low 64 bits in lane 0.
 //
 // Every method always works: it is the instruction where the CPU has it (`u64x2.hasClmulX86()`,
 // `u64x2.hasClmulArm()`: the runtime's flags, rt_abi.md "SIMD") and otherwise an exact
 // emulation, a shift and XOR per bit. The checks are false on WebAssembly, in debug (Cranelift)
 // builds and with `VELT_SIMD_DISABLE=clmul`. Code that would be slower on the emulation than
 // without the instruction (a table-driven CRC) checks `u64x2.hasClmul()` first; in a function
-// gated on the extension (`__intrinsic_target("clmul-x86")`, std only) the methods are the bare
+// gated on the extension (`targetFeature("clmul-x86")`, std only) the methods are the bare
 // instructions.
 
 declare function velt_simd_has_clmul_x86(): bool;

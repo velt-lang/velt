@@ -1,0 +1,20 @@
+// velt/lang/intrinsics (internal): SIMD loads of a string's bytes, and the CPU extension a
+// function is compiled for. The public surface is velt/simd.
+
+/** The 16 UTF-8 bytes of `s` from `at`, unchecked: a SIMD load of the string's bytes, no copy. */
+export declare intrinsic function strLoadU8x16(s: string, at: u64): u8x16;
+
+/**
+ * `count` (below 16) UTF-8 bytes of `s` from `at` in the low lanes, 0 in the others, unchecked
+ * (a SIMD partial load of the string's bytes).
+ */
+export declare intrinsic function strLoadPartialU8x16(s: string, at: u64, count: u64): u8x16;
+
+/**
+ * As the first statement of a std function (not a method or closure): the function is compiled
+ * for the CPU extension `name` (`"sha-arm"`, `"sha-x86"`, `"clmul-x86"` or `"clmul-arm"`, a
+ * string literal), which backends may use anywhere in it. Every call of it must then sit behind
+ * velt/simd's check of that extension (`if (u32x4.hasShaX86())`) or in a function gated on the
+ * same one.
+ */
+export declare intrinsic function targetFeature(name: string): void;

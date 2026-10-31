@@ -1,0 +1,124 @@
+// sqlite type mapping: exact i64, REAL, TEXT escapes, BLOB as u8[], NULL, BOOLEAN columns.
+import { open, Database } from "../src/lib";
+
+class Value {
+  i: i64;
+  f: f64;
+  t: string;
+  b: u8[];
+  n: string | null;
+  ok: bool;
+
+  constructor(i: i64, f: f64, t: string, b: u8[], n: string | null, ok: bool) {
+    this.i = i;
+    this.f = f;
+    this.t = t;
+    this.b = b;
+    this.n = n;
+    this.ok = ok;
+  }
+}
+
+class Typed {
+  i: string;
+  f: string;
+  t: string;
+  b: string;
+  n: string;
+
+  constructor(i: string, f: string, t: string, b: string, n: string) {
+    this.i = i;
+    this.f = f;
+    this.t = t;
+    this.b = b;
+    this.n = n;
+  }
+}
+
+// Table `v` with three rows of every kind of value.
+function filled(): Database {
+  const db = open(":memory:");
+  db.exec("CREATE TABLE v (i INTEGER, f REAL, t TEXT, b BLOB, n TEXT, ok BOOLEAN)");
+  const ins = db.prepare("INSERT INTO v VALUES (:i, :f, :t, :b, :n, :ok)");
+  const bytes: u8[] = [0, 1, 127, 128, 255];
+  const empty: u8[] = [];
+  // `i64 | null` is Copy, so one null works for several calls.
+  const none: i64 | null = null;
+  ins.runWith({
+    i: 9223372036854775807i64,
+    f: 0.1,
+    t: "tab\tquote\"é😀",
+    b: bytes,
+    n: "x",
+    ok: true,
+  });
+  ins.runWith({ i: -9007199254740993i64, f: 1e21, t: "", b: empty, n: none, ok: false });
+  ins.runWith({ i: 0i64, f: -2.5e-7, t: "line\nbreak", b: [7u8], n: none, ok: true });
+  ins.close();
+  return db;
+}
+
+export function test_values_round_trip() {
+  const db = filled();
+  const rows: Value[] = db.prepare("SELECT * FROM v ORDER BY rowid").all();
+  const shown: string[] = [];
+  for (const r of rows) {
+    shown.push(`${r.i} ${r.f} ${JSON.stringify(r.t)} [${r.b.join(",")}] ${r.n} ${r.ok}`);
+  }
+  assertEq(shown, [
+    '9223372036854775807 0.1 "tab\\tquote\\"é😀" [0,1,127,128,255] x true',
+    '-9007199254740993 1e+21 "" [] null false',
+    '0 -2.5e-7 "line\\nbreak" [7] null true',
+  ]);
+  // The exact values, not only their text.
+  assertEq(rows[0].i, 9223372036854775807i64);
+  assertEq(rows[1].i, -9007199254740993i64);
+  assertEq(rows[0].t, "tab\tquote\"é😀");
+  assertEq(rows[2].t, "line\nbreak");
+  db.close();
+}
+
+export function test_stored_types() {
+  const db = filled();
+  // What SQLite stored: typeof() of each column.
+  const types: Typed[] = db
+    .prepare(
+      "SELECT typeof(i) AS i, typeof(f) AS f, typeof(t) AS t, typeof(b) AS b, typeof(n) AS n FROM v",
+    )
+    .all();
+  assertEq(
+    [types[0].i, types[0].f, types[0].t, types[0].b, types[0].n, types[1].n],
+    ["integer", "real", "text", "blob", "text", "null"],
+  );
+  db.close();
+}
+
+export function test_whole_number_float_binds_as_integer() {
+  const db = open(":memory:");
+  // A whole-number float is bound as INTEGER; a REAL column converts it back.
+  db.exec("CREATE TABLE nums (r REAL, any)");
+  db.prepare("INSERT INTO nums VALUES (?, ?)").runWith([3.0, 3.0]);
+  const kinds: { r: f64; any: f64; tr: string; ta: string }[] = db
+    .prepare("SELECT r, any, typeof(r) AS tr, typeof(any) AS ta FROM nums")
+    .all();
+  assertEq(kinds[0].r, 3.0);
+  assertEq(kinds[0].any, 3.0);
+  assertEq(kinds[0].tr, "real");
+  assertEq(kinds[0].ta, "integer");
+  db.close();
+}
+
+export function test_booleans_and_mixed_numbers() {
+  const db = filled();
+  // Booleans from expressions are integers (only BOOLEAN columns decode as bool).
+  const flags: { ok: bool; expr: i64 }[] = db
+    .prepare("SELECT ok, ok = 1 AS expr FROM v ORDER BY rowid")
+    .all();
+  assertEq(flags.map((f) => `${f.ok}/${f.expr}`).join(" "), "true/1 false/0 true/1");
+
+  // Integers decode into f64 fields too; bool params bind as 0/1.
+  const mixed: { a: f64; b: i64 } | null = db.prepare("SELECT 42 AS a, ? AS b").getWith([true]);
+  assertEq(mixed?.a, 42.0);
+  assertEq(mixed?.b, 1);
+  db.close();
+}

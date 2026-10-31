@@ -1,7 +1,7 @@
 // check: no leaks
 // `readInto(buf)` reads into the program's own buffer; `writeBytes` and `tryWrite` take a
 // `Uint8Array` (a view: only its range is written). Plain and TLS streams behave the same.
-import { connect, connectTls, listen, listenTls, TcpListener, TcpStream } from "velt:net";
+import { connect, connectTls, listen, listenTls, TcpListener, TcpStream } from "velt/net";
 import { TEST_CA, TEST_CERT, TEST_KEY } from "./_tls";
 
 // Echoes through one 7-byte buffer (so messages arrive split), writing views of what came,

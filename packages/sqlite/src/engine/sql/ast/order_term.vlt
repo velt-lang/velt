@@ -1,0 +1,11 @@
+// `OrderTerm`: An ORDER BY term: the expression, its direction, and where NULLs go.
+
+import { Expr } from "./expr";
+
+/** An ORDER BY term: the expression, its direction, and where NULLs go. */
+export struct OrderTerm {
+  expr: Expr;
+  desc: bool;
+  /** 0: default (NULLS FIRST ascending, LAST descending), 1: NULLS FIRST, 2: NULLS LAST. */
+  nulls: u8;
+}

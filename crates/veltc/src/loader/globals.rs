@@ -4,7 +4,7 @@
 //! sit on top of large parts of std (the HTTP client, the URL parser, cancellation), which a
 //! program that never names them should not pay for in compile time.
 //!
-//! A global module consists only of re-exports (`export { fetch, Response } from "velt:fetch";`);
+//! A global module consists only of re-exports (`export { fetch, Response } from "velt/net/http";`);
 //! the names it re-exports are its triggers. A non-std module whose source contains one of them
 //! as a whole word (in code, a comment or a string: a false positive only costs loading time)
 //! loads the global module, which then becomes part of the prelude (its canonical path starts
@@ -14,7 +14,7 @@
 //! naming `RegExp`. std modules import what they use, so they never trigger one.
 //!
 //! A **conditional** global names nothing: it holds a `// load when <module> uses: <words>`
-//! line and imports what it adds (`import "velt:fetch/typed";`, `extend` blocks that give
+//! line and imports what it adds (`import "velt/net/http/fetch/typed";`, `extend` blocks that give
 //! `Response` its `bytes()`). It is loaded once the program has loaded std module `<module>`
 //! (`std/fetch/response`) and a non-std module mentions one of the words (`bytes`): a method
 //! whose result type lives in modules that most users of the class never need. A word written
@@ -52,7 +52,10 @@ pub(super) fn global_modules(std_root: &Path) -> Vec<Global> {
         .into_iter()
         .filter_map(|file| {
             let src = vpm::probe::read_to_string(&file).ok()?;
-            let names = reexported_names(&src);
+            let mut names = reexported_names(&src);
+            if names.is_empty() && src.contains(THIS_FN_LINE) {
+                names.push(THIS_FN.to_string());
+            }
             let when = load_when(&src);
             Some(Global { file, names, when })
         })
@@ -143,11 +146,16 @@ pub(super) fn names_global(src: &str, module: &ast::Module, name: &str) -> bool 
         || (name == THIS_FN && mentions(src, "this") && has_this_fn(module))
 }
 
-/// The global a function expression with a `this` parameter loads (std/this_fn.vlt).
-const THIS_FN: &str = "__ThisFn";
+/// The trigger of the global a function expression with a `this` parameter loads
+/// (std/prelude/global/this_fn.vlt, which re-exports nothing: its value's class and calls are
+/// compiler hooks, velt_common `std_hooks.rs`). No source can mention it as a word.
+const THIS_FN: &str = "<function with this>";
+
+/// The line that marks that global ([`THIS_FN`]).
+const THIS_FN_LINE: &str = "// load for: a function expression with a `this` parameter";
 
 /// Whether `module` holds a function expression (not a generator) whose `this` parameter its
-/// body uses (sema's `this_fn_expr`, whose value is a `__ThisFn`).
+/// body uses (sema's `this_fn_expr`, whose value is a `ThisFn`).
 fn has_this_fn(module: &ast::Module) -> bool {
     struct Find(bool);
     impl<'a> Visit<'a> for Find {
@@ -328,23 +336,23 @@ mod tests {
 
     #[test]
     fn names_are_the_reexports() {
-        let src = "// globals\nexport { fetch, Response as R } from \"velt:fetch\";\n\
-                   export { URL } from \"velt:url\";\n";
+        let src = "// globals\nexport { fetch, Response as R } from \"velt/net/http\";\n\
+                   export { URL } from \"velt/net/url\";\n";
         assert_eq!(reexported_names(src), ["fetch", "R", "URL"]);
     }
 
     #[test]
     fn a_conditional_global_names_its_module_and_words() {
-        let src = "// Bytes.\n// load when std/fetch/response uses: bytes arrayBuffer\nimport \"velt:fetch/typed\";\n";
+        let src = "// Bytes.\n// load when std/net/http/fetch/response uses: bytes arrayBuffer\nimport \"velt/net/http/fetch/typed\";\n";
         assert_eq!(
             load_when(src),
             Some((
-                "std/fetch/response".into(),
+                "std/net/http/fetch/response".into(),
                 vec!["bytes".into(), "arrayBuffer".into()]
             ))
         );
         assert!(reexported_names(src).is_empty());
-        assert_eq!(load_when("export { A } from \"velt:a\";\n"), None);
+        assert_eq!(load_when("export { A } from \"velt/a\";\n"), None);
     }
 
     #[test]
@@ -353,11 +361,32 @@ mod tests {
         assert!(global_modules(tmp.path()).is_empty());
         let dir = tmp.path().join("prelude/global");
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("b.vlt"), "export { B } from \"velt:b\";\n").unwrap();
-        std::fs::write(dir.join("a.vlt"), "export { A } from \"velt:a\";\n").unwrap();
+        std::fs::write(dir.join("b.vlt"), "export { B } from \"velt/b\";\n").unwrap();
+        std::fs::write(dir.join("a.vlt"), "export { A } from \"velt/a\";\n").unwrap();
         let g = global_modules(tmp.path());
         assert_eq!(g.len(), 2);
         assert_eq!(g[0].names, ["A"]);
         assert_eq!(g[1].file, dir.join("b.vlt"));
+    }
+
+    #[test]
+    fn the_global_of_this_functions_loads_on_its_marker_not_a_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("prelude/global");
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = format!("{THIS_FN_LINE}\nimport \"velt/lang/this_fn\";\n");
+        std::fs::write(dir.join("this_fn.vlt"), src).unwrap();
+        let g = global_modules(tmp.path());
+        assert_eq!(g[0].names, [THIS_FN]);
+        let parse = |src: &str| {
+            let mut sm = SourceMap::new();
+            let file = sm.add(Path::new("main.vlt"), src.to_string());
+            velt_syntax::parse_file(file, &sm.get(file).src).0
+        };
+        let with = "const f = function (this: any) { return this; };\n";
+        assert!(names_global(with, &parse(with), THIS_FN));
+        // The class's name is no trigger: a program cannot name it.
+        let named = "const ThisFn = 1;\n";
+        assert!(!names_global(named, &parse(named), THIS_FN));
     }
 }

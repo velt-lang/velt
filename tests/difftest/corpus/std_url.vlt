@@ -6,7 +6,7 @@ import {
   encodeURI,
   decodeURIComponent,
   decodeURI,
-} from "velt:url";
+} from "velt/net/url";
 
 function show(input: string, base: string | null) {
   try {

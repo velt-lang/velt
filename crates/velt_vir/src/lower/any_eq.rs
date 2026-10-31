@@ -20,8 +20,8 @@ use super::rt::Rt;
 use super::{cint, ice, FnLower};
 use crate::vir::{self, BinOp, Const, Operand, Place, Proj, Rvalue, Terminator, Ty, STR_AGG};
 
-/// The prelude's `==` of an object and a primitive (std/prelude/zzzzz_any_ops.vlt).
-const LOOSE_EQ: &str = "std/prelude/zzzzz_any_ops::__anyLooseEq";
+/// The prelude's `==` of an object and a primitive (std/lang/hooks/any_ops.vlt).
+const LOOSE_EQ: &str = velt_common::std_hook!(any_loose_eq);
 
 /// Is `e` the literal `null` or `undefined` made dynamic?
 fn nothing_lit(e: &hir::Expr) -> bool {
@@ -269,7 +269,7 @@ impl FnLower<'_, '_> {
             let r = self.any_numbers_equal(&da, &xa, &db, &xb);
             set(self, r);
             // An object and a boolean, number or string: the object's `ToPrimitive` compared
-            // loosely (`[] == 0` is `true`), the prelude's `__anyLooseEq`. A function's
+            // loosely (`[] == 0` is `true`), the hook `anyLooseEq`. A function's
             // `ToPrimitive` is its source text, which is never a number or a boolean: `false`.
             self.switch_to(no_bb);
             if !objects {
@@ -306,7 +306,7 @@ impl FnLower<'_, '_> {
         p
     }
 
-    /// `__anyLooseEq(a, b, at)` of the `any`s at `a` and `b` (borrowed), one an object and the
+    /// `anyLooseEq(a, b, at)` of the `any`s at `a` and `b` (borrowed), one an object and the
     /// other a boolean, number or string; `at` is this location (the prelude's stops report it).
     fn any_loose_object(&mut self, a: &Place, b: &Place) -> Operand {
         let d = self

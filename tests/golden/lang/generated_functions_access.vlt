@@ -1,0 +1,26 @@
+// Code generated for a type has that type's access (docs/internals/design/source-generators.md
+// §7): it reads the private fields of `Vault`, and builds one with `__construct` without running
+// its private constructor (`opened` takes its initializer, not the constructor's 0).
+import { peek, rebuild } from "./_generators";
+
+class Vault {
+  label: string;
+  private code: i32;
+  opened: i32 = 7;
+
+  private constructor(label: string, code: i32) {
+    this.label = label;
+    this.code = code;
+    this.opened = 0;
+  }
+
+  static make(): Vault {
+    return new Vault("main", 42);
+  }
+}
+
+function main() {
+  const v = Vault.make();
+  console.log(peek(v));
+  console.log(peek(rebuild(v)));
+}

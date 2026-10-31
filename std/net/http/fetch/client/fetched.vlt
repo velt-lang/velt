@@ -1,0 +1,200 @@
+// velt/net/http (internal): a response whose head has arrived, as a `Response`
+// of velt/net/http/fetch/response holds it: the status, the head kept as it was read (headers are made
+// into strings only when a program asks for them), the URL, and the body still to receive.
+//
+// A body that arrived whole with its head (most small responses) is kept as a range of the read
+// buffer and its connection goes back to the pool at once, so it is reused even if nobody reads
+// the body. Any other body is received when it is read, decoded as its `content-encoding` says.
+
+import { IoError } from "velt/io/error";
+import { AbortError } from "velt/task";
+import { statusText } from "velt/net/http/fetch/status";
+import { BodyReader } from "velt/net/http/fetch/client/body";
+import { H2Body } from "velt/net/http/fetch/client/h2/body";
+import { Chain, CHUNK, codingsOf, decodeAll, tooMany } from "velt/net/http/fetch/client/decode";
+import { Head } from "velt/net/http/fetch/client/wire";
+
+/** A response `fetch` received. */
+export class Fetched {
+  status: i64;
+  url: string;
+  redirected: bool;
+  private head: Head;
+  /** The body still on its connection; null when it arrived with the head (or there is none). */
+  private reader: BodyReader | null;
+  /** A body that arrived with the head: `head.buf[bodyStart..bodyEnd]`. */
+  private bodyStart: i64;
+  private bodyEnd: i64;
+  /** The codings to undo (null: too many); a body is decoded once its first piece is read. */
+  private codings: i64[] | null;
+  private chain: Chain | null = null;
+  private used: bool = false;
+  /// The body arriving over HTTP/2 (`overH2`), instead of `reader`.
+  private h2: H2Body | null = null;
+
+  constructor(head: Head, reader: BodyReader | null, bodyEnd: i64, url: string, redirected: bool) {
+    this.status = head.status;
+    this.head = head;
+    this.reader = reader;
+    this.bodyStart = head.bodyStart;
+    this.bodyEnd = bodyEnd;
+    this.url = url;
+    this.redirected = redirected;
+    this.codings = reader == null && bodyEnd == head.bodyStart ? [] : codingsOf(head.coding());
+  }
+
+  /** A response received over HTTP/2: its head, and its body (null: none). */
+  static overH2(head: Head, body: H2Body | null, url: string, redirected: bool): Fetched {
+    const f = new Fetched(head, null, head.bodyStart, url, redirected);
+    if (body != null) {
+      f.h2 = body;
+      f.codings = codingsOf(head.coding());
+    }
+    return f;
+  }
+
+  /** The `location` header, or null. */
+  location(): string | null {
+    return this.head.location();
+  }
+
+  /** The server's reason phrase, else the standard one for the status. */
+  statusText(): string {
+    const h = this.head;
+    if (h.reasonEnd > h.reasonStart) {
+      return h.reason();
+    }
+    return statusText(this.status as number);
+  }
+
+  /** The headers, `[name, value, …]`, names lowercase. */
+  headers(): string[] {
+    return this.head.list();
+  }
+
+  /** Whether the body arrives decoded (its `content-encoding` no longer applies). */
+  decoded(): bool {
+    // Null: too many codings, a body that is never decoded (reading it fails).
+    const c = this.codings;
+    return c != null && c.length > 0;
+  }
+
+  /** Throws once a body has been read: each response's body is received once. */
+  private claim() throws IoError {
+    if (this.used) {
+      throw new IoError("EINVAL", "Body is unusable: Body has already been read");
+    }
+    this.used = true;
+  }
+
+  /** The whole body, decoded. */
+  async bytes(): Promise<u8[], IoError | AbortError> {
+    this.claim();
+    const codings = this.codings;
+    if (codings == null) {
+      throw tooMany();
+    }
+    const reader = this.reader;
+    const h2 = this.h2;
+    let raw: u8[];
+    if (h2 != null) {
+      raw = await h2.all();
+    } else if (reader == null) {
+      raw = this.head.buf.slice(this.bodyStart, this.bodyEnd);
+    } else {
+      raw = await reader.all();
+    }
+    return codings.length == 0 ? raw : decodeAll(raw, codings);
+  }
+
+  /** The whole body as text: UTF-8, invalid bytes as U+FFFD, a byte order mark dropped. */
+  async text(): Promise<string, IoError | AbortError> {
+    const codings = this.codings;
+    if (this.reader == null && this.h2 == null && codings != null && codings.length == 0) {
+      // The body is in the read buffer: decoded from there, without a copy.
+      this.claim();
+      return utf8Text(this.head.buf, this.bodyStart, this.bodyEnd);
+    }
+    const b = await this.bytes();
+    return utf8Text(b, 0, b.length as i64);
+  }
+
+  /** The next decoded piece of the body (at most 64 KiB); `[]` once it is complete. */
+  async chunk(): Promise<u8[], IoError | AbortError> {
+    if (!this.used) {
+      this.claim();
+    }
+    const codings = this.codings;
+    if (codings == null) {
+      throw tooMany();
+    }
+    if (codings.length == 0) {
+      return await this.raw();
+    }
+    let chain = this.chain;
+    if (chain == null) {
+      chain = new Chain(codings);
+      this.chain = chain;
+    }
+    while (true) {
+      const out = chain.read(CHUNK);
+      if (out.length > 0) {
+        return out;
+      }
+      if (chain.done) {
+        // Whatever follows the decoded stream is received, and ignored.
+        while ((await this.raw()).length > 0) {}
+        return [];
+      }
+      const piece = await this.raw();
+      if (piece.length == 0) {
+        chain.finish();
+        const rest = chain.read(CHUNK);
+        if (rest.length == 0 && !chain.done) {
+          continue;
+        }
+        return rest;
+      }
+      chain.feed(piece);
+    }
+  }
+
+  /** The next piece of the body as received; `[]` once it is complete. */
+  private async raw(): Promise<u8[], IoError | AbortError> {
+    const reader = this.reader;
+    if (reader != null) {
+      return await reader.next(CHUNK);
+    }
+    const h2 = this.h2;
+    if (h2 != null) {
+      return await h2.next();
+    }
+    if (this.bodyEnd == this.bodyStart) {
+      return [];
+    }
+    const piece = this.head.buf.slice(this.bodyStart, this.bodyEnd);
+    this.bodyStart = this.bodyEnd;
+    return piece;
+  }
+
+  /** Releases the response: a body nobody finished reading closes its connection. */
+  close() {
+    const reader = this.reader;
+    if (reader != null) {
+      reader.abandon();
+    }
+    const h2 = this.h2;
+    if (h2 != null) {
+      h2.abandon();
+    }
+  }
+}
+
+/** `buf[from..to]` as text, as JS decodes it: a leading byte order mark is not text. */
+function utf8Text(buf: u8[], from: i64, to: i64): string {
+  let start = from;
+  if (to - from >= 3 && buf[from] == 239 && buf[from + 1] == 187 && buf[from + 2] == 191) {
+    start += 3;
+  }
+  return buf.utf8Slice(start, to);
+}

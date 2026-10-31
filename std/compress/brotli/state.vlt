@@ -1,104 +1,12 @@
-// std/compress/brotli/state (internal to velt:compress/brotli): what a Brotli decoder holds
-// between steps, shared by the header reader (header.vlt), the command loop (commands.vlt) and
-// the driver (decoder.vlt).
+// velt/compress (internal): what a Brotli decoder holds between steps, shared by the header reader
+// (header.vlt), the command loop (commands.vlt) and the driver (decoder.vlt).
 //
-// `Cursor` is the part a command step changes besides the bit reader, kept apart so that the
-// driver can save it before a step that may run out of input and put it back after (decoder.vlt);
-// `State` is the rest: the input, the output buffer, and what the current meta-block's header
+// `State` is all but its `Cursor` (cursor.vlt): the input, the output buffer, and what the current meta-block's header
 // set up (prefix code tables, context maps, distance codes).
 
-import { Bits } from "velt:compress/brotli/bits";
-import { PrefixReader } from "velt:compress/brotli/prefix";
-
-/** The stream's first bits, the window size, are not read yet. */
-export const STAGE_STREAM: i64 = 0;
-/** At a meta-block header. */
-export const STAGE_HEADER: i64 = 1;
-/** Copying an uncompressed meta-block. */
-export const STAGE_UNCOMPRESSED: i64 = 2;
-/** Skipping a metadata block. */
-export const STAGE_METADATA: i64 = 3;
-/** At the next command. */
-export const STAGE_COMMAND: i64 = 4;
-/** Inserting a command's literals (`insertLeft` to go). */
-export const STAGE_INSERT: i64 = 5;
-/** At a command's distance. */
-export const STAGE_DISTANCE: i64 = 6;
-/** Copying a back-reference (`copyLeft` bytes from `distance` back). */
-export const STAGE_COPY: i64 = 7;
-/** A meta-block is complete. */
-export const STAGE_END: i64 = 8;
-/** The stream is complete. */
-export const STAGE_DONE: i64 = 9;
-
-/** The block-switch and command state that a command step changes. */
-export class Cursor {
-  stage: i64 = STAGE_STREAM;
-  /** Where the next output byte goes in `State.out`. */
-  outPos: usize = 0;
-  /** Bytes of the meta-block not yet given to a command. */
-  metaLeft: i64 = 0;
-  insertLeft: usize = 0;
-  copyLength: usize = 0;
-  copyLeft: usize = 0;
-  distance: usize = 0;
-  /** Whether the command reuses the last distance without reading a distance code. */
-  lastDistance: bool = false;
-  /** The last four distances, `d0` the latest (section 4). */
-  d0: i64 = 4;
-  d1: i64 = 11;
-  d2: i64 = 15;
-  d3: i64 = 16;
-  /** Per block category (literals, commands, distances): the current block type, the one
-   * before it, and how much of the current block is left. */
-  litType: usize = 0;
-  litPrev: usize = 1;
-  litLeft: usize = 0;
-  cmdType: usize = 0;
-  cmdPrev: usize = 1;
-  cmdLeft: usize = 0;
-  distType: usize = 0;
-  distPrev: usize = 1;
-  distLeft: usize = 0;
-  /** From the literal block type: where its context map starts, its context mode's shift in
-   * `CONTEXT` (context.vlt), and its one table when all 64 contexts use the same, else -1. */
-  litMapAt: usize = 0;
-  litShift: u64 = 0;
-  litTable: i64 = -1;
-  /** The command block type's table. */
-  cmdTable: usize = 0;
-  /** Where the distance block type's context map starts. */
-  distMapAt: usize = 0;
-
-  copyFrom(o: Cursor) {
-    this.stage = o.stage;
-    this.outPos = o.outPos;
-    this.metaLeft = o.metaLeft;
-    this.insertLeft = o.insertLeft;
-    this.copyLength = o.copyLength;
-    this.copyLeft = o.copyLeft;
-    this.distance = o.distance;
-    this.lastDistance = o.lastDistance;
-    this.d0 = o.d0;
-    this.d1 = o.d1;
-    this.d2 = o.d2;
-    this.d3 = o.d3;
-    this.litType = o.litType;
-    this.litPrev = o.litPrev;
-    this.litLeft = o.litLeft;
-    this.cmdType = o.cmdType;
-    this.cmdPrev = o.cmdPrev;
-    this.cmdLeft = o.cmdLeft;
-    this.distType = o.distType;
-    this.distPrev = o.distPrev;
-    this.distLeft = o.distLeft;
-    this.litMapAt = o.litMapAt;
-    this.litShift = o.litShift;
-    this.litTable = o.litTable;
-    this.cmdTable = o.cmdTable;
-    this.distMapAt = o.distMapAt;
-  }
-}
+import { Bits } from "velt/compress/brotli/bits";
+import { PrefixReader } from "velt/compress/brotli/prefix";
+import { Cursor } from "velt/compress/brotli/cursor";
 
 /** A decoder's state. */
 export class State {

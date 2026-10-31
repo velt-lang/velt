@@ -1,0 +1,26 @@
+// sqlite (internal): `Transaction`, a transaction (or a savepoint) from `Database.begin()`.
+
+import { Database } from "./database";
+
+/** A transaction from `Database.begin()`. */
+export struct Transaction {
+  private db: Database;
+  /** A savepoint inside an outer transaction. */
+  nested: bool;
+
+  /** Starts a transaction on `db`: what `db.begin()` does. */
+  static begin(db: Database): Transaction {
+    const nested = db.inTransaction;
+    db.exec(nested ? "SAVEPOINT velt_tx" : "BEGIN");
+    return Transaction { db: db, nested: nested };
+  }
+
+  commit() {
+    this.db.exec(this.nested ? "RELEASE velt_tx" : "COMMIT");
+  }
+
+  /** Undoes everything since `begin()`. */
+  rollback() {
+    this.db.exec(this.nested ? "ROLLBACK TO velt_tx; RELEASE velt_tx" : "ROLLBACK");
+  }
+}

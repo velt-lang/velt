@@ -1,0 +1,18 @@
+// velt/native (internal): the `IoError` of a failed runtime or native-package result, and the
+// name of its code.
+
+import { IoError } from "velt/io/error";
+import { velt_rt_err_code_name } from "velt/native/rt";
+
+/**
+ * The Node-style name of a native function's failure code (`code` of a failed `IoResult` or
+ * `IoStatus`): "ENOENT", "ECONNREFUSED", "ETIMEDOUT", ...; what `IoError.code` holds.
+ */
+export function errorCodeName(code: i32): string {
+  return velt_rt_err_code_name(code);
+}
+
+/** Builds the `IoError` for a failed result; takes ownership of the runtime's message. */
+export function ioError(code: i32, message: string): IoError {
+  return new IoError(velt_rt_err_code_name(code), message);
+}

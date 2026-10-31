@@ -1,6 +1,5 @@
-// std/compress/brotli/commands (internal to velt:compress/brotli): the commands of a compressed
-// meta-block (RFC 7932 section 9.3): literals inserted, then a back-reference copied or a word
-// of the static dictionary written.
+// velt/compress (internal): the commands of a compressed meta-block (RFC 7932 section 9.3):
+// literals inserted, then a back-reference copied or a word of the static dictionary written.
 //
 // This is where decoding spends its time, so the bit reader, the output position and the whole
 // command and block state live in locals for the length of the loop (one function, so that
@@ -16,19 +15,19 @@
 // afterwards whether the step needed more input than there is. A step's refill loads 8 bytes
 // at `pos`, which the zeros after the input (bits.vlt) keep inside the buffer.
 
-import { COMMANDS } from "velt:compress/brotli/command";
-import { CONTEXT } from "velt:compress/brotli/context";
-import { writeWord } from "velt:compress/brotli/dictionary";
-import { switchCommands, switchDistances, switchLiterals } from "velt:compress/brotli/header";
+import { COMMANDS } from "velt/compress/brotli/command";
+import { CONTEXT } from "velt/compress/brotli/context";
+import { writeWord } from "velt/compress/brotli/dictionary";
+import { switchCommands, switchDistances, switchLiterals } from "velt/compress/brotli/header";
+import { State } from "velt/compress/brotli/state";
 import {
-  State,
   STAGE_COMMAND,
   STAGE_COPY,
   STAGE_DISTANCE,
   STAGE_INSERT,
-} from "velt:compress/brotli/state";
+} from "velt/compress/brotli/cursor";
 
-// The vector operations used here (`velt:simd` is the API; declared again for the unchecked
+// The vector operations used here (`velt/simd` is the API; declared again for the unchecked
 // load and store, which take no range check): every load and store below stays inside its
 // array by the argument next to it.
 declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;

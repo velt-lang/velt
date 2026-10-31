@@ -1,0 +1,20 @@
+// velt/time (internal): timers that run a promise later: `delay`, and `setTimeout`,
+// `setInterval` and their `clear` functions, which are also globals (std/prelude/timers.vlt), as
+// are `setImmediate` and `clearImmediate`.
+
+// `setTimeout`, `clearTimeout`, `setInterval`, `clearInterval`, `setImmediate`,
+// `clearImmediate` and `Timer` are globals (the prelude's), also importable from here.
+export {
+  Timer,
+  setTimeout,
+  clearTimeout,
+  setInterval,
+  clearInterval,
+  setImmediate,
+  clearImmediate,
+} from "velt/prelude/timers";
+
+/** Resolves after `ms` milliseconds (same as the built-in `sleep`). */
+export async function delay(ms: i64): Promise<void> {
+  await sleep(ms);
+}

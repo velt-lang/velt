@@ -1,0 +1,5 @@
+// velt/test (internal): the runtime functions the test runner calls.
+
+export declare function velt_rt_clear_throw_loc(): void;
+
+export declare function velt_rt_flush(): void;

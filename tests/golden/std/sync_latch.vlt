@@ -1,7 +1,7 @@
 // check: no leaks
-// velt:sync's `VersionLatch` (optimistic lock coupling, bbtree's latch word) and `Backoff`, on
+// velt/sync's `VersionLatch` (optimistic lock coupling, bbtree's latch word) and `Backoff`, on
 // one thread: what each operation answers in each state.
-import { Backoff, VersionLatch } from "velt:sync";
+import { Backoff, VersionLatch } from "velt/sync";
 
 const l = VersionLatch.create();
 const v = l.readVersion();

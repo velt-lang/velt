@@ -60,7 +60,7 @@ pub enum SimdTy {
 }
 
 /// A CPU extension a gated function is compiled for (#1330): its first statement is
-/// `__intrinsic_target("sha-arm")` (std only), and every call of it sits behind the check of
+/// `targetFeature("sha-arm")` (std only), and every call of it sits behind the check of
 /// that extension (`u32x4.hasShaArm()`, `u64x2.hasClmulX86()`), so backends may use the
 /// extension anywhere in it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -84,7 +84,7 @@ impl CpuTarget {
         CpuTarget::ClmulArm,
     ];
 
-    /// The name `__intrinsic_target` takes.
+    /// The name `targetFeature` takes.
     pub fn name(self) -> &'static str {
         match self {
             CpuTarget::ShaArm => "sha-arm",
@@ -99,13 +99,13 @@ impl CpuTarget {
         CpuTarget::ALL.into_iter().find(|t| t.name() == name)
     }
 
-    /// The static method of velt:simd that checks for it, by its definition's full name.
+    /// The static method of velt/simd that checks for it, by its definition's full name.
     pub fn check(self) -> &'static str {
         match self {
-            CpuTarget::ShaArm => "std/simd/sha::u32x4.hasShaArm",
-            CpuTarget::ShaX86 => "std/simd/sha::u32x4.hasShaX86",
-            CpuTarget::ClmulX86 => "std/simd/clmul::u64x2.hasClmulX86",
-            CpuTarget::ClmulArm => "std/simd/clmul::u64x2.hasClmulArm",
+            CpuTarget::ShaArm => velt_common::std_item!(simd_sha, "u32x4.hasShaArm"),
+            CpuTarget::ShaX86 => velt_common::std_item!(simd_sha, "u32x4.hasShaX86"),
+            CpuTarget::ClmulX86 => velt_common::std_item!(simd_clmul, "u64x2.hasClmulX86"),
+            CpuTarget::ClmulArm => velt_common::std_item!(simd_clmul, "u64x2.hasClmulArm"),
         }
     }
 

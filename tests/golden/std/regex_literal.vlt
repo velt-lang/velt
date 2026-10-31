@@ -1,7 +1,7 @@
 // Regular expression literals (`/a[NSt]|BY/g`) are the existing `RegExp` (imported from
 // std/regex); a `/` after an operand stays division. Regression (benchmarks-game): a parse error
 // ("expected expression, found `/`").
-import { RegExp } from "velt:regex";
+import { RegExp } from "velt/text";
 
 function main() {
   const re = /a[NSt]|BY/g;

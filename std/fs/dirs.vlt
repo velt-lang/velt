@@ -1,0 +1,54 @@
+// velt/fs (internal): listing and creating directories (`readDir`, `readDirEntries`, `mkdir` and
+// their `*Sync` twins).
+
+import { unwrapIo } from "velt/native/result";
+import { checkIo } from "velt/native/status";
+import { Dirent } from "velt/fs/dirent";
+import {
+  dirents,
+  velt_rt_fs_mkdir,
+  velt_rt_fs_mkdir_sync,
+  velt_rt_fs_read_dir,
+  velt_rt_fs_read_dir_sync,
+  velt_rt_fs_read_dir_typed,
+  velt_rt_fs_read_dir_typed_sync,
+} from "velt/fs/rt";
+
+/** The options of `mkdir`. */
+export struct MkdirOptions {
+  /** Create missing parents; an existing directory is then not an error. */
+  recursive?: bool;
+}
+
+/** Entry names (not paths), sorted. */
+export async function readDir(path: string): Promise<string[]> {
+  return unwrapIo(await velt_rt_fs_read_dir(path));
+}
+
+/**
+ * Entries with their types, sorted by name: Node's `readdir(path, { withFileTypes: true })`.
+ * Faster than `readDir` plus a `stat` per entry, since the listing carries the types.
+ */
+export async function readDirEntries(path: string): Promise<Dirent[]> {
+  return dirents(unwrapIo(await velt_rt_fs_read_dir_typed(path)));
+}
+
+/** Creates the directory `path` (and with `recursive` its missing parents). */
+export async function mkdir(path: string, opts: MkdirOptions = {}): Promise<void> {
+  checkIo(await velt_rt_fs_mkdir(path, opts.recursive ?? false));
+}
+
+/** `readDir`, blocking the calling thread. */
+export function readDirSync(path: string): string[] {
+  return unwrapIo(velt_rt_fs_read_dir_sync(path));
+}
+
+/** `readDirEntries`, blocking the calling thread. */
+export function readDirEntriesSync(path: string): Dirent[] {
+  return dirents(unwrapIo(velt_rt_fs_read_dir_typed_sync(path)));
+}
+
+/** `mkdir`, blocking the calling thread. */
+export function mkdirSync(path: string, opts: MkdirOptions = {}) {
+  checkIo(velt_rt_fs_mkdir_sync(path, opts.recursive ?? false));
+}

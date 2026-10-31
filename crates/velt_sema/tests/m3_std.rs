@@ -10,15 +10,17 @@ use velt_sema::hir::{PassMode, TyKind};
 #[test]
 fn every_std_module_type_checks() {
     for (module, name) in [
-        ("velt:io", "IoError"),
-        ("velt:fs", "readFile"),
-        ("velt:net", "listen"),
-        ("velt:net_bytes", "writeBytesTo"),
-        ("velt:http", "serve"),
-        ("velt:process", "argv"),
-        ("velt:path", "join"),
-        ("velt:json", "Value"),
-        ("velt:math", "clamp"),
+        ("velt/io", "IoError"),
+        ("velt/fs", "readFile"),
+        ("velt/net", "listen"),
+        ("velt/net/bytes", "writeBytesTo"),
+        ("velt/net/http", "fetch"),
+        ("velt/net/http/h2", "HpackEncoder"),
+        ("velt/dev", "joinStop"),
+        ("velt/process", "argv"),
+        ("velt/path", "join"),
+        ("velt/encoding/json", "Value"),
+        ("velt/math", "clamp"),
     ] {
         ok_src(&format!(
             "import {{ {name} }} from \"{module}\";\nfunction main() {{}}"
@@ -28,8 +30,8 @@ fn every_std_module_type_checks() {
 
 #[test]
 fn std_async_functions_own_their_params() {
-    let p = ok_src("import { readFile } from \"velt:fs\";\nfunction main() {}");
-    let f = func(&p, "std/fs::readFile");
+    let p = ok_src("import { readFile } from \"velt/fs\";\nasync function main() { console.log(await readFile(\"x\")); }");
+    let f = func(&p, "std/fs/files::readFile");
     assert!(f.is_async);
     assert_eq!(
         f.ret,
@@ -41,16 +43,14 @@ fn std_async_functions_own_their_params() {
 
 #[test]
 fn std_handles_release_in_drop_hooks() {
-    let p = ok_src(
-        "import { serve } from \"velt:http\";\nimport { fetch } from \"velt:fetch\";\nfunction main() {}",
+    let p = ok_src("import { fetch } from \"velt/net/http\";\nfunction main() {}");
+    assert!(
+        adt(&p, "std/net/http/fetch/response::Response")
+            .dispose
+            .is_some(),
+        "Response has no dispose hook"
     );
-    for class in ["std/http::Server", "std/fetch/response::Response"] {
-        assert!(
-            adt(&p, class).dispose.is_some(),
-            "{class} has no dispose hook"
-        );
-    }
-    let text = func(&p, "std/fetch/response::Response.text");
+    let text = func(&p, "std/net/http/fetch/response::Response.text");
     assert!(text.is_async);
     assert_eq!(
         text.params[0].mode,

@@ -200,7 +200,7 @@ pub struct Program {
     /// Per implementation (`impls` index) of an interface in `upcasts`: the implementation of
     /// each target for the same type, in `upcasts` order. Additive.
     pub upcast_impls: HashMap<u32, Vec<u32>>,
-    /// Gated functions (`__intrinsic_target`) and the CPU extension each is compiled for
+    /// Gated functions (`targetFeature`) and the CPU extension each is compiled for
     /// (#1330): lowering gives the VIR function its target.
     pub cpu_targets: HashMap<DefId, CpuTarget>,
     /// Names of structural types for messages: aliases' and field-only interfaces'. Additive.
@@ -231,6 +231,11 @@ pub struct Program {
     /// The functions `(f: any) => T` converting a function held as `any` to the function type
     /// `T` (their result type) inside a conversion lowering makes (hir_encodings.md). Additive.
     pub any_fn_views: Vec<DefId>,
+    /// The instances of generated functions (`declare generated(…) function`,
+    /// docs/internals/design/source-generators.md): `(function, concrete type arguments)` →
+    /// the generated, non-generic definition lowering builds for that instance instead of the
+    /// function's own body (which it never builds). Additive.
+    pub generated: HashMap<(DefId, Vec<TyId>), DefId>,
 }
 
 impl Program {
@@ -392,7 +397,7 @@ pub struct AdtDef {
     /// Drop hook: the type's `[Symbol.dispose]()` method (modifies `this`, no params, void). Drop glue calls it
     /// first, then drops the fields. Types with a dispose hook are never Copy.
     pub dispose: Option<DefId>,
-    /// Classes: the `toString()`, `toJSON()` and `__inspect()` hooks, own or inherited, that
+    /// Classes: the `toString()`, `toJSON()` and `[INSPECT]()` hooks, own or inherited, that
     /// `String(x)`, `JSON.stringify` and `console.log` call from glue (hir_encodings.md).
     pub to_string: Option<DefId>,
     pub to_json: Option<DefId>,

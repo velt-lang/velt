@@ -1,0 +1,41 @@
+// http-server (internal): `EventStream`, a Server-Sent Events stream (`HttpResponse.sse`)
+// written through an `HttpStream`.
+
+import { HttpStream } from "./http_stream";
+
+/** A Server-Sent Events stream (`HttpResponse.sse`). */
+export class EventStream {
+  private stream: HttpStream;
+
+  constructor(stream: HttpStream) {
+    this.stream = stream;
+  }
+
+  /**
+   * Writes an event: `data` (each of its lines a `data:` line), with an `event` name and an
+   * `id` when given. Resolves once the connection took it.
+   */
+  async send(data: string, event: string | null = null, id: string | null = null) {
+    let text = "";
+    if (event != null) {
+      text += `event: ${event}\n`;
+    }
+    if (id != null) {
+      text += `id: ${id}\n`;
+    }
+    for (const line of data.split("\n")) {
+      text += `data: ${line}\n`;
+    }
+    await this.stream.write(text + "\n");
+  }
+
+  /** Writes a comment line, which clients ignore: a keep-alive through idle proxies. */
+  async comment(text: string = "") {
+    await this.stream.write(`: ${text}\n\n`);
+  }
+
+  /** Ends the stream. */
+  async end() {
+    await this.stream.end();
+  }
+}

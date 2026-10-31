@@ -1,0 +1,7 @@
+// Generated code has the access of its request's types only: building another class without
+// its constructor is an error in the generated code.
+import { forge } from "./_generators";
+
+function main() {
+  console.log(forge<i32>());
+}

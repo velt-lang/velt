@@ -5,7 +5,7 @@
 // do not keep the process alive: they are an hour long, so if one did, this program would not
 // end. Node prints the same for the equivalent TypeScript (`hasRef()` stays true after a clear
 // there too).
-import { channel, Channel } from "velt:channel";
+import { channel, Channel } from "velt/sync";
 
 async function never(what: string): Promise<void> {
   console.log("never printed:", what);

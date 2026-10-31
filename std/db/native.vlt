@@ -1,0 +1,70 @@
+// velt/db (internal): what a native driver (a package with a Rust library on the native SDK,
+// docs/book/native-packages.md) hands std to decode its rows and to bind a statement's
+// parameters: a row cursor and a parameter sink (docs/internals/contracts/native_abi.md "Row
+// cursors" and "Parameter sinks"). Both are handles, `u64` keys the runtime gave the driver when
+// it registered the cursor or sink (`velt_text::rows_cursor::open_cursor` / `open_sink`), never
+// addresses: std looks each one up, so a number that names no open cursor or sink (made up,
+// closed already, the other kind) never reaches memory: `decodeRows` throws `RowError`,
+// `bindParams` binds nothing. The driver keeps
+// owning what it registered and takes it back by the same handle.
+//
+// The decoder and the binder are generated per type by the compiler: a row is read cell by cell
+// from the driver's memory into the `T` being built, and parameters go to the driver value by
+// value, without JSON text in between.
+
+import { dbBind, jsonParseCursor } from "velt/lang/intrinsics";
+import { RowError } from "velt/db/errors";
+import { velt_rt_db_cursor, velt_rt_db_sink } from "velt/db/rt";
+
+/**
+ * Every row of a native driver's row cursor (its handle) as a `T`: each column fills the field
+ * of its name, as `readRows` fills them from a `RowSource` (the same conversions and messages).
+ * The cursor stays the driver's: give the handle back to the driver afterwards, which then
+ * reports a failure met while stepping. Throws `RowError` for a row that does not fit `T`, and
+ * for a handle that names no open row cursor.
+ */
+export function decodeRows<T>(cursor: u64): T[] {
+  const raw = openCursor(cursor);
+  try {
+    return jsonParseCursor<T[]>(raw, 0, 0);
+  } catch (e) {
+    throw new RowError(e.message);
+  }
+}
+
+/**
+ * The one row of a native driver's row cursor opened for a single row, as a `T` (see
+ * `decodeRows`). Throws `RowError` for a row that does not fit `T`, and for a handle that names
+ * no open row cursor.
+ */
+export function decodeRow<T>(cursor: u64): T {
+  const raw = openCursor(cursor);
+  try {
+    return jsonParseCursor<T>(raw, 0, 0);
+  } catch (e) {
+    throw new RowError(e.message);
+  }
+}
+
+/**
+ * Hands `params` to a native driver's parameter sink (its handle) value by value: an array, a tuple or a lone
+ * value by position, an object's fields by name, each value bound as its JSON text would read
+ * back (an integral number an integer, NaN null, a `u8[]` field a blob). True once they went to
+ * the sink; false, having done nothing, for a type it cannot take that way (a nested object, a
+ * union): the driver then takes `JSON.stringify(params)` instead, which binds the same values.
+ * False too for a handle that names no open parameter sink (nothing reaches memory; the driver
+ * finds the handle dead when it is handed on).
+ */
+export function bindParams<P>(sink: u64, params: P): bool {
+  const raw = velt_rt_db_sink(sink);
+  return raw != 0 && dbBind<P>(raw, params);
+}
+
+// The address of the open row cursor `handle` names; throws `RowError` when it names none.
+function openCursor(handle: u64): u64 {
+  const raw = velt_rt_db_cursor(handle);
+  if (raw == 0) {
+    throw new RowError("not an open row cursor");
+  }
+  return raw;
+}

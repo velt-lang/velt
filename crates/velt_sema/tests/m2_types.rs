@@ -502,14 +502,23 @@ fn imports_exports_and_intrinsics() {
     let (p, d) = l.check();
     assert!(p.is_none());
     assert!(l.render(&d).contains("`hidden` is not exported"));
+    // Intrinsics are std's own declarations, not names a program may spell or declare.
     let r = err_src("function main() { const xs: i64[] = __intrinsic_array_with_capacity(4); }");
     assert!(
-        r.contains("intrinsics can only be called from the standard library"),
+        r.contains("cannot find `__intrinsic_array_with_capacity` in this scope"),
         "{r}"
     );
-    let r = err_src("import { nope } from \"velt:math\"; function main() {}");
+    let r = err_src(
+        "declare intrinsic function arraySwap<T>(xs: T[], i: usize, j: usize): void; function main() { const xs = [1, 2]; arraySwap(xs, 0, 1); }",
+    );
+    assert!(
+        r.contains("`declare intrinsic function arraySwap` is not allowed: only the standard library declares intrinsics"),
+        "{r}"
+    );
+    assert_eq!(r.matches("error").count(), 1, "{r}");
+    let r = err_src("import { nope } from \"velt/math\"; function main() {}");
     assert!(r.contains("has no member `nope`"), "{r}");
-    ok_src("import { clamp as c } from \"velt:math\"; function main() { console.log(c(1, 2, 3), Math.PI); }");
+    ok_src("import { clamp as c } from \"velt/math\"; function main() { console.log(c(1, 2, 3), Math.PI); }");
     // A pure call may initialize a module constant (#383); one with effects makes it module
     // state, evaluated once (#802), and so does an array that is not a table.
     ok_src("const X: i64 = 1 + f(); function f(): i64 { return 1; } function main() {}");

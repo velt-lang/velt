@@ -1,0 +1,7 @@
+// `RedisConnectOptions`: `connect` options.
+
+/** `connect` options. */
+export struct RedisConnectOptions {
+  /** Extra trusted CA certificates (PEM) for `rediss://`, e.g. a private or test CA. */
+  ca?: string;
+}

@@ -321,7 +321,7 @@ registry's records of module constants `const R = Symbol.for("r")` too (`key` 1,
 description being the key, in the static string form), and lists them in a read-only table
 (`Intrinsic::SymbolRegistry`): their addresses, one per 8-byte slot, then a null slot. Records are
 never freed; one made at run time is one allocation. On wasm32 each table address takes the
-first half of its 8-byte slot. Functions (`std/symbol.vlt`; `string` parameters by pointer, a
+first half of its 8-byte slot. Functions (`std/lang/symbol/index.vlt`; `string` parameters by pointer, a
 `string` result through an out pointer):
 - `velt_rt_symbol_new(desc: *const VeltStr, described: u8) -> *const SymbolRec`: `Symbol(desc)`
   (`described` = 0: `Symbol()`, `desc` unread); keeps a reference to `desc`.
@@ -355,7 +355,7 @@ Velt functions. Lanes are in memory order: lane 0 is the lowest-addressed bytes,
 A mask lane is all ones or all zeros.
 
 The operations are externs `velt_simd_<type>_<op>` (`velt_simd_u8x16_add`,
-`velt_simd_mask8x16_any`) declared by `std/simd/*.vlt` (`velt:simd`). **No runtime defines
+`velt_simd_mask8x16_any`) declared by `std/simd/*.vlt` (`velt/simd`). **No runtime defines
 them**: `velt_vir::simd` gives each symbol's operation and VIR signature (`SimdCall`), the
 verifier rejects a `velt_simd_*` extern that is not one, and both backends emit every call
 inline. They never cross the C ABI, so no target's vector calling convention is involved.
@@ -382,7 +382,7 @@ moves no call.
 
 `velt_simd_prefetch(void* addr)` (`-> void`, additive) starts loading the cache line at `addr`
 for a read soon, as a hint: LLVM emits `llvm.prefetch` (read, every cache level, data), which
-never faults; Cranelift emits nothing. Std reaches it through `__intrinsic_array_prefetch(xs, i)`
+never faults; Cranelift emits nothing. Std reaches it through `arrayPrefetch(xs, i)`
 (HIR `Intrinsic::ArrayPrefetch`, the address of element `i`, not bounds-checked).
 
 A shuffle is `velt_simd_<type>_shuffle_<i0>_<i1>…`, one lane index per lane spelled in the symbol
@@ -415,12 +415,12 @@ uint8_t velt_cpu_clmul_arm;  /* 1: aarch64 with PMULL (64-bit polynomial multipl
 
 LLVM gives a function that calls one of these operations the extension's own feature (`+sha2`,
 `+sha`, `+pclmul`, `+aes`), which it uses for nothing else; a *gated* function (VIR
-`Function::target`, HIR `Program::cpu_targets`, from std's `__intrinsic_target("sha-arm" |
+`Function::target`, HIR `Program::cpu_targets`, from std's `targetFeature("sha-arm" |
 "sha-x86" | "clmul-x86" | "clmul-arm")`, every call of
 which sema keeps behind the check) gets the extension's whole set (`+sha,+ssse3,+sse4.1` on x86),
 and the check of its own extension (`velt_simd_has_<ext>`) is the constant `1` there, so the
 emulation behind it is dead code. The ordinary functions it calls that check that extension
-(the `velt:simd` methods), themselves or through their callees, are cloned for it by `velt_opt`
+(the `velt/simd` methods), themselves or through their callees, are cloned for it by `velt_opt`
 with the check `true`, so this holds whether or not they would be inlined. A gated function is never inlined into an ordinary one or one
 gated on another target (`velt_opt`, and `noinline` on the call for LLVM); ordinary code may be
 inlined into a gated function.
@@ -460,7 +460,7 @@ read-modify-write calls an `__aarch64_*` helper (libgcc's or compiler-rt's, the 
 LL/SC loops, as in Rust. Cranelift's
 atomics are all sequentially consistent, which is correct for every ordering. On wasm without
 threads they are plain loads and stores. `velt_rt_thread_yield()`
-(a real runtime function, rt_abi_async.md §9) is what `velt:sync`'s `Backoff` yields with.
+(a real runtime function, rt_abi_async.md §9) is what `velt/sync`'s `Backoff` yields with.
 
 ## Thread-local values [additive]
 
@@ -535,6 +535,19 @@ the same block, still initialized up to `s`, with the lock still held. The compi
 instead of calling again (`velt_opt` `module_state`, #1571), so a runtime change must keep this
 [additive, #1571].
 
+## Static atomics at exit [additive]
+
+```c
+void velt_rt_statics_drop(void (*f)(void));
+```
+
+A program with static atomics holding a reference (a module `const X = new Atomic<shared<T> |
+null>(null)`, hir_encodings.md "Static atomics") calls it from `velt_main` before returning,
+with a generated function that releases the reference each such word holds and stores null
+into it. The runtime calls `f` once at exit, after dropping the module state, and only when it
+drops the module state (the leak counters of the debug runtime, `VELT_RC_STATS=1`; § Module
+state). The WebAssembly runtime ignores it.
+
 ## Array length limit [additive, #1572]
 
 An array (`{ data, len, cap }`) holds at most `MAX_ARRAY_LEN` = 2^52 - 1 elements, and its
@@ -561,7 +574,7 @@ int64_t velt_rt_proxy_array_call(const void *target, int64_t op);
 int64_t velt_rt_proxy_array_hole(const void *array, int64_t index, int64_t op);
 ```
 
-The state of the generic array methods `velt:proxy/array` runs on a proxy of an array
+The state of the generic array methods `velt/lang/proxy/array` runs on a proxy of an array
 (`p.push(…)`, `p.pop()`, …), per thread, so that the standard library keeps no module state.
 Arrays are identified by the data pointer of the `any` holding them. Only a running method's
 target is ever recorded: its proxy keeps it alive, so its address is not reused while the
@@ -577,7 +590,7 @@ trap calls (`has`, `get`, `set`, `deleteProperty` on the proxy), -2 ends it. Bet
 `op` 0 answers whether element `index` is one (1 or 0); 1 records it, only during a trap call of
 a method on `array` (answering whether it was one), else answers -1 and records nothing; 2
 forgets it (whether it was one); 3 forgets the holes from `index` on (a shorter length; 0); 4
-answers the first hole below `index`, or -1. std/proxy.vlt's `Reflect` records them (a delete,
+answers the first hole below `index`, or -1. std/lang/proxy/index.vlt's `Reflect` records them (a delete,
 the gap before an element written past the end) and reports them as absent; elsewhere both are
 `TypeError`s. Both runtimes provide them (`velt_rt/src/proxy_array.rs`, compiled into
 velt_rt_wasm too).
@@ -616,7 +629,7 @@ The `velt_rt_array_view_*` functions keep a second table the same way for array 
 within the program) to `view`, the view's box. A conversion asks it first and records the view
 it makes; the view's drop glue removes the entry, and so does a transfer that turns the view
 into a plain array in place. `velt_rt_array_view_remove` takes the view's view object (the
-`__ArrayView`, untagged) and removes the entry if it is that object's view: if the entry's box
+`ArrayView`, untagged) and removes the entry if it is that object's view: if the entry's box
 header holds `object | 1`. So the view's own box never reaches the runtime, and the backend
 need not assume that a call may change a box of a view type.
 
@@ -753,6 +766,8 @@ Declared in std (Velt signatures; `u8[]`/`string` are passed as in rt_abi_async.
   `velt_rt_bytes_index_of(b: u8[], byte: u8, from: i64): i64`,
   `velt_rt_bytes_last_index_of(b: u8[], byte: u8, from: i64): i64` (−1 if absent),
   `velt_rt_bytes_set(dst: u8[], src: u8[], offset: u64): bool` (false: out of range),
+  `velt_rt_bytes_copy(dst: u8[], src: u8[], targetStart: i64, sourceStart: i64, sourceEnd: i64): i64`
+  (Node's `src.copy(dst, …)`: the bytes copied, −1 for a position out of range),
   `velt_rt_bytes_copy_within(b: u8[], target: i64, start: i64, end: i64)`,
   `velt_rt_bytes_fill(b: u8[], byte: u8, start: i64, end: i64)`,
   `velt_rt_bytes_slice(b: u8[], start: i64, end: i64): u8[]`,
@@ -760,16 +775,16 @@ Declared in std (Velt signatures; `u8[]`/`string` are passed as in rt_abi_async.
   vectors there, and UTF-8 validation (`utf8Valid`, the WebSocket reader) in
   `std/encoding/utf8.vlt`.
 - For protocols written in Velt (`u8[]`'s `utf8Slice` in `std/prelude/bytes.vlt`;
-  `std/websocket/bytes.vlt`), on a range `[start, end)` (relative indices) so no slice is made:
+  `std/net/websocket/text.vlt`), on a range `[start, end)` (relative indices) so no slice is made:
   `velt_rt_bytes_range_to_str(b: u8[], start: i64, end: i64): IoResult<string>` (`INVALID_DATA` if
   not UTF-8) and `velt_rt_bytes_range_to_str_lossy(b: u8[], start: i64, end: i64): string` (an
   invalid sequence as U+FFFD, one per maximal invalid subpart): making a string is the runtime's.
   Writing a string's bytes and comparing them (`write`, `utf8Equals`) is Velt code that reads the
   string's bytes in place (intrinsics `StrByteAt`, `StrLoadU8x16`, `StrLoadPartialU8x16`).
-- BigInt (`std/bigint.vlt`, handle `u64`, freed by `velt_rt_bigint_free`): `from_i64`, `from_f64`,
+- BigInt (`std/math/bigint.vlt`, handle `u64`, freed by `velt_rt_bigint_free`): `from_i64`, `from_f64`,
   `parse(s, radix)`, `clone`, `assign(dst, a)`, `neg(dst, a)`, `op(dst, a, b, op: u32): bool` and
   `op_i64(dst, a, k: i64, op: u32): bool` (false: division by zero or a negative or huge shift; `dst` unchanged), `cmp`/`cmp_i64` (−1/0/1),
-  `to_i64`, `to_f64`, `to_string(a, radix)`. `op` codes are defined in `std/bigint.vlt`.
+  `to_i64`, `to_f64`, `to_string(a, radix)`. `op` codes are defined in `std/math/bigint.vlt`.
 - Numbers: `velt_rt_f64_to_fixed(x: f64, digits: i64): string` (JS `toFixed` rounding),
   `velt_rt_f64_to_exponential(x: f64, digits: i64): string` (JS `toExponential`; `digits < 0`:
   omitted), `velt_rt_f64_to_precision(x: f64, precision: i64): string` (JS `toPrecision`),

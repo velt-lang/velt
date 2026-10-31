@@ -1,0 +1,43 @@
+// sqlite (internal): `SqliteError`, the package's one error class (the native driver's and the
+// engine's), and the checks that turn a failed native result into one.
+
+import { IoResult, IoStatus } from "velt/native";
+import { velt_sqlite__error_name } from "./native";
+
+/** SQLite's `SQLITE_MISMATCH`: a row that does not decode into the requested type. */
+export const SQLITE_MISMATCH: i32 = 20;
+
+/**
+ * A failed SQLite operation. `code` is SQLite's result code name, e.g. "SQLITE_ERROR" (bad
+ * SQL), "SQLITE_CONSTRAINT_UNIQUE", "SQLITE_BUSY", "SQLITE_CANTOPEN", "SQLITE_RANGE" (wrong
+ * parameters), "SQLITE_MISUSE" (closed handle, several statements in `prepare`) or
+ * "SQLITE_MISMATCH" (a row that does not fit the requested type).
+ */
+export class SqliteError extends Error {
+  code: string;
+
+  constructor(code: string, message: string) {
+    super(message);
+    this.code = code;
+  }
+}
+
+/** The error for SQLite result code `code`. */
+export function sqliteError(code: i32, message: string): SqliteError {
+  return new SqliteError(velt_sqlite__error_name(code), message);
+}
+
+/** Throws the error of a failed status. */
+export function check(s: IoStatus) {
+  if (s.code != 0) {
+    throw sqliteError(s.code, s.message);
+  }
+}
+
+/** The value of a successful result; throws its error otherwise. */
+export function unwrap<T>(r: IoResult<T>): T {
+  if (r.code != 0) {
+    throw sqliteError(r.code, r.message);
+  }
+  return r.value;
+}

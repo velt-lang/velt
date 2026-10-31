@@ -1,0 +1,88 @@
+// postgres: interval, money, inet/cidr and macaddr columns decode without a ::text cast
+// (to the text PostgreSQL prints for them), also inside arrays and as NULL. Needs
+// VELT_TEST_PG_URL (tests/support/pg.vlt).
+import { connect } from "../src/lib";
+import { pgUrl } from "./support/pg";
+
+class Row {
+  span: string;
+  neg: string | null;
+  price: string;
+  host: string;
+  net: string;
+  v6: string;
+  mac: string;
+  hosts: string[];
+
+  constructor(
+    span: string,
+    neg: string | null,
+    price: string,
+    host: string,
+    net: string,
+    v6: string,
+    mac: string,
+    hosts: string[],
+  ) {
+    this.span = span;
+    this.neg = neg;
+    this.price = price;
+    this.host = host;
+    this.net = net;
+    this.v6 = v6;
+    this.mac = mac;
+    this.hosts = hosts;
+  }
+}
+
+export async function test_values_decode_to_their_text() {
+  const url = pgUrl();
+  if (url == null) {
+    return;
+  }
+  const db = await connect(url);
+  const r: Row | null = await db.selectOne(
+    `SELECT interval '1 year 2 months 3 days 04:05:06.5' AS span,
+            CASE WHEN false THEN interval '1 day' END AS neg,
+            '-1234.5'::numeric::money AS price,
+            inet '10.0.0.1' AS host,
+            cidr '10.0.0.0/8' AS net,
+            inet '2001:db8::1/64' AS v6,
+            macaddr '08:00:2b:01:02:03' AS mac,
+            ARRAY[inet '192.168.0.1', inet '::1'] AS hosts`,
+  );
+  assert(r != null, "a row");
+  if (r != null) {
+    assertEq(r.span, "1 year 2 mons 3 days 04:05:06.5");
+    assert(r.neg == null, "NULL interval");
+    assertEq(r.price, "-1234.50");
+    assertEq(r.host, "10.0.0.1");
+    assertEq(r.net, "10.0.0.0/8");
+    assertEq(r.v6, "2001:db8::1/64");
+    assertEq(r.mac, "08:00:2b:01:02:03");
+    assertEq(r.hosts, ["192.168.0.1", "::1"]);
+  }
+  db.close();
+}
+
+export async function test_negative_zero_and_empty_values() {
+  const url = pgUrl();
+  if (url == null) {
+    return;
+  }
+  const db = await connect(url);
+  const spans: Row[] = await db.select(
+    "SELECT interval '-1 second' AS span, NULL::interval AS neg, 0::money AS price, " +
+      "inet '::ffff:1.2.3.4' AS host, cidr '2001:db8::/32' AS net, inet '::' AS v6, " +
+      "macaddr 'ff:ff:ff:ff:ff:ff' AS mac, ARRAY[]::inet[] AS hosts",
+  );
+  assertEq(spans[0].span, "-00:00:01");
+  assert(spans[0].neg == null, "NULL interval");
+  assertEq(spans[0].price, "0.00");
+  assertEq(spans[0].host, "::ffff:1.2.3.4");
+  assertEq(spans[0].net, "2001:db8::/32");
+  assertEq(spans[0].v6, "::");
+  assertEq(spans[0].mac, "ff:ff:ff:ff:ff:ff");
+  assertEq(spans[0].hosts.length, 0);
+  db.close();
+}

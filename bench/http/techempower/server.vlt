@@ -3,9 +3,9 @@
 // time, sorted by message and rendered as an escaped HTML table).
 // Usage: server <port> (bench/http/techempower/run.sh picks the port).
 
-import { escapeHtml } from "velt:html";
-import { serve } from "velt:http";
-import { args } from "velt:process";
+import { escapeHtml } from "velt/text";
+import { serve } from "http-server";
+import { args } from "velt/process";
 
 class Fortune {
   id: i64;

@@ -61,6 +61,18 @@ pub(crate) use shapes::self_type;
 /// The def allocated for each module-level and nested item.
 pub(crate) type ItemDefs = Vec<DefId>;
 
+/// Collect generated modules `ms` once the program's bodies are checked
+/// (docs/internals/design/source-generators.md §6): their items declared in their own scope
+/// (with their declaring module's names inherited) and their signatures resolved. Returns the
+/// definitions made.
+pub(crate) fn collect_generated(cx: &mut Ctx, ms: &[usize]) -> ItemDefs {
+    let mut items = ItemDefs::new();
+    declare::declare_generated(cx, ms, &mut items);
+    sigs::resolve_def_sigs(cx, &items);
+    sigs::fill_deferred(cx);
+    items
+}
+
 pub(crate) fn collect(cx: &mut Ctx) -> ItemDefs {
     let mut items = ItemDefs::new();
     declare::declare_all(cx, &mut items);

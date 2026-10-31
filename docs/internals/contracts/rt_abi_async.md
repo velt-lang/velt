@@ -249,7 +249,7 @@ one (the same pointer once it is shared, so a hash taken before stays valid).
 | Symbol | Signature | Notes |
 |---|---|---|
 | `velt_rt_block_on` | `(PollFn poll, void* state)` | `async main`, and a synchronous `main` of a program that starts promises or tasks (§1.1; its root calls `main`): `velt_main` builds the state on its stack, calls this, then reads the result at `state+0`. Runs the root as a task on the runtime's workers; returns when READY. Tasks still running afterwards are abandoned when the process exits. Must not be called from inside a task. |
-| `velt_rt_tla_at` | `(const VeltStr* site)` | a top-level `await` (std/prelude/process.vlt `__topLevelAwaitAt`) at `site` (`path:line:col`, a string literal) suspends: called on the suspending path only (an `await` that goes on at once calls nothing), two atomic stores of the literal's bytes, no lock, no allocation. When the root can never finish, the site stored last makes the program write `Warning: Detected unsettled top-level await at <path>:<line>` and exit with 13, as Node does; with none stored it exits with 0 (`top_level_await.rs`, both runtimes) |
+| `velt_rt_tla_at` | `(const VeltStr* site)` | a top-level `await` (std/prelude/process.vlt `topLevelAwaitAt`) at `site` (`path:line:col`, a string literal) suspends: called on the suspending path only (an `await` that goes on at once calls nothing), two atomic stores of the literal's bytes, no lock, no allocation. When the root can never finish, the site stored last makes the program write `Warning: Detected unsettled top-level await at <path>:<line>` and exit with 13, as Node does; with none stored it exits with 0 (`top_level_await.rs`, both runtimes) |
 | `velt_rt_spawn` | `(PollFn, DropFn, const void* state, u64 state_size, u64 state_align, u64 result_size, void (*result_drop)(void* slot)) -> VeltFut*` | `spawn(f(...))`: copies the initial state into the task (caller gives up ownership of its contents), starts it now. Returns the join handle; its result slot (+16) receives `result_size` bytes (≤ 256; box larger results). Dropping the handle **detaches** (task keeps running); a result the handle never claims (dropped before or after the task finished) is dropped with `result_drop` (null: nothing to drop). |
 | `velt_rt_spawn_transfer` | `(PollFn, DropFn, const void* state, u64 state_size, u64 state_align, u64 result_size, void (*result_drop)(void* slot), void (*result_transfer)(void* slot)) -> VeltFut*` | `velt_rt_spawn` for a result that can reach counted objects: `result_transfer` (compiled transfer glue, in place) runs on the result as the task's state finishes, on the task and inside its local set (so promises the task started, which may still use the result's objects, are on the same thread, and a promise the glue starts joins the set), before the join handle can see it. Null: as `velt_rt_spawn`. |
 | `velt_rt_spawn_detached` | `(PollFn, DropFn, const void* state, u64 state_size, u64 state_align)` | spawn whose result is unused: no handle, one allocation |
@@ -329,15 +329,15 @@ keeps the settled value in Velt code). Thread-safe; no callbacks are stored (§1
 | `velt_rt_latch_wait` | `(u64 latch) -> VeltFut*` | completes (unit result) once the latch is open, and for a waiter queued by `velt_rt_latch_open`, once its queue reached that entry |
 | `velt_rt_task_id` | `() -> u64` | a unique id of the task being polled, never reused and kept by its local promises when they outlive it (0 outside a task; always 1 on single-threaded wasm): `resolve` copies a value settled from another task |
 
-### 2.2 Channels (`velt:channel`)
+### 2.2 Channels (`velt/sync`)
 
-`Channel<T>` (std/channel.vlt) is a Copy struct around a `u64` handle, a key into a runtime table
+`Channel<T>` (std/sync/channel.vlt) is a Copy struct around a `u64` handle, a key into a runtime table
 like the socket handles (§3.2): a channel leaves the table once it is closed and drained, and any
 later use of a copy sees a closed, empty channel. The runtime never sees a `T`, only its bytes:
 every call passes the item size (align <= 16). `receive` results are a `T | null` in the
 compiler's layout: `payload` is the offset of the value after the `bool` present flag, or 0 when
 `T` is pointer-like and null is the zero pointer. `send`, `trySend`, `receive` and `tryReceive` are reached
-through the std-only intrinsics `__intrinsic_chan_{send,try_send,receive,try_receive}<T>` (lowering knows
+through the std-only intrinsics `chanSend`, `chanTrySend`, `chanReceive` and `chanTryReceive` (velt/lang/intrinsics) (lowering knows
 `T`'s size, layout and drop glue; it transfers the value first, like a `spawn` argument: a value the
 sender still shares is deep-copied). No code pointers are stored except drop glue (§13.5): the
 `item_drop` a pending `send` future owns, and the channel's copy of it. A channel keeps the
@@ -370,13 +370,13 @@ ends. No suspension point may lie between lock and unlock.
 
 | Symbol | Signature | Notes |
 |---|---|---|
-| `velt_rt_global_lock` | `(u32 slot)` | locks slot `slot` (0..8; std assigns them) |
+| `velt_rt_global_lock` | `(u32 slot)` | locks slot `slot` (0..8; std assigns them: 0 velt/net/websocket's topics, 1 the `fetch` client's HTTP/2 sessions) |
 | `velt_rt_global_unlock` | `(u32 slot)` | unlocks it, on the thread that locked it |
 | `velt_rt_global_chan` | `(u32 slot) -> u64` | the slot's channel, made on first use; called with the slot locked |
 
-### 2.3 Abort signals (`velt:task`)
+### 2.3 Abort signals (`velt/task`)
 
-Each signal's `u64` handle (an `Arc`) is owned by a private `shared` cell in std/task.vlt and
+Each signal's `u64` handle (an `Arc`) is owned by a private `shared` cell in std/task/signal.vlt and
 released once, at the cell's last reference; no handle is public. Aborting sets a flag, stores
 the reason and wakes the waiters; it never cancels anything itself. No code pointers are
 stored: `AbortSignal.timeout` is a runtime timer task holding a weak reference, aborted (freed with
@@ -398,7 +398,7 @@ by `any` holds strong references to its sources until it is aborted (they hold w
 
 ### 2.4 Task groups (`taskScope`)
 
-The live-children count of a `taskScope` (std/task.vlt), behind a registry key (a `TaskScope`
+The live-children count of a `taskScope` (std/task/scope.vlt), behind a registry key (a `TaskScope`
 copy used after its scope ended finds no group). No code pointers are stored.
 
 | Symbol | Signature | Notes |
@@ -457,7 +457,7 @@ a parameter the declaration leaves out is `NULL`. Variadic arguments are 64-bit 
 (pointers converted), and on Apple arm64 come after zeros up to eight integer arguments, so
 they land in the stack slots a variadic callee reads. Right after each system call, the `int`
 that `__error()` (macOS) or `__errno_location()` (Linux) points to is stored into a
-thread-local value (`velt_tls_*_32_0` of `velt:os::lastOsError:I32`, crate::tls), and
+thread-local value (`velt_tls_*_32_0` of `velt/os::lastOsError:I32`, crate::tls), and
 `lastOsError()` reads that value; on Windows it is a call of `GetLastError`. One symbol has one signature, so the forms of `fcntl` share it.
 
 ### 3.2 Object handles
@@ -475,11 +475,6 @@ and returns the same `u64`, in argument lists, results and result slots alike.
   pid 0, exit code -1, empty address), and releasing again is a no-op; a stale handle never
   reaches a newer object. In-flight operations hold their own `Arc`, so the object lives until
   they finish.
-- The HTTP handles (`VeltServer`, `VeltReq`, `VeltResp`) are registry keys as
-  well, so a stale or forged one never reaches memory (additive): server operations on a closed
-  handle are no-ops (port 0, `shutdown` resolves at once), a dead response key is ignored
-  (`velt_rt_http_resp_drop`) and the server answers 500 for one, and using a
-  released request is a fatal error that says so.
 - The others are the object's address (`velt_rt::handle::Handle<T>`, `repr(transparent)`): an
   `Arc` (regexes, JSON nodes) owned by a class whose `dispose()` releases it exactly once. std
   keeps every handle in a `private` field (the standard library may use the private members of
@@ -548,9 +543,9 @@ denied).
 ## 6. std/net (TCP, TLS over TCP)
 
 Handles (`VeltListener`, `VeltStream`: §3.2) are `Arc`s; in-flight operations keep the socket
-alive, so `close` may be called at any time. A `VeltStream` is a raw TCP socket, a TLS stream
-(rustls, §14.8) or an HTTP connection handed over by an upgrade (`velt_rt_http_req_take_upgrade`,
-§14.8); every operation below works on all of them, and one task may read while another writes.
+alive, so `close` may be called at any time. A `VeltStream` is a raw TCP socket or a TLS stream
+(rustls, §14.8); every operation below works on both, and one task may read while another
+writes.
 
 | Symbol | Signature | Result slot / notes |
 |---|---|---|
@@ -578,76 +573,17 @@ alive, so `close` may be called at any time. A `VeltStream` is a raw TCP socket,
 | `velt_rt_tcp_close` | `(VeltStream s)` | releases the handle |
 | `velt_rt_tcp_listen_tls` | `(const VeltStr* addr, const VeltStr* cert_pem, const VeltStr* key_pem, const VeltStr* alpn) -> VeltFut*` | `IoResult<VeltListener>` whose accepted streams are TLS; `alpn` = protocols to offer, comma-separated (`""`: none); bad PEM ⇒ `EINVAL`. `velt_rt_tcp_accept` returns once the TCP connection is accepted: the handshake (10 s limit) runs with the stream's first operation, which reports its failure |
 | `velt_rt_tcp_connect_tls` | `(const VeltStr* addr, const VeltStr* server_name, const VeltStr* ca_pem, const VeltStr* alpn) -> VeltFut*` | `IoResult<VeltStream>` once the handshake is done; `server_name` `""` = the host of `addr`; `ca_pem` = extra trusted CAs |
+| `velt_rt_tcp_alpn` | `(VeltStream s) -> VeltFut*` | `IoResult<VeltStr>` once the stream is set up (a TLS stream's handshake done, running it if no operation did yet): the protocol ALPN chose, `""` for none or a plain TCP stream |
+| `velt_rt_tcp_pair` | `(VeltArray<u64>* out)` | two connected in-memory stream handles (`[a, b]`): what one writes the other reads; a `shutdown` is the other's end of stream |
 | `velt_rt_tcp_park` | `(VeltStream s, const VeltStr* key)` | keeps idle stream `s` under `key` (the `fetch` client's origin) for a later `velt_rt_tcp_unpark` in any task; closed instead when the key holds 512 already. The caller gives the handle up. Additive |
 | `velt_rt_tcp_unpark` | `(const VeltStr* key, uint32_t settled) -> VeltStream` | the stream most recently parked under `key` that is still open (each is checked with a look at the socket that must find nothing; one idle over 60 s is closed), or 0. With `settled` not 0, only a stream idle for at least 5 ms, so a close its server sent shortly after the response has arrived (for a request that may not be sent twice). Process-wide runtime state, so no Velt memory is kept and tasks do not take the module lock for it. The WebAssembly runtime defines the client's §6 symbols without a network: connecting fails with `ENOTSUP` (`fetch failed: WebAssembly programs have no network access`). Additive |
 
-## 7. std/http (hyper 1.x, HTTP/1.1 keep-alive + h2c)
+## 7. HTTP (no runtime functions)
 
-**Handler.** A handler `(req: Request) => Promise<Response>` is described by:
-```c
-typedef struct {
-    void     (*init)(void* env, void* req, void* state);    // write the initial state; owns req
-                                                            // (the VeltReq handle as a pointer)
-    uint32_t (*poll)(void* state, void* cx);                // result at state+0: VeltResp, or 1 =
-                                                            // responded (req_respond); 0 ⇒ 500
-    void     (*drop)(void* state);                          // request cancelled (client gone)
-    uint64_t state_size, state_align;
-    void*    env;   // closure captures; shared read-only by concurrent requests (§14.14)
-} VeltHandler;      // 48 bytes
-```
-The runtime stores each request's state inline in the request future (no extra allocation for
-states ≤ 1 KiB) and polls it on a worker. `init` runs once the request's head has arrived; the
-body is received while the handler reads it (`req_text`, `req_bytes`, `req_chunk`).
-The handler must `velt_rt_http_req_drop(req)` when done with it (typically before returning).
-`VeltReq` is a registry key (`crate::registry`, like the database handles): every accessor checks
-it, and using a request after it was dropped stops the program with a clear message instead of
-reading freed memory. While the runtime polls a handler it keeps that handler's request in a
-per-worker frame: accessors given its key read it there (no registry lock or count), and
-`velt_rt_http_req_drop` takes it out of the frame as well as out of the registry, so the check
-still holds. Any other key (a request handed to another task) is looked up in the registry.
-
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_rt_http_serve` | `(const VeltStr* addr, const VeltHandler* h) -> VeltFut*` | result `IoResult<VeltServer>` once bound; serving continues in the background. `h` is copied. |
-| `velt_rt_http_server_port` | `(VeltServer s) -> u32` | real port (after port 0) |
-| `velt_rt_http_server_close` | `(VeltServer s)` | stop accepting, finish in-flight requests, close idle connections; frees `s` |
-| `velt_rt_http_server_detach` | `(VeltServer s)` | free `s` but keep serving (dropping the `Server` value) |
-| `velt_rt_http_server_shutdown` | `(VeltServer s) -> VeltFut*` | `close` + result `()` once the handler was released (§14.14) |
-| `velt_rt_http_req_method` | `(VeltReq r, VeltStr* out)` | owned copy |
-| `velt_rt_http_req_url` | `(VeltReq r, VeltStr* out)` | the absolute URL: `http://` (`https://` over TLS), the `host` header (HTTP/2: `:authority`; neither: the server's address), path and query |
-| `velt_rt_http_req_header` | `(VeltReq r, const VeltStr* name, VeltStr* out) -> u8` | case-insensitive; repeated fields joined with `", "`; 0 = absent (`out` untouched) |
-| `velt_rt_http_req_headers` | `(VeltReq r, VeltStrArray* out)` | every header as the flat list `[name, value, …]` (lowercase names, received order; non-UTF-8 values decoded lossily): `req.headers` in one call |
-| `velt_rt_http_req_has_body` | `(VeltReq r) -> u8` | whether the request arrived with a body |
-| `velt_rt_http_req_text` | `(VeltReq r) -> VeltFut*` | result `IoResult<VeltStr>`: the rest of the body, UTF-8 decoded lossily, a leading BOM dropped |
-| `velt_rt_http_req_bytes` | `(VeltReq r) -> VeltFut*` | result `IoResult<VeltBytes>`: the rest of the body |
-| `velt_rt_http_req_chunk` | `(VeltReq r) -> VeltFut*` | result `IoResult<VeltBytes>`: the next chunk (≤ 64 KiB, never empty); empty at the end |
-| `velt_rt_http_req_remote_host` | `(VeltReq r, VeltStr* out)` | the client's IP address |
-| `velt_rt_http_req_remote_port` | `(VeltReq r) -> u32` | the client's port |
-| `velt_rt_http_req_drop` | `(VeltReq r)` | |
-| `velt_rt_http_resp_build` | `(u32 status, const VeltStr* reason, const VeltStrArray* headers, u32 kind, VeltStr* text, const VeltBytes* bytes, u32 implied) -> VeltResp` | a handler's `Response` in one call; see below |
-| `velt_rt_http_req_respond` | `(VeltReq r, u32 status, const VeltStr* reason, const VeltStr* name, const VeltStr* value, u32 kind, VeltStr* text, u32 implied) -> u64` | `resp_build` with no body or a text one (`kind` 0 or 1) and at most one header (`name` as written, `""` for none, lowercased by parsing; `value` trimmed of HTTP whitespace) for the handler of `r`, handed straight to it: returns 1 (the response is in the handler's frame; the handler returns 1) while the runtime polls that handler, else a `VeltResp` (a handler that runs on after its client left), 0 if a header is invalid |
-| `velt_rt_http_req_respond_list` | `(VeltReq r, u32 status, const VeltStr* reason, const VeltStr* name, const VeltStr* value, const VeltStrArray* headers, u32 kind, VeltStr* text, const VeltBytes* bytes, u32 implied) -> u64` | `req_respond` with more headers (`name`/`value` first, then the flat list, as for `resp_build`) and any complete body (`kind` 0–2) |
-| `velt_rt_http_resp_drop` | `(VeltResp r)` | only for responses not returned from a handler |
-
-A listening server holds a **keep-alive** reference (released by `close`): after `main` returns,
-the program entry waits until no keep-alive references remain — like Node, a listening server
-keeps the process running. (`velt_rt_block_on` itself does not wait.) Pending ref'd timers hold
-one too (`velt_rt_keep_alive_acquire`, §2).
-
-`velt_rt_http_resp_build` turns the global `Response` a handler returned into a `VeltResp`:
-`status` (invalid ⇒ 500), the reason phrase (`""` for the standard one), the headers as the flat
-list `[name, value, …]`, and the body by `kind`: 0 none, 1 `text` (**taken**: zero-copy if owned,
-`*text` left empty), 2 `bytes` (copied: the array may be borrowed), 3 a stream std fills next
-(§14.17), 4 a stream of a fetched response's body (std leaves out a `content-encoding` the
-client decoded). A streamed body drops `content-length`. `implied` is the `content-type`
-the body implies, added unless the headers have one: 0 none, 1 `text/plain;charset=UTF-8`, 2
-`application/json`, 3 `application/x-www-form-urlencoded;charset=UTF-8`. A bodiless status (1xx,
-204, 304) gets no body and no `content-type`. An invalid header name or value builds nothing
-(result 0); std answers 500 then.
-
-**Client**: the global `fetch` has no runtime symbols of its own. Its HTTP/1.1 client is Velt
-code (std/fetch/client/) on the §6 streams, which the runtime pools between requests
-(`velt_rt_tcp_park` / `velt_rt_tcp_unpark`, §6), and bodies are decoded by velt:compress (Velt).
+The HTTP client (std/net/http/fetch/client) and server (packages/http-server) are written in Velt
+on the TCP and TLS streams of §6: the runtime has no HTTP of its own. Under `velt dev` a server
+joins the graceful stop through velt/dev (std/dev), on `velt_rt_dev_server_stop` /
+`velt_rt_dev_server_drained` (§13.2).
 
 ## 8. Process
 
@@ -679,7 +615,7 @@ object compiled against them no longer links.
 |---|---|---|
 | `velt_rt_rc_inc` | `(u64* rc)` | `shared.clone()`; Relaxed (like `Arc`); aborts on overflow |
 | `velt_rt_rc_dec` | `(u64* rc) -> u8` | Release; returns 1 (after an Acquire fence) when it reached zero: caller drops + frees |
-| `velt_rt_thread_yield` | `()` | `velt:sync`'s `Backoff.snooze` once spinning stops: let another thread run (`sched_yield`); nothing on wasm [additive] |
+| `velt_rt_thread_yield` | `()` | `velt/sync`'s `Backoff.snooze` once spinning stops: let another thread run (`sched_yield`); nothing on wasm [additive] |
 | `velt_rt_mutex_init` | `(u64* lock)` | the `Mutex<T>` lock word: 8 bytes, align 8, inside the shared object; no destroy needed |
 | `velt_rt_mutex_lock` / `velt_rt_mutex_unlock` | `(u64* lock)` | `m.with(f)` = lock; call f; unlock. Blocks the thread; bodies must not await. |
 | `velt_rt_mutex_lock_checked` | `(u64* lock)` | `velt_rt_mutex_lock` from code that may run in read mode (§9.1): there it stops the program before locking [additive, #708] |
@@ -880,8 +816,8 @@ buffer grows. An adopted string's head must not lie in its buffer.
 | `velt_rt_strbuf_adopt` | `(VeltStr* part, const VeltStr* head, u64 cap, VeltStrBuf* out) -> u8` | a builder holding `head + *part` in `part`'s own buffer, grown to `cap` (clamped like `new`'s hint): 1 when `part` is the only reference to a heap buffer of its own (not a slice, literal or inline string) whose layout fits the result, and `head` has no lone surrogate; `*out` is then the builder and `*part` empty. Otherwise 0 and nothing changes. `head` must not lie in `part`'s buffer. Template literals use it for a long fresh part |
 | `velt_rt_strbuf_push_str` | `(VeltStrBuf* b, const VeltStr* s)` | `s` may be `b` itself or lie in its buffer |
 | `velt_rt_strbuf_push_bytes` | `(VeltStrBuf* b, const u8* p, u64 len)` | static text chunks of a template; `len == 0` ⇒ `p` unused. The low 32 bits of `len` are the byte count; the high 32 bits may carry the UTF-16 unit count (as a string's `w1`): equal to the byte count, the text is ASCII and is not scanned; 0 means unknown (counted) |
-| `velt_rt_strbuf_push_u8s` | `(VeltStrBuf* b, const VeltBytes* bytes, u64 len, u64 units)` | the first `len` bytes of a `u8[]` (canonical WTF-8 Velt code built, e.g. std/json/writer.vlt); `units == len`: ASCII, not scanned; otherwise counted |
-| `velt_rt_bytes_put_f64` | `(VeltBytes* bytes, u64 at, f64 v) -> u64` | writes finite `v` as JS `String(v)` (`-0` is `0`) into the `u8[]`'s bytes from `at` and returns the position after it; needs 32 bytes of the array's length from `at`, else writes nothing and returns `at`. A writer that gathers text in a byte array (std/json/tape.vlt) prints a double there |
+| `velt_rt_strbuf_push_u8s` | `(VeltStrBuf* b, const VeltBytes* bytes, u64 len, u64 units)` | the first `len` bytes of a `u8[]` (canonical WTF-8 Velt code built, e.g. std/encoding/json/writer.vlt); `units == len`: ASCII, not scanned; otherwise counted |
+| `velt_rt_bytes_put_f64` | `(VeltBytes* bytes, u64 at, f64 v) -> u64` | writes finite `v` as JS `String(v)` (`-0` is `0`) into the `u8[]`'s bytes from `at` and returns the position after it; needs 32 bytes of the array's length from `at`, else writes nothing and returns `at`. A writer that gathers text in a byte array (std/encoding/json/tape.vlt) prints a double there |
 | `velt_rt_strbuf_push_i64` / `_u64` | `(VeltStrBuf* b, i64 / u64 v)` | decimal |
 | `velt_rt_strbuf_push_f64` | `(VeltStrBuf* b, f64 v)` | JS `String(v)` (`-0` is `0`) |
 | `velt_rt_strbuf_push_inspect_f64` | `(VeltStrBuf* b, f64 v)` | what `console.log` prints, as `velt_rt_write_f64` (`-0` is `-0`) [additive, #525] |
@@ -897,22 +833,24 @@ buffer grows. An adopted string's head must not lie in its buffer.
 | `velt_rt_strbuf_inspect_enter` | `(VeltStrBuf* b, const void* p) -> u8` | start printing the object at `p` (class instance or recursive object): `1`, or, when `p` is already being printed (a cycle), append `[Circular *N]` and return `0` (the caller skips it); `N` is the object's number for the whole top-level value (additive) |
 | `velt_rt_strbuf_inspect_leave` | `(VeltStrBuf* b)` | done with the innermost entered object; an object with a number gets the `<ref *N> ` prefix at the start of its text (additive) |
 | `velt_rt_strbuf_inspect_circular` | `(VeltStrBuf* b, const void* p) -> u8` | for an object past node's depth limit: when `p` is being printed, append `[Circular *N]` (numbered like `inspect_enter`) and return `1`; else `0` (the caller prints `[Name]`). The object is not entered (additive) |
-| `velt_rt_strbuf_inspect_atom` | `(const VeltStrBuf* b, u64 start)` | the text from byte `start` to the end of `b` is what a class's `__inspect()` returned: `inspect_layout` keeps it as one piece (node inserts a custom inspect's string as it is). Forgotten at the next `inspect_begin` (additive) |
+| `velt_rt_strbuf_inspect_atom` | `(const VeltStrBuf* b, u64 start)` | the text from byte `start` to the end of `b` is what a class's `[util.inspect.custom]()` returned: `inspect_layout` keeps it as one piece (node inserts a custom inspect's string as it is). Forgotten at the next `inspect_begin` (additive) |
 | `velt_rt_strbuf_inspect_more` | `(VeltStrBuf* b, u64 remaining)` | append node's `, ... n more items` (`, ... 1 more item`) after the first 100 entries of an array, `Map` or `Set` (additive) |
 | `velt_rt_strbuf_len` | `(const VeltStrBuf* b) -> u64` | byte length: where the next value's text starts (for `inspect_layout`) |
 | `velt_rt_strbuf_inspect_layout` | `(VeltStrBuf* b, u64 start)` | re-lays out the text of one printed value, from byte `start` to the end, the way node's `util.inspect` breaks it across lines (`breakLength` 80, 2-space indentation, arrays of more than six short entries in columns (an array's `... n more items` entry on its own line after them), long strings split at line breaks); a value of at most 71 bytes with fewer than six commas and no line break is left alone without being parsed; a custom inspect's text (`velt_rt_strbuf_inspect_atom`) is kept as it is, its lines after the first indented by the value's indentation, as node indents a custom inspect's string. Emitted after each top-level `console.log` / `${}` value that can hold containers |
 | `velt_rt_strbuf_finish` | `(VeltStrBuf* b, VeltStr* out)` | moves the text to `*out`; `*b` becomes empty (reusable, nothing to free) |
 | `velt_rt_strbuf_drop` | `(VeltStrBuf* b)` | abandon an unfinished builder (exception path); zeroes it |
 | `velt_rt_json_enter` | `(const void* p) -> u8` | `JSON.stringify` glue starts writing the object at `p`: 1, or 0 if it is already being written (a cycle; the caller panics with `JSON.stringify: converting circular structure to JSON`). Per thread |
-| `velt_rt_rows_begin` / `_end` | `(const RawCursor* c, const u8* fields) -> RowsState*` / `(RowsState* st)` | `Glue::RowsRead` (std's `__intrinsic_json_parse_cursor<T>` when the row type is an object of plain fields) reads a driver's row cursor by column: `fields` is static data (`u32` count, then per field `u32` byte length and the name); each column is matched to its field once (the map is kept per thread for the next result with the same header and table). Additive |
+| `velt_rt_rows_begin` / `_end` | `(const RawCursor* c, const u8* fields) -> RowsState*` / `(RowsState* st)` | `Glue::RowsRead` (std's `jsonParseCursor<T>` when the row type is an object of plain fields) reads a driver's row cursor by column: `fields` is static data (`u32` count, then per field `u32` byte length and the name); each column is matched to its field once (the map is kept per thread for the next result with the same header and table). Additive |
 | `velt_rt_rows_next` / `_columns` / `_field` | `(st) -> u8` / `(st) -> u64` / `(st, u64 col) -> i64` | step to the next row (1, or 0 at the end); the column count; the field column `col` fills (-1: none). Additive |
 | `velt_rt_rows_i64` / `_f64` / `_bool` / `_str` / `_bytes` | `(st, u64 col, T* out) -> u8` | column `col` of the current row typed: 1 = written, 2 = NULL, 0 = another kind (an integer accepts an exact float, a float an integer, a string's invalid UTF-8 becomes U+FFFD). Additive |
-| `velt_rt_rows_map` / `_map_column` | `(const u8* fields) -> RowsState*` / `(RowsState* st, const VeltStr* name)` | the column map of std/db' `RowSource` written in Velt (`__intrinsic_read_rows<T, S>`), whose rows the compiled code reads through the source's own methods: a state without a cursor, then each column's name in order. Additive |
+| `velt_rt_rows_map` / `_map_column` | `(const u8* fields) -> RowsState*` / `(RowsState* st, const VeltStr* name)` | the column map of std/db' `RowSource` written in Velt (`readRowsByColumn<T, S>`), whose rows the compiled code reads through the source's own methods: a state without a cursor, then each column's name in order. Additive |
 | `velt_rt_rows_exact_i64` | `(f64 v, i64* out) -> u8` | 1 and the integer when `v` is one exactly (an integer field from a float cell), else 0. Additive |
 | `velt_rt_rows_fail` | `(const VeltStr* expected, i64 row, const VeltStr* field, VeltStr* out)` | the JSON decoder's message for a row that does not fit: `expected <expected> at $[row].field` (`row` -1: the single row; `field` empty: the row itself). Additive |
-| `velt_rt_param_object` / `velt_rt_param_name` | `(const RawSink* s)` / `(const RawSink* s, const VeltStr* name)` | `Glue::DbBind` (`__intrinsic_db_bind<P>`, std only) hands a driver's parameter sink (native_abi.md "Parameter sinks") an object's members: `object` first, then each member's name before its value. Additive |
+| `velt_rt_param_object` / `velt_rt_param_name` | `(const RawSink* s)` / `(const RawSink* s, const VeltStr* name)` | `Glue::DbBind` (`dbBind<P>`, std only) hands a driver's parameter sink (native_abi.md "Parameter sinks") an object's members: `object` first, then each member's name before its value. Additive |
 | `velt_rt_param_i64` / `_u64` / `_f64` / `_bool` / `_null` / `_str` / `_bytes` | `(const RawSink* s, v)` (`_str`: `const VeltStr*`, `_bytes`: `const VeltBytes*`, `_null`: no value) | one value, as its JSON text would bind: a `u64` beyond `i64` and a non-integral `f64` (or one of 1e21 or more) a REAL, an integral `f64` an INTEGER, NaN/±Infinity NULL, a string UTF-8 (lone surrogates U+FFFD), a `u8[]` a BLOB. Additive |
 | `velt_rt_json_leave` | `()` | done with the innermost object entered |
+| `velt_rt_visit_enter` | `(u64 id) -> u8` | velt/reflect `beginVisit`: starts visiting the value with identity `id`: 1, or 0 if it is being visited already (it contains itself). The same per-thread stack as `velt_rt_json_enter` |
+| `velt_rt_visit_leave` | `()` | velt/reflect `endVisit`: done with the innermost value visited |
 
 ### 12.2 String methods
 
@@ -931,7 +869,7 @@ U+FFFD. "Omitted" JS arguments are passed as the value given in Notes.
 | Symbol | Signature | Notes |
 |---|---|---|
 | `velt_rt_str_slice` | `(const VeltStr* s, i64 start, i64 end, VeltStr* out)` | JS `slice`: negative = from end, clamped, empty if `start >= end`; omitted `end` = `i64::MAX` |
-| `velt_rt_str_byte_slice` | `(const VeltStr* s, u64 start, u64 end, VeltStr* out)` | bytes `start..end` of the WTF-8 (velt:encoding `utf8Substring`); the caller checks `start <= end <= len` and code point boundaries |
+| `velt_rt_str_byte_slice` | `(const VeltStr* s, u64 start, u64 end, VeltStr* out)` | bytes `start..end` of the WTF-8 (velt/encoding `utf8Substring`); the caller checks `start <= end <= len` and code point boundaries |
 | `velt_rt_str_index_of` | `(const VeltStr* s, const VeltStr* needle, i64 from) -> i64` | `from` clamped to `0..=len` (omitted = 0); -1 if absent; empty needle ⇒ clamped `from` |
 | `velt_rt_str_last_index_of` | `(const VeltStr* s, const VeltStr* needle, i64 from) -> i64` | last match starting `<= from`; omitted `from` = `i64::MAX` |
 | `velt_rt_str_includes` | `(const VeltStr* s, const VeltStr* needle) -> u8` | (a `position` arg ⇒ use `index_of(s, n, pos) >= 0`) |
@@ -939,7 +877,7 @@ U+FFFD. "Omitted" JS arguments are passed as the value given in Notes.
 | `velt_rt_str_eq` | `(const VeltStr* a, const VeltStr* b) -> u8` | `==` fast path: length check + one memcmp |
 | `velt_rt_str_join` | `(const VeltStrArray* parts, const VeltStr* sep, VeltStr* out)` | `parts.join(sep)`: sums the pieces' lengths and unit counts, then writes the result once (inline, or a heap buffer of exactly its size) |
 | `velt_rt_str_split` | `(const VeltStr* s, const VeltStr* sep, VeltStrArray* out)` | JS semantics: `"a,b,".split(",")` = `["a","b",""]`, `"".split(",")` = `[""]`, `"".split("")` = `[]`, `split("")` = code units (a pair gives its two halves). Drop with `velt_rt_str_array_drop` (§4). |
-| `velt_rt_str_code_points` | `(const VeltStr* s, VeltStrArray* out)` | the characters (code points; a pair is one, a lone surrogate one): what `for (const c of s)` and `[...s]` iterate (the prelude's `__codePoints`) |
+| `velt_rt_str_code_points` | `(const VeltStr* s, VeltStrArray* out)` | the characters (code points; a pair is one, a lone surrogate one): what `for (const c of s)` and `[...s]` iterate (the hook `stringCodePoints`, std/lang/hooks/string.vlt) |
 | `velt_rt_str_is_well_formed` | `(const VeltStr* s) -> u8` | 1 when `s` has no lone surrogates (std's `encodeURIComponent`) |
 | `velt_rt_str_trim` / `_trim_start` / `_trim_end` | `(const VeltStr* s, VeltStr* out)` | JS WhiteSpace + LineTerminator set (includes U+FEFF, U+00A0, U+2028/9, Zs; not U+0085) |
 | `velt_rt_str_to_upper` / `_to_lower` | `(const VeltStr* s, VeltStr* out)` | full Unicode default case mapping (`ß` → `SS`, final sigma), like JS; ASCII fast path |
@@ -968,7 +906,7 @@ typedef struct VeltJsonReader VeltJsonReader;   // opaque
 | Symbol | Signature | Notes |
 |---|---|---|
 | `velt_rt_json_reader_new` | `(const VeltStr* src) -> VeltJsonReader*` | never null; `src` must stay alive, unchanged **and in place** (an inline string's bytes live in the `VeltStr` itself) until `free` |
-| `velt_rt_json_reader_new_with` | `(const VeltStr* src, u32 flags, u32 max_depth) -> VeltJsonReader*` (with flag 4, `src` is a `const VeltBytes*`) | `JSON.parse` options: flag 1 = `skip_unknown` fails; flag 2 = a JSON `null` for an optional field without `null` is not an absent field (`velt_rt_json_reader_null_absent`); `max_depth` = most arrays/objects open at once, counted from the top-level value (0 = no limit), checked by `expect_*_start`, `skip_value` and `read_value`. Flag 4 (`FLAG_ROWS`, set only by `__intrinsic_json_parse_rows`): `src` is a `const VeltBytes*`, a `u8[]` of a driver's binary rows (`velt_text::rows`, native_abi.md "Rows"), which the reader walks instead of text, borrowed like a source string. Every reader call then answers as it would for the JSON the rows stand for; the only failures are a value of another kind and a rejected unknown key. `max_depth` does not apply to such rows (they nest three deep at most). Flag 8 (`FLAG_CURSOR`, set only by `__intrinsic_json_parse_cursor`, additive): `src` is a driver's row cursor (`const RawCursor*`, native_abi.md "Row cursors"), read as binary rows are, which the reader uses but does not free; a decoder that marks a position outside a row (a union of whole results) gets the rows left copied into binary form |
+| `velt_rt_json_reader_new_with` | `(const VeltStr* src, u32 flags, u32 max_depth) -> VeltJsonReader*` (with flag 4, `src` is a `const VeltBytes*`) | `JSON.parse` options: flag 1 = `skip_unknown` fails; flag 2 = a JSON `null` for an optional field without `null` is not an absent field (`velt_rt_json_reader_null_absent`); `max_depth` = most arrays/objects open at once, counted from the top-level value (0 = no limit), checked by `expect_*_start`, `skip_value` and `read_value`. Flag 4 (`FLAG_ROWS`, set only by `Intrinsic::JsonParseRows`): `src` is a `const VeltBytes*`, a `u8[]` of a driver's binary rows (`velt_text::rows`, native_abi.md "Rows"), which the reader walks instead of text, borrowed like a source string. Every reader call then answers as it would for the JSON the rows stand for; the only failures are a value of another kind and a rejected unknown key. `max_depth` does not apply to such rows (they nest three deep at most). Flag 8 (`FLAG_CURSOR`, set only by `jsonParseCursor`, additive): `src` is a driver's row cursor (`const RawCursor*`, native_abi.md "Row cursors"), read as binary rows are, which the reader uses but does not free; a decoder that marks a position outside a row (a union of whole results) gets the rows left copied into binary form |
 | `velt_rt_json_reader_free` | `(VeltJsonReader* r)` | null ok |
 | `velt_rt_json_reader_null_absent` | `(VeltJsonReader* r) -> u8` | 1 when a JSON `null` may stand for an absent optional field whose type has no `null` (`JSON.parse<T>`), 0 when the reader was made with flag 2 (`JSON.parse(text) as T`): the decoder then reads the field's value, which fails |
 | `velt_rt_json_reader_peek` | `(VeltJsonReader* r) -> u32` | next token kind, skipping whitespace: 0 EOF, 1 `null`, 2 `true`, 3 `false`, 4 number, 5 string, 6 `[`, 7 `]`, 8 `{`, 9 `}`, 10 error (bad byte, or the reader already failed). Classifies by first byte only; the `read_*` call validates. |
@@ -984,12 +922,12 @@ typedef struct VeltJsonReader VeltJsonReader;   // opaque
 | `velt_rt_json_reader_skip_unknown` | `(r) -> u8` | the value of an object key the target type has no field for: `skip_value`, or a failure when the reader rejects unknown keys |
 | `velt_rt_json_reader_skip_value` | `(r) -> u8` | skips (and validates) any value — unknown keys; iterative (no recursion), but nesting past the reader's `max_depth` fails like `expect_*_start` |
 | `velt_rt_json_reader_skip_lookahead` | `(r) -> u8` | `skip_value` for a union decoder looking ahead for its discriminant: also remembers where each array/object it passes ends (by the offset of its opening bracket), and jumps over one already passed. So the lookahead of unions nested in the skipped value does not scan it again: nested unions stay linear in the input size. Memory: one entry per container skipped this way, freed with the reader |
-| `velt_rt_json_reader_read_value` | `(r, VeltJson* out) -> u8` | any one value as a `json.Value` tree (§12.5), an owned handle. Iterative (no recursion); nesting past the reader's `max_depth` fails like `expect_*_start`. Only the rows of a database driver read through it now (`std/json/reader.vlt` `readValue`); a typed decoder's `JsonValue` field from text is a tape the Velt reader builds |
+| `velt_rt_json_reader_read_value` | `(r, VeltJson* out) -> u8` | any one value as a `json.Value` tree (§12.5), an owned handle. Iterative (no recursion); nesting past the reader's `max_depth` fails like `expect_*_start`. Only the rows of a database driver read through it now (`std/encoding/json/reader.vlt` `readValue`); a typed decoder's `JsonValue` field from text is a tape the Velt reader builds |
 | `velt_rt_json_reader_mark` | `(const VeltJsonReader* r) -> u64` | the current position (opaque), for `reset` |
 | `velt_rt_json_reader_reset` | `(r, u64 mark)` | go back to a `mark` of the same reader and clear any error since: union decoders look ahead (for a discriminant key, or a number against literal members) and then decode from the start of the value |
 | `velt_rt_json_reader_end` | `(r) -> u8` | after the top-level value: 1 if only whitespace remains |
 | `velt_rt_json_error` | `(const VeltJsonReader* r, const VeltStr* expected, const VeltStr* path, VeltStr* out)` | builds the owned `JsonError.message` (§12.4) |
-| `velt_rt_json_node_syntax` | `(const VeltStr* src, VeltStr* out) -> u8` | Node's `SyntaxError` message for `src` if it is not JSON (1), else 0 and `out` untouched; the Velt reader (`std/json/reader.vlt`) asks after a failure |
+| `velt_rt_json_node_syntax` | `(const VeltStr* src, VeltStr* out) -> u8` | Node's `SyntaxError` message for `src` if it is not JSON (1), else 0 and `out` untouched; the Velt reader (`std/encoding/json/reader.vlt`) asks after a failure |
 
 Except where stated, `u8` results are 1 = ok, 0 = failed (outputs untouched). **The first failure
 is sticky**: every later call fails (`peek` returns 10), so a decoder can bail out on the first 0
@@ -1094,7 +1032,7 @@ Nothing here changes the ABI generated code uses; it is how the runtime behaves 
 `VELT_DEV_SOCKET` names the supervisor's dev channel: a Unix socket path, or on Windows a local
 named pipe (`\\.\pipe\velt-dev-<pid>-<n>`, byte mode; a program retries for up to 5 s while every
 pipe instance is busy). Each request is one connection. When the variable is set,
-`velt_rt_http_serve` and `velt_rt_tcp_listen` do not bind themselves: they connect, send
+`velt_rt_tcp_listen` and `velt_rt_tcp_listen_tls` do not bind themselves: they connect, send
 `listen <addr>\n` (the address exactly as the program passed it) and receive the listening
 socket, or `err <message>\n` (the operation then fails with that message):
 - Unix: `ok\n` with the socket's descriptor attached (`SCM_RIGHTS`);
@@ -1112,7 +1050,15 @@ its port. Without the variable the runtime binds as before.
 ### 13.2 Stopping
 In dev mode (`VELT_DEV_SOCKET` set, once the program listens) the runtime handles a stop request:
 HTTP servers stop accepting (the supervisor still holds the socket), in-flight requests get up to
-1 s to finish, stdout is flushed and the process exits with status 0. The stop request is:
+1 s to finish, stdout is flushed and the process exits with status 0. A server written in Velt
+joins through velt/dev's `joinStop` and `drained` (std/dev/stop.vlt), on:
+
+| Symbol | Signature | Notes |
+|---|---|---|
+| `velt_rt_dev_server_stop` | `() -> VeltSignal` | a signal (the `AbortSignal` handles of §2; the caller owns it) aborted once a stop request arrives; null outside dev mode. The process waits for the server until it reports itself drained (up to 1 s) |
+| `velt_rt_dev_server_drained` | `()` | the server that joined stopped accepting and finished its requests |
+
+The stop request is:
 - Unix: SIGTERM. Outside dev mode SIGTERM keeps its default action.
 - Windows (no SIGTERM): before its first `listen` request the program opens a **stop channel**, a
   connection that sends `watch-stop\n` and gets `ok\n`; the supervisor keeps it (by the client
@@ -1155,19 +1101,10 @@ On Windows x64 the JIT (`velt_codegen_cl::DevSession`) registers each loaded pro
 info with `RtlAddFunctionTable` (code and records in one arena), so stack walks get through JIT
 frames as they do through linked code's `.pdata`.
 
-### 13.5 Handler re-read and the rule against cached code pointers
-In dev mode an HTTP server re-reads its `VeltHandler` for every request (an atomic pointer) and
-keeps handler states on the heap, so `velt_rt::http::handler::replace_handler(index, desc)` (Rust
-API for the phase 3 hot swap; `index` = `serve` order) gives new requests new code while requests
-in flight finish on theirs (their future copied `poll`/`drop`). Replaced descriptors are never
-freed. Outside dev mode the descriptor is read once, as before.
-`velt_rt::http::handler::update_handlers(f)` offers every running server's descriptor to `f`
-and installs the replacement it returns: after a hot swap that recompiled a handler, the host
-replaces `init`, `poll`, `drop` and the state size/alignment with the new version's (they share
-one state layout, so all of them change together; `env` stays). In dev builds the descriptor's
-`init` is that version's code itself, not a trampoline.
-Rule: only vtables (via relocations), `VeltFut` headers and these per-server handler slots may
-store code addresses. New runtime APIs that take callbacks (timers, WebSockets, child processes,
+### 13.5 The rule against cached code pointers
+A hot swap reaches new calls through each function's trampoline; a future in flight keeps the
+`poll`/`drop` of the version that created it (its `VeltFut` header).
+Rule: only vtables (via relocations) and `VeltFut` headers may store code addresses. New runtime APIs that take callbacks (timers, WebSockets, child processes,
 ...) must keep them replaceable the same way. The one exception is drop glue kept with a value in
 flight (a join's or a spawned task's result, a channel item being sent) or with the values a
 channel holds (the `item_drop` a channel keeps from its sends, §2.2, called only at program end): it
@@ -1194,7 +1131,7 @@ of a Copy element type, built from a Rust `Vec<T>` (same allocator), like `VeltS
 | `velt_rt_random_u64` | `() -> u64` | uniform, OS CSPRNG |
 | `velt_rt_local_offset_minutes` | `(i64 epoch_ms) -> i32` | minutes to add to UTC for local time at that instant (DST-aware: the C library tz database on Unix; on Windows `TZ` when it names UTC or a fixed offset (`Etc/GMT±N`), else the system time zone with its dynamic per-year DST rules, `SystemTimeToTzSpecificLocalTimeEx`) |
 
-### 14.2 Regular expressions (`velt:regex`)
+### 14.2 Regular expressions (`velt/text`)
 
 `VeltRegex` is an `Arc` of a compiled Rust `regex::bytes::Regex`; a JS pattern is rewritten
 first (ASCII `\d \w \b`, JS class literals; `crates/velt_rt/src/regex/syntax.rs`). Matching runs
@@ -1217,10 +1154,10 @@ pair, and the offsets of a match are translated once per match.
 | `velt_rt_regex_split` | `(VeltRegex re, const VeltStr* s, u64 limit, VeltStrArray* out)` | JS `split` (captures spliced in, `""` for unmatched ones); `limit` 0 = none |
 | `velt_rt_regex_escape` | `(const VeltStr* s, VeltStr* out)` | metacharacters backslash-escaped |
 
-### 14.3 Child processes (`velt:child_process`)
+### 14.3 Child processes (`velt/process/child`)
 
 ```c
-typedef struct {                 // std/child_process.vlt `CommandSpec` (104 bytes)
+typedef struct {                 // std/process/child/spec.vlt `CommandSpec` (104 bytes)
     VeltStr program;             // looked up in PATH when it has no separator
     VeltStrArray args;           // after the program name
     VeltStr cwd;                 // "" = the parent's
@@ -1250,7 +1187,7 @@ are `IoResult` errors whose message starts with `spawn <program>: `.
 | `velt_rt_child_output` | `(const VeltCommand* spec, const VeltStr* input) -> VeltFut*` | run to completion: stdout/stderr piped and drained concurrently, `input` (empty = none, stdin is then null) written then closed; `IoResult<VeltOutput>`, output decoded lossily; `spec.stdio` ignored |
 | `velt_rt_child_output_sync` | `(const VeltCommand* spec, const VeltStr* input, IoResult<VeltOutput>* out)` | same, blocking |
 
-### 14.4 Standard input (`velt:stdin`)
+### 14.4 Standard input (`velt/process`)
 
 `typedef struct { IoResult<VeltStr> line; u8 eof; } LineRead;` (64 bytes): a line without its
 `\n`/`\r\n`; at end of input `eof = 1` and the line is empty. One process-wide buffered stream
@@ -1263,7 +1200,7 @@ serves both forms; async reads run on the blocking pool; text is decoded lossily
 | `velt_rt_stdin_read_all` | `() -> VeltFut*` (result `IoResult<VeltStr>`) |
 | `velt_rt_stdin_read_all_sync` | `(IoResult<VeltStr>* out)` |
 
-### 14.5 Machine facts (`velt:os`)
+### 14.5 Machine facts (`velt/os`)
 
 | Symbol | Signature | Notes |
 |---|---|---|
@@ -1273,7 +1210,7 @@ serves both forms; async reads run on the blocking pool; text is decoded lossily
 | `velt_rt_os_tmpdir` | `(VeltStr* out)` | no trailing separator |
 | `velt_rt_os_hostname` | `(VeltStr* out)` | `""` if unknown |
 
-### 14.6 UDP and DNS (`velt:udp`, `velt:dns`)
+### 14.6 UDP and DNS (`velt/net/udp`, `velt/net/dns`)
 
 `VeltUdp` is an `Arc<tokio::net::UdpSocket>` (in-flight operations hold a clone).
 `typedef struct { VeltBytes data; VeltStr addr; } VeltDatagram;` (48 bytes; `addr` = `"ip:port"`).
@@ -1288,7 +1225,7 @@ serves both forms; async reads run on the blocking pool; text is decoded lossily
 | `velt_rt_udp_close` | `(VeltUdp u)` | |
 | `velt_rt_dns_lookup` | `(const VeltStr* host) -> VeltFut*` | `IoResult<VeltStrArray>` of IP strings (system resolver, duplicates removed); `ENOENT` if unresolvable |
 
-### 14.7 File streams (`velt:fs_stream`)
+### 14.7 File streams (`velt/fs`)
 
 `VeltFileReader` / `VeltFileWriter` are `Arc`s around a buffered (64 KiB) `std::fs::File`;
 every operation runs on the blocking pool. A writer's last release flushes (errors ignored).
@@ -1306,25 +1243,17 @@ every operation runs on the blocking pool. A writer's last release flushes (erro
 | `velt_rt_fs_writer_close` | `(VeltFileWriter w) -> VeltFut*` | `IoResult<()>`: flush + close; later writes fail `EPIPE`; idempotent |
 | `velt_rt_fs_writer_free` | `(VeltFileWriter w)` | releases the handle |
 
-### 14.8 HTTPS, HTTP/2 and response headers (`velt:http` additions)
+### 14.8 TLS
 
 TLS is rustls with the `ring` provider (`crates/velt_rt/src/tls.rs`). Clients trust Mozilla's
-root certificates (`webpki-roots`, compiled in) plus optional extra PEM CAs; servers offer
-ALPN `h2` and `http/1.1`. The `fetch` client (Velt code, §7) connects with
-`velt_rt_tcp_connect_tls` and offers `http/1.1` only.
-HTTP/1.1 server connections now support upgrades (`serve_connection_with_upgrades`).
+root certificates (`webpki-roots`, compiled in) plus optional extra PEM CAs. The HTTP server and
+`fetch` client (Velt code, §7) use `velt_rt_tcp_listen_tls` and `velt_rt_tcp_connect_tls`.
 
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_rt_http_serve_tls` | `(const VeltStr* addr, const VeltHandler* h, const VeltStr* cert_pem, const VeltStr* key_pem) -> VeltFut*` | as `velt_rt_http_serve`, over TLS; certificate chain + PKCS#8/PKCS#1/SEC1 key; bad PEM or mismatch ⇒ `EINVAL`; handshakes time out after 10 s |
-| `velt_rt_http_req_upgrade` | `(VeltReq r) -> u64` | key of the request's parked HTTP upgrade (0 = the request has no `Upgrade` header); an unclaimed upgrade is dropped when the handler's response is produced |
-| `velt_rt_http_req_take_upgrade` | `(VeltReq r) -> u64` | claims the request's parked upgrade (once) and returns its connection as a `VeltStream` (§6), 0 if there is none or it was claimed. The handler must return a `101` response; the stream's first operation waits until it is sent (what is written before goes out after it) and fails with `ECONNABORTED` if the upgrade does not happen. Over plain TCP the stream is the raw socket |
+### 14.9 WebSockets (`velt/net/websocket`)
 
-### 14.9 WebSockets (`velt:websocket`)
-
-`velt:websocket` is written in Velt (`std/websocket.vlt`, `std/websocket/`) on std/net streams
+`velt/net/websocket` is written in Velt (`std/net/websocket/`) on std/net streams
 (§6): a client connects with `velt_rt_tcp_connect` / `velt_rt_tcp_connect_tls`, a server takes
-the upgraded connection with `velt_rt_http_req_take_upgrade` (§14.8). A `WebSocket` is a struct
+the connection a request on the Velt HTTP server switched to (`HttpResponse.upgrade`). A `WebSocket` is a struct
 of the `TcpStream` and a `shared` value holding the connection's send queue and reader (one
 lock), so there is no `VeltWs` handle and no `velt_rt_ws_*` symbol. It uses public APIs only
 (reads with `TcpStream.read`, masking keys from `randomBytes`, text through `u8[]`'s `write` and
@@ -1334,276 +1263,48 @@ task started by whoever queues into an idle connection writes everything queued 
 (a reply by the connection's reading task, with no more input waiting, is written at once
 instead), and a send waits while more than 1 MiB is queued. No callbacks are stored (§13.5).
 
-### 14.10 HTML escaping (`velt:html`; stream std-2, additive)
+### 14.10 HTML escaping (`velt/text`; stream std-2, additive)
 
 | Symbol | Signature | Notes |
 |---|---|---|
 | `velt_rt_html_escape` | `(const VeltStr* s, VeltStr* out)` | owned `s` with `& < > " '` → `&amp; &lt; &gt; &quot; &#39;`, in one pass (output sized once); other bytes unchanged. Without any of them, `s` itself (as `velt_rt_str_own`: shared, no copy) |
 | `velt_rt_jsx_escape` | `(const VeltStr* s, VeltStr* out)` | as `velt_rt_html_escape`, but `'` → `&#x27;` (react-dom's; `std/jsx`) |
 
-Stable hash (`velt:hash`, additive):
+Stable hash (`velt/hash`, additive):
 
 | Symbol | Signature | Notes |
 |---|---|---|
-| `velt_rt_fnv1a64_str` | `(const VeltStr* s) -> u64` | `velt:hash`: 64-bit FNV-1a of the bytes; stable forever (std contract) |
+| `velt_rt_fnv1a64_str` | `(const VeltStr* s) -> u64` | `velt/hash`: 64-bit FNV-1a of the bytes; stable forever (std contract) |
 | `velt_rt_fnv1a64_bytes` | `(const VeltBytes* data) -> u64` | the same over a `u8[]` |
 
-### 14.11 SQLite (`velt:sqlite`; stream db, additive)
+### 14.11 SQLite (moved)
 
-The crate `velt_std_sqlite` over `rusqlite` (SQLite compiled in: `bundled`; also
-`column_decltype`), built on the native-package SDK only and linked into the runtime
-(native_abi.md "Drivers in the runtime"): its functions are `velt_std_sqlite__*` exports with
-the signatures below. **Synchronous**: a typical statement takes microseconds, less than a
-blocking-pool round trip. A database is a registry key of `Mutex<Option<Connection>>` plus a
-failure counter and the last error; a statement is a key of `{ Arc<db>, sql }` that re-finds
-its compiled statement in the connection's cache (`prepare_cached`, 256 entries) on every call,
-so closing the database while statements exist is safe (they fail with `SQLITE_MISUSE`). A
-null or closed handle (a closed `Database` / `Statement` in std) fails the same way instead of
-crashing.
+The SQLite driver left the runtime for the `sqlite` package (`packages/sqlite`, a package with
+native code); its library's functions are documented there (`packages/sqlite/docs/native_abi.md`).
 
-Errors: `err.code` is SQLite's **extended result code** (never 0; e.g. 2067
-`SQLITE_CONSTRAINT_UNIQUE`), `message` SQLite's message. Parameter problems are `SQLITE_RANGE`
-(25), a closed handle or several statements in one `prepare` `SQLITE_MISUSE` (21).
+### 14.12 Redis (moved)
 
-Parameters (`params`) are JSON text (`velt_text::db_json`): `""` = none, an object binds
-`:name` / `@name` / `$name` by name (missing member ⇒ `SQLITE_RANGE`, extra members ignored), an
-array or a lone scalar binds by position (count must match). Integer literals in i64 range ⇒
-INTEGER (exact), other numbers ⇒ REAL, strings ⇒ TEXT, `true`/`false` ⇒ 1/0, `null` ⇒ NULL,
-arrays of integers 0–255 (`u8[]`) ⇒ BLOB, nested objects ⇒ `SQLITE_RANGE`. For the parameter
-types it can, std hands the parameters to a sink instead (`bind_begin`, native_abi.md "Parameter
-sinks"), which binds them as their JSON text would. Rows come through a row cursor
-(native_abi.md "Row cursors"), which std decodes with `__intrinsic_json_parse_cursor<T>`: they
-read as the JSON `[{"col":value,...}]` keyed by column name, INTEGER exact, REAL a number
-(non-finite ⇒ `null`), TEXT a string, BLOB a number array, NULL `null`; a 0/1 value in a column
-declared `BOOL`/`BOOLEAN` is `false`/`true`. The cursor holds the connection's lock until std
-gives it back with `close_rows`, as a sink does until it is handed on or given up.
+The Redis client left the runtime for the `redis` package (`packages/redis`, a package with
+native code); its library's functions are documented there (`packages/redis/docs/native_abi.md`).
 
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_std_sqlite__open` | `(string path, bool readonly, bool create, u32 timeout_ms) -> IoResult<u64>` | `":memory:"`, a file path or a `file:` URI; `timeout_ms` = busy timeout |
-| `velt_std_sqlite__close` | `(u64 db) -> IoStatus` | closes the connection (finalizing cached statements) and releases the handle; null or closed ⇒ no-op |
-| `velt_std_sqlite__exec` | `(u64 db, string sql) -> IoStatus` | `;`-separated statements, no parameters |
-| `velt_std_sqlite__pragma` | `(u64 db, string source) -> IoResult<string>` | `PRAGMA <source>`: first column of the first row as text, `""` if none/NULL/blob |
-| `velt_std_sqlite__in_transaction` | `(u64 db) -> bool` | not in autocommit mode; false when closed |
-| `velt_std_sqlite__error_count` | `(u64 db) -> u64` | failed operations so far (incl. `note_error`) |
-| `velt_std_sqlite__reset_error_count` | `(u64 db, u64 count)` | a nested `transaction` that rolled back hands its failure to its caller |
-| `velt_std_sqlite__last_error` | `(u64 db) -> IoStatus` | the most recent failure as a failed status (success if none) |
-| `velt_std_sqlite__prepare` | `(u64 db, string sql) -> IoResult<u64>` | compiles exactly one statement; the connection keeps it per SQL text (preparing the same text again compiles nothing) |
-| `velt_std_sqlite__run` | `(u64 stmt, string params) -> IoResult<{changes:i64,lastInsertRowid:i64}>` | steps to completion (rows discarded) |
-| `velt_std_sqlite__open_rows` | `(u64 stmt, string params, bool first_only) -> IoResult<u64>` | binds, steps to the first row: a row cursor (`RawCursor*`) for `__intrinsic_json_parse_cursor<T[]>`; `first_only` ⇒ the first row alone (`<T>`), or 0 if there is none |
-| `velt_std_sqlite__close_rows` | `(u64 cursor) -> IoStatus` | releases a cursor (and the connection's lock); fails with what SQLite met while stepping; 0 ⇒ no-op |
-| `velt_std_sqlite__bind_begin` | `(u64 stmt) -> IoResult<u64>` | a parameter sink (`RawSink*`) for `__intrinsic_db_bind<P>` |
-| `velt_std_sqlite__open_rows_bound` | `(u64 sink, bool first_only) -> IoResult<u64>` | `open_rows` with the parameters the sink bound (missing or extra ones fail as with JSON text) |
-| `velt_std_sqlite__run_bound` | `(u64 sink) -> IoResult<{changes:i64,lastInsertRowid:i64}>` | `run` with the parameters the sink bound |
-| `velt_std_sqlite__bind_abort` | `(u64 sink)` | gives up a sink std did not use (it then binds JSON text) |
-| `velt_std_sqlite__note_error` | `(u64 stmt, i32 code, string message)` | counts a failure std found (a row that does not decode) against the connection |
-| `velt_std_sqlite__stmt_free` | `(u64 stmt)` | releases the handle; null ⇒ no-op |
-| `velt_std_sqlite__error_name` | `(i32 code) -> string` | known extended names (`SQLITE_CONSTRAINT_UNIQUE`, `SQLITE_BUSY_SNAPSHOT` …), else the primary one |
+### 14.13 PostgreSQL (moved)
 
-Not available on WebAssembly (no symbols in `libvelt_rt_wasm.a`: linking fails with undefined
-`velt_std_sqlite__*`).
+The PostgreSQL driver left the runtime for the `postgres` package (`packages/postgres`, a
+package with native code); its library's functions, including `COPY` (formerly §14.15) and
+batches (§14.18), are documented there (`packages/postgres/docs/native_abi.md`).
 
-### 14.12 Redis (std/redis; stream db, additive)
+### 14.14 (removed: the hyper HTTP server's runtime functions; the HTTP server is Velt code, §7)
 
-The crate `velt_std_redis`, built on the native-package SDK only and linked into the runtime
-(native_abi.md "Drivers in the runtime"): a RESP2 client over the runtime's own sockets
-(`velt_native::net::TcpStream`, on Velt's scheduler the worker's reactor) and timers, with TLS
-from the shared client configuration (`velt_tls`: `ring`, webpki roots + extra PEM CAs). A
-client is a registry key of one **multiplexed** connection: requests from any number of tasks
-are queued in order and written in batches, and a reader task completes them in order;
-in-flight operations keep a reference, so `close` is allowed any time, and a closed handle
-fails with `EBADF`. A failed connection fails the commands already written to it
-(`ECONNRESET`); later commands reopen it (exponential backoff for up to 10 s, stream
-linux-servers) or fail with the connect error. A subscriber is a key of a dedicated subscribed
-connection whose messages are pulled (no callbacks are stored, §13.5).
+### 14.15 PostgreSQL `COPY` (moved to `packages/postgres/docs/native_abi.md`)
 
-URLs: `redis://[[user]:password@]host[:port][/db]` or `rediss://…` (TLS); percent-decoded
-credentials, `[v6]` hosts, `?db=N`. The handshake sends `AUTH` and `SELECT` as needed; connecting
-(TCP + TLS + handshake) times out after 10 s (`ETIMEDOUT`). A bad URL is `EINVAL`.
-
-Errors: I/O failures use the §3 codes. An **error reply** from the server uses code **100**
-with the reply text as the message (`WRONGTYPE Operation against …`); std/redis takes its first
-word as `RedisError.code`. A reply that is not valid RESP is `EILSEQ`.
-
-Commands are encoded from the borrowed `string[]` when called (an `#[export(async)]` `fn`
-returning its future, native_abi.md); replies are written straight into Velt's arrays.
-
-```
-RawReply   { tags: u8[]; nums: i64[]; strs: string[] }
-  One entry per node in pre-order (a node, then its children). tags: 0 nil, 1 status,
-  2 error, 3 int, 4 bulk string, 5 array; nums: the int value or the array's length (else 0);
-  strs: the text of status/error/string nodes (else ""; invalid UTF-8 becomes U+FFFD).
-RawMessage { kind: u32; channel: string; message: string; pattern: string }
-  kind: 0 = closed (after close), 1 = message, 2 = pattern message (pattern set)
-```
-
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_std_redis__connect` | `async (string url, string ca) -> IoResult<u64>` | `ca`: extra PEM CAs for `rediss://` (`""` = none) |
-| `velt_std_redis__duplicate` | `async (u64 c) -> IoResult<u64>` | a second connection opened like `c` |
-| `velt_std_redis__close` | `(u64 c)` | releases the handle (through any copy; again: no-op) |
-| `velt_std_redis__command` | `async (u64 c, string[] args) -> IoResult<RawReply>` | one command (`args[0]` its name); an error reply fails with code 100 |
-| `velt_std_redis__pipeline` | `async (u64 c, string[] args, u64[] counts, bool atomic) -> IoResult<RawReply>` | `args` split by `counts`, sent together; one array node per command (error replies as nodes); `atomic`: in `MULTI`/`EXEC`, the result is `EXEC`'s array |
-| `velt_std_redis__subscribe` | `async (u64 c, string url, string ca, string[] names, bool patterns) -> IoResult<u64>` | a new subscribed connection (to client `c`'s server, or `url` when `c` is 0); resolves once every name is confirmed |
-| `velt_std_redis__sub_next` | `async (u64 s) -> IoResult<RawMessage>` | the next message; kind 0 after `close` |
-| `velt_std_redis__sub_change` | `async (u64 s, string[] names, bool patterns, bool subscribe) -> IoStatus` | (un)subscribe, once confirmed |
-| `velt_std_redis__sub_close` | `(u64 s)` | pending and later `next` calls return kind 0 |
-
-Not available on wasm (no sockets): the symbols are not defined by `velt_rt_wasm`.
-
-### 14.13 PostgreSQL (`velt:postgres`; stream db, additive)
-
-The crate `velt_std_postgres`, built on the native-package SDK only (`velt_native`, `velt_text`) and linked into the runtime (native_abi.md "Drivers in the runtime"); its functions are `velt_std_postgres__*` exports, with the signatures below. Over `tokio-postgres` (`default-features = false`), connected over the runtime's own sockets (`velt_native::net::TcpStream`) and wire stream (§14.18). Rows are written into the result string itself (`velt_native::StrBuf`); `sql` and `params` are kept by reference, not copied.
-TLS is a hand-written `TlsConnect` over tokio-rustls with the runtime's `ring` provider and
-roots (§14.8); `sslmode` = `disable`, `prefer` (default), `require` (no certificate check),
-`verify-ca`, `verify-full`, plus `sslrootcert=<PEM file>` (extra roots; turns `require` into
-`verify-ca`). No channel binding (SCRAM falls back to SCRAM-SHA-256). Every server round trip is
-an async leaf (§1). `VeltPgClient` is an `Arc` of `{ connection (tokio-postgres client + LRU
-statement cache of 256 + transaction depth), pool lease, failure counter, last 32 failures }`;
-operations keep an `Arc` of the connection, so `close` is safe while they run. `VeltPgPool` is
-an `Arc` of `{ config, semaphore(max), idle connections }`. The null handle (a closed `Client`,
-an ended `Pool` in std) fails with `ECLOSED` instead of crashing. No code pointers are stored
-(§13.5): `transaction(fn)` is Velt over `begin` / `end` and the failure counter.
-
-Errors: `err.code` is only the failure flag (the §3 code when an I/O error caused it, else 99);
-`message` is JSON `{"code":…,"message":…,"detail":…|null,"constraint":…|null}` where `code` is
-the SQLSTATE (`"23505"`) or a name: §3 names (`"ECONNREFUSED"`, `"ETIMEDOUT"` …),
-`"ECONNRESET"` (connection lost), `"ECLOSED"`, `"EINVAL"` (connection string, parameters, bad
-transaction nesting), `"ETLS"`, `"ENOTSUP"` (undecodable column type), `"UNKNOWN"`.
-
-Parameters (`params`) are JSON text as in §14.11 (`db_json`): `""` = none, an array (or scalar)
-binds `$1..$n` (count must match), an object binds `:name` / `$name` placeholders, which are
-rewritten to `$n` once per SQL text and cached (`::` casts, literals, quoted identifiers, dollar
-quotes and comments are skipped; mixing with `$1` ⇒ `EINVAL`; missing member ⇒ `EINVAL`). Values
-are converted for the prepared parameter types: Int ⇒ int2/int4/int8/oid (range-checked),
-float4/float8, numeric, text types; Float ⇒ float4/float8, numeric, text types; Bool ⇒ bool,
-text types; Bytes ⇒ bytea; Text ⇒ text types and json/jsonb in binary, any other type in text
-format (parsed by the server); Null ⇒ NULL; anything else ⇒ `EINVAL`. For the parameter
-types it can, std hands them to a sink instead (`bind_begin`, native_abi.md "Parameter sinks"),
-which keeps them as the JSON text would have parsed.
-Rows come through a row cursor (native_abi.md "Row cursors", decoded by
-`__intrinsic_json_parse_cursor`), the values as JSON text would give them (batches still return
-JSON text, `db_json::RowWriter`): int2/int4/int8/oid exact, float4/float8 (non-finite
-⇒ `null`), numeric ⇒ string of its digits, bool, text types/enums ⇒ string, uuid ⇒ string,
-date/time/timestamp ⇒ ISO 8601 string, timestamptz ⇒ ISO 8601 UTC with `Z`, json/jsonb ⇒ the
-document, bytea ⇒ number array, arrays ⇒ nested arrays, domains ⇒ base type, NULL ⇒ `null`;
-other column types ⇒ `ENOTSUP` (checked before any row).
-
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_std_postgres__connect` | `(const VeltStr* url) -> VeltFut*` | `IoResult<VeltPgClient>`; URL or libpq `key=value` string |
-| `velt_std_postgres__query_rows` | `(VeltPgClient c, const VeltStr* sql, const VeltStr* params, u8 first_only) -> VeltFut*` | `IoResult<u64>`: a row cursor (`RawCursor*`) over the rows, given back to `close_rows`; `first_only` ⇒ the first row alone, or 0 if there is none |
-| `velt_std_postgres__query_bound` | `(VeltPgClient c, const VeltStr* sql, u64 sink, u8 first_only) -> VeltFut*` | `query_rows` with the parameters a sink took |
-| `velt_std_postgres__execute_bound` | `(VeltPgClient c, const VeltStr* sql, u64 sink) -> VeltFut*` | `execute` with the parameters a sink took |
-| `velt_std_postgres__bind_begin` | `() -> u64` | a parameter sink (`RawSink*`) for `__intrinsic_db_bind<P>`, handed on to a `…_bound` call |
-| `velt_std_postgres__bind_abort` | `(u64 sink)` | gives up a sink std did not use |
-| `velt_std_postgres__close_rows` | `(u64 cursor, VeltErr* out)` | releases a row cursor; fails if a value could not be read; 0 ⇒ no-op |
-| `velt_std_postgres__execute` | `(VeltPgClient c, const VeltStr* sql, const VeltStr* params) -> VeltFut*` | `IoResult<i64>`: rows affected/returned |
-| `velt_std_postgres__batch` | `(VeltPgClient c, const VeltStr* sql) -> VeltFut*` | `VeltErr`: `;`-separated statements, simple protocol, not cached |
-| `velt_std_postgres__begin` | `(VeltPgClient c) -> VeltFut*` | `IoResult<u32>`: new level (1 = `BEGIN`, n > 1 = `SAVEPOINT velt_tx_n`) |
-| `velt_std_postgres__end` | `(VeltPgClient c, u32 depth, u8 commit) -> VeltFut*` | `VeltErr`: commit / roll back level `depth`, which must be the innermost (`EINVAL` otherwise); the level ends whatever the outcome |
-| `velt_std_postgres__depth` | `(VeltPgClient c) -> u32` | open levels; 0 when closed |
-| `velt_std_postgres__error_count` | `(VeltPgClient c) -> u64` | failed operations so far (incl. `note_error`) |
-| `velt_std_postgres__reset_error_count` | `(VeltPgClient c, u64 count)` | forget failures after `count` |
-| `velt_std_postgres__error_after` | `(VeltPgClient c, u64 count, VeltErr* out)` | the first failure after `count` failures (code 0 if none) |
-| `velt_std_postgres__note_error` | `(VeltPgClient c, const VeltStr* code, const VeltStr* message)` | counts a failure std found (`EMISMATCH` row decoding) |
-| `velt_std_postgres__close` | `(VeltPgClient c)` | closes (or returns a pooled connection to its pool unless broken or in a transaction) and releases the handle; null ⇒ no-op |
-| `velt_std_postgres__pool_new` | `(const VeltStr* url, u32 max, IoResult<VeltPgPool>* out)` | parses the URL and reads `sslrootcert` now; connections open on demand; `max == 0` ⇒ 10 |
-| `velt_std_postgres__pool_connect` | `(VeltPgPool p) -> VeltFut*` | `IoResult<VeltPgClient>`: a dedicated connection (holds a permit) until `velt_std_postgres__close` |
-| `velt_std_postgres__pool_query_rows` / `_pool_query_bound` / `_pool_execute_bound` | as the client's, with `VeltPgPool p` | on a borrowed connection |
-| `velt_std_postgres__pool_execute` | `(VeltPgPool p, const VeltStr* sql, const VeltStr* params) -> VeltFut*` | as `velt_std_postgres__execute` |
-| `velt_std_postgres__pool_batch` | `(VeltPgPool p, const VeltStr* sql) -> VeltFut*` | as `velt_std_postgres__batch` |
-| `velt_std_postgres__pool_idle` | `(VeltPgPool p) -> u32` | idle connections |
-| `velt_std_postgres__pool_end` | `(VeltPgPool p)` | closes idle connections, fails later acquires with `ECLOSED`, releases the handle; null ⇒ no-op |
-
-Linking: tokio-postgres' `whoami` needs `-framework SystemConfiguration -framework
-CoreFoundation` on macOS and `secur32.lib` on Windows (added to `velt_link`'s native library
-lists). Not available on WebAssembly (no `velt_std_postgres__*` symbols in `libvelt_rt_wasm.a`).
-
-### 14.14 Releasing an HTTP handler (stream linux-servers, additive)
-`VeltHandler.env` is null or a closure environment box whose first word is its drop function
-(`void drop(void* env)`, may be null), as closure lowering lays it out. Once a server is closed
-and its last connection and request have finished, the runtime calls that function once, so
-the handler's captures are dropped (their `dispose()` hooks run). A `serve` that fails (the
-address does not bind, the TLS certificate or key does not parse) calls it too, since no server
-will. Before this, `env` was never freed. Every in-flight request keeps the server's handler state alive, so no request can see a
-released environment; under `velt dev`, environments of replaced handlers (§13.5) are still
-never freed.
-
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_rt_http_server_shutdown` | `(VeltServer s) -> VeltFut*` | like `velt_rt_http_server_close` (frees `s`), then result `()` once every in-flight request finished and `env` was released (`await server.shutdown()`) |
-
-### 14.15 PostgreSQL `COPY` (stream linux-servers, additive)
-Writers (`VeltPgCopyIn`) and readers (`VeltPgCopyOut`) are registry keys (`u64`, §3.2 tables).
-Errors are the JSON `PgError` of §14.13 (`ECLOSED` for a released handle); failures count
-against the client.
-
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_std_postgres__copy_from` | `(VeltPgClient c, const VeltStr* sql) -> VeltFut*` | `IoResult<VeltPgCopyIn>`: `COPY … FROM STDIN` started |
-| `velt_std_postgres__copy_write` / `_write_bytes` | `(VeltPgCopyIn w, const VeltStr*/VeltBytes* data) -> VeltFut*` | `IoResult<()>`; copied, batched into ~4 KiB messages |
-| `velt_std_postgres__copy_end` | `(VeltPgCopyIn w) -> VeltFut*` | `IoResult<i64>` rows copied; releases `w` |
-| `velt_std_postgres__copy_abort` | `(VeltPgCopyIn w)` | releases `w` unfinished: the server aborts the copy |
-| `velt_std_postgres__copy_to` | `(VeltPgClient c, const VeltStr* sql) -> VeltFut*` | `IoResult<VeltPgCopyOut>`: `COPY … TO STDOUT` started |
-| `velt_std_postgres__copy_read` / `_read_bytes` | `(VeltPgCopyOut r) -> VeltFut*` | `IoResult<VeltStr / VeltBytes>`: every chunk received so far (≥ 1, up to ~64 KiB), empty at the end |
-| `velt_std_postgres__copy_close` | `(VeltPgCopyOut r)` | releases `r` (unread data is discarded) |
-
-### 14.16 Fast random numbers (`velt:random`; stream linux-servers, additive)
+### 14.16 Fast random numbers (`velt/random`; stream linux-servers, additive)
 | Symbol | Signature | Notes |
 |---|---|---|
 | `velt_rt_prng_f64` | `() -> f64` | uniform `[0, 1)`, 53 bits; per-thread wyrand seeded from §14.1 |
 | `velt_rt_prng_range` | `(i64 min, i64 max) -> i64` | uniform `[min, max)` (unbiased); `min` if `max <= min` |
 
 
-### 14.17 Streamed response bodies (a `Response` whose body is a `BodyStream`)
-A `VeltResp` body is either complete (`velt_rt_http_resp_build` kinds 1 and 2, §7: sent with
-an exact `Content-Length`, no extra allocation) or **streamed**: `velt_rt_http_resp_stream_open`
-replaces the body with the receiving end of a bounded channel (8 chunks) and returns a writer,
-`VeltRespWriter`, a registry key (§3.2, `u64`). A streamed body has no known length, so hyper
-sends it with chunked transfer encoding (HTTP/1.1) or DATA frames (HTTP/2) and never computes a
-`Content-Length`; the status and headers go out when the handler returns the response, before
-the first chunk. std/http/stream.vlt fills the writer from the `BodyStream`, in a task that
-keeps running after the handler returned (a stored promise of the handler's task, §1.1): it
-writes and flushes each chunk, stops reading the stream once a write or flush returns 0, and
-closes the writer (aborts it when reading the stream failed). No code pointers are stored
-(§13.5).
+### 14.17 (removed: the hyper HTTP server's runtime functions; the HTTP server is Velt code, §7)
 
-Writes append a copy to the writer's buffer (`BytesMut`) and never wait; a flush hands the
-buffer to the body as one chunk, waiting for channel room (**backpressure**: a producer faster
-than its client waits in `flush`). A buffer that reaches 16 KiB is also handed over by a write
-when the channel has room. Chunks keep their write order even when several tasks flush
-concurrently. Once the client has gone away (hyper dropped the body) or the writer ended, writes
-and flushes return 0 and discard their data. A writer that is neither closed nor aborted keeps
-its response open.
+### 14.18 PostgreSQL batches (moved to `packages/postgres/docs/native_abi.md`)
 
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_rt_http_resp_stream_open` | `(VeltResp r) -> VeltRespWriter` | body becomes a stream (no default `content-type`); opening again detaches the earlier writer (its writes return 0). A bodiless status (1xx, 204, 304) keeps the empty body; the writer's writes return 0 |
-| `velt_rt_http_resp_stream_write_bytes` | `(VeltRespWriter w, const VeltBytes* data) -> u8` | buffers a copy; 0 once ended, client gone, or `w` released |
-| `velt_rt_http_resp_stream_flush` | `(VeltRespWriter w) -> VeltFut*` | result `u8`: 1 = the buffer was handed to the body (nothing buffered: 1 while the client is there); 0 = client gone / ended. Cancel-safe: the buffer is taken only once there is room |
-| `velt_rt_http_resp_stream_close` | `(VeltRespWriter w) -> VeltFut*` | result `u8` as `flush`; sends the rest, ends the body normally (final chunk) and releases `w`; 0 on a released handle |
-| `velt_rt_http_resp_stream_abort` | `(VeltRespWriter w)` | ends the body with an error (HTTP/1.1: the connection is closed without the final chunk; HTTP/2: `RST_STREAM`), discarding the buffer, and releases `w`; no-op on a released handle |
-
-### 14.18 PostgreSQL batches (`std/postgres`; stream platform-perf, additive)
-One prepared statement run with N parameter sets in one message group — `Bind` + `Execute` per
-set and **one** `Sync` (pgx's `Batch`): one round trip and one implicit transaction on the server
-instead of N. tokio-postgres has no API for it, so every connection now runs over a wire stream
-(`postgres/wire`) between tokio-postgres and the socket/TLS stream that injects the group between
-two driver requests and routes the server's replies up to its `ReadyForQuery` back to the batch.
-The runtime opens the socket itself for that (`Config::connect_raw`): hosts/`hostaddr`s/ports in
-order, `connect_timeout`, keepalives; `target_session_attrs` and `load_balance_hosts` are not
-supported. The statement is prepared by tokio-postgres (types, cache) and a second time under a
-batch name (`velt_b<n>`, `Parse` at the head of the first group; closed when evicted).
-
-`sets` is JSON: an array with one element per execution, each a parameter set as §14.13
-`params` (array ⇒ `$1..$n`, object ⇒ named placeholders, scalar ⇒ one parameter; the first
-element decides named vs positional). `[]` ⇒ `"[]"` without a server round trip. Errors are the
-§14.13 JSON `PgError`; when an execution fails, the server skips the rest of the group, so the
-whole batch fails with that error (its SQLSTATE) and, outside a transaction, the group's
-earlier writes are rolled back with it (all or nothing). Failures count against the client.
-
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_std_postgres__query_batch` | `(VeltPgClient c, const VeltStr* sql, const VeltStr* sets, u8 mode) -> VeltFut*` | `IoResult<VeltStr>`: a JSON array, per execution: `mode` 0 its rows (`[[{…},…],…]`), 1 its first row or `null` (`[{…},null]`), 2 its rows affected (`[1,0]`) |
-| `velt_std_postgres__pool_query_batch` | `(VeltPgPool p, const VeltStr* sql, const VeltStr* sets, u8 mode) -> VeltFut*` | as `velt_std_postgres__query_batch`, on one pooled connection |

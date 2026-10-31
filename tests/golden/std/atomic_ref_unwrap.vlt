@@ -1,0 +1,49 @@
+// check: no leaks
+// `a.load()!` and `a.load() ?? d` of an `Atomic<shared<T> | null>` borrow the loaded reference,
+// as `a.load()` does: the value the check binds is not owned, so a consumer that keeps it (a
+// `const`, a return, an array) counts it, and nothing releases the `Atomic`'s own reference. A
+// registry made on first use: a module `Atomic` of a `shared` `Mutex` around a `Map`, read
+// through `with` again and again. Each read used to release the word's reference, so the next
+// one read freed memory.
+
+type Origins = Mutex<Map<string, i64>>;
+
+const ORIGINS = new Atomic<shared<Origins> | null>(null);
+const NONE: shared<Origins> = shared(new Mutex<Map<string, i64>>(new Map<string, i64>()));
+
+function origins(): shared<Origins> {
+  const found = ORIGINS.load();
+  if (found != null) {
+    return found;
+  }
+  ORIGINS.compareExchange(null, shared(new Mutex<Map<string, i64>>(new Map<string, i64>())));
+  return ORIGINS.load()!;
+}
+
+function get(key: string): i64 {
+  const o = ORIGINS.load()!;
+  return o.with((m) => m.get(key) ?? -1);
+}
+
+function put(key: string, v: i64) {
+  origins().with((m) => {
+    m.set(key, v);
+  });
+}
+
+function size(): i64 {
+  return (ORIGINS.load() ?? NONE).with((m) => m.size as i64);
+}
+
+function main() {
+  console.log(size());
+  const kept: shared<Origins>[] = [];
+  for (let i = 0; i < 4; i++) {
+    put(`k${i}`, i);
+    kept.push(ORIGINS.load()!);
+    console.log(get("k0"), get(`k${i}`), get("none"), size());
+  }
+  console.log(ORIGINS.load()!.with((m) => m.get("k3") ?? -1));
+  // The `Atomic`'s reference and the kept ones are the same value.
+  console.log(kept[0].with((m) => m.size), kept.length);
+}

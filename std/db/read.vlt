@@ -1,0 +1,93 @@
+// velt/db (internal): `readRows` and `readRow`, the rows of a `RowSource` as typed values.
+//
+// For a row type of plain fields (numbers, bools, strings, `T | null` of those, `u8[]`) and a
+// source class whose methods do not throw, the compiler reads the rows column by column from
+// the source itself (`readRowsByColumn`, null for any other type: nothing read): no text, no
+// copy beyond the values kept. Any other row type is read through the JSON text of the rows
+// (`rowsJson`), with the same result.
+
+import { readRowByColumn, readRowsByColumn } from "velt/lang/intrinsics";
+import { JSON } from "velt/prelude/json/json";
+import { CellKind, RowSource } from "velt/db/row_source";
+import { RowError } from "velt/db/errors";
+
+/** Every remaining row of `src` as a `T`. Throws `RowError` for a row that does not fit. */
+export function readRows<T, S extends RowSource>(src: S): T[] {
+  try {
+    const direct: T[] | null = readRowsByColumn<T, S>(src);
+    if (direct != null) {
+      return direct;
+    }
+  } catch (e) {
+    throw new RowError(e.message);
+  }
+  const text = rowsJson<S>(src);
+  try {
+    return JSON.parse<T[]>(text);
+  } catch (e) {
+    throw new RowError(e.message);
+  }
+}
+
+/** The next row of `src` as a `T`, or null when there is none. */
+export function readRow<T, S extends RowSource>(src: S): T | null {
+  if (!src.next()) {
+    return null;
+  }
+  try {
+    const direct: T | null = readRowByColumn<T, S>(src);
+    if (direct != null) {
+      return direct;
+    }
+  } catch (e) {
+    throw new RowError(e.message);
+  }
+  const text = rowJson<S>(src);
+  try {
+    return JSON.parse<T>(text);
+  } catch (e) {
+    throw new RowError(e.message);
+  }
+}
+
+// The remaining rows as the JSON text they stand for: `[{"col":value,...},...]`.
+function rowsJson<S extends RowSource>(src: S): string {
+  const rows: string[] = [];
+  while (src.next()) {
+    rows.push(rowJson<S>(src));
+  }
+  return `[${rows.join(",")}]`;
+}
+
+// The current row as a JSON object.
+function rowJson<S extends RowSource>(src: S): string {
+  const parts: string[] = [];
+  const n = src.columnCount();
+  for (let i: i64 = 0; i < n; i++) {
+    parts.push(`${JSON.stringify(src.columnName(i))}:${cellJson<S>(src, i)}`);
+  }
+  return `{${parts.join(",")}}`;
+}
+
+function cellJson<S extends RowSource>(src: S, i: i64): string {
+  const kind = src.kind(i);
+  if (kind == CellKind.Bool) {
+    return src.bool(i) ? "true" : "false";
+  }
+  if (kind == CellKind.Int) {
+    return `${src.int(i)}`;
+  }
+  if (kind == CellKind.Float) {
+    return JSON.stringify(src.float(i));
+  }
+  if (kind == CellKind.Text) {
+    return JSON.stringify(src.text(i));
+  }
+  if (kind == CellKind.Blob) {
+    return JSON.stringify(src.blob(i));
+  }
+  if (kind == CellKind.Json) {
+    return src.json(i);
+  }
+  return "null";
+}

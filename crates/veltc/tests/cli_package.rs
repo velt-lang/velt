@@ -660,7 +660,7 @@ fn ts_and_tsx_modules_in_a_package() {
     );
     s.write(
         "app/src/main.vlt",
-        "import { renderToStringSync } from \"velt:jsx/render\";\nimport { Card } from \"./card\";\nimport { greet } from \"./model\";\n\nfunction main() {\n  console.log(greet(\"ts\"));\n  console.log(renderToStringSync(<Card title=\"tsx\" />));\n}\n",
+        "import { renderToStringSync } from \"velt/jsx\";\nimport { Card } from \"./card\";\nimport { greet } from \"./model\";\n\nfunction main() {\n  console.log(greet(\"ts\"));\n  console.log(renderToStringSync(<Card title=\"tsx\" />));\n}\n",
     );
     // The package's JSX provider applies to `.tsx` modules.
     let err = s.fail("app", &["check"]);
@@ -671,7 +671,7 @@ fn ts_and_tsx_modules_in_a_package() {
     std::fs::create_dir_all(s.dir.join("app/ui")).unwrap();
     s.write(
         "app/ui/jsx-runtime.vlt",
-        "export * from \"velt:jsx/jsx-runtime\";\n",
+        "export * from \"velt/jsx/jsx-runtime\";\n",
     );
     s.ok("app", &["check"]);
     let o = s.velt("app", &["run"]);
@@ -772,7 +772,7 @@ fn a_pin_this_velt_does_not_satisfy_is_a_warning() {
     std::fs::create_dir_all(s.dir.join("app")).unwrap();
     s.write(
         "app/package.vlt",
-        "import type { Package } from \"velt:package\";\n\nexport const pkg: Package = { name: \"app\", version: \"0.1.0\", velt: \"9.9\" };\n",
+        "import type { Package } from \"velt/package\";\n\nexport const pkg: Package = { name: \"app\", version: \"0.1.0\", velt: \"9.9\" };\n",
     );
     let out = s.velt("app", &["manifest"]);
     let err = String::from_utf8_lossy(&out.stderr);

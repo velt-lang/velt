@@ -1,0 +1,45 @@
+// scripts/std-lint: every public module has its page under docs/std, at the path of its folder,
+// and tests (docs/internals/design/std-layout.md §6, "Docs mirror the tree").
+
+import { execSync } from "velt/process/child";
+import { existsSync } from "velt/fs";
+
+/** `[index file below std/, message]` for each public module (`indexes`: the folders with an
+ * index.vlt; `files`: std's files) without its page, or without tests: an end-to-end test
+ * (`tests/golden`, `tests/std`) that imports it, or white-box tests in its folder. */
+export function docsProblems(indexes: Set<string>, files: string[]): [string, string][] {
+  const out: [string, string][] = [];
+  const imported =
+    execSync("git", [
+      "grep",
+      "-h",
+      "-o",
+      "-E",
+      "\"velt/[a-z0-9_/-]+\"",
+      "--",
+      "tests/golden",
+      "tests/std",
+    ]).stdout;
+  for (const dir of indexes) {
+    const first = dir.split("/")[0];
+    if (dir.length == 0 || first == "prelude" || first == "lang") {
+      continue;
+    }
+    const file = `${dir}/index.vlt`;
+    const page = `docs/std/${dir}.md`;
+    if (!existsSync(page)) {
+      out.push([
+        file,
+        `velt/${dir} has no page: write ${page} (docs/std mirrors std's tree; the site lists it by itself)`,
+      ]);
+    }
+    const whiteBox = files.some((f) => f.startsWith(`${dir}/`) && f.endsWith(".test.vlt"));
+    if (!whiteBox && !imported.includes(`"velt/${dir}"`)) {
+      out.push([
+        file,
+        `velt/${dir} has no tests: add an end-to-end test that imports it (tests/golden/std, tests/std) or white-box tests in std/${dir}/`,
+      ]);
+    }
+  }
+  return out;
+}

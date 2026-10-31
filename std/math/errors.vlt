@@ -1,0 +1,4 @@
+// velt/math (internal): `BigIntError`.
+
+/** A string that is not a valid integer (JS throws `SyntaxError`). */
+export class BigIntError extends Error {}

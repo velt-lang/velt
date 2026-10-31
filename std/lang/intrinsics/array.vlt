@@ -1,0 +1,73 @@
+// velt/lang/intrinsics (internal): arrays below their public methods: capacity, raw moves and
+// bounds-checked rearranging that never clones or drops an element. The public surface is
+// `Array`'s methods (std/prelude/array.vlt): `reserve`, `truncate`, `swap`, `rotateLeft` …
+
+import type { Mut } from "./modes";
+
+/** A new empty array with room for `capacity` elements (one allocation). */
+export declare intrinsic function arrayWithCapacity<T>(capacity: usize): T[];
+
+/** Drops the elements from `length` on (nothing when the array is not longer). */
+export declare intrinsic function arrayTruncate<T>(xs: Mut<T[]>, length: usize): void;
+
+/**
+ * Sets the length to `length` (growing the capacity when it is smaller) without dropping or
+ * initializing any element: slots past the old length must be written (`arrayMove`) before they
+ * are read, and slots that are not owned any more must be cut off with it before the array is
+ * dropped.
+ */
+export declare intrinsic function arraySetLen<T>(xs: Mut<T[]>, length: usize): void;
+
+/**
+ * Makes room for `extra` more elements: when the capacity is under `length + extra`, the buffer
+ * is reallocated to exactly that (no doubling); the length and the elements stay.
+ */
+export declare intrinsic function arrayReserve<T>(xs: Mut<T[]>, extra: usize): void;
+
+/** Exchanges elements `i` and `j` (both bounds-checked): their bits, nothing cloned. */
+export declare intrinsic function arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void;
+
+/**
+ * Exchanges `xs[a][i]` and `xs[b][j]` (all four bounds-checked): the bits of two elements, also
+ * between two inner arrays, which one call may not otherwise change both of.
+ */
+export declare intrinsic function arraySwapNested<T>(
+  xs: Mut<T[][]>,
+  a: usize,
+  i: usize,
+  b: usize,
+  j: usize,
+): void;
+
+/** Removes element `i` (bounds-checked) and returns it; the elements after it move down. */
+export declare intrinsic function arrayRemove<T>(xs: Mut<T[]>, i: usize): T;
+
+/**
+ * Rotates `xs[lo..=hi]` one slot up by one memory move: the element at `hi` moves to `lo` and the
+ * others one slot up (`hi` bounds-checked; nothing when `lo >= hi`). A permutation: every
+ * element stays owned once.
+ */
+export declare intrinsic function arrayRotateRight<T>(xs: Mut<T[]>, lo: usize, hi: usize): void;
+
+/** As `arrayRotateRight`, one slot down: the element at `lo` moves to `hi`. */
+export declare intrinsic function arrayRotateLeft<T>(xs: Mut<T[]>, lo: usize, hi: usize): void;
+
+/**
+ * A hint that element `i` is read soon, so the CPU starts loading its cache line. Not
+ * bounds-checked: a prefetch never faults, and an index past the end only wastes the load.
+ */
+export declare intrinsic function arrayPrefetch<T>(xs: T[], i: usize): void;
+
+/**
+ * Writes the bits of `src[s..s + n)` to `dst[d..d + n)` (both ranges bounds-checked; `dst` and
+ * `src` are different arrays): what `dst` held there is not dropped, nothing is shared, and
+ * `src` keeps stale copies. A raw move for algorithms that keep every element owned exactly once
+ * themselves (the stable sort's scratch buffer, std/lang/sort/stable.vlt).
+ */
+export declare intrinsic function arrayMove<T>(
+  dst: Mut<T[]>,
+  d: usize,
+  src: T[],
+  s: usize,
+  n: usize,
+): void;

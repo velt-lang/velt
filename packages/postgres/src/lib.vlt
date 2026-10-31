@@ -1,0 +1,38 @@
+// postgres: a PostgreSQL client (README.md; the native library is tokio-postgres, native/),
+// with an API close to node-postgres: `connect(url)` for one connection, `createPool({ url,
+// max })` for many. Every server round trip is async.
+//
+// Parameters are a value `P` bound as its JSON text would be: an array binds `$1, $2, …` by
+// position; an object binds `:name` / `$name` placeholders by field name (they are rewritten
+// to `$n` once per statement; `::type` casts, strings, quoted identifiers and comments are
+// left alone). Values are converted for the parameter types the server inferred: numbers for
+// integer, float, numeric and text parameters (integers are range-checked), bools for `bool`,
+// `u8[]` for `bytea`, strings for text and json types, and a string in PostgreSQL's input
+// syntax for anything else (`uuid`, `date`, `timestamptz`, arrays like "{1,2}" …). Use
+// `{}` or the `select` / `selectOne` / `run` forms for statements without parameters.
+//
+// Rows are decoded by velt/db's `decodeRows`, as `JSON.parse<T[]>` would: each column fills the
+// field of the same name (rename with `AS`). int2/int4/int8 → exact integers, float4/float8 → `f64`, numeric → its
+// exact digits as a `string` (cast `::float8` for a number), bool → `bool`, text types, enums
+// and uuid → `string`, date/time/timestamp/timestamptz → ISO 8601 `string` (timestamptz in UTC
+// with "Z"), interval, inet/cidr and macaddr → PostgreSQL's text form as a `string`, money →
+// its exact amount as a `string`, json/jsonb → the document (any matching `T`), bytea → `u8[]`,
+// arrays → `T[]`, domains → as their base type, NULL → `T | null` fields. Other types (ranges,
+// composites, geometric types …) throw "ENOTSUP": cast them.
+//
+// `batchQuery` / `batchQueryOne` / `batchExecute` run one statement with many parameter sets
+// in one round trip: one message group with a single Sync (what pgx's Batch does), so the
+// server runs them as one implicit transaction. When one execution fails, the server skips the
+// rest: the whole batch throws that error, and outside a transaction its writes are all or
+// nothing.
+//
+// `Client` and `Pool` are Copy handles like velt/net's sockets: pass and capture them freely
+// (also into spawned tasks: a client pipelines concurrent queries, a pool runs them on
+// separate connections) and release them once with `close()` / `end()`.
+
+export { Client, connect } from "./client";
+export { CopyReader } from "./copy_reader";
+export { CopyWriter } from "./copy_writer";
+export { PgError } from "./errors";
+export { createPool, Pool, PoolOptions } from "./pool";
+export { Transaction } from "./transaction";

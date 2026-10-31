@@ -44,7 +44,7 @@ pub extern "C" fn velt_rt_strbuf_inspect_begin() {
 }
 
 /// The text from byte `start` of the builder to its end is what a class's custom inspect
-/// (`__inspect()`) returned: `velt_rt_strbuf_inspect_layout` keeps it as one piece, as node
+/// (`[INSPECT]()`) returned: `velt_rt_strbuf_inspect_layout` keeps it as one piece, as node
 /// inserts the string a custom inspect returns without laying it out again.
 ///
 /// # Safety

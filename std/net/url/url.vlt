@@ -1,0 +1,275 @@
+// velt/net/url (internal): `URL`, a parsed absolute URL (JS `URL`) over the URL record
+// (std/net/url/record.vlt) and its parser (std/net/url/parse.vlt).
+
+import { FRAGMENT, QUERY, SPECIAL_QUERY, USERINFO, encodeSet } from "velt/net/url/encode";
+import { UrlError } from "velt/net/url/errors";
+import { parseHost } from "velt/net/url/host";
+import { parsePath } from "velt/net/url/path";
+import { parseUrl, removeTabNewline } from "velt/net/url/parse";
+import { UrlRecord, serialize } from "velt/net/url/record";
+import { defaultPort, isSpecial, validScheme } from "velt/net/url/scheme";
+import { URLSearchParams } from "velt/net/url/search_params";
+import { hostInput, portColon, userinfoOrPort } from "velt/net/url/setters";
+import { setFileHost } from "velt/net/url/authority";
+
+/** A parsed absolute URL (JS `URL`). */
+export class URL {
+  private rec: UrlRecord;
+
+  /** Parses `input`, resolved against `base` when it is relative; throws `UrlError`. */
+  constructor(input: string, base: string | null = null) {
+    this.rec = parseOrThrow(input, base);
+  }
+
+  /** Like the constructor, but null instead of throwing (JS `URL.parse`). */
+  static parse(input: string, base: string | null = null): URL | null {
+    try {
+      return new URL(input, base);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /** Whether `new URL(input, base)` would succeed. */
+  static canParse(input: string, base: string | null = null): bool {
+    return URL.parse(input, base) != null;
+  }
+
+  /** The whole URL; assigning reparses it (throws `UrlError` if invalid). */
+  get href(): string {
+    return serialize(this.rec);
+  }
+
+  set href(v: string) {
+    this.rec = parseOrThrow(v, null);
+  }
+
+  /** The scheme with its colon, e.g. `https:`. */
+  get protocol(): string {
+    return `${this.rec.scheme}:`;
+  }
+
+  /** Switches between schemes of the same kind (special or not), like JS. */
+  set protocol(value: string) {
+    const v = removeTabNewline(value);
+    const colon = v.indexOf(":");
+    const scheme = (colon >= 0 ? v.slice(0, colon) : v.clone()).toLowerCase();
+    if (!validScheme(scheme) || isSpecial(scheme) != isSpecial(this.rec.scheme)) {
+      return;
+    }
+    if (this.rec.port == defaultPort(scheme)) {
+      this.rec.port = "";
+    }
+    this.rec.scheme = scheme;
+  }
+
+  /** Percent-encoded user name ("" if none). */
+  get username(): string {
+    return this.rec.username.clone();
+  }
+
+  set username(v: string) {
+    if (this.canHaveCredentials()) {
+      this.rec.username = encodeSet(v, USERINFO);
+    }
+  }
+
+  /** Percent-encoded password ("" if none). */
+  get password(): string {
+    return this.rec.password.clone();
+  }
+
+  set password(v: string) {
+    if (this.canHaveCredentials()) {
+      this.rec.password = encodeSet(v, USERINFO);
+    }
+  }
+
+  /** `hostname:port`, or just the hostname when the port is absent or the scheme's default. */
+  get host(): string {
+    if (this.rec.port.length > 0) {
+      return `${this.rec.host}:${this.rec.port}`;
+    }
+    return this.rec.host.clone();
+  }
+
+  /**
+   * Takes the host (and a port after `:`) up to the first `/`, `?` or `#`; ignored when the
+   * host is invalid, or empty where the URL needs one (a special scheme, credentials or a port).
+   * An empty port keeps the current one.
+   */
+  set host(v: string) {
+    if (this.rec.opaque) {
+      return;
+    }
+    const text = hostInput(v, isSpecial(this.rec.scheme));
+    if (this.rec.scheme == "file") {
+      setFileHost(this.rec, text);
+      return;
+    }
+    const colon = portColon(text);
+    if (colon < 0) {
+      this.applyHost(text);
+      return;
+    }
+    if (colon == 0 || !this.applyHost(text.slice(0, colon))) {
+      return;
+    }
+    const port = text.slice(colon + 1);
+    if (port.length > 0) {
+      this.port = port;
+    }
+  }
+
+  /** The host without the port (lowercased for special schemes; IPv6 keeps its brackets). */
+  get hostname(): string {
+    return this.rec.host.clone();
+  }
+
+  /** Like `host`, but a value with a port (`h:8`) is ignored. */
+  set hostname(v: string) {
+    if (this.rec.opaque) {
+      return;
+    }
+    const text = hostInput(v, isSpecial(this.rec.scheme));
+    if (this.rec.scheme == "file") {
+      setFileHost(this.rec, text);
+    } else if (portColon(text) < 0) {
+      this.applyHost(text);
+    }
+  }
+
+  /** The port as written ("" when absent or the scheme's default, e.g. 443 for https). */
+  get port(): string {
+    return this.rec.port.clone();
+  }
+
+  /**
+   * Takes the leading digits of `value` ("" clears the port); ignored when out of range or when
+   * the URL cannot have a port (no host, or `file:`).
+   */
+  set port(value: string) {
+    if (!this.canHaveCredentials()) {
+      return;
+    }
+    const v = removeTabNewline(value);
+    let n: i64 = 0;
+    let digits: i64 = 0;
+    while (digits < (v.length as i64) && v.charCodeAt(digits) >= 48 && v.charCodeAt(digits) <= 57) {
+      n = n * 10 + v.charCodeAt(digits) - 48;
+      digits++;
+      if (n > 65535) {
+        return;
+      }
+    }
+    if (digits == 0) {
+      if (v.length == 0) {
+        this.rec.port = "";
+      }
+      return;
+    }
+    const port = `${n}`;
+    this.rec.port = port == defaultPort(this.rec.scheme) ? "" : port;
+  }
+
+  /** The path, e.g. `/a/b` (percent-encoded; for `mailto:x` it is `x`). */
+  get pathname(): string {
+    return this.rec.path.clone();
+  }
+
+  set pathname(v: string) {
+    if (!this.rec.opaque) {
+      const file = this.rec.scheme == "file";
+      this.rec.path = parsePath(removeTabNewline(v), [], isSpecial(this.rec.scheme), file);
+    }
+  }
+
+  /** `?` + the query, or "" when the query is absent or empty. */
+  get search(): string {
+    return this.rec.query.length == 0 ? "" : `?${this.rec.query}`;
+  }
+
+  set search(v: string) {
+    this.rec.hasQuery = v.length > 0;
+    const set = isSpecial(this.rec.scheme) ? SPECIAL_QUERY : QUERY;
+    this.rec.query = encodeSet(removeTabNewline(v.startsWith("?") ? v.slice(1) : v.clone()), set);
+  }
+
+  /** `#` + the fragment, or "" when it is absent or empty. */
+  get hash(): string {
+    return this.rec.fragment.length == 0 ? "" : `#${this.rec.fragment}`;
+  }
+
+  set hash(v: string) {
+    this.rec.hasFragment = v.length > 0;
+    this.rec.fragment = encodeSet(
+      removeTabNewline(v.startsWith("#") ? v.slice(1) : v.clone()),
+      FRAGMENT,
+    );
+  }
+
+  /** `scheme://host[:port]` for http(s), ws(s) and ftp; "null" for other schemes (JS). */
+  get origin(): string {
+    if (!isSpecial(this.rec.scheme) || this.rec.scheme == "file") {
+      return "null";
+    }
+    return `${this.rec.scheme}://${this.host}`;
+  }
+
+  /** A copy of the parsed query (see the header for how to write it back). */
+  get searchParams(): URLSearchParams {
+    return new URLSearchParams(this.rec.query);
+  }
+
+  /** Replaces the query with `p` serialized (no query if `p` is empty). */
+  set searchParams(p: URLSearchParams) {
+    this.rec.query = p.toString();
+    this.rec.hasQuery = this.rec.query.length > 0;
+  }
+
+  /** Same as `href`. */
+  toString(): string {
+    return this.href;
+  }
+
+  /** Same as `href` (JS `toJSON`). */
+  toJSON(): string {
+    return this.href;
+  }
+
+  // Sets the (non-file) host from `text`, which has no port; false (URL unchanged) if it is
+  // invalid, or empty where WHATWG does not allow that: for special schemes, and when the URL
+  // has credentials or a port.
+  private applyHost(text: string): bool {
+    const special = isSpecial(this.rec.scheme);
+    if (text.length == 0 && (special || userinfoOrPort(this.rec))) {
+      return false;
+    }
+    const host = parseHost(text, special);
+    if (host == null) {
+      return false;
+    }
+    this.rec.hasHost = true;
+    this.rec.host = host;
+    return true;
+  }
+
+  private canHaveCredentials(): bool {
+    return this.rec.host.length > 0 && this.rec.scheme != "file";
+  }
+}
+
+function parseOrThrow(input: string, base: string | null): UrlRecord {
+  let baseRec: UrlRecord | null = null;
+  if (base != null) {
+    baseRec = parseUrl(base, null);
+    if (baseRec == null) {
+      throw new UrlError(`Invalid base URL: ${base}`);
+    }
+  }
+  const rec = parseUrl(input, baseRec);
+  if (rec == null) {
+    throw new UrlError(`Invalid URL: ${input}`);
+  }
+  return rec;
+}

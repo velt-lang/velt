@@ -4,6 +4,9 @@
 use std::fmt;
 use std::path::PathBuf;
 
+pub mod std_hooks;
+pub mod std_modules;
+
 /// Index into a [`SourceMap`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 pub struct FileId(pub u32);

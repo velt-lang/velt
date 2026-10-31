@@ -1,0 +1,20 @@
+// The driver's handles have no JSON form: decoding would forge a native handle, and encoding
+// would hand one out.
+import { Client, CopyReader, CopyWriter, Pool, Transaction } from "../../src/lib";
+
+function main() {
+  const c = JSON.parse<Client>('{"handle":1}');
+  const p = JSON.parse<Pool>('{"handle":1}');
+  const t = JSON.parse<Transaction>('{"handle":1}');
+  const r = JSON.parse<CopyReader>('{"handle":1}');
+  const w = JSON.parse<CopyWriter>('{"handle":1}');
+}
+
+// Encoding: the handles are private fields of types that bind the native library.
+function encode(c: Client, p: Pool, t: Transaction, r: CopyReader, w: CopyWriter) {
+  console.log(JSON.stringify(c));
+  console.log(JSON.stringify(p));
+  console.log(JSON.stringify(t));
+  console.log(JSON.stringify(r));
+  console.log(JSON.stringify(w));
+}

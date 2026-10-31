@@ -4,6 +4,8 @@
 // x86_64/aarch64). `min`/`max` follow JS exactly: NaN if either operand is NaN, and
 // -0 < +0 (`Math.max(-0, 0)` is +0, `Math.min(0, -0)` is -0).
 
+import { abs, ceil, floor, round, sqrt, trunc } from "velt/lang/intrinsics";
+
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
 /**
@@ -21,7 +23,7 @@ export class Math {
    * @param x - A numeric expression.
    */
   static sqrt(x: f64): f64 {
-    return __intrinsic_sqrt(x);
+    return sqrt(x);
   }
 
   /**
@@ -29,7 +31,7 @@ export class Math {
    * @param x - A numeric expression.
    */
   static floor(x: f64): f64 {
-    return __intrinsic_floor(x);
+    return floor(x);
   }
 
   /**
@@ -37,12 +39,12 @@ export class Math {
    * @param x - A numeric expression.
    */
   static ceil(x: f64): f64 {
-    return __intrinsic_ceil(x);
+    return ceil(x);
   }
 
   /** JS rounding: halves go toward +Infinity (`Math.round(-2.5)` is -2). */
   static round(x: f64): f64 {
-    return __intrinsic_round(x);
+    return round(x);
   }
 
   /**
@@ -52,7 +54,7 @@ export class Math {
    * @param x - A numeric expression.
    */
   static trunc(x: f64): f64 {
-    return __intrinsic_trunc(x);
+    return trunc(x);
   }
 
   /**
@@ -62,7 +64,7 @@ export class Math {
    * @param x - A numeric expression for which the absolute value is needed.
    */
   static abs(x: f64): f64 {
-    return __intrinsic_f_abs(x);
+    return abs(x);
   }
 
   /** -1, 0 or 1 with the sign of `x`; keeps -0 and NaN as they are, like JS. */
@@ -103,8 +105,8 @@ export class Math {
   }
 
   /**
-   * Uniform in [0, 1), like JS: the per-thread generator of `velt:random` (not for secrets; use
-   * `velt:crypto`).
+   * Uniform in [0, 1), like JS: the per-thread generator of `velt/random` (not for secrets; use
+   * `velt/crypto`).
    */
   static random(): f64 {
     return velt_rt_prng_f64();
@@ -129,10 +131,10 @@ export class Math {
     if (rest.length > 0) {
       return hypotMany([a, b, c, d, ...rest]);
     }
-    const x = __intrinsic_f_abs(a);
-    const y = __intrinsic_f_abs(b);
-    const z = __intrinsic_f_abs(c);
-    const w = __intrinsic_f_abs(d);
+    const x = abs(a);
+    const y = abs(b);
+    const z = abs(c);
+    const w = abs(d);
     const inf = 1.0 / 0.0;
     if (x == inf || y == inf || z == inf || w == inf) {
       return inf;
@@ -200,7 +202,7 @@ function hypotMany(xs: f64[]): f64 {
   let big = 0.0;
   let nan = false;
   for (const x of xs) {
-    const a = __intrinsic_f_abs(x);
+    const a = abs(x);
     if (a == inf) {
       return inf;
     }
@@ -221,7 +223,7 @@ function hypotMany(xs: f64[]): f64 {
     const r = x / big;
     sum += r * r;
   }
-  return big * __intrinsic_sqrt(sum);
+  return big * sqrt(sum);
 }
 
 // sqrt of the sum of the squares of the scaled values; `scale` is a power of two, so the scaling
@@ -231,7 +233,7 @@ function hypotScaled(x: f64, y: f64, z: f64, w: f64, scale: f64): f64 {
   const sy = y * scale;
   const sz = z * scale;
   const sw = w * scale;
-  return __intrinsic_sqrt(sx * sx + sy * sy + sz * sz + sw * sw);
+  return sqrt(sx * sx + sy * sy + sz * sz + sw * sw);
 }
 
 // JS's ToInt32 (`x | 0`): truncated, modulo 2^32, in the signed 32-bit range; NaN and ±Infinity
@@ -239,45 +241,5 @@ function hypotScaled(x: f64, y: f64, z: f64, w: f64, scale: f64): f64 {
 declare function velt_rt_math_to_int32(x: f64): i32;
 // Leading zero bits of a 32-bit value (`Math.clz32`), one instruction.
 declare function velt_rt_math_clz32(x: i32): i32;
-// JS's `(a * b) | 0` and `(a + x) | 0` for int32 numbers `a`, `b` (backends emit them inline).
-declare function velt_rt_math_mul_int32(a: i32, b: i32): i32;
+// JS's `(a + x) | 0` for an int32 number `a` (backends emit it inline).
 declare function velt_rt_math_add_int32(a: i32, x: f64): i32;
-
-/**
- * ToInt32 of the product `a * b` of two JS numbers (`(y * k) | 0`; sema `int32.rs` inserts the
- * call). JS multiplies doubles, so a product past 2^53 is rounded before its low 32 bits are
- * taken. For int32 operands that is `velt_rt_math_mul_int32` (one multiply when `numrep` proves
- * the product within 2^53); other values multiply as doubles.
- */
-export function __mulToInt32(a: f64, b: f64): i32 {
-  const x = a as i32;
-  const y = b as i32;
-  if (x as f64 == a && y as f64 == b) {
-    return velt_rt_math_mul_int32(x, y);
-  }
-  return velt_rt_math_to_int32(a * b);
-}
-
-/**
- * `xs[i]` with a float `i` (a JS number; the compiler inserts the call, `sema` `numbers.rs`): a
- * whole number indexes as usual. Anything else would read `undefined` in JS; here it panics like
- * an index out of bounds.
- */
-export function __floatIndex(x: f64): usize {
-  if (x >= 0.0 && __intrinsic_trunc(x) == x && x < 18446744073709551616.0) {
-    return x as usize;
-  }
-  panic(`index out of bounds: the index is ${x}`);
-}
-
-/**
- * A `number` given as a position or lane index of a SIMD method (the compiler inserts the call,
- * `sema` `numbers.rs`): a whole number from 0 up as itself. Anything else is the largest `usize`,
- * which is out of range everywhere, so `fits` gives `false` and the others a `RangeError`.
- */
-export function __floatPosition(x: f64): usize {
-  if (x >= 0.0 && __intrinsic_trunc(x) == x && x < 18446744073709551616.0) {
-    return x as usize;
-  }
-  return ~(0 as usize);
-}

@@ -1,4 +1,4 @@
-//! Array views (#1485; std/prelude/zzz_adapt.vlt): an `any` holding an array of another
+//! Array views (#1485; std/lang/hooks): an `any` holding an array of another
 //! element type, converted to `U[]` (`kids as JSXChild[]`, also as a union member, and a cast
 //! `xs as U[]` of an existing array, which sema writes through `any`), is a view of that one
 //! array, as in Node, not a copy.
@@ -6,18 +6,18 @@
 //! Only the *view types* can hold a view: the array types an `any` is converted to in the
 //! program's own code, and the arrays among their element types (nested arrays, a recursive
 //! union such as `JSXChild`). They are boxed. A view is a box whose header is
-//! `{ data: view | 1, len: 0, cap: 0 }`, `view` the prelude's `__ArrayView<U>`: the original
+//! `{ data: view | 1, len: 0, cap: 0 }`, `view` the hook `ArrayView<U>`: the original
 //! array as an `any` (`__target`) and a mirror `U[]` of its elements (`__seen`). No pointer is
 //! tagged, so retain and release are those of any box. On a view type:
 //!
 //! | operation | `data & 1` clear | `data & 1` set (a view) |
 //! |---|---|---|
-//! | `length` | the header's | the original's (`__arrayViewLen`) |
-//! | a read or write of element `i` (an index, a `for...of` step) | the header | the mirror, element `i` synced with the original first (`__arrayViewSyncAt`); a write goes back for element `i` only (`__arrayViewFlushAt`) |
+//! | `length` | the header's | the original's (`arrayViewLen`) |
+//! | a read or write of element `i` (an index, a `for...of` step) | the header | the mirror, element `i` synced with the original first (`arrayViewSyncAt`); a write goes back for element `i` only (`arrayViewFlushAt`) |
 //! | `push`, `pop`, `truncate`, swaps | the change | the change on the mirror, synced for its length (and the elements swapped or popped), then the changed elements written back |
-//! | any other access to the contents (`content`) | the header | the mirror, synced with the original first (`__arrayViewSync`) |
-//! | any other change | the change | the change on the mirror, then written back (`__arrayViewFlush`) |
-//! | the stable sort (`sort(cmp)`) | the sort | a sorted copy of the mirror as the mirror, written back (`__arrayViewSort`) |
+//! | any other access to the contents (`content`) | the header | the mirror, synced with the original first (`arrayViewSync`) |
+//! | any other change | the change | the change on the mirror, then written back (`arrayViewFlush`) |
+//! | the stable sort (`sort(cmp)`) | the sort | a sorted copy of the mirror as the mirror, written back (`arrayViewSort`) |
 //! | to `any` | the array | the original (`__target`) |
 //! | drop | the elements and buffer | the view object, and the view's entry in the table |
 //! | deep copy, transfer | the elements | a plain array of the mirror's elements (no longer in the table) |
@@ -45,36 +45,36 @@ use super::rt::Rt;
 use super::{cint, ice, Cx, FnLower};
 use crate::vir::{self, BinOp, Callee, Const, Operand, Place, Proj, Rvalue, Ty};
 
-pub(super) const VIEW_CLASS: &str = "std/prelude/zzz_adapt::__ArrayView";
-const VIEW_NEW: &str = "std/prelude/zzz_adapt::__arrayViewNew";
-const VIEW_SYNC: &str = "std/prelude/zzz_adapt::__arrayViewSync";
-pub(super) const VIEW_SYNC_AT: &str = "std/prelude/zzz_adapt::__arrayViewSyncAt";
-pub(super) const VIEW_SYNC_LEN: &str = "std/prelude/zzz_adapt::__arrayViewSyncLen";
-const VIEW_FLUSH: &str = "std/prelude/zzz_adapt::__arrayViewFlush";
-const VIEW_FLUSH_AT: &str = "std/prelude/zzz_adapt::__arrayViewFlushAt";
-pub(super) const VIEW_FLUSH_FROM: &str = "std/prelude/zzz_adapt::__arrayViewFlushFrom";
-pub(super) const VIEW_LEN: &str = "std/prelude/zzz_adapt::__arrayViewLen";
-pub(super) const VIEW_SORT: &str = "std/prelude/zzz_adapt::__arrayViewSort";
+pub(super) const VIEW_CLASS: &str = velt_common::std_hook!(array_view);
+const VIEW_NEW: &str = velt_common::std_hook!(array_view_new);
+const VIEW_SYNC: &str = velt_common::std_hook!(array_view_sync);
+pub(super) const VIEW_SYNC_AT: &str = velt_common::std_hook!(array_view_sync_at);
+pub(super) const VIEW_SYNC_LEN: &str = velt_common::std_hook!(array_view_sync_len);
+const VIEW_FLUSH: &str = velt_common::std_hook!(array_view_flush);
+const VIEW_FLUSH_AT: &str = velt_common::std_hook!(array_view_flush_at);
+pub(super) const VIEW_FLUSH_FROM: &str = velt_common::std_hook!(array_view_flush_from);
+pub(super) const VIEW_LEN: &str = velt_common::std_hook!(array_view_len);
+pub(super) const VIEW_SORT: &str = velt_common::std_hook!(array_view_sort);
 
 /// What an access to a view's contents needs of the mirror (`content_with`).
 pub(super) enum ViewSync {
-    /// Every element (`__arrayViewSync`).
+    /// Every element (`arrayViewSync`).
     All,
-    /// The original's length, the new elements converted (`__arrayViewSyncLen`).
+    /// The original's length, the new elements converted (`arrayViewSyncLen`).
     Len,
     /// That, and the last element up to date (a `pop`).
     Last,
-    /// The elements at these indices (`u64` operands) up to date (`__arrayViewSyncAt`).
+    /// The elements at these indices (`u64` operands) up to date (`arrayViewSyncAt`).
     Slots(Vec<Operand>),
 }
 
 /// What a change through a view writes back to the original (`view_flush`).
 pub(super) enum ViewFlush {
-    /// Every element, and the length (`__arrayViewFlush`).
+    /// Every element, and the length (`arrayViewFlush`).
     All,
-    /// The elements from this index (`u64`) on, and the length (`__arrayViewFlushFrom`).
+    /// The elements from this index (`u64`) on, and the length (`arrayViewFlushFrom`).
     From(Operand),
-    /// The elements at these indices (`u64` operands) (`__arrayViewFlushAt`).
+    /// The elements at these indices (`u64` operands) (`arrayViewFlushAt`).
     Slots(Vec<Operand>),
 }
 
@@ -101,7 +101,9 @@ impl Cx<'_> {
     /// Record an `AnyTo` to the array type `t` (not counted in the standard library).
     pub(super) fn note_array_view(&mut self, t: TyId) {
         let std = self.cur_def.is_some_and(|d| match self.hir.def(d) {
-            hir::Def::Fn(f) => f.name.starts_with("std/"),
+            hir::Def::Fn(f) => f
+                .name
+                .starts_with(velt_common::std_modules::CANONICAL_PREFIX),
             _ => false,
         });
         let TyKind::Array(mut e) = self.types.kind(t).clone() else {
@@ -111,7 +113,7 @@ impl Cx<'_> {
             return;
         }
         self.facts.array_view_targets.insert(t);
-        // The view converts its elements out of `any` (`__arrayViewSyncAt`, in the prelude):
+        // The view converts its elements out of `any` (`arrayViewSyncAt`, in the prelude):
         // an object among them may be a view too (any_view.rs), as when the program converts
         // one itself.
         while let TyKind::Array(x) = self.types.kind(e).clone() {
@@ -161,7 +163,7 @@ impl Cx<'_> {
         }
     }
 
-    /// The prelude definition `name` (std/prelude/zzz_adapt.vlt).
+    /// The prelude definition `name` (std/lang/hooks).
     pub(super) fn prelude_def(&self, name: &str) -> Option<DefId> {
         let found = self.hir.defs.iter().position(|d| match d {
             hir::Def::Fn(f) => f.name == name,
@@ -199,24 +201,24 @@ impl FnLower<'_, '_> {
         self.call(Callee::Func(f), args, out, false);
     }
 
-    /// The type `__ArrayView<e>`.
+    /// The type `ArrayView<e>`.
     fn view_class(&mut self, e: TyId) -> TyId {
         let d = self
             .cx
             .prelude_def(VIEW_CLASS)
-            .unwrap_or_else(|| ice("no prelude `__ArrayView`"));
+            .unwrap_or_else(|| ice("no prelude `ArrayView`"));
         self.cx.intern(TyKind::Adt(d, vec![e]))
     }
 
-    /// The place of field `name` of the `__ArrayView<e>` object `v` (untagged).
+    /// The place of field `name` of the `ArrayView<e>` object `v` (untagged).
     pub(super) fn view_field(&mut self, v: &Operand, e: TyId, name: &str) -> Place {
         let cls = self.view_class(e);
         let TyKind::Adt(d, _) = self.cx.kind(cls) else {
-            ice("`__ArrayView` is not a class")
+            ice("`ArrayView` is not a class")
         };
         let fields = &self.cx.adt_def(d).fields;
         let Some(i) = fields.iter().position(|f| f.name == name) else {
-            ice(format_args!("`__ArrayView` without `{name}`"))
+            ice(format_args!("`ArrayView` without `{name}`"))
         };
         self.proxy_hot_place(v, cls, i as u32)
     }
@@ -308,7 +310,7 @@ impl FnLower<'_, '_> {
     /// may change a box of this type in the function, a plain array's in its loops too.
     fn view_unlist(&mut self, e: TyId, v: &Operand) {
         let t = self.cx.intern(TyKind::Array(e));
-        let target = self.view_field(v, e, "__target");
+        let target = self.view_field(v, e, "target");
         let data = Operand::Copy(proj(&target, Proj::Field(0)));
         self.call_rt(
             Rt::ArrayViewRemove,
@@ -350,7 +352,7 @@ impl FnLower<'_, '_> {
                 }
             }
         }
-        let seen = self.view_field(&v, e, "__seen");
+        let seen = self.view_field(&v, e, "seen");
         self.assign(at.clone(), Rvalue::Use(Operand::Copy(seen)));
         self.goto(join);
         self.switch_to(join);
@@ -436,7 +438,7 @@ impl FnLower<'_, '_> {
         let (yes, join) = (self.new_block(), self.new_block());
         self.branch(is, yes, join);
         self.switch_to(yes);
-        let target = self.view_field(&v, e, "__target");
+        let target = self.view_field(&v, e, "target");
         let any = self.cx.any_ty();
         let shared = self.share_value(Operand::Copy(target), any);
         let avt = self.cx.ty(any);
@@ -500,7 +502,7 @@ impl FnLower<'_, '_> {
         self.terminate(vir::Terminator::Return(super::unit()));
     }
 
-    /// Is field `f` of the class type `ty` a view's mirror (`__ArrayView.__seen`)?
+    /// Is field `f` of the class type `ty` a view's mirror (`ArrayView.__seen`)?
     pub(super) fn view_mirror_field(&mut self, ty: TyId, f: u32) -> bool {
         if self.cx.boxing.array_views.is_empty() {
             return false;
@@ -509,11 +511,7 @@ impl FnLower<'_, '_> {
             return false;
         };
         let def = self.cx.adt_def(d);
-        def.name == VIEW_CLASS
-            && def
-                .fields
-                .get(f as usize)
-                .is_some_and(|x| x.name == "__seen")
+        def.name == VIEW_CLASS && def.fields.get(f as usize).is_some_and(|x| x.name == "seen")
     }
 
     /// Before a deep copy or transfer of the inline value at `arr` of an array of `e`: a view

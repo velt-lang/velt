@@ -432,7 +432,7 @@ fn per_use_part(cx: &mut Ctx, e: &Expr, errors: &mut Vec<Diagnostic>) {
 }
 
 /// `e`, passed to parameter `param` of `f`, which `f` borrows: when `f` shares it into what it
-/// keeps (`fill(value)` storing `__intrinsic_share(value)`, or a function handing it to `fill`),
+/// keeps (`fill(value)` storing `share(value)`, or a function handing it to `fill`),
 /// the callee keeps the argument as an owned parameter would, so a part of a module constant
 /// evaluated at each use is taken over.
 pub(super) fn kept_by_share(
@@ -451,7 +451,7 @@ pub(super) fn kept_by_share(
     }
 }
 
-/// Does `f` share its borrowed parameter `param` (`__intrinsic_share(p)`), directly or by
+/// Does `f` share its borrowed parameter `param` (`share(p)`), directly or by
 /// passing it on to a borrowed parameter of a function that does? (`seen`: the functions and
 /// parameters already followed.)
 fn shares_param(

@@ -1,7 +1,7 @@
 // `Atomic<T>` under contention on worker threads: a relaxed counter loses no increment, a spin
 // lock from `compareExchangeWeak` + acquire / release keeps a read-then-write sequence whole,
 // and optimistic readers of a `VersionLatch` never accept a pair a writer was changing.
-import { Backoff, VersionLatch } from "velt:sync";
+import { Backoff, VersionLatch } from "velt/sync";
 
 class State {
   count: Atomic<u64> = new Atomic<u64>(0);

@@ -1,0 +1,126 @@
+// velt/task (internal): `AbortSignal`, whether and why an operation was aborted. A signal's
+// runtime object is owned by a `shared` cell (atomic, so `spawn` shares it rather than copying
+// it) and released once, at the cell's last reference.
+
+import { AbortError } from "velt/task/errors";
+import {
+  velt_rt_signal_aborted,
+  velt_rt_signal_any,
+  velt_rt_signal_free,
+  velt_rt_signal_reason,
+  velt_rt_signal_timeout,
+  velt_rt_signal_timeout_ms,
+  velt_rt_signal_wait,
+} from "velt/task/rt";
+import { TimeoutError } from "velt/task/timeout";
+import { INSPECT } from "velt/lang/hooks/keys";
+
+// Owns one runtime signal (not exported: only this module makes signals). Lives in a `shared`
+// cell, so it is released exactly once, when the last signal or controller using it goes away.
+class SignalObj {
+  private handle: u64;
+
+  constructor(handle: u64) {
+    this.handle = handle;
+  }
+
+  raw(): u64 {
+    return this.handle;
+  }
+
+  [Symbol.dispose]() {
+    if (this.handle != 0) {
+      velt_rt_signal_free(this.handle);
+      this.handle = 0;
+    }
+  }
+}
+
+type SignalCell = shared<Mutex<SignalObj>>;
+
+export function signalCell(handle: u64): SignalCell {
+  return shared(new Mutex<SignalObj>(new SignalObj(handle)));
+}
+
+/** The receiving half: tells work that it should stop. */
+export class AbortSignal {
+  // Keeps the runtime signal alive; `h` is its handle, valid as long as `cell` is.
+  #cell: SignalCell;
+  #h: u64;
+
+  /**
+   * Made by `AbortController`, `taskScope` and the static constructors (`SignalCell` is
+   * internal).
+   */
+  constructor(cell: SignalCell) {
+    this.#h = cell.with((s) => s.raw());
+    this.#cell = cell;
+  }
+
+  private handle(): u64 {
+    return this.#h;
+  }
+
+  // The signal behind a runtime signal handle the caller owns (std only: the runtime's own
+  // signals, such as the dev-mode stop request std/net/http/server/dev.vlt joins).
+  private static adopt(handle: u64): AbortSignal {
+    return new AbortSignal(signalCell(handle));
+  }
+
+  /** Whether `abort()` was called (or the timeout elapsed). */
+  get aborted(): bool {
+    return velt_rt_signal_aborted(this.handle());
+  }
+
+  /** The reason passed to `abort()` ("" while not aborted). */
+  get reason(): string {
+    return velt_rt_signal_reason(this.handle());
+  }
+
+  /**
+   * Throws if the signal is aborted: `TimeoutError` if an `AbortSignal.timeout` aborted it,
+   * otherwise `AbortError` with the reason as its message.
+   */
+  throwIfAborted() throws AbortError {
+    if (this.aborted) {
+      const ms = velt_rt_signal_timeout_ms(this.handle());
+      if (ms >= 0) {
+        throw new TimeoutError(ms);
+      }
+      throw new AbortError(this.reason);
+    }
+  }
+
+  /**
+   * Resolves once the signal is aborted (never, if it never is). Race it directly against
+   * work: `Promise.race([work(), signal.whenAborted()])`.
+   */
+  whenAborted(): Promise<void> {
+    return velt_rt_signal_wait(this.handle());
+  }
+
+  /**
+   * A signal that aborts by itself after `ms` milliseconds (reason "timed out after <ms> ms";
+   * `throwIfAborted()` throws `TimeoutError`).
+   */
+  static timeout(ms: i64): AbortSignal {
+    return new AbortSignal(signalCell(velt_rt_signal_timeout(ms, `timed out after ${ms} ms`)));
+  }
+
+  /**
+   * A signal that aborts as soon as any of `signals` does, with its reason. It keeps those
+   * signals alive until then.
+   */
+  static any(signals: AbortSignal[]): AbortSignal {
+    const handles: u64[] = [];
+    for (const s of signals) {
+      handles.push(s.handle());
+    }
+    return new AbortSignal(signalCell(velt_rt_signal_any(handles)));
+  }
+
+  /** How `console.log` shows the signal, like Node: `AbortSignal { aborted: false }`. */
+  [INSPECT]() {
+    return { aborted: this.aborted };
+  }
+}

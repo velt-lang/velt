@@ -1,0 +1,60 @@
+// velt/fs (internal): metadata and symbolic links (`stat`, `lstat`, `readlink`, `symlink` and
+// their `*Sync` twins).
+
+import { unwrapIo } from "velt/native/result";
+import { checkIo } from "velt/native/status";
+import { Stats } from "velt/fs/stats";
+import {
+  velt_rt_fs_lstat,
+  velt_rt_fs_lstat_sync,
+  velt_rt_fs_readlink,
+  velt_rt_fs_readlink_sync,
+  velt_rt_fs_stat,
+  velt_rt_fs_stat_sync,
+  velt_rt_fs_symlink,
+  velt_rt_fs_symlink_sync,
+} from "velt/fs/rt";
+
+/** Metadata of `path`, following symlinks. */
+export async function stat(path: string): Promise<Stats> {
+  return unwrapIo(await velt_rt_fs_stat(path));
+}
+
+/** Metadata of `path` itself: a symlink is described, not followed. */
+export async function lstat(path: string): Promise<Stats> {
+  return unwrapIo(await velt_rt_fs_lstat(path));
+}
+
+/** The target of the symlink `path`, as stored in the link (`EINVAL` if it is not a link). */
+export async function readlink(path: string): Promise<string> {
+  return unwrapIo(await velt_rt_fs_readlink(path));
+}
+
+/**
+ * Creates a symlink at `path` pointing to `target` (relative to the link's directory). On
+ * Windows the link is a directory link when `target` is a directory, as in Node, and creating
+ * one needs Developer Mode or administrator rights (`EACCES` otherwise).
+ */
+export async function symlink(target: string, path: string): Promise<void> {
+  checkIo(await velt_rt_fs_symlink(target, path));
+}
+
+/** `stat`, blocking the calling thread. */
+export function statSync(path: string): Stats {
+  return unwrapIo(velt_rt_fs_stat_sync(path));
+}
+
+/** `lstat`, blocking the calling thread. */
+export function lstatSync(path: string): Stats {
+  return unwrapIo(velt_rt_fs_lstat_sync(path));
+}
+
+/** `readlink`, blocking the calling thread. */
+export function readlinkSync(path: string): string {
+  return unwrapIo(velt_rt_fs_readlink_sync(path));
+}
+
+/** `symlink`, blocking the calling thread. */
+export function symlinkSync(target: string, path: string) {
+  checkIo(velt_rt_fs_symlink_sync(target, path));
+}

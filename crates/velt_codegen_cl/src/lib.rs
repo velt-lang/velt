@@ -50,7 +50,7 @@ pub use cpu::{
     check_cpu, is_for_another_arch, level_features, required_features, x86_features_from_macros,
     DEFAULT_X86_CPU, X86_FEATURES, X86_FEATURE_MACROS,
 };
-pub use dev::{DevSession, HandlerCode, JitProgram, Reload};
+pub use dev::{DevSession, JitProgram, Reload};
 
 /// Internal result type: errors are human-readable messages.
 pub(crate) type CodegenResult<T> = Result<T, String>;

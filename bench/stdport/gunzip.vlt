@@ -1,8 +1,8 @@
-// gzip decompression (`velt:compress/inflate`): the 1 MB JSON of `json.gz`
+// gzip decompression (`velt/compress`): the 1 MB JSON of `json.gz`
 // (rust/src/bin/gen_inputs.rs, written by run.sh), decoded 50 times. The Rust port uses
 // `flate2`, which the runtime's `fetch` decoded gzip bodies with before the client was Velt code.
-import { readFileBytesSync } from "velt:fs";
-import { gunzip } from "velt:compress/inflate";
+import { readFileBytesSync } from "velt/fs";
+import { gunzip } from "velt/compress";
 
 function main() {
   const input = readFileBytesSync(`${process.env.STDPORT_INPUTS ?? "."}/json.gz`);

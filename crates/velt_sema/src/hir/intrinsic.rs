@@ -12,16 +12,16 @@ pub enum Intrinsic {
     PrintErr,
     /// 1 arg of int/float/bool/Str type → owned `Str` (JS formatting for floats: `1`, `1.5`, `NaN`).
     ToString,
-    /// `(e: borrow T) -> string` (`__intrinsic_error_text`): what the report of `e` thrown and
+    /// `(e: borrow T) -> string` (`errorText`): what the report of `e` thrown and
     /// not caught writes after `Uncaught ` and before the location: Node's header for an
-    /// `Error` (`ParseError: bad`), any other value as `console.log` prints it. `velt:test`
+    /// `Error` (`ParseError: bad`), any other value as `console.log` prints it. `velt/test`
     /// reports a failed test with it.
     ErrorText,
-    /// `() -> string` (`__intrinsic_throw_loc`): ` at <path>:<line>:<col>` of the last `throw`
+    /// `() -> string` (`throwLoc`): ` at <path>:<line>:<col>` of the last `throw`
     /// on this thread, as an uncaught report ends, or `""` when not known (read it first thing
     /// in the `catch`).
     ThrowLoc,
-    /// `(x: borrow T) -> string` (`__intrinsic_inspect`): `x` as Node's `util.inspect` writes
+    /// `(x: borrow T) -> string` (`inspect`): `x` as Node's `util.inspect` writes
     /// it (`'a'`, `[ 1, 2 ]`, `{ a: 1 }`: as `console.log` prints it inside an array), for
     /// messages that show values, such as a failed `assertEq`.
     Inspect,
@@ -35,7 +35,8 @@ pub enum Intrinsic {
     Exit,
     /// `panic(msg: string)` → Never.
     Panic,
-    // M2. Callable from std/ as `__intrinsic_<snake_case_name>(...)`; some are user-visible too.
+    // M2. Those std calls are declared in std/lang/intrinsics (`declare intrinsic function`, named
+    // in `velt_sema::intrinsic_decls`); some are user-visible too.
     /// `(cap: usize) -> T[]`
     ArrayWithCapacity,
     /// `xs.length` (user-visible) `-> usize`
@@ -54,7 +55,7 @@ pub enum Intrinsic {
     /// bits of `src[s..s + n)` written to `dst[d..d + n)` (both ranges bounds-checked; `dst`
     /// and `src` are different arrays): what `dst` held there is not dropped, nothing is
     /// shared, and `src` keeps stale copies. A raw move for algorithms that keep every element
-    /// owned exactly once themselves (the stable sort's scratch buffer, std/sort/stable.vlt).
+    /// owned exactly once themselves (the stable sort's scratch buffer, std/lang/sort/stable.vlt).
     ArrayMove,
     /// std only: `(xs (modified), len: usize)` set the length to `len` (growing the capacity
     /// when it is smaller) without dropping or initializing any element: slots past the old
@@ -104,20 +105,20 @@ pub enum Intrinsic {
     /// keys): numbers, bool and strings by value, objects by identity, unions, options and
     /// tuples part by part
     Hash,
-    /// `(a: borrow T, b: borrow T) -> bool` structural (deep) equality: `__intrinsic_eq`,
+    /// `(a: borrow T, b: borrow T) -> bool` structural (deep) equality: `eq`,
     /// `deepEqual`, `assertEq`
     Eq,
-    /// `(a: borrow T, b: borrow T) -> bool` Vitest's `toEqual` (`__intrinsic_deep_eq`,
-    /// `velt:test`'s `expect`): as `Eq`, but a class instance that isn't the same object is
+    /// `(a: borrow T, b: borrow T) -> bool` Vitest's `toEqual` (`deepEq`,
+    /// `velt/test`'s `expect`): as `Eq`, but a class instance that isn't the same object is
     /// compared by its fields (a `Date` by its time, a `Set` by its members), and floats with
     /// SameValue (`NaN` equals itself, `0` doesn't equal `-0`).
     DeepEq,
     /// `(a: borrow T, b: borrow T) -> bool` JS SameValueZero, the `Map` and `Set` key comparison
-    /// (`__intrinsic_key_eq`): `Same` with floats compared so that `NaN` equals itself and `0`
+    /// (`keyEq`): `Same` with floats compared so that `NaN` equals itself and `0`
     /// equals `-0`. Objects compare by identity, as `Hash` hashes them.
     KeyEq,
     /// `(a: borrow T, b: borrow T) -> bool` JS `Array.prototype.includes`
-    /// (`__intrinsic_includes_eq`): `Same`, except that a number `NaN` equals `NaN` (a number
+    /// (`includesEq`): `Same`, except that a number `NaN` equals `NaN` (a number
     /// held by an `any` or an option too). Tuples and the other parts compare as `Same` does.
     IncludesEq,
     /// `(a: borrow T, b: borrow T) -> bool` JS `===` (`==` on non-primitive types): objects —
@@ -154,31 +155,31 @@ pub enum Intrinsic {
     /// `(field: borrow T | null) -> bool`, `field` a `Field` place of a `presence` field: whether
     /// it is present (written, or given in the literal that made the object)
     FieldPresent,
-    /// std only (std/prelude/promise.vlt): `__intrinsic_transfer<T>(value: T) -> T`, the value
+    /// std only (std/prelude/promise.vlt): `transfer<T>(value: T) -> T`, the value
     /// made safe for another task (moved where this task held the only reference, deep-copied
     /// where it is still shared; velt_vir transfer.rs), like a `spawn` argument. Also emitted
     /// by sema around a value a `Mutex.with` callback stores across the lock
     /// (ownership/locked).
     Transfer,
-    /// std only (std/prelude/promise.vlt): `__intrinsic_needs_transfer<T>(value: borrow T) ->
+    /// std only (std/prelude/promise.vlt): `needsTransfer<T>(value: borrow T) ->
     /// bool`, a constant: can a `T` reach a counted object, so that `Transfer` has work to do
     /// (the value itself is not read)?
     NeedsTransfer,
-    /// std only (std/sort/stable.vlt): `__intrinsic_needs_drop<T>(value: borrow T) -> bool`,
+    /// std only (std/lang/sort/stable.vlt): `needsDrop<T>(value: borrow T) -> bool`,
     /// a constant: does a `T` own anything that dropping it releases (strings, arrays,
     /// objects, closures with a heap environment)? A bit copy of a `T` that does not is an
     /// independent value. The value itself is not evaluated.
     NeedsDrop,
-    /// std only (std/prelude/array.vlt): `__intrinsic_may_alias<T>(value: borrow T) -> bool`, a
+    /// std only (std/prelude/array.vlt): `mayAlias<T>(value: borrow T) -> bool`, a
     /// constant: can a value of type `T` that a call borrows be reached through another
     /// reference while the call runs (lowering counts the type, or borrows values of it inside
     /// counted objects)? Only then can a callback change it. The value is not evaluated.
     MayAlias,
-    /// std only (std/prelude/map.vlt): `__intrinsic_holds_null<T>(probe: borrow T) -> bool`, a
+    /// std only (std/prelude/map.vlt): `holdsNull<T>(probe: borrow T) -> bool`, a
     /// constant: is `null` a value of `T` (is `T` an option, `X | null`, once substituted)? Then
     /// a generic `T | null` is `T` itself and its `null` is a `T`. The probe is not evaluated.
     HoldsNull,
-    /// std only (std/prelude/map.vlt): `__intrinsic_null_as<T>() -> T`, `null` as a `T` that
+    /// std only (std/prelude/map.vlt): `nullAs<T>() -> T`, `null` as a `T` that
     /// holds null (`HoldsNull`). For any other `T` it stops the program with an internal error:
     /// std reaches it only behind a `HoldsNull` test.
     NullAs,
@@ -216,7 +217,7 @@ pub enum Intrinsic {
     /// class: the condition of the text of a `T` value in a string `+`, which asks a class
     /// instance for its `valueOf()` first. The probe is not evaluated.
     HoldsDynamicOrClass,
-    /// std only (std/sort/stable.vlt): `__intrinsic_fn_captures_nothing<F>(f: borrow F) ->
+    /// std only (std/lang/sort/stable.vlt): `fnCapturesNothing<F>(f: borrow F) ->
     /// bool` for a function value: true when its environment is null, which only closures
     /// without captures and named functions have (a program that compares function values
     /// gives every closure an environment, so it is false there). Such a function reaches no
@@ -246,7 +247,7 @@ pub enum Intrinsic {
     // M3 async & concurrency (user-visible builtins; see docs/reference/async.md)
     /// `spawn(p: Promise<T>): Promise<T>` — start now on the runtime, returns a join handle.
     Spawn,
-    /// `__intrinsic_spawn_handled(p)` (standard library only): `spawn(p)` whose rejection the
+    /// `spawnHandled(p)` (standard library only): `spawn(p)` whose rejection the
     /// caller handles itself (a `taskScope` child): a dropped handle never reports it.
     SpawnHandled,
     /// `sleep(ms: i64): Promise<void>`
@@ -258,36 +259,36 @@ pub enum Intrinsic {
     /// `Promise.race(ps: Promise<T, E>[]): Promise<T, E>` — the first to settle; the others keep
     /// running.
     PromiseRace,
-    /// std only: `__intrinsic_promise_any(ps: Promise<T, E>[]): Promise<T, E>` — the first to
+    /// std only: `firstFulfilled(ps: Promise<T, E>[]): Promise<T, E>` — the first to
     /// fulfill, or the last rejection when all reject (std/prelude/promise.vlt `promiseAny`).
     PromiseAny,
-    /// std only (std/channel.vlt): `__intrinsic_chan_send<T>(ch: u64, value: T):
+    /// std only (std/sync/channel.vlt): `chanSend<T>(ch: u64, value: T):
     /// Promise<bool>` — moves `value` into the channel; false (and `value` dropped) if it is
     /// closed.
     ChanSend,
-    /// std only: `__intrinsic_chan_receive<T>(ch: u64): Promise<T | null>` — the oldest value,
+    /// std only: `chanReceive<T>(ch: u64): Promise<T | null>` — the oldest value,
     /// or null once the channel is closed and drained.
     ChanReceive,
-    /// std only: `__intrinsic_chan_try_send<T>(ch: u64, value: T): bool` — moves `value` into
+    /// std only: `chanTrySend<T>(ch: u64, value: T): bool` — moves `value` into
     /// the channel if it has room; false (and `value` dropped) if it is full or closed.
     ChanTrySend,
-    /// std only: `__intrinsic_chan_try_receive<T>(ch: u64): T | null` — the oldest value if one
+    /// std only: `chanTryReceive<T>(ch: u64): T | null` — the oldest value if one
     /// is queued.
     ChanTryReceive,
     /// Compiler-internal (no source syntax): the location of the call's span as a string,
     /// `"path:line:col"` (the site of a `new Promise`, std/prelude/promise.vlt).
     SourceLocation,
-    /// Compiler-internal (std: `__intrinsic_symbol_static(id, desc, described)`): `(id: i64
+    /// Compiler-internal (std: `symbolStatic(id, desc, described)`): `(id: i64
     /// literal, desc: string literal, described: bool literal) -> symbol`, the address of a
     /// read-only symbol record made at compile time (rt_abi.md "Symbols"): one record per `id`
     /// in a program, whatever the call site, so every evaluation gives the same symbol. Ids
-    /// below 64 are the well-known symbols (`Symbol.iterator`, std/symbol.vlt), ids from 64 the
+    /// below 64 are the well-known symbols (`Symbol.iterator`, std/lang/symbol/index.vlt), ids from 64 the
     /// module constants initialized with `Symbol()` / `Symbol("d")`, and ids from 2^40 the
     /// registry's symbols of module constants initialized with `Symbol.for("k")` (`desc` is the
     /// key; such a record is listed in [`Intrinsic::SymbolRegistry`]'s table). With `described`
     /// false the symbol has no description (`desc` is `""`).
     SymbolStatic,
-    /// Compiler-internal (std: `__intrinsic_symbol_registry()`): `() -> symbol`, the address of
+    /// Compiler-internal (std: `symbolRegistry()`): `() -> symbol`, the address of
     /// the program's read-only table of the registry's records (the `SymbolStatic` records with
     /// ids from 2^40): their addresses, one per 8-byte slot, ending with a null slot. It is typed
     /// `symbol` only to be passed on as a pointer, to `velt_rt_symbol_for`, whose registry
@@ -366,44 +367,37 @@ pub enum Intrinsic {
     /// receiver as for `ThreadLocalGet`. Additive.
     ThreadLocalSet,
 
-    // M4 JSON (compile-time generated glue over the rt JSON reader / string builder)
-    /// `JSON.stringify(x: borrow T): string`
-    JsonStringify,
-    /// std only: `__intrinsic_json_parse<T>(text: borrow string, flags: i64, max_depth: i64): T`
+    // M4 JSON (compile-time generated glue over the rt JSON reader)
+    /// std only: `jsonParse<T>(text: borrow string, flags: i64, max_depth: i64): T`
     /// — the body of the prelude's `JSON.parse<T>(text, options)`: decodes `text` as `T` with the
     /// reader options of `velt_rt_json_reader_new_with` (flag 1 = reject unknown keys;
     /// `max_depth` 0 = no limit); throws `JsonError { message }`.
     JsonParse,
-    /// std only: `__intrinsic_json_parse_rows<T>(rows: borrow u8[], flags: i64, max_depth: i64): T`
+    /// `(rows: borrow u8[], flags: i64, max_depth: i64) -> T` (no std declaration calls it now)
     /// — `JsonParse` over a driver's binary result rows (`velt_text::rows`) instead of JSON
     /// text: the same generated decoder, the reader made with flag `FLAG_ROWS`
     /// (native_abi.md "Rows").
     JsonParseRows,
-    /// std only: `__intrinsic_json_parse_cursor<T>(cursor: u64, flags: i64, max_depth: i64): T`
+    /// std only: `jsonParseCursor<T>(cursor: u64, flags: i64, max_depth: i64): T`
     /// — `JsonParseRows` over a driver's live rows (the address of a
     /// `velt_text::rows_cursor::RawCursor`, which the caller keeps and releases afterwards): the
     /// reader made with flag `FLAG_CURSOR` (native_abi.md "Row cursors").
     JsonParseCursor,
-    /// std only: `__intrinsic_db_bind<P>(sink: u64, params: borrow P): bool` — hands `params`
+    /// std only: `dbBind<P>(sink: u64, params: borrow P): bool` — hands `params`
     /// to a driver's parameter sink (the address of a `velt_text::rows_cursor::RawSink`) value
     /// by value, as their JSON text would bind; false (nothing done) for a type std binds as
     /// JSON text (native_abi.md "Parameter sinks").
     DbBind,
-    /// std only: `__intrinsic_read_rows<T, S>(src: borrow S): T[] | null` — every remaining row
+    /// std only: `readRowsByColumn<T, S>(src: borrow S): T[] | null` — every remaining row
     /// of the std/db `RowSource` `src`, read by column when `T` is an object of plain fields
     /// and `S` a class whose row methods do not throw; throws `JsonError { message }` for a row
     /// that does not fit. `null` (nothing read) for any other `T` or `S`: std/db then reads
     /// the rows as JSON.
     ReadRows,
-    /// std only: `__intrinsic_read_row<T, S>(src: borrow S): T | null` — the current row of
+    /// std only: `readRowByColumn<T, S>(src: borrow S): T | null` — the current row of
     /// `src` (`next()` returned true), as `ReadRows` reads each; `null` as for `ReadRows`.
     ReadRow,
-    /// std only: `__intrinsic_http_handler(f: (raw: u64) => Promise<u64>)` → `[u64; 6]` =
-    /// `{init, poll, drop, state_size, state_align, env}` for `velt_rt_http_serve` (the closure's
-    /// state machine is the per-request state; `init(env, req, state)` sets `raw = req`; the env
-    /// box is leaked and shared by in-flight requests). See std/http.vlt.
-    HttpHandler,
-    /// std only: `__intrinsic_str_char_code_at(s: borrow string, i: i64) -> i64` — the byte at
+    /// std only: `strCharCodeAt(s: borrow string, i: i64) -> i64` — the byte at
     /// `i`, or -1 when out of range (`s.charCodeAt(i)`, POC byte model); inline code, no call.
     StrCharCodeAt,
     /// `(s, i: u64)` → u8: byte `i` of the UTF-8 bytes of `s`, unchecked (std checks the
@@ -415,7 +409,7 @@ pub enum Intrinsic {
     /// `(s, at: u64, count: u64)` → u8x16: `count` (below 16) bytes from `at` in the low lanes,
     /// 0 in the others, unchecked (a SIMD `load_partial` of the string's bytes).
     StrLoadPartialU8x16,
-    /// std only: `__intrinsic_array_data_ptr(xs: borrow T[]) -> u64` — address of element 0.
+    /// `(xs: borrow T[]) -> u64` — address of element 0 (no std declaration calls it now).
     ArrayDataPtr,
     /// `attempt(f)`: call `f: () => T throws E` (borrowed) and return its result or error as a
     /// value, of type `T | E` (or `E | null` when `T` is `void`); hir_encodings.md "Errors".
@@ -427,23 +421,23 @@ pub enum Intrinsic {
     /// N>` the call has type `N`: the value `next(value)` resumes it with, and its second
     /// argument (owned, evaluated only then) is the value when `next()` passes none.
     Yield,
-    /// std only: `__intrinsic_generator_resume<T, E>(g: Generator<T, E> (modified)): bool`,
+    /// std only: `generatorResume<T, E>(g: Generator<T, E> (modified)): bool`,
     /// throws `E` — run the generator to its next `yield` (true: a value is in the slot) or to
     /// its end (false; also every later call). An error thrown by the body is thrown here.
     GeneratorResume,
-    /// std only: `__intrinsic_generator_value<T, E>(g: Generator<T, E> (modified)): T` — move
+    /// std only: `generatorValue<T, E>(g: Generator<T, E> (modified)): T` — move
     /// the value of the last `yield` out of the slot (once, after `GeneratorResume` returned true).
     GeneratorValue,
-    /// std only: `__intrinsic_generator_return<T, E>(g: Generator<T, E> (modified))` — close
+    /// std only: `generatorReturn<T, E>(g: Generator<T, E> (modified))` — close
     /// the generator: a suspended body runs its `finally` blocks and disposes its `using`
     /// values as if the `yield` were a `return`; then it is done.
     GeneratorReturn,
-    /// std only: `__intrinsic_generator_resume_with<T, E, N>(g: Generator<T, E, N> (modified),
+    /// std only: `generatorResumeWith<T, E, N>(g: Generator<T, E, N> (modified),
     /// value: N (borrowed)): bool`, throws `E` — `next(value)`: like `GeneratorResume`, and the
     /// paused `yield` evaluates to (a copy of) `value`; a generator that has not started
     /// ignores it.
     GeneratorResumeWith,
-    /// std only: `__intrinsic_generator_throw<T, E, N>(g: Generator<T, E, N> (modified), error:
+    /// std only: `generatorThrow<T, E, N>(g: Generator<T, E, N> (modified), error:
     /// any (borrowed)): u32`, throws `E` — `throw(error)`: resume the body with `error` thrown
     /// at the paused `yield`. 1: the body caught it and yielded again (the value is in the
     /// slot); 0: it caught it and finished; 3: nothing caught it (the generator is closed, as
@@ -463,46 +457,46 @@ pub enum Intrinsic {
     GeneratorEmbed,
 
     // Async generators (hir_encodings.md "Async generators")
-    /// std only: `__intrinsic_async_generator_resume<T, E>(g: AsyncGenerator<T, E> (modified)):
+    /// std only: `asyncGeneratorResume<T, E>(g: AsyncGenerator<T, E> (modified)):
     /// Promise<bool, E>`, only as the operand of `await` — run the generator to its next
     /// `yield` (true) or its end (false; also every later call), suspending the awaiting
     /// function while the generator awaits. An error thrown by the body rejects it.
     AsyncGeneratorResume,
-    /// std only: `__intrinsic_async_generator_value<T, E>(g: AsyncGenerator<T, E> (modified)):
+    /// std only: `asyncGeneratorValue<T, E>(g: AsyncGenerator<T, E> (modified)):
     /// T` — like `GeneratorValue`.
     AsyncGeneratorValue,
-    /// std only: `__intrinsic_async_generator_return<T, E>(g: AsyncGenerator<T, E> (modified)):
+    /// std only: `asyncGeneratorReturn<T, E>(g: AsyncGenerator<T, E> (modified)):
     /// Promise<void>`, only as the operand of `await` — close the generator: a body suspended
     /// at a `yield` runs its `finally` blocks and disposals (which may `await`) as if the
     /// `yield` were a `return`; one suspended at an `await` is cancelled. Then it is done.
     AsyncGeneratorReturn,
-    /// std only: `__intrinsic_async_generator_dispose<T, E>(g: AsyncGenerator<T, E>
+    /// std only: `asyncGeneratorDispose<T, E>(g: AsyncGenerator<T, E>
     /// (modified))` — close the generator without awaiting (its drop): like
     /// `AsyncGeneratorReturn`, except that a body whose cleanup at that `yield` would `await`
     /// is cancelled instead (drops only, like a cancelled async function).
     AsyncGeneratorDispose,
 
     // Weak references (std/prelude/weak.vlt; rt_abi.md "Weak references")
-    /// std only: `__intrinsic_weakmap_set<K, V>(m: u32, key: borrow K, value: owned V): u32` —
+    /// std only: `weakMapSet<K, V>(m: u32, key: borrow K, value: owned V): u32` —
     /// store `value` for the object `key` in weak map `m`, creating the map first when `m` is 0
     /// (with `K`'s and `V`'s glue); returns the map. `K` is counted and weak-capable.
     WeakMapSet,
-    /// std only: `__intrinsic_weakmap_get<K>(m: u32, key: borrow K): u64` — the value word
+    /// std only: `weakMapGet<K>(m: u32, key: borrow K): u64` — the value word
     /// stored for `key` (counted), or 0 when there is none (0 is also a stored null or zero:
     /// `WeakMapHas` tells them apart).
     WeakMapGet,
-    /// std only: `__intrinsic_weakmap_has<K>(m: u32, key: borrow K): bool`.
+    /// std only: `weakMapHas<K>(m: u32, key: borrow K): bool`.
     WeakMapHas,
-    /// std only: `__intrinsic_weakmap_delete<K>(m: u32, key: borrow K): bool` — true if there
+    /// std only: `weakMapDelete<K>(m: u32, key: borrow K): bool` — true if there
     /// was an entry (its value is released).
     WeakMapDelete,
-    /// std only: `__intrinsic_weakmap_value<V>(w: u64): V` — the value a word `WeakMapGet`
+    /// std only: `weakMapValue<V>(w: u64): V` — the value a word `WeakMapGet`
     /// returned (taking over its reference).
     WeakMapValue,
-    /// std only: `__intrinsic_weakref_new<T>(target: borrow T): u32` — a `WeakRef` slot of the
+    /// std only: `weakRefNew<T>(target: borrow T): u32` — a `WeakRef` slot of the
     /// object `target`, which is counted and weak-capable.
     WeakRefNew,
-    /// std only: `__intrinsic_weakref_deref<T>(r: u32): T | null` — the target (counted), or
+    /// std only: `weakRefDeref<T>(r: u32): T | null` — the target (counted), or
     /// null once it was freed.
     WeakRefDeref,
 
@@ -562,12 +556,12 @@ pub enum Intrinsic {
     /// not supported yet. Sets `Program::dyn_members`.
     AnyHas,
     /// std only: `(x: borrow any, key: borrow string) -> bool`, `delete x[key]` of a value that
-    /// is not a proxy (std/proxy.vlt, `Reflect.deleteProperty`): a record's entry is
+    /// is not a proxy (std/lang/proxy/index.vlt, `Reflect.deleteProperty`): a record's entry is
     /// removed and an optional field made absent (`true`), a key the value does not have is
     /// `true`, an array's `length` is `false`; a `TypeError` for anything else (a fixed field).
     AnyDelete,
     /// std only: `(x: borrow any, op: i64) -> i64`, an array method running on a proxy of the
-    /// array `x` holds (velt:proxy/array; identified by its data pointer): `op` 1 starts it, -1
+    /// array `x` holds (velt/lang/proxy/array; identified by its data pointer): `op` 1 starts it, -1
     /// ends it and answers the first hole it leaves (or -1), 2 and -2 start and end a trap call
     /// of it (`velt_rt_proxy_array_call`, rt_abi.md "Array methods on a proxy").
     ProxyArrayCall,
@@ -581,6 +575,30 @@ pub enum Intrinsic {
     /// `T` is a typed proxy (velt_vir's tagged pointer, proxy_typed.rs); `false` for a type that
     /// cannot hold one. A test of a bit, so a plain value keeps its own code path.
     IsTypedProxy,
+    /// `(x: borrow T) -> u64`: the identity of the value `x` (velt/reflect `identity`): the
+    /// address of a class object, a boxed value or an array, the data pointer of an `any` that
+    /// holds an object, an array or a function; 0 for a value without one (a number, a string,
+    /// a struct copied by value). A typed proxy's tag bit is cleared. Additive.
+    Identity,
+    /// `(x: borrow T) -> any`: a share of `x` as an `any`, boxed at run time as `ToDyn` boxes it
+    /// (a typed proxy as the proxy), without the conversion's effect on the checks of `T`
+    /// (velt/reflect `dynamicOf`). Additive.
+    ToAny,
+    /// `(x: borrow any) -> string`: what the value `x` holds is, from its descriptor (velt/reflect
+    /// `typeOf`): `"<kind>|<repr>|<name>|<hooks>"`, a static string (`any_reflect.rs`). Additive.
+    AnyReflectInfo,
+    /// `(x: borrow any) -> i64`: how many entries velt/reflect lists for the value `x` holds (the
+    /// fields of an object, the elements of an array or a tuple, the entry positions of a `Map`
+    /// or a `Record`), or -1 when it cannot list them. Additive.
+    AnyReflectCount,
+    /// `(x: borrow any, i: i64) -> string`: the name of entry `i` (`AnyReflectCount`). Additive.
+    AnyReflectName,
+    /// `(x: borrow any, i: i64) -> any`: the value of entry `i`, `undefined` for an absent
+    /// optional field or a deleted `Map` entry. Additive.
+    AnyReflectValue,
+    /// `(x: borrow any, key: borrow string) -> any`: what the `toJSON(key)` hook of the class
+    /// object `x` holds returns (`undefined` without one). Additive.
+    AnyReflectHook,
     /// `(x: borrow any) -> bool`: `Array.isArray(x)` (the value held is an array or a tuple).
     AnyIsArray,
     /// `(x: borrow any) -> string[]`: `Object.keys(x)`, the own enumerable string keys of the
@@ -597,7 +615,7 @@ pub enum Intrinsic {
     /// call through the descriptor. An object or a function held gives `NaN`: sema converts
     /// those with `ToPrimitive` first. Additive (#924).
     AnyToNumber,
-    /// `T.shuffle(a, b, i0, …)` of a SIMD vector type (`velt:simd`): `(a: T, b: T) -> T`, lane
+    /// `T.shuffle(a, b, i0, …)` of a SIMD vector type (`velt/simd`): `(a: T, b: T) -> T`, lane
     /// `k` of the result being lane `lanes[k]` of `a`'s lanes followed by `b`'s. The indices
     /// were integer literals in range (sema checks them), so they are part of the operation:
     /// lowering calls the `velt_simd_<T>_shuffle_<i0>_<i1>…` extern (`velt_vir::simd`).

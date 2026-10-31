@@ -1,15 +1,16 @@
 # TechEmpower-style web benchmarks
 
 The six [TechEmpower Framework Benchmarks](https://github.com/TechEmpower/FrameworkBenchmarks/wiki/Project-Information-Framework-Tests-Overview)
-test types, served by Velt (`std/http` + `std/postgres`) and by the usual baselines, against
+test types, served by Velt (`std/http` + the `postgres` package, a path dependency of
+`package.vlt`) and by the usual baselines, against
 Postgres 17 with the TFB `hello_world` schema. `bench/http/techempower` is the DB-less
 predecessor (plaintext, JSON and an in-memory fortunes page).
 
 ```
 db/init.sql, db/db.sh   Postgres 17 in Docker (container velt-web-pg) with World + Fortune
-velt/server.vlt        std/http + std/postgres (createPool); the routes are in velt/app.ts
-velt-tsx/server.vlt    the same routes, the fortunes page in TSX (velt:jsx, precompiled)
-velt-native/server.vlt every route on velt:http/server, the HTTP/1.1 server written in Velt on std/net (not hyper);
+velt/server.vlt        std/http + the postgres package (createPool); the routes are in velt/app.ts
+velt-tsx/server.vlt    the same routes, the fortunes page in TSX (velt/jsx, precompiled)
+velt-native/server.vlt every route on velt/net/http, the HTTP/1.1 server written in Velt on std/net (not hyper);
                        the database side shared with velt/ through velt/worlds.ts
 node/server.mjs         node:http + pg (Pool); CLUSTER=1: node:cluster, one worker per core
 bun/server.ts           Bun.serve + Bun.SQL (Bun's built-in Postgres client)

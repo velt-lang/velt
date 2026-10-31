@@ -237,6 +237,10 @@ pub(crate) struct FnInfo<'m> {
     /// `declare system function` (`hir::ExternFnDef::system`): per parameter, whether its type
     /// was written `readonly` (a buffer the C function only reads). `None` for anything else.
     pub system: Option<Vec<bool>>,
+    /// `declare intrinsic function` (std/lang/intrinsics): what a call of it is. A call is
+    /// checked against its signature and becomes the intrinsic (`body::expr::intrinsic_call`),
+    /// so its `hir::ExternFnDef` is never called and lowering never declares its symbol.
+    pub intrinsic: Option<crate::intrinsic_decls::DeclaredIntrinsic>,
     /// `function*` / `*name()`: a generator. `ret` is the declared result (`Generator<T>`,
     /// `Iterator<T>` or `Iterable<T>`, its `E` moved into `declared_throws`); a call returns it
     /// with the generator's final error type as `E` (`generators.rs`).

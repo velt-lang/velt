@@ -2,15 +2,16 @@
 // program loads this module when one of its modules names one of them (the global
 // std/prelude/global/json.vlt) or imports a std module that uses them.
 //
-// `JSON.stringify<T>` / `JSON.parse<T>` are compile-time generated per type by the compiler
-// intrinsics (a string builder for stringify, a pull-reader decoder for parse); parse failures
-// throw a `SyntaxError` `JsonError` ("expected string at $.name"). The stringify glue writes a
-// `JsonValue` (at any depth) with its private `__writeJson(b)`, decodes one with
-// `__fromReader(r)`, and `console.log` prints one from the runtime tree `__runtimeHandle()`
+// `JSON.stringify<T>` / `JSON.parse<T>` are generated per type at compile time by the source
+// generators of velt/encoding/json (a string builder for stringify, a pull-reader decoder for
+// parse; a type that generator does not decode yet by the compiler's `jsonParse` intrinsic);
+// parse failures throw a `SyntaxError` `JsonError` ("expected string at $.name"). The
+// generated code writes a `JsonValue` (at any depth) with its private `__writeJson(b)`, decodes
+// one with `__fromReader(r)`, and `console.log` prints one from the runtime tree `__runtimeHandle()`
 // makes for it (freed after).
 //
 // `JSON.parseValue` gives a `JsonValue` for data of unknown shape: a position on a tape (one
-// flat array per document, velt:json/tape), which its children share. A value built or edited
+// flat array per document, velt/encoding/json/tape), which its children share. A value built or edited
 // here is a tree of reference-counted runtime nodes behind an opaque `u64` handle
 // (rt_abi_async.md §3.2; 0 is the null handle, which a `JsonValue` holds for JSON null); an edit
 // turns a tape value into such a tree first.
@@ -24,9 +25,17 @@
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
 // The pull reader under every `JSON.parse<T>` decoder (Velt code; the compiler's glue calls it).
-import { FLAG_COMMENTS, FLAG_REJECT_UNKNOWN, FLAG_TRAILING_COMMAS, Reader } from "velt:json/reader";
+import {
+  FLAG_COMMENTS,
+  FLAG_REJECT_UNKNOWN,
+  FLAG_TRAILING_COMMAS,
+  Reader,
+} from "velt/encoding/json/reader";
 // What `JSON.stringify<T>` writes for numbers and strings (Velt code; the glue calls it).
-import "velt:json/writer";
+import "velt/encoding/json/writer";
+// `JSON.stringify<T>`: the writer generated per type, and the check of a dynamic value at the top.
+import { StringBuilder } from "velt/text/string_builder";
+import { parseJsonTop, writeJsonTop } from "velt/encoding/json/generated";
 // `JSON.parseValue`'s documents: one flat tape each (Velt code).
 import {
   parseTape,
@@ -40,7 +49,7 @@ import {
   T_STRING,
   T_ARRAY,
   T_OBJECT,
-} from "velt:json/tape";
+} from "velt/encoding/json/tape";
 
 declare function velt_rt_strbuf_push_json_value(buf: string, h: u64);
 
@@ -117,7 +126,7 @@ export type JsonParseOptions = {
   trailingCommas?: bool;
 };
 
-// The reader's flags for `options` on top of `base` (std/json/reader.vlt `FLAG_*`).
+// The reader's flags for `options` on top of `base` (std/encoding/json/reader.vlt `FLAG_*`).
 function jsonFlags(options: JsonParseOptions | null, base: i64): i64 {
   let flags = base;
   if (options == null) {
@@ -167,7 +176,9 @@ export class JSON {
    * JS `JSON.stringify`: no whitespace, fields in declaration order, null optional fields omitted.
    */
   static stringify<T>(value: T): string {
-    return __intrinsic_json_stringify(value);
+    const w = new StringBuilder();
+    writeJsonTop<T>(w, value);
+    return w.take();
   }
   // `JSON.stringify(value, replacer, space)` is written by the compiler: the text above, laid
   // out again by `jsonRelayout` (below).
@@ -177,7 +188,7 @@ export class JSON {
    * `options.unknownKeys` is "reject".
    */
   static parse<T>(text: string, options: JsonParseOptions | null = null): T {
-    return __intrinsic_json_parse<T>(text, jsonFlags(options, 0), jsonMaxDepth(options));
+    return parseJsonTop<T>(text, jsonFlags(options, 0), jsonMaxDepth(options));
   }
 
   /**
@@ -188,7 +199,7 @@ export class JSON {
    * field a `null` its type can't hold).
    */
   static __parseFromContext<T>(text: string, options: JsonParseOptions | null = null): T {
-    return __intrinsic_json_parse<T>(text, jsonFlags(options, 2), jsonMaxDepth(options));
+    return parseJsonTop<T>(text, jsonFlags(options, 2), jsonMaxDepth(options));
   }
 
   /**
@@ -201,12 +212,12 @@ export class JSON {
 }
 
 /**
- * A JSON value of any shape, as `JSON.parseValue` returns it (`velt:json` calls it `Value`). It
+ * A JSON value of any shape, as `JSON.parseValue` returns it (`velt/encoding/json` calls it `Value`). It
  * has value semantics: an edit never shows through a clone, a parent or a child. Accessors on
  * the wrong kind return null / 0. `JSON.stringify` and `JSON.parse<T>` read and write it. Only
  * std makes one: the constructor is private, so no class can extend `JsonValue`.
  *
- * Two forms (#1660). A parsed value is a position on a tape (velt:json/tape): reading it makes
+ * Two forms (#1660). A parsed value is a position on a tape (velt/encoding/json/tape): reading it makes
  * nothing, and its children share the tape. A value built or edited here (`object()`, `set`, …)
  * or read from a database driver is a tree of reference-counted runtime nodes behind `#handle`
  * (which stays the first field: compiled glue writes it); an edit turns a tape value into such
@@ -327,10 +338,11 @@ export class JsonValue {
   }
 
   /**
-   * Reads one value with `r` (compiled glue: a `JsonValue` field being decoded): null when the
-   * reader failed. Private: the glue calls it by name.
+   * Reads one value with `r` (a `JsonValue` being decoded: the decoders velt/encoding/json
+   * generates call it, as the compiler's glue does by name): null when the reader failed.
+   * Internal, not part of the API.
    */
-  private static __fromReader(r: Reader): JsonValue | null {
+  static __fromReader(r: Reader): JsonValue | null {
     const limit = r.valueLimit();
     if (limit >= 0) {
       const t = parseWith(r, limit as u32, false);
@@ -570,6 +582,14 @@ export class JsonValue {
       out.push(key);
     }
     return out;
+  }
+
+  /**
+   * Its JSON text, as `stringify()`: what `JSON.stringify` writes for a `JsonValue` that an
+   * `any` holds (the text itself, not a JSON string of it).
+   */
+  toJSON(): string {
+    return this.stringify();
   }
 
   /** Same as `JSON.stringify(this)`. */

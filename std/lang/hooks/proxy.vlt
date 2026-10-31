@@ -1,0 +1,386 @@
+// velt/lang/hooks (internal): the operations on `any` that a proxy answers with its traps, which
+// sema calls in a program that has loaded `Proxy` (std/prelude/global/proxy.vlt) instead of the
+// hooks of any_object.vlt: a spread, `Object.hasOwn`, `Object.values` / `entries` and
+// `delete` of an `any`; the operations whose key is a symbol constant (`p[KEY]`, `KEY in p`,
+// `delete p[KEY]`, `Object.hasOwn(p, KEY)`); and `new Proxy(target, handler)` with a handler typed
+// `any` (issue #823; docs/reference/types.md "Proxy and Reflect").
+//
+// A symbol constant names a member of a typed value by its key name (U+FFFF and `Symbol(d)`,
+// velt_sema's `symbols.rs`); sema passes both that name and the symbol itself, so a plain value
+// is read by the name, as before, and a proxy's trap sees the symbol, as in JavaScript.
+
+import { PropertyDescriptor, Proxy, ProxyHandler, Reflect, symbolKeyName } from "velt/lang/proxy";
+import {
+  anyDeleteMember,
+  anyEntries,
+  anyHasOwn,
+  anyValues,
+  spreadAny,
+} from "velt/lang/hooks/any_object";
+import { arrayIndex } from "velt/lang/hooks/record";
+import {
+  PROXY_DELETE,
+  PROXY_GET,
+  PROXY_GET_GETTER,
+  PROXY_GET_OWN_PROPERTY_DESCRIPTOR,
+  PROXY_HAS,
+  PROXY_HAS_OWN,
+  PROXY_IS_ARRAY,
+  PROXY_KEYS,
+  PROXY_OWN_KEYS,
+  PROXY_SELF,
+  PROXY_SET,
+} from "velt/lang/hooks/keys";
+
+/** `{ ...o }` of an `any` `o` into `r`: a proxy's enumerable own entries, else `spreadAny`. */
+export function spreadAnyProxy(r: Record<string, any>, o: any): void {
+  if (o instanceof Proxy) {
+    for (const [k, v] of proxyEntries(o)) {
+      r.__set(k, v);
+    }
+    return;
+  }
+  spreadAny(r, o);
+}
+
+/** `Object.hasOwn(o, k)` of an `any` `o`: a proxy's `getOwnPropertyDescriptor` trap. */
+export function anyHasOwnProxy(o: any, key: string | symbol): boolean {
+  if (o instanceof Proxy) {
+    return o[PROXY_HAS_OWN](key);
+  }
+  if (arrayIndexKey(o, key)) {
+    // An element, which may be a hole an array method on a proxy made (velt/lang/proxy/array).
+    return Reflect.getOwnPropertyDescriptor(o, key) !== undefined;
+  }
+  return anyHasOwn(o, key);
+}
+
+/** Is `o` an array and `key` the string or number of an index? */
+function arrayIndexKey(o: any, key: any): boolean {
+  if (!Array.isArray(o)) {
+    return false;
+  }
+  if (typeof key === "number") {
+    return (arrayIndex(`${key as number}`) as number) >= 0;
+  }
+  return typeof key === "string" && (arrayIndex(key as string) as number) >= 0;
+}
+
+/** `Object.values(o)` of an `any` `o`. */
+export function anyValuesProxy(o: any): any[] {
+  if (o instanceof Proxy) {
+    const out: any[] = [];
+    for (const [_, v] of proxyEntries(o)) {
+      out.push(v);
+    }
+    return out;
+  }
+  return anyValues(o);
+}
+
+/** `Object.entries(o)` of an `any` `o`. */
+export function anyEntriesProxy(o: any): [string, any][] {
+  if (o instanceof Proxy) {
+    return proxyEntries(o);
+  }
+  return anyEntries(o);
+}
+
+/**
+ * The enumerable own entries of the proxy `p`, in Node's order: its keys, then for each string
+ * key its property and, when that is enumerable, its value.
+ */
+function proxyEntries(p: Proxy): [string, any][] {
+  const out: [string, any][] = [];
+  for (const k of p[PROXY_OWN_KEYS]()) {
+    if (typeof k === "string") {
+      const d = p[PROXY_GET_OWN_PROPERTY_DESCRIPTOR](k);
+      if (d !== undefined && d.enumerable === true) {
+        out.push([k, p[PROXY_GET](k, p)]);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * `delete o.k` / `delete o[k]` of an `any` `o` (strict code): a proxy's `deleteProperty` trap,
+ * which throws Node's `TypeError` when it answers `false`.
+ */
+export function anyDeleteProxy(o: any, k: any): boolean {
+  if (o instanceof Proxy) {
+    return o[PROXY_DELETE](k);
+  }
+  if (arrayIndexKey(o, k)) {
+    // An element, which an array method on a proxy may delete (velt/lang/proxy/array).
+    return Reflect.deleteProperty(o, k);
+  }
+  return anyDeleteMember(o, k);
+}
+
+/**
+ * `o.key` of a class getter `key` on a class instance brand that holds a typed proxy (velt_sema
+ * `proxy_getters.rs`): the `get` trap's answer, where a trap that forwards the getter with
+ * `Reflect.get(target, key, receiver)` stops (#1732).
+ */
+export function brandGetterRead(o: any, key: string): any {
+  if (o instanceof Proxy) {
+    return o[PROXY_GET_GETTER](key);
+  }
+  return o[key];
+}
+
+/** `o[KEY]` of an `any` `o` with a symbol constant `KEY` naming the member `name`. */
+export function anyGetSym(o: any, name: string, key: symbol): any {
+  const recv: any = o;
+  if (o instanceof Proxy) {
+    return o[PROXY_GET](key, recv);
+  }
+  if (o instanceof Record) {
+    // A record's symbol table (std/lang/record/reflect.vlt).
+    return o.__symGet(key);
+  }
+  return o[name];
+}
+
+/**
+ * `o[k]` of an `any` `o` with a key that is a symbol or `string | symbol` at run time (held
+ * as an `any`): a symbol as `anyGetSym`, with the member name it keys on a typed value.
+ */
+export function anyGetKey(o: any, k: any): any {
+  if (typeof k === "symbol") {
+    const s = k as symbol;
+    return anyGetSym(o, symbolKeyName(s), s);
+  }
+  return o[k];
+}
+
+/** `o[k] = v` of an `any` `o` with a key as `anyGetKey` takes it. */
+export function anySetKey(o: any, k: any, v: any): void {
+  if (typeof k === "symbol") {
+    const s = k as symbol;
+    anySetSym(o, symbolKeyName(s), s, v);
+    return;
+  }
+  o[k] = v;
+}
+
+/** `k in o` of an `any` `o` with a key as `anyGetKey` takes it. */
+export function anyHasKey(o: any, k: any): boolean {
+  if (typeof k === "symbol") {
+    const s = k as symbol;
+    return anyHasSym(o, symbolKeyName(s), s);
+  }
+  return k in o;
+}
+
+/** `delete o[k]` of an `any` `o` with a key as `anyGetKey` takes it (strict code). */
+export function anyDeleteKey(o: any, k: any): boolean {
+  if (typeof k === "symbol") {
+    const s = k as symbol;
+    return anyDeleteSym(o, symbolKeyName(s), s);
+  }
+  return Reflect.deleteProperty(o, k);
+}
+
+/** `o[KEY] = v` of an `any` `o` with a symbol constant `KEY` naming the member `name`. */
+export function anySetSym(o: any, name: string, key: symbol, v: any): void {
+  const recv: any = o;
+  if (o instanceof Proxy) {
+    if (!o[PROXY_SET](key, v, recv)) {
+      panic(`TypeError: 'set' on proxy: trap returned falsish for property '${String(key)}'`);
+    }
+    return;
+  }
+  if (o instanceof Record) {
+    o.__symSet(key, v);
+    return;
+  }
+  o[name] = v;
+}
+
+/** `KEY in o` of an `any` `o` with a symbol constant `KEY` naming the member `name`. */
+export function anyHasSym(o: any, name: string, key: symbol): boolean {
+  if (o instanceof Proxy) {
+    return o[PROXY_HAS](key);
+  }
+  if (o instanceof Record) {
+    return o.__symHas(key) as boolean;
+  }
+  return name in o;
+}
+
+/** `delete o[KEY]` of an `any` `o` with a symbol constant `KEY` (strict code). */
+export function anyDeleteSym(o: any, name: string, key: symbol): boolean {
+  if (o instanceof Proxy) {
+    return o[PROXY_DELETE](key);
+  }
+  if (o instanceof Record) {
+    return o.__symDelete(key) as boolean;
+  }
+  return anyDeleteMember(o, name);
+}
+
+/** `Object.hasOwn(o, KEY)` of an `any` `o` with a symbol constant `KEY`. */
+export function anyHasOwnSym(o: any, name: string, key: symbol): boolean {
+  if (o instanceof Proxy) {
+    return o[PROXY_HAS_OWN](key);
+  }
+  return anyHasOwn(o, key);
+}
+
+/**
+ * `new Proxy(target, handler)` with a handler typed `any`: a proxy whose traps call the
+ * handler's own (`handler.get(target, key, receiver)`, ...), each one the handler has when the
+ * proxy is made.
+ */
+export function proxyNewAny(target: any, handler: any): any {
+  if (
+    target === null ||
+    (typeof target !== "object" && typeof target !== "function") ||
+    handler === null ||
+    (typeof handler !== "object" && typeof handler !== "function")
+  ) {
+    panic("TypeError: Cannot create proxy with a non-object as target or handler");
+  }
+  const h: ProxyHandler<any> = {
+    get:
+      "get" in handler
+        ? (t: any, k: string | symbol, r: any): any => handler.get(t, k, r)
+        : undefined,
+    set:
+      "set" in handler
+        ? (t: any, k: string | symbol, v: any, r: any): boolean =>
+          handler.set(t, k, v, r) ? true : false
+        : undefined,
+    has:
+      "has" in handler
+        ? (t: any, k: string | symbol): boolean => (handler.has(t, k) ? true : false)
+        : undefined,
+    deleteProperty:
+      "deleteProperty" in handler
+        ? (t: any, k: string | symbol): boolean => (handler.deleteProperty(t, k) ? true : false)
+        : undefined,
+    ownKeys: "ownKeys" in handler ? (t: any): any => handler.ownKeys(t) : undefined,
+    getOwnPropertyDescriptor:
+      "getOwnPropertyDescriptor" in handler
+        ? (
+          t: any,
+          k: string | symbol,
+        ): PropertyDescriptor | undefined => handler.getOwnPropertyDescriptor(t, k)
+        : undefined,
+    defineProperty:
+      "defineProperty" in handler
+        ? (t: any, k: string | symbol, d: PropertyDescriptor): boolean =>
+          handler.defineProperty(t, k, d) ? true : false
+        : undefined,
+  };
+  return new Proxy(target, h);
+}
+
+/**
+ * `Object.prototype.hasOwnProperty` read as a value (`const hasOwn =
+ * Object.prototype.hasOwnProperty`): `hasOwn.call(o, k)` is `Object.hasOwn(o, k)`.
+ */
+export class HasOwnPropertyProxy {
+  /** Whether `o` has the own property `key`. */
+  call(o: any, key: string | symbol): boolean {
+    return anyHasOwnProxy(o, key);
+  }
+}
+
+/**
+ * `Object.keys(x)` of a typed proxy `x` (velt_sema tests `Intrinsic::IsTypedProxy` first): the
+ * keys its traps list (`ownKeys`, `getOwnPropertyDescriptor`). A view (`Proxy[PROXY_VIEW]`) is the
+ * object it views once in an `any`: its own keys.
+ */
+export function proxyKeysOf(o: any): string[] {
+  if (o instanceof Proxy) {
+    return o[PROXY_KEYS]();
+  }
+  return Object.keys(o);
+}
+
+/**
+ * `{ ...x }` of a class instance or an object `x` in a program that makes proxies: a typed
+ * proxy's keys are what its traps list, which a value of a fixed shape cannot follow yet.
+ */
+export function proxySpreadCheck(o: any): void {
+  if (o instanceof Proxy) {
+    panic(
+      "TypeError: spreading a proxy typed as a class or object type is not supported yet (#823)",
+    );
+  }
+}
+
+/** `Array.isArray(o)` of an `any` `o` in a program that has loaded `Proxy`: a proxy of an array is one. */
+export function anyIsArrayProxy(o: any): boolean {
+  if (o instanceof Proxy) {
+    return o[PROXY_IS_ARRAY]();
+  }
+  return Array.isArray(o);
+}
+
+/**
+ * `"k" in x` of a typed proxy `x` (velt_sema tests `Intrinsic::IsTypedProxy` first): its `has`
+ * trap; of a view, the object it views.
+ */
+export function proxyHas(o: any, k: string): boolean {
+  if (o instanceof Proxy) {
+    return o[PROXY_HAS](k);
+  }
+  return k in o;
+}
+
+/**
+ * `Object.hasOwn(x, k)` of a typed proxy `x` (velt_sema tests `Intrinsic::IsTypedProxy` first):
+ * its `getOwnPropertyDescriptor` trap for `k`.
+ */
+export function proxyHasOwnOf(o: any, k: string): boolean {
+  if (o instanceof Proxy) {
+    return o[PROXY_HAS_OWN](k);
+  }
+  // A view: the object it views.
+  return anyHasOwnProxy(o, k);
+}
+
+/**
+ * A typed proxy `x` as the `any` it is (velt_sema tests `Intrinsic::IsTypedProxy` first). `x`
+ * is only borrowed (a returned parameter would be taken over, making its type counted).
+ */
+export function proxyAny(o: any): any {
+  if (o instanceof Proxy) {
+    return o[PROXY_SELF]();
+  }
+  // A view: the object it views.
+  return o;
+}
+
+/**
+ * The keys `for (const k in o)` of an `any` `o` visits, each tested just before its turn
+ * (`__anyForInHasProxy`): a proxy's string keys from its `ownKeys` trap, else `Object.keys(o)`.
+ */
+export function anyForInKeys(o: any): string[] {
+  if (o instanceof Proxy) {
+    const out: string[] = [];
+    for (const k of o[PROXY_OWN_KEYS]()) {
+      if (typeof k === "string") {
+        out.push(k as string);
+      }
+    }
+    return out;
+  }
+  return Object.keys(o);
+}
+
+/**
+ * Whether `for (const k in o)` visits `k` at its turn: a proxy's `getOwnPropertyDescriptor`
+ * trap finds it enumerable; a plain value's keys were listed when the loop began.
+ */
+export function anyForInHas(o: any, k: string): boolean {
+  if (o instanceof Proxy) {
+    const d = o[PROXY_GET_OWN_PROPERTY_DESCRIPTOR](k);
+    return d !== undefined && d.enumerable === true;
+  }
+  return true;
+}

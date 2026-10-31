@@ -1,0 +1,383 @@
+// velt/encoding/json (internal): what `JSON.parse` cannot decode, found on the model by the
+// generator of `parseJsonTop` (read.vlt) and reported at each call that parses it, with the
+// messages the language reference gives (docs/std/encoding/json.md): a value that may be
+// `undefined`, a function with properties, a union whose members a document cannot tell apart,
+// a class whose constructor is not public, a private field, a dynamic value, and any other
+// type without a JSON form.
+
+import { Model, Type } from "velt/generate";
+import { hiddenKey } from "velt/encoding/json/generate/facts";
+import { messageQuote, unquote } from "velt/encoding/json/generate/choice";
+
+const SUPPORTED =
+  "JSON supports numbers, boolean, string, literal types, enums, arrays, tuples, `T | null`, `Map<string, T>`, structs, classes and object literals of those, and `JsonValue`";
+
+const JSON_VALUE = "std/prelude/json/json::JsonValue";
+
+/** A problem: the message (with its notes, one per line), and a label at a field (-1: none). */
+export class ParseProblem {
+  message: string = "";
+  labelAt: i64 = -1;
+  label: string = "";
+}
+
+/** Why `JSON.parse` cannot decode a value of model type `id`, or null when it can. */
+export function parseProblem(model: Model, id: i64): ParseProblem | null {
+  const t = model.type(id);
+  const unsupported = notYet(model, t);
+  if (unsupported.length > 0) {
+    const p = new ParseProblem();
+    p.message = `${unsupported} is not supported yet`;
+    return p;
+  }
+  const bad = undecodable(model, id, []);
+  if (bad < 0) {
+    return null;
+  }
+  const b = model.type(bad);
+  const tn = t.display;
+  const bn = b.display;
+  const within = bad == id ? "" : ` (in \`${tn}\`)`;
+  const p = new ParseProblem();
+  const why = b.kind == "union" ? unionProblem(model, b) : "";
+  if (why.length > 0) {
+    let fix = "parse a `JsonValue` and build the union from it";
+    if (why.includes("objects")) {
+      fix =
+        "give each object member a literal field such as `kind: \"a\"` (a discriminant), or parse a `JsonValue` and build the union from it";
+    } else if (why.includes("are both the JSON")) {
+      fix = "give each member its own values, or parse a `JsonValue` and build the union from it";
+    }
+    p.message = `\`JSON.parse\` cannot decode the union \`${bn}\`${within}: ${why}\n${fix}`;
+    return p;
+  }
+  if (b.ctorAccess.length > 0) {
+    const name = shortName(b);
+    const article = "AEIOU".includes(name.charAt(0)) && name.length > 0 ? "an" : "a";
+    let note = `decoding fills the fields without running a constructor; decode into a plain object type and create the \`${name}\` from it with a static factory method`;
+    if (b.factories.length > 0) {
+      const calls = b.factories.map((f) => `\`${name}.${f}(...)\``);
+      const last = calls.pop()!;
+      const all = calls.length == 0 ? last : `${calls.join(", ")} or ${last}`;
+      note = `decoding fills the fields without running a constructor; decode into a plain object type and call ${all}`;
+    }
+    p.message = `\`JSON.parse\` cannot create ${article} \`${name}\`${within}: its constructor is ${b.ctorAccess}\n${note}`;
+    return p;
+  }
+  if (b.kind == "generator") {
+    const what =
+      bad == id ? `\`${tn}\` is a generator` : `\`${tn}\` contains the generator \`${bn}\``;
+    p.message = `cannot convert to or from JSON: ${what}\nTypeScript allows this (\`JSON.stringify\` writes a generator as \`{}\`); Velt doesn't because a generator is a paused computation, not data; write the values it yields instead (collect them into an array with \`for...of\`)`;
+    return p;
+  }
+  if (b.dynamic) {
+    p.message = `\`JSON.parse\` into \`${bn}\`${within} is not supported yet (#924)\nTypeScript gives an \`any\` holding whatever the text has; Velt decodes into a type and checks the data against it\nname the type the JSON must have: \`JSON.parse(text) as User\`, \`JSON.parse<User>(text)\` or \`const u: User = JSON.parse(text)\`, or use \`JSON.parseValue(text)\` (a \`JsonValue\`) for data of unknown shape`;
+    return p;
+  }
+  let field = b.privateField;
+  let fieldAt: i64 = -1;
+  if (b.kind != "map" && b.kind != "record") {
+    for (const f of b.fields) {
+      if (f.isPrivate) {
+        field = f.name;
+        fieldAt = f.at;
+        break;
+      }
+    }
+  }
+  if (field.length > 0 && b.kind != "map" && b.kind != "record") {
+    const what =
+      bad == id
+        ? `\`${tn}\` has a private field \`${field}\`, which decoding cannot set`
+        : `\`${tn}\` contains \`${bn}\`, whose private field \`${field}\` decoding cannot set`;
+    p.message = `cannot convert to or from JSON: ${what}\ndecoding fills fields without running the constructor, so it cannot build a type with private fields; decode into a type with public fields and construct it from that`;
+    p.labelAt = fieldAt;
+    p.label = "private field";
+    return p;
+  }
+  const what =
+    bad == id
+      ? `\`${tn}\` has no JSON form`
+      : `\`${tn}\` contains \`${bn}\`, which has no JSON form`;
+  p.message = `cannot convert to or from JSON: ${what}\n${SUPPORTED}`;
+  if (b.kind == "map") {
+    p.message += "\na `Map` converts to a JSON object only with `string` keys";
+  }
+  return p;
+}
+
+/** A declared type's own name (`Money` of `app::Money`). */
+function shortName(t: Type): string {
+  const q = t.qualifiedName;
+  const i = q.lastIndexOf("::");
+  return i >= 0 ? q.slice(i + 2) : t.display;
+}
+
+/**
+ * What of type `t` this version cannot decode yet: a value that may be `undefined` (a
+ * `T | null | undefined` reads as its `T | null`), a function with properties or a class used
+ * as a value ("" when none).
+ */
+function notYet(model: Model, t: Type): string {
+  const seen: i64[] = [];
+  const stack: i64[] = [t.id];
+  while (stack.length > 0) {
+    const id = stack.pop()!;
+    if (seen.includes(id)) {
+      continue;
+    }
+    seen.push(id);
+    const u = model.type(id);
+    if (u.kind == "option" && u.literal == "undefined") {
+      return "`JSON.parse` into a type that may hold `undefined`";
+    }
+    if ((u.kind == "function" && u.hasProperties) || u.classValue) {
+      return "`JSON.parse` into a function with properties (#921)";
+    }
+    for (const a of u.args) {
+      stack.push(a);
+    }
+    for (const a of u.arms) {
+      stack.push(a);
+    }
+    for (const f of u.fields) {
+      stack.push(f.type);
+    }
+  }
+  return "";
+}
+
+/** The first part of type `id` that `JSON.parse` cannot decode (`stack`: the types being looked at), or -1. */
+function undecodable(model: Model, id: i64, stack: i64[]): i64 {
+  const t = model.type(id);
+  const k = t.kind;
+  if (k == "number" || k == "boolean" || k == "string" || k == "literal" || k == "enum") {
+    return -1;
+  }
+  if (k == "opaque" && t.qualifiedName == JSON_VALUE) {
+    return -1;
+  }
+  if (k == "array" || k == "option") {
+    return undecodable(model, t.args[0], stack);
+  }
+  if (stack.includes(id)) {
+    return -1;
+  }
+  stack.push(id);
+  let bad: i64 = -1;
+  if (k == "tuple") {
+    bad = first(model, t.args, stack);
+  } else if (k == "record") {
+    bad = undecodable(model, t.args[1], stack);
+  } else if (k == "map") {
+    bad = model.type(t.args[0]).kind == "string" ? undecodable(model, t.args[1], stack) : id;
+  } else if (k == "union") {
+    bad = unionProblem(model, t).length > 0 ? id : first(model, t.arms, stack);
+  } else if ((k == "object" || k == "struct" || k == "class") && !t.dynamic) {
+    if (t.ctorAccess.length > 0 || t.fields.some((f) => f.isPrivate)) {
+      bad = id;
+    } else {
+      for (const f of t.fields) {
+        bad = undecodable(model, f.type, stack);
+        if (bad >= 0) {
+          break;
+        }
+      }
+    }
+  } else {
+    bad = id;
+  }
+  stack.pop();
+  return bad;
+}
+
+function first(model: Model, ids: i64[], stack: i64[]): i64 {
+  for (const a of ids) {
+    const bad = undecodable(model, a, stack);
+    if (bad >= 0) {
+      return bad;
+    }
+  }
+  return -1;
+}
+
+/**
+ * How a union member is recognized in a document (`str`, `strLits`, `num`, `numLits`, `bool`,
+ * `boolLits`, `array`, `object`, `dict`: any object, `any`: any value).
+ */
+function shape(model: Model, id: i64): string {
+  const t = model.type(id);
+  const k = t.kind;
+  if (k == "string") {
+    return "str";
+  }
+  if (k == "number") {
+    return "num";
+  }
+  if (k == "boolean") {
+    return "bool";
+  }
+  if (k == "literal") {
+    return t.literal.startsWith("\"")
+      ? "strLits"
+      : t.literal == "true" || t.literal == "false" ? "boolLits" : "numLits";
+  }
+  if (k == "enum") {
+    return t.members.some((m) => m.value.startsWith("\"")) ? "strLits" : "numLits";
+  }
+  if (k == "array" || k == "tuple") {
+    return "array";
+  }
+  if (k == "opaque" && t.qualifiedName == JSON_VALUE) {
+    return "any";
+  }
+  if (k == "map" || k == "record") {
+    return "dict";
+  }
+  return "object";
+}
+
+/** A JSON value a literal is matched by: its kind (`string`, `number`) and its text. */
+function jsonLit(source: string): [string, string] {
+  if (source.startsWith("\"")) {
+    return ["string", unquote(source)];
+  }
+  return ["number", `${Number(source)}`];
+}
+
+/** `string "a"`, `number 1`. */
+function describe(lit: [string, string]): string {
+  return lit[0] == "string" ? `string ${messageQuote(lit[1])}` : `number ${lit[1]}`;
+}
+
+/** The literals member `m` is matched by, each with its name in messages (`"a"`, `1`, `E.A`). */
+function memberLiterals(model: Model, m: Type): [string, [string, string]][] {
+  const out: [string, [string, string]][] = [];
+  if (m.kind == "literal" && m.literal != "true" && m.literal != "false") {
+    out.push([m.display, jsonLit(m.literal)]);
+  } else if (m.kind == "enum") {
+    const e = shortName(m);
+    for (const x of m.members) {
+      out.push([`${e}.${x.name}`, jsonLit(x.value)]);
+    }
+  }
+  return out;
+}
+
+/** Why the members of union `t` cannot be told apart in a document, or "". */
+export function unionProblem(model: Model, t: Type): string {
+  const shapes = t.arms.map((a) => shape(model, a));
+  const of = (want: string[]): i64[] => {
+    const out: i64[] = [];
+    for (let i: i64 = 0; i < (t.arms.length as i64); i++) {
+      if (want.includes(shapes[i])) {
+        out.push(t.arms[i]);
+      }
+    }
+    return out;
+  };
+  const both = (
+    ms: i64[],
+    what: string,
+  ): string => `\`${model.type(ms[0]).display}\` and \`${model.type(ms[1]).display}\` are both ${what}`;
+  if (shapes.includes("any")) {
+    return "a `JsonValue` member takes any JSON value";
+  }
+  const seen: [i64, string, [string, string]][] = [];
+  for (let i: i64 = 0; i < (t.arms.length as i64); i++) {
+    if (shapes[i] != "strLits" && shapes[i] != "numLits") {
+      continue;
+    }
+    for (const [name, lit] of memberLiterals(model, model.type(t.arms[i]))) {
+      for (const [j, other, l] of seen) {
+        if (j != i && l[0] == lit[0] && l[1] == lit[1]) {
+          return `\`${other}\` and \`${name}\` are both the JSON ${describe(lit)}`;
+        }
+      }
+      seen.push([i, name, lit]);
+    }
+  }
+  const nums = of(["num"]);
+  if (nums.length > 1) {
+    return both(nums, "JSON numbers");
+  }
+  const arrays = of(["array"]);
+  if (arrays.length > 1) {
+    return both(arrays, "JSON arrays");
+  }
+  const objects = of(["object", "dict"]);
+  if (objects.length > 1) {
+    const dicts = of(["dict"]);
+    if (dicts.length > 0) {
+      return `\`${model.type(dicts[0]).display}\` takes any JSON object`;
+    }
+    const disc = discriminant(model, objects);
+    if (disc.length > 0) {
+      const lits: [i64, [string, string]][] = [];
+      for (const m of objects) {
+        const mt = model.type(m);
+        const f = mt.fields.find((x) => x.name == disc)!;
+        const lit = jsonLit(model.type(f.type).literal);
+        for (const [o, l] of lits) {
+          if (l[0] == lit[0] && l[1] == lit[1]) {
+            const a = model.type(o).display;
+            return `\`${a}.${disc}\` and \`${mt.display}.${disc}\` are both the JSON ${describe(lit)}`;
+          }
+        }
+        lits.push([m, lit]);
+      }
+    } else if (!ownKeys(model, objects)) {
+      return both(
+        objects,
+        "objects with no discriminant field and no required field that only one of them has",
+      );
+    }
+  }
+  return "";
+}
+
+/** The fields of object type `t` a JSON key fills. */
+function keyed(t: Type): string[] {
+  return t.fields.filter((f) => !hiddenKey(f)).map((f) => f.name);
+}
+
+/**
+ * A field every object member has with a literal type, the types all different (`1` and
+ * `1.0` are), or "".
+ */
+function discriminant(model: Model, objects: i64[]): string {
+  for (const name of keyed(model.type(objects[0]))) {
+    const types: string[] = [];
+    let ok = true;
+    for (const m of objects) {
+      const f = model.type(m).fields.find((x) => x.name == name);
+      const ft = f == null ? null : model.type(f.type);
+      if (ft == null || ft.kind != "literal" || types.includes(ft.display)) {
+        ok = false;
+        break;
+      }
+      types.push(ft.display);
+    }
+    if (ok) {
+      return name;
+    }
+  }
+  return "";
+}
+
+/** Has each object member a required field no other member has? */
+function ownKeys(model: Model, objects: i64[]): bool {
+  for (const m of objects) {
+    const mt = model.type(m);
+    const own = mt.fields.some((f) => {
+      if (hiddenKey(f) || f.optional || model.type(f.type).kind == "option") {
+        return false;
+      }
+      return objects.every((o) => o == m || !keyed(model.type(o)).includes(f.name));
+    });
+    if (!own) {
+      return false;
+    }
+  }
+  return true;
+}

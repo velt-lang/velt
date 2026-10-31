@@ -1,6 +1,6 @@
 // Command-line options: the parser (also the source of `--help`) and the parsed settings.
-import { ArgParser, CliError } from "velt:cli";
-import { availableParallelism } from "velt:os";
+import { ArgParser, CliError } from "velt/cli";
+import { availableParallelism } from "velt/os";
 
 export type Options = {
   pattern: string;

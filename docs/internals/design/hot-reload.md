@@ -158,7 +158,7 @@ and optionally *code* to define:
   the code itself; a later version that does not recompile one imports the newest address.
 - The handler descriptor's `init` is pinned too: `init`, `poll`, `drop` and the state size must
   come from one version. When a swap recompiles a handler, each running server gets a whole new
-  descriptor and keeps its environment. For `velt:http`'s `serve`, the user's handler is a
+  descriptor and keeps its environment. For `velt/http`'s `serve`, the user's handler is a
   closure *value* that the std wrapper calls through its trampoline, so editing a handler never
   touches the descriptor.
 

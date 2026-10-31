@@ -1,0 +1,360 @@
+// http-server (internal): `HeadParser`, which parses an HTTP/1.1 request head in place in its
+// connection's buffer (`Parser`, http1/parser.vlt finds where it ends) into a `Head`: the
+// request line, every header's ranges (four numbers each, for `header(name)`), and the framing
+// of the body. The headers the server acts on are recognised by their length and one vector
+// compare, letters folded to lowercase; requests are framed strictly as RFC 9112 says, so a
+// proxy in front of the server cannot find other request boundaries than it does.
+//
+// The byte strings it compares with are made per connection: module-level constants that are
+// not literals are module state, behind one process-wide lock (#1487).
+
+import { utf8Encode } from "velt/encoding";
+import { mask8x16, u8x16 } from "velt/simd";
+import { BadRequest } from "./bad_request";
+import { isTchar } from "../fields";
+import { BODY_BUFFERED, BODY_CHUNKED, BODY_LENGTH, BODY_NONE, Head } from "./head";
+
+const CR: u8 = 13;
+const LF: u8 = 10;
+const SP: u8 = 32;
+const TAB: u8 = 9;
+const COLON: u8 = 58;
+const COMMA: u8 = 44;
+const DEL: u8 = 127;
+
+/// What a head's Connection tokens said, and its Transfer-Encoding codings: one was seen, the
+/// last so far is `chunked`, another one is there.
+const CONN_CLOSE: i64 = 1;
+const CONN_KEEP_ALIVE: i64 = 2;
+const TE_SEEN: i64 = 1;
+const TE_LAST_CHUNKED: i64 = 2;
+const TE_OTHER: i64 = 4;
+
+/// Transfer-Encoding (RFC 9112 §6.1, §6.3): not with Content-Length (`length` >= 0), not in
+/// HTTP/1.0, and `chunked` last, else the body's end is unknown (400). The server decodes no
+/// other coding (501).
+function checkCodings(te: i64, length: i64, http11: bool) {
+  if (length >= 0 || !http11 || (te & TE_LAST_CHUNKED) == 0) {
+    throw new BadRequest(400);
+  }
+  if ((te & TE_OTHER) != 0) {
+    throw new BadRequest(501);
+  }
+}
+
+/// The bit of `byteClasses()` for a token character.
+const TOKEN: u8 = 1;
+
+/// For each byte value, its `TOKEN` bit: a method's and a header name's scan take one load a
+/// byte.
+function byteClasses(): u8[] {
+  const t: u8[] = Buffer.alloc(256);
+  for (let c: i64 = 0; c < 256; c++) {
+    t[c] = isTchar(c as u8) ? TOKEN : 0;
+  }
+  return t;
+}
+
+/// The lowercase name `s` (at most 16 bytes) as a vector, for `HeadParser`'s compares.
+function nameVector(s: string): u8x16 {
+  const b: u8[] = Buffer.alloc(16);
+  b.set(utf8Encode(s), 0);
+  return u8x16.load(b, 0);
+}
+
+/// Parses request heads for one connection.
+export class HeadParser {
+  /// The largest body accepted (413 past it), and the most headers (431).
+  private maxBody: i64;
+  private maxHeaders: i64;
+  // The list element `element` found.
+  private elementStart: i64 = 0;
+  private elementEnd: i64 = 0;
+  // The headers the server acts on, lowercase; vectors for one compare each.
+  private lower: u8x16 = u8x16.splat(32);
+  private contentLength: u8x16 = nameVector("content-length");
+  private connection: u8x16 = nameVector("connection");
+  private transfer: u8x16 = nameVector("transfer-encodin");
+  private expect: u8x16 = nameVector("expect");
+  private close: u8x16 = nameVector("close");
+  private keepAlive: u8x16 = nameVector("keep-alive");
+  private continue_: u8x16 = nameVector("100-continue");
+  private classes: u8[] = byteClasses();
+  private space: u8x16 = u8x16.splat(SP);
+  private del: u8x16 = u8x16.splat(DEL);
+  private question: u8x16 = u8x16.splat(63);
+  private chunked: u8x16 = nameVector("chunked");
+
+  constructor(maxBody: i64, maxHeaders: i64) {
+    this.maxBody = maxBody;
+    this.maxHeaders = maxHeaders;
+  }
+
+  /**
+   * Parses the head in `b[start..headEnd)` (`headEnd` past its CR LF CR LF; the data read ends
+   * at `end`) into `req`, and returns where the next request starts: past the head, or past
+   * its body when that was read already (`BODY_BUFFERED`). Throws `BadRequest` for input that
+   * is not a request, framed as RFC 9112 asks (§2.2, §3, §5, §6).
+   */
+  parse(b: u8[], start: i64, headEnd: i64, end: i64, req: Head): i64 {
+    const classes = this.classes;
+    // The request line: method SP target SP HTTP/1.x CR LF. The head ends in CR LF CR LF, so
+    // every scan below stops by then.
+    let p = start;
+    req.buf = b;
+    req.methodStart = p;
+    while ((classes[b[p]] & TOKEN) != 0) {
+      p++;
+    }
+    req.methodEnd = p;
+    if (p == req.methodStart || b[p] != SP) {
+      throw new BadRequest(400);
+    }
+    p++;
+    req.targetStart = p;
+    // Visible characters (and bytes past ASCII): it ends at the first control, space or DEL,
+    // 16 bytes at a time; the path at the first `?` before that.
+    req.pathEnd = -1;
+    while (true) {
+      const v = u8x16.load(b, p as usize);
+      const stop = v.le(this.space).or(v.eq(this.del));
+      const query = v.eq(this.question);
+      if (req.pathEnd < 0 && query.any()) {
+        const q = query.first() as i64;
+        if (!stop.any() || q < (stop.first() as i64)) {
+          req.pathEnd = p + q;
+        }
+      }
+      if (stop.any()) {
+        p += stop.first() as i64;
+        break;
+      }
+      p += 16;
+    }
+    req.targetEnd = p;
+    if (req.pathEnd < 0) {
+      req.pathEnd = p;
+    }
+    if (req.targetEnd == req.targetStart || b[p] != SP) {
+      throw new BadRequest(400);
+    }
+    p++;
+    // Exactly `HTTP/1.0` or `HTTP/1.1`.
+    if (
+      b[p] != 72 ||
+      b[p + 1] != 84 ||
+      b[p + 2] != 84 ||
+      b[p + 3] != 80 ||
+      b[p + 4] != 47 ||
+      b[p + 5] != 49 ||
+      b[p + 6] != 46 ||
+      (b[p + 7] != 48 && b[p + 7] != 49)
+    ) {
+      throw new BadRequest(400);
+    }
+    req.http11 = b[p + 7] == 49;
+    req.expectsContinue = false;
+    req.continueSent = false;
+    p += 8;
+    if (b[p] != CR || b[p + 1] != LF) {
+      throw new BadRequest(400);
+    }
+    p += 2;
+    req.heads.length = 0;
+    // Content-Length (-1: none), the Host headers, and the Connection tokens and
+    // Transfer-Encoding codings seen (`CONN_*`, `TE_*` bits).
+    let length: i64 = -1;
+    let hosts = 0;
+    let conn: i64 = 0;
+    let te: i64 = 0;
+    while (p < headEnd - 2) {
+      // A name of token characters, then a colon: no space before it (RFC 9112 §5.1), no line
+      // folding (a line that starts with a space, §5.2).
+      const nameStart = p;
+      while ((classes[b[p]] & TOKEN) != 0) {
+        p++;
+      }
+      if (p == nameStart || b[p] != COLON) {
+        throw new BadRequest(400);
+      }
+      const nameEnd = p;
+      p++;
+      while (b[p] == SP || b[p] == TAB) {
+        p++;
+      }
+      // The value: no controls but TAB (no NUL, no CR or LF of its own, RFC 9110 §5.5). It ends
+      // at the first other control or DEL, found 16 bytes at a time: the CR of its line end.
+      const valueStart = p;
+      while (true) {
+        const v = u8x16.load(b, p as usize);
+        const stop = v.lt(this.space).or(v.eq(this.del));
+        if (!stop.any()) {
+          p += 16;
+          continue;
+        }
+        p += stop.first() as i64;
+        if (b[p] != TAB) {
+          break;
+        }
+        p++;
+      }
+      let valueEnd = p;
+      while (valueEnd > valueStart && (b[valueEnd - 1] == SP || b[valueEnd - 1] == TAB)) {
+        valueEnd--;
+      }
+      if (b[p] != CR || b[p + 1] != LF) {
+        throw new BadRequest(400);
+      }
+      p += 2;
+      if ((req.heads.length as i64) >= this.maxHeaders * 4) {
+        throw new BadRequest(431);
+      }
+      req.heads.push(nameStart, nameEnd, valueStart, valueEnd);
+      const len = nameEnd - nameStart;
+      if (
+        len == 4 &&
+        (b[nameStart] | 32) == 104 &&
+        (b[nameStart + 1] | 32) == 111 &&
+        (b[nameStart + 2] | 32) == 115 &&
+        (b[nameStart + 3] | 32) == 116
+      ) {
+        hosts++;
+      } else if (len == 14 && this.nameIs(b, nameStart, len, this.contentLength)) {
+        // Two of them, even equal, are refused: a proxy may have used the other (§6.3).
+        if (length >= 0) {
+          throw new BadRequest(400);
+        }
+        length = this.number(b, valueStart, valueEnd);
+      } else if (len == 10 && this.nameIs(b, nameStart, len, this.connection)) {
+        conn |= this.connectionTokens(b, valueStart, valueEnd);
+      } else if (
+        len == 17 && this.nameIs(b, nameStart, 16, this.transfer) && (b[nameStart + 16] | 32) == 103
+      ) {
+        te = this.transferCodings(b, valueStart, valueEnd, te);
+      } else if (len == 6 && this.nameIs(b, nameStart, len, this.expect)) {
+        const vl = valueEnd - valueStart;
+        // An HTTP/1.0 client does not wait for it (RFC 9110 §10.1.1).
+        req.expectsContinue =
+          req.http11 && vl == 12 && this.nameIs(b, valueStart, vl, this.continue_);
+      }
+    }
+    // HTTP/1.1 needs exactly one Host; none may have two (RFC 9112 §3.2).
+    if (hosts > 1 || (hosts == 0 && req.http11)) {
+      throw new BadRequest(400);
+    }
+    // HTTP/1.1 keeps the connection open unless `close` is among the Connection tokens; HTTP/1.0
+    // only with `keep-alive`.
+    req.keepAlive = (conn & CONN_CLOSE) == 0 && (req.http11 || (conn & CONN_KEEP_ALIVE) != 0);
+    let next = headEnd;
+    if (te != 0) {
+      checkCodings(te, length, req.http11);
+      req.bodyMode = BODY_CHUNKED;
+    } else if (length <= 0) {
+      req.bodyMode = BODY_NONE;
+    } else if (end - headEnd >= length) {
+      // Here already: the handler gets it without waiting.
+      req.bodyMode = BODY_BUFFERED;
+      req.bodyStart = headEnd;
+      req.bodyEnd = headEnd + length;
+      next = headEnd + length;
+    } else {
+      req.bodyMode = BODY_LENGTH;
+      req.bodyLength = length;
+    }
+    // A body that has arrived needs no `100 Continue`.
+    if (req.bodyMode == BODY_NONE || req.bodyMode == BODY_BUFFERED) {
+      req.expectsContinue = false;
+    }
+    return next;
+  }
+
+  /// Whether `b[at..at + len)` is the lowercase name in `want` (letters in any case).
+  private nameIs(b: u8[], at: i64, len: i64, want: u8x16): bool {
+    const v = u8x16.load(b, at as usize).or(this.lower);
+    return v
+      .eq(want)
+      .or(mask8x16.prefix(len as usize).not())
+      .all();
+  }
+
+  /// The end of the element of a comma-separated list starting at `at` (before `end`), and its
+  /// start, without the whitespace around it, in `this.elementStart`.
+  private element(b: u8[], at: i64, end: i64): i64 {
+    let i = at;
+    while (i < end && (b[i] == SP || b[i] == TAB || b[i] == COMMA)) {
+      i++;
+    }
+    this.elementStart = i;
+    while (i < end && b[i] != COMMA) {
+      i++;
+    }
+    let e = i;
+    while (e > this.elementStart && (b[e - 1] == SP || b[e - 1] == TAB)) {
+      e--;
+    }
+    this.elementEnd = e;
+    return i;
+  }
+
+  /// The tokens of a Connection value: `CONN_CLOSE`, `CONN_KEEP_ALIVE` (others are ignored).
+  private connectionTokens(b: u8[], start: i64, end: i64): i64 {
+    let found: i64 = 0;
+    let at = start;
+    while (at < end) {
+      at = this.element(b, at, end);
+      const s = this.elementStart;
+      const n = this.elementEnd - s;
+      if (n == 5 && this.nameIs(b, s, n, this.close)) {
+        found |= CONN_CLOSE;
+      } else if (n == 10 && this.nameIs(b, s, n, this.keepAlive)) {
+        found |= CONN_KEEP_ALIVE;
+      }
+    }
+    return found;
+  }
+
+  /// `te` (`TE_*` bits) after the codings of a Transfer-Encoding value, in order: `chunked`
+  /// twice is refused.
+  private transferCodings(b: u8[], start: i64, end: i64, te: i64): i64 {
+    // A header without codings still counts: it is refused for not ending in `chunked`.
+    let state = te | TE_SEEN;
+    let at = start;
+    while (at < end) {
+      at = this.element(b, at, end);
+      const s = this.elementStart;
+      const n = this.elementEnd - s;
+      if (n == 0) {
+        continue;
+      }
+      if (n == 7 && this.nameIs(b, s, n, this.chunked)) {
+        if ((state & TE_LAST_CHUNKED) != 0) {
+          throw new BadRequest(400);
+        }
+        state |= TE_LAST_CHUNKED;
+      } else {
+        state = (state & ~TE_LAST_CHUNKED) | TE_OTHER;
+      }
+    }
+    return state;
+  }
+
+  /// A Content-Length value: its digits only.
+  private number(b: u8[], start: i64, end: i64): i64 {
+    if (start == end) {
+      throw new BadRequest(400);
+    }
+    let n: i64 = 0;
+    for (let k = start; k < end; k++) {
+      const d = (b[k] as i64) - 48;
+      if (d < 0 || d > 9) {
+        throw new BadRequest(400);
+      }
+      // Beyond the limit (or what an i64 holds, for a limit near it).
+      if (n > this.maxBody || n > 922337203685477579) {
+        throw new BadRequest(413);
+      }
+      n = n * 10 + d;
+    }
+    return n;
+  }
+}

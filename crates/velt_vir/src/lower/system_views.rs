@@ -18,8 +18,8 @@ use super::{cint, ice, FnLower};
 use crate::system::Func;
 use crate::vir::{BinOp, Callee, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
-/// The std function giving a view's length in bytes (std/typed_array/core.vlt).
-const VIEW_BYTES: &str = "std/typed_array/core::__viewBytes";
+/// The std function giving a view's length in bytes (std/lang/typed_array/core.vlt).
+const VIEW_BYTES: &str = velt_common::std_hook!(view_bytes);
 
 impl FnLower<'_, '_> {
     /// The bytes of `a`, when it is a view: `None` for a `u8[]` (the caller takes its header).
@@ -110,7 +110,7 @@ impl FnLower<'_, '_> {
         let d = self
             .cx
             .prelude_def(VIEW_BYTES)
-            .unwrap_or_else(|| ice("no `__viewBytes` in std/typed_array/core"));
+            .unwrap_or_else(|| ice("no `viewBytes` in std/typed_array/core"));
         let f = self.cx.func_for_direct(d, vec![], self.mode);
         let n = Place::local(self.temp(Ty::U64));
         self.call(Callee::Func(f), vec![v], Some(n.clone()), false);

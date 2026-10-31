@@ -1,2 +1,2 @@
-Server { port: 0 }
+AbortSignal { aborted: false }
 { a: [ 1 ] }

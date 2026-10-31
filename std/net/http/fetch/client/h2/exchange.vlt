@@ -1,0 +1,249 @@
+// velt/net/http (internal): a `fetch` over HTTP/2. A new connection to an `https:` origin asks
+// for "h2" with ALPN; one that agrees gets a session (h2/session.vlt) that every later request to
+// it shares, from any task; one that answers HTTP/1.1 serves the request the HTTP/1.1 way and
+// goes to that pool, whose idle connections later requests take before making a new one.
+// Plain `http:` stays HTTP/1.1, as in browsers and undici.
+//
+// A request the server did not process (a GOAWAY's later streams, REFUSED_STREAM, a session
+// closing before it was sent) goes out once more on a new connection, as does an idempotent one
+// whose session failed before the response's head (RFC 9113 §8.7). A request aborted before its
+// response's head cancels its stream.
+
+import { IoError } from "velt/io/error";
+import { TcpStream } from "velt/net";
+import { channel, Channel } from "velt/sync";
+import { AbortError, AbortSignal } from "velt/task";
+import { dial, keyOf } from "velt/net/http/fetch/client/conn";
+import { Fetched } from "velt/net/http/fetch/client/fetched";
+import { Target } from "velt/net/http/fetch/client/target";
+import { Head } from "velt/net/http/fetch/client/wire";
+import { CALL_REQUEST, H2Call } from "velt/net/http/fetch/client/h2/call";
+import {
+  errorEvent,
+  EVENT_ERROR,
+  H2Event,
+  RETRY_ALWAYS,
+  RETRY_IDEMPOTENT,
+  RETRY_NEVER,
+} from "velt/net/http/fetch/client/h2/event";
+import { giveUp, H2Body, nextEvent } from "velt/net/http/fetch/client/h2/body";
+import { claim, forget, sessionOf } from "velt/net/http/fetch/client/h2/registry";
+import { ClientSession } from "velt/net/http/fetch/client/h2/session";
+
+/// What an HTTP/2 attempt gave: the response, or the HTTP/1.1 connection ALPN chose instead
+/// (both null: use HTTP/1.1 as usual).
+export struct H2Outcome {
+  fetched: Fetched | null;
+  stream: TcpStream | null;
+  /// `stream` is an idle pooled one (it may have been closed by the server meanwhile).
+  reused: bool;
+}
+
+/// The fields of a request over HTTP/2: the caller's (lowercase) and the defaults, without the
+/// ones HTTP/2 does not have (`host` becomes `:authority`).
+function fieldsOf(headers: string[], codings: string, length: i64, method: string): string[] {
+  const out: string[] = [];
+  let accept = false;
+  let agent = false;
+  let coding = false;
+  for (let i: i64 = 0; i + 1 < (headers.length as i64); i += 2) {
+    const n = headers[i];
+    if (
+      n == "host" ||
+      n == "connection" ||
+      n == "keep-alive" ||
+      n == "transfer-encoding" ||
+      n == "upgrade" ||
+      n == "proxy-connection" ||
+      n == "content-length" ||
+      (n == "te" && headers[i + 1].trim().toLowerCase() != "trailers")
+    ) {
+      continue;
+    }
+    accept = accept || n == "accept";
+    agent = agent || n == "user-agent";
+    coding = coding || n == "accept-encoding";
+    out.push(n, headers[i + 1]);
+  }
+  if (!accept) {
+    out.push("accept", "*/*");
+  }
+  if (!agent) {
+    out.push("user-agent", "velt");
+  }
+  if (!coding) {
+    out.push("accept-encoding", codings);
+  }
+  if (length > 0 || method == "POST" || method == "PUT" || method == "PATCH") {
+    out.push("content-length", `${length < 0 ? 0 : length}`);
+  }
+  return out;
+}
+
+/// A response head as the HTTP/1.1 parser would have kept it: the fields' bytes, four offsets
+/// each, and the ones the client acts on.
+function headOf(status: i64, fields: string[]): Head {
+  const h = new Head();
+  h.status = status;
+  let size: i64 = 0;
+  for (const f of fields) {
+    size += Buffer.byteLength(f) as i64;
+  }
+  const buf: u8[] = Buffer.alloc(size as usize);
+  let at: i64 = 0;
+  for (let i: i64 = 0; i + 1 < (fields.length as i64); i += 2) {
+    const ns = at;
+    at += buf.write(fields[i], at as usize) as i64;
+    const vs = at;
+    at += buf.write(fields[i + 1], at as usize) as i64;
+    h.fields.push(ns, vs, vs, at);
+    if (fields[i] == "content-encoding") {
+      h.codingStart = vs;
+      h.codingEnd = at;
+    } else if (fields[i] == "location") {
+      h.locationStart = vs;
+      h.locationEnd = at;
+    }
+  }
+  h.buf = buf;
+  h.bodyStart = at;
+  return h;
+}
+
+/// Sends the request over HTTP/2 when `t`'s origin speaks it (see the module's comment).
+export async function h2Exchange(
+  method: string,
+  t: Target,
+  headers: string[],
+  codings: string,
+  body: u8[],
+  signal: AbortSignal | null,
+  ca: string,
+  redirected: bool,
+  once: bool,
+): Promise<H2Outcome, IoError | AbortError> {
+  if (!t.https) {
+    return { fetched: null, stream: null, reused: false };
+  }
+  const key = keyOf(t, ca);
+  const fields = fieldsOf(headers, codings, body.length as i64, method);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    let calls = sessionOf(key);
+    if (calls == null) {
+      // An idle HTTP/1.1 connection to the origin: it answered ALPN with HTTP/1.1 before.
+      const idle = TcpStream.unpark(key, once);
+      if (idle != null) {
+        return { fetched: null, stream: idle, reused: true };
+      }
+      // This request makes the connection; others queue on its channel meanwhile.
+      const made = channel<H2Call>();
+      const id = claim(key, made);
+      if (id == 0) {
+        made.close();
+        continue;
+      }
+      const stream = await connect(t, ca, signal, key, id, made);
+      if (stream != null) {
+        return { fetched: null, stream: stream, reused: false };
+      }
+      calls = made;
+    }
+    const events = channel<H2Event>();
+    const mine: H2Call = {
+      kind: CALL_REQUEST,
+      id: 0,
+      n: 0,
+      method: method,
+      scheme: "https",
+      authority: t.host,
+      path: t.path,
+      fields: fields.slice(),
+      body: body,
+      events: events,
+    };
+    if (!calls.trySend(mine)) {
+      // The session closed meanwhile: a new one.
+      events.close();
+      continue;
+    }
+    const e = await nextEvent(events, signal);
+    if (e == null) {
+      // Aborted: the session drops the stream (or the request, if not yet sent).
+      giveUp(events, calls, 0);
+      if (signal != null) {
+        signal.throwIfAborted();
+      }
+      throw new IoError("ECONNRESET", "fetch failed: the HTTP/2 session closed");
+    }
+    if (e.kind == EVENT_ERROR) {
+      events.close();
+      // `once`: the method is not idempotent.
+      if (attempt < 2 && (e.retry == RETRY_ALWAYS || (e.retry == RETRY_IDEMPOTENT && !once))) {
+        continue;
+      }
+      throw new IoError("ECONNRESET", e.message);
+    }
+    const head = headOf(e.status, e.fields);
+    const reader = e.ended ? null : new H2Body(events, calls, e.id, signal);
+    if (e.ended) {
+      events.close();
+    }
+    return {
+      fetched: Fetched.overH2(head, reader, t.href, redirected),
+      stream: null,
+      reused: false,
+    };
+  }
+  throw new IoError("ECONNRESET", "fetch failed: the HTTP/2 connection kept closing");
+}
+
+/**
+ * Connects to `t` offering "h2": a session on `calls` (claimed as session `id` of `key`) when
+ * the server chooses it (null returned), else the HTTP/1.1 stream (the origin is remembered as
+ * HTTP/1.1, and the requests queued on `calls` are told to retry). A failed connect forgets the
+ * claim and fails the queued requests too.
+ */
+async function connect(
+  t: Target,
+  ca: string,
+  signal: AbortSignal | null,
+  key: string,
+  id: i64,
+  calls: Channel<H2Call>,
+): Promise<TcpStream | null, IoError | AbortError> {
+  let stream: TcpStream;
+  let p: string | null = null;
+  try {
+    stream = await dial(t, ca, signal, "h2,http/1.1");
+    try {
+      p = await stream.alpnProtocol();
+    } catch (e) {
+      stream.close();
+      throw new IoError("ECONNRESET", "fetch failed: TLS handshake failed");
+    }
+  } catch (e) {
+    forget(key, id);
+    turnAway(calls, "fetch failed: connect failed", RETRY_NEVER);
+    throw e;
+  }
+  if (p != "h2") {
+    // HTTP/1.1: the connection is this request's, then the pool's.
+    forget(key, id);
+    turnAway(calls, "the server speaks HTTP/1.1", RETRY_ALWAYS);
+    return stream;
+  }
+  const s = new ClientSession(stream, calls, key);
+  s.onClose = () => forget(key, id);
+  spawn(s.run());
+  return null;
+}
+
+/// Closes `calls` and answers the requests queued on it with an error.
+function turnAway(calls: Channel<H2Call>, message: string, retry: i64) {
+  calls.close();
+  let c = calls.tryReceive();
+  while (c != null) {
+    c.events.trySend(errorEvent(message, retry));
+    c = calls.tryReceive();
+  }
+}

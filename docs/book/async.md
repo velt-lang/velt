@@ -187,12 +187,12 @@ the result back with another `with`.
 
 ## Streams with `for await`
 
-Work that arrives over time — jobs on a [channel](../std/channel.md), lines of a file,
+Work that arrives over time — jobs on a [channel](../std/sync/channel.md), lines of a file,
 WebSocket messages, ticks — is consumed with `for await`, as in TypeScript. A channel passes
 values between tasks and ends the loop once it is closed and drained:
 
 ```ts
-import { channel, Channel, ChannelClosed } from "velt:channel";
+import { channel, Channel, ChannelClosed } from "velt/sync";
 
 async function worker(id: i64, jobs: Channel<string>, results: Channel<string>): Promise<void> throws ChannelClosed {
   for await (const job of jobs) {
@@ -225,7 +225,7 @@ for other receivers. Your own sources are `async function*` generators
 
 ## Timers
 
-`sleep(ms)` pauses the current async function. [`velt:timers`](../std/timers.md) has
+`sleep(ms)` pauses the current async function. [`velt/time`](../std/time/timers.md) has
 `setImmediate` and `Ticker`, a drift-free interval you iterate with `for await (const n of
 ticker)` or pull with `await ticker.tick()`. `setTimeout` and `setInterval` are globals, as in
 TypeScript.

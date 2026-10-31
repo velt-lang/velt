@@ -1,7 +1,7 @@
 //! Node's `Map(2) { 'a' => 1, 'b' => 2 }` (empty: `Map(0) {}`) for the prelude `Map` class
 //! (std/prelude/map.vlt), instead of its private fields: the live entries of the dense
 //! `entryKeys` / `entryValues` arrays in insertion order (a deleted entry's value is null; where
-//! the value type includes null, `map_entry_live` asks the map's `__liveAt`).
+//! the value type includes null, `map_entry_live` asks the map's `[MAP_LIVE_AT]`).
 //! A prelude `Record` (std/prelude/record.vlt, a `Map` in field 0) prints like the object it
 //! stands for, in JavaScript's key order (array indices first: the entry positions its
 //! `__positions` gives, json/map.rs): `{ a: 1, 'b c': 2 }` (empty: `{}`), and std's `Set` (std/collections/set.vlt, a
@@ -66,7 +66,7 @@ impl FnLower<'_, '_> {
     /// Whether entry position `i` of the prelude `Map` at `map` (of type `ty`, values of type
     /// `vt`) is live, with the place of its value: `slot` is the entry's `entryValues` element
     /// (of type `slot_t`). A null slot is a deleted entry unless `vt` includes null (the slot
-    /// type is then `vt` itself and the slot the value); then the map's `__liveAt` decides
+    /// type is then `vt` itself and the slot the value); then the map's `[MAP_LIVE_AT]` decides
     /// (std/prelude/map.vlt).
     pub(in crate::lower) fn map_entry_live(
         &mut self,
@@ -81,7 +81,7 @@ impl FnLower<'_, '_> {
         let TyKind::Adt(d, targs) = self.cx.kind(ty) else {
             crate::lower::ice("Map of a non-ADT type")
         };
-        let def = self.class_method(d, "__liveAt");
+        let def = self.class_method(d, velt_common::std_key!(map_live_at));
         let f = self.cx.func_for_direct(def, targs, self.mode);
         let live = self.temp(Ty::Bool);
         let args = vec![Operand::Copy(map.clone()), i];
@@ -227,7 +227,9 @@ impl FnLower<'_, '_> {
         let hir::Def::Adt(a) = self.cx.hir.def(d) else {
             return None;
         };
-        if a.name.starts_with("std/") {
+        if a.name
+            .starts_with(velt_common::std_modules::CANONICAL_PREFIX)
+        {
             return None;
         }
         let mut base = self.cx.subst(a.base?, &args);

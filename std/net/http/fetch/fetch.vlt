@@ -1,0 +1,183 @@
+// velt/net/http (internal): the WHATWG `fetch` API (docs/std/net/http.md), global like in Node:
+// `fetch`, `Request`, `Response` and `Headers` need no import (std/prelude/global/fetch.vlt).
+//
+// `fetch` resolves once the response's status and headers have arrived; the body is received
+// when it is read. The client is Velt code on velt/net (std/fetch/client/): HTTP/1.1 with
+// keep-alive connections pooled per origin, redirects followed as the Fetch standard says,
+// bodies decoded by velt/compress, and an `AbortSignal` that stops the request where it is
+// waiting and closes its connection.
+
+import { IoError } from "velt/io/error";
+import { AbortError, AbortSignal } from "velt/task";
+import { URL } from "velt/net/url";
+import { BodyStream, bodyParts, collect, impliedType, sourceType } from "velt/net/http/fetch/body";
+import { Headers } from "velt/net/http/fetch/headers";
+import {
+  normalizeMethod,
+  Request,
+  RequestInit,
+  RequestRedirect,
+} from "velt/net/http/fetch/request";
+import { Response } from "velt/net/http/fetch/response";
+import { ClientRequest, ERROR, FOLLOW, MANUAL, send } from "velt/net/http/fetch/client/send";
+
+export { BodyInit, BodyStream } from "velt/net/http/fetch/body";
+export { Headers, HeadersInit } from "velt/net/http/fetch/headers";
+export { Request, RequestInit, RequestRedirect } from "velt/net/http/fetch/request";
+export { Response, ResponseInit } from "velt/net/http/fetch/response";
+
+function redirectMode(r: RequestRedirect): i64 {
+  if (r == "error") {
+    return ERROR;
+  }
+  if (r == "manual") {
+    return MANUAL;
+  }
+  return FOLLOW;
+}
+
+/**
+ * Sends a request. Rejects with `IoError` when there is no response (`ECONNREFUSED`,
+ * `ETIMEDOUT`, a TLS failure, an invalid URL or header: `EINVAL`), and with the signal's
+ * `AbortError` (`TimeoutError` for `AbortSignal.timeout`) when it is aborted. An HTTP error
+ * status is a response, not an error: check `res.ok`.
+ */
+export async function fetch(
+  input: string | URL | Request,
+  init: RequestInit = {},
+): Promise<Response, IoError | AbortError> {
+  const o = outgoing(input, init);
+  let text = o.text;
+  let bytes = o.bytes;
+  let kind = o.kind;
+  const stream = o.stream;
+  if (stream != null) {
+    // A stream is sent once it has been read whole.
+    bytes = await collect(stream);
+    kind = 2;
+  }
+  const signal = o.signal;
+  const out = new ClientRequest(
+    o.method,
+    o.url,
+    o.headers,
+    kind,
+    text,
+    bytes,
+    redirectMode(o.redirect),
+    signal,
+    o.ca,
+  );
+  try {
+    return Response.adopt(await send(out), signal, o.method == "HEAD");
+  } catch (e) {
+    // An I/O error the abort caused (a closed stream) is the abort.
+    if (signal != null && e instanceof IoError) {
+      signal.throwIfAborted();
+    }
+    throw e;
+  }
+}
+
+// What `fetch` sends.
+struct Outgoing {
+  method: string;
+  url: string;
+  // `[name, value, …]`
+  headers: string[];
+  // The body, as `BodyParts` has it.
+  kind: u32;
+  text: string;
+  bytes: u8[];
+  stream: BodyStream | null;
+  redirect: RequestRedirect;
+  signal: AbortSignal | null;
+  ca: string;
+}
+
+// What `fetch(input, init)` sends; throws the signal's `AbortError` if it is already aborted.
+// For a URL, that is what `new Request(url, init)` would hold (the same checks and defaults),
+// without making one.
+function outgoing(
+  input: string | URL | Request,
+  init: RequestInit,
+): Outgoing throws IoError | AbortError {
+  let url = "";
+  if (typeof input == "string") {
+    url = input;
+  } else if (input instanceof URL) {
+    url = input.href;
+  } else {
+    const req = new Request(input, init);
+    const signal = req.givenSignal();
+    if (signal != null) {
+      signal.throwIfAborted();
+    }
+    const body = req.parts();
+    return {
+      method: req.method,
+      url: req.url,
+      headers: req.headers.raw(),
+      kind: body.kind,
+      text: body.text,
+      bytes: body.bytes,
+      stream: body.stream,
+      redirect: req.redirect,
+      signal: signal,
+      ca: req.ca(),
+    };
+  }
+  const m = init.method;
+  const method = m == null ? "GET" : normalizeMethod(m);
+  const given = init.headers;
+  const signal = init.signal;
+  const b = init.body;
+  if (b == null) {
+    // Most requests: no body parts to make.
+    if (signal != null) {
+      signal.throwIfAborted();
+    }
+    return {
+      method: method,
+      url: url,
+      headers: given == null ? [] : new Headers(given).raw(),
+      kind: 0,
+      text: "",
+      bytes: [],
+      stream: null,
+      redirect: init.redirect ?? "follow",
+      signal: signal ?? null,
+      ca: init.ca ?? "",
+    };
+  }
+  const body = bodyParts(b);
+  if (method == "GET" || method == "HEAD") {
+    throw new IoError("EINVAL", "Request with GET/HEAD method cannot have body.");
+  }
+  let headers: string[] = [];
+  const ct = sourceType(b) ?? impliedType(body.implied);
+  if (given != null) {
+    const h = new Headers(given);
+    if (ct != null && !h.has("content-type")) {
+      h.set("content-type", ct);
+    }
+    headers = h.raw();
+  } else if (ct != null) {
+    headers = ["content-type", ct];
+  }
+  if (signal != null) {
+    signal.throwIfAborted();
+  }
+  return {
+    method: method,
+    url: url,
+    headers: headers,
+    kind: body.kind,
+    text: body.text,
+    bytes: body.bytes,
+    stream: body.stream,
+    redirect: init.redirect ?? "follow",
+    signal: signal ?? null,
+    ca: init.ca ?? "",
+  };
+}

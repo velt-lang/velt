@@ -1,4 +1,4 @@
-# velt:test
+# velt/test
 
 The test runner, written in Velt. `velt test` ([Testing](../book/testing.md)) compiles the test
 files into a program whose generated `main` registers their tests with this module and hands it
@@ -35,7 +35,8 @@ imports this module. How they run:
   register. A test program may hold several test files, and every module it imports is
   evaluated when it starts, so this is all their top level does in each process; such a file
   still counts as one that only declares and shares a program with the others. The generated
-  `main` gives each file the registrations its top level queued, in import order (`__file(n)`).
+  `main` gives each file the registrations its top level queued, in import order
+  (`registerFile(n)`).
 - In the process for one file, its tests are collected: its `test_*` functions, then what its
   queued calls register, running the `describe` callbacks, whose calls register into their
   group at once. The process lists the tests to the runner (their full names, `group > test`)
@@ -44,7 +45,7 @@ imports this module. How they run:
 - A `describe` callback that throws (or is `async`) is reported as a failed test named as its
   group, and the group's tests don't run. An `afterAll` that throws is printed where it ran and
   fails the run. A test's name is escaped on its report line (`\n` for a line break).
-- `toEqual` compares with `__intrinsic_deep_eq`: `deepEqual`'s comparison, but a class instance
+- `toEqual` compares with `deepEq`: `deepEqual`'s comparison, but a class instance
   that isn't the same object compares by its fields and numbers with `Object.is`. The fields
   are those of the object's own class, whatever type holds it: two `Shape`s (an interface) or
   two `Animal`s (a base class) are equal when they are objects of one class with equal fields,
@@ -61,11 +62,11 @@ matchers, which are methods (the generic ones) and `extend` blocks (those for ar
 return a `Resolves<V, E>` or `Rejects<V, E>`, whose matchers are `async`; their `settled()` is
 the `Expect` of the value or the error, for a custom matcher that awaits.
 
-`toMatch` and `toThrow` take a `string | Pattern` (velt:regex/pattern), an interface `RegExp`
-implements, so `expect` doesn't import velt:regex: a test file compiles the regex engine only
+`toMatch` and `toThrow` take a `string | Pattern` (velt/text/regex/pattern), an interface `RegExp`
+implements, so `expect` doesn't import velt/text: a test file compiles the regex engine only
 when it has a regex (a literal such as `/^h/`, or `RegExp` named), as any program does.
 
-`velt:test/http` adds `toHaveStatus` and `toHaveHeader` to `Expect<Response>` (`velt:fetch`).
+`velt/test/http` adds `toHaveStatus` and `toHaveHeader` to `Expect<Response>` (`velt/net/http`).
 
 With `VELT_RC_STATS=1` (the debug runtime's block counters), the process for a file returns from
 `main` after its tests instead of exiting at once, so the runtime frees the module state and
@@ -74,5 +75,6 @@ its process reported no counts (a runtime without the debug counters). Such a
 process waits for what is still running, as a program does after `main`: the runner ends one
 still running 120 s after its tests and fails the file.
 
-The other exports (`__file`, `__test`, `__testAsync`, `__run`, `__claim`) are for the generated
-`main` only.
+The generated `main` registers the tests and starts the runner through compiler hooks
+(`registerFile`, `registerTest`, `registerAsyncTest`, `runRegistered` in velt/test's internal
+files; docs/internals/design/std-layout.md §10b), which programs cannot import.

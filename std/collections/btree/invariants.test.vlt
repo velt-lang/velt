@@ -1,0 +1,228 @@
+// velt/collections (tests): white-box tests, run by `velt test std/`.
+//
+// White-box test of std/collections/btree: the tree's invariants (velt/collections/btree/check
+// `checkPool`) after
+// every insert and delete of seeded random runs, against a sorted array, for key kinds that take
+// different paths: small integers (many splits, merges and B* moves), integers that differ only
+// in their low bytes (long node prefixes), floats with NaN, and strings with long shared beginnings, keys
+// that are prefixes of others, and the empty string (wide words, edge prefixes, word ties).
+// (Was the golden std/btree_invariants.)
+import { describe, expect, it } from "velt/test";
+
+import { F, Pool, windowOf } from "velt/collections/btree/pool";
+import { insert } from "velt/collections/btree/insert";
+import { removeAt } from "velt/collections/btree/remove";
+import { afterRemove, isEdge } from "velt/collections/btree/edges";
+import { NO_SLOT, leafFind, slotAtRank } from "velt/collections/btree/leaf";
+import { checkPool } from "velt/collections/btree/check";
+
+function next(x: u64): u64 {
+  let y = x ^ (x << 13);
+  y = y ^ (y >> 7);
+  return y ^ (y << 17);
+}
+
+function fail(label: string) {
+  throw new Error(label);
+}
+
+// What `BTreeMap.delete` does.
+function del<K extends Comparable<K>>(p: Pool<K, i64>, key: K): bool {
+  if (p.size == 0) {
+    return false;
+  }
+  const win = windowOf(key);
+  const leaf = p.findLeaf(key, win);
+  const s = leafFind(p, leaf, key, win);
+  if (s == NO_SLOT) {
+    return false;
+  }
+  const edge = isEdge(p, key, win);
+  removeAt(p, leaf, s);
+  if (edge || p.size == 0) {
+    afterRemove(p);
+  }
+  return true;
+}
+
+// What `BTreeMap.get` does.
+function find<K extends Comparable<K>>(p: Pool<K, i64>, key: K): i64 | undefined {
+  if (p.size == 0) {
+    return undefined;
+  }
+  const win = windowOf(key);
+  const leaf = p.leafOf(key, win);
+  const s = leafFind(p, leaf, key, win);
+  return s == NO_SLOT ? undefined : p.valAt((leaf as usize) * F + s);
+}
+
+// The keys in order, along the leaf chain.
+function walk<K extends Comparable<K>>(p: Pool<K, i64>): K[] {
+  const out: K[] = [];
+  if (p.size == 0) {
+    return out;
+  }
+  let leaf = p.edgeLeaf(false);
+  for (let i: usize = 0; i < p.size;) {
+    const n = p.leafCount(leaf);
+    for (let r: usize = 0; r < n; r++) {
+      out.push(p.keyAt(slotAtRank(p, leaf, r)));
+    }
+    i += n;
+    leaf = p.leafNext[leaf as usize];
+  }
+  return out;
+}
+
+function lowerBound<K extends Comparable<K>>(keys: K[], k: K): usize {
+  let lo: usize = 0;
+  let hi = keys.length as usize;
+  while (lo < hi) {
+    const mid = (lo + hi) / 2;
+    if (keys[mid].compareTo(k) < 0) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return lo;
+}
+
+// `ops` random inserts, deletes and lookups of keys `keyOf` gives, with the invariants checked
+// after every change while the map is small and every `every` changes once it is larger.
+function fuzz<K extends Comparable<K>>(
+  name: string,
+  seed: u64,
+  ops: i64,
+  every: i64,
+  keyOf: (x: u64) => K,
+): usize {
+  const p = new Pool<K, i64>();
+  const keys: K[] = [];
+  const vals: i64[] = [];
+  let x = seed;
+  let peak: usize = 0;
+
+  for (let op: i64 = 0; op < ops; op++) {
+    x = next(x);
+    const k = keyOf(x >> 8);
+    const i = lowerBound(keys, k);
+    const present = i < (keys.length as usize) && keys[i].compareTo(k) == 0;
+    // Three phases: grow, churn, shrink to empty.
+    const third = ops / 3;
+    const insertBelow: u64 = op < third ? 7 : op < 2 * third ? 5 : 2;
+    const kind = x % 10;
+    if (kind < insertBelow) {
+      insert(p, k, op);
+      if (present) {
+        vals[i] = op;
+      } else {
+        keys.splice(i as i64, 0, k);
+        vals.splice(i as i64, 0, op);
+      }
+    } else if (kind < 9) {
+      if (del(p, k) != present) {
+        fail(`${name} op ${op}: delete ${k}`);
+      }
+      if (present) {
+        keys.splice(i as i64, 1);
+        vals.splice(i as i64, 1);
+      }
+    } else {
+      const got = find(p, k);
+      if (present ? got != vals[i] : got !== undefined) {
+        fail(`${name} op ${op}: get ${k}`);
+      }
+    }
+    if (p.size != (keys.length as usize)) {
+      fail(`${name} op ${op}: size ${p.size}, want ${keys.length}`);
+    }
+    if (p.size > peak) {
+      peak = p.size;
+    }
+    if (p.size < 200 || op % every == 0) {
+      const problem = checkPool(p);
+      if (problem != "") {
+        fail(`${name} op ${op}: ${problem}`);
+      }
+    }
+  }
+  // Empty it, checking all the way down.
+  while (keys.length > 0) {
+    const k = keys.pop()!;
+    vals.pop();
+    if (!del(p, k)) {
+      fail(`${name} drain ${k}`);
+    }
+    if (p.size < 200 || p.size % (every as usize) == 0) {
+      const problem = checkPool(p);
+      if (problem != "") {
+        fail(`${name} drain at ${p.size}: ${problem}`);
+      }
+    }
+    if (p.size % 997 == 0) {
+      const got = walk(p);
+      for (let j: usize = 0; j < (keys.length as usize); j++) {
+        if (got[j].compareTo(keys[j]) != 0) {
+          fail(`${name} walk at ${j}`);
+        }
+      }
+    }
+  }
+  if (p.size != 0 || checkPool(p) != "") {
+    fail(`${name}: not empty at the end`);
+  }
+  return peak;
+}
+
+function alphabet(): string[] {
+  return ["", "a", "b", "é", "中", "😀", "/", "zz"];
+}
+
+describe("the B+ tree", () => {
+  it("keeps its invariants for small ints", () => {
+    expect(fuzz<i64>("small ints", 1, 12000, 50, (x) => (x % 600) as i64)).toBe(485);
+  });
+  it("keeps its invariants for ints", () => {
+    expect(fuzz<i64>("ints", 2, 12000, 400, (x) => (x % 50000) as i64 - 25000)).toBe(4904);
+  });
+  // Keys that agree in all but their lowest bytes: nodes with long prefixes.
+  it("keeps its invariants for keys that differ in their low bytes", () => {
+    expect(fuzz<u64>("low bytes", 3, 8000, 200, (x) => 0x7766554433000000 + (x % 4000))).toBe(1732);
+  });
+  // NaN among them: its own key, after every other number (`f64.compareTo`).
+  it("keeps its invariants for floats with NaN", () => {
+    const peak = fuzz<f64>(
+      "floats",
+      4,
+      8000,
+      200,
+      (x) => (x % 97 == 0 ? NaN : ((x % 4000) as f64) / 7.0 - 250.0),
+    );
+    expect(peak).toBe(1794);
+  });
+  // Long shared beginnings, keys that are prefixes of others, and "".
+  it("keeps its invariants for strings with shared prefixes", () => {
+    const peak = fuzz<string>("shared prefixes", 5, 10000, 100, (x) => {
+      let k = (x & 1) == 0 ? "" : "tenant/0042/users/";
+      let y = x >> 1;
+      const len = y % 5;
+      for (let j: u64 = 0; j < len; j++) {
+        y = y >> 3;
+        k = k + alphabet()[(y % 8) as usize];
+      }
+      return k;
+    });
+    expect(peak).toBe(849);
+  });
+  it("keeps its invariants for long strings", () => {
+    const peak = fuzz<string>(
+      "long strings",
+      6,
+      4000,
+      100,
+      (x) => `${"segment/".repeat((x % 4) as i64)}${x % 900}`,
+    );
+    expect(peak).toBe(526);
+  });
+});

@@ -1,6 +1,6 @@
 // The notes commands: parse argv, run one command against the store, return the output lines.
-import { ArgParser, CliError, ParsedArgs } from "velt:cli";
-import { DateTime } from "velt:datetime";
+import { ArgParser, CliError, ParsedArgs } from "velt/cli";
+import { DateTime } from "velt/time";
 import { NoteStore, Note } from "./store";
 
 export function parser(): ArgParser {

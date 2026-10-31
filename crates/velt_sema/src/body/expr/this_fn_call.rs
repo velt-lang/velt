@@ -1,12 +1,12 @@
 //! Method calls that pass their object as `this` to a function expression with a `this: any`
-//! parameter (`this_fn_expr.rs`), in a program that has one (it loads std/this_fn.vlt). A call
+//! parameter (`this_fn_expr.rs`), in a program that has one (it loads std/lang/this_fn/index.vlt). A call
 //! `o.m(x)` on an `any` is a slot call that does so already (velt_vir this_fn.rs); the other
 //! member calls whose function is a dynamic value read here call
-//! `__callOn(<o.m>, o, [x])`, which passes `o` to such a function and calls any other one
+//! `callOn(<o.m>, o, [x])`, which passes `o` to such a function and calls any other one
 //! plainly:
 //!
 //! - `o[k](x)` (an `any` `o`, or an element of an `any[]`, `arr[0](x)`);
-//! - `o.m?.(x)` (`__callOptOn`, which evaluates the arguments only when `o.m` is a function);
+//! - `o.m?.(x)` (`callOptOn`, which evaluates the arguments only when `o.m` is a function);
 //! - `o.m(x)` on a typed `o` whose member `m` is a `Function` or an `any`.
 //!
 //! `o` is evaluated once: a variable, `this` or a field path is named twice, anything else is
@@ -21,7 +21,7 @@ use crate::body::FnCx;
 use crate::hir;
 
 impl FnCx<'_, '_> {
-    /// Does the call `callee(..)` go through `__callOn` (module docs)? Only in a user module of
+    /// Does the call `callee(..)` go through `callOn` (module docs)? Only in a user module of
     /// a program with function expressions taking `this`.
     pub(super) fn this_fn_call_site(
         &mut self,
@@ -31,7 +31,10 @@ impl FnCx<'_, '_> {
     ) -> bool {
         if !type_args.is_empty()
             || self.cx.scopes[self.module].is_std
-            || self.cx.prelude_adt("__ThisFn").is_none()
+            || self
+                .cx
+                .prelude_adt(velt_common::std_hook!(this_fn))
+                .is_none()
             || self.object_assign_callee(callee)
         {
             return false;
@@ -54,7 +57,7 @@ impl FnCx<'_, '_> {
         self.call_on(callee, object, args, optional, span)
     }
 
-    /// The object of `callee` when its call goes through `__callOn`.
+    /// The object of `callee` when its call goes through `callOn`.
     fn this_fn_member<'e>(
         &mut self,
         callee: &'e ast::Expr,
@@ -98,7 +101,7 @@ impl FnCx<'_, '_> {
         (callable && (index || !dynamic_object)).then_some(&**object)
     }
 
-    /// `__callOn(<callee with o>, o, [args])` (`__callOptOn` with the arguments in a function
+    /// `callOn(<callee with o>, o, [args])` (`callOptOn` with the arguments in a function
     /// for an optional call).
     fn call_on(
         &mut self,
@@ -128,7 +131,11 @@ impl FnCx<'_, '_> {
             // not reach into another (`arr[0]` and `arr`).
             let f = lw.expr(&read, None, crate::body::Want::Borrow);
             lw.with_temp("<method>", f, callee.span, span, |lw, f| match optional {
-                false => lw.prelude_fn_call("__callOn", vec![f.clone(), o.clone(), list], span),
+                false => lw.prelude_fn_call(
+                    velt_common::std_hook!(call_on),
+                    vec![f.clone(), o.clone(), list],
+                    span,
+                ),
                 true => {
                     let thunk = synth(
                         ast::ExprKind::Arrow {
@@ -141,7 +148,11 @@ impl FnCx<'_, '_> {
                         },
                         span,
                     );
-                    lw.prelude_fn_call("__callOptOn", vec![f.clone(), o.clone(), thunk], span)
+                    lw.prelude_fn_call(
+                        velt_common::std_hook!(call_opt_on),
+                        vec![f.clone(), o.clone(), thunk],
+                        span,
+                    )
                 }
             })
         };

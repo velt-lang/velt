@@ -153,7 +153,7 @@ mod tests {
 
     fn read(body: &str) -> Result<WorkspaceFile, Vec<String>> {
         let src =
-            format!("import type {{ Workspace }} from \"velt:package\";\n\nexport const workspace: Workspace = {body};\n");
+            format!("import type {{ Workspace }} from \"velt/package\";\n\nexport const workspace: Workspace = {body};\n");
         read_workspace(FileId(0), &src).map_err(|d| d.into_iter().map(|d| d.message).collect())
     }
 
@@ -205,7 +205,7 @@ mod tests {
     fn rejects_other_shapes_and_keys() {
         let errs = read(r#"{ members: ["a"], memebers: ["b"] }"#).unwrap_err();
         assert_eq!(errs, ["unknown key `memebers` in the manifest"]);
-        let pkg = "import type { Package } from \"velt:package\";\nexport const pkg: Package = { name: \"a\", version: \"0.1.0\" };\n";
+        let pkg = "import type { Package } from \"velt/package\";\nexport const pkg: Package = { name: \"a\", version: \"0.1.0\" };\n";
         let errs: Vec<String> = read_workspace(FileId(0), pkg)
             .unwrap_err()
             .into_iter()

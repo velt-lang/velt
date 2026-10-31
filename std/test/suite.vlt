@@ -1,13 +1,18 @@
-// std/test/suite: `describe`, `it`/`test` and the hooks (docs/book/testing.md), as Vitest's.
+// velt/test (internal): `describe`, `it`/`test` and the hooks (docs/book/testing.md), as Vitest's.
 //
 // A call at a test file's top level only queues what it registers (`queued`): it runs when the
 // program starts, in every process of a test program shared by several files, and must not run
-// a test file's code there. `velt:test` collects one file's tests (`collect`) in the process
+// a test file's code there. `velt/test` collects one file's tests (`collect`) in the process
 // that runs them: it runs the file's queued steps, and with them the `describe` callbacks, whose
 // calls register into their suite at once.
 
-/** A test or hook callback, run as an `async` one. */
-export type Body = () => Promise<void, unknown>;
+import { Body, Case } from "velt/test/case";
+import { errorText, throwLoc } from "velt/lang/intrinsics";
+import { Symbol } from "velt/lang/symbol";
+
+/** The members of `Settles`, keyed by symbols this module keeps to itself. */
+const SETTLE = Symbol("settle");
+const KIND = Symbol("kind");
 
 /**
  * What a test or hook callback returns: nothing, or a promise, which is awaited. `it`'s callback
@@ -15,25 +20,25 @@ export type Body = () => Promise<void, unknown>;
  */
 export interface Settles {
   /** Waits for it if it is a promise; its rejection is the callback's error. */
-  __settle(): Promise<void, unknown>;
+  [SETTLE](): Promise<void, unknown>;
   /** `"promise"`, `"function"` or `"value"`. */
-  __kind(): string;
+  [KIND](): string;
 }
 
 extend<T> T implements Settles {
-  async __settle(): Promise<void, unknown> {}
+  async [SETTLE](): Promise<void, unknown> {}
 
-  __kind(): string {
+  [KIND](): string {
     return typeof this == "function" ? "function" : "value";
   }
 }
 
 extend<V, E> Promise<V, E> implements Settles {
-  async __settle(): Promise<void, unknown> {
+  async [SETTLE](): Promise<void, unknown> {
     await this;
   }
 
-  __kind(): string {
+  [KIND](): string {
     return "promise";
   }
 }
@@ -80,22 +85,6 @@ export class Suite {
   }
 }
 
-/** A test to run: its full name, its body and its suite. */
-export class Case {
-  readonly name: string;
-  readonly run: Body;
-  readonly suite: Suite;
-  /** Set when collecting it failed (its `describe` callback threw): it fails with this. */
-  readonly error: string | null;
-
-  constructor(name: string, run: Body, suite: Suite, error: string | null) {
-    this.name = name;
-    this.run = run;
-    this.suite = suite;
-    this.error = error;
-  }
-}
-
 /** A registration queued at a file's top level: done into the file's top-level suite. */
 export type Step = (root: Suite) => void;
 
@@ -109,7 +98,7 @@ let collecting: Suite | null = null;
 let collected: Case[] = [];
 
 /** The next `count` queued registrations (`-1`: all that are left), for one test file. */
-export function __claim(count: i64): Step[] {
+export function claim(count: i64): Step[] {
   return queued.splice(0, count < 0 ? (queued.length as i64) : count);
 }
 
@@ -145,7 +134,7 @@ function join(outer: string, name: string): string {
 
 function body<R extends Settles>(fn: () => R throws unknown): Body {
   return async (): Promise<void, unknown> => {
-    await fn().__settle();
+    await fn()[SETTLE]();
   };
 }
 
@@ -153,10 +142,10 @@ function body<R extends Settles>(fn: () => R throws unknown): Body {
 function hook<R extends Settles>(fn: () => R throws unknown): Body {
   return async (): Promise<void, unknown> => {
     const r = fn();
-    if (r.__kind() == "function") {
+    if (r[KIND]() == "function") {
       throw new Error(TEARDOWN);
     }
-    await r.__settle();
+    await r[SETTLE]();
   };
 }
 
@@ -174,13 +163,13 @@ export function describe<R extends Settles>(name: string, fn: () => R throws unk
     let error: string | null = null;
     try {
       const r = fn();
-      if (r.__kind() == "promise") {
+      if (r[KIND]() == "promise") {
         error = `Error: ${ASYNC_DESCRIBE}`;
         // What it registers after its first `await` would be lost, and its error unreported.
-        r.__settle().catch((e) => {});
+        r[SETTLE]().catch((e) => {});
       }
     } catch (e) {
-      error = `${__intrinsic_error_text(e)}${__intrinsic_throw_loc()}`;
+      error = `${errorText(e)}${throwLoc()}`;
     }
     collecting = outer;
     if (error != null) {

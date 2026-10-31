@@ -20,7 +20,7 @@ use crate::ctx::Ctx;
 /// Report the early uses of every module's top-level statements (the generated `main`, or the
 /// chunks an imported module's statements were split into).
 pub(crate) fn check(cx: &mut Ctx) {
-    let modules = cx.modules;
+    let modules = cx.modules.clone();
     for m in modules {
         let scripts = crate::module_scripts::script_fns(m);
         if scripts.is_empty() {

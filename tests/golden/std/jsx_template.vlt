@@ -12,8 +12,8 @@ import {
   jsxEscape,
   jsxEscapeString,
   jsxAttr,
-} from "velt:jsx/jsx-runtime";
-import { Element, raw, renderToString } from "velt:jsx";
+} from "velt/jsx/jsx-runtime";
+import { Element, raw, renderToString } from "velt/jsx";
 
 class Fortune {
   constructor(public id: i64, public message: string) {}

@@ -99,7 +99,7 @@ struct Atomic<T> {                          // T: integer or bool
 - **`shared<i64>`'s `add`/`get`/`set` stay** and compile through the same inline path, so they
   stop being calls (they keep `add` returning the *new* value; they are a different API).
 
-Written on these in Velt (`velt:sync`): `Backoff` (spins with `spinHint`, twice as long each
+Written on these in Velt (`velt/sync`): `Backoff` (spins with `spinHint`, twice as long each
 round, then yields the thread with `velt_rt_thread_yield`) and `VersionLatch`, bbtree's latch
 word (`readVersion`, `tryReadVersion`, `isUnchanged`, `tryLockAt`, `tryLockExclusive`,
 `lockExclusive`, `unlockExclusive`, `lockShared`, `unlockShared`), as the reference user of the
@@ -186,7 +186,10 @@ where LLVM would reload them after every acquire, fence or call (see "Frozen fie
   starting as the literal (`vir::StaticData::mutable`), and its methods act on it directly,
   with no lock, from every thread, also in std (whose other module constants are not kept in
   the module state). Every version in a `velt dev` session uses the session's one word
-  per constant, so a swap keeps its value.
+  per constant, so a swap keeps its value. `new Atomic<shared<T> | null>(null)` is one too, and
+  its word owns the reference it holds: as the runtime drops the module state at exit for the
+  leak counters (`VELT_RC_STATS=1`), it calls a function `velt_main` handed it
+  (`velt_rt_statics_drop`, velt_vir `lower/static_atomic.rs`) that releases those references.
 - ``` `Atomic<T>` needs a number type, `bool`, `string` or a `shared` value, found `string | null` ```
   (a type parameter too: the instruction depends on the type).
 - `mismatched types` for an ordering the operation cannot have (``expected "relaxed" | "acquire"
@@ -210,7 +213,7 @@ reason to spin. `max` and `min` are the prelude's `max2` and `min2` (`Math.max`,
 
 1. **`Atomic<T>`** (implemented): the type, the sema rules, the inline code in both backends,
    `shared<int>`'s atomics through the same path (their runtime functions are gone),
-   `velt:sync`'s `Backoff` and `VersionLatch`, docs (docs/std/sync.md, reference async.md),
+   `velt/sync`'s `Backoff` and `VersionLatch`, docs (docs/std/sync.md, reference async.md),
    goldens (`tests/golden/std/atomic*.vlt`, `sync_latch.vlt`: every operation at every width,
    the errors, a counter, a spin lock and latch-checked reads on worker threads), and
    `bench/atomics` against Rust (results below).
@@ -232,7 +235,7 @@ reason to spin. `max` and `min` are the prelude's `max2` and `min2` (`Math.max`,
    - **Read sections placed by the compiler**: opened at the first protected `load`, closed
      before each `await`, `yield`, return and at loop back edges; a borrow live at a close is
      counted there (one atomic increment). No new rule for users.
-   - **`velt:sync/epoch`**: epoch-based reclamation (one store and fence per section) on
+   - **`velt/sync/epoch`**: epoch-based reclamation (one store and fence per section) on
      `Atomic<u64>` and `ThreadLocal`, with per-thread retire lists. Then `Atom<T>` (#708's API)
      as a std struct, and `ConcurrentMap<K, V>` with string keys (inline prefix and tag, keys
      compared 16 bytes at a time in Velt, #1697) and retired values.
@@ -412,12 +415,12 @@ ran about 10% slower than for the step 1 table): 354.6 / 352.0 (1.01), 90.1 / 90
 
 ## Results of step 2
 
-The concurrent map is `velt:collections/concurrent_map` (`ConcurrentMap`, `u64` → `u64`), in
+The concurrent map is `velt/collections` (`ConcurrentMap`, `u64` → `u64`), in
 pure Velt on public APIs. It differs from the plan above in two ways. Its nodes are 1 KB blocks
 of one `Atomic<u64>[]` arena taken whole by `create`, a fixed capacity instead of growing pools
 behind `Once<T>`: nodes never move or are freed, so the arena needs no reclamation. Its leaves
 are unsorted, unlike bbtree's sorted ones:
-- **Leaves:** 16-bit tags of the keys in the first line. A lookup compares them with velt:simd
+- **Leaves:** 16-bit tags of the keys in the first line. A lookup compares them with velt/simd
   `loadOptimistic` (step 2a) and reads one pair, or no pair for an absent key. A key sits in its
   home slot when that was free, so `add` writes the home pair first and checks after.
 - **Inner nodes:** a 6-key index in the first line, then groups of 8 keys and 8 children, one
@@ -506,17 +509,23 @@ on the pointer's bits, so backends see nothing new.
 - **Retiring:** the reference a store, an exchange or a successful compare-and-swap takes out of
   the word is *retired*, not released. Another thread may have loaded the pointer and not
   counted it yet; releasing it could free the box under that increment. Lowering calls
-  `velt:sync/epoch`'s `retire<U>` with it (none for null), which drops it once no thread in a
+  `velt/sync/epoch`'s `retire<U>` with it (none for null), which drops it once no thread in a
   section can still read it.
+- **`a.load()!` and `a.load() ?? d`:** sema makes them a `match` on the load whose arm binds the
+  value by move. The load is not an owned temporary, so lowering (`match_expr`) makes such a
+  binding borrow it: a consumer that keeps it (`const o = a.load()!`, a return) counts it. Owning
+  it uncounted released the word's reference when `o` was dropped, and the next load read freed
+  memory. Tests: `std/atomic_ref_unwrap`.
 
 ## Reclamation (#1696 step 2d)
 
-`velt:sync/epoch` (std/sync/epoch.vlt) is epoch-based reclamation in Velt.
+`velt/sync/epoch` (std/sync/epoch/reclaim.vlt) is epoch-based reclamation in Velt.
 - **State:** a global epoch, a static `Atomic<u64>` moving in steps of 2. Per thread, a slot:
   an `Atomic<u64>` state (the epoch it saw, bit 0 set while in a section) and a
   `shared<Mutex<Garbage>>` of retired values with their epochs, which the slot's thread makes
   at its first `retire` (a thread that only reads makes none). Slots live in chunks of 64,
-  linked from a static `Atomic<shared<Chunk> | null>` and never freed; their states are 16
+  linked from a static `Atomic<shared<Chunk> | null>` and freed only at exit, for the leak
+  counters, with the values still retired (a static atomic, above); their states are 16
   words apart, a 128-byte line each. A thread finds its slot through `ThreadLocal<u64>`, its
   number + 1.
 - **`pin` / `unpin`:** store the global epoch with the bit into this thread's state, then a
@@ -548,7 +557,7 @@ on the pointer's bits, so backends see nothing new.
 ## Sections (#1696 step 2e)
 
 velt_vir `lower/epoch_sections.rs` places the sections. A function with a borrowed reference
-load (`FnLower::ref_loads`) calls `velt:sync/epoch`'s `pin` at its entry and `unpin` before each
+load (`FnLower::ref_loads`) calls `velt/sync/epoch`'s `pin` at its entry and `unpin` before each
 `Return`: the entry's code moves to a block of its own behind the `pin` call, and jumps to the
 entry are redirected there.
 - **Suspensions:** poll functions and generator resumes keep their dispatch in the entry block,
@@ -556,7 +565,7 @@ entry are redirected there.
   `pin`, the load, the count, `unpin`. Sema binds `const c = a.load()` there by value.
 - **Nesting:** `pin` counts depth in a `ThreadLocal`, so a callee with loads of its own costs a
   depth count, not a fence.
-- **Exempt:** `velt:sync/epoch`'s own functions (`FnLower::epoch_exempt`, by qualified name).
+- **Exempt:** `velt/sync/epoch`'s own functions (`FnLower::epoch_exempt`, by qualified name).
   Its registry words are only ever set once, so its borrows need no section.
 - **Not done:** sections stay open across a loop's back edges, so a long synchronous loop
   delays drops (memory only).
@@ -591,7 +600,7 @@ holding one: the box a `shared<string>` has. velt_vir `Cx::adt_field_tys` lays t
 
 ## `Atom<T>` (#1696 step 3)
 
-`velt:sync`'s `Atom<T>` is plain Velt on the pieces above: a struct of an `Atomic<shared<T>>`
+`velt/sync`'s `Atom<T>` is plain Velt on the pieces above: a struct of an `Atomic<shared<T>>`
 and a `VersionLatch` for writers.
 - **Reads:** `read(f)` loads the value borrowed and hands it to the callback, with no count, in
   the method's own epoch section. `load()` returns it counted.

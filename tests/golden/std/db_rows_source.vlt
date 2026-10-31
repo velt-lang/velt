@@ -1,7 +1,7 @@
 // A driver written in Velt offers its rows as a `RowSource`, and `readRows<T>` fills typed
 // objects from them as JSON.parse fills fields from keys: by column name, with JSON's
 // conversions and its messages for a row that does not fit.
-import { CellKind, readRow, readRows, RowSource } from "velt:db";
+import { CellKind, readRow, readRows, RowSource } from "velt/db";
 
 // Rows held as cells: what a parser of some wire format would hand over.
 class Table implements RowSource {

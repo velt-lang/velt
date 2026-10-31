@@ -1,7 +1,7 @@
 // `process.exit` ends the process at once, also while a ref'd timer is pending (an hour long
 // here, so the program would not end if the timer kept it alive), like Node. The timeout's
 // callback waits until `main` printed its line (`printed`), so the output has one order.
-import { channel, Channel } from "velt:channel";
+import { channel, Channel } from "velt/sync";
 
 async function stop(printed: Channel<bool>): Promise<void> {
   await printed.receive();

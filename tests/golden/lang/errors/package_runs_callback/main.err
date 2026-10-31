@@ -1,0 +1,4 @@
+main.vlt:13:5: error: this function can be called on another thread, and it changes `seen`
+main.vlt:12:9: but it is passed here to a function that runs it on other threads
+main.vlt:9:5: error: this async closure modifies captured `done`, so it must stay on the task that created it
+main.vlt:8:9: but it is passed here to a function that runs it on other threads

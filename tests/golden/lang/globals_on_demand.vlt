@@ -1,7 +1,7 @@
 // Node's web globals (`fetch`, `Request`, `Response`, `Headers`, `AbortController`,
 // `AbortSignal`, `URL`, `URLSearchParams`) need no import; a module's own declarations and
 // imports of the same names win, as in TypeScript.
-import { Set as URLSearchParams } from "velt:collections/set";
+import { Set as URLSearchParams } from "velt/collections";
 
 class Request {
   path: string = "/local";

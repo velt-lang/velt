@@ -1,7 +1,7 @@
 use super::*;
 
 const FULL: &str = r#"
-import type { Package } from "velt:package";
+import type { Package } from "velt/package";
 
 export const pkg: Package = {
   name: "hello",
@@ -21,7 +21,7 @@ fn to_vlt_round_trips_and_is_formatted() {
     let m = Manifest::parse(FULL).unwrap();
     let text = m.to_vlt();
     assert!(
-        text.starts_with("import type { Package } from \"velt:package\";\n"),
+        text.starts_with("import type { Package } from \"velt/package\";\n"),
         "{text}"
     );
     assert!(
@@ -39,7 +39,7 @@ fn to_vlt_round_trips_and_is_formatted() {
             .to_vlt();
     assert_eq!(
         minimal,
-        "import type { Package } from \"velt:package\";\n\nexport const pkg: Package = { name: \"a\", version: \"1.0.0\" };\n"
+        "import type { Package } from \"velt/package\";\n\nexport const pkg: Package = { name: \"a\", version: \"1.0.0\" };\n"
     );
 }
 
@@ -211,12 +211,12 @@ fn finds_enclosing_package() {
     );
 }
 
-/// `std/package.vlt` (the type editors and `velt doc` show) declares exactly the schema's fields,
+/// `std/package/index.vlt` (the type editors and `velt doc` show) declares exactly the schema's fields,
 /// with the same optionality and types.
 #[test]
 fn std_package_types_match_the_schema() {
     use velt_syntax::ast::{ItemKind, TypeExprKind};
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std/package.vlt");
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std/package/index.vlt");
     let src = std::fs::read_to_string(&path).unwrap();
     let (module, diags) = velt_syntax::parse_file(FileId(0), &src);
     assert!(diags.is_empty(), "{diags:?}");
@@ -228,7 +228,7 @@ fn std_package_types_match_the_schema() {
                 ItemKind::TypeAlias(a) if a.name.name == name && item.exported => Some(a),
                 _ => None,
             })
-            .unwrap_or_else(|| panic!("std/package.vlt exports no type `{name}`"));
+            .unwrap_or_else(|| panic!("std/package/index.vlt exports no type `{name}`"));
         let TypeExprKind::Object(fields) = &alias.ty.kind else {
             panic!("`{name}` is not an object type");
         };
@@ -260,7 +260,7 @@ fn std_package_types_match_the_schema() {
         assert_eq!(
             declared(name),
             expected(fields),
-            "`{name}` in std/package.vlt"
+            "`{name}` in std/package/index.vlt"
         );
     }
 }
@@ -287,6 +287,34 @@ fn windows_device_names_are_not_package_names() {
         "auxiliary",
     ] {
         assert!(!is_windows_device_name(name), "{name}");
+        assert!(is_valid_package_name(name), "{name}");
+    }
+}
+
+/// `velt/…` (and `std/…`) are the standard library's modules: no package or dependency may be
+/// named `velt` or `std`.
+#[test]
+fn the_standard_library_names_are_reserved() {
+    for name in ["velt", "std"] {
+        let text =
+            format!("export const pkg: Package = {{ name: \"{name}\", version: \"1.0.0\" }};");
+        let err = Manifest::parse(&text).unwrap_err();
+        assert!(
+            err.contains(&format!("`{name}` is reserved for the standard library")),
+            "{err}"
+        );
+        assert!(!is_valid_package_name(name));
+        let dep = format!(
+            "export const pkg: Package = {{ name: \"a\", version: \"1.0.0\", dependencies: {{ {name}: \"1\" }} }};"
+        );
+        let err = Manifest::parse(&dep).unwrap_err();
+        assert!(
+            err.contains(&format!("`{name}` is reserved for the standard library")),
+            "{err}"
+        );
+    }
+    // Only the names themselves.
+    for name in ["velt-utils", "my-velt", "veltx"] {
         assert!(is_valid_package_name(name), "{name}");
     }
 }

@@ -1,0 +1,29 @@
+// velt/net/url (internal): what `URL`'s host and port setters take from their values.
+
+import { removeTabNewline } from "velt/net/url/parse";
+import { UrlRecord } from "velt/net/url/record";
+
+/**
+ * A host setter's value: tabs and newlines removed, cut at the first `/`, `?` or `#` (or `\`
+ * for special schemes).
+ */
+export function hostInput(v: string, special: bool): string {
+  const s = removeTabNewline(v);
+  for (let i: i64 = 0; i < (s.length as i64); i++) {
+    const c = s.charCodeAt(i);
+    if (c == 47 || c == 63 || c == 35 || (special && c == 92)) {
+      return s.slice(0, i);
+    }
+  }
+  return s;
+}
+
+/** Index of the `:` before a port (outside an IPv6 literal's brackets), or -1. */
+export function portColon(text: string): i64 {
+  return text.indexOf(":", text.startsWith("[") ? text.indexOf("]") : 0);
+}
+
+/** Whether `r` has credentials or a port (then its host cannot be emptied). */
+export function userinfoOrPort(r: UrlRecord): bool {
+  return r.username.length > 0 || r.password.length > 0 || r.port.length > 0;
+}

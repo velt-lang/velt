@@ -1,15 +1,16 @@
 //! How a native library's string results reach Velt, per path (native_abi.md "Strings"):
 //!
 //! - `vec+copy`: encode into a `Vec<u8>`, close the array (a copy), make the string from it (a
-//!   copy and a count): what the runtime's own Postgres driver did;
+//!   copy and a count): what the Postgres driver did when it was in the runtime;
 //! - `vec+check+copy`: the same with a `String` result through the table (`String::from_utf8`,
 //!   then `str_new` checks again): a native library before `StrBuf`;
 //! - `strbuf`: encode into a `StrBuf`, the Velt string itself (one count at the end).
 //!
 //! Run: `cargo run --release -p velt_rt --example native_strings [name filter]`.
 //!
-//! It runs as a Velt program: the runtime's own `main` starts it (as for a compiled program,
-//! with the native table set up) and calls `velt_main` below.
+//! It runs as a Velt program: the runtime's own `main` starts it (as for a compiled program) and
+//! calls `velt_main` below, which hands the SDK the runtime's table first, as a package's
+//! `velt_native_init_<pkg>` does.
 
 #![no_main]
 
@@ -152,6 +153,10 @@ fn param(name: &str, text: &str) {
 /// The program the runtime runs.
 #[no_mangle]
 pub extern "C" fn velt_main() -> i32 {
+    let table = velt_rt::native::velt_rt_native_api();
+    // SAFETY: the runtime's static table, whose layout the SDK's mirrors.
+    let rc = unsafe { velt_native::__init(table.cast(), "native_strings") };
+    assert_eq!(rc, 0, "the SDK refused the runtime's table");
     for (name, n) in [
         ("param: 16", 16),
         ("param: 200", 200),

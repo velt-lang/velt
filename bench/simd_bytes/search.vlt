@@ -2,7 +2,7 @@
 // <hit>`, where `hit` is the position of the byte searched for, or -1 for a byte that is
 // absent (the whole array is read). Every call changes a byte first, so no call repeats the
 // one before.
-import { args } from "velt:process";
+import { args } from "velt/process";
 
 function main() {
   const a = args();

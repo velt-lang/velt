@@ -1,0 +1,7 @@
+// velt/encoding (internal): `TextEncoderEncodeIntoResult`, what `TextEncoder.encodeInto` did.
+
+/** What `TextEncoder.encodeInto` did: code units read, bytes written. */
+export struct TextEncoderEncodeIntoResult {
+  read: number;
+  written: number;
+}

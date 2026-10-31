@@ -1,0 +1,25 @@
+// The type model's kinds for the prelude's collections, `shared` cells, functions with
+// properties and object literal getters, and `__arm`, the per-member test of a union in
+// generated code (docs/internals/design/source-generators.md §4, §7).
+import { armOf, describe } from "./_generators";
+
+type Counter = { (): i32; count: i32 };
+type Lazy = { a: f64; get b(): string };
+
+function main() {
+  console.log(describe<Map<string, i32>>());
+  console.log(describe<Record<string, bool>>());
+  console.log(describe<shared<i32>>());
+  console.log(describe<{ count: Counter; tally: shared<i32> }>());
+  console.log(describe<{ inner: Lazy }>());
+  console.log(describe<Lazy>());
+  type N = i32 | f64 | string;
+  const xs: N[] = [1i32, 2.5, "s"];
+  for (const x of xs) {
+    console.log(armOf<N>(x));
+  }
+  type L = i32[] | f64[];
+  const a: L = [1i32, 2i32];
+  const b: L = [1.5];
+  console.log(armOf<L>(a), armOf<L>(b));
+}

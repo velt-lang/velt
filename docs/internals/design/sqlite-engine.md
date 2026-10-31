@@ -5,8 +5,9 @@ Tracking: #1726, with one sub-issue per step and per language feature.
 
 ## Where we are
 
-`velt:sqlite` ([docs](../../std/sqlite.md)) wraps C SQLite through `crates/velt_std_sqlite`
-(rusqlite, bundled). Rows decode into typed values through `__intrinsic_read_rows`, which
+The `sqlite` package (`packages/sqlite`, [docs](../../../packages/sqlite/README.md); until
+2026-10 std's `velt/sqlite`) wraps C SQLite through its native library (`packages/sqlite/native`,
+rusqlite, bundled). The engine below is `sqlite/engine` in the same package (`src/engine/`). Rows decode into typed values through `readRowsByColumn`, which
 calls `sqlite3_column_*` once per value across the FFI. That is fast, but it can't get faster:
 every statement runs SQLite's bytecode interpreter (VDBE) behind an opaque call that LLVM can't
 inline, and one connection runs on one thread.
@@ -14,7 +15,7 @@ inline, and one connection runs on one thread.
 The goal: replace the C library with an engine written in Velt that reads and writes the same
 files (a database written by either can be opened by the other, with `sqlite3` alongside),
 answers queries the way SQLite does, and is faster than C SQLite, better-sqlite3, bun:sqlite
-and rusqlite on `bench/db` and `bench/sqlite`. No Rust: no `velt_std_sqlite`, nothing new in
+and rusqlite on `bench/db` and `bench/sqlite`. No Rust: no native library, nothing new in
 `velt_rt`. Where Velt can't express something, or can't express it fast enough, that is a
 language or compiler feature to add, which then helps every program
 ([velt-in-velt](json-engine.md#rule-the-engine-is-written-in-velt)).
@@ -117,7 +118,7 @@ it, starting with positioned I/O for the pager.
 - Paths are `readonly u8[]` with exactly one 0, as the last byte (checked at the call), not `string`: no allocation or
   conversion is hidden in a call.
 - A target without a function accepts its declaration; calling it there is a compile error
-  (`velt:fs`'s fd API on Windows and WebAssembly for now).
+  (`velt/fs`'s fd API on Windows and WebAssembly for now).
 - `lastOsError()` adjacency is a compiler guarantee, not a convention: lowering captures `errno`
   (`*__error()` / `*__errno_location()`) into one hidden `i32` local per function, zero-filled in
   the entry block, right after every system call; `lastOsError()` reads that local when a call
@@ -136,7 +137,7 @@ it, starting with positioned I/O for the pager.
 
 ## Steps
 
-1. **Reading the file format** (`velt:sqlite/format`, `velt:sqlite/btree`): header, table and
+1. **Reading the file format** (`src/engine/format`, `src/engine/btree`): header, table and
    index b-tree cursors (first, next, seek by rowid), records, overflow chains, `sqlite_schema`.
    The whole file in one `u8[]`. Tested against files `sqlite3` writes.
 2. **The pager and the OS layer**: page cache over `pread`, locks, change counter; files larger
@@ -144,11 +145,11 @@ it, starting with positioned I/O for the pager.
 3. **SQL**: tokenizer, parser, name resolution against the schema, a planner (rowid and index
    lookups and ranges, nested-loop joins, ORDER BY through an index or a sort, LIMIT), and
    execution as compiled closures. Expressions with SQLite's affinity and comparison rules,
-   core functions, aggregates, subqueries. Typed row decoding replaces `__intrinsic_read_rows`
+   core functions, aggregates, subqueries. Typed row decoding replaces `readRowsByColumn`
    for the Velt engine.
 4. **Writing**: INSERT, UPDATE, DELETE, b-tree balancing, the freelist, the rollback journal,
-   transactions, DDL. Then `velt:sqlite` switches to the Velt engine and `velt_std_sqlite` is
-   deleted.
+   transactions, DDL. Then the package's driver switches to the Velt engine and its native
+   library is deleted.
 5. **WAL and concurrent readers**: the WAL file and `-shm` index, snapshots per reader, a
    page cache shared between threads.
 6. **Parallel queries**: split a scan by subtrees of the root, run the parts as tasks, merge
@@ -158,5 +159,5 @@ it, starting with positioned I/O for the pager.
 ## Decided
 
 - The engine may live in std or in a package: OS calls are a language feature for every
-  module (feature 1), not a std privilege. `velt:sqlite`'s planned move to a package needs no
-  native code once the engine is in Velt.
+  module (feature 1), not a std privilege. It moved to the `sqlite` package with the driver
+  (2026-10); the package needs no native code once the engine writes.

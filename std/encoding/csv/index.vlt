@@ -1,0 +1,12 @@
+// velt/encoding/csv: RFC 4180 CSV parsing and writing.
+//
+// The parser scans the text once with `charCodeAt` (the delimiter, quotes and line breaks are
+// ASCII, so an ASCII text is read inline); unquoted fields are slices of the input, quoted fields
+// are slices with `""` unescaped. Records end at LF, CRLF or a lone CR; a final line break does
+// not start another record, and a leading byte order mark (U+FEFF) is skipped. Quoted fields may
+// contain delimiters and line breaks. Fields are strings; no type inference.
+// docs/std/encoding/csv.md.
+
+export { CsvError } from "velt/encoding/csv/errors";
+export { CsvOptions, parseCsv, parseCsvRecords } from "velt/encoding/csv/parse";
+export { CsvWriteOptions, stringifyCsv } from "velt/encoding/csv/stringify";

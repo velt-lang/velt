@@ -1,0 +1,190 @@
+// sqlite/engine/exec/func/func_value (internal): SQLite's functions of values (typeof, abs,
+// coalesce, ifnull, nullif, iif, if, min, max with several arguments, round, zeroblob, sign;
+// https://sqlite.org/lang_corefunc.html).
+
+import { NULL, INTEGER, REAL, TEXT } from "../../storage_class";
+import { SqlRunError } from "../errors";
+import { FMT_FLOAT, formatReal } from "../value/format_real";
+import { atof } from "../value/atof";
+import { realToI64, toF64, toI64, truth } from "../value/ops";
+import { MAX_LENGTH, tooBig } from "../value/value_text";
+import { Val, blobVal, intVal, nullVal, realVal, textVal } from "../value/val";
+import { compareVals } from "../value/compare";
+import { parseNumeric } from "../value/numeric";
+import { utf8Encode } from "velt/encoding";
+import { Ev } from "../types";
+import { arity, text } from "./func_args";
+
+/** The compiled call of value function `name` (upper case), or null when it is none of them. */
+export function valueFunction(name: string, shown: string, a: Ev[], coll: u8): Ev | null {
+  const n: usize = a.length;
+  if (name == "TYPEOF") {
+    arity(shown, n, 1, 1);
+    const x = a[0];
+    return () => textVal(typeName(x().t));
+  }
+  if (name == "ABS") {
+    arity(shown, n, 1, 1);
+    const x = a[0];
+    return () => {
+      const v = x();
+      if (v.t == NULL) {
+        return v;
+      }
+      if (v.t == INTEGER) {
+        if (v.i == -9223372036854775807 - 1) {
+          throw new SqlRunError("integer overflow");
+        }
+        return intVal(v.i < 0 ? -v.i : v.i);
+      }
+      return realVal(Math.abs(toF64(v)));
+    };
+  }
+  if (name == "COALESCE" || name == "IFNULL") {
+    if (name == "IFNULL") {
+      arity(shown, n, 2, 2);
+    } else {
+      arity(shown, n, 2, 1000);
+    }
+    return () => {
+      for (const f of a) {
+        const v = f();
+        if (v.t != NULL) {
+          return v;
+        }
+      }
+      return nullVal();
+    };
+  }
+  if (name == "NULLIF") {
+    arity(shown, n, 2, 2);
+    const x = a[0];
+    const y = a[1];
+    return () => {
+      const v = x();
+      return compareVals(v, y(), coll) != 0 ? v : nullVal();
+    };
+  }
+  if (name == "IIF" || name == "IF") {
+    arity(shown, n, 2, 3);
+    const c = a[0];
+    const y = a[1];
+    return () => {
+      if (truth(c()) == 1) {
+        return y();
+      }
+      return n == 3 ? a[2]() : nullVal();
+    };
+  }
+  if (name == "MIN" || name == "MAX") {
+    arity(shown, n, 1, 1000);
+    const max = name == "MAX";
+    return () => {
+      let best = a[0]();
+      if (best.t == NULL) {
+        return best;
+      }
+      for (let i: usize = 1; i < n; i++) {
+        const v = a[i]();
+        if (v.t == NULL) {
+          return v;
+        }
+        const c = compareVals(best, v, coll);
+        if ((max && c < 0) || (!max && c >= 0)) {
+          best = v;
+        }
+      }
+      return best;
+    };
+  }
+  if (name == "ROUND") {
+    arity(shown, n, 1, 2);
+    return () => round(a[0](), n == 2 ? a[1]() : intVal(0), n == 2);
+  }
+  if (name == "ZEROBLOB") {
+    arity(shown, n, 1, 1);
+    const x = a[0];
+    return () => {
+      const k = toI64(x());
+      if (k > (MAX_LENGTH as i64)) {
+        tooBig();
+      }
+      const b: u8[] = [];
+      b.reserve(k < 0 ? 0 : k as usize);
+      for (let i: i64 = 0; i < k; i++) {
+        b.push(0);
+      }
+      return blobVal(b);
+    };
+  }
+  if (name == "SIGN") {
+    arity(shown, n, 1, 1);
+    const x = a[0];
+    return () => sign(x());
+  }
+  return null;
+}
+
+/** The name `typeof()` gives a storage class. */
+export function typeName(t: u8): string {
+  if (t == NULL) {
+    return "null";
+  }
+  if (t == INTEGER) {
+    return "integer";
+  }
+  if (t == REAL) {
+    return "real";
+  }
+  return t == TEXT ? "text" : "blob";
+}
+
+function round(x: Val, y: Val, two: bool): Val {
+  if (two && y.t == NULL) {
+    return nullVal();
+  }
+  let n: i64 = two ? toI64(y) : 0;
+  if (n > 30) {
+    n = 30;
+  }
+  if (n < 0) {
+    n = 0;
+  }
+  if (x.t == NULL) {
+    return x;
+  }
+  let r = toF64(x);
+  if (r < -4503599627370496.0 || r > 4503599627370496.0) {
+    return realVal(r);
+  }
+  if (n == 0) {
+    return realVal(realToI64(r + (r < 0 ? -0.5 : 0.5)) as f64);
+  }
+  const s = formatReal(r, FMT_FLOAT, n, true, false, false);
+  return realVal(atof(utf8Encode(s), 0).value);
+}
+
+function sign(v: Val): Val {
+  let x = v;
+  // sqlite3_value_numeric_type: only TEXT is read as a number (a BLOB stays a BLOB).
+  if (x.t == TEXT) {
+    // Read as a C string: up to a NUL.
+    let t = text(x);
+    const nul = t.indexOf("\u0000");
+    if (nul >= 0) {
+      t = t.slice(0, nul);
+    }
+    const p = parseNumeric(t);
+    if (!p.whole) {
+      return nullVal();
+    }
+    x = p.v;
+  }
+  if (x.t == INTEGER) {
+    return intVal(x.i < 0 ? -1 : x.i > 0 ? 1 : 0);
+  }
+  if (x.t == REAL) {
+    return intVal(x.r < 0 ? -1 : x.r > 0 ? 1 : 0);
+  }
+  return nullVal();
+}

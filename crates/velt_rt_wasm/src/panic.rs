@@ -80,7 +80,7 @@ pub extern "C" fn velt_rt_set_throw_loc(loc: *const VeltStr) {
     THROW_LOC.with(|c| c.set(loc));
 }
 
-/// Forget the throw location (`velt:test`, before each test).
+/// Forget the throw location (`velt/test`, before each test).
 #[no_mangle]
 pub extern "C" fn velt_rt_clear_throw_loc() {
     velt_rt_set_throw_loc(std::ptr::null());

@@ -4,8 +4,8 @@
 // readers on other threads that only trust what a latch check confirms: they never see a pair
 // a writer was changing.
 
-import { i8x16, u8x16, i16x8, u16x8, i32x4, u32x4, i64x2, u64x2 } from "velt:simd";
-import { VersionLatch } from "velt:sync";
+import { i8x16, u8x16, i16x8, u16x8, i32x4, u32x4, i64x2, u64x2 } from "velt/simd";
+import { VersionLatch } from "velt/sync";
 
 function words(n: i64): Atomic<u64>[] {
   const w: Atomic<u64>[] = [];

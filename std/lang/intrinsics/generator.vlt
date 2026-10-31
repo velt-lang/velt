@@ -1,0 +1,70 @@
+// velt/lang/intrinsics (internal): stepping generators, below the methods of the prelude's
+// `Generator` and `AsyncGenerator` (std/prelude/iter.vlt;
+// docs/internals/contracts/hir_encodings.md "Generators" and "Async generators").
+
+import type { Mut } from "./modes";
+
+/**
+ * Runs the generator to its next `yield` (true: a value is in its slot) or to its end (false;
+ * also every later call). An error the body throws (an `E`) is thrown here.
+ */
+export declare intrinsic function generatorResume<T, E, N>(g: Mut<Generator<T, E, N>>): bool;
+
+/**
+ * `next(value)`: like `generatorResume`, and the paused `yield` evaluates to (a copy of)
+ * `value`; a generator that has not started ignores it.
+ */
+export declare intrinsic function generatorResumeWith<T, E, N>(
+  g: Mut<Generator<T, E, N>>,
+  value: N,
+): bool;
+
+/**
+ * `throw(error)`: resumes the body with `error` thrown at the paused `yield`. 1: the body caught
+ * it and yielded again (the value is in the slot); 0: it caught it and finished; 3: nothing caught
+ * it (the generator is closed, as by `return()`, or it had not started or was finished), and the
+ * caller throws it. An error the body throws (after catching) is thrown here.
+ */
+export declare intrinsic function generatorThrow<T, E, N>(
+  g: Mut<Generator<T, E, N>>,
+  error: any,
+): u32;
+
+/**
+ * Moves the value of the last `yield` out of the slot (once, after `generatorResume` returned
+ * true).
+ */
+export declare intrinsic function generatorValue<T, E, N>(g: Mut<Generator<T, E, N>>): T;
+
+/**
+ * Closes the generator: a suspended body runs its `finally` blocks and disposes its `using`
+ * values as if the `yield` were a `return`; then it is done.
+ */
+export declare intrinsic function generatorReturn<T, E, N>(g: Mut<Generator<T, E, N>>): void;
+
+/**
+ * Runs the async generator to its next `yield` (true) or its end (false; also every later call),
+ * suspending the awaiting function while the generator awaits; only as the operand of `await`.
+ * An error the body throws rejects it.
+ */
+export declare intrinsic function asyncGeneratorResume<T, E>(
+  g: Mut<AsyncGenerator<T, E>>,
+): Promise<bool, E>;
+
+/** Like `generatorValue`. */
+export declare intrinsic function asyncGeneratorValue<T, E>(g: Mut<AsyncGenerator<T, E>>): T;
+
+/**
+ * Closes the async generator, only as the operand of `await`: a body suspended at a `yield`
+ * runs its `finally` blocks and disposals (which may `await`) as if the `yield` were a `return`;
+ * one suspended at an `await` is cancelled. Then it is done.
+ */
+export declare intrinsic function asyncGeneratorReturn<T, E>(
+  g: Mut<AsyncGenerator<T, E>>,
+): Promise<void, never>;
+
+/**
+ * Closes the async generator without awaiting (its drop): like `asyncGeneratorReturn`, except
+ * that a body whose cleanup at that `yield` would `await` is cancelled instead.
+ */
+export declare intrinsic function asyncGeneratorDispose<T, E>(g: Mut<AsyncGenerator<T, E>>): void;

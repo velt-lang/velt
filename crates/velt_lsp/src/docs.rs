@@ -367,6 +367,7 @@ type Props = {
         let module = velt_sema::SourceModule {
             path: "main".into(),
             is_std: false,
+            is_dependency: false,
             file,
             ast,
             imports: vec![],

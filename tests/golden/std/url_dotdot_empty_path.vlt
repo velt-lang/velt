@@ -1,6 +1,6 @@
 // Regression (#359, difftest fuzz --std seed 84): a `..` segment with nothing left to remove
 // leaves a non-special URL's path empty, as Node has it; a special URL keeps `/`.
-import { URL } from "velt:url";
+import { URL } from "velt/net/url";
 
 function show(u: URL) {
   console.log(u.href, JSON.stringify(u.pathname));

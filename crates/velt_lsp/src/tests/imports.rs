@@ -59,12 +59,12 @@ fn fixture() -> Fixture {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().canonicalize().unwrap();
     let files = [
-        ("std/fs.vlt", FS),
-        ("std/collections/set.vlt", "// std/collections/set: sets.\n\nexport function setOf(): i64 {\n  return 1;\n}\n"),
-        ("std/url.vlt", "// std/url: URLs.\n\nexport function parseUrl(s: string): string {\n  return s;\n}\n"),
-        ("std/url/encode.vlt", "// std/url/encode: helpers.\n\nexport function encodeAll(s: string): string {\n  return s;\n}\n"),
+        ("std/fs/index.vlt", FS),
+        ("std/collections/index.vlt", "// velt/collections: sets.\n\nexport function setOf(): i64 {\n  return 1;\n}\n"),
+        ("std/net/url/index.vlt", "// std/url: URLs.\n\nexport function parseUrl(s: string): string {\n  return s;\n}\n"),
+        ("std/net/url/encode.vlt", "// std/url/encode: helpers.\n\nexport function encodeAll(s: string): string {\n  return s;\n}\n"),
         ("std/prelude/array.vlt", "// arrays\n"),
-        ("std/import_meta.vlt", "// std/import_meta (std-internal): `import.meta`.\n\nexport class ImportMeta {\n  readonly url: string;\n  constructor(d: string, f: string, m: boolean, url: string) {\n    this.url = url;\n  }\n}\n"),
+        ("std/lang/import_meta/index.vlt", "// std/import_meta (std-internal): `import.meta`.\n\nexport class ImportMeta {\n  readonly url: string;\n  constructor(d: string, f: string, m: boolean, url: string) {\n    this.url = url;\n  }\n}\n"),
         ("app/util.vlt", UTIL),
         ("app/sub/deep.vlt", "export const DEPTH: i64 = 2;\n"),
         ("app/main.vlt", ""),
@@ -135,7 +135,7 @@ fn with_import(text: &str, item: &Value, doc: &Url) -> String {
 #[test]
 fn braces_offer_the_std_module_exports_not_yet_listed() {
     let fx = fixture();
-    let text = "import { readFile,  } from \"velt:fs\";\n";
+    let text = "import { readFile,  } from \"velt/fs\";\n";
     let (mut client, doc, _) = open(&fx, text);
     let items = complete(&mut client, &doc, text, ",  }", 2, None);
     assert_eq!(labels(&items), ["writeFile", "IoError", "Mode"]);
@@ -144,7 +144,7 @@ fn braces_offer_the_std_module_exports_not_yet_listed() {
         json!("function writeFile(path: string, data: string): string")
     );
     // Mid-typing: the statement does not parse.
-    let text = "import { readFile as, w } from \"velt:fs\";\n";
+    let text = "import { readFile as, w } from \"velt/fs\";\n";
     client.change(&doc, 2, text);
     client.diagnostics(&doc);
     let items = complete(&mut client, &doc, text, "w }", 1, None);
@@ -157,7 +157,7 @@ fn braces_offer_the_std_module_exports_not_yet_listed() {
 #[test]
 fn import_completions_show_doc_comments() {
     let fx = fixture();
-    let text = "import { readFile,  } from \"velt:fs\";
+    let text = "import { readFile,  } from \"velt/fs\";
 ";
     let (mut client, doc, _) = open(&fx, text);
     let items = complete(&mut client, &doc, text, ",  }", 2, None);
@@ -193,7 +193,7 @@ fn import_completions_show_doc_comments() {
         None,
     );
     let write = item(&items, "writeFile");
-    assert_eq!(write["labelDetails"]["description"], json!("velt:fs"));
+    assert_eq!(write["labelDetails"]["description"], json!("velt/fs"));
     let value = write["documentation"]["value"].as_str().unwrap();
     assert!(value.starts_with("Writes `data` to `path`."), "{value}");
     assert_eq!(write["deprecated"], json!(true));
@@ -218,7 +218,7 @@ fn braces_offer_a_relative_module_exports() {
 #[test]
 fn import_type_offers_types_only() {
     let fx = fixture();
-    let text = "import type {  } from \"velt:fs\";\n";
+    let text = "import type {  } from \"velt/fs\";\n";
     let (mut client, doc, _) = open(&fx, text);
     let items = complete(&mut client, &doc, text, "{  }", 2, None);
     assert_eq!(labels(&items), ["IoError", "Mode"]);
@@ -228,14 +228,14 @@ fn import_type_offers_types_only() {
 #[test]
 fn specifiers_offer_std_modules_and_files() {
     let fx = fixture();
-    let text = "import { readFile } from \"velt:\";\n";
+    let text = "import { readFile } from \"velt/\";\n";
     let (mut client, doc, _) = open(&fx, text);
-    let items = complete(&mut client, &doc, text, "velt:\"", 5, None);
+    let items = complete(&mut client, &doc, text, "velt/\"", 5, None);
     assert_eq!(
         labels(&items),
-        ["velt:collections/set", "velt:fs", "velt:url"]
+        ["velt/collections", "velt/fs", "velt/net/url"]
     );
-    let fs = item(&items, "velt:fs");
+    let fs = item(&items, "velt/fs");
     assert_eq!(fs["detail"], json!("file system access."));
     assert_eq!(
         fs["textEdit"]["range"],
@@ -247,7 +247,7 @@ fn specifiers_offer_std_modules_and_files() {
     client.diagnostics(&doc);
     let items = complete(&mut client, &doc, text, "\"\n", 1, Some("\""));
     let found = labels(&items);
-    for want in ["../", "./sub/", "./util", "velt:fs"] {
+    for want in ["../", "./sub/", "./util", "velt/fs"] {
         assert!(found.contains(&want), "{want} in {found:?}");
     }
     assert!(!found.contains(&"./main"), "{found:?}");
@@ -267,10 +267,10 @@ fn auto_import_adds_an_import_to_a_file_without_imports() {
     let (mut client, doc, _) = open(&fx, text);
     let items = complete(&mut client, &doc, text, "readF\n", 5, None);
     let read = item(&items, "readFile");
-    assert_eq!(read["labelDetails"]["description"], json!("velt:fs"));
+    assert_eq!(read["labelDetails"]["description"], json!("velt/fs"));
     assert_eq!(
         with_import(text, read, &doc),
-        "// The app.\n\nimport { readFile } from \"velt:fs\";\n\nfunction main() {\n  readF\n}\n"
+        "// The app.\n\nimport { readFile } from \"velt/fs\";\n\nfunction main() {\n  readF\n}\n"
     );
     // Only names starting with what was typed.
     assert!(
@@ -319,7 +319,7 @@ fn auto_import_ignores_the_import_of_import_meta() {
     let read = item(&items, "readFile");
     assert_eq!(
         with_import(text, read, &doc),
-        "// The app.\n\nimport { readFile } from \"velt:fs\";\n\nfunction main() {\n  console.log(import.meta.url);\n  readF\n  __Imp\n}\n"
+        "// The app.\n\nimport { readFile } from \"velt/fs\";\n\nfunction main() {\n  console.log(import.meta.url);\n  readF\n  __Imp\n}\n"
     );
     let items = complete(&mut client, &doc, text, "__Imp\n", 5, None);
     assert!(
@@ -409,14 +409,14 @@ fn auto_import_specifiers_name_the_chosen_file() {
 #[test]
 fn crlf_documents_keep_their_line_endings() {
     let fx = fixture();
-    let text = "import { readFile } from \"velt:fs\";\r\n\r\nfunction main() {\r\n  setO\r\n}\r\n";
+    let text = "import { readFile } from \"velt/fs\";\r\n\r\nfunction main() {\r\n  setO\r\n}\r\n";
     let (mut client, doc, _) = open(&fx, text);
     let items = complete(&mut client, &doc, text, "setO\r", 4, None);
     assert_eq!(
         with_import(text, item(&items, "setOf"), &doc),
         text.replace(
-            "\"velt:fs\";\r\n",
-            "\"velt:fs\";\r\nimport { setOf } from \"velt:collections/set\";\r\n"
+            "\"velt/fs\";\r\n",
+            "\"velt/fs\";\r\nimport { setOf } from \"velt/collections\";\r\n"
         )
     );
     let text = "import { helper } from \"./u\r\n";
@@ -433,7 +433,7 @@ fn crlf_documents_keep_their_line_endings() {
 #[test]
 fn auto_import_extends_an_existing_import() {
     let fx = fixture();
-    let text = "import { readFile } from \"velt:fs\";\n\nfunction main() {\n  readFile(\"a\");\n  wri\n}\n";
+    let text = "import { readFile } from \"velt/fs\";\n\nfunction main() {\n  readFile(\"a\");\n  wri\n}\n";
     let (mut client, doc, _) = open(&fx, text);
     let items = complete(&mut client, &doc, text, "wri\n", 3, None);
     assert_eq!(
@@ -446,7 +446,7 @@ fn auto_import_extends_an_existing_import() {
     assert_eq!(read.len(), 1);
     assert!(read[0]["additionalTextEdits"].is_null(), "{read:?}");
     // Into a sorted list, in order.
-    let text = "import { IoError, writeFile } from \"velt:fs\";\n\nfunction main() {\n  readF\n}\n";
+    let text = "import { IoError, writeFile } from \"velt/fs\";\n\nfunction main() {\n  readF\n}\n";
     client.change(&doc, 2, text);
     client.diagnostics(&doc);
     let items = complete(&mut client, &doc, text, "readF\n", 5, None);
@@ -470,12 +470,12 @@ fn quick_fix_imports_an_unknown_name() {
         "{diags:?}"
     );
     let offered = actions(&mut client, &doc, text, "readFile", &diags);
-    let fix = find(&offered, "Import `readFile` from `velt:fs`");
+    let fix = find(&offered, "Import `readFile` from `velt/fs`");
     assert_eq!(fix["isPreferred"], json!(true));
     let fixed = apply(text, fix, &doc);
     assert_eq!(
         fixed,
-        format!("import {{ readFile }} from \"velt:fs\";\n\n{text}")
+        format!("import {{ readFile }} from \"velt/fs\";\n\n{text}")
     );
     client.change(&doc, 2, &fixed);
     let errors: Vec<Value> = client.diagnostics(&doc)["diagnostics"]

@@ -30,9 +30,9 @@ enum BinTok {
     Satisfies,
 }
 
-/// The prelude function `e satisfies T` is parsed as a call of: `__satisfies<T>(e)` checks `e`
+/// The prelude function `e satisfies T` is parsed as a call of: `satisfies<T>(e)` checks `e`
 /// against `T` (with `T` as its context, like an annotated initializer) and returns it.
-pub(crate) const SATISFIES_FN: &str = "__satisfies";
+pub(crate) const SATISFIES_FN: &str = velt_common::std_hook!(satisfies);
 
 impl<'a> Parser<'a> {
     pub(super) fn parse_expr(&mut self) -> PResult<Expr> {

@@ -1,0 +1,15 @@
+// sqlite/engine/exec/found (internal): a name resolved by the expression compiler: the source it
+// reads and the column.
+
+import { Source } from "./source";
+
+/** A name's source and column. */
+export class Found {
+  src: Source;
+  col: i64;
+
+  constructor(src: Source, col: i64) {
+    this.src = src;
+    this.col = col;
+  }
+}

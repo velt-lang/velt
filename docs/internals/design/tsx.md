@@ -44,9 +44,9 @@ already solved it; add nothing JavaScript-specific that causes bugs; keep Rust-l
 
 Configuration, like TypeScript (`jsx: "react-jsx"` plus `jsxImportSource`):
 
-- `jsx: { importSource: "sigx" }` in `package.vlt` (a package or `velt:jsx`), or per file
+- `jsx: { importSource: "sigx" }` in `package.vlt` (a package or `velt/jsx`), or per file
   `/** @jsxImportSource sigx */` among the comments before the first token. The default is
-  `velt:jsx`. Velt reads the pragma from a line comment (`// @jsxImportSource sigx`) too, but
+  `velt/jsx`. Velt reads the pragma from a line comment (`// @jsxImportSource sigx`) too, but
   `tsc` reads it only from a block comment, so files shared with a client use the block form
   (`jsx-pragma-comment` below).
 - The provider module `<source>/jsx-runtime` exports the factory functions and the `JSX`
@@ -66,7 +66,7 @@ Two lowerings, chosen by what the provider exports:
    plus `jsxAttr(name, value)` for dynamic attributes and `jsxEscape` for text. Components
    inside a template are still called through `jsx(Component, props)`. This removes almost all
    per-node allocation: the server writes constant slices and escaped dynamic values straight
-   into the response buffer. It is the default for `velt:jsx`; sigx can implement it for its
+   into the response buffer. It is the default for `velt/jsx`; sigx can implement it for its
    SSR output (and emit its resumability and island markers from `jsx` at component
    boundaries). A provider whose client hydrates text nodes one by one exports
    `jsxTextSeparator` (sigx: `<!--t-->`), and the compiler writes it between adjacent text
@@ -93,17 +93,17 @@ Types:
   the renderer; streaming providers flush finished parts while later ones load (hybrid promises
   make sibling async components run concurrently, as in JavaScript).
 - Children: `children?: JSX.Element | JSX.Element[] | string | number | null` (no `undefined`;
-  `false` and `true` render nothing in `velt:jsx`, as in TypeScript and React; a provider may
+  `false` and `true` render nothing in `velt/jsx`, as in TypeScript and React; a provider may
   render a placeholder of its own instead, as sigx does for hydration).
 - Safety: text and attribute values are **always escaped**; raw HTML only goes through an
-  explicit provider API (`velt:jsx`'s `raw(html)`), so cross-site scripting by default can't
+  explicit provider API (`velt/jsx`'s `raw(html)`), so cross-site scripting by default can't
   happen.
 - Event handlers (`onClick={…}`) can't run on the server: a provider decides how to serialize
-  them (sigx: resumable handler references); `velt:jsx` rejects them at compile time.
+  them (sigx: resumable handler references); `velt/jsx` rejects them at compile time.
 
-## `velt:jsx` (the default provider)
+## `velt/jsx` (the default provider)
 
-`renderToString(el)`, `renderToStream(el)` (a `BodyStream` a `velt:http` response sends while
+`renderToString(el)`, `renderToStream(el)` (a `BodyStream` a `velt/http` response sends while
 rendering, in chunks at async component boundaries), `Fragment`, `raw(html)`, and a full
 `JSX.IntrinsicElements` for HTML. Precompile mode. Goal: the TechEmpower "fortunes" test written
 in TSX at least as fast as the hand-written template (`bench/web`).
@@ -146,9 +146,9 @@ Errors where `tsc` rejects the code:
 | `throws` | `throws E` on functions, methods, arrows and function types | a fix removes it where Velt infers it (a body) | |
 | `promise-error-type` | `Promise<T, E>` | `Promise<T>` (a fix on the return type of a function with a body) | |
 | `interface-body` | default method bodies in an interface | a base class or a function | |
-| `velt-import` | `velt:*` imports | keep them out of the shared files | |
+| `velt-import` | `velt/*` imports of values (`import type` passes: the `velt` type package declares the types) | keep them out of the shared files | |
 | `outside-import` | relative imports of files not being linted | lint them too, or keep the import out | |
-| `jsx-provider` | JSX on the default `velt:jsx` provider | a provider with both runtimes | |
+| `jsx-provider` | JSX on the default `velt/jsx` provider | a provider with both runtimes | |
 | `velt-global` | prelude exports and builtins TypeScript doesn't have: `spawn`, `shared`, `attempt`, `assertEq`, `deepEqual`, `JsonValue`, `Comparable`, `process`, … | a hint per name | |
 | `velt-member` | members TypeScript doesn't have: `xs.isEmpty()`, `m.upsert(…)`, `x.unwrapOr(d)`, `a.compareTo(b)`, `x.clone()`, `JSON.parse<T>(…)`, `Promise.withResolvers()` (ES2024), … | a hint per member | |
 | `map-iter-as-array` | `m.keys()`, `values()`, `entries()` used as an array (a member, an index, a declared type, a return value) | `[...m.keys()]` (a fix) | |
@@ -240,7 +240,7 @@ errors.
   but JavaScript runs it differently (`behaviour/<code>.ts`), or `tsc` can't
   decide it, with the reason in the test (`outside-import`: `tsc` follows relative imports
   anywhere, and the rule is about which files the client shares; `jsx-provider`: `tsc` uses the
-  provider the client configures, the rule is that `velt:jsx` has no JavaScript runtime). A rule
+  provider the client configures, the rule is that `velt/jsx` has no JavaScript runtime). A rule
   in `velt_tscompat::RULES` without a claim and its sample fails `cargo test -p velt_tscompat`,
   with or without Node.
 - A sample reports only its own rule, is valid Velt (`rejected/`; `veltc`'s `ts_compat` test),
@@ -295,10 +295,10 @@ about 7 ms for one file with the prelude, 24 ms for a hundred files, in a releas
    `velt fmt` printing; parser fuzz and robustness tests.
 2. `velt_sema`: desugar JSX to the provider's calls (generic or precompile) using the configured
    import source; typing through the `JSX` namespace; diagnostics with TypeScript's wording.
-3. `velt:jsx`, end-to-end tests, and bench/web fortunes in TSX; language server: completion of
+3. `velt/jsx`, end-to-end tests, and bench/web fortunes in TSX; language server: completion of
    tags and attributes from `JSX.IntrinsicElements`, hover, go-to-definition of components.
 4. Providers live in their own repositories: Velt ships the generic infrastructure (JSX syntax,
-   the `jsxImportSource` lowering, precompile mode, `velt:jsx` as the reference provider,
+   the `jsxImportSource` lowering, precompile mode, `velt/jsx` as the reference provider,
    typing, editor support) and documents the provider contract (required exports, precompile
    functions, how markers and serialization hooks work). Framework-specific adapters are
    packages in their framework's repository.

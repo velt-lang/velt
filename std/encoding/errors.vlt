@@ -1,0 +1,8 @@
+// velt/encoding (internal): `EncodingError`.
+
+/** Thrown for malformed Base64, hex or UTF-8 input. */
+export class EncodingError extends Error {
+  constructor(message: string) {
+    super(message);
+  }
+}

@@ -127,6 +127,8 @@ fn items_and_types() {
 import { a as b, } from 'x';
 export const X: [i64, string] = [1, \"a\"];
 export declare async function ext(a: i64): i64;
+export declare generated('./gen/write') function write<T>(out: string, v: T): void;
+declare generated(\"g\") async function load<T>(s: string): T;
 export type F = (x: i64) => (y: i64) => Map<string, (z: i64) => void>;
 type G<T> = T[][] | ((A | B)[]) | null;
 class Empty {}
@@ -413,5 +415,13 @@ fn system_function_declarations() {
         "declare system function pwrite(fd: i32, buf: readonly u8[], start: usize, end: usize, offset: i64): isize;
 export declare system function lastOsError(): i32;
 declare function velt_rt_x(): void;",
+    );
+}
+
+#[test]
+fn intrinsic_function_declarations() {
+    holds(
+        "export declare intrinsic function arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void;
+export declare intrinsic function throwLoc(): string;",
     );
 }

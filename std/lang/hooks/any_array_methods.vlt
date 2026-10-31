@@ -1,0 +1,281 @@
+// velt/lang/hooks (internal): the built-in methods of arrays (`anyArr_<name><T>(a, args)`) and
+// maps (`anyMap_<name>`) called through `any` (issue #924; any_methods.vlt has the strings',
+// numbers' and booleans', and the argument conversions these share).
+
+import { anyArg, anyFnArg, anyIntArg } from "./any_methods";
+import { anyJoin, anyString, anyText } from "./any_text";
+
+// Arrays: `T` is the element type of the array held; arguments are converted to it as
+// `x as T` converts them (a value of another type is a `TypeError`), elements go to callbacks
+// and back as `any`.
+
+/** The position `i` (`ToIntegerOrInfinity`, negative from the end) clamped to `0..=n`. */
+function anyPos(i: i64, n: i64): i64 {
+  if (i < 0) {
+    return i + n < 0 ? 0 : i + n;
+  }
+  return i > n ? n : i;
+}
+
+export function anyArr_push<T>(a: T[], args: any[]): any {
+  for (let k: i64 = 0; k < (args.length as i64); k++) {
+    a.push(args[k as usize] as T);
+  }
+  return a.length as number;
+}
+
+export function anyArr_pop<T>(a: T[], args: any[]): any {
+  return a.pop();
+}
+
+export function anyArr_shift<T>(a: T[], args: any[]): any {
+  return a.shift();
+}
+
+export function anyArr_unshift<T>(a: T[], args: any[]): any {
+  const items: T[] = [];
+  for (let k: i64 = 0; k < (args.length as i64); k++) {
+    items.push(args[k as usize] as T);
+  }
+  a.unshift(...items);
+  return a.length as number;
+}
+
+export function anyArr_splice<T>(a: T[], args: any[]): any {
+  const n = a.length as i64;
+  const start = anyPos(anyIntArg(args, 0, 0), n);
+  let count =
+    (args.length as i64) === 0 ? 0 : (args.length as i64) === 1 ? n - start : anyIntArg(args, 1, 0);
+  count = count < 0 ? 0 : count > n - start ? n - start : count;
+  const items: T[] = [];
+  for (let k: i64 = 2; k < (args.length as i64); k++) {
+    items.push(args[k as usize] as T);
+  }
+  return a.splice(start, count, ...items);
+}
+
+export function anyArr_slice<T>(a: T[], args: any[]): any {
+  return a.slice(anyIntArg(args, 0, 0), anyIntArg(args, 1, 9223372036854775807));
+}
+
+export function anyArr_at<T>(a: T[], args: any[]): any {
+  return a.at(anyIntArg(args, 0, 0));
+}
+
+export function anyArr_reverse<T>(a: T[], args: any[]): any {
+  a.reverse();
+  return a;
+}
+
+export function anyArr_sort<T>(a: T[], args: any[]): any {
+  const f = anyArg(args, 0);
+  if (f === undefined) {
+    a.sort((x: T, y: T): number => anySortDefault(x, y));
+    return a;
+  }
+  if (typeof f !== "function") {
+    panic(
+      `TypeError: The comparison function must be either a function or undefined: ${anyText(f, "")}`,
+    );
+  }
+  a.sort((x: T, y: T): number => {
+    const ex: any = x;
+    const ey: any = y;
+    // `SortCompare` puts `undefined` last before it calls the comparator.
+    if (ex === undefined || ey === undefined) {
+      return anySortDefault(ex, ey);
+    }
+    // The comparator's result is `ToNumber`ed; `NaN` counts as equal.
+    const n: number = +f(ex, ey);
+    return n !== n ? 0 : n;
+  });
+  return a;
+}
+
+/** `sort`'s default order: by `ToString`, `undefined` last. */
+function anySortDefault(x: any, y: any): number {
+  if (x === undefined) {
+    return y === undefined ? 0 : 1;
+  }
+  if (y === undefined) {
+    return -1;
+  }
+  const sx = anyString(x, "");
+  const sy = anyString(y, "");
+  return sx < sy ? -1 : sx > sy ? 1 : 0;
+}
+
+export function anyArr_concat<T>(a: T[], args: any[]): any {
+  const out: any[] = [];
+  for (let i: usize = 0; i < a.length; i++) {
+    out.push(a[i]);
+  }
+  for (let k: i64 = 0; k < (args.length as i64); k++) {
+    const x = args[k as usize];
+    if (Array.isArray(x)) {
+      for (const y of x) {
+        out.push(y);
+      }
+    } else {
+      out.push(x);
+    }
+  }
+  return out;
+}
+
+export function anyArr_indexOf<T>(a: T[], args: any[]): any {
+  const x = anyArg(args, 0);
+  const n = a.length as i64;
+  for (let i = anyPos(anyIntArg(args, 1, 0), n); i < n; i++) {
+    const e: any = a[i as usize];
+    if (e === x) {
+      return i as number;
+    }
+  }
+  return -1;
+}
+
+export function anyArr_lastIndexOf<T>(a: T[], args: any[]): any {
+  const x = anyArg(args, 0);
+  const n = a.length as i64;
+  let i = (args.length as i64) > 1 ? anyIntArg(args, 1, 0) : n - 1;
+  i = i < 0 ? i + n : i >= n ? n - 1 : i;
+  for (; i >= 0; i--) {
+    const e: any = a[i as usize];
+    if (e === x) {
+      return i as number;
+    }
+  }
+  return -1;
+}
+
+export function anyArr_includes<T>(a: T[], args: any[]): any {
+  const x = anyArg(args, 0);
+  const n = a.length as i64;
+  for (let i = anyPos(anyIntArg(args, 1, 0), n); i < n; i++) {
+    const e: any = a[i as usize];
+    // SameValueZero: `NaN` is found.
+    if (e === x || (e !== e && x !== x)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function anyArr_map<T>(a: T[], args: any[]): any {
+  const f = anyFnArg(args, 0);
+  const out: any[] = [];
+  for (let i: usize = 0; i < a.length; i++) {
+    const e: any = a[i];
+    out.push(f(e, i as number, a));
+  }
+  return out;
+}
+
+export function anyArr_forEach<T>(a: T[], args: any[]): any {
+  const f = anyFnArg(args, 0);
+  for (let i: usize = 0; i < a.length; i++) {
+    const e: any = a[i];
+    f(e, i as number, a);
+  }
+  return undefined;
+}
+
+export function anyArr_filter<T>(a: T[], args: any[]): any {
+  const f = anyFnArg(args, 0);
+  const out: T[] = [];
+  for (let i: usize = 0; i < a.length; i++) {
+    const e: any = a[i];
+    if (f(e, i as number, a)) {
+      out.push(a[i]);
+    }
+  }
+  return out;
+}
+
+export function anyArr_find<T>(a: T[], args: any[]): any {
+  const f = anyFnArg(args, 0);
+  for (let i: usize = 0; i < a.length; i++) {
+    const e: any = a[i];
+    if (f(e, i as number, a)) {
+      return e;
+    }
+  }
+  return undefined;
+}
+
+export function anyArr_findIndex<T>(a: T[], args: any[]): any {
+  const f = anyFnArg(args, 0);
+  for (let i: usize = 0; i < a.length; i++) {
+    const e: any = a[i];
+    if (f(e, i as number, a)) {
+      return i as number;
+    }
+  }
+  return -1;
+}
+
+export function anyArr_some<T>(a: T[], args: any[]): any {
+  const f = anyFnArg(args, 0);
+  for (let i: usize = 0; i < a.length; i++) {
+    const e: any = a[i];
+    if (f(e, i as number, a)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function anyArr_every<T>(a: T[], args: any[]): any {
+  const f = anyFnArg(args, 0);
+  for (let i: usize = 0; i < a.length; i++) {
+    const e: any = a[i];
+    if (!f(e, i as number, a)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+export function anyArr_reduce<T>(a: T[], args: any[]): any {
+  const f = anyFnArg(args, 0);
+  let i: usize = 0;
+  let acc: any = undefined;
+  if ((args.length as i64) > 1) {
+    acc = args[1];
+  } else {
+    if (a.length === 0) {
+      panic("TypeError: Reduce of empty array with no initial value");
+    }
+    acc = a[0];
+    i = 1;
+  }
+  for (; i < a.length; i++) {
+    const e: any = a[i];
+    acc = f(acc, e, i as number, a);
+  }
+  return acc;
+}
+
+export function anyArr_toString<T>(a: T[], args: any[]): any {
+  const v: any = a;
+  return anyJoin(v, ",", "");
+}
+
+// `Map` and `Set` methods whose own signature glue cannot call (a callback with a `throws` type
+// parameter): `__any<Class>_<name><type arguments>(value, args)` (velt_vir any_builtin.rs,
+// `any_class_call`); those of `Set` are in std/collections/set.vlt.
+
+/**
+ * `m.forEach(f)` through `any`: `f(value, key, whole)` per entry, in insertion order; `whole` is
+ * `m` as an `any` of its own class (a class extending `Map`, with its own members).
+ */
+export function anyMap_forEach<K, V>(m: Map<K, V>, args: any[], whole: any): any {
+  const f = anyFnArg(args, 0);
+  m.forEach((v, k) => {
+    const value: any = v;
+    const key: any = k;
+    f(value, key, whole);
+  });
+  return undefined;
+}

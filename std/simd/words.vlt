@@ -1,4 +1,5 @@
-// velt:simd/words: 128-bit SIMD, 32- and 64-bit integer lanes. Programs import the types from `velt:simd`.
+// velt/simd (internal): 128-bit SIMD, 32- and 64-bit integer lanes. Programs import the types from
+// `velt/simd`.
 //
 // A vector is a value like a number: sixteen `u8` lanes in a `u8x16`, four `f32` in an
 // `f32x4`. Every method is one instruction, or a few, on x86-64 (SSE2), arm64 (NEON) and
@@ -75,7 +76,7 @@ extend i32x4 {
 
   /**
    * The 4 words of `from` starting at `at`, read while other threads may be changing them:
-   * an optimistic read (velt:sync `VersionLatch`). Each lane a word no thread wrote during the
+   * an optimistic read (velt/sync `VersionLatch`). Each lane a word no thread wrote during the
    * read is that word; a lane a thread was writing is some value, never undefined behaviour,
    * so check the latch's version (`isUnchanged`) before trusting any lane. One vector load, as
    * `load` is, where reading the words one by one takes 4 atomic loads. Panics with a
@@ -383,7 +384,7 @@ extend u32x4 {
 
   /**
    * The 4 words of `from` starting at `at`, read while other threads may be changing them:
-   * an optimistic read (velt:sync `VersionLatch`). Each lane a word no thread wrote during the
+   * an optimistic read (velt/sync `VersionLatch`). Each lane a word no thread wrote during the
    * read is that word; a lane a thread was writing is some value, never undefined behaviour,
    * so check the latch's version (`isUnchanged`) before trusting any lane. One vector load, as
    * `load` is, where reading the words one by one takes 4 atomic loads. Panics with a
@@ -676,7 +677,7 @@ extend i64x2 {
 
   /**
    * The 2 words of `from` starting at `at`, read while other threads may be changing them:
-   * an optimistic read (velt:sync `VersionLatch`). Each lane a word no thread wrote during the
+   * an optimistic read (velt/sync `VersionLatch`). Each lane a word no thread wrote during the
    * read is that word; a lane a thread was writing is some value, never undefined behaviour,
    * so check the latch's version (`isUnchanged`) before trusting any lane. One vector load, as
    * `load` is, where reading the words one by one takes 2 atomic loads. Panics with a
@@ -937,7 +938,7 @@ extend u64x2 {
 
   /**
    * The 2 words of `from` starting at `at`, read while other threads may be changing them:
-   * an optimistic read (velt:sync `VersionLatch`). Each lane a word no thread wrote during the
+   * an optimistic read (velt/sync `VersionLatch`). Each lane a word no thread wrote during the
    * read is that word; a lane a thread was writing is some value, never undefined behaviour,
    * so check the latch's version (`isUnchanged`) before trusting any lane. One vector load, as
    * `load` is, where reading the words one by one takes 2 atomic loads. Panics with a

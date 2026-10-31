@@ -1,0 +1,34 @@
+// sqlite/engine/exec/count_only (internal): `SELECT count(*) FROM … [WHERE …]` alone, whose loops
+// only count their rows (`Counter`).
+
+import { E_CALL, SelectCore } from "../sql/types";
+import { AG_COUNT_STAR } from "./agg/agg_fn";
+import { AggCtx } from "./agg/agg_ctx";
+
+/** Rows counted by a count-only query's loops. */
+export class Counter {
+  n: i64 = 0;
+}
+
+/**
+ * Whether a core is `SELECT count(*) FROM … [WHERE …]` (no GROUP BY, HAVING, DISTINCT, window,
+ * other aggregate or column): its run counts the loops' rows and outputs the count.
+ */
+export function countOnlyCore(core: SelectCore, isAgg: bool, hasWin: bool, agg: AggCtx): bool {
+  if (!isAgg || hasWin || core.groupBy.length > 0 || core.having != null || core.distinct) {
+    return false;
+  }
+  if (agg.fns.length != 1 || agg.bareSrc.length > 0 || core.columns.length != 1) {
+    return false;
+  }
+  const f = agg.fns[0];
+  const e = core.columns[0].expr;
+  return (
+    f.kind == AG_COUNT_STAR &&
+    f.filter == null &&
+    e.kind == E_CALL &&
+    e.star &&
+    e.over == null &&
+    e.filter == null
+  );
+}

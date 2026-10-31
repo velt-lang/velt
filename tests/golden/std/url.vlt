@@ -7,7 +7,7 @@ import {
   decodeURIComponent,
   encodeURI,
   decodeURI,
-} from "velt:url";
+} from "velt/net/url";
 
 // Absolute inputs (base "") and relative references with their base.
 function cases(): string[][] {

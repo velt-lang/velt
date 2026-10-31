@@ -1,4 +1,4 @@
-import { platform, arch, availableParallelism, tmpdir, hostname, eol } from "velt:os";
+import { platform, arch, availableParallelism, tmpdir, hostname, eol } from "velt/os";
 
 function main() {
   const p = platform();

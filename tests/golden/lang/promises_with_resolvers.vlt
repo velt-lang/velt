@@ -3,7 +3,7 @@
 // settlement wins; `resolve` may be called on the promise's own task (the same object), moved
 // into a spawned task, or sent over a channel and called there (a copy). `T` and `E` also come
 // from the expected type.
-import { channel, Channel } from "velt:channel";
+import { channel, Channel } from "velt/sync";
 
 class Failed extends Error {}
 

@@ -1,0 +1,88 @@
+// http-server (internal): `HttpRequest`, the request a `serveHttp` handler reads: an abstract
+// class, the same over HTTP/1.1 (`Http1Request`, http1/request.vlt) and HTTP/2 (`H2Request`,
+// h2/request.vlt), which extend it, so the compiler rejects one that misses a method. What only
+// the server calls (`begin`, `finish`, `timedOut`, ...) is on those classes.
+//
+// An abstract class rather than an interface: a handler's `req` and `res` are then instances of
+// two unrelated classes, which the compiler knows cannot be one object, so a helper taking both
+// (`acceptWebSocket(req, res)`) can be called with them; two interfaces could be one object.
+
+import { utf8DecodeLossy } from "velt/encoding";
+import { IoError } from "velt/io";
+import { BodyTooLarge } from "./errors";
+
+/// A request: its head and its body, read on demand. Valid while the handler runs: the server
+/// reads the next request into the same buffer.
+export abstract class HttpRequest {
+  /// The connection stays open after the response (HTTP/1.1 unless `Connection: close`;
+  /// always over HTTP/2).
+  abstract get keepAlive(): bool;
+
+  /// Whether the method is `m` (`"GET"`), without making a string.
+  abstract isMethod(m: string): bool;
+
+  /// The method (`"GET"`, `"POST"`, ...).
+  abstract method(): string;
+
+  /// Whether the path (the target up to `?`) is `p`, without making a string.
+  abstract pathIs(p: string): bool;
+
+  /// The path: the request target up to `?` (`/users/1`).
+  abstract path(): string;
+
+  /// The query after `?`, without it, or `""`.
+  abstract query(): string;
+
+  /// The whole request target (`/users/1?full=1`; over HTTP/2, a CONNECT's authority).
+  abstract target(): string;
+
+  /// The value of header `name` (any case), the first one if there are several, or null.
+  abstract header(name: string): string | null;
+
+  /// The values of header `name` (any case) joined with ", " in the order they came, as
+  /// `Headers.get` reads them; null when it was not sent.
+  abstract headerValues(name: string): string | null;
+
+  /// Whether header `name` (any case) was sent.
+  abstract hasHeader(name: string): bool;
+
+  /// The headers' names (as sent; lowercase over HTTP/2) and values, in order.
+  abstract headers(): [string, string][];
+
+  /**
+   * Whether the request asks to switch to `protocol` (`"websocket"`): over HTTP/1.1 an
+   * `Upgrade` header naming it and `Connection: upgrade`; over HTTP/2 an extended CONNECT
+   * (RFC 8441).
+   */
+  abstract isUpgrade(protocol: string): bool;
+
+  /** The client's address, "ip:port" (IPv6 in brackets: "[::1]:5000"). */
+  abstract remoteAddr(): string;
+
+  /**
+   * The next piece of the body (as it arrives, decoded when chunked), or null at its end. For
+   * bodies of any size: what was read is not kept.
+   */
+  abstract read(): Promise<u8[] | null, IoError | RangeError>;
+
+  /**
+   * The whole body (what `read()` has not taken yet). Throws `BodyTooLarge` beyond the server's
+   * `maxBodySize`.
+   */
+  abstract body(): Promise<u8[], IoError | BodyTooLarge | RangeError>;
+
+  /// The whole body as text (UTF-8; invalid bytes become U+FFFD).
+  async bodyText(): Promise<string, IoError | BodyTooLarge | RangeError> {
+    return utf8DecodeLossy(await this.body());
+  }
+
+  /// Whether the body was read to its end, or there is none.
+  abstract bodyRead(): bool;
+
+  /**
+   * Takes the bytes the connection read past this request: after `res.upgrade`, what the client
+   * sent in the new protocol along with the request (a WebSocket's first frame). Over HTTP/2,
+   * nothing.
+   */
+  abstract takeUnread(): u8[];
+}

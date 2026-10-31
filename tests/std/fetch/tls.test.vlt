@@ -1,7 +1,7 @@
-// `fetch` over HTTPS against a velt:http server with the test certificate.
-import { serve } from "velt:http";
-import { afterAll, beforeAll, describe, expect, it } from "velt:test";
-import "velt:test/http";
+// `fetch` over HTTPS against a velt/http server with the test certificate.
+import { serve } from "http-server";
+import { afterAll, beforeAll, describe, expect, it } from "velt/test";
+import "velt/test/http";
 import { TEST_CA, TEST_CERT, TEST_KEY } from "../../golden/std/_tls";
 
 describe("fetch over HTTPS", () => {

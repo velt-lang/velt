@@ -9,7 +9,7 @@ import {
   uuidValidate,
   uuidVersion,
   NIL_UUID,
-} from "velt:uuid";
+} from "velt/random/uuid";
 
 function generated() {
   const a = uuidv4();

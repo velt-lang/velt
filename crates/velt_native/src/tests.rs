@@ -150,6 +150,10 @@ unused!(
         *mut *mut c_void,
     ) -> *mut c_void
 );
+unused!(db_open(u32, *mut c_void, *const c_void, u64) -> u64);
+extern "C" fn db_close(_: u32, _: u64, _: u64) -> *mut c_void {
+    panic!("the mock table has no db_close")
+}
 unused!(fut_poll_ext(*mut c_void, *const crate::rt::WakerArg) -> u32);
 unused!(fut_drop(*mut c_void));
 unused!(spawn(*mut c_void));
@@ -251,6 +255,8 @@ static MOCK: Api = Api {
     strbuf_commit,
     str_utf8,
     fut_poll_in,
+    db_open,
+    db_close,
 };
 
 crate::package!(demo);

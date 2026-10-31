@@ -1,0 +1,4 @@
+iface_method_param_initializer.vlt:6:8: error: a parameter initializer is only allowed in a function or constructor implementation
+  = note: declare it optional, `by?: T`; an implementation gives its own default with `by: T | undefined = …`
+iface_method_param_initializer.vlt:7:21: error: a parameter initializer is only allowed in a function or constructor implementation
+  = note: declare it optional, `quiet?: T`; an implementation gives its own default with `quiet: T | undefined = …`

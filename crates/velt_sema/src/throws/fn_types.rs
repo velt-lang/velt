@@ -11,8 +11,8 @@
 //! grows. A program that stores no throwing closure into such a type is checked once.
 //!
 //! The sets outlive one check, whose interned types they can't use: an error type is kept as a
-//! [`Portable`] type, classes by `DefId` and declaration span (collected before any body is
-//! checked, so the same in every check of one program).
+//! [`Portable`] type, classes and interfaces (`unknown` is one) by `DefId` and declaration span
+//! (collected before any body is checked, so the same in every check of one program).
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -29,6 +29,9 @@ pub(crate) enum Portable {
     Leaf(TyKind),
     /// A class (or other definition) instance: its id, declaration span and type arguments.
     Def(DefId, Span, Vec<Portable>),
+    /// A value of an interface type (`unknown`, `any`, a thrown interface value): the
+    /// interface's id, declaration span and type arguments.
+    Dyn(DefId, Span, Vec<Portable>),
     Array(Box<Portable>),
     Option(Box<Portable>, Nothing),
 }
@@ -38,7 +41,9 @@ impl Portable {
     fn size(&self) -> usize {
         match self {
             Portable::Leaf(_) => 1,
-            Portable::Def(_, _, args) => 1 + args.iter().map(Portable::size).sum::<usize>(),
+            Portable::Def(_, _, args) | Portable::Dyn(_, _, args) => {
+                1 + args.iter().map(Portable::size).sum::<usize>()
+            }
             Portable::Array(e) | Portable::Option(e, _) => 1 + e.size(),
         }
     }
@@ -51,13 +56,13 @@ pub(crate) struct FnTypeSeeds {
     /// The error types the previous check inferred for the functions declared before any body
     /// is checked, by `DefId` and declaration span: what a recursive call counts while the
     /// callee is still being checked ([`Ctx::recursion_hint`]).
-    hints: FxHashMap<DefId, (Span, Vec<Portable>)>,
+    pub(super) hints: FxHashMap<DefId, (Span, Vec<Portable>)>,
     /// The error types the previous check inferred for interface method slots that a body read
     /// before the implementations converted to the interface were found (an object literal
     /// converted in code checked later), by interface `DefId` and slot, with the interface's
     /// declaration span: a call through the slot counts them from the start
     /// ([`Ctx::slot_hint`]).
-    slots: FxHashMap<(DefId, u32), (Span, Vec<Portable>)>,
+    pub(super) slots: FxHashMap<(DefId, u32), (Span, Vec<Portable>)>,
     /// Check with the sets written in, without variables (`throws::vars`).
     no_vars: bool,
     /// The sites of std/proxy's `ProxyHandler` traps the previous check met.
@@ -121,7 +126,7 @@ pub(crate) struct FnSites {
     pub(super) flows: FxHashMap<Span, Vec<Span>>,
     /// How many errors were added to `found`.
     pub added: usize,
-    last: bool,
+    pub(super) last: bool,
     /// The check has error-set variables (`TyOp::ErrSite`): the program's own sites get one
     /// (`user_vars`), or the traps of std/proxy without a seeded set do. A trap's set grows
     /// through the program's sites and other traps (a `has` trap calling `Reflect.has` throws
@@ -234,7 +239,6 @@ impl Ctx<'_> {
                 return self.ty.error;
             }
         }
-        let mut ret = self.resolve_type(ret, env);
         let never = self.ty.never;
         let throws_clause = throws;
         let err = throws.map(|t| {
@@ -242,6 +246,17 @@ impl Ctx<'_> {
             self.no_void_error(e, t.span);
             e
         });
+        // `Promise<T>` with a written `throws E`: the promise rejects with `E` and nothing else
+        // (docs/reference/async.md "Errors"), so `E` is what an argument's promise rejects with,
+        // not one member of a union with the inferred rejections of a `Promise<T>` site.
+        let mut ret = match (promise_payload_written(ret), err) {
+            (Some(payload), Some(e)) => {
+                let v = self.resolve_type(payload, env);
+                let e = self.canon_error(Some(e)).unwrap_or(never);
+                self.ty.promise_rejecting(v, e)
+            }
+            _ => self.resolve_type(ret, env),
+        };
         let inferred = throws.is_none();
         // A trap of std/proxy gets a variable in every check with variables, unless the previous
         // check seeded its set; the program's own sites only in a check without seeds.
@@ -378,7 +393,7 @@ impl Ctx<'_> {
             Some(s) if s.is_std => self
                 .modules
                 .get(module)
-                .is_some_and(|m| m.path == "std/proxy"),
+                .is_some_and(|m| m.path == velt_common::std_module!(lang_proxy)),
             Some(_) => true,
         }
     }
@@ -471,142 +486,6 @@ impl Ctx<'_> {
         e
     }
 
-    /// Keep the error types this check inferred for the next check, when there is one.
-    pub(crate) fn record_recursion_hints(&mut self, fns: &[DefId]) {
-        if !self.fn_sites.again() {
-            return;
-        }
-        for &d in fns {
-            if d.0 as usize >= self.collected_defs {
-                continue;
-            }
-            let Some(t) = self.fn_info(d).throws else {
-                continue;
-            };
-            let ms: Option<Vec<Portable>> = (self.error_members(t).into_iter())
-                .map(|m| self.port(m, 0))
-                .collect();
-            if let Some(ms) = ms {
-                let span = self.def_spans[d.0 as usize];
-                self.fn_sites.found.hints.insert(d, (span, ms));
-            }
-        }
-    }
-
-    /// A type built while a body was checked (a generator's or a function value's, a `catch`
-    /// variable's) missed what a function in a recursion throws, because that function's body
-    /// was still being checked. Keep what the functions `srcs` call (through any depth of calls)
-    /// throw in the final inference for the next check, where a call to one whose body is
-    /// still being checked counts it ([`Ctx::recursion_hint`]), as TypeScript has no error
-    /// types to annotate. True when the program is checked again for it.
-    pub(crate) fn recursion_found_late(&mut self, srcs: &[crate::defs::ThrowSrc]) -> bool {
-        if self.fn_sites.last {
-            return false;
-        }
-        let mut grew = false;
-        let mut todo = srcs.to_vec();
-        let mut seen: Vec<DefId> = vec![];
-        while let Some(s) = todo.pop() {
-            let crate::defs::ThrowSrc::Call(d, ..) = s else {
-                continue;
-            };
-            if d.0 as usize >= self.collected_defs || seen.contains(&d) {
-                continue;
-            }
-            seen.push(d);
-            let Some(f) = self.try_fn(d) else {
-                continue;
-            };
-            if f.declared_throws.is_some_and(|t| !t.from_body) {
-                continue;
-            }
-            todo.extend(f.throw_srcs.iter().cloned());
-            if let Some(t) = f.throws {
-                grew |= self.add_recursion_hint(d, t);
-            }
-        }
-        if grew {
-            self.fn_sites.grew = true;
-        }
-        grew
-    }
-
-    /// Add the members of `t` to the hint of function `d` for the next check; true when new.
-    fn add_recursion_hint(&mut self, d: DefId, t: TyId) -> bool {
-        let ms: Option<Vec<Portable>> = (self.error_members(t).into_iter())
-            .map(|m| self.port(m, 0))
-            .collect();
-        let Some(ms) = ms else {
-            return false;
-        };
-        let span = self.def_spans[d.0 as usize];
-        let mut all = match self.fn_sites.found.hints.get(&d) {
-            Some((s, old)) if *s == span => old.clone(),
-            _ => vec![],
-        };
-        let before = all.len();
-        for m in ms {
-            if !all.contains(&m) {
-                all.push(m);
-            }
-        }
-        let new = all.len() > before;
-        self.fn_sites.found.hints.insert(d, (span, all));
-        new
-    }
-
-    /// What the previous check inferred function `d` throws (see [`FnTypeSeeds::hints`]).
-    pub(crate) fn recursion_hint(&mut self, d: DefId) -> Option<TyId> {
-        let (span, ms) = self.fn_sites.seeds.hints.get(&d)?.clone();
-        if self.def_spans.get(d.0 as usize) != Some(&span) {
-            return None;
-        }
-        let ms: Vec<TyId> = ms.iter().filter_map(|p| self.unport(p)).collect();
-        self.error_union(&ms)
-    }
-
-    /// Keep `t`, what slot `slot` of `iface` throws in the final inference, for the next check
-    /// (see [`FnTypeSeeds::slots`]); true when the program is checked again for it.
-    pub(crate) fn record_slot_hint(&mut self, iface: DefId, slot: u32, t: TyId) -> bool {
-        if self.fn_sites.last || iface.0 as usize >= self.collected_defs {
-            return false;
-        }
-        let ms: Option<Vec<Portable>> = (self.error_members(t).into_iter())
-            .map(|m| self.port(m, 0))
-            .collect();
-        let Some(ms) = ms else {
-            return false;
-        };
-        let span = self.def_spans[iface.0 as usize];
-        let mut all = match self.fn_sites.found.slots.get(&(iface, slot)) {
-            Some((s, old)) if *s == span => old.clone(),
-            _ => vec![],
-        };
-        let before = all.len();
-        for m in ms {
-            if !all.contains(&m) {
-                all.push(m);
-            }
-        }
-        if all.len() == before {
-            return false;
-        }
-        self.fn_sites.found.slots.insert((iface, slot), (span, all));
-        self.fn_sites.grew = true;
-        true
-    }
-
-    /// What the previous check inferred a call through slot `slot` of `iface` throws (see
-    /// [`FnTypeSeeds::slots`]).
-    pub(crate) fn slot_hint(&mut self, iface: DefId, slot: u32) -> Option<TyId> {
-        let (span, ms) = self.fn_sites.seeds.slots.get(&(iface, slot))?.clone();
-        if self.def_spans.get(iface.0 as usize) != Some(&span) {
-            return None;
-        }
-        let ms: Vec<TyId> = ms.iter().filter_map(|p| self.unport(p)).collect();
-        self.error_union(&ms)
-    }
-
     /// Can a value of `used` have been typed by site type `g`: equal, with `g`'s type
     /// parameters (and deferred types) matching anything, and error types ignored. A part of
     /// `used` that is a reported type error matches nothing: it would match every site.
@@ -691,6 +570,13 @@ impl Ctx<'_> {
                     .collect::<Option<Vec<_>>>()?;
                 Portable::Def(*d, span, args)
             }
+            TyKind::Dyn(d, args) if (d.0 as usize) < self.collected_defs => {
+                let span = *self.def_spans.get(d.0 as usize)?;
+                let args = (args.iter())
+                    .map(|a| self.port(*a, depth + 1))
+                    .collect::<Option<Vec<_>>>()?;
+                Portable::Dyn(*d, span, args)
+            }
             TyKind::Array(e) => Portable::Array(Box::new(self.port(*e, depth + 1)?)),
             TyKind::Option(e, n) => Portable::Option(Box::new(self.port(*e, depth + 1)?), *n),
             _ => return None,
@@ -709,6 +595,15 @@ impl Ctx<'_> {
                     .map(|a| self.unport(a))
                     .collect::<Option<Vec<_>>>()?;
                 TyKind::Adt(*d, args)
+            }
+            Portable::Dyn(d, span, args) => {
+                if self.def_spans.get(d.0 as usize) != Some(span) {
+                    return None;
+                }
+                let args = (args.iter())
+                    .map(|a| self.unport(a))
+                    .collect::<Option<Vec<_>>>()?;
+                TyKind::Dyn(*d, args)
             }
             Portable::Array(e) => TyKind::Array(self.unport(e)?),
             Portable::Option(e, n) => TyKind::Option(self.unport(e)?, *n),
@@ -756,5 +651,17 @@ impl Ctx<'_> {
             self.seed_fn_sites(to, have, site);
         }
         Some(false)
+    }
+}
+
+/// `T` of a result type written `Promise<T>` (no error type).
+fn promise_payload_written(t: &ast::TypeExpr) -> Option<&ast::TypeExpr> {
+    match &t.kind {
+        ast::TypeExprKind::Named { path, args }
+            if path.len() == 1 && path[0].name == "Promise" && args.len() == 1 =>
+        {
+            args.first()
+        }
+        _ => None,
     }
 }

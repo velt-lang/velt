@@ -67,7 +67,7 @@ pub enum TypeView {
     Nullable(TypeRef),            // T | null, and T | undefined (issue #930, phase 1)
     Array(TypeRef), Tuple(Vec<TypeRef>),
     Map(TypeRef, TypeRef),        // the prelude's Map
-    Set(TypeRef),                 // velt:collections/set
+    Set(TypeRef),                 // velt/collections
     Promise(TypeRef),             // what it rejects with is not shown
     Shared(TypeRef), Fn,          // Fn: closures and named functions as values
     Union(Vec<TypeRef>),          // A | B (with null: Nullable(Union))

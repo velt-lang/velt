@@ -1,8 +1,9 @@
-//! Gated functions (#1330, `__intrinsic_target`, std only): every call sits behind the check of
-//! the function's CPU extension or in a function gated on the same target; a gated function is
-//! never a value; a closure inside one does not inherit its target. Gating is std-only, so a
-//! golden file cannot declare one: std is copied to a temp directory with a probe module added,
-//! and `velt check` / `velt run` use it through `$VELT_STD` (as std_simd_import.rs does).
+//! Gated functions (#1330, the intrinsic `targetFeature` of velt/lang/intrinsics, std only):
+//! every call sits behind the check of the function's CPU extension or in a function gated on
+//! the same target; a gated function is never a value; a closure inside one does not inherit its
+//! target. Gating is std-only, so a golden file cannot declare one: std is copied to a temp
+//! directory with a probe module added, and `velt check` / `velt run` use it through `$VELT_STD`
+//! (as std_simd_import.rs does).
 
 use std::path::{Path, PathBuf};
 use std::process::Output;
@@ -31,7 +32,11 @@ fn velt(dir: &test_dir::TestDir, probe: &str, main: &str, args: &[&str]) -> Outp
             &std,
         );
     }
-    std::fs::write(std.join("zz_gated.vlt"), probe).unwrap();
+    // A module of its own (a folder's index.vlt): user code imports only modules.
+    std::fs::create_dir_all(std.join("zz_gated")).unwrap();
+    // Each probe gates its functions with the intrinsic, which std imports like any function.
+    let probe = format!("import {{ targetFeature }} from \"velt/lang/intrinsics\";\n{probe}");
+    std::fs::write(std.join("zz_gated/index.vlt"), probe).unwrap();
     let file = dir.path().join("main.vlt");
     std::fs::write(&file, main).unwrap();
     let mut all: Vec<&str> = args.to_vec();
@@ -47,15 +52,15 @@ fn velt(dir: &test_dir::TestDir, probe: &str, main: &str, args: &[&str]) -> Outp
 /// Gated functions used as they must be: a guarded call, a call from a function gated on the same
 /// target, and the method that checks the target.
 const GOOD: &str = r#"
-import { u32x4 } from "velt:simd";
+import { u32x4 } from "velt/simd";
 
 function twice(v: u32x4): u32x4 {
-  __intrinsic_target("sha-arm");
+  targetFeature("sha-arm");
   return v.add(v);
 }
 
 function four(v: u32x4): u32x4 {
-  __intrinsic_target("sha-arm");
+  targetFeature("sha-arm");
   return twice(twice(v));
 }
 
@@ -70,7 +75,7 @@ export function scaled(v: u32x4): u32x4 {
 #[test]
 fn guarded_and_same_target_calls_compile_and_run() {
     let dir = test_dir::TestDir::new();
-    let main = "import { scaled } from \"velt:zz_gated\";\nimport { u32x4 } from \"velt:simd\";\n\nfunction main() {\n  console.log(scaled(u32x4.splat(3)).lane(2));\n}\n";
+    let main = "import { scaled } from \"velt/zz_gated\";\nimport { u32x4 } from \"velt/simd\";\n\nfunction main() {\n  console.log(scaled(u32x4.splat(3)).lane(2));\n}\n";
     for release in [false, true] {
         let mut args = vec!["run"];
         if release {
@@ -99,15 +104,15 @@ fn check_fails(probe: &str, main: &str, messages: &[&str]) {
 }
 
 const MAIN_PROBE: &str =
-    "import { probe } from \"velt:zz_gated\";\n\nfunction main() {\n  console.log(probe());\n}\n";
+    "import { probe } from \"velt/zz_gated\";\n\nfunction main() {\n  console.log(probe());\n}\n";
 
 #[test]
 fn a_call_needs_the_check_of_its_target() {
     let probe = r#"
-import { u32x4 } from "velt:simd";
+import { u32x4 } from "velt/simd";
 
 function gated(): i64 {
-  __intrinsic_target("sha-x86");
+  targetFeature("sha-x86");
   return 1;
 }
 
@@ -131,10 +136,10 @@ export function probe(): i64 {
 #[test]
 fn a_gated_function_is_not_a_value() {
     let probe = r#"
-import { u32x4 } from "velt:simd";
+import { u32x4 } from "velt/simd";
 
 function gated(): i64 {
-  __intrinsic_target("sha-arm");
+  targetFeature("sha-arm");
   return 1;
 }
 
@@ -156,15 +161,15 @@ export function probe(): i64 {
 #[test]
 fn a_closure_does_not_inherit_the_target() {
     let probe = r#"
-import { u32x4 } from "velt:simd";
+import { u32x4 } from "velt/simd";
 
 function inner(): i64 {
-  __intrinsic_target("sha-arm");
+  targetFeature("sha-arm");
   return 1;
 }
 
 function outer(): i64 {
-  __intrinsic_target("sha-arm");
+  targetFeature("sha-arm");
   const f = (): i64 => inner();
   return f();
 }
@@ -188,18 +193,18 @@ fn the_statement_is_first_named_and_not_in_a_method() {
     let probe = r#"
 function late(): i64 {
   const x = 1;
-  __intrinsic_target("sha-arm");
+  targetFeature("sha-arm");
   return x;
 }
 
 function unknown(): i64 {
-  __intrinsic_target("sha-mips");
+  targetFeature("sha-mips");
   return 1;
 }
 
 class Box {
   get(): i64 {
-    __intrinsic_target("sha-arm");
+    targetFeature("sha-arm");
     return 1;
   }
 }
@@ -212,8 +217,8 @@ export function probe(): i64 {
         probe,
         MAIN_PROBE,
         &[
-            "`__intrinsic_target` must be the first statement of a function (not a method or closure)",
-            "`__intrinsic_target` takes the target as a string literal: one of sha-arm, sha-x86, clmul-x86, clmul-arm",
+            "`targetFeature` must be the first statement of a function (not a method or closure)",
+            "`targetFeature` takes the target as a string literal: one of sha-arm, sha-x86, clmul-x86, clmul-arm",
         ],
     );
 }
@@ -222,11 +227,11 @@ export function probe(): i64 {
 fn user_code_calls_an_exported_gated_function_only_behind_the_check() {
     let probe = r#"
 export function gated(): i64 {
-  __intrinsic_target("sha-arm");
+  targetFeature("sha-arm");
   return 1;
 }
 "#;
-    let main = "import { gated } from \"velt:zz_gated\";\nimport { u32x4 } from \"velt:simd\";\n\nfunction main() {\n  if (u32x4.hasShaArm()) {\n    console.log(gated());\n  }\n  console.log(gated());\n  const f = gated;\n}\n";
+    let main = "import { gated } from \"velt/zz_gated\";\nimport { u32x4 } from \"velt/simd\";\n\nfunction main() {\n  if (u32x4.hasShaArm()) {\n    console.log(gated());\n  }\n  console.log(gated());\n  const f = gated;\n}\n";
     check_fails(
         probe,
         main,
@@ -239,7 +244,7 @@ export function gated(): i64 {
 
 const ONE_GATED: &str = r#"
 export function gated(x: i64): i64 {
-  __intrinsic_target("sha-arm");
+  targetFeature("sha-arm");
   return x + 1;
 }
 "#;
@@ -247,15 +252,15 @@ export function gated(x: i64): i64 {
 #[test]
 fn the_check_is_velt_simds_method_not_its_name() {
     // A user type named `u32x4` with a `hasShaArm` that returns true is not the CPU check.
-    let fake = "import { gated } from \"velt:zz_gated\";\n\nclass u32x4 {\n  static hasShaArm(): bool {\n    return true;\n  }\n}\n\nfunction main() {\n  if (u32x4.hasShaArm()) {\n    console.log(gated(1));\n  }\n}\n";
+    let fake = "import { gated } from \"velt/zz_gated\";\n\nclass u32x4 {\n  static hasShaArm(): bool {\n    return true;\n  }\n}\n\nfunction main() {\n  if (u32x4.hasShaArm()) {\n    console.log(gated(1));\n  }\n}\n";
     check_fails(
         ONE_GATED,
         fake,
         &["`gated` runs only where the CPU has `sha-arm`, so it must be called behind that check"],
     );
-    // velt:simd's `u32x4` imported under another name is.
+    // velt/simd's `u32x4` imported under another name is.
     let dir = test_dir::TestDir::new();
-    let alias = "import { gated } from \"velt:zz_gated\";\nimport { u32x4 as V } from \"velt:simd\";\n\nfunction main() {\n  console.log(V.hasShaArm() ? gated(1) : 2);\n  if (V.hasShaArm()) {\n    console.log(gated(1));\n  } else {\n    console.log(2);\n  }\n}\n";
+    let alias = "import { gated } from \"velt/zz_gated\";\nimport { u32x4 as V } from \"velt/simd\";\n\nfunction main() {\n  console.log(V.hasShaArm() ? gated(1) : 2);\n  if (V.hasShaArm()) {\n    console.log(gated(1));\n  } else {\n    console.log(2);\n  }\n}\n";
     let out = velt(&dir, ONE_GATED, alias, &["run"]);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -276,7 +281,7 @@ fn the_check_is_velt_simds_method_not_its_name() {
 
 #[test]
 fn call_and_apply_are_direct_calls() {
-    let main = "import { gated } from \"velt:zz_gated\";\nimport { u32x4 } from \"velt:simd\";\n\nfunction main() {\n  if (u32x4.hasShaArm()) {\n    console.log(gated.call(undefined, 1), gated.apply(undefined, [2]));\n  }\n  console.log(gated.call(undefined, 3));\n  console.log(gated.apply(undefined, [4]));\n}\n";
+    let main = "import { gated } from \"velt/zz_gated\";\nimport { u32x4 } from \"velt/simd\";\n\nfunction main() {\n  if (u32x4.hasShaArm()) {\n    console.log(gated.call(undefined, 1), gated.apply(undefined, [2]));\n  }\n  console.log(gated.call(undefined, 3));\n  console.log(gated.apply(undefined, [4]));\n}\n";
     let dir = test_dir::TestDir::new();
     let out = velt(&dir, ONE_GATED, main, &["check"]);
     let err = String::from_utf8_lossy(&out.stderr);
@@ -290,10 +295,10 @@ fn call_and_apply_are_direct_calls() {
 
 /// Each SHA method of an extension twice in a function gated on it, and once in ordinary code.
 const SHA_PROBE: &str = r#"
-import { u32x4 } from "velt:simd";
+import { u32x4 } from "velt/simd";
 
 export function roundsArm(a: u32x4, n: i64): u32x4 {
-  __intrinsic_target("sha-arm");
+  targetFeature("sha-arm");
   let x = a;
   for (let i = 0; i < n; i++) {
     x = x.sha256h(a, x).sha256h(x, a).sha256h2(a, x).sha256h2(x, a);
@@ -305,7 +310,7 @@ export function roundsArm(a: u32x4, n: i64): u32x4 {
 }
 
 export function roundsX86(a: u32x4, n: i64): u32x4 {
-  __intrinsic_target("sha-x86");
+  targetFeature("sha-x86");
   let x = a;
   for (let i = 0; i < n; i++) {
     x = x.sha256rnds2(a, x).sha256rnds2(x, a).sha256msg1(a).sha256msg1(x);
@@ -323,7 +328,7 @@ export function plain(a: u32x4): u32x4 {
 }
 "#;
 
-const SHA_MAIN: &str = "import { roundsArm, roundsX86, plain } from \"velt:zz_gated\";\nimport { u32x4 } from \"velt:simd\";\n\nfunction main() {\n  const a = u32x4.splat(1);\n  if (u32x4.hasShaArm()) {\n    console.log(roundsArm(a, 3).lane(0));\n  }\n  if (u32x4.hasShaX86()) {\n    console.log(roundsX86(a, 3).lane(0));\n  }\n  console.log(plain(a).lane(0));\n}\n";
+const SHA_MAIN: &str = "import { roundsArm, roundsX86, plain } from \"velt/zz_gated\";\nimport { u32x4 } from \"velt/simd\";\n\nfunction main() {\n  const a = u32x4.splat(1);\n  if (u32x4.hasShaArm()) {\n    console.log(roundsArm(a, 3).lane(0));\n  }\n  if (u32x4.hasShaX86()) {\n    console.log(roundsX86(a, 3).lane(0));\n  }\n  console.log(plain(a).lane(0));\n}\n";
 
 /// The LLVM functions of `ir` by name: `define … @name(…) … { body }`.
 fn llvm_functions(ir: &str) -> Vec<(String, &str)> {
@@ -431,10 +436,10 @@ fn a_gated_function_knows_its_extension_and_stays_out_of_line() {
 
 /// Each carry-less multiplication in a function gated on its extension, per architecture.
 const CLMUL_PROBE: &str = r#"
-import { u64x2 } from "velt:simd";
+import { u64x2 } from "velt/simd";
 
 export function foldX86(a: u64x2, n: i64): u64x2 {
-  __intrinsic_target("clmul-x86");
+  targetFeature("clmul-x86");
   let x = a;
   for (let i = 0; i < n; i++) {
     x = x.clmulLow(a).xor(x.clmulHigh(a)).xor(x.clmulLowHigh(a)).xor(x.clmulHighLow(a));
@@ -443,7 +448,7 @@ export function foldX86(a: u64x2, n: i64): u64x2 {
 }
 
 export function foldArm(a: u64x2, n: i64): u64x2 {
-  __intrinsic_target("clmul-arm");
+  targetFeature("clmul-arm");
   let x = a;
   for (let i = 0; i < n; i++) {
     x = x.clmulLow(a).xor(x.clmulHigh(a)).xor(x.clmulLowHigh(a)).xor(x.clmulHighLow(a));
@@ -452,7 +457,7 @@ export function foldArm(a: u64x2, n: i64): u64x2 {
 }
 "#;
 
-const CLMUL_MAIN: &str = "import { foldArm, foldX86 } from \"velt:zz_gated\";\nimport { u64x2 } from \"velt:simd\";\n\nfunction main() {\n  const a = u64x2.splat(3);\n  if (u64x2.hasClmulX86()) {\n    console.log(foldX86(a, 3).lane(0));\n  }\n  if (u64x2.hasClmulArm()) {\n    console.log(foldArm(a, 3).lane(0));\n  }\n}\n";
+const CLMUL_MAIN: &str = "import { foldArm, foldX86 } from \"velt/zz_gated\";\nimport { u64x2 } from \"velt/simd\";\n\nfunction main() {\n  const a = u64x2.splat(3);\n  if (u64x2.hasClmulX86()) {\n    console.log(foldX86(a, 3).lane(0));\n  }\n  if (u64x2.hasClmulArm()) {\n    console.log(foldArm(a, 3).lane(0));\n  }\n}\n";
 
 #[test]
 fn clmul_gated_functions_are_the_bare_instruction() {

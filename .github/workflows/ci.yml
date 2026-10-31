@@ -184,12 +184,15 @@ jobs:
     # entry within the hour instead of holding the queue for two.
     timeout-minutes: 45
     steps:
+      # With its parent: std-lint compares the allow lists with the change's base (`HEAD^1`).
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
       - uses: ./.github/actions/setup
       - name: cargo xtask check --full --part lint,test
         shell: bash
         working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
-        run: cargo xtask check --full --part lint,test
+        run: cargo xtask check --full --part lint,test --base HEAD^1
       - if: failure()
         uses: ./.github/actions/fail-fast
         with:

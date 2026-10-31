@@ -6,7 +6,7 @@
 // no per-pixel exit (the escape test runs every 4 iterations and only stops when all 8 lanes
 // escaped, and only when the previous byte was all-escaped too). Tests whether struct-of-lanes
 // code gets vectorized like Rust's `[f64; 8]`.
-import { argv, stdout } from "velt:process";
+import { argv, stdout } from "velt/process";
 
 struct F64x8 {
   l0: f64;

@@ -1,4 +1,4 @@
-import type { Package } from "velt:package";
+import type { Package } from "velt/package";
 
 export const pkg: Package = {
   name: "ssr-blog",
@@ -7,4 +7,5 @@ export const pkg: Package = {
   // (tsconfig.json), so the shared components compile with both.
   jsx: { importSource: "./jsx" },
   tsCompat: ["src/shared"],
+  dependencies: { "http-server": { path: "../../../packages/http-server" } },
 };

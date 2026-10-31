@@ -1,0 +1,15 @@
+// What `JSON.stringify` cannot write is a compile error at the call that writes it, reported by
+// the generator of its writer (velt/encoding/json/generate/check.vlt), also through a generic
+// function: a `Map` without `string` keys, an atomic `shared` integer, a `shared` lock (read
+// only under its lock).
+function send<T>(v: T): string {
+  return JSON.stringify(v);
+}
+
+function main() {
+  const m = new Map<i64, i64>();
+  console.log(JSON.stringify(m));
+  console.log(send(shared(1 as i64)));
+  const l = shared(new Mutex<number[]>([1]));
+  console.log(JSON.stringify(l));
+}

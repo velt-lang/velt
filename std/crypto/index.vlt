@@ -1,0 +1,18 @@
+// velt/crypto: SHA-256 and SHA-1 (FIPS 180-4), HMAC (RFC 2104), secure random bytes/integers
+// and constant-time comparison.
+//
+// The hashes are Velt: where the CPU has SHA instructions (`velt/simd`, #1330: ARMv8 SHA2, x86
+// SHA-NI with SSSE3 and SSE4.1) whole blocks go through functions gated on them, which run the
+// bare instructions; elsewhere (other CPUs, WebAssembly, debug builds, `VELT_SIMD_DISABLE=sha`)
+// through portable rounds over `u32` words (integer arithmetic wraps, `>>>` is a logical shift).
+// Randomness comes from the OS generator through the runtime. SHA-1 is broken for collision
+// resistance: use it only for legacy protocols (WebSocket handshakes, HMAC-SHA1 in TOTP, git
+// object ids).
+// docs/std/crypto.md.
+
+export { timingSafeEqual } from "velt/crypto/compare";
+export { CryptoError } from "velt/crypto/errors";
+export { hmacSha1, hmacSha256 } from "velt/crypto/hmac";
+export { randomBytes, randomInt } from "velt/crypto/random";
+export { sha1, sha1Hex } from "velt/crypto/sha1";
+export { sha256, sha256Hex } from "velt/crypto/sha256";

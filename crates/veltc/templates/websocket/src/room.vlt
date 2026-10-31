@@ -1,7 +1,7 @@
 // Who is connected: client ids, names and sockets. Plain synchronous state that the server keeps
 // behind a `Mutex`. Methods return errors as values (`string | null`) because they run inside
 // `Mutex.with` callbacks, which cannot throw (the lock is held).
-import { WebSocket } from "velt:websocket";
+import { WebSocket } from "velt/net/websocket";
 
 type Member = { name: string; socket: WebSocket };
 

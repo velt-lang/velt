@@ -1,0 +1,5 @@
+// velt/os: facts about the machine (a subset of Node's `os` module, rt_abi_async.md §14).
+// docs/std/os.md.
+
+export { arch, availableParallelism, eol, hostname, platform, tmpdir } from "velt/os/machine";
+export { lastOsError } from "velt/os/rt";

@@ -1,0 +1,75 @@
+// velt/lang/this_fn: the value of a function expression with a `this: any` parameter
+// (docs/reference/functions.md "Function expressions"), whose `this` is the object it is called
+// on, as in JavaScript. Sema makes `function (this: any, a: A) { body }` a `ThisFn` holding the
+// closure `(this, arguments) => { let a: A = arguments[0]; body }`, held as a `Function`. A call
+// passes the receiver: a method call through a proxy or an `any` (velt_vir's call slots), a call
+// of a member read some other way (`o[k](x)`, `o.f?.(x)`, `o.f(x)` with `f: Function`) through
+// `callOn`, and `call` (`[THIS_FN_APPLY]`), `apply` and `bind` (`[THIS_FN_BIND]`) below; a plain call `f(x)`
+// passes `undefined`. `typeof` is `"function"`.
+
+import { THIS_FN_APPLY, THIS_FN_BIND } from "velt/lang/hooks/keys";
+
+/** A function value whose `this` is bound at the call (module docs). */
+export class ThisFn {
+  #f: Function;
+
+  constructor(f: Function) {
+    this.#f = f;
+  }
+
+  /** The call with `self` as `this` and `args` as the arguments. */
+  [THIS_FN_APPLY](self: any, args: any[]): any {
+    const f: any = this.#f;
+    return f(self, args);
+  }
+
+  /** `f.apply(thisArg, args)`: `null` or `undefined` passes no arguments. */
+  apply(self: any, args?: any): any {
+    if (args == null) {
+      return this[THIS_FN_APPLY](self, []);
+    }
+    const list: any[] = args;
+    return this[THIS_FN_APPLY](self, list);
+  }
+
+  /**
+   * `f.bind(thisArg, ...bound)`: a function whose `this` is `self`, whatever the call passes,
+   * and whose arguments start with `bound`. (`f.call(thisArg, ...args)` is `[THIS_FN_APPLY]`: velt_vir's
+   * `this_fn_call_keys` passes the arguments of both as one array.)
+   */
+  [THIS_FN_BIND](self: any, bound: any[]): Function {
+    const f: any = this.#f;
+    const g = (_ignored: any, args: any[]): any => {
+      const all: any[] = [];
+      for (const b of bound) {
+        all.push(b);
+      }
+      for (const a of args) {
+        all.push(a);
+      }
+      return f(self, all);
+    };
+    const out: any = new ThisFn(g);
+    return out;
+  }
+}
+
+/**
+ * `o.m(...args)` where sema read the member `f` some other way than a slot call through `any`
+ * (`o[k](...)`, `o.m?.(...)`, a typed `o` with `m: Function`): a `ThisFn` gets `self` as
+ * `this`, any other function the plain call.
+ */
+export function callOn(f: any, self: any, args: any[]): any {
+  if (f instanceof ThisFn) {
+    return f[THIS_FN_APPLY](self, args);
+  }
+  return f(...args);
+}
+
+/** `o.m?.(...args)`: `undefined` when `f` is `null` or `undefined`, without evaluating `args`. */
+export function callOptOn(f: any, self: any, args: () => any[]): any {
+  if (f == null) {
+    return undefined;
+  }
+  return callOn(f, self, args());
+}

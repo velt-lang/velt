@@ -1,0 +1,18 @@
+// velt/lang/intrinsics (internal): how an intrinsic takes each argument. Velt infers a
+// function's parameter modes from its body; an intrinsic has none, so its declaration says it:
+// a parameter of a number, `bool` or `symbol` type is copied, any other is borrowed (read where
+// it is, for the call only), and one of these wrappers says otherwise. Each is its type
+// argument itself, so TypeScript and every tool read the declaration as the plain type; the
+// compiler reads the wrapper only on a `declare intrinsic function`'s parameter.
+
+/** The argument is modified in place (a mutable borrow): a variable, field or element passed
+ * there must be one the caller may change. */
+export type Mut<T> = T;
+
+/** The argument is taken over (moved in): the caller's value is the intrinsic's from then on,
+ * or a copy of it where the caller keeps using it. */
+export type Owned<T> = T;
+
+/** The argument is copied bit for bit, whatever the type: for a type parameter that only ever
+ * stands for a number or `bool` (an `Atomic<T>`'s value). */
+export type Copied<T> = T;

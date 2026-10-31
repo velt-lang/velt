@@ -1,7 +1,7 @@
-/** @jsxImportSource velt:jsx/generic */
+/** @jsxImportSource velt/jsx/generic */
 
 // The page of `jsx_svg_mathml` under std/jsx's generic runtime: `_jsx_svg_page.vlt` under
-// `velt:jsx/generic`.
+// `velt/jsx/generic`.
 
 export function icon(r: i64): JSX.Element {
   return <svg viewBox="0 0 10 10"><circle cx={5} cy={5} r={r} /></svg>;

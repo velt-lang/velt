@@ -1,0 +1,35 @@
+// velt/task (internal): the runtime functions velt/task calls: signals, task groups and workers.
+
+export declare function velt_rt_signal_new(): u64;
+
+export declare function velt_rt_signal_retain(s: u64): u64;
+
+export declare function velt_rt_signal_free(s: u64);
+
+export declare function velt_rt_signal_abort(s: u64, reason: string);
+
+export declare function velt_rt_signal_aborted(s: u64): bool;
+
+export declare function velt_rt_signal_reason(s: u64): string;
+
+export declare function velt_rt_signal_timeout_ms(s: u64): i64;
+
+export declare async function velt_rt_signal_wait(s: u64): Promise<void>;
+
+export declare function velt_rt_signal_timeout(ms: i64, reason: string): u64;
+
+export declare function velt_rt_signal_any(signals: u64[]): u64;
+
+export declare function velt_rt_group_new(): u64;
+
+export declare function velt_rt_group_enter(g: u64): bool;
+
+export declare function velt_rt_group_leave(g: u64);
+
+export declare async function velt_rt_group_wait(g: u64): Promise<void>;
+
+export declare function velt_rt_group_free(g: u64);
+
+export declare function velt_rt_worker_count(): u64;
+
+export declare function velt_rt_current_worker(): u64;

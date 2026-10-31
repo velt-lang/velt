@@ -3,7 +3,7 @@
 // Written the way a TypeScript developer would: stdin line by line, a Map<number, number> of
 // counts keyed by the 2-bit packed k-nucleotide.
 
-import { readLineSync } from "velt:stdin";
+import { readLineSync } from "velt/process";
 
 const LETTERS = "ACGT";
 

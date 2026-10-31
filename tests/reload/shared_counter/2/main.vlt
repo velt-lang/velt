@@ -1,7 +1,7 @@
 // Handler state (the closure's captured `shared` counter) survives a hot swap: this edit (a
 // string in the handler body, env layout unchanged) swaps, and the count continues at 3. A
 // restart (`--exe` mode) starts it over.
-import { serve } from "velt:http";
+import { serve } from "http-server";
 
 async function main() {
   const hits = shared(0);

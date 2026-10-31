@@ -124,7 +124,25 @@ fn steps(case: &Path) -> Vec<PathBuf> {
 /// files that import it change. Written now, they get the current time as their mtime (a copy
 /// would keep the source's, and two versions with the same length and checkout time would look
 /// unchanged).
+/// The project the cases run in: their servers are packages/http-server's, a path dependency.
+fn manifest(dir: &Path) {
+    let manifest = dir.join("package.vlt");
+    if manifest.exists() {
+        return;
+    }
+    let server = root().join("packages/http-server");
+    let path = server.to_string_lossy().replace('\\', "/");
+    std::fs::write(
+        manifest,
+        format!(
+            "import type {{ Package }} from \"velt/package\";\n\nexport const pkg: Package = {{\n  name: \"reload-case\",\n  version: \"0.0.0\",\n  dependencies: {{ \"http-server\": {{ path: \"{path}\" }} }},\n}};\n"
+        ),
+    )
+    .unwrap();
+}
+
 fn apply(step: &Path, dir: &Path) {
+    manifest(dir);
     let mut files: Vec<PathBuf> = std::fs::read_dir(step)
         .unwrap()
         .map(|entry| entry.unwrap().path())
@@ -412,6 +430,7 @@ fn quiet_host_prints_no_diagnostics() {
     let dir = TestDir::new();
     let main = std::fs::read_to_string(root().join("tests/reload/hello_server/1/main.vlt"));
     let bad = main.unwrap().replace("new Response(", "Response.txt(");
+    manifest(dir.path());
     save(&dir.path().join("main.vlt"), bad);
     let host = |quiet: bool| {
         let mut cmd = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));

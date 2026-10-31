@@ -1,5 +1,5 @@
 // A worker pool: jobs of interface type sent on a channel, results back on another.
-import { channel, Channel, ChannelClosed } from "velt:channel";
+import { channel, Channel, ChannelClosed } from "velt/sync";
 interface Job { run(): number; name(): string; }
 class Square implements Job { x: number; constructor(x: number) { this.x = x; } run(): number { return this.x * this.x; } name(): string { return "sq"; } }
 class Sum implements Job { xs: number[]; constructor(xs: number[]) { this.xs = xs; } run(): number { let s = 0; for (const x of this.xs) s += x; return s; } name(): string { return "sum"; } }

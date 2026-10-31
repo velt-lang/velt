@@ -1,6 +1,6 @@
-# velt:collections/priority_queue
+# velt/collections: PriorityQueue
 
-`import { PriorityQueue } from "velt:collections/priority_queue"`. A binary heap ordered by a
+`import { PriorityQueue } from "velt/collections"`. A binary heap ordered by a
 comparator. `cmp(a, b) < 0` means `a` comes out first, so `(a, b) => a - b` gives a min-heap.
 
 - `new PriorityQueue<T>(cmp)`, `size` / `length`, `isEmpty()`, `clear()`.
@@ -8,7 +8,7 @@ comparator. `cmp(a, b) < 0` means `a` comes out first, so `(a, b) => a - b` give
 - `toSortedArray()`: clones, stable for equal elements. `toArray()`: clones in heap order.
 
 ```ts
-import { PriorityQueue } from "velt:collections/priority_queue";
+import { PriorityQueue } from "velt/collections";
 
 struct Job {
   name: string;

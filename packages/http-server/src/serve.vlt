@@ -1,0 +1,146 @@
+// http-server (internal): `serveHttp`, the HTTP server written in Velt on velt/net
+// (docs/serve-http.md): it binds, accepts, and serves each connection on a task of its own
+// (http1/connection.vlt, and HTTP/2 in h2/). Nothing on the request path is module state (#1487).
+
+import { IoError } from "velt/io";
+import { listen, listenTls, TcpListener } from "velt/net";
+import { AbortController, AbortSignal, TaskScope, taskScope } from "velt/task";
+import { drained, joinStop } from "velt/dev";
+import { delay } from "velt/time";
+import { H2Options, h2Options } from "./h2/options";
+import { connection, HEADERS_MS, IDLE_MS, Limits, REQUEST_MS } from "./http1/connection";
+import { HttpRequest } from "./request";
+import { HttpResponse } from "./response";
+import { HttpServeOptions } from "./serve_options";
+import { HttpServer } from "./server";
+
+const DEFAULT_HOST = "127.0.0.1";
+/// A request head (request line and headers) larger than this is refused (431), as Node's
+/// `maxHeaderSize`.
+const MAX_HEAD: number = 16384;
+/// A request with more headers than this is refused (431).
+const MAX_HEADERS: number = 100;
+/// A request body larger than this is refused (413).
+const MAX_BODY: number = 8388608;
+
+/**
+ * Binds `host:port` (default host 127.0.0.1; port 0 picks a free port) and serves `handler` in
+ * the background: an `async` handler answers each request through `res` (`res.send(...)`). A
+ * handler that throws, or returns without sending, gets a 500 or an empty 200.
+ */
+export async function serveHttp<E>(
+  opts: HttpServeOptions,
+  handler: (req: HttpRequest, res: HttpResponse) => Promise<void, E> throws E,
+): Promise<HttpServer> {
+  const addr = `${opts.host ?? DEFAULT_HOST}:${opts.port}`;
+  const tls = opts.tls;
+  const maxHead = (opts.maxHeadSize ?? MAX_HEAD) as i64;
+  const maxBody = (opts.maxBodySize ?? MAX_BODY) as i64;
+  let h2: H2Options | null = null;
+  if (opts.http2 ?? true) {
+    const o = h2Options(
+      maxHead,
+      maxBody,
+      opts.idleTimeout ?? IDLE_MS,
+      (opts.requestTimeout ?? REQUEST_MS) as i64,
+    );
+    o.maxConcurrentStreams = (opts.maxConcurrentStreams ?? 128) as i64;
+    h2 = o;
+  }
+  let listener: TcpListener;
+  if (tls != null) {
+    // HTTP/2 first when the client offers it (ALPN), unless the options chose the protocols.
+    const alpn = tls.alpn ?? (h2 != null ? ["h2", "http/1.1"] : ["http/1.1"]);
+    listener = await listenTls(addr, { cert: tls.cert, key: tls.key, alpn: alpn });
+  } else {
+    listener = await listen(addr);
+  }
+  const maxHeaders = (opts.maxHeaders ?? MAX_HEADERS) as i64;
+  const idle = (opts.idleTimeout ?? IDLE_MS) as i64;
+  const limits = Limits {
+    headMs: (opts.headersTimeout ?? HEADERS_MS) as i64,
+    requestMs: (opts.requestTimeout ?? REQUEST_MS) as i64,
+    maxHeaders: maxHeaders,
+  };
+  const stop = new AbortController();
+  // Under `velt dev` the server also stops when the next version is about to start (velt/dev).
+  const dev = joinStop();
+  const stopped = dev == null ? stop.signal : AbortSignal.any([stop.signal, dev]);
+  if (dev != null) {
+    const closing = spawn(closeWhen(stopped, listener));
+  }
+  const reload = dev != null;
+  const secure = tls != null;
+  const done = spawn(
+    acceptAll(listener, handler, maxHead, maxBody, idle, limits, stopped, reload, h2, secure),
+  );
+  return new HttpServer(listener, stop, done);
+}
+
+/** Stops accepting once `stopped` is aborted (`close()` stops the listener itself). */
+async function closeWhen(stopped: AbortSignal, listener: TcpListener) {
+  await stopped.whenAborted();
+  listener.close();
+}
+
+/**
+ * Accepts connections until `stopped` (`close()`, or `velt dev`'s stop request with `reload`),
+ * each served on a task of its own in one task scope, so this settles only once the last of them
+ * finished. Only stopping ends the loop: another failure (out of file descriptors, a connection
+ * reset before it was accepted) is waited out, 5 ms doubling up to 1 s, as Go's net/http does.
+ */
+async function acceptAll<E>(
+  listener: TcpListener,
+  handler: (req: HttpRequest, res: HttpResponse) => Promise<void, E> throws E,
+  maxHead: i64,
+  maxBody: i64,
+  idle: i64,
+  limits: Limits,
+  stopped: AbortSignal,
+  reload: bool,
+  h2: H2Options | null,
+  secure: bool,
+): Promise<void> {
+  await taskScope(
+    async (scope: TaskScope<never>): Promise<void> => {
+      let backoff: i64 = 0;
+      while (!stopped.aborted) {
+        try {
+          const conn = await listener.accept();
+          backoff = 0;
+          // The scope waits for it: nothing awaits the handle.
+          const served = connection(
+            conn,
+            handler,
+            maxHead,
+            maxBody,
+            idle,
+            limits,
+            stopped,
+            h2,
+            secure,
+          );
+          const task = scope.spawn(guarded(served));
+        } catch (e) {
+          if (stopped.aborted || (e instanceof IoError && e.code == "EBADF")) {
+            break;
+          }
+          backoff = backoff == 0 ? 5 : backoff >= 500 ? 1000 : backoff * 2;
+          await delay(backoff);
+        }
+      }
+    },
+    { cancelOnError: false },
+  );
+  if (reload) {
+    // Every connection finished: the program may stop for the next version.
+    drained();
+  }
+}
+
+/** A connection's task: what it throws ends only that connection. */
+async function guarded(served: Promise<void>): Promise<void> {
+  try {
+    await served;
+  } catch (e) {}
+}

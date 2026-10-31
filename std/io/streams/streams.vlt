@@ -1,0 +1,188 @@
+// velt/io (internal): WHATWG streams (https://streams.spec.whatwg.org) as in Node 22:
+// `ReadableStream` with its default controller and reader. They are globals (docs/std/io/streams.md).
+//
+// A stream's state lives in its controller (`ReadableStreamDefaultController`): the queue of
+// chunks, the pending reads, and the flags of the spec's algorithms (`started`, `pulling`,
+// `pullAgain`, `closeRequested`). Nothing points back from the controller to the stream or a
+// reader, so a stream is freed with its last reference (Velt counts references; a cycle would
+// never be freed). The source's callbacks run in the spec's order: `start` in the constructor,
+// `pull` once `start` has settled (a microtask later) and again while the queue is below its
+// high-water mark or a read is waiting, never two at once; a read takes a queued chunk at once.
+
+import { IoError } from "velt/io/error";
+import { AbortError } from "velt/task/errors";
+import { BYTE_CHUNKS, ByteSource } from "velt/io/streams/byte_source";
+import { Uint8Array } from "velt/lang/typed_array/uint8_array";
+import {
+  CLOSED,
+  invalidState,
+  READABLE,
+  ReadableStreamDefaultController,
+} from "velt/io/streams/controller";
+import { ReadableStreamDefaultReader } from "velt/io/streams/reader";
+import { CancelReason, QueuingStrategy, Reason, UnderlyingSource } from "velt/io/streams/types";
+import { INSPECT } from "velt/lang/hooks/keys";
+
+// For the globals' module (std/prelude/global/streams.vlt), which imports them from here.
+
+/**
+ * A stream of chunks (JS `ReadableStream`): made from a source (`new ReadableStream({ start,
+ * pull, cancel })`) or an async iterable (`ReadableStream.from`), and read with a reader
+ * (`getReader()`), with `for await`, or as a `Response` body.
+ */
+export class ReadableStream<R> extends ByteSource {
+  private ctl: ReadableStreamDefaultController<R>;
+
+  /**
+   * A stream reading from `source`; `strategy.highWaterMark` is how many chunks it queues ahead
+   * of the reads (default 1).
+   */
+  constructor(source: UnderlyingSource<R> = {}, strategy: QueuingStrategy = {}) throws unknown {
+    super();
+    const hwm = strategy.highWaterMark ?? 1;
+    if (!(hwm >= 0)) {
+      throw new RangeError(`The property 'strategy.highWaterMark' is invalid. Received ${hwm}`);
+    }
+    this.ctl = ReadableStreamDefaultController.make<R>(source, hwm);
+  }
+
+  /** A stream of the values `src` yields (an async generator, any async iterable). */
+  static from<T, E>(src: AsyncIterable<T, E>): ReadableStream<T> {
+    const s = new ReadableStream<T>({}, { highWaterMark: 0 });
+    s.ctl.iter = relay(src);
+    return s;
+  }
+
+  // A stream of the chunks of `chunks`, pulled only when read (std only: the `body` of
+  // `Response` and `Request`); `used`: the body was read already, so the stream is closed and
+  // locked, as in JS.
+  private static body<T>(chunks: AsyncIterator<T, Error>, used: bool): ReadableStream<T> {
+    const s = new ReadableStream<T>({}, { highWaterMark: 0 });
+    s.ctl.bytes = true;
+    if (used) {
+      s.ctl.finishClose();
+      s.ctl.locked = true;
+    } else {
+      s.ctl.iter = chunks;
+    }
+    return s;
+  }
+
+  /** Whether a reader holds the stream (`getReader()` until `releaseLock()`). */
+  get locked(): bool {
+    return this.ctl.locked;
+  }
+
+  /**
+   * Cancels the stream: queued chunks are dropped, the source's `cancel(reason)` runs, and
+   * reads get `done`. Rejects with a `TypeError` while a reader holds the stream (cancel
+   * through the reader then).
+   */
+  cancel(reason: CancelReason = null): Promise<void, unknown> {
+    if (this.ctl.locked) {
+      return Promise.reject<void>(invalidState("ReadableStream is locked"));
+    }
+    return this.ctl.cancel(reason);
+  }
+
+  /** A reader that holds the stream; a `TypeError` when another one does. */
+  getReader(): ReadableStreamDefaultReader<R> {
+    return new ReadableStreamDefaultReader<R>(this);
+  }
+
+  /** `for await (const chunk of stream)`: reads to the end; leaving the loop early cancels the stream. */
+  [Symbol.asyncIterator](): AsyncIterator<R, Reason> {
+    return new StreamIterator<R>(this.getReader());
+  }
+
+  /**
+   * The chunks as a body's bytes (std only: `new Response(stream)`, a request body): each one
+   * must be a `Uint8Array` (copied, as a body's bytes are), else the read fails as Node's does.
+   */
+  [BYTE_CHUNKS](): AsyncIterator<u8[], IoError | AbortError> {
+    return bodyBytes<R>(this);
+  }
+
+  /** How `console.log` shows the stream, as Node does. */
+  [INSPECT](): string {
+    const state =
+      this.ctl.state == READABLE ? "readable" : this.ctl.state == CLOSED ? "closed" : "errored";
+    return `ReadableStream { locked: ${this.ctl.locked}, state: '${state}', supportsBYOB: ${this.ctl.bytes} }`;
+  }
+}
+
+// `for await` over a stream.
+class StreamIterator<R> implements AsyncIterator<R, Reason> {
+  private reader: ReadableStreamDefaultReader<R>;
+
+  constructor(reader: ReadableStreamDefaultReader<R>) {
+    this.reader = reader;
+  }
+
+  async next(): Promise<IteratorResult<R>> throws unknown {
+    let r: IteratorResult<R>;
+    try {
+      r = await this.reader.read();
+    } catch (e) {
+      // The loop ends with the error; the stream is released, as in JS.
+      this.reader.releaseLock();
+      throw e;
+    }
+    if (r.done) {
+      this.reader.releaseLock();
+    }
+    return r;
+  }
+
+  async return(): Promise<IteratorResult<R>> {
+    try {
+      await this.reader.cancel(null);
+    } catch (e) {
+      // The loop is left either way.
+    }
+    this.reader.releaseLock();
+    return { done: true };
+  }
+}
+
+// `src`'s values; an error it throws reaches the stream as an `Error` with its text.
+async function* relay<T, E>(src: AsyncIterable<T, E>): AsyncGenerator<T, Error> {
+  try {
+    for await (const x of src) {
+      yield x;
+    }
+  } catch (e) {
+    throw new Error(`${e}`);
+  }
+}
+
+// The chunks of `stream`, read once the body is, as bytes: a `Uint8Array` chunk's range is
+// copied, anything else fails as Node fails it; a stream another reader holds, or an error the
+// stream gives, reaches the body's reader as an `IoError`.
+async function* bodyBytes<R>(
+  stream: ReadableStream<R>,
+): AsyncGenerator<u8[], IoError | AbortError> {
+  let reader: ReadableStreamDefaultReader<R>;
+  try {
+    reader = stream.getReader();
+  } catch (e) {
+    throw new IoError("EINVAL", e.message);
+  }
+  while (true) {
+    let r: IteratorResult<R>;
+    try {
+      r = await reader.read();
+    } catch (e) {
+      throw new IoError("EIO", `${e}`);
+    }
+    if (r.done) {
+      return;
+    }
+    const chunk: unknown = r.value;
+    if (!(chunk instanceof Uint8Array)) {
+      throw new IoError("EINVAL", "Received non-Uint8Array chunk");
+    }
+    const at = chunk.off as i64;
+    yield chunk.buf.bytes.slice(at, at + (chunk.len as i64));
+  }
+}

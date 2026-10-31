@@ -1,0 +1,57 @@
+// http-server (internal): a response body's pieces as HTTP/1.1 sends them: each a chunk of
+// `Transfer-Encoding: chunked` (RFC 9112 §7.1), its size line before it and CR LF after it, or as
+// they are when the body ends with the connection (HTTP/1.0); and the last chunk, with the
+// trailers.
+
+import { FieldBuf } from "./fields_buf";
+import { Out } from "./out";
+
+/// One piece of a streamed body, as a chunk when `chunked`.
+export function writePiece(out: Out, data: string | u8[] | Uint8Array, chunked: bool) {
+  if (data instanceof Uint8Array) {
+    if (chunked) {
+      out.chunkSize(data.length as i64);
+    }
+    out.view(data);
+  } else if (typeof data == "string") {
+    const n = Buffer.byteLength(data) as i64;
+    if (chunked) {
+      out.chunkSize(n);
+    }
+    out.textOf(data, n);
+  } else {
+    if (chunked) {
+      out.chunkSize(data.length as i64);
+    }
+    out.bytes(data);
+  }
+  if (chunked) {
+    out.crlf();
+  }
+}
+
+/// A whole body (`text`, else `bytes`) as one chunk; nothing when it is empty.
+export function oneChunk(out: Out, text: string | null, bytes: u8[] | null) {
+  if (text != null) {
+    const n = Buffer.byteLength(text) as i64;
+    if (n > 0) {
+      out.chunkSize(n);
+      out.textOf(text, n);
+      out.crlf();
+    }
+  } else if (bytes != null && bytes.length > 0) {
+    out.chunkSize(bytes.length as i64);
+    out.bytes(bytes);
+    out.crlf();
+  }
+}
+
+/// The last chunk of a chunked body, with the trailers.
+export function lastChunk(out: Out, trailers: FieldBuf) {
+  out.text("0\r\n");
+  if (trailers.length > 0) {
+    const b = trailers.buf;
+    out.bytesOf(b, trailers.length);
+  }
+  out.crlf();
+}

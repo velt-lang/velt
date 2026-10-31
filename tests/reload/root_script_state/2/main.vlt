@@ -2,7 +2,7 @@
 // file's slots where they stand. A swapped-in version's `main` does not run again, so its slots
 // are initialized when its code first reaches them (`ModuleDesc.rest`): the handler works after
 // the swap, with no `ReferenceError`, and reads the new static initializer's value.
-import { serve } from "velt:http";
+import { serve } from "http-server";
 
 let hits = 0;
 

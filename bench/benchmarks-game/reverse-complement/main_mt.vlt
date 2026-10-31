@@ -3,8 +3,8 @@
 // complement of a slice taken from the end of the sequence, so every spawned task gets its own
 // slice and `Promise.all` returns the blocks in order.
 
-import { openRead } from "velt:fs_stream";
-import { stdout } from "velt:process";
+import { openRead } from "velt/fs";
+import { stdout } from "velt/process";
 
 const LINE_LENGTH: usize = 60;
 // Output characters per task (a whole number of lines).

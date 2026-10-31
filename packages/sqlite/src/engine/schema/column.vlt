@@ -1,0 +1,32 @@
+// sqlite/engine/schema/column (internal): a column of a table, as its CREATE TABLE declares it.
+
+import { BINARY } from "../collation";
+import { affinityOf } from "../affinity";
+
+/** A column of a table: its declared type and affinity, constraints and collation. */
+export class Column {
+  name: string;
+  type: string;
+  affinity: u8;
+  notNull: bool = false;
+  collation: u8 = BINARY;
+  /** The declared collation's name, upper case ("BINARY" when none is declared). */
+  collationName: string = "BINARY";
+  /** The column is the rowid (`INTEGER PRIMARY KEY`): not stored in the record (NULL there). */
+  isRowid: bool = false;
+  hasDefault: bool = false;
+  /** A generated column (`AS (…)`); `stored` when it is STORED, VIRTUAL otherwise. */
+  generated: bool = false;
+  stored: bool = false;
+  /**
+   * The column's field in the table's records: VIRTUAL generated columns have none (-1), and a
+   * WITHOUT ROWID table's records hold its primary key columns first.
+   */
+  field: i64 = -1;
+
+  constructor(name: string, type: string) {
+    this.name = name;
+    this.type = type;
+    this.affinity = affinityOf(type);
+  }
+}

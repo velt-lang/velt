@@ -1,18 +1,35 @@
-// velt:simd/sha: the CPU's SHA-1 and SHA-256 instructions as methods of `u32x4` (#1330,
+// velt/simd (internal): the CPU's SHA-1 and SHA-256 instructions as methods of `u32x4` (#1330,
 // docs/std/simd.md "SHA instructions"): the ARMv8 ones (ACLE `vsha256hq_u32` & co.) and the x86
 // ones (Intel's `_mm_sha256rnds2_epu32` & co.), named after the instruction, with the operands
 // in its order and lane 0 the low 32 bits.
 //
 // Every method always works: it is the instruction where the CPU has it (`u32x4.hasShaArm()`,
-// `u32x4.hasShaX86()`: the runtime's flags, rt_abi.md "SIMD") and otherwise an exact emulation,
-// written below from the ARM Architecture Reference Manual's and the Intel SDM's pseudocode. The
-// checks are false on another architecture, on WebAssembly and in debug (Cranelift) builds, and
-// with `VELT_SIMD_DISABLE=sha`, which runs the emulation on a CPU that has the instructions.
+// `u32x4.hasShaX86()`: the runtime's flags, rt_abi.md "SIMD") and otherwise an exact emulation
+// (std/simd/sha_emulation.vlt, from the ARM Architecture Reference Manual's and the Intel SDM's
+// pseudocode). The checks are false on another architecture, on WebAssembly and in debug
+// (Cranelift) builds, and with `VELT_SIMD_DISABLE=sha`, which runs the emulation on a CPU that has
+// the instructions.
 //
 // The instructions are as fast as the checks around them allow: in a loop of them the flag is
 // read once, before the loop, and tested in every iteration. In a function gated on the
-// extension (`__intrinsic_target`, std only, as std/crypto.vlt's) the check is true and the
+// extension (`targetFeature`, std only, as std/crypto/index.vlt's) the check is true and the
 // methods are the bare instructions.
+
+import {
+  emulSha1msg1,
+  emulSha1msg2,
+  emulSha1rnds4,
+  emulSha1su0,
+  emulSha1su1,
+  emulSha256msg1,
+  emulSha256msg2,
+  emulSha256rnds2,
+  emulSha256su0,
+  emulSha256su1,
+  rol,
+  sha1Rounds,
+  sha256Hash,
+} from "velt/simd/sha_emulation";
 
 // Whether the CPU has the ARMv8 SHA instructions (the runtime's `velt_cpu_sha_arm`).
 declare function velt_simd_has_sha_arm(): bool;
@@ -206,221 +223,4 @@ extend u32x4 {
     }
     return emulSha1msg2(this, b);
   }
-}
-
-// ───────────────── the emulation (ARM ARM / Intel SDM pseudocode) ─────────────────
-
-function rol(x: u32, n: u32): u32 {
-  return (x << n) | (x >>> (32 - n));
-}
-
-function ror(x: u32, n: u32): u32 {
-  return (x >>> n) | (x << (32 - n));
-}
-
-// The vector with lanes a, b, c, d (lane 0 first).
-function lanes(a: u32, b: u32, c: u32, d: u32): u32x4 {
-  return u32x4.splat(a).withLane(1, b).withLane(2, c).withLane(3, d);
-}
-
-// SHAchoose, SHAparity, SHAmajority.
-function sha1F(f: u32, b: u32, c: u32, d: u32): u32 {
-  if (f == 0) {
-    return (b & c) | (~b & d);
-  }
-  if (f == 2) {
-    return (b & c) | (b & d) | (c & d);
-  }
-  return b ^ c ^ d;
-}
-
-// SHA1C / SHA1P / SHA1M (`f` 0, 1, 2): X = abcd, Y = e; per round
-// Y += ROL(X[0], 5) + f(X[1], X[2], X[3]) + W[e]; X[1] = ROL(X[1], 30); <Y, X> = ROL(Y:X, 32).
-function sha1Rounds(abcd: u32x4, e: u32, wk: u32x4, f: u32): u32x4 {
-  let x0 = abcd.lane(0);
-  let x1 = abcd.lane(1);
-  let x2 = abcd.lane(2);
-  let x3 = abcd.lane(3);
-  let y = e;
-  for (let i: usize = 0; i < 4; i++) {
-    y = y + rol(x0, 5) + sha1F(f, x1, x2, x3) + wk.lane(i);
-    x1 = rol(x1, 30);
-    const top = x3;
-    x3 = x2;
-    x2 = x1;
-    x1 = x0;
-    x0 = y;
-    y = top;
-  }
-  return lanes(x0, x1, x2, x3);
-}
-
-// SHA1SU0: (w1<63:0> : w0<127:64>) EOR w0 EOR w2.
-function emulSha1su0(w0: u32x4, w1: u32x4, w2: u32x4): u32x4 {
-  return lanes(w0.lane(2), w0.lane(3), w1.lane(0), w1.lane(1)).xor(w0).xor(w2);
-}
-
-// SHA1SU1: T = t EOR LSR(w3, 32); each lane ROL 1, lane 3 also EOR ROL(T[0], 2).
-function emulSha1su1(t: u32x4, w3: u32x4): u32x4 {
-  const t0 = t.lane(0) ^ w3.lane(1);
-  const t1 = t.lane(1) ^ w3.lane(2);
-  const t2 = t.lane(2) ^ w3.lane(3);
-  const t3 = t.lane(3);
-  return lanes(rol(t0, 1), rol(t1, 1), rol(t2, 1), rol(t3, 1) ^ rol(t0, 2));
-}
-
-function bigSigma0(x: u32): u32 {
-  return ror(x, 2) ^ ror(x, 13) ^ ror(x, 22);
-}
-
-function bigSigma1(x: u32): u32 {
-  return ror(x, 6) ^ ror(x, 11) ^ ror(x, 25);
-}
-
-function smallSigma0(x: u32): u32 {
-  return ror(x, 7) ^ ror(x, 18) ^ (x >>> 3);
-}
-
-function smallSigma1(x: u32): u32 {
-  return ror(x, 17) ^ ror(x, 19) ^ (x >>> 10);
-}
-
-// SHA256hash(X = abcd, Y = efgh, W, part1): per round
-// T1 = Y[3] + Σ1(Y[0]) + Ch(Y[0], Y[1], Y[2]) + W[e]; X[3] += T1;
-// Y[3] = T1 + Σ0(X[0]) + Maj(X[0], X[1], X[2]); <Y, X> = ROL(Y:X, 32). X for SHA256H, Y for H2.
-function sha256Hash(abcd: u32x4, efgh: u32x4, wk: u32x4, part1: bool): u32x4 {
-  let x0 = abcd.lane(0);
-  let x1 = abcd.lane(1);
-  let x2 = abcd.lane(2);
-  let x3 = abcd.lane(3);
-  let y0 = efgh.lane(0);
-  let y1 = efgh.lane(1);
-  let y2 = efgh.lane(2);
-  let y3 = efgh.lane(3);
-  for (let i: usize = 0; i < 4; i++) {
-    const t1 = y3 + bigSigma1(y0) + sha1F(0, y0, y1, y2) + wk.lane(i);
-    x3 = t1 + x3;
-    y3 = t1 + bigSigma0(x0) + sha1F(2, x0, x1, x2);
-    const xTop = x3;
-    x3 = x2;
-    x2 = x1;
-    x1 = x0;
-    x0 = y3;
-    y3 = y2;
-    y2 = y1;
-    y1 = y0;
-    y0 = xTop;
-  }
-  return part1 ? lanes(x0, x1, x2, x3) : lanes(y0, y1, y2, y3);
-}
-
-// SHA256SU0: T = w1<31:0> : w0<127:32>; lane e = σ0(T[e]) + w0[e].
-function emulSha256su0(w0: u32x4, w1: u32x4): u32x4 {
-  return lanes(
-    smallSigma0(w0.lane(1)) + w0.lane(0),
-    smallSigma0(w0.lane(2)) + w0.lane(1),
-    smallSigma0(w0.lane(3)) + w0.lane(2),
-    smallSigma0(w1.lane(0)) + w0.lane(3),
-  );
-}
-
-// SHA256SU1: T0 = w3<31:0> : w2<127:32>, T1 = w3<127:64>; lanes 0, 1 from σ1(T1), lanes 2, 3
-// from σ1 of lanes 0, 1 of the result, each plus t[e] and T0[e].
-function emulSha256su1(t: u32x4, w2: u32x4, w3: u32x4): u32x4 {
-  const r0 = smallSigma1(w3.lane(2)) + t.lane(0) + w2.lane(1);
-  const r1 = smallSigma1(w3.lane(3)) + t.lane(1) + w2.lane(2);
-  const r2 = smallSigma1(r0) + t.lane(2) + w2.lane(3);
-  const r3 = smallSigma1(r1) + t.lane(3) + w3.lane(0);
-  return lanes(r0, r1, r2, r3);
-}
-
-// SHA256RNDS2: A, B, E, F from `abef` (lanes 3, 2, 1, 0), C, D, G, H from `cdgh`, two rounds
-// with WK0 = wk[0], WK1 = wk[1]; the result is A, B, E, F after them.
-function emulSha256rnds2(cdgh: u32x4, abef: u32x4, wk: u32x4): u32x4 {
-  let a = abef.lane(3);
-  let b = abef.lane(2);
-  let e = abef.lane(1);
-  let f = abef.lane(0);
-  let c = cdgh.lane(3);
-  let d = cdgh.lane(2);
-  let g = cdgh.lane(1);
-  let h = cdgh.lane(0);
-  for (let i: usize = 0; i < 2; i++) {
-    const t = sha1F(0, e, f, g) + bigSigma1(e) + wk.lane(i) + h;
-    const a1 = t + sha1F(2, a, b, c) + bigSigma0(a);
-    const e1 = t + d;
-    h = g;
-    g = f;
-    f = e;
-    e = e1;
-    d = c;
-    c = b;
-    b = a;
-    a = a1;
-  }
-  return lanes(f, e, b, a);
-}
-
-// SHA256MSG1: lane i = SRC1[i] + σ0(next word), the word after SRC1[3] being SRC2[0].
-function emulSha256msg1(a: u32x4, b: u32x4): u32x4 {
-  return lanes(
-    a.lane(0) + smallSigma0(a.lane(1)),
-    a.lane(1) + smallSigma0(a.lane(2)),
-    a.lane(2) + smallSigma0(a.lane(3)),
-    a.lane(3) + smallSigma0(b.lane(0)),
-  );
-}
-
-// SHA256MSG2: W16 = SRC1[0] + σ1(SRC2[2]), W17 = SRC1[1] + σ1(SRC2[3]), W18 = SRC1[2] + σ1(W16),
-// W19 = SRC1[3] + σ1(W17).
-function emulSha256msg2(a: u32x4, b: u32x4): u32x4 {
-  const w16 = a.lane(0) + smallSigma1(b.lane(2));
-  const w17 = a.lane(1) + smallSigma1(b.lane(3));
-  const w18 = a.lane(2) + smallSigma1(w16);
-  const w19 = a.lane(3) + smallSigma1(w17);
-  return lanes(w16, w17, w18, w19);
-}
-
-// SHA1RNDS4: A, B, C, D = lanes 3, 2, 1, 0 of `abcd`; W0+E, W1, W2, W3 = lanes 3, 2, 1, 0 of
-// `ewk`; four rounds of function `func` with its constant (E is added only in round 0, through
-// W0+E; later rounds add the E the previous round left).
-function emulSha1rnds4(abcd: u32x4, ewk: u32x4, func: u32): u32x4 {
-  const k: u32 =
-    func == 0 ? 0x5a827999 : func == 1 ? 0x6ed9eba1 : func == 2 ? 0x8f1bbcdc : 0xca62c1d6;
-  const f: u32 = func == 0 ? 0 : func == 2 ? 2 : 1;
-  let a = abcd.lane(3);
-  let b = abcd.lane(2);
-  let c = abcd.lane(1);
-  let d = abcd.lane(0);
-  let e: u32 = 0;
-  for (let i: usize = 0; i < 4; i++) {
-    const w = ewk.lane(3 - i);
-    const a1 = sha1F(f, b, c, d) + rol(a, 5) + w + e + k;
-    e = d;
-    d = c;
-    c = rol(b, 30);
-    b = a;
-    a = a1;
-  }
-  return lanes(d, c, b, a);
-}
-
-// SHA1MSG1: W0..W3 = SRC1 lanes 3..0, W4, W5 = SRC2 lanes 3, 2; lane 3 = W2 ^ W0, 2 = W3 ^ W1,
-// 1 = W4 ^ W2, 0 = W5 ^ W3.
-function emulSha1msg1(a: u32x4, b: u32x4): u32x4 {
-  const w0 = a.lane(3);
-  const w1 = a.lane(2);
-  const w2 = a.lane(1);
-  const w3 = a.lane(0);
-  return lanes(b.lane(2) ^ w3, b.lane(3) ^ w2, w3 ^ w1, w2 ^ w0);
-}
-
-// SHA1MSG2: W13, W14, W15 = SRC2 lanes 2, 1, 0; W16 = ROL(SRC1[3] ^ W13, 1), W17 = ROL(SRC1[2] ^
-// W14, 1), W18 = ROL(SRC1[1] ^ W15, 1), W19 = ROL(SRC1[0] ^ W16, 1); lanes 3..0 = W16..W19.
-function emulSha1msg2(a: u32x4, b: u32x4): u32x4 {
-  const w16 = rol(a.lane(3) ^ b.lane(2), 1);
-  const w17 = rol(a.lane(2) ^ b.lane(1), 1);
-  const w18 = rol(a.lane(1) ^ b.lane(0), 1);
-  const w19 = rol(a.lane(0) ^ w16, 1);
-  return lanes(w19, w18, w17, w16);
 }

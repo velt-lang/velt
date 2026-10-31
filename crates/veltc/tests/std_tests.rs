@@ -1,11 +1,14 @@
-//! The standard library's behaviour tests: `velt test` over each `tests/std/<module>/`, in a
+//! The standard library's tests: its black-box behaviour tests, `velt test` over each
+//! `tests/std/<module>/`, and its white-box tests next to the code, `velt test std/` (the
+//! `std/<module>/<name>.test.vlt` files, docs/internals/design/std-layout.md §9). Each runs in a
 //! debug build that also checks that every test file's process frees every block it allocates
 //! (`VELT_RC_STATS=1`, as the goldens' `// check: no leaks`) and uses the checking allocator
 //! (`VELT_RT_DEBUG_ALLOC=1`, as the goldens' debug runs), and in a release build. Each run
 //! has a temporary directory of its own for its build output. A module where no test ran fails
 //! too. CONTRIBUTING.md "Golden or `velt test`?" says which tests go here.
 //!
-//! Filter with `VELT_STD_TESTS=<module>` (several separated by `,`).
+//! Filter with `VELT_STD_TESTS=<module>` (several separated by `,`; `std` names the white-box
+//! tests).
 
 use std::path::{Path, PathBuf};
 
@@ -20,7 +23,8 @@ fn root() -> PathBuf {
         .expect("repo root")
 }
 
-/// The modules with tests (`tests/std/<module>/`), sorted, after the `VELT_STD_TESTS` filter.
+/// The directories to run `velt test` in, after the `VELT_STD_TESTS` filter: the modules with
+/// tests (`tests/std/<module>/`), sorted, then `std/` itself (its white-box tests).
 fn modules(root: &Path) -> Vec<PathBuf> {
     let filter = std::env::var("VELT_STD_TESTS").unwrap_or_default();
     let wanted = |name: &str| filter.is_empty() || filter.split(',').any(|f| f.trim() == name);
@@ -28,9 +32,15 @@ fn modules(root: &Path) -> Vec<PathBuf> {
         .expect("tests/std")
         .flatten()
         .map(|e| e.path())
-        .filter(|p| p.is_dir() && wanted(&p.file_name().unwrap().to_string_lossy()))
+        // `target/`: the build output of `velt test` in the package tests/std is (its
+        // `package.vlt` depends on the HTTP server for the clients' tests).
+        .filter(|p| p.is_dir() && p.file_name().is_some_and(|n| n != "target"))
+        .filter(|p| wanted(&p.file_name().unwrap().to_string_lossy()))
         .collect();
     modules.sort();
+    if wanted("std") {
+        modules.push(root.join("std"));
+    }
     modules
 }
 
@@ -92,7 +102,7 @@ fn std_modules_pass_their_tests() {
     let modules = modules(&root);
     assert!(
         !modules.is_empty(),
-        "no module with tests under tests/std (VELT_STD_TESTS={:?})",
+        "no module with tests under tests/std or std (VELT_STD_TESTS={:?})",
         std::env::var("VELT_STD_TESTS").unwrap_or_default()
     );
     let failures: Vec<String> = std::thread::scope(|s| {

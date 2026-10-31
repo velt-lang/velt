@@ -1,0 +1,43 @@
+// velt/net/url (internal): JS's `encodeURIComponent`, `encodeURI`, `decodeURIComponent` and
+// `decodeURI`, over the percent-encoding of std/net/url/encode.vlt.
+
+import { decodeUri, encodeUri } from "velt/net/url/encode";
+
+/**
+ * JS `encodeURIComponent`: escapes everything except alphanumerics and `-_.!~*'()`; throws
+ * `URIError("URI malformed")` on a lone surrogate, as JS.
+ */
+export function encodeURIComponent(s: string): string {
+  const out = encodeUri(s, false);
+  if (out == null) {
+    throw new URIError("URI malformed");
+  }
+  return out;
+}
+
+/** JS `encodeURI`: like `encodeURIComponent`, but keeps `;,/?:@&=+$#`. */
+export function encodeURI(s: string): string {
+  const out = encodeUri(s, true);
+  if (out == null) {
+    throw new URIError("URI malformed");
+  }
+  return out;
+}
+
+/** JS `decodeURIComponent`; throws `URIError("URI malformed")` on a bad escape or invalid UTF-8. */
+export function decodeURIComponent(s: string): string {
+  const out = decodeUri(s, false);
+  if (out == null) {
+    throw new URIError("URI malformed");
+  }
+  return out;
+}
+
+/** JS `decodeURI`: like `decodeURIComponent`, but escapes of `;/?:@&=+$,#` stay escaped. */
+export function decodeURI(s: string): string {
+  const out = decodeUri(s, true);
+  if (out == null) {
+    throw new URIError("URI malformed");
+  }
+  return out;
+}

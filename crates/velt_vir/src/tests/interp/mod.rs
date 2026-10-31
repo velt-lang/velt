@@ -10,7 +10,6 @@ mod async_rt;
 mod atomic;
 mod cancel;
 mod drops;
-mod http;
 mod json;
 mod local;
 mod net;
@@ -77,24 +76,10 @@ struct Interp<'p> {
 
 /// Run `velt_main` to completion (or until panic/exit).
 pub(super) fn run(p: &Program) -> Outcome {
-    run_in(Interp::new(p)).0
+    run_in(Interp::new(p))
 }
 
-/// Run with an emulated http server that receives `requests` (`(method, path, body)`) once
-/// the program serves; also returns the `(status, body)` responses in request order.
-pub(super) fn run_http(
-    p: &Program,
-    requests: &[(&str, &str, &str)],
-) -> (Outcome, Vec<(u32, String)>) {
-    let mut it = Interp::new(p);
-    it.exec.http.requests = requests
-        .iter()
-        .map(|(m, p, b)| (m.to_string(), p.to_string(), b.to_string()))
-        .collect();
-    run_in(it)
-}
-
-fn run_in(mut it: Interp) -> (Outcome, Vec<(u32, String)>) {
+fn run_in(mut it: Interp) -> Outcome {
     let p = it.p;
     let main = p
         .funcs
@@ -105,14 +90,13 @@ fn run_in(mut it: Interp) -> (Outcome, Vec<(u32, String)>) {
         Ok(v) => (v.s() as u32 as i32, true),
         Err(c) => (c, false),
     };
-    let out = Outcome {
+    Outcome {
         stdout: it.stdout,
         stderr: it.stderr,
         code,
         live_allocs: if normal { it.allocs.len() } else { 0 },
         frees: it.frees,
-    };
-    (out, it.exec.http.responses)
+    }
 }
 
 impl<'p> Interp<'p> {

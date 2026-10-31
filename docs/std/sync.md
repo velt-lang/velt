@@ -1,7 +1,7 @@
-# Atomics and velt:sync
+# velt/sync
 
-Lock-free shared state: the prelude's `Atomic<T>`, the primitive, and `velt:sync`
-(`import { Backoff, VersionLatch } from "velt:sync"`), building blocks written on it. They are
+Lock-free shared state: the prelude's `Atomic<T>`, the primitive, and `velt/sync`
+(`import { Backoff, VersionLatch } from "velt/sync"`), building blocks written on it. They are
 for code that needs to be as fast as threads allow: counters, flags, statistics, and data
 structures that many threads read and change at once without a lock, such as a concurrent tree
 with a latch in every node. For ordinary shared state, a
@@ -172,7 +172,7 @@ module's other state (its box is made at run time), which tasks reach one at a t
 busy one in a field of a `shared` object instead.
 
 It has no `add`, `and` and the like. A value it replaces is not freed at once, since another
-thread may be reading it: it is freed once no thread can be (`velt:sync/epoch` below). A
+thread may be reading it: it is freed once no thread can be ([`velt/sync/epoch`](sync/epoch.md)). A
 function that calls `load()` runs in a section for that, which the compiler opens and closes:
 a few nanoseconds per call, so a loop of loads costs one. The section lasts the whole call, so
 values replaced while a long-running plain function loops are freed only once it returns
@@ -286,7 +286,7 @@ never write; a value it replaces is dropped once no thread can still be reading 
 At module level, use an `Atomic<shared<T> | null>` (`null` to start), which takes no lock.
 
 ```ts
-import { Atom } from "velt:sync";
+import { Atom } from "velt/sync";
 
 interface Limits {
   rps: u64;
@@ -363,7 +363,7 @@ nothing). To wait for another task, use a `Mutex` (its callback cannot be async 
 channel.
 
 ```ts
-import { Backoff } from "velt:sync";
+import { Backoff } from "velt/sync";
 
 class Lock {
   held: Atomic<bool> = new Atomic<bool>(false);
@@ -397,7 +397,7 @@ bit, a count of shared holders, and a version that only grows.
   after): code that could fail on such a value, like indexing an array with an index read under
   the latch, runs only after the check (or clamps the value first). A reader writes no shared
   memory, so readers on many cores never slow each other. Words of an `Atomic<u64>[]` read under
-  the latch can be read several at a time with velt:simd's `loadOptimistic` (`u64x2`, two words
+  the latch can be read several at a time with velt/simd's `loadOptimistic` (`u64x2`, two words
   in one load; [SIMD](simd.md)), whose lanes are trusted after the same check.
 - **Exclusive:** `tryLockAt(v)` takes the node at the version the thread read, failing at once
   if anything changed it (then start over); `lockExclusive()` waits for it and returns the
@@ -410,7 +410,7 @@ As with `Backoff`, hold a latch only between `await`s: `readVersion()` and `lock
 wait by spinning, so a task waiting on a latch another task holds across an `await` can hang.
 
 ```ts
-import { VersionLatch } from "velt:sync";
+import { VersionLatch } from "velt/sync";
 
 class Point {
   latch: VersionLatch = VersionLatch.create();
@@ -441,42 +441,5 @@ function main() {
   const p = new Point();
   move(p, 2, 3);
   console.log(sum(p)); // 5
-}
-```
-
-## `velt:sync/epoch`
-
-Epoch-based reclamation, written in Velt on `Atomic`, `ThreadLocal` and `Mutex`: a way to drop
-a `shared` value that other threads may still be reading, once none can be. The compiler calls
-it for the values an `Atomic` of a `shared` value replaces, and opens a section around a
-function that loads one. Lock-free code of your own can call it too.
-
-- `pin()` enters a *section*, and `unpin()` leaves it. Sections nest; an `unpin()` without a
-  `pin()` before it on the thread is an error. While a thread is in one,
-  no value retired since it entered, nor one retired before that it can still reach, is
-  dropped. Entering costs a store and a fence, and leaving a store. Keep a section between two
-  `await`s: a section belongs to the thread it was entered on, and a task may resume on another
-  thread after an `await`, where its `unpin()` is an error (and the first thread stays pinned).
-- `retire(v)` hands over a `shared` value just taken out of where other threads find it. It is
-  dropped once every thread that was in a section then has left it.
-- `collect()` moves the global epoch on if every thread in a section has seen it, then drops
-  what was retired two epochs or more before, on every thread's list. It returns how many it
-  dropped. `retire` calls it every 64 retirements.
-- `pending()` counts this thread's values not dropped yet, `outstanding()` every thread's, and
-  `dropped()` all values dropped so far.
-
-```ts
-import { pin, unpin, retire, collect, pending } from "velt:sync/epoch";
-
-interface Item {
-  n: u64;
-}
-
-function main() {
-  retire(shared({ n: 1 }));
-  pin();
-  console.log(collect(), pending()); // 0 1: this thread may still read it
-  unpin();
-  console.log(collect(), pending()); // 1 0
 }
 ```

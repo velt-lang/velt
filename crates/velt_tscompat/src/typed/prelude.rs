@@ -73,7 +73,7 @@ pub(crate) const TS_GLOBALS: &[&str] = &[
     "setTimeout",
     // A deep copy (TypeScript's baseline has it from the DOM's lib, Node as a global).
     "structuredClone",
-    // TypeScript's dynamic types (prelude interfaces in Velt, std/prelude/z_dynamic.vlt).
+    // TypeScript's dynamic types (prelude interfaces in Velt, std/prelude/dynamic.vlt).
     "any",
     "unknown",
     "object",
@@ -389,9 +389,9 @@ pub(crate) const TS_MEMBERS: &[(&str, &[&str])] = &[
     ),
     ("Object", &["entries", "fromEntries", "keys", "values"]),
     // `Object.prototype.hasOwnProperty` read as a value: its `call` is `Function.call`.
-    ("__HasOwnProperty", &["call"]),
+    ("HasOwnProperty", &["call"]),
     // An array method read through a proxy (`Reflect.get(array, "push")`): its name.
-    ("__ArrayMethod", &["name"]),
+    ("ArrayMethod", &["name"]),
     (
         "Reflect",
         &[
@@ -469,6 +469,10 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
     (
         "Array",
         &[
+            (
+                "copy",
+                "copy with `target.set(bytes.subarray(sourceStart, sourceEnd), targetStart)`",
+            ),
             ("isEmpty", "write `xs.length === 0`"),
             ("prefetch", "leave it out: it is only a hint"),
             ("reserve", "leave it out: arrays grow as needed"),
@@ -571,6 +575,7 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
             ("set", JSON_VALUE),
             ("setAt", JSON_VALUE),
             ("stringify", JSON_VALUE),
+            ("toJSON", JSON_VALUE),
         ],
     ),
     (

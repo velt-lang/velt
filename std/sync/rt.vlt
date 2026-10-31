@@ -1,0 +1,11 @@
+// velt/sync (internal): the runtime functions velt/sync calls.
+
+export declare function velt_rt_thread_yield(): void;
+
+export declare function velt_rt_chan_new(capacity: u64): u64;
+
+export declare function velt_rt_chan_close(ch: u64);
+
+export declare function velt_rt_chan_closed(ch: u64): bool;
+
+export declare function velt_rt_chan_len(ch: u64): u64;

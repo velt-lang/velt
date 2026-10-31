@@ -1,0 +1,167 @@
+// velt/encoding/json (tests): white-box tests, run by `velt test std/`.
+//
+// White-box tests of the JSON scanner written in Velt (#1668, #1658): UTF-16 lengths, decoded
+// escapes, surrogates, numbers and error offsets, as the Rust scanner it replaced gave them, and
+// the sixteen-byte string scan over random strings. (Were the goldens std/json_scan and
+// std/json_scan_long.)
+import { describe, expect, it } from "velt/test";
+import { Scanner, numberF64, numberI64 } from "velt/encoding/json/scan";
+
+/** A string token's UTF-16 length, decoded text and lone-surrogate flag, or its error. */
+function str(src: string): string {
+  const s = new Scanner(src);
+  if (!s.string(true)) {
+    return `error: ${s.what} at ${s.at}`;
+  }
+  const t = s.text();
+  const undecoded = new Scanner(src);
+  undecoded.string(false);
+  expect(t.length == s.units).toBe(true);
+  expect(undecoded.units).toBe(s.units);
+  return `${s.units} ${JSON.stringify(t)} ${s.lone}`;
+}
+
+/** A number token's integer flag and values, or its error. */
+function num(src: string): string {
+  const s = new Scanner(src);
+  if (!s.number()) {
+    return `error: ${s.what} at ${s.at}`;
+  }
+  const f = numberF64(src, s.start, s.end, s.integer);
+  const sign = Object.is(f, -0) ? "-" : "";
+  return `${s.integer} ${sign}${f} ${numberI64(src, s.start, s.end, s.integer)}`;
+}
+
+describe("strings", () => {
+  it("counts UTF-16 units and decodes escapes", () => {
+    expect(str(`"plain"`)).toBe(`5 "plain" false`);
+    expect(str(`""`)).toBe(`0 "" false`);
+    expect(str(`"héllo 日本 😀"`)).toBe(`11 "héllo 日本 😀" false`);
+    expect(str(`"a\\"b\\\\c\\n"`)).toBe(`6 "a\\"b\\\\c\\n" false`);
+    expect(str(`"é日"`)).toBe(`2 "é日" false`);
+    expect(str(`"😀!"`)).toBe(`3 "😀!" false`);
+    expect(str(`"😀\\n😀"`)).toBe(`5 "😀\\n😀" false`);
+    expect(str(`"\\ud83d\\ude00"`)).toBe(`2 "😀" false`);
+    expect(str(`"\\u00e9\\/\\b\\f\\r\\t"`)).toBe(`6 "é/\\b\\f\\r\\t" false`);
+  });
+
+  it("keeps lone surrogate escapes lone", () => {
+    expect(str(`"\\ud83d x"`)).toBe(`3 "\\ud83d x" true`);
+    expect(str(`"\\ud800\\u0041"`)).toBe(`2 "\\ud800A" true`);
+    expect(str(`"\\udc00"`)).toBe(`1 "\\udc00" true`);
+  });
+
+  it("reports errors at their offset", () => {
+    expect(str(`"tab\there"`)).toBe("error: control character in string at 4");
+    expect(str(`"bad \\x"`)).toBe("error: invalid escape at 6");
+    expect(str(`"bad \\u12g4"`)).toBe("error: invalid \\u escape at 9");
+    expect(str(`"open`)).toBe("error: unexpected end of input at 5");
+    expect(str(`"esc \\`)).toBe("error: unexpected end of input at 6");
+  });
+});
+
+describe("numbers", () => {
+  it("reads integers and floats", () => {
+    expect(num("0")).toBe("true 0 0");
+    expect(num("-0")).toBe("true -0 0");
+    expect(num("42")).toBe("true 42 42");
+    expect(num("-17.25")).toBe("false -17.25 null");
+    expect(num("1e3")).toBe("false 1000 1000");
+    expect(num("2.5E-3")).toBe("false 0.0025 null");
+    expect(num("1.0")).toBe("false 1 1");
+    expect(num("1.5")).toBe("false 1.5 null");
+    expect(num("0.1")).toBe("false 0.1 null");
+    expect(num("1.7976931348623157e308")).toBe("false 1.7976931348623157e+308 null");
+    expect(num("01")).toBe("true 0 0");
+  });
+
+  it("gives an i64 only within its range", () => {
+    expect(num("123456789012345678")).toBe("true 123456789012345680 123456789012345678");
+    expect(num("9223372036854775807")).toBe("true 9223372036854776000 9223372036854775807");
+    expect(num("9223372036854775808")).toBe("true 9223372036854776000 null");
+    expect(num("-9223372036854775808")).toBe("true -9223372036854776000 -9223372036854775808");
+    expect(num("-9223372036854775809")).toBe("true -9223372036854776000 null");
+  });
+
+  it("reports a number cut short", () => {
+    expect(num("-")).toBe("error: unexpected end of input at 1");
+    expect(num("1.")).toBe("error: unexpected end of input at 2");
+    expect(num("1e+")).toBe("error: unexpected end of input at 3");
+  });
+});
+
+describe("literals and white space", () => {
+  it("reports a literal cut short or misspelled", () => {
+    const lit = new Scanner("nul");
+    expect(lit.literal("null")).toBe(false);
+    expect(`${lit.what} ${lit.at}`).toBe("unexpected end of input 3");
+    const lit2 = new Scanner("nuxl");
+    expect(lit2.literal("null")).toBe(false);
+    expect(`${lit2.what} ${lit2.at}`).toBe("unexpected character 2");
+  });
+
+  it("skips white space", () => {
+    const ws = new Scanner(" \t\r\n x");
+    expect(ws.peekNonWs()).toBe(120);
+    expect(ws.pos).toBe(5);
+  });
+});
+
+let seed: u64 = 1658;
+
+function next(n: u64): u64 {
+  seed = seed * 6364136223846793005 + 1442695040888963407;
+  return (seed >> 33) % n;
+}
+
+function piece(): string {
+  const k = next(12);
+  if (k < 5) {
+    return String.fromCharCode((0x20 + next(0x5e)) as number);
+  }
+  if (k == 5) {
+    return "é";
+  }
+  if (k == 6) {
+    return "日本";
+  }
+  if (k == 7) {
+    return "😀";
+  }
+  if (k == 8) {
+    return ["\n", "\"", "\\", "\t", "\u0001"][next(5) as usize];
+  }
+  if (k == 9) {
+    return String.fromCharCode((0xd800 + next(0x800)) as number);
+  }
+  if (k == 10) {
+    return "한국어";
+  }
+  return "abcdefghijklmnopqrstuvwxyz".slice(0, next(27) as i64);
+}
+
+describe("the sixteen-byte string scan", () => {
+  it("counts and decodes long random strings as they are", () => {
+    // Long enough for whole blocks, mixing ASCII, two-, three- and four-byte characters,
+    // escapes and lone surrogates at every offset.
+    let bad = 0;
+    for (let c = 0; c < 20000; c++) {
+      let s = "";
+      const parts = next(60);
+      for (let i: u64 = 0; i < parts; i++) {
+        s += piece();
+      }
+      const text = JSON.stringify(s);
+      for (const decode of [true, false]) {
+        const sc = new Scanner(text);
+        if (!sc.string(decode) || sc.units != (s.length as usize) || (decode && sc.text() != s)) {
+          bad++;
+        }
+      }
+      if (JSON.parse<string>(text) != s) {
+        bad++;
+      }
+    }
+    expect(bad).toBe(0);
+  });
+});

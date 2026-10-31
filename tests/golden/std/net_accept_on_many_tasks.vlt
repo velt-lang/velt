@@ -2,8 +2,8 @@
 // Eight tasks accept on one listener (with the per-core scheduler, on several workers, sharing
 // one registration of the socket); every connection is answered once, and after `close()` the
 // port can be listened on again at once.
-import { listen, connect, TcpListener } from "velt:net";
-import { IoError } from "velt:io";
+import { listen, connect, TcpListener } from "velt/net";
+import { IoError } from "velt/io";
 
 async function serveFour(server: TcpListener): Promise<void> {
   for (let i = 0; i < 4; i++) {

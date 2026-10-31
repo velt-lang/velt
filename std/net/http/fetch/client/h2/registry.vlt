@@ -1,0 +1,79 @@
+// velt/net/http (internal): the process's HTTP/2 client sessions by origin, so that every task's
+// `fetch` to an origin shares one connection (multiplexing). A map behind a `Mutex`, kept in the
+// runtime slot std assigns to it (rt_abi_async.md §2.2, slot 1), which is dropped with the
+// program, as velt/net/websocket's topics are kept in slot 0.
+//
+// Not a module-level value: a `shared` one would be module state, which every task touching it
+// then locks at each poll; and an `Atomic` of a `shared` value (no lock) leaves blocks of
+// velt/sync/epoch behind when the program ends, which std's leak checks count.
+
+import { Channel } from "velt/sync/channel";
+import { H2Call } from "velt/net/http/fetch/client/h2/call";
+
+declare function velt_rt_global_lock(slot: u32);
+declare function velt_rt_global_unlock(slot: u32);
+declare function velt_rt_global_chan(slot: u32): u64;
+
+/// The slot: read only here, with its one type.
+const SLOT: u32 = 1;
+
+/// An origin's session: its channel's handle and its number.
+struct Origin {
+  calls: u64;
+  id: i64;
+}
+
+type Origins = Mutex<Map<string, Origin>>;
+
+/// The process's map, made on first use: taken out of the slot and a reference put back.
+function origins(): shared<Origins> {
+  velt_rt_global_lock(SLOT);
+  const ch: Channel<shared<Origins>> = Channel { handle: velt_rt_global_chan(SLOT) };
+  const found = ch.tryReceive();
+  const value =
+    found == null ? shared(new Mutex<Map<string, Origin>>(new Map<string, Origin>())) : found;
+  ch.trySend(value.clone());
+  velt_rt_global_unlock(SLOT);
+  return value;
+}
+
+/// Numbers sessions, so that a closing one forgets only its own entry.
+const NEXT_ID = new Atomic<i64>(1);
+
+/// The session of `key`, if one is open.
+export function sessionOf(key: string): Channel<H2Call> | null {
+  const h = origins().with((m) => {
+    const o = m.get(key);
+    return o == undefined ? 0u64 : o.calls;
+  });
+  if (h == 0) {
+    return null;
+  }
+  const c: Channel<H2Call> = Channel { handle: h };
+  return c;
+}
+
+/// Registers the session `calls` for `key` if none is there (its connection is being made;
+/// requests may queue on it already): its number, or 0 when another came first.
+export function claim(key: string, calls: Channel<H2Call>): i64 {
+  const id = NEXT_ID.add(1);
+  const h = calls.handle;
+  const claimed = origins().with((m) => {
+    if (m.has(key)) {
+      return false;
+    }
+    m.set(key, { calls: h, id: id });
+    return true;
+  });
+  return claimed ? id : 0;
+}
+
+/// Forgets session `id` of `key`, if it is still the registered one.
+export function forget(key: string, id: i64) {
+  origins().with((m) => {
+    const o = m.get(key);
+    if (o != undefined && o.id == id) {
+      m.delete(key);
+    }
+  });
+}

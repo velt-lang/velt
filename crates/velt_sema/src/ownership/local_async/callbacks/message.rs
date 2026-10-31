@@ -1,4 +1,4 @@
-//! The diagnostic: where the handler calls the closure, and the fix-it declaration.
+//! The diagnostic: where code on another thread calls the closure, and the fix-it declaration.
 
 use super::*;
 
@@ -41,7 +41,7 @@ pub(super) fn call_site(
     let fields = &bodies.stores;
     let mut best: Option<(u8, bool, u32, String, Span)> = None;
     for d in order {
-        if d == c || in_std(cx, d) {
+        if d == c || in_library(cx, d) {
             continue;
         }
         let Some(Def::Fn(f)) = &cx.defs[d.0 as usize] else {
@@ -70,13 +70,13 @@ pub(super) fn call_site(
             _ => passes1(x),
         };
         each_expr(&f.body.block, &mut |e: &Expr| {
-            // `c` passed to the standard library, which calls it.
+            // `c` passed to a library, which calls it.
             if let E::Call {
                 callee: Callee::Def(s, _),
                 args,
             } = &e.kind
             {
-                if in_std(cx, *s) && args.iter().any(passes) {
+                if in_library(cx, *s) && args.iter().any(passes) {
                     let key = (1, !request, e.span.lo);
                     if let Some(text) = shown(cx, f, e) {
                         if best.as_ref().is_none_or(|b| key < (b.0, b.1, b.2)) {
@@ -277,16 +277,18 @@ pub(super) fn report(
 ) {
     let mut d = match &call {
         Some((callee, span)) => Diagnostic::error(
-            format!("this handler calls `{callee}`, which changes `{name}`; requests run at the same time"),
+            format!(
+                "this code runs on another thread and calls `{callee}`, which changes `{name}`"
+            ),
             *span,
         )
         .with_label(at, format!("`{name}` is changed here")),
         None => Diagnostic::error(
-            format!("an HTTP handler can call this function, which changes `{name}`; requests run at the same time"),
+            format!("this function can be called on another thread, and it changes `{name}`"),
             at,
-        )
-        .with_label(why.span, "the handler is passed to `serve` here"),
+        ),
     };
+    d = d.with_label(why.span, super::super::reaches(cx, &why));
     // `shared` alone holds a 64-bit integer (`add`, `get`, `set`); any other value goes in a
     // `Mutex`, and one that is not copied (a string, an object) in an object there, since a
     // `with` callback can replace the fields of what it gets but not the value itself.
@@ -308,7 +310,7 @@ pub(super) fn report(
     };
     d = d
         .with_note(format!(
-            "fix: const {name} = {decl}  // one value shared by every request, as in Node"
+            "fix: const {name} = {decl}  // one value every thread shares, as in Node"
         ))
         .with_note(how);
     cx.error(d);

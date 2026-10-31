@@ -1,0 +1,9 @@
+// velt/encoding (internal): `TextDecoderOptions`, the options of `TextDecoder`.
+
+/** `TextDecoder`'s options. */
+export struct TextDecoderOptions {
+  /** Throw `EncodingError` on invalid UTF-8 instead of writing U+FFFD (default false). */
+  fatal?: bool;
+  /** Keep a leading byte order mark instead of dropping it (default false). */
+  ignoreBOM?: bool;
+}

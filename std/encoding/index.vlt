@@ -1,0 +1,28 @@
+// velt/encoding: byte <-> text encodings — Base64 (RFC 4648 §4 and the URL-safe §5 alphabet),
+// lowercase hex, and UTF-8 (strict and lossy decoding, validation).
+//
+// Strings are stored as UTF-8, so `utf8Encode` is a copy of a string's bytes (a lone surrogate
+// written as U+FFFD) and decoding validates them. Encoders build the output as ASCII bytes and turn them into a string with one
+// runtime copy. Decoders throw `EncodingError` on malformed input.
+// docs/std/encoding.md.
+
+export {
+  base64Decode,
+  base64DecodeString,
+  base64Encode,
+  base64EncodeString,
+  base64UrlDecode,
+  base64UrlEncode,
+} from "velt/encoding/base64";
+export { atob, btoa } from "velt/encoding/binary_string";
+export { EncodingError } from "velt/encoding/errors";
+export { hexDecode, hexEncode } from "velt/encoding/hex";
+export { isAscii, utf8ByteAt, utf8Length, utf8Substring } from "velt/encoding/string_bytes";
+export {
+  firstInvalid,
+  utf8Decode,
+  utf8DecodeLossy,
+  utf8Encode,
+  utf8Valid,
+  validToString,
+} from "velt/encoding/utf8";

@@ -1,0 +1,87 @@
+// velt/lang/intrinsics: the compiler's intrinsics, declared (docs/internals/design/std-layout.md
+// §10): operations the compiler emits inline, such as a bounds-checked swap, a byte of a string
+// or a per-type equality, which no Velt code can express. Each file of this folder declares an
+// area's with `export declare intrinsic function`; the declaration is the signature calls are
+// checked against (modes.vlt says how arguments are passed), and the compiler's table
+// (`crates/velt_sema/src/body/expr/intrinsics.rs`) maps each name to the operation, a test
+// checking that the two name the same set. std code imports them like any function; programs
+// and packages cannot (`velt/lang` is internal), so they use the public APIs instead.
+
+export {
+  anyDelete,
+  anyToPrimitive,
+  proxyArrayCall,
+  proxyArrayHole,
+} from "velt/lang/intrinsics/any";
+export {
+  arrayMove,
+  arrayPrefetch,
+  arrayRemove,
+  arrayReserve,
+  arrayRotateLeft,
+  arrayRotateRight,
+  arraySetLen,
+  arraySwap,
+  arraySwapNested,
+  arrayTruncate,
+  arrayWithCapacity,
+} from "velt/lang/intrinsics/array";
+export {
+  atomicCas,
+  atomicCasWeak,
+  atomicFence,
+  atomicLoad,
+  atomicRmw,
+  atomicSpinHint,
+  atomicStore,
+} from "velt/lang/intrinsics/atomic";
+export { chanReceive, chanSend, chanTryReceive, chanTrySend } from "velt/lang/intrinsics/channel";
+export { deepEq, eq, hash, includesEq, keyEq } from "velt/lang/intrinsics/compare";
+export { dbBind, readRowByColumn, readRowsByColumn } from "velt/lang/intrinsics/db";
+export {
+  asyncGeneratorDispose,
+  asyncGeneratorResume,
+  asyncGeneratorReturn,
+  asyncGeneratorValue,
+  generatorResume,
+  generatorResumeWith,
+  generatorReturn,
+  generatorThrow,
+  generatorValue,
+} from "velt/lang/intrinsics/generator";
+export { jsonParse, jsonParseCursor } from "velt/lang/intrinsics/json";
+export { abs, ceil, floor, round, sqrt, trunc } from "velt/lang/intrinsics/math";
+export { share, transfer } from "velt/lang/intrinsics/ownership";
+export {
+  anyReflectCount,
+  anyReflectHook,
+  anyReflectInfo,
+  anyReflectName,
+  anyReflectValue,
+  identity,
+  isTypedProxy,
+  toAny,
+} from "velt/lang/intrinsics/reflect";
+export { errorText, inspect, throwLoc } from "velt/lang/intrinsics/report";
+export { strLoadPartialU8x16, strLoadU8x16, targetFeature } from "velt/lang/intrinsics/simd";
+export { strByteAt, strByteLen, strCharCodeAt, strLen } from "velt/lang/intrinsics/string";
+export { symbolRegistry, symbolStatic } from "velt/lang/intrinsics/symbol";
+export { firstFulfilled, spawnHandled } from "velt/lang/intrinsics/task";
+export { threadLocalGet, threadLocalSet } from "velt/lang/intrinsics/thread_local";
+export {
+  fnCapturesNothing,
+  holdsNull,
+  mayAlias,
+  needsDrop,
+  needsTransfer,
+  nullAs,
+} from "velt/lang/intrinsics/types";
+export {
+  weakMapDelete,
+  weakMapGet,
+  weakMapHas,
+  weakMapSet,
+  weakMapValue,
+  weakRefDeref,
+  weakRefNew,
+} from "velt/lang/intrinsics/weak";

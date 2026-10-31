@@ -1,0 +1,110 @@
+// velt/cli (internal): `ParsedArgs`, what `ArgParser.parse` found on a command line.
+
+import { CliError } from "velt/cli/errors";
+
+/** The result of `ArgParser.parse` (constructed by it). */
+export class ParsedArgs {
+  /** Arguments that are not options, in order (including those after `--`). */
+  positionals: string[];
+  private flagNames: string[];
+  private flagValues: bool[];
+  private values: Map<string, string[]>;
+  private defaults: Map<string, string>;
+  private positionalNames: string[];
+
+  constructor(
+    positionals: string[],
+    flagNames: string[],
+    flagValues: bool[],
+    values: Map<string, string[]>,
+    defaults: Map<string, string>,
+    positionalNames: string[],
+  ) {
+    this.positionals = positionals;
+    this.flagNames = flagNames;
+    this.flagValues = flagValues;
+    this.values = values;
+    this.defaults = defaults;
+    this.positionalNames = positionalNames;
+  }
+
+  /** Whether flag `name` was given (the last `--name` / `--no-name` wins). */
+  flag(name: string): bool {
+    for (let i = this.flagNames.length; i > 0; i--) {
+      if (this.flagNames[i - 1] == name) {
+        return this.flagValues[i - 1];
+      }
+    }
+    return false;
+  }
+
+  /**
+   * The last value of option `name`, else its default, else the declared positional of that
+   * name, else null.
+   */
+  get(name: string): string | null {
+    const all = this.values.get(name);
+    if (all != null && all.length > 0) {
+      return all[all.length - 1].clone();
+    }
+    const d = this.defaults.get(name);
+    if (d != null) {
+      return d;
+    }
+    const p = this.positionalNames.indexOf(name);
+    if (p >= 0 && (p as usize) < this.positionals.length) {
+      return this.positionals[p as usize].clone();
+    }
+    return null;
+  }
+
+  /** `get(name)`, or `fallback` when it is null. */
+  getOr(name: string, fallback: string): string {
+    return this.get(name) ?? fallback;
+  }
+
+  /** Every value given for option `name`, in order (the default is not included). */
+  getAll(name: string): string[] {
+    return this.values.get(name) ?? [];
+  }
+
+  /** Whether option or flag `name` was given explicitly. */
+  has(name: string): bool {
+    return this.values.has(name) || this.flagNames.includes(name);
+  }
+
+  /**
+   * `get(name)` as an integer (decimal digits with an optional sign), or null when absent;
+   * throws `CliError` if the value is not an integer.
+   */
+  getInt(name: string): i64 | null {
+    const v = this.get(name);
+    if (v == null) {
+      return null;
+    }
+    const n = parseInteger(v);
+    if (n == null) {
+      throw new CliError(`Option '${name}' expects an integer, got '${v}'`);
+    }
+    return n;
+  }
+}
+
+// `[+-]digits` as an i64, or null (also on overflow).
+function parseInteger(s: string): i64 | null {
+  const len = s.length as i64;
+  const sign = s.charCodeAt(0);
+  let i: i64 = sign == 43 || sign == 45 ? 1 : 0;
+  if (i >= len) {
+    return null;
+  }
+  let v: i64 = 0;
+  for (; i < len; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 48 || c > 57 || v > (9223372036854775807 - (c - 48)) / 10) {
+      return null;
+    }
+    v = v * 10 + (c - 48);
+  }
+  return sign == 45 ? -v : v;
+}

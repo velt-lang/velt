@@ -35,7 +35,7 @@ pending one, then waits for it. The status code is decided before the stream sta
 (`statusOf`), since the headers go out first.
 
 **Shared with TypeScript.** `src/shared` is in the common subset of TypeScript and Velt
-(`tsCompat` in package.vlt): plain types, `number` and `boolean`, typed props, no `velt:`
+(`tsCompat` in package.vlt): plain types, `number` and `boolean`, typed props, no `velt/`
 imports, and the server-only parts (the store, async loading) stay outside it. Check both sides:
 
 ```sh

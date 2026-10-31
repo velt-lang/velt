@@ -14,7 +14,18 @@
 // Lowering calls `pin` and `unpin` around a function that loads an `Atomic` of a `shared` value,
 // and `retire` for each reference such an `Atomic` gives up (velt_vir `epoch_sections.rs`,
 // `atomic_ref.rs`).
-import { pin, unpin, retire } from "velt:sync/epoch";
+import { pin, unpin, retire } from "velt/sync/epoch";
+import {
+  atomicCas,
+  atomicCasWeak,
+  atomicFence,
+  atomicLoad,
+  atomicRmw,
+  atomicSpinHint,
+  atomicStore,
+  threadLocalGet,
+  threadLocalSet,
+} from "velt/lang/intrinsics";
 
 /**
  * A lock around a value of type `T`, for sharing it between tasks and threads:
@@ -98,17 +109,17 @@ export struct Atomic<T> {
 
   /** The value. */
   load(order: "relaxed" | "acquire" | "seqcst" = "seqcst"): T {
-    return __intrinsic_atomic_load(this, 4);
+    return atomicLoad(this, 4);
   }
 
   /** Makes `v` the value. */
   store(v: T, order: "relaxed" | "release" | "seqcst" = "seqcst"): void {
-    __intrinsic_atomic_store(this, v, 4);
+    atomicStore(this, v, 4);
   }
 
   /** Makes `v` the value; returns the previous one. */
   exchange(v: T, order: "relaxed" | "acquire" | "release" | "acqrel" | "seqcst" = "seqcst"): T {
-    return __intrinsic_atomic_rmw(this, v, 0, 4);
+    return atomicRmw(this, v, 0, 4);
   }
 
   /**
@@ -124,7 +135,7 @@ export struct Atomic<T> {
     order: "relaxed" | "acquire" | "release" | "acqrel" | "seqcst" = "seqcst",
     failure: "relaxed" | "acquire" | "seqcst" = "seqcst",
   ): T {
-    return __intrinsic_atomic_cas(this, expected, v, 4, 4);
+    return atomicCas(this, expected, v, 4, 4);
   }
 
   /**
@@ -138,32 +149,32 @@ export struct Atomic<T> {
     order: "relaxed" | "acquire" | "release" | "acqrel" | "seqcst" = "seqcst",
     failure: "relaxed" | "acquire" | "seqcst" = "seqcst",
   ): bool {
-    return __intrinsic_atomic_cas_weak(this, expected, v, 4, 4);
+    return atomicCasWeak(this, expected, v, 4, 4);
   }
 
   /** Adds `v` (wrapping around at an integer type's bounds); returns the previous value. */
   add(v: T, order: "relaxed" | "acquire" | "release" | "acqrel" | "seqcst" = "seqcst"): T {
-    return __intrinsic_atomic_rmw(this, v, 1, 4);
+    return atomicRmw(this, v, 1, 4);
   }
 
   /** Subtracts `v` (wrapping around at an integer type's bounds); returns the previous value. */
   sub(v: T, order: "relaxed" | "acquire" | "release" | "acqrel" | "seqcst" = "seqcst"): T {
-    return __intrinsic_atomic_rmw(this, v, 2, 4);
+    return atomicRmw(this, v, 2, 4);
   }
 
   /** Bitwise and (logical, for `bool`) with `v`; returns the previous value. */
   and(v: T, order: "relaxed" | "acquire" | "release" | "acqrel" | "seqcst" = "seqcst"): T {
-    return __intrinsic_atomic_rmw(this, v, 3, 4);
+    return atomicRmw(this, v, 3, 4);
   }
 
   /** Bitwise or (logical, for `bool`) with `v`; returns the previous value. */
   or(v: T, order: "relaxed" | "acquire" | "release" | "acqrel" | "seqcst" = "seqcst"): T {
-    return __intrinsic_atomic_rmw(this, v, 4, 4);
+    return atomicRmw(this, v, 4, 4);
   }
 
   /** Bitwise exclusive or (logical, for `bool`) with `v`; returns the previous value. */
   xor(v: T, order: "relaxed" | "acquire" | "release" | "acqrel" | "seqcst" = "seqcst"): T {
-    return __intrinsic_atomic_rmw(this, v, 5, 4);
+    return atomicRmw(this, v, 5, 4);
   }
 
   /**
@@ -171,7 +182,7 @@ export struct Atomic<T> {
    * value. Numbers only.
    */
   max(v: T, order: "relaxed" | "acquire" | "release" | "acqrel" | "seqcst" = "seqcst"): T {
-    return __intrinsic_atomic_rmw(this, v, 6, 4);
+    return atomicRmw(this, v, 6, 4);
   }
 
   /**
@@ -179,7 +190,7 @@ export struct Atomic<T> {
    * value. Numbers only.
    */
   min(v: T, order: "relaxed" | "acquire" | "release" | "acqrel" | "seqcst" = "seqcst"): T {
-    return __intrinsic_atomic_rmw(this, v, 7, 4);
+    return atomicRmw(this, v, 7, 4);
   }
 
   /**
@@ -188,7 +199,7 @@ export struct Atomic<T> {
    * `"seqcst"` also in the one order of all `seqcst` operations.
    */
   static fence(order: "acquire" | "release" | "acqrel" | "seqcst" = "seqcst"): void {
-    __intrinsic_atomic_fence(4);
+    atomicFence(4);
   }
 
   /**
@@ -196,7 +207,7 @@ export struct Atomic<T> {
    * power and gives a sibling hardware thread its turn (`pause`, `isb`). It changes no memory.
    */
   static spinHint(): void {
-    __intrinsic_atomic_spin_hint();
+    atomicSpinHint();
   }
 }
 
@@ -215,12 +226,12 @@ export struct ThreadLocal<T> {
 
   /** This thread's value. */
   get(): T {
-    return __intrinsic_thread_local_get(this);
+    return threadLocalGet(this);
   }
 
   /** Makes `v` this thread's value. */
   set(v: T): void {
-    __intrinsic_thread_local_set(this, v);
+    threadLocalSet(this, v);
   }
 }
 

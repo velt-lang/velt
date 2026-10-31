@@ -1,5 +1,5 @@
 // A closure capturing a WeakRef is sent on a channel.
-import { channel } from "velt:channel";
+import { channel } from "velt/sync";
 class V { n: number; constructor(n: number) { this.n = n; } }
 async function main() {
   const keep = new V(7);

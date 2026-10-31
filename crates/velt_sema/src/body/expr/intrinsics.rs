@@ -1,119 +1,17 @@
-//! The intrinsic table: `__intrinsic_<snake_case>` names (std only) and each intrinsic's
-//! signature as a callable generic over `T = Param(0)`.
+//! Intrinsic calls. A call of a function std declares with `declare intrinsic function`
+//! (std/lang/intrinsics, `crate::intrinsic_decls`) is checked against that declaration like any
+//! call and becomes the intrinsic ([`FnCx::intrinsic_call`]). The builtins that are intrinsics
+//! without a declaration (`panic`, `sleep`, `xs.push`, `new Mutex`, …) have their signature here
+//! ([`FnCx::intrinsic_sig`]), as a callable generic over `T = Param(0)`.
 
 use velt_common::Span;
+use velt_syntax::ast;
 
 use super::args::Callable;
 use crate::body::FnCx;
 use crate::defs::ParamSig;
-use crate::hir::{IntTy, Intrinsic, PassMode, TyId, TyKind};
-
-/// `__intrinsic_<name>` → intrinsic (snake_case of the `Intrinsic` variant).
-pub(super) fn intrinsic_named(name: &str) -> Option<Intrinsic> {
-    use Intrinsic as I;
-    Some(match name {
-        "print" => I::Print,
-        "spawn_handled" => I::SpawnHandled,
-        "print_err" => I::PrintErr,
-        "to_string" => I::ToString,
-        "error_text" => I::ErrorText,
-        "inspect" => I::Inspect,
-        "throw_loc" => I::ThrowLoc,
-        "str_concat" => I::StrConcat,
-        "str_len" => I::StrLen,
-        "str_byte_len" => I::StrByteLen,
-        "str_char_code_at" => I::StrCharCodeAt,
-        "str_byte_at" => I::StrByteAt,
-        "str_load_u8x16" => I::StrLoadU8x16,
-        "str_load_partial_u8x16" => I::StrLoadPartialU8x16,
-        "exit" => I::Exit,
-        "panic" => I::Panic,
-        "array_with_capacity" => I::ArrayWithCapacity,
-        "array_len" => I::ArrayLen,
-        "array_push" => I::ArrayPush,
-        "array_pop" => I::ArrayPop,
-        "array_swap" => I::ArraySwap,
-        "array_remove" => I::ArrayRemove,
-        "array_truncate" => I::ArrayTruncate,
-        "array_move" => I::ArrayMove,
-        "array_set_len" => I::ArraySetLen,
-        "array_reserve" => I::ArrayReserve,
-        "array_prefetch" => I::ArrayPrefetch,
-        "atomic_load" => I::AtomicLoad,
-        "atomic_store" => I::AtomicStore,
-        "atomic_rmw" => I::AtomicRmw,
-        "atomic_cas" => I::AtomicCas,
-        "atomic_cas_weak" => I::AtomicCasWeak,
-        "atomic_fence" => I::AtomicFence,
-        "atomic_spin_hint" => I::AtomicSpinHint,
-        "thread_local_get" => I::ThreadLocalGet,
-        "thread_local_set" => I::ThreadLocalSet,
-        "array_rotate_right" => I::ArrayRotateRight,
-        "array_rotate_left" => I::ArrayRotateLeft,
-        "array_swap_nested" => I::ArraySwapNested,
-        "hash" => I::Hash,
-        "eq" => I::Eq,
-        "deep_eq" => I::DeepEq,
-        "key_eq" => I::KeyEq,
-        "includes_eq" => I::IncludesEq,
-        "same" => I::Same,
-        "same_value" => I::SameValue,
-        "clone" => I::Clone,
-        "share" => I::Share,
-        "transfer" => I::Transfer,
-        "needs_transfer" => I::NeedsTransfer,
-        "needs_drop" => I::NeedsDrop,
-        "may_alias" => I::MayAlias,
-        "holds_null" => I::HoldsNull,
-        "null_as" => I::NullAs,
-        "fn_captures_nothing" => I::FnCapturesNothing,
-        "sqrt" => I::Sqrt,
-        "floor" => I::Floor,
-        "ceil" => I::Ceil,
-        "round" => I::Round,
-        "trunc" => I::Trunc,
-        "f_abs" => I::FAbs,
-        "shared_new" => I::SharedNew,
-        "array_data_ptr" => I::ArrayDataPtr,
-        "json_stringify" => I::JsonStringify,
-        "json_parse" => I::JsonParse,
-        "json_parse_rows" => I::JsonParseRows,
-        "json_parse_cursor" => I::JsonParseCursor,
-        "db_bind" => I::DbBind,
-        "read_rows" => I::ReadRows,
-        "read_row" => I::ReadRow,
-        "http_handler" => I::HttpHandler,
-        "promise_any" => I::PromiseAny,
-        "chan_send" => I::ChanSend,
-        "any_delete" => I::AnyDelete,
-        "any_tag" => I::AnyTag,
-        "any_to_number" => I::AnyToNumber,
-        "proxy_array_call" => I::ProxyArrayCall,
-        "proxy_array_hole" => I::ProxyArrayHole,
-        "chan_receive" => I::ChanReceive,
-        "chan_try_send" => I::ChanTrySend,
-        "chan_try_receive" => I::ChanTryReceive,
-        "generator_resume" => I::GeneratorResume,
-        "generator_value" => I::GeneratorValue,
-        "generator_return" => I::GeneratorReturn,
-        "generator_resume_with" => I::GeneratorResumeWith,
-        "generator_throw" => I::GeneratorThrow,
-        "async_generator_resume" => I::AsyncGeneratorResume,
-        "async_generator_value" => I::AsyncGeneratorValue,
-        "async_generator_return" => I::AsyncGeneratorReturn,
-        "async_generator_dispose" => I::AsyncGeneratorDispose,
-        "weakmap_set" => I::WeakMapSet,
-        "weakmap_get" => I::WeakMapGet,
-        "weakmap_has" => I::WeakMapHas,
-        "weakmap_delete" => I::WeakMapDelete,
-        "weakmap_value" => I::WeakMapValue,
-        "weakref_new" => I::WeakRefNew,
-        "weakref_deref" => I::WeakRefDeref,
-        "symbol_static" => I::SymbolStatic,
-        "symbol_registry" => I::SymbolRegistry,
-        _ => return None,
-    })
-}
+use crate::hir::{self, DefId, Intrinsic, PassMode, TyId, TyKind};
+use crate::intrinsic_decls::DeclaredIntrinsic;
 
 pub(super) fn param(ty: TyId, mode: PassMode, span: Span) -> ParamSig {
     ParamSig {
@@ -130,7 +28,93 @@ pub(super) fn param(ty: TyId, mode: PassMode, span: Span) -> ParamSig {
 type Sig = (Vec<(TyId, PassMode)>, TyId, bool);
 
 impl FnCx<'_, '_> {
-    /// Signature of an intrinsic as a generic callable over `T = Param(0)`.
+    /// A call of the declared intrinsic `d` (`decl`): its arguments checked against the
+    /// declaration (explicit type arguments as for any generic function), then the intrinsic.
+    #[allow(clippy::too_many_arguments)] // mirrors `fn_call`
+    pub(super) fn intrinsic_call(
+        &mut self,
+        d: DefId,
+        decl: DeclaredIntrinsic,
+        type_args: &[ast::TypeExpr],
+        args: &[ast::Expr],
+        exp: Option<TyId>,
+        span: Span,
+    ) -> hir::Expr {
+        let i = match decl {
+            DeclaredIntrinsic::Op(i) => i,
+            DeclaredIntrinsic::TargetFeature => return self.target_stmt(args, span),
+            DeclaredIntrinsic::AnyToPrimitive => return self.primitive_dispatch(args, span),
+            DeclaredIntrinsic::Invalid => {
+                self.check_args_loose(args);
+                return self.error_expr(span);
+            }
+        };
+        let f = self.cx.fn_info(d);
+        let c = Callable {
+            what: format!("intrinsic `{}`", f.name),
+            params: f.params.clone(),
+            ret: f.ret,
+            slot_names: f.generics.names.clone(),
+            bounds: f.generics.bounds.clone(),
+            constraints: f.generics.constraints.clone(),
+            js_numbers: false,
+            positions: false,
+            js_api: false,
+            rest: false,
+            defaults: f.generics.defaults.clone(),
+        };
+        let n = c.slot_names.len();
+        let mut slots = vec![None; n];
+        self.explicit_type_args(&mut slots, n, type_args, &c.defaults, span);
+        let ck = self.check_call(&c, slots, args, exp, span);
+        if matches!(
+            i,
+            Intrinsic::JsonParse
+                | Intrinsic::JsonParseCursor
+                | Intrinsic::ReadRows
+                | Intrinsic::ReadRow
+        ) {
+            self.json_parse_throws(span);
+        }
+        if matches!(
+            i,
+            Intrinsic::GeneratorResume | Intrinsic::GeneratorResumeWith | Intrinsic::GeneratorThrow
+        ) {
+            // Resuming throws what the generator's body throws (its `E`).
+            if let Some(&e) = ck.type_args.get(1) {
+                self.throw_src(crate::defs::ThrowSrc::Direct(e, span));
+            }
+        }
+        let e = self.intrinsic(i, ck.args, ck.ret, span);
+        if i == Intrinsic::SpawnHandled {
+            self.spawned_promises(&e);
+        }
+        e
+    }
+
+    /// `(x: T) -> C<T>`, `x` copied: the constructor of the prelude's struct `C` holding one
+    /// number or `bool` (`new Atomic<T>(x)`, `new ThreadLocal<T>(x)`), whose operations are
+    /// intrinsics taking the value copied too.
+    pub(super) fn value_cell_ctor(&mut self, c: DefId, what: &str, span: Span) -> Callable {
+        let t = self.cx.ty.param(0);
+        let ret = self.cx.ty.intern(TyKind::Adt(c, vec![t]));
+        Callable {
+            what: what.into(),
+            params: vec![param(t, PassMode::Copy, span)],
+            ret,
+            slot_names: vec!["T".into()],
+            bounds: vec![vec![]],
+            constraints: vec![],
+            js_numbers: false,
+            positions: false,
+            js_api: false,
+            rest: false,
+            defaults: vec![],
+        }
+    }
+
+    /// Signature of a builtin intrinsic as a generic callable over `T = Param(0)`. A declared
+    /// intrinsic has none here: its declaration is its signature.
     pub(super) fn intrinsic_sig(&mut self, i: Intrinsic, span: Span) -> Callable {
         let (params, ret, generic) = match self.m2_sig(i) {
             Some(s) => s,
@@ -138,31 +122,8 @@ impl FnCx<'_, '_> {
         };
         let slot_names: Vec<String> = match (generic, i) {
             (false, _) => vec![],
-            (
-                true,
-                Intrinsic::Spawn
-                | Intrinsic::SpawnHandled
-                | Intrinsic::PromiseAll
-                | Intrinsic::PromiseRace
-                | Intrinsic::PromiseAny
-                | Intrinsic::AsyncGeneratorResume
-                | Intrinsic::AsyncGeneratorValue
-                | Intrinsic::AsyncGeneratorReturn
-                | Intrinsic::AsyncGeneratorDispose
-                | Intrinsic::WeakMapSet,
-            ) => {
+            (true, Intrinsic::Spawn | Intrinsic::PromiseAll | Intrinsic::PromiseRace) => {
                 vec!["T".into(), "E".into()]
-            }
-            (
-                true,
-                Intrinsic::GeneratorResume
-                | Intrinsic::GeneratorResumeWith
-                | Intrinsic::GeneratorThrow
-                | Intrinsic::GeneratorValue
-                | Intrinsic::GeneratorReturn,
-            ) => vec!["T".into(), "E".into(), "N".into()],
-            (true, Intrinsic::ReadRows | Intrinsic::ReadRow) => {
-                vec!["T".into(), "S".into()]
             }
             (true, _) => vec!["T".into()],
         };
@@ -187,133 +148,43 @@ impl FnCx<'_, '_> {
         let ty = &mut self.cx.ty;
         let t = ty.param(0);
         let arr = ty.array(t);
-        let (usize_, f64_, str_, unit, bool_) = (ty.usize, ty.f64, ty.str_, ty.unit, ty.bool_);
+        let (str_, unit) = (ty.str_, ty.unit);
         Some(match i {
             I::SimdShuffle(simd, _) => {
                 let v = ty.intern(TyKind::Simd(simd));
                 (vec![(v, C), (v, C)], v, false)
             }
-            I::ArrayWithCapacity => (vec![(usize_, C)], arr, true),
-            I::ArrayLen => (vec![(arr, B)], usize_, true),
             I::ArrayPush => (vec![(arr, M), (t, O)], unit, true),
             I::ArrayPop => (
                 vec![(arr, M)],
                 ty.option_of(t, crate::hir::Nothing::Undefined),
                 true,
             ),
-            I::ArraySwap | I::ArrayRotateRight | I::ArrayRotateLeft => {
-                (vec![(arr, M), (usize_, C), (usize_, C)], unit, true)
-            }
-            I::ArraySwapNested => {
-                let outer = ty.array(arr);
-                let at = (usize_, C);
-                (vec![(outer, M), at, at, at, at], unit, true)
-            }
-            I::ArrayRemove => (vec![(arr, M), (usize_, C)], t, true),
-            I::ArrayTruncate | I::ArraySetLen | I::ArrayReserve => {
-                (vec![(arr, M), (usize_, C)], unit, true)
-            }
-            I::ArrayPrefetch => (vec![(arr, B), (usize_, C)], unit, true),
-            I::ArrayMove => (
-                vec![(arr, M), (usize_, C), (arr, B), (usize_, C), (usize_, C)],
-                unit,
-                true,
-            ),
-            I::Hash => (vec![(t, B)], ty.u64, true),
-            I::Eq | I::DeepEq | I::KeyEq | I::IncludesEq | I::Same | I::SameValue | I::LooseEq => {
-                (vec![(t, B), (t, B)], bool_, true)
-            }
-            I::Clone | I::Share => (vec![(t, B)], t, true),
-            I::Transfer => (vec![(t, O)], t, true),
-            I::NeedsTransfer
-            | I::NeedsDrop
-            | I::MayAlias
-            | I::HoldsNull
-            | I::FnCapturesNothing
-            | I::Truthy
-            | I::IsNull
-            | I::IsNullish
-            | I::MayHoldPrimitive
-            | I::HoldsDynamic
-            | I::HoldsDynamicOrClass => (vec![(t, B)], bool_, true),
-            I::NullAs => (vec![], t, true),
-            I::ToString | I::ErrorText | I::Inspect => (vec![(t, B)], str_, true),
-            I::ThrowLoc => (vec![], str_, false),
+            I::Clone => (vec![(t, B)], t, true),
+            I::ToString => (vec![(t, B)], str_, true),
             I::SharedNew => {
                 let s = ty.intern(TyKind::Shared(t));
                 (vec![(t, O)], s, true)
             }
-            I::Sqrt | I::Floor | I::Ceil | I::Round | I::Trunc | I::FAbs => {
-                (vec![(f64_, C)], f64_, false)
-            }
-            I::StrConcat => (vec![(str_, B), (str_, B)], str_, false),
-            I::StrLen | I::StrByteLen => (vec![(str_, B)], usize_, false),
-            I::StrCharCodeAt => (vec![(str_, B), (ty.i64, C)], ty.i64, false),
-            I::StrByteAt => {
-                let u8_ = ty.intern(TyKind::Int(IntTy::U8));
-                (vec![(str_, B), (ty.u64, C)], u8_, false)
-            }
-            I::StrLoadU8x16 => {
-                let v = ty.intern(TyKind::Simd(crate::hir::SimdTy::U8x16));
-                (vec![(str_, B), (ty.u64, C)], v, false)
-            }
-            I::StrLoadPartialU8x16 => {
-                let v = ty.intern(TyKind::Simd(crate::hir::SimdTy::U8x16));
-                (vec![(str_, B), (ty.u64, C), (ty.u64, C)], v, false)
-            }
             I::Exit => (vec![(ty.i32, C)], ty.never, false),
             I::Panic => (vec![(str_, B)], ty.never, false),
-            I::ArrayDataPtr => (vec![(arr, B)], ty.u64, true),
-            I::Print | I::PrintErr => (vec![], unit, false),
-            I::WeakMapSet => {
-                let (u32_, v) = (ty.intern(TyKind::Int(IntTy::U32)), ty.param(1));
-                (vec![(u32_, C), (t, B), (v, O)], u32_, true)
-            }
-            I::WeakMapGet => {
-                let u32_ = ty.intern(TyKind::Int(IntTy::U32));
-                (vec![(u32_, C), (t, B)], ty.u64, true)
-            }
-            I::WeakMapHas | I::WeakMapDelete => {
-                let u32_ = ty.intern(TyKind::Int(IntTy::U32));
-                (vec![(u32_, C), (t, B)], bool_, true)
-            }
-            I::WeakMapValue => (vec![(ty.u64, C)], t, true),
-            I::WeakRefNew => (vec![(t, B)], ty.intern(TyKind::Int(IntTy::U32)), true),
-            I::WeakRefDeref => {
-                let u32_ = ty.intern(TyKind::Int(IntTy::U32));
-                (vec![(u32_, C)], ty.option(t), true)
-            }
             _ => return None,
         })
     }
 
-    /// M3/M4 intrinsics. `MutexWith` and `HttpHandler` take closures and are checked by their
-    /// own code; their signatures here only describe the shapes.
+    /// M3/M4 builtin intrinsics.
     fn m3_sig(&mut self, i: Intrinsic) -> Sig {
         use Intrinsic as I;
         use PassMode::{Borrow as B, Copy as C, Owned as O};
         let mutex = self.cx.mutex_ty();
         let rwlock = self.cx.rwlock_ty();
-        let atomic_def = self.cx.atomic_ty();
-        let thread_local_def = self.cx.thread_local_ty();
-        let (t0, e0, n0) = (
-            self.cx.ty.param(0),
-            self.cx.ty.param(1),
-            self.cx.ty.param(2),
-        );
-        let gen = self.cx.generator_ty_next(t0, e0, n0);
-        let agen = self.cx.async_generator_ty(t0, e0);
-        let any_ty = self.any_ty().unwrap_or(self.cx.ty.error);
         let ty = &mut self.cx.ty;
         let (t, e) = (ty.param(0), ty.param(1));
-        let (unit, str_, i64_, u64_) = (ty.unit, ty.str_, ty.i64, ty.u64);
+        let (unit, i64_) = (ty.unit, ty.i64);
         let pt = ty.promise_rejecting(t, e);
         let shared = ty.intern(TyKind::Shared(t));
-        let u8_ = ty.intern(TyKind::Int(IntTy::U8));
-        let atomic = atomic_def.map_or(ty.error, |d| ty.intern(TyKind::Adt(d, vec![t])));
-        let tl = thread_local_def.map_or(ty.error, |d| ty.intern(TyKind::Adt(d, vec![t])));
         match i {
-            I::Spawn | I::SpawnHandled => (vec![(pt, O)], pt, true),
+            I::Spawn => (vec![(pt, O)], pt, true),
             I::Sleep => (vec![(i64_, C)], ty.promise(unit), false),
             I::YieldNow => (vec![], ty.promise(unit), false),
             I::PromiseAll => {
@@ -321,104 +192,26 @@ impl FnCx<'_, '_> {
                 let arr = ty.array(t);
                 (vec![(ps, O)], ty.promise_rejecting(arr, e), true)
             }
-            I::PromiseRace | I::PromiseAny => (vec![(ty.array(pt), O)], pt, true),
-            I::ChanSend => (vec![(u64_, C), (t, O)], ty.promise(ty.bool_), true),
-            I::ChanReceive => {
-                let v = ty.option(t);
-                (vec![(u64_, C)], ty.promise(v), true)
-            }
-            I::ChanTrySend => (vec![(u64_, C), (t, O)], ty.bool_, true),
-            I::ChanTryReceive => (vec![(u64_, C)], ty.option(t), true),
+            I::PromiseRace => (vec![(ty.array(pt), O)], pt, true),
             I::PerfNow => (vec![], ty.f64, false),
-            I::AnyDelete => (vec![(any_ty, B), (str_, B)], ty.bool_, false),
-            I::AnyTag => (vec![(any_ty, B)], i64_, false),
-            I::AnyToNumber => (vec![(any_ty, B)], ty.f64, false),
-            I::ProxyArrayCall => (vec![(any_ty, B), (i64_, C)], i64_, false),
-            I::ProxyArrayHole => (vec![(any_ty, B), (i64_, C), (i64_, C)], i64_, false),
-            I::SymbolStatic => {
-                let sym = ty.intern(TyKind::Symbol);
-                (vec![(i64_, C), (str_, B), (ty.bool_, C)], sym, false)
-            }
-            I::SymbolRegistry => (vec![], ty.intern(TyKind::Symbol), false),
             I::DateNow => (vec![], i64_, false),
             I::SharedAdd => (vec![(shared, B), (t, C)], t, true),
             I::SharedGet => (vec![(shared, B)], t, true),
-            I::SharedRead => (vec![(shared, B)], t, true),
             I::SharedSet => (vec![(shared, B), (t, C)], unit, true),
             I::MutexNew => {
                 let m = mutex.map_or(ty.error, |d| ty.intern(TyKind::Adt(d, vec![t])));
                 (vec![(t, O)], m, true)
             }
-            I::MutexWith | I::LockRead => (vec![(t, B)], ty.error, true),
             I::RwLockNew => {
                 let r = rwlock.map_or(ty.error, |d| ty.intern(TyKind::Adt(d, vec![t])));
                 (vec![(t, O)], r, true)
             }
-            I::AtomicLoad => (vec![(atomic, B), (u8_, C)], t, true),
-            I::AtomicStore => (vec![(atomic, B), (t, C), (u8_, C)], unit, true),
-            I::AtomicRmw => (vec![(atomic, B), (t, C), (u8_, C), (u8_, C)], t, true),
-            I::AtomicCas => (
-                vec![(atomic, B), (t, C), (t, C), (u8_, C), (u8_, C)],
-                t,
-                true,
-            ),
-            I::AtomicCasWeak => (
-                vec![(atomic, B), (t, C), (t, C), (u8_, C), (u8_, C)],
-                ty.bool_,
-                true,
-            ),
-            I::AtomicFence => (vec![(u8_, C)], unit, false),
-            I::AtomicSpinHint => (vec![], unit, false),
-            I::ThreadLocalGet => (vec![(tl, B)], t, true),
-            I::ThreadLocalSet => (vec![(tl, B), (t, C)], unit, true),
-            I::JsonStringify => (vec![(t, B)], str_, true),
-            // `(text, flags, max_depth)`: the options as std's `JSON.parse` encodes them.
-            I::JsonParse => (vec![(str_, B), (ty.i64, C), (ty.i64, C)], t, true),
-            I::JsonParseRows => {
-                let bytes = ty.intern(TyKind::Int(IntTy::U8));
-                let bytes = ty.array(bytes);
-                (vec![(bytes, B), (ty.i64, C), (ty.i64, C)], t, true)
-            }
-            I::JsonParseCursor => (vec![(u64_, C), (ty.i64, C), (ty.i64, C)], t, true),
-            I::DbBind => (vec![(u64_, C), (t, B)], ty.bool_, true),
-            // `<T, S>`: the row type and the source's type.
-            I::ReadRows => {
-                let rows = ty.array(t);
-                (vec![(e, B)], ty.option(rows), true)
-            }
-            I::ReadRow => (vec![(e, B)], ty.option(t), true),
-            I::HttpHandler => {
-                let f = http_handler_fn(ty);
-                (vec![(f, O)], ty.intern(TyKind::Tuple(vec![u64_; 6])), false)
-            }
-            I::GeneratorResume => (vec![(gen, PassMode::BorrowMut)], ty.bool_, true),
-            // `(g, value: N)`: the value is borrowed; the resumed `yield` takes its own copy.
-            I::GeneratorResumeWith => {
-                let n = ty.param(2);
-                (vec![(gen, PassMode::BorrowMut), (n, B)], ty.bool_, true)
-            }
-            // `(g, error: any)`: the result code (0 done, 1 yielded, 3 not caught).
-            I::GeneratorThrow => {
-                let u32_ = ty.intern(TyKind::Int(IntTy::U32));
-                (vec![(gen, PassMode::BorrowMut), (any_ty, B)], u32_, true)
-            }
-            I::GeneratorValue => (vec![(gen, PassMode::BorrowMut)], t, true),
-            I::GeneratorReturn => (vec![(gen, PassMode::BorrowMut)], unit, true),
-            I::AsyncGeneratorResume => {
-                let r = ty.promise_rejecting(ty.bool_, e);
-                (vec![(agen, PassMode::BorrowMut)], r, true)
-            }
-            I::AsyncGeneratorValue => (vec![(agen, PassMode::BorrowMut)], t, true),
-            I::AsyncGeneratorReturn => (vec![(agen, PassMode::BorrowMut)], ty.promise(unit), true),
-            I::AsyncGeneratorDispose => (vec![(agen, PassMode::BorrowMut)], unit, true),
-            _ => unreachable!("ICE: intrinsic {i:?} has an M2 signature"),
+            _ => match crate::intrinsic_decls::name_of(i) {
+                Some(name) => unreachable!(
+                    "ICE: intrinsic {i:?} is declared in std/lang/intrinsics as `{name}`: its declaration is its signature"
+                ),
+                None => unreachable!("ICE: intrinsic {i:?} has no builtin signature"),
+            },
         }
     }
-}
-
-/// `(raw: u64) => Promise<u64>`: the closure `__intrinsic_http_handler` turns into a handler.
-pub(super) fn http_handler_fn(ty: &mut crate::types::Types) -> TyId {
-    let u64_ = ty.intern(TyKind::Int(IntTy::U64));
-    let ret = ty.promise(u64_);
-    ty.fn_ptr(vec![u64_], ret)
 }

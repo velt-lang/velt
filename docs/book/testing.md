@@ -77,11 +77,11 @@ FAILED test_out_of_range (exit code 101)
 ## `describe`, `it` and `expect`
 
 Tests can also be written as in Vitest, with `describe`, `it` (or `test`) and `expect` from
-`velt:test`. A file written for Vitest imports them from `"vitest"`, which is `velt:test` in
+`velt/test`. A file written for Vitest imports them from `"vitest"`, which is `velt/test` in
 Velt, and runs as it is:
 
 ```ts
-import { beforeEach, describe, expect, it } from "velt:test";
+import { beforeEach, describe, expect, it } from "velt/test";
 
 class Cart {
   items: string[] = [];
@@ -138,7 +138,7 @@ ok cart > async > waits
   class instances by their fields, a `Date` by its time, a `Set` by its members in any order,
   numbers with `Object.is`), `toBeNull`, `toBeUndefined`, `toBeDefined`, `toBeTruthy`,
   `toBeFalsy`, `toContain` and `toHaveLength` (an array or a string), `toMatch` (a string: a
-  `RegExp`, or a string it contains; a file without a regex doesn't compile velt:regex),
+  `RegExp`, or a string it contains; a file without a regex doesn't compile velt/text),
   `toBeGreaterThan`, `toBeGreaterThanOrEqual`, `toBeLessThan`, `toBeLessThanOrEqual` (a
   `Comparable` type: numbers, strings), and `toThrow` on a function
   (`expect(() => parse("x")).toThrow("bad")`). `.not` checks the opposite. `await
@@ -159,7 +159,7 @@ allows, or for one type, where a call on any other type is a compile error. It c
 message's first ` to ` as ` not to ` (or pass the message for `.not` as a third argument).
 
 ```ts
-import { Expect, expect, it } from "velt:test";
+import { Expect, expect, it } from "velt/test";
 
 extend<T extends Comparable<T>> Expect<T> {
   toBeWithin(lo: T, hi: T) {
@@ -188,7 +188,7 @@ it("checks a reply", () => {
 });
 ```
 
-`velt:test/http` has matchers for a `Response`: `import "velt:test/http"`, then
+`velt/test/http` has matchers for a `Response`: `import "velt/test/http"`, then
 `expect(res).toHaveStatus(204)` and `expect(res).toHaveHeader("etag", "\"v1\"")` (without the
 value: that the header is there; with `.not`: that it isn't).
 
@@ -217,7 +217,7 @@ nothing. Each test file runs in a process of its own, several at
 once (`--jobs`), and its output is printed in file order, whatever finishes first. The tests of
 a file run one after another, in source order, in that process; one that ends it (a panic, a
 crash, `process.exit`) is reported, and a new process runs the tests after it. The runner itself
-is written in Velt: the standard library's `velt:test`, compiled into the test program. Run a
+is written in Velt: the standard library's `velt/test`, compiled into the test program. Run a
 test program by hand (`velt test --no-run` prints its path) and it runs its tests itself.
 `--watch` reruns the tests whenever a file they import, a test file or the manifest changes. `--no-run` prints the paths of the test programs, to run one
 under a debugger (`--json` describes them for tools). In VS Code, **▶ Run test | Debug test**

@@ -1,4 +1,4 @@
-// std/jsx/render: turns an Element into HTML, as one string or as a streamed response body.
+// velt/jsx (internal): turns an Element into HTML, as one string or as a streamed response body.
 //
 // A complete element already is its HTML, as a string or a tree of template strings (node.vlt)
 // joined or written once. Otherwise the renderer walks the node's
@@ -6,9 +6,11 @@
 // awaited async component, then the other parts. Every async component started when its node was
 // created, so awaiting them one after the other still lets them load concurrently.
 
-import { Element, RenderError, markupOf, pushMarkup } from "velt:jsx/node";
-import { utf8Encode } from "velt:encoding";
-import { BodyStream } from "velt:fetch/body";
+import { Element } from "velt/jsx/node";
+import { RenderError } from "velt/jsx/errors";
+import { markupOf, pushMarkup } from "velt/jsx/tree";
+import { utf8Encode } from "velt/encoding/utf8";
+import { BodyStream } from "velt/net/http/fetch/body";
 
 /**
  * The HTML of `el`, after awaiting its async components. Throws the `RenderError` of the

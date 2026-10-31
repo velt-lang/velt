@@ -1,25 +1,28 @@
-// std/compress/inflate/blocks (std-internal): a DEFLATE stream's blocks (RFC 1951 §3.2.3): the
+// velt/compress (internal): a DEFLATE stream's blocks (RFC 1951 §3.2.3): the
 // three-bit header, stored blocks, and the fixed or dynamic Huffman tables of the others, whose
-// symbols velt:compress/inflate/codes decodes.
+// symbols velt/compress/inflate/codes decodes.
 //
 // Input may arrive in pieces. Every step that reads input either completes or, when the input
 // ends inside it, leaves the position as it was before the step (`SHORT`): a block header, a
 // dynamic block's code lengths and a symbol are decoded again whole once more input is there.
 // Only a stored block's bytes are taken as they arrive.
 
-import { CompressError } from "velt:compress/error";
+import { CompressError } from "velt/compress/errors";
 import {
   Bits,
   BLOCK_END,
   fast,
+  mark,
   MAX_MATCH,
   pull,
+  rewind,
   SHORT,
   SLACK,
   slow,
-} from "velt:compress/inflate/codes";
+} from "velt/compress/inflate/codes";
 import {
   build,
+  buildFixed,
   CODES,
   CODES_ROOT,
   CODES_SIZE,
@@ -30,8 +33,8 @@ import {
   LITLEN_ROOT,
   LITLEN_SIZE,
   Work,
-} from "velt:compress/inflate/huffman";
-import { CODE_ORDER } from "velt:compress/inflate/tables";
+} from "velt/compress/inflate/huffman";
+import { CODE_ORDER } from "velt/compress/inflate/tables";
 
 /** Where the block decoder is. */
 const HEADER: i64 = 0;
@@ -147,27 +150,16 @@ export class Blocks extends Bits {
         this.room(MAX_MATCH);
       }
       // Too close to the end of the input (or the output) for `fast`: one symbol, counted.
-      const saved = this.save();
+      const saved = mark(this);
       const s = slow(this);
       if (s == BLOCK_END) {
         return STREAM_END;
       }
       if (s == SHORT) {
-        this.restore(saved);
+        rewind(this, saved);
         return NEED_INPUT;
       }
     }
-  }
-
-  /** The input position, for a step that may have to be undone. */
-  private save(): Mark {
-    return { ip: this.ip, bb: this.bb, bc: this.bc };
-  }
-
-  private restore(m: Mark) {
-    this.ip = m.ip;
-    this.bb = m.bb;
-    this.bc = m.bc;
   }
 
   /** `n` bits (at most 32), or -1 when the input ends first (nothing is taken then). */
@@ -186,7 +178,7 @@ export class Blocks extends Bits {
 
   /** A block header (and a dynamic block's tables); false, with nothing taken, when short. */
   private header(): bool throws CompressError {
-    const saved = this.save();
+    const saved = mark(this);
     const h = this.bits(3);
     if (h < 0) {
       return false;
@@ -195,7 +187,7 @@ export class Blocks extends Bits {
     const kind = h >> 1;
     if (kind == 0) {
       if (!this.storedHeader()) {
-        this.restore(saved);
+        rewind(this, saved);
         return false;
       }
       this.mode = STORED;
@@ -205,7 +197,7 @@ export class Blocks extends Bits {
       this.useFixed();
     } else if (kind == 2) {
       if (!this.dynamic()) {
-        this.restore(saved);
+        rewind(this, saved);
         return false;
       }
     } else {
@@ -274,17 +266,11 @@ export class Blocks extends Bits {
   /** The tables of a fixed-code block (§3.2.6), built the first time one is used. */
   private useFixed() {
     if (this.fixedLit.length == 0) {
-      const lens: u8[] = Buffer.alloc(320);
-      lens.fill(8, 0, 144);
-      lens.fill(9, 144, 256);
-      lens.fill(7, 256, 280);
-      lens.fill(8, 280, 288);
-      lens.fill(5, 288, 320);
-      const w = this.workArea();
-      this.fixedLit = new Array<u32>(LITLEN_SIZE).fill(0);
-      this.fixedDist = new Array<u32>(DIST_SIZE).fill(0);
-      build(lens, 0, 288, this.fixedLit, LITLEN_SIZE, LITLEN_ROOT, LITLEN, w);
-      build(lens, 288, 32, this.fixedDist, DIST_SIZE, DIST_ROOT, DIST, w);
+      const lit = new Array<u32>(LITLEN_SIZE).fill(0);
+      const dist = new Array<u32>(DIST_SIZE).fill(0);
+      buildFixed(lit, dist, this.workArea());
+      this.fixedLit = lit;
+      this.fixedDist = dist;
     }
     this.lit = this.fixedLit;
     this.dist = this.fixedDist;
@@ -398,11 +384,4 @@ export class Blocks extends Bits {
     }
     return true;
   }
-}
-
-/** A position in the input, to go back to. */
-struct Mark {
-  ip: i64;
-  bb: u64;
-  bc: u64;
 }

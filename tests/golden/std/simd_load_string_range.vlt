@@ -1,7 +1,7 @@
 // `u8x16.loadString` checks its position without overflowing: a position near 2^64 is past the
 // end of the string, not 16 bytes before it.
 
-import { u8x16 } from "velt:simd";
+import { u8x16 } from "velt/simd";
 
 function main() {
   const s = "abcdefghijklmnopqrstuvwxyz";

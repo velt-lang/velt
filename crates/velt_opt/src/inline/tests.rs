@@ -404,3 +404,28 @@ fn a_leaf_counts_as_small_up_to_the_leaf_limit() {
     let m = &p.funcs[main.0 as usize];
     assert_eq!((calls_to(m, leaf), calls_to(m, calling)), (0, 2));
 }
+
+#[test]
+fn debug_builds_inline_std_forwarders_only() {
+    // Trivial std functions become helpers; a user's stays a function, and so does a std
+    // forwarder that calls another helper (helpers do not call each other).
+    let mut pb = ProgramBuilder::new();
+    let leaf = pb.add(adder("_V3stdP1aN4leaf", 2, Linkage::Internal));
+    let user = pb.add(adder("_V4user", 2, Linkage::Internal));
+    let fwd = pb.add(caller_named(
+        "_V3stdP1aN3fwd",
+        &[leaf],
+        1,
+        Linkage::Internal,
+    ));
+    let big = pb.add(adder("_V3stdP1aN3big", 50, Linkage::Internal));
+    let hook = pb.add(adder("_V3stdP4langP5hooksN4hook", 2, Linkage::Internal));
+    let p = pb.finish();
+    let mut helpers = vec![false; p.funcs.len()];
+    std_forwarders(&p.funcs, &mut helpers);
+    assert!(helpers[leaf.0 as usize]);
+    assert!(!helpers[user.0 as usize]);
+    assert!(!helpers[fwd.0 as usize]);
+    assert!(!helpers[big.0 as usize]);
+    assert!(!helpers[hook.0 as usize]);
+}

@@ -4,11 +4,11 @@
 // not into the props. This one wraps the component in comments naming them; std/jsx renders
 // everything else. The generic lowering (no precompile exports).
 
-import { Element } from "velt:jsx/node";
-import type { AttrValue } from "velt:jsx/node";
-import { Fragment, jsxComponent, raw } from "velt:jsx/factory";
+import { Element, raw } from "velt/jsx";
+import type { AttrValue } from "velt/jsx";
+import { Fragment, jsxComponent } from "velt/jsx/generic/jsx-runtime";
 
-export * from "velt:jsx/generic/jsx-runtime";
+export * from "velt/jsx/generic/jsx-runtime";
 
 // Attributes every component accepts besides its props, as TypeScript's
 // `JSX.IntrinsicAttributes`: checked against these types, passed to `jsxComponentAttributes`.

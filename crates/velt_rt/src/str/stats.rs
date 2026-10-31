@@ -15,7 +15,7 @@
 //! checks, semantics stage 2); the counts are frozen at a moment when they were equal, or else
 //! once no task is left that could make them so ([`freeze`]). `channel
 //! leftovers=<n>`: values still queued in channels when `main` returned normally, which the
-//! runtime dropped then (docs/std/channel.md); a leak check passes with them, so the count keeps
+//! runtime dropped then (docs/std/sync/channel.md); a leak check passes with them, so the count keeps
 //! them visible.
 
 #[cfg(debug_assertions)]

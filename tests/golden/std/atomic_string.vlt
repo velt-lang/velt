@@ -2,7 +2,7 @@
 // `store` and `exchange` replace it, and `compareExchange` compares contents (strings are values)
 // and returns whether it swapped. Tasks on 4 threads append to it with a compare-and-swap loop
 // while 4 others read it: no append is lost, and every string read is one some writer stored.
-import { collect } from "velt:sync/epoch";
+import { collect } from "velt/sync/epoch";
 
 class Status {
   text: Atomic<string> = new Atomic<string>("idle");

@@ -1,0 +1,159 @@
+// sqlite/engine/exec/value/arith (internal): SQLite's arithmetic on values: integer arithmetic that
+// overflows to REAL, REAL arithmetic otherwise, operands read as numbers
+// (https://sqlite.org/lang_expr.html).
+
+import { NULL, INTEGER, REAL, TEXT, BLOB } from "../../storage_class";
+import { I64_MAX, I64_MIN, isSpace, intValue, parseNumeric, toNumber } from "./numeric";
+import { Val, intVal, nullVal, realVal } from "./val";
+import { toText } from "./value_text";
+
+/** |x| as a u64 (2^63 for I64_MIN). */
+function magnitude(x: i64): u64 {
+  return x < 0 ? ((-(x + 1)) as u64) + 1 : x as u64;
+}
+
+/** p * q, exactly when it fits in i64, else in REAL. */
+function multiply(p: i64, q: i64): Val {
+  if (p == 0 || q == 0) {
+    return intVal(0);
+  }
+  const neg = (p < 0) != (q < 0);
+  const a = magnitude(p);
+  const b = magnitude(q);
+  const limit: u64 = neg ? 9223372036854775808 : 9223372036854775807;
+  if (a > limit / b) {
+    return realVal((p as f64) * (q as f64));
+  }
+  const m = a * b;
+  if (!neg) {
+    return intVal(m as i64);
+  }
+  return intVal(m == 9223372036854775808 ? I64_MIN : -(m as i64));
+}
+
+/** Arithmetic operators (arithOp). */
+export const OP_ADD: u8 = 0;
+export const OP_SUB: u8 = 1;
+export const OP_MUL: u8 = 2;
+export const OP_DIV: u8 = 3;
+export const OP_REM: u8 = 4;
+
+/** `arithOp` by the operator's spelling (`+`, `-`, `*`, `/`, `%`). */
+export function arith(op: string, a: Val, b: Val): Val {
+  const code =
+    op == "+" ? OP_ADD : op == "-" ? OP_SUB : op == "*" ? OP_MUL : op == "/" ? OP_DIV : OP_REM;
+  return arithOp(code, a, b);
+}
+
+/** Integer arithmetic that overflows to REAL, as SQLite's; REAL arithmetic otherwise. */
+export function arithOp(op: u8, a: Val, b: Val): Val {
+  if (a.t == NULL || b.t == NULL) {
+    return nullVal();
+  }
+  const x = a.t == INTEGER || a.t == REAL ? a : numericOf(a);
+  const y = b.t == INTEGER || b.t == REAL ? b : numericOf(b);
+  if (x.t == INTEGER && y.t == INTEGER) {
+    const p = x.i;
+    const q = y.i;
+    // Each operation is checked before it is done: one that would overflow is done in REAL.
+    if (op == OP_ADD) {
+      if ((q > 0 && p > I64_MAX - q) || (q < 0 && p < I64_MIN - q)) {
+        return realVal((p as f64) + (q as f64));
+      }
+      return intVal(p + q);
+    }
+    if (op == OP_SUB) {
+      if ((q < 0 && p > I64_MAX + q) || (q > 0 && p < I64_MIN + q)) {
+        return realVal((p as f64) - (q as f64));
+      }
+      return intVal(p - q);
+    }
+    if (op == OP_MUL) {
+      return multiply(p, q);
+    }
+    if (op == OP_DIV) {
+      if (q == 0) {
+        return nullVal();
+      }
+      if (q == -1 && p == -9223372036854775807 - 1) {
+        return realVal(9223372036854775808.0);
+      }
+      return intVal((p / q) as i64);
+    }
+    if (op == OP_REM) {
+      if (q == 0) {
+        return nullVal();
+      }
+      if (q == -1) {
+        return intVal(0);
+      }
+      return intVal(p % q);
+    }
+  }
+  if (op == OP_REM) {
+    // SQLite takes both operands as integers (sqlite3VdbeIntValue), and the result as a REAL.
+    const ix = intValue(a);
+    let iy = intValue(b);
+    if (iy == 0) {
+      return nullVal();
+    }
+    if (iy == -1) {
+      iy = 1;
+    }
+    return realVal((ix % iy) as f64);
+  }
+  const fx = realOf(a, x);
+  const fy = realOf(b, y);
+  if (op == OP_ADD) {
+    return realVal(fx + fy);
+  }
+  if (op == OP_SUB) {
+    return realVal(fx - fy);
+  }
+  if (op == OP_MUL) {
+    return realVal(fx * fy);
+  }
+  return fy == 0 ? nullVal() : realVal(fx / fy);
+}
+
+/**
+ * Text or a blob as arithmetic reads it (numericType in vdbe.c). Text with a NUL inside reads
+ * up to the NUL, and an integer there counts as REAL (the integer check sees the rest).
+ */
+function numericOf(v: Val): Val {
+  if (v.t == TEXT) {
+    const nul = v.s.indexOf("\u0000");
+    if (nul >= 0) {
+      const n = parseNumeric(v.s.slice(0, nul));
+      if (n.whole && n.v.t == INTEGER) {
+        return realVal(n.v.i as f64);
+      }
+      return n.v;
+    }
+  }
+  return toNumber(v);
+}
+
+/**
+ * The REAL of operand `v` (its numeric value `n`) in REAL arithmetic: text reads as a double,
+ * so `'-0'` is -0.0 there (`0.5 * '-0'` is -0.0), though `'-0' + 0` is the INTEGER 0.
+ */
+function realOf(v: Val, n: Val): f64 {
+  if (n.t != INTEGER) {
+    return n.r;
+  }
+  if (n.i == 0 && (v.t == TEXT || v.t == BLOB) && negativeZero(toText(v))) {
+    return -0.0;
+  }
+  return n.i as f64;
+}
+
+/** Whether text that reads as zero starts (after spaces) with a minus sign. */
+function negativeZero(s: string): bool {
+  const n = s.length as i64;
+  let i: i64 = 0;
+  while (i < n && isSpace(s.charCodeAt(i))) {
+    i++;
+  }
+  return i < n && s.charCodeAt(i) == 45;
+}

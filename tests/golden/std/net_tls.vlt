@@ -1,6 +1,6 @@
 // check: no leaks
 // TLS streams in std/net: `listenTls` / `connectTls` give ordinary `TcpStream`s.
-import { connect, connectTls, listenTls, TcpStream } from "velt:net";
+import { connect, connectTls, listenTls, TcpStream } from "velt/net";
 import { TEST_CA, TEST_CERT, TEST_KEY } from "./_tls";
 
 // Echoes until the peer shuts its side down, then says how much it saw.

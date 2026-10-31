@@ -1,0 +1,146 @@
+// velt/net/http (internal): `H2Body`, a response body arriving over an HTTP/2 client session, as
+// the request's task reads it: DATA pieces from the request's channel, each read giving its
+// window back to the session (so a body nobody reads holds at most the stream's window), an
+// abort or an abandoned body cancelling the stream.
+
+import { IoError } from "velt/io/error";
+import { Channel } from "velt/sync";
+import { AbortError, AbortSignal } from "velt/task";
+import { CALL_CANCEL, CALL_CREDIT, H2Call } from "velt/net/http/fetch/client/h2/call";
+import { EVENT_DATA, EVENT_ERROR, H2Event } from "velt/net/http/fetch/client/h2/event";
+
+/// A control message for stream `id` (`events` only fills the field).
+export function control(kind: i64, id: i64, n: i64, events: Channel<H2Event>): H2Call {
+  return {
+    kind: kind,
+    id: id,
+    n: n,
+    method: "",
+    scheme: "",
+    authority: "",
+    path: "",
+    fields: [],
+    body: [],
+    events: events,
+  };
+}
+
+/**
+ * The request gives up on its response (aborted, or the body abandoned): closes `events`, and
+ * tells the session to cancel stream `id` (0: the request does not know it yet, before the
+ * response's head), with the body bytes it received and will not read, which the session gives
+ * back to the connection's window. What arrives after the close the session gives back itself.
+ */
+export function giveUp(events: Channel<H2Event>, calls: Channel<H2Call>, id: i64) {
+  events.close();
+  let stream = id;
+  let unread: i64 = 0;
+  let e = events.tryReceive();
+  while (e != null) {
+    if (e.kind == EVENT_DATA) {
+      unread += e.data.length as i64;
+    }
+    if (e.id > 0) {
+      stream = e.id;
+    }
+    e = events.tryReceive();
+  }
+  calls.trySend(control(CALL_CANCEL, stream, unread, events));
+}
+
+/// The next event, or null once `signal` was aborted first.
+export async function nextEvent(
+  events: Channel<H2Event>,
+  signal: AbortSignal | null,
+): Promise<H2Event | null> {
+  if (signal == null) {
+    return await events.receive();
+  }
+  if (signal.aborted) {
+    return null;
+  }
+  return await Promise.race([events.receive(), abortedNull(signal)]);
+}
+
+async function abortedNull(signal: AbortSignal): Promise<H2Event | null> {
+  await signal.whenAborted();
+  return null;
+}
+
+/// A response body on an HTTP/2 stream.
+export class H2Body {
+  private events: Channel<H2Event>;
+  private calls: Channel<H2Call>;
+  private id: i64;
+  private signal: AbortSignal | null;
+  /// The body is complete, failed or abandoned.
+  done: bool = false;
+
+  constructor(
+    events: Channel<H2Event>,
+    calls: Channel<H2Call>,
+    id: i64,
+    signal: AbortSignal | null,
+  ) {
+    this.events = events;
+    this.calls = calls;
+    this.id = id;
+    this.signal = signal;
+  }
+
+  /// The next piece of the body (at most a frame); `[]` once it is complete.
+  async next(): Promise<u8[], IoError | AbortError> {
+    if (this.done) {
+      return [];
+    }
+    const e = await nextEvent(this.events, this.signal);
+    if (e == null) {
+      const signal = this.signal;
+      this.abandon();
+      if (signal != null) {
+        signal.throwIfAborted();
+      }
+      throw new IoError("ECONNRESET", "fetch failed: the HTTP/2 session closed");
+    }
+    if (e.kind == EVENT_DATA) {
+      this.calls.trySend(control(CALL_CREDIT, this.id, e.data.length as i64, this.events));
+      return e.data;
+    }
+    this.done = true;
+    this.events.close();
+    if (e.kind == EVENT_ERROR) {
+      throw new IoError("ECONNRESET", e.message);
+    }
+    return [];
+  }
+
+  /// The rest of the body.
+  async all(): Promise<u8[], IoError | AbortError> {
+    const pieces: u8[][] = [];
+    let total: i64 = 0;
+    let p = await this.next();
+    while (p.length > 0) {
+      total += p.length as i64;
+      pieces.push(p);
+      p = await this.next();
+    }
+    if (pieces.length == 1) {
+      return pieces[0];
+    }
+    const all: u8[] = Buffer.allocUnsafe(total as usize);
+    let at: i64 = 0;
+    for (const piece of pieces) {
+      piece.copy(all, at);
+      at += piece.length as i64;
+    }
+    return all;
+  }
+
+  /// Gives the body up: the stream is cancelled.
+  abandon() {
+    if (!this.done) {
+      this.done = true;
+      giveUp(this.events, this.calls, this.id);
+    }
+  }
+}

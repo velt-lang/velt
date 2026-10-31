@@ -1,0 +1,303 @@
+// velt/net/http (internal): sending a `fetch` request and receiving the response's
+// head: on a pooled or new connection, again on a new one when a reused connection turns out
+// to have been closed (for a method that may be sent twice), and again for each redirect the
+// Fetch standard says to follow ("HTTP-redirect fetch").
+//
+// A 1xx response other than 101 (`100 Continue`, `103 Early Hints`) is skipped: the final
+// response follows it on the same connection.
+
+import { IoError } from "velt/io/error";
+import { AbortError, AbortSignal } from "velt/task";
+import { URL } from "velt/net/url";
+import { utf8Encode } from "velt/encoding";
+import { BodyReader } from "velt/net/http/fetch/client/body";
+import { Conn, keyOf, open } from "velt/net/http/fetch/client/conn";
+import { h2Exchange } from "velt/net/http/fetch/client/h2/exchange";
+import { acceptEncoding } from "velt/net/http/fetch/client/decode";
+import { Fetched } from "velt/net/http/fetch/client/fetched";
+import { ofUrl, Target, target } from "velt/net/http/fetch/client/target";
+import {
+  BODY_LENGTH,
+  BODY_NONE,
+  encode,
+  Encoded,
+  Head,
+  headEnd,
+  parseHead,
+} from "velt/net/http/fetch/client/wire";
+
+/** The most redirects one `fetch` follows (the Fetch standard's limit). */
+const MAX_REDIRECTS: i64 = 20;
+
+/** What `fetch` does with a redirect. */
+export const FOLLOW: i64 = 0;
+export const ERROR: i64 = 1;
+export const MANUAL: i64 = 2;
+
+/** A request as `fetch` sends it (again, after a redirect). */
+export class ClientRequest {
+  method: string;
+  url: string;
+  /** The caller's headers, `[name, value, …]`, names lowercase. */
+  headers: string[];
+  /** The body: none (0), `text` (1) or `bytes` (2). */
+  kind: u32;
+  text: string;
+  bytes: u8[];
+  redirect: i64;
+  signal: AbortSignal | null;
+  ca: string;
+
+  constructor(
+    method: string,
+    url: string,
+    headers: string[],
+    kind: u32,
+    text: string,
+    bytes: u8[],
+    redirect: i64,
+    signal: AbortSignal | null,
+    ca: string,
+  ) {
+    this.method = method;
+    this.url = url;
+    this.headers = headers;
+    this.kind = kind;
+    this.text = text;
+    this.bytes = bytes;
+    this.redirect = redirect;
+    this.signal = signal;
+    this.ca = ca;
+  }
+}
+
+/** The statuses the Fetch standard follows ("redirect status"); a 300 or 304 is returned. */
+function redirects(s: i64): bool {
+  return s == 301 || s == 302 || s == 303 || s == 307 || s == 308;
+}
+
+/** Methods that may be sent twice (RFC 9110 §9.2.2). */
+function idempotent(m: string): bool {
+  return m == "GET" || m == "HEAD" || m == "OPTIONS" || m == "TRACE" || m == "PUT" || m == "DELETE";
+}
+
+function unknown(message: string): IoError {
+  return new IoError("UNKNOWN", `fetch failed: ${message}`);
+}
+
+/** Sends `o`, following redirects as `o.redirect` says, and resolves with the response. */
+export async function send(o: ClientRequest): Promise<Fetched, IoError | AbortError> {
+  let t = target(o.url);
+  let redirected = false;
+  for (let hop: i64 = 0; hop <= MAX_REDIRECTS; hop++) {
+    // Recomputed for each hop, as undici does: `br` is offered over HTTPS only (#606).
+    const codings = acceptEncoding(t.https);
+    const req = encode(o.method, t, o.headers, codings, o.kind, o.text, o.bytes);
+    // HTTPS origins that speak HTTP/2 (ALPN) get the request on their shared session.
+    const viaH2 = await h2Exchange(
+      o.method,
+      t,
+      o.headers,
+      codings,
+      bodyOf(o),
+      o.signal,
+      o.ca,
+      redirected,
+      !idempotent(o.method),
+    );
+    const f = viaH2.fetched;
+    if (f != null) {
+      const at = redirects(f.status) && o.redirect != MANUAL ? f.location() : null;
+      if (at == null) {
+        return f;
+      }
+      f.close();
+      t = next(o, t, at, f.status);
+      redirected = true;
+      continue;
+    }
+    const got = viaH2.stream;
+    const pre = got != null ? new Conn(got, keyOf(t, o.ca), viaH2.reused, o.signal) : null;
+    const [conn, head] = await exchange(o, t, req, pre);
+    const s = head.status;
+    const location = redirects(s) && o.redirect != MANUAL ? head.location() : null;
+    if (location == null) {
+      return received(conn, head, t.href, redirected);
+    }
+    // The redirect's own body is not wanted: its connection is reused if it is all here.
+    discard(conn, head);
+    t = next(o, t, location, s);
+    redirected = true;
+  }
+  throw unknown("redirect count exceeded");
+}
+
+/** The target a redirect with `status` to `location` leads to, `o` turned into its request. */
+function next(o: ClientRequest, t: Target, location: string, status: i64): Target throws IoError {
+  if (o.redirect == ERROR) {
+    throw unknown("unexpected redirect");
+  }
+  const u = URL.parse(location, t.href);
+  if (u == null) {
+    throw unknown("invalid redirect URL");
+  }
+  const p = u.protocol;
+  if (p != "http:" && p != "https:") {
+    throw unknown("redirect to a URL that is not http: or https:");
+  }
+  const n = ofUrl(u);
+  follow(o, t, n, status);
+  return n;
+}
+
+/** The request body as bytes (HTTP/2 sends it from the session's task). */
+function bodyOf(o: ClientRequest): u8[] {
+  return o.kind == 1 ? utf8Encode(o.text) : o.kind == 2 ? o.bytes : [];
+}
+
+/** Turns `o` into the request a redirect with `status` from `from` to `to` asks for. */
+function follow(o: ClientRequest, from: Target, to: Target, status: i64) {
+  const toGet =
+    (status == 303 && o.method != "HEAD") ||
+    ((status == 301 || status == 302) && o.method == "POST");
+  let drop: string[] = [];
+  if (toGet) {
+    o.method = "GET";
+    o.kind = 0;
+    o.text = "";
+    o.bytes = [];
+    drop = [
+      "content-type",
+      "content-length",
+      "content-encoding",
+      "content-language",
+      "content-location",
+    ];
+  }
+  if (from.origin != to.origin) {
+    drop = drop.concat(["authorization", "cookie", "proxy-authorization", "host"]);
+  }
+  if (drop.length == 0 || o.headers.length == 0) {
+    return;
+  }
+  const kept: string[] = [];
+  const h = o.headers;
+  for (let i: i64 = 0; i + 1 < (h.length as i64); i += 2) {
+    if (!drop.includes(h[i])) {
+      kept.push(h[i]);
+      kept.push(h[i + 1]);
+    }
+  }
+  o.headers = kept;
+}
+
+/**
+ * Sends `req` on a connection for `t` (`pre`, the one the HTTP/2 attempt found, or one from the
+ * pool or a new one) and reads the response's head. A reused connection that
+ * fails before any response byte arrived was closed by the server while it was idle: an
+ * idempotent request goes out once more, on a new connection. Never one on a fresh connection
+ * (that server got the request and failed).
+ */
+async function exchange(
+  o: ClientRequest,
+  t: Target,
+  req: Encoded,
+  pre: Conn | null = null,
+): Promise<[Conn, Head], IoError | AbortError> {
+  const conn = pre != null ? pre : await open(t, o.ca, o.signal, !idempotent(o.method));
+  try {
+    return await sendOn(conn, o, req);
+  } catch (e) {
+    if (!(e instanceof IoError) || !conn.reused || conn.answered || !idempotent(o.method)) {
+      throw e;
+    }
+  }
+  const fresh = await open(t, o.ca, o.signal, true);
+  fresh.reused = false;
+  return await sendOn(fresh, o, req);
+}
+
+/** The request on `conn`, and the final response's head. */
+async function sendOn(
+  conn: Conn,
+  o: ClientRequest,
+  req: Encoded,
+): Promise<[Conn, Head], IoError | AbortError> {
+  await conn.write(req.data, 0, req.length);
+  if (!req.bodyInline) {
+    if (o.kind == 1) {
+      const b = utf8Encode(o.text);
+      await conn.write(b, 0, b.length as i64);
+    } else {
+      await conn.write(o.bytes, 0, o.bytes.length as i64);
+    }
+  }
+  while (true) {
+    const head = await readHead(conn, o.method);
+    const s = head.status;
+    if (s >= 100 && s < 200 && s != 101) {
+      continue;
+    }
+    return [conn, head];
+  }
+}
+
+/** The next response head on `conn`. */
+async function readHead(conn: Conn, method: string): Promise<Head, IoError | AbortError> {
+  while (true) {
+    if (conn.end > conn.pos) {
+      let end = -1;
+      try {
+        end = headEnd(conn.buf, conn.pos, conn.end);
+      } catch (e) {
+        conn.close();
+        throw e;
+      }
+      if (end >= 0) {
+        let head: Head;
+        try {
+          head = parseHead(conn.buf, conn.pos, end, method);
+        } catch (e) {
+          conn.close();
+          throw e;
+        }
+        conn.pos = end;
+        return head;
+      }
+    }
+    if (!(await conn.fill())) {
+      conn.close();
+      throw new IoError("ECONNRESET", "fetch failed: other side closed");
+    }
+  }
+}
+
+/** The response of `head` on `conn`, its body still to read unless it is all here already. */
+function received(conn: Conn, head: Head, url: string, redirected: bool): Fetched {
+  const have = conn.end - conn.pos;
+  if (head.framing == BODY_NONE || (head.framing == BODY_LENGTH && have >= head.length)) {
+    const bodyEnd = conn.pos + (head.framing == BODY_NONE ? 0 : head.length);
+    conn.pos = bodyEnd;
+    // The buffer now belongs to the response: the connection does not read into it again.
+    conn.release(head.keepAlive);
+    return new Fetched(head, null, bodyEnd, url, redirected);
+  }
+  // The head stays readable while the body is received into the buffer after it.
+  const kept = conn.buf.slice(0, conn.pos);
+  head.buf = kept;
+  const reader = new BodyReader(conn, head.framing, head.length, head.keepAlive);
+  return new Fetched(head, reader, head.bodyStart, url, redirected);
+}
+
+/** Drops a redirect's body: its connection goes back to the pool if the body is all here. */
+function discard(conn: Conn, head: Head) {
+  const have = conn.end - conn.pos;
+  if (head.framing == BODY_NONE) {
+    conn.release(head.keepAlive);
+  } else if (head.framing == BODY_LENGTH && have == head.length) {
+    conn.pos = conn.end;
+    conn.release(head.keepAlive);
+  } else {
+    conn.close();
+  }
+}

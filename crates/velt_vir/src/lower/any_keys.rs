@@ -13,7 +13,7 @@
 //! - arrays, tuples and strings: their indexes as strings;
 //! - booleans, numbers, symbols, functions and the standard library's classes (a `Map`, a
 //!   `Set`, an `Error`): none;
-//! - a proxy: `Proxy.__keys()` (std/proxy.vlt), which runs its `ownKeys` and
+//! - a proxy: `Proxy[PROXY_KEYS]()` (std/lang/proxy/index.vlt), which runs its `ownKeys` and
 //!   `getOwnPropertyDescriptor` traps;
 //! - `JsonValue`: not yet.
 
@@ -50,10 +50,15 @@ impl FnLower<'_, '_> {
         self.switch_to(ok);
         let vt = self.cx.ty(sa);
         let out = self.temp(vt);
-        let done = self.proxy_branch("__keys", &data, &desc, |lw, obj, pty, r| {
-            let v = lw.proxy_keys_direct((obj, pty, r));
-            lw.assign(Place::local(out), Rvalue::Use(v));
-        });
+        let done = self.proxy_branch(
+            velt_common::std_key!(proxy_keys),
+            &data,
+            &desc,
+            |lw, obj, pty, r| {
+                let v = lw.proxy_keys_direct((obj, pty, r));
+                lw.assign(Place::local(out), Rvalue::Use(v));
+            },
+        );
         let oa = self.addr(Place::local(out));
         let st = self.any_slot(desc, SLOT_KEYS, vec![data, oa], vec![Ty::Ptr; 2]);
         let unsupported = self.rvalue_temp(
@@ -87,10 +92,11 @@ impl FnLower<'_, '_> {
             proj: vec![Proj::Deref(self.cx.ty(sa))],
         };
         if self.is_proxy(ty) {
-            // Its `ownKeys` and `getOwnPropertyDescriptor` traps (`Proxy.__keys`), whose
+            // Its `ownKeys` and `getOwnPropertyDescriptor` traps (`Proxy[PROXY_KEYS]`), whose
             // `string[]` goes to `*out` as it is (never boxed: a `string[]` an `any` held
             // would be a counted type in every program that loads `Proxy`).
-            let Some(v) = self.proxy_invoke_typed("__keys", data, ty) else {
+            let Some(v) = self.proxy_invoke_typed(velt_common::std_key!(proxy_keys), data, ty)
+            else {
                 return self.ret_status(ST_UNSUPPORTED);
             };
             self.store(outp, v);
@@ -163,7 +169,9 @@ impl FnLower<'_, '_> {
         let a = self.cx.adt_def(d);
         let (class, std, all) = (
             a.kind == hir::AdtKind::Class,
-            a.name.starts_with("std/") && a.kind != hir::AdtKind::Anon,
+            a.name
+                .starts_with(velt_common::std_modules::CANONICAL_PREFIX)
+                && a.kind != hir::AdtKind::Anon,
             a.fields.len(),
         );
         // Fields a standard library base class declares (an `Error`'s) are not the object's
@@ -242,7 +250,9 @@ impl FnLower<'_, '_> {
                 break;
             };
             let a = self.cx.adt_def(bd);
-            if a.name.starts_with("std/") {
+            if a.name
+                .starts_with(velt_common::std_modules::CANONICAL_PREFIX)
+            {
                 return a.fields.len();
             }
             cur = a.base;

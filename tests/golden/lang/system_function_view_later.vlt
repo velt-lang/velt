@@ -4,7 +4,7 @@
 // are read at the call, after every argument, so a later argument that grows the array (which
 // moves its bytes) cannot leave the call reading or writing freed memory. One that gives the
 // variable another array leaves the view at the first one, which the view keeps alive.
-import { platform } from "velt:os";
+import { platform } from "velt/os";
 
 declare system function open(path: readonly u8[], oflag: i32, mode: u32): i32;
 declare system function pread(fd: i32, buf: u8[], offset: i64): isize;

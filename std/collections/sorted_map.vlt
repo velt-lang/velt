@@ -1,4 +1,4 @@
-// std/collections/sorted_map: `SortedMap<K, V>`, a map that keeps its keys in ascending order
+// velt/collections (internal): `SortedMap<K, V>`, a map that keeps its keys in ascending order
 // (`K extends Comparable<K>`: numbers, strings, bool, user types that implement `Comparable`).
 //
 // Two parallel sorted arrays searched by binary search: O(log n) lookups, O(n) inserts and
@@ -7,6 +7,14 @@
 // output. Keys are ordered by `compareTo`: as `<`, with a float NaN after every other value and
 // equal to itself. `set` takes ownership; `get` / `keys` / `values` / `entries` return clones
 // (unlike `Map`, which shares stored objects).
+
+import {
+  arrayRemove,
+  arraySwap,
+  arrayTruncate,
+  arrayWithCapacity,
+  needsDrop,
+} from "velt/lang/intrinsics";
 
 /** A map ordered by key. */
 export class SortedMap<K extends Comparable<K>, V> {
@@ -33,8 +41,8 @@ export class SortedMap<K extends Comparable<K>, V> {
     this.sortedKeys.push(key);
     this.vals.push(value);
     for (let j = this.sortedKeys.length - 1; j > i; j--) {
-      __intrinsic_array_swap(this.sortedKeys, j, j - 1);
-      __intrinsic_array_swap(this.vals, j, j - 1);
+      arraySwap(this.sortedKeys, j, j - 1);
+      arraySwap(this.vals, j, j - 1);
     }
   }
 
@@ -58,15 +66,15 @@ export class SortedMap<K extends Comparable<K>, V> {
     if (i < 0) {
       return false;
     }
-    __intrinsic_array_remove(this.sortedKeys, i as usize);
-    __intrinsic_array_remove(this.vals, i as usize);
+    arrayRemove(this.sortedKeys, i as usize);
+    arrayRemove(this.vals, i as usize);
     return true;
   }
 
   /** Removes every entry. */
   clear() {
-    __intrinsic_array_truncate(this.sortedKeys, 0);
-    __intrinsic_array_truncate(this.vals, 0);
+    arrayTruncate(this.sortedKeys, 0);
+    arrayTruncate(this.vals, 0);
   }
 
   /** Clones of the keys, ascending. */
@@ -174,7 +182,7 @@ export class SortedMap<K extends Comparable<K>, V> {
   }
 
   private slice(lo: usize, hi: usize): [K, V][] {
-    const out: [K, V][] = __intrinsic_array_with_capacity(hi - lo);
+    const out: [K, V][] = arrayWithCapacity(hi - lo);
     for (let i = lo; i < hi; i++) {
       const pair: [K, V] = [this.sortedKeys[i].clone(), this.vals[i].clone()];
       out.push(pair);
@@ -190,5 +198,5 @@ function keyLess<K extends Comparable<K>>(a: K, b: K): bool {
 }
 
 function isNaNKey<K extends Comparable<K>>(t: K): bool {
-  return !__intrinsic_needs_drop(t) && t != t;
+  return !needsDrop(t) && t != t;
 }

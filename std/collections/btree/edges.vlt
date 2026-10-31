@@ -1,5 +1,5 @@
-// velt:collections/btree/edges: the smallest and the largest key of a `Pool`
-// (velt:collections/btree/pool), internal.
+// velt/collections (internal): the smallest and the largest key of a `Pool`
+// (velt/collections/btree/pool), internal.
 //
 // A node at the edge of the tree (the root, and the first and last node of each level) lacks a
 // separator on one side, so the separators alone would give it no prefix: for keys that all
@@ -11,8 +11,8 @@
 // their prefix again (`noteEdges`). A delete of the smallest or the largest leaves the edge
 // prefixes as they are: a range that narrows keeps them true, if shorter than they could be.
 
-import { F, Pool, Window } from "velt:collections/btree/pool";
-import { slotAtRank } from "velt:collections/btree/leaf";
+import { F, Pool, Window } from "velt/collections/btree/pool";
+import { slotAtRank } from "velt/collections/btree/leaf";
 
 /**
  * Where `t` (window `win`) lies against the smallest and the largest key: -1 below the smallest,
@@ -75,7 +75,7 @@ export function noteEdges<K extends Comparable<K>, V>(p: Pool<K, V>, key: K, win
 export function afterRemove<K extends Comparable<K>, V>(p: Pool<K, V>) {
   if (p.size == 0) {
     // Keys and values that own memory: the last delete dropped the pools
-    // (velt:collections/btree/remove `removeAt`). Others keep them, and the empty root leaf
+    // (velt/collections/btree/remove `removeAt`). Others keep them, and the empty root leaf
     // drops its prefix (the next key need not share it).
     p.minKey.truncate(0);
     p.maxKey.truncate(0);

@@ -1,6 +1,6 @@
 //! Whether a program can reach the outside world (#1855 step 3): the runtime functions it can
 //! call from its entry ([`velt_opt::used_externs`]) that read or change something besides the
-//! program's own memory. A test harness is also the test runner (`std/test.vlt` `__run`, which
+//! program's own memory. A test harness is also the test runner (`std/test/run.vlt` `runRegistered`, which
 //! starts processes and reads files and the clock), so the runner is left out: what counts is
 //! what the tests reach, through the functions the harness registers. `velt test` keeps a test's result only
 //! for a program that reaches none: such a test passes again as long as its program is the same.
@@ -62,6 +62,7 @@ const PURE_RUNTIME: &[&str] = &[
     "signal",
     "sleep",
     "spawn",
+    "statics",
     "stdout",
     "str",
     "strbuf",
@@ -214,9 +215,19 @@ pub(crate) fn of_file(record: &str, index: usize) -> Option<String> {
     }
 }
 
-/// Whether `symbol` is `velt:test`'s `__run` (its state machine's `$poll` and `$drop` too).
+/// Whether `symbol` is `velt/test`'s `runRegistered` (its state machine's `$poll` and `$drop` too).
+/// What a source generator host reaches outside itself (docs/internals/design/source-generators.md
+/// §5): `-` or the reasons. The host's own plumbing (`velt/generate`, which reads the requests
+/// from standard input) is left out: what counts is what the generators it registers reach.
+pub(crate) fn generator_reaches(program: &Program) -> String {
+    // `std/generate::…` and `std/generate/<file>::…`.
+    describe(program, &|symbol| {
+        symbol.starts_with("_V3stdP8generateN") || symbol.starts_with("_V3stdP8generateP")
+    })
+}
+
 fn is_test_runner(symbol: &str) -> bool {
-    symbol.contains("V3stdP4testN7____run")
+    symbol.contains("V3stdP4testP3runN13runRegistered")
 }
 
 /// What calling the extern `symbol` reaches, if anything. Only what is known to be pure is

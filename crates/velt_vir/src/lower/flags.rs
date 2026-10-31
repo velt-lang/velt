@@ -33,8 +33,6 @@ pub(super) struct Scan {
     /// Per HIR local: does it need a drop flag (if it is droppable at all)?
     pub flagged: Vec<bool>,
     pub ref_bindings: Vec<LocalId>,
-    /// Per HIR local: is it moved out of, wholly or in part, anywhere in the body?
-    pub consumed: Vec<bool>,
     /// Per HIR local: are fields moved out of it zeroed in place instead of being tracked
     /// statically (it has a drop flag, or a field is moved in a conditional region)? See
     /// `LInfo::zero_parts`.
@@ -42,11 +40,7 @@ pub(super) struct Scan {
 }
 
 impl<'h, 'p> FlagScan<'h, 'p> {
-    pub(super) fn run(hir: &'h hir::Program, body: &hir::Body) -> Scan {
-        Self::run_picking(hir, body, None)
-    }
-
-    /// `run`, scanning only the branch lowering takes of an `if` on a condition fixed per
+    /// Scans `body`, only the branch lowering takes of an `if` on a condition fixed per
     /// instantiation (`pick`): the code of that branch is straight-line code of its block.
     pub(super) fn run_picking(
         hir: &'h hir::Program,
@@ -71,12 +65,10 @@ impl<'h, 'p> FlagScan<'h, 'p> {
         let flagged: Vec<bool> = (0..n)
             .map(|i| s.cond_move[i] || (s.cond_assign[i] && (s.moved[i] || s.uninit[i])))
             .collect();
-        let consumed = (0..n).map(|i| s.moved[i] || s.part_moved[i]).collect();
         let zero_parts = (0..n).map(|i| flagged[i] || s.cond_part[i]).collect();
         Scan {
             flagged,
             ref_bindings: s.ref_bindings,
-            consumed,
             zero_parts,
         }
     }

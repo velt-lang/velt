@@ -1,0 +1,56 @@
+// sqlite/engine/exec/func/func (internal): SQLite's core scalar functions
+// (https://sqlite.org/lang_corefunc.html), each compiled from its arguments' compiled expressions:
+// printf, format and the date and time functions here, the text functions in
+// engine/exec/func/func_text and the others in engine/exec/func/func_value.
+
+import { prepareError } from "../errors";
+import { dateFunction, isDateFunction } from "./date";
+import { printf } from "./printf";
+import { Val } from "../value/val";
+import { textFunction } from "./func_text";
+import { valueFunction } from "./func_value";
+import { Ev } from "../types";
+
+/**
+ * The compiled call of scalar function `name` (upper case) with these arguments, or null when
+ * there is no such function. `coll` is the collation of the first argument that has one.
+ */
+export function scalarFunction(name: string, shown: string, a: Ev[], coll: u8): Ev | null {
+  const n: usize = a.length;
+  if (name == "PRINTF" || name == "FORMAT") {
+    return () => {
+      const vals: Val[] = [];
+      for (const f of a) {
+        vals.push(f());
+      }
+      return printf(vals);
+    };
+  }
+  if (isDateFunction(name) || name.startsWith("CURRENT_")) {
+    let fn = name;
+    if (name == "CURRENT_DATE") {
+      fn = "DATE";
+    } else if (name == "CURRENT_TIME") {
+      fn = "TIME";
+    } else if (name == "CURRENT_TIMESTAMP") {
+      fn = "DATETIME";
+    } else if (!isDateFunction(name)) {
+      return null;
+    }
+    if (fn != name && n != 0) {
+      prepareError(`wrong number of arguments to function ${shown}()`);
+    }
+    return () => {
+      const vals: Val[] = [];
+      for (const f of a) {
+        vals.push(f());
+      }
+      return dateFunction(fn, vals);
+    };
+  }
+  const t = textFunction(name, shown, a, coll);
+  if (t != null) {
+    return t;
+  }
+  return valueFunction(name, shown, a, coll);
+}

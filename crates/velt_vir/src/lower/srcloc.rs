@@ -3,7 +3,7 @@
 //! records, and the ` at <path>:<line>:<col>` suffix of compiler-emitted panics.
 //!
 //! Texts compiled into the program name a standard-library file relative to the std root
-//! (`std/json/scan.vlt:12:3`), so they are the same on every machine: code compiled once and
+//! (`std/encoding/json/scan.vlt:12:3`), so they are the same on every machine: code compiled once and
 //! shared, such as a cached std object (#1728), must not carry one machine's paths. Debug info
 //! keeps the path as loaded, where a debugger finds the file.
 //!
@@ -46,6 +46,9 @@ pub(super) struct LocMap {
     std_files: Vec<bool>,
 }
 
+/// Where the source map holds the code generated for std's modules (veltc `GENERATED_DIR`).
+const GENERATED_STD: &str = "<generated>/std/";
+
 impl LocMap {
     /// Tables for every file of `sm`. `std_root` marks standard-library files.
     pub(super) fn new(sm: &SourceMap, std_root: Option<&std::path::Path>) -> LocMap {
@@ -56,6 +59,7 @@ impl LocMap {
         for (_, f) in sm.files() {
             let path = f.path.display().to_string().replace('\\', "/");
             let in_std = std_root.and_then(|r| f.path.strip_prefix(r).ok());
+            let generated_std = path.starts_with(GENERATED_STD);
             shown.push(match in_std {
                 Some(rel) => format!("std/{}", rel.display().to_string().replace('\\', "/")),
                 None => path.clone(),
@@ -71,7 +75,10 @@ impl LocMap {
                 )
                 .collect();
             line_starts.push(starts);
-            std_files.push(in_std.is_some());
+            // Code a std generator wrote for a std module (`<generated>/std/…`, veltc's
+            // generated modules) is std's too: an error it throws is reported at the user's
+            // call, as one thrown in std is.
+            std_files.push(in_std.is_some() || generated_std);
         }
         LocMap {
             files,
@@ -107,6 +114,29 @@ impl LocMap {
             .get(loc.file as usize)
             .copied()
             .unwrap_or(false)
+    }
+
+    /// The std module a program imports the std module `module` (`std/fs/fd/open`) from: the
+    /// nearest loaded folder module (`std/fs`, from `std/fs/index.vlt`) at or above it, or
+    /// `module` itself when none is loaded.
+    pub(super) fn owner_module<'a>(&self, module: &'a str) -> std::borrow::Cow<'a, str> {
+        let owner = self
+            .shown
+            .iter()
+            .zip(&self.std_files)
+            .filter(|(_, std)| **std)
+            .filter_map(|(path, _)| path.strip_suffix("/index.vlt"))
+            .filter(|dir| {
+                module == *dir
+                    || module
+                        .strip_prefix(*dir)
+                        .is_some_and(|rest| rest.starts_with('/'))
+            })
+            .max_by_key(|dir| dir.len());
+        match owner {
+            Some(dir) => std::borrow::Cow::Owned(dir.to_string()),
+            None => std::borrow::Cow::Borrowed(module),
+        }
     }
 
     /// `path:line:col`, a std file's path relative to the std root.
@@ -250,13 +280,13 @@ mod tests {
         let root = std::path::Path::new("/opt/velt/std");
         let mut sm = SourceMap::new();
         sm.add("/home/me/app.vlt", "x");
-        sm.add(root.join("json").join("scan.vlt"), "\n y");
+        sm.add(root.join("encoding/json").join("scan.vlt"), "\n y");
         let m = LocMap::new(&sm, Some(root));
         let loc = |file, line, col| SrcLoc { file, line, col };
         assert_eq!(m.describe(loc(0, 1, 1)), "/home/me/app.vlt:1:1");
-        assert_eq!(m.describe(loc(1, 2, 2)), "std/json/scan.vlt:2:2");
+        assert_eq!(m.describe(loc(1, 2, 2)), "std/encoding/json/scan.vlt:2:2");
         assert!(m.is_std_loc(loc(1, 2, 2)) && !m.is_std_loc(loc(0, 1, 1)));
         // Debug info keeps the path a debugger opens.
-        assert_eq!(m.files[1], "/opt/velt/std/json/scan.vlt");
+        assert_eq!(m.files[1], "/opt/velt/std/encoding/json/scan.vlt");
     }
 }

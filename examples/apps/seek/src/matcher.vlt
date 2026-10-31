@@ -1,6 +1,6 @@
 // Finding a pattern in a file's text: the matching lines, their numbers and the matched spans.
 // Plain words use `indexOf` (memchr/memmem in the runtime); anything else uses a RegExp.
-import { RegExp } from "velt:regex";
+import { RegExp } from "velt/text";
 
 /// How to interpret the pattern.
 export type MatchOptions = { fixed: bool; ignoreCase: bool; word: bool };

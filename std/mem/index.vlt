@@ -1,0 +1,6 @@
+// velt/mem: facts about how values are stored, for code that manages memory layouts itself
+// (Rust's `std::mem`), and `Arena`, a typed memory pool. docs/std/mem.md.
+
+export { Arena } from "velt/mem/arena";
+export { Blank } from "velt/mem/blank";
+export { needsDrop } from "velt/mem/needs_drop";

@@ -8,7 +8,7 @@ LSP client; the repository ships a Visual Studio Code extension in `editors/vsco
 
 - **Diagnostics** from the parser, the module loader and the type checker, as you type. Unsaved
   changes of other open files are taken into account. A standard library file opened from the
-  toolchain (go to definition into `velt:http`, say) is checked as that std module, as it is when
+  toolchain (go to definition into `velt/fs`, say) is checked as that std module, as it is when
   your program imports it.
 - **Formatting** with [`velt fmt`](fmt.md).
 - **Navigation**: document outline, go to definition (also through `ns.x` namespace imports and
@@ -34,16 +34,16 @@ LSP client; the repository ships a Visual Studio Code extension in `editors/vsco
   selected item (JSX tags and attributes included), and items documented `@deprecated` are
   struck through.
 - **Imports**, as in TypeScript editors (all of it also while the import doesn't parse yet):
-  - inside the braces of `import { … } from "velt:fs"`, completion offers the module's exports
+  - inside the braces of `import { … } from "velt/fs"`, completion offers the module's exports
     with their signatures, minus the names already listed (`import type { … }`: types only);
   - inside the quotes after `from` (or `import("…")`), completion offers module specifiers: the
-    standard library's modules (`velt:fs`, `velt:collections/set`, with a line about each),
+    standard library's modules (`velt/fs`, `velt/collections`, with a line about each),
     files and folders next to the file for `./` and `../`, and the package's dependencies.
     Typing `"` or `/` there opens the list. Files are named as imports name them: without the
     extension, unless two files share a name (`./dup.ts` next to `./dup.vlt`);
   - **auto-import**: typing a name that isn't imported yet offers the exports of std modules,
     of the dependencies and of the package's other files (unsaved changes of open files
-    included) that start with what you typed, marked with the module (`readFile  velt:fs`).
+    included) that start with what you typed, marked with the module (`readFile  velt/fs`).
     Accepting one adds it to the file's `import { … } from` that module (in order, if its names
     are sorted), or adds that import after the other imports. A file is named so that the
     import loads it: with its extension when another file shares its name, and a folder module
@@ -71,7 +71,7 @@ LSP client; the repository ships a Visual Studio Code extension in `editors/vsco
   literal, replace `export default` with a named export, add `await`
   or `spawn(...)` to a floating promise, add `async` to a method whose promise must carry
   its errors, and import a name the file uses without importing it ("Import `readFile` from
-  `velt:fs`", one fix per module that exports it). A fix that applies in several places is
+  `velt/fs`", one fix per module that exports it). A fix that applies in several places is
   also offered as "Fix all in file", and **Fix all** (`source.fixAll`, e.g. on save) applies every preferred
   fix of the file.
 

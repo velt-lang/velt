@@ -22,6 +22,11 @@ pub(super) fn check_group(cx: &mut Ctx, g: &Group) {
         if f.source.is_none() || f.is_async == g.promise {
             continue;
         }
+        // An abstract method never runs: a call through it rejects the promise of the override
+        // that runs, as through an interface method (`Group::promise`).
+        if cx.abstract_methods.contains(&m) {
+            continue;
+        }
         let Some(e) = f.throws else { continue };
         let (is_getter, ret) = (f.is_getter, f.ret);
         // A synchronous member whose body throws nothing returns its errors in the promise it

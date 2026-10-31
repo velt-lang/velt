@@ -1,0 +1,585 @@
+// velt/net/http (internal): the WHATWG `Response` (docs/std/net/http.md): what `fetch` resolves to,
+// what a server handler returns (`serve`), or a response built with `new Response(body, init)`
+// / `Response.json(data)`.
+//
+// A fetched response holds the client's response (`Fetched`, std/net/http/fetch/client/fetched.vlt) whose
+// head has arrived; its body is received by the first `text()`, `json()`, `bytes()` or
+// `arrayBuffer()`, or chunk by chunk through `res.body` (a second read throws, as in JS). A
+// compressed body (`content-encoding: gzip`, `deflate`, `br`) arrives decoded. Dropping the
+// response closes the connection of a body nobody read. The status text and headers are made
+// into strings the first time they are read (most programs read neither), and stay readable
+// after the body was read. A built response
+// makes no `Headers` until they are read: the `content-type` its body implies waits in
+// `#implied`, and a server sends it from there.
+
+import { JSON, JsonError } from "velt/prelude/json/json";
+import { IoError } from "velt/io/error";
+import { AbortError, AbortSignal } from "velt/task";
+import { utf8DecodeLossy, utf8Encode } from "velt/encoding";
+import {
+  BodyInit,
+  BodyStream,
+  JSON_TYPE,
+  TEXT_TYPE,
+  bodyParts,
+  collect,
+  impliedType,
+  sourceType,
+} from "velt/net/http/fetch/body";
+import { Headers, HeadersInit } from "velt/net/http/fetch/headers";
+import { Fetched } from "velt/net/http/fetch/client/fetched";
+import { BodyKind, ResponseParts } from "velt/net/http/fetch/parts";
+import { tee } from "velt/net/http/fetch/tee";
+import { INSPECT } from "velt/lang/hooks/keys";
+
+/** `new Response(body, init)` and `Response.json(data, init)`: default status 200. */
+export struct ResponseInit {
+  status?: number;
+  statusText?: string;
+  headers?: HeadersInit;
+}
+
+// Where a response's body is (`Response.#source`); the first four are a `BodyKind` (parts.vlt).
+const NONE: i64 = 0;
+const TEXT: i64 = 1;
+const BYTES: i64 = 2;
+const STREAM: i64 = 3;
+// A fetched response's body, received by the `fetch` client.
+const RUNTIME: i64 = 4;
+
+export class Response {
+  #code: i64 = 200;
+  // Null until `headers` is first read.
+  #fields: Headers | null = null;
+  // The `content-type` the body implies (`impliedType`), until `headers` is first read.
+  #implied: u32 = 0;
+  // A fetched response's status text and URL: null until first read.
+  #reason: string | null = "";
+  // A fetched response's signal, URL and `redirected`: null for one made here.
+  #remote: Remote | null = null;
+  #used: bool = false;
+  #source: i64 = 0;
+  #str: string = "";
+  // A bytes body (null for any other), so a response without one allocates no array.
+  #data: u8[] | null = null;
+  #stream: BodyStream | null = null;
+  // A fetched response's head and body (also of a HEAD request's, whose source is NONE).
+  #fetched: Fetched | null = null;
+
+  constructor(body: BodyInit | null = null, init?: ResponseInit) {
+    if (init == null && typeof body == "string") {
+      // Most responses: text and no options, so no parts and no status to check.
+      this.#source = TEXT;
+      this.#str = body;
+      this.#implied = TEXT_TYPE;
+      return;
+    }
+    if (body != null || init != null) {
+      this.setUp(body, init, 0);
+    }
+  }
+
+  // The constructor's work; `type` (if not 0) replaces the `content-type` the body implies.
+  private setUp(body: BodyInit | null, init: ResponseInit | null | undefined, type: u32) {
+    if (init != null) {
+      this.init(init);
+    }
+    if (body == null) {
+      return;
+    }
+    const status = this.#code;
+    if (status == 204 || status == 205 || status == 304) {
+      panic(`TypeError: Response constructor: Invalid response status code ${status}`);
+    }
+    let implied = type;
+    if (typeof body == "string") {
+      // Most bodies: no parts to make.
+      this.#source = TEXT;
+      this.#str = body;
+      implied = type != 0 ? type : TEXT_TYPE;
+    } else {
+      const parts = bodyParts(body);
+      this.#source = parts.kind as i64;
+      this.#str = parts.text;
+      if (parts.kind == 2) {
+        this.#data = parts.bytes;
+      }
+      this.#stream = parts.stream;
+      implied = type != 0 ? type : parts.implied;
+      const st = sourceType(body);
+      if (st != null && type == 0) {
+        // A blob's or form's type: a header of its own, unless `init` named one.
+        const h = this.headers;
+        if (!h.has("content-type")) {
+          h.set("content-type", st);
+        }
+      }
+    }
+    const fields = this.#fields;
+    if (fields == null) {
+      this.#implied = implied;
+      return;
+    }
+    const ct = impliedType(implied);
+    if (ct != null && !fields.has("content-type")) {
+      fields.set("content-type", ct);
+    }
+  }
+
+  // The status, status text and headers of `init`.
+  private init(init: ResponseInit) {
+    const status = (init.status ?? 200) as i64;
+    if (status < 200 || status > 599) {
+      panic(`RangeError: init["status"] must be in the range of 200 to 599, inclusive.`);
+    }
+    this.#code = status;
+    this.#reason = init.statusText ?? "";
+    const given = init.headers;
+    if (given != null) {
+      this.#fields = new Headers(given);
+    }
+  }
+
+  // The response `fetch` received, whose body aborts with `signal` (std only). The response to
+  // a HEAD request has no body, whatever its headers say: `body` is null and `text()` is "".
+  private static adopt(f: Fetched, signal: AbortSignal | null, head: bool): Response {
+    const r = new Response();
+    r.#code = f.status;
+    r.#reason = null;
+    const remote = new Remote(signal);
+    remote.url = f.url;
+    remote.redirected = f.redirected;
+    r.#remote = remote;
+    r.#source = head ? NONE : RUNTIME;
+    r.#fetched = f;
+    return r;
+  }
+
+  // A `101 Switching Protocols` response with `headers` (`switchingProtocols`, parts.vlt; the
+  // constructor takes 200-599).
+  private static switching(headers: Headers): Response {
+    const r = new Response();
+    r.#code = 101;
+    r.#fields = headers;
+    return r;
+  }
+
+  /**
+   * A response whose body is `JSON.stringify(data)`, with `content-type: application/json`
+   * unless `init` sets one.
+   */
+  static json<T>(data: T, init?: ResponseInit): Response {
+    const r = new Response();
+    if (init == null) {
+      r.#source = TEXT;
+      r.#str = JSON.stringify(data);
+      r.#implied = JSON_TYPE;
+      return r;
+    }
+    r.setUp(JSON.stringify(data), init, JSON_TYPE);
+    return r;
+  }
+
+  /** A network error: status 0, type "error". */
+  static error(): Response {
+    const r = new Response();
+    r.#code = 0;
+    return r;
+  }
+
+  /** A redirect to `url` (`status` 301, 302, 303, 307 or 308). */
+  static redirect(url: string, status: i64 = 302): Response {
+    if (status != 301 && status != 302 && status != 303 && status != 307 && status != 308) {
+      panic(`RangeError: Invalid status code ${status}`);
+    }
+    const r = new Response(null, { status: status as number });
+    r.headers.set("location", url);
+    return r;
+  }
+
+  /** The headers; a fetched response's are immutable. */
+  get headers(): Headers {
+    const known = this.#fields;
+    if (known != null) {
+      return known;
+    }
+    let h = new Headers();
+    const f = this.#fetched;
+    if (f != null) {
+      h = Headers.adopt(f.headers());
+      h.frozen = true;
+    }
+    // `h` is empty: the implied type moves over as its number (std/net/http/fetch/headers.vlt).
+    h.implied = this.#implied;
+    this.#implied = 0;
+    this.#fields = h;
+    return h;
+  }
+
+  get status(): i64 {
+    return this.#code;
+  }
+
+  /** Whether the status is 200–299. */
+  get ok(): bool {
+    return this.#code >= 200 && this.#code <= 299;
+  }
+
+  /**
+   * The status message (`OK`, `Not Found`): the server's reason phrase, else the standard one for
+   * the status ("" for a status without one, and for a constructed response by default).
+   */
+  get statusText(): string {
+    const known = this.#reason;
+    if (known != null) {
+      return known;
+    }
+    const f = this.#fetched;
+    const s = f == null ? "" : f.statusText();
+    this.#reason = s;
+    return s;
+  }
+
+  /** The URL the response came from, after redirects ("" for a constructed response). */
+  get url(): string {
+    const remote = this.#remote;
+    if (remote == null) {
+      return "";
+    }
+    return remote.url ?? "";
+  }
+
+  /** Whether `fetch` followed a redirect to get it. */
+  get redirected(): bool {
+    const remote = this.#remote;
+    if (remote == null) {
+      return false;
+    }
+    return remote.redirected ?? false;
+  }
+
+  /** "basic" (fetched), "default" (constructed) or "error" (`Response.error()`). */
+  get type(): string {
+    if (this.#code == 0) {
+      return "error";
+    }
+    return this.#remote != null ? "basic" : "default";
+  }
+
+  /**
+   * A copy of the response whose body can be read on its own: a streamed or fetched body is
+   * teed, each chunk going to both. Throws `IoError` "EINVAL" (JS: `TypeError`) when the body
+   * was already read.
+   */
+  clone(): Response throws IoError {
+    if (this.#used) {
+      throw new IoError("EINVAL", "Response.clone: Body has already been consumed.");
+    }
+    const r = new Response();
+    r.#code = this.#code;
+    r.#remote = this.#remote;
+    r.#source = this.#source;
+    r.#str = this.#str;
+    const data = this.#data;
+    if (data != null) {
+      r.#data = data.slice();
+    }
+    const f = this.#fetched;
+    if (f != null) {
+      // Both read the head from here on; the body (if any) goes to both through a tee, which
+      // now owns the connection.
+      r.#reason = this.statusText;
+      if (f.decoded()) {
+        this.decodedRemote().decoded = true;
+        r.#remote = this.#remote;
+      }
+      const h = Headers.adopt(this.headers.raw());
+      h.frozen = true;
+      r.#fields = h;
+      this.#fetched = null;
+      if (this.#source == RUNTIME) {
+        this.split(r, bodyOf(new Held(f)));
+      }
+      return r;
+    }
+    r.#reason = this.#reason;
+    const fields = this.#fields;
+    if (fields != null) {
+      r.#fields = new Headers(fields);
+    } else {
+      r.#implied = this.#implied;
+    }
+    const s = this.#stream;
+    this.#stream = null;
+    if (this.#source == STREAM && s != null) {
+      this.split(r, s[Symbol.asyncIterator]());
+    }
+    return r;
+  }
+
+  // The body `chunks` teed between this response and its clone `r`, both now streamed.
+  private split(r: Response, chunks: AsyncIterator<u8[], IoError | AbortError>) {
+    const [mine, theirs] = tee(chunks);
+    this.#source = STREAM;
+    this.#stream = BodyStream.adopt(mine);
+    r.#source = STREAM;
+    r.#stream = BodyStream.adopt(theirs);
+  }
+
+  // `#remote`, for a fetched response (which has one).
+  private decodedRemote(): Remote {
+    const remote = this.#remote;
+    if (remote == null) {
+      panic("ICE: a fetched response without its remote state");
+    }
+    return remote;
+  }
+
+  // `body` is in velt/net/http/fetch/streams, loaded with the streams it gives
+  // (std/prelude/global/fetch_body.vlt).
+
+  // Whether the response has a body to stream (`body` is not null).
+  private streams(): bool {
+    const code = this.#code;
+    const none = code == 101 || code == 103 || code == 204 || code == 205;
+    return !(none || code == 304 || this.#source == NONE);
+  }
+
+  /** Whether the body has been read. */
+  get bodyUsed(): bool {
+    return this.#used;
+  }
+
+  /** The body as text (invalid UTF-8 becomes U+FFFD, as in JS). */
+  async text(): Promise<string, IoError | AbortError> {
+    this.claim();
+    const f = this.#fetched;
+    if (this.#source == RUNTIME && f != null) {
+      return await f.text();
+    }
+    if (this.#source == TEXT) {
+      return this.#str;
+    }
+    let d = this.#data ?? [];
+    // Taken out: the body is read once (and a borrow of the field here reads freed memory, #1115).
+    const s = this.#stream;
+    this.#stream = null;
+    if (this.#source == STREAM && s != null) {
+      d = await collect(s);
+    }
+    // A leading byte order mark is not text, as in JS.
+    const bom = d.length >= 3 && d[0] == 239 && d[1] == 187 && d[2] == 191;
+    return utf8DecodeLossy(bom ? d.slice(3) : d);
+  }
+
+  /**
+   * `JSON.parse<T>` of the body: the JSON is checked against `T` (`JsonError` if it doesn't
+   * match). Velt has no `any`: name the type, `await res.json<User[]>()`, or annotate the
+   * variable that receives it.
+   */
+  async json<T>(): Promise<T, IoError | AbortError | JsonError> {
+    return JSON.parse<T>(await this.text());
+  }
+
+  // The body's bytes, as Velt's byte array.
+  private async rawBytes(): Promise<u8[], IoError | AbortError> {
+    this.claim();
+    const f = this.#fetched;
+    if (this.#source == RUNTIME && f != null) {
+      return await f.bytes();
+    }
+    if (this.#source == TEXT) {
+      return utf8Encode(this.#str);
+    }
+    // Taken out: the body is read once (and a borrow of the field here reads freed memory, #1115).
+    const s = this.#stream;
+    this.#stream = null;
+    if (this.#source == STREAM && s != null) {
+      return await collect(s);
+    }
+    return this.#data ?? [];
+  }
+
+  // `bytes()` and `arrayBuffer()` are in velt/net/http/fetch/typed, loaded with the typed arrays they
+  // give (std/prelude/global/fetch_bytes.vlt).
+
+  // The body's chunks, for `BodyStream` (std only); reading them uses the body up.
+  private async *chunks(): AsyncIterator<u8[], IoError | AbortError> {
+    this.claim();
+    const f = this.#fetched;
+    if (this.#source == RUNTIME && f != null) {
+      while (true) {
+        const chunk = await f.chunk();
+        if (chunk.length == 0) {
+          return;
+        }
+        yield chunk;
+      }
+    }
+    // Taken out: the body is read once (and a borrow of the field here reads freed memory, #1115).
+    const s = this.#stream;
+    this.#stream = null;
+    if (this.#source == TEXT) {
+      yield utf8Encode(this.#str);
+    } else if (this.#source == STREAM && s != null) {
+      for await (const chunk of s) {
+        yield chunk;
+      }
+    } else {
+      const d = this.#data;
+      if (d != null && d.length > 0) {
+        yield d;
+      }
+    }
+  }
+
+  // What a server writes for this response (`responseParts`, parts.vlt): a streamed body (a
+  // `BodyStream`, or a fetched response's body) is used up, as sending it does in JS. A fetched
+  // body arrives decoded, so the coding it was sent in is not passed on.
+  private serverBody(): ResponseParts throws IoError {
+    const source = this.#source;
+    let headers: string[] = [];
+    let implied = this.#implied;
+    const fields = this.#fields;
+    if (fields != null) {
+      const [list, type] = fields.serverFlat();
+      headers = list;
+      implied = type;
+    } else if (this.#fetched != null) {
+      headers = this.headers.raw();
+    }
+    if (this.decoded()) {
+      headers = withoutCoding(headers);
+    }
+    let stream: BodyStream | null = null;
+    if (source == STREAM || source == RUNTIME) {
+      if (this.#used) {
+        throw new IoError("EINVAL", "Body is unusable: Body has already been read");
+      }
+      if (source == STREAM) {
+        this.#used = true;
+        stream = this.#stream;
+        this.#stream = null;
+      } else {
+        // `chunks` marks the body used when it starts.
+        stream = BodyStream.adopt(this.chunks());
+      }
+    }
+    return {
+      status: this.#code,
+      headers: headers,
+      type: impliedType(implied),
+      kind: kindOf(source == RUNTIME ? STREAM : source),
+      text: this.#str,
+      bytes: this.#data ?? [],
+      stream: stream,
+    };
+  }
+
+  // Whether a fetched body arrives decoded (its `content-encoding` no longer applies).
+  private decoded(): bool {
+    const f = this.#fetched;
+    if (f != null) {
+      return f.decoded();
+    }
+    const remote = this.#remote;
+    return remote != null && remote.decoded;
+  }
+
+  // Marks the body read; throws if it was already. A response without a body can be read any
+  // number of times, as in JS.
+  private claim() throws IoError {
+    if (this.#source == NONE) {
+      return;
+    }
+    if (this.#used) {
+      throw new IoError("EINVAL", "Body is unusable: Body has already been read");
+    }
+    this.#used = true;
+  }
+
+  /** How `console.log` shows the response, like Node: its public state. */
+  [INSPECT]() {
+    return {
+      status: this.status,
+      statusText: this.statusText,
+      headers: this.headers,
+      // As Node shows a body stream (printed without loading velt/io/streams/streams).
+      body: this.streams() ? BodyStream.adopt(this.chunks(), this.#used) : null,
+      bodyUsed: this.bodyUsed,
+      ok: this.ok,
+      redirected: this.redirected,
+      type: this.type,
+      url: this.url,
+    };
+  }
+
+  /** Drop hook: closes the connection of a fetched body nobody finished reading. */
+  [Symbol.dispose]() {
+    const f = this.#fetched;
+    if (f != null) {
+      f.close();
+      this.#fetched = null;
+    }
+  }
+}
+
+// `[name, value, …]` without its `content-encoding` headers.
+function withoutCoding(list: string[]): string[] {
+  const out: string[] = [];
+  for (let i: i64 = 0; i + 1 < (list.length as i64); i += 2) {
+    if (list[i] != "content-encoding") {
+      out.push(list[i]);
+      out.push(list[i + 1]);
+    }
+  }
+  return out;
+}
+
+// What only a fetched response has: the signal that aborts its body, its URL and `redirected`,
+// and (once it was cloned) whether its body arrives decoded.
+class Remote {
+  signal: AbortSignal | null;
+  url: string | null = null;
+  redirected: bool | null = null;
+  decoded: bool = false;
+
+  constructor(signal: AbortSignal | null) {
+    this.signal = signal;
+  }
+}
+
+// A fetched body teed by `clone`: dropped with the last reader, it closes a connection whose body
+// nobody finished reading.
+class Held {
+  fetched: Fetched;
+
+  constructor(fetched: Fetched) {
+    this.fetched = fetched;
+  }
+
+  [Symbol.dispose]() {
+    this.fetched.close();
+  }
+}
+
+async function* bodyOf(held: Held): AsyncGenerator<u8[], IoError | AbortError> {
+  while (true) {
+    const chunk = await held.fetched.chunk();
+    if (chunk.length == 0) {
+      return;
+    }
+    yield chunk;
+  }
+}
+
+/// The `BodyKind` of a body source (`NONE` to `STREAM`).
+function kindOf(source: i64): BodyKind {
+  if (source == TEXT) {
+    return BodyKind.Text;
+  }
+  if (source == BYTES) {
+    return BodyKind.Bytes;
+  }
+  return source == STREAM ? BodyKind.Stream : BodyKind.None;
+}

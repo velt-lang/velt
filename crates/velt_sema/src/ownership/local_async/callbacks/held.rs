@@ -16,7 +16,7 @@ pub(super) fn homes(cx: &Ctx, g: &Graph) -> FxHashMap<DefId, Vec<usize>> {
     for (i, def) in cx.defs.iter().enumerate() {
         let d = DefId(i as u32);
         let Some(Def::Fn(f)) = def else { continue };
-        if in_std(cx, d) || !parents.contains(&d) {
+        if in_library(cx, d) || !parents.contains(&d) {
             continue;
         }
         let mut sites = vec![];
@@ -38,7 +38,8 @@ fn setters(cx: &Ctx) -> FxHashMap<DefId, Vec<usize>> {
     for (i, def) in cx.defs.iter().enumerate() {
         let d = DefId(i as u32);
         let Some(Def::Fn(f)) = def else { continue };
-        if f.self_ty.is_none() || !f.captures.is_empty() || f.params.len() < 2 || in_std(cx, d) {
+        if f.self_ty.is_none() || !f.captures.is_empty() || f.params.len() < 2 || in_library(cx, d)
+        {
             continue;
         }
         let this = f.params[0].local;
@@ -143,7 +144,7 @@ impl Visit for Sites<'_, '_> {
 fn std_method(cx: &Ctx, callee: &Callee) -> bool {
     match callee {
         Callee::Def(g, _) => {
-            in_std(cx, *g)
+            cx.try_fn(*g).is_some_and(|i| cx.scopes[i.module].is_std)
                 && matches!(&cx.defs[g.0 as usize], Some(Def::Fn(gf)) if gf.self_ty.is_some())
         }
         Callee::Intrinsic(Intrinsic::ArrayPush) => true,

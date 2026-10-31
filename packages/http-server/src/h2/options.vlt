@@ -1,0 +1,41 @@
+// velt/net/http (internal): `H2Options`, the limits an HTTP/2 connection serves with, and their
+// defaults.
+
+/// An HTTP/2 connection's limits.
+export struct H2Options {
+  /// SETTINGS_MAX_CONCURRENT_STREAMS: requests whose handlers run at once (default 128).
+  maxConcurrentStreams: i64;
+  /// SETTINGS_INITIAL_WINDOW_SIZE: request body bytes a stream may send before the handler reads
+  /// them (default 256 KiB).
+  streamWindow: i64;
+  /// The connection's receive window: request body bytes of all streams not yet read (1 MiB).
+  connectionWindow: i64;
+  /// SETTINGS_MAX_HEADER_LIST_SIZE: the largest request head (16 KiB, as HTTP/1.1's
+  /// `maxHeadSize`); a larger one gets 431.
+  maxHeaderListSize: i64;
+  /// The largest body `body()` collects (8 MiB).
+  maxBodySize: i64;
+  /// Milliseconds a connection without streams stays open (5000).
+  idleTimeout: number;
+  /// Milliseconds a request's body may take to arrive, from its head (300000, as HTTP/1.1's
+  /// `requestTimeout`): a handler reading it after that gets `IoError` `ETIMEDOUT` (408).
+  requestTimeout: i64;
+}
+
+/// The defaults, with the HTTP/1.1 server's limits where they apply.
+export function h2Options(
+  maxHeaderListSize: i64 = 16384,
+  maxBodySize: i64 = 8388608,
+  idleTimeout: number = 5000,
+  requestTimeout: i64 = 300000,
+): H2Options {
+  return {
+    maxConcurrentStreams: 128,
+    streamWindow: 262144,
+    connectionWindow: 1048576,
+    maxHeaderListSize: maxHeaderListSize,
+    maxBodySize: maxBodySize,
+    idleTimeout: idleTimeout,
+    requestTimeout: requestTimeout,
+  };
+}

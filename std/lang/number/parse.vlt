@@ -1,0 +1,344 @@
+// velt/lang/number (internal): `Number(s)` and `parseFloat(s)` in Velt, with exact JavaScript
+// semantics (#1658, part of #1655): decimal values are correctly rounded (exact arithmetic when it
+// is exact, else Eisel-Lemire, velt/lang/number/eisel_lemire; a mantissa of more than 19 significant
+// digits goes to the runtime's arbitrary-precision parser), `0x`/`0o`/`0b` values exactly at any
+// length.
+
+import { decide } from "velt/lang/number/eisel_lemire";
+import { strByteAt, strByteLen } from "velt/lang/intrinsics";
+
+declare function velt_rt_str_to_number(s: string): f64;
+declare function velt_rt_parse_float(s: string): f64;
+
+// 10^0 to 10^22, each exact in f64.
+const POW10: f64[] = [
+  1e0,
+  1e1,
+  1e2,
+  1e3,
+  1e4,
+  1e5,
+  1e6,
+  1e7,
+  1e8,
+  1e9,
+  1e10,
+  1e11,
+  1e12,
+  1e13,
+  1e14,
+  1e15,
+  1e16,
+  1e17,
+  1e18,
+  1e19,
+  1e20,
+  1e21,
+  1e22,
+];
+
+/** A decimal literal read from bytes `start` to `end`: its value, or `ok` false. */
+struct Decimal {
+  /** Bytes read (from `start`). */
+  end: usize;
+  ok: bool;
+  value: f64;
+  /** More than 19 significant digits: the value needs the arbitrary-precision parser. */
+  long: bool;
+}
+
+/** The value of `w * 10^q` (`w` nonzero), correctly rounded; `ok` false when undecided. */
+export function decimalValue(w: u64, q: i64): Decimal {
+  if (w <= 9007199254740992 && q >= -22 && q <= 22) {
+    // Clinger: both exact, one rounding.
+    const m = w as f64;
+    const v = q < 0 ? m / POW10[(-q) as usize] : m * POW10[q as usize];
+    return Decimal { end: 0, ok: true, value: v, long: false };
+  }
+  const r = decide(w, q);
+  return Decimal { end: 0, ok: r.ok, value: r.value, long: false };
+}
+
+// The longest unsigned decimal literal at byte `start` of `s` (digits, `.digits`, an exponent
+// with digits; at least one digit): its end and value (`end == start`: none).
+function decimal(s: string, start: usize, n: usize): Decimal {
+  let i = start;
+  let w: u64 = 0;
+  let digits = 0;
+  let q: i64 = 0;
+  let any = false;
+  while (i < n) {
+    const d = strByteAt(s, i as u64) - 48;
+    if (d > 9) {
+      break;
+    }
+    any = true;
+    if (w != 0 || d != 0) {
+      digits++;
+      if (digits <= 19) {
+        w = w * 10 + (d as u64);
+      } else {
+        q++;
+      }
+    }
+    i++;
+  }
+  if (i < n && strByteAt(s, i as u64) == 46) {
+    let j = i + 1;
+    while (j < n) {
+      const d = strByteAt(s, j as u64) - 48;
+      if (d > 9) {
+        break;
+      }
+      any = true;
+      if (w != 0 || d != 0) {
+        digits++;
+        if (digits <= 19) {
+          w = w * 10 + (d as u64);
+          q--;
+        }
+      } else {
+        q--;
+      }
+      j++;
+    }
+    if (any) {
+      i = j;
+    }
+  }
+  if (!any) {
+    return Decimal { end: start, ok: false, value: 0, long: false };
+  }
+  // An exponent counts only with digits.
+  if (i < n && (strByteAt(s, i as u64) | 0x20) == 101) {
+    let j = i + 1;
+    let eneg = false;
+    if (j < n) {
+      const c = strByteAt(s, j as u64);
+      if (c == 43 || c == 45) {
+        eneg = c == 45;
+        j++;
+      }
+    }
+    const first = j;
+    let e: i64 = 0;
+    while (j < n) {
+      const d = strByteAt(s, j as u64) - 48;
+      if (d > 9) {
+        break;
+      }
+      // Saturates far past any digit count a string can have, so that the leading zeros of a
+      // fraction (each one a step of `q`) can never cancel it out: past 2^40 the value is 0 or
+      // infinity whatever the digits. (`e * 10 + 9` stays below 2^44, and `q` cannot overflow.)
+      if (e < 1099511627776) {
+        e = e * 10 + (d as i64);
+      }
+      j++;
+    }
+    if (j > first) {
+      i = j;
+      q += eneg ? -e : e;
+    }
+  }
+  if (w == 0) {
+    return Decimal { end: i, ok: true, value: 0, long: false };
+  }
+  if (digits > 19) {
+    return Decimal { end: i, ok: true, value: 0, long: true };
+  }
+  const v = decimalValue(w, q);
+  return Decimal { end: i, ok: v.ok, value: v.value, long: !v.ok };
+}
+
+// The value of the digits of radix 2, 8 or 16 at bytes `start` to `n` (all of them digits:
+// else NaN), exact at any length: the top 64 significant bits, the rest folded into a sticky
+// bit, rounded once by the conversion to f64.
+function powerOfTwo(s: string, start: usize, n: usize, bits: u64): f64 {
+  if (start == n) {
+    return NaN;
+  }
+  let acc: u64 = 0;
+  let shift: i64 = 0;
+  let sticky: u64 = 0;
+  for (let i = start; i < n; i++) {
+    const c = strByteAt(s, i as u64);
+    let d: u64 = 99;
+    if (c - 48 <= 9) {
+      d = (c - 48) as u64;
+    } else if ((c | 0x20) - 97 <= 5) {
+      d = ((c | 0x20) - 87) as u64;
+    }
+    if (d >= ((1 as u64) << bits)) {
+      return NaN;
+    }
+    if ((acc >> (64 - bits)) == 0) {
+      acc = (acc << bits) | d;
+    } else {
+      shift += bits as i64;
+      sticky = sticky | (d != 0 ? 1 : 0);
+    }
+  }
+  // The sticky bit below the 53 kept ones only breaks ties (the low bits of a full 64-bit `acc`
+  // are below the rounding point too).
+  let v = (acc | sticky) as f64;
+  // Times 2^shift, in exact steps (past 2^1023 it is infinity, as it should be).
+  while (shift > 0) {
+    const k = shift > 1000 ? 1000 : shift;
+    v = v * f64.fromBits(((k + 0x3ff) as u64) << 52);
+    shift -= k;
+  }
+  return v;
+}
+
+// Whether a JavaScript whitespace or line terminator starts at byte `i` of `s` (`n` bytes): its
+// length in bytes, or 0. (Tab to carriage return, space, U+00A0, U+1680, U+2000-U+200A, U+2028,
+// U+2029, U+202F, U+205F, U+3000, U+FEFF.)
+function space(s: string, i: usize, n: usize): usize {
+  const b = strByteAt(s, i as u64);
+  if (b == 32 || (b >= 9 && b <= 13)) {
+    return 1;
+  }
+  if (b < 0xc2 || i + 1 >= n) {
+    return 0;
+  }
+  const b1 = strByteAt(s, (i + 1) as u64);
+  if (b == 0xc2) {
+    return b1 == 0xa0 ? 2 : 0;
+  }
+  if (i + 2 >= n) {
+    return 0;
+  }
+  const b2 = strByteAt(s, (i + 2) as u64);
+  if (b == 0xe1) {
+    return b1 == 0x9a && b2 == 0x80 ? 3 : 0;
+  }
+  if (b == 0xe2) {
+    if (b1 == 0x80) {
+      return b2 <= 0x8a || b2 == 0xa8 || b2 == 0xa9 || b2 == 0xaf ? 3 : 0;
+    }
+    return b1 == 0x81 && b2 == 0x9f ? 3 : 0;
+  }
+  if (b == 0xe3) {
+    return b1 == 0x80 && b2 == 0x80 ? 3 : 0;
+  }
+  if (b == 0xef) {
+    return b1 == 0xbb && b2 == 0xbf ? 3 : 0;
+  }
+  return 0;
+}
+
+// The first byte of `s` after its leading whitespace.
+function skipSpace(s: string, n: usize): usize {
+  let i: usize = 0;
+  while (i < n) {
+    const k = space(s, i, n);
+    if (k == 0) {
+      break;
+    }
+    i += k;
+  }
+  return i;
+}
+
+// The byte after the last non-whitespace byte of `s` from `start`.
+function trimEnd(s: string, start: usize, n: usize): usize {
+  // Whitespace characters are at most 3 bytes: step back over them by their last byte.
+  let end = n;
+  while (end > start) {
+    const b = strByteAt(s, (end - 1) as u64);
+    if (b == 32 || (b >= 9 && b <= 13)) {
+      end--;
+      continue;
+    }
+    if (b < 0x80) {
+      break;
+    }
+    let lead = end - 1;
+    while (lead > start && (strByteAt(s, lead as u64) & 0xc0) == 0x80) {
+      lead--;
+    }
+    if (space(s, lead, end) != end - lead) {
+      break;
+    }
+    end = lead;
+  }
+  return end;
+}
+
+// Whether bytes `i` to `i + 8` of `s` are "Infinity".
+function infinityAt(s: string, i: usize, n: usize): bool {
+  if (i + 8 > n) {
+    return false;
+  }
+  const word = "Infinity";
+  for (let k: usize = 0; k < 8; k++) {
+    if (strByteAt(s, (i + k) as u64) != strByteAt(word, k as u64)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** `Number(s)`: the whole string (whitespace trimmed) as a numeric literal; `""` is 0; else NaN. */
+export function toNumber(s: string): f64 {
+  const n = strByteLen(s);
+  let i = skipSpace(s, n);
+  const end = trimEnd(s, i, n);
+  if (i == end) {
+    return 0;
+  }
+  if (end - i > 2 && strByteAt(s, i as u64) == 48) {
+    const p = strByteAt(s, (i + 1) as u64) | 0x20;
+    if (p == 120) {
+      return powerOfTwo(s, i + 2, end, 4);
+    }
+    if (p == 111) {
+      return powerOfTwo(s, i + 2, end, 3);
+    }
+    if (p == 98) {
+      return powerOfTwo(s, i + 2, end, 1);
+    }
+  }
+  let neg = false;
+  const c = strByteAt(s, i as u64);
+  if (c == 43 || c == 45) {
+    neg = c == 45;
+    i++;
+  }
+  if (infinityAt(s, i, end) && i + 8 == end) {
+    return neg ? -Infinity : Infinity;
+  }
+  const d = decimal(s, i, end);
+  if (d.end != end || !(d.ok || d.long)) {
+    return NaN;
+  }
+  if (d.long) {
+    return velt_rt_str_to_number(s);
+  }
+  return neg ? -d.value : d.value;
+}
+
+/** `parseFloat(s)`: the longest decimal prefix after leading whitespace (`Infinity` too); else NaN. */
+export function parseFloatOf(s: string): f64 {
+  const n = strByteLen(s);
+  let i = skipSpace(s, n);
+  let neg = false;
+  if (i < n) {
+    const c = strByteAt(s, i as u64);
+    if (c == 43 || c == 45) {
+      neg = c == 45;
+      i++;
+    }
+  }
+  if (infinityAt(s, i, n)) {
+    return neg ? -Infinity : Infinity;
+  }
+  const d = decimal(s, i, n);
+  if (d.end == i) {
+    return NaN;
+  }
+  if (d.long || !d.ok) {
+    return velt_rt_parse_float(s);
+  }
+  return neg ? -d.value : d.value;
+}

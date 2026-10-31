@@ -1,6 +1,6 @@
 # Design: building strings fast, in compiled code and in Velt
 
-Status: proposed (#1677, part of the JSON engine, #1655). Nothing here is in `main` yet.
+Status: steps 1 and 2 built (#1677, part of the JSON engine, #1655); step 3 proposed.
 
 ## Problem
 
@@ -17,7 +17,7 @@ With the JSON writer written in Velt (#1668, a later pull request), a profile of
 them; the pull request that implements step 1 commits the profile's numbers with the script that
 measures them.
 
-Velt code has no better way to build strings. The Velt JSON writer (`std/json/writer.vlt`, in
+Velt code has no better way to build strings. The Velt JSON writer (`std/encoding/json/writer.vlt`, in
 the engine's `std/json/` modules, json-engine.md §0) passes the glue's builder
 around as an opaque `string` and calls `velt_rt_strbuf_*` externs on it. That is a trap, as
 #1668 found: an argument after it that is a call makes the compiler copy the "string" first, so
@@ -71,7 +71,16 @@ const s = b.take();     // the builder becomes the string: no copy (it has VeltS
 
 A std class whose one field is the builder value (the 24 bytes of a `VeltStrBuf`), declared as
 a builder type the compiler knows. Its methods are Velt code over the same inline fast path as
-step 1, so a call to `append` inlines to the step-1 sequence. The JSON writer then takes a
+step 1, so a call to `append` inlines to the step-1 sequence.
+
+As built: `StringBuilder` (`velt/text`) holds the builder in its field, and lowering compiles
+`b.append("literal")` (ASCII, at most 32 bytes) to the step-1 sequence on that field
+(`lower/strbuf.rs` `builder_append_literal`), without the count check: the buffer may be shared
+(`toString()`), but every other holder is a string whose text ends at or before the builder's
+and appends in place only as the buffer's one holder (the runtime checks), when the builder no
+longer has it, so the bytes after the builder's text are always the builder's. Measured on
+literal appends (a loop of `append("{\"id\":")`, `appendInt`, three more literals): 1.95 G →
+0.745 G instructions in a release build (-62%), 2.27 G → 1.13 G in a debug build. The JSON writer then takes a
 `StringBuilder` instead of an opaque `string`, and the generated glue passes its builder as one.
 Integer formatting moves to Velt (`bench/stdport` `int_to_string` is 1.82× `itoa` today: a call
 per value and a string result, where writing digits into the builder needs neither).
@@ -99,8 +108,8 @@ for the position between its two UTF-16 units, as slicing there does (`"😀".sl
 range that starts there begins with the low surrogate, and one that ends there ends with the
 high surrogate, each appended as a lone surrogate. An end inside any other sequence is a
 `RangeError` panic (no position in a JavaScript string corresponds to it). The copy between stays one
-`memcpy`, and the UTF-16 count is taken while copying (non-ASCII blocks only). Std parsers (`velt:json`, `velt:url`, `velt:csv`)
-then need neither `__intrinsic_str_byte_at` nor `utf8ByteAt`'s check at each byte: the view is
+`memcpy`, and the UTF-16 count is taken while copying (non-ASCII blocks only). Std parsers (`velt/encoding/json`, `velt/net/url`, `velt/encoding/csv`)
+then need neither `strByteAt` nor `utf8ByteAt`'s check at each byte: the view is
 bounds-checked once per loop where the compiler can prove the range, like an array.
 
 ## Not proposed
@@ -123,4 +132,4 @@ bounds-checked once per loop where the compiler can prove the range, like an arr
 1. Inline appends (step 1). Measured on `bench/json/stringify` and the template literal
    benchmarks (`bench/typical` `strings`).
 2. `StringBuilder`, and the JSON writer moved onto it; integer digits in Velt.
-3. Byte views, and `velt:json/scan` moved onto them.
+3. Byte views, and `velt/encoding/json/scan` moved onto them.

@@ -1,0 +1,128 @@
+// http-server (internal): a request the server received, as the web-standard `Request` reads
+// it (std/net/http/fetch/request.vlt): its method, URL, headers and body come from the
+// connection's `HttpRequest`, read when first asked for. Only while its handler runs: the
+// connection reuses its `HttpRequest` for the next request, so a read after `release` stops the
+// program with a clear message (as a read of a released value does), never answering with
+// another request's data.
+
+import { IoError } from "velt/io";
+import { TcpStream } from "velt/net";
+import { RequestSource } from "velt/net/http";
+import { HttpRequest } from "./request";
+import { HttpResponse } from "./response";
+import { BodyTooLarge } from "./errors";
+
+/** The server side of a received `Request` (internal). */
+export class Received implements RequestSource {
+  private req: HttpRequest;
+  private res: HttpResponse;
+  // `http://host` or `https://host`, from the `Host` header.
+  private origin: string;
+  private live: bool = true;
+
+  constructor(req: HttpRequest, res: HttpResponse, secure: bool) {
+    this.req = req;
+    this.res = res;
+    const host = req.header("host") ?? "localhost";
+    this.origin = (secure ? "https://" : "http://") + host;
+  }
+
+  /** The handler returned: the request may no longer be read. */
+  release() {
+    this.live = false;
+  }
+
+  private check() {
+    if (!this.live) {
+      panic(
+        "TypeError: a request was read after its handler returned (read what the response needs before returning)",
+      );
+    }
+  }
+
+  method(): string {
+    this.check();
+    return this.req.method();
+  }
+
+  /** The absolute URL (`http://host/path?query`), as in Deno and Bun. */
+  url(): string {
+    this.check();
+    return this.origin + this.req.target();
+  }
+
+  /** The values of `name` joined with ", ", as `Headers.get` reads them. */
+  header(name: string): string | null {
+    this.check();
+    return this.req.headerValues(name);
+  }
+
+  hasHeader(name: string): bool {
+    this.check();
+    return this.req.hasHeader(name);
+  }
+
+  /** Every header as it came, in order. */
+  headers(): [string, string][] {
+    this.check();
+    return this.req.headers();
+  }
+
+  hasBody(): bool {
+    this.check();
+    return !this.req.bodyRead();
+  }
+
+  /** The next piece of the body, or null at its end; `IoError` "EPROTO" for a malformed one. */
+  async read(): Promise<u8[] | null, IoError> {
+    this.check();
+    try {
+      return await this.req.read();
+    } catch (e) {
+      throw received(e);
+    }
+  }
+
+  /**
+   * The whole body; `IoError` "EMSGSIZE" beyond the server's `maxBodySize` (answered 413),
+   * "EPROTO" for a malformed one.
+   */
+  async body(): Promise<u8[], IoError> {
+    this.check();
+    try {
+      return await this.req.body();
+    } catch (e) {
+      throw received(e);
+    }
+  }
+
+  /** Whether the request asks to switch the connection to `protocol`. */
+  isUpgrade(protocol: string): bool {
+    this.check();
+    return this.req.isUpgrade(protocol);
+  }
+
+  /** Switches the connection (`HttpResponse.upgrade`): the stream, and what came along. */
+  upgrade(protocol: string, headers: [string, string][]): [TcpStream, u8[]] {
+    this.check();
+    const stream = this.res.upgrade(protocol, headers);
+    return [stream, this.req.takeUnread()];
+  }
+
+  /** The client's "ip:port". */
+  remoteAddr(): string {
+    this.check();
+    return this.req.remoteAddr();
+  }
+}
+
+/** What reading a body threw, as the `IoError` a `Request`'s readers throw. */
+function received(e: IoError | BodyTooLarge | RangeError): IoError {
+  if (e instanceof IoError) {
+    return e;
+  }
+  if (e instanceof BodyTooLarge) {
+    return new IoError("EMSGSIZE", e.message);
+  }
+  return new IoError("EPROTO", e.message);
+}

@@ -157,12 +157,12 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Work::WidenDrop(from, to) => Self::build_widen_drop(cx, *from, *to),
             Work::AdoptPoll(p) => Self::build_adopt_poll(cx, *p),
             Work::AdoptDrop(p) => Self::build_adopt_drop(cx, *p),
-            Work::HandlerInit(def, targs) => Self::build_handler_init(cx, *def, targs),
             Work::Unclaimed(t) => Self::build_unclaimed(cx, *t),
             Work::Init(t, e) => Self::build_init(cx, *t, *e),
             Work::GenNew(def, targs) => Self::build_gen_new(cx, *def, targs),
             Work::GenFree(def, targs) => Self::build_gen_free(cx, *def, targs),
             Work::ModuleInit(from, to) => Self::build_module_init(cx, *from, *to),
+            Work::StaticsDrop => Self::build_statics_drop(cx),
         }
     }
 
@@ -413,7 +413,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
     }
 
     pub(super) fn lower_body(&mut self, f: &FnDef) {
-        self.proxy_routes = !f.name.starts_with("std/") || f.name.starts_with("std/proxy::");
+        self.proxy_routes = !f
+            .name
+            .starts_with(velt_common::std_modules::CANONICAL_PREFIX)
+            || f.name
+                .starts_with(concat!(velt_common::std_module!(lang_proxy), "::"));
         // Outermost scope: owned params, dropped on every return.
         self.push_scope(ScopeKind::Block);
         for p in &f.params[f.captures.len()..] {

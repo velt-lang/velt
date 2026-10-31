@@ -12,7 +12,7 @@ use crate::hir::{self, DefId, ExprKind as H, PatKind as P, TyId, TyKind};
 use crate::object_copies::Seen;
 use crate::symbols::Presence;
 
-/// The well-known symbols (std/symbol.vlt `SymbolConstructor`), which name members as
+/// The well-known symbols (std/lang/symbol/index.vlt `SymbolConstructor`), which name members as
 /// `[Symbol.<name>]`.
 const WELL_KNOWN: [&str; 15] = [
     "asyncDispose",
@@ -91,7 +91,7 @@ impl FnCx<'_, '_> {
     }
 
     /// `props` with each `[E.M]: v` whose key is an enum member (which the parser writes as a
-    /// key known only at run time, `...__computed_key(E.M, v)`) as the property its value
+    /// key known only at run time, `...computedKey(E.M, v)`) as the property its value
     /// names; `None` if there is none.
     pub(crate) fn enum_computed_keys(
         &mut self,

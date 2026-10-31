@@ -362,7 +362,7 @@ impl Cx<'_> {
 /// Is `d` the prelude's `Atomic` (its private field declared by std)?
 pub(super) fn is_atomic(cx: &Cx<'_>, d: hir::DefId) -> bool {
     matches!(cx.hir.def(d), hir::Def::Adt(a)
-        if a.opaque && a.name.strip_prefix("std/prelude/sync::") == Some("Atomic"))
+        if a.opaque && a.name.strip_prefix(concat!(velt_common::std_module!(prelude_sync), "::")) == Some("Atomic"))
 }
 
 /// A `bits` word as the `T` of VIR type `vt`.

@@ -1,5 +1,5 @@
 // Global, conditional (crates/veltc/src/loader/globals.rs): `Response.body` and `Request.body`
-// (velt:fetch/streams), with the streams they give, for a program that uses `Response` and
+// (velt/net/http/fetch/streams), with the streams they give, for a program that uses `Response` and
 // reads `.body`; other fetch and http programs don't load streams.
-// load when std/fetch/response uses: .body
-import "velt:fetch/streams";
+// load when std/net/http/fetch/response uses: .body
+import "velt/net/http/fetch/streams";

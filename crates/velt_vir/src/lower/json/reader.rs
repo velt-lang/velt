@@ -1,4 +1,4 @@
-//! The decoders' pull reader is Velt code: `std/json/reader.vlt`'s `Reader` (#1668). The glue
+//! The decoders' pull reader is Velt code: `std/encoding/json/reader.vlt`'s `Reader` (#1668). The glue
 //! keeps the runtime reader's operations (`Rt::Json*`, rt_abi_async.md §12.3) as its vocabulary:
 //! [`FnLower::reader_rt`] lowers each one to direct calls of the `Reader` methods, with the
 //! same results (`u8` status, `u32` token kind, `u64` mark) and the same out-parameters
@@ -14,9 +14,7 @@ use crate::lower::{cint, ice, Cx, FnLower, ScopeKind};
 use crate::vir::{BinOp, BlockId, Local, Operand, Place, Proj, Rvalue, Ty};
 
 /// Qualified name of the reader class.
-const READER: &str = "std/json/reader::Reader";
-/// The module of the number and string writers.
-const WRITER: &str = "std/json/writer";
+const READER: &str = velt_common::std_item!(encoding_json_reader, "Reader");
 
 impl Cx<'_> {
     /// The `Reader` method (or static function) `name`.
@@ -24,14 +22,16 @@ impl Cx<'_> {
         self.json_std_fn(&format!("{READER}.{name}"))
     }
 
-    /// The std function with the qualified name `full` (velt:json's Velt code).
+    /// The std function with the qualified name `full` (velt/encoding/json's Velt code).
     pub(in crate::lower) fn json_std_fn(&self, full: &str) -> DefId {
         let hir = self.hir;
         let fns = self.std_fns.get_or_init(|| {
             let mut fns = FxHashMap::default();
             for (i, d) in hir.defs.iter().enumerate() {
                 if let hir::Def::Fn(f) = d {
-                    if f.name.starts_with("std/") {
+                    if f.name
+                        .starts_with(velt_common::std_modules::CANONICAL_PREFIX)
+                    {
                         fns.entry(f.name.as_str()).or_insert(DefId(i as u32));
                     }
                 }
@@ -50,7 +50,7 @@ impl Cx<'_> {
             .defs
             .iter()
             .position(|d| matches!(d, hir::Def::Adt(a) if a.name == READER))
-            .unwrap_or_else(|| ice("JSON.parse needs std/json/reader.vlt's `Reader`"));
+            .unwrap_or_else(|| ice("JSON.parse needs std/encoding/json/reader.vlt's `Reader`"));
         self.intern(TyKind::Adt(DefId(d as u32), vec![]))
     }
 }
@@ -87,35 +87,6 @@ impl FnLower<'_, '_> {
         let def = self
             .cx
             .json_std_fn(&format!("{}.{name}", super::PRELUDE_JSON_VALUE));
-        self.json_std_call(def, pre)
-    }
-
-    /// `velt:json/writer`'s `name(pre...)` (lowered arguments; the builder first, by address).
-    pub(super) fn writer_call(&mut self, name: &str, pre: Vec<Operand>) {
-        let def = self.cx.json_std_fn(&format!("{WRITER}::{name}"));
-        self.builder_call(def, pre, 0);
-    }
-
-    /// A call of `def`, a writer of the glue's string builder, passed at argument `at`
-    /// (`writeString(out, s)`, `JsonValue.__writeJson(out)`). The builder is typed `string` in
-    /// Velt but is no string: its parameter must borrow it, since an owned one would be cloned
-    /// as a string here and corrupt the builder. Checked at every call, not left to a comment.
-    pub(in crate::lower) fn builder_call(
-        &mut self,
-        def: DefId,
-        pre: Vec<Operand>,
-        at: usize,
-    ) -> Operand {
-        let f = self.cx.fn_def(def);
-        if f.params
-            .get(at)
-            .is_none_or(|p| p.mode == hir::PassMode::Owned)
-        {
-            ice(format!(
-                "`{}` must borrow the string builder it writes to (parameter {at})",
-                f.name
-            ));
-        }
         self.json_std_call(def, pre)
     }
 

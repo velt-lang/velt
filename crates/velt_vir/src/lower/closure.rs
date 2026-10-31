@@ -64,7 +64,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         frozen
     }
 
-    /// `__intrinsic_fn_captures_nothing(f)`: `f.env == null` (module docs: only closures without
+    /// `fnCapturesNothing(f)`: `f.env == null` (module docs: only closures without
     /// captures and named functions have a null env).
     pub(super) fn fn_captures_nothing(&mut self, f: &hir::Expr) -> Operand {
         let fty = self.sub(f.ty);

@@ -1,0 +1,131 @@
+// The Redis client against a real server ($VELT_TEST_REDIS_URL; every test returns at once
+// without it): pipelines, MULTI/EXEC transactions and one client shared by many tasks.
+import { connect, RedisClient, RedisError, RedisReply } from "../src/lib";
+import { redisUrl, freshPrefix, cleanup } from "./support/redis";
+
+function show(r: RedisReply): string {
+  switch (r.kind) {
+    case "nil":
+      return "nil";
+    case "int":
+      return `int ${r.int}`;
+    case "array":
+      return `array [${r.items.map((x) => show(x)).join(", ")}]`;
+    case "error":
+      return `error ${r.text.split(" ")[0]}`;
+    case "status":
+    case "string":
+      return `${r.kind} ${r.text}`;
+  }
+}
+
+async function bump(c: RedisClient, key: string, times: i64): Promise<i64> {
+  let last: i64 = 0;
+  for (let i = 0; i < times; i++) {
+    last = await c.incr(key);
+  }
+  return last;
+}
+
+// A pipeline: one round trip, one reply per command; a rejected command is an error reply.
+export async function test_pipeline() {
+  const url = redisUrl();
+  if (url == null) {
+    return;
+  }
+  const p = freshPrefix();
+  const c = await connect(url);
+  const pl = c.pipeline();
+  pl.set(`${p}a`, "1");
+  pl.incr(`${p}a`);
+  pl.incrBy(`${p}a`, 10);
+  pl.get(`${p}a`);
+  pl.get(`${p}missing`);
+  pl.rpush(`${p}l`, ["x", "y"]);
+  pl.call(["LRANGE", `${p}l`, "0", "-1"]);
+  pl.hset(`${p}h`, "f", "v");
+  pl.hget(`${p}h`, "f");
+  pl.incr(`${p}l`);
+  pl.sadd(`${p}s`, ["m"]);
+  pl.zadd(`${p}z`, 1.5, "m");
+  pl.expire(`${p}a`, 100);
+  pl.publish(`${p}nobody-listens`, "hi");
+  pl.del([`${p}h`]);
+  assertEq(pl.length, 15);
+  const replies = await pl.exec();
+  assertEq(replies.map((r) => show(r)), [
+    "status OK",
+    "int 2",
+    "int 12",
+    "string 12",
+    "nil",
+    "int 2",
+    "array [string x, string y]",
+    "int 1",
+    "string v",
+    "error WRONGTYPE",
+    "int 1",
+    "int 1",
+    "int 1",
+    "int 0",
+    "int 1",
+  ]);
+  assertEq(replies[9].isError(), true);
+  assertEq(replies[1].asInt(), 2);
+  assertEq((await c.pipeline().exec()).length, 0);
+  assertEq(await cleanup(c, p), 4);
+  c.close();
+}
+
+// A transaction runs atomically and returns EXEC's replies; a command the server rejects while
+// queueing aborts the whole transaction.
+export async function test_transactions() {
+  const url = redisUrl();
+  if (url == null) {
+    return;
+  }
+  const p = freshPrefix();
+  const c = await connect(url);
+  const tx = c.multi();
+  tx.incr(`${p}counter`);
+  tx.incr(`${p}counter`);
+  tx.get(`${p}counter`);
+  assertEq((await tx.exec()).map((r) => show(r)), ["int 1", "int 2", "string 2"]);
+
+  const bad = c.multi();
+  bad.incr(`${p}counter`);
+  bad.call(["NOSUCHCOMMAND"]);
+  let aborted = "aborted transaction did not throw";
+  try {
+    await bad.exec();
+  } catch (e) {
+    aborted = e.code.clone();
+  }
+  assertEq(aborted, "EXECABORT");
+  assertEq(await c.get(`${p}counter`), "2");
+  assertEq(await cleanup(c, p), 1);
+  c.close();
+}
+
+// The multiplexed connection is shared by concurrent tasks.
+export async function test_one_client_shared_by_many_tasks() {
+  const url = redisUrl();
+  if (url == null) {
+    return;
+  }
+  const p = freshPrefix();
+  const c = await connect(url);
+  const tasks: Promise<i64, RedisError>[] = [];
+  for (let t = 0; t < 8; t++) {
+    tasks.push(spawn(bump(c, `${p}shared`, 25)));
+  }
+  const lasts = await Promise.all(tasks);
+  let highest: i64 = 0;
+  for (const x of lasts) {
+    highest = x > highest ? x : highest;
+  }
+  assertEq(await c.get(`${p}shared`), "200");
+  assertEq(highest, 200);
+  assertEq(await cleanup(c, p), 1);
+  c.close();
+}

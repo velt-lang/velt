@@ -2,10 +2,13 @@
 
 use std::path::{Path, PathBuf};
 
+use velt_common::std_modules;
+
 /// What an import specifier refers to, before the file is looked up.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ModuleRef {
-    /// `velt:x` — standard library module (like Node's `node:fs`); `rel` is `x`.
+    /// `velt/x` — standard library module; `rel` is `x`. `velt` is a package name the toolchain
+    /// provides, so no dependency may take it.
     Std {
         /// Path below the std root, `/`-separated, no extension.
         rel: String,
@@ -31,15 +34,32 @@ pub fn resolve_spec(spec: &str, importer_dir: &Path) -> Result<ModuleRef, String
     if spec.is_empty() {
         return Err("empty module specifier".into());
     }
-    if let Some(rel) = spec.strip_prefix("std/") {
+    if let Some(rel) = spec.strip_prefix(std_modules::CANONICAL_PREFIX) {
         return Err(format!(
-            "standard library modules are imported as `velt:{rel}` (not `{spec}`)"
+            "standard library modules are imported as `velt/{rel}` (not `{spec}`)"
         ));
     }
-    if spec == "std" {
-        return Err("standard library modules are imported as `velt:x` (`velt:fs`)".into());
+    if spec == "std" || spec == "velt" {
+        return Err(format!(
+            "`{spec}` names no module: standard library modules are imported as `velt/<module>` \
+             (`velt/fs`)"
+        ));
     }
     if let Some(rel) = spec.strip_prefix("velt:") {
+        let list = super::moved::STD_DOCS_URL;
+        return Err(match super::moved::now(rel, spec) {
+            // A package's sentence links its page; the others, the std docs.
+            Some(now) if now.contains("https://") => {
+                format!("{now}; `velt:` specifiers were removed")
+            }
+            Some(now) => format!("{now} (`velt:` specifiers were removed; the modules: {list})"),
+            None => format!(
+                "`velt:` specifiers were removed: standard library modules are imported as \
+                 `velt/<module>` (`velt/fs`; the modules: {list}), not `velt:{rel}`"
+            ),
+        });
+    }
+    if let Some(rel) = spec.strip_prefix(std_modules::SPECIFIER_PREFIX) {
         extension_check(spec)?;
         if !is_std_subpath(rel) {
             return Err(format!("invalid standard library module `{spec}`"));
@@ -48,10 +68,12 @@ pub fn resolve_spec(spec: &str, importer_dir: &Path) -> Result<ModuleRef, String
             rel: rel.to_string(),
         });
     }
-    // Vitest's module is `velt:test`, which has its API (`describe`, `it`, `expect`), so a test
+    // Vitest's module is `velt/test`, which has its API (`describe`, `it`, `expect`), so a test
     // file written for Vitest runs as it is.
     if spec == "vitest" {
-        return Ok(ModuleRef::Std { rel: "test".into() });
+        return Ok(ModuleRef::Std {
+            rel: velt_common::std_rel!(test).into(),
+        });
     }
     if spec.starts_with("./") || spec.starts_with("../") {
         if spec.ends_with('/') || spec.contains('\\') {
@@ -63,7 +85,7 @@ pub fn resolve_spec(spec: &str, importer_dir: &Path) -> Result<ModuleRef, String
     }
     if spec.starts_with('/') || spec.contains('\\') || spec.contains(':') {
         return Err(format!(
-            "invalid module specifier `{spec}` (use `./relative/path`, `velt:x` or a package name)"
+            "invalid module specifier `{spec}` (use `./relative/path`, `velt/x` or a package name)"
         ));
     }
     // A scoped name (`@scope/name`) spans two segments, as in npm.
@@ -94,8 +116,8 @@ pub fn resolve_spec(spec: &str, importer_dir: &Path) -> Result<ModuleRef, String
     })
 }
 
-/// Standard library and package specifiers name modules without an extension (`velt:fs`, not
-/// `velt:fs.vlt`); only relative imports may name one.
+/// Standard library and package specifiers name modules without an extension (`velt/fs`, not
+/// `velt/fs.vlt`); only relative imports may name one.
 fn extension_check(spec: &str) -> Result<(), String> {
     match vpm::sources::SOURCE_EXTENSIONS
         .iter()
@@ -135,17 +157,17 @@ mod tests {
     fn std_specs_stay_inside_the_std_root() {
         let dir = Path::new("proj");
         for spec in [
-            "velt:C:/Users/me/evil",
-            "velt:..\\..\\proj\\evil",
-            "velt:..\\prelude\\evil",
-            "velt:a\\b",
-            "velt:/etc/x",
-            "velt:../x",
-            "velt:a/./b",
-            "velt:Fs",
-            "velt:a.b",
-            "velt:a b",
-            "velt:",
+            "velt/C:/Users/me/evil",
+            "velt/..\\..\\proj\\evil",
+            "velt/..\\prelude\\evil",
+            "velt/a\\b",
+            "velt//etc/x",
+            "velt/../x",
+            "velt/a/./b",
+            "velt/Fs",
+            "velt/a.b",
+            "velt/a b",
+            "velt/",
         ] {
             let err = resolve_spec(spec, dir).unwrap_err();
             assert!(
@@ -153,22 +175,40 @@ mod tests {
                 "{spec}: {err}"
             );
         }
-        for spec in [
-            "velt:jsx/jsx-runtime",
-            "velt:collections/priority_queue",
-            "velt:fs2",
-        ] {
+        for spec in ["velt/jsx/jsx-runtime", "velt/collections", "velt/fs2"] {
             assert!(resolve_spec(spec, dir).is_ok(), "{spec}");
         }
-        let err = resolve_spec("std", dir).unwrap_err();
-        assert!(err.contains("`velt:x`"), "{err}");
+        for spec in ["std", "velt"] {
+            let err = resolve_spec(spec, dir).unwrap_err();
+            assert!(err.contains("`velt/<module>`"), "{err}");
+        }
+    }
+
+    #[test]
+    fn velt_colon_specifiers_are_removed() {
+        let err = resolve_spec("velt:fs", Path::new(".")).unwrap_err();
+        assert!(err.contains("`velt:` specifiers were removed"), "{err}");
+        assert!(err.starts_with("`velt:fs` is now `velt/fs`"), "{err}");
+        // Per module: where it is now.
+        let err = resolve_spec("velt:json", Path::new(".")).unwrap_err();
+        assert!(
+            err.starts_with("`velt:json` is now `velt/encoding/json`"),
+            "{err}"
+        );
+        let err = resolve_spec("velt:sqlite", Path::new(".")).unwrap_err();
+        assert!(err.contains("the `sqlite` package"), "{err}");
+        // Not a module of the old layout: the general form.
+        let err = resolve_spec("velt:nothing", Path::new(".")).unwrap_err();
+        assert!(err.contains("not `velt:nothing`"), "{err}");
+        let err = resolve_spec("std/fs", Path::new(".")).unwrap_err();
+        assert!(err.contains("`velt/fs`"), "{err}");
     }
 
     #[test]
     fn classify_specs() {
         let dir = Path::new("proj/src");
         assert_eq!(
-            resolve_spec("velt:fs", dir).unwrap(),
+            resolve_spec("velt/fs", dir).unwrap(),
             ModuleRef::Std { rel: "fs".into() }
         );
         assert_eq!(
@@ -176,9 +216,9 @@ mod tests {
             ModuleRef::Std { rel: "test".into() }
         );
         assert_eq!(
-            resolve_spec("velt:collections/map", dir).unwrap(),
+            resolve_spec("velt/net/http", dir).unwrap(),
             ModuleRef::Std {
-                rel: "collections/map".into()
+                rel: "net/http".into()
             }
         );
         assert_eq!(
@@ -241,8 +281,10 @@ mod tests {
         for bad in [
             "",
             "std/fs",
-            "velt:",
-            "velt:../x",
+            "velt",
+            "velt:fs",
+            "velt/",
+            "velt/../x",
             "/abs",
             "C:\\x",
             "Bad",
@@ -259,7 +301,7 @@ mod tests {
                 "`{bad}` should be rejected"
             );
         }
-        let err = resolve_spec("velt:fs.vlt", dir).unwrap_err();
+        let err = resolve_spec("velt/fs.vlt", dir).unwrap_err();
         assert!(
             err.contains("should not include the `.vlt` extension"),
             "{err}"

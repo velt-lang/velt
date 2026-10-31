@@ -1,8 +1,8 @@
-# velt:task
+# velt/task
 
-`import { AbortError, TimeoutError, timeout, taskScope } from "velt:task"`. Cancellation with
+`import { AbortError, TimeoutError, timeout, taskScope } from "velt/task"`. Cancellation with
 TypeScript's `AbortController` / `AbortSignal` (global, as in Node; this module exports them
-too), timeouts, task scopes (structured concurrency) and task placement. [`fetch`](fetch.md) takes a signal.
+too), timeouts, task scopes (structured concurrency) and task placement. [`fetch`](net/http.md) takes a signal.
 
 Cancellation is cooperative. `abort()` marks the signal and wakes the tasks waiting for it;
 code that takes a signal checks it with `throwIfAborted()`, or races its work against
@@ -37,7 +37,7 @@ disposal run as usual.
   `AbortSignal.any` create them.
 
 ```ts
-import { AbortController, AbortSignal, AbortError, TimeoutError, timeout } from "velt:task";
+import { AbortController, AbortSignal, AbortError, TimeoutError, timeout } from "velt/task";
 
 async function download(name: string, signal: AbortSignal): Promise<string> throws AbortError {
   for (let chunk = 0; chunk < 10; chunk++) {
@@ -97,7 +97,7 @@ body's, and every child's.
 - `scope.spawn` after the scope ended is an error (it panics).
 
 ```ts
-import { AbortSignal, AbortError, TaskScope, taskScope } from "velt:task";
+import { AbortSignal, AbortError, TaskScope, taskScope } from "velt/task";
 
 async function fetchPart(n: i64, signal: AbortSignal): Promise<i64> throws AbortError {
   for (let i = 0; i < n; i++) {
@@ -162,8 +162,8 @@ never wakes another thread.
   worker. `scope.spawn` takes no placement yet.
 
 ```ts
-import { channel, Channel } from "velt:channel";
-import { workerCount, currentWorker } from "velt:task";
+import { channel, Channel } from "velt/sync";
+import { workerCount, currentWorker } from "velt/task";
 
 type Call = { key: string; reply: (n: i64) => void };
 

@@ -1,0 +1,29 @@
+// velt/test: the test runner (docs/book/testing.md). `velt test` finds the test files, compiles
+// them with a generated `main` that registers their tests here (`registerFile`, `registerTest`,
+// `registerAsyncTest`) and calls `runRegistered`, and starts the program. Everything after that
+// is this module:
+//
+// - Started by `velt test` (`$VELT_TEST_PLAN` names the plan, a JSON `Plan`), the program is the
+//   runner: it starts a process per test file, from the program the plan names for the file,
+//   several at once, and prints their reports in file order, then the summary; its exit code is
+//   the run's.
+// - Started for one file (`$VELT_TEST_FILE`, from the test `$VELT_TEST_FROM` on), it runs that
+//   file's tests one after another and reports each in marker lines for the runner. A failed
+//   test is an error it throws (a failed `assert` throws an `AssertionError`): it is caught and
+//   reported, and the next test runs. When a test ends the process (a panic, `process.exit`),
+//   the runner starts the file again from the test after it. After its last test the process
+//   exits, whatever timers or servers a failed test left behind.
+// - Started without either (a test program run by hand or under a debugger), it runs every file's
+//   tests in this process and prints the report itself.
+
+export { Expect, expect } from "velt/test/expect";
+export {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  it,
+  Settles,
+  test,
+} from "velt/test/suite";

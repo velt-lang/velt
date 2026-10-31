@@ -2,7 +2,7 @@
 
 This guide builds HTML pages on the server with TSX: components, lists, a layout, data loaded by
 async components, and pages streamed to the browser. It uses
-[`velt:jsx`](../std/jsx.md), the default JSX provider; the precise rules are in
+[`velt/jsx`](../std/jsx.md), the default JSX provider; the precise rules are in
 [the reference](../reference/tsx.md). The finished app, with components shared with a
 TypeScript client, is [`examples/apps/ssr-blog`](../../examples/apps/ssr-blog/README.md).
 
@@ -12,7 +12,7 @@ JSX works in any `.vlt` (or `.tsx`) file. A component is a function from typed p
 `JSX.Element`, and `renderToStringSync` turns an element into HTML:
 
 ```ts
-import { renderToStringSync } from "velt:jsx";
+import { renderToStringSync } from "velt/jsx";
 
 function Greeting(props: { name: string }): JSX.Element {
   return <h1 class="title">Hello, {props.name}!</h1>;
@@ -23,7 +23,7 @@ console.log(renderToStringSync(<Greeting name="<Ada>" />));
 ```
 
 Text and attributes are escaped as they are rendered, so user data can't inject markup. The only
-way to write raw HTML is `raw(html)` from `velt:jsx`. Tags and attributes are checked:
+way to write raw HTML is `raw(html)` from `velt/jsx`. Tags and attributes are checked:
 `<h1 clas="title">` is a compile error that suggests `class`.
 
 ## Lists and conditions
@@ -32,7 +32,7 @@ A list is an array of elements, usually from `map`. A condition is a `boolean` (
 treat strings or numbers as conditions), so an optional part is `cond ? <x /> : null`:
 
 ```ts
-import { renderToStringSync } from "velt:jsx";
+import { renderToStringSync } from "velt/jsx";
 
 type Item = { name: string; done: bool };
 
@@ -60,7 +60,7 @@ and an element from a component's own props can't be passed on yet
 ([the reference](../reference/tsx.md#components)).
 
 ```ts
-import { renderToStringSync } from "velt:jsx";
+import { renderToStringSync } from "velt/jsx";
 
 function page(title: string, content: JSX.Element): JSX.Element {
   return (
@@ -86,7 +86,7 @@ the loads of a page run concurrently, and rendering waits for them in document o
 such a tree with `await renderToString(el)`:
 
 ```ts
-import { renderToString } from "velt:jsx";
+import { renderToString } from "velt/jsx";
 
 async function loadComments(post: string): Promise<string[]> {
   await sleep(10); // a database query
@@ -112,15 +112,14 @@ naming the component.
 
 ## Streaming pages
 
-`renderToStream` turns a page into a streamed response body (a `BodyStream` for
-`new Response`, see [`velt:http`](../std/http.md#the-response)) that is sent in chunks: the
-markup above each async component goes out before the component is awaited, so the browser gets
-the top of the page while the rest loads. The status goes out first, so decide it before
-streaming starts:
+`renderToStream` turns a page into a streamed response body (a `BodyStream` for `new Response`, see
+[http-server](../../packages/http-server/README.md#the-response)) that is sent in chunks: the markup
+above each async component goes out before the component is awaited, so the browser gets the top of
+the page while the rest loads. The status goes out first, so decide it before streaming starts:
 
 ```ts
-import { serve } from "velt:http";
-import { renderToStream } from "velt:jsx";
+import { serve } from "http-server";
+import { renderToStream } from "velt/jsx";
 
 async function Slow(): Promise<JSX.Element> {
   await sleep(100);
@@ -150,7 +149,7 @@ browser bundle can use the same files. Keep them in folders listed under `tsComp
 `package.vlt` and check them with `velt check --ts-compat`
 ([the CLI](../tooling/cli.md#code-shared-with-typescript---ts-compat)). The provider must exist
 on both sides: `examples/apps/ssr-blog` names its own (`jsx: { importSource: "./jsx" }`), which
-is `velt:jsx` on the server and a small TypeScript runtime for `tsc`, and both render the same
+is `velt/jsx` on the server and a small TypeScript runtime for `tsc`, and both render the same
 HTML.
 
 ## Testing pages
@@ -159,7 +158,7 @@ A page is a value, so a test renders it and compares the HTML:
 
 ```ts ignore
 // tests/greeting.test.vlt
-import { renderToStringSync } from "velt:jsx";
+import { renderToStringSync } from "velt/jsx";
 import { Greeting } from "../src/greeting";
 
 export function test_escapes_the_name() {
@@ -169,7 +168,7 @@ export function test_escapes_the_name() {
 
 ## How fast is it
 
-`velt:jsx` compiles a tree of HTML elements into constant strings with the dynamic text folded
+`velt/jsx` compiles a tree of HTML elements into constant strings with the dynamic text folded
 in, as a hand-written template literal would be, and keeps the markup of nested elements as
 pieces that are copied once, when the page is written. `bench/jsx` compares a TSX page with
 hand-written template literals.

@@ -1,0 +1,10 @@
+// velt/net/url (internal): the byte values the URL parser's scanners look for.
+
+export const SLASH: i64 = 47;
+export const BACKSLASH: i64 = 92;
+export const QUESTION: i64 = 63;
+export const HASH: i64 = 35;
+export const COLON: i64 = 58;
+export const AT: i64 = 64;
+export const OPEN_BRACKET: i64 = 91;
+export const CLOSE_BRACKET: i64 = 93;

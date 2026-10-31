@@ -1,7 +1,7 @@
-//! The decoder generated for a union told apart by a discriminant skips the fields before the
-//! discriminant with the reader's `skipLookahead` (std/json/reader.vlt), which remembers where
-//! skipped objects end, so nested unions decode in linear time. A plain skip here would rescan
-//! every subtree once per enclosing level.
+//! The decoder generated (velt/encoding/json/generate/read_union.vlt) for a union told apart by
+//! a discriminant skips the fields before the discriminant with the reader's `skipLookahead`
+//! (std/encoding/json/reader.vlt), which remembers where skipped objects end, so nested unions
+//! decode in linear time. A plain skip here would rescan every subtree once per enclosing level.
 
 mod no_window;
 mod test_dir;
@@ -31,8 +31,10 @@ fn union_lookahead_uses_the_remembering_skip() {
         String::from_utf8_lossy(&out.stderr)
     );
     let vir = String::from_utf8_lossy(&out.stdout);
+    // Called from generated code, the method may be an instance that takes its caller's
+    // location (`…skipLookahead_LA`).
     assert!(
-        vir.contains("ReaderM13skipLookahead("),
+        vir.contains("ReaderM13skipLookahead(") || vir.contains("ReaderM13skipLookahead_LA("),
         "the union decoder does not use the reader's skipLookahead"
     );
 }

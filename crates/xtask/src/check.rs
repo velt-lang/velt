@@ -90,6 +90,9 @@ pub struct Options {
     pub archive: Option<String>,
     /// Print the commands instead of running them.
     pub dry_run: bool,
+    /// The revision the change is checked against (`--base`, else origin/main or main): an
+    /// allow-list entry of std-lint it lacks fails.
+    pub base: Option<String>,
 }
 
 struct Gate<'a> {
@@ -149,6 +152,9 @@ pub fn run(root: &Path, graph: &Graph, plan: &Plan, opts: &Options) -> Result<()
     if part.has(Part::Lint) && plan.difftest {
         gate.difftest_lint()?;
     }
+    if part.has(Part::Lint) && plan.native_crates {
+        gate.native_crates_lint()?;
+    }
     if part.has(Part::Test) {
         gate.tests(plan, graph, &ws)?;
     }
@@ -196,8 +202,17 @@ pub fn run(root: &Path, graph: &Graph, plan: &Plan, opts: &Options) -> Result<()
     if part.has(Part::Test) && plan.vlt_fmt {
         let velt = target_dir(root).join("debug").join(exe("velt"));
         let mut fmt = Command::new(&velt);
-        fmt.args(["fmt", "--check", "std", "examples"]);
-        gate.step("velt fmt --check (std, examples)", &mut fmt)?;
+        fmt.args(["fmt", "--check", "std", "examples", "packages"]);
+        gate.step("velt fmt --check (std, examples, packages)", &mut fmt)?;
+        // The std layout and quality rules (docs/internals/design/std-layout.md §2, §6). With
+        // the base revision, an allow-list entry it lacks fails: the lists only shrink.
+        let mut lint = Command::new(&velt);
+        lint.current_dir(root)
+            .args(["run", "scripts/std-lint/main.vlt"]);
+        if let Some(base) = &opts.base {
+            lint.args(["--", "--base", base]);
+        }
+        gate.step("std-lint", &mut lint)?;
     }
     if part.has(Part::Test) && plan.full && opts.smoke && !cfg!(windows) {
         let velt = target_dir(root).join("debug/velt");
@@ -537,6 +552,33 @@ impl Gate<'_> {
         self.step("clippy (tests/difftest)", &mut clippy)
     }
 
+    /// `cargo fmt --check` and clippy of each package's native crate (`packages/<name>/native`,
+    /// outside the workspace), in the cargo directory `velt` builds it in.
+    fn native_crates_lint(&mut self) -> Result<(), String> {
+        for dir in native_crates(self.root) {
+            let name = dir
+                .parent()
+                .and_then(|p| p.file_name())
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let manifest = dir.join("Cargo.toml");
+            let mut fmt = cargo(&["fmt", "--check", "--manifest-path"]);
+            fmt.arg(&manifest);
+            self.step(
+                &format!("cargo fmt --check (packages/{name}/native)"),
+                &mut fmt,
+            )?;
+            let mut clippy = cargo(&["clippy", "--manifest-path"]);
+            clippy
+                .arg(&manifest)
+                .arg("--target-dir")
+                .arg(dir.join("../target/velt-native/cargo"))
+                .args(["--all-targets", "--", "-D", "warnings"]);
+            self.step(&format!("clippy (packages/{name}/native)"), &mut clippy)?;
+        }
+        Ok(())
+    }
+
     fn step(&mut self, name: &str, cmd: &mut Command) -> Result<(), String> {
         let shown = show(cmd);
         println!("\x1b[36m==> {name}\x1b[0m");
@@ -592,6 +634,20 @@ pub(crate) fn workspace_args(root: &Path) -> Vec<String> {
         args.extend(["--exclude".into(), "velt_rt_shared".into()]);
     }
     args
+}
+
+/// The native crates of the repository's packages (`packages/*/native` with a `Cargo.toml`),
+/// sorted.
+fn native_crates(root: &Path) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = std::fs::read_dir(root.join("packages"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path().join("native"))
+        .filter(|d| d.join("Cargo.toml").is_file())
+        .collect();
+    out.sort();
+    out
 }
 
 fn difftest_manifest(root: &Path) -> PathBuf {

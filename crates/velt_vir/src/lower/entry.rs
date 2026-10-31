@@ -9,6 +9,9 @@
 //! on that task, as in Node, where `main end` prints before the callbacks `main` queued. A
 //! program that never does calls `main` directly.
 //!
+//! Before it returns, `velt_main` hands the runtime the function releasing what static atomics
+//! hold at exit, when there are any (static_atomic.rs).
+//!
 //! Before anything else, `velt_main` initializes the native libraries of packages
 //! (native_abi.md "Start-up"): for each, `rc = velt_native_init_<pkg>(velt_rt_native_api())`
 //! then `velt_rt_native_check(rc, &"<pkg>")`, which stops the program when `rc != 0`.
@@ -40,6 +43,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         if f.is_async {
             lw.push_scope(ScopeKind::Block);
             let code = lw.run_async_main(def);
+            lw.register_statics_drop();
             lw.terminate(Terminator::Return(code));
             lw.scopes.clear();
             return lw.finish_export();
@@ -70,6 +74,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         } else {
             lw.call_main(def, None)
         };
+        lw.register_statics_drop();
         lw.terminate(Terminator::Return(code));
         lw.scopes.clear();
         lw.finish_export()
@@ -272,7 +277,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
     }
 
     /// The `Error` class every member of the union `err` extends, when they all do (the errors
-    /// `velt:fs` throws: `IoError | RangeError | TypeError`).
+    /// `velt/fs` throws: `IoError | RangeError | TypeError`).
     fn common_error_root(&mut self, err: TyId) -> Option<DefId> {
         let mut root = None;
         for k in 0..self.union_len(err) {
@@ -346,7 +351,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
     }
 
     /// The first line Node prints for an uncaught error of class `err` (extending the prelude
-    /// `Error` class `root`): `Error.__uncaughtHeader(<dynamic class name>)`, which writes
+    /// `Error` class `root`): `uncaughtHeader(e, <dynamic class name>)` (std/lang/hooks/error.vlt), which writes
     /// `<name>: <message>` from the (possibly overridden) `name`, and the class in front when
     /// they differ (`E [TypeError]: m`).
     fn push_error_header(&mut self, buf: &Operand, ep: &Place, err: TyId, root: DefId) {
@@ -387,10 +392,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
     }
 
-    /// `Error.__uncaughtHeader(cls)` of the error at `ep` (a class extending `root`), appended
-    /// to the builder at `buf`.
+    /// The hook `uncaughtHeader(e, cls)` of the error at `ep` (a class extending `root`),
+    /// appended to the builder at `buf`.
     fn push_class_error_header(&mut self, buf: &Operand, ep: &Place, root: DefId, cls: &Place) {
-        let m = self.class_method(root, "__uncaughtHeader");
+        let m = (self.cx.prelude_def(velt_common::std_hook!(uncaught_header)))
+            .unwrap_or_else(|| super::ice("std without the hook `uncaughtHeader`"));
         let root_ty = self.cx.intern(TyKind::Adt(root, vec![]));
         let (text, ty) = self.call_hook(m, Operand::Copy(ep.clone()), root_ty, Some(cls));
         let a = self.addr(text.clone());

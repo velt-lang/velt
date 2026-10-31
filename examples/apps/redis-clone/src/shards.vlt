@@ -4,7 +4,7 @@
 // keys; KEYS, DBSIZE, FLUSHDB, FLUSHALL, INFO) holds the locks of every shard it touches at
 // once, taken in ascending order (so two of them can't deadlock), runs its part on each, and
 // merges the replies: it is as atomic as in Redis.
-import { utf8DecodeLossy } from "velt:encoding";
+import { utf8DecodeLossy } from "velt/encoding";
 import { execute } from "./commands";
 import { Db } from "./db";
 import { Writer } from "./resp";

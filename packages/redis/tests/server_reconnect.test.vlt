@@ -1,0 +1,86 @@
+// The Redis client against a real server ($VELT_TEST_REDIS_URL; every test returns at once
+// without it): a client whose connection was killed reconnects on its next command instead of
+// failing with ECONNRESET from then on.
+import { connect, RedisClient, RedisError, RedisReply } from "../src/lib";
+import { redisUrl, freshPrefix, cleanup } from "./support/redis";
+
+// Whether the server reports client `id` waiting in `BLPOP`.
+async function blockedInBlpop(admin: RedisClient, id: i64): Promise<bool> {
+  const list = await admin.call(["CLIENT", "LIST"]);
+  for (const line of list.text.split("\n")) {
+    if (line.startsWith(`id=${id} `)) {
+      return line.includes(" cmd=blpop");
+    }
+  }
+  return false;
+}
+
+// Kills `c`'s connection while it waits in a `BLPOP` nothing answers, and returns once `c` saw
+// the connection end (the `BLPOP` failed): the next command can only go to a new connection.
+// It waits for the server to report the `BLPOP` first (a minute is a hang guard, not a limit).
+// The number of clients `CLIENT KILL` killed.
+async function kill(c: RedisClient, admin: RedisClient, p: string): Promise<i64> {
+  const id = (await c.call(["CLIENT", "ID"])).int;
+  // Handled from the start: the kill can fail it before `CLIENT KILL`'s own reply arrives, and
+  // a rejection nobody handles by then is an uncaught error (as in Node).
+  const blocked = failed(c.call(["BLPOP", `${p}never`, "0"]));
+  for (let t = 0; t < 60000; t++) {
+    if (await blockedInBlpop(admin, id)) {
+      break;
+    }
+    await sleep(1);
+  }
+  const killed = await admin.call(["CLIENT", "KILL", "ID", `${id}`]);
+  assert(await blocked, "unexpected: the BLPOP returned");
+  return killed.int;
+}
+
+// Whether `reply` fails.
+async function failed(reply: Promise<RedisReply, RedisError>): Promise<bool> {
+  try {
+    await reply;
+    return false;
+  } catch (e) {
+    return true;
+  }
+}
+
+export async function test_a_killed_connection_is_reopened_by_the_next_command() {
+  const url = redisUrl();
+  if (url == null) {
+    return;
+  }
+  const p = freshPrefix();
+  const c = await connect(url);
+  const admin = await connect(url);
+  await c.set(`${p}k`, "before");
+  const id = await c.call(["CLIENT", "ID"]);
+  assertEq(await kill(c, admin, p), 1);
+  assertEq(await c.get(`${p}k`), "before");
+  const newId = await c.call(["CLIENT", "ID"]);
+  assert(newId.int != id.int, "a new connection");
+  assertEq(await cleanup(c, p), 1);
+  admin.close();
+  c.close();
+}
+
+// Several tasks on the reconnected client still share one pipelined connection.
+export async function test_tasks_share_the_reopened_connection_after_a_second_kill() {
+  const url = redisUrl();
+  if (url == null) {
+    return;
+  }
+  const p = freshPrefix();
+  const c = await connect(url);
+  const admin = await connect(url);
+  await c.set(`${p}k`, "before");
+  assertEq(await kill(c, admin, p), 1);
+  assertEq(await c.get(`${p}k`), "before");
+  assertEq(await kill(c, admin, p), 1);
+  const all = await Promise.all([c.incr(`${p}n`), c.incr(`${p}n`), c.incr(`${p}n`)]);
+  assertEq(all.length, 3);
+  assertEq(await c.get(`${p}n`), "3");
+  assertEq(await cleanup(c, p), 2);
+  admin.close();
+  c.close();
+}

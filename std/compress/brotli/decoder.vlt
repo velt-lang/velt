@@ -1,6 +1,6 @@
-// std/compress/brotli/decoder (internal to velt:compress/brotli): the decoder's driver: it runs
-// the stream's parts in order (headers, uncompressed and metadata blocks, commands) as far as
-// the input and the room for output allow, and keeps the output buffer.
+// velt/compress (internal): the decoder's driver: it runs the stream's parts in order (headers,
+// uncompressed and metadata blocks, commands) as far as the input and the room for output allow,
+// and keeps the output buffer.
 //
 // Input may stop anywhere. A step that can run out of it (a header, or a command step within 16
 // bytes of the input's end) starts from a saved state: when it turns out to have needed more
@@ -11,13 +11,12 @@
 // The output buffer keeps what back-references can still reach (the window) and what has not
 // been read; `brotliDecompress` keeps all of it, which is then the result.
 
-import { u8x16 } from "velt:simd";
-import { CompressError } from "velt:compress/error";
-import { decodeCommands, FAILED, META_DONE } from "velt:compress/brotli/commands";
-import { readHeader } from "velt:compress/brotli/header";
+import { u8x16 } from "velt/simd";
+import { CompressError } from "velt/compress/errors";
+import { decodeCommands, FAILED, META_DONE } from "velt/compress/brotli/commands";
+import { readHeader } from "velt/compress/brotli/header";
 import {
   Cursor,
-  State,
   STAGE_COMMAND,
   STAGE_COPY,
   STAGE_DONE,
@@ -26,7 +25,9 @@ import {
   STAGE_METADATA,
   STAGE_STREAM,
   STAGE_UNCOMPRESSED,
-} from "velt:compress/brotli/state";
+} from "velt/compress/brotli/cursor";
+import { State } from "velt/compress/brotli/state";
+import { arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
 
 /** `run` stopped because the output reached its limit. */
 export const FULL: i64 = 0;
@@ -243,8 +244,8 @@ export class Decoder {
         const half = s.out.length + s.out.length / 2;
         size = end + SLACK > half ? end + SLACK : half;
       }
-      const grown: u8[] = __intrinsic_array_with_capacity(size);
-      __intrinsic_array_set_len(grown, size);
+      const grown: u8[] = arrayWithCapacity(size);
+      arraySetLen(grown, size);
       grown.set(s.out);
       s.out = grown;
     }

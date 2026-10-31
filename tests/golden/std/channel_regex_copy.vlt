@@ -1,7 +1,7 @@
 // A value holding a `RegExp`, sent on a channel while the program still uses it, is copied for
 // the receiving task with `RegExp.clone()` (#690); a resource the sender no longer uses moves.
-import { channel, Channel } from "velt:channel";
-import { RegExp } from "velt:regex";
+import { channel, Channel } from "velt/sync";
+import { RegExp } from "velt/text";
 
 class Rule {
   re: RegExp;

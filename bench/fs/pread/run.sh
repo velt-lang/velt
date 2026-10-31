@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Positioned file I/O: pread.vlt (velt:fs's fd API, Velt over system functions, LLVM release)
+# Positioned file I/O: pread.vlt (velt/fs's fd API, Velt over system functions, LLVM release)
 # against Node (pread.js: fs.readSync with a position) and Rust (rust/: FileExt::read_at, fat
 # LTO). Workloads: random 4 KiB reads of a 64 MiB file (in the OS cache after a warm-up),
 # sequential 64 KiB reads of it, and 100-byte writes each followed by fsync. Checks that all

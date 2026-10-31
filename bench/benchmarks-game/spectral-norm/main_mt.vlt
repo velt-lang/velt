@@ -4,8 +4,8 @@
 // main.vlt with each matrix-vector product split into row blocks: every block is a spawned task
 // that gets its own copy of the input vector (async parameters are owned) and returns its rows;
 // `Promise.all` gives the blocks back in order.
-import { argv } from "velt:process";
-import { availableParallelism } from "velt:os";
+import { argv } from "velt/process";
+import { availableParallelism } from "velt/os";
 
 // Entry (i, j) of the infinite matrix A.
 function a(i: i64, j: i64): f64 {

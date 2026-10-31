@@ -13,8 +13,7 @@
 //! - Drop elaboration: a droppable local whose ownership state changes inside a conditional region
 //!   (relative to its declaration) gets a Bool drop flag (flags.rs); all others are tracked
 //!   statically during lowering.
-//! - Async functions (M3) become poll/drop state machines (async_fn/); JSON glue (M4) lives in
-//!   json/.
+//! - Async functions (M3) become poll/drop state machines (async_fn/); JSON glue lives in json/.
 //! - Source locations (srcloc.rs): with a source map every statement records the location of
 //!   the HIR expression/statement being lowered, and panics name their location
 //!   (track_caller.rs for standard-library helpers such as `unwrap`).
@@ -43,6 +42,7 @@ mod any_number;
 mod any_object_fill;
 mod any_proxy;
 mod any_record;
+mod any_reflect;
 mod any_rest;
 mod any_set;
 mod any_set_site;
@@ -200,6 +200,12 @@ pub(crate) fn lower_program(
         // `velt_main` last: whether it selects the per-core scheduler depends on everything else.
         cx.func(Work::Main);
         while let Some((fid, work)) = cx.queue.pop_front() {
+            // The function releasing the static atomics at exit is built last: it releases the
+            // ones the program's code uses, which every other function has said by then.
+            if matches!(work, Work::StaticsDrop) && !cx.queue.is_empty() {
+                cx.queue.push_back((fid, work));
+                continue;
+            }
             cx.build_now(fid, &work);
         }
         cx.build_iface_glues();
@@ -374,8 +380,6 @@ enum Work {
     /// `(slot: ptr)`: disposes of the unclaimed result of a started promise of a rejecting
     /// promise type (async_fn/start.rs).
     Unclaimed(TyId),
-    /// `(env, req, state)` initializer of an http handler closure's per-request state.
-    HandlerInit(DefId, Vec<TyId>),
     /// `(this: ptr)`: the field initializers `new` runs for class `T` (after its constructor),
     /// throwing `E`; built only for classes whose initializers construct each other in a
     /// cycle (ctor_init.rs).
@@ -387,6 +391,8 @@ enum Work {
     /// `(state: ptr)`: the initializer of module state slots `from..to` (module_state.rs):
     /// the state's own (`0..deferred`), or the root file's slots its `main` initializes.
     ModuleInit(u32, u32),
+    /// `()`: releases the references the static atomics hold, at exit (static_atomic.rs).
+    StaticsDrop,
 }
 
 /// Program-level lowering state.
@@ -447,8 +453,7 @@ struct Cx<'h> {
     work_map: FxHashMap<Work, FuncId>,
     queue: VecDeque<(FuncId, Work)>,
     /// The glues that depend on the types `any` values hold (`AnyIface`, any_iface.rs, and
-    /// `AnyNumeric`, any_number.rs), built last: each with the number of such types when it
-    /// was built.
+    /// `AnyNumeric`, any_number.rs), built last, each with the number of such types then.
     iface_glues: Vec<(FuncId, Work, Option<usize>)>,
     /// Params given `noalias` or `frozen`, with their types, for `unfreeze_module_reach`
     /// (boxing/module_reach.rs); those of the function being declared until it is built.
@@ -461,9 +466,6 @@ struct Cx<'h> {
     /// Closure instances whose declared scalar params are passed by pointer: `Mutex.with`
     /// callbacks update the locked value in place.
     by_ref_params: FxHashSet<(DefId, Vec<TyId>)>,
-    /// Async closure instances used as http handlers: the capture modes their state machine
-    /// uses, reading the shared, leaked environment (async_fn/handler.rs).
-    shared_envs: FxHashMap<(DefId, Vec<TyId>), Vec<hir::PassMode>>,
     lay: layout::Layouts,
     /// Line tables when lowering with a source map (`lower_with`).
     locs: Option<srcloc::LocMap>,
@@ -496,11 +498,10 @@ struct Cx<'h> {
     honoured_clones: FxHashMap<TyId, Option<DefId>>,
     /// Memoized `dyn_modes` per (interface, slot).
     dyn_modes_memo: FxHashMap<(DefId, u32), Option<Vec<hir::PassMode>>>,
-    /// Whether some class has a `toJSON(key)`, and memoized `json_needs_key` per type
-    /// (json/key.rs); `None` until first asked.
-    json_key_memo: Option<(bool, FxHashMap<TyId, bool>)>,
     /// One type per anonymous object shape (types.rs `canon`).
     anon: types::AnonShapes,
+    /// `hir::Program::generated` by work items' canonical type arguments (made on first use).
+    generated_canon: Option<FxHashMap<(DefId, Vec<TyId>), DefId>>,
     /// The function whose instance is being built (for `nothing_clashes`).
     cur_def: Option<DefId>,
     /// The read mode of the function being built (`Work::Checked`, `Work::Read`).
@@ -745,7 +746,7 @@ struct FnLower<'c, 'h> {
     /// read through a proxy (`call_def` takes it).
     super_call: bool,
     /// The location of the top-level `await` lowered last (velt_sema's `top_level_await.rs`
-    /// marks each with `__topLevelAwaitAt(site)`): a suspension from here on tells the runtime it
+    /// marks each with `topLevelAwaitAt(site)`): a suspension from here on tells the runtime it
     /// waits there (`velt_rt_tla_at`, async_fn/suspend.rs), only when it really suspends.
     tla_site: Option<velt_common::Span>,
     /// Building `Glue::Same`: objects inside the compared values compare by identity (same.rs).
@@ -772,8 +773,7 @@ struct FnLower<'c, 'h> {
     /// Classes whose initializers a `new` is inlining here (ctor_init.rs): a `new` of one of
     /// them inside them calls an out-of-line initializer function instead.
     init_stack: Vec<TyId>,
-    /// Closures of this body only ever called here: their envs live in the frame
-    /// (frame_envs.rs).
+    /// Closures of this body only ever called here: their envs live in the frame (frame_envs.rs).
     frame_closures: FxHashSet<DefId>,
     /// `Intrinsic::ClosureSibling` locals only ever called: calls go straight to the member
     /// (frame_envs.rs).
@@ -781,7 +781,7 @@ struct FnLower<'c, 'h> {
     /// The env param of the closure being lowered (`Intrinsic::ClosureSibling`).
     self_env: Option<Local>,
     /// This function loads an `Atomic` of a `shared` value, so it runs in an epoch section
-    /// (epoch_sections.rs), unless it is one of `velt:sync/epoch`'s own (`epoch_exempt`).
+    /// (epoch_sections.rs), unless it is one of `velt/sync/epoch`'s own (`epoch_exempt`).
     ref_loads: bool,
     epoch_exempt: bool,
     /// Lowering a method of the prelude's `Reflect`, where a proxy's reads reach their target:

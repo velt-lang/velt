@@ -1,0 +1,101 @@
+// velt/net/http's `serveHttp` speaking HTTP/2: with prior knowledge on plain TCP (h2c), chosen by
+// ALPN over TLS, HTTP/1.1 still for clients that do not offer it, and `Upgrade: h2c` answered
+// over HTTP/1.1. The client side is curl, when it is installed with HTTP/2 support; these tests
+// are skipped otherwise. h2spec, when installed, is run by docs/internals/design/http2.md.
+import { HttpRequest, HttpResponse, serveHttp } from "../../src/lib";
+import { exec } from "velt/process/child";
+import { describe, expect, it } from "velt/test";
+import { TEST_CERT, TEST_KEY } from "../_tls";
+
+async function handler(req: HttpRequest, res: HttpResponse) {
+  if (req.pathIs("/echo")) {
+    const body = await req.body();
+    res.send(`got ${body.length}`);
+  } else if (req.pathIs("/sse")) {
+    const ev = await res.sse();
+    await ev.send("one");
+    await ev.send("two", "x");
+    await ev.end();
+  } else if (req.pathIs("/stream")) {
+    const s = await res.stream();
+    await s.write("a");
+    await s.write("b");
+    await s.end();
+  } else {
+    res.header("X-Test", "1");
+    res.send(`hello ${req.method()} ${req.path()} ${req.header("host")}`);
+  }
+}
+
+/// Whether curl is there and speaks HTTP/2.
+async function curlHasHttp2(): Promise<bool> {
+  try {
+    const r = await exec("curl", ["--version"]);
+    return r.code == 0 && r.stdout.includes("HTTP2");
+  } catch (e) {
+    return false;
+  }
+}
+
+/// curl's output (`-w` adds the protocol version) for `args`.
+async function curl(args: string[]): Promise<string> {
+  const all = ["-s", "-k", "-m", "10", "-w", " v%{http_version}"];
+  for (const a of args) {
+    all.push(a);
+  }
+  const r = await exec("curl", all);
+  return r.stdout;
+}
+
+describe("serveHttp over HTTP/2", () => {
+  it("serves h2c with prior knowledge, HTTP/1.1, and HTTP/2 over TLS by ALPN", async () => {
+    if (!(await curlHasHttp2())) {
+      console.log("skipped: no curl with HTTP/2");
+      return;
+    }
+    const plain = await serveHttp({ port: 0 }, handler);
+    const secure = await serveHttp({ port: 0, tls: { cert: TEST_CERT, key: TEST_KEY } }, handler);
+    try {
+      const p = `http://127.0.0.1:${plain.port}`;
+      const s = `https://localhost:${secure.port}`;
+      expect(await curl(["--http2-prior-knowledge", `${p}/a`])).toBe(
+        `hello GET /a 127.0.0.1:${plain.port} v2`,
+      );
+      expect(await curl(["--http1.1", `${p}/a`])).toBe(`hello GET /a 127.0.0.1:${plain.port} v1.1`);
+      // `Upgrade: h2c` is not taken up: the answer comes over HTTP/1.1.
+      expect(await curl(["--http2", `${p}/a`])).toBe(`hello GET /a 127.0.0.1:${plain.port} v1.1`);
+      expect(await curl(["--http2", `${s}/a`])).toBe(`hello GET /a localhost:${secure.port} v2`);
+      expect(await curl(["--http1.1", `${s}/a`])).toBe(
+        `hello GET /a localhost:${secure.port} v1.1`,
+      );
+      expect(await curl(["--http2", `${s}/sse`])).toBe("data: one\n\nevent: x\ndata: two\n\n v2");
+      expect(await curl(["--http2-prior-knowledge", `${p}/stream`])).toBe("ab v2");
+      expect(await curl(["--http2", "--data-binary", "x".repeat(100000), `${s}/echo`])).toBe(
+        "got 100000 v2",
+      );
+      const head = await curl(["--http2-prior-knowledge", "-I", `${p}/a`]);
+      expect(head.includes("x-test: 1")).toBe(true);
+    } finally {
+      plain.close();
+      secure.close();
+    }
+  });
+
+  it("serves many requests at once on one connection", async () => {
+    if (!(await curlHasHttp2())) {
+      console.log("skipped: no curl with HTTP/2");
+      return;
+    }
+    const server = await serveHttp({ port: 0 }, handler);
+    try {
+      const urls: string[] = ["--http2-prior-knowledge", "-Z", "--parallel-max", "50"];
+      for (let i = 0; i < 100; i++) {
+        urls.push(`http://127.0.0.1:${server.port}/n${i}`, "-o", "/dev/null");
+      }
+      const out = await curl(urls);
+      expect(out.split(" v2").length).toBe(101);
+    } finally {
+      server.close();
+    }
+  });
+});

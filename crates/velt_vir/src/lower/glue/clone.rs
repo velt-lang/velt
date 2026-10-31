@@ -287,7 +287,7 @@ impl FnLower<'_, '_> {
         let tys = self.cx.adt_field_tys(ty);
         // A record's copy has its own enumerable string keys only, as JavaScript's structured
         // clone (`structuredClone`, a value sent to another task) makes it: not its symbol keys
-        // or accessors (fields 2 and 3, std/record/symbols.vlt).
+        // or accessors (fields 2 and 3, std/lang/record/symbols.vlt).
         let record = self.prelude_record(ty).is_some();
         for (i, t) in tys.into_iter().enumerate() {
             let dp = self.field_place(&np, ty, i as u32);

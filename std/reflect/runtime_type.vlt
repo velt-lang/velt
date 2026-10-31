@@ -1,0 +1,33 @@
+// velt/reflect (internal): `RuntimeType`, what `typeOf` tells of a dynamic value.
+
+/** What a dynamic value holds at run time (`typeOf`). */
+export class RuntimeType {
+  /**
+   * `"undefined"`, `"null"`, `"boolean"`, `"number"`, `"string"`, `"symbol"`, `"function"`,
+   * `"array"`, `"tuple"`, `"object"` (an object type), `"class"`, `"struct"`, `"map"`,
+   * `"record"`, `"set"`, `"shared"`, `"proxy"`, `"interface"`, `"enum"` or `"opaque"` (a value
+   * whose structure is not shown, such as a promise).
+   */
+  readonly kind: string;
+  /** `i64`, `u8`, `f64`, … for a number; `""` otherwise. */
+  readonly repr: string;
+  /** The type's name as messages show it (`User`, `Map`, `number`). */
+  readonly name: string;
+  /**
+   * The hooks its class has, of `toJSON`, `toString` and the inspect hook (a method keyed by
+   * `Symbol.for("nodejs.util.inspect.custom")`, named as velt_sema's `hooks::INSPECT` names it).
+   */
+  readonly hooks: string[];
+
+  constructor(kind: string, repr: string, name: string, hooks: string[]) {
+    this.kind = kind;
+    this.repr = repr;
+    this.name = name;
+    this.hooks = hooks;
+  }
+
+  /** Whether its class has the hook `name` (`toJSON`, `toString`, the inspect hook's name). */
+  hasHook(name: string): bool {
+    return this.hooks.includes(name);
+  }
+}

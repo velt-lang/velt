@@ -43,9 +43,23 @@ pub(crate) fn path(exe: &Path) -> PathBuf {
     exe.with_file_name(name)
 }
 
-/// Whether stamps are used: not with `$VELT_BUILD_STAMP=off`.
+/// Whether stamps are used: not with `$VELT_BUILD_STAMP=off`, except while a build needs one
+/// whatever the environment says ([`required`]).
 pub(crate) fn enabled() -> bool {
-    !std::env::var("VELT_BUILD_STAMP").is_ok_and(|v| v == "off" || v == "0")
+    REQUIRED.load(std::sync::atomic::Ordering::Relaxed) > 0
+        || !std::env::var("VELT_BUILD_STAMP").is_ok_and(|v| v == "off" || v == "0")
+}
+
+static REQUIRED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Run `build` with stamps on: a source generator's host (`crate::generate`), whose stamp lists
+/// the files the generators read and keeps an unchanged host from being compiled again.
+pub(crate) fn required<T>(build: impl FnOnce() -> T) -> T {
+    use std::sync::atomic::Ordering;
+    REQUIRED.fetch_add(1, Ordering::Relaxed);
+    let out = build();
+    REQUIRED.fetch_sub(1, Ordering::Relaxed);
+    out
 }
 
 /// The key of what a build is configured by (everything but the files it reads).
@@ -58,6 +72,7 @@ pub(super) fn options_key(opts: &BuildOptions, backend: Backend) -> Key {
     let BuildOptions {
         input,
         root_source,
+        test_harness,
         packages: _, // From the manifest and lockfile, recorded with their directory.
         output,
         release,
@@ -70,7 +85,7 @@ pub(super) fn options_key(opts: &BuildOptions, backend: Backend) -> Key {
         debug_vars,
     } = opts;
     h.part(format!("{:?}", vpm::relpath::absolute(input)).as_bytes());
-    h.part(format!("{root_source:?}").as_bytes());
+    h.part(format!("{root_source:?} {test_harness}").as_bytes());
     let settings = format!(
         "{output:?} {release} {debug_info} {} {cpu:?} {emit:?} {backend:?} {report_numbers} \
          {debug_vars} {}",
@@ -160,6 +175,9 @@ pub(super) struct Built<'a> {
     pub std_objects: &'a [PathBuf],
     /// What the program reaches outside itself (`super::outside::reaches`: `-` for nothing).
     pub outside: &'a str,
+    /// What the generators the build ran read: the `file`, `dir`, `probe` and `real` entries of
+    /// their hosts' stamps.
+    pub generator_inputs: &'a [String],
 }
 
 /// The stamp of a build configured by `key` that read the files in `sm` and `built`.
@@ -173,7 +191,10 @@ pub(super) fn render(key: &Key, sm: &SourceMap, built: &Built) -> String {
     let seen = built.seen;
     let mut files = seen.read.clone();
     for (_, file) in sm.files() {
-        if Some(file.path.as_path()) == built.virtual_root {
+        // Generated modules are no files: the generators' files stand for them.
+        if Some(file.path.as_path()) == built.virtual_root
+            || file.path.starts_with(crate::generate::GENERATED_DIR)
+        {
             continue;
         }
         // Read other than through `probe` (none is): no time, so it is always hashed.
@@ -184,6 +205,29 @@ pub(super) fn render(key: &Key, sm: &SourceMap, built: &Built) -> String {
         files
             .entry(vpm::relpath::absolute(&file.path))
             .or_insert(read);
+    }
+    // What the build's generators read (entries of their hosts' stamps): files, and what
+    // resolving their imports looked at (`dir`, `probe` and `real` entries, kept as they are).
+    let mut generator_lookups = std::collections::BTreeSet::new();
+    for line in built.generator_inputs {
+        let Some((head, path)) = line.split_once('\t') else {
+            continue;
+        };
+        if !head.starts_with("file ") {
+            generator_lookups.insert(line.as_str());
+            continue;
+        }
+        let mut fields = head.split(' ').skip(1);
+        let Some(hash) = fields.next() else {
+            continue;
+        };
+        let stat = (fields.next().and_then(|s| s.parse().ok()))
+            .zip(fields.next().and_then(|t| t.parse().ok()));
+        let read = probe::Read {
+            stat,
+            hash: hash.to_string(),
+        };
+        files.entry(PathBuf::from(path)).or_insert(read);
     }
     let mut entries = 0;
     for (path, read) in &files {
@@ -203,6 +247,10 @@ pub(super) fn render(key: &Key, sm: &SourceMap, built: &Built) -> String {
     }
     for (path, hash) in &seen.resolved {
         let _ = writeln!(s, "real {hash}\t{}", path.display());
+        entries += 1;
+    }
+    for line in generator_lookups {
+        let _ = writeln!(s, "{line}");
         entries += 1;
     }
     for (kind, paths) in [("link", built.link_inputs), ("std", built.std_objects)] {
@@ -288,7 +336,7 @@ pub(super) fn read(path: &Path, key: &Key) -> Option<(usize, Vec<PathBuf>)> {
 
 /// Whether the stamp `text`, written at `written` (nanoseconds since 1970), still describes the
 /// build configured by `key`: `Some(objects)` when everything it records is unchanged.
-pub(super) fn check(text: &str, key: &Key, written: Option<u128>) -> Option<usize> {
+pub(crate) fn check(text: &str, key: &Key, written: Option<u128>) -> Option<usize> {
     let mut lines = text.lines();
     (lines.next()? == HEADER).then_some(())?;
     (lines.next()?.strip_prefix("key ")? == key.hex()).then_some(())?;

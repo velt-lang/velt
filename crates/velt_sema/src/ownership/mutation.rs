@@ -194,6 +194,15 @@ impl Dispatch {
     /// The dispatch groups of the whole program.
     pub(super) fn new(cx: &Ctx) -> Dispatch {
         let mut groups: Vec<Group> = vtable_groups(cx).into_iter().map(Group::Vtable).collect();
+        // A generated function and the generated bodies of its instances share one ABI: callers
+        // are checked against the function, lowering calls the bodies (`crate::generated`).
+        let mut generated: FxHashMap<DefId, Vec<DefId>> = FxHashMap::default();
+        for ((g, _), body) in &cx.gen.binding.bound {
+            generated.entry(*g).or_insert_with(|| vec![*g]).push(*body);
+        }
+        let mut generated: Vec<Vec<DefId>> = generated.into_values().collect();
+        generated.sort();
+        groups.extend(generated.into_iter().map(Group::Vtable));
         groups.extend(iface_slots(cx));
         Dispatch { groups }
     }

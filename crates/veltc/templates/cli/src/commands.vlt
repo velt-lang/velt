@@ -1,6 +1,6 @@
 // The commands: argv in, output lines out. No process access here, so tests call `execute`
 // directly; src/main.vlt does the printing and the exit code.
-import { ArgParser, CliError, ParsedArgs } from "velt:cli";
+import { ArgParser, CliError, ParsedArgs } from "velt/cli";
 
 /// The argument parser (also the source of `--help`).
 export function parser(): ArgParser {

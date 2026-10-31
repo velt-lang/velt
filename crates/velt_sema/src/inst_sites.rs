@@ -59,18 +59,41 @@ impl Uses {
 /// in definition order, followed by those of the field initializers of each struct and class (a
 /// unit of their own, keyed by the type, which `new` and literals of the type instantiate).
 pub(crate) fn collect(cx: &mut Ctx, signature: bool) -> Vec<(DefId, Uses)> {
+    collect_with(cx, signature, 0, true, false)
+}
+
+/// [`collect`] of the definitions from `from` on (those made since an earlier collection);
+/// without `types`, [`Uses::types`] stays empty (the calls are all a caller needs, when no
+/// method can be dispatched to). The initializers of module variables are units too, keyed by
+/// the variable (a module constant made by `JSON.parse` instantiates its generated decoder).
+pub(crate) fn collect_from(
+    cx: &mut Ctx,
+    signature: bool,
+    from: usize,
+    types: bool,
+) -> Vec<(DefId, Uses)> {
+    collect_with(cx, signature, from, types, true)
+}
+
+fn collect_with(
+    cx: &mut Ctx,
+    signature: bool,
+    from: usize,
+    types: bool,
+    globals: bool,
+) -> Vec<(DefId, Uses)> {
     type News = Vec<(DefId, Vec<TyId>, Span, u64)>;
     let mut out: Vec<(DefId, Uses, News)> = vec![];
     let mut converts = cx.type_level.converts.clone();
     converts.extend(cx.type_level.inline.reads.iter().map(|(&k, &v)| (k, v)));
     let tys = &cx.ty;
-    for (i, d) in cx.defs.iter_mut().enumerate() {
+    for (i, d) in cx.defs.iter_mut().enumerate().skip(from) {
         let Some(Def::Fn(f)) = d else { continue };
         let mut u = Uses::default();
         let mut news = vec![];
         let mut seen: FxHashSet<TyId> = FxHashSet::default();
         let guards = guards_of(tys, &mut f.body.block);
-        if signature {
+        if signature && types {
             let span = f.body.block.span;
             for t in f.params.iter().map(|p| p.ty).chain([f.ret]) {
                 if seen.insert(t) {
@@ -78,14 +101,14 @@ pub(crate) fn collect(cx: &mut Ctx, signature: bool) -> Vec<(DefId, Uses)> {
                 }
             }
         }
-        for l in &f.body.locals {
+        for l in f.body.locals.iter().filter(|_| types) {
             if seen.insert(l.ty) {
                 u.types.push((l.ty, l.span));
             }
         }
         visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
             let guard = guards.get(&(e as *const Expr)).copied().unwrap_or(0);
-            add_site(tys, &mut u, &mut news, &mut seen, e, guard);
+            add_site(tys, &mut u, &mut news, &mut seen, e, guard, types);
             if !converts.is_empty() {
                 convert_site(&mut u, &mut seen, e, &converts);
             }
@@ -93,13 +116,31 @@ pub(crate) fn collect(cx: &mut Ctx, signature: bool) -> Vec<(DefId, Uses)> {
         out.push((DefId(i as u32), u, news));
     }
     let mut inits: FxHashMap<DefId, (Uses, News, FxHashSet<TyId>)> = FxHashMap::default();
-    for_each_init(cx, &mut |tys, d, e| {
+    for_each_init(cx, globals, &mut |tys, d, e| {
+        if (d.0 as usize) < from {
+            return;
+        }
         let (u, news, seen) = inits.entry(d).or_default();
-        add_site(tys, u, news, seen, e, 0);
+        add_site(tys, u, news, seen, e, 0, types);
         if !converts.is_empty() {
             convert_site(u, seen, e, &converts);
         }
     });
+    // A module constant's initializer: lowering evaluates it where it is read
+    // (`hir::GlobalDef::init`), in whichever function reads it, so it is a unit of its own.
+    for (i, info) in cx.info.iter_mut().enumerate().skip(from) {
+        let DefInfo::Global(g) = info else { continue };
+        let Some(init) = g.init.as_mut() else {
+            continue;
+        };
+        let (u, news, seen) = inits.entry(DefId(i as u32)).or_default();
+        visit::exprs_in(init, &mut |e: &mut Expr| {
+            add_site(&cx.ty, u, news, seen, e, 0, types);
+            if !converts.is_empty() {
+                convert_site(u, seen, e, &converts);
+            }
+        });
+    }
     let mut inits: Vec<_> = inits.into_iter().collect();
     inits.sort_by_key(|(d, _)| *d);
     out.extend(inits.into_iter().map(|(d, (u, news, _))| (d, u, news)));
@@ -156,12 +197,13 @@ fn add_site(
     seen: &mut FxHashSet<TyId>,
     e: &Expr,
     guard: u64,
+    types: bool,
 ) {
-    if seen.insert(e.ty) {
+    if types && seen.insert(e.ty) {
         u.types.push((e.ty, e.span));
     }
     let mut mention = |u: &mut Uses, ts: &[TyId]| {
-        for t in ts {
+        for t in ts.iter().filter(|_| types) {
             if seen.insert(*t) {
                 u.types.push((*t, e.span));
             }
@@ -279,11 +321,17 @@ fn constructed(cx: &mut Ctx, def: DefId, targs: Vec<TyId>) -> Vec<(DefId, Vec<Ty
 
 /// Visits the field initializers of every struct and class (own fields and the inherited ones
 /// it gives an initializer), in terms of its type parameters, with the type's def.
-fn for_each_init(cx: &mut Ctx, f: &mut dyn FnMut(&Types, DefId, &mut Expr)) {
+fn for_each_init(cx: &mut Ctx, globals: bool, f: &mut dyn FnMut(&Types, DefId, &mut Expr)) {
     let tys = &cx.ty;
     for (i, info) in cx.info.iter_mut().enumerate() {
-        let DefInfo::Adt(a) = info else { continue };
         let d = DefId(i as u32);
+        if let DefInfo::Global(g) = info {
+            if let Some(e) = g.init.as_mut().filter(|_| globals) {
+                crate::visit::exprs_in(e, &mut |e| f(tys, d, e));
+            }
+            continue;
+        }
+        let DefInfo::Adt(a) = info else { continue };
         let start = a.own_fields_start;
         let own = a.fields[start..]
             .iter_mut()

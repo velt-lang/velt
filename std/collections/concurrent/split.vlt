@@ -1,0 +1,304 @@
+// velt/collections (internal): splitting `ConcurrentMap`'s nodes: a full leaf or inner node into
+// two, with the separator for the parent, for `u64` and for string keys, and the tags and indexes
+// they keep.
+
+import { ConcurrentMap } from "velt/collections/concurrent_map";
+import {
+  childAt,
+  FENCE,
+  GROUPS,
+  homeOf,
+  INDEX,
+  INNER_CAP,
+  keyAt,
+  LEAF_BIT,
+  LEAF_CAP,
+  LEN_MASK,
+  MAX_KEY,
+  NODE,
+  PAIRS,
+  pick,
+  SKEYS,
+  strHash,
+  strOrder,
+  TAG_WORDS,
+  tagOf,
+  TAGS,
+} from "velt/collections/concurrent/layout";
+import { backTies, position, tagAt } from "velt/collections/concurrent/search";
+
+/** Puts the tag of a key (`k` from `hashKey`) in lane `slot` of the leaf at `base` (held). */
+export function setTag<K, V extends Frozen>(cm: ConcurrentMap<K, V>, base: u64, slot: u64, k: u64) {
+  const at = base + TAGS + (slot >> 2);
+  const sh = (slot & 3) * 16;
+  const w = cm.w[at].load("relaxed");
+  cm.w[at].store((w & ~(65535 << sh)) | (tagOf(k) << sh), "relaxed");
+}
+
+/** Empties lane `slot` of the leaf at `base` (held). */
+export function clearTag<K, V extends Frozen>(cm: ConcurrentMap<K, V>, base: u64, slot: u64) {
+  const at = base + TAGS + (slot >> 2);
+  const sh = (slot & 3) * 16;
+  cm.w[at].store(cm.w[at].load("relaxed") & ~(65535 << sh), "relaxed");
+}
+
+/** Fills the key slots of the inner node at `base` from slot `from` on with `MAX_KEY`. */
+export function padKeys<K, V extends Frozen>(cm: ConcurrentMap<K, V>, base: u64, from: u64) {
+  for (let j = from; j < 56; j++) {
+    cm.w[base + keyAt(j)].store(MAX_KEY, "relaxed");
+  }
+}
+
+/** Rewrites the index of the inner node at `base` (held) from its `len` keys. */
+export function reindex<K, V extends Frozen>(cm: ConcurrentMap<K, V>, base: u64, len: u64) {
+  for (let g: u64 = 0; g < GROUPS; g++) {
+    const at = g * 8 + 7;
+    const key = at < len ? cm.w[base + keyAt(at)].load("relaxed") : MAX_KEY;
+    cm.w[base + INDEX + g].store(key, "relaxed");
+  }
+}
+
+/** Sorts full leaf `n` and moves its upper half to the empty node `r`; `r`'s least key. */
+export function splitLeaf<K, V extends Frozen>(cm: ConcurrentMap<K, V>, n: u64, r: u64): u64 {
+  const b = n * NODE;
+  const rb = r * NODE;
+  // Insertion sort of the full leaf's pairs, shifting elements in place (no `splice`).
+  const keys: u64[] = [];
+  const vals: u64[] = [];
+  keys.reserve(LEAF_CAP as usize);
+  vals.reserve(LEAF_CAP as usize);
+  const boxed = !typeIs<V, u64>();
+  for (let j: u64 = 0; j < LEAF_CAP; j++) {
+    const k = cm.w[b + PAIRS + 2 * j].load("relaxed");
+    // A boxed value's word carries its slot through the sort, to move it after.
+    const v = boxed ? j : cm.w[b + PAIRS + 1 + 2 * j].load("relaxed");
+    keys.push(k);
+    vals.push(v);
+    let at = j;
+    while (at > 0 && keys[at - 1] > k) {
+      keys[at] = keys[at - 1];
+      vals[at] = vals[at - 1];
+      at--;
+    }
+    keys[at] = k;
+    vals[at] = v;
+  }
+  const keep = LEAF_CAP / 2;
+  for (let w: u64 = 0; w < TAG_WORDS; w++) {
+    cm.w[b + TAGS + w].store(0, "relaxed");
+  }
+  // Each key to its home slot in its new leaf where it can (`r` is a new node: all empty).
+  fill(cm, b, keys, vals, 0, keep);
+  fill(cm, rb, keys, vals, keep, LEAF_CAP);
+  if (boxed) {
+    moveBoxed(cm, n, r);
+  }
+  cm.w[rb + 1].store(LEAF_BIT | (LEAF_CAP - keep), "relaxed");
+  cm.w[b + 1].store(LEAF_BIT | keep, "relaxed");
+  return keys[keep];
+}
+
+/** Puts pairs `from` until `to` of `keys` and `vals` in the empty leaf at `base`. */
+export function fill<K, V extends Frozen>(
+  cm: ConcurrentMap<K, V>,
+  base: u64,
+  keys: u64[],
+  vals: u64[],
+  from: u64,
+  to: u64,
+) {
+  let free: u64 = (1 << LEAF_CAP) - 1;
+  for (let j = from; j < to; j++) {
+    const k = keys[j];
+    const slot = pick(free, homeOf(k));
+    free &= ~(1 << slot);
+    cm.w[base + PAIRS + 2 * slot].store(k, "relaxed");
+    cm.w[base + PAIRS + 1 + 2 * slot].store(vals[j], "relaxed");
+    setTag(cm, base, slot, k);
+  }
+}
+
+/**
+ * Moves the boxed values of full leaf `n` (held) to the slots `splitLeaf` gave their keys in
+ * `n` and `r`, whose value words name the slot of `n` each came from.
+ */
+export function moveBoxed<K, V extends Frozen>(cm: ConcurrentMap<K, V>, n: u64, r: u64) {
+  const taken: (shared<V> | null)[] = [];
+  taken.reserve(LEAF_CAP as usize);
+  for (let j: u64 = 0; j < LEAF_CAP; j++) {
+    taken.push(cm.vals[n * LEAF_CAP + j].exchange(null, "acquire"));
+  }
+  for (let side: u64 = 0; side < 2; side++) {
+    const node = side == 0 ? n : r;
+    const base = node * NODE;
+    for (let slot: u64 = 0; slot < LEAF_CAP; slot++) {
+      if (tagAt(cm, base, slot) != 0) {
+        const from = cm.w[base + PAIRS + 1 + 2 * slot].load("relaxed");
+        cm.vals[node * LEAF_CAP + slot].store(taken[from], "release");
+      }
+    }
+  }
+}
+
+/** Moves the upper half of full inner node `n` to `r`; the middle key goes up. */
+export function splitInner<K, V extends Frozen>(cm: ConcurrentMap<K, V>, n: u64, r: u64): u64 {
+  const b = n * NODE;
+  const rb = r * NODE;
+  const keep = INNER_CAP / 2;
+  const sep = cm.w[b + keyAt(keep)].load("relaxed");
+  const moved = INNER_CAP - keep - 1;
+  for (let j: u64 = 0; j < moved; j++) {
+    cm.w[rb + keyAt(j)].store(cm.w[b + keyAt(keep + 1 + j)].load("relaxed"), "relaxed");
+  }
+  for (let j: u64 = 0; j <= moved; j++) {
+    cm.w[rb + childAt(j)].store(cm.w[b + childAt(keep + 1 + j)].load("relaxed"), "relaxed");
+  }
+  const level = cm.w[b + 1].load("relaxed") & ~LEN_MASK;
+  padKeys(cm, rb, moved);
+  cm.w[rb + 1].store(level | moved, "relaxed");
+  reindex(cm, rb, moved);
+  padKeys(cm, b, keep);
+  cm.w[b + 1].store(level | keep, "relaxed");
+  reindex(cm, b, keep);
+  return sep;
+}
+
+/**
+ * Adds `sep` and the child `right` after it to inner node `p` (held, not full); for string
+ * keys, `right`'s fence is the separator's string.
+ */
+export function insertSeparator<K, V extends Frozen>(
+  cm: ConcurrentMap<K, V>,
+  p: u64,
+  sep: u64,
+  right: u64,
+) {
+  const b = p * NODE;
+  const meta = cm.w[b + 1].load("relaxed");
+  const len = meta & LEN_MASK;
+  let i: u64 = 0;
+  if (typeIs<K, string>()) {
+    const s = cm.skeys[right * SKEYS + FENCE].load("acquire");
+    i = s == null ? position(cm, b, sep) : backTies(cm, b, position(cm, b, sep), sep, s);
+  } else {
+    i = position(cm, b, sep);
+  }
+  for (let j = len; j > i; j--) {
+    cm.w[b + keyAt(j)].store(cm.w[b + keyAt(j - 1)].load("relaxed"), "relaxed");
+    cm.w[b + childAt(1 + j)].store(cm.w[b + childAt(j)].load("relaxed"), "relaxed");
+  }
+  cm.w[b + keyAt(i)].store(sep, "relaxed");
+  cm.w[b + childAt(1 + i)].store(right, "relaxed");
+  cm.w[b + 1].store(meta + 1, "relaxed");
+  reindex(cm, b, len + 1);
+}
+
+/**
+ * `splitLeaf` for string keys: moves the upper half of full leaf `n` (held), by word and then
+ * string, to the empty node `r`, each key's string (and boxed value) with it, and makes `r`'s
+ * least key its fence; the separator's word. The lower half stays in its slots: every string
+ * moved is retired from its slot, so as few move as can.
+ */
+export function splitLeafKeyed<K, V extends Frozen>(cm: ConcurrentMap<K, V>, n: u64, r: u64): u64 {
+  const b = n * NODE;
+  const rb = r * NODE;
+  // Insertion sort of the words, with their slots, as `splitLeaf`'s.
+  const keys: u64[] = [];
+  const slots: u64[] = [];
+  keys.reserve(LEAF_CAP as usize);
+  slots.reserve(LEAF_CAP as usize);
+  for (let j: u64 = 0; j < LEAF_CAP; j++) {
+    const k = cm.w[b + PAIRS + 2 * j].load("relaxed");
+    keys.push(k);
+    slots.push(j);
+    let at = j;
+    while (at > 0 && keys[at - 1] > k) {
+      keys[at] = keys[at - 1];
+      slots[at] = slots[at - 1];
+      at--;
+    }
+    keys[at] = k;
+    slots[at] = j;
+  }
+  // Only the keys whose words tie with the middle one need their strings to choose the half.
+  const keep = LEAF_CAP / 2;
+  let lo = keep;
+  while (lo > 0 && keys[lo - 1] == keys[keep]) {
+    lo--;
+  }
+  let hi = keep + 1;
+  while (hi < LEAF_CAP && keys[hi] == keys[keep]) {
+    hi++;
+  }
+  if (hi - lo > 1) {
+    sortTies(cm, n, slots, lo, hi);
+  }
+  const boxed = !typeIs<V, u64>();
+  let free: u64 = (1 << LEAF_CAP) - 1;
+  for (let j = keep; j < LEAF_CAP; j++) {
+    const from = slots[j];
+    const s = cm.skeys[n * SKEYS + from].exchange(null, "acquire");
+    const h = s == null ? 0 : strHash(s);
+    const slot = pick(free, homeOf(h));
+    free &= ~(1 << slot);
+    cm.w[rb + PAIRS + 2 * slot].store(keys[j], "relaxed");
+    cm.w[rb + PAIRS + 1 + 2 * slot].store(
+      cm.w[b + PAIRS + 1 + 2 * from].load("relaxed"),
+      "relaxed",
+    );
+    setTag(cm, rb, slot, h);
+    clearTag(cm, b, from);
+    if (j == keep) {
+      cm.skeys[r * SKEYS + FENCE].store(s, "release");
+    }
+    cm.skeys[r * SKEYS + slot].store(s, "release");
+    if (boxed) {
+      cm.vals[r * LEAF_CAP + slot].store(
+        cm.vals[n * LEAF_CAP + from].exchange(null, "acquire"),
+        "release",
+      );
+    }
+  }
+  cm.w[rb + 1].store(LEAF_BIT | (LEAF_CAP - keep), "relaxed");
+  cm.w[b + 1].store(LEAF_BIT | keep, "relaxed");
+  return keys[keep];
+}
+
+/** Sorts `slots[lo..hi]`, slots of leaf `n` (held) whose words tie, by their strings. */
+export function sortTies<K, V extends Frozen>(
+  cm: ConcurrentMap<K, V>,
+  n: u64,
+  slots: u64[],
+  lo: u64,
+  hi: u64,
+) {
+  for (let j = lo + 1; j < hi; j++) {
+    const x = slots[j];
+    const sx = cm.skeys[n * SKEYS + x].load("acquire");
+    let at = j;
+    while (at > lo) {
+      const sy = cm.skeys[n * SKEYS + slots[at - 1]].load("acquire");
+      if (sx == null || sy == null || strOrder(sy, sx) <= 0) {
+        break;
+      }
+      slots[at] = slots[at - 1];
+      at--;
+    }
+    slots[at] = x;
+  }
+}
+
+/**
+ * `splitInner` for string keys: the middle separator, which goes up, is the fence of child
+ * `keep + 1`, which becomes `r`'s first child, whose fence is never read: the string moves to
+ * `r`'s fence (no copy, nothing retired; a reader of `n` that reads the child's fence `null`
+ * meanwhile fails `n`'s version check).
+ */
+export function splitInnerKeyed<K, V extends Frozen>(cm: ConcurrentMap<K, V>, n: u64, r: u64): u64 {
+  const c = cm.w[n * NODE + childAt(INNER_CAP / 2 + 1)].load("relaxed");
+  cm.skeys[r * SKEYS + FENCE].store(
+    cm.skeys[c * SKEYS + FENCE].exchange(null, "acquire"),
+    "release",
+  );
+  return splitInner(cm, n, r);
+}

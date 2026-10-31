@@ -18,7 +18,7 @@
 //!   environment variables are set (for tests needing a database or other external service).
 //! - A golden whose first lines contain `// requires: symlinks` is skipped where this process
 //!   cannot create symbolic links (Windows without Developer Mode or administrator rights);
-//!   `// requires: unix` is skipped on Windows (POSIX system functions, `velt:fs`'s fd API), and
+//!   `// requires: unix` is skipped on Windows (POSIX system functions, `velt/fs`'s fd API), and
 //!   `// requires: windows` everywhere else (Windows system functions).
 //! - A golden whose first lines contain `// check: no leaks` must free every block it allocates
 //!   (`VELT_RC_STATS=1` with the debug runtime: `blocks=A/F` with A = F) in its debug run. Tasks
@@ -28,7 +28,7 @@
 //!   unfreed).
 //! - A golden whose first lines contain `// check: unfreed blocks at most N` is checked the same
 //!   way, but may leave up to N blocks unfreed: for programs that keep memory on purpose until
-//!   they exit (`velt:sync/epoch`'s registry of thread slots, made once and never freed).
+//!   they exit.
 //! - A golden whose first lines contain `// check: heap strings at most N` allocates at most N
 //!   heap string buffers in its debug run (`alloc=` of the same report): a count that does not
 //!   depend on timing, for programs that must not copy a string per step (e.g. appends).
@@ -37,7 +37,7 @@
 //!   must not allocate per step (e.g. a callback per call).
 //! - A golden whose first lines contain `// check: also with NAME=VALUE` runs once more in each
 //!   mode with that environment variable set, and must print the same: for programs whose paths
-//!   an environment switch selects (`VELT_SIMD_DISABLE=sha`: `velt:simd`'s emulation and std's
+//!   an environment switch selects (`VELT_SIMD_DISABLE=sha`: `velt/simd`'s emulation and std's
 //!   portable code on a CPU that has the instructions, #1330).
 //!
 //! Filter with `VELT_GOLDEN=<substring>` (several separated by `,`: a file matching any of them

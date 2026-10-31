@@ -102,7 +102,8 @@ pub(super) fn collect(cx: &mut Ctx) -> RawMembers {
         .filter(|m| m.is_std)
         .map(|m| m.file)
         .collect();
-    let in_std = |m: usize| cx.modules.get(m).is_some_and(|m| m.is_std);
+    let modules = cx.modules.clone();
+    let in_std = |m: usize| modules.get(m).is_some_and(|m| m.is_std);
     let mut types = vec![];
     for i in 0..cx.info.len() {
         let d = DefId(i as u32);

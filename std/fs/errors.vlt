@@ -1,0 +1,87 @@
+// velt/fs (internal): Node's `IoError` for an errno: its `code` is the errno's name and its
+// message libuv's (`ENOENT: no such file or directory, open 'a.txt'`).
+
+import { IoError } from "velt/io/error";
+import { isMac } from "velt/fs/fd/system";
+
+// The Linux number of a macOS errno (they agree below 35).
+function linuxErrno(e: i32): i32 {
+  switch (e) {
+    case 11:
+      return 35; // EDEADLK
+    case 35:
+      return 11; // EAGAIN
+    case 45:
+      return 95; // ENOTSUP
+    case 62:
+      return 40; // ELOOP
+    case 63:
+      return 36; // ENAMETOOLONG
+    case 66:
+      return 39; // ENOTEMPTY
+    case 69:
+      return 122; // EDQUOT
+    case 77:
+      return 37; // ENOLCK
+    case 78:
+      return 38; // ENOSYS
+    case 84:
+      return 75; // EOVERFLOW
+  }
+  return e < 35 ? e : -1;
+}
+
+// libuv's name and message of each Linux errno these calls report, one per line:
+// `<errno> <name>: <message>`. A table read on the error path, where a `switch` per errno would
+// put a branch and a string per case into every program that uses the fd API.
+const ERRNOS =
+  "\n" +
+  "1 EPERM: operation not permitted\n" +
+  "2 ENOENT: no such file or directory\n" +
+  "4 EINTR: interrupted system call\n" +
+  "5 EIO: i/o error\n" +
+  "6 ENXIO: no such device or address\n" +
+  "9 EBADF: bad file descriptor\n" +
+  "11 EAGAIN: resource temporarily unavailable\n" +
+  "12 ENOMEM: not enough memory\n" +
+  "13 EACCES: permission denied\n" +
+  "16 EBUSY: resource busy or locked\n" +
+  "17 EEXIST: file already exists\n" +
+  "18 EXDEV: cross-device link not permitted\n" +
+  "20 ENOTDIR: not a directory\n" +
+  "21 EISDIR: illegal operation on a directory\n" +
+  "22 EINVAL: invalid argument\n" +
+  "23 ENFILE: file table overflow\n" +
+  "24 EMFILE: too many open files\n" +
+  "26 ETXTBSY: text file is busy\n" +
+  "27 EFBIG: file too large\n" +
+  "28 ENOSPC: no space left on device\n" +
+  "29 ESPIPE: invalid seek\n" +
+  "30 EROFS: read-only file system\n" +
+  "32 EPIPE: broken pipe\n" +
+  "35 EDEADLK: resource deadlock avoided\n" +
+  "36 ENAMETOOLONG: name too long\n" +
+  "37 ENOLCK: no locks available\n" +
+  "38 ENOSYS: function not implemented\n" +
+  "39 ENOTEMPTY: directory not empty\n" +
+  "40 ELOOP: too many symbolic links encountered\n" +
+  "75 EOVERFLOW: value too large for defined data type\n" +
+  "95 ENOTSUP: operation not supported on socket\n" +
+  "122 EDQUOT: disk quota exceeded\n";
+
+/**
+ * The `IoError` for the errno `e` of the system call `syscall` (on `path`, if any), as Node
+ * writes it: `ENOENT: no such file or directory, open 'a.txt'`.
+ */
+export function osError(e: i32, syscall: string, path: string | null = null): IoError {
+  const key = `\n${isMac() ? linuxErrno(e) : e} `;
+  const at = ERRNOS.indexOf(key);
+  let line = "UNKNOWN: unknown error";
+  if (at >= 0) {
+    const from = at + (key.length as i64);
+    line = ERRNOS.slice(from, ERRNOS.indexOf("\n", from));
+  }
+  const code = line.slice(0, line.indexOf(":"));
+  const on = path == null ? "" : ` '${path}'`;
+  return new IoError(code, `${line}, ${syscall}${on}`);
+}

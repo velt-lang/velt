@@ -439,7 +439,7 @@ impl FnLower<'_, '_> {
         self.terminate(Terminator::Return(unit()));
     }
 
-    /// Print the class object `obj` through its `__inspect()` method `m`, as Node prints a custom
+    /// Print the class object `obj` through its `[INSPECT]()` method `m`, as Node prints a custom
     /// inspect: a string result raw, any other value after the class name, at the object's depth
     /// (`Headers { a: '1' }`).
     fn format_inspect(&mut self, buf: &Operand, obj: Operand, ty: TyId, m: DefId, depth: &Operand) {
@@ -495,11 +495,11 @@ impl FnLower<'_, '_> {
         self.call_rt(Rt::StrbufInspectAtom, vec![buf.clone(), start], None);
     }
 
-    /// Is `ty` std's `NativeInspect` (std/typed_array/core.vlt), the result of an `__inspect()`
+    /// Is `ty` std's `NativeInspect` (std/lang/typed_array/core.vlt), the result of an `[INSPECT]()`
     /// that prints one of Node's own objects?
     fn is_native_inspect(&self, ty: TyId) -> bool {
         matches!(self.cx.kind(ty), TyKind::Adt(d, _)
-            if self.cx.adt_def(d).name == "std/typed_array/core::NativeInspect")
+            if self.cx.adt_def(d).name == velt_common::std_item!(lang_typed_array_core, "NativeInspect"))
     }
 
     /// Print the object at address `p` with `body`, unless it is already being printed: an
@@ -535,7 +535,7 @@ impl FnLower<'_, '_> {
 
 impl FnLower<'_, '_> {
     /// The tag of a class object's function type (velt_sema's `ctor_objects.rs`): its rest
-    /// parameter is `__ClassMarker<T>[]`, `T` the tag (std/prelude/zzz_adapt_ctor.vlt).
+    /// parameter is `ClassMarker<T>[]`, `T` the tag (std/lang/hooks/class_object.vlt).
     fn class_object_tag(&self, ty: TyId) -> Option<TyId> {
         let TyKind::FnPtr {
             params, rest: true, ..
@@ -549,15 +549,15 @@ impl FnLower<'_, '_> {
         let TyKind::Adt(d, args) = self.cx.kind(m) else {
             return None;
         };
-        if !self.cx.adt_def(d).name.ends_with("::__ClassMarker") {
+        if self.cx.adt_def(d).name != velt_common::std_hook!(class_marker) {
             return None;
         }
         args.first().copied()
     }
 
     /// The class object at `place`, of type `ty`, as Node prints it: the `Number` kind's
-    /// `[Function: Number]`; one the prelude's `__classObject` made by the text it keeps (its
-    /// closure's first capture: `[class A]`, `[Function: Map]`); one `__classObjectStatics` made
+    /// `[Function: Number]`; one the hook `classObject` made by the text it keeps (its
+    /// closure's first capture: `[class A]`, `[Function: Map]`); one `classObjectStatics` made
     /// stops, as its static fields are not supported yet.
     fn format_class_object(&mut self, buf: &Operand, place: &Place, ty: TyId) {
         let Some(tag) = self.class_object_tag(ty) else {
@@ -569,7 +569,7 @@ impl FnLower<'_, '_> {
                 "TypeError: printing the object of a class with static fields or accessors is not supported yet (#926)",
             ),
             _ => {
-                let Some(def) = self.prelude_closure("__classObject") else {
+                let Some(def) = self.prelude_closure(velt_common::std_hook!(class_object)) else {
                     return self.push_text(buf, "[Function (anonymous)]");
                 };
                 let ea = self.cx.env_agg(def, &[]);
@@ -583,11 +583,13 @@ impl FnLower<'_, '_> {
 
     /// The closure the prelude function `f` returns (its only one).
     fn prelude_closure(&self, f: &str) -> Option<DefId> {
-        let name = format!("::{f}::{{closure#0}}");
-        let at =
-            self.cx.hir.defs.iter().position(
-                |d| matches!(d, velt_sema::hir::Def::Fn(def) if def.name.ends_with(&name)),
-            )?;
+        let name = format!("{f}::{{closure#0}}");
+        let at = self
+            .cx
+            .hir
+            .defs
+            .iter()
+            .position(|d| matches!(d, velt_sema::hir::Def::Fn(def) if def.name == name))?;
         Some(DefId(at as u32))
     }
 }

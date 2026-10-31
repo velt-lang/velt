@@ -1,0 +1,168 @@
+// sqlite/engine/sql/column_def (internal): a column definition of CREATE TABLE (parse.y's `columnname
+// carglist`): its name, its declared type as SQLite keeps it, and its column constraints, with
+// DEFAULT values and generated columns.
+
+import { Parser } from "./parser";
+import { SqlError } from "./errors";
+import { T_IDENT, T_QUOTED } from "./token";
+import { dequote } from "./text";
+import { ColumnDef, E_FALSE, E_STRING, E_TRUE, Expr } from "./types";
+import { isLiteralWord, literal, negated } from "./clauses";
+import { conflictClause, deferrable, references } from "./constraint";
+
+/** A column definition: name, type, then column constraints in any order. */
+export function columnDef(p: Parser): ColumnDef {
+  const c = new ColumnDef(p.name());
+  c.type = columnType(p.typeName());
+  while (true) {
+    if (p.eatKw("CONSTRAINT")) {
+      p.name();
+    } else if (p.eatKw("PRIMARY")) {
+      p.expectKw("KEY");
+      c.primaryKey = true;
+      if (p.eatKw("DESC")) {
+        c.desc = true;
+      } else {
+        p.eatKw("ASC");
+      }
+      conflictClause(p);
+      c.autoincrement = p.eatKw("AUTOINCREMENT");
+    } else if (p.isKw("NOT") && !p.isKwAt(1, "DEFERRABLE")) {
+      p.advance();
+      p.expectKw("NULL");
+      c.notNull = true;
+      conflictClause(p);
+    } else if (p.eatKw("NULL")) {
+      conflictClause(p);
+    } else if (p.eatKw("UNIQUE")) {
+      c.unique = true;
+      conflictClause(p);
+    } else if (p.eatKw("CHECK")) {
+      p.expectOp("(");
+      c.check.push(p.expr());
+      p.expectOp(")");
+    } else if (p.eatKw("DEFAULT")) {
+      c.dflt = defaultValue(p);
+    } else if (p.eatKw("COLLATE")) {
+      if (!p.isAlias()) {
+        p.fail();
+      }
+      c.collate = p.advance().text.toUpperCase();
+    } else if (p.isKw("REFERENCES")) {
+      references(p);
+    } else if (deferrable(p)) {
+      // A column's DEFERRABLE is a constraint of its own.
+    } else if (p.eatKw("GENERATED") || p.isKw("AS")) {
+      if (!p.eatKw("AS")) {
+        p.expectKw("ALWAYS");
+        p.expectKw("AS");
+      }
+      generated(p, c);
+    } else {
+      return c;
+    }
+  }
+}
+
+/**
+ * A column's declared type as SQLite keeps it (sqlite3AddColumn): without a trailing GENERATED
+ * ALWAYS, which the type's words take in (`a INT GENERATED ALWAYS AS (…)` has the type INT),
+ * then dequoted as SQLite does it.
+ */
+function columnType(written: string): string {
+  let t = withoutGeneratedAlways(written);
+  // sqlite3DequoteToken: a type that starts with a quote and has none inside loses its first
+  // and last characters (`[x] y` is `x] `); then sqlite3Dequote.
+  const n = t.length as i64;
+  if (n >= 3 && isQuote(t.charCodeAt(0))) {
+    let inner = false;
+    for (let i: i64 = 1; i < n - 1; i++) {
+      if (isQuote(t.charCodeAt(i))) {
+        inner = true;
+        break;
+      }
+    }
+    if (!inner) {
+      t = t.slice(1, n - 1);
+    }
+  }
+  return dequote(t);
+}
+
+function isQuote(c: i64): bool {
+  return c == 39 || c == 34 || c == 96 || c == 91;
+}
+
+/** `t` without a trailing `GENERATED ALWAYS` (or `ALWAYS`), when it is 16 characters or more. */
+function withoutGeneratedAlways(t: string): string {
+  let n = t.length as i64;
+  if (n < 16 || t.slice(n - 6).toUpperCase() != "ALWAYS") {
+    return t;
+  }
+  n -= 6;
+  while (n > 0 && isSpace(t.charCodeAt(n - 1))) {
+    n--;
+  }
+  if (n >= 9 && t.slice(n - 9, n).toUpperCase() == "GENERATED") {
+    n -= 9;
+    while (n > 0 && isSpace(t.charCodeAt(n - 1))) {
+      n--;
+    }
+  }
+  return t.slice(0, n);
+}
+
+function isSpace(c: i64): bool {
+  return c == 32 || (c >= 9 && c <= 13);
+}
+
+/** `(expr) [STORED | VIRTUAL]` of a generated column. */
+function generated(p: Parser, c: ColumnDef) {
+  p.expectOp("(");
+  c.generated = p.expr();
+  p.expectOp(")");
+  if (p.isId()) {
+    const t = p.advance();
+    if (t.upper == "STORED") {
+      c.stored = true;
+    } else if (t.upper != "VIRTUAL") {
+      throw new SqlError(`error in generated column "${c.name}"`, t.start);
+    }
+  }
+}
+
+/**
+ * DEFAULT's value: `(expr)`, a literal (number, string, blob, NULL, CURRENT_TIME…) with an
+ * optional sign, or a bare name, which is a string (TRUE and FALSE are booleans).
+ */
+function defaultValue(p: Parser): Expr {
+  if (p.eatOp("(")) {
+    const e = p.expr();
+    p.expectOp(")");
+    return e;
+  }
+  if (p.isOp("+") || p.isOp("-")) {
+    const sign = p.advance();
+    const e = literal(p);
+    return sign.text == "-" ? negated(e, sign.start) : e;
+  }
+  const t = p.peek();
+  if (p.isId() || (t.kind == T_IDENT && t.upper == "INDEXED")) {
+    if (t.kind == T_IDENT && !isLiteralWord(t.upper)) {
+      p.advance();
+      const e = new Expr(
+        t.upper == "TRUE" ? E_TRUE : t.upper == "FALSE" ? E_FALSE : E_STRING,
+        t.start,
+      );
+      e.text = t.text;
+      return e;
+    }
+    if (t.kind == T_QUOTED) {
+      p.advance();
+      const e = new Expr(E_STRING, t.start);
+      e.text = t.text;
+      return e;
+    }
+  }
+  return literal(p);
+}

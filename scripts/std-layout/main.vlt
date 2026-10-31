@@ -1,0 +1,327 @@
+// scripts/std-layout: moves the standard library into its layout (layout.vlt,
+// docs/internals/design/std-layout.md) and rewrites what names its files. It runs on a tree from
+// before the move, from the repository root, with a `velt` and a std from after it (replay.sh
+// runs it that way, so the branch can be replayed onto a newer main):
+//
+//   VELT_STD=<std after the move> <velt after the move> run scripts/std-layout/main.vlt
+//
+// 1. Rewrites (before moving, so the paths it reads are the old ones):
+//    - `velt:<module>` specifiers: inside std to the moved file's own `velt/` path, elsewhere to
+//      the module that exports its names (`layout.modules`), else to the file's path; a module
+//      that leaves std keeps its path (`velt/sqlite`); a folder (`velt:compress`,
+//      `@jsxImportSource velt:jsx/generic`) follows its files;
+//    - imports of names that moved to another module (`layout.names`: `IoResult` from velt:io is
+//      velt/native), split into one import per module;
+//    - `std/<file>.vlt` paths in comments, docs and expected outputs, the compiler's
+//      `"std/<module>"` names (`"std/json/reader"`, `"std/record/"`), and the conditional
+//      globals' `// load when std/<module>` lines.
+// 2. `git mv` of every std file to its place (so history follows).
+// It stops if a std file has no rule, and prints the specifiers it left alone.
+
+import { execSync } from "velt/process/child";
+import { mkdirSync, readFileSync, writeFileSync } from "velt/fs";
+import { dirname } from "velt/path";
+import { layout } from "./layout";
+
+function git(args: string[]): string {
+  const r = execSync("git", args);
+  if (r.code != 0) {
+    throw new Error(`git ${args.join(" ")}: ${r.stderr}`);
+  }
+  return r.stdout;
+}
+
+function lines(text: string): string[] {
+  return text.split("\n").filter((l) => l.length > 0);
+}
+
+/** The module path of a std file below `std/`: `fs/index.vlt` → `fs`, `json/scan.vlt` → `json/scan`. */
+function modulePath(file: string): string {
+  const noExt = file.slice(0, file.length - 4);
+  if (noExt == "index") {
+    return "";
+  }
+  return noExt.endsWith("/index") ? noExt.slice(0, noExt.length - 6) : noExt;
+}
+
+function leaves(file: string): boolean {
+  for (const l of layout.leaving) {
+    if (l.endsWith("/") ? file.startsWith(l) : file == l) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Where a std file (below `std/`) goes: `files`, else the longest matching `dirs` entry. */
+function target(file: string): string | null {
+  const exact = layout.files[file];
+  if (exact !== undefined) {
+    return exact;
+  }
+  let best = "";
+  for (const from of Object.keys(layout.dirs)) {
+    if (file.startsWith(from + "/") && from.length > best.length) {
+      best = from;
+    }
+  }
+  if (best.length == 0) {
+    return null;
+  }
+  const to = layout.dirs[best] ?? best;
+  return to + file.slice(best.length);
+}
+
+const SPEC_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789_/-";
+const IDENT_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_";
+
+function specEnd(text: string, from: number): number {
+  let i = from;
+  while (i < text.length && SPEC_CHARS.includes(text[i])) {
+    i++;
+  }
+  return i;
+}
+
+/** An import or re-export statement with a brace list, ending at a specifier's closing quote. */
+class BraceImport {
+  start: number = 0;
+  end: number = 0;
+  head: string = "";
+  names: string[] = [];
+}
+
+/** The `import { … } from "` / `export { … } from "` statement whose specifier opens at `quote`. */
+function braceImport(text: string, quote: number): BraceImport | null {
+  const close = text.lastIndexOf("}", quote);
+  const open = text.lastIndexOf("{", quote);
+  if (close < 0 || open < 0 || open > close || text.slice(close + 1, quote).trim() != "from") {
+    return null;
+  }
+  const lineStart = text.lastIndexOf("\n", open) + 1;
+  const head = text.slice(lineStart, open);
+  if (!head.startsWith("import") && !head.startsWith("export")) {
+    return null;
+  }
+  const end = text.indexOf("\"", quote + 1);
+  if (end < 0) {
+    return null;
+  }
+  const r = new BraceImport();
+  r.start = lineStart;
+  r.end = end + 1;
+  r.head = head;
+  r.names = text
+    .slice(open + 1, close)
+    .split(",")
+    .map((n) => n.trim())
+    .filter((n) => n.length > 0);
+  return r;
+}
+
+/** The moves: old module path → new module path, and old file → new file (below `std/`). */
+class Moves {
+  modules: Map<string, string> = new Map();
+  files: Map<string, string> = new Map();
+  unknown: Map<string, string> = new Map();
+
+  /** The new name of `velt:<spec>`, or null to leave it. */
+  spec(spec: string, inStd: boolean): string | null {
+    if (!inStd) {
+      const pub = layout.modules["velt:" + spec];
+      if (pub !== undefined && pub !== null) {
+        return pub;
+      }
+    }
+    const moved = this.modules.get(spec);
+    if (moved !== undefined) {
+      return "velt/" + moved;
+    }
+    const trail = spec.endsWith("/") ? "/" : "";
+    const dir = this.dir(trail.length > 0 ? spec.slice(0, spec.length - 1) : spec);
+    if (dir !== null) {
+      return "velt/" + dir + trail;
+    }
+    return leaves(spec + ".vlt") || leaves(spec + "/") ? "velt/" + spec : null;
+  }
+
+  /** Where the folder `dir` (below `std/`) went, from the files that were in it. */
+  dir(dir: string): string | null {
+    for (const [from, to] of this.files) {
+      if (from.startsWith(dir + "/")) {
+        const rest = from.slice(dir.length);
+        if (to.endsWith(rest)) {
+          return to.slice(0, to.length - rest.length);
+        }
+      }
+    }
+    return null;
+  }
+
+  /** A compiler-side module name below `std/` (`json/reader`, `record/`), renamed. */
+  canonical(name: string): string | null {
+    if (name.endsWith("/")) {
+      const dir = this.dir(name.slice(0, name.length - 1));
+      return dir === null ? null : "std/" + dir + "/";
+    }
+    const moved = this.modules.get(name);
+    if (moved !== undefined) {
+      return moved.length == 0 ? "std" : "std/" + moved;
+    }
+    const dir = this.dir(name);
+    return dir === null ? null : "std/" + dir;
+  }
+
+  /** `stmt`, an import of `velt:<spec>`, split by where its names went (`layout.names`). */
+  split(stmt: BraceImport, spec: string, inStd: boolean): string | null {
+    const moved = layout.names[spec];
+    if (moved === undefined) {
+      return null;
+    }
+    const byModule: Map<string, string[]> = new Map();
+    for (const name of stmt.names) {
+      const bare = name.split(" as ")[0].replace("type ", "").trim();
+      const to = moved[bare];
+      const module =
+        to === undefined
+          ? this.spec(spec, inStd) ?? "velt:" + spec
+          : "velt/" + (inStd ? to.std : to.user);
+      const list = byModule.get(module) ?? [];
+      list.push(name);
+      byModule.set(module, list);
+    }
+    const out: string[] = [];
+    for (const [module, names] of byModule) {
+      out.push(`${stmt.head}{ ${names.join(", ")} } from "${module}"`);
+    }
+    return out.join(";\n");
+  }
+
+  /** Rewrites `velt:` specifiers and `std/` paths in one file's text. */
+  rewrite(path: string, text: string): string {
+    const inStd = path.startsWith("std/");
+    const rust = path.endsWith(".rs");
+    const out: string[] = [];
+    let copied = 0;
+    let i = 0;
+    while (i < text.length) {
+      const v = text.indexOf("velt:", i);
+      const s = text.indexOf("std/", i);
+      if (v < 0 && s < 0) {
+        break;
+      }
+      const atVelt = v >= 0 && (s < 0 || v < s);
+      const at = atVelt ? v : s;
+      const start = at + (atVelt ? 5 : 4);
+      const end = specEnd(text, start);
+      const name = text.slice(start, end);
+      i = end > start ? end : start;
+      if (at > 0 && IDENT_CHARS.includes(text[at - 1])) {
+        continue;
+      }
+      let from = at;
+      let to = end;
+      let replacement: string | null = null;
+      if (atVelt) {
+        const stmt = at > 0 && text[at - 1] == "\"" ? braceImport(text, at - 1) : null;
+        const split = stmt === null || stmt.start < copied ? null : this.split(stmt, name, inStd);
+        if (stmt !== null && split !== null) {
+          from = stmt.start;
+          to = stmt.end;
+          replacement = split;
+        } else {
+          replacement = this.spec(name, inStd);
+        }
+        if (replacement === null && name.length > 0) {
+          this.unknown.set("velt:" + name, path);
+        }
+      } else if (at > 0 && text[at - 1] == "/" && !(at >= 3 && text.slice(at - 3, at) == "../")) {
+        // A path that only contains `std/` (`tests/golden/std/url.vlt`, `/opt/velt/std/x.vlt`).
+        continue;
+      } else if (text.startsWith(".vlt", end)) {
+        const file = this.files.get(name + ".vlt");
+        if (file !== undefined) {
+          replacement = "std/" + file.slice(0, file.length - 4);
+        }
+      } else if (
+        (rust && at > 0 && text[at - 1] == "\"") || text.slice(at - 10, at) == "load when "
+      ) {
+        replacement = this.canonical(name);
+      }
+      if (replacement !== null) {
+        out.push(text.slice(copied, from));
+        out.push(replacement);
+        copied = to;
+        i = to;
+      }
+    }
+    if (copied == 0) {
+      return text;
+    }
+    out.push(text.slice(copied));
+    return out.join("");
+  }
+}
+
+function main() {
+  if (git(["status", "--porcelain", "--untracked-files=no"]).length > 0) {
+    throw new Error("the work tree has changes; commit them first");
+  }
+  const moves = new Moves();
+  const unmapped: string[] = [];
+  for (const path of lines(git(["ls-files", "std"]))) {
+    if (!path.endsWith(".vlt")) {
+      continue;
+    }
+    const file = path.slice(4);
+    if (leaves(file)) {
+      continue;
+    }
+    const to = target(file);
+    if (to === null) {
+      unmapped.push(file);
+      continue;
+    }
+    moves.files.set(file, to);
+    moves.modules.set(modulePath(file), modulePath(to));
+  }
+  if (unmapped.length > 0) {
+    throw new Error(`no rule in layout.vlt for: ${unmapped.join(", ")}`);
+  }
+
+  // Rewrite before moving, so the paths below are the old ones.
+  const candidates = lines(git(["grep", "-lI", "-e", "velt:", "-e", "std/"]));
+  let rewritten = 0;
+  for (const path of candidates) {
+    // The script and the design keep the old specifiers they describe.
+    if (path.startsWith("scripts/std-layout/") || path == "docs/internals/design/std-layout.md") {
+      continue;
+    }
+    const text = readFileSync(path);
+    const next = moves.rewrite(path, text);
+    if (next != text) {
+      writeFileSync(path, next);
+      rewritten++;
+    }
+  }
+
+  let moved = 0;
+  for (const [from, to] of moves.files) {
+    if (from == to) {
+      continue;
+    }
+    mkdirSync(dirname("std/" + to), { recursive: true });
+    git(["mv", "std/" + from, "std/" + to]);
+    moved++;
+  }
+
+  console.log(`moved ${moved} files, rewrote ${rewritten} files`);
+  if (moves.unknown.size > 0) {
+    console.log("specifiers left as they were:");
+    for (const [spec, path] of moves.unknown) {
+      console.log(`  ${spec}  (first in ${path})`);
+    }
+  }
+}
+
+main();

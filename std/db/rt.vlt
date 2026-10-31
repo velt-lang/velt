@@ -1,0 +1,13 @@
+// velt/db (internal): the runtime functions velt/db calls.
+
+/**
+ * `u64 velt_rt_db_cursor(u64 handle)`: the address of the open row cursor a native driver
+ * registered under `handle` (velt_rt db_handles.rs), or 0 when the handle names none.
+ */
+export declare function velt_rt_db_cursor(handle: u64): u64;
+
+/**
+ * `u64 velt_rt_db_sink(u64 handle)`: the address of the open parameter sink a native driver
+ * registered under `handle`, or 0 when the handle names none.
+ */
+export declare function velt_rt_db_sink(handle: u64): u64;

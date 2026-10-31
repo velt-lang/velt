@@ -2,7 +2,7 @@
 // Values still queued in a channel nobody drains are dropped when the program ends: a closed
 // channel of strings, one of objects and one of arrays, a channel never closed, one half drained,
 // a bounded one filled by `send` in another task, and one of numbers (nothing to drop).
-import { channel, Channel, ChannelClosed } from "velt:channel";
+import { channel, Channel, ChannelClosed } from "velt/sync";
 
 class Job {
   name: string;

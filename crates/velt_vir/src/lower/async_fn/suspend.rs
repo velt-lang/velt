@@ -96,7 +96,7 @@ impl FnLower<'_, '_> {
         self.cancel_cases(k, d);
     }
 
-    /// A call to the prelude's `__topLevelAwaitAt(site)` (or to the `velt_rt_tla_at` it forwards
+    /// A call to the prelude's `topLevelAwaitAt(site)` (or to the `velt_rt_tla_at` it forwards
     /// to, which a forwarder call becomes) from user code: the mark velt_sema puts before each
     /// top-level `await`, lowered to nothing but [`FnLower::tla_site`]. The prelude's own call
     /// is the runtime's. Matched by `DefId` ([`super::super::Cx::tla_marks`]), so a user
@@ -138,6 +138,7 @@ impl FnLower<'_, '_> {
     ) -> Vec<Option<Operand>> {
         let mut out = vec![];
         let later = self.later_each(args);
+        let mut pending: Vec<Place> = vec![];
         for ((a, mode), later) in args.iter().zip(modes).zip(later) {
             let t = self.vty(a.ty);
             let v = match (t, mode) {
@@ -156,16 +157,25 @@ impl FnLower<'_, '_> {
                 (Ty::Agg(_), _) => {
                     let v = self.consume(a);
                     let v = self.maybe_transfer(v, a.ty);
-                    Some(Operand::Copy(Place::local(self.copy_to_temp(v, t))))
+                    let tmp = Place::local(self.copy_to_temp(v, t));
+                    if *mode == PassMode::Owned {
+                        self.pending_owned(tmp.clone(), a.ty, later, &mut pending);
+                    }
+                    Some(Operand::Copy(tmp))
                 }
                 (_, PassMode::Owned) => {
                     let v = self.consume(a);
                     let v = self.hold_owned(v, a.ty, later);
-                    Some(self.maybe_transfer(v, a.ty))
+                    let v = self.maybe_transfer(v, a.ty);
+                    Some(self.pending_scalar(v, a.ty, later, &mut pending))
                 }
                 _ => Some(self.expr_held(a, later)),
             };
             out.push(v);
+        }
+        // The call's state takes them now.
+        for p in pending {
+            self.take_temp(&p);
         }
         out
     }
@@ -391,10 +401,10 @@ impl FnLower<'_, '_> {
 }
 
 /// The fully qualified name of the prelude's top-level `await` mark (std/prelude/process.vlt).
-const TLA_MARK: &str = "std/prelude/process::__topLevelAwaitAt";
+const TLA_MARK: &str = velt_common::std_hook!(top_level_await_at);
 
 impl super::super::Cx<'_> {
-    /// The prelude's `__topLevelAwaitAt` and the `velt_rt_tla_at` declaration its body calls,
+    /// The prelude's `topLevelAwaitAt` and the `velt_rt_tla_at` declaration its body calls,
     /// once looked up (none when the program lacks them).
     pub(in crate::lower) fn tla_marks(&mut self) -> [Option<DefId>; 2] {
         let hir = self.hir;

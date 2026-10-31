@@ -7,6 +7,19 @@
 // it too. Velt has no `undefined`, so a finished result has no `value` (reading `r.value`
 // without narrowing gives `T | null`).
 
+import {
+  asyncGeneratorDispose,
+  asyncGeneratorResume,
+  asyncGeneratorReturn,
+  asyncGeneratorValue,
+  generatorResume,
+  generatorResumeWith,
+  generatorReturn,
+  generatorThrow,
+  generatorValue,
+  share,
+} from "velt/lang/intrinsics";
+
 /**
  * One step of an iterator: `{ value, done: false }` for the next value, `{ done: true }` once it
  * is finished (Velt has no `undefined`: a finished result has no `value`).
@@ -158,7 +171,7 @@ export class ArrayIterator<T> implements IterableIterator<T>, IteratorObject<T> 
       this.finished = true;
       return { done: true };
     }
-    const value = __intrinsic_share(this.items[this.index]);
+    const value = share(this.items[this.index]);
     this.index++;
     return { value: value, done: false };
   }
@@ -221,8 +234,8 @@ export class Generator<T, E = never, N = never> implements Iterator<T, E>, Itera
 
   /** Runs the body up to its next `yield` and returns that value, or a `done` result. */
   next(): IteratorResult<T> throws E {
-    if (__intrinsic_generator_resume(this)) {
-      return { value: __intrinsic_generator_value(this), done: false };
+    if (generatorResume(this)) {
+      return { value: generatorValue(this), done: false };
     }
     return { done: true };
   }
@@ -230,8 +243,8 @@ export class Generator<T, E = never, N = never> implements Iterator<T, E>, Itera
   // `next(value)` in a `Generator<T, E, N>` (the compiler calls this for it): like `next()`,
   // and the paused `yield` evaluates to `value` (the first call's value is ignored, as in JS).
   private nextWith(value: N): IteratorResult<T> throws E {
-    if (__intrinsic_generator_resume_with(this, value)) {
-      return { value: __intrinsic_generator_value(this), done: false };
+    if (generatorResumeWith(this, value)) {
+      return { value: generatorValue(this), done: false };
     }
     return { done: true };
   }
@@ -243,9 +256,9 @@ export class Generator<T, E = never, N = never> implements Iterator<T, E>, Itera
    * at once (and is done). `e` is an `any`, as in TypeScript.
    */
   throw(e: any): IteratorResult<T> throws E | any {
-    const r = __intrinsic_generator_throw(this, e);
+    const r = generatorThrow(this, e);
     if (r == 1) {
-      return { value: __intrinsic_generator_value(this), done: false };
+      return { value: generatorValue(this), done: false };
     }
     if (r == 0) {
       return { done: true };
@@ -258,7 +271,7 @@ export class Generator<T, E = never, N = never> implements Iterator<T, E>, Itera
    * its `using` values. Returns a finished result.
    */
   return(): IteratorResult<T> {
-    __intrinsic_generator_return(this);
+    generatorReturn(this);
     return { done: true };
   }
 
@@ -269,7 +282,7 @@ export class Generator<T, E = never, N = never> implements Iterator<T, E>, Itera
 
   /** `using` support: closes the generator, like `return()`. */
   [Symbol.dispose](): void {
-    __intrinsic_generator_return(this);
+    generatorReturn(this);
   }
 }
 
@@ -305,8 +318,8 @@ export class AsyncGenerator<T, E = never> implements AsyncIterator<T, E>, AsyncI
   async next(): Promise<IteratorResult<T>, E> {
     const mine = await this.takeTurn();
     try {
-      if (await __intrinsic_async_generator_resume(this)) {
-        return { value: __intrinsic_async_generator_value(this), done: false };
+      if (await asyncGeneratorResume(this)) {
+        return { value: asyncGeneratorValue(this), done: false };
       }
       return { done: true };
     } finally {
@@ -321,7 +334,7 @@ export class AsyncGenerator<T, E = never> implements AsyncIterator<T, E>, AsyncI
   async return(): Promise<IteratorResult<T>> {
     const mine = await this.takeTurn();
     try {
-      await __intrinsic_async_generator_return(this);
+      await asyncGeneratorReturn(this);
       return { done: true };
     } finally {
       this.passTurn(mine);
@@ -341,7 +354,7 @@ export class AsyncGenerator<T, E = never> implements AsyncIterator<T, E>, AsyncI
   /** `using` support: closes the generator without awaiting its cleanup (see the class). */
   [Symbol.dispose](): void {
     // A pending call keeps the object alive, so no call is queued any more.
-    __intrinsic_async_generator_dispose(this);
+    asyncGeneratorDispose(this);
   }
 
   // Waits until the calls made before this one finished. Returns the latch this call opens
@@ -396,24 +409,3 @@ declare function velt_rt_latch_new(): u64;
 declare function velt_rt_latch_free(latch: u64);
 declare function velt_rt_latch_open(latch: u64);
 declare async function velt_rt_latch_wait(latch: u64): Promise<void>;
-
-/**
- * An object literal whose member is a `[Symbol.iterator]()` method (`{ *[Symbol.iterator]() {
- * ... } }`, docs/reference/types.md): the method as a function, called by each loop.
- */
-export class __IterableObject<T, E = never> implements Iterable<T, E> {
-  constructor(private iterator: () => Iterator<T, E>) {}
-
-  [Symbol.iterator](): Iterator<T, E> {
-    return this.iterator();
-  }
-}
-
-/** The async twin: `{ async *[Symbol.asyncIterator]() { ... } }`. */
-export class __AsyncIterableObject<T, E = never> implements AsyncIterable<T, E> {
-  constructor(private iterator: () => AsyncIterator<T, E>) {}
-
-  [Symbol.asyncIterator](): AsyncIterator<T, E> {
-    return this.iterator();
-  }
-}

@@ -1,0 +1,17 @@
+// velt/generate: source generators (docs/internals/design/source-generators.md). A library
+// declares `declare generated("./gen") function f<T>(…): R;`, and the module `./gen` exports a
+// function `f(req: InstanceRequest, out: Output): void` that writes the body of `f` for each concrete
+// instance the program uses. The compiler runs it at compile time, in a separate process, and
+// checks the code it writes with the program. A generator reads the types of its instance from
+// `req.model`, a read-only description of every type the instance reaches (`Type`, `Field`),
+// and writes Velt source to `out`.
+
+export { EnumMember } from "velt/generate/enum_member";
+export { Field } from "velt/generate/field";
+export { Model } from "velt/generate/model";
+export { Output, quote } from "velt/generate/output";
+export { InstanceRequest } from "velt/generate/instance_request";
+export { Method } from "velt/generate/method";
+export { GeneratorEntry, serve } from "velt/generate/serve";
+export { Session } from "velt/generate/session";
+export { Type } from "velt/generate/type";

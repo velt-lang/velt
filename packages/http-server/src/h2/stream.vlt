@@ -1,0 +1,249 @@
+// http-server (internal): `H2Stream`, one HTTP/2 stream's state (RFC 9113 §5.1): its
+// request head and the body as it arrives, the response body waiting for flow-control window,
+// and the waits of the handler on either.
+//
+// A stream holds no reference to its connection: the connection holds its streams (and reuses
+// their buffers for later ones), the handler's `H2Request` and `H2Response` hold both. A waiting
+// handler is woken through `wake()`, which settles the promise it awaits; the connection wakes
+// every waiting stream when it ends, so no handler waits for ever.
+
+import { TcpStream } from "velt/net";
+import { AbortController, AbortSignal } from "velt/task";
+import { FieldList } from "velt/net/http/h2";
+import { RequestFields } from "./validate";
+
+// States (RFC 9113 §5.1). A stream the server knows is open or half-closed; an idle one has no
+// object, a closed one is forgotten.
+/// Both sides may send.
+export const OPEN: i64 = 1;
+/// The request has ended (END_STREAM received); the response may still be sent.
+export const HALF_CLOSED_REMOTE: i64 = 2;
+/// The response has ended (END_STREAM sent); the request body may still arrive.
+export const HALF_CLOSED_LOCAL: i64 = 3;
+/// Both have ended, or the stream was reset.
+export const CLOSED: i64 = 4;
+
+/// One stream of a connection.
+export class H2Stream {
+  id: i64 = 0;
+  state: i64 = CLOSED;
+  /// The request head, and where its pseudo-headers are.
+  fields: FieldList = new FieldList();
+  info: RequestFields = {
+    method: -1,
+    scheme: -1,
+    authority: -1,
+    path: -1,
+    protocol: -1,
+    contentLength: -1,
+  };
+
+  // The request body: DATA payloads not read yet (from `head`), their size, the size of all.
+  chunks: u8[][] = [];
+  head: i64 = 0;
+  buffered: i64 = 0;
+  received: i64 = 0;
+  /// END_STREAM arrived (the body is complete once `chunks` are read).
+  remoteEnded: bool = false;
+  /// What the peer may still send before a WINDOW_UPDATE, and what was read since the last one.
+  recvWindow: i64 = 0;
+  consumed: i64 = 0;
+
+  // The response.
+  /// What the stream may still send (the peer's window for it; may go below 0 after SETTINGS).
+  sendWindow: i64 = 0;
+  /// Response body bytes waiting for window: `out[outStart..outEnd)`, then END_STREAM if
+  /// `endAfter`.
+  out: u8[] = [];
+  outStart: i64 = 0;
+  outEnd: i64 = 0;
+  endAfter: bool = false;
+  /// The response head was sent; END_STREAM was sent (or queued in `out`).
+  headersSent: bool = false;
+  localEnded: bool = false;
+  /// RST_STREAM was sent or received: nothing more is sent on it.
+  reset: bool = false;
+  /// The handler has not returned yet: the stream's slot stays taken, also after a reset (so
+  /// resetting streams does not run more handlers at once than the limit).
+  running: bool = false;
+  /// Back in the connection's pool (`recycle`), until `open` gives it to the next stream.
+  pooled: bool = false;
+  /// The connection is in the list of streams with output waiting.
+  queued: bool = false;
+  /// The request body must have arrived by `deadline` (`Date.now()` ms); `late` once it has not.
+  deadline: i64 = 0;
+  late: bool = false;
+  /// The response's trailers (lowercase name, value, ...), sent after its body.
+  trailers: string[] = [];
+
+  // Who waits: a handler for body or window (`wake` aborts it, which settles its wait).
+  private waiter: AbortController | null = null;
+  /// Who waits for window (a response body writer), apart from a reader of the body.
+  private outWaiter: AbortController | null = null;
+  /// The server's end of the stream pair of an extended CONNECT tunnel (h2/tunnel.vlt).
+  tunnel: TcpStream | null = null;
+  /// The tunnel's directions that have ended.
+  tunnelOut: bool = false;
+  tunnelIn: bool = false;
+  private aborter: AbortController | null = null;
+
+  /// Prepares a pooled stream for request `id`.
+  open(id: i64, recvWindow: i64, sendWindow: i64) {
+    this.id = id;
+    this.state = OPEN;
+    this.chunks.length = 0;
+    this.head = 0;
+    this.buffered = 0;
+    this.received = 0;
+    this.remoteEnded = false;
+    this.recvWindow = recvWindow;
+    this.consumed = 0;
+    this.sendWindow = sendWindow;
+    this.outStart = 0;
+    this.outEnd = 0;
+    this.endAfter = false;
+    this.headersSent = false;
+    this.localEnded = false;
+    this.reset = false;
+    this.running = false;
+    this.pooled = false;
+    this.queued = false;
+    this.late = false;
+    this.trailers.length = 0;
+    this.waiter = null;
+    this.outWaiter = null;
+    this.tunnel = null;
+    this.tunnelOut = false;
+    this.tunnelIn = false;
+    this.aborter = null;
+  }
+
+  /// The END_STREAM of the request arrived.
+  endRemote() {
+    this.remoteEnded = true;
+    this.state = this.state == HALF_CLOSED_LOCAL ? CLOSED : HALF_CLOSED_REMOTE;
+  }
+
+  /// The END_STREAM of the response went out.
+  endLocal() {
+    this.localEnded = true;
+    this.state = this.state == HALF_CLOSED_REMOTE ? CLOSED : HALF_CLOSED_LOCAL;
+  }
+
+  /// The stream was reset (either way): aborts its signal and wakes its handler.
+  resetNow() {
+    this.reset = true;
+    this.state = CLOSED;
+    this.outStart = 0;
+    this.outEnd = 0;
+    this.endAfter = false;
+    const a = this.aborter;
+    if (a != null) {
+      a.abort();
+    }
+    const t = this.tunnel;
+    if (t != null) {
+      t.abort();
+    }
+    this.wake();
+    this.wakeOut();
+  }
+
+  /// A DATA payload of the request.
+  push(data: u8[]) {
+    this.chunks.push(data);
+    this.buffered += data.length as i64;
+    this.wake();
+  }
+
+  /// The next unread piece of the body, or null when none has arrived (or it ended).
+  take(): u8[] | null {
+    if (this.head >= (this.chunks.length as i64)) {
+      return null;
+    }
+    const c = this.chunks[this.head];
+    this.chunks[this.head] = [];
+    this.head++;
+    if (this.head == (this.chunks.length as i64)) {
+      this.chunks.length = 0;
+      this.head = 0;
+    }
+    this.buffered -= c.length as i64;
+    return c;
+  }
+
+  /// Response body bytes waiting for window.
+  get pending(): i64 {
+    return this.outEnd - this.outStart;
+  }
+
+  /// Queues `src[start..end)` of the response body, to go out as window allows.
+  queue(src: u8[], start: i64, end: i64) {
+    const n = end - start;
+    if (this.outStart > 0 && this.outEnd + n > (this.out.length as i64)) {
+      // Move what is left to the front first.
+      this.out.copyWithin(0, this.outStart, this.outEnd);
+      this.outEnd -= this.outStart;
+      this.outStart = 0;
+    }
+    if (this.outEnd + n > (this.out.length as i64)) {
+      let size = (this.out.length as i64) * 2;
+      if (size < 4096) {
+        size = 4096;
+      }
+      while (size < this.outEnd + n) {
+        size *= 2;
+      }
+      const grown: u8[] = Buffer.alloc(size as usize);
+      this.out.copy(grown, 0, 0, this.outEnd);
+      this.out = grown;
+    }
+    src.copy(this.out, this.outEnd, start, end);
+    this.outEnd += n;
+  }
+
+  /// A promise that settles at the next `wake()`: a handler waiting for body or window.
+  waitForWake(): Promise<void> {
+    const w = new AbortController();
+    this.waiter = w;
+    return w.signal.whenAborted();
+  }
+
+  /// Wakes the handler waiting on this stream, if one is.
+  wake() {
+    const w = this.waiter;
+    if (w != null) {
+      this.waiter = null;
+      w.abort();
+    }
+  }
+
+  /// A promise that settles at the next `wakeOut()`: a writer waiting for window.
+  waitForWindow(): Promise<void> {
+    const w = new AbortController();
+    this.outWaiter = w;
+    return w.signal.whenAborted();
+  }
+
+  /// Wakes the writer waiting for window, if one is.
+  wakeOut() {
+    const w = this.outWaiter;
+    if (w != null) {
+      this.outWaiter = null;
+      w.abort();
+    }
+  }
+
+  /// Aborted when the stream is reset or the connection ends (made when first asked for).
+  signal(): AbortSignal {
+    let a = this.aborter;
+    if (a == null) {
+      a = new AbortController();
+      if (this.reset) {
+        a.abort();
+      }
+      this.aborter = a;
+    }
+    return a.signal;
+  }
+}

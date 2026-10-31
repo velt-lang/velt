@@ -1,12 +1,8 @@
-//! `JSON.stringify(x)` / `JSON.parse<T>(s)` (docs/std/json.md): compile-time
-//! generated per-type glue over the rt string builder and JSON pull reader (rt_abi_async.md
-//! §12). One function per type, shared by every use (which also handles recursive types).
+//! `JSON.parse<T>(s)` (docs/std/encoding/json.md): compile-time generated per-type glue over
+//! the rt JSON pull reader (rt_abi_async.md §12). One function per type, shared by every use
+//! (which also handles recursive types). `JSON.stringify` is written by a source generator in
+//! Velt (velt/encoding/json/generate), not here.
 //!
-//! - stringify: a `VeltStrBuf`; numbers, bools and strings are appended inline, every other type
-//!   through its `Glue::JsonWrite` (write.rs). Structs/classes/anon objects are objects in field
-//!   order with optional fields (`x?: T`, default `null`) omitted when null; `null` elsewhere;
-//!   C-like enums are their discriminant numbers; a `json.Value` field is re-serialized. A class
-//!   value is written as its dynamic class (dynamic.rs).
 //! - parse: `Glue::JsonParse` of the document type owns the reader, checks for trailing input and
 //!   turns a failure into the owned `JsonError.message`; `Glue::JsonRead` decodes one value
 //!   (read.rs, object.rs). The call site throws the prelude's `JsonError { message }`.
@@ -15,10 +11,7 @@
 //! stores what it expected (a static string), and every level prepends its path segment
 //! (`.name`, `[3]`) while returning, so paths cost nothing on success.
 
-pub(in crate::lower) mod any;
 mod db_bind;
-mod dynamic;
-mod key;
 mod literal;
 mod map;
 mod object;
@@ -29,7 +22,6 @@ mod union;
 mod union_object;
 
 pub(in crate::lower) use map::RecordOrder;
-pub(in crate::lower) mod write;
 
 use velt_sema::hir::{self, AdtKind, TyId, TyKind};
 
@@ -38,7 +30,7 @@ use super::{cint, ice, unit, Cx, FnLower, Glue};
 use crate::vir::{AggId, BinOp, BlockId, Operand, Place, Proj, Rvalue, Ty, STR_AGG};
 
 /// Qualified name of the prelude's dynamic JSON value class.
-const PRELUDE_JSON_VALUE: &str = "std/prelude/json/json::JsonValue";
+const PRELUDE_JSON_VALUE: &str = velt_common::std_item!(prelude_json, "JsonValue");
 
 const STR: Ty = Ty::Agg(STR_AGG);
 /// `velt_rt_json_reader_new_with`'s flag: the source is a `u8[]` of binary rows (rt_abi.md).
@@ -92,7 +84,7 @@ enum Seg<'a> {
 }
 
 /// The name of the prelude's `JsonError` class.
-const PRELUDE_JSON_ERROR: &str = "std/prelude/json/json::JsonError";
+const PRELUDE_JSON_ERROR: &str = velt_common::std_item!(prelude_json, "JsonError");
 
 impl Cx<'_> {
     /// `{ expected: string, path: string }`, the decoders' failure context.
@@ -129,7 +121,7 @@ impl Cx<'_> {
                     .hir
                     .defs
                     .iter()
-                    .any(|d| matches!(d, hir::Def::Adt(a) if a.name.starts_with("std/prelude/")))
+                    .any(|d| matches!(d, hir::Def::Adt(a) if a.name.starts_with(velt_common::std_dir!(prelude))))
                 {
                     return None;
                 }
@@ -155,38 +147,6 @@ impl Cx<'_> {
 }
 
 impl FnLower<'_, '_> {
-    /// `JSON.stringify(a)` → owned string.
-    pub(super) fn json_stringify(&mut self, a: &hir::Expr, ty: TyId) -> Operand {
-        let t = self.sub(a.ty);
-        let v = self.expr(a);
-        if self.dead() {
-            return unit();
-        }
-        let place = self.place_of(v, t);
-        if self.cx.is_dynamic(t) {
-            self.json_any_top_check(&place);
-        } else if self.cx.is_union(t) {
-            // The `any` / `unknown` member of a generic union at such an instantiation
-            // (`T | Mod<T>` at `T = unknown`) is checked as a plain one is.
-            self.for_each_variant(&place, t, |lw, _, parts| {
-                if let [(pp, pt)] = parts.as_slice() {
-                    if lw.cx.is_dynamic(*pt) {
-                        lw.json_any_top_check(pp);
-                    }
-                }
-            });
-        }
-        let buf = self.temp(STR);
-        let bp = self.addr(Place::local(buf));
-        self.call_rt(Rt::StrbufNew, vec![cint(0, Ty::U64), bp.clone()], None);
-        self.json_write_at(&bp, &place, t, key::JsonKey::Text(""));
-        let out = self.temp(STR);
-        let op = self.addr(Place::local(out));
-        self.call_rt(Rt::StrbufFinish, vec![bp, op], None);
-        let ty = self.sub(ty);
-        self.owned_result(Some(out), ty)
-    }
-
     /// `JSON.parse<T>(a)` with reader options `flags` / `depth` (`i64`s): the decoded value,
     /// or a thrown `JsonError`.
     pub(super) fn json_parse(

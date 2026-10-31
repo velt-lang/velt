@@ -1,8 +1,8 @@
 //! JavaScript's `ToPrimitive(v, hint)` of an object held in an `any` (#924), the conversion
 //! behind arithmetic, `+`, the relational operators and `==` on objects. The prelude's
-//! `__anyToPrimitive(v, hint, at)` (std/prelude/zzzzz_any_ops.vlt) ends with
-//! `__intrinsic_any_to_primitive(v, hint, at)`, which sema writes here as a dispatch over the
-//! program's classes, as `__anyString` holds the dispatch of `String(x)` (any_text.rs):
+//! `anyPrimitive(v, hint, at)` (std/lang/hooks/any_ops.vlt) ends with
+//! `anyToPrimitive(v, hint, at)`, which sema writes here as a dispatch over the
+//! program's classes, as `anyString` holds the dispatch of `String(x)` (any_text.rs):
 //! - a class with a `[Symbol.toPrimitive]` is what that returns for `hint`;
 //! - another one tries its `valueOf()` and `toString()` (`toString()` first for `"string"`),
 //!   and the first primitive result is kept as it is (a number stays a number); a method whose
@@ -10,7 +10,7 @@
 //! - without a `toString()` of its own, `Object.prototype.toString` writes it last.
 //!
 //! An object result of the last method is Node's `TypeError`. Every other value goes to the
-//! prelude's `__anyToPrimitivePlain` (arrays, object literals, functions).
+//! prelude's `anyPrimitivePlain` (arrays, object literals, functions).
 
 use velt_common::Span;
 use velt_syntax::ast;
@@ -74,7 +74,7 @@ enum PrimMethod {
 }
 
 impl FnCx<'_, '_> {
-    /// `__intrinsic_any_to_primitive(v, hint, at)` in the prelude's `__anyToPrimitive`: the
+    /// `anyToPrimitive(v, hint, at)` in the hook `anyPrimitive`: the
     /// dispatch (module docs).
     pub(super) fn primitive_dispatch(&mut self, args: &[ast::Expr], span: Span) -> hir::Expr {
         let (Some(any), [v, ..]) = (self.any_ty(), args) else {
@@ -88,7 +88,7 @@ impl FnCx<'_, '_> {
             lw.dynamic_class_match_where(
                 s,
                 any,
-                ("__anyToPrimitivePlain", fallback),
+                (velt_common::std_hook!(any_primitive_plain), fallback),
                 |lw, c| lw.prim_method(c).is_some(),
                 |lw, c, read| match lw.prim_method(c) {
                     Some(m) => lw.prim_method_call(&m, read, any, span),
@@ -142,7 +142,11 @@ impl FnCx<'_, '_> {
         let e = match m {
             PrimMethod::Proxy => {
                 let lit = synth(ast::ExprKind::Lit(ast::Lit::Str("Proxy".into())), span);
-                call("__anyTextUnsupported", vec![lit, at()], span)
+                call(
+                    velt_common::std_hook!(any_text_unsupported),
+                    vec![lit, at()],
+                    span,
+                )
             }
             PrimMethod::ToPrimitive(takes_hint) => {
                 let args = match takes_hint {
@@ -164,7 +168,11 @@ impl FnCx<'_, '_> {
                     args,
                     optional: false,
                 };
-                call("__anyPrimKeep", vec![synth(kind, span), at()], span)
+                call(
+                    velt_common::std_hook!(any_prim_keep),
+                    vec![synth(kind, span), at()],
+                    span,
+                )
             }
             &PrimMethod::Ordinary {
                 to_string,
@@ -178,7 +186,11 @@ impl FnCx<'_, '_> {
                 // Without a `toString` of its own, `Object.prototype.toString` writes it first
                 // for `"string"`.
                 let string_chain = match inherited {
-                    true => call("__anyText", vec![read.clone(), at()], span),
+                    true => call(
+                        velt_common::std_hook!(any_text),
+                        vec![read.clone(), at()],
+                        span,
+                    ),
                     false => self.prim_chain(&string, false, &read, span),
                 };
                 let default_chain = self.prim_chain(&default, inherited, &read, span);
@@ -224,14 +236,22 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> ast::Expr {
         let Some((&(name, primitive), rest)) = ms.split_first() else {
-            return call("__anyText", vec![read.clone(), ident("at", span)], span);
+            return call(
+                velt_common::std_hook!(any_text),
+                vec![read.clone(), ident("at", span)],
+                span,
+            );
         };
         let c = method0(read.clone(), name, span);
         if primitive {
             return c;
         }
         if rest.is_empty() && !inherited {
-            return call("__anyPrimKeep", vec![c, ident("at", span)], span);
+            return call(
+                velt_common::std_hook!(any_prim_keep),
+                vec![c, ident("at", span)],
+                span,
+            );
         }
         let next = self.prim_chain(rest, inherited, read, span);
         let arrow = ast::ExprKind::Arrow {
@@ -242,6 +262,10 @@ impl FnCx<'_, '_> {
             body: ast::ArrowBody::Expr(Box::new(next)),
             is_async: false,
         };
-        call("__anyPrimThen", vec![c, synth(arrow, span)], span)
+        call(
+            velt_common::std_hook!(any_prim_then),
+            vec![c, synth(arrow, span)],
+            span,
+        )
     }
 }

@@ -1,6 +1,6 @@
 // std/csv: RFC 4180 parsing (quotes, escaped quotes, embedded delimiters and line breaks,
 // CRLF / LF / CR), options, header records, writing and round trips, error lines.
-import { parseCsv, parseCsvRecords, stringifyCsv, CsvError } from "velt:csv";
+import { parseCsv, parseCsvRecords, stringifyCsv, CsvError } from "velt/encoding/csv";
 
 function show(label: string, text: string) {
   try {

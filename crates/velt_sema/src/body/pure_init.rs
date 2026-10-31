@@ -431,7 +431,7 @@ fn decide(cx: &mut Ctx, f: DefId) -> Result<(), Impure> {
     // declare).
     if info.kind == FnKind::Extern
         && info.name == "velt_rt_symbol_for"
-        && cx.modules[info.module].path == "std/symbol"
+        && cx.modules[info.module].path == velt_common::std_module!(lang_symbol)
     {
         return Ok(());
     }
@@ -650,7 +650,6 @@ fn effect_of(i: Intrinsic) -> Option<String> {
         | I::Round
         | I::Trunc
         | I::FAbs
-        | I::JsonStringify
         | I::SourceLocation
         | I::SymbolStatic
         | I::SymbolRegistry

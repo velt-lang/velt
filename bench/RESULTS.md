@@ -1216,7 +1216,7 @@ the table is from `main` at 8949f2c7):
 ## Stable sort with a comparator (#530, 2026-10-05)
 
 `sort(cmp)` / `toSorted(cmp)` moved from an in-place SymMerge (O(n log² n) swaps) to a stable
-sort shaped like Rust's driftsort through a scratch buffer (std/sort/stable.vlt), and velt_opt
+sort shaped like Rust's driftsort through a scratch buffer (std/lang/sort/stable.vlt), and velt_opt
 now inlines the comparator through `cmp: F | null` and through every closure argument of a
 recursive helper. Instructions and branch mispredictions of the sort alone (a run with the sort
 minus a run with only the setup), valgrind cachegrind on Linux (WSL2), clang 18; before is
@@ -1439,7 +1439,7 @@ What changed:
 
 ## Positioned file I/O over system functions (`bench/fs/pread`, #1716, 2026-10-27)
 
-`velt:fs`'s `readSync`/`writeSync`/`fsyncSync` are Velt code calling `pread`/`pwrite`/`fcntl`
+`velt/fs`'s `readSync`/`writeSync`/`fsyncSync` are Velt code calling `pread`/`pwrite`/`fcntl`
 directly (`declare system function`), against Rust (`FileExt::read_at`, `sync_all`) and Node
 (`fs.readSync` with a position). Workloads: 200,000 random 4 KiB reads of a cached 64 MiB file,
 8 sequential passes in 64 KiB reads, 200 100-byte writes each followed by an fsync.
@@ -1449,7 +1449,7 @@ for all, and it is most of the time):
 
 | program | instructions |
 |---|---:|
-| Velt, the whole benchmark through `velt:fs` | 12.85 M |
+| Velt, the whole benchmark through `velt/fs` | 12.85 M |
 | Rust, the whole benchmark | 8.18 M |
 | Velt, the random reads through a bare `declare system function pread` | 8.03 M |
 | Velt, an empty program (runtime start-up) | 0.40 M |

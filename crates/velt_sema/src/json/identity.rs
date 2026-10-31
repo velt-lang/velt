@@ -100,3 +100,23 @@ impl Looks<'_> {
         }
     }
 }
+
+/// A call of a generated function (`declare generated`): its code looks at the shape of each of
+/// its type arguments, as `JSON.stringify` (whose writer std generates) does when it writes a
+/// value, so a copy of an object type's value shows there (`object_copies`).
+pub(super) fn generated_look(
+    generated: &rustc_hash::FxHashSet<crate::hir::DefId>,
+    e: &crate::hir::Expr,
+    direct: &mut Vec<(crate::hir::TyId, velt_common::Span, super::Need)>,
+) {
+    if let crate::hir::ExprKind::Call {
+        callee: crate::hir::Callee::Def(d, targs),
+        ..
+    } = &e.kind
+    {
+        if generated.contains(d) {
+            let seen = super::Need::Seen(crate::object_copies::Seen::Serialized);
+            direct.extend(targs.iter().map(|t| (*t, e.span, seen)));
+        }
+    }
+}

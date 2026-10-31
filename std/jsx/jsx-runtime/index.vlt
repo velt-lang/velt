@@ -1,0 +1,19 @@
+// velt/jsx/jsx-runtime: the JSX provider module of std/jsx (docs/internals/contracts/jsx.md). A
+// module with JSX imports it implicitly, as the namespace `JSX` for types; generated code calls the
+// factories. Includes the SSR precompile exports, so static markup compiles to constant strings.
+
+export { Element } from "velt/jsx/node";
+export { RenderError } from "velt/jsx/errors";
+export type { Child, AttrValue, Style, Text } from "velt/jsx/node";
+export type { IntrinsicElements, ElementChildrenAttribute } from "velt/jsx/intrinsic";
+export {
+  jsx,
+  Fragment,
+  jsxComponent,
+  jsxAsyncComponent,
+  jsxEscape,
+  jsxEscapeString,
+  jsxAttr,
+} from "velt/jsx/factory";
+export { jsxTemplate, jsxTemplateString, jsxList } from "velt/jsx/template";
+export { jsxVoidElements } from "velt/jsx/void_elements";

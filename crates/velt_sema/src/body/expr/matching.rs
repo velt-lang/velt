@@ -476,7 +476,12 @@ impl FnCx<'_, '_> {
         let hint = match (nothing_lit(rhs), exp) {
             (Some(n), _) => self.cx.ty.option_of(payload, n),
             (_, Some(e)) if !super::ops::untyped(rhs) => e,
-            _ => payload,
+            // `x ?? (c ? y : null)`: a default that may be nothing makes the result an option
+            // too, as in TypeScript.
+            _ => match nothing_branch(rhs) {
+                Some(n) => self.cx.ty.option_of(payload, n),
+                None => payload,
+            },
         };
         let d = self.expr(rhs, Some(hint), Want::Move);
         self.nullish_match(s, (l, mode), payload, d, exp, span)
@@ -748,6 +753,17 @@ fn moves_out(e: &hir::Expr) -> bool {
 }
 
 /// The nothing `e` is written as (`null`, `undefined`), if it is one of those literals.
+/// The nothing a branch of `e` is: `null` or `undefined` itself, or in an arm of `c ? a : b`.
+fn nothing_branch(e: &ast::Expr) -> Option<Nothing> {
+    match &e.kind {
+        ast::ExprKind::Cond { then, els, .. } => {
+            nothing_branch(then).or_else(|| nothing_branch(els))
+        }
+        ast::ExprKind::Paren(inner) => nothing_branch(inner),
+        _ => nothing_lit(e),
+    }
+}
+
 fn nothing_lit(e: &ast::Expr) -> Option<Nothing> {
     match &e.kind {
         ast::ExprKind::Lit(ast::Lit::Null) => Some(Nothing::Null),

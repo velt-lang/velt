@@ -1,0 +1,327 @@
+// sqlite/engine/schema/load (internal): the tables and indexes of a database, read from `sqlite_schema` (page 1)
+// and parsed from the CREATE statements stored there
+// (https://sqlite.org/schematab.html, https://sqlite.org/datatype3.html#type_affinity).
+
+import { DbFile } from "../db_file";
+import { Cursor } from "../cursor";
+import { parseOne } from "../sql/statement";
+import {
+  E_COLUMN,
+  IndexedColumn,
+  S_CREATE_INDEX,
+  S_CREATE_TABLE,
+  S_CREATE_VIEW,
+  Statement,
+} from "../sql/types";
+import { BINARY, collationOf } from "../collation";
+import { A_BLOB, affinityOf } from "../affinity";
+import { Column } from "./column";
+import { Index } from "./table_index";
+import { Table } from "./table";
+import { View } from "./view";
+import { Schema } from "./schema";
+import { SchemaRow } from "./schema_row";
+
+/**
+ * Reads the schema of `db`. Every sqlite_schema row is kept (`Schema.rows`); a table, view or
+ * virtual table this engine cannot use is in `tables` with why (`Table.unsupported`), and an
+ * index it cannot use is on its table with why (`Index.unsupported`).
+ */
+export function loadSchema(db: DbFile): Schema {
+  const schema = new Schema();
+  schema.cookie = db.schemaCookie;
+  const master = new Table("sqlite_schema", 1, "");
+  for (const c of ["type", "name", "tbl_name", "rootpage", "sql"]) {
+    master.columns.push(new Column(c, c == "rootpage" ? "INT" : "TEXT"));
+  }
+  fields(master, []);
+  schema.tables.push(master);
+  const pending: Statement[] = [];
+  const failed: string[] = [];
+  const roots: u32[] = [];
+  const names: string[] = [];
+  const c = new Cursor(db, 1);
+  let more = c.first();
+  while (more) {
+    const row = SchemaRow {
+      type: c.text(0),
+      name: c.text(1),
+      tableName: c.text(2),
+      root: c.int(3) as u32,
+      sql: c.text(4),
+    };
+    schema.rows.push(row);
+    if (row.type == "table") {
+      schema.tables.push(table(row));
+    } else if (row.type == "view") {
+      const t = new Table(row.name, 0, row.sql);
+      t.kind = "view";
+      try {
+        const v = parseOne(row.sql);
+        if (v.kind == S_CREATE_VIEW && v.select != null) {
+          schema.views.push(new View(v.name, v.columns, v.select!));
+        } else {
+          t.unsupported = "not a CREATE VIEW statement";
+        }
+      } catch (e) {
+        t.unsupported = e.message;
+      }
+      // A view this engine cannot read is kept with why, so it never reads as missing.
+      if (t.unsupported != "") {
+        schema.tables.push(t);
+      }
+    } else if (row.type == "index") {
+      // Indexes after their tables; an automatic index (UNIQUE, PRIMARY KEY) has no SQL.
+      names.push(row.name);
+      roots.push(row.root);
+      let s = new Statement(0);
+      let why = "";
+      if (row.sql != "") {
+        try {
+          s = parseOne(row.sql);
+        } catch (e) {
+          why = e.message;
+        }
+      }
+      // Remember the table (an automatic index has only its name).
+      s.table = s.kind == S_CREATE_INDEX ? s.table : row.tableName;
+      pending.push(s);
+      failed.push(why);
+    }
+    more = c.next();
+  }
+  for (let i: usize = 0; i < pending.length; i++) {
+    addIndex(schema, pending[i], names[i], roots[i], failed[i]);
+  }
+  return schema;
+}
+
+function tryParse(sql: string): Statement | null {
+  try {
+    return parseOne(sql);
+  } catch (e) {
+    return null;
+  }
+}
+
+/** The table of a sqlite_schema row: usable, or with why not. */
+function table(row: SchemaRow): Table {
+  let st = new Statement(0);
+  try {
+    st = parseOne(row.sql);
+  } catch (e) {
+    const t = new Table(row.name, row.root, row.sql);
+    t.unsupported = e.message;
+    if (row.sql.toUpperCase().startsWith("CREATE VIRTUAL")) {
+      t.kind = "virtual table";
+    }
+    return t;
+  }
+  if (st.kind != S_CREATE_TABLE) {
+    const t = new Table(row.name, row.root, row.sql);
+    t.unsupported = "not a CREATE TABLE statement";
+    return t;
+  }
+  const t = new Table(st.name, row.root, row.sql);
+  t.withoutRowid = st.withoutRowid;
+  t.strict = st.strict;
+  for (const d of st.columnDefs) {
+    const col = new Column(d.name, d.type);
+    // In a STRICT table, ANY means no affinity at all.
+    if (st.strict && d.type.toUpperCase() == "ANY") {
+      col.affinity = A_BLOB;
+    }
+    col.notNull = d.notNull;
+    col.hasDefault = d.dflt != null;
+    col.generated = d.generated != null;
+    col.stored = d.stored;
+    const coll = collationOf(d.collate);
+    // An unknown collation keeps BINARY here; indexes over the column are marked not seekable.
+    col.collation = coll < 0 ? BINARY : coll as u8;
+    col.collationName = d.collate == "" ? "BINARY" : d.collate.toUpperCase();
+    t.columns.push(col);
+  }
+  /**
+   * INTEGER PRIMARY KEY (exactly that type, not DESC) is the rowid; so is PRIMARY KEY (x)
+   * naming one INTEGER column.
+   */
+  let pk: i64 = -1;
+  for (let i: usize = 0; i < st.columnDefs.length; i++) {
+    const d = st.columnDefs[i];
+    if (d.primaryKey && d.type.toUpperCase() == "INTEGER" && !d.desc) {
+      pk = i as i64;
+    }
+  }
+  if (st.primaryKey.length == 1 && st.primaryKey[0].expr.kind == E_COLUMN) {
+    const i = t.column(st.primaryKey[0].expr.name);
+    if (i >= 0 && t.columns[i as usize].type.toUpperCase() == "INTEGER") {
+      pk = i;
+    }
+  }
+  if (pk >= 0 && !t.withoutRowid) {
+    t.rowidColumn = pk;
+    t.columns[pk as usize].isRowid = true;
+  }
+  // A WITHOUT ROWID table's key columns are NOT NULL, declared or not (as SQLite enforces).
+  const keyCols: i64[] = [];
+  if (t.withoutRowid) {
+    for (const k of st.keys) {
+      if (!k.primary) {
+        continue;
+      }
+      for (const c of k.columns) {
+        const i = c.expr.kind == E_COLUMN ? t.column(c.expr.name) : -1;
+        if (i >= 0) {
+          t.columns[i as usize].notNull = true;
+          if (!keyCols.includes(i)) {
+            keyCols.push(i);
+          }
+        }
+      }
+    }
+  }
+  fields(t, keyCols);
+  return t;
+}
+
+/**
+ * Each column's field in the records: the key columns `first` (a WITHOUT ROWID table's primary
+ * key), then the others in order, VIRTUAL generated columns left out (sqlite3TableColumnToStorage).
+ */
+function fields(t: Table, first: i64[]) {
+  let n: i64 = 0;
+  for (const i of first) {
+    t.columns[i as usize].field = n;
+    n++;
+  }
+  for (let i: usize = 0; i < t.columns.length; i++) {
+    const col = t.columns[i];
+    if (first.includes(i as i64) || (col.generated && !col.stored)) {
+      continue;
+    }
+    col.field = n;
+    n++;
+  }
+}
+
+function addIndex(schema: Schema, s: Statement, name: string, root: u32, why: string) {
+  if (why != "") {
+    // A CREATE INDEX that does not parse: on its table, unusable.
+    const t = schema.find(s.table);
+    if (t != null) {
+      const ix = new Index(name, t!.name, root, false);
+      ix.unsupported = why;
+      ix.seekable = false;
+      t!.indexes.push(ix);
+    }
+    return;
+  }
+  if (s.kind == S_CREATE_INDEX) {
+    const t = schema.find(s.table);
+    if (t == null) {
+      return;
+    }
+    const ix = new Index(name, t!.name, root, s.unique);
+    if (t!.unsupported != "") {
+      ix.unsupported = t!.unsupported;
+      ix.seekable = false;
+      t!.indexes.push(ix);
+      return;
+    }
+    ix.partial = s.where != null;
+    keyColumns(t!, ix, s.indexed);
+    t!.indexes.push(ix);
+    return;
+  }
+  /** An automatic index: sqlite_autoindex_<table>_<n>, for a UNIQUE or PRIMARY KEY constraint. */
+  const t = schema.find(s.table);
+  if (t == null) {
+    return;
+  }
+  if (t!.unsupported != "") {
+    // The index of a table this engine cannot use: kept, unusable for the same reason.
+    const ix = new Index(name, t!.name, root, true);
+    ix.unsupported = t!.unsupported;
+    ix.seekable = false;
+    t!.indexes.push(ix);
+    return;
+  }
+  const def = tryParse(t!.sql);
+  if (def == null) {
+    return;
+  }
+  const n = autoIndexNumber(name);
+  const keys = autoIndexKeys(t!, def!);
+  if (n < 1 || n > keys.length) {
+    return;
+  }
+  const ix = new Index(name, t!.name, root, true);
+  keyColumns(t!, ix, keys[n - 1]);
+  t!.indexes.push(ix);
+}
+
+/**
+ * The keys of a table's automatic indexes, in the order SQLite numbers them: its PRIMARY KEY and
+ * UNIQUE constraints in source order (column ones where their column is), except a PRIMARY KEY
+ * that is the rowid, and except a constraint over the same columns with the same collations as
+ * an earlier one (SQLite makes no second index for it). A WITHOUT ROWID table's PRIMARY KEY
+ * takes a number, though its index is the table itself and has no row in sqlite_schema.
+ */
+function autoIndexKeys(t: Table, def: Statement): IndexedColumn[][] {
+  const keys: IndexedColumn[][] = [];
+  const seen: string[] = [];
+  for (const k of def.keys) {
+    if (k.primary && t.rowidColumn >= 0) {
+      continue;
+    }
+    const sig = signature(t, k.columns);
+    if (seen.includes(sig)) {
+      continue;
+    }
+    seen.push(sig);
+    keys.push(k.columns);
+  }
+  return keys;
+}
+
+/** The columns and collations of a key, as text: two keys index alike when these are equal. */
+function signature(t: Table, cols: IndexedColumn[]): string {
+  let s = "";
+  for (const k of cols) {
+    const pos = k.expr.kind == E_COLUMN ? t.column(k.expr.name) : -2;
+    let coll = k.collate.toUpperCase();
+    if (coll == "" && pos >= 0) {
+      coll = t.columns[pos as usize].collationName;
+    }
+    s += `${pos}:${coll == "" ? "BINARY" : coll},`;
+  }
+  return s;
+}
+
+function autoIndexNumber(name: string): usize {
+  const at = name.lastIndexOf("_");
+  return at < 0 ? 0 : parseInt(name.slice(at + 1), 10) as usize;
+}
+
+function keyColumns(t: Table, ix: Index, cols: IndexedColumn[]) {
+  for (const k of cols) {
+    let pos: i64 = -2;
+    let at: i64 = -1;
+    if (k.expr.kind == E_COLUMN) {
+      at = t.column(k.expr.name);
+      pos = at >= 0 && t.columns[at as usize].isRowid ? -1 : at;
+    }
+    ix.columns.push(pos);
+    // An index column takes its column's collation unless it names one.
+    let name = k.collate;
+    if (name == "" && at >= 0) {
+      name = t.columns[at as usize].collationName;
+    }
+    const coll = collationOf(name);
+    if (coll < 0) {
+      ix.seekable = false;
+    }
+    ix.colls.push(coll < 0 ? BINARY : coll as u8);
+    ix.desc.push(k.desc);
+  }
+}

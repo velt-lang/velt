@@ -3,7 +3,7 @@
 //!   known (or one of whose edges the refinement rules out) becomes a jump;
 //! - `trunc`/`floor`/`ceil`/`round` of a whole value is the value (also for ±∞ and NaN);
 //! - `abs` of a value that is never negative or `-0` is the value;
-//! - `__floatIndex(x)` of a whole `x` in `[0, 2^64)`, never NaN, is `x as u64` (the path the
+//! - `floatIndex(x)` of a whole `x` in `[0, 2^64)`, never NaN, is `x as u64` (the path the
 //!   helper takes for it);
 //! - ToInt32 of a constant is that constant, and of a whole value in the int32 range a
 //!   conversion;
@@ -286,7 +286,7 @@ fn js_to_int32(x: f64) -> i32 {
     m as u32 as i32
 }
 
-/// Integer comparisons of a local with itself (`x == x` once a NaN test like `__floatIndex`'s
+/// Integer comparisons of a local with itself (`x == x` once a NaN test like `floatIndex`'s
 /// `trunc(x) == x` compares integers) become constants, and branches on them jumps.
 pub(crate) fn self_comparisons(func: &mut Function) -> bool {
     let mut changed = false;

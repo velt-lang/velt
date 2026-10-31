@@ -4,7 +4,7 @@
 //! A test is a top-level `export function test_*()` (or `export async function test_*()`) with no
 //! parameters and no generics. Tests must be exported because the generated harness imports them
 //! from a separate module; a `test_*` function that is not exported (or takes parameters) is
-//! reported and skipped. Tests registered with `describe`, `it` and `test` (`velt:test`, or
+//! reported and skipped. Tests registered with `describe`, `it` and `test` (`velt/test`, or
 //! `vitest`) are known only when the program runs; here they are counted ([`TestFunctions`]).
 
 use std::path::{Path, PathBuf};
@@ -80,14 +80,14 @@ pub struct TestFunctions {
     /// own instead of sharing one with the other test files.
     pub runs_code: bool,
     /// Its top-level statements that are `describe`, `it`, `test` and hook calls, each of
-    /// which queues one registration (`velt:test/suite`); they don't count as running code.
+    /// which queues one registration (`velt/test/suite`); they don't count as running code.
     pub queued: usize,
     /// It imports `describe`, `it`, `test` or a hook, so it may have tests that only running it
     /// lists (`--filter` can't rule it out).
     pub registers: bool,
 }
 
-/// The functions of `velt:test` that register tests and hooks.
+/// The functions of `velt/test` that register tests and hooks.
 const REGISTERING: [&str; 7] = [
     "describe",
     "it",
@@ -99,7 +99,7 @@ const REGISTERING: [&str; 7] = [
 ];
 
 /// The modules that export them.
-const TEST_MODULES: [&str; 2] = ["velt:test", "vitest"];
+const TEST_MODULES: [&str; 2] = [velt_common::std_specifier!(test), "vitest"];
 
 /// The local names `module` imports the [`REGISTERING`] functions under.
 fn registering_names(module: &ast::Module) -> Vec<String> {
@@ -196,7 +196,7 @@ pub fn test_functions(module: &ast::Module) -> TestFunctions {
 
 /// Does a module that `module` (the file `file`) imports by a relative path, directly or through
 /// others, run code when it is evaluated? Its code would run in the process of every test file
-/// sharing a harness, and a failure there would end them all. Package and `velt:` imports are
+/// sharing a harness, and a failure there would end them all. Package and `velt/` imports are
 /// not followed; a module that cannot be read or parsed counts as running code (its file then
 /// gets a harness of its own, which reports the error).
 pub fn imports_run_code(file: &Path, module: &ast::Module, scanned: &mut Scanned) -> bool {
@@ -205,7 +205,9 @@ pub fn imports_run_code(file: &Path, module: &ast::Module, scanned: &mut Scanned
     while let Some((from, specs)) = stack.pop() {
         let dir = from.parent().unwrap_or(Path::new(""));
         for spec in specs {
-            let Some(path) = resolve(&dir.join(&spec)) else {
+            // Lexically normal: a cycle through `../` would otherwise reach the same file under
+            // ever longer paths (`a/../b/../a.vlt`), each one walked again.
+            let Some(path) = resolve(&lexical(&dir.join(&spec))) else {
                 // Not a source file (JSON, an asset) or missing: the build says which.
                 continue;
             };
@@ -261,6 +263,25 @@ fn relative_imports(module: &ast::Module) -> Vec<String> {
             _ => None,
         })
         .collect()
+}
+
+/// `path` with its `.` and `..` components taken out where it names a folder to leave (a
+/// leading `..`, or one after the root, stays).
+fn lexical(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir
+                if matches!(out.components().next_back(), Some(Component::Normal(_))) =>
+            {
+                out.pop();
+            }
+            c => out.push(c.as_os_str()),
+        }
+    }
+    out
 }
 
 /// The source file a relative import `base` names: itself, with an extension, its `index`, or
@@ -506,7 +527,7 @@ mod tests {
             test_functions(&module)
         };
         let f = found(
-            "import { describe, it as spec } from \"velt:test\";\n\
+            "import { describe, it as spec } from \"velt/test\";\n\
              const log: string[] = [];\n\
              describe(`a ${1}`, () => { spec(\"x\", () => { log.push(\"x\"); }); });\n\
              spec(\"y\", async () => {});\n\
@@ -514,14 +535,14 @@ mod tests {
         );
         assert_eq!((f.queued, f.registers, f.runs_code), (2, true, false));
         assert_eq!(f.tests, ["test_z"]);
-        // Vitest's module is `velt:test`.
+        // Vitest's module is `velt/test`.
         let f = found("import { test } from \"vitest\";\ntest(\"t\", () => {});\n");
         assert_eq!((f.queued, f.registers, f.runs_code), (1, true, false));
         // Anything else at the top level runs code, and so does a registration whose arguments
         // do (or a `using`).
         for src in [
-            "import { it } from \"velt:test\";\nit(\"a\", () => {});\nconsole.log(1);\n",
-            "import { it } from \"velt:test\";\nit(name(), () => {});\nfunction name(): string { return \"a\"; }\n",
+            "import { it } from \"velt/test\";\nit(\"a\", () => {});\nconsole.log(1);\n",
+            "import { it } from \"velt/test\";\nit(name(), () => {});\nfunction name(): string { return \"a\"; }\n",
             "import { it } from \"./mine\";\nit(\"a\", () => {});\n",
         ] {
             let f = found(src);
@@ -620,5 +641,41 @@ mod tests {
             &module,
             &mut scanned
         ));
+    }
+
+    /// A cycle across folders reads each module once: its paths are normal, not
+    /// `x/../y/../x/m.vlt` (which walked a package's engine tens of thousands of times).
+    #[test]
+    fn a_cycle_through_parent_folders_reads_each_module_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let d = tmp.path();
+        let write = |rel: &str, src: &str| {
+            let p = d.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, src).unwrap();
+        };
+        write(
+            "x/a.vlt",
+            "import { b } from \"../y/b\";\nexport const a = 1;\n",
+        );
+        write(
+            "y/b.vlt",
+            "import { c } from \"../z/c\";\nexport const b = 2;\n",
+        );
+        write(
+            "z/c.vlt",
+            "import { a } from \"../x/a\";\nexport const c = 3;\n",
+        );
+        let src = "import { a } from \"../x/a\";\n";
+        write("t/a.test.vlt", src);
+        let (module, _) = velt_syntax::parse_file(FileId(0), src);
+        let mut scanned = Scanned::default();
+        assert!(!imports_run_code(
+            &d.join("t/a.test.vlt"),
+            &module,
+            &mut scanned
+        ));
+        assert_eq!(scanned.modules.len(), 3, "{:?}", scanned.modules.keys());
+        assert_eq!(lexical(Path::new("../a/./b/../c")), Path::new("../a/c"));
     }
 }

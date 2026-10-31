@@ -1,0 +1,25 @@
+// A streamed body that reads the `Request` after its handler returned: the request is already
+// released, so this is a clear runtime error (exit 101), never a read of freed memory. Read what
+// the body needs before returning (tests/std/http/streams.test.vlt, "a BodyStream response").
+import { utf8Encode } from "velt/encoding";
+import { BodyStream } from "velt/net/http";
+import { serve } from "http-server";
+
+// Reads `req` while the response is sent, after its handler returned.
+async function* late(req: Request): AsyncGenerator<u8[]> {
+  await sleep(20);
+  yield utf8Encode(req.url);
+}
+
+async function main() {
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    return new Response(BodyStream.from(late(req)));
+  });
+  console.log("requesting");
+  try {
+    const res = await fetch(`http://127.0.0.1:${server.port}/x`);
+    console.log(await res.text());
+  } catch (e) {
+    console.log("cut off");
+  }
+}

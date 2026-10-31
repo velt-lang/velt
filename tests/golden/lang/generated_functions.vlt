@@ -1,0 +1,67 @@
+// Source generators (docs/internals/design/source-generators.md): `describe<T>` and `show<T>`
+// are declared `declare generated("./gen") function` in _generators/index.vlt, and their
+// bodies are written per type by _generators/gen.vlt at compile time.
+import { describe, show } from "./_generators";
+
+class Animal {
+  name: string = "rex";
+  private secret: i32 = 7;
+  legs?: i32;
+}
+
+class Dog extends Animal {
+  good: bool = true;
+}
+
+class Node {
+  value: i32 = 0;
+  next: Node | null = null;
+}
+
+type Point = { x: f64; y: f64 };
+
+enum Color {
+  Red,
+  Green = 5,
+}
+
+// The model's methods (`toJSON`) and string values (JSON text).
+class Stamp {
+  at: f64 = 0;
+  toJSON(): string {
+    return "now";
+  }
+}
+
+enum Mood {
+  Up = "up\n",
+}
+
+// An instance reached through generic code: `describe<T>` in `describeVia<T>`.
+function describeVia<T>(): string {
+  return describe<T>();
+}
+
+function showTwice<T>(v: T): string {
+  return show(v) + " " + show<T>(v);
+}
+
+function main() {
+  console.log(describe<Animal>());
+  console.log(describe<Point>());
+  console.log(describeVia<Color>());
+  console.log(describeVia<string | f64>());
+  console.log(describe<i32[]>());
+  const n = new Node();
+  n.value = 1;
+  n.next = new Node();
+  n.next!.value = 2;
+  // Recursive: `show<Node>` asks for `show<Node | null>`, which asks for `show<Node>` again.
+  console.log(show(n));
+  console.log(show(new Dog()));
+  console.log(show<Point>({ x: 1.5, y: -2 }));
+  console.log(showTwice(["a", "b"]));
+  console.log(show(true));
+  console.log(describe<Stamp>());
+  console.log(describe<Mood>());
+}

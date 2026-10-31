@@ -5,8 +5,8 @@
 // after the server has ended the conversation: leaving sends `{"type":"leave"}`, the server
 // closes, `receive` returns null, the receiver closes. Closing from the stdin loop while the
 // receiver waits would be a use after free.
-import { WebSocket, connectWebSocket } from "velt:websocket";
-import { readLine } from "velt:stdin";
+import { WebSocket, connectWebSocket } from "velt/net/websocket";
+import { readLine } from "velt/process";
 import { decodeServer, describe } from "./protocol";
 
 // The next server message as the client shows it, or null once the connection has ended.

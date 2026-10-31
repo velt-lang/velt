@@ -1,0 +1,21 @@
+// velt/reflect: what a dynamic value (`any`, `unknown`) holds at run time, read from its type
+// descriptor: its kind and type, and the entries it lists (the fields of an object, the
+// elements of an array). It is what a library needs to walk a value whose type it does not
+// know, as std's `JSON.stringify` of an `any` does (std/encoding/json/any.vlt), plus the
+// identity of a value and a per-thread stack of the values being visited, to find values that
+// contain themselves. docs/std/reflect.md.
+
+export { RuntimeType } from "velt/reflect/runtime_type";
+export {
+  beginVisit,
+  callToJSON,
+  dynamicOf,
+  endVisit,
+  entryCount,
+  entryName,
+  entryValue,
+  identity,
+  isProxy,
+  kindOf,
+  typeOf,
+} from "velt/reflect/reflect";

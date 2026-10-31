@@ -461,7 +461,7 @@ impl FnCx<'_, '_> {
             if let Some(k) = keys {
                 known[k] = None;
             }
-            if let Some(k) = self.infer_union_error(&args[i], p.ty, &known, slots) {
+            for k in self.infer_union_error(&args[i], p.ty, &known, slots) {
                 known[k] = slots[k];
             }
             let outer = self.cx.type_level.use_site.replace(args[i].span);

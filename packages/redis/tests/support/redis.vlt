@@ -1,0 +1,57 @@
+// Shared by the tests that need a real Redis: the server URLs and per-run key names, so
+// concurrent runs never see each other's keys and every run deletes what it created (never
+// FLUSHALL).
+import { RedisClient } from "../../src/lib";
+
+import { uuidv4 } from "velt/random/uuid";
+
+// The value of the environment variable `name`; null when it is unset or empty.
+function envOrNull(name: string): string | null {
+  const v = process.env[name] ?? "";
+  if (v.length == 0) {
+    return null;
+  }
+  return v;
+}
+
+// $VELT_TEST_REDIS_URL; null when it is unset or empty (the tests then return at once).
+export function redisUrl(): string | null {
+  return envOrNull("VELT_TEST_REDIS_URL");
+}
+
+// $VELT_TEST_REDISS_URL, a TLS Redis; null when it is unset or empty.
+export function redissUrl(): string | null {
+  return envOrNull("VELT_TEST_REDISS_URL");
+}
+
+// $VELT_TEST_REDISS_CA, the file of the CA that signed the TLS Redis's certificate; null when it
+// is unset or empty.
+export function redissCa(): string | null {
+  return envOrNull("VELT_TEST_REDISS_CA");
+}
+
+// `host:port` of `url` (without credentials or database), for URLs that must reach the same
+// server with other settings.
+export function hostPort(url: string): string {
+  let rest = url.substring(8);
+  const at = rest.lastIndexOf("@");
+  if (at >= 0) {
+    rest = rest.substring(at + 1);
+  }
+  const slash = rest.indexOf("/");
+  return slash >= 0 ? rest.substring(0, slash) : rest;
+}
+
+// A key prefix unique to this run: `velt-test:<uuid>:`.
+export function freshPrefix(): string {
+  return `velt-test:${uuidv4()}:`;
+}
+
+// Deletes every key under `prefix`; the number deleted.
+export async function cleanup(c: RedisClient, prefix: string): Promise<i64> {
+  const keys = await c.keys(`${prefix}*`);
+  if (keys.length == 0) {
+    return 0;
+  }
+  return await c.del(keys);
+}

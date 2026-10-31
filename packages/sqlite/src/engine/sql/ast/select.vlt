@@ -1,0 +1,18 @@
+// `Select`: A whole SELECT: WITH, the compound cores, ORDER BY, LIMIT, OFFSET.
+
+import { Cte } from "./cte";
+import { Expr } from "./expr";
+import { OrderTerm } from "./order_term";
+import { SelectCore } from "./select_core";
+
+/** A whole SELECT: WITH, the compound cores, ORDER BY, LIMIT, OFFSET. */
+export class Select {
+  /** The height of its highest expression (SQLite's heightOfSelect), for the subquery's. */
+  height: i64 = 0;
+  with: Cte[] = [];
+  recursive: bool = false;
+  cores: SelectCore[] = [];
+  orderBy: OrderTerm[] = [];
+  limit: Expr | null = null;
+  offset: Expr | null = null;
+}

@@ -6,7 +6,7 @@ use serde_json::{json, Map, Value};
 use super::{Dependency, Manifest, DEFAULT_ENTRY, DEFAULT_NATIVE_PATH};
 
 /// The first line of every generated manifest.
-pub(crate) const TYPES_IMPORT: &str = "import type { Package } from \"velt:package\";";
+pub(crate) const TYPES_IMPORT: &str = "import type { Package } from \"velt/package\";";
 
 pub(super) fn to_vlt(m: &Manifest) -> String {
     let mut fields = vec![

@@ -1,5 +1,5 @@
 // Notes and the JSON file they are kept in.
-import { readFileSync, writeFileSync, existsSync } from "velt:fs";
+import { readFileSync, writeFileSync, existsSync } from "velt/fs";
 
 export type Note = { id: i64; title: string; body: string; tags: string[]; created: i64 };
 

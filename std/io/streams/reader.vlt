@@ -1,0 +1,70 @@
+// velt/io (internal): `ReadableStreamDefaultReader`, which reads a stream it holds.
+
+import { invalidState, ReadableStreamDefaultController } from "velt/io/streams/controller";
+import { ReadableStream } from "velt/io/streams/streams";
+import { CancelReason, ReadableStreamReadResult } from "velt/io/streams/types";
+import { INSPECT } from "velt/lang/hooks/keys";
+
+/**
+ * Reads a stream it holds (JS `ReadableStreamDefaultReader`): `read()` the next chunk,
+ * `releaseLock()` to let go, `cancel(reason)`, and `closed`.
+ */
+export class ReadableStreamDefaultReader<R> {
+  private ctl: ReadableStreamDefaultController<R> | null;
+
+  /** A reader holding `stream`; a `TypeError` when another reader holds it. */
+  constructor(stream: ReadableStream<R>) {
+    const c = stream.ctl;
+    if (c.locked) {
+      throw invalidState("ReadableStream is locked");
+    }
+    c.locked = true;
+    this.ctl = c;
+  }
+
+  /** The next chunk (`{ value, done: false }`), or `{ done: true }` once the stream is closed. */
+  read(): Promise<ReadableStreamReadResult<R>, unknown> {
+    const c = this.ctl;
+    if (c == null) {
+      return Promise.reject<ReadableStreamReadResult<R>>(
+        invalidState("The reader is not attached to a stream"),
+      );
+    }
+    return c.read();
+  }
+
+  /** Lets go of the stream: another reader may take it, and waiting reads reject. */
+  releaseLock() {
+    const c = this.ctl;
+    if (c != null) {
+      c.release();
+      this.ctl = null;
+    }
+  }
+
+  /** Cancels the stream (see `ReadableStream.cancel`). */
+  cancel(reason: CancelReason = null): Promise<void, unknown> {
+    const c = this.ctl;
+    if (c == null) {
+      return Promise.reject<void>(invalidState("The reader is not attached to a stream"));
+    }
+    return c.cancel(reason);
+  }
+
+  /**
+   * Settles when the stream closes (or rejects when it errors); rejects with `TypeError:
+   * Invalid state: Reader released` once the reader let go of the stream.
+   */
+  get closed(): Promise<void, unknown> {
+    const c = this.ctl;
+    if (c == null) {
+      return Promise.reject<void>(invalidState("Reader released"));
+    }
+    return c.closed();
+  }
+
+  /** How `console.log` shows the reader, as Node does. */
+  [INSPECT](): string {
+    return `ReadableStreamDefaultReader { stream: ${this.ctl == null ? "undefined" : "ReadableStream"} }`;
+  }
+}

@@ -236,8 +236,8 @@ fn literal_keys(
     }
 }
 
-/// `e satisfies T`, which the parser gives as a call of the prelude's `__satisfies<T>(e)`.
+/// `e satisfies T`, which the parser gives as a call of the prelude's `satisfies<T>(e)`.
 fn is_satisfies(e: &ast::Expr) -> bool {
     matches!(&e.kind, E::Call { callee, args, .. }
-        if args.len() == 1 && matches!(&callee.kind, E::Ident(id) if id.name == "__satisfies"))
+        if args.len() == 1 && matches!(&callee.kind, E::Ident(id) if id.name == velt_common::std_hook!(satisfies)))
 }

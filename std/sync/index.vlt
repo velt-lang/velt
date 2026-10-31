@@ -1,0 +1,12 @@
+// velt/sync: building blocks for lock-free code on the prelude's `Atomic<T>`
+// (docs/std/sync.md, docs/internals/design/atomics.md): `Backoff`, for a loop that waits for
+// another thread, and `VersionLatch`, the latch word of optimistic lock coupling, which a
+// concurrent tree keeps in every node (bbtree's `NodeLatch`). Both are plain Velt on the
+// public `Atomic` API: any package can write its own. `Atom<T>`, a shared value threads read,
+// replace and update, and `Channel<T>`, a typed queue between tasks (docs/std/sync/channel.md).
+
+export { Atom } from "velt/sync/atom";
+export { Backoff, SPIN_ROUNDS } from "velt/sync/backoff";
+export { Channel, channel } from "velt/sync/channel";
+export { ChannelClosed } from "velt/sync/errors";
+export { VersionLatch } from "velt/sync/version_latch";

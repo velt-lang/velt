@@ -1,0 +1,51 @@
+// scripts/std-lint: the files allowed to break a rule until they are fixed. The lists only
+// shrink: `cargo xtask precheck` rejects an entry its base revision did not have, and std-lint
+// reports an entry that no longer breaks its rule.
+
+import type { Allow } from "./types";
+
+export const allow: Allow = {
+  oversize: [
+    "encoding/json/reader.vlt",
+    "encoding/json/scan.vlt",
+    "encoding/json/tape.vlt",
+    "encoding/json/writer.vlt",
+    "lang/proxy/array.vlt",
+    "lang/proxy/index.vlt",
+    "net/http/fetch/client/wire.vlt",
+    "net/http/fetch/headers.vlt",
+    "net/http/fetch/request.vlt",
+    "net/http/fetch/response.vlt",
+    "prelude/array.vlt",
+    "prelude/bytes.vlt",
+    "prelude/date.vlt",
+    "prelude/iter.vlt",
+    "prelude/json/json.vlt",
+    "prelude/map.vlt",
+    "prelude/promise.vlt",
+    "prelude/sort.vlt",
+  ],
+  multiClass: [
+    "encoding/json/tape.vlt",
+    "lang/proxy/index.vlt",
+    "lang/typed_array/base.vlt",
+    "lang/typed_array/core.vlt",
+    "net/http/fetch/blob.vlt",
+    "net/http/fetch/body.vlt",
+    "net/http/fetch/client/wire.vlt",
+    "net/http/fetch/request.vlt",
+    "net/http/fetch/response.vlt",
+    "prelude/error.vlt",
+    "prelude/iter.vlt",
+    "prelude/json/json.vlt",
+    "prelude/record.vlt",
+    "prelude/sync.vlt",
+    "prelude/weak.vlt",
+  ],
+  indexCode: [
+    "encoding/json/index.vlt",
+    "package/index.vlt",
+  ],
+  unowned: [
+  ],
+};

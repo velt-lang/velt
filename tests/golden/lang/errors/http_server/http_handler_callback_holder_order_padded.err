@@ -1,0 +1,6 @@
+http_handler_callback_holder_order_padded.vlt:31:5: error: this code runs on another thread and calls `i.onChange`, which changes `last`
+http_handler_callback_holder_order_padded.vlt:23:5: `last` is changed here
+http_handler_callback_holder_order_padded.vlt:30:19: but it is stored in an `Input`, which is passed here to a function that runs it on other threads
+http_handler_callback_holder_order_padded.vlt:32:5: error: this code runs on another thread and calls `w.set`, which changes `state`
+http_handler_callback_holder_order_padded.vlt:28:5: `state` is changed here
+http_handler_callback_holder_order_padded.vlt:30:19: but it is stored in an `Input`, which is passed here to a function that runs it on other threads

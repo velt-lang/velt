@@ -2,7 +2,7 @@
 // guard (bench/nightly.sh, #601): sequential keep-alive GETs of a small body, of a JSON body read
 // with `json<T>()`, and of a gzip-compressed body. The client's work dominates; the full client
 // comparison with Node and reqwest is bench/http/fetch.
-import { serve } from "velt:http";
+import { serve } from "http-server";
 
 struct Item {
   id: i64;

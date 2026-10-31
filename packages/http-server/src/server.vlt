@@ -1,0 +1,41 @@
+// http-server (internal): `HttpServer`, a running server (`serveHttp`, `serve`): its port, and
+// stopping it.
+
+import { TcpListener } from "velt/net";
+import { AbortController } from "velt/task";
+
+/** A running server. */
+export class HttpServer {
+  /** The real port (useful after `port: 0`). */
+  port: number = 0;
+  private listener: TcpListener;
+  private stop: AbortController;
+  // Settles once the server stopped accepting and every connection finished.
+  private done: Promise<void>;
+
+  constructor(listener: TcpListener, stop: AbortController, done: Promise<void>) {
+    this.listener = listener;
+    this.port = listener.port;
+    this.stop = stop;
+    this.done = done;
+  }
+
+  /**
+   * Stops accepting connections and closes the idle ones; a connection in the middle of a
+   * request answers it, then closes. Idempotent.
+   */
+  close() {
+    this.listener.close();
+    this.stop.abort();
+  }
+
+  /**
+   * `close()`, then waits until every connection has finished (its request answered) and the
+   * handler, with everything it captured, was dropped.
+   */
+  async shutdown() {
+    this.close();
+    const done = this.done;
+    await done;
+  }
+}

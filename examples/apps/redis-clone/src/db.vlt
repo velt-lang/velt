@@ -1,8 +1,8 @@
 // The keyspace: one map per value type (strings, the hot path, need no tag check), expiry
 // times in an index of their own (src/structs.vlt), checked on access and swept in the
 // background.
-import { utf8DecodeLossy } from "velt:encoding";
-import { Deque } from "velt:collections/deque";
+import { utf8DecodeLossy } from "velt/encoding";
+import { Deque } from "velt/collections";
 import { Expires, MemberSet, ZSet } from "./structs";
 
 /// A value of the wrong type for the command (`WRONGTYPE`), or a bad argument (`ERR …`).

@@ -6,7 +6,7 @@
 //! Two kinds of modules:
 //! - **shared with velt_rt**, compiled from `crates/velt_rt/src` (`#[path]`): strings, string
 //!   methods and builders, number formatting, JSON (incl. `json.Value` handles), byte buffers
-//!   and their bulk operations, BigInts, results, object handles, hashing (also `velt:hash`'s
+//!   and their bulk operations, BigInts, results, object handles, hashing (also `velt/hash`'s
 //!   FNV-1a), HTML escaping, symbols, math, memory, weak references, the fs operations and the
 //!   `*_sync` fs calls. Their
 //!   `repr(C)` types put a pointer only where an 8-byte field follows, so on wasm32 each pointer
@@ -73,7 +73,6 @@ pub mod process;
 pub mod proxy_array;
 #[path = "../../velt_rt/src/result.rs"]
 pub mod result;
-pub mod server_request;
 pub mod shared;
 #[path = "../../velt_rt/src/str/mod.rs"]
 pub mod str;

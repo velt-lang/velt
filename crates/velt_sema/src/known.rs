@@ -60,14 +60,43 @@ impl Ctx<'_> {
         }
     }
 
-    /// A function of the prelude named `name`, exported or not: the helpers and runtime
-    /// functions the compiler calls itself (`body/expr/int32.rs`).
+    /// The std definition with qualified name `qualified` (`std/lang/hooks/any_text::anyText`, a
+    /// compiler hook: `velt_common::std_hook!`), exported or not, if its module is loaded. An
+    /// identifier the compiler writes may be spelled so ([`Self::lookup_item`]); no source can
+    /// write one, so it names a hook in user code too, where `lang/` cannot be imported.
+    pub fn std_def(&self, qualified: &str) -> Option<Item> {
+        let (module, item) = qualified.rsplit_once("::")?;
+        if !velt_common::std_modules::is_std(module) {
+            return None;
+        }
+        let m = self
+            .modules
+            .iter()
+            .position(|m| m.is_std && m.path == module)?;
+        self.scopes[m].items.get(item).copied()
+    }
+
+    /// The prelude's item `name`, or the compiler hook named so ([`Self::std_def`]).
+    pub fn prelude_or_hook(&self, name: &str) -> Option<Item> {
+        self.prelude
+            .get(name)
+            .copied()
+            .or_else(|| self.std_def(name))
+    }
+
+    /// A function of the prelude named `name`, exported or not, or the compiler hook with
+    /// qualified name `name` (`velt_common::std_hook!`, [`Ctx::std_def`]): the helpers and
+    /// runtime functions the compiler calls itself (`body/expr/int32.rs`).
     pub fn prelude_fn(&self, name: &str) -> Option<DefId> {
         let found = match self.prelude.get(name) {
             Some(it) => Some(*it),
+            None if name.contains("::") => self.std_def(name),
             None => (0..self.modules.len())
                 .filter(|&m| {
-                    self.scopes[m].is_std && self.modules[m].path.starts_with("std/prelude/")
+                    self.scopes[m].is_std
+                        && self.modules[m]
+                            .path
+                            .starts_with(velt_common::std_dir!(prelude))
                 })
                 .find_map(|m| self.scopes[m].items.get(name).copied()),
         };
@@ -77,7 +106,6 @@ impl Ctx<'_> {
         }
     }
 
-    /// An ADT exported by the prelude under `name`.
     /// Does the private field `private_to`/`name` hold data that JSON may skip? Only the
     /// prelude `Error`'s `#name` (behind `e.name`): it is not a runtime handle, so error classes
     /// keep their JSON form (written without it, as Node leaves out a `name` from the
@@ -86,8 +114,14 @@ impl Ctx<'_> {
         name == "#name" && private_to.is_some() && private_to == self.prelude_adt("Error")
     }
 
+    /// An ADT exported by the prelude under `name`, or the compiler hook class with qualified
+    /// name `name` (`velt_common::std_hook!`).
     pub fn prelude_adt(&self, name: &str) -> Option<DefId> {
-        match self.prelude.get(name) {
+        let found = match self.prelude.get(name) {
+            Some(it) => Some(*it),
+            None => self.std_def(name),
+        };
+        match found.as_ref() {
             Some(Item::Def(d)) if self.adt(*d).is_some() => Some(*d),
             _ => None,
         }
@@ -123,7 +157,7 @@ impl Ctx<'_> {
         let module = self
             .modules
             .iter()
-            .position(|m| m.is_std && m.path == "std/channel");
+            .position(|m| m.is_std && m.path == velt_common::std_module!(sync_channel));
         let channel = match module.and_then(|m| self.scopes[m].items.get("Channel")) {
             Some(Item::Def(d)) => *d,
             _ => return vec![],
@@ -278,13 +312,8 @@ impl Ctx<'_> {
     /// parameter, a class with subclasses, whose objects may have more fields), nor when it
     /// holds a type with a `clone()` of its own: copying what a read gets would run it on the
     /// objects other threads read, as a side effect of reading. A `shared` inside is fine: it
-    /// counts atomically.
-    pub fn frozen_readable(&mut self, t: TyId) -> bool {
-        self.frozen_readable_in(t, &[], &mut rustc_hash::FxHashSet::default())
-    }
-
-    /// `frozen_readable`, taking the type parameters `frozen` (bounded by `Frozen` where the
-    /// type is read: `Ctx::frozen_readable_under`) as readable.
+    /// counts atomically. The type parameters `frozen` (bounded by `Frozen` where the type is
+    /// read: `Ctx::frozen_readable_under`) are readable.
     pub(crate) fn frozen_readable_in(
         &mut self,
         t: TyId,

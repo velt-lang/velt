@@ -1,0 +1,12 @@
+// sqlite/engine/exec/row_need (internal): how many rows the reader of a query's rows needs, held
+// apart from the query.
+
+/**
+ * How many rows the reader of a query's rows needs (-1: all; EXISTS and scalar subqueries need
+ * one). A query's run reads it, so it is an object of its own: the run's closure holds it, not
+ * the query that holds the closure (such a cycle is never freed, and every prepared statement
+ * leaked its whole compiled query).
+ */
+export class RowNeed {
+  n: i64 = -1;
+}

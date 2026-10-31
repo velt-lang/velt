@@ -1,0 +1,10 @@
+// velt/task (internal): `AbortError`, what an aborted signal throws.
+
+export const DEFAULT_REASON: string = "This operation was aborted";
+
+/** Thrown by `throwIfAborted()`: the signal's reason is the message. */
+export class AbortError extends Error {
+  constructor(reason: string) {
+    super(reason);
+  }
+}

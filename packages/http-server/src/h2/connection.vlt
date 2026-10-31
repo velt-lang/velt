@@ -1,0 +1,382 @@
+// http-server (internal): `H2Connection`, one HTTP/2 connection (RFC 9113) served by one
+// task: it reads frames into a buffer of its own and parses them in place, and runs each
+// request's handler as a promise started on the same task, so the streams of a connection share
+// its state (HPACK tables, windows, the output buffer) without locks, as in Node.
+//
+// The frames written while one read's frames are processed (responses of handlers that answer at
+// once, SETTINGS and PING acknowledgements, window updates) leave in one write
+// (`writeBytesLater`); a handler that answers later queues its frames the same way. The frame
+// handlers are in h2/inbound.vlt, the response side in h2/outbound.vlt.
+
+import { IoError } from "velt/io";
+import { TcpStream } from "velt/net";
+import { AbortController, AbortSignal } from "velt/task";
+import {
+  DEFAULT_WINDOW,
+  ENHANCE_YOUR_CALM,
+  FieldList,
+  FrameWriter,
+  HEADER_LENGTH,
+  HpackDecoder,
+  HpackEncoder,
+  isPreface,
+  mayBePreface,
+  MIN_MAX_FRAME_SIZE,
+  NO_ERROR,
+  PREFACE_LENGTH,
+  PROTOCOL_ERROR,
+  SETTINGS_ENABLE_CONNECT_PROTOCOL,
+  SETTINGS_ENABLE_PUSH,
+  SETTINGS_HEADER_TABLE_SIZE,
+  SETTINGS_INITIAL_WINDOW_SIZE,
+  SETTINGS_MAX_CONCURRENT_STREAMS,
+  SETTINGS_MAX_FRAME_SIZE,
+  SETTINGS_MAX_HEADER_LIST_SIZE,
+} from "velt/net/http/h2";
+import { ClosedStreams } from "./closed";
+import { H2Options } from "./options";
+import { H2Request } from "./request";
+import { H2Response } from "./response";
+import { CLOSED, H2Stream } from "./stream";
+import { frames } from "./inbound";
+import { expire, startHandlers } from "./streams";
+import { linger } from "../linger";
+import { waitForInput } from "./wait";
+
+/// Queued output beyond which the connection reads no more frames until the peer has read most
+/// of it: a peer that sends PINGs or requests but does not read the answers gets no more.
+const MAX_QUEUED: number = 1048576;
+const RESUME_QUEUED: number = 262144;
+/// No deadline.
+const MAX_TIME: i64 = 9007199254740991;
+
+/// One HTTP/2 connection.
+export class H2Connection {
+  conn: TcpStream;
+  opts: H2Options;
+  out: FrameWriter = new FrameWriter();
+  decoder: HpackDecoder;
+  encoder: HpackEncoder = new HpackEncoder();
+  /// The streams the protocol knows (open or half-closed), by id.
+  streams: Map<i64, H2Stream> = new Map();
+  /// Streams done with, for the next ones (their buffers are reused).
+  pool: H2Stream[] = [];
+  /// The streams closed last.
+  closed: ClosedStreams;
+  /// Streams opened by the frames being processed, whose handlers start after them.
+  starting: H2Stream[] = [];
+  /// Streams with response body waiting for window, in the order they began to wait.
+  blocked: H2Stream[] = [];
+  /// Streams in use: in `streams`, or reset with their handler still running (the concurrency
+  /// limit counts these).
+  inUse: i64 = 0;
+  /// The earliest deadline of a request body still arriving (`MAX_TIME`: none).
+  nextDeadline: i64 = MAX_TIME;
+  /// The handler of each request: what it throws is answered inside it (`serveH2`).
+  handler: (req: H2Request, res: H2Response) => Promise<void, never>;
+
+  // The read buffer: frames from `rpos` to `rlen`.
+  rbuf: u8[];
+  rpos: i64 = 0;
+  rlen: i64 = 0;
+
+  // The peer's settings.
+  peerMaxFrame: i64 = MIN_MAX_FRAME_SIZE;
+  peerInitialWindow: i64 = DEFAULT_WINDOW;
+  /// What the connection may still send (the peer's connection window).
+  sendWindow: i64 = DEFAULT_WINDOW;
+  /// What the peer may still send on the connection, and what was read since the last update.
+  recvWindow: i64;
+  recvConsumed: i64 = 0;
+
+  /// The highest stream id the peer opened.
+  lastStreamId: i64 = 0;
+  /// The highest stream the client opened after GOAWAY: not served, its frames ignored.
+  ignoredId: i64 = 0;
+  /// The header block being received (HEADERS then CONTINUATION): its stream (0: none), flags,
+  /// bytes and frame count.
+  blockStream: i64 = 0;
+  blockFlags: i64 = 0;
+  block: u8[] = Buffer.alloc(4096);
+  blockLength: i64 = 0;
+  blockFrames: i64 = 0;
+  /// The fields of a block no stream keeps (trailers, a refused stream).
+  scratch: FieldList = new FieldList();
+  /// Abuse allowance: a reset or refused stream, an empty DATA frame or a stream error costs 1,
+  /// a completed response gives 1 back; at 0 the connection ends with ENHANCE_YOUR_CALM.
+  budget: i64 = 1000;
+
+  /// GOAWAY was sent (no new streams beyond `lastStreamId`), or the peer sent one.
+  goingAway: bool = false;
+  /// The connection is finished: nothing more is read.
+  done: bool = false;
+  /// It ended with a connection error: what the peer still sends is read for a while, so the
+  /// GOAWAY reaches it before the socket closes.
+  failed: bool = false;
+  /// Frames are being processed for a read: output is flushed after them.
+  inBatch: bool = false;
+  // The `Date` value of this second.
+  date: string = "";
+  private dateSecond: i64 = -1;
+  stopped: AbortSignal;
+  /// Aborted to end a wait for input early (a draining connection whose last stream ended).
+  wakeLoop: AbortController | null = null;
+
+  constructor(
+    conn: TcpStream,
+    opts: H2Options,
+    stopped: AbortSignal,
+    handler: (req: H2Request, res: H2Response) => Promise<void, never>,
+  ) {
+    this.conn = conn;
+    this.opts = opts;
+    this.stopped = stopped;
+    this.handler = handler;
+    this.decoder = new HpackDecoder(4096, opts.maxHeaderListSize);
+    const n = opts.maxConcurrentStreams * 2;
+    this.closed = new ClosedStreams(n < 64 ? 64 : n);
+    this.recvWindow = opts.connectionWindow;
+    this.rbuf = Buffer.alloc(((MIN_MAX_FRAME_SIZE + HEADER_LENGTH) * 2) as usize);
+  }
+
+  /**
+   * Serves the connection until it ends: `initial` holds the bytes read already (the preface
+   * found by the HTTP/1.1 server). Returns once every handler has returned.
+   */
+  async run(initial: u8[]) {
+    const o = this.opts;
+    this.out.settings([
+      SETTINGS_MAX_CONCURRENT_STREAMS,
+      o.maxConcurrentStreams,
+      SETTINGS_INITIAL_WINDOW_SIZE,
+      o.streamWindow,
+      SETTINGS_MAX_HEADER_LIST_SIZE,
+      o.maxHeaderListSize,
+      SETTINGS_ENABLE_PUSH,
+      0,
+      SETTINGS_ENABLE_CONNECT_PROTOCOL,
+      1,
+    ]);
+    if (o.connectionWindow > DEFAULT_WINDOW) {
+      this.out.windowUpdate(0, o.connectionWindow - DEFAULT_WINDOW);
+    }
+    this.room(initial.length as i64);
+    initial.copy(this.rbuf, 0);
+    this.rlen = initial.length as i64;
+    let preface = false;
+    let deferred = 0;
+    try {
+      while (!this.done) {
+        if (!preface) {
+          if (this.rlen - this.rpos >= PREFACE_LENGTH) {
+            if (!isPreface(this.rbuf, this.rpos)) {
+              this.fail(PROTOCOL_ERROR, "no connection preface");
+              break;
+            }
+            this.rpos += PREFACE_LENGTH;
+            preface = true;
+          } else if (!mayBePreface(this.rbuf, this.rpos, this.rlen)) {
+            this.fail(PROTOCOL_ERROR, "no connection preface");
+            break;
+          }
+        }
+        if (preface) {
+          this.tick();
+          this.inBatch = true;
+          frames(this);
+          if (this.starting.length > 0 && !this.done) {
+            // Frames the client sent right behind the requests are processed first (an error
+            // on a new stream resets it before its handler answers), a few reads at most.
+            if (deferred < 4 && this.readMore()) {
+              deferred++;
+              this.inBatch = false;
+              continue;
+            }
+            deferred = 0;
+            startHandlers(this);
+          }
+          if (this.nextDeadline <= Date.now()) {
+            expire(this);
+          }
+          this.inBatch = false;
+        }
+        const queued = this.flush();
+        if (this.done || (this.goingAway && this.inUse == 0)) {
+          break;
+        }
+        if (queued > MAX_QUEUED) {
+          await this.conn.drained(RESUME_QUEUED);
+        }
+        this.room(HEADER_LENGTH + MIN_MAX_FRAME_SIZE);
+        const n = this.conn.tryRead(this.rbuf, this.rlen as number, this.rbuf.length as number);
+        if (n == null) {
+          break;
+        }
+        if (n == 0) {
+          if (!(await waitForInput(this))) {
+            break;
+          }
+          continue;
+        }
+        this.rlen += n as i64;
+      }
+    } catch (e) {
+      // The peer went away, or a write failed.
+    }
+    await this.finish();
+  }
+
+  /// Ends the connection: every stream is reset (its handler's signal aborted, its waits woken),
+  /// every handler waited for, then the socket closed.
+  private async finish() {
+    this.done = true;
+    const open: H2Stream[] = [];
+    for (const s of this.streams.values()) {
+      open.push(s);
+    }
+    for (const s of open) {
+      s.resetNow();
+      this.release(s);
+    }
+    // Streams opened by the last frames, reset now: their handlers never start.
+    startHandlers(this);
+    while (this.inUse > 0) {
+      const w = new AbortController();
+      this.wakeLoop = w;
+      await w.signal.whenAborted();
+      this.wakeLoop = null;
+    }
+    try {
+      this.flush();
+      this.conn.shutdown();
+      if (this.failed) {
+        await linger(this.conn, this.rbuf);
+      }
+    } catch (e) {
+      // Already gone.
+    }
+    this.conn.close();
+    // Nothing refers back to the connection now that no handler runs.
+    this.streams.clear();
+    this.pool.length = 0;
+    this.blocked.length = 0;
+  }
+
+  /// Writes the frames buffered so far (sent when the task next waits); the bytes still to be
+  /// sent on the socket.
+  flush(): i64 {
+    if (this.out.length == 0) {
+      return 0;
+    }
+    const n = this.out.length;
+    this.out.length = 0;
+    return this.conn.writeBytesLater(this.out.buf, 0, n as number);
+  }
+
+  /// After a handler wrote frames outside a batch: they are queued now.
+  written() {
+    if (!this.inBatch) {
+      this.flush();
+    }
+  }
+
+  /// Sends GOAWAY with `code` and stops taking new streams.
+  goaway(code: i64, debug: string) {
+    if (!this.goingAway || code != NO_ERROR) {
+      this.out.goaway(this.lastStreamId, code, debug);
+    }
+    this.goingAway = true;
+  }
+
+  /// A connection error (RFC 9113 §5.4.1): GOAWAY, then the connection ends.
+  fail(code: i64, debug: string) {
+    this.goaway(code, debug);
+    this.done = true;
+    this.failed = true;
+  }
+
+  /// One unit of abuse allowance spent (see `budget`).
+  spend() {
+    this.budget--;
+    if (this.budget <= 0 && !this.done) {
+      this.fail(ENHANCE_YOUR_CALM, "too many reset or refused streams");
+    }
+  }
+
+  /// A response completed: one unit of allowance back.
+  earn() {
+    if (this.budget < 1000) {
+      this.budget++;
+    }
+  }
+
+  /// Forgets a stream the protocol is done with; its object goes back to the pool once its
+  /// handler has returned too.
+  release(s: H2Stream) {
+    if (this.streams.get(s.id) === s) {
+      this.streams.delete(s.id);
+      this.closed.add(s.id, s.reset);
+      s.state = CLOSED;
+      if (!s.running) {
+        this.recycle(s);
+      }
+    }
+  }
+
+  /// A stream neither the protocol nor a handler uses any more.
+  recycle(s: H2Stream) {
+    // Once: a second recycle would put the object in the pool twice (two later streams sharing
+    // it) and undercount the streams in use.
+    if (s.pooled) {
+      return;
+    }
+    s.pooled = true;
+    this.inUse--;
+    if (this.pool.length < 16) {
+      this.pool.push(s);
+    }
+    if (this.inUse == 0) {
+      const w = this.wakeLoop;
+      if (w != null) {
+        w.abort();
+      }
+    }
+  }
+
+  /// The `Date` header value for this second.
+  tick() {
+    const now = Date.now();
+    const second = (now / 1000) as i64;
+    if (second != this.dateSecond) {
+      this.dateSecond = second;
+      this.date = new Date(now as number).toUTCString();
+    }
+  }
+
+  /// Reads what has arrived already, without waiting: whether there was something.
+  private readMore(): bool {
+    this.room(HEADER_LENGTH + MIN_MAX_FRAME_SIZE);
+    const n = this.conn.tryRead(this.rbuf, this.rlen as number, this.rbuf.length as number);
+    if (n == null || n == 0) {
+      return false;
+    }
+    this.rlen += n as i64;
+    return true;
+  }
+
+  /// Room in the read buffer for `n` more bytes past `rlen`: what was parsed is dropped first.
+  private room(n: i64) {
+    if (this.rpos > 0) {
+      if (this.rpos < this.rlen) {
+        this.rbuf.copyWithin(0, this.rpos, this.rlen);
+      }
+      this.rlen -= this.rpos;
+      this.rpos = 0;
+    }
+    if (this.rlen + n > (this.rbuf.length as i64)) {
+      const grown: u8[] = Buffer.alloc(((this.rlen + n) * 2) as usize);
+      this.rbuf.copy(grown, 0, 0, this.rlen);
+      this.rbuf = grown;
+    }
+  }
+}

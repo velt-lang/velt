@@ -1,7 +1,7 @@
 // Arbitrary-precision integers: 2000! by small multiplications, two squarings (5.7k and 11.5k
 // digit operands), a division, a remainder and a decimal conversion, 200 times. The Rust port
-// uses `dashu-int`, which is what `velt:bigint` runs on today.
-import { BigInt } from "velt:bigint";
+// uses `dashu-int`, which is what `velt/math` runs on today.
+import { BigInt } from "velt/math";
 
 function main() {
   let digits: i64 = 0;

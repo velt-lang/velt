@@ -1,0 +1,12 @@
+Animal: class; name: string; private secret: i32; legs?: i32 (extended by Dog)
+Point: object; x: f64; y: f64
+Color: enum; Red = 0; Green = 5
+string | f64: union of string, f64
+i32[]: array
+Node { value: 1, next: Node { value: 2, next: null } }
+Dog { name: 'rex', legs: undefined, good: true }
+{ x: 1.5, y: -2 }
+['a', 'b'] ['a', 'b']
+true
+Stamp: class; at: f64; toJSON(0): string
+Mood: enum; Up = "up\n"

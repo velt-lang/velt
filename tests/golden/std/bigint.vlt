@@ -1,6 +1,6 @@
 // std/bigint: arbitrary-precision integers. Expected output is Node's (BigInt literals and
 // operators; `asIntN(64, x)` for `toI64`).
-import { BigInt } from "velt:bigint";
+import { BigInt } from "velt/math";
 
 function main() {
   const f = new BigInt(1);

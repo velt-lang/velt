@@ -1,0 +1,17 @@
+// redis (internal): `RedisMessage`, a message a subscriber received.
+
+/** A published message. */
+export class RedisMessage {
+  /** The channel it was published to. */
+  channel: string;
+  /** The payload. */
+  message: string;
+  /** The pattern that matched, for `psubscribe` subscribers; null for channel subscriptions. */
+  pattern: string | null;
+
+  constructor(channel: string, message: string, pattern: string | null) {
+    this.channel = channel;
+    this.message = message;
+    this.pattern = pattern;
+  }
+}

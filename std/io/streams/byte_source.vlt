@@ -1,0 +1,41 @@
+// velt/io (internal): `ByteSource`, the base class of the bodies a fetch body
+// (`BodyInit`, std/net/http/fetch/body.vlt) takes besides text and bytes: `ReadableStream<R>`, `Blob` (and
+// `File`) and `FormData`. `BodyInit` names this class rather than each of them, so a program that
+// uses `Response` without them loads neither velt/io/streams/streams, the typed arrays nor the form code
+// (#1129). It depends on nothing a body does not already load.
+
+import { IoError } from "velt/io/error";
+import { Symbol } from "velt/lang/symbol";
+import { AbortError } from "velt/task/errors";
+
+/**
+ * The keys of `ByteSource`'s members: symbols std's bodies share and programs never see (this
+ * file is internal to velt/io), so the members are no API of `Blob`, `FormData` or
+ * `ReadableStream`.
+ */
+export const BYTE_CHUNKS = Symbol("byteChunks");
+export const WHOLE_BODY = Symbol("wholeBody");
+export const BODY_TYPE = Symbol("bodyType");
+
+/** Something a body can be made of: a stream, a blob, form data (std only). */
+export class ByteSource {
+  /**
+   * The chunks as bytes, read as the body is: a `ReadableStream`'s, each of which must be a
+   * `Uint8Array` as Node requires (an `IoError` "EINVAL" otherwise).
+   */
+  [BYTE_CHUNKS](): AsyncIterator<u8[], IoError | AbortError> {
+    return none();
+  }
+
+  /** The whole body when it is known when the request or response is made (a blob, a form). */
+  [WHOLE_BODY](): u8[] | null {
+    return null;
+  }
+
+  /** The `content-type` the body implies ("" for none): a blob's type, a form's boundary. */
+  [BODY_TYPE](): string {
+    return "";
+  }
+}
+
+async function* none(): AsyncGenerator<u8[], IoError | AbortError> {}

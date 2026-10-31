@@ -1,4 +1,4 @@
-//! The state of the array methods a proxy runs (`velt:proxy/array`, issue #823; rt_abi.md
+//! The state of the array methods a proxy runs (`velt/lang/proxy/array`, issue #823; rt_abi.md
 //! "Array methods on a proxy"): the targets of the methods running on this thread, the target
 //! whose trap call is running, and the holes the methods made in their targets. Node leaves a
 //! hole where `pop`, `shift` and `splice` delete an element before they write the shorter length,

@@ -226,6 +226,10 @@ impl Builder<'_, '_, '_> {
                 DefKind::Function,
                 format!("{asyncness}function {short}{sig}: {ret}"),
             ),
+            FnKind::Extern if f.intrinsic.is_some() => (
+                DefKind::ExternFunction,
+                format!("declare intrinsic function {short}{sig}: {ret}"),
+            ),
             FnKind::Extern => (
                 DefKind::ExternFunction,
                 format!("declare function {short}{sig}: {ret}"),

@@ -1,0 +1,207 @@
+// http-server (internal): an HTTP/1.1 connection of the server (serve.vlt). It reads into a
+// buffer of its own; each request is parsed in place there (`Parser`) and handed to the handler
+// as an `Http1Request`, with an `Http1Response` whose bytes go into one buffer per connection:
+// every response to the requests one read brought (pipelining) leaves in one write. HTTP/2 when
+// the client asks for it (h2/).
+
+import { TcpStream } from "velt/net";
+import { AbortSignal } from "velt/task";
+import { statusText } from "velt/net/http";
+import { BadRequest } from "./bad_request";
+import { H2Options } from "../h2/options";
+import { serveH2 } from "../h2/serve";
+import { linger } from "../linger";
+import { HttpRequest } from "../request";
+import { HttpResponse } from "../response";
+import { BODY_CHUNKED, BODY_LENGTH } from "./head";
+import { Parser } from "./parser";
+import { Http1Request } from "./request";
+import { Http1Response } from "./response";
+
+/// How long a connection waits for its next request by default (Node's `keepAliveTimeout`).
+export const IDLE_MS: number = 5000;
+/// How long a request's head and body may take by default (Node's `headersTimeout`,
+/// `requestTimeout`).
+export const HEADERS_MS: number = 60000;
+export const REQUEST_MS: number = 300000;
+
+/// The time limits of a request.
+export struct Limits {
+  headMs: i64;
+  requestMs: i64;
+  maxHeaders: i64;
+}
+
+/// Waits until `conn` may have input: true, or false once `stopped` is aborted or `idle`
+/// milliseconds passed (the connection then closes).
+async function more(conn: TcpStream, stopped: AbortSignal, idle: i64): Promise<bool> {
+  return !stopped.aborted && (await conn.readableWithin(idle as number, stopped));
+}
+
+export async function connection<E>(
+  conn: TcpStream,
+  handler: (req: HttpRequest, res: HttpResponse) => Promise<void, E> throws E,
+  maxHead: i64,
+  maxBody: i64,
+  idle: i64,
+  limits: Limits,
+  stopped: AbortSignal,
+  h2: H2Options | null = null,
+  tls: bool = false,
+): Promise<void> {
+  if (h2 != null && tls) {
+    try {
+      if ((await conn.alpnProtocol()) == "h2") {
+        await serveH2(conn, [], h2, stopped, handler);
+        return;
+      }
+    } catch (e) {
+      // The handshake failed.
+      conn.close();
+      return;
+    }
+  }
+  const parser = new Parser(maxHead, maxBody, limits.maxHeaders);
+  const req = new Http1Request(parser, conn, idle, limits.requestMs);
+  const res = new Http1Response(conn, stopped, req.head);
+  let open = true;
+  let rejected = false;
+  // When the head being read began to arrive (`Date.now()`), or -1 between requests.
+  let headStart: i64 = -1;
+  // Nothing was read yet: the connection may still turn out to be HTTP/2.
+  let first = true;
+  try {
+    while (open) {
+      const n = parser.readFrom(conn);
+      if (n == null) {
+        break;
+      }
+      if (n == 0) {
+        // The idle timeout, but no later than the head's deadline.
+        let wait = idle;
+        if (headStart >= 0) {
+          const left = headStart + limits.headMs - Date.now();
+          wait = left < wait ? left : wait;
+        }
+        if (wait <= 0 || !(await more(conn, stopped, wait))) {
+          if (headStart >= 0 && Date.now() >= headStart + limits.headMs && !stopped.aborted) {
+            res.begin(false, true);
+            res.status(408);
+            res.send(statusText(408));
+            await res.flush();
+            rejected = true;
+          }
+          break;
+        }
+        continue;
+      }
+      // A connection that starts with the HTTP/2 preface (h2c with prior knowledge, RFC 9113
+      // §3.3): no HTTP/1.1 method is `PRI`.
+      if (h2 != null && first && parser.available() >= 3) {
+        if (parser.buf.utf8Equals("PRI", parser.pos, parser.pos + 3)) {
+          await serveH2(conn, parser.take(parser.available()), h2, stopped, handler);
+          return;
+        }
+        first = false;
+      }
+      // One clock read per batch: the Date header and the time limits.
+      const now = res.tick();
+      if (headStart < 0) {
+        headStart = now;
+      }
+      try {
+        while (open && parser.next(req.head)) {
+          // The next head, if any, starts arriving now.
+          headStart = -1;
+          req.begin(now);
+          res.begin(req.head.keepAlive, req.head.http11, req.isMethod("HEAD"));
+          // A body still to come: the responses before it go out first, so a client waiting
+          // for them (or for `100 Continue` after them) sends it.
+          if (
+            res.out.length > 0 &&
+            (req.head.bodyMode == BODY_LENGTH || req.head.bodyMode == BODY_CHUNKED)
+          ) {
+            await res.flush();
+          }
+          let failed = false;
+          try {
+            await handler(req, res);
+          } catch (e) {
+            failed = true;
+            if (req.bodyTooLarge() || req.timedOut() || req.bodyMalformed()) {
+              // The client's fault, not the handler's: answered, not logged. The rest of the
+              // body cannot be found, so the connection closes after it.
+              if (!res.sent()) {
+                const code = req.bodyTooLarge() ? 413 : req.timedOut() ? 408 : 400;
+                res.closeAfter();
+                res.status(code);
+                res.send(statusText(code));
+              }
+            } else if (!res.clientGone()) {
+              if (!res.sent()) {
+                res.status(500);
+                res.send("Internal Server Error");
+              }
+              console.error("request handler failed:", e);
+            }
+            // Otherwise the client went away while the response was being written (a streamed
+            // one): nothing can be sent, and it is not the handler's failure.
+          }
+          if (res.upgraded()) {
+            // The connection is the handler's now (also if it failed after switching).
+            return;
+          }
+          if (!res.sent()) {
+            res.send("");
+          }
+          // A streamed body the handler left open is ended; one it failed in cannot be.
+          let finished = !(failed && !res.reusable());
+          // The usual request has neither: no async step for them.
+          if (finished && (res.streamOpen() || !req.bodyRead())) {
+            try {
+              // The response goes out before the rest of the body is waited for.
+              await res.endStream(!req.bodyRead());
+              // A body held back for a `100 Continue` the handler did not ask for is not waited
+              // for: its response said `Connection: close`.
+              const h = req.head;
+              finished = h.expectsContinue && !h.continueSent ? false : await req.finish();
+            } catch (e) {
+              finished = false;
+            }
+          }
+          // A body too large to skip, or held back for `100 Continue`: the client may still send it.
+          rejected = rejected || !finished;
+          open = finished && res.reusable() && !stopped.aborted;
+          parser.release();
+        }
+        // Part of the next head is here already: its time runs from now.
+        if (headStart < 0 && parser.available() > 0) {
+          headStart = now;
+        }
+      } catch (e) {
+        if (e instanceof BadRequest) {
+          res.begin(false, true);
+          res.status(e.status);
+          res.send(statusText(e.status));
+          rejected = true;
+        }
+        open = false;
+      }
+      await res.flush();
+    }
+    if (rejected) {
+      conn.shutdown();
+      await linger(conn, Buffer.alloc(16384));
+    }
+  } catch (e) {
+    // The client went away.
+  }
+  // The end of the responses: a TLS connection says so (close_notify), so a client reading to
+  // the end does not see it cut short.
+  try {
+    conn.shutdown();
+  } catch (e) {
+    // Already gone.
+  }
+  conn.close();
+}

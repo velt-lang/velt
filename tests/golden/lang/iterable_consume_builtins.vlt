@@ -4,7 +4,7 @@
 // `new Set(...)` and `yield*` over strings (their characters), `Map`s (their entries), `Set`s,
 // `Iterable<T>` values and generators. Strings and maps go through the array of their
 // characters or entries, as `for...of` does; the others through `[Symbol.iterator]()`.
-import { Set } from "velt:collections/set";
+import { Set } from "velt/collections";
 
 function* upTo(n: number): Generator<number> {
   for (let i = 0; i < n; i++) {

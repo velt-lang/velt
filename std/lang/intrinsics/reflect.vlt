@@ -1,0 +1,36 @@
+// velt/lang/intrinsics (internal): what a dynamic value holds at run time, read from its type
+// descriptor's reflection slot (velt_vir `any_reflect.rs`), and the identity of a value. The
+// public API over them is velt/reflect.
+
+/**
+ * What `value` holds, as `kind|repr|name|hooks` (`hooks` comma-separated): the text
+ * velt/reflect's `typeOf` splits.
+ */
+export declare intrinsic function anyReflectInfo(value: any): string;
+
+/** How many entries `value` lists, or -1 when it cannot list them (velt/reflect `entryCount`). */
+export declare intrinsic function anyReflectCount(value: any): i64;
+
+/** The name of entry `index` of `value`: a field's or a key's, `""` for an element. */
+export declare intrinsic function anyReflectName(value: any, index: i64): string;
+
+/** The value of entry `index` of `value`, `undefined` when it has none. */
+export declare intrinsic function anyReflectValue(value: any, index: i64): any;
+
+/** What the `toJSON(key)` method of the class instance `value` holds returns, or `undefined`. */
+export declare intrinsic function anyReflectHook(value: any, key: string): any;
+
+/**
+ * The identity of `value`: the same number for the same object, array or function (an `any`
+ * holding one included), 0 for a value without one.
+ */
+export declare intrinsic function identity<T>(value: T): u64;
+
+/** Whether `value`, of a class or object type, is a typed `Proxy` (false for other types). */
+export declare intrinsic function isTypedProxy<T>(value: T): bool;
+
+/**
+ * A share of `value` as an `any`, boxed when it runs (a typed proxy as the proxy), without a
+ * conversion's effect on the checks of `T` (velt/reflect `dynamicOf`).
+ */
+export declare intrinsic function toAny<T>(value: T): any;

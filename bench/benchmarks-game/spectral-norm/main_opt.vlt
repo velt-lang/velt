@@ -5,7 +5,7 @@
 // TeXitoi, Tung Duong, Cristi Cobzarenco, Andre Bogus): two output rows at a time, each summed
 // in two lanes of a Copy struct `F64x2` (even and odd j). Four independent sums instead of one
 // long dependency chain of adds; compare with main.vlt (Node #1 shape).
-import { argv } from "velt:process";
+import { argv } from "velt/process";
 
 // Entry (i, j) of the infinite matrix A.
 function a(i: i64, j: i64): f64 {

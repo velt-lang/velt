@@ -82,6 +82,7 @@ pub(crate) fn lift(modules: &[SourceModule]) -> Option<Lifted> {
         .map(|(k, m)| SourceModule {
             path: m.path.clone(),
             is_std: m.is_std,
+            is_dependency: m.is_dependency,
             file: m.file,
             ast: ast::Module {
                 items: (m.ast.items.iter().enumerate())
@@ -227,6 +228,8 @@ fn lifted_arrow(v: &ast::VarDecl, rest: bool) -> Option<ast::FnDecl> {
         throws: throws.clone(),
         is_async: *is_async,
         is_system: false,
+        is_intrinsic: false,
+        generator: None,
         is_generator: false,
         this_param: None,
         span: v.span,
@@ -250,6 +253,7 @@ mod tests {
         let m = SourceModule {
             path: "main".into(),
             is_std: false,
+            is_dependency: false,
             file: FileId(0),
             ast,
             imports: vec![],
@@ -308,6 +312,7 @@ mod tests {
             let m = SourceModule {
                 path: "main".into(),
                 is_std: false,
+                is_dependency: false,
                 file: FileId(0),
                 ast,
                 imports: vec![],

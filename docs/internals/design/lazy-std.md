@@ -5,11 +5,11 @@ Status: implemented (#1658). Owner: `velt_sema` (`body/lazy_std.rs`).
 ## Problem
 
 The checker used to check every function body and module constant of every loaded module.
-The prelude imports std modules that most programs never use (`velt:number/parse` and its
-1,300-line table of powers of five, `velt:json/reader`, `velt:datetime/*`), so hello world
+The prelude imports std modules that most programs never use (`velt/lang/number/parse` and its
+1,300-line table of powers of five, `velt/encoding/json/reader`, `velt/time/*`), so hello world
 paid to check all of them. Lowering builds only what `main` reaches, so none of that code ends
 up in the program. Each such module made every program slower to compile: about 3% for
-`velt:number/parse`, about 20% more for `velt:json/reader`.
+`velt/lang/number/parse`, about 20% more for `velt/encoding/json/reader`.
 
 ## Design
 
@@ -37,7 +37,7 @@ The definitions of a lazy module that are *deferred*:
   member of `any`) reaches further: it dispatches over every class in the program that extends
   the value's class (`velt_vir` `any_subclass_dispatch`, `json_descendants`), constructed or
   not. So a used class makes its subclasses used too, transitively: printing an `Error` checks
-  the methods of every `Error` subclass the program loads (their `__inspect`, `toJSON`, …).
+  the methods of every `Error` subclass the program loads (their `[util.inspect.custom]`, `toJSON`, …).
 
 The prelude (`std/prelude/`, `std/record`, `std/collections`) is lazy in a narrower way:
 lowering looks up its types' methods and its helper functions by name, so only its free
@@ -74,7 +74,7 @@ once) at the first instantiation of one of its intrinsics in checked code
 
 - an intrinsic whose types are concrete is one;
 - one whose types mention the type parameters of the generic function it is in
-  (`JSON.parse<T>`'s `__intrinsic_json_parse<T>`) makes that function generic glue; so does a
+  (`JSON.parse<T>`'s `jsonParse<T>`) makes that function generic glue; so does a
   call of generic glue with type arguments that mention the caller's own parameters
   (`JsonValue.as<T>` calling `JSON.parse<T>`). A call of generic glue with concrete type
   arguments is an instantiation;
@@ -102,9 +102,9 @@ to compare.
 Std code has no errors, so no message changes. A user module's own code is always checked, and
 so is every std module it imports directly. An error in a deferred std function that a program
 reaches is reported as before. One that nothing reaches is not reported, which only matters
-while std itself is being written. What checks every std definition is `velt check
-bench/compile/all_std.vlt` with `VELT_EAGER_STD=1`: all_std.vlt imports every module, which makes
-them all eager except the prelude, whose free functions and statics would stay deferred.
+while std itself is being written. What checks every std definition is `velt check --std`:
+every file of std (a program may import only std's public modules, so no program reaches the
+internal files nothing public uses), with laziness off (`CheckOptions::eager_std`).
 `crates/veltc/tests/bench_programs.rs` `all_of_std_checks_without_diagnostics` runs it in CI and
 requires no diagnostics, and nightly's `compile/check_all_std` measures it the same way.
 

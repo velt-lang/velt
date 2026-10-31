@@ -1,0 +1,6 @@
+// A generator that throws: reported at the call that needs the instance.
+import { crash } from "./_generators";
+
+function main() {
+  console.log(crash<string>());
+}

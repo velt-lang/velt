@@ -14,12 +14,12 @@ mod pattern;
 use super::rng::Rng;
 
 /// Header: imports and printing helpers shared by all statements.
-const PRELUDE: &str = r#"import { URL, URLSearchParams, encodeURIComponent, decodeURIComponent, encodeURI, decodeURI } from "velt:url";
-import { base64Encode, base64Decode, base64UrlEncode, base64UrlDecode, base64EncodeString, base64DecodeString, hexEncode, hexDecode, utf8Encode, utf8Decode, utf8DecodeLossy, utf8Valid } from "velt:encoding";
-import { sha256, sha1, sha256Hex, sha1Hex, hmacSha256, hmacSha1 } from "velt:crypto";
-import { parseCsv, stringifyCsv } from "velt:csv";
-import { RegExp, RegExpMatch } from "velt:regex";
-import { DateTime, Duration } from "velt:datetime";
+const PRELUDE: &str = r#"import { URL, URLSearchParams, encodeURIComponent, decodeURIComponent, encodeURI, decodeURI } from "velt/net/url";
+import { base64Encode, base64Decode, base64UrlEncode, base64UrlDecode, base64EncodeString, base64DecodeString, hexEncode, hexDecode, utf8Encode, utf8Decode, utf8DecodeLossy, utf8Valid } from "velt/encoding";
+import { sha256, sha1, sha256Hex, sha1Hex, hmacSha256, hmacSha1 } from "velt/crypto";
+import { parseCsv, stringifyCsv } from "velt/encoding/csv";
+import { RegExp, RegExpMatch } from "velt/text";
+import { DateTime, Duration } from "velt/time";
 
 function showUrl(u: URL) {
   console.log(u.href, "|", u.protocol, u.username, u.password, u.host, u.hostname, u.port, u.pathname, u.search, u.hash, u.origin);

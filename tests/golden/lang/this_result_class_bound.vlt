@@ -1,0 +1,26 @@
+// check: no leaks
+// A method returning `this` called on a value of a type parameter bounded by its class
+// (`x: T` with `T extends Base`) gives `T`, as in TypeScript: chained calls keep the
+// subclass, for each instance (`Sub`, and `Base` itself).
+
+class Base {
+  n: i64 = 0;
+  bump(): this {
+    this.n++;
+    return this;
+  }
+}
+class Sub extends Base {
+  hi(): string {
+    return `hi ${this.n}`;
+  }
+}
+function twice<T extends Base>(x: T): T {
+  return x.bump().bump();
+}
+function main() {
+  console.log(twice(new Sub()).hi());
+  console.log(twice(new Base()).n);
+  const subs: Sub[] = [new Sub(), new Sub()];
+  console.log(subs.map((s) => twice(s).hi()).join(", "));
+}

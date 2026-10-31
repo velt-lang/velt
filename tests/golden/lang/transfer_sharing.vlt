@@ -6,7 +6,7 @@
 // a subclass, through a spawned function value, for an async closure's captures, and with a
 // class's own `clone()` (which runs outside the transfer, so its own copies stay distinct).
 
-import { channel } from "velt:channel";
+import { channel } from "velt/sync";
 
 class Pt {
   n: number = 0;

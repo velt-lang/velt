@@ -1,7 +1,7 @@
 // UTF-8 validation (`utf8Valid`): 1 MiB of ASCII 300 times, of text with one accented letter
 // in eight 100 times, and of three-byte characters 100 times, then a 40-byte ASCII value 10M
 // times. The Rust port is `std::str::from_utf8`, as the runtime used.
-import { utf8Valid } from "velt:encoding";
+import { utf8Valid } from "velt/encoding";
 
 function fill(kind: usize): u8[] {
   const d = Buffer.alloc(1048576 + 2);

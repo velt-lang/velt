@@ -28,23 +28,23 @@ fn unchecked(p: &Program) -> Vec<String> {
 fn what_no_code_reaches_stays_unchecked() {
     let p = ok_src("function main() {\n  console.log(\"hi\");\n}\n");
     let names = unchecked(&p);
-    // The prelude imports `velt:datetime/format`, whose `formatPattern` only `velt:datetime`
+    // The prelude imports `velt/time/format`, whose `formatPattern` only `velt/time`
     // calls, and hello world doesn't import that.
     for f in [
-        "std/datetime/format::formatPattern",
-        "std/datetime/civil::monthLong",
+        "std/time/format::formatPattern",
+        "std/time/civil::monthLong",
     ] {
         assert!(names.contains(&f.to_string()), "{f}: {names:?}");
     }
     // Modules lowering looks into by name are checked whole, and so are the prelude's helpers
     // and its types' methods.
-    let eager = ["std/sort", "std/proxy", "std/typed_array"];
+    let eager = ["std/lang/sort", "std/lang/proxy", "std/lang/typed_array"];
     for n in &names {
         assert!(n.starts_with("std/"), "{n}");
         assert!(!eager.iter().any(|e| n.starts_with(e)), "{n}");
     }
     assert!(
-        !names.iter().any(|n| n.ends_with("::__anyLooseEq")),
+        !names.iter().any(|n| n.ends_with("::anyLooseEq")),
         "a helper"
     );
     // `Number` of the prelude is a function nothing in hello world calls.
@@ -56,17 +56,17 @@ fn what_no_code_reaches_stays_unchecked() {
 
 #[test]
 fn what_checked_code_calls_is_checked_with_what_it_calls() {
-    // `velt:datetime`, imported, is checked whole; its methods call `formatPattern`, which calls
+    // `velt/time`, imported, is checked whole; its methods call `formatPattern`, which calls
     // the module's private `token`, which calls `monthLong` of another lazy module.
     let p = ok_src(
-        "import * as dt from \"velt:datetime\";\n\
+        "import * as dt from \"velt/time\";\n\
          function main() {\n  console.log(\"hi\");\n}\n",
     );
     let names = unchecked(&p);
     for f in [
-        "std/datetime/format::formatPattern",
-        "std/datetime/format::token",
-        "std/datetime/civil::monthLong",
+        "std/time/format::formatPattern",
+        "std/time/format::token",
+        "std/time/civil::monthLong",
     ] {
         assert!(!names.contains(&f.to_string()), "{f} is checked: {names:?}");
         assert!(matches!(p.def(def_id(&p, f)), Def::Fn(f) if !f.body.block.stmts.is_empty()));
@@ -76,12 +76,12 @@ fn what_checked_code_calls_is_checked_with_what_it_calls() {
 #[test]
 fn a_module_the_program_imports_is_checked_whole() {
     let p = ok_src(
-        "import { formatPattern } from \"velt:datetime/format\";\n\
+        "import { formatPattern } from \"velt/time/format\";\n\
          function main() {\n  console.log(\"hi\");\n}\n",
     );
     let names = unchecked(&p);
     assert!(
-        !names.iter().any(|n| n.starts_with("std/datetime/format::")),
+        !names.iter().any(|n| n.starts_with("std/time/format::")),
         "{names:?}"
     );
 }
@@ -90,18 +90,18 @@ fn a_module_the_program_imports_is_checked_whole() {
 fn errors_in_user_code_are_reported_as_before() {
     // The program's own unreached function is checked: lazy checking is for std only.
     let e = err_src(
-        "import { parseIso } from \"velt:datetime/parse\";\n\
+        "import { parseIso } from \"velt/time/parse\";\n\
          function unused(): i64 { return parseIso(1); }\n\
          function main() {}\n",
     );
     assert!(e.contains("error"), "{e}");
 }
 
-/// A std module `velt:zzprobe` that re-exports what `velt:zzprobe/impl` (`impl_src`) declares,
-/// so that `impl` stays lazy when the program imports `velt:zzprobe`; `src` imports it.
+/// A std module `velt/zzprobe` that re-exports what `velt/zzprobe/impl` (`impl_src`) declares,
+/// so that `impl` stays lazy when the program imports `velt/zzprobe`; `src` imports it.
 fn with_probe_std(impl_src: &str, src: &str) -> Program {
     let mut l = common::programs::load_src(src);
-    let reexport = "export { Gadget, SpecialError, Base, Special } from \"velt:zzprobe/impl\";\n";
+    let reexport = "export { Gadget, SpecialError, Base, Special } from \"velt/zzprobe/impl\";\n";
     for (path, text) in [("std/zzprobe", reexport), ("std/zzprobe/impl", impl_src)] {
         let file = l.sm.add(format!("{path}.vlt"), text.to_string());
         let (ast, diags) = velt_syntax::parse_file(file, text);
@@ -109,6 +109,7 @@ fn with_probe_std(impl_src: &str, src: &str) -> Program {
         l.modules.push(velt_sema::SourceModule {
             path: path.to_string(),
             is_std: true,
+            is_dependency: false,
             file,
             ast,
             imports: vec![],
@@ -118,10 +119,14 @@ fn with_probe_std(impl_src: &str, src: &str) -> Program {
     let n = l.modules.len();
     l.modules[n - 2]
         .imports
-        .push(("velt:zzprobe/impl".into(), "std/zzprobe/impl".into()));
+        .push(("velt/zzprobe/impl".into(), "std/zzprobe/impl".into()));
+    // The impl's key of the inspect hook (loaded with the prelude's hooks).
+    l.modules[n - 1]
+        .imports
+        .push(("velt/lang/hooks/keys".into(), "std/lang/hooks/keys".into()));
     l.modules[l.root]
         .imports
-        .push(("velt:zzprobe".into(), "std/zzprobe".into()));
+        .push(("velt/zzprobe".into(), "std/zzprobe".into()));
     let (p, d) = l.check();
     assert!(
         p.is_some() && d.iter().all(|d| !d.is_error()),
@@ -133,11 +138,12 @@ fn with_probe_std(impl_src: &str, src: &str) -> Program {
 
 /// The classes of the probe's lazy module.
 const PROBE_IMPL: &str = "\
+import { INSPECT } from \"velt/lang/hooks/keys\";
 export class Gadget { n: number = 1; constructor() {} toString(): string { return \"G\" + this.n; } }
 export class SpecialError extends Error {
   constructor() { super(\"special\"); }
   toJSON(): { s: string } { return { s: \"x\" }; }
-  __inspect(): string { return \"S\"; }
+  [INSPECT](): string { return \"S\"; }
 }
 export class Base { constructor() {} }
 export class Special extends Base { constructor() { super(); } describe(): string { return \"special\"; } }
@@ -149,7 +155,7 @@ fn a_class_used_only_as_a_type_argument_has_its_methods_checked() {
     // local of the program has a type that mentions `Gadget`, only the call's type argument.
     let p = with_probe_std(
         PROBE_IMPL,
-        "import { Gadget } from \"velt:zzprobe\";\n\
+        "import { Gadget } from \"velt/zzprobe\";\n\
          function probe<T>(): number {\n\
            const xs: T[] = [];\n\
            for (const x of xs) { console.log(`${x}`); console.log(x); }\n\
@@ -169,11 +175,11 @@ fn the_subclasses_of_a_used_class_have_their_methods_checked() {
     // Printing an `Error` dispatches over every class that extends it, constructed or not.
     let p = with_probe_std(
         PROBE_IMPL,
-        "import { Gadget } from \"velt:zzprobe\";\n\
+        "import { Gadget } from \"velt/zzprobe\";\n\
          function main() { const e: Error = new Error(\"x\"); console.log(e); }\n",
     );
     let names = unchecked(&p);
-    for m in ["__inspect", "toJSON"] {
+    for m in [velt_common::std_key!(inspect), "toJSON"] {
         let f = format!("std/zzprobe/impl::SpecialError.{m}");
         assert!(!names.contains(&f), "{f}: {names:?}");
     }
@@ -189,7 +195,7 @@ fn a_user_subclass_makes_the_std_subclasses_of_its_base_checked() {
     // `JSON.stringify` of a `Base` value dispatches over `Special` too.
     let p = with_probe_std(
         PROBE_IMPL,
-        "import { Base } from \"velt:zzprobe\";\n\
+        "import { Base } from \"velt/zzprobe\";\n\
          class Mine extends Base { constructor() { super(); } }\n\
          function main() { const b: Base = new Mine(); console.log(JSON.stringify(b)); }\n",
     );
@@ -218,7 +224,7 @@ export class Holder {{
     );
     let p = with_probe_std(
         &impl_src,
-        "import { Gadget } from \"velt:zzprobe\";\n\
+        "import { Gadget } from \"velt/zzprobe\";\n\
          function main() { console.log(`${new Gadget()}`); }\n",
     );
     let names = unchecked(&p);
@@ -238,7 +244,7 @@ export class Holder {{
 fn a_decoder_checks_the_tape_only_for_a_type_with_a_json_value() {
     // The reader names no tape: `JsonValue.__fromReader` parses one, and is checked once the
     // decoded type holds a `JsonValue` (it is a method of a used `JsonValue`).
-    let tape = "std/json/tape::parseWith";
+    let tape = "std/encoding/json/tape::parseWith";
     let plain = ok_src(
         "function main() {\n  const p = JSON.parse<{ x: i64 }>(\"{}\");\n  console.log(p.x);\n}\n",
     );

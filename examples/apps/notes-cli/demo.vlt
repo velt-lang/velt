@@ -1,6 +1,6 @@
 // A scripted notes session (golden: demo.out) — what `notes <argv>` prints for each command.
 import { execute } from "@notes/commands";
-import { removeSync } from "velt:fs";
+import { removeSync } from "velt/fs";
 
 const DB = "notes-demo.json";
 

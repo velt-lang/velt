@@ -1,6 +1,6 @@
 // A shared promise sent over a channel to a task started later (#212): the receiving task
 // awaits a copy of the result made on the sending task's side.
-import { channel, Channel } from "velt:channel";
+import { channel, Channel } from "velt/sync";
 class Obj {
   n: number;
   constructor(n: number) {

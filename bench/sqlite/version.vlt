@@ -1,0 +1,13 @@
+// Prints the version of the SQLite that the sqlite package's driver links (bench/showcase records
+// it beside the versions the other drivers bundle).
+import { open } from "sqlite";
+
+struct Version {
+  v: string;
+}
+
+function main() {
+  const db = open(":memory:");
+  const row: Version | null = db.prepare("select sqlite_version() as v").get();
+  console.log(row == null ? "unknown" : row.v);
+}

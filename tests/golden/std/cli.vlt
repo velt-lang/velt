@@ -1,7 +1,7 @@
 // std/cli: flags, options (long/short, `=`/separate/attached values, defaults, repeats),
 // short clusters, `--no-*`, `--`, positionals, integer values, errors and help text.
-import { ArgParser, CliError, ParsedArgs } from "velt:cli";
-import { args } from "velt:process";
+import { ArgParser, CliError, ParsedArgs } from "velt/cli";
+import { args } from "velt/process";
 
 function parser(): ArgParser {
   return new ArgParser("tool", "Converts things.")

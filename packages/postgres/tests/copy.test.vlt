@@ -1,0 +1,128 @@
+// postgres COPY streaming: copyFrom writes rows in chunks (split anywhere), copyTo reads
+// them back as they arrive (with read() and with for await); abort() cancels a copy, a bad row
+// fails end() and a transaction. Needs VELT_TEST_PG_URL (tests/support/pg.vlt).
+import { uuidv4 } from "velt/random/uuid";
+import { Client, connect } from "../src/lib";
+import { pgUrl } from "./support/pg";
+
+class Count {
+  n: i64;
+
+  constructor(n: i64) {
+    this.n = n;
+  }
+}
+
+// A TEMP table with a unique name and `rows` rows copied in: `i,row i,i.5`, except rows 1 and 2.
+async function copied(db: Client, rows: i64): Promise<string> {
+  const t = `copy_${uuidv4().replaceAll("-", "")}`;
+  await db.batch(`CREATE TEMP TABLE ${t} (id int PRIMARY KEY, name text, score float8)`);
+  const w = await db.copyFrom(`COPY ${t} (id, name, score) FROM STDIN (FORMAT csv)`);
+  await w.write("1,alpha,1.5\n2,\"be");
+  await w.write("ta, with comma\",2.25\n");
+  for (let i = 3; i <= rows; i++) {
+    await w.write(`${i},row ${i},${i}.5\n`);
+  }
+  assertEq(await w.end(), rows);
+  return t;
+}
+
+async function count(db: Client, t: string): Promise<i64> {
+  const n: Count | null = await db.selectOne(`SELECT count(*)::int8 AS n FROM ${t}`);
+  return n?.n ?? -1;
+}
+
+export async function test_copy_in_and_out() {
+  const url = pgUrl();
+  if (url == null) {
+    return;
+  }
+  const db = await connect(url);
+  const t = await copied(db, 1000);
+
+  const r = await db.copyTo(`COPY (SELECT * FROM ${t} ORDER BY id) TO STDOUT (FORMAT csv)`);
+  let text = "";
+  let chunk = await r.read();
+  while (chunk != null) {
+    text += chunk;
+    chunk = await r.read();
+  }
+  const lines = text.split("\n");
+  assertEq(lines.length - 1, 1000);
+  assertEq(lines[0], "1,alpha,1.5");
+  assertEq(lines[1], "2,\"beta, with comma\",2.25");
+  assertEq(lines[999], "1000,row 1000,1000.5");
+
+  // A reader is also an async iterable of its chunks.
+  const r2 = await db.copyTo(`COPY (SELECT * FROM ${t} ORDER BY id) TO STDOUT (FORMAT csv)`);
+  let again = "";
+  for await (const chunk of r2) {
+    again += chunk;
+  }
+  assert(again == text, "for await reads the same text");
+  // A released reader fails with ECLOSED.
+  let code = "";
+  try {
+    await r.read();
+  } catch (e) {
+    code = e.code.clone();
+  }
+  assertEq(code, "ECLOSED");
+  assertEq(await count(db, t), 1000);
+  db.close();
+}
+
+export async function test_abort_and_bad_rows() {
+  const url = pgUrl();
+  if (url == null) {
+    return;
+  }
+  const db = await connect(url);
+  const t = await copied(db, 1000);
+
+  // Aborted: nothing is copied, and the connection stays usable.
+  const a = await db.copyFrom(`COPY ${t} (id, name, score) FROM STDIN (FORMAT csv)`);
+  await a.write("5000,never,0\n");
+  a.abort();
+  assertEq(await count(db, t), 1000);
+
+  // A bad row fails end() with the server's error.
+  const bad = await db.copyFrom(`COPY ${t} (id, name, score) FROM STDIN (FORMAT csv)`);
+  await bad.write("x,y,z\n");
+  let code = "";
+  try {
+    await bad.end();
+  } catch (e) {
+    code = e.code.clone();
+  }
+  assertEq(code, "22P02");
+  // A released writer fails with ECLOSED.
+  code = "";
+  try {
+    await bad.write("1,a,1\n");
+  } catch (e) {
+    code = e.code.clone();
+  }
+  assertEq(code, "ECLOSED");
+  assertEq(await count(db, t), 1000);
+  db.close();
+}
+
+export async function test_binary_copy_out() {
+  const url = pgUrl();
+  if (url == null) {
+    return;
+  }
+  const db = await connect(url);
+  // COPY TO in the binary format, read as bytes: the PGCOPY signature comes first.
+  const b = await db.copyTo(`COPY (SELECT 1) TO STDOUT (FORMAT binary)`);
+  const bytes = await b.readBytes();
+  assert(bytes != null, "a chunk");
+  if (bytes != null) {
+    const head: u8[] = [bytes[0], bytes[1], bytes[2], bytes[3], bytes[4]];
+    const want: u8[] = [80, 71, 67, 79, 80];
+    assertEq(head, want);
+  }
+  b.close();
+  db.close();
+}

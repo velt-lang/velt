@@ -1,7 +1,7 @@
 // A `file:` URL keeps its base's Windows drive letter, as Node's URL does on every OS: a path
 // starting with `/` stays on the drive, `..` stops at it, `C|` is `C:`, and a path or host that
 // starts with a drive letter switches to it. Output compared with Node.
-import { URL } from "velt:url";
+import { URL } from "velt/net/url";
 
 const b = "file:///C:/p/m.ts";
 console.log(new URL("/abs/x.js", b).href);

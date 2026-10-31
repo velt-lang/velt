@@ -1,0 +1,199 @@
+// velt/lang/typed_array (internal): `DataView` (ES2024 §25.3), reads and writes of numbers of any
+// size at any byte offset of an `ArrayBuffer`, big-endian unless `littleEndian` is true.
+// Programs use the global (velt/lang/typed_array).
+
+import {
+  ArrayBuffer,
+  f32Bits,
+  f32FromBits,
+  f64Bits,
+  f64FromBits,
+  inspectBuffer,
+  load16,
+  load32,
+  loadBE16,
+  loadBE32,
+  load64,
+  store16,
+  store32,
+  store64,
+  swap16,
+  swap32,
+  swap64,
+  toIndex,
+  toUint32,
+  toUint8,
+} from "velt/lang/typed_array/buffer";
+import { BufferView, NativeInspect } from "velt/lang/typed_array/core";
+import { INSPECT, VIEW_EMPTY_TEXT } from "velt/lang/hooks/keys";
+
+/**
+ * A view of a byte range of an `ArrayBuffer` for numbers of any size at any offset (JS
+ * `DataView`): `getUint16(offset, littleEndian)`, `setFloat64(offset, value, littleEndian)`, ….
+ * Multi-byte values are big-endian unless `littleEndian` is true, as in JS. An access outside
+ * the view throws a `RangeError`.
+ */
+export class DataView extends BufferView {
+  /**
+   * A view of `buffer` from `byteOffset`, of `byteLength` bytes or up to its end; `RangeError`
+   * as in JS when the range is outside the buffer.
+   */
+  constructor(buffer: ArrayBuffer, byteOffset: number = 0, byteLength?: number) {
+    const off = toIndex(byteOffset);
+    const total = buffer.bytes.length as usize;
+    if (off < 0 || (off as usize) > total) {
+      throw new RangeError(`Start offset ${byteOffset} is outside the bounds of the buffer`);
+    }
+    const start = off as usize;
+    let len = total - start;
+    if (byteLength != null) {
+      const n = toIndex(byteLength);
+      if (n < 0 || start + (n as usize) > total) {
+        throw new RangeError(`Invalid DataView length ${byteLength}`);
+      }
+      len = n as usize;
+    }
+    super(buffer, start, len);
+  }
+
+  /** The buffer the view is of. */
+  override get buffer(): ArrayBuffer {
+    return this.buf;
+  }
+
+  /** Where the view starts in `buffer`, in bytes. */
+  override get byteOffset(): number {
+    return this.off as number;
+  }
+
+  /** The size of the view in bytes. */
+  override get byteLength(): number {
+    return this.len as number;
+  }
+
+  // The position in the buffer of `size` bytes at `offset` in the view (a `RangeError` outside it).
+  private at(offset: number, size: usize): usize {
+    const i = toIndex(offset);
+    if (i < 0 || (i as usize) + size > this.len) {
+      throw new RangeError("Offset is outside the bounds of the DataView");
+    }
+    return this.off + (i as usize);
+  }
+
+  /** The signed byte at `byteOffset`. */
+  getInt8(byteOffset: number): number {
+    return this.buf.bytes[this.at(byteOffset, 1)] as i8;
+  }
+
+  /** The byte at `byteOffset`. */
+  getUint8(byteOffset: number): number {
+    return this.buf.bytes[this.at(byteOffset, 1)];
+  }
+
+  /** The 16-bit signed integer at `byteOffset`. */
+  getInt16(byteOffset: number, littleEndian: bool = false): number {
+    return this.uint16(byteOffset, littleEndian) as i16;
+  }
+
+  /** The 16-bit unsigned integer at `byteOffset`. */
+  getUint16(byteOffset: number, littleEndian: bool = false): number {
+    return this.uint16(byteOffset, littleEndian);
+  }
+
+  private uint16(byteOffset: number, littleEndian: bool): u16 {
+    const at = this.at(byteOffset, 2);
+    return littleEndian ? load16(this.buf.bytes, at) : loadBE16(this.buf.bytes, at);
+  }
+
+  /** The 32-bit signed integer at `byteOffset`. */
+  getInt32(byteOffset: number, littleEndian: bool = false): number {
+    return this.uint32(byteOffset, littleEndian) as i32;
+  }
+
+  /** The 32-bit unsigned integer at `byteOffset`. */
+  getUint32(byteOffset: number, littleEndian: bool = false): number {
+    return this.uint32(byteOffset, littleEndian);
+  }
+
+  private uint32(byteOffset: number, littleEndian: bool): u32 {
+    const at = this.at(byteOffset, 4);
+    return littleEndian ? load32(this.buf.bytes, at) : loadBE32(this.buf.bytes, at);
+  }
+
+  /** The 32-bit float at `byteOffset`. */
+  getFloat32(byteOffset: number, littleEndian: bool = false): number {
+    return f32FromBits(this.uint32(byteOffset, littleEndian));
+  }
+
+  /** The 64-bit float (number) at `byteOffset`. */
+  getFloat64(byteOffset: number, littleEndian: bool = false): number {
+    const x = load64(this.buf.bytes, this.at(byteOffset, 8));
+    return f64FromBits(littleEndian ? x : swap64(x));
+  }
+
+  /** Writes `value` as a signed byte (wrapped, as JS's `ToInt8`). */
+  setInt8(byteOffset: number, value: number) {
+    this.buf.bytes[this.at(byteOffset, 1)] = toUint8(value);
+  }
+
+  /** Writes `value` as a byte (wrapped, as JS's `ToUint8`). */
+  setUint8(byteOffset: number, value: number) {
+    this.buf.bytes[this.at(byteOffset, 1)] = toUint8(value);
+  }
+
+  /** Writes `value` as a 16-bit integer (wrapped). */
+  setInt16(byteOffset: number, value: number, littleEndian: bool = false) {
+    this.setUint16(byteOffset, value, littleEndian);
+  }
+
+  /** Writes `value` as a 16-bit unsigned integer (wrapped). */
+  setUint16(byteOffset: number, value: number, littleEndian: bool = false) {
+    const x = toUint32(value) as u16;
+    store16(this.buf.bytes, this.at(byteOffset, 2), littleEndian ? x : swap16(x));
+  }
+
+  /** Writes `value` as a 32-bit integer (wrapped). */
+  setInt32(byteOffset: number, value: number, littleEndian: bool = false) {
+    this.setUint32(byteOffset, value, littleEndian);
+  }
+
+  /** Writes `value` as a 32-bit unsigned integer (wrapped). */
+  setUint32(byteOffset: number, value: number, littleEndian: bool = false) {
+    const x = toUint32(value);
+    store32(this.buf.bytes, this.at(byteOffset, 4), littleEndian ? x : swap32(x));
+  }
+
+  /** Writes `value` as a 32-bit float (rounded). */
+  setFloat32(byteOffset: number, value: number, littleEndian: bool = false) {
+    const x = f32Bits(value as f32);
+    store32(this.buf.bytes, this.at(byteOffset, 4), littleEndian ? x : swap32(x));
+  }
+
+  /** Writes `value` as a 64-bit float. */
+  setFloat64(byteOffset: number, value: number, littleEndian: bool = false) {
+    const x = f64Bits(value);
+    store64(this.buf.bytes, this.at(byteOffset, 8), littleEndian ? x : swap64(x));
+  }
+
+  override [VIEW_EMPTY_TEXT](): string {
+    return this[INSPECT]().text;
+  }
+
+  /** `"[object DataView]"`, as `String(view)` gives in JS. */
+  toString(): string {
+    return "[object DataView]";
+  }
+
+  /** `JSON.stringify` writes a `DataView` as `{}`, as in JS. */
+  toJSON(): Record<string, number> {
+    return {};
+  }
+
+  /** How `console.log` shows the view, like Node (its length, offset and buffer). */
+  [INSPECT](): NativeInspect {
+    const buf = inspectBuffer(this.buf.bytes, 2);
+    return {
+      text: `DataView {\n  [byteLength]: ${this.len},\n  [byteOffset]: ${this.off},\n  [buffer]: ${buf}\n}`,
+    };
+  }
+}

@@ -1,0 +1,16 @@
+// velt/lang/intrinsics (internal): a string's UTF-8 bytes, read where the string keeps them.
+// The public surface is velt/encoding's `utf8Length`, `utf8ByteAt` and `utf8Substring`.
+
+/** The length of `s`'s UTF-8, which a string stores (no call). */
+export declare intrinsic function strByteLen(s: string): usize;
+
+/** `s.length`. */
+export declare intrinsic function strLen(s: string): usize;
+
+/**
+ * Byte `i` of `s`'s UTF-8, unchecked: the caller checks `i` against `strByteLen(s)` first.
+ */
+export declare intrinsic function strByteAt(s: string, i: u64): u8;
+
+/** The byte at `i`, or -1 when `i` is out of range; inline code, no call. */
+export declare intrinsic function strCharCodeAt(s: string, i: i64): i64;

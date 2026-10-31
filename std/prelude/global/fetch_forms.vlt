@@ -1,5 +1,5 @@
 // Global, conditional (crates/veltc/src/loader/globals.rs): `blob()` and `formData()` of
-// `Response` and `Request` (velt:fetch/forms), with the blob and form code they give, for a
+// `Response` and `Request` (velt/net/http/fetch/forms), with the blob and form code they give, for a
 // program that uses `Response` and calls one; other fetch and http programs don't load them.
-// load when std/fetch/response uses: blob formData
-import "velt:fetch/forms";
+// load when std/net/http/fetch/response uses: blob formData
+import "velt/net/http/fetch/forms";

@@ -6,7 +6,7 @@
 //! select:
 //! - `cargo fmt --check -p <crates with changed Rust files>` (`--all` when the build
 //!   configuration changed);
-//! - the gate's own `velt fmt --check std examples` when anything under `std/` or `examples/`
+//! - the gate's own `velt fmt --check std examples packages` when anything under them
 //!   changed, or when the formatter (`velt_fmt`) or a crate it depends on did (it takes about a
 //!   second, and it picks the `.vlt` files and the `.ts`/`.tsx` files of packages exactly as the
 //!   gate does);
@@ -41,11 +41,13 @@ const WORKSPACE_CONFIG: &[&str] = &[
 
 /// The directories `velt fmt --check` checks (as crates/xtask/src/check.rs does): a change under
 /// them runs the same command on them.
-const FORMATTED: &[&str] = &["std", "examples"];
+const FORMATTED: &[&str] = &["std", "examples", "packages"];
 
 /// The formatter's crate: a change to it or to a crate it depends on can change how the files
 /// under [`FORMATTED`] format.
 const FORMATTER: &str = "velt_fmt";
+/// The std lint: a change to it checks all of std.
+const STD_LINT: &str = "scripts/std-lint/";
 
 /// The file-size rule, which veltc's `standards` test includes with `#[path]`.
 const FILE_SIZE_RS: &str = "crates/xtask/src/file_size.rs";
@@ -92,13 +94,24 @@ pub struct Selection {
     pub rustfmt: Crates,
     /// Clippy: the crates with changed Rust files or manifests, and their dependents.
     pub clippy: Crates,
-    /// `velt fmt --check std examples`: something under them changed, or the formatter or a
+    /// `velt fmt --check std examples packages`: something under them changed, or the formatter or a
     /// crate it depends on did.
     pub velt_fmt: bool,
     /// Changed Rust files the file-size rule covers.
     pub sized: Vec<String>,
     /// `tests/difftest` changed: its `cargo fmt` and clippy.
     pub difftest: bool,
+    /// The std layout and quality rules (scripts/std-lint, docs/internals/design/std-layout.md
+    /// §6): the changed std files, or all of std when the lint itself changed.
+    pub std_lint: StdLint,
+}
+
+/// What `std-lint` checks.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StdLint {
+    None,
+    Files(Vec<String>),
+    All,
 }
 
 /// The checks for a change touching `paths` (relative, `/`-separated); `exists` says whether a
@@ -110,6 +123,7 @@ pub fn select(graph: &Graph, paths: &[String], exists: impl Fn(&str) -> bool) ->
         velt_fmt: false,
         sized: vec![],
         difftest: false,
+        std_lint: StdLint::None,
     };
     let mut changed = BTreeSet::new();
     let mut formatted = BTreeSet::new();
@@ -139,8 +153,19 @@ pub fn select(graph: &Graph, paths: &[String], exists: impl Fn(&str) -> bool) ->
             path.strip_prefix(d)
                 .is_some_and(|rest| rest.starts_with('/'))
         });
+        if path.starts_with(STD_LINT) {
+            sel.std_lint = StdLint::All;
+        }
         if !exists(path) {
             continue;
+        }
+        if (path.starts_with("std/") || path.starts_with("packages/")) && path.ends_with(".vlt") {
+            if let StdLint::None = sel.std_lint {
+                sel.std_lint = StdLint::Files(vec![]);
+            }
+            if let StdLint::Files(files) = &mut sel.std_lint {
+                files.push(path.clone());
+            }
         }
         if file_size::applies(path) {
             sel.sized.push(path.clone());
@@ -227,6 +252,9 @@ pub fn run(root: &Path, sel: &Selection, reason: &str) -> Result<(), String> {
     if sel.velt_fmt {
         velt_fmt(&mut r);
     }
+    if sel.std_lint != StdLint::None {
+        std_lint(&mut r, &sel.std_lint);
+    }
     file_sizes(&mut r, &sel.sized);
     clippy(&mut r, &sel.clippy);
     if sel.difftest {
@@ -250,7 +278,7 @@ pub fn run(root: &Path, sel: &Selection, reason: &str) -> Result<(), String> {
     summary(&r, start.elapsed().as_secs_f64())
 }
 
-/// `velt fmt --check std examples`, with this checkout's `velt` (built first: a no-op
+/// `velt fmt --check std examples packages`, with this checkout's `velt` (built first: a no-op
 /// when it is up to date; `--workspace` resolves the features like `cargo xtask check`, so the
 /// two never rebuild each other's crates).
 fn velt_fmt(r: &mut Runner) {
@@ -270,6 +298,32 @@ fn velt_fmt(r: &mut Runner) {
         &format!("velt fmt --check {}", FORMATTED.join(" ")),
         &mut fmt,
         fix,
+    );
+}
+
+/// `scripts/std-lint` on the changed std files (or all of std), with the base revision for its
+/// shrink-only allow lists.
+fn std_lint(r: &mut Runner, which: &StdLint) {
+    let mut build = cargo(&["build", "--quiet", "--workspace", "--bin", "velt"]);
+    if !r.step("build velt", &mut build, "fix the build errors above") {
+        return;
+    }
+    let velt = target_dir(r.root).join("debug").join(exe("velt"));
+    let mut lint = Command::new(velt);
+    lint.current_dir(r.root)
+        .args(["run", "scripts/std-lint/main.vlt", "--"]);
+    // The lists' base: origin/main, else main (std-lint fails on a revision git lacks).
+    if let Some(base) = crate::changes::default_base(r.root) {
+        lint.args(["--base", &base]);
+    }
+    if let StdLint::Files(files) = which {
+        lint.args(files);
+    }
+    r.step(
+        "std-lint (docs/internals/design/std-layout.md §2, §6)",
+        &mut lint,
+        "follow the message of each problem: std files live in module folders, an index.vlt only \
+         re-exports, one exported class per file, at most 400 lines",
     );
 }
 
@@ -411,6 +465,17 @@ mod tests {
     }
 
     #[test]
+    fn std_changes_lint_their_files_and_a_lint_change_lints_all_of_std() {
+        let s = sel(&["std/fs/index.vlt", "std/deleted.vlt", "docs/std/fs.md"]);
+        assert_eq!(s.std_lint, StdLint::Files(vec!["std/fs/index.vlt".into()]));
+        assert_eq!(sel(&["crates/xtask/src/main.rs"]).std_lint, StdLint::None);
+        assert_eq!(
+            sel(&["std/fs/index.vlt", "scripts/std-lint/allow.vlt"]).std_lint,
+            StdLint::All
+        );
+    }
+
+    #[test]
     fn deleted_files_select_their_crate_but_nothing_to_read() {
         let s = sel(&["crates/velt_fmt/src/deleted.rs", "std/deleted.vlt"]);
         assert_eq!(s.clippy, packages(&["velt_fmt"]));
@@ -420,7 +485,7 @@ mod tests {
     #[test]
     fn a_change_under_std_or_examples_runs_the_gates_velt_fmt() {
         for path in [
-            "std/json.vlt",
+            "std/encoding/json/index.vlt",
             "std/README.md",
             "examples/apps/chat/src/main.vlt",
             // `velt fmt` formats a package's .ts/.tsx sources too.

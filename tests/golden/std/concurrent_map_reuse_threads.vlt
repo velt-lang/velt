@@ -1,11 +1,11 @@
-// velt:collections/concurrent_map reusing emptied leaves while threads run: writers move windows
+// velt/collections reusing emptied leaves while threads run: writers move windows
 // of keys forward (each sets a key and deletes the one `W` behind it; their keys interleave, so
 // they share leaves and a leaf empties once all have passed it), and a fixed capacity that only
 // reuse makes enough. Readers check that every key they find has its own value, and that keys
 // a writer's window held for the whole lookup are found: a lookup misled by a reused node would
 // miss them. At the end each writer's last window is present and every key before it is gone.
 
-import { ConcurrentMap } from "velt:collections/concurrent_map";
+import { ConcurrentMap } from "velt/collections";
 
 const WRITERS: u64 = 4;
 const N: u64 = 100000;

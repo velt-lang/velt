@@ -49,7 +49,7 @@ first component is `rt`, `sig` or `native` (`rt`, `rt-str`, `native_init`) are r
 and init functions. Outside std, the compiler requires every `declare` to name one of
 the exports of **its own** package's library with **exactly** the recorded signature: a root
 program, a package without a library (`free`, `memcpy`) and another package's export are
-errors. `IoResult`/`IoStatus` are std's `velt:io` types, identified
+errors. `IoResult`/`IoStatus` are std's `velt/io` types, identified
 by definition (a look-alike struct is rejected). Violations are compile errors at the `declare`
 (`veltc/src/native/`). Separately, sema rejects a `velt_rt_*` runtime function declared outside
 std, in any package or the root program (`velt_sema` `collect/declare.rs`).
@@ -89,8 +89,20 @@ typedef struct VeltRtApi {
                               uint64_t* handle);
     void (*complete)(uint64_t handle, const void* result);
     _Noreturn void (*fatal)(const uint8_t* msg, size_t len);         // `panic: <msg>`, exit 101
+    // ... the async I/O part (version 2, below) ...
+    // version 3: the row cursors and parameter sinks a library hands to std ("Row cursors")
+    uint64_t (*db_open)(uint32_t kind, void* data, const void* vtable, uint64_t tag);
+    void* (*db_close)(uint32_t kind, uint64_t handle, uint64_t tag);
 } VeltRtApi;
 ```
+
+- `db_open` registers a row cursor (`kind` 0, `vtable` a `CursorVTable`) or a parameter sink
+  (`kind` 1, a `SinkVTable`) and returns its handle (never 0), a key with a generation as the
+  runtime's own handles (`registry.rs`); `db_close` unregisters the one `handle` names if it was
+  opened with the same `kind` and `tag` (the SDK's tag of the Rust type) and returns its data,
+  else null and nothing changes. std's `velt_rt_db_cursor(handle)` / `velt_rt_db_sink(handle)`
+  give the registered `RawCursor*` / `RawSink*` (0 for a handle that names none) to the generated
+  decoder and binder.
 
 - `str_new` decodes the bytes as UTF-8 from outside the program: an invalid sequence becomes
   U+FFFD by the WHATWG rule (Rust's `String::from_utf8_lossy`), and that includes a surrogate
@@ -109,7 +121,8 @@ typedef struct VeltRtApi {
   function or helper named in its comment). A library is `dlopen`ed into `velt dev`'s host,
   whose runtime symbols are not exported, and a DLL cannot import from an executable.
 - **Versioning**: the table is append-only; `abi_version` grows by one with each addition
-  (version 2 adds the async I/O part below and the values beyond `u8[]`). A
+  (version 2 adds the async I/O part below and the values beyond `u8[]`, version 3 `db_open`
+  and `db_close`). A
   library records the version it needs (`abi` in `native.json`, `native_abi` in the index);
   vpm refuses a library needing more than the running `velt` provides
   (`vpm::native::NATIVE_ABI` = velt_rt's `NATIVE_ABI_VERSION`), and the SDK's init checks
@@ -259,7 +272,7 @@ non-ASCII text), and 18–77 % faster than a `String` result (checked, then copi
 A database driver hands result rows to std's `JSON.parse<T[]>` decoder without making them
 JSON text: as a `u8[]` in the binary rows format of `velt_text::rows` (`BinRows` writes it,
 into a `velt_native::Array<u8>`, the Velt array itself). std decodes them with the std-only
-intrinsic `__intrinsic_json_parse_rows<T>(rows, flags, max_depth)`: the same generated decoder
+intrinsic `Intrinsic::JsonParseRows` (`(rows, flags, max_depth)`): the same generated decoder
 as `JSON.parse<T>`, over a reader made from the array (`velt_rt_json_reader_new_with` flag 4,
 rt_abi_async.md), which answers every call as it would for the JSON the rows stand for
 (`[{"col":value,...},...]`, or with `single` one row's object). No number formatting or
@@ -270,8 +283,8 @@ cell per column: a tag byte and its payload, `NULL` 0, `FALSE` 1, `TRUE` 2, `INT
 `FLOAT` 4 + `f64`, `TEXT` 5 or `ASCII` 7 + `u32` length + UTF-8, `BLOB` 6 + `u32` length +
 bytes (integers little-endian); bit 31 of a name's length says the name is ASCII. The reader
 trusts what the tags say about text (UTF-8, ASCII; `BinRows` checks), and a buffer cut short
-reads as a type mismatch, never out of bounds. std/postgres still writes JSON text (its arrays
-and json/jsonb columns are nested values, which the format has no cell for yet); std/sqlite
+reads as a type mismatch, never out of bounds. packages/postgres still writes JSON text (its arrays
+and json/jsonb columns are nested values, which the format has no cell for yet); packages/sqlite
 hands std a row cursor instead (below).
 
 ## Row cursors
@@ -281,48 +294,54 @@ buffer first (`velt_text::rows_cursor`): it implements `RowCursor` — `header()
 the binary rows: `single`, the column names), `step()` (to the next row, the first on the first
 call; false at the end and after a failure, which the driver keeps) and `cell(col)` (a `Cell`
 of the current row: null, bool, int, float, text, ascii text, blob, or a nested value as JSON
-text, borrowed until the next step) — and hands std the address of a `RawCursor`
-(`RawCursor::new`: the data pointer and a `#[repr(C)]` table of those three functions). std
-decodes with the std-only intrinsic `__intrinsic_json_parse_cursor<T>(cursor, flags, max_depth)`
-(reader flag 8, rt_abi_async.md) and gives the cursor back to the driver afterwards, which
-releases what it held (std/sqlite: the connection's lock) and reports a failure met while
-stepping. The decoder reads cells between two steps; a decoder that looks ahead across rows (a
+text, borrowed until the next step) — and registers it with the runtime: `open_cursor(Box<C>)`
+(`velt_text`'s `sdk` feature) puts its data pointer and a `#[repr(C)]` table of those three
+functions (`RawCursor`) in the runtime's table of open cursors (`db_open`, below) and returns the
+key, a `u64` handle like every other native handle, which the library hands its Velt side. The
+Velt side decodes with velt/db's `decodeRows<T>(cursor)` (or `decodeRow<T>` for a cursor opened
+for one row; [velt/db](../../std/db.md) "Native drivers"): std looks the handle up
+(`velt_rt_db_cursor`), throws `RowError` when it names no open cursor (a made-up number, a
+closed cursor's handle, a sink's), and otherwise runs the generated decoder over the cursor
+(reader flag 8, rt_abi_async.md). No Velt code ever holds an address. Then it gives the handle
+back to the driver, whose library takes the cursor back with `close_cursor::<C>(handle)` (`None`
+for a handle that is not an open cursor of type `C`: the runtime checks the key and a tag of the
+type), releases what it held (packages/sqlite: the connection's lock) and reports a failure met
+while stepping. The decoder reads cells between two steps; a decoder that looks ahead across rows (a
 union of whole results) gets the remaining rows copied into binary form once, and a nested value
 is read with a JSON reader over its text.
 
 When the row type is an object of plain fields (numbers, bools, strings, `T | null` of those,
 `u8[]`), the compiler reads the rows by column instead of through the JSON reader
-(`Glue::RowsRead`, rt_abi_async.md), with the same results and messages. std/sqlite and
-std/postgres use cursors. A driver written in Velt offers its rows as std/db' `RowSource`
-instead ([velt:db](../../std/db.md)), read the same way through its own methods.
+(`Glue::RowsRead`, rt_abi_async.md), with the same results and messages. packages/sqlite and
+packages/postgres use cursors. A driver written in Velt offers its rows as std/db' `RowSource`
+instead ([velt/db](../../std/db.md)), read the same way through its own methods.
 
 ## Parameter sinks
 
 The other way, a driver can take a statement's parameters as typed values instead of the JSON
 text of `JSON.stringify(params)`: it implements `ParamSink` — `object()` (the parameters are an
 object's members), `name(bytes)` (the next value is the member of that name) and `value(Cell)`
-— and hands std a `RawSink`. The std-only intrinsic `__intrinsic_db_bind<P>(sink, params)`
+— and registers it with `open_sink(Box<S>)` (as a cursor: its handle goes to the Velt side, the
+library takes it back with `close_sink::<S>(handle)`). velt/db's `bindParams<P>(sink, params)`
+looks the handle up (`velt_rt_db_sink`; false, binding nothing, when it names no open sink)
+and fills the sink: it
 calls them from code generated for `P` (`Glue::DbBind`): values in order for an array, a tuple
 or a lone value, `object()` and then names and values for an object, each value as its JSON
 text would read back (an integral number below 1e21 an int, NaN null, a `u8[]` member a blob).
 It does so for numbers, bools, strings, `T | null` of those, `u8[]` members and objects of such
-fields, and returns false, doing nothing, for any other type: std then sends the JSON text, so
-the binding never depends on which way the parameters went (std/sqlite: `bind_begin` …
-`open_rows_bound`, rt_abi_async.md §14.11).
+fields, and returns false, doing nothing, for any other type: the driver then takes the JSON
+text, so the binding never depends on which way the parameters went (packages/sqlite:
+`bind_begin` … `open_rows_bound`, its docs/native_abi.md).
 
-## Drivers in the runtime
+## Helper crates
 
-std's drivers (`velt:postgres`: crate `velt_std_postgres`; `velt:sqlite`: `velt_std_sqlite`;
-`velt:redis`: `velt_std_redis`) are crates on this SDK only
-(`velt_native`, `velt_text`), linked into the runtime library instead of a package's own: their
-`#[export]` functions are std's `declare`s (named `velt_std_<driver>__…`, checked against their
-signature records like any package's, `veltc/src/native/` `check_std_driver`), and an
-executable stays self-contained. The runtime hands them its table at start-up
-(`velt_rt::native::embed`, from `entry::init`), as `velt_native_init_<pkg>` does for a
-package, without replacing the panic hook (they share the runtime's std). They share two helper crates any
-native library can use: `velt_text` (string encoding, number formatting, JSON, database rows)
-and `velt_tls` (one rustls client setup per process: the `ring` provider, Mozilla's roots plus
-extra PEM CAs, cached per CA text; the runtime's `fetch` and WebSockets use it too).
+Two crates of this repository help a native library and are shared with the runtime:
+`velt_text` (string encoding, number formatting, JSON, database rows, row cursors and parameter
+sinks; its `sdk` feature writes into Velt strings) and `velt_tls` (one rustls client setup per
+process: the `ring` provider, Mozilla's roots plus extra PEM CAs, cached per CA text; the
+runtime's `fetch` and WebSockets use it too). The database drivers in the repository's
+`packages/` (`sqlite`, `postgres`, `redis`) are built on them. (Until they left std, those drivers
+were crates linked into the runtime, whose `velt_std_<driver>__…` exports std declared.)
 
 ## Start-up
 
@@ -345,15 +364,24 @@ A bundle is one target's library, a directory exchanged as a `VELTPKG1` archive
 (`vpm::archive`) restricted to these paths:
 
 ```text
-native.json                   # package, version, target, abi, shared, import_lib?, static?, exports
+native.json                   # package, version, target, abi, shared, import_lib?, static?,
+                              # system_libs?, exports
 shared/libvelt_native_<p>.so  # .dylib (install name @rpath/...) on macOS
 shared/velt_native_<p>.dll    # Windows, with shared/velt_native_<p>.dll.lib
 static/<p>.o                  # Linux and macOS only
 ```
 
 - `velt native build [--target <triple>]` runs
-  `cargo build --release --lib --target <triple> --manifest-path <pkg>/<path>/Cargo.toml`
-  (`$VELT_CARGO`); the crate must build a `cdylib` and (except on Windows) a `staticlib`.
+  `cargo rustc --release --lib --target <triple> --manifest-path <pkg>/<path>/Cargo.toml --
+  --print native-static-libs=<file>` (`$VELT_CARGO`); the crate must build a `cdylib` and (except
+  on Windows) a `staticlib`.
+- `system_libs` (with `static`): the system libraries the object needs, as rustc printed them
+  for the staticlib (`-lgcc_s`, `-framework`, `SystemConfiguration`, …: what the crate's
+  dependencies declare with `cargo:rustc-link-lib`). A release link adds those that the link
+  does not pass anyway, so a library's system dependencies (packages/postgres: `whoami`'s
+  SystemConfiguration and CoreFoundation on macOS) reach only the programs that use it. A shared
+  library brings its own. A bundle without the field (built by an older velt) is built again
+  when it is built from source, and linked without them when it is prebuilt.
 - **Prelinking** (`static/<p>.o`): `ld -r --force-group-allocation -u <export>… lib.a`, then
   `objcopy --strip-debug --keep-global-symbols=<exports + init>` (GNU ld/objcopy,
   `$VELT_NATIVE_LD`/`$VELT_NATIVE_OBJCOPY`); macOS: `ld -r -exported_symbols_list`. The Rust
@@ -407,7 +435,7 @@ For the build target (`InstallOptions::target`):
 | Build | Linux / macOS | Windows |
 |---|---|---|
 | debug | `-L<dir> -lvelt_native_<p> -Wl,-rpath,<dir>` | import library; the DLL is copied next to the executable |
-| `--release` | `static/<p>.o` after the program's objects: self-contained | as debug (no partial link with MSVC) |
+| `--release` | `static/<p>.o` after the program's objects, its `system_libs` after the runtime's libraries: self-contained | as debug (no partial link with MSVC) |
 | `velt dev` (JIT) | `dlopen` (RTLD_NOW, RTLD_LOCAL), exports and init given to the JIT | `LoadLibraryW` |
 
 The bundled linker (lld with a link kit, [linking](../linking.md)) gets the same libraries
@@ -415,9 +443,11 @@ The bundled linker (lld with a link kit, [linking](../linking.md)) gets the same
 (`--target <arch>-unknown-linux-musl`) takes only `static/<p>.o`, so its native packages need a
 `--release` build. The kits' system libraries cover what the runtime imports and, on Windows and
 Linux, every export of those system libraries; a native library that needs another system
-library links with `VELT_LINKER=system`.
+library links with `VELT_LINKER=system` (the macOS kit has CoreFoundation and
+SystemConfiguration besides libSystem).
 
-The link stamp hashes every native file (path, size, modification time). A statically linked
+The link stamp hashes every native file (path, size, modification time) and the system
+libraries. A statically linked
 (musl) `velt` cannot load libraries into its JIT host and says to use `velt dev --exe`.
 `velt dev` watches the crate sources of libraries built from source and restarts (never swaps)
 when they change.

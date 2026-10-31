@@ -1,0 +1,5 @@
+// redis (internal): the plain data types of the API: options and a sorted-set member.
+
+export { RedisConnectOptions } from "./redis_connect_options";
+export { SetOptions } from "./set_options";
+export { ZMember } from "./z_member";

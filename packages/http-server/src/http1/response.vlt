@@ -1,0 +1,354 @@
+// http-server (internal): `Http1Response`, an HTTP/1.1 response as `HttpResponse`
+// (response.vlt). One per connection, reused for its requests.
+//
+// A response written at once (`send` and the like) goes into the connection's `Out`, so the
+// responses to the requests one read brought leave in one write; the fixed parts of a head come
+// from `HeadParts`. A streamed response (`stream`, `sse`) writes its head at once and each piece
+// as one chunk (`Transfer-Encoding: chunked`; to an HTTP/1.0 client, the body ends with the
+// connection). Its pieces are queued on the connection (`writeBytesLater`): what the handler
+// writes before it next waits leaves in one write, and `write` waits while more than `QUEUED`
+// bytes are still to be sent, so a fast producer waits for a slow client (backpressure); a
+// client that went away makes it throw and aborts the request's signal (cancellation).
+
+import { BodyStream } from "velt/net/http";
+import { TcpStream } from "velt/net";
+import { AbortController, AbortSignal } from "velt/task";
+import { EventStream } from "../event_stream";
+import { lengthValue } from "../fields";
+import { BodySink, HttpStream } from "../http_stream";
+import { HttpResponse } from "../response";
+import { lastChunk, oneChunk, writePiece } from "./chunks";
+import { FieldBuf } from "./fields_buf";
+import { Head } from "./head";
+import { HeadParts, TYPE_BYTES, TYPE_HTML, TYPE_JSON, TYPE_SSE, TYPE_TEXT } from "./head_parts";
+import { Out } from "./out";
+import { writeHead } from "./write_head";
+
+/// How many bytes of a streamed body may wait to be sent before `write` waits.
+const QUEUED: number = 65536;
+
+/// A response on an HTTP/1.1 connection (the methods are documented on `HttpResponse`).
+export class Http1Response extends HttpResponse implements BodySink {
+  /** The responses not yet written to the connection. */
+  out: Out = new Out();
+  /** The fixed parts of a head, and the `Date` value. */
+  parts: HeadParts = new HeadParts();
+  /** The head of the request being answered (its `Expect: 100-continue` state). */
+  request: Head;
+  statusCode: number = 200;
+  /** The headers set for this response, and its trailers. */
+  extra: FieldBuf = new FieldBuf(256);
+  trailers: FieldBuf = new FieldBuf(0);
+  hasType: bool = false;
+  /// The handler set a `Server` header: the server's own is not sent.
+  hasServer: bool = false;
+  /// The Content-Length a handler set (-1: none), sent for a HEAD request's response.
+  headLength: i64 = -1;
+  keepAlive: bool = true;
+  http11: bool = true;
+  /// A response was started.
+  done: bool = false;
+  /** A streamed body is being written, chunked (HTTP/1.1) or until the connection closes. */
+  streaming: bool = false;
+  chunked: bool = false;
+  /// The request was `HEAD`: the response has the head a `GET` would get, and no body.
+  headOnly: bool = false;
+  /// The response has no body (a `HEAD` request, or status 1xx, 204 or 304): what the handler
+  /// writes as one is not sent.
+  noBody: bool = false;
+  /// The connection was switched to another protocol (`upgrade`): the server lets it go.
+  private switched: bool = false;
+  private conn: TcpStream;
+  // Aborted when a write to the client fails or the server closes (made when first asked for).
+  private stopped: AbortSignal;
+  private failed: AbortController = new AbortController();
+  private either: AbortSignal | null = null;
+
+  constructor(conn: TcpStream, stopped: AbortSignal, request: Head) {
+    super();
+    this.conn = conn;
+    this.stopped = stopped;
+    this.request = request;
+  }
+
+  status(code: number) {
+    if (!(code >= 100 && code <= 999) || code != Math.floor(code)) {
+      throw new RangeError(`invalid status code: ${code}`);
+    }
+    this.statusCode = code;
+  }
+
+  header(name: string, value: string) {
+    const start = this.extra.length;
+    const nameLength = this.extra.add(name, value);
+    if (nameLength == 14 && name.toLowerCase() == "content-length") {
+      this.extra.length = start;
+      this.headLength = lengthValue(value);
+    } else if (nameLength == 17 && name.toLowerCase() == "transfer-encoding") {
+      this.extra.length = start;
+    } else if (nameLength == 12 && name.toLowerCase() == "content-type") {
+      this.hasType = true;
+    } else if (nameLength == 6 && name.toLowerCase() == "server") {
+      this.hasServer = true;
+    }
+  }
+
+  addTrailers(trailers: [string, string][]) {
+    for (const t of trailers) {
+      this.trailers.add(t[0], t[1]);
+    }
+  }
+
+  send(body: string) {
+    this.sendText(TYPE_TEXT, body);
+  }
+
+  sendBytes(body: u8[]) {
+    if (this.trailers.length > 0 && this.http11 && this.request.teTrailers()) {
+      this.whole(TYPE_BYTES, null, body);
+      return;
+    }
+    writeHead(this, TYPE_BYTES, null, body.length as i64);
+    if (!this.noBody) {
+      this.out.bytes(body);
+    }
+  }
+
+  json(json: string) {
+    this.sendText(TYPE_JSON, json);
+  }
+
+  html(html: string) {
+    this.sendText(TYPE_HTML, html);
+  }
+
+  async stream(type?: string): Promise<HttpStream> {
+    writeHead(this, -1, type ?? "text/plain; charset=utf-8", -1);
+    await this.queue();
+    return new HttpStream(this);
+  }
+
+  async sendStream(body: BodyStream, type?: string): Promise<void> {
+    // The head goes out with the first chunk: one write less per response.
+    writeHead(this, -1, type ?? "text/html; charset=utf-8", -1);
+    try {
+      for await (const chunk of body) {
+        await this.piece(chunk);
+      }
+    } catch (e) {
+      // The client went away (or the source failed): nothing more can be sent.
+      this.streaming = false;
+      this.keepAlive = false;
+      return;
+    }
+    await this.finishStream();
+  }
+
+  async sse(): Promise<EventStream> {
+    this.header("Cache-Control", "no-cache");
+    writeHead(this, TYPE_SSE, null, -1);
+    await this.queue();
+    return new EventStream(new HttpStream(this));
+  }
+
+  signal(): AbortSignal {
+    const either = this.either;
+    if (either != null) {
+      return either;
+    }
+    const made = AbortSignal.any([this.failed.signal, this.stopped]);
+    this.either = made;
+    return made;
+  }
+
+  /// Throws if a response was started or the request is HTTP/1.0.
+  upgrade(protocol: string, headers?: [string, string][]): TcpStream {
+    if (this.done) {
+      throw new Error("the response was already sent");
+    }
+    if (!this.http11) {
+      throw new Error("only an HTTP/1.1 connection can be upgraded");
+    }
+    const fields = headers ?? [];
+    // Checked before anything is kept: a bad name or value throws, and what the check wrote is
+    // dropped, so nothing of it is sent.
+    const out = this.out;
+    const start = out.length;
+    try {
+      out.field("Upgrade", protocol);
+      for (const h of fields) {
+        out.field(h[0], h[1]);
+      }
+    } finally {
+      out.length = start;
+    }
+    this.done = true;
+    this.switched = true;
+    this.keepAlive = false;
+    out.text("HTTP/1.1 101 Switching Protocols\r\nUpgrade: ");
+    out.text(protocol);
+    out.text("\r\nConnection: Upgrade\r\n");
+    for (const h of fields) {
+      out.field(h[0], h[1]);
+    }
+    out.text("\r\n");
+    this.conn.writeBytesLater(out.buf, 0, out.length as number);
+    out.length = 0;
+    return this.conn;
+  }
+
+  upgraded(): bool {
+    return this.switched;
+  }
+
+  sent(): bool {
+    return this.done;
+  }
+
+  /** The connection closes after this response (an error response to bad input). */
+  closeAfter() {
+    this.keepAlive = false;
+  }
+
+  /** Whether writing to the client failed: it went away. */
+  clientGone(): bool {
+    return this.failed.signal.aborted;
+  }
+
+  /** A new request: status 200, no headers. */
+  begin(keepAlive: bool, http11: bool, headOnly: bool = false) {
+    this.headOnly = headOnly;
+    this.headLength = -1;
+    this.switched = false;
+    this.noBody = false;
+    this.statusCode = 200;
+    this.extra.length = 0;
+    this.trailers.length = 0;
+    this.hasType = false;
+    this.hasServer = false;
+    this.keepAlive = keepAlive;
+    this.http11 = http11;
+    this.done = false;
+    this.streaming = false;
+    this.chunked = false;
+  }
+
+  /**
+   * Whether the connection can serve another request after this response: not after a
+   * streamed body that ends with the connection, nor one left unfinished.
+   */
+  reusable(): bool {
+    return this.keepAlive && !this.streaming;
+  }
+
+  /** Whether a streamed body is still open. */
+  streamOpen(): bool {
+    return this.streaming;
+  }
+
+  /**
+   * Ends a streamed body the handler left open; with `send`, also writes what is buffered
+   * (before the server waits for the rest of a request's body).
+   */
+  async endStream(send: bool = false) {
+    if (this.streaming) {
+      await this.finishStream();
+    }
+    if (send) {
+      await this.flush();
+    }
+  }
+
+  /** The time now, and the `Date` value for the responses of this batch (once a second). */
+  tick(): i64 {
+    return this.parts.tick();
+  }
+
+  /** Writes what is buffered to the connection; a failure aborts `signal()`. */
+  async flush() {
+    const out = this.out;
+    if (out.length > 0) {
+      try {
+        await this.conn.writeBytes(out.buf, 0, out.length as number);
+      } catch (e) {
+        out.length = 0;
+        this.failed.abort();
+        throw e;
+      }
+      out.length = 0;
+    }
+  }
+
+  /**
+   * Queues what is buffered, sent with everything else this task writes before it next waits
+   * (one write for a head and the chunks a render produces without waiting); waits only while
+   * more than `QUEUED` bytes are still to be sent.
+   */
+  async queue() {
+    const out = this.out;
+    if (out.length > 0) {
+      try {
+        this.conn.writeBytesLater(out.buf, 0, out.length as number);
+        out.length = 0;
+        await this.conn.drained(QUEUED);
+      } catch (e) {
+        out.length = 0;
+        this.failed.abort();
+        throw e;
+      }
+    }
+  }
+
+  /** One piece of a streamed body (`HttpStream.write`). */
+  async piece(data: string | u8[] | Uint8Array) {
+    if (!this.streaming) {
+      throw new Error("the streamed response has ended");
+    }
+    if (this.noBody) {
+      return;
+    }
+    writePiece(this.out, data, this.chunked);
+    await this.queue();
+  }
+
+  /** Ends a streamed body (`HttpStream.end`). */
+  async finishStream() {
+    if (!this.streaming) {
+      return;
+    }
+    this.streaming = false;
+    this.endChunks();
+    // Otherwise (HTTP/1.0) the body ends with the connection: the head set `keepAlive` false.
+    await this.queue();
+  }
+
+  /// A body written at once: `send`, `json`, `html`.
+  private sendText(type: i64, body: string) {
+    if (this.trailers.length > 0 && this.http11 && this.request.teTrailers()) {
+      this.whole(type, body, null);
+      return;
+    }
+    const n = Buffer.byteLength(body) as i64;
+    writeHead(this, type, null, n);
+    if (!this.noBody) {
+      this.out.textOf(body, n);
+    }
+  }
+
+  /// The last chunk of a chunked body, with the trailers.
+  private endChunks() {
+    if (this.chunked && !this.noBody) {
+      lastChunk(this.out, this.trailers);
+    }
+  }
+
+  /// A whole body sent chunked, so that the trailers can follow it (`TE: trailers`).
+  private whole(type: i64, text: string | null, bytes: u8[] | null) {
+    writeHead(this, type, null, -1);
+    this.streaming = false;
+    if (!this.noBody) {
+      oneChunk(this.out, text, bytes);
+    }
+    this.endChunks();
+  }
+}

@@ -1,0 +1,204 @@
+// velt/generate (internal): the generator host's loop (`serve`).
+
+import { readAllSync } from "velt/process";
+import { JsonValue } from "velt/prelude/json/json";
+import { EnumMember } from "velt/generate/enum_member";
+import { Field } from "velt/generate/field";
+import { Method } from "velt/generate/method";
+import { Output } from "velt/generate/output";
+import { Pending } from "velt/generate/pending";
+import { InstanceRequest } from "velt/generate/instance_request";
+import { Session, frame } from "velt/generate/session";
+import { Type } from "velt/generate/type";
+
+/** A generated function the host can generate: its generator's key, its name, the generator. */
+export type GeneratorEntry = {
+  key: string;
+  fn: string;
+  run: (req: InstanceRequest, out: Output) => void throws Error;
+};
+
+function num(v: JsonValue | null): i64 {
+  return v == null ? -1 : (v.asNumber() ?? -1) as i64;
+}
+
+function str(v: JsonValue | null): string {
+  return v == null ? "" : v.asString() ?? "";
+}
+
+function bool(v: JsonValue | null): bool {
+  return v == null ? false : v.asBool() ?? false;
+}
+
+function nums(v: JsonValue | null): i64[] {
+  const out: i64[] = [];
+  if (v == null) {
+    return out;
+  }
+  for (let i = 0; i < v.len(); i++) {
+    out.push(num(v.at(i)));
+  }
+  return out;
+}
+
+function strs(v: JsonValue | null): string[] {
+  const out: string[] = [];
+  if (v == null) {
+    return out;
+  }
+  for (let i = 0; i < v.len(); i++) {
+    out.push(str(v.at(i)));
+  }
+  return out;
+}
+
+function readType(id: i64, v: JsonValue): Type {
+  const t = new Type();
+  t.id = id;
+  t.kind = str(v.get("kind"));
+  t.display = str(v.get("display"));
+  t.qualifiedName = str(v.get("qualifiedName"));
+  t.spelling = str(v.get("spelling"));
+  t.repr = str(v.get("repr"));
+  t.args = nums(v.get("args"));
+  t.arms = nums(v.get("arms"));
+  t.base = num(v.get("base"));
+  t.subclasses = nums(v.get("subclasses"));
+  t.literal = str(v.get("literal"));
+  t.mayBeProxy = bool(v.get("mayBeProxy"));
+  t.hasProperties = bool(v.get("hasProperties"));
+  t.classValue = bool(v.get("classValue"));
+  t.dynamic = bool(v.get("dynamic"));
+  t.privateField = str(v.get("privateField"));
+  t.ctorAccess = str(v.get("ctorAccess"));
+  t.factories = strs(v.get("factories"));
+  t.at = num(v.get("at"));
+  const fields = v.get("fields");
+  if (fields != null) {
+    for (let i = 0; i < fields.len(); i++) {
+      const fv = fields.at(i);
+      if (fv == null) {
+        continue;
+      }
+      const f = new Field();
+      f.name = str(fv.get("name"));
+      f.type = num(fv.get("type"));
+      f.optional = bool(fv.get("optional"));
+      f.readonly = bool(fv.get("readonly"));
+      f.isPrivate = bool(fv.get("private"));
+      f.isEsPrivate = bool(fv.get("esPrivate"));
+      f.hasDefault = bool(fv.get("hasDefault"));
+      f.isGetter = bool(fv.get("isGetter"));
+      f.stdPrivate = bool(fv.get("stdPrivate"));
+      f.via = num(fv.get("via"));
+      f.at = num(fv.get("at"));
+      t.fields.push(f);
+    }
+  }
+  const members = v.get("members");
+  if (members != null) {
+    for (let i = 0; i < members.len(); i++) {
+      const mv = members.at(i);
+      if (mv == null) {
+        continue;
+      }
+      const m = new EnumMember();
+      m.name = str(mv.get("name"));
+      m.value = str(mv.get("value"));
+      t.members.push(m);
+    }
+  }
+  const methods = v.get("methods");
+  if (methods != null) {
+    for (let i = 0; i < methods.len(); i++) {
+      const mv = methods.at(i);
+      if (mv == null) {
+        continue;
+      }
+      const m = new Method();
+      m.name = str(mv.get("name"));
+      m.params = num(mv.get("params"));
+      m.ret = num(mv.get("ret"));
+      t.methods.push(m);
+    }
+  }
+  return t;
+}
+
+/**
+ * The host's loop (the compiler builds a program whose `main` calls it with the generators it
+ * needs): reads the requests from standard input, runs each generator, and writes the bodies,
+ * the further instances they ask for and their diagnostics to standard output.
+ */
+export function serve(generators: GeneratorEntry[]): void {
+  const doc = JsonValue.parse(readAllSync());
+  const s = new Session();
+  s.prefix = str(doc.get("prefix"));
+  const types = doc.get("types");
+  if (types != null) {
+    for (let i = 0; i < types.len(); i++) {
+      const tv = types.at(i);
+      if (tv != null) {
+        s.model.types.push(readType(i, tv));
+      }
+    }
+  }
+  const functions = doc.get("functions");
+  if (functions != null) {
+    for (let i = 0; i < functions.len(); i++) {
+      const f = functions.at(i);
+      if (f != null) {
+        s.params.set(str(f.get("generator")) + " " + str(f.get("function")), strs(f.get("params")));
+      }
+    }
+  }
+  const requests = doc.get("requests");
+  if (requests != null) {
+    for (let i = 0; i < requests.len(); i++) {
+      const r = requests.at(i);
+      if (r == null) {
+        continue;
+      }
+      const p = new Pending();
+      p.name = str(r.get("name"));
+      p.key = str(r.get("generator"));
+      p.fn = str(r.get("function"));
+      p.args = nums(r.get("typeArgs"));
+      s.names.set(p.key + " " + p.fn + "<" + p.args.join(",") + ">", p.name);
+      s.queue.push(p);
+    }
+  }
+  let i = 0;
+  while (i < s.queue.length) {
+    const p = s.queue[i];
+    i += 1;
+    let found = false;
+    for (const g of generators) {
+      if (g.key != p.key || g.fn != p.fn) {
+        continue;
+      }
+      found = true;
+      s.key = p.key;
+      const req = new InstanceRequest();
+      req.fn = p.fn;
+      req.args = p.args;
+      req.params = s.params.get(p.key + " " + p.fn) ?? [];
+      req.model = s.model;
+      const out = new Output(s, p.name);
+      try {
+        g.run(req, out);
+      } catch (e) {
+        s.report("error", p.name, -1, `the generator of \`${p.fn}\` threw: ${e.message}`);
+      }
+      frame(`body ${p.name}`, out.takeBody());
+      const helpers = out.takeHelpers();
+      if (helpers.length > 0) {
+        frame(`helper ${p.name}`, helpers);
+      }
+    }
+    if (!found) {
+      s.report("error", p.name, -1, `the generator module exports no function \`${p.fn}\``);
+    }
+  }
+  frame("done", "");
+}

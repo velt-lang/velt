@@ -1,8 +1,8 @@
 //! Built-in methods of strings, arrays, numbers and booleans called through `any` (#924): the
 //! `AnyCall` slot of such a type (any_glue.rs) compares the key with the names of the prelude's
-//! functions for its kind (std/prelude/zzzz_any_methods.vlt: `__anyStr_<name>(s, args)`,
-//! `__anyArr_<name><T>(a, args)` instantiated at the element type, `__anyNum_<name>(n, args)`,
-//! `__anyBool_<name>(b, args)`) and calls the one named, with the value borrowed and the
+//! functions for its kind (std/lang/hooks/any_methods.vlt: `anyStr_<name>(s, args)`,
+//! `anyArr_<name><T>(a, args)` instantiated at the element type, `anyNum_<name>(n, args)`,
+//! `anyBool_<name>(b, args)`) and calls the one named, with the value borrowed and the
 //! arguments packed into an `any[]`; its `any` result is the call's. Another JavaScript
 //! built-in is a member not supported yet (`ST_UNSUPPORTED`, a `TypeError` naming #924), and any
 //! other name is not a function (`ST_NOT_FN`: Node's `x.foo is not a function`). Only the names the
@@ -21,16 +21,16 @@ impl FnLower<'_, '_> {
     /// has built-in methods.
     pub(super) fn builtin_prefix(&self, ty: TyId) -> Option<&'static str> {
         match self.cx.kind(ty) {
-            TyKind::Str => Some("__anyStr_"),
+            TyKind::Str => Some("anyStr_"),
             // An array of nothing but `void` (an empty literal's type) has no element to hand out.
             TyKind::Array(e) if !matches!(self.cx.kind(e), TyKind::Unit | TyKind::Never) => {
-                Some("__anyArr_")
+                Some("anyArr_")
             }
-            TyKind::Int(_) | TyKind::Float(_) => Some("__anyNum_"),
-            TyKind::Bool => Some("__anyBool_"),
+            TyKind::Int(_) | TyKind::Float(_) => Some("anyNum_"),
+            TyKind::Bool => Some("anyBool_"),
             // A function has none here yet: `call`, `apply`, `bind` and `toString` are not
             // supported, and any other name is not a function.
-            TyKind::FnPtr { .. } | TyKind::Closure(_) => Some("__anyFn_"),
+            TyKind::FnPtr { .. } | TyKind::Closure(_) => Some("anyFn_"),
             _ => None,
         }
     }
@@ -41,9 +41,13 @@ impl FnLower<'_, '_> {
         let mut out = vec![];
         for (i, d) in self.cx.hir.defs.iter().enumerate() {
             let hir::Def::Fn(f) = d else { continue };
-            let std_fn = ["std/prelude/", "std/record/", "std/collections/"]
-                .iter()
-                .any(|r| f.name.starts_with(r));
+            let std_fn = [
+                velt_common::std_dir!(lang_hooks),
+                velt_common::std_dir!(lang_record),
+                velt_common::std_dir!(collections),
+            ]
+            .iter()
+            .any(|r| f.name.starts_with(r));
             // `(value, args)`, or `(value, args, whole)` for a class's (`any_class_call`).
             if !std_fn || !(2..=3).contains(&f.params.len()) {
                 continue;
@@ -123,7 +127,7 @@ impl FnLower<'_, '_> {
 
 impl FnLower<'_, '_> {
     /// The `AnyCall` slot body of a `Record<string, V>`: the prelude's functions named
-    /// `__anyRec_<name>` (`<name>` starts with `__`, which no record key the program calls
+    /// `anyRec_<name>` (`<name>` starts with `__`, which no record key the program calls
     /// through `any` is meant to reach), each given the record and the arguments; any other
     /// name is not supported yet, as before.
     pub(super) fn any_record_call(
@@ -133,7 +137,7 @@ impl FnLower<'_, '_> {
     ) {
         let keys = &self.cx.boxing.any_call_keys;
         let methods: Vec<(String, DefId)> = self
-            .builtin_methods("__anyRec_")
+            .builtin_methods("anyRec_")
             .into_iter()
             .filter(|(name, _)| name.starts_with("__") && keys.contains(name))
             .collect();
@@ -219,7 +223,7 @@ impl FnLower<'_, '_> {
 
     /// The methods of a standard library class `d` (a `Map` or `Set`, type `ty`) that glue
     /// cannot call as declared (`forEach`, whose callback has a `throws` type parameter): the
-    /// standard library's `__any<Class>_<name>` taking the value and an `any[]`, instantiated
+    /// standard library's `any<Class>_<name>` taking the value and an `any[]`, instantiated
     /// at the class's type arguments, for the names the program calls through `any`. Continues
     /// in the block for other names.
     pub(super) fn any_class_call(
@@ -239,7 +243,7 @@ impl FnLower<'_, '_> {
                 hir::Def::Adt(a) => (a.name.clone(), a.base),
                 _ => return,
             };
-            if name.starts_with("std/") {
+            if name.starts_with(velt_common::std_modules::CANONICAL_PREFIX) {
                 match name.rsplit_once("::") {
                     Some((_, class)) => break class.to_string(),
                     None => return,
@@ -254,7 +258,7 @@ impl FnLower<'_, '_> {
             };
             bd = next;
         };
-        let prefix = format!("__any{class}_");
+        let prefix = format!("any{class}_");
         let keys = &self.cx.boxing.any_call_keys;
         let methods: Vec<(String, DefId)> = (self.builtin_methods(&prefix).into_iter())
             .filter(|(name, _)| keys.contains("") || keys.contains(name))
@@ -278,7 +282,7 @@ impl FnLower<'_, '_> {
 /// prototypes.
 fn js_methods(prefix: &str) -> &'static [&'static str] {
     match prefix {
-        "__anyStr_" => &[
+        "anyStr_" => &[
             "at",
             "charAt",
             "charCodeAt",
@@ -317,7 +321,7 @@ fn js_methods(prefix: &str) -> &'static [&'static str] {
             "trimStart",
             "valueOf",
         ],
-        "__anyArr_" => &[
+        "anyArr_" => &[
             "at",
             "concat",
             "copyWithin",
@@ -356,14 +360,14 @@ fn js_methods(prefix: &str) -> &'static [&'static str] {
             "values",
             "with",
         ],
-        "__anyNum_" => &[
+        "anyNum_" => &[
             "toExponential",
             "toFixed",
             "toPrecision",
             "toString",
             "valueOf",
         ],
-        "__anyFn_" => &["apply", "bind", "call", "toString", "valueOf"],
+        "anyFn_" => &["apply", "bind", "call", "toString", "valueOf"],
         _ => &["toString", "valueOf"],
     }
 }

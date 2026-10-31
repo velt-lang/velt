@@ -1,0 +1,32 @@
+// velt/encoding/json (internal): appending JSON text to a `StringBuilder`, for code that writes
+// JSON itself: converters, and the code source generators write per type
+// (docs/internals/design/source-generators.md). What they append is what `JSON.stringify`
+// writes. They check nothing about the document's structure: the caller appends the punctuation
+// and the keys (`out.append("{\"id\":")`), which a `StringBuilder` appends inline when they
+// are literal text.
+
+import { StringBuilder } from "velt/text/string_builder";
+import { writeF64, writeString } from "velt/encoding/json/writer";
+import { JsonValue } from "velt/prelude/json/json";
+
+declare function velt_rt_strbuf_push_u64(out: string, v: u64);
+
+/** Appends `s` as a JSON string: quoted, with `"`, `\`, control characters and lone surrogates escaped. */
+export function appendJsonString(out: StringBuilder, s: string): void {
+  writeString(out.buf, s);
+}
+
+/** Appends `x` as `JSON.stringify` writes a number (`null` for NaN and the infinities). */
+export function appendJsonNumber(out: StringBuilder, x: f64): void {
+  writeF64(out.buf, x);
+}
+
+/** Appends the decimal digits of an unsigned integer (every `u64`, unlike an `f64`). */
+export function appendJsonUint(out: StringBuilder, n: u64): void {
+  velt_rt_strbuf_push_u64(out.buf, n);
+}
+
+/** Appends the JSON text of `v` (what `v.stringify()` returns), without making a string of it. */
+export function appendJsonValue(out: StringBuilder, v: JsonValue): void {
+  v.__writeJson(out.buf);
+}

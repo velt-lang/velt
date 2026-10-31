@@ -1,0 +1,20 @@
+// velt/net/url: WHATWG-style `URL` and `URLSearchParams`, plus JS's `encodeURIComponent` family.
+//
+// Parsing follows the WHATWG URL Standard for the inputs people write (std/net/url/parse.vlt):
+// special schemes (http https ws wss ftp file) get lowercased hosts, dropped default ports,
+// `\` as a path separator and dot-segment removal; other schemes keep opaque hosts and paths.
+// Components are percent-encoded with the spec's encode sets. Known gaps: no IDNA/punycode
+// (a non-ASCII host is invalid), IPv6 literals are validated loosely and not compressed
+// (`[0:0::1]` stays as written). `file:` URLs follow the spec's Windows drive-letter rules:
+// `/x` keeps the base's drive letter, `..` never removes it, a first segment `C|` is `C:`, and a
+// relative path or a host that starts with a drive letter switches to it.
+//
+// Mutation: `searchParams` returns a copy; to change the query, edit the copy and assign it
+// back (`const p = u.searchParams; p.set("a", "1"); u.searchParams = p;`). Setters follow JS:
+// invalid values are ignored, except `href`, which throws like JS. Like the WHATWG setters, the
+// ones that run the URL parser drop tabs and newlines from the value first.
+
+export { UrlError } from "velt/net/url/errors";
+export { URLSearchParams } from "velt/net/url/search_params";
+export { decodeURI, decodeURIComponent, encodeURI, encodeURIComponent } from "velt/net/url/uri";
+export { URL } from "velt/net/url/url";

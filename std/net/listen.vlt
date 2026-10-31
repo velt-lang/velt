@@ -1,0 +1,30 @@
+// velt/net (internal): `listen` and `listenTls`, which bind a `TcpListener`.
+
+import { unwrapIo } from "velt/native/result";
+import { velt_rt_tcp_listen, velt_rt_tcp_listen_tls, velt_rt_tcp_listener_port } from "velt/net/rt";
+import { TcpListener } from "velt/net/tcp_listener";
+
+/** Listens on "host:port" (port 0 picks a free port; read it back from `.port`). */
+export async function listen(addr: string): Promise<TcpListener> {
+  const handle = unwrapIo(await velt_rt_tcp_listen(addr));
+  return TcpListener { port: velt_rt_tcp_listener_port(handle), handle: handle };
+}
+
+export struct TlsListenOptions {
+  /** The certificate chain, PEM text. */
+  cert: string;
+  /** Its private key, PEM text. */
+  key: string;
+  /** The protocols to offer with ALPN, most preferred first (default: none). */
+  alpn?: string[];
+}
+
+/**
+ * `listen` for TLS connections: `accept` gives streams that are encrypted with `opts.cert`.
+ * Throws `IoError` "EINVAL" for a certificate or key that is not valid PEM.
+ */
+export async function listenTls(addr: string, opts: TlsListenOptions): Promise<TcpListener> {
+  const alpn = (opts.alpn ?? []).join(",");
+  const handle = unwrapIo(await velt_rt_tcp_listen_tls(addr, opts.cert, opts.key, alpn));
+  return TcpListener { port: velt_rt_tcp_listener_port(handle), handle: handle };
+}

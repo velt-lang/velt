@@ -1,0 +1,214 @@
+// velt/encoding/json (internal): what `JSON.stringify` cannot write, found on the model by the
+// generator of `writeJsonTop` (write.vlt) and reported at the call that writes it, with the
+// messages the language reference gives (docs/std/encoding/json.md). Generated code is checked
+// only for a program whose types can all be written.
+
+import { Model, Type } from "velt/generate";
+import { toJsonMethod } from "velt/encoding/json/generate/facts";
+
+const SUPPORTED =
+  "JSON supports numbers, boolean, string, literal types, enums, arrays, tuples, `T | null`, `Map<string, T>`, structs, classes and object literals of those, and `JsonValue`";
+
+/**
+ * Why `JSON.stringify` cannot write a value of model type `id`, as a diagnostic: its message,
+ * then its notes, one per line; "" when it can.
+ */
+export function stringifyProblem(model: Model, id: i64): string {
+  const t = model.type(id);
+  const unsupported = notYet(model, t);
+  if (unsupported.length > 0) {
+    return `${unsupported} is not supported yet`;
+  }
+  const bad = unwritable(model, id, []);
+  if (bad < 0) {
+    return "";
+  }
+  const b = model.type(bad);
+  const top = bad == id;
+  const tn = t.display;
+  const bn = b.display;
+  if (b.kind == "generator") {
+    const what = top ? `\`${tn}\` is a generator` : `\`${tn}\` contains the generator \`${bn}\``;
+    return `cannot convert to or from JSON: ${what}\nTypeScript allows this (\`JSON.stringify\` writes a generator as \`{}\`); Velt doesn't because a generator is a paused computation, not data; write the values it yields instead (collect them into an array with \`for...of\`)`;
+  }
+  const field = privateField(b);
+  if (field.length > 0) {
+    const what =
+      top
+        ? `\`${tn}\` has a private field \`${field}\`, so it has no JSON form`
+        : `\`${tn}\` contains \`${bn}\`, which has a private field \`${field}\`, so it has no JSON form`;
+    return `cannot convert to or from JSON: ${what}\na type of std or of a native library keeps its handles in private fields, so it has no JSON form; convert it to a type with public fields first`;
+  }
+  const what =
+    top ? `\`${tn}\` has no JSON form` : `\`${tn}\` contains \`${bn}\`, which has no JSON form`;
+  let text = `cannot convert to or from JSON: ${what}\n${SUPPORTED}`;
+  if (b.kind == "map") {
+    text += "\na `Map` converts to a JSON object only with `string` keys";
+  }
+  return text;
+}
+
+/**
+ * The first private field of std's or of a native library's that keeps `t` from JSON (a
+ * handle), or "".
+ */
+function privateField(t: Type): string {
+  if (t.privateField.length > 0) {
+    return t.privateField;
+  }
+  for (const f of t.fields) {
+    if (f.stdPrivate) {
+      return f.name;
+    }
+  }
+  return "";
+}
+
+/**
+ * What of the value of type `t` this version cannot write yet: a value that may be
+ * `undefined`, a function with properties, a class used as a value, a `toJSON()` that may
+ * return `undefined` (as the message says, "" when none).
+ */
+function notYet(model: Model, t: Type): string {
+  if (t.kind == "option" && t.literal.endsWith("undefined")) {
+    return "`JSON.stringify` of a value that may be `undefined` (Node returns `undefined`, not a string)";
+  }
+  const v = t.kind == "option" ? model.type(t.args[0]) : t;
+  if (v.kind == "function" && v.hasProperties) {
+    return "`JSON.stringify` of a function with properties (Node returns `undefined`, not a string)";
+  }
+  const seen: i64[] = [];
+  const stack: i64[] = [t.id];
+  while (stack.length > 0) {
+    const id = stack.pop()!;
+    if (seen.includes(id)) {
+      continue;
+    }
+    seen.push(id);
+    const u = model.type(id);
+    if (u.classValue) {
+      return "`JSON.stringify` of a class used as a value (#943)";
+    }
+    let toJson = false;
+    if (u.kind == "class") {
+      const classes: i64[] = [id];
+      for (const s of u.subclasses) {
+        classes.push(s);
+      }
+      for (const c of classes) {
+        const ct = model.type(c);
+        const m = toJsonMethod(ct);
+        if (m < 0) {
+          continue;
+        }
+        const ret = model.type(ct.methods[m].ret);
+        if (ret.kind == "option" && ret.literal.endsWith("undefined")) {
+          return "`JSON.stringify` of a value whose `toJSON()` may return `undefined` (Node leaves such a field out, and returns `undefined` for the value itself)";
+        }
+        toJson = toJson || c == id;
+        stack.push(ret.id);
+      }
+    }
+    if (!toJson) {
+      for (const f of u.fields) {
+        stack.push(f.type);
+      }
+    }
+    for (const a of u.args) {
+      stack.push(a);
+    }
+    for (const a of u.arms) {
+      stack.push(a);
+    }
+  }
+  return "";
+}
+
+/**
+ * The first part of type `id` without a JSON form (`stack`: the types being looked at, so
+ * recursive types end), or -1.
+ */
+function unwritable(model: Model, id: i64, stack: i64[]): i64 {
+  const t = model.type(id);
+  const k = t.kind;
+  if (
+    k == "number" ||
+    k == "boolean" ||
+    k == "string" ||
+    k == "literal" ||
+    k == "never" ||
+    k == "enum" ||
+    k == "any" ||
+    k == "unknown" ||
+    k == "date"
+  ) {
+    return -1;
+  }
+  if (stack.includes(id) || t.dynamic) {
+    return -1;
+  }
+  if (k == "opaque" && t.qualifiedName == "std/prelude/json/json::JsonValue") {
+    return -1;
+  }
+  // A function with properties is written as a function is: left out (`null` in an array).
+  if (k == "function" && t.hasProperties) {
+    return -1;
+  }
+  if (k == "array" || k == "option") {
+    return unwritable(model, t.args[0], stack);
+  }
+  if (k == "shared") {
+    // Read in place like the `T` it holds: not a `shared` 64-bit integer (its atomics may be
+    // running).
+    const e = model.type(t.args[0]);
+    const r = e.repr;
+    if (e.kind == "number" && (r == "i64" || r == "u64" || r == "isize" || r == "usize")) {
+      return id;
+    }
+    return unwritable(model, t.args[0], stack);
+  }
+  stack.push(id);
+  let bad: i64 = -1;
+  if (k == "tuple") {
+    bad = first(model, t.args, stack);
+  } else if (k == "union") {
+    bad = first(model, t.arms, stack);
+  } else if (k == "record") {
+    bad = unwritable(model, t.args[1], stack);
+  } else if (k == "map") {
+    bad = model.type(t.args[0]).kind == "string" ? unwritable(model, t.args[1], stack) : id;
+  } else if (k == "object" || k == "struct" || k == "class" || k == "opaque") {
+    // A class with `toJSON()` is written as what it returns (std's `URL` too).
+    const m = toJsonMethod(t);
+    if (m >= 0) {
+      bad = unwritable(model, t.methods[m].ret, stack);
+    } else if (privateField(t).length > 0 || k == "opaque") {
+      bad = id;
+    } else {
+      for (const f of t.fields) {
+        // An extension's field (`via`) is written as its value allows (a function left out).
+        if (f.isEsPrivate || f.via >= 0) {
+          continue;
+        }
+        bad = unwritable(model, f.type, stack);
+        if (bad >= 0) {
+          break;
+        }
+      }
+    }
+  } else {
+    bad = id;
+  }
+  stack.pop();
+  return bad;
+}
+
+function first(model: Model, ids: i64[], stack: i64[]): i64 {
+  for (const a of ids) {
+    const bad = unwritable(model, a, stack);
+    if (bad >= 0) {
+      return bad;
+    }
+  }
+  return -1;
+}

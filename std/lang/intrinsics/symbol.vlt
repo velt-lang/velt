@@ -1,0 +1,23 @@
+// velt/lang/intrinsics (internal): symbols the compiler makes at compile time (velt/lang/symbol;
+// rt_abi.md "Symbols").
+
+/**
+ * The address of a read-only symbol record made at compile time: one record per `id` in a
+ * program, whatever the call site, so every evaluation gives the same symbol. Ids below 64 are
+ * the well-known symbols (`Symbol.iterator`), ids from 64 the module constants initialized with
+ * `Symbol()` / `Symbol("d")`, and ids from 2^40 the registry's symbols of module constants
+ * initialized with `Symbol.for("k")` (`description` is the key). With `described` false the
+ * symbol has no description (`description` is `""`). All three are literals.
+ */
+export declare intrinsic function symbolStatic(
+  id: i64,
+  description: string,
+  described: bool,
+): symbol;
+
+/**
+ * The address of the program's read-only table of the registry's records (the `symbolStatic`
+ * records with ids from 2^40), one per 8-byte slot, ending with a null slot: typed `symbol` only
+ * to be passed on to `velt_rt_symbol_for`.
+ */
+export declare intrinsic function symbolRegistry(): symbol;

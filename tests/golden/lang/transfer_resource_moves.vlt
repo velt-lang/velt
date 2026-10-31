@@ -3,7 +3,7 @@
 // its type is counted because the program shares other values of it: no copy (the type has no
 // `clone()`), and it is released once (#122). So for a closure that owns one, an array, a map
 // value and a channel send.
-import { channel, Channel } from "velt:channel";
+import { channel, Channel } from "velt/sync";
 
 class Conn {
   id: i64;

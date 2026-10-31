@@ -96,23 +96,28 @@ fn missing_module_reports_tried_paths_at_the_specifier() {
 fn std_modules_and_prelude_come_first() {
     let t = Tree::new();
     let std = t.path("std");
+    // The index decides the prelude's order, not the file names.
+    t.write(
+        "std/prelude/index.vlt",
+        "// Prelude.\nimport \"./b_array\";\nimport \"./a_core\";\n",
+    );
     t.write(
         "std/prelude/b_array.vlt",
         "export function len(): i64 { return 0; }\n",
     );
     t.write(
         "std/prelude/a_core.vlt",
-        "import { clamp } from \"velt:math\";\nexport function id(): i64 { return 0; }\n",
+        "import { clamp } from \"velt/math\";\nexport function id(): i64 { return 0; }\n",
     );
     t.write(
-        "std/math.vlt",
+        "std/math/index.vlt",
         "export function clamp(x: i64, lo: i64, hi: i64): i64 { return x; }\n",
     );
     t.write(
         "std/net/index.vlt",
         "import { clamp } from \"../math\";\nexport function connect() {}\n",
     );
-    let root = t.write("p/main.vlt", "import { clamp } from \"velt:math\";\nimport { connect } from \"velt:net\";\nfunction main() {}\n");
+    let root = t.write("p/main.vlt", "import { clamp } from \"velt/math\";\nimport { connect } from \"velt/net\";\nfunction main() {}\n");
     let (l, diags, _) = load(
         &root,
         LoadOptions {
@@ -124,8 +129,8 @@ fn std_modules_and_prelude_come_first() {
     assert_eq!(
         paths(&l),
         [
-            "std/prelude/a_core",
             "std/prelude/b_array",
+            "std/prelude/a_core",
             "main",
             "std/math",
             "std/net"
@@ -138,7 +143,7 @@ fn std_modules_and_prelude_come_first() {
     );
     assert_eq!(
         imports(&l, "std/prelude/a_core"),
-        [("velt:math".into(), "std/math".into())]
+        [("velt/math".into(), "std/math".into())]
     );
 }
 
@@ -147,10 +152,10 @@ fn std_import_without_std_root() {
     let t = Tree::new();
     let root = t.write(
         "main.vlt",
-        "import { f } from \"velt:fs\";\nfunction main() {}\n",
+        "import { f } from \"velt/fs\";\nfunction main() {}\n",
     );
     let (_, diags, _) = load(&root, LoadOptions::default());
-    assert_eq!(messages(&diags), ["cannot find module `velt:fs`"]);
+    assert_eq!(messages(&diags), ["cannot find module `velt/fs`"]);
     assert!(diags[0].notes[0].contains("VELT_STD"));
 }
 
@@ -389,7 +394,7 @@ fn missing_jsx_runtime_says_where_it_came_from() {
     let (l, diags, _) = load(&root, LoadOptions::default());
     assert_eq!(
         messages(&diags),
-        ["cannot find module `velt:jsx/jsx-runtime`"]
+        ["cannot find module `velt/jsx/jsx-runtime`"]
     );
     let note = diags[0].notes.last().unwrap();
     assert!(note.contains("from the default"), "{note}");
@@ -412,16 +417,19 @@ fn load_with_std(t: &Tree, main: &str) -> (Loaded, Diagnostics) {
 #[test]
 fn only_files_below_the_std_root_are_std() {
     let t = Tree::new();
-    t.write("std/math.vlt", "export function one(): i64 { return 1; }\n");
     t.write(
-        "std/escape.vlt",
-        "import { x } from \"../outside\";\nexport function y() {}\n",
+        "std/math/index.vlt",
+        "export function one(): i64 { return 1; }\n",
+    );
+    t.write(
+        "std/escape/index.vlt",
+        "import { x } from \"../../outside\";\nexport function y() {}\n",
     );
     t.write("outside.vlt", "export function x() {}\n");
     // std modules are std; the root and its own modules are not.
     let (l, d) = load_with_std(
         &t,
-        "import { one } from \"velt:math\";\nfunction main() {}\n",
+        "import { one } from \"velt/math\";\nfunction main() {}\n",
     );
     assert!(d.is_empty(), "{:?}", messages(&d));
     let std_flags: Vec<(&str, bool)> = l
@@ -433,11 +441,11 @@ fn only_files_below_the_std_root_are_std() {
     // A std module whose relative import leaves the std root.
     let (_, d) = load_with_std(
         &t,
-        "import { y } from \"velt:escape\";\nfunction main() {}\n",
+        "import { y } from \"velt/escape\";\nfunction main() {}\n",
     );
     assert_eq!(
         messages(&d),
-        ["module `../outside` resolves to a file outside the standard library"]
+        ["module `../../outside` resolves to a file outside the standard library"]
     );
     // A user's relative import of a std file.
     let (_, d) = load_with_std(
@@ -446,17 +454,20 @@ fn only_files_below_the_std_root_are_std() {
     );
     assert_eq!(
         messages(&d),
-        ["module `../std/math` is a file of the standard library: import it as `velt:math`"]
+        ["module `../std/math` is a file of the standard library: import it as `velt/math`"]
     );
 }
 
-/// On Windows, `\` and drive letters would let a `velt:` path leave the std root; the specifier is
+/// On Windows, `\` and drive letters would let a `velt/` path leave the std root; the specifier is
 /// rejected before any file is looked up.
 #[cfg(windows)]
 #[test]
 fn windows_std_specifiers_cannot_leave_the_std_root() {
     let t = Tree::new();
-    t.write("std/math.vlt", "export function one(): i64 { return 1; }\n");
+    t.write(
+        "std/math/index.vlt",
+        "export function one(): i64 { return 1; }\n",
+    );
     let evil = t.write("evil.vlt", "export function x() {}\n");
     let absolute = evil
         .with_extension("")
@@ -466,7 +477,7 @@ fn windows_std_specifiers_cannot_leave_the_std_root() {
     for spec in [
         r"velt:..\evil".to_string(),
         r"velt:..\std\..\evil".to_string(),
-        format!("velt:{absolute}"),
+        format!("velt/{absolute}"),
     ] {
         // In the source text a `\` is written `\\`.
         let quoted = spec.replace('\\', r"\\");

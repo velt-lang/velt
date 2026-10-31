@@ -1,0 +1,29 @@
+// velt/native (internal): `IoResult<T>`, the result runtime and native-package functions return,
+// and `unwrapIo`, which turns a failed one into `IoError`.
+//
+// Runtime I/O functions (docs/internals/contracts/rt_abi_async.md §3) report failures as an `IoResult<T>`
+// with the C layout `{ i32 code; u32 pad; VeltStr message; T value /* @32 */ }`, which is exactly
+// the natural layout of the Velt struct below. `code == 0` means success: `message` is an empty
+// static string and `value` is initialized. Otherwise `value` is all-zero bytes, which every type's
+// drop glue treats as "owns nothing", so dropping a failed result is safe. Operations without a
+// value return `IoStatus` (velt/native/status).
+
+import { ioError } from "velt/native/error";
+
+// For the std modules that still import them from here: `IoStatus` and `checkIo` are defined in
+// velt/native/status, `ioError` in velt/native/error.
+
+/** Result slot of a runtime operation producing a `T` (layout documented above). */
+export struct IoResult<T> {
+  code: i32;
+  message: string;
+  value: T;
+}
+
+/** The value of a successful result; throws `IoError` otherwise. */
+export function unwrapIo<T>(r: IoResult<T>): T {
+  if (r.code != 0) {
+    throw ioError(r.code, r.message);
+  }
+  return r.value;
+}

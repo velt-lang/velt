@@ -40,7 +40,7 @@ captures (§6).
 - **Implicit copies are shares**: async-call arguments used again, discriminated-union field
   reads, spread fields, interface-field getters, lowering's "borrowed place used as an owned
   value", and the prelude (`filter`, `slice`, `at`, `find`, `concat`, `Map.get/keys/values/
-  entries`, `fill`, `getOrInsert`) via `__intrinsic_share`: `xs.filter(f)` returns the same
+  entries`, `fill`, `getOrInsert`) via `share`: `xs.filter(f)` returns the same
   objects.
 - **By-reference `const`s** (`const x = node.left`) stay borrows unless the rest of the block
   would invalidate the place; then they become owned shares instead of an error
@@ -49,10 +49,10 @@ captures (§6).
 - Ownership inference is unchanged: a param that stores or returns its value is `Owned`, so a
   caller whose variable is dead hands it over for free, and only a caller that uses its variable
   again pays one count increment.
-- `==` / `!=` on non-primitive types is `Intrinsic::Same` (JS `===`, §7); `__intrinsic_eq` stays
-  structural (`deepEqual`, `assertEq`). `Map` and `Set` keys compare with `__intrinsic_key_eq`
+- `==` / `!=` on non-primitive types is `Intrinsic::Same` (JS `===`, §7); `eq` stays
+  structural (`deepEqual`, `assertEq`). `Map` and `Set` keys compare with `keyEq`
   (`Intrinsic::KeyEq`, JS SameValueZero: `Same` with `NaN` equal to itself) and hash with
-  `__intrinsic_hash`, which hashes an object's identity; hashing an object type or array as a
+  `hash`, which hashes an object's identity; hashing an object type or array as a
   key counts it (boxing/), so its pointer is the object wherever the map moves it. A type
   declared with `struct` is a value type there: its keys compare and hash by content, field
   by field (#641).

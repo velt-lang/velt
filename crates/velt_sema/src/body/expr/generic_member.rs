@@ -110,8 +110,8 @@ impl FnCx<'_, '_> {
     }
 
     /// Is `t` an array or primitive type (or a union of them), whose members a value read
-    /// through `any` has as the bound does? A class bound (`T extends Map<K, V>`) keeps its
-    /// compile error: its members are resolved statically, not by name.
+    /// through `any` has as the bound does? A class bound (`T extends Map<K, V>`) is not: its
+    /// members are resolved statically, on the value as the class (`class_bound`).
     fn array_or_primitive(&mut self, t: TyId) -> bool {
         if let Some(ms) = self.cx.union_members(t) {
             return ms.iter().all(|m| self.array_or_primitive(*m));

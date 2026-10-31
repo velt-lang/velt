@@ -18,11 +18,11 @@ pub(super) enum WriteKey {
     Str(hir::Expr),
     /// A number key.
     Num(hir::Expr),
-    /// A symbol constant: the name of the member it keys and the symbol (`__anySetSym`, so a
+    /// A symbol constant: the name of the member it keys and the symbol (`anySetSym`, so a
     /// proxy's `set` trap sees the symbol).
     Sym(hir::Expr, hir::Expr),
     /// A key that is a symbol or `string | symbol` at run time, as an `any`, in a program with
-    /// proxies (`__anySetKey`, velt:proxy/ops: a proxy's traps and a record see the symbol).
+    /// proxies (`anySetKey`, velt/lang/hooks/proxy: a proxy's traps and a record see the symbol).
     Keyed(hir::Expr),
 }
 
@@ -286,11 +286,11 @@ impl FnCx<'_, '_> {
             }
             WriteKey::Sym(n, k) => {
                 let args = vec![obj.clone(), n.clone(), k.clone()];
-                self.prelude_hir_call("__anyGetSym", args, any, span)
+                self.prelude_hir_call(velt_common::std_hook!(any_get_sym), args, any, span)
             }
             WriteKey::Keyed(k) => {
                 let args = vec![obj.clone(), k.clone()];
-                self.prelude_hir_call("__anyGetKey", args, any, span)
+                self.prelude_hir_call(velt_common::std_hook!(any_get_key), args, any, span)
             }
         }
     }
@@ -307,10 +307,18 @@ impl FnCx<'_, '_> {
         match key {
             WriteKey::Str(k) => self.any_op(Intrinsic::AnySet, vec![obj, k, v], unit, span),
             WriteKey::Num(k) => self.any_op(Intrinsic::AnySetIndex, vec![obj, k, v], unit, span),
-            WriteKey::Sym(n, k) => {
-                self.prelude_hir_call("__anySetSym", vec![obj, n, k, v], unit, span)
-            }
-            WriteKey::Keyed(k) => self.prelude_hir_call("__anySetKey", vec![obj, k, v], unit, span),
+            WriteKey::Sym(n, k) => self.prelude_hir_call(
+                velt_common::std_hook!(any_set_sym),
+                vec![obj, n, k, v],
+                unit,
+                span,
+            ),
+            WriteKey::Keyed(k) => self.prelude_hir_call(
+                velt_common::std_hook!(any_set_key),
+                vec![obj, k, v],
+                unit,
+                span,
+            ),
         }
     }
 

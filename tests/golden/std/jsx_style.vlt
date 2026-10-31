@@ -3,7 +3,7 @@
 // properties, vendor prefixes (`WebkitX`, `msX`), custom properties as written, values trimmed,
 // empty strings left out, and the string form unchanged.
 
-import { renderToStringSync } from "velt:jsx";
+import { renderToStringSync } from "velt/jsx";
 
 function main() {
   const accent = "red";

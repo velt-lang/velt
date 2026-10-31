@@ -1,7 +1,7 @@
 //! Symbols as values and as member names (docs/reference/types.md "Symbols").
 //!
 //! A `symbol` is a pointer-sized value compared by identity (`TyKind::Symbol`); `Symbol(d)`,
-//! `Symbol.for(k)` and the well-known symbols live in std/symbol.vlt. Velt objects have fixed
+//! `Symbol.for(k)` and the well-known symbols live in std/lang/symbol/index.vlt. Velt objects have fixed
 //! fields, so a symbol names a member only when the compiler knows which symbol it is: a module
 //! constant initialized with `Symbol()`, `Symbol("d")` or `Symbol.for("k")` (TypeScript's
 //! `unique symbol`), or a well-known symbol (`[Symbol.iterator]`). Such a member is an ordinary
@@ -23,7 +23,7 @@ use crate::ctx::{Ctx, Item};
 use crate::defs::DefInfo;
 use crate::hir::{self, AdtKind, DefId, ExprKind as H, Intrinsic, TyId, TyKind};
 
-/// The first `SymbolStatic` id of the symbols of module constants (std/symbol.vlt numbers the
+/// The first `SymbolStatic` id of the symbols of module constants (std/lang/symbol/index.vlt numbers the
 /// well-known symbols below it).
 const CONSTANT_IDS: u128 = 64;
 
@@ -62,10 +62,17 @@ fn literal_text(e: &ast::Expr) -> Option<String> {
 }
 
 impl Ctx<'_> {
-    /// Does `Symbol` in `module` name the global `Symbol` (std/symbol.vlt), not a binding of
-    /// the module's own?
+    /// Does `Symbol` in `module` name the global `Symbol` (std/lang/symbol/index.vlt), not a binding of
+    /// the module's own? A std module may import it (`import { Symbol } from "velt/lang/symbol"`):
+    /// its symbol keys are then known in programs that never name `Symbol` themselves.
     pub(crate) fn names_global_symbol(&self, module: usize) -> bool {
-        !self.scopes[module].items.contains_key("Symbol") && self.prelude.contains_key("Symbol")
+        match self.scopes[module].items.get("Symbol") {
+            None => self.prelude.contains_key("Symbol"),
+            Some(it) => {
+                self.scopes[module].is_std
+                    && self.std_def(velt_common::std_item!(lang_symbol, "Symbol")) == Some(*it)
+            }
+        }
     }
 
     /// The symbol module constant `d` holds when its initializer is a call of the global
@@ -199,14 +206,21 @@ impl Ctx<'_> {
 
     /// Gives every symbol constant of the program its key name, in declaration order, before
     /// any member is collected, so [`Self::resolve_key`] needs no `&mut`.
+    /// std's first: the keys of std's methods the compiler calls (std/lang/hooks/keys.vlt) get
+    /// their descriptions' first names, which velt_common's `std_key!` spells.
     pub(crate) fn name_symbol_keys(&mut self) {
-        for i in 0..self.info.len() {
-            let d = DefId(i as u32);
-            if !matches!(self.info[i], DefInfo::Global(_)) {
-                continue;
-            }
-            if let Some(sym) = self.known_symbol(d) {
-                self.key_name(sym);
+        for std in [true, false] {
+            for i in 0..self.info.len() {
+                let d = DefId(i as u32);
+                let Some(g) = self.global(d) else {
+                    continue;
+                };
+                if self.modules[g.module].is_std != std {
+                    continue;
+                }
+                if let Some(sym) = self.known_symbol(d) {
+                    self.key_name(sym);
+                }
             }
         }
     }

@@ -1,7 +1,7 @@
 // Async errors are typed: a promise's type carries what it can reject with
 // (`Promise<T, E>`), so awaiting a direct call, a stored promise, a spawned task, or
 // `Promise.all` rethrows the error with its type.
-import { channel, Channel } from "velt:channel";
+import { channel, Channel } from "velt/sync";
 
 class Timeout extends Error {
   ms: i64;

@@ -2,7 +2,7 @@
 // (`View | Promise<View>`): as in TS it returns that promise. `r instanceof Promise` tests for
 // the promise member and narrows both branches.
 
-import { delay } from "velt:timers";
+import { delay } from "velt/time";
 
 type View = () => string;
 type Setup = (n: i64) => View | Promise<View>;

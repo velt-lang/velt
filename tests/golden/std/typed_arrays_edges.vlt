@@ -1,6 +1,6 @@
 // Every kind's element reads and writes at the ends of a buffer: views ending exactly at the
 // buffer's last byte, at offsets 0 and one element in, with the bytes around them checked, so
-// a load or store that touched a byte past an element would show (std/typed_array/buffer.vlt
+// a load or store that touched a byte past an element would show (std/lang/typed_array/buffer.vlt
 // `element*`, one access of the element's bytes).
 function bytesOf(buf: ArrayBuffer): string {
   return new Uint8Array(buf).join(",");

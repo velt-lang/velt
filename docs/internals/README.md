@@ -14,7 +14,7 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
       ─▶ object file ─▶ velt_link (bundled lld or system linker) + velt_rt (runtime static library)
 ```
 
-1. **Load**: the driver (`veltc`) reads the root file, follows imports (relative, `velt:` std,
+1. **Load**: the driver (`veltc`) reads the root file, follows imports (relative, `velt/` std,
    `paths` aliases, package dependencies through `vpm`), and loads the prelude.
 2. **Parse** (`velt_syntax`): a hand-written lexer and Pratt parser with error recovery; one
    `ast::Module` per file.
@@ -167,6 +167,8 @@ Decisions and their rationale, including what is still planned:
 - [TypeScript compatibility, round 1](design/ts-compat.md): JS numbers from the standard
   library, scripts, callback indexes, arrow defaults, rest parameters, `x!`, `??=`, destructuring
   defaults, `Date`.
+- [Standard library layout](design/std-layout.md): `velt/<area>` imports, one folder per module
+  with `index.vlt` as its API, the rules `precheck` enforces, and the scripted move (proposed).
 - [Hot reload](design/hot-reload.md): `velt dev`'s supervisor, JIT host and hot swap.
 - [Variables in the debugger](design/debug-variables.md): describing source variables in VIR,
   their DWARF in debug builds, and the LLDB formatters (#958).
@@ -203,6 +205,12 @@ Decisions and their rationale, including what is still planned:
   System.Text.Json (proposed, issue #1655).
 - [Building strings fast](design/string-building.md): builder appends compiled inline, a Velt
   `StringBuilder`, and byte views of strings (proposed, issue #1677).
+- [HTTP/2](design/http2.md): the HTTP/2 server written in Velt behind `serveHttp`: frames,
+  HPACK, streams and flow control on one task per connection, ALPN and h2c, limits against
+  rapid reset and its relatives, benchmarks against hyper.
+- [Source generators](design/source-generators.md): generic functions whose bodies a library's
+  generator, written in Velt, produces per type at compile time from a read-only type model;
+  std's JSON, equality, clone and inspect move onto it (proposed).
 - [Compiling std's Velt code once](design/std-object.md): a cached, optimized object of std's
   non-generic functions that programs link, with a VIR fingerprint check per function
   (proposed, issue #1728).

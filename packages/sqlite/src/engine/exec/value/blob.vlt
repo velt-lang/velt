@@ -1,0 +1,10 @@
+// sqlite/engine/exec/value/blob (internal): a BLOB's bytes, boxed (`Blob`), as a value holds them.
+
+/** A BLOB's bytes, boxed: a value that is no BLOB holds none (no empty array to make). */
+export class Blob {
+  bytes: u8[];
+
+  constructor(bytes: u8[]) {
+    this.bytes = bytes;
+  }
+}

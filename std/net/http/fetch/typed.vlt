@@ -1,0 +1,36 @@
+// velt/net/http (internal): the body readers of `Response` and `Request` that give typed arrays,
+// `bytes()` and `arrayBuffer()`. They are `extend` blocks of their own, loaded (with the typed
+// arrays) only by programs that name them or a typed array (std/prelude/global/fetch_bytes.vlt
+// and typed_array.vlt), so a fetch or http program that never reads bytes does not compile the
+// typed arrays.
+
+import { AbortError } from "velt/task";
+import { IoError } from "velt/io/error";
+import { Request } from "velt/net/http/fetch/request";
+import { Response } from "velt/net/http/fetch/response";
+import { ArrayBuffer } from "velt/lang/typed_array/buffer";
+import { Uint8Array } from "velt/lang/typed_array/uint8_array";
+
+extend Response {
+  /** The body's bytes, in a `Uint8Array`. */
+  async bytes(): Promise<Uint8Array, IoError | AbortError> {
+    return Uint8Array.wrap(await this.rawBytes());
+  }
+
+  /** The body's bytes, in an `ArrayBuffer`. */
+  async arrayBuffer(): Promise<ArrayBuffer, IoError | AbortError> {
+    return ArrayBuffer.adopt(await this.rawBytes());
+  }
+}
+
+extend Request {
+  /** The body's bytes, in a `Uint8Array`. */
+  async bytes(): Promise<Uint8Array, IoError | AbortError> {
+    return Uint8Array.wrap(await this.rawBytes());
+  }
+
+  /** The body's bytes, in an `ArrayBuffer`. */
+  async arrayBuffer(): Promise<ArrayBuffer, IoError | AbortError> {
+    return ArrayBuffer.adopt(await this.rawBytes());
+  }
+}

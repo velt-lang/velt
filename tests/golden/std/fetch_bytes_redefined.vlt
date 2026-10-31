@@ -1,4 +1,4 @@
-// `bytes()` is an `extend` method of `Response` (std/fetch/typed.vlt): a subclass cannot redefine
+// `bytes()` is an `extend` method of `Response` (std/net/http/fetch/typed.vlt): a subclass cannot redefine
 // it yet, since a call through a `Response` would not reach the subclass's method.
 class MyRes extends Response {
   async bytes(): Promise<Uint8Array> {

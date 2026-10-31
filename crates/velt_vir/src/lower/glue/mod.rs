@@ -25,8 +25,6 @@
 //! | TransferRoot | `(p: ptr)`                      | Transfer of a whole value: one copy per object reached twice (velt_rt `transfer_map`) |
 //! | ObjTransfer/DynTransfer | `(obj: ptr) -> ptr`  | the same for a class object / interface data (a tagged pointer: check for many threads, many.rs) |
 //! | ManyCheck | `(p: ptr)`                         | panic if `*p` holds a function value that cannot be called from several threads (many.rs) |
-//! | JsonWrite | `(buf: ptr, p: ptr)`               | append `JSON.stringify(*p)` to a builder |
-//! | JsonWriteKey | `(buf: ptr, p: ptr, key: ptr)`  | JsonWrite of a type that passes its key (a string) to a `toJSON(key)` (json/key.rs) |
 //! | JsonRead  | `(r: ptr, out: ptr, ctx: ptr) -> bool` | decode one value (json/read.rs)      |
 //! | JsonParse | `(src: ptr, flags: u32, max_depth: u32, out: ptr, err: ptr) -> bool` | whole-document `JSON.parse<T>` |
 //! | Trace     | `(obj: ptr, visit: ptr, ctx: ptr)` | weak maps: visit the counted objects `obj` refers to (trace.rs) |
@@ -112,8 +110,6 @@ pub(crate) enum Glue {
     ObjTransfer,
     DynTransfer,
     ManyCheck,
-    JsonWrite,
-    JsonWriteKey,
     JsonRead,
     JsonParse,
     DbBind,
@@ -136,7 +132,8 @@ pub(crate) enum Glue {
     AnyHas,
     AnyDelete,
     AnyKeys,
-    AnyJson,
+    /// `(data, op, index, text, value) -> u64`: reflection (any_reflect.rs).
+    AnyReflect,
     ProxyGet,
     ProxySet,
     /// `(data, desc, out) -> bool`: an `any` as the interface type (any_iface.rs).
@@ -196,8 +193,6 @@ impl Glue {
             Glue::ObjTransfer => "objtransfer",
             Glue::DynTransfer => "dyntransfer",
             Glue::ManyCheck => "manycheck",
-            Glue::JsonWrite => "jsonwrite",
-            Glue::JsonWriteKey => "jsonwritekey",
             Glue::JsonRead => "jsonread",
             Glue::JsonParse => "jsonparse",
             Glue::DbBind => "dbbind",
@@ -220,7 +215,7 @@ impl Glue {
             Glue::AnyHas => "anyhas",
             Glue::AnyDelete => "anydelete",
             Glue::AnyKeys => "anykeys",
-            Glue::AnyJson => "anyjson",
+            Glue::AnyReflect => "anyreflect",
             Glue::ProxyGet => "proxyget",
             Glue::ProxySet => "proxyset",
             Glue::AnyIface => "anyiface",
@@ -262,8 +257,6 @@ impl Glue {
             | Glue::ObjDeepEq
             | Glue::DynDeepEq => (vec![Ptr, Ptr], Bool),
             Glue::Hash => (vec![Ptr], U64),
-            Glue::JsonWrite => (vec![Ptr, Ptr], Unit),
-            Glue::JsonWriteKey => (vec![Ptr, Ptr, Ptr], Unit),
             Glue::JsonRead => (vec![Ptr, Ptr, Ptr], Bool),
             Glue::JsonParse => (vec![Ptr, U32, U32, Ptr, Ptr], Bool),
             Glue::DbBind => (vec![Ptr, Ptr], Unit),
@@ -280,7 +273,8 @@ impl Glue {
             Glue::AnyApply => (vec![Ptr, Ptr, U64, Ptr], U8),
             Glue::AnySet => (vec![Ptr, Ptr, Ptr], U8),
             Glue::AnySetIndex => (vec![Ptr, F64, Ptr], U8),
-            Glue::AnyHas | Glue::AnyDelete | Glue::AnyKeys | Glue::AnyJson => (vec![Ptr, Ptr], U8),
+            Glue::AnyHas | Glue::AnyDelete | Glue::AnyKeys => (vec![Ptr, Ptr], U8),
+            Glue::AnyReflect => (vec![Ptr, U64, U64, Ptr, Ptr], U64),
             Glue::ProxyGet | Glue::ProxySet => (vec![Ptr, Ptr, Ptr], Unit),
             Glue::AnyIface | Glue::AnyNumeric => (vec![Ptr, Ptr, Ptr], Bool),
             Glue::AnyNumericOrError => (vec![Ptr, Ptr, Ptr], Unit),
@@ -325,8 +319,6 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::ObjTransfer => lw.obj_transfer_body(args[0], ty),
             Glue::DynTransfer => lw.dyn_transfer_body(args[0], ty),
             Glue::ManyCheck => lw.many_check_body(args[0], ty),
-            Glue::JsonWrite => lw.json_write_body(a(0), args[1], None, ty),
-            Glue::JsonWriteKey => lw.json_write_body(a(0), args[1], Some(args[2]), ty),
             Glue::JsonRead => lw.json_read_body(args[0], args[1], args[2], ty),
             Glue::JsonParse => {
                 lw.json_parse_body(args[0], (args[1], args[2]), args[3], args[4], ty)
@@ -349,7 +341,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::AnyHas => lw.any_has_glue(args[0], args[1], ty),
             Glue::AnyDelete => lw.any_delete_glue(args[0], args[1], ty),
             Glue::AnyKeys => lw.any_keys_glue(args[0], args[1], ty),
-            Glue::AnyJson => lw.any_json_glue(args[0], args[1], ty),
+            Glue::AnyReflect => lw.any_reflect_glue(&args, ty),
             Glue::ProxyGet => lw.proxy_get_glue(args[0], args[1], args[2], ty),
             Glue::ProxySet => lw.proxy_set_glue(args[0], args[1], args[2], ty),
             Glue::AnyIface => lw.any_iface_body(args[0], args[1], args[2], ty),

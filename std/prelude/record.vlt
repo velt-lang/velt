@@ -9,31 +9,24 @@
 // index marks the record `unordered`; then the readers (`__keyNames`, `__values`, `__entries`,
 // and the JSON and formatting glue through `__positions`) sort the entries they read, without
 // changing the record (they borrow it). A record without such keys pays one byte test per new
-// key (`Map.__newestKeyDigit`, then `arrayIndex` for a key that starts with a digit). JSON reads
+// key (`Map[MAP_NEWEST_KEY_DIGIT]`, then `arrayIndex` for a key that starts with a digit). JSON reads
 // and writes a record as an object (a decoded record is checked for such keys once,
 // `__decoded`), and `console.log` shows it like one.
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
+import {
+  MAP_AT,
+  MAP_IS_NULL_PROTO,
+  MAP_LIVE_POSITIONS,
+  MAP_MARK_NULL_PROTO,
+  MAP_NEWEST_KEY_DIGIT,
+} from "velt/lang/hooks/keys";
+import { arrayIndex, objectPrototypeKey } from "velt/lang/hooks/record";
+import { INSPECT } from "velt/lang/hooks/keys";
+
 // The rank of a key that is not an array index: after every index.
 const NOT_INDEX: i64 = 4294967296;
-
-// The array index `s` names (canonical decimal, 0 to 2^32 - 2), or -1.
-function arrayIndex(s: string): i64 {
-  const n = s.length as i64;
-  if (n == 0 || n > 10 || (n > 1 && s.charCodeAt(0) == 48)) {
-    return -1;
-  }
-  let v: i64 = 0;
-  for (let i: i64 = 0; i < n; i++) {
-    const c = s.charCodeAt(i);
-    if (c < 48 || c > 57) {
-      return -1;
-    }
-    v = v * 10 + (c - 48);
-  }
-  return v <= 4294967294 ? v : -1;
-}
 
 /**
  * A dictionary from keys of type `K` to values of type `V`, like TypeScript's `Record<K, V>`:
@@ -56,7 +49,7 @@ export class Record<K, V> {
   // `Keyed` methods there for every key (`hir::Program::record_accessors`).
   private accessors: Map<K | symbol, [(() => V) | null, ((value: V) => void) | null, bool]> | null =
     null;
-  // The methods that read fields 2 and 3 are in std/record/symbols.vlt, which a
+  // The methods that read fields 2 and 3 are in std/lang/record/symbols.vlt, which a
   // program loads only when it mentions symbols or property definitions.
 
   __get(key: K): V | undefined {
@@ -77,15 +70,27 @@ export class Record<K, V> {
 
   /** A literal-key record holds every key (sema checks literals; JSON checks documents). */
   __at(key: K): V {
-    return this.entries.__at(key);
+    return this.entries[MAP_AT](key);
   }
 
   __set(key: K, value: V) {
     const n = this.entries.size;
     this.entries.set(key, value);
     if (this.entries.size != n && !this.unordered) {
-      this.unordered = this.entries.__newestKeyDigit() && arrayIndex(`${key}`) >= 0;
+      this.unordered = this.entries[MAP_NEWEST_KEY_DIGIT]() && arrayIndex(`${key}`) >= 0;
     }
+  }
+
+  /**
+   * A record of the entries of `m`, in its order (a JSON object's members in document order:
+   * the decoders velt/encoding/json generates make records with it), `unordered` when a key is
+   * an array index. Internal, not part of the API.
+   */
+  static __fromMap<RK, RV>(m: Map<RK, RV>): Record<RK, RV> {
+    const r = new Record<RK, RV>();
+    r.entries = m;
+    r.__decoded();
+    return r;
   }
 
   /** After JSON decoding (in document order): `unordered` when a key is an array index. */
@@ -143,7 +148,7 @@ export class Record<K, V> {
     if (at.length == 0) {
       return at;
     }
-    const live = this.entries.__livePositions();
+    const live = this.entries[MAP_LIVE_POSITIONS]();
     const out: usize[] = [];
     for (const i of at) {
       out.push(live[i]);
@@ -166,7 +171,7 @@ export class Record<K, V> {
    * `Object.prototype` (none for a record made by `Object.create(null)`).
    */
   __inAny(key: K): bool {
-    return this.__has(key) || (!this.__isNullProto() && __objectPrototypeKey(String(key)));
+    return this.__has(key) || (!this.__isNullProto() && objectPrototypeKey(String(key)));
   }
 
   /** `{ ...other }`: every entry of `other`, later entries replacing earlier ones. */
@@ -217,12 +222,12 @@ export class Record<K, V> {
 
   /** `Object.create(null)`: this record has no prototype (marked in its map). */
   __markNullProto() {
-    this.entries.__markNullProto();
+    this.entries[MAP_MARK_NULL_PROTO]();
   }
 
   /** Was this record made by `Object.create(null)`? */
   __isNullProto(): bool {
-    return this.entries.__isNullProto();
+    return this.entries[MAP_IS_NULL_PROTO]();
   }
 
   /**
@@ -325,7 +330,7 @@ export class Object {
 /**
  * A prototype object, as `Object.getPrototypeOf(v)` returns it and `Object.prototype` or
  * `C.prototype` names it. Velt objects have fixed layouts, so a prototype is compared (`===`
- * compares the prototypes they name: sema calls `__prototypeSame`), printed and converted to a
+ * compares the prototypes they name: sema calls `prototypeSame`), printed and converted to a
  * string or JSON as Node does, and nothing else. Sema writes each one's texts.
  */
 export class ObjectPrototype {
@@ -367,10 +372,11 @@ export class ObjectPrototype {
         "TypeError: `in` with a key known only at run time on this prototype is not supported yet (#924)",
       );
     }
-    return __objectPrototypeKey(key);
+    return objectPrototypeKey(key);
   }
 
-  __inspect(): string {
+  /** How `console.log` shows the prototype (Node's `util.inspect.custom`). */
+  [INSPECT](): string {
     return this.shown;
   }
 
@@ -386,76 +392,4 @@ export class ObjectPrototype {
     }
     return {};
   }
-}
-
-/** `a === b` on prototypes (or `null`, a prototype-less object's). */
-export function __prototypeSame(a: ObjectPrototype | null, b: ObjectPrototype | null): bool {
-  if (a == null) {
-    return b == null;
-  }
-  if (b == null) {
-    return false;
-  }
-  return a.__sameAs(b);
-}
-
-/** `key in p` of a prototype `p` for a key known only at run time. */
-export function __prototypeIn(key: string, p: ObjectPrototype): bool {
-  return p.__hasKey(key);
-}
-
-/**
- * `k in r` for a key known only at run time: whether `key` names a member every object inherits
- * from `Object.prototype` (sema tests the record's own entries first).
- */
-export function __objectPrototypeKey(key: string): bool {
-  switch (key) {
-    case "__defineGetter__":
-    case "__defineSetter__":
-    case "__lookupGetter__":
-    case "__lookupSetter__":
-    case "__proto__":
-    case "constructor":
-    case "hasOwnProperty":
-    case "isPrototypeOf":
-    case "propertyIsEnumerable":
-    case "toLocaleString":
-    case "toString":
-    case "valueOf":
-      return true;
-    default:
-      return false;
-  }
-}
-
-/**
- * `k in r` for a key known only at run time (sema calls this): whether the record has the entry
- * `key`, or `key` names a member every object inherits from `Object.prototype`.
- */
-export function __recordIn<V>(key: string, r: Record<string, V>): bool {
-  return r.__has(key) || __objectPrototypeKey(key);
-}
-
-/**
- * `k in r` in a program that calls `Object.create(null)` (sema calls this instead of
- * `__recordIn` there): a record made by it inherits nothing from `Object.prototype`.
- */
-export function __recordInMaybeNullProto<V>(key: string, r: Record<string, V>): bool {
-  return r.__has(key) || (!r.__isNullProto() && __objectPrototypeKey(key));
-}
-
-/**
- * `{ [key]: value }` with a key known only at run time: the parser writes the property as a
- * spread of this call (a one-entry record). Where a `Record` is built, sema sets the entry
- * directly instead.
- */
-export function __computed_key<V>(key: string, value: V): Record<string, V> {
-  const r: Record<string, V> = {};
-  r[key] = value;
-  return r;
-}
-
-/** The array index `s` names (canonical decimal, 0 to 2^32 - 2), or -1. */
-export function __arrayIndex(s: string): i64 {
-  return arrayIndex(s);
 }

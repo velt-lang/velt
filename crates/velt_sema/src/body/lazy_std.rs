@@ -1,6 +1,6 @@
 //! Standard-library code checked on demand (#1658, docs/internals/design/lazy-std.md). The
-//! prelude imports modules that most programs never use (`velt:number/parse`,
-//! `velt:json/reader`, …), and checking all of their bodies cost every program, hello world
+//! prelude imports modules that most programs never use (`velt/lang/number/parse`,
+//! `velt/encoding/json/reader`, …), and checking all of their bodies cost every program, hello world
 //! included, although lowering only builds what `main` reaches. So std definitions are
 //! *deferred*: checked once checked code reaches them. [`reach`] runs after the other bodies:
 //! it scans the checked HIR for references to deferred functions and constants (a call, a
@@ -34,18 +34,21 @@ use crate::hir::{self, Callee, DefId, ExprKind as E, TyId, TyKind};
 /// (`velt_vir` `STABLE_SORT`, the proxy and typed-array glue, the epoch sections' `pin`,
 /// `unpin` and `retire`, `this_fn`'s glue) and calls them.
 const EAGER: &[&str] = &[
-    "std/sort",
-    "std/proxy",
-    "std/typed_array",
-    "std/sync/epoch",
-    "std/this_fn",
+    velt_common::std_module!(lang_sort),
+    velt_common::std_module!(lang_proxy),
+    velt_common::std_module!(lang_typed_array),
+    velt_common::std_module!(sync_epoch),
+    velt_common::std_module!(lang_this_fn),
 ];
 
 /// Std modules whose definitions lowering's JSON glue calls by name (`velt_vir` `json_std_fn`:
 /// `std/json/reader::Reader.<method>`, `std/json/writer::<fn>`): all of a module's deferred
 /// definitions are reached once checked code instantiates an intrinsic whose glue calls it
 /// (`lazy_std_json.rs`). What they call in other modules is reached from their code as usual.
-const JSON_GLUE: [&str; 2] = ["std/json/reader", "std/json/writer"];
+const JSON_GLUE: [&str; 2] = [
+    velt_common::std_module!(encoding_json_reader),
+    velt_common::std_module!(encoding_json_writer),
+];
 
 /// Per [`JSON_GLUE`] module: the prelude definitions (full names) that the same glue calls by
 /// name, reached with that module rather than kept checked as helpers (a `JsonValue` built from
@@ -58,13 +61,16 @@ const JSON_GLUE_PRELUDE: [&[&str]; 2] = [&[], &[]];
 /// value of the type (`JsonValue.__writeJson` writes one, `__runtimeHandle` prints one,
 /// `__fromReader` decodes one: [`LAZY_PRELUDE_STATICS`]), and
 /// their code reaches large modules most programs never load (`JsonValue`'s the tape,
-/// velt:json/tape).
-const LAZY_PRELUDE_TYPES: &[&str] = &["std/prelude/json/json::JsonValue"];
+/// velt/encoding/json/tape).
+const LAZY_PRELUDE_TYPES: &[&str] = &[velt_common::std_item!(prelude_json, "JsonValue")];
 
 /// Static methods of [`LAZY_PRELUDE_TYPES`] checked with the type's methods, once the type is
 /// used: `JsonValue.__fromReader`, which the decoder of a type holding a `JsonValue` calls by
 /// name (it parses the value into a tape, so a decoder of other types checks none of the tape).
-const LAZY_PRELUDE_STATICS: &[&str] = &["std/prelude/json/json::JsonValue.__fromReader"];
+const LAZY_PRELUDE_STATICS: &[&str] = &[velt_common::std_item!(
+    prelude_json,
+    "JsonValue.__fromReader"
+)];
 
 /// The [`JSON_GLUE`] module whose glue calls prelude definition `name`
 /// ([`JSON_GLUE_PRELUDE`]).
@@ -75,85 +81,63 @@ fn json_glue_prelude(name: &str) -> Option<usize> {
 /// The prelude's modules (path prefixes): lowering looks up the methods of their classes and
 /// some of their functions by name ([`is_helper`]), so only their other free functions and
 /// static methods are deferred.
-const HELPERS: &[&str] = &["std/prelude/", "std/record", "std/collections"];
+const HELPERS: &[&str] = &[
+    velt_common::std_dir!(prelude),
+    velt_common::std_dir!(lang_hooks),
+    velt_common::std_module!(lang_record),
+    velt_common::std_module!(collections),
+];
 
-/// The prelude functions lowering looks up by name (`velt_vir` `prelude_def`, `LOOSE_EQ`,
-/// `FLOAT_INDEX`, `TLA_MARK`, `track_caller`, …): every `"__…"` name in the code of lowering, the
-/// optimizer and the backends (`tests::every_name_lowering_looks_up_is_a_helper`); classes too.
+/// The prelude methods (and the few other names) lowering looks up by name: every `"__…"` name
+/// in the code of lowering, the optimizer and the backends
+/// (`tests::every_name_lowering_looks_up_is_a_helper`). The compiler's hooks lowering calls are
+/// marked `lowered` in velt_common's `std_hooks.rs` instead.
 pub(crate) const HELPER_NAMES: &[&str] = &[
-    "__ArrayMethod",
-    "__ArrayView",
-    "__ClassMarker",
-    "__HasOwnProperty",
-    "__HasOwnPropertyProxy",
-    "__ThisFn",
     "__any",
-    "__anyConcatPlain",
-    "__anyConcatText",
-    "__anyJoin",
-    "__anyJoinSeen",
-    "__anyLooseEq",
-    "__anyPrimKeep",
-    "__anyPrimText",
-    "__anyPrimTry",
-    "__anyString",
-    "__anyText",
-    "__anyTextUnsupported",
-    "__anyToPrimitive",
-    "__anyToPrimitivePlain",
-    "__apply",
-    "__arrayCall",
-    "__arrayViewFlush",
-    "__arrayViewFlushAt",
-    "__arrayViewFlushFrom",
-    "__arrayViewLen",
-    "__arrayViewNew",
-    "__arrayViewSort",
-    "__arrayViewSync",
-    "__arrayViewSyncAt",
-    "__arrayViewSyncLen",
-    "__bind",
-    "__classObject",
+    velt_common::std_key!(this_fn_apply),
+    velt_common::std_key!(proxy_array_call),
+    velt_common::std_key!(this_fn_bind),
     "__debug_line",
     "__decoded",
-    "__deepEquals",
+    velt_common::std_key!(map_deep_equals),
     "__defineGetter__",
     "__defineSetter__",
     "__delete",
-    "__entryAt",
-    "__floatIndex",
+    velt_common::std_key!(map_entry_at),
     "__get",
     "__has",
-    "__hasGet",
+    velt_common::std_key!(proxy_has_get),
     "__inAny",
-    "__isView",
-    "__json",
-    "__keyAt",
+    velt_common::std_key!(proxy_is_view),
+    velt_common::std_key!(proxy_json),
+    velt_common::std_key!(map_key_at),
     "__keyNames",
-    "__keys",
-    "__liveAt",
+    velt_common::std_key!(proxy_keys),
+    velt_common::std_key!(map_live_at),
     "__lookupGetter__",
     "__lookupSetter__",
-    "__mulToInt32",
     "__placeholder",
-    "__plain",
+    velt_common::std_key!(proxy_plain),
     "__positions",
     "__proto__",
-    "__seen",
     "__set",
-    "__target",
-    "__topLevelAwaitAt",
-    "__uncaughtHeader",
-    "__valueAt",
+    velt_common::std_key!(proxy_target),
+    velt_common::std_key!(proxy_get),
+    velt_common::std_key!(proxy_set),
+    velt_common::std_key!(proxy_has),
+    velt_common::std_key!(proxy_delete),
+    velt_common::std_key!(map_value_at),
 ];
 
-/// Is `name` (a definition's short name) one of the compiler's helpers: in [`HELPER_NAMES`], or
-/// a built-in method of a value held as `any` (`__any<Type>_<method>`, `velt_vir`
-/// `builtin_methods`)?
-pub(crate) fn is_helper(name: &str) -> bool {
-    HELPER_NAMES.contains(&name)
+/// Is the definition `qualified` (its full name) one of the compiler's helpers: a hook lowering
+/// calls (`velt_common::std_hooks`, `lowered`), a name in [`HELPER_NAMES`], or a built-in method
+/// of a value held as `any` (`any<Type>_<method>`, `velt_vir` `builtin_methods`)?
+pub(crate) fn is_helper(qualified: &str) -> bool {
+    let name = qualified.rsplit(['.', ':']).next().unwrap_or(qualified);
+    velt_common::std_hooks::is_lowered(qualified)
+        || HELPER_NAMES.contains(&name)
         || name
-            .strip_prefix("__any")
+            .strip_prefix("any")
             .is_some_and(|r| r.starts_with(|c: char| c.is_ascii_uppercase()) && r.contains('_'))
 }
 
@@ -185,6 +169,8 @@ pub(crate) struct Lazy {
     subclasses: FxHashMap<DefId, Vec<DefId>>,
     /// When the [`JSON_GLUE`] modules are reached.
     json: json::JsonReach,
+    /// The definitions below this one had their defaults scanned ([`reach`]).
+    defaults_scanned: usize,
 }
 
 impl Lazy {
@@ -199,6 +185,15 @@ impl Lazy {
             methods: FxHashMap::default(),
             subclasses: FxHashMap::default(),
             json: json::JsonReach::default(),
+            defaults_scanned: 0,
+        }
+    }
+
+    /// A module added during the check (a generated one, `Ctx::add_module`): checked eagerly,
+    /// as any non-std module.
+    pub(crate) fn add_module(&mut self) {
+        if !self.modules.is_empty() {
+            self.modules.push(Mode::Eager);
         }
     }
 }
@@ -208,9 +203,17 @@ pub(crate) fn plan(cx: &mut Ctx) {
     if !cx.lazy.on {
         return;
     }
-    let mods = cx.modules;
+    let mods = cx.modules.clone();
     let mut direct: FxHashSet<&str> = FxHashSet::default();
-    for m in mods.iter().filter(|m| !m.is_std) {
+    // A generated module sees what its declaring module imports without importing it: it makes
+    // no std module checked whole (the declaring module, a user's, already does for its own).
+    let generated = |m: &crate::SourceModule| {
+        cx.gen
+            .input
+            .as_ref()
+            .is_some_and(|g| g.files.contains(&m.file))
+    };
+    for m in mods.iter().filter(|m| !m.is_std && !generated(m)) {
         direct.extend(m.imports.iter().map(|(_, p)| p.as_str()));
         direct.extend(m.jsx_runtime.as_deref());
     }
@@ -269,7 +272,7 @@ pub(crate) fn deferred(cx: &Ctx, d: DefId) -> bool {
             FnKind::Free | FnKind::Static => match cx.lazy.modules[f.module] {
                 Mode::Eager => false,
                 Mode::Lazy => true,
-                Mode::Helpers => !f.name.rsplit(['.', ':']).next().is_some_and(is_helper),
+                Mode::Helpers => !is_helper(&f.name),
             },
             // A type's methods, where the type is declared (an `extend` of a prelude type
             // keeps its methods checked).
@@ -305,7 +308,10 @@ pub(crate) fn reach(cx: &mut Ctx) {
     // field defaults of a class whose methods are deferred, scanned once the class is used (the
     // type of `#tape: Tape | null = null` would make `Tape` used in every program).
     let mut sc = Scan::default();
-    for i in 0..cx.info.len() {
+    // Those of the definitions made since the last time (generated code checked later,
+    // `generated::phase`).
+    let from = std::mem::replace(&mut cx.lazy.defaults_scanned, cx.info.len());
+    for i in from..cx.info.len() {
         let lazy_class = cx.lazy.methods.contains_key(&DefId(i as u32));
         // A deferred function's parameter defaults are scanned with its body, once reached.
         let deferred_fn = deferred(cx, DefId(i as u32));
@@ -398,7 +404,7 @@ pub(crate) fn reach(cx: &mut Ctx) {
 /// Its subclasses too: lowering's glue for a class value (`console.log`'s formatting,
 /// `JSON.stringify`, a member of `any`) dispatches over every class in the program that extends
 /// it (`velt_vir` `any_subclass_dispatch`, `json_descendants`), constructed or not, and so builds
-/// their methods (`__inspect`, `toJSON`, …).
+/// their methods (`[INSPECT]`, `toJSON`, …).
 fn used_types(cx: &mut Ctx, mut todo: Vec<TyId>, found: &mut Vec<DefId>) {
     let mut classes: Vec<DefId> = vec![];
     loop {

@@ -1,0 +1,44 @@
+// The Redis client over TLS: `rediss://` against a real TLS Redis ($VELT_TEST_REDISS_URL) whose
+// certificate is signed by the CA in the file $VELT_TEST_REDISS_CA (scripts/linux-check.sh
+// --services starts one); every test returns at once without them.
+import { connect } from "../src/lib";
+
+import { readFile } from "velt/fs";
+import { redissUrl, redissCa, freshPrefix, cleanup } from "./support/redis";
+
+export async function test_commands_over_tls() {
+  const url = redissUrl();
+  const caFile = redissCa();
+  if (url == null || caFile == null) {
+    return;
+  }
+  const ca = await readFile(caFile);
+  const p = freshPrefix();
+  const c = await connect(url, { ca: ca });
+  assertEq(await c.ping(), "PONG");
+  await c.set(`${p}secret`, "over tls");
+  assertEq(await c.get(`${p}secret`), "over tls");
+  const pipe = c.pipeline();
+  pipe.incr(`${p}n`);
+  pipe.incr(`${p}n`);
+  assertEq((await pipe.exec()).length, 2);
+  assertEq(await cleanup(c, p), 2);
+  c.close();
+}
+
+// Without the CA the server's certificate is not trusted.
+export async function test_untrusted_without_the_ca() {
+  const url = redissUrl();
+  if (url == null || redissCa() == null) {
+    return;
+  }
+  let untrusted = "connected";
+  try {
+    const bad = await connect(url);
+    untrusted = `unexpected ${await bad.ping()}`;
+    bad.close();
+  } catch (e) {
+    untrusted = e.message.clone();
+  }
+  assert(untrusted.includes("certificate"), untrusted);
+}
