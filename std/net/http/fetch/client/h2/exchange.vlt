@@ -5,7 +5,8 @@
 // Plain `http:` stays HTTP/1.1, as in browsers and undici.
 //
 // A request the server did not process (a GOAWAY's later streams, REFUSED_STREAM, a session
-// closing) goes out once more on a new connection.
+// closing before it was sent) goes out once more on a new connection, as does an idempotent one
+// whose session failed before the response's head (RFC 9113 §8.7).
 
 import { IoError } from "velt/io/error";
 import { TcpStream } from "velt/net";
@@ -16,7 +17,14 @@ import { Fetched } from "velt/net/http/fetch/client/fetched";
 import { Target } from "velt/net/http/fetch/client/target";
 import { Head } from "velt/net/http/fetch/client/wire";
 import { CALL_REQUEST, H2Call } from "velt/net/http/fetch/client/h2/call";
-import { errorEvent, EVENT_ERROR, H2Event } from "velt/net/http/fetch/client/h2/event";
+import {
+  errorEvent,
+  EVENT_ERROR,
+  H2Event,
+  RETRY_ALWAYS,
+  RETRY_IDEMPOTENT,
+  RETRY_NEVER,
+} from "velt/net/http/fetch/client/h2/event";
 import { H2Body, nextEvent } from "velt/net/http/fetch/client/h2/body";
 import { claim, forget, sessionOf } from "velt/net/http/fetch/client/h2/registry";
 import { ClientSession } from "velt/net/http/fetch/client/h2/session";
@@ -167,7 +175,8 @@ export async function h2Exchange(
     }
     if (e.kind == EVENT_ERROR) {
       events.close();
-      if (e.retry && attempt < 2) {
+      // `once`: the method is not idempotent.
+      if (attempt < 2 && (e.retry == RETRY_ALWAYS || (e.retry == RETRY_IDEMPOTENT && !once))) {
         continue;
       }
       throw new IoError("ECONNRESET", e.message);
@@ -212,13 +221,13 @@ async function connect(
     }
   } catch (e) {
     forget(key, id);
-    turnAway(calls, "fetch failed: connect failed", false);
+    turnAway(calls, "fetch failed: connect failed", RETRY_NEVER);
     throw e;
   }
   if (p != "h2") {
     // HTTP/1.1: the connection is this request's, then the pool's.
     forget(key, id);
-    turnAway(calls, "the server speaks HTTP/1.1", true);
+    turnAway(calls, "the server speaks HTTP/1.1", RETRY_ALWAYS);
     return stream;
   }
   const s = new ClientSession(stream, calls, key);
@@ -228,7 +237,7 @@ async function connect(
 }
 
 /// Closes `calls` and answers the requests queued on it with an error.
-function turnAway(calls: Channel<H2Call>, message: string, retry: bool) {
+function turnAway(calls: Channel<H2Call>, message: string, retry: i64) {
   calls.close();
   let c = calls.tryReceive();
   while (c != null) {

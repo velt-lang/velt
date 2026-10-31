@@ -276,9 +276,12 @@ The API does not change: the same `Response`, headers (lowercase, as HTTP/2 send
 redirects, `content-encoding` decoding and `signal`. Bodies have flow control: the server may
 send 1 MiB of a response body ahead of what the program read (4 MiB for the connection), and a
 request body goes out as the server's windows allow. An abort, or a body given up (`res.body`
-cancelled), resets just that stream. A request the server did not process (a GOAWAY's later
-streams, `REFUSED_STREAM`, a connection that closed before it went out) is sent again on a new
-connection, whatever its method, since the server never saw it. Server push is turned off;
+cancelled), resets just that stream. A request the server did not process (a GOAWAY's later streams,
+`REFUSED_STREAM`, a connection that closed before it went out) is sent again on a new
+connection, whatever its method, since the server never saw it (RFC 9113 §8.7). One the server
+may have processed (the connection failed after it went out, before the response's head) is sent
+again only if its method is idempotent (`GET`, `HEAD`, `OPTIONS`, `TRACE`, `PUT`, `DELETE`), as
+over HTTP/1.1: a POST then fails with `IoError` "ECONNRESET". Server push is turned off;
 response trailers are read and dropped (the Fetch standard has no API for them).
 
 HTTP/2's wire format, which the client and HTTP/2 servers share, is

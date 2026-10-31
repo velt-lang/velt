@@ -1,0 +1,178 @@
+// velt/net/http (tests): white-box tests, run by `velt test std/`.
+//
+// The HTTP/2 `fetch` client against a server written frame by frame (TLS, ALPN "h2"): which
+// failed requests go out again (RFC 9113 §8.7: a refused stream whatever its method; after a
+// connection that failed with the request sent, only an idempotent one).
+import { listenTls, TcpListener, TcpStream } from "velt/net";
+import { fetch } from "velt/net/http";
+import { FieldList, FrameWriter, HpackDecoder, HpackEncoder } from "velt/net/http/h2";
+import { timeout } from "velt/task";
+import { describe, expect, it } from "velt/test";
+
+// Test-only TLS material (a copy of tests/golden/std/_tls.vlt; std tests depend on nothing
+// outside std): a throwaway CA and a localhost certificate it signed, valid until 2126.
+const TEST_CA =
+  "-----BEGIN CERTIFICATE-----\nMIIBtDCCAVmgAwIBAgIUAdKl7damW41yHgg5amYgxZD1tWcwCgYIKoZIzj0EAwIw\nJjEkMCIGA1UEAwwbVmFpcyBUZXN0IENBIChkbyBub3QgdHJ1c3QpMCAXDTI2MDkz\nMDEzNTcxMloYDzIxMjYwOTA2MTM1NzEyWjAmMSQwIgYDVQQDDBtWYWlzIFRlc3Qg\nQ0EgKGRvIG5vdCB0cnVzdCkwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAASk+j0T\nPdqEZlzKfKYbGiuDdqn5w1BnL2cBv2JUf/NorWzJipuXvAu/LVXoj419DalaZ+4D\nRpiTuT5d5eSRDcndo2MwYTAdBgNVHQ4EFgQU+XUq6wKttKjp0aSG6Tn4kyHKKDow\nHwYDVR0jBBgwFoAU+XUq6wKttKjp0aSG6Tn4kyHKKDowDwYDVR0TAQH/BAUwAwEB\n/zAOBgNVHQ8BAf8EBAMCAQYwCgYIKoZIzj0EAwIDSQAwRgIhALAhEgBiBw5QVGfL\ncr2a+XdMgKEZ6Lgmw/PEFAOL8IZaAiEA7Ba9rrnHO96Vrn8cfkSA6YJbfP4Y8zD5\nRADTuyZ4C9w=\n-----END CERTIFICATE-----\n";
+const TEST_CERT =
+  "-----BEGIN CERTIFICATE-----\nMIIB4zCCAYmgAwIBAgIUUWjjR76EmcvpdwD5yyBeoGEC+oIwCgYIKoZIzj0EAwIw\nJjEkMCIGA1UEAwwbVmFpcyBUZXN0IENBIChkbyBub3QgdHJ1c3QpMCAXDTI2MDkz\nMDEzNTcxMloYDzIxMjYwOTA2MTM1NzEyWjAUMRIwEAYDVQQDDAlsb2NhbGhvc3Qw\nWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAS34JkOS/SCH/jEnDTsuUiNpPFqqmgg\nnHmhm9FVPrvW3dzk0y1gwh63NeHjxyHL+KFcX6OAtu2BoAXhCOUH33wxo4GkMIGh\nMCwGA1UdEQQlMCOCCWxvY2FsaG9zdIcEfwAAAYcQAAAAAAAAAAAAAAAAAAAAATAM\nBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDATBgNVHSUEDDAKBggrBgEFBQcD\nATAdBgNVHQ4EFgQUBbUl3Qdv7aCuWcSog8ViJH1NEb4wHwYDVR0jBBgwFoAU+XUq\n6wKttKjp0aSG6Tn4kyHKKDowCgYIKoZIzj0EAwIDSAAwRQIhAPnCnjJTXQEYZS2z\nydBhuGIPfgwpZ9Mect34i62AYGYyAiB31JwL5JCmjtIueBktaY+6sJ8hbf1v2xW3\n2KQT7T6l1w==\n-----END CERTIFICATE-----\n";
+const TEST_KEY =
+  "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgNMWysN/lz+uQWJ6b\nICqIzZwmPk6pOdOeO30P+ITXNCChRANCAAS34JkOS/SCH/jEnDTsuUiNpPFqqmgg\nnHmhm9FVPrvW3dzk0y1gwh63NeHjxyHL+KFcX6OAtu2BoAXhCOUH33wx\n-----END PRIVATE KEY-----\n";
+
+// What the server does with the n-th request it receives (`actions[n]`; past the end: ANSWER).
+/// A 200 with the body "ok".
+const ANSWER: i64 = 0;
+/// RST_STREAM REFUSED_STREAM: not processed.
+const REFUSE: i64 = 1;
+/// Closes the connection: the request may have been processed.
+const DROP: i64 = 2;
+
+/// A running server: its port, and how many requests (HEADERS) it received.
+class RawServer {
+  listener: TcpListener;
+  port: number;
+  requests: shared<i64>;
+
+  constructor(listener: TcpListener, requests: shared<i64>) {
+    this.listener = listener;
+    this.port = listener.port;
+    this.requests = requests;
+  }
+
+  get url(): string {
+    return `https://localhost:${this.port}/`;
+  }
+
+  close() {
+    this.listener.close();
+  }
+}
+
+async function startRaw(actions: i64[]): Promise<RawServer> {
+  const l = await listenTls("127.0.0.1:0", { cert: TEST_CERT, key: TEST_KEY, alpn: ["h2"] });
+  const requests = shared<i64>(0);
+  const counted = requests.clone();
+  const accepting = l;
+  spawn(async () => {
+    while (true) {
+      try {
+        const conn = await accepting.accept();
+        spawn(serveConn(conn, actions.slice(), counted.clone()));
+      } catch (e) {
+        break;
+      }
+    }
+  });
+  return new RawServer(l, requests);
+}
+
+async function flush(conn: TcpStream, w: FrameWriter) {
+  const n = w.length;
+  w.length = 0;
+  await conn.writeBytes(w.buf, 0, n as number);
+}
+
+/// Serves one connection: the preface, SETTINGS (acknowledged), and each request's HEADERS as
+/// `actions` says.
+async function serveConn(conn: TcpStream, actions: i64[], requests: shared<i64>) {
+  const w = new FrameWriter();
+  const enc = new HpackEncoder();
+  const dec = new HpackDecoder();
+  let buf: u8[] = [];
+  let preface = false;
+  try {
+    w.settings([]);
+    await flush(conn, w);
+    while (true) {
+      const more = await conn.read();
+      if (more.length == 0) {
+        break;
+      }
+      buf = buf.concat(more);
+      if (!preface) {
+        if (buf.length < 24) {
+          continue;
+        }
+        buf = buf.slice(24);
+        preface = true;
+      }
+      while (buf.length >= 9) {
+        const len = ((buf[0] as i64) << 16) | ((buf[1] as i64) << 8) | (buf[2] as i64);
+        if ((buf.length as i64) < 9 + len) {
+          break;
+        }
+        const type = buf[3] as i64;
+        const flags = buf[4] as i64;
+        const id =
+          (((buf[5] as i64) & 127) << 24) |
+          ((buf[6] as i64) << 16) |
+          ((buf[7] as i64) << 8) |
+          (buf[8] as i64);
+        const payload = buf.slice(9, 9 + len);
+        buf = buf.slice(9 + len);
+        if (type == 4 && (flags & 1) == 0) {
+          w.settingsAck();
+        } else if (type == 1) {
+          // Decoded for the HPACK table (the client sends no padding or priority).
+          dec.decode(payload, 0, len, new FieldList());
+          requests.add(1);
+          const n = requests.get() - 1;
+          const action = n < (actions.length as i64) ? actions[n] : ANSWER;
+          if (action == DROP) {
+            conn.close();
+            return;
+          } else if (action == REFUSE) {
+            w.rstStream(id, 7);
+          } else {
+            const at = w.beginHeaders();
+            enc.begin(w);
+            enc.field(w, ":status", "200");
+            w.endHeaders(at, id, 0, 16384);
+            const ok: u8[] = [111u8, 107u8];
+            w.data(id, 1, ok, 0, 2);
+          }
+        }
+      }
+      await flush(conn, w);
+    }
+  } catch (e) {
+    // The client went away.
+  }
+  conn.close();
+}
+
+/// The response's text, or the error's message.
+async function outcome(url: string, method: string): Promise<string> {
+  try {
+    const r =
+      method == "GET"
+        ? await fetch(url, { ca: TEST_CA })
+        : await fetch(url, { method: method, body: "x", ca: TEST_CA });
+    return `${r.status} ${await r.text()}`;
+  } catch (e) {
+    return `error: ${e}`;
+  }
+}
+
+describe("HTTP/2 fetch retries", () => {
+  it("does not send a POST again after the connection dropped with it sent", async () => {
+    const server = await startRaw([DROP, ANSWER]);
+    const got = await timeout(outcome(server.url, "POST"), 10000);
+    expect(got.startsWith("error:")).toBe(true);
+    expect(server.requests.get()).toBe(1);
+    server.close();
+  });
+
+  it("sends a GET (idempotent) again after the connection dropped with it sent", async () => {
+    const server = await startRaw([DROP, ANSWER]);
+    expect(await timeout(outcome(server.url, "GET"), 10000)).toBe("200 ok");
+    expect(server.requests.get()).toBe(2);
+    server.close();
+  });
+
+  it("sends a refused POST again (REFUSED_STREAM: not processed)", async () => {
+    const server = await startRaw([REFUSE, ANSWER]);
+    expect(await timeout(outcome(server.url, "POST"), 10000)).toBe("200 ok");
+    expect(server.requests.get()).toBe(2);
+    server.close();
+  });
+});

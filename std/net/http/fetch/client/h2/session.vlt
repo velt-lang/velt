@@ -23,7 +23,13 @@ import { FrameWriter } from "velt/net/http/h2";
 import { HpackDecoder } from "velt/net/http/h2";
 import { HpackEncoder } from "velt/net/http/h2";
 import { CALL_CANCEL, CALL_CREDIT, H2Call } from "velt/net/http/fetch/client/h2/call";
-import { errorEvent, H2Event } from "velt/net/http/fetch/client/h2/event";
+import {
+  errorEvent,
+  H2Event,
+  RETRY_ALWAYS,
+  RETRY_IDEMPOTENT,
+  RETRY_NEVER,
+} from "velt/net/http/fetch/client/h2/event";
 import { ClientStream } from "velt/net/http/fetch/client/h2/stream";
 import { frames, pump, pumpAll, startCall } from "velt/net/http/fetch/client/h2/frames";
 
@@ -145,7 +151,7 @@ export class ClientSession {
       } else if (call.kind == CALL_CANCEL) {
         this.cancel(call.id);
       } else if (this.goingAway || this.done) {
-        call.events.trySend(errorEvent("the HTTP/2 connection is closing", true));
+        call.events.trySend(errorEvent("the HTTP/2 connection is closing", RETRY_ALWAYS));
       } else if ((this.streams.size as i64) >= this.maxStreams) {
         this.waiting.push(call);
       } else {
@@ -168,7 +174,7 @@ export class ClientSession {
     this.goingAway = true;
     this.calls.close();
     for (const w of this.waiting) {
-      w.events.trySend(errorEvent("the HTTP/2 connection is closing", true));
+      w.events.trySend(errorEvent("the HTTP/2 connection is closing", RETRY_ALWAYS));
     }
     this.waiting.length = 0;
   }
@@ -178,12 +184,15 @@ export class ClientSession {
     this.done = true;
     this.stopTaking();
     for (const s of this.streams.values()) {
-      s.events.trySend(errorEvent(`fetch failed: ${message}`, !s.headSeen && s.id > 0));
+      // Sent, so the server may have processed it: only an idempotent request goes out again,
+      // and none whose response began.
+      const retry = s.headSeen ? RETRY_NEVER : RETRY_IDEMPOTENT;
+      s.events.trySend(errorEvent(`fetch failed: ${message}`, retry));
     }
     this.streams.clear();
     let c = this.calls.tryReceive();
     while (c != null) {
-      c.events.trySend(errorEvent("the HTTP/2 connection is closing", true));
+      c.events.trySend(errorEvent("the HTTP/2 connection is closing", RETRY_ALWAYS));
       c = this.calls.tryReceive();
     }
   }
@@ -220,7 +229,7 @@ export class ClientSession {
     const s = this.streams.get(id);
     if (s != undefined) {
       this.out.rstStream(id, 8);
-      s.events.trySend(errorEvent("fetch failed: the request was cancelled", false));
+      s.events.trySend(errorEvent("fetch failed: the request was cancelled", RETRY_NEVER));
       this.forget(s);
     }
   }

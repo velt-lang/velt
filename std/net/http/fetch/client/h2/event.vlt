@@ -8,9 +8,18 @@ export const EVENT_HEAD: i64 = 0;
 export const EVENT_DATA: i64 = 1;
 /// The body is complete.
 export const EVENT_END: i64 = 2;
-/// The request failed (`message`); `retry` when the server did not process it (a GOAWAY's
-/// streams above its last one, REFUSED_STREAM, a session that closed before sending it).
+/// The request failed (`message`); `retry` says whether it may be sent again.
 export const EVENT_ERROR: i64 = 3;
+
+// `H2Event.retry`.
+/// The request may have been processed: it is not sent again.
+export const RETRY_NEVER: i64 = 0;
+/// The request may have been processed, but sending it twice does no harm if its method is
+/// idempotent (a session that failed before the response's head).
+export const RETRY_IDEMPOTENT: i64 = 1;
+/// The server did not process the request (RFC 9113 §8.7: REFUSED_STREAM, a GOAWAY's streams
+/// above its last one, a request never sent): sent again whatever its method.
+export const RETRY_ALWAYS: i64 = 2;
 
 /// A message to a request.
 export struct H2Event {
@@ -21,11 +30,11 @@ export struct H2Event {
   ended: bool;
   data: u8[];
   message: string;
-  retry: bool;
+  retry: i64;
 }
 
 /// An error event.
-export function errorEvent(message: string, retry: bool): H2Event {
+export function errorEvent(message: string, retry: i64): H2Event {
   return {
     kind: EVENT_ERROR,
     id: 0,

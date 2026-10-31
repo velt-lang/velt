@@ -34,7 +34,15 @@ import {
   readU32,
 } from "velt/net/http/h2";
 import { H2Call } from "velt/net/http/fetch/client/h2/call";
-import { EVENT_DATA, EVENT_END, EVENT_HEAD, errorEvent } from "velt/net/http/fetch/client/h2/event";
+import {
+  EVENT_DATA,
+  EVENT_END,
+  EVENT_HEAD,
+  errorEvent,
+  RETRY_ALWAYS,
+  RETRY_IDEMPOTENT,
+  RETRY_NEVER,
+} from "velt/net/http/fetch/client/h2/event";
 import { ClientSession, STREAM_WINDOW } from "velt/net/http/fetch/client/h2/session";
 import { ClientStream } from "velt/net/http/fetch/client/h2/stream";
 import { applySettings } from "velt/net/http/fetch/client/h2/settings";
@@ -89,7 +97,12 @@ export function frames(s: ClientSession) {
       const st = s.streams.get(id);
       if (st != undefined && len == 4) {
         const code = readU32(b, p);
-        const retry = code == REFUSED_STREAM || (!st.headSeen && code == 0);
+        // REFUSED_STREAM: not processed (RFC 9113 §8.7). NO_ERROR before the head: the server
+        // may have processed it.
+        const retry =
+          code == REFUSED_STREAM
+            ? RETRY_ALWAYS
+            : !st.headSeen && code == 0 ? RETRY_IDEMPOTENT : RETRY_NEVER;
         st.events.trySend(errorEvent(`fetch failed: stream reset (${errorName(code)})`, retry));
         s.forget(st);
       }
@@ -121,7 +134,9 @@ function goaway(s: ClientSession, p: i64, len: i64) {
     }
   }
   for (const st of gone) {
-    st.events.trySend(errorEvent("fetch failed: the server is closing the connection", true));
+    st.events.trySend(
+      errorEvent("fetch failed: the server is closing the connection", RETRY_ALWAYS),
+    );
     s.streams.delete(st.id);
   }
   s.stopTaking();
@@ -162,7 +177,7 @@ function data(s: ClientSession, flags: i64, id: i64, p: i64, len: i64) {
       ended: false,
       data: s.rbuf.slice(start, end),
       message: "",
-      retry: false,
+      retry: RETRY_NEVER,
     });
   }
   if ((flags & END_STREAM) != 0) {
@@ -181,7 +196,7 @@ function ended(s: ClientSession, st: ClientStream) {
     ended: true,
     data: [],
     message: "",
-    retry: false,
+    retry: RETRY_NEVER,
   });
   if (st.localEnded) {
     s.forget(st);
@@ -255,7 +270,7 @@ function block(s: ClientSession, id: i64, flags: i64) {
     }
     if (status < 100 || status > 999 || f.overflow) {
       s.out.rstStream(id, PROTOCOL_ERROR);
-      st.events.trySend(errorEvent("fetch failed: invalid HTTP/2 response head", false));
+      st.events.trySend(errorEvent("fetch failed: invalid HTTP/2 response head", RETRY_NEVER));
       s.forget(st);
       return;
     }
@@ -273,7 +288,7 @@ function block(s: ClientSession, id: i64, flags: i64) {
       ended: end,
       data: [],
       message: "",
-      retry: false,
+      retry: RETRY_NEVER,
     });
     if (end) {
       ended(s, st);
