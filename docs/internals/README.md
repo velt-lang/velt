@@ -14,7 +14,7 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
       ─▶ object file ─▶ velt_link (bundled lld or system linker) + velt_rt (runtime static library)
 ```
 
-1. **Load**: the driver (`veltc`) reads the root file, follows imports (relative, `velt:` std,
+1. **Load**: the driver (`veltc`) reads the root file, follows imports (relative, `velt/` std,
    `paths` aliases, package dependencies through `vpm`), and loads the prelude.
 2. **Parse** (`velt_syntax`): a hand-written lexer and Pratt parser with error recovery; one
    `ast::Module` per file.

@@ -33,7 +33,7 @@ function main() {
   form.
 - A module-level `let` is module state, one per process as in Node; importers see its current
   value ([module state](../reference/variables.md#module-state)).
-- Standard library modules use the `velt:` prefix: `"velt/fs"`, `"velt/collections"`.
+- Standard library modules are imported as `velt/<module>`: `"velt/fs"`, `"velt/collections"`.
 
 All rules are in [Modules and packages](../reference/modules.md) in the Reference.
 

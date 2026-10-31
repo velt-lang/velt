@@ -304,7 +304,7 @@ reference count. Reference cycles are not freed (**planned**: `weak` references)
 ## Modules
 
 - Named exports only: `export default` and default imports are errors with a fix.
-- Standard library modules use the `velt:` prefix: `import { readFile } from "velt/fs"`.
+- Standard library modules are imported as `velt/<module>`: `import { readFile } from "velt/fs"`.
 - Relative imports drop the extension: `import { x } from "./util"`. A folder is a module
   through its `index.vlt`, `index.ts` or `index.tsx`. `paths` aliases in `package.vlt` work like `compilerOptions.paths`.
 - Modules can be `.ts` and `.tsx` files as well as `.vlt`, so a folder can be shared with a

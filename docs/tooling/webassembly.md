@@ -81,7 +81,7 @@ velt playground            # http://127.0.0.1:8090/  (--port, --host)
 
 An editor with examples, a Run button and an output pane. The compiler is native (it uses LLVM
 and a linker), so the playground compiles on the server (the `velt playground` process) and the
-page runs the resulting module in a Web Worker in your browser. Only `velt:` imports are
-accepted. Anyone who can reach the port can compile programs (which run in their own browser,
+page runs the resulting module in a Web Worker in your browser. Only standard library
+(`velt/…`) imports are accepted. Anyone who can reach the port can compile programs (which run in their own browser,
 not on the server); keep the default `127.0.0.1` unless you mean to share it. The playground
 needs the browser runtime: `cargo build -p velt_rt_wasm --target wasm32-unknown-unknown`.

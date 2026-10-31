@@ -8,7 +8,7 @@ LSP client; the repository ships a Visual Studio Code extension in `editors/vsco
 
 - **Diagnostics** from the parser, the module loader and the type checker, as you type. Unsaved
   changes of other open files are taken into account. A standard library file opened from the
-  toolchain (go to definition into `velt/http`, say) is checked as that std module, as it is when
+  toolchain (go to definition into `velt/fs`, say) is checked as that std module, as it is when
   your program imports it.
 - **Formatting** with [`velt fmt`](fmt.md).
 - **Navigation**: document outline, go to definition (also through `ns.x` namespace imports and

@@ -367,7 +367,7 @@ An item (an export, or a member in `members`, which has the same shape):
 
 | Field | |
 |---|---|
-| `id` | a key unique in the document: `<specifier>#<name>` (`velt/http#serve`), `#<Type>.<member>` for a member (`velt/http#Server.close`); a setter is `<member>:set`, a static member whose name an instance member has too `static:<member>`, a type whose module exports a value of the same name (`export type Color = …; export const Color = …`) `type:<name>` (`pkg#type:Color`; the value is `pkg#Color`), an `extend` block `extend:<type>` (`~2` for a second one on the same type) |
+| `id` | a key unique in the document: `<specifier>#<name>` (`velt/fs#readFile`), `#<Type>.<member>` for a member (`velt/fs#FileWriter.close`); a setter is `<member>:set`, a static member whose name an instance member has too `static:<member>`, a type whose module exports a value of the same name (`export type Color = …; export const Color = …`) `type:<name>` (`pkg#type:Color`; the value is `pkg#Color`), an `extend` block `extend:<type>` (`~2` for a second one on the same type) |
 | `name` | its exported name |
 | `kind` | `function`, `class`, `struct`, `interface`, `enum`, `type`, `const`, `extend` (an `extend` block, named after its type), `re-export` (from a module not documented alongside); members: `field`, `method`, `getter`, `setter`, `constructor`, `member` (of an enum) |
 | `modifiers` | `static`, `async`, `readonly`, `abstract`, `protected`, `public`, `mut` as written, and `deprecated` |
