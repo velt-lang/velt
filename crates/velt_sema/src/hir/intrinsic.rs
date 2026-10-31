@@ -105,14 +105,6 @@ pub enum Intrinsic {
     /// keys): numbers, bool and strings by value, objects by identity, unions, options and
     /// tuples part by part
     Hash,
-    /// `(a: borrow T, b: borrow T) -> bool` structural (deep) equality: `eq`,
-    /// `deepEqual`, `assertEq`
-    Eq,
-    /// `(a: borrow T, b: borrow T) -> bool` Vitest's `toEqual` (`deepEq`,
-    /// `velt/test`'s `expect`): as `Eq`, but a class instance that isn't the same object is
-    /// compared by its fields (a `Date` by its time, a `Set` by its members), and floats with
-    /// SameValue (`NaN` equals itself, `0` doesn't equal `-0`).
-    DeepEq,
     /// `(a: borrow T, b: borrow T) -> bool` JS SameValueZero, the `Map` and `Set` key comparison
     /// (`keyEq`): `Same` with floats compared so that `NaN` equals itself and `0`
     /// equals `-0`. Objects compare by identity, as `Hash` hashes them.

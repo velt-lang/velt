@@ -39,8 +39,6 @@ export const MAP_KEY_AT = Symbol("mapKeyAt");
 export const MAP_VALUE_AT = Symbol("mapValueAt");
 /** `Map`: the entry a cursor is at. */
 export const MAP_ENTRY_AT = Symbol("mapEntryAt");
-/** `Map`: equal by content (deep equality). */
-export const MAP_DEEP_EQUALS = Symbol("mapDeepEquals");
 /** `Map`: is the entry at a position live? */
 export const MAP_LIVE_AT = Symbol("mapLiveAt");
 /** `Map`: the value of a key known to be present. */

@@ -10,15 +10,12 @@
 //! | Eq        | `(a: ptr, b: ptr) -> bool`         | structural equality                      |
 //! | Same      | `(a: ptr, b: ptr) -> bool`         | JS `===`: objects inside by identity (same.rs) |
 //! | SameValue | `(a: ptr, b: ptr) -> bool`         | `Object.is`: Same with floats by SameValue (same.rs) |
-//! | KeyEq     | `(a: ptr, b: ptr) -> bool`         | Eq with floats compared by SameValueZero (eq.rs) |
 //! | KeySame   | `(a: ptr, b: ptr) -> bool`         | Same with floats compared by SameValueZero: `Map` keys (same.rs) |
 //! | Hash      | `(p: ptr) -> u64`                  | FxHash-style combine                     |
 //! | ObjDrop   | `(obj: ptr)`                       | drop a class object's fields and free it |
 //! | QueuedDrop | `(b: ptr)`                        | drop the value in heap box `b` and free it, or the boxed value `b` (drop_depth.rs) |
 //! | ObjClone  | `(obj: ptr) -> ptr`                | deep copy of a class object              |
 //! | ObjFormat | `(buf: ptr, obj: ptr, depth: u32)` | append `Name { field: value, … }`        |
-//! | ObjDeepEq | `(a: ptr, b: ptr) -> bool`         | `toEqual` of two objects of exactly this class, by their fields (eq_dyn.rs) |
-//! | DynDeepEq | `(a: ptr, b: ptr) -> bool`         | `toEqual` of the data of two interface values holding this type (eq_dyn.rs) |
 //! | DynDrop/DynClone/DynFormat | as Obj*, on the data pointer of an interface value |
 //! | DynShare  | `(data: ptr) -> ptr`               | data of another reference (share.rs)     |
 //! | Transfer  | `(p: ptr)`                         | make `*p` safe for another thread, in place (transfer.rs) |
@@ -46,7 +43,6 @@ mod drop_chain;
 mod drop_depth;
 mod eq;
 mod eq_cycles;
-mod eq_dyn;
 mod eq_numbers;
 mod format;
 mod format_array;
@@ -86,16 +82,7 @@ pub(crate) enum Glue {
     Eq,
     Same,
     SameValue,
-    KeyEq,
     KeySame,
-    /// Vitest's `toEqual` (`Intrinsic::DeepEq`): `Eq`, but a class instance compares by its
-    /// fields when it isn't the same object, and floats with SameValue (glue/eq.rs).
-    DeepEq,
-    /// `toEqual` of two objects of exactly class `ty` (a class table slot, eq_dyn.rs).
-    ObjDeepEq,
-    /// `toEqual` of the data pointers of two interface values holding a `ty` (an interface
-    /// table slot, eq_dyn.rs).
-    DynDeepEq,
     Hash,
     ObjDrop,
     QueuedDrop,
@@ -174,11 +161,7 @@ impl Glue {
             Glue::Eq => "eq",
             Glue::Same => "same",
             Glue::SameValue => "samevalue",
-            Glue::KeyEq => "keyeq",
             Glue::KeySame => "keysame",
-            Glue::DeepEq => "deepeq",
-            Glue::ObjDeepEq => "objdeepeq",
-            Glue::DynDeepEq => "dyndeepeq",
             Glue::Hash => "hash",
             Glue::ObjDrop => "objdrop",
             Glue::QueuedDrop => "queueddrop",
@@ -248,14 +231,7 @@ impl Glue {
             | Glue::ObjTransfer
             | Glue::DynTransfer => (vec![Ptr], Ptr),
             Glue::Format | Glue::ObjFormat | Glue::DynFormat => (vec![Ptr, Ptr, U32], Unit),
-            Glue::Eq
-            | Glue::Same
-            | Glue::SameValue
-            | Glue::KeyEq
-            | Glue::KeySame
-            | Glue::DeepEq
-            | Glue::ObjDeepEq
-            | Glue::DynDeepEq => (vec![Ptr, Ptr], Bool),
+            Glue::Eq | Glue::Same | Glue::SameValue | Glue::KeySame => (vec![Ptr, Ptr], Bool),
             Glue::Hash => (vec![Ptr], U64),
             Glue::JsonRead => (vec![Ptr, Ptr, Ptr], Bool),
             Glue::JsonParse => (vec![Ptr, U32, U32, Ptr, Ptr], Bool),
@@ -300,11 +276,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::Eq => lw.eq_body(args[0], args[1], ty),
             Glue::Same => lw.same_body(args[0], args[1], ty),
             Glue::SameValue => lw.same_value_body(args[0], args[1], ty),
-            Glue::KeyEq => lw.key_eq_body(args[0], args[1], ty),
             Glue::KeySame => lw.key_same_body(args[0], args[1], ty),
-            Glue::DeepEq => lw.deep_eq_body(args[0], args[1], ty),
-            Glue::ObjDeepEq => lw.obj_deep_eq_body(args[0], args[1], ty),
-            Glue::DynDeepEq => lw.dyn_data_deep_eq_body(args[0], args[1], ty),
             Glue::Hash => lw.hash_body(args[0], ty),
             Glue::ObjDrop => lw.obj_drop_body(args[0], ty),
             Glue::QueuedDrop => lw.queued_drop_body(args[0], ty),
@@ -390,13 +362,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
     pub(super) fn call_glue(&mut self, g: Glue, ty: TyId, args: Vec<Operand>) -> Operand {
         if matches!(
             g,
-            Glue::Eq
-                | Glue::Same
-                | Glue::SameValue
-                | Glue::KeyEq
-                | Glue::KeySame
-                | Glue::DeepEq
-                | Glue::Hash
+            Glue::Eq | Glue::Same | Glue::SameValue | Glue::KeySame | Glue::Hash
         ) {
             self.note_fn_compared_in(ty);
         }

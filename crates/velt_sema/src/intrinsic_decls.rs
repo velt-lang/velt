@@ -62,8 +62,6 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("chanTryReceive", Op(I::ChanTryReceive)),
     ("chanTrySend", Op(I::ChanTrySend)),
     // compare.vlt
-    ("deepEq", Op(I::DeepEq)),
-    ("eq", Op(I::Eq)),
     ("hash", Op(I::Hash)),
     ("includesEq", Op(I::IncludesEq)),
     ("keyEq", Op(I::KeyEq)),

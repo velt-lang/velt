@@ -48,8 +48,6 @@ import {
   arraySwap,
   arrayTruncate,
   arrayWithCapacity,
-  deepEq,
-  eq,
   hash,
   holdsNull,
   keyEq,
@@ -60,7 +58,6 @@ import {
   MAP_ADVANCE,
   MAP_AT,
   MAP_CURSOR,
-  MAP_DEEP_EQUALS,
   MAP_ENTRY_AT,
   MAP_IS_NULL_PROTO,
   MAP_KEY_AT,
@@ -70,6 +67,7 @@ import {
   MAP_NEWEST_KEY_DIGIT,
   MAP_VALUE_AT,
 } from "velt/lang/hooks/keys";
+import { equalByContent, equalByFields } from "velt/lang/equal/generated";
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
@@ -492,12 +490,13 @@ export class Map<K, V> {
   // ─────────────── internals (not part of the JS surface) ───────────────
 
   /**
-   * `deepEqual` (the compiler's equality glue calls it): the same keys, matched as `get`
-   * matches them, each with a deeply equal value, in any order (Node's `isDeepStrictEqual`).
-   * `deep`: the values (and unmatched keys) compare as Vitest's `toEqual` does
-   * (`deepEq`: class instances by their fields).
+   * `deepEqual` (the code generated for `equalByContent` calls it): the same keys, matched as `get` matches them, each with a deeply equal value, in any
+   * order (Node's `isDeepStrictEqual`). `deep`: the values (and unmatched keys) compare as
+   * Vitest's `toEqual` does (`equalByFields`: class instances by their fields). Private, so that
+   * no `any` table lists it and only a comparison instantiates it: generated code calls it with
+   * the access of the map's type (or of a `Record` or `Set` holding one).
    */
-  [MAP_DEEP_EQUALS](other: Map<K, V>, deep: bool): bool {
+  private deepEquals(other: Map<K, V>, deep: bool): bool {
     if (this._size != other._size) {
       return false;
     }
@@ -521,10 +520,10 @@ export class Map<K, V> {
 
   /** Two keys or values, as `deepEqual` compares them, or (`deep`) as Vitest's `toEqual`. */
   private static entriesEqual<T>(a: T, b: T, deep: bool): bool {
-    return deep ? deepEq(a, b) : eq(a, b);
+    return deep ? equalByFields(a, b) : equalByContent(a, b);
   }
 
-  // `[MAP_DEEP_EQUALS]` once a key of this map is not a key of `other`: an object key is matched by
+  // `deepEquals` once a key of this map is not a key of `other`: an object key is matched by
   // identity, so, as in Node's `isDeepStrictEqual`, each such entry is paired with a distinct
   // entry of `other` whose key and value are deeply equal.
   private deepEqualsByContent(other: Map<K, V>, deep: bool): bool {
@@ -594,7 +593,7 @@ export class Map<K, V> {
     return bits;
   }
 
-  // `[MAP_LIVE_POSITIONS]`, `keys()`, `values()`, `entries()` and `[MAP_DEEP_EQUALS]` with `liveBits`.
+  // `[MAP_LIVE_POSITIONS]`, `keys()`, `values()`, `entries()` and `deepEquals` with `liveBits`.
   // They are methods of their own so that the code of maps whose `V` excludes null declares no
   // more locals.
   private livePositionsBits(): usize[] {

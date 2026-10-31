@@ -611,8 +611,6 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::Subarray
         | I::ParamOrdering
         | I::Hash
-        | I::Eq
-        | I::DeepEq
         | I::KeyEq
         | I::IncludesEq
         | I::Same

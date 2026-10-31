@@ -333,13 +333,12 @@ keys! {
     array_get => "ARRAY_GET", "arrayGet";
     set_index => "SET_INDEX", "setIndex";
     // Map: what a `for...of` over a map reads (`velt_sema` `for_map.rs`, `velt_vir` `frozen.rs`),
-    // what deep equality and `console.log` call (`velt_vir` `glue/eq.rs`, `glue/format_map.rs`).
+    // what `console.log` calls (`velt_vir` `glue/format_map.rs`).
     map_cursor => "MAP_CURSOR", "mapCursor";
     map_advance => "MAP_ADVANCE", "mapAdvance";
     map_key_at => "MAP_KEY_AT", "mapKeyAt";
     map_value_at => "MAP_VALUE_AT", "mapValueAt";
     map_entry_at => "MAP_ENTRY_AT", "mapEntryAt";
-    map_deep_equals => "MAP_DEEP_EQUALS", "mapDeepEquals";
     map_live_at => "MAP_LIVE_AT", "mapLiveAt";
     // ThisFn: a call with a `this` and `bind` (`velt_vir` `this_fn.rs`).
     this_fn_apply => "THIS_FN_APPLY", "thisFnApply";

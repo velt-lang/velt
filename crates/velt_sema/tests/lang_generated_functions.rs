@@ -60,10 +60,14 @@ fn checking_without_generators_names_the_function() {
 #[test]
 fn demand_reaches_instances_through_generic_code() {
     let d = demand(PROGRAM);
-    assert_eq!(d.functions.len(), 1);
-    assert_eq!(d.functions[0].function, "describe");
-    assert_eq!(d.functions[0].generator, "./gen");
-    assert_eq!(d.functions[0].ret, "string");
+    // The prelude declares generated functions of its own (velt/lang/equal), which no code here
+    // calls.
+    let own: Vec<_> = (d.functions.iter())
+        .filter(|f| f.generator == "./gen")
+        .collect();
+    assert_eq!(own.len(), 1);
+    assert_eq!(own[0].function, "describe");
+    assert_eq!(own[0].ret, "string");
     let mut shown: Vec<String> = (d.requests.iter())
         .map(|r| d.model.types[r.type_args[0] as usize].display.clone())
         .collect();

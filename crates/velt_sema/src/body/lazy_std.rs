@@ -99,7 +99,6 @@ pub(crate) const HELPER_NAMES: &[&str] = &[
     velt_common::std_key!(this_fn_bind),
     "__debug_line",
     "__decoded",
-    velt_common::std_key!(map_deep_equals),
     "__defineGetter__",
     "__defineSetter__",
     "__delete",

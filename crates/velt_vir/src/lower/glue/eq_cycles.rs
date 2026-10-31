@@ -1,6 +1,5 @@
-//! Equality of values that may be reached again through their own fields: class instances in
-//! `toEqual` (`Glue::DeepEq`) and object values whose type can hold itself in `deepEqual` /
-//! `assertEq` (`Glue::KeyEq`, `Glue::Eq`, #1881). Such a comparison keeps the pairs of objects
+//! Equality of values that may be reached again through their own fields: object values whose
+//! type can hold itself, compared by `==` on an aggregate holding them (`Glue::Eq`, #1881). Such a comparison keeps the pairs of objects
 //! being compared on a per-thread stack (`velt_rt_deep_eq_enter` / `_leave`), with Vitest's
 //! rule: the same pair met again is equal (the same cycle on both sides), an object met again
 //! with another partner differs (a cycle on one side, rings of two lengths). Node's
@@ -13,13 +12,6 @@ use crate::lower::{cint, FnLower};
 use crate::vir::{self, BinOp, Const, Operand, Place, Rvalue, Terminator, Ty};
 
 impl FnLower<'_, '_> {
-    /// `Glue::DeepEq`: as `Eq` compares it, its parts in `deep_mode`, where a class instance
-    /// (as an object value) is equal to itself, else when its fields are (`guarded_eq_body`).
-    pub(super) fn deep_eq_body(&mut self, pa: vir::Local, pb: vir::Local, ty: TyId) {
-        self.deep_mode = true;
-        self.eq_body(pa, pb, ty)
-    }
-
     /// The object at `*pa` is equal to the one at `*pb` when it is the same object, else when
     /// their fields are, compared under the cycle guard (module docs).
     pub(super) fn guarded_eq_body(&mut self, pa: vir::Local, pb: vir::Local, ty: TyId) {
@@ -39,11 +31,11 @@ impl FnLower<'_, '_> {
         self.branch(same, yes, enter);
         self.switch_to(enter);
         let seen = self.temp(Ty::U8);
-        self.call_rt(
-            Rt::DeepEqEnter,
-            vec![ptr_a, ptr_b],
-            Some(Place::local(seen)),
-        );
+        let ids = vec![
+            self.cast_to(ptr_a, Ty::Ptr, Ty::U64),
+            self.cast_to(ptr_b, Ty::Ptr, Ty::U64),
+        ];
+        self.call_rt(Rt::DeepEqEnter, ids, Some(Place::local(seen)));
         let seen = Operand::Copy(Place::local(seen));
         let fresh = self.rvalue_temp(
             Ty::Bool,
@@ -59,7 +51,6 @@ impl FnLower<'_, '_> {
         self.switch_to(fields);
         let differ = self.new_block();
         match self.cx.kind(ty) {
-            _ if self.is_dictionary(ty) => self.dictionary_eq(&a, &b, ty, differ),
             TyKind::Array(e) => {
                 let (ca, cb) = (self.content(&a, ty), self.content(&b, ty));
                 self.eq_array(&ca, &cb, e, differ);
@@ -86,35 +77,23 @@ impl FnLower<'_, '_> {
         self.terminate(Terminator::Return(Operand::Const(Const::Bool(v), Ty::Bool)));
     }
 
-    /// A class instance, or a nullable one: compared through `Glue::DeepEq` in `deep_mode`.
-    pub(super) fn deep_class(&mut self, ty: TyId) -> bool {
-        let inner = match self.cx.kind(ty) {
-            TyKind::Option(e, _) => e,
-            _ => ty,
-        };
-        self.cx.is_class(inner) && !self.is_dictionary(inner)
-    }
-
-    /// Is `ty` compared under the cycle guard (`guarded_eq_body`)? In `deep_mode` every class
-    /// instance and object value is, as Vitest tracks every object; otherwise (`deepEqual`,
-    /// which compares class instances and interface values by identity) only an object value,
-    /// array, `Map` or `Record` stored as a pointer whose parts can reach a value of its own
-    /// type. Other types cannot form a cycle and pay nothing.
+    /// Is `ty` compared under the cycle guard (`guarded_eq_body`)? Only an object value or array
+    /// stored as a pointer whose parts can reach a value of its own type (class instances,
+    /// including `Map` and `Record`, and interface values compare by identity). Other types cannot form a cycle and
+    /// pay nothing.
     pub(super) fn guarded(&mut self, ty: TyId) -> bool {
         if self.same_mode || self.value_mode || self.is_enum(ty) {
             return false;
         }
         match self.cx.kind(ty) {
-            _ if self.is_dictionary(ty) => self.compared_to_itself(ty),
-            TyKind::Adt(..) if self.cx.is_class(ty) => self.deep_mode,
-            TyKind::Adt(..) if self.cx.boxed(ty) => self.deep_mode || self.compared_to_itself(ty),
+            TyKind::Adt(..) if self.cx.is_class(ty) => false,
+            TyKind::Adt(..) if self.cx.boxed(ty) => self.compared_to_itself(ty),
             TyKind::Array(_) => self.cx.boxed(ty) && self.compared_to_itself(ty),
             _ => false,
         }
     }
 
-    /// Can a value of `ty` reach another `ty` through the parts the comparison of the current
-    /// mode follows (in `deep_mode` also class fields)?
+    /// Can a value of `ty` reach another `ty` through the parts the comparison follows?
     fn compared_to_itself(&mut self, ty: TyId) -> bool {
         let mut seen = rustc_hash::FxHashSet::default();
         let mut work = self.compared_parts(ty);
@@ -131,11 +110,8 @@ impl FnLower<'_, '_> {
 
     /// The types whose values the comparison compares inside a `t` by content.
     fn compared_parts(&mut self, t: TyId) -> Vec<TyId> {
-        if let Some((k, v)) = self.prelude_map(t).or_else(|| self.prelude_record(t)) {
-            return vec![k, v];
-        }
         match self.cx.kind(t) {
-            TyKind::Adt(..) if self.cx.is_class(t) && !self.deep_mode => vec![],
+            TyKind::Adt(..) if self.cx.is_class(t) => vec![],
             TyKind::Array(e) | TyKind::Shared(e) => vec![e],
             _ => self.cx.part_types(t),
         }

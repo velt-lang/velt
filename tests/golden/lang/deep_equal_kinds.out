@@ -1,0 +1,37 @@
+nan true true
+zero true false
+ints true true
+strings true true
+enum false false
+union zero true false
+union one true true
+union big false false
+union kinds false false
+arrays true true
+array lengths false false
+nested false false
+tuples false false
+optional same true true
+optional present false false
+nullable false false
+structs true true
+options false false
+options null true true
+trees true true
+maps in any order true true
+maps false false
+records true true
+sets false true
+other sets false false
+dates false true
+other dates false false
+shared false false
+same dog true true
+dogs false true
+other dogs false false
+dogs as animals false true
+dog and cat false false
+dog and animal false false
+animals false true
+same function true true
+functions false false

@@ -380,7 +380,7 @@ impl Rt {
             Rt::MutexUnlock => f("velt_rt_mutex_unlock", vec![Ptr], Unit),
             Rt::RwLockInit => f("velt_rt_rwlock_init", vec![Ptr], Unit),
             Rt::LkMode => f("velt_rt_lk_mode", vec![], U8),
-            Rt::DeepEqEnter => f("velt_rt_deep_eq_enter", vec![Ptr, Ptr], U8),
+            Rt::DeepEqEnter => f("velt_rt_deep_eq_enter", vec![U64, U64], U8),
             Rt::DeepEqLeave => f("velt_rt_deep_eq_leave", vec![], Unit),
             Rt::LkWrite => f("velt_rt_lk_write", vec![Ptr], Unit),
             Rt::FreeAfterReads => f("velt_rt_free_after_reads", vec![Ptr, Ptr], Unit),

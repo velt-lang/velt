@@ -1,5 +1,6 @@
-//! The cycle guard of `toEqual` and `deepEqual` (velt_vir `lower/glue/eq_cycles.rs`): the pairs
-//! of objects being compared field by field on this thread, with Vitest's
+//! The cycle guard of `toEqual` and `deepEqual` (the code std/lang/equal generates, and velt_vir
+//! `lower/glue/eq_cycles.rs` for `==` on aggregates): the identities (addresses) of the pairs of
+//! objects being compared field by field on this thread, with Vitest's
 //! `aStack`/`bStack` rule: a pair met again while it is being compared (the same cycle on both
 //! sides: a parent pointer, rings of one length) counts as equal, an object met again with
 //! another partner (a cycle on one side, rings of two lengths) as different. The glue is
@@ -8,7 +9,7 @@
 use std::cell::RefCell;
 
 thread_local! {
-    static PAIRS: RefCell<Vec<(usize, usize)>> = const { RefCell::new(Vec::new()) };
+    static PAIRS: RefCell<Vec<(u64, u64)>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Whether `a` and `b`, about to be compared, are on the stack of pairs being compared, as
@@ -17,8 +18,7 @@ thread_local! {
 /// is (a cycle on one side only: they differ); else 0, and the pair is being compared from now
 /// until `velt_rt_deep_eq_leave`.
 #[no_mangle]
-pub extern "C" fn velt_rt_deep_eq_enter(a: *const u8, b: *const u8) -> u8 {
-    let (a, b) = (a as usize, b as usize);
+pub extern "C" fn velt_rt_deep_eq_enter(a: u64, b: u64) -> u8 {
     PAIRS.with(|p| {
         let mut p = p.borrow_mut();
         for &(x, y) in p.iter().rev() {
@@ -48,7 +48,7 @@ mod tests {
 
     #[test]
     fn a_pair_met_again_is_equal_and_one_side_met_again_differs() {
-        let (a, b, c) = (8 as *const u8, 16 as *const u8, 24 as *const u8);
+        let (a, b, c) = (8, 16, 24);
         assert_eq!(velt_rt_deep_eq_enter(a, b), 0);
         assert_eq!(velt_rt_deep_eq_enter(a, b), 1);
         // `a` with another partner, or `b` with another one: a cycle on one side.

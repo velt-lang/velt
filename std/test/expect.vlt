@@ -7,7 +7,8 @@
 import { Pattern } from "velt/text/regex/pattern";
 // The matchers of arrays, strings, numbers, throwing functions and promises: `extend` blocks.
 import "velt/test/matchers";
-import { deepEq, inspect } from "velt/lang/intrinsics";
+import { inspect } from "velt/lang/intrinsics";
+import { equalByFields } from "velt/lang/equal/generated";
 
 /** What `expect(actual)` returns: the matchers for `actual`. */
 export class Expect<T> {
@@ -53,7 +54,7 @@ export class Expect<T> {
    */
   toEqual(expected: T) {
     this.check(
-      deepEq(this.actual, expected),
+      equalByFields(this.actual, expected),
       `expected ${show(this.actual)} to deeply equal ${show(expected)}`,
       `expected ${show(this.actual)} to not deeply equal ${show(expected)}`,
     );

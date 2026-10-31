@@ -2,7 +2,8 @@
 // Node's `assert` does: `velt test` reports it as the test's failure and runs the next test;
 // elsewhere it is an uncaught error like any other (exit code 1).
 
-import { eq, inspect } from "velt/lang/intrinsics";
+import { inspect } from "velt/lang/intrinsics";
+import { equalByContent } from "velt/lang/equal/generated";
 
 /** What a failed `assert`, `assertEq` or `assertThrows` throws (Node's `AssertionError`). */
 export class AssertionError extends Error {
@@ -25,7 +26,7 @@ export function assert(cond: bool, msg: string = "assertion failed") {
  * whose message shows both values, as Node's `util.inspect` writes them (`'a'`, `[ 1, 2 ]`).
  */
 export function assertEq<T>(left: T, right: T, msg: string = "assertEq failed") {
-  if (!eq(left, right)) {
+  if (!equalByContent(left, right)) {
     const l = inspect(left);
     const r = inspect(right);
     throw new AssertionError(`${msg}\n  left: ${l}\n right: ${r}`);
@@ -38,7 +39,7 @@ export function assertEq<T>(left: T, right: T, msg: string = "assertEq failed") 
  * key order; other class instances by identity. `==` compares every object by identity, like JS.
  */
 export function deepEqual<T>(a: T, b: T): bool {
-  return eq(a, b);
+  return equalByContent(a, b);
 }
 
 /**

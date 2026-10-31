@@ -618,8 +618,6 @@ fn effect_of(i: Intrinsic) -> Option<String> {
         | I::ArrayRemove
         | I::ArrayTruncate
         | I::Hash
-        | I::Eq
-        | I::DeepEq
         | I::KeyEq
         | I::IncludesEq
         | I::Same

@@ -294,8 +294,15 @@ fn reachable_types(model: &velt_sema::generated::model::Model, roots: &[u32]) ->
             continue;
         };
         next += 1;
-        if matches!(t.kind, "class" | "struct") && !t.qualified_name.is_empty() {
+        // The prelude's collections are declared classes too (their entries are their structure);
+        // a `Record` and a `Set` hold theirs in a `Map`.
+        let declared = matches!(t.kind, "class" | "struct" | "map" | "record" | "set");
+        if declared && !t.qualified_name.is_empty() {
             out.push(t.qualified_name.clone());
+        }
+        let map = velt_common::std_item!(prelude_map, "Map");
+        if matches!(t.kind, "record" | "set") && !out.iter().any(|q| q == map) {
+            out.push(map.to_string());
         }
         let refs = (t.args.iter().chain(&t.arms).chain(&t.subclasses))
             .copied()

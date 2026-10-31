@@ -52,6 +52,11 @@ export class Record<K, V> {
   // The methods that read fields 2 and 3 are in std/lang/record/symbols.vlt, which a
   // program loads only when it mentions symbols or property definitions.
 
+  /** `r`'s string-keyed entries, for the generated `deepEqual`/`toEqual` (static: in no table). */
+  static __entriesOf(r: Record<K, V>): Map<K, V> {
+    return r.entries;
+  }
+
   __get(key: K): V | undefined {
     return this.entries.get(key);
   }
