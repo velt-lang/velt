@@ -1,4 +1,7 @@
 // Global (loaded when a module names one of these): `Blob`, `File` and `FormData`, as in Node
 // (docs/std/net/http.md).
-export { Blob, File, BlobPart, BlobPropertyBag, FilePropertyBag } from "velt/net/http/fetch/blob";
+export { Blob, BlobPart } from "velt/net/http/fetch/blob";
+export { BlobPropertyBag } from "velt/net/http/fetch/blob_property_bag";
+export { File } from "velt/net/http/fetch/file";
+export { FilePropertyBag } from "velt/net/http/fetch/file_property_bag";
 export { FormData, FormDataEntryValue } from "velt/net/http/fetch/form";

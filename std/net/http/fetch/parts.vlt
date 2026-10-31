@@ -4,7 +4,7 @@
 // is 200-599).
 
 import { IoError } from "velt/io/error";
-import { BodyStream } from "velt/net/http/fetch/body";
+import { BodyStream } from "velt/net/http/fetch/body_stream";
 import { Headers, HeadersInit } from "velt/net/http/fetch/headers";
 import { Response } from "velt/net/http/fetch/response";
 

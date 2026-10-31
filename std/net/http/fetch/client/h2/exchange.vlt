@@ -16,7 +16,7 @@ import { AbortError, AbortSignal } from "velt/task";
 import { dial, keyOf } from "velt/net/http/fetch/client/conn";
 import { Fetched } from "velt/net/http/fetch/client/fetched";
 import { Target } from "velt/net/http/fetch/client/target";
-import { Head } from "velt/net/http/fetch/client/wire";
+import { Head } from "velt/net/http/fetch/client/head";
 import { CALL_REQUEST, H2Call } from "velt/net/http/fetch/client/h2/call";
 import {
   errorEvent,

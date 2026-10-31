@@ -10,7 +10,7 @@ import { Element } from "velt/jsx/node";
 import { RenderError } from "velt/jsx/errors";
 import { markupOf, pushMarkup } from "velt/jsx/tree";
 import { utf8Encode } from "velt/encoding/utf8";
-import { BodyStream } from "velt/net/http/fetch/body";
+import { BodyStream } from "velt/net/http/fetch/body_stream";
 
 /**
  * The HTML of `el`, after awaiting its async components. Throws the `RenderError` of the

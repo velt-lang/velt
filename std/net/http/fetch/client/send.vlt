@@ -16,15 +16,8 @@ import { h2Exchange } from "velt/net/http/fetch/client/h2/exchange";
 import { acceptEncoding } from "velt/net/http/fetch/client/decode";
 import { Fetched } from "velt/net/http/fetch/client/fetched";
 import { ofUrl, Target, target } from "velt/net/http/fetch/client/target";
-import {
-  BODY_LENGTH,
-  BODY_NONE,
-  encode,
-  Encoded,
-  Head,
-  headEnd,
-  parseHead,
-} from "velt/net/http/fetch/client/wire";
+import { encode, Encoded } from "velt/net/http/fetch/client/wire";
+import { BODY_LENGTH, BODY_NONE, Head, headEnd, parseHead } from "velt/net/http/fetch/client/head";
 
 /** The most redirects one `fetch` follows (the Fetch standard's limit). */
 const MAX_REDIRECTS: i64 = 20;

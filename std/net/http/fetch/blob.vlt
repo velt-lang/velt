@@ -1,4 +1,4 @@
-// velt/net/http (internal): the WHATWG `Blob` and `File` (docs/std/net/http.md): immutable bytes with
+// velt/net/http (internal): the WHATWG `Blob` (docs/std/net/http.md; `File` is in file.vlt): immutable bytes with
 // a media type, which a `Response` or `Request` takes as its body (the type becomes its
 // `content-type`), and which `FormData` sends as a file. The bytes are held whole, in one array.
 //
@@ -12,22 +12,10 @@ import { utf8DecodeLossy, utf8Encode } from "velt/encoding";
 import { BODY_TYPE, WHOLE_BODY, ByteSource } from "velt/io/streams/byte_source";
 import { INSPECT } from "velt/lang/hooks/keys";
 import { VIEW_SIZE } from "velt/lang/hooks/keys";
+import { BlobPropertyBag } from "velt/net/http/fetch/blob_property_bag";
 
 /** What a blob is made of: text (encoded as UTF-8), bytes, or another blob. */
 export type BlobPart = string | u8[] | BufferView | ArrayBuffer | Blob;
-
-/** The options of `new Blob(parts, options)`. */
-export struct BlobPropertyBag {
-  /** The media type, lowercased ("" if it has a character outside printable ASCII). */
-  type?: string;
-}
-
-/** The options of `new File(parts, name, options)`. */
-export struct FilePropertyBag {
-  type?: string;
-  /** Milliseconds since the epoch; default now. */
-  lastModified?: i64;
-}
 
 export class Blob extends ByteSource {
   #bytes: u8[] = [];
@@ -92,31 +80,6 @@ export class Blob extends ByteSource {
   /** How `console.log` shows a blob, like Node: `Blob { size: 5, type: 'text/plain' }`. */
   [INSPECT]() {
     return { size: this.size, type: this.type };
-  }
-}
-
-/** A `Blob` with a file name and a modification time, as `FormData` holds a file. */
-export class File extends Blob {
-  #name: string = "";
-  #modified: i64 = 0;
-
-  constructor(parts: BlobPart[], name: string, options?: FilePropertyBag) {
-    super(parts, { type: options == null ? "" : (options.type ?? "") });
-    this.#name = name;
-    const at = options == null ? null : options.lastModified;
-    this.#modified = at ?? Date.now();
-  }
-
-  get name(): string {
-    return this.#name;
-  }
-
-  get lastModified(): i64 {
-    return this.#modified;
-  }
-
-  get webkitRelativePath(): string {
-    return "";
   }
 }
 

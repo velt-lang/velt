@@ -13,7 +13,7 @@ fn notify(conn: &Connection, method: &str, params: Value) {
 }
 
 /// A std file shows no diagnostics: before, `velt_rt_*` declarations were "only the standard
-/// library may declare it" and `Date.now()` was user code's `number` (std/net/http/fetch/blob.vlt
+/// library may declare it" and `Date.now()` was user code's `number` (std/net/http/fetch/file.vlt
 /// stores it in an `i64`). A prelude file is the prelude module already loaded.
 #[test]
 fn std_files_are_checked_as_std() {
@@ -29,7 +29,7 @@ fn std_files_are_checked_as_std() {
     notify(&conn, "initialized", json!({}));
     for rel in [
         "net/http/fetch/client/conn.vlt",
-        "net/http/fetch/blob.vlt",
+        "net/http/fetch/file.vlt",
         "prelude/date.vlt",
     ] {
         let path = std.join(rel);

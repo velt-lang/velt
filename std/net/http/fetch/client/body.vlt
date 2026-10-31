@@ -18,7 +18,7 @@ import {
   BODY_LENGTH,
   BODY_NONE,
   malformed,
-} from "velt/net/http/fetch/client/wire";
+} from "velt/net/http/fetch/client/head";
 
 /** The most a `content-length` sizes the buffer of `all` for before any of the body arrived. */
 const MAX_RESERVE: i64 = 4194304;

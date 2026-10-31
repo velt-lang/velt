@@ -10,21 +10,21 @@
 import { IoError } from "velt/io/error";
 import { AbortError, AbortSignal } from "velt/task";
 import { URL } from "velt/net/url";
-import { BodyStream, bodyParts, collect, impliedType, sourceType } from "velt/net/http/fetch/body";
+import { bodyParts, collect, impliedType, sourceType } from "velt/net/http/fetch/body";
+import { BodyStream } from "velt/net/http/fetch/body_stream";
 import { Headers } from "velt/net/http/fetch/headers";
-import {
-  normalizeMethod,
-  Request,
-  RequestInit,
-  RequestRedirect,
-} from "velt/net/http/fetch/request";
+import { Request } from "velt/net/http/fetch/request";
+import { normalizeMethod, RequestInit, RequestRedirect } from "velt/net/http/fetch/request_init";
 import { Response } from "velt/net/http/fetch/response";
 import { ClientRequest, ERROR, FOLLOW, MANUAL, send } from "velt/net/http/fetch/client/send";
 
-export { BodyInit, BodyStream } from "velt/net/http/fetch/body";
+export { BodyInit } from "velt/net/http/fetch/body";
+export { BodyStream } from "velt/net/http/fetch/body_stream";
 export { Headers, HeadersInit } from "velt/net/http/fetch/headers";
-export { Request, RequestInit, RequestRedirect } from "velt/net/http/fetch/request";
-export { Response, ResponseInit } from "velt/net/http/fetch/response";
+export { Request } from "velt/net/http/fetch/request";
+export { RequestInit, RequestRedirect } from "velt/net/http/fetch/request_init";
+export { Response } from "velt/net/http/fetch/response";
+export { ResponseInit } from "velt/net/http/fetch/response_init";
 
 function redirectMode(r: RequestRedirect): i64 {
   if (r == "error") {

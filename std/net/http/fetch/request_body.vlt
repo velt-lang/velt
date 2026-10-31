@@ -1,0 +1,84 @@
+// velt/net/http (internal): reading the body of a `Request` (request.vlt): as text, as bytes, chunk
+// by chunk.
+
+import { IoError } from "velt/io/error";
+import { AbortError } from "velt/task";
+import { utf8DecodeLossy, utf8Encode } from "velt/encoding";
+import { BodyParts, collect } from "velt/net/http/fetch/body";
+import { BodyStream } from "velt/net/http/fetch/body_stream";
+import { Request } from "velt/net/http/fetch/request";
+
+/** A body read from `chunks`. */
+export function streamed(chunks: AsyncIterator<u8[], IoError | AbortError>): BodyParts {
+  return { kind: 3, text: "", bytes: [], stream: BodyStream.adopt(chunks), implied: 0 };
+}
+
+/** The body of a request without one, as `fetch` takes it. */
+export function noBody(): BodyParts {
+  return { kind: 0, text: "", bytes: [], stream: null, implied: 0 };
+}
+
+/** `r.text()`: the body as text (invalid UTF-8 becomes U+FFFD, as in JS). */
+export async function requestText(r: Request): Promise<string, IoError | AbortError> {
+  r.claim();
+  const received = r.fromServer();
+  if (received != null) {
+    return utf8DecodeLossy(await received.body());
+  }
+  const body = r.made();
+  if (body == null) {
+    return "";
+  }
+  if (body.kind == 1) {
+    return body.text;
+  }
+  const s = body.stream;
+  return utf8DecodeLossy(s == null ? body.bytes : await collect(s));
+}
+
+/** The body of `r` as Velt's byte array (`bytes()`, `formData()`, …). */
+export async function requestBytes(r: Request): Promise<u8[], IoError | AbortError> {
+  r.claim();
+  const received = r.fromServer();
+  if (received != null) {
+    return await received.body();
+  }
+  const body = r.made();
+  if (body == null) {
+    return [];
+  }
+  if (body.kind == 1) {
+    return utf8Encode(body.text);
+  }
+  const s = body.stream;
+  return s == null ? body.bytes : await collect(s);
+}
+
+/** The body of `r` chunk by chunk, for `BodyStream`; reading them uses the body up. */
+export async function* requestChunks(r: Request): AsyncIterator<u8[], IoError | AbortError> {
+  r.claim();
+  if (r.fromServer() != null) {
+    const source = r.received();
+    while (true) {
+      const r = await source.next();
+      if (r.done) {
+        return;
+      }
+      yield r.value;
+    }
+  }
+  const body = r.made();
+  if (body == null) {
+    return;
+  }
+  const s = body.stream;
+  if (body.kind == 1) {
+    yield utf8Encode(body.text);
+  } else if (s != null) {
+    for await (const chunk of s) {
+      yield chunk;
+    }
+  } else if (body.bytes.length > 0) {
+    yield body.bytes;
+  }
+}

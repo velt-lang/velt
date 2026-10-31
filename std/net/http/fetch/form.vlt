@@ -7,7 +7,8 @@ import { IoError } from "velt/io/error";
 import { URLSearchParams } from "velt/net/url";
 import { utf8DecodeLossy, utf8Encode } from "velt/encoding";
 import { BODY_TYPE, WHOLE_BODY, ByteSource } from "velt/io/streams/byte_source";
-import { Blob, File } from "velt/net/http/fetch/blob";
+import { Blob } from "velt/net/http/fetch/blob";
+import { File } from "velt/net/http/fetch/file";
 import { INSPECT } from "velt/lang/hooks/keys";
 
 /** A field's value: text, or a file. */

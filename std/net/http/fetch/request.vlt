@@ -1,4 +1,5 @@
-// velt/net/http (internal): the WHATWG `Request` and `RequestInit` (docs/std/net/http.md): a request
+// velt/net/http (internal): the WHATWG `Request` (docs/std/net/http.md; `RequestInit` is in
+// request_init.vlt): a request
 // `fetch` can send, made from a URL and the same options `fetch` takes, or one a server received
 // (`serverRequest`, source.vlt).
 //
@@ -13,84 +14,22 @@ import { JSON, JsonError } from "velt/prelude/json/json";
 import { IoError } from "velt/io/error";
 import { AbortController, AbortError, AbortSignal } from "velt/task";
 import { URL } from "velt/net/url";
-import { utf8DecodeLossy, utf8Encode } from "velt/encoding";
-import {
-  BodyInit,
-  BodyParts,
-  BodyStream,
-  bodyParts,
-  collect,
-  impliedType,
-  sourceType,
-} from "velt/net/http/fetch/body";
-import { Headers, HeadersInit } from "velt/net/http/fetch/headers";
+import { BodyParts, bodyParts, impliedType, sourceType } from "velt/net/http/fetch/body";
+import { BodyStream } from "velt/net/http/fetch/body_stream";
+import { Headers } from "velt/net/http/fetch/headers";
 import { tee } from "velt/net/http/fetch/tee";
 import { RequestSource } from "velt/net/http/fetch/source";
 import { INSPECT } from "velt/lang/hooks/keys";
-
-/** What `fetch` does with a redirect: follow it (default, up to 20), fail, or return it. */
-export type RequestRedirect = "follow" | "error" | "manual";
-
-/** The options of `fetch(input, init)` and `new Request(input, init)`. */
-export struct RequestInit {
-  /** Default "GET"; `get`, `post`, `put`, `delete`, `head` and `options` are uppercased. */
-  method?: string;
-  headers?: HeadersInit;
-  body?: BodyInit;
-  redirect?: RequestRedirect;
-  /**
-   * Aborting it rejects the `fetch` (and a body read in progress) with its `AbortError`
-   * (`TimeoutError` for `AbortSignal.timeout(ms)`), and cancels the request.
-   */
-  signal?: AbortSignal;
-  /** Velt: extra trusted CA certificates (PEM) for `https://`, e.g. a private or test CA. */
-  ca?: string;
-}
-
-/** The method as the Fetch standard normalizes it (std only: `fetch` uses it too). */
-export function normalizeMethod(m: string): string {
-  const up = m.toUpperCase();
-  if (
-    up == "DELETE" || up == "GET" || up == "HEAD" || up == "OPTIONS" || up == "POST" || up == "PUT"
-  ) {
-    return up;
-  }
-  return m;
-}
-
-// What only a request to be sent has: `fetch`'s options beyond method, headers and body.
-class Sending {
-  redirect: RequestRedirect;
-  signal: AbortSignal | null;
-  ca: string;
-
-  constructor(redirect: RequestRedirect, signal: AbortSignal | null, ca: string) {
-    this.redirect = redirect;
-    this.signal = signal;
-    this.ca = ca;
-  }
-}
-
-// What a request has beyond its key, URL and headers (`Request.#extra`), null while all of it is
-// default, as it is for a received request until its body is read: `fetch`'s options, the body
-// of a request made here, and whether the body was used.
-class Extra {
-  sending: Sending | null = null;
-  body: BodyParts | null = null;
-  used: bool = false;
-  // The signal of a request made without one, made when `signal` is first read.
-  idle: AbortSignal | null = null;
-}
-
-// A body read from `chunks`.
-function streamed(chunks: AsyncIterator<u8[], IoError | AbortError>): BodyParts {
-  return { kind: 3, text: "", bytes: [], stream: BodyStream.adopt(chunks), implied: 0 };
-}
-
-// The body of a request without one, as `fetch` takes it.
-function noBody(): BodyParts {
-  return { kind: 0, text: "", bytes: [], stream: null, implied: 0 };
-}
+import { Extra } from "velt/net/http/fetch/request_extra";
+import { Sending } from "velt/net/http/fetch/request_sending";
+import {
+  noBody,
+  requestBytes,
+  requestChunks,
+  requestText,
+  streamed,
+} from "velt/net/http/fetch/request_body";
+import { normalizeMethod, RequestInit, RequestRedirect } from "velt/net/http/fetch/request_init";
 
 export class Request {
   // Null until `headers` is first read.
@@ -327,20 +266,7 @@ export class Request {
 
   /** The body as text (invalid UTF-8 becomes U+FFFD, as in JS). */
   async text(): Promise<string, IoError | AbortError> {
-    this.claim();
-    const received = this.fromServer();
-    if (received != null) {
-      return utf8DecodeLossy(await received.body());
-    }
-    const body = this.made();
-    if (body == null) {
-      return "";
-    }
-    if (body.kind == 1) {
-      return body.text;
-    }
-    const s = body.stream;
-    return utf8DecodeLossy(s == null ? body.bytes : await collect(s));
+    return await requestText(this);
   }
 
   /** `JSON.parse<T>` of the body (see `Response.json`). */
@@ -349,21 +275,8 @@ export class Request {
   }
 
   // The body's bytes, as Velt's byte array.
-  private async rawBytes(): Promise<u8[], IoError | AbortError> {
-    this.claim();
-    const received = this.fromServer();
-    if (received != null) {
-      return await received.body();
-    }
-    const body = this.made();
-    if (body == null) {
-      return [];
-    }
-    if (body.kind == 1) {
-      return utf8Encode(body.text);
-    }
-    const s = body.stream;
-    return s == null ? body.bytes : await collect(s);
+  private rawBytes(): Promise<u8[], IoError | AbortError> {
+    return requestBytes(this);
   }
 
   // `bytes()` and `arrayBuffer()` are in velt/net/http/fetch/typed, loaded with the typed arrays they
@@ -402,32 +315,8 @@ export class Request {
   }
 
   // The body's chunks, for `BodyStream` (std only); reading them uses the body up.
-  private async *chunks(): AsyncIterator<u8[], IoError | AbortError> {
-    this.claim();
-    if (this.fromServer() != null) {
-      const source = this.received();
-      while (true) {
-        const r = await source.next();
-        if (r.done) {
-          return;
-        }
-        yield r.value;
-      }
-    }
-    const body = this.made();
-    if (body == null) {
-      return;
-    }
-    const s = body.stream;
-    if (body.kind == 1) {
-      yield utf8Encode(body.text);
-    } else if (s != null) {
-      for await (const chunk of s) {
-        yield chunk;
-      }
-    } else if (body.bytes.length > 0) {
-      yield body.bytes;
-    }
+  private chunks(): AsyncIterator<u8[], IoError | AbortError> {
+    return requestChunks(this);
   }
 
   /**

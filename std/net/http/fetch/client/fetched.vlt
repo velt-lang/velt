@@ -12,7 +12,7 @@ import { statusText } from "velt/net/http/fetch/status";
 import { BodyReader } from "velt/net/http/fetch/client/body";
 import { H2Body } from "velt/net/http/fetch/client/h2/body";
 import { Chain, CHUNK, codingsOf, decodeAll, tooMany } from "velt/net/http/fetch/client/decode";
-import { Head } from "velt/net/http/fetch/client/wire";
+import { Head } from "velt/net/http/fetch/client/head";
 
 /** A response `fetch` received. */
 export class Fetched {

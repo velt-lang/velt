@@ -1,0 +1,11 @@
+// velt/net/http (internal): `ResponseInit`, the options of `new Response(body, init)` and
+// `Response.json(data, init)`.
+
+import { HeadersInit } from "velt/net/http/fetch/headers";
+
+/** `new Response(body, init)` and `Response.json(data, init)`: default status 200. */
+export struct ResponseInit {
+  status?: number;
+  statusText?: string;
+  headers?: HeadersInit;
+}
