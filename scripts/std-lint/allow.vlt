@@ -29,7 +29,6 @@ export const allow: Allow = {
     "prelude/promise.vlt",
     "prelude/record.vlt",
     "prelude/sort.vlt",
-    "simd/sha.vlt",
   ],
   multiClass: [
     "encoding/json/tape.vlt",
