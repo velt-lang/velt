@@ -1,0 +1,15 @@
+std_moved_modules.vlt:3:23: error: `velt:json` is now `velt/encoding/json` (`velt:` specifiers were removed; the modules: https://veltlang.com/docs/std/)
+std_moved_modules.vlt:4:23: error: cannot find module `velt/json`
+  = note: `velt/json` is now `velt/encoding/json` (https://veltlang.com/docs/std/)
+std_moved_modules.vlt:5:23: error: cannot find module `velt/regex`
+  = note: `velt/regex` is now `velt/text` (https://veltlang.com/docs/std/)
+std_moved_modules.vlt:6:23: error: cannot find module `velt/fetch`
+  = note: `velt/fetch` is now `velt/net/http` (https://veltlang.com/docs/std/)
+std_moved_modules.vlt:7:21: error: `velt:url` is now `velt/net/url` (`velt:` specifiers were removed; the modules: https://veltlang.com/docs/std/)
+std_moved_modules.vlt:8:24: error: `velt:symbol` was removed: its names are globals, used without an import (`velt:` specifiers were removed; the modules: https://veltlang.com/docs/std/)
+std_moved_modules.vlt:9:22: error: cannot find module `velt/sqlite`
+  = note: `velt/sqlite` was removed: SQLite is the `sqlite` package now, imported as `"sqlite"` once package.vlt lists it in `dependencies` (https://github.com/velt-lang/velt/tree/main/packages/sqlite)
+std_moved_modules.vlt:10:25: error: `velt:postgres` was removed: the PostgreSQL client is the `postgres` package now, imported as `"postgres"` once package.vlt lists it in `dependencies` (https://github.com/velt-lang/velt/tree/main/packages/postgres); `velt:` specifiers were removed
+std_moved_modules.vlt:11:23: error: cannot find module `velt/http`
+  = note: `velt/http` was removed: the HTTP server is the `http-server` package now, imported as `"http-server"` once package.vlt lists it in `dependencies` (https://github.com/velt-lang/velt/tree/main/packages/http-server), and `fetch` and the HTTP types are in `velt/net/http`
+std_moved_modules.vlt:12:26: error: `velt:fs` is now `velt/fs` (`velt:` specifiers were removed; the modules: https://veltlang.com/docs/std/)

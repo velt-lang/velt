@@ -45,6 +45,7 @@ mod globals;
 mod import_meta;
 mod jsx;
 mod locate;
+mod moved;
 mod pick;
 mod resolve;
 mod spec;

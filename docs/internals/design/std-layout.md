@@ -43,7 +43,9 @@ import { Headers } from "velt/net/http";
   bundlers resolve std imports. That turns the `velt-import` ts-compat error into "install the
   types". `jsxImportSource: "velt/jsx"` works in a stock `tsconfig.json` too.
 - `velt:x` stops resolving. It becomes a compile error: `` `velt:` specifiers were removed;
-  std modules are `velt/<module>` (docs/std/README.md) ``. There is no alias period: we have no outside users to
+  std modules are `velt/<module>` ``, naming the module that replaced `x` (a table in the
+  compiler, `loader/moved.rs`, which also notes it on `cannot find module velt/<old name>`; a module
+  that left std names its package). There is no alias period: we have no outside users to
   protect, and two spellings would end up in docs and examples forever.
 - `vitest` keeps resolving to `velt/test`.
 

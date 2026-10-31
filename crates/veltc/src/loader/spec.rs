@@ -46,10 +46,18 @@ pub fn resolve_spec(spec: &str, importer_dir: &Path) -> Result<ModuleRef, String
         ));
     }
     if let Some(rel) = spec.strip_prefix("velt:") {
-        return Err(format!(
-            "`velt:` specifiers were removed: standard library modules are imported as \
-             `velt/<module>` (`velt/fs`; docs/std/README.md lists them), not `velt:{rel}`"
-        ));
+        let list = super::moved::STD_DOCS_URL;
+        return Err(match super::moved::now(rel, spec) {
+            // A package's sentence links its page; the others, the std docs.
+            Some(now) if now.contains("https://") => {
+                format!("{now}; `velt:` specifiers were removed")
+            }
+            Some(now) => format!("{now} (`velt:` specifiers were removed; the modules: {list})"),
+            None => format!(
+                "`velt:` specifiers were removed: standard library modules are imported as \
+                 `velt/<module>` (`velt/fs`; the modules: {list}), not `velt:{rel}`"
+            ),
+        });
     }
     if let Some(rel) = spec.strip_prefix(std_modules::SPECIFIER_PREFIX) {
         extension_check(spec)?;
@@ -180,7 +188,18 @@ mod tests {
     fn velt_colon_specifiers_are_removed() {
         let err = resolve_spec("velt:fs", Path::new(".")).unwrap_err();
         assert!(err.contains("`velt:` specifiers were removed"), "{err}");
-        assert!(err.contains("not `velt:fs`"), "{err}");
+        assert!(err.starts_with("`velt:fs` is now `velt/fs`"), "{err}");
+        // Per module: where it is now.
+        let err = resolve_spec("velt:json", Path::new(".")).unwrap_err();
+        assert!(
+            err.starts_with("`velt:json` is now `velt/encoding/json`"),
+            "{err}"
+        );
+        let err = resolve_spec("velt:sqlite", Path::new(".")).unwrap_err();
+        assert!(err.contains("the `sqlite` package"), "{err}");
+        // Not a module of the old layout: the general form.
+        let err = resolve_spec("velt:nothing", Path::new(".")).unwrap_err();
+        assert!(err.contains("not `velt:nothing`"), "{err}");
         let err = resolve_spec("std/fs", Path::new(".")).unwrap_err();
         assert!(err.contains("`velt/fs`"), "{err}");
     }

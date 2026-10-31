@@ -139,7 +139,7 @@ fn user_code_imports_only_public_std_modules() {
     assert_eq!(
         errors(&t, &std, "import { LOOSE } from \"velt/stray/loose\";\n"),
         ["`velt/stray/loose` is internal to the standard library / user code imports a module's \
-          `index.vlt` (docs/std/README.md lists the modules)"]
+          `index.vlt` (the modules: https://veltlang.com/docs/std/)"]
     );
     assert_eq!(
         errors(&t, &std, "import { Symbol } from \"velt/lang/symbol\";\n"),

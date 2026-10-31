@@ -90,6 +90,41 @@ Database drivers are packages, not std: the repository's `packages/` holds
 and [redis](../../packages/redis/README.md). They are written on public std APIs only
 ([`velt/db`](db.md), `velt/native`) and will move to repositories of their own.
 
+## From the former layout
+
+Before the `velt/<module>` layout, std modules were imported as `velt:<name>`. The compiler names
+the new import for each of them; the ones that changed beyond the prefix:
+
+| Was | Now |
+|---|---|
+| `velt:arena`, `velt:mem` | `velt/mem` |
+| `velt:bigint`, `velt:math` | `velt/math` |
+| `velt:channel`, `velt:sync` | `velt/sync` |
+| `velt:child_process` | `velt/process/child` |
+| `velt:collections/btree_map`, `…/deque`, `…/set`, … | `velt/collections` |
+| `velt:compress/brotli`, `velt:compress/inflate` | `velt/compress` |
+| `velt:csv` | `velt/encoding/csv` |
+| `velt:datetime`, `velt:timers` | `velt/time` |
+| `velt:dns` | `velt/net/dns` |
+| `velt:encoding/binary_string` | `velt/encoding` |
+| `velt:fetch` | `velt/net/http` |
+| `velt:fs_stream` | `velt/fs` |
+| `velt:html`, `velt:regex` | `velt/text` |
+| `velt:json` | `velt/encoding/json` |
+| `velt:stdin` | `velt/process` |
+| `velt:streams` | `velt/io` |
+| `velt:udp` | `velt/net/udp` |
+| `velt:url` | `velt/net/url` |
+| `velt:uuid` | `velt/random/uuid` |
+| `velt:websocket` | `velt/net/websocket` |
+| `velt:dom_exception`, `velt:proxy`, `velt:string_builder`, `velt:symbol`, `velt:typed_array` | globals: no import |
+| `velt:http` (the server) | the `http-server` package |
+| `velt:sqlite`, `velt:postgres`, `velt:redis` | the `sqlite`, `postgres` and `redis` packages |
+
+The others are `velt/<name>` (`velt:fs` is `velt/fs`). A package is imported by its name
+(`import { open } from "sqlite"`) once `package.vlt` lists it in `dependencies`; its README in
+the repository's `packages/` shows the entry.
+
 ## Runtime-backed and pure modules
 
 Every module is Velt source. Some bind runtime functions (`velt_rt_*`, implemented in Rust) for

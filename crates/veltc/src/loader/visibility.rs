@@ -140,10 +140,10 @@ fn internal(rel: &str, spec: &str, has_index: &dyn Fn(&str) -> bool) -> (String,
             ),
             None => (
                 format!("`{spec}` is internal to the standard library"),
-                vec![
-                    "user code imports a module's `index.vlt` (docs/std/README.md lists the modules)"
-                        .into(),
-                ],
+                vec![format!(
+                    "user code imports a module's `index.vlt` (the modules: {})",
+                    super::moved::STD_DOCS_URL
+                )],
             ),
         },
     }
