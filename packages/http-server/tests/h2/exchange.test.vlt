@@ -16,7 +16,13 @@ async function handler(req: HttpRequest, res: HttpResponse) {
       `${req.method()} ${req.path()} ${req.query()} ${req.target()} ${req.header("Host")} ${hs}`,
     );
   } else if (req.pathIs("/cookie")) {
-    res.send(`${req.headerValues("cookie")}|${req.headerValues("x-two")}`);
+    // The entries first (a `Headers` built from them is what `Request.headers` reads).
+    const entries = req
+      .headers()
+      .filter((h) => h[0] == "cookie" || h[0] == "x-two")
+      .map((h) => `${h[0]}=${h[1]}`)
+      .join(",");
+    res.send(`${entries}|${req.headerValues("cookie")}|${req.headerValues("x-two")}`);
   } else if (req.pathIs("/stream")) {
     const out = await res.stream();
     await out.write("a");
@@ -152,7 +158,9 @@ describe("HTTP/2 exchanges", () => {
     const c = await Client.open(port);
     c.get(1, "/cookie", ["cookie", "a=1", "x-two", "p", "cookie", "b=2", "x-two", "q"]);
     await c.flush();
-    expect(await c.until(endOf(1))).toBe("HEADERS 1 :status=200\nDATA 1 es 13:a=1; b=2|p, q");
+    expect(await c.until(endOf(1))).toBe(
+      "HEADERS 1 :status=200\nDATA 1 es 45:cookie=a=1; b=2,x-two=p,x-two=q|a=1; b=2|p, q",
+    );
     c.close();
   });
 

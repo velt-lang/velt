@@ -118,16 +118,26 @@ export class H2Request extends HttpRequest {
   }
 
   /// The headers' names (lowercase, as HTTP/2 sends them) and values, in order; the
-  /// pseudo-headers are not among them, `host` is when only `:authority` came.
+  /// pseudo-headers are not among them, `host` is when only `:authority` came, and `cookie`
+  /// fields are one entry joined with "; ", where the first one was (see `headerValues`).
   headers(): [string, string][] {
     const out: [string, string][] = [];
     const f = this.s.fields;
     let host = false;
+    let cookie = false;
     for (let i: i64 = 0; i < f.count; i++) {
-      if (f.nameByte(i) != 0x3a) {
-        host = host || f.nameIs(i, "host");
-        out.push([f.name(i), f.value(i)]);
+      if (f.nameByte(i) == 0x3a) {
+        continue;
       }
+      if (f.nameIs(i, "cookie")) {
+        if (!cookie) {
+          cookie = true;
+          out.push(["cookie", this.headerValues("cookie") ?? ""]);
+        }
+        continue;
+      }
+      host = host || f.nameIs(i, "host");
+      out.push([f.name(i), f.value(i)]);
     }
     const a = this.s.info.authority;
     if (!host && a >= 0) {
