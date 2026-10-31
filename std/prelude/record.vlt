@@ -29,6 +29,7 @@ import {
   RECORD_DEFINE_ACCESSOR,
   RECORD_DELETE,
   RECORD_ENTRIES,
+  RECORD_ENTRIES_OF,
   RECORD_EXTEND,
   RECORD_EXTEND_FROM,
   RECORD_EXTEND_MAYBE,
@@ -74,8 +75,8 @@ export class Record<K, V> {
   // The methods that read fields 2 and 3 are in std/lang/record/symbols.vlt, which a
   // program loads only when it mentions symbols or property definitions.
 
-  /** `r`'s string-keyed entries, for the generated `deepEqual`/`toEqual` (static: in no table). */
-  static __entriesOf(r: Record<K, V>): Map<K, V> {
+  /** `r`'s string-keyed entries (the hook `recordEntriesOf`; static: in no `any` table). */
+  static [RECORD_ENTRIES_OF]<RK, RV>(r: Record<RK, RV>): Map<RK, RV> {
     return r.entries;
   }
 

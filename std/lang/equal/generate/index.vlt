@@ -263,8 +263,7 @@ function content(
     w.line(`return ${a}.deepEquals(${b}, ${d});`);
   } else if (k == "record") {
     entryInstances(out, t);
-    const ea = `Record.__entriesOf(${a})`;
-    w.line(`return ${ea}.deepEquals(Record.__entriesOf(${b}), ${d});`);
+    w.line(`return recordEntriesOf(${a}).deepEquals(recordEntriesOf(${b}), ${d});`);
   } else if (k == "set") {
     w.line(`return ${a}.items.deepEquals(${b}.items, ${d});`);
   } else if (k == "date") {

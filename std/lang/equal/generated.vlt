@@ -18,6 +18,7 @@ import {
   keyEq,
   toAny,
 } from "velt/lang/intrinsics";
+import { recordEntriesOf } from "velt/lang/hooks/record";
 
 declare function velt_rt_deep_eq_enter(a: u64, b: u64): u8;
 declare function velt_rt_deep_eq_leave();

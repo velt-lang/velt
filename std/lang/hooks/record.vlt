@@ -1,11 +1,13 @@
 // velt/lang/hooks (internal): the compiler's hooks for records and prototypes (std-layout.md
 // §10b): `k in r` for a key known only at run time (velt_sema `in_keys.rs`), `===` on
-// prototypes, the array index a key names, which the prelude's `Record` orders its keys by, and
-// the record a JSON decoder makes of a map.
+// prototypes, the array index a key names, which the prelude's `Record` orders its keys by, the
+// record a JSON decoder makes of a map, and the map of a record's entries the generated
+// comparisons compare.
 
 import {
   PROTOTYPE_HAS_KEY,
   PROTOTYPE_SAME_AS,
+  RECORD_ENTRIES_OF,
   RECORD_FROM_MAP,
   RECORD_HAS,
   RECORD_IS_NULL_PROTO,
@@ -90,4 +92,12 @@ export function arrayIndex(s: string): i64 {
  */
 export function recordFromMap<K, V>(m: Map<K, V>): Record<K, V> {
   return Record[RECORD_FROM_MAP](m);
+}
+
+/**
+ * The map of the string-keyed entries of `r`: what `deepEqual` and `toEqual` compare (the code
+ * velt/lang/equal generates calls it, std/lang/equal/generated.vlt).
+ */
+export function recordEntriesOf<K, V>(r: Record<K, V>): Map<K, V> {
+  return Record[RECORD_ENTRIES_OF](r);
 }

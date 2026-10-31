@@ -115,6 +115,8 @@ export const RECORD_DECODED = Symbol("recordDecoded");
 export const RECORD_DELETE = Symbol("recordDelete");
 /** `Record`: what `entries` does for the compiler. */
 export const RECORD_ENTRIES = Symbol("recordEntries");
+/** `Record`: the map of a record's string-keyed entries, which generated comparisons compare. */
+export const RECORD_ENTRIES_OF = Symbol("recordEntriesOf");
 /** `Record`: what `extend` does for the compiler. */
 export const RECORD_EXTEND = Symbol("recordExtend");
 /** `Record`: what `extendFrom` does for the compiler. */
