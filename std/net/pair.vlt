@@ -1,6 +1,6 @@
 // velt/net (internal): `streamPair`, two connected in-memory streams.
 
-import { TcpStream } from "velt/net";
+import { TcpStream } from "velt/net/tcp_stream";
 
 declare function velt_rt_tcp_pair(): u64[];
 
