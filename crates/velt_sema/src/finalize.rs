@@ -243,7 +243,7 @@ fn adt_def(
         .iter()
         .any(|f| f.private_to.is_some() && !cx.plain_private(f.private_to, &f.name));
     let opaque = a.fields.iter().any(|f| {
-        f.private_to.is_some_and(|o| cx.declared_in_std(o))
+        f.private_to.is_some_and(|o| cx.keeps_handles(o))
             && !cx.plain_private(f.private_to, &f.name)
     });
     let fields = a

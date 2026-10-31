@@ -1,8 +1,16 @@
-// Decoding cannot build the driver's handles: JSON would forge a native handle.
+// The driver's handles have no JSON form: decoding would forge a native handle, and encoding
+// would hand one out.
 import { Database, Statement, Transaction } from "../../src/lib";
 
 function main() {
   const d = JSON.parse<Database>('{"handle":1}');
   const s = JSON.parse<Statement>('{"handle":1}');
   const t = JSON.parse<Transaction>('{"handle":1}');
+}
+
+// Encoding: the handles are private fields of types that bind the native library.
+function encode(d: Database, s: Statement, t: Transaction) {
+  console.log(JSON.stringify(d));
+  console.log(JSON.stringify(s));
+  console.log(JSON.stringify(t));
 }

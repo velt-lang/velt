@@ -32,6 +32,7 @@ use crate::object_copies::Seen;
 use crate::types::children;
 use crate::visit;
 
+mod handles;
 mod identity;
 mod union;
 
@@ -464,7 +465,7 @@ fn check(cx: &mut Ctx, t: TyId, span: Span, parse: bool) -> bool {
             "decoding fills fields without running the constructor, so it cannot build a type with private fields; decode into a type with public fields and construct it from that",
         ),
         Some((_, field_span)) => d.with_label(field_span, "private field").with_note(
-            "a std type with private fields (such as a runtime handle) has no JSON form; convert it to a type with public fields first",
+            "a type of std or of a native library keeps its handles in private fields, so it has no JSON form; convert it to a type with public fields first",
         ),
         None => d.with_note(
             "JSON supports numbers, boolean, string, literal types, enums, arrays, tuples, `T | null`, `Map<string, T>`, structs, classes and object literals of those, and `JsonValue`",
@@ -528,7 +529,7 @@ fn private_field(cx: &Ctx, t: TyId, parse: bool) -> Option<(String, Span)> {
             .fields
             .iter()
             .find(|f| {
-                f.private_to.is_some_and(|o| parse || cx.declared_in_std(o))
+                f.private_to.is_some_and(|o| parse || cx.keeps_handles(o))
                     && !cx.plain_private(f.private_to, &f.name)
             })
             .map(|f| (f.name.clone(), f.span)),
@@ -740,7 +741,7 @@ fn unserializable(cx: &mut Ctx, t: TyId, stack: &mut Vec<TyId>, parse: bool) -> 
                 // handle, also inherited by a user class) has no JSON form at all.
                 DefInfo::Adt(a)
                     if a.fields.iter().any(|f| {
-                        f.private_to.is_some_and(|o| parse || cx.declared_in_std(o))
+                        f.private_to.is_some_and(|o| parse || cx.keeps_handles(o))
                             && !cx.plain_private(f.private_to, &f.name)
                     }) =>
                 {

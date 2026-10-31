@@ -285,7 +285,7 @@ impl Builder {
         let getters = literal_getters(cx, d);
         match &cx.info[d.0 as usize] {
             DefInfo::Adt(a) => {
-                let std = cx.scopes[a.module].is_std;
+                let std = cx.keeps_handles(d);
                 m.qualified_name = if a.kind == AdtKind::Anon {
                     String::new()
                 } else {
@@ -300,7 +300,7 @@ impl Builder {
                         // The prelude `Error`'s `#name` is no runtime handle.
                         let plain = cx.plain_private(f.private_to, &f.name);
                         let std_private =
-                            !plain && f.private_to.is_some_and(|o| cx.declared_in_std(o));
+                            !plain && f.private_to.is_some_and(|o| cx.keeps_handles(o));
                         (
                             f.name.clone(),
                             f.declared,
@@ -428,7 +428,7 @@ fn std_private_field(cx: &Ctx, d: DefId) -> Option<String> {
     let a = cx.adt(d)?;
     (a.fields.iter())
         .find(|f| {
-            f.private_to.is_some_and(|o| cx.declared_in_std(o))
+            f.private_to.is_some_and(|o| cx.keeps_handles(o))
                 && !cx.plain_private(f.private_to, &f.name)
         })
         .map(|f| f.name.clone())

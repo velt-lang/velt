@@ -12,7 +12,10 @@ export class Field {
   hasDefault: bool = false;
   /** An object literal's getter (`get k() { … }`): `type` is what it returns. */
   isGetter: bool = false;
-  /** A private field a std type declares (its runtime state), also in a class extending it. */
+  /**
+   * A private field a std type, or a type of a module binding native code, declares (its
+   * runtime state: a handle), also in a class extending it.
+   */
   stdPrivate: bool = false;
   /**
    * A field the type's objects hold for an extension (`interface E extends T` with optional

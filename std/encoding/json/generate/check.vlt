@@ -37,7 +37,7 @@ export function stringifyProblem(model: Model, id: i64): string {
       top
         ? `\`${tn}\` has a private field \`${field}\`, so it has no JSON form`
         : `\`${tn}\` contains \`${bn}\`, which has a private field \`${field}\`, so it has no JSON form`;
-    return `cannot convert to or from JSON: ${what}\na std type with private fields (such as a runtime handle) has no JSON form; convert it to a type with public fields first`;
+    return `cannot convert to or from JSON: ${what}\na type of std or of a native library keeps its handles in private fields, so it has no JSON form; convert it to a type with public fields first`;
   }
   const what =
     top ? `\`${tn}\` has no JSON form` : `\`${tn}\` contains \`${bn}\`, which has no JSON form`;
@@ -48,7 +48,10 @@ export function stringifyProblem(model: Model, id: i64): string {
   return text;
 }
 
-/** The first private field of std's that keeps `t` from JSON (a runtime handle), or "". */
+/**
+ * The first private field of std's or of a native library's that keeps `t` from JSON (a
+ * handle), or "".
+ */
 function privateField(t: Type): string {
   if (t.privateField.length > 0) {
     return t.privateField;
