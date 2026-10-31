@@ -224,6 +224,8 @@ write. What differs from HTTP/1.1, for a handler:
   wait for an earlier response.
 - Header names arrive in lowercase; `header(name)` matches any case, and `host` is the request's
   `:authority` when no `host` header came. `headers()` leaves out the pseudo-headers.
+  `cookie` fields, which HTTP/2 clients may send one per cookie, read joined with `; `
+  (RFC 9113 §8.2.3), as one `Cookie` header would.
 - `keepAlive` is always true. The connection is never handed over: `isUpgrade(protocol)` is true
   for an extended CONNECT (RFC 8441: `:method CONNECT`, `:protocol websocket`; the server
   announces SETTINGS_ENABLE_CONNECT_PROTOCOL), and `upgrade(protocol)` answers it 200 and

@@ -90,7 +90,9 @@ export class H2Request extends HttpRequest {
   }
 
   /// The values of header `name` (any case) joined with ", " in the order they came, as
-  /// `Headers.get` reads them; null when it was not sent (`host` as for `header`).
+  /// `Headers.get` reads them; null when it was not sent (`host` as for `header`). `cookie`
+  /// fields are joined with "; ": HTTP/2 clients may split the one cookie header into a field
+  /// per cookie, to be put back together that way (RFC 9113 §8.2.3).
   headerValues(name: string): string | null {
     const first = this.find(name);
     if (first < 0) {
@@ -98,12 +100,13 @@ export class H2Request extends HttpRequest {
     }
     const f = this.s.fields;
     const n = Buffer.byteLength(name) as i64;
+    const sep = f.nameIs(first, "cookie") ? "; " : ", ";
     let out = f.value(first);
     for (let i = first + 1; i < f.count; i++) {
       if (
         f.nameLength(i) == n && f.buf.utf8EqualsIgnoreCase(name, f.heads[i * 4], f.heads[i * 4 + 1])
       ) {
-        out = `${out}, ${f.value(i)}`;
+        out = `${out}${sep}${f.value(i)}`;
       }
     }
     return out;
