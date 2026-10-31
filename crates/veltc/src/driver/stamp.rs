@@ -197,14 +197,14 @@ pub(super) fn render(key: &Key, sm: &SourceMap, built: &Built) -> String {
         {
             continue;
         }
-        // Read other than through `probe` (none is): no time, so it is always hashed.
-        let read = probe::Read {
-            stat: None,
-            hash: probe::content_hash(file.src.as_bytes()),
-        };
+        // Read other than through `probe` (none is): no time, so it is always hashed. A file
+        // `probe` read is recorded with its hash already, and is not hashed again.
         files
             .entry(vpm::relpath::absolute(&file.path))
-            .or_insert(read);
+            .or_insert_with(|| probe::Read {
+                stat: None,
+                hash: probe::content_hash(file.src.as_bytes()),
+            });
     }
     // What the build's generators read (entries of their hosts' stamps): files, and what
     // resolving their imports looked at (`dir`, `probe` and `real` entries, kept as they are).
