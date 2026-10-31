@@ -63,29 +63,10 @@ or, for a prelude function, its name in `HELPER_NAMES`. A unit test scans the co
 the optimizer and the backends for `"std/<module>::<name>"` literals and checks that each one
 stays checked.
 
-The JSON glue is the one exception, to keep its modules off hello world's bill: it calls the
-methods of `std/json/reader`'s `Reader` and the functions of `std/json/writer` by name
-(`velt_vir` `json_std_fn`), but only in the glue it builds for an instantiation of a JSON
-intrinsic: the decoders (`JsonParse`, `JsonParseRows`, `JsonParseCursor`, `ReadRows`,
-`ReadRow`) call the reader, the encoders (`JsonStringify`, `DbBind`) the writer. So those two
-modules (`JSON_GLUE`) stay lazy, and each is reached whole (all of its deferred definitions at
-once) at the first instantiation of one of its intrinsics in checked code
-(`body/lazy_std_json.rs`):
-
-- an intrinsic whose types are concrete is one;
-- one whose types mention the type parameters of the generic function it is in
-  (`JSON.parse<T>`'s `jsonParse<T>`) makes that function generic glue; so does a
-  call of generic glue with type arguments that mention the caller's own parameters
-  (`JsonValue.as<T>` calling `JSON.parse<T>`). A call of generic glue with concrete type
-  arguments is an instantiation;
-- conservatively, so is an intrinsic or a call in a function whose type parameters a call
-  does not name (a closure, a method of a generic type, a default), and any call of a generic
-  method through an interface or `any` once a generic glue function is a method.
-
-A prelude definition that only this glue calls by name (one that builds a `JsonValue` from the
-reader's state, say) can be reached the same way instead of staying checked as a helper:
-`JSON_GLUE_PRELUDE` lists it with its module, and it is deferred, even as a method, and reached
-with that module or by a reference in checked code (not by a use of its type).
+The JSON glue was the one exception (`JSON_GLUE`: the modules its decoders and encoders called
+by name, reached at the first instantiation of a JSON intrinsic). `JSON.parse`, `JSON.stringify`
+and velt/db's row readers and binder are generated code now (source-generators.md), which
+reaches what it calls as any checked code does, so the exception is gone with the intrinsics.
 
 So a prelude method that stays checked but that nothing calls (`JsonValue.as<T>`) costs hello
 world nothing. What the reader and writer call in other modules (`std/json/scan`,

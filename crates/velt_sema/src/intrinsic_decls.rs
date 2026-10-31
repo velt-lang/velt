@@ -65,10 +65,6 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("hash", Op(I::Hash)),
     ("includesEq", Op(I::IncludesEq)),
     ("keyEq", Op(I::KeyEq)),
-    // db.vlt
-    ("dbBind", Op(I::DbBind)),
-    ("readRowByColumn", Op(I::ReadRow)),
-    ("readRowsByColumn", Op(I::ReadRows)),
     // generator.vlt
     ("asyncGeneratorDispose", Op(I::AsyncGeneratorDispose)),
     ("asyncGeneratorResume", Op(I::AsyncGeneratorResume)),
@@ -79,9 +75,6 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("generatorReturn", Op(I::GeneratorReturn)),
     ("generatorThrow", Op(I::GeneratorThrow)),
     ("generatorValue", Op(I::GeneratorValue)),
-    // json.vlt
-    ("jsonParse", Op(I::JsonParse)),
-    ("jsonParseCursor", Op(I::JsonParseCursor)),
     // math.vlt
     ("abs", Op(I::FAbs)),
     ("ceil", Op(I::Ceil)),

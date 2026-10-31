@@ -3,7 +3,6 @@
 use velt_sema::hir::{self, Intrinsic, TyId};
 
 use super::async_fn::BoxHold;
-use super::json::JsonSource;
 use super::operand::proj;
 use super::rt::Rt;
 use super::{ice, unit, FnLower};
@@ -359,18 +358,6 @@ impl FnLower<'_, '_> {
                 | I::ChanTryReceive,
                 _,
             ) => self.async_intrinsic(i, args, ty),
-            (I::JsonParse, [a, flags, depth]) => {
-                self.json_parse(a, flags, depth, JsonSource::Text, ty)
-            }
-            (I::JsonParseRows, [a, flags, depth]) => {
-                self.json_parse(a, flags, depth, JsonSource::Rows, ty)
-            }
-            (I::JsonParseCursor, [a, flags, depth]) => {
-                self.json_parse(a, flags, depth, JsonSource::Cursor, ty)
-            }
-            (I::DbBind, [sink, a]) => self.db_bind(sink, a),
-            (I::ReadRows, [a]) => self.read_rows(a, true, ty),
-            (I::ReadRow, [a]) => self.read_rows(a, false, ty),
             (I::Attempt, [f]) => self.attempt(f, ty),
             (
                 I::WeakMapSet

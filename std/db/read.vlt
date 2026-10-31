@@ -1,49 +1,47 @@
 // velt/db (internal): `readRows` and `readRow`, the rows of a `RowSource` as typed values.
 //
-// For a row type of plain fields (numbers, bools, strings, `T | null` of those, `u8[]`) and a
-// source class whose methods do not throw, the compiler reads the rows column by column from
-// the source itself (`readRowsByColumn`, null for any other type: nothing read): no text, no
-// copy beyond the values kept. Any other row type is read through the JSON text of the rows
-// (`rowsJson`), with the same result.
+// For a row type of plain fields (numbers, bools, strings, `T | null` of those, `u8[]`) the rows
+// are read column by column from the source itself, by code generated per type
+// (`readRowsByColumn`, velt/db/generate/rows; null for any other type: nothing read): no text,
+// no copy beyond the values kept. Any other row type is read through the JSON text of the rows
+// (`rowsJson`), with the same result. What the source's methods throw becomes a `RowError`.
 
-import { readRowByColumn, readRowsByColumn } from "velt/lang/intrinsics";
+import { readRowByColumn, readRowsByColumn } from "velt/db/generated";
 import { JSON } from "velt/prelude/json/json";
 import { CellKind, RowSource } from "velt/db/row_source";
 import { RowError } from "velt/db/errors";
 
-/** Every remaining row of `src` as a `T`. Throws `RowError` for a row that does not fit. */
+/**
+ * Every remaining row of `src` as a `T`. Throws `RowError` for a row that does not fit, and with
+ * the message of what the source's methods throw.
+ */
 export function readRows<T, S extends RowSource>(src: S): T[] {
   try {
     const direct: T[] | null = readRowsByColumn<T, S>(src);
     if (direct != null) {
       return direct;
     }
-  } catch (e) {
-    throw new RowError(e.message);
-  }
-  const text = rowsJson<S>(src);
-  try {
+    const text = rowsJson<S>(src);
     return JSON.parse<T[]>(text);
   } catch (e) {
     throw new RowError(e.message);
   }
 }
 
-/** The next row of `src` as a `T`, or null when there is none. */
+/**
+ * The next row of `src` as a `T`, or null when there is none. Throws `RowError` as `readRows`
+ * does.
+ */
 export function readRow<T, S extends RowSource>(src: S): T | null {
-  if (!src.next()) {
-    return null;
-  }
   try {
+    if (!src.next()) {
+      return null;
+    }
     const direct: T | null = readRowByColumn<T, S>(src);
     if (direct != null) {
       return direct;
     }
-  } catch (e) {
-    throw new RowError(e.message);
-  }
-  const text = rowJson<S>(src);
-  try {
+    const text = rowJson<S>(src);
     return JSON.parse<T>(text);
   } catch (e) {
     throw new RowError(e.message);

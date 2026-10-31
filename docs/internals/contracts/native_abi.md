@@ -271,11 +271,10 @@ non-ASCII text), and 18–77 % faster than a `String` result (checked, then copi
 
 A database driver hands result rows to std's `JSON.parse<T[]>` decoder without making them
 JSON text: as a `u8[]` in the binary rows format of `velt_text::rows` (`BinRows` writes it,
-into a `velt_native::Array<u8>`, the Velt array itself). std decodes them with the std-only
-intrinsic `Intrinsic::JsonParseRows` (`(rows, flags, max_depth)`): the same generated decoder
-as `JSON.parse<T>`, over a reader made from the array (`velt_rt_json_reader_new_with` flag 4,
-rt_abi_async.md), which answers every call as it would for the JSON the rows stand for
-(`[{"col":value,...},...]`, or with `single` one row's object). No number formatting or
+into a `velt_native::Array<u8>`, the Velt array itself). The runtime's reader reads them (`velt_rt_json_reader_new_with` flag 4,
+rt_abi_async.md), answering every call as it would for the JSON the rows stand for
+(`[{"col":value,...},...]`, or with `single` one row's object); no std code decodes such an
+array now (drivers hand over a row cursor, below). No number formatting or
 escaping on the way out, no scanning on the way in.
 
 Layout: a header `single: u8, columns: u16, (name_len: u32, name bytes)*`, then the rows, one
@@ -311,8 +310,9 @@ union of whole results) gets the remaining rows copied into binary form once, an
 is read with a JSON reader over its text.
 
 When the row type is an object of plain fields (numbers, bools, strings, `T | null` of those,
-`u8[]`), the compiler reads the rows by column instead of through the JSON reader
-(`Glue::RowsRead`, rt_abi_async.md), with the same results and messages. packages/sqlite and
+`u8[]`), the generated decoder reads the rows by column instead of through the JSON reader
+(`velt_rt_rows_*`, rt_abi_async.md; velt/db/generate/columns.vlt), with the same results and
+messages. packages/sqlite and
 packages/postgres use cursors. A driver written in Velt offers its rows as std/db' `RowSource`
 instead ([velt/db](../../std/db.md)), read the same way through its own methods.
 
@@ -325,7 +325,7 @@ object's members), `name(bytes)` (the next value is the member of that name) and
 library takes it back with `close_sink::<S>(handle)`). velt/db's `bindParams<P>(sink, params)`
 looks the handle up (`velt_rt_db_sink`; false, binding nothing, when it names no open sink)
 and fills the sink: it
-calls them from code generated for `P` (`Glue::DbBind`): values in order for an array, a tuple
+calls them from code generated for `P` (velt/db/generate/bind.vlt): values in order for an array, a tuple
 or a lone value, `object()` and then names and values for an object, each value as its JSON
 text would read back (an integral number below 1e21 an int, NaN null, a `u8[]` member a blob).
 It does so for numbers, bools, strings, `T | null` of those, `u8[]` members and objects of such

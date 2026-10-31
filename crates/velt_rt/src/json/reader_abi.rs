@@ -51,6 +51,24 @@ pub unsafe extern "C" fn velt_rt_json_reader_new_with(
     )))
 }
 
+/// A reader over a driver's live rows (`cursor`: the address of a
+/// `velt_text::rows_cursor::RawCursor`, which the caller keeps until the reader is freed), with
+/// `flags` as [`velt_rt_json_reader_new_with`]'s (`FLAG_CURSOR` added): the reader's address.
+/// What velt/encoding/json's generated `parseJsonCursor<T>` reads a row type that is not read by
+/// column with.
+///
+/// # Safety
+/// `cursor` is a live `RawCursor`'s address.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_json_reader_over_cursor(
+    cursor: u64,
+    flags: u32,
+    max_depth: u32,
+) -> u64 {
+    let src = cursor as usize as *const VeltStr;
+    velt_rt_json_reader_new_with(src, flags | FLAG_CURSOR, max_depth) as usize as u64
+}
+
 /// May a JSON `null` stand for an absent optional field whose type has no `null`? 1 = yes
 /// (`JSON.parse<T>`), 0 = no: the decoder reads the field's value and fails
 /// (`FLAG_NULL_NOT_ABSENT`, `JSON.parse(text) as T`).

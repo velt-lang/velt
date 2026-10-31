@@ -444,8 +444,8 @@ function itself there, instantiated (`FnRef`), so the values compare equal to ea
   member (`V(m) => <m as T>`); re-tagging into a wider union may convert members the same way.
 - `Print`/`PrintErr`/`ToString` of a union format the active member (top-level
   style for `console.log` args: a string member prints raw). `JSON.parse` into a union
-  picks the member by the JSON value (velt_vir lower/json/union.rs); sema rejects unions whose
-  members it cannot tell apart.
+  picks the member by the JSON value (velt/encoding/json/generate/read_union.vlt); its
+  generator rejects unions whose members it cannot tell apart.
 - Clone/drop/eq/hash glue is the ordinary enum glue.
 
 ## Literal types
@@ -904,12 +904,9 @@ never builds or reads one: building a function in `unchecked` (any `Work` of its
 reading such a global is an ICE, as it would mean a reference sema did not see. Lowering may
 look up by name only what sema keeps checked: the prelude helpers (`velt_sema` `body/lazy_std.rs`
 `HELPER_NAMES`, which a test keeps in step with the `"__…"` names in lowering's code), the
-methods of the prelude's types, the modules in `EAGER`, and, in the glue built for a JSON
-intrinsic, the definitions of the module in `JSON_GLUE` it calls and the prelude definitions
-`JSON_GLUE_PRELUDE` lists with that module, which sema checks once checked code instantiates
-such an intrinsic (design/lazy-std.md): `std/json/reader` for `JsonParse`, `JsonParseRows`,
-`JsonParseCursor`, `ReadRows` and `ReadRow`, `std/json/writer` for
-`DbBind`.
+methods of the prelude's types and the modules in `EAGER`. (The JSON intrinsics, and the
+`JSON_GLUE` modules their glue called by name, are gone: `JSON.parse`, velt/db's row readers and
+its parameter binder are generated code, source-generators.md.)
 
 ## Symbols
 

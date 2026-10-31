@@ -2,7 +2,7 @@
 // arrays, tuples, objects, structs and classes, `Map<string, V>` and `Record<K, V>`.
 
 import { Model, Output, Type } from "velt/generate";
-import { isIdentifier } from "velt/encoding/json/generate/facts";
+import { hiddenKey, isIdentifier } from "velt/encoding/json/generate/facts";
 import { choices, messageQuote, recordKeys } from "velt/encoding/json/generate/choice";
 import { readInto, readNullable, utf8Length } from "velt/encoding/json/generate/read_value";
 
@@ -186,6 +186,10 @@ export function readObject(out: Output, model: Model, t: Type): void {
   }
   for (let i: i64 = 0; i < n; i++) {
     const f = fields[i];
+    if (hiddenKey(f)) {
+      // A symbol key: no key of the document names it (it stays absent).
+      continue;
+    }
     const name = out.literal(f.name);
     // The key's length in UTF-8 bytes, as the reader counts it.
     const bytes = utf8Length(f.name);
@@ -207,9 +211,24 @@ export function readObject(out: Output, model: Model, t: Type): void {
   const props: string[] = [];
   const segs: string[] = [];
   const later: i64[] = [];
+  // A required field a symbol keys: no key of a document names it, so decoding fails there.
+  let dead = false;
   for (let i: i64 = 0; i < n; i++) {
     const f = fields[i];
-    const missing = out.literal(`field "${f.name}"`);
+    segs.push(out.literal(`.${f.name}`));
+    if (dead) {
+      continue;
+    }
+    const shown = f.name.startsWith("\u{ffff}") ? `[${f.name.slice(1)}]` : f.name;
+    const missing = out.literal(`field "${shown}"`);
+    if (hiddenKey(f)) {
+      if (!f.optional) {
+        out.line(`throw jsonFailed(${missing});`);
+        dead = true;
+      }
+      // An optional one stays absent.
+      continue;
+    }
     if (empty[i] == "null") {
       out.line(`if (f${i} == null) { throw jsonFailed(${missing}); }`);
     } else if (empty[i] == "seen") {
@@ -217,7 +236,6 @@ export function readObject(out: Output, model: Model, t: Type): void {
     }
     const key = isIdentifier(f.name) ? f.name : out.literal(f.name);
     const value = empty[i] == "seen" ? model.type(f.type).literal : `f${i}`;
-    segs.push(out.literal(`.${f.name}`));
     if (f.optional && t.kind != "class") {
       // Set below only when its key was read: an object's `a?: T` left out is absent
       // (generated code may set a readonly field of a value it built).
@@ -228,7 +246,9 @@ export function readObject(out: Output, model: Model, t: Type): void {
   }
   const obj = `{ ${props.join(", ")} }`;
   const made = t.kind == "object" ? obj : `__construct<${out.typeName(t.id)}>(${obj})`;
-  if (later.length == 0) {
+  if (dead) {
+    // Nothing to build.
+  } else if (later.length == 0) {
     out.line(`return ${made};`);
   } else {
     out.line(`const o: ${out.typeName(t.id)} = ${made};`);

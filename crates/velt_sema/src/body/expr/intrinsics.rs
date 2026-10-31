@@ -69,15 +69,6 @@ impl FnCx<'_, '_> {
         let ck = self.check_call(&c, slots, args, exp, span);
         if matches!(
             i,
-            Intrinsic::JsonParse
-                | Intrinsic::JsonParseCursor
-                | Intrinsic::ReadRows
-                | Intrinsic::ReadRow
-        ) {
-            self.json_parse_throws(span);
-        }
-        if matches!(
-            i,
             Intrinsic::GeneratorResume | Intrinsic::GeneratorResumeWith | Intrinsic::GeneratorThrow
         ) {
             // Resuming throws what the generator's body throws (its `E`).

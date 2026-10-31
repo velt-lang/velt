@@ -5,7 +5,7 @@
 //!
 //! Any native driver can offer one: it implements [`RowCursor`], registers the cursor with the
 //! runtime (`open_cursor`, `sdk` feature) and hands velt/db's `decodeRows` the handle. std finds
-//! the cursor by it, decodes with `jsonParseCursor<T>` (flag `FLAG_CURSOR` of
+//! the cursor by it, decodes with `parseJsonCursor<T>` (flag `FLAG_CURSOR` of
 //! `velt_rt_json_reader_new_with`) and gives the handle back to the driver afterwards, which
 //! takes the cursor back (`close_cursor`), releases what it held and reports a failure the rows
 //! met.
@@ -14,7 +14,7 @@
 //! names), then the rows, each read cell by cell, in any order, between two steps.
 //!
 //! The other way, a [`ParamSink`] takes a statement's parameters as typed values from std's
-//! generated code (`dbBind<P>`), instead of as JSON text the driver parses.
+//! generated code (velt/db's `bindValues<P>`), instead of as JSON text the driver parses.
 
 use std::ffi::c_void;
 

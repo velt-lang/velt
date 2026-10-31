@@ -109,7 +109,7 @@ pub extern "C" fn db_close(kind: u32, handle: u64, tag: u64) -> *mut c_void {
 }
 
 /// `u64 velt_rt_db_cursor(u64 handle)` (std's velt/db): the address of the open row cursor
-/// `handle` names, for `jsonParseCursor`; 0 when it names none. The address stays
+/// `handle` names, for `parseJsonCursor`; 0 when it names none. The address stays
 /// valid until the driver closes the cursor.
 #[no_mangle]
 pub extern "C" fn velt_rt_db_cursor(handle: u64) -> u64 {
@@ -119,7 +119,7 @@ pub extern "C" fn velt_rt_db_cursor(handle: u64) -> u64 {
 }
 
 /// `u64 velt_rt_db_sink(u64 handle)` (std's velt/db): the address of the open parameter sink
-/// `handle` names, for `dbBind`; 0 when it names none.
+/// `handle` names, for `bindValues`; 0 when it names none.
 #[no_mangle]
 pub extern "C" fn velt_rt_db_sink(handle: u64) -> u64 {
     SINKS

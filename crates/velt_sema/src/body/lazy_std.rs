@@ -41,42 +41,21 @@ const EAGER: &[&str] = &[
     velt_common::std_module!(lang_this_fn),
 ];
 
-/// Std modules whose definitions lowering's JSON glue calls by name (`velt_vir` `json_std_fn`:
-/// `std/json/reader::Reader.<method>`, `std/json/writer::<fn>`): all of a module's deferred
-/// definitions are reached once checked code instantiates an intrinsic whose glue calls it
-/// (`lazy_std_json.rs`). What they call in other modules is reached from their code as usual.
-const JSON_GLUE: [&str; 2] = [
-    velt_common::std_module!(encoding_json_reader),
-    velt_common::std_module!(encoding_json_writer),
-];
-
-/// Per [`JSON_GLUE`] module: the prelude definitions (full names) that the same glue calls by
-/// name, reached with that module rather than kept checked as helpers (a `JsonValue` built from
-/// the reader's state). Deferred even when they are methods, and reached only with the module
-/// or by a reference in checked code, not by a use of their type: nothing else calls them.
-const JSON_GLUE_PRELUDE: [&[&str]; 2] = [&[], &[]];
-
 /// Prelude classes whose methods are checked once the type is used, as a class outside the
 /// prelude's are: lowering looks up none of their methods by name except where it also has a
-/// value of the type (`JsonValue[JSON_RUNTIME_HANDLE]` prints one, `[JSON_FROM_READER]` decodes
-/// one: [`LAZY_PRELUDE_STATICS`]), and
-/// their code reaches large modules most programs never load (`JsonValue`'s the tape,
+/// value of the type (`JsonValue[JSON_RUNTIME_HANDLE]` prints one; generated decoders call
+/// [`LAZY_PRELUDE_STATICS`]), and their code reaches large modules most programs never load (`JsonValue`'s the tape,
 /// velt/encoding/json/tape).
 const LAZY_PRELUDE_TYPES: &[&str] = &[velt_common::std_item!(prelude_json, "JsonValue")];
 
 /// Static methods of [`LAZY_PRELUDE_TYPES`] checked with the type's methods, once the type is
-/// used: `JsonValue[JSON_FROM_READER]`, which the decoder of a type holding a `JsonValue` calls
-/// (it parses the value into a tape, so a decoder of other types checks none of the tape).
+/// used: `JsonValue[JSON_FROM_READER]`, which the decoder generated for a type holding a
+/// `JsonValue` calls (it parses the value into a tape, so a decoder of other types checks none
+/// of the tape).
 const LAZY_PRELUDE_STATICS: &[&str] = &[concat!(
     velt_common::std_item!(prelude_json, "JsonValue."),
     velt_common::std_key!(json_from_reader)
 )];
-
-/// The [`JSON_GLUE`] module whose glue calls prelude definition `name`
-/// ([`JSON_GLUE_PRELUDE`]).
-fn json_glue_prelude(name: &str) -> Option<usize> {
-    JSON_GLUE_PRELUDE.iter().position(|l| l.contains(&name))
-}
 
 /// The prelude's modules (path prefixes): lowering looks up the methods of their classes and
 /// some of their functions by name ([`is_helper`]), so only their other free functions and
@@ -166,8 +145,6 @@ pub(crate) struct Lazy {
     methods: FxHashMap<DefId, Vec<DefId>>,
     /// Per class: the classes that extend it directly.
     subclasses: FxHashMap<DefId, Vec<DefId>>,
-    /// When the [`JSON_GLUE`] modules are reached.
-    json: json::JsonReach,
     /// The definitions below this one had their defaults scanned ([`reach`]).
     defaults_scanned: usize,
 }
@@ -183,7 +160,6 @@ impl Lazy {
             used: FxHashSet::default(),
             methods: FxHashMap::default(),
             subclasses: FxHashMap::default(),
-            json: json::JsonReach::default(),
             defaults_scanned: 0,
         }
     }
@@ -238,13 +214,6 @@ pub(crate) fn plan(cx: &mut Ctx) {
             }
         }
         if let (DefInfo::Fn(f), true) = (&cx.info[i], deferred(cx, d)) {
-            if let Some(k) = JSON_GLUE.iter().position(|m| *m == mods[f.module].path) {
-                cx.lazy.json.defs[k].push(d);
-            }
-            if let Some(k) = json_glue_prelude(&f.name) {
-                cx.lazy.json.defs[k].push(d);
-                continue;
-            }
             let with_type = matches!(f.kind, FnKind::Method | FnKind::Ctor)
                 || LAZY_PRELUDE_STATICS.contains(&f.name.as_str());
             if let (Some(o), true) = (f.owner, with_type) {
@@ -261,12 +230,6 @@ pub(crate) fn deferred(cx: &Ctx, d: DefId) -> bool {
     }
     match &cx.info[d.0 as usize] {
         DefInfo::Fn(f) if f.source.is_none() => false,
-        DefInfo::Fn(f)
-            if cx.lazy.modules[f.module] == Mode::Helpers
-                && json_glue_prelude(&f.name).is_some() =>
-        {
-            true
-        }
         DefInfo::Fn(f) => match f.kind {
             FnKind::Free | FnKind::Static => match cx.lazy.modules[f.module] {
                 Mode::Eager => false,
@@ -345,7 +308,6 @@ pub(crate) fn reach(cx: &mut Ctx) {
             if !done || !cx.lazy.scanned.insert(d) {
                 continue;
             }
-            sc.cur = Some(d);
             let deferred_fn = deferred(cx, d);
             match (&mut cx.defs[i], &mut cx.info[i]) {
                 (Some(hir::Def::Fn(f)), info) => {
@@ -367,9 +329,7 @@ pub(crate) fn reach(cx: &mut Ctx) {
                 _ => {}
             }
         }
-        sc.cur = None;
         used_types(cx, std::mem::take(&mut sc.types), &mut sc.found);
-        json::settle(cx, &mut sc);
         let mut checked = false;
         for d in std::mem::take(&mut sc.found) {
             if !deferred(cx, d) {
@@ -534,15 +494,6 @@ struct Scan {
     found: Vec<DefId>,
     /// Types of its expressions and locals.
     types: Vec<TyId>,
-    /// The function being scanned (none for defaults and constants).
-    cur: Option<DefId>,
-    /// The JSON intrinsics it uses: the [`JSON_GLUE`] module, the function they are in, and
-    /// their types (`json::settle`).
-    json: Vec<(usize, Option<DefId>, Vec<TyId>)>,
-    /// Its calls (and function values) with type arguments: caller, callee, type arguments.
-    calls: Vec<(Option<DefId>, DefId, Vec<TyId>)>,
-    /// Whether it calls a generic method through an interface or dynamically.
-    generic_dispatch: bool,
 }
 
 /// The definitions and types `e` refers to, into `sc` (`visit` walks mutable HIR; nothing is
@@ -563,23 +514,11 @@ fn refs_of(e: &hir::Expr, sc: &mut Scan) {
             // A type argument is a used type: monomorphization builds the methods the callee
             // calls on it (`probe<Gadget>()` printing a `T`).
             sc.types.extend(targs);
-            if !targs.is_empty() {
-                sc.calls.push((sc.cur, *d, targs.clone()));
-            }
         }
         E::AdtLit { type_args, .. } | E::Variant { type_args, .. } | E::New { type_args, .. } => {
             sc.types.extend(type_args)
         }
         E::Global(d) => sc.found.push(*d),
-        E::Call {
-            callee: Callee::Intrinsic(i),
-            args,
-        } => {
-            if let Some(k) = json::json_glue(i) {
-                let tys = (args.iter().map(|a| a.ty)).chain([e.ty]).collect();
-                sc.json.push((k, sc.cur, tys));
-            }
-        }
         E::Call {
             callee: Callee::Dyn {
                 method_type_args, ..
@@ -587,7 +526,6 @@ fn refs_of(e: &hir::Expr, sc: &mut Scan) {
             ..
         } => {
             sc.types.extend(method_type_args);
-            sc.generic_dispatch |= !method_type_args.is_empty();
         }
         E::Call {
             callee:
@@ -599,14 +537,10 @@ fn refs_of(e: &hir::Expr, sc: &mut Scan) {
             ..
         } => {
             sc.types.extend(method_type_args.iter().chain(iface_args));
-            sc.generic_dispatch |= !method_type_args.is_empty();
         }
         _ => {}
     }
 }
-
-#[path = "lazy_std_json.rs"]
-mod json;
 
 #[cfg(test)]
 #[path = "lazy_std_tests.rs"]

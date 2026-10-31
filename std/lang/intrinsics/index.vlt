@@ -37,7 +37,6 @@ export {
 } from "velt/lang/intrinsics/atomic";
 export { chanReceive, chanSend, chanTryReceive, chanTrySend } from "velt/lang/intrinsics/channel";
 export { hash, includesEq, keyEq } from "velt/lang/intrinsics/compare";
-export { dbBind, readRowByColumn, readRowsByColumn } from "velt/lang/intrinsics/db";
 export {
   asyncGeneratorDispose,
   asyncGeneratorResume,
@@ -49,7 +48,6 @@ export {
   generatorThrow,
   generatorValue,
 } from "velt/lang/intrinsics/generator";
-export { jsonParse, jsonParseCursor } from "velt/lang/intrinsics/json";
 export { abs, ceil, floor, round, sqrt, trunc } from "velt/lang/intrinsics/math";
 export { share, transfer } from "velt/lang/intrinsics/ownership";
 export {

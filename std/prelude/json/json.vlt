@@ -4,8 +4,7 @@
 //
 // `JSON.stringify<T>` / `JSON.parse<T>` are generated per type at compile time by the source
 // generators of velt/encoding/json (a string builder for stringify, a pull-reader decoder for
-// parse; a type that generator does not decode yet by the compiler's `jsonParse` intrinsic);
-// parse failures throw a `SyntaxError` `JsonError` ("expected string at $.name"). The
+// parse); parse failures throw a `SyntaxError` `JsonError` ("expected string at $.name"). The
 // generated code writes a `JsonValue` (at any depth) with its `[JSON_WRITE](b)`, decodes one with
 // `JsonValue[JSON_FROM_READER](r)`, and `console.log` prints one from the runtime tree
 // `[JSON_RUNTIME_HANDLE]()` makes for it (freed after); the keys are std/lang/hooks/keys.vlt's,

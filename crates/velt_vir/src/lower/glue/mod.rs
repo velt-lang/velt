@@ -22,8 +22,6 @@
 //! | TransferRoot | `(p: ptr)`                      | Transfer of a whole value: one copy per object reached twice (velt_rt `transfer_map`) |
 //! | ObjTransfer/DynTransfer | `(obj: ptr) -> ptr`  | the same for a class object / interface data (a tagged pointer: check for many threads, many.rs) |
 //! | ManyCheck | `(p: ptr)`                         | panic if `*p` holds a function value that cannot be called from several threads (many.rs) |
-//! | JsonRead  | `(r: ptr, out: ptr, ctx: ptr) -> bool` | decode one value (json/read.rs)      |
-//! | JsonParse | `(src: ptr, flags: u32, max_depth: u32, out: ptr, err: ptr) -> bool` | whole-document `JSON.parse<T>` |
 //! | Trace     | `(obj: ptr, visit: ptr, ctx: ptr)` | weak maps: visit the counted objects `obj` refers to (trace.rs) |
 //! | TraceIn   | `(p: ptr, visit: ptr, ctx: ptr)`   | the same for an inline value at `p`      |
 //! | WeakRetain / WeakRelease | `(word: u64)`       | retain / release a weak map value word   |
@@ -97,10 +95,6 @@ pub(crate) enum Glue {
     ObjTransfer,
     DynTransfer,
     ManyCheck,
-    JsonRead,
-    JsonParse,
-    DbBind,
-    RowsRead,
     Trace,
     TraceIn,
     WeakRetain,
@@ -176,10 +170,6 @@ impl Glue {
             Glue::ObjTransfer => "objtransfer",
             Glue::DynTransfer => "dyntransfer",
             Glue::ManyCheck => "manycheck",
-            Glue::JsonRead => "jsonread",
-            Glue::JsonParse => "jsonparse",
-            Glue::DbBind => "dbbind",
-            Glue::RowsRead => "rowsread",
             Glue::Trace => "trace",
             Glue::TraceIn => "tracein",
             Glue::WeakRetain => "weakretain",
@@ -233,10 +223,6 @@ impl Glue {
             Glue::Format | Glue::ObjFormat | Glue::DynFormat => (vec![Ptr, Ptr, U32], Unit),
             Glue::Eq | Glue::Same | Glue::SameValue | Glue::KeySame => (vec![Ptr, Ptr], Bool),
             Glue::Hash => (vec![Ptr], U64),
-            Glue::JsonRead => (vec![Ptr, Ptr, Ptr], Bool),
-            Glue::JsonParse => (vec![Ptr, U32, U32, Ptr, Ptr], Bool),
-            Glue::DbBind => (vec![Ptr, Ptr], Unit),
-            Glue::RowsRead => (vec![Ptr, Ptr, Ptr], Bool),
             Glue::Trace | Glue::TraceIn | Glue::WeakBoxTrace => (vec![Ptr, Ptr, Ptr], Unit),
             Glue::WeakRetain | Glue::WeakRelease => (vec![U64], Unit),
             Glue::AnyTruthy => (vec![Ptr], Bool),
@@ -291,12 +277,6 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::ObjTransfer => lw.obj_transfer_body(args[0], ty),
             Glue::DynTransfer => lw.dyn_transfer_body(args[0], ty),
             Glue::ManyCheck => lw.many_check_body(args[0], ty),
-            Glue::JsonRead => lw.json_read_body(args[0], args[1], args[2], ty),
-            Glue::JsonParse => {
-                lw.json_parse_body(args[0], (args[1], args[2]), args[3], args[4], ty)
-            }
-            Glue::DbBind => lw.db_bind_body(a(0), args[1], ty),
-            Glue::RowsRead => lw.rows_read_body(a(0), args[1], args[2], ty),
             Glue::Trace => lw.trace_body(args[0], args[1], args[2], ty),
             Glue::TraceIn => lw.trace_in_body(args[0], args[1], args[2], ty),
             Glue::WeakBoxTrace => lw.weak_box_trace_body(args[0], args[1], args[2], ty),

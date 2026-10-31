@@ -360,35 +360,6 @@ pub enum Intrinsic {
     ThreadLocalSet,
 
     // M4 JSON (compile-time generated glue over the rt JSON reader)
-    /// std only: `jsonParse<T>(text: borrow string, flags: i64, max_depth: i64): T`
-    /// — the body of the prelude's `JSON.parse<T>(text, options)`: decodes `text` as `T` with the
-    /// reader options of `velt_rt_json_reader_new_with` (flag 1 = reject unknown keys;
-    /// `max_depth` 0 = no limit); throws `JsonError { message }`.
-    JsonParse,
-    /// `(rows: borrow u8[], flags: i64, max_depth: i64) -> T` (no std declaration calls it now)
-    /// — `JsonParse` over a driver's binary result rows (`velt_text::rows`) instead of JSON
-    /// text: the same generated decoder, the reader made with flag `FLAG_ROWS`
-    /// (native_abi.md "Rows").
-    JsonParseRows,
-    /// std only: `jsonParseCursor<T>(cursor: u64, flags: i64, max_depth: i64): T`
-    /// — `JsonParseRows` over a driver's live rows (the address of a
-    /// `velt_text::rows_cursor::RawCursor`, which the caller keeps and releases afterwards): the
-    /// reader made with flag `FLAG_CURSOR` (native_abi.md "Row cursors").
-    JsonParseCursor,
-    /// std only: `dbBind<P>(sink: u64, params: borrow P): bool` — hands `params`
-    /// to a driver's parameter sink (the address of a `velt_text::rows_cursor::RawSink`) value
-    /// by value, as their JSON text would bind; false (nothing done) for a type std binds as
-    /// JSON text (native_abi.md "Parameter sinks").
-    DbBind,
-    /// std only: `readRowsByColumn<T, S>(src: borrow S): T[] | null` — every remaining row
-    /// of the std/db `RowSource` `src`, read by column when `T` is an object of plain fields
-    /// and `S` a class whose row methods do not throw; throws `JsonError { message }` for a row
-    /// that does not fit. `null` (nothing read) for any other `T` or `S`: std/db then reads
-    /// the rows as JSON.
-    ReadRows,
-    /// std only: `readRowByColumn<T, S>(src: borrow S): T | null` — the current row of
-    /// `src` (`next()` returned true), as `ReadRows` reads each; `null` as for `ReadRows`.
-    ReadRow,
     /// std only: `strCharCodeAt(s: borrow string, i: i64) -> i64` — the byte at
     /// `i`, or -1 when out of range (`s.charCodeAt(i)`, POC byte model); inline code, no call.
     StrCharCodeAt,

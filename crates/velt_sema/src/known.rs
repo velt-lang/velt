@@ -748,10 +748,4 @@ impl Ctx<'_> {
     pub fn is_json_value(&self, d: DefId) -> bool {
         self.prelude_adt("JsonValue") == Some(d)
     }
-
-    /// `JsonError` (prelude class), the type `JSON.parse` throws.
-    pub fn json_error_ty(&mut self) -> Option<TyId> {
-        let d = self.prelude_adt("JsonError")?;
-        Some(self.ty.intern(TyKind::Adt(d, vec![])))
-    }
 }

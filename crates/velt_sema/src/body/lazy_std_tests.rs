@@ -69,12 +69,6 @@ fn helper_literals(dir: &std::path::Path, out: &mut Vec<String>) {
     }
 }
 
-/// Is `name` (a short name) the last part of one of [`JSON_GLUE_PRELUDE`]'s definitions?
-fn in_json_glue_prelude(name: &str) -> bool {
-    (JSON_GLUE_PRELUDE.iter().flat_map(|l| l.iter()))
-        .any(|full| full.rsplit(['.', ':']).next() == Some(name))
-}
-
 #[test]
 fn every_name_lowering_looks_up_is_a_helper() {
     let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
@@ -94,12 +88,9 @@ fn every_name_lowering_looks_up_is_a_helper() {
     let missing: Vec<&String> = (names.iter())
         .filter(|n| !n.ends_with("__") && !n.starts_with("__DWARF") && !n.starts_with("__GCC"))
         .filter(|n| !C_SYMBOLS.contains(&n.as_str()))
-        .filter(|n| !is_helper(n) && !in_json_glue_prelude(n))
+        .filter(|n| !is_helper(n))
         .collect();
-    assert!(
-        missing.is_empty(),
-        "add to HELPER_NAMES (or, for one only JSON glue calls, to JSON_GLUE_PRELUDE): {missing:?}"
-    );
+    assert!(missing.is_empty(), "add to HELPER_NAMES: {missing:?}");
 }
 
 /// The `std_item!(<module>, "<name>")` uses in the Rust sources under `dir`, outside tests.
@@ -124,7 +115,7 @@ fn std_literals(dir: &std::path::Path, out: &mut Vec<(String, String)>) {
 }
 
 /// A definition lowering, the optimizer or a backend looks up by name must stay checked: its
-/// module is checked whole ([`EAGER`]) or reached with the JSON glue ([`JSON_GLUE`]), or it is
+/// module is checked whole ([`EAGER`]), or it is
 /// a prelude helper or a prelude type (whose methods stay checked), or an interface (no bodies;
 /// the methods lowering calls through it are those of a type checked code uses).
 #[test]
@@ -151,7 +142,7 @@ fn every_std_definition_lowering_names_stays_checked() {
         .filter(|(m, name)| !INTERFACES.contains(&(m.as_str(), name.as_str())))
         .filter(|(m, name)| !RECOGNIZED.contains(&(m.as_str(), name.as_str())))
         .filter(|(m, name)| {
-            let eager = EAGER.iter().any(|p| m.starts_with(p)) || JSON_GLUE.contains(&m.as_str());
+            let eager = EAGER.iter().any(|p| m.starts_with(p));
             let prelude = HELPERS.iter().any(|p| m.starts_with(p))
                 && (name.is_empty()
                     || is_helper(name)

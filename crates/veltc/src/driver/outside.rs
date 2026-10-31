@@ -57,6 +57,9 @@ const PURE_RUNTIME: &[&str] = &[
     "rc",
     "realloc",
     "regex",
+    // Reading rows by column: a driver's cursor (reached through its native code, which counts)
+    // or a `RowSource` written in Velt.
+    "rows",
     "rwlock",
     "set",
     "signal",

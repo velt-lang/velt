@@ -155,6 +155,17 @@ impl FnLower<'_, '_> {
         self.call(vir::Callee::Extern(id), args, dest, r.sig().3);
     }
 
+    /// Calls the runtime function `r`, whose `u8` result is a flag: whether it is not 0.
+    pub(in crate::lower) fn rt_u8(&mut self, r: Rt, args: Vec<Operand>) -> Operand {
+        let d = self.temp(Ty::U8);
+        self.call_rt(r, args, Some(Place::local(d)));
+        let zero = super::cint(0, Ty::U8);
+        self.rvalue_temp(
+            Ty::Bool,
+            vir::Rvalue::Binary(vir::BinOp::Ne, Operand::Copy(Place::local(d)), zero),
+        )
+    }
+
     /// Materialize deferred blocks, prune unreachable ones and build the VIR function.
     pub(super) fn finish(mut self, symbol: String, params: Vec<Ty>, ret: Ty) -> Function {
         self.build_div_zero_blocks();

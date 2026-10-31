@@ -152,7 +152,7 @@ async fn velt_postgres__connect(url: String) -> Result<u64, Error> {
 }
 
 /// `client.query(sql, params)` → `IoResult<u64>`: the rows as a row cursor (`super::cursor`)
-/// for `jsonParseCursor`, given back to `velt_postgres__close_rows`; with
+/// for `parseJsonCursor`, given back to `velt_postgres__close_rows`; with
 /// `first_only` the first row alone, 0 if there is none. `params` is JSON.
 #[export(async)]
 async fn velt_postgres__query_rows(
@@ -195,7 +195,7 @@ async fn velt_postgres__execute_bound(client: u64, sql: Str, sink: u64) -> Resul
     .await
 }
 
-/// A parameter sink (`velt_text::rows_cursor::RawSink`) for `dbBind`, handed on to
+/// A parameter sink (`velt_text::rows_cursor::RawSink`) for `bindValues`, handed on to
 /// a `…_bound` call or given up with `velt_postgres__bind_abort`.
 #[export]
 fn velt_postgres__bind_begin() -> u64 {

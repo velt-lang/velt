@@ -189,11 +189,8 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
         .map(DefId)
         .filter(|d| cx.generator_of(*d).is_some())
         .collect();
-    // `JSON.parse<T>` calls the generated `parseJsonTop<T>` (velt/encoding/json), whose code
-    // decodes the types its generator ports and calls `jsonParse<T>` for the others: the
-    // calls of the generated function need `T` decoded, so a type without a JSON form is
-    // reported where the program parses it, never in the generated code (step 5 of
-    // docs/internals/design/source-generators.md moves these checks into the generator).
+    // `JSON.parse<T>` calls the generated `parseJsonTop<T>` (velt/encoding/json): its calls
+    // decode `T`, which extended layouts need to know (`layouts.parsed`).
     let parsers: FxHashSet<DefId> = generated
         .iter()
         .copied()
@@ -208,9 +205,6 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
             DefInfo::Fn(f) => f.params.iter().any(|p| has_param(cx, p.ty)),
             _ => false,
         })
-        .collect();
-    let generated_modules: FxHashSet<usize> = (0..cx.modules.len())
-        .filter(|m| cx.is_generated_module(*m))
         .collect();
     // Looks at values matter only for object copies; most programs make none.
     let looks = !cx.object_copies.copies.is_empty();
@@ -231,10 +225,6 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
     };
     for (i, d) in cx.defs.iter_mut().enumerate() {
         let Some(Def::Fn(f)) = d else { continue };
-        let in_generated = matches!(
-            cx.info.get(i),
-            Some(DefInfo::Fn(info)) if generated_modules.contains(&info.module)
-        );
         let mut u = Uses::default();
         let mut seen: FxHashSet<TyId> = FxHashSet::default();
         ids.f = DefId(i as u32);
@@ -258,7 +248,7 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
                     u.types.push((*t, e.span));
                 }
             }
-            uses_of(ids.tys, &mut u, e, looks, (&parsers, in_generated));
+            uses_of(ids.tys, &mut u, e, looks, &parsers);
             if looks {
                 identity::generated_look(&lookers, e, &mut u.direct);
             }

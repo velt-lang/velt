@@ -18,11 +18,12 @@ packages read their rows the same way (below).
 - `readRows<T, S extends RowSource>(src: S): T[]`: every remaining row.
 - `readRow<T, S extends RowSource>(src: S): T | null`: the next row, or null.
 - `RowError { message }`: a row that doesn't fit `T` (`expected i64 at $[0].id`, `expected
-  field "name" at $[1]`). Extra columns are ignored.
+  field "name" at $[1]`). Extra columns are ignored. An error the source's methods throw is
+  thrown again as a `RowError` with its message (the rows are never read another way instead).
 
-For a row type of plain fields (numbers, bools, strings, `T | null` of those, `u8[]`) and a
-source class whose methods don't throw, the compiler reads the rows column by column from the
-source itself: each column is matched to its field once, and no text is made. Any other row
+For a row type of plain fields (numbers, bools, strings, `T | null` of those, `u8[]`), the rows
+are read column by column from the source itself, by code generated for the row type at compile
+time: each column is matched to its field once, and no text is made. Any other row
 type (nested objects, arrays, unions) is read through the JSON text of the rows, with the same
 result.
 
@@ -91,7 +92,7 @@ library owns: a row cursor over its live result and a parameter sink for a state
 `velt_text::rows_cursor` on the Rust side). The library registers each one with the runtime and
 gives its Velt side a handle (a `u64`), never an address: std looks the handle up, so a number
 that names no open cursor or sink (made up, closed already, the other kind) never reaches
-memory. The decoder and the binder are generated for each type by the compiler.
+memory. The decoder and the binder are generated for each type at compile time.
 
 - `decodeRows<T>(cursor: u64): T[]`: every row of the cursor as a `T`, each column filling the
   field of its name with the same conversions and messages as `readRows`. The cursor stays the

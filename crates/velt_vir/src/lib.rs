@@ -112,11 +112,10 @@
 //! failures call `velt_rt_set_throw_loc(" at …")`, and an `Uncaught …` report appends
 //! `velt_rt_throw_loc()`. Plain `lower` emits none of this (no locations, empty suffixes).
 //!
-//! # JSON (M4, `lower/json/`)
-//! `JSON.parse<T>` calls one generated function per type (`Glue::JsonRead` over the rt pull
-//! reader, `Glue::JsonParse` for the document; `JSON.stringify` is Velt code a source generator
-//! writes, velt/encoding/json); a failed parse throws the prelude's `JsonError { message }` with a
-//! `$.field[3]`-style path built only on the failure path.
+//! # JSON (`lower/json.rs`)
+//! `JSON.parse<T>` and `JSON.stringify` are Velt code source generators write per type
+//! (velt/encoding/json/generate); lowering only prints a `JsonValue` (from the runtime tree its
+//! `[JSON_RUNTIME_HANDLE]()` makes) and walks a `Record`'s entries in key order.
 
 pub mod vir;
 

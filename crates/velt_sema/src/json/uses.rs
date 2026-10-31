@@ -9,16 +9,15 @@ use super::{param_in, Need, Uses};
 /// The qualified name's end of the generated function `JSON.parse<T>` calls.
 pub(super) const PARSE_TOP: &str = "::parseJsonTop";
 
-/// The JSON intrinsic calls, generic calls and closures of one expression, and with `looks`
-/// its `console.log` and `===` calls. `parsers`: the generated `parseJsonTop` (a call of it
-/// needs its `T` decoded); `in_generated`: the expression is generated code, whose
-/// `jsonParse<T>` was needed by such a call already.
+/// The decoding calls, generic calls and closures of one expression, and with `looks` its
+/// `console.log` and `===` calls. `parsers`: the generated `parseJsonTop` (a call of it
+/// decodes its `T`).
 pub(super) fn uses_of(
     tys: &crate::types::Types,
     u: &mut Uses,
     e: &Expr,
     looks: bool,
-    (parsers, in_generated): (&FxHashSet<DefId>, bool),
+    parsers: &FxHashSet<DefId>,
 ) {
     // A type parameter read without a lock: whatever it is instantiated with may hold one.
     let unlocked = match &e.kind {
@@ -48,10 +47,6 @@ pub(super) fn uses_of(
         u.direct.push((a.ty, a.span, Need::NoLock));
     }
     match &e.kind {
-        E::Call {
-            callee: Callee::Intrinsic(Intrinsic::JsonParse),
-            ..
-        } if !in_generated => u.direct.push((e.ty, e.span, Need::Json(true))),
         E::Call {
             callee: Callee::Def(d, _),
             ..

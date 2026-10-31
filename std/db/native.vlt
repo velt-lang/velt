@@ -8,11 +8,12 @@
 // `bindParams` binds nothing. The driver keeps
 // owning what it registered and takes it back by the same handle.
 //
-// The decoder and the binder are generated per type by the compiler: a row is read cell by cell
-// from the driver's memory into the `T` being built, and parameters go to the driver value by
-// value, without JSON text in between.
+// The decoder and the binder are generated per type by source generators (velt/db/generate,
+// velt/encoding/json/generate): a row is read cell by cell from the driver's memory into the
+// `T` being built, and parameters go to the driver value by value, without JSON text in between.
 
-import { dbBind, jsonParseCursor } from "velt/lang/intrinsics";
+import { parseJsonCursor } from "velt/encoding/json/generated";
+import { bindValues } from "velt/db/generated";
 import { RowError } from "velt/db/errors";
 import { velt_rt_db_cursor, velt_rt_db_sink } from "velt/db/rt";
 
@@ -26,7 +27,7 @@ import { velt_rt_db_cursor, velt_rt_db_sink } from "velt/db/rt";
 export function decodeRows<T>(cursor: u64): T[] {
   const raw = openCursor(cursor);
   try {
-    return jsonParseCursor<T[]>(raw, 0, 0);
+    return parseJsonCursor<T[]>(raw, 0, 0);
   } catch (e) {
     throw new RowError(e.message);
   }
@@ -40,7 +41,7 @@ export function decodeRows<T>(cursor: u64): T[] {
 export function decodeRow<T>(cursor: u64): T {
   const raw = openCursor(cursor);
   try {
-    return jsonParseCursor<T>(raw, 0, 0);
+    return parseJsonCursor<T>(raw, 0, 0);
   } catch (e) {
     throw new RowError(e.message);
   }
@@ -57,7 +58,7 @@ export function decodeRow<T>(cursor: u64): T {
  */
 export function bindParams<P>(sink: u64, params: P): bool {
   const raw = velt_rt_db_sink(sink);
-  return raw != 0 && dbBind<P>(raw, params);
+  return raw != 0 && bindValues<P>(raw, params);
 }
 
 // The address of the open row cursor `handle` names; throws `RowError` when it names none.
