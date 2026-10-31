@@ -28,8 +28,13 @@ fn main() {
     println!("cargo:rustc-env=VELT_RELEASE_TAG={release}");
     println!("cargo:rerun-if-env-changed=GITHUB_REF_TYPE");
     println!("cargo:rerun-if-env-changed=GITHUB_REF_NAME");
-    // Re-run when HEAD moves: HEAD itself (branch switches), the branch ref, and packed refs.
-    let mut watched = vec!["HEAD".to_string(), "packed-refs".to_string()];
+    // Re-run when HEAD moves: HEAD itself (branch switches), the branch ref, and packed refs;
+    // and when a tag is created (`refs/tags`, for VELT_RELEASE_TAG).
+    let mut watched = vec![
+        "HEAD".to_string(),
+        "packed-refs".to_string(),
+        "refs/tags".to_string(),
+    ];
     watched.extend(git(&["symbolic-ref", "-q", "HEAD"]));
     for rel in watched {
         // A missing path would make cargo re-run this script on every build.
