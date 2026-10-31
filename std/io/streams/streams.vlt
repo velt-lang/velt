@@ -11,7 +11,7 @@
 
 import { IoError } from "velt/io/error";
 import { AbortError } from "velt/task/errors";
-import { ByteSource } from "velt/io/streams/byte_source";
+import { BYTE_CHUNKS, ByteSource } from "velt/io/streams/byte_source";
 import { Uint8Array } from "velt/lang/typed_array/uint8_array";
 import {
   CLOSED,
@@ -98,7 +98,7 @@ export class ReadableStream<R> extends ByteSource {
    * The chunks as a body's bytes (std only: `new Response(stream)`, a request body): each one
    * must be a `Uint8Array` (copied, as a body's bytes are), else the read fails as Node's does.
    */
-  __byteChunks(): AsyncIterator<u8[], IoError | AbortError> {
+  [BYTE_CHUNKS](): AsyncIterator<u8[], IoError | AbortError> {
     return bodyBytes<R>(this);
   }
 

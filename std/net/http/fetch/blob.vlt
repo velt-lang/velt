@@ -8,7 +8,7 @@
 
 import { ArrayBuffer, BufferView } from "velt/lang/typed_array/core";
 import { utf8DecodeLossy, utf8Encode } from "velt/encoding";
-import { ByteSource } from "velt/io/streams/byte_source";
+import { BODY_TYPE, WHOLE_BODY, ByteSource } from "velt/io/streams/byte_source";
 
 /** What a blob is made of: text (encoded as UTF-8), bytes, or another blob. */
 export type BlobPart = string | u8[] | BufferView | ArrayBuffer | Blob;
@@ -77,12 +77,12 @@ export class Blob extends ByteSource {
     return this.#bytes;
   }
 
-  __wholeBody(): u8[] | null {
+  [WHOLE_BODY](): u8[] | null {
     // A copy: a body's bytes may become an `ArrayBuffer`, whose bytes nothing else may hold.
     return this.#bytes.slice();
   }
 
-  __type(): string {
+  [BODY_TYPE](): string {
     return this.#kind;
   }
 

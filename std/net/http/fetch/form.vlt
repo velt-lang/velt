@@ -6,7 +6,7 @@
 import { IoError } from "velt/io/error";
 import { URLSearchParams } from "velt/net/url";
 import { utf8DecodeLossy, utf8Encode } from "velt/encoding";
-import { ByteSource } from "velt/io/streams/byte_source";
+import { BODY_TYPE, WHOLE_BODY, ByteSource } from "velt/io/streams/byte_source";
 import { Blob, File } from "velt/net/http/fetch/blob";
 
 /** A field's value: text, or a file. */
@@ -138,7 +138,7 @@ export class FormData extends ByteSource {
     return this.#boundary;
   }
 
-  __wholeBody(): u8[] | null {
+  [WHOLE_BODY](): u8[] | null {
     const b = this.boundary();
     let out: u8[] = [];
     for (let i: i64 = 0; i < (this.#names.length as i64); i++) {
@@ -158,7 +158,7 @@ export class FormData extends ByteSource {
     return out.concat(utf8Encode(`--${b}--\r\n`));
   }
 
-  __type(): string {
+  [BODY_TYPE](): string {
     return `multipart/form-data; boundary=${this.boundary()}`;
   }
 

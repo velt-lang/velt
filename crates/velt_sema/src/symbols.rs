@@ -63,9 +63,16 @@ fn literal_text(e: &ast::Expr) -> Option<String> {
 
 impl Ctx<'_> {
     /// Does `Symbol` in `module` name the global `Symbol` (std/lang/symbol/index.vlt), not a binding of
-    /// the module's own?
+    /// the module's own? A std module may import it (`import { Symbol } from "velt/lang/symbol"`):
+    /// its symbol keys are then known in programs that never name `Symbol` themselves.
     pub(crate) fn names_global_symbol(&self, module: usize) -> bool {
-        !self.scopes[module].items.contains_key("Symbol") && self.prelude.contains_key("Symbol")
+        match self.scopes[module].items.get("Symbol") {
+            None => self.prelude.contains_key("Symbol"),
+            Some(it) => {
+                self.scopes[module].is_std
+                    && self.std_def(velt_common::std_item!(lang_symbol, "Symbol")) == Some(*it)
+            }
+        }
     }
 
     /// The symbol module constant `d` holds when its initializer is a call of the global

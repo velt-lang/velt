@@ -6,7 +6,7 @@ import { IoError } from "velt/io/error";
 import { AbortError } from "velt/task";
 import { URLSearchParams } from "velt/net/url";
 import { ArrayBuffer, BufferView } from "velt/lang/typed_array/core";
-import { ByteSource } from "velt/io/streams/byte_source";
+import { BODY_TYPE, BYTE_CHUNKS, WHOLE_BODY, ByteSource } from "velt/io/streams/byte_source";
 
 /**
  * A body: text, bytes (a typed array, an `ArrayBuffer`, a `DataView`, or Velt's `u8[]`), form
@@ -72,11 +72,11 @@ export function bodyParts(body: BodyInit | null): BodyParts {
   if (body instanceof ByteSource) {
     // A blob or form: its bytes (its type is set by `sourceType`); a `ReadableStream`: its
     // `Uint8Array` chunks, read as the body is.
-    const whole = body.__wholeBody();
+    const whole = body[WHOLE_BODY]();
     if (whole != null) {
       return { kind: 2, text: "", bytes: whole, stream: null, implied: 0 };
     }
-    const stream = BodyStream.adopt(body.__byteChunks());
+    const stream = BodyStream.adopt(body[BYTE_CHUNKS]());
     return { kind: 3, text: "", bytes: [], stream: stream, implied: 0 };
   }
   // A typed array or `DataView` (a `BufferView`), or a buffer: its bytes, copied (as JS does).
@@ -99,7 +99,7 @@ export function bodyParts(body: BodyInit | null): BodyParts {
  */
 export function sourceType(body: BodyInit | null): string | null {
   if (body instanceof ByteSource) {
-    const t = body.__type();
+    const t = body[BODY_TYPE]();
     return t.length > 0 ? t : null;
   }
   return null;
