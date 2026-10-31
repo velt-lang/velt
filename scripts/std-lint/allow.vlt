@@ -40,7 +40,6 @@ export const allow: Allow = {
     "net/http/fetch/client/wire.vlt",
     "net/http/fetch/request.vlt",
     "net/http/fetch/response.vlt",
-    "net/udp/index.vlt",
     "net/url/index.vlt",
     "net/websocket/bytes.vlt",
     "net/websocket/handshake.vlt",
@@ -54,7 +53,6 @@ export const allow: Allow = {
   ],
   indexCode: [
     "encoding/json/index.vlt",
-    "net/udp/index.vlt",
     "net/url/index.vlt",
     "package/index.vlt",
   ],
