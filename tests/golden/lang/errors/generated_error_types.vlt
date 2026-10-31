@@ -1,0 +1,12 @@
+// A type with an error in it is reported where it is written, and once: the generators of
+// `JSON.parse`, `JSON.stringify` and `deepEqual` are not asked about it (they reported it as
+// "`_` has no JSON form" before the real error).
+type W = { s: Nope };
+type R = Record<Missing, string>;
+
+function main() {
+  const w = JSON.parse<W>("{}");
+  console.log(JSON.stringify(w), deepEqual(w, w));
+  const r = JSON.parse<R>("{}");
+  console.log(JSON.stringify(r));
+}

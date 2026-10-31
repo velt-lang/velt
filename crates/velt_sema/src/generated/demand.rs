@@ -48,13 +48,45 @@ pub(crate) fn compute(cx: &mut Ctx) -> Vec<Instance> {
     let found = match &walked.found {
         Some((n, found)) if *n == cx.defs.len() => found.clone(),
         _ => {
-            let found = compute_with(cx, &mut walked);
+            let mut found = compute_with(cx, &mut walked);
+            // A type with an error in it (an unknown name, a bad type argument) is reported
+            // where it is written: no generator is asked about it, which would report it again
+            // as a value it cannot handle (`_`).
+            let mut clean = FxHashSet::default();
+            found.retain(|(_, targs, _)| !reaches_error(cx, targs, &mut clean));
             walked.found = Some((cx.defs.len(), found.clone()));
             found
         }
     };
     cx.gen.binding.walked = walked;
     found
+}
+
+/// Do the types `targs` reach an error type, through their parts or the fields of the object
+/// types among them? `clean`: types known to reach none (from earlier calls), grown by this one.
+fn reaches_error(cx: &mut Ctx, targs: &[TyId], clean: &mut FxHashSet<TyId>) -> bool {
+    let mut seen: FxHashSet<TyId> = FxHashSet::default();
+    let mut stack: Vec<TyId> = targs.to_vec();
+    while let Some(t) = stack.pop() {
+        if clean.contains(&t) || !seen.insert(t) {
+            continue;
+        }
+        let kind = cx.ty.kind(t).clone();
+        if matches!(kind, TyKind::Error) {
+            return true;
+        }
+        if let TyKind::Adt(d, args) = &kind {
+            let fields: Vec<TyId> = (cx.adt(*d).into_iter())
+                .flat_map(|a| a.fields.iter().map(|f| f.ty))
+                .collect();
+            for f in fields {
+                stack.push(cx.subst(f, args));
+            }
+        }
+        stack.extend(children(&kind));
+    }
+    clean.extend(seen);
+    false
 }
 
 fn compute_with(cx: &mut Ctx, walked: &mut Walked) -> Vec<Instance> {

@@ -340,3 +340,36 @@ fn generated_comparisons_are_not_copied_per_call_site() {
         .collect();
     assert!(copies.is_empty(), "{copies:#?}");
 }
+
+/// A type with an error in it (an unknown name) is reported once, where it is written: no
+/// generator is asked about it (`JSON.parse`'s and `JSON.stringify`'s reported it as "`_` has no
+/// JSON form" before the real error).
+#[test]
+fn a_type_with_an_error_reaches_no_generator() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let main = tmp.path().join("main.vlt");
+    std::fs::write(
+        &main,
+        "type W = { s: Nope };\n\
+         type T = [number, ...Missing[]];\n\
+         function main() {\n\
+         \x20 const w = JSON.parse<W>(\"{}\");\n\
+         \x20 console.log(JSON.stringify(w), deepEqual(w, w));\n\
+         \x20 const t = JSON.parse<T>(\"[1]\");\n\
+         \x20 console.log(JSON.stringify(t));\n\
+         }\n",
+    )
+    .expect("main");
+    let out = Command::new(env!("CARGO_BIN_EXE_velt"))
+        .arg("check")
+        .arg(&main)
+        .current_dir(tmp.path())
+        .env("VELT_BUILD_CACHE", tmp.path().join("cache"))
+        .output()
+        .expect("run velt");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{stderr}");
+    assert!(stderr.contains("cannot find type `Nope`"), "{stderr}");
+    assert!(stderr.contains("variadic tuple types"), "{stderr}");
+    assert!(!stderr.contains("JSON form"), "{stderr}");
+}
