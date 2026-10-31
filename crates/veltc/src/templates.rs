@@ -175,7 +175,7 @@ impl Template {
     }
 
     /// The packages a project from this template starts with: the servers' HTTP server, from
-    /// the Velt repository on GitHub (packages/http-server, the `main` branch).
+    /// the Velt repository on GitHub (packages/http-server, [`http_server`]).
     pub fn dependencies(self) -> Vec<(&'static str, vpm::manifest::Dependency)> {
         match self {
             Template::Api | Template::Websocket => vec![("http-server", http_server())],
@@ -224,11 +224,24 @@ impl Template {
     }
 }
 
-/// `http-server` as a git dependency on the Velt repository.
+/// `http-server` as a git dependency on the Velt repository: at this toolchain's release tag
+/// (`v0.5.0`), so a project gets the server its toolchain was released with; on the `main` branch
+/// for a toolchain built from any other commit, whose version names an earlier release.
 pub fn http_server() -> vpm::manifest::Dependency {
+    http_server_at(env!("VELT_RELEASE_TAG"))
+}
+
+/// `http-server` at `release_tag`, or on `main` when it is empty.
+fn http_server_at(release_tag: &str) -> vpm::manifest::Dependency {
+    let (tag, branch) = if release_tag.is_empty() {
+        (None, Some("main".to_string()))
+    } else {
+        (Some(release_tag.to_string()), None)
+    };
     vpm::manifest::Dependency::Detailed(vpm::manifest::DetailedDependency {
         git: Some(HTTP_SERVER_REPO.to_string()),
-        branch: Some("main".to_string()),
+        tag,
+        branch,
         path: Some("packages/http-server".to_string()),
         ..Default::default()
     })
@@ -274,6 +287,25 @@ mod tests {
             assert_eq!(attributes.contents, GITATTRIBUTES, "{t:?}");
             assert_eq!(attributes.if_exists, IfExists::AppendLines, "{t:?}");
         }
+    }
+
+    /// A released toolchain's projects take the server at its release tag, others from `main`.
+    #[test]
+    fn the_http_server_is_pinned_to_the_release_tag() {
+        let manifest =
+            |dep| vpm::scaffold::manifest_text_depending("demo", None, &[("http-server", dep)]);
+        let released = manifest(http_server_at("v0.5.0"));
+        assert!(released.contains("tag: \"v0.5.0\""), "{released}");
+        assert!(!released.contains("branch"), "{released}");
+        assert!(
+            released.contains("path: \"packages/http-server\""),
+            "{released}"
+        );
+        let dev = manifest(http_server_at(""));
+        assert!(dev.contains("branch: \"main\""), "{dev}");
+        assert!(!dev.contains("tag"), "{dev}");
+        let tag = env!("VELT_RELEASE_TAG");
+        assert!(tag.is_empty() || tag == format!("v{}", env!("CARGO_PKG_VERSION")));
     }
 
     #[test]

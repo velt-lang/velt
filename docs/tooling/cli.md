@@ -286,6 +286,11 @@ velt init --editor vscode [--dir <dir>]
 | `websocket` | a WebSocket chat server and terminal client, with an end-to-end test |
 | `lib` | a library: exports with `/** */` doc comments for `velt doc`, tests, ready for `velt publish` |
 
+The `api` and `websocket` projects depend on the `http-server` package from the Velt repository
+on GitHub, at the tag of the toolchain's release (`tag: "v0.5.0"`), so a project gets the server
+its toolchain was released with; a toolchain built from any other commit takes it from the
+`main` branch.
+
 Every template builds, passes `velt test` and is formatted. `velt init` writes the same files
 into the current directory; it never overwrites files without `--force`, always keeps an
 existing `README.md`, and names the package after the directory unless `--name` is given.
