@@ -417,3 +417,11 @@ export declare system function lastOsError(): i32;
 declare function velt_rt_x(): void;",
     );
 }
+
+#[test]
+fn intrinsic_function_declarations() {
+    holds(
+        "export declare intrinsic function arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void;
+export declare intrinsic function throwLoc(): string;",
+    );
+}

@@ -407,6 +407,7 @@ pub fn func(name: &str, params: &[(&str, &str)], ret: Option<&str>, body: Vec<St
         throws: None,
         is_async: false,
         is_system: false,
+        is_intrinsic: false,
         generator: None,
         is_generator: false,
         this_param: None,

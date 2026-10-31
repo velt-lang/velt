@@ -75,6 +75,16 @@ Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exi
   signature alone is that function type, otherwise the intersection of the signatures and the
   members (and an interface's bases).
 
+## Declared intrinsics (additive AST extension)
+- `FnSig::is_intrinsic` (`ast.rs`): `declare intrinsic function name<T>(…): R;`, an
+  `ItemKind::ExternFn` like `declare system function` (`intrinsic` is a word only between
+  `declare` and `function`; never `async`). Only std declares them, in `std/lang/intrinsics/`
+  (`std_modules`: `lang_intrinsics`); elsewhere sema reports the declaration. A call is checked
+  against the declaration and is the same HIR `Call { Intrinsic(..) }` as before
+  (hir_encodings.md); the name maps to the `Intrinsic` in `velt_sema::intrinsic_decls`, whose
+  test fails on a declaration without a table entry or an entry without a declaration
+  (docs/internals/design/std-layout.md §10).
+
 ## Who owns what
 | Area | Crates / files |
 |---|---|

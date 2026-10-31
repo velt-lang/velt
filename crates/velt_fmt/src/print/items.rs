@@ -53,12 +53,14 @@ impl<'a> Printer<'a> {
             ItemKind::Var(var) => cat![self.var_decl(var), ";"],
             ItemKind::Extend(decl) => self.extend(decl),
             ItemKind::ExternFn(sig) => {
-                let asyncness = match (sig.is_system, sig.is_async) {
+                let asyncness = match (sig.is_system, sig.is_intrinsic, sig.is_async) {
                     // Not a system function (the check says why), but written as it was.
-                    (true, true) => "async system ",
-                    (true, false) => "system ",
-                    (false, true) => "async ",
-                    (false, false) => "",
+                    (true, _, true) => "async system ",
+                    (true, _, false) => "system ",
+                    // `declare intrinsic function` is never async (it parses only so).
+                    (false, true, _) => "intrinsic ",
+                    (false, false, true) => "async ",
+                    (false, false, false) => "",
                 };
                 let sig = self.fn_sig(sig, "function ", sig.span.hi);
                 cat!["declare ", asyncness, sig, ";"]

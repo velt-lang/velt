@@ -76,6 +76,7 @@ impl<'a> Parser<'a> {
                         throws,
                         is_async,
                         is_system: false,
+                        is_intrinsic: false,
                         generator: None,
                         is_generator: false,
                         this_param: Some(Box::new(ty.clone())),

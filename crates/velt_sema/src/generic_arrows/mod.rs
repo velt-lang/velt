@@ -216,6 +216,7 @@ fn lifted_arrow(v: &ast::VarDecl, rest: bool) -> Option<ast::FnDecl> {
         throws: throws.clone(),
         is_async: *is_async,
         is_system: false,
+        is_intrinsic: false,
         generator: None,
         is_generator: false,
         this_param: None,

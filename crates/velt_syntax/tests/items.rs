@@ -103,6 +103,27 @@ fn declare_system_function() {
     assert!(matches!(&m.items[3].kind, ItemKind::ExternFn(s) if !s.is_system));
 }
 
+/// `declare intrinsic function`: `intrinsic` is a word only between `declare` and `function` (a
+/// function may still be named `intrinsic`), and the declaration is generic like any other.
+#[test]
+fn declare_intrinsic_function() {
+    let m = parse_ok(
+        "export declare intrinsic function arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void;
+         function intrinsic(): i32 { return 1; }
+         declare function intrinsic2(): i32;",
+    );
+    let ItemKind::ExternFn(sig) = &m.items[0].kind else {
+        panic!()
+    };
+    assert!(sig.is_intrinsic && !sig.is_system && !sig.is_async && m.items[0].exported);
+    assert_eq!(sig.name.name, "arraySwap");
+    assert_eq!(sig.generics.len(), 1);
+    assert_eq!(sig.params.len(), 3);
+    assert_eq!(sig.params[0].name.name, "xs");
+    assert!(matches!(&m.items[1].kind, ItemKind::Function(f) if f.sig.name.name == "intrinsic"));
+    assert!(matches!(&m.items[2].kind, ItemKind::ExternFn(s) if !s.is_intrinsic));
+}
+
 /// `declare generated("<spec>") function`: a generic function with an empty body whose
 /// generator module is the string; `generated` is a word only there.
 #[test]
