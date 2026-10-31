@@ -321,6 +321,43 @@ pub(crate) fn write(path: &Path, text: &str) -> std::io::Result<()> {
     })
 }
 
+/// The files the stamp at `path` records with a size and time older than the stamp itself (so
+/// trusted by [`check`]), with their hashes: what [`probe::record_reusing`] may reuse for a file
+/// that still has that size and time, instead of hashing it again.
+pub(super) fn known(path: &Path) -> std::collections::BTreeMap<PathBuf, probe::Read> {
+    let mut known = std::collections::BTreeMap::new();
+    let (Ok(text), Some((_, written))) = (std::fs::read_to_string(path), probe::stat(path)) else {
+        return known;
+    };
+    if text.lines().next() != Some(HEADER) {
+        return known;
+    }
+    for line in text.lines() {
+        let Some((head, file)) = line.split_once('\t') else {
+            continue;
+        };
+        let mut fields = head.split(' ');
+        if fields.next() != Some("file") {
+            continue;
+        }
+        let (Some(hash), Some(size), Some(time)) = (fields.next(), fields.next(), fields.next())
+        else {
+            continue;
+        };
+        let (Ok(size), Ok(time)) = (size.parse(), time.parse()) else {
+            continue;
+        };
+        if time < written {
+            let read = probe::Read {
+                stat: Some((size, time)),
+                hash: hash.to_string(),
+            };
+            known.insert(PathBuf::from(file), read);
+        }
+    }
+    known
+}
+
 /// [`check`] of the stamp at `path`, against the time it was written: the number of unit
 /// objects, and the std cache's objects the link also needs.
 pub(super) fn read(path: &Path, key: &Key) -> Option<(usize, Vec<PathBuf>)> {

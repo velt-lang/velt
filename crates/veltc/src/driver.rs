@@ -517,6 +517,8 @@ fn build_on_current_thread(
 ) -> Result<Artifact, BuildError> {
     let target = opts.target();
     // An executable whose inputs are those of its last build is up to date (`stamp`).
+    // The hashes of the files the last build's stamp records, for this build to reuse.
+    let mut known = Default::default();
     let stamped = (opts.emit == Emit::Exe && !opts.report_numbers && stamp::enabled()).then(|| {
         let t = Instant::now();
         let backend = Backend::resolve(opts.backend, opts.release).0;
@@ -532,6 +534,7 @@ fn build_on_current_thread(
             })
             .filter(|objects| objects.iter().all(|o| o.is_file()));
         if objects.is_none() {
+            known = stamp::known(&stamp_path);
             // A build that fails half-way must not leave a stamp of the old one.
             let _ = std::fs::remove_file(&stamp_path);
             // Made before the build looks at directories, so their listings include it.
@@ -554,7 +557,7 @@ fn build_on_current_thread(
     }
     // What module resolution looked at, for the stamp.
     let (program, seen) = match &stamped {
-        Some(_) => vpm::probe::record(|| {
+        Some(_) => vpm::probe::record_reusing(known, || {
             stamp::note_project(opts);
             compile_to_vir(sess, opts)
         }),
