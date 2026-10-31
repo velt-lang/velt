@@ -201,10 +201,14 @@ pub fn run(root: &Path, graph: &Graph, plan: &Plan, opts: &Options) -> Result<()
         let mut fmt = Command::new(&velt);
         fmt.args(["fmt", "--check", "std", "examples", "packages"]);
         gate.step("velt fmt --check (std, examples, packages)", &mut fmt)?;
-        // The std layout and quality rules (docs/internals/design/std-layout.md §2, §6).
+        // The std layout and quality rules (docs/internals/design/std-layout.md §2, §6). With
+        // the base revision, an allow-list entry it lacks fails: the lists only shrink.
         let mut lint = Command::new(&velt);
         lint.current_dir(root)
             .args(["run", "scripts/std-lint/main.vlt"]);
+        if let Some(base) = crate::changes::default_base(root) {
+            lint.args(["--", "--base", &base]);
+        }
         gate.step("std-lint", &mut lint)?;
     }
     if part.has(Part::Test) && plan.full && opts.smoke && !cfg!(windows) {

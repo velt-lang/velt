@@ -259,7 +259,7 @@ pub struct Plan {
     pub all_tests: bool,
     pub veltc: Veltc,
     pub goldens: Goldens,
-    /// `velt fmt --check std examples packages`.
+    /// `velt fmt --check std examples packages`, and std-lint.
     pub vlt_fmt: bool,
     /// The native crates of the repository's packages (`packages/<name>/native`, outside the
     /// workspace): `cargo fmt` and clippy. (`veltc::packages` runs their tests.)
@@ -399,7 +399,11 @@ impl Plan {
                     if let Some(filter) = golden_filter(path) {
                         plan.add_golden(filter);
                     }
-                    if path.starts_with("examples/") || path.starts_with("packages/") {
+                    // (std's white-box tests too: formatted and linted with std.)
+                    if ["examples/", "packages/", "std/"]
+                        .iter()
+                        .any(|d| path.starts_with(d))
+                    {
                         plan.vlt_fmt = true;
                     }
                     if path.starts_with("packages/") && path.contains("/native/") {

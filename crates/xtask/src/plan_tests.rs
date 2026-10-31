@@ -534,6 +534,9 @@ fn std_suites_run_with_std_tests() {
     let p = plan(&["std/encoding/json/scan.test.vlt"]);
     assert_eq!(p.veltc, Veltc::Some(set(&["std_tests"])));
     assert_eq!(p.goldens, Goldens::None);
+    // They are formatted and linted with std.
+    assert!(p.vlt_fmt);
+    assert!(!plan(&["tests/std/fetch/client.test.vlt"]).vlt_fmt);
 }
 
 #[test]
