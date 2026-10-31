@@ -14,10 +14,20 @@
 export class ArrayBuffer {
   // The bytes (the views read and write them).
   private bytes: u8[];
+  // The length of `bytes` where the buffer made them (the constructor): nothing else holds
+  // them, so it never changes. 0 for a buffer over an array that may become shorter (`over`, a
+  // `u8[]`'s `subarray`) or that it was given (`adopt`), whose length is read each time (an
+  // empty buffer made by the constructor reads it too, which is the same 0). The views take their bytes' length
+  // from it (`count`): for a buffer made in the same function the compiler then knows the
+  // length (`bytes.length` is the runtime's), so a loop up to a view's `length` has a constant
+  // trip count.
+  private fixed: usize;
 
   /** `byteLength` zero bytes (`RangeError` for a negative or non-integer length beyond 2^53). */
   constructor(byteLength: number = 0) {
-    this.bytes = Buffer.alloc(bufferLength(byteLength));
+    const n = bufferLength(byteLength);
+    this.bytes = Buffer.alloc(n);
+    this.fixed = n;
   }
 
   // A buffer over the array `bytes`, shared with whoever else holds it (std only: a `u8[]`'s
@@ -27,6 +37,7 @@ export class ArrayBuffer {
     try {
       const b = new ArrayBuffer(0);
       b.bytes = bytes;
+      b.fixed = 0;
       return b;
     } catch (e) {
       panic(`ICE: ArrayBuffer.over: ${e.message}`);
@@ -38,6 +49,7 @@ export class ArrayBuffer {
     try {
       const b = new ArrayBuffer(0);
       b.bytes = bytes;
+      b.fixed = 0;
       return b;
     } catch (e) {
       panic(`ICE: ArrayBuffer.adopt: ${e.message}`);

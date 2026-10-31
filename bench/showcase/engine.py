@@ -14,8 +14,10 @@ A benchmark is a dict:
 Every implementation first runs once untimed: that run is the correctness check, and it warms the
 page cache for every implementation alike. Then `runs` rounds follow, each running every
 implementation once, the order rotated by one per round, so a change of load on the machine hits
-them all alike. Wall time, user + sys CPU time and peak RSS come from wait4 (the numbers GNU
-`time -v` prints, without needing it installed).
+them all alike. Wall time, user + sys CPU time and peak RSS come from the measure helper
+(measure.c): its own fork, exec and wait4 of the program, the numbers GNU `time -v` prints,
+without needing it installed. Not Python's wait4: see measure.c for why that reports the
+harness's own RSS.
 """
 
 import json
@@ -34,14 +36,56 @@ class RunError(Exception):
     pass
 
 
+# The measure helper (measure.c, built by build_measure): None until it is built and checked.
+MEASURE = None
+
+
+def build_measure(out_dir, cc=None):
+    """Builds measure.c into out_dir; returns its path, or raises RunError with the reason."""
+    src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "measure.c")
+    exe = os.path.join(out_dir, "measure")
+    reason = "no C compiler found (cc, clang or gcc)"
+    for compiler in [c for c in (cc, os.environ.get("CC"), "cc", "clang", "gcc") if c]:
+        try:
+            p = subprocess.run([compiler, "-O2", "-o", exe, src], capture_output=True, text=True)
+        except OSError:
+            continue
+        if p.returncode == 0:
+            return exe
+        reason = p.stderr.strip()[-300:]
+    raise RunError(f"could not build measure.c: {reason}")
+
+
+def check_measure():
+    """None when the helper reports each process's own peak RSS, else the reason: a program that
+    touches 128 MB must report over 120 MB, and `true` under 16 MB even though this process
+    (whose RSS the old wait4 measurement reported for every small program) now holds 64 MB more."""
+    ballast = b"x" * (64 << 20)
+    try:
+        small = run_proc(["true"])[0]["rss_mb"]
+        big = run_proc([sys.executable, "-c", "b = b'x' * (128 << 20)"])[0]["rss_mb"]
+    except RunError as e:
+        return f"the helper failed: {e}"
+    finally:
+        del ballast
+    if small is None or big is None or small >= 16 or big <= 120:
+        return f"peak RSS not the program's own: `true` {small} MB, 128 MB program {big} MB"
+    return None
+
+
 def run_proc(cmd, stdin=None, env=None, cwd=None, timeout=TIMEOUT_S):
-    """Runs cmd to completion: returns (metrics dict, stdout bytes)."""
+    """Runs cmd to completion: returns (metrics dict, stdout bytes). With MEASURE set, wall time,
+    CPU time and peak RSS are the measure helper's (the program's own); without it, wall and CPU
+    time come from here and peak RSS is None (unknown), never the harness's own size."""
     full_env = {**os.environ, **(env or {})}
     with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+        fd, result = tempfile.mkstemp(prefix="measure-")
+        os.close(fd)
+        argv = [MEASURE, result, *cmd] if MEASURE else list(cmd)
         inp = open(stdin, "rb") if stdin else subprocess.DEVNULL
         try:
             t = time.perf_counter()
-            p = subprocess.Popen(cmd, stdin=inp, stdout=out, stderr=err, env=full_env, cwd=cwd)
+            p = subprocess.Popen(argv, stdin=inp, stdout=out, stderr=err, env=full_env, cwd=cwd)
             timer = threading.Timer(timeout, p.kill)
             timer.start()
             try:
@@ -49,22 +93,33 @@ def run_proc(cmd, stdin=None, env=None, cwd=None, timeout=TIMEOUT_S):
             finally:
                 timer.cancel()
             wall = time.perf_counter() - t
+            line = []
+            if MEASURE:
+                with open(result) as f:
+                    line = f.read().split()
         finally:
             if stdin:
                 inp.close()
+            os.unlink(result)
         p.returncode = os.waitstatus_to_exitcode(status)
         if p.returncode != 0:
             err.seek(0)
             tail = err.read().decode(errors="replace").strip().splitlines()[-4:]
             raise RunError(f"exit {p.returncode}: {' | '.join(tail)}")
         out.seek(0)
-        rss = ru.ru_maxrss / (1 << 20) if sys.platform == "darwin" else ru.ru_maxrss / 1024
+        if MEASURE:
+            if len(line) != 4:
+                raise RunError("the measure helper wrote no result")
+            wall, user, sys_s = int(line[0]) / 1e9, int(line[2]) / 1e6, int(line[3]) / 1e6
+            rss = int(line[1]) / 1024  # Linux: KiB (the helper is built and used on Linux only)
+        else:
+            user, sys_s, rss = ru.ru_utime, ru.ru_stime, None
         metrics = {
             "wall_s": round(wall, 6),
-            "user_s": round(ru.ru_utime, 4),
-            "sys_s": round(ru.ru_stime, 4),
-            "cpu_s": round(ru.ru_utime + ru.ru_stime, 4),
-            "rss_mb": round(rss, 2),
+            "user_s": round(user, 4),
+            "sys_s": round(sys_s, 4),
+            "cpu_s": round(user + sys_s, 4),
+            "rss_mb": None if rss is None else round(rss, 2),
         }
         return metrics, out.read()
 
@@ -150,7 +205,8 @@ def summarize(runs, parse, unit):
     s["best_wall_s"] = walls[0]
     s["median_wall_s"] = walls[len(walls) // 2]
     s["min_cpu_s"] = min(r["cpu_s"] for r in runs)
-    s["peak_rss_mb"] = max(r["rss_mb"] for r in runs)
+    rss = [r["rss_mb"] for r in runs if r.get("rss_mb") is not None]
+    s["peak_rss_mb"] = max(rss) if rss else None
     if parse:
         best = {}
         for r in runs:

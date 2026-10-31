@@ -125,7 +125,11 @@ export class Float32Array extends TypedArray implements Iterable<number> {
     // Without a branch (a loop test whose condition spans blocks would not bound the loop's
     // counter for the compiler): `n - off` wraps when the array ends before the view starts,
     // and is then taken 0 times; `len - (len - avail) * short` is the smaller of the two.
-    const n = this.buf.bytes.length as usize;
+    // The buffer's bytes now (`ArrayBuffer.fixed`), in this function's own code and without a
+    // branch: in a method of its own, or as a `?:`, it would leave a loop up to `length`
+    // counting in doubles.
+    const f = this.buf.fixed;
+    const n = f | ((this.buf.bytes.length as usize) & (0 - ((f == 0) as usize)));
     const avail = ((n - this.off) * ((this.off <= n) as usize)) / 4;
     const short = (avail < this.len) as usize;
     return ((this.len - (this.len - avail) * short) & 0xfffffffffffff) as number;

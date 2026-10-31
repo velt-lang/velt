@@ -13,12 +13,13 @@ import urllib.error
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 
 import core
 import engine
-from suites import cargo, impl, log, sh, velt_build
+from suites import MT, ST, cargo, impl, log, sh, velt_build
 
 ROUTES = ["plaintext", "json", "fortunes"]
 
@@ -100,6 +101,48 @@ def proc_stats(pids):
     return cpu, rss, hwm
 
 
+def threads_of(pids):
+    """The threads of pids (from /proc/<pid>/status `Threads:`), summed."""
+    n = 0
+    for p in pids:
+        try:
+            for line in open(f"/proc/{p}/status"):
+                if line.startswith("Threads:"):
+                    n += int(line.split()[1])
+                    break
+        except (OSError, ValueError):
+            pass
+    return n
+
+
+class PeakThreads:
+    """Samples the server's thread count (all its processes) every `every` seconds while a
+    measured run goes on: `with PeakThreads(pids) as t: ...`, then `t.peak`. It shows how many
+    threads a server really used, the "1 thread" rows included (the runtime's monitor thread,
+    and a spare worker it may start while one is blocked)."""
+
+    def __init__(self, pids, every=0.1):
+        # Only the processes that exist now are counted: one forked after sampling starts is not.
+        self.pids, self.every, self.peak = [p for root in pids for p in tree(root)], every, 0
+        self.done = threading.Event()
+        self.thread = threading.Thread(target=self._run, daemon=True)
+
+    def _run(self):
+        while True:
+            self.peak = max(self.peak, threads_of(self.pids))
+            if self.done.wait(self.every):
+                return
+
+    def __enter__(self):
+        self.thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self.done.set()
+        self.thread.join()
+        self.peak = max(self.peak, threads_of(self.pids))
+
+
 class Server:
     """Server processes started (each in its own process group) and stopped by their PIDs."""
 
@@ -164,6 +207,7 @@ def http_servers(ctx, server_cpus):
     te = os.path.join(ctx.bench, "http", "techempower")
     out = os.path.join(ctx.out, "http")
     os.makedirs(out, exist_ok=True)
+    # The Velt server is techempower/server.vlt on the http-server package, written in Velt on std/net.
     velt = os.path.join(out, "server-velt")
     verr = velt_build(ctx, os.path.join(te, "server.vlt"), velt)
     axum_t = os.path.join(out, "axum-target")
@@ -175,15 +219,17 @@ def http_servers(ctx, server_cpus):
     node = ctx.node or "node"
     bun_ts = os.path.join(ctx.here, "bun", "techempower.ts")
     return [
-        # (label, lang, [cmd per process] given the port, env, error)
-        ("Velt serve", "velt", lambda p: [[velt, str(p)]], {"VELT_THREADS": str(n)}, verr),
-        ("Rust axum", "rust", lambda p: [[os.path.join(axum_t, "release", "techempower-axum"), str(p)]], {}, aerr),
-        ("Node node:http (1 process)", "node", lambda p: [[node, os.path.join(te, "server.mjs"), str(p)]], {}, nerr),
+        # (label, lang, [cmd per process] given the port, env, error, threads: suites.ST or MT)
+        ("Velt http-server (written in Velt)", "velt", lambda p: [[velt, str(p)]], {"VELT_THREADS": str(n)}, verr, MT),
+        ("Velt http-server (written in Velt, 1 thread)", "velt", lambda p: [[velt, str(p)]], {"VELT_THREADS": "1"}, verr, ST),
+        ("Rust axum", "rust", lambda p: [[os.path.join(axum_t, "release", "techempower-axum"), str(p)]], {}, aerr, MT),
+        ("Node node:http (1 process)", "node", lambda p: [[node, os.path.join(te, "server.mjs"), str(p)]], {}, nerr,
+         ST),
         (f"Node node:cluster ({n} workers)", "node", lambda p: [[node, os.path.join(te, "server.mjs"), str(p)]],
-         {"CLUSTER": "1"}, nerr),
-        ("Bun Bun.serve (1 process)", "bun", lambda p: [[bun, bun_ts, str(p)]], {}, berr),
+         {"CLUSTER": "1"}, nerr, MT),
+        ("Bun Bun.serve (1 process)", "bun", lambda p: [[bun, bun_ts, str(p)]], {}, berr, ST),
         (f"Bun Bun.serve reusePort ({n} processes)", "bun", lambda p: [[bun, bun_ts, str(p)]] * n,
-         {"REUSE_PORT": "1"}, berr),
+         {"REUSE_PORT": "1"}, berr, MT),
     ]
 
 
@@ -236,7 +282,7 @@ def check_servers(ctx, servers, server_cpus, routes, errors, reference, expected
     body of the reference server (or of `expected`, {route: body}). A server that fails is an
     error and gets no req/s."""
     got = {}
-    for label, lang, cmds, env, err in servers:
+    for label, lang, cmds, env, err, _ in servers:
         if label in errors:
             continue
         port = free_port()
@@ -288,13 +334,13 @@ def http_run(ctx, servers, server_cpus, load_cpus, routes, prefix, reference, ex
     warm = "1s" if ctx.smoke else "3s"
     conns = 16 if ctx.smoke else ctx.http_conns
     results = {(label, route): [] for label, *_ in servers for route in routes}
-    errors = {label: err for label, _, _, _, err in servers if err}
+    errors = {label: err for label, _, _, _, err, _ in servers if err}
     checked = check_servers(ctx, servers, server_cpus, routes, errors, reference, expected)
     # A route that answered anything but 200 in a timed run fails for that server only.
     route_errors = {}
     for r in range(ctx.runs):
         k = r % len(servers)
-        for label, lang, cmds, env, err in servers[k:] + servers[:k]:
+        for label, lang, cmds, env, err, _ in servers[k:] + servers[:k]:
             if label in errors:
                 continue
             port = free_port()
@@ -310,8 +356,10 @@ def http_run(ctx, servers, server_cpus, load_cpus, routes, prefix, reference, ex
                     url = f"http://127.0.0.1:{port}/{route}"
                     oha(ctx, load_cpus, url, warm, conns)
                     cpu0, _, _ = proc_stats(srv.pids)
-                    m = oha(ctx, load_cpus, url, duration, conns)
+                    with PeakThreads(srv.pids) as threads:
+                        m = oha(ctx, load_cpus, url, duration, conns)
                     cpu1, rss, hwm = proc_stats(srv.pids)
+                    m["server_peak_threads"] = threads.peak
                     m["server_cpu_s"] = cpu1 - cpu0
                     m["server_us_per_req"] = (cpu1 - cpu0) * 1e6 / max(m["requests"], 1)
                     m["server_rss_mb"], m["server_peak_rss_mb"] = rss, hwm
@@ -328,7 +376,7 @@ def http_run(ctx, servers, server_cpus, load_cpus, routes, prefix, reference, ex
     benches = []
     for route in routes:
         impls = []
-        for label, lang, _, _, _ in servers:
+        for label, lang, _, _, _, threads in servers:
             runs = results[(label, route)]
             summary = {"runs": len(runs)}
             if runs:
@@ -336,10 +384,11 @@ def http_run(ctx, servers, server_cpus, load_cpus, routes, prefix, reference, ex
                 summary.update(best_rps=best["rps"], p50_ms=best["p50_ms"], p99_ms=best["p99_ms"],
                                server_us_per_req=min(m["server_us_per_req"] for m in runs),
                                server_peak_rss_mb=max(m["server_peak_rss_mb"] for m in runs),
+                               server_peak_threads=max(m.get("server_peak_threads", 0) for m in runs),
                                min_success=min(m["success"] for m in runs),
                                load_cpu_share=best["load_cpu_share"],
                                load_bound=best["load_cpu_share"] >= LOAD_BOUND)
-            d = {"label": label, "lang": lang, "runs": runs, "summary": summary,
+            d = {"label": label, "lang": lang, "threads": threads, "runs": runs, "summary": summary,
                  "response_check": checked.get(label)}
             if label in errors or (label, route) in route_errors:
                 d["error"] = errors.get(label) or route_errors[(label, route)]
@@ -358,6 +407,7 @@ def chat_benchmarks(ctx):
     here = os.path.join(ctx.bench, "chat")
     out = os.path.join(ctx.out, "chat")
     os.makedirs(out, exist_ok=True)
+    # bench/chat/velt/server.vlt: the http-server package and velt/net/websocket (written in Velt).
     velt = os.path.join(out, "chat-velt")
     verr = velt_build(ctx, os.path.join(here, "velt", "server.vlt"), velt)
     load_t = os.path.join(out, "load-target")
@@ -367,11 +417,19 @@ def chat_benchmarks(ctx):
         nerr = sh(ctx, "npm ci (ws, better-sqlite3)", [ctx.npm or "npm", "ci", "--no-audit", "--no-fund"],
                   cwd=os.path.join(here, "node"))
     n = count_cpus(server_cpus)
+    # The Bun and Node chat servers keep the rooms in the process (Bun's pub/sub, ws's client
+    # sets): several processes behind reusePort or node:cluster would each see only their own
+    # clients, so a room's messages would not reach the members on the other processes. They run
+    # as one process, beside Velt on one thread (the like-for-like row) and on the server cores.
+    single = "single process; rooms need shared state"
     servers = [
-        (f"Velt ({n} threads)", "velt", [velt], {"VELT_THREADS": str(n)}, verr),
-        ("Bun (Bun.serve websockets, 1 process)", "bun", [ctx.bun or "bun", os.path.join(here, "bun", "server.ts")], {},
-         None if ctx.bun else "bun not found"),
-        ("Node (ws, 1 process)", "node", [ctx.node or "node", os.path.join(here, "node", "server.js")], {}, nerr),
+        (f"Velt http-server + velt/net/websocket (written in Velt, {n} threads)", "velt", [velt],
+         {"VELT_THREADS": str(n)}, verr, MT),
+        ("Velt http-server + velt/net/websocket (written in Velt, 1 thread)", "velt", [velt],
+         {"VELT_THREADS": "1"}, verr, ST),
+        (f"Bun (Bun.serve websockets, {single})", "bun", [ctx.bun or "bun", os.path.join(here, "bun", "server.ts")], {},
+         None if ctx.bun else "bun not found", ST),
+        (f"Node (ws, {single})", "node", [ctx.node or "node", os.path.join(here, "node", "server.js")], {}, nerr, ST),
     ]
     return lambda: chat_run(ctx, servers, lerr, server_cpus, load_cpus, out, load_t)
 
@@ -380,10 +438,10 @@ def chat_run(ctx, servers, lerr, server_cpus, load_cpus, out, load_t):
     conns, rooms, rate, secs = (100, 10, 100, 2) if ctx.smoke else (2000, 20, 1000, 10)
     loader = os.path.join(load_t, "release", "chat-load")
     rows = {label: [] for label, *_ in servers}
-    errors = {label: err or lerr for label, _, _, _, err in servers if err or lerr}
+    errors = {label: err or lerr for label, _, _, _, err, _ in servers if err or lerr}
     for r in range(ctx.runs):
         k = r % len(servers)
-        for label, lang, cmd, env, _ in servers[k:] + servers[:k]:
+        for label, lang, cmd, env, _, _ in servers[k:] + servers[:k]:
             if label in errors:
                 continue
             port = free_port()
@@ -396,16 +454,18 @@ def chat_run(ctx, servers, lerr, server_cpus, load_cpus, out, load_t):
                     continue
                 time.sleep(0.5)
                 cpu0, _, _ = proc_stats(srv.pids)
-                p = subprocess.run(["taskset", "-c", load_cpus, loader, "steady", f"ws://127.0.0.1:{port}",
-                                    str(conns), str(rooms), str(rate), str(secs)],
-                                   env={**os.environ, "THREADS": str(count_cpus(load_cpus))},
-                                   capture_output=True, text=True, timeout=600)
+                with PeakThreads(srv.pids) as threads:
+                    p = subprocess.run(["taskset", "-c", load_cpus, loader, "steady", f"ws://127.0.0.1:{port}",
+                                        str(conns), str(rooms), str(rate), str(secs)],
+                                       env={**os.environ, "THREADS": str(count_cpus(load_cpus))},
+                                       capture_output=True, text=True, timeout=600)
                 cpu1, rss, hwm = proc_stats(srv.pids)
                 res = next((json.loads(line) for line in p.stdout.splitlines() if line.startswith("{")), None)
                 if res is None:
                     errors[label] = f"round {r + 1}: no result from chat-load: {p.stderr[-300:]}"
                     continue
-                res.update(server_cpu_s=cpu1 - cpu0, server_rss_mb=rss, server_peak_rss_mb=hwm)
+                res.update(server_cpu_s=cpu1 - cpu0, server_rss_mb=rss, server_peak_rss_mb=hwm,
+                           server_peak_threads=threads.peak)
                 rows[label].append(res)
             except Exception as e:  # a failed round is a result, never the end of the run
                 errors[label] = f"round {r + 1}: {type(e).__name__}: {e}"
@@ -415,7 +475,7 @@ def chat_run(ctx, servers, lerr, server_cpus, load_cpus, out, load_t):
                     if os.path.exists(db + suffix):
                         os.remove(db + suffix)
     impls = []
-    for label, lang, cmd, _, _ in servers:
+    for label, lang, cmd, _, _, threads in servers:
         runs = rows[label]
         summary = {"runs": len(runs)}
         if runs:
@@ -423,8 +483,9 @@ def chat_run(ctx, servers, lerr, server_cpus, load_cpus, out, load_t):
             summary.update(p50_ms=best["p50_ms"], p99_ms=best["p99_ms"],
                            deliveries_per_s=best["deliveries_per_s"], delivered_ratio=best["delivered_ratio"],
                            server_cpu_s=min(m["server_cpu_s"] for m in runs),
-                           server_peak_rss_mb=max(m["server_peak_rss_mb"] for m in runs))
-        d = {"label": label, "lang": lang, "runs": runs, "summary": summary}
+                           server_peak_rss_mb=max(m["server_peak_rss_mb"] for m in runs),
+                           server_peak_threads=max(m.get("server_peak_threads", 0) for m in runs))
+        d = {"label": label, "lang": lang, "threads": threads, "runs": runs, "summary": summary}
         if label in errors:
             d["error"] = errors[label]
         impls.append(d)
@@ -455,12 +516,17 @@ def fetch_benchmarks(ctx):
         js = os.path.join(here, "client.mjs")
         benches.append({
             "category": "async", "name": f"fetch client: {s}", "check": "fetch", "parse": "fetch", "unit": "s",
-            "impls": [impl("Rust reqwest", "rust", [*pin, os.path.join(target, "release", "client"), base, s]),
-                      impl("Velt fetch", "velt", [*pin, velt, base, s], verr),
+            # reqwest on tokio's multi-thread runtime and Velt's runtime use the server cores;
+            # Node and Bun are one process each, paired with Velt on one thread.
+            "impls": [impl("Rust reqwest", "rust", [*pin, os.path.join(target, "release", "client"), base, s],
+                           threads=MT),
+                      impl("Velt fetch", "velt", [*pin, velt, base, s], verr, threads=MT),
+                      impl("Velt fetch (1 thread)", "velt", [*pin, velt, base, s], verr, env={"VELT_THREADS": "1"},
+                           threads=ST),
                       impl("Node fetch (undici)", "node", [*pin, ctx.node or "node", js, base, s],
-                           None if ctx.node else "node not found"),
+                           None if ctx.node else "node not found", threads=ST),
                       impl("Bun fetch", "bun", [*pin, ctx.bun or "bun", js, base, s],
-                           None if ctx.bun else "bun not found")],
+                           None if ctx.bun else "bun not found", threads=ST)],
         })
 
     def run():

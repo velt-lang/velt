@@ -80,17 +80,19 @@ pub(super) fn modified_before_rebind(cx: &mut Ctx, b: &Block, l: LocalId) -> Opt
 /// `FnInfo::modified_params`.
 pub(super) fn collect_in(cx: &mut Ctx, d: crate::hir::DefId, f: &mut FnDef) -> Evidence {
     let params = f.captures.len()..f.params.len();
-    let (mut ev, aliases) = collect_aliased(cx, &mut f.body.block, params);
-    if !cx.frozen_reads {
-        return ev;
-    }
-    let mut edges = super::derived::edges(cx, f);
+    // A body creating no closure has no local holding one: it is not walked for them.
+    let closures = match cx.kept_fns.closure_free.contains(&d) {
+        true => Closures::default(),
+        false => closure_locals(cx, &mut f.body.block),
+    };
+    let (mut ev, aliases) = collect_aliased(cx, &mut f.body.block, params, closures);
     // Std's own bodies change only what they write directly: its containers never change
     // what they hold or walk (`Map.set`'s value goes into an array the map then changes, an
-    // iterator steps over its source).
-    if cx.modules[cx.fn_info(d).module].is_std {
-        edges.clear();
+    // iterator steps over its source). Their edges are not even collected.
+    if !cx.frozen_reads || cx.modules[cx.fn_info(d).module].is_std {
+        return ev;
     }
+    let edges = super::derived::edges(cx, f);
     let mut changed: FxHashSet<LocalId> = ev.mutated.iter().copied().collect();
     changed.extend(ev.modified.iter().copied());
     changed.extend(ev.weak.iter().copied());
@@ -123,15 +125,17 @@ pub(super) fn collect_in(cx: &mut Ctx, d: crate::hir::DefId, f: &mut FnDef) -> E
 
 /// Collect the evidence of body `b`.
 pub(super) fn collect(cx: &mut Ctx, b: &mut Block, params: std::ops::Range<usize>) -> Evidence {
-    collect_aliased(cx, b, params).0
+    let closures = closure_locals(cx, b);
+    collect_aliased(cx, b, params, closures).0
 }
 
+/// [`collect`] with the body's `closure_locals`, and the aliases it found.
 fn collect_aliased(
     cx: &mut Ctx,
     b: &mut Block,
     params: std::ops::Range<usize>,
+    closures: Closures,
 ) -> (Evidence, Aliases) {
-    let closures = closure_locals(cx, b);
     let mut v = Collector {
         cx,
         ev: Evidence::default(),
