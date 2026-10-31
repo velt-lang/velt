@@ -115,6 +115,21 @@ pub(crate) fn collect_from(
             convert_site(u, seen, e, &converts);
         }
     });
+    // A module constant's initializer: lowering evaluates it where it is read
+    // (`hir::GlobalDef::init`), in whichever function reads it, so it is a unit of its own.
+    for (i, info) in cx.info.iter_mut().enumerate().skip(from) {
+        let DefInfo::Global(g) = info else { continue };
+        let Some(init) = g.init.as_mut() else {
+            continue;
+        };
+        let (u, news, seen) = inits.entry(DefId(i as u32)).or_default();
+        visit::exprs_in(init, &mut |e: &mut Expr| {
+            add_site(&cx.ty, u, news, seen, e, 0, types);
+            if !converts.is_empty() {
+                convert_site(u, seen, e, &converts);
+            }
+        });
+    }
     let mut inits: Vec<_> = inits.into_iter().collect();
     inits.sort_by_key(|(d, _)| *d);
     out.extend(inits.into_iter().map(|(d, (u, news, _))| (d, u, news)));

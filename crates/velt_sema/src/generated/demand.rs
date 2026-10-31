@@ -114,6 +114,12 @@ fn names_any(cx: &mut Ctx, generated: &FxHashSet<DefId>) -> bool {
         }
     }
     for info in cx.info.iter_mut() {
+        // A module constant's initializer (evaluated where it is read).
+        if let crate::defs::DefInfo::Global(g) = info {
+            if let Some(init) = g.init.as_mut() {
+                crate::visit::exprs_in(init, &mut look);
+            }
+        }
         if let crate::defs::DefInfo::Adt(a) = info {
             let start = a.own_fields_start;
             let own = a.fields[start..]
