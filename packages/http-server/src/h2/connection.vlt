@@ -325,6 +325,12 @@ export class H2Connection {
 
   /// A stream neither the protocol nor a handler uses any more.
   recycle(s: H2Stream) {
+    // Once: a second recycle would put the object in the pool twice (two later streams sharing
+    // it) and undercount the streams in use.
+    if (s.pooled) {
+      return;
+    }
+    s.pooled = true;
     this.inUse--;
     if (this.pool.length < 16) {
       this.pool.push(s);

@@ -361,17 +361,18 @@ async function serve(c: H2Connection, s: H2Stream) {
   } catch (e) {
     // The stream was reset or the connection ended meanwhile.
   }
-  s.running = false;
   // A tunnel's data is the tunnel's (h2/tunnel.vlt), also after the handler returned.
   if (!s.reset && s.tunnel == null) {
     giveBack(c, s);
     if (!s.remoteEnded && s.localEnded) {
       // The response is complete: the rest of the request is not needed (RFC 9113 §8.1).
+      // Released while still `running`, so the stream is recycled once, below.
       c.out.rstStream(s.id, NO_ERROR);
       s.resetNow();
       c.release(s);
     }
   }
+  s.running = false;
   if (c.streams.get(s.id) !== s) {
     c.recycle(s);
   }

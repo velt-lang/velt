@@ -272,4 +272,47 @@ describe("HTTP/2 limits", () => {
     c.close();
     server.close();
   });
+
+  it("answers each early upload on its own stream, and closes with none in use", async () => {
+    // A handler answering before its upload ended had its stream recycled twice: two later
+    // streams shared one object, responses went out on other requests' streams, and the count
+    // of streams in use went below 0 (a graceful close then never ended).
+    const server = await startServer(async (req: HttpRequest, res: HttpResponse) => {
+      res.status(401);
+      res.send(req.path());
+    });
+    const c = await Client.open(server.port);
+    const chunk: u8[] = new Array<u8>(16384).fill(120);
+    const n: i64 = 70;
+    for (let i: i64 = 0; i < n; i++) {
+      const id = i * 2 + 1;
+      const head = [":method", "POST", ":scheme", "http", ":path", `/u${id}`, ":authority", "x"];
+      c.headers(id, head, false);
+      await c.flush();
+      // The handler answers before the upload arrives; nothing is read meanwhile.
+      await delay(10);
+      c.frame(0, 1, id, chunk);
+      await c.flush();
+    }
+    server.close();
+    // Each stream is reset (NO_ERROR) after its response if its upload had not ended by then,
+    // which depends on timing: those resets are left out.
+    const lines = (await timeout(c.until((f) => false), 10000))
+      .split("\n")
+      .filter((l) => !(l.startsWith("RST ") && l.endsWith(" NO_ERROR")));
+    const want: string[] = [`GOAWAY ${n * 2 - 1} NO_ERROR`];
+    for (let i: i64 = 0; i < n; i++) {
+      const id = i * 2 + 1;
+      const path = `/u${id}`;
+      want.push(`HEADERS ${id} :status=401`, `DATA ${id} es ${path.length}:${path}`);
+    }
+    want.push("EOF");
+    const sorted = lines.slice();
+    sorted.sort();
+    const wanted = want.slice();
+    wanted.sort();
+    expect(sorted.join("\n")).toBe(wanted.join("\n"));
+    expect(lines[lines.length - 1]).toBe("EOF");
+    c.close();
+  });
 });

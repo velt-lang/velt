@@ -66,6 +66,8 @@ export class H2Stream {
   /// The handler has not returned yet: the stream's slot stays taken, also after a reset (so
   /// resetting streams does not run more handlers at once than the limit).
   running: bool = false;
+  /// Back in the connection's pool (`recycle`), until `open` gives it to the next stream.
+  pooled: bool = false;
   /// The connection is in the list of streams with output waiting.
   queued: bool = false;
   /// The request body must have arrived by `deadline` (`Date.now()` ms); `late` once it has not.
@@ -104,6 +106,7 @@ export class H2Stream {
     this.localEnded = false;
     this.reset = false;
     this.running = false;
+    this.pooled = false;
     this.queued = false;
     this.late = false;
     this.trailers.length = 0;
