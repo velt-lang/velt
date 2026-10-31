@@ -32,7 +32,7 @@ use crate::object_copies::Seen;
 use crate::types::children;
 use crate::visit;
 
-mod handles;
+pub(crate) mod handles;
 mod identity;
 mod union;
 mod uses;

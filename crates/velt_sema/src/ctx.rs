@@ -403,6 +403,8 @@ pub(crate) struct Ctx<'m> {
     /// (`None`: all of it), and each module the prelude's globals re-export from, with the
     /// names re-exported from it (`Some`).
     pub js_api_modules: std::cell::OnceCell<FxHashMap<usize, Option<FxHashSet<String>>>>,
+    /// Where the native libraries' modules are (`json::handles`): computed when first asked.
+    pub native_libraries: std::cell::OnceCell<crate::json::handles::NativeLibraries>,
     /// Integer types decided for locals declared from literals, by function and declaration
     /// span (`body::literal_locals`).
     pub literal_types: FxHashMap<DefId, FxHashMap<Span, TyId>>,
@@ -596,6 +598,7 @@ impl<'m> Ctx<'m> {
             rechecks: vec![],
             closure_defs: vec![],
             js_api_modules: std::cell::OnceCell::new(),
+            native_libraries: std::cell::OnceCell::new(),
             literal_types: FxHashMap::default(),
             literal_found: FxHashMap::default(),
         }

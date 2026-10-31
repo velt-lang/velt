@@ -58,9 +58,9 @@ export class Type {
    */
   dynamic: bool = false;
   /**
-   * For a std type, or a type of a module binding native code, whose structure the model does
-   * not show (`opaque`, `set`): the private field
-   * that keeps its state (a runtime handle), else "".
+   * For a std type, or a type of a package with a native library, whose structure the model
+   * does not show (`opaque`, `set`): the private field that keeps its state (a runtime
+   * handle), else "".
    */
   privateField: string = "";
   /**

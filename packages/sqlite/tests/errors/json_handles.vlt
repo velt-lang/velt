@@ -14,3 +14,14 @@ function encode(d: Database, s: Statement, t: Transaction) {
   console.log(JSON.stringify(s));
   console.log(JSON.stringify(t));
 }
+
+// Every type of a package with a native library, also one in a file that declares none of its
+// functions (a wrapper of another file's).
+class Wrapped {
+  private handle: u64 = 0;
+}
+
+function wrapped(w: Wrapped) {
+  console.log(JSON.stringify(w));
+  const back = JSON.parse<Wrapped>('{"handle":1}');
+}

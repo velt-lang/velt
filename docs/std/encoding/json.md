@@ -109,9 +109,9 @@ console.log(JSON.stringify(item, ["note", "id"])); // {"note":"x","id":7}
   struct with a `private` or `#` field (own or inherited), wherever it appears in `T`: decoding
   fills fields without running the constructor, so it could not initialize them; the error
   names the field. A type with a private field declared by a std type, or by a type of a
-  module that binds native code (one that declares or imports a package's native functions,
-  `velt_<package>__…`, or a `declare system function`), has no JSON form in either direction:
-  such libraries keep runtime handles there (`#` fields of classes such as `BigInt`, `RegExp`,
+  package with a native library (any of its modules, also one that only wraps another's native
+  functions; a program's `declare system function` makes no native library), has no JSON form
+  in either direction: such libraries keep runtime handles there (`#` fields of classes such as `BigInt`, `RegExp`,
   `JsonValue`, HTTP requests and responses, `AbortSignal` and `TaskScope`; `private` fields of
   structs such as `Mutex`, sockets and files; the database handles of the sqlite, postgres and
   redis packages), also when a user class extends one. So JSON can never carry or forge a

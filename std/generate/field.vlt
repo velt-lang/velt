@@ -13,7 +13,7 @@ export class Field {
   /** An object literal's getter (`get k() { … }`): `type` is what it returns. */
   isGetter: bool = false;
   /**
-   * A private field a std type, or a type of a module binding native code, declares (its
+   * A private field a std type, or a type of a package with a native library, declares (its
    * runtime state: a handle), also in a class extending it.
    */
   stdPrivate: bool = false;
