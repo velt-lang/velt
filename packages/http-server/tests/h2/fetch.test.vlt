@@ -1,0 +1,87 @@
+// `fetch` over HTTP/2 against this server: aborted requests give their stream up (RST_STREAM
+// CANCEL, the connection window of what they received back, their place among the server's
+// concurrent streams free), so the connection they shared keeps serving.
+import { serveHttp } from "../../src/lib";
+import { HttpRequest } from "../../src/request";
+import { HttpResponse } from "../../src/response";
+import { AbortController, timeout } from "velt/task";
+import { describe, expect, it } from "velt/test";
+import { delay } from "velt/time";
+import { TEST_CA, TEST_CERT, TEST_KEY } from "../_tls";
+
+// A large response, slow to begin: 2 MiB in 64 KiB pieces after `wait` ms.
+async function handler(req: HttpRequest, res: HttpResponse) {
+  if (req.pathIs("/big")) {
+    const wait = Number(req.query().slice(5));
+    await delay(wait);
+    const out = await res.stream();
+    const piece = new Array<u8>(65536).fill(120);
+    try {
+      for (let i = 0; i < 32; i++) {
+        await out.write(piece);
+      }
+      await out.end();
+    } catch (e) {
+      // The client cancelled the stream.
+    }
+  } else {
+    res.send("small");
+  }
+}
+
+describe("aborted HTTP/2 fetches", () => {
+  it("before the response's head, leave the shared connection serving", async () => {
+    const server = await serveHttp({ port: 0, tls: { cert: TEST_CERT, key: TEST_KEY } }, handler);
+    const base = `https://localhost:${server.port}`;
+    try {
+      // The connection, made by a first request.
+      expect(await (await fetch(`${base}/`, { ca: TEST_CA })).text()).toBe("small");
+      for (let i = 0; i < 6; i++) {
+        const ac = new AbortController();
+        const pending = fetch(`${base}/big?wait=150`, { ca: TEST_CA, signal: ac.signal });
+        await delay(30);
+        ac.abort();
+        let err = "";
+        try {
+          await pending;
+        } catch (e) {
+          err = `${e}`;
+        }
+        expect(err.includes("abort")).toBe(true);
+      }
+      // The responses of the aborted requests start meanwhile (6 x 2 MiB, more than the
+      // connection's window if nobody gave it back).
+      await delay(400);
+      const r = await timeout(fetch(`${base}/`, { ca: TEST_CA }), 5000);
+      expect(await timeout(r.text(), 5000)).toBe("small");
+    } finally {
+      server.close();
+    }
+  });
+
+  it("after the response's head, leave the shared connection serving", async () => {
+    const server = await serveHttp({ port: 0, tls: { cert: TEST_CERT, key: TEST_KEY } }, handler);
+    const base = `https://localhost:${server.port}`;
+    try {
+      for (let i = 0; i < 6; i++) {
+        const ac = new AbortController();
+        const r = await fetch(`${base}/big?wait=0`, { ca: TEST_CA, signal: ac.signal });
+        expect(r.status).toBe(200);
+        // Body pieces arrive unread meanwhile.
+        await delay(50);
+        ac.abort();
+        let err = "";
+        try {
+          await r.text();
+        } catch (e) {
+          err = `${e}`;
+        }
+        expect(err.includes("abort")).toBe(true);
+      }
+      const r = await timeout(fetch(`${base}/`, { ca: TEST_CA }), 5000);
+      expect(await timeout(r.text(), 5000)).toBe("small");
+    } finally {
+      server.close();
+    }
+  });
+});

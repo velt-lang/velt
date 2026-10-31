@@ -9,6 +9,7 @@
 import { TcpStream } from "velt/net";
 import { Channel } from "velt/sync";
 import {
+  CANCEL,
   DEFAULT_WINDOW,
   END_STREAM,
   HEADER_LENGTH,
@@ -149,7 +150,9 @@ export class ClientSession {
       if (call.kind == CALL_CREDIT) {
         this.credit(call.id, call.n);
       } else if (call.kind == CALL_CANCEL) {
-        this.cancel(call.id);
+        this.cancel(call.id, call.n);
+      } else if (call.events.closed) {
+        // The request gave up (aborted) before it was sent.
       } else if (this.goingAway || this.done) {
         call.events.trySend(errorEvent("the HTTP/2 connection is closing", RETRY_ALWAYS));
       } else if ((this.streams.size as i64) >= this.maxStreams) {
@@ -224,23 +227,52 @@ export class ClientSession {
     }
   }
 
-  /// The request gave up stream `id`: RST_STREAM CANCEL.
-  private cancel(id: i64) {
-    const s = this.streams.get(id);
-    if (s != undefined) {
-      this.out.rstStream(id, 8);
-      s.events.trySend(errorEvent("fetch failed: the request was cancelled", RETRY_NEVER));
-      this.forget(s);
+  /// A request gave up (aborted, or its body abandoned) and closed its channel: stream `id`
+  /// (0: not known to it) and every other stream or waiting request whose channel is closed are
+  /// dropped, and the `n` bytes of body it had received but not read come back to the
+  /// connection's window.
+  private cancel(id: i64, n: i64) {
+    if (n > 0) {
+      this.credit(0, n);
     }
+    this.waiting = this.waiting.filter((w) => !w.events.closed);
+    const gone: ClientStream[] = [];
+    for (const s of this.streams.values()) {
+      if (s.id == id || s.events.closed) {
+        gone.push(s);
+      }
+    }
+    for (const s of gone) {
+      this.drop(s);
+    }
+  }
+
+  /// Drops `s`, whose request is no longer read: RST_STREAM CANCEL unless both sides ended it,
+  /// and its place goes to a waiting request. What the server still sends on it is given back
+  /// to the connection's window as it arrives (h2/frames.vlt `data`).
+  drop(s: ClientStream) {
+    if (!(s.remoteEnded && s.localEnded)) {
+      this.out.rstStream(s.id, CANCEL);
+    }
+    this.forget(s);
   }
 
   /// A stream that is done: a waiting request takes its place.
   forget(s: ClientStream) {
     this.streams.delete(s.id);
+    this.startWaiting();
+  }
+
+  /// Starts waiting requests while the server's concurrency limit allows; one whose request
+  /// gave up meanwhile (its channel is closed) is dropped.
+  startWaiting() {
     while (
       this.waiting.length > 0 && (this.streams.size as i64) < this.maxStreams && !this.goingAway
     ) {
-      startCall(this, this.waiting.shift()!);
+      const next = this.waiting.shift()!;
+      if (!next.events.closed) {
+        startCall(this, next);
+      }
     }
   }
 

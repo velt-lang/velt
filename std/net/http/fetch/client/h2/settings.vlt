@@ -15,7 +15,6 @@ import {
   readU32,
 } from "velt/net/http/h2";
 import { ClientSession } from "velt/net/http/fetch/client/h2/session";
-import { startCall } from "velt/net/http/fetch/client/h2/frames";
 
 /// Applies the settings at `s.rbuf[at..at + length)`: false after a connection error.
 export function applySettings(s: ClientSession, at: i64, length: i64): bool {
@@ -46,9 +45,7 @@ export function applySettings(s: ClientSession, at: i64, length: i64): bool {
     }
   }
   s.out.settingsAck();
-  while (s.waiting.length > 0 && (s.streams.size as i64) < s.maxStreams && !s.goingAway) {
-    startCall(s, s.waiting.shift()!);
-  }
+  s.startWaiting();
   return true;
 }
 

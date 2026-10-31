@@ -6,7 +6,8 @@
 //
 // A request the server did not process (a GOAWAY's later streams, REFUSED_STREAM, a session
 // closing before it was sent) goes out once more on a new connection, as does an idempotent one
-// whose session failed before the response's head (RFC 9113 §8.7).
+// whose session failed before the response's head (RFC 9113 §8.7). A request aborted before its
+// response's head cancels its stream.
 
 import { IoError } from "velt/io/error";
 import { TcpStream } from "velt/net";
@@ -25,7 +26,7 @@ import {
   RETRY_IDEMPOTENT,
   RETRY_NEVER,
 } from "velt/net/http/fetch/client/h2/event";
-import { H2Body, nextEvent } from "velt/net/http/fetch/client/h2/body";
+import { giveUp, H2Body, nextEvent } from "velt/net/http/fetch/client/h2/body";
 import { claim, forget, sessionOf } from "velt/net/http/fetch/client/h2/registry";
 import { ClientSession } from "velt/net/http/fetch/client/h2/session";
 
@@ -167,7 +168,8 @@ export async function h2Exchange(
     }
     const e = await nextEvent(events, signal);
     if (e == null) {
-      events.close();
+      // Aborted: the session drops the stream (or the request, if not yet sent).
+      giveUp(events, calls, 0);
       if (signal != null) {
         signal.throwIfAborted();
       }

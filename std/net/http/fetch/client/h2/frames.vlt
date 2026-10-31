@@ -169,7 +169,7 @@ function data(s: ClientSession, flags: i64, id: i64, p: i64, len: i64) {
   }
   st.recvWindow -= len;
   if (end > start) {
-    st.events.trySend({
+    const sent = st.events.trySend({
       kind: EVENT_DATA,
       id: id,
       status: 0,
@@ -179,6 +179,13 @@ function data(s: ClientSession, flags: i64, id: i64, p: i64, len: i64) {
       message: "",
       retry: RETRY_NEVER,
     });
+    if (!sent) {
+      // The request gave up on the response (its channel is closed): nobody reads this.
+      s.credit(0, end - start);
+      st.remoteEnded = (flags & END_STREAM) != 0;
+      s.drop(st);
+      return;
+    }
   }
   if ((flags & END_STREAM) != 0) {
     ended(s, st);
@@ -280,7 +287,7 @@ function block(s: ClientSession, id: i64, flags: i64) {
     }
     st.headSeen = true;
     const end = (flags & END_STREAM) != 0;
-    st.events.trySend({
+    const sent = st.events.trySend({
       kind: EVENT_HEAD,
       id: id,
       status: status,
@@ -290,6 +297,14 @@ function block(s: ClientSession, id: i64, flags: i64) {
       message: "",
       retry: RETRY_NEVER,
     });
+    if (!sent) {
+      // The request gave up (aborted) before its response's head.
+      if (end) {
+        st.remoteEnded = true;
+      }
+      s.drop(st);
+      return;
+    }
     if (end) {
       ended(s, st);
     }

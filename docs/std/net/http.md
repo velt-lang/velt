@@ -275,8 +275,9 @@ always HTTP/1.1 (no h2c), as in browsers and undici.
 The API does not change: the same `Response`, headers (lowercase, as HTTP/2 sends them),
 redirects, `content-encoding` decoding and `signal`. Bodies have flow control: the server may
 send 1 MiB of a response body ahead of what the program read (4 MiB for the connection), and a
-request body goes out as the server's windows allow. An abort, or a body given up (`res.body`
-cancelled), resets just that stream. A request the server did not process (a GOAWAY's later streams,
+request body goes out as the server's windows allow. An abort (before or after the response's
+head), or a body given up (`res.body` cancelled), resets just that stream and frees its place on
+the shared connection. A request the server did not process (a GOAWAY's later streams,
 `REFUSED_STREAM`, a connection that closed before it went out) is sent again on a new
 connection, whatever its method, since the server never saw it (RFC 9113 §8.7). One the server
 may have processed (the connection failed after it went out, before the response's head) is sent

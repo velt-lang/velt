@@ -25,6 +25,29 @@ export function control(kind: i64, id: i64, n: i64, events: Channel<H2Event>): H
   };
 }
 
+/**
+ * The request gives up on its response (aborted, or the body abandoned): closes `events`, and
+ * tells the session to cancel stream `id` (0: the request does not know it yet, before the
+ * response's head), with the body bytes it received and will not read, which the session gives
+ * back to the connection's window. What arrives after the close the session gives back itself.
+ */
+export function giveUp(events: Channel<H2Event>, calls: Channel<H2Call>, id: i64) {
+  events.close();
+  let stream = id;
+  let unread: i64 = 0;
+  let e = events.tryReceive();
+  while (e != null) {
+    if (e.kind == EVENT_DATA) {
+      unread += e.data.length as i64;
+    }
+    if (e.id > 0) {
+      stream = e.id;
+    }
+    e = events.tryReceive();
+  }
+  calls.trySend(control(CALL_CANCEL, stream, unread, events));
+}
+
 /// The next event, or null once `signal` was aborted first.
 export async function nextEvent(
   events: Channel<H2Event>,
@@ -117,8 +140,7 @@ export class H2Body {
   abandon() {
     if (!this.done) {
       this.done = true;
-      this.calls.trySend(control(CALL_CANCEL, this.id, 0, this.events));
-      this.events.close();
+      giveUp(this.events, this.calls, this.id);
     }
   }
 }
