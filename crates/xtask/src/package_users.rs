@@ -3,9 +3,10 @@
 //! besides the packages' own (crates/xtask/src/plan.rs, `READ_BY_TESTS`).
 //!
 //! The table is kept by hand and checked against the repository: [`tests`] finds every
-//! `package.vlt` outside `packages/` with a path dependency on a package, and every package the
-//! documentation test compiles snippets against, and fails when the plan for a change to that
-//! package would not run their tests.
+//! `package.vlt` outside `packages/` with a path dependency on a package, every Rust test that
+//! names a package's directory (`packages/<name>`, as a manifest it writes at run time does), and
+//! every package the documentation test compiles snippets against, and fails when the plan for
+//! a change to that package would not run their tests.
 
 /// A package (`packages/<name>/`): the goldens that depend on it (`VELT_GOLDEN` substrings) and
 /// the `veltc` test binaries that compile programs or documents using it.
@@ -23,10 +24,11 @@ pub(crate) const USERS: &[Users] = &[
             "tests/golden/lang/errors/http_server/",
         ],
         // tests/std (the `fetch` and WebSocket clients' tests talk to it), the server benchmarks
-        // (`bench_programs` compiles them) and the documentation (`docs` compiles its snippets
+        // (`bench_programs` compiles them), the documentation (`docs` compiles its snippets
         // against the packages without native code, and reads packages/http-server's README and
-        // docs).
-        binaries: &["std_tests", "bench_programs", "docs"],
+        // docs), and tests that write manifests depending on it: hot reload's servers (`reload`)
+        // and the `api` and `websocket` templates' projects (`templates`).
+        binaries: &["std_tests", "bench_programs", "docs", "reload", "templates"],
     },
     // The database benchmarks (bench/db, bench/sqlite, bench/web, ...).
     Users {
@@ -171,6 +173,62 @@ mod tests {
             missing.is_empty(),
             "a change to the package would not test these (add them to package_users::USERS, \
              or teach the test where they live):\n{}",
+            missing.join("\n")
+        );
+    }
+
+    /// Each Rust test (`crates/<crate>/tests/<name>.rs`) that names a package's directory runs
+    /// when the package changes: `veltc`'s test binary `<name>`, another crate's tests.
+    #[test]
+    fn a_changed_package_runs_the_rust_tests_naming_it() {
+        let root = root();
+        let packages: Vec<String> = std::fs::read_dir(root.join("packages"))
+            .expect("packages/")
+            .flatten()
+            .filter(|e| e.path().join("package.vlt").is_file())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        let mut missing = vec![];
+        let crates = std::fs::read_dir(root.join("crates")).expect("crates/");
+        for krate in crates.flatten() {
+            let Ok(tests) = std::fs::read_dir(krate.path().join("tests")) else {
+                continue;
+            };
+            let krate = krate.file_name().to_string_lossy().into_owned();
+            for test in tests.flatten() {
+                let path = test.path();
+                if path.extension().is_none_or(|e| e != "rs") {
+                    continue;
+                }
+                let name = path.file_stem().unwrap().to_string_lossy().into_owned();
+                let text = std::fs::read_to_string(&path).unwrap_or_default();
+                for package in &packages {
+                    let named = text
+                        .match_indices(&format!("packages/{package}"))
+                        .any(|(i, m)| {
+                            let next = text[i + m.len()..].chars().next();
+                            !next.is_some_and(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+                        });
+                    if !named {
+                        continue;
+                    }
+                    let plan = plan_for(package);
+                    let tested = if krate == "veltc" {
+                        runs(&plan, &name)
+                    } else {
+                        plan.all_tests || plan.packages.contains(&krate)
+                    };
+                    if !tested {
+                        missing.push(format!(
+                            "crates/{krate}/tests/{name}.rs names packages/{package}"
+                        ));
+                    }
+                }
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "a change to the package would not run these (add them to package_users::USERS):\n{}",
             missing.join("\n")
         );
     }

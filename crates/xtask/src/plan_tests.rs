@@ -183,6 +183,8 @@ fn a_changed_http_server_runs_what_depends_on_it() {
         "std_tests",
         "bench_programs",
         "docs",
+        "reload",
+        "templates",
     ] {
         assert!(binaries.contains(b), "{b}: {binaries:?}");
     }
