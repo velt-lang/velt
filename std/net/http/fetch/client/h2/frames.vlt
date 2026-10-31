@@ -334,6 +334,16 @@ function windowUpdate(s: ClientSession, id: i64, p: i64, len: i64) {
   const st = s.streams.get(id);
   if (st != undefined) {
     st.sendWindow += inc;
+    if (inc == 0 || st.sendWindow > MAX_WINDOW) {
+      // A stream error (RFC 9113 §6.9, §6.9.1).
+      const code = inc == 0 ? PROTOCOL_ERROR : FLOW_CONTROL_ERROR;
+      s.out.rstStream(id, code);
+      st.events.trySend(
+        errorEvent(`fetch failed: a bad WINDOW_UPDATE (${errorName(code)})`, RETRY_NEVER),
+      );
+      s.forget(st);
+      return;
+    }
     pump(s, st);
   }
 }

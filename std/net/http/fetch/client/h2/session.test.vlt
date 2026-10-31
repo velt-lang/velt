@@ -2,7 +2,8 @@
 //
 // The HTTP/2 `fetch` client against a server written frame by frame (TLS, ALPN "h2"): which
 // failed requests go out again (RFC 9113 §8.7: a refused stream whatever its method; after a
-// connection that failed with the request sent, only an idempotent one).
+// connection that failed with the request sent, only an idempotent one), and a stream error for
+// a bad WINDOW_UPDATE.
 import { listenTls, TcpListener, TcpStream } from "velt/net";
 import { fetch } from "velt/net/http";
 import { FieldList, FrameWriter, HpackDecoder, HpackEncoder } from "velt/net/http/h2";
@@ -25,6 +26,8 @@ const ANSWER: i64 = 0;
 const REFUSE: i64 = 1;
 /// Closes the connection: the request may have been processed.
 const DROP: i64 = 2;
+/// A WINDOW_UPDATE of 0 on the request's stream (a stream error).
+const ZERO_WINDOW: i64 = 3;
 
 /// A running server: its port, and how many requests (HEADERS) it received.
 class RawServer {
@@ -122,6 +125,8 @@ async function serveConn(conn: TcpStream, actions: i64[], requests: shared<i64>)
             return;
           } else if (action == REFUSE) {
             w.rstStream(id, 7);
+          } else if (action == ZERO_WINDOW) {
+            w.windowUpdate(id, 0);
           } else {
             const at = w.beginHeaders();
             enc.begin(w);
@@ -172,6 +177,16 @@ describe("HTTP/2 fetch retries", () => {
   it("sends a refused POST again (REFUSED_STREAM: not processed)", async () => {
     const server = await startRaw([REFUSE, ANSWER]);
     expect(await timeout(outcome(server.url, "POST"), 10000)).toBe("200 ok");
+    expect(server.requests.get()).toBe(2);
+    server.close();
+  });
+
+  it("fails a request whose stream gets a WINDOW_UPDATE of 0, and goes on", async () => {
+    const server = await startRaw([ZERO_WINDOW, ANSWER]);
+    const bad = await timeout(outcome(server.url, "GET"), 10000);
+    expect(bad.startsWith("error:")).toBe(true);
+    expect(bad.includes("a bad WINDOW_UPDATE (PROTOCOL_ERROR)")).toBe(true);
+    expect(await timeout(outcome(server.url, "GET"), 10000)).toBe("200 ok");
     expect(server.requests.get()).toBe(2);
     server.close();
   });
