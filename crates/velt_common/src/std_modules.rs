@@ -126,6 +126,8 @@ table! {
     sync_epoch_reclaim => "sync/epoch/reclaim",
     /// The test runner's module, also `vitest`.
     test => "test",
+    test_registry => "test/registry",
+    test_run => "test/run",
     text_regex_regexp => "text/regex/regexp",
     text_regex_regexp_match => "text/regex/regexp_match",
     text_regex_string_methods => "text/regex/string_methods",

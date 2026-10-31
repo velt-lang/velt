@@ -273,6 +273,13 @@ hooks! {
     search_reg_exp => text_regex_string_methods, "searchRegExp", "(string, RegExp) -> i64";
     split_reg_exp => text_regex_string_methods, "splitRegExp", "(string, RegExp, f64 | undefined) -> string[]";
 
+    // test/registry.vlt, test/run.vlt: what `velt test`'s generated `main` calls (veltc
+    // `commands/test/harness.rs`; the loader lets only the harness import these files).
+    register_file => test_registry, "registerFile", "(i64) -> void";
+    register_test => test_registry, "registerTest", "(string, () => void throws unknown) -> void";
+    register_async_test => test_registry, "registerAsyncTest", "<A>(string, () => Promise<A, unknown>) -> void";
+    run_registered => test_run, "runRegistered", "() -> void throws JsonError | IoError";
+
     // lang/typed_array/core.vlt: the bytes of a typed array.
     view_bytes => lang_typed_array_core, "viewBytes", "(BufferView) -> usize", lowered;
 }

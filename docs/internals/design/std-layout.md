@@ -454,8 +454,9 @@ name (`std/lang/hooks/number::f64ToString`), an identifier or type name no sourc
 (`Ctx::std_def`); the globals no longer re-export the proxy and `this` hooks, and the global of
 `this` functions loads on its marker line instead of a name. The built-in methods of a value held
 as `any` keep a name prefix (`anyStr_trim`, found by `velt_vir` `any_builtin.rs`). `velt test`'s
-generated `main` calls `velt/test`'s `registerFile`, `registerTest`, `registerAsyncTest` and
-`runRegistered`, its documented runner API. The JSON hooks (`JSON.__parseFromContext`, the
+generated `main` calls the runner's hooks `registerFile`, `registerTest`, `registerAsyncTest`
+and `runRegistered` from velt/test's internal files, which the loader lets only the harness
+import (`LoadOptions::test_harness`). The JSON hooks (`JSON.__parseFromContext`, the
 reader's and writer's) are left to the JSON port.
 
 Left for a follow-up: the `__` *methods* (on `Record`, `Map`, `Proxy`, the typed arrays,

@@ -32,6 +32,9 @@ pub struct BuildOptions {
     pub input: PathBuf,
     /// Root module source instead of reading `input` (generated `velt test` harnesses).
     pub root_source: Option<String>,
+    /// The root is `velt test`'s generated harness, which imports the test runner's hooks from
+    /// velt/test's internal files ([`loader::LoadOptions::test_harness`]).
+    pub test_harness: bool,
     /// Installed packages when building inside a package (`None` → package imports fail).
     pub packages: Option<vpm::PackageGraph>,
     /// `-o`; `None` → `./target/velt/<stem>[.exe]`.
@@ -276,6 +279,7 @@ fn load_modules(
             .as_ref()
             .map(|g| g as &dyn loader::PackageResolver),
         root_source: opts.root_source.clone(),
+        test_harness: opts.test_harness,
         overlay: None,
         // A source generator host for std's generators sits in the std root and imports their
         // internal files: it is std code (docs/internals/design/source-generators.md §5).

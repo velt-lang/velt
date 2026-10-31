@@ -599,6 +599,7 @@ impl Run<'_> {
         let opts = BuildOptions {
             input: dir.join(format!("__velt_test_{name}.vlt")),
             root_source: Some(source),
+            test_harness: true,
             packages: self.packages.clone(),
             output: Some(out_dir.join(format!("{}_{key:016x}", name.replace('.', "_")))),
             release: self.opts.release,

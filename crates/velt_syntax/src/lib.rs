@@ -63,9 +63,12 @@ pub fn computed_key_name(key: &ast::Ident) -> Option<&str> {
 use velt_common::{Diagnostics, FileId};
 
 /// Is `import` the one the parser adds for `import.meta` (its class, [`ast::IMPORT_META_CLASS`]),
-/// not one written in the source? Tools that list or place imports skip it.
+/// not one written in the source? Its specifier's span is empty, which a written string literal's
+/// never is: the same import written by hand is the user's, and the loader checks it as such.
+/// Tools that list or place imports skip it.
 pub fn is_synthesized_import(import: &ast::Import) -> bool {
-    import.from == ast::IMPORT_META_MODULE
+    import.from_span.lo == import.from_span.hi
+        && import.from == ast::IMPORT_META_MODULE
         && matches!(import.names.as_slice(), [n]
             if n.alias.as_ref().is_some_and(|a| a.name == ast::IMPORT_META_CLASS))
 }

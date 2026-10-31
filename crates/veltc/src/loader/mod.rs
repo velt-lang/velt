@@ -81,6 +81,9 @@ pub struct LoadOptions<'a> {
     /// as `main`: the language server, for a std file opened in the editor, so it is checked like
     /// std code (runtime declarations, std's own types) instead of as a user program.
     pub std_root_as_std: bool,
+    /// The root is `velt test`'s generated harness: its imports of velt/test's internal files
+    /// (the runner's hooks, velt_common `std_hooks.rs`) are the compiler's, not the user's.
+    pub test_harness: bool,
 }
 
 /// Result of loading a program: the modules and the index of the root (`main`).
@@ -177,8 +180,9 @@ pub fn load_with_roots(
         }
         None => loader.add(root, key, src, "main".into(), origin.clone()),
     };
-    // A root given as source is `velt test`'s harness, which imports std's test files.
-    loader.harness = opts.root_source.is_some().then_some(root_index);
+    if opts.test_harness {
+        loader.harness = Some(root_index);
+    }
     let mut queue: VecDeque<usize> = (0..loader.modules.len()).collect();
     loader.resolve_all(&mut queue);
     loader.extra_phase = true;
@@ -232,8 +236,9 @@ struct Loader<'a, 'o> {
     /// file it names (`wanted::pure` asks again each time the module is resolved again, and
     /// resolving costs filesystem round trips).
     skipped: HashMap<(usize, String), Option<(PathBuf, PathBuf)>>,
-    /// The root module when it is `velt test`'s generated harness (its source given): the only
-    /// module outside std that may import std's test files ([`visibility`]).
+    /// The root module when it is `velt test`'s harness ([`LoadOptions::test_harness`]): the only
+    /// module outside std that may import std's test files and the test runner's hooks
+    /// ([`visibility`]).
     harness: Option<usize>,
 }
 
@@ -518,7 +523,9 @@ impl Loader<'_, '_> {
             if skip && self.pure(index, &imp.from) {
                 continue;
             }
-            let written = !velt_syntax::is_synthesized_import(&imp);
+            let runner = self.harness == Some(index)
+                && imp.from.starts_with(velt_common::std_specifier!(test));
+            let written = !velt_syntax::is_synthesized_import(&imp) && !runner;
             imports.push((
                 imp.from.clone(),
                 imp.from_span,

@@ -17,8 +17,6 @@
 //   tests in this process and prints the report itself.
 
 export { Expect, expect } from "velt/test/expect";
-export { registerFile, registerTest, registerAsyncTest } from "velt/test/registry";
-export { runRegistered } from "velt/test/run";
 export {
   afterAll,
   afterEach,

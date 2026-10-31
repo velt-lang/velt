@@ -72,6 +72,7 @@ pub(super) fn options_key(opts: &BuildOptions, backend: Backend) -> Key {
     let BuildOptions {
         input,
         root_source,
+        test_harness,
         packages: _, // From the manifest and lockfile, recorded with their directory.
         output,
         release,
@@ -84,7 +85,7 @@ pub(super) fn options_key(opts: &BuildOptions, backend: Backend) -> Key {
         debug_vars,
     } = opts;
     h.part(format!("{:?}", vpm::relpath::absolute(input)).as_bytes());
-    h.part(format!("{root_source:?}").as_bytes());
+    h.part(format!("{root_source:?} {test_harness}").as_bytes());
     let settings = format!(
         "{output:?} {release} {debug_info} {} {cpu:?} {emit:?} {backend:?} {report_numbers} \
          {debug_vars} {}",

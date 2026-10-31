@@ -75,5 +75,6 @@ its process reported no counts (a runtime without the debug counters). Such a
 process waits for what is still running, as a program does after `main`: the runner ends one
 still running 120 s after its tests and fails the file.
 
-The other exports (`registerFile`, `registerTest`, `registerAsyncTest`, `runRegistered`) are the
-runner's API that the generated `main` calls.
+The generated `main` registers the tests and starts the runner through compiler hooks
+(`registerFile`, `registerTest`, `registerAsyncTest`, `runRegistered` in velt/test's internal
+files; docs/internals/design/std-layout.md §10b), which programs cannot import.

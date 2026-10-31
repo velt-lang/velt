@@ -33,6 +33,7 @@ fn std_test_files_are_std_code_wherever_they_are_imported_from() {
                 "import * as t from \"./x/inner.test.vlt\";\nfunction main() { t.test_one(); }\n"
                     .into(),
             ),
+            test_harness: true,
             ..Default::default()
         },
     );
@@ -46,6 +47,7 @@ fn std_test_files_are_std_code_wherever_they_are_imported_from() {
         LoadOptions {
             std_root: Some(std),
             root_source: Some("import { one } from \"./x/inner\";\nfunction main() {}\n".into()),
+            test_harness: true,
             ..Default::default()
         },
     );
@@ -104,6 +106,7 @@ fn std_test_files_are_not_importable_by_programs() {
             root_source: Some(
                 "import * as m from \"./mine.test.vlt\";\nfunction main() {}\n".into(),
             ),
+            test_harness: true,
             ..Default::default()
         },
     );
@@ -266,7 +269,37 @@ fn the_import_the_parser_adds_for_import_meta_is_not_the_users() {
     );
     let main = "function main() {\n  console.log(import.meta.url);\n}\n";
     assert_eq!(errors(&t, &std, main), Vec::<String>::new());
-    // Written by hand, the same import is an error.
+    // Written by hand, the same import is an error, also under the parser's alias.
     let main = "import { ImportMeta } from \"velt/lang/import_meta\";\nfunction main() {}\n";
     assert_eq!(errors(&t, &std, main).len(), 1);
+    let main = "import { ImportMeta as __ImportMeta } from \"velt/lang/import_meta\";\n\
+                function main() {\n  console.log(import.meta.url);\n}\n";
+    assert_eq!(errors(&t, &std, main).len(), 1);
+}
+
+#[test]
+fn only_the_test_harness_imports_the_runners_hooks() {
+    let t = Tree::new();
+    t.write(
+        "std/test/index.vlt",
+        "export { it } from \"velt/test/suite\";\n",
+    );
+    t.write("std/test/suite.vlt", "export function it() {}\n");
+    t.write(
+        "std/test/run.vlt",
+        "export async function runRegistered() {}\n",
+    );
+    let main = "import { runRegistered } from \"velt/test/run\";\n\
+                async function main() {\n  await runRegistered();\n}\n";
+    let opts = |harness: bool| LoadOptions {
+        std_root: Some(t.path("std")),
+        root_source: Some(main.into()),
+        test_harness: harness,
+        ..Default::default()
+    };
+    let root = t.path("main.vlt");
+    let (_, d, _) = load(&root, opts(true));
+    assert!(d.is_empty(), "{:?}", messages(&d));
+    let (_, d, _) = load(&root, opts(false));
+    assert_eq!(messages(&d), ["`velt/test/run` is internal to `velt/test`"]);
 }
