@@ -2,10 +2,6 @@
 
 use super::*;
 
-/// The methods of [`LAZY_PRELUDE_TYPES`] lowering calls by name: each only where it has a value
-/// of the type, so its type is used and its methods are checked.
-const LAZY_PRELUDE_METHODS: &[&str] = &["__fromReader", "__runtimeHandle", "__writeJson"];
-
 /// The definitions named by `std_item!(<entry>, "<item>")` in `src` (velt_common's std module
 /// table): per use, the byte offset of the item's text, its module's canonical path and the
 /// item (`"Proxy.from"`).
@@ -99,7 +95,6 @@ fn every_name_lowering_looks_up_is_a_helper() {
         .filter(|n| !n.ends_with("__") && !n.starts_with("__DWARF") && !n.starts_with("__GCC"))
         .filter(|n| !C_SYMBOLS.contains(&n.as_str()))
         .filter(|n| !is_helper(n) && !in_json_glue_prelude(n))
-        .filter(|n| !LAZY_PRELUDE_METHODS.contains(&n.as_str()))
         .collect();
     assert!(
         missing.is_empty(),

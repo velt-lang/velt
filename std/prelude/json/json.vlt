@@ -6,9 +6,10 @@
 // generators of velt/encoding/json (a string builder for stringify, a pull-reader decoder for
 // parse; a type that generator does not decode yet by the compiler's `jsonParse` intrinsic);
 // parse failures throw a `SyntaxError` `JsonError` ("expected string at $.name"). The
-// generated code writes a `JsonValue` (at any depth) with its private `__writeJson(b)`, decodes
-// one with `__fromReader(r)`, and `console.log` prints one from the runtime tree `__runtimeHandle()`
-// makes for it (freed after).
+// generated code writes a `JsonValue` (at any depth) with its `[JSON_WRITE](b)`, decodes one with
+// `JsonValue[JSON_FROM_READER](r)`, and `console.log` prints one from the runtime tree
+// `[JSON_RUNTIME_HANDLE]()` makes for it (freed after); the keys are std/lang/hooks/keys.vlt's,
+// which no program can name.
 //
 // `JSON.parseValue` gives a `JsonValue` for data of unknown shape: a position on a tape (one
 // flat array per document, velt/encoding/json/tape), which its children share. A value built or edited
@@ -25,16 +26,14 @@
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
 // The pull reader under every `JSON.parse<T>` decoder (Velt code; the compiler's glue calls it).
-import {
-  FLAG_COMMENTS,
-  FLAG_REJECT_UNKNOWN,
-  FLAG_TRAILING_COMMAS,
-  Reader,
-} from "velt/encoding/json/reader";
+import { Reader } from "velt/encoding/json/reader";
+// `options` as the reader's flags and nesting limit.
+import { jsonFlags, jsonMaxDepth } from "velt/encoding/json/options";
 // What `JSON.stringify<T>` writes for numbers and strings (Velt code; the glue calls it).
 import "velt/encoding/json/writer";
 // `JSON.stringify<T>`: the writer generated per type, and the check of a dynamic value at the top.
 import { StringBuilder } from "velt/text/string_builder";
+import { JSON_FROM_READER, JSON_RUNTIME_HANDLE, JSON_WRITE } from "velt/lang/hooks/keys";
 import { parseJsonTop, writeJsonTop } from "velt/encoding/json/generated";
 // `JSON.parseValue`'s documents: one flat tape each (Velt code).
 import {
@@ -126,42 +125,6 @@ export type JsonParseOptions = {
   trailingCommas?: bool;
 };
 
-// The reader's flags for `options` on top of `base` (std/encoding/json/reader.vlt `FLAG_*`).
-function jsonFlags(options: JsonParseOptions | null, base: i64): i64 {
-  let flags = base;
-  if (options == null) {
-    return flags;
-  }
-  if (options.unknownKeys == "reject") {
-    flags = flags | (FLAG_REJECT_UNKNOWN as i64);
-  }
-  if (options.comments == "skip") {
-    flags = flags | (FLAG_COMMENTS as i64);
-  }
-  if (options.trailingCommas == true) {
-    flags = flags | (FLAG_TRAILING_COMMAS as i64);
-  }
-  return flags;
-}
-
-// `maxDepth` when the options leave it out.
-const DEFAULT_MAX_DEPTH: i64 = 128;
-
-// The `max_depth` the runtime gets for `options` (throws `JsonError` when out of range).
-function jsonMaxDepth(options: JsonParseOptions | null): i64 {
-  if (options == null) {
-    return DEFAULT_MAX_DEPTH;
-  }
-  const d = options.maxDepth;
-  if (d == null) {
-    return DEFAULT_MAX_DEPTH;
-  }
-  if (d < 1 || d > 4294967295) {
-    throw new JsonError(`maxDepth must be between 1 and 4294967295, got ${d}`);
-  }
-  return d;
-}
-
 /**
  * Converts values to and from the JavaScript Object Notation (JSON) format. Unlike JS, it is
  * typed: `stringify` and `parse` are generated for the static type at compile time, `parse<T>`
@@ -191,16 +154,8 @@ export class JSON {
     return parseJsonTop<T>(text, jsonFlags(options, 0), jsonMaxDepth(options));
   }
 
-  /**
-   * `JSON.parse(text)` with its type from the context (`JSON.parse(text) as T`,
-   * `const t: T = JSON.parse(text)`, TypeScript's forms; the compiler calls this for them):
-   * `parse<T>`, except that a JSON `null` for an optional field whose type has no `null`
-   * (`a?: string`) fails the decode, as a value of another type does (JavaScript would give the
-   * field a `null` its type can't hold).
-   */
-  static __parseFromContext<T>(text: string, options: JsonParseOptions | null = null): T {
-    return parseJsonTop<T>(text, jsonFlags(options, 2), jsonMaxDepth(options));
-  }
+  // `JSON.parse(text)` with its type from the context (`as T`) is the compiler's hook
+  // `jsonParseFromContext` (std/lang/hooks/json.vlt).
 
   /**
    * Parses any JSON document (throws `JsonError`); the options are `maxDepth`, `comments` and
@@ -329,7 +284,7 @@ export class JsonValue {
    * frees it with `velt_rt_json_value_free`): another reference to the tree, or a tree made from
    * the tape.
    */
-  private __runtimeHandle(): u64 {
+  [JSON_RUNTIME_HANDLE](): u64 {
     const t = this.#tape;
     if (t != null) {
       return treeOf(t, this.#node);
@@ -339,10 +294,9 @@ export class JsonValue {
 
   /**
    * Reads one value with `r` (a `JsonValue` being decoded: the decoders velt/encoding/json
-   * generates call it, as the compiler's glue does by name): null when the reader failed.
-   * Internal, not part of the API.
+   * generates call it, as the compiler's glue does): null when the reader failed.
    */
-  static __fromReader(r: Reader): JsonValue | null {
+  static [JSON_FROM_READER](r: Reader): JsonValue | null {
     const limit = r.valueLimit();
     if (limit >= 0) {
       const t = parseWith(r, limit as u32, false);
@@ -358,8 +312,8 @@ export class JsonValue {
     return null;
   }
 
-  /** Appends this value as `JSON.stringify` writes it to the builder `out` (compiled glue). */
-  private __writeJson(out: string): void {
+  /** Appends this value as `JSON.stringify` writes it to the builder `out`. */
+  [JSON_WRITE](out: string): void {
     const t = this.#tape;
     if (t != null) {
       const node = this.#node;
@@ -373,7 +327,7 @@ export class JsonValue {
   /** Sets object member `key` (an existing key keeps its position); false if not an object. */
   set(key: string, value: JsonValue): bool {
     this.toTree();
-    const h = value.__runtimeHandle();
+    const h = value[JSON_RUNTIME_HANDLE]();
     let slot = JsonHandleSlot { handle: this.#handle };
     const ok = velt_rt_json_value_set(slot, key, h);
     this.#handle = slot.handle;
@@ -393,7 +347,7 @@ export class JsonValue {
   /** Appends to an array; false if not an array. */
   push(value: JsonValue): bool {
     this.toTree();
-    const h = value.__runtimeHandle();
+    const h = value[JSON_RUNTIME_HANDLE]();
     let slot = JsonHandleSlot { handle: this.#handle };
     const ok = velt_rt_json_value_push(slot, h);
     this.#handle = slot.handle;
@@ -407,7 +361,7 @@ export class JsonValue {
       return false;
     }
     this.toTree();
-    const h = value.__runtimeHandle();
+    const h = value[JSON_RUNTIME_HANDLE]();
     let slot = JsonHandleSlot { handle: this.#handle };
     const ok = velt_rt_json_value_set_at(slot, i as u64, h);
     this.#handle = slot.handle;

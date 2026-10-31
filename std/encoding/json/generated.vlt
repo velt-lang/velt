@@ -16,6 +16,7 @@ import { checkJsonTop, jsonPresent, writeJsonAny } from "velt/encoding/json/any"
 import { beginVisit, dynamicOf, endVisit, identity, isProxy } from "velt/reflect";
 import { Reader } from "velt/encoding/json/reader";
 import { JsonFail, jsonFailed } from "velt/encoding/json/fail";
+import { JSON_FROM_READER } from "velt/lang/hooks/keys";
 import { jsonParse } from "velt/lang/intrinsics";
 import { recordFromMap } from "velt/lang/hooks/record";
 

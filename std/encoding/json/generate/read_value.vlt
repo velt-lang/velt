@@ -5,7 +5,7 @@
 import { Model, Output, Type } from "velt/generate";
 import { Choice, choices, choicesExpected } from "velt/encoding/json/generate/choice";
 
-/** The prelude's dynamic JSON value, decoded by its `__fromReader`. */
+/** The prelude's dynamic JSON value, decoded by its `[JSON_FROM_READER]`. */
 const JSON_VALUE = "std/prelude/json/json::JsonValue";
 
 /** Is `t` a `JsonValue`? */
@@ -87,7 +87,7 @@ export function readInto(out: Output, model: Model, id: i64, name: string): void
   } else if (isJsonValue(t)) {
     // A tape over the reader's text, or a driver's runtime tree; null when the reader failed.
     const v = out.fresh("v");
-    out.line(`const ${v} = JsonValue.__fromReader(r);`);
+    out.line(`const ${v} = JsonValue[JSON_FROM_READER](r);`);
     out.line(`if (${v} == null) { throw jsonFailed("value"); }`);
     out.line(`const ${name} = ${v};`);
   } else {

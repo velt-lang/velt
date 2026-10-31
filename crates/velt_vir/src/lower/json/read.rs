@@ -261,13 +261,13 @@ impl FnLower<'_, '_> {
         self.switch_to(next);
     }
 
-    /// A `JsonValue`: the prelude's `__fromReader` reads the value (a tape over the reader's
+    /// A `JsonValue`: the prelude's `JsonValue[JSON_FROM_READER]` reads the value (a tape over the reader's
     /// source; a runtime tree from a driver's rows) and gives the `JsonValue | null` of it, null
     /// (a null pointer, all-zero) when the reader failed.
     fn json_read_value(&mut self, r: Local, place: &Place, ctx: Local, ty: TyId, fail: BlockId) {
         let _ = ty;
         let ro = Operand::Copy(Place::local(r));
-        let v = self.json_value_call("__fromReader", vec![ro]);
+        let v = self.json_value_call(velt_common::std_key!(json_from_reader), vec![ro]);
         let v = self.copy_to_temp(v, Ty::Ptr);
         let vo = Operand::Copy(Place::local(v));
         let ok = self.rvalue_temp(

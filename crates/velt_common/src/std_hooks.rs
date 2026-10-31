@@ -222,6 +222,11 @@ hooks! {
     async_iterable_object => lang_hooks_async_iter, "AsyncIterableObject", "class";
     iterable_object => lang_hooks_iter, "IterableObject", "class";
 
+    // json.vlt: `JSON.parse(text) as T`, loaded with the global `JSON`
+    // (std/prelude/global/json.vlt).
+    /// `JSON.parse(text)` with its type from the context (`velt_sema` `static_call.rs`).
+    json_parse_from_context => lang_hooks_json, "jsonParseFromContext", "<A>(string, { unknownKeys?: \"ignore\" | \"reject\", maxDepth?: i64, comments?: \"error\" | \"skip\", trailingCommas?: boolean } | null) -> A";
+
     // proxy.vlt: the operations on `any` that ask a proxy, used once a program has loaded `Proxy`
     // (std/prelude/global/proxy.vlt).
     any_delete_proxy => lang_hooks_proxy, "anyDeleteProxy", "(any, any) -> bool";
@@ -336,6 +341,12 @@ keys! {
     // Arrays: `xs[i]` that reads `undefined` past the end, as JS (`velt_sema` `indexers.rs`).
     array_get => "ARRAY_GET", "arrayGet";
     set_index => "SET_INDEX", "setIndex";
+    // JsonValue: what `console.log` prints a value from (`velt_vir` `glue/format.rs`), what
+    // appends one's text (velt/encoding/json/append) and what decoders read one with
+    // (velt/encoding/json/generate/read_value).
+    json_runtime_handle => "JSON_RUNTIME_HANDLE", "jsonRuntimeHandle";
+    json_write => "JSON_WRITE", "jsonWrite";
+    json_from_reader => "JSON_FROM_READER", "jsonFromReader";
     // Map: what a `for...of` over a map reads (`velt_sema` `for_map.rs`, `velt_vir` `frozen.rs`),
     // what `console.log` calls (`velt_vir` `glue/format_map.rs`).
     map_cursor => "MAP_CURSOR", "mapCursor";

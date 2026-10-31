@@ -213,7 +213,7 @@ impl FnLower<'_, '_> {
         // A runtime handle of its own (a tape value's is a tree made for this), freed after.
         let _ = ty;
         let v = Operand::Copy(place.clone());
-        let h = self.json_value_call("__runtimeHandle", vec![v]);
+        let h = self.json_value_call(velt_common::std_key!(json_runtime_handle), vec![v]);
         let h = self.copy_to_temp(h, Ty::U64);
         let hp = self.rvalue_temp(
             Ty::Ptr,

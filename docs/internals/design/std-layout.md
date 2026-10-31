@@ -456,8 +456,10 @@ name (`std/lang/hooks/number::f64ToString`), an identifier or type name no sourc
 as `any` keep a name prefix (`anyStr_trim`, found by `velt_vir` `any_builtin.rs`). `velt test`'s
 generated `main` calls the runner's hooks `registerFile`, `registerTest`, `registerAsyncTest`
 and `runRegistered` from velt/test's internal files, which the loader lets only the harness
-import (`LoadOptions::test_harness`). The JSON hooks (`JSON.__parseFromContext`, the
-reader's and writer's) are left to the JSON port.
+import (`LoadOptions::test_harness`). The JSON hooks came with the JSON port (#1946):
+`JSON.parse(text) as T` calls `jsonParseFromContext<T>` (`std/lang/hooks/json.vlt`, loaded with
+the global `JSON`), and `JsonValue`'s methods the compiler and generated code call are keyed by
+std's symbols (`[JSON_RUNTIME_HANDLE]()`, `[JSON_WRITE](b)`, `static [JSON_FROM_READER](r)`).
 
 Left for a follow-up: the `__` *methods* (on `Record`, `Map`, `Proxy`, the typed arrays,
 `RegExp`, the fetch bodies, `String`, `Error`, `ThisFn`, the test suite) and the `__inspect`

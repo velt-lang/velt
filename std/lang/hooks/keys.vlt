@@ -29,6 +29,12 @@ export const VIEW_SIZE = Symbol("viewSize");
 /** Buffer views: how an empty one prints. */
 export const VIEW_EMPTY_TEXT = Symbol("viewEmptyText");
 
+/** `JsonValue`: a runtime handle of its own to the value (`console.log` prints its tree). */
+export const JSON_RUNTIME_HANDLE = Symbol("jsonRuntimeHandle");
+/** `JsonValue`: appends the value's JSON text to a string builder. */
+export const JSON_WRITE = Symbol("jsonWrite");
+/** `JsonValue` (static): one value read by a JSON reader, as decoders read a `JsonValue`. */
+export const JSON_FROM_READER = Symbol("jsonFromReader");
 /** `Map`: a cursor before the first entry of a live `for...of` loop. */
 export const MAP_CURSOR = Symbol("mapCursor");
 /** `Map`: moves a cursor to the next live entry. */

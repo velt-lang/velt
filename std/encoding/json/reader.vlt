@@ -137,7 +137,7 @@ export class Reader extends Scanner {
   int: i64 = 0;
   /**
    * The value `valueLimit` read from a driver's rows: a runtime `JsonValue` handle. (A value
-   * read from text is the tape `JsonValue.__fromReader` parses: no field of the reader holds a
+   * read from text is the tape `JsonValue[JSON_FROM_READER]` parses: no field of the reader holds a
    * tape, so a program that decodes no `JsonValue` does not carry the tape's drop and copy code.)
    */
   handle: u64 = 0;
@@ -541,7 +541,7 @@ export class Reader extends Scanner {
   }
 
   /**
-   * The start of one complete value of any kind, for a `JsonValue` (`JsonValue.__fromReader`
+   * The start of one complete value of any kind, for a `JsonValue` (`JsonValue[JSON_FROM_READER]`
    * parses it into a tape over this reader's source with `parseWith`): the depth limit to give
    * `parseWith` (0: none), or -1 when no text value is to be parsed: on failure, or for a
    * driver's rows, which set `rowsValue` and leave the runtime tree in `handle`. The tape is not

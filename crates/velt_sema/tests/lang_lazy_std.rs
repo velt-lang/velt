@@ -242,7 +242,7 @@ export class Holder {{
 
 #[test]
 fn a_decoder_checks_the_tape_only_for_a_type_with_a_json_value() {
-    // The reader names no tape: `JsonValue.__fromReader` parses one, and is checked once the
+    // The reader names no tape: `JsonValue[JSON_FROM_READER]` parses one, and is checked once the
     // decoded type holds a `JsonValue` (it is a method of a used `JsonValue`).
     let tape = "std/encoding/json/tape::parseWith";
     let plain = ok_src(

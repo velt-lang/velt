@@ -88,6 +88,7 @@ table! {
     lang_hooks_class_object => "lang/hooks/class_object",
     lang_hooks_error => "lang/hooks/error",
     lang_hooks_iter => "lang/hooks/iter",
+    lang_hooks_json => "lang/hooks/json",
     lang_hooks_number => "lang/hooks/number",
     lang_hooks_process => "lang/hooks/process",
     lang_hooks_proxy => "lang/hooks/proxy",

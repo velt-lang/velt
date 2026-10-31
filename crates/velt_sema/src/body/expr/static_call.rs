@@ -108,16 +108,18 @@ impl FnCx<'_, '_> {
         self.note_reflect_call(d, &prop.name, span);
         let cname = self.cx.adt(d).expect("ICE: adt").name.clone();
         // `JSON.parse(text)` with its type from the context (`as T`, an annotated variable):
-        // TypeScript's form, decoded strictly where `JSON.parse<T>` is lenient (std's
-        // `JSON.__parseFromContext`).
-        let from_context = type_args.is_empty()
+        // TypeScript's form, decoded strictly where `JSON.parse<T>` is lenient (the hook
+        // `jsonParseFromContext`, loaded with the global `JSON`).
+        if type_args.is_empty()
             && prop.name == "parse"
             && cname == "JSON"
-            && self.cx.declared_in_std(d);
-        let lookup = match from_context {
-            true => "__parseFromContext",
-            false => prop.name.as_str(),
-        };
+            && self.cx.declared_in_std(d)
+        {
+            if let Some(h) = self.json_parse_from_context(d, prop, args, exp, span) {
+                return h;
+            }
+        }
+        let lookup = prop.name.as_str();
         let (m, owner_generics, owner_args) = match self.find_static(d, lookup) {
             Ok(found) => found,
             // A static field holding a function value: a call of what it holds.
@@ -152,7 +154,12 @@ impl FnCx<'_, '_> {
             *slot = Some(a);
         }
         self.explicit_type_args(&mut slots, own, type_args, &c.defaults, span);
-        let mut ck = self.check_call(&c, slots, args, exp, span);
+        let ck = self.check_call(&c, slots, args, exp, span);
+        self.def_call(def, ck, span)
+    }
+
+    /// The call of `def` whose arguments `ck` checked.
+    fn def_call(&mut self, def: DefId, mut ck: super::args::Checked, span: Span) -> hir::Expr {
         if let Some(h) = self.sync_call(def, &mut ck.args, ck.ret, span) {
             return h;
         }
@@ -163,6 +170,33 @@ impl FnCx<'_, '_> {
             args: ck.args,
         };
         self.mk(kind, ck.ret, span)
+    }
+
+    /// `JSON.parse(text, options?)` of std's `JSON` (class `d`) with no type arguments: a call of
+    /// the hook `jsonParseFromContext<T>`, `T` taken from the context. `None` when the hook is
+    /// not loaded.
+    fn json_parse_from_context(
+        &mut self,
+        d: DefId,
+        prop: &ast::Ident,
+        args: &[ast::Expr],
+        exp: Option<TyId>,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let Some(crate::ctx::Item::Def(def)) = self
+            .cx
+            .std_def(velt_common::std_hook!(json_parse_from_context))
+        else {
+            return None;
+        };
+        if let Ok((m, _, _)) = self.find_static(d, "parse") {
+            self.cx
+                .rec_ref(prop.span, crate::ide::record::Target::Def(m.def));
+        }
+        let c = self.fn_callable(def, "`JSON.parse`".to_string(), span);
+        let slots = vec![None; c.slot_names.len()];
+        let ck = self.check_call(&c, slots, args, exp, span);
+        Some(self.def_call(def, ck, span))
     }
 
     /// A static method of class `d` (whose `owner` first slots are `d`'s type parameters) called
