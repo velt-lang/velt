@@ -36,6 +36,8 @@ declare function velt_simd_u8x16_as_u16x8(v: u8x16): u16x8;
 declare function velt_simd_u8x16_as_u32x4(v: u8x16): u32x4;
 declare function velt_simd_u8x16_as_f32x4(v: u8x16): f32x4;
 declare function velt_simd_u8x16_as_f64x2(v: u8x16): f64x2;
+declare function velt_simd_u8x16_lane(v: u8x16, index: u64): u8;
+declare function velt_simd_u8x16_splat(x: u8): u8x16;
 declare function velt_simd_u16x8_lane(v: u16x8, index: u64): u16;
 declare function velt_simd_u16x8_with_lane(v: u16x8, index: u64, x: u16): u16x8;
 declare function velt_simd_u16x8_as_u8x16(v: u16x8): u8x16;
@@ -180,6 +182,11 @@ export function loadF32(b: u8[], o: usize): f32 {
 // it against `b`'s current length first (a `u8[]`'s `subarray` makes a buffer whose bytes are
 // that array, which may become shorter), in one test the compiler can hoist from a loop.
 
+/** The byte at `o`. */
+export function element8(b: u8[], o: usize): u8 {
+  return velt_simd_u8x16_lane(velt_simd_u8x16_load_partial(b, o as u64, 1), 0);
+}
+
 /** The `u16` of the element at `o`. */
 export function element16(b: u8[], o: usize): u16 {
   return velt_simd_u16x8_lane(
@@ -210,6 +217,11 @@ export function elementF64(b: u8[], o: usize): f64 {
     velt_simd_u8x16_as_f64x2(velt_simd_u8x16_load_partial(b, o as u64, 8)),
     0,
   );
+}
+
+/** Writes the byte `x` at `o`. */
+export function setElement8(b: u8[], o: usize, x: u8) {
+  velt_simd_u8x16_store_partial(velt_simd_u8x16_splat(x), b, o as u64, 1);
 }
 
 /** Writes `x` to the element at `o`. */

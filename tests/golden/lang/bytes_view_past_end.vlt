@@ -1,0 +1,29 @@
+// Byte views of a `u8[]` that became shorter: a `subarray` whose start is now past the array's
+// end has no elements (its `length` is 0, a write does nothing, a read panics), and an
+// `Int8Array` and a `Uint8ClampedArray` over its buffer have the elements the array still has
+// in their ranges, read in loops up to `length` (inclusive or not) and written in place.
+function main() {
+  const b: u8[] = Buffer.alloc(16);
+  for (let i = 0; i < 16; i++) {
+    b[i] = i as u8;
+  }
+  const v = b.subarray(10, 14);
+  const s = new Int8Array(v.buffer, 2, 8);
+  const c = new Uint8ClampedArray(v.buffer, 6, 8);
+  b.length = 8;
+  console.log(v.length, s.length, c.length);
+  v[0] = 1;
+  c[3] = 1;
+  let sum = 0;
+  for (let i = 1; i <= s.length; i++) {
+    sum += s[i - 1];
+  }
+  for (let i = 0; i < c.length; i++) {
+    sum += c[i];
+  }
+  console.log(sum, b.join(","));
+  s[0] = -1;
+  c[0] = 300;
+  console.log(b[2], b[6], s[0], c[0]);
+  console.log(v[0]);
+}

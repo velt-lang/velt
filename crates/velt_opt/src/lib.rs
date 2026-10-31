@@ -76,9 +76,12 @@
 //!   nothing and tests only counters (no type test) is made once in front of the outermost such
 //!   loop, each pointer tested for null first, so LLVM sees the bound of an inner loop's check
 //!   defined outside every loop.
-//! - `cold_calls`: last, the calls of a function to one callee that never returns (the
+//! - `cold_calls`: then, the calls of a function to one callee that never returns (the
 //!   out-of-bounds report, a throw helper) become one call that the call sites jump to, so a
 //!   small function with many checks stays cheap enough for LLVM to inline.
+//! - `null_exits`: after it, a call of a function that returns at once when a pointer it is
+//!   passed points at null (every drop glue) first tests that pointer, so a null field or a
+//!   value moved out costs no call, and none where the value is known.
 //!
 //! Every pass keeps `Function::locs` aligned with the statements it edits (`srclocs`).
 //!
@@ -114,6 +117,7 @@ mod locals;
 mod map_probe;
 mod module_state;
 mod noalias;
+mod null_exits;
 mod numrep;
 mod scc;
 mod simplify_cfg;
@@ -293,6 +297,10 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
                 if t.time("cold_calls", || cold_calls::run(&no_return, func)) {
                     t.time("simplify_cfg", || simplify_cfg::run(func));
                 }
+            }
+            let exits = null_exits::NullExits::find(program);
+            for func in with_bodies(&mut program.funcs) {
+                t.time("null_exits", || null_exits::run(&exits, func));
             }
         }
     }
