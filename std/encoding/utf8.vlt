@@ -1,6 +1,6 @@
 // velt/encoding (internal): UTF-8: encoding, strict and lossy decoding, and validation in Velt,
 // skipping ASCII sixteen and 64 bytes at a time with SIMD vectors (`validPrefix`, which the
-// WebSocket reader's check of text that arrives in pieces, std/net/websocket/bytes, uses too).
+// WebSocket reader's check of text that arrives in pieces, std/net/websocket/text, uses too).
 
 import { EncodingError } from "velt/encoding/errors";
 import {

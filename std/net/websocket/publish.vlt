@@ -2,8 +2,8 @@
 // `WebSocket.publish`, which leaves its own connection out): the frame is encoded once and queued
 // for each subscriber (topics.vlt).
 
-import { setText } from "velt/net/websocket/bytes";
 import { OP_BINARY, OP_TEXT, headSize, writeHead } from "velt/net/websocket/frame";
+import { setText } from "velt/net/websocket/text";
 import { publish as publishFrame } from "velt/net/websocket/topics";
 
 /** A whole unmasked text frame, for `publish`. */

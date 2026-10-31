@@ -2,7 +2,7 @@
 // what a send or a close waits for. Not part of the public API.
 
 import { IoError } from "velt/io/error";
-import { TcpStream } from "velt/net";
+import { TcpStream } from "velt/net/tcp_stream";
 import { timeout } from "velt/task";
 import { OP_CLOSE } from "velt/net/websocket/frame";
 import {

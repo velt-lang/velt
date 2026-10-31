@@ -13,7 +13,7 @@
 // Locks, always in this order: the registry, a topic, a connection's queue.
 
 import { Channel } from "velt/sync/channel";
-import { TcpStream } from "velt/net";
+import { TcpStream } from "velt/net/tcp_stream";
 import { START } from "velt/net/websocket/queue";
 import { Tx, writeDirect } from "velt/net/websocket/writer";
 import { arrayRemove } from "velt/lang/intrinsics";

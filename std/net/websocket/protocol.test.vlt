@@ -2,11 +2,11 @@
 //
 // White-box tests of velt/net/websocket (RFC 6455): its protocol against a peer that speaks it by
 // hand (`RawClient`), the opening handshake (velt/net/websocket/handshake), framing
-// (velt/net/websocket/frame), the byte helpers (velt/net/websocket/bytes), and the send queue's
-// bounds against a peer that reads slowly or not at all (velt/net/websocket/queue, reader,
-// receive, writer). The server side is a `WebSocket` over a stream whose handshake
-// `serveWebSockets` answered (`webSocketAccept`, `webSocketOver`), as a server outside std builds
-// it. (Were tests/std/websocket/protocol.test.vlt and internals.test.vlt.)
+// (velt/net/websocket/frame), the byte helpers (velt/net/websocket/text, byte_buf, mask_keys),
+// and the send queue's bounds against a peer that reads slowly or not at all
+// (velt/net/websocket/queue, reader, receive, writer). The server side is a `WebSocket` over a
+// stream whose handshake `serveWebSockets` answered (`webSocketAccept`, `webSocketOver`), as a
+// server outside std builds it. (Were tests/std/websocket/protocol.test.vlt and internals.test.vlt.)
 import { Set } from "velt/collections";
 import { channel, Channel } from "velt/sync";
 import { base64Decode, utf8Decode, utf8Encode } from "velt/encoding";
@@ -19,7 +19,7 @@ import {
   webSocketAccept as acceptKey,
   webSocketOver,
 } from "velt/net/websocket";
-import { ByteBuf, maskKey, setText, textOf, utf8Prefix } from "velt/net/websocket/bytes";
+import { ByteBuf } from "velt/net/websocket/byte_buf";
 import {
   Frame,
   OP_BINARY,
@@ -36,10 +36,14 @@ import {
   validCloseCode,
   writeHead,
 } from "velt/net/websocket/frame";
-import { webSocketAccept, checkResponse, generateKey, target } from "velt/net/websocket/handshake";
+import { webSocketAccept, checkResponse, generateKey } from "velt/net/websocket/handshake";
+import { maskKey } from "velt/net/websocket/mask_keys";
 import { CLOSED, FAILED, HIGH_WATER, START, STATUS, SendQueue } from "velt/net/websocket/queue";
-import { PING, Reader, Step } from "velt/net/websocket/reader";
+import { Reader } from "velt/net/websocket/reader";
 import { other } from "velt/net/websocket/receive";
+import { PING, Step } from "velt/net/websocket/step";
+import { target } from "velt/net/websocket/target";
+import { setText, textOf, utf8Prefix } from "velt/net/websocket/text";
 import { finish, flush, settleQuietly } from "velt/net/websocket/writer";
 
 /** A test server on 127.0.0.1 that speaks no more HTTP than the opening handshake. */
@@ -619,8 +623,8 @@ describe("framing", () => {
 });
 
 describe("the byte helpers", () => {
-  // `u8[].xorMask` (prelude), and std/websocket/bytes: ranged UTF-8 checks and decoding, text
-  // copied into a buffer, `ByteBuf`. (Was the golden std/websocket_bytes.)
+  // `u8[].xorMask` (prelude), and std/net/websocket/text.vlt and byte_buf.vlt: ranged UTF-8
+  // checks and decoding, text copied into a buffer, `ByteBuf`. (Was the golden std/websocket_bytes.)
   it("xorMask applies the mask most significant byte first, from start", () => {
     const data: u8[] = [];
     for (let i = 0; i < 21; i++) {

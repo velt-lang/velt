@@ -1,0 +1,37 @@
+// velt/net/websocket (internal): `Step`, one step of receiving, and the kinds of step
+// (`Reader.next`'s answers).
+
+// What `Reader.next` found.
+/** The peer closed the connection (or the stream ended): no more messages. */
+export const CLOSED: i64 = 0;
+/** A text message, in `text`. */
+export const TEXT: i64 = 1;
+/** A binary message, in `data`. */
+export const BINARY: i64 = 2;
+/** More bytes are needed, and the caller is the one to read them (then `feed`). */
+export const READ: i64 = 3;
+/** More bytes are needed, and another task is reading them (`awaitTurn`). */
+export const WAIT: i64 = 4;
+/** A ping, to answer with `data`. */
+export const PING: i64 = 5;
+/** The peer's close frame, to answer with `code`. */
+export const CLOSE: i64 = 6;
+/** A protocol error `text`: the connection is failed with close code `code`. */
+export const FAIL: i64 = 7;
+/** The handle was released. */
+export const RELEASED: i64 = 8;
+
+/** One step of receiving: a message, or what to do before there is one. */
+export class Step {
+  kind: i64;
+  text: string;
+  data: u8[];
+  code: i64;
+
+  constructor(kind: i64, text: string = "", data: u8[] = [], code: i64 = 0) {
+    this.kind = kind;
+    this.text = text;
+    this.data = data;
+    this.code = code;
+  }
+}

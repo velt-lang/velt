@@ -4,7 +4,7 @@
 // whose handshake is done (a client's, or a server's upgrade).
 
 import { IoError } from "velt/io/error";
-import { TcpStream } from "velt/net";
+import { TcpStream } from "velt/net/tcp_stream";
 import {
   closePayload,
   headSize,
@@ -15,8 +15,9 @@ import {
 import { WsMessage } from "velt/net/websocket/message";
 import { binaryFrame, textFrame } from "velt/net/websocket/publish";
 import { DIRECT, QUEUED, SendQueue, START } from "velt/net/websocket/queue";
-import { BINARY, CLOSED, READ, Reader, Step } from "velt/net/websocket/reader";
+import { Reader } from "velt/net/websocket/reader";
 import { other, READ_CHUNK, ReadTurn } from "velt/net/websocket/receive";
+import { BINARY, CLOSED, READ, Step } from "velt/net/websocket/step";
 import { leave, publish as publishFrame, subscribe, unsubscribe } from "velt/net/websocket/topics";
 import { closeDown, closedHandle, flush, settle, Tx, writeDirect } from "velt/net/websocket/writer";
 

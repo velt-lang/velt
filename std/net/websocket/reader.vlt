@@ -2,7 +2,7 @@
 // public API.
 //
 // The connection's `Reader` holds the bytes read and not yet parsed, and a fragmented message
-// so far. It lives in the connection's `SendQueue` (std/websocket/queue), under the same lock,
+// so far. It lives in the connection's `SendQueue` (std/net/websocket/queue.vlt), under the same lock,
 // and is only touched in short steps under it: `next` takes a whole message out of
 // the buffer, or says that more bytes are needed; the task that asked reads them from the
 // stream with the lock released and hands them over with `feed`. So nothing of the state lives
@@ -10,7 +10,7 @@
 // it is used: an idle connection holds none.
 
 import { Channel, channel } from "velt/sync/channel";
-import { ByteBuf, textOf, utf8Prefix } from "velt/net/websocket/bytes";
+import { ByteBuf } from "velt/net/websocket/byte_buf";
 import {
   Frame,
   OP_BINARY,
@@ -26,44 +26,24 @@ import {
   parse,
   validCloseCode,
 } from "velt/net/websocket/frame";
+import { textOf, utf8Prefix } from "velt/net/websocket/text";
+import {
+  BINARY,
+  CLOSE,
+  CLOSED,
+  FAIL,
+  PING,
+  READ,
+  RELEASED,
+  Step,
+  TEXT,
+  WAIT,
+} from "velt/net/websocket/step";
 
 /** Largest message accepted (64 MiB, as most servers). */
 export const MAX_MESSAGE: i64 = 67108864;
-// What `Reader.next` found.
-/** The peer closed the connection (or the stream ended): no more messages. */
-export const CLOSED: i64 = 0;
-/** A text message, in `text`. */
-export const TEXT: i64 = 1;
-/** A binary message, in `data`. */
-export const BINARY: i64 = 2;
-/** More bytes are needed, and the caller is the one to read them (then `feed`). */
-export const READ: i64 = 3;
-/** More bytes are needed, and another task is reading them (`awaitTurn`). */
-export const WAIT: i64 = 4;
-/** A ping, to answer with `data`. */
-export const PING: i64 = 5;
-/** The peer's close frame, to answer with `code`. */
-export const CLOSE: i64 = 6;
-/** A protocol error `text`: the connection is failed with close code `code`. */
-export const FAIL: i64 = 7;
-/** The handle was released. */
-export const RELEASED: i64 = 8;
 
-/** One step of receiving: a message, or what to do before there is one. */
-export class Step {
-  kind: i64;
-  text: string;
-  data: u8[];
-  code: i64;
-
-  constructor(kind: i64, text: string = "", data: u8[] = [], code: i64 = 0) {
-    this.kind = kind;
-    this.text = text;
-    this.data = data;
-    this.code = code;
-  }
-}
-
+/** A connection's receiving side: the bytes read and not yet parsed, and a fragmented message. */
 export class Reader {
   buf: ByteBuf = new ByteBuf();
   pos: i64 = 0;

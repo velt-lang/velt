@@ -5,9 +5,9 @@
 // the connection on a protocol error). Not part of the public API.
 
 import { IoError } from "velt/io/error";
-import { TcpStream } from "velt/net";
+import { TcpStream } from "velt/net/tcp_stream";
 import { OP_CLOSE, closePayload } from "velt/net/websocket/frame";
-import { CLOSE, CLOSED, FAIL, PING, Step, WAIT } from "velt/net/websocket/reader";
+import { CLOSE, CLOSED, FAIL, PING, Step, WAIT } from "velt/net/websocket/step";
 import { Tx, closedHandle, pongRoom, settleQuietly } from "velt/net/websocket/writer";
 
 /** Bytes read at a time. */

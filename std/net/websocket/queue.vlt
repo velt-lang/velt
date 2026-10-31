@@ -7,9 +7,11 @@
 // which writes everything queued in one write; an idle connection has no task and no buffer.
 
 import { Channel, channel } from "velt/sync/channel";
-import { MaskKeys, setText } from "velt/net/websocket/bytes";
 import { OP_CLOSE, OP_PONG, headSize, writeHead } from "velt/net/websocket/frame";
-import { BINARY, Reader, Step, TEXT } from "velt/net/websocket/reader";
+import { MaskKeys } from "velt/net/websocket/mask_keys";
+import { Reader } from "velt/net/websocket/reader";
+import { BINARY, Step, TEXT } from "velt/net/websocket/step";
+import { setText } from "velt/net/websocket/text";
 import { arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
 
 /** Queued bytes past which a `send` completes only once the flusher has caught up. */

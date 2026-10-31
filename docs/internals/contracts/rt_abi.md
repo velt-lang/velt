@@ -775,7 +775,7 @@ Declared in std (Velt signatures; `u8[]`/`string` are passed as in rt_abi_async.
   vectors there, and UTF-8 validation (`utf8Valid`, the WebSocket reader) in
   `std/encoding/utf8.vlt`.
 - For protocols written in Velt (`u8[]`'s `utf8Slice` in `std/prelude/bytes.vlt`;
-  `std/net/websocket/bytes.vlt`), on a range `[start, end)` (relative indices) so no slice is made:
+  `std/net/websocket/text.vlt`), on a range `[start, end)` (relative indices) so no slice is made:
   `velt_rt_bytes_range_to_str(b: u8[], start: i64, end: i64): IoResult<string>` (`INVALID_DATA` if
   not UTF-8) and `velt_rt_bytes_range_to_str_lossy(b: u8[], start: i64, end: i64): string` (an
   invalid sequence as U+FFFD, one per maximal invalid subpart): making a string is the runtime's.

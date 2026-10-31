@@ -1,12 +1,12 @@
 // velt/net/websocket (internal): the opening handshake (RFC 6455 §4), server side (the
-// accept key) and client side (the HTTP/1.1 upgrade request over a std/net stream). Not part of
-// the public API.
+// accept key) and client side (the HTTP/1.1 upgrade request over a std/net stream, and the check
+// of its response).
 
 import { randomBytes, sha1 } from "velt/crypto";
 import { base64Encode, utf8DecodeLossy, utf8Encode } from "velt/encoding";
 import { IoError } from "velt/io/error";
-import { TcpStream, connect, connectTls } from "velt/net";
-import { URL } from "velt/net/url";
+import { TcpStream } from "velt/net/tcp_stream";
+import { Target } from "velt/net/websocket/target";
 
 const GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 // The response head may be this long.
@@ -23,41 +23,6 @@ export function webSocketAccept(key: string): string {
 /** A fresh `Sec-WebSocket-Key`: 16 random bytes, base64. */
 export function generateKey(): string {
   return base64Encode(randomBytes(16));
-}
-
-/** Where a `ws://` or `wss://` URL points. */
-export struct Target {
-  secure: bool;
-  /** Without the brackets of an IPv6 literal. */
-  host: string;
-  port: i64;
-  /** Path and query. */
-  path: string;
-}
-
-function invalid(what: string): IoError {
-  return new IoError("EINVAL", what);
-}
-
-/** Parses a WebSocket URL; throws `IoError` "EINVAL" for anything else. */
-export function target(url: string): Target {
-  const u = URL.parse(url);
-  if (u == null) {
-    throw invalid("invalid WebSocket URL");
-  }
-  if (u.protocol != "ws:" && u.protocol != "wss:") {
-    throw invalid("WebSocket URLs start with ws:// or wss://");
-  }
-  const secure = u.protocol == "wss:";
-  let host = u.hostname;
-  if (host.startsWith("[") && host.endsWith("]")) {
-    host = host.slice(1, (host.length as i64) - 1);
-  }
-  if (host == "") {
-    throw invalid("WebSocket URL without a host");
-  }
-  const port: i64 = u.port == "" ? (secure ? 443 : 80) : (parseInt(u.port, 10) as i64);
-  return Target { secure: secure, host: host, port: port, path: u.pathname + u.search };
 }
 
 function failed(what: string): IoError {
@@ -123,9 +88,11 @@ function headEnd(buf: u8[]): i64 {
   return -1;
 }
 
-// Sends the upgrade request and checks the response; returns the bytes read past the response
-// (the first frames, if the server was quick).
-async function handshake(stream: TcpStream, t: Target): Promise<u8[]> {
+/**
+ * Sends the upgrade request and checks the response; returns the bytes read past the response
+ * (the first frames, if the server was quick).
+ */
+export async function handshake(stream: TcpStream, t: Target): Promise<u8[]> {
   const key = generateKey();
   const usual = t.port == (t.secure ? 443 : 80);
   const name = t.host.includes(":") ? `[${t.host}]` : t.host;
@@ -151,24 +118,4 @@ async function handshake(stream: TcpStream, t: Target): Promise<u8[]> {
     throw failed(wrong);
   }
   return buf.slice(end + 4);
-}
-
-/** An open client connection: the stream, and what was read from it past the handshake. */
-export struct Opened {
-  stream: TcpStream;
-  rest: u8[];
-}
-
-/** Connects to a `ws://` or `wss://` URL (`ca`: extra trusted PEM CAs, "" for none) and shakes hands. */
-export async function open(url: string, ca: string): Promise<Opened> {
-  const t = target(url);
-  const addr = t.host.includes(":") ? `[${t.host}]:${t.port}` : `${t.host}:${t.port}`;
-  const stream =
-    t.secure ? await connectTls(addr, { serverName: t.host, ca: ca }) : await connect(addr);
-  try {
-    return Opened { stream: stream, rest: await handshake(stream, t) };
-  } catch (e) {
-    stream.close();
-    throw e;
-  }
 }
