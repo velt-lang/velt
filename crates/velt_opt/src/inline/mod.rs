@@ -181,8 +181,9 @@ pub(crate) fn std_forwarders(funcs: &[Function], helpers: &mut [bool]) {
     let candidate: Vec<bool> = (funcs.iter().enumerate())
         .map(|(i, f)| {
             // Not std/lang: the compiler's hooks and the language's runtime code, whose calls
-            // stay visible in a debug build's code.
-            let lang = f.symbol.starts_with("_V3stdP4lang");
+            // stay visible in a debug build's code. Except the helpers of the code generated
+            // for `deepEqual` and `toEqual` (std/lang/equal), which only that code calls.
+            let lang = f.symbol.starts_with("_V3stdP4lang") && !f.symbol.starts_with(STD_EQUAL);
             let std =
                 (f.symbol.starts_with("_V3std") && !lang) || f.symbol.starts_with(GENERATED_STD);
             std && !helpers[i]
@@ -203,6 +204,9 @@ pub(crate) fn std_forwarders(funcs: &[Function], helpers: &mut [bool]) {
         }
     }
 }
+
+/// The symbol prefix of std/lang/equal: `generated.vlt`'s helpers (`identity`, `beginPair`, …).
+const STD_EQUAL: &str = "_V3stdP4langP5equal";
 
 /// The symbol prefix of the code generated for std's generated functions
 /// (`<generated>/std/…`, velt_sema `generated`).

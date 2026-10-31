@@ -818,7 +818,10 @@ goldens:
   themselves through the parts compared (`canHoldItself`) is compared under the runtime's pair
   stack (`beginPair`, Node's and Vitest's cycle rule), its content in a helper. The declaring
   module is loaded by every program (the prelude's `assert` and `Map` call it), so it imports
-  only velt/lang/intrinsics, which the prelude loads anyway, not velt/reflect.
+  only velt/lang/intrinsics, which the prelude loads anyway, not velt/reflect. Its helpers
+  (`identity`, `beginPair`, `endPair`, …) are inlined in debug builds like std's other trivial
+  functions (velt_opt `inline::std_forwarders`), though std/lang's keep their calls: only
+  generated code calls them.
   Deleted: `Intrinsic::Eq` and `Intrinsic::DeepEq` (std's `eq` and `deepEq`), the glue kinds
   `KeyEq`, `DeepEq`, `ObjDeepEq` and `DynDeepEq`, `deep_mode`, glue/eq_dyn.rs and the hidden
   `toEqual` slots of class and interface tables (`Boxing::deep_dyns`, `deep_roots`). What stays

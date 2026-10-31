@@ -420,6 +420,11 @@ fn debug_builds_inline_std_forwarders_only() {
     ));
     let big = pb.add(adder("_V3stdP1aN3big", 50, Linkage::Internal));
     let hook = pb.add(adder("_V3stdP4langP5hooksN4hook", 2, Linkage::Internal));
+    let pair = pb.add(adder(
+        "_V3stdP4langP5equalP9generatedN9beginPair",
+        2,
+        Linkage::Internal,
+    ));
     let p = pb.finish();
     let mut helpers = vec![false; p.funcs.len()];
     std_forwarders(&p.funcs, &mut helpers);
@@ -428,4 +433,6 @@ fn debug_builds_inline_std_forwarders_only() {
     assert!(!helpers[fwd.0 as usize]);
     assert!(!helpers[big.0 as usize]);
     assert!(!helpers[hook.0 as usize]);
+    // std/lang/equal's helpers are only called by generated code: inlined too.
+    assert!(helpers[pair.0 as usize]);
 }
