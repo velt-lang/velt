@@ -140,6 +140,7 @@ pub fn load_with_roots(
         resolved: std::collections::HashSet::new(),
         effects: HashMap::new(),
         skipped: HashMap::new(),
+        harness: None,
     };
     if let Some(std) = &opts.std_root {
         match prelude_files(std) {
@@ -176,6 +177,8 @@ pub fn load_with_roots(
         }
         None => loader.add(root, key, src, "main".into(), origin.clone()),
     };
+    // A root given as source is `velt test`'s harness, which imports std's test files.
+    loader.harness = opts.root_source.is_some().then_some(root_index);
     let mut queue: VecDeque<usize> = (0..loader.modules.len()).collect();
     loader.resolve_all(&mut queue);
     loader.extra_phase = true;
@@ -229,6 +232,9 @@ struct Loader<'a, 'o> {
     /// file it names (`wanted::pure` asks again each time the module is resolved again, and
     /// resolving costs filesystem round trips).
     skipped: HashMap<(usize, String), Option<(PathBuf, PathBuf)>>,
+    /// The root module when it is `velt test`'s generated harness (its source given): the only
+    /// module outside std that may import std's test files ([`visibility`]).
+    harness: Option<usize>,
 }
 
 impl Loader<'_, '_> {
@@ -613,9 +619,10 @@ impl Loader<'_, '_> {
         };
         let file = self.pick_file(spec, span, &target, &shown)?;
         let key = file_key(&file);
-        let target = self.std_test_origin(target, &file, &key);
+        let harness = self.harness == Some(index);
+        let target = self.std_test_origin(target, &file, &key, harness);
         if written {
-            if let Err((msg, notes)) = self.visible(&from, &target, &key, spec) {
+            if let Err((msg, notes)) = self.visible(&from, &target, &key, spec, harness) {
                 return self.error(msg, notes, span);
             }
         }

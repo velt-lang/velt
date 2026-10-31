@@ -55,6 +55,61 @@ fn std_test_files_are_std_code_wherever_they_are_imported_from() {
     );
 }
 
+/// Only `velt test`'s harness gets std's test files as std code: a program (a written root, or
+/// a module the harness imports) that imports one is refused, by specifier or relative path.
+#[test]
+fn std_test_files_are_not_importable_by_programs() {
+    let t = Tree::new();
+    let std = std_with_a_test(&t);
+    let main = t.path("main.vlt");
+    // A written root.
+    t.write(
+        "main.vlt",
+        "import * as t from \"velt/x/inner.test\";\nfunction main() {}\n",
+    );
+    let (l, d, _) = load(
+        &main,
+        LoadOptions {
+            std_root: Some(std.clone()),
+            ..Default::default()
+        },
+    );
+    assert!(!d.is_empty(), "{:?}", paths(&l));
+    assert!(
+        l.modules.iter().all(|m| !m.path.ends_with(".test")),
+        "{:?}",
+        paths(&l)
+    );
+    t.write(
+        "main.vlt",
+        "import * as t from \"./std/x/inner.test.vlt\";\nfunction main() {}\n",
+    );
+    let (_, d, _) = load(
+        &main,
+        LoadOptions {
+            std_root: Some(std.clone()),
+            ..Default::default()
+        },
+    );
+    assert!(!d.is_empty());
+    // A user test file the harness imports, which imports std's test file.
+    t.write(
+        "mine.test.vlt",
+        "import * as t from \"velt/x/inner.test\";\nexport function f() {}\n",
+    );
+    let (l, d, _) = load(
+        &t.path("harness.vlt"),
+        LoadOptions {
+            std_root: Some(std),
+            root_source: Some(
+                "import * as m from \"./mine.test.vlt\";\nfunction main() {}\n".into(),
+            ),
+            ..Default::default()
+        },
+    );
+    assert!(!d.is_empty(), "{:?}", paths(&l));
+}
+
 /// A std root with modules, their internal files, the prelude and `lang/`.
 fn std_tree(t: &Tree) -> PathBuf {
     t.write(

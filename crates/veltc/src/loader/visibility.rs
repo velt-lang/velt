@@ -7,8 +7,8 @@
 //! `import.meta` is the compiler's, not the user's.
 //!
 //! std's own test files (`std/<module>/<name>.test.vlt`, the white-box tests `velt test std/`
-//! runs) are std code wherever the import that reaches them comes from: the generated harness of
-//! `velt test` imports them relatively, and they import the internals they test.
+//! runs) are std code when the generated harness of `velt test` imports them (relatively): they
+//! import the internals they test. No other module outside std may import them.
 
 use std::path::Path;
 
@@ -20,14 +20,22 @@ use crate::commands::test::discover::is_test_file;
 
 impl Loader<'_, '_> {
     /// `target` with a std origin when it is one of std's test files (`file`, whose
-    /// [`super::file_key`] is `key`) reached from outside std.
-    pub(super) fn std_test_origin(&self, target: Target, file: &Path, key: &Path) -> Target {
+    /// [`super::file_key`] is `key`) reached from outside std by `velt test`'s harness
+    /// (`harness`: the importer is it).
+    pub(super) fn std_test_origin(
+        &self,
+        target: Target,
+        file: &Path,
+        key: &Path,
+        harness: bool,
+    ) -> Target {
         let (Some(std), Some(std_key)) = (&self.opts.std_root, &self.std_key) else {
             return target;
         };
         let name = file.file_name().and_then(|n| n.to_str()).unwrap_or("");
         let test = is_test_file(name);
-        if matches!(target.origin, Origin::Std(_)) || !test || !key.starts_with(std_key) {
+        if !harness || matches!(target.origin, Origin::Std(_)) || !test || !key.starts_with(std_key)
+        {
             return target;
         }
         Target {
@@ -39,13 +47,15 @@ impl Loader<'_, '_> {
 
     /// Whether module `from` (an importer's origin) may load the std file `key` (a
     /// [`super::file_key`]) that `spec` names: `Err` with the message and notes when it is
-    /// internal.
+    /// internal (`harness`: the importer is `velt test`'s harness, which may import std's test
+    /// files).
     pub(super) fn visible(
         &self,
         from: &Origin,
         target: &Target,
         key: &Path,
         spec: &str,
+        harness: bool,
     ) -> Result<(), (String, Vec<String>)> {
         let (Some(std), Some(std_key)) = (&self.opts.std_root, &self.std_key) else {
             return Ok(());
@@ -55,7 +65,7 @@ impl Loader<'_, '_> {
         }
         let rel = vpm::relpath::relative(key, std_key);
         // std's test files: `velt test std/`'s harness imports them ([`Self::std_test_origin`]).
-        let test = rel.rsplit('/').next().is_some_and(is_test_file);
+        let test = harness && rel.rsplit('/').next().is_some_and(is_test_file);
         if !key.starts_with(std_key) || std_modules::importable(&rel) || test {
             return Ok(());
         }
