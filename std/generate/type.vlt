@@ -63,6 +63,11 @@ export class Type {
    * that keeps its state (a runtime handle), else "".
    */
   privateField: string = "";
+  /**
+   * A struct's or class's constructor when it is not public (`private`, `protected`), else "":
+   * code that builds a value without running the constructor (`__construct`) bypasses it.
+   */
+  ctorAccess: string = "";
   /** Where it is declared, for `Output.error` (-1: nowhere). */
   at: i64 = -1;
 }

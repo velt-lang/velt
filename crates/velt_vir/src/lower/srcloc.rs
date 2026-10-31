@@ -46,6 +46,9 @@ pub(super) struct LocMap {
     std_files: Vec<bool>,
 }
 
+/// Where the source map holds the code generated for std's modules (veltc `GENERATED_DIR`).
+const GENERATED_STD: &str = "<generated>/std/";
+
 impl LocMap {
     /// Tables for every file of `sm`. `std_root` marks standard-library files.
     pub(super) fn new(sm: &SourceMap, std_root: Option<&std::path::Path>) -> LocMap {
@@ -56,6 +59,7 @@ impl LocMap {
         for (_, f) in sm.files() {
             let path = f.path.display().to_string().replace('\\', "/");
             let in_std = std_root.and_then(|r| f.path.strip_prefix(r).ok());
+            let generated_std = path.starts_with(GENERATED_STD);
             shown.push(match in_std {
                 Some(rel) => format!("std/{}", rel.display().to_string().replace('\\', "/")),
                 None => path.clone(),
@@ -71,7 +75,10 @@ impl LocMap {
                 )
                 .collect();
             line_starts.push(starts);
-            std_files.push(in_std.is_some());
+            // Code a std generator wrote for a std module (`<generated>/std/…`, veltc's
+            // generated modules) is std's too: an error it throws is reported at the user's
+            // call, as one thrown in std is.
+            std_files.push(in_std.is_some() || generated_std);
         }
         LocMap {
             files,

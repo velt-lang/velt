@@ -1,0 +1,328 @@
+// velt/encoding/json (internal): the generator of `parseJsonTop<T>` and `readJson<T>`
+// (generated.vlt), run at compile time (docs/internals/design/source-generators.md): one
+// function per type that decodes a value of that type with the pull reader (reader.vlt), as
+// `JSON.parse<T>` does, with the messages and paths of its errors (`expected string at
+// $.items[3].name`). It uses nothing a package could not: the model of `velt/generate` and, in
+// the code it writes, the public `Reader`, `JsonFail`, `JsonError` and `__construct<T>`.
+//
+// A decoder reads its value or throws a `JsonFail` saying what it expected; each level the
+// failure passes through puts its path segment (`.name`, `[3]`) in front, so paths cost
+// nothing on success. `parseJsonTop` turns the failure into the `JsonError` the reader's
+// `message` words.
+//
+// What it decodes so far: numbers (integers range-checked, as their type is named in the
+// message), booleans, strings, arrays, tuples, `JsonValue`, and objects, structs and classes
+// whose fields are all of those (required, public, built without running a constructor). Any
+// other type is decoded, as a whole document, by the compiler's `jsonParse<T>`, which also
+// reports a type that has no JSON form.
+
+import { InstanceRequest, Model, Output, Type } from "velt/generate";
+import { hiddenKey, isIdentifier } from "velt/encoding/json/generate/facts";
+
+/** The prelude's dynamic JSON value, decoded by its `__fromReader`. */
+const JSON_VALUE = "std/prelude/json/json::JsonValue";
+
+/** Is `t` a `JsonValue`? */
+function isJsonValue(t: Type): bool {
+  return t.kind == "opaque" && t.qualifiedName == JSON_VALUE;
+}
+
+/**
+ * Does this generator decode a value of type `id` (`seen`: the types being looked at, so
+ * recursive types end)? Otherwise the whole document is decoded by `jsonParse<T>`.
+ */
+function decodes(model: Model, id: i64, seen: i64[]): bool {
+  const t = model.type(id);
+  const k = t.kind;
+  if (k == "number") {
+    return intRange(t.repr).length > 0 || t.repr == "f64" || t.repr == "f32";
+  }
+  if (k == "boolean" || k == "string" || isJsonValue(t)) {
+    return true;
+  }
+  if (seen.includes(id)) {
+    return true;
+  }
+  seen.push(id);
+  if (k == "array") {
+    return decodes(model, t.args[0], seen);
+  }
+  if (k == "tuple") {
+    for (const a of t.args) {
+      if (!decodes(model, a, seen)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if (k == "object" || k == "struct" || k == "class") {
+    if (t.dynamic || t.ctorAccess.length > 0) {
+      return false;
+    }
+    for (const f of t.fields) {
+      if (
+        f.optional ||
+        f.isPrivate ||
+        f.isEsPrivate ||
+        f.isGetter ||
+        f.stdPrivate ||
+        f.via >= 0 ||
+        hiddenKey(f)
+      ) {
+        return false;
+      }
+      if (!decodes(model, f.type, seen)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return false;
+}
+
+/**
+ * The range an integer type checks, as `[min, max]` source text ("" for no bound); empty for
+ * a type that is not one read as an `i64` (`u64` is read by `readU64`).
+ */
+function intRange(repr: string): string[] {
+  if (repr == "i8") {
+    return ["-128", "127"];
+  }
+  if (repr == "i16") {
+    return ["-32768", "32767"];
+  }
+  if (repr == "i32") {
+    return ["-2147483648", "2147483647"];
+  }
+  if (repr == "i64" || repr == "isize") {
+    return ["", ""];
+  }
+  if (repr == "u8") {
+    return ["0", "255"];
+  }
+  if (repr == "u16") {
+    return ["0", "65535"];
+  }
+  if (repr == "u32") {
+    return ["0", "4294967295"];
+  }
+  if (repr == "u64" || repr == "usize") {
+    return ["0", ""];
+  }
+  return [];
+}
+
+/**
+ * Writes the code that reads a value of type `id` into a new local `name`, throwing a
+ * `JsonFail` for the value itself (the code around it adds the value's path segment).
+ */
+function readInto(out: Output, model: Model, id: i64, name: string): void {
+  const t = model.type(id);
+  const k = t.kind;
+  if (k == "number") {
+    const repr = t.repr;
+    const what = out.literal(repr);
+    if (repr == "f64" || repr == "f32") {
+      out.line(`if (!r.readF64()) { throw jsonFailed("number"); }`);
+      out.line(`const ${name} = r.lastF64()${repr == "f32" ? " as f32" : ""};`);
+    } else if (repr == "u64") {
+      // `readU64` checks `[0, 2^64)` and leaves the bits in `lastI64`.
+      out.line(`if (!r.readU64()) { throw jsonFailed("u64"); }`);
+      out.line(`const ${name} = r.lastI64() as u64;`);
+    } else {
+      const [min, max] = intRange(repr);
+      const tests: string[] = [`!r.readI64()`];
+      if (min.length > 0) {
+        tests.push(`r.lastI64() < ${min}`);
+      }
+      if (max.length > 0) {
+        tests.push(`r.lastI64() > ${max}`);
+      }
+      out.line(`if (${tests.join(" || ")}) { throw jsonFailed(${what}); }`);
+      out.line(`const ${name} = r.lastI64()${repr == "i64" ? "" : ` as ${repr}`};`);
+    }
+  } else if (k == "boolean") {
+    out.line(`if (!r.readBool()) { throw jsonFailed("boolean"); }`);
+    out.line(`const ${name} = r.lastI64() != 0;`);
+  } else if (k == "string") {
+    out.line(`if (!r.readString()) { throw jsonFailed("string"); }`);
+    out.line(`const ${name} = r.value();`);
+  } else if (isJsonValue(t)) {
+    // A tape over the reader's text, or a driver's runtime tree; null when the reader failed.
+    const v = out.fresh("v");
+    out.line(`const ${v} = JsonValue.__fromReader(r);`);
+    out.line(`if (${v} == null) { throw jsonFailed("value"); }`);
+    out.line(`const ${name} = ${v};`);
+  } else {
+    const reader = out.instance("readJson", [id]);
+    out.line(`const ${name} = ${reader}(r);`);
+  }
+}
+
+/** The length of `s` in UTF-8 bytes. */
+function utf8Length(s: string): i64 {
+  let n: i64 = 0;
+  const units = s.length as i64;
+  for (let i: i64 = 0; i < units; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 0x80) {
+      n += 1;
+    } else if (c < 0x800) {
+      n += 2;
+    } else if (c >= 0xd800 && c <= 0xdbff && i + 1 < units) {
+      // A surrogate pair: one code point of 4 bytes.
+      n += 4;
+      i++;
+    } else {
+      n += 3;
+    }
+  }
+  return n;
+}
+
+/** The body of `readJson<T>` for an array (`T` is `E[]`). */
+function readArray(out: Output, model: Model, t: Type): void {
+  out.line(`if (!r.openArray()) { throw jsonFailed("array"); }`);
+  out.line(`const out: ${out.typeName(t.id)} = [];`);
+  out.line(`let i: i64 = 0;`);
+  out.line(`while (true) {`);
+  out.line(`const step = r.arrayNext();`);
+  out.line(`if (step == 0) { break; }`);
+  out.line(`if (step != 1) { throw jsonFailed("array"); }`);
+  out.line(`try {`);
+  readInto(out, model, t.args[0], "x");
+  out.line(`out.push(x);`);
+  out.line("} catch (fail) { fail.at(`[${i}]`); throw fail; }");
+  out.line(`i++;`);
+  out.line(`}`);
+  out.line(`return out;`);
+}
+
+/** The body of `readJson<T>` for a tuple: an array of exactly its length. */
+function readTuple(out: Output, model: Model, t: Type): void {
+  const n = t.args.length as i64;
+  const expected = out.literal(`array of length ${n}`);
+  out.line(`if (!r.openArray()) { throw jsonFailed(${expected}); }`);
+  // The element being read (-1: none), whose index a failure's path starts with.
+  out.line(`let at: i64 = -1;`);
+  out.line(`try {`);
+  const names: string[] = [];
+  for (let i: i64 = 0; i < n; i++) {
+    out.line(`if (r.arrayNext() != 1) { throw jsonFailed(${expected}); }`);
+    out.line(`at = ${i};`);
+    const name = `e${i}`;
+    readInto(out, model, t.args[i], name);
+    out.line(`at = -1;`);
+    names.push(name);
+  }
+  out.line(`if (r.arrayNext() != 0) { throw jsonFailed(${expected}); }`);
+  out.line(`return [${names.join(", ")}];`);
+  out.line("} catch (fail) { if (at >= 0) { fail.at(`[${at}]`); } throw fail; }");
+}
+
+/**
+ * The body of `readJson<T>` for an object, a struct or a class: keys matched against the
+ * field names (by length first, then in place in the reader), a repeated key replacing the
+ * earlier value, unknown keys skipped (or rejected), every field required; the value built at
+ * the end, a class or struct without running its constructor. One `try` adds the path of the
+ * field being read (`at`) to any failure.
+ */
+function readObject(out: Output, model: Model, t: Type): void {
+  out.line(`if (!r.openObject()) { throw jsonFailed("object"); }`);
+  const fields = t.fields;
+  const n = fields.length as i64;
+  for (let i: i64 = 0; i < n; i++) {
+    out.line(`let f${i}: ${out.typeName(fields[i].type)} | null = null;`);
+  }
+  if (n > 0) {
+    out.line(`let at: i64 = -1;`);
+  }
+  out.line(`try {`);
+  out.line(`while (true) {`);
+  if (n > 0) {
+    out.line(`at = -1;`);
+  }
+  out.line(`const step = r.nextKey();`);
+  out.line(`if (step == 0) { break; }`);
+  out.line(`if (step != 1) { throw jsonFailed("object"); }`);
+  if (n > 0) {
+    out.line(`const len = r.keyLength();`);
+  }
+  for (let i: i64 = 0; i < n; i++) {
+    const f = fields[i];
+    const name = out.literal(f.name);
+    // The key's length in UTF-8 bytes, as the reader counts it.
+    const bytes = utf8Length(f.name);
+    out.line(`if (len == ${bytes} && r.keyIs(${name})) {`);
+    out.line(`at = ${i};`);
+    readInto(out, model, f.type, "v");
+    out.line(`f${i} = v;`);
+    out.line(`continue;`);
+    out.line(`}`);
+  }
+  // An unknown key: its value is skipped (a malformed one fails at `.<key>`; with unknown keys
+  // rejected, any does).
+  out.line(`if (!r.skipUnknown()) { throw new JsonFail("value", "." + r.key()); }`);
+  out.line(`}`);
+  const props: string[] = [];
+  const segs: string[] = [];
+  for (let i: i64 = 0; i < n; i++) {
+    const f = fields[i];
+    const missing = out.literal(`field "${f.name}"`);
+    out.line(`if (f${i} == null) { throw jsonFailed(${missing}); }`);
+    const key = isIdentifier(f.name) ? f.name : out.literal(f.name);
+    props.push(`${key}: f${i}`);
+    segs.push(out.literal(`.${f.name}`));
+  }
+  const obj = `{ ${props.join(", ")} }`;
+  if (t.kind == "object") {
+    out.line(`return ${obj};`);
+  } else {
+    out.line(`return __construct<${out.typeName(t.id)}>(${obj});`);
+  }
+  if (n > 0) {
+    out.line(`} catch (fail) { if (at >= 0) { fail.at([${segs.join(", ")}][at]); } throw fail; }`);
+  } else {
+    out.line(`} catch (fail) { throw fail; }`);
+  }
+}
+
+/** The generator of `readJson<T>(r: Reader): T throws JsonFail`. */
+export function readJson(req: InstanceRequest, out: Output): void {
+  const model = req.model;
+  const t = model.type(req.args[0]);
+  const k = t.kind;
+  if (k == "array") {
+    readArray(out, model, t);
+  } else if (k == "tuple") {
+    readTuple(out, model, t);
+  } else if (k == "object" || k == "struct" || k == "class") {
+    readObject(out, model, t);
+  } else {
+    readInto(out, model, t.id, "v");
+    out.line(`return v;`);
+  }
+}
+
+/**
+ * The generator of `parseJsonTop<T>(text: string, flags: i64, maxDepth: i64): T throws
+ * JsonError`: the reader over `text`, the value, nothing but whitespace after it, and the
+ * `JsonError` of a failure.
+ */
+export function parseJsonTop(req: InstanceRequest, out: Output): void {
+  const model = req.model;
+  const id = req.args[0];
+  const [text, flags, depth] = [req.params[0], req.params[1], req.params[2]];
+  if (!decodes(model, id, [])) {
+    out.line(`return jsonParse<${out.typeName(id)}>(${text}, ${flags}, ${depth});`);
+    return;
+  }
+  out.line(`const r = Reader.of(${text}, ${flags} as u32, ${depth} as u32);`);
+  out.line(`try {`);
+  readInto(out, model, id, "v");
+  out.line(`if (!r.finish()) { throw jsonFailed("end of input"); }`);
+  out.line(`return v;`);
+  out.line(`} catch (e) {`);
+  out.line(`throw new JsonError(r.message(e.expected, "$" + e.path));`);
+  out.line(`}`);
+}

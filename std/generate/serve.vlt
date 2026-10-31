@@ -70,6 +70,7 @@ function readType(id: i64, v: JsonValue): Type {
   t.classValue = bool(v.get("classValue"));
   t.dynamic = bool(v.get("dynamic"));
   t.privateField = str(v.get("privateField"));
+  t.ctorAccess = str(v.get("ctorAccess"));
   t.at = num(v.get("at"));
   const fields = v.get("fields");
   if (fields != null) {

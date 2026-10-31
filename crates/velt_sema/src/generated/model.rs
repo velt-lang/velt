@@ -68,6 +68,9 @@ pub struct ModelType {
     /// For a std type whose structure the model does not show (`opaque`, `set`): the private
     /// field that keeps its state (a runtime handle), else empty.
     pub private_field: String,
+    /// A struct's or class's constructor when it is not public (`private`, `protected`), else
+    /// empty: decoding builds a value without running it, which such a type does not allow.
+    pub ctor_access: &'static str,
     pub at: Option<u32>,
 }
 
@@ -314,6 +317,11 @@ impl Builder {
                     })
                     .collect();
                 let (kind, base, span) = (a.kind, a.base, a.span);
+                m.ctor_access = match cx.ctor_visibility(d) {
+                    velt_syntax::ast::CtorVisibility::Public => "",
+                    velt_syntax::ast::CtorVisibility::Private => "private",
+                    velt_syntax::ast::CtorVisibility::Protected => "protected",
+                };
                 m.kind = match kind {
                     AdtKind::Anon => "object",
                     AdtKind::Struct => "struct",
@@ -563,6 +571,7 @@ impl Model {
             let flags = [t.has_properties, t.class_value, t.dynamic];
             h.u32(flags.iter().fold(0, |acc, &b| acc << 1 | u32::from(b)));
             h.str(&t.private_field);
+            h.str(t.ctor_access);
             for (tag, list) in [("a", &t.args), ("u", &t.arms), ("s", &t.subclasses)] {
                 h.str(tag);
                 h.u32(list.len() as u32);

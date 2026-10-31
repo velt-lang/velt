@@ -59,17 +59,28 @@ impl Uses {
 /// in definition order, followed by those of the field initializers of each struct and class (a
 /// unit of their own, keyed by the type, which `new` and literals of the type instantiate).
 pub(crate) fn collect(cx: &mut Ctx, signature: bool) -> Vec<(DefId, Uses)> {
-    collect_from(cx, signature, 0, true)
+    collect_with(cx, signature, 0, true, false)
 }
 
 /// [`collect`] of the definitions from `from` on (those made since an earlier collection);
 /// without `types`, [`Uses::types`] stays empty (the calls are all a caller needs, when no
-/// method can be dispatched to).
+/// method can be dispatched to). The initializers of module variables are units too, keyed by
+/// the variable (a module constant made by `JSON.parse` instantiates its generated decoder).
 pub(crate) fn collect_from(
     cx: &mut Ctx,
     signature: bool,
     from: usize,
     types: bool,
+) -> Vec<(DefId, Uses)> {
+    collect_with(cx, signature, from, types, true)
+}
+
+fn collect_with(
+    cx: &mut Ctx,
+    signature: bool,
+    from: usize,
+    types: bool,
+    globals: bool,
 ) -> Vec<(DefId, Uses)> {
     type News = Vec<(DefId, Vec<TyId>, Span, u64)>;
     let mut out: Vec<(DefId, Uses, News)> = vec![];
@@ -105,7 +116,7 @@ pub(crate) fn collect_from(
         out.push((DefId(i as u32), u, news));
     }
     let mut inits: FxHashMap<DefId, (Uses, News, FxHashSet<TyId>)> = FxHashMap::default();
-    for_each_init(cx, &mut |tys, d, e| {
+    for_each_init(cx, globals, &mut |tys, d, e| {
         if (d.0 as usize) < from {
             return;
         }
@@ -310,11 +321,17 @@ fn constructed(cx: &mut Ctx, def: DefId, targs: Vec<TyId>) -> Vec<(DefId, Vec<Ty
 
 /// Visits the field initializers of every struct and class (own fields and the inherited ones
 /// it gives an initializer), in terms of its type parameters, with the type's def.
-fn for_each_init(cx: &mut Ctx, f: &mut dyn FnMut(&Types, DefId, &mut Expr)) {
+fn for_each_init(cx: &mut Ctx, globals: bool, f: &mut dyn FnMut(&Types, DefId, &mut Expr)) {
     let tys = &cx.ty;
     for (i, info) in cx.info.iter_mut().enumerate() {
-        let DefInfo::Adt(a) = info else { continue };
         let d = DefId(i as u32);
+        if let DefInfo::Global(g) = info {
+            if let Some(e) = g.init.as_mut().filter(|_| globals) {
+                crate::visit::exprs_in(e, &mut |e| f(tys, d, e));
+            }
+            continue;
+        }
+        let DefInfo::Adt(a) = info else { continue };
         let start = a.own_fields_start;
         let own = a.fields[start..]
             .iter_mut()

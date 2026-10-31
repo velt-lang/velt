@@ -26,7 +26,7 @@ use velt_syntax::ast;
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
 use crate::dispatch::{add_work, instantiate, Dispatch, Pass, Rounds};
-use crate::hir::{AdtKind, Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, TyId, TyKind};
+use crate::hir::{AdtKind, Callee, Def, DefId, Expr, ExprKind as E, TyId, TyKind};
 use crate::inst_sites::{carry_guard, guards_of};
 use crate::object_copies::Seen;
 use crate::types::children;
@@ -35,8 +35,10 @@ use crate::visit;
 mod handles;
 mod identity;
 mod union;
+mod uses;
 
 use union::union_decode_problem;
+use uses::{uses_of, PARSE_TOP};
 
 /// What a function needs of a type: a JSON form (`true`: decoded by `JSON.parse`), or a look
 /// at its values ([`crate::object_copies`]).
@@ -196,6 +198,29 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
         .map(DefId)
         .filter(|d| cx.generator_of(*d).is_some())
         .collect();
+    // `JSON.parse<T>` calls the generated `parseJsonTop<T>` (velt/encoding/json), whose code
+    // decodes the types its generator ports and calls `jsonParse<T>` for the others: the
+    // calls of the generated function need `T` decoded, so a type without a JSON form is
+    // reported where the program parses it, never in the generated code (step 5 of
+    // docs/internals/design/source-generators.md moves these checks into the generator).
+    let parsers: FxHashSet<DefId> = generated
+        .iter()
+        .copied()
+        .filter(|d| matches!(&cx.info[d.0 as usize], DefInfo::Fn(f) if f.name.ends_with(PARSE_TOP)))
+        .collect();
+    // Only a generated function that is given values of its type arguments can look at them
+    // (`writeJson<T>(w, value: T)`); one that makes them (`parseJsonTop<T>(text): T`) cannot.
+    let lookers: FxHashSet<DefId> = generated
+        .iter()
+        .copied()
+        .filter(|d| match &cx.info[d.0 as usize] {
+            DefInfo::Fn(f) => f.params.iter().any(|p| has_param(cx, p.ty)),
+            _ => false,
+        })
+        .collect();
+    let generated_modules: FxHashSet<usize> = (0..cx.modules.len())
+        .filter(|m| cx.is_generated_module(*m))
+        .collect();
     // Looks at values matter only for object copies; most programs make none.
     let looks = !cx.object_copies.copies.is_empty();
     let copies: Vec<(Span, TyId)> = cx
@@ -215,6 +240,10 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
     };
     for (i, d) in cx.defs.iter_mut().enumerate() {
         let Some(Def::Fn(f)) = d else { continue };
+        let in_generated = matches!(
+            cx.info.get(i),
+            Some(DefInfo::Fn(info)) if generated_modules.contains(&info.module)
+        );
         let mut u = Uses::default();
         let mut seen: FxHashSet<TyId> = FxHashSet::default();
         ids.f = DefId(i as u32);
@@ -238,9 +267,9 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
                     u.types.push((*t, e.span));
                 }
             }
-            uses_of(ids.tys, &mut u, e, looks);
+            uses_of(ids.tys, &mut u, e, looks, (&parsers, in_generated));
             if looks {
-                identity::generated_look(&generated, e, &mut u.direct);
+                identity::generated_look(&lookers, e, &mut u.direct);
             }
             if u.calls.len() > calls {
                 let guard = guards.get(&(e as *const Expr)).copied().unwrap_or(0);
@@ -255,77 +284,6 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
     let sources = std::mem::take(&mut ids.sources);
     cx.object_copies.dyn_sources.extend(sources);
     out
-}
-
-/// The JSON intrinsic calls, generic calls and closures of one expression, and with `looks`
-/// its `console.log` and `===` calls.
-fn uses_of(tys: &crate::types::Types, u: &mut Uses, e: &Expr, looks: bool) {
-    // A type parameter read without a lock: whatever it is instantiated with may hold one.
-    let unlocked = match &e.kind {
-        E::ToDyn { expr, .. } => Some(expr.as_ref()),
-        E::Call {
-            callee:
-                Callee::Intrinsic(
-                    Intrinsic::Print
-                    | Intrinsic::PrintErr
-                    | Intrinsic::ToString
-                    | Intrinsic::TemplateToString,
-                ),
-            args,
-        } => args.first(),
-        _ => None,
-    };
-    if let E::Call {
-        callee: Callee::Intrinsic(Intrinsic::Print | Intrinsic::PrintErr),
-        args,
-    } = &e.kind
-    {
-        for a in args.iter().skip(1).filter(|a| param_in(tys, a.ty)) {
-            u.direct.push((a.ty, a.span, Need::NoLock));
-        }
-    }
-    if let Some(a) = unlocked.filter(|a| param_in(tys, a.ty)) {
-        u.direct.push((a.ty, a.span, Need::NoLock));
-    }
-    match &e.kind {
-        E::Call {
-            callee: Callee::Intrinsic(Intrinsic::JsonParse),
-            ..
-        } => u.direct.push((e.ty, e.span, Need::Json(true))),
-        E::Call {
-            callee:
-                Callee::Intrinsic(
-                    i @ (Intrinsic::Print
-                    | Intrinsic::PrintErr
-                    | Intrinsic::Same
-                    | Intrinsic::SameValue
-                    | Intrinsic::KeyEq
-                    | Intrinsic::IncludesEq),
-                ),
-            args,
-        } if looks => {
-            let how = match i {
-                // `IncludesEq`: `includes`; `KeyEq`: `Map` keys, which `Hash` shows too.
-                Intrinsic::Same
-                | Intrinsic::SameValue
-                | Intrinsic::KeyEq
-                | Intrinsic::IncludesEq => Seen::Identity,
-                _ => Seen::Printed,
-            };
-            for a in args {
-                u.direct.push((a.ty, a.span, Need::Seen(how)));
-            }
-        }
-        E::Call {
-            callee: Callee::Def(d, targs),
-            ..
-        } if !targs.is_empty() => u.calls.push((*d, targs.clone(), e.span)),
-        // A generic function used as a value (`const f: (s: string) => T = decode`) needs what
-        // its calls would need at those type arguments.
-        E::FnRef(d, targs) if !targs.is_empty() => u.calls.push((*d, targs.clone(), e.span)),
-        E::Closure(c) => u.closures.push(*c),
-        _ => {}
-    }
 }
 
 /// `JSON.parse` into, or `JSON.stringify` of, a dynamic type `name` (in `tn` unless `whole`):

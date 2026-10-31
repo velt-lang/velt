@@ -229,10 +229,14 @@ fn propagate(
             rounds.changed(*f);
         }
     }
-    // Only an instance method or an interface's default one is dispatched to.
+    // Only an instance method or an interface's default one is dispatched to (a need may
+    // also be a class's, from a field initializer).
     let method_needs = (needs.keys()).any(|d| {
-        use crate::defs::FnKind;
-        matches!(cx.fn_info(*d).kind, FnKind::Method | FnKind::IfaceDefault)
+        use crate::defs::{DefInfo, FnKind};
+        matches!(
+            cx.info.get(d.0 as usize),
+            Some(DefInfo::Fn(f)) if matches!(f.kind, FnKind::Method | FnKind::IfaceDefault)
+        )
     });
     (found, method_needs)
 }

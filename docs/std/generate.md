@@ -12,8 +12,8 @@ come: [the design notes](../internals/design/source-generators.md).
 - `Model`: every type the instance reaches, as `Type`s (a `kind`, `display`, `fields`, union
   `arms`, enum `members` as `EnumMember`s, a class's `base` and `subclasses`, and the `Method`s
   std's operations call by name, such as `toJSON` and `toString`; `mayBeProxy` when a typed
-  `Proxy` may stand for a value of it; `hasProperties`, `classValue`, `dynamic` and
-  `privateField`) and `Field`s (`name`, `type`, `optional`, `readonly`, `isPrivate`,
+  `Proxy` may stand for a value of it; `hasProperties`, `classValue`, `dynamic`,
+  `privateField`, and `ctorAccess` when a class's constructor is `private` or `protected`) and `Field`s (`name`, `type`, `optional`, `readonly`, `isPrivate`,
   `stdPrivate`, and `via` for a field an extension of the type adds to its objects). Types refer
   to each other by id, so recursive types are fine. Code generated for a type has that type's access: its `private` members and private
   constructor ([What generated code sees](../reference/source-generators.md#what-generated-code-sees)).

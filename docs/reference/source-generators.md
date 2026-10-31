@@ -99,7 +99,9 @@ generator class is the kind `generator`; a function with properties has `hasProp
 used as a value (`typeof C`) `classValue`, and `object` and `Function` (kind `interface`), like
 `any` and `unknown`, are `dynamic`. A std type that keeps runtime state in private fields shows
 no fields (kind `opaque`, or `set`): its `privateField` names one, and a field such a type
-declares (also in a class that extends it) has `stdPrivate`. Compute names from `out` into variables before writing a line that uses them
+declares (also in a class that extends it) has `stdPrivate`. A class whose constructor is
+`private` or `protected` says so in `ctorAccess` (empty when it is public): a generator that
+builds values without running the constructor (`__construct`) can refuse such a class. Compute names from `out` into variables before writing a line that uses them
 (`const field = out.instance(…); out.line(…)`): one call cannot both modify `out` and read it in
 an argument.
 

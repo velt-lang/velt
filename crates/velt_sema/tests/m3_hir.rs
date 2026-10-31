@@ -195,7 +195,11 @@ fn spawned_handler_shapes() {
 fn json_shapes() {
     let p = golden("m4/json.vlt");
     let parse = func(&p, "std/prelude/json/json::JSON.parse");
-    assert!(intrinsics(parse).contains(&Intrinsic::JsonParse));
+    // Decoded by the code velt/encoding/json's generator writes per type.
+    let generated = calls(parse).into_iter().any(|(c, _)| {
+        matches!(c, Callee::Def(d, _) if matches!(p.def(*d), Def::Fn(f) if f.name.ends_with("::parseJsonTop")))
+    });
+    assert!(generated, "JSON.parse calls the generated parseJsonTop");
     assert!(parse.throws.is_some(), "JSON.parse throws JsonError");
     let main = func(&p, "main");
     let thrown = main.throws.expect("main throws JsonError");

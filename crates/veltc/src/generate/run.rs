@@ -440,6 +440,7 @@ fn model_json(m: &velt_sema::generated::model::Model) -> Value {
                     "classValue": t.class_value,
                     "dynamic": t.dynamic,
                     "privateField": t.private_field,
+                    "ctorAccess": t.ctor_access,
                     "methods": t.methods.iter().map(|m| json!({
                         "name": m.name,
                         "params": m.params,

@@ -1,8 +1,9 @@
 // velt/encoding/json (internal): `writeJson<T>`, which appends a value's JSON text to a
-// `StringBuilder`; its body is generated per type at compile time by
-// velt/encoding/json/generate/write (docs/internals/design/source-generators.md). The code it
-// generates calls the functions imported here. `JSON.stringify` is `writeJson` into a new
-// builder (std/prelude/json/json.vlt).
+// `StringBuilder`, and `readJson<T>`, which decodes one from a `Reader`; their bodies are
+// generated per type at compile time by velt/encoding/json/generate/write and /read
+// (docs/internals/design/source-generators.md). The code they generate calls the functions
+// imported here. `JSON.stringify` is `writeJson` into a new builder, `JSON.parse` is
+// `parseJsonTop` (std/prelude/json/json.vlt).
 
 import { StringBuilder } from "velt/text/string_builder";
 import {
@@ -13,6 +14,9 @@ import {
 } from "velt/encoding/json/append";
 import { checkJsonTop, jsonPresent, writeJsonAny } from "velt/encoding/json/any";
 import { beginVisit, dynamicOf, endVisit, identity, isProxy } from "velt/reflect";
+import { Reader } from "velt/encoding/json/reader";
+import { JsonFail, jsonFailed } from "velt/encoding/json/fail";
+import { jsonParse } from "velt/lang/intrinsics";
 
 /** Appends what `JSON.stringify(value)` writes to `w` (one function per type, generated). */
 export declare generated("velt/encoding/json/generate/write") function writeJson<T>(
@@ -38,6 +42,26 @@ export declare generated("velt/encoding/json/generate/write") function writeJson
   value: T,
   key: string,
 ): void;
+
+/**
+ * What `JSON.parse<T>(text, options)` returns: the `T` that `text` holds, decoded by
+ * `readJson<T>` with the reader's `flags` and nesting limit (`maxDepth`), and nothing but
+ * whitespace after it. A type the generator does not decode yet is decoded by the compiler's
+ * `jsonParse<T>`.
+ */
+export declare generated("velt/encoding/json/generate/read") function parseJsonTop<T>(
+  text: string,
+  flags: i64,
+  maxDepth: i64,
+): T throws JsonError;
+
+/**
+ * Reads one `T` with `r` (one function per type, generated): a `JsonFail` saying what was
+ * expected where, when the value is not a `T`.
+ */
+export declare generated("velt/encoding/json/generate/read") function readJson<T>(
+  r: Reader,
+): T throws JsonFail;
 
 /** A recursive object type's value seen again while it is being written. */
 function jsonCircular(): never {

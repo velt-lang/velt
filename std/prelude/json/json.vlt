@@ -2,11 +2,12 @@
 // program loads this module when one of its modules names one of them (the global
 // std/prelude/global/json.vlt) or imports a std module that uses them.
 //
-// `JSON.stringify<T>` / `JSON.parse<T>` are compile-time generated per type by the compiler
-// intrinsics (a string builder for stringify, a pull-reader decoder for parse); parse failures
-// throw a `SyntaxError` `JsonError` ("expected string at $.name"). The stringify glue writes a
-// `JsonValue` (at any depth) with its private `__writeJson(b)`, decodes one with
-// `__fromReader(r)`, and `console.log` prints one from the runtime tree `__runtimeHandle()`
+// `JSON.stringify<T>` / `JSON.parse<T>` are generated per type at compile time by the source
+// generators of velt/encoding/json (a string builder for stringify, a pull-reader decoder for
+// parse; a type that generator does not decode yet by the compiler's `jsonParse` intrinsic);
+// parse failures throw a `SyntaxError` `JsonError` ("expected string at $.name"). The
+// generated code writes a `JsonValue` (at any depth) with its private `__writeJson(b)`, decodes
+// one with `__fromReader(r)`, and `console.log` prints one from the runtime tree `__runtimeHandle()`
 // makes for it (freed after).
 //
 // `JSON.parseValue` gives a `JsonValue` for data of unknown shape: a position on a tape (one
@@ -34,7 +35,7 @@ import {
 import "velt/encoding/json/writer";
 // `JSON.stringify<T>`: the writer generated per type, and the check of a dynamic value at the top.
 import { StringBuilder } from "velt/text/string_builder";
-import { writeJsonTop } from "velt/encoding/json/generated";
+import { parseJsonTop, writeJsonTop } from "velt/encoding/json/generated";
 // `JSON.parseValue`'s documents: one flat tape each (Velt code).
 import {
   parseTape,
@@ -49,7 +50,6 @@ import {
   T_ARRAY,
   T_OBJECT,
 } from "velt/encoding/json/tape";
-import { jsonParse } from "velt/lang/intrinsics";
 
 declare function velt_rt_strbuf_push_json_value(buf: string, h: u64);
 
@@ -188,7 +188,7 @@ export class JSON {
    * `options.unknownKeys` is "reject".
    */
   static parse<T>(text: string, options: JsonParseOptions | null = null): T {
-    return jsonParse<T>(text, jsonFlags(options, 0), jsonMaxDepth(options));
+    return parseJsonTop<T>(text, jsonFlags(options, 0), jsonMaxDepth(options));
   }
 
   /**
@@ -199,7 +199,7 @@ export class JSON {
    * field a `null` its type can't hold).
    */
   static __parseFromContext<T>(text: string, options: JsonParseOptions | null = null): T {
-    return jsonParse<T>(text, jsonFlags(options, 2), jsonMaxDepth(options));
+    return parseJsonTop<T>(text, jsonFlags(options, 2), jsonMaxDepth(options));
   }
 
   /**
@@ -338,10 +338,11 @@ export class JsonValue {
   }
 
   /**
-   * Reads one value with `r` (compiled glue: a `JsonValue` field being decoded): null when the
-   * reader failed. Private: the glue calls it by name.
+   * Reads one value with `r` (a `JsonValue` being decoded: the decoders velt/encoding/json
+   * generates call it, as the compiler's glue does by name): null when the reader failed.
+   * Internal, not part of the API.
    */
-  private static __fromReader(r: Reader): JsonValue | null {
+  static __fromReader(r: Reader): JsonValue | null {
     const limit = r.valueLimit();
     if (limit >= 0) {
       const t = parseWith(r, limit as u32, false);
