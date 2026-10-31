@@ -309,7 +309,7 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `.cargo/config.toml`); the root gets a `CACHEDIR.TAG` on the first write when it is new, empty or
   holds only what the cache makes (a directory with other files is used, never adopted), and
   `velt clean --cache` and garbage collection act only on a root that has it, removing only layout directories,
-  `warm/` and the marker (the root too when it is then empty); layout `v3/<kind>/`
+  `warm/` and the marker (the root too when it is then empty); layout `v4/<kind>/`
   with kinds `cl` (Cranelift compiled functions, Cranelift's incremental-cache key with the
   Cranelift version), `stdfn` (the std cache below: objects of single std functions, file
   entries) and `llvm`

@@ -1473,6 +1473,7 @@ checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
 name = "velt_build_cache"
 version = "0.4.0"
 dependencies = [
+ "crc32fast",
  "sha2",
  "tempfile",
 ]

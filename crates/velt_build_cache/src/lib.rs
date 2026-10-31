@@ -5,7 +5,7 @@
 //!   code, the target and settings, the version of whatever compiled it), so an entry is never
 //!   stale, and two compiler versions (projects can pin different ones) keep their entries side
 //!   by side instead of overwriting each other's.
-//! - Layout: `<root>/v3/<kind>/`. Entries under [`LARGE`] bytes (most compiled functions) are
+//! - Layout: `<root>/v4/<kind>/`. Entries under [`LARGE`] bytes (most compiled functions) are
 //!   packed into a few files per kind (`pack`); larger ones (objects) are a file each (`files`).
 //!   File entries ([`Cache::put_file`], [`Cache::path_of`]) are plain files in `<kind>/files/`,
 //!   handed out by path, for whoever must pass a file on (a linker): the cached std object.
@@ -41,7 +41,7 @@ use pack::Packs;
 
 /// The layout version: a change of the layout or of how keys are made starts a new directory
 /// (garbage collection removes the others).
-const LAYOUT: &str = "v3";
+const LAYOUT: &str = "v4";
 /// The file that marks a directory as a build cache (<https://bford.info/cachedir/>).
 pub const MARKER: &str = "CACHEDIR.TAG";
 const MARKER_TEXT: &str = "Signature: 8a477f597d28d172789f06886806bc55\n\
@@ -113,7 +113,7 @@ pub struct Usage {
 pub struct Cache {
     /// `<root>`.
     root: PathBuf,
-    /// `<root>/v3`.
+    /// `<root>/v4`.
     dir: PathBuf,
     /// The size limit in bytes.
     limit: u64,
@@ -451,10 +451,12 @@ fn is_layout(name: &str) -> bool {
     name.len() > 1 && name.starts_with('v') && name[1..].bytes().all(|b| b.is_ascii_digit())
 }
 
-/// The first 8 bytes of the value's SHA-256.
+/// The check of an entry's value, read on every hit: its CRC-32, which tells a value written
+/// whole from one torn or damaged (all the check is for; keys are SHA-256) at a fraction of the
+/// cost of a cryptographic hash. Layouts before `v4` checked the first 8 bytes of the value's
+/// SHA-256.
 fn checksum(value: &[u8]) -> u64 {
-    let key = Key::of(&[value]);
-    u64::from_le_bytes(key.0[..8].try_into().unwrap_or_default())
+    u64::from(crc32fast::hash(value))
 }
 
 /// `key` as a [`Key`]: itself when it is 32 bytes (already a hash), else its hash.
