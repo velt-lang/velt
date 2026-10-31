@@ -312,13 +312,8 @@ impl Ctx<'_> {
     /// parameter, a class with subclasses, whose objects may have more fields), nor when it
     /// holds a type with a `clone()` of its own: copying what a read gets would run it on the
     /// objects other threads read, as a side effect of reading. A `shared` inside is fine: it
-    /// counts atomically.
-    pub fn frozen_readable(&mut self, t: TyId) -> bool {
-        self.frozen_readable_in(t, &[], &mut rustc_hash::FxHashSet::default())
-    }
-
-    /// `frozen_readable`, taking the type parameters `frozen` (bounded by `Frozen` where the
-    /// type is read: `Ctx::frozen_readable_under`) as readable.
+    /// counts atomically. The type parameters `frozen` (bounded by `Frozen` where the type is
+    /// read: `Ctx::frozen_readable_under`) are readable.
     pub(crate) fn frozen_readable_in(
         &mut self,
         t: TyId,

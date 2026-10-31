@@ -762,6 +762,22 @@ goldens:
   types, are left to the glue. Measured against step (b) (same method): `parse_union.vlt`
   release 3635.1 M against 3668.5 M (-0.9%), debug build 9820.2 M against 9674.4 M (+1.5%);
   `parse_typed.vlt` unchanged.
+  Step (d): what `JSON.parse` cannot decode is reported by its generator
+  (`parse_check.vlt`, from the model, with the messages sema gave): a value that may be
+  `undefined`, a function with properties or a class used as a value, a union whose members a
+  document cannot tell apart (the same rules, and the same wording, as the decoder's), a class
+  whose constructor is not public (naming the model's new `factories`), a generator, a dynamic
+  value and a private field (with a label at its declaration). Sema's JSON pass keeps only the
+  propagation of the types `JSON.parse` decodes, which extended layouts need; its checks,
+  `union.rs` and their helpers are deleted. Two generator features came with it: an error a
+  generator reports at the call (`at` -1) is reported at every call that reaches the instance
+  (the demand keeps them all, `Walked::sites`, `Request::sites`), as sema reported each place
+  (stringify's errors are back to one per call too); and `Output.error` takes labels, `[at,
+  text]` at places of the model (a `#label` record after the error). A check without
+  generators (the editor's) does not report these errors. Measured against step (c) (same
+  method; base: http2 at 4fe053dd9): `velt check` of `parse_typed`, `parse_union` and the
+  options program -0.1% to -0.6% (the sema pass's checks are gone), `velt build` +0.5% to
+  +1.5%; run time unchanged; hello world -0.6%.
   Fixed on the way: the demand walks the initializers of module variables (a module constant
   made by `JSON.parse` had no generated code, and ran the placeholder), and a need recorded
   for a class (a field initializer) no longer stops it with an ICE; only a generated function

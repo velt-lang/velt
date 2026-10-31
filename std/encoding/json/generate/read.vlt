@@ -21,6 +21,7 @@ import { hiddenKey } from "velt/encoding/json/generate/facts";
 import { choices, recordKeys } from "velt/encoding/json/generate/choice";
 import { intRange, isJsonValue, readInto } from "velt/encoding/json/generate/read_value";
 import { readUnion, unionDecodable } from "velt/encoding/json/generate/read_union";
+import { parseProblem } from "velt/encoding/json/generate/parse_check";
 import {
   readArray,
   readMap,
@@ -138,6 +139,12 @@ export function parseJsonTop(req: InstanceRequest, out: Output): void {
   const model = req.model;
   const id = req.args[0];
   const [text, flags, depth] = [req.params[0], req.params[1], req.params[2]];
+  const problem = parseProblem(model, id);
+  if (problem != null) {
+    const labels: [i64, string][] = problem.labelAt >= 0 ? [[problem.labelAt, problem.label]] : [];
+    out.error(problem.message, -1, labels);
+    return;
+  }
   if (!decodes(model, id, [])) {
     out.line(`return jsonParse<${out.typeName(id)}>(${text}, ${flags}, ${depth});`);
     return;

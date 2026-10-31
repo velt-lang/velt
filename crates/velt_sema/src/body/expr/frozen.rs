@@ -105,7 +105,7 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// Why the `shared<T>` type `shared` (one `frozen_readable` refuses) is not read like its `T`.
+    /// Why the `shared<T>` type `shared` (one `frozen_readable_in` refuses) is not read like its `T`.
     pub(crate) fn unreadable_shared_note(&mut self, shared: hir::TyId) -> String {
         let f = self.cx.display(shared);
         let inner = match *self.cx.ty.kind(shared) {
@@ -180,7 +180,7 @@ impl FnCx<'_, '_> {
 }
 
 impl FnCx<'_, '_> {
-    /// `Ctx::frozen_readable` with this body's type parameters bounded by the prelude's `Frozen`
+    /// `Ctx::frozen_readable_in` with this body's type parameters bounded by the prelude's `Frozen`
     /// taken as readable (checked where the generic is instantiated).
     /// The name of `t` when it is the prelude's `AtomicValue` or `Frozen` as a value type:
     /// interfaces the compiler implements, only ever bounds.
