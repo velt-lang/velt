@@ -16,8 +16,6 @@ export const allow: Allow = {
     "net/http/fetch/headers.vlt",
     "net/http/fetch/request.vlt",
     "net/http/fetch/response.vlt",
-    "net/url/index.vlt",
-    "net/url/record.vlt",
     "prelude/adapt.vlt",
     "prelude/any_methods.vlt",
     "prelude/array.vlt",
@@ -40,7 +38,6 @@ export const allow: Allow = {
     "net/http/fetch/client/wire.vlt",
     "net/http/fetch/request.vlt",
     "net/http/fetch/response.vlt",
-    "net/url/index.vlt",
     "net/websocket/bytes.vlt",
     "net/websocket/handshake.vlt",
     "net/websocket/reader.vlt",
@@ -53,7 +50,6 @@ export const allow: Allow = {
   ],
   indexCode: [
     "encoding/json/index.vlt",
-    "net/url/index.vlt",
     "package/index.vlt",
   ],
   unowned: [

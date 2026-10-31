@@ -1,0 +1,223 @@
+// velt/net/url (internal): the URL parser, for velt/net/url's `URL`.
+//
+// A simplified WHATWG basic URL parser (url.spec.whatwg.org §4.4): the input is split into
+// scheme, authority, path, query and fragment by scanning for delimiters instead of running the
+// spec's character state machine, which gives the same results for the inputs the spec accepts
+// (minus the gaps listed in std/net/url/index.vlt). Relative references resolve against a base
+// record like RFC 3986 §5.2 with WHATWG's special-scheme rules (`\` is a separator, empty hosts
+// are invalid, default ports are dropped). Parsers return null where the URL is invalid.
+
+import { HASH, QUESTION, SLASH } from "velt/net/url/chars";
+import { C0, FRAGMENT, QUERY, SPECIAL_QUERY, encodeSet, isAscii } from "velt/net/url/encode";
+import { parseAuthority } from "velt/net/url/authority";
+import { isDriveLetter, isSep, parsePath, startsWithDrive } from "velt/net/url/path";
+import { UrlRecord } from "velt/net/url/record";
+import { isSpecial, schemeEnd } from "velt/net/url/scheme";
+
+// Up to this many code units, `removeTabNewline` looks through an ASCII text itself. The
+// runtime's three searches cost a fixed amount and little per unit, so they are the cheaper way
+// from about 48 units on.
+const SCAN_UP_TO: i64 = 32;
+
+/** Parses `input` (absolute, or relative to `base`); null if it is not a valid URL. */
+export function parseUrl(input: string, base: UrlRecord | null): UrlRecord | null {
+  const s = cleanInput(input);
+  const colon = schemeEnd(s);
+  if (colon < 0) {
+    return base == null ? null : parseRelative(s, base);
+  }
+  const scheme = s.slice(0, colon).toLowerCase();
+  if (base != null && isSpecial(scheme) && base.scheme == scheme) {
+    const rest = s.slice(colon + 1);
+    if (!rest.startsWith("//")) {
+      return parseRelative(rest, base);
+    }
+  }
+  return parseAbsolute(scheme, s, colon + 1);
+}
+
+// Strips leading/trailing C0 controls and spaces, and removes tabs and newlines (WHATWG).
+function cleanInput(input: string): string {
+  let start: i64 = 0;
+  let end = input.length as i64;
+  while (start < end && input.charCodeAt(start) <= 32) {
+    start++;
+  }
+  while (end > start && input.charCodeAt(end - 1) <= 32) {
+    end--;
+  }
+  return removeTabNewline(input.slice(start, end));
+}
+
+/**
+ * `s` without ASCII tabs and newlines, which the WHATWG parser drops everywhere (the constructor
+ * and every setter that runs it).
+ */
+export function removeTabNewline(s: string): string {
+  // A short ASCII text is looked through where it stands; a long one, or one where each
+  // `charCodeAt` has a position to find first, is searched by the runtime.
+  if ((s.length as i64) <= SCAN_UP_TO && isAscii(s)) {
+    let found = false;
+    for (let i: i64 = 0; i < (s.length as i64); i++) {
+      const c = s.charCodeAt(i);
+      if (c == 9 || c == 10 || c == 13) {
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      return s;
+    }
+  } else if (s.indexOf("\t") < 0 && s.indexOf("\n") < 0 && s.indexOf("\r") < 0) {
+    return s;
+  }
+  return s.replaceAll("\t", "").replaceAll("\n", "").replaceAll("\r", "");
+}
+
+// Index of the first byte of `s` at or after `from` ending an authority (or a path, when
+// `pathToo` is false: then only `?` and `#` end it).
+function componentEnd(s: string, from: i64, special: bool, pathToo: bool): i64 {
+  for (let i = from; i < (s.length as i64); i++) {
+    const c = s.charCodeAt(i);
+    if (c == QUESTION || c == HASH || (pathToo && isSep(s, i, special))) {
+      return i;
+    }
+  }
+  return s.length as i64;
+}
+
+// Parses `s[from..]`, everything after the scheme's colon. The components are found by index
+// in `s`; only the ones kept are cut out of it.
+function parseAbsolute(scheme: string, s: string, from: i64): UrlRecord | null {
+  const special = isSpecial(scheme);
+  if (!special && s.charCodeAt(from) != SLASH) {
+    // Decided before the cut below, so that an opaque URL is sliced once.
+    const o = new UrlRecord();
+    o.scheme = scheme;
+    return parseOpaque(o, s.slice(from));
+  }
+  if (from > 0 && !isAscii(s)) {
+    // Finding a position in text that is not ASCII costs more the further in it is: cut the
+    // scheme off first.
+    return parseAbsolute(scheme, s.slice(from), 0);
+  }
+  const file = scheme == "file";
+  const r = new UrlRecord();
+  r.scheme = scheme;
+  let at = from;
+  const twoSlashes = isSep(s, from, special) && isSep(s, from + 1, special);
+  if (special && !file) {
+    while (isSep(s, at, true)) {
+      at++;
+    }
+  } else if (twoSlashes) {
+    at = from + 2;
+  }
+  if (file && twoSlashes && startsWithDrive(s, at)) {
+    // `file://C:/x`: a drive letter where the host would be starts the path (the URL spec's
+    // file host state), so the host is empty.
+    r.hasHost = true;
+  } else if (at > from || (special && !file)) {
+    const end = componentEnd(s, at, special, true);
+    if (!parseAuthority(r, s, at, end, special)) {
+      return null;
+    }
+    at = end;
+  } else if (file) {
+    r.hasHost = true;
+  }
+  applyTail(r, s, at, [], special);
+  return r;
+}
+
+// `mailto:a@b`, `data:...`: the path is kept as written (C0-encoded), without dot segments.
+function parseOpaque(r: UrlRecord, rest: string): UrlRecord {
+  const end = componentEnd(rest, 0, false, false);
+  r.opaque = true;
+  r.path = encodeSet(rest.slice(0, end), C0);
+  applyQueryFragment(r, rest, end, false);
+  return r;
+}
+
+// Resolves a scheme-less reference against `base`.
+function parseRelative(rest: string, base: UrlRecord): UrlRecord | null {
+  if (base.opaque) {
+    if (!rest.startsWith("#")) {
+      return null;
+    }
+    const r = base.clone();
+    r.hasFragment = true;
+    r.fragment = encodeSet(rest.slice(1), FRAGMENT);
+    return r;
+  }
+  const special = isSpecial(base.scheme);
+  if (isSep(rest, 0, special) && isSep(rest, 1, special)) {
+    return parseAbsolute(base.scheme.clone(), rest, 0);
+  }
+  const r = new UrlRecord();
+  r.scheme = base.scheme.clone();
+  r.username = base.username.clone();
+  r.password = base.password.clone();
+  r.hasHost = base.hasHost;
+  r.host = base.host.clone();
+  r.port = base.port.clone();
+  const end = componentEnd(rest, 0, special, false);
+  if (end == 0) {
+    r.path = base.path.clone();
+    applyQueryFragment(r, rest, 0, special);
+    if (!r.hasQuery) {
+      r.hasQuery = base.hasQuery;
+      r.query = base.query.clone();
+    }
+    return r;
+  }
+  if (isSep(rest, 0, special)) {
+    // A `file:` URL keeps its base's Windows drive letter (`/x` against `file:///C:/p` is
+    // `file:///C:/x`), unless the path names one itself.
+    const drive: string[] = [];
+    const first = base.path.length > 0 ? base.path.slice(1).split("/")[0] : "";
+    if (r.scheme == "file" && isDriveLetter(first) && !startsWithDrive(rest, 1)) {
+      drive.push(first);
+    }
+    applyTail(r, rest, 0, drive, special);
+    return r;
+  }
+  // A relative path continues from the base's directory, unless a `file:` URL's path starts
+  // with a drive letter (`C|/x`), which takes none of the base's path (the URL spec's file
+  // state).
+  const drive = r.scheme == "file" && startsWithDrive(rest, 0);
+  const segs = base.path.length > 0 && !drive ? base.path.slice(1).split("/") : [];
+  if (!drive) {
+    segs.pop();
+  }
+  applyTail(r, rest, 0, segs, special);
+  return r;
+}
+
+// Sets path, query and fragment from `s[from..]` (everything after the authority); a relative
+// path continues from `segs`. `special`: whether `r.scheme` is special.
+function applyTail(r: UrlRecord, s: string, from: i64, segs: string[], special: bool) {
+  if (from > 0 && !isAscii(s)) {
+    // As in `parseAbsolute`: positions are counted from the tail's start.
+    applyTail(r, s.slice(from), 0, segs, special);
+    return;
+  }
+  const end = componentEnd(s, from, special, false);
+  r.path = parsePath(s.slice(from, end), segs, special, r.scheme == "file");
+  applyQueryFragment(r, s, end, special);
+}
+
+// Sets query and fragment from `s[from..]`, which is empty or starts with `?` or `#`.
+function applyQueryFragment(r: UrlRecord, s: string, from: i64, special: bool) {
+  let hash = s.indexOf("#", from);
+  if (hash < 0) {
+    hash = s.length as i64;
+  } else {
+    r.hasFragment = true;
+    r.fragment = encodeSet(s.slice(hash + 1), FRAGMENT);
+  }
+  if (from < hash && s.charCodeAt(from) == QUESTION) {
+    r.hasQuery = true;
+    r.query = encodeSet(s.slice(from + 1, hash), special ? SPECIAL_QUERY : QUERY);
+  }
+}

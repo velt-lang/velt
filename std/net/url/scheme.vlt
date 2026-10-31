@@ -1,0 +1,64 @@
+// velt/net/url (internal): schemes: WHATWG's special schemes, their default ports, and the
+// scheme syntax (`ALPHA *(ALPHA / DIGIT / "+" / "-" / ".")`).
+
+/** Whether `scheme` is one of WHATWG's special schemes. */
+export function isSpecial(scheme: string): bool {
+  return scheme == "http" ||
+    scheme == "https" ||
+    scheme == "ws" ||
+    scheme == "wss" ||
+    scheme == "ftp" ||
+    scheme == "file";
+}
+
+/** The default port of a special scheme as a string, or "". */
+export function defaultPort(scheme: string): string {
+  if (scheme == "http" || scheme == "ws") {
+    return "80";
+  }
+  if (scheme == "https" || scheme == "wss") {
+    return "443";
+  }
+  return scheme == "ftp" ? "21" : "";
+}
+
+/** Index of the `:` ending a scheme (`ALPHA *(ALPHA / DIGIT / "+" / "-" / ".")`), or -1. */
+export function schemeEnd(s: string): i64 {
+  const first = s.charCodeAt(0);
+  if (!((first >= 65 && first <= 90) || (first >= 97 && first <= 122))) {
+    return -1;
+  }
+  for (let i: i64 = 1; i < (s.length as i64); i++) {
+    const c = s.charCodeAt(i);
+    if (c == 58) {
+      return i;
+    }
+    const ok =
+      (c >= 65 && c <= 90) ||
+      (c >= 97 && c <= 122) ||
+      (c >= 48 && c <= 57) ||
+      c == 43 ||
+      c == 45 ||
+      c == 46;
+    if (!ok) {
+      return -1;
+    }
+  }
+  return -1;
+}
+
+/** Whether `s` (lowercased) is a scheme, as `URL`'s `protocol` setter takes one. */
+export function validScheme(s: string): bool {
+  if (s.length == 0) {
+    return false;
+  }
+  for (let i: i64 = 0; i < (s.length as i64); i++) {
+    const c = s.charCodeAt(i);
+    const letter = c >= 97 && c <= 122;
+    const other = (c >= 48 && c <= 57) || c == 43 || c == 45 || c == 46;
+    if (!letter && (i == 0 || !other)) {
+      return false;
+    }
+  }
+  return true;
+}
