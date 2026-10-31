@@ -103,7 +103,12 @@ export function onData(c: H2Connection, flags: i64, id: i64, p: i64, len: i64) {
   const s = c.streams.get(id);
   if (s == undefined || s.remoteEnded) {
     if (s == undefined && id > c.lastStreamId) {
-      c.fail(PROTOCOL_ERROR, "DATA on an idle stream");
+      if (id <= c.ignoredId) {
+        // A stream opened after GOAWAY (RFC 9113 §6.8).
+        dropped(c, len);
+      } else {
+        c.fail(PROTOCOL_ERROR, "DATA on an idle stream");
+      }
       return;
     }
     if (s == undefined && c.wasReset(id)) {
@@ -189,7 +194,7 @@ export function onWindowUpdate(c: H2Connection, id: i64, p: i64, len: i64) {
   }
   const s = c.streams.get(id);
   if (s == undefined) {
-    if (id > c.lastStreamId) {
+    if (id > c.lastStreamId && id > c.ignoredId) {
       c.fail(PROTOCOL_ERROR, "WINDOW_UPDATE on an idle stream");
     }
     return;
@@ -231,8 +236,10 @@ export function onHeaderBlock(
     return;
   }
   if (c.goingAway) {
-    // Beyond the last stream GOAWAY announced: decoded for the table, not served.
+    // Beyond the last stream GOAWAY announced: decoded for the table, not served, and what
+    // the client sends on it is ignored (RFC 9113 §6.8).
     discard(c, src, start, end);
+    c.ignoredId = id;
     return;
   }
   c.lastStreamId = id;

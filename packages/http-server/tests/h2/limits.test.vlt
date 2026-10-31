@@ -147,6 +147,27 @@ describe("HTTP/2 limits", () => {
     c.close();
   });
 
+  it("ignores a request the client sent after the GOAWAY, and its body", async () => {
+    const server = await startServer(async (req: HttpRequest, res: HttpResponse) => {
+      await delay(100);
+      res.send("finished");
+    });
+    const c = await Client.open(server.port);
+    c.get(1, "/");
+    await c.flush();
+    await delay(20);
+    server.close();
+    expect(await c.until((f) => f.type == 7)).toBe("GOAWAY 1 NO_ERROR");
+    // Sent before the client saw the GOAWAY: a POST with a body, then its reset.
+    c.headers(3, [":method", "POST", ":scheme", "http", ":path", "/", ":authority", "x"], false);
+    c.frame(0, 0, 3, bytes("body"));
+    c.frame(8, 0, 3, [0, 0, 0, 1]);
+    c.frame(3, 0, 3, [0, 0, 0, 8]);
+    await c.flush();
+    expect(await c.until((f) => false)).toBe("HEADERS 1 :status=200\nDATA 1 es 8:finished\nEOF");
+    c.close();
+  });
+
   it("gives the window of a body the handler does not read back", async () => {
     const server = await startServer(async (req: HttpRequest, res: HttpResponse) => {
       // The body arrives (and waits, unread) before the handler answers.

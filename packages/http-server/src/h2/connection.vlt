@@ -93,6 +93,8 @@ export class H2Connection {
 
   /// The highest stream id the peer opened.
   lastStreamId: i64 = 0;
+  /// The highest stream the client opened after GOAWAY: not served, its frames ignored.
+  ignoredId: i64 = 0;
   /// The header block being received (HEADERS then CONTINUATION): its stream (0: none), flags,
   /// bytes and frame count.
   blockStream: i64 = 0;

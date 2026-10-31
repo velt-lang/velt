@@ -206,7 +206,7 @@ function reset(c: H2Connection, id: i64, p: i64, len: i64) {
   }
   const s = c.streams.get(id);
   if (s == undefined) {
-    if (id > c.lastStreamId) {
+    if (id > c.lastStreamId && id > c.ignoredId) {
       c.fail(PROTOCOL_ERROR, "RST_STREAM on an idle stream");
     }
     return;
