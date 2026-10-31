@@ -20,13 +20,8 @@ import {
   toInteger,
   toUint32,
 } from "velt/lang/typed_array/buffer";
-import {
-  ascending,
-  elementsOf,
-  layout,
-  localeNumber,
-  TypedArray,
-} from "velt/lang/typed_array/base";
+import { ascending, elementsOf, localeNumber, TypedArray } from "velt/lang/typed_array/base";
+import { layout } from "velt/lang/typed_array/layout";
 import {
   INDEX,
   INSPECT,

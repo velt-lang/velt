@@ -3,7 +3,8 @@
 // the typed arrays it takes. The globals' module (std/prelude/global/encoding.vlt) imports
 // `TextEncoder` and `TextDecoderOptions` from here too.
 
-import { ArrayBuffer, BufferView } from "velt/lang/typed_array/core";
+import { ArrayBuffer } from "velt/lang/typed_array/core";
+import { BufferView } from "velt/lang/typed_array/buffer_view";
 import { EncodingError } from "velt/encoding/errors";
 import { TextDecoderOptions } from "velt/encoding/text_decoder_options";
 import { firstInvalid, utf8DecodeLossy, validToString } from "velt/encoding/utf8";

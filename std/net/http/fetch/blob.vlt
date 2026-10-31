@@ -6,7 +6,8 @@
 // velt/net/http/fetch/blob_typed, loaded only by programs that call them
 // (std/prelude/global/blob_typed.vlt), as `Response.bytes()` is.
 
-import { ArrayBuffer, BufferView } from "velt/lang/typed_array/core";
+import { ArrayBuffer } from "velt/lang/typed_array/core";
+import { BufferView } from "velt/lang/typed_array/buffer_view";
 import { utf8DecodeLossy, utf8Encode } from "velt/encoding";
 import { BODY_TYPE, WHOLE_BODY, ByteSource } from "velt/io/streams/byte_source";
 import { INSPECT } from "velt/lang/hooks/keys";

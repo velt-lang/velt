@@ -495,11 +495,11 @@ impl FnLower<'_, '_> {
         self.call_rt(Rt::StrbufInspectAtom, vec![buf.clone(), start], None);
     }
 
-    /// Is `ty` std's `NativeInspect` (std/lang/typed_array/core.vlt), the result of an `[INSPECT]()`
+    /// Is `ty` std's `NativeInspect` (std/lang/typed_array/native_inspect.vlt), the result of an `[INSPECT]()`
     /// that prints one of Node's own objects?
     fn is_native_inspect(&self, ty: TyId) -> bool {
         matches!(self.cx.kind(ty), TyKind::Adt(d, _)
-            if self.cx.adt_def(d).name == velt_common::std_item!(lang_typed_array_core, "NativeInspect"))
+            if self.cx.adt_def(d).name == velt_common::std_item!(lang_typed_array_native_inspect, "NativeInspect"))
     }
 
     /// Print the object at address `p` with `body`, unless it is already being printed: an

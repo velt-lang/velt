@@ -106,7 +106,9 @@ table! {
     lang_symbol => "lang/symbol",
     lang_this_fn => "lang/this_fn",
     lang_typed_array => "lang/typed_array",
+    lang_typed_array_buffer_view => "lang/typed_array/buffer_view",
     lang_typed_array_core => "lang/typed_array/core",
+    lang_typed_array_native_inspect => "lang/typed_array/native_inspect",
 
     // Modules and their files that lowering and the checks know.
     collections => "collections",

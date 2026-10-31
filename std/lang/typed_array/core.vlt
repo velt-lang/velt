@@ -1,5 +1,5 @@
-// velt/lang/typed_array (internal): `ArrayBuffer`, and `BufferView`, what typed arrays and
-// `DataView` are (a byte range of a buffer). The small part of the typed arrays that `fetch` bodies
+// velt/lang/typed_array (internal): `ArrayBuffer` (`BufferView`, what typed arrays and
+// `DataView` are, is in buffer_view.vlt). The small part of the typed arrays that `fetch` bodies
 // need: a program that uses `Response` loads this module, and the typed array classes only when it
 // names one or reads `bytes()` (std/prelude/global/fetch_bytes.vlt). Programs use the globals.
 //
@@ -7,7 +7,9 @@
 // `DataView`, …) keep a reference to the buffer and a byte range of it, so two views of one
 // buffer see each other's writes, as in JS.
 
-import { INSPECT, VIEW_EMPTY_TEXT, VIEW_SIZE } from "velt/lang/hooks/keys";
+import { INSPECT } from "velt/lang/hooks/keys";
+import { ArrayBufferView, BufferView } from "velt/lang/typed_array/buffer_view";
+import { NativeInspect } from "velt/lang/typed_array/native_inspect";
 
 /**
  * A fixed-length block of bytes (JS `ArrayBuffer`). Read and write it through a view:
@@ -106,76 +108,6 @@ export class ArrayBuffer {
     return { text: inspectBuffer(this.bytes) };
   }
 }
-
-/**
- * What an `[INSPECT]()` returns for a class that stands for one of Node's own objects (std only:
- * `ArrayBuffer`, `DataView`): `console.log` prints `text`, and `[ArrayBuffer]` (the class's
- * name) past Node's depth limit, as Node cuts its objects, where a string `[INSPECT]()` is
- * printed at any depth (`Date`). crates/velt_vir/src/lower/glue/format.rs knows it by name.
- */
-export struct NativeInspect {
-  text: string;
-}
-
-/**
- * A view of a byte range of an `ArrayBuffer` (std only: what every typed array and `DataView`
- * extends): the buffer, the offset of the range in it (bytes), and its length in elements of
- * `[VIEW_SIZE]()` bytes.
- */
-export class BufferView {
-  private buf: ArrayBuffer;
-  private off: usize;
-  private len: usize;
-
-  constructor(buf: ArrayBuffer, off: usize, len: usize) {
-    this.buf = buf;
-    this.off = off;
-    this.len = len;
-  }
-
-  /** The size of an element in bytes (a `DataView`'s elements are bytes). */
-  [VIEW_SIZE](): usize {
-    return 1;
-  }
-
-  /**
-   * What Node's messages show for the view when it is empty (`util.inspect`: `Uint8Array(0) []`,
-   * or a `DataView` with its buffer), for the fd API's errors; each view overrides it, so a
-   * program has the code of the views it makes only.
-   */
-  [VIEW_EMPTY_TEXT](): string {
-    return "";
-  }
-
-  /** The buffer the view is of. */
-  get buffer(): ArrayBuffer {
-    return this.buf;
-  }
-
-  /** Where the view starts in `buffer`, in bytes. */
-  get byteOffset(): number {
-    return this.off as number;
-  }
-
-  /** The size of the view in bytes. */
-  get byteLength(): number {
-    return (this.len * this[VIEW_SIZE]()) as number;
-  }
-}
-
-/**
- * The number of bytes `v` views (std only: a typed array's or a `DataView`'s bytes passed to a
- * system function, crates/velt_vir/src/lower/system_views.rs).
- */
-export function viewBytes(v: BufferView): usize {
-  return v.len * v[VIEW_SIZE]();
-}
-
-/**
- * TypeScript's `ArrayBufferView`: a typed array or a `DataView` (`buffer`, `byteOffset`,
- * `byteLength`). A type only, as in JS.
- */
-export type ArrayBufferView = BufferView;
 
 /**
  * Node's text for a buffer's bytes, `ArrayBuffer { [Uint8Contents]: <…>, [byteLength]: n }`,

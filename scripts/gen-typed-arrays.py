@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-# Generates the typed arrays of `velt/lang/typed_array`: std/lang/typed_array/base.vlt (what they share)
-# and one module per array class (std/lang/typed_array/uint8_array.vlt, …), and their two globals
+# Generates the typed arrays of `velt/lang/typed_array`: std/lang/typed_array/base.vlt (what they
+# share), layout.vlt (a new array's layout) and one module per array class
+# (std/lang/typed_array/uint8_array.vlt, …), and their two globals
 # (std/prelude/global/typed_array.vlt: `ArrayBuffer`, `DataView`, `Uint8Array`; and
 # typed_array_kinds.vlt: the other eight), so a program loads the classes it names or that the
 # std modules it uses import (`TextEncoder` and `fetch` take `Uint8Array` only). The same
@@ -8,7 +9,7 @@
 # each class prints and tests with `instanceof` under its own name). To change the API, change
 # this script and run it from the repository root, then `velt fmt` the files:
 #
-#   python3 scripts/gen-typed-arrays.py && velt fmt std/typed_array std/prelude/global
+#   python3 scripts/gen-typed-arrays.py && velt fmt std/lang/typed_array std/prelude/global
 #
 # `ArrayBuffer` and the element conversions are in std/lang/typed_array/buffer.vlt, `DataView` in
 # std/lang/typed_array/data_view.vlt.
@@ -45,35 +46,18 @@ KINDS = [
 
 BASE_DOC = """\
 // velt/lang/typed_array (internal): what the typed arrays share (ES2024 §23.2: `%TypedArray%`): the
-// std-only base class `TypedArray`, the layout of a new array, and the default sort order.
-// Programs use the globals (velt/lang/typed_array).
+// std-only base class `TypedArray`, and the default sort order. Programs use the globals
+// (velt/lang/typed_array).
 //
 """
 
-BASE_BODY = """/**
- * What every typed array is (std only: JS's `%TypedArray%`): a view of a buffer
- * (`BufferView`: the buffer, the range of it the elements take) with element access by number
- * for copies between kinds.
- */
-export class TypedArray extends BufferView {
-  /** Element `i` (in range) as a number; each kind overrides it. */
-  [TYPED_ARRAY_GET](i: usize): number {
-    panic("ICE: TypedArray[TYPED_ARRAY_GET]");
-  }
+LAYOUT_DOC = """\
+// velt/lang/typed_array (internal): the layout of a new typed array (`new C(arg, byteOffset,
+// length)`): its buffer, the range of it the elements take, and the values to write there.
+//
+"""
 
-  /** Writes element `i` (in range); each kind overrides it. */
-  [TYPED_ARRAY_PUT](i: usize, v: number) {
-    panic("ICE: TypedArray[TYPED_ARRAY_PUT]");
-  }
-
-  /** Which of the nine kinds it is (its position in `KINDS` of the generator); each overrides it. */
-  [TYPED_ARRAY_KIND](): u32 {
-    panic("ICE: TypedArray[TYPED_ARRAY_KIND]");
-  }
-
-}
-
-/** Where a new typed array's elements are, and the values to write there (null: none). */
+LAYOUT_BODY = """/** Where a new typed array's elements are, and the values to write there (null: none). */
 export struct Layout {
   buf: ArrayBuffer;
   off: usize;
@@ -140,6 +124,30 @@ export function layout(
   const xs = elementsOf(arg);
   const n = xs.length as usize;
   return { buf: new ArrayBuffer((n * size) as number), off: 0, len: n, values: xs };
+}
+"""
+
+BASE_BODY = """/**
+ * What every typed array is (std only: JS's `%TypedArray%`): a view of a buffer
+ * (`BufferView`: the buffer, the range of it the elements take) with element access by number
+ * for copies between kinds.
+ */
+export class TypedArray extends BufferView {
+  /** Element `i` (in range) as a number; each kind overrides it. */
+  [TYPED_ARRAY_GET](i: usize): number {
+    panic("ICE: TypedArray[TYPED_ARRAY_GET]");
+  }
+
+  /** Writes element `i` (in range); each kind overrides it. */
+  [TYPED_ARRAY_PUT](i: usize, v: number) {
+    panic("ICE: TypedArray[TYPED_ARRAY_PUT]");
+  }
+
+  /** Which of the nine kinds it is (its position in `KINDS` of the generator); each overrides it. */
+  [TYPED_ARRAY_KIND](): u32 {
+    panic("ICE: TypedArray[TYPED_ARRAY_KIND]");
+  }
+
 }
 
 /** Any element, of any kind, as a number (std only). */
@@ -850,7 +858,8 @@ BUFFER_NAMES = ["ArrayBuffer", "element8", "element16", "element32", "elementF32
                 "load32", "loadF32", "loadF64", "relative", "setElement8", "setElement16", "setElement32",
                 "setElementF32", "setElementF64", "store16", "store32", "storeF32", "storeF64",
                 "toIndex", "toInteger", "toUint32", "toUint8", "toUint8Clamp"]
-BASE_NAMES = ["TypedArray", "ascending", "elementsOf", "layout", "localeNumber"]
+BASE_NAMES = ["TypedArray", "ascending", "elementsOf", "localeNumber"]
+LAYOUT_NAMES = ["Layout", "layout"]
 # The keys of the methods the compiler and std call (std/lang/hooks/keys.vlt).
 KEY_NAMES = ["INDEX", "INSPECT", "SET_INDEX", "TYPED_ARRAY_GET", "TYPED_ARRAY_KIND", "TYPED_ARRAY_PUT",
              "VIEW_EMPTY_TEXT", "VIEW_SIZE"]
@@ -876,8 +885,13 @@ def main():
     base = BASE_BODY
     write(os.path.join(DIR, "base.vlt"),
           BASE_DOC + GENERATED + "\n" + imports(base, BUFFER_NAMES, "velt/lang/typed_array/buffer")
-          + 'import { BufferView } from "velt/lang/typed_array/core";\n'
+          + 'import { BufferView } from "velt/lang/typed_array/buffer_view";\n'
           + imports(base, KEY_NAMES, "velt/lang/hooks/keys") + "\n" + base)
+    lay = LAYOUT_BODY
+    write(os.path.join(DIR, "layout.vlt"),
+          LAYOUT_DOC + GENERATED + "\n" + imports(lay, BUFFER_NAMES, "velt/lang/typed_array/buffer")
+          + imports(lay, BASE_NAMES, "velt/lang/typed_array/base")
+          + imports(lay, KEY_NAMES, "velt/lang/hooks/keys") + "\n" + lay)
     for kind, (c, n, read, convert, store, what) in enumerate(KINDS):
         t = TEMPLATE
         extra = UINT8_EXTRA if c == "Uint8Array" else ""
@@ -903,6 +917,7 @@ def main():
         doc += CLASS_DOC.replace("@C@", c).replace("@WHAT@", what)
         head = (imports(t, BUFFER_NAMES, "velt/lang/typed_array/buffer")
                 + imports(t, BASE_NAMES, "velt/lang/typed_array/base")
+                + imports(t, LAYOUT_NAMES, "velt/lang/typed_array/layout")
                 + imports(t, KEY_NAMES, "velt/lang/hooks/keys"))
         write(os.path.join(DIR, snake(c) + ".vlt"), doc + GENERATED + "\n" + head + t)
 
@@ -914,7 +929,8 @@ def main():
           "// Global (loaded when a module names one of these): `ArrayBuffer`, `DataView` and `Uint8Array`,\n"
           "// as in Node (docs/std/prelude/typed_array.md); the other typed arrays are in typed_array_kinds.vlt.\n"
           + GENERATED
-          + "export { ArrayBuffer, ArrayBufferView } from \"velt/lang/typed_array/core\";\n"
+          + "export { ArrayBuffer } from \"velt/lang/typed_array/core\";\n"
+          + "export { ArrayBufferView } from \"velt/lang/typed_array/buffer_view\";\n"
           + "export { DataView } from \"velt/lang/typed_array/data_view\";\n"
           + "export { Uint8Array } from \"velt/lang/typed_array/uint8_array\";\n")
     write(os.path.join(GLOBAL, "typed_array_kinds.vlt"),

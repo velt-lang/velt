@@ -24,7 +24,8 @@ import {
   toUint32,
   toUint8,
 } from "velt/lang/typed_array/buffer";
-import { BufferView, NativeInspect } from "velt/lang/typed_array/core";
+import { BufferView } from "velt/lang/typed_array/buffer_view";
+import { NativeInspect } from "velt/lang/typed_array/native_inspect";
 import { INSPECT, VIEW_EMPTY_TEXT } from "velt/lang/hooks/keys";
 
 /**

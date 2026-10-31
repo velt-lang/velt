@@ -331,7 +331,7 @@ declaration's `ExternFnDef` is never called. Its name maps to the `Intrinsic` in
   `readonly`) writes every non-Copy param not written `readonly` (its `u8[]` buffers and its
   structs): callers pass those `BorrowMut`.
   An argument of such a call for a `u8[]` parameter (a buffer or a path) is a `u8[]`, a value
-  of a class extending `std/typed_array/core::BufferView` (a typed array or `DataView`: the
+  of a class extending `std/lang/typed_array/buffer_view::BufferView` (a typed array or `DataView`: the
   argument keeps its class type, with no conversion), or `Intrinsic::Subarray(xs, begin,
   end)` of type `u8[]` (`xs` a `u8[]` place; `begin` and `end` each an `i64`, or a `usize`
   when never negative), which sema makes only there, from `xs.subarray(begin, end)`.

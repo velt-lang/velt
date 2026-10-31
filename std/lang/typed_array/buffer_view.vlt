@@ -1,0 +1,65 @@
+// velt/lang/typed_array (internal): `BufferView`, what typed arrays and `DataView` are (a byte
+// range of an `ArrayBuffer`), and the number of bytes a view has.
+
+import { VIEW_EMPTY_TEXT, VIEW_SIZE } from "velt/lang/hooks/keys";
+import { ArrayBuffer } from "velt/lang/typed_array/core";
+
+/**
+ * A view of a byte range of an `ArrayBuffer` (std only: what every typed array and `DataView`
+ * extends): the buffer, the offset of the range in it (bytes), and its length in elements of
+ * `[VIEW_SIZE]()` bytes.
+ */
+export class BufferView {
+  private buf: ArrayBuffer;
+  private off: usize;
+  private len: usize;
+
+  constructor(buf: ArrayBuffer, off: usize, len: usize) {
+    this.buf = buf;
+    this.off = off;
+    this.len = len;
+  }
+
+  /** The size of an element in bytes (a `DataView`'s elements are bytes). */
+  [VIEW_SIZE](): usize {
+    return 1;
+  }
+
+  /**
+   * What Node's messages show for the view when it is empty (`util.inspect`: `Uint8Array(0) []`,
+   * or a `DataView` with its buffer), for the fd API's errors; each view overrides it, so a
+   * program has the code of the views it makes only.
+   */
+  [VIEW_EMPTY_TEXT](): string {
+    return "";
+  }
+
+  /** The buffer the view is of. */
+  get buffer(): ArrayBuffer {
+    return this.buf;
+  }
+
+  /** Where the view starts in `buffer`, in bytes. */
+  get byteOffset(): number {
+    return this.off as number;
+  }
+
+  /** The size of the view in bytes. */
+  get byteLength(): number {
+    return (this.len * this[VIEW_SIZE]()) as number;
+  }
+}
+
+/**
+ * The number of bytes `v` views (std only: a typed array's or a `DataView`'s bytes passed to a
+ * system function, crates/velt_vir/src/lower/system_views.rs).
+ */
+export function viewBytes(v: BufferView): usize {
+  return v.len * v[VIEW_SIZE]();
+}
+
+/**
+ * TypeScript's `ArrayBufferView`: a typed array or a `DataView` (`buffer`, `byteOffset`,
+ * `byteLength`). A type only, as in JS.
+ */
+export type ArrayBufferView = BufferView;

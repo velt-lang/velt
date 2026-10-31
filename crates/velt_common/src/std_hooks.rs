@@ -292,8 +292,8 @@ hooks! {
     // (std/lang/equal/generated.vlt imports it for the code it generates).
     record_entries_of => lang_hooks_record, "recordEntriesOf", "<A, B>(Record<A, B>) -> Map<A, B>";
 
-    // lang/typed_array/core.vlt: the bytes of a typed array.
-    view_bytes => lang_typed_array_core, "viewBytes", "(BufferView) -> usize", lowered;
+    // lang/typed_array/buffer_view.vlt: the bytes of a typed array.
+    view_bytes => lang_typed_array_buffer_view, "viewBytes", "(BufferView) -> usize", lowered;
 }
 
 /// One key of a std method the compiler calls: a symbol constant of std/lang/hooks/keys.vlt.

@@ -3,7 +3,7 @@
 import { EINTR, lastOsError, pread, read } from "velt/fs/fd/system";
 import { bufferOffset, checkRead, descriptor, readLength, readPosition } from "velt/fs/fd/args";
 import { osError } from "velt/fs/errors";
-import { ArrayBufferView, BufferView } from "velt/lang/typed_array/core";
+import { ArrayBufferView, BufferView } from "velt/lang/typed_array/buffer_view";
 import { VIEW_EMPTY_TEXT, VIEW_SIZE } from "velt/lang/hooks/keys";
 
 /**
