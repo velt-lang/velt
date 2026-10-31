@@ -90,6 +90,9 @@ pub struct Options {
     pub archive: Option<String>,
     /// Print the commands instead of running them.
     pub dry_run: bool,
+    /// The revision the change is checked against (`--base`, else origin/main or main): an
+    /// allow-list entry of std-lint it lacks fails.
+    pub base: Option<String>,
 }
 
 struct Gate<'a> {
@@ -206,8 +209,8 @@ pub fn run(root: &Path, graph: &Graph, plan: &Plan, opts: &Options) -> Result<()
         let mut lint = Command::new(&velt);
         lint.current_dir(root)
             .args(["run", "scripts/std-lint/main.vlt"]);
-        if let Some(base) = crate::changes::default_base(root) {
-            lint.args(["--", "--base", &base]);
+        if let Some(base) = &opts.base {
+            lint.args(["--", "--base", base]);
         }
         gate.step("std-lint", &mut lint)?;
     }

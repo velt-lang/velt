@@ -496,6 +496,11 @@ function main() {
     }
   }
   if (base !== null) {
+    // A base revision git doesn't have (a shallow checkout) would check nothing: fail instead.
+    // A base from before the lists has nothing to shrink from.
+    if (execSync("git", ["rev-parse", "--verify", "--quiet", `${base}^{commit}`]).code != 0) {
+      report.push(`std-lint: no revision \`${base}\` to compare the allow lists with (fetch it)`);
+    }
     const shown = execSync("git", ["show", `${base}:scripts/std-lint/allow.vlt`]);
     if (shown.code == 0) {
       for (const rule of ["oversize", "multiClass", "indexCode", "unowned"]) {

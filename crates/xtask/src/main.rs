@@ -164,6 +164,9 @@ fn run() -> Result<(), String> {
                 pack: args.pack.clone(),
                 archive: args.archive.clone(),
                 dry_run: args.dry_run,
+                // `--base` even with `--full` (the merge queue passes `HEAD^1`): the revision the
+                // change is checked against, which std-lint's allow lists may only shrink from.
+                base: args.base.clone().or_else(|| changes::default_base(&root)),
             };
             check::run(&root, &Graph::load(&root)?, &plan, &opts)?;
             println!("\x1b[32mall selected gates passed\x1b[0m");

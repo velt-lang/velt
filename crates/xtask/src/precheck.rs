@@ -310,13 +310,12 @@ fn std_lint(r: &mut Runner, which: &StdLint) {
     }
     let velt = target_dir(r.root).join("debug").join(exe("velt"));
     let mut lint = Command::new(velt);
-    lint.current_dir(r.root).args([
-        "run",
-        "scripts/std-lint/main.vlt",
-        "--",
-        "--base",
-        "origin/main",
-    ]);
+    lint.current_dir(r.root)
+        .args(["run", "scripts/std-lint/main.vlt", "--"]);
+    // The lists' base: origin/main, else main (std-lint fails on a revision git lacks).
+    if let Some(base) = crate::changes::default_base(r.root) {
+        lint.args(["--base", &base]);
+    }
     if let StdLint::Files(files) = which {
         lint.args(files);
     }
