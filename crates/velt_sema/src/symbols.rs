@@ -229,13 +229,21 @@ impl Ctx<'_> {
     pub(crate) fn resolve_key(&self, module: usize, k: &ast::Ident) -> Result<String, String> {
         let name = k.name.as_str();
         // `[Symbol.for("key")]` written in place (the parser's name for it): the registered
-        // symbol's name, as a constant holding it has (std's keys name theirs first).
+        // symbol's name, as a constant holding it has, or the one `key_name` would give it: the
+        // first that no other symbol has (std's private keys are named first, so a program's
+        // `Symbol.for("mapAt")` is never std's `Symbol("mapAt")`).
         if let Some(key) = registered_key(name) {
             let sym = KnownSymbol::Registered(key.clone());
-            return Ok(match self.symbol_keys.names.get(&sym) {
-                Some(n) => n.clone(),
-                None => crate::property_order::symbol_key_name(&key, 1),
-            });
+            if let Some(n) = self.symbol_keys.names.get(&sym) {
+                return Ok(n.clone());
+            }
+            let mut n = 1;
+            let mut name = crate::property_order::symbol_key_name(&key, n);
+            while (self.symbol_keys.taken.get(&name)).is_some_and(|s| *s != sym) {
+                n += 1;
+                name = crate::property_order::symbol_key_name(&key, n);
+            }
+            return Ok(name);
         }
         let inner = match name.strip_prefix('[').and_then(|n| n.strip_suffix(']')) {
             Some(inner) if is_computed_key(k) => inner,
