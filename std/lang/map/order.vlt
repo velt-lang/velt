@@ -1,0 +1,91 @@
+// velt/lang/map (internal): the prelude `Map`'s insertion order once entries were renumbered
+// (std/prelude/map.vlt): the sequence numbers and segments that give the order back.
+
+import { arrayTruncate } from "velt/lang/intrinsics";
+import { MAX_ENTRIES } from "velt/lang/map/layout";
+
+/** The sequence number the next appended entry gets. */
+export function mapNextSeq<K, V>(m: Map<K, V>): usize {
+  const n = m.seqOff.length;
+  return m.entryKeys.length + (n == 0 ? 0 : m.seqOff[n - 1]);
+}
+
+/**
+ * After renumbering left `len` entries: entries appended from position `len` on get sequence
+ * numbers from `next` on (none is reused).
+ */
+export function mapSeqTail<K, V>(m: Map<K, V>, len: usize, next: usize) {
+  let n = m.seqPos.length;
+  while (n > 0 && m.seqPos[n - 1] >= len) {
+    n--;
+  }
+  arrayTruncate(m.seqPos, n);
+  arrayTruncate(m.seqOff, n);
+  const off = next - len;
+  if (off == (n == 0 ? 0 : m.seqOff[n - 1])) {
+    return;
+  }
+  if (n == 0 && len > 0) {
+    m.seqPos.push(0);
+    m.seqOff.push(0);
+  }
+  m.seqPos.push(len);
+  m.seqOff.push(off);
+}
+
+/**
+ * The breakpoint whose segment holds position `e` (the last one at or before it), or -1 when
+ * there are none.
+ */
+export function mapSegmentOf<K, V>(m: Map<K, V>, e: usize): i64 {
+  const n = m.seqPos.length;
+  if (n == 0) {
+    return -1;
+  }
+  let lo: usize = 0;
+  let hi = n;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) / 2;
+    if (m.seqPos[mid] <= e) {
+      lo = mid;
+    } else {
+      hi = mid;
+    }
+  }
+  return lo as i64;
+}
+
+/** Segment `k`'s offset (`segmentOf`'s result). */
+export function mapSegmentOff<K, V>(m: Map<K, V>, k: i64): usize {
+  return k < 0 ? 0 : m.seqOff[k as usize];
+}
+
+/** Where segment `k` ends: the next breakpoint, or past every position. */
+export function mapSegmentEnd<K, V>(m: Map<K, V>, k: i64): usize {
+  const n = (k + 1) as usize;
+  return k >= 0 && n < m.seqPos.length ? m.seqPos[n] : MAX_ENTRIES;
+}
+
+/** The first position whose entry's sequence number is at least `seq` (past the end if none). */
+export function mapPositionOfSeq<K, V>(m: Map<K, V>, seq: usize): usize {
+  const n = m.seqPos.length;
+  if (n == 0) {
+    return seq;
+  }
+  if (m.seqOff[0] > seq) {
+    return 0;
+  }
+  // The last segment starting at a sequence number <= `seq`.
+  let lo: usize = 0;
+  let hi = n;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) / 2;
+    if (m.seqPos[mid] + m.seqOff[mid] <= seq) {
+      lo = mid;
+    } else {
+      hi = mid;
+    }
+  }
+  const p = seq - m.seqOff[lo];
+  return lo + 1 < n && p > m.seqPos[lo + 1] ? m.seqPos[lo + 1] : p;
+}

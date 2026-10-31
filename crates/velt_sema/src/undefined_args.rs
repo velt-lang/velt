@@ -224,7 +224,8 @@ pub(crate) fn check_instantiations(cx: &mut Ctx) {
     }
 }
 
-/// Is `d` part of the prelude `Map` or `Record` (the types, their methods and helpers)? A
+/// Is `d` part of the prelude `Map` or `Record` (the types, their methods and helpers, also
+/// those in std/lang/map)? A
 /// map's `V | null` entry slots tell a deleted entry from a live one by the map's index
 /// wherever `V` holds a nothing (`holdsNull`, std/prelude/map.vlt), so a value's
 /// own `undefined` (or `null`) stays a value; a record keeps its entries in a map. Lowering
@@ -237,11 +238,14 @@ fn keeps_null_apart(cx: &Ctx, d: DefId) -> bool {
     let Some(f) = cx.try_fn(d) else {
         return false;
     };
+    let path = cx.modules[f.module].path.as_str();
     cx.scopes[f.module].is_std
-        && matches!(
-            cx.modules[f.module].path.as_str(),
-            velt_common::std_module!(prelude_map) | velt_common::std_module!(prelude_record)
-        )
+        && (matches!(
+            path,
+            velt_common::std_module!(prelude_map)
+                | velt_common::std_module!(prelude_map_utf8)
+                | velt_common::std_module!(prelude_record)
+        ) || path.starts_with(velt_common::std_dir!(lang_map)))
 }
 
 /// Is `d` the prelude's `Array<T>.sort(cmp)` or `toSorted(cmp)` for any element type (not the

@@ -1,7 +1,7 @@
 //! `for...of` over a `Map` (or its `keys()`, `values()`, `entries()`) held in a place iterates
 //! live, as in JS: entries added by the body are visited, deleted ones are not (#624). The loop
-//! is desugared into a cursor walk over the map's entries (std/prelude/map.vlt, "Live
-//! iteration"):
+//! is desugared into a cursor walk over the map's entries (std/prelude/map.vlt; "Live
+//! iteration" in std/lang/map/layout.vlt):
 //!
 //! ```text
 //! {

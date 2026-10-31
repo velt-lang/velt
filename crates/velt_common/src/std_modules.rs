@@ -67,6 +67,7 @@ table! {
     prelude_iter => "prelude/iter",
     prelude_json => "prelude/json/json",
     prelude_map => "prelude/map",
+    prelude_map_utf8 => "prelude/map_utf8",
     prelude_math => "prelude/math",
     prelude_process => "prelude/process",
     prelude_promise => "prelude/promise",
@@ -108,6 +109,8 @@ table! {
     lang_proxy_keys => "lang/proxy/keys",
     lang_proxy_reflect => "lang/proxy/reflect",
     lang_proxy_traps => "lang/proxy/traps",
+    /// The prelude `Map`'s internals (std/lang/map/*.vlt).
+    lang_map => "lang/map",
     lang_record => "lang/record",
     lang_sort => "lang/sort",
     lang_sort_stable => "lang/sort/stable",

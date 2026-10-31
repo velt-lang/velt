@@ -11,7 +11,6 @@ export const allow: Allow = {
     "encoding/json/tape.vlt",
     "encoding/json/writer.vlt",
     "prelude/json/json.vlt",
-    "prelude/map.vlt",
   ],
   multiClass: [
     "encoding/json/tape.vlt",

@@ -63,7 +63,9 @@ impl<'h> Cx<'h> {
         match self.hir.def(d) {
             hir::Def::Fn(f) => [
                 concat!(velt_common::std_module!(prelude_map), "::"),
+                concat!(velt_common::std_module!(prelude_map_utf8), "::"),
                 concat!(velt_common::std_module!(prelude_record), "::"),
+                velt_common::std_dir!(lang_map),
             ]
             .iter()
             .any(|m| f.name.starts_with(m)),

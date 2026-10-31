@@ -23,6 +23,7 @@ import "./date";
 import "./errors";
 import "./iter";
 import "./map";
+import "./map_utf8";
 import "./math";
 import "./nullable";
 import "./number";
