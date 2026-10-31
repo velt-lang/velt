@@ -439,7 +439,7 @@ impl FnLower<'_, '_> {
         self.terminate(Terminator::Return(unit()));
     }
 
-    /// Print the class object `obj` through its `__inspect()` method `m`, as Node prints a custom
+    /// Print the class object `obj` through its `[INSPECT]()` method `m`, as Node prints a custom
     /// inspect: a string result raw, any other value after the class name, at the object's depth
     /// (`Headers { a: '1' }`).
     fn format_inspect(&mut self, buf: &Operand, obj: Operand, ty: TyId, m: DefId, depth: &Operand) {
@@ -495,7 +495,7 @@ impl FnLower<'_, '_> {
         self.call_rt(Rt::StrbufInspectAtom, vec![buf.clone(), start], None);
     }
 
-    /// Is `ty` std's `NativeInspect` (std/lang/typed_array/core.vlt), the result of an `__inspect()`
+    /// Is `ty` std's `NativeInspect` (std/lang/typed_array/core.vlt), the result of an `[INSPECT]()`
     /// that prints one of Node's own objects?
     fn is_native_inspect(&self, ty: TyId) -> bool {
         matches!(self.cx.kind(ty), TyKind::Adt(d, _)

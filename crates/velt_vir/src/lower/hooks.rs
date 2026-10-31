@@ -1,5 +1,5 @@
 //! Calls to a class's hook methods from glue (`hir::AdtDef::to_string`, `to_json`, `inspect`):
-//! `String(x)` calls `toString()`, `JSON.stringify` `toJSON()`, `console.log` `__inspect()`.
+//! `String(x)` calls `toString()`, `JSON.stringify` `toJSON()`, `console.log` `[INSPECT]()`.
 //! Sema only records a method that cannot throw and takes no arguments but `this` (and the key,
 //! for `toJSON(key)`); it gives other shapes an adapter of that form, which dispatches through
 //! the vtable and passes the defaults (sema's `hooks.rs`). So a call is a plain call with the

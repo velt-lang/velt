@@ -13,6 +13,7 @@ import {
   velt_rt_signal_wait,
 } from "velt/task/rt";
 import { TimeoutError } from "velt/task/timeout";
+import { INSPECT } from "velt/lang/hooks/keys";
 
 // Owns one runtime signal (not exported: only this module makes signals). Lives in a `shared`
 // cell, so it is released exactly once, when the last signal or controller using it goes away.
@@ -119,7 +120,7 @@ export class AbortSignal {
   }
 
   /** How `console.log` shows the signal, like Node: `AbortSignal { aborted: false }`. */
-  __inspect() {
+  [INSPECT]() {
     return { aborted: this.aborted };
   }
 }

@@ -1,6 +1,7 @@
 //! The methods a class can give the formatters and `JSON.stringify` (`hir::AdtDef::to_string`,
 //! `to_json` and `inspect`): `toString()` for `String(x)` / `${x}`, `toJSON(key)` for
-//! `JSON.stringify`, as in JS, and `__inspect()` for `console.log` (std's types print their
+//! `JSON.stringify`, as in JS, and `[util.inspect.custom]()` for `console.log` (Node's key,
+//! `Symbol.for("nodejs.util.inspect.custom")`: [`INSPECT`]; std's types print their
 //! state that way, as Node's custom inspect does, never their runtime handles).
 //!
 //! Lowering calls a hook from glue, so a hook is a plain method of the class or a base class:
@@ -26,10 +27,11 @@ use crate::hir::{
 pub(crate) const TO_STRING: &str = "toString";
 /// The `toJSON()` hook's name.
 pub(crate) const TO_JSON: &str = "toJSON";
-/// The `__inspect()` hook's name.
-pub(crate) const INSPECT: &str = "__inspect";
+/// The inspect hook's member name: a method keyed by `Symbol.for("nodejs.util.inspect.custom")`
+/// (Node's `util.inspect.custom`; std/lang/hooks/keys.vlt `INSPECT`).
+pub const INSPECT: &str = velt_common::std_key!(inspect);
 
-/// The hooks' names, in the order `toJSON`, `toString`, `__inspect` (velt/reflect lists them).
+/// The hooks' names, in the order `toJSON`, `toString`, `[INSPECT]` (velt/reflect lists them).
 pub const NAMES: [&str; 3] = [TO_JSON, TO_STRING, INSPECT];
 
 /// Class `d<args>`'s hook method `name` (its adapter, if it has one) and its result type

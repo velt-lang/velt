@@ -6,6 +6,7 @@
 
 import { ArrayBuffer, toIndex } from "velt/lang/typed_array/buffer";
 import { BufferView } from "velt/lang/typed_array/core";
+import { TYPED_ARRAY_GET, TYPED_ARRAY_KIND, TYPED_ARRAY_PUT } from "velt/lang/hooks/keys";
 
 /**
  * What every typed array is (std only: JS's `%TypedArray%`): a view of a buffer
@@ -14,18 +15,18 @@ import { BufferView } from "velt/lang/typed_array/core";
  */
 export class TypedArray extends BufferView {
   /** Element `i` (in range) as a number; each kind overrides it. */
-  __get(i: usize): number {
-    panic("ICE: TypedArray.__get");
+  [TYPED_ARRAY_GET](i: usize): number {
+    panic("ICE: TypedArray[TYPED_ARRAY_GET]");
   }
 
   /** Writes element `i` (in range); each kind overrides it. */
-  __put(i: usize, v: number) {
-    panic("ICE: TypedArray.__put");
+  [TYPED_ARRAY_PUT](i: usize, v: number) {
+    panic("ICE: TypedArray[TYPED_ARRAY_PUT]");
   }
 
   /** Which of the nine kinds it is (its position in `KINDS` of the generator); each overrides it. */
-  __kind(): u32 {
-    panic("ICE: TypedArray.__kind");
+  [TYPED_ARRAY_KIND](): u32 {
+    panic("ICE: TypedArray[TYPED_ARRAY_KIND]");
   }
 }
 
@@ -90,11 +91,11 @@ export function layout(
     }
     return { buf: arg, off: start, len: n as usize, values: null };
   }
-  if (arg instanceof TypedArray && arg.__kind() == kind) {
+  if (arg instanceof TypedArray && arg[TYPED_ARRAY_KIND]() == kind) {
     // The same kind: the bytes, copied.
     const o = arg.off as i64;
     const bytes = arg.buf.bytes.slice(o, o + ((arg.len * size) as i64));
-    // The length of what was copied, not `arg.len`: `__kind` is a method a subclass may
+    // The length of what was copied, not `arg.len`: `[TYPED_ARRAY_KIND]` is a method a subclass may
     // override, and a view's elements must lie in its buffer (typed_array/buffer `element*`).
     return {
       buf: ArrayBuffer.adopt(bytes),
@@ -113,7 +114,7 @@ export function elementsOf(src: number[] | TypedArray): number[] {
   if (src instanceof TypedArray) {
     const out: number[] = [];
     for (let i: usize = 0; i < src.len; i++) {
-      out.push(src.__get(i));
+      out.push(src[TYPED_ARRAY_GET](i));
     }
     return out;
   }

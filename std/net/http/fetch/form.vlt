@@ -8,6 +8,7 @@ import { URLSearchParams } from "velt/net/url";
 import { utf8DecodeLossy, utf8Encode } from "velt/encoding";
 import { BODY_TYPE, WHOLE_BODY, ByteSource } from "velt/io/streams/byte_source";
 import { Blob, File } from "velt/net/http/fetch/blob";
+import { INSPECT } from "velt/lang/hooks/keys";
 
 /** A field's value: text, or a file. */
 export type FormDataEntryValue = string | File;
@@ -163,7 +164,7 @@ export class FormData extends ByteSource {
   }
 
   /** How `console.log` shows a form, like Node: its fields. */
-  __inspect() {
+  [INSPECT]() {
     return this.entries();
   }
 }

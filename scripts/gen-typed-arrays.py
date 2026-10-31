@@ -57,18 +57,18 @@ BASE_BODY = """/**
  */
 export class TypedArray extends BufferView {
   /** Element `i` (in range) as a number; each kind overrides it. */
-  __get(i: usize): number {
-    panic("ICE: TypedArray.__get");
+  [TYPED_ARRAY_GET](i: usize): number {
+    panic("ICE: TypedArray[TYPED_ARRAY_GET]");
   }
 
   /** Writes element `i` (in range); each kind overrides it. */
-  __put(i: usize, v: number) {
-    panic("ICE: TypedArray.__put");
+  [TYPED_ARRAY_PUT](i: usize, v: number) {
+    panic("ICE: TypedArray[TYPED_ARRAY_PUT]");
   }
 
   /** Which of the nine kinds it is (its position in `KINDS` of the generator); each overrides it. */
-  __kind(): u32 {
-    panic("ICE: TypedArray.__kind");
+  [TYPED_ARRAY_KIND](): u32 {
+    panic("ICE: TypedArray[TYPED_ARRAY_KIND]");
   }
 
 }
@@ -129,11 +129,11 @@ export function layout(
     }
     return { buf: arg, off: start, len: n as usize, values: null };
   }
-  if (arg instanceof TypedArray && arg.__kind() == kind) {
+  if (arg instanceof TypedArray && arg[TYPED_ARRAY_KIND]() == kind) {
     // The same kind: the bytes, copied.
     const o = arg.off as i64;
     const bytes = arg.buf.bytes.slice(o, o + ((arg.len * size) as i64));
-    // The length of what was copied, not `arg.len`: `__kind` is a method a subclass may
+    // The length of what was copied, not `arg.len`: `[TYPED_ARRAY_KIND]` is a method a subclass may
     // override, and a view's elements must lie in its buffer (typed_array/buffer `element*`).
     return { buf: ArrayBuffer.adopt(bytes), off: 0, len: (bytes.length as usize) / size, values: null };
   }
@@ -147,7 +147,7 @@ export function elementsOf(src: number[] | TypedArray): number[] {
   if (src instanceof TypedArray) {
     const out: number[] = [];
     for (let i: usize = 0; i < src.len; i++) {
-      out.push(src.__get(i));
+      out.push(src[TYPED_ARRAY_GET](i));
     }
     return out;
   }
@@ -223,7 +223,7 @@ CLASS_DOC = """\
 //
 // Elements read as numbers and are converted when written, as in JS (`ToUint8`: 300 is 44,
 // `-1` is 255; `Uint8ClampedArray` clamps; `Float32Array` rounds to `f32`). `xs[i]` reads
-// element `i` (std's `__index`, which sema calls for `xs[i]`: crates/velt_sema/src/body/expr/
+// element `i` (std's `[INDEX]`, which sema calls for `xs[i]`: crates/velt_sema/src/body/expr/
 // indexers.rs) and panics out of range like an array index (JS reads `undefined`); `xs[i] = v`
 // writes it and does nothing out of range, as in JS. `subarray` shares the buffer, `slice`
 // copies.
@@ -289,23 +289,23 @@ export class @C@ extends TypedArray implements Iterable<number> {
     return this.buf.bytes.slice(start, start + ((this.len * @N@) as i64));
   }
 
-  override __get(i: usize): number {
+  override [TYPED_ARRAY_GET](i: usize): number {
     return this.get(i);
   }
 
-  override __put(i: usize, v: number) {
+  override [TYPED_ARRAY_PUT](i: usize, v: number) {
     this.put(i, v);
   }
 
-  override __kind(): u32 {
+  override [TYPED_ARRAY_KIND](): u32 {
     return @K@;
   }
 
-  override __emptyText(): string {
+  override [VIEW_EMPTY_TEXT](): string {
     return "@C@(0) []";
   }
 
-  override __size(): usize {
+  override [VIEW_SIZE](): usize {
     return @N@;
   }
 
@@ -329,7 +329,7 @@ export class @C@ extends TypedArray implements Iterable<number> {
   }
 
   /** `xs[i]`: element `i`; panics out of range, like an array index (JS reads `undefined`). */
-  __index(i: number): number {
+  [INDEX](i: number): number {
 @INDEX_BODY@
   }
 
@@ -342,7 +342,7 @@ export class @C@ extends TypedArray implements Iterable<number> {
    * `xs[i] = v`: writes element `i`, converted; nothing out of range, as in JS (nor past the
    * end of a `u8[]` that became shorter than its `subarray`: `length`).
    */
-  __setIndex(i: number, v: number) {
+  [SET_INDEX](i: number, v: number) {
     if (i >= 0 && i < this.count() && i == Math.trunc(i)) {
       // Inside the view and inside its buffer's bytes (`count`).
       const o = this.off + (i as usize) * @N@;
@@ -788,7 +788,7 @@ export class @C@ extends TypedArray implements Iterable<number> {
   }
 
   /** How `console.log` shows the array, like Node: `@C@(2) [ 1, 2 ]`. */
-  __inspect(): number[] {
+  [INSPECT](): number[] {
     return this.values();
   }
 @EXTRA@}
@@ -851,6 +851,9 @@ BUFFER_NAMES = ["ArrayBuffer", "element8", "element16", "element32", "elementF32
                 "setElementF32", "setElementF64", "store16", "store32", "storeF32", "storeF64",
                 "toIndex", "toInteger", "toUint32", "toUint8", "toUint8Clamp"]
 BASE_NAMES = ["TypedArray", "ascending", "elementsOf", "layout", "localeNumber"]
+# The keys of the methods the compiler and std call (std/lang/hooks/keys.vlt).
+KEY_NAMES = ["INDEX", "INSPECT", "SET_INDEX", "TYPED_ARRAY_GET", "TYPED_ARRAY_KIND", "TYPED_ARRAY_PUT",
+             "VIEW_EMPTY_TEXT", "VIEW_SIZE"]
 
 
 def snake(c):
@@ -873,7 +876,8 @@ def main():
     base = BASE_BODY
     write(os.path.join(DIR, "base.vlt"),
           BASE_DOC + GENERATED + "\n" + imports(base, BUFFER_NAMES, "velt/lang/typed_array/buffer")
-          + 'import { BufferView } from "velt/lang/typed_array/core";\n' + "\n" + base)
+          + 'import { BufferView } from "velt/lang/typed_array/core";\n'
+          + imports(base, KEY_NAMES, "velt/lang/hooks/keys") + "\n" + base)
     for kind, (c, n, read, convert, store, what) in enumerate(KINDS):
         t = TEMPLATE
         extra = UINT8_EXTRA if c == "Uint8Array" else ""
@@ -897,7 +901,9 @@ def main():
         head = CLASS_HEAD.replace("@C@", c).replace("@WHAT@", what)
         doc = "".join("// %s\n" % line for line in textwrap.wrap(head, 97, break_long_words=False))
         doc += CLASS_DOC.replace("@C@", c).replace("@WHAT@", what)
-        head = imports(t, BUFFER_NAMES, "velt/lang/typed_array/buffer") + imports(t, BASE_NAMES, "velt/lang/typed_array/base")
+        head = (imports(t, BUFFER_NAMES, "velt/lang/typed_array/buffer")
+                + imports(t, BASE_NAMES, "velt/lang/typed_array/base")
+                + imports(t, KEY_NAMES, "velt/lang/hooks/keys"))
         write(os.path.join(DIR, snake(c) + ".vlt"), doc + GENERATED + "\n" + head + t)
 
     # Two globals: `Uint8Array` with `ArrayBuffer` and `DataView` (what `TextEncoder` and `fetch`

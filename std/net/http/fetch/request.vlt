@@ -26,6 +26,7 @@ import {
 import { Headers, HeadersInit } from "velt/net/http/fetch/headers";
 import { tee } from "velt/net/http/fetch/tee";
 import { RequestSource } from "velt/net/http/fetch/source";
+import { INSPECT } from "velt/lang/hooks/keys";
 
 /** What `fetch` does with a redirect: follow it (default, up to 20), fail, or return it. */
 export type RequestRedirect = "follow" | "error" | "manual";
@@ -433,7 +434,7 @@ export class Request {
    * How `console.log` shows the request, like Node: its state, with Node's values for the
    * options Velt's `fetch` does not have (`mode: 'cors'`, `cache: 'default'`, …).
    */
-  __inspect() {
+  [INSPECT]() {
     return {
       method: this.method,
       url: this.url,

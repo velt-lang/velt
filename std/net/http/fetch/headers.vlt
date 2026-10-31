@@ -25,6 +25,7 @@
 import { impliedType } from "velt/net/http/fetch/body";
 import { RequestSource } from "velt/net/http/fetch/source";
 import { arraySwap, arrayTruncate } from "velt/lang/intrinsics";
+import { INSPECT } from "velt/lang/hooks/keys";
 
 // HTTP whitespace (tab, LF, CR, space) around `v` removed; other spaces (U+00A0, …) stay.
 function trimHttp(v: string): string {
@@ -384,7 +385,7 @@ export class Headers {
    * in insertion order with repeats joined (Node keeps the case a name was first added with;
    * Velt's names are lowercase).
    */
-  __inspect(): Record<string, string> {
+  [INSPECT](): Record<string, string> {
     // A body's implied `content-type` comes last, as in Node (`items` puts it first).
     const implied = this.implied != 0;
     const list = this.items();

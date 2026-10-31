@@ -30,6 +30,7 @@ import { Headers, HeadersInit } from "velt/net/http/fetch/headers";
 import { Fetched } from "velt/net/http/fetch/client/fetched";
 import { BodyKind, ResponseParts } from "velt/net/http/fetch/parts";
 import { tee } from "velt/net/http/fetch/tee";
+import { INSPECT } from "velt/lang/hooks/keys";
 
 /** `new Response(body, init)` and `Response.json(data, init)`: default status 200. */
 export struct ResponseInit {
@@ -498,7 +499,7 @@ export class Response {
   }
 
   /** How `console.log` shows the response, like Node: its public state. */
-  __inspect() {
+  [INSPECT]() {
     return {
       status: this.status,
       statusText: this.statusText,

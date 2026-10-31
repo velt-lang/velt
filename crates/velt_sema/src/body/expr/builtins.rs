@@ -166,7 +166,7 @@ impl FnCx<'_, '_> {
             let h = self.printed_expr(a);
             let h = self.read_shared(h);
             // A `Date` prints as its ISO string, like Node.
-            let h = self.own_to_string(h, "__inspect");
+            let h = self.own_to_string(h, crate::hooks::INSPECT);
             let h = self.narrowed_for_print(h);
             // A literal with accessors prints as Node shows it (`[Getter]`), through `any`.
             let h = self.literal_iface_as_any(h);

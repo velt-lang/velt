@@ -3,6 +3,7 @@
 import { invalidState, ReadableStreamDefaultController } from "velt/io/streams/controller";
 import { ReadableStream } from "velt/io/streams/streams";
 import { CancelReason, ReadableStreamReadResult } from "velt/io/streams/types";
+import { INSPECT } from "velt/lang/hooks/keys";
 
 /**
  * Reads a stream it holds (JS `ReadableStreamDefaultReader`): `read()` the next chunk,
@@ -63,7 +64,7 @@ export class ReadableStreamDefaultReader<R> {
   }
 
   /** How `console.log` shows the reader, as Node does. */
-  __inspect(): string {
+  [INSPECT](): string {
     return `ReadableStreamDefaultReader { stream: ${this.ctl == null ? "undefined" : "ReadableStream"} }`;
   }
 }

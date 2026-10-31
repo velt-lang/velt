@@ -53,7 +53,7 @@ pub struct ModelType {
     /// `null | undefined`).
     pub literal: String,
     /// The methods of a class that std's operations call by name (`toJSON`, `toString`,
-    /// `__inspect`), with their parameter count and result type, when callable as such.
+    /// `[INSPECT]`), with their parameter count and result type, when callable as such.
     pub methods: Vec<ModelMethod>,
     /// Whether a value of the type may be a typed `Proxy` standing for it: a class or object
     /// type in a program that uses `Proxy` (velt_vir's `proxiable` decides which exactly).

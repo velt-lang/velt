@@ -291,12 +291,17 @@ pub struct Key {
     pub name: &'static str,
     /// The constant in std/lang/hooks/keys.vlt (`MAP_CURSOR`).
     pub constant: &'static str,
-    /// The symbol's description (`mapCursor`).
+    /// The symbol's description (`mapCursor`), or its registry key for a registered one.
     pub description: &'static str,
+    /// `Symbol.for(key)`, which programs reach too (a protocol they implement: `inspect`), not
+    /// `Symbol(description)`, which only std holds.
+    pub registered: bool,
 }
 
 macro_rules! keys {
-    ($($(#[doc = $doc:literal])* $name:ident => $constant:literal, $desc:literal;)*) => {
+    (@registered) => { false };
+    (@registered registered) => { true };
+    ($($(#[doc = $doc:literal])* $name:ident => $constant:literal, $desc:literal $(, $reg:ident)?;)*) => {
         /// The member name of the std method keyed by entry `name` of the key table: what sema
         /// names a member `[KEY]` declared with that symbol (`"\u{FFFF}Symbol(mapCursor)"`;
         /// velt_sema's `property_order::symbol_key_name`, which names std's symbols first).
@@ -310,11 +315,23 @@ macro_rules! keys {
             name: stringify!($name),
             constant: $constant,
             description: $desc,
+            registered: keys!(@registered $($reg)?),
         }),*];
     };
 }
 
 keys! {
+    // What `console.log` and `util.inspect` call, as Node's `util.inspect.custom`: a program's
+    // class implements it with `const custom = Symbol.for("nodejs.util.inspect.custom")` and a
+    // method `[custom]()` (`velt_sema` `hooks.rs`).
+    inspect => "INSPECT", "nodejs.util.inspect.custom", registered;
+    // Typed arrays: the kind a class's elements are (a subclass may override it), and the
+    // indexer protocol `xs[i]` / `xs[i] = v` compiles to (`velt_sema` `indexers.rs`).
+    typed_array_kind => "TYPED_ARRAY_KIND", "velt.typedArray.kind", registered;
+    index => "INDEX", "index";
+    // Arrays: `xs[i]` that reads `undefined` past the end, as JS (`velt_sema` `indexers.rs`).
+    array_get => "ARRAY_GET", "arrayGet";
+    set_index => "SET_INDEX", "setIndex";
     // Map: what a `for...of` over a map reads (`velt_sema` `for_map.rs`, `velt_vir` `frozen.rs`),
     // what deep equality and `console.log` call (`velt_vir` `glue/eq.rs`, `glue/format_map.rs`).
     map_cursor => "MAP_CURSOR", "mapCursor";
@@ -399,8 +416,9 @@ mod tests {
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std/lang/hooks/keys.vlt");
         let src = std::fs::read_to_string(path).expect("std/lang/hooks/keys.vlt");
         for k in KEYS {
+            let make = if k.registered { "Symbol.for" } else { "Symbol" };
             let decl = format!(
-                "export const {} = Symbol(\"{}\");",
+                "export const {} = {make}(\"{}\");",
                 k.constant, k.description
             );
             assert!(src.contains(&decl), "keys.vlt lacks `{decl}`");

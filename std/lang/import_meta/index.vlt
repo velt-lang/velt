@@ -4,6 +4,7 @@
 // arguments the compiler fills in. Not part of the public API.
 
 import { URL } from "velt/net/url";
+import { INSPECT } from "velt/lang/hooks/keys";
 
 /**
  * `import.meta`: Node's fields in Node's order, printed as Node prints them
@@ -29,7 +30,7 @@ export class ImportMeta {
   }
 
   /** How `console.log` shows it, as Node does. */
-  __inspect(): string {
+  [INSPECT](): string {
     const fields = [
       `dirname: ${quoted(this.dirname)}`,
       `filename: ${quoted(this.filename)}`,

@@ -4,7 +4,7 @@
 //
 // Elements read as numbers and are converted when written, as in JS (`ToUint8`: 300 is 44,
 // `-1` is 255; `Uint8ClampedArray` clamps; `Float32Array` rounds to `f32`). `xs[i]` reads
-// element `i` (std's `__index`, which sema calls for `xs[i]`: crates/velt_sema/src/body/expr/
+// element `i` (std's `[INDEX]`, which sema calls for `xs[i]`: crates/velt_sema/src/body/expr/
 // indexers.rs) and panics out of range like an array index (JS reads `undefined`); `xs[i] = v`
 // writes it and does nothing out of range, as in JS. `subarray` shares the buffer, `slice`
 // copies.
@@ -26,6 +26,16 @@ import {
   localeNumber,
   TypedArray,
 } from "velt/lang/typed_array/base";
+import {
+  INDEX,
+  INSPECT,
+  SET_INDEX,
+  TYPED_ARRAY_GET,
+  TYPED_ARRAY_KIND,
+  TYPED_ARRAY_PUT,
+  VIEW_EMPTY_TEXT,
+  VIEW_SIZE,
+} from "velt/lang/hooks/keys";
 
 /**
  * An array of 64-bit floats (numbers) in an `ArrayBuffer` (JS `Float64Array`): `new Float64Array(n)` (`n` zeros),
@@ -96,23 +106,23 @@ export class Float64Array extends TypedArray implements Iterable<number> {
     return this.buf.bytes.slice(start, start + ((this.len * 8) as i64));
   }
 
-  override __get(i: usize): number {
+  override [TYPED_ARRAY_GET](i: usize): number {
     return this.get(i);
   }
 
-  override __put(i: usize, v: number) {
+  override [TYPED_ARRAY_PUT](i: usize, v: number) {
     this.put(i, v);
   }
 
-  override __kind(): u32 {
+  override [TYPED_ARRAY_KIND](): u32 {
     return 8;
   }
 
-  override __emptyText(): string {
+  override [VIEW_EMPTY_TEXT](): string {
     return "Float64Array(0) []";
   }
 
-  override __size(): usize {
+  override [VIEW_SIZE](): usize {
     return 8;
   }
 
@@ -136,7 +146,7 @@ export class Float64Array extends TypedArray implements Iterable<number> {
   }
 
   /** `xs[i]`: element `i`; panics out of range, like an array index (JS reads `undefined`). */
-  __index(i: number): number {
+  [INDEX](i: number): number {
     // One test per branch, so the compiler knows `i` is in range where it converts it.
     if (!(i >= 0)) {
       this.outOfBounds(i);
@@ -169,7 +179,7 @@ export class Float64Array extends TypedArray implements Iterable<number> {
    * `xs[i] = v`: writes element `i`, converted; nothing out of range, as in JS (nor past the
    * end of a `u8[]` that became shorter than its `subarray`: `length`).
    */
-  __setIndex(i: number, v: number) {
+  [SET_INDEX](i: number, v: number) {
     if (i >= 0 && i < this.count() && i == Math.trunc(i)) {
       // Inside the view and inside its buffer's bytes (`count`).
       const o = this.off + (i as usize) * 8;
@@ -619,7 +629,7 @@ export class Float64Array extends TypedArray implements Iterable<number> {
   }
 
   /** How `console.log` shows the array, like Node: `Float64Array(2) [ 1, 2 ]`. */
-  __inspect(): number[] {
+  [INSPECT](): number[] {
     return this.values();
   }
 }

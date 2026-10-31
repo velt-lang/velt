@@ -491,7 +491,7 @@ impl FnCx<'_, '_> {
                 .filter(|&p| !matches!(self.cx.ty.kind(p), TyKind::Unit))
                 .collect(),
             TyKind::Adt(d, args) => {
-                // A class printed through its `__inspect()` shows what that returns.
+                // A class printed through its `[INSPECT]()` shows what that returns.
                 if let Some((_, ret)) = crate::hooks::hook(self.cx, d, &args, crate::hooks::INSPECT)
                 {
                     return self.printable_depth(ret, depth + 1);
@@ -660,7 +660,7 @@ impl FnCx<'_, '_> {
     }
 
     /// `h.<method>()` when `h` is a class or struct value with its own `method` (a template
-    /// literal uses `toString()`, as in JS; `console.log` a `__inspect()` returning a
+    /// literal uses `toString()`, as in JS; `console.log` a `[INSPECT]()` returning a
     /// `string`), else `h`. A parameter left out takes its default, and a `toString()` result
     /// that is not a `string` is written with `String(result)`, as JS does (`crate::hooks`
     /// reports the shapes this cannot call).

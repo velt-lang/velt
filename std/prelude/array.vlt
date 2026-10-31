@@ -39,6 +39,7 @@ import {
 } from "velt/lang/intrinsics";
 import { arrayLength } from "velt/lang/hooks/array";
 import { floatPosition } from "velt/lang/hooks/number";
+import { ARRAY_GET } from "velt/lang/hooks/keys";
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
@@ -841,7 +842,7 @@ extend<T> Array<T> {
    * `indexers.rs`): the element, or `undefined` when `index` is not a position in the array (out
    * of range, negative or not a whole number), as in JS.
    */
-  __get(index: number): T | undefined {
+  [ARRAY_GET](index: number): T | undefined {
     const i = floatPosition(index);
     if (i >= this.length) {
       return undefined;

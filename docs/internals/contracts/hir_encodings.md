@@ -672,7 +672,7 @@ function itself there, instantiated (`FnRef`), so the values compare equal to ea
   `Map` and `Set` keys of such a type compare (`Intrinsic::KeyEq`) and hash
   (`Intrinsic::Hash`) by content, field by field; `===` still compares it by identity.
 - `AdtDef::to_string`, `to_json`, `inspect` (additive): a class's `toString()`, `toJSON()` and
-  `__inspect()` methods, own or inherited (sema's `hooks.rs`), as functions glue can call:
+  `[util.inspect.custom]()` methods, own or inherited (sema's `hooks.rs`), as functions glue can call:
   instance methods with no type parameters of their own, neither async nor generators, that
   cannot throw, taking only `this` (`to_json` may also take the key, a borrowed `string`:
   `(this, key)`); `to_string` returns `string`. A user method of another accepted shape is

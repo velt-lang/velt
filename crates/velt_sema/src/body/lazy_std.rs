@@ -404,7 +404,7 @@ pub(crate) fn reach(cx: &mut Ctx) {
 /// Its subclasses too: lowering's glue for a class value (`console.log`'s formatting,
 /// `JSON.stringify`, a member of `any`) dispatches over every class in the program that extends
 /// it (`velt_vir` `any_subclass_dispatch`, `json_descendants`), constructed or not, and so builds
-/// their methods (`__inspect`, `toJSON`, …).
+/// their methods (`[INSPECT]`, `toJSON`, …).
 fn used_types(cx: &mut Ctx, mut todo: Vec<TyId>, found: &mut Vec<DefId>) {
     let mut classes: Vec<DefId> = vec![];
     loop {

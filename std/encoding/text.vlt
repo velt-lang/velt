@@ -7,6 +7,7 @@ import { ArrayBuffer, BufferView } from "velt/lang/typed_array/core";
 import { EncodingError } from "velt/encoding/errors";
 import { TextDecoderOptions } from "velt/encoding/text_decoder_options";
 import { firstInvalid, utf8DecodeLossy, validToString } from "velt/encoding/utf8";
+import { VIEW_SIZE } from "velt/lang/hooks/keys";
 
 // For the globals' module (std/prelude/global/encoding.vlt), which imports them from here.
 
@@ -55,7 +56,7 @@ export class TextDecoder {
       return this.decodeBytes(input.bytes);
     }
     if (input instanceof BufferView) {
-      return this.decodeRange(input.buf.bytes, input.off, input.len * input.__size());
+      return this.decodeRange(input.buf.bytes, input.off, input.len * input[VIEW_SIZE]());
     }
     return this.decodeBytes(input);
   }

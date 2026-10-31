@@ -397,7 +397,7 @@ pub struct AdtDef {
     /// Drop hook: the type's `[Symbol.dispose]()` method (modifies `this`, no params, void). Drop glue calls it
     /// first, then drops the fields. Types with a dispose hook are never Copy.
     pub dispose: Option<DefId>,
-    /// Classes: the `toString()`, `toJSON()` and `__inspect()` hooks, own or inherited, that
+    /// Classes: the `toString()`, `toJSON()` and `[INSPECT]()` hooks, own or inherited, that
     /// `String(x)`, `JSON.stringify` and `console.log` call from glue (hir_encodings.md).
     pub to_string: Option<DefId>,
     pub to_json: Option<DefId>,

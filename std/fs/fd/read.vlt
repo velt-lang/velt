@@ -4,6 +4,7 @@ import { EINTR, lastOsError, pread, read } from "velt/fs/fd/system";
 import { bufferOffset, checkRead, descriptor, readLength, readPosition } from "velt/fs/fd/args";
 import { osError } from "velt/fs/errors";
 import { ArrayBufferView, BufferView } from "velt/lang/typed_array/core";
+import { VIEW_EMPTY_TEXT, VIEW_SIZE } from "velt/lang/hooks/keys";
 
 /**
  * Reads up to `length` bytes into `buffer` from byte `offset` on (Node's `fs.readSync`): at
@@ -27,7 +28,7 @@ export function readSync(
   const bytes = buffer instanceof BufferView ? buffer.buf.bytes : buffer;
   const base = buffer instanceof BufferView ? buffer.off : (0 as usize);
   const size =
-    buffer instanceof BufferView ? buffer.len * buffer.__size() : (buffer.length as usize);
+    buffer instanceof BufferView ? buffer.len * buffer[VIEW_SIZE]() : (buffer.length as usize);
   // A `null` offset is Node's options argument (`typeof null` is "object") with no options:
   // the whole buffer, at the file's own position, whatever `length` and `position` say.
   const options = offset === null;
@@ -37,7 +38,7 @@ export function readSync(
     return 0;
   }
   if (size == 0) {
-    const shown = buffer instanceof BufferView ? buffer.__emptyText() : "<Buffer >";
+    const shown = buffer instanceof BufferView ? buffer[VIEW_EMPTY_TEXT]() : "<Buffer >";
     throw new TypeError(`The argument 'buffer' is empty and cannot be written. Received ${shown}`);
   }
   checkRead(size, off, len);

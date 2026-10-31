@@ -37,7 +37,7 @@ The definitions of a lazy module that are *deferred*:
   member of `any`) reaches further: it dispatches over every class in the program that extends
   the value's class (`velt_vir` `any_subclass_dispatch`, `json_descendants`), constructed or
   not. So a used class makes its subclasses used too, transitively: printing an `Error` checks
-  the methods of every `Error` subclass the program loads (their `__inspect`, `toJSON`, …).
+  the methods of every `Error` subclass the program loads (their `[util.inspect.custom]`, `toJSON`, …).
 
 The prelude (`std/prelude/`, `std/record`, `std/collections`) is lazy in a narrower way:
 lowering looks up its types' methods and its helper functions by name, so only its free

@@ -13,7 +13,10 @@ export class RuntimeType {
   readonly repr: string;
   /** The type's name as messages show it (`User`, `Map`, `number`). */
   readonly name: string;
-  /** The hooks its class has, of `toJSON`, `toString` and `__inspect`. */
+  /**
+   * The hooks its class has, of `toJSON`, `toString` and the inspect hook (a method keyed by
+   * `Symbol.for("nodejs.util.inspect.custom")`, named as velt_sema's `hooks::INSPECT` names it).
+   */
   readonly hooks: string[];
 
   constructor(kind: string, repr: string, name: string, hooks: string[]) {
@@ -23,7 +26,7 @@ export class RuntimeType {
     this.hooks = hooks;
   }
 
-  /** Whether its class has the hook `name` (`toJSON`, `toString`, `__inspect`). */
+  /** Whether its class has the hook `name` (`toJSON`, `toString`, the inspect hook's name). */
   hasHook(name: string): bool {
     return this.hooks.includes(name);
   }

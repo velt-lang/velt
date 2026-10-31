@@ -120,6 +120,10 @@ fn with_probe_std(impl_src: &str, src: &str) -> Program {
     l.modules[n - 2]
         .imports
         .push(("velt/zzprobe/impl".into(), "std/zzprobe/impl".into()));
+    // The impl's key of the inspect hook (loaded with the prelude's hooks).
+    l.modules[n - 1]
+        .imports
+        .push(("velt/lang/hooks/keys".into(), "std/lang/hooks/keys".into()));
     l.modules[l.root]
         .imports
         .push(("velt/zzprobe".into(), "std/zzprobe".into()));
@@ -134,11 +138,12 @@ fn with_probe_std(impl_src: &str, src: &str) -> Program {
 
 /// The classes of the probe's lazy module.
 const PROBE_IMPL: &str = "\
+import { INSPECT } from \"velt/lang/hooks/keys\";
 export class Gadget { n: number = 1; constructor() {} toString(): string { return \"G\" + this.n; } }
 export class SpecialError extends Error {
   constructor() { super(\"special\"); }
   toJSON(): { s: string } { return { s: \"x\" }; }
-  __inspect(): string { return \"S\"; }
+  [INSPECT](): string { return \"S\"; }
 }
 export class Base { constructor() {} }
 export class Special extends Base { constructor() { super(); } describe(): string { return \"special\"; } }
@@ -174,7 +179,7 @@ fn the_subclasses_of_a_used_class_have_their_methods_checked() {
          function main() { const e: Error = new Error(\"x\"); console.log(e); }\n",
     );
     let names = unchecked(&p);
-    for m in ["__inspect", "toJSON"] {
+    for m in [velt_common::std_key!(inspect), "toJSON"] {
         let f = format!("std/zzprobe/impl::SpecialError.{m}");
         assert!(!names.contains(&f), "{f}: {names:?}");
     }

@@ -5,6 +5,7 @@ import { bufferOffset, descriptor, writeLength, writePosition } from "velt/fs/fd
 import { osError } from "velt/fs/errors";
 import { utf8Encode } from "velt/encoding/utf8";
 import { ArrayBufferView, BufferView } from "velt/lang/typed_array/core";
+import { VIEW_SIZE } from "velt/lang/hooks/keys";
 
 /**
  * Writes `length` bytes of `buffer` from byte `offset` on (Node's `fs.writeSync`): at
@@ -29,7 +30,7 @@ export function writeSync(
   const bytes = buffer instanceof BufferView ? buffer.buf.bytes : buffer;
   const base = buffer instanceof BufferView ? buffer.off : (0 as usize);
   const size =
-    buffer instanceof BufferView ? buffer.len * buffer.__size() : (buffer.length as usize);
+    buffer instanceof BufferView ? buffer.len * buffer[VIEW_SIZE]() : (buffer.length as usize);
   return writeFrom(f, bytes, base, size, offset, length, position);
 }
 

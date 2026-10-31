@@ -19,7 +19,7 @@ only the run time knows.
     or `"opaque"` (a value whose structure is not shown, such as a promise);
   - `repr`: the number type of a number (`"f64"`, `"i64"`, `"u8"`, …), `""` otherwise;
   - `name`: the type's name as messages show it (`"Point"`, `"Map"`, `"number"`, `"Object"`);
-  - `hooks`: the hook methods its class has, of `toJSON`, `toString` and `__inspect`, and
+  - `hooks`: the hook methods its class has, of `toJSON`, `toString` and `[util.inspect.custom]`, and
     `hasHook(name)`.
 - `kindOf(v: any): string`: `typeOf(v).kind` alone.
 

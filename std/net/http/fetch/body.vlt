@@ -7,6 +7,8 @@ import { AbortError } from "velt/task";
 import { URLSearchParams } from "velt/net/url";
 import { ArrayBuffer, BufferView } from "velt/lang/typed_array/core";
 import { BODY_TYPE, BYTE_CHUNKS, WHOLE_BODY, ByteSource } from "velt/io/streams/byte_source";
+import { INSPECT } from "velt/lang/hooks/keys";
+import { VIEW_SIZE } from "velt/lang/hooks/keys";
 
 /**
  * A body: text, bytes (a typed array, an `ArrayBuffer`, a `DataView`, or Velt's `u8[]`), form
@@ -82,7 +84,7 @@ export function bodyParts(body: BodyInit | null): BodyParts {
   // A typed array or `DataView` (a `BufferView`), or a buffer: its bytes, copied (as JS does).
   if (body instanceof BufferView) {
     const o = body.off as i64;
-    const bytes = body.buf.bytes.slice(o, o + ((body.len * body.__size()) as i64));
+    const bytes = body.buf.bytes.slice(o, o + ((body.len * body[VIEW_SIZE]()) as i64));
     return { kind: 2, text: "", bytes: bytes, stream: null, implied: 0 };
   }
   if (body instanceof ArrayBuffer) {
@@ -160,7 +162,7 @@ export class BodyStream {
   }
 
   /** How `console.log` shows the stream: as Node shows a body's `ReadableStream`. */
-  __inspect(): string {
+  [INSPECT](): string {
     return this.#used
       ? "ReadableStream { locked: true, state: 'closed', supportsBYOB: true }"
       : "ReadableStream { locked: false, state: 'readable', supportsBYOB: true }";

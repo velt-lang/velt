@@ -1,5 +1,7 @@
 // velt/text (internal): `RegExpMatch`, one match of a `RegExp` (JS's match array).
 
+import { INDEX } from "velt/lang/hooks/keys";
+
 /** One match: the matched text, where it is, and its capture groups. */
 export class RegExpMatch {
   /** Position of the match in the subject (code units). */
@@ -28,7 +30,7 @@ export class RegExpMatch {
   }
 
   /** `m[n]`: group `n` (0 = the whole match), "" if it did not take part or does not exist. */
-  __index(n: usize): string {
+  [INDEX](n: usize): string {
     return this.group(n) ?? "";
   }
 

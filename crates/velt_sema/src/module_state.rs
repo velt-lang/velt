@@ -378,7 +378,7 @@ struct Facts {
 /// the `Mutex` another thread waits for, holding the module lock. So module state is not
 /// reachable from a `with` callback: not directly, not through the functions it calls, not
 /// through the code that runs without a call (field and constant initializers, and the
-/// `[Symbol.dispose]()`, `toString()`, `toJSON()`, `__inspect()` and `clone()` hooks that drops
+/// `[Symbol.dispose]()`, `toString()`, `toJSON()`, `[INSPECT]()` and `clone()` hooks that drops
 /// and glue run: `replaced_holders::implicit` lists them), and not through a function value whose
 /// body is not known (rt_abi.md "Module state"; the runtime stops with an `ICE:` otherwise).
 /// Every variable a refused callback reaches is recorded (`script_locals`; through a function

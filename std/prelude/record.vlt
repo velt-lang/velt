@@ -23,6 +23,7 @@ import {
   MAP_NEWEST_KEY_DIGIT,
 } from "velt/lang/hooks/keys";
 import { arrayIndex, objectPrototypeKey } from "velt/lang/hooks/record";
+import { INSPECT } from "velt/lang/hooks/keys";
 
 // The rank of a key that is not an array index: after every index.
 const NOT_INDEX: i64 = 4294967296;
@@ -374,7 +375,8 @@ export class ObjectPrototype {
     return objectPrototypeKey(key);
   }
 
-  __inspect(): string {
+  /** How `console.log` shows the prototype (Node's `util.inspect.custom`). */
+  [INSPECT](): string {
     return this.shown;
   }
 

@@ -9,6 +9,8 @@
 import { ArrayBuffer, BufferView } from "velt/lang/typed_array/core";
 import { utf8DecodeLossy, utf8Encode } from "velt/encoding";
 import { BODY_TYPE, WHOLE_BODY, ByteSource } from "velt/io/streams/byte_source";
+import { INSPECT } from "velt/lang/hooks/keys";
+import { VIEW_SIZE } from "velt/lang/hooks/keys";
 
 /** What a blob is made of: text (encoded as UTF-8), bytes, or another blob. */
 export type BlobPart = string | u8[] | BufferView | ArrayBuffer | Blob;
@@ -87,7 +89,7 @@ export class Blob extends ByteSource {
   }
 
   /** How `console.log` shows a blob, like Node: `Blob { size: 5, type: 'text/plain' }`. */
-  __inspect() {
+  [INSPECT]() {
     return { size: this.size, type: this.type };
   }
 }
@@ -130,7 +132,7 @@ function joined(parts: BlobPart[]): u8[] {
       out = out.concat(part.held());
     } else if (part instanceof BufferView) {
       const o = part.off as i64;
-      out = out.concat(part.buf.bytes.slice(o, o + ((part.len * part.__size()) as i64)));
+      out = out.concat(part.buf.bytes.slice(o, o + ((part.len * part[VIEW_SIZE]()) as i64)));
     } else if (part instanceof ArrayBuffer) {
       out = out.concat(part.bytes);
     } else {

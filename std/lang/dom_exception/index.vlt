@@ -3,6 +3,7 @@
 // the legacy number of that name (0 for names without one), as Node computes it at construction.
 
 import { uncaughtHeader } from "velt/lang/hooks/error";
+import { INSPECT } from "velt/lang/hooks/keys";
 
 /**
  * The error web APIs throw (a global, as in Node): `name` is the kind (`"InvalidCharacterError"`,
@@ -61,7 +62,7 @@ export class DOMException extends Error {
   }
 
   /** How `console.log` shows it, as the first line of Node's: `DOMException [AbortError]: m`. */
-  __inspect(): string {
+  [INSPECT](): string {
     return uncaughtHeader(this, "DOMException");
   }
 }

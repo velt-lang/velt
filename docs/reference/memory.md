@@ -108,7 +108,7 @@ explanation, see [Memory without a garbage collector](../book/memory.md).
   anything in the program. A generic function's field of type `T` counts as the type the call
   passes for `T`, or, where that is not known, as any type the program passes as a type
   argument. Code that runs without being called counts as called: a class's `toString()`,
-  `toJSON()`, `__inspect()` and own `clone()` when the right-hand side formats, serialises or
+  `toJSON()`, `[util.inspect.custom]()` and own `clone()` when the right-hand side formats, serialises or
   copies a value that may hold that class (`String(x)`, `[x].join()`, `JSON.stringify`,
   `console.log`, `x.clone()`), its `[Symbol.dispose]()` wherever such a value is dropped, the
   body of any generator in the program at each `next()`, `for...of` or spread over a

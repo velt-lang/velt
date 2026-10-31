@@ -41,7 +41,10 @@ export class Type {
    * JSON text. For an `option`: what it holds when empty (`null`, `undefined` or `null | undefined`).
    */
   literal: string = "";
-  /** The methods std's operations call by name (`toJSON`, `toString`, `__inspect`). */
+  /**
+   * The methods std's operations call by name (`toJSON`, `toString`, the inspect hook keyed by
+   * `Symbol.for("nodejs.util.inspect.custom")`).
+   */
   methods: Method[] = [];
   /**
    * Whether a value of this type may be a typed `Proxy` standing for it (a class or object type

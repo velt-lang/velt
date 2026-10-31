@@ -21,6 +21,7 @@ import {
 } from "velt/io/streams/controller";
 import { ReadableStreamDefaultReader } from "velt/io/streams/reader";
 import { CancelReason, QueuingStrategy, Reason, UnderlyingSource } from "velt/io/streams/types";
+import { INSPECT } from "velt/lang/hooks/keys";
 
 // For the globals' module (std/prelude/global/streams.vlt), which imports them from here.
 
@@ -103,7 +104,7 @@ export class ReadableStream<R> extends ByteSource {
   }
 
   /** How `console.log` shows the stream, as Node does. */
-  __inspect(): string {
+  [INSPECT](): string {
     const state =
       this.ctl.state == READABLE ? "readable" : this.ctl.state == CLOSED ? "closed" : "errored";
     return `ReadableStream { locked: ${this.ctl.locked}, state: '${state}', supportsBYOB: ${this.ctl.bytes} }`;

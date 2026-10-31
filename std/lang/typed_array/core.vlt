@@ -7,6 +7,8 @@
 // `DataView`, …) keep a reference to the buffer and a byte range of it, so two views of one
 // buffer see each other's writes, as in JS.
 
+import { INSPECT, VIEW_EMPTY_TEXT, VIEW_SIZE } from "velt/lang/hooks/keys";
+
 /**
  * A fixed-length block of bytes (JS `ArrayBuffer`). Read and write it through a view:
  * `new Uint8Array(buffer)`, `new DataView(buffer)`, or any other typed array.
@@ -100,15 +102,15 @@ export class ArrayBuffer {
   }
 
   /** How `console.log` shows the buffer, like Node: `ArrayBuffer { [Uint8Contents]: <00 ff>, [byteLength]: 2 }`. */
-  __inspect(): NativeInspect {
+  [INSPECT](): NativeInspect {
     return { text: inspectBuffer(this.bytes) };
   }
 }
 
 /**
- * What an `__inspect()` returns for a class that stands for one of Node's own objects (std only:
+ * What an `[INSPECT]()` returns for a class that stands for one of Node's own objects (std only:
  * `ArrayBuffer`, `DataView`): `console.log` prints `text`, and `[ArrayBuffer]` (the class's
- * name) past Node's depth limit, as Node cuts its objects, where a string `__inspect()` is
+ * name) past Node's depth limit, as Node cuts its objects, where a string `[INSPECT]()` is
  * printed at any depth (`Date`). crates/velt_vir/src/lower/glue/format.rs knows it by name.
  */
 export struct NativeInspect {
@@ -118,7 +120,7 @@ export struct NativeInspect {
 /**
  * A view of a byte range of an `ArrayBuffer` (std only: what every typed array and `DataView`
  * extends): the buffer, the offset of the range in it (bytes), and its length in elements of
- * `__size()` bytes.
+ * `[VIEW_SIZE]()` bytes.
  */
 export class BufferView {
   private buf: ArrayBuffer;
@@ -132,7 +134,7 @@ export class BufferView {
   }
 
   /** The size of an element in bytes (a `DataView`'s elements are bytes). */
-  __size(): usize {
+  [VIEW_SIZE](): usize {
     return 1;
   }
 
@@ -141,7 +143,7 @@ export class BufferView {
    * or a `DataView` with its buffer), for the fd API's errors; each view overrides it, so a
    * program has the code of the views it makes only.
    */
-  __emptyText(): string {
+  [VIEW_EMPTY_TEXT](): string {
     return "";
   }
 
@@ -157,7 +159,7 @@ export class BufferView {
 
   /** The size of the view in bytes. */
   get byteLength(): number {
-    return (this.len * this.__size()) as number;
+    return (this.len * this[VIEW_SIZE]()) as number;
   }
 }
 
@@ -166,7 +168,7 @@ export class BufferView {
  * system function, crates/velt_vir/src/lower/system_views.rs).
  */
 export function viewBytes(v: BufferView): usize {
-  return v.len * v.__size();
+  return v.len * v[VIEW_SIZE]();
 }
 
 /**

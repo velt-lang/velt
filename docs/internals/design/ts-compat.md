@@ -96,7 +96,7 @@ as in Node.
   ([design/strings.md](strings.md)).
 - `Math.random()`.
 - `Date` (prelude, `std/prelude/date.vlt`): JavaScript's, on velt/time, with months 0-11 and
-  local-time getters. `console.log` prints a `Date` through its `__inspect()` (the ISO string, as
+  local-time getters. `console.log` prints a `Date` through its `[util.inspect.custom]()` (the ISO string, as
   Node). Loading it costs about 7 ms of checking per program (velt/time's modules join the
   prelude).
 - `<` on a class or struct implementing `Comparable` calls `compareTo` (it did only on type

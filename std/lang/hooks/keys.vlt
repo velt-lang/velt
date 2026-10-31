@@ -6,6 +6,29 @@
 
 import { Symbol } from "velt/lang/symbol";
 
+/**
+ * What `console.log` and `util.inspect` call to show a class instance: Node's
+ * `util.inspect.custom`, which a program's class implements with
+ * `const custom = Symbol.for("nodejs.util.inspect.custom")` and `[custom]()`.
+ */
+export const INSPECT = Symbol.for("nodejs.util.inspect.custom");
+/** Typed arrays: the kind of a class's elements, which a subclass may override. */
+export const TYPED_ARRAY_KIND = Symbol.for("velt.typedArray.kind");
+/** `xs[i]` of a std class indexed like an array (a typed array, a regex match). */
+export const INDEX = Symbol("index");
+/** `xs[i] = v` of a std class indexed like an array. */
+export const SET_INDEX = Symbol("setIndex");
+/** `xs[i]` of an array where JS reads `undefined` past the end. */
+export const ARRAY_GET = Symbol("arrayGet");
+/** Typed arrays: element `i` as a number (in range). */
+export const TYPED_ARRAY_GET = Symbol("typedArrayGet");
+/** Typed arrays: writes element `i` (in range). */
+export const TYPED_ARRAY_PUT = Symbol("typedArrayPut");
+/** Buffer views: the size of an element in bytes. */
+export const VIEW_SIZE = Symbol("viewSize");
+/** Buffer views: how an empty one prints. */
+export const VIEW_EMPTY_TEXT = Symbol("viewEmptyText");
+
 /** `Map`: a cursor before the first entry of a live `for...of` loop. */
 export const MAP_CURSOR = Symbol("mapCursor");
 /** `Map`: moves a cursor to the next live entry. */

@@ -3,6 +3,7 @@
 import { DEFAULT_REASON } from "velt/task/errors";
 import { velt_rt_signal_abort, velt_rt_signal_new } from "velt/task/rt";
 import { AbortSignal, signalCell } from "velt/task/signal";
+import { INSPECT } from "velt/lang/hooks/keys";
 
 /** The sending half: `abort()` aborts its `signal`. */
 export class AbortController {
@@ -26,7 +27,7 @@ export class AbortController {
   }
 
   /** How `console.log` shows the controller, like Node: its signal. */
-  __inspect() {
+  [INSPECT]() {
     return { signal: this.#sig };
   }
 }

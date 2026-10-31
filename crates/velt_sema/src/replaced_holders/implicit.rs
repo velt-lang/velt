@@ -8,7 +8,7 @@
 //! 1. **Class hooks called by formatting and serialising glue** (`hir::AdtDef::to_string`,
 //!    `to_json`, `inspect`): `String(x)`, template literals, `+` on a string and `join` /
 //!    `toString` of arrays (std code over a `T`) call `toString()`; `JSON.stringify` calls
-//!    `toJSON()`; `console.log` / `console.error` call `__inspect()`, all for the value and for
+//!    `toJSON()`; `console.log` / `console.error` call `[INSPECT]()`, all for the value and for
 //!    every value it holds. Counted for the arguments of the intrinsics in [`glue_args`] whose
 //!    type reaches a class with such a method ([`Implicit::reach`]).
 //! 2. **A class's own `clone()`**, which a deep copy calls instead of copying a resource owner
@@ -62,7 +62,7 @@ use crate::defs::DefInfo;
 use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, TyId, TyKind};
 
 /// The methods glue calls on a class (1 and 2).
-const GLUE_HOOKS: [&str; 4] = ["toString", "toJSON", "__inspect", "clone"];
+const GLUE_HOOKS: [&str; 4] = ["toString", "toJSON", crate::hooks::INSPECT, "clone"];
 
 /// What dropping, formatting or copying a value of some type may reach.
 #[derive(Clone, Default, PartialEq, Eq)]
