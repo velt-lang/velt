@@ -1,0 +1,339 @@
+// velt/encoding/json (internal): the body the generator of `readJson` (read.vlt) writes for a
+// union whose members are not all literal types: the next token's kind picks the members to
+// try, literals by value, several object members by a discriminant field or by a key only one
+// of them requires (velt_vir lower/json union.rs and union_object.rs did the same).
+
+import { Field, Model, Output, Type } from "velt/generate";
+import { hiddenKey } from "velt/encoding/json/generate/facts";
+import {
+  Choice,
+  choices,
+  choicesExpected,
+  choiceText,
+  literalChoice,
+  messageQuote,
+} from "velt/encoding/json/generate/choice";
+import {
+  isJsonValue,
+  matchChoices,
+  readInto,
+  utf8Length,
+} from "velt/encoding/json/generate/read_value";
+
+/** How a union member is recognized in a JSON document. */
+function shapeOf(model: Model, id: i64): string {
+  const t = model.type(id);
+  const k = t.kind;
+  if (k == "string" || k == "number" || k == "boolean") {
+    return k;
+  }
+  if (k == "literal" || k == "enum") {
+    const cs = choices(model, t);
+    return cs.length > 0 && cs[0].kind == "string"
+      ? "strings"
+      : cs.length > 0 && cs[0].kind == "boolean" ? "booleans" : "numbers";
+  }
+  if (k == "array" || k == "tuple") {
+    return "array";
+  }
+  return "object";
+}
+
+/** The members of union `t` of shape `shape` (indexes into `arms`). */
+function armsOf(model: Model, t: Type, shape: string): i64[] {
+  const out: i64[] = [];
+  for (let i: i64 = 0; i < (t.arms.length as i64); i++) {
+    if (shapeOf(model, t.arms[i]) == shape) {
+      out.push(i);
+    }
+  }
+  return out;
+}
+
+/** The fields of object type `t` a JSON key fills, with whether each is required. */
+function keyedFields(model: Model, t: Type): Field[] {
+  const out: Field[] = [];
+  for (const f of t.fields) {
+    if (!hiddenKey(f)) {
+      out.push(f);
+    }
+  }
+  return out;
+}
+
+/** Is a field of type `id` required (not an option)? */
+function required(model: Model, id: i64): bool {
+  return model.type(id).kind != "option";
+}
+
+/** The field named `name` of object type `t`, or -1. */
+function fieldNamed(t: Type, name: string): i64 {
+  for (let i: i64 = 0; i < (t.fields.length as i64); i++) {
+    if (t.fields[i].name == name) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+/**
+ * How the object members `ms` (type ids) are told apart: `["kind"]`, the discriminant (a
+ * field every member has with a literal type, the values all different), or else one key per
+ * member that only it has (and requires); empty when neither.
+ */
+function objectChoice(model: Model, ms: i64[]): string[] {
+  const first = model.type(ms[0]);
+  for (const f of keyedFields(model, first)) {
+    const seen: string[] = [];
+    let ok = true;
+    for (const m of ms) {
+      const mt = model.type(m);
+      const i = fieldNamed(mt, f.name);
+      if (i < 0) {
+        ok = false;
+        break;
+      }
+      const ft = model.type(mt.fields[i].type);
+      if (ft.kind != "literal" || seen.includes(ft.literal)) {
+        ok = false;
+        break;
+      }
+      seen.push(ft.literal);
+    }
+    if (ok) {
+      return [f.name];
+    }
+  }
+  const keys: string[] = [];
+  for (const m of ms) {
+    const mt = model.type(m);
+    let own = "";
+    for (const f of keyedFields(model, mt)) {
+      if (!required(model, f.type)) {
+        continue;
+      }
+      let shared = false;
+      for (const o of ms) {
+        if (o != m && fieldNamed(model.type(o), f.name) >= 0) {
+          shared = true;
+        }
+      }
+      if (!shared) {
+        own = f.name;
+        break;
+      }
+    }
+    if (own.length == 0) {
+      return [];
+    }
+    keys.push(own);
+  }
+  return keys;
+}
+
+/** Can the members of union `t` be told apart in a document (as the compiler's check says)? */
+export function unionDecodable(model: Model, t: Type): bool {
+  if (armsOf(model, t, "number").length > 1 || armsOf(model, t, "array").length > 1) {
+    return false;
+  }
+  for (const a of t.arms) {
+    if (isJsonValue(model.type(a))) {
+      return false;
+    }
+  }
+  const objects = armsOf(model, t, "object");
+  if (objects.length > 1) {
+    const ms: i64[] = [];
+    for (const i of objects) {
+      const m = model.type(t.arms[i]);
+      if (m.kind != "object" && m.kind != "struct" && m.kind != "class") {
+        return false;
+      }
+      ms.push(m.id);
+    }
+    if (objectChoice(model, ms).length == 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** What a union's value was expected to be: its members' kinds and literal values. */
+function unionExpected(model: Model, t: Type): string {
+  const parts: string[] = [];
+  for (const a of t.arms) {
+    const shape = shapeOf(model, a);
+    const texts: string[] = [];
+    if (shape == "strings" || shape == "numbers" || shape == "booleans") {
+      for (const c of choices(model, model.type(a))) {
+        texts.push(choiceText(c));
+      }
+    } else {
+      texts.push(shape);
+    }
+    for (const text of texts) {
+      if (!parts.includes(text)) {
+        parts.push(text);
+      }
+    }
+  }
+  return parts.length == 1 ? parts[0] : `one of ${parts.join(", ")}`;
+}
+
+/**
+ * The body of `readJson<T>` for a union whose members are not all literal types: the next
+ * token picks the members to try (string literals and string enums by value, else the `string`
+ * member; numbers likewise, read again for the number member; booleans; the array member; the
+ * object member, or among several the one the discriminant or a key names). Any other value
+ * is skipped and fails with the members' kinds (`expected one of string, number`).
+ */
+export function readUnion(out: Output, model: Model, t: Type): void {
+  const expected = out.literal(unionExpected(model, t));
+  const fail = `jsonFailed(${expected})`;
+  out.line(`const tok = r.peek();`);
+  // Literal members of `shape`, with the code of the value each choice is.
+  const lits = (shape: string): [Choice[], string[]] => {
+    const cs: Choice[] = [];
+    const values: string[] = [];
+    for (const i of armsOf(model, t, shape)) {
+      const m = model.type(t.arms[i]);
+      for (const c of choices(model, m)) {
+        cs.push(c);
+        values.push(
+          c.member >= 0
+            ? `__member<${out.typeName(m.id)}>(${c.member})`
+            : `${c.source} as ${out.typeName(m.id)}`,
+        );
+      }
+    }
+    return [cs, values];
+  };
+  // The member `i` read whole, returned.
+  const member = (i: i64): void => {
+    const x = out.fresh("m");
+    readInto(out, model, t.arms[i], x);
+    out.line(`return ${x};`);
+  };
+  for (const [shape, token, read] of [
+    ["string", "tok == 5", "readString"],
+    ["number", "tok == 4", "readF64"],
+    ["boolean", "(tok == 2 || tok == 3)", "readBool"],
+  ]) {
+    const [cs, values] = lits(shape + "s");
+    const own = armsOf(model, t, shape);
+    if (cs.length == 0 && own.length == 0) {
+      continue;
+    }
+    out.line(`if (${token}) {`);
+    if (cs.length == 0) {
+      member(own[0]);
+    } else {
+      // Look at the value as the literals' kind; the `number` member reads it again (an
+      // integer member needs its exact digits).
+      if (shape == "number" && own.length > 0) {
+        out.line(`const mark = r.mark();`);
+      }
+      out.line(`if (!r.${read}()) { throw ${fail}; }`);
+      for (let j: i64 = 0; j < (cs.length as i64); j++) {
+        const c = cs[j];
+        const cond =
+          shape == "string"
+            ? `r.textIs(${c.source})`
+            : shape == "number"
+              ? `r.lastF64() == ${c.source}`
+              : `r.lastI64() ${c.source == "true" ? "!=" : "=="} 0`;
+        out.line(`if (${cond}) { return ${values[j]}; }`);
+      }
+      if (own.length == 0) {
+        out.line(`throw ${fail};`);
+      } else if (shape == "string") {
+        out.line(`return r.value();`);
+      } else if (shape == "boolean") {
+        out.line(`return r.lastI64() != 0;`);
+      } else {
+        out.line(`r.reset(mark);`);
+        member(own[0]);
+      }
+    }
+    out.line(`}`);
+  }
+  const arrays = armsOf(model, t, "array");
+  if (arrays.length > 0) {
+    out.line(`if (tok == 6) {`);
+    member(arrays[0]);
+    out.line(`}`);
+  }
+  const objects = armsOf(model, t, "object");
+  if (objects.length == 1) {
+    out.line(`if (tok == 8) {`);
+    member(objects[0]);
+    out.line(`}`);
+  } else if (objects.length > 1) {
+    out.line(`if (tok == 8) {`);
+    readObjectMember(out, model, t, objects);
+    out.line(`}`);
+  }
+  // Another kind of value: skipped, so that a malformed one reports its syntax error.
+  out.line(`r.skipValue();`);
+  out.line(`throw ${fail};`);
+}
+
+/**
+ * Among several object members (`objects`, indexes into `t.arms`): look ahead in the object
+ * for the discriminant or a key only one member has (skipping other values with
+ * `skipLookahead`, which remembers where they end, so a union nested in them finds its own key
+ * without scanning again), go back to the `{` and read that member.
+ */
+function readObjectMember(out: Output, model: Model, t: Type, objects: i64[]): void {
+  const ms: i64[] = [];
+  for (const i of objects) {
+    ms.push(t.arms[i]);
+  }
+  const keys = objectChoice(model, ms);
+  const disc = keys.length == 1;
+  out.line(`const mark = r.mark();`);
+  out.line(`if (!r.openObject()) { throw jsonFailed("object"); }`);
+  out.line(`let which: i64 = -1;`);
+  out.line(`while (true) {`);
+  out.line(`const step = r.nextKey();`);
+  out.line(`if (step == 0) { break; }`);
+  out.line(`if (step != 1) { throw jsonFailed("object"); }`);
+  out.line(`const len = r.keyLength();`);
+  let missing = "";
+  if (disc) {
+    const name = keys[0];
+    const cs: Choice[] = [];
+    const values: string[] = [];
+    for (let j: i64 = 0; j < (ms.length as i64); j++) {
+      const mt = model.type(ms[j]);
+      cs.push(literalChoice(model.type(mt.fields[fieldNamed(mt, name)].type).literal));
+      values.push(`${j}`);
+    }
+    out.line(`if (len == ${utf8Length(name)} && r.keyIs(${out.literal(name)})) {`);
+    const fail = `new JsonFail(${out.literal(choicesExpected(cs))}, ${out.literal("." + name)})`;
+    matchChoices(out, cs, values, "which", fail);
+    out.line(`break;`);
+    out.line(`}`);
+    missing = `field ${messageQuote(name)}`;
+  } else {
+    const shown: string[] = [];
+    for (let j: i64 = 0; j < (keys.length as i64); j++) {
+      out.line(
+        `if (len == ${utf8Length(keys[j])} && r.keyIs(${out.literal(keys[j])})) { which = ${j}; break; }`,
+      );
+      shown.push(messageQuote(keys[j]));
+    }
+    missing = `object with one of the fields ${shown.join(", ")}`;
+  }
+  out.line(`if (!r.skipLookahead()) { throw new JsonFail("value", "." + r.key()); }`);
+  out.line(`}`);
+  out.line(`if (which < 0) { throw jsonFailed(${out.literal(missing)}); }`);
+  out.line(`r.reset(mark);`);
+  for (let j: i64 = 0; j < (objects.length as i64); j++) {
+    out.line(`if (which == ${j}) {`);
+    const x = out.fresh("m");
+    readInto(out, model, ms[j], x);
+    out.line(`return ${x};`);
+    out.line(`}`);
+  }
+}

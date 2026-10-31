@@ -10,17 +10,17 @@
 // nothing on success. `parseJsonTop` turns the failure into the `JsonError` the reader's
 // `message` words.
 //
-// What it decodes so far: numbers (integers range-checked, as their type is named in the
-// message), booleans, strings, literal types, enums and unions of literal types, options,
-// arrays, tuples, `Map<string, V>`, `Record<K, V>`, `JsonValue`, and objects, structs and
-// classes of those (public fields, built without running a constructor). Any other type (a
-// union with other members) is decoded, as a whole document, by the compiler's
-// `jsonParse<T>`, which also reports a type that has no JSON form.
+// What it decodes: numbers (integers range-checked, as their type is named in the message),
+// booleans, strings, literal types, enums, options, arrays, tuples, unions (read_union.vlt),
+// `Map<string, V>`, `Record<K, V>`, `JsonValue`, and objects, structs and classes of those
+// (public fields, built without running a constructor). Any other type is decoded, as a whole
+// document, by the compiler's `jsonParse<T>`, which also reports a type that has no JSON form.
 
 import { InstanceRequest, Model, Output, Type } from "velt/generate";
 import { hiddenKey } from "velt/encoding/json/generate/facts";
 import { choices, recordKeys } from "velt/encoding/json/generate/choice";
 import { intRange, isJsonValue, readInto } from "velt/encoding/json/generate/read_value";
+import { readUnion, unionDecodable } from "velt/encoding/json/generate/read_union";
 import {
   readArray,
   readMap,
@@ -42,9 +42,9 @@ function decodes(model: Model, id: i64, seen: i64[]): bool {
   if (k == "boolean" || k == "string" || k == "literal" || k == "enum" || isJsonValue(t)) {
     return true;
   }
-  if (k == "union") {
-    // A union of literal types is one of their values (other unions: step c).
-    return choices(model, t).length > 0;
+  if (k == "union" && choices(model, t).length > 0) {
+    // A union of literal types is one of their values.
+    return true;
   }
   if (seen.includes(id)) {
     return true;
@@ -52,6 +52,19 @@ function decodes(model: Model, id: i64, seen: i64[]): bool {
   seen.push(id);
   if (k == "array" || k == "option") {
     return decodes(model, t.args[0], seen);
+  }
+  if (k == "union") {
+    // Its members told apart by the kind of JSON value, literals by value, objects by a
+    // discriminant or a key only one of them requires.
+    if (!unionDecodable(model, t)) {
+      return false;
+    }
+    for (const a of t.arms) {
+      if (!decodes(model, a, seen)) {
+        return false;
+      }
+    }
+    return true;
   }
   if (k == "map") {
     return model.type(t.args[0]).kind == "string" && decodes(model, t.args[1], seen);
@@ -104,6 +117,8 @@ export function readJson(req: InstanceRequest, out: Output): void {
     readTuple(out, model, t);
   } else if (k == "object" || k == "struct" || k == "class") {
     readObject(out, model, t);
+  } else if (k == "union" && choices(model, t).length == 0) {
+    readUnion(out, model, t);
   } else if (k == "map") {
     readMap(out, model, t);
   } else if (k == "record") {

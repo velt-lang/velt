@@ -753,6 +753,15 @@ goldens:
   it) are checked with the program, most of it in the ownership passes, where the glue was
   lowered directly. The generated phase's own cost (one check round, ownership of generated
   modules cached) is being worked on separately; hello world unchanged (-0.6%).
+  Step (c): unions (`read_union.vlt`): the next token's kind picks the members (string and
+  number literals and enum members by value, a number read again for the number member after
+  a `mark`; the array member; the object member, or among several the one a discriminant or a
+  key only it requires names, looked ahead with `skipLookahead` and read after `reset`), as
+  velt_vir's `union.rs` and `union_object.rs` did, with their messages (`expected one of
+  string, number`). Only what the compiler rejects, and readonly optional fields of object
+  types, are left to the glue. Measured against step (b) (same method): `parse_union.vlt`
+  release 3635.1 M against 3668.5 M (-0.9%), debug build 9820.2 M against 9674.4 M (+1.5%);
+  `parse_typed.vlt` unchanged.
   Fixed on the way: the demand walks the initializers of module variables (a module constant
   made by `JSON.parse` had no generated code, and ran the placeholder), and a need recorded
   for a class (a field initializer) no longer stops it with an ICE; only a generated function
@@ -790,8 +799,8 @@ port's order:
 - **A cycle through a recursive object type held by an `any`** is reported with the `any`
   path's message (`TypeError: Converting circular structure to JSON`), where the glue's typed
   writer of that type reported its own; no golden has one.
-- **`JSON.parse` / `parse<T>` / `as T`** (json port step 4; steps (a) and (b) above port all
-  but unions with members other than literals): the decoders of `lower/json`
+- **`JSON.parse` / `parse<T>` / `as T`** (json port step 4; steps (a)–(c) above port every
+  type the compiler accepts, the glue only kept for what it rejects): the decoders of `lower/json`
   (`read.rs`, `object.rs`, `union*.rs`, `literal.rs`, `map.rs`, `key.rs`, `reader.rs`), the
   rows and cursors of std/db (`rows_read/`, `jsonParseCursor`, `readRowsByColumn` /
   `readRowByColumn`) and the parameter binding (`dbBind`, `db_bind.rs`) still run in the

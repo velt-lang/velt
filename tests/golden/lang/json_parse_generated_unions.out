@@ -1,0 +1,20 @@
+shape expected one of "circle", "rect" at $[2].kind
+shape expected field "kind" at $[0]
+shape expected one of "circle", "rect" at $[0].kind
+shape invalid JSON at $[0].zz: unexpected character ',' (byte 10)
+shape expected field "h" at $[0]
+shape expected object at $[0]
+bykey expected object with one of the fields "url", "path" at $[2]
+bykey expected string at $[0].path
+["s",3,true,[1,2],{"kind":"circle","r":2},null]
+mixed expected i32 at $[0]
+mixed expected i64 at $[0][1]
+lits expected one of number, "auto" at $[2]
+lits expected one of number, "auto" at $[0]
+codes expected one of string, 200, 404 at $[3]
+flags expected one of array, true at $[2]
+dir expected one of "up", "down", 0, object at $[4]
+dir expected one of "up", "down", 0, object at $[0]
+rect top 404
+{"more":[{"inner":[{"kind":"rect","w":2,"h":1}],"tag":"a"}],"tag":"b"}
+expected one of "circle", "rect" at $.more[0].inner[0].kind
