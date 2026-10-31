@@ -1,64 +1,62 @@
 // velt/text (internal): the string methods that take a regex (`s.replace(re, …)`, `match`,
-// `matchAll`, `search`, `split`, `replaceAll`), as in JS. An `extend string` block, loaded with
-// `RegExp` (velt/text/regex/regexp imports this module).
+// `matchAll`, `search`, `split`, `replaceAll`), as in JS: compiler hooks (velt_common
+// `std_hooks.rs`) taking the string first, loaded with `RegExp` (velt/text/regex/regexp imports
+// this module).
 
+import { MATCH, MATCH_ALL, REPLACE_CALLING, SEARCH, SPLIT } from "velt/text/regex/keys";
 import { RegExp } from "velt/text/regex/regexp";
 import { RegExpMatch } from "velt/text/regex/regexp_match";
 
-/**
- * The string methods that take a regex, as in JS. The compiler calls these for
- * `s.replace(re, …)` & co. when the first argument is a `RegExp`; they are not called by name.
- */
-extend string {
-  /** `s.replace(re, replacement)` */
-  __replaceRegExp(re: RegExp, replacement: string): string {
-    return re.replace(this, replacement);
-  }
+/** `s.replace(re, replacement)` */
+export function replaceRegExp(s: string, re: RegExp, replacement: string): string {
+  return re.replace(s, replacement);
+}
 
-  /** `s.replace(re, (match, p1, …, offset, s) => …)` (the compiler adapts the function). */
-  __replaceRegExpCalling<E>(
-    re: RegExp,
-    f: (m: RegExpMatch, s: string) => string throws E,
-  ): string throws E {
-    return re.__replaceCalling(this, f);
-  }
+/** `s.replace(re, (match, p1, …, offset, s) => …)` (the compiler adapts the function). */
+export function replaceRegExpCalling<E>(
+  s: string,
+  re: RegExp,
+  f: (m: RegExpMatch, s: string) => string throws E,
+): string throws E {
+  return re[REPLACE_CALLING](s, f);
+}
 
-  /** `s.replaceAll(re, replacement)`: `re` must have the `g` flag. */
-  __replaceAllRegExp(re: RegExp, replacement: string): string {
-    if (!re.global) {
-      panic("TypeError: String.prototype.replaceAll called with a non-global RegExp argument");
-    }
-    return re.replace(this, replacement);
+/** `s.replaceAll(re, replacement)`: `re` must have the `g` flag. */
+export function replaceAllRegExp(s: string, re: RegExp, replacement: string): string {
+  if (!re.global) {
+    panic("TypeError: String.prototype.replaceAll called with a non-global RegExp argument");
   }
+  return re.replace(s, replacement);
+}
 
-  /** `s.replaceAll(re, (match, …) => …)`: `re` must have the `g` flag. */
-  __replaceAllRegExpCalling<E>(
-    re: RegExp,
-    f: (m: RegExpMatch, s: string) => string throws E,
-  ): string throws E {
-    if (!re.global) {
-      panic("TypeError: String.prototype.replaceAll called with a non-global RegExp argument");
-    }
-    return re.__replaceCalling(this, f);
+/** `s.replaceAll(re, (match, …) => …)`: `re` must have the `g` flag. */
+export function replaceAllRegExpCalling<E>(
+  s: string,
+  re: RegExp,
+  f: (m: RegExpMatch, s: string) => string throws E,
+): string throws E {
+  if (!re.global) {
+    panic("TypeError: String.prototype.replaceAll called with a non-global RegExp argument");
   }
+  return re[REPLACE_CALLING](s, f);
+}
 
-  /** `s.match(re)` */
-  __matchRegExp(re: RegExp): string[] | null {
-    return re.__match(this);
-  }
+/** `s.match(re)` */
+export function matchRegExp(s: string, re: RegExp): string[] | null {
+  return re[MATCH](s);
+}
 
-  /** `s.matchAll(re)`: `re` must have the `g` flag. */
-  __matchAllRegExp(re: RegExp): RegExpMatch[] {
-    return re.__matchAll(this);
-  }
+/** `s.matchAll(re)`: `re` must have the `g` flag. */
+export function matchAllRegExp(s: string, re: RegExp): RegExpMatch[] {
+  return re[MATCH_ALL](s);
+}
 
-  /** `s.search(re)` */
-  __searchRegExp(re: RegExp): i64 {
-    return re.__search(this);
-  }
+/** `s.search(re)` */
+export function searchRegExp(s: string, re: RegExp): i64 {
+  return re[SEARCH](s);
+}
 
-  /** `s.split(re, limit)` */
-  __splitRegExp(re: RegExp, limit?: number): string[] {
-    return re.__split(this, limit);
-  }
+/** `s.split(re, limit)` */
+export function splitRegExp(s: string, re: RegExp, limit?: number): string[] {
+  return re[SPLIT](s, limit);
 }

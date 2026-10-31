@@ -1,0 +1,33 @@
+// velt/lang/hooks (internal): the compiler's hooks for errors (std-layout.md §10b): the first
+// line of Node's report of an error nothing catches (velt_vir `entry.rs`), and the
+// `Error.prototype.toString` text the prelude's `Error` shares with it.
+
+/** `Error.prototype.toString` of an error with `name` and `message`. */
+export function errorText(name: string, message: string): string {
+  if (name == "") {
+    return message;
+  }
+  if (message == "") {
+    return name;
+  }
+  return `${name}: ${message}`;
+}
+
+/**
+ * The first line of Node's report of the error `e` when nothing catches it, for a value of class
+ * `cls`: `toString()`'s text as `Error`'s writes it, with the class in front when its `name`
+ * ends in `Error` and is not the class's own name (`E [TypeError]: m`; `MyTypeError: m` when the
+ * class's name contains it).
+ */
+export function uncaughtHeader(e: Error, cls: string): string {
+  const name = e.name;
+  const text = errorText(name, e.message);
+  if (!name.endsWith("Error") || name == cls) {
+    return text;
+  }
+  const rest = text.slice(name.length as i64);
+  if (cls.includes(name)) {
+    return `${cls}${rest}`;
+  }
+  return `${cls} [${name}]${rest}`;
+}

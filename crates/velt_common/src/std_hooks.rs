@@ -212,6 +212,12 @@ hooks! {
     prototype_in => lang_hooks_record, "prototypeIn", "(string, ObjectPrototype) -> bool";
     record_in => lang_hooks_record, "recordIn", "<A>(string, Record<string, A>) -> bool";
     record_in_maybe_null_proto => lang_hooks_record, "recordInMaybeNullProto", "<A>(string, Record<string, A>) -> bool";
+    // error.vlt: the first line of the report of an uncaught error (`velt_vir` `entry.rs`).
+    uncaught_header => lang_hooks_error, "uncaughtHeader", "(Error, string) -> string", lowered;
+
+    // string.vlt: the characters a `for...of` over a string iterates.
+    string_code_points => lang_hooks_string, "stringCodePoints", "(string) -> string[]";
+
     // iter.vlt, async_iter.vlt: iterable object literals.
     async_iterable_object => lang_hooks_async_iter, "AsyncIterableObject", "class";
     iterable_object => lang_hooks_iter, "IterableObject", "class";
@@ -255,6 +261,17 @@ hooks! {
     // collections/set.vlt: the adapter of `Set<unknown>` (not exported).
     unknown_set_in => collections_set, "unknownSetIn", "(unknown) -> Set<unknown>";
     unknown_set_out => collections_set, "unknownSetOut", "(unknown, Set<unknown>) -> void";
+
+    // text/regex/string_methods.vlt: the string methods called with a `RegExp` (`velt_sema`
+    // `regex_args.rs`), loaded with `RegExp`.
+    replace_reg_exp => text_regex_string_methods, "replaceRegExp", "(string, RegExp, string) -> string";
+    replace_reg_exp_calling => text_regex_string_methods, "replaceRegExpCalling", "<A>(string, RegExp, (RegExpMatch, string) => string throws A) -> string";
+    replace_all_reg_exp => text_regex_string_methods, "replaceAllRegExp", "(string, RegExp, string) -> string";
+    replace_all_reg_exp_calling => text_regex_string_methods, "replaceAllRegExpCalling", "<A>(string, RegExp, (RegExpMatch, string) => string throws A) -> string";
+    match_reg_exp => text_regex_string_methods, "matchRegExp", "(string, RegExp) -> string[] | null";
+    match_all_reg_exp => text_regex_string_methods, "matchAllRegExp", "(string, RegExp) -> RegExpMatch[]";
+    search_reg_exp => text_regex_string_methods, "searchRegExp", "(string, RegExp) -> i64";
+    split_reg_exp => text_regex_string_methods, "splitRegExp", "(string, RegExp, f64 | undefined) -> string[]";
 
     // lang/typed_array/core.vlt: the bytes of a typed array.
     view_bytes => lang_typed_array_core, "viewBytes", "(BufferView) -> usize", lowered;
@@ -302,10 +319,13 @@ mod tests {
 
     #[test]
     fn every_hook_is_in_lang() {
-        // Outside `lang/` only where the hook needs a module's internals, and not exported.
+        // Outside `lang/` only where the hook needs a module's internals, in a file no program
+        // can import (not a module's `index.vlt`).
         for h in HOOKS {
+            let rel = crate::std_modules::rel(h.module_entry).expect("ICE: a std module");
             assert!(
-                h.module().starts_with("std/lang/") || h.module_entry == "collections_set",
+                h.module().starts_with("std/lang/")
+                    || !crate::std_modules::importable(&format!("{rel}.vlt")),
                 "{}: {}",
                 h.name,
                 h.module()

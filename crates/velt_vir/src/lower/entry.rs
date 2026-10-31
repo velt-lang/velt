@@ -351,7 +351,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
     }
 
     /// The first line Node prints for an uncaught error of class `err` (extending the prelude
-    /// `Error` class `root`): `Error.__uncaughtHeader(<dynamic class name>)`, which writes
+    /// `Error` class `root`): `uncaughtHeader(e, <dynamic class name>)` (std/lang/hooks/error.vlt), which writes
     /// `<name>: <message>` from the (possibly overridden) `name`, and the class in front when
     /// they differ (`E [TypeError]: m`).
     fn push_error_header(&mut self, buf: &Operand, ep: &Place, err: TyId, root: DefId) {
@@ -392,10 +392,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
     }
 
-    /// `Error.__uncaughtHeader(cls)` of the error at `ep` (a class extending `root`), appended
-    /// to the builder at `buf`.
+    /// The hook `uncaughtHeader(e, cls)` of the error at `ep` (a class extending `root`),
+    /// appended to the builder at `buf`.
     fn push_class_error_header(&mut self, buf: &Operand, ep: &Place, root: DefId, cls: &Place) {
-        let m = self.class_method(root, "__uncaughtHeader");
+        let m = (self.cx.prelude_def(velt_common::std_hook!(uncaught_header)))
+            .unwrap_or_else(|| super::ice("std without the hook `uncaughtHeader`"));
         let root_ty = self.cx.intern(TyKind::Adt(root, vec![]));
         let (text, ty) = self.call_hook(m, Operand::Copy(ep.clone()), root_ty, Some(cls));
         let a = self.addr(text.clone());

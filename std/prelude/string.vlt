@@ -21,7 +21,6 @@ declare function velt_rt_str_includes(s: string, needle: string): bool;
 declare function velt_rt_str_starts_with(s: string, affix: string): bool;
 declare function velt_rt_str_ends_with(s: string, affix: string): bool;
 declare function velt_rt_str_split(s: string, sep: string): string[];
-declare function velt_rt_str_code_points(s: string): string[];
 declare function velt_rt_str_trim(s: string): string;
 declare function velt_rt_str_trim_start(s: string): string;
 declare function velt_rt_str_trim_end(s: string): string;
@@ -107,14 +106,6 @@ extend string {
    */
   split(sep: string): string[] {
     return velt_rt_str_split(this, sep);
-  }
-
-  /**
-   * The characters (code points, a surrogate pair as one string), as JS's string iterator:
-   * what `for (const c of s)` and `[...s]` iterate. Internal to the compiler.
-   */
-  __codePoints(): string[] {
-    return velt_rt_str_code_points(this);
   }
 
   /** Strips JS whitespace and line terminators. */

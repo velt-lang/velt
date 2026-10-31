@@ -86,11 +86,13 @@ table! {
     lang_hooks_array_view => "lang/hooks/array_view",
     lang_hooks_async_iter => "lang/hooks/async_iter",
     lang_hooks_class_object => "lang/hooks/class_object",
+    lang_hooks_error => "lang/hooks/error",
     lang_hooks_iter => "lang/hooks/iter",
     lang_hooks_number => "lang/hooks/number",
     lang_hooks_process => "lang/hooks/process",
     lang_hooks_proxy => "lang/hooks/proxy",
     lang_hooks_record => "lang/hooks/record",
+    lang_hooks_string => "lang/hooks/string",
     lang_hooks_syntax => "lang/hooks/syntax",
     lang_import_meta => "lang/import_meta",
     /// The compiler's intrinsics, declared (`declare intrinsic function`; std-layout.md §10).
@@ -126,6 +128,7 @@ table! {
     test => "test",
     text_regex_regexp => "text/regex/regexp",
     text_regex_regexp_match => "text/regex/regexp_match",
+    text_regex_string_methods => "text/regex/string_methods",
     text_string_builder => "text/string_builder",
 }
 

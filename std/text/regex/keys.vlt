@@ -1,0 +1,15 @@
+// velt/text (internal): the keys of the `RegExp` methods the string methods that take a regex
+// call (string_methods.vlt): symbols programs never see, so they are no API of `RegExp`.
+
+import { Symbol } from "velt/lang/symbol";
+
+/** `s.match(re)`. */
+export const MATCH = Symbol("match");
+/** `s.matchAll(re)`. */
+export const MATCH_ALL = Symbol("matchAll");
+/** `s.search(re)`. */
+export const SEARCH = Symbol("search");
+/** `s.split(re, limit)`. */
+export const SPLIT = Symbol("split");
+/** `s.replace(re, f)` with a replacer the compiler adapted. */
+export const REPLACE_CALLING = Symbol("replaceCalling");

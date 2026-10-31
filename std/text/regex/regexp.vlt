@@ -9,15 +9,16 @@
 // `exec(s, from)` takes the start explicitly and leaves `lastIndex` alone.
 //
 // The string methods that take a regex (`s.replace(re, …)`, `match`, `matchAll`, `search`,
-// `split`, `replaceAll`) are the `extend string` block of velt/text/regex/string_methods, loaded
-// with this file: the compiler sends such a call there when the first argument is a `RegExp`
-// (velt_sema's `regex_args`).
+// `split`, `replaceAll`) are the functions of velt/text/regex/string_methods, loaded with this
+// file: the compiler calls them when the first argument is a `RegExp` (velt_sema's
+// `regex_args`), and they call this class's methods keyed by velt/text/regex/keys.
 //
 // A `RegExp` owns a runtime handle (released by `[Symbol.dispose]()`); the compiled program is
 // immutable and can be used from any task.
 
 import { Pattern } from "velt/text/regex/pattern";
 import { RegExpError } from "velt/text/regex/errors";
+import { MATCH, MATCH_ALL, REPLACE_CALLING, SEARCH, SPLIT } from "velt/text/regex/keys";
 import { RegExpMatch } from "velt/text/regex/regexp_match";
 import {
   velt_rt_regex_escape,
@@ -33,7 +34,7 @@ import {
   velt_rt_regex_split,
   velt_rt_regex_test,
 } from "velt/text/regex/rt";
-// The string methods that take a regex: an `extend string` block.
+// The string methods that take a regex (compiler hooks).
 import "velt/text/regex/string_methods";
 import { arrayWithCapacity } from "velt/lang/intrinsics";
 
@@ -163,7 +164,7 @@ export class RegExp implements Pattern {
   }
 
   /** `replaceWith` for `s.replace(re, (match, ...groups) => …)`: `f` gets the subject too. */
-  __replaceCalling<E>(
+  [REPLACE_CALLING]<E>(
     s: string,
     f: (m: RegExpMatch, s: string) => string throws E,
   ): string throws E {
@@ -179,7 +180,7 @@ export class RegExp implements Pattern {
   }
 
   /** JS `s.match(re)`: every match's text with `g` (null if none), else `exec`'s groups. */
-  __match(s: string): string[] | null {
+  [MATCH](s: string): string[] | null {
     if (!this.global) {
       const m = this.exec(s);
       if (m == null) {
@@ -198,7 +199,7 @@ export class RegExp implements Pattern {
   }
 
   /** JS `s.matchAll(re)` (a `g` regex): every match from `lastIndex` on, which stays as is. */
-  __matchAll(s: string): RegExpMatch[] {
+  [MATCH_ALL](s: string): RegExpMatch[] {
     if (!this.global) {
       panic("TypeError: String.prototype.matchAll called with a non-global RegExp argument");
     }
@@ -222,13 +223,13 @@ export class RegExp implements Pattern {
   }
 
   /** JS `s.search(re)`: where the first match from 0 starts, or -1; `lastIndex` stays. */
-  __search(s: string): i64 {
+  [SEARCH](s: string): i64 {
     const m = this.execAt(s, 0);
     return m == null ? -1 : m.index as i64;
   }
 
   /** JS `s.split(re, limit)`: no limit when null, `[]` for 0. */
-  __split(s: string, limit: number | null | undefined): string[] {
+  [SPLIT](s: string, limit: number | null | undefined): string[] {
     if (limit == null) {
       return this.split(s);
     }

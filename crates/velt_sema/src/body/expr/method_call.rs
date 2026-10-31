@@ -7,6 +7,7 @@ use velt_syntax::ast;
 
 use super::iface_call::IfaceSlot;
 use super::method::Resolved;
+use super::setters::synth;
 use crate::body::places::set_place_mode;
 use crate::body::{FnCx, Want};
 use crate::hir::{self, Callee, DefId, ExprKind as H, PassMode, TyId, TyKind, UseMode};
@@ -59,8 +60,22 @@ impl FnCx<'_, '_> {
         self.literal_use_number(&recv);
         // `s.replace(/a/g, "b")`: std/regex's method for a regex argument (`regex_args`).
         if recv.ty == self.cx.ty.str_ {
-            if let Some((prop, args)) = self.regex_string_call(prop, args) {
-                return self.method_call_at(recv, &prop, type_args, &args, exp, span, false);
+            if let Some((hook, args)) = self.regex_string_call(prop, args) {
+                return self.with_temp("<string>", recv, span, span, |lw, s| {
+                    let call = ast::ExprKind::Call {
+                        callee: Box::new(synth(
+                            ast::ExprKind::Ident(ast::Ident {
+                                name: hook.into(),
+                                span: prop.span,
+                            }),
+                            prop.span,
+                        )),
+                        type_args: type_args.to_vec(),
+                        args: std::iter::once(s.clone()).chain(args).collect(),
+                        optional: false,
+                    };
+                    lw.expr(&synth(call, span), exp, Want::Move)
+                });
             }
         }
         self.method_call_at(recv, prop, type_args, args, exp, span, false)

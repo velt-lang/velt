@@ -5,6 +5,8 @@
 // `catch (e) { e.message }` works either way (every member has `message`). User error classes
 // extend it too.
 
+import { errorText } from "velt/lang/hooks/error";
+
 /**
  * The base class of errors: what std throws (`IoError`, `JsonError`, …) and what error classes
  * of your own extend. Catch them with `try { … } catch (e) { e.message }`.
@@ -48,36 +50,6 @@ export class Error {
   toString(): string {
     return errorText(this.name, this.message);
   }
-
-  /**
-   * The first line of Node's report of this error when nothing catches it, for a value of class
-   * `cls` (the compiler calls it): `toString()`'s text as `Error`'s writes it, with the class
-   * in front when its `name` ends in `Error` and is not the class's own name
-   * (`E [TypeError]: m`; `MyTypeError: m` when the class's name contains it).
-   */
-  __uncaughtHeader(cls: string): string {
-    const name = this.name;
-    const text = errorText(name, this.message);
-    if (!name.endsWith("Error") || name == cls) {
-      return text;
-    }
-    const rest = text.slice(name.length as i64);
-    if (cls.includes(name)) {
-      return `${cls}${rest}`;
-    }
-    return `${cls} [${name}]${rest}`;
-  }
-}
-
-// `Error.prototype.toString` of an error with `name` and `message`.
-function errorText(name: string, message: string): string {
-  if (name == "") {
-    return message;
-  }
-  if (message == "") {
-    return name;
-  }
-  return `${name}: ${message}`;
 }
 
 /** A value is not of the expected type (thrown by the runtime in JavaScript). */

@@ -122,7 +122,6 @@ pub(crate) const HELPER_NAMES: &[&str] = &[
     "__proto__",
     "__set",
     "__target",
-    "__uncaughtHeader",
     "__valueAt",
 ];
 

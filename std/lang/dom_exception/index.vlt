@@ -2,6 +2,8 @@
 // throw (`btoa`/`atob`'s `InvalidCharacterError`). Its `name` says what went wrong and `code` is
 // the legacy number of that name (0 for names without one), as Node computes it at construction.
 
+import { uncaughtHeader } from "velt/lang/hooks/error";
+
 /**
  * The error web APIs throw (a global, as in Node): `name` is the kind (`"InvalidCharacterError"`,
  * `"AbortError"`, …; `"Error"` by default) and `code` its legacy number (`5`, `20`, …; 0 for
@@ -60,7 +62,7 @@ export class DOMException extends Error {
 
   /** How `console.log` shows it, as the first line of Node's: `DOMException [AbortError]: m`. */
   __inspect(): string {
-    return this.__uncaughtHeader("DOMException");
+    return uncaughtHeader(this, "DOMException");
   }
 }
 
