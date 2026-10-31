@@ -1,5 +1,6 @@
 // fetch over HTTPS against serveHttp on loopback: HTTP/2 (one multiplexed connection) or
-// HTTP/1.1 (pooled connections). Usage: tls_h2 h2|h1 <requests> <at once>.
+// HTTP/1.1 (pooled connections). Usage: tls_h2 [h2|h1] [<requests>] [<at once>] (default: h2,
+// 40000 requests, 64 at once).
 // docs/internals/design/http2.md "Benchmarks".
 import { HttpRequest, HttpResponse, serveHttp } from "http-server";
 import { args } from "velt/process";
@@ -16,9 +17,10 @@ async function worker(url: string, n: i64): Promise<i64> {
 
 async function main() {
   const a = args();
-  const h2 = a[0] == "h2";
-  const n = parseInt(a[1], 10) as i64;
-  const conc = parseInt(a[2], 10) as i64;
+  const mode = a.length > 0 ? a[0] : "h2";
+  const h2 = mode == "h2";
+  const n = a.length > 1 ? (parseInt(a[1], 10) as i64) : 40000;
+  const conc = a.length > 2 ? (parseInt(a[2], 10) as i64) : 64;
   const server = await serveHttp(
     { port: 0, http2: h2, tls: { cert: TEST_CERT, key: TEST_KEY } },
     async (req: HttpRequest, res: HttpResponse) => {
@@ -35,7 +37,7 @@ async function main() {
   await Promise.all(all);
   const ms = performance.now() - start;
   console.log(
-    `${a[0]} ${n} requests, ${conc} at once: ${Math.round((n as number) / ms * 1000)} req/s`,
+    `${mode} ${n} requests, ${conc} at once: ${Math.round((n as number) / ms * 1000)} req/s`,
   );
   server.close();
 }

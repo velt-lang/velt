@@ -53,14 +53,26 @@ fi
 # The benchmarks: CPU-bound programs whose work does not depend on timing (bench/async/timers
 # sleeps, the HTTP and database benchmarks need servers and load generators). bench/fetch is the
 # `fetch` client against a server in the same process, over loopback: its count repeats to within
-# about 0.2% (#601).
+# about 0.2% (#601). bench/fetch/tls_h2 stays out: a throughput benchmark of HTTP/2 against
+# HTTP/1.1 over TLS, 40,000 requests by default, compared by hand (docs/internals/design/http2.md).
 BENCHES=("$ROOT"/bench/*.vlt "$ROOT"/bench/iter/*.vlt "$ROOT"/bench/json/*.vlt
   "$ROOT"/bench/strings_utf16/*.vlt "$ROOT"/bench/stdport/*.vlt "$ROOT"/bench/spread_order/*.vlt
-  "$ROOT"/bench/fetch/*.vlt)
+  "$ROOT"/bench/fetch/loopback.vlt)
 # NIGHTLY_EXTRA_DIRS="typical …": also the benchmarks in bench/<dir>/*.vlt (for an A/B of a change).
 for dir in ${NIGHTLY_EXTRA_DIRS:-}; do
   BENCHES+=("$ROOT/bench/$dir"/*.vlt)
 done
+# Not programs (as in crates/veltc/tests/bench_programs.rs): a directory's package manifest
+# (`package.vlt`, the benchmarks there depend on the repository's packages) and the modules a
+# program imports (`_name.vlt`).
+programs=()
+for src in "${BENCHES[@]}"; do
+  case "$(basename "$src")" in
+    package.vlt | _*) ;;
+    *) programs+=("$src") ;;
+  esac
+done
+BENCHES=("${programs[@]}")
 for name in await_chain await_deep hot_loop fanout_all fanout_all_throwing all_small_stored \
   spawn_many channel_pipeline timers_fire top_level_await timer_await timer_await_top \
   promise_identity_loop; do
