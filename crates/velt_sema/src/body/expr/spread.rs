@@ -263,8 +263,12 @@ impl FnCx<'_, '_> {
         let seen = crate::object_copies::Seen::Spread;
         self.cx.object_copies.observe(h.ty, e.span, seen);
         if super::object_keys::reevaluable(e) && self.may_be_typed_proxy(h.ty) {
-            // A typed proxy's keys are what its traps list (`__proxySpreadCheck`).
-            let check = self.prelude_fn_call("__proxySpreadCheck", vec![e.clone()], e.span);
+            // A typed proxy's keys are what its traps list (`proxySpreadCheck`).
+            let check = self.prelude_fn_call(
+                velt_common::std_hook!(proxy_spread_check),
+                vec![e.clone()],
+                e.span,
+            );
             lets.push(hir::Stmt {
                 kind: hir::StmtKind::Expr(check),
                 span: e.span,

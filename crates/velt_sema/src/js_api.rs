@@ -22,7 +22,8 @@ const VELT_GLOBAL_MODULES: &[&str] = &[velt_common::std_module!(text_string_buil
 
 impl<'m> Ctx<'m> {
     /// Is the function `f` (fully qualified name, module) part of the JS API the standard
-    /// library provides? Everything in a prelude module is, but for `VELT_PRELUDE`. In a module the prelude's globals
+    /// library provides? Everything in a prelude module or a compiler hook's (std/lang/hooks) is,
+    /// but for `VELT_PRELUDE`. In a module the prelude's globals
     /// re-export from (`velt/net/http` and its submodules such as `std/fetch/response`, `velt/net/url`,
     /// `velt/task`), the methods are (of the re-exported classes and the classes they use), and
     /// the top-level functions the globals re-export (`fetch`), but not its other functions:
@@ -75,7 +76,11 @@ impl<'m> Ctx<'m> {
                 if !m.is_std || VELT_GLOBAL_MODULES.contains(&m.path.trim_end_matches(".vlt")) {
                     continue;
                 }
-                if m.path.starts_with(velt_common::std_dir!(prelude)) {
+                // The compiler's hooks were prelude functions, and calls of them in a program's
+                // code (the code sema writes) keep the prelude's conversions.
+                if m.path.starts_with(velt_common::std_dir!(prelude))
+                    || m.path.starts_with(velt_common::std_dir!(lang_hooks))
+                {
                     if !VELT_PRELUDE.contains(&m.path.trim_end_matches(".vlt")) {
                         out.insert(i, None);
                     }

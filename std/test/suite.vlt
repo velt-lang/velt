@@ -93,7 +93,7 @@ let collecting: Suite | null = null;
 let collected: Case[] = [];
 
 /** The next `count` queued registrations (`-1`: all that are left), for one test file. */
-export function __claim(count: i64): Step[] {
+export function claim(count: i64): Step[] {
   return queued.splice(0, count < 0 ? (queued.length as i64) : count);
 }
 

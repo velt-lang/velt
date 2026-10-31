@@ -33,7 +33,7 @@ library keeps Rust-style integer code. Then:
   (`total += s.length`) the target keeps its type, so the value converts to it when either side
   is inferred (#421); a signed value never converts to an unsigned target. A local declared
   without a type from such a value (`let n = xs.length`) is an `i64`, so it can go negative.
-- A float index converts through the prelude's `__floatIndex`: whole numbers index, anything else
+- A float index converts through the prelude's `floatIndex`: whole numbers index, anything else
   panics like an out-of-bounds index. A quotient index (`xs[n / 2]`) stays an error.
 - A float argument for an integer parameter of a `std/` function converts like
   `ToIntegerOrInfinity` (a saturating cast): `xs.slice(0, xs.length / 2)`.

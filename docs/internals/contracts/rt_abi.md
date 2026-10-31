@@ -629,7 +629,7 @@ The `velt_rt_array_view_*` functions keep a second table the same way for array 
 within the program) to `view`, the view's box. A conversion asks it first and records the view
 it makes; the view's drop glue removes the entry, and so does a transfer that turns the view
 into a plain array in place. `velt_rt_array_view_remove` takes the view's view object (the
-`__ArrayView`, untagged) and removes the entry if it is that object's view: if the entry's box
+`ArrayView`, untagged) and removes the entry if it is that object's view: if the entry's box
 header holds `object | 1`. So the view's own box never reaches the runtime, and the backend
 need not assume that a call may change a box of a view type.
 

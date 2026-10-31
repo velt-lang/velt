@@ -1,0 +1,40 @@
+// velt/lang/hooks (internal): the functions the parser writes some syntax as (std-layout.md
+// §10b): `value satisfies T`, a getter or setter in an object literal and a computed key known
+// only at run time. The parser spells their qualified names (velt_syntax `ast_names.rs`), which
+// no source can write.
+
+/**
+ * `value satisfies T` (TypeScript): `value`, checked against `T` with `T` as its context, as an
+ * annotated initializer is. The parser writes the operator as a call of this function.
+ */
+export function satisfies<T>(value: T): T {
+  return value;
+}
+
+/**
+ * `get name() { … }` in an object literal: the parser writes the getter as an arrow passed to
+ * this function. Sema reads it where the literal implements an interface (the getter runs on
+ * each read); this body never runs.
+ */
+export function objectGet<T>(get: () => T): T {
+  return get();
+}
+
+/**
+ * `set name(v) { … }` in an object literal, written as a call of this function (see
+ * `objectGet`).
+ */
+export function objectSet<T>(set: (value: T) => void): (value: T) => void {
+  return set;
+}
+
+/**
+ * `{ [key]: value }` with a key known only at run time: the parser writes the property as a
+ * spread of this call (a one-entry record). Where a `Record` is built, sema sets the entry
+ * directly instead.
+ */
+export function computedKey<V>(key: string, value: V): Record<string, V> {
+  const r: Record<string, V> = {};
+  r[key] = value;
+  return r;
+}

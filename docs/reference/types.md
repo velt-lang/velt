@@ -2835,8 +2835,8 @@ console.log([...range(1, 3)]); // [ 1, 2, 3 ]
   `this` in it is the object: an `IterableIterator<T>` written as `{ next() { … },
   [Symbol.iterator]() { return this; } }` is the iterator, so a loop over it goes on from where
   `next()` left off, as in Node.
-- The value is an instance of the prelude class `__IterableObject<T, E>` (async:
-  `__AsyncIterableObject<T, E>`), which holds the method; annotate it as `Iterable<T>`.
+- The value is an object of std's that holds the method and implements `Iterable<T, E>`
+  (`AsyncIterable<T, E>`); annotate it as `Iterable<T>`.
 
 ### Object literals implementing interfaces
 

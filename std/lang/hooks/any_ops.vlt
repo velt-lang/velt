@@ -1,11 +1,10 @@
-// Prelude: operators on `any` values holding objects and functions (issue #924,
-// docs/reference/types.md "any and unknown"). Sema converts primitives itself; an object goes
-// through JavaScript's `ToPrimitive` here first (`__anyToPrimitive`), and the operator then
+// velt/lang/hooks (internal): operators on `any` values holding objects and functions (issue
+// #924, docs/reference/types.md "any and unknown"). Sema converts primitives itself; an object
+// goes through JavaScript's `ToPrimitive` here first (`anyToPrimitive`), and the operator then
 // runs on the primitive it gives.
-//
-// The file name sorts after the other prelude modules, so their indexes stay the same.
 
 import { anyToPrimitive } from "velt/lang/intrinsics";
+import { anyJoin, anyOwnFn, anyPrimText, anyText } from "./any_text";
 
 /**
  * JavaScript's `ToPrimitive(v, hint)` of an `any` holding an object or a function (`hint` is
@@ -14,9 +13,9 @@ import { anyToPrimitive } from "velt/lang/intrinsics";
  * `valueOf()` and `toString()` (`toString()` first for `"string"`), the first primitive one
  * returns kept as it is (a number stays a number). A `Date` takes `"default"` as `"string"`. Sema
  * writes the dispatch over the program's classes into this body (any_prim.rs); other values go
- * to `__anyToPrimitivePlain`.
+ * to `anyPrimitivePlain`.
  */
-export function __anyToPrimitive(v: any, hint: string, at: string): any {
+export function anyPrimitive(v: any, hint: string, at: string): any {
   if (v instanceof Date) {
     if (hint === "number") {
       return (v as Date).getTime();
@@ -34,46 +33,46 @@ export function __anyToPrimitive(v: any, hint: string, at: string): any {
  * stands for it where only its number counts (`"number"`, and `==`, which `"default"` is for
  * here, because the text is never a number or a boolean).
  */
-export function __anyToPrimitivePlain(v: any, hint: string, at: string): any {
+export function anyPrimitivePlain(v: any, hint: string, at: string): any {
   if (typeof v === "function") {
     if (hint === "string") {
-      return __anyText(v, at);
+      return anyText(v, at);
     }
     return NaN;
   }
   if (Array.isArray(v)) {
-    return __anyJoin(v, ",", at);
+    return anyJoin(v, ",", at);
   }
-  if (hint !== "string" && __anyOwnFn(v, "valueOf")) {
+  if (hint !== "string" && anyOwnFn(v, "valueOf")) {
     const r: any = v.valueOf();
-    if (!__anyHoldsObject(r)) {
+    if (!anyHoldsObject(r)) {
       return r;
     }
   }
-  if (__anyOwnFn(v, "toString")) {
+  if (anyOwnFn(v, "toString")) {
     const r: any = v.toString();
-    if (!__anyHoldsObject(r)) {
+    if (!anyHoldsObject(r)) {
       return r;
     }
-    if (hint === "string" && __anyOwnFn(v, "valueOf")) {
-      return __anyPrimKeep(v.valueOf(), at);
+    if (hint === "string" && anyOwnFn(v, "valueOf")) {
+      return anyPrimKeep(v.valueOf(), at);
     }
     panic(`TypeError: Cannot convert object to primitive value at ${at}`);
   }
-  return __anyText(v, at);
+  return anyText(v, at);
 }
 
 /** What a `valueOf()`, `toString()` or `[Symbol.toPrimitive]` returned, which must be a primitive. */
-export function __anyPrimKeep(r: any, at: string): any {
-  if (__anyHoldsObject(r)) {
+export function anyPrimKeep(r: any, at: string): any {
+  if (anyHoldsObject(r)) {
     panic(`TypeError: Cannot convert object to primitive value at ${at}`);
   }
   return r;
 }
 
 /** `r` when it is a primitive, else what `next` gives (the next method `ToPrimitive` tries). */
-export function __anyPrimThen(r: any, next: () => any): any {
-  if (__anyHoldsObject(r)) {
+export function anyPrimThen(r: any, next: () => any): any {
+  if (anyHoldsObject(r)) {
     return next();
   }
   return r;
@@ -84,8 +83,8 @@ export function __anyPrimThen(r: any, next: () => any): any {
  * `+x`): `ToPrimitive` with hint `"number"`, then `ToNumber` (`[5]` is 5, `[]` 0, `{}` NaN, a
  * `Date` its time, an object its `valueOf()`).
  */
-export function __anyObjectNumber(v: any, at: string): number {
-  return +__anyToPrimitive(v, "number", at);
+export function anyObjectNumber(v: any, at: string): number {
+  return +anyPrimitive(v, "number", at);
 }
 
 /**
@@ -94,15 +93,15 @@ export function __anyObjectNumber(v: any, at: string): number {
  * taken; when either is a string the two are concatenated as `String` writes them, else they
  * are added as numbers.
  */
-export function __anyAdd(a: any, b: any, at: string): any {
+export function anyAdd(a: any, b: any, at: string): any {
   if (typeof a === "function" || typeof b === "function") {
     // The text of a function is its source, which a compiled function doesn't keep.
-    __anyText(typeof a === "function" ? a : b, at);
+    anyText(typeof a === "function" ? a : b, at);
   }
-  const pa = __anyHoldsObject(a) ? __anyToPrimitive(a, "default", at) : a;
-  const pb = __anyHoldsObject(b) ? __anyToPrimitive(b, "default", at) : b;
+  const pa = anyHoldsObject(a) ? anyPrimitive(a, "default", at) : a;
+  const pb = anyHoldsObject(b) ? anyPrimitive(b, "default", at) : b;
   if (typeof pa === "string" || typeof pb === "string") {
-    return __anyPrimText(pa, at) + __anyPrimText(pb, at);
+    return anyPrimText(pa, at) + anyPrimText(pb, at);
   }
   return +pa + +pb;
 }
@@ -113,9 +112,9 @@ export function __anyAdd(a: any, b: any, at: string): any {
  * `"number"`, so `[2] < 10` is true, `[2] < "10"` compares strings and an object with a
  * `valueOf()` compares by the number it returns.
  */
-export function __anyRelational(a: any, b: any, op: i64, at: string): boolean {
-  const pa = __anyHoldsObject(a) ? __anyToPrimitive(a, "number", at) : a;
-  const pb = __anyHoldsObject(b) ? __anyToPrimitive(b, "number", at) : b;
+export function anyRelational(a: any, b: any, op: i64, at: string): boolean {
+  const pa = anyHoldsObject(a) ? anyPrimitive(a, "number", at) : a;
+  const pb = anyHoldsObject(b) ? anyPrimitive(b, "number", at) : b;
   let lt = false;
   let gt = false;
   if (typeof pa === "string" && typeof pb === "string") {
@@ -140,15 +139,15 @@ export function __anyRelational(a: any, b: any, op: i64, at: string): boolean {
  * `ToPrimitive` (hint `"default"`) compared loosely with the other (`[] == 0`,
  * `[1, 2] == "1,2"`, an object by its `valueOf()`).
  */
-export function __anyLooseEq(a: any, b: any, at: string): boolean {
-  if (__anyHoldsObject(a)) {
-    return __anyToPrimitive(a, "default", at) == b;
+export function anyLooseEq(a: any, b: any, at: string): boolean {
+  if (anyHoldsObject(a)) {
+    return anyPrimitive(a, "default", at) == b;
   }
-  return a == __anyToPrimitive(b, "default", at);
+  return a == anyPrimitive(b, "default", at);
 }
 
 /** Does `v` hold an object or a function? */
-export function __anyHoldsObject(v: any): boolean {
+export function anyHoldsObject(v: any): boolean {
   const t = typeof v;
   return (t === "object" && v !== null) || t === "function";
 }

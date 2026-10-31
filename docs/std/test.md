@@ -35,7 +35,8 @@ imports this module. How they run:
   register. A test program may hold several test files, and every module it imports is
   evaluated when it starts, so this is all their top level does in each process; such a file
   still counts as one that only declares and shares a program with the others. The generated
-  `main` gives each file the registrations its top level queued, in import order (`__file(n)`).
+  `main` gives each file the registrations its top level queued, in import order
+  (`registerFile(n)`).
 - In the process for one file, its tests are collected: its `test_*` functions, then what its
   queued calls register, running the `describe` callbacks, whose calls register into their
   group at once. The process lists the tests to the runner (their full names, `group > test`)
@@ -74,5 +75,5 @@ its process reported no counts (a runtime without the debug counters). Such a
 process waits for what is still running, as a program does after `main`: the runner ends one
 still running 120 s after its tests and fails the file.
 
-The other exports (`__file`, `__test`, `__testAsync`, `__run`, `__claim`) are for the generated
-`main` only.
+The other exports (`registerFile`, `registerTest`, `registerAsyncTest`, `runRegistered`) are the
+runner's API that the generated `main` calls.

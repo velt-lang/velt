@@ -1,11 +1,11 @@
 //! Function expressions with a `this: any` parameter whose body uses `this` (docs/reference/
 //! functions.md "Function expressions"): `this` is the object the function is called on, as in
-//! JavaScript. The value is `__ThisFn` (std/lang/this_fn/index.vlt, a global loaded on demand by
+//! JavaScript. The value is `ThisFn` (std/lang/this_fn/index.vlt, a global loaded on demand by
 //! std/prelude/global/this_fn.vlt) held as a `Function`:
 //!
 //! ```text
 //! function (this: any, a: A, ...rest: R[]) { body }
-//!   ==> new __ThisFn((this: any, arguments: any[]) => {
+//!   ==> new ThisFn((this: any, arguments: any[]) => {
 //!         let a: A = arguments.length > 0 ? arguments[0] : undefined;
 //!         let rest: R[] = arguments.slice(1).map((x: any): R => x); body
 //!       }) as Function
@@ -82,7 +82,7 @@ impl FnCx<'_, '_> {
         ));
         let class = ast::TypeExpr {
             kind: ast::TypeExprKind::Named {
-                path: vec![ident("__ThisFn", span)],
+                path: vec![ident(velt_common::std_hook!(this_fn), span)],
                 args: vec![],
             },
             span,

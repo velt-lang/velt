@@ -9,10 +9,10 @@
 export declare intrinsic function anyDelete(value: any, key: string): bool;
 
 /**
- * `ToPrimitive(value, hint)` of a class instance (the prelude's `__anyToPrimitive`, whose
+ * `ToPrimitive(value, hint)` of a class instance (the prelude's `anyPrimitive`, whose
  * parameters must be named `hint` and `at`): its `[Symbol.toPrimitive]`, or its `valueOf()` and
  * `toString()` in the hint's order, chosen per class by the compiler; any other value goes to
- * `__anyToPrimitivePlain(value, hint, at)`.
+ * `anyPrimitivePlain(value, hint, at)`.
  */
 export declare intrinsic function anyToPrimitive(value: any, hint: string, at: string): any;
 

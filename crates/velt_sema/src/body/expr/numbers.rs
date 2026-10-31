@@ -427,12 +427,14 @@ impl FnCx<'_, '_> {
     }
 
     /// A `number` passed as a position or lane index of a SIMD method (`u8x16.load(d, i)`), as
-    /// a `usize` through the prelude's `__floatPosition`: a whole number from 0 up as itself,
+    /// a `usize` through std's `floatPosition` (a hook): a whole number from 0 up as itself,
     /// anything else (negative, fractional, NaN, ±Infinity) as `usize`'s maximum, which no
     /// array or vector has room at, so `fits` gives `false` and the others their `RangeError`.
     pub(super) fn simd_position(&mut self, h: hir::Expr) -> hir::Expr {
         let span = h.span;
-        let Some(crate::ctx::Item::Def(d)) = self.cx.prelude.get("__floatPosition").copied() else {
+        let Some(crate::ctx::Item::Def(d)) =
+            self.cx.std_def(velt_common::std_hook!(float_position))
+        else {
             let usize_ = self.cx.ty.usize;
             return self.mk(H::Cast(Box::new(h)), usize_, span);
         };
@@ -453,10 +455,11 @@ impl FnCx<'_, '_> {
     }
 
     /// A float index (`xs[i]` with `i: number`, `xs[Math.floor(n / 2)]`) as a `usize`, through
-    /// the prelude's `__floatIndex`: a whole number indexes as usual, anything else panics (in
+    /// std's `floatIndex` (a hook): a whole number indexes as usual, anything else panics (in
     /// JS it reads `undefined`).
     pub(super) fn float_index(&mut self, h: hir::Expr) -> hir::Expr {
-        let Some(crate::ctx::Item::Def(d)) = self.cx.prelude.get("__floatIndex").copied() else {
+        let Some(crate::ctx::Item::Def(d)) = self.cx.std_def(velt_common::std_hook!(float_index))
+        else {
             return h;
         };
         let span = h.span;

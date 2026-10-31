@@ -18,7 +18,7 @@
 //! - an argument for a parameter of type `unknown[]`, `Map<unknown, unknown>` or `Set<unknown>`
 //!   ([`Container`]), which may hold elements of any type, is passed as a copy holding them
 //!   boxed, written back into the caller's container when the call returns (the prelude
-//!   helpers of std/prelude/adapt.vlt);
+//!   helpers of std/lang/hooks);
 //! - another parameter type holding `unknown` (`Box<unknown>`) refuses the conversion, with the
 //!   reason in the mismatch's note ([`FnCx::adapt_refusal`]).
 //!
@@ -107,7 +107,7 @@ pub(super) fn has_params(cx: &Ctx, t: TyId) -> bool {
 }
 
 /// A container parameter type the adapter passes as a copy of boxed elements, written back
-/// after the call (std/prelude/adapt.vlt): `unknown[]`, `Map<unknown, unknown>` and
+/// after the call (std/lang/hooks): `unknown[]`, `Map<unknown, unknown>` and
 /// `Set<unknown>`, the shapes of a serializer's handler table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Container {
@@ -119,10 +119,11 @@ pub(super) enum Container {
 impl Container {
     /// The prelude helpers making the copy and writing it back.
     pub(super) fn helpers(self) -> (&'static str, &'static str) {
+        use velt_common::std_hook as h;
         match self {
-            Container::Array => ("__unknownArrayIn", "__unknownArrayOut"),
-            Container::Map => ("__unknownMapIn", "__unknownMapOut"),
-            Container::Set => ("__unknownSetIn", "__unknownSetOut"),
+            Container::Array => (h!(unknown_array_in), h!(unknown_array_out)),
+            Container::Map => (h!(unknown_map_in), h!(unknown_map_out)),
+            Container::Set => (h!(unknown_set_in), h!(unknown_set_out)),
         }
     }
 }

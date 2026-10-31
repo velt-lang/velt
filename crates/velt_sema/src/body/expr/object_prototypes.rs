@@ -1,6 +1,6 @@
 //! Prototypes as values (object_builtins.rs): `Object.getPrototypeOf(v)`, `Object.prototype` and
 //! `C.prototype` are `ObjectPrototype`s (std/prelude/record.vlt) naming the prototype by a tag,
-//! which `===` compares (`__prototypeSame`, called from `binary`), and which print, convert to a
+//! which `===` compares (`prototypeSame`, called from `binary`), and which print, convert to a
 //! string and to JSON as Node does. A record made by `Object.create(null)` has none (`null`,
 //! tested at run time), a class with subclasses the one of the class it holds.
 
@@ -186,23 +186,31 @@ impl FnCx<'_, '_> {
 
     /// `Object.getPrototypeOf(v)` of an `any` or `object` `v` (of type `ret`): its class's
     /// prototype, a record's (`null` when made by `Object.create(null)`), else the prelude's
-    /// `__anyPrototype(v)` (arrays, objects; anything else is a `TypeError`).
+    /// `anyPrototype(v)` (arrays, objects; anything else is a `TypeError`).
     fn dynamic_prototype(&mut self, s: hir::Expr, ret: TyId, span: Span) -> hir::Expr {
         let record = self.cx.prelude_adt("Record");
         self.dynamic_class_match(
             s,
             ret,
-            "__anyPrototype",
+            velt_common::std_hook!(any_prototype),
             |lw, c, read| {
                 if Some(c) == record {
-                    return lw.prelude_fn_call("__anyRecordPrototype", vec![read], span);
+                    return lw.prelude_fn_call(
+                        velt_common::std_hook!(any_record_prototype),
+                        vec![read],
+                        span,
+                    );
                 }
                 match lw.class_proto(c) {
                     Some(p) => lw.new_prototype(&p, ret, span),
                     None => {
                         let name = lw.cx.adt(c).map_or(String::new(), |a| a.name.clone());
                         let lit = synth(ast::ExprKind::Lit(ast::Lit::Str(name)), span);
-                        lw.prelude_fn_call("__anyPrototypeUnsupported", vec![lit], span)
+                        lw.prelude_fn_call(
+                            velt_common::std_hook!(any_prototype_unsupported),
+                            vec![lit],
+                            span,
+                        )
                     }
                 }
             },
@@ -415,7 +423,9 @@ impl FnCx<'_, '_> {
             let class = ast::TypeExpr {
                 kind: ast::TypeExprKind::Named {
                     path: vec![ast::Ident {
-                        name: self.proxy_op("__HasOwnProperty").to_string(),
+                        name: self
+                            .proxy_op(velt_common::std_hook!(has_own_property))
+                            .to_string(),
                         span: id.span,
                     }],
                     args: vec![],
@@ -491,7 +501,7 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let found = self.cx.prelude_adt("ObjectPrototype").zip(
-            match self.cx.prelude.get("__prototypeSame").cloned() {
+            match self.cx.std_def(velt_common::std_hook!(prototype_same)) {
                 Some(Item::Def(f)) => Some(f),
                 _ => None,
             },

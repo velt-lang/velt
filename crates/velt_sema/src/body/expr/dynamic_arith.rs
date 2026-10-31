@@ -2,10 +2,10 @@
 //! them: each operand is evaluated, then converted with `ToNumber` (`ToPrimitive` first for an
 //! object). The conversion of a primitive is one call through its descriptor
 //! (`Intrinsic::AnyToNumber`); an object or a function held goes to the prelude's
-//! `__anyObjectNumber` (`[5]` is 5, `{}` NaN, a `Date` its time). `-`, `*`, `/`, `%`, `**` and
+//! `anyObjectNumber` (`[5]` is 5, `{}` NaN, a `Date` its time). `-`, `*`, `/`, `%`, `**` and
 //! the bitwise operators give a number, as in TypeScript; `+` adds numbers when neither operand
 //! holds a string, an object or a symbol (a test of the descriptors' tags), else it is the
-//! prelude's `__anyAdd` (string concatenation after `ToPrimitive`), and gives an `any`.
+//! prelude's `anyAdd` (string concatenation after `ToPrimitive`), and gives an `any`.
 
 use velt_common::Span;
 use velt_syntax::ast;
@@ -140,7 +140,12 @@ impl FnCx<'_, '_> {
         let is_obj = self.tag_test(t, d, BinOp::GtEq, TAG_FUNCTION, span);
         let read = self.side_any(t, d, span);
         let site = self.text_site(span);
-        let obj = self.dyn_helper_call("__anyObjectNumber", vec![read, site], f64_, span);
+        let obj = self.dyn_helper_call(
+            velt_common::std_hook!(any_object_number),
+            vec![read, site],
+            f64_,
+            span,
+        );
         let prim = self.op_prim_number(t, d, span);
         self.op_choose(is_obj, obj, prim, f64_, span)
     }
@@ -211,7 +216,7 @@ impl FnCx<'_, '_> {
     }
 
     /// `l + r` where an operand is an `any` and neither is a string: numbers are added when
-    /// both hold `undefined`, `null`, a boolean or a number, else `__anyAdd` runs JavaScript's
+    /// both hold `undefined`, `null`, a boolean or a number, else `anyAdd` runs JavaScript's
     /// `+` (a string concatenation when either side's `ToPrimitive` is a string). An `any`.
     pub(crate) fn dynamic_add(&mut self, l: hir::Expr, r: hir::Expr, span: Span) -> hir::Expr {
         if !self.any_operands(&l, &r) {
@@ -268,7 +273,12 @@ impl FnCx<'_, '_> {
         };
         let (xa, ya) = (as_any(self, a), as_any(self, b));
         let site = self.text_site(span);
-        let slow = self.dyn_helper_call("__anyAdd", vec![xa, ya, site], any, span);
+        let slow = self.dyn_helper_call(
+            velt_common::std_hook!(any_add),
+            vec![xa, ya, site],
+            any,
+            span,
+        );
         let v = match test {
             Some(test) => self.op_choose(test, fast, slow, any, span),
             None => slow,
@@ -278,7 +288,7 @@ impl FnCx<'_, '_> {
 
     /// `ToNumber` of `h` when it is a dynamic `+` (`dynamic_add`'s block) feeding another
     /// arithmetic operator (`a + b - 1`): the numbers' sum stays an `f64`, and only the other
-    /// path (`__anyAdd`) is converted. `Err` gives `h` back otherwise.
+    /// path (`anyAdd`) is converted. `Err` gives `h` back otherwise.
     fn number_of_sum(&mut self, h: hir::Expr) -> Result<hir::Expr, hir::Expr> {
         let f64_ = self.cx.ty.f64;
         let H::Block(b) = &h.kind else { return Err(h) };
@@ -289,7 +299,7 @@ impl FnCx<'_, '_> {
         let H::ToDyn { expr, .. } = &then.kind else {
             return Err(h);
         };
-        let add = self.cx.prelude_fn("__anyAdd");
+        let add = self.cx.prelude_fn(velt_common::std_hook!(any_add));
         let is_add =
             matches!(&els.kind, H::Call { callee: hir::Callee::Def(d, _), .. } if Some(*d) == add);
         if expr.ty != f64_ || !is_add {

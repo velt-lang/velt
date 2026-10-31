@@ -3,7 +3,7 @@
 //! converted with `ToNumber` (`true` is 1, `null` is 0, `undefined` and a string that is not a
 //! number are `NaN`, and a comparison with `NaN` is `false`). A symbol stops the program with
 //! Node's `TypeError`; an object or a function is compared after `ToPrimitive` (which calls
-//! `valueOf` / `toString`) by the prelude's `__anyRelational`.
+//! `valueOf` / `toString`) by the hook `anyRelational`.
 
 use velt_common::Span;
 
@@ -87,7 +87,7 @@ impl FnCx<'_, '_> {
     }
 
     /// `result` unless an `any` operand holds an object or a function, which the prelude's
-    /// `__anyRelational` compares after `ToPrimitive` (hint `"number"`: `[2] < 10`, a `Date`
+    /// `anyRelational` compares after `ToPrimitive` (hint `"number"`: `[2] < 10`, a `Date`
     /// by its time).
     fn rel_objects(
         &mut self,
@@ -136,7 +136,7 @@ impl FnCx<'_, '_> {
         let code = self.mk(H::Lit(hir::Lit::Int(code)), i64_, span);
         let site = self.text_site(span);
         let args = vec![x, y, code, site];
-        let slow = self.dyn_helper_call("__anyRelational", args, bool_, span);
+        let slow = self.dyn_helper_call(velt_common::std_hook!(any_relational), args, bool_, span);
         self.rel_choose(test, slow, result, bool_, span)
     }
 

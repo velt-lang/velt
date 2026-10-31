@@ -5,8 +5,8 @@
 //
 // The core types and their methods come first, in name order. The dynamic value (`dynamic`),
 // the interface adapters (`adapt`, `adapt_ctor`) and the methods and operators of `any`
-// (`any_methods`, `any_ops`) come last, in this order, as when the order was spelled in file
-// names (`z_dynamic.vlt` … `zzzzz_any_ops.vlt`).
+// (`any_methods`, `any_ops`) come next, in this order, as when the order was spelled in file
+// names (`z_dynamic.vlt` … `zzzzz_any_ops.vlt`). The compiler's hooks (`hooks`) are loaded last.
 
 import "./array";
 import "./array_nested";
@@ -32,7 +32,4 @@ import "./timers";
 import "./type_tests";
 import "./weak";
 import "./dynamic";
-import "./adapt";
-import "./adapt_ctor";
-import "./any_methods";
-import "./any_ops";
+import "./hooks";

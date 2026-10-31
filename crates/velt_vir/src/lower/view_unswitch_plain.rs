@@ -28,7 +28,7 @@ use crate::vir::{Ty, UnOp};
 
 /// The prelude's conversion of a number index (velt_sema `numbers.rs`), which reads nothing but
 /// its number.
-pub(super) const FLOAT_INDEX: &str = velt_common::std_item!(prelude_math, "__floatIndex");
+pub(super) const FLOAT_INDEX: &str = velt_common::std_hook!(float_index);
 
 /// A value as computed from the values the locals in it hold at the point.
 #[derive(Clone, Debug, PartialEq)]

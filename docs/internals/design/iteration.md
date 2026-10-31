@@ -689,15 +689,15 @@ return ... }`, or `async *[Symbol.asyncIterator]()`): object literal methods par
 `ast::ObjectProp::Method` (a contract change). Velt's object literals are plain data, so the
 closest workable form is a literal whose *one* member is the iterator method: sema
 (`expr/object_method.rs`) makes the method a function value (a generator expression returning
-`Iterator<T, E>`, or an arrow) and the object `new __IterableObject(f)`, a prelude class
-(`std/prelude/iter.vlt`) implementing `Iterable<T, E>` by calling `f`
-(`__AsyncIterableObject` for `AsyncIterable`). Each loop calls the method again, as in JS.
+`Iterator<T, E>`, or an arrow) and the object `new IterableObject(f)`, a compiler hook
+(`std/lang/hooks/iter.vlt`) implementing `Iterable<T, E>` by calling `f`
+(`AsyncIterableObject` for `AsyncIterable`). Each loop calls the method again, as in JS.
 
 ### Deviations
 
 - Object literals: other members next to the iterator method, `this` in it (TS: the object),
   and any other method are errors with the fix (variables, a class implementing `Iterable<T>`,
-  or a property holding an arrow). The value is an `__IterableObject<T, E>`, not an object type.
+  or a property holding an arrow). The value is an `IterableObject<T, E>`, not an object type.
 - Generator expressions: no recursion through the name, no type parameters or rest parameters
   (above).
 - Spread: array sources are evaluated before the other elements (unchanged); an iterable source

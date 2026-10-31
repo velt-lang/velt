@@ -19,20 +19,20 @@ pub const IMPORT_META_CLASS: &str = "__ImportMeta";
 pub const IMPORT_META_MODULE: &str = velt_common::std_specifier!(lang_import_meta);
 
 /// The prelude function an object-literal property with a computed key known only at run time
-/// is written as a spread of: `{ [k]: v }` is `{ ...__computed_key(k, v) }` (a one-entry
+/// is written as a spread of: `{ [k]: v }` is `{ ...computedKey(k, v) }` (a one-entry
 /// `Record<string, V>`). The callee's span is the bracketed key, which tells it from a written
 /// call.
-pub const COMPUTED_KEY_FN: &str = "__computed_key";
+pub const COMPUTED_KEY_FN: &str = velt_common::std_hook!(computed_key);
 
 /// The prelude function a getter in an object literal is written as a call of: `{ get v() {
-/// body } }` is `{ v: __object_get(() => { body }) }`, the getter as an arrow (its span starts
+/// body } }` is `{ v: objectGet(() => { body }) }`, the getter as an arrow (its span starts
 /// at the name, as a method's does). The callee's span is the `get` keyword, which tells it
 /// from a written call. Sema reads it where the literal implements an interface.
-pub const OBJECT_GET_FN: &str = "__object_get";
+pub const OBJECT_GET_FN: &str = velt_common::std_hook!(object_get);
 
-/// [`OBJECT_GET_FN`] for a setter: `{ set v(x) { body } }` is `{ v: __object_set((x) => { body
+/// [`OBJECT_GET_FN`] for a setter: `{ set v(x) { body } }` is `{ v: objectSet((x) => { body
 /// }) }`, the callee's span being the `set` keyword.
-pub const OBJECT_SET_FN: &str = "__object_set";
+pub const OBJECT_SET_FN: &str = velt_common::std_hook!(object_set);
 
 /// The parameter the parser puts in front of the parameters of an object-literal method whose
 /// body uses `this` (outside the functions and classes declared in it): `{ m(x) { return

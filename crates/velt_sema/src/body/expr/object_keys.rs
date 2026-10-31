@@ -318,7 +318,7 @@ impl FnCx<'_, '_> {
     }
 
     /// `Object.values(x)` / `Object.entries(x)` (`helper`) of an `any`, `object` or `Function`
-    /// `x`: the prelude's `__anyValues(x)` / `__anyEntries(x)` (an `any[]` / `[string, any][]`,
+    /// `x`: the hook `anyValues(x)` / `anyEntries(x)` (an `any[]` / `[string, any][]`,
     /// as TypeScript types them). `None`: `x` is not dynamic.
     fn any_values(&mut self, helper: &str, arg: &ast::Expr, span: Span) -> Option<hir::Expr> {
         let t = self.trial_type(arg)?;
@@ -330,8 +330,8 @@ impl FnCx<'_, '_> {
             return Some(self.error_expr(span));
         }
         let f = self.proxy_op(match helper {
-            "values" => "__anyValues",
-            _ => "__anyEntries",
+            "values" => velt_common::std_hook!(any_values),
+            _ => velt_common::std_hook!(any_entries),
         });
         let call = synth(
             ast::ExprKind::Call {

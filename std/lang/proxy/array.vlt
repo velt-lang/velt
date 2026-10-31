@@ -4,7 +4,7 @@
 // Reflect").
 //
 // `p.push(x)` on a proxy reads `push` through the `get` trap. When the trap forwards to an array
-// (`Reflect.get(target, key, receiver)`), the method it reads is an `__ArrayMethod`, and the call
+// (`Reflect.get(target, key, receiver)`), the method it reads is an `ArrayMethod`, and the call
 // runs the method's generic algorithm from the ECMAScript specification with the proxy as `this`
 // (`Proxy.__arrayCall`, which velt_vir's proxy call slot calls): every read of `length` or of an
 // element, every write, `in` test and delete goes through the traps, in Node's order.
@@ -19,7 +19,7 @@ import { proxyArrayCall, proxyArrayHole } from "velt/lang/intrinsics";
  * it is not supported yet. Each read makes a new one (the standard library keeps no module
  * state), so two reads of a method are not `===`.
  */
-export class __ArrayMethod {
+export class ArrayMethod {
   name: string;
 
   constructor(name: string) {
@@ -27,8 +27,8 @@ export class __ArrayMethod {
   }
 }
 
-/** Is `key` an array method a proxy runs generically (`__ArrayMethod`)? */
-export function __proxyArrayMethod(key: string): boolean {
+/** Is `key` an array method a proxy runs generically (`ArrayMethod`)? */
+export function proxyArrayMethod(key: string): boolean {
   return key === "push" ||
     key === "pop" ||
     key === "shift" ||
@@ -134,7 +134,7 @@ function arrayMove(p: Proxy, o: any, from: number, to: number): void {
  * `Array.prototype[name].apply(o, args)` for the proxy `p` of an array, `o` its receiver: each
  * method is the steps of `splice` that its own algorithm takes in the same order.
  */
-export function __proxyArrayCall(p: Proxy, name: string, args: any[], o: any): any {
+export function proxyArrayInvoke(p: Proxy, name: string, args: any[], o: any): any {
   // While it runs, `Reflect` records the holes Node's algorithm makes in the target during the
   // algorithm's trap calls (`trapGet`), and reports them: velt_rt's `proxy_array`.
   const t = arrayTarget(p);
@@ -256,7 +256,7 @@ function arrayCallback(f: any): any {
 }
 
 /**
- * The other methods of `__proxyArrayMethod` on the proxy `p` (length `len`), each the steps of
+ * The other methods of `proxyArrayMethod` on the proxy `p` (length `len`), each the steps of
  * its algorithm in the specification: `map`, `filter`, `forEach`, `some`, `every` and `find`
  * call the callback with the element, its index and the proxy (`thisArg` is not passed on);
  * `map`, `filter` and `slice` read `constructor` (ArraySpeciesCreate) and give a new array.

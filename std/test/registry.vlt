@@ -1,7 +1,7 @@
 // velt/test (internal): the test files of a test program and the tests they register
-// (`__file`, `__test`, `__testAsync`, which `velt test`'s generated `main` calls).
+// (`registerFile`, `registerTest`, `registerAsyncTest`, which `velt test`'s generated `main` calls).
 
-import { __claim, collect, Step, Suite } from "velt/test/suite";
+import { claim, collect, Step, Suite } from "velt/test/suite";
 import { Case } from "velt/test/case";
 
 /** The tests of one test file: its `test_*` functions and what its top level registered. */
@@ -23,19 +23,19 @@ export class TestFile {
   }
 }
 
-/** The test files of this program, in the order `__file` registered them. */
+/** The test files of this program, in the order `registerFile` registered them. */
 export let files: TestFile[] = [];
 
 /**
- * `__file(queued)`: the tests registered from now on are those of the next test file, and so
+ * `registerFile(queued)`: the tests registered from now on are those of the next test file, and so
  * are the next `queued` registrations its top level made (`-1`: all that are left).
  */
-export function __file(queued: i64) {
-  files.push(new TestFile(__claim(queued)));
+export function registerFile(queued: i64) {
+  files.push(new TestFile(claim(queued)));
 }
 
 /** Registers a test function of the current file. */
-export function __test(name: string, run: () => void throws unknown) {
+export function registerTest(name: string, run: () => void throws unknown) {
   const f = current();
   f.functions.push(
     new Case(
@@ -50,7 +50,7 @@ export function __test(name: string, run: () => void throws unknown) {
 }
 
 /** Registers an `async` test function of the current file; what its promise holds is not looked at. */
-export function __testAsync<T>(name: string, run: () => Promise<T, unknown>) {
+export function registerAsyncTest<T>(name: string, run: () => Promise<T, unknown>) {
   const f = current();
   f.functions.push(
     new Case(
@@ -66,7 +66,7 @@ export function __testAsync<T>(name: string, run: () => Promise<T, unknown>) {
 
 function current(): TestFile {
   if (files.length == 0) {
-    files.push(new TestFile(__claim(-1)));
+    files.push(new TestFile(claim(-1)));
   }
   return files[files.length - 1];
 }

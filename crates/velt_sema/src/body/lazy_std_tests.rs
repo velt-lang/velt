@@ -91,7 +91,7 @@ fn every_name_lowering_looks_up_is_a_helper() {
     ] {
         helper_literals(&crates.join(c).join("src"), &mut names);
     }
-    assert!(names.iter().any(|n| n == "__anyLooseEq"), "{names:?}");
+    assert!(names.iter().any(|n| n == "__entryAt"), "{names:?}");
     // C preprocessor macros (`__AVX2__`, `__GCC_…`), DWARF names and the C library's own
     // symbols (`errno`'s location, velt_vir `system/posix.rs`) are no definitions.
     const C_SYMBOLS: &[&str] = &["__error", "__errno_location"];
@@ -172,9 +172,64 @@ fn every_std_definition_lowering_names_stays_checked() {
 
 #[test]
 fn helpers_by_name_and_by_family() {
-    assert!(is_helper("__anyLooseEq"));
-    assert!(is_helper("__anyRec_get"));
-    assert!(is_helper("__anyMap_set"));
-    assert!(!is_helper("__anyMember"));
+    assert!(is_helper(velt_common::std_hook!(any_loose_eq)));
+    assert!(is_helper("anyRec_get"));
+    assert!(is_helper("anyMap_set"));
+    assert!(!is_helper(velt_common::std_hook!(any_member)));
     assert!(!is_helper("Number"));
+}
+
+/// The `std_hook!(<entry>)` uses in the Rust sources under `dir`, outside tests.
+fn hook_uses(dir: &std::path::Path, out: &mut Vec<String>) {
+    for entry in std::fs::read_dir(dir).expect("source directory") {
+        let path = entry.expect("source entry").path();
+        if path.is_dir() {
+            if path.file_name().is_some_and(|n| n != "tests") {
+                hook_uses(&path, out);
+            }
+            continue;
+        }
+        if path.extension().is_none_or(|e| e != "rs")
+            || path.to_string_lossy().ends_with("_tests.rs")
+        {
+            continue;
+        }
+        let src = std::fs::read_to_string(&path).expect("source file");
+        let src = src.split("#[cfg(test)]").next().unwrap_or_default();
+        for (i, m) in src.match_indices("std_hook!(") {
+            let name: String = src[i + m.len()..]
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .collect();
+            out.push(name);
+        }
+    }
+}
+
+/// A hook lowering, the optimizer or a backend calls is marked `lowered` in velt_common's
+/// table, so lazy std keeps it checked: nothing in the checked code refers to it.
+#[test]
+fn every_hook_lowering_calls_is_marked_lowered() {
+    let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let mut names = vec![];
+    for c in [
+        "velt_vir",
+        "velt_opt",
+        "velt_codegen_llvm",
+        "velt_codegen_cl",
+    ] {
+        hook_uses(&crates.join(c).join("src"), &mut names);
+    }
+    assert!(names.iter().any(|n| n == "any_loose_eq"), "{names:?}");
+    let unmarked: Vec<&String> = (names.iter())
+        .filter(|n| {
+            !velt_common::std_hooks::HOOKS
+                .iter()
+                .any(|h| h.name == n.as_str() && h.lowered)
+        })
+        .collect();
+    assert!(
+        unmarked.is_empty(),
+        "mark `lowered` in velt_common std_hooks.rs: {unmarked:?}"
+    );
 }

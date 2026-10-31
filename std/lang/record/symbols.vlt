@@ -5,6 +5,8 @@
 // key (`Objects::record_accessors`). A program loads this module only when it mentions symbols,
 // property definitions, `Proxy` or `Reflect` (std/prelude/global/record_symbols.vlt).
 
+import { objectPrototypeKey } from "velt/lang/hooks/record";
+
 /**
  * A property key, as in TypeScript's lib: a string, a number (converted to its string) or a
  * symbol. `Record<PropertyKey, V>` is a `Record<string, V>`, whose symbol keys are in a table
@@ -229,7 +231,7 @@ extend<K, V> Record<K, V> {
     if (this.__hasKeyed(key)) {
       return true;
     }
-    return typeof key === "string" && !this.__isNullProto() && __objectPrototypeKey(key);
+    return typeof key === "string" && !this.__isNullProto() && objectPrototypeKey(key);
   }
 }
 

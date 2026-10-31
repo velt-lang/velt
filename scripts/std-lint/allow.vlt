@@ -16,8 +16,6 @@ export const allow: Allow = {
     "net/http/fetch/headers.vlt",
     "net/http/fetch/request.vlt",
     "net/http/fetch/response.vlt",
-    "prelude/adapt.vlt",
-    "prelude/any_methods.vlt",
     "prelude/array.vlt",
     "prelude/bytes.vlt",
     "prelude/date.vlt",
@@ -25,7 +23,6 @@ export const allow: Allow = {
     "prelude/json/json.vlt",
     "prelude/map.vlt",
     "prelude/promise.vlt",
-    "prelude/record.vlt",
     "prelude/sort.vlt",
   ],
   multiClass: [

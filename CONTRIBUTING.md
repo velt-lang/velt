@@ -224,6 +224,11 @@ shrinks.
 - **The compiler names std modules in one table**, `velt_common::std_modules`
   (`std_module!(lang_proxy)`, `std_item!(lang_proxy, "Proxy")`): a std file the compiler looks
   into moves with its entry there, never with a string literal elsewhere.
+- **The std code the compiler calls** (its hooks: `n.toString(16)` calls `f64ToString`) lives in
+  `std/lang/hooks/`, never exported to programs, and is named only through
+  `velt_common::std_hooks` (`std_hook!(f64_to_string)`), whose entries give each hook's
+  signature; `cargo test -p velt_sema --test std_hooks` checks them against std. No new `__`
+  names in std.
 - **The prelude's load order** is the list in `std/prelude/index.vlt`; a new prelude file is
   added there.
 - **A new module**: its folder and `index.vlt`, a row in the areas of std-layout.md §3, its page

@@ -336,8 +336,8 @@ impl FnCx<'_, '_> {
         all.extend(ck.args);
         self.intrinsic(i, all, ck.ret, span)
     }
-    /// `n.toString(radix)` on a number: a call of the prelude's `__f64ToString`, `__i64ToString`
-    /// or `__u64ToString` (by the receiver's type), with the receiver converted to its parameter.
+    /// `n.toString(radix)` on a number: a call of std's hook `f64ToString`, `i64ToString`
+    /// or `u64ToString` (by the receiver's type), with the receiver converted to its parameter.
     fn number_to_string_radix(
         &mut self,
         recv: hir::Expr,
@@ -346,11 +346,13 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let (name, to) = match self.cx.ty.kind(recv.ty) {
-            TyKind::Int(i) if i.is_signed() => ("__i64ToString", self.cx.ty.i64),
-            TyKind::Int(_) => ("__u64ToString", self.cx.ty.u64),
-            _ => ("__f64ToString", self.cx.ty.f64),
+            TyKind::Int(i) if i.is_signed() => {
+                (velt_common::std_hook!(i64_to_string), self.cx.ty.i64)
+            }
+            TyKind::Int(_) => (velt_common::std_hook!(u64_to_string), self.cx.ty.u64),
+            _ => (velt_common::std_hook!(f64_to_string), self.cx.ty.f64),
         };
-        let Some(crate::ctx::Item::Def(d)) = self.cx.prelude.get(name).copied() else {
+        let Some(crate::ctx::Item::Def(d)) = self.cx.std_def(name) else {
             self.cx
                 .err("`toString(radix)` needs the prelude (std/prelude)", span);
             self.check_args_loose(args);

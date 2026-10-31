@@ -295,8 +295,8 @@ impl FnCx<'_, '_> {
     }
 
     /// `k in o` where `k` is known only at run time: on a `Record<string, V>`,
-    /// `__recordIn(k, o)` (std/prelude/record.vlt; a key that may be a number as `String(k)`,
-    /// as JavaScript converts it); on a prototype (`k in Object.prototype`), `__prototypeIn(k, o)`;
+    /// `recordIn(k, o)` (std/prelude/record.vlt; a key that may be a number as `String(k)`,
+    /// as JavaScript converts it); on a prototype (`k in Object.prototype`), `prototypeIn(k, o)`;
     /// elsewhere an error.
     pub(crate) fn dynamic_key_in(
         &mut self,
@@ -315,7 +315,11 @@ impl FnCx<'_, '_> {
             && matches!(self.cx.ty.kind(target), TyKind::Adt(d, _) if Some(*d) == proto)
         {
             // `k in Object.prototype` (a proxy's `get` trap telling protocol keys apart).
-            return self.prelude_fn_call("__prototypeIn", vec![lhs.clone(), rhs.clone()], span);
+            return self.prelude_fn_call(
+                velt_common::std_hook!(prototype_in),
+                vec![lhs.clone(), rhs.clone()],
+                span,
+            );
         }
         // A symbol or `string | symbol` key: the symbol table too (std/prelude/record.vlt).
         let symbolic = kind == KeyKind::Symbol && self.symbolic_key_type(key_ty);
@@ -369,8 +373,8 @@ impl FnCx<'_, '_> {
         };
         // A record made by `Object.create(null)` inherits nothing (`hir::Program::null_proto_records`).
         let helper = match self.cx.objects.null_proto_records {
-            true => "__recordInMaybeNullProto",
-            false => "__recordIn",
+            true => velt_common::std_hook!(record_in_maybe_null_proto),
+            false => velt_common::std_hook!(record_in),
         };
         let test = syn.call(syn.name(helper), vec![key, rhs.clone()]);
         self.expr(&test, None, Want::Move)

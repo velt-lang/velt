@@ -1,6 +1,6 @@
 //! JS array constructors: `new Array<T>(n).fill(v)` (n copies of `v`) and
-//! `Array.from({ length: n }, (_, i) => f(i))`, rewritten to the prelude's `__arrayFilled` /
-//! `__arrayFromLength` (one allocation each). A bare `new Array<T>(n)` would hold `n` holes
+//! `Array.from({ length: n }, (_, i) => f(i))`, rewritten to the prelude's `arrayFilled` /
+//! `arrayFromLength` (one allocation each). A bare `new Array<T>(n)` would hold `n` holes
 //! (`undefined`), which Velt has no value for, so it asks for `.fill(v)`; likewise the element
 //! argument of `Array.from`'s callback is always `undefined` and must go unused.
 //! `Array.from(iterable[, (v, i) => ...])` over anything `for...of` takes is a loop pushing
@@ -13,7 +13,7 @@ use crate::body::{FnCx, Want};
 use crate::hir::{self, TyId};
 
 impl FnCx<'_, '_> {
-    /// `new Array<T>(n).fill(v)` as `__arrayFilled<T>(n, v)`, if `object.prop(args)` is that.
+    /// `new Array<T>(n).fill(v)` as `arrayFilled<T>(n, v)`, if `object.prop(args)` is that.
     pub(super) fn array_fill_new(
         &mut self,
         object: &ast::Expr,
@@ -28,7 +28,7 @@ impl FnCx<'_, '_> {
         }
         // `new Array(...args)` with a tuple: one element is the argument (`args[0]`, the tuple
         // evaluated once); any other count makes an array of those elements, as in JS, which
-        // `fill` replaces (`__arrayOne(args, __arrayFilled(count, v))`). Any other spread stays
+        // `fill` replaces (`arrayOne(args, arrayFilled(count, v))`). Any other spread stays
         // the call's arguments (an error unless it is a tuple).
         let elem;
         let n = match &n.kind {
@@ -43,18 +43,28 @@ impl FnCx<'_, '_> {
                     Some(1) => {}
                     Some(k) => {
                         let filled = synthetic_call(
-                            "__arrayFilled",
+                            velt_common::std_hook!(array_filled),
                             type_args,
                             vec![int_lit(k as u128, span), args[0].clone()],
                             span,
                         );
                         let call_args = vec![(**inner).clone(), filled];
-                        let call = synthetic_call("__arrayOne", vec![], call_args, span);
+                        let call = synthetic_call(
+                            velt_common::std_hook!(array_one),
+                            vec![],
+                            call_args,
+                            span,
+                        );
                         return Some(self.expr(&call, exp, Want::Move));
                     }
                     None => {
                         let call_args = vec![n.clone(), args[0].clone()];
-                        let call = synthetic_call("__arrayFilled", type_args, call_args, span);
+                        let call = synthetic_call(
+                            velt_common::std_hook!(array_filled),
+                            type_args,
+                            call_args,
+                            span,
+                        );
                         return Some(self.expr(&call, exp, Want::Move));
                     }
                 }
@@ -107,7 +117,7 @@ impl FnCx<'_, '_> {
             // way JS does (a whole number from 0 up, within the array length limit). An `n`
             // with errors reports them here.
             _ => synthetic_call(
-                "__arrayFilled",
+                velt_common::std_hook!(array_filled),
                 type_args,
                 vec![as_number(n), args[0].clone()],
                 span,
@@ -117,7 +127,7 @@ impl FnCx<'_, '_> {
     }
 
     /// `new Array<T>(e).fill(v)` with `e` a value of the numeric enum `def`: its number is the
-    /// length (`__arrayFilled(<the member's number>, v)`), as in JS.
+    /// length (`arrayFilled(<the member's number>, v)`), as in JS.
     fn array_filled_enum(
         &mut self,
         type_args: &[ast::TypeExpr],
@@ -146,8 +156,8 @@ impl FnCx<'_, '_> {
         let ty = self.cx.ty.intern(hir::TyKind::Array(elem));
         let d = self
             .cx
-            .prelude_fn("__arrayFilled")
-            .unwrap_or_else(|| panic!("ICE: the prelude without `__arrayFilled`"));
+            .prelude_fn(velt_common::std_hook!(array_filled))
+            .unwrap_or_else(|| panic!("ICE: std without the hook `arrayFilled`"));
         let kind = hir::ExprKind::Call {
             callee: hir::Callee::Def(d, vec![elem]),
             args: vec![n, vh],
@@ -156,7 +166,7 @@ impl FnCx<'_, '_> {
     }
 
     /// `new Array<T>(x).fill(v)` with an `x` that is no number: as in JS, `x` is evaluated and
-    /// the array holds the one element `v` (`__arrayOne(x, [v])`, the literal typed `T[]`).
+    /// the array holds the one element `v` (`arrayOne(x, [v])`, the literal typed `T[]`).
     fn array_of_one(
         &mut self,
         type_args: &[ast::TypeExpr],
@@ -181,8 +191,8 @@ impl FnCx<'_, '_> {
         let arr = self.expr(&lit, lit_exp, Want::Move);
         let d = self
             .cx
-            .prelude_fn("__arrayOne")
-            .unwrap_or_else(|| panic!("ICE: the prelude without `__arrayOne`"));
+            .prelude_fn(velt_common::std_hook!(array_one))
+            .unwrap_or_else(|| panic!("ICE: std without the hook `arrayOne`"));
         let ty = arr.ty;
         let kind = hir::ExprKind::Call {
             callee: hir::Callee::Def(d, vec![xh.ty, ty]),
@@ -209,7 +219,7 @@ impl FnCx<'_, '_> {
         true
     }
 
-    /// `Array.from({ length: n }, (_, i) => e)` as `__arrayFromLength(n, (i) => e)`.
+    /// `Array.from({ length: n }, (_, i) => e)` as `arrayFromLength(n, (i) => e)`.
     pub(super) fn array_from(
         &mut self,
         args: &[ast::Expr],
@@ -246,7 +256,12 @@ impl FnCx<'_, '_> {
             );
             return self.error_expr(span);
         };
-        let call = synthetic_call("__arrayFromLength", vec![], vec![n.clone(), f], span);
+        let call = synthetic_call(
+            velt_common::std_hook!(array_from_length),
+            vec![],
+            vec![n.clone(), f],
+            span,
+        );
         self.expr(&call, exp, Want::Move)
     }
 }

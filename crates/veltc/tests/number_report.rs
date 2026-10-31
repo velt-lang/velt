@@ -78,7 +78,7 @@ fn debug_builds_keep_bounded_number_counters_in_integers() {
             "the counter `k` is an integer in debug builds too: {line}"
         );
     }
-    // Indexing with it needs no `__floatIndex` call.
+    // Indexing with it needs no `floatIndex` call.
     assert!(!main.contains("floatIndex"), "{main}");
 }
 

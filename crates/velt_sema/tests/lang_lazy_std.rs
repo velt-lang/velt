@@ -44,7 +44,7 @@ fn what_no_code_reaches_stays_unchecked() {
         assert!(!eager.iter().any(|e| n.starts_with(e)), "{n}");
     }
     assert!(
-        !names.iter().any(|n| n.ends_with("::__anyLooseEq")),
+        !names.iter().any(|n| n.ends_with("::anyLooseEq")),
         "a helper"
     );
     // `Number` of the prelude is a function nothing in hello world calls.

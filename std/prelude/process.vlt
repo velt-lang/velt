@@ -1,28 +1,7 @@
-// Prelude the members of the builtin `process` namespace that the compiler turns
-// into calls: `process.stdout.write(s)` / `process.stderr.write(s)` (`__processWrite`),
-// `process.env.NAME` / `process.env[name]` (`__processEnv`) and `process.memoryUsage()`
-// (`processMemoryUsage`). The rest of Node's `process` is in `velt/process` (docs/std/process.md).
-
-declare function velt_rt_write_str(stream: u32, s: string);
-declare function velt_rt_env_get(name: string, out: string): bool;
-
-/**
- * Writes `s` to standard output (`stream` 1) or standard error (2), without a newline, ordered
- * with `console.log` / `console.error`. Returns `true`, like Node's `write`.
- */
-export function __processWrite(stream: u32, s: string): bool {
-  velt_rt_write_str(stream, s);
-  return true;
-}
-
-/** The value of environment variable `name`, or `undefined` if it is unset. */
-export function __processEnv(name: string): string | undefined {
-  let out = "";
-  if (velt_rt_env_get(name, out)) {
-    return out;
-  }
-  return undefined;
-}
+// Prelude: `process.memoryUsage()` (`processMemoryUsage`), which the compiler turns into a call
+// of this module's function. The other members of the builtin `process` namespace that compile
+// to calls are hooks (std/lang/hooks/process.vlt); the rest of Node's `process` is in
+// `velt/process` (docs/std/process.md).
 
 declare function velt_rt_memory_rss(): i64;
 declare function velt_rt_memory_heap(): i64;
@@ -36,25 +15,4 @@ export type MemoryUsage = { rss: i64; heapUsed: i64 };
 /** `process.memoryUsage()`: the process's memory use in bytes, now. */
 export function processMemoryUsage(): MemoryUsage {
   return { rss: velt_rt_memory_rss(), heapUsed: velt_rt_memory_heap() };
-}
-
-declare function velt_rt_process_node_argv(): string[];
-
-/**
- * Node's `process.argv`: `[runtime, script, ...args]` (the running executable, the script under
- * `velt run` / `velt dev` or the executable again, then the arguments).
- */
-export function __processArgv(): string[] {
-  return velt_rt_process_node_argv();
-}
-
-declare function velt_rt_tla_at(site: string);
-
-/**
- * Compiler-internal: marks the top-level `await`s after it as at `site` (`path:line:col`, a
- * string literal). The compiler lowers a call to `velt_rt_tla_at(site)` where they suspend
- * instead of this call; a program that ends there writes Node's warning and exits with code 13.
- */
-export function __topLevelAwaitAt(site: string) {
-  velt_rt_tla_at(site);
 }

@@ -153,7 +153,7 @@ export class BufferView {
  * The number of bytes `v` views (std only: a typed array's or a `DataView`'s bytes passed to a
  * system function, crates/velt_vir/src/lower/system_views.rs).
  */
-export function __viewBytes(v: BufferView): usize {
+export function viewBytes(v: BufferView): usize {
   return v.len * v.__size();
 }
 

@@ -20,7 +20,7 @@
 //! - `Object.prototype.toString.call(v)`: the `[object Tag]` string of each member type.
 //! - `Object.getPrototypeOf(v)`, `Object.prototype`, `C.prototype`: an `ObjectPrototype` value
 //!   naming the prototype (std/prelude/record.vlt), which `===` compares by what it names
-//!   (`__prototypeSame`, from `binary`).
+//!   (`prototypeSame`, from `binary`).
 //!
 //! What Velt's fixed object layouts can't do exactly is an error saying it is not supported yet,
 //! never a silent difference: other `Object` functions, prototypes of built-in values whose
@@ -308,7 +308,12 @@ impl FnCx<'_, '_> {
             // An `any` / `unknown` of any expression shape: whether the value held is an array
             // (or a proxy of one).
             if self.uses_proxy() && !self.cx.scopes[self.module].is_std {
-                return self.prelude_hir_call("__anyIsArrayProxy", vec![s], b, span);
+                return self.prelude_hir_call(
+                    velt_common::std_hook!(any_is_array_proxy),
+                    vec![s],
+                    b,
+                    span,
+                );
             }
             return self.intrinsic(hir::Intrinsic::AnyIsArray, vec![s], b, span);
         }
@@ -317,7 +322,12 @@ impl FnCx<'_, '_> {
             // is an array, at run time.
             if let Ok(boxed) = self.generic_as_any(s.clone()) {
                 if self.uses_proxy() && !self.cx.scopes[self.module].is_std {
-                    return self.prelude_hir_call("__anyIsArrayProxy", vec![boxed], b, span);
+                    return self.prelude_hir_call(
+                        velt_common::std_hook!(any_is_array_proxy),
+                        vec![boxed],
+                        b,
+                        span,
+                    );
                 }
                 return self.intrinsic(hir::Intrinsic::AnyIsArray, vec![boxed], b, span);
             }

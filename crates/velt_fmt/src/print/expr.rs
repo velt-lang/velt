@@ -55,7 +55,7 @@ impl<'a> Printer<'a> {
                 }
             }
             ExprKind::Cond { cond, then, els } => self.conditional(cond, then, els),
-            // `e satisfies T`, which the parser writes as a call of the prelude's `__satisfies`.
+            // `e satisfies T`, which the parser writes as a call of the hook `satisfies`.
             ExprKind::Call {
                 callee,
                 type_args,
@@ -254,11 +254,10 @@ impl Printer<'_> {
         })
     }
 
-    /// Is `callee` the `__satisfies` of a `satisfies` operator (its span starts at the
-    /// operand, not at a written `__satisfies`)?
+    /// Is `callee` the hook `satisfies` of a `satisfies` operator? No source can write its
+    /// qualified name.
     fn is_satisfies(&self, callee: &Expr) -> bool {
-        matches!(&callee.kind, ExprKind::Ident(id) if id.name == "__satisfies")
-            && !crate::source::slice(self.src, callee.span).starts_with("__satisfies")
+        matches!(&callee.kind, ExprKind::Ident(id) if id.name == velt_common::std_hook!(satisfies))
     }
 }
 

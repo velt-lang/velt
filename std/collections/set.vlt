@@ -9,6 +9,8 @@
 // hold the stored elements (objects shared, as in JS); `forEach` borrows.
 
 import { share } from "velt/lang/intrinsics";
+import { adaptMismatch } from "velt/lang/hooks/adapt";
+import { anyFnArg } from "velt/lang/hooks/any_methods";
 
 /** An insertion-ordered set of unique values. */
 export class Set<T> implements Iterable<T> {
@@ -151,8 +153,8 @@ export class Set<T> implements Iterable<T> {
  * `s.forEach(f)` through `any`: `f(value, value, whole)` per element, in insertion order;
  * `whole` is `s` as an `any` of its own class (a class extending `Set`, with its own members).
  */
-export function __anySet_forEach<T>(s: Set<T>, args: any[], whole: any): any {
-  const f = __anyFnArg(args, 0);
+function anySet_forEach<T>(s: Set<T>, args: any[], whole: any): any {
+  const f = anyFnArg(args, 0);
   s.forEach((x) => {
     const value: any = x;
     f(value, value, whole);
@@ -160,12 +162,12 @@ export function __anySet_forEach<T>(s: Set<T>, args: any[], whole: any): any {
   return undefined;
 }
 
-// The copy an interface adapter passes for a `Set<unknown>` parameter (std/prelude/adapt.vlt).
+// The copy an interface adapter passes for a `Set<unknown>` parameter (std/lang/hooks).
 
 /** A set of any type held by `v`, as a `Set<unknown>` of its elements. */
-export function __unknownSetIn(v: unknown): Set<unknown> {
+function unknownSetIn(v: unknown): Set<unknown> {
   if (!(v instanceof Set)) {
-    __adaptMismatch(v, "a Set<unknown>");
+    adaptMismatch(v, "a Set<unknown>");
   }
   const a = v as any;
   const vs = a.values();
@@ -177,8 +179,8 @@ export function __unknownSetIn(v: unknown): Set<unknown> {
   return out;
 }
 
-/** Writes the elements of `s` back into the set `v` holds (`__unknownSetIn`). */
-export function __unknownSetOut(v: unknown, s: Set<unknown>): void {
+/** Writes the elements of `s` back into the set `v` holds (`unknownSetIn`). */
+function unknownSetOut(v: unknown, s: Set<unknown>): void {
   const a = v as any;
   a.clear();
   for (const x of s) {

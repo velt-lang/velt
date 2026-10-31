@@ -4,7 +4,7 @@
 //! callee such as `Object.values({ a: 1 })`), an unknown key type is `string`, as in TypeScript
 //! (an object's keys are strings), and an unknown value type is the first value's (widened), which
 //! every other value must have. A spread of an `any` or `object` (`{ ...a }`) makes the literal
-//! a `Record<string, any>`, filled at run time by the prelude's `__spreadAny` with the keys of the
+//! a `Record<string, any>`, filled at run time by the hook `spreadAny` with the keys of the
 //! value held (`Intrinsic::AnyKeys`, then a member read of each).
 
 use velt_common::{Diagnostic, Span};
@@ -408,7 +408,7 @@ impl FnCx<'_, '_> {
             .is_some_and(|d| d != crate::any::Dynamic::Unknown)
     }
 
-    /// `__spreadAny(r, e)` for the spread `...e` of an `any` into the record literal whose
+    /// `spreadAny(r, e)` for the spread `...e` of an `any` into the record literal whose
     /// temporary `recv` (of type `ty`) reads; `None` when reported.
     fn spread_any(&mut self, recv: hir::Expr, ty: TyId, e: &ast::Expr) -> Option<hir::Expr> {
         let value_any = self.record_args(ty).is_some_and(|(k, v)| {
@@ -445,7 +445,7 @@ impl FnCx<'_, '_> {
         };
         let call = synth(
             ast::ExprKind::Call {
-                callee: Box::new(ident(self.proxy_op("__spreadAny"))),
+                callee: Box::new(ident(self.proxy_op(velt_common::std_hook!(spread_any)))),
                 type_args: vec![],
                 args: vec![ident(&name), e.clone()],
                 optional: false,
@@ -488,7 +488,7 @@ fn identity_arrow(span: Span) -> ast::Expr {
 }
 
 /// The key and value of `{ [key]: value }` with a key known only at run time, which the parser
-/// writes as a spread of a call of the prelude's `__computed_key` (`ast::COMPUTED_KEY_FN`).
+/// writes as a spread of a call of the prelude's `computedKey` (`ast::COMPUTED_KEY_FN`).
 pub(crate) fn computed_entry(e: &ast::Expr) -> Option<(&ast::Expr, &ast::Expr)> {
     let ast::ExprKind::Call {
         callee,

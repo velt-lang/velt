@@ -741,7 +741,7 @@ impl<'m> Ctx<'m> {
     pub fn lookup_item(&self, module: usize, name: &str) -> Option<Item> {
         let own = self.scopes[module].items.get(name).copied();
         let Some(it) = own else {
-            return self.prelude.get(name).copied();
+            return self.prelude_or_hook(name);
         };
         match self.meaning(it) {
             crate::type_meanings::Meaning::Type => self.global_value(name).unwrap_or(own),

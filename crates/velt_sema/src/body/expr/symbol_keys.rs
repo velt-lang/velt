@@ -91,7 +91,7 @@ impl FnCx<'_, '_> {
     }
 
     /// `props` with each `[E.M]: v` whose key is an enum member (which the parser writes as a
-    /// key known only at run time, `...__computed_key(E.M, v)`) as the property its value
+    /// key known only at run time, `...computedKey(E.M, v)`) as the property its value
     /// names; `None` if there is none.
     pub(crate) fn enum_computed_keys(
         &mut self,

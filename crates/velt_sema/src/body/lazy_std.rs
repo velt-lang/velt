@@ -83,47 +83,20 @@ fn json_glue_prelude(name: &str) -> Option<usize> {
 /// static methods are deferred.
 const HELPERS: &[&str] = &[
     velt_common::std_dir!(prelude),
+    velt_common::std_dir!(lang_hooks),
     velt_common::std_module!(lang_record),
     velt_common::std_module!(collections),
 ];
 
-/// The prelude functions lowering looks up by name (`velt_vir` `prelude_def`, `LOOSE_EQ`,
-/// `FLOAT_INDEX`, `TLA_MARK`, `track_caller`, …): every `"__…"` name in the code of lowering, the
-/// optimizer and the backends (`tests::every_name_lowering_looks_up_is_a_helper`); classes too.
+/// The prelude methods (and the few other names) lowering looks up by name: every `"__…"` name
+/// in the code of lowering, the optimizer and the backends
+/// (`tests::every_name_lowering_looks_up_is_a_helper`). The compiler's hooks lowering calls are
+/// marked `lowered` in velt_common's `std_hooks.rs` instead.
 pub(crate) const HELPER_NAMES: &[&str] = &[
-    "__ArrayMethod",
-    "__ArrayView",
-    "__ClassMarker",
-    "__HasOwnProperty",
-    "__HasOwnPropertyProxy",
-    "__ThisFn",
     "__any",
-    "__anyConcatPlain",
-    "__anyConcatText",
-    "__anyJoin",
-    "__anyJoinSeen",
-    "__anyLooseEq",
-    "__anyPrimKeep",
-    "__anyPrimText",
-    "__anyPrimTry",
-    "__anyString",
-    "__anyText",
-    "__anyTextUnsupported",
-    "__anyToPrimitive",
-    "__anyToPrimitivePlain",
     "__apply",
     "__arrayCall",
-    "__arrayViewFlush",
-    "__arrayViewFlushAt",
-    "__arrayViewFlushFrom",
-    "__arrayViewLen",
-    "__arrayViewNew",
-    "__arrayViewSort",
-    "__arrayViewSync",
-    "__arrayViewSyncAt",
-    "__arrayViewSyncLen",
     "__bind",
-    "__classObject",
     "__debug_line",
     "__decoded",
     "__deepEquals",
@@ -131,7 +104,6 @@ pub(crate) const HELPER_NAMES: &[&str] = &[
     "__defineSetter__",
     "__delete",
     "__entryAt",
-    "__floatIndex",
     "__get",
     "__has",
     "__hasGet",
@@ -144,26 +116,25 @@ pub(crate) const HELPER_NAMES: &[&str] = &[
     "__liveAt",
     "__lookupGetter__",
     "__lookupSetter__",
-    "__mulToInt32",
     "__placeholder",
     "__plain",
     "__positions",
     "__proto__",
-    "__seen",
     "__set",
     "__target",
-    "__topLevelAwaitAt",
     "__uncaughtHeader",
     "__valueAt",
 ];
 
-/// Is `name` (a definition's short name) one of the compiler's helpers: in [`HELPER_NAMES`], or
-/// a built-in method of a value held as `any` (`__any<Type>_<method>`, `velt_vir`
-/// `builtin_methods`)?
-pub(crate) fn is_helper(name: &str) -> bool {
-    HELPER_NAMES.contains(&name)
+/// Is the definition `qualified` (its full name) one of the compiler's helpers: a hook lowering
+/// calls (`velt_common::std_hooks`, `lowered`), a name in [`HELPER_NAMES`], or a built-in method
+/// of a value held as `any` (`any<Type>_<method>`, `velt_vir` `builtin_methods`)?
+pub(crate) fn is_helper(qualified: &str) -> bool {
+    let name = qualified.rsplit(['.', ':']).next().unwrap_or(qualified);
+    velt_common::std_hooks::is_lowered(qualified)
+        || HELPER_NAMES.contains(&name)
         || name
-            .strip_prefix("__any")
+            .strip_prefix("any")
             .is_some_and(|r| r.starts_with(|c: char| c.is_ascii_uppercase()) && r.contains('_'))
 }
 
@@ -298,7 +269,7 @@ pub(crate) fn deferred(cx: &Ctx, d: DefId) -> bool {
             FnKind::Free | FnKind::Static => match cx.lazy.modules[f.module] {
                 Mode::Eager => false,
                 Mode::Lazy => true,
-                Mode::Helpers => !f.name.rsplit(['.', ':']).next().is_some_and(is_helper),
+                Mode::Helpers => !is_helper(&f.name),
             },
             // A type's methods, where the type is declared (an `extend` of a prelude type
             // keeps its methods checked).

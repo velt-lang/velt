@@ -60,31 +60,30 @@ impl Cx<'_> {
     }
 }
 
-/// The prelude's text of an `any` (velt_sema `any_text.rs`): `__anyString` and
-/// `__anyConcatText` hold a dispatch over every class of the program, and the others are what
+/// The prelude's text of an `any` (velt_sema `any_text.rs`): `anyString` and
+/// `anyConcatText` hold a dispatch over every class of the program, and the others are what
 /// they call. Too large to copy per call site, each keeps one instance and takes the user's call
 /// site as its last argument (`at`, a `"path:line:col"` constant per site, like the hidden
 /// location argument of Rust's `#[track_caller]`), which its stops write into their messages:
 /// their panics get no suffix of their own ([`Cx::reports_own_site`]).
 const UNTRACKED: [&str; 12] = [
-    "__anyString",
-    "__anyConcatText",
-    "__anyConcatPlain",
-    "__anyText",
-    "__anyPrimText",
-    "__anyPrimTry",
-    "__anyTextUnsupported",
-    "__anyJoin",
-    "__anyJoinSeen",
-    "__anyToPrimitive",
-    "__anyToPrimitivePlain",
-    "__anyPrimKeep",
+    velt_common::std_hook!(any_string),
+    velt_common::std_hook!(any_concat_text),
+    velt_common::std_hook!(any_concat_plain),
+    velt_common::std_hook!(any_text),
+    velt_common::std_hook!(any_prim_text),
+    velt_common::std_hook!(any_prim_try),
+    velt_common::std_hook!(any_text_unsupported),
+    velt_common::std_hook!(any_join),
+    velt_common::std_hook!(any_join_seen),
+    velt_common::std_hook!(any_primitive),
+    velt_common::std_hook!(any_primitive_plain),
+    velt_common::std_hook!(any_prim_keep),
 ];
 
-/// Is the function named `name` (its last path segment) one of [`UNTRACKED`]?
+/// Is the function named `name` (its full name) one of [`UNTRACKED`]?
 fn untracked(name: &str) -> bool {
-    let last = name.rsplit(['.', ':', '/']).next().unwrap_or(name);
-    UNTRACKED.contains(&last)
+    UNTRACKED.contains(&name)
 }
 
 impl Cx<'_> {

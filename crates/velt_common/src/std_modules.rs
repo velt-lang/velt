@@ -3,8 +3,8 @@
 //! user code may import (§2).
 //! CONTRACT FILE — changes need maintainer review (docs/internals/contracts/README.md).
 //!
-//! Each entry names a module by its path below the std root (`prelude/adapt` for
-//! `std/prelude/adapt.vlt`, `lang/proxy` for `std/lang/proxy/index.vlt`). The compiler spells a
+//! Each entry names a module by its path below the std root (`prelude/map` for
+//! `std/prelude/map.vlt`, `lang/proxy` for `std/lang/proxy/index.vlt`). The compiler spells a
 //! module's canonical path (`"std/lang/proxy"`), a definition's qualified name
 //! (`"std/lang/proxy::Proxy"`) or a module's import specifier (`"velt/jsx"`) only through the
 //! macros below, never as a string literal of its own, so moving a std file changes this table
@@ -58,8 +58,6 @@ table! {
     // The prelude (loaded into every program, never imported).
     /// The prelude's folder.
     prelude => "prelude",
-    prelude_adapt => "prelude/adapt",
-    prelude_any_ops => "prelude/any_ops",
     prelude_array => "prelude/array",
     prelude_bits => "prelude/bits",
     prelude_compare => "prelude/compare",
@@ -78,12 +76,27 @@ table! {
 
     // What implements the language and its globals (never imported by user code).
     lang => "lang",
+    /// The compiler's hooks: std functions lowering calls (`std_hooks.rs`; std-layout.md §10b).
+    lang_hooks => "lang/hooks",
+    lang_hooks_adapt => "lang/hooks/adapt",
+    lang_hooks_any_object => "lang/hooks/any_object",
+    lang_hooks_any_ops => "lang/hooks/any_ops",
+    lang_hooks_any_text => "lang/hooks/any_text",
+    lang_hooks_array => "lang/hooks/array",
+    lang_hooks_array_view => "lang/hooks/array_view",
+    lang_hooks_async_iter => "lang/hooks/async_iter",
+    lang_hooks_class_object => "lang/hooks/class_object",
+    lang_hooks_iter => "lang/hooks/iter",
+    lang_hooks_number => "lang/hooks/number",
+    lang_hooks_process => "lang/hooks/process",
+    lang_hooks_proxy => "lang/hooks/proxy",
+    lang_hooks_record => "lang/hooks/record",
+    lang_hooks_syntax => "lang/hooks/syntax",
     lang_import_meta => "lang/import_meta",
     /// The compiler's intrinsics, declared (`declare intrinsic function`; std-layout.md §10).
     lang_intrinsics => "lang/intrinsics",
     lang_proxy => "lang/proxy",
     lang_proxy_array => "lang/proxy/array",
-    lang_proxy_ops => "lang/proxy/ops",
     lang_record => "lang/record",
     lang_sort => "lang/sort",
     lang_sort_stable => "lang/sort/stable",

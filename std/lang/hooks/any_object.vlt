@@ -1,0 +1,256 @@
+// velt/lang/hooks (internal): `Object.*` and `delete` on `any` values (issue #924,
+// docs/reference/types.md "any and unknown"): spreads, own keys, values and entries,
+// prototypes, the `Object.prototype.toString` tag, a constructor's name and deleting a key. A
+// program that loads `Proxy` calls the versions in proxy_ops.vlt instead, which ask a proxy's
+// traps (velt_sema `body/expr/proxy.rs`).
+
+import { anyDelete } from "velt/lang/intrinsics";
+import { arrayIndex } from "./record";
+
+/**
+ * `{ ...o }` of an `any` (or `object`) `o` in an object literal: the record `r` the literal
+ * builds gets every own enumerable key of the value `o` holds, in its order (`null` and
+ * `undefined` have none, as in JavaScript).
+ */
+export function spreadAny(r: Record<string, any>, o: any): void {
+  if (o === null || o === undefined) {
+    return;
+  }
+  for (const k of Object.keys(o)) {
+    r.__set(k, anyMember(o, k));
+  }
+}
+
+/**
+ * `Object.hasOwn(o, k)` of an `any` (or `object`) `o`: one of its own enumerable keys, or an
+ * array's or string's `length` (a proxy's `getOwnPropertyDescriptor` trap: velt/lang/hooks/proxy).
+ */
+export function anyHasOwn(o: any, key: string | symbol): boolean {
+  if (typeof key !== "string") {
+    // Symbol-keyed members are not among the keys `Object.keys` lists.
+    return false;
+  }
+  const k = key as string;
+  if ((Array.isArray(o) || typeof o === "string") && k === "length") {
+    return true;
+  }
+  return Object.keys(o).includes(k);
+}
+
+/**
+ * Member `k` (one of `Object.keys(o)`) of the value `o` holds: an array's or a string's by its
+ * index.
+ */
+export function anyMember(o: any, k: string): any {
+  if (Array.isArray(o)) {
+    return o[Number(k)];
+  }
+  if (typeof o === "string") {
+    return o[Number(k) as i64];
+  }
+  return o[k];
+}
+
+/** `Object.values(o)` of an `any` (or `object`) `o`. */
+export function anyValues(o: any): any[] {
+  const out: any[] = [];
+  for (const k of Object.keys(o)) {
+    out.push(anyMember(o, k));
+  }
+  return out;
+}
+
+/** `Object.entries(o)` of an `any` (or `object`) `o`. */
+export function anyEntries(o: any): [string, any][] {
+  const out: [string, any][] = [];
+  for (const k of Object.keys(o)) {
+    out.push([k, anyMember(o, k)]);
+  }
+  return out;
+}
+
+/**
+ * `Object.getPrototypeOf(v)` of an `any` (or `object`) `v` that holds no class instance: an
+ * array's or an object's; anything else is not supported yet.
+ */
+export function anyPrototype(v: any): ObjectPrototype | null {
+  if (v === null || v === undefined) {
+    panic("TypeError: Cannot convert undefined or null to object");
+  }
+  if (Array.isArray(v)) {
+    return Array.prototype;
+  }
+  if (typeof v === "object") {
+    return Object.prototype;
+  }
+  panic(
+    `TypeError: \`Object.getPrototypeOf\` of a ${typeof v} through \`any\` is not supported yet (#924)`,
+  );
+}
+
+/** `Object.getPrototypeOf(r)` of an `any` holding a record: `null` for `Object.create(null)`'s. */
+export function anyRecordPrototype(r: any): ObjectPrototype | null {
+  // A record made by `Object.create(null)` inherits nothing, `__proto__` included.
+  if ("__proto__" in r) {
+    return Object.prototype;
+  }
+  return null;
+}
+
+/** `Object.getPrototypeOf(v)` of an `any` holding an instance of class `name`, which Velt doesn't name. */
+export function anyPrototypeUnsupported(name: string): ObjectPrototype | null {
+  panic(
+    `TypeError: \`Object.getPrototypeOf\` of a ${name} through \`any\` is not supported yet (#924)`,
+  );
+}
+
+/** `Object.prototype.toString.call(v)` of an `any` (or `object`) `v` that holds no class instance. */
+export function anyObjectTag(v: any): string {
+  if (v === undefined) {
+    return "[object Undefined]";
+  }
+  if (v === null) {
+    return "[object Null]";
+  }
+  if (Array.isArray(v)) {
+    return "[object Array]";
+  }
+  const t = typeof v;
+  if (t === "number") {
+    return "[object Number]";
+  }
+  if (t === "string") {
+    return "[object String]";
+  }
+  if (t === "boolean") {
+    return "[object Boolean]";
+  }
+  if (t === "function") {
+    return "[object Function]";
+  }
+  if (t === "symbol") {
+    return "[object Symbol]";
+  }
+  return "[object Object]";
+}
+
+/** `Object.prototype.toString.call(v)` of an `any` holding an instance of class `name`, whose tag Velt doesn't know. */
+export function anyTagUnsupported(name: string): string {
+  panic(
+    `TypeError: \`Object.prototype.toString.call\` of a ${name} through \`any\` is not supported yet (#924)`,
+  );
+}
+
+/**
+ * `v.constructor.name` of an `any` (or `object`) `v` that holds no class instance: the name of
+ * its constructor in JavaScript.
+ */
+export function anyCtorName(v: any): string {
+  if (v === undefined || v === null) {
+    panic(
+      `TypeError: Cannot read properties of ${v === null ? "null" : "undefined"} (reading 'constructor')`,
+    );
+  }
+  if (Array.isArray(v)) {
+    return "Array";
+  }
+  const t = typeof v;
+  if (t === "number") {
+    return "Number";
+  }
+  if (t === "string") {
+    return "String";
+  }
+  if (t === "boolean") {
+    return "Boolean";
+  }
+  if (t === "symbol") {
+    return "Symbol";
+  }
+  if (t === "bigint") {
+    return "BigInt";
+  }
+  if (t === "function") {
+    // `Function`, `AsyncFunction` or `GeneratorFunction`: a function value doesn't say which.
+    panic("TypeError: `constructor` of a function through `any` is not supported yet (#926)");
+  }
+  return "Object";
+}
+
+/** `v.constructor.name` of an `any` holding an instance of class `name`, whose constructor Velt doesn't name. */
+export function anyCtorNameUnsupported(name: string): string {
+  panic(`TypeError: \`constructor\` of a ${name} through \`any\` is not supported yet (#926)`);
+}
+
+/**
+ * `delete o.k` / `delete o[k]` of an `any` (or `object`) `o` (strict code) that is not a proxy
+ * (a proxy's `deleteProperty` trap: velt/lang/hooks/proxy): `anyDeletePlain`, and Node's `TypeError`
+ * when the property cannot go.
+ */
+export function anyDeleteMember(o: any, k: any): boolean {
+  if (o === null || o === undefined) {
+    panic("TypeError: Cannot convert undefined or null to object");
+  }
+  if (typeof o === "string") {
+    // A string's characters and `length` are fixed; it has no other own properties.
+    const key = typeof k === "string" ? (k as string) : `${k}`;
+    const i = arrayIndex(key) as number;
+    if (key === "length" || (i >= 0 && i < (o.length as number))) {
+      panic(`TypeError: Cannot delete property '${key}' of [object String]`);
+    }
+    return true;
+  }
+  if (typeof o !== "object" && typeof o !== "function") {
+    // A number's or a boolean's properties are its prototype's.
+    return true;
+  }
+  if (!anyDeletePlain(o, k)) {
+    // Strict code: only an array's `length` refuses.
+    panic(`TypeError: Cannot delete property '${String(k)}' of [object Array]`);
+  }
+  return true;
+}
+
+/**
+ * `delete o[key]` of a plain (not proxy) object `o` (`Reflect.deleteProperty`): a record's key
+ * is removed and an optional field made absent; a key `o` does not have is `true` and an array's
+ * `length` `false`. Other properties are fixed by their types, which Velt cannot remove yet.
+ */
+export function anyDeletePlain(o: any, key: any): boolean {
+  if (typeof key === "symbol") {
+    panic(
+      "TypeError: deleting a symbol-keyed property of this value through `any` is not supported yet (#823)",
+    );
+  }
+  if (typeof key !== "string" && typeof key !== "number") {
+    panic("TypeError: this property key is not supported through a proxy yet (#823)");
+  }
+  const k = typeof key === "string" ? (key as string) : `${key as number}`;
+  // Velt's arrays have no holes: an element past the end is not there, and one inside would
+  // leave a hole (Node keeps the length). An array method on a proxy deletes the last ones
+  // before it writes the shorter length (velt/lang/proxy/array).
+  if (Array.isArray(o)) {
+    const i = arrayIndex(k) as number;
+    if (i >= 0) {
+      const n = o.length as number;
+      if (i >= n) {
+        return true;
+      }
+      panic(
+        `TypeError: deleting element ${i} of an array of ${n} through \`any\` is not supported yet (#823): Velt's arrays have no holes`,
+      );
+    }
+  }
+  return anyDelete(o, k);
+}
+
+/**
+ * `Object.prototype.hasOwnProperty` read as a value (`const hasOwn =
+ * Object.prototype.hasOwnProperty`): `hasOwn.call(o, k)` is `Object.hasOwn(o, k)`.
+ */
+export class HasOwnProperty {
+  /** Whether `o` has the own property `key`. */
+  call(o: any, key: string | symbol): boolean {
+    return anyHasOwn(o, key);
+  }
+}

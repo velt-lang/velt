@@ -18,7 +18,7 @@ pub(crate) enum DeclaredIntrinsic {
     /// `targetFeature("sha-arm")`: the statement that gates a std function on a CPU extension
     /// (`body::gated`).
     TargetFeature,
-    /// `anyToPrimitive(value, hint, at)` in the prelude's `__anyToPrimitive`: the per-class
+    /// `anyToPrimitive(value, hint, at)` in the hook `anyPrimitive`: the per-class
     /// dispatch sema writes out (`body::expr::any_prim`).
     AnyToPrimitive,
     /// A `declare intrinsic function` that names none, or one outside std/lang/intrinsics: the

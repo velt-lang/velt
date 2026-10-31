@@ -781,7 +781,7 @@ fn calls_object_create_null(module: &velt_syntax::ast::Module) -> bool {
 }
 
 /// Does `module` read a `constructor` property (`x.constructor`)? Only then does the prelude's
-/// `__anyConstructor` hold the dispatch over the program's classes, whose objects are module
+/// `anyConstructor` hold the dispatch over the program's classes, whose objects are module
 /// state (`body::expr::ctor_objects`); other programs get none of it.
 fn reads_constructor(module: &velt_syntax::ast::Module) -> bool {
     use velt_syntax::ast::{self, ExprKind as E};

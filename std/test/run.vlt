@@ -1,4 +1,4 @@
-// velt/test (internal): the entry of a test program (`__run`), and running one file's tests in
+// velt/test (internal): the entry of a test program (`runRegistered`), and running one file's tests in
 // this process, reporting each test in marker lines for the runner or as the runner shows them.
 
 import { JSON } from "velt/prelude/json/json";
@@ -17,7 +17,7 @@ import { errorText, throwLoc } from "velt/lang/intrinsics";
 export const MARK = "::velt-test:";
 
 /** The entry of a test program: run as the runner, as one file's tests, or every file here. */
-export async function __run() {
+export async function runRegistered() {
   const plan = process.env.VELT_TEST_PLAN;
   const file = process.env.VELT_TEST_FILE;
   if (file != null) {

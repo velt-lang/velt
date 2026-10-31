@@ -11,10 +11,12 @@
 // Its bodies use dynamic operations without making the program pay for them: sema counts a
 // program as using `any` members only when its own code constructs a `Proxy` or calls `Reflect`.
 // A program that never names them doesn't load this module, and its operations on `any` don't
-// test for a proxy (velt/lang/proxy/ops).
+// test for a proxy (velt/lang/hooks/proxy).
 
-import { __ArrayMethod, __proxyArrayCall, __proxyArrayMethod } from "velt/lang/proxy/array";
+import { ArrayMethod, proxyArrayInvoke, proxyArrayMethod } from "velt/lang/proxy/array";
 import { proxyArrayHole } from "velt/lang/intrinsics";
+import { anyDeletePlain } from "velt/lang/hooks/any_object";
+import { arrayIndex } from "velt/lang/hooks/record";
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
@@ -60,7 +62,7 @@ export type ProxyHandler<T> = {
 
 /** The array index the string `s` names (canonical decimal, 0 to 2^32 - 2), or -1. */
 function proxyIndex(s: string): number {
-  return __arrayIndex(s) as number;
+  return arrayIndex(s) as number;
 }
 
 /**
@@ -146,7 +148,7 @@ function proxyKey(key: any): string | symbol {
  * symbol, else U+FFFF and `Symbol(d)` (velt_sema's `symbols.rs`; of two symbol constants with
  * one description, the second's name ends in ` #2`, which this doesn't give).
  */
-export function __symbolKeyName(s: symbol): string {
+export function symbolKeyName(s: symbol): string {
   const d = String(s);
   // The well-known symbols, as a list in a string (an array here would be a counted value in
   // every program that loads `Proxy`).
@@ -164,7 +166,7 @@ export function __symbolKeyName(s: symbol): string {
 /** A key a `Reflect` function passes to a plain (not proxy) value: a symbol by its name. */
 function plainKey(key: any): any {
   if (typeof key === "symbol") {
-    return __symbolKeyName(key as symbol);
+    return symbolKeyName(key as symbol);
   }
   return key;
 }
@@ -673,12 +675,12 @@ export class Proxy {
   }
 
   /**
-   * `p.m(...args)` where the `get` trap answered an array method `m` (`__ArrayMethod`, velt_vir's
+   * `p.m(...args)` where the `get` trap answered an array method `m` (`ArrayMethod`, velt_vir's
    * proxy call slot): the method's generic algorithm with `receiver` (the proxy) as `this`.
    */
   __arrayCall(m: any, args: any[], receiver: any): any {
-    if (m instanceof __ArrayMethod) {
-      return __proxyArrayCall(this, m.name, args, receiver);
+    if (m instanceof ArrayMethod) {
+      return proxyArrayInvoke(this, m.name, args, receiver);
     }
     return undefined;
   }
@@ -722,12 +724,12 @@ export class Reflect {
         return undefined;
       }
       // A method that a call on a proxy runs through the proxy (`__arrayCall`).
-      if (__proxyArrayMethod(key)) {
-        return new __ArrayMethod(key);
+      if (proxyArrayMethod(key)) {
+        return new ArrayMethod(key);
       }
       // What `splice`, `map`, `filter` and `slice` read to make their result: Node's `Array`.
       if (key === "constructor") {
-        return new __ArrayMethod("Array");
+        return new ArrayMethod("Array");
       }
     }
     if (typeof key === "symbol") {
@@ -887,7 +889,7 @@ export class Reflect {
     if (typeof key === "symbol" && target instanceof Record) {
       return target.__symDelete(key) as boolean;
     }
-    return __anyDeletePlain(target, proxyKey(key));
+    return anyDeletePlain(target, proxyKey(key));
   }
 
   /**

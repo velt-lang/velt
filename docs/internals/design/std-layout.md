@@ -440,6 +440,30 @@ The fix, together with §10:
   function in the native ABI (docs/internals/design/native-packages.md). They leave std with the
   drivers.
 
+**Status (commit 7, functions done).** The free functions and types are hooks now: 110 of them in
+`crates/velt_common/src/std_hooks.rs`, each with its module, its name and its signature, which
+`crates/velt_sema/tests/std_hooks.rs` checks against std (and that no program can name one).
+They live in `std/lang/hooks/` (`adapt`, `any_methods`, `any_object`, `any_ops`, `any_text`,
+`array`, `array_view`, `class_object`, `iter`, `number`, `process`, `proxy`, `record`,
+`syntax`), loaded by the prelude (`std/prelude/hooks.vlt`) except `proxy.vlt`, which comes with
+`Proxy`; a few stay next to what they need, unexported or in `lang/` (`lang/proxy/array`,
+`lang/this_fn`, `lang/typed_array/core`, `collections/set`). Sema names a hook by its qualified
+name (`std/lang/hooks/number::f64ToString`), an identifier or type name no source can write
+(`Ctx::std_def`); the globals no longer re-export the proxy and `this` hooks, and the global of
+`this` functions loads on its marker line instead of a name. The built-in methods of a value held
+as `any` keep a name prefix (`anyStr_trim`, found by `velt_vir` `any_builtin.rs`). `velt test`'s
+generated `main` calls `velt/test`'s `registerFile`, `registerTest`, `registerAsyncTest` and
+`runRegistered`, its documented runner API. The JSON hooks (`JSON.__parseFromContext`, the
+reader's and writer's) are left to the JSON port.
+
+Left for a follow-up: the `__` *methods* (on `Record`, `Map`, `Proxy`, the typed arrays,
+`RegExp`, the fetch bodies, `String`, `Error`, `ThisFn`, the test suite) and the `__inspect`
+protocol. Each needs its own change in sema and lowering, which call them as methods: the
+internal ones become unexported functions of their class's module taking the object, and the
+protocols that programs implement (`__inspect`, which user classes define and `console.log`
+calls; a typed array's `__kind`, which a subclass may override) need the public names above,
+with `Symbol.for(…)` method keys in sema first.
+
 ### 11. Per-type code generation (JSON, equality, hashing, inspect) is a privilege today
 
 A package can write its own JSON scanner, reader and writer. What it cannot do is what makes std's

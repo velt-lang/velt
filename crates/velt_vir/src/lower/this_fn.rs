@@ -1,4 +1,4 @@
-//! Calls of a function whose `this` is bound at the call: std/lang/this_fn/index.vlt's `__ThisFn`, the
+//! Calls of a function whose `this` is bound at the call: std/lang/this_fn/index.vlt's `ThisFn`, the
 //! value of a function expression with a `this: any` parameter (sema `this_fn_expr.rs`). Held
 //! as an `any` (a `Function`), it is a function: `typeof` is `"function"` (`Cx::is_function_object`),
 //! a plain call `f(x)` (its `AnyApply` slot, any_glue.rs) is `__apply(undefined, [x])`, and a method call
@@ -15,10 +15,10 @@ use super::{cint, FnLower};
 use crate::vir::{self, BinOp, Operand, Place, Rvalue, Ty};
 
 /// The qualified name of std/lang/this_fn/index.vlt's class.
-pub(super) const STD_THIS_FN: &str = velt_common::std_item!(lang_this_fn, "__ThisFn");
+pub(super) const STD_THIS_FN: &str = velt_common::std_hook!(this_fn);
 
 impl super::Cx<'_> {
-    /// Is `t` std/lang/this_fn/index.vlt's `__ThisFn` (module docs)?
+    /// Is `t` std/lang/this_fn/index.vlt's `ThisFn` (module docs)?
     pub(super) fn is_this_fn(&self, t: TyId) -> bool {
         let TyKind::Adt(d, _) = self.types.kind(t) else {
             return false;
@@ -28,7 +28,7 @@ impl super::Cx<'_> {
 }
 
 impl FnLower<'_, '_> {
-    /// The type of `__ThisFn`, when the program has it.
+    /// The type of `ThisFn`, when the program has it.
     fn this_fn_ty(&mut self) -> Option<TyId> {
         let d = self
             .cx
@@ -63,7 +63,7 @@ impl FnLower<'_, '_> {
         (arr, arr_ty)
     }
 
-    /// `__apply(this, args)` on the `__ThisFn` at `data` (of type `ty`) with the owned `this`
+    /// `__apply(this, args)` on the `ThisFn` at `data` (of type `ty`) with the owned `this`
     /// and the arguments at `argv`, its result into `*out`; returns the status.
     fn this_fn_invoke(
         &mut self,
@@ -82,7 +82,7 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// In the `AnyCall` slot of a type `ty`, when it is `__ThisFn`: `f.call(thisArg, ...args)` is
+    /// In the `AnyCall` slot of a type `ty`, when it is `ThisFn`: `f.call(thisArg, ...args)` is
     /// `__apply(thisArg, args)` and `f.bind(thisArg, ...args)` is `__bind(thisArg, args)` (a
     /// method's rest parameter is not packed through `any`). Continues in the block for the
     /// other keys.
@@ -133,7 +133,7 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// The `AnyApply` slot of `__ThisFn` (`ty`): a plain call, with `undefined` as `this`.
+    /// The `AnyApply` slot of `ThisFn` (`ty`): a plain call, with `undefined` as `this`.
     pub(super) fn this_fn_apply_body(
         &mut self,
         (data, argv, argc, out): (vir::Local, vir::Local, vir::Local, vir::Local),
@@ -151,7 +151,7 @@ impl FnLower<'_, '_> {
     /// In an `AnyCall` slot, after reading the member `f` (owned, of the dynamic type `fty`;
     /// `any` parts `fd`, `fdesc`) for
     /// a call on the object `data` (of type `pty`; a proxy's `get` trap answered it): when `f`
-    /// is a `__ThisFn`, its call with the object as `this`. Continues in the block for any
+    /// is a `ThisFn`, its call with the object as `this`. Continues in the block for any
     /// other `f`.
     pub(super) fn this_fn_method_call(
         &mut self,

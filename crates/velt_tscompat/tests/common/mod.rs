@@ -172,7 +172,16 @@ impl Loader {
             }
             None => {
                 let file = relative(self.files[from].parent()?, spec)?;
-                (file.to_string_lossy().into_owned(), false, file)
+                // A std file's relative import names a std module (`./number` in
+                // std/lang/hooks/index.vlt is `std/lang/hooks/number`).
+                let std = std_dir().canonicalize().expect("std");
+                match file.strip_prefix(&std) {
+                    Ok(rel) if self.modules[from].is_std => {
+                        let rel = rel.with_extension("").to_string_lossy().replace('\\', "/");
+                        (format!("std/{rel}"), true, file)
+                    }
+                    _ => (file.to_string_lossy().into_owned(), false, file),
+                }
             }
         };
         if let Some(i) = self.modules.iter().position(|m| m.path == path) {

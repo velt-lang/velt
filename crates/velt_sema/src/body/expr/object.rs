@@ -390,7 +390,7 @@ impl FnCx<'_, '_> {
 
     /// `props` with each `[x]: v` whose `x` is a local (a key known only at run time, not a
     /// module constant naming a symbol or string) written as the parser writes other such keys
-    /// (`...__computed_key(x, v)`, `record_literal::computed_entry`); `None` if there is none.
+    /// (`...computedKey(x, v)`, `record_literal::computed_entry`); `None` if there is none.
     fn local_computed_keys(&self, props: &[ast::ObjectProp]) -> Option<Vec<ast::ObjectProp>> {
         let local = |p: &ast::ObjectProp| match p {
             ast::ObjectProp::KeyValue(k, _) if crate::symbols::is_computed_key(k) => {

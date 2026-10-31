@@ -430,7 +430,6 @@ The iteration protocol behind `for...of` and `for await` ([Control flow](../refe
 | `interface AsyncIterableIterator<T, E = never>` | `extends AsyncIterator<T, E>, AsyncIterable<T, E>`; `AsyncGenerator` implements it, and a value converts to an `AsyncIterable<T, E>` |
 | `[Symbol.iterator](): Iterator<T>` on `T[]`, `string` (`Iterator<string>`), `Map<K, V>` (`Iterator<[K, V]>`) | makes them `Iterable`: they convert to `Iterable<T>` values and satisfy `Iterable<T>` bounds. An array's iterator is a live view (JS's: it reads the length at each step); a string's yields characters (code points); a map's iterates the entries as of the call (`entries()`) |
 | `class ArrayIterator<T>`, `class StringIterator` | the iterators of arrays and strings (TS's names): `implements IterableIterator<T>, IteratorObject<T>` |
-| `class __IterableObject<T, E = never>`, `class __AsyncIterableObject<T, E = never>` | an [iterable object literal](../reference/types.md#iterable-object-literals) (`{ *[Symbol.iterator]() { ... } }`): `implements Iterable<T, E>` (`AsyncIterable<T, E>`) by calling the method it holds |
 
 An `extend` block defining `[Symbol.iterator](): Iterator<T, E>` (or
 `[Symbol.asyncIterator](): AsyncIterator<T, E>`) makes its type an `Iterable<T, E>` (or

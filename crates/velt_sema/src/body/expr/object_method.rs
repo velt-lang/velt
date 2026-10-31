@@ -3,12 +3,12 @@
 //! generator; `[Symbol.asyncIterator]()` / `async *[Symbol.asyncIterator]()` for an async
 //! iterable). The method is a function value — a generator function expression
 //! (`gen_closure.rs`) or an arrow — and the object is the prelude's
-//! `__IterableObject<T, E>` (`__AsyncIterableObject<T, E>`) holding it, an `Iterable<T, E>`
+//! `IterableObject<T, E>` (`AsyncIterableObject<T, E>`) holding it, an `Iterable<T, E>`
 //! whose `[Symbol.iterator]()` calls it:
 //!
 //! ```text
 //! { *[Symbol.iterator](): Generator<T> { body } }
-//!   →  { const <iterator#N> = function* (): Iterator<T> { body }; new __IterableObject(<iterator#N>) }
+//!   →  { const <iterator#N> = function* (): Iterator<T> { body }; new IterableObject(<iterator#N>) }
 //! ```
 //!
 //! An object literal is plain data in Velt (its type has fields only; the parser makes a plain
@@ -63,8 +63,8 @@ impl FnCx<'_, '_> {
         let mut lets = vec![];
         self.hidden_local(syn.ident(&syn.value), f, false, &mut lets);
         let class = match is_async {
-            true => "__AsyncIterableObject",
-            false => "__IterableObject",
+            true => velt_common::std_hook!(async_iterable_object),
+            false => velt_common::std_hook!(iterable_object),
         };
         let new = syn.expr(ast::ExprKind::New {
             class: ast::TypeExpr {

@@ -12,7 +12,7 @@
 //!   around its steps (`counter`).
 //! - **Simplification** (`simplify`): comparisons and branches the facts decide become
 //!   constants and jumps; `trunc`/`floor`/`ceil`/`round` of whole values, `abs` of
-//!   non-negative ones, ToInt32 of constants and int32 values and `__floatIndex` of whole
+//!   non-negative ones, ToInt32 of constants and int32 values and `floatIndex` of whole
 //!   indexes need no call; a parameter known to be one constant is that constant.
 //! - **Narrowing** (`narrow`, `rewrite`): an `f64` local whose every value is whole, never NaN
 //!   and within ±2^53 (where integer arithmetic is exact), and that is never `-0` or only read
@@ -68,11 +68,11 @@ const ROUNDING: [&str; 4] = [
 /// `Math.abs` (`f64 -> f64`).
 const ABS: &str = "velt_rt_math_fabs";
 /// The prelude's `xs[i]` with a float `i` (`std/prelude/math.vlt`).
-const FLOAT_INDEX: &str = velt_common::std_item!(prelude_math, "__floatIndex");
+const FLOAT_INDEX: &str = velt_common::std_hook!(float_index);
 
 /// The prelude's int32 helpers (`std/prelude/math.vlt`), inlined in debug builds too so that
 /// `numrep` sees their integer paths.
-const INT32_HELPERS: [&str; 1] = [velt_common::std_item!(prelude_math, "__mulToInt32")];
+const INT32_HELPERS: [&str; 1] = [velt_common::std_hook!(mul_to_int32)];
 
 /// Per function: is it (an instance of) one of the prelude functions `names`? Instances made
 /// for a caller's location (panic messages) append `_L…` to the symbol.
@@ -99,7 +99,7 @@ pub(crate) fn int32_helpers(funcs: &[Function]) -> Vec<bool> {
 /// The program-wide names `numrep` recognizes.
 pub(crate) struct Env<'p> {
     externs: &'p [ExternFn],
-    /// Per function: is it (an instance of) the prelude's `__floatIndex`?
+    /// Per function: is it (an instance of) the prelude's `floatIndex`?
     float_index: Vec<bool>,
     /// The arrays' aggregate: its field 1 is a length, below 2^53.
     array: Option<AggId>,

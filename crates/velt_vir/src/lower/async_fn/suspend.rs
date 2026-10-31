@@ -96,7 +96,7 @@ impl FnLower<'_, '_> {
         self.cancel_cases(k, d);
     }
 
-    /// A call to the prelude's `__topLevelAwaitAt(site)` (or to the `velt_rt_tla_at` it forwards
+    /// A call to the prelude's `topLevelAwaitAt(site)` (or to the `velt_rt_tla_at` it forwards
     /// to, which a forwarder call becomes) from user code: the mark velt_sema puts before each
     /// top-level `await`, lowered to nothing but [`FnLower::tla_site`]. The prelude's own call
     /// is the runtime's. Matched by `DefId` ([`super::super::Cx::tla_marks`]), so a user
@@ -401,10 +401,10 @@ impl FnLower<'_, '_> {
 }
 
 /// The fully qualified name of the prelude's top-level `await` mark (std/prelude/process.vlt).
-const TLA_MARK: &str = velt_common::std_item!(prelude_process, "__topLevelAwaitAt");
+const TLA_MARK: &str = velt_common::std_hook!(top_level_await_at);
 
 impl super::super::Cx<'_> {
-    /// The prelude's `__topLevelAwaitAt` and the `velt_rt_tla_at` declaration its body calls,
+    /// The prelude's `topLevelAwaitAt` and the `velt_rt_tla_at` declaration its body calls,
     /// once looked up (none when the program lacks them).
     pub(in crate::lower) fn tla_marks(&mut self) -> [Option<DefId>; 2] {
         let hir = self.hir;

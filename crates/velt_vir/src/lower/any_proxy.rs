@@ -6,7 +6,7 @@
 //! | slot | calls |
 //! |---|---|
 //! | `AnyGet` / `AnyIndex` | `__get(key, receiver)` (a number key as its string) |
-//! | `AnyCall` | `__get(key, receiver)`, then the function value it returns (`AnyApply` slot); an array method (`__ArrayMethod`) is `__arrayCall(method, args, receiver)` |
+//! | `AnyCall` | `__get(key, receiver)`, then the function value it returns (`AnyApply` slot); an array method (`ArrayMethod`) is `__arrayCall(method, args, receiver)` |
 //! | `AnySet` / `AnySetIndex` | `__set(key, value, receiver)`; `false` is Node's `TypeError` |
 //! | `AnyApply` | not a function (a proxy of a function comes later) |
 //!
@@ -28,14 +28,12 @@ pub(super) const PRELUDE_REFLECT: &str = velt_common::std_item!(lang_proxy, "Ref
 /// The start of the names of `Reflect`'s methods.
 pub(super) const PRELUDE_REFLECT_METHODS: &str = velt_common::std_item!(lang_proxy, "Reflect.");
 /// The prelude's array method read through a proxy (std/lang/proxy/array.vlt).
-pub(super) const PRELUDE_ARRAY_METHOD: &str =
-    velt_common::std_item!(lang_proxy_array, "__ArrayMethod");
+pub(super) const PRELUDE_ARRAY_METHOD: &str = velt_common::std_hook!(array_method);
 
-/// The prelude's `Object.prototype.hasOwnProperty` read as a value (std/prelude/adapt.vlt)
-/// and its version that asks a proxy (std/lang/proxy/ops.vlt).
-pub(super) const PRELUDE_HAS_OWN: &str = velt_common::std_item!(prelude_adapt, "__HasOwnProperty");
-pub(super) const PROXY_HAS_OWN: &str =
-    velt_common::std_item!(lang_proxy_ops, "__HasOwnPropertyProxy");
+/// The prelude's `Object.prototype.hasOwnProperty` read as a value (std/lang/hooks)
+/// and its version that asks a proxy (std/lang/hooks/proxy.vlt).
+pub(super) const PRELUDE_HAS_OWN: &str = velt_common::std_hook!(has_own_property);
+pub(super) const PROXY_HAS_OWN: &str = velt_common::std_hook!(has_own_property_proxy);
 
 /// How the key reaches a proxy slot.
 #[derive(Clone, Copy)]
@@ -211,7 +209,7 @@ impl FnLower<'_, '_> {
         self.terminate(Terminator::Return(st));
     }
 
-    /// The type of velt/lang/proxy's `__ArrayMethod`, when the program has it.
+    /// The type of velt/lang/proxy's `ArrayMethod`, when the program has it.
     fn array_method_ty(&mut self) -> Option<TyId> {
         let d = self
             .cx
@@ -223,7 +221,7 @@ impl FnLower<'_, '_> {
     }
 
     /// In `proxy_call_body`, after the `get` trap answered `f` (descriptor `fdesc`): when `f` is
-    /// an array method (`__ArrayMethod`), the arguments as an `any[]` and
+    /// an array method (`ArrayMethod`), the arguments as an `any[]` and
     /// `__arrayCall(f, args, receiver)`, which runs the method on the proxy. Continues in the
     /// block for any other `f`.
     fn proxy_array_call(
@@ -304,7 +302,7 @@ impl FnLower<'_, '_> {
 }
 
 impl super::Cx<'_> {
-    /// Is `t` velt/lang/proxy's `__ArrayMethod` (an array method read through `Reflect.get`), which
+    /// Is `t` velt/lang/proxy's `ArrayMethod` (an array method read through `Reflect.get`), which
     /// `typeof` and `console.log` show as the function it stands for?
     pub(super) fn is_array_method(&self, t: TyId) -> bool {
         let TyKind::Adt(d, _) = self.types.kind(t) else {

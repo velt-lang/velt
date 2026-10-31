@@ -98,12 +98,13 @@ impl Loader {
                 } else {
                     let file =
                         normalize(&dir.join(format!("{}.vlt", spec.trim_start_matches("./"))));
-                    let rel = file
-                        .strip_prefix(root_dir)
-                        .unwrap_or(&file)
-                        .with_extension("")
-                        .to_string_lossy()
-                        .replace('\\', "/");
+                    // A std file's relative import names a std module (`./number` in
+                    // std/lang/hooks/index.vlt is `std/lang/hooks/number`).
+                    let rel = match file.strip_prefix(normalize(&std_dir)) {
+                        Ok(in_std) => Path::new("std").join(in_std),
+                        Err(_) => file.strip_prefix(root_dir).unwrap_or(&file).to_path_buf(),
+                    };
+                    let rel = rel.with_extension("").to_string_lossy().replace('\\', "/");
                     (rel, file)
                 };
                 if !self.modules.iter().any(|x| x.path == canonical) {

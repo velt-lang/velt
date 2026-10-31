@@ -1,6 +1,7 @@
 // velt/test: the test runner (docs/book/testing.md). `velt test` finds the test files, compiles
-// them with a generated `main` that registers their tests here (`__file`, `__test`,
-// `__testAsync`) and calls `__run`, and starts the program. Everything after that is this module:
+// them with a generated `main` that registers their tests here (`registerFile`, `registerTest`,
+// `registerAsyncTest`) and calls `runRegistered`, and starts the program. Everything after that
+// is this module:
 //
 // - Started by `velt test` (`$VELT_TEST_PLAN` names the plan, a JSON `Plan`), the program is the
 //   runner: it starts a process per test file, from the program the plan names for the file,
@@ -16,8 +17,8 @@
 //   tests in this process and prints the report itself.
 
 export { Expect, expect } from "velt/test/expect";
-export { __file, __test, __testAsync } from "velt/test/registry";
-export { __run } from "velt/test/run";
+export { registerFile, registerTest, registerAsyncTest } from "velt/test/registry";
+export { runRegistered } from "velt/test/run";
 export {
   afterAll,
   afterEach,

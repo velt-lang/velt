@@ -107,7 +107,7 @@ pub(super) struct Boxing {
     /// concrete `AnyTo` targets and `Proxy` itself. Others are opaque (a leak at worst).
     pub(super) proxy_traced: BTreeSet<TyId>,
     /// Array views (#1485, array_view.rs): the boxed array types whose header may point at an
-    /// `__ArrayView`. Empty in a program that converts no `any` to an array type.
+    /// `ArrayView`. Empty in a program that converts no `any` to an array type.
     pub(super) array_views: FxHashSet<TyId>,
     /// The value types of the program's `RwLock`s, the lock set they reach (class hierarchies
     /// by root, other counted types), and those whose `read` is exclusive (locks.rs).

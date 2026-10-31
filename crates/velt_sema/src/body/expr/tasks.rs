@@ -248,7 +248,8 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
-        let Some(Item::Def(d)) = self.cx.prelude.get(name).cloned() else {
+        let found = self.cx.prelude.get(name).cloned();
+        let Some(Item::Def(d)) = found.or_else(|| self.cx.std_def(name)) else {
             self.cx
                 .err(format!("`{what}` needs the prelude (std/prelude)"), span);
             self.check_args_loose(args);

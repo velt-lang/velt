@@ -63,7 +63,7 @@ impl Cx<'_> {
         matches!(self.hir.def(d), hir::Def::Adt(a) if last.contains(&a.name.as_str()))
     }
 
-    /// Is `d` the prelude's `__ArrayView` (array_view.rs)? Numbered after every other class, so
+    /// Is `d` the hook `ArrayView` (array_view.rs)? Numbered after every other class, so
     /// that no other class's id moves for it.
     fn view_class(&self, d: DefId) -> bool {
         matches!(self.hir.def(d), hir::Def::Adt(a) if a.name == super::array_view::VIEW_CLASS)

@@ -1,0 +1,76 @@
+// velt/lang/hooks (internal): the compiler's hooks for records and prototypes (std-layout.md
+// §10b): `k in r` for a key known only at run time (velt_sema `in_keys.rs`), `===` on
+// prototypes, and the array index a key names, which the prelude's `Record` orders its keys by.
+
+/** `a === b` on prototypes (or `null`, a prototype-less object's). */
+export function prototypeSame(a: ObjectPrototype | null, b: ObjectPrototype | null): bool {
+  if (a == null) {
+    return b == null;
+  }
+  if (b == null) {
+    return false;
+  }
+  return a.__sameAs(b);
+}
+
+/** `key in p` of a prototype `p` for a key known only at run time. */
+export function prototypeIn(key: string, p: ObjectPrototype): bool {
+  return p.__hasKey(key);
+}
+
+/**
+ * `k in r` for a key known only at run time: whether `key` names a member every object inherits
+ * from `Object.prototype` (sema tests the record's own entries first).
+ */
+export function objectPrototypeKey(key: string): bool {
+  switch (key) {
+    case "__defineGetter__":
+    case "__defineSetter__":
+    case "__lookupGetter__":
+    case "__lookupSetter__":
+    case "__proto__":
+    case "constructor":
+    case "hasOwnProperty":
+    case "isPrototypeOf":
+    case "propertyIsEnumerable":
+    case "toLocaleString":
+    case "toString":
+    case "valueOf":
+      return true;
+    default:
+      return false;
+  }
+}
+
+/**
+ * `k in r` for a key known only at run time (sema calls this): whether the record has the entry
+ * `key`, or `key` names a member every object inherits from `Object.prototype`.
+ */
+export function recordIn<V>(key: string, r: Record<string, V>): bool {
+  return r.__has(key) || objectPrototypeKey(key);
+}
+
+/**
+ * `k in r` in a program that calls `Object.create(null)` (sema calls this instead of
+ * `recordIn` there): a record made by it inherits nothing from `Object.prototype`.
+ */
+export function recordInMaybeNullProto<V>(key: string, r: Record<string, V>): bool {
+  return r.__has(key) || (!r.__isNullProto() && objectPrototypeKey(key));
+}
+
+/** The array index `s` names (canonical decimal, 0 to 2^32 - 2), or -1. */
+export function arrayIndex(s: string): i64 {
+  const n = s.length as i64;
+  if (n == 0 || n > 10 || (n > 1 && s.charCodeAt(0) == 48)) {
+    return -1;
+  }
+  let v: i64 = 0;
+  for (let i: i64 = 0; i < n; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 48 || c > 57) {
+      return -1;
+    }
+    v = v * 10 + (c - 48);
+  }
+  return v <= 4294967294 ? v : -1;
+}
