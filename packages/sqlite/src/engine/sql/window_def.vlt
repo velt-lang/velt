@@ -105,8 +105,7 @@ function windowBody(p: Parser): Window {
       }
     }
   }
-  w.text =
-    p.pos > 0 && p.toks[p.pos - 1].end > from ? p.text(from, p.toks[p.pos - 1].end) : "";
+  w.text = p.pos > 0 && p.toks[p.pos - 1].end > from ? p.text(from, p.toks[p.pos - 1].end) : "";
   return w;
 }
 

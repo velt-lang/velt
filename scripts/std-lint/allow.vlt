@@ -18,11 +18,6 @@ export const allow: Allow = {
     "net/http/fetch/response.vlt",
     "net/url/index.vlt",
     "net/url/record.vlt",
-<<<<<<< HEAD
-    "postgres.vlt",
-=======
-    "net/websocket/index.vlt",
->>>>>>> 04c88c47a (std: the database drivers leave std and the runtime)
     "prelude/adapt.vlt",
     "prelude/any_methods.vlt",
     "prelude/array.vlt",

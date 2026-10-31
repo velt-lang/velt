@@ -159,7 +159,7 @@ pub fn select(graph: &Graph, paths: &[String], exists: impl Fn(&str) -> bool) ->
         if !exists(path) {
             continue;
         }
-        if path.starts_with("std/") && path.ends_with(".vlt") {
+        if (path.starts_with("std/") || path.starts_with("packages/")) && path.ends_with(".vlt") {
             if let StdLint::None = sel.std_lint {
                 sel.std_lint = StdLint::Files(vec![]);
             }

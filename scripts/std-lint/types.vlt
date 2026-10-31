@@ -1,7 +1,10 @@
 // scripts/std-lint: the shape of allow.vlt, the files std-lint lets break a rule until they are
 // fixed (docs/internals/design/std-layout.md §6).
 
-/** Files allowed to break a rule, per rule; each list only shrinks. Paths are below `std/`. */
+/**
+ * Files allowed to break a rule, per rule; each list only shrinks. Paths are below `std/`, or the
+ * repository's for a package's sources (`packages/<name>/src/…`).
+ */
 export interface Allow {
   /** Over the size limit. */
   oversize: string[];

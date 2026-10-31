@@ -1,0 +1,16 @@
+// `Cte`: A common table expression of a WITH clause.
+
+import { Select } from "./select";
+
+/** A common table expression of a WITH clause. */
+export class Cte {
+  name: string;
+  columns: string[] = [];
+  select: Select;
+  materialized: u8 = 0;
+
+  constructor(name: string, select: Select) {
+    this.name = name;
+    this.select = select;
+  }
+}

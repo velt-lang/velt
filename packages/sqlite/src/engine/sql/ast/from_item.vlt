@@ -1,0 +1,22 @@
+// `FromItem`: One FROM item: a table (or CTE) by name, or a subquery, with how it joins the …
+
+import { Expr } from "./expr";
+import { Select } from "./select";
+import { J_INNER } from "../types";
+
+/** One FROM item: a table (or CTE) by name, or a subquery, with how it joins the items before it. */
+export class FromItem {
+  schema: string = "";
+  name: string = "";
+  alias: string = "";
+  subquery: Select | null = null;
+  /** Table-valued function arguments (`json_each(x)`, `generate_series(1, 9)`). */
+  args: Expr[] = [];
+  join: u8 = J_INNER;
+  natural: bool = false;
+  on: Expr | null = null;
+  using: string[] = [];
+  /** INDEXED BY name, or NOT INDEXED (`notIndexed`). */
+  indexedBy: string = "";
+  notIndexed: bool = false;
+}

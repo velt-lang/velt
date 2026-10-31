@@ -18,18 +18,7 @@ import {
 import { check, SqliteError, sqliteError, unwrap } from "./errors";
 import { Statement } from "./statement";
 import { Transaction } from "./transaction";
-
-/** `open` options. */
-export struct OpenOptions {
-  /** Open without write access (default false). */
-  readonly?: bool;
-  /** Fail with "SQLITE_CANTOPEN" instead of creating a missing file (default false). */
-  fileMustExist?: bool;
-  /** Milliseconds to wait for another connection's lock before "SQLITE_BUSY" (default 5000). */
-  timeout?: i64;
-  /** Switch to write-ahead logging (`PRAGMA journal_mode = WAL`; default false). */
-  wal?: bool;
-}
+import { OpenOptions } from "./open_options";
 
 /** An open connection (see the header for handle rules). */
 export struct Database {
@@ -125,3 +114,5 @@ export struct Database {
 export function open(path: string, opts: OpenOptions = {}): Database {
   return Database.open(path, opts);
 }
+
+export { OpenOptions } from "./open_options";

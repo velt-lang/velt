@@ -1,0 +1,24 @@
+// `Window`: A window: `OVER name`, or `OVER ([base] [PARTITION BY ...] [ORDER BY ...] [frame])`.
+
+import { Expr } from "./expr";
+import { OrderTerm } from "./order_term";
+import { BOUND_CURRENT, BOUND_UNBOUNDED_PRECEDING, FRAME_DEFAULT } from "../types";
+
+/** A window: `OVER name`, or `OVER ([base] [PARTITION BY ...] [ORDER BY ...] [frame])`. */
+export class Window {
+  /** A named window this one is (`OVER w`) or builds on (`OVER (w ORDER BY ...)`). */
+  base: string = "";
+  /** The name a WINDOW clause gives it. */
+  name: string = "";
+  partition: Expr[] = [];
+  orderBy: OrderTerm[] = [];
+  frame: u8 = FRAME_DEFAULT;
+  start: u8 = BOUND_UNBOUNDED_PRECEDING;
+  startExpr: Expr | null = null;
+  end: u8 = BOUND_CURRENT;
+  endExpr: Expr | null = null;
+  /** EXCLUDE: "" (NO OTHERS), "CURRENT ROW", "GROUP", "TIES". */
+  exclude: string = "";
+  /** The definition's source text (two windows with the same text are the same window). */
+  text: string = "";
+}

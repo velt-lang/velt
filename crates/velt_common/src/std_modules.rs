@@ -202,19 +202,11 @@ pub fn prelude_order(index_src: &str) -> Result<Vec<String>, String> {
 /// implements the language).
 const NOT_IMPORTABLE: [&str; 2] = ["prelude", "lang"];
 
-/// The modules in the old form (`sqlite.vlt` next to `sqlite/`) that stay importable, with
-/// their files, until they move to `packages/` (std-layout.md §3).
-const LEAVING: [&str; 3] = ["sqlite", "postgres", "redis"];
-
 /// Whether user code (any module not loaded from std) may import the std file at `rel_file`
 /// (its path below the std root, `/`-separated: `net/http/index.vlt`): a module's `index.vlt`
 /// outside `prelude/` and `lang/` (std-layout.md §2).
 pub fn importable(rel_file: &str) -> bool {
     let first = rel_file.split('/').next().unwrap_or("");
-    let first = first.strip_suffix(".vlt").unwrap_or(first);
-    if LEAVING.contains(&first) {
-        return true;
-    }
     rel_file.ends_with("/index.vlt") && !NOT_IMPORTABLE.contains(&first)
 }
 
@@ -314,7 +306,8 @@ mod tests {
         assert!(!importable("lang/proxy/index.vlt"));
         assert!(!importable("prelude/array.vlt"));
         assert!(!importable("prelude/index.vlt"));
-        assert!(importable("sqlite.vlt") && importable("sqlite/btree.vlt"));
+        // A file directly in std is in no module (what was `sqlite.vlt` left for packages/).
+        assert!(!importable("sqlite.vlt") && !importable("fs.vlt"));
     }
 
     #[test]

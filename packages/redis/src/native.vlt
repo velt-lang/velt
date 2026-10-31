@@ -3,21 +3,8 @@
 // Velt.
 
 import { IoResult, IoStatus } from "velt/native";
-
-/** The library's `VeltRedisReply` (see reply.vlt for its layout). */
-export struct RawReply {
-  tags: u8[];
-  nums: i64[];
-  strs: string[];
-}
-
-// The library's `VeltRedisMessage`: kind 0 = closed, 1 = message, 2 = pattern message.
-export struct RawMessage {
-  kind: u32;
-  channel: string;
-  message: string;
-  pattern: string;
-}
+import { RawMessage } from "./raw_message";
+import { RawReply } from "./raw_reply";
 
 export declare async function velt_redis__connect(url: string, ca: string): Promise<IoResult<u64>>;
 export declare async function velt_redis__duplicate(c: u64): Promise<IoResult<u64>>;
@@ -47,3 +34,6 @@ export declare async function velt_redis__sub_change(
   subscribe: bool,
 ): Promise<IoStatus>;
 export declare function velt_redis__sub_close(s: u64);
+
+export { RawReply } from "./raw_reply";
+export { RawMessage } from "./raw_message";

@@ -1,0 +1,13 @@
+// `OpenOptions`: `open` options.
+
+/** `open` options. */
+export struct OpenOptions {
+  /** Open without write access (default false). */
+  readonly?: bool;
+  /** Fail with "SQLITE_CANTOPEN" instead of creating a missing file (default false). */
+  fileMustExist?: bool;
+  /** Milliseconds to wait for another connection's lock before "SQLITE_BUSY" (default 5000). */
+  timeout?: i64;
+  /** Switch to write-ahead logging (`PRAGMA journal_mode = WAL`; default false). */
+  wal?: bool;
+}

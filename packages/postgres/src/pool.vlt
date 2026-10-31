@@ -21,14 +21,7 @@ import { bindParams } from "velt/db";
 import { check, PgError, unwrap } from "./errors";
 import { counts, cursorRow, cursorRows, firstRows, rowSets } from "./rows";
 import { Client } from "./client";
-
-/** `createPool` options. */
-export struct PoolOptions {
-  /** Connection string (as for `connect`). */
-  url: string;
-  /** Most connections open at once (default 10); further operations wait for a free one. */
-  max?: i64;
-}
+import { PoolOptions } from "./pool_options";
 
 /**
  * Up to `max` connections, opened on demand and reused. `query` & co. borrow a connection
@@ -142,3 +135,5 @@ export struct Pool {
 export function createPool(opts: PoolOptions): Pool {
   return Pool.create(opts);
 }
+
+export { PoolOptions } from "./pool_options";

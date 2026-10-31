@@ -1,0 +1,14 @@
+// `Upsert`: UPSERT: ON CONFLICT (target) DO NOTHING | DO UPDATE SET … WHERE ….
+
+import { Expr } from "./expr";
+import { IndexedColumn } from "./indexed_column";
+
+/** UPSERT: ON CONFLICT (target) DO NOTHING | DO UPDATE SET … WHERE …. */
+export class Upsert {
+  target: IndexedColumn[] = [];
+  targetWhere: Expr | null = null;
+  doNothing: bool = true;
+  setColumns: string[][] = [];
+  setValues: Expr[] = [];
+  where: Expr | null = null;
+}

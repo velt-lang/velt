@@ -1,0 +1,27 @@
+// `SelectCore`: One SELECT (or VALUES) core of a compound select.
+
+import { Expr } from "./expr";
+import { FromItem } from "./from_item";
+import { ResultColumn } from "./result_column";
+import { Window } from "./window";
+import { C_NONE } from "../types";
+
+/** One SELECT (or VALUES) core of a compound select. */
+export class SelectCore {
+  /** How this core combines with the result so far (C_NONE for the first). */
+  op: u8 = C_NONE;
+  distinct: bool = false;
+  columns: ResultColumn[] = [];
+  from: FromItem[] = [];
+  where: Expr | null = null;
+  groupBy: Expr[] = [];
+  having: Expr | null = null;
+  /** VALUES (…), (…): one row per entry. */
+  values: Expr[][] = [];
+  /** WINDOW name AS (...), ...: the named windows. */
+  windows: Window[] = [];
+  /** Set by the compiler: a subquery holds an aggregate of this core (its columns are ours). */
+  aggFromInner: bool = false;
+  /** Set by the compiler: its FROM terms once SQLite's flattener merged its subqueries. */
+  flat: i64 = -1;
+}
