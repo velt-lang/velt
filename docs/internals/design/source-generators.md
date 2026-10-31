@@ -751,7 +751,8 @@ goldens:
   cannot be made empty) are generated too. Generated code makes an enum value with
   `__member<E>(i)` (`generated/member.rs`). A required field of a literal type is a flag, not
   a `"x" | null` local: lowering a narrowed option of a zero-sized type into a struct field
-  failed VIR verification (left for a fix in lowering). An object's or struct's optional
+  failed VIR verification (since fixed in lowering, `unwrap_some`: golden
+  `lang/narrowed_zero_sized_stores`; the flag stays). An object's or struct's optional
   field is set after the value is built, when its key was read (an object literal's `a:
   undefined` would make it present). The
   generator is split by concern (`read.vlt`, `read_value.vlt`, `read_object.vlt`,

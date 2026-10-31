@@ -226,6 +226,12 @@ impl FnLower<'_, '_> {
         let v = self.expr(inner);
         let p = self.place_of(v, oty);
         self.check_narrowed_field(inner, &p, oty);
+        if pty != oty && self.cx.is_unit(pty) {
+            // A zero-sized payload (`"x"` of `"x" | null`) has nothing to read: the option's
+            // flag is not the payload, and a store of it would write a `bool` into the
+            // payload's place (a zero-sized field has none).
+            return unit();
+        }
         let payload = if pty == oty {
             p.clone()
         } else {

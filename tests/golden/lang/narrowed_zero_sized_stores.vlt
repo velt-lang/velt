@@ -1,0 +1,124 @@
+// check: no leaks
+// A narrowed option of a zero-sized type (`"x" | null`, `true | null`, `7 | null`, a
+// single-member enum) stored into a field of that type failed VIR verification: the option's
+// present flag (a `bool`) was taken for the payload and written into the field's place, which
+// a zero-sized field does not have ("assignment of Bool to place of type F64").
+enum One {
+  Only = "only",
+}
+
+interface Obj {
+  lit: "x";
+  n: number;
+}
+
+class Box {
+  lit: "x" = "x";
+  yes: true = true;
+  seven: 7 = 7;
+  one: One = One.Only;
+  n: number = 0;
+}
+
+class Made {
+  lit: "x";
+  n: number;
+  constructor(lit: "x", n: number) {
+    this.lit = lit;
+    this.n = n;
+  }
+}
+
+function pickX(b: boolean): "x" | null {
+  return b ? "x" : null;
+}
+
+function pickTrue(b: boolean): true | null {
+  return b ? true : null;
+}
+
+function pickSeven(b: boolean): 7 | null {
+  return b ? 7 : null;
+}
+
+function pickOne(b: boolean): One | null {
+  return b ? One.Only : null;
+}
+
+function show(lit: "x", n: number): string {
+  return `${lit}${n}`;
+}
+
+// The shape the JSON reader generates: a local set in a loop, checked once at the end.
+function read(keys: string[]): Obj {
+  let f0: "x" | null = null;
+  let f1: number | null = null;
+  for (const k of keys) {
+    if (k == "lit") {
+      f0 = "x";
+      continue;
+    }
+    if (k == "n") {
+      f1 = keys.length;
+    }
+  }
+  if (f0 == null) {
+    throw new Error("missing lit");
+  }
+  if (f1 == null) {
+    throw new Error("missing n");
+  }
+  const o: Obj = { lit: "x", n: f1 };
+  o.lit = f0;
+  return o;
+}
+
+function main() {
+  const v = pickX(true);
+  const t = pickTrue(true);
+  const s = pickSeven(true);
+  const e = pickOne(true);
+
+  const o: Obj = { lit: "x", n: 1 };
+  if (v !== null) {
+    o.lit = v;
+  }
+  console.log(o.lit, o.n);
+
+  const b = new Box();
+  b.n = 2;
+  if (v !== null) {
+    b.lit = v;
+  }
+  if (t !== null) {
+    b.yes = t;
+  }
+  if (s !== null) {
+    b.seven = s;
+  }
+  if (e !== null) {
+    b.one = e;
+  }
+  console.log(b.lit, b.yes, b.seven, b.one, b.n);
+
+  if (v !== null) {
+    const lit = { lit: v, n: 3 };
+    console.log(lit.lit, lit.n, show(v, 4));
+    const m = new Made(v, 5);
+    console.log(m.lit, m.n);
+    const xs: "x"[] = ["x"];
+    xs[0] = v;
+    console.log(xs[0], xs.length);
+  }
+  console.log(o.lit === pickX(true)!, b.yes === pickTrue(true)!);
+
+  const r = read(["n", "lit"]);
+  console.log(r.lit, r.n);
+  try {
+    read(["n"]);
+  } catch (err) {
+    console.log((err as Error).message);
+  }
+}
+
+main();
