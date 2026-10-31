@@ -7,3 +7,6 @@ edition.workspace = true
 velt_common.workspace = true
 velt_syntax.workspace = true
 velt_sema.workspace = true
+
+[dev-dependencies]
+velt_doc = { path = "../velt_doc" }

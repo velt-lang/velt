@@ -13,7 +13,7 @@ use velt_syntax::ast::{self, Item, ItemKind};
 
 use crate::comment::{self, DocComment};
 use crate::sig::Printer;
-use crate::ts::{TsDecl, TsPrinter};
+use crate::ts::{TsDecl, TsPrinter, Widened};
 
 /// The kind of a documented declaration.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -151,7 +151,13 @@ pub struct ReExport {
 /// Extract the documentation of module `name` from its `source`. Syntax errors are tolerated:
 /// whatever the parser recovered is documented. Re-exports are recorded, not yet resolved.
 pub fn extract(name: &str, source: &str) -> DocModule {
-    extract_with(name, source).0
+    extract_with(name, source, &Widened::new()).0
+}
+
+/// [`extract`], the TypeScript declarations with the bounds of `widened` widened
+/// ([`crate::ts::Widened`]; the type package's, [`crate::dts`]).
+pub(crate) fn extract_widened(name: &str, source: &str, widened: &Widened) -> DocModule {
+    extract_with(name, source, widened).0
 }
 
 /// The declarations that [`extract`] documents without a doc comment although a plain comment
@@ -159,10 +165,10 @@ pub fn extract(name: &str, source: &str) -> DocModule {
 /// the doc comment syntax, such a comment was the documentation; std's tests use this to keep
 /// plain comments from hiding docs.
 pub fn plain_comments_above_docs(source: &str) -> Vec<u32> {
-    extract_with("", source).1
+    extract_with("", source, &Widened::new()).1
 }
 
-fn extract_with(name: &str, source: &str) -> (DocModule, Vec<u32>) {
+fn extract_with(name: &str, source: &str, widened: &Widened) -> (DocModule, Vec<u32>) {
     let (module, _) = velt_syntax::parse_file(FileId(0), source);
     let text = Source {
         printer: Printer { src: source },
@@ -171,6 +177,7 @@ fn extract_with(name: &str, source: &str) -> (DocModule, Vec<u32>) {
             .chain(source.match_indices('\n').map(|(i, _)| i as u32 + 1))
             .collect(),
         plain_above: RefCell::default(),
+        widened,
     };
     let mut imports = vec![];
     for item in &module.items {
@@ -319,6 +326,8 @@ struct Source<'a> {
     line_starts: Vec<u32>,
     /// Documented declarations without a doc comment and with a plain comment right above.
     plain_above: RefCell<Vec<u32>>,
+    /// The bounds the TypeScript declarations widen.
+    widened: &'a Widened,
 }
 
 impl Source<'_> {
@@ -381,6 +390,7 @@ impl Source<'_> {
             refs: Default::default(),
             scope: Default::default(),
             subst: Default::default(),
+            widened: self.widened,
         };
         doc.ts = ts.decl(
             item,

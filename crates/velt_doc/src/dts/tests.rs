@@ -20,8 +20,9 @@ fn package() -> BTreeMap<String, String> {
         input(
             "prelude/sync.vlt",
             "/** A lock. */\nexport class Mutex<T> {\n  lock(): T { panic(\"\"); }\n}\n\n\
-             export extend<T> Array<T> {\n  /** The count. */\n  count(): i64 { return 0; }\n}\n\n\
-             export extend Array<string> {\n  joined(): string { return \"\"; }\n}\n",
+             export extend<T> Mutex<T> {\n  /** The count. */\n  count(): i64 { return 0; }\n}\n\n\
+             export extend Mutex<string> {\n  joined(): string { return \"\"; }\n}\n\n\
+             export extend<T> Array<T> {\n  total(): i64 { return 0; }\n}\n",
         ),
         input("io/index.vlt", "export class IoError {\n  code: string;\n}\n"),
         // The intrinsics are `lang/`, but no globals: only std imports them.
@@ -72,8 +73,9 @@ fn a_module_declared_in_internal_files() {
     );
     let b = &files["box/index.d.ts"];
     let want = [
-        "/// <reference path=\"../globals.d.ts\" />",
-        // A type of another public module is imported from it.
+        // A type of the prelude is imported from globals.d.ts, one of another public module
+        // from that module.
+        "import type { Mutex } from \"../globals.js\";",
         "import type { IoError } from \"velt/io\";",
         "/**\n * Holds a value.\n */\nexport declare class Box<T> {",
         "  value: T;",
@@ -103,17 +105,19 @@ fn globals_and_extensions() {
     let files = package();
     let g = &files["globals.d.ts"];
     let want = [
-        "declare global {",
-        "  /**\n   * A lock.\n   */\n  class Mutex<T> {",
+        "/**\n * A lock.\n */\nexport declare class Mutex<T> {",
         // The extension's parameters are the target's: the methods as written.
-        "  interface Array<T> {\n    /**\n     * The count.\n     */\n    count(): number;\n  }",
+        "export interface Mutex<T> {\n  /**\n   * The count.\n   */\n  count(): number;\n}",
         // A specialized target: a `this` parameter.
-        "  interface Array<T> {\n    joined(this: Array<string>): string;\n  }",
+        "export interface Mutex<T> {\n  joined(this: Mutex<string>): string;\n}",
         "export {};",
     ];
     for w in want {
         assert!(g.contains(w), "missing {w:?} in:\n{g}");
     }
+    // Nothing global: a type-only import must not change the client's globals, so neither
+    // Velt's globals nor its methods on TypeScript's own types (`Array`) are declared there.
+    assert!(!g.contains("declare global") && !g.contains("total"), "{g}");
     assert!(!g.contains("type Mut") && !g.contains("arraySwap"), "{g}");
     let json = &files["package.json"];
     assert!(json.contains("\"version\": \"1.2.3\""), "{json}");

@@ -431,17 +431,19 @@ export function oldest(queue: Deque<string>): string | undefined {
 ```
 
 - `package.json` maps each public module to its declarations (`"./fs": { "types":
-  "./fs/index.d.ts" }`); `globals.d.ts`, which every module's file references, declares the
-  prelude's globals that TypeScript lacks (`Mutex`, `Atomic`, `StringBuilder`, …).
+  "./fs/index.d.ts" }`). The prelude's types that TypeScript lacks (`Mutex`, `Atomic`,
+  `StringBuilder`, …) are exported by the package's `globals.d.ts`, which the modules import
+  them from: an `import type` from `velt/…` adds nothing to the client's globals.
 - The declarations are std's in TypeScript's types: the integer and float types are
   `number`, `bool` is `boolean`, `shared<T>` is `T`, and the error type of `Promise<T, E>` and
   of the iterators is left out (TypeScript has no `throws`). A parameter with a default is
   optional. Doc comments come along, for editors' hovers.
-- An `extend` block adds its methods to its target's interface (`interface Array<T>`); one of
-  a narrower target (`extend Array<string>`) gives each method a `this` parameter of that type,
-  as TypeScript's own `flat` does. A block TypeScript can't attach to anything (`extend<T> T`,
-  `extend<T> (T | null)`, `Record`) is left out, and so are getters and setters on TypeScript's
-  own interfaces, which declare those properties already.
+- An `extend` block of a std type adds its methods to the type's interface; one of a narrower
+  type (`extend Box<string>`) gives each method a `this` parameter of that type, as
+  TypeScript's own `flat` does. Extensions of TypeScript's own types (`Array`, `string`,
+  numbers) are left out, since declaring them would change the client's globals; a bound that
+  such a type meets through one (`K extends Comparable<K>`, which `string` and the numbers
+  implement by extensions) takes it in: `K extends Comparable<K> | boolean | number | string`.
 - A type std uses in a public signature but doesn't export (an internal class in a constructor
   only std calls) is opaque: `unknown`.
 - The package declares types only; the modules run in Velt. It needs a `lib` with

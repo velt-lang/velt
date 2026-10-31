@@ -2276,6 +2276,7 @@ name = "velt_tscompat"
 version = "0.4.0"
 dependencies = [
  "velt_common",
+ "velt_doc",
  "velt_sema",
  "velt_syntax",
 ]

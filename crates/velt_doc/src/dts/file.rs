@@ -4,14 +4,14 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use velt_common::std_modules;
 
-use super::globals::{ts_params, TS_GLOBALS};
+use super::globals::TS_GLOBALS;
 use super::{rel_of, DeclAt, Package};
 use crate::extract::Kind;
 use crate::ts::FIRST_PARAM;
 
 /// Where an extension's target interface is.
 enum Place {
-    /// A global (`declare global`, or `globals.d.ts` itself).
+    /// A type of the prelude (declared by globals.d.ts).
     Global,
     /// Declared in the file being written.
     Here { exported: bool },
@@ -64,8 +64,6 @@ pub(super) struct DeclFile<'p, 'a> {
     decls: Vec<String>,
     /// Declarations made or imported, and the local name they have here.
     local: HashMap<DeclAt, String>,
-    /// Extensions: global ones go in `declare global`.
-    global_ext: Vec<String>,
     /// The declarations made here by name, and whether each is exported.
     declared: HashMap<String, bool>,
     /// Extensions of other modules' types: `declare module "velt/…"` blocks by specifier.
@@ -81,7 +79,6 @@ impl<'p, 'a> DeclFile<'p, 'a> {
             reexports: vec![],
             decls: vec![],
             local: HashMap::new(),
-            global_ext: vec![],
             declared: HashMap::new(),
             augments: BTreeMap::new(),
         }
@@ -94,7 +91,6 @@ impl<'p, 'a> DeclFile<'p, 'a> {
         let Some(it) = p.own[at.0].get(&at.1) else {
             return;
         };
-        let export = export && self.module.is_some();
         if let Some(local) = self.local.get(at).cloned() {
             // Declared already (privately, for a declaration that refers to it).
             if export {
@@ -110,10 +106,10 @@ impl<'p, 'a> DeclFile<'p, 'a> {
         }
         self.local.insert(at.clone(), name.to_string());
         self.declared.insert(name.to_string(), export);
-        let keyword = match (self.module, export) {
-            (None, _) => "",
-            (Some(_), true) => "export declare ",
-            (Some(_), false) => "declare ",
+        let keyword = if export {
+            "export declare "
+        } else {
+            "declare "
         };
         let text = with_keyword(&renamed(&it.ts.text, &it.ts.name, name), keyword);
         let slot = self.decls.len();
@@ -134,13 +130,8 @@ impl<'p, 'a> DeclFile<'p, 'a> {
             true => String::new(),
             false => format!("<{}>", generics.join(", ")),
         };
-        let keyword = if self.module.is_some() {
-            "declare "
-        } else {
-            ""
-        };
         self.decls
-            .push(format!("{keyword}type {name}{params} = {to}{params};"));
+            .push(format!("declare type {name}{params} = {to}{params};"));
     }
 
     /// Make type name `name`, written in module `from` with `arity` type arguments, resolve
@@ -156,13 +147,8 @@ impl<'p, 'a> DeclFile<'p, 'a> {
                     true => String::new(),
                     false => format!("<{}>", params.join(", ")),
                 };
-                let keyword = if self.module.is_some() {
-                    "declare "
-                } else {
-                    ""
-                };
                 self.decls.push(format!(
-                    "/** Internal to the Velt standard library. */\n{keyword}type {name}{params} = unknown;"
+                    "/** Internal to the Velt standard library. */\ndeclare type {name}{params} = unknown;"
                 ));
             }
             return;
@@ -177,7 +163,16 @@ impl<'p, 'a> DeclFile<'p, 'a> {
             }
             return;
         }
+        // The prelude's: TypeScript's own, or declared by globals.d.ts (and imported from it).
         if p.global_files.contains(&at.0) {
+            if self.module.is_some() && !TS_GLOBALS.contains(&at.1.as_str()) {
+                self.imports
+                    .entry(self.globals_spec())
+                    .or_default()
+                    .insert((at.1.clone(), name.to_string()));
+                self.declared.insert(name.to_string(), false);
+                self.local.insert(at, name.to_string());
+            }
             return;
         }
         match p.home(&at) {
@@ -202,11 +197,11 @@ impl<'p, 'a> DeclFile<'p, 'a> {
         }
     }
 
-    /// The extensions in the files `wanted` picks, added to their targets' interfaces: in
-    /// `declare global` for a global type, merged with the declaration made here, or in a
-    /// `declare module "velt/…"` block for another module's type. An extension of a type that
-    /// is not an interface or class in TypeScript (`Record`) is left out, and so are getters
-    /// and setters of TypeScript's own interfaces (which declare those properties already).
+    /// The extensions in the files `wanted` picks, added to their targets' interfaces: merged
+    /// with the declaration made here, or in a `declare module` block for another module's type
+    /// (globals.d.ts's for the prelude's). An extension of TypeScript's own types (`Array`,
+    /// `string`) is left out: declaring it would change the client's globals, which a type-only
+    /// import must not. So is one of a type that is not an interface or class in TypeScript.
     pub(super) fn extensions(&mut self, wanted: impl Fn(usize) -> bool) {
         let p = self.package;
         for f in (0..p.modules.len()).filter(|&f| wanted(f)) {
@@ -218,14 +213,13 @@ impl<'p, 'a> DeclFile<'p, 'a> {
                 let Some(ext) = &it.ts.ext else {
                     continue;
                 };
-                let Some((place, name, params, lib)) = self.target(f, &ext.target) else {
+                let Some((place, name, params)) = self.target(f, &ext.target) else {
                     continue;
                 };
                 let direct = ext.args == params;
                 let members: String = ext
                     .members
                     .iter()
-                    .filter(|m| !(lib && m.accessor))
                     .filter_map(|m| match direct {
                         true => Some(m.direct.clone()),
                         false => m.this_form.clone(),
@@ -246,8 +240,13 @@ impl<'p, 'a> DeclFile<'p, 'a> {
                     false => format!("<{}>", params.join(", ")),
                 };
                 let text = format!("interface {name}{params} {{\n{members}}}");
+                let place = match place {
+                    Place::Global if self.module.is_none() => Place::Here { exported: true },
+                    Place::Global => Place::Module(self.globals_spec()),
+                    place => place,
+                };
                 match place {
-                    Place::Global => self.global_ext.push(text),
+                    Place::Global => {}
                     Place::Here { exported: true } => self.decls.push(format!("export {text}")),
                     Place::Here { exported: false } => self.decls.push(text),
                     Place::Module(spec) => self.augments.entry(spec).or_default().push(text),
@@ -257,9 +256,8 @@ impl<'p, 'a> DeclFile<'p, 'a> {
     }
 
     /// Where the interface of extension target `target` (written in module `f`) is, its name
-    /// there and its type parameters' names.
-    /// Also whether it is one of TypeScript's own interfaces.
-    fn target(&self, f: usize, target: &str) -> Option<(Place, String, Vec<String>, bool)> {
+    /// there and its type parameters' names; `None` for TypeScript's own types.
+    fn target(&self, f: usize, target: &str) -> Option<(Place, String, Vec<String>)> {
         let p = self.package;
         // A Velt declaration the module sees first (`Request` of `velt/net/http`), then
         // TypeScript's globals (whose parameters a merge must repeat).
@@ -267,9 +265,6 @@ impl<'p, 'a> DeclFile<'p, 'a> {
             .resolve_ref(f, target)
             .filter(|at| !p.global_files.contains(&at.0));
         let Some(at) = at else {
-            if let Some(params) = ts_params(target) {
-                return Some((Place::Global, target.to_string(), params, true));
-            }
             if TS_GLOBALS.contains(&target) {
                 return None;
             }
@@ -278,7 +273,7 @@ impl<'p, 'a> DeclFile<'p, 'a> {
             return decl
                 .ts
                 .merges
-                .then(|| (Place::Global, at.1.clone(), decl.generics.clone(), false));
+                .then(|| (Place::Global, at.1.clone(), decl.generics.clone()));
         };
         let decl = p.own[at.0].get(&at.1)?;
         if !decl.ts.merges {
@@ -290,22 +285,26 @@ impl<'p, 'a> DeclFile<'p, 'a> {
             .get(&at.1)
             .filter(|_| self.local.contains_key(&at))
         {
-            return Some((Place::Here { exported }, at.1, params, false));
+            return Some((Place::Here { exported }, at.1, params));
         }
         let (home, name) = p.home(&at)?;
         let spec = std_modules::specifier(&p.modules[home].name)?;
-        Some((Place::Module(spec), name, params, false))
+        Some((Place::Module(spec), name, params))
+    }
+
+    /// The specifier of globals.d.ts from this file (`../globals.js`).
+    fn globals_spec(&self) -> String {
+        let depth = self.module.map_or(0, |m| {
+            rel_of(&self.package.modules[m].name).split('/').count()
+        });
+        match depth {
+            0 => "./globals.js".to_string(),
+            n => format!("{}globals.js", "../".repeat(n)),
+        }
     }
 
     pub(super) fn finish(self) -> String {
         let mut out = String::from("// Generated by `velt doc --types`: do not edit.\n");
-        if let Some(m) = self.module {
-            let depth = rel_of(&self.package.modules[m].name).split('/').count();
-            out.push_str(&format!(
-                "/// <reference path=\"{}globals.d.ts\" />\n",
-                "../".repeat(depth)
-            ));
-        }
         for (spec, names) in &self.imports {
             let names: Vec<String> = names.iter().map(|(n, l)| rename(n, l)).collect();
             out.push_str(&format!(
@@ -314,40 +313,20 @@ impl<'p, 'a> DeclFile<'p, 'a> {
             ));
         }
         out.push('\n');
-        let decls = self.decls.iter().filter(|d| !d.is_empty());
-        match self.module {
-            Some(_) => {
-                for d in decls {
-                    out.push_str(d);
-                    out.push_str("\n\n");
-                }
-                for (spec, exts) in &self.augments {
-                    out.push_str(&format!("declare module \"{spec}\" {{\n"));
-                    for e in exts {
-                        out.push_str(&indent(e));
-                    }
-                    out.push_str("}\n\n");
-                }
-                if !self.global_ext.is_empty() {
-                    out.push_str("declare global {\n");
-                    for e in &self.global_ext {
-                        out.push_str(&indent(e));
-                    }
-                    out.push_str("}\n\n");
-                }
-                for r in &self.reexports {
-                    out.push_str(r);
-                    out.push('\n');
-                }
+        for d in self.decls.iter().filter(|d| !d.is_empty()) {
+            out.push_str(d);
+            out.push_str("\n\n");
+        }
+        for (spec, exts) in &self.augments {
+            out.push_str(&format!("declare module \"{spec}\" {{\n"));
+            for e in exts {
+                out.push_str(&indent(e));
             }
-            None => {
-                out.push_str("declare global {\n");
-                for d in decls.chain(&self.global_ext) {
-                    out.push_str(&indent(d));
-                    out.push('\n');
-                }
-                out.push_str("}\n\n");
-            }
+            out.push_str("}\n\n");
+        }
+        for r in &self.reexports {
+            out.push_str(r);
+            out.push('\n');
         }
         out.push_str("export {};\n");
         out

@@ -7,14 +7,17 @@
 //! declared in the file of the module that owns its source file; other modules that export it
 //! re-export it from there, and declarations that refer to it import it from there with
 //! `import type`. A type no public module exports, which a public declaration refers to, is
-//! declared in the file that needs it without `export`. The prelude's declarations (Velt's
-//! globals) that TypeScript lacks are global ones in `globals.d.ts`, which every module file
-//! references; so are extensions of global types (`interface Array<T> { … }`).
+//! declared in the file that needs it without `export`. The prelude's declarations that
+//! TypeScript lacks (Velt's globals: `Mutex`, `Atomic`, …) are exported by `globals.d.ts`, an
+//! ordinary module the others import them from: a type-only import of `velt/…` adds nothing to
+//! the client's globals. For the same reason the methods Velt adds to TypeScript's own types
+//! (`extend<T> Array<T>`) are not declared.
 
 mod file;
 mod globals;
 #[cfg(test)]
 mod tests;
+mod widen;
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -22,7 +25,7 @@ use velt_common::std_modules;
 
 use crate::extract::{DocItem, DocModule, Kind};
 use crate::resolve::ModuleIndex;
-use crate::{extract_all, Input};
+use crate::Input;
 
 use file::{rename, DeclFile};
 use globals::TS_GLOBALS;
@@ -30,7 +33,18 @@ use globals::TS_GLOBALS;
 /// The type package's files for std's `inputs` (as [`crate::inputs_from_dir`] reads them with
 /// the prefix `std`): `(path in the package, text)`, sorted by path.
 pub fn type_package(inputs: &[Input], version: &str) -> Vec<(String, String)> {
-    let modules = extract_all(inputs);
+    let widened = widen::widened(inputs);
+    let mut modules: Vec<DocModule> = inputs
+        .iter()
+        .map(|i| {
+            let stem = i.file.rsplit('/').next().unwrap_or("");
+            DocModule {
+                index: stem.split('.').next() == Some("index"),
+                ..crate::extract::extract_widened(&i.module, &i.source, &widened)
+            }
+        })
+        .collect();
+    crate::resolve::resolve(&mut modules);
     let files: Vec<&str> = inputs.iter().map(|i| i.file.as_str()).collect();
     let package = Package::new(&modules, &files);
     let mut out: BTreeMap<String, String> = BTreeMap::new();
@@ -56,7 +70,7 @@ fn package_json(exports: &[&str], version: &str) -> String {
     let mut out = format!(
         "{{\n  \"name\": \"velt\",\n  \"version\": \"{version}\",\n  \"description\": \"TypeScript \
          declarations of the Velt standard library\",\n  \"license\": \"MIT OR Apache-2.0\",\n  \
-         \"types\": \"./globals.d.ts\",\n  \"exports\": {{\n"
+         \"exports\": {{\n"
     );
     let entries: Vec<String> = exports
         .iter()
@@ -220,8 +234,8 @@ impl<'a> Package<'a> {
         file.finish()
     }
 
-    /// `globals.d.ts`: the prelude's declarations TypeScript lacks, and extensions of global
-    /// types.
+    /// `globals.d.ts`: the prelude's declarations TypeScript lacks, exported, with the
+    /// extensions of those types.
     fn globals_file(&self) -> String {
         let mut file = DeclFile::new(self, None);
         for &g in &self.global_files {
@@ -229,7 +243,7 @@ impl<'a> Package<'a> {
             names.sort();
             for name in names {
                 if !TS_GLOBALS.contains(&name.as_str()) {
-                    file.declare(&(g, name.clone()), name, false);
+                    file.declare(&(g, name.clone()), name, true);
                 }
             }
         }

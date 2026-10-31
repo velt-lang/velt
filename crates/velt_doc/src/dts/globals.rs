@@ -168,27 +168,3 @@ pub(super) const TS_GLOBALS: &[&str] = &[
     "unknown",
     "void",
 ];
-
-/// The type parameters of TypeScript's global interface `name` (`Array`: `T`); `None` for a
-/// name that is not one of TypeScript's globals, or not an interface (`Record`).
-pub(super) fn ts_params(name: &str) -> Option<Vec<String>> {
-    let params: &[&str] = match name {
-        "Array" | "ReadonlyArray" | "Set" | "ReadonlySet" | "WeakSet" | "Promise"
-        | "PromiseLike" | "ArrayLike" | "WeakRef" => &["T"],
-        "Map" | "ReadonlyMap" | "WeakMap" => &["K", "V"],
-        "Iterator"
-        | "Iterable"
-        | "IterableIterator"
-        | "IteratorObject"
-        | "AsyncIterator"
-        | "AsyncIterable"
-        | "AsyncIterableIterator"
-        | "Generator"
-        | "AsyncGenerator" => &["T", "TReturn", "TNext"],
-        "String" | "Number" | "Boolean" | "Date" | "RegExp" | "Error" | "URL" | "Headers"
-        | "Request" | "Response" | "AbortSignal" | "AbortController" | "ArrayBuffer"
-        | "DataView" | "TextEncoder" | "TextDecoder" => &[],
-        _ => return None,
-    };
-    Some(params.iter().map(|s| s.to_string()).collect())
-}

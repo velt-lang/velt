@@ -46,7 +46,16 @@ pub(crate) struct TsPrinter<'a> {
     /// Type names printed as something else (an extension's type parameters in the `this`
     /// form's conditional types: `infer T`, `unknown`).
     pub(crate) subst: RefCell<HashMap<String, String>>,
+    /// The bounds that TypeScript's own types satisfy through Velt's extensions.
+    pub(crate) widened: &'a Widened,
 }
+
+/// What satisfies an interface beyond what declares it, through std's extensions (computed by
+/// [`crate::dts`]): a bound on it (`K extends Comparable<K>`) widens to those of TypeScript's
+/// types (`Comparable<K> | string | number | boolean`), or goes (`None`: every type does,
+/// `extend<T> T implements Settles`). TypeScript sees no extensions of its own types, which
+/// a type-only import must not add to the client's globals.
+pub(crate) type Widened = HashMap<String, Option<Vec<String>>>;
 
 /// A top-level declaration in TypeScript.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -441,8 +450,8 @@ impl TsPrinter<'_> {
             .iter()
             .map(|g| {
                 let mut out = g.name.name.clone();
-                if !g.bounds.is_empty() {
-                    let bounds: Vec<String> = g.bounds.iter().map(|b| self.operand(b)).collect();
+                let bounds: Vec<String> = g.bounds.iter().filter_map(|b| self.bound(b)).collect();
+                if !bounds.is_empty() {
                     out.push_str(&format!(" extends {}", bounds.join(" & ")));
                 }
                 if let Some(default) = &g.default {
@@ -452,6 +461,19 @@ impl TsPrinter<'_> {
             })
             .collect();
         format!("<{}>", params.join(", "))
+    }
+
+    /// A type parameter's bound, widened by [`Widened`]; `None` when every type satisfies it.
+    fn bound(&self, b: &TypeExpr) -> Option<String> {
+        let text = self.operand(b);
+        let TypeExprKind::Named { path, .. } = &b.kind else {
+            return Some(text);
+        };
+        match self.widened.get(&path[0].name) {
+            None => Some(text),
+            Some(None) => None,
+            Some(Some(types)) => Some(format!("({text} | {})", types.join(" | "))),
+        }
     }
 
     /// `class Name<T> extends Base implements A, B` (a struct is a class; also `interface`).
