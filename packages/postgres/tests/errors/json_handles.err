@@ -1,0 +1,5 @@
+json_handles.vlt:5:13: error: cannot convert to or from JSON: `Client` has a private field `handle`, which decoding cannot set
+json_handles.vlt:6:13: error: cannot convert to or from JSON: `Pool` has a private field `handle`, which decoding cannot set
+json_handles.vlt:7:13: error: cannot convert to or from JSON: `Transaction` has a private field `handle`, which decoding cannot set
+json_handles.vlt:8:13: error: cannot convert to or from JSON: `CopyReader` has a private field `handle`, which decoding cannot set
+json_handles.vlt:9:13: error: cannot convert to or from JSON: `CopyWriter` has a private field `handle`, which decoding cannot set

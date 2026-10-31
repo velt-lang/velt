@@ -1,0 +1,3 @@
+json_handles.vlt:5:13: error: cannot convert to or from JSON: `RedisClient` has a private field `handle`, which decoding cannot set
+json_handles.vlt:6:13: error: cannot convert to or from JSON: `RedisSubscriber` has a private field `handle`, which decoding cannot set
+json_handles.vlt:7:13: error: cannot convert to or from JSON: `RedisPipeline` has a private field `#handle`, which decoding cannot set

@@ -1,0 +1,10 @@
+// Decoding cannot build the driver's handles: JSON would forge a native handle.
+import { Client, CopyReader, CopyWriter, Pool, Transaction } from "../../src/lib";
+
+function main() {
+  const c = JSON.parse<Client>('{"handle":1}');
+  const p = JSON.parse<Pool>('{"handle":1}');
+  const t = JSON.parse<Transaction>('{"handle":1}');
+  const r = JSON.parse<CopyReader>('{"handle":1}');
+  const w = JSON.parse<CopyWriter>('{"handle":1}');
+}

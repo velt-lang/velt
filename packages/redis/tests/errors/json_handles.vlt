@@ -1,0 +1,8 @@
+// Decoding cannot build the driver's handles: JSON would forge a native handle.
+import { RedisClient, RedisPipeline, RedisSubscriber } from "../../src/lib";
+
+function main() {
+  const c = JSON.parse<RedisClient>('{"handle":1}');
+  const s = JSON.parse<RedisSubscriber>('{"handle":1}');
+  const p = JSON.parse<RedisPipeline>('{"handle":1}');
+}

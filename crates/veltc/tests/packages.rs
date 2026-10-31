@@ -9,6 +9,10 @@
 //! own Rust tests run too (`cargo test`, outside the compiler's workspace). A package where no test
 //! ran fails too.
 //!
+//! Programs that must not compile are `tests/errors/<name>.vlt` with a `<name>.err` beside them,
+//! as in the goldens: `velt check` of the program, in the package, must fail, and its output must
+//! contain every non-empty line of the `.err` (`velt test` runs only `*.test.vlt` files).
+//!
 //! Tests that need a database server read its URL from the environment and do nothing without it:
 //! `VELT_TEST_PG_URL` (packages/postgres), `VELT_TEST_REDIS_URL`, `VELT_TEST_REDISS_URL` and
 //! `VELT_TEST_REDISS_CA` (packages/redis). `scripts/linux-check.sh --services` starts the servers
@@ -114,6 +118,53 @@ fn native_unit_tests(package: &Path) -> Option<String> {
     ))
 }
 
+/// `velt check` of each `tests/errors/<name>.vlt` in `package`: the reports of those that
+/// compiled, or whose errors miss a line of their `<name>.err`.
+fn compile_errors(package: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(package.join("tests/errors")) else {
+        return vec![];
+    };
+    let mut programs: Vec<PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "vlt"))
+        .collect();
+    programs.sort();
+    let name = package.file_name().unwrap().to_string_lossy().into_owned();
+    let mut failures = vec![];
+    for program in programs {
+        let file = program.file_name().unwrap().to_string_lossy().into_owned();
+        let rel = format!("packages/{name}/tests/errors/{file}");
+        let Ok(expected) = std::fs::read_to_string(program.with_extension("err")) else {
+            failures.push(format!("{rel}: no .err beside it"));
+            continue;
+        };
+        let out = no_window::command(env!("CARGO_BIN_EXE_velt"))
+            .arg("check")
+            .arg(format!("tests/errors/{file}"))
+            .current_dir(package)
+            .env_remove("CLICOLOR_FORCE")
+            .env("NO_COLOR", "1")
+            .output()
+            .expect("run velt check");
+        let stderr = String::from_utf8_lossy(&out.stderr).replace('\\', "/");
+        let missing: Vec<&str> = expected
+            .lines()
+            .map(str::trim_end)
+            .filter(|l| !l.is_empty() && !stderr.contains(l))
+            .collect();
+        if out.status.success() {
+            failures.push(format!("{rel}: compiled, but must fail"));
+        } else if !missing.is_empty() {
+            failures.push(format!(
+                "{rel}: missing errors:\n{}\n--- velt check said:\n{stderr}",
+                missing.join("\n")
+            ));
+        }
+    }
+    failures
+}
+
 /// N from the summary line `test result: ok. N passed; 0 failed`, if it is there.
 fn passed_tests(stdout: &str) -> Option<usize> {
     stdout.lines().find_map(|line| {
@@ -185,6 +236,27 @@ fn every_package_passes_its_tests() {
                     failures
                 })
             })
+            .collect();
+        runs.into_iter()
+            .flat_map(|r| {
+                r.join()
+                    .unwrap_or_else(|_| vec!["a test thread panicked".into()])
+            })
+            .collect()
+    });
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}
+
+/// The programs of each package that must not compile (`tests/errors/`) don't.
+#[test]
+fn every_package_rejects_its_error_programs() {
+    let root = root();
+    let skip_native = std::env::var_os("VELT_SKIP_NATIVE_E2E").is_some_and(|v| v == "1");
+    let failures: Vec<String> = std::thread::scope(|s| {
+        let runs: Vec<_> = packages(&root)
+            .into_iter()
+            .filter(|p| !(skip_native && native(p)))
+            .map(|p| s.spawn(move || compile_errors(&p)))
             .collect();
         runs.into_iter()
             .flat_map(|r| {

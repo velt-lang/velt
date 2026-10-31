@@ -1,0 +1,8 @@
+// Decoding cannot build the driver's handles: JSON would forge a native handle.
+import { Database, Statement, Transaction } from "../../src/lib";
+
+function main() {
+  const d = JSON.parse<Database>('{"handle":1}');
+  const s = JSON.parse<Statement>('{"handle":1}');
+  const t = JSON.parse<Transaction>('{"handle":1}');
+}
