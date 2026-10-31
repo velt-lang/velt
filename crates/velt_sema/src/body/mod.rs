@@ -45,7 +45,6 @@ mod consume;
 mod ctor;
 pub(crate) mod defaults;
 mod driver;
-mod generated_bodies;
 pub(crate) mod expr;
 mod field_narrow;
 mod for_any;
@@ -56,6 +55,7 @@ mod for_map;
 mod forward_consts;
 mod frame;
 mod gated;
+mod generated_bodies;
 mod generators;
 mod global_narrow;
 mod index_keys;
@@ -106,8 +106,8 @@ use crate::resolve::TyEnv;
 
 pub(crate) use defaults::param_defaults;
 pub(crate) use driver::{
-    check_bodies, ensure_body, ensure_global, field_defaults,
-    holds_promise_by_value, printable, promise_in_state,
+    check_bodies, ensure_body, ensure_global, field_defaults, holds_promise_by_value, printable,
+    promise_in_state,
 };
 pub(crate) use expr::REPORTED;
 pub(crate) use frame::Frame;

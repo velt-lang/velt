@@ -274,7 +274,6 @@ impl Ctx<'_> {
     }
 }
 
-/// `twins` with each extension's layout replaced by its base's ([`Layouts::redirect`]).
 impl Ctx<'_> {
     /// The fields the layout of object type `d` gets from the extensions of its family, when the
     /// program converts in that family (module docs): what an object of type `d` may hold
@@ -300,6 +299,7 @@ impl Ctx<'_> {
     }
 }
 
+/// `twins` with each extension's layout replaced by its base's ([`Layouts::redirect`]).
 pub(crate) fn redirect_twins(
     twins: &mut FxHashMap<DefId, (DefId, Option<Vec<TyId>>)>,
     redirect: &FxHashMap<DefId, DefId>,

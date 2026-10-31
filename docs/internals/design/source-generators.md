@@ -693,7 +693,17 @@ goldens:
   they matter, through `Dispatch`), and the end of the check reuses the phase's result while no
   definition was added since. Generated modules do not make the std modules their declaring
   module imports checked whole (`lazy_std::plan`), and lazy std's reach scans each
-  definition's defaults once.
+  definition's defaults once. The demand walks nothing when no checked code calls or names a
+  generated function (`demand::names_any`: a program that loads velt/encoding/json's
+  generated.vlt through the JSON prelude for `JSON.parse` only).
+- Loading the modules generated code needs: the loader keeps, per module and specifier, the
+  file each re-export it skips names (`wanted::pure`), so a std module asked for more names
+  later (velt/lang/intrinsics' index, asked by velt/reflect for the reflection intrinsics) does
+  not resolve its skipped re-exports from scratch again. Loading costs less than before the port
+  although a JSON program loads 8 more std modules (measured below).
+- A generator host starts and links none of the program's native packages
+  (`driver::build`): it reaches no native code (`check_generator_host`), and with a native
+  package in the graph (examples/apps/todo-api and sqlite) it was refused for reaching it.
 
 ### Left for the port of `JSON.stringify` and `JSON.parse`
 
@@ -701,14 +711,16 @@ Done: the reflection API (velt/reflect), the model's gaps, `__arm`, `JSON.string
 generator, types generated code could not name, and the second check (above). Left, in the json
 port's order:
 
-- **Compile time, warm.** `bench/json/stringify.vlt` is checked in +3.8% instructions warm
-  (+4.9% for `velt build`), against 3% (measured below). What is left over the glue: the demand
-  pass (a walk of every body; `json::check_json_types` walks the same bodies for the glue's
-  checks and goes with step 5), the std modules of the dynamic path that velt/encoding/json's
-  generated.vlt imports for its generated code (any.vlt, velt/reflect: about 9 M to load, also
-  for a program whose types have no dynamic part; loading them only when generated code calls
-  them needs the loader to run again for generated code), and the generated functions' check
-  and lowering (about 5 M and 14 M, the glue built VIR directly).
+- **Compile time** (measured below). `velt check` of a typed JSON program is within the
+  criteria (the JSON goldens without dynamic values +0.9%, `bench/json/stringify.vlt` +1.5%
+  warm, +3.2% cold). Left over the glue: `velt build` of `bench/json/stringify.vlt` is +6.7%
+  (debug) and +12.5% (release) with the code generator's output cached: velt_opt's inliner,
+  `sroa` and `constfold` work through the generated functions' calls (`w.append`,
+  `appendJsonNumber` into the writer), which the glue emitted inline; and a program that
+  writes a dynamic value (`any`, `unknown`, an interface value, a typed proxy) checks the
+  `any` writer and velt/reflect's bodies (any.vlt), +20% for `velt check` (the 11 such JSON
+  goldens), where the glue's dynamic path was runtime code. The demand pass (about 4 M) and
+  `json::check_json_types` (about 7 M, the glue's checks, step 5) both walk every body.
 - **A cycle through a recursive object type held by an `any`** is reported with the `any`
   path's message (`TypeError: Converting circular structure to JSON`), where the glue's typed
   writer of that type reported its own; no golden has one.
@@ -725,6 +737,28 @@ port's order:
 - **Deleting the glue** (step 7), which needs 4–6.
 
 ### Measured (Apple M4, a shared machine)
+
+- **`JSON.stringify` on the generator against the glue, after the rebase on the std layout**
+  (debug `velt`, instructions retired, `/usr/bin/time -l`, `VELT_THREADS=1`, median of 5,
+  base and head interleaved; base: the std-layout branch the port is rebased on). `velt check
+  bench/json/stringify.vlt`: warm (the last build's code offered) 608.6 M against 599.8 M
+  (+1.5%), cold (a new root path; the generators' output cached) 620.2 M against 601.0 M
+  (+3.2%); hello world 488.6 M against 491.2 M, a program with `JSON.parse` only 639.5 M
+  against 641.1 M. `velt build` (debug, the file edited) 768.0 M against 720.0 M (+6.7%),
+  cold 783.0 M against 731.8 M (+7.0%); `velt build --release` (the codegen unit from the build
+  cache) 1148.8 M against 1021.5 M (+12.5%), cold 1158.7 M against 1021.6 M (+13.4%): the
+  `optimize` stage is 48 ms against 35 ms. The 50 JSON goldens (`velt check`, median of 3
+  each): +4.95% in all; the 39 without dynamic values +0.9%, the 11 with them +20.7%. Loading
+  (`load_modules`, best of 7): 182.6 M against 191.4 M with 8 more std modules
+  (generated.vlt, append.vlt, any.vlt, velt/reflect, the string builder), hello world 120.5 M
+  against 127.0 M, after the loader stopped resolving skipped re-exports again
+  (`wanted::pure`); before that, the 8 modules cost about 18 M, 14 M of it velt/reflect's
+  import of the reflection intrinsics from velt/lang/intrinsics' index. LLVM IR of
+  `bench/json/stringify.vlt` 8060 lines against 7669, the release executable 1457696 bytes
+  against 1458864.
+- **Run time of the generated writer** (same programs, release runtime, median of 7):
+  `bench/json/stringify.vlt` 1050.2 M instructions against 1090.0 M (-3.7%), 0.07-0.08 s
+  both; debug build 4272.8 M against 4271.7 M (0.0%).
 
 - **`JSON.stringify` on the generator against the glue** (json port, after the handles and the
   generation during the check; debug `velt`, instructions retired, `/usr/bin/time -l`, best of

@@ -109,12 +109,21 @@ impl super::Loader<'_, '_> {
     /// Whether the std module `spec` names from module `index` may be left unloaded: it is not
     /// loaded yet and has no effects beyond its exports ([`has_effects`]).
     pub(super) fn pure(&mut self, index: usize, spec: &str) -> bool {
-        let importer = self.origins[index].0.clone();
-        let std = self.opts.std_root.as_deref();
-        let Some(file) = resolve::resolve_module(spec, &importer, std, None) else {
+        let memo = (index, spec.to_string());
+        let key = match self.skipped.get(&memo) {
+            Some(key) => key.clone(),
+            None => {
+                let importer = &self.origins[index].0;
+                let std = self.opts.std_root.as_deref();
+                let found = resolve::resolve_module(spec, importer, std, None);
+                let found = found.map(|f| (file_key(&f), f));
+                self.skipped.insert(memo, found.clone());
+                found
+            }
+        };
+        let Some((key, file)) = key else {
             return false;
         };
-        let key = file_key(&file);
         if self.by_file.contains_key(&key) {
             return false;
         }

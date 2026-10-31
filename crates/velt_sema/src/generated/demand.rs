@@ -57,7 +57,7 @@ fn compute_with(cx: &mut Ctx, walked: &mut Walked) -> Vec<Instance> {
         .map(DefId)
         .filter(|d| cx.generator_of(*d).is_some())
         .collect();
-    if generated.is_empty() {
+    if generated.is_empty() || (walked.uses.is_empty() && !names_any(cx, &generated)) {
         return vec![];
     }
     loop {
@@ -90,6 +90,42 @@ fn compute_with(cx: &mut Ctx, walked: &mut Walked) -> Vec<Instance> {
             ..Walked::default()
         };
     }
+}
+
+/// Whether any checked code calls or names one of the `generated` functions: without that the
+/// program reaches no instance, and the uses need no walk (a program that loads a module
+/// declaring one, as JSON's prelude does, but never writes JSON).
+fn names_any(cx: &mut Ctx, generated: &FxHashSet<DefId>) -> bool {
+    use crate::hir::{Callee, Def, ExprKind as E};
+    let mut found = false;
+    let mut look = |e: &mut crate::hir::Expr| {
+        if let E::Call {
+            callee: Callee::Def(d, _),
+            ..
+        }
+        | E::FnRef(d, _) = &e.kind
+        {
+            found |= generated.contains(d);
+        }
+    };
+    for d in cx.defs.iter_mut() {
+        if let Some(Def::Fn(f)) = d {
+            crate::visit::exprs_mut(&mut f.body.block, &mut look);
+        }
+    }
+    for info in cx.info.iter_mut() {
+        if let crate::defs::DefInfo::Adt(a) = info {
+            let start = a.own_fields_start;
+            let own = a.fields[start..]
+                .iter_mut()
+                .filter_map(|x| x.default.as_mut());
+            let redefined = a.redefined.iter_mut().filter_map(|r| r.init.as_mut());
+            for e in own.chain(redefined) {
+                crate::visit::exprs_in(e, &mut look);
+            }
+        }
+    }
+    found
 }
 
 /// The concrete instances `uses` reach, and whether a method needs instances.

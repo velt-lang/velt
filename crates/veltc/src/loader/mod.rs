@@ -138,6 +138,7 @@ pub fn load_with_roots(
         wanted: wanted::WantedByModule::default(),
         resolved: std::collections::HashSet::new(),
         effects: HashMap::new(),
+        skipped: HashMap::new(),
     };
     if let Some(std) = &opts.std_root {
         match prelude_files(std) {
@@ -223,6 +224,10 @@ struct Loader<'a, 'o> {
     resolved: std::collections::HashSet<usize>,
     /// Per std file not loaded: whether it has effects beyond its exports ([`wanted::has_effects`]).
     effects: HashMap<PathBuf, bool>,
+    /// Per module and specifier of a re-export it skipped: the [`file_key`] and the path of the
+    /// file it names (`wanted::pure` asks again each time the module is resolved again, and
+    /// resolving costs filesystem round trips).
+    skipped: HashMap<(usize, String), Option<(PathBuf, PathBuf)>>,
 }
 
 impl Loader<'_, '_> {
