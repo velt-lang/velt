@@ -185,11 +185,18 @@ fn interface_method_signatures_take_no_defaults() {
 fn abstract_methods_and_declared_functions_take_no_defaults() {
     // TypeScript's TS2371 for every signature without a body; the subclass, or a function that
     // calls the declared one, gives the default.
-    let init = "a parameter initializer is only allowed in a function or constructor implementation";
+    let init =
+        "a parameter initializer is only allowed in a function or constructor implementation";
     let r = err_src("abstract class A { abstract m(a: i64 = 1): void; } function main() {}");
-    assert!(r.contains(init) && r.contains("an implementation gives its own"), "{r}");
+    assert!(
+        r.contains(init) && r.contains("an implementation gives its own"),
+        "{r}"
+    );
     let r = err_src("declare function d(a: i64 = 3): void; function main() {}");
-    assert!(r.contains(init) && r.contains("a function that calls this one"), "{r}");
+    assert!(
+        r.contains(init) && r.contains("a function that calls this one"),
+        "{r}"
+    );
     ok_src(
         "abstract class A { abstract m(a?: i64): i64; }
          class B extends A { m(a: i64 | undefined = 2): i64 { return a ?? 0; } }

@@ -19,8 +19,8 @@ pub mod bytes_ops;
 pub mod cell_owner;
 pub mod child;
 pub mod cpu;
-pub mod db_json;
 pub mod db_handles;
+pub mod db_json;
 pub mod db_params;
 pub mod db_rows;
 #[cfg(all(debug_assertions, not(velt_rt_host)))]

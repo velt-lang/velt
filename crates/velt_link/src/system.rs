@@ -75,11 +75,7 @@ const MACOS: Platform = Platform {
     runtime_lib_name: "libvelt_rt.a",
     // rustc's list minus `-lSystem`: `cc` always links libSystem, and passing it again makes
     // ld64 print "ignoring duplicate libraries" into every link error.
-    native_libs: &[
-        "-liconv",
-        "-lc",
-        "-lm",
-    ],
+    native_libs: &["-liconv", "-lc", "-lm"],
     // `cc` links libSystem, which has the C library.
     shared_native_libs: &[],
     base_args: &[],

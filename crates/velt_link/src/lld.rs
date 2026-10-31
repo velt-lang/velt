@@ -92,7 +92,15 @@ fn elf_gnu_args(req: &LinkRequest, kit: &Kit) -> Vec<OsString> {
 
 /// The libraries of glibc a kit has stubs for (`kit::linux_gnu_libs`), as rustc names them in a
 /// staticlib's `native-static-libs`.
-const GLIBC_LIBS: &[&str] = &["-lgcc_s", "-lutil", "-lrt", "-lpthread", "-lm", "-ldl", "-lc"];
+const GLIBC_LIBS: &[&str] = &[
+    "-lgcc_s",
+    "-lutil",
+    "-lrt",
+    "-lpthread",
+    "-lm",
+    "-ldl",
+    "-lc",
+];
 
 /// `ld.lld` for musl: a static executable (musl's crt objects, the runtime built for musl,
 /// libunwind and libc from the kit). Programs cannot load shared libraries.

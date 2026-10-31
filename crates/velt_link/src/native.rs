@@ -126,7 +126,12 @@ mod tests {
         };
         let native = [
             n(&["-framework", "SystemConfiguration", "-lSystem", "-liconv"]),
-            n(&["-framework", "CoreFoundation", "-framework", "SystemConfiguration"]),
+            n(&[
+                "-framework",
+                "CoreFoundation",
+                "-framework",
+                "SystemConfiguration",
+            ]),
         ];
         let args: Vec<String> = system_lib_args(&native, &["-lSystem", "-liconv"])
             .iter()
@@ -134,7 +139,12 @@ mod tests {
             .collect();
         assert_eq!(
             args,
-            ["-framework", "SystemConfiguration", "-framework", "CoreFoundation"]
+            [
+                "-framework",
+                "SystemConfiguration",
+                "-framework",
+                "CoreFoundation"
+            ]
         );
     }
 
@@ -150,7 +160,9 @@ mod tests {
                 import_lib: None,
                 static_obj: Some(PathBuf::from("/c/a/a.o")),
                 // What every program links already, and one library it doesn't.
-                system_libs: ["-lgcc_s", "-lpthread", "-lfoo", "-lc"].map(String::from).into(),
+                system_libs: ["-lgcc_s", "-lpthread", "-lfoo", "-lc"]
+                    .map(String::from)
+                    .into(),
             },
             NativeLink {
                 shared: PathBuf::from("/c/b/libvelt_native_b.so"),

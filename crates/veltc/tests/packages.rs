@@ -228,7 +228,10 @@ fn a_closed_redis_client_lets_the_program_end() {
     let tmp = test_dir::TestDir::new();
     let app = tmp.path().join("app");
     std::fs::create_dir_all(app.join("src")).unwrap();
-    let dep = root.join("packages/redis").to_string_lossy().replace('\\', "/");
+    let dep = root
+        .join("packages/redis")
+        .to_string_lossy()
+        .replace('\\', "/");
     std::fs::write(
         app.join("package.vlt"),
         format!(

@@ -284,7 +284,12 @@ mod handles {
         // SAFETY: `data` is a live `C` that stays put until `close_cursor` frees it; the table
         // is static.
         unsafe {
-            (velt_native::api().db_open)(CURSOR, data.cast(), (vtable as *const CursorVTable).cast(), tag::<C>())
+            (velt_native::api().db_open)(
+                CURSOR,
+                data.cast(),
+                (vtable as *const CursorVTable).cast(),
+                tag::<C>(),
+            )
         }
     }
 
@@ -304,7 +309,12 @@ mod handles {
         let vtable: &'static SinkVTable = &SinkTable::<S>::VTABLE;
         // SAFETY: as in `open_cursor`.
         unsafe {
-            (velt_native::api().db_open)(SINK, data.cast(), (vtable as *const SinkVTable).cast(), tag::<S>())
+            (velt_native::api().db_open)(
+                SINK,
+                data.cast(),
+                (vtable as *const SinkVTable).cast(),
+                tag::<S>(),
+            )
         }
     }
 

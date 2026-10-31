@@ -49,18 +49,33 @@ static SINKS: Registry<Sink> = Registry::new();
 /// # Safety
 /// `vtable` is null or a `&'static CursorVTable` (`DB_CURSOR`) or `SinkVTable` (`DB_SINK`);
 /// `data` stays valid for it until [`db_close`] returns it.
-pub unsafe extern "C" fn db_open(kind: u32, data: *mut c_void, vtable: *const c_void, tag: u64) -> u64 {
+pub unsafe extern "C" fn db_open(
+    kind: u32,
+    data: *mut c_void,
+    vtable: *const c_void,
+    tag: u64,
+) -> u64 {
     if data.is_null() || vtable.is_null() {
         return 0;
     }
     match kind {
         DB_CURSOR => {
             let vtable = &*(vtable as *const CursorVTable);
-            CURSORS.insert(Cursor { raw: RawCursor { data, vtable }, tag }).bits()
+            CURSORS
+                .insert(Cursor {
+                    raw: RawCursor { data, vtable },
+                    tag,
+                })
+                .bits()
         }
         DB_SINK => {
             let vtable = &*(vtable as *const SinkVTable);
-            SINKS.insert(Sink { raw: RawSink { data, vtable }, tag }).bits()
+            SINKS
+                .insert(Sink {
+                    raw: RawSink { data, vtable },
+                    tag,
+                })
+                .bits()
         }
         _ => 0,
     }
@@ -76,14 +91,18 @@ pub extern "C" fn db_close(kind: u32, handle: u64, tag: u64) -> *mut c_void {
             if CURSORS.get(key).is_none_or(|c| c.tag != tag) {
                 return std::ptr::null_mut();
             }
-            CURSORS.remove(key).map_or(std::ptr::null_mut(), |c| c.raw.data)
+            CURSORS
+                .remove(key)
+                .map_or(std::ptr::null_mut(), |c| c.raw.data)
         }
         DB_SINK => {
             let key = Key::from_bits(handle);
             if SINKS.get(key).is_none_or(|s| s.tag != tag) {
                 return std::ptr::null_mut();
             }
-            SINKS.remove(key).map_or(std::ptr::null_mut(), |s| s.raw.data)
+            SINKS
+                .remove(key)
+                .map_or(std::ptr::null_mut(), |s| s.raw.data)
         }
         _ => std::ptr::null_mut(),
     }
