@@ -147,6 +147,10 @@ pub(crate) struct Lazy {
     subclasses: FxHashMap<DefId, Vec<DefId>>,
     /// The definitions below this one had their defaults scanned ([`reach`]).
     defaults_scanned: usize,
+    /// Per definition when [`plan`] ran: whether it is a function [`deferred`] (`None`: not a
+    /// function, decided when asked). What decides it for a function (its module, kind and
+    /// owner) does not change during a check, and the passes ask about every definition.
+    fn_deferred: Vec<Option<bool>>,
 }
 
 impl Lazy {
@@ -161,6 +165,7 @@ impl Lazy {
             methods: FxHashMap::default(),
             subclasses: FxHashMap::default(),
             defaults_scanned: 0,
+            fn_deferred: vec![],
         }
     }
 
@@ -206,6 +211,9 @@ pub(crate) fn plan(cx: &mut Ctx) {
             }
         })
         .collect();
+    cx.lazy.fn_deferred = (0..cx.info.len())
+        .map(|i| matches!(cx.info[i], DefInfo::Fn(_)).then(|| decide(cx, DefId(i as u32))))
+        .collect();
     for i in 0..cx.info.len() {
         let d = DefId(i as u32);
         if let DefInfo::Adt(a) = &cx.info[i] {
@@ -225,6 +233,14 @@ pub(crate) fn plan(cx: &mut Ctx) {
 
 /// Is `d` a function or module constant checked only once checked code reaches it?
 pub(crate) fn deferred(cx: &Ctx, d: DefId) -> bool {
+    match cx.lazy.fn_deferred.get(d.0 as usize) {
+        Some(Some(known)) => *known,
+        _ => decide(cx, d),
+    }
+}
+
+/// [`deferred`], worked out.
+fn decide(cx: &Ctx, d: DefId) -> bool {
     if cx.lazy.modules.is_empty() {
         return false;
     }
