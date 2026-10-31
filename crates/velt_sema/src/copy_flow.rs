@@ -140,7 +140,6 @@ fn keeps_nothing(i: Intrinsic) -> bool {
             | Intrinsic::IncludesEq
             | Intrinsic::Hash
             | Intrinsic::Clone
-            | Intrinsic::JsonStringify
             | Intrinsic::AnyStrictEq
             | Intrinsic::AnyLooseEq
             | Intrinsic::AnyTypeof

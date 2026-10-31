@@ -532,7 +532,6 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::ErrorText
         | I::Inspect
         | I::TemplateToString
-        | I::JsonStringify
         | I::Clone
         | I::Transfer
         | I::Spawn

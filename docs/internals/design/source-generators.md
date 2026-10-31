@@ -633,8 +633,17 @@ goldens:
   dynamic values: `any`, `unknown`, interface values and typed proxies are written by
   std/encoding/json/any.vlt over velt/reflect. `writeJsonTop` adds the check of a dynamic value
   at the top (Node returns `undefined` there; an array element is `null`).
-- Sema keeps reporting which types `JSON.stringify` cannot write (`sema/json`), now from the
-  calls of `writeJsonTop` (until the generator reports them, step 5).
+- What `JSON.stringify` cannot write is reported by the generator (step 5:
+  std/encoding/json/generate/check.vlt, from the model, at the call), with the messages sema
+  gave; sema names no JSON function. Generators run during the check whatever else it reports,
+  so their errors come with the program's others; a check without a generator (the editor's)
+  does not report them. The model grew what the check needs: the kind `generator`,
+  `hasProperties`, `classValue`, `dynamic`, a std type's `privateField` and a field's
+  `stdPrivate`; `Output.error` takes notes (the lines after the first). A call of any generated
+  function looks at its type arguments' shapes for `object_copies` (`Seen::Serialized`). The
+  `jsonStringify` intrinsic and the writer glue of velt_vir `lower/json` (`write.rs`,
+  `key.rs`, `dynamic.rs`, `any.rs`, the `JsonWrite`, `JsonWriteKey` and `AnyJson` glue) are
+  deleted.
 - Fixed on the way: a generated function's bodies take no parameter as their own
   (`bind::fix_modes`: their pass modes are fixed, as a vtable slot's, since callers were checked
   against the declaration; a body that converted its parameter to `any` took it owned, and a
@@ -729,9 +738,6 @@ port's order:
   rows and cursors of std/db (`rows_read/`, `jsonParseCursor`, `readRowsByColumn` /
   `readRowByColumn`) and the parameter binding (`dbBind`, `db_bind.rs`) still run in the
   compiler; packages reach `dbBind` and `jsonParseCursor` through std's `velt/db`.
-- **Diagnostics from the generator** (step 5): `sema/json` still reports what `JSON.stringify`
-  cannot write, from the calls of `writeJsonTop`; generators run only for a program without
-  errors.
 - **Incremental recheck** (step 6): generated code is checked inside the check that needs it
   (above); what is left is the editor's and `velt dev`'s reuse of a check across edits.
 - **Deleting the glue** (step 7), which needs 4–6.

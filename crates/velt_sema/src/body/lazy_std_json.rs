@@ -25,7 +25,7 @@ pub(super) fn json_glue(i: &Intrinsic) -> Option<usize> {
         | Intrinsic::JsonParseCursor
         | Intrinsic::ReadRows
         | Intrinsic::ReadRow => Some(0),
-        Intrinsic::JsonStringify | Intrinsic::DbBind => Some(1),
+        Intrinsic::DbBind => Some(1),
         _ => None,
     }
 }

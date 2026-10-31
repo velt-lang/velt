@@ -367,9 +367,7 @@ pub enum Intrinsic {
     /// receiver as for `ThreadLocalGet`. Additive.
     ThreadLocalSet,
 
-    // M4 JSON (compile-time generated glue over the rt JSON reader / string builder)
-    /// `JSON.stringify(x: borrow T): string`
-    JsonStringify,
+    // M4 JSON (compile-time generated glue over the rt JSON reader)
     /// std only: `jsonParse<T>(text: borrow string, flags: i64, max_depth: i64): T`
     /// — the body of the prelude's `JSON.parse<T>(text, options)`: decodes `text` as `T` with the
     /// reader options of `velt_rt_json_reader_new_with` (flag 1 = reject unknown keys;

@@ -190,7 +190,11 @@ fn requirements(cx: &mut Ctx, u: &Uses, needs: &Needs) -> Vec<(TyId, Span, Need,
 
 fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
     let mut out = vec![];
-    let top_writer = identity::json_top_writer(cx);
+    // Calls of generated functions look at their type arguments' shapes (`generated_look`).
+    let generated: FxHashSet<DefId> = (0..cx.info.len() as u32)
+        .map(DefId)
+        .filter(|d| cx.generator_of(*d).is_some())
+        .collect();
     // Looks at values matter only for object copies; most programs make none.
     let looks = !cx.object_copies.copies.is_empty();
     let copies: Vec<(Span, TyId)> = cx
@@ -234,7 +238,9 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
                 }
             }
             uses_of(ids.tys, &mut u, e, looks);
-            identity::top_write(top_writer, e, &mut u.direct);
+            if looks {
+                identity::generated_look(&generated, e, &mut u.direct);
+            }
             if u.calls.len() > calls {
                 let guard = guards.get(&(e as *const Expr)).copied().unwrap_or(0);
                 u.guards.push(guard);
@@ -281,14 +287,6 @@ fn uses_of(tys: &crate::types::Types, u: &mut Uses, e: &Expr, looks: bool) {
         u.direct.push((a.ty, a.span, Need::NoLock));
     }
     match &e.kind {
-        E::Call {
-            callee: Callee::Intrinsic(Intrinsic::JsonStringify),
-            args,
-        } => {
-            if let Some(a) = args.first() {
-                u.direct.push((a.ty, e.span, Need::Json(false)));
-            }
-        }
         E::Call {
             callee: Callee::Intrinsic(Intrinsic::JsonParse),
             ..

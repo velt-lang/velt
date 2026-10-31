@@ -64,9 +64,6 @@ pub(super) struct Boxing {
     /// The program lists the keys of an `any` (`AnyKeys`): the `any` tables have the keys slot
     /// (any_keys.rs).
     pub(super) any_keys: bool,
-    /// The program writes a dynamic value as JSON: the `any` tables have the JSON slot
-    /// (json/any.rs).
-    pub(super) any_json: bool,
     /// The program reflects on `any` values (velt/reflect): the `any` tables have the
     /// reflection slot (any_reflect.rs).
     pub(super) any_reflect: bool,
@@ -239,8 +236,6 @@ pub(super) struct Facts {
     any_delete: bool,
     /// `Object.keys` of an `any` is listed.
     any_keys: bool,
-    /// A dynamic value is written as JSON.
-    any_json: bool,
     /// An `any` is reflected on.
     any_reflect: bool,
     /// An `any` is converted to a number.
@@ -349,11 +344,6 @@ impl Cx<'_> {
     /// Record that `Object.keys` of an `any` is listed.
     pub(super) fn note_any_keys(&mut self) {
         self.facts.any_keys = true;
-    }
-
-    /// Record that a dynamic value is written as JSON.
-    pub(super) fn note_any_json(&mut self) {
-        self.facts.any_json = true;
     }
 
     /// Record that an `any` is reflected on (velt/reflect).
@@ -497,7 +487,6 @@ impl Cx<'_> {
         next.any_has |= self.facts.any_has;
         next.any_delete |= self.facts.any_delete;
         next.any_keys |= self.facts.any_keys;
-        next.any_json |= self.facts.any_json;
         next.any_reflect |= self.facts.any_reflect;
         next.any_number |= self.facts.any_number;
         next.any_call_keys

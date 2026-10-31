@@ -84,7 +84,6 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     // json.vlt
     ("jsonParse", Op(I::JsonParse)),
     ("jsonParseCursor", Op(I::JsonParseCursor)),
-    ("jsonStringify", Op(I::JsonStringify)),
     // math.vlt
     ("abs", Op(I::FAbs)),
     ("ceil", Op(I::Ceil)),

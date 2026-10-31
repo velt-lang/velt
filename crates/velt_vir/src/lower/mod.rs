@@ -498,9 +498,6 @@ struct Cx<'h> {
     honoured_clones: FxHashMap<TyId, Option<DefId>>,
     /// Memoized `dyn_modes` per (interface, slot).
     dyn_modes_memo: FxHashMap<(DefId, u32), Option<Vec<hir::PassMode>>>,
-    /// Whether some class has a `toJSON(key)`, and memoized `json_needs_key` per type
-    /// (json/key.rs); `None` until first asked.
-    json_key_memo: Option<(bool, FxHashMap<TyId, bool>)>,
     /// One type per anonymous object shape (types.rs `canon`).
     anon: types::AnonShapes,
     /// `hir::Program::generated` by work items' canonical type arguments (made on first use).

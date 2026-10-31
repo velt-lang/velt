@@ -81,7 +81,9 @@ export function show(req: InstanceRequest, out: Output): void {
   name; `instanceof` takes a class's.
 - `out.literal(s)` writes a string as a Velt string literal.
 - `out.error(message, at)` reports an error at a type's or a field's `at` (`-1`: at the call that
-  needed the instance).
+  needed the instance). The first line of `message` is the error, each further line a note.
+  Errors from generators are reported with the program's other errors; the program is then not
+  built. `velt/encoding/json` reports what `JSON.stringify` cannot write this way.
 
 An optional field (`legs?: i32`) reads as `T | undefined`: the model gives `T` and
 `optional: true`; a field `n?: T | null` reads `undefined` when absent and `null` when it holds
@@ -92,7 +94,12 @@ An optional field (`legs?: i32`) reads as `T | undefined`: the model gives `T` a
 interface with optional fields extends an object type and the program converts between the two,
 they share objects, and the base's model lists the extension's fields too, each with `via` (the
 extension's type id): read one as `(v as ${out.typeName(f.via)}).name`. A class or object type
-whose values may be a typed `Proxy` (the program uses `Proxy`) has `mayBeProxy: true`. Compute names from `out` into variables before writing a line that uses them
+whose values may be a typed `Proxy` (the program uses `Proxy`) has `mayBeProxy: true`. A
+generator class is the kind `generator`; a function with properties has `hasProperties`, a class
+used as a value (`typeof C`) `classValue`, and `object` and `Function` (kind `interface`), like
+`any` and `unknown`, are `dynamic`. A std type that keeps runtime state in private fields shows
+no fields (kind `opaque`, or `set`): its `privateField` names one, and a field such a type
+declares (also in a class that extends it) has `stdPrivate`. Compute names from `out` into variables before writing a line that uses them
 (`const field = out.instance(…); out.line(…)`): one call cannot both modify `out` and read it in
 an argument.
 

@@ -26,6 +26,7 @@ import {
   toJsonMethod,
   writable,
 } from "velt/encoding/json/generate/facts";
+import { stringifyProblem } from "velt/encoding/json/generate/check";
 import {
   writeEntries,
   writeFields,
@@ -57,8 +58,15 @@ function body(req: InstanceRequest, out: Output, keyed: bool): void {
     out.line(`if (${v} == null) { w.append("null"); return; }`);
     writeValue(out, model, t.args[0], v, key);
   } else if (t.kind == "shared") {
-    // Read in place, like the `T` it holds.
-    writeValue(out, model, t.args[0], v, key);
+    const held = model.type(t.args[0]).kind;
+    if (held == "object" || held == "struct" || held == "class" || held == "array") {
+      // Read in place, like the `T` it holds.
+      writeValue(out, model, t.args[0], v, key);
+    } else {
+      // A scalar is passed where its `T` is expected (it has no cast from `shared<T>`).
+      const [name, keyed] = writerOf(out, model, t.args[0]);
+      out.line(keyed ? `${name}(w, ${v}, ${key});` : `${name}(w, ${v});`);
+    }
   } else if (t.kind == "array") {
     const et = model.type(t.args[0]);
     out.line(`w.append("[");`);
@@ -153,6 +161,11 @@ export function writeJsonTop(req: InstanceRequest, out: Output): void {
   const id = req.args[0];
   const t = model.type(id);
   const v = req.params[1];
+  const problem = stringifyProblem(model, id);
+  if (problem.length > 0) {
+    out.error(problem, -1);
+    return;
+  }
   if (isDynamic(t)) {
     out.line(`checkJsonTop(${v});`);
   }

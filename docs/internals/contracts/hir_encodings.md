@@ -442,7 +442,7 @@ function itself there, instantiated (`FnRef`), so the values compare equal to ea
 - A union converts to a type every member it can hold converts to (a union of literals to their
   base type, members to a common base class / interface): a `Match` whose arms convert each
   member (`V(m) => <m as T>`); re-tagging into a wider union may convert members the same way.
-- `Print`/`PrintErr`/`ToString`/`JsonStringify` of a union format the active member (top-level
+- `Print`/`PrintErr`/`ToString` of a union format the active member (top-level
   style for `console.log` args: a string member prints raw). `JSON.parse` into a union
   picks the member by the JSON value (velt_vir lower/json/union.rs); sema rejects unions whose
   members it cannot tell apart.
@@ -455,7 +455,7 @@ function itself there, instantiated (`FnRef`), so the values compare equal to ea
 - Conversion to the base type (`string`, the number type, `bool`) is explicit in HIR: sema
   replaces the value by the base-typed constant (`Lit`, `Unary(Neg, Lit)` for negatives), keeping
   a non-place operand for its effects (`Block { [Expr(e)], value: Lit }`).
-- `Print`/`PrintErr`/`ToString`/`JsonStringify` of a literal type (also as a struct field or a
+- `Print`/`PrintErr`/`ToString` of a literal type (also as a struct field or a
   union member) write its value: strings raw at the top level of `console.log`, quoted `'a'` when
   nested, JSON-escaped for JSON; floats in JS number format. Eq glue is `true`, hash glue `0`,
   no drop/clone work.
@@ -914,7 +914,7 @@ methods of the prelude's types, the modules in `EAGER`, and, in the glue built f
 intrinsic, the definitions of the module in `JSON_GLUE` it calls and the prelude definitions
 `JSON_GLUE_PRELUDE` lists with that module, which sema checks once checked code instantiates
 such an intrinsic (design/lazy-std.md): `std/json/reader` for `JsonParse`, `JsonParseRows`,
-`JsonParseCursor`, `ReadRows` and `ReadRow`, `std/json/writer` for `JsonStringify` and
+`JsonParseCursor`, `ReadRows` and `ReadRow`, `std/json/writer` for
 `DbBind`.
 
 ## Symbols

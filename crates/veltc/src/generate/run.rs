@@ -413,6 +413,7 @@ fn model_json(m: &velt_sema::generated::model::Model) -> Value {
                         "esPrivate": f.es_private,
                         "hasDefault": f.has_default,
                         "isGetter": f.getter,
+                        "stdPrivate": f.std_private,
                         "via": f.via.map_or(-1, i64::from),
                         "at": f.at,
                     })).collect::<Vec<_>>(),
@@ -424,6 +425,10 @@ fn model_json(m: &velt_sema::generated::model::Model) -> Value {
                     })).collect::<Vec<_>>(),
                     "literal": t.literal,
                     "mayBeProxy": t.may_be_proxy,
+                    "hasProperties": t.has_properties,
+                    "classValue": t.class_value,
+                    "dynamic": t.dynamic,
+                    "privateField": t.private_field,
                     "methods": t.methods.iter().map(|m| json!({
                         "name": m.name,
                         "params": m.params,
@@ -513,7 +518,13 @@ fn parse_frames(
                     .ok()
                     .and_then(|a| demand.model.spans.get(a).copied())
                     .unwrap_or(call);
-                errors.push(Diagnostic::error(text, span));
+                // The first line is the message, each further line a note.
+                let mut lines = text.lines();
+                let mut d = Diagnostic::error(lines.next().unwrap_or(""), span);
+                for note in lines.filter(|l| !l.is_empty()) {
+                    d = d.with_note(note);
+                }
+                errors.push(d);
             }
             _ => return Err(format!("an unknown record `#{header}`")),
         }

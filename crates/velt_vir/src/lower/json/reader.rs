@@ -15,8 +15,6 @@ use crate::vir::{BinOp, BlockId, Local, Operand, Place, Proj, Rvalue, Ty};
 
 /// Qualified name of the reader class.
 const READER: &str = velt_common::std_item!(encoding_json_reader, "Reader");
-/// The module of the number and string writers.
-const WRITER: &str = velt_common::std_module!(encoding_json_writer);
 
 impl Cx<'_> {
     /// The `Reader` method (or static function) `name`.
@@ -89,35 +87,6 @@ impl FnLower<'_, '_> {
         let def = self
             .cx
             .json_std_fn(&format!("{}.{name}", super::PRELUDE_JSON_VALUE));
-        self.json_std_call(def, pre)
-    }
-
-    /// `velt/encoding/json/writer`'s `name(pre...)` (lowered arguments; the builder first, by address).
-    pub(super) fn writer_call(&mut self, name: &str, pre: Vec<Operand>) {
-        let def = self.cx.json_std_fn(&format!("{WRITER}::{name}"));
-        self.builder_call(def, pre, 0);
-    }
-
-    /// A call of `def`, a writer of the glue's string builder, passed at argument `at`
-    /// (`writeString(out, s)`, `JsonValue.__writeJson(out)`). The builder is typed `string` in
-    /// Velt but is no string: its parameter must borrow it, since an owned one would be cloned
-    /// as a string here and corrupt the builder. Checked at every call, not left to a comment.
-    pub(in crate::lower) fn builder_call(
-        &mut self,
-        def: DefId,
-        pre: Vec<Operand>,
-        at: usize,
-    ) -> Operand {
-        let f = self.cx.fn_def(def);
-        if f.params
-            .get(at)
-            .is_none_or(|p| p.mode == hir::PassMode::Owned)
-        {
-            ice(format!(
-                "`{}` must borrow the string builder it writes to (parameter {at})",
-                f.name
-            ));
-        }
         self.json_std_call(def, pre)
     }
 

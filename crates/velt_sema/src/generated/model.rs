@@ -23,7 +23,8 @@ pub struct Model {
 pub struct ModelType {
     /// `number`, `boolean`, `string`, `void`, `never`, `symbol`, `literal`, `enum`, `array`,
     /// `tuple`, `option`, `union`, `object`, `class`, `struct`, `interface`, `map`, `record`,
-    /// `set`, `shared`, `date`, `function`, `any`, `unknown`, `promise` or `opaque`.
+    /// `set`, `shared`, `date`, `function`, `generator`, `any`, `unknown`, `promise` or
+    /// `opaque`.
     pub kind: &'static str,
     /// As messages show it (`User`, `Map<string, User[]>`).
     pub display: String,
@@ -57,6 +58,16 @@ pub struct ModelType {
     /// Whether a value of the type may be a typed `Proxy` standing for it: a class or object
     /// type in a program that uses `Proxy` (velt_vir's `proxiable` decides which exactly).
     pub may_be_proxy: bool,
+    /// A `function` with properties (`Object.assign(f, { … })`).
+    pub has_properties: bool,
+    /// A class used as a value (`typeof C`: its constructor and statics).
+    pub class_value: bool,
+    /// A dynamic type: `any`, `unknown`, and also `object` and `Function` (kind `interface`),
+    /// whose values say at run time what they hold.
+    pub dynamic: bool,
+    /// For a std type whose structure the model does not show (`opaque`, `set`): the private
+    /// field that keeps its state (a runtime handle), else empty.
+    pub private_field: String,
     pub at: Option<u32>,
 }
 
@@ -81,6 +92,8 @@ pub struct ModelField {
     pub has_default: bool,
     /// An object literal's getter (`get k() { … }`): `ty` is what it returns.
     pub getter: bool,
+    /// A private field a std type declares (a runtime handle, also in a class that extends it).
+    pub std_private: bool,
     /// A field the layout holds for an extension of the type (an `interface E extends T` with
     /// optional fields that shares `T`'s objects): read through the value seen as this type.
     pub via: Option<u32>,
@@ -155,6 +168,8 @@ impl Builder {
         }
         let mut m = ModelType {
             display: cx.display(t),
+            class_value: cx.ctor_sig_own(t).is_some(),
+            dynamic: cx.dynamic(t).is_some(),
             ..ModelType::default()
         };
         match cx.ty.kind(t).clone() {
@@ -249,12 +264,22 @@ impl Builder {
             };
             m.qualified_name = cx.adt(d).map(|a| a.qual_name.clone()).unwrap_or_default();
             m.args = args.iter().map(|t| self.id(*t)).collect();
+            if name == "Set" {
+                m.private_field = std_private_field(cx, d).unwrap_or_default();
+            }
+            return;
+        }
+        if cx.is_generator_class(d) {
+            m.kind = "generator";
+            m.qualified_name = cx.adt(d).map(|a| a.qual_name.clone()).unwrap_or_default();
+            m.args = args.iter().map(|t| self.id(*t)).collect();
             return;
         }
         // A function with properties is a function (its properties are not data).
         let t = cx.ty.intern(TyKind::Adt(d, args.to_vec()));
         if cx.is_callable_object(t) {
             m.kind = "function";
+            m.has_properties = true;
             return;
         }
         let getters = literal_getters(cx, d);
@@ -273,16 +298,18 @@ impl Builder {
                     .map(|(f, via)| {
                         let private = f.private_to.is_some() || f.name.starts_with('#');
                         // The prelude `Error`'s `#name` is no runtime handle.
-                        let private = private && !cx.plain_private(f.private_to, &f.name);
+                        let plain = cx.plain_private(f.private_to, &f.name);
+                        let std_private =
+                            !plain && f.private_to.is_some_and(|o| cx.declared_in_std(o));
                         (
                             f.name.clone(),
                             f.declared,
                             f.optional,
                             f.readonly,
-                            private,
+                            private && !plain,
                             f.has_default,
                             f.span,
-                            via,
+                            (via, std_private),
                         )
                     })
                     .collect();
@@ -299,10 +326,13 @@ impl Builder {
                     } else {
                         "opaque"
                     };
+                    let handle = fields.iter().find(|f| f.7 .1).map(|f| f.0.clone());
+                    m.private_field = handle.unwrap_or_default();
                 } else {
-                    for (name, declared, optional, readonly, private, has_default, at, via) in
+                    for (name, declared, optional, readonly, private, has_default, at, extra) in
                         fields
                     {
+                        let (via, std_private) = extra;
                         let getter = getters.iter().find(|(n, _)| *n == name).map(|(_, r)| *r);
                         let ty = cx.subst(getter.unwrap_or(declared), args);
                         let es_private = name.starts_with('#');
@@ -314,6 +344,7 @@ impl Builder {
                             es_private,
                             has_default,
                             getter: getter.is_some(),
+                            std_private,
                             via: via.map(|e| {
                                 let t = cx.ty.intern(TyKind::Adt(e, vec![]));
                                 self.id(t)
@@ -389,6 +420,18 @@ impl Builder {
             _ => m.kind = "opaque",
         }
     }
+}
+
+/// The first private field std type `d` declares (its state: a runtime handle, a collection's
+/// storage), if any.
+fn std_private_field(cx: &Ctx, d: DefId) -> Option<String> {
+    let a = cx.adt(d)?;
+    (a.fields.iter())
+        .find(|f| {
+            f.private_to.is_some_and(|o| cx.declared_in_std(o))
+                && !cx.plain_private(f.private_to, &f.name)
+        })
+        .map(|f| f.name.clone())
 }
 
 /// Is `d` std's `Set` (velt/collections; a class whose field 0 is the `Map` of its items)?
@@ -517,6 +560,9 @@ impl Model {
             h.str(&t.repr);
             h.str(&t.literal);
             h.u32(u32::from(t.may_be_proxy));
+            let flags = [t.has_properties, t.class_value, t.dynamic];
+            h.u32(flags.iter().fold(0, |acc, &b| acc << 1 | u32::from(b)));
+            h.str(&t.private_field);
             for (tag, list) in [("a", &t.args), ("u", &t.arms), ("s", &t.subclasses)] {
                 h.str(tag);
                 h.u32(list.len() as u32);
@@ -537,6 +583,7 @@ impl Model {
                     f.es_private,
                     f.has_default,
                     f.getter,
+                    f.std_private,
                 ];
                 h.u32(flags.iter().fold(0, |acc, &b| acc << 1 | u32::from(b)));
                 h.u32(f.via.map_or(0, |v| n(v).wrapping_add(1)));

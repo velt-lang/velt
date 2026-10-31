@@ -14,7 +14,7 @@
 //! | 9..11 | member writes and `in` (any_set.rs, any_has.rs), when the program has them |
 //! | 12 | the weak word (weak_object.rs), when `object` is a weak key |
 //! | 13 | `AnyKeys` (any_keys.rs), when the program lists the keys of an `any` |
-//! | 14 | `AnyJson` (json/any.rs), when the program writes a dynamic value as JSON |
+//! | 14 | (unused: was the JSON writer's, now velt/encoding/json/any.vlt over reflection) |
 //! | 15 | `AnyDelete` (any_delete.rs), when the prelude deletes a property through `any` |
 //! | 18 | `AnyReflect` (any_reflect.rs), when the program reflects on `any` values (velt/reflect) |
 //!
@@ -192,10 +192,6 @@ impl Cx<'_> {
         if self.boxing.any_reflect {
             let f = Const::Func(self.func(Work::Glue(Glue::AnyReflect, ty)));
             e.push((super::any_reflect::SLOT_REFLECT, f));
-        }
-        if self.boxing.any_json {
-            let f = Const::Func(self.func(Work::Glue(Glue::AnyJson, ty)));
-            e.push((super::json::any::SLOT_JSON, f));
         }
         e
     }

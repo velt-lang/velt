@@ -369,7 +369,6 @@ impl FnLower<'_, '_> {
                 | I::ChanTryReceive,
                 _,
             ) => self.async_intrinsic(i, args, ty),
-            (I::JsonStringify, [a]) => self.json_stringify(a, ty),
             (I::JsonParse, [a, flags, depth]) => {
                 self.json_parse(a, flags, depth, JsonSource::Text, ty)
             }

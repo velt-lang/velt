@@ -66,6 +66,10 @@ function readType(id: i64, v: JsonValue): Type {
   t.subclasses = nums(v.get("subclasses"));
   t.literal = str(v.get("literal"));
   t.mayBeProxy = bool(v.get("mayBeProxy"));
+  t.hasProperties = bool(v.get("hasProperties"));
+  t.classValue = bool(v.get("classValue"));
+  t.dynamic = bool(v.get("dynamic"));
+  t.privateField = str(v.get("privateField"));
   t.at = num(v.get("at"));
   const fields = v.get("fields");
   if (fields != null) {
@@ -83,6 +87,7 @@ function readType(id: i64, v: JsonValue): Type {
       f.isEsPrivate = bool(fv.get("esPrivate"));
       f.hasDefault = bool(fv.get("hasDefault"));
       f.isGetter = bool(fv.get("isGetter"));
+      f.stdPrivate = bool(fv.get("stdPrivate"));
       f.via = num(fv.get("via"));
       f.at = num(fv.get("at"));
       t.fields.push(f);

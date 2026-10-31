@@ -49,7 +49,7 @@ export {
   generatorThrow,
   generatorValue,
 } from "velt/lang/intrinsics/generator";
-export { jsonParse, jsonParseCursor, jsonStringify } from "velt/lang/intrinsics/json";
+export { jsonParse, jsonParseCursor } from "velt/lang/intrinsics/json";
 export { abs, ceil, floor, round, sqrt, trunc } from "velt/lang/intrinsics/math";
 export { share, transfer } from "velt/lang/intrinsics/ownership";
 export {

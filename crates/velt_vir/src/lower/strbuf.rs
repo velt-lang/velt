@@ -54,65 +54,6 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// [`Self::push_text`] with the builder's fast path inline (#1677), for `JSON.stringify`'s
-    /// glue, whose builder no other reference can reach. Each site costs about ten instructions
-    /// more than a call (bench/json/stringify: 14-17% faster; IR of programs that stringify
-    /// 5-13% larger), so other builders (template literals, `console.log`, error messages) keep
-    /// the call.
-    pub(super) fn push_text_private(&mut self, buf: &Operand, text: &str) {
-        match text.as_bytes() {
-            [] => {}
-            [b] if b.is_ascii() => {
-                let byte = cint(*b as i128, Ty::U8);
-                let b2 = byte.clone();
-                self.push_ascii_inline(
-                    buf,
-                    1,
-                    |lw, dst| {
-                        let at = Place {
-                            local: lw.copy_to_temp(dst, Ty::Ptr),
-                            proj: vec![Proj::Deref(Ty::U8)],
-                        };
-                        lw.assign(at, Rvalue::Use(byte));
-                    },
-                    |lw| lw.call_rt(Rt::StrbufPushByte, vec![buf.clone(), b2], None),
-                );
-            }
-            [b] => self.call_rt(
-                Rt::StrbufPushByte,
-                vec![buf.clone(), cint(*b as i128, Ty::U8)],
-                None,
-            ),
-            bytes => {
-                let sid = self.cx.static_bytes(bytes.to_vec(), 1);
-                let p = Operand::Const(Const::Static(sid), Ty::Ptr);
-                if text.is_ascii() && bytes.len() <= INLINE_PUSH_MAX {
-                    let n = bytes.len() as u64;
-                    // ASCII: as many units as bytes (the high half of the length).
-                    let w1 = cint((n * 0x1_0000_0001) as i128, Ty::U64);
-                    let args = vec![buf.clone(), p.clone(), w1];
-                    self.push_ascii_inline(
-                        buf,
-                        n,
-                        |lw, dst| {
-                            lw.push_stmt(Stmt::MemCopy {
-                                dst,
-                                src: p,
-                                size: n,
-                            })
-                        },
-                        |lw| lw.call_rt(Rt::StrbufPushBytes, args, None),
-                    );
-                    return;
-                }
-                // The length argument carries the unit count too (rt_abi_async.md §12.1).
-                let w1 = super::strings::str_w1(text);
-                let args = vec![buf.clone(), p, cint(w1 as i128, Ty::U64)];
-                self.call_rt(Rt::StrbufPushBytes, args, None);
-            }
-        }
-    }
-
     /// Append `n` ASCII bytes, which `write` stores at the pointer it is given, to the builder
     /// at `buf`: the builder's fast path (`VeltStr::push_ascii`) inline, `slow_path` (the runtime
     /// call) when it fails. The fast path: a plain heap string (not inline, not a slice: bits 62

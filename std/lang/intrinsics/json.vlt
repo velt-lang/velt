@@ -1,9 +1,7 @@
-// velt/lang/intrinsics (internal): JSON encoders and decoders the compiler generates per type
-// (velt/encoding/json). They write private fields and build classes without running their
-// constructor, which no Velt code can do yet (docs/internals/design/std-layout.md §11).
-
-/** `JSON.stringify(value)`, by the encoder generated for `T`. */
-export declare intrinsic function jsonStringify<T>(value: T): string;
+// velt/lang/intrinsics (internal): JSON decoders the compiler generates per type
+// (velt/encoding/json). They build classes without running their constructor, which no Velt
+// code can do yet (docs/internals/design/std-layout.md §11). `JSON.stringify`'s writers are
+// written by a source generator (velt/encoding/json/generate).
 
 /**
  * Decodes `text` as a `T` with the reader options of `velt_rt_json_reader_new_with` (flag 1:

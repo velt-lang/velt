@@ -13,95 +13,9 @@ use super::{Seg, STR};
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
 use crate::lower::{cint, ice, FnLower, ScopeKind};
-use crate::vir::{
-    self, BinOp, BlockId, Const, Local, Operand, Place, Proj, Rvalue, Terminator, Ty,
-};
-
-/// Field indexes of the prelude `Map` (see glue/format_map.rs).
-const KEYS: u32 = 1;
-const VALUES: u32 = 2;
+use crate::vir::{self, BinOp, BlockId, Local, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
 impl FnLower<'_, '_> {
-    /// `{"k":v,...}` for the prelude `Map` object at `place` (string keys).
-    pub(super) fn json_write_map(
-        &mut self,
-        buf: &Operand,
-        place: &Place,
-        ty: TyId,
-        kv: (TyId, TyId),
-    ) {
-        self.json_write_entries(buf, place, ty, kv, None);
-    }
-
-    /// The entries of the `Map` at `place`, in insertion order or in `order` (a record's).
-    fn json_write_entries(
-        &mut self,
-        buf: &Operand,
-        place: &Place,
-        ty: TyId,
-        (kt, vt): (TyId, TyId),
-        order: Option<&RecordOrder>,
-    ) {
-        let tys = self.cx.adt_field_tys(ty);
-        // Either array may be boxed (shared elsewhere in the program as the same type).
-        let keys = self.field_place(place, ty, KEYS);
-        let keys = self.content(&keys, tys[KEYS as usize]);
-        let values = self.field_place(place, ty, VALUES);
-        let values = self.content(&values, tys[VALUES as usize]);
-        let TyKind::Array(slot_t) = self.cx.kind(tys[VALUES as usize]) else {
-            ice("Map.entryValues is not an array")
-        };
-        self.push_text(buf, "{");
-        let first = self.temp(Ty::Bool);
-        let yes = Operand::Const(Const::Bool(true), Ty::Bool);
-        self.assign(Place::local(first), Rvalue::Use(yes));
-        let k = self.temp(Ty::U64);
-        self.assign(Place::local(k), Rvalue::Use(cint(0, Ty::U64)));
-        let len = Operand::Copy(proj(&keys, Proj::Field(1)));
-        let len = self.order_len(order, len);
-        self.count_loop(k, len, |lw, i| {
-            let i = lw.order_pos(order, i);
-            // A deleted entry's value slot is null (glue/format_map.rs `map_entry_live`).
-            let slot = lw.elem_place(&values, i.clone(), slot_t);
-            let (live, vp) = lw.map_entry_live(place, ty, (i.clone(), &slot, slot_t, vt));
-            let (live_bb, skip) = (lw.new_block(), lw.new_block());
-            lw.branch(live, live_bb, skip);
-            lw.switch_to(live_bb);
-            // A dynamic value holding `undefined`, a function or a symbol is left out.
-            if lw.cx.is_dynamic(vt) {
-                let present = lw.any_json_present(&vp);
-                let written = lw.new_block();
-                lw.branch(present, written, skip);
-                lw.switch_to(written);
-            }
-            // So is a value holding `undefined` (`Record<string, T | undefined>`), as JavaScript
-            // leaves out such a property; a `null` is written.
-            if let TyKind::Option(_, n) = lw.cx.kind(vt) {
-                if n.has_undefined() {
-                    let present = lw.option_is_some(&vp, vt);
-                    let written = lw.new_block();
-                    lw.branch(present, written, skip);
-                    lw.switch_to(written);
-                }
-            }
-            let (sep_bb, entry_bb) = (lw.new_block(), lw.new_block());
-            lw.branch(Operand::Copy(Place::local(first)), entry_bb, sep_bb);
-            lw.switch_to(sep_bb);
-            lw.push_text(buf, ",");
-            lw.goto(entry_bb);
-            lw.switch_to(entry_bb);
-            let no = Operand::Const(Const::Bool(false), Ty::Bool);
-            lw.assign(Place::local(first), Rvalue::Use(no));
-            let kp = lw.elem_place(&keys, i, kt);
-            lw.json_write(buf, &kp, kt);
-            lw.push_text(buf, ":");
-            lw.json_write_at(buf, &vp, vt, super::key::JsonKey::Str(&kp));
-            lw.goto(skip);
-            lw.switch_to(skip);
-        });
-        self.push_text(buf, "}");
-    }
-
     /// Decode an object into a new prelude `Map<K, V>` at `place` (`K`: `string`, or the
     /// literal keys of a record).
     pub(super) fn json_read_map(
@@ -378,21 +292,6 @@ impl FnLower<'_, '_> {
         });
         let i = found.unwrap_or_else(|| ice(format_args!("no method `{full}`")));
         DefId(i as u32)
-    }
-
-    /// `Record<K, V>`: its `Map<K, V>` (field 0) as an object.
-    pub(super) fn json_write_record(
-        &mut self,
-        buf: &Operand,
-        place: &Place,
-        ty: TyId,
-        kv: (TyId, TyId),
-    ) {
-        let order = self.record_order(place, ty);
-        let map_ty = self.cx.adt_field_tys(ty)[0];
-        let map = self.field_place(place, ty, 0);
-        self.json_write_entries(buf, &map, map_ty, kv, Some(&order));
-        self.drop_record_order(order);
     }
 
     /// The order in which to walk the entries of the record at `place` (of the prelude `Record`

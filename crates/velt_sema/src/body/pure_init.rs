@@ -650,7 +650,6 @@ fn effect_of(i: Intrinsic) -> Option<String> {
         | I::Round
         | I::Trunc
         | I::FAbs
-        | I::JsonStringify
         | I::SourceLocation
         | I::SymbolStatic
         | I::SymbolRegistry

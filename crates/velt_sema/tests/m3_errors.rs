@@ -130,11 +130,8 @@ fn json_types() {
         "type D = { m: Map<string, i64[]>, t: [string, f64] };
          function main() { const d = JSON.parse<D>(\"{}\"); console.log(JSON.stringify(d)); }",
     );
-    let r = err_src(
-        "function main() { const m = new Map<i64, i64>(); console.log(JSON.stringify(m)); }",
-    );
-    assert!(r.contains("`Map<i64, i64>` has no JSON form"), "{r}");
-    assert!(r.contains("only with `string` keys"), "{r}");
+    // What `JSON.stringify` cannot write is reported by its generator, which a check without
+    // generators does not run: tests/golden/lang/errors/json_stringify_unwritable.vlt.
     // Everything else without a JSON form is a diagnostic (never an ICE in lowering).
     for (decl, ty) in [
         ("interface Named { name(): string; }", "Named"),
@@ -159,16 +156,11 @@ fn json_types() {
          function main() { const w = JSON.parse<W>(\"{}\"); }",
     );
     assert!(r.contains("cannot convert to or from JSON"), "{r}");
-    // A `shared<T>` is written as its `T`, except an atomic `shared<int>`.
+    // A `shared<T>` is written as its `T`, except an atomic `shared<int>` (the golden above).
     ok_src(
         "function send<T>(v: T): string { return JSON.stringify(v); }
          function main() { console.log(send(shared(1))); }",
     );
-    let r = err_src(
-        "function send<T>(v: T): string { return JSON.stringify(v); }
-         function main() { console.log(send(shared(1 as i64))); }",
-    );
-    assert!(r.contains("`shared<i64>` has no JSON form"), "{r}");
 }
 
 #[test]

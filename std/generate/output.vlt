@@ -56,7 +56,10 @@ export class Output {
     return quote(s);
   }
 
-  /** Reports an error at `at` (a type's or a field's `at`; -1: at the call that needs it). */
+  /**
+   * Reports an error at `at` (a type's or a field's `at`; -1: at the call that needs it). The
+   * first line of `message` is the error, each further line a note.
+   */
   error(message: string, at: i64): void {
     this.#session.report("error", this.#name, at, message);
   }

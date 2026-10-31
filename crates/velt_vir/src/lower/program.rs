@@ -75,7 +75,6 @@ impl<'h> Cx<'h> {
             own_clones: None,
             honoured_clones: FxHashMap::default(),
             dyn_modes_memo: FxHashMap::default(),
-            json_key_memo: None,
             anon: Default::default(),
             generated_canon: None,
             cur_def: None,

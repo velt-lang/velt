@@ -180,7 +180,7 @@ impl FnLower<'_, '_> {
             || self.prelude_map(ty).is_some()
             || self.prelude_record(ty).is_some()
             || self.hook(ty, Hook::ToJson).is_some()
-            || self.json_callable(ty)
+            || self.callable_object(ty)
             || self.cx.adt_def(d).opaque
         {
             return false;
@@ -203,5 +203,18 @@ impl FnLower<'_, '_> {
                         && self.cx.presence_slot(ty, i as u32).is_none()
                         && (self.db_bind_scalar(fty) || self.db_bind_blob(fty)))
             })
+    }
+}
+
+impl FnLower<'_, '_> {
+    /// Is `ty` a function with properties (an object type whose first field is its `#call`)?
+    fn callable_object(&self, ty: TyId) -> bool {
+        match self.cx.kind(ty) {
+            TyKind::Adt(d, _) => matches!(
+                self.cx.hir.def(d),
+                hir::Def::Adt(a) if a.fields.first().is_some_and(|f| f.name == "#call")
+            ),
+            _ => false,
+        }
     }
 }

@@ -113,9 +113,9 @@
 //! `velt_rt_throw_loc()`. Plain `lower` emits none of this (no locations, empty suffixes).
 //!
 //! # JSON (M4, `lower/json/`)
-//! `JSON.stringify`/`JSON.parse<T>` call one generated function per type (`Glue::JsonWrite` over
-//! the rt string builder, `Glue::JsonRead` over the rt pull reader, `Glue::JsonParse` for the
-//! document); a failed parse throws the prelude's `JsonError { message }` with a
+//! `JSON.parse<T>` calls one generated function per type (`Glue::JsonRead` over the rt pull
+//! reader, `Glue::JsonParse` for the document; `JSON.stringify` is Velt code a source generator
+//! writes, velt/encoding/json); a failed parse throws the prelude's `JsonError { message }` with a
 //! `$.field[3]`-style path built only on the failure path.
 
 pub mod vir;
