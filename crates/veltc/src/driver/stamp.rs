@@ -174,7 +174,8 @@ pub(super) struct Built<'a> {
     pub std_objects: &'a [PathBuf],
     /// What the program reaches outside itself (`super::outside::reaches`: `-` for nothing).
     pub outside: &'a str,
-    /// What the generators the build ran read (`file` entries of their hosts' stamps).
+    /// What the generators the build ran read: the `file`, `dir`, `probe` and `real` entries of
+    /// their hosts' stamps.
     pub generator_inputs: &'a [String],
 }
 
@@ -204,11 +205,17 @@ pub(super) fn render(key: &Key, sm: &SourceMap, built: &Built) -> String {
             .entry(vpm::relpath::absolute(&file.path))
             .or_insert(read);
     }
-    // What the build's generators read (entries of their hosts' stamps).
+    // What the build's generators read (entries of their hosts' stamps): files, and what
+    // resolving their imports looked at (`dir`, `probe` and `real` entries, kept as they are).
+    let mut generator_lookups = std::collections::BTreeSet::new();
     for line in built.generator_inputs {
         let Some((head, path)) = line.split_once('\t') else {
             continue;
         };
+        if !head.starts_with("file ") {
+            generator_lookups.insert(line.as_str());
+            continue;
+        }
         let mut fields = head.split(' ').skip(1);
         let Some(hash) = fields.next() else {
             continue;
@@ -239,6 +246,10 @@ pub(super) fn render(key: &Key, sm: &SourceMap, built: &Built) -> String {
     }
     for (path, hash) in &seen.resolved {
         let _ = writeln!(s, "real {hash}\t{}", path.display());
+        entries += 1;
+    }
+    for line in generator_lookups {
+        let _ = writeln!(s, "{line}");
         entries += 1;
     }
     for (kind, paths) in [("link", built.link_inputs), ("std", built.std_objects)] {

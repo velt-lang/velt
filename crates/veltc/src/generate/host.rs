@@ -19,7 +19,8 @@ use super::{guard, HOST_COMMAND};
 const ROOT_SOURCE_ENV: &str = "VELT_GENERATE_ROOT_SOURCE";
 
 /// A host ready to run: its command, and the files its build read as build-stamp entries
-/// (`file <hash> <size> <time>\t<path>`), which the output cache and the program's own stamp
+/// (`file <hash> <size> <time>\t<path>`, and `dir`/`probe`/`real` for what resolving its
+/// imports looked at), which the output cache and the program's own stamp
 /// check (a changed generator changes the output).
 pub(super) struct Host {
     command: Command,
@@ -85,11 +86,18 @@ fn executable(
         Ok(_) => return Some(Err("the generator host is not an executable".into())),
         Err(e) => return Some(Err(report(&sess, &e))),
     };
-    // What the host's build read, from its stamp (also when the stamp made the build a no-op).
+    // What the host's build read, from its stamp (also when the stamp made the build a no-op):
+    // the files, and what resolving the generators' imports looked at, so a generator module
+    // that now resolves to another file (`./gen` to a new `gen.vlt` over `gen/index.vlt`) is
+    // a change. The host's own objects and link inputs are not the generators' inputs.
     let text = std::fs::read_to_string(stamp::path(&exe)).unwrap_or_default();
     let files = stamp::entry_lines(&text)
         .into_iter()
-        .filter(|l| l.starts_with("file "))
+        .filter(|l| {
+            ["file ", "dir ", "probe ", "real "]
+                .iter()
+                .any(|k| l.starts_with(k))
+        })
         .map(String::from)
         .collect();
     if let Some(l) = &lock {

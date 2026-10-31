@@ -116,6 +116,28 @@ fn programs_at_the_same_relative_path_have_their_own_generators() {
     }
 }
 
+/// The generator module resolves to another file (`./gen` was `gen/index.vlt`; a `gen.vlt` added
+/// next to it wins): the cached output and the offered code are stale.
+#[test]
+fn a_generator_that_resolves_to_another_file_is_run_again() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let dir = tmp.path().join("prog");
+    let cache = tmp.path().join("cache");
+    std::fs::create_dir_all(dir.join("gen")).expect("dir");
+    std::fs::write(
+        dir.join("main.vlt"),
+        "declare generated(\"./gen\") function hello<T>(): string;\n\
+         class User {}\n\
+         function main() { console.log(hello<User>()); }\n",
+    )
+    .expect("main");
+    std::fs::write(dir.join("gen").join("index.vlt"), generator("hello")).expect("gen");
+    assert_eq!(run(&dir, &cache), "hello User\n");
+    assert_eq!(run(&dir, &cache), "hello User\n");
+    std::fs::write(dir.join("gen.vlt"), generator("goodbye")).expect("gen");
+    assert_eq!(run(&dir, &cache), "goodbye User\n");
+}
+
 /// A generator that lists a type's fields: its output changes when the type does.
 const FIELDS: &str = "import { InstanceRequest, Output } from \"velt/generate\";\n\
      export function fields(req: InstanceRequest, out: Output): void {\n\

@@ -206,18 +206,20 @@ pub struct GenFunction {
 }
 
 impl GenFunction {
-    /// The signature as generated code spells it, for fingerprints.
+    /// The signature as generated code spells it, with the generator module it names, for
+    /// fingerprints (code another generator wrote is stale).
     pub fn signature(&self) -> String {
         let params: Vec<String> = (self.params.iter())
             .map(|(n, t)| format!("{n}: {t}"))
             .collect();
         format!(
-            "{}{}({}): {} throws {}",
+            "{}{}({}): {} throws {} from {:?}",
             if self.is_async { "async " } else { "" },
             self.function,
             params.join(", "),
             self.ret,
-            self.throws.as_deref().unwrap_or("-")
+            self.throws.as_deref().unwrap_or("-"),
+            self.generator
         )
     }
 }
