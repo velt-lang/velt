@@ -150,7 +150,16 @@ pub(super) fn run(
         }
     }
     if !errors.is_empty() {
-        sess.diagnostics.extend(errors);
+        // An instance a generator refused is asked for again by each later round: one report.
+        for e in errors {
+            let primary = |d: &Diagnostic| d.labels.first().map(|l| l.span);
+            let same = |d: &Diagnostic| {
+                d.message == e.message && d.notes == e.notes && primary(d) == primary(&e)
+            };
+            if !sess.diagnostics.iter().any(same) {
+                sess.diagnostics.push(e);
+            }
+        }
         return None;
     }
     // The code, per declaring module.
