@@ -83,7 +83,8 @@ struct Package<'a> {
     index: ModuleIndex,
     /// The public modules, sorted by name.
     public: Vec<usize>,
-    /// The prelude's and `lang/`'s files: their exports are globals.
+    /// The prelude's and `lang/`'s files: their exports are globals (not the intrinsics' files,
+    /// whose exports only std imports).
     global_files: Vec<usize>,
     /// Each declaration's public exports: `(public module, exported name)`, sorted.
     exported_as: HashMap<DeclAt, Vec<(usize, String)>>,
@@ -98,8 +99,12 @@ impl<'a> Package<'a> {
             .filter(|&m| files[m].ends_with("/index.vlt") && std_modules::importable(files[m]))
             .collect();
         public.sort_by(|&a, &b| modules[a].name.cmp(&modules[b].name));
+        let intrinsics = velt_common::std_dir!(lang_intrinsics)
+            .strip_prefix(std_modules::CANONICAL_PREFIX)
+            .unwrap_or_default();
         let global_files: Vec<usize> = (0..modules.len())
             .filter(|&m| files[m].starts_with("prelude/") || files[m].starts_with("lang/"))
+            .filter(|&m| !files[m].starts_with(intrinsics))
             .collect();
         let own: Vec<HashMap<String, &DocItem>> = modules
             .iter()

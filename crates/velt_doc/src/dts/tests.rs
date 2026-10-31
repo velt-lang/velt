@@ -24,6 +24,13 @@ fn package() -> BTreeMap<String, String> {
              export extend Array<string> {\n  joined(): string { return \"\"; }\n}\n",
         ),
         input("io/index.vlt", "export class IoError {\n  code: string;\n}\n"),
+        // The intrinsics are `lang/`, but no globals: only std imports them.
+        input("lang/intrinsics/modes.vlt", "export type Mut<T> = T;\n"),
+        input(
+            "lang/intrinsics/array.vlt",
+            "import type { Mut } from \"./modes\";\n\
+             export declare intrinsic function arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void;\n",
+        ),
         input(
             "box/index.vlt",
             "export { Box, make } from \"./box\";\n\
@@ -107,6 +114,7 @@ fn globals_and_extensions() {
     for w in want {
         assert!(g.contains(w), "missing {w:?} in:\n{g}");
     }
+    assert!(!g.contains("type Mut") && !g.contains("arraySwap"), "{g}");
     let json = &files["package.json"];
     assert!(json.contains("\"version\": \"1.2.3\""), "{json}");
     assert!(
