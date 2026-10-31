@@ -96,9 +96,9 @@ fn compute_with(cx: &mut Ctx, walked: &mut Walked) -> Vec<Instance> {
             .filter(|d| cx.generator_of(*d).is_some())
             .collect()
     });
-    let unnamed =
-        |cx: &mut Ctx| crate::timings::pass("demand::names_any", || !names_any(cx, &generated));
-    if generated.is_empty() || (walked.uses.is_empty() && unnamed(cx)) {
+    let unreached =
+        |cx: &mut Ctx| crate::timings::pass("demand::may_reach", || !may_reach(cx, &generated));
+    if generated.is_empty() || (walked.uses.is_empty() && unreached(cx)) {
         return vec![];
     }
     loop {
@@ -139,32 +139,64 @@ fn compute_with(cx: &mut Ctx, walked: &mut Walked) -> Vec<Instance> {
     }
 }
 
-/// Whether any checked code calls or names one of the `generated` functions: without that the
-/// program reaches no instance, and the uses need no walk (a program that loads a module
-/// declaring one, as JSON's prelude does, but never writes JSON).
-fn names_any(cx: &mut Ctx, generated: &FxHashSet<DefId>) -> bool {
+/// Whether checked code may reach a concrete instance of one of the `generated` functions:
+/// without that the uses need no walk. Not when no code names one (a program that loads a
+/// module declaring one, as JSON's prelude does, but never writes JSON), nor when only generic
+/// code no concrete code reaches does (`Map`'s comparisons in a program without a `Map`).
+///
+/// The functions leading to an instance are those naming a generated function at type
+/// arguments that mention their type parameters, and, until none is added, the callers of
+/// those, with the type parameters (by index) the instances depend on. A call of one reaches
+/// a concrete instance unless each type argument at those indices mentions the caller's type
+/// parameters (and then the caller leads to one too); so does a call outside any function (a
+/// module constant's initializer, a field's default), and a function that runs other than by
+/// a call (a method a dynamic call may run, a closure, a constructor). Like [`propagate`]
+/// without guards (which only leave instances out): `false` means it would find none.
+fn may_reach(cx: &mut Ctx, generated: &FxHashSet<DefId>) -> bool {
     use crate::hir::{Callee, Def, ExprKind as E};
-    let mut found = false;
-    let mut look = |e: &mut crate::hir::Expr| {
-        if let E::Call {
-            callee: Callee::Def(d, _),
+    use crate::types::collect_params;
+    /// The caller of a call outside any function body: concrete code.
+    const ROOT: u32 = u32::MAX;
+    // Every call and function value: caller, callee and the range of its type arguments in
+    // `targs`.
+    let mut calls: Vec<(u32, DefId, std::ops::Range<usize>)> = vec![];
+    let mut targs: Vec<TyId> = vec![];
+    // The functions leading to an instance, with the type parameters it depends on.
+    let mut leads: FxHashMap<DefId, Vec<u32>> = FxHashMap::default();
+    let mut concrete = false;
+    let tys = &cx.ty;
+    let mut look = |caller: u32, e: &mut crate::hir::Expr| {
+        let (E::Call {
+            callee: Callee::Def(d, args),
             ..
         }
-        | E::FnRef(d, _) = &e.kind
-        {
-            found |= generated.contains(d);
+        | E::FnRef(d, args)) = &e.kind
+        else {
+            return;
+        };
+        if generated.contains(d) {
+            let mut params = vec![];
+            for t in args {
+                collect_params(tys, *t, &mut params);
+            }
+            if params.is_empty() || caller == ROOT {
+                concrete = true;
+            } else {
+                add_params(leads.entry(DefId(caller)).or_default(), &params);
+            }
         }
+        calls.push((caller, *d, targs.len()..targs.len() + args.len()));
+        targs.extend_from_slice(args);
     };
-    for d in cx.defs.iter_mut() {
+    for (i, d) in cx.defs.iter_mut().enumerate() {
         if let Some(Def::Fn(f)) = d {
-            crate::visit::exprs_mut(&mut f.body.block, &mut look);
+            crate::visit::exprs_mut(&mut f.body.block, &mut |e| look(i as u32, e));
         }
     }
     for info in cx.info.iter_mut() {
-        // A module constant's initializer (evaluated where it is read).
         if let crate::defs::DefInfo::Global(g) = info {
             if let Some(init) = g.init.as_mut() {
-                crate::visit::exprs_in(init, &mut look);
+                crate::visit::exprs_in(init, &mut |e| look(ROOT, e));
             }
         }
         if let crate::defs::DefInfo::Adt(a) = info {
@@ -174,11 +206,65 @@ fn names_any(cx: &mut Ctx, generated: &FxHashSet<DefId>) -> bool {
                 .filter_map(|x| x.default.as_mut());
             let redefined = a.redefined.iter_mut().filter_map(|r| r.init.as_mut());
             for e in own.chain(redefined) {
-                crate::visit::exprs_in(e, &mut look);
+                crate::visit::exprs_in(e, &mut |e| look(ROOT, e));
             }
         }
     }
-    found
+    if concrete {
+        return true;
+    }
+    let mut grew = !leads.is_empty();
+    while grew {
+        grew = false;
+        for (caller, callee, range) in &calls {
+            let Some(needed) = leads.get(callee).cloned() else {
+                continue;
+            };
+            if *caller == ROOT {
+                return true;
+            }
+            let args = &targs[range.clone()];
+            let mut params = vec![];
+            for i in needed {
+                // Past the arguments, the parameter stays one (as `Types::subst` leaves it).
+                let Some(t) = args.get(i as usize) else {
+                    add_params(&mut params, &[i]);
+                    continue;
+                };
+                let mut mentioned = vec![];
+                collect_params(&cx.ty, *t, &mut mentioned);
+                if mentioned.is_empty() {
+                    return true;
+                }
+                add_params(&mut params, &mentioned);
+            }
+            let own = leads.entry(DefId(*caller)).or_default();
+            grew |= add_params(own, &params);
+        }
+    }
+    let mut targets: Option<FxHashSet<DefId>> = None;
+    leads.keys().any(|d| {
+        use crate::defs::{DefInfo, FnKind};
+        match cx.info.get(d.0 as usize) {
+            Some(DefInfo::Fn(f)) => match f.kind {
+                FnKind::Free | FnKind::Static | FnKind::Extern => false,
+                FnKind::Method => (targets.get_or_insert_with(|| dispatch_targets(cx))).contains(d),
+                FnKind::Ctor | FnKind::IfaceDefault | FnKind::Closure => true,
+            },
+            _ => true,
+        }
+    })
+}
+
+/// Add `params` to `to` (a set as a list); whether any was new.
+fn add_params(to: &mut Vec<u32>, params: &[u32]) -> bool {
+    let n = to.len();
+    for p in params {
+        if !to.contains(p) {
+            to.push(*p);
+        }
+    }
+    to.len() > n
 }
 
 /// The concrete instances `uses` reach, and whether a method needs instances.

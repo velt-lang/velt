@@ -189,3 +189,84 @@ function main() {
     shown.sort();
     assert_eq!(shown, ["[string, string]", "boolean[]", "i32"]);
 }
+
+/// The `./gen` instances `src` demands, shown (none when nothing generated is demanded).
+fn shown(src: &str) -> Vec<String> {
+    let l = load_src(src);
+    let (out, diags) = velt_sema::check_generating(
+        &l.modules,
+        l.root,
+        CheckOptions::default(),
+        &GenInput::default(),
+        &[],
+        None,
+    );
+    assert!(diags.iter().all(|d| !d.is_error()), "{}", l.render(&diags));
+    let d = match out {
+        Some(Checked::Demand(d)) => d,
+        Some(Checked::Program(_)) => return vec![],
+        _ => panic!("no demand"),
+    };
+    let mut shown: Vec<String> = (d.requests.iter())
+        .filter(|r| d.functions[r.function].generator == "./gen")
+        .map(|r| d.model.types[r.type_args[0] as usize].display.clone())
+        .collect();
+    shown.sort();
+    shown
+}
+
+const CHAIN: &str = r#"
+declare generated("./gen") function describe<T>(): string;
+
+function via<T>(): string {
+  return describe<T>();
+}
+
+function twice<T>(): string {
+  return via<T[]>() + via<T>();
+}
+"#;
+
+/// Generic code that names a generated function demands nothing while no concrete code reaches
+/// it; each way concrete code can reach it demands the instances at its types: a call, a
+/// module constant, a field default, a closure, a dynamic call, and a concrete call inside
+/// generic code nothing calls.
+#[test]
+fn demand_reaches_instances_only_from_concrete_code() {
+    let unreached = format!("{CHAIN}\nfunction main() {{\n  console.log(\"x\");\n}}\n");
+    assert_eq!(shown(&unreached), Vec::<String>::new());
+    let called = format!("{CHAIN}\nfunction main() {{\n  console.log(twice<i32>());\n}}\n");
+    assert_eq!(shown(&called), ["i32", "i32[]"]);
+    let constant = format!(
+        "{CHAIN}\nconst text = twice<boolean>();\n\nfunction main() {{\n  console.log(text);\n}}\n"
+    );
+    assert_eq!(shown(&constant), ["boolean", "boolean[]"]);
+    let field = format!(
+        "{CHAIN}
+class Holder<T> {{
+  text: string = twice<T>();
+}}
+
+         function main() {{
+  console.log(new Holder<i16>().text);
+}}
+"
+    );
+    assert_eq!(shown(&field), ["i16", "i16[]"]);
+    let closure = format!(
+        "{CHAIN}\nfunction wrap<T>(): () => string {{\n  return () => via<T>();\n}}\n\n\
+         function main() {{\n  console.log(wrap<u8>()());\n}}\n"
+    );
+    assert_eq!(shown(&closure), ["u8"]);
+    let dynamic = format!(
+        "{CHAIN}\nclass Base {{\n  name(): string {{\n    return \"b\";\n  }}\n}}\n\n\
+         class Box<T> extends Base {{\n  override name(): string {{\n    return twice<T>();\n  }}\n}}\n\n\
+         function main() {{\n  const b: Base = new Box<i64>();\n  console.log(b.name());\n}}\n"
+    );
+    assert_eq!(shown(&dynamic), ["i64", "i64[]"]);
+    let inside = format!(
+        "{CHAIN}\nfunction never<T>(): string {{\n  return via<string>();\n}}\n\n\
+         function main() {{\n  console.log(\"x\");\n}}\n"
+    );
+    assert_eq!(shown(&inside), ["string"]);
+}
