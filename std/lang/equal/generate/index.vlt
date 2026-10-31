@@ -79,8 +79,59 @@ function compare(out: Output, model: Model, id: i64, x: string, y: string, deep:
   if (k == "opaque") {
     return `equalOpaque(${x}, ${y}, ${d})`;
   }
+  // A small object or struct of plain values is compared in place, field by field, as the glue
+  // did: no call per value, so the optimizer sees the loads (and the bounds an array loop
+  // checked).
+  if (inlineable(model, t)) {
+    const parts: string[] = [];
+    for (const fld of t.fields) {
+      parts.push(
+        compare(out, model, fld.type, member(out, model, fld, x), member(out, model, fld, y), deep),
+      );
+    }
+    return parts.length == 0 ? "true" : `(${parts.join(" && ")})`;
+  }
   const f = out.instance(fnOf(deep), [id]);
   return `${f}(${x}, ${y})`;
+}
+
+/**
+ * The fields of `t` (an object, a struct or, in `toEqual`, a class) compared as one expression,
+ * or "" when a field is optional (its comparison needs statements) or `t` has none of them.
+ */
+function fieldsExpr(out: Output, model: Model, t: Type, a: string, b: string, deep: bool): string {
+  if (!byFields(t, deep)) {
+    return "";
+  }
+  const parts: string[] = [];
+  for (const fld of t.fields) {
+    if (unreadable(fld)) {
+      continue;
+    }
+    if (fld.optional && model.type(fld.type).kind != "option") {
+      return "";
+    }
+    const xa = member(out, model, fld, a);
+    const xb = member(out, model, fld, b);
+    parts.push(compare(out, model, fld.type, xa, xb, deep));
+  }
+  return parts.length == 0 ? "true" : `(${parts.join(" && ")})`;
+}
+
+/** Is `t` an object or struct of a few plain fields (numbers, strings, booleans, enums)? */
+function inlineable(model: Model, t: Type): bool {
+  if (!(t.kind == "object" || t.kind == "struct") || t.fields.length > 8) {
+    return false;
+  }
+  for (const fld of t.fields) {
+    const ft = model.type(fld.type);
+    const plain =
+      ft.kind == "number" || ft.kind == "string" || ft.kind == "boolean" || ft.kind == "enum";
+    if (!plain || fld.optional || unreadable(fld) || fld.isGetter) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /** Writes `if (!(cond)) { return false; }`. */
@@ -272,20 +323,34 @@ function body(req: InstanceRequest, out: Output, deep: bool): void {
     if (!canHoldItself(model, t, deep)) {
       content(w, out, model, t, a, b, deep);
     } else {
-      // Under the cycle guard: the comparison itself is a helper.
-      const name = out.fresh("content");
-      const ty = out.typeName(id);
-      const h = new Lines();
-      content(h, out, model, t, "x", "y", deep);
-      const code = h.text();
-      out.helper(`function ${name}(x: ${ty}, y: ${ty}): bool {\n${code}}\n`);
+      // Under the cycle guard. Fields compare as one expression in place (a helper would be
+      // recursive through the field types, and LLVM inlines no recursive function); other
+      // kinds compare in a helper.
+      const inPlace = fieldsExpr(out, model, t, a, b, deep);
+      let call = "";
+      if (inPlace.length == 0) {
+        const name = out.fresh("content");
+        const ty = out.typeName(id);
+        const h = new Lines();
+        content(h, out, model, t, "x", "y", deep);
+        const code = h.text();
+        out.helper(`function ${name}(x: ${ty}, y: ${ty}): bool {\n${code}}\n`);
+        call = `${name}(${a}, ${b})`;
+      }
+      const cmp = inPlace.length > 0 ? inPlace : call;
+      if (k == "array") {
+        // Arrays of other lengths, and empty ones, are told apart without the guard.
+        w.line(`const len = ${a}.length;`);
+        w.line(`if (len != ${b}.length) { return false; }`);
+        w.line(`if (len == 0) { return true; }`);
+      }
       w.line(`const ia = identity(${a});`);
       w.line(`const ib = identity(${b});`);
-      w.line(`if (ia == 0 || ib == 0) { return ${name}(${a}, ${b}); }`);
+      w.line(`if (ia == 0 || ib == 0) { return ${cmp}; }`);
       w.line(`if (ia == ib) { return true; }`);
       w.line(`const seen = beginPair(ia, ib);`);
       w.line(`if (seen != 0) { return seen == 1; }`);
-      w.line(`const r = ${name}(${a}, ${b});`);
+      w.line(`const r = ${cmp};`);
       w.line(`endPair();`);
       w.line(`return r;`);
     }
