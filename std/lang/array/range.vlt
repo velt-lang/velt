@@ -1,0 +1,43 @@
+// velt/lang/array (internal): positions and ranges of the array methods (std/prelude/array.vlt):
+// a JS relative position as an index, a range reversed in place, a range checked against the length.
+
+import { arraySwap } from "velt/lang/intrinsics";
+
+/** JS relative position → index in [0, len]. */
+export function clampPosition(pos: i64, len: usize): usize {
+  const n = len as i64;
+  if (pos < 0) {
+    const fromEnd = n + pos;
+    return fromEnd < 0 ? 0 : fromEnd as usize;
+  }
+  return pos > n ? len : pos as usize;
+}
+
+/** Reverses `xs[lo..hi)` in place. */
+export function reverseRange<T>(xs: T[], lo: usize, hi: usize) {
+  if (hi - lo < 2) {
+    return;
+  }
+  let i = lo;
+  let j = hi - 1;
+  while (i < j) {
+    arraySwap(xs, i, j);
+    i++;
+    j--;
+  }
+}
+
+/** `[start, end)` lies in an array of `len` elements, else a RangeError panic. */
+export function checkRange(start: usize, end: usize, len: usize) {
+  if (start > end || end > len) {
+    rangeOutside(start, end, len);
+  }
+}
+
+/**
+ * The panic of `checkRange`, out of line: a function that never returns is not inlined, so the
+ * message's formatting stays here instead of in every caller of a checked method.
+ */
+export function rangeOutside(start: usize, end: usize, len: usize): never {
+  panic(`RangeError: the range ${start}..${end} is not inside the array (length ${len})`);
+}

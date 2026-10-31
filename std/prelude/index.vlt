@@ -8,7 +8,9 @@
 // velt/lang/hooks, with the interface adapters and the methods and operators of `any`).
 
 import "./array";
+import "./array_edit";
 import "./array_iterator";
+import "./array_join";
 import "./array_nested";
 import "./assert";
 import "./async_generator";

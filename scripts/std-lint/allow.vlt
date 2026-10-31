@@ -10,7 +10,6 @@ export const allow: Allow = {
     "encoding/json/scan.vlt",
     "encoding/json/tape.vlt",
     "encoding/json/writer.vlt",
-    "prelude/array.vlt",
     "prelude/json/json.vlt",
     "prelude/map.vlt",
   ],
