@@ -54,7 +54,6 @@ export const allow: Allow = {
   ],
   indexCode: [
     "encoding/json/index.vlt",
-    "net/dns/index.vlt",
     "net/udp/index.vlt",
     "net/url/index.vlt",
     "package/index.vlt",
