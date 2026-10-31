@@ -215,9 +215,9 @@ export function readUnion(out: Output, model: Model, t: Type): void {
     out.line(`return ${x};`);
   };
   for (const [shape, token, read] of [
-    ["string", "tok == 5", "readString"],
-    ["number", "tok == 4", "readF64"],
-    ["boolean", "(tok == 2 || tok == 3)", "readBool"],
+    ["string", "tok == 5", "r.readString()"],
+    ["number", "tok == 4", "r.readF64()"],
+    ["boolean", "(tok == 2 || tok == 3)", "readerReadBool(r)"],
   ]) {
     const [cs, values] = lits(shape + "s");
     const own = armsOf(model, t, shape);
@@ -233,7 +233,7 @@ export function readUnion(out: Output, model: Model, t: Type): void {
       if (shape == "number" && own.length > 0) {
         out.line(`const mark = r.mark();`);
       }
-      out.line(`if (!r.${read}()) { throw ${fail}; }`);
+      out.line(`if (!${read}) { throw ${fail}; }`);
       for (let j: i64 = 0; j < (cs.length as i64); j++) {
         const c = cs[j];
         const cond =
@@ -251,7 +251,7 @@ export function readUnion(out: Output, model: Model, t: Type): void {
       } else if (shape == "boolean") {
         out.line(`return r.lastI64() != 0;`);
       } else {
-        out.line(`r.reset(mark);`);
+        out.line(`readerReset(r, mark);`);
         member(own[0]);
       }
     }
@@ -325,10 +325,10 @@ function readObjectMember(out: Output, model: Model, t: Type, objects: i64[]): v
     }
     missing = `object with one of the fields ${shown.join(", ")}`;
   }
-  out.line(`if (!r.skipLookahead()) { throw new JsonFail("value", "." + r.key()); }`);
+  out.line(`if (!readerSkipLookahead(r)) { throw new JsonFail("value", "." + r.key()); }`);
   out.line(`}`);
   out.line(`if (which < 0) { throw jsonFailed(${out.literal(missing)}); }`);
-  out.line(`r.reset(mark);`);
+  out.line(`readerReset(r, mark);`);
   for (let j: i64 = 0; j < (objects.length as i64); j++) {
     out.line(`if (which == ${j}) {`);
     const x = out.fresh("m");

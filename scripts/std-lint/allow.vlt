@@ -6,18 +6,10 @@ import type { Allow } from "./types";
 
 export const allow: Allow = {
   oversize: [
-    "encoding/json/reader.vlt",
-    "encoding/json/scan.vlt",
-    "encoding/json/tape.vlt",
-    "encoding/json/writer.vlt",
-    "prelude/json/json.vlt",
   ],
   multiClass: [
-    "encoding/json/tape.vlt",
-    "prelude/json/json.vlt",
   ],
   indexCode: [
-    "encoding/json/index.vlt",
   ],
   unowned: [
   ],

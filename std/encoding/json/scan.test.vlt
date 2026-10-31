@@ -5,7 +5,8 @@
 // the sixteen-byte string scan over random strings. (Were the goldens std/json_scan and
 // std/json_scan_long.)
 import { describe, expect, it } from "velt/test";
-import { Scanner, numberF64, numberI64 } from "velt/encoding/json/scan";
+import { Scanner } from "velt/encoding/json/scan";
+import { numberF64, numberI64 } from "velt/encoding/json/scan_number";
 
 /** A string token's UTF-16 length, decoded text and lone-surrogate flag, or its error. */
 function str(src: string): string {

@@ -6,7 +6,7 @@ import { Model, Output, Type } from "velt/generate";
 import { Choice, choices, choicesExpected } from "velt/encoding/json/generate/choice";
 
 /** The prelude's dynamic JSON value, decoded by its `[JSON_FROM_READER]`. */
-const JSON_VALUE = "std/prelude/json/json::JsonValue";
+const JSON_VALUE = "std/prelude/json/json_value::JsonValue";
 
 /** Is `t` a `JsonValue`? */
 export function isJsonValue(t: Type): bool {
@@ -60,11 +60,11 @@ export function readInto(out: Output, model: Model, id: i64, name: string): void
       out.line(`const ${name} = r.lastF64()${repr == "f32" ? " as f32" : ""};`);
     } else if (repr == "u64") {
       // `readU64` checks `[0, 2^64)` and leaves the bits in `lastI64`.
-      out.line(`if (!r.readU64()) { throw jsonFailed("u64"); }`);
+      out.line(`if (!readerReadU64(r)) { throw jsonFailed("u64"); }`);
       out.line(`const ${name} = r.lastI64() as u64;`);
     } else {
       const [min, max] = intRange(repr);
-      const tests: string[] = [`!r.readI64()`];
+      const tests: string[] = [`!readerReadI64(r)`];
       if (min.length > 0) {
         tests.push(`r.lastI64() < ${min}`);
       }
@@ -75,7 +75,7 @@ export function readInto(out: Output, model: Model, id: i64, name: string): void
       out.line(`const ${name} = r.lastI64()${repr == "i64" ? "" : ` as ${repr}`};`);
     }
   } else if (k == "boolean") {
-    out.line(`if (!r.readBool()) { throw jsonFailed("boolean"); }`);
+    out.line(`if (!readerReadBool(r)) { throw jsonFailed("boolean"); }`);
     out.line(`const ${name} = r.lastI64() != 0;`);
   } else if (k == "string") {
     out.line(`if (!r.readString()) { throw jsonFailed("string"); }`);
@@ -87,7 +87,7 @@ export function readInto(out: Output, model: Model, id: i64, name: string): void
   } else if (isJsonValue(t)) {
     // A tape over the reader's text, or a driver's runtime tree; null when the reader failed.
     const v = out.fresh("v");
-    out.line(`const ${v} = JsonValue[JSON_FROM_READER](r);`);
+    out.line(`const ${v} = jsonValueFromReader(r);`);
     out.line(`if (${v} == null) { throw jsonFailed("value"); }`);
     out.line(`const ${name} = ${v};`);
   } else {
@@ -181,8 +181,9 @@ export function matchChoices(
         : kind == "number" ? `${tok} == 4` : `(${tok} == 2 || ${tok} == 3)`;
     out.line(`${first ? "" : "} else "}if (${test}) {`);
     first = false;
-    const read = kind == "string" ? "readString" : kind == "number" ? "readF64" : "readBool";
-    out.line(`if (!r.${read}()) { throw ${fail}; }`);
+    const read =
+      kind == "string" ? "r.readString()" : kind == "number" ? "r.readF64()" : "readerReadBool(r)";
+    out.line(`if (!${read}) { throw ${fail}; }`);
     for (let j: i64 = 0; j < (of.length as i64); j++) {
       const c = cs[of[j]];
       const cond =

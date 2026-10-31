@@ -12,7 +12,7 @@ import { messageQuote, unquote } from "velt/encoding/json/generate/choice";
 const SUPPORTED =
   "JSON supports numbers, boolean, string, literal types, enums, arrays, tuples, `T | null`, `Map<string, T>`, structs, classes and object literals of those, and `JsonValue`";
 
-const JSON_VALUE = "std/prelude/json/json::JsonValue";
+const JSON_VALUE = "std/prelude/json/json_value::JsonValue";
 
 /** A problem: the message (with its notes, one per line), and a label at a field (-1: none). */
 export class ParseProblem {

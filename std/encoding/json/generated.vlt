@@ -15,6 +15,17 @@ import {
 import { checkJsonTop, jsonPresent, writeJsonAny } from "velt/encoding/json/any";
 import { beginVisit, dynamicOf, endVisit, identity, isProxy } from "velt/reflect";
 import { Reader } from "velt/encoding/json/reader";
+import {
+  readerFinish,
+  readerMessage,
+  readerReadBool,
+  readerReadI64,
+  readerReadU64,
+  readerReset,
+  readerSkipLookahead,
+  readerSkipUnknown,
+} from "velt/encoding/json/reader_ops";
+import { jsonValueFromReader } from "velt/encoding/json/value_ops";
 import { JsonFail, jsonFailed } from "velt/encoding/json/fail";
 import { JSON_FROM_READER } from "velt/lang/hooks/keys";
 import {

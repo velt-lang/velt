@@ -100,7 +100,7 @@ function body(req: InstanceRequest, out: Output, keyed: bool): void {
     writeEntries(out, model, model.type(t.args[0]), t.args[1], v);
   } else if (t.kind == "record") {
     writeEntries(out, model, model.type(t.args[0]), t.args[1], `Object.entries(${v})`);
-  } else if (t.kind == "opaque" && t.qualifiedName == "std/prelude/json/json::JsonValue") {
+  } else if (t.kind == "opaque" && t.qualifiedName == "std/prelude/json/json_value::JsonValue") {
     out.line(`appendJsonValue(w, ${v});`);
   } else if (
     t.kind == "object" ||

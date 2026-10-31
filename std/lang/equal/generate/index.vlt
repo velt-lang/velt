@@ -78,7 +78,7 @@ function compare(out: Output, model: Model, id: i64, x: string, y: string, deep:
   if (!deep && (k == "class" || k == "set" || k == "date")) {
     return `${x} === ${y}`;
   }
-  if (k == "opaque" && t.qualifiedName == "std/prelude/json/json::JsonValue") {
+  if (k == "opaque" && t.qualifiedName == "std/prelude/json/json_value::JsonValue") {
     // Its private `deepEquals`, with the access of its type.
     return `${x}.deepEquals(${y}, ${d})`;
   }

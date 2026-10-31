@@ -1,7 +1,7 @@
 // velt/generate (internal): the generator host's loop (`serve`).
 
 import { readAllSync } from "velt/process";
-import { JsonValue } from "velt/prelude/json/json";
+import { JsonValue } from "velt/prelude/json/json_value";
 import { EnumMember } from "velt/generate/enum_member";
 import { Field } from "velt/generate/field";
 import { Method } from "velt/generate/method";

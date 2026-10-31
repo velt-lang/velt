@@ -1,0 +1,262 @@
+// velt/encoding/json (internal): what a `Reader` (reader.vlt) does less often: integers, marks and
+// resets, skipping what a decoder does not know, the limits of a value read whole, and messages.
+
+import { TOO_DEEP, TRAILING } from "velt/encoding/json/scan";
+import { utf8Substring } from "velt/encoding";
+import { strByteAt, strByteLen } from "velt/lang/intrinsics";
+import {
+  MARK_DEPTH_BITS,
+  MISMATCH,
+  NONE,
+  PATH_KEEP,
+  Reader,
+  ROWS,
+  SYNTAX,
+  UNKNOWN,
+} from "velt/encoding/json/reader";
+import { numberI64, numberU64 } from "velt/encoding/json/scan_number";
+import {
+  readerDepthLeft,
+  readerDetail,
+  readerEndsMap,
+  readerNumberStart,
+  readerSyntaxFailed,
+  readerValueStart,
+  readerWalk,
+} from "velt/encoding/json/reader_steps";
+
+declare function velt_rt_json_error(r: u64, expected: string, path: string): string;
+declare function velt_rt_json_node_syntax(src: string, out: string): bool;
+declare function velt_rt_json_reader_end(r: u64): u8;
+declare function velt_rt_json_reader_read_bool(r: u64, out: ReaderBool): u8;
+declare function velt_rt_json_reader_read_i64(r: u64, out: ReaderI64): u8;
+declare function velt_rt_json_reader_read_value(r: u64, out: ReaderHandle): u8;
+declare function velt_rt_json_reader_reset(r: u64, mark: u64);
+declare function velt_rt_json_reader_skip_unknown(r: u64): u8;
+declare function velt_rt_json_reader_skip_value(r: u64): u8;
+
+/** The `JsonError.message` for the current state: the decoder expected `expected` at `path`. */
+export function readerMessage(r: Reader, expected: string, path: string): string {
+  if (r.rows != 0) {
+    return velt_rt_json_error(r.rows, expected, path);
+  }
+  // Text that is not JSON fails as in Node, wherever the decoder stopped (not JSONC, which
+  // Node does not read).
+  let node = "";
+  if (!r.comments && !r.trailingCommas && velt_rt_json_node_syntax(r.src, node)) {
+    return node;
+  }
+  const where = shortPath(path);
+  if (r.failed == SYNTAX) {
+    if (r.code == TOO_DEEP) {
+      return `JSON nested deeper than ${r.maxDepth} levels at ${where} (byte ${r.at})`;
+    }
+    return `invalid JSON at ${where}: ${readerDetail(r)} (byte ${r.at})`;
+  }
+  if (r.failed == UNKNOWN) {
+    return `unknown field at ${where}`;
+  }
+  return `expected ${expected} at ${where}`;
+}
+
+/**
+ * The start of one complete value of any kind, for a `JsonValue` (`JsonValue[JSON_FROM_READER]`
+ * parses it into a tape over this reader's source with `parseWith`): the depth limit to give
+ * `parseWith` (0: none), or -1 when no text value is to be parsed: on failure, or for a
+ * driver's rows, which set `rowsValue` and leave the runtime tree in `handle`. The tape is not
+ * named here, so a program that decodes no `JsonValue` checks none of its code.
+ */
+export function readerValueLimit(r: Reader): i64 {
+  // A failed read leaves `handle` 0 and `rowsValue` false: the value before is not the
+  // decoder's to own (its out-parameter must own nothing on failure).
+  r.handle = 0;
+  r.rowsValue = false;
+  if (!readerValueStart(r, 0, 0)) {
+    if (r.rows != 0 && r.failed == ROWS) {
+      let out = ReaderHandle { v: 0 };
+      r.rowsValue = velt_rt_json_reader_read_value(r.rows, out) == 1;
+      if (r.rowsValue) {
+        r.handle = out.v;
+      }
+    }
+    return -1;
+  }
+  const limit = readerDepthLeft(r);
+  if (limit == 0) {
+    // No container fits; `parseWith` takes a limit of 0 as none.
+    const c = r.peekNonWs();
+    if (c == 123 || c == 91) {
+      r.fail(TOO_DEEP);
+      readerSyntaxFailed(r);
+      return -1;
+    }
+    return 1;
+  }
+  return limit > 0xffffffff ? 0 : limit as i64;
+}
+
+/**
+ * Skips one value like `skipValue`, for a union decoder looking ahead for its discriminant:
+ * the end of every array and object passed is remembered, so nested unions' lookahead jumps
+ * over each in O(1) (without it, nested unions with the discriminant last rescan every
+ * subtree once per enclosing level).
+ */
+export function readerSkipLookahead(r: Reader): bool {
+  if (!readerValueStart(r, 0, 0)) {
+    return r.rows != 0 && r.failed == ROWS && velt_rt_json_reader_skip_value(r.rows) == 1;
+  }
+  const b = strByteAt(r.src, r.pos as u64);
+  if (b != 123 && b != 91) {
+    return (readerWalk(r, readerDepthLeft(r), false) || readerSyntaxFailed(r));
+  }
+  // A container at a given offset always has the same depth, so an earlier walk over it
+  // already checked the limit.
+  const ends = readerEndsMap(r);
+  const known = ends.get(r.pos);
+  if (known != null) {
+    r.pos = known;
+    return true;
+  }
+  return (readerWalk(r, readerDepthLeft(r), true) || readerSyntaxFailed(r));
+}
+
+/** Skips the value of a key the target type does not have (fails if unknown keys are rejected). */
+export function readerSkipUnknown(r: Reader): bool {
+  if (r.rows != 0 && r.failed == ROWS) {
+    return velt_rt_json_reader_skip_unknown(r.rows) == 1;
+  }
+  if (r.rejectUnknown) {
+    if (r.failed == NONE) {
+      r.failed = UNKNOWN;
+    }
+    return false;
+  }
+  return r.skipValue();
+}
+
+/** Goes back to `mark` and forgets any failure since. */
+export function readerReset(r: Reader, mark: u64) {
+  if (r.rows != 0 && r.failed == ROWS) {
+    velt_rt_json_reader_reset(r.rows, mark);
+    return;
+  }
+  r.pos = (mark >> (MARK_DEPTH_BITS + 1)) as usize;
+  r.depth = ((mark >> 1) & ((1 << MARK_DEPTH_BITS) - 1)) as usize;
+  r.afterOpen = (mark & 1) == 1;
+  r.failed = NONE;
+}
+
+/**
+ * A number value that is an integer in `u64`'s range, `[0, 2^64)`: its bits are `int` after
+ * true (the glue reinterprets them). A driver's rows give `i64`s, so there it is `[0, 2^63)`.
+ */
+export function readerReadU64(r: Reader): bool {
+  if (!readerNumberStart(r)) {
+    if (r.rows != 0 && r.failed == ROWS) {
+      let out = ReaderI64 { v: 0 };
+      const ok = velt_rt_json_reader_read_i64(r.rows, out) == 1 && out.v >= 0;
+      r.int = out.v;
+      return ok;
+    }
+    return false;
+  }
+  const v = numberU64(r.src, r.start, r.end, r.integer);
+  if (v == null) {
+    r.failed = MISMATCH;
+    return false;
+  }
+  r.int = v as i64;
+  return true;
+}
+
+/** A number value that is an integer exactly representable as `i64`: `int` after true. */
+export function readerReadI64(r: Reader): bool {
+  if (!readerNumberStart(r)) {
+    if (r.rows != 0 && r.failed == ROWS) {
+      let out = ReaderI64 { v: 0 };
+      const ok = velt_rt_json_reader_read_i64(r.rows, out) == 1;
+      r.int = out.v;
+      return ok;
+    }
+    return false;
+  }
+  if (r.small) {
+    const m = r.digitsValue as i64;
+    r.int = r.negative ? -m : m;
+    return true;
+  }
+  const v = numberI64Of(r);
+  if (v == null) {
+    r.failed = MISMATCH;
+    return false;
+  }
+  r.int = v;
+  return true;
+}
+
+/** Only whitespace may follow the top-level value. */
+export function readerFinish(r: Reader): bool {
+  if (r.failed != NONE) {
+    return r.rows != 0 && r.failed == ROWS && velt_rt_json_reader_end(r.rows) == 1;
+  }
+  if (r.peekNonWs() >= 0) {
+    r.fail(TRAILING);
+    return readerSyntaxFailed(r);
+  }
+  return true;
+}
+
+/** The number token's value. */
+export function numberI64Of(r: Reader): i64 | null {
+  return numberI64(r.src, r.start, r.end, r.integer);
+}
+
+/**
+ * `path` with at most `2 * PATH_KEEP` segments (each starts at a `.` or a `[`): a longer one
+ * keeps its first and last `PATH_KEEP` with `…` between.
+ */
+export function shortPath(path: string): string {
+  const n = strByteLen(path);
+  const starts: usize[] = [];
+  for (let i: usize = 0; i < n; i++) {
+    const b = strByteAt(path, i as u64);
+    if (b == 46 || b == 91) {
+      starts.push(i);
+    }
+  }
+  if (starts.length <= 2 * PATH_KEEP) {
+    return path;
+  }
+  return `${utf8Substring(path, 0, starts[PATH_KEEP])}…${utf8Substring(path, starts[starts.length - PATH_KEEP], n)}`;
+}
+
+/** `true` or `false`: `int` is 1 or 0 after true. */
+export function readerReadBool(r: Reader): bool {
+  if (!readerValueStart(r, 116, 102)) {
+    if (r.rows != 0 && r.failed == ROWS) {
+      let out = ReaderBool { v: 0 };
+      const ok = velt_rt_json_reader_read_bool(r.rows, out) == 1;
+      r.int = out.v as i64;
+      return ok;
+    }
+    return false;
+  }
+  const t = strByteAt(r.src, r.pos as u64) == 116;
+  if (!r.literal(t ? "true" : "false")) {
+    return readerSyntaxFailed(r);
+  }
+  r.int = t ? 1 : 0;
+  return true;
+}
+
+struct ReaderI64 {
+  v: i64;
+}
+
+struct ReaderBool {
+  v: u8;
+}
+
+struct ReaderHandle {
+  v: u64;
+}

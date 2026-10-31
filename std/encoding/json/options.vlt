@@ -2,12 +2,12 @@
 // `JSON.parse` and `JsonValue.parse` (std/prelude/json/json.vlt) and the compiler's hook of
 // `JSON.parse(text) as T` (std/lang/hooks/json.vlt).
 
-import { JsonError, JsonParseOptions } from "velt/prelude/json/json";
 import {
   FLAG_COMMENTS,
   FLAG_REJECT_UNKNOWN,
   FLAG_TRAILING_COMMAS,
 } from "velt/encoding/json/reader";
+import { JsonError, JsonParseOptions } from "velt/prelude/json/json_error";
 
 /** The reader's flags for `options` on top of `base` (std/encoding/json/reader.vlt `FLAG_*`). */
 export function jsonFlags(options: JsonParseOptions | null, base: i64): i64 {

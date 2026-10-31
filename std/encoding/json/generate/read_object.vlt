@@ -63,7 +63,7 @@ export function readRecord(out: Output, model: Model, t: Type): void {
     out.line(`continue;`);
     out.line(`}`);
   }
-  out.line(`if (!r.skipUnknown()) { throw new JsonFail("value", "." + r.key()); }`);
+  out.line(`if (!readerSkipUnknown(r)) { throw new JsonFail("value", "." + r.key()); }`);
   out.line(`}`);
   if (required) {
     for (let i: i64 = 0; i < n; i++) {
@@ -206,7 +206,7 @@ export function readObject(out: Output, model: Model, t: Type): void {
   }
   // An unknown key: its value is skipped (a malformed one fails at `.<key>`; with unknown keys
   // rejected, any does).
-  out.line(`if (!r.skipUnknown()) { throw new JsonFail("value", "." + r.key()); }`);
+  out.line(`if (!readerSkipUnknown(r)) { throw new JsonFail("value", "." + r.key()); }`);
   out.line(`}`);
   const props: string[] = [];
   const segs: string[] = [];

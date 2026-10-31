@@ -1,0 +1,6 @@
+// velt/encoding/json (internal): `Value`, the name velt/encoding/json gives the prelude's `JsonValue`.
+
+import { JsonValue } from "velt/prelude/json/json_value";
+
+/** A JSON value of unknown shape: the prelude's `JsonValue` (docs/std/encoding/json.md). */
+export type Value = JsonValue;

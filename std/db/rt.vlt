@@ -1,6 +1,6 @@
 // velt/db (internal): the runtime functions velt/db calls, and the code generated for it calls.
 
-import { JsonError } from "velt/prelude/json/json";
+import { JsonError } from "velt/prelude/json/json_error";
 
 /**
  * `u64 velt_rt_db_cursor(u64 handle)`: the address of the open row cursor a native driver

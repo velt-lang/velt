@@ -147,7 +147,7 @@ function unwritable(model: Model, id: i64, stack: i64[]): i64 {
   if (stack.includes(id) || t.dynamic) {
     return -1;
   }
-  if (k == "opaque" && t.qualifiedName == "std/prelude/json/json::JsonValue") {
+  if (k == "opaque" && t.qualifiedName == "std/prelude/json/json_value::JsonValue") {
     return -1;
   }
   // A function with properties is written as a function is: left out (`null` in an array).

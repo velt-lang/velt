@@ -241,7 +241,7 @@ export function writable(model: Model, id: i64, seen: i64[]): bool {
   if (k == "number" || k == "boolean" || k == "string" || k == "literal" || k == "enum") {
     return true;
   }
-  if (k == "opaque" && t.qualifiedName == "std/prelude/json/json::JsonValue") {
+  if (k == "opaque" && t.qualifiedName == "std/prelude/json/json_value::JsonValue") {
     return true;
   }
   seen.push(id);

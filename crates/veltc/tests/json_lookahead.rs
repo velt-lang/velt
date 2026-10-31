@@ -31,10 +31,10 @@ fn union_lookahead_uses_the_remembering_skip() {
         String::from_utf8_lossy(&out.stderr)
     );
     let vir = String::from_utf8_lossy(&out.stdout);
-    // Called from generated code, the method may be an instance that takes its caller's
-    // location (`…skipLookahead_LA`).
+    // Called from generated code, the function may be an instance that takes its caller's
+    // location (`…readerSkipLookahead_LA`).
     assert!(
-        vir.contains("ReaderM13skipLookahead(") || vir.contains("ReaderM13skipLookahead_LA("),
+        vir.contains("19readerSkipLookahead(") || vir.contains("19readerSkipLookahead_LA("),
         "the union decoder does not use the reader's skipLookahead"
     );
 }

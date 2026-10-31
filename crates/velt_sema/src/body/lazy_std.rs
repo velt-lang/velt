@@ -46,14 +46,14 @@ const EAGER: &[&str] = &[
 /// value of the type (`JsonValue[JSON_RUNTIME_HANDLE]` prints one; generated decoders call
 /// [`LAZY_PRELUDE_STATICS`]), and their code reaches large modules most programs never load (`JsonValue`'s the tape,
 /// velt/encoding/json/tape).
-const LAZY_PRELUDE_TYPES: &[&str] = &[velt_common::std_item!(prelude_json, "JsonValue")];
+const LAZY_PRELUDE_TYPES: &[&str] = &[velt_common::std_item!(prelude_json_value, "JsonValue")];
 
 /// Static methods of [`LAZY_PRELUDE_TYPES`] checked with the type's methods, once the type is
 /// used: `JsonValue[JSON_FROM_READER]`, which the decoder generated for a type holding a
 /// `JsonValue` calls (it parses the value into a tape, so a decoder of other types checks none
 /// of the tape).
 const LAZY_PRELUDE_STATICS: &[&str] = &[concat!(
-    velt_common::std_item!(prelude_json, "JsonValue."),
+    velt_common::std_item!(prelude_json_value, "JsonValue."),
     velt_common::std_key!(json_from_reader)
 )];
 

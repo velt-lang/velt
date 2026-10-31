@@ -66,6 +66,8 @@ table! {
     prelude_global => "prelude/global",
     prelude_iter => "prelude/iter",
     prelude_json => "prelude/json/json",
+    prelude_json_error => "prelude/json/json_error",
+    prelude_json_value => "prelude/json/json_value",
     prelude_map => "prelude/map",
     prelude_map_utf8 => "prelude/map_utf8",
     prelude_math => "prelude/math",

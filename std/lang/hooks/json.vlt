@@ -2,10 +2,10 @@
 // the global `JSON` (std/prelude/global/json.vlt), so a program that never names it loads none of
 // the JSON engine.
 
-import { JsonParseOptions } from "velt/prelude/json/json";
 import { jsonFlags, jsonMaxDepth } from "velt/encoding/json/options";
-import { FLAG_NULL_NOT_ABSENT } from "velt/encoding/json/reader";
 import { parseJsonTop } from "velt/encoding/json/generated";
+import { FLAG_NULL_NOT_ABSENT } from "velt/encoding/json/reader";
+import { JsonParseOptions } from "velt/prelude/json/json_error";
 
 /**
  * `JSON.parse(text)` with its type from the context (`JSON.parse(text) as T`,

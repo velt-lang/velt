@@ -10,7 +10,8 @@
 // here has (body, redirect mode, signal, CA) is one null field. It is valid until its handler
 // settles; what was read stays readable.
 
-import { JSON, JsonError } from "velt/prelude/json/json";
+import { JSON } from "velt/prelude/json/json";
+import { JsonError } from "velt/prelude/json/json_error";
 import { IoError } from "velt/io/error";
 import { AbortController, AbortError, AbortSignal } from "velt/task";
 import { URL } from "velt/net/url";

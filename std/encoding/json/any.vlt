@@ -10,7 +10,7 @@
 
 import { StringBuilder } from "velt/text/string_builder";
 import { appendJsonNumber, appendJsonString, appendJsonUint } from "velt/encoding/json/append";
-import { JsonValue } from "velt/prelude/json/json";
+import { JsonValue } from "velt/prelude/json/json_value";
 import {
   beginVisit,
   callToJSON,
@@ -19,8 +19,8 @@ import {
   entryName,
   entryValue,
   identity,
-  typeOf,
   RuntimeType,
+  typeOf,
 } from "velt/reflect";
 
 /** Whether the dynamic value `v` has a JSON form: not `undefined`, a function or a symbol. */

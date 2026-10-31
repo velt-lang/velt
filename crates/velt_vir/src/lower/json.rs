@@ -14,13 +14,13 @@ use crate::vir::{self, BinOp, Local, Operand, Place, Proj, Rvalue, Ty, STR_AGG};
 const STR: Ty = Ty::Agg(STR_AGG);
 
 /// Qualified name of the prelude's dynamic JSON value class.
-const PRELUDE_JSON_VALUE: &str = velt_common::std_item!(prelude_json, "JsonValue");
+const PRELUDE_JSON_VALUE: &str = velt_common::std_item!(prelude_json_value, "JsonValue");
 
 /// The name of the prelude's `JsonError` class.
-const PRELUDE_JSON_ERROR: &str = velt_common::std_item!(prelude_json, "JsonError");
+const PRELUDE_JSON_ERROR: &str = velt_common::std_item!(prelude_json_error, "JsonError");
 
 impl Cx<'_> {
-    /// The prelude's `JsonError` definition: `std/prelude/json/json::JsonError`, else (a program
+    /// The prelude's `JsonError` definition: `std/prelude/json/json_error::JsonError`, else (a program
     /// built without the real prelude, as in unit tests) the first type named `JsonError`. A
     /// user's own class of that name is never it.
     pub(super) fn json_error_def(&self) -> Option<hir::DefId> {

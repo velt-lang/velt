@@ -149,10 +149,10 @@ export function parseJsonTop(req: InstanceRequest, out: Output): void {
   out.line(`const r = Reader.of(${text}, ${flags} as u32, ${depth} as u32);`);
   out.line(`try {`);
   readInto(out, model, id, "v");
-  out.line(`if (!r.finish()) { throw jsonFailed("end of input"); }`);
+  out.line(`if (!readerFinish(r)) { throw jsonFailed("end of input"); }`);
   out.line(`return v;`);
   out.line(`} catch (e) {`);
-  out.line(`throw new JsonError(r.message(e.expected, "$" + e.path));`);
+  out.line(`throw new JsonError(readerMessage(r, e.expected, "$" + e.path));`);
   out.line(`}`);
 }
 
@@ -214,10 +214,10 @@ export function parseJsonCursor(req: InstanceRequest, out: Output): void {
   );
   out.line(`try {`);
   readInto(out, model, id, "v");
-  out.line(`if (!r.finish()) { throw jsonFailed("end of input"); }`);
+  out.line(`if (!readerFinish(r)) { throw jsonFailed("end of input"); }`);
   out.line(`return v;`);
   out.line(`} catch (e) {`);
-  out.line(`throw new JsonError(r.message(e.expected, "$" + e.path));`);
+  out.line(`throw new JsonError(readerMessage(r, e.expected, "$" + e.path));`);
   out.line(`} finally {`);
   out.line(`r.close();`);
   out.line(`}`);
