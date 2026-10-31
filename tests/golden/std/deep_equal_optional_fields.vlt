@@ -1,0 +1,91 @@
+// `deepEqual` (Node's `util.isDeepStrictEqual`) and `toEqual` of objects with optional fields
+// of every kind: left out, set to `undefined`, set to `null` (where the type holds it) and set
+// to a value are four states; equal only when both are in the same state with equal values.
+import { expect } from "velt/test";
+
+function toEq<T>(a: T, b: T): bool {
+  try {
+    expect(a).toEqual(b);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function both<T>(name: string, a: T, b: T) {
+  console.log(name, deepEqual(a, b), toEq(a, b));
+}
+
+type N = { a?: number | null; b: number };
+type U = { a?: number | undefined; b: number };
+type NU = { a?: number | null | undefined; b: number };
+type Un = { a?: string | number };
+type Rec = { a?: Record<string, number> };
+type Arr = { a?: number[] | null };
+type In = { v: number };
+type Obj = { a?: In | null };
+
+class K {
+  a?: number | null;
+  b: string = "k";
+}
+
+function k(state: string): K {
+  const x = new K();
+  if (state == "undefined") {
+    x.a = undefined;
+  } else if (state == "null") {
+    x.a = null;
+  } else if (state != "absent") {
+    x.a = 1;
+  }
+  return x;
+}
+
+function main() {
+  both("N absent absent", { b: 1 } as N, { b: 1 } as N);
+  both("N absent undefined", { b: 1 } as N, { a: undefined, b: 1 } as N);
+  both("N absent null", { b: 1 } as N, { a: null, b: 1 } as N);
+  both("N undefined null", { a: undefined, b: 1 } as N, { a: null, b: 1 } as N);
+  both("N null null", { a: null, b: 1 } as N, { a: null, b: 1 } as N);
+  both("N 1 1", { a: 1, b: 1 } as N, { a: 1, b: 1 } as N);
+  both("N 1 2", { a: 1, b: 1 } as N, { a: 2, b: 1 } as N);
+  both("N null 1", { a: null, b: 1 } as N, { a: 1, b: 1 } as N);
+  both("N absent 1", { b: 1 } as N, { a: 1, b: 1 } as N);
+  both("U absent undefined", { b: 1 } as U, { a: undefined, b: 1 } as U);
+  both("U undefined undefined", { a: undefined, b: 1 } as U, { a: undefined, b: 1 } as U);
+  both("U undefined 1", { a: undefined, b: 1 } as U, { a: 1, b: 1 } as U);
+  both("U 1 1", { a: 1, b: 1 } as U, { a: 1, b: 1 } as U);
+  both("NU absent undefined", { b: 1 } as NU, { a: undefined, b: 1 } as NU);
+  both("NU undefined null", { a: undefined, b: 1 } as NU, { a: null, b: 1 } as NU);
+  both("NU null null", { a: null, b: 1 } as NU, { a: null, b: 1 } as NU);
+  both("NU 1 1", { a: 1, b: 1 } as NU, { a: 1, b: 1 } as NU);
+  both("NU 1 null", { a: 1, b: 1 } as NU, { a: null, b: 1 } as NU);
+  both("Un x x", { a: "x" } as Un, { a: "x" } as Un);
+  both("Un x 1", { a: "x" } as Un, { a: 1 } as Un);
+  both("Un absent undefined", {} as Un, { a: undefined } as Un);
+  both("Rec same", { a: { k: 1 } } as Rec, { a: { k: 1 } } as Rec);
+  both("Rec diff", { a: { k: 1 } } as Rec, { a: { k: 2 } } as Rec);
+  both("Rec absent undefined", {} as Rec, { a: undefined } as Rec);
+  both("Arr same", { a: [1, 2] } as Arr, { a: [1, 2] } as Arr);
+  both("Arr null", { a: null } as Arr, { a: [1] } as Arr);
+  both("Arr null null", { a: null } as Arr, { a: null } as Arr);
+  both("Arr absent null", {} as Arr, { a: null } as Arr);
+  both("Obj same", { a: { v: 1 } } as Obj, { a: { v: 1 } } as Obj);
+  both("Obj diff", { a: { v: 1 } } as Obj, { a: { v: 2 } } as Obj);
+  both("Obj null", { a: null } as Obj, { a: { v: 1 } } as Obj);
+  both("nested", [{ b: 1 } as N], [{ a: null, b: 1 } as N]);
+  // A class: `deepEqual` compares its instances by identity, `toEqual` by their fields. A
+  // declared field is defined on every instance (`undefined` until set), so left out and
+  // `undefined` are one state there, as in JavaScript.
+  const states = ["absent", "undefined", "null", "1"];
+  for (const x of states) {
+    for (const y of states) {
+      console.log("K", x, y, toEq(k(x), k(y)));
+    }
+  }
+  const r1: Record<string, number | undefined> = { a: undefined };
+  const r2: Record<string, number | undefined> = {};
+  both("record undefined entry", r1, r2);
+  both("record same", { a: 1 } as Record<string, number | undefined>, { a: 1 } as Record<string, number | undefined>);
+}

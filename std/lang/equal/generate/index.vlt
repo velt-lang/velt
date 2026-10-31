@@ -114,11 +114,8 @@ function fieldsExpr(out: Output, model: Model, t: Type, a: string, b: string, de
     if (unreadable(fld)) {
       continue;
     }
-    if (fld.optional && model.type(fld.type).kind != "option") {
-      return "";
-    }
     if (fld.optional) {
-      parts.push(presence(out, fld.name, a, b));
+      return "";
     }
     const xa = member(out, model, fld, a);
     const xb = member(out, model, fld, b);
@@ -182,15 +179,19 @@ function fields(
     if (f.optional) {
       require(w, presence(out, f.name, a, b));
     }
-    if (f.optional && ft.kind != "option") {
+    if (f.optional) {
+      // Read, an optional field is its type or `undefined`: compared as its type once both are
+      // set (`null` too, when its type holds one: then only `undefined` means unset).
+      const empty = ft.kind == "option" ? "=== undefined" : "== null";
+      const set = ft.kind == "option" ? "!== undefined" : "!= null";
       const fa = out.fresh("fa");
       const fb = out.fresh("fb");
       w.line(`const ${fa} = ${xa};`);
       w.line(`const ${fb} = ${xb};`);
-      w.line(`if (${fa} == null) {`);
-      w.line(`if (${fb} != null) { return false; }`);
+      w.line(`if (${fa} ${empty}) {`);
+      w.line(`if (${fb} ${set}) { return false; }`);
       w.line(`} else {`);
-      w.line(`if (${fb} == null) { return false; }`);
+      w.line(`if (${fb} ${empty}) { return false; }`);
       require(w, compare(out, model, f.type, fa, fb, deep));
       w.line(`}`);
     } else {
