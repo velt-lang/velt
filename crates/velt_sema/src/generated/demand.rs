@@ -34,6 +34,9 @@ pub(crate) struct Walked {
     margs: Vec<(String, Vec<TyId>)>,
     /// The last result, and how many definitions there were then: the same while there are.
     found: Option<(usize, Vec<Instance>)>,
+    /// Every call that reaches each instance, in the order found (the first is the
+    /// instance's own): an error a generator reports at the call is reported at each.
+    pub sites: FxHashMap<(DefId, Vec<TyId>), Vec<Span>>,
 }
 
 /// Every concrete instance of a generated function the checked program reaches, in the order
@@ -81,7 +84,10 @@ fn compute_with(cx: &mut Ctx, walked: &mut Walked) -> Vec<Instance> {
             }
         }
         walked.uses.extend(new);
-        let (found, method_needs) = propagate(cx, &walked.uses, &walked.margs, &generated);
+        let mut sites = FxHashMap::default();
+        let (found, method_needs) =
+            propagate(cx, &walked.uses, &walked.margs, &generated, &mut sites);
+        walked.sites = sites;
         if full || !method_needs {
             return found;
         }
@@ -140,6 +146,7 @@ fn propagate(
     uses: &[(DefId, crate::inst_sites::Uses)],
     margs: &[(String, Vec<TyId>)],
     generated: &FxHashSet<DefId>,
+    sites: &mut FxHashMap<(DefId, Vec<TyId>), Vec<Span>>,
 ) -> (Vec<Instance>, bool) {
     let reads = uses
         .iter()
@@ -221,8 +228,14 @@ fn propagate(
                     n.push((g, gt, bits));
                     grew = true;
                 }
-            } else if seen.insert((g, gt.clone())) {
-                found.push((g, gt, span));
+            } else {
+                let at = sites.entry((g, gt.clone())).or_default();
+                if !at.contains(&span) {
+                    at.push(span);
+                }
+                if seen.insert((g, gt.clone())) {
+                    found.push((g, gt, span));
+                }
             }
         }
         if grew {

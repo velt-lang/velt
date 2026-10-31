@@ -80,10 +80,13 @@ export function show(req: InstanceRequest, out: Output): void {
   type with a symbol key). It is a handle the compiler resolves (`__type<…>`), not the type's
   name; `instanceof` takes a class's.
 - `out.literal(s)` writes a string as a Velt string literal.
-- `out.error(message, at)` reports an error at a type's or a field's `at` (`-1`: at the call that
-  needed the instance). The first line of `message` is the error, each further line a note.
-  Errors from generators are reported with the program's other errors; the program is then not
-  built. `velt/encoding/json` reports what `JSON.stringify` cannot write this way.
+- `out.error(message, at, labels)` reports an error at a type's or a field's `at` (`-1`: at
+  each call that needs the instance). The first line of `message` is the error, each further
+  line a note; `labels` (optional) are `[at, text]` pairs that point at other places of the
+  model, such as the declaration of the field the error is about. Errors from generators are
+  reported with the program's other errors; the program is then not built.
+  `velt/encoding/json` reports what `JSON.stringify` cannot write and `JSON.parse` cannot
+  decode this way.
 
 An optional field (`legs?: i32`) reads as `T | undefined`: the model gives `T` and
 `optional: true`; a field `n?: T | null` reads `undefined` when absent and `null` when it holds
@@ -101,7 +104,8 @@ used as a value (`typeof C`) `classValue`, and `object` and `Function` (kind `in
 no fields (kind `opaque`, or `set`): its `privateField` names one, and a field such a type
 declares (also in a class that extends it) has `stdPrivate`. A class whose constructor is
 `private` or `protected` says so in `ctorAccess` (empty when it is public): a generator that
-builds values without running the constructor (`__construct`) can refuse such a class. Compute names from `out` into variables before writing a line that uses them
+builds values without running the constructor (`__construct`) can refuse such a class, and
+name its `factories` (the public static methods that return one) in the message. Compute names from `out` into variables before writing a line that uses them
 (`const field = out.instance(…); out.line(…)`): one call cannot both modify `out` and read it in
 an argument.
 

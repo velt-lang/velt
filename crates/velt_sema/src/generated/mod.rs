@@ -258,6 +258,9 @@ pub struct Request {
     pub function: usize,
     /// The call that first reached the instance.
     pub at: Span,
+    /// Every call that reaches it, `at` first: an error the generator reports at the call
+    /// (`Output.error` with no location) is reported at each.
+    pub sites: Vec<Span>,
     /// The type arguments, as ids into the model.
     pub type_args: Vec<u32>,
     /// The instance's key ([`phase::keys`]): what the handles of the types its code names
@@ -375,9 +378,13 @@ pub(crate) fn demand_of(
         };
         let type_args: Vec<u32> = targs.iter().map(|t| model.add(cx, *t)).collect();
         roots.push((key.clone(), type_args.clone()));
+        let sites = (cx.gen.binding.walked.sites.get(&(*g, targs.clone())))
+            .cloned()
+            .unwrap_or_else(|| vec![*at]);
         requests.push(Request {
             function,
             at: *at,
+            sites,
             type_args,
             fingerprint: key,
         });

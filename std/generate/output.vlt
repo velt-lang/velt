@@ -57,11 +57,15 @@ export class Output {
   }
 
   /**
-   * Reports an error at `at` (a type's or a field's `at`; -1: at the call that needs it). The
-   * first line of `message` is the error, each further line a note.
+   * Reports an error at `at` (a type's or a field's `at`; -1: at each call that needs the
+   * instance). The first line of `message` is the error, each further line a note; `labels`
+   * point at other places of the model (`[at, text]`, such as a field's declaration).
    */
-  error(message: string, at: i64): void {
+  error(message: string, at: i64, labels: [i64, string][] = []): void {
     this.#session.report("error", this.#name, at, message);
+    for (const [where, text] of labels) {
+      this.#session.report("label", this.#name, where, text);
+    }
   }
 
   /** The body written so far. */

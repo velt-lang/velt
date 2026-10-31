@@ -71,6 +71,8 @@ export class Type {
    * code that builds a value without running the constructor (`__construct`) bypasses it.
    */
   ctorAccess: string = "";
+  /** The public static methods of a class that return one (its factories), sorted. */
+  factories: string[] = [];
   /** Where it is declared, for `Output.error` (-1: nowhere). */
   at: i64 = -1;
 }

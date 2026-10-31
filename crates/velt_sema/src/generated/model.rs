@@ -71,6 +71,8 @@ pub struct ModelType {
     /// A struct's or class's constructor when it is not public (`private`, `protected`), else
     /// empty: decoding builds a value without running it, which such a type does not allow.
     pub ctor_access: &'static str,
+    /// The public static methods of a class that return one (its factories), sorted.
+    pub factories: Vec<String>,
     pub at: Option<u32>,
 }
 
@@ -317,6 +319,7 @@ impl Builder {
                     })
                     .collect();
                 let (kind, base, span) = (a.kind, a.base, a.span);
+                m.factories = cx.factory_names(d);
                 m.ctor_access = match cx.ctor_visibility(d) {
                     velt_syntax::ast::CtorVisibility::Public => "",
                     velt_syntax::ast::CtorVisibility::Private => "private",
@@ -572,6 +575,10 @@ impl Model {
             h.u32(flags.iter().fold(0, |acc, &b| acc << 1 | u32::from(b)));
             h.str(&t.private_field);
             h.str(t.ctor_access);
+            h.u32(t.factories.len() as u32);
+            for f in &t.factories {
+                h.str(f);
+            }
             for (tag, list) in [("a", &t.args), ("u", &t.arms), ("s", &t.subclasses)] {
                 h.str(tag);
                 h.u32(list.len() as u32);

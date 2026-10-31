@@ -441,6 +441,7 @@ fn model_json(m: &velt_sema::generated::model::Model) -> Value {
                     "dynamic": t.dynamic,
                     "privateField": t.private_field,
                     "ctorAccess": t.ctor_access,
+                    "factories": t.factories,
                     "methods": t.methods.iter().map(|m| json!({
                         "name": m.name,
                         "params": m.params,
@@ -463,6 +464,8 @@ fn parse_frames(
 ) -> Result<(), String> {
     let mut pos = 0;
     let mut done = false;
+    // Where the errors of the last `#error` record start (its labels follow it).
+    let mut last_error = errors.len();
     while pos < out.len() {
         let end = (out[pos..].iter().position(|&b| b == b'\n'))
             .map(|i| pos + i)
@@ -521,22 +524,39 @@ fn parse_frames(
             }
             ["error", name, at] => {
                 let at: i64 = at.parse().map_err(|_| "a bad location")?;
-                // `-1`: at the call that needed the instance (its root request's, for an
+                // `-1`: at each call that needs the instance (its root request's, for an
                 // instance a generator asked for).
-                let call = (written.iter().position(|(n, _)| n == name))
+                let calls = (written.iter().position(|(n, _)| n == name))
                     .and_then(|i| demand.requests.get(i))
-                    .map_or(first_at, |r| r.at);
-                let span = usize::try_from(at)
+                    .map_or_else(|| vec![first_at], |r| r.sites.clone());
+                let spans = match usize::try_from(at)
                     .ok()
                     .and_then(|a| demand.model.spans.get(a).copied())
-                    .unwrap_or(call);
+                {
+                    Some(span) => vec![span],
+                    None => calls,
+                };
                 // The first line is the message, each further line a note.
-                let mut lines = text.lines();
-                let mut d = Diagnostic::error(lines.next().unwrap_or(""), span);
-                for note in lines.filter(|l| !l.is_empty()) {
-                    d = d.with_note(note);
+                last_error = errors.len();
+                for span in spans {
+                    let mut lines = text.lines();
+                    let mut d = Diagnostic::error(lines.next().unwrap_or(""), span);
+                    for note in lines.filter(|l| !l.is_empty()) {
+                        d = d.with_note(note);
+                    }
+                    errors.push(d);
                 }
-                errors.push(d);
+            }
+            ["label", _, at] => {
+                // A label of the error before it, at a location of the model.
+                let at: usize = at.parse().map_err(|_| "a bad location")?;
+                let span = (demand.model.spans.get(at).copied()).ok_or("a bad location")?;
+                for d in &mut errors[last_error..] {
+                    d.labels.push(velt_common::Label {
+                        span,
+                        message: text.clone(),
+                    });
+                }
             }
             _ => return Err(format!("an unknown record `#{header}`")),
         }
