@@ -235,4 +235,41 @@ describe("HTTP/2 limits", () => {
     c.close();
     server.close();
   });
+
+  it("ignores the uploads of a burst of streams it answered early", async () => {
+    // More streams reset at once than the 64 the connection used to remember: their uploads,
+    // arriving after the resets, are ignored all the same.
+    const server = await startServer(async (req: HttpRequest, res: HttpResponse) => {
+      res.status(413);
+      res.send("");
+    });
+    const c = await Client.open(server.port);
+    const n: i64 = 120;
+    for (let i: i64 = 0; i < n; i++) {
+      const head = [":method", "POST", ":scheme", "http", ":path", "/", ":authority", "x"];
+      c.headers(i * 2 + 1, head, false);
+    }
+    await c.flush();
+    let resets: i64 = 0;
+    await timeout(
+      c.until((f) => {
+        if (f.type == 3) {
+          resets++;
+        }
+        return resets == n;
+      }),
+      10000,
+    );
+    for (let i: i64 = 0; i < n; i++) {
+      c.frame(0, 1, i * 2 + 1, bytes("late"));
+    }
+    c.get(n * 2 + 1, "/after");
+    await c.flush();
+    const out = await timeout(c.until(endOf(n * 2 + 1)), 10000);
+    expect(out.includes("STREAM_CLOSED")).toBe(false);
+    expect(out.includes("GOAWAY")).toBe(false);
+    expect(out.includes(`HEADERS ${n * 2 + 1} `)).toBe(true);
+    c.close();
+    server.close();
+  });
 });

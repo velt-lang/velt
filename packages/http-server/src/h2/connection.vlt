@@ -33,6 +33,7 @@ import {
   SETTINGS_MAX_FRAME_SIZE,
   SETTINGS_MAX_HEADER_LIST_SIZE,
 } from "velt/net/http/h2";
+import { ClosedStreams } from "./closed";
 import { H2Options } from "./options";
 import { H2Request } from "./request";
 import { H2Response } from "./response";
@@ -60,11 +61,8 @@ export class H2Connection {
   streams: Map<i64, H2Stream> = new Map();
   /// Streams done with, for the next ones (their buffers are reused).
   pool: H2Stream[] = [];
-  /// The ids of the last 64 streams closed (`wasOpen`), and which of them the server reset
-  /// (`wasReset`).
-  private closed: i64[] = new Array<i64>(64).fill(0);
-  private closedReset: bool[] = new Array<bool>(64).fill(false);
-  private closedAt: i64 = 0;
+  /// The streams closed last.
+  closed: ClosedStreams;
   /// Streams opened by the frames being processed, whose handlers start after them.
   starting: H2Stream[] = [];
   /// Streams with response body waiting for window, in the order they began to wait.
@@ -135,6 +133,8 @@ export class H2Connection {
     this.stopped = stopped;
     this.handler = handler;
     this.decoder = new HpackDecoder(4096, opts.maxHeaderListSize);
+    const n = opts.maxConcurrentStreams * 2;
+    this.closed = new ClosedStreams(n < 64 ? 64 : n);
     this.recvWindow = opts.connectionWindow;
     this.rbuf = Buffer.alloc(((MIN_MAX_FRAME_SIZE + HEADER_LENGTH) * 2) as usize);
   }
@@ -315,33 +315,12 @@ export class H2Connection {
   release(s: H2Stream) {
     if (this.streams.get(s.id) === s) {
       this.streams.delete(s.id);
-      this.remember(s.id, s.reset);
+      this.closed.add(s.id, s.reset);
       s.state = CLOSED;
       if (!s.running) {
         this.recycle(s);
       }
     }
-  }
-
-  /// Whether stream `id` was open recently (a frame on it is then STREAM_CLOSED, on any other
-  /// id below `lastStreamId` PROTOCOL_ERROR).
-  wasOpen(id: i64): bool {
-    return this.closed.includes(id);
-  }
-
-  /// Whether stream `id` is one of the last ones closed with a reset (by either side, or
-  /// refused): frames the client sent before it saw the reset may still arrive, and are ignored
-  /// (RFC 9113 §5.1, "closed").
-  wasReset(id: i64): bool {
-    const i = this.closed.indexOf(id);
-    return i >= 0 && this.closedReset[i];
-  }
-
-  /// Notes stream `id` as closed (`reset`: with RST_STREAM) for `wasOpen` and `wasReset`.
-  remember(id: i64, reset: bool) {
-    this.closed[this.closedAt] = id;
-    this.closedReset[this.closedAt] = reset;
-    this.closedAt = (this.closedAt + 1) & 63;
   }
 
   /// A stream neither the protocol nor a handler uses any more.
