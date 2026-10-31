@@ -30,7 +30,7 @@ pub(crate) struct ModuleScope {
     pub type_only: FxHashSet<String>,
     /// Of those, the names their module exports only as types (`export type { x }`).
     pub via_export_type: FxHashSet<String>,
-    /// `std/...` module: may call `__intrinsic_*`.
+    /// `std/...` module: may import `velt/lang` (the intrinsics among it) and use std types' private members.
     pub is_std: bool,
     /// A library to the program: std or a package it depends on (`SourceModule::is_dependency`).
     pub is_library: bool,

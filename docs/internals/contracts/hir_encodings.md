@@ -3,6 +3,13 @@
 How sema encodes language features in HIR; lowering relies on every point here.
 Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs`.
 
+An intrinsic marked "std only" below is one std declares in `std/lang/intrinsics/`
+(`export declare intrinsic function arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void;`) and
+calls by that name (`arraySwap(xs, i, j)`, imported from `velt/lang/intrinsics`): sema checks
+the call against the declaration and makes it `Call { Intrinsic(..), args }` as before, so the
+declaration's `ExternFnDef` is never called. Its name maps to the `Intrinsic` in one table
+(`velt_sema::intrinsic_decls`).
+
 ## M2 additions
 (see docs/reference/classes.md and docs/reference/memory.md):
 - Class instances are heap-allocated and referenced by a pointer; `Option<Class>` uses null.
@@ -117,21 +124,21 @@ Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs
   `Intrinsic::Spawn`; any other call of an async function (or of a function value returning a
   `TyKind::Promise(T)`) yields a started promise: boxed via `velt_rt_fut_box`, then
   `velt_rt_fut_start` (hybrid promises, docs/reference/async.md).
-- `Intrinsic::SpawnHandled` (`__intrinsic_spawn_handled(p)`, standard library only) is
+- `Intrinsic::SpawnHandled` (`spawnHandled(p)`, standard library only) is
   `Intrinsic::Spawn` whose rejection the caller handles itself (`TaskScope.spawn`: the scope
   fails with it). A dropped `Spawn` handle reports its task's rejection as uncaught; a dropped
   `SpawnHandled` handle drops it quietly.
 - Error and value text (standard library only; `velt/test` and `assertEq` use them):
-  `Intrinsic::ErrorText` (`__intrinsic_error_text(e)`, `e` borrowed, any type) is what an
+  `Intrinsic::ErrorText` (`errorText(e)`, `e` borrowed, any type) is what an
   uncaught report writes for `e` between `Uncaught ` and the location; `Intrinsic::ThrowLoc`
-  (`__intrinsic_throw_loc()`) is that location, ` at <path>:<line>:<col>` of the last `throw`
+  (`throwLoc()`) is that location, ` at <path>:<line>:<col>` of the last `throw`
   on the thread (`velt_rt_throw_loc`), or `""` (also when lowering emits no locations);
-  `Intrinsic::Inspect` (`__intrinsic_inspect(x)`, borrowed) is `x` as Node's `util.inspect`
+  `Intrinsic::Inspect` (`inspect(x)`, borrowed) is `x` as Node's `util.inspect`
   writes it. Each yields an owned string.
 - Hybrid promises: sema rejects an expression statement of type `Promise<T>` or `Promise<T>[]`
   other than a `spawn(...)` call ("floating promise"). `Intrinsic::PromiseRace`
   (`Promise.race(ps: Promise<T, E>[]): Promise<T, E>`, `ps` owned) and the std-only
-  `Intrinsic::PromiseAny` (`__intrinsic_promise_any`, same signature: the first to fulfill, or
+  `Intrinsic::PromiseAny` (`firstFulfilled`, same signature: the first to fulfill, or
   the last rejection). `Promise.allSettled(ps)` and
   `Promise.any(ps)` are `Call { Def(promiseAllSettled / promiseAny, [T]) }` of the prelude's
   async functions (std/prelude/promise.vlt), so a directly awaited `Promise.any` throws its
@@ -155,9 +162,9 @@ Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs
 
 - The prelude (`std/prelude/*.vlt`) is ordinary Velt code; methods in `extend` blocks are
   `Def::Fn`s whose `self_ty` is the extended (possibly builtin) type.
-- `Intrinsic::HoldsNull` (`__intrinsic_holds_null(probe)`, std only) is a constant per
+- `Intrinsic::HoldsNull` (`holdsNull(probe)`, std only) is a constant per
   instantiation: whether the probe's type is an option once substituted, so that a generic
-  `T | null` is `T` itself. `Intrinsic::NullAs` (`__intrinsic_null_as<T>()`, no arguments, type
+  `T | null` is `T` itself. `Intrinsic::NullAs` (`nullAs<T>()`, no arguments, type
   `T`) is that `T`'s `null`; std calls it only where `HoldsNull` is true (lowering of any other `T`
   is a run-time internal error). Lowering evaluates a condition built from `HoldsNull` with `!`,
   `&&` and `||` itself (`const_cond`): an `if` lowers only the branch taken and `&&` / `||` only
@@ -203,8 +210,6 @@ Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs
   closure (`FnDef::shares_captures`, #208: sema proved it never reaches a thread boundary)
   instead gives each promise another reference to its owned captures (a share, as a generator
   closure does), and the cell itself for a `LocalDef::boxed` capture.
-- `__intrinsic_http_handler(closure)`: `Call { Intrinsic(HttpHandler), [closure] }`, type `u64[]`
-  (init, poll, drop, state_size, state_align, env).
 - Sema rejects: JSON of maps without `string` keys / functions / interface values, and
   `JSON.parse` of unions whose members it cannot tell apart; atomics on non-64-bit ints.
 
@@ -688,8 +693,8 @@ function itself there, instantiated (`FnRef`), so the values compare equal to ea
 - `==` / `!=` on non-primitive types are `Intrinsic::Same` (JS `===`: objects — class instances,
   arrays, structs, object literals, interface and function values — by identity; `T | null`,
   unions and tuples part by part; `!=` wraps it in `Not`). `Intrinsic::Eq` is structural
-  (`__intrinsic_eq`, `deepEqual`, `assertEq`); an object value, array, `Map` or `Record` whose
-  type can hold itself is compared under the same cycle rule as `DeepEq`'s (#1881). `Intrinsic::DeepEq` (`__intrinsic_deep_eq`, std
+  (`eq`, `deepEqual`, `assertEq`); an object value, array, `Map` or `Record` whose
+  type can hold itself is compared under the same cycle rule as `DeepEq`'s (#1881). `Intrinsic::DeepEq` (`deepEq`, std
   only: `velt/test`'s `toEqual`) is `Eq` with Vitest's rules: a class instance that isn't the
   same object compares by its fields, floats with SameValue (`NaN` equal to itself, `0` unequal
   to `-0`), an interface value or an object of a class in a hierarchy with a vtable pointer
@@ -697,7 +702,7 @@ function itself there, instantiated (`FnRef`), so the values compare equal to ea
   not; #1882), and cycles go by Vitest's rule: a class instance or object value met again while its
   fields are being compared is equal if it meets the same partner again, else different. The prelude `Map`'s content comparison, `Map.__deepEquals(other, deep)`, takes
   `deep = true` under it, so a `Map`'s (and a `Set`'s, a `Record`'s) values compare the same way. `Map` and `Set` keys compare with
-  `Intrinsic::KeyEq` (`__intrinsic_key_eq`, JS SameValueZero: `Same` with `NaN` equal to itself
+  `Intrinsic::KeyEq` (`keyEq`, JS SameValueZero: `Same` with `NaN` equal to itself
   and `0` to `-0`) and hash with `Intrinsic::Hash`, which agrees with it (objects hash their
   identity; a type declared with `struct`, `AdtDef::declared_struct`, compares and hashes by
   content, field by field). `Array.includes` compares with `Intrinsic::IncludesEq` (`Same`, with a
@@ -1280,7 +1285,7 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   6 or more goes to the prelude's `__anyObjectNumber`, which takes `ToPrimitive(v, "number")`
   (`__anyToPrimitive`: `[Symbol.toPrimitive](hint)`, else `valueOf` / `toString` in the hint's
   order, keeping a primitive result; the dispatch over the program's classes is sema's, written
-  where the prelude calls `__intrinsic_any_to_primitive`). `+` adds numbers when both tags are
+  where the prelude calls `anyToPrimitive`). `+` adds numbers when both tags are
   at most 3, else it is `__anyAdd` (an `any`); `<` / `>` / `<=` / `>=` go to `__anyRelational`
   when a tag is 6 or more. `x op= v` and `++` / `--` on an `any` place or member read it once
   and write the boxed result; a typed number place with an `any` value (`n += a`) converts the
@@ -1334,15 +1339,15 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   proxy's `has` trap): in `effects::runs_user_code` and `replaced_holders::implicit::glue_args`.
   The `any` tables get slot 11 `AnyHas (data, key) -> u8` (velt_vir `lower/any_has.rs`; 0 no,
   1 yes, 2 not supported yet) only when the program has such a test.
-- `Intrinsic::AnyDelete(x, key)` (std only, `__intrinsic_any_delete`) is `delete x[key]` with a
+- `Intrinsic::AnyDelete(x, key)` (std only, `anyDelete`) is `delete x[key]` with a
   `string` key on an `any` `x` that is not a proxy (borrowed), of type `bool`: a record's entry
   is removed (its `__delete`), an optional field made absent, a key the value does not have as
   its own is `true`, an array's `length` `false`. It changes memory (`effects`,
   `replaced_holders::implicit::glue_args`). The `any` tables get slot 15 `AnyDelete (data,
   key) -> u8` (velt_vir `lower/any_delete.rs`; 0 false, 1 true, 2 not supported yet, a
   `TypeError`) only when the program has such a call.
-- `Intrinsic::ProxyArrayCall(x, op)` (std only, `__intrinsic_proxy_array_call`) and
-  `Intrinsic::ProxyArrayHole(x, index, op)` (std only, `__intrinsic_proxy_array_hole`), with `x`
+- `Intrinsic::ProxyArrayCall(x, op)` (std only, `proxyArrayCall`) and
+  `Intrinsic::ProxyArrayHole(x, index, op)` (std only, `proxyArrayHole`), with `x`
   an `any` (borrowed, passed by its data pointer: the target of an array method running on a
   proxy, which the proxy keeps alive, or the array a `Reflect` call reaches) and `index` / `op`
   `i64`, of type `i64`, are calls of `velt_rt_proxy_array_call` and `velt_rt_proxy_array_hole`

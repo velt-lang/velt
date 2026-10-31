@@ -53,7 +53,7 @@ impl<'h> Cx<'h> {
 
     /// Is the type being made part of the prelude `Map` or `Record` (a function of theirs being
     /// built, or a map's field types)? Their `V | null` entry slots tell a deleted entry from
-    /// a live one by the map's index where `V` holds a nothing (`__intrinsic_holds_null`), so a
+    /// a live one by the map's index where `V` holds a nothing (`holdsNull`), so a
     /// `V` that allows `undefined` keeps its values (velt_sema `undefined_args`).
     fn keeps_nothings_apart(&self) -> bool {
         if self.map_fields > 0 {

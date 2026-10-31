@@ -228,8 +228,14 @@ shrinks.
   element-returning methods clone, iteration and callbacks borrow.
 - Only `export` the public surface; helpers stay module-private. `extend` blocks apply wherever
   their module is loaded (they cannot be exported).
-- Only std code may call compiler intrinsics, spelled `__intrinsic_<snake_case>` after the
-  `Intrinsic` enum in `crates/velt_sema/src/hir/intrinsic.rs`.
+- Compiler intrinsics are declared in `std/lang/intrinsics/` (`export declare intrinsic function
+  arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void;`, grouped by area, each with a doc
+  comment) and std code imports them like any function (`import { arraySwap } from
+  "velt/lang/intrinsics";`). `velt/lang` is internal, so programs and packages cannot: what they
+  legitimately need gets a public API (`xs.reserve(n)`, `xs.truncate(n)`, velt/encoding's
+  `utf8ByteAt`). A new intrinsic is a declaration there plus its row in the table of
+  `crates/velt_sema/src/intrinsic_decls.rs` (a test checks that both name the same ones); the
+  declaration is the signature calls are checked against.
 
 #### Runtime bindings
 
@@ -246,18 +252,18 @@ handles are `u64`. Handle-owning classes release them in their `[Symbol.dispose]
 #### Performance
 
 Std code is monomorphized and inlined like user code, so write plain index loops.
-- Reserve capacity (`__intrinsic_array_with_capacity`) when the final length is known.
+- Reserve capacity (`arrayWithCapacity`) when the final length is known.
 - Never clone to read: pass `xs[i]` straight to callbacks and comparisons (they borrow; when
   other references may reach the array, lowering passes a share of the element instead, so a
   callback that pushes onto the array or pops it cannot leave its argument dangling).
-- Rearrange arrays with `__intrinsic_array_swap` / `__intrinsic_array_truncate`; moving an
+- Rearrange arrays with `arraySwap` / `arrayTruncate`; moving an
   element out of an index is not allowed, and a swap avoids clones. Algorithms that need a
   buffer (the stable sort, std/lang/sort/stable.vlt) move raw elements with
-  `__intrinsic_array_move` into an array sized with `__intrinsic_array_set_len`, keeping every
+  `arrayMove` into an array sized with `arraySetLen`, keeping every
   element owned exactly once themselves, and set its length back to 0 before it is dropped.
   A callback may reach the caller's array through an alias, so while it runs that array must
   hold only elements it owns: the stable sort copies elements that need no drop
-  (`__intrinsic_needs_drop`; short arrays in place when `__intrinsic_fn_captures_nothing(cmp)`)
+  (`needsDrop`; short arrays in place when `fnCapturesNothing(cmp)`)
   and moves the others out at any length, leaving the array empty.
 - Keep algorithms allocation-free where possible (`sort()` is in place; `sort(cmp)` needs
   two buffers as long as the array).

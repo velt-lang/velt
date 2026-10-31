@@ -8,7 +8,7 @@ use super::*;
 #[derive(Clone)]
 pub(crate) struct Frame {
     pub kind: FnKind,
-    /// The CPU extension this function is gated on (`__intrinsic_target`, `body::gated`): it
+    /// The CPU extension this function is gated on (`targetFeature`, `body::gated`): it
     /// may call the gated functions of that target. A closure's frame starts without it.
     pub target: Option<crate::hir::CpuTarget>,
     /// The checks of CPU extensions that hold where the code being checked runs: the `then`

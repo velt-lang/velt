@@ -6,7 +6,7 @@ Tracking: #1726, with one sub-issue per step and per language feature.
 ## Where we are
 
 `velt/sqlite` ([docs](../../std/sqlite.md)) wraps C SQLite through `crates/velt_std_sqlite`
-(rusqlite, bundled). Rows decode into typed values through `__intrinsic_read_rows`, which
+(rusqlite, bundled). Rows decode into typed values through `readRowsByColumn`, which
 calls `sqlite3_column_*` once per value across the FFI. That is fast, but it can't get faster:
 every statement runs SQLite's bytecode interpreter (VDBE) behind an opaque call that LLVM can't
 inline, and one connection runs on one thread.
@@ -144,7 +144,7 @@ it, starting with positioned I/O for the pager.
 3. **SQL**: tokenizer, parser, name resolution against the schema, a planner (rowid and index
    lookups and ranges, nested-loop joins, ORDER BY through an index or a sort, LIMIT), and
    execution as compiled closures. Expressions with SQLite's affinity and comparison rules,
-   core functions, aggregates, subqueries. Typed row decoding replaces `__intrinsic_read_rows`
+   core functions, aggregates, subqueries. Typed row decoding replaces `readRowsByColumn`
    for the Velt engine.
 4. **Writing**: INSERT, UPDATE, DELETE, b-tree balancing, the freelist, the rollback journal,
    transactions, DDL. Then `velt/sqlite` switches to the Velt engine and `velt_std_sqlite` is

@@ -42,8 +42,8 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// `__intrinsic_chan_send(ch, value)` (`r`: `Rt::ChanSend`, a future) and
-    /// `__intrinsic_chan_try_send(ch, value)` (`Rt::ChanTrySend`, a `bool` now): the value's bytes
+    /// `chanSend(ch, value)` (`r`: `Rt::ChanSend`, a future) and
+    /// `chanTrySend(ch, value)` (`Rt::ChanTrySend`, a `bool` now): the value's bytes
     /// (and its ownership) go to the runtime, with the drop glue it uses if the value is not
     /// queued. A channel is a thread boundary like `spawn`: a value the sender still shares is
     /// deep-copied (transfer.rs).

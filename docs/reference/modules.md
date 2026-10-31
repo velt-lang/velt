@@ -359,8 +359,9 @@ library uses them to bind `velt_rt_*`, and only it may declare those (they take 
 handles). Outside the standard library, a `declare` may only name an export of the native
 library of its own package, and must match that export exactly
 ([Packages with native code](../book/native-packages.md)). Anything else is a compile error: a
-program or a package without native code can't declare C functions such as `free` or `memcpy`. Compiler intrinsics (`__intrinsic_*`) are reserved for
-the standard library too. A runtime function std declares writes the `string` it takes as `out`
+program or a package without native code can't declare C functions such as `free` or `memcpy`. Compiler intrinsics
+(`declare intrinsic function`, in `velt/lang/intrinsics`) are reserved for the standard library
+too. A runtime function std declares writes the `string` it takes as `out`
 or `buf` (a string builder, or the slot for its result), so passing a place there modifies it,
 as a modifying method does.
 

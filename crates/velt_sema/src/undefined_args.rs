@@ -226,7 +226,7 @@ pub(crate) fn check_instantiations(cx: &mut Ctx) {
 
 /// Is `d` part of the prelude `Map` or `Record` (the types, their methods and helpers)? A
 /// map's `V | null` entry slots tell a deleted entry from a live one by the map's index
-/// wherever `V` holds a nothing (`__intrinsic_holds_null`, std/prelude/map.vlt), so a value's
+/// wherever `V` holds a nothing (`holdsNull`, std/prelude/map.vlt), so a value's
 /// own `undefined` (or `null`) stays a value; a record keeps its entries in a map. Lowering
 /// makes the same exception (`velt_vir` `Cx::intern`).
 fn keeps_null_apart(cx: &Ctx, d: DefId) -> bool {

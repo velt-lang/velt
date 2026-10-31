@@ -201,7 +201,7 @@ impl FnLower<'_, '_> {
         None
     }
 
-    /// `__intrinsic_weakmap_set(m, key, value)`: the map (created now when `m` is 0).
+    /// `weakMapSet(m, key, value)`: the map (created now when `m` is 0).
     fn weakmap_set(&mut self, m: &hir::Expr, key: &hir::Expr, value: &hir::Expr) -> Operand {
         let m = self.expr(m);
         let kt = self.sub(key.ty);

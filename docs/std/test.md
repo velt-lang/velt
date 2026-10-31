@@ -44,7 +44,7 @@ imports this module. How they run:
 - A `describe` callback that throws (or is `async`) is reported as a failed test named as its
   group, and the group's tests don't run. An `afterAll` that throws is printed where it ran and
   fails the run. A test's name is escaped on its report line (`\n` for a line break).
-- `toEqual` compares with `__intrinsic_deep_eq`: `deepEqual`'s comparison, but a class instance
+- `toEqual` compares with `deepEq`: `deepEqual`'s comparison, but a class instance
   that isn't the same object compares by its fields and numbers with `Object.is`. The fields
   are those of the object's own class, whatever type holds it: two `Shape`s (an interface) or
   two `Animal`s (a base class) are equal when they are objects of one class with equal fields,

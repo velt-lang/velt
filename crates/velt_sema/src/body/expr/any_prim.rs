@@ -1,7 +1,7 @@
 //! JavaScript's `ToPrimitive(v, hint)` of an object held in an `any` (#924), the conversion
 //! behind arithmetic, `+`, the relational operators and `==` on objects. The prelude's
 //! `__anyToPrimitive(v, hint, at)` (std/prelude/any_ops.vlt) ends with
-//! `__intrinsic_any_to_primitive(v, hint, at)`, which sema writes here as a dispatch over the
+//! `anyToPrimitive(v, hint, at)`, which sema writes here as a dispatch over the
 //! program's classes, as `__anyString` holds the dispatch of `String(x)` (any_text.rs):
 //! - a class with a `[Symbol.toPrimitive]` is what that returns for `hint`;
 //! - another one tries its `valueOf()` and `toString()` (`toString()` first for `"string"`),
@@ -74,7 +74,7 @@ enum PrimMethod {
 }
 
 impl FnCx<'_, '_> {
-    /// `__intrinsic_any_to_primitive(v, hint, at)` in the prelude's `__anyToPrimitive`: the
+    /// `anyToPrimitive(v, hint, at)` in the prelude's `__anyToPrimitive`: the
     /// dispatch (module docs).
     pub(super) fn primitive_dispatch(&mut self, args: &[ast::Expr], span: Span) -> hir::Expr {
         let (Some(any), [v, ..]) = (self.any_ty(), args) else {

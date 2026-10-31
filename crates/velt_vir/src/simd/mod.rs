@@ -263,7 +263,7 @@ pub enum SimdCall {
     /// `false` on another architecture, on wasm and under Cranelift).
     Has(Ext),
     /// `velt_simd_prefetch(addr)`: start loading the cache line at `addr` for a read soon
-    /// (`__intrinsic_array_prefetch`); never faults. Nothing under Cranelift and on wasm.
+    /// (`arrayPrefetch`); never faults. Nothing under Cranelift and on wasm.
     Prefetch,
 }
 

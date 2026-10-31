@@ -2,7 +2,7 @@
 //! database driver's rows reach the compile-time generated `JSON.parse<T[]>` decoder without
 //! becoming JSON text: no escaping and number formatting on the way out, no scanning on the way
 //! in. A driver returns them as a `u8[]` and std decodes them with the same decoder as JSON text
-//! (`__intrinsic_json_parse_rows`; native_abi.md "Rows").
+//! (`Intrinsic::JsonParseRows`; native_abi.md "Rows").
 //!
 //! Layout: a header `single: u8, columns: u16, (name_len: u32, name bytes)*`, then the rows,
 //! each one cell per column. A cell is a tag byte and its payload: [`NULL`], [`FALSE`],

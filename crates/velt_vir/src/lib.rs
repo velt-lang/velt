@@ -138,7 +138,7 @@ pub const ARRAY_LEN_MESSAGE: &str =
     "RangeError: Invalid array length: an array holds at most 2^52 - 1 elements, and its elements at most 2^52 - 1 bytes";
 
 /// The name of the one-byte aggregate (`{ byte: U8 }`) that lowering reads a string's UTF-8
-/// bytes through (`(*p as string text).0`, `__intrinsic_str_byte_at` and `charCodeAt`'s ASCII
+/// bytes through (`(*p as string text).0`, `strByteAt` and `charCodeAt`'s ASCII
 /// path), which no user type can have: the LLVM backend tags those loads as array element
 /// reads for alias analysis (velt_codegen_llvm `tbaa.rs`, #1669). A string's text lives in its
 /// own buffer or inline in the string value, never in a class object's scalar field or an

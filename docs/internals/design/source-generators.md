@@ -28,8 +28,8 @@ types have a JSON form, propagated through generic code) and `crates/velt_vir/sr
 
 The same std-only scheme generates, per type, structural equality (`Intrinsic::Eq`, `DeepEq`),
 `structuredClone` (`Clone`), `inspect` and `console.log` of objects (`glue/format*.rs`), database
-rows (`__intrinsic_json_parse_cursor`, `ReadRows`, `ReadRow`) and parameter binding
-(`__intrinsic_db_bind`, `json/db_bind.rs`): about 6,500 lines of glue in `lower/glue/` besides
+rows (`jsonParseCursor`, `ReadRows`, `ReadRow`) and parameter binding
+(`dbBind`, `json/db_bind.rs`): about 6,500 lines of glue in `lower/glue/` besides
 JSON.
 
 So a third-party JSON, MessagePack, CBOR, ORM, validation or deep-equal library cannot match std:
@@ -475,7 +475,7 @@ The port of each operation is merged only when, against `main` at its merge base
 | 2 | Caching of generator output; the offered modules; `--emit-generated`; `--timings` rows | — |
 | 3 | The access rule and `construct<T>` | — |
 | 4 | `JSON.stringify` as a generator in `velt/encoding/json` (with `velt/generate/runtime` for proxies, `any` and subclass dispatch) | `lower/json/write.rs`, `dynamic.rs`, `literal.rs`, the stringify half of `sema/json`, `JSON_GLUE`'s writer |
-| 5 | `JSON.parse<T>`, then `JSON.parse` of rows and cursors (`velt/db`) and `__intrinsic_db_bind` | the rest of `lower/json/`, `sema/json/`, `JSON_GLUE`, `lazy_std_json.rs`, the intrinsics |
+| 5 | `JSON.parse<T>`, then `JSON.parse` of rows and cursors (`velt/db`) and `dbBind` | the rest of `lower/json/`, `sema/json/`, `JSON_GLUE`, `lazy_std_json.rs`, the intrinsics |
 | 6 | Decorators (json-engine.md steps 9–10, declared with `declare decorator function`) | — |
 | 7 | `deepEqual`/`toEqual` (`Eq`, `DeepEq`), `structuredClone` (`Clone`), `inspect` and `console.log` of objects | `glue/eq*.rs`, `clone.rs`, `format*.rs` |
 

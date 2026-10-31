@@ -60,7 +60,7 @@ pub enum SimdTy {
 }
 
 /// A CPU extension a gated function is compiled for (#1330): its first statement is
-/// `__intrinsic_target("sha-arm")` (std only), and every call of it sits behind the check of
+/// `targetFeature("sha-arm")` (std only), and every call of it sits behind the check of
 /// that extension (`u32x4.hasShaArm()`, `u64x2.hasClmulX86()`), so backends may use the
 /// extension anywhere in it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -84,7 +84,7 @@ impl CpuTarget {
         CpuTarget::ClmulArm,
     ];
 
-    /// The name `__intrinsic_target` takes.
+    /// The name `targetFeature` takes.
     pub fn name(self) -> &'static str {
         match self {
             CpuTarget::ShaArm => "sha-arm",

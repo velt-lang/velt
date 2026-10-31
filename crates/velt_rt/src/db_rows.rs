@@ -1,5 +1,5 @@
 //! Rows read straight into typed values (`Glue::RowsRead`, VIR json/rows_read.rs): what std's
-//! `JSON.parse` of a driver's row cursor (`__intrinsic_json_parse_cursor`) compiles to when the
+//! `JSON.parse` of a driver's row cursor (`jsonParseCursor`) compiles to when the
 //! row type is an object of plain fields. Each column is matched to its field once per result
 //! ([`velt_rt_rows_begin`]), and each value is read by column, typed, without the JSON reader's
 //! keys. The results, and the messages of a row that does not fit, are those of the JSON decoder.

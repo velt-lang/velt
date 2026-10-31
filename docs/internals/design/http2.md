@@ -12,7 +12,7 @@ until now.
 Velt (`serveHttp`, #1533), which spoke HTTP/1.1 only. Removing hyper would have dropped HTTP/2:
 browsers use it for every HTTPS site, gRPC needs it, and many requests over one connection are
 what a page with dozens of assets wants. The owner's rule for servers holds here too: the
-protocol is written in Velt on public std APIs (no `__intrinsic_*`, no `declare`d runtime
+protocol is written in Velt on public std APIs (no intrinsics, no `declare`d runtime
 functions in protocol code), and where an API is missing it is added to std properly. It must
 also be fast: the HTTP/1.1 server is ahead of hyper and axum, and HTTP/2 should not be the
 place where Velt loses.

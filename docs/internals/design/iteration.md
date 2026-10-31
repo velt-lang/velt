@@ -178,7 +178,7 @@ function* range(n: i64): Generator<i64> {
   `Iterator<T, E>` and `Iterable<T, E>`: `next()`, `return()`, `[Symbol.iterator]()` (returns
   `this` as an `Iterator<T, E>`) and `[Symbol.dispose]()` (closes it, so `using g = gen()`
   works and dropping it closes it). Its methods use the std-only intrinsics
-  `__intrinsic_generator_resume` (throws `E`), `_value` and `_return`. `new Generator` and
+  `generatorResume` (throws `E`), `generatorValue` and `generatorReturn` (velt/lang/intrinsics). `new Generator` and
   `extends Generator` are errors.
 - `yield* src` is `for (const <yield@N> of src) { yield <yield@N>; }`: any iterable, and a
   direct generator call takes the embedded path below. Closing the outer generator while it is

@@ -200,7 +200,7 @@ pub struct Program {
     /// Per implementation (`impls` index) of an interface in `upcasts`: the implementation of
     /// each target for the same type, in `upcasts` order. Additive.
     pub upcast_impls: HashMap<u32, Vec<u32>>,
-    /// Gated functions (`__intrinsic_target`) and the CPU extension each is compiled for
+    /// Gated functions (`targetFeature`) and the CPU extension each is compiled for
     /// (#1330): lowering gives the VIR function its target.
     pub cpu_targets: HashMap<DefId, CpuTarget>,
     /// Names of structural types for messages: aliases' and field-only interfaces'. Additive.

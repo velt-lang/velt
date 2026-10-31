@@ -1,4 +1,4 @@
-//! Std-only intrinsics with extra rules: `__intrinsic_json_parse` throws the prelude's
+//! Std-only intrinsics with extra rules: `jsonParse` throws the prelude's
 //! `JsonError`. What JSON glue can be generated for is checked after all bodies
 //! (`crate::json`).
 

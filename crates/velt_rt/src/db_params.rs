@@ -1,5 +1,5 @@
 //! A statement's parameters handed to a driver's sink (`velt_text::rows_cursor::ParamSink`) by
-//! the code `__intrinsic_db_bind<P>` generates for the parameter type: one call per member name
+//! the code `dbBind<P>` generates for the parameter type: one call per member name
 //! and value, instead of JSON text the driver parses (native_abi.md "Parameter sinks"). Each
 //! value binds as its JSON text would: an integral number below 1e21 as an integer (when it
 //! fits), NaN and the infinities as null, a string as UTF-8 (a lone surrogate as U+FFFD).

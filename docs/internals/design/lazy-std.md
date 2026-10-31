@@ -74,7 +74,7 @@ once) at the first instantiation of one of its intrinsics in checked code
 
 - an intrinsic whose types are concrete is one;
 - one whose types mention the type parameters of the generic function it is in
-  (`JSON.parse<T>`'s `__intrinsic_json_parse<T>`) makes that function generic glue; so does a
+  (`JSON.parse<T>`'s `jsonParse<T>`) makes that function generic glue; so does a
   call of generic glue with type arguments that mention the caller's own parameters
   (`JsonValue.as<T>` calling `JSON.parse<T>`). A call of generic glue with concrete type
   arguments is an instantiation;

@@ -382,7 +382,7 @@ moves no call.
 
 `velt_simd_prefetch(void* addr)` (`-> void`, additive) starts loading the cache line at `addr`
 for a read soon, as a hint: LLVM emits `llvm.prefetch` (read, every cache level, data), which
-never faults; Cranelift emits nothing. Std reaches it through `__intrinsic_array_prefetch(xs, i)`
+never faults; Cranelift emits nothing. Std reaches it through `arrayPrefetch(xs, i)`
 (HIR `Intrinsic::ArrayPrefetch`, the address of element `i`, not bounds-checked).
 
 A shuffle is `velt_simd_<type>_shuffle_<i0>_<i1>…`, one lane index per lane spelled in the symbol
@@ -415,7 +415,7 @@ uint8_t velt_cpu_clmul_arm;  /* 1: aarch64 with PMULL (64-bit polynomial multipl
 
 LLVM gives a function that calls one of these operations the extension's own feature (`+sha2`,
 `+sha`, `+pclmul`, `+aes`), which it uses for nothing else; a *gated* function (VIR
-`Function::target`, HIR `Program::cpu_targets`, from std's `__intrinsic_target("sha-arm" |
+`Function::target`, HIR `Program::cpu_targets`, from std's `targetFeature("sha-arm" |
 "sha-x86" | "clmul-x86" | "clmul-arm")`, every call of
 which sema keeps behind the check) gets the extension's whole set (`+sha,+ssse3,+sse4.1` on x86),
 and the check of its own extension (`velt_simd_has_<ext>`) is the constant `1` there, so the

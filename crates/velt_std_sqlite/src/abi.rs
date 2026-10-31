@@ -87,7 +87,7 @@ fn velt_std_sqlite__run(stmt_h: u64, params: &Str) -> Result<RunInfo, Error> {
 }
 
 /// `stmt.all()` / `get()` → `IoResult<u64>`: a cursor over the rows
-/// (`velt_text::rows_cursor`) for `__intrinsic_json_parse_cursor`, given back to
+/// (`velt_text::rows_cursor`) for `jsonParseCursor`, given back to
 /// `velt_std_sqlite__close_rows`; 0 if `first_only` found no row. `params` is JSON, as for
 /// `run`.
 #[export]
@@ -108,7 +108,7 @@ fn velt_std_sqlite__close_rows(cursor: u64) -> Result<(), Error> {
 }
 
 /// `runWith` / `getWith` / `allWith` → `IoResult<u64>`: a parameter sink
-/// (`velt_text::rows_cursor::RawSink`) for `__intrinsic_db_bind`, then handed on to
+/// (`velt_text::rows_cursor::RawSink`) for `dbBind`, then handed on to
 /// `velt_std_sqlite__open_rows_bound` or `velt_std_sqlite__run_bound`, or given up with
 /// `velt_std_sqlite__bind_abort`.
 #[export]

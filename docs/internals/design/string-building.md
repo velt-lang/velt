@@ -109,7 +109,7 @@ range that starts there begins with the low surrogate, and one that ends there e
 high surrogate, each appended as a lone surrogate. An end inside any other sequence is a
 `RangeError` panic (no position in a JavaScript string corresponds to it). The copy between stays one
 `memcpy`, and the UTF-16 count is taken while copying (non-ASCII blocks only). Std parsers (`velt/encoding/json`, `velt/net/url`, `velt/encoding/csv`)
-then need neither `__intrinsic_str_byte_at` nor `utf8ByteAt`'s check at each byte: the view is
+then need neither `strByteAt` nor `utf8ByteAt`'s check at each byte: the view is
 bounds-checked once per loop where the compiler can prove the range, like an array.
 
 ## Not proposed

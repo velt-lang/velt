@@ -170,7 +170,8 @@ whole tree after the move is in the appendix.
   that it names every prelude file once).
 - `std/lang/` is new: what implements the language and its globals, which no program imports:
   `symbol`, `proxy`, `record`, `this_fn`, `import_meta`, `dom_exception`, `typed_array`,
-  `number` (float parsing), `sort` (the sort algorithms). Each is a folder; since nothing
+  `number` (float parsing), `sort` (the sort algorithms), `intrinsics` (the compiler's
+  intrinsics, declared: §10). Each is a folder; since nothing
   imports `lang/`, its folders need no `index.vlt`. `prelude/global/*.vlt` re-exports from here
   as today.
 
@@ -370,6 +371,26 @@ The fix, as Rust's `#[rustc_intrinsic]` and Swift's `Builtin` do it:
   strings, `array_truncate`) gets a public, documented std API instead (`Array.withCapacity`,
   `velt/encoding` byte views), as the Velt HTTP server proved for its own needs (#1533). The
   packages of §3 use only those.
+
+Done: `std/lang/intrinsics/` declares the 83 intrinsics std calls in 18 files by area (`array`,
+`string`, `simd`, `types`, `compare`, `atomic`, `generator`, `json`, `db`, …; `index.vlt`
+re-exports them), with `declare intrinsic function` (`ast::FnSig::is_intrinsic`, additive). A
+declaration's parameters are borrowed or copied by their type as a function's start out;
+`Mut<T>`, `Owned<T>` and `Copied<T>` (aliases of `T` in `modes.vlt`) mark the ones the
+intrinsic modifies, takes over or copies. `crates/velt_sema/src/intrinsic_decls.rs` is the one
+table from name to `Intrinsic` (plus `targetFeature` and `anyToPrimitive`, which sema writes out
+itself); a call is checked against the declaration (errors say `` intrinsic `arraySwap` ``) and
+becomes the same `Call { Intrinsic(..) }` as before, so lowering did not change (the VIR of
+every golden and bench program is identical). A declaration the table lacks is an ICE-level
+error, and a test reads std's declarations and fails on a missing or an extra one. The
+`__intrinsic_` prefix is gone: in user code it is an unknown name, `declare intrinsic function`
+outside std is an error, and importing `velt/lang/intrinsics` is the loader's visibility error.
+The builtins that are intrinsics without a std declaration (`panic`, `sleep`, `xs.push`, `new
+Mutex`, …) keep their signatures in `body/expr/intrinsics.rs`. Packages already had public APIs
+for what they need (`xs.reserve(n)`, `xs.truncate(n)`, `xs.length = n`, velt/encoding's
+`utf8Length`, `utf8ByteAt`, `utf8Substring`); the database drivers reach the per-type row
+decoding and parameter binding (`jsonParseCursor`, `dbBind`) through velt/db, whose functions
+call them (§11).
 
 ### 10b. Compiler hooks: the `__` functions and methods
 
