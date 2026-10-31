@@ -116,7 +116,8 @@ fn program(s: &Shape) -> (Program, FuncId, usize) {
     (pb.finish(), drop, user.0 as usize)
 }
 
-/// Whether `user`'s call of `drop` runs only where `*s` is not null.
+/// Whether `user`'s call of `drop` runs only where `*s` is not null, and calls `drop`'s clone
+/// without the test: one return (after the work), where `drop` has two.
 fn guarded(p: &Program, user: usize, drop: FuncId) -> bool {
     let f = &p.funcs[user];
     let Terminator::Branch { cond, then, els } = &f.blocks[0].term else {
@@ -124,16 +125,24 @@ fn guarded(p: &Program, user: usize, drop: FuncId) -> bool {
     };
     let reads = matches!(&f.blocks[0].stmts[..], [Stmt::Assign(t, Rvalue::Use(Operand::Copy(src))), Stmt::Assign(c, Rvalue::Binary(BinOp::Ne, Operand::Copy(t2), Operand::Const(Const::Int(0), Ty::Ptr)))]
         if *src == deref(Local(0), Ty::Ptr) && t == t2 && Operand::Copy(c.clone()) == *cond);
-    let calls = matches!(&f.blocks[then.0 as usize].term, Terminator::Call { callee: Callee::Func(d), next, .. } if *d == drop && next == els);
-    reads && calls
+    let calls = matches!(&f.blocks[then.0 as usize].term, Terminator::Call { callee: Callee::Func(d), next, .. }
+        if p.funcs[d.0 as usize].symbol == "drop$present" && next == els);
+    let returns = |g: &Function| {
+        g.blocks
+            .iter()
+            .filter(|b| matches!(b.term, Terminator::Return(_)))
+            .count()
+    };
+    let clone = p.funcs.iter().find(|g| g.symbol == "drop$present");
+    let one = clone.is_some_and(|g| returns(g) == 1) && returns(&p.funcs[drop.0 as usize]) == 2;
+    reads && calls && one
 }
 
 /// Runs the pass on `user`; returns whether it changed anything, checking the call is still
 /// the first block's terminator when it did not.
 fn rewrites(s: &Shape) -> bool {
     let (mut p, drop, user) = program(s);
-    let exits = NullExits::find(&p);
-    let changed = run(&exits, &mut p.funcs[user]);
+    let changed = run(&mut p);
     assert_valid(&p);
     match changed {
         true => assert!(guarded(&p, user, drop), "the call is behind a null test"),
