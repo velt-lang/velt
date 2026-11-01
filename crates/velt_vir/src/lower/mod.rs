@@ -93,6 +93,7 @@ mod hand_result;
 mod hooks;
 mod host;
 mod impl_lookup;
+mod index_order;
 mod intrinsics;
 mod js_string;
 mod json;
@@ -150,6 +151,7 @@ mod weak;
 mod weak_object;
 mod weak_view;
 mod widen;
+mod write_effects;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
@@ -445,6 +447,10 @@ struct Cx<'h> {
     module_desc: Option<StaticId>,
     /// The module state slots some code assigns as a whole, once asked (module_state.rs).
     reassigned_slots: Option<FxHashSet<hir::DefId>>,
+    /// The fields of object types some code assigns, once asked (index_order.rs).
+    assigned_fields: Option<index_order::AssignedFields>,
+    /// What each function may store, with what it calls, once asked (write_effects.rs).
+    fn_writes: Option<write_effects::FnWrites>,
     /// The prelude's `Error` class, once looked up (js_string.rs).
     prelude_error: Option<Option<hir::DefId>>,
     /// The prelude's top-level `await` mark and what it forwards to (async_fn/suspend.rs).
@@ -709,6 +715,9 @@ struct FnLower<'c, 'h> {
     /// The body of a function of a user module or of std/proxy: its operations on `any` throw
     /// what a proxy's trap throws, as velt_sema counts them (proxy_throws.rs).
     proxy_routes: bool,
+    /// The held bases of the assignment target being formed, by the address of their HIR
+    /// expression (index_order.rs `target_base`).
+    held_targets: Vec<(usize, Operand)>,
     /// How many objects are being built from a record's or object's members around this
     /// conversion (`any_record_fill`, `any_object_fill`): a member is filled the same way up to
     /// `any_record::FILL_DEPTH` deep, so a type that contains itself ends.

@@ -1,0 +1,208 @@
+// An element read evaluates its base before its index, as JavaScript does (#1527): an index that
+// replaces the array being read (a call, a getter, an assignment) leaves the element read from
+// the array that was there, which stays alive for the read.
+const rows: string[][] = [["a", "b"], ["c", "d"]];
+
+function swapRows(i: number): number {
+  rows[0] = ["L0", "L1"];
+  return i;
+}
+
+class Holder {
+  xs: number[] = [1, 2, 3];
+
+  get bump(): number {
+    this.xs = [10, 20, 30];
+    return 1;
+  }
+}
+
+function inLocals(): void {
+  // A closure that replaces the inner array of a local.
+  const grid: string[][] = [["p", "q"], ["r", "s"]];
+  const swap = (i: number): number => {
+    grid[1] = ["X", "Y"];
+    return i;
+  };
+  console.log(grid[1][swap(1)], grid[1][1]);
+  // A variable the index assigns.
+  let ws: string[] = ["w0", "w1"];
+  const w = ws[(ws = ["z0", "z1"]).length - 1];
+  console.log(w, ws[1]);
+}
+
+console.log(rows[0][swapRows(0)], rows[0][0]);
+const h = new Holder();
+console.log(h.xs[0 + h.bump], h.xs[1]);
+inLocals();
+
+// A conditional index of a `number` with an integer literal in the other branch.
+const grid: number[][] = [[1, 2], [3, 4]];
+const k: number = 1;
+grid[k === 0 ? 0 : k] = [7, 8];
+console.log(grid[1][0], grid[k === 0 ? 0 : k][1], grid[k !== 0 ? 0 : k][0]);
+
+// The index changes the array in place (an element store, a push): the read sees the change,
+// before and after the index replaces it too.
+const nums: number[][] = [[1, 2], [3, 4]];
+function bump(): number {
+  nums[0][1] = nums[0][1] + 10;
+  return 1;
+}
+function bumpThenReplace(): number {
+  nums[1][0] = 100;
+  nums[1] = [7];
+  return 0;
+}
+console.log(nums[0][bump()], nums[1][bumpThenReplace()], nums[1][0]);
+const words: string[][] = [["a"]];
+function add(): number {
+  words[0].push("b");
+  return 1;
+}
+function addThenReplace(): number {
+  words[0].push("c");
+  words[0] = ["z"];
+  return 2;
+}
+console.log(words[0][add()], words[0][addThenReplace()], words[0][0]);
+
+class Marks {
+  rows: number[][] = [[0, 0, 0]];
+  mark(): number {
+    this.rows[0][2] = 9;
+    return 2;
+  }
+  read(): number {
+    return this.rows[0][this.mark()];
+  }
+}
+console.log(new Marks().read());
+
+// A field written through a base class or a subclass, and by a generic function.
+class Base {
+  xs: string[] = ["old0", "old1"];
+}
+class Derived extends Base {}
+const derived = new Derived();
+function replaceDerived(): number {
+  derived.xs = ["new0", "new1"];
+  return 1;
+}
+function replaceBase(o: Base): number {
+  o.xs = ["new0", "new1"];
+  return 1;
+}
+const asBase: Base = derived;
+console.log(asBase.xs[replaceDerived()]);
+derived.xs = ["old0", "old1"];
+console.log(derived.xs[replaceBase(derived)]);
+function replaceGeneric<T extends Base>(o: T): number {
+  o.xs = ["gen0", "gen1"];
+  return 0;
+}
+const plain = new Base();
+console.log(plain.xs[replaceGeneric(plain)], plain.xs[0]);
+
+// Writes: the target's array is read before the index runs, so a store, a compound assignment
+// or an update goes into the array that was there, even when the index replaces it (#2010).
+const wrows: string[][] = [["L0", "L1"]];
+function repRow(i: number): number {
+  wrows[0] = ["L0", "L1"];
+  return i;
+}
+const kept = wrows[0];
+wrows[0][repRow(1)] = "W";
+console.log(kept.join(","), wrows[0].join(","));
+const wnums: number[][] = [[100, 200]];
+function repNums(): number {
+  wnums[0] = [100, 200];
+  return 0;
+}
+const keptNums = wnums[0];
+wnums[0][repNums()] += 5;
+wnums[0][repNums()]++;
+console.log(keptNums.join(","), wnums[0].join(","));
+class Swapper {
+  xs: number[] = [50, 60, 70];
+  sw(): number {
+    this.xs = [50, 60, 70];
+    return 1;
+  }
+  write(): void {
+    this.xs[this.sw()] = 99;
+  }
+}
+const swapper = new Swapper();
+swapper.write();
+console.log(swapper.xs.join(","));
+class Setter {
+  hs: string[] = ["h0", "h1"];
+  get at(): number {
+    this.hs = ["h0", "h1"];
+    return 1;
+  }
+}
+const setter = new Setter();
+setter.hs[setter.at] = "set";
+console.log(setter.hs.join(","));
+const arows: string[][] = [["A"], ["X", "Y"]];
+async function replaceLater(): Promise<number> {
+  arows[1] = ["X", "Y"];
+  return 0;
+}
+async function writeAfterAwait(): Promise<void> {
+  arows[1][await replaceLater()] = "Z";
+  console.log(arows[1].join(","));
+}
+await writeAfterAwait();
+
+// Indexes that change the array through an array method, a constructor or a generator.
+const srows: number[][] = [[1, 2], [3, 4]];
+function dropFirst(): number {
+  srows.shift();
+  return 1;
+}
+console.log(srows[0][dropFirst()], srows[0][1]);
+const crows: number[][] = [[1, 2]];
+class Replacer {
+  i: number = 1;
+  constructor() {
+    crows[0] = [7, 8];
+  }
+}
+console.log(crows[0][new Replacer().i], crows[0][1]);
+const grows: number[][] = [[1, 2]];
+function* replacing(): Generator<number> {
+  grows[0] = [7, 8];
+  yield 1;
+}
+const gen = replacing();
+console.log(grows[0][gen.next().value ?? 0], grows[0][1]);
+
+// A hook method the generated code runs (a dispose when a value is dropped, a `toString`).
+let drows: number[] = [1, 2];
+class Guard {
+  [Symbol.dispose](): void {
+    drows = [7, 8];
+  }
+}
+let spare: Guard | null = new Guard();
+function disposeOne(): number {
+  using held = spare!;
+  spare = null;
+  return 1;
+}
+console.log(drows[disposeOne()], drows[1]);
+let trows: number[] = [1, 2];
+class Texty {
+  toString(): string {
+    trows = [7, 8];
+    return "x";
+  }
+}
+const texty = new Texty();
+function textLen(): number {
+  return `${texty}`.length;
+}
+console.log(trows[textLen()], trows[1]);

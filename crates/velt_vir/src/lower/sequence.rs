@@ -104,12 +104,22 @@ pub(super) fn may_move_local(e: &hir::Expr, l: hir::LocalId) -> bool {
 /// may write those in cells); `changed_hold` asks it only of a variable outside a cell, where
 /// a call through a function value (`hooks[0](acc, nums[0]())`) cannot assign it.
 /// Conservative: shapes not listed may.
-fn assigns_local(e: &hir::Expr, l: hir::LocalId) -> bool {
+pub(super) fn assigns_local(e: &hir::Expr, l: hir::LocalId) -> bool {
     use hir::ExprKind as K;
     match &e.kind {
         K::Lit(_) | K::Global(_) | K::FnRef(..) | K::Local(..) | K::Closure(_) => false,
         K::Assign { place, value } | K::CompoundAssign { place, value, .. } => {
             root_local(place) == Some(l) || assigns_local(place, l) || assigns_local(value, l)
+        }
+        // `i++` is `{ let t = i; i += 1; t }`.
+        K::Block(b) => {
+            b.stmts.iter().any(|st| match &st.kind {
+                hir::StmtKind::Let { init, .. } => {
+                    init.as_ref().is_some_and(|x| assigns_local(x, l))
+                }
+                hir::StmtKind::Expr(x) => assigns_local(x, l),
+                _ => true,
+            }) || b.value.as_deref().is_some_and(|x| assigns_local(x, l))
         }
         _ => any_operand(e, &mut |x| assigns_local(x, l)).unwrap_or(true),
     }
@@ -119,7 +129,7 @@ fn assigns_local(e: &hir::Expr, l: hir::LocalId) -> bool {
 /// does ([`may_move_local`], [`assigns_local`]): unary and binary operators, casts and wraps,
 /// field and index reads, conditionals, array literals and calls (their arguments, and the
 /// function value of an indirect call)? `None` for any other shape.
-fn any_operand(e: &hir::Expr, f: &mut dyn FnMut(&hir::Expr) -> bool) -> Option<bool> {
+pub(super) fn any_operand(e: &hir::Expr, f: &mut dyn FnMut(&hir::Expr) -> bool) -> Option<bool> {
     use hir::ExprKind as K;
     Some(match &e.kind {
         K::Unary { expr: x, .. }
@@ -266,7 +276,7 @@ impl FnLower<'_, '_> {
     }
 
     /// May a read in this program run code ([`Self::read_runs_code`])?
-    fn reads_may_run_code(&self) -> bool {
+    pub(super) fn reads_may_run_code(&self) -> bool {
         self.cx.has_proxies() || !self.cx.boxing.array_views.is_empty()
     }
 
@@ -456,7 +466,7 @@ impl FnLower<'_, '_> {
     /// standard-library function whose arguments are all numbers, booleans or strings
     /// (`Math.sqrt(4)`, `x.toFixed(2)`, `String(n)`) reaches no such object: it is handed no
     /// reference to one, and the library sees none of the program's variables.
-    fn reaches_objects(&mut self, e: &hir::Expr) -> bool {
+    pub(super) fn reaches_objects(&mut self, e: &hir::Expr) -> bool {
         use hir::ExprKind as K;
         if !self.may_change_memory(e) {
             return false;

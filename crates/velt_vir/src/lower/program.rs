@@ -46,6 +46,8 @@ impl<'h> Cx<'h> {
             module_desc: None,
             static_atomics: FxHashMap::default(),
             reassigned_slots: None,
+            assigned_fields: None,
+            fn_writes: None,
             prelude_error: None,
             tla_marks: None,
             static_map: FxHashMap::default(),

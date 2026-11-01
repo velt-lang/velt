@@ -113,6 +113,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             ref_loads: false,
             epoch_exempt: false,
             proxy_routes: false,
+            held_targets: vec![],
             record_fill: 0,
         };
         lw.mode = lw.cx.cur_mode;

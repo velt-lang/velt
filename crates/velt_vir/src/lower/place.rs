@@ -182,7 +182,7 @@ impl FnLower<'_, '_> {
                     true => BoxHold::Yes,
                     false => hold,
                 };
-                let v = self.projection_base(base, hold);
+                let v = self.index_base(base, index, hold, frozen);
                 let arr = self.place_of(v, bty);
                 if let Some(p) = self.view_index_elem(&arr, bty, index, None, None) {
                     return Operand::Copy(p);
@@ -362,7 +362,7 @@ impl FnLower<'_, '_> {
     /// (outermost base first), into temporaries, so they run before an assignment's right-hand
     /// side as in JS (`xs[f()] = g()` calls `f` first) while the element places themselves are
     /// formed only after it (the right-hand side may grow the array).
-    fn place_indices(&mut self, e: &hir::Expr, out: &mut VecDeque<Operand>) {
+    pub(super) fn place_indices(&mut self, e: &hir::Expr, out: &mut VecDeque<Operand>) {
         use hir::ExprKind as K;
         match &e.kind {
             K::Field { base, .. }
@@ -370,7 +370,7 @@ impl FnLower<'_, '_> {
             | K::UnwrapVariant { expr: base, .. }
             | K::Downcast(base) => self.place_indices(base, out),
             K::Index { base, index, .. } => {
-                self.place_indices(base, out);
+                self.target_indices(base, index, out);
                 let i = self.expr(index);
                 out.push_back(self.freeze(i, index.ty));
             }
@@ -409,7 +409,7 @@ impl FnLower<'_, '_> {
             }
             K::Index { base, index, .. } => {
                 let bty = self.sub(base.ty);
-                let arr = self.place_expr_with(base, pre);
+                let arr = self.index_target_base(base, index, pre);
                 let mark = self.view_writes_mark();
                 if !self.captured_root(base) {
                     self.target_barrier(&arr, bty);
@@ -463,7 +463,7 @@ impl FnLower<'_, '_> {
         if let Some(done) = self.str_append(place, value) {
             return done;
         }
-        let mut pre = VecDeque::new();
+        let (mut pre, held) = (VecDeque::new(), self.held_targets.len());
         self.place_indices(place, &mut pre);
         let pin = match place.kind {
             hir::ExprKind::Local(..) => None,
@@ -478,6 +478,7 @@ impl FnLower<'_, '_> {
             false => self.consume(value),
         };
         if self.dead() {
+            self.held_targets.truncate(held);
             return unit();
         }
         if let hir::ExprKind::Local(id, _) = &place.kind {
@@ -493,6 +494,7 @@ impl FnLower<'_, '_> {
         let ty = self.sub(place.ty);
         let shared = self.through_counted(place, ty);
         let p = self.place_expr_with(place, &mut pre);
+        self.held_targets.truncate(held);
         let v = match self.cx.needs_drop(ty) {
             true => self.detach(v, place.ty),
             false => v,
@@ -682,7 +684,7 @@ impl FnLower<'_, '_> {
         value: &hir::Expr,
         ty: TyId,
     ) -> Operand {
-        let mut pre = VecDeque::new();
+        let (mut pre, held) = (VecDeque::new(), self.held_targets.len());
         self.place_indices(place, &mut pre);
         let later = self.later_of(value);
         let pin = self.pin_target(place, &pre, later);
@@ -698,6 +700,7 @@ impl FnLower<'_, '_> {
         let vt = self.cx.ty(ty);
         let v = Operand::Copy(Place::local(self.copy_to_temp(v, vt)));
         let p = self.place_expr_with(place, &mut pre);
+        self.held_targets.truncate(held);
         let unstored = v.clone();
         let write = |this: &mut Self, p: Place| {
             let old = this.copy_to_temp(Operand::Copy(p.clone()), vt);

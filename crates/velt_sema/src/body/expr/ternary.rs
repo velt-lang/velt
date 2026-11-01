@@ -67,7 +67,14 @@ impl FnCx<'_, '_> {
         first: &hir::Expr,
         second: &ast::Expr,
     ) -> Option<TyId> {
-        if exp.is_some_and(|e| !self.cx.ty.has_error(e)) {
+        if let Some(e) = exp.filter(|e| !self.cx.ty.has_error(*e)) {
+            // An integer the context prefers is a hint a `number` branch need not meet (an
+            // index: `xs[k]` with `k: number` is checked at run time): an untyped number in the
+            // other branch takes the `number` too (`xs[k === 0 ? 0 : k]`, #1527).
+            let ty = &self.cx.ty;
+            if ty.is_int(e) && ty.is_float(first.ty) && untyped(second) {
+                return Some(first.ty);
+            }
             return exp;
         }
         if self.cx.ty.is_bottom(first.ty) {
