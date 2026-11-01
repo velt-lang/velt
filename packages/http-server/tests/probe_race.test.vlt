@@ -1,0 +1,32 @@
+// A deliberately racy test (not for merging): it waits a fixed 8 ms for the server to handle a
+// request, then assumes it did. The handler's work takes a few ms on an idle core.
+import { serve } from "../src/lib";
+import { connect } from "velt/net";
+import { describe, expect, it } from "velt/test";
+
+function work(n: number): number {
+  let x = 1;
+  for (let i = 0; i < n; i++) {
+    x = (x * 31 + i) % 1000003;
+  }
+  return x;
+}
+
+describe("a race made by a delay", () => {
+  it("assumes the server handled the request within 8 ms", async () => {
+    const handled = shared(0);
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      handled.add(work(150000) >= 0 ? 1 : 2);
+      return new Response("ok");
+    });
+    try {
+      const s = await connect(`127.0.0.1:${server.port}`);
+      await s.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+      await sleep(8);
+      expect(handled.get()).toBe(1);
+      s.close();
+    } finally {
+      await server.shutdown();
+    }
+  });
+});
