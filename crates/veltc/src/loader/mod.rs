@@ -49,6 +49,7 @@ mod moved;
 mod pick;
 mod resolve;
 mod spec;
+mod std_ast;
 mod std_root;
 mod visibility;
 mod wanted;
@@ -313,11 +314,8 @@ impl Loader<'_, '_> {
         let plain_ts = vpm::sources::is_plain_ts(path);
         let mut ast = if is_std {
             let src = &self.sm.get(file).src;
-            let (ast, parse_diags) = if plain_ts {
-                velt_syntax::parse_ts_file(file, src)
-            } else {
-                velt_syntax::parse_file(file, src)
-            };
+            let on_disk = !self.overlay.contains_key(&key);
+            let (ast, parse_diags) = std_ast::parse(file, src, plain_ts, on_disk);
             self.diags.extend(parse_diags);
             ast
         } else {

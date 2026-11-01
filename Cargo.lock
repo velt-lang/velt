@@ -1807,7 +1807,9 @@ dependencies = [
 name = "veltc"
 version = "0.4.0"
 dependencies = [
+ "crc32fast",
  "flate2",
+ "foldhash",
  "libc",
  "lsp-server",
  "lsp-types",

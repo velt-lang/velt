@@ -24,7 +24,6 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use velt_common::SourceMap;
 use velt_syntax::ast;
 use velt_syntax::visit::{self, Visit};
 
@@ -64,9 +63,7 @@ pub(super) fn global_modules(std_root: &Path) -> Vec<Global> {
 
 /// The names a global module's `export { … } from "…"` items re-export (under their aliases).
 fn reexported_names(src: &str) -> Vec<String> {
-    let mut sm = SourceMap::new();
-    let file = sm.add(Path::new("global.vlt"), src.to_string());
-    let (module, _) = velt_syntax::parse_file(file, &sm.get(file).src);
+    let (module, _) = super::std_ast::parse(velt_common::FileId(0), src, false, true);
     let mut names = vec![];
     for item in &module.items {
         if let ast::ItemKind::Import(imp) = &item.kind {
@@ -275,6 +272,7 @@ pub(super) fn mentions(src: &str, name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use velt_common::SourceMap;
 
     #[test]
     fn whole_words_only() {
