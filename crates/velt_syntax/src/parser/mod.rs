@@ -558,7 +558,10 @@ impl<'a> Parser<'a> {
     /// Is the cursor at the plain identifier `word` (a contextual keyword such as `extend`)?
     fn at_word(&mut self, word: &str) -> bool {
         let t = self.tok(self.pos);
-        t.kind == Tok::Ident && self.text(t.lo, t.hi) == word
+        // Compared as bytes: slicing the source as `str` checks character boundaries, which a
+        // comparison does not need (a token's span is on them anyway).
+        t.kind == Tok::Ident
+            && self.src.as_bytes().get(t.lo as usize..t.hi as usize) == Some(word.as_bytes())
     }
 
     fn at_ident_like(&mut self) -> bool {

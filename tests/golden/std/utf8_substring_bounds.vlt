@@ -1,5 +1,5 @@
 // utf8Substring past the end of its string is a RangeError (start after end fails the same check).
-import { utf8Substring } from "velt:encoding";
+import { utf8Substring } from "velt/encoding";
 
 function main() {
   const s = "ab€";

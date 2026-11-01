@@ -179,24 +179,24 @@ mod tests {
     #[test]
     fn names_inside_braces() {
         assert_eq!(
-            context("import { a, re| } from \"velt:fs\";"),
-            names("velt:fs", &["a"], false)
+            context("import { a, re| } from \"velt/fs\";"),
+            names("velt/fs", &["a"], false)
         );
         assert_eq!(
             context("import {\n  b as c,\n  |\n  type D,\n} from './m'"),
             names("./m", &["b", "D"], false)
         );
         assert_eq!(
-            context("import type { | } from \"velt:fs\""),
-            names("velt:fs", &[], true)
+            context("import type { | } from \"velt/fs\""),
+            names("velt/fs", &[], true)
         );
         assert_eq!(
             context("import { größe, | } from \"./m\""),
             names("./m", &["größe"], false)
         );
         assert_eq!(context("function f() { a, | }"), None);
-        assert_eq!(context("// import { a, | } from \"velt:fs\""), None);
-        assert_eq!(context("/* import { | } from \"velt:fs\" */"), None);
+        assert_eq!(context("// import { a, | } from \"velt/fs\""), None);
+        assert_eq!(context("/* import { | } from \"velt/fs\" */"), None);
         assert_eq!(context("import { a, |"), None);
         assert_eq!(context("const x = { a: 1, | } from"), None);
     }
@@ -204,9 +204,9 @@ mod tests {
     #[test]
     fn specifier_strings() {
         assert_eq!(
-            context("import { a } from \"velt:c|\";"),
+            context("import { a } from \"velt/c|\";"),
             Some(ImportContext::Specifier {
-                typed: "velt:c".into(),
+                typed: "velt/c".into(),
                 lo: 19,
                 hi: 25
             })

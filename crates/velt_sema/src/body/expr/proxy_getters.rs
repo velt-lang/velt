@@ -3,7 +3,7 @@
 //! through the `get` trap and needs the method itself back, but a getter's read is the
 //! property's value: Node runs `get(target, "twice", receiver)` and the answer is what
 //! `obj.twice` gives. So in a program that makes proxies, `obj.twice` on such a brand is
-//! `IsTypedProxy(obj) ? __brandGetterRead(obj, "twice") as T : obj.<twice getter>()`: a plain
+//! `IsTypedProxy(obj) ? brandGetterRead(obj, "twice") as T : obj.<twice getter>()`: a plain
 //! instance calls its getter as before, and a proxy answers through its trap, checked as the
 //! getter's type. A trap that forwards the getter with `Reflect.get(target, key, receiver)`
 //! stops there with a `TypeError` (#1732: Node runs it with `this` the proxy). Typed proxies
@@ -61,7 +61,12 @@ impl FnCx<'_, '_> {
         let str_ = self.cx.ty.str_;
         let key = self.mk(H::Lit(hir::Lit::Str(prop.name.clone())), str_, prop.span);
         self.note_dyn_members();
-        let read = self.prelude_hir_call("__brandGetterRead", vec![boxed, key], any, span);
+        let read = self.prelude_hir_call(
+            velt_common::std_hook!(brand_getter_read),
+            vec![boxed, key],
+            any,
+            span,
+        );
         let through = self.intrinsic(Intrinsic::AnyTo, vec![read], plain.ty, span);
         let pick = self.mk(
             H::If {

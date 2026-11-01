@@ -3,7 +3,7 @@
 // value they find is their key's. A replaced or deleted value stays readable until no reader has
 // it; at the end every key has its last value.
 
-import { ConcurrentMap } from "velt:collections/concurrent_map";
+import { ConcurrentMap } from "velt/collections";
 
 const N: u64 = 20000;
 

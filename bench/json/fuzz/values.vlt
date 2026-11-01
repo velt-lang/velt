@@ -3,7 +3,7 @@
 // `get` of each key is the member `at` gives). The output
 // must be bench/json/fuzz/values.js's under Node: `JSON.stringify(JSON.parse(line))` and
 // `Object.keys` (bench/json/fuzz/run.sh).
-import { readFileSync } from "velt:fs";
+import { readFileSync } from "velt/fs";
 
 function keysOf(v: JsonValue, out: string[]) {
   if (v.isObject()) {

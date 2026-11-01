@@ -28,6 +28,15 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.checked_key_call(callee, type_args, args, span) {
             return h;
         }
+        if let Some(h) = self.generated_arm(callee, args, span) {
+            return h;
+        }
+        if let Some(h) = self.generated_construct(callee, type_args, args, span) {
+            return h;
+        }
+        if let Some(h) = self.generated_member(callee, type_args, args, span) {
+            return h;
+        }
         if let Some(callee) = self.without_namespace(callee) {
             return self.call(&callee, type_args, args, false, exp, span);
         }
@@ -285,6 +294,9 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        if let Some(decl) = self.cx.fn_info(d).intrinsic {
+            return self.intrinsic_call(d, decl, type_args, args, exp, span);
+        }
         if self.takes_this(d) {
             return self.this_fn_call(d, name, None, type_args, args, exp, span);
         }
@@ -301,8 +313,6 @@ impl FnCx<'_, '_> {
         let ck = self.check_call(&c, slots, args, exp, span);
         self.void_task = None;
         self.task_callback = None;
-        self.thread_task = None;
-        self.thread_callback = None;
         if name == "structuredClone" && Some(d) == self.cx.prelude_fn(name) {
             if let Some(a) = ck.args.first() {
                 self.check_structured_clone(a.ty, a.span);

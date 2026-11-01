@@ -1,0 +1,4 @@
+json_stringify_unwritable.vlt:11:15: error: cannot convert to or from JSON: `Map<i64, i64>` has no JSON form
+json_stringify_unwritable.vlt:12:15: error: cannot convert to or from JSON: `shared<i64>` has no JSON form
+json_stringify_unwritable.vlt:14:15: error: cannot convert to or from JSON: `shared<Mutex<f64[]>>` contains `Mutex<f64[]>`, which has a private field `lock`, so it has no JSON form
+a `Map` converts to a JSON object only with `string` keys

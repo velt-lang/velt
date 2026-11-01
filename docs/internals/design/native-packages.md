@@ -31,8 +31,9 @@ How a program uses the binary depends on the mode:
   modules may use it, but every symbol must come from `velt_rt`:
   - `velt_link::LinkRequest` takes only objects plus one runtime library.
   - The dev JIT resolves only `velt_rt_host::abi_symbols::symbol_table()` and `c_symbols`.
-- This is why the sqlite, postgres and redis drivers are built into `velt_rt`
-  (`rt_abi_async.md` §14). The roadmap wants them moved out into versioned packages.
+- This is why the sqlite, postgres and redis drivers were built into `velt_rt`
+  (`rt_abi_async.md` §14). They are packages now (`packages/sqlite`, `packages/postgres`,
+  `packages/redis`; see [As built](#as-built)).
 
 ## Package layout
 
@@ -325,7 +326,7 @@ The prototype driver is **sqlite**:
 - It is synchronous, bundles its C library through rusqlite, needs no server, and exercises
   handles and `fut_new_blocking`.
 - `packages/sqlite` mirrors `std/sqlite.vlt` with `velt_sqlite__*` exports.
-- `std/sqlite` stays until the drivers are migrated as a follow-up.
+- `std/sqlite` stays until the drivers are migrated as a follow-up (done: see As built).
 
 Each step below lands with its own tests:
 
@@ -399,15 +400,27 @@ Differences from the proposal above:
 - **Builds from source** use the published `Cargo.lock` (`--locked`) and need
   `VELT_NATIVE_FROM_SOURCE=1` for registry packages, since they run the package's build scripts.
 - **Prototype**: `packages/sqlite` (rusqlite; rows as JSON decoded with `JSON.parse<T[]>`),
-  tested end to end in `crates/veltc/tests/native_packages.rs`: publish to a
+  later replaced by std's driver (below), tested end to end in
+  `crates/veltc/tests/native_packages.rs`: publish to a
   `velt registry serve`, then without cargo `velt add`, `velt run`, `velt build --release` (runs
   with the cache removed) and `velt dev` (a Velt edit hot-swaps; the database opened before the
   swap survives).
 
+- **The drivers as packages** (std-layout.md §3): std's `velt/sqlite`, `velt/postgres` and
+  `velt/redis` left std and the runtime for `packages/sqlite` (the prototype's API gave way to
+  std's), `packages/postgres` and `packages/redis`, each with its crate in `native/`, its tests
+  (`velt test` in the package; `crates/veltc/tests/packages.rs` runs it for every package, building
+  the native crate first, as for any package with native code it builds locally) and its docs.
+  They use only public std APIs: the row and parameter API of velt/db (`decodeRows`,
+  `bindParams`) and velt/native. Programs in the repository depend on them by path
+  (`examples/apps/todo-api`, `bench/`); a path dependency on a package with native code builds
+  its crate with cargo into the package's `target/velt-native/`.
+
 ## Known gaps
 
-- Verified on Linux x86_64 only. The macOS prelink (`ld -r -exported_symbols_list`) and
-  `install_name_tool` step, and Windows DLL placement, are written but untested.
+- Verified on Linux x86_64 and macOS aarch64 (the repository's packages build, link as a shared
+  library in debug builds and as a prelinked object in release builds, and pass their tests
+  there). Windows DLL placement is written but untested.
 - `velt_native` is not on crates.io; a published package's crate cannot yet build from source on
   a user's machine (the fallback) unless it depends on the SDK by git.
 - `[native] wasm = true` is rejected; WebAssembly targets with native packages are an error.
@@ -415,4 +428,13 @@ Differences from the proposal above:
   without libraries (users then get the "no prebuilt native library" error).
 - Callbacks from native code into Velt are not supported (planned: runtime-owned callback slots,
   the `VeltHandler` pattern).
-- `std/sqlite` still lives in the runtime; migrating the drivers to packages is a follow-up.
+- A package's release object brings no system libraries of its own: `velt_link` adds what the
+  database packages need (tokio-postgres' `whoami`: `secur32.lib`, the macOS frameworks) to every
+  executable. A `native.libs` field would let a package name them.
+- Packages have no "package-private" visibility: `private` members are usable only in their own
+  type's body (std's modules may use each other's, packages may not), so a package type made by
+  another of its types has a public factory taking a raw handle (`Client.fromHandle` in
+  packages/postgres). The handles are registry keys, so a forged one only fails (`ECLOSED`).
+- velt/db's `decodeRows` and `bindParams` take the address of a driver's cursor or sink as a
+  `u64`: a program that passes another number reads memory it should not (what a std-only
+  intrinsic used to rule out). A typed, runtime-checked handle is a follow-up.

@@ -1,0 +1,12 @@
+// velt/cli (internal): `OptionSpec`, the settings of an option that takes a value.
+
+/** Settings of an option that takes a value. */
+export struct OptionSpec {
+  /** One-character alias (`o` for `-o`). */
+  short?: string;
+  /** Value when the option is absent. */
+  default?: string;
+  help?: string;
+  /** Placeholder shown in `help()` (default `value`). */
+  valueName?: string;
+}

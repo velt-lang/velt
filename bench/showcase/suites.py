@@ -369,7 +369,7 @@ def sqlite_benchmarks(ctx):
         "category": "sqlite", "name": "db workloads (file database, WAL)", "check": "results",
         "parse": "results", "unit": "ops/s",
         "impls": [impl("Rust rusqlite", "rust", [os.path.join(target, "release", "sqlite"), *quick], rerr, threads=ST),
-                  impl("Velt velt:sqlite", "velt", [velt, *quick], verr, threads=ST),
+                  impl("Velt sqlite package", "velt", [velt, *quick], verr, threads=ST),
                   impl("Node better-sqlite3", "node", [ctx.node or "node", os.path.join(db, "node", "sqlite.mjs"), *quick],
                        nerr or (None if ctx.node else "node not found"), threads=ST),
                   impl("Bun bun:sqlite", "bun", [ctx.bun or "bun", bun_file, *quick],
@@ -448,11 +448,11 @@ def compile_benchmarks(ctx):
                       impl("rustc -C opt-level=3, fat LTO, x86-64-v2 (as the runtime rows)", "rust",
                            [*RUSTC, "-C", f"target-cpu={RUST_CPU}", "-o", o + "-rr", rsrc], env=nocache, threads=UNPAIRED)],
         })
-    # The HTTP server: velt:http/server (written in Velt, velt/techempower_server.vlt) against axum. Cargo compiles axum, hyper and tokio from source
+    # The HTTP server: the http-server package (written in Velt, techempower/server.vlt) against axum. Cargo compiles axum, hyper and tokio from source
     # on a clean build (Velt's runtime, which holds its hyper and tokio, is prebuilt); the
     # rebuild row (main.rs touched, dependencies built) is the comparable edit-compile time.
     te = os.path.join(ctx.bench, "http", "techempower")
-    vte = os.path.join(ctx.here, "velt", "techempower_server.vlt")
+    vte = os.path.join(te, "server.vlt")
     axum_src = os.path.join(out, "axum-src")
     shutil.rmtree(axum_src, ignore_errors=True)
     shutil.copytree(os.path.join(te, "axum"), axum_src, ignore=shutil.ignore_patterns("target"))
@@ -462,7 +462,7 @@ def compile_benchmarks(ctx):
     cargo_cmd = ["cargo", "build", "--release", "-q", "--offline", "--locked"]
     relenv = {**nocache, **rust_profile()}
     benches.append({
-        "category": "compile", "name": "HTTP server (techempower: velt:http/server vs axum)", "check": "none",
+        "category": "compile", "name": "HTTP server (techempower: http-server vs axum)", "check": "none",
         "impls": [impl("velt build (debug, Cranelift)", "velt", [ctx.velt, "build", vte, "-o", o + "-vd"], env=cold, threads=UNPAIRED),
                   impl("velt build --release (LLVM -O3)", "velt", [ctx.velt, "build", "--release", vte, "-o", o + "-vr"], env=cold, threads=UNPAIRED),
                   impl("cargo build (debug), clean: axum + deps", "rust", ["cargo", "build", "-q", "--offline", "--locked", "--target-dir", clean_t],

@@ -1,6 +1,6 @@
 // A matcher only fits the types it checks, built-in or added with `extend`: on any other type
 // its call is a compile error (#1778).
-import { Expect, expect } from "velt:test";
+import { Expect, expect } from "velt/test";
 
 class Reply {
   status: i64 = 204;

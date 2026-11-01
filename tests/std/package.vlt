@@ -1,0 +1,9 @@
+import type { Package } from "velt/package";
+
+// The standard library's behaviour tests. Those of the `fetch` client and the WebSocket client
+// talk to a server: the one written in Velt (packages/http-server).
+export const pkg: Package = {
+  name: "std-tests",
+  version: "0.0.0",
+  dependencies: { "http-server": { path: "../../packages/http-server" } },
+};

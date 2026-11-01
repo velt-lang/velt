@@ -1,0 +1,35 @@
+// Prelude: `ArrayIterator<T>`, the iterator of an array and of a map's entries.
+
+import { share } from "velt/lang/intrinsics";
+
+/**
+ * The iterator of an array (TS's `ArrayIterator<T>`). It holds the array (another reference
+ * to it, not a copy) and reads each element when `next()` reaches it; once it reported `done`
+ * it stays done, as in JS.
+ */
+export class ArrayIterator<T> implements IterableIterator<T>, IteratorObject<T> {
+  private items: T[];
+  private index: usize = 0;
+  private finished: bool = false;
+
+  /** An iterator over `items`, from the first element. */
+  constructor(items: T[]) {
+    this.items = items;
+  }
+
+  /** The next element, or a `done` result past the end. */
+  next(): IteratorResult<T> {
+    if (this.finished || this.index >= this.items.length) {
+      this.finished = true;
+      return { done: true };
+    }
+    const value = share(this.items[this.index]);
+    this.index++;
+    return { value: value, done: false };
+  }
+
+  /** The iterator itself. */
+  [Symbol.iterator](): Iterator<T> {
+    return this;
+  }
+}

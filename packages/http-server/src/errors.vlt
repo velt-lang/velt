@@ -1,0 +1,8 @@
+// velt/net/http (internal): the errors of the HTTP server.
+
+/** The body a handler collects (`body()`) is larger than the server's `maxBodySize`. */
+export class BodyTooLarge extends Error {
+  constructor(limit: i64) {
+    super(`request body larger than ${limit} bytes`);
+  }
+}

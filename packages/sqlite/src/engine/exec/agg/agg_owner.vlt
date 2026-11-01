@@ -1,0 +1,157 @@
+// sqlite/engine/exec/agg/agg_owner (internal): which query an aggregate call belongs to, as SQLite
+// resolves it (resolve.c): the innermost query whose columns its arguments read, so `(SELECT
+// sum(t.a))` in a query over t is an aggregate of that query; and where an aggregate may not be,
+// with SQLite's messages.
+
+import { E_CALL, E_COLUMN, E_EXISTS, E_IN_SELECT, E_SUBQUERY, Expr } from "../../sql/types";
+import { Scope } from "../scope";
+import { aggregateKind } from "./agg_fn";
+import { ExprCompiler } from "../expr_compiler";
+import { prepareError } from "../errors";
+
+/**
+ * The query an aggregate call belongs to (resolve.c): the innermost scope from `sc` out that
+ * holds a column its arguments read; `sc` when they read none.
+ */
+export function aggOwner(c: ExprCompiler, e: Expr, sc: Scope): Scope {
+  const refs: Expr[] = [];
+  for (const a of e.args) {
+    columnRefs(a, refs);
+  }
+  columnRefs(e.filter, refs);
+  let best: Scope | null = null;
+  let bestDepth: usize = 0;
+  for (const r of refs) {
+    let s: Scope | null = sc;
+    let d: usize = 0;
+    while (s != null) {
+      if (c.lookup(r, s!) != null) {
+        if (best == null || d < bestDepth) {
+          best = s;
+          bestDepth = d;
+        }
+        break;
+      }
+      s = s!.parent;
+      d++;
+    }
+  }
+  return best == null ? sc : best!;
+}
+
+/** Whether `e` calls an aggregate that belongs to `sc`'s query (outside subqueries). */
+export function ownsAggregate(c: ExprCompiler, e: Expr | null, sc: Scope): bool {
+  if (e == null) {
+    return false;
+  }
+  const x = e!;
+  if (x.kind == E_CALL && x.over == null && aggregateKind(x.name, x.args.length, x.star) >= 0) {
+    return aggOwner(c, x, sc) == sc;
+  }
+  if (x.kind == E_IN_SELECT || x.kind == E_EXISTS || x.kind == E_SUBQUERY) {
+    return ownsAggregate(c, x.a, sc);
+  }
+  if (ownsAggregate(c, x.a, sc) || ownsAggregate(c, x.b, sc) || ownsAggregate(c, x.c, sc)) {
+    return true;
+  }
+  if (ownsAggregate(c, x.filter, sc)) {
+    return true;
+  }
+  for (const a of x.args) {
+    if (ownsAggregate(c, a, sc)) {
+      return true;
+    }
+  }
+  if (x.over != null) {
+    const w = x.over!;
+    for (const p of w.partition) {
+      if (ownsAggregate(c, p, sc)) {
+        return true;
+      }
+    }
+    for (const o of w.orderBy) {
+      if (ownsAggregate(c, o.expr, sc)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// The column references of `e`, outside subqueries.
+function columnRefs(e: Expr | null, out: Expr[]) {
+  if (e == null) {
+    return;
+  }
+  const x = e!;
+  if (x.kind == E_COLUMN) {
+    out.push(x);
+    return;
+  }
+  if (x.kind == E_IN_SELECT || x.kind == E_EXISTS || x.kind == E_SUBQUERY) {
+    columnRefs(x.a, out);
+    return;
+  }
+  columnRefs(x.a, out);
+  columnRefs(x.b, out);
+  columnRefs(x.c, out);
+  columnRefs(x.filter, out);
+  for (const a of x.args) {
+    columnRefs(a, out);
+  }
+}
+
+/**
+ * An aggregate call `e` where it cannot be, with SQLite's message (`message`). Where name
+ * resolution allows no aggregate (another aggregate's arguments or FILTER, LIMIT, and WHERE or
+ * ON of a query that is no aggregate query; `sc` is where the call is written, as SQLite's name
+ * context, whichever query the aggregate belongs to) it is `misuse of aggregate function f()`;
+ * elsewhere (WHERE of an aggregate query, ORDER BY of one that is not, a subquery's result
+ * column owned by a query that cannot take it) it is the code generator's `misuse of
+ * aggregate: f()`. In a core's own GROUP BY, an aggregate it owns gets SQLite's GROUP BY
+ * message. A name in the arguments that does not resolve is reported instead, as in SQLite,
+ * whose name error comes later and replaces the message.
+ */
+export function aggMisuse(c: ExprCompiler, e: Expr, sc: Scope, message: string): never {
+  const was = sc.inAggArgs;
+  sc.inAggArgs = true;
+  try {
+    for (const a of e.args) {
+      c.expr(a, sc);
+    }
+    if (e.filter != null) {
+      c.pred(e.filter!, sc);
+    }
+  } finally {
+    sc.inAggArgs = was;
+  }
+  prepareError(message);
+}
+
+/**
+ * Whether the core whose FROM items `sc` holds is an aggregate query: GROUP BY, or an aggregate
+ * of its own among the result columns.
+ */
+export function aggregateCore(c: ExprCompiler, sc: Scope): bool {
+  const core = sc.core!;
+  if (core.groupBy.length > 0 || core.aggFromInner) {
+    return true;
+  }
+  for (const rc of core.columns) {
+    if (ownsAggregate(c, rc.expr, sc)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * A subquery's aggregate `e` of a query with window functions (`owner`): SQLite computes the
+ * windows in a query around the aggregate query, and the aggregate is that query's only in the
+ * windows computed last (Scope.windowed); elsewhere it is the code generator's misuse error.
+ */
+export function windowedMisuse(c: ExprCompiler, e: Expr, sc: Scope, owner: Scope, lname: string) {
+  if (owner != sc && owner.windowed && !owner.winAgg) {
+    aggMisuse(c, e, sc, `misuse of aggregate: ${lname}()`);
+  }
+}

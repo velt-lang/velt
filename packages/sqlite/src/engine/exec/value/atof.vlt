@@ -1,0 +1,103 @@
+// sqlite/engine/exec/value/atof (internal): decimal text to a double as SQLite's `sqlite3AtoF`
+// (util.c, 3.53) reads it, and what it read (`AtoF`).
+
+import { toDouble } from "../../real_wide";
+
+/** What `atof` read: the value, how far, and SQLite's state bits (1 digits, 2 real). */
+export struct AtoF {
+  value: f64;
+  /** Bytes read, spaces after the number included. */
+  end: usize;
+  state: i64;
+  /** The whole text (but surrounding spaces) is the number. */
+  whole: bool;
+}
+
+function isSpaceByte(c: u8): bool {
+  return c == 32 || (c >= 9 && c <= 13);
+}
+
+/** Decimal text in `b` from `at` to a double, as sqlite3AtoF reads it. */
+export function atof(b: u8[], at: usize): AtoF {
+  let i = at;
+  const n = b.length;
+  let neg = false;
+  let s: u64 = 0;
+  let d: i64 = 0;
+  let state: i64 = 0;
+  while (i < n && isSpaceByte(b[i])) {
+    i++;
+  }
+  if (i < n && (b[i] == 45 || b[i] == 43)) {
+    neg = b[i] == 45;
+    i++;
+  }
+  if (i < n && b[i] >= 48 && b[i] <= 57) {
+    state = 1;
+    while (i < n && b[i] >= 48 && b[i] <= 57) {
+      s = s * 10 + ((b[i] - 48) as u64);
+      i++;
+      if (s >= (18446744073709551615 - 9) / 10) {
+        state = 9;
+        while (i < n && b[i] >= 48 && b[i] <= 57) {
+          i++;
+          d++;
+        }
+        break;
+      }
+    }
+  }
+  if (i < n && b[i] == 46) {
+    i++;
+    if (i < n && b[i] >= 48 && b[i] <= 57) {
+      state = state | 1;
+      while (i < n && b[i] >= 48 && b[i] <= 57) {
+        if (s < (18446744073709551615 - 9) / 10) {
+          s = s * 10 + ((b[i] - 48) as u64);
+          d--;
+        } else {
+          state = 11;
+        }
+        i++;
+      }
+    } else if (state == 0) {
+      return AtoF { value: 0, end: at, state: 0, whole: false };
+    }
+    state = state | 2;
+  } else if (state == 0) {
+    return AtoF { value: 0, end: at, state: 0, whole: false };
+  }
+  if (i < n && (b[i] == 101 || b[i] == 69)) {
+    let j = i + 1;
+    let esign: i64 = 1;
+    if (j < n && b[j] == 45) {
+      esign = -1;
+      j++;
+    } else if (j < n && b[j] == 43) {
+      j++;
+    }
+    if (j < n && b[j] >= 48 && b[j] <= 57) {
+      let ex: i64 = 0;
+      while (j < n && b[j] >= 48 && b[j] <= 57) {
+        ex = ex < 10000 ? ex * 10 + ((b[j] - 48) as i64) : 10000;
+        j++;
+      }
+      state = state | 2;
+      d += esign * ex;
+      i = j;
+    }
+  }
+  let value: f64 = 0;
+  if (s == 0) {
+    state = state | 4;
+  } else {
+    value = toDouble(s, d);
+  }
+  if (neg) {
+    value = -value;
+  }
+  while (i < n && isSpaceByte(b[i])) {
+    i++;
+  }
+  return AtoF { value: value, end: i, state: state, whole: i == n };
+}

@@ -174,7 +174,7 @@ fn stdout_is_flushed_before_stdin_is_read() {
     let file = dir.path().join("prompt.vlt");
     std::fs::write(
         &file,
-        "import { readLineSync } from \"velt:stdin\";\n\
+        "import { readLineSync } from \"velt/process\";\n\
          function main() {\n  console.log(\"name?\");\n  const n = readLineSync();\n  \
          console.log(`hi ${n}`);\n}\n",
     )

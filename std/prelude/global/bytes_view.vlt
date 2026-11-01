@@ -1,5 +1,5 @@
 // Global, conditional (crates/veltc/src/loader/globals.rs): `subarray` of a `u8[]`
-// (velt:typed_array/bytes_view), a `Uint8Array` over the array's bytes, for a program that
+// (velt/lang/typed_array/bytes_view), a `Uint8Array` over the array's bytes, for a program that
 // mentions `subarray`; other programs don't load typed arrays for it.
 // load when std/prelude/bytes uses: subarray
-import "velt:typed_array/bytes_view";
+import "velt/lang/typed_array/bytes_view";

@@ -1,4 +1,4 @@
-// std/compress/inflate/codes (std-internal): the inner loop of a DEFLATE block, the literals
+// velt/compress (internal): the inner loop of a DEFLATE block, the literals
 // and matches of its Huffman codes (RFC 1951 §3.2.5).
 //
 // `fast` runs while 16 input bytes and a longest match (plus 16 bytes of slack) of output room
@@ -9,9 +9,9 @@
 // every bit counted: when the input runs out in the middle of a symbol it puts everything back
 // as it was before the symbol, to be decoded again once more input arrives.
 
-import { u8x16, u64x2 } from "velt:simd";
-import { CompressError } from "velt:compress/error";
-import { BASE, END, LITERAL, SUBTABLE } from "velt:compress/inflate/huffman";
+import { u8x16, u64x2 } from "velt/simd";
+import { CompressError } from "velt/compress/errors";
+import { BASE, END, LITERAL, SUBTABLE } from "velt/compress/inflate/huffman";
 
 // The vector load and store without their range checks: `fast` loads only where its loop
 // condition leaves 16 input bytes, and copies only where the output has a match's room and
@@ -44,6 +44,25 @@ export class Bits {
   /** The current block's tables. */
   lit: u32[] = [];
   dist: u32[] = [];
+}
+
+/** A position in the input, to go back to. */
+struct Mark {
+  ip: i64;
+  bb: u64;
+  bc: u64;
+}
+
+/** The input position of `s`, for a step that may have to be undone. */
+export function mark(s: Bits): Mark {
+  return { ip: s.ip, bb: s.bb, bc: s.bc };
+}
+
+/** Puts `s` back at the input position `m`. */
+export function rewind(s: Bits, m: Mark) {
+  s.ip = m.ip;
+  s.bb = m.bb;
+  s.bc = m.bc;
 }
 
 /** The last 8-byte refill loads 16 bytes (`u8x16`), so it needs that many left. */

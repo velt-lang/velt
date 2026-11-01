@@ -27,7 +27,7 @@ too.
 The small library gaps of the first round are fixed and used too: `Ticker.stop()` takes effect
 at once (#201), `Promise.withResolvers` replaces a one-slot reply channel per call (#203),
 `Channel.trySend` (#204), `new Map(entries)` (#205), `process.memoryUsage()` (#206) and
-`fnv1a64` from `velt:hash` (#207).
+`fnv1a64` from `velt/hash` (#207).
 
 This round found no new compiler bugs.
 

@@ -1,4 +1,4 @@
-// std/encoding/binary_string: `btoa` and `atob` (globals, as in Node): Base64 of a "binary
+// velt/encoding (internal): `btoa` and `atob` (globals, as in Node): Base64 of a "binary
 // string", whose code units are bytes (0..255).
 //
 // Both read the string's UTF-8 bytes once: a code unit up to 0x7F is one byte, one from 0x80
@@ -7,15 +7,10 @@
 // decodes into one buffer of UTF-8 and turns it into a string with one runtime copy. Bad input
 // throws Node's `DOMException` (`InvalidCharacterError`, with Node's messages).
 
-import { IoResult } from "velt:io";
-import { base64Encode } from "velt:encoding";
-import { DOMException } from "velt:dom_exception";
-
-declare function velt_rt_bytes_from_str(s: string): u8[];
-declare function velt_rt_bytes_to_str(b: u8[]): IoResult<string>;
-
-// `=`
-const PAD: u8 = 61;
+import { DOMException } from "velt/lang/dom_exception";
+import { base64Encode, PAD } from "velt/encoding/base64";
+import { velt_rt_bytes_from_str, velt_rt_bytes_to_str } from "velt/encoding/rt";
+import { arraySetLen, arrayTruncate, arrayWithCapacity } from "velt/lang/intrinsics";
 
 /**
  * The Base64 (standard alphabet, `=` padded) of `data`, whose code units are bytes, as Node's
@@ -45,7 +40,7 @@ export function btoa(data: string): string {
     }
     o++;
   }
-  __intrinsic_array_truncate(bytes, o);
+  arrayTruncate(bytes, o);
   return base64Encode(bytes);
 }
 
@@ -122,7 +117,7 @@ export function atob(data: string): string {
   if (equals > 0 && (digits + equals) % 4 != 0) {
     throw invalidCharacter("Invalid character");
   }
-  __intrinsic_array_truncate(out, o);
+  arrayTruncate(out, o);
   const r = velt_rt_bytes_to_str(out);
   if (r.code != 0) {
     panic("ICE: atob produced invalid UTF-8");
@@ -143,14 +138,15 @@ function put(out: u8[], o: usize, b: i64): usize {
 
 // In `classTable`: `=`, and the ASCII whitespace forgiving-base64 ignores.
 const PAD_CLASS: i64 = -2;
+
 const SPACE_CLASS: i64 = -3;
 
 // The value of every byte as a standard Base64 digit; `PAD_CLASS` for `=`, `SPACE_CLASS` for
 // TAB, LF, FF, CR and SPACE, and -1 for the others. Signed, so that one sign test finds a byte
 // that is not a digit among four.
 function classTable(): i8[] {
-  const table: i8[] = __intrinsic_array_with_capacity(256);
-  __intrinsic_array_set_len(table, 256);
+  const table: i8[] = arrayWithCapacity(256);
+  arraySetLen(table, 256);
   for (let c: usize = 0; c < 256; c++) {
     table[c] = -1;
   }

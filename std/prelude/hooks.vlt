@@ -1,0 +1,4 @@
+// Prelude: loads the compiler's hooks (std/lang/hooks/index.vlt), which no program names: they
+// are not prelude exports, so no program sees them.
+
+import "velt/lang/hooks";

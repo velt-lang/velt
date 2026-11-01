@@ -1,0 +1,8 @@
+// velt/random/uuid (internal): `UuidError`.
+
+/** Thrown for malformed UUID text or a byte array that is not 16 bytes long. */
+export class UuidError extends Error {
+  constructor(message: string) {
+    super(message);
+  }
+}

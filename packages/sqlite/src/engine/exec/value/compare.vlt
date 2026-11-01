@@ -1,0 +1,114 @@
+// sqlite/engine/exec/value/compare (internal): the comparison of values across storage classes, as
+// SQLite's sort orders them, and of text under a collation (https://sqlite.org/datatype3.html §4).
+
+import { NULL, INTEGER, REAL, TEXT } from "../../storage_class";
+import { NOCASE, RTRIM } from "../../collation";
+import { utf8ByteAt, utf8Length } from "velt/encoding";
+import { Val } from "./val";
+
+function rank(t: u8): i64 {
+  if (t == NULL) {
+    return 0;
+  }
+  if (t == INTEGER || t == REAL) {
+    return 1;
+  }
+  return t == TEXT ? 2 : 3;
+}
+
+function compareIntReal(i: i64, r: f64): i64 {
+  if (r < -9223372036854775808.0) {
+    return 1;
+  }
+  if (r >= 9223372036854775808.0) {
+    return -1;
+  }
+  const t = Math.trunc(r);
+  const ti = t as i64;
+  if (i != ti) {
+    return i < ti ? -1 : 1;
+  }
+  return r > t ? -1 : r < t ? 1 : 0;
+}
+
+/** Text under a collation: BINARY compares UTF-8 bytes (code point order). */
+export function compareText(a: string, b: string, coll: u8): i64 {
+  let x = a;
+  let y = b;
+  if (coll == RTRIM) {
+    x = trimSpaces(x);
+    y = trimSpaces(y);
+  }
+  const fold = coll == NOCASE;
+  // UTF-8 bytes, as SQLite's memcmp (NOCASE folds ASCII letters).
+  if (x == y) {
+    return 0;
+  }
+  const nx = utf8Length(x);
+  const ny = utf8Length(y);
+  const n = nx < ny ? nx : ny;
+  for (let i: usize = 0; i < n; i++) {
+    let p = utf8ByteAt(x, i as usize);
+    let q = utf8ByteAt(y, i as usize);
+    if (fold) {
+      p = p >= 65 && p <= 90 ? p + 32 : p;
+      q = q >= 65 && q <= 90 ? q + 32 : q;
+    }
+    if (p != q) {
+      return p < q ? -1 : 1;
+    }
+  }
+  return nx == ny ? 0 : nx < ny ? -1 : 1;
+}
+
+// Without trailing spaces (RTRIM ignores only U+0020).
+function trimSpaces(s: string): string {
+  let end = s.length as i64;
+  while (end > 0 && s.charCodeAt(end - 1) == 32) {
+    end--;
+  }
+  return end == (s.length as i64) ? s : s.slice(0, end);
+}
+
+function compareBlob(a: u8[], b: u8[]): i64 {
+  const n = a.length < b.length ? a.length : b.length;
+  for (let i: usize = 0; i < n; i++) {
+    if (a[i] != b[i]) {
+      return a[i] < b[i] ? -1 : 1;
+    }
+  }
+  return a.length == b.length ? 0 : a.length < b.length ? -1 : 1;
+}
+
+/** Total order of SQLite's sort: NULL < numbers < TEXT < BLOB. */
+export function compareVals(a: Val, b: Val, coll: u8): i64 {
+  const ra = rank(a.t);
+  const rb = rank(b.t);
+  if (ra != rb) {
+    return ra < rb ? -1 : 1;
+  }
+  if (ra == 0) {
+    return 0;
+  }
+  if (ra == 1) {
+    if (a.t == INTEGER && b.t == INTEGER) {
+      return a.i < b.i ? -1 : a.i > b.i ? 1 : 0;
+    }
+    if (a.t == REAL && b.t == REAL) {
+      return a.r < b.r ? -1 : a.r > b.r ? 1 : 0;
+    }
+    if (a.t == INTEGER) {
+      return compareIntReal(a.i, b.r);
+    }
+    return -compareIntReal(b.i, a.r);
+  }
+  if (ra == 2) {
+    return compareText(a.s, b.s, coll);
+  }
+  return compareBlob(a.b, b.b);
+}
+
+/** Whether two values are the same for DISTINCT, GROUP BY and IS (NULLs are equal). */
+export function sameVal(a: Val, b: Val, coll: u8): bool {
+  return compareVals(a, b, coll) == 0;
+}

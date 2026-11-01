@@ -61,12 +61,16 @@ impl FnLower<'_, '_> {
             return true;
         }
         let std = match self.cx.kind(ty) {
-            TyKind::Adt(d, _) => self.cx.adt_def(d).name.starts_with("std/"),
+            TyKind::Adt(d, _) => self
+                .cx
+                .adt_def(d)
+                .name
+                .starts_with(velt_common::std_modules::CANONICAL_PREFIX),
             _ => false,
         };
         if self.prelude_record(ty).is_some() && self.cx.hir.null_proto_records {
             // A record made by `Object.create(null)` has no `toString` or `valueOf`: Node's
-            // `TypeError` (its map is marked, std/prelude/map.vlt `__markNullProto`).
+            // `TypeError` (its map is marked, std/prelude/map.vlt `[RECORD_MARK_NULL_PROTO]`).
             let map_ty = self.cx.adt_field_tys(ty)[0];
             let map = self.field_place(place, ty, 0);
             let np = self.null_proto_mark(&map, map_ty);
@@ -212,7 +216,7 @@ impl FnLower<'_, '_> {
 }
 
 /// The name of the prelude's `Error` class.
-const PRELUDE_ERROR: &str = "std/prelude/error::Error";
+const PRELUDE_ERROR: &str = velt_common::std_item!(prelude_error, "Error");
 
 impl super::Cx<'_> {
     /// The prelude's `Error` class, if the program has it.

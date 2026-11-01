@@ -21,7 +21,6 @@ pub fn init() {
     crate::process::init_clock();
     crate::process::init_script();
     crate::io::init_stdout();
-    crate::native::embed();
     ignore_sigpipe();
     #[cfg(all(debug_assertions, not(velt_rt_host)))]
     crate::debug_alloc::claim_faults();
@@ -83,6 +82,7 @@ fn finish(code: i32) -> i32 {
         if crate::str::stats::counting() {
             crate::task::local::module_drop_at_exit();
             crate::fn_props::drop_at_exit();
+            statics_drop_at_exit();
         }
         // Nothing receives any more: drop the values still queued in channels. Not on a failing
         // exit: tasks may still be running then, and drop glue runs user code.
@@ -96,6 +96,31 @@ fn finish(code: i32) -> i32 {
     #[cfg(all(debug_assertions, not(velt_rt_host)))]
     crate::debug_alloc::check_quarantine(&crate::GLOBAL_QUARANTINE);
     code
+}
+
+/// The program's function releasing what its static atomics hold (`velt_rt_statics_drop`).
+static STATICS_DROP: std::sync::atomic::AtomicPtr<()> =
+    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+
+/// `velt_rt_statics_drop(f)` (rt_abi.md "Static atomics at exit"): `velt_main` hands over, before
+/// it returns, the generated function that releases the references its static atomics hold
+/// (an `Atomic<shared<T> | null>` module constant made with `null`). The runtime calls it at
+/// exit when it drops the module state, for the leak counters.
+#[no_mangle]
+pub extern "C" fn velt_rt_statics_drop(f: extern "C" fn()) {
+    STATICS_DROP.store(f as *mut (), std::sync::atomic::Ordering::Release);
+}
+
+/// At exit, for the leak counters only: the static atomics' references, after the module state.
+/// Among them is `velt/sync/epoch`'s registry, whose lists hold the values retired and not yet
+/// dropped.
+fn statics_drop_at_exit() {
+    let f = STATICS_DROP.swap(std::ptr::null_mut(), std::sync::atomic::Ordering::Acquire);
+    if !f.is_null() {
+        // SAFETY: stored by `velt_rt_statics_drop` from an `extern "C" fn()`.
+        let f: extern "C" fn() = unsafe { std::mem::transmute::<*mut (), extern "C" fn()>(f) };
+        f();
+    }
 }
 
 #[cfg(not(any(test, velt_rt_host, velt_rt_shared)))]

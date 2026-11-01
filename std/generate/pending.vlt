@@ -1,0 +1,9 @@
+// velt/generate (internal): one instance queued in a host run (`Pending`).
+
+/** One queued instance. */
+export class Pending {
+  name: string = "";
+  key: string = "";
+  fn: string = "";
+  args: i64[] = [];
+}

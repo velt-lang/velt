@@ -8,7 +8,7 @@
 #
 # --prepend LINE checks all_std.vlt with LINE added at the top (written next to it as
 # all_std_variant.vlt), to measure what one more import costs at a ref, e.g.
-# --prepend 'import * as m from "velt:url";'.
+# --prepend 'import * as m from "velt/net/url";'.
 #
 # Each ref is exported to WORKDIR/src-<sha> (git archive) and built there, with that tree's
 # toolchain and cargo config, into one shared CARGO_TARGET_DIR (WORKDIR/target) so consecutive

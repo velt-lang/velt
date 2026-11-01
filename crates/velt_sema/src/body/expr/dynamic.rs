@@ -609,7 +609,12 @@ impl FnCx<'_, '_> {
             TyKind::Array(_) => {
                 let x = read(self);
                 if self.uses_proxy() && !self.cx.scopes[self.module].is_std {
-                    self.prelude_hir_call("__anyIsArrayProxy", vec![x], b, span)
+                    self.prelude_hir_call(
+                        velt_common::std_hook!(any_is_array_proxy),
+                        vec![x],
+                        b,
+                        span,
+                    )
                 } else {
                     self.intrinsic(Intrinsic::AnyIsArray, vec![x], b, span)
                 }
@@ -697,7 +702,7 @@ impl FnCx<'_, '_> {
 
     /// `l === r` / `l == r` (`negate`: `!==` / `!=`) where the checked type of an operand is
     /// `any` or `unknown`: both sides boxed (`Intrinsic::AnyStrictEq` / `AnyLooseEq`, whose
-    /// lowering compares an object with a primitive through the prelude's `__anyLooseEq`).
+    /// lowering compares an object with a primitive through the hook `anyLooseEq`).
     pub(crate) fn dynamic_eq(
         &mut self,
         l: hir::Expr,
@@ -712,7 +717,7 @@ impl FnCx<'_, '_> {
         let l = self.compared_operand(l, any);
         let r = self.compared_operand(r, any);
         if !strict {
-            // An object against a primitive is the prelude's `__anyLooseEq` (velt_vir
+            // An object against a primitive is the hook `anyLooseEq` (velt_vir
             // any_eq.rs), which reads its members through `any`.
             self.note_dyn_members();
         }

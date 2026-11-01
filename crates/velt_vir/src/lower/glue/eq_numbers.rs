@@ -1,8 +1,8 @@
 //! Equality and hash of a union with several number members (`f64 | u8`, #1890). Every number
 //! is a number in TypeScript, so two such values are equal when their numbers are, whichever
 //! members hold them: `1.0` equals `1u8`, as both print `1`. The comparison is exact (an `i64`
-//! above 2^53 equals no `f64` it only rounds to) and keeps the glue's mode: `toEqual` tells `-0`
-//! from `0` (SameValue), keys do not (SameValueZero). The hash agrees: a number member hashes
+//! above 2^53 equals no `f64` it only rounds to) and keeps the glue's mode: `Object.is` tells
+//! `-0` from `0` (SameValue), keys do not (SameValueZero). The hash agrees: a number member hashes
 //! its value as a key `f64`, without the member's tag. A numeric literal-type member (`1` in
 //! `1 | 2 | u8`) is a number member holding its constant.
 
@@ -110,10 +110,10 @@ impl FnLower<'_, '_> {
             (true, false) => self.int_float_eq(y, vy, x, vx),
         }
     }
-    /// Two `f64`s by the glue's mode: SameValue for `toEqual` and value comparison, SameValueZero
-    /// for keys, `==` otherwise.
+    /// Two `f64`s by the glue's mode: SameValue for value comparison (`Object.is`),
+    /// SameValueZero for keys, `==` otherwise.
     fn floats_eq(&mut self, x: Operand, y: Operand) -> Operand {
-        if self.deep_mode || self.value_mode {
+        if self.value_mode {
             self.same_value(x, y, Ty::F64)
         } else if self.key_mode {
             self.same_value_zero(x, y)

@@ -19,6 +19,21 @@ impl Ctx<'_> {
     /// `` `C.of(...)` or `C.parse(...)` ``; `None` without any.
     pub fn factories(&self, d: DefId) -> Option<String> {
         let a = self.adt(d)?;
+        let mut names: Vec<String> = (self.factory_names(d).into_iter())
+            .map(|name| format!("`{}.{name}(...)`", a.name))
+            .collect();
+        let last = names.pop()?;
+        Some(match names.is_empty() {
+            true => last,
+            false => format!("{} or {last}", names.join(", ")),
+        })
+    }
+
+    /// The names of the public static methods of class `d` that return a `d`, sorted.
+    pub fn factory_names(&self, d: DefId) -> Vec<String> {
+        let Some(a) = self.adt(d) else {
+            return vec![];
+        };
         let mut names: Vec<String> = a
             .methods
             .iter()
@@ -26,17 +41,10 @@ impl Ctx<'_> {
             .filter(|(_, m)| {
                 matches!(self.ty.kind(self.fn_info(m.def).ret), TyKind::Adt(r, _) if *r == d)
             })
-            .map(|(name, _)| {
-                let name = name.strip_prefix("static ").unwrap_or(name);
-                format!("`{}.{name}(...)`", a.name)
-            })
+            .map(|(name, _)| name.strip_prefix("static ").unwrap_or(name).to_string())
             .collect();
         names.sort();
-        let last = names.pop()?;
-        Some(match names.is_empty() {
-            true => last,
-            false => format!("{} or {last}", names.join(", ")),
-        })
+        names
     }
 
     /// A note saying how code outside class `d` creates one: `new`, its factories, or (for a

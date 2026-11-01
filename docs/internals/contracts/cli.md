@@ -23,7 +23,7 @@ velt native build [--target <triple>]
 velt fmt [<file|dir>...] [--check]
 velt lsp [--stdio]                     # language server (VS Code extension: editors/vscode)
 velt playground [--port <n>] [--host <addr>]   # browser playground (default 127.0.0.1:8090)
-velt doc [<file|dir>...] [--std] [--format html|json] [-o <dir|file|->]     # API docs (HTML, or JSON for the docs website)
+velt doc [<file|dir>...] [--std] [--format html|json|types] [-o <dir|file|->]     # API docs (HTML, or JSON for the docs website), std's TypeScript declarations
 velt registry serve [--dir <d>] [--port <n>] [--host <addr>]   # package registry server (default 127.0.0.1:8091)
 velt doctor                            # checks toolchain setup + smoke test
 velt toolchain list [--available] | install <v> [--default] | remove <t> [--force] | self-update | prune [--dry-run] | default [<t>] | which | link <name> <prefix> | unlink <name> | --version   # the launcher's (#948)
@@ -153,6 +153,10 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `{ schemaVersion, title, modules }`; `schemaVersion` (1) goes up when a field changes meaning
   or goes away, and fields may be added without it. The fields are in docs/tooling/cli.md
   "JSON output"; the docs website renders its API pages, search index and std catalog from it.
+  `--format types` (additive, with `--std` only): the standard library's TypeScript
+  declarations as the npm package `velt` (`package.json` with an `exports` map, an
+  `index.d.ts` per public module, `globals.d.ts`) into `-o` (default `target/velt-types`);
+  docs/tooling/cli.md "TypeScript declarations".
 - `registry serve` (additive): serves a registry directory (default: the
   local registry) over HTTP (protocol in manifest.md "Remote registries"). `publish`
   uploads when the package's `registry` (or `$VELT_REGISTRY`) is a URL.
@@ -305,11 +309,15 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `.cargo/config.toml`); the root gets a `CACHEDIR.TAG` on the first write when it is new, empty or
   holds only what the cache makes (a directory with other files is used, never adopted), and
   `velt clean --cache` and garbage collection act only on a root that has it, removing only layout directories,
-  `warm/` and the marker (the root too when it is then empty); layout `v3/<kind>/`
+  `warm/` and the marker (the root too when it is then empty); layout `v4/<kind>/`
   with kinds `cl` (Cranelift compiled functions, Cranelift's incremental-cache key with the
   Cranelift version), `stdfn` (the std cache below: objects of single std functions, file
-  entries) and `llvm`
-  (unit objects, keyed by clang's path, size, time and arguments, the host triple and the IR).
+  entries), `llvm`
+  (unit objects, keyed by clang's path, size, time and arguments, the host triple and the IR)
+  and `std-ast` (std files' parses, `velt_syntax::encode_module`, keyed by the compiler identity,
+  `AST_FORMAT`, plain TypeScript or not and the source's length, CRC-32 and 64-bit hash; only
+  parses without diagnostics of files read from disk, never an editor's unsaved buffer; every
+  command that loads a program uses them, `check` and the language server included).
   Entries under 16 KiB are packed: 64 shards per kind by the key's first byte, each `<nn>.pack`
   (values) + `<nn>.idx` (56-byte records: key, offset, length, 8-byte SHA-256 prefix of the
   value, minutes since 1970 of the last use; the last record of a key wins) appended under an
@@ -574,7 +582,7 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   files, plus `.ts`/`.tsx` (not `.d.ts`) under a package's `src/` and `tests/`; skips
   `target/`, `node_modules/`, hidden dirs). `--check` writes nothing, lists unformatted files,
   exit 1 if any. Unparsable files → exit 1.
-- Imports: `velt:x` → `<std root>/x.vlt` or `x/index.vlt`; `./x`, `../x` → relative `x.vlt`,
+- Imports: `velt/x` → `<std root>/x.vlt` or `x/index.vlt`; `./x`, `../x` → relative `x.vlt`,
   `x.ts` or `x.tsx`, else folder module `x/index.vlt`, `x/index.ts` or `x/index.tsx` (two
   existing files among one of these triples: an error at the specifier naming them); `./x.vlt`,
   `./x.ts`, `./x.tsx` → exactly that file; `./x.js` → `x.ts` or `x.tsx`, `./x.jsx` → `x.tsx`

@@ -1,0 +1,7 @@
+json_parse_no_form.vlt:15:13: error: cannot convert to or from JSON: `W1` contains `Named`, which has no JSON form
+json_parse_no_form.vlt:16:13: error: cannot convert to or from JSON: `W2` contains `Promise<i64>`, which has no JSON form
+json_parse_no_form.vlt:17:13: error: cannot convert to or from JSON: `W3` contains `shared<i64>`, which has no JSON form
+json_parse_no_form.vlt:18:13: error: cannot convert to or from JSON: `W4` contains `() => void`, which has no JSON form
+json_parse_no_form.vlt:19:13: error: cannot convert to or from JSON: `W5` contains `(i64) => i64`, which has no JSON form
+json_parse_no_form.vlt:20:17: error: cannot convert to or from JSON: `W5` contains `(i64) => i64`, which has no JSON form
+JSON supports numbers, boolean, string, literal types, enums, arrays, tuples, `T | null`, `Map<string, T>`, structs, classes and object literals of those, and `JsonValue`

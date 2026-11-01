@@ -1,0 +1,47 @@
+// Prelude: the modules implicitly imported into every program, in the order the compiler loads
+// them (docs/internals/design/std-layout.md §4). The loader reads this list, not the folder: a
+// new prelude file is added here, and a test checks that every file is listed once. Only
+// side-effect imports of files in this folder (`import "./name";`) and comments may appear.
+//
+// The core types and their methods come first, in name order. The dynamic types (`dynamic`:
+// `any`, `unknown`, `object`, `Function`) come next, and the compiler's hooks last (`hooks`:
+// velt/lang/hooks, with the interface adapters and the methods and operators of `any`).
+
+import "./array";
+import "./array_edit";
+import "./array_iterator";
+import "./array_join";
+import "./array_nested";
+import "./assert";
+import "./async_generator";
+import "./atomic";
+import "./bits";
+import "./bytes";
+import "./clone";
+import "./compare";
+import "./date";
+import "./errors";
+import "./iter";
+import "./map";
+import "./map_utf8";
+import "./math";
+import "./nullable";
+import "./number";
+import "./object";
+import "./object_prototype";
+import "./process";
+import "./promise";
+import "./record";
+import "./rw_lock";
+import "./sort";
+import "./string";
+import "./string_iterator";
+import "./sync";
+import "./thread_local";
+import "./timers";
+import "./type_tests";
+import "./weak";
+import "./weak_ref";
+import "./weak_set";
+import "./dynamic";
+import "./hooks";

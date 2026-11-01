@@ -1,0 +1,81 @@
+// velt/time (internal): `Duration`, a span of time in milliseconds.
+
+import { MS_PER_SECOND, MS_PER_MINUTE, MS_PER_HOUR, MS_PER_DAY } from "velt/time/civil";
+
+/** A signed span of time with millisecond precision. */
+export struct Duration implements Comparable<Duration> {
+  private ms: i64;
+
+  static ofMs(n: i64): Duration {
+    return { ms: n };
+  }
+
+  static ofSeconds(n: i64): Duration {
+    return { ms: n * MS_PER_SECOND };
+  }
+
+  static ofMinutes(n: i64): Duration {
+    return { ms: n * MS_PER_MINUTE };
+  }
+
+  static ofHours(n: i64): Duration {
+    return { ms: n * MS_PER_HOUR };
+  }
+
+  /** `n` days of 24 hours. */
+  static ofDays(n: i64): Duration {
+    return { ms: n * MS_PER_DAY };
+  }
+
+  toMs(): i64 {
+    return this.ms;
+  }
+
+  /** Fractional seconds. */
+  toSeconds(): f64 {
+    return (this.ms as f64) / 1000.0;
+  }
+
+  plus(other: Duration): Duration {
+    return { ms: this.ms + other.ms };
+  }
+
+  minus(other: Duration): Duration {
+    return { ms: this.ms - other.ms };
+  }
+
+  negated(): Duration {
+    return { ms: -this.ms };
+  }
+
+  compareTo(other: Duration): i64 {
+    return this.ms < other.ms ? -1 : this.ms > other.ms ? 1 : 0;
+  }
+
+  /** ISO 8601 duration with days as the largest unit: `P1DT2H3M4.005S`, `PT0S`, `-PT1.5S`. */
+  toString(): string {
+    const neg = this.ms < 0;
+    let rest = neg ? -this.ms : this.ms;
+    const days = rest / MS_PER_DAY;
+    rest -= days * MS_PER_DAY;
+    const hours = rest / MS_PER_HOUR;
+    rest -= hours * MS_PER_HOUR;
+    const minutes = rest / MS_PER_MINUTE;
+    rest -= minutes * MS_PER_MINUTE;
+    let out = neg ? "-P" : "P";
+    if (days > 0) {
+      out = `${out}${days}D`;
+    }
+    if (rest == 0 && hours == 0 && minutes == 0) {
+      return days > 0 ? out : `${out}T0S`;
+    }
+    out += "T";
+    if (hours > 0) {
+      out = `${out}${hours}H`;
+    }
+    if (minutes > 0) {
+      out = `${out}${minutes}M`;
+    }
+    return rest > 0 ? `${out}${(rest as f64) / 1000.0}S` : out;
+  }
+}

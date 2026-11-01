@@ -1,0 +1,58 @@
+// sqlite/engine/exec/plan/plan_words (internal): a FROM level's access in EXPLAIN QUERY PLAN's
+// words, as SQLite describes it.
+
+import { Index } from "../../schema/table_index";
+import { Source } from "../source";
+import { ACC_INDEX, ACC_ROWID_EQ, ACC_ROWID_IN, ACC_ROWID_RANGE, Access } from "./access";
+import { covers } from "./covering";
+
+/** One level's access path, in the words of SQLite's EXPLAIN QUERY PLAN. */
+export function describe(src: Source, a: Access): string {
+  // The name as the statement writes it (an alias alone), as SQLite shows it.
+  const name = src.name;
+  if (a.kind == ACC_ROWID_EQ || a.kind == ACC_ROWID_IN) {
+    return `SEARCH ${name} USING INTEGER PRIMARY KEY (rowid=?)`;
+  }
+  if (a.kind == ACC_ROWID_RANGE) {
+    return `SEARCH ${name} USING INTEGER PRIMARY KEY (${rangeWords("rowid", a, false)})`;
+  }
+  if (a.kind == ACC_INDEX) {
+    const ix = a.index!;
+    const how = covers(src, ix) ? "COVERING INDEX" : "INDEX";
+    const n: usize = (a.eq.length as usize) + (a.inList != null ? 1 : 0);
+    if (n == 0 && a.lo == null && a.hi == null) {
+      return `SCAN ${name} USING ${how} ${ix.name}`;
+    }
+    // SQLite's words: `(a=? AND b=? AND c>? AND c<?)`.
+    const parts: string[] = [];
+    for (let k: usize = 0; k < n; k++) {
+      parts.push(`${indexColumnName(src, ix, k)}=?`);
+    }
+    if (a.lo != null || a.hi != null) {
+      parts.push(rangeWords(indexColumnName(src, ix, n), a, n < ix.desc.length && ix.desc[n]));
+    }
+    return `SEARCH ${name} USING ${how} ${ix.name} (${parts.join(" AND ")})`;
+  }
+  return `SCAN ${name}`;
+}
+
+/** `c>?`, `c<?` or `c>? AND c<?` for a range access on `c` (`desc`: a DESC index column). */
+export function rangeWords(col: string, a: Access, desc: bool): string {
+  if (a.lo != null && a.hi != null) {
+    return `${col}>? AND ${col}<?`;
+  }
+  // `lo` and `hi` are in the index's order: on a DESC column `lo` is the SQL's upper bound.
+  return (a.lo != null) != desc ? `${col}>?` : `${col}<?`;
+}
+
+/** The name of key column `k` of `ix` (the rowid after the key columns, "<expr>" an expression). */
+export function indexColumnName(src: Source, ix: Index, k: usize): string {
+  if (k >= ix.columns.length) {
+    return "rowid";
+  }
+  const c = ix.columns[k];
+  if (c == -1) {
+    return "rowid";
+  }
+  return c < 0 ? "<expr>" : src.cols[c as usize];
+}

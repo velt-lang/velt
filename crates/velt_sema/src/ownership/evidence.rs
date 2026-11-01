@@ -584,7 +584,7 @@ pub(super) fn changing_callback(
     args: &[Expr],
 ) -> bool {
     let name = &cx.fn_info(d).name;
-    let elem = match name.starts_with("std/")
+    let elem = match name.starts_with(velt_common::std_modules::CANONICAL_PREFIX)
         && [".reduce", ".reduceRight"]
             .iter()
             .any(|m| name.ends_with(m))

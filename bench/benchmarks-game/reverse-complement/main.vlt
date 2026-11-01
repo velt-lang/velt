@@ -4,8 +4,8 @@
 // headers are found with `indexOf`, every sequence is written backwards (complemented, folded
 // into 60-column lines) into one preallocated output Buffer, which goes to stdout in one write.
 
-import { readAllBytesSync } from "velt:stdin";
-import { stdout } from "velt:process";
+import { readAllBytesSync } from "velt/process";
+import { stdout } from "velt/process";
 
 const LINE_LENGTH: usize = 60;
 const NEWLINE: u8 = 10;

@@ -594,7 +594,7 @@ impl Ctx<'_> {
                 TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Error
             ) || self.atomic_ref(ty);
         }
-        // The prelude's `Frozen`: a type `frozen_readable` takes (type parameters through their
+        // The prelude's `Frozen`: a type `frozen_readable_in` takes (type parameters through their
         // own `Frozen` bounds).
         if Some(b.iface) == self.prelude_iface("Frozen")
             && !matches!(self.ty.kind(ty), TyKind::Param(_))
@@ -657,7 +657,7 @@ impl Ctx<'_> {
         ok
     }
 
-    /// `frozen_readable` of `t` with the type parameters bounded by the prelude's `Frozen` in
+    /// `frozen_readable_in` of `t` with the type parameters bounded by the prelude's `Frozen` in
     /// `bounds` taken as readable (checked where the generic is instantiated).
     pub(crate) fn frozen_readable_under(&mut self, bounds: &[Vec<Bound>], t: TyId) -> bool {
         let frozen = self.prelude_iface("Frozen");

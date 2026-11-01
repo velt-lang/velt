@@ -1,6 +1,6 @@
 // `storePartial` past the array's end is a RangeError (simd_partial_range: `loadPartial`).
 
-import { u8x16 } from "velt:simd";
+import { u8x16 } from "velt/simd";
 
 function main() {
   const d: u8[] = [1, 2, 3];

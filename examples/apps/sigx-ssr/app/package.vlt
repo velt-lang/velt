@@ -1,4 +1,4 @@
-import type { Package } from "velt:package";
+import type { Package } from "velt/package";
 
 // The server half of the app. `sigx` is the Velt provider shipped inside the npm package
 // @sigx/velt, so `pnpm install` brings both halves at one version.

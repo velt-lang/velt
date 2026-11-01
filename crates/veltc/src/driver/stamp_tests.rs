@@ -31,6 +31,7 @@ fn render_of(sm: &SourceMap, seen: &Seen, link_inputs: &[PathBuf]) -> String {
         link_inputs,
         std_objects: &[],
         outside: "-",
+        generator_inputs: &[],
     };
     render(&Key::of(&[b"opts"]), sm, &built)
 }
@@ -173,6 +174,7 @@ fn a_generated_root_is_left_to_the_key() {
         link_inputs: &[],
         std_objects: &[],
         outside: "-",
+        generator_inputs: &[],
     };
     let stamp = render(&key, &sm, &built);
     assert!(!stamp.contains("harness.vlt"));
@@ -200,6 +202,7 @@ fn std_objects_are_linked_again_and_must_stay_as_they_were() {
         link_inputs: &[],
         std_objects: std::slice::from_ref(&member),
         outside: "-",
+        generator_inputs: &[],
     };
     let stamp = render(&key, &SourceMap::new(), &built);
     let path = tmp.path().join("app.build-stamp");
@@ -212,4 +215,72 @@ fn std_objects_are_linked_again_and_must_stay_as_they_were() {
     assert!(read(&path, &key).is_some());
     std::fs::remove_file(&member).unwrap();
     assert_eq!(read(&path, &key), None, "removed");
+}
+
+/// A build after a change reuses the hashes the old stamp has for the files that still have the
+/// size and time it records, and hashes every other file it reads: one edited since, one the old
+/// stamp is not newer than (rewritten within its time's granularity), one just written.
+#[test]
+fn a_rebuild_hashes_only_files_that_may_have_changed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let (main, lib) = (dir.join("main.vlt"), dir.join("lib.vlt"));
+    std::fs::write(&main, "a").unwrap();
+    std::fs::write(&lib, "b").unwrap();
+    set_time(&main, 1_000_000);
+    set_time(&lib, 1_000_000);
+    let (sm, seen) = probe::record(|| {
+        let mut sm = SourceMap::new();
+        for path in [&main, &lib] {
+            sm.add(path, probe::read_to_string(path).unwrap());
+        }
+        sm
+    });
+    let stamp_path = dir.join("app.build-stamp");
+    std::fs::write(&stamp_path, render_of(&sm, &seen, &[])).unwrap();
+    set_time(&stamp_path, 2_000_000);
+    let abs = |p: &Path| vpm::relpath::absolute(p);
+    // Marked, to tell a reused hash from one computed again.
+    let marked = || {
+        let mut known = known(&stamp_path);
+        for read in known.values_mut() {
+            read.hash = format!("old {}", read.hash);
+        }
+        known
+    };
+    assert_eq!(marked().len(), 2);
+    let hashes = |known| {
+        let ((), seen) = probe::record_reusing(known, || {
+            probe::read_to_string(&main).unwrap();
+            probe::read_to_string(&lib).unwrap();
+        });
+        (
+            seen.read[&abs(&main)].hash.clone(),
+            seen.read[&abs(&lib)].hash.clone(),
+        )
+    };
+    let old = |text: &str| format!("old {}", probe::content_hash(text.as_bytes()));
+    assert_eq!(hashes(marked()), (old("a"), old("b")), "unchanged");
+
+    // Edited (same size): hashed again.
+    std::fs::write(&main, "c").unwrap();
+    set_time(&main, 1_000_001);
+    assert_eq!(hashes(marked()), (probe::content_hash(b"c"), old("b")));
+    // Just written, with the size and time the old stamp has for it: too new to trust.
+    std::fs::write(&main, "d").unwrap();
+    let mut fresh = marked();
+    fresh.get_mut(&abs(&main)).unwrap().stat = probe::stat(&main);
+    assert_eq!(hashes(fresh), (probe::content_hash(b"d"), old("b")));
+    // A stamp not newer than the files (written within their time's granularity): nothing in
+    // it is trusted.
+    set_time(&stamp_path, 1_000_000);
+    assert!(known(&stamp_path).is_empty());
+    assert_eq!(
+        hashes(known(&stamp_path)),
+        (probe::content_hash(b"d"), probe::content_hash(b"b"))
+    );
+    // No stamp, or one of another format: nothing known.
+    std::fs::write(&stamp_path, "velt-build-stamp 0\nfile x 1 1\tlib.vlt\n").unwrap();
+    assert!(known(&stamp_path).is_empty());
+    assert!(known(&dir.join("none.build-stamp")).is_empty());
 }

@@ -1,108 +1,13 @@
-# Velt standard library
+# The Velt standard library
 
-Written in Velt. The compiler resolves `import { x } from "velt:<path>"` to `std/<path>.vlt`.
+Written in Velt. `import { x } from "velt/<module>"` names the module whose folder is
+`std/<module>/`, and its `index.vlt` is the module's API; `prelude/` is in scope everywhere
+and `lang/` implements the language, so neither is imported.
 
-## Layout
-| Path | Role |
-|---|---|
-| `prelude/*.vlt` | Implicitly imported into every module. |
-| `prelude/global/*.vlt` | Globals loaded on demand: only re-exports, loaded (and then part of the prelude) when a non-std module mentions one of the names without importing or declaring it itself (`fetch.vlt`: `fetch Headers Request Response AbortController AbortSignal`; `url.vlt`: `URL URLSearchParams`). std modules import what they use. |
-| `prelude/array.vlt` | `T[]` methods: `forEach map filter reduce find findIndex some every indexOf lastIndexOf includes slice concat reverse fill splice truncate toReversed toSpliced with isEmpty entries join`. Callback methods rethrow their callback's errors (generic `E`). |
-| `prelude/array_nested.vlt` | `flat` and `join` on `T[][]`, `join` on `(T \| null)[]`. |
-| `prelude/sort.vlt` | `sort()` on `i64 i32 u64 usize f64 string` arrays (pdqsort), stable `sort(cmp)` on any array, and the copying `toSorted`. |
-| `sort/stable.vlt`, `sort/merge.vlt` | Internal: the stable sort behind `sort(cmp)` and `toSorted(cmp)` (natural runs, stable quicksort, merges through a scratch buffer). |
-| `prelude/map.vlt` | `Map<K, V>`: insertion-ordered hash map (dense entries + linear-probing index). |
-| `prelude/math.vlt` | `Math` static methods (f64). |
-| `prelude/nullable.vlt` | `isNull unwrap unwrapOr map` on `T \| null`. |
-| `prelude/assert.vlt` | `assert`, `assertEq`, `assertThrows`, `deepEqual`. |
-| `prelude/number.vlt` | `NaN`, `Infinity`, `isNaN`, `isFinite`, `toFixed`, and `Number.*` (`NumberConstructor`). |
-| `prelude/error.vlt` | `Error { message }`, base class of std errors. |
-| `prelude/string.vlt` | `string` methods (`slice indexOf split trim replace padStart localeCompare …`), `String.fromCharCode`, `parseInt`, `parseFloat`, `Number`. |
-| `prelude/json/json.vlt` | `JSON.stringify/parse/parseValue`, `JsonError`, `JsonValue`; loaded when a module names them (`prelude/global/json.vlt`). |
-| `prelude/sync.vlt` | `Mutex<T>` and `RwLock<T>` layouts for `new Mutex(x)` / `.with(f)` (compiler-implemented); `Atomic<T>`, whose method calls compile to one instruction each. |
-| `math.vlt` | `std/math`: integer helpers `clamp gcd lcm isPrime fib`. |
-| `mem.vlt` | `std/mem`: `needsDrop`, whether a type's values own memory (Rust's `std::mem::needs_drop`). |
-| `sync.vlt` | `std/sync`: `Backoff` and `VersionLatch` (optimistic lock coupling), lock-free building blocks on the prelude's `Atomic<T>`. |
-| `io.vlt` | `std/io`: `IoError`; std-internal `IoResult`/`IoStatus` plumbing over rt results. |
-| `fs.vlt` | `std/fs`: async + `*Sync` file system API. |
-| `fs_stream.vlt` | `std/fs_stream`: chunked/line `FileReader` (`openRead`) and buffered `FileWriter` (`openWrite`). |
-| `net.vlt` | `std/net`: `listen`/`connect`, `listenTls`/`connectTls`, `TcpListener`, `TcpStream` (`net_bytes.vlt`: internal). |
-| `http.vlt` | `std/http`: `serve` (HTTP/1.1, HTTP/2, HTTPS), `Server`, `ServeInfo`, `upgradeConnection`; handlers take and return the global `Request` and `Response` (streamed bodies: `http/stream.vlt`, internal). |
-| `fetch.vlt` | `std/fetch`: the global `fetch`, `Request`, `Response` (`fetch/request.vlt`, `fetch/response.vlt`), `Headers` (`fetch/headers.vlt`, also the server's request headers) and `BodyInit` (`fetch/body.vlt`). |
-| `http/server.vlt` | `std/http/server`: `serve`, `HttpRequest`, `HttpResponse`, `HttpStream`, `EventStream`, `HttpServer`: an HTTP/1.1 server written in Velt on std/net (requests parsed in place, responses written per batch, streamed bodies both ways); internal: `http/server/parse.vlt` (request heads), `request.vlt` (`HttpRequest`, body reading), `response.vlt` (`HttpResponse`, streaming). |
-| `websocket.vlt` | `std/websocket`: server upgrades (`upgradeWebSocket`) and clients (`connectWebSocket`), `WebSocket`, topics. Written in Velt on std/net streams; internal: `websocket/frame.vlt` (framing), `reader.vlt` and `receive.vlt` (the receiving side), `queue.vlt` and `writer.vlt` (the send queue and its flusher), `handshake.vlt`, `topics.vlt`, `bytes.vlt` (byte helpers). |
-| `json.vlt` | `std/json`: `Value` (= prelude `JsonValue`). |
-| `process.vlt` | `std/process`: `argv args env setEnv removeEnv cwd chdir exit`. |
-| `path.vlt` | `std/path`: POSIX `join joinAll dirname basename extname normalize isAbsolute sep`. |
-| `collections/set.vlt` | `std/collections/set`: `Set<T>`, insertion-ordered hash set with ES2025 set algebra. |
-| `collections/deque.vlt` | `std/collections/deque`: `Deque<T>`, ring-buffer double-ended queue. |
-| `collections/priority_queue.vlt` | `std/collections/priority_queue`: `PriorityQueue<T>`, binary heap ordered by a comparator. |
-| `collections/sorted_map.vlt` | `std/collections/sorted_map`: `SortedMap<K, V>`, key-ordered map (sorted arrays) with `floorKey ceilingKey range`. |
-| `collections/btree_map.vlt` | `std/collections/btree_map`: `BTreeMap<K, V>`, key-ordered B+tree map with `floorKey ceilingKey range` (internal: `collections/btree/pool.vlt` the node pools and inner search, `leaf.vlt` leaf entries, `insert.vlt` inserts, `remove.vlt` deletes, `edges.vlt` the smallest and largest key, `line.vlt` a node's 64-byte words and rank order, `inline_key.vlt` `InlineKey` and the built-in encodings, `check.vlt` the invariants for tests). |
-| `collections/concurrent_map.vlt` | `std/collections/concurrent_map`: `ConcurrentMap`, a `u64` → `u64` map many threads read and write at once (a B+ tree with optimistic lock coupling on one `Atomic<u64>[]` arena, read with velt:simd `loadOptimistic`). |
-| `encoding.vlt` | `std/encoding`: Base64 (std + URL-safe), hex, UTF-8 encode/decode/validate; `EncodingError`. |
-| `encoding/utf8.vlt` | Internal: UTF-8 validation of a byte range with SIMD over ASCII runs, behind `utf8Valid` and the WebSocket reader's check of text that arrives in pieces. |
-| `encoding/binary_string.vlt` | `std/encoding/binary_string`: the globals `btoa atob` (Node's Base64 of binary strings, forgiving decoding). |
-| `dom_exception.vlt` | `std/dom_exception`: the global `DOMException` (`name`, legacy `code`) web APIs throw. |
-| `crypto.vlt` | `std/crypto`: `sha256 sha1 hmacSha256 hmacSha1 randomBytes randomInt timingSafeEqual`. |
-| `random.vlt` | `std/random`: `random randomInt` (fast, not for secrets). |
-| `uuid.vlt` | `std/uuid`: `uuidv4 uuidv7 uuidParse uuidStringify uuidValidate uuidVersion NIL_UUID`. |
-| `regex.vlt` | `std/regex`: `RegExp`, `RegExpMatch` over the runtime's linear-time regex engine. |
-| `url.vlt` | `std/url`: WHATWG `URL`, `URLSearchParams`, `encodeURIComponent` family (`url/*.vlt`: internal). |
-| `datetime.vlt` | `std/datetime`: UTC-first `DateTime` (ISO/HTTP dates, formatting, calendar math), `Duration` (`datetime/*.vlt`: internal). |
-| `html.vlt` | `std/html`: `escapeHtml` (one runtime pass). |
-| `package.vlt` | `velt:package`: types only, `Package` and its parts: the type of a package's `package.vlt` manifest (docs/tooling/manifest.md). |
-| `jsx.vlt` | `velt:jsx`: server-side TSX rendering, `renderToString renderToStringSync renderToStream raw Fragment`, `Element`, `RenderError`, the `JSX` types. |
-| `jsx/jsx-runtime.vlt` | `velt:jsx/jsx-runtime`: the JSX provider module compiled JSX calls (docs/internals/contracts/jsx.md), with the SSR precompile exports; `jsx/generic/jsx-runtime.vlt` without them. Internal: `jsx/node.vlt` (`Element`), `factory.vlt`, `escape.vlt`, `void_elements.vlt`, `render.vlt`, `intrinsic.vlt` + `attrs/*.vlt` (HTML tags and attributes). |
-| `csv.vlt` | `std/csv`: RFC 4180 `parseCsv parseCsvRecords stringifyCsv`, `CsvError`. |
-| `db.vlt` | `std/db`: `RowSource`, `readRows readRow`, `CellKind`, `RowError`: typed rows from any source. |
-| `cli.vlt` | `std/cli`: `ArgParser` (flags, options, positionals, help text), `ParsedArgs`, `CliError`. |
-| `child_process.vlt` | `std/child_process`: `exec execSync execShell spawn`, `ChildProcess`, `ExecResult`. |
-| `stdin.vlt` | `std/stdin`: `readLine readAll` (+ `*Sync`). |
-| `os.vlt` | `std/os`: `platform arch availableParallelism tmpdir hostname eol`. |
-| `udp.vlt` | `std/udp`: `bindUdp`, `UdpSocket`, `Datagram`. |
-| `dns.vlt` | `std/dns`: `lookup lookupOne`. |
-| `sqlite.vlt` | `std/sqlite`: embedded SQLite (`open`, `Database`, `Statement`, `Transaction`, `SqliteError`), synchronous, better-sqlite3-like. |
-| `postgres.vlt` | `std/postgres`: PostgreSQL client (`connect`, `createPool`, `Client`, `Pool`, `Transaction`, `PgError`), async, node-postgres-like. |
-| `redis.vlt` | `std/redis`: Redis client (`connect`, `RedisClient`, pipelines, `subscribe`) (`redis/*.vlt`: internal). |
-| `timers.vlt` | `std/timers`: `setTimeout clearTimeout setInterval clearInterval setImmediate clearImmediate` and `Timer` (re-exported from the prelude, where they are globals), `delay`, `Ticker`. |
-
-## Runtime bindings
-std binds `velt_rt_*` symbols (docs/internals/contracts/rt_abi_async.md) with `declare function` /
-`declare async function`. Lowering passes `string`/struct/array params as `const T*` and returns
-struct results through a trailing out-pointer; a C out-parameter next to a scalar result is an
-ordinary param that std always passes as a fresh local (`let out = "";` / a zeroed value, which
-the runtime overwrites): sema cannot see foreign writes, so an out-parameter must never be a
-param, field or element of the calling function. Opaque runtime
-handles are `u64`. Handle-owning classes release them in their `[Symbol.dispose]()` drop hook (http
-`Server`/`Response`, fetch's `Response`, `JsonValue`); the Copy handle structs of std/net
-(`TcpListener`, `TcpStream`) are released by an explicit `close()` (see net.vlt).
-
-## Rules for std code
-- Only files under `std/` may call compiler intrinsics, spelled `__intrinsic_<snake_case>` after the
-  `Intrinsic` enum in `crates/velt_sema/src/hir.rs` (`ArrayWithCapacity` → `__intrinsic_array_with_capacity`).
-- A function taking a callback rethrows what the callback throws by being generic over its error
-  type: `map<U, E>(f: (x: T) => U throws E): U[] throws E`.
-- Every file starts with a `//` comment describing its role; keep files under 400 lines.
-- Only `export` the public surface; helpers stay module-private. `extend` blocks apply wherever
-  their module is loaded (they cannot be exported).
-- Element-returning methods clone (`find`, `filter`, `slice`, `Map.get`, `Map.keys()`…). For Copy
-  types a clone is a plain copy. Iteration and callbacks borrow.
-
-## Performance notes
-Std code is monomorphized and inlined like user code, so write plain index loops.
-- Reserve capacity (`__intrinsic_array_with_capacity`) when the final length is known.
-- Never clone to read: pass `xs[i]` straight to callbacks and comparisons (they borrow; when
-  other references may reach the array, lowering passes a share of the element instead, so a
-  callback that pushes onto the array or pops it cannot leave its argument dangling).
-- Rearrange arrays with `__intrinsic_array_swap` / `__intrinsic_array_truncate`; moving an
-  element out of an index is not allowed, and a swap avoids clones. Algorithms that need a
-  buffer (the stable sort, std/sort/stable.vlt) move raw elements with
-  `__intrinsic_array_move` into an array sized with `__intrinsic_array_set_len`, keeping every
-  element owned exactly once themselves, and set its length back to 0 before it is dropped.
-  A callback may reach the caller's array through an alias, so while it runs that array must
-  hold only elements it owns: the stable sort copies elements that need no drop
-  (`__intrinsic_needs_drop`; short arrays in place when `__intrinsic_fn_captures_nothing(cmp)`)
-  and moves the others out at any length, leaving the array empty.
-- Keep algorithms allocation-free where possible (`sort()` is in place; `sort(cmp)` needs
-  two buffers as long as the array).
+- What each module does, for users: [docs/std](../docs/std/README.md), one page per module at
+  the same path, and `velt doc --std` for the API reference.
+- How std is laid out and why: [the std layout design](../docs/internals/design/std-layout.md).
+- Working on it (the layout rules `scripts/std-lint` checks, imports, the prelude's order, new
+  modules, runtime bindings, performance): CONTRIBUTING.md, [The standard
+  library](../CONTRIBUTING.md#the-standard-library). `velt check --std` checks every file, and
+  `velt test std/` runs the white-box tests next to the code.

@@ -1,0 +1,79 @@
+// velt/net/http/h2 (internal): the HPACK dynamic table a decoder keeps (RFC 7541 §2.3.2,
+// §4): entries newest first, each costing its name's and value's length plus 32 bytes, the
+// oldest evicted to stay within the size the peer's encoder was allowed.
+
+/// The decoder's dynamic table: entry 0 is the newest (HPACK index 62).
+export class DynamicTable {
+  // The entries, oldest first from `start` (evicted ones before it until compacted).
+  private names: u8[][] = [];
+  private values: u8[][] = [];
+  private start: i64 = 0;
+  /// The sum of the entries' sizes (RFC 7541 §4.1).
+  size: i64 = 0;
+  /// The most the table may hold: the last size update, at most `limit`.
+  maxSize: i64;
+  /// The most the encoder may choose (our SETTINGS_HEADER_TABLE_SIZE).
+  limit: i64;
+
+  constructor(limit: i64) {
+    this.limit = limit;
+    this.maxSize = limit;
+  }
+
+  /// The number of entries.
+  get length(): i64 {
+    return (this.names.length as i64) - this.start;
+  }
+
+  /// The name of entry `i` (0 = newest).
+  name(i: i64): u8[] {
+    return this.names[(this.names.length as i64) - 1 - i];
+  }
+
+  /// The value of entry `i` (0 = newest).
+  value(i: i64): u8[] {
+    return this.values[(this.values.length as i64) - 1 - i];
+  }
+
+  /// Adds an entry (RFC 7541 §4.4): older ones are evicted to make room; one larger than the
+  /// whole table empties it and is not added.
+  add(name: u8[], value: u8[]) {
+    const cost = (name.length as i64) + (value.length as i64) + 32;
+    while (this.size + cost > this.maxSize && this.length > 0) {
+      this.evictOldest();
+    }
+    if (cost > this.maxSize) {
+      return;
+    }
+    this.names.push(name);
+    this.values.push(value);
+    this.size += cost;
+  }
+
+  /// A dynamic table size update (RFC 7541 §6.3): false if above `limit`.
+  resize(max: i64): bool {
+    if (max > this.limit) {
+      return false;
+    }
+    this.maxSize = max;
+    while (this.size > this.maxSize && this.length > 0) {
+      this.evictOldest();
+    }
+    return true;
+  }
+
+  private evictOldest() {
+    const n = this.names[this.start];
+    const v = this.values[this.start];
+    this.size -= (n.length as i64) + (v.length as i64) + 32;
+    // Dropped now, not when the slot is compacted away.
+    this.names[this.start] = [];
+    this.values[this.start] = [];
+    this.start++;
+    if (this.start >= 32 && this.start * 2 >= (this.names.length as i64)) {
+      this.names = this.names.slice(this.start);
+      this.values = this.values.slice(this.start);
+      this.start = 0;
+    }
+  }
+}

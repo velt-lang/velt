@@ -1,9 +1,11 @@
 # Building an HTTP server
 
-This guide builds a small JSON API for todos: routing, request bodies, validation, errors as
-status codes, shared state, and tests. The server is [`velt:http`](../std/http.md), which runs
-on hyper and tokio: HTTP/1.1 with keep-alive, HTTP/2, and HTTPS through rustls. Handlers run
-concurrently on every core.
+This guide builds a small JSON API for todos: routing, request bodies, validation, errors as status
+codes, shared state, and tests. The server is [http-server](../../packages/http-server/README.md), a
+package written in Velt: HTTP/1.1 with keep-alive, HTTP/2, and HTTPS, from the Velt repository:
+`velt new todo --template api` depends on it, or add `"http-server": { git:
+"https://github.com/velt-lang/velt", branch: "main", path: "packages/http-server" }` to your
+`package.vlt`'s `dependencies`. Handlers run concurrently on every core.
 
 `velt new todo --template api` generates a larger version of the same design, split into
 modules, with tests.
@@ -11,7 +13,7 @@ modules, with tests.
 ## Hello, HTTP
 
 ```ts
-import { serve } from "velt:http";
+import { serve } from "http-server";
 
 async function main() {
   const server = await serve({ port: 8080 }, async (req: Request): Promise<Response> => {
@@ -35,7 +37,7 @@ serializes any value with `JSON.stringify`, which is generated at compile time f
 ## A JSON API
 
 ```ts
-import { serve } from "velt:http";
+import { serve } from "http-server";
 
 class ApiError extends Error {
   status: number;
@@ -170,7 +172,7 @@ What to notice:
 - `new Response(body, { status, headers })`, `Response.json(value, { status })`;
   `res.headers.set(name, value)` sets a header. A streamed body is `new
   Response(BodyStream.from(chunks))` with an async generator of `u8[]` chunks
-  ([velt:http](../std/http.md#the-response)).
+  ([http-server](../../packages/http-server/README.md#the-response)).
 - The second handler argument, `info: ServeInfo`, says who connected (`info.remoteAddr`).
 - A handler that throws gets a `500 Internal Server Error`, and its error is printed to stderr.
 - `server.close()` stops accepting connections and lets in-flight requests finish;
@@ -178,9 +180,10 @@ What to notice:
 
 ## Testing it
 
-Start the server on port 0 (any free port), read the port from `server.port`, and call it with
-the global [`fetch`](../std/fetch.md). A test file in `tests/` (`tests/api.test.vlt`), assuming `main.vlt` was split so that a
-`startServer(port)` function in `src/server.vlt` returns the `Server`:
+Start the server on port 0 (any free port), read the port from `server.port`, and call it with the
+global [`fetch`](../std/net/http.md). A test file in `tests/` (`tests/api.test.vlt`), assuming
+`main.vlt` was split so that a `startServer(port)` function in `src/server.vlt` returns the
+`Server`:
 
 ```ts ignore
 import { startServer } from "../src/server";
@@ -208,15 +211,17 @@ ALPN:
 const server = await serve({ port: 8443, tls: { cert: certPem, key: keyPem } }, handler);
 ```
 
-[`fetch`](../std/fetch.md) speaks `http://` and `https://` (trusting Mozilla's root
-certificates plus the PEM CAs you pass in `ca`), and uses HTTP/2 when the server offers it. WebSockets are in
-[`velt:websocket`](../std/websocket.md).
+[`fetch`](../std/net/http.md) speaks `http://` and `https://` (trusting Mozilla's root certificates
+plus the PEM CAs you pass in `ca`), and uses HTTP/2 when the server offers it. WebSockets are in
+[`velt/net/websocket`](../std/net/websocket.md).
 
 ## Databases
 
-[`velt:postgres`](../std/postgres.md) (async, with a connection pool), [`velt:sqlite`](../std/sqlite.md)
-(embedded) and [`velt:redis`](../std/redis.md) decode rows straight into your classes with the
-same compile-time JSON machinery: `const users: User[] = await db.query("SELECT …", [id])`.
+The database drivers are packages: [`postgres`](../../packages/postgres/README.md) (async, with a
+connection pool), [`sqlite`](../../packages/sqlite/README.md) (embedded) and
+[`redis`](../../packages/redis/README.md), in the Velt repository's `packages/`. The SQL drivers
+decode rows straight into your classes with the same compile-time machinery as `JSON.parse`:
+`const users: User[] = await db.query("SELECT …", [id])`.
 
 ## Performance
 

@@ -1,0 +1,18 @@
+// velt/time (internal): `TickerStop`, which stops a `Ticker` from any task.
+
+import { AbortController } from "velt/task/controller";
+
+/** Stops a `Ticker` from any task: `const stop = t.stopper(); spawn(later(stop));`. */
+export class TickerStop {
+  private control: AbortController;
+
+  /** Wraps a ticker's stop controller (use `Ticker.stopper()`). */
+  constructor(control: AbortController) {
+    this.control = control;
+  }
+
+  /** Makes the ticker's pending and future `tick()`s resolve to false, the pending one at once. */
+  stop() {
+    this.control.abort("ticker stopped");
+  }
+}

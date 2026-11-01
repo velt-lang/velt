@@ -117,12 +117,22 @@ impl Loader<'_, '_> {
             self.error(msg, vec![fix, note.to_string()], span);
             return;
         }
-        let notes = target
+        let mut notes: Vec<String> = target
             .candidates
             .iter()
             .flatten()
             .map(|f| format!("tried `{}`", shown.show(f)))
             .collect();
+        // A module of the standard library's former layout: where it went.
+        let old = spec.strip_prefix(velt_common::std_modules::SPECIFIER_PREFIX);
+        if let Some(now) = old.and_then(|old| super::moved::now(old, spec)) {
+            // A package's sentence links its page; the others, the std docs.
+            let note = match now.contains("https://") {
+                true => now,
+                false => format!("{now} ({})", super::moved::STD_DOCS_URL),
+            };
+            notes.insert(0, note);
+        }
         self.error(format!("cannot find module `{spec}`"), notes, span);
     }
 

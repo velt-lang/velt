@@ -1,11 +1,11 @@
-// velt:collections/concurrent_map reusing emptied leaves while writers race in one hot range:
+// velt/collections reusing emptied leaves while writers race in one hot range:
 // 16 writers interleave their keys, and each sets a burst of 40 (checking each with `get`), then
 // deletes them (checking with `has`). Their leaves split, empty, go to the free list and come back
 // all the time. A writer that reached a leaf before it was freed must fail to take it once it is
 // reused for another range (the version the free adds): otherwise its key lands in the wrong
 // leaf, and its own `get` misses it. At the end the range is empty.
 
-import { ConcurrentMap } from "velt:collections/concurrent_map";
+import { ConcurrentMap } from "velt/collections";
 
 const WRITERS: u64 = 16;
 const BURST: u64 = 40;

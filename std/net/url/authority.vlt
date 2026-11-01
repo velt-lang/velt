@@ -1,0 +1,145 @@
+// velt/net/url (internal): the authority parser: userinfo, host (std/net/url/host.vlt) and port.
+
+import { AT, CLOSE_BRACKET, COLON, OPEN_BRACKET } from "velt/net/url/chars";
+import { USERINFO, encodeSet, isAscii } from "velt/net/url/encode";
+import { parseHost } from "velt/net/url/host";
+import { UrlRecord } from "velt/net/url/record";
+import { defaultPort } from "velt/net/url/scheme";
+
+/**
+ * Fills userinfo, host and port from the authority `s[from..end]`; false if any of them is
+ * invalid.
+ */
+export function parseAuthority(r: UrlRecord, s: string, from: i64, end: i64, special: bool): bool {
+  if (r.scheme == "file") {
+    return setFileHost(r, s.slice(from, end));
+  }
+  if (!isAscii(s)) {
+    // The scans below are for ASCII text.
+    return parseWideAuthority(r, s.slice(from, end), special);
+  }
+  // The last `@` ends the userinfo.
+  let at: i64 = -1;
+  for (let i = from; i < end; i++) {
+    if (s.charCodeAt(i) == AT) {
+      at = i;
+    }
+  }
+  if (at >= 0) {
+    const info = s.slice(from, at);
+    const colon = info.indexOf(":");
+    if (colon >= 0) {
+      r.username = encodeSet(info.slice(0, colon), USERINFO);
+      r.password = encodeSet(info.slice(colon + 1), USERINFO);
+    } else {
+      r.username = encodeSet(info, USERINFO);
+    }
+  }
+  const hostStart = at < 0 ? from : at + 1;
+  // An IPv6 literal's colons are not the port separator: the search starts at its `]`.
+  let colon = hostStart;
+  if (s.charCodeAt(hostStart) == OPEN_BRACKET) {
+    let close = hostStart;
+    while (close < end && s.charCodeAt(close) != CLOSE_BRACKET) {
+      close++;
+    }
+    if (close < end) {
+      colon = close;
+    }
+  }
+  while (colon < end && s.charCodeAt(colon) != COLON) {
+    colon++;
+  }
+  if (colon == hostStart) {
+    if (special && r.scheme != "file") {
+      return false;
+    }
+    r.hasHost = true;
+    return at < 0 && colon == end;
+  }
+  const host = parseHost(s.slice(hostStart, colon), special);
+  if (host == null) {
+    return false;
+  }
+  r.hasHost = true;
+  r.host = host;
+  return parsePort(r, s, colon + 1, end);
+}
+
+/**
+ * A `file:` URL's authority is only a host (no credentials or port: `@` and `:` are forbidden
+ * host code points); `localhost` means the empty host. False if `text` is not a valid host.
+ */
+export function setFileHost(r: UrlRecord, text: string): bool {
+  let host = "";
+  if (text.length > 0) {
+    const parsed = parseHost(text, true);
+    if (parsed == null) {
+      return false;
+    }
+    host = parsed == "localhost" ? "" : parsed;
+  }
+  r.hasHost = true;
+  r.host = host;
+  return true;
+}
+
+// `parseAuthority` for the authority of a URL that is not ASCII: the runtime's searches find
+// `@` and `:`, and the parts are cut out to be looked at.
+function parseWideAuthority(r: UrlRecord, auth: string, special: bool): bool {
+  const at = auth.lastIndexOf("@");
+  if (at >= 0) {
+    const info = auth.slice(0, at);
+    const colon = info.indexOf(":");
+    if (colon >= 0) {
+      r.username = encodeSet(info.slice(0, colon), USERINFO);
+      r.password = encodeSet(info.slice(colon + 1), USERINFO);
+    } else {
+      r.username = encodeSet(info, USERINFO);
+    }
+  }
+  const hostPort = auth.slice(at + 1);
+  // An IPv6 literal's colons are not the port separator.
+  let colon = hostPort.indexOf(":", hostPort.startsWith("[") ? hostPort.indexOf("]") : 0);
+  if (colon < 0) {
+    colon = hostPort.length as i64;
+  }
+  const hostText = hostPort.slice(0, colon);
+  if (hostText.length == 0) {
+    if (special && r.scheme != "file") {
+      return false;
+    }
+    r.hasHost = true;
+    return at < 0 && colon == (hostPort.length as i64);
+  }
+  const host = parseHost(hostText, special);
+  if (host == null) {
+    return false;
+  }
+  r.hasHost = true;
+  r.host = host;
+  const port = hostPort.slice(colon + 1);
+  return parsePort(r, port, 0, port.length as i64);
+}
+
+// The port `s[from..end]` (empty: none): digits only, at most 65535; leading zeros and the
+// scheme's default port are dropped.
+function parsePort(r: UrlRecord, s: string, from: i64, end: i64): bool {
+  if (from >= end) {
+    return true;
+  }
+  let v: i64 = 0;
+  for (let i = from; i < end; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 48 || c > 57) {
+      return false;
+    }
+    v = v * 10 + (c - 48);
+    if (v > 65535) {
+      return false;
+    }
+  }
+  const port = `${v}`;
+  r.port = port == defaultPort(r.scheme) ? "" : port;
+  return true;
+}

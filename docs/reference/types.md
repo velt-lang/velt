@@ -30,7 +30,7 @@ fields ([Intersection types](#intersection-types)). An alias or interface may sh
 with a constant or function, as in TypeScript ([Types and values of one
 name](modules.md#types-and-values-of-one-name)). `any` and `unknown` hold a value of any
 type, checked at run time ([any and unknown](#any-and-unknown)); dynamic JSON is `JsonValue`
-([`velt:json`](../std/json.md)).
+([`velt/encoding/json`](../std/encoding/json.md)).
 
 The names TypeScript does not have (`i8`…`i64`, `isize`, `u8`…`u64`, `usize`, `f32`, `f64`,
 `bool`) are like library globals: a type alias, class, interface or enum of the module with
@@ -92,7 +92,7 @@ and memory where you want a fixed width; code shared with TypeScript never names
   `String`, `Map`, `Date`, `Math`, `fetch`, `URL`, …) gives numbers where JavaScript does:
   `xs.length`, `s.indexOf(t)`, `m.size`, `Date.now()`, `res.status` and the indexes of
   `entries()` and of array callbacks (inside the standard library they stay `usize`/`i64`).
-  Velt's own modules (`velt:sqlite`, `velt:hash`, `velt:bigint`, …) and the methods JS has no
+  Velt's own modules (`velt/db`, `velt/hash`, `velt/math`, …) and the methods JS has no
   counterpart of (`compareTo`, `leadingZeros`, `trailingZeros`, `countOnes`) keep the integer
   types they declare, as do a program's and its packages' own functions and `extend` methods.
 - **Where an integer type is expected, the standard library's integers convert by
@@ -356,7 +356,7 @@ array or tuple that holds one (`[s].join()`, `String([s])`, `${[s]}`, `${pair}` 
 `[string, symbol]`, also of a `(string | symbol)[]` that holds one), and a template literal part
 whose type is a type parameter that is `symbol` or a union holding a symbol (`` `v=${x}` `` with
 `x: T`, called with a symbol; the union's other members are written as usual). Unlike Node's
-`TypeError`, this panic cannot be caught with `try`/`catch`. The API is [`Symbol`](../std/symbol.md).
+`TypeError`, this panic cannot be caught with `try`/`catch`. The API is [`Symbol`](../std/prelude/symbol.md).
 
 A symbol a module constant holds names a member: `[KEY]: T` in an interface, an object type or
 a class, `{ [KEY]: v }` in an object literal, `o[KEY]` and `KEY in o`. The constant is
@@ -488,7 +488,7 @@ every x86-64 and arm64 CPU has: the same source compiles everywhere, with no CPU
 and release builds. On WebAssembly they are `v128` values: WebAssembly SIMD is part of Velt's
 WebAssembly baseline, and a program that uses vectors needs an engine with it (every current
 browser and runtime). They are Velt's own, and not global: a module imports the ones it names
-from [`velt:simd`](../std/simd.md) (`import { u8x16 } from "velt:simd";`), so a module that
+from [`velt/simd`](../std/simd.md) (`import { u8x16 } from "velt/simd";`), so a module that
 does not is free to use these names for its own types, as TypeScript code may.
 
 A vector is a value like a number: it is copied when assigned or passed, lives in a register,
@@ -499,7 +499,7 @@ per lane, set or not, which `any()`, `all()`, `first()`, `count()` and `bitmask(
 `boolean` or a number and `select` into a choice between two vectors.
 
 ```ts
-import { u8x16 } from "velt:simd";
+import { u8x16 } from "velt/simd";
 
 // The position of the first `b` in `d`, sixteen bytes at a time.
 function indexOf(d: u8[], b: u8): i64 {
@@ -1094,7 +1094,7 @@ the nullable type; `void` cannot be a member.
   cannot be printed (a closure) prints once a test has narrowed it to members that can
   (`typeof v !== "function"`). `JSON.stringify` works on
   unions; `JSON.parse` decodes them when the JSON value tells the members apart (discriminated
-  unions by their discriminant; see [`velt:json`](../std/json.md)).
+  unions by their discriminant; see [`velt/encoding/json`](../std/encoding/json.md)).
 - A union of numbers, bools, strings and literals is copied; one holding an object refers to
   it like any other variable.
 - A union alias may name itself behind an indirection: as an array's element, an index
@@ -2359,7 +2359,7 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   a proxy whose target is a record forwards symbol keys to its symbol table through `Reflect`,
   and indexing an `any` with a `symbol` key reads, writes and tests it there. The methods for
   symbol keys and accessors are loaded only by a program that mentions symbols, property
-  definitions, `Proxy` or `Reflect` (std/record/symbols.vlt). A type parameter
+  definitions, `Proxy` or `Reflect` (std/lang/record/symbols.vlt). A type parameter
   given `number` as a record key is not supported yet. A cast to `Record<symbol, unknown>` (or `Record<symbol,
   any>`) looks at a value's symbol-keyed members, as through `any`:
   `(v as Record<symbol, unknown>)[BRAND] === true` reads the member `BRAND` names, or
@@ -2467,7 +2467,7 @@ console.log(Object.keys(r), s.dave ?? "none"); // [ 'bob', 'alice', 'carol' ] no
 ```
 - `JSON.stringify(x)` / `JSON.parse<T>(s)` are generated at compile time for numbers, bools,
   strings, literal types, arrays, tuples, enums, nullable values, `Map<string, V>`,
-  `Record<K, V>`, structs, classes and anonymous objects ([`velt:json`](../std/json.md)).
+  `Record<K, V>`, structs, classes and anonymous objects ([`velt/encoding/json`](../std/encoding/json.md)).
   `JSON.stringify` writes a class's or struct's `private` fields, as Node does, and skips ES
   private fields (`#x`). `JSON.parse<T>` cannot build a type with a `private` or `#` field (a
   compile error naming the field: decoding does not run the constructor). A type holding a std
@@ -2835,8 +2835,8 @@ console.log([...range(1, 3)]); // [ 1, 2, 3 ]
   `this` in it is the object: an `IterableIterator<T>` written as `{ next() { … },
   [Symbol.iterator]() { return this; } }` is the iterator, so a loop over it goes on from where
   `next()` left off, as in Node.
-- The value is an instance of the prelude class `__IterableObject<T, E>` (async:
-  `__AsyncIterableObject<T, E>`), which holds the method; annotate it as `Iterable<T>`.
+- The value is an object of std's that holds the method and implements `Iterable<T, E>`
+  (`AsyncIterable<T, E>`); annotate it as `Iterable<T>`.
 
 ### Object literals implementing interfaces
 
@@ -3018,7 +3018,7 @@ console.log(app, router.installs); // [ 'router' ] 1
 ## bigint
 
 TypeScript's `bigint` is a type name in Velt, but there are no `BigInt` values yet (no `10n`
-literals, no `BigInt()`; arbitrary-precision integers are [`velt:bigint`](../std/bigint.md)).
+literals, no `BigInt()`; arbitrary-precision integers are [`velt/math`](../std/math/bigint.md)).
 Until there are, `bigint` is `never`: the type no value has. So types written for TypeScript
 that mention it work for every value a Velt program holds: a union naming it is its other
 members, a conditional type testing it never takes that branch, and a type bound naming it

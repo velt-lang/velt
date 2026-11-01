@@ -145,7 +145,7 @@ impl Links {
     ) -> HashMap<String, Target> {
         let mut scope = HashMap::new();
         for (i, other) in modules.iter().enumerate() {
-            if other.name.starts_with("std/prelude") {
+            if other.name.starts_with(velt_common::std_module!(prelude)) {
                 scope.extend(names[i].clone());
             }
         }

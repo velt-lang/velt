@@ -1,0 +1,4 @@
+expected field "[Symbol(k)]" at $
+expected field "a" at $
+3 x false {"a":3,"b":"x"}
+2 true

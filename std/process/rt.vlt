@@ -1,0 +1,46 @@
+// velt/process (internal): the runtime functions velt/process calls (rt_abi_async.md §8) and the
+// layouts they return.
+
+import { IoResult, unwrapIo } from "velt/native/result";
+import { IoStatus } from "velt/native/status";
+
+export declare function velt_rt_process_args(): string[];
+
+export declare function velt_rt_env_set(name: string, value: string);
+
+export declare function velt_rt_env_remove(name: string);
+
+export declare function velt_rt_env_all(): string[];
+
+export declare function velt_rt_process_cwd(): IoResult<string>;
+
+export declare function velt_rt_process_chdir(path: string): IoStatus;
+
+export declare function velt_rt_stdout_write_bytes(bytes: u8[]);
+
+export declare function velt_rt_isatty(fd: i32): bool;
+
+// The runtime's `LineRead`: a line, and whether input had ended instead.
+struct LineRead {
+  line: IoResult<string>;
+  eof: bool;
+}
+
+export declare async function velt_rt_stdin_read_line(): Promise<LineRead>;
+
+export declare function velt_rt_stdin_read_line_sync(): LineRead;
+
+export declare async function velt_rt_stdin_read_all(): Promise<IoResult<string>>;
+
+export declare function velt_rt_stdin_read_all_sync(): IoResult<string>;
+
+export declare async function velt_rt_stdin_read_all_bytes(): Promise<IoResult<u8[]>>;
+
+export declare function velt_rt_stdin_read_all_bytes_sync(): IoResult<u8[]>;
+
+export function lineOf(r: LineRead): string | null {
+  if (r.eof) {
+    return null;
+  }
+  return unwrapIo(r.line);
+}

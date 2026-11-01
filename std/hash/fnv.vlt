@@ -1,0 +1,13 @@
+// velt/hash (internal): 64-bit FNV-1a of strings and bytes.
+
+import { velt_rt_fnv1a64_bytes, velt_rt_fnv1a64_str } from "velt/hash/rt";
+
+/** The 64-bit FNV-1a hash of the UTF-8 bytes of `s`. */
+export function fnv1a64(s: string): u64 {
+  return velt_rt_fnv1a64_str(s);
+}
+
+/** The 64-bit FNV-1a hash of `data`. */
+export function fnv1a64Bytes(data: u8[]): u64 {
+  return velt_rt_fnv1a64_bytes(data);
+}

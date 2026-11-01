@@ -1,0 +1,19 @@
+// includes, startsWith and endsWith take JavaScript's position argument (code units, clamped).
+const s = "héllo wörld";
+console.log(
+  s.startsWith("wör", 6),
+  s.startsWith("wör", 5),
+  s.startsWith("h", -3),
+  s.startsWith("", 99),
+);
+console.log(
+  s.endsWith("llo", 5),
+  s.endsWith("héllo", 5),
+  s.endsWith("ld", 99),
+  s.endsWith("h", 1),
+  s.endsWith("x", -1),
+  s.endsWith("", 0),
+);
+console.log(s.includes("o", 5), s.includes("é", 2), s.includes("h", -5), s.includes("", 50));
+const e = "😀ab";
+console.log(e.startsWith("ab", 2), e.endsWith("😀", 2), e.includes("a", 3));

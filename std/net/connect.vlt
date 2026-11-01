@@ -1,0 +1,31 @@
+// velt/net (internal): `connect` and `connectTls`, which open a `TcpStream`.
+
+import { unwrapIo } from "velt/native/result";
+import { velt_rt_tcp_connect, velt_rt_tcp_connect_tls } from "velt/net/rt";
+import { TcpStream } from "velt/net/tcp_stream";
+
+/** Connects to "host:port". */
+export async function connect(addr: string): Promise<TcpStream> {
+  return TcpStream { handle: unwrapIo(await velt_rt_tcp_connect(addr)) };
+}
+
+export struct TlsConnectOptions {
+  /** The name the server's certificate must be for (default: the host in the address). */
+  serverName?: string;
+  /** Extra trusted CA certificates (PEM), e.g. a private or test CA. */
+  ca?: string;
+  /** The protocols to offer with ALPN, most preferred first (default: none). */
+  alpn?: string[];
+}
+
+/**
+ * Connects to "host:port" over TLS; resolves once the handshake is done (the server's
+ * certificate is checked against the built-in roots and `opts.ca`).
+ */
+export async function connectTls(addr: string, opts: TlsConnectOptions = {}): Promise<TcpStream> {
+  const alpn = (opts.alpn ?? []).join(",");
+  const name = opts.serverName ?? "";
+  return TcpStream {
+    handle: unwrapIo(await velt_rt_tcp_connect_tls(addr, name, opts.ca ?? "", alpn)),
+  };
+}

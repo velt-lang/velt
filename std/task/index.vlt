@@ -1,0 +1,20 @@
+// velt/task: cancellation, timeouts, task scopes and task placement (docs/std/task.md).
+//
+// `AbortController` / `AbortSignal` follow TypeScript's shapes. Cancellation is cooperative:
+// `abort()` sets the signal and wakes the tasks waiting on it; code that accepts a signal checks
+// it (`throwIfAborted()`) or races its work against `whenAborted()`. Nothing is dropped behind
+// the program's back, so `finally` blocks and `using` disposal run as usual. There is no
+// `addEventListener`: the runtime keeps no callbacks (they would break hot reload). Put
+// `signal.whenAborted()` itself in a `Promise.race` instead: a losing runtime wait is dropped,
+// whereas an async function wrapped around it would keep waiting.
+//
+// A signal's runtime object is owned by a `shared` cell (atomic, so `spawn` shares it rather
+// than copying it) and released once, at the cell's last reference. No handle is public: a
+// signal is only made by an `AbortController` or the static constructors.
+
+export { AbortController } from "velt/task/controller";
+export { AbortError } from "velt/task/errors";
+export { ScopeOptions, TaskScope, taskScope } from "velt/task/scope";
+export { AbortSignal } from "velt/task/signal";
+export { timeout, TimeoutError } from "velt/task/timeout";
+export { currentWorker, SpawnOptions, workerCount } from "velt/task/workers";

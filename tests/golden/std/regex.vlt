@@ -1,5 +1,5 @@
 // check: no leaks
-import { RegExp, RegExpMatch } from "velt:regex";
+import { RegExp, RegExpMatch } from "velt/text";
 
 function showMatch(m: RegExpMatch | null) {
   if (m == null) {

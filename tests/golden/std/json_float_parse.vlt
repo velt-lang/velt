@@ -1,4 +1,4 @@
-// JSON numbers parsed by velt:json/scan and velt:number/eisel_lemire (#1658), checked against
+// JSON numbers parsed by velt/encoding/json/scan and velt/lang/number/eisel_lemire (#1658), checked against
 // Node: known hard cases one per line, then a hash over 100,000 random 16- to 19-digit
 // mantissas at every decimal exponent (subnormals and the overflow edge included). Each value
 // is printed as its exact sign, odd significand and power of two, so the output does not

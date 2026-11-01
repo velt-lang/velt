@@ -1,0 +1,8 @@
+// The compiler's intrinsics are declared in std (velt/lang/intrinsics), which only std imports:
+// a program uses the public API built on them.
+import { arrayWithCapacity } from "velt/lang/intrinsics";
+
+function main() {
+  const xs: i64[] = arrayWithCapacity<i64>(4);
+  console.log(xs.length);
+}

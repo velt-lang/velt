@@ -5,7 +5,7 @@ import { Circle } from "./shapes";
 import * as shapes from "./shapes";
 
 export { Shape as Figure } from "./shapes";
-export { readFile } from "velt:fs";
+export { readFile } from "velt/fs";
 
 /** Largest coordinate a {@link Point} may have. */
 export const LIMIT: i64 = 100;

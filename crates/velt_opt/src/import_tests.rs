@@ -127,7 +127,7 @@ fn a_declaration_may_write_through_what_it_is_given() {
 fn a_declared_helper_is_not_inlined() {
     let mut pb = ProgramBuilder::new();
     let helper = pb.add(Function::new(
-        velt_vir::mangle::mangle("std/prelude/math::__mulToInt32"),
+        velt_vir::mangle::mangle(velt_common::std_hook!(mul_to_int32)),
         vec![Ty::F64, Ty::F64],
         Ty::I32,
         Linkage::Import,

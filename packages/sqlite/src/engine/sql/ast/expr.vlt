@@ -1,0 +1,35 @@
+// `Expr`: An expression. Fields not used by a kind keep their defaults.
+
+import { Select } from "./select";
+import { Window } from "./window";
+
+/** An expression. Fields not used by a kind keep their defaults. */
+export class Expr {
+  kind: u8;
+  op: string = "";
+  ival: i64 = 0;
+  rval: f64 = 0;
+  text: string = "";
+  table: string = "";
+  name: string = "";
+  a: Expr | null = null;
+  b: Expr | null = null;
+  c: Expr | null = null;
+  args: Expr[] = [];
+  select: Select | null = null;
+  not: bool = false;
+  distinct: bool = false;
+  star: bool = false;
+  filter: Expr | null = null;
+  /** OVER: a window function's window. */
+  over: Window | null = null;
+  /** The source offset, for errors. */
+  at: usize = 0;
+  /** The tree's height (a leaf is 1), bounded as in SQLite (engine/sql/expr_height). */
+  height: i64 = 1;
+
+  constructor(kind: u8, at: usize) {
+    this.kind = kind;
+    this.at = at;
+  }
+}

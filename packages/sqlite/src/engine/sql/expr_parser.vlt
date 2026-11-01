@@ -1,0 +1,384 @@
+// sqlite/engine/sql/expr_parser (internal): the expressions of SQLite's grammar (parse.y), by recursive
+// descent: the operators here, the operands in engine/sql/expr_operand (an `extend` block).
+// SELECT and the statements are in engine/sql/parser, a subclass (expressions hold
+// subqueries, so they call its `select()`).
+//
+// Precedence, lowest first (https://sqlite.org/lang_expr.html#operators):
+// OR; AND; NOT; = == != <> IS IN LIKE GLOB MATCH REGEXP BETWEEN ISNULL NOTNULL;
+// < <= > >=; & | << >>; + -; * / %; || -> ->>; COLLATE; unary - + ~.
+// The binary levels are parsed by precedence climbing (`binaryFrom`), and nesting is bounded
+// (engine/sql/token_cursor's `enter`), so deeply nested input fails with SQLite's error.
+
+import { T_IDENT, T_OP, Token } from "./token";
+import {
+  E_BETWEEN,
+  E_BINARY,
+  E_COLLATE,
+  E_INT,
+  E_IN_LIST,
+  E_IN_SELECT,
+  E_IS,
+  E_ISNULL,
+  E_LIKE,
+  E_REAL,
+  E_STAR,
+  E_UNARY,
+  Expr,
+  FromItem,
+  ResultColumn,
+  Select,
+  Window,
+  SelectCore,
+} from "./types";
+import { TokenCursor } from "./token_cursor";
+import {
+  L_NONE,
+  L_OR,
+  L_AND,
+  L_NOT,
+  L_EQ,
+  L_CMP,
+  L_CONCAT,
+  opLevel,
+  isMatchWord,
+} from "./precedence";
+import { raised, sized } from "./expr_height";
+import "./expr_operand";
+import "./type_name";
+
+/** The expression grammar, on a token cursor. */
+export abstract class ExprParser extends TokenCursor {
+  /** `?` parameters are numbered in order; `?NNN` sets the counter. */
+  params: i64 = 0;
+  /** The index each named parameter was given at its first use. */
+  names: Map<string, i64> = new Map<string, i64>();
+
+  constructor(sql: string) {
+    super(sql);
+  }
+
+  /** A whole SELECT (engine/sql/parser). */
+  abstract select(): Select;
+
+  /** The window after OVER (engine/sql/parser). */
+  abstract over(): Window;
+
+  // Expressions, lowest precedence first.
+
+  expr(): Expr {
+    this.enter();
+    const e = this.binaryFrom(L_OR);
+    this.leave();
+    return e;
+  }
+
+  /**
+   * An operand followed by the binary operators that bind at least as tightly as level `min`,
+   * left to right (precedence climbing: one frame per level actually used, so nesting stays
+   * cheap on the stack).
+   */
+  binaryFrom(min: i64): Expr {
+    let e = this.collate();
+    while (true) {
+      const level = this.levelHere();
+      if (level < min) {
+        return e;
+      }
+      e = this.infix(e, level);
+    }
+  }
+
+  /** The level of the binary operator at the cursor, or L_NONE. */
+  levelHere(): i64 {
+    const t = this.peek();
+    if (t.kind == T_OP) {
+      return opLevel(t.text);
+    }
+    if (t.kind != T_IDENT) {
+      return L_NONE;
+    }
+    const w = t.upper;
+    if (w == "OR") {
+      return L_OR;
+    }
+    if (w == "AND") {
+      return L_AND;
+    }
+    if (w == "IS" || w == "ISNULL" || w == "NOTNULL" || isMatchWord(w) || w == "IN") {
+      return L_EQ;
+    }
+    if (w == "BETWEEN") {
+      return L_EQ;
+    }
+    // NOT after an operand starts NOT IN, NOT LIKE (GLOB, MATCH, REGEXP), NOT BETWEEN or NOT
+    // NULL; anything else after it is the error (`equality`).
+    if (w == "NOT") {
+      return L_EQ;
+    }
+    return L_NONE;
+  }
+
+  /** The operator at the cursor (of level `level`) applied to `e` and its right side. */
+  infix(e: Expr, level: i64): Expr {
+    if (level == L_EQ) {
+      return this.equality(e);
+    }
+    const t = this.advance();
+    if (level == L_CONCAT) {
+      return binary(t.text, e, this.collate(), t.start);
+    }
+    const op = t.kind == T_IDENT ? t.upper : t.text == "==" ? "=" : t.text == "<>" ? "!=" : t.text;
+    // A right operand nests (`1+(1+(…`): it counts toward the recursion bound.
+    this.enter();
+    const right = this.binaryFrom(level + 1);
+    this.leave();
+    return binary(op, e, right, t.start);
+  }
+
+  /** NOT and its operand: everything up to the next AND or OR (`1 = NOT 0 AND x`). */
+  notOperand(): Expr {
+    // A run of NOTs shares one operand: counted, not recursed into.
+    const ats: usize[] = [];
+    while (this.isKw("NOT")) {
+      ats.push(this.advance().start);
+    }
+    this.enter();
+    let e = this.binaryFrom(L_NOT);
+    this.leave();
+    for (let k = ats.length; k > 0; k--) {
+      const u = new Expr(E_UNARY, ats[k - 1]);
+      u.op = "NOT";
+      u.a = e;
+      e = sized(u);
+    }
+    return e;
+  }
+
+  /** One operator of `=`'s level: = == != <> IS, IN, LIKE and kin, BETWEEN, ISNULL, NOT NULL. */
+  equality(e: Expr): Expr {
+    // Its operands nest through its own frame and an operand's: a level of its own. A chain
+    // (`a = b = c`) is a loop of calls, each left before the next.
+    this.enter();
+    const r = this.equalityBody(e);
+    this.leave();
+    return r;
+  }
+
+  equalityBody(e: Expr): Expr {
+    const t = this.peek();
+    if (t.kind == T_OP) {
+      this.pos++;
+      const op = t.text == "==" ? "=" : t.text == "<>" ? "!=" : t.text;
+      return binary(op, e, this.binaryFrom(L_CMP), t.start);
+    }
+    let not = false;
+    let k: usize = 0;
+    if (t.upper == "NOT") {
+      not = true;
+      k = 1;
+      const n = this.peekAt(1);
+      if (
+        !(
+          n.kind == T_IDENT &&
+          (n.upper == "IN" || n.upper == "BETWEEN" || n.upper == "NULL" || isMatchWord(n.upper))
+        )
+      ) {
+        this.pos++;
+        this.fail();
+      }
+    }
+    const word = this.peekAt(k).upper;
+    if (word == "IS") {
+      this.pos++;
+      const n = this.eatKw("NOT");
+      if (this.eatKw("DISTINCT")) {
+        // IS [NOT] DISTINCT FROM: IS NOT / IS.
+        this.expectKw("FROM");
+        return isExpr(e, this.binaryFrom(L_CMP), !n, t.start);
+      }
+      return isExpr(e, this.binaryFrom(L_CMP), n, t.start);
+    }
+    if (word == "ISNULL" || word == "NOTNULL" || word == "NULL") {
+      this.pos += k + 1;
+      return isNull(e, word != "ISNULL", t.start);
+    }
+    this.pos += k + 1;
+    if (word == "IN") {
+      return this.inExpr(e, not, t.start);
+    }
+    if (word == "BETWEEN") {
+      const b = new Expr(E_BETWEEN, t.start);
+      b.a = e;
+      // The low bound binds like `=` (`x BETWEEN 1 = 1 AND 3`), the high one tighter. The low
+      // bound can hold another BETWEEN (`a BETWEEN b BETWEEN c AND d AND e`): it nests.
+      this.enter();
+      b.b = this.binaryFrom(L_EQ);
+      this.leave();
+      this.expectKw("AND");
+      b.c = this.binaryFrom(L_CMP);
+      b.not = not;
+      return sized(b);
+    }
+    const l = new Expr(E_LIKE, t.start);
+    l.op = word;
+    l.a = e;
+    l.b = this.binaryFrom(L_CMP);
+    if (this.eatKw("ESCAPE")) {
+      l.c = this.binaryFrom(L_CMP);
+    }
+    l.not = not;
+    return sized(l);
+  }
+
+  inExpr(left: Expr, not: bool, at: usize): Expr {
+    if (!this.isOp("(")) {
+      // IN [schema.]table, or IN a table-valued function (`IN json_each(x)`): a subquery
+      // over all of it.
+      const s = new Select();
+      const core = new SelectCore();
+      const item = new FromItem();
+      item.name = this.name();
+      if (this.eatOp(".")) {
+        item.schema = item.name;
+        item.name = this.name();
+      }
+      if (this.eatOp("(")) {
+        this.enter();
+        if (!this.isOp(")")) {
+          item.args.push(this.expr());
+          while (this.eatOp(",")) {
+            item.args.push(this.expr());
+          }
+        }
+        this.leave();
+        this.expectOp(")");
+      }
+      core.from.push(item);
+      core.columns.push(ResultColumn { expr: new Expr(E_STAR, at), alias: "", span: "*" });
+      s.cores.push(core);
+      const e = new Expr(E_IN_SELECT, at);
+      e.a = left;
+      e.select = s;
+      e.not = not;
+      return sized(e);
+    }
+    this.pos++;
+    if (this.isKw("SELECT") || this.isKw("WITH") || this.isKw("VALUES")) {
+      const e = new Expr(E_IN_SELECT, at);
+      e.a = left;
+      e.select = this.select();
+      e.not = not;
+      this.expectOp(")");
+      return sized(e);
+    }
+    const e = new Expr(E_IN_LIST, at);
+    e.a = left;
+    e.not = not;
+    if (!this.isOp(")")) {
+      e.args.push(this.expr());
+      while (this.eatOp(",")) {
+        e.args.push(this.expr());
+      }
+    }
+    this.expectOp(")");
+    return sized(e);
+  }
+
+  collate(): Expr {
+    let e = this.unary();
+    while (this.isKw("COLLATE")) {
+      const at = this.advance().start;
+      // The collation is `ID` or a string (not a join word or INDEXED).
+      if (!this.isAlias()) {
+        this.fail();
+      }
+      const name = this.advance().text.toUpperCase();
+      if (e.kind == E_COLLATE) {
+        // A run of COLLATE is one node: the outermost collation wins, as in SQLite
+        // (`'a' = 'A' COLLATE nocase COLLATE binary` is 0), and the tree stays as high as it is.
+        e.name = name;
+        continue;
+      }
+      const c = new Expr(E_COLLATE, at);
+      c.a = e;
+      c.name = name;
+      // COLLATE adds no level (SQLite's TK_COLLATE node carries no height).
+      c.height = e.height;
+      e = c;
+    }
+    return e;
+  }
+
+  unary(): Expr {
+    // Prefix operators are read as a run and applied innermost first: no recursion per operator.
+    const ops: Token[] = [];
+    while (true) {
+      const t = this.peek();
+      if (t.kind == T_OP && (t.text == "-" || t.text == "+" || t.text == "~")) {
+        ops.push(t);
+        this.pos++;
+      } else {
+        break;
+      }
+    }
+    let e = this.primary();
+    for (let k = ops.length; k > 0; k--) {
+      e = prefix(ops[k - 1], e);
+    }
+    return e;
+  }
+}
+
+function binary(op: string, a: Expr, b: Expr, at: usize): Expr {
+  const e = new Expr(E_BINARY, at);
+  e.op = op;
+  e.a = a;
+  e.b = b;
+  return sized(e);
+}
+
+/**
+ * Prefix operator `t` applied to `operand`. A negative literal folds, so -9223372036854775808
+ * is an integer; negating that one overflows, so it stays an operation (SQLite gives the REAL
+ * 9.2233720368547758e+18). A folded minus still counts as the level SQLite's unfolded
+ * TK_UMINUS would add.
+ */
+function prefix(t: Token, operand: Expr): Expr {
+  if (t.text == "-" && operand.kind == E_REAL) {
+    operand.rval = -operand.rval;
+    return raised(operand);
+  }
+  if (
+    t.text == "-" &&
+    operand.kind == E_INT &&
+    operand.text == "" &&
+    operand.ival != -9223372036854775807 - 1
+  ) {
+    operand.ival = -operand.ival;
+    return raised(operand);
+  }
+  if (t.text == "-" && operand.kind == E_INT && operand.text == "9223372036854775808") {
+    operand.ival = -9223372036854775807 - 1;
+    operand.text = "";
+    return raised(operand);
+  }
+  const u = new Expr(E_UNARY, t.start);
+  u.op = t.text;
+  u.a = operand;
+  return sized(u);
+}
+
+function isExpr(a: Expr, b: Expr, not: bool, at: usize): Expr {
+  const e = new Expr(E_IS, at);
+  e.a = a;
+  e.b = b;
+  e.not = not;
+  return sized(e);
+}
+
+function isNull(a: Expr, not: bool, at: usize): Expr {
+  const e = new Expr(E_ISNULL, at);
+  e.a = a;
+  e.not = not;
+  return sized(e);
+}

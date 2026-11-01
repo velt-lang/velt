@@ -1,0 +1,12 @@
+// `KeyConstraint`: A PRIMARY KEY or UNIQUE constraint of CREATE TABLE, on a column or the …
+
+import { IndexedColumn } from "./indexed_column";
+
+/**
+ * A PRIMARY KEY or UNIQUE constraint of CREATE TABLE, on a column or the table. SQLite names the
+ * automatic indexes of these (sqlite_autoindex_<table>_<n>) in this order.
+ */
+export struct KeyConstraint {
+  primary: bool;
+  columns: IndexedColumn[];
+}

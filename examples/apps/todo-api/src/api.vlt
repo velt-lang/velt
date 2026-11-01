@@ -3,7 +3,7 @@
 // std/http. Generic over the store, so it works on the JSON and the SQLite one alike.
 import { TodoRepository, must } from "./repository";
 import { Todo, NewTodoBody, TodoPatchBody, ApiError } from "./model";
-import { decodeURIComponent } from "velt:url";
+import { decodeURIComponent } from "velt/net/url";
 
 // What a request produced; `changed` tells the server to persist the store.
 export type ApiResponse = { status: i64; body: string; changed: bool };

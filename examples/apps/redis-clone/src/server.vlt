@@ -1,9 +1,9 @@
 // The network side: one task per connection, and the keyspace in shards (src/shards.vlt). Each
 // read is parsed into as many complete commands as it holds (clients pipeline); consecutive
 // commands on one shard run as one batch under its lock, and the replies go back in one write.
-import { listen, TcpListener, TcpStream } from "velt:net";
-import { workerCount } from "velt:task";
-import { utf8DecodeLossy } from "velt:encoding";
+import { listen, TcpListener, TcpStream } from "velt/net";
+import { workerCount } from "velt/task";
+import { utf8DecodeLossy } from "velt/encoding";
 import { execute } from "./commands";
 import { Db } from "./db";
 import { protocolErrorReply, RespParser, Writer } from "./resp";

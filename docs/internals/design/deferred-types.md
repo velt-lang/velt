@@ -429,7 +429,7 @@ these answers:
    standard `pick` compiles unchanged, at one presence test per field at the conversion. The
    object has `D`'s fields in `D`'s order: keys set in another order, or a key `D` lacks, are a
    run-time error too (`any_record.rs` `record_fill_order`, which compares the keys `Record`'s
-   `__keyNames` lists with the fields set, in order), since printing, serializing or listing the keys would
+   `[RECORD_KEY_NAMES]` lists with the fields set, in order), since printing, serializing or listing the keys would
    differ from Node's object, which keeps the order the keys were set in.
 6. **`T & U` with a type parameter part** (`merge<T, U>(t: T, u: U): T & U`), which #649 left to
    #350, is a deferred operator, `TyOp::Intersect`, reduced by `crate::intersections` at

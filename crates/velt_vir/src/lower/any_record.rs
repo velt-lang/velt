@@ -212,7 +212,7 @@ impl FnLower<'_, '_> {
     /// lacks, or its keys in another order: Velt's object has its type's fields in their order,
     /// where JavaScript's object would have the record's (decision 5 in
     /// docs/internals/design/deferred-types.md), so it is a `TypeError`. The record's keys
-    /// (`__keyNames`, in JavaScript's order) must be the names of the fields it holds
+    /// (`[RECORD_KEY_NAMES]`, in JavaScript's order) must be the names of the fields it holds
     /// (`present`), in order.
     fn record_fill_order(
         &mut self,
@@ -222,9 +222,9 @@ impl FnLower<'_, '_> {
         present: &[Operand],
     ) {
         let key_names = self.plain_adt(rec).and_then(|(d, _)| {
-            self.dyn_members_of(d)
-                .into_iter()
-                .find(|m| m.name == "__keyNames" && m.kind == DynMemberKind::Method)
+            self.dyn_members_of(d).into_iter().find(|m| {
+                m.name == velt_common::std_key!(record_key_names) && m.kind == DynMemberKind::Method
+            })
         });
         let Some(r) = key_names.and_then(|m| self.ready(rec, &m)) else {
             return;
@@ -286,7 +286,7 @@ impl FnLower<'_, '_> {
 }
 
 impl FnLower<'_, '_> {
-    /// `r[key]` on a `Record<string, V>`: its `__get` (a missing key is `undefined`). A record
+    /// `r[key]` on a `Record<string, V>`: its `[RECORD_GET]` (a missing key is `undefined`). A record
     /// has no members of its own; `Object.prototype`'s come later.
     pub(super) fn any_get_record(
         &mut self,
@@ -307,22 +307,22 @@ impl FnLower<'_, '_> {
         self.ret_status(ST_OK);
     }
 
-    /// The record type `ty`'s `__get`, ready to call from glue, when its keys are strings.
+    /// The record type `ty`'s `[RECORD_GET]`, ready to call from glue, when its keys are strings.
     fn record_get_ready(&mut self, ty: TyId) -> Option<Ready> {
         let (k, _) = self
             .prelude_record(ty)
             .unwrap_or_else(|| super::ice("record"));
         let get = self.plain_adt(ty).and_then(|(d, _)| {
-            self.dyn_members_of(d)
-                .into_iter()
-                .find(|m| m.name == "__get" && m.kind == DynMemberKind::Method)
+            self.dyn_members_of(d).into_iter().find(|m| {
+                m.name == velt_common::std_key!(record_get) && m.kind == DynMemberKind::Method
+            })
         });
         let ready = get.and_then(|m| self.ready(ty, &m));
         ready.filter(|_| matches!(self.cx.kind(k), TyKind::Str))
     }
 
     /// The value the record (`data`, of type `ty`) holds at the string `key`, boxed into `out`
-    /// (`undefined` for a key it lacks), read with its `__get` `r`.
+    /// (`undefined` for a key it lacks), read with its `[RECORD_GET]` `r`.
     fn record_get_into(
         &mut self,
         r: &Ready,

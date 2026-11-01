@@ -1,5 +1,5 @@
 // check: no leaks
-// velt:compress/inflate: gzip (one member and two), zlib and raw DEFLATE streams with dynamic,
+// velt/compress: gzip (one member and two), zlib and raw DEFLATE streams with dynamic,
 // fixed and stored blocks, decoded whole and fed one byte at a time with small reads (whose
 // pieces never exceed the size asked for); `deflate` as HTTP sends it, zlib or raw; empty input;
 // and the errors: a truncated stream, a wrong check, a bad header, an invalid block type.
@@ -10,9 +10,9 @@ import {
   inflateRaw,
   InflateDecoder,
   InflateFormat,
-} from "velt:compress/inflate";
-import { CompressError } from "velt:compress/error";
-import { hexDecode } from "velt:encoding";
+} from "velt/compress";
+import { CompressError } from "velt/compress";
+import { hexDecode } from "velt/encoding";
 
 // 400 words of text: dynamic Huffman blocks (Python's `zlib`, level 6).
 const GZIP =

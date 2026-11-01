@@ -1,0 +1,30 @@
+// velt/net/http (internal): the requests and controls `fetch` sends to an HTTP/2 client session's
+// task (`H2Call`); the answers come back as `H2Event`s (h2/event.vlt).
+
+import { Channel } from "velt/sync";
+import { H2Event } from "velt/net/http/fetch/client/h2/event";
+
+// `H2Call.kind`.
+/// A request: open a stream.
+export const CALL_REQUEST: i64 = 0;
+/// `n` bytes of stream `id`'s body were read: its window may be given back.
+export const CALL_CREDIT: i64 = 1;
+/// The request does not want the rest of stream `id` (aborted, or its body abandoned).
+export const CALL_CANCEL: i64 = 2;
+
+/// A message to a session.
+export struct H2Call {
+  kind: i64;
+  /// The stream (credit and cancel).
+  id: i64;
+  n: i64;
+  method: string;
+  scheme: string;
+  authority: string;
+  path: string;
+  /// The fields after the pseudo-headers: lowercase name, value, ...
+  fields: string[];
+  body: u8[];
+  /// Where the response goes.
+  events: Channel<H2Event>;
+}

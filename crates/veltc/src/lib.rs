@@ -12,6 +12,7 @@ pub mod commands;
 pub mod debugger;
 pub mod dev;
 pub mod driver;
+pub mod generate;
 pub mod link;
 pub mod loader;
 pub mod native;

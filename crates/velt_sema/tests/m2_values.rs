@@ -80,10 +80,19 @@ fn for_of_over_a_map_iterates_entries() {
             .iter()
             .any(|(c, _)| matches!(c, Callee::Def(d, _) if d.0 as usize == m))
     };
-    assert!(calls_method("live", "Map.__advance"));
-    assert!(calls_method("live", "Map.__entryAt"));
+    assert!(calls_method(
+        "live",
+        concat!("Map.", velt_common::std_key!(map_advance))
+    ));
+    assert!(calls_method(
+        "live",
+        concat!("Map.", velt_common::std_key!(map_entry_at))
+    ));
     assert!(!calls_method("live", "Map.entries"));
-    assert!(calls_method("called", "Map.__advance"));
+    assert!(calls_method(
+        "called",
+        concat!("Map.", velt_common::std_key!(map_advance))
+    ));
     assert!(!calls_method("called", "Map.entries"));
     assert!(calls_method("temp", "Map.entries"));
 }

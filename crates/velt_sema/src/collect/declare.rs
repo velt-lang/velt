@@ -21,18 +21,45 @@ pub(crate) const DISPOSE: &str = ast::SYMBOL_DISPOSE;
 pub(crate) const ASYNC_DISPOSE: &str = ast::SYMBOL_ASYNC_DISPOSE;
 
 pub(super) fn declare_all(cx: &mut Ctx, items: &mut ItemDefs) {
-    for m in 0..cx.modules.len() {
+    // Generated modules are collected after the program's bodies are checked
+    // (`collect_generated`): their code names the program's types by the instances they were
+    // generated for, which only the checked program can tell.
+    let ms: Vec<usize> = (0..cx.modules.len())
+        .filter(|&m| !cx.is_generated_module(m))
+        .collect();
+    for &m in &ms {
         let module = &cx.modules[m];
         for item in &module.ast.items {
             declare_item(cx, m, item, items);
         }
     }
-    super::nested::declare_nested(cx, items);
+    super::nested::declare_nested(cx, items, &ms);
     for m in 0..cx.modules.len() {
         super::imports::resolve_imports(cx, m);
         super::imports::bind_jsx_runtime(cx, m);
     }
     collect_prelude(cx);
+}
+
+/// Declare the items of generated modules `ms`: functions, constants and type aliases (what a
+/// generator's body and helpers declare); any other item is the generator's error.
+pub(super) fn declare_generated(cx: &mut Ctx, ms: &[usize], items: &mut ItemDefs) {
+    for &m in ms {
+        let module = &cx.modules[m];
+        for item in &module.ast.items {
+            match &item.kind {
+                ast::ItemKind::Function(_) | ast::ItemKind::TypeAlias(_) | ast::ItemKind::Var(_) => {
+                    declare_item(cx, m, item, items)
+                }
+                _ => cx.err(
+                    "generated code declares only functions, constants and type aliases (a bug in the generator)",
+                    item.span,
+                ),
+            }
+        }
+    }
+    super::nested::declare_nested(cx, items, ms);
+    crate::generated::access::inherit_scopes(cx, ms);
 }
 
 pub(super) fn generic_names(gs: &[ast::GenericParam]) -> Generics {
@@ -77,6 +104,7 @@ pub(crate) fn fn_placeholder<'m>(
         owner: None,
         is_async: false,
         system: None,
+        intrinsic: None,
         is_generator: false,
         is_async_gen: false,
         soft_moves: vec![],
@@ -160,7 +188,7 @@ pub(super) fn new_def<'m>(
                     s.name.span,
                 );
             }
-            let info = fn_placeholder(
+            let mut info = fn_placeholder(
                 s.name.name.clone(),
                 s.name.span,
                 s.span,
@@ -168,6 +196,9 @@ pub(super) fn new_def<'m>(
                 FnKind::Extern,
                 None,
             );
+            if s.is_intrinsic {
+                info.intrinsic = Some(crate::intrinsic_decls::declare(cx, m, s));
+            }
             (&s.name, DefInfo::Fn(Box::new(info)))
         }
         ast::ItemKind::Struct(t) => (&t.name, adt_info(m, t, AdtKind::Struct, q)),
@@ -322,7 +353,11 @@ fn iface_info(m: usize, d: &ast::InterfaceDecl, qual: String) -> DefInfo<'_> {
 
 fn collect_prelude(cx: &mut Ctx) {
     for m in 0..cx.modules.len() {
-        if !cx.scopes[m].is_std || !cx.modules[m].path.starts_with("std/prelude/") {
+        if !cx.scopes[m].is_std
+            || !cx.modules[m]
+                .path
+                .starts_with(velt_common::std_dir!(prelude))
+        {
             continue;
         }
         // Re-exports included: a global module (`std/prelude/global/`) only re-exports.

@@ -1,0 +1,10 @@
+// velt/process/child (internal): `ExecOptions`, the options of `exec` and `execShell`.
+
+/** Options of `exec`/`execSync`. */
+export struct ExecOptions {
+  cwd?: string;
+  env?: Map<string, string>;
+  clearEnv?: bool;
+  /** Written to the program's stdin, which is then closed (default: empty stdin). */
+  input?: string;
+}

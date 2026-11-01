@@ -184,6 +184,14 @@ impl Ctx<'_> {
             {
                 sa.iter().zip(&pa).all(|(x, y)| self.relate(*x, *y, slots))
             }
+            // A subclass is its base class (`T extends Base` takes a `Sub`, `E extends Error`
+            // a `class NotFound extends Error`).
+            (TyKind::Adt(sd, _), TyKind::Adt(pd, _)) if self.class_extends(sd, pd) => {
+                match self.base_of(s) {
+                    Some(b) => self.relate(b, p, slots),
+                    None => false,
+                }
+            }
             _ => false,
         }
     }

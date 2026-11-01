@@ -1,0 +1,244 @@
+// Requests and responses over velt/net/http's HTTP/2 server, seen as frames: heads, bodies both
+// ways, streamed responses, HEAD, trailers, 100-continue and the request API.
+import { afterAll, beforeAll, describe, expect, it } from "velt/test";
+import { HttpRequest } from "../../src/request";
+import { HttpResponse } from "../../src/response";
+import { bytes, Client, endOf, startServer, TestServer } from "./_h2";
+
+async function handler(req: HttpRequest, res: HttpResponse) {
+  if (req.pathIs("/echo")) {
+    const body = await req.bodyText();
+    res.header("X-Length", `${body.length}`);
+    res.send(`echo:${body}`);
+  } else if (req.pathIs("/info")) {
+    const hs = req.headers().map((h) => `${h[0]}=${h[1]}`).join(",");
+    res.json(
+      `${req.method()} ${req.path()} ${req.query()} ${req.target()} ${req.header("Host")} ${hs}`,
+    );
+  } else if (req.pathIs("/cookie")) {
+    // The entries first (a `Headers` built from them is what `Request.headers` reads).
+    const entries = req
+      .headers()
+      .filter((h) => h[0] == "cookie" || h[0] == "x-two")
+      .map((h) => `${h[0]}=${h[1]}`)
+      .join(",");
+    res.send(`${entries}|${req.headerValues("cookie")}|${req.headerValues("x-two")}`);
+  } else if (req.pathIs("/stream")) {
+    const out = await res.stream();
+    await out.write("a");
+    await out.write(bytes("bc"));
+    await out.end();
+  } else if (req.pathIs("/trailers")) {
+    res.addTrailers([["Grpc-Status", "0"]]);
+    res.send("x");
+  } else if (req.pathIs("/stream-trailers")) {
+    const out = await res.stream();
+    await out.write("a");
+    res.addTrailers([["x-sum", "97"]]);
+    await out.end();
+  } else if (req.pathIs("/server")) {
+    res.header("Server", "mine");
+    res.send("s");
+  } else if (req.pathIs("/none")) {
+    res.status(204);
+    res.send("ignored");
+  } else if (req.pathIs("/throw")) {
+    throw new Error("boom (expected in this test)");
+  } else if (req.pathIs("/silent")) {
+    // Nothing: an empty 200.
+  } else {
+    res.header("Content-Type", "text/x-test");
+    res.header("Connection", "close");
+    res.send("hello");
+  }
+}
+
+describe("HTTP/2 exchanges", () => {
+  let server: TestServer | null = null;
+  let port = 0;
+  beforeAll(async () => {
+    const s = await startServer(handler);
+    port = s.port;
+    server = s;
+  });
+  afterAll(() => {
+    server!.close();
+  });
+
+  it("answers a GET with HEADERS and DATA", async () => {
+    const c = await Client.open(port);
+    c.get(1, "/");
+    await c.flush();
+    let head = "";
+    const frames = await c.until((f) => {
+      if (f.type == 1) {
+        head = c.fields(f);
+      }
+      return f.type == 0 && (f.flags & 1) == 1;
+    });
+    expect(frames).toBe("HEADERS 1 :status=200\nDATA 1 es 5:hello");
+    expect(head.replace(/date: [^\n]*/, "date: D")).toBe(
+      ":status: 200\nserver: Velt\ndate: D\ncontent-length: 5\ncontent-type: text/x-test",
+    );
+    c.close();
+  });
+
+  it("sends the handler's own server field instead of its own", async () => {
+    const c = await Client.open(port);
+    c.get(1, "/server");
+    await c.flush();
+    let head = "";
+    await c.until((f) => {
+      if (f.type == 1) {
+        head = c.fields(f);
+      }
+      return f.type == 0 && (f.flags & 1) == 1;
+    });
+    expect(head.replace(/date: [^\n]*/, "date: D")).toBe(
+      ":status: 200\ndate: D\ncontent-type: text/plain; charset=utf-8\ncontent-length: 1\nserver: mine",
+    );
+    c.close();
+  });
+
+  it("reads a request body sent in several DATA frames", async () => {
+    const c = await Client.open(port);
+    c.headers(
+      1,
+      [":method", "POST", ":scheme", "http", ":path", "/echo", ":authority", "x"],
+      false,
+    );
+    c.frame(0, 0, 1, bytes("hel"));
+    c.frame(0, 1, 1, bytes("lo"));
+    await c.flush();
+    expect(await c.until(endOf(1))).toBe("HEADERS 1 :status=200\nDATA 1 es 10:echo:hello");
+    c.close();
+  });
+
+  it("serves streams at once, several on one connection", async () => {
+    const c = await Client.open(port);
+    c.get(1, "/stream");
+    c.get(3, "/");
+    c.get(5, "/none");
+    await c.flush();
+    const out = await c.until((f) => f.id == 1 && (f.flags & 1) == 1 && f.type == 0);
+    expect(out.includes("HEADERS 3 :status=200")).toBe(true);
+    expect(out.includes("HEADERS 5 es :status=204")).toBe(true);
+    expect(out.includes("DATA 1 1:a")).toBe(true);
+    expect(out.includes("DATA 1 2:bc")).toBe(true);
+    c.close();
+  });
+
+  it("gives the request's pseudo-headers and headers to the handler", async () => {
+    const c = await Client.open(port);
+    c.headers(
+      1,
+      [
+        ":method",
+        "GET",
+        ":scheme",
+        "https",
+        ":path",
+        "/info?a=1",
+        ":authority",
+        "ex.com",
+        "x-one",
+        "1",
+      ],
+      true,
+    );
+    await c.flush();
+    expect(await c.until(endOf(1))).toBe(
+      "HEADERS 1 :status=200\nDATA 1 es 50:GET /info a=1 /info?a=1 ex.com x-one=1,host=ex.com",
+    );
+    c.close();
+  });
+
+  it("joins split cookie fields with \"; \" and other repeated fields with \", \"", async () => {
+    // RFC 9113 §8.2.3: a client may send each cookie as a field of its own.
+    const c = await Client.open(port);
+    c.get(1, "/cookie", ["cookie", "a=1", "x-two", "p", "cookie", "b=2", "x-two", "q"]);
+    await c.flush();
+    expect(await c.until(endOf(1))).toBe(
+      "HEADERS 1 :status=200\nDATA 1 es 45:cookie=a=1; b=2,x-two=p,x-two=q|a=1; b=2|p, q",
+    );
+    c.close();
+  });
+
+  it(
+    "answers HEAD and 204 without a body, and a handler that sends nothing with an empty 200",
+    async () => {
+      const c = await Client.open(port);
+      c.headers(1, [":method", "HEAD", ":scheme", "http", ":path", "/", ":authority", "x"], true);
+      c.get(3, "/silent");
+      await c.flush();
+      const out = await c.until(endOf(3));
+      expect(out).toBe("HEADERS 1 es :status=200\nHEADERS 3 es :status=200");
+      c.close();
+    },
+  );
+
+  it("answers a handler that throws with 500", async () => {
+    const c = await Client.open(port);
+    c.get(1, "/throw");
+    await c.flush();
+    expect(await c.until(endOf(1))).toBe(
+      "HEADERS 1 :status=500\nDATA 1 es 21:Internal Server Error",
+    );
+    c.close();
+  });
+
+  it("sends trailers after a body, whole or streamed", async () => {
+    const c = await Client.open(port);
+    c.get(1, "/trailers");
+    await c.flush();
+    expect(await c.until(endOf(1))).toBe(
+      "HEADERS 1 :status=200\nDATA 1 1:x\nHEADERS 1 es grpc-status=0",
+    );
+    c.get(3, "/stream-trailers");
+    await c.flush();
+    expect(await c.until(endOf(3))).toBe(
+      "HEADERS 3 :status=200\nDATA 3 1:a\nHEADERS 3 es x-sum=97",
+    );
+    c.close();
+  });
+
+  it("takes trailers at the end of a request body", async () => {
+    const c = await Client.open(port);
+    c.headers(
+      1,
+      [":method", "POST", ":scheme", "http", ":path", "/echo", ":authority", "x"],
+      false,
+    );
+    c.frame(0, 0, 1, bytes("ab"));
+    c.headers(1, ["x-checksum", "1"], true);
+    await c.flush();
+    expect(await c.until(endOf(1))).toBe("HEADERS 1 :status=200\nDATA 1 es 7:echo:ab");
+    c.close();
+  });
+
+  it("sends 100 Continue when the handler waits for a body the client holds back", async () => {
+    const c = await Client.open(port);
+    c.headers(
+      1,
+      [
+        ":method",
+        "POST",
+        ":scheme",
+        "http",
+        ":path",
+        "/echo",
+        ":authority",
+        "x",
+        "expect",
+        "100-continue",
+      ],
+      false,
+    );
+    await c.flush();
+    expect(await c.until((f) => f.type == 1)).toBe("HEADERS 1 :status=100");
+    c.frame(0, 1, 1, bytes("go"));
+    await c.flush();
+    expect(await c.until(endOf(1))).toBe("HEADERS 1 :status=200\nDATA 1 es 7:echo:go");
+    c.close();
+  });
+});

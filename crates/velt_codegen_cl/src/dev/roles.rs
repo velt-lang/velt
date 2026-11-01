@@ -1,8 +1,8 @@
 //! What a function key (its symbol) says about how `velt dev` may swap the function.
 //!
 //! - **Pinned** functions run state machines whose layout belongs to one version: async
-//!   `$poll`/`$drop` (and the value wrappers' `$value_poll`/`$value_drop`), an HTTP handler's
-//!   `$init`, and the `Promise.all`/`allSettled` wrappers (`_Gall_…`). They never go through
+//!   `$poll`/`$drop` (and the value wrappers' `$value_poll`/`$value_drop`) and the
+//!   `Promise.all`/`allSettled` wrappers (`_Gall_…`). They never go through
 //!   trampolines: a future keeps the `poll`/`drop` of the version that created it (its `VeltFut`
 //!   header), and code embedding a child's state calls the child's code of its own version.
 //! - Everything else is an **entry point**: every call and address goes through its trampoline,
@@ -10,7 +10,7 @@
 //! - Repeated symbols get a `$dup<n>` suffix in lowering; such keys are **ambiguous**.
 
 /// Suffixes of pinned state-machine functions.
-const PINNED_SUFFIXES: [&str; 5] = ["$poll", "$drop", "$init", "$value_poll", "$value_drop"];
+const PINNED_SUFFIXES: [&str; 4] = ["$poll", "$drop", "$value_poll", "$value_drop"];
 /// Prefixes of pinned glue.
 const PINNED_PREFIXES: [&str; 4] = [
     "_Gall_poll_",
@@ -31,11 +31,6 @@ pub(crate) fn is_pinned(symbol: &str) -> bool {
 /// Is the key ambiguous (a repeated symbol renamed with `$dup<n>`)?
 pub(crate) fn is_ambiguous(symbol: &str) -> bool {
     symbol.contains(DUPLICATE)
-}
-
-/// Is this the handler-state initializer of an HTTP handler (`<closure>$init`)?
-pub(crate) fn is_handler_init(symbol: &str) -> bool {
-    symbol.ends_with("$init")
 }
 
 /// The closure a closure function belongs to: (enclosing function's name, closure number), from
@@ -63,7 +58,6 @@ mod tests {
     #[test]
     fn roles_from_symbols() {
         assert!(is_pinned("_V4main$poll"));
-        assert!(is_pinned("_V4mainN17_7bclosure_230_7d$init"));
         assert!(is_pinned("_Gall_poll_3i64"));
         assert!(is_pinned("_V1f$drop$dup2"));
         assert!(!is_pinned("_V4main"));

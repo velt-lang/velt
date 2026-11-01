@@ -1,0 +1,4 @@
+Inner { id: 3, label: 'in' } id=3 label=in
+{ name: 'ann', age: 4 }
+{ a: 1, b: 'two', c: true }
+{ tag: 't', n: 5 } { tag: 1.5, n: 6 }

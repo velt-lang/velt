@@ -1,6 +1,6 @@
 // Literal-pattern replace/test/split calls through the RegExp API in a loop: the paths a string
 // method with a regex takes (`bench/regex/run.sh`).
-import { RegExp } from "velt:regex";
+import { RegExp } from "velt/text";
 
 function main() {
   const line = "alpha,beta, gamma ,delta;epsilon-zeta eta,theta";

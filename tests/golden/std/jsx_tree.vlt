@@ -3,7 +3,7 @@
 // components render the same as the generic lowering, through `renderToString` and
 // `renderToStringSync`. Text escapes quotes in both lowerings (`it&#39;s &quot;quoted&quot;`).
 
-import { renderToString, renderToStringSync } from "velt:jsx";
+import { renderToString, renderToStringSync } from "velt/jsx";
 import * as precompiled from "./_jsx_tree_page";
 import * as generic from "./_jsx_tree_page_generic";
 

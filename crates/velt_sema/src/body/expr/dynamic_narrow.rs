@@ -61,7 +61,12 @@ impl FnCx<'_, '_> {
         let b = self.cx.ty.bool_;
         if self.uses_proxy() && !self.cx.scopes[self.module].is_std {
             // A proxy of an array is one too.
-            return Some(self.prelude_hir_call("__anyIsArrayProxy", vec![x], b, span));
+            return Some(self.prelude_hir_call(
+                velt_common::std_hook!(any_is_array_proxy),
+                vec![x],
+                b,
+                span,
+            ));
         }
         Some(self.intrinsic(Intrinsic::AnyIsArray, vec![x], b, span))
     }

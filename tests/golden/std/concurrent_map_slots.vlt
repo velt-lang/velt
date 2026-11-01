@@ -1,7 +1,7 @@
 // A leaf's slots: keys away from their home slot (two keys of one leaf share a home), deleted
 // keys whose words stay in their slots, holes filled again, and `add` on every key, in one leaf
 // and after the leaves split.
-import { ConcurrentMap } from "velt:collections/concurrent_map";
+import { ConcurrentMap } from "velt/collections";
 
 function check(m: ConcurrentMap, n: u64, step: u64): u64 {
   let wrong: u64 = 0;

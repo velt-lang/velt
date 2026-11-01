@@ -1,13 +1,13 @@
 //! Builtins: `console.log/info/debug/error/warn`, `process.exit`, `process.memoryUsage`, `panic`, `shared`, `Ok`/`Err`, enum variant
 //! constructors, the builtin array/`clone` methods, the M3 task builtins (`spawn`, `sleep`,
-//! `yieldNow`, `Promise.all/race/allSettled/any`, `performance.now`, `Date.now`; see `tasks.rs`), and
-//! `__intrinsic_*` (std modules only).
+//! `yieldNow`, `Promise.all/race/allSettled/any`, `performance.now`, `Date.now`; see `tasks.rs`).
+//! The intrinsics std declares (std/lang/intrinsics) are called like functions: `intrinsics.rs`.
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use super::args::Callable;
-use super::intrinsics::{intrinsic_named, param};
+use super::intrinsics::param;
 use super::method::BuiltinMethod;
 use crate::body::{FnCx, Want};
 use crate::hir::{self, DefId, ExprKind as H, Intrinsic, PassMode, TyId, TyKind};
@@ -23,9 +23,6 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let name = id.name.as_str();
-        if let Some(rest) = name.strip_prefix("__intrinsic_") {
-            return self.intrinsic_call(id, rest, type_args, args, exp, span);
-        }
         match name {
             super::overload_arg::OVERLOAD_ARG => self.overload_arg(type_args, args, span),
             "panic" => self.simple_intrinsic(Intrinsic::Panic, "`panic`", args, exp, span),
@@ -106,74 +103,6 @@ impl FnCx<'_, '_> {
         self.intrinsic(i, ck.args, ck.ret, span)
     }
 
-    fn intrinsic_call(
-        &mut self,
-        id: &ast::Ident,
-        rest: &str,
-        type_args: &[ast::TypeExpr],
-        args: &[ast::Expr],
-        exp: Option<TyId>,
-        span: Span,
-    ) -> hir::Expr {
-        if !self.cx.scopes[self.module].is_std {
-            self.cx.error(
-                Diagnostic::error(format!("`{}` is a compiler intrinsic", id.name), id.span)
-                    .with_note("intrinsics can only be called from the standard library (`std/`)"),
-            );
-            self.check_args_loose(args);
-            return self.error_expr(span);
-        }
-        if rest == "target" {
-            return self.target_stmt(args, span);
-        }
-        if rest == "any_to_primitive" {
-            return self.primitive_dispatch(args, span);
-        }
-        let Some(i) = intrinsic_named(rest) else {
-            self.cx
-                .err(format!("unknown intrinsic `{}`", id.name), id.span);
-            self.check_args_loose(args);
-            return self.error_expr(span);
-        };
-        match i {
-            Intrinsic::Print | Intrinsic::PrintErr => return self.print(i, args, span),
-            Intrinsic::HttpHandler => return self.http_handler(args, span),
-            _ => {}
-        }
-        let c = self.intrinsic_sig(i, span);
-        let mut slots = vec![None; c.slot_names.len()];
-        if let [t] = type_args {
-            if let Some(s) = slots.first_mut() {
-                *s = Some(self.resolve(t));
-            }
-        }
-        let ck = self.check_call(&c, slots, args, exp, span);
-        if matches!(
-            i,
-            Intrinsic::JsonParse
-                | Intrinsic::JsonParseRows
-                | Intrinsic::JsonParseCursor
-                | Intrinsic::ReadRows
-                | Intrinsic::ReadRow
-        ) {
-            self.json_parse_throws(span);
-        }
-        if matches!(
-            i,
-            Intrinsic::GeneratorResume | Intrinsic::GeneratorResumeWith | Intrinsic::GeneratorThrow
-        ) {
-            // Resuming throws what the generator's body throws (its `E`).
-            if let Some(&e) = ck.type_args.get(1) {
-                self.throw_src(crate::defs::ThrowSrc::Direct(e, span));
-            }
-        }
-        let e = self.intrinsic(i, ck.args, ck.ret, span);
-        if i == Intrinsic::SpawnHandled {
-            self.spawned_promises(&e);
-        }
-        e
-    }
-
     /// `console.log(...)`, `console.error(...)`, `process.exit(code)`, `process.memoryUsage()`,
     /// `Promise.all(ps)` (and `race`, `allSettled`, `any`),
     /// `performance.now()`, `Date.now()`.
@@ -237,7 +166,7 @@ impl FnCx<'_, '_> {
             let h = self.printed_expr(a);
             let h = self.read_shared(h);
             // A `Date` prints as its ISO string, like Node.
-            let h = self.own_to_string(h, "__inspect");
+            let h = self.own_to_string(h, crate::hooks::INSPECT);
             let h = self.narrowed_for_print(h);
             // A literal with accessors prints as Node shows it (`[Getter]`), through `any`.
             let h = self.literal_iface_as_any(h);
@@ -407,8 +336,8 @@ impl FnCx<'_, '_> {
         all.extend(ck.args);
         self.intrinsic(i, all, ck.ret, span)
     }
-    /// `n.toString(radix)` on a number: a call of the prelude's `__f64ToString`, `__i64ToString`
-    /// or `__u64ToString` (by the receiver's type), with the receiver converted to its parameter.
+    /// `n.toString(radix)` on a number: a call of std's hook `f64ToString`, `i64ToString`
+    /// or `u64ToString` (by the receiver's type), with the receiver converted to its parameter.
     fn number_to_string_radix(
         &mut self,
         recv: hir::Expr,
@@ -417,11 +346,13 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let (name, to) = match self.cx.ty.kind(recv.ty) {
-            TyKind::Int(i) if i.is_signed() => ("__i64ToString", self.cx.ty.i64),
-            TyKind::Int(_) => ("__u64ToString", self.cx.ty.u64),
-            _ => ("__f64ToString", self.cx.ty.f64),
+            TyKind::Int(i) if i.is_signed() => {
+                (velt_common::std_hook!(i64_to_string), self.cx.ty.i64)
+            }
+            TyKind::Int(_) => (velt_common::std_hook!(u64_to_string), self.cx.ty.u64),
+            _ => (velt_common::std_hook!(f64_to_string), self.cx.ty.f64),
         };
-        let Some(crate::ctx::Item::Def(d)) = self.cx.prelude.get(name).copied() else {
+        let Some(crate::ctx::Item::Def(d)) = self.cx.std_def(name) else {
             self.cx
                 .err("`toString(radix)` needs the prelude (std/prelude)", span);
             self.check_args_loose(args);

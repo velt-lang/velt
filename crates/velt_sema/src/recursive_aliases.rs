@@ -49,6 +49,7 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> (Option<Vec<SourceModule>>, B
         .map(|(m, new)| SourceModule {
             path: m.path.clone(),
             is_std: m.is_std,
+            is_dependency: m.is_dependency,
             file: m.file,
             ast: ast::Module {
                 items: (m.ast.items.iter().zip(new))

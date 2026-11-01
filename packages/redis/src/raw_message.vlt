@@ -1,0 +1,9 @@
+// `RawMessage`.
+
+// The library's `VeltRedisMessage`: kind 0 = closed, 1 = message, 2 = pattern message.
+export struct RawMessage {
+  kind: u32;
+  channel: string;
+  message: string;
+  pattern: string;
+}

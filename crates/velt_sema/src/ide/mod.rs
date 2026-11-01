@@ -365,6 +365,7 @@ mod tests {
         let m = SourceModule {
             path: "main".into(),
             is_std: false,
+            is_dependency: false,
             file: FileId(0),
             ast,
             imports: vec![],

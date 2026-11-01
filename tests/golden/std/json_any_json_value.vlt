@@ -1,0 +1,12 @@
+// `JSON.stringify` of a `JsonValue` an `any` holds writes its JSON text (through its `toJSON()`
+// hook), at the top, in an array and as a member, with keys in its own order.
+function main() {
+  const v = JsonValue.parse("{\"b\":[1,2,{\"c\":null}],\"1\":\"x\",\"a\":true}");
+  const x: any = v;
+  console.log(JSON.stringify(x));
+  const arr: any[] = [1, x, "s"];
+  console.log(JSON.stringify(arr));
+  const rec: Record<string, any> = { k: x, n: 2 };
+  console.log(JSON.stringify(rec));
+  console.log(v.toJSON() == v.stringify());
+}

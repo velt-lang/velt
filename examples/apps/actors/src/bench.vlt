@@ -1,8 +1,8 @@
 // In-process benchmarks, the Velt side of `pnpm bench:run dispatch activation mem` in
 // @sigx/actors: closed loops of C callers, each issuing its next call as soon as the last one
 // answered, against the `Tiny` actor (no storage on the call path).
-import { Value } from "velt:json";
-import { channel, Channel } from "velt:channel";
+import { Value } from "velt/encoding/json";
+import { channel, Channel } from "velt/sync";
 import { Host, Router } from "./runtime";
 
 struct LoopResult {

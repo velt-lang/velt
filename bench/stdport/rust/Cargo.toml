@@ -8,7 +8,7 @@ publish = false
 [workspace]
 
 # The crates the runtime uses for the same job (crates/velt_rt/Cargo.toml), and `sha2` for what
-# `velt:crypto` does in Velt.
+# `velt/crypto` does in Velt.
 [dependencies]
 base64 = "0.22"
 # `brotli` only writes the inputs of `brotli_decode` (gen_inputs.rs).

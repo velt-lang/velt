@@ -144,7 +144,7 @@ class Pairing(unittest.TestCase):
 
     def test_no_velt_single_threaded_version(self):
         rec = {"name": "/plaintext", "kind": "http",
-               "impls": [impl("Velt velt:http", "velt", threads="mt", best_rps=100.0),
+               "impls": [impl("Velt http-server", "velt", threads="mt", best_rps=100.0),
                          impl("Node node:http (1 process)", "node", threads="st", best_rps=50.0)]}
         out = report.losses(results("http", rec))
         self.assertEqual(out, ["http: /plaintext: req/s [single-threaded]: Node node:http (1 process): "

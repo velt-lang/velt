@@ -1,11 +1,11 @@
 // check: no leaks
-// velt:task: an AbortController stops cooperative work (checked with `throwIfAborted()`, or
+// velt/task: an AbortController stops cooperative work (checked with `throwIfAborted()`, or
 // raced with `whenAborted()`), also in a spawned task sharing the signal; `AbortSignal.timeout`
 // and `AbortSignal.any` (which keeps its sources alive); `throwIfAborted()` throws
 // `TimeoutError` for a timeout; `timeout(p, ms)` rejects with `TimeoutError` while `p` keeps
 // running.
-import { channel, Channel } from "velt:channel";
-import { AbortController, AbortSignal, AbortError, TimeoutError, timeout } from "velt:task";
+import { channel, Channel } from "velt/sync";
+import { AbortController, AbortSignal, AbortError, TimeoutError, timeout } from "velt/task";
 
 async function work(
   name: string,

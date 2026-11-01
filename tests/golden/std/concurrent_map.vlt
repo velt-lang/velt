@@ -1,9 +1,9 @@
 // check: no leaks
-// velt:collections/concurrent_map on one thread: every operation against the built-in `Map`
+// velt/collections on one thread: every operation against the built-in `Map`
 // on a random mix of sets, deletes and lookups that splits leaves and inner nodes many times,
 // plus edge keys and `getManyInto`.
 
-import { ConcurrentMap } from "velt:collections/concurrent_map";
+import { ConcurrentMap } from "velt/collections";
 
 function mix(x: u64): u64 {
   let z = x + 0x9E3779B97F4A7C15;

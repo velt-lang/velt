@@ -1,0 +1,28 @@
+// velt/net (internal): `TcpListener`, a bound listening socket (`listen`, `listenTls`).
+
+import { unwrapIo } from "velt/native/result";
+import { velt_rt_tcp_accept, velt_rt_tcp_listener_close } from "velt/net/rt";
+import { TcpStream } from "velt/net/tcp_stream";
+
+/** A bound listening socket. */
+export struct TcpListener {
+  /** The real bound port (useful after listening on port 0). */
+  port: number;
+  private handle: u64;
+
+  /**
+   * Waits for the next connection (TCP_NODELAY is on). On a `listenTls` listener the TLS
+   * handshake runs with the stream's first read or write, which throws if it fails (10 s limit).
+   */
+  async accept(): Promise<TcpStream> {
+    return TcpStream { handle: unwrapIo(await velt_rt_tcp_accept(this.handle)) };
+  }
+
+  /**
+   * Releases the handle: later `accept`s through any copy throw `IoError` `EBADF`, and closing
+   * again does nothing. An `accept` already waiting keeps the socket open until it completes.
+   */
+  close() {
+    velt_rt_tcp_listener_close(this.handle);
+  }
+}

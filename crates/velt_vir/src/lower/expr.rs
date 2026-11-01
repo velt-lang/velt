@@ -447,7 +447,7 @@ impl FnLower<'_, '_> {
     }
 
     fn logical(&mut self, op: hir::LogicOp, lhs: &hir::Expr, rhs: &hir::Expr) -> Operand {
-        // A constant operand (`__intrinsic_holds_null`) decides here: no blocks, and the operand
+        // A constant operand (`holdsNull`) decides here: no blocks, and the operand
         // it skips is not lowered (std/prelude/map.vlt keeps one shape of code per `V`).
         let and = op == hir::LogicOp::And;
         match (self.const_cond(lhs), self.const_cond(rhs)) {
@@ -476,7 +476,7 @@ impl FnLower<'_, '_> {
     }
 
     /// The value of a condition known per instantiation without running it: built from
-    /// `__intrinsic_holds_null` with `!`, `&&` and `||` (std/prelude/map.vlt). Other constant
+    /// `holdsNull` with `!`, `&&` and `||` (std/prelude/map.vlt). Other constant
     /// conditions are left to velt_opt, so their code keeps its shape.
     pub(super) fn const_cond(&mut self, e: &hir::Expr) -> Option<bool> {
         match &e.kind {

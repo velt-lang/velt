@@ -1,0 +1,17 @@
+// velt/path: POSIX path manipulation (Node's `path.posix`), pure string code.
+//
+// The separator is always "/", on every platform (the runtime's file APIs accept "/" on Windows
+// too); a backslash is an ordinary character. Results match Node; like every string method,
+// offsets count UTF-16 code units.
+// docs/std/path.md.
+
+export {
+  basename,
+  dirname,
+  extname,
+  isAbsolute,
+  join,
+  joinAll,
+  normalize,
+  sep,
+} from "velt/path/posix";

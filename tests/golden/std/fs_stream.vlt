@@ -1,7 +1,7 @@
-import { openRead, openWrite } from "velt:fs_stream";
-import { readFile, remove } from "velt:fs";
-import { tmpdir } from "velt:os";
-import { uuidv4 } from "velt:uuid";
+import { openRead, openWrite } from "velt/fs";
+import { readFile, remove } from "velt/fs";
+import { tmpdir } from "velt/os";
+import { uuidv4 } from "velt/random/uuid";
 
 async function main() {
   const path = `${tmpdir()}/velt-fs-stream-${uuidv4()}.txt`;

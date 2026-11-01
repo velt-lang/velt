@@ -1,0 +1,407 @@
+// velt/encoding/json (internal): parsing a document into a tape (tape.vlt): one pass over the text,
+// the containers closed as they end, an object's members ordered and indexed, and the error a
+// document too deep or not JSON gives.
+
+import { blankComments, detailText } from "velt/encoding/json/scan_escape";
+import {
+  EXPECTED_COLON,
+  EXPECTED_COMMA_BRACE,
+  EXPECTED_COMMA_BRACKET,
+  EXPECTED_KEY,
+  OK,
+  Scanner,
+  TOO_DEEP,
+  TRAILING,
+  UNEXPECTED_CHAR,
+} from "velt/encoding/json/scan";
+import { utf8Substring } from "velt/encoding";
+import { FLAG_COMMENTS, FLAG_TRAILING_COMMAS } from "velt/encoding/json/reader";
+import { shortPath } from "velt/encoding/json/reader_ops";
+import { strByteAt, strByteLen } from "velt/lang/intrinsics";
+import {
+  ESCAPED,
+  ESCAPED_KEY,
+  INDEX_THRESHOLD,
+  ORDERED,
+  REPEATED,
+  T_ARRAY,
+  T_FALSE,
+  T_NULL,
+  T_NUMBER,
+  T_OBJECT,
+  T_STRING,
+  T_TRUE,
+  Tape,
+} from "velt/encoding/json/tape";
+import { TapeError } from "velt/encoding/json/tape_error";
+
+declare function velt_rt_json_node_syntax(src: string, out: string): bool;
+
+/**
+ * Parses `src` (one JSON value, whitespace around it) into a tape, nesting at most `maxDepth`
+ * arrays and objects (0: no limit); `jsonc` has the reader's `FLAG_COMMENTS` (16) and
+ * `FLAG_TRAILING_COMMAS` (32). Messages as the runtime's parser gives them: Node's for text
+ * that is not JSON, `JSON nested deeper than N levels at <path> (byte k)` past the limit.
+ */
+export function parseTape(src: string, maxDepth: u32, jsonc: u32 = 0): Tape | TapeError {
+  const comments = (jsonc & FLAG_COMMENTS) != 0;
+  const sc = new Scanner(comments ? blankComments(src) : src);
+  sc.comments = comments;
+  sc.trailingCommas = (jsonc & FLAG_TRAILING_COMMAS) != 0;
+  return parseWith(sc, maxDepth, true);
+}
+
+/**
+ * Parses one value at `sc`'s position into a new tape over `sc.src` (for a reader,
+ * `JsonValue[JSON_FROM_READER]`: the value a decoder reads into a `JsonValue` field). With `whole`,
+ * only whitespace may follow.
+ */
+export function parseWith(sc: Scanner, maxDepth: u32, whole: boolean): Tape | TapeError {
+  const t = new Tape(sc.src);
+  const limit: usize = maxDepth == 0 ? ~(0 as usize) : maxDepth as usize;
+  // Open containers (their tape positions) and the members read so far, all open containers'
+  // in one stack: a container's own start in it is `from`.
+  const open: u32[] = [];
+  const from: usize[] = [];
+  const pending: u32[] = [];
+  let ok = true;
+  // Whether a failure is at a value (its path names the value), not between members.
+  let atValue = false;
+  while (true) {
+    // At a value position.
+    const c = sc.peekNonWs();
+    const v = (t.words.length / 2) as u32;
+    if (c == 123 || c == 91) {
+      if (open.length >= limit) {
+        return tooDeep(sc, t, open, from, pending, maxDepth);
+      }
+      sc.pos++;
+      t.words.push(c == 123 ? T_OBJECT : T_ARRAY);
+      t.words.push(0);
+      // An array lists its elements; an object its keys (each value follows its key).
+      if (open.length > 0 && t.kind(open[open.length - 1]) == T_ARRAY) {
+        pending.push(v);
+      }
+      open.push(v);
+      from.push(pending.length);
+      const close = c == 123 ? 125 : 93;
+      if (sc.peekNonWs() == close) {
+        sc.pos++;
+        closeContainer(t, open, from, pending);
+      } else {
+        if (c == 123 && !key(sc, t, v, pending)) {
+          ok = false;
+          break;
+        }
+        continue;
+      }
+    } else {
+      if (!scalar(sc, t, c)) {
+        ok = false;
+        atValue = true;
+        break;
+      }
+      if (open.length > 0 && t.kind(open[open.length - 1]) == T_ARRAY) {
+        pending.push(v);
+      }
+    }
+    // A value is complete: close containers until one expects another member.
+    let more = false;
+    while (open.length > 0) {
+      const top = open[open.length - 1];
+      const object = t.kind(top) == T_OBJECT;
+      const b = sc.peekNonWs();
+      if (b == 44) {
+        sc.pos++;
+        if (sc.trailingCommas && sc.peekNonWs() == (object ? 125 : 93)) {
+          // JSONC: the comma before the closing bracket; it closes below.
+          continue;
+        }
+        if (object && !key(sc, t, top, pending)) {
+          ok = false;
+        }
+        more = true;
+        break;
+      }
+      if (b == (object ? 125 : 93)) {
+        sc.pos++;
+        closeContainer(t, open, from, pending);
+        continue;
+      }
+      sc.fail(object ? EXPECTED_COMMA_BRACE : EXPECTED_COMMA_BRACKET);
+      ok = false;
+      break;
+    }
+    if (!ok) {
+      break;
+    }
+    if (!more) {
+      break;
+    }
+  }
+  if (ok && whole && sc.peekNonWs() >= 0) {
+    ok = false;
+  }
+  if (!ok) {
+    let node = "";
+    if (!sc.comments && !sc.trailingCommas && velt_rt_json_node_syntax(sc.src, node)) {
+      return new TapeError(node);
+    }
+    if (sc.code == OK) {
+      sc.fail(TRAILING);
+    }
+    let detail = sc.what;
+    if (sc.code == UNEXPECTED_CHAR && sc.at < sc.len) {
+      // The character, as the reader names it.
+      let end = sc.at + 1;
+      while (end < sc.len && (strByteAt(sc.src, end as u64) & 0xc0) == 0x80) {
+        end++;
+      }
+      detail = `${detailText(UNEXPECTED_CHAR)} '${utf8Substring(sc.src, sc.at, end)}'`;
+    }
+    const where = shortPath(pathOf(t, open, from, pending, atValue));
+    return new TapeError(`invalid JSON at ${where}: ${detail} (byte ${sc.at})`);
+  }
+  return t;
+}
+
+// `"key" :` inside object `obj`: the key's string goes on the tape (its value follows it).
+function key(sc: Scanner, t: Tape, obj: u32, pending: u32[]): bool {
+  if (sc.peekNonWs() != 34) {
+    return sc.fail(EXPECTED_KEY);
+  }
+  const k = (t.words.length / 2) as u32;
+  if (!str(sc, t)) {
+    return false;
+  }
+  if (sc.escaped) {
+    t.words[2 * (obj as usize)] = t.words[2 * (obj as usize)] | ESCAPED_KEY;
+  }
+  pending.push(k);
+  if (sc.peekNonWs() != 58) {
+    return sc.fail(EXPECTED_COLON);
+  }
+  sc.pos++;
+  return true;
+}
+
+// A string at the scanner (its opening quote) onto the tape.
+function str(sc: Scanner, t: Tape): bool {
+  if (!sc.string(true)) {
+    return false;
+  }
+  const units = (sc.units as u64) << 32;
+  if (sc.escaped) {
+    t.words.push(T_STRING | ESCAPED | units);
+    t.words.push(t.decoded.length as u64);
+    t.decoded.push(sc.decoded);
+  } else {
+    t.words.push(T_STRING | units);
+    t.words.push((sc.start as u64) | ((sc.end as u64) << 32));
+  }
+  return true;
+}
+
+// One scalar whose first byte is `c` onto the tape.
+function scalar(sc: Scanner, t: Tape, c: i32): bool {
+  if (c == 34) {
+    return str(sc, t);
+  }
+  if (c == 116 || c == 102 || c == 110) {
+    const word = c == 116 ? "true" : c == 102 ? "false" : "null";
+    if (!sc.literal(word)) {
+      return false;
+    }
+    t.words.push(c == 116 ? T_TRUE : c == 102 ? T_FALSE : T_NULL);
+    t.words.push(0);
+    return true;
+  }
+  if (c == 45 || (c >= 48 && c <= 57)) {
+    if (!sc.number()) {
+      return false;
+    }
+    t.words.push(T_NUMBER);
+    t.words.push(sc.numberValue().toBits());
+    return true;
+  }
+  return sc.unexpected();
+}
+
+// The innermost open container is complete: its members move from `pending` to `kids`.
+function closeContainer(t: Tape, open: u32[], from: usize[], pending: u32[]) {
+  const v = open.pop()!;
+  const start = from.pop()!;
+  const n = pending.length - start;
+  const at = t.kids.length;
+  for (let i = start; i < pending.length; i++) {
+    t.kids.push(pending[i]);
+  }
+  pending.length = start as number;
+  // The container itself stays a member of its parent (pushed when it opened).
+  t.words[2 * (v as usize)] = t.words[2 * (v as usize)] | ((n as u64) << 32);
+  t.words[2 * (v as usize) + 1] = at as u64;
+  if (t.kind(v) == T_OBJECT && n > 1) {
+    orderMembers(t, v, at, n);
+  }
+}
+
+// An object's members in JSON order when its keys are not that already: array-index keys first
+// (ascending), then the others as written; a repeated key at its first place, holding the
+// position of its last occurrence (whose value counts, at `key + 1`).
+function orderMembers(t: Tape, v: u32, at: usize, n: usize) {
+  // Checked in place: only an object with a key that may be an index, or a repeated key, gets a
+  // member list.
+  let index = false;
+  for (let i: usize = 0; i < n; i++) {
+    if (t.digitFirst(t.kids[at + i]) && indexKey(t, t.kids[at + i]) >= 0) {
+      index = true;
+      break;
+    }
+  }
+  if (n <= INDEX_THRESHOLD) {
+    let repeated = false;
+    for (let i: usize = 1; i < n && !repeated; i++) {
+      for (let j: usize = 0; j < i; j++) {
+        if (t.sameKey(t.kids[at + i], t.kids[at + j])) {
+          repeated = true;
+          break;
+        }
+      }
+    }
+    if (index || repeated) {
+      setMembers(t, v, distinctKeys(t, at, n), index, repeated);
+    }
+    return;
+  }
+  // Over `INDEX_THRESHOLD` keys: each key's place in `firsts` (the distinct keys, each at its
+  // first place holding its last occurrence).
+  const firsts: u32[] = [];
+  const places = new Map<string, usize>();
+  let repeated = false;
+  for (let i: usize = 0; i < n; i++) {
+    const k = t.kids[at + i];
+    const s = t.text(k);
+    const j = places.get(s);
+    if (j == undefined) {
+      places.set(s, firsts.length);
+      firsts.push(k);
+    } else {
+      firsts[j] = k;
+      repeated = true;
+    }
+  }
+  if (index || repeated) {
+    setMembers(t, v, firsts, index, repeated);
+  }
+}
+
+// The distinct keys of a small object, each at its first place holding its last occurrence.
+function distinctKeys(t: Tape, at: usize, n: usize): u32[] {
+  const firsts: u32[] = [];
+  for (let i: usize = 0; i < n; i++) {
+    const k = t.kids[at + i];
+    let seen = false;
+    for (let j: usize = 0; j < firsts.length; j++) {
+      if (t.sameKey(firsts[j], k)) {
+        firsts[j] = k;
+        seen = true;
+        break;
+      }
+    }
+    if (!seen) {
+      firsts.push(k);
+    }
+  }
+  return firsts;
+}
+
+// Object `v`'s member list from its distinct keys `firsts` (in order of first occurrence):
+// array-index keys moved to the front, ascending, when `index`.
+function setMembers(t: Tape, v: u32, firsts: u32[], index: bool, repeated: bool) {
+  const flags = repeated ? REPEATED | ORDERED : ORDERED;
+  t.words[2 * (v as usize)] = t.words[2 * (v as usize)] | flags;
+  if (!index) {
+    t.ordered.set(v, firsts);
+    return;
+  }
+  // Index keys sorted by value (each with its key position below), then the others.
+  const idx: u64[] = [];
+  const out: u32[] = [];
+  for (const k of firsts) {
+    const x = indexKey(t, k);
+    if (x >= 0) {
+      idx.push(((x as u64) << 32) | (k as u64));
+    }
+  }
+  idx.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  for (const e of idx) {
+    out.push((e & 0xffffffff) as u32);
+  }
+  for (const k of firsts) {
+    if (indexKey(t, k) < 0) {
+      out.push(k);
+    }
+  }
+  t.ordered.set(v, out);
+}
+
+// Key `k`'s value as an array index (`"0"`, `"17"`, below 2^32 - 1, no leading zero), or -1. Read
+// in place (an escaped key from its decoded text).
+function indexKey(t: Tape, k: u32): i64 {
+  const w = t.words[2 * (k as usize)];
+  const p = t.words[2 * (k as usize) + 1];
+  const escaped = (w & ESCAPED) != 0;
+  const s = escaped ? t.decoded[p as usize] : t.src;
+  const start = escaped ? 0 : (p & 0xffffffff) as usize;
+  const end = escaped ? strByteLen(s) : (p >> 32) as usize;
+  const n = end - start;
+  if (n == 0 || n > 10) {
+    return -1;
+  }
+  let v: i64 = 0;
+  for (let i: usize = 0; i < n; i++) {
+    const d = (strByteAt(s, (start + i) as u64) as i64) - 48;
+    if (d < 0 || d > 9 || (i == 0 && d == 0 && n > 1)) {
+      return -1;
+    }
+    v = v * 10 + d;
+  }
+  return v < 4294967295 ? v : -1;
+}
+
+// Nesting past the limit: the message names where, from the open containers: an array's
+// element being read (the containers it holds are listed when they open, the value that is too
+// deep is not), an object's last key.
+function tooDeep(
+  sc: Scanner,
+  t: Tape,
+  open: u32[],
+  from: usize[],
+  pending: u32[],
+  maxDepth: u32,
+): TapeError {
+  // For a reader (`JsonValue[JSON_FROM_READER]`), whose message names the place itself.
+  sc.fail(TOO_DEEP);
+  const path = pathOf(t, open, from, pending, true);
+  return new TapeError(
+    `JSON nested deeper than ${maxDepth} levels at ${shortPath(path)} (byte ${sc.pos})`,
+  );
+}
+
+// The path of the place being read, from the open containers, as the typed reader names it: with
+// `atValue`, the value being read (an array's element, an object's last key); otherwise the
+// innermost container (a failure between its members or at a key).
+function pathOf(t: Tape, open: u32[], from: usize[], pending: u32[], atValue: bool): string {
+  let path = "$";
+  const levels = atValue ? open.length : open.length > 0 ? open.length - 1 : 0;
+  for (let i = 0; i < levels; i++) {
+    const inner = i + 1 == open.length;
+    const end = inner ? pending.length : from[i + 1];
+    if (t.kind(open[i]) == T_ARRAY) {
+      path += `[${inner ? end - from[i] : end - from[i] - 1}]`;
+    } else {
+      path += `.${t.text(pending[end - 1])}`;
+    }
+  }
+  return path;
+}

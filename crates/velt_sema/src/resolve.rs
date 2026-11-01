@@ -288,6 +288,15 @@ impl Ctx<'_> {
         if name == "this" {
             return self.resolve_this_type(t, args, env);
         }
+        if name == crate::generated::QUALIFIED && self.in_generated_file(t.span) {
+            return self.resolve_qualified(t, args, env);
+        }
+        if name == crate::generated::handles::TYPE && self.in_generated_file(t.span) {
+            return self.resolve_handle(t, args);
+        }
+        if name == crate::generated::UNION && self.in_generated_file(t.span) {
+            return self.resolve_generated_union(t, args, env);
+        }
         if let Some(i) = env.params.iter().rposition(|p| p == name) {
             if !args.is_empty() {
                 self.err(
@@ -298,7 +307,7 @@ impl Ctx<'_> {
             return self.ty.param(i as u32);
         }
         // The SIMD type names (`u8x16`) are built in only for std: other modules import them
-        // from `velt:simd` (#1055), whose `export type u8x16 = u8x16` names the built-in type.
+        // from `velt/simd` (#1055), whose `export type u8x16 = u8x16` names the built-in type.
         let simd_outside_std =
             crate::hir::SimdTy::named(name).is_some() && !self.scopes[env.module].is_std;
         // Velt's own type names (`u8`, `f32`, `bool`, …) are like library globals: a type the

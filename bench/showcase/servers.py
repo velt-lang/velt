@@ -207,10 +207,9 @@ def http_servers(ctx, server_cpus):
     te = os.path.join(ctx.bench, "http", "techempower")
     out = os.path.join(ctx.out, "http")
     os.makedirs(out, exist_ok=True)
-    # The Velt server is velt:http/server, written in Velt on std/net (velt/techempower_server.vlt:
-    # the routes of techempower/server.vlt, which is on velt:http, hyper in the runtime).
+    # The Velt server is techempower/server.vlt on the http-server package, written in Velt on std/net.
     velt = os.path.join(out, "server-velt")
-    verr = velt_build(ctx, os.path.join(ctx.here, "velt", "techempower_server.vlt"), velt)
+    verr = velt_build(ctx, os.path.join(te, "server.vlt"), velt)
     axum_t = os.path.join(out, "axum-target")
     aerr = cargo(ctx, "techempower axum", os.path.join(te, "axum"), axum_t)
     n = count_cpus(server_cpus)
@@ -221,8 +220,8 @@ def http_servers(ctx, server_cpus):
     bun_ts = os.path.join(ctx.here, "bun", "techempower.ts")
     return [
         # (label, lang, [cmd per process] given the port, env, error, threads: suites.ST or MT)
-        ("Velt velt:http/server (written in Velt)", "velt", lambda p: [[velt, str(p)]], {"VELT_THREADS": str(n)}, verr, MT),
-        ("Velt velt:http/server (written in Velt, 1 thread)", "velt", lambda p: [[velt, str(p)]], {"VELT_THREADS": "1"}, verr, ST),
+        ("Velt http-server (written in Velt)", "velt", lambda p: [[velt, str(p)]], {"VELT_THREADS": str(n)}, verr, MT),
+        ("Velt http-server (written in Velt, 1 thread)", "velt", lambda p: [[velt, str(p)]], {"VELT_THREADS": "1"}, verr, ST),
         ("Rust axum", "rust", lambda p: [[os.path.join(axum_t, "release", "techempower-axum"), str(p)]], {}, aerr, MT),
         ("Node node:http (1 process)", "node", lambda p: [[node, os.path.join(te, "server.mjs"), str(p)]], {}, nerr,
          ST),
@@ -408,10 +407,9 @@ def chat_benchmarks(ctx):
     here = os.path.join(ctx.bench, "chat")
     out = os.path.join(ctx.out, "chat")
     os.makedirs(out, exist_ok=True)
-    # velt/chat_server.vlt: bench/chat/velt/server.vlt on velt:http/server and velt:websocket's
-    # acceptWebSocket (written in Velt) instead of velt:http (hyper in the runtime).
+    # bench/chat/velt/server.vlt: the http-server package and velt/net/websocket (written in Velt).
     velt = os.path.join(out, "chat-velt")
-    verr = velt_build(ctx, os.path.join(ctx.here, "velt", "chat_server.vlt"), velt)
+    verr = velt_build(ctx, os.path.join(here, "velt", "server.vlt"), velt)
     load_t = os.path.join(out, "load-target")
     lerr = cargo(ctx, "chat-load (Rust load generator)", os.path.join(here, "load"), load_t)
     nerr = None if ctx.node else "node not found"
@@ -425,9 +423,9 @@ def chat_benchmarks(ctx):
     # as one process, beside Velt on one thread (the like-for-like row) and on the server cores.
     single = "single process; rooms need shared state"
     servers = [
-        (f"Velt velt:http/server + velt:websocket (written in Velt, {n} threads)", "velt", [velt],
+        (f"Velt http-server + velt/net/websocket (written in Velt, {n} threads)", "velt", [velt],
          {"VELT_THREADS": str(n)}, verr, MT),
-        ("Velt velt:http/server + velt:websocket (written in Velt, 1 thread)", "velt", [velt],
+        ("Velt http-server + velt/net/websocket (written in Velt, 1 thread)", "velt", [velt],
          {"VELT_THREADS": "1"}, verr, ST),
         (f"Bun (Bun.serve websockets, {single})", "bun", [ctx.bun or "bun", os.path.join(here, "bun", "server.ts")], {},
          None if ctx.bun else "bun not found", ST),

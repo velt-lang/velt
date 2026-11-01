@@ -28,7 +28,7 @@ fn package() -> Package {
     p.write("tests/pure.test.vlt", &pure_test(5));
     p.write(
         "tests/clock.test.vlt",
-        "import { expect } from \"velt:test\";\n\nexport function test_clock() {\n  expect(Date.now() > 0).toBe(true);\n}\n",
+        "import { expect } from \"velt/test\";\n\nexport function test_clock() {\n  expect(Date.now() > 0).toBe(true);\n}\n",
     );
     p
 }
@@ -39,7 +39,7 @@ fn lib(body: &str) -> String {
 
 fn pure_test(expected: i32) -> String {
     format!(
-        "import {{ add }} from \"../src/lib\";\nimport {{ expect }} from \"velt:test\";\n\nexport function test_add() {{\n  expect(add(2, 3)).toBe({expected});\n}}\n"
+        "import {{ add }} from \"../src/lib\";\nimport {{ expect }} from \"velt/test\";\n\nexport function test_add() {{\n  expect(add(2, 3)).toBe({expected});\n}}\n"
     )
 }
 
@@ -138,7 +138,7 @@ fn a_test_calling_a_system_function_runs_every_time() {
     let p = package();
     p.write(
         "tests/sys.test.vlt",
-        "import { expect } from \"velt:test\";\n\ndeclare system function close(fd: i32): i32;\n\nexport function test_pid() {\n  expect(close(-1)).toBe(-1);\n}\n",
+        "import { expect } from \"velt/test\";\n\ndeclare system function close(fd: i32): i32;\n\nexport function test_pid() {\n  expect(close(-1)).toBe(-1);\n}\n",
     );
     for _ in 0..2 {
         let running = p.running(&[]);
@@ -161,7 +161,7 @@ fn a_function_named_like_a_registration_is_the_files_own_code() {
     p.write("data.txt", "a");
     p.write(
         "tests/s.test.vlt",
-        "import { expect } from \"velt:test\";\nimport { readFileSync } from \"velt:fs\";\n\nfunction __velt_r7(): string {\n  return readFileSync(\"data.txt\");\n}\n\nexport function test_s() {\n  expect(__velt_r7()).toBe(\"a\");\n}\n",
+        "import { expect } from \"velt/test\";\nimport { readFileSync } from \"velt/fs\";\n\nfunction __velt_r7(): string {\n  return readFileSync(\"data.txt\");\n}\n\nexport function test_s() {\n  expect(__velt_r7()).toBe(\"a\");\n}\n",
     );
     for _ in 0..2 {
         let running = p.running(&[]);

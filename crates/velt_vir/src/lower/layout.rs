@@ -55,7 +55,6 @@ pub(super) struct Layouts {
     /// States of the wrappers adopting async externs' foreign results (async_fn/foreign_promise.rs).
     pub(super) adopt_boxes: FxHashMap<TyId, AggId>,
     /// Failure context of JSON decoders (json/).
-    pub(super) json_ctx: Option<AggId>,
     /// Promise-value wrappers of throwing async functions: layout and inner-state field.
     pub(super) value_wraps: FxHashMap<(DefId, Vec<TyId>), (AggId, u32)>,
     /// Vtable statics (glue/vtable.rs).

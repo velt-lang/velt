@@ -1,7 +1,7 @@
 // `ConcurrentMap.add` from many threads at once, while another thread inserts keys that split
 // the leaves the counters live in: no add is lost, and none lands on a moved slot.
 
-import { ConcurrentMap } from "velt:collections/concurrent_map";
+import { ConcurrentMap } from "velt/collections";
 
 const COUNTERS: u64 = 200;
 const ROUNDS: u64 = 1000;

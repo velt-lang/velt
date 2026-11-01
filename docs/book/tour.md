@@ -1,8 +1,8 @@
 # A tour of Velt
 
-Velt reads like TypeScript and runs like Rust: it compiles to native code, has no garbage
-collector, and runs your async code on every core of the machine. This tour shows the language in one
-sitting. Every example compiles; the full rules are in [the Reference](../reference/README.md).
+Velt reads like TypeScript and runs like Rust: it compiles to native code, has no garbage collector,
+and runs your async code on every core of the machine. This tour shows the language in one sitting.
+Every example compiles; the full rules are in [the Reference](../reference/README.md).
 
 ## Values and types
 
@@ -19,9 +19,9 @@ const s = `a=${a} x=${x}`;               // template literals; "a=" + a is "a=7"
 ```
 
 Types are required on function signatures and inferred everywhere else. Conditions work as in
-JavaScript (`0`, `NaN`, `""`, `null` and `undefined` are falsy; `if (!user) return;` is a null
-check that narrows `user`), and `null` and `undefined` are two values, as in Node. See [Types](../reference/types.md) and
-[Variables and conditions](../reference/variables.md).
+JavaScript (`0`, `NaN`, `""`, `null` and `undefined` are falsy; `if (!user) return;` is a null check
+that narrows `user`), and `null` and `undefined` are two values, as in Node. See
+[Types](../reference/types.md) and [Variables and conditions](../reference/variables.md).
 
 ## Functions and errors
 
@@ -166,14 +166,15 @@ log(user);            // the same object: `user` stays usable
 save(user);
 ```
 
-You never annotate memory: the compiler works out which functions modify their arguments and
-when each object can be freed. Assigning an object to a second variable refers to the same object, as in JS; `.clone()` makes a deep copy.
-[Memory without a garbage collector](memory.md) explains the model.
+You never annotate memory: the compiler works out which functions modify their arguments and when
+each object can be freed. Assigning an object to a second variable refers to the same object, as in
+JS; `.clone()` makes a deep copy. [Memory without a garbage collector](memory.md) explains the
+model.
 
 ## Async and I/O
 
 ```ts
-import { readFile, writeFile } from "velt:fs";
+import { readFile, writeFile } from "velt/fs";
 
 async function fetchUser(id: i64): Promise<string> {
   await sleep(10);
@@ -205,8 +206,12 @@ they can't modify captured variables, so they share state through `shared(...)` 
 
 ## An HTTP server
 
+The server is a package written in Velt ([http-server](../../packages/http-server/README.md)):
+`velt new --template api` makes a package that depends on it (its
+[README](../../packages/http-server/README.md) shows the dependency to add to yours).
+
 ```ts
-import { serve } from "velt:http";
+import { serve } from "http-server";
 
 async function main() {
   const hits = shared(0);
@@ -225,8 +230,8 @@ async function main() {
 Modules work like TypeScript's ES modules, with named exports only:
 
 ```ts
-import * as path from "velt:path";            // namespace import: path.join, path.basename, …
-import { gcd as greatestDivisor } from "velt:math";
+import * as path from "velt/path";            // namespace import: path.join, path.basename, …
+import { gcd as greatestDivisor } from "velt/math";
 
 export function describe(file: string): string {
   return `${path.basename(file)} (${greatestDivisor(12, 18)})`;

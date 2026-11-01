@@ -1,5 +1,5 @@
 // std/arena: values named by `u32` index, reset between rounds (the memory is kept).
-import { Arena } from "velt:arena";
+import { Arena } from "velt/mem";
 
 struct Pair {
   a: i64;

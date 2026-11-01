@@ -1,4 +1,4 @@
-// velt:collections/btree/leaf: entries of a leaf of a `Pool` (velt:collections/btree/pool),
+// velt/collections (internal): entries of a leaf of a `Pool` (velt/collections/btree/pool),
 // internal.
 //
 // A leaf keeps its keys and values in physical slots `0 .. n` in the order they came, its words
@@ -10,7 +10,7 @@
 // keys to compare. What works on ranks (walks, ranges, splits, merges) reads the order; entries
 // move between leaves by rank (`moveRanks`), so no leaf is ever sorted.
 
-import { F, Pool, Window, quadIn, windowOf, wordIn } from "velt:collections/btree/pool";
+import { F, Pool, Window, quadIn, windowOf, wordIn } from "velt/collections/btree/pool";
 import {
   EMPTY,
   HEAD,
@@ -29,7 +29,7 @@ import {
   withWord,
   wordsBelow,
   wordsBelow2,
-} from "velt:collections/btree/line";
+} from "velt/collections/btree/line";
 
 /** No physical slot: a key that is not in its leaf. */
 export const NO_SLOT: usize = 63;
@@ -254,52 +254,6 @@ export function removeEntry<K extends Comparable<K>, V>(p: Pool<K, V>, leaf: u32
       lineB = withWord(lineB, s, wordAt(lineB, last));
     }
     p.setLineB(leaf, withWord(lineB, last, EMPTY));
-  }
-}
-
-/**
- * Finds the leaves of `keys[start .. start + m]` together: level by level, each key's next node
- * is prefetched once its slot is known, so it loads while the others search theirs. Then each
- * key's candidate slot in its leaf (`leafCandidate`, `NO_SLOT` for none), with its key and value
- * prefetched. `leaves` and `slots` get one entry per key.
- */
-export function descendMany<K extends Comparable<K>, V>(
-  p: Pool<K, V>,
-  keys: K[],
-  start: usize,
-  m: usize,
-  leaves: u32[],
-  slots: usize[],
-) {
-  leaves.truncate(0);
-  slots.truncate(0);
-  for (let j: usize = 0; j < m; j++) {
-    leaves.push(p.root);
-  }
-  // Each key's window, once (`wins[2j]`, `wins[2j + 1]`).
-  const wins = p.batchWindows;
-  for (let j: usize = 0; j < m; j++) {
-    const [a, b] = windowOf(keys[start + j]);
-    wins[2 * j] = a;
-    wins[2 * j + 1] = b;
-  }
-  for (let h = p.height; h > 0; h--) {
-    for (let j: usize = 0; j < m; j++) {
-      const node = leaves[j];
-      const win: Window = [wins[2 * j], wins[2 * j + 1]];
-      const child = p.innerKids[(node as usize) * F + p.innerSlot(node, keys[start + j], win)];
-      leaves[j] = child;
-      p.prefetchNode(child, h > 1);
-    }
-  }
-  for (let j: usize = 0; j < m; j++) {
-    const leaf = leaves[j];
-    const s = leafCandidate(p, leaf, keys[start + j], [wins[2 * j], wins[2 * j + 1]]);
-    slots.push(s);
-    if (s != NO_SLOT) {
-      p.keyPrefetch((leaf as usize) * F + s);
-      p.valPrefetch((leaf as usize) * F + s);
-    }
   }
 }
 

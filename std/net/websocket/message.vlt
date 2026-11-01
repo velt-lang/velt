@@ -1,0 +1,15 @@
+// velt/net/websocket (internal): `WsMessage`, a message a WebSocket received.
+
+/** One received message: text, or binary data. */
+export class WsMessage {
+  /** True for a binary message (`data`), false for text (`text`). */
+  isBinary: bool;
+  text: string;
+  data: u8[];
+
+  constructor(isBinary: bool, text: string, data: u8[]) {
+    this.isBinary = isBinary;
+    this.text = text;
+    this.data = data;
+  }
+}

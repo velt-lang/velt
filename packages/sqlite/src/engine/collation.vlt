@@ -1,0 +1,22 @@
+// sqlite/engine/collation (internal): the built-in collations of SQLite's text comparisons
+// (https://sqlite.org/datatype3.html#collation): their codes, and the code of a name.
+
+/** Collations of index columns. */
+export const BINARY: u8 = 0;
+export const NOCASE: u8 = 1;
+export const RTRIM: u8 = 2;
+
+/** A collation's code from its name (unknown names are reported by the caller). */
+export function collationOf(name: string): i64 {
+  const n = name.toUpperCase();
+  if (n == "" || n == "BINARY") {
+    return BINARY as i64;
+  }
+  if (n == "NOCASE") {
+    return NOCASE as i64;
+  }
+  if (n == "RTRIM") {
+    return RTRIM as i64;
+  }
+  return -1;
+}

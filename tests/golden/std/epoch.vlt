@@ -1,6 +1,6 @@
-// velt:sync/epoch on one thread: a retired value is kept while this thread is in a section and
+// velt/sync/epoch on one thread: a retired value is kept while this thread is in a section and
 // dropped by the first `collect` that moves the epoch two steps past its retiring; sections nest.
-import { pin, unpin, retire, collect, pending } from "velt:sync/epoch";
+import { pin, unpin, retire, collect, pending } from "velt/sync/epoch";
 
 interface Item {
   n: u64;

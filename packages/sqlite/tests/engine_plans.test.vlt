@@ -1,0 +1,133 @@
+// Queries whose answer depends on the plan the SQLite engine written in Velt (sqlite/engine)
+// picks, against C SQLite (the driver) on the same file: which row of a DISTINCT or GROUP BY
+// group shows a column that only compares equal (NOCASE), and which index gives the order. The
+// rows must be the same as C SQLite's. Then plan()'s words against EXPLAIN QUERY PLAN's, and the
+// words themselves.
+import { open } from "../src/lib";
+import { openDatabase } from "../src/engine/index";
+import { checkAll } from "./support/diff";
+import { tmpdir } from "velt/os";
+import { uuidv4 } from "velt/random/uuid";
+import { removeSync } from "velt/fs";
+
+const SETUP = `
+CREATE TABLE t1 (id INTEGER PRIMARY KEY, a INTEGER, b TEXT, c REAL, e TEXT COLLATE NOCASE);
+CREATE INDEX t1_a ON t1 (a);
+CREATE INDEX t1_ba ON t1 (b, a);
+CREATE INDEX t1_e ON t1 (e);
+CREATE INDEX t1_c ON t1 (c DESC);
+INSERT INTO t1 VALUES (1, 5, '2', 12.0, 'x'), (2, 1, '2', -1.0, 'abc'), (3, 2, '3', 2.5, 'B'),
+  (4, 7, '2', 2.5, 'ABC'), (5, 3, '3', 20.0, 'b'), (6, 9, '1', 0.5, 'Abc'), (7, 4, '1', 9.5, 'X');
+`;
+
+const QUERIES = [
+  // A range on t1_c: SQLite keeps it, and DISTINCT uses a temporary b-tree (the first row of
+  // each group in t1_c's order shows).
+  "SELECT DISTINCT b, e FROM t1 WHERE t1.c < 10",
+  // A full scan: SQLite reads t1_ba, led by the first DISTINCT column, instead.
+  "SELECT DISTINCT b, e FROM t1",
+  "SELECT DISTINCT e FROM t1 WHERE c > 0",
+  "SELECT DISTINCT e, id FROM t1 WHERE c < 10",
+  "SELECT DISTINCT a FROM t1 WHERE c < 3",
+  "SELECT DISTINCT b, a FROM t1 WHERE c BETWEEN 0 AND 10",
+  "SELECT DISTINCT e FROM t1 WHERE id > 2",
+  "SELECT b, e FROM t1 GROUP BY b",
+  "SELECT e, count(*) FROM t1 WHERE c < 10 GROUP BY e",
+  "SELECT e FROM t1 WHERE a > 2 GROUP BY e",
+  // Unary minus is `0 - x`: text reads as arithmetic reads it.
+  "SELECT -('0' || c), -('0.0'), -(e), -(-9223372036854775807 - 1) FROM t1 ORDER BY id",
+];
+
+// plan() against C SQLite's EXPLAIN QUERY PLAN: the same words (index ranges, covering
+// indexes, names as written), for queries where both pick the same plan.
+// Each query, then the words both engines give for it.
+const PLAN_QUERIES = [
+  "SELECT * FROM t1 WHERE a = 5",
+  "SEARCH t1 USING INDEX t1_a (a=?)",
+  "SELECT a FROM t1 WHERE a = 5",
+  "SEARCH t1 USING COVERING INDEX t1_a (a=?)",
+  "SELECT id FROM t1 WHERE a > 3",
+  "SEARCH t1 USING COVERING INDEX t1_a (a>?)",
+  "SELECT * FROM t1 WHERE a > 3 AND a < 7",
+  "SEARCH t1 USING INDEX t1_a (a>? AND a<?)",
+  "SELECT * FROM t1 WHERE a IN (1, 5)",
+  "SEARCH t1 USING INDEX t1_a (a=?)",
+  "SELECT a, b FROM t1 WHERE b = '2'",
+  "SEARCH t1 USING COVERING INDEX t1_ba (b=?)",
+  "SELECT * FROM t1 WHERE b = '2' AND a > 1",
+  "SEARCH t1 USING INDEX t1_ba (b=? AND a>?)",
+  "SELECT * FROM t1 WHERE b = '2' AND a = 7",
+  "SEARCH t1 USING INDEX t1_ba (b=? AND a=?)",
+  "SELECT * FROM t1 WHERE c < 3",
+  "SEARCH t1 USING INDEX t1_c (c<?)",
+  "SELECT c FROM t1 WHERE c > 1",
+  "SEARCH t1 USING COVERING INDEX t1_c (c>?)",
+  "SELECT * FROM t1 WHERE e = 'abc'",
+  "SEARCH t1 USING INDEX t1_e (e=?)",
+  "SELECT * FROM T1 AS x WHERE id = 3",
+  "SEARCH x USING INTEGER PRIMARY KEY (rowid=?)",
+  "SELECT * FROM t1 WHERE id > 3",
+  "SEARCH t1 USING INTEGER PRIMARY KEY (rowid>?)",
+  "SELECT * FROM t1 ORDER BY a",
+  "SCAN t1 USING INDEX t1_a",
+  "SELECT * FROM t1 ORDER BY b DESC",
+  "SCAN t1 USING INDEX t1_ba",
+  "SELECT a FROM t1 WHERE a >= 2 AND a <= 6",
+  "SEARCH t1 USING COVERING INDEX t1_a (a>? AND a<?)",
+  "SELECT * FROM t1 WHERE a < 3",
+  "SEARCH t1 USING INDEX t1_a (a<?)",
+  "SELECT b FROM t1 WHERE b > '1'",
+  "SEARCH t1 USING COVERING INDEX t1_ba (b>?)",
+  "SELECT * FROM t1 WHERE a = 5 ORDER BY id",
+  "SEARCH t1 USING INDEX t1_a (a=?)",
+  "SELECT count(*) FROM t1 WHERE a > 2",
+  "SEARCH t1 USING COVERING INDEX t1_a (a>?)",
+  "SELECT max(a) FROM t1",
+  "SEARCH t1 USING COVERING INDEX t1_a",
+  "SELECT DISTINCT b FROM t1",
+  "SCAN t1 USING COVERING INDEX t1_ba",
+  "SELECT b, count(*) FROM t1 GROUP BY b",
+  "SCAN t1 USING COVERING INDEX t1_ba",
+];
+
+struct Eqp {
+  detail: string;
+}
+
+export function test_rows_match_c_sqlite() {
+  const path = `${tmpdir()}/velt-engine-plans-${uuidv4()}.db`;
+  const c = open(path);
+  c.exec(SETUP);
+  const v = openDatabase(path);
+  assertEq(QUERIES.length, 11);
+  assertEq(checkAll(c, v, QUERIES), []);
+  c.close();
+  removeSync(path);
+}
+
+export function test_plan_words_match_explain_query_plan() {
+  const path = `${tmpdir()}/velt-engine-plans-${uuidv4()}.db`;
+  const c = open(path);
+  c.exec(SETUP);
+  const v = openDatabase(path);
+  const n: usize = PLAN_QUERIES.length;
+  assertEq(n, 46);
+  const differ: string[] = [];
+  const words: string[] = [];
+  const expected: string[] = [];
+  for (let i: usize = 0; i < n; i += 2) {
+    const q = PLAN_QUERIES[i];
+    const rows: Eqp[] = c.prepare(`EXPLAIN QUERY PLAN ${q}`).all();
+    const want = rows.map((r) => r.detail).join(" ; ");
+    const mine = v.prepare(q).plan().join(" ; ");
+    if (mine != want) {
+      differ.push(`${q}: velt ${mine}, C ${want}`);
+    }
+    words.push(`${q}: ${mine}`);
+    expected.push(`${q}: ${PLAN_QUERIES[i + 1]}`);
+  }
+  assertEq(differ, []);
+  assertEq(words, expected);
+  c.close();
+  removeSync(path);
+}

@@ -13,7 +13,7 @@ fn a_large_caller_tracking_function_has_one_instance_for_all_call_sites() {
     let main = dir.path().join("main.vlt");
     std::fs::write(
         &main,
-        "import { BTreeMap } from \"velt:collections/btree_map\";\n\
+        "import { BTreeMap } from \"velt/collections\";\n\
          function main() {\n\
            const m = new BTreeMap<string, i64>();\n\
            m.set(\"a\", 1);\n\

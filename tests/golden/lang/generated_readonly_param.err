@@ -1,0 +1,4 @@
+9:15: error: the code generated for `setParam<R>` by `./gen` does not compile (a bug in the generator)
+= note: <generated>/_readonly_generators/1.vlt:4:7: cannot assign to `id`: it is a readonly field
+9:34: error: the code generated for `setCopy<R>` by `./gen` does not compile (a bug in the generator)
+= note: <generated>/_readonly_generators/1.vlt:11:3: cannot assign to `id`: it is a readonly field

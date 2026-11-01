@@ -1,0 +1,4 @@
+// velt/cli (internal): `CliError`, the usage error of a command line.
+
+/** A usage error: unknown option, missing or unexpected value, bad integer. */
+export class CliError extends Error {}

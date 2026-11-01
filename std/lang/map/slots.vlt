@@ -1,0 +1,101 @@
+// velt/lang/map (internal): the prelude `Map`'s slots and entry values (std/prelude/map.vlt): bit
+// sets, the Robin Hood slot table, and the `V | null` entry slots read and collected.
+
+import { holdsNull, nullAs, share } from "velt/lang/intrinsics";
+
+/** Whether bit `e` of the bitset `bits` is set (`Map.liveBits`). */
+export function bitAt(bits: u64[], e: usize): bool {
+  return ((bits[e >> 6] >> ((e & 63) as u64)) & 1) != 0;
+}
+
+/** Inserts slot word `w` into `slots` (home `w >> shift`) at its Robin Hood position. */
+export function place(slots: u64[], shift: u64, w: u64) {
+  const mask = slots.length - 1;
+  let s = (w >> shift) as usize;
+  let dist: usize = 0;
+  while (slots[s] != 0 && ((s - ((slots[s] >> shift) as usize)) & mask) >= dist) {
+    s = (s + 1) & mask;
+    dist++;
+  }
+  shiftIn(slots, s, w);
+}
+
+/**
+ * Stores `w` at slot `s`, shifting the occupied slots from `s` up to the next empty one right
+ * by one (keeps each cluster sorted by home).
+ */
+export function shiftIn(slots: u64[], s: usize, w: u64) {
+  const mask = slots.length - 1;
+  while (w != 0) {
+    const next = slots[s];
+    slots[s] = w;
+    w = next;
+    s = (s + 1) & mask;
+  }
+}
+
+// Helpers that reach into a live entry's value (`V | null` narrowed through a parameter). Where
+// `V` includes null, a live entry's value may be null itself: `nullAs<V>()`.
+
+/**
+ * `f(value)` for a live entry's value. The caller stores the result into the array element
+ * (assigning a parameter is local to the callee).
+ */
+export function applyTo<V, E>(slot: V | null, f: (value: V) => V throws E): V | null throws E {
+  if (slot != null) {
+    return f(slot);
+  }
+  if (holdsNull(nullAs<V>())) {
+    return f(nullAs<V>());
+  }
+  return null;
+}
+
+export function mutateWith<V, E>(slot: V | null, f: (value: V) => void throws E) throws E {
+  if (slot != null) {
+    f(slot);
+  } else if (holdsNull(nullAs<V>())) {
+    f(nullAs<V>());
+  }
+}
+
+export function sharedValue<V>(slot: V | null): V {
+  if (slot != null) {
+    return share(slot);
+  }
+  if (holdsNull(nullAs<V>())) {
+    return nullAs<V>();
+  }
+  panic("ICE: Map entry without a value");
+}
+
+export function pushShared<V>(out: V[], slot: V | null) {
+  if (slot != null) {
+    out.push(share(slot));
+  }
+}
+
+export function pushEntry<K, V>(out: [K, V][], key: K, slot: V | null) {
+  if (slot != null) {
+    const pair: [K, V] = [share(key), share(slot)];
+    out.push(pair);
+  }
+}
+
+/** `[key, null]` for a live entry holding null (`V` includes null). */
+export function pushNullEntry<K, V>(out: [K, V][], key: K) {
+  const pair: [K, V] = [share(key), nullAs<V>()];
+  out.push(pair);
+}
+
+export function visit<K, V, E>(
+  slot: V | null,
+  key: K,
+  f: (value: V, key: K) => void throws E,
+) throws E {
+  if (slot != null) {
+    f(slot, key);
+  } else if (holdsNull(nullAs<V>())) {
+    f(nullAs<V>(), key);
+  }
+}

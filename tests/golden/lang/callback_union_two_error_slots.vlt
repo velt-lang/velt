@@ -1,0 +1,40 @@
+// A callback typed `(x) => T | Promise<T, E> throws F` (a sync-or-async handler) with the
+// promise's error `E` and what it throws, `F`, as two type parameters: both are inferred, from a
+// function value of the same shape passed on, and from a sync arrow that throws before it
+// returns a promise that rejects.
+class Denied extends Error {}
+
+class Bad extends Error {}
+
+async function check(n: i64): Promise<i64> {
+  if (n < 0) {
+    throw new Denied("negative");
+  }
+  return n * 2;
+}
+
+async function run<E, F>(h: (n: i64) => i64 | Promise<i64, E> throws F, n: i64): Promise<string> {
+  try {
+    return `ok ${await h(n)}`;
+  } catch (e) {
+    return "failed";
+  }
+}
+
+async function passOn<E, F>(h: (n: i64) => i64 | Promise<i64, E> throws F): Promise<string> {
+  return await run(h, 1);
+}
+
+function parse(n: i64): i64 throws Bad {
+  if (n > 100) {
+    throw new Bad("too big");
+  }
+  return n;
+}
+
+async function main() {
+  console.log(await run((n) => check(parse(n)), 3));
+  console.log(await run((n) => check(parse(n)), -1));
+  console.log(await run((n) => check(parse(n)), 500));
+  console.log(await passOn((n) => n + 1));
+}

@@ -1,0 +1,142 @@
+// sqlite/engine/database (internal): the SQLite engine written in Velt: queries over a database file's bytes,
+// with the statement API of the driver (docs/engine.md). Read-only for now: SELECT
+// with joins, subqueries, CTEs, aggregates, compound selects; writing is step 4 of
+// docs/internals/design/sqlite-engine.md.
+//
+// `prepare` parses and plans once and caches the plan per SQL text, so preparing the same text
+// again is a map lookup. A plan runs as closures composed at prepare time (no bytecode VM); rows
+// are read straight from the b-tree pages and decoded only for the columns a query uses.
+
+import { DbFile } from "./db_file";
+import { Schema } from "./schema/schema";
+import { loadSchema } from "./schema/load";
+import { Parser } from "./sql/parser";
+import { statement } from "./sql/statement";
+import { T_EOF, T_SEMI } from "./sql/token";
+import { S_SELECT } from "./sql/types";
+import { Params } from "./exec/params";
+import { SelectCompiler } from "./exec/select_compiler";
+import { readFileBytesSync } from "velt/fs";
+import { SqliteError } from "../errors";
+import { Statement } from "./statement";
+
+/** The most plans a database keeps cached by their text. */
+const CACHE_SIZE: usize = 200;
+
+/** A database: the bytes of a SQLite file, its schema, and the statements prepared on it. */
+export class Database {
+  file: DbFile;
+  schema: Schema;
+  cache: Map<string, Statement> = new Map();
+  /** Counts lookups: a statement's `used` is the last one that found it. */
+  tick: i64 = 0;
+  last: Statement | null = null;
+  lastSql: string = "";
+
+  constructor(data: u8[]) {
+    this.file = openFile(data);
+    this.schema = schemaOf(this.file);
+  }
+
+  /** Compiles one SELECT (cached by its text). Throws `SqliteError` for SQL it cannot run. */
+  prepare(sql: string): Statement {
+    // The statement prepared last, without hashing the text again.
+    if (this.last != null && this.lastSql == sql) {
+      return this.last!;
+    }
+    const st = this.lookup(sql);
+    this.lastSql = sql;
+    this.last = st;
+    return st;
+  }
+
+  private lookup(sql: string): Statement {
+    this.tick++;
+    const hit = this.cache.get(sql);
+    if (hit != null) {
+      hit!.used = this.tick;
+      return hit!;
+    }
+    const st = this.compile(sql);
+    st.used = this.tick;
+    // At most CACHE_SIZE plans: the one used longest ago goes (a statement held stays usable).
+    if (this.cache.size >= CACHE_SIZE) {
+      let oldest = "";
+      let at: i64 = 9223372036854775807;
+      for (const [k, v] of this.cache) {
+        if (v.used < at) {
+          at = v.used;
+          oldest = k;
+        }
+      }
+      this.cache.delete(oldest);
+    }
+    this.cache.set(sql, st);
+    return st;
+  }
+
+  private compile(sql: string): Statement {
+    const params = new Params();
+    try {
+      const p = new Parser(sql);
+      while (p.peek().kind == T_SEMI) {
+        p.advance();
+      }
+      const s = statement(p);
+      while (p.peek().kind == T_SEMI) {
+        p.advance();
+      }
+      if (p.peek().kind != T_EOF) {
+        throw new SqliteError("SQLITE_MISUSE", "more than one statement");
+      }
+      if (s.kind != S_SELECT) {
+        throw new SqliteError("SQLITE_ERROR", "only SELECT statements are supported yet");
+      }
+      const c = new SelectCompiler(this.file, this.schema, params, sql);
+      const q = c.select(s.select!, null);
+      if (c.tooManyTerms) {
+        throw new SqliteError("SQLITE_ERROR", "too many FROM clause terms, max: 200");
+      }
+      const names: string[] = [];
+      for (let i: i64 = 0; i < p.params; i++) {
+        names.push("");
+      }
+      for (const [name, at] of p.names) {
+        names[(at - 1) as usize] = name;
+      }
+      return new Statement(sql, q, params, names, p.params as usize);
+    } catch (e) {
+      if (e instanceof SqliteError) {
+        throw e;
+      }
+      throw new SqliteError("SQLITE_ERROR", e.message);
+    }
+  }
+}
+
+function openFile(data: u8[]): DbFile {
+  try {
+    return new DbFile(data);
+  } catch (e) {
+    throw new SqliteError("SQLITE_CORRUPT", e.message);
+  }
+}
+
+function schemaOf(f: DbFile): Schema {
+  try {
+    return loadSchema(f);
+  } catch (e) {
+    throw new SqliteError("SQLITE_CORRUPT", e.message);
+  }
+}
+
+/** Opens the database file at `path` (read into memory). Throws `SqliteError`. */
+export function openDatabase(path: string): Database {
+  let data: u8[] = [];
+  try {
+    data = readFileBytesSync(path);
+  } catch (e) {
+    throw new SqliteError("SQLITE_CANTOPEN", e.message);
+  }
+  return new Database(data);
+}

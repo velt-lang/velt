@@ -2,7 +2,7 @@
 // sorted array large enough to split and merge nodes at every level (inserts, replacements,
 // deletes down to empty and back), with number, string and struct keys.
 
-import { BTreeMap } from "velt:collections/btree_map";
+import { BTreeMap } from "velt/collections";
 
 struct Version {
   major: i64;

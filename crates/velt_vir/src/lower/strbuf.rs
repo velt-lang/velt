@@ -12,6 +12,9 @@ use crate::vir::{self, BinOp, Const, Operand, Place, Proj, Rvalue, Stmt, Ty, STR
 /// The longest literal text appended with the inline fast path (longer text is one call).
 const INLINE_PUSH_MAX: usize = 32;
 
+/// `StringBuilder.append`, whose literal arguments are appended inline.
+const STRING_BUILDER_APPEND: &str = "std/text/string_builder::StringBuilder.append";
+
 impl FnLower<'_, '_> {
     /// A fresh empty builder local with room for `cap` bytes (0 = allocate on first push),
     /// and its address.
@@ -51,75 +54,20 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// [`Self::push_text`] with the builder's fast path inline (#1677), for `JSON.stringify`'s
-    /// glue, whose builder no other reference can reach. Each site costs about ten instructions
-    /// more than a call (bench/json/stringify: 14-17% faster; IR of programs that stringify
-    /// 5-13% larger), so other builders (template literals, `console.log`, error messages) keep
-    /// the call.
-    pub(super) fn push_text_private(&mut self, buf: &Operand, text: &str) {
-        match text.as_bytes() {
-            [] => {}
-            [b] if b.is_ascii() => {
-                let byte = cint(*b as i128, Ty::U8);
-                let b2 = byte.clone();
-                self.push_ascii_inline(
-                    buf,
-                    1,
-                    |lw, dst| {
-                        let at = Place {
-                            local: lw.copy_to_temp(dst, Ty::Ptr),
-                            proj: vec![Proj::Deref(Ty::U8)],
-                        };
-                        lw.assign(at, Rvalue::Use(byte));
-                    },
-                    |lw| lw.call_rt(Rt::StrbufPushByte, vec![buf.clone(), b2], None),
-                );
-            }
-            [b] => self.call_rt(
-                Rt::StrbufPushByte,
-                vec![buf.clone(), cint(*b as i128, Ty::U8)],
-                None,
-            ),
-            bytes => {
-                let sid = self.cx.static_bytes(bytes.to_vec(), 1);
-                let p = Operand::Const(Const::Static(sid), Ty::Ptr);
-                if text.is_ascii() && bytes.len() <= INLINE_PUSH_MAX {
-                    let n = bytes.len() as u64;
-                    // ASCII: as many units as bytes (the high half of the length).
-                    let w1 = cint((n * 0x1_0000_0001) as i128, Ty::U64);
-                    let args = vec![buf.clone(), p.clone(), w1];
-                    self.push_ascii_inline(
-                        buf,
-                        n,
-                        |lw, dst| {
-                            lw.push_stmt(Stmt::MemCopy {
-                                dst,
-                                src: p,
-                                size: n,
-                            })
-                        },
-                        |lw| lw.call_rt(Rt::StrbufPushBytes, args, None),
-                    );
-                    return;
-                }
-                // The length argument carries the unit count too (rt_abi_async.md §12.1).
-                let w1 = super::strings::str_w1(text);
-                let args = vec![buf.clone(), p, cint(w1 as i128, Ty::U64)];
-                self.call_rt(Rt::StrbufPushBytes, args, None);
-            }
-        }
-    }
-
     /// Append `n` ASCII bytes, which `write` stores at the pointer it is given, to the builder
     /// at `buf`: the builder's fast path (`VeltStr::push_ascii`) inline, `slow_path` (the runtime
     /// call) when it fails. The fast path: a plain heap string (not inline, not a slice: bits 62
     /// and 63 of `w2` clear, `w2` its capacity) with room for the bytes; they go after the text
     /// and `w1` gains `n` bytes and `n` units (#1677).
     ///
-    /// It does not check that the buffer has no other reference, as `push_ascii` does: `buf` is
-    /// `JSON.stringify`'s builder, which has none. It is fresh (`velt_rt_strbuf_new`), and no
-    /// code but its glue (and the Velt writers it is handed to, which only append) sees it
-    /// before `finish` makes it a string.
+    /// It does not check that the buffer has no other reference, as `push_ascii` does. For
+    /// `JSON.stringify`'s builder there is none: it is fresh (`velt_rt_strbuf_new`), and no code
+    /// but its glue (and the Velt writers it is handed to, which only append) sees it before
+    /// `finish` makes it a string. A `StringBuilder`'s buffer may be shared (`toString()`), and
+    /// writing after its text is still safe: every other holder of the buffer is a string whose
+    /// length ends at or before the builder's, and appends in place only once it is the only
+    /// holder (the runtime checks the count), when the builder no longer has the buffer. So the
+    /// bytes after the builder's text are the builder's.
     fn push_ascii_inline(
         &mut self,
         buf: &Operand,
@@ -159,6 +107,71 @@ impl FnLower<'_, '_> {
         slow_path(self);
         self.goto(done);
         self.switch_to(done);
+    }
+
+    /// `b.append("text")` on a `StringBuilder` (string-building.md step 2, #1677): literal ASCII
+    /// text appended with the builder's fast path inline, as `JSON.stringify`'s glue appends its
+    /// literal text ([`Self::push_ascii_inline`] says why a shared buffer needs no count check). `None`: not such a call
+    /// (it is compiled as written).
+    pub(super) fn builder_append_literal(
+        &mut self,
+        name: &str,
+        args: &[velt_sema::hir::Expr],
+    ) -> Option<Operand> {
+        if name != STRING_BUILDER_APPEND {
+            return None;
+        }
+        let [recv, s] = args else {
+            return None;
+        };
+        let velt_sema::hir::ExprKind::Lit(velt_sema::hir::Lit::Str(text)) = &s.kind else {
+            return None;
+        };
+        if text.is_empty() || !text.is_ascii() || text.len() > INLINE_PUSH_MAX {
+            return None;
+        }
+        let recv_ty = self.sub(recv.ty);
+        let (argv, _) = self.borrow_args(std::slice::from_ref(recv), None, false, false);
+        let obj = self.copy_to_temp(argv.into_iter().next()?, Ty::Ptr);
+        let field = self.field_place(&Place::local(obj), recv_ty, 0);
+        let buf = self.addr(field);
+        let bytes = text.as_bytes();
+        let n = bytes.len() as u64;
+        let w1 = cint((n * 0x1_0000_0001) as i128, Ty::U64);
+        if let [b] = bytes {
+            let byte = cint(*b as i128, Ty::U8);
+            let b2 = byte.clone();
+            let slow_buf = buf.clone();
+            self.push_ascii_inline(
+                &buf,
+                1,
+                |lw, dst| {
+                    let at = Place {
+                        local: lw.copy_to_temp(dst, Ty::Ptr),
+                        proj: vec![Proj::Deref(Ty::U8)],
+                    };
+                    lw.assign(at, Rvalue::Use(byte));
+                },
+                |lw| lw.call_rt(Rt::StrbufPushByte, vec![slow_buf, b2], None),
+            );
+        } else {
+            let sid = self.cx.static_bytes(bytes.to_vec(), 1);
+            let p = Operand::Const(Const::Static(sid), Ty::Ptr);
+            let args = vec![buf.clone(), p.clone(), w1];
+            self.push_ascii_inline(
+                &buf,
+                n,
+                |lw, dst| {
+                    lw.push_stmt(Stmt::MemCopy {
+                        dst,
+                        src: p,
+                        size: n,
+                    })
+                },
+                |lw| lw.call_rt(Rt::StrbufPushBytes, args, None),
+            );
+        }
+        Some(super::unit())
     }
 
     /// Append the string at address `s` to the builder at `buf`.

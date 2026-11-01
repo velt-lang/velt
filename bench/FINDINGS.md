@@ -403,7 +403,7 @@ fs_stream handle code) was out of scope this round and still reads through its p
   against the old limb class, which stays as `main_limbs.vlt`. Also `Math.umulh`.
 - `std/arena` (typed `u32`-index pool, `reset()` keeps the memory): `binary-trees/main_arena.vlt`
   uses 3.7× fewer cycles than `main`.
-- `stdout.write(bytes)` (`import { stdout } from "velt:process"`): synchronous, portable, and ordered
+- `stdout.write(bytes)` (`import { stdout } from "velt/process"`): synchronous, portable, and ordered
   with `console.log`; 64 KiB and up go straight from the caller's array. fasta and mandelbrot use
   it: −3% cycles for fasta, and mandelbrot peak RSS 76 → 68 MB.
 - **Not done:** `new Array<T>(n).fill(v)` and `Array.from({ length: n }, f)` need sema (`new` only

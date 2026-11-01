@@ -66,7 +66,7 @@ pub struct Item {
 
 #[derive(Clone, Debug)]
 pub enum ItemKind {
-    /// `import { a, b as c } from "velt:fs";`, `import * as ns from "./m";`. With `exported`
+    /// `import { a, b as c } from "velt/fs";`, `import * as ns from "./m";`. With `exported`
     /// set it is a re-export: `export { a, b as c } from "./m";`, `export * from "./m";`, or a
     /// local export list `export { a, b as c };` (empty `from`).
     Import(Import),
@@ -84,7 +84,8 @@ pub enum ItemKind {
     /// `extend<T> Array<T> { methods }` — add methods to an existing type (used by std/prelude).
     Extend(ExtendDecl),
     /// `declare function name(a: i64): void;` — external C-ABI symbol (used by std for rt FFI);
-    /// `declare system function pread(...)` (`FnSig::is_system`) binds the platform's C library.
+    /// `declare system function pread(...)` (`FnSig::is_system`) binds the platform's C library;
+    /// `declare intrinsic function f(...)` (`FnSig::is_intrinsic`) declares a compiler intrinsic.
     ExternFn(FnSig),
     /// `declare global { … }` / `declare module "spec" { … }`: declarations that augment the
     /// global scope or another module (TypeScript's augmentation; interfaces merge into the
@@ -161,11 +162,28 @@ pub struct FnSig {
     /// compiler's table of system functions (docs/reference/system-functions.md). Always `false`
     /// for anything but a `declare` item.
     pub is_system: bool,
+    /// `declare intrinsic function arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void;`: an
+    /// operation the compiler emits itself, declared in std/lang/intrinsics (only there) so that
+    /// calls are checked against this signature (docs/internals/design/std-layout.md §10).
+    /// Always `false` for anything but a `declare` item. Additive.
+    pub is_intrinsic: bool,
+    /// `declare generated("./gen") function f<T>(…): R;`: a function whose body a source
+    /// generator writes per instance (docs/internals/design/source-generators.md). Parsed as a
+    /// [`FnDecl`] with an empty body; `None` for every other function. Additive.
+    pub generator: Option<GeneratorSpec>,
     /// `function*` / `*name()`: a generator (`yield` is allowed in its body).
     pub is_generator: bool,
     /// `function f(this: T, ...)`: the type of `this` in the body, when it is not `void` (a
     /// `this` parameter is no parameter: callers pass the receiver). `None` without one.
     pub this_param: Option<Box<TypeExpr>>,
+    pub span: Span,
+}
+
+/// The generator module of a generated function: the specifier string of
+/// `declare generated("<spec>") function`, resolved like an import of the declaring module.
+#[derive(Clone, Debug)]
+pub struct GeneratorSpec {
+    pub spec: String,
     pub span: Span,
 }
 

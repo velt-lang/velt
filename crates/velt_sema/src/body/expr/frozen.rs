@@ -54,10 +54,10 @@ impl FnCx<'_, '_> {
         if !self.frozen_readable_here(inner) {
             return h;
         }
-        // `velt:sync/epoch`, which the prelude imports for every program, reads its registry
+        // `velt/sync/epoch`, which the prelude imports for every program, reads its registry
         // in place: that alone does not make a program one that reads `shared` values.
         let m = &self.cx.modules[self.module];
-        if !(m.is_std && m.path == "std/sync/epoch") {
+        if !(m.is_std && m.path == velt_common::std_module!(sync_epoch_reclaim)) {
             self.cx.frozen_reads = true;
         }
         let span = h.span;
@@ -105,7 +105,7 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// Why the `shared<T>` type `shared` (one `frozen_readable` refuses) is not read like its `T`.
+    /// Why the `shared<T>` type `shared` (one `frozen_readable_in` refuses) is not read like its `T`.
     pub(crate) fn unreadable_shared_note(&mut self, shared: hir::TyId) -> String {
         let f = self.cx.display(shared);
         let inner = match *self.cx.ty.kind(shared) {
@@ -145,9 +145,10 @@ impl FnCx<'_, '_> {
             return false;
         }
         let view = self.cx.class_of(obj.ty).is_some_and(|(d, _)| {
-            self.cx
-                .adt(d)
-                .is_some_and(|a| a.qual_name.starts_with("std/typed_array/"))
+            self.cx.adt(d).is_some_and(|a| {
+                a.qual_name
+                    .starts_with(velt_common::std_dir!(lang_typed_array))
+            })
         });
         if !view {
             return false;
@@ -179,7 +180,7 @@ impl FnCx<'_, '_> {
 }
 
 impl FnCx<'_, '_> {
-    /// `Ctx::frozen_readable` with this body's type parameters bounded by the prelude's `Frozen`
+    /// `Ctx::frozen_readable_in` with this body's type parameters bounded by the prelude's `Frozen`
     /// taken as readable (checked where the generic is instantiated).
     /// The name of `t` when it is the prelude's `AtomicValue` or `Frozen` as a value type:
     /// interfaces the compiler implements, only ever bounds.

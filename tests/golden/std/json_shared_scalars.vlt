@@ -1,0 +1,10 @@
+// `JSON.stringify` of a `shared` scalar writes the value it holds (also as a member), as of the
+// array or object one holds.
+function main() {
+  console.log(JSON.stringify(shared(1.5)));
+  console.log(JSON.stringify(shared("s")));
+  console.log(JSON.stringify(shared(true)));
+  console.log(JSON.stringify(shared(7 as i32)));
+  const box = { n: shared(2.5), xs: shared([1, 2]) };
+  console.log(JSON.stringify(box));
+}

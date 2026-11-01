@@ -2,7 +2,7 @@
 // later rejection is dropped instead of being reported as uncaught. Losers keep running to
 // completion. Each race's loser settles only when `main` releases it after the race, and `main`
 // waits until it did, so which input wins doesn't depend on timing.
-import { channel, Channel } from "velt:channel";
+import { channel, Channel } from "velt/sync";
 
 class Timeout extends Error {
   ms: i64;

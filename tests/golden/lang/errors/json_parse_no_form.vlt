@@ -1,0 +1,21 @@
+// What `JSON.parse` cannot decode, reported by its generator at each call (a type without a
+// JSON form in a field: an interface value, a promise, a shared integer, a function).
+interface Named {
+  name(): string;
+}
+type W1 = { f: Named };
+type W2 = { f: Promise<i64> };
+type W3 = { f: shared<i64> };
+type W4 = { f: () => void };
+struct W5 {
+  f: (x: i64) => i64;
+}
+
+async function main() {
+  const a = JSON.parse<W1>("{}");
+  const b = JSON.parse<W2>("{}");
+  const c = JSON.parse<W3>("{}");
+  const d = JSON.parse<W4>("{}");
+  const e = JSON.parse<W5>("{}");
+  const again = JSON.parse<W5>("{}");
+}

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# velt:collections/concurrent_map (map.vlt, LLVM release) against bbtree's concurrent
+# velt/collections (map.vlt, LLVM release) against bbtree's concurrent
 # `BBTreeMap` (rust/: fat LTO, built for this CPU) on the same workloads. Checks that both print
 # the same checksums, and prints a Markdown table of the best Mops/s over RUNS runs of each,
 # interleaved so a busy machine affects them alike.

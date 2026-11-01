@@ -1,0 +1,3 @@
+[{"id":1},{"id":2}]
+Point: class; x: i32; y: i32
+Point { x: 1, y: 2 }

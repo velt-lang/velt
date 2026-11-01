@@ -2,7 +2,7 @@
 // workloads are in rust/src/main.rs, on `std::sync::atomic` and `std::thread`. A threaded
 // workload's time runs from when every worker is ready (a start barrier, so that how fast
 // threads start does not count) to when the last one finishes.
-import { Backoff, VersionLatch } from "velt:sync";
+import { Backoff, VersionLatch } from "velt/sync";
 
 const THREADS = 4;
 /** Words per 128 bytes: a shard on a cache line of its own (128-byte lines on Apple). */

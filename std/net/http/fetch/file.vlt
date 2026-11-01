@@ -1,0 +1,30 @@
+// velt/net/http (internal): the WHATWG `File` (docs/std/net/http.md): a `Blob` with a file name
+// and a modification time, as `FormData` holds a file.
+
+import { Blob, BlobPart } from "velt/net/http/fetch/blob";
+import { FilePropertyBag } from "velt/net/http/fetch/file_property_bag";
+
+/** A `Blob` with a file name and a modification time, as `FormData` holds a file. */
+export class File extends Blob {
+  #name: string = "";
+  #modified: i64 = 0;
+
+  constructor(parts: BlobPart[], name: string, options?: FilePropertyBag) {
+    super(parts, { type: options == null ? "" : (options.type ?? "") });
+    this.#name = name;
+    const at = options == null ? null : options.lastModified;
+    this.#modified = at ?? Date.now();
+  }
+
+  get name(): string {
+    return this.#name;
+  }
+
+  get lastModified(): i64 {
+    return this.#modified;
+  }
+
+  get webkitRelativePath(): string {
+    return "";
+  }
+}

@@ -1,0 +1,12 @@
+// sqlite/engine/exec/col_ref (internal): where a name resolved (`ColRef`): a source of some scope
+// and its column.
+
+import { Source } from "./source";
+
+/** Where a name resolved: a source of some scope and its column. */
+export struct ColRef {
+  src: Source;
+  col: i64;
+  /** How many scopes out (0: the scope itself). */
+  depth: usize;
+}

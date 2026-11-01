@@ -1,6 +1,6 @@
 // The command layer: argv in, output lines out.
 import { execute } from "@notes/commands";
-import { existsSync, removeSync } from "velt:fs";
+import { existsSync, removeSync } from "velt/fs";
 
 const DB = "notes-commands-test.json";
 

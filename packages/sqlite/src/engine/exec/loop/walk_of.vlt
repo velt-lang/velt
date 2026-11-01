@@ -1,0 +1,157 @@
+// sqlite/engine/exec/loop/walk_of (internal): the `Walk` of one FROM level through its access path:
+// a full scan, a rowid lookup or list, the rows of a subquery here, a rowid range and index scans
+// in engine/exec/loop/rowid_range_walk, engine/exec/loop/index_walk and
+// engine/exec/loop/index_in_walk.
+
+import { Cursor } from "../../cursor";
+import "../../btree_back";
+import { Source } from "../source";
+import { Ev } from "../types";
+import { Params } from "../params";
+import { Query } from "../query";
+import { ExprCompiler } from "../expr_compiler";
+import {
+  ACC_INDEX,
+  ACC_ROWID_EQ,
+  ACC_ROWID_IN,
+  ACC_ROWID_RANGE,
+  ACC_ROWS,
+  Access,
+} from "../plan/access";
+import { rowidKey } from "../plan/rowid_key";
+import { inValues } from "./in_values";
+import { Val } from "../value/val";
+import { Walk } from "./walk";
+import { IndexInWalk } from "./index_in_walk";
+import { IndexWalk } from "./index_walk";
+import { RowidRangeWalk } from "./rowid_range_walk";
+
+/** Every row of a table, by rowid (backwards when `reverse`). */
+class ScanWalk extends Walk {
+  cur: Cursor;
+  reverse: bool;
+
+  constructor(cur: Cursor, reverse: bool) {
+    super();
+    this.cur = cur;
+    this.reverse = reverse;
+  }
+
+  start(): bool {
+    return this.reverse ? this.cur.last() : this.cur.first();
+  }
+
+  step(): bool {
+    return this.reverse ? this.cur.prev() : this.cur.next();
+  }
+}
+
+/** The rows of a subquery, a CTE or VALUES. */
+class RowsWalk extends Walk {
+  src: Source;
+  q: Query;
+  params: Params;
+
+  constructor(src: Source, q: Query, params: Params) {
+    super();
+    this.src = src;
+    this.q = q;
+    this.params = params;
+  }
+
+  start(): bool {
+    this.q.open(this.params);
+    this.src.at = 0;
+    return this.q.has(0);
+  }
+
+  step(): bool {
+    this.src.at++;
+    return this.q.has(this.src.at);
+  }
+}
+
+/** The row with a rowid. */
+class RowidEqWalk extends Walk {
+  cur: Cursor;
+  ve: Ev;
+  aff: u8;
+
+  constructor(cur: Cursor, ve: Ev, aff: u8) {
+    super();
+    this.cur = cur;
+    this.ve = ve;
+    this.aff = aff;
+  }
+
+  start(): bool {
+    const r = rowidKey(this.ve(), this.aff, false);
+    return r.ok && !r.frac && this.cur.seekRowid(r.value);
+  }
+
+  step(): bool {
+    return false;
+  }
+}
+
+/** The rows whose rowid is in a list. */
+class RowidInWalk extends Walk {
+  cur: Cursor;
+  list: Ev[];
+  inq: Query | null;
+  params: Params;
+  aff: u8;
+  vals: Val[] = [];
+  vi: usize = 0;
+
+  constructor(cur: Cursor, acc: Access, params: Params) {
+    super();
+    this.cur = cur;
+    this.list = acc.inList!;
+    this.inq = acc.inQuery;
+    this.params = params;
+    this.aff = acc.inAff;
+  }
+
+  start(): bool {
+    this.vals = inValues(this.list, this.inq, this.params, this.aff, 0);
+    this.vi = 0;
+    return this.step();
+  }
+
+  step(): bool {
+    while (this.vi < this.vals.length) {
+      const v = this.vals[this.vi];
+      this.vi++;
+      const r = rowidKey(v, this.aff, false);
+      if (r.ok && !r.frac && this.cur.seekRowid(r.value)) {
+        return true;
+      }
+    }
+    return false;
+  }
+}
+
+/** The walk of `src` through `acc`. */
+export function walkOf(c: ExprCompiler, src: Source, acc: Access): Walk {
+  if (acc.kind == ACC_ROWS) {
+    return new RowsWalk(src, c.rowsQuery(src), c.params);
+  }
+  if (acc.kind == ACC_INDEX) {
+    if (acc.inList != null) {
+      return new IndexInWalk(src, acc, c.params);
+    }
+    return new IndexWalk(src, acc);
+  }
+  const cur = src.cur!;
+  if (acc.kind == ACC_ROWID_EQ) {
+    return new RowidEqWalk(cur, acc.eq[0], acc.eqAff[0]);
+  }
+  if (acc.kind == ACC_ROWID_IN) {
+    return new RowidInWalk(cur, acc, c.params);
+  }
+  if (acc.kind == ACC_ROWID_RANGE) {
+    return new RowidRangeWalk(cur, acc);
+  }
+  return new ScanWalk(cur, acc.reverse);
+}

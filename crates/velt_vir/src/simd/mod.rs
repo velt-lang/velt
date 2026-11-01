@@ -1,7 +1,7 @@
 //! The SIMD operations: what each `velt_simd_*` extern means (rt_abi.md "SIMD").
 //!
 //! A vector value is a [`Ty::V128`]; its lanes are given by the operation. The SIMD API
-//! (`std/simd/*.vlt`, `velt:simd`) declares one extern per vector type and operation,
+//! (`std/simd/*.vlt`, `velt/simd`) declares one extern per vector type and operation,
 //! `velt_simd_<type>_<op>`, and backends emit each call inline from the [`SimdCall`] its symbol
 //! parses to. No runtime function exists behind these symbols.
 
@@ -131,7 +131,7 @@ pub enum Op {
     /// unchecked (the prelude checks the range).
     Load,
     /// `(array: ptr, at: u64) -> v`: `Load` from `Atomic` words other threads may be storing
-    /// to (velt:simd `loadOptimistic`, under a latch): a plain vector load, then frozen, so a
+    /// to (velt/simd `loadOptimistic`, under a latch): a plain vector load, then frozen, so a
     /// lane a store raced is some value, never undefined behaviour; a latch's version check
     /// tells the reader whether one did. Unchecked, like `Load`.
     LoadOptimistic,
@@ -263,7 +263,7 @@ pub enum SimdCall {
     /// `false` on another architecture, on wasm and under Cranelift).
     Has(Ext),
     /// `velt_simd_prefetch(addr)`: start loading the cache line at `addr` for a read soon
-    /// (`__intrinsic_array_prefetch`); never faults. Nothing under Cranelift and on wasm.
+    /// (`arrayPrefetch`); never faults. Nothing under Cranelift and on wasm.
     Prefetch,
 }
 

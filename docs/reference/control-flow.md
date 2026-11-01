@@ -113,7 +113,7 @@ interface Iterable<T, E = never> {
 - `AsyncIterator<T, E>` (`next(): Promise<IteratorResult<T>, E>`) and `AsyncIterable<T, E>`
   (`[Symbol.asyncIterator]()`) are their async counterparts, iterated with
   [`for await`](#for-await).
-- **Builtin iterables**: arrays, strings, `Map`s and `Set`s (`velt:collections/set`) are
+- **Builtin iterables**: arrays, strings, `Map`s and `Set`s (`velt/collections`) are
   `Iterable<T>` (`Iterable<[K, V]>` for a map, `Iterable<string>` for a string), so they convert
   to an `Iterable<T>` value and satisfy an `Iterable<T>` bound: `sum(xs: Iterable<number>)`
   takes `[1, 2, 3]`, a set, `m.values()` or (with `Iterable<string>`) a string. An array
@@ -223,7 +223,7 @@ no generator object, and stopping early closes the iterator):
   map)`. A nested pattern takes its values after the outer pattern has taken all of its own
   (JS goes element by element; only an outer generator with effects can tell).
 - **`new Map(iterable)`** of `[key, value]` pairs and **`new Set(iterable)`**
-  ([velt:collections/set](../std/collections/set.md)).
+  ([velt/collections](../std/collections/set.md)).
 - An object literal with a `*[Symbol.iterator]()` method is an iterable
   ([Iterable object literals](types.md#iterable-object-literals)).
 

@@ -1,8 +1,8 @@
-// std/jsx/attrs/media: attribute types of images, audio and video
+// velt/jsx/attrs (internal): attribute types of images, audio and video
 // (each is `HtmlAttrs`, the global attributes from attrs/global.vlt, `&` its own; public as
-// `velt:jsx/attrs`).
+// `velt/jsx/attrs`).
 
-import type { HtmlAttrs } from "velt:jsx/attrs/global";
+import type { HtmlAttrs } from "velt/jsx/attrs/global";
 
 /** `<audio>`. */
 export type AudioAttrs = HtmlAttrs & {

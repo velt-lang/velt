@@ -1,0 +1,23 @@
+// velt/native: the helpers a native package's Velt side turns a failed result into an error with.
+// The codes are the runtime's (`velt_native::code`): 1 ENOENT, 6 ETIMEDOUT, 7 ECONNREFUSED, 999 none of them.
+import { checkIo, errorCodeName, ioError, IoResult, IoStatus, unwrapIo } from "velt/native";
+import { IoError } from "velt/io";
+
+function main() {
+  console.log(errorCodeName(1), errorCodeName(6), errorCodeName(7), errorCodeName(999));
+  const e = ioError(7, "refused");
+  console.log(e instanceof IoError, e.code, e.message);
+  const ok: IoResult<i64> = { code: 0, message: "", value: 42 };
+  console.log(unwrapIo(ok));
+  try {
+    unwrapIo<i64>({ code: 1, message: "no such file", value: 0 });
+  } catch (err) {
+    console.log(err.code, err.message);
+  }
+  const s: IoStatus = { code: 6, message: "too slow" };
+  try {
+    checkIo(s);
+  } catch (err) {
+    console.log(err.code, err.message);
+  }
+}

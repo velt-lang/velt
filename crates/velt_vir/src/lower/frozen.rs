@@ -283,7 +283,7 @@ impl FnLower<'_, '_> {
         Some(v)
     }
 
-    /// `let pat = <map>.__keyAt(cursor)` (or `__valueAt`, `__entryAt`) in a loop over a frozen
+    /// `let pat = <map>.[MAP_KEY_AT](cursor)` (or `[MAP_VALUE_AT]`, `[MAP_ENTRY_AT]`) in a loop over a frozen
     /// map (sema for_map.rs; std map.vlt "live `for...of`"), whose bindings nothing changes:
     /// bound into the key and value the map stores, frozen, as a loop over an array binds its
     /// elements, instead of to the copies the methods' frozen instances return. True when done.
@@ -307,7 +307,8 @@ impl FnLower<'_, '_> {
         let hir::Def::Fn(f) = self.cx.hir.def(*def) else {
             return false;
         };
-        let read = ["__keyAt", "__valueAt", "__entryAt"]
+        use velt_common::std_key as key;
+        let read = [key!(map_key_at), key!(map_value_at), key!(map_entry_at)]
             .into_iter()
             .find(|m| f.name.ends_with(&format!("Map.{m}")));
         let Some(read) = read else {
@@ -372,7 +373,7 @@ impl FnLower<'_, '_> {
         };
         let key = slot(self, keys);
         let value = slot(self, vals);
-        // The value slot is `V | null`; a live entry's holds a `V` (`__advance` skipped the
+        // The value slot is `V | null`; a live entry's holds a `V` (`[MAP_ADVANCE]` skipped the
         // others, and a `V` that holds null itself is the slot's value as it is).
         let value = match self.cx.kind(value.ty) {
             hir::TyKind::Option(vt, _) => mk(K::UnwrapSome(Box::new(value), UseMode::Borrow), vt),
@@ -381,11 +382,11 @@ impl FnLower<'_, '_> {
         let ty = self.sub(init.ty);
         self.frozen.extend(binds.iter().copied());
         let place = match read {
-            "__keyAt" => {
+            velt_common::std_key!(map_key_at) => {
                 let v = self.frozen_read(&key);
                 self.place_of(v, key.ty)
             }
-            "__valueAt" => {
+            velt_common::std_key!(map_value_at) => {
                 let v = self.frozen_read(&value);
                 self.place_of(v, value.ty)
             }

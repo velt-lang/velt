@@ -102,7 +102,7 @@ Promises behave like JavaScript's, at Rust's cost:
   that started it, nor before timers due earlier. `sleep`s of different tasks have no order
   between them, since the tasks run in parallel; `setTimeout`, `setInterval` and `setImmediate`
   callbacks do, whichever task created them: they run in Node's order, one list per delay
-  ([velt:timers](../std/timers.md)).
+  ([velt/time](../std/time/timers.md)).
 - **A dropped promise is not cancelled**: a stored promise that is never awaited still runs to
   completion (its result is dropped), and the program waits for it before exiting while it can
   still make progress, like Node waits for pending work. A synchronous `main` that starts promises, timers or microtasks runs
@@ -110,8 +110,8 @@ Promises behave like JavaScript's, at Rust's cost:
   created, and what they queued once `main` returns. A promise created outside async code (for example in a synchronous
   `main`) starts when it is awaited or spawned.
 - After `main` returns (a synchronous one, an `async` one, or the top level), the process runs
-  while something can still happen, as in Node: a listening [server](../std/http.md), a pending
-  [timer](../std/timers.md) (`setTimeout`, `setInterval`) unless it is `unref()`ed, and tasks
+  while something can still happen, as in Node: a listening [server](../../packages/http-server/README.md), a pending
+  [timer](../std/time/timers.md) (`setTimeout`, `setInterval`) unless it is `unref()`ed, and tasks
   and promises that run or wait for a timer or I/O (`sleep`, a socket, a file, a child
   process). Spawned tasks are waited for like that too. What waits only for other promises or
   tasks that can never settle it (a `resolve` nobody calls any more, a channel nobody sends on)
@@ -154,7 +154,7 @@ Promises behave like JavaScript's, at Rust's cost:
     using it afterwards is an error; pass another holder (`const q = p; spawn(f(q))`) to await
     it on both tasks.
   - Another holder of a shared promise that goes to another task (`const q = p; spawn(f(q))`,
-    `spawn(q)`, a promise read from a `Map`, `ch.send(q)`, a [timer](../std/timers.md) callback
+    `spawn(q)`, a promise read from a `Map`, `ch.send(q)`, a [timer](../std/time/timers.md) callback
     capturing it, which runs as a task of its own, a `Promise.all` or `Promise.race` over it) is
     awaited there through a copy. So is one inside a value that goes there while it is still
     used here (an object, an array or a closure passed to a spawned call or sent over a
@@ -193,6 +193,13 @@ Promises behave like JavaScript's, at Rust's cost:
   in JavaScript ([Functions](functions.md#captures)). So `spawn(f())` through an
   async closure value `f` gives the task a copy of `f`, and stops the program
   (``panic: cannot copy …``) when `f` captured such a resource.
+- A callback handed to a library function (std's or a package's) that runs it on other threads,
+  as a server runs its handler once per connection, must not change what it captured (a sync
+  callback included) nor capture a resource without `clone()`: each thread would change, or
+  release, a copy of its own, out of sight. That is a compile-time error at the program's call
+  into the library (``but it is passed here to a function that runs it on other threads``),
+  with the `shared(...)` fix. A closure the program hands to `spawn` itself is copied as above
+  and may change its copy.
 - A value owning a `[Symbol.dispose]` resource is copied by its class's own `clone()` method
   ([Classes](classes.md)), so each copy releases its own resource; what the returned object
   still shares with the original (a shallow `clone()`) is deep-copied in turn, and a `clone()`
@@ -297,7 +304,7 @@ only when `p` cannot reject (**Planned**: both, as a union). A `then` chain kept
 is reported as uncaught, like a dropped promise, once the microtask queue is empty (as in
 Node). `queueMicrotask(f)` runs `f` as such a callback, but an error `f` throws ends the
 process at the throw, as in Node, like one a timer's callback throws
-([timers](../std/timers.md)). Both need async code around them:
+([timers](../std/time/timers.md)). Both need async code around them:
 in synchronous code (a synchronous `main`, or top-level code without an `await`) the chain
 starts only when awaited or spawned, like any [dropped promise](#promises), so a chain kept as a
 statement there and `queueMicrotask` never run (**Planned**: run them as Node does, #846).
@@ -404,16 +411,16 @@ ending the stream is always an explicit `close()` (or `stop()`).
 
 | Source | Loop | Ends when |
 |---|---|---|
-| [`Channel<T>`](../std/channel.md) | `for await (const job of jobs)` | the channel is closed and drained |
-| [`FileReader`](../std/fs_stream.md) | `for await (const line of reader.lines())` | end of file |
-| [standard input](../std/stdin.md) | `for await (const line of lines())` | end of input |
-| [`WebSocket`](../std/websocket.md) | `for await (const msg of ws)` | the peer closed the connection |
-| [`RedisSubscriber`](../std/redis.md) | `for await (const m of sub)` | `sub.close()` |
-| [`Ticker`](../std/timers.md) | `for await (const n of ticker)` | the ticker is stopped |
-| [postgres `CopyReader`](../std/postgres.md) | `for await (const chunk of reader)` | the end of the `COPY` |
+| [`Channel<T>`](../std/sync/channel.md) | `for await (const job of jobs)` | the channel is closed and drained |
+| [`FileReader`](../std/fs/stream.md) | `for await (const line of reader.lines())` | end of file |
+| [standard input](../std/process/stdin.md) | `for await (const line of lines())` | end of input |
+| [`WebSocket`](../std/net/websocket.md) | `for await (const msg of ws)` | the peer closed the connection |
+| [`RedisSubscriber`](../../packages/redis/README.md) (the `redis` package) | `for await (const m of sub)` | `sub.close()` |
+| [`Ticker`](../std/time/timers.md) | `for await (const n of ticker)` | the ticker is stopped |
+| [postgres `CopyReader`](../../packages/postgres/README.md) (the `postgres` package) | `for await (const chunk of reader)` | the end of the `COPY` |
 
 ```ts
-import { channel, Channel, ChannelClosed } from "velt:channel";
+import { channel, Channel, ChannelClosed } from "velt/sync";
 
 async function produce(out: Channel<i64>): Promise<void> throws ChannelClosed {
   for (let i = 1; i <= 3; i++) {
@@ -448,12 +455,12 @@ it (a promise it started still may), else a copy made where it was produced, so 
 use one object (also on single-threaded WebAssembly, where tasks share the one thread).
 
 `spawn(p, { worker: i })` pins the task to worker `i` (`0` to `workerCount() - 1`, from
-[`velt:task`](../std/task.md#task-placement)): it starts there and never moves. `p` must be a
+[`velt/task`](../std/task.md#task-placement)): it starts there and never moves. `p` must be a
 call or a task body (not a promise that already started); an index out of range is a panic at
 the spawn. Every task stays on the worker it started on unless that worker is busy enough to
 share its work, so a caller pinned next to the task it talks to never wakes another thread.
 
-Tasks exchange values through channels ([`velt:channel`](../std/channel.md)): typed,
+Tasks exchange values through channels ([`velt/sync`](../std/sync/channel.md)): typed,
 bounded or unbounded queues where `send` waits while a bounded channel is full.
 
 Output from different tasks interleaves line by line: a `console.log` line is never split by
@@ -472,12 +479,12 @@ Hand-offs through shared state (`shared`, a `Mutex`) and through timers are not 
 such lines in order, print them from one task. Writing to stderr flushes stdout first.
 
 Built-ins: `sleep(ms)`, `yieldNow()`, `performance.now(): f64` (monotonic milliseconds) and
-`Date.now(): i64`. Timers and intervals are in [`velt:timers`](../std/timers.md).
+`Date.now(): i64`. Timers and intervals are in [`velt/time`](../std/time/timers.md).
 
 ## Cancellation
 
 Cancellation is cooperative, with TypeScript's `AbortController` / `AbortSignal`
-([`velt:task`](../std/task.md)): `abort()` marks the signal, and code that takes one checks it
+([`velt/task`](../std/task.md)): `abort()` marks the signal, and code that takes one checks it
 (`throwIfAborted()`) or races its work against `signal.whenAborted()` (put the wait itself in
 the `Promise.race`, so it is dropped when the work wins). A started promise is never cancelled
 behind the program's back, so `finally` blocks and `using` disposal run as usual.
@@ -587,7 +594,7 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   memory ordering such as `"relaxed"` or `"acquire"`) are single CPU instructions on the word
   inside the shared value (`s.hits.add(1)`). It is the one part of a `shared<T>` that changes.
   An `Atomic` is used where it is, never copied or shared, and binding a part of a `shared`
-  value that holds one to a variable is an error. See [Atomics and velt:sync](../std/sync.md),
+  value that holds one to a variable is an error. See [Atomics and velt/sync](../std/sync.md),
   which also has `Backoff` and `VersionLatch` (optimistic lock coupling) for lock-free data
   structures, and `ThreadLocal<T>`, a module constant with one value per thread.
 - `shared(new RwLock<T>(x))` for state read far more often than written: `rw.read((v) => …)`
@@ -784,7 +791,13 @@ can.
   and every override are `async` when any of them can fail, unless the failing one only
   returns a rejecting promise: a synchronous override whose body throws nothing may return a
   promise that rejects, when both results are `Promise<T>` written without an error type, and
-  the base method's promise then rejects with that too. A getter cannot be `async`, so a getter returning a promise from an interface cannot
+  the base method's promise then rejects with that too. An abstract method never runs, so
+  it is never the one that must be `async`: `abstract read(): Promise<u8[], IoError>` (or
+  `Promise<u8[]>`, or `Promise<u8[]> throws IoError`) is implemented by
+  `async read(): Promise<u8[], IoError> { … }` (or one whose errors are inferred), as an
+  interface method is. The error type written in a base method's promise, abstract or not,
+  bounds what its `async` overrides may reject with (an override rejecting with
+  more is an error: `` `Sub.read` throws `Other`, but `Base.read` does not allow it ``). A getter cannot be `async`, so a getter returning a promise from an interface cannot
   fail, and overridden getters throw at the read. A method declared as returning a type
   parameter (`get(): T`) throws its errors for every type argument: an `async` implementation
   for `T = Promise<…>` must not fail. A default body of such an interface method can be `async` too:
@@ -919,7 +932,7 @@ async function main() {
   the program ends, as Node's does ([Promises](#promises)).
 
 ```ts
-import { setTimeout } from "velt:timers";
+import { setTimeout } from "velt/time";
 
 class Failed extends Error {}
 
@@ -949,7 +962,7 @@ the type arguments or from the expected type; without a written `E`
 (`Promise.withResolvers<T>()`), the promise rejects with what `reject` is called with.
 
 - `resolve` and `reject` work like a `new Promise` executor's: store them, move them into a
-  spawned task, or send them over a [channel](../std/channel.md) and call them there; the
+  spawned task, or send them over a [channel](../std/sync/channel.md) and call them there; the
   awaiting task wakes. The first settlement wins and later calls do nothing.
 - A value settled from another task is transferred (moved, or copied while that task still uses
   it), one settled on the promise's own task is the same object, as for `new Promise`.
@@ -960,7 +973,7 @@ the type arguments or from the expected type; without a written `E`
 A one-shot reply to a request handled on another task, without a channel per request:
 
 ```ts
-import { channel, Channel } from "velt:channel";
+import { channel, Channel } from "velt/sync";
 
 type Request = { n: i64; reply: (value: i64) => void };
 

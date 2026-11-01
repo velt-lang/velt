@@ -1,0 +1,30 @@
+// velt/collections (internal): the node latches of `ConcurrentMap`: a node's version, read and
+// taken (optimistic lock coupling, velt/sync's `VersionLatch` word).
+
+import { ConcurrentMap } from "velt/collections/concurrent_map";
+import { EXCLUSIVE, SHARED_MASK, VERSION_UNIT } from "velt/collections/concurrent/layout";
+
+export function readVersion<K, V extends Frozen>(cm: ConcurrentMap<K, V>, n: u64): u64 {
+  while (true) {
+    const x = cm.w[n].load("acquire");
+    if ((x & EXCLUSIVE) == 0) {
+      return x & ~SHARED_MASK;
+    }
+    Atomic.spinHint();
+  }
+}
+
+export function isUnchanged<K, V extends Frozen>(cm: ConcurrentMap<K, V>, n: u64, v: u64): bool {
+  Atomic.fence("acquire");
+  return (cm.w[n].load("relaxed") & ~SHARED_MASK) == v;
+}
+
+export function tryLockAt<K, V extends Frozen>(cm: ConcurrentMap<K, V>, n: u64, v: u64): bool {
+  const ok = cm.w[n].compareExchange(v, v | EXCLUSIVE, "acquire", "relaxed") == v;
+  Atomic.fence("release");
+  return ok;
+}
+
+export function unlock<K, V extends Frozen>(cm: ConcurrentMap<K, V>, n: u64, v: u64) {
+  cm.w[n].store(v + VERSION_UNIT, "release");
+}

@@ -1,0 +1,43 @@
+A null 7 3 5 down x Map(2) { 't' => [ 1, 2 ], 'u' => [] } { '0': true, '1': true, z: false } { mem: 2, cpu: 1.5 } { up: 'u', down: 'd' } true true
+{"a":"A","b":null,"c":7,"lvl":3,"color":5,"dir":"down","lit":"x","tags":{"t":[1,2],"u":[]},"rec":{"0":true,"1":true,"z":false},"keyed":{"mem":2,"cpu":1.5},"byDir":{"up":"u","down":"d"}}
+undefined undefined null false 1 up x Map(0) {} {} { cpu: 1, mem: 2 } undefined true true
+{"c":null,"lvl":false,"color":1,"dir":"up","lit":"x","tags":{},"rec":{},"keyed":{"cpu":1,"mem":2}}
+undefined null null high 1 up x Map(0) {} {} { cpu: 1, mem: 2 } undefined true true
+{"b":null,"c":null,"lvl":"high","color":1,"dir":"up","lit":"x","tags":{},"rec":{},"keyed":{"cpu":1,"mem":2}}
+expected string at $.a
+expected one of "low", "high", 3, false at $.lvl
+expected one of "low", "high", 3, false at $.lvl
+expected one of "low", "high", 3, false at $.lvl
+expected one of "low", "high", 3, false at $.lvl
+expected one of "low", "high", 3, false at $.lvl
+expected one of "low", "high", 3, false at $.lvl
+expected one of "low", "high", 3, false at $.lvl
+expected one of "low", "high", 3, false at $.lvl
+expected one of 1, 5 at $.color
+expected one of 1, 5 at $.color
+expected one of "up", "down" at $.dir
+expected one of "up", "down" at $.dir
+expected "x" at $.lit
+expected "x" at $.lit
+expected i64 at $.tags.a[1]
+expected i64 at $.tags.a[1]
+expected boolean at $.rec.q
+expected boolean at $.rec.q
+expected field "mem" at $.keyed
+expected field "mem" at $.keyed
+expected number at $.keyed.mem
+expected number at $.keyed.mem
+expected field "down" at $.byDir
+expected field "down" at $.byDir
+expected i32 at $.c
+expected i32 at $.c
+expected string at $.a
+expected string at $.a
+invalid JSON at $.keyed.x: unexpected character '}' (byte 115)
+unknown field at $.keyed.x
+expected field "lvl" at $
+expected field "lvl" at $
+[ 5, 1 ] null [ 'a', null ]
+Map(1) { 'k' => 'down' } 1.5
+expected one of "a\\tb", 1.5, true at $
+expected field "b\\nc" at $

@@ -13,7 +13,7 @@
 //!
 //! The reference `store`, `exchange` or a successful compare-and-swap takes out of the word is
 //! *retired*: another thread may have read the word and not counted it yet, so releasing it at
-//! once could free what that thread is about to count. It goes to `velt:sync/epoch`'s `retire`,
+//! once could free what that thread is about to count. It goes to `velt/sync/epoch`'s `retire`,
 //! which drops it once no thread in a section can still read it.
 
 use velt_sema::hir::{self, ExprKind as K, Intrinsic, TyId, TyKind};
@@ -22,8 +22,8 @@ use super::FnLower;
 use crate::atomic::{AtomicCall, Order, Rmw};
 use crate::vir::{BinOp, Callee, Operand, Place, Rvalue, Ty};
 
-/// `velt:sync/epoch`'s `retire`, which every retired reference goes to.
-const RETIRE: &str = "std/sync/epoch::retire";
+/// `velt/sync/epoch`'s `retire`, which every retired reference goes to.
+const RETIRE: &str = velt_common::std_item!(sync_epoch_reclaim, "retire");
 
 impl FnLower<'_, '_> {
     /// The `T` of the `Atomic<T>` receiver `a` when the word holds a reference.
@@ -175,7 +175,7 @@ impl FnLower<'_, '_> {
         Operand::Copy(Place::local(tmp))
     }
 
-    /// Hands the reference `old` of type `t`, taken out of a word, to `velt:sync/epoch`'s
+    /// Hands the reference `old` of type `t`, taken out of a word, to `velt/sync/epoch`'s
     /// `retire`, which drops it once no thread in a section can still read it (none for null).
     pub(super) fn retire(&mut self, old: Operand, t: TyId) {
         let (shared_ty, nullable) = match self.cx.kind(t) {

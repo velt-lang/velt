@@ -282,7 +282,11 @@ pub fn namespace_member<'a>(
 
 /// Indices of the implicitly imported prelude modules.
 pub fn prelude_modules(analysis: &Analysis) -> impl Iterator<Item = usize> + '_ {
-    (0..analysis.modules.len()).filter(|&m| analysis.modules[m].path.starts_with("std/prelude/"))
+    (0..analysis.modules.len()).filter(|&m| {
+        analysis.modules[m]
+            .path
+            .starts_with(velt_common::std_dir!(prelude))
+    })
 }
 
 /// Members (fields, constructor, methods, variants, inherited members) of the type declared by `ty`.

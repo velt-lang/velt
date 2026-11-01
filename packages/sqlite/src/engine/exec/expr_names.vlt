@@ -1,0 +1,111 @@
+// sqlite/engine/exec/expr_names (internal): names in expressions resolved for the expression
+// compiler (engine/exec/expr_compiler): columns against the FROM items of the query and its
+// enclosing queries, the rowid, result column aliases.
+
+import { BINARY } from "../collation";
+import { A_INTEGER } from "../affinity";
+import { Expr } from "../sql/types";
+import { ROWID, Source } from "./source";
+import { prepareError } from "./errors";
+import { Scope } from "./scope";
+import { textVal } from "./value/val";
+import { C, constant } from "./c";
+import { Found } from "./found";
+import { ExprCompiler } from "./expr_compiler";
+
+export function compileColumn(ec: ExprCompiler, e: Expr, sc: Scope): C {
+  let s: Scope | null = sc;
+  while (s != null) {
+    const here = s!;
+    const r = ec.lookup(e, here);
+    if (r != null) {
+      // Every scope from `sc` out to (not including) `here` reads an enclosing query.
+      let m: Scope | null = sc;
+      while (m != null && m! != here) {
+        m!.outer = true;
+        m = m!.parent;
+      }
+      return ec.columnRef(r!.src, r!.col, here);
+    }
+    if (e.table == "") {
+      const alias = ec.aliasRef(e.name, here);
+      if (alias != null) {
+        return alias!;
+      }
+    }
+    s = here.parent;
+  }
+  if (e.op == "quoted" && e.table == "") {
+    return constant(textVal(e.name));
+  }
+  prepareError(`no such column: ${e.table != "" ? e.table + "." : ""}${e.name}`);
+}
+
+/** The column `e` names among the sources of `s`, or null. */
+export function lookupName(ec: ExprCompiler, e: Expr, s: Scope): Found | null {
+  const t = e.table.toUpperCase();
+  let found: Source | null = null;
+  let col: i64 = -2;
+  let n = 0;
+  for (const src of s.sources) {
+    if (t != "" && src.name.toUpperCase() != t) {
+      continue;
+    }
+    const c = src.column(e.name);
+    if (c >= 0 && !(t == "" && src.hidden[c as usize])) {
+      n++;
+      found = src;
+      col = c;
+    }
+  }
+  if (n == 0) {
+    for (const src of s.sources) {
+      if ((t == "" || src.name.toUpperCase() == t) && src.isRowidName(e.name)) {
+        n++;
+        found = src;
+        col = ROWID;
+      }
+    }
+  }
+  if (n > 1) {
+    prepareError(`ambiguous column name: ${e.table != "" ? e.table + "." : ""}${e.name}`);
+  }
+  if (n == 0) {
+    return null;
+  }
+  return new Found(found!, col);
+}
+
+/** A column of `src` read in scope `s` (the group's saved value in aggregate output). */
+export function columnRefOf(ec: ExprCompiler, src: Source, col: i64, s: Scope): C {
+  ec.touched.push(src);
+  if (col >= 0 && (col as usize) < src.used.length) {
+    src.used[col as usize] = true;
+  }
+  const rowid = col < 0 || col == src.rowidCol;
+  const aff = rowid ? A_INTEGER : src.affs[col as usize];
+  const coll: i64 = rowid ? BINARY as i64 : src.colls[col as usize] as i64;
+  if (s.agg != null) {
+    const agg = s.agg!;
+    const slot = agg.bareSlot(src, col);
+    return C { ev: () => agg.cur.bare[slot], aff: aff, coll: coll, explicit: false };
+  }
+  return C { ev: () => src.col(col), aff: aff, coll: coll, explicit: false };
+}
+
+/** A result column's alias used as a name in the same SELECT. */
+export function aliasRefOf(ec: ExprCompiler, name: string, s: Scope): C | null {
+  const n = name.toUpperCase();
+  for (const rc of s.aliases) {
+    if (rc.alias != "" && rc.alias.toUpperCase() == n) {
+      if (s.expanding.includes(n)) {
+        prepareError(`misuse of alias: ${name}`);
+      }
+      s.expanding.push(n);
+      const c = ec.expr(rc.expr, s);
+      s.expanding.pop();
+      return c;
+    }
+  }
+  return null;
+}

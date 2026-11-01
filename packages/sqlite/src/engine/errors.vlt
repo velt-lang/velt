@@ -1,0 +1,14 @@
+// sqlite/engine/errors (internal): the error of a database file that does not follow the format, and
+// the helper that throws it out of line.
+
+/** A database file that does not follow the format. */
+export class CorruptError extends Error {
+  constructor(message: string) {
+    super(`database disk image is malformed: ${message}`);
+  }
+}
+
+/** Throws a `CorruptError`: out of line, so the readers that check stay small. */
+export function corrupt(what: string): never {
+  throw new CorruptError(what);
+}

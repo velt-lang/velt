@@ -171,7 +171,7 @@ round still carried the bug workarounds, among them a JSON round trip of every c
 |---|---|
 | `src/runtime.vlt` | The runtime: definitions, activations, storage, shards, router, host |
 | `src/app.vlt` | The actors: `Counter` (examples/counter's) and `Tiny` (the sigx benchmark actor) |
-| `src/wire.vlt` | The sigx wire endpoint on `velt:http` |
+| `src/wire.vlt` | The sigx wire endpoint on `velt/http` |
 | `src/bench.vlt` | `actors bench` (throughput and latency) and `actors calls` (fixed work) |
 | `src/main.vlt` | `actors serve` / `bench` / `calls` |
 | `demo.vlt` / `demo.out` | The scripted walk above (golden: `cargo test --workspace --test golden`) |

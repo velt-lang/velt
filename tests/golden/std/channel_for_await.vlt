@@ -1,8 +1,8 @@
 // check: no leaks
-// velt:channel as an async iterable: `for await (const v of ch)` receives until the channel is
+// velt/sync as an async iterable: `for await (const v of ch)` receives until the channel is
 // closed and drained. Leaving the loop early does not close the channel (other receivers may
 // still use it): the remaining values stay receivable.
-import { Channel, ChannelClosed, channel } from "velt:channel";
+import { Channel, ChannelClosed, channel } from "velt/sync";
 
 class Job {
   id: i64;

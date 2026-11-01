@@ -21,7 +21,7 @@ pub(super) enum AssignTarget {
     Setter(hir::Expr),
     /// `r[k]` / `r.name` of a `Record`: the checked record.
     Record(hir::Expr),
-    /// `xs[i]` of a std class with `__index` / `__setIndex` (`indexers`): the checked object.
+    /// `xs[i]` of a std class with `[INDEX]` / `[SET_INDEX]` (`indexers`): the checked object.
     Indexer(hir::Expr),
     /// `x.f` / `x[k]` of an `any` (`dynamic_write`): the checked receiver, and the type a value
     /// written is checked as first (`(x as Record<K, V>)[k]`, `any_record_cast.rs`).

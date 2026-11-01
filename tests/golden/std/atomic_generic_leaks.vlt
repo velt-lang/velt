@@ -1,6 +1,4 @@
-// check: unfreed blocks at most 4
-// (The 4 blocks: `velt:sync/epoch`'s registry of thread slots, made at the first load's section
-// and kept until the program exits.)
+// check: no leaks
 // An `Atomic<T>` in generic code frees what nothing replaces: a load bound to a variable (counted
 // there, since generic code cannot know it is a reference) and kept in a `T[]`, a failed
 // `compareExchangeWeak`, and the `Atomic` dropped as a field and in an array, for a `string`

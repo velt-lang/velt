@@ -145,6 +145,9 @@ impl<'a> Parser<'a> {
                 ItemKind::Namespace(self.parse_namespace()?)
             }
             None if self.at_namespace(0) => ItemKind::Namespace(self.parse_namespace()?),
+            Some(Kw::Declare) if self.nth_word(1, "generated") && self.nth(2) == Tok::LParen => {
+                ItemKind::Function(self.parse_generated_decl(lo)?)
+            }
             Some(Kw::Declare) => ItemKind::ExternFn(self.parse_declare(lo)?),
             _ if self.at_var_decl() => {
                 let var = self.parse_var_decl()?;
@@ -168,9 +171,10 @@ impl<'a> Parser<'a> {
         Ok(kind)
     }
 
-    /// `declare [async] function name(...): R;` or `declare system function name(...): R;`
+    /// `declare [async] function name(...): R;`, `declare system function name(...): R;`
     /// (`declare async system function` too, which the system function check rejects)
-    /// (`system` is a word only there: a function of the platform's C library).
+    /// (`system` is a word only there: a function of the platform's C library) or
+    /// `declare intrinsic function name(...): R;` (`intrinsic` likewise: a compiler intrinsic).
     fn parse_declare(&mut self, lo: u32) -> PResult<FnSig> {
         // `declare async system function` parses, so the check can say why it is not one.
         self.bump(); // declare
@@ -182,9 +186,15 @@ impl<'a> Parser<'a> {
         if is_system {
             self.bump(); // system
         }
+        let is_intrinsic =
+            !is_system && self.at_word("intrinsic") && self.nth(1) == Tok::Kw(Kw::Function);
+        if is_intrinsic {
+            self.bump(); // intrinsic
+        }
         is_async |= self.eat_kw(Kw::Async);
         let mut sig = self.parse_fn_sig(lo, is_async)?;
         sig.is_system = is_system;
+        sig.is_intrinsic = is_intrinsic;
         if sig.is_generator {
             self.error("a `declare function` cannot be a generator", sig.name.span);
         }
@@ -192,6 +202,46 @@ impl<'a> Parser<'a> {
             self.expect_semi()?;
         }
         Ok(sig)
+    }
+
+    /// `declare generated("<spec>") [async] function name<T>(...): R;`: a function whose body a
+    /// source generator writes per instance (`generated` is a word only there). Parsed as a
+    /// function with an empty body; sema checks what it may be.
+    fn parse_generated_decl(&mut self, lo: u32) -> PResult<FnDecl> {
+        self.bump(); // declare
+        self.bump(); // generated
+        self.expect(Tok::LParen)?;
+        let Tok::Str(idx) = self.peek() else {
+            self.error_expected("the generator module as a string");
+            return Err(Fail);
+        };
+        let spec = GeneratorSpec {
+            spec: self.payload_text(idx),
+            span: self.cur_span(),
+        };
+        self.bump();
+        self.expect(Tok::RParen)?;
+        let is_async = self.eat_kw(Kw::Async);
+        let mut sig = self.parse_fn_sig(lo, is_async)?;
+        sig.generator = Some(spec);
+        if sig.is_generator {
+            self.error(
+                "a generated function cannot be a generator function",
+                sig.name.span,
+            );
+        }
+        if !self.eat_signature_end() {
+            self.expect_semi()?;
+        }
+        let span = Span::new(sig.span.file, sig.span.hi, sig.span.hi);
+        Ok(FnDecl {
+            sig,
+            body: Block {
+                stmts: vec![],
+                span,
+            },
+            overloads: vec![],
+        })
     }
 
     /// At `function`. `lo` is the start of the item (may include `export`/`async`). A
@@ -361,6 +411,8 @@ impl<'a> Parser<'a> {
             throws,
             is_async,
             is_system: false,
+            is_intrinsic: false,
+            generator: None,
             is_generator,
             this_param,
             span: self.span_from(lo),

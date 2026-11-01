@@ -1,5 +1,5 @@
 //! A std module may use the SIMD type names without importing them (they are built in there),
-//! but their methods come from `velt:simd`: one that calls `u8x16.splat` without the import
+//! but their methods come from `velt/simd`: one that calls `u8x16.splat` without the import
 //! gets an error that names the import, not only "not a static method". std is copied to a
 //! temp directory with a probe module added, and `velt check` runs with `$VELT_STD` on it.
 
@@ -28,15 +28,17 @@ fn std_module_without_the_import_is_told_to_import() {
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std"),
         &std,
     );
+    // A module of its own (a folder's index.vlt): user code imports only modules.
+    std::fs::create_dir_all(std.join("zz_probe")).unwrap();
     std::fs::write(
-        std.join("zz_probe.vlt"),
+        std.join("zz_probe/index.vlt"),
         "export function probe(): u8 {\n  return u8x16.splat(3).lane(0);\n}\n",
     )
     .unwrap();
     let main = dir.path().join("main.vlt");
     std::fs::write(
         &main,
-        "import { probe } from \"velt:zz_probe\";\n\nfunction main() {\n  console.log(probe());\n}\n",
+        "import { probe } from \"velt/zz_probe\";\n\nfunction main() {\n  console.log(probe());\n}\n",
     )
     .unwrap();
     let out = no_window::command(env!("CARGO_BIN_EXE_velt"))
@@ -51,5 +53,5 @@ fn std_module_without_the_import_is_told_to_import() {
         err.contains("`u8x16.splat` is not a static method"),
         "{err}"
     );
-    assert!(err.contains("import { u8x16 } from \"velt:simd\""), "{err}");
+    assert!(err.contains("import { u8x16 } from \"velt/simd\""), "{err}");
 }

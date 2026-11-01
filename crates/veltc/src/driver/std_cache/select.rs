@@ -30,7 +30,7 @@ pub(super) fn size(f: &vir::Function) -> usize {
 }
 
 fn is_std(f: &vir::Function) -> bool {
-    velt_vir::mangle::demangle(&f.symbol).starts_with("std/")
+    velt_common::std_modules::is_std(&velt_vir::mangle::demangle(&f.symbol))
 }
 
 /// The functions of `program` the cache serves.

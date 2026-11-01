@@ -1,6 +1,6 @@
 // The JSON globals load for a program that reaches them only through std: the `Value` alias
-// of velt:json and the fetch API's `json()` (this file never spells the globals' names).
-import { Value } from "velt:json";
+// of velt/encoding/json and the fetch API's `json()` (this file never spells the globals' names).
+import { Value } from "velt/encoding/json";
 
 function show(v: Value): string {
   return v.stringify();

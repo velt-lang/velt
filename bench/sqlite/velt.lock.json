@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "packages": [
+    {
+      "name": "sqlite",
+      "version": "0.2.0",
+      "source": "path+../../packages/sqlite"
+    }
+  ]
+}

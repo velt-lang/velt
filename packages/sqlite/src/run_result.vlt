@@ -1,0 +1,14 @@
+// sqlite (internal): `RunResult`, what running a statement did.
+
+/** What `run` did. */
+export class RunResult {
+  /** Rows inserted, updated or deleted. */
+  changes: i64;
+  /** Rowid of the most recent successful INSERT on this connection. */
+  lastInsertRowid: i64;
+
+  constructor(changes: i64, lastInsertRowid: i64) {
+    this.changes = changes;
+    this.lastInsertRowid = lastInsertRowid;
+  }
+}

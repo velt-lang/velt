@@ -1,0 +1,24 @@
+// velt/dev (internal): the graceful stop of a server under `velt dev`. Before the supervisor
+// starts the next version of the program, it asks this one to stop: a server that joined then
+// stops accepting (the supervisor keeps the listening socket, so new connections wait for the
+// next version), answers its in-flight requests, and says it `drained`; the runtime exits once
+// every server that joined did (or after a bounded wait). Outside `velt dev` nothing joins.
+
+import { velt_rt_dev_server_drained, velt_rt_dev_server_stop } from "velt/dev/rt";
+import { AbortSignal } from "velt/task";
+
+/**
+ * Joins the graceful stop of `velt dev`: a signal aborted once the program is asked to stop
+ * for its next version, after which the caller stops taking work, finishes what it has and
+ * calls `drained()`; the program exits once everything that joined did. Null outside
+ * `velt dev`, where nothing waits.
+ */
+export function joinStop(): AbortSignal | null {
+  const handle = velt_rt_dev_server_stop();
+  return handle == 0 ? null : AbortSignal.adopt(handle);
+}
+
+/** What joined the graceful stop (`joinStop`) finished. */
+export function drained() {
+  velt_rt_dev_server_drained();
+}

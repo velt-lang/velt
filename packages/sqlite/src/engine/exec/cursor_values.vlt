@@ -1,0 +1,64 @@
+// sqlite/engine/exec/cursor_values (internal): the values of the record a b-tree cursor is on,
+// decoded when read, and text from UTF-8 bytes.
+
+import { serialSize } from "../format";
+import { Cursor } from "../cursor";
+import { utf8Decode, utf8DecodeLossy } from "velt/encoding";
+import { Val, blobVal, intVal, nullVal, realVal, textVal } from "./value/val";
+
+/**
+ * Text from its UTF-8 bytes; invalid sequences become U+FFFD. (The strict decoder is several
+ * times faster than the lossy one on valid text, the common case.)
+ */
+export function textOf(raw: u8[]): string {
+  try {
+    return utf8Decode(raw);
+  } catch (e) {
+    return utf8DecodeLossy(raw);
+  }
+}
+
+/**
+ * Text from `n` UTF-8 bytes at `at` in one copy, each invalid sequence a U+FFFD (valid text, the
+ * common case, is only checked and copied).
+ */
+export function textRange(b: u8[], at: usize, n: usize): string {
+  return b.utf8Slice(at as i64, (at + n) as i64);
+}
+
+/** Column `i` of the record a cursor is on, decoded (a column past the record's end is NULL). */
+export function cursorVal(c: Cursor, i: usize): Val {
+  c.parse();
+  if (i >= c.types.length) {
+    return nullVal();
+  }
+  const t = c.types[i];
+  if (t == 0) {
+    return nullVal();
+  }
+  if (t < 7 || t == 8 || t == 9) {
+    return intVal(c.int(i));
+  }
+  if (t == 7) {
+    return realVal(c.real(i));
+  }
+  if ((t & 1) == 1) {
+    return textVal(cursorText(c, i));
+  }
+  const n = serialSize(t);
+  const at = c.local ? c.start + c.offsets[i] : c.offsets[i];
+  const b =
+    c.local
+      ? c.db.data.slice(at as i64, (at + n) as i64)
+      : c.scratch.slice(at as i64, (at + n) as i64);
+  return blobVal(b);
+}
+
+/** TEXT column `i` of the record a cursor is on (parsed), from the page bytes in one copy. */
+export function cursorText(c: Cursor, i: usize): string {
+  const n = serialSize(c.types[i]);
+  if (c.local) {
+    return textRange(c.db.data, c.start + c.offsets[i], n);
+  }
+  return textRange(c.scratch, c.offsets[i], n);
+}

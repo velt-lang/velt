@@ -100,7 +100,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// `import { ImportMeta as __ImportMeta } from "velt:import_meta"`, the class of
+    /// `import { ImportMeta as __ImportMeta } from "velt/lang/import_meta"`, the class of
     /// `import.meta`. Its span is empty, at the start of the file: it is not in the source
     /// (`crate::is_synthesized_import`).
     pub(super) fn import_meta_import(&self) -> Item {

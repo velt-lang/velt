@@ -224,7 +224,7 @@ impl Machine {
         std::fs::write(
             dir.join("package.vlt"),
             format!(
-                "import type {{ Package }} from \"velt:package\";\n\nexport const pkg: Package = \
+                "import type {{ Package }} from \"velt/package\";\n\nexport const pkg: Package = \
                  {{ name: \"{name}\", version: \"0.1.0\"{pin} }};\n"
             ),
         )

@@ -1,6 +1,6 @@
 // std/csv against an independent RFC 4180 reader/writer (the shim): quoting, line endings,
 // options, errors, and write → parse round trips.
-import { parseCsv, parseCsvRecords, stringifyCsv, CsvError } from "velt:csv";
+import { parseCsv, parseCsvRecords, stringifyCsv, CsvError } from "velt/encoding/csv";
 
 function show(label: string, text: string) {
   try {

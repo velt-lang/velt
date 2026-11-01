@@ -3,8 +3,8 @@
 // spawned task turns them into letters (like the Go #2 and Node #5 programs); every round runs
 // one block per core and `Promise.all` returns the blocks in order for writing.
 
-import { args, stdout } from "velt:process";
-import { availableParallelism } from "velt:os";
+import { args, stdout } from "velt/process";
+import { availableParallelism } from "velt/os";
 
 const LINE_LENGTH: i64 = 60;
 // Characters generated per write (a whole number of lines).

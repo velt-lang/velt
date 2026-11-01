@@ -1,0 +1,208 @@
+// velt/lang/promise (internal): how a `Promise` made with `new Promise(executor)` settles
+// (std/prelude/promise.vlt): the slot its settlers write and its awaiter reads, the latch the
+// awaiter waits on, and what happens when nothing settles it.
+
+import { needsTransfer, transfer } from "velt/lang/intrinsics";
+
+declare function velt_rt_latch_new(): u64;
+
+declare function velt_rt_latch_free(latch: u64);
+
+declare function velt_rt_latch_open(latch: u64);
+
+declare async function velt_rt_latch_wait(latch: u64): Promise<void>;
+
+declare function velt_rt_task_id(): u64;
+
+/**
+ * What a `new Promise` settled with (`pending` until `resolve` or `reject` is called;
+ * `abandoned` when every `resolve` and `reject` was dropped without settling).
+ */
+export type Settlement<T, E> =
+  | { status: "pending" }
+  | { status: "abandoned" }
+  | { status: "fulfilled"; value: T }
+  | { status: "rejected"; reason: E };
+
+/**
+ * The state `resolve`, `reject` and the waiting promise share: the outcome (at most one element:
+ * an array, so the promise can move it out with `pop()`), and the runtime latch that wakes the
+ * promise once it is settled.
+ */
+export class PromiseSlot<T, E> {
+  latch: u64;
+  outcome: Settlement<T, E>[];
+
+  constructor() {
+    this.latch = velt_rt_latch_new();
+    this.outcome = [];
+  }
+
+  /**
+   * The first settlement wins; later calls of `resolve` or `reject` are ignored, like JS.
+   * Returns the latch to open once the lock is released (0: already settled).
+   */
+  settle(outcome: Settlement<T, E>): u64 {
+    if (this.outcome.length == 0) {
+      this.outcome.push(outcome);
+      return this.latch;
+    }
+    return 0;
+  }
+
+  /** The settlement, moved out (`pending` if there is none). */
+  takeOutcome(): Settlement<T, E> {
+    return this.outcome.pop() ?? { status: "pending" };
+  }
+
+  /** Drop hook: releases the latch. */
+  [Symbol.dispose]() {
+    if (this.latch != 0) {
+      velt_rt_latch_free(this.latch);
+      this.latch = 0;
+    }
+  }
+}
+
+// Opens a latch `settle` returned (0: nothing to open).
+function openLatch(latch: u64) {
+  if (latch != 0) {
+    velt_rt_latch_open(latch);
+  }
+}
+
+// Held only by `resolve` and `reject`: when the last of them is dropped, a promise that was
+// never settled is settled as abandoned instead of waiting forever.
+class AbandonGuard<T, E> {
+  slot: shared<Mutex<PromiseSlot<T, E>>>;
+
+  constructor(slot: shared<Mutex<PromiseSlot<T, E>>>) {
+    this.slot = slot;
+  }
+
+  [Symbol.dispose]() {
+    openLatch(this.slot.with((s) => s.settle({ status: "abandoned" })));
+  }
+}
+
+/**
+ * A promise's `resolve` and `reject`: heap closures over its slot, so they may be stored,
+ * returned and moved to other tasks; both hold the guard. A value settled on the promise's own
+ * task is shared with the awaiter, like JS. One settled from another task crosses threads, so it
+ * is transferred like a `spawn` argument (moved if nothing else references it, copied if it is
+ * still shared): after the settling statement has finished with it (`fulfillLater`), so a value
+ * made just for the call moves (#263). A value that cannot reach a counted object (a number, a
+ * string) has nothing to transfer and settles at once, so the reply costs no extra step.
+ */
+export type Settlers<T, E> = { resolve: (value: T) => void; reject: (reason: E) => void };
+
+export function settlers<T, E>(slot: shared<Mutex<PromiseSlot<T, E>>>): Settlers<T, E> {
+  const home = velt_rt_task_id();
+  const guard = shared(new Mutex<AbandonGuard<T, E>>(new AbandonGuard<T, E>(slot.clone())));
+  const forResolve = slot.clone();
+  const forReject = slot.clone();
+  const guardReject = guard.clone();
+  const resolve = (value: T) => {
+    const here = velt_rt_task_id();
+    if (here == home || here == 0 || !needsTransfer(value)) {
+      const v = here == home ? value : transfer(value);
+      openLatch(
+        guard.with((g) => forResolve.with((s) => s.settle({ status: "fulfilled", value: v }))),
+      );
+    } else {
+      const later = fulfillLater<T, E>(forResolve.clone(), guard.clone(), value);
+    }
+  };
+  const reject = (reason: E) => {
+    const here = velt_rt_task_id();
+    if (here == home || here == 0 || !needsTransfer(reason)) {
+      const r = here == home ? reason : transfer(reason);
+      openLatch(
+        guardReject.with((g) => forReject.with((s) => s.settle({ status: "rejected", reason: r }))),
+      );
+    } else {
+      const later = rejectLater<T, E>(forReject.clone(), guardReject.clone(), reason);
+    }
+  };
+  return { resolve: resolve, reject: reject };
+}
+
+// Settle `slot` from a task other than the promise's own, once the settling task is done with
+// the current step: a promise this task drives (kept unawaited, it still runs to completion)
+// that resumes at the task's next poll, when the caller has released its own reference to a
+// value made for the call. The transfer then moves what nothing else references.
+async function fulfillLater<T, E>(
+  slot: shared<Mutex<PromiseSlot<T, E>>>,
+  guard: shared<Mutex<AbandonGuard<T, E>>>,
+  value: T,
+): Promise<void> {
+  await yieldNow();
+  const v = transfer(value);
+  openLatch(guard.with((g) => slot.with((s) => s.settle({ status: "fulfilled", value: v }))));
+}
+
+// `fulfillLater` for a rejection.
+async function rejectLater<T, E>(
+  slot: shared<Mutex<PromiseSlot<T, E>>>,
+  guard: shared<Mutex<AbandonGuard<T, E>>>,
+  reason: E,
+): Promise<void> {
+  await yieldNow();
+  const r = transfer(reason);
+  openLatch(guard.with((g) => slot.with((s) => s.settle({ status: "rejected", reason: r }))));
+}
+
+/**
+ * Run the executor with its `resolve` and `reject`. A function of its own, so that once it
+ * returns only what the executor kept still references the guard.
+ */
+export function runExecutor<T, E>(
+  executor: (resolve: (value: T) => void, reject: (reason: E) => void) => void throws E,
+  slot: shared<Mutex<PromiseSlot<T, E>>>,
+) {
+  const s = settlers<T, E>(slot.clone());
+  try {
+    executor(s.resolve, s.reject);
+  } catch (e) {
+    openLatch(slot.with((s) => s.settle({ status: "rejected", reason: e })));
+  }
+}
+
+/**
+ * The slot's settlement, moved out. A plain value comes out as `with`'s result. One that
+ * reaches an object is taken out through `taken` instead: `with`'s result is transferred as it
+ * leaves the lock (a copy where it is still shared), but a value settled on this promise's own
+ * task is the awaiter's same object (JS identity), and one settled from another task was
+ * transferred when it was settled.
+ */
+export function takeSettlement<T, E>(slot: shared<Mutex<PromiseSlot<T, E>>>): Settlement<T, E> {
+  const probe = { status: "pending" } as Settlement<T, E>; // the whole type, not `pending`
+  if (!needsTransfer(probe)) {
+    return slot.with((s) => s.takeOutcome());
+  }
+  const taken: Settlement<T, E>[] = [];
+  slot.with((s) => {
+    taken.push(s.takeOutcome());
+  });
+  return taken.pop() ?? probe;
+}
+
+/** Waits for the slot to be settled (holding only the slot, not the executor). */
+export async function settlement<T, E>(
+  slot: shared<Mutex<PromiseSlot<T, E>>>,
+): Promise<T> throws E {
+  await velt_rt_latch_wait(slot.with((s) => s.latch));
+  const outcome = takeSettlement<T, E>(slot);
+  switch (outcome.status) {
+    case "fulfilled":
+      return outcome.value;
+    case "rejected":
+      throw outcome.reason;
+    case "abandoned":
+      // Never settles, like a JS promise nobody resolves.
+      const never: Promise<T, E>[] = [];
+      return await Promise.race(never);
+    case "pending":
+      panic("internal error: a settled promise lost its outcome");
+  }
+}

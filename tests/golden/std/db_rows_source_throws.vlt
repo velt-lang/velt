@@ -1,0 +1,98 @@
+// A `RowSource` whose methods throw: `readRows` and `readRow` re-throw the error as a
+// `RowError` with its message, whether the rows are read by column (plain fields) or through
+// their JSON text (a nested field), never falling back to another way of reading them.
+import { CellKind, readRow, readRows, RowError, RowSource } from "velt/db";
+
+class Broken implements RowSource {
+  rows: i64;
+  // The row whose `int` cell throws.
+  bad: i64;
+  row: i64 = -1;
+
+  constructor(rows: i64, bad: i64) {
+    this.rows = rows;
+    this.bad = bad;
+  }
+
+  columnCount(): i64 {
+    return 2;
+  }
+  columnName(i: i64): string {
+    return i == 0 ? "id" : "tags";
+  }
+  next(): bool {
+    this.row++;
+    if (this.row > 5) {
+      throw new Error("the connection was lost");
+    }
+    return this.row < this.rows;
+  }
+  kind(i: i64): CellKind {
+    return i == 0 ? CellKind.Int : CellKind.Json;
+  }
+  bool(i: i64): bool {
+    return false;
+  }
+  int(i: i64): i64 {
+    if (this.row == this.bad) {
+      throw new RangeError(`cell ${this.row}:${i} is corrupt`);
+    }
+    return this.row * 10;
+  }
+  float(i: i64): f64 {
+    return 0;
+  }
+  text(i: i64): string {
+    return "";
+  }
+  blob(i: i64): u8[] {
+    return [];
+  }
+  json(i: i64): string {
+    return "[1]";
+  }
+}
+
+struct Plain {
+  id: i64;
+}
+
+struct Nested {
+  id: i64;
+  tags: i64[];
+}
+
+function main() {
+  console.log(readRows<Plain, Broken>(new Broken(3, -1)).map((r) => r.id));
+  try {
+    readRows<Plain, Broken>(new Broken(3, 1));
+  } catch (e) {
+    console.log(e instanceof RowError, e.message);
+  }
+  try {
+    readRows<Plain, Broken>(new Broken(9, -1));
+  } catch (e) {
+    console.log(e instanceof RowError, e.message);
+  }
+  try {
+    readRow<Plain, Broken>(new Broken(3, 0));
+  } catch (e) {
+    console.log(e instanceof RowError, e.message);
+  }
+  console.log(readRows<Nested, Broken>(new Broken(2, -1)).map((r) => r.tags));
+  try {
+    readRows<Nested, Broken>(new Broken(2, 1));
+  } catch (e) {
+    console.log(e instanceof RowError, e.message);
+  }
+  try {
+    readRow<Nested, Broken>(new Broken(9, -1));
+    const late = new Broken(9, -1);
+    for (let i = 0; i < 6; i++) {
+      late.next();
+    }
+    readRow<Nested, Broken>(late);
+  } catch (e) {
+    console.log(e instanceof RowError, e.message);
+  }
+}

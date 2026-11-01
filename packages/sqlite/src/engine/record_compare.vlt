@@ -1,0 +1,98 @@
+// sqlite/engine/record_compare (internal): the pieces of SQLite's order of values that comparing a record
+// with a record (engine/record) and with a decoded key (engine/key_rec) share: the class rank
+// of a serial type, integers against floats exactly, and bytes under a collation.
+
+import { readBe } from "./format";
+import { NOCASE, RTRIM } from "./collation";
+
+/** The class rank of a serial type: NULL 0, numbers 1, text 2, blob 3. */
+export function rank(t: i64): i64 {
+  if (t == 0) {
+    return 0;
+  }
+  if (t < 12) {
+    return 1;
+  }
+  return (t & 1) == 1 ? 2 : 3;
+}
+
+export function intAt(data: u8[], at: usize, t: i64): i64 {
+  if (t == 8) {
+    return 0;
+  }
+  if (t == 9) {
+    return 1;
+  }
+  const n: usize = t == 5 ? 6 : t == 6 ? 8 : t as usize;
+  const v = readBe(data, at, n);
+  if (n == 8) {
+    return v as i64;
+  }
+  const shift = (64 - 8 * n) as u64;
+  return ((v << shift) as i64) >> (shift as i64);
+}
+
+/** -1, 0 or 1 for an integer against a float, exactly (as sqlite3IntFloatCompare). */
+export function compareIntReal(i: i64, r: f64): i64 {
+  if (r != r) {
+    // NaN is stored as NULL; treat as smaller than any number for safety.
+    return 1;
+  }
+  if (r < -9223372036854775808.0) {
+    return 1;
+  }
+  if (r >= 9223372036854775808.0) {
+    return -1;
+  }
+  const t = Math.trunc(r);
+  const ti = t as i64;
+  if (i < ti) {
+    return -1;
+  }
+  if (i > ti) {
+    return 1;
+  }
+  // Same integer part: the fraction decides.
+  return r > t ? -1 : r < t ? 1 : 0;
+}
+
+function sign(x: i64): i64 {
+  return x < 0 ? -1 : x > 0 ? 1 : 0;
+}
+
+function foldAscii(b: u8): u8 {
+  return b >= 65 && b <= 90 ? b + 32 : b;
+}
+
+/** Bytes [a, a + na) against [b, b + nb) under a collation. */
+export function compareBytes(
+  x: u8[],
+  a: usize,
+  na: usize,
+  y: u8[],
+  b: usize,
+  nb: usize,
+  coll: u8,
+): i64 {
+  if (coll == RTRIM) {
+    while (na > 0 && x[a + na - 1] == 32) {
+      na--;
+    }
+    while (nb > 0 && y[b + nb - 1] == 32) {
+      nb--;
+    }
+  }
+  const n = na < nb ? na : nb;
+  for (let i: usize = 0; i < n; i++) {
+    let p = x[a + i];
+    let q = y[b + i];
+    if (coll == NOCASE) {
+      p = foldAscii(p);
+      q = foldAscii(q);
+    }
+    if (p != q) {
+      return p < q ? -1 : 1;
+    }
+  }
+  return sign((na as i64) - (nb as i64));
+}

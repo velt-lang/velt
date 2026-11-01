@@ -1,4 +1,4 @@
-// velt:collections/btree/inline_key: `InlineKey`, the order-preserving bytes of a key that
+// velt/collections (internal): `InlineKey`, the order-preserving bytes of a key that
 // `BTreeMap` keeps beside its keys, a few per key, to search nodes without reading the keys.
 //
 // A key's encoding is a byte string that orders as the keys do: for keys `a < b`, `a`'s bytes
@@ -9,8 +9,8 @@
 // their keys in full. A type with an order of its own implements `InlineKey` with an `extend`
 // block (or `implements InlineKey`) to get the fast search.
 
-import { isAscii, utf8ByteAt, utf8Length } from "velt:encoding";
-import { mask8x16, u8x16 } from "velt:simd";
+import { isAscii, utf8ByteAt, utf8Length } from "velt/encoding/string_bytes";
+import { mask8x16, u8x16 } from "velt/simd";
 
 /** The bytes of a key that order as the keys do, for `BTreeMap`'s node search. */
 export interface InlineKey {

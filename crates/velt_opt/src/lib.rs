@@ -189,7 +189,8 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
     match level {
         OptLevel::None => {
             numrep::declare_formatters(&mut program.externs);
-            let helpers = numrep::int32_helpers(&program.funcs);
+            let mut helpers = numrep::int32_helpers(&program.funcs);
+            inline::std_forwarders(&program.funcs, &mut helpers);
             if helpers.contains(&true) {
                 t.time("inline", || inline::run_helpers(program, &helpers));
             }
@@ -241,6 +242,8 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
                     break;
                 }
             }
+            // What inlining left without callers, before the passes below go over every function.
+            t.time("dead_funcs", || dead_funcs::run(program));
             let borrowed = t.time("borrowed_copies", || borrowed_copies::counted::run(program));
             for (func, _) in program.funcs.iter_mut().zip(borrowed).filter(|(_, b)| *b) {
                 // The releases' tests now branch to one block either way.
@@ -342,7 +345,11 @@ fn speed_round(
     changed |= t.time("const_fields", || const_fields::run(program, specs));
     let signatures = t.time("signatures", || callgraph::signatures(program));
     let allocator = heap_sroa::Allocator::find(program);
-    for func in with_bodies(&mut program.funcs) {
+    // A function inlining left without callers (one called once, now in its caller) is removed
+    // at the end: optimizing it again would only double the work on its body.
+    let live = t.time("dead_funcs", || dead_funcs::live_functions(program));
+    let funcs = (program.funcs.iter_mut().zip(live)).filter(|(f, l)| *l && !f.blocks.is_empty());
+    for (func, _) in funcs {
         changed |= t.time("vtable_loads", || {
             vtable_loads::run(&program.aggs, &program.statics, allocator, func)
         });

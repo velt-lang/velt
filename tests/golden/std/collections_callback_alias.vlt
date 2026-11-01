@@ -4,9 +4,9 @@
 // Deque and SortedMap visit by position, reading the length again after each call, as a `for`
 // loop over an array does (docs/std/collections).
 
-import { Deque } from "velt:collections/deque";
-import { Set } from "velt:collections/set";
-import { SortedMap } from "velt:collections/sorted_map";
+import { Deque } from "velt/collections";
+import { Set } from "velt/collections";
+import { SortedMap } from "velt/collections";
 
 function label(i: number): string {
   return `value-${i}-with-a-label-long-enough-to-live-on-the-heap`;

@@ -4,7 +4,7 @@
 // as props. Both lowerings render byte-identically; a component without them is a plain
 // `jsxComponent`.
 
-import { renderToStringSync } from "velt:jsx";
+import { renderToStringSync } from "velt/jsx";
 import * as generic from "./_jsx_attrs_page_generic";
 import * as precompiled from "./_jsx_attrs_page_precompile";
 

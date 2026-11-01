@@ -2,11 +2,10 @@
 //! standard library root and the modules of a dependency. Shared by `veltc`'s loader and the
 //! tests' loader, so both list the same modules.
 //!
-//! A std module is internal (not offered) when its header comment says so (`std/url/encode
-//! (std-internal): …`, `Internal: import the public names from "velt:redis"`), or when it sits
-//! in the folder of a public module of the same name (`url/*.vlt` next to `url.vlt`); a JSX
-//! runtime (`jsx/jsx-runtime`) is public wherever it is. The prelude is imported implicitly and
-//! never listed.
+//! The std modules offered are those user code may import (docs/internals/design/std-layout.md
+//! §2, the loader's rule: [`velt_common::std_modules::importable`]): a folder's `index.vlt`
+//! outside `prelude/` and `lang/`. Every other std file is internal to a module and is not
+//! offered.
 
 use std::path::{Path, PathBuf};
 
@@ -20,22 +19,26 @@ const MAX_DOC_CHARS: usize = 160;
 /// The public modules of the standard library at `std_root`, sorted by specifier.
 pub fn std_module_entries(std_root: &Path) -> Vec<ModuleEntry> {
     let mut files = vec![];
-    // std modules are `.vlt` files; its `package.vlt` is the module `velt:package`.
+    // std modules are `.vlt` files; its `package.vlt` is the module `velt/package`.
     source_files(std_root, &|name| name.ends_with(".vlt"), &mut files);
     let mut out: Vec<ModuleEntry> = files
         .into_iter()
         .filter_map(|path| {
+            let file = std_file_rel(std_root, &path)?;
+            // A module in the old form (`sqlite.vlt`) is offered until it moves to `packages/`,
+            // but not its files.
+            let module = file.ends_with("/index.vlt") || !file.contains('/');
+            if !module || !velt_common::std_modules::importable(&file) {
+                return None;
+            }
             let rel = module_rel(std_root, &path)?;
-            if rel == "prelude" || rel.starts_with("prelude/") || !is_std_rel(&rel) {
+            if !is_std_rel(&rel) {
                 return None;
             }
             let header = header(&path);
-            if is_internal(std_root, &rel, &header) {
-                return None;
-            }
             Some(ModuleEntry {
                 doc: describe(&header),
-                spec: format!("velt:{rel}"),
+                spec: format!("velt/{rel}"),
                 path,
                 kind: ModuleKind::Std,
             })
@@ -106,7 +109,7 @@ fn module_rel(base: &Path, file: &Path) -> Option<String> {
     (rel != "index").then(|| rel.to_string())
 }
 
-/// A path a `velt:` specifier can spell: `/`-separated segments of `[a-z0-9_-]`.
+/// A path a `velt/` specifier can spell: `/`-separated segments of `[a-z0-9_-]`.
 fn is_std_rel(rel: &str) -> bool {
     rel.split('/').all(|s| {
         !s.is_empty()
@@ -115,28 +118,11 @@ fn is_std_rel(rel: &str) -> bool {
     })
 }
 
-fn is_internal(std_root: &Path, rel: &str, header: &str) -> bool {
-    if says_internal(header) {
-        return true;
-    }
-    if rel.ends_with("jsx-runtime") {
-        return false;
-    }
-    // In the folder of a public module of the same name (`url/encode` next to `url.vlt`).
-    let segments: Vec<&str> = rel.split('/').collect();
-    (1..segments.len()).any(|n| {
-        std_root
-            .join(format!("{}.vlt", segments[..n].join("/")))
-            .is_file()
-    })
-}
-
-/// Whether `header` calls the module internal (the word, not `docs/internals/…`).
-fn says_internal(header: &str) -> bool {
-    let lower = header.to_ascii_lowercase();
-    lower
-        .match_indices("internal")
-        .any(|(i, word)| !lower[i + word.len()..].starts_with(|c: char| c.is_ascii_alphabetic()))
+/// The path of `file` below `std_root`, `/`-separated (`net/http/index.vlt`).
+fn std_file_rel(std_root: &Path, file: &Path) -> Option<String> {
+    let rel = file.strip_prefix(std_root).ok()?;
+    let parts: Option<Vec<&str>> = rel.components().map(|c| c.as_os_str().to_str()).collect();
+    Some(parts?.join("/"))
 }
 
 /// The first paragraph of the `//` comment a file starts with, as one line.
@@ -165,7 +151,11 @@ fn header(path: &Path) -> String {
 /// [`MAX_DOC_CHARS`].
 fn describe(header: &str) -> String {
     let text = match header.split_once(": ") {
-        Some((name, rest)) if name.starts_with("std/") && !name.contains(' ') => rest,
+        Some((name, rest))
+            if (name.starts_with("velt/") || name.starts_with("std/")) && !name.contains(' ') =>
+        {
+            rest
+        }
         _ => header,
     };
     if text.chars().count() <= MAX_DOC_CHARS {
@@ -191,28 +181,40 @@ mod tests {
         let root = tmp.path();
         write(
             root,
-            "fs.vlt",
-            "// std/fs: file system access (docs/internals/x.md).\n//\n// More.\n",
+            "fs/index.vlt",
+            "// velt/fs: file system access (docs/internals/x.md).\n//\n// More.\n",
         );
-        write(root, "url.vlt", "// std/url: URLs.\n");
-        write(root, "url/encode.vlt", "// std/url/encode: helpers.\n");
+        write(root, "fs/stream.vlt", "// velt/fs (internal): streams.\n");
+        write(root, "net/url/index.vlt", "// velt/net/url: URLs.\n");
         write(
             root,
-            "net_bytes.vlt",
-            "// std/net_bytes (std-internal): bytes.\n",
+            "net/url/encode.vlt",
+            "// velt/net/url (internal): helpers.\n",
         );
         write(
             root,
-            "collections/set.vlt",
-            "// std/collections/set: `Set<T>`.\n",
+            "net/bytes.vlt",
+            "// bytes, in no module's folder of its own\n",
         );
-        write(root, "jsx.vlt", "// std/jsx: rendering.\n");
+        write(root, "net/index.vlt", "// velt/net: TCP.\n");
         write(
             root,
-            "jsx/jsx-runtime.vlt",
-            "// std/jsx/jsx-runtime: runtime.\n",
+            "collections/index.vlt",
+            "// velt/collections: containers.\n",
         );
-        write(root, "package.vlt", "// std/package: manifest types.\n");
+        write(root, "collections/set.vlt", "// `Set<T>`.\n");
+        write(root, "jsx/index.vlt", "// velt/jsx: rendering.\n");
+        write(
+            root,
+            "jsx/jsx-runtime/index.vlt",
+            "// velt/jsx/jsx-runtime: runtime.\n",
+        );
+        write(
+            root,
+            "package/index.vlt",
+            "// velt/package: manifest types.\n",
+        );
+        write(root, "lang/symbol/index.vlt", "// `Symbol`.\n");
         write(root, "prelude/array.vlt", "// arrays\n");
         write(root, "README.md", "# std\n");
         write(root, "Bad.vlt", "");
@@ -221,16 +223,17 @@ mod tests {
         assert_eq!(
             specs,
             [
-                "velt:collections/set",
-                "velt:fs",
-                "velt:jsx",
-                "velt:jsx/jsx-runtime",
-                "velt:package",
-                "velt:url"
+                "velt/collections",
+                "velt/fs",
+                "velt/jsx",
+                "velt/jsx/jsx-runtime",
+                "velt/net",
+                "velt/net/url",
+                "velt/package"
             ]
         );
         assert_eq!(entries[1].doc, "file system access (docs/internals/x.md).");
-        assert_eq!(entries[1].path, root.join("fs.vlt"));
+        assert_eq!(entries[1].path, root.join("fs/index.vlt"));
     }
 
     /// The real std: modules marked internal, such as the one the parser imports for
@@ -240,8 +243,8 @@ mod tests {
         let std_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
         let entries = std_module_entries(&std_root);
         let specs: Vec<&str> = entries.iter().map(|e| e.spec.as_str()).collect();
-        assert!(specs.contains(&"velt:fs"), "{specs:?}");
-        for internal in ["velt:import_meta", "velt:net_bytes"] {
+        assert!(specs.contains(&"velt/fs"), "{specs:?}");
+        for internal in ["velt/lang/import_meta", "velt/net/bytes"] {
             assert!(!specs.contains(&internal), "{internal} offered: {specs:?}");
         }
     }

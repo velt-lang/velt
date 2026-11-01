@@ -1,0 +1,5 @@
+// velt/test/http: matchers for a `Response`, for tests of HTTP servers and clients
+// (docs/book/testing.md): `import "velt/test/http"` adds `toHaveStatus`, `toHaveHeader` … to
+// `expect(response)`.
+
+import "velt/test/http/matchers";

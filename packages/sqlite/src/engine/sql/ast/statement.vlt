@@ -1,0 +1,75 @@
+// `Statement`: Any statement; the fields used depend on `kind`.
+
+import { ColumnDef } from "./column_def";
+import { Expr } from "./expr";
+import { FromItem } from "./from_item";
+import { IndexedColumn } from "./indexed_column";
+import { KeyConstraint } from "./key_constraint";
+import { OrderTerm } from "./order_term";
+import { ResultColumn } from "./result_column";
+import { Select } from "./select";
+import { Upsert } from "./upsert";
+
+/** Any statement; the fields used depend on `kind`. */
+export class Statement {
+  kind: u8;
+  select: Select | null = null;
+  /** INSERT, UPDATE, DELETE, CREATE, DROP, PRAGMA: the object's schema and name. */
+  schema: string = "";
+  name: string = "";
+  alias: string = "";
+  /** INSERT: OR <conflict>, columns, VALUES rows / SELECT / DEFAULT VALUES, upserts. */
+  orConflict: string = "";
+  replace: bool = false;
+  columns: string[] = [];
+  rows: Expr[][] = [];
+  defaultValues: bool = false;
+  upserts: Upsert[] = [];
+  /** UPDATE: SET (columns per assignment: one, or several for `(a, b) = …`) and values. */
+  setColumns: string[][] = [];
+  setValues: Expr[] = [];
+  from: FromItem[] = [];
+  /** UPDATE, DELETE: INDEXED BY name, or NOT INDEXED (`notIndexed`). */
+  indexedBy: string = "";
+  notIndexed: bool = false;
+  where: Expr | null = null;
+  returning: ResultColumn[] = [];
+  orderBy: OrderTerm[] = [];
+  limit: Expr | null = null;
+  offset: Expr | null = null;
+  /** CREATE TABLE / INDEX / VIEW. */
+  ifNotExists: bool = false;
+  temp: bool = false;
+  columnDefs: ColumnDef[] = [];
+  primaryKey: IndexedColumn[] = [];
+  uniques: IndexedColumn[][] = [];
+  /** Every PRIMARY KEY and UNIQUE constraint, column ones included, in source order. */
+  keys: KeyConstraint[] = [];
+  checks: Expr[] = [];
+  withoutRowid: bool = false;
+  strict: bool = false;
+  table: string = "";
+  indexed: IndexedColumn[] = [];
+  unique: bool = false;
+  /** DROP: what (TABLE, INDEX, VIEW, TRIGGER), IF EXISTS. */
+  what: string = "";
+  ifExists: bool = false;
+  /** BEGIN DEFERRED/IMMEDIATE/EXCLUSIVE, PRAGMA value, SAVEPOINT name. */
+  mode: string = "";
+  /** BEGIN, COMMIT, ROLLBACK: the name after TRANSACTION, which SQLite ignores. */
+  transaction: string = "";
+  value: Expr | null = null;
+  /** ALTER TABLE: RENAME TO / RENAME COLUMN / ADD COLUMN / DROP COLUMN. */
+  action: string = "";
+  newName: string = "";
+  column: ColumnDef | null = null;
+  /** EXPLAIN [QUERY PLAN] statement. */
+  inner: Statement | null = null;
+  queryPlan: bool = false;
+  /** The statement's source text (CREATE statements are stored in sqlite_schema as written). */
+  sql: string = "";
+
+  constructor(kind: u8) {
+    this.kind = kind;
+  }
+}

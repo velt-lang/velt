@@ -41,7 +41,7 @@ pnpm does is work Velt does not need:
 runs; the same reader, errors with locations, completions and hovers in the editor):
 
 ```ts ignore
-import type { Workspace } from "velt:package";
+import type { Workspace } from "velt/package";
 
 export const workspace: Workspace = {
   members: ["packages/*", "apps/*", "tools/cli"],
@@ -171,7 +171,7 @@ build stamp records what the program reaches (`outside`): the runtime functions 
 call (`velt_opt::used_externs`, after unreachable functions are gone) that touch the file system,
 network, clock, environment, child processes, random numbers or standard input, and native
 packages' functions. For a harness this is per test file: walked from the function that
-registers the file's tests, leaving out the runner (`velt:test`'s `__run`) and the other files.
+registers the file's tests, leaving out the runner (`velt/test`'s `runRegistered`) and the other files.
 `<harness>.test-results.json` keeps, under a key over the harness's bytes and
 `--filter`/`--exact`, the reports of the files whose tests all passed. The runner prints a kept
 report as `(cached)`, and a file that reaches outside as `(ran: not cacheable, it uses …)`.
@@ -227,7 +227,7 @@ packages/core/velt.lock.json: error: a member of a workspace has no lock of its 
 
 ## Steps
 
-1. The workspace file (reader, schema, `velt:package` `Workspace`), member discovery, `"workspace"`
+1. The workspace file (reader, schema, `velt/package` `Workspace`), member discovery, `"workspace"`
    dependencies, one resolution and one lock; `velt install` and builds of one member inside a
    workspace. Outputs per member, and the workspace's files in the build stamp.
 2. Member selection (`--workspace`, `-p`, `--affected`) for `check`, `test`, `build`, `fmt`,

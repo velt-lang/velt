@@ -170,6 +170,8 @@ impl<'a> Parser<'a> {
             throws: None,
             is_async: false,
             is_system: false,
+            is_intrinsic: false,
+            generator: None,
             is_generator: false,
             this_param: None,
             span,

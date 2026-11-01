@@ -1,4 +1,4 @@
-// std/compress/inflate/huffman (std-internal): the decoding tables of a DEFLATE block's Huffman
+// velt/compress (internal): the decoding tables of a DEFLATE block's Huffman
 // codes (RFC 1951 §3.2.2), built as zlib's `inflate_table` builds them.
 //
 // A table is indexed by the next bits of the input, least significant first, which are a code
@@ -17,7 +17,7 @@
 // over-subscribed always, incomplete unless it is a single code of one bit (or no code at all,
 // for a block that uses no distances), whose missing entries stay 0 and fail if they are read.
 
-import { DIST_BASE, DIST_EXTRA, LENGTH_BASE, LENGTH_EXTRA } from "velt:compress/inflate/tables";
+import { DIST_BASE, DIST_EXTRA, LENGTH_BASE, LENGTH_EXTRA } from "velt/compress/inflate/tables";
 
 /** A literal byte (code lengths: a length or a repeat code). */
 export const LITERAL: u32 = 256;
@@ -209,4 +209,16 @@ function fill(
       table[low] = ((next as u32) << 16) | ((curr as u32) << 4) | SUBTABLE | (root as u32);
     }
   }
+}
+
+/** Builds the tables of the fixed codes (§3.2.6) into `lit` and `dist`. */
+export function buildFixed(lit: u32[], dist: u32[], w: Work) {
+  const lens: u8[] = Buffer.alloc(320);
+  lens.fill(8, 0, 144);
+  lens.fill(9, 144, 256);
+  lens.fill(7, 256, 280);
+  lens.fill(8, 280, 288);
+  lens.fill(5, 288, 320);
+  build(lens, 0, 288, lit, LITLEN_SIZE, LITLEN_ROOT, LITLEN, w);
+  build(lens, 288, 32, dist, DIST_SIZE, DIST_ROOT, DIST, w);
 }

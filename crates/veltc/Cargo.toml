@@ -14,6 +14,9 @@ velt_sema.workspace = true
 velt_vir.workspace = true
 velt_codegen_cl.workspace = true
 velt_build_cache.workspace = true
+# Content hashes of std sources, the keys of their cached parses (loader/std_ast.rs).
+crc32fast = "1.5"
+foldhash = "0.2"
 velt_codegen_llvm.workspace = true
 velt_link.workspace = true
 vpm.workspace = true

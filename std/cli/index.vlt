@@ -1,0 +1,24 @@
+// velt/cli: command-line argument parsing (Node's `util.parseArgs` rules, commander-style API).
+//
+// Build a parser, then parse an argv array (usually `args()` from std/process):
+//
+//   const p = new ArgParser("tool", "Does things")
+//     .flag("verbose", { short: "v", help: "Chatty output" })
+//     .option("out", { short: "o", default: "out.txt", help: "Output file" })
+//     .positional("input", "File to read");
+//   const a = p.parse(args());
+//   if (a.flag("help")) { console.log(p.help()); return; }
+//
+// Builder methods change the parser and return it, so they chain (`p.flag(...)` alone also works).
+// Accepted syntax: `--name`, `--name=value`, `--name value`, `--no-name` (flag set to false),
+// `-v`, `-abc` (short flags clustered), `-o value` / `-ovalue` (short option, value attached or
+// next), `--` (everything after is positional) and `-` (a positional). An option's value is
+// taken verbatim even if it starts with `-`. Repeated options keep every value (`getAll`).
+// Every parser has `-h, --help`.
+// docs/std/cli.md.
+
+export { ArgParser } from "velt/cli/arg_parser";
+export { CliError } from "velt/cli/errors";
+export { FlagSpec } from "velt/cli/flag_spec";
+export { OptionSpec } from "velt/cli/option_spec";
+export { ParsedArgs } from "velt/cli/parsed_args";

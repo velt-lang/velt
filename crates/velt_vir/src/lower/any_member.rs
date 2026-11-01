@@ -449,10 +449,15 @@ impl FnLower<'_, '_> {
         out: Operand,
     ) {
         self.any_nullish_check(desc, NullKey::Str(&key));
-        let done = self.proxy_branch("__get", data, desc, |lw, obj, pty, r| {
-            let k = lw.copy_to_temp(key.clone(), Ty::Ptr);
-            lw.proxy_get_direct((obj, pty, r), ProxyKey::Str(k), out.clone());
-        });
+        let done = self.proxy_branch(
+            velt_common::std_key!(proxy_get),
+            data,
+            desc,
+            |lw, obj, pty, r| {
+                let k = lw.copy_to_temp(key.clone(), Ty::Ptr);
+                lw.proxy_get_direct((obj, pty, r), ProxyKey::Str(k), out.clone());
+            },
+        );
         let args = vec![data.clone(), key.clone(), out];
         let st = self.any_slot(desc.clone(), SLOT_GET, args, vec![Ty::Ptr; 3]);
         // In `Reflect.get`, the read a proxy forwards to its target: a method of a class
@@ -474,10 +479,15 @@ impl FnLower<'_, '_> {
         out: Operand,
     ) {
         self.any_nullish_check(desc, NullKey::Num(&i));
-        let done = self.proxy_branch("__get", data, desc, |lw, obj, pty, r| {
-            let n = lw.copy_to_temp(i.clone(), Ty::F64);
-            lw.proxy_get_direct((obj, pty, r), ProxyKey::Num(n), out.clone());
-        });
+        let done = self.proxy_branch(
+            velt_common::std_key!(proxy_get),
+            data,
+            desc,
+            |lw, obj, pty, r| {
+                let n = lw.copy_to_temp(i.clone(), Ty::F64);
+                lw.proxy_get_direct((obj, pty, r), ProxyKey::Num(n), out.clone());
+            },
+        );
         let args = vec![data.clone(), i, out];
         let st = self.any_slot(
             desc.clone(),

@@ -1,0 +1,153 @@
+// sqlite/engine/exec/loop/index_walk (internal): the rows of an index scan with a prefix equality
+// and a range on the next column, stepped one at a time (`IndexWalk`).
+
+import { Cursor } from "../../cursor";
+import { NULL } from "../../storage_class";
+import { KeyRec } from "../../key_rec";
+import "../../btree_back";
+import { Source } from "../source";
+import { Ev } from "../types";
+import { Access } from "../plan/access";
+import { addKeyField } from "../plan/rowid_key";
+import { forCompare } from "../value/ops";
+import { Walk } from "./walk";
+
+/** An index's entries: equal to the equalities' values, within a range on the next column. */
+export class IndexWalk extends Walk {
+  src: Source;
+  ix: Cursor;
+  reverse: bool;
+  colls: u8[];
+  desc: bool[];
+  eq: Ev[];
+  eqAff: u8[];
+  eqIs: bool[];
+  nEq: usize;
+  lo: Ev | null;
+  hi: Ev | null;
+  loAff: u8;
+  hiAff: u8;
+  loIncl: bool;
+  hiIncl: bool;
+  hasLo: bool = false;
+  hasHi: bool = false;
+  // Reused from run to run: the keys, built field by field (no record encoding).
+  prefix: KeyRec = new KeyRec([]);
+  loKey: KeyRec = new KeyRec([]);
+  hiKey: KeyRec = new KeyRec([]);
+
+  constructor(src: Source, acc: Access) {
+    super();
+    this.src = src;
+    this.ix = src.ix!;
+    this.reverse = acc.reverse;
+    const index = acc.index!;
+    this.colls = index.colls;
+    this.desc = index.desc;
+    this.eq = acc.eq;
+    this.eqAff = acc.eqAff;
+    this.eqIs = acc.eqIs;
+    this.nEq = acc.eq.length;
+    this.lo = acc.lo;
+    this.hi = acc.hi;
+    this.loAff = acc.loAff;
+    this.hiAff = acc.hiAff;
+    this.loIncl = acc.loIncl;
+    this.hiIncl = acc.hiIncl;
+  }
+
+  start(): bool {
+    const nEq = this.nEq;
+    const eq = this.eq;
+    const eqAff = this.eqAff;
+    const prefix = this.prefix;
+    prefix.clear();
+    for (let i: usize = 0; i < nEq; i++) {
+      const v = forCompare(eq[i](), eqAff[i]);
+      if (v.t == NULL && !this.eqIs[i]) {
+        return false;
+      }
+      addKeyField(prefix, v);
+    }
+    this.hasHi = false;
+    if (this.hi != null) {
+      const v = this.hi!();
+      if (v.t == NULL) {
+        return false;
+      }
+      const hk = this.hiKey;
+      hk.clear();
+      for (let i: usize = 0; i < nEq; i++) {
+        addKeyField(hk, forCompare(eq[i](), eqAff[i]));
+      }
+      addKeyField(hk, forCompare(v, this.hiAff));
+      this.hasHi = true;
+    }
+    this.hasLo = false;
+    if (this.lo != null) {
+      const v = this.lo!();
+      if (v.t == NULL) {
+        return false;
+      }
+      const lk = this.loKey;
+      lk.clear();
+      for (let i: usize = 0; i < nEq; i++) {
+        addKeyField(lk, forCompare(eq[i](), eqAff[i]));
+      }
+      addKeyField(lk, forCompare(v, this.loAff));
+      this.hasLo = true;
+    }
+    const ix = this.ix;
+    const colls = this.colls;
+    const desc = this.desc;
+    let ok = false;
+    if (this.reverse) {
+      if (this.hasHi) {
+        ok = ix.seekLastBefore(this.hiKey, nEq + 1, colls, desc, !this.hiIncl);
+      } else if (nEq > 0) {
+        ok = ix.seekLastBefore(prefix, nEq, colls, desc, false);
+      } else {
+        ok = ix.last();
+      }
+    } else if (this.hasLo) {
+      ok = ix.seekKeyRec(this.loKey, nEq + 1, colls, desc);
+    } else if (nEq > 0) {
+      ok = ix.seekKeyRec(prefix, nEq, colls, desc);
+    } else {
+      ok = ix.first();
+    }
+    return this.inRange(ok);
+  }
+
+  step(): bool {
+    const ok = this.reverse ? this.ix.prev() : this.ix.next();
+    return this.inRange(ok);
+  }
+
+  // Whether the index entry reached is still in the walk's range.
+  inRange(ok: bool): bool {
+    if (!ok) {
+      return false;
+    }
+    const ix = this.ix;
+    const nEq = this.nEq;
+    if (nEq > 0 && ix.compareKeyRec(this.prefix, nEq, this.colls, this.desc) != 0) {
+      return false;
+    }
+    if (this.reverse) {
+      if (this.hasLo) {
+        const r = ix.compareKeyRec(this.loKey, nEq + 1, this.colls, this.desc);
+        if (r < 0 || (r == 0 && !this.loIncl)) {
+          return false;
+        }
+      }
+    } else if (this.hasHi) {
+      const r = ix.compareKeyRec(this.hiKey, nEq + 1, this.colls, this.desc);
+      if (r > 0 || (r == 0 && !this.hiIncl)) {
+        return false;
+      }
+    }
+    this.src.seeked = false;
+    return true;
+  }
+}

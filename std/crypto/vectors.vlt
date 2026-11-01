@@ -1,0 +1,90 @@
+// velt/crypto (internal): what the SHA-instruction paths of both hashes share (#1330).
+//
+// Where the CPU has them, a hash is one call of a function gated on the extension: the state
+// stays in vector registers, the round constants and initial values load from their tables'
+// read-only data, the padding is built in registers, and only the digest is allocated.
+
+import { u32x4, u8x16 } from "velt/simd";
+import { arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
+
+//
+// Where the CPU has them, a hash is one call of a function gated on the extension: the state
+// stays in vector registers, the round constants and initial values load from their tables'
+// read-only data, the padding is built in registers, and only the digest is allocated.
+
+/** The 16 bytes of `src` from `off`, as four big-endian words. */
+export function blockWords(src: u8[], off: usize): u32x4 {
+  return u8x16.load(src, off).asU32x4().reverseBytes();
+}
+
+/** Quarter `q` of the keyed first block: `key` zero-padded to a block, XORed with `pad`. */
+export function keyWords(key: u8[], pad: u8x16, q: usize): u32x4 {
+  const at = 16 * q;
+  const bytes = at < key.length ? u8x16.loadPartial(key, at) : u8x16.splat(0);
+  return bytes.xor(pad).asU32x4().reverseBytes();
+}
+
+// Four vectors: a block's words.
+struct Quad {
+  w0: u32x4;
+  w1: u32x4;
+  w2: u32x4;
+  w3: u32x4;
+}
+
+// The bytes of `src` from `at` that exist (up to 16, zeros after) as four big-endian words.
+function quarter(src: u8[], at: usize): u32x4 {
+  return at < src.length ? u8x16.loadPartial(src, at).asU32x4().reverseBytes() : u32x4.splat(0);
+}
+
+/**
+ * Padding block `b` (0 or 1) after the whole blocks of `data` (which end at `full`): the rest of
+ * `data`, the 0x80 marker, zeros, and in the last block the message's length in bits (`total`
+ * bytes, a keyed first block included) as a big-endian `u64`.
+ */
+export function tailBlock(data: u8[], full: usize, total: usize, b: usize, last: bool): Quad {
+  const at = full + 64 * b;
+  let w0 = quarter(data, at);
+  let w1 = quarter(data, at + 16);
+  let w2 = quarter(data, at + 32);
+  let w3 = quarter(data, at + 48);
+  const end = data.length;
+  if (end >= at && end < at + 64) {
+    // Byte `p` of the block is byte `p % 4` (big-endian) of word `p / 4`.
+    const p = end - at;
+    const bit = (0x80 as u32) << ((24 - 8 * (p % 4)) as u32);
+    const word = (p % 16) / 4;
+    if (p < 16) {
+      w0 = w0.withLane(word, w0.lane(word) | bit);
+    } else if (p < 32) {
+      w1 = w1.withLane(word, w1.lane(word) | bit);
+    } else if (p < 48) {
+      w2 = w2.withLane(word, w2.lane(word) | bit);
+    } else {
+      w3 = w3.withLane(word, w3.lane(word) | bit);
+    }
+  }
+  if (last) {
+    const bits = (total as u64) * 8;
+    w3 = w3.withLane(2, (bits >> 32) as u32).withLane(3, (bits & 0xffffffff) as u32);
+  }
+  return { w0: w0, w1: w1, w2: w2, w3: w3 };
+}
+
+/** A new array of `n` bytes, uninitialized: the caller writes every byte before anything reads it. */
+export function newBytes(n: usize): u8[] {
+  const out: u8[] = arrayWithCapacity(n);
+  arraySetLen(out, n);
+  return out;
+}
+
+/** Padding blocks after the whole blocks of `data`: one, or two when fewer than 9 bytes are left. */
+export function tailBlocks(data: u8[], full: usize): usize {
+  return data.length - full < 56 ? 1 : 2;
+}
+
+/** Two vectors of state: SHA-256's ABCD / EFGH on ARM, ABEF / CDGH on x86. */
+export struct Pair {
+  a: u32x4;
+  b: u32x4;
+}

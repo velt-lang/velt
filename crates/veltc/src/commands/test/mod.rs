@@ -285,7 +285,7 @@ impl Run<'_> {
         }))
     }
 
-    /// Build the harnesses for `planned` and run them: `velt:test` in a harness without test
+    /// Build the harnesses for `planned` and run them: `velt/test` in a harness without test
     /// files runs every file, as the plan it is handed says, prints the report and exits with
     /// the run's verdict. Returns whether every test passed.
     fn run(&mut self, planned: &[Planned]) -> Result<bool, String> {
@@ -453,7 +453,7 @@ impl Run<'_> {
     fn build_files(&mut self, files: &[&Planned], quiet: bool) -> Result<PathBuf, Vec<usize>> {
         let opts = self.harness_options(files);
         let mut sess = Session::new();
-        let result = driver::build(&mut sess, &opts);
+        let result = build_locked(&mut sess, &opts);
         // The harness itself is generated (never on disk); everything else it read is watched.
         self.watched.extend(
             sess.sm
@@ -520,7 +520,7 @@ impl Run<'_> {
         let (file, found) = (&p.file, &p.found);
         let opts = self.harness_options(&[p]);
         let mut sess = Session::new();
-        let built = driver::build(&mut sess, &opts);
+        let built = build_locked(&mut sess, &opts);
         let failure = match &built {
             Err(driver::BuildError::Failed(msg)) => Some(msg.clone()),
             Err(driver::BuildError::Ice(msg)) => Some(format!("internal compiler error: {msg}")),
@@ -579,11 +579,29 @@ impl Run<'_> {
             true => self.out_dir.join("debug"),
             false => self.out_dir.clone(),
         };
+        let source = harness::harness_source(&harness_files);
+        // Named by what it is built from, not by its place in this run: two runs in a package at
+        // once (std's tests run each folder in parallel) build different harnesses under
+        // different names, and the same harness under one name (`build_locked`).
+        let key = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::hash::DefaultHasher::new();
+            (
+                &source,
+                &dir,
+                self.opts.release,
+                self.opts.no_run,
+                &self.cpu,
+            )
+                .hash(&mut h);
+            h.finish()
+        };
         let opts = BuildOptions {
             input: dir.join(format!("__velt_test_{name}.vlt")),
-            root_source: Some(harness::harness_source(&harness_files)),
+            root_source: Some(source),
+            test_harness: true,
             packages: self.packages.clone(),
-            output: Some(out_dir.join(format!("{}_{}", name.replace('.', "_"), self.builds))),
+            output: Some(out_dir.join(format!("{}_{key:016x}", name.replace('.', "_")))),
             release: self.opts.release,
             cpu: self.cpu.clone(),
             // What `--no-run` builds is for a debugger.
@@ -593,6 +611,25 @@ impl Run<'_> {
         self.builds += 1;
         opts
     }
+}
+
+/// `driver::build` of a harness while holding `<output>.lock`: another `velt test` building the
+/// same harness at the same moment waits, then finds it built, instead of both linking the one
+/// file at once.
+fn build_locked(
+    sess: &mut Session,
+    opts: &BuildOptions,
+) -> Result<driver::Artifact, driver::BuildError> {
+    let lock = opts.output.as_ref().and_then(|out| {
+        let path = out.with_extension("lock");
+        std::fs::create_dir_all(path.parent()?).ok()?;
+        let file = std::fs::File::create(path).ok()?;
+        file.lock().ok()?;
+        Some(file)
+    });
+    let built = driver::build(sess, opts);
+    drop(lock);
+    built
 }
 
 /// Keep the reports in the runner's `results` file (`Ran[]`) of the files whose tests all passed,

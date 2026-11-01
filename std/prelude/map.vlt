@@ -1,76 +1,46 @@
 // Prelude: `Map<K, V>`, an insertion-ordered hash map with JS `Map` semantics.
-//
-// Layout (like CPython's dict / indexmap):
-// - Entries live in two dense parallel arrays (`entryKeys`, `entryValues`) in insertion order,
-//   so iteration is a linear scan and order matches JS. A deleted entry's value is dropped at
-//   once (set to null); its key stays as a tombstone until the next compaction. (One array of
-//   `{ key, value }` entries measured ~20% slower on k-nucleotide: probing reads only keys, and
-//   they pack densest on their own. Values stay `V | null` so a delete drops the value at once.)
-// - A null value marks a deleted entry only where `V` excludes null. When `V` includes null
-//   (`Map<string, number | null>`, a `Record<string, T | null>`), `V | null` is `V` and a live
-//   entry may hold null too: such an entry is live when the map has no tombstones (`dead == 0`,
-//   the common case) or a slot of the index points at it (a delete removes the entry's slot at
-//   once, its key stays). `__intrinsic_holds_null` is a constant per instantiation, so maps
-//   whose `V` excludes null keep this layout and code unchanged (no extra field, no per-entry
-//   flag). Maps whose `V` includes null pay only while they have tombstones: `keys()`,
-//   `values()`, `entries()`, `compact` and the other bulk readers then mark the live positions
-//   from the slot words in one pass (`liveBits`), and `forEach`, `for...of` and the formatting
-//   and JSON glue probe the index for each null-valued entry, deleted ones included (`liveNull`).
-// - `slots` is an open-addressing index (power-of-two capacity) of packed `u64` words:
-//   the top 32 bits of the entry's scrambled hash `p = hash * 2^64/phi` (Fibonacci hashing,
-//   which spreads even weak hashes such as sequential integers), and in the low 32 bits the
-//   entry position + 1 (0 = empty slot). The home slot of `p` is its top bits, so the stored
-//   tag also gives every slot's home: probing rejects most non-matching slots without loading
-//   the key, and growing or deleting never rehashes keys.
-// - Collisions use Robin Hood linear probing: every probe cluster is kept sorted by home slot,
-//   so a lookup stops at the first slot whose resident is closer to its own home than the key
-//   would be (misses are short even at high load), inserts shift the rest of the cluster one
-//   slot right, and deletes shift it back (no tombstones in the index). The index grows at 3/4
-//   load (as fast as plain linear probing grown at 5/8 in bench/hashmap.vlt, with half the
-//   index memory at some sizes; bench/RESULTS.md).
-//
-// Ownership: `set` takes ownership of the key and value. `get` returns the stored value like JS
-// (an object is shared — another reference to it — and numbers or strings are copied); `upsert`
-// / `update` change a value in place. `keys()`, `values()` and `entries()` return the stored
-// keys and values the same way; `forEach` borrows. A map holds at most 2^31 entries.
-//
-// Live iteration (JS order: entries added while a loop runs are visited, deleted ones are not):
-// `forEach` and `for...of` over a map (or its `keys()`, `values()`, `entries()`, through a
-// `MapCursor`) walk the entry positions. A compaction, the pop of the newest entry and clearing
-// renumber positions; they alone bump `renumbers`, and a loop that sees it changed finds its
-// place again by *sequence number*: every entry has one, increasing in insertion order and never
-// reused. The sequence number of the entry at position `p` is `p + off`, with `off` from the
-// last breakpoint at or before `p` in (`seqPos`, `seqOff`); a map that never renumbered has no
-// breakpoints (`off` is 0). Renumbering rebuilds the breakpoints (at most one per run of
-// removed entries), so set, get and append never touch them.
+// The layout, ownership and live iteration are described in std/lang/map/layout.vlt.
 
-// Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
-
-declare function velt_rt_bytes_hash(b: u8[]): u64;
-declare function velt_rt_bytes_is_utf8(b: u8[]): bool;
-declare function velt_rt_str_eq_bytes(s: string, b: u8[]): bool;
-declare function velt_rt_bytes_to_str_lossy(b: u8[]): string;
-
-// First index capacity once a map receives its first entry.
-const INITIAL_SLOTS: usize = 8;
-
-// Dead entries tolerated before `delete` considers compacting.
-const COMPACT_MIN_DEAD: usize = 8;
-
-// 2^64 / golden ratio.
-const FIB: u64 = 0x9e3779b97f4a7c15;
-
-// Low half of a slot word: entry position + 1.
-const POS_MASK: u64 = 0xffffffff;
-
-// Entries (tombstones included) a map may hold: keeps positions within `POS_MASK` and the index
-// at most 2^32 slots, so home slots (`shift` >= 32) come from the tag half of a slot word.
-const MAX_ENTRIES: usize = 0x80000000;
-
-// The top bit of `edits` marks the entries of a record made by `Object.create(null)`, which has
-// no prototype (`__markNullProto`). `edits` is only ever compared for equality and incremented,
-// which keeps the bit; no map reaches 2^63 edits.
-const NULL_PROTO: u64 = 0x8000000000000000;
+import { hash, holdsNull, keyEq, nullAs, share } from "velt/lang/intrinsics";
+import {
+  MAP_ADVANCE,
+  MAP_AT,
+  MAP_CURSOR,
+  MAP_ENTRY_AT,
+  MAP_IS_NULL_PROTO,
+  MAP_KEY_AT,
+  MAP_LIVE_AT,
+  MAP_LIVE_POSITIONS,
+  MAP_MARK_NULL_PROTO,
+  MAP_NEWEST_KEY_DIGIT,
+  MAP_VALUE_AT,
+} from "velt/lang/hooks/keys";
+import { equalByContent, equalByFields } from "velt/lang/equal/generated";
+import { applyTo, mutateWith, place, sharedValue, visit } from "velt/lang/map/slots";
+import {
+  mapNextSeq,
+  mapPositionOfSeq,
+  mapSegmentEnd,
+  mapSegmentOf,
+  mapSegmentOff,
+  mapSeqTail,
+} from "velt/lang/map/order";
+import {
+  mapAppend,
+  mapCompact,
+  mapDropEntries,
+  mapRemoveSlot,
+  mapResize,
+} from "velt/lang/map/table";
+import {
+  mapDeepEquals,
+  mapEntries,
+  mapKeys,
+  mapLiveNull,
+  mapLivePositions,
+  mapValues,
+} from "velt/lang/map/live";
+import { COMPACT_MIN_DEAD, FIB, INITIAL_SLOTS, NULL_PROTO, POS_MASK } from "velt/lang/map/layout";
 
 /**
  * A collection of key/value pairs that remembers insertion order, with JS `Map` semantics:
@@ -126,13 +96,13 @@ export class Map<K, V> {
    * (JS semantics: re-setting a key does not move it to the end).
    */
   set(key: K, value: V) {
-    const p = __intrinsic_hash(key) * FIB;
+    const p = hash(key) * FIB;
     const e = this.lookup(key, p);
     if (e >= 0) {
       this.entryValues[e as usize] = value;
       return;
     }
-    this.append(key, value, p, e);
+    mapAppend(this, key, value, p, e);
   }
 
   /**
@@ -140,7 +110,7 @@ export class Map<K, V> {
    * itself: an object is shared (another reference to it), a number or string is copied.
    */
   get(key: K): V | undefined {
-    const e = this.lookup(key, __intrinsic_hash(key) * FIB);
+    const e = this.lookup(key, hash(key) * FIB);
     if (e < 0) {
       return undefined;
     }
@@ -151,17 +121,17 @@ export class Map<K, V> {
    * The value stored for `key`, which is present (a literal-key `Record` reads its keys with it);
    * unlike `get(key)!` it reads a live entry holding null as that null.
    */
-  __at(key: K): V {
-    const e = this.lookup(key, __intrinsic_hash(key) * FIB);
+  [MAP_AT](key: K): V {
+    const e = this.lookup(key, hash(key) * FIB);
     if (e < 0) {
-      panic("ICE: Map.__at of a missing key");
+      panic("ICE: Map[MAP_AT] of a missing key");
     }
     return sharedValue(this.entryValues[e as usize]);
   }
 
   /** Whether the map has an entry for `key`, matched as `get` matches it. */
   has(key: K): bool {
-    return this.lookup(key, __intrinsic_hash(key) * FIB) >= 0;
+    return this.lookup(key, hash(key) * FIB) >= 0;
   }
 
   /**
@@ -170,7 +140,7 @@ export class Map<K, V> {
    * `m.upsert(word, 1, (n) => n + 1)` counts words.
    */
   upsert<E>(key: K, init: V, f: (value: V) => V throws E) throws E {
-    const p = __intrinsic_hash(key) * FIB;
+    const p = hash(key) * FIB;
     const found = this.lookup(key, p);
     if (found >= 0) {
       const e = found as usize;
@@ -185,13 +155,13 @@ export class Map<K, V> {
       if (again >= 0) {
         this.entryValues[again as usize] = next;
       } else if (next != null) {
-        this.append(key, next, p, again);
-      } else if (__intrinsic_holds_null(__intrinsic_null_as<V>())) {
-        this.append(key, __intrinsic_null_as<V>(), p, again);
+        mapAppend(this, key, next, p, again);
+      } else if (holdsNull(nullAs<V>())) {
+        mapAppend(this, key, nullAs<V>(), p, again);
       }
       return;
     }
-    this.append(key, init, p, found);
+    mapAppend(this, key, init, p, found);
   }
 
   /**
@@ -201,7 +171,7 @@ export class Map<K, V> {
    * Returns whether `key` was present.
    */
   update<E>(key: K, f: (value: V) => void throws E): bool throws E {
-    const e = this.lookup(key, __intrinsic_hash(key) * FIB);
+    const e = this.lookup(key, hash(key) * FIB);
     if (e < 0) {
       return false;
     }
@@ -211,7 +181,7 @@ export class Map<K, V> {
 
   /** The value stored for `key`, inserting `make()` first if `key` is absent. */
   getOrInsert<E>(key: K, make: () => V throws E): V throws E {
-    const p = __intrinsic_hash(key) * FIB;
+    const p = hash(key) * FIB;
     let e = this.lookup(key, p);
     if (e < 0) {
       const edits = this.edits;
@@ -224,7 +194,7 @@ export class Map<K, V> {
           return sharedValue(this.entryValues[e as usize]);
         }
       }
-      this.append(key, v, p, e);
+      mapAppend(this, key, v, p, e);
       return sharedValue(this.entryValues[this.entryValues.length - 1]);
     }
     return sharedValue(this.entryValues[e as usize]);
@@ -232,27 +202,27 @@ export class Map<K, V> {
 
   /** Removes `key`; returns whether it was present. The value is dropped immediately. */
   delete(key: K): bool {
-    const p = __intrinsic_hash(key) * FIB;
+    const p = hash(key) * FIB;
     const found = this.lookup(key, p);
     if (found < 0) {
       return false;
     }
     const e = found as usize;
     this.edits++;
-    this.removeSlot(this.slotOf(p, e));
+    mapRemoveSlot(this, this.slotOf(p, e));
     this._size--;
     if (this._size == 0) {
       // Every slot is empty again; drop all entries but keep the index capacity.
-      this.dropEntries();
+      mapDropEntries(this);
       return true;
     }
     if (e + 1 == this.entryKeys.length) {
       // Newest entry: pop it instead of leaving a tombstone. The next entry takes its position
       // with a new sequence number.
-      const next = this.nextSeq();
+      const next = mapNextSeq(this);
       this.entryKeys.pop();
       this.entryValues.pop();
-      this.seqTail(e, next);
+      mapSeqTail(this, e, next);
       this.renumbers++;
       return true;
     }
@@ -266,9 +236,9 @@ export class Map<K, V> {
         fit = fit * 2;
       }
       if (fit < this.slots.length) {
-        this.resize(fit);
+        mapResize(this, fit);
       } else {
-        this.compact();
+        mapCompact(this);
       }
     }
     return true;
@@ -277,7 +247,7 @@ export class Map<K, V> {
   /** Removes all entries. */
   clear() {
     this.edits++;
-    this.dropEntries();
+    mapDropEntries(this);
     this.slots = [];
     this.shift = 64;
   }
@@ -288,25 +258,16 @@ export class Map<K, V> {
    * visits keys added while it runs and skips deleted ones.
    */
   keys(): K[] {
-    if (__intrinsic_holds_null(__intrinsic_null_as<V>()) && this.dead > 0) {
-      return this.liveKeys();
-    }
-    const out: K[] = __intrinsic_array_with_capacity(this._size);
-    for (let e: usize = 0; e < this.entryKeys.length; e++) {
-      if (__intrinsic_holds_null(__intrinsic_null_as<V>()) || this.entryValues[e] != null) {
-        out.push(__intrinsic_share(this.entryKeys[e]));
-      }
-    }
-    return out;
+    return mapKeys(this);
   }
 
   /** Marks this map as a prototype-less record's entries (`Object.create(null)`). */
-  __markNullProto() {
+  [MAP_MARK_NULL_PROTO]() {
     this.edits = this.edits | NULL_PROTO;
   }
 
-  /** Was this map marked by `__markNullProto`? */
-  __isNullProto(): bool {
+  /** Was this map marked by `[MAP_MARK_NULL_PROTO]`? */
+  [MAP_IS_NULL_PROTO](): bool {
     return (this.edits & NULL_PROTO) != 0;
   }
 
@@ -314,7 +275,7 @@ export class Map<K, V> {
    * Whether the newest entry's key starts with a digit (a `Record` key that may be an array
    * index): `${key}` reads a string or a string enum member's value.
    */
-  __newestKeyDigit(): bool {
+  [MAP_NEWEST_KEY_DIGIT](): bool {
     const n = this.entryKeys.length;
     if (n == 0) {
       return false;
@@ -324,17 +285,8 @@ export class Map<K, V> {
   }
 
   /** The positions of the live entries in `entryKeys` / `entryValues` (a record's glue). */
-  __livePositions(): usize[] {
-    if (__intrinsic_holds_null(__intrinsic_null_as<V>()) && this.dead > 0) {
-      return this.livePositionsBits();
-    }
-    const out: usize[] = __intrinsic_array_with_capacity(this._size);
-    for (let e: usize = 0; e < this.entryKeys.length; e++) {
-      if (__intrinsic_holds_null(__intrinsic_null_as<V>()) || this.entryValues[e] != null) {
-        out.push(e);
-      }
-    }
-    return out;
+  [MAP_LIVE_POSITIONS](): usize[] {
+    return mapLivePositions(this);
   }
 
   /**
@@ -342,18 +294,7 @@ export class Map<K, V> {
    * `for (const v of m.values())` iterates live, as `keys()` does.
    */
   values(): V[] {
-    if (__intrinsic_holds_null(__intrinsic_null_as<V>()) && this.dead > 0) {
-      return this.liveValues();
-    }
-    const out: V[] = __intrinsic_array_with_capacity(this._size);
-    for (let e: usize = 0; e < this.entryValues.length; e++) {
-      if (__intrinsic_holds_null(__intrinsic_null_as<V>()) && this.entryValues[e] == null) {
-        out.push(__intrinsic_null_as<V>());
-      } else {
-        pushShared(out, this.entryValues[e]);
-      }
-    }
-    return out;
+    return mapValues(this);
   }
 
   /**
@@ -362,18 +303,7 @@ export class Map<K, V> {
    * iterate live, as `keys()` does.
    */
   entries(): [K, V][] {
-    if (__intrinsic_holds_null(__intrinsic_null_as<V>()) && this.dead > 0) {
-      return this.liveEntries();
-    }
-    const out: [K, V][] = __intrinsic_array_with_capacity(this._size);
-    for (let e: usize = 0; e < this.entryKeys.length; e++) {
-      if (__intrinsic_holds_null(__intrinsic_null_as<V>()) && this.entryValues[e] == null) {
-        pushNullEntry(out, this.entryKeys[e]);
-      } else {
-        pushEntry(out, this.entryKeys[e], this.entryValues[e]);
-      }
-    }
-    return out;
+    return mapEntries(this);
   }
 
   /**
@@ -386,21 +316,18 @@ export class Map<K, V> {
     let segEnd: usize = 0;
     let e: usize = 0;
     while (e < this.entryKeys.length) {
-      if (
-        this.entryValues[e] != null ||
-        (__intrinsic_holds_null(__intrinsic_null_as<V>()) && this.liveNull(e))
-      ) {
+      if (this.entryValues[e] != null || (holdsNull(nullAs<V>()) && mapLiveNull(this, e))) {
         if (e >= segEnd) {
-          const k = this.segmentOf(e);
-          off = this.segmentOff(k);
-          segEnd = this.segmentEnd(k);
+          const k = mapSegmentOf(this, e);
+          off = mapSegmentOff(this, k);
+          segEnd = mapSegmentEnd(this, k);
         }
         const next = e + off + 1;
         visit(this.entryValues[e], this.entryKeys[e], f);
         if (this.renumbers != renumbers) {
           // `f` renumbered the entries (through another reference): find the next one again.
           renumbers = this.renumbers;
-          e = this.positionOfSeq(next);
+          e = mapPositionOfSeq(this, next);
           segEnd = 0;
           continue;
         }
@@ -411,8 +338,8 @@ export class Map<K, V> {
 
   // ─────────────── live `for...of` (the compiler's loop over a map calls these) ───────────────
 
-  /** A cursor before the first entry, for `__advance`. */
-  __cursor(): MapCursor {
+  /** A cursor before the first entry, for `[MAP_ADVANCE]`. */
+  [MAP_CURSOR](): MapCursor {
     return MapCursor { pos: 0, at: 0, next: 0, renumbers: this.renumbers, off: 0, segEnd: 0 };
   }
 
@@ -420,15 +347,15 @@ export class Map<K, V> {
    * Moves `c` to the next entry (in insertion order, including entries added since the loop
    * started); false at the end.
    */
-  __advance(c: MapCursor): bool {
+  [MAP_ADVANCE](c: MapCursor): bool {
     if (c.renumbers != this.renumbers) {
       c.renumbers = this.renumbers;
-      c.pos = this.positionOfSeq(c.next);
+      c.pos = mapPositionOfSeq(this, c.next);
       c.segEnd = 0;
     }
     let e = c.pos;
     while (e < this.entryValues.length && this.entryValues[e] == null) {
-      if (__intrinsic_holds_null(__intrinsic_null_as<V>()) && this.liveNull(e)) {
+      if (holdsNull(nullAs<V>()) && mapLiveNull(this, e)) {
         break;
       }
       e++;
@@ -438,9 +365,9 @@ export class Map<K, V> {
       return false;
     }
     if (e >= c.segEnd) {
-      const k = this.segmentOf(e);
-      c.off = this.segmentOff(k);
-      c.segEnd = this.segmentEnd(k);
+      const k = mapSegmentOf(this, e);
+      c.off = mapSegmentOff(this, k);
+      c.segEnd = mapSegmentEnd(this, k);
     }
     c.at = e;
     c.next = e + c.off + 1;
@@ -448,19 +375,19 @@ export class Map<K, V> {
     return true;
   }
 
-  /** The key of the entry `c` is at (after `__advance` returned true). */
-  __keyAt(c: MapCursor): K {
-    return __intrinsic_share(this.entryKeys[c.at]);
+  /** The key of the entry `c` is at (after `[MAP_ADVANCE]` returned true). */
+  [MAP_KEY_AT](c: MapCursor): K {
+    return share(this.entryKeys[c.at]);
   }
 
   /** The value of the entry `c` is at. */
-  __valueAt(c: MapCursor): V {
+  [MAP_VALUE_AT](c: MapCursor): V {
     return sharedValue(this.entryValues[c.at]);
   }
 
   /** The `[key, value]` pair of the entry `c` is at. */
-  __entryAt(c: MapCursor): [K, V] {
-    const key = __intrinsic_share(this.entryKeys[c.at]);
+  [MAP_ENTRY_AT](c: MapCursor): [K, V] {
+    const key = share(this.entryKeys[c.at]);
     const pair: [K, V] = [key, sharedValue(this.entryValues[c.at])];
     return pair;
   }
@@ -468,205 +395,22 @@ export class Map<K, V> {
   // ─────────────── internals (not part of the JS surface) ───────────────
 
   /**
-   * `deepEqual` (the compiler's equality glue calls it): the same keys, matched as `get`
-   * matches them, each with a deeply equal value, in any order (Node's `isDeepStrictEqual`).
-   * `deep`: the values (and unmatched keys) compare as Vitest's `toEqual` does
-   * (`__intrinsic_deep_eq`: class instances by their fields).
+   * `deepEqual` (the code generated for `equalByContent` calls it): the same keys, matched as `get` matches them, each with a deeply equal value, in any
+   * order (Node's `isDeepStrictEqual`). `deep`: the values (and unmatched keys) compare as
+   * Vitest's `toEqual` does (`equalByFields`: class instances by their fields). Private, so that
+   * no `any` table lists it and only a comparison instantiates it: generated code calls it with
+   * the access of the map's type (or of a `Record` or `Set` holding one).
    */
-  __deepEquals(other: Map<K, V>, deep: bool): bool {
-    if (this._size != other._size) {
-      return false;
-    }
-    if (__intrinsic_holds_null(__intrinsic_null_as<V>()) && this.dead > 0) {
-      return this.liveDeepEquals(other, deep);
-    }
-    for (let e: usize = 0; e < this.entryKeys.length; e++) {
-      if (__intrinsic_holds_null(__intrinsic_null_as<V>()) || this.entryValues[e] != null) {
-        const p = __intrinsic_hash(this.entryKeys[e]) * FIB;
-        const o = other.lookup(this.entryKeys[e], p);
-        if (o < 0) {
-          return this.deepEqualsByContent(other, deep);
-        }
-        if (!Map.entriesEqual(this.entryValues[e], other.entryValues[o as usize], deep)) {
-          return false;
-        }
-      }
-    }
-    return true;
-  }
-
-  /** Two keys or values, as `deepEqual` compares them, or (`deep`) as Vitest's `toEqual`. */
-  private static entriesEqual<T>(a: T, b: T, deep: bool): bool {
-    return deep ? __intrinsic_deep_eq(a, b) : __intrinsic_eq(a, b);
-  }
-
-  // `__deepEquals` once a key of this map is not a key of `other`: an object key is matched by
-  // identity, so, as in Node's `isDeepStrictEqual`, each such entry is paired with a distinct
-  // entry of `other` whose key and value are deeply equal.
-  private deepEqualsByContent(other: Map<K, V>, deep: bool): bool {
-    const used: bool[] = __intrinsic_array_with_capacity(other.entryKeys.length);
-    for (let o: usize = 0; o < other.entryKeys.length; o++) {
-      used.push(false);
-    }
-    const misses: usize[] = [];
-    for (let e: usize = 0; e < this.entryKeys.length; e++) {
-      if (this.__liveAt(e)) {
-        const o = other.lookup(this.entryKeys[e], __intrinsic_hash(this.entryKeys[e]) * FIB);
-        if (o < 0) {
-          misses.push(e);
-        } else if (Map.entriesEqual(this.entryValues[e], other.entryValues[o as usize], deep)) {
-          used[o as usize] = true;
-        } else {
-          return false;
-        }
-      }
-    }
-    for (const e of misses) {
-      let found = false;
-      for (let o: usize = 0; o < other.entryKeys.length && !found; o++) {
-        if (
-          !used[o] &&
-          other.__liveAt(o) &&
-          Map.entriesEqual(this.entryKeys[e], other.entryKeys[o], deep) &&
-          Map.entriesEqual(this.entryValues[e], other.entryValues[o], deep)
-        ) {
-          used[o] = true;
-          found = true;
-        }
-      }
-      if (!found) {
-        return false;
-      }
-    }
-    return true;
+  private deepEquals(other: Map<K, V>, deep: bool): bool {
+    return mapDeepEquals(this, other, deep);
   }
 
   /**
    * Whether entry position `e` holds a live entry, not a deleted one (the formatting and JSON
    * glue ask it for maps whose `V` includes null; for the others a null value answers).
    */
-  __liveAt(e: usize): bool {
-    return this.entryValues[e] != null ||
-      (__intrinsic_holds_null(__intrinsic_null_as<V>()) && this.liveNull(e));
-  }
-
-  // Which entry positions are live, as a bitset read from the slot words in one pass: every live
-  // entry has a slot and a deleted one has none (a delete removes the slot at once). For maps
-  // whose `V` includes null that have tombstones, where a null value does not tell; an entry
-  // holding a value is live anyway. No key is hashed, so an entry whose tuple key changed
-  // since it was set is found too.
-  private liveBits(): u64[] {
-    const words = (this.entryKeys.length + 63) / 64;
-    const bits: u64[] = __intrinsic_array_with_capacity(words);
-    for (let i: usize = 0; i < words; i++) {
-      bits.push(0);
-    }
-    for (let s: usize = 0; s < this.slots.length; s++) {
-      const w = this.slots[s];
-      if (w != 0) {
-        const e = (w & POS_MASK) - 1;
-        bits[(e >> 6) as usize] = bits[(e >> 6) as usize] | ((1 as u64) << (e & 63));
-      }
-    }
-    return bits;
-  }
-
-  // `__livePositions`, `keys()`, `values()`, `entries()` and `__deepEquals` with `liveBits`.
-  // They are methods of their own so that the code of maps whose `V` excludes null declares no
-  // more locals.
-  private livePositionsBits(): usize[] {
-    const live = this.liveBits();
-    const out: usize[] = __intrinsic_array_with_capacity(this._size);
-    for (let e: usize = 0; e < this.entryKeys.length; e++) {
-      if (this.entryValues[e] != null || bitAt(live, e)) {
-        out.push(e);
-      }
-    }
-    return out;
-  }
-
-  private liveKeys(): K[] {
-    const live = this.liveBits();
-    const out: K[] = __intrinsic_array_with_capacity(this._size);
-    for (let e: usize = 0; e < this.entryKeys.length; e++) {
-      if (this.entryValues[e] != null || bitAt(live, e)) {
-        out.push(__intrinsic_share(this.entryKeys[e]));
-      }
-    }
-    return out;
-  }
-
-  private liveValues(): V[] {
-    const live = this.liveBits();
-    const out: V[] = __intrinsic_array_with_capacity(this._size);
-    for (let e: usize = 0; e < this.entryValues.length; e++) {
-      if (this.entryValues[e] != null) {
-        pushShared(out, this.entryValues[e]);
-      } else if (bitAt(live, e)) {
-        out.push(__intrinsic_null_as<V>());
-      }
-    }
-    return out;
-  }
-
-  private liveEntries(): [K, V][] {
-    const live = this.liveBits();
-    const out: [K, V][] = __intrinsic_array_with_capacity(this._size);
-    for (let e: usize = 0; e < this.entryKeys.length; e++) {
-      if (this.entryValues[e] != null) {
-        pushEntry(out, this.entryKeys[e], this.entryValues[e]);
-      } else if (bitAt(live, e)) {
-        pushNullEntry(out, this.entryKeys[e]);
-      }
-    }
-    return out;
-  }
-
-  private liveDeepEquals(other: Map<K, V>, deep: bool): bool {
-    const live = this.liveBits();
-    for (let e: usize = 0; e < this.entryKeys.length; e++) {
-      if (this.entryValues[e] != null || bitAt(live, e)) {
-        const o = other.lookup(this.entryKeys[e], __intrinsic_hash(this.entryKeys[e]) * FIB);
-        if (o < 0) {
-          return this.deepEqualsByContent(other, deep);
-        }
-        if (!Map.entriesEqual(this.entryValues[e], other.entryValues[o as usize], deep)) {
-          return false;
-        }
-      }
-    }
-    return true;
-  }
-
-  // Whether entry `e`, whose value is null and whose `V` includes null, is live (holds a null
-  // value) rather than deleted: true when the map has no tombstones, else when a slot of the
-  // index still points at it (a delete removes the entry's slot at once but leaves its key). It
-  // probes from the home of the entry's key's current hash, so while the map has tombstones it
-  // misses an entry whose tuple key changed since it was set (`forEach`, `for...of` and the
-  // formatting and JSON glue then skip it; the bulk readers use `liveBits`).
-  private liveNull(e: usize): bool {
-    if (this.dead == 0) {
-      return true;
-    }
-    const mask = this.slots.length - 1;
-    const want = e as u64 + 1;
-    const p = __intrinsic_hash(this.entryKeys[e]) * FIB;
-    let s = (p >> this.shift) as usize;
-    let dist: usize = 0;
-    while (true) {
-      const w = this.slots[s];
-      if (w == 0) {
-        return false;
-      }
-      if ((w & POS_MASK) == want) {
-        return true;
-      }
-      if (((s - ((w >> this.shift) as usize)) & mask) < dist) {
-        return false;
-      }
-      s = (s + 1) & mask;
-      dist++;
-    }
+  [MAP_LIVE_AT](e: usize): bool {
+    return this.entryValues[e] != null || (holdsNull(nullAs<V>()) && mapLiveNull(this, e));
   }
 
   // Probes for `key` (scrambled hash `p`): its entry position if present, else -(stop + 1)
@@ -687,7 +431,7 @@ export class Map<K, V> {
       }
       if (((w ^ p) >> 32) == 0) {
         const e = ((w & POS_MASK) - 1) as usize;
-        if (__intrinsic_key_eq(this.entryKeys[e], key)) {
+        if (keyEq(this.entryKeys[e], key)) {
           return e as i64;
         }
       }
@@ -708,249 +452,9 @@ export class Map<K, V> {
     }
     return s;
   }
-
-  // Appends a new entry; `s` is `lookup`'s miss result for `key`.
-  private append(key: K, value: V, p: u64, s: i64) {
-    this.edits++;
-    if ((this._size + 1) * 4 > this.slots.length * 3) {
-      this.resize(this.slots.length == 0 ? INITIAL_SLOTS : this.slots.length * 2);
-      s = this.lookup(key, p);
-    }
-    if (this.entryKeys.length >= MAX_ENTRIES) {
-      panic("Map: too many entries");
-    }
-    const word = (p & ~POS_MASK) | (this.entryKeys.length as u64 + 1);
-    this.entryKeys.push(key);
-    this.entryValues.push(value);
-    shiftIn(this.slots, (-s - 1) as usize, word);
-    this._size++;
-  }
-
-  // Backward-shift deletion: moves the rest of the probe cluster one slot left until an empty
-  // slot or an entry already in its home slot.
-  private removeSlot(hole: usize) {
-    const mask = this.slots.length - 1;
-    let next = (hole + 1) & mask;
-    let w = this.slots[next];
-    while (w != 0 && ((next - ((w >> this.shift) as usize)) & mask) != 0) {
-      this.slots[hole] = w;
-      hole = next;
-      next = (next + 1) & mask;
-      w = this.slots[next];
-    }
-    this.slots[hole] = 0;
-  }
-
-  // Rebuilds the index with `capacity` slots (a power of two), compacting tombstones first.
-  // The old slot words are re-placed as they are: their tags hold the homes, so no key is
-  // rehashed.
-  private resize(capacity: usize) {
-    if (this.dead > 0) {
-      this.compact();
-    }
-    const slots: u64[] = __intrinsic_array_with_capacity(capacity);
-    for (let s: usize = 0; s < capacity; s++) {
-      slots.push(0);
-    }
-    let bits: u64 = 0;
-    let c = capacity;
-    while (c > 1) {
-      c = c >> 1;
-      bits++;
-    }
-    const shift = 64 - bits;
-    for (let s: usize = 0; s < this.slots.length; s++) {
-      const w = this.slots[s];
-      if (w != 0) {
-        place(slots, shift, w);
-      }
-    }
-    this.slots = slots;
-    this.shift = shift;
-  }
-
-  // Slides live entries to the front (preserving order) with swaps, truncates the dead tail
-  // (dropping the dead keys), then renumbers the positions in the slot words in place.
-  // The sequence-number breakpoints are rebuilt on the way: one where a run of removed entries
-  // ends (or an old breakpoint starts), so each entry keeps its sequence number.
-  // Where `V` includes null, a null value does not tell a live entry from a deleted one, so
-  // `moved` first marks the positions the slot words point at (1), in one pass, and then is
-  // filled in place instead of pushed.
-  private compact() {
-    const next = this.nextSeq();
-    const moved: u64[] = __intrinsic_array_with_capacity(this.entryKeys.length);
-    if (__intrinsic_holds_null(__intrinsic_null_as<V>())) {
-      this.markLive(moved);
-    }
-    const oldPos = this.seqPos;
-    const oldOff = this.seqOff;
-    this.seqPos = [];
-    this.seqOff = [];
-    let k: usize = 0;
-    let off: usize = 0;
-    let nextBp = oldPos.length > 0 ? oldPos[0] : MAX_ENTRIES;
-    let shifted = false;
-    let w: usize = 0;
-    for (let r: usize = 0; r < this.entryKeys.length; r++) {
-      if (r == nextBp) {
-        off = oldOff[k];
-        k++;
-        nextBp = k < oldPos.length ? oldPos[k] : MAX_ENTRIES;
-        shifted = true;
-      }
-      if (
-        this.entryValues[r] != null ||
-        (__intrinsic_holds_null(__intrinsic_null_as<V>()) && moved[r] != 0)
-      ) {
-        if (w != r) {
-          __intrinsic_array_swap(this.entryKeys, w, r);
-          __intrinsic_array_swap(this.entryValues, w, r);
-        }
-        if (shifted) {
-          // The first breakpoint is at position 0: the entries before this one kept their
-          // positions, and with them offset 0.
-          if (w > 0 && this.seqPos.length == 0) {
-            this.seqPos.push(0);
-            this.seqOff.push(0);
-          }
-          this.seqPos.push(w);
-          this.seqOff.push(r + off - w);
-          shifted = false;
-        }
-        w++;
-        if (__intrinsic_holds_null(__intrinsic_null_as<V>())) {
-          moved[r] = w as u64;
-        } else {
-          moved.push(w as u64);
-        }
-      } else {
-        if (!__intrinsic_holds_null(__intrinsic_null_as<V>())) {
-          moved.push(0);
-        }
-        shifted = true;
-      }
-    }
-    __intrinsic_array_truncate(this.entryKeys, w);
-    __intrinsic_array_truncate(this.entryValues, w);
-    this.seqTail(w, next);
-    this.renumbers++;
-    this.dead = 0;
-    for (let s: usize = 0; s < this.slots.length; s++) {
-      const word = this.slots[s];
-      if (word != 0) {
-        this.slots[s] = (word & ~POS_MASK) | moved[((word & POS_MASK) - 1) as usize];
-      }
-    }
-  }
-
-  // `compact`'s marks where `V` includes null: one word per entry, 1 where a slot word points at
-  // the entry (it is live), else 0.
-  private markLive(moved: u64[]) {
-    for (let e: usize = 0; e < this.entryKeys.length; e++) {
-      moved.push(0);
-    }
-    for (let s: usize = 0; s < this.slots.length; s++) {
-      const w = this.slots[s];
-      if (w != 0) {
-        moved[((w & POS_MASK) - 1) as usize] = 1;
-      }
-    }
-  }
-
-  private dropEntries() {
-    const next = this.nextSeq();
-    __intrinsic_array_truncate(this.entryKeys, 0);
-    __intrinsic_array_truncate(this.entryValues, 0);
-    this._size = 0;
-    this.dead = 0;
-    this.seqTail(0, next);
-    this.renumbers++;
-  }
-
-  // The sequence number the next appended entry gets.
-  private nextSeq(): usize {
-    const n = this.seqOff.length;
-    return this.entryKeys.length + (n == 0 ? 0 : this.seqOff[n - 1]);
-  }
-
-  // After renumbering left `len` entries: entries appended from position `len` on get sequence
-  // numbers from `next` on (none is reused).
-  private seqTail(len: usize, next: usize) {
-    let n = this.seqPos.length;
-    while (n > 0 && this.seqPos[n - 1] >= len) {
-      n--;
-    }
-    __intrinsic_array_truncate(this.seqPos, n);
-    __intrinsic_array_truncate(this.seqOff, n);
-    const off = next - len;
-    if (off == (n == 0 ? 0 : this.seqOff[n - 1])) {
-      return;
-    }
-    if (n == 0 && len > 0) {
-      this.seqPos.push(0);
-      this.seqOff.push(0);
-    }
-    this.seqPos.push(len);
-    this.seqOff.push(off);
-  }
-
-  // The breakpoint whose segment holds position `e` (the last one at or before it), or -1 when
-  // there are none.
-  private segmentOf(e: usize): i64 {
-    const n = this.seqPos.length;
-    if (n == 0) {
-      return -1;
-    }
-    let lo: usize = 0;
-    let hi = n;
-    while (hi - lo > 1) {
-      const mid = (lo + hi) / 2;
-      if (this.seqPos[mid] <= e) {
-        lo = mid;
-      } else {
-        hi = mid;
-      }
-    }
-    return lo as i64;
-  }
-
-  // Segment `k`'s offset (`segmentOf`'s result).
-  private segmentOff(k: i64): usize {
-    return k < 0 ? 0 : this.seqOff[k as usize];
-  }
-
-  // Where segment `k` ends: the next breakpoint, or past every position.
-  private segmentEnd(k: i64): usize {
-    const n = (k + 1) as usize;
-    return k >= 0 && n < this.seqPos.length ? this.seqPos[n] : MAX_ENTRIES;
-  }
-
-  // The first position whose entry's sequence number is at least `seq` (past the end if none).
-  private positionOfSeq(seq: usize): usize {
-    const n = this.seqPos.length;
-    if (n == 0) {
-      return seq;
-    }
-    if (this.seqOff[0] > seq) {
-      return 0;
-    }
-    // The last segment starting at a sequence number <= `seq`.
-    let lo: usize = 0;
-    let hi = n;
-    while (hi - lo > 1) {
-      const mid = (lo + hi) / 2;
-      if (this.seqPos[mid] + this.seqOff[mid] <= seq) {
-        lo = mid;
-      } else {
-        hi = mid;
-      }
-    }
-    const p = seq - this.seqOff[lo];
-    return lo + 1 < n && p > this.seqPos[lo + 1] ? this.seqPos[lo + 1] : p;
-  }
 }
 
-/** A live `for...of` loop's place in a map (`Map.__advance`). */
+/** A live `for...of` loop's place in a map (`Map.[MAP_ADVANCE]`). */
 struct MapCursor {
   // The next position to look at.
   pos: usize;
@@ -963,162 +467,4 @@ struct MapCursor {
   // The current segment's offset and end (`Map.segmentOf`).
   off: usize;
   segEnd: usize;
-}
-
-// Whether bit `e` of the bitset `bits` is set (`Map.liveBits`).
-function bitAt(bits: u64[], e: usize): bool {
-  return ((bits[e >> 6] >> ((e & 63) as u64)) & 1) != 0;
-}
-
-// Inserts slot word `w` into `slots` (home `w >> shift`) at its Robin Hood position.
-function place(slots: u64[], shift: u64, w: u64) {
-  const mask = slots.length - 1;
-  let s = (w >> shift) as usize;
-  let dist: usize = 0;
-  while (slots[s] != 0 && ((s - ((slots[s] >> shift) as usize)) & mask) >= dist) {
-    s = (s + 1) & mask;
-    dist++;
-  }
-  shiftIn(slots, s, w);
-}
-
-// Stores `w` at slot `s`, shifting the occupied slots from `s` up to the next empty one right
-// by one (keeps each cluster sorted by home).
-function shiftIn(slots: u64[], s: usize, w: u64) {
-  const mask = slots.length - 1;
-  while (w != 0) {
-    const next = slots[s];
-    slots[s] = w;
-    w = next;
-    s = (s + 1) & mask;
-  }
-}
-
-// Helpers that reach into a live entry's value (`V | null` narrowed through a parameter). Where
-// `V` includes null, a live entry's value may be null itself: `__intrinsic_null_as<V>()`.
-
-// `f(value)` for a live entry's value. The caller stores the result into the array element
-// (assigning a parameter is local to the callee).
-function applyTo<V, E>(slot: V | null, f: (value: V) => V throws E): V | null throws E {
-  if (slot != null) {
-    return f(slot);
-  }
-  if (__intrinsic_holds_null(__intrinsic_null_as<V>())) {
-    return f(__intrinsic_null_as<V>());
-  }
-  return null;
-}
-
-function mutateWith<V, E>(slot: V | null, f: (value: V) => void throws E) throws E {
-  if (slot != null) {
-    f(slot);
-  } else if (__intrinsic_holds_null(__intrinsic_null_as<V>())) {
-    f(__intrinsic_null_as<V>());
-  }
-}
-
-function sharedValue<V>(slot: V | null): V {
-  if (slot != null) {
-    return __intrinsic_share(slot);
-  }
-  if (__intrinsic_holds_null(__intrinsic_null_as<V>())) {
-    return __intrinsic_null_as<V>();
-  }
-  panic("ICE: Map entry without a value");
-}
-
-function pushShared<V>(out: V[], slot: V | null) {
-  if (slot != null) {
-    out.push(__intrinsic_share(slot));
-  }
-}
-
-function pushEntry<K, V>(out: [K, V][], key: K, slot: V | null) {
-  if (slot != null) {
-    const pair: [K, V] = [__intrinsic_share(key), __intrinsic_share(slot)];
-    out.push(pair);
-  }
-}
-
-// `[key, null]` for a live entry holding null (`V` includes null).
-function pushNullEntry<K, V>(out: [K, V][], key: K) {
-  const pair: [K, V] = [__intrinsic_share(key), __intrinsic_null_as<V>()];
-  out.push(pair);
-}
-
-function visit<K, V, E>(slot: V | null, key: K, f: (value: V, key: K) => void throws E) throws E {
-  if (slot != null) {
-    f(slot, key);
-  } else if (__intrinsic_holds_null(__intrinsic_null_as<V>())) {
-    f(__intrinsic_null_as<V>(), key);
-  }
-}
-
-/**
- * A map with string keys, looked up by the UTF-8 bytes of a key (Velt): a server reading keys
- * from the network finds them without making a string per request. Each method is the one
- * without `Utf8` called with the bytes decoded (`utf8DecodeLossy`: an invalid sequence reads as
- * U+FFFD); valid UTF-8 is hashed and compared as it is, and a string is made only to store a
- * new key.
- */
-extend<V> Map<string, V> {
-  /** `get` of the key whose UTF-8 bytes are `key`. */
-  getUtf8(key: u8[]): V | undefined {
-    if (!velt_rt_bytes_is_utf8(key)) {
-      return this.get(velt_rt_bytes_to_str_lossy(key));
-    }
-    const e = lookupUtf8(this, key, velt_rt_bytes_hash(key) * FIB);
-    if (e < 0) {
-      return undefined;
-    }
-    return sharedValue(this.entryValues[e as usize]);
-  }
-
-  /** `has` of the key whose UTF-8 bytes are `key`. */
-  hasUtf8(key: u8[]): bool {
-    if (!velt_rt_bytes_is_utf8(key)) {
-      return this.has(velt_rt_bytes_to_str_lossy(key));
-    }
-    return lookupUtf8(this, key, velt_rt_bytes_hash(key) * FIB) >= 0;
-  }
-
-  /** `set` of the key whose UTF-8 bytes are `key`: the string is made only for a new entry. */
-  setUtf8(key: u8[], value: V) {
-    if (velt_rt_bytes_is_utf8(key)) {
-      const e = lookupUtf8(this, key, velt_rt_bytes_hash(key) * FIB);
-      if (e >= 0) {
-        this.entryValues[e as usize] = value;
-        return;
-      }
-    }
-    this.set(velt_rt_bytes_to_str_lossy(key), value);
-  }
-}
-
-// `Map.lookup` of valid UTF-8 bytes against the string keys of `m` (hashed alike:
-// `velt_rt_bytes_hash`): the entry position, or -1.
-function lookupUtf8<V>(m: Map<string, V>, key: u8[], p: u64): i64 {
-  if (m.slots.length == 0) {
-    return -1;
-  }
-  const mask = m.slots.length - 1;
-  let s = (p >> m.shift) as usize;
-  let dist: usize = 0;
-  while (true) {
-    const w = m.slots[s];
-    if (w == 0) {
-      return -1;
-    }
-    if (((w ^ p) >> 32) == 0) {
-      const e = ((w & POS_MASK) - 1) as usize;
-      if (velt_rt_str_eq_bytes(m.entryKeys[e], key)) {
-        return e as i64;
-      }
-    }
-    if (((s - ((w >> m.shift) as usize)) & mask) < dist) {
-      return -1;
-    }
-    s = (s + 1) & mask;
-    dist++;
-  }
 }

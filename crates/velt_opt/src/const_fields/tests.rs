@@ -543,9 +543,9 @@ fn every_closure_argument_is_specialized_down_the_recursion() {
     }
 }
 
-// ───── `__intrinsic_fn_captures_nothing`: `f.env == null` ─────
+// ───── `fnCapturesNothing`: `f.env == null` ─────
 
-/// Comparisons of a closure's env with null (`__intrinsic_fn_captures_nothing` lowered).
+/// Comparisons of a closure's env with null (`fnCapturesNothing` lowered).
 fn env_null_tests(p: &Program) -> usize {
     let null = Operand::Const(Const::Int(0), Ty::Ptr);
     p.funcs

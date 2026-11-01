@@ -1,5 +1,5 @@
 // A deterministic synthetic access log (same bytes as node/pipeline.mjs for the same seed/count).
-import { openWrite } from "velt:fs_stream";
+import { openWrite } from "velt/fs";
 
 // A 32-bit LCG (Numerical Recipes); JS mirrors it with `Math.imul` and `>>> 0`.
 export class Random {

@@ -1,0 +1,67 @@
+// velt/net/http's web-standard `serve` over HTTP/2: the handler's `Request` reads the stream's
+// method, URL and headers (a field sent several times joined with ", ", as `Headers.get` reads
+// it), and the `Response` it returns becomes the stream's HEADERS and DATA.
+import { serve } from "../../src/lib";
+import { describe, expect, it } from "velt/test";
+import { Client, endOf } from "./_h2";
+
+describe("serve over HTTP/2", () => {
+  it("gives the handler the stream's request as a Request", async () => {
+    const server = await serve({ port: 0 }, (req: Request): Response => {
+      const h = req.headers;
+      return new Response(`${req.method} ${req.url} ${h.get("x-two")} ${h.get("host")}`);
+    });
+    const c = await Client.open(server.port);
+    try {
+      c.headers(
+        1,
+        [
+          ":method",
+          "GET",
+          ":scheme",
+          "http",
+          ":path",
+          "/p?q=1",
+          ":authority",
+          "ex.com",
+          "x-two",
+          "a",
+          "x-two",
+          "b",
+        ],
+        true,
+      );
+      await c.flush();
+      expect(await c.until(endOf(1))).toBe(
+        "HEADERS 1 :status=200\nDATA 1 es 35:GET http://ex.com/p?q=1 a, b ex.com",
+      );
+    } finally {
+      c.close();
+      server.close();
+    }
+  });
+
+  it("reads split cookie fields as one cookie header, iterated first or not", async () => {
+    // RFC 9113 §8.2.3: joined with "; ", in `headers` iteration as in `get`.
+    const server = await serve({ port: 0 }, (req: Request): Response => {
+      const seen: string[] = [];
+      for (const [name, value] of req.headers) {
+        if (name == "cookie") {
+          seen.push(value);
+        }
+      }
+      return new Response(`${seen.join("|")} / ${req.headers.get("cookie")}`);
+    });
+    const c = await Client.open(server.port);
+    try {
+      c.get(1, "/", ["cookie", "a=1", "x", "y", "cookie", "b=2"]);
+      await c.flush();
+      expect(await c.until(endOf(1))).toBe(
+        "HEADERS 1 :status=200\nDATA 1 es 19:a=1; b=2 / a=1; b=2",
+      );
+    } finally {
+      c.close();
+      server.close();
+    }
+  });
+});

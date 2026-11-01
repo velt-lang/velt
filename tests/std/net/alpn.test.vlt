@@ -1,0 +1,44 @@
+// ALPN on velt/net's TLS streams (`alpnProtocol()`), as the HTTP server uses it to choose between
+// HTTP/2 and HTTP/1.1.
+import { connect, connectTls, listen, listenTls } from "velt/net";
+import { describe, expect, it } from "velt/test";
+import { TEST_CA, TEST_CERT, TEST_KEY } from "../../golden/std/_tls";
+
+describe("alpnProtocol", () => {
+  it("is the protocol both sides agreed on, on either side", async () => {
+    const l = await listenTls("127.0.0.1:0", {
+      cert: TEST_CERT,
+      key: TEST_KEY,
+      alpn: ["h2", "http/1.1"],
+    });
+    const accepting = l;
+    const server = spawn(async () => {
+      const out: string[] = [];
+      for (let i = 0; i < 3; i++) {
+        const conn = await accepting.accept();
+        out.push(`${await conn.alpnProtocol()}`);
+        conn.close();
+      }
+      return out.join(",");
+    });
+    const a = await connectTls(`localhost:${l.port}`, { ca: TEST_CA, alpn: ["h2", "http/1.1"] });
+    const b = await connectTls(`localhost:${l.port}`, { ca: TEST_CA, alpn: ["http/1.1"] });
+    const c = await connectTls(`localhost:${l.port}`, { ca: TEST_CA });
+    expect(`${await a.alpnProtocol()},${await b.alpnProtocol()},${await c.alpnProtocol()}`).toBe(
+      "h2,http/1.1,null",
+    );
+    expect(await server).toBe("h2,http/1.1,null");
+    a.close();
+    b.close();
+    c.close();
+    l.close();
+  });
+
+  it("is null on a plain TCP stream", async () => {
+    const l = await listen("127.0.0.1:0");
+    const c = await connect(`127.0.0.1:${l.port}`);
+    expect(await c.alpnProtocol()).toBe(null);
+    c.close();
+    l.close();
+  });
+});

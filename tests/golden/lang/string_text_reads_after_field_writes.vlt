@@ -2,7 +2,7 @@
 // inline string keeps its text inside the 24-byte value, so a store to the field changes the
 // text that a later byte read in the same loop returns, while the integer fields next to it
 // (whose stores the byte reads may be reordered with) do not.
-import { utf8ByteAt } from "velt:encoding";
+import { utf8ByteAt } from "velt/encoding";
 
 class Holder {
   s: string = "a";

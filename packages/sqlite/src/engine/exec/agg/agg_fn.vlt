@@ -1,0 +1,94 @@
+// sqlite/engine/exec/agg/agg_fn (internal): one aggregate call of a query: the aggregate kinds
+// (count, sum, total, avg, min, max, group_concat, string_agg) and which calls are aggregates
+// (https://sqlite.org/lang_aggfunc.html).
+
+import { BINARY } from "../../collation";
+import { Val } from "../value/val";
+import { E_CALL, Expr } from "../../sql/types";
+
+/** Aggregate kinds. */
+export const AG_COUNT_STAR: u8 = 0;
+export const AG_COUNT: u8 = 1;
+export const AG_SUM: u8 = 2;
+export const AG_TOTAL: u8 = 3;
+export const AG_AVG: u8 = 4;
+export const AG_MIN: u8 = 5;
+export const AG_MAX: u8 = 6;
+export const AG_CONCAT: u8 = 7;
+
+/** The aggregate kind of a call to `name` with `n` arguments, or -1 if it is no aggregate. */
+export function aggregateKind(name: string, n: usize, star: bool): i64 {
+  if (name == "COUNT") {
+    return star || n == 0 ? AG_COUNT_STAR as i64 : n == 1 ? AG_COUNT as i64 : -2;
+  }
+  if (name == "SUM" || name == "TOTAL" || name == "AVG") {
+    if (n != 1) {
+      return -2;
+    }
+    return name == "SUM" ? AG_SUM as i64 : name == "TOTAL" ? AG_TOTAL as i64 : AG_AVG as i64;
+  }
+  if (name == "MIN" || name == "MAX") {
+    // With several arguments min() and max() are scalar functions.
+    if (n == 1) {
+      return name == "MIN" ? AG_MIN as i64 : AG_MAX as i64;
+    }
+    return n == 0 ? -2 : -1;
+  }
+  if (name == "GROUP_CONCAT") {
+    return n == 1 || n == 2 ? AG_CONCAT as i64 : -2;
+  }
+  if (name == "STRING_AGG") {
+    return n == 2 ? AG_CONCAT as i64 : -2;
+  }
+  return -1;
+}
+
+/** One aggregate call of a query. */
+export class AggFn {
+  kind: u8;
+  args: (() => Val throws Error)[] = [];
+  distinct: bool = false;
+  filter: (() => bool throws Error) | null = null;
+  /** The argument's collation (min, max, DISTINCT). */
+  coll: u8 = BINARY;
+  name: string;
+
+  constructor(kind: u8, name: string) {
+    this.kind = kind;
+    this.name = name;
+  }
+}
+
+/** Whether `e` calls an aggregate function outside any subquery. */
+export function hasAggregate(e: Expr | null): bool {
+  if (e == null) {
+    return false;
+  }
+  const x = e!;
+  if (x.kind == E_CALL && x.over == null && aggregateKind(x.name, x.args.length, x.star) >= 0) {
+    return true;
+  }
+  if (hasAggregate(x.a) || hasAggregate(x.b) || hasAggregate(x.c) || hasAggregate(x.filter)) {
+    return true;
+  }
+  for (const a of x.args) {
+    if (hasAggregate(a)) {
+      return true;
+    }
+  }
+  if (x.over != null) {
+    // A window function's window may order by aggregates.
+    const w = x.over!;
+    for (const p of w.partition) {
+      if (hasAggregate(p)) {
+        return true;
+      }
+    }
+    for (const o of w.orderBy) {
+      if (hasAggregate(o.expr)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}

@@ -1,0 +1,58 @@
+// http-server (internal): how an HTTP/2 connection waits for input: no longer than its idle
+// timeout (without streams) or the earliest request body deadline (with them), and ended early
+// by the server's stop or, while draining, by its last stream ending.
+
+import { AbortController, AbortSignal } from "velt/task";
+import { NO_ERROR } from "velt/net/http/h2";
+import { NO_DEADLINE } from "../read_deadline";
+import { H2Connection } from "./connection";
+import { expire } from "./streams";
+
+/// Waits for input: false when the connection should end (idle with no streams, or the server
+/// stopped and the last stream is done).
+export async function waitForInput(c: H2Connection): Promise<bool> {
+  while (true) {
+    if (c.stopped.aborted && !c.goingAway) {
+      c.goaway(NO_ERROR, "");
+      c.flush();
+    }
+    if (c.goingAway && c.inUse == 0) {
+      return false;
+    }
+    let signal = c.stopped;
+    if (c.goingAway || c.stopped.aborted) {
+      const w = new AbortController();
+      c.wakeLoop = w;
+      signal = w.signal;
+    } else if (c.inUse > 0) {
+      // With streams: woken when the last one ends (`recycle` aborts `wakeLoop`), so the idle
+      // timeout counts from then. One signal serves the waits until it is aborted.
+      let busy = c.busy;
+      if (busy == null || busy.aborted) {
+        const w = new AbortController();
+        c.wakeLoop = w;
+        busy = AbortSignal.any([c.stopped, w.signal]);
+        c.busy = busy;
+      }
+      signal = busy;
+    }
+    // Without streams the idle timeout; with them the next request body's deadline, if any.
+    const idle = c.inUse == 0;
+    const deadline = idle ? (Date.now() as i64) + (c.opts.idleTimeout as i64) : c.nextDeadline;
+    const ready = await c.waits.readable(c.conn, deadline, signal);
+    if (c.nextDeadline <= Date.now()) {
+      expire(c);
+      c.flush();
+    }
+    if (ready) {
+      return true;
+    }
+    if (idle && !c.stopped.aborted && !c.goingAway && c.inUse == 0) {
+      // Idle for the whole timeout: tell the peer, then close. (A wait begun with streams
+      // that ended because the last one did starts the idle timeout now, above.)
+      c.goaway(NO_ERROR, "idle");
+      c.flush();
+      return false;
+    }
+  }
+}

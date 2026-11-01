@@ -1,8 +1,8 @@
 // The commands: arguments in, a RESP reply out, with Redis's argument rules and error messages.
-import { utf8DecodeLossy, utf8Encode } from "velt:encoding";
+import { utf8DecodeLossy, utf8Encode } from "velt/encoding";
 import { CommandError, Db, notInteger } from "./db";
 import { MemberSet, Scored, ZSet } from "./structs";
-import { Deque } from "velt:collections/deque";
+import { Deque } from "velt/collections";
 import { Writer } from "./resp";
 
 const MAX: i64 = 9223372036854775807;

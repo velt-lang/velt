@@ -1,7 +1,7 @@
-// velt:channel: a bounded channel makes the producer wait (backpressure); a worker pool of
+// velt/sync: a bounded channel makes the producer wait (backpressure); a worker pool of
 // spawned tasks shares one jobs channel and one results channel; closing ends the stream, a
 // send on a closed channel throws `ChannelClosed` and drops the value it was given.
-import { Channel, ChannelClosed, channel } from "velt:channel";
+import { Channel, ChannelClosed, channel } from "velt/sync";
 
 class Result {
   job: string;

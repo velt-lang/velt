@@ -2,7 +2,8 @@
 //! VIR verification — no codegen or linking, so the whole set checks in seconds).
 //!
 //! Checked files: every Markdown file under [`DOCS`] (a file, or a directory searched
-//! recursively). The fence's info string says what is expected:
+//! recursively). A snippet may import the repository's packages without native code
+//! (`http-server`). The fence's info string says what is expected:
 //! - `ts` — must compile.
 //! - `ts error` — must be rejected with a diagnostic (not an internal compiler error).
 //! - `ts planned` — decided design that is not implemented yet: not compiled. The surrounding
@@ -33,6 +34,8 @@ const DOCS: &[&str] = &[
     "docs/reference",
     "docs/std",
     "docs/tooling",
+    "packages/http-server/README.md",
+    "packages/http-server/docs",
 ];
 
 /// What a fenced block's info string asks for.
@@ -63,6 +66,10 @@ fn markdown_files(root: &Path, rel: &str) -> Vec<String> {
     for entry in entries {
         let name = entry.expect("directory entry").file_name();
         let child = format!("{rel}/{}", name.to_string_lossy());
+        // A package's build output holds no docs.
+        if name == "target" {
+            continue;
+        }
         if root.join(&child).is_dir() || child.ends_with(".md") {
             out.extend(markdown_files(root, &child));
         }
@@ -211,11 +218,49 @@ fn complete(source: &str) -> String {
     }
 }
 
+/// What a snippet may import besides std: the repository's packages without native code
+/// (`import { serve } from "http-server"`), each a path dependency of a package made for them,
+/// which snippets are compiled in (its directory, and its installed graph). Packages with native
+/// code are left out: installing them builds their libraries with cargo.
+fn packages(root: &Path) -> (PathBuf, vpm::PackageGraph) {
+    static GRAPH: std::sync::OnceLock<(PathBuf, vpm::PackageGraph)> = std::sync::OnceLock::new();
+    GRAPH
+        .get_or_init(|| {
+            let dir = std::env::temp_dir().join(format!("velt-docs-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let mut deps = vec![];
+            for entry in std::fs::read_dir(root.join("packages")).unwrap().flatten() {
+                let path = entry.path();
+                let Ok(manifest) = vpm::Manifest::from_dir(&path) else {
+                    continue;
+                };
+                if manifest.native.is_none() {
+                    let at = path.to_string_lossy().replace('\\', "/");
+                    deps.push(format!("\"{}\": {{ path: \"{at}\" }}", manifest.package.name));
+                }
+            }
+            deps.sort();
+            let manifest = format!(
+                "import type {{ Package }} from \"velt/package\";\n\nexport const pkg: Package = {{\n  name: \"docs\",\n  version: \"0.0.0\",\n  dependencies: {{ {} }},\n}};\n",
+                deps.join(", ")
+            );
+            std::fs::write(dir.join(vpm::manifest::MANIFEST_FILE), manifest).unwrap();
+            let loc = vpm::Locations::under(&dir.join("home"));
+            let installed = vpm::install(&dir, &loc, vpm::InstallOptions::default())
+                .unwrap_or_else(|e| panic!("installing the repository's packages: {e}"));
+            (dir, installed.graph)
+        })
+        .clone()
+}
+
 /// Compiles a program to verified VIR. `Ok(())`, or `Err((is_ice, message))`.
 fn compile(root: &Path, program: &str) -> Result<(), (bool, String)> {
+    let (dir, graph) = packages(root);
     let opts = BuildOptions {
-        // Virtual root module path: relative imports resolve from the repo root.
-        input: root.join("__doc_snippet.vlt"),
+        packages: Some(graph),
+        // Virtual root module path, in the package that depends on the repository's packages
+        // (a snippet with a relative import is `ts ignore`).
+        input: dir.join("__doc_snippet.vlt"),
         root_source: Some(program.to_string()),
         emit: Emit::Vir,
         // The examples that call system functions call POSIX ones (docs/reference/
@@ -317,8 +362,8 @@ fn doc_snippets_compile() {
 
 #[test]
 fn completes_snippets_without_main() {
-    let src = "import { x } from \"velt:a\";\nconst MAX = 3;\n// note\nclass A {\n}\nconst a = new A();\nfor (const i of [1]) {\n  console.log(i);\n}\n";
-    let want = "import { x } from \"velt:a\";\nconst MAX = 3;\n// note\nclass A {\n}\n\nasync function main() {\n  const a = new A();\n  for (const i of [1]) {\n    console.log(i);\n  }\n}\n";
+    let src = "import { x } from \"velt/a\";\nconst MAX = 3;\n// note\nclass A {\n}\nconst a = new A();\nfor (const i of [1]) {\n  console.log(i);\n}\n";
+    let want = "import { x } from \"velt/a\";\nconst MAX = 3;\n// note\nclass A {\n}\n\nasync function main() {\n  const a = new A();\n  for (const i of [1]) {\n    console.log(i);\n  }\n}\n";
     assert_eq!(complete(src), want);
     assert_eq!(
         complete("function f() {}\n"),

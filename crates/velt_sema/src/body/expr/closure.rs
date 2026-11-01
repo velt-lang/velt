@@ -36,8 +36,6 @@ pub(crate) struct TrialFrames {
     literal: crate::body::literal_locals::LiteralLocals,
     std_callback: Option<Vec<bool>>,
     void_task: Option<Span>,
-    thread_task: Option<Span>,
-    await_body: Option<Span>,
 }
 
 /// A checked closure, before its locals are renumbered (captures first).
@@ -79,8 +77,6 @@ impl FnCx<'_, '_> {
             literal: self.literal.clone(),
             std_callback: self.std_callback.clone(),
             void_task: self.void_task,
-            thread_task: self.thread_task,
-            await_body: self.await_body,
         }
     }
 
@@ -91,8 +87,6 @@ impl FnCx<'_, '_> {
         self.literal = t.literal;
         self.std_callback = t.std_callback;
         self.void_task = t.void_task;
-        self.thread_task = t.thread_task;
-        self.await_body = t.await_body;
     }
 
     /// The first of `members` that arrow `e` type-checks against (each try is rolled back), or
@@ -200,10 +194,6 @@ impl FnCx<'_, '_> {
             [one] => Some(*one),
             several => Some(self.member_by_trial(e, several, escaping)),
         };
-        if !*is_async && self.thread_task == Some(e.span) {
-            self.thread_task = None;
-            return self.thread_arrow(e, exp, escaping);
-        }
         if *is_async {
             if let Some(h) = self.async_arrow_callback(e, exp) {
                 return h;
@@ -216,10 +206,6 @@ impl FnCx<'_, '_> {
         }
         if let Some(h) = self.frameless_widened_params(e, exp) {
             return h;
-        }
-        let await_body = self.await_body == Some(e.span) && *is_async;
-        if await_body {
-            self.await_body = None;
         }
         let void_task = self.void_task == Some(e.span) && self.is_void_task(params, ret, body);
         if void_task {
@@ -374,7 +360,6 @@ impl FnCx<'_, '_> {
         self.cx.fn_value_depth += 1;
         let mut block = match body {
             ast::ArrowBody::Expr(x) if void_task => self.void_task_body(x),
-            ast::ArrowBody::Expr(x) if await_body => self.awaited_body(x),
             _ => self.closure_body(body, span, ret.is_none()),
         };
         self.cx.fn_value_depth -= 1;

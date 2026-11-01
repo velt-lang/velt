@@ -1,0 +1,18 @@
+// velt/net/http (internal): what only a fetched `Response` has (response.vlt).
+
+import { AbortSignal } from "velt/task";
+
+/**
+ * What only a fetched response has: the signal that aborts its body, its URL and `redirected`,
+ * and (once it was cloned) whether its body arrives decoded.
+ */
+export class Remote {
+  signal: AbortSignal | null;
+  url: string | null = null;
+  redirected: bool | null = null;
+  decoded: bool = false;
+
+  constructor(signal: AbortSignal | null) {
+    this.signal = signal;
+  }
+}

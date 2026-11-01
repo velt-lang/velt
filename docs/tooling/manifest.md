@@ -4,7 +4,7 @@ Every package has a `package.vlt` at its root: the manifest, written in Velt. `v
 `velt init` write one.
 
 ```ts ignore
-import type { Package } from "velt:package";
+import type { Package } from "velt/package";
 
 export const pkg: Package = {
   name: "hello",
@@ -43,8 +43,8 @@ file and reports these errors without building anything.
 
 - `name`: lowercase letters and digits, starting with a letter, with single `-` or `_` between
   words (`text-kit`, `text_kit`; not `text--kit`, `text_-kit` or `textkit-`). Names that differ
-  only in `-` versus `_` count as the same in a registry. `std` is reserved for the standard
-  library, and names whose first word is `rt`, `sig` or `native` (`rt`, `rt-str`) because a
+  only in `-` versus `_` count as the same in a registry. `velt` and `std` are reserved for the
+  standard library (its modules are `velt/…`), and names whose first word is `rt`, `sig` or `native` (`rt`, `rt-str`) because a
   package's native functions are named `velt_<name>__…` and those prefixes are Velt's own
   (`velt_rt_…` is the runtime).
 - A name can also be scoped, as on npm: `@scope/name`, each part lowercase words as above
@@ -103,7 +103,7 @@ a requirement that names one (`"0.2.0-rc.1"`). Leave the field out to build with
 
 `import … from "json"` and `"json/sub"` resolve through `dependencies`: the dependency's
 `src/lib.vlt`, or `src/sub.vlt` / `src/sub/index.vlt` (or `.ts`, `.tsx`, tried like a relative
-import's files). Standard library imports (`"velt:x"`)
+import's files). Standard library imports (`"velt/x"`)
 and relative imports (`"./x"`) never do. Names that aren't identifiers are quoted
 (`"my-lib": "1.0"`, `"@sigx/reactivity": { path: "../reactivity" }`; a scoped dependency needs
 a `path` or `git`). `{ git: "https://…", branch: "main", path: "packages/x" }` takes the package
@@ -119,7 +119,7 @@ for an [npm package](packages.md#npm-packages).
 Import aliases, like TypeScript's `compilerOptions.paths`, replace long `../../` chains:
 
 - A bare specifier that matches a pattern resolves to the target, relative to the package root,
-  before `dependencies` are consulted. `"velt:x"` and `"./x"` are never aliased.
+  before `dependencies` are consulted. `"velt/x"` and `"./x"` are never aliased.
 - A pattern has at most one `*`, at its end, and so does its target (both or neither). The
   longest matching pattern wins. Each pattern has one target.
 - Targets must stay inside the package (no `..`, not absolute).
@@ -131,7 +131,7 @@ Import aliases, like TypeScript's `compilerOptions.paths`, replace long `../../`
 jsx: { importSource: "sigx" },
 ```
 
-The module whose `jsx-runtime` compiles the package's JSX: a dependency, `"velt:jsx"` (the
+The module whose `jsx-runtime` compiles the package's JSX: a dependency, `"velt/jsx"` (the
 default), a `paths` alias, or `./dir` relative to the package root. A
 `/** @jsxImportSource x */` comment at the top of a file wins ([JSX](../std/jsx.md)); Velt also
 reads it from a `//` comment, `tsc` only from a block comment.

@@ -40,7 +40,7 @@ family), `std/encoding` (Base64, hex, UTF-8 strict/lossy), `std/crypto` (SHA-256
 `std/csv` (parse with options, stringify, round trips), `std/regex` (a grammar of patterns ×
 flags × `test`/`exec`/`matchAll`/`replace`/`split`) and `std/datetime` (epoch values,
 rolled-over fields, ISO parsing, format patterns, calendar arithmetic, durations) — one
-statement per line, each in its own `try`. Node runs them through `shims/std/*.ts` (below).
+statement per line, each in its own `try`. Node runs them through `shims/std/**/*.ts` (below).
 
 Verdicts:
 
@@ -71,7 +71,7 @@ The TypeScript twin is the `.vlt` source plus:
 
 1. a call of `main()`; a numeric return becomes `process.exitCode`;
 2. a `panic(msg)` shim when the program calls Velt's `panic` builtin (`panic: msg` on stderr, exit 101);
-3. `import … from "velt:<module>"` loads `shims/std/<module>.ts`, the module's Node twin: the same
+3. `import … from "velt/<module>"` loads `shims/std/<module>.ts`, the module's Node twin: the same
    API on Node's own implementation where there is one (`URL`/`URLSearchParams` (ada), `RegExp`
    (V8), `Buffer`/`TextDecoder`, `node:crypto`, `Date`), and small independent implementations
    written from the std docs where Node has none (CSV, `DateTime.format`, month arithmetic,

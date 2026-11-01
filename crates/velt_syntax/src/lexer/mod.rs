@@ -103,8 +103,21 @@ pub(crate) fn may_start_jsx(c: u8) -> bool {
 }
 
 fn is_ident_continue(c: u8) -> bool {
-    c.is_ascii_alphanumeric() || c == b'_' || c == b'$'
+    IDENT_CONTINUE[c as usize]
 }
+
+/// [`is_ident_continue`] of each byte: one load per character of an identifier, the lexer's
+/// most frequent loop.
+const IDENT_CONTINUE: [bool; 256] = {
+    let mut table = [false; 256];
+    let mut i = 0;
+    while i < 256 {
+        let c = i as u8;
+        table[i] = c.is_ascii_alphanumeric() || c == b'_' || c == b'$';
+        i += 1;
+    }
+    table
+};
 
 impl<'a> Lexer<'a> {
     /// Byte at `pos + n`, or 0 past the end (0 never starts a valid token).
@@ -341,12 +354,7 @@ impl<'a> Lexer<'a> {
                 _ if self.at_unicode_line_break() => self.pos += 3,
                 b'/' if self.at(1) == b'/' => {
                     let start = self.pos;
-                    while self.pos < self.src.len()
-                        && self.src[self.pos] != b'\n'
-                        && !self.at_unicode_line_break()
-                    {
-                        self.pos += 1;
-                    }
+                    self.line_comment_end();
                     self.comment_done(start);
                 }
                 b'/' if self.at(1) == b'*' => {
@@ -355,6 +363,28 @@ impl<'a> Lexer<'a> {
                     self.comment_done(start);
                 }
                 _ => return,
+            }
+        }
+    }
+
+    /// Moves to the end of the line comment at `self.pos`: the next `\n`, U+2028 or U+2029
+    /// (whose UTF-8 starts with `E2`), or the end of the source. Comments are much of the
+    /// standard library's source, so the scan looks only for those two bytes.
+    fn line_comment_end(&mut self) {
+        loop {
+            let rest = &self.src[self.pos..];
+            match rest.iter().position(|&b| b == b'\n' || b == 0xE2) {
+                None => {
+                    self.pos = self.src.len();
+                    return;
+                }
+                Some(n) => {
+                    self.pos += n;
+                    if self.src[self.pos] == b'\n' || self.at_unicode_line_break() {
+                        return;
+                    }
+                    self.pos += 1;
+                }
             }
         }
     }
@@ -374,11 +404,16 @@ impl<'a> Lexer<'a> {
         let start = self.pos;
         self.pos += 2;
         loop {
-            if self.pos >= self.src.len() {
-                self.error("unterminated block comment", start, start + 2);
-                return;
+            // The next `*`: only there can the comment end.
+            match self.src[self.pos..].iter().position(|&b| b == b'*') {
+                None => {
+                    self.pos = self.src.len();
+                    self.error("unterminated block comment", start, start + 2);
+                    return;
+                }
+                Some(n) => self.pos += n,
             }
-            if self.src[self.pos] == b'*' && self.at(1) == b'/' {
+            if self.at(1) == b'/' {
                 self.pos += 2;
                 return;
             }
@@ -388,9 +423,11 @@ impl<'a> Lexer<'a> {
 
     fn ident(&mut self) -> Tok {
         let start = self.pos;
-        while self.pos < self.src.len() && is_ident_continue(self.src[self.pos]) {
-            self.pos += 1;
-        }
+        let rest = &self.src[start..];
+        let len = (rest.iter())
+            .position(|&c| !is_ident_continue(c))
+            .unwrap_or(rest.len());
+        self.pos += len;
         match Kw::from_word(&self.text[start..self.pos]) {
             Some(k) => Tok::Kw(k),
             None => Tok::Ident,

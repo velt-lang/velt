@@ -14,7 +14,7 @@ declare system function fsync(fd: i32): i32;
 declare system function lastOsError(): i32;
 ```
 
-[`velt:fs/fd`](../std/fs.md#file-descriptors)'s `openSync`, `readSync`, `writeSync`, `fsyncSync`
+[`velt/fs`](../std/fs.md#file-descriptors)'s `openSync`, `readSync`, `writeSync`, `fsyncSync`
 and `fstatSync` are Velt code over these declarations.
 
 ## What crosses
@@ -103,10 +103,10 @@ captures `errno` into a slot of the thread right after every system call, and `l
 reads that slot, so a system call followed by `lastOsError()` reports that call's error even when
 anything the statement does after the call (freeing a temporary argument, `console.log`) runs in
 between, and even when the call was made in a function this one called; call `lastOsError()`
-after the failing call and before the next system call, which overwrites the slot. Read it before any `await` too: the slot belongs to the thread, as C's `errno` does, so across an `await` other tasks' system calls (on this thread or, once resumed, another one) may have replaced it. Keep the value in a local if it is needed after the `await`. `velt:os` exports it (`import { lastOsError } from "velt:os"`).
+after the failing call and before the next system call, which overwrites the slot. Read it before any `await` too: the slot belongs to the thread, as C's `errno` does, so across an `await` other tasks' system calls (on this thread or, once resumed, another one) may have replaced it. Keep the value in a local if it is needed after the `await`. `velt/os` exports it (`import { lastOsError } from "velt/os"`).
 
 ```ts
-import { lastOsError } from "velt:os";
+import { lastOsError } from "velt/os";
 
 declare system function close(fd: i32): i32;
 
@@ -143,7 +143,7 @@ error: system function `pread` is not available on wasm32-wasip1
 A standard-library function that calls one is reported at the program's call of it:
 
 ```text
-app.vlt:4:14: error: `openSync` (velt:fs/fd) is not available on x86_64-pc-windows-msvc
+app.vlt:4:14: error: `openSync` (velt/fs) is not available on x86_64-pc-windows-msvc
   = note: it calls the system function `open`, which x86_64-pc-windows-msvc lacks
 ```
 

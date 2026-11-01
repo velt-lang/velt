@@ -14,7 +14,7 @@ import {
   utf8Decode,
   utf8DecodeLossy,
   utf8Valid,
-} from "velt:encoding";
+} from "velt/encoding";
 
 function rfcVectors() {
   const inputs = ["", "f", "fo", "foo", "foob", "fooba", "foobar"];

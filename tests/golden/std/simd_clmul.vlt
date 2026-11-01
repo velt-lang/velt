@@ -1,8 +1,8 @@
 // check: no leaks
-// velt:simd's carry-less multiplication (`u64x2.clmulLow` & co.): the products of known operands,
+// velt/simd's carry-less multiplication (`u64x2.clmulLow` & co.): the products of known operands,
 // which a debug build computes with the emulation and a release build on x86-64 or arm64 with
 // the CPU's instruction (PCLMULQDQ, PMULL), and each method's choice of lanes.
-import { u64x2 } from "velt:simd";
+import { u64x2 } from "velt/simd";
 
 function hex(v: u64x2): string {
   return `${v.lane(0).toString(16)} ${v.lane(1).toString(16)}`;

@@ -1,0 +1,232 @@
+// http-server (internal): the frames an HTTP/2 server receives (RFC 9113 §6), parsed in place
+// in the connection's read buffer, with the checks §5 and §6 ask for: a violation of the
+// connection's rules ends it (GOAWAY), one of a stream's resets that stream (RST_STREAM).
+//
+// Header blocks are decoded in the order they arrive, also those of streams that are refused
+// or ignored, so the HPACK table stays as the peer's encoder has it.
+
+import {
+  ACK,
+  CONTINUATION,
+  DATA,
+  END_HEADERS,
+  END_STREAM,
+  ENHANCE_YOUR_CALM,
+  FRAME_SIZE_ERROR,
+  frameLength,
+  GOAWAY,
+  HEADER_LENGTH,
+  HEADERS,
+  MIN_MAX_FRAME_SIZE,
+  PADDED,
+  PING,
+  PRIORITY,
+  PRIORITY_FLAG,
+  PROTOCOL_ERROR,
+  PUSH_PROMISE,
+  readStreamId,
+  RST_STREAM,
+  SETTINGS,
+  STREAM_CLOSED,
+  WINDOW_UPDATE,
+} from "velt/net/http/h2";
+import { H2Connection } from "./connection";
+import { onData, onHeaderBlock, onWindowUpdate, streamError } from "./streams";
+import { applyPeerSettings } from "./settings";
+
+/// A header block may take this many CONTINUATION frames (a flood of tiny ones is refused).
+const MAX_CONTINUATIONS: i64 = 128;
+
+/// Processes the complete frames in `c.rbuf[c.rpos..c.rlen)`.
+export function frames(c: H2Connection) {
+  while (!c.done) {
+    const avail = c.rlen - c.rpos;
+    if (avail < HEADER_LENGTH) {
+      return;
+    }
+    const b = c.rbuf;
+    const at = c.rpos;
+    const len = frameLength(b, at);
+    if (len > MIN_MAX_FRAME_SIZE) {
+      c.fail(FRAME_SIZE_ERROR, "a frame larger than SETTINGS_MAX_FRAME_SIZE");
+      return;
+    }
+    if (avail < HEADER_LENGTH + len) {
+      return;
+    }
+    const type = b[at + 3] as i64;
+    const flags = b[at + 4] as i64;
+    const id = readStreamId(b, at + 5);
+    const p = at + HEADER_LENGTH;
+    c.rpos = p + len;
+    if (c.blockStream != 0 && (type != CONTINUATION || id != c.blockStream)) {
+      c.fail(PROTOCOL_ERROR, "a header block was interrupted");
+      return;
+    }
+    if (type == DATA) {
+      onData(c, flags, id, p, len);
+    } else if (type == HEADERS) {
+      headers(c, flags, id, p, len);
+    } else if (type == CONTINUATION) {
+      continuation(c, flags, id, p, len);
+    } else if (type == SETTINGS) {
+      settings(c, flags, id, p, len);
+    } else if (type == WINDOW_UPDATE) {
+      onWindowUpdate(c, id, p, len);
+    } else if (type == PING) {
+      if (id != 0) {
+        c.fail(PROTOCOL_ERROR, "PING on a stream");
+      } else if (len != 8) {
+        c.fail(FRAME_SIZE_ERROR, "PING of a length other than 8");
+      } else if ((flags & ACK) == 0) {
+        c.out.pingAck(b, p);
+      }
+    } else if (type == RST_STREAM) {
+      reset(c, id, p, len);
+    } else if (type == PRIORITY) {
+      priority(c, id, p, len);
+    } else if (type == GOAWAY) {
+      if (id != 0) {
+        c.fail(PROTOCOL_ERROR, "GOAWAY on a stream");
+      } else if (len < 8) {
+        c.fail(FRAME_SIZE_ERROR, "GOAWAY shorter than 8 bytes");
+      }
+      // Otherwise nothing changes: the peer opens no more streams, and closes the connection
+      // when it is done with the open ones (or the idle timeout does).
+    } else if (type == PUSH_PROMISE) {
+      c.fail(PROTOCOL_ERROR, "PUSH_PROMISE from a client");
+    }
+    // Other types are ignored (RFC 9113 §4.1).
+  }
+}
+
+function settings(c: H2Connection, flags: i64, id: i64, p: i64, len: i64) {
+  if (id != 0) {
+    c.fail(PROTOCOL_ERROR, "SETTINGS on a stream");
+  } else if ((flags & ACK) != 0) {
+    if (len != 0) {
+      c.fail(FRAME_SIZE_ERROR, "a SETTINGS acknowledgement with a payload");
+    }
+  } else if (len % 6 != 0) {
+    c.fail(FRAME_SIZE_ERROR, "a SETTINGS length not a multiple of 6");
+  } else {
+    applyPeerSettings(c, p, len);
+  }
+}
+
+function headers(c: H2Connection, flags: i64, id: i64, p: i64, len: i64) {
+  if (id == 0) {
+    c.fail(PROTOCOL_ERROR, "HEADERS on stream 0");
+    return;
+  }
+  const b = c.rbuf;
+  let start = p;
+  let end = p + len;
+  let pad: i64 = 0;
+  if ((flags & PADDED) != 0) {
+    if (len < 1) {
+      c.fail(FRAME_SIZE_ERROR, "a padded HEADERS frame without its padding length");
+      return;
+    }
+    pad = b[start] as i64;
+    start++;
+  }
+  let selfDependent = false;
+  if ((flags & PRIORITY_FLAG) != 0) {
+    if (end - start < 5) {
+      c.fail(FRAME_SIZE_ERROR, "a HEADERS frame too short for its priority");
+      return;
+    }
+    selfDependent = readStreamId(b, start) == id;
+    start += 5;
+  }
+  if (pad > end - start) {
+    c.fail(PROTOCOL_ERROR, "padding longer than the frame");
+    return;
+  }
+  end -= pad;
+  const f = (flags & END_STREAM) | (selfDependent ? 0x100 : 0);
+  if ((flags & END_HEADERS) != 0) {
+    // The usual case: the whole block in this frame, decoded where it is.
+    onHeaderBlock(c, id, f, b, start, end);
+    return;
+  }
+  c.blockStream = id;
+  c.blockFlags = f;
+  c.blockLength = 0;
+  c.blockFrames = 0;
+  append(c, start, end);
+}
+
+function continuation(c: H2Connection, flags: i64, id: i64, p: i64, len: i64) {
+  if (c.blockStream == 0) {
+    c.fail(PROTOCOL_ERROR, "CONTINUATION without HEADERS");
+    return;
+  }
+  c.blockFrames++;
+  if (c.blockFrames > MAX_CONTINUATIONS) {
+    c.fail(ENHANCE_YOUR_CALM, "too many CONTINUATION frames");
+    return;
+  }
+  if (!append(c, p, p + len)) {
+    return;
+  }
+  if ((flags & END_HEADERS) != 0) {
+    c.blockStream = 0;
+    onHeaderBlock(c, id, c.blockFlags, c.block, 0, c.blockLength);
+  }
+}
+
+/// Appends a block fragment: false (and the connection ends) beyond what a block may be.
+function append(c: H2Connection, start: i64, end: i64): bool {
+  const n = end - start;
+  const limit = c.opts.maxHeaderListSize * 2 + 16384;
+  if (c.blockLength + n > limit) {
+    c.fail(ENHANCE_YOUR_CALM, "a header block too large");
+    return false;
+  }
+  if (c.blockLength + n > (c.block.length as i64)) {
+    const grown: u8[] = Buffer.alloc(((c.blockLength + n) * 2) as usize);
+    c.block.copy(grown, 0, 0, c.blockLength);
+    c.block = grown;
+  }
+  c.rbuf.copy(c.block, c.blockLength, start, end);
+  c.blockLength += n;
+  return true;
+}
+
+function reset(c: H2Connection, id: i64, p: i64, len: i64) {
+  if (len != 4) {
+    c.fail(FRAME_SIZE_ERROR, "RST_STREAM of a length other than 4");
+    return;
+  }
+  if (id == 0) {
+    c.fail(PROTOCOL_ERROR, "RST_STREAM on stream 0");
+    return;
+  }
+  const s = c.streams.get(id);
+  if (s == undefined) {
+    if (id > c.lastStreamId && id > c.ignoredId) {
+      c.fail(PROTOCOL_ERROR, "RST_STREAM on an idle stream");
+    }
+    return;
+  }
+  // A stream reset before its response ended: what rapid reset (CVE-2023-44487) does many
+  // times a second. Its handler still counts against the limit until it returns.
+  if (!s.localEnded) {
+    c.spend();
+  }
+  s.resetNow();
+  c.release(s);
+}
+
+function priority(c: H2Connection, id: i64, p: i64, len: i64) {
+  if (id == 0) {
+    c.fail(PROTOCOL_ERROR, "PRIORITY on stream 0");
+  } else if (len != 5) {
+    streamError(c, id, FRAME_SIZE_ERROR);
+  } else if (readStreamId(c.rbuf, p) == id) {
+    streamError(c, id, PROTOCOL_ERROR);
+  }
+  // Otherwise ignored: RFC 9113 §5.3.2 deprecates the priority scheme.
+}

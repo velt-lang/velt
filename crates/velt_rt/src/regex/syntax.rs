@@ -11,7 +11,7 @@
 //!   a class that excludes all four. (With `m`, the caller turns on CRLF mode so `^`/`$` also
 //!   stop at `\r`. U+2028/2029 are not anchor boundaries: the engine's anchors take one-byte
 //!   terminators, and no same-length rewrite of a three-byte character can put a boundary on
-//!   both of its sides only. A documented difference: docs/std/regex.md.)
+//!   both of its sides only. A documented difference: docs/std/text/regex.md.)
 //! - `\0` (NUL) and `\cX` (control letter) have no Rust spelling.
 //! - Annex B: a `{` that doesn't start a valid quantifier (`x{`, `a{,3}`) and a lone `}` are
 //!   literal text.

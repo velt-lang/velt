@@ -1,8 +1,8 @@
 // check: heap blocks at most 2
 // A table passed to a function that only reads its parameter, generic or nested, or to a
-// method of the array or `velt:simd` load, reads its stored data: nothing is allocated per use
+// method of the array or `velt/simd` load, reads its stored data: nothing is allocated per use
 // (#1334). The two blocks are the string of `join` and the copy of `slice`.
-import { u32x4 } from "velt:simd";
+import { u32x4 } from "velt/simd";
 
 const TABLE: u32[] = [10, 20, 30, 40, 50, 60, 70, 80];
 const FLAGS: bool[] = [true, false, true];

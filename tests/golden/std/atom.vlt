@@ -1,7 +1,7 @@
-// `Atom<T>` (velt:sync): a `shared` value threads read without a lock and replace whole. Tasks on
+// `Atom<T>` (velt/sync): a `shared` value threads read without a lock and replace whole. Tasks on
 // 4 threads update it 10,000 times each while 4 others read it: updates take turns, so none is
 // lost; a throwing update changes nothing and lets the next one run.
-import { Atom } from "velt:sync";
+import { Atom } from "velt/sync";
 
 interface Config {
   name: string;

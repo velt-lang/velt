@@ -1,4 +1,4 @@
-//! Process-wide slots for standard-library state (std/websocket/topics.vlt owns slot 0).
+//! Process-wide slots for standard-library state (std/net/websocket/topics.vlt owns slot 0).
 //!
 //! Velt modules have no mutable globals, and a few std features need one object per process (the
 //! topics of std/websocket). The runtime cannot hold a typed Velt value, but a channel can: each

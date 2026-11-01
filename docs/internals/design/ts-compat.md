@@ -33,7 +33,7 @@ library keeps Rust-style integer code. Then:
   (`total += s.length`) the target keeps its type, so the value converts to it when either side
   is inferred (#421); a signed value never converts to an unsigned target. A local declared
   without a type from such a value (`let n = xs.length`) is an `i64`, so it can go negative.
-- A float index converts through the prelude's `__floatIndex`: whole numbers index, anything else
+- A float index converts through the prelude's `floatIndex`: whole numbers index, anything else
   panics like an out-of-bounds index. A quotient index (`xs[n / 2]`) stays an error.
 - A float argument for an integer parameter of a `std/` function converts like
   `ToIntegerOrInfinity` (a saturating cast): `xs.slice(0, xs.length / 2)`.
@@ -95,9 +95,9 @@ as in Node.
   points. Positions count UTF-16 code units since #377 phase 2b
   ([design/strings.md](strings.md)).
 - `Math.random()`.
-- `Date` (prelude, `std/prelude/date.vlt`): JavaScript's, on velt:datetime, with months 0-11 and
-  local-time getters. `console.log` prints a `Date` through its `__inspect()` (the ISO string, as
-  Node). Loading it costs about 7 ms of checking per program (velt:datetime's modules join the
+- `Date` (prelude, `std/prelude/date.vlt`): JavaScript's, on velt/time, with months 0-11 and
+  local-time getters. `console.log` prints a `Date` through its `[util.inspect.custom]()` (the ISO string, as
+  Node). Loading it costs about 7 ms of checking per program (velt/time's modules join the
   prelude).
 - `<` on a class or struct implementing `Comparable` calls `compareTo` (it did only on type
   parameters), and a template literal calls a value's own `toString(): string`.

@@ -1,0 +1,257 @@
+// velt/collections (internal): searching `ConcurrentMap`'s nodes: an inner node's child for a key,
+// a leaf's slot for a key, its free slots.
+
+import { u16x8, u64x2 } from "velt/simd";
+import { ConcurrentMap } from "velt/collections/concurrent_map";
+import {
+  childAt,
+  FENCE,
+  GROUP0,
+  GROUPS,
+  hashKey,
+  HIGHS,
+  homeOf,
+  INDEX,
+  keyAt,
+  LANES,
+  LEAF_CAP,
+  NODE,
+  PAIRS,
+  pick,
+  SKEYS,
+  strOrder,
+  strSame,
+  TAG_WORDS,
+  tagOf,
+  TAGS,
+} from "velt/collections/concurrent/layout";
+import { setTag } from "velt/collections/concurrent/split";
+
+/**
+ * The word of the child of the inner node at `base` that holds `k`. Fixed counts, no branches,
+ * two keys per vector compare: the 6 index words pick the group, then the group's 8 key slots
+ * count the keys at most `k`. That count is at most 7 (the group's last key is the next index
+ * word, above `k`, or `MAX_KEY`), so the child is in the group's own line.
+ */
+export function childWord<K, V extends Frozen>(cm: ConcurrentMap<K, V>, base: u64, k: u64): u64 {
+  const key = u64x2.splat(k);
+  const one = u64x2.splat(1);
+  const zero = u64x2.splat(0);
+  let below = zero;
+  for (let j: u64 = 0; j < GROUPS; j += 2) {
+    const le = u64x2.loadOptimistic(cm.w, (base + INDEX + j) as usize).le(key);
+    below = below.add(u64x2.select(le, one, zero));
+  }
+  const sum = below.sum();
+  const g = sum < GROUPS ? sum : GROUPS;
+  const at = base + GROUP0 + (g << 4);
+  below = zero;
+  for (let j: u64 = 0; j < 8; j += 2) {
+    const le = u64x2.loadOptimistic(cm.w, (at + j) as usize).le(key);
+    below = below.add(u64x2.select(le, one, zero));
+  }
+  const c = below.sum();
+  return at + 8 + (c < 7 ? c : 7);
+}
+
+/** The word of the child of the inner node at `base` that holds `key` (word `k`). */
+export function childFor<K, V extends Frozen>(
+  cm: ConcurrentMap<K, V>,
+  base: u64,
+  k: u64,
+  key: K,
+): u64 {
+  if (typeIs<K, string>()) {
+    return base + childAt(backTies(cm, base, position(cm, base, k), k, asType<string>(key)));
+  }
+  return childWord(cm, base, k);
+}
+
+/** How many keys of the inner node at `base` are at most `k`: where `k` would go. */
+export function position<K, V extends Frozen>(cm: ConcurrentMap<K, V>, base: u64, k: u64): u64 {
+  // `childWord` is `base + GROUP0 + 16g + 8 + c`, with the count `c` at most 7.
+  const w = childWord(cm, base, k) - base - GROUP0;
+  return (w >> 4) * 8 + (w & 15) - 8;
+}
+
+/**
+ * How many separators of the inner node at `base` are at most the string `key` (word `k`),
+ * from `at`, how many words are at most `k`: the separators before `at` whose word is `k` are
+ * the last of those, and the ones greater than `key` go back.
+ */
+export function backTies<K, V extends Frozen>(
+  cm: ConcurrentMap<K, V>,
+  base: u64,
+  at: u64,
+  k: u64,
+  key: string,
+): u64 {
+  // Most keys tie with no separator: no string read, so no epoch section (its own function's).
+  if (at == 0 || cm.w[base + keyAt(at - 1)].load("relaxed") != k) {
+    return at;
+  }
+  return backTiesSlow(cm, base, at, k, key);
+}
+
+/**
+ * `backTies` where the separator before `at` ties with `k`: a binary search over the
+ * separators before `at` (their words at most `k`), ordered by word and then string (as the
+ * keys they separate), for the first greater than `key`. Only the separators whose word ties
+ * have their strings read (each the fence of a child: its `skeys` line and the string), about
+ * log2 of the run of ties.
+ */
+export function backTiesSlow<K, V extends Frozen>(
+  cm: ConcurrentMap<K, V>,
+  base: u64,
+  at: u64,
+  k: u64,
+  key: string,
+): u64 {
+  let lo: u64 = 0;
+  let hi = at;
+  while (lo < hi) {
+    const m = (lo + hi) >> 1;
+    // A word other than `k` is below it.
+    if (cm.w[base + keyAt(m)].load("relaxed") != k) {
+      lo = m + 1;
+      continue;
+    }
+    // Separator m's string: the fence of child m + 1. Words that disagree, a child out of
+    // range or a `null` fence only while a writer changes the node: any answer will do then,
+    // the version check after fails.
+    const c = cm.w[base + childAt(m + 1)].load("relaxed");
+    if (c >= cm.nodes) {
+      return m;
+    }
+    const s = cm.skeys[c * SKEYS + FENCE].load("acquire");
+    if (s == null) {
+      return m;
+    }
+    if (strOrder(s, key) > 0) {
+      hi = m;
+    } else {
+      lo = m + 1;
+    }
+  }
+  return lo;
+}
+
+/** The slot of `key` (word `k`) in the leaf at `base`, or `LEAF_CAP`. */
+export function findSlot<K, V extends Frozen>(
+  cm: ConcurrentMap<K, V>,
+  base: u64,
+  k: u64,
+  key: K,
+): u64 {
+  const cand = candidate(cm, base, hashKey(k, key));
+  if (cand > LEAF_CAP) {
+    return findSlotSlow(cm, base, k, key);
+  }
+  // Without a candidate, read the meta word (already in cache) instead of a pair: an
+  // absent key costs no cache line beyond the tags.
+  const at = cand < LEAF_CAP ? base + PAIRS + 2 * cand : base + 1;
+  const word = cm.w[at].load("relaxed");
+  if (typeIs<K, string>()) {
+    return cand < LEAF_CAP && word == k && sameKey(cm, base, cand, asType<string>(key))
+      ? cand
+      : LEAF_CAP;
+  }
+  return cand < LEAF_CAP && word == k ? cand : LEAF_CAP;
+}
+
+/** Whether slot `slot` of the leaf at `base` holds the string `key` (its word matched). */
+export function sameKey<K, V extends Frozen>(
+  cm: ConcurrentMap<K, V>,
+  base: u64,
+  slot: u64,
+  key: string,
+): bool {
+  const s = cm.skeys[(base / NODE) * SKEYS + slot].load("acquire");
+  return s != null && strSame(s, key);
+}
+
+/**
+ * The one slot whose tag is `k`'s (`k` from `hashKey`), `LEAF_CAP` if none is, `LEAF_CAP + 1`
+ * if several are (an empty slot's tag, 0, is no key's).
+ */
+export function candidate<K, V extends Frozen>(cm: ConcurrentMap<K, V>, base: u64, k: u64): u64 {
+  const tag = u16x8.splat(tagOf(k) as u16);
+  let hits: u64 = 0;
+  for (let w: u64 = 0; w < TAG_WORDS; w += 2) {
+    const tags = u64x2
+      .loadOptimistic(cm.w, (base + TAGS + w) as usize)
+      .asU8x16()
+      .asU16x8();
+    hits |= tags.eq(tag).bitmask() << (w * 4);
+  }
+  if (hits.countOnes() > 1) {
+    return LEAF_CAP + 1;
+  }
+  const cand = hits.trailingZeros() as u64;
+  return cand < LEAF_CAP ? cand : LEAF_CAP;
+}
+
+/** `findSlot` for a key whose tag another key of the leaf shares. */
+export function findSlotSlow<K, V extends Frozen>(
+  cm: ConcurrentMap<K, V>,
+  base: u64,
+  k: u64,
+  key: K,
+): u64 {
+  const pat = tagOf(hashKey(k, key)) * LANES;
+  for (let w: u64 = 0; w < TAG_WORDS; w++) {
+    const x = cm.w[base + TAGS + w].load("relaxed") ^ pat;
+    let hits = (x - LANES) & ~x & HIGHS;
+    while (hits != 0) {
+      const slot = w * 4 + ((hits.trailingZeros() as u64) >> 4);
+      if (cm.w[base + PAIRS + 2 * slot].load("relaxed") == k) {
+        if (typeIs<K, string>()) {
+          if (sameKey(cm, base, slot, asType<string>(key))) {
+            return slot;
+          }
+        } else {
+          return slot;
+        }
+      }
+      hits &= hits - 1;
+    }
+  }
+  return LEAF_CAP;
+}
+
+/** The tag in slot `slot` of the leaf at `base`, 0 if the slot is empty. */
+export function tagAt<K, V extends Frozen>(cm: ConcurrentMap<K, V>, base: u64, slot: u64): u64 {
+  return (cm.w[base + TAGS + (slot >> 2)].load("relaxed") >> ((slot & 3) * 16)) & 65535;
+}
+
+/** A free slot for a key (`k` from `hashKey`) in the leaf at `base` (held, not full). */
+export function freeSlot<K, V extends Frozen>(cm: ConcurrentMap<K, V>, base: u64, k: u64): u64 {
+  const zero = u16x8.splat(0);
+  let empty: u64 = 0;
+  for (let w: u64 = 0; w < TAG_WORDS; w += 2) {
+    const tags = u64x2
+      .loadOptimistic(cm.w, (base + TAGS + w) as usize)
+      .asU8x16()
+      .asU16x8();
+    empty |= tags.eq(zero).bitmask() << (w * 4);
+  }
+  return pick(empty, homeOf(k));
+}
+
+/** Puts `key` (word `k`) and `val` in a free slot of the leaf at `base` (held, not full). */
+export function place<K, V extends Frozen>(
+  cm: ConcurrentMap<K, V>,
+  base: u64,
+  k: u64,
+  key: K,
+  val: u64,
+) {
+  const h = hashKey(k, key);
+  const slot = freeSlot(cm, base, h);
+  cm.w[base + PAIRS + 2 * slot].store(k, "relaxed");
+  cm.w[base + PAIRS + 1 + 2 * slot].store(val, "relaxed");
+  setTag(cm, base, slot, h);
+  if (typeIs<K, string>()) {
+    cm.skeys[(base / NODE) * SKEYS + slot].store(shared(asType<string>(key)), "release");
+  }
+}

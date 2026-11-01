@@ -1,7 +1,7 @@
 // Walks the benchmark tree 5 times the way a program must without entry types: `readDirSync`
 // for the names, then a `statSync` per entry to tell files from directories.
-import { readDirSync, statSync } from "velt:fs";
-import { args } from "velt:process";
+import { readDirSync, statSync } from "velt/fs";
+import { args } from "velt/process";
 
 function walk(dir: string): i64 {
   let files = 0;

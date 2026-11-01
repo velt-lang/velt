@@ -2,7 +2,7 @@
 // each a lane of the first vector or of the second (a negative literal is out of range), and one
 // per lane; masks have no shuffle.
 
-import { u32x4, mask32x4 } from "velt:simd";
+import { u32x4, mask32x4 } from "velt/simd";
 
 function main() {
   const v = u32x4.splat(1);

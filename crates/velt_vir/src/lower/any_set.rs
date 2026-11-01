@@ -252,7 +252,7 @@ impl FnLower<'_, '_> {
             .collect()
     }
 
-    /// `r[key] = v` on a `Record<string, V>`: its `__set`.
+    /// `r[key] = v` on a `Record<string, V>`: its `[RECORD_SET]`.
     fn any_set_record(
         &mut self,
         data: vir::Local,
@@ -264,10 +264,9 @@ impl FnLower<'_, '_> {
         let Some((d, _)) = self.plain_adt(ty) else {
             return self.any_set_refuse(v, ST_UNSUPPORTED);
         };
-        let set = self
-            .dyn_members_of(d)
-            .into_iter()
-            .find(|m| m.name == "__set" && m.kind == DynMemberKind::Method);
+        let set = self.dyn_members_of(d).into_iter().find(|m| {
+            m.name == velt_common::std_key!(record_set) && m.kind == DynMemberKind::Method
+        });
         let ready = set.and_then(|m| self.ready(ty, &m));
         let str_key = matches!(self.cx.kind(k), TyKind::Str);
         let Some(r) = ready.filter(|_| str_key && self.cx.any_unboxable(val)) else {

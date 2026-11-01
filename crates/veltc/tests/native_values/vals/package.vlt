@@ -1,4 +1,4 @@
-import type { Package } from "velt:package";
+import type { Package } from "velt/package";
 
 // A test package (crates/veltc/tests/native_values.rs): arrays and structs across the native
 // boundary, sync and async.

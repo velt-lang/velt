@@ -1,20 +1,18 @@
-//! Structural equality (`Intrinsic::Eq`: `deepEqual`, `assertEq`) and the hash of `Map` and
-//! `Set` keys (`Intrinsic::Hash`). Structural equality compares class objects, interface values
-//! and function values by identity (JS reference semantics: an interface value by its data
-//! pointer, a function value by its code and environment), everything else by content; the
-//! prelude `Map` and `Record` classes compare by content in any key order (Node's
-//! `isDeepStrictEqual`) through `Map.__deepEquals` (std/prelude/map.vlt); a record compares its
-//! map. The hash agrees with the key comparison, `Intrinsic::KeyEq` (same.rs): objects (class
+//! Structural equality of `==` on aggregates (`Glue::Eq`), the parts the comparisons of
+//! same.rs compare by content, and the hash of `Map` and `Set` keys (`Intrinsic::Hash`).
+//! (`deepEqual`, `assertEq` and `toEqual` are generated in Velt: std/lang/equal.) Structural
+//! equality compares class objects, interface values and function values by identity (JS
+//! reference semantics: an interface value by its data pointer, a function value by its code
+//! and environment), everything else by content. The hash agrees with the key comparison, `Intrinsic::KeyEq` (same.rs): objects (class
 //! instances, object types, arrays, interface and function values, promises) hash their identity, a type
 //! declared with `struct` its fields, the rest by value. Hashes combine parts FxHash-style: `h = (rotl(h, 5) ^ part) * 0x517cc1b727220a95`;
 //! strings hash their bytes with `velt_rt_str_hash`. Values that may hold themselves compare
 //! under a cycle guard (eq_cycles.rs).
 //!
-//! `Intrinsic::Eq` and `Intrinsic::KeyEq` compare floats with JS's SameValueZero, as JS
-//! compares `Map` keys: `NaN` equals itself and `0` equals `-0`. The hash agrees: it hashes `-0`
-//! as `0` and every `NaN` alike. `==` keeps IEEE comparison, so the glue these call
-//! (`Glue::KeyEq` / `Glue::KeySame`, built in `key_mode`) is separate from `==`'s (`Glue::Eq` /
-//! `Glue::Same`).
+//! `Intrinsic::KeyEq` compares floats with JS's SameValueZero, as JS compares `Map` keys: `NaN`
+//! equals itself and `0` equals `-0`. The hash agrees: it hashes `-0` as `0` and every `NaN`
+//! alike. `==` keeps IEEE comparison, so the glue it calls (`Glue::KeySame`, built in
+//! `key_mode`) is separate from `==`'s (`Glue::Eq` / `Glue::Same`).
 
 use velt_sema::hir::{TyId, TyKind};
 
@@ -27,42 +25,16 @@ use crate::vir::{self, BinOp, Const, Operand, Place, Proj, Rvalue, Terminator, T
 const FX_K: i128 = 0x517c_c1b7_2722_0a95;
 
 impl FnLower<'_, '_> {
-    /// `Intrinsic::Eq` of the values of concrete type `ty` at two places: `eq_values` with
-    /// floats compared by SameValueZero (Bool operand).
-    pub(in crate::lower) fn key_eq_values(&mut self, a: &Place, b: &Place, ty: TyId) -> Operand {
-        let outer = std::mem::replace(&mut self.key_mode, true);
-        let r = self.eq_values(a, b, ty);
-        self.key_mode = outer;
-        r
-    }
-
-    pub(super) fn key_eq_body(&mut self, pa: vir::Local, pb: vir::Local, ty: TyId) {
-        self.key_mode = true;
-        self.eq_body(pa, pb, ty);
-    }
-
-    /// `Intrinsic::DeepEq` (Vitest's `toEqual`) of the values of concrete type `ty` at two
-    /// places: `eq_values` in `deep_mode` (Bool operand).
-    pub(in crate::lower) fn deep_eq_values(&mut self, a: &Place, b: &Place, ty: TyId) -> Operand {
-        let outer = std::mem::replace(&mut self.deep_mode, true);
-        let r = self.eq_values(a, b, ty);
-        self.deep_mode = outer;
-        r
-    }
-
     /// The equality glue for the current mode.
     fn eq_glue(&self) -> Glue {
-        if self.deep_mode {
-            return Glue::DeepEq;
-        }
         if self.value_mode {
             return Glue::SameValue;
         }
         match (self.same_mode, self.key_mode) {
-            (false, false) => Glue::Eq,
-            (false, true) => Glue::KeyEq,
             (true, false) => Glue::Same,
             (true, true) => Glue::KeySame,
+            // `key_mode` is set only with `same_mode` (same.rs `key_same_values`).
+            (false, _) => Glue::Eq,
         }
     }
 
@@ -105,33 +77,15 @@ impl FnLower<'_, '_> {
                 let (pa, pb) = (self.addr(a.clone()), self.addr(b.clone()));
                 self.str_eq(pa, pb)
             }
-            _ if self.dictionary_content(ty) => {
-                let (pa, pb) = (self.addr(a.clone()), self.addr(b.clone()));
-                let g = self.eq_glue();
-                self.call_glue(g, ty, vec![pa, pb])
-            }
             TyKind::Unit | TyKind::Never | TyKind::Literal(_) => {
                 Operand::Const(Const::Bool(true), Ty::Bool)
             }
             // `any` / `unknown` (generic code over them): by value, as `===` (keys: SameValueZero).
             TyKind::Dyn(..) if self.cx.is_dynamic(ty) => self.any_same_places(a, b, self.key_mode),
-            // `toEqual`: by the objects the interface values hold (eq_dyn.rs).
-            TyKind::Dyn(..) if self.deep_mode && self.deep_dyn(ty) => {
-                let (pa, pb) = (self.addr(a.clone()), self.addr(b.clone()));
-                self.call_glue(Glue::DeepEq, ty, vec![pa, pb])
-            }
             TyKind::FnPtr { .. } | TyKind::Closure(_) | TyKind::Dyn(..) => {
                 self.ref_identity(a, b, ty)
             }
             TyKind::Promise(..) => self.promise_identity(a, b),
-            _ if self.deep_mode && vt.is_float() => {
-                let (x, y) = (Operand::Copy(a.clone()), Operand::Copy(b.clone()));
-                self.same_value(x, y, vt)
-            }
-            _ if self.deep_mode && self.deep_class(ty) => {
-                let (pa, pb) = (self.addr(a.clone()), self.addr(b.clone()));
-                self.call_glue(Glue::DeepEq, ty, vec![pa, pb])
-            }
             _ if self.key_mode && vt.is_float() => {
                 let (x, y) = (Operand::Copy(a.clone()), Operand::Copy(b.clone()));
                 self.same_value_zero(x, y)
@@ -242,40 +196,6 @@ impl FnLower<'_, '_> {
         self.fx_combine(cint(0, Ty::U64), x)
     }
 
-    /// The prelude `Map` or `Record` class, which compares by content (`deepEqual`).
-    pub(super) fn is_dictionary(&mut self, ty: TyId) -> bool {
-        self.prelude_map(ty).is_some() || self.prelude_record(ty).is_some()
-    }
-
-    /// A `Map` or `Record` (or a nullable one): a pointer that still compares by content.
-    fn dictionary_content(&mut self, ty: TyId) -> bool {
-        match self.cx.kind(ty) {
-            TyKind::Option(e, _) => self.is_dictionary(e),
-            _ => self.is_dictionary(ty),
-        }
-    }
-
-    /// `Map.<name>(a, …)` for the prelude `Map<K, V>` type `ty` (object pointers in `args`).
-    fn call_map_method(&mut self, ty: TyId, name: &str, args: Vec<Operand>, ret: Ty) -> Operand {
-        let TyKind::Adt(map, targs) = self.cx.kind(ty) else {
-            crate::lower::ice("Map method on a non-ADT type")
-        };
-        let def = self.class_method(map, name);
-        let f = self.cx.func_for_direct(def, targs, self.mode);
-        let d = self.temp(ret);
-        self.call(vir::Callee::Func(f), args, Some(Place::local(d)), false);
-        Operand::Copy(Place::local(d))
-    }
-
-    /// `ty`'s `Map` (itself, or a record's field 0) at the object `p`: (map type, map place).
-    fn dictionary_map(&mut self, p: &Place, ty: TyId) -> (TyId, Place) {
-        if self.prelude_map(ty).is_some() {
-            return (ty, p.clone());
-        }
-        let map_ty = self.cx.adt_field_tys(ty)[0];
-        (map_ty, self.field_place(p, ty, 0))
-    }
-
     /// A pointer-sized value that still compares and hashes by content: a boxed array / object
     /// (or a nullable one), whose pointer is only its representation (semantics stage 2).
     fn boxed_content(&mut self, ty: TyId) -> bool {
@@ -370,12 +290,6 @@ impl FnLower<'_, '_> {
     }
 
     pub(in crate::lower) fn eq_body(&mut self, pa: vir::Local, pb: vir::Local, ty: TyId) {
-        if self.deep_mode && self.deep_dyn(ty) {
-            return self.dyn_deep_eq_body(pa, pb, ty);
-        }
-        if self.virtual_deep_eq(ty) {
-            return self.virtual_deep_eq_body(pa, pb, ty);
-        }
         if self.guarded(ty) {
             return self.guarded_eq_body(pa, pb, ty);
         }
@@ -383,7 +297,6 @@ impl FnLower<'_, '_> {
         let b = self.deref_param(pb, ty);
         let no = self.new_block();
         match self.cx.kind(ty) {
-            TyKind::Adt(..) if self.is_dictionary(ty) => self.dictionary_eq(&a, &b, ty, no),
             TyKind::Adt(..) | TyKind::Tuple(_) if !self.is_enum(ty) => {
                 for (x, y, t) in self.struct_parts(&a, &b, ty) {
                     let e = self.eq_values(&x, &y, t);
@@ -452,17 +365,6 @@ impl FnLower<'_, '_> {
             Const::Bool(false),
             Ty::Bool,
         )));
-    }
-
-    /// The `Map`s or `Record`s at `a` and `b` (of type `ty`) by content, in any key order
-    /// (`Map.__deepEquals`); jumps to `no` when they differ.
-    pub(super) fn dictionary_eq(&mut self, a: &Place, b: &Place, ty: TyId, no: vir::BlockId) {
-        let (map_ty, ma) = self.dictionary_map(a, ty);
-        let (_, mb) = self.dictionary_map(b, ty);
-        let deep = Operand::Const(Const::Bool(self.deep_mode), Ty::Bool);
-        let args = vec![Operand::Copy(ma), Operand::Copy(mb), deep];
-        let r = self.call_map_method(map_ty, "__deepEquals", args, Ty::Bool);
-        self.when(r, no);
     }
 
     fn eq_option(&mut self, a: &Place, b: &Place, ty: TyId, e: TyId, no: vir::BlockId) {

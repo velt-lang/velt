@@ -1,11 +1,11 @@
-# velt:package
+# velt/package
 
-`import type { Package } from "velt:package"`. The type of the package manifest,
+`import type { Package } from "velt/package"`. The type of the package manifest,
 [`package.vlt`](../tooling/manifest.md). The module contains only types; nothing imports it at
 run time.
 
 ```ts ignore
-import type { Package } from "velt:package";
+import type { Package } from "velt/package";
 
 export const pkg: Package = {
   name: "todo-api",

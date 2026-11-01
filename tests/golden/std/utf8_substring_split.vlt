@@ -1,6 +1,6 @@
 // utf8Substring at a byte inside a character is a RangeError: inside a four-byte character too,
 // although slice can cut its surrogate pair (no string position is inside its UTF-8 form).
-import { utf8Substring } from "velt:encoding";
+import { utf8Substring } from "velt/encoding";
 
 function main() {
   const s = "a😀";

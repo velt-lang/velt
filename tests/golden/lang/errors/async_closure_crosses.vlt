@@ -2,7 +2,7 @@
 // (#208). Each error names the modification and where the closure leaves its task: a spawned
 // call, a parameter that a helper spawns, an object that crosses holding it, a channel, a
 // function value that may keep it, and `shared(...)`.
-import { channel } from "velt:channel";
+import { channel } from "velt/sync";
 
 class Jobs {
   run: () => Promise<void>;

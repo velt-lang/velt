@@ -5,7 +5,7 @@
 //!   signature the SDK recorded for that export exactly. Anything else (a root program or a
 //!   package without native code declaring `free`, another package's export, a mismatch) would
 //!   let ordinary code call arbitrary C symbols or corrupt memory, so it is a compile error.
-//!   `IoResult` and `IoStatus` are std's (`velt:io`) types, identified by definition, not by name.
+//!   `IoResult` and `IoStatus` are std's (`velt/io`) types, identified by definition, not by name.
 //! - [`inits`]: the libraries `velt_main` initializes before `main`.
 //! - [`links`]: what the linker adds per library.
 
@@ -16,7 +16,7 @@ use velt_common::{Diagnostic, Diagnostics, FileId, SourceMap};
 use velt_sema::hir::{self, Def, DefId, FloatTy, IntTy, TyId, TyKind};
 use vpm::PackageGraph;
 
-/// The definitions of std's `IoResult` and `IoStatus` (`velt:io`), if the program has them.
+/// The definitions of std's `IoResult` and `IoStatus` (`velt/io`), if the program has them.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct IoTypes {
     io_result: Option<DefId>,
@@ -24,21 +24,22 @@ pub struct IoTypes {
 }
 
 impl IoTypes {
-    /// Find them: the ADTs named `IoResult`/`IoStatus` defined in `<std_root>/io.vlt`.
+    /// Find them: the ADTs `IoResult` in `<std_root>/native/result.vlt` and `IoStatus` in
+    /// `<std_root>/native/status.vlt`.
     pub fn find(p: &hir::Program, sm: &SourceMap, std_root: Option<&Path>) -> IoTypes {
         let mut io = IoTypes::default();
-        let Some(file) = std_root.map(|r| canonical(&r.join("io.vlt"))) else {
+        let Some(native) = std_root.map(|r| r.join("native")) else {
             return io;
         };
+        let result = canonical(&native.join("result.vlt"));
+        let status = canonical(&native.join("status.vlt"));
         for (i, def) in p.defs.iter().enumerate() {
             let Def::Adt(a) = def else { continue };
-            if canonical(&sm.get(a.span.file).path) != file {
-                continue;
-            }
+            let file = canonical(&sm.get(a.span.file).path);
             let id = Some(DefId(i as u32));
             match a.name.rsplit("::").next() {
-                Some("IoResult") => io.io_result = id,
-                Some("IoStatus") => io.io_status = id,
+                Some("IoResult") if file == result => io.io_result = id,
+                Some("IoStatus") if file == status => io.io_status = id,
                 _ => {}
             }
         }
@@ -180,51 +181,6 @@ fn ty_name(p: &hir::Program, t: TyId) -> String {
     }
 }
 
-/// Exports of std's drivers (crates/velt_std_*: crates on the native SDK, linked into the
-/// runtime).
-const STD_DRIVER_PREFIX: &str = "velt_std_";
-
-/// std's declaration `f` of a driver export against the driver's signature record (the check a
-/// package's declarations get, `abi_symbols::driver_signatures`). A mismatch is the toolchain's
-/// bug, reported as an internal error.
-fn check_std_driver(p: &hir::Program, io: IoTypes, f: &hir::ExternFnDef, diags: &mut Diagnostics) {
-    static SIGS: std::sync::OnceLock<std::collections::HashMap<&str, &str>> =
-        std::sync::OnceLock::new();
-    let sigs = SIGS.get_or_init(|| {
-        velt_rt_host::abi_symbols::driver_signatures()
-            .into_iter()
-            .collect()
-    });
-    let actual = match signature(p, io, f) {
-        Ok(a) => a,
-        Err(why) => {
-            diags.push(Diagnostic::error(
-                format!("ICE: std's declaration: {why}"),
-                f.span,
-            ));
-            return;
-        }
-    };
-    match sigs.get(f.symbol.as_str()) {
-        Some(expected) if *expected == actual => {}
-        Some(expected) => diags.push(
-            Diagnostic::error(
-                format!(
-                    "ICE: std's `declare` of `{}` does not match its driver",
-                    f.symbol
-                ),
-                f.span,
-            )
-            .with_note(format!("the driver exports `{expected}`"))
-            .with_note(format!("std declares        `{actual}`")),
-        ),
-        None => diags.push(Diagnostic::error(
-            format!("ICE: std declares `{}`, which no driver exports", f.symbol),
-            f.span,
-        )),
-    }
-}
-
 /// Check every `declare function` outside the standard library (`std_files`: the files of std
 /// modules) against the native library of its own package (`graph`, `None` for a program without
 /// packages), and every `declare system function` against the table of system functions of
@@ -246,9 +202,6 @@ pub fn check_declares(
             continue;
         }
         if std_files.contains(&f.span.file) {
-            if f.symbol.starts_with(STD_DRIVER_PREFIX) {
-                check_std_driver(p, io, f, diags);
-            }
             continue;
         }
         let file = &sm.get(f.span.file).path;
@@ -356,10 +309,17 @@ pub fn links(graph: Option<&PackageGraph>, release: bool) -> Vec<velt_link::Nati
     graph
         .into_iter()
         .flat_map(|g| g.natives())
-        .map(|(_, lib)| velt_link::NativeLink {
-            shared: lib.shared_lib(),
-            import_lib: lib.import_lib(),
-            static_obj: lib.static_obj().filter(|_| release),
+        .map(|(_, lib)| {
+            let static_obj = lib.static_obj().filter(|_| release);
+            velt_link::NativeLink {
+                shared: lib.shared_lib(),
+                import_lib: lib.import_lib(),
+                system_libs: match static_obj {
+                    Some(_) => lib.meta.system_libs.clone().unwrap_or_default(),
+                    None => Vec::new(),
+                },
+                static_obj,
+            }
         })
         .collect()
 }

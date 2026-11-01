@@ -1,5 +1,5 @@
 // A new function swaps in (it gets its own slot and trampoline).
-import { serve } from "velt:http";
+import { serve } from "http-server";
 
 async function main() {
   const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {

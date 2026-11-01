@@ -293,15 +293,15 @@ fn members_whose_tests_cannot_have_changed_are_not_started() {
     let r = repo();
     r.write(
         "packages/core/tests/add.test.vlt",
-        "import { greet } from \"../src/lib\";\nimport { expect } from \"velt:test\";\n\nexport function test_greet() {\n  expect(greet(\"x\")).toBe(\"hello x\");\n}\n",
+        "import { greet } from \"../src/lib\";\nimport { expect } from \"velt/test\";\n\nexport function test_greet() {\n  expect(greet(\"x\")).toBe(\"hello x\");\n}\n",
     );
     r.write(
         "apps/a/tests/a.test.vlt",
-        "import { greet } from \"core\";\nimport { expect } from \"velt:test\";\n\nexport function test_a() {\n  expect(greet(\"a\")).toBe(\"hello a\");\n}\n",
+        "import { greet } from \"core\";\nimport { expect } from \"velt/test\";\n\nexport function test_a() {\n  expect(greet(\"a\")).toBe(\"hello a\");\n}\n",
     );
     r.write(
         "apps/b/tests/b.test.vlt",
-        "import { expect } from \"velt:test\";\n\nexport function test_clock() {\n  expect(Date.now() > 0).toBe(true);\n}\n",
+        "import { expect } from \"velt/test\";\n\nexport function test_clock() {\n  expect(Date.now() > 0).toBe(true);\n}\n",
     );
     r.write("packages/core/tests/fixtures/README.md", "data\n");
     let sorted = |mut v: Vec<String>| {
@@ -331,7 +331,7 @@ fn members_whose_tests_cannot_have_changed_are_not_started() {
     // A new test file is a change too.
     r.write(
         "apps/a/tests/more.test.vlt",
-        "import { expect } from \"velt:test\";\n\nexport function test_more() {\n  expect(1).toBe(1);\n}\n",
+        "import { expect } from \"velt/test\";\n\nexport function test_more() {\n  expect(1).toBe(1);\n}\n",
     );
     let (ran, unchanged) = ran_and_unchanged(&r.ok(".", &["test"]).1);
     assert_eq!(sorted(ran), ["a", "b"]);
@@ -339,7 +339,7 @@ fn members_whose_tests_cannot_have_changed_are_not_started() {
     // So is one in a directory no test file was in, which only discovery lists.
     r.write(
         "packages/core/tests/fixtures/deep.test.vlt",
-        "import { expect } from \"velt:test\";\n\nexport function test_deep() {\n  expect(1).toBe(1);\n}\n",
+        "import { expect } from \"velt/test\";\n\nexport function test_deep() {\n  expect(1).toBe(1);\n}\n",
     );
     let (ran, _) = ran_and_unchanged(&r.ok(".", &["test"]).1);
     assert_eq!(sorted(ran), ["b", "core"]);
@@ -347,7 +347,7 @@ fn members_whose_tests_cannot_have_changed_are_not_started() {
     // run, and `-p core` again, find it unchanged.
     r.write(
         "packages/core/tests/fixtures/deep.test.vlt",
-        "import { expect } from \"velt:test\";\n\nexport function test_deep() {\n  expect(2).toBe(2);\n}\n",
+        "import { expect } from \"velt/test\";\n\nexport function test_deep() {\n  expect(2).toBe(2);\n}\n",
     );
     let (ran, _) = ran_and_unchanged(&r.ok(".", &["test", "-p", "core"]).1);
     assert_eq!(ran, ["core"]);
@@ -361,7 +361,7 @@ fn members_whose_tests_cannot_have_changed_are_not_started() {
     // A failing member always runs.
     r.write(
         "apps/a/tests/more.test.vlt",
-        "import { expect } from \"velt:test\";\n\nexport function test_more() {\n  expect(1).toBe(2);\n}\n",
+        "import { expect } from \"velt/test\";\n\nexport function test_more() {\n  expect(1).toBe(2);\n}\n",
     );
     for _ in 0..2 {
         let o = r.velt(".", &["test"], &[]);

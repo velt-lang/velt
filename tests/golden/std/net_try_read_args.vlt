@@ -1,6 +1,6 @@
 // tryRead's and writeBytes' indices are taken as JS takes them: truncated, and a negative
 // writeBytes index counts from the end, as `subarray` takes it.
-import { connect, listen } from "velt:net";
+import { connect, listen } from "velt/net";
 
 async function main() {
   const BUF: u8[] = [0, 0, 0, 0];

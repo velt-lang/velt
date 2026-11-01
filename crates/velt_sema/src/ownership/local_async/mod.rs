@@ -4,13 +4,13 @@
 //!
 //! Every call of an async closure is a started promise on the caller's task, which never runs
 //! at the same time as the task's other code. What makes sharing unsafe is another thread: a
-//! spawned task, an HTTP handler running on every core, a `shared(...)` value, a channel, or a
+//! spawned task, a `shared(...)` value, a channel, or a
 //! promise settled for another task. An async closure is **non-local** when its value may
 //! reach one of them ([`graph`]):
 //! - spawned: a spawned closure literal (`spawn(async () => …)`), the callee of a spawned call
 //!   (`spawn(f())`), an argument of one (`spawn(run(f))`) or what the spawned function returns;
 //! - the argument of `shared(...)` or `new Mutex(...)`, a channel send, a value settling a
-//!   promise (`Intrinsic::Transfer`) or an HTTP handler (`Intrinsic::HttpHandler`);
+//!   promise (`Intrinsic::Transfer`);
 //! - passed directly to a function value, an interface method or an overridden method, whose
 //!   callee is unknown and may keep it;
 //! - through locals, parameters (from every direct caller), return values, and the captures of
@@ -36,7 +36,7 @@ mod callbacks;
 mod graph;
 mod types;
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 
 use velt_common::Diagnostic;
 
@@ -53,7 +53,7 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
     for &(n, f, why) in &g.seeds {
         p.set(n, f, why);
     }
-    let mut seen = FxHashSet::default();
+    let mut seen = FxHashMap::default();
     let mut fns: FxHashMap<TyId, Why> = FxHashMap::default();
     let mut rooted = 0;
     loop {
@@ -106,15 +106,22 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
             break;
         }
     }
-    let handlers = sync_handlers(cx, &g, &p);
-    callbacks::check_handler_callbacks(cx, &g, &p.flags, &handlers);
+    let reported = callbacks::check_crossing_callbacks(cx, &g, &p.flags);
     for (n, node) in g.nodes.iter().enumerate() {
         let Node::Lit(c) = *node else { continue };
         let why = p.why[n][0].or(p.why[n][1]);
         let local = p.flags[n] & (CROSSES | INDIRECT) == 0;
         finish(cx, c, local, why);
-        if let Some(why) = handlers.get(&c) {
-            sync_handler(cx, c, *why);
+        // A standard-library function that runs it on other threads: spawns it, from the user's
+        // call (`serve`'s handler); a channel or a promise hands a value over once.
+        let to_std = (p.why[n][0])
+            .filter(|w| p.flags[n] & CROSSES != 0 && w.in_library && w.boundary == Boundary::Spawn);
+        if let (Some(w), false) = (to_std, reported.contains(&c)) {
+            crossing_sync(cx, c, Some(w));
+        }
+        if let Some(w) = to_std {
+            let copied = crate::ownership::Copied::Crossing(w.span, reaches(cx, &w));
+            crate::ownership::check_copied_closure(cx, c, &copied);
         }
     }
 }
@@ -148,7 +155,7 @@ fn crossing_params(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> bool {
     }
     let mut changed = false;
     for (ty, k, why, c) in found {
-        for (callee, args, span, std, only) in &g.indirect {
+        for (callee, args, span, library, only) in &g.indirect {
             // A call through a variable holding only closures of one function
             // (`crate::defined_accessors`) reaches no closure of another.
             if only.is_some_and(|d| outermost(g, d) != outermost(g, c)) {
@@ -156,7 +163,7 @@ fn crossing_params(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> bool {
             }
             if let Some(&a) = args.get(k) {
                 if p.flags[a] & CROSSES == 0 && types::may_be(cx, ty, *callee) {
-                    p.set(a, CROSSES, why.map(|w| w.through(Some((*span, *std)))));
+                    p.set(a, CROSSES, why.map(|w| w.through(Some((*span, *library)))));
                     changed = true;
                 }
             }
@@ -180,8 +187,8 @@ fn outermost(g: &Graph, mut c: DefId) -> DefId {
 /// function that creates it: `(value: T) => void` in `withResolvers<T>` is `(value: Job) =>
 /// void` where the program calls `withResolvers<Job>()`. Generic parameters of callers that
 /// are generic themselves are followed to their own callers; where that gives no answer (or too
-/// many), the generic type itself, whose parameters match anything; a generic standard library
-/// function the program never calls gives none.
+/// many), the generic type itself, whose parameters match anything; a generic library function
+/// the program never calls gives none.
 fn instances(cx: &mut Ctx, g: &Graph, c: DefId, ty: TyId) -> Vec<TyId> {
     let mut owner = c;
     let mut hops = 0;
@@ -199,10 +206,10 @@ fn instances(cx: &mut Ctx, g: &Graph, c: DefId, ty: TyId) -> Vec<TyId> {
             continue;
         }
         let sites = g.insts.get(&f).cloned().unwrap_or_default();
-        // A generic function of the standard library that the program never calls directly
+        // A generic library function that the program never calls directly
         // makes no such closure (its methods are called with their type arguments too).
-        let std = cx.try_fn(f).is_some_and(|i| cx.scopes[i.module].is_std);
-        if sites.is_empty() && std {
+        let library = cx.try_fn(f).is_some_and(|i| cx.scopes[i.module].is_library);
+        if sites.is_empty() && library {
             continue;
         }
         if sites.is_empty() || depth > 4 || out.len() + work.len() > 64 {
@@ -225,64 +232,21 @@ fn instances(cx: &mut Ctx, g: &Graph, c: DefId, ty: TyId) -> Vec<TyId> {
     out
 }
 
-/// The sync closures passed to `serve` as its handler (directly, or through a variable, a
-/// function's result, a parameter, a conditional, a field), with why they cross: the values
-/// flowing into what the async adapter of `serve`'s handler (`body/expr/callback.rs`) calls.
-/// A value read from the heap stands for every stored sync closure of its type. Only these are
-/// checked as sync handlers: a sync closure an async handler reaches otherwise (through an
-/// object or a collection the handler captured) is not a compile-time error, as on main.
-fn sync_handlers(cx: &Ctx, g: &Graph, p: &Propagation) -> FxHashMap<DefId, Option<Why>> {
-    let mut out = FxHashMap::default();
-    let mut work = vec![];
-    for (n, node) in g.nodes.iter().enumerate() {
-        let Node::Lit(c) = *node else { continue };
-        if cx.thread_adapters.contains(&c) {
-            for &i in g.captures.get(&n).into_iter().flatten() {
-                work.push((i, p.why[n][0]));
-            }
-        }
-    }
-    let mut seen = FxHashSet::default();
-    let mut heap_tys = vec![];
-    while let Some((i, why)) = work.pop() {
-        if !seen.insert(i) {
-            continue;
-        }
-        if let Node::Lit(c) = g.nodes[i] {
-            out.entry(c).or_insert(why);
-        }
-        if g.unknown[i] {
-            heap_tys.extend(g.inflows[i].iter().map(|(t, _)| (*t, why)));
-        }
-        for &(src, _) in &g.srcs[i] {
-            work.push((src, why));
-        }
-    }
-    for (n, node) in g.nodes.iter().enumerate() {
-        let Node::Lit(c) = *node else { continue };
-        if p.flags[n] & STORED == 0 {
-            continue;
-        }
-        if let Some((_, why)) = heap_tys
-            .iter()
-            .find(|(t, _)| !types::mentions_param(cx, *t) && types::may_be(cx, g.tys[n], *t))
-        {
-            out.entry(c).or_insert(*why);
-        }
-    }
-    out
-}
-
-/// A sync closure `c` passed to `serve` as its handler runs on several threads at once with a
-/// copy of what it captured, like an async handler: modifying a capture is the same error.
-fn sync_handler(cx: &mut Ctx, c: DefId, why: Option<Why>) {
+/// A sync closure handed to a standard-library function that runs it on other threads (a
+/// server's handler: a copy on each connection's task) would change only those copies of what it
+/// captured, out of sight, so modifying a capture is an error there, as for an async closure. A
+/// closure the program hands to `spawn` itself is copied for the task with what it captures, as
+/// docs/reference/async.md says, and may change its copy. A library's closures (std's, a
+/// package's) are not the program's to change.
+fn crossing_sync(cx: &mut Ctx, c: DefId, why: Option<Why>) {
     let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] else {
         return;
     };
-    if f.is_async || f.is_generator {
+    if f.is_async || f.is_generator || cx.try_fn(c).is_some_and(|i| cx.scopes[i.module].is_library)
+    {
         return;
     }
-    report_mutated(cx, c, why, "handler");
+    report_mutated(cx, c, why, "closure");
 }
 
 /// Record what was decided for async closure `c`.
@@ -388,10 +352,13 @@ fn report_generators(cx: &mut Ctx, c: DefId, why: Option<Why>) {
 }
 
 /// The label naming where a non-local closure leaves its task.
-fn reaches(cx: &Ctx, w: &Why) -> String {
+pub(in crate::ownership::local_async) fn reaches(cx: &Ctx, w: &Why) -> String {
     let place = match w.boundary {
+        // The `spawn` is in a library: the program's call hands the value to it.
+        Boundary::Spawn if w.in_library => {
+            "is passed here to a function that runs it on other threads"
+        }
         Boundary::Spawn => "reaches `spawn` here",
-        Boundary::Handler => "handles HTTP requests here, which run on several threads",
         Boundary::Shared => "reaches `shared(...)` here",
         Boundary::Mutex => "is put in a `Mutex` here, which other threads may lock",
         Boundary::Channel => "is sent on a channel here",
@@ -502,11 +469,6 @@ impl Propagation {
 fn report_mutated(cx: &mut Ctx, c: DefId, why: Option<Why>, what: &str) {
     let mutated = std::mem::take(&mut cx.fn_info_mut(c).mutated_captures);
     let closure = cx.def_spans.get(c.0 as usize).copied();
-    // A sync arrow passed to `serve` is checked as an async one: call it what it is.
-    let what = match closure {
-        Some(span) if cx.sync_handlers.contains(&span) => "handler",
-        _ => what,
-    };
     for (name, at) in mutated {
         // The capture is then moved into the closure: no second error for a later use of it.
         if let Some(span) = closure {
@@ -522,7 +484,6 @@ fn report_mutated(cx: &mut Ctx, c: DefId, why: Option<Why>, what: &str) {
         }
         let runs = match why.map(|w| w.boundary) {
             Some(Boundary::Spawn) => "the spawned task runs it on another thread",
-            Some(Boundary::Handler) => "requests run it on several threads at once",
             Some(Boundary::Shared | Boundary::Mutex) => {
                 "every thread holding the `shared` value may call it"
             }

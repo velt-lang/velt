@@ -1,0 +1,23 @@
+// velt/lang/hooks: the compiler's hooks (std-layout.md §10b), std functions written in Velt that
+// lowering calls: velt_common's `std_hooks.rs` names each one. No program imports them: the
+// prelude loads this list (std/prelude/hooks.vlt), and proxy.vlt, which only programs with a
+// `Proxy` need, comes with it (std/prelude/global/proxy.vlt).
+
+import "./adapt";
+import "./any_array_methods";
+import "./any_methods";
+import "./any_object";
+import "./any_ops";
+import "./any_text";
+import "./array";
+import "./array_view";
+import "./async_iter";
+import "./class_object";
+import "./error";
+import "./iter";
+import "./keys";
+import "./number";
+import "./process";
+import "./record";
+import "./string";
+import "./syntax";

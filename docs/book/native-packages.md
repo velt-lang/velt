@@ -17,7 +17,7 @@ greet/
 
 ```ts ignore
 // package.vlt
-import type { Package } from "velt:package";
+import type { Package } from "velt/package";
 
 export const pkg: Package = {
   name: "greet",
@@ -160,7 +160,7 @@ The package declares each function with exactly the signature the Rust side expo
 them in a Velt API:
 
 ```ts ignore
-import { IoResult } from "velt:io";
+import { IoResult } from "velt/native";
 
 declare function velt_greet__hello(name: string, excited: bool): string;
 declare function velt_greet__parse(text: string): IoResult<i64>;
@@ -184,19 +184,56 @@ Only a package's own library can be declared this way. A `declare function` anyw
 a program or a package without native code, or naming another package's export) is a compile
 error, so ordinary Velt code can't call arbitrary C functions such as `free`.
 
+`velt/native` also has what turns a failed result into an error: `unwrapIo(r)` and `checkIo(s)`
+throw an `IoError` (velt/io), and `errorCodeName(code)` is the Node-style name of a failure code
+(`"ECONNREFUSED"`, `"ETIMEDOUT"`), for a package that throws an error class of its own:
+
+```ts ignore
+import { errorCodeName, IoStatus } from "velt/native";
+
+export class GreetError extends Error {
+  code: string;
+
+  constructor(code: string, message: string) {
+    super(message);
+    this.code = code;
+  }
+}
+
+function check(s: IoStatus) {
+  if (s.code != 0) {
+    throw new GreetError(errorCodeName(s.code), s.message);
+  }
+}
+```
+
+A database driver hands its rows and a statement's parameters to std's generated decoder and
+binder through velt/db's `decodeRows` and `bindParams` ([velt/db](../std/db.md) "Native
+drivers"). Its library registers the row cursor or parameter sink with the runtime
+(`velt_text::rows_cursor::open_cursor` / `open_sink`) and returns the handle; std looks it up, so
+the Velt side never holds an address that a wrong number could stand in for.
+
 Wrap handles in a class that releases them in `[Symbol.dispose]()`, so `using` and the end of
 the object's life close them (see `packages/sqlite/src/lib.vlt`).
 
 ## Building and publishing
 
 While you work on the package, any program that depends on it by path builds the crate with
-cargo when needed. To publish:
+cargo when needed, into the package's own `target/velt-native/` (where the package really is,
+also when the path goes through a symbolic link), so the programs that share the package share
+the build. The Velt repository's database drivers in `packages/` are such packages; its examples
+and benchmarks depend on them by path. To publish:
 
 ```sh
 velt native build                                  # this machine's target → target/velt-native/<triple>/
 velt native build --target aarch64-apple-darwin    # another target your toolchain can build
 velt publish                                       # the package plus one library per target
 ```
+
+A release build links the library's prelinked object into the executable (Linux and macOS),
+with the system libraries the crate needs: `velt native build` records the ones rustc lists for
+it (what its dependencies declare, e.g. a framework on macOS), and only programs that use the
+package link them.
 
 `velt publish` needs the crate's `Cargo.lock` (commit it) and a library for every target in
 `native.targets`. Build the others on machines for those platforms (a CI matrix), collect their `target/velt-native/<triple>/`

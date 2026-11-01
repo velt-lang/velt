@@ -1,0 +1,2 @@
+intrinsic_import.vlt:3:35: error: `velt/lang/intrinsics` is internal to the standard library: the compiler's intrinsics are std's own building blocks
+  = note: use the public API std builds on them (an array's `reserve`, `truncate` and `swap`, velt/encoding's `utf8ByteAt`, …)

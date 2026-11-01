@@ -1,1 +1,1 @@
-evil.vlt:4:10: error: `__intrinsic_array_with_capacity` is a compiler intrinsic
+evil.vlt:3:28: error: `declare intrinsic function arrayWithCapacity` is not allowed: only the standard library declares intrinsics

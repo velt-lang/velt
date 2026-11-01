@@ -68,7 +68,7 @@ fn export_default_is_an_error_with_a_named_export_hint() {
 
 #[test]
 fn default_imports_and_export_star_as_are_errors() {
-    let errs = errors("import fs from \"velt:fs\";\nfunction main() {}\n");
+    let errs = errors("import fs from \"velt/fs\";\nfunction main() {}\n");
     assert_eq!(
         errs,
         ["default imports are not supported: Velt has named exports only"]

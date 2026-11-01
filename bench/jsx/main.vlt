@@ -15,8 +15,8 @@
 //   precompiled-no-doctype  the TSX page rendered, without the doctype
 //   shape                   `shape-no-doctype` with the doctype prepended
 
-import { renderToStringSync } from "velt:jsx";
-import { args } from "velt:process";
+import { renderToStringSync } from "velt/jsx";
+import { args } from "velt/process";
 import {
   Fortune,
   fortunes,

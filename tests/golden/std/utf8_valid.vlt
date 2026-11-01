@@ -2,7 +2,7 @@
 // (std/encoding/utf8) uses: for every length up to 150, a two-byte character, a lone
 // continuation byte, and a lead byte cut off by the end, at every position. `utf8DecodeLossy`
 // must agree with it.
-import { utf8DecodeLossy, utf8Valid } from "velt:encoding";
+import { utf8DecodeLossy, utf8Valid } from "velt/encoding";
 
 // Whether `d` is valid UTF-8, by `utf8Valid` and by whether `utf8DecodeLossy` replaces anything
 // (no input here contains U+FFFD itself).

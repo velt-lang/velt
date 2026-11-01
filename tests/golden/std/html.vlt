@@ -1,7 +1,7 @@
 // std/html: escapeHtml on each special character, mixed and non-ASCII text, text that needs no
 // escaping, and the TechEmpower fortunes payload.
 
-import { escapeHtml } from "velt:html";
+import { escapeHtml } from "velt/text";
 
 function main() {
   console.log(escapeHtml(""), escapeHtml("plain text"), escapeHtml("フレームワーク — ok"));

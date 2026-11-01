@@ -4,7 +4,7 @@
 //! Every drop glue starts by reading the reference it releases and returning when it is null
 //! (`_Gdrop_…(slot)`: `p = *slot; if p == null return`): a field of a `T | null` type, a value
 //! moved out, an object's fields in its zero fill. A glue that releases a class with many fields
-//! is too large for LLVM to inline, so dropping a null `Tape | null` (velt:json's `JsonValue` off
+//! is too large for LLVM to inline, so dropping a null `Tape | null` (velt/encoding/json's `JsonValue` off
 //! a tape) cost a call and the glue's saving of six registers before its first test, at every
 //! drop of every `JsonValue`.
 //!

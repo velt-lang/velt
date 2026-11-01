@@ -209,7 +209,7 @@ is for **x86-64-v2** unless `--cpu` names another:
 | a CPU name (`znver4`, `skylake`, `neoverse-n1`, `apple-m2`) | that CPU and compatible ones | what clang enables for it |
 
 x86-64-v2 is what Windows 11 24H2 and RHEL 9 require; the baseline lacks the byte shuffles,
-`popcnt` and rounding instructions std's hot paths (SIMD, `velt:simd`, `Math.floor`) use, and
+`popcnt` and rounding instructions std's hot paths (SIMD, `velt/simd`, `Math.floor`) use, and
 emulates them at several times the cost.
 
 - **Other targets.** aarch64 Linux code is for the baseline, armv8-a with NEON (the Raspberry Pi

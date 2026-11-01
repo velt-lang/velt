@@ -1,0 +1,33 @@
+// velt/task (internal): `AbortController`, which aborts its signal.
+
+import { DEFAULT_REASON } from "velt/task/errors";
+import { velt_rt_signal_abort, velt_rt_signal_new } from "velt/task/rt";
+import { AbortSignal, signalCell } from "velt/task/signal";
+import { INSPECT } from "velt/lang/hooks/keys";
+
+/** The sending half: `abort()` aborts its `signal`. */
+export class AbortController {
+  #sig: AbortSignal;
+  #h: u64;
+
+  constructor() {
+    const cell = signalCell(velt_rt_signal_new());
+    this.#h = cell.with((s) => s.raw());
+    this.#sig = new AbortSignal(cell);
+  }
+
+  /** The controller's signal (the same object every time, like JS). */
+  get signal(): AbortSignal {
+    return this.#sig;
+  }
+
+  /** Aborts the signal (a no-op if it already is). */
+  abort(reason: string = DEFAULT_REASON) {
+    velt_rt_signal_abort(this.#h, reason);
+  }
+
+  /** How `console.log` shows the controller, like Node: its signal. */
+  [INSPECT]() {
+    return { signal: this.#sig };
+  }
+}

@@ -191,7 +191,8 @@ impl Ctx<'_> {
                 None => {}
             }
         }
-        value
+        // A compiler hook's qualified name (`velt_common::std_hook!`), which no source can write.
+        value.or_else(|| self.std_def(name))
     }
 
     /// [`Ctx::lookup_type_item_at`] for a path: `ns.T` of a namespace import or `N.T` of a

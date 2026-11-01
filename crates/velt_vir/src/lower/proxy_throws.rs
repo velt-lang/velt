@@ -1,15 +1,15 @@
 //! Errors thrown by a proxy's traps (issue #1174; hir_encodings.md "Proxy and Reflect"). A trap
-//! may throw, as in JavaScript: velt_sema infers what the `Proxy` methods of std/proxy.vlt
+//! may throw, as in JavaScript: velt_sema infers what the `Proxy` methods of std/lang/proxy/index.vlt
 //! throw from the closures stored into `ProxyHandler`'s traps, and an operation on `any` in a
 //! user module (or in std/proxy, whose `Reflect` functions reach a target that may be a proxy)
 //! throws what the method it runs on a proxy throws (velt_sema's `any_op`):
 //!
 //! | operation | method |
 //! |---|---|
-//! | `AnyGet` / `AnyIndex` | `__get(key, receiver)` |
-//! | `AnySet` / `AnySetIndex` | `__set(key, value, receiver)` |
-//! | `AnyHas` | `__has(key)` |
-//! | `AnyKeys` | `__keys()` |
+//! | `AnyGet` / `AnyIndex` | `[PROXY_GET](key, receiver)` |
+//! | `AnySet` / `AnySetIndex` | `[PROXY_SET](key, value, receiver)` |
+//! | `AnyHas` | `[PROXY_HAS](key)` |
+//! | `AnyKeys` | `[PROXY_KEYS]()` |
 //!
 //! When that method throws, such an operation in a user function first tests whether the value
 //! holds a `Proxy` (its descriptor is the `Proxy` class's table) and then calls the method
@@ -148,7 +148,7 @@ impl FnLower<'_, '_> {
         v
     }
 
-    /// `__get(key, receiver)` on the proxy `obj`: its result into the `any` at address `out`.
+    /// `[PROXY_GET](key, receiver)` on the proxy `obj`: its result into the `any` at address `out`.
     pub(super) fn proxy_get_direct(
         &mut self,
         (obj, pty, r): (vir::Local, TyId, &Ready),
@@ -165,7 +165,7 @@ impl FnLower<'_, '_> {
         self.any_box_with(v, r.ret, &outp, true);
     }
 
-    /// `__set(key, *value, receiver)` on the proxy `obj` (`value`: the address of an owned
+    /// `[PROXY_SET](key, *value, receiver)` on the proxy `obj` (`value`: the address of an owned
     /// `any`); a trap answering `false` is Node's `TypeError` (module code is strict).
     pub(super) fn proxy_set_direct(
         &mut self,
@@ -205,7 +205,7 @@ impl FnLower<'_, '_> {
         self.switch_to(good);
     }
 
-    /// `__has(key)` on the proxy `obj` (`key`: the address of the key's string).
+    /// `[PROXY_HAS](key)` on the proxy `obj` (`key`: the address of the key's string).
     pub(super) fn proxy_has_direct(
         &mut self,
         (obj, pty, r): (vir::Local, TyId, &Ready),
@@ -218,7 +218,7 @@ impl FnLower<'_, '_> {
         self.ready_bool(v, r.ret)
     }
 
-    /// `__keys()` on the proxy `obj`: its `string[]`, owned.
+    /// `[PROXY_KEYS]()` on the proxy `obj`: its `string[]`, owned.
     pub(super) fn proxy_keys_direct(
         &mut self,
         (obj, pty, r): (vir::Local, TyId, &Ready),

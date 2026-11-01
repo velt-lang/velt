@@ -1,0 +1,31 @@
+// An interface method declares only that a parameter may be left out (`x?: T`); its default
+// value belongs to each implementation, as TypeScript requires ("a parameter initializer is
+// only allowed in a function or constructor implementation"). A method with a body (a default
+// implementation), an optional parameter and a rest parameter stay allowed.
+interface Counter {
+  step(by: number = 1): number;
+  reset(to: number, quiet: bool = false, ...log: string[]): void;
+  skip(by?: number): number;
+  twice(by: number = 2): number {
+    return this.step(by) + this.step(by);
+  }
+}
+
+class C implements Counter {
+  n = 0;
+  step(by: number = 1): number {
+    this.n += by;
+    return this.n;
+  }
+  reset(to: number, quiet: bool = false, ...log: string[]): void {
+    this.n = to;
+  }
+  skip(by?: number): number {
+    return this.step(by ?? 1);
+  }
+}
+
+function main() {
+  const c: Counter = new C();
+  console.log(c.step());
+}

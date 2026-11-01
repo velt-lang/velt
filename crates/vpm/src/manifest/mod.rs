@@ -1,7 +1,7 @@
 //! The package manifest, `package.vlt` (CONTRACT: docs/internals/contracts/manifest.md):
 //!
 //! ```ts ignore
-//! import type { Package } from "velt:package";
+//! import type { Package } from "velt/package";
 //!
 //! export const pkg: Package = {
 //!   name: "hello",
@@ -650,9 +650,9 @@ pub fn is_valid_package_name(name: &str) -> bool {
         && chars.all(|c| matches!(c, 'a'..='z' | '0'..='9' | '-' | '_'))
 }
 
-/// Names no package may have: a package's modules are named after it (`std/x`), and `std` is the
-/// standard library's namespace.
-pub const RESERVED_NAMES: &[&str] = &["std"];
+/// Names no package may have: a package's modules are named after it (`std/x`), and `velt` (and
+/// `std`, its former name) is the standard library's namespace (`velt/fs`).
+pub const RESERVED_NAMES: &[&str] = &["std", "velt"];
 
 /// Whether `name` is a device name on Windows (`con`, `prn`, `aux`, `nul`, `com0`–`com9`,
 /// `lpt0`–`lpt9`, in any case): a file or directory of that name can't be created there, so a

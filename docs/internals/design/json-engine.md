@@ -1,6 +1,6 @@
 # Design: the JSON engine, fastest in class with System.Text.Json's features
 
-Status: proposed. Nothing here is implemented beyond what [velt:json](../../std/json.md)
+Status: proposed. Nothing here is implemented beyond what [velt/encoding/json](../../std/encoding/json.md)
 documents today. Tracking: #1655, with one sub-issue per step; survey #529 has the `navigate` and `parse_value` rows.
 
 ## Where we are
@@ -73,12 +73,12 @@ and the features of STJ.
 ### Rule: the engine is written in Velt
 
 Every part of the engine is Velt code in `std/`, built only on APIs every program has (`u8[]`
-and byte views, `velt:simd`, integer types, classes and structs). This includes the scanner,
+and byte views, `velt/simd`, integer types, classes and structs). This includes the scanner,
 the pull reader, number parsing and printing, string escaping, `JsonValue` and the writer. It
 is the rule `BTreeMap` follows (#1543). No logic goes into new Rust code in `velt_rt` or
 `velt_text`, and no Rust crate is used. The reasons:
 
-- **It proves the claim.** If `velt:json` is Velt and beats serde_json, the language is fast.
+- **It proves the claim.** If `velt/encoding/json` is Velt and beats serde_json, the language is fast.
   If it were Rust behind an extern call, that would only show that Rust is fast.
 - **The code is faster.** The per-type glue calls today's runtime through opaque extern calls
   (`velt_rt_json_reader_next_key`, `_read_f64`, `velt_rt_str_eq` per field). LLVM can inline
@@ -125,7 +125,7 @@ mode when wasmtime is on the machine.
 
 Port `velt_text/src/json_scan.rs`, `velt_rt/src/json/reader.rs`, `json_escape.rs`, the JSON
 pushes of `strbuf.rs` and float printing (`ryu`, as a std port) to Velt, as internal std modules
-in `std/json/` (`velt:json/scan`, `velt:json/reader`, `velt:json/writer`, `velt:json/tape`),
+in `std/json/` (`velt/encoding/json/scan`, `velt/encoding/json/reader`, `velt/encoding/json/writer`, `velt/encoding/json/tape`),
 which the prelude's JSON module imports (`std/prelude/json/json.vlt`, a global a program loads
 only when its code names `JSON` or `JsonValue`: std/prelude/global/json.vlt). Then switch the
 glue in `crates/velt_vir/src/lower/json/` from `Rt::Json*` calls to calls of those Velt methods.
@@ -213,8 +213,8 @@ Targets:
 
 ### 3. A SIMD scanner and SWAR numbers
 
-The scanner from step 0 is written with `velt:simd` (`u8x16`, compare and movemask), so the
-same Velt source becomes NEON or SSE2 code. A missing vector operation is added to `velt:simd`
+The scanner from step 0 is written with `velt/simd` (`u8x16`, compare and movemask), so the
+same Velt source becomes NEON or SSE2 code. A missing vector operation is added to `velt/simd`
 and the backends, not written in Rust:
 - **The inside of a string.** It looks 16 bytes at a time (16-byte vectors) for `"`, `\`,
   bytes below 0x20 and bytes of 0x80 or more. While doing so it counts UTF-16 units, so the
@@ -222,7 +222,7 @@ and the backends, not written in Rust:
   `json_escape.rs`'s `clean_run`.
 - **Whitespace.** A fast exit when the next byte is not whitespace (the common case in compact
   JSON), and a 16-byte skip for indented JSON.
-- **Reading numbers**, correctly rounded for every input as V8 is, in Velt (`velt:number`):
+- **Reading numbers**, correctly rounded for every input as V8 is, in Velt (`std/lang/number`):
   exact arithmetic when the mantissa is at most 2^53 and the power of ten at most 10^22
   (Clinger), else Eisel-Lemire with its 128-bit power-of-five table. More than 19 significant
   digits, or a rounding Eisel-Lemire cannot decide, still goes to the runtime's parser: a
@@ -247,7 +247,7 @@ scanning ahead.
 
 ### 5. A tape for `JsonValue`
 
-`JSON.parseValue` writes a **tape**, a Velt class in `velt:json/tape`: two `u64` words per
+`JSON.parseValue` writes a **tape**, a Velt class in `velt/encoding/json/tape`: two `u64` words per
 value in one array. The first word is the kind, a flag (escaped string, repeated keys), and
 from bit 32 a string's UTF-16 length or a container's member count; the second is a number's
 bits, a string's byte range in the source (`start | end << 32`) or its index among the decoded
@@ -281,7 +281,7 @@ The scanner already works on bytes. It adds a UTF-8 check that runs inside the s
 (non-ASCII blocks only), and invalid UTF-8 is a `JsonError` that gives the byte offset. Changes
 in std:
 - `Request.json<T>()` and `Response.json<T>()` parse the body bytes, without making a `string`;
-- `velt:fs`'s `readFileBytes` paired with `JSON.parse<T>` documents the pattern.
+- `velt/fs`'s `readFileBytes` paired with `JSON.parse<T>` documents the pattern.
 
 ```ts ignore
 const cfg = JSON.parse<Config>(await readFileBytes("config.json")); // bytes in, no string made
@@ -296,7 +296,7 @@ offsets (there is no string to count UTF-16 units in).
 ### 7. Writing to a sink
 
 `JSON.stringifyTo(out, value)` writes into a byte sink without making a `string`. The sink is a
-`WritableStream<Uint8Array>`, a socket, a file, or a `velt:io` writer. The writer glue already
+`WritableStream<Uint8Array>`, a socket, a file, or a `velt/io` writer. The writer glue already
 appends to a `strbuf`; the sink's buffer drains whenever it passes 64 KiB, as STJ's
 `Utf8JsonWriter` does over a `PipeWriter`. `Response.json(data)` stays eager: in Node it throws
 for a cycle or a `BigInt` at the call, before the headers are sent, and runs `toJSON` and
@@ -320,7 +320,7 @@ Velt has no decorators today (`docs/book/ts-developers.md`). This step adds the 
 syntax for them, with the meaning of .NET attributes:
 
 ```ts ignore
-import { json } from "velt:json";
+import { json } from "velt/encoding/json";
 
 @json.naming("snake_case")
 class User {
@@ -358,7 +358,7 @@ item types, both fixed contracts. It needs a maintainer's sign-off before the st
 
 ### 10. The JSON decorators
 
-The decorators live in `velt:json`'s `json` namespace and are checked by sema.
+The decorators live in `velt/encoding/json`'s `json` namespace and are checked by sema.
 
 | Decorator | On | Effect | STJ |
 |---|---|---|---|
@@ -420,7 +420,7 @@ decodes.
   `JSON.parse<T>` accepts. It includes required keys, literal unions (`enum`), discriminators
   (`oneOf` with `const`), decorators and `unknownKeys`. Sema builds it from the same contract as
   the decoder, so the two cannot drift apart; the result is a string constant.
-- **`json.Reader` and `json.Writer`** are public in `velt:json`. They are the pull reader and
+- **`json.Reader` and `json.Writer`** are public in `velt/encoding/json`. They are the pull reader and
   the builder the glue already uses, and are the types converters receive. With them, hand-made
   parsers can run at the speed of the generated ones, as STJ's `Utf8JsonReader` does.
 
@@ -445,7 +445,7 @@ decodes.
 Each step is one pull request:
 - a step that changes speed has `bench/json/run.sh` numbers before and after, plus build time
   and IR size, with every row within 3% or better;
-- a step that users see updates `docs/std/json.md` (marked **Planned** until it lands) and adds
+- a step that users see updates `docs/std/encoding/json.md` (marked **Planned** until it lands) and adds
   goldens.
 
 ## Open questions

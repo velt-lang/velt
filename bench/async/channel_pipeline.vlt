@@ -1,6 +1,6 @@
 // 4 producer tasks send 250k numbers each through one bounded channel (capacity 1024) to a
 // consumer that sums them: send/receive throughput with backpressure across tasks and cores.
-import { Channel, ChannelClosed, channel } from "velt:channel";
+import { Channel, ChannelClosed, channel } from "velt/sync";
 
 async function produce(ch: Channel<i64>, id: i64): Promise<void> throws ChannelClosed {
   for (let i = 0; i < 250000; i++) {

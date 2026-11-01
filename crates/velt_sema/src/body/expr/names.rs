@@ -533,6 +533,14 @@ impl FnCx<'_, '_> {
     pub(super) fn fn_ref(&mut self, d: DefId, id: &ast::Ident, exp: Option<TyId>) -> hir::Expr {
         let span = id.span;
         let f = self.cx.fn_info(d);
+        if f.intrinsic.is_some() {
+            let what = format!("intrinsic `{}` cannot be used as a value", f.name);
+            self.cx.error(
+                Diagnostic::error(what, span)
+                    .with_note("the compiler emits each call of it in place: call it directly"),
+            );
+            return self.error_expr(span);
+        }
         if f.kind == FnKind::Extern {
             self.cx.err(
                 format!("external function `{}` cannot be used as a value", id.name),

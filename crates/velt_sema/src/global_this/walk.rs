@@ -643,7 +643,7 @@ fn ident(name: &str, span: velt_common::Span) -> ast::Expr {
 
 /// `(k as string) === "key"`: the cast keeps `k` from narrowing, so a test in a branch of
 /// another (a read in the value of an assignment) is not always false. The first test of a
-/// chain (`listed`: the keys) also checks that `k` is one of them, `__satisfies<"a" | "b">(k)`,
+/// chain (`listed`: the keys) also checks that `k` is one of them, `satisfies<"a" | "b">(k)`,
 /// as TypeScript requires (TS7053): a wider key is a type error, not a property the chain skips.
 /// A string constant of a scope that is a key of `globalThis`, where it is declared and in how
 /// many functions.

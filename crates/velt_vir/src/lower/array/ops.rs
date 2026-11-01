@@ -1,5 +1,5 @@
 //! Array intrinsics: `length`, `push` (amortized growth), `pop`, `reserve` (exact growth), and the `std/` helpers
-//! `__intrinsic_array_with_capacity/swap/remove/truncate/move/set_len`.
+//! `arrayWithCapacity`, `arraySwap`, `arrayRemove`, `arrayTruncate`, `arrayMove` and `arraySetLen` (velt/lang/intrinsics).
 
 use crate::lower::async_fn::BoxHold;
 use velt_sema::hir::{self, TyId};
@@ -239,7 +239,7 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// `__intrinsic_array_rotate_right` (`right`) or `_left` of `xs[lo..=hi]` (U64 operands):
+    /// `arrayRotateRight` (`right`) or `arrayRotateLeft` of `xs[lo..=hi]` (U64 operands):
     /// the end element is held aside, the rest moved one slot by one `memmove`, and the held
     /// element stored at the other end. `hi` is bounds-checked, which covers the range.
     fn rotate(&mut self, arr: &Place, aty: TyId, (lo, hi): (Operand, Operand), right: bool) {
@@ -282,7 +282,7 @@ impl FnLower<'_, '_> {
         self.switch_to(join);
     }
 
-    /// `__intrinsic_array_swap` of the elements at the (evaluated) indices `a` and `b`.
+    /// `arraySwap` of the elements at the (evaluated) indices `a` and `b`.
     pub(in crate::lower) fn swap_elems(
         &mut self,
         arr: &Place,
@@ -304,7 +304,7 @@ impl FnLower<'_, '_> {
         unit()
     }
 
-    /// `__intrinsic_array_swap_nested(xs, a, i, b, j)` on the content `arr` of `xs` (`aty` =
+    /// `arraySwapNested(xs, a, i, b, j)` on the content `arr` of `xs` (`aty` =
     /// `T[][]`): exchanges `xs[a][i]` and `xs[b][j]`, every index bounds-checked. Each inner
     /// array is reached as an element of `xs`; an inner array of a view type (array_view.rs)
     /// syncs and writes back just the one element, as `swap` does.
@@ -346,7 +346,7 @@ impl FnLower<'_, '_> {
         unit()
     }
 
-    /// `__intrinsic_array_move(dst, d, src, s, n)`: `dst[d..d + n)` = the bits of
+    /// `arrayMove(dst, d, src, s, n)`: `dst[d..d + n)` = the bits of
     /// `src[s..s + n)`, both ranges bounds-checked; no drop of what `dst` held, no share of
     /// what `src` holds. A literal `n` of 1 is one element copy, anything else one memcpy.
     fn array_move(&mut self, args: &[hir::Expr]) -> Operand {

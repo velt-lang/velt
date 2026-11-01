@@ -338,7 +338,7 @@ fn scan(src: &str, offset: u32) -> Scan {
         cursor: None,
         hovered: None,
     };
-    // Before the manifest value: `import type { … } from "velt:package"; export const pkg … =`.
+    // Before the manifest value: `import type { … } from "velt/package"; export const pkg … =`.
     let Some(start) = tokens.iter().position(|t| t.tok == Tok::Eq) else {
         return scan;
     };

@@ -1,0 +1,87 @@
+// The client's multiplexed connection against a fake server, so no Redis is needed: replies come
+// back in order, a connection the server closed is reopened for later commands, and once
+// reopening gives up (after its 10 s window) commands fail with the connect error.
+import { connect, RedisClient, RedisError } from "../src/lib";
+import { listen, TcpStream } from "velt/net";
+
+// Serves one connection: answers each `PING` with `:n` (its count so far on this connection) and
+// closes the connection after `limit` commands.
+async function serve(s: TcpStream, limit: i64) {
+  let seen: i64 = 0;
+  while (seen < limit) {
+    const text = await s.readString();
+    if (text.length == 0) {
+      break;
+    }
+    const pings = text.split("PING").length - 1;
+    let out = "";
+    for (let i = 0; i < pings && seen < limit; i++) {
+      seen++;
+      out += `:${seen}\r\n`;
+    }
+    await s.write(out);
+  }
+  s.close();
+}
+
+// A fake server on a free port that accepts `connections` connections (it stops listening when it
+// accepts the last one), each served by `serve`; its port.
+async function fakeServer(limit: i64, connections: i64): Promise<number> {
+  const l = await listen("127.0.0.1:0");
+  spawn(async () => {
+    for (let i = 0; i < connections; i++) {
+      const s = await l.accept();
+      if (i + 1 == connections) {
+        l.close();
+      }
+      await serve(s, limit);
+    }
+  });
+  return l.port;
+}
+
+// The reply to a `PING`: its integer, or the error's code (`"ECONNRESET"` for a command already
+// written to a connection the server closed).
+async function ping(c: RedisClient): Promise<string> {
+  try {
+    const r = await c.call(["PING"]);
+    return `${r.int}`;
+  } catch (e) {
+    if (e instanceof RedisError) {
+      return e.code;
+    }
+    throw e;
+  }
+}
+
+// `ping`, again while it fails with `ECONNRESET` (the client noticed the closed connection only
+// after writing to it).
+async function pingAfterReset(c: RedisClient): Promise<string> {
+  let r = await ping(c);
+  while (r == "ECONNRESET") {
+    r = await ping(c);
+  }
+  return r;
+}
+
+export async function test_replies_arrive_in_order_and_a_lost_connection_is_reopened() {
+  const port = await fakeServer(3, 2);
+  const c = await connect(`redis://127.0.0.1:${port}`);
+  assertEq(await ping(c), "1");
+  // Two commands from one task at once: pipelined on the one connection, answered in order.
+  const both = await Promise.all([ping(c), ping(c)]);
+  assertEq(both, ["2", "3"]);
+  // The server closed the first connection after three commands; a later one gets a new one.
+  assertEq(await pingAfterReset(c), "1");
+  c.close();
+}
+
+export async function test_requests_fail_once_reconnecting_gives_up() {
+  const port = await fakeServer(1, 1);
+  const c = await connect(`redis://127.0.0.1:${port}`);
+  assertEq(await ping(c), "1");
+  // The server closed the connection and stopped listening: reconnecting fails until the window
+  // ends, then the command fails with the connect error.
+  assertEq(await pingAfterReset(c), "ECONNREFUSED");
+  c.close();
+}

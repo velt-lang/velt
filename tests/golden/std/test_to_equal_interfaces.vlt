@@ -1,7 +1,7 @@
 // `toEqual` on values held as an interface or a base class compares their objects' fields
 // (#1882), as Vitest does: two objects of one class with equal fields are equal, whatever type
 // holds them, a subclass's own fields count, and cycles through interface values stop.
-import { expect } from "velt:test";
+import { expect } from "velt/test";
 
 interface Shape {
   area(): number;

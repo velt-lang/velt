@@ -235,7 +235,7 @@ impl FnLower<'_, '_> {
     }
 
     fn if_stmt(&mut self, cond: &hir::Expr, then: &hir::Block, els: Option<&hir::Block>) {
-        // A condition known per instantiation (`__intrinsic_holds_null`, expr.rs `const_cond`):
+        // A condition known per instantiation (`holdsNull`, expr.rs `const_cond`):
         // only the branch it takes is lowered.
         if let Some(c) = self.const_cond(cond) {
             match (c, els) {

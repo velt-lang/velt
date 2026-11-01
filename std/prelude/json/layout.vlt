@@ -1,0 +1,132 @@
+// Prelude, loaded on use: `JSON.stringify(value, replacer, space)` (the compiler calls these): `text`
+// is `JSON.stringify(value)`; `keys` the replacer array's JSON text, applied when `filter`; `gap`
+// the indent `jsonGapOfString` made of a string `space` (empty: no whitespace).
+
+import { JSON_CALLBACK_DEPTH, jsonCallbackTooDeep } from "velt/encoding/json/value_ops";
+import { JSON } from "velt/prelude/json/json";
+import { JsonValue } from "velt/prelude/json/json_value";
+
+declare function velt_rt_json_relayout(
+  text: string,
+  keys: string,
+  flags: u8,
+  indent: string,
+): string;
+
+// `JSON.stringify(value, replacer, space)` (the compiler calls these): `text` is
+// `JSON.stringify(value)`; `keys` the replacer array's JSON text, applied when `filter`; `gap`
+// the indent `jsonGapOfString` made of a string `space` (empty: no whitespace).
+/**
+ * A replacer function of `JSON.stringify(value, replacer, space)`: called with each key and the
+ * JSON form of its value (the value passed itself under the key `""` first), it returns the
+ * value to write there, or `undefined` to leave a member out (an array element is then `null`).
+ */
+export type JsonReplacer = (key: string, value: JsonValue) => JsonValue | undefined;
+
+// `JSON.stringify(value, replacer)` (the compiler calls it): `text` is `JSON.stringify(value)`,
+// which `replacer` rewrites as JavaScript applies it, from the top: its result for a key is
+// what is written there, and the members of that result are replaced in turn. `undefined` for
+// the value itself throws a `TypeError` (JavaScript returns `undefined`; this returns a string).
+function jsonReplaceWith(text: string, replacer: JsonReplacer): string {
+  let root = JsonValue.of(null);
+  try {
+    // At any depth: `stringify` writes values nested deeper than the default limit too.
+    root = JsonValue.parse(text, { maxDepth: 4294967295 });
+  } catch (e) {
+    // `text` is `JSON.stringify`'s own output.
+    panic(`ICE: JSON.stringify wrote text it cannot read back: ${e.message}`);
+  }
+  const out = jsonReplaced("", root, replacer, 0);
+  if (out == undefined) {
+    throw new TypeError(
+      "JSON.stringify: the replacer returned undefined for the value itself (JavaScript would return undefined; Velt's JSON.stringify returns a string)",
+    );
+  }
+  return out.stringify();
+}
+
+function jsonReplaced(
+  key: string,
+  value: JsonValue,
+  replacer: JsonReplacer,
+  depth: i64,
+): JsonValue | undefined {
+  if (depth > JSON_CALLBACK_DEPTH) {
+    throw jsonCallbackTooDeep();
+  }
+  const r = replacer(key, value);
+  if (r == undefined) {
+    return undefined;
+  }
+  if (r.isArray()) {
+    const out = JsonValue.array();
+    const n = r.len();
+    for (let i: i64 = 0; i < n; i++) {
+      const e = jsonReplaced(String(i), r.at(i)!, replacer, depth + 1);
+      out.push(e ?? JsonValue.of(null));
+    }
+    return out;
+  }
+  if (r.isObject()) {
+    const out = JsonValue.object();
+    for (const k of r.keys()) {
+      const e = jsonReplaced(k, r.get(k)!, replacer, depth + 1);
+      if (e != undefined) {
+        out.set(k, e);
+      }
+    }
+    return out;
+  }
+  return r;
+}
+
+function jsonRelayout(text: string, keys: string, filter: bool, gap: string): string {
+  if (!filter && gap.length == 0) {
+    return text;
+  }
+  return velt_rt_json_relayout(text, keys, jsonLayoutFlags(filter, gap.length > 0), gap);
+}
+
+// The same for a number `space`: as in V8, any `space > 0` breaks lines, so one below 1 gives
+// line breaks with an empty indent.
+function jsonRelayoutNumber(text: string, keys: string, filter: bool, space: f64): string {
+  if (!(space > 0)) {
+    return jsonRelayout(text, keys, filter, "");
+  }
+  return velt_rt_json_relayout(text, keys, jsonLayoutFlags(filter, true), jsonGapOfNumber(space));
+}
+
+// `velt_rt_json_relayout`'s flags: bit 0 filters by `keys`, bit 1 breaks lines.
+function jsonLayoutFlags(filter: bool, pretty: bool): u8 {
+  let flags: u8 = 0;
+  if (filter) {
+    flags = flags + 1;
+  }
+  if (pretty) {
+    flags = flags + 2;
+  }
+  return flags;
+}
+
+// A replacer array of strings as the runtime reads it.
+function jsonKeys(keys: string[]): string {
+  return JSON.stringify(keys);
+}
+
+// A replacer array of numbers: JS lists each as `String(n)`.
+function jsonNumberKeys(keys: f64[]): string {
+  return JSON.stringify(keys.map((k) => `${k}`));
+}
+
+// JS's gap for a number `space`: `min(10, trunc(space))` spaces, empty below 1 (or for NaN).
+function jsonGapOfNumber(space: f64): string {
+  if (!(space >= 1)) {
+    return "";
+  }
+  return " ".repeat(space >= 10 ? 10 : (space as i64));
+}
+
+// JS's gap for a string `space`: its first 10 code units.
+function jsonGapOfString(space: string): string {
+  return space.slice(0, 10);
+}

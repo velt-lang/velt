@@ -1,22 +1,23 @@
-// std/compress/brotli/header (internal to velt:compress/brotli): the stream header and meta-block
-// headers of RFC 7932 (sections 9.1 and 9.2), and block switches (section 6).
+// velt/compress (internal): the stream header and meta-block headers of RFC 7932 (sections 9.1 and
+// 9.2), and block switches (section 6).
 //
 // A compressed meta-block's header sets up everything its commands are decoded with: the block
 // types of the three categories, the context modes and maps, and the prefix code tables, all
 // of them back to back in `State.tables`. It is read in one go, as one step of the decoder
 // (decoder.vlt starts it over when the input runs out before its end).
 
-import { CompressError } from "velt:compress/error";
-import { Bits } from "velt:compress/brotli/bits";
-import { BLOCK_LENGTH_CODES, MAX_TABLE_SIZE } from "velt:compress/brotli/tables";
+import { CompressError } from "velt/compress/errors";
+import { Bits } from "velt/compress/brotli/bits";
+import { BLOCK_LENGTH_CODES, MAX_TABLE_SIZE } from "velt/compress/brotli/tables";
+import { State } from "velt/compress/brotli/state";
 import {
-  State,
   STAGE_COMMAND,
   STAGE_END,
   STAGE_METADATA,
   STAGE_STREAM,
   STAGE_UNCOMPRESSED,
-} from "velt:compress/brotli/state";
+} from "velt/compress/brotli/cursor";
+import { arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
 
 // Block categories.
 const LITERALS: usize = 0;
@@ -123,8 +124,8 @@ function reserve(s: State, at: usize, n: usize) {
   if (need > s.tables.length) {
     // Left unfilled: a table is written whole before it is read.
     const size = need * 2;
-    const grown: u32[] = __intrinsic_array_with_capacity(size);
-    __intrinsic_array_set_len(grown, size);
+    const grown: u32[] = arrayWithCapacity(size);
+    arraySetLen(grown, size);
     const old = s.tables;
     for (let i: usize = 0; i < at; i++) {
       grown[i] = old[i];

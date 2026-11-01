@@ -33,7 +33,7 @@ Errors are `{"error":{"code","message"}}` with 400 (`invalid`, `bad_json`), 404 
 500 (`db_error`).
 
 **Storage.** The JSON store keeps the list in memory and, after every change, writes the whole list
-to `$TODO_DB` (default `todos.json`) via a temp file + rename. The SQLite store (`std/sqlite`)
+to `$TODO_DB` (default `todos.json`) via a temp file + rename. The SQLite store (the repository's `sqlite` package, a path dependency in `package.vlt`)
 creates its table on open (`CREATE TABLE IF NOT EXISTS`), runs in WAL mode, prepares each query
 once and commits every change as one statement (`INSERT/UPDATE … RETURNING *`); tags are a JSON
 array column, filtered with `json_each`. Both hand out ids as max(id) + 1 after a restart. The

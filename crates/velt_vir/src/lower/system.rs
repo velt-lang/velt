@@ -213,7 +213,7 @@ impl FnLower<'_, '_> {
     /// `lastOsError` is an `errno` pointer (Windows reads `GetLastError()` at the call).
     fn errno_tls(&self) -> Option<(TlsCall, TlsCall)> {
         system::overloads(&self.cx.target, "lastOsError").find(|f| matches!(f.ret, Ret::Errno))?;
-        let id = crate::tls::stable_id("velt:os::lastOsError:I32");
+        let id = crate::tls::stable_id("velt/os::lastOsError:I32");
         let (bits, init) = (32, 0);
         Some((
             TlsCall::Get { id, bits, init },
@@ -622,7 +622,11 @@ impl super::Cx<'_> {
                         continue;
                     }
                     velt_common::Diagnostic::error(
-                        format!("{} is not available on {}", std_name(&f.name), self.target),
+                        format!(
+                            "{} is not available on {}",
+                            self.std_name(&f.name),
+                            self.target
+                        ),
                         site,
                     )
                     .with_note(format!(
@@ -672,14 +676,22 @@ impl super::Cx<'_> {
     }
 }
 
-/// A standard-library function as a program imports it: `std/fs/fd::openSync` is
-/// "`openSync` (velt:fs/fd)".
-fn std_name(qualified: &str) -> String {
-    match qualified.rsplit_once("::") {
-        Some((module, name)) => {
-            let module = module.strip_prefix("std/").unwrap_or(module);
-            format!("`{name}` (velt:{module})")
+impl super::Cx<'_> {
+    /// A standard-library function as a program imports it: `std/fs/fd/open::openSync` is
+    /// "`openSync` (velt/fs)", the module whose `index.vlt` re-exports it.
+    fn std_name(&self, qualified: &str) -> String {
+        match qualified.rsplit_once("::") {
+            Some((module, name)) => {
+                let module = match self.locs.as_ref() {
+                    Some(m) => m.owner_module(module),
+                    None => std::borrow::Cow::Borrowed(module),
+                };
+                let module = module
+                    .strip_prefix(velt_common::std_modules::CANONICAL_PREFIX)
+                    .unwrap_or(&module);
+                format!("`{name}` (velt/{module})")
+            }
+            None => format!("`{qualified}`"),
         }
-        None => format!("`{qualified}`"),
     }
 }

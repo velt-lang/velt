@@ -3,8 +3,8 @@
 //   curl -X POST localhost:8090/todos -d '{"title":"write docs"}'
 //   curl localhost:8090/todos
 // Stops after VELT_TODO_SECONDS seconds if that variable is set.
-import { serve } from "velt:http";
-import { writeFile, readFile, exists } from "velt:fs";
+import { serve } from "http-server";
+import { writeFile, readFile, exists } from "velt/fs";
 
 struct Todo {
   id: i64;

@@ -1,5 +1,5 @@
 // check: no leaks
-import { Set } from "velt:collections/set";
+import { Set } from "velt/collections";
 
 // Collecting an iterable (#424): `Array.from(iterable)`, `Array.from(iterable, (v, i) => ...)`
 // (the callback runs as each value arrives; a throw closes the iterator), `new Set(iterable)`

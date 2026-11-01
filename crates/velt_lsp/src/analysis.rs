@@ -138,6 +138,7 @@ fn standalone(path: &Path, overlay: &HashMap<PathBuf, String>, msg: String) -> A
     let module = SourceModule {
         path: "main".into(),
         is_std: false,
+        is_dependency: false,
         file,
         ast,
         imports: vec![],

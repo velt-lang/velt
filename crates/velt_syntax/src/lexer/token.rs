@@ -56,59 +56,67 @@ pub(crate) enum Kw {
 }
 
 impl Kw {
-    /// Keyword for an identifier-shaped word, if it is one.
+    /// Keyword for an identifier-shaped word, if it is one. Matched by first letter, then
+    /// whole: most words are not keywords, and one byte rules out all but a few.
     pub(crate) fn from_word(s: &str) -> Option<Kw> {
         use Kw::*;
-        Some(match s {
-            "as" => As,
-            "async" => Async,
-            "await" => Await,
-            "break" => Break,
-            "case" => Case,
-            "catch" => Catch,
-            "class" => Class,
-            "const" => Const,
-            "constructor" => Constructor,
-            "continue" => Continue,
-            "declare" => Declare,
-            "default" => Default,
-            "do" => Do,
-            "else" => Else,
-            "enum" => Enum,
-            "export" => Export,
-            "extends" => Extends,
-            "false" => False,
-            "finally" => Finally,
-            "for" => For,
-            "from" => From,
-            "function" => Function,
-            "if" => If,
-            "implements" => Implements,
-            "import" => Import,
-            "in" => In,
-            "interface" => Interface,
-            "let" => Let,
-            "new" => New,
-            "null" => Null,
-            "of" => Of,
-            "readonly" => Readonly,
-            "return" => Return,
-            "shared" => Shared,
-            "static" => Static,
-            "struct" => Struct,
-            "switch" => Switch,
-            "this" => This,
-            "throw" => Throw,
-            "true" => True,
-            "try" => Try,
-            "type" => Type,
-            "typeof" => Typeof,
-            "instanceof" => Instanceof,
-            "void" => Void,
-            "while" => While,
-            "yield" => Yield,
+        let words: &[(&str, Kw)] = match s.as_bytes().first()? {
+            b'a' => &[("as", As), ("async", Async), ("await", Await)],
+            b'b' => &[("break", Break)],
+            b'c' => &[
+                ("case", Case),
+                ("catch", Catch),
+                ("class", Class),
+                ("const", Const),
+                ("constructor", Constructor),
+                ("continue", Continue),
+            ],
+            b'd' => &[("declare", Declare), ("default", Default), ("do", Do)],
+            b'e' => &[
+                ("else", Else),
+                ("enum", Enum),
+                ("export", Export),
+                ("extends", Extends),
+            ],
+            b'f' => &[
+                ("false", False),
+                ("finally", Finally),
+                ("for", For),
+                ("from", From),
+                ("function", Function),
+            ],
+            b'i' => &[
+                ("if", If),
+                ("implements", Implements),
+                ("import", Import),
+                ("in", In),
+                ("instanceof", Instanceof),
+                ("interface", Interface),
+            ],
+            b'l' => &[("let", Let)],
+            b'n' => &[("new", New), ("null", Null)],
+            b'o' => &[("of", Of)],
+            b'r' => &[("readonly", Readonly), ("return", Return)],
+            b's' => &[
+                ("shared", Shared),
+                ("static", Static),
+                ("struct", Struct),
+                ("switch", Switch),
+            ],
+            b't' => &[
+                ("this", This),
+                ("throw", Throw),
+                ("true", True),
+                ("try", Try),
+                ("type", Type),
+                ("typeof", Typeof),
+            ],
+            b'v' => &[("void", Void)],
+            b'w' => &[("while", While)],
+            b'y' => &[("yield", Yield)],
             _ => return None,
-        })
+        };
+        words.iter().find(|(w, _)| *w == s).map(|&(_, k)| k)
     }
 
     /// Contextual keywords that may also be used as ordinary identifiers (`type`, `from`, `of`, ...).

@@ -1,6 +1,6 @@
 //! A minimal [`ProgramLoader`] for protocol tests: relative imports only (`./x` → `x.vlt` next to
 //! the importer) and relative JSX runtimes (`// @jsxImportSource ./ui` → `ui/jsx-runtime.vlt`),
-//! sources from the overlay or the disk, no std or packages. [`StdLoader`] adds `velt:x` imports
+//! sources from the overlay or the disk, no std or packages. [`StdLoader`] adds `velt/x` imports
 //! from a test's own std root (no prelude) and lists its modules. The real loader lives in
 //! `veltc` (which depends on this crate) and has its own LSP integration test there.
 
@@ -31,7 +31,7 @@ impl ProgramLoader for TestLoader {
     }
 }
 
-/// [`TestLoader`] plus `velt:x` imports from the std root it holds.
+/// [`TestLoader`] plus `velt/x` imports from the std root it holds.
 pub struct StdLoader(pub PathBuf);
 
 impl ProgramLoader for StdLoader {
@@ -59,9 +59,19 @@ fn resolve(spec: &str, from: &Path, std_root: Option<&Path>) -> Option<PathBuf> 
     let file = if let Some(rel) = spec.strip_prefix("./") {
         from.parent()?.join(format!("{rel}.vlt"))
     } else {
-        std_root?.join(format!("{}.vlt", spec.strip_prefix("velt:")?))
+        std_file(std_root?, spec.strip_prefix("velt/")?)
     };
     file.is_file().then_some(file)
+}
+
+/// The file of std module `rel`: `<std>/<rel>.vlt`, else the folder module `<std>/<rel>/index.vlt`.
+fn std_file(std: &Path, rel: &str) -> PathBuf {
+    let file = std.join(format!("{rel}.vlt"));
+    if file.is_file() {
+        file
+    } else {
+        std.join(rel).join("index.vlt")
+    }
 }
 
 fn load(
@@ -99,8 +109,8 @@ fn load(
         for (spec, span, is_runtime) in specs {
             let (file, canonical) = if let Some(rel) = spec.strip_prefix("./") {
                 (dir.join(format!("{rel}.vlt")), rel.to_string())
-            } else if let (Some(rel), Some(std)) = (spec.strip_prefix("velt:"), std_root) {
-                (std.join(format!("{rel}.vlt")), format!("std/{rel}"))
+            } else if let (Some(rel), Some(std)) = (spec.strip_prefix("velt/"), std_root) {
+                (std_file(std, rel), format!("std/{rel}"))
             } else {
                 continue;
             };
@@ -143,6 +153,7 @@ fn parse(
     diags.extend(parse_diags);
     SourceModule {
         is_std: canonical.starts_with("std/"),
+        is_dependency: false,
         path: canonical,
         file,
         ast,

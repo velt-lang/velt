@@ -61,7 +61,7 @@ fn renumber_operand(op: &mut Operand, new_id: &impl Fn(FuncId) -> FuncId) {
 }
 
 /// Mark functions reachable from exported roots.
-fn live_functions(program: &Program) -> Vec<bool> {
+pub(crate) fn live_functions(program: &Program) -> Vec<bool> {
     let n = program.funcs.len();
     let mut live = vec![false; n];
     let mut work: Vec<usize> = (0..n)

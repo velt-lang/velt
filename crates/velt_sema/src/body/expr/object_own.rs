@@ -79,7 +79,7 @@ impl FnCx<'_, '_> {
 
     /// `Object.hasOwn(o, k)` / `Object.prototype.hasOwnProperty.call(o, k)` of an `any` or
     /// `object` `o` with a `string`, `symbol` or `string | symbol` key: the prelude's
-    /// `__anyHasOwn(o, k)`, which asks the value held (`None`: `o` is not one of them).
+    /// `anyHasOwn(o, k)`, which asks the value held (`None`: `o` is not one of them).
     pub(super) fn any_has_own(&mut self, args: &[ast::Expr], span: Span) -> Option<hir::Expr> {
         let [o, k] = args else {
             return None;
@@ -106,9 +106,9 @@ impl FnCx<'_, '_> {
         if let Some(name) = self.symbol_key_of(k).filter(|_| self.uses_proxy()) {
             let name = synth(ast::ExprKind::Lit(ast::Lit::Str(name)), k.span);
             let args = vec![o.clone(), name, k.clone()];
-            return Some(self.prelude_fn_call("__anyHasOwnSym", args, span));
+            return Some(self.prelude_fn_call(velt_common::std_hook!(any_has_own_sym), args, span));
         }
-        let f = self.proxy_op("__anyHasOwn");
+        let f = self.proxy_op(velt_common::std_hook!(any_has_own));
         Some(self.prelude_fn_call(f, vec![o.clone(), k.clone()], span))
     }
 
@@ -135,7 +135,7 @@ impl FnCx<'_, '_> {
                 let symbolic = kt.is_some_and(|t| self.symbolic_key_type(t));
                 // `PropertyKey` (`string | number | symbol`): through `__propertyKey(k)`.
                 let numbered = !symbolic && kt.is_some_and(|t| self.number_property_key(t));
-                if numbered && self.has_record_method("__hasKeyed") {
+                if numbered && self.has_record_method(velt_common::std_key!(record_has_keyed)) {
                     // The record first, then the key, as JavaScript evaluates the arguments.
                     let obj = self.expr(o, None, Want::Borrow);
                     return self.with_temp("<record>", obj, o.span, span, |cx, r| {
@@ -143,13 +143,22 @@ impl FnCx<'_, '_> {
                         let kh = cx.property_key_of(kh);
                         cx.with_temp("<key>", kh, k.span, span, |cx, key| {
                             let obj = cx.expr(r, None, Want::Borrow);
-                            cx.record_call(obj, "__hasKeyed", std::slice::from_ref(key), span)
+                            cx.record_call(
+                                obj,
+                                velt_common::std_key!(record_has_keyed),
+                                std::slice::from_ref(key),
+                                span,
+                            )
                         })
                     });
                 }
                 let keyed = (symbolic || self.cx.objects.record_accessors)
-                    && self.has_record_method("__hasKeyed");
-                let method = if keyed { "__hasKeyed" } else { "__has" };
+                    && self.has_record_method(velt_common::std_key!(record_has_keyed));
+                let method = if keyed {
+                    velt_common::std_key!(record_has_keyed)
+                } else {
+                    velt_common::std_key!(record_has)
+                };
                 let obj = self.expr(o, None, Want::Borrow);
                 return self.record_call(obj, method, std::slice::from_ref(k), span);
             }
@@ -354,13 +363,13 @@ impl FnCx<'_, '_> {
     }
 
     /// `Object.prototype.toString.call(v)` of an `any` or `object` `v`: the tag of its class,
-    /// else the prelude's `__anyObjectTag(v)` (primitives, arrays, objects).
+    /// else the hook `anyObjectTag(v)` (primitives, arrays, objects).
     fn dynamic_to_string(&mut self, s: hir::Expr, span: Span) -> hir::Expr {
         let str_ = self.cx.ty.str_;
         self.dynamic_class_match(
             s,
             str_,
-            "__anyObjectTag",
+            velt_common::std_hook!(any_object_tag),
             |lw, c, _| {
                 let n = lw.cx.adt(c).map_or(0, |a| a.generics.len());
                 let params: Vec<TyId> = (0..n as u32).map(|i| lw.cx.ty.param(i)).collect();
@@ -370,7 +379,11 @@ impl FnCx<'_, '_> {
                     None => {
                         let name = lw.cx.adt(c).map_or(String::new(), |a| a.name.clone());
                         let lit = synth(ast::ExprKind::Lit(ast::Lit::Str(name)), span);
-                        lw.prelude_fn_call("__anyTagUnsupported", vec![lit], span)
+                        lw.prelude_fn_call(
+                            velt_common::std_hook!(any_tag_unsupported),
+                            vec![lit],
+                            span,
+                        )
                     }
                 }
             },
@@ -489,10 +502,7 @@ fn std_string_tag(s: &FnCx<'_, '_>, d: DefId, name: &str) -> Option<&'static str
 }
 
 /// A prelude class whose objects never reach an `any`: an array view's state
-/// (std/prelude/zzz_adapt.vlt; a view converts to `any` as the array it views).
+/// (std/lang/hooks; a view converts to `any` as the array it views).
 fn is_internal(name: &str) -> bool {
-    matches!(
-        name.rsplit("::").next(),
-        Some("__ArrayView" | "__ClassMarker")
-    )
+    name == velt_common::std_hook!(array_view) || name == velt_common::std_hook!(class_marker)
 }

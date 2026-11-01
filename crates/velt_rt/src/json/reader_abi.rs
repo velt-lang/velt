@@ -1,7 +1,7 @@
 //! The `extern "C"` surface of the JSON pull reader (`velt_rt_json_reader_*`,
 //! `velt_rt_json_error`). Return conventions: 1 = ok / 0 = error, except `next_key` and
 //! `array_next` (0 = end, 1 = more, 2 = error) and `peek` (a `TOKEN_*` kind). The reader is
-//! passed as a `u64` handle (its address): Velt code holds it as one (std/json/reader.vlt), and
+//! passed as a `u64` handle (its address): Velt code holds it as one (std/encoding/json/reader.vlt), and
 //! on wasm32 a pointer parameter would not match that `u64`.
 
 use super::reader::{Reader, FLAG_CURSOR, FLAG_ROWS, STEP_END, STEP_ERROR, STEP_MORE};
@@ -49,6 +49,24 @@ pub unsafe extern "C" fn velt_rt_json_reader_new_with(
     Box::into_raw(Box::new(Reader::with_source(
         bytes, lone_free, flags, max_depth,
     )))
+}
+
+/// A reader over a driver's live rows (`cursor`: the address of a
+/// `velt_text::rows_cursor::RawCursor`, which the caller keeps until the reader is freed), with
+/// `flags` as [`velt_rt_json_reader_new_with`]'s (`FLAG_CURSOR` added): the reader's address.
+/// What velt/encoding/json's generated `parseJsonCursor<T>` reads a row type that is not read by
+/// column with.
+///
+/// # Safety
+/// `cursor` is a live `RawCursor`'s address.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_json_reader_over_cursor(
+    cursor: u64,
+    flags: u32,
+    max_depth: u32,
+) -> u64 {
+    let src = cursor as usize as *const VeltStr;
+    velt_rt_json_reader_new_with(src, flags | FLAG_CURSOR, max_depth) as usize as u64
 }
 
 /// May a JSON `null` stand for an absent optional field whose type has no `null`? 1 = yes
@@ -276,7 +294,7 @@ pub unsafe extern "C" fn velt_rt_json_error(
 }
 
 /// Node's own message for text that is not JSON (`JSON.parse`'s `SyntaxError`), into `*out`:
-/// 1 if `src` is not JSON, 0 (`out` untouched) if it is. The Velt reader (std/json/reader.vlt)
+/// 1 if `src` is not JSON, 0 (`out` untouched) if it is. The Velt reader (std/encoding/json/reader.vlt)
 /// asks only after a failure.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_json_node_syntax(src: *const VeltStr, out: *mut VeltStr) -> u8 {

@@ -161,7 +161,7 @@ mod tests {
     use super::*;
 
     const BASE: &str = "\
-import type { Package } from \"velt:package\";
+import type { Package } from \"velt/package\";
 
 // my app
 export const pkg: Package = {

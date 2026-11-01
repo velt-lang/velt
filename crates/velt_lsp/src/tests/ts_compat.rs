@@ -18,7 +18,7 @@ fn package() -> tempfile::TempDir {
 
 fn manifest(ts_compat: &str) -> String {
     format!(
-        "import type {{ Package }} from \"velt:package\";\n\n\
+        "import type {{ Package }} from \"velt/package\";\n\n\
          export const pkg: Package = {{ name: \"app\", version: \"0.1.0\", tsCompat: {ts_compat} }};\n"
     )
 }

@@ -407,6 +407,8 @@ pub fn func(name: &str, params: &[(&str, &str)], ret: Option<&str>, body: Vec<St
         throws: None,
         is_async: false,
         is_system: false,
+        is_intrinsic: false,
+        generator: None,
         is_generator: false,
         this_param: None,
         span: D,
@@ -431,6 +433,7 @@ pub fn run_with(items: Vec<Item>, opts: CheckOptions) -> (Option<hir::Program>, 
     let m = SourceModule {
         path: "main".into(),
         is_std: false,
+        is_dependency: false,
         file: FileId(0),
         ast: Module {
             items,

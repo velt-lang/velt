@@ -84,6 +84,7 @@ impl Supervisor {
             dev_socket.name().to_os_string(),
         )];
         interrupt::install();
+        settle_lockfile(&args.build);
         let cache = vpm::Locations::from_env().ok().map(|loc| loc.cache);
         let watcher = first_watcher(
             Watcher::default(),
@@ -499,6 +500,24 @@ fn host_args(args: &DevArgs) -> Vec<OsString> {
     out
 }
 
+/// Install the program's package (as its first build would) before the watcher looks at it, so
+/// a lockfile the install writes (none yet, or a dependency added to the manifest) is there when
+/// the watcher is seeded, not seen as saved during the first build, which would build again
+/// right after it with no edit. What fails is left for the build to report.
+fn settle_lockfile(build: &crate::cli::BuildArgs) {
+    let dir = build
+        .input
+        .as_deref()
+        .and_then(Path::parent)
+        .filter(|d| !d.as_os_str().is_empty())
+        .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+    let target = build
+        .target
+        .clone()
+        .unwrap_or_else(velt_codegen_cl::host_triple);
+    let _ = crate::commands::project::Project::find(&dir, build.locked, &target);
+}
+
 /// `watcher` before the first build of `input`: it covers the program's directories, manifest
 /// and lockfile, so the first build is compared with what they held when it started. Files in
 /// the package `cache` are written once (`velt add`, `velt install`: checksum-verified registry
@@ -670,6 +689,54 @@ mod tests {
         assert!(
             reports_a_change(&mut watcher),
             "recent files count as saved"
+        );
+    }
+
+    /// A program with a path dependency and no lockfile yet: the install writes the lockfile.
+    /// Done before the watcher is seeded (`settle_lockfile`), the first build sees it as it
+    /// was, and no second build follows; written by the first build itself, it looks saved
+    /// during it, and the program is built (and restarted) again right after starting.
+    #[test]
+    fn a_lockfile_the_install_writes_needs_no_second_build() {
+        let dir = tempfile::tempdir().unwrap();
+        let loc = vpm::Locations::under(&dir.path().join("home"));
+        vpm::scaffold::new_package(dir.path(), "util", true).unwrap();
+        let app = vpm::scaffold::new_package(dir.path(), "app", false).unwrap();
+        let spec = vpm::edit::DependencySpec {
+            version: None,
+            path: Some("../util".into()),
+        };
+        vpm::edit::add_dependency(&app, "util", &spec).unwrap();
+        let lock = app.join(vpm::lockfile::LOCK_FILE);
+        let _ = std::fs::remove_file(&lock);
+        let main = app.join("src").join("main.vlt");
+        let input = Some(main.as_path());
+        let install = || {
+            vpm::install(&app, &loc, vpm::InstallOptions::default()).unwrap();
+        };
+        let first_build = |watcher: &mut Watcher, installs: bool| {
+            let snapshot = watcher.snapshot();
+            if installs {
+                install();
+            }
+            let read = std::iter::once(main.clone()).chain(manifest_files(input));
+            watcher.set(read, &snapshot);
+        };
+
+        // The fix: installed first, then watched.
+        install();
+        assert!(lock.is_file());
+        let mut watcher = first_watcher(Watcher::new(false), input, None);
+        first_build(&mut watcher, true);
+        stays_quiet(&mut watcher);
+
+        // Without it: the first build writes the lockfile, which counts as a change.
+        std::fs::remove_file(&lock).unwrap();
+        let mut watcher = first_watcher(Watcher::new(false), input, None);
+        first_build(&mut watcher, true);
+        assert!(
+            reports_a_change(&mut watcher),
+            "the lockfile the build wrote"
         );
     }
 }

@@ -1,0 +1,19 @@
+// velt/net/websocket (internal): opening a client connection (`connectWebSocket`): the
+// handshake (handshake.vlt), then a `WebSocket` over the stream.
+
+import { open } from "velt/net/websocket/opened";
+import { WebSocket, webSocketOver } from "velt/net/websocket/socket";
+
+export struct WsConnectOptions {
+  /** Extra trusted CA certificates (PEM) for `wss://`, e.g. a private or test CA. */
+  ca?: string;
+}
+
+/** Opens a client connection to a `ws://` or `wss://` URL. */
+export async function connectWebSocket(
+  url: string,
+  opts: WsConnectOptions = {},
+): Promise<WebSocket> {
+  const opened = await open(url, opts.ca ?? "");
+  return webSocketOver(opened.stream, false, opened.rest);
+}

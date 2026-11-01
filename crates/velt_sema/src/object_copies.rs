@@ -549,7 +549,9 @@ fn with_notes(cx: &mut Ctx, d: Diagnostic, c: &Copy) -> Diagnostic {
     ))
 }
 
-/// The types of the object literals (`AdtLit`) in the program's bodies and constants.
+/// The types of the object literals (`AdtLit`) in the program's bodies and constants. Generated
+/// code is left out: the objects a generator builds (a value `JSON.parse` decodes) are made as
+/// the compiler's own glue made them, which no literal of the program built.
 fn built_types(cx: &mut Ctx) -> Vec<TyId> {
     struct Lits(FxHashSet<TyId>);
     impl crate::visit::VisitMut for Lits {
@@ -560,9 +562,17 @@ fn built_types(cx: &mut Ctx) -> Vec<TyId> {
         }
     }
     let mut v = Lits(FxHashSet::default());
-    for d in cx.defs.iter_mut().flatten() {
-        if let crate::hir::Def::Fn(f) = d {
-            crate::visit::block(&mut f.body.block, &mut v);
+    let generated: Vec<bool> = (0..cx.defs.len())
+        .map(|i| match cx.info.get(i) {
+            Some(crate::defs::DefInfo::Fn(f)) => cx.is_generated_module(f.module),
+            _ => false,
+        })
+        .collect();
+    for (i, d) in cx.defs.iter_mut().enumerate() {
+        if let Some(crate::hir::Def::Fn(f)) = d {
+            if !generated[i] {
+                crate::visit::block(&mut f.body.block, &mut v);
+            }
         }
     }
     for i in cx.info.iter_mut() {

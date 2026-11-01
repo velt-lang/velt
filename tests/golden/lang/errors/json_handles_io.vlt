@@ -1,9 +1,9 @@
 // The I/O handles of std (sockets, files, processes, channels) have no JSON form.
-import { TcpListener, TcpStream } from "velt:net";
-import { FileReader, FileWriter } from "velt:fs_stream";
-import { UdpSocket } from "velt:udp";
-import { ChildProcess } from "velt:child_process";
-import { Channel } from "velt:channel";
+import { TcpListener, TcpStream } from "velt/net";
+import { FileReader, FileWriter } from "velt/fs";
+import { UdpSocket } from "velt/net/udp";
+import { ChildProcess } from "velt/process/child";
+import { Channel } from "velt/sync";
 
 function write(s: TcpStream, w: FileWriter): string {
   return JSON.stringify(s) + JSON.stringify(w);

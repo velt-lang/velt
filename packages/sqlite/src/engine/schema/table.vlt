@@ -1,0 +1,44 @@
+// sqlite/engine/schema/table (internal): a table of the schema: its columns, its rowid alias and its
+// indexes.
+
+import { Column } from "./column";
+import { Index } from "./table_index";
+
+/** A table: its columns, its rowid alias, and its indexes. */
+export class Table {
+  name: string;
+  root: u32;
+  columns: Column[] = [];
+  /** The position of the rowid alias column, or -1. */
+  rowidColumn: i64 = -1;
+  withoutRowid: bool = false;
+  /** A STRICT table: its ANY columns have no affinity. */
+  strict: bool = false;
+  indexes: Index[] = [];
+  sql: string;
+  /** "table", "virtual table" (which this engine cannot read yet), or "view" (one it cannot read). */
+  kind: string = "table";
+  /**
+   * Why the table cannot be used, or "": its CREATE statement does not parse (the parser's
+   * message), or it is a virtual table or a view that does not parse. `Schema.table` throws
+   * this for it.
+   */
+  unsupported: string = "";
+
+  constructor(name: string, root: u32, sql: string) {
+    this.name = name;
+    this.root = root;
+    this.sql = sql;
+  }
+
+  /** The position of column `name` (case-insensitive), or -1. */
+  column(name: string): i64 {
+    const n = name.toUpperCase();
+    for (let i: usize = 0; i < this.columns.length; i++) {
+      if (this.columns[i].name.toUpperCase() == n) {
+        return i as i64;
+      }
+    }
+    return -1;
+  }
+}

@@ -1,0 +1,7 @@
+import type { Package } from "velt/package";
+
+export const pkg: Package = {
+  name: "package-runs-callback",
+  version: "0.1.0",
+  dependencies: { pool: { path: "_pool" } },
+};

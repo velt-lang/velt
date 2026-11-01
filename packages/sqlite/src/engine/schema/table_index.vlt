@@ -1,0 +1,30 @@
+// sqlite/engine/schema/table_index (internal): an index of a table, as the schema declares it (the file
+// is not index.vlt, which names a folder's API).
+
+/** An index of a table: declared (CREATE INDEX) or automatic (UNIQUE, PRIMARY KEY). */
+export class Index {
+  name: string;
+  table: string;
+  root: u32;
+  unique: bool;
+  /** For each key column: its column's position in the table (-1 for the rowid, -2 for an
+   *  expression), collation and direction; the rowid follows the key columns in each entry. */
+  columns: i64[] = [];
+  colls: u8[] = [];
+  desc: bool[] = [];
+  partial: bool = false;
+  /**
+   * False when a key column has a collation this engine does not know: the entries are in an
+   * order it cannot compare in, so the index must not be used for seeks.
+   */
+  seekable: bool = true;
+  /** Why the index cannot be used (its CREATE INDEX does not parse), or "". */
+  unsupported: string = "";
+
+  constructor(name: string, table: string, root: u32, unique: bool) {
+    this.name = name;
+    this.table = table;
+    this.root = root;
+    this.unique = unique;
+  }
+}

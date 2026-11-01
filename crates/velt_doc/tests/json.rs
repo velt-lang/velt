@@ -253,7 +253,7 @@ fn every_std_module_serializes_and_its_links_resolve() {
         .iter()
         .find(|m| m["module"] == "std/fs")
         .expect("std/fs");
-    assert_eq!(fs["specifier"], "velt:fs");
+    assert_eq!(fs["specifier"], "velt/fs");
     assert!(fs["exports"].as_array().is_some_and(|e| !e.is_empty()));
     let (broken, unresolved) = check_links(&doc);
     assert!(broken.is_empty(), "{}", broken.join("\n"));

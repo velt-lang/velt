@@ -7,6 +7,14 @@
 // it too. Velt has no `undefined`, so a finished result has no `value` (reading `r.value`
 // without narrowing gives `T | null`).
 
+import {
+  generatorResume,
+  generatorResumeWith,
+  generatorReturn,
+  generatorThrow,
+  generatorValue,
+} from "velt/lang/intrinsics";
+
 /**
  * One step of an iterator: `{ value, done: false }` for the next value, `{ done: true }` once it
  * is finished (Velt has no `undefined`: a finished result has no `value`).
@@ -138,76 +146,6 @@ extend string {
 }
 
 /**
- * The iterator of an array (TS's `ArrayIterator<T>`). It holds the array (another reference
- * to it, not a copy) and reads each element when `next()` reaches it; once it reported `done`
- * it stays done, as in JS.
- */
-export class ArrayIterator<T> implements IterableIterator<T>, IteratorObject<T> {
-  private items: T[];
-  private index: usize = 0;
-  private finished: bool = false;
-
-  /** An iterator over `items`, from the first element. */
-  constructor(items: T[]) {
-    this.items = items;
-  }
-
-  /** The next element, or a `done` result past the end. */
-  next(): IteratorResult<T> {
-    if (this.finished || this.index >= this.items.length) {
-      this.finished = true;
-      return { done: true };
-    }
-    const value = __intrinsic_share(this.items[this.index]);
-    this.index++;
-    return { value: value, done: false };
-  }
-
-  /** The iterator itself. */
-  [Symbol.iterator](): Iterator<T> {
-    return this;
-  }
-}
-
-/**
- * The iterator of a string (TS's `StringIterator<string>`): one character (code point) per
- * step, as a string.
- */
-export class StringIterator implements IterableIterator<string>, IteratorObject<string> {
-  private text: string;
-  private pos: i64 = 0;
-
-  /** An iterator over the characters of `text`. */
-  constructor(text: string) {
-    this.text = text;
-  }
-
-  /** The next character (code point) as a string, or a `done` result at the end. */
-  next(): IteratorResult<string> {
-    if (this.pos >= (this.text.length as i64)) {
-      return { done: true };
-    }
-    // A high surrogate followed by a low one is one character.
-    let n: i64 = 1;
-    const c = this.text.charCodeAt(this.pos);
-    if (c >= 0xd800 && c < 0xdc00) {
-      const d = this.text.charCodeAt(this.pos + 1);
-      if (d >= 0xdc00 && d < 0xe000) {
-        n = 2;
-      }
-    }
-    const value = this.text.slice(this.pos, this.pos + n);
-    this.pos += n;
-    return { value: value, done: false };
-  }
-
-  /** The iterator itself. */
-  [Symbol.iterator](): Iterator<string> {
-    return this;
-  }
-}
-
-/**
  * A generator (`function*`, docs/reference/functions.md "Generators"): what calling one creates.
  * The body runs lazily, one `next()` at a time, up to its next `yield`. `return()` (or dropping
  * the generator, or `using`) closes a generator suspended at a `yield`: its `finally` blocks run
@@ -221,8 +159,8 @@ export class Generator<T, E = never, N = never> implements Iterator<T, E>, Itera
 
   /** Runs the body up to its next `yield` and returns that value, or a `done` result. */
   next(): IteratorResult<T> throws E {
-    if (__intrinsic_generator_resume(this)) {
-      return { value: __intrinsic_generator_value(this), done: false };
+    if (generatorResume(this)) {
+      return { value: generatorValue(this), done: false };
     }
     return { done: true };
   }
@@ -230,8 +168,8 @@ export class Generator<T, E = never, N = never> implements Iterator<T, E>, Itera
   // `next(value)` in a `Generator<T, E, N>` (the compiler calls this for it): like `next()`,
   // and the paused `yield` evaluates to `value` (the first call's value is ignored, as in JS).
   private nextWith(value: N): IteratorResult<T> throws E {
-    if (__intrinsic_generator_resume_with(this, value)) {
-      return { value: __intrinsic_generator_value(this), done: false };
+    if (generatorResumeWith(this, value)) {
+      return { value: generatorValue(this), done: false };
     }
     return { done: true };
   }
@@ -243,9 +181,9 @@ export class Generator<T, E = never, N = never> implements Iterator<T, E>, Itera
    * at once (and is done). `e` is an `any`, as in TypeScript.
    */
   throw(e: any): IteratorResult<T> throws E | any {
-    const r = __intrinsic_generator_throw(this, e);
+    const r = generatorThrow(this, e);
     if (r == 1) {
-      return { value: __intrinsic_generator_value(this), done: false };
+      return { value: generatorValue(this), done: false };
     }
     if (r == 0) {
       return { done: true };
@@ -258,7 +196,7 @@ export class Generator<T, E = never, N = never> implements Iterator<T, E>, Itera
    * its `using` values. Returns a finished result.
    */
   return(): IteratorResult<T> {
-    __intrinsic_generator_return(this);
+    generatorReturn(this);
     return { done: true };
   }
 
@@ -269,151 +207,6 @@ export class Generator<T, E = never, N = never> implements Iterator<T, E>, Itera
 
   /** `using` support: closes the generator, like `return()`. */
   [Symbol.dispose](): void {
-    __intrinsic_generator_return(this);
-  }
-}
-
-/**
- * An async generator (`async function*`, docs/reference/functions.md "Async generators"): what
- * calling one creates. Each `next()` runs the body up to its next `yield`, awaiting what the body
- * awaits on the way; its promise rejects with what the body throws (`E`). `return()` closes a
- * generator suspended at a `yield`: its `finally` blocks run (and may `await`) and its `using`
- * / `await using` values are disposed, as if the `yield` were a `return`. Dropping it closes it
- * too, without awaiting: cleanup that would `await` is then cancelled (drops only), like a
- * cancelled async function. After it finished, threw, or was closed, `next()` reports `done`.
- *
- * Like JS, `next()` and `return()` calls are queued: a call made while another one is still
- * running waits for its turn, so each promise settles with its own step, in call order. A call
- * whose promise nobody awaits still takes its turn (its value is dropped).
- *
- * The compiler creates these objects: the generator's state follows the class's fields, and the
- * queue fields start at zero.
- */
-export class AsyncGenerator<T, E = never> implements AsyncIterator<T, E>, AsyncIterable<T, E>, AsyncIterableIterator<T, E> {
-  #state: u64 = 0;
-  // The call queue (see `takeTurn`): whether a call is running, the runtime latch the running
-  // call opens when it finishes if it started alone, and the latch the last call in line opens
-  // (0: none).
-  #running: u64 = 0;
-  #head: u64 = 0;
-  #tail: u64 = 0;
-
-  /**
-   * Runs the body up to its next `yield` (awaiting what it awaits) and resolves to that value,
-   * or a `done` result; rejects with what the body throws. Calls are queued, in call order.
-   */
-  async next(): Promise<IteratorResult<T>, E> {
-    const mine = await this.takeTurn();
-    try {
-      if (await __intrinsic_async_generator_resume(this)) {
-        return { value: __intrinsic_async_generator_value(this), done: false };
-      }
-      return { done: true };
-    } finally {
-      this.passTurn(mine);
-    }
-  }
-
-  /**
-   * Closes the generator: a body suspended at a `yield` runs its `finally` blocks (which may
-   * `await`) and disposes its `using` values. Resolves to a finished result.
-   */
-  async return(): Promise<IteratorResult<T>> {
-    const mine = await this.takeTurn();
-    try {
-      await __intrinsic_async_generator_return(this);
-      return { done: true };
-    } finally {
-      this.passTurn(mine);
-    }
-  }
-
-  /** An async generator is its own iterator. */
-  [Symbol.asyncIterator](): AsyncIterator<T, E> {
-    return this;
-  }
-
-  /** `await using` support: closes the generator, like `return()`. */
-  async [Symbol.asyncDispose](): Promise<void> {
-    await this.return();
-  }
-
-  /** `using` support: closes the generator without awaiting its cleanup (see the class). */
-  [Symbol.dispose](): void {
-    // A pending call keeps the object alive, so no call is queued any more.
-    __intrinsic_async_generator_dispose(this);
-  }
-
-  // Waits until the calls made before this one finished. Returns the latch this call opens
-  // when it finishes, which the call after it waits on (0: it started alone; a call queueing
-  // behind it creates `head` for it then). An uncontended call allocates nothing; each finished
-  // call wakes only the next one.
-  private async takeTurn(): Promise<u64> {
-    if (this.#running == 0) {
-      this.#running = 1;
-      return 0;
-    }
-    let before = this.#tail;
-    if (before == 0) {
-      // Only the running call, which started alone, is ahead.
-      if (this.#head == 0) {
-        this.#head = velt_rt_latch_new();
-      }
-      before = this.#head;
-    }
-    const mine = velt_rt_latch_new();
-    this.#tail = mine;
-    await velt_rt_latch_wait(before);
-    return mine;
-  }
-
-  // The call that got `mine` from `takeTurn` finished: wake the next one, if any. The latch
-  // is released by the call that opens it (a waiting call holds its own reference).
-  private passTurn(mine: u64) {
-    if (mine == 0) {
-      if (this.#head == 0) {
-        this.#running = 0;
-        return;
-      }
-      velt_rt_latch_open(this.#head);
-      velt_rt_latch_free(this.#head);
-      this.#head = 0;
-      return;
-    }
-    if (this.#tail == mine) {
-      // Nobody is in line behind this call.
-      this.#tail = 0;
-      this.#running = 0;
-      velt_rt_latch_free(mine);
-      return;
-    }
-    velt_rt_latch_open(mine);
-    velt_rt_latch_free(mine);
-  }
-}
-
-declare function velt_rt_latch_new(): u64;
-declare function velt_rt_latch_free(latch: u64);
-declare function velt_rt_latch_open(latch: u64);
-declare async function velt_rt_latch_wait(latch: u64): Promise<void>;
-
-/**
- * An object literal whose member is a `[Symbol.iterator]()` method (`{ *[Symbol.iterator]() {
- * ... } }`, docs/reference/types.md): the method as a function, called by each loop.
- */
-export class __IterableObject<T, E = never> implements Iterable<T, E> {
-  constructor(private iterator: () => Iterator<T, E>) {}
-
-  [Symbol.iterator](): Iterator<T, E> {
-    return this.iterator();
-  }
-}
-
-/** The async twin: `{ async *[Symbol.asyncIterator]() { ... } }`. */
-export class __AsyncIterableObject<T, E = never> implements AsyncIterable<T, E> {
-  constructor(private iterator: () => AsyncIterator<T, E>) {}
-
-  [Symbol.asyncIterator](): AsyncIterator<T, E> {
-    return this.iterator();
+    generatorReturn(this);
   }
 }

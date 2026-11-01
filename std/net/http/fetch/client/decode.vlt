@@ -1,0 +1,192 @@
+// velt/net/http (internal): undoing the codings a server compressed a body with
+// (`content-encoding`), as Node's `fetch` does: `gzip` / `x-gzip` (several members), `deflate`
+// (zlib-wrapped or raw, decided by the first byte) and `br`, in any combination of up to five,
+// the last one undone first. A list naming another coding leaves the body as it is; an empty
+// body is empty in any coding; a body cut off before its compressed stream ends is an error.
+//
+// A body read whole is decoded whole (velt/compress's one-shot functions, the output sized from
+// gzip's trailer); a body read piece by piece goes through a chain of streaming decoders, each
+// handing out at most `CHUNK` bytes at a time, so a small body that expands enormously still
+// arrives in bounded pieces.
+
+import { IoError } from "velt/io/error";
+import { CompressError } from "velt/compress/errors";
+import { BrotliDecoder, brotliDecompress } from "velt/compress/brotli/brotli_decoder";
+import { gunzip, InflateDecoder, inflateHttp } from "velt/compress/inflate/inflate_decoder";
+
+/** The most a decoder hands back at once (Node's pieces are at most 16 KiB). */
+export const CHUNK: i64 = 65536;
+/** The most codings one body may list (undici's limit). */
+const MAX_CODINGS: i64 = 5;
+
+const GZIP: i64 = 0;
+const DEFLATE: i64 = 1;
+const BROTLI: i64 = 2;
+
+/** What `fetch` asks servers for when the request names nothing (undici's values). */
+export function acceptEncoding(https: bool): string {
+  return https ? "br, gzip, deflate" : "gzip, deflate";
+}
+
+/**
+ * The codings to undo for a `content-encoding` header value, in the order they were applied:
+ * `[]` for none (or one `fetch` does not decode), null for more than `MAX_CODINGS`.
+ */
+export function codingsOf(value: string): i64[] | null {
+  if (value.length == 0) {
+    return [];
+  }
+  const out: i64[] = [];
+  for (const part of value.split(",")) {
+    const c = part.trim().toLowerCase();
+    if (c.length == 0 || c == "identity") {
+      continue;
+    }
+    if (c == "gzip" || c == "x-gzip") {
+      out.push(GZIP);
+    } else if (c == "deflate") {
+      out.push(DEFLATE);
+    } else if (c == "br") {
+      out.push(BROTLI);
+    } else {
+      return [];
+    }
+  }
+  return (out.length as i64) > MAX_CODINGS ? null : out;
+}
+
+/** `fetch`'s error for a body that does not decode. */
+export function undecodable(e: CompressError): IoError {
+  return new IoError("EILSEQ", `fetch failed: invalid compressed body: ${e.message}`);
+}
+
+export function tooMany(): IoError {
+  return new IoError(
+    "EILSEQ",
+    `fetch failed: invalid compressed body: more than ${MAX_CODINGS} content codings`,
+  );
+}
+
+/** `body` (a whole body) with `codings` undone, the last applied first. */
+export function decodeAll(body: u8[], codings: i64[]): u8[] throws IoError {
+  let data = body;
+  try {
+    for (let i = (codings.length as i64) - 1; i >= 0; i--) {
+      const c = codings[i];
+      data = c == GZIP ? gunzip(data) : c == DEFLATE ? inflateHttp(data) : brotliDecompress(data);
+    }
+  } catch (e) {
+    throw undecodable(e);
+  }
+  return data;
+}
+
+/** One coding undone as its input arrives. */
+class Layer {
+  private inflater: InflateDecoder | null = null;
+  private brotli: BrotliDecoder | null = null;
+
+  constructor(coding: i64) {
+    if (coding == BROTLI) {
+      this.brotli = new BrotliDecoder();
+    } else {
+      this.inflater = new InflateDecoder(coding == GZIP ? "gzip" : "deflate");
+    }
+  }
+
+  feed(input: u8[]) {
+    const i = this.inflater;
+    const b = this.brotli;
+    if (i != null) {
+      i.feed(input);
+    } else if (b != null) {
+      b.feed(input);
+    }
+  }
+
+  finish() {
+    const i = this.inflater;
+    const b = this.brotli;
+    if (i != null) {
+      i.finish();
+    } else if (b != null) {
+      b.finish();
+    }
+  }
+
+  read(max: i64): u8[] throws CompressError {
+    const i = this.inflater;
+    const b = this.brotli;
+    if (i != null) {
+      return i.read(max);
+    }
+    return b != null ? b.read(max) : [];
+  }
+
+  get done(): bool {
+    const i = this.inflater;
+    const b = this.brotli;
+    if (i != null) {
+      return i.done;
+    }
+    return b != null ? b.done : true;
+  }
+}
+
+/** The streaming decoders of one body: `layers[0]` takes the body as received. */
+export class Chain {
+  private layers: Layer[] = [];
+  private finished: bool[] = [];
+
+  constructor(codings: i64[]) {
+    for (let i = (codings.length as i64) - 1; i >= 0; i--) {
+      this.layers.push(new Layer(codings[i]));
+      this.finished.push(false);
+    }
+  }
+
+  /** The next received piece of the body. */
+  feed(piece: u8[]) {
+    this.layers[0].feed(piece);
+  }
+
+  /** The body has been received whole. */
+  finish() {
+    this.layers[0].finish();
+    this.finished[0] = true;
+  }
+
+  /** Whether the last decoder has ended (what follows in the body is ignored). */
+  get done(): bool {
+    return this.layers[(this.layers.length as i64) - 1].done;
+  }
+
+  /** Up to `max` decoded bytes: `[]` when more of the body is needed first, or at the end. */
+  read(max: i64): u8[] throws IoError {
+    try {
+      return this.out((this.layers.length as i64) - 1, max);
+    } catch (e) {
+      throw undecodable(e);
+    }
+  }
+
+  /** The output of decoder `i`, pulling the output of the one before it as it needs. */
+  private out(i: i64, max: i64): u8[] throws CompressError {
+    const layer = this.layers[i];
+    while (true) {
+      const r = layer.read(max);
+      if (r.length > 0 || layer.done || i == 0) {
+        return r;
+      }
+      const up = this.out(i - 1, CHUNK);
+      if (up.length > 0) {
+        layer.feed(up);
+      } else if (this.layers[i - 1].done && !this.finished[i]) {
+        layer.finish();
+        this.finished[i] = true;
+      } else {
+        return [];
+      }
+    }
+  }
+}

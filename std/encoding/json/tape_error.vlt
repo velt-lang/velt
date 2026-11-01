@@ -1,0 +1,9 @@
+// velt/encoding/json (internal): `TapeError`, what parsing a tape (tape.vlt) fails with.
+
+/** Why `parseTape` failed: the message `JSON.parseValue` throws. */
+export class TapeError {
+  message: string;
+  constructor(message: string) {
+    this.message = message;
+  }
+}

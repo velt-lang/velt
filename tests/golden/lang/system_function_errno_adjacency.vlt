@@ -3,7 +3,7 @@
 // (or any other work that calls the C library) sits between the failing call and the read: the
 // compiler captures errno into a hidden slot right after each system call. `open` of a missing
 // file sets ENOENT (2 everywhere); building and dropping arrays in between must not change it.
-import { lastOsError } from "velt:os";
+import { lastOsError } from "velt/os";
 
 declare system function open(path: readonly u8[], oflag: i32, mode: u32): i32;
 declare system function close(fd: i32): i32;

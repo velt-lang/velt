@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 
 /// The version of the runtime function table this `velt` provides (velt_rt's
 /// `NATIVE_ABI_VERSION`); bundles needing more are refused before download.
-pub const NATIVE_ABI: u32 = 2;
+pub const NATIVE_ABI: u32 = 3;
 
 /// File name of a bundle's metadata (generated JSON, [`crate::json_file`]).
 pub const META_FILE: &str = "native.json";
@@ -102,6 +102,12 @@ pub struct NativeMeta {
     /// Linux/macOS: the prelinked object for static (release) links, relative to the bundle.
     #[serde(default, skip_serializing_if = "Option::is_none", rename = "static")]
     pub static_obj: Option<String>,
+    /// Linux/macOS: the system libraries `static` needs, as linker arguments (rustc's
+    /// `native-static-libs` for the crate: `-lgcc_s`, `-framework`, `SystemConfiguration`, ...).
+    /// Linked only into the programs that use the package, besides what every program links.
+    /// `None` in a bundle built before velt recorded them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_libs: Option<Vec<String>>,
     /// Every export except the init function: name → signature (`(string,u32)->IoResult<u64>`).
     pub exports: BTreeMap<String, String>,
 }
@@ -268,6 +274,7 @@ mod tests {
             shared: "shared/libvelt_native_sqlite.so".into(),
             import_lib: None,
             static_obj: Some("static/sqlite.o".into()),
+            system_libs: None,
             exports: BTreeMap::from([(
                 "velt_sqlite__open".into(),
                 "(string)->IoResult<u64>".into(),

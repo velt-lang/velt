@@ -241,7 +241,7 @@ impl FnCx<'_, '_> {
             || self
                 .cx
                 .adt(d)
-                .is_some_and(|a| a.qual_name == "std/collections/set::Set")
+                .is_some_and(|a| a.qual_name == velt_common::std_item!(collections_set, "Set"))
     }
 
     /// What the field initializers of class type `ty` and of its base classes up to (not

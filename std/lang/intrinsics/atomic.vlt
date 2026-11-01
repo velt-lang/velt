@@ -1,0 +1,50 @@
+// velt/lang/intrinsics (internal): the operations of `Atomic<T>` (std/prelude/sync.vlt,
+// docs/internals/design/atomics.md), each one instruction. An ordering argument is an integer
+// literal: 0 relaxed, 1 acquire, 2 release, 3 acqrel, 4 seqcst; the compiler replaces it with the
+// ordering the call of the `Atomic` method names, after checking that the operation may have it.
+// The `Atomic` is read and changed where it is (in a local, an object, an array or a `shared`
+// box); nothing else reads or writes one.
+
+import type { Copied } from "./modes";
+
+/** The value. */
+export declare intrinsic function atomicLoad<T>(a: Atomic<T>, order: u8): T;
+
+/** Makes `value` the value. */
+export declare intrinsic function atomicStore<T>(a: Atomic<T>, value: Copied<T>, order: u8): void;
+
+/**
+ * A read-modify-write; returns the previous value. `op` is an integer literal: 0 exchange, 1 add,
+ * 2 sub, 3 and, 4 or, 5 xor, 6 max, 7 min (`max` and `min` compare as `T` does: signed for a
+ * signed `T`; integers only; add and sub wrap).
+ */
+export declare intrinsic function atomicRmw<T>(
+  a: Atomic<T>,
+  value: Copied<T>,
+  op: u8,
+  order: u8,
+): T;
+
+/** Makes `value` the value if it is `expected`; returns the previous value. */
+export declare intrinsic function atomicCas<T>(
+  a: Atomic<T>,
+  expected: Copied<T>,
+  value: Copied<T>,
+  order: u8,
+  failure: u8,
+): T;
+
+/** As `atomicCas`, whether it made the change (which may fail spuriously). */
+export declare intrinsic function atomicCasWeak<T>(
+  a: Atomic<T>,
+  expected: Copied<T>,
+  value: Copied<T>,
+  order: u8,
+  failure: u8,
+): bool;
+
+/** A memory fence of ordering `order` (never relaxed). */
+export declare intrinsic function atomicFence(order: u8): void;
+
+/** Tells the CPU the thread is spinning on a value another thread changes. */
+export declare intrinsic function atomicSpinHint(): void;

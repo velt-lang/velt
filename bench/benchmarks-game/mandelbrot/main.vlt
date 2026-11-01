@@ -4,7 +4,7 @@
 // Idiomatic single-threaded Velt, written the way a TypeScript developer would: one pixel at a
 // time, eight pixels packed per byte, the bitmap written as binary PBM to stdout. Follows the
 // Node.js #2 program (Greg Buchholz's C #2, buffered by Isaac Gouy).
-import { argv, stdout } from "velt:process";
+import { argv, stdout } from "velt/process";
 
 const MAX_ITERATIONS = 50;
 const LIMIT_SQUARED = 4.0;

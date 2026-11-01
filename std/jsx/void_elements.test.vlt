@@ -1,0 +1,23 @@
+// velt/jsx (tests): white-box tests, run by `velt test std/`.
+//
+// White-box test: std/jsx's two lists of void elements agree (#675 review): `jsxVoidElements`,
+// which the compiler reads (children are an error, templates write no end tag), and
+// `isVoidElement`, which the generic `jsx` uses. (Was the golden std/jsx_void_elements.)
+import { describe, expect, it } from "velt/test";
+import { isVoidElement, jsxVoidElements } from "velt/jsx/void_elements";
+
+describe("the void elements", () => {
+  it("are the same in both lists", () => {
+    const tags = jsxVoidElements.split(" ");
+    expect(tags.length).toBe(13);
+    for (const tag of tags) {
+      expect(isVoidElement(tag)).toBe(true);
+    }
+  });
+
+  it("leave out other tags, and match case exactly", () => {
+    for (const tag of ["div", "p", "svg", "circle", "template", "my-br", "BR"]) {
+      expect(isVoidElement(tag)).toBe(false);
+    }
+  });
+});

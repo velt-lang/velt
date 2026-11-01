@@ -1,0 +1,162 @@
+// Prelude: `Atomic<T>` (docs/std/sync.md, docs/internals/design/atomics.md), and the interfaces
+// that bound what one holds (`AtomicValue`) and what may be shared without a lock (`Frozen`). The
+// compiler turns every call of an `Atomic` method into the instruction with the ordering its call
+// site names; the bodies here, `seqcst` whatever the ordering (only ever stronger), run only
+// through a function value of a method.
+//
+// Lowering calls `pin` and `unpin` around a function that loads an `Atomic` of a `shared` value,
+// and `retire` for each reference such an `Atomic` gives up (velt_vir `epoch_sections.rs`,
+// `atomic_ref.rs`).
+
+import { pin, unpin, retire } from "velt/sync/epoch";
+import {
+  atomicCas,
+  atomicCasWeak,
+  atomicFence,
+  atomicLoad,
+  atomicRmw,
+  atomicSpinHint,
+  atomicStore,
+} from "velt/lang/intrinsics";
+
+/**
+ * A number, `bool` or `shared` value that threads read and change at once, without a lock:
+ * `new Atomic<u64>(0)`
+ * (docs/std/sync.md). It is stored in place, as a plain `T`, in the object or array that holds
+ * it, and it is the one part of a `shared<T>` that changes: `s.hits.add(1)` changes the word in
+ * the `shared` value every thread reads. Each method is one instruction (or a short loop where
+ * the CPU has none). `T` is an integer type, `f64`, `f32` or `bool`; a float's `add`, `sub`,
+ * `max` and `min` are compare-and-swap loops. `T` may also be `shared<U>` or `shared<U> | null`:
+ * `load`, `store` and `exchange` then move references, and `compareExchange` compares identity
+ * and returns whether it swapped (docs/std/sync.md). An `Atomic<string>` is the same, except that
+ * `compareExchange` compares contents.
+ *
+ * Every method takes a memory ordering, `"seqcst"` when left out, as JavaScript's `Atomics`:
+ * `"relaxed"` (only this word is atomic), `"acquire"` (later reads see what the thread that
+ * released saw), `"release"`, `"acqrel"` (both) or `"seqcst"` (also one order of all `seqcst`
+ * operations). It must be a string literal. An `Atomic` cannot be copied or shared, only used
+ * where it is: `a.load()` reads it.
+ */
+export struct Atomic<T> {
+  private v: T;
+
+  /** The value. */
+  load(order: "relaxed" | "acquire" | "seqcst" = "seqcst"): T {
+    return atomicLoad(this, 4);
+  }
+
+  /** Makes `v` the value. */
+  store(v: T, order: "relaxed" | "release" | "seqcst" = "seqcst"): void {
+    atomicStore(this, v, 4);
+  }
+
+  /** Makes `v` the value; returns the previous one. */
+  exchange(v: T, order: "relaxed" | "acquire" | "release" | "acqrel" | "seqcst" = "seqcst"): T {
+    return atomicRmw(this, v, 0, 4);
+  }
+
+  /**
+   * Makes `v` the value if it is `expected`; returns the previous value, which is `expected`
+   * when it did. `failure` is the ordering of the read when it did not (by default `order`
+   * without its release part). On an `Atomic` of a `shared` value it compares identity (the same
+   * reference), on an `Atomic<string>` contents, and returns whether it made `v` the value; when
+   * it did not, `v` is dropped.
+   */
+  compareExchange(
+    expected: T,
+    v: T,
+    order: "relaxed" | "acquire" | "release" | "acqrel" | "seqcst" = "seqcst",
+    failure: "relaxed" | "acquire" | "seqcst" = "seqcst",
+  ): T {
+    return atomicCas(this, expected, v, 4, 4);
+  }
+
+  /**
+   * `compareExchange` that may fail even when the value is `expected` (call it in a loop), and
+   * that is cheaper on CPUs without a compare-and-swap instruction; returns whether it made `v`
+   * the value.
+   */
+  compareExchangeWeak(
+    expected: T,
+    v: T,
+    order: "relaxed" | "acquire" | "release" | "acqrel" | "seqcst" = "seqcst",
+    failure: "relaxed" | "acquire" | "seqcst" = "seqcst",
+  ): bool {
+    return atomicCasWeak(this, expected, v, 4, 4);
+  }
+
+  /** Adds `v` (wrapping around at an integer type's bounds); returns the previous value. */
+  add(v: T, order: "relaxed" | "acquire" | "release" | "acqrel" | "seqcst" = "seqcst"): T {
+    return atomicRmw(this, v, 1, 4);
+  }
+
+  /** Subtracts `v` (wrapping around at an integer type's bounds); returns the previous value. */
+  sub(v: T, order: "relaxed" | "acquire" | "release" | "acqrel" | "seqcst" = "seqcst"): T {
+    return atomicRmw(this, v, 2, 4);
+  }
+
+  /** Bitwise and (logical, for `bool`) with `v`; returns the previous value. */
+  and(v: T, order: "relaxed" | "acquire" | "release" | "acqrel" | "seqcst" = "seqcst"): T {
+    return atomicRmw(this, v, 3, 4);
+  }
+
+  /** Bitwise or (logical, for `bool`) with `v`; returns the previous value. */
+  or(v: T, order: "relaxed" | "acquire" | "release" | "acqrel" | "seqcst" = "seqcst"): T {
+    return atomicRmw(this, v, 4, 4);
+  }
+
+  /** Bitwise exclusive or (logical, for `bool`) with `v`; returns the previous value. */
+  xor(v: T, order: "relaxed" | "acquire" | "release" | "acqrel" | "seqcst" = "seqcst"): T {
+    return atomicRmw(this, v, 5, 4);
+  }
+
+  /**
+   * Makes the value the larger of it and `v` (`Math.max` for a float); returns the previous
+   * value. Numbers only.
+   */
+  max(v: T, order: "relaxed" | "acquire" | "release" | "acqrel" | "seqcst" = "seqcst"): T {
+    return atomicRmw(this, v, 6, 4);
+  }
+
+  /**
+   * Makes the value the smaller of it and `v` (`Math.min` for a float); returns the previous
+   * value. Numbers only.
+   */
+  min(v: T, order: "relaxed" | "acquire" | "release" | "acqrel" | "seqcst" = "seqcst"): T {
+    return atomicRmw(this, v, 7, 4);
+  }
+
+  /**
+   * A fence: with `"acquire"`, later reads and writes of this thread stay after the reads before
+   * it; with `"release"`, earlier ones stay before the writes after it; `"acqrel"` both;
+   * `"seqcst"` also in the one order of all `seqcst` operations.
+   */
+  static fence(order: "acquire" | "release" | "acqrel" | "seqcst" = "seqcst"): void {
+    atomicFence(4);
+  }
+
+  /**
+   * A hint for a loop that waits for another thread to change a value: the CPU spends less
+   * power and gives a sibling hardware thread its turn (`pause`, `isb`). It changes no memory.
+   */
+  static spinHint(): void {
+    atomicSpinHint();
+  }
+}
+
+/**
+ * The types an `Atomic` can hold: the integer types, `f32`, `f64`, `bool`, `string` and
+ * `shared` values (and `shared<U> | null`); the compiler knows which, so no type declares it. A
+ * type parameter bounded by it (`T extends AtomicValue`) may be an `Atomic`'s `T` in generic
+ * code, checked where the generic is instantiated.
+ */
+export interface AtomicValue {}
+
+/**
+ * The types whose `shared` values are read in place, without a lock or a copy: what holds no
+ * `Mutex`, weak reference, promise, function or interface value, and no class with subclasses
+ * or a `clone()` of its own. The compiler knows which, so no type declares it (an `extends` or
+ * `implements` of it is an error). With a type parameter bounded by it (`V extends Frozen`),
+ * generic code reads a `shared<V>` as a `V`, checked where the generic is instantiated.
+ */
+export interface Frozen {}

@@ -114,7 +114,7 @@ workspace: a `velt.workspace.vlt` at its root lists the member packages, which t
 
 ```ts ignore
 // velt.workspace.vlt
-import type { Workspace } from "velt:package";
+import type { Workspace } from "velt/package";
 
 export const workspace: Workspace = {
   members: ["packages/*", "apps/*"],

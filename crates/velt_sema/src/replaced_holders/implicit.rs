@@ -8,7 +8,7 @@
 //! 1. **Class hooks called by formatting and serialising glue** (`hir::AdtDef::to_string`,
 //!    `to_json`, `inspect`): `String(x)`, template literals, `+` on a string and `join` /
 //!    `toString` of arrays (std code over a `T`) call `toString()`; `JSON.stringify` calls
-//!    `toJSON()`; `console.log` / `console.error` call `__inspect()`, all for the value and for
+//!    `toJSON()`; `console.log` / `console.error` call `[INSPECT]()`, all for the value and for
 //!    every value it holds. Counted for the arguments of the intrinsics in [`glue_args`] whose
 //!    type reaches a class with such a method ([`Implicit::reach`]).
 //! 2. **A class's own `clone()`**, which a deep copy calls instead of copying a resource owner
@@ -50,7 +50,7 @@
 //!    nothing they could drop.
 //!
 //! Lowering also calls std methods from glue (`Map` methods for equality and hashing of
-//! dictionaries, `Record.__positions` / `__decoded` / `set` for JSON): std code that runs no
+//! dictionaries, `Record[RECORD_POSITIONS]` / `[RECORD_DECODED]` / `set` for JSON): std code that runs no
 //! user code. Equality, hashing, sharing and truthiness are generated and call nothing.
 
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -62,7 +62,7 @@ use crate::defs::DefInfo;
 use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, TyId, TyKind};
 
 /// The methods glue calls on a class (1 and 2).
-const GLUE_HOOKS: [&str; 4] = ["toString", "toJSON", "__inspect", "clone"];
+const GLUE_HOOKS: [&str; 4] = ["toString", "toJSON", crate::hooks::INSPECT, "clone"];
 
 /// What dropping, formatting or copying a value of some type may reach.
 #[derive(Clone, Default, PartialEq, Eq)]
@@ -532,7 +532,6 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::ErrorText
         | I::Inspect
         | I::TemplateToString
-        | I::JsonStringify
         | I::Clone
         | I::Transfer
         | I::Spawn
@@ -558,8 +557,11 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::AnySetIndex
         // `key in p` runs a proxy's `has` trap (and a proxy's `get` / `set` slots its traps).
         | I::AnyHas
-        // A record's `__delete` removes an entry.
-        | I::AnyDelete => true,
+        // A record's `[RECORD_DELETE]` removes an entry.
+        | I::AnyDelete
+        // Reading an entry runs an object literal's getter; a hook is a method.
+        | I::AnyReflectValue
+        | I::AnyReflectHook => true,
         // Run no user code (what they drop is counted as drops; the function values they call
         // as callbacks; generator resumes apart).
         I::StrConcat
@@ -571,6 +573,11 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::AnyKeys
         | I::AnyTruthy
         | I::AnyTag
+        | I::Identity
+        | I::ToAny
+        | I::AnyReflectInfo
+        | I::AnyReflectCount
+        | I::AnyReflectName
         | I::AnyToNumber
         | I::AnyStrictEq
         | I::AnyLooseEq
@@ -604,8 +611,6 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::Subarray
         | I::ParamOrdering
         | I::Hash
-        | I::Eq
-        | I::DeepEq
         | I::KeyEq
         | I::IncludesEq
         | I::Same
@@ -653,16 +658,6 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::SharedAdd
         | I::SharedGet
         | I::SharedRead
-        | I::JsonParse
-        | I::JsonParseRows
-        | I::JsonParseCursor
-        | I::DbBind
-        // The `RowSource` methods these call are not hooks; std/db calls the same methods
-        // itself on the path that reads rows as JSON, in the same function, so the analysis of
-        // `readRows` / `readRow` sees them.
-        | I::ReadRows
-        | I::ReadRow
-        | I::HttpHandler
         | I::StrCharCodeAt
         | I::StrByteAt
         | I::StrLoadU8x16

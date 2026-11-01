@@ -3,8 +3,8 @@
 // Written the way a TypeScript developer would: read all of stdin into a string and use
 // `RegExp` (std/regex, the Rust `regex` crate underneath) for every match and replace.
 
-import { readAll } from "velt:stdin";
-import { RegExp } from "velt:regex";
+import { readAll } from "velt/process";
+import { RegExp } from "velt/text";
 
 async function main() {
   // (Locals, not module constants: module-level constants must be literals.)

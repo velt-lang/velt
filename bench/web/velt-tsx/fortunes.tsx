@@ -2,7 +2,7 @@
 // folded into the page's string (`jsxList`: one template literal per row, no element), so the
 // whole page is one `jsxTemplateString`, rendered by `renderToStringSync`.
 
-import { renderToStringSync } from "velt:jsx";
+import { renderToStringSync } from "velt/jsx";
 import { Fortune } from "../velt/app";
 
 function page(fortunes: Fortune[]): JSX.Element {

@@ -1,0 +1,8 @@
+import type { Package } from "velt/package";
+
+// The `fetch` benchmarks' servers: the repository's HTTP server package.
+export const pkg: Package = {
+  name: "fetch-bench",
+  version: "0.1.0",
+  dependencies: { "http-server": { path: "../../packages/http-server" } },
+};

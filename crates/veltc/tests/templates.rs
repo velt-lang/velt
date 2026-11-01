@@ -81,6 +81,43 @@ fn check_template(template: &str, has_main: bool) {
     let s = sandbox();
     let name = format!("demo-{template}");
     let out = s.ok("", &["new", &name, "--template", template]);
+    if matches!(template, "api" | "websocket") {
+        // Their projects depend on `http-server` from the Velt repository on GitHub (at the
+        // release's tag, or `main` for a toolchain built from another commit); here the
+        // dependency points at this checkout's copy instead, so the test needs no network.
+        let manifest = s.path(&name).join("package.vlt");
+        let text = std::fs::read_to_string(&manifest).unwrap();
+        let tag = env!("VELT_RELEASE_TAG");
+        let at = if tag.is_empty() {
+            "branch: \"main\"".to_string()
+        } else {
+            format!("tag: \"{tag}\"")
+        };
+        for field in [
+            "git: \"https://github.com/velt-lang/velt\"",
+            &at,
+            "path: \"packages/http-server\"",
+        ] {
+            assert!(text.contains(field), "{text}");
+        }
+        // The manifest as generated is formatted; the one rewritten below is formatted again,
+        // since whether its dependencies fit on a line depends on where the checkout is.
+        assert_eq!(velt_fmt::format_source(&text).unwrap(), text);
+        let start = text.find("\"http-server\": {").unwrap();
+        let end = start + text[start..].find('}').unwrap() + 1;
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .unwrap();
+        let local = repo.join("packages/http-server");
+        let local = format!(
+            "\"http-server\": {{ path: \"{}\" }}",
+            local.display().to_string().replace('\\', "/")
+        );
+        let rewritten = format!("{}{local}{}", &text[..start], &text[end..]);
+        let rewritten = velt_fmt::format_source(&rewritten).unwrap();
+        std::fs::write(&manifest, rewritten).unwrap();
+    }
     assert!(out.contains(&format!("({template} template)")), "{out}");
     let root = s.path(&name);
     for file in [

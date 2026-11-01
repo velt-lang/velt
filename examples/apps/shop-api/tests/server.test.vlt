@@ -1,7 +1,7 @@
 // The HTTP server under concurrent writes: requests run on several threads, and the store's
 // Mutex must make stock-taking all or nothing.
-import { AbortError } from "velt:task";
-import { IoError } from "velt:io";
+import { AbortError } from "velt/task";
+import { IoError } from "velt/io";
 import { Order, Product } from "../src/model";
 import { startServer } from "../src/server";
 import { Store } from "../src/store";

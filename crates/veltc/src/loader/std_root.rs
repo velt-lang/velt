@@ -2,6 +2,8 @@
 
 use std::path::{Path, PathBuf};
 
+use velt_common::std_modules;
+
 /// The std root: `$VELT_STD`; else the installed layout (`<prefix>/bin/velt` → `<prefix>/std`);
 /// else, walking up from the executable to the first directory with a `Cargo.toml` (dev layout:
 /// `<repo>/target/<profile>/velt`), its `std/`; else `<exe dir>/std`. `None` if none of these
@@ -47,18 +49,35 @@ pub fn in_std(file: &Path, std_root: &Path) -> bool {
     key(file).starts_with(key(std_root))
 }
 
-/// `std/prelude/*.vlt`, sorted by file name (empty if the directory is missing).
-pub fn prelude_files(std_root: &Path) -> Vec<PathBuf> {
-    let Ok(entries) = vpm::probe::read_dir(&std_root.join("prelude")) else {
-        return vec![];
+/// The prelude's files in load order, as `std/prelude/index.vlt` lists them
+/// ([`velt_common::std_modules::prelude_order`], docs/internals/design/std-layout.md §4). No
+/// prelude file is no prelude; prelude files without a readable, valid index are an error.
+pub fn prelude_files(std_root: &Path) -> Result<Vec<PathBuf>, String> {
+    let dir = std_root.join("prelude");
+    let index = std_root.join(std_modules::PRELUDE_INDEX);
+    let has_files = || {
+        vpm::probe::read_dir(&dir).is_ok_and(|entries| {
+            entries.iter().any(|e| {
+                let p = e.path();
+                vpm::probe::is_file(&p) && p.extension().is_some_and(|x| x == "vlt")
+            })
+        })
     };
-    let mut files: Vec<PathBuf> = entries
+    if !vpm::probe::is_file(&index) && !has_files() {
+        return Ok(vec![]);
+    }
+    let src = vpm::probe::read_to_string(&index).map_err(|e| {
+        format!(
+            "cannot read the prelude's load order `{}`: {e}",
+            index.display()
+        )
+    })?;
+    let order =
+        std_modules::prelude_order(&src).map_err(|e| format!("`{}`, {e}", index.display()))?;
+    Ok(order
         .into_iter()
-        .map(|e| e.path())
-        .filter(|p| vpm::probe::is_file(p) && p.extension().is_some_and(|e| e == "vlt"))
-        .collect();
-    files.sort();
-    files
+        .map(|name| dir.join(format!("{name}.vlt")))
+        .collect())
 }
 
 #[cfg(test)]
@@ -66,18 +85,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn lists_prelude_sorted() {
+    fn lists_the_prelude_in_index_order() {
         let tmp = tempfile::tempdir().unwrap();
-        assert!(prelude_files(tmp.path()).is_empty());
+        assert!(prelude_files(tmp.path()).unwrap().is_empty());
         let dir = tmp.path().join("prelude");
         std::fs::create_dir_all(&dir).unwrap();
         for f in ["b.vlt", "a.vlt", "notes.md"] {
             std::fs::write(dir.join(f), "").unwrap();
         }
-        assert_eq!(
-            prelude_files(tmp.path()),
-            [dir.join("a.vlt"), dir.join("b.vlt")]
+        let err = prelude_files(tmp.path()).unwrap_err();
+        assert!(
+            err.contains("cannot read the prelude's load order"),
+            "{err}"
         );
+        // The index decides the order, not the file names.
+        std::fs::write(
+            dir.join("index.vlt"),
+            "// Prelude.\nimport \"./b\";\nimport \"./a\";\n",
+        )
+        .unwrap();
+        assert_eq!(
+            prelude_files(tmp.path()).unwrap(),
+            [dir.join("b.vlt"), dir.join("a.vlt")]
+        );
+        std::fs::write(dir.join("index.vlt"), "export { x } from \"./a\";\n").unwrap();
+        let err = prelude_files(tmp.path()).unwrap_err();
+        assert!(err.contains("line 1: expected `import"), "{err}");
     }
 
     #[test]

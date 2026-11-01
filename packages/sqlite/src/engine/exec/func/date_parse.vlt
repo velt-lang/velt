@@ -1,0 +1,185 @@
+// sqlite/engine/exec/func/date_parse (internal): the times SQLite's date.c parses: `YYYY-MM-DD
+// HH:MM:SS.SSS[+HH:MM]`, `HH:MM[:SS]`, a number or 'now'.
+
+import { atof } from "../value/atof";
+import { DateTime, computeJD, computeFloor, setNow, setRawNumber } from "./date_time";
+
+export function isDigit(c: u8): bool {
+  return c >= 48 && c <= 57;
+}
+
+export function isSpace(c: u8): bool {
+  return c == 32 || (c >= 9 && c <= 13);
+}
+
+/** Byte `i` of `b`, or 0 past its end (a C string's terminator). */
+export function at(b: u8[], i: usize): u8 {
+  return i < b.length ? b[i] : 0;
+}
+
+// `n` digits at `i` between `min` and `max`, followed by `next` (0: anything): the value, or -1.
+export function digits(b: u8[], i: usize, n: usize, min: i64, max: i64, next: u8): i64 {
+  let v: i64 = 0;
+  for (let k: usize = 0; k < n; k++) {
+    const c = at(b, i + k);
+    if (!isDigit(c)) {
+      return -1;
+    }
+    v = v * 10 + ((c - 48) as i64);
+  }
+  if (v < min || v > max || (next != 0 && at(b, i + n) != next)) {
+    return -1;
+  }
+  return v;
+}
+
+function parseTimezone(b: u8[], i0: usize, p: DateTime): bool {
+  let i = i0;
+  while (isSpace(at(b, i))) {
+    i++;
+  }
+  p.tz = 0;
+  const c = at(b, i);
+  let sgn: i64 = 0;
+  if (c == 45) {
+    sgn = -1;
+  } else if (c == 43) {
+    sgn = 1;
+  } else if (c == 90 || c == 122) {
+    i++;
+    while (isSpace(at(b, i))) {
+      i++;
+    }
+    return at(b, i) != 0;
+  } else {
+    return c != 0;
+  }
+  i++;
+  const hr = digits(b, i, 2, 0, 14, 58);
+  const mn = hr < 0 ? -1 : digits(b, i + 3, 2, 0, 59, 0);
+  if (mn < 0) {
+    return true;
+  }
+  i += 5;
+  p.tz = sgn * (mn + hr * 60);
+  while (isSpace(at(b, i))) {
+    i++;
+  }
+  return at(b, i) != 0;
+}
+
+// HH:MM[:SS[.FFF]]: true on an error.
+export function parseHhMmSs(b: u8[], i0: usize, p: DateTime): bool {
+  let i = i0;
+  const h = digits(b, i, 2, 0, 24, 58);
+  const m = h < 0 ? -1 : digits(b, i + 3, 2, 0, 59, 0);
+  if (m < 0) {
+    return true;
+  }
+  i += 5;
+  let s: i64 = 0;
+  let ms: f64 = 0;
+  if (at(b, i) == 58) {
+    i++;
+    s = digits(b, i, 2, 0, 59, 0);
+    if (s < 0) {
+      return true;
+    }
+    i += 2;
+    if (at(b, i) == 46 && isDigit(at(b, i + 1))) {
+      let scale: f64 = 1;
+      i++;
+      while (isDigit(at(b, i))) {
+        ms = ms * 10 + ((b[i] - 48) as f64);
+        scale *= 10;
+        i++;
+      }
+      ms /= scale;
+      if (ms > 0.999) {
+        ms = 0.999;
+      }
+    }
+  }
+  p.validJD = false;
+  p.rawS = false;
+  p.validHMS = true;
+  p.h = h;
+  p.m = m;
+  p.s = (s as f64) + ms;
+  return parseTimezone(b, i, p);
+}
+
+// YYYY-MM-DD [HH:MM[:SS[.FFF]]]: true on an error.
+function parseYyyyMmDd(b: u8[], p: DateTime): bool {
+  let i: usize = 0;
+  let neg = false;
+  if (at(b, 0) == 45) {
+    i = 1;
+    neg = true;
+  }
+  const Y = digits(b, i, 4, 0, 9999, 45);
+  const M = Y < 0 ? -1 : digits(b, i + 5, 2, 1, 12, 45);
+  const D = M < 0 ? -1 : digits(b, i + 8, 2, 1, 31, 0);
+  if (D < 0) {
+    return true;
+  }
+  i += 10;
+  while (isSpace(at(b, i)) || at(b, i) == 84) {
+    i++;
+  }
+  if (!parseHhMmSs(b, i, p)) {
+    // got the time
+  } else if (at(b, i) == 0) {
+    p.validHMS = false;
+  } else {
+    return true;
+  }
+  p.validJD = false;
+  p.validYMD = true;
+  p.Y = neg ? -Y : Y;
+  p.M = M;
+  p.D = D;
+  computeFloor(p);
+  if (p.tz != 0) {
+    computeJD(p);
+  }
+  return false;
+}
+
+function iequals(b: u8[], s: string): bool {
+  if (b.length != s.length) {
+    return false;
+  }
+  for (let i: usize = 0; i < b.length; i++) {
+    const c = b[i] >= 65 && b[i] <= 90 ? b[i] + 32 : b[i];
+    if (c != (s.charCodeAt(i as i64) as u8)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// The time a string names: true on an error.
+export function parseDateOrTime(b: u8[], p: DateTime): bool {
+  if (!parseYyyyMmDd(b, p)) {
+    return false;
+  }
+  if (!parseHhMmSs(b, 0, p)) {
+    return false;
+  }
+  if (iequals(b, "now")) {
+    setNow(p);
+    return false;
+  }
+  const r = atof(b, 0);
+  if (r.whole && r.state > 0 && r.end > 0) {
+    setRawNumber(p, r.value);
+    return false;
+  }
+  if (iequals(b, "subsec") || iequals(b, "subsecond")) {
+    p.useSubsec = true;
+    setNow(p);
+    return false;
+  }
+  return true;
+}

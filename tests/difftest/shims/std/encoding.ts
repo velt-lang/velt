@@ -1,6 +1,6 @@
-// Node twin of std/encoding for the differential harness, on `Buffer` and `TextDecoder`. The
+// Node twin of velt/encoding for the differential harness, on `Buffer` and `TextDecoder`. The
 // strict checks that Node's decoders skip (Base64 alphabet and padding, hex digits, UTF-8
-// validity) are written out from the std/encoding docs, independently of its code.
+// validity) are written out from the velt/encoding docs, independently of its code.
 
 export class EncodingError extends Error {}
 

@@ -130,45 +130,17 @@ fn json_types() {
         "type D = { m: Map<string, i64[]>, t: [string, f64] };
          function main() { const d = JSON.parse<D>(\"{}\"); console.log(JSON.stringify(d)); }",
     );
-    let r = err_src(
-        "function main() { const m = new Map<i64, i64>(); console.log(JSON.stringify(m)); }",
-    );
-    assert!(r.contains("`Map<i64, i64>` has no JSON form"), "{r}");
-    assert!(r.contains("only with `string` keys"), "{r}");
-    // Everything else without a JSON form is a diagnostic (never an ICE in lowering).
-    for (decl, ty) in [
-        ("interface Named { name(): string; }", "Named"),
-        ("", "Promise<i64>"),
-        ("", "shared<i64>"),
-        ("", "() => void"),
-    ] {
-        let r = err_src(&format!(
-            "{decl} type W = {{ f: {ty} }};
-             async function main() {{ const w = JSON.parse<W>(\"{{}}\"); }}"
-        ));
-        assert!(
-            r.contains(&format!("contains `{ty}`, which has no JSON form")),
-            "{r}"
-        );
-    }
+    // What `JSON.stringify` cannot write and `JSON.parse` cannot decode is reported by their
+    // generators, which a check without generators does not run:
+    // tests/golden/lang/errors/json_stringify_unwritable.vlt and json_parse_no_form.vlt.
     // An unknown type is reported once, not again as having no JSON form.
     let r = err_src("type W = { s: Nope }; function main() { JSON.parse<W>(\"{}\"); }");
     assert!(!r.contains("JSON"), "{r}");
-    let r = err_src(
-        "struct W { f: (x: i64) => i64; }
-         function main() { const w = JSON.parse<W>(\"{}\"); }",
-    );
-    assert!(r.contains("cannot convert to or from JSON"), "{r}");
-    // A `shared<T>` is written as its `T`, except an atomic `shared<int>`.
+    // A `shared<T>` is written as its `T`, except an atomic `shared<int>` (the golden above).
     ok_src(
         "function send<T>(v: T): string { return JSON.stringify(v); }
          function main() { console.log(send(shared(1))); }",
     );
-    let r = err_src(
-        "function send<T>(v: T): string { return JSON.stringify(v); }
-         function main() { console.log(send(shared(1 as i64))); }",
-    );
-    assert!(r.contains("`shared<i64>` has no JSON form"), "{r}");
 }
 
 #[test]

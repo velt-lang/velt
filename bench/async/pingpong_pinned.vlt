@@ -2,7 +2,7 @@
 // (320k in total) to the owner of their key, over a channel plus Promise.withResolvers: the
 // pattern of the actors runtime (#182), whose cost is mostly cross-thread wakes. Every key has
 // one owner, so the printed total is the same in any order.
-import { channel, Channel } from "velt:channel";
+import { channel, Channel } from "velt/sync";
 
 type Call = { key: string; reply: (n: i64) => void };
 

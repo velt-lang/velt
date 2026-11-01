@@ -1,0 +1,9 @@
+// Outside `velt dev` nothing joins the graceful stop: `joinStop()` is null, and `drained()`
+// does nothing.
+import { drained, joinStop } from "velt/dev";
+
+function main() {
+  console.log(joinStop() == null);
+  drained();
+  console.log("done");
+}

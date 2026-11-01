@@ -1,0 +1,75 @@
+// velt/encoding (internal): the runtime functions velt/encoding calls, and the SIMD operations it uses
+// (`velt/simd`, std/simd/*.vlt, is the API; declared again here so that this module does not
+// load it). `load` and `store` do not check their range.
+
+import { IoResult } from "velt/native/result";
+
+/** `(const VeltStr* s, VeltBytes* out)`: copies a string's bytes. */
+export declare function velt_rt_bytes_from_str(s: string): u8[];
+
+/** `(const VeltBytes* b, IoResult<VeltStr>* out)`: copies bytes into a string, `EILSEQ` if invalid. */
+export declare function velt_rt_bytes_to_str(b: u8[]): IoResult<string>;
+
+export declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
+
+/**
+ * The SIMD operations hex uses (`velt/simd`, std/simd/*.vlt, is the API; declared again here
+ * so that this module does not load it). `load` and `store` do not check their range.
+ */
+export declare function velt_simd_u8x16_splat(x: u8): u8x16;
+
+export declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
+
+export declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
+
+export declare function velt_simd_u8x16_add(a: u8x16, b: u8x16): u8x16;
+
+export declare function velt_simd_u8x16_sub(a: u8x16, b: u8x16): u8x16;
+
+export declare function velt_simd_u8x16_and(a: u8x16, b: u8x16): u8x16;
+
+export declare function velt_simd_u8x16_or(a: u8x16, b: u8x16): u8x16;
+
+export declare function velt_simd_u8x16_shr(v: u8x16, count: u32): u8x16;
+
+export declare function velt_simd_u8x16_gt(a: u8x16, b: u8x16): mask8x16;
+
+export declare function velt_simd_u8x16_le(a: u8x16, b: u8x16): mask8x16;
+
+export declare function velt_simd_u8x16_select(m: mask8x16, a: u8x16, b: u8x16): u8x16;
+
+export declare function velt_simd_u8x16_zip_low(a: u8x16, b: u8x16): u8x16;
+
+export declare function velt_simd_u8x16_zip_high(a: u8x16, b: u8x16): u8x16;
+
+export declare function velt_simd_u8x16_as_u16x8(v: u8x16): u16x8;
+
+export declare function velt_simd_u16x8_splat(x: u16): u16x8;
+
+export declare function velt_simd_u16x8_and(a: u16x8, b: u16x8): u16x8;
+
+export declare function velt_simd_u16x8_or(a: u16x8, b: u16x8): u16x8;
+
+export declare function velt_simd_u16x8_shl(v: u16x8, count: u32): u16x8;
+
+export declare function velt_simd_u16x8_shr(v: u16x8, count: u32): u16x8;
+
+export declare function velt_simd_u16x8_narrow(a: u16x8, b: u16x8): u8x16;
+
+export declare function velt_simd_mask8x16_or(a: mask8x16, b: mask8x16): mask8x16;
+
+export declare function velt_simd_mask8x16_all(m: mask8x16): bool;
+
+export declare function velt_simd_u8x16_ge(a: u8x16, b: u8x16): mask8x16;
+
+export declare function velt_simd_mask8x16_any(m: mask8x16): bool;
+
+export declare function velt_simd_mask8x16_first(m: mask8x16): u64;
+
+export declare function velt_simd_mask8x16_and(a: mask8x16, b: mask8x16): mask8x16;
+
+export declare function velt_simd_u64x2_splat(x: u64): u64x2;
+
+export declare function velt_simd_u64x2_with_lane(v: u64x2, index: u64, x: u64): u64x2;
+
+export declare function velt_simd_u64x2_as_u8x16(v: u64x2): u8x16;

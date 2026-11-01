@@ -3,7 +3,7 @@
 // and `withLane` panic with their RangeError. Lane values and shift counts are converted as std
 // converts every `number` it takes as an integer.
 
-import { u8x16, f32x4 } from "velt:simd";
+import { u8x16, f32x4 } from "velt/simd";
 
 function main() {
   const d: u8[] = Buffer.alloc(32);

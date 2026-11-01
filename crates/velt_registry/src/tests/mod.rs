@@ -142,6 +142,7 @@ fn native_bundle(dir: &Path, content: &str) -> std::path::PathBuf {
         shared: "shared/libvelt_native_n.so".into(),
         import_lib: None,
         static_obj: None,
+        system_libs: None,
         exports,
     };
     std::fs::write(b.join("native.json"), meta.to_json()).unwrap();

@@ -128,13 +128,18 @@ impl FnLower<'_, '_> {
 
     /// The null check, the slot call and the status check of a write with key `key`.
     fn any_set_at(&mut self, data: &Operand, desc: &Operand, key: SetKey, v: Operand) {
-        let done = self.proxy_branch("__set", data, desc, |lw, obj, pty, r| {
-            let pk = match &key {
-                SetKey::Str(k) => ProxyKey::Str(lw.copy_to_temp(k.clone(), Ty::Ptr)),
-                SetKey::Num(i) => ProxyKey::Num(lw.copy_to_temp(i.clone(), Ty::F64)),
-            };
-            lw.proxy_set_direct((obj, pty, r), pk, v.clone());
-        });
+        let done = self.proxy_branch(
+            velt_common::std_key!(proxy_set),
+            data,
+            desc,
+            |lw, obj, pty, r| {
+                let pk = match &key {
+                    SetKey::Str(k) => ProxyKey::Str(lw.copy_to_temp(k.clone(), Ty::Ptr)),
+                    SetKey::Num(i) => ProxyKey::Num(lw.copy_to_temp(i.clone(), Ty::F64)),
+                };
+                lw.proxy_set_direct((obj, pty, r), pk, v.clone());
+            },
+        );
         let (st, k) = match &key {
             SetKey::Str(k) => {
                 self.any_nullish_check_as(desc, NullKey::Str(k), true);

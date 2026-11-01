@@ -41,8 +41,6 @@ const WINDOWS: Platform = Platform {
         "bcrypt.lib",
         "dbghelp.lib",
         "synchronization.lib",
-        // `whoami` (tokio-postgres' default user name).
-        "secur32.lib",
         "msvcrt.lib",
     ],
     shared_native_libs: &["kernel32.lib", "msvcrt.lib"],
@@ -77,15 +75,7 @@ const MACOS: Platform = Platform {
     runtime_lib_name: "libvelt_rt.a",
     // rustc's list minus `-lSystem`: `cc` always links libSystem, and passing it again makes
     // ld64 print "ignoring duplicate libraries" into every link error.
-    native_libs: &[
-        "-framework",
-        "SystemConfiguration",
-        "-framework",
-        "CoreFoundation",
-        "-liconv",
-        "-lc",
-        "-lm",
-    ],
+    native_libs: &["-liconv", "-lc", "-lm"],
     // `cc` links libSystem, which has the C library.
     shared_native_libs: &[],
     base_args: &[],
@@ -183,7 +173,11 @@ pub(crate) fn unix_args(req: &LinkRequest, os: TargetOs) -> Vec<OsString> {
         args.push(req.runtime_lib.into());
     }
     args.extend(native::unix_shared_args(req.native));
-    args.extend(p.libs_for(req, os).iter().map(OsString::from));
+    let libs = p.libs_for(req, os);
+    args.extend(libs.iter().map(OsString::from));
+    // What the packages' prelinked objects need besides (`cc` links libSystem on macOS).
+    let covered: Vec<&str> = libs.iter().copied().chain(["-lSystem"]).collect();
+    args.extend(native::system_lib_args(req.native, &covered));
     args.push("-o".into());
     args.push(req.output.into());
     args
@@ -421,7 +415,9 @@ mod tests {
             "{mac:?}"
         );
         let mac = args("aarch64-apple-darwin", "/t/libvelt_rt.a");
-        assert!(mac.contains(&"SystemConfiguration".to_string()), "{mac:?}");
+        assert!(mac.contains(&"-liconv".to_string()), "{mac:?}");
+        // Frameworks only a package needs are the package's (its bundle's system libraries).
+        assert!(!mac.iter().any(|a| a == "-framework"), "{mac:?}");
 
         let linux = args("x86_64-unknown-linux-gnu", "/t/libvelt_rt_shared.so");
         assert!(linux.contains(&"-lm".to_string()) && linux.contains(&"-lc".to_string()));

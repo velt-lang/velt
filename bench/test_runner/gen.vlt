@@ -3,8 +3,8 @@
 // test does a little work (an array, a loop, a string) and checks it, and every one passes.
 //
 //   velt run bench/test_runner/gen.vlt <root> [FILES] [TESTS]   (default 50 files of 20 tests)
-import { existsSync, mkdirSync, removeSync, writeFileSync } from "velt:fs";
-import { args } from "velt:process";
+import { existsSync, mkdirSync, removeSync, writeFileSync } from "velt/fs";
+import { args } from "velt/process";
 
 /** The body shared by both suites; `check(a, b)` is `assertEq` or `expect(a).toBe(b)`. */
 function body(n: number, check: (a: string, b: string) => string): string {

@@ -1,0 +1,134 @@
+// velt/net/url (internal): the path parser: percent-encoding segments, resolving `.` and `..`,
+// and the Windows drive letters of `file:` URLs.
+
+import { BACKSLASH, SLASH } from "velt/net/url/chars";
+import { PATH, encodeSet, inSetCode, isAscii } from "velt/net/url/encode";
+
+/** Whether the byte at `i` separates path segments. */
+export function isSep(s: string, i: i64, special: bool): bool {
+  const c = s.charCodeAt(i);
+  return c == SLASH || (special && c == BACKSLASH);
+}
+
+/**
+ * Serializes path `p` (after `segs`), percent-encoding segments and resolving `.` and `..`. In
+ * a `file:` URL (`file`), a first segment `C|` is the drive letter `C:`, and `..` does not
+ * remove a drive letter.
+ */
+export function parsePath(p: string, segs: string[], special: bool, file: bool = false): string {
+  const len = p.length as i64;
+  if (len == 0 && segs.length == 0) {
+    return special ? "/" : "";
+  }
+  if (segs.length == 0 && !file && isSerializedPath(p)) {
+    return p;
+  }
+  let i: i64 = isSep(p, 0, special) ? 1 : 0;
+  while (true) {
+    let j = i;
+    while (j < len && !isSep(p, j, special)) {
+      j++;
+    }
+    const last = j >= len;
+    const dots = dotSegment(p, i, j);
+    // A final `.` or `..` leaves an empty last segment (the path ends in `/`), except for a
+    // `..` that had nothing to remove in a non-special URL: its path stays empty, as Node has
+    // it (`foo://h/..` is `foo://h`, `foo://h/a/..` is `foo://h/`).
+    const emptied = dots == 2 && segs.length == 0;
+    if (dots == 2 && !(file && segs.length == 1 && isDriveLetter(segs[0]))) {
+      segs.pop();
+    }
+    if (dots == 0) {
+      const seg = p.slice(i, j);
+      // A `file:` URL's first segment `C|` is the drive letter `C:`.
+      const drive =
+        file &&
+        segs.length == 0 &&
+        seg.length == 2 &&
+        seg.charCodeAt(1) == 124 &&
+        startsWithDrive(seg, 0);
+      segs.push(drive ? `${seg.slice(0, 1)}:` : encodeSet(seg, PATH));
+    } else if (last && (special || !emptied)) {
+      segs.push("");
+    }
+    if (last) {
+      break;
+    }
+    i = j + 1;
+  }
+  return segs.length == 0 ? "" : `/${segs.join("/")}`;
+}
+
+/** Is `s` a normalized Windows drive letter (`C:`)? */
+export function isDriveLetter(s: string): bool {
+  if (s.length != 2 || s.charCodeAt(1) != 58) {
+    return false;
+  }
+  const c = s.charCodeAt(0);
+  return (c >= 65 && c <= 90) || (c >= 97 && c <= 122);
+}
+
+/**
+ * Does `s[from..]` start with a Windows drive letter (`C:` or `C|`) followed by the end, `/`,
+ * `\`, `?` or `#`?
+ */
+export function startsWithDrive(s: string, from: i64): bool {
+  const len = s.length as i64;
+  if (from + 2 > len) {
+    return false;
+  }
+  const c = s.charCodeAt(from);
+  const second = s.charCodeAt(from + 1);
+  const letter = (c >= 65 && c <= 90) || (c >= 97 && c <= 122);
+  if (!letter || (second != 58 && second != 124)) {
+    return false;
+  }
+  if (from + 2 == len) {
+    return true;
+  }
+  const next = s.charCodeAt(from + 2);
+  return next == 47 || next == 92 || next == 63 || next == 35;
+}
+
+// Whether `parsePath` would give back `p` unchanged, found in one pass without building the
+// segments: `p` starts with `/`, has nothing to escape and no `\` (a separator only in special
+// URLs; the others just take the long way), and no segment starts with `.` or `%` (every
+// spelling of a dot segment does).
+function isSerializedPath(p: string): bool {
+  if (!isAscii(p) || p.charCodeAt(0) != SLASH) {
+    return false;
+  }
+  let segmentStart = true;
+  for (let i: i64 = 1; i < (p.length as i64); i++) {
+    const c = p.charCodeAt(i);
+    if (c == SLASH) {
+      segmentStart = true;
+      continue;
+    }
+    if (c == BACKSLASH || inSetCode(c, PATH)) {
+      return false;
+    }
+    if (segmentStart && (c == 46 || c == 37)) {
+      return false;
+    }
+    segmentStart = false;
+  }
+  return true;
+}
+
+// 1 for a `.` segment, 2 for `..` (also spelled with `%2e`), else 0.
+function dotSegment(p: string, from: i64, to: i64): i64 {
+  const n = to - from;
+  if (n == 0 || n > 6) {
+    return 0;
+  }
+  const first = p.charCodeAt(from);
+  if (first != 46 && first != 37) {
+    return 0;
+  }
+  const seg = p.slice(from, to).toLowerCase();
+  if (seg == "." || seg == "%2e") {
+    return 1;
+  }
+  return seg == ".." || seg == ".%2e" || seg == "%2e." || seg == "%2e%2e" ? 2 : 0;
+}

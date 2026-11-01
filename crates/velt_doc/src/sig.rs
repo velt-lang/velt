@@ -296,7 +296,7 @@ impl Printer<'_> {
     }
 
     /// `name` in `name: ` (or `name?: `) right before byte `lo`.
-    fn param_name_before(&self, lo: u32) -> Option<&str> {
+    pub(crate) fn param_name_before(&self, lo: u32) -> Option<&str> {
         let before = self.src.get(..lo as usize)?.trim_end();
         let before = before.strip_suffix(':')?.trim_end();
         let before = before.strip_suffix('?').unwrap_or(before);

@@ -1,6 +1,6 @@
 // Regression (difftest url-file-host-port): a `file:` URL has no port or credentials (`:` and `@`
 // are forbidden host code points), in the constructor and in the `host` setter.
-import { URL } from "velt:url";
+import { URL } from "velt/net/url";
 
 function main() {
   const inputs: string[] = [

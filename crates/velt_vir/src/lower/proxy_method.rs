@@ -222,12 +222,11 @@ impl FnLower<'_, '_> {
         let TyKind::Adt(pd, _) = self.cx.kind(pty) else {
             super::ice("the `Proxy` class")
         };
-        let m = self
-            .dyn_members_of(pd)
-            .into_iter()
-            .find(|m| m.name == "__hasGet" && m.kind == hir::DynMemberKind::Method);
+        let m = self.dyn_members_of(pd).into_iter().find(|m| {
+            m.name == velt_common::std_key!(proxy_has_get) && m.kind == hir::DynMemberKind::Method
+        });
         let Some(m) = m else {
-            super::ice("the `Proxy` class without `__hasGet`")
+            super::ice("the `Proxy` class without `[PROXY_HAS_GET]`")
         };
         let fid = self.cx.func_for(m.def, vec![]);
         let b = self.cx.intern(TyKind::Bool);
@@ -244,8 +243,14 @@ impl FnLower<'_, '_> {
         let k = self.proxy_key(ProxyKey::Str(kl));
         let r = self.proxy_receiver(data, pty);
         let res = Place::local(self.temp(avt));
-        if !self.proxy_invoke("__get", data, pty, vec![(k, any), (r, any)], &res) {
-            super::ice("the `Proxy` class without `__get`");
+        if !self.proxy_invoke(
+            velt_common::std_key!(proxy_get),
+            data,
+            pty,
+            vec![(k, any), (r, any)],
+            &res,
+        ) {
+            super::ice("the `Proxy` class without `[PROXY_GET]`");
         }
         let fd = self.copy_to_temp(Operand::Copy(proj(&res, Proj::Field(0))), Ty::Ptr);
         let fdesc = Operand::Copy(proj(&res, Proj::Field(1)));

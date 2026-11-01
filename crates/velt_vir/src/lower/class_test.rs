@@ -63,7 +63,7 @@ impl Cx<'_> {
         matches!(self.hir.def(d), hir::Def::Adt(a) if last.contains(&a.name.as_str()))
     }
 
-    /// Is `d` the prelude's `__ArrayView` (array_view.rs)? Numbered after every other class, so
+    /// Is `d` the hook `ArrayView` (array_view.rs)? Numbered after every other class, so
     /// that no other class's id moves for it.
     fn view_class(&self, d: DefId) -> bool {
         matches!(self.hir.def(d), hir::Def::Adt(a) if a.name == super::array_view::VIEW_CLASS)
@@ -89,7 +89,7 @@ impl Cx<'_> {
         // Explicit stack (deep hierarchies must not overflow the compiler's stack): (class,
         // whether its subclasses are numbered already).
         let mut stack: Vec<(DefId, bool)> = vec![];
-        // `Proxy` and `Reflect` (std/proxy.vlt) and the other classes of `numbered_last` are
+        // `Proxy` and `Reflect` (std/lang/proxy/index.vlt) and the other classes of `numbered_last` are
         // numbered last, so the classes of programs that don't use them keep their ids.
         let mut roots: Vec<DefId> = children.get(&None).cloned().unwrap_or_default();
         roots.sort_by_key(|&d| (self.view_class(d), self.numbered_last(d)));

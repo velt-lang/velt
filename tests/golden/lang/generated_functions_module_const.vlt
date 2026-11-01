@@ -1,0 +1,28 @@
+// A module constant whose initializer reaches a generated function is evaluated where it is
+// read, also inside a function: the instance it needs is generated (it panicked as "the own
+// body of a generated function ran" when read only inside `main`).
+import { describe, show } from "./_generators";
+
+struct Item {
+  id: i64;
+}
+
+class Point {
+  x: i32 = 1;
+  y: i32 = 2;
+}
+
+const items: Item[] = [];
+items.push({ id: 1 });
+items.push({ id: 2 });
+const s = JSON.stringify(items);
+const d = describe<Point>();
+const shown = show(new Point());
+
+function main() {
+  console.log(s);
+  console.log(d);
+  console.log(shown);
+}
+
+main();

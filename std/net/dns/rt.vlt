@@ -1,0 +1,5 @@
+// velt/net/dns (internal): the runtime's resolver function (rt_abi_async.md §14.6).
+
+import { IoResult } from "velt/native/result";
+
+export declare async function velt_rt_dns_lookup(host: string): Promise<IoResult<string[]>>;

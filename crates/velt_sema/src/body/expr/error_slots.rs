@@ -17,15 +17,16 @@ impl FnCx<'_, '_> {
     /// union, so a trial check against one member finds it, and is rolled back. A sync arrow
     /// is tried as `(…) => T throws E` (`E`: what it throws), a named function by its own type
     /// (what it throws, or what its promise rejects with). An async arrow needs none: checked
-    /// first, it infers what it rejects with (`FnCx::async_arrow_callback`). Returns the slot it
-    /// fixed; one nothing fixes is `never`.
+    /// first, it infers what it rejects with (`FnCx::async_arrow_callback`). Returns the slots
+    /// it fixed: every unknown error-only one (`E` of the promise and `F` of `throws F` may be two
+    /// parameters); one nothing fixes is `never`.
     pub(super) fn infer_union_error(
         &mut self,
         arg: &ast::Expr,
         pty: TyId,
         known: &[Option<TyId>],
         slots: &mut [Option<TyId>],
-    ) -> Option<usize> {
+    ) -> Vec<usize> {
         let arrow = as_arrow(arg);
         let is_async = matches!(
             arrow.map(|a| &a.kind),
@@ -34,12 +35,7 @@ impl FnCx<'_, '_> {
         // An async arrow needs no trial: checked first, it infers what it rejects with
         // (`FnCx::async_arrow_callback`).
         if is_async || (arrow.is_none() && !matches!(arg.kind, ast::ExprKind::Ident(_))) {
-            return None;
-        }
-        // A server's handler is checked as an async arrow (`FnCx::thread_arrow`), which infers
-        // its error type itself.
-        if self.thread_task == Some(arg.span) || self.thread_callback == Some(arg.span) {
-            return None;
+            return vec![];
         }
         let fn_ty = self.cx.ty.core(pty).unwrap_or(pty);
         let TyKind::FnPtr {
@@ -49,18 +45,24 @@ impl FnCx<'_, '_> {
             rest,
         } = self.cx.ty.kind(fn_ty).clone()
         else {
-            return None;
+            return vec![];
         };
         let inner = self.cx.ty.core(ret).unwrap_or(ret);
-        let members = self.cx.union_members(inner)?;
+        let Some(members) = self.cx.union_members(inner) else {
+            return vec![];
+        };
         let (promises, values): (Vec<TyId>, Vec<TyId>) = members
             .iter()
             .partition(|m| self.cx.ty.promise_payload(**m).is_some());
         let ([promise], [value]) = (promises.as_slice(), values.as_slice()) else {
-            return None;
+            return vec![];
         };
-        let k = (0..slots.len())
-            .find(|&k| known[k].is_none() && error_only(self.cx, fn_ty, k as u32))?;
+        let open: Vec<usize> = (0..slots.len())
+            .filter(|&k| known[k].is_none() && error_only(self.cx, fn_ty, k as u32))
+            .collect();
+        if open.is_empty() {
+            return vec![];
+        }
         let mark = crate::body::recheck::Mark::here(self.cx);
         let frames = self.trial_frames();
         let (trial, found) = match arrow {
@@ -82,7 +84,12 @@ impl FnCx<'_, '_> {
                     }
                     _ => *value,
                 };
-                let throws = if ret == *promise {
+                // A promise's rejections fill its own error slot; what the arrow throws before
+                // returning it fills `throws` only when that is another slot (`throws F` beside
+                // `Promise<T, E>`), not the same `E`.
+                let same =
+                    matches!(self.cx.ty.kind(*promise), TyKind::Promise(_, e) if *e == throws);
+                let throws = if ret == *promise && same {
                     self.cx.ty.never
                 } else {
                     throws
@@ -97,9 +104,21 @@ impl FnCx<'_, '_> {
             }
             None => {
                 let h = self.expr(arg, None, Want::Borrow);
-                let (ret, throws) = match self.cx.ty.kind(h.ty) {
-                    TyKind::FnPtr { ret, .. } if self.cx.ty.promise_payload(*ret).is_some() => {
+                let (ret, throws) = match self.cx.ty.kind(h.ty).clone() {
+                    TyKind::FnPtr { ret: r, .. } if self.cx.ty.promise_payload(r).is_some() => {
                         (*promise, self.cx.ty.never)
+                    }
+                    // A function of the same sync-or-async shape (`T | Promise<T, E2>`): the
+                    // whole union is matched, which fixes both error slots.
+                    TyKind::FnPtr { ret: r, .. }
+                        if self
+                            .cx
+                            .union_members(self.cx.ty.core(r).unwrap_or(r))
+                            .is_some_and(|ms| {
+                                ms.iter().any(|m| self.cx.ty.promise_payload(*m).is_some())
+                            }) =>
+                    {
+                        (ret, throws)
                     }
                     _ => (*value, throws),
                 };
@@ -117,9 +136,10 @@ impl FnCx<'_, '_> {
         mark.rollback(self.cx);
         self.restore_trial_frames(frames);
         // Nothing the function throws or rejects with: `E` is `never`.
-        let e = fixed.get(k).copied().flatten().unwrap_or(self.cx.ty.never);
-        slots[k] = Some(e);
-        Some(k)
+        for &k in &open {
+            slots[k] = Some(fixed.get(k).copied().flatten().unwrap_or(self.cx.ty.never));
+        }
+        open
     }
 }
 

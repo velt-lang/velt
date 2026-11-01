@@ -1,0 +1,62 @@
+// velt/net (internal): the runtime's TCP and TLS functions that velt/net's streams and listeners
+// call (docs/internals/contracts/rt_abi_async.md §6).
+
+import { IoResult } from "velt/native/result";
+import { IoStatus } from "velt/native/status";
+
+export declare async function velt_rt_tcp_listen(addr: string): Promise<IoResult<u64>>;
+export declare function velt_rt_tcp_listener_port(l: u64): u32;
+export declare function velt_rt_tcp_listener_close(l: u64);
+export declare async function velt_rt_tcp_accept(l: u64): Promise<IoResult<u64>>;
+export declare async function velt_rt_tcp_connect(addr: string): Promise<IoResult<u64>>;
+export declare async function velt_rt_tcp_read(s: u64, max: u64): Promise<IoResult<u8[]>>;
+export declare async function velt_rt_tcp_read_string(s: u64, max: u64): Promise<IoResult<string>>;
+/** The `u8[]` variant, `velt_rt_tcp_write_bytes`, is declared in std/net/bytes.vlt. */
+export declare async function velt_rt_tcp_write(s: u64, data: string): Promise<IoStatus>;
+/** Reads into and writes from a range of the program's own bytes (a `Uint8Array`'s buffer). */
+export declare function velt_rt_tcp_try_read_into(
+  s: u64,
+  data: u8[],
+  start: u64,
+  end: u64,
+): IoResult<i64>;
+export declare async function velt_rt_tcp_readable(s: u64): Promise<IoStatus>;
+export declare function velt_rt_tcp_write_later(s: u64, data: string): IoResult<u64>;
+export declare function velt_rt_tcp_write_later_range(
+  s: u64,
+  data: u8[],
+  start: u64,
+  end: u64,
+): IoResult<u64>;
+export declare async function velt_rt_tcp_drained(s: u64, max: u64): Promise<IoStatus>;
+export declare async function velt_rt_tcp_readable_within(
+  s: u64,
+  ms: i64,
+  signal: u64,
+): Promise<IoResult<u8>>;
+export declare async function velt_rt_tcp_write_range(
+  s: u64,
+  data: u8[],
+  start: u64,
+  end: u64,
+): Promise<IoStatus>;
+export declare function velt_rt_tcp_try_write_range(s: u64, data: u8[], start: u64, end: u64): u64;
+export declare function velt_rt_tcp_shutdown(s: u64): IoStatus;
+export declare function velt_rt_tcp_peer_addr(s: u64): string;
+export declare function velt_rt_tcp_abort(s: u64);
+export declare function velt_rt_tcp_close(s: u64);
+export declare async function velt_rt_tcp_listen_tls(
+  addr: string,
+  cert: string,
+  key: string,
+  alpn: string,
+): Promise<IoResult<u64>>;
+export declare async function velt_rt_tcp_alpn(s: u64): Promise<IoResult<string>>;
+export declare function velt_rt_tcp_park(s: u64, key: string);
+export declare function velt_rt_tcp_unpark(key: string, settled: u32): u64;
+export declare async function velt_rt_tcp_connect_tls(
+  addr: string,
+  serverName: string,
+  ca: string,
+  alpn: string,
+): Promise<IoResult<u64>>;

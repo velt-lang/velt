@@ -14,7 +14,7 @@
 #   --platform  container platform (default: the Docker host's)
 #   --services  also start PostgreSQL 17 and Redis 7 (plain + TLS) containers on a private
 #               network and export VELT_TEST_PG_URL, VELT_TEST_REDIS_URL, VELT_TEST_REDISS_URL (+ _CA),
-#               so the database goldens run too
+#               so the database packages' tests run too (crates/veltc/tests/packages.rs)
 #   --shell     open an interactive shell in the prepared container instead of check-all
 #   --run CMD   run CMD (bash -c) in the prepared container instead of check-all
 # Examples:

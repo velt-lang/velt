@@ -1,5 +1,5 @@
 // Autobahn fuzzingserver client: runs every case against ws://127.0.0.1:9001, echoing messages.
-import { connectWebSocket, WebSocket, WsMessage } from "velt:websocket";
+import { connectWebSocket, WebSocket, WsMessage } from "velt/net/websocket";
 
 const BASE = "ws://127.0.0.1:9001";
 

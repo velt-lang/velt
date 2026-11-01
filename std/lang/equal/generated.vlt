@@ -1,0 +1,174 @@
+// velt/lang/equal (internal): structural equality, generated per type at compile time by
+// velt/lang/equal/generate (docs/internals/design/source-generators.md). `equalByContent<T>` is
+// what `deepEqual` and `assertEq` compare (Node's `util.isDeepStrictEqual`), `equalByFields<T>`
+// what `velt test`'s `toEqual` compares (Vitest's). The code generated for them calls the
+// functions declared here. The helpers read identities and dynamic values with the intrinsics
+// velt/reflect is written on (the prelude loads this module, and velt/reflect only on use).
+//
+// The operators of the language stay the compiler's: `===`, `Object.is`, and the `Map` key
+// comparison (`keyEq`, SameValueZero), which the helpers below use on values whose structure no
+// generator sees (`any`).
+
+import {
+  anyReflectCount,
+  anyReflectInfo,
+  anyReflectName,
+  anyReflectValue,
+  identity as valueIdentity,
+  keyEq,
+  toAny,
+} from "velt/lang/intrinsics";
+import { recordEntriesOf } from "velt/lang/hooks/record";
+
+declare function velt_rt_deep_eq_enter(a: u64, b: u64): u8;
+declare function velt_rt_deep_eq_leave();
+
+/**
+ * Deep equality as `deepEqual` and `assertEq` compare: arrays, tuples, structs and object values
+ * by content, `Map` and `Record` by their entries in any order, class instances, interface and
+ * function values by identity, numbers with SameValueZero (`NaN` equals itself, `0` equals
+ * `-0`). Values that hold themselves stop at a cycle, as in Node (one function per type,
+ * generated).
+ */
+export declare generated("velt/lang/equal/generate") function equalByContent<T>(a: T, b: T): bool;
+
+/**
+ * Vitest's `toEqual`: as `equalByContent`, but class instances (a `Date`, a `Set`, a value held
+ * as an interface or a base class) by the fields of their own class, and numbers with
+ * `Object.is` (`0` doesn't equal `-0`).
+ */
+export declare generated("velt/lang/equal/generate") function equalByFields<T>(a: T, b: T): bool;
+
+/** The identity of `v` (velt/reflect `identity`): 0 for a value without one. */
+function identity<T>(v: T): u64 {
+  return valueIdentity(v);
+}
+
+/** `v` as an `any` (velt/reflect `dynamicOf`). */
+function dynamicOf<T>(v: T): any {
+  return toAny(v);
+}
+
+/**
+ * Starts comparing the objects with identities `a` and `b` (velt/reflect `identity`): 0 when the
+ * pair is new (end it with `endPair`), 1 when this pair is being compared already (the same
+ * cycle on both sides: equal), 2 when either object is being compared with another one (a cycle
+ * on one side only: different).
+ */
+function beginPair(a: u64, b: u64): u8 {
+  return velt_rt_deep_eq_enter(a, b);
+}
+
+/** Ends the comparison `beginPair` last started. */
+function endPair(): void {
+  velt_rt_deep_eq_leave();
+}
+
+/** SameValueZero of two dynamic values (`any`, `unknown`): `===`, with `NaN` equal to itself. */
+function sameValueZeroAny(a: any, b: any): bool {
+  return keyEq(a, b);
+}
+
+/** Two numbers of an `i64` and an `f64` member of a union: equal exactly, not after rounding. */
+function intFloatEqual(i: i64, f: f64, deep: bool): bool {
+  if (deep && f == 0 && 1 / f < 0) {
+    return false;
+  }
+  return f >= -9223372036854775808.0 &&
+    f < 9223372036854775808.0 &&
+    Math.trunc(f) == f &&
+    (f as i64) == i;
+}
+
+/** Two numbers of a `u64` and an `f64` member of a union, equal exactly. */
+function uintFloatEqual(u: u64, f: f64, deep: bool): bool {
+  if (deep && f == 0 && 1 / f < 0) {
+    return false;
+  }
+  return f >= 0 && f < 18446744073709551616.0 && Math.trunc(f) == f && (f as u64) == u;
+}
+
+/** Two numbers of an `i64` and a `u64` member of a union. */
+function intUintEqual(i: i64, u: u64): bool {
+  return i >= 0 && (i as u64) == u;
+}
+
+/** Two floats with SameValueZero (`deep`: with SameValue, `Object.is`). */
+function floatEqual(x: f64, y: f64, deep: bool): bool {
+  return deep ? Object.is(x, y) : x == y || (x != x && y != y);
+}
+
+/**
+ * Two values whose structure only their dynamic type shows (an interface value in `toEqual`, a
+ * std type keeping its state private): equal when they are the same value, else when they are of
+ * one runtime type and their entries are equal (`deep`: compared as `toEqual` does). Class
+ * instances in `deepEqual` compare by identity.
+ */
+function equalDynamic(a: any, b: any, deep: bool): bool {
+  // `kind|repr|name|hooks` (velt/reflect `typeOf`): one runtime type when all but the hooks match.
+  const ta = anyReflectInfo(a);
+  const tb = anyReflectInfo(b);
+  if (ta.slice(0, ta.lastIndexOf("|")) != tb.slice(0, tb.lastIndexOf("|"))) {
+    return false;
+  }
+  const kind = ta.slice(0, ta.indexOf("|"));
+  if (kind == "number" && (ta.startsWith("number|f64|") || ta.startsWith("number|f32|"))) {
+    return floatEqual(a as f64, b as f64, deep);
+  }
+  if (a === b) {
+    return true;
+  }
+  if (kind == "class" && !deep) {
+    return false;
+  }
+  const listed =
+    kind == "class" ||
+    kind == "struct" ||
+    kind == "object" ||
+    kind == "array" ||
+    kind == "tuple" ||
+    kind == "shared" ||
+    kind == "map" ||
+    kind == "record";
+  if (!listed) {
+    return deep ? false : sameValueZeroAny(a, b);
+  }
+  const n = anyReflectCount(a);
+  if (n < 0 || n != anyReflectCount(b)) {
+    return false;
+  }
+  const ia = identity(a);
+  const ib = identity(b);
+  const guarded = ia != 0 && ib != 0;
+  if (guarded) {
+    const seen = beginPair(ia, ib);
+    if (seen != 0) {
+      return seen == 1;
+    }
+  }
+  let r = true;
+  for (let i: i64 = 0; i < n; i++) {
+    const same = anyReflectName(a, i) == anyReflectName(b, i);
+    if (!same || !equalDynamic(anyReflectValue(a, i), anyReflectValue(b, i), deep)) {
+      r = false;
+      break;
+    }
+  }
+  if (guarded) {
+    endPair();
+  }
+  return r;
+}
+
+/**
+ * Two values of a type whose structure the model does not show (a std type keeping its state
+ * private): in `deepEqual` an object by identity, in `toEqual` and for other values by what
+ * their dynamic type lists.
+ */
+function equalOpaque<T>(a: T, b: T, deep: bool): bool {
+  const ia = identity(a);
+  if (!deep && ia != 0) {
+    return ia == identity(b);
+  }
+  return equalDynamic(dynamicOf(a), dynamicOf(b), deep);
+}

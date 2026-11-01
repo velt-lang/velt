@@ -1,0 +1,320 @@
+// sqlite/engine/exec/expr_compiler (internal): the expression compiler (`ExprCompiler`):
+// expressions compiled into closures, names resolved against the FROM items of the query and its
+// enclosing queries (engine/exec/expr_names), operators with SQLite's affinity, collation and NULL
+// rules (engine/exec/expr_ops; https://sqlite.org/lang_expr.html,
+// https://sqlite.org/datatype3.html), subqueries (engine/exec/expr_subquery) and function calls
+// (engine/exec/expr_call).
+//
+// Compiling happens once, at `prepare`; a compiled expression (`Ev`) reads the columns of the rows
+// the loops stand on each time it runs. Subqueries are compiled by the SELECT compiler
+// (engine/exec/select_compiler, a subclass) and run again for each row only when correlated.
+
+import { DbFile } from "../db_file";
+import { NULL } from "../storage_class";
+import { collationOf } from "../collation";
+import { affinityOf } from "../affinity";
+import { Schema } from "../schema/schema";
+import {
+  E_BETWEEN,
+  E_BINARY,
+  E_BLOB,
+  E_CALL,
+  E_CASE,
+  E_CAST,
+  E_COLLATE,
+  E_COLUMN,
+  E_EXISTS,
+  E_FALSE,
+  E_INT,
+  E_IN_LIST,
+  E_IN_SELECT,
+  E_IS,
+  E_ISNULL,
+  E_LIKE,
+  E_NULL,
+  E_PARAM,
+  E_REAL,
+  E_STRING,
+  E_SUBQUERY,
+  E_TRUE,
+  E_UNARY,
+  Expr,
+  FromItem,
+  Select,
+  SelectCore,
+} from "../sql/types";
+import { Source } from "./source";
+import { prepareError } from "./errors";
+import { Ev, Pred } from "./types";
+import { Params } from "./params";
+import { Query } from "./query";
+import { Scope } from "./scope";
+import { compileLike } from "./value/like";
+import { castTo, compareAff, comparisonAffinity, holds, truth } from "./value/ops";
+import { blobVal, intVal, nullVal, realVal, textVal } from "./value/val";
+import { C, binaryColl, constant, plain } from "./c";
+import { Found } from "./found";
+import { comparisonOp } from "./value/op_codes";
+import { hexDecode, utf8Length } from "velt/encoding";
+import { byteSlice } from "../sql/utf16_index";
+import { compileCall } from "./expr_call";
+import { hasWindow } from "./window/calls";
+import { aliasRefOf, columnRefOf, compileColumn, lookupName } from "./expr_names";
+import {
+  compileBinary,
+  compileCase,
+  compileInList,
+  compileNullTests,
+  compileUnary,
+} from "./expr_ops";
+import { compileSubquery } from "./expr_subquery";
+
+/** Compiles expressions; the SELECT compiler extends it with subqueries. */
+export abstract class ExprCompiler {
+  db: DbFile;
+  schema: Schema;
+  params: Params;
+  /** Sources the expressions compiled since the last `track()` read. */
+  touched: Source[] = [];
+
+  /** The statement's text, for names in messages as they were written. */
+  sql: string = "";
+
+  constructor(db: DbFile, schema: Schema, params: Params) {
+    this.db = db;
+    this.schema = schema;
+    this.params = params;
+  }
+
+  /** A function name as the statement spells it. */
+  written(e: Expr): string {
+    const n = utf8Length(e.name);
+    if (e.at + n <= utf8Length(this.sql)) {
+      const s = byteSlice(this.sql, e.at, e.at + n);
+      if (s.toUpperCase() == e.name) {
+        return s;
+      }
+    }
+    return e.name.toLowerCase();
+  }
+
+  /** FROM subqueries and CTE references, and the queries that fill their rows. */
+  rowsSrc: Source[] = [];
+  rowsQ: Query[] = [];
+
+  /** Compiles a subquery whose names may also resolve in `sc`. */
+  abstract subquery(s: Select, sc: Scope): Query;
+
+  /** The source a FROM item reads (`outer`: the scope enclosing its SELECT). */
+  abstract fromSource(item: FromItem, outer: Scope | null): Source;
+
+  /** Notes how many FROM terms `core` has once SQLite's flattener merged its subqueries. */
+  abstract noteFromTerms(core: SelectCore): void;
+
+  /** Where the table references counted so far end, for `rewind`. */
+  abstract refMark(): usize;
+
+  /**
+   * Takes back what a core's compile counted and made after `refs` (references) and `rows`
+   * (FROM sources), when the core compiles again as an aggregate query.
+   */
+  rewind(refs: usize, rows: usize) {
+    this.rewindRefs(refs);
+    this.rowsSrc.truncate(rows as i64);
+    this.rowsQ.truncate(rows as i64);
+  }
+
+  /** Takes back the table references counted after `mark`. */
+  abstract rewindRefs(mark: usize): void;
+
+  /** The query filling a materialized source. */
+  rowsQuery(src: Source): Query {
+    for (let i: usize = 0; i < this.rowsSrc.length; i++) {
+      if (this.rowsSrc[i] == src) {
+        return this.rowsQ[i];
+      }
+    }
+    prepareError("ICE: a FROM subquery without its query");
+  }
+
+  /**
+   * Starts recording the sources the next expressions read: they are `touched` from the
+   * position returned (nested compiles only add to the list).
+   */
+  track(): usize {
+    return this.touched.length;
+  }
+
+  ev(e: Expr, sc: Scope): Ev {
+    return this.expr(e, sc).ev;
+  }
+
+  expr(e: Expr, sc: Scope): C {
+    const k = e.kind;
+    if (sc.win != null && !hasWindow(e)) {
+      return this.collected(e, sc);
+    }
+    if (k == E_INT) {
+      return constant(e.text != "" ? realVal(9223372036854775808.0) : intVal(e.ival));
+    }
+    if (k == E_REAL) {
+      return constant(realVal(e.rval));
+    }
+    if (k == E_STRING) {
+      return constant(textVal(e.text));
+    }
+    if (k == E_NULL) {
+      return constant(nullVal());
+    }
+    if (k == E_TRUE || k == E_FALSE) {
+      return constant(intVal(k == E_TRUE ? 1 : 0));
+    }
+    if (k == E_BLOB) {
+      return constant(blobVal(hexDecode(e.text)));
+    }
+    if (k == E_PARAM) {
+      const p = this.params;
+      const i = (e.ival - 1) as usize;
+      return plain(() => p.get(i));
+    }
+    if (k == E_COLUMN) {
+      return this.column(e, sc);
+    }
+    if (k == E_UNARY) {
+      return this.unary(e, sc);
+    }
+    if (k == E_BINARY) {
+      return this.binary(e, sc);
+    }
+    if (k == E_IS || k == E_ISNULL || k == E_BETWEEN) {
+      return this.nullTests(e, sc);
+    }
+    if (k == E_IN_LIST) {
+      return this.inList(e, sc);
+    }
+    if (k == E_IN_SELECT || k == E_EXISTS || k == E_SUBQUERY) {
+      return this.subqueryExpr(e, sc);
+    }
+    if (k == E_CASE) {
+      return this.caseExpr(e, sc);
+    }
+    if (k == E_CAST) {
+      const x = this.expr(e.a!, sc);
+      const a = affinityOf(e.name);
+      const xe = x.ev;
+      return C { ev: () => castTo(xe(), a), aff: a, coll: x.coll, explicit: x.explicit };
+    }
+    if (k == E_COLLATE) {
+      const x = this.expr(e.a!, sc);
+      const coll = collationOf(e.name);
+      if (coll < 0) {
+        prepareError(`no such collation sequence: ${e.name}`);
+      }
+      return C { ev: x.ev, aff: x.aff, coll: coll, explicit: true };
+    }
+    if (k == E_LIKE) {
+      if (e.op == "REGEXP" || e.op == "MATCH") {
+        prepareError(`no such function: ${e.op}`);
+      }
+      const x = this.expr(e.a!, sc);
+      const p = this.expr(e.b!, sc);
+      const esc: Ev | null = e.c == null ? null : this.ev(e.c!, sc);
+      return plain(compileLike(x.ev, p.ev, esc, e.op == "GLOB", e.not));
+    }
+    if (k == E_CALL) {
+      return this.call(e, sc);
+    }
+    prepareError(e.kind == 22 ? "row value misused" : "unsupported expression");
+  }
+
+  /** A condition: true only when the expression is true. */
+  pred(e: Expr, sc: Scope): Pred {
+    if (e.kind == E_BINARY && (e.op == "AND" || e.op == "OR")) {
+      const a = this.pred(e.a!, sc);
+      const b = this.pred(e.b!, sc);
+      if (e.op == "AND") {
+        return () => a() && b();
+      }
+      return () => a() || b();
+    }
+    if (e.kind == E_BINARY) {
+      const op = comparisonOp(e.op);
+      if (op >= 0) {
+        const x = this.expr(e.a!, sc);
+        const y = this.expr(e.b!, sc);
+        const aff = comparisonAffinity(x.aff, y.aff);
+        const coll = binaryColl(x, y);
+        const xe = x.ev;
+        const ye = y.ev;
+        const o = op as u8;
+        return () => {
+          const p = xe();
+          const q = ye();
+          if (p.t == NULL || q.t == NULL) {
+            return false;
+          }
+          return holds(o, compareAff(p, q, aff, coll));
+        };
+      }
+    }
+    const c = this.expr(e, sc).ev;
+    return () => truth(c()) == 1;
+  }
+
+  column(e: Expr, sc: Scope): C {
+    return compileColumn(this, e, sc);
+  }
+
+  /** The column `e` names among the sources of `s`, or null. */
+  lookup(e: Expr, s: Scope): Found | null {
+    return lookupName(this, e, s);
+  }
+
+  /** A column of `src` read in scope `s` (the group's saved value in aggregate output). */
+  columnRef(src: Source, col: i64, s: Scope): C {
+    return columnRefOf(this, src, col, s);
+  }
+
+  /** A result column's alias used as a name in the same SELECT. */
+  aliasRef(name: string, s: Scope): C | null {
+    return aliasRefOf(this, name, s);
+  }
+
+  unary(e: Expr, sc: Scope): C {
+    return compileUnary(this, e, sc);
+  }
+
+  binary(e: Expr, sc: Scope): C {
+    return compileBinary(this, e, sc);
+  }
+
+  /** IS, IS NOT, ISNULL, NOTNULL, BETWEEN. */
+  nullTests(e: Expr, sc: Scope): C {
+    return compileNullTests(this, e, sc);
+  }
+
+  inList(e: Expr, sc: Scope): C {
+    return compileInList(this, e, sc);
+  }
+
+  subqueryExpr(e: Expr, sc: Scope): C {
+    return compileSubquery(this, e, sc);
+  }
+
+  caseExpr(e: Expr, sc: Scope): C {
+    return compileCase(this, e, sc);
+  }
+
+  /** In the output of a query with window functions: a value computed as the rows are collected. */
+  collected(e: Expr, sc: Scope): C {
+    const w = sc.win!;
+    const x = this.expr(e, sc.winBase!);
+    w.captures.push(x.ev);
+    const k: usize = w.captures.length - 1;
+    return C { ev: () => w.capture(k), aff: x.aff, coll: x.coll, explicit: x.explicit };
+  }
+
+  call(e: Expr, sc: Scope): C {
+    return compileCall(this, e, sc);
+  }
+}

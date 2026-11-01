@@ -1,0 +1,23 @@
+number f64 number [] 0:
+string - string [] 0:
+boolean - boolean [] 0:
+null - null [] 0:
+undefined - undefined [] 0:
+number u8 number [] 0:
+array - f64[] [] 2: =number =number
+class - Point [] 4: x=number label=undefined note=null id=number
+class - Point3 [] 5: x=number label=undefined note=null id=number z=boolean
+class - Stamp [toJSON] 0:
+stamp:at undefined
+class - Bag [] 6: counts=map pair=tuple big=number small=number level=number color=string
+map - Map [] 2: =undefined kept=number
+tuple - [f64, string] [] 2: =number =string
+object - Object [] 4: a=number b=undefined c=array n=null
+object - Object [] 4: a=number b=undefined c=array n=undefined
+record - Record [] 2: b=number 1=number
+object - Object [] 2: g=number h=number
+2 undefined true
+true false 0
+true false
+true false
+true

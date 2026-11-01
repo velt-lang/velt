@@ -1,0 +1,73 @@
+// sqlite/engine/exec/plan/covering (internal): covering indexes: an index that holds every column a
+// FROM item's query reads, so the table is not read (SQLite's covering index scans).
+
+import { Index } from "../../schema/table_index";
+import { SRC_TABLE, Source } from "../source";
+import { Access } from "./access";
+
+/** The index with the fewest columns holding every column of `src` the query reads. */
+export function coveringIndex(src: Source): Index | null {
+  if (src.kind != SRC_TABLE) {
+    return null;
+  }
+  let best: Index | null = null;
+  for (const ix of src.table!.indexes) {
+    if (ix.partial || (best != null && ix.columns.length >= best!.columns.length)) {
+      continue;
+    }
+    let all = true;
+    for (let i: usize = 0; i < src.used.length; i++) {
+      if (src.used[i] && (i as i64) != src.rowidCol && !ix.columns.includes(i as i64)) {
+        all = false;
+        break;
+      }
+    }
+    if (all) {
+      best = ix;
+    }
+  }
+  return best;
+}
+
+/** Whether `ix` holds every column of `src` the query reads. */
+export function covers(src: Source, ix: Index): bool {
+  for (let i: usize = 0; i < src.used.length; i++) {
+    if (src.used[i] && (i as i64) != src.rowidCol && !ix.columns.includes(i as i64)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * A covering index that reads as `a.index` does: its leading columns the same (all of them for
+ * a scan in index order), with the same collations and directions.
+ */
+export function coveringLike(src: Source, a: Access): Index | null {
+  const ix = a.index!;
+  let k = a.eq.length + (a.inList != null || a.lo != null || a.hi != null ? 1 : 0);
+  if (a.eq.length == 0 && a.inList == null && a.lo == null && a.hi == null) {
+    k = ix.columns.length;
+  }
+  const all = src.table!.indexes;
+  for (let i = all.length; i > 0; i--) {
+    const other = all[i - 1];
+    if (other == ix || other.partial || other.columns.length < k || !covers(src, other)) {
+      continue;
+    }
+    let same = true;
+    for (let i: usize = 0; i < k; i++) {
+      if (
+        other.columns[i] != ix.columns[i] ||
+        other.colls[i] != ix.colls[i] ||
+        other.desc[i] != ix.desc[i]
+      ) {
+        same = false;
+      }
+    }
+    if (same) {
+      return other;
+    }
+  }
+  return null;
+}

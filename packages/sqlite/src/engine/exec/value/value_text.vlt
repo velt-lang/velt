@@ -1,0 +1,82 @@
+// sqlite/engine/exec/value/value_text (internal): a value as text or bytes (`CAST(v AS TEXT)`,
+// `CAST(v AS BLOB)`, concatenation), and SQLite's length limit on them.
+
+import { NULL, INTEGER, REAL, TEXT, BLOB } from "../../storage_class";
+import { realText } from "../../real";
+import { utf8DecodeLossy, utf8Encode, utf8Length } from "velt/encoding";
+import { SqlRunError } from "../errors";
+
+/** A REAL's text as SQLite writes it (engine/real). */
+export { realText } from "../../real";
+import { Val, nullVal, textVal } from "./val";
+
+/** The text of a value, as `CAST(v AS TEXT)` and concatenation give it (NULL is ""). */
+export function toText(v: Val): string {
+  if (v.t == TEXT) {
+    return v.s;
+  }
+  if (v.t == INTEGER) {
+    return String(v.i);
+  }
+  if (v.t == REAL) {
+    return realText(v.r);
+  }
+  if (v.t == BLOB) {
+    return utf8DecodeLossy(v.b);
+  }
+  return "";
+}
+
+/** The bytes of a value, as `CAST(v AS BLOB)` gives them. */
+export function toBlob(v: Val): u8[] {
+  if (v.t == BLOB) {
+    return v.b;
+  }
+  if (v.t == NULL) {
+    return [];
+  }
+  return utf8Encode(toText(v));
+}
+
+/** SQLITE_MAX_LENGTH: the most bytes a TEXT or BLOB value can have (1,000,000,000). */
+export const MAX_LENGTH: u64 = 1000000000;
+
+/** SQLite's `string or blob too big` (SQLITE_TOOBIG). */
+export function tooBig(): never {
+  throw new SqlRunError("string or blob too big");
+}
+
+/**
+ * Throws SQLite's `string or blob too big` when a value of `n` bytes is over `MAX_LENGTH`. Every
+ * function whose result size the SQL controls calls it before it builds the value.
+ */
+export function checkLength(n: u64) {
+  if (n > MAX_LENGTH) {
+    tooBig();
+  }
+}
+
+/** A value's size in bytes as `sqlite3_value_bytes` counts it: its text's UTF-8, or a blob's. */
+export function valueBytes(v: Val): usize {
+  if (v.t == TEXT) {
+    return utf8Length(v.s);
+  }
+  if (v.t == BLOB) {
+    return v.b.length;
+  }
+  if (v.t == NULL) {
+    return 0;
+  }
+  return utf8Length(toText(v));
+}
+
+/** `x || y`: the texts joined, NULL if either is NULL, an error past `MAX_LENGTH`. */
+export function concatOp(x: Val, y: Val): Val {
+  if (x.t == NULL || y.t == NULL) {
+    return nullVal();
+  }
+  const a = toText(x);
+  const b = toText(y);
+  checkLength((utf8Length(a) + utf8Length(b)) as u64);
+  return textVal(a + b);
+}

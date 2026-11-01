@@ -1,0 +1,7 @@
+// `ZMember`: A sorted-set member with its score.
+
+/** A sorted-set member with its score. */
+export struct ZMember {
+  member: string;
+  score: f64;
+}

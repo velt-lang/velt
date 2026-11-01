@@ -1,0 +1,56 @@
+// An async function whose error type is `unknown` used as a value while its body is still being
+// checked. Checking `handle` reads what a call through `Source.label` throws (the `catch` in
+// `describe`), so the bodies holding an object literal with a member `label` are checked first,
+// `main` among them; `main` passes `handle` to `run`, and `handle` is still being checked: its
+// error type is not known yet. The program is checked again with what the first check inferred
+// for `handle` (a recursion hint). The hint used to drop `unknown` (an interface type), so the
+// second check missed it too and the call was reported as an unsettled recursion.
+interface Source {
+  label(): string;
+}
+
+class Plain implements Source {
+  label(): string {
+    return "plain";
+  }
+}
+
+function describe(s: Source) {
+  try {
+    return s.label();
+  } catch (e) {
+    return "failed";
+  }
+}
+
+function boom(n: i64): void throws unknown {
+  if (n < 0) {
+    const u: unknown = `negative ${n}`;
+    throw u;
+  }
+}
+
+function tag(): string {
+  return "tag";
+}
+
+async function handle(n: i64): Promise<string> {
+  boom(n);
+  const shown = { label: tag() };
+  return `${shown.label} ${describe(new Plain())} ${n}`;
+}
+
+async function run<E>(f: (n: i64) => Promise<string, E>, n: i64): Promise<string, E> {
+  return await f(n);
+}
+
+async function main() {
+  const named = { label: tag() };
+  console.log(named.label);
+  console.log(await run(handle, 1));
+  try {
+    await run(handle, -2);
+  } catch (e) {
+    console.log(`caught: ${e}`);
+  }
+}

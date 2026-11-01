@@ -1,8 +1,8 @@
-# velt:cli
+# velt/cli
 
-`import { ArgParser } from "velt:cli"`. Argument parsing with Node `util.parseArgs` rules and a
+`import { ArgParser } from "velt/cli"`. Argument parsing with Node `util.parseArgs` rules and a
 commander-style builder. `parse` takes the argv array, so it is easy to test. Pass it `args()`
-from `velt:process`.
+from `velt/process`.
 
 - `new ArgParser(program, description = "")`: every parser has `-h, --help`, which you can
   redeclare.
@@ -20,8 +20,8 @@ from `velt:process`.
   - `getInt(name): i64 | null`: throws `CliError` if the value is not an integer
 
 ```ts
-import { ArgParser } from "velt:cli";
-import { args } from "velt:process";
+import { ArgParser } from "velt/cli";
+import { args } from "velt/process";
 
 function main(): i32 {
   const p = new ArgParser("resize", "Resizes images.")

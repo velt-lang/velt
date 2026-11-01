@@ -1,0 +1,155 @@
+// velt/collections (internal): allocating, freeing and clearing B+ tree nodes, and the fillers
+// of unused slots. An `extend` block of `Pool`, which velt/collections/btree/pool loads.
+
+import { emptyLine, identityOrder } from "velt/collections/btree/line";
+import { F, LEAF_SHIFT, NONE, Pool } from "velt/collections/btree/pool";
+
+extend<K extends Comparable<K>, V> Pool<K, V> {
+  newLeaf(): u32 {
+    if (this.freeLeaves.length > 0) {
+      return this.freeLeaves.pop()!;
+    }
+    const id = this.leafNext.length as u32;
+    const c = (id >> LEAF_SHIFT) as usize;
+    if (c == this.leafKeys.length) {
+      this.leafKeys.push([]);
+      this.leafLines.push([]);
+      this.leafOrder.push([]);
+      this.vals.push([]);
+    }
+    for (let i: usize = 0; i < F; i++) {
+      this.leafKeys[c].push(this.fill[0]);
+      this.vals[c].push(this.valFill[0]);
+    }
+    this.leafLines[c].push(emptyLine());
+    if (this.lineShift == 1) {
+      this.leafLines[c].push(emptyLine());
+    }
+    this.leafOrder[c].push(identityOrder());
+    this.leafNext.push(NONE);
+    this.leafPrev.push(NONE);
+    return id;
+  }
+
+  newInner(): u32 {
+    if (this.freeInners.length > 0) {
+      return this.freeInners.pop()!;
+    }
+    const id = (this.innerLines.length >> this.lineShift) as u32;
+    for (let i: usize = 0; i < F; i++) {
+      this.innerKeys.push(this.fill[0]);
+      this.innerKids.push(0);
+    }
+    this.innerLines.push(emptyLine());
+    if (this.lineShift == 1) {
+      this.innerLines.push(emptyLine());
+    }
+    return id;
+  }
+
+  freeLeaf(leaf: u32) {
+    const base = (leaf as usize) * F;
+    for (let i: usize = 0; i < F; i++) {
+      this.setKey(base + i, this.fill[0]);
+      this.valClear(base + i);
+    }
+    this.setLine(leaf, emptyLine());
+    if (this.wide()) {
+      this.setLineB(leaf, emptyLine());
+    }
+    this.setOrder(leaf, identityOrder());
+    this.freeLeaves.push(leaf);
+  }
+
+  freeInner(node: u32) {
+    const base = (node as usize) * F;
+    for (let i: usize = 0; i < F; i++) {
+      this.innerKeys[base + i] = this.fill[0];
+    }
+    this.setInnerLine(node, emptyLine());
+    if (this.wide()) {
+      this.setInnerLineB(node, emptyLine());
+    }
+    this.freeInners.push(node);
+  }
+
+  /**
+   * Whether a filler is a live key or value (a type without a blank value, velt/mem `Blank`):
+   * then its entry (`fillOwner`) going, or its value being replaced, calls `refill`. The same
+   * for every map of the types: a constant where they are known.
+   */
+  liveFill(): bool {
+    return !this.fill[0].hasBlank() || !this.valFill[0].hasBlank();
+  }
+
+  /**
+   * Whether the key in slot `s` is the fillers' entry's (`liveFill` only), by the map's own
+   * equality: `==` is false for a NaN key and itself.
+   */
+  isFill(s: usize): bool {
+    return this.cmpKey(this.fillOwner[0], s) == 0;
+  }
+
+  /**
+   * New fillers from a live entry in the middle of the tree, written into every unused slot
+   * (free nodes' too) a live filler is in, so that the old one is released (`liveFill` only).
+   * The entry goes when about half of the keys have gone, whether they go from the front, from
+   * the back or at random, so a drain makes a few of these passes.
+   */
+  refill() {
+    let node = this.root;
+    for (let h = this.height; h > 0; h--) {
+      node = this.innerKids[(node as usize) * F + this.innerCount(node) / 2];
+    }
+    const mid = (node as usize) * F + this.leafCount(node) / 2;
+    this.fillOwner[0] = this.keyAt(mid);
+    const keys = !this.fill[0].hasBlank();
+    const vals = !this.valFill[0].hasBlank();
+    if (keys) {
+      this.fill[0] = this.keyAt(mid);
+    }
+    if (vals) {
+      this.valFill[0] = this.valAt(mid);
+    }
+    for (let leaf: usize = 0; leaf < this.leafNext.length; leaf++) {
+      for (let i = this.leafCount(leaf as u32); i < F; i++) {
+        if (keys) {
+          this.setKey(leaf * F + i, this.fill[0]);
+        }
+        if (vals) {
+          this.valClear(leaf * F + i);
+        }
+      }
+    }
+    const inners: usize = keys ? this.innerKeys.length / F : 0;
+    for (let inner: usize = 0; inner < inners; inner++) {
+      for (let i = this.innerCount(inner as u32); i < F; i++) {
+        this.innerKeys[inner * F + i] = this.fill[0];
+      }
+    }
+  }
+
+  /** Drops every node; the next `insert` starts a new root. */
+  clear() {
+    this.leafKeys.truncate(0);
+    this.vals.truncate(0);
+    this.valFill.truncate(0);
+    this.leafLines.truncate(0);
+    this.leafOrder.truncate(0);
+    this.leafNext.truncate(0);
+    this.leafPrev.truncate(0);
+    this.innerKeys.truncate(0);
+    this.innerLines.truncate(0);
+    this.innerKids.truncate(0);
+    this.freeLeaves.truncate(0);
+    this.freeInners.truncate(0);
+    this.fill.truncate(0);
+    this.fillOwner.truncate(0);
+    this.minKey.truncate(0);
+    this.maxKey.truncate(0);
+    this.root = 0;
+    this.height = 0;
+    this.size = 0;
+    this.edits++;
+  }
+}

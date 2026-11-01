@@ -1,0 +1,219 @@
+// velt/lang/hooks (internal): the text of an `any` value (issue #924, docs/reference/types.md
+// "any and unknown"; velt_sema `body/expr/any_text.rs`): `String(v)`, a template part or `+`
+// operand (`ToString` after `ToPrimitive`), and `xs.join(sep)` of an array held. Each takes the
+// call site its `TypeError`s name (`at`), which velt_vir's `track_caller` fills in.
+
+import { anyNullProto } from "./class_object";
+
+/**
+ * `String(v)` of an `any` (or `unknown`, `object`) `v`, and its text in a template literal:
+ * JavaScript's `ToString(ToPrimitive(v, "string"))`. Sema writes the dispatch over the program's
+ * classes into this body (once per program, any_text.rs): an instance of a class with a
+ * `[Symbol.toPrimitive]` method is written as that returns for `"string"`, one with a
+ * `toString()` as that returns (else as its `valueOf()` returns); any other value goes to
+ * `anyText`.
+ *
+ * `at` (and the `at` of the helpers below) is the `path:line:col` of the user's call site, which
+ * these helpers' stops report (one instance each, velt_vir `track_caller.rs`).
+ */
+export function anyString(v: any, at: string): string {
+  return String(v);
+}
+
+/**
+ * The text of an `any` (or `object`) `v` in a string `+` or `+=`: JavaScript's
+ * `ToString(ToPrimitive(v, "default"))`. Sema writes the dispatch over the program's classes
+ * into this body (once per program, any_text.rs): `[Symbol.toPrimitive]("default")`, else what
+ * `valueOf()` returns when that is a primitive, else what `toString()` returns; any other value
+ * goes to `anyConcatPlain`.
+ */
+export function anyConcatText(v: any, at: string): string {
+  return String(v);
+}
+
+/**
+ * `anyConcatText` of a value that is no class instance with a `[Symbol.toPrimitive]`,
+ * `valueOf()` or `toString()`: an object literal's own `valueOf` when it returns a primitive,
+ * else `anyText`.
+ */
+export function anyConcatPlain(v: any, at: string): string {
+  if (typeof v === "symbol") {
+    panic(`TypeError: Cannot convert a Symbol value to a string at ${at}`);
+  }
+  if (typeof v === "object" && v !== null && !Array.isArray(v) && anyOwnFn(v, "valueOf")) {
+    const p = anyPrimTry(v.valueOf(), at);
+    if (p !== null) {
+      return p;
+    }
+  }
+  return anyText(v, at);
+}
+
+/**
+ * The text of what a `toString()`, `valueOf()` or `[Symbol.toPrimitive]` returned: an object
+ * there is Node's `TypeError`, and so is a symbol (`ToString` of it).
+ */
+export function anyPrimText(r: any, at: string): string {
+  const t = typeof r;
+  if ((t === "object" && r !== null) || t === "function") {
+    panic(`TypeError: Cannot convert object to primitive value at ${at}`);
+  }
+  if (t === "symbol") {
+    panic(`TypeError: Cannot convert a Symbol value to a string at ${at}`);
+  }
+  return anyText(r, at);
+}
+
+/**
+ * `anyPrimText(r)` of a primitive `r`; `null` for an object, for which `ToPrimitive` goes on
+ * to the next method (`toString()` after `valueOf()`, or the other way round).
+ */
+export function anyPrimTry(r: any, at: string): string | null {
+  const t = typeof r;
+  if ((t === "object" && r !== null) || t === "function") {
+    return null;
+  }
+  return anyPrimText(r, at);
+}
+
+/**
+ * `String(p)` of a proxy `p` through `any`: JavaScript reads `p[Symbol.toPrimitive]` and
+ * `p.toString` through its `get` trap, which this does not run yet.
+ */
+export function anyTextUnsupported(name: string, at: string): string {
+  panic(`TypeError: the text of a ${name} through \`any\` is not supported yet (#924) at ${at}`);
+}
+
+/** Is `k` one of the own keys of the object `v`, holding a function? */
+export function anyOwnFn(v: any, k: string): boolean {
+  return Object.keys(v).includes(k) && typeof v[k] === "function";
+}
+
+/**
+ * `String(v)` of an `any` (or `unknown`, `object`) `v` that holds no class instance with a
+ * `[Symbol.toPrimitive]` or `toString()` (`anyString` calls those): an array as JavaScript's
+ * `Array.prototype.toString` writes it (`anyJoin`), an object literal by its own `toString`
+ * (else its own `valueOf` when `toString` returns an object), another object as
+ * `Object.prototype.toString` does (`[object Object]`), a number with `ToString` (`-0` is `0`).
+ */
+export function anyText(v: any, at: string): string {
+  const t = typeof v;
+  if (t === "number") {
+    // `-0` is `0`; the number may be held at any width (a `size` read through `any`).
+    return v === 0 ? "0" : anyNumberText(v);
+  }
+  if (t === "string") {
+    return v as string;
+  }
+  if (t === "boolean") {
+    return (v as boolean) ? "true" : "false";
+  }
+  if (t === "symbol") {
+    return String(v as symbol);
+  }
+  if (v === null) {
+    return "null";
+  }
+  if (v === undefined) {
+    return "undefined";
+  }
+  if (t === "function") {
+    // JavaScript writes the function's source text, which a compiled function doesn't keep.
+    panic(
+      `TypeError: \`String\` of a function through \`any\` is not supported yet (#924) at ${at}`,
+    );
+  }
+  if (Array.isArray(v)) {
+    return anyJoin(v, ",", at);
+  }
+  if (anyOwnFn(v, "toString")) {
+    const p = anyPrimTry(v.toString(), at);
+    if (p !== null) {
+      return p;
+    }
+    if (anyOwnFn(v, "valueOf")) {
+      return anyPrimText(v.valueOf(), at);
+    }
+    panic(`TypeError: Cannot convert object to primitive value at ${at}`);
+  }
+  return Object.prototype.toString.call(v);
+}
+
+/**
+ * `String(r)` of an `any` holding a record, in a program that calls `Object.create(null)` (sema
+ * dispatches records here): one without a prototype has no `toString` to inherit, so its own
+ * `valueOf`, else Node's `TypeError`.
+ */
+export function anyRecordText(r: any, at: string): string {
+  if (!anyOwnFn(r, "toString") && anyNullProto(r)) {
+    if (anyOwnFn(r, "valueOf")) {
+      return anyPrimText(r.valueOf(), at);
+    }
+    panic(`TypeError: Cannot convert object to primitive value at ${at}`);
+  }
+  return anyText(r, at);
+}
+
+/** `r + ""` of an `any` holding a record, as `anyRecordText` for the `"default"` hint. */
+export function anyRecordConcat(r: any, at: string): string {
+  if (!anyOwnFn(r, "valueOf") && !anyOwnFn(r, "toString") && anyNullProto(r)) {
+    panic(`TypeError: Cannot convert object to primitive value at ${at}`);
+  }
+  return anyConcatPlain(r, at);
+}
+
+/**
+ * `xs.join(sep)` of an array (or tuple) of `any`, `unknown` or `object` values, and
+ * `String(xs)`: each element as `String(x)` writes it, `null` and `undefined` as empty text, and
+ * an array being joined already (one holding itself) as empty text, as in JavaScript.
+ */
+export function anyJoin(v: any, sep: string, at: string): string {
+  const seen: any[] = [];
+  return anyJoinSeen(v, sep, seen, at);
+}
+
+/**
+ * `xs.join(sep)` of an `any` `xs` (issue #1462): an array held is written as `anyJoin`
+ * writes it, with `sep` as `String(sep)` writes it (`","` when it is `undefined`, as in
+ * JavaScript); another value's own `join` is called.
+ */
+export function anyJoinMethod(v: any, sep: any, at: string): any {
+  if (Array.isArray(v)) {
+    return anyJoin(v, sep === undefined ? "," : anyString(sep, at), at);
+  }
+  return v.join(sep);
+}
+
+/** `anyJoin` with the arrays being joined around it in `seen`. */
+export function anyJoinSeen(v: any, sep: string, seen: any[], at: string): string {
+  seen.push(v);
+  let out = "";
+  let first = true;
+  for (const x of v) {
+    if (!first) {
+      out += sep;
+    }
+    first = false;
+    if (x === null || x === undefined) {
+      continue;
+    }
+    if (Array.isArray(x)) {
+      if (!seen.includes(x)) {
+        out += anyJoinSeen(x, ",", seen, at);
+      }
+      continue;
+    }
+    if (typeof x === "symbol") {
+      // `join` converts each element with `ToString`, which throws for a symbol.
+      panic(`TypeError: Cannot convert a Symbol value to a string at ${at}`);
+    }
+    out += String(x);
+  }
+  seen.pop();
+  return out;
+}
+
+/** `String(v)` of an `any` holding a number other than zero, written as it is held. */
+function anyNumberText(v: any): string {
+  return String(v);
+}

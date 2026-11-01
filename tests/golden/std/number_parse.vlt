@@ -1,4 +1,4 @@
-// `Number(s)` and `parseFloat(s)` (velt:number/parse, #1658), checked against Node: the
+// `Number(s)` and `parseFloat(s)` (velt/lang/number/parse, #1658), checked against Node: the
 // grammar (whitespace, signs, `0x`/`0o`/`0b`, `Infinity`, the empty string, trailing garbage,
 // underscores), correct rounding (halfway cases, long mantissas, subnormals, the largest and
 // smallest values, neighbours of 2^53 and 2^64, radix 2/8/16 ties) and exponents balanced

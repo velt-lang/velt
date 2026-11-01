@@ -3,7 +3,6 @@
 use velt_sema::hir::{self, Intrinsic, TyId};
 
 use super::async_fn::BoxHold;
-use super::json::JsonSource;
 use super::operand::proj;
 use super::rt::Rt;
 use super::{ice, unit, FnLower};
@@ -247,6 +246,21 @@ impl FnLower<'_, '_> {
             (I::AnySetIndex, [o, i, v]) => self.any_set(o, i, v, true),
             (I::AnyHas, [o, k]) => self.any_has(o, k),
             (I::AnyDelete, [o, k]) => self.any_delete(o, k),
+            (I::Identity, [x]) => self.identity_of(x),
+            (I::ToAny, [x]) => self.boxed_any(x),
+            (I::AnyReflectInfo, [a]) => self.any_reflect(a, super::any_reflect::OP_INFO, None, ty),
+            (I::AnyReflectCount, [a]) => {
+                self.any_reflect(a, super::any_reflect::OP_COUNT, None, ty)
+            }
+            (I::AnyReflectName, [a, i]) => {
+                self.any_reflect(a, super::any_reflect::OP_NAME, Some(i), ty)
+            }
+            (I::AnyReflectValue, [a, i]) => {
+                self.any_reflect(a, super::any_reflect::OP_VALUE, Some(i), ty)
+            }
+            (I::AnyReflectHook, [a, k]) => {
+                self.any_reflect(a, super::any_reflect::OP_HOOK, Some(k), ty)
+            }
             (I::ProxyArrayCall, [o, op]) => {
                 let t = self.sub(o.ty);
                 let v = self.expr(o);
@@ -289,16 +303,6 @@ impl FnLower<'_, '_> {
                     false => self.share_value(v, t),
                 };
                 self.own_value(c, t)
-            }
-            (I::Eq, [a, b]) => {
-                let t = self.sub(a.ty);
-                let (pa, pb) = self.two_places(a, b);
-                self.key_eq_values(&pa, &pb, t)
-            }
-            (I::DeepEq, [a, b]) => {
-                let t = self.sub(a.ty);
-                let (pa, pb) = self.two_places(a, b);
-                self.deep_eq_values(&pa, &pb, t)
             }
             (I::Same, [a, b]) => {
                 let t = self.sub(a.ty);
@@ -354,20 +358,6 @@ impl FnLower<'_, '_> {
                 | I::ChanTryReceive,
                 _,
             ) => self.async_intrinsic(i, args, ty),
-            (I::JsonStringify, [a]) => self.json_stringify(a, ty),
-            (I::JsonParse, [a, flags, depth]) => {
-                self.json_parse(a, flags, depth, JsonSource::Text, ty)
-            }
-            (I::JsonParseRows, [a, flags, depth]) => {
-                self.json_parse(a, flags, depth, JsonSource::Rows, ty)
-            }
-            (I::JsonParseCursor, [a, flags, depth]) => {
-                self.json_parse(a, flags, depth, JsonSource::Cursor, ty)
-            }
-            (I::DbBind, [sink, a]) => self.db_bind(sink, a),
-            (I::ReadRows, [a]) => self.read_rows(a, true, ty),
-            (I::ReadRow, [a]) => self.read_rows(a, false, ty),
-            (I::HttpHandler, [f]) => self.http_handler(f, ty),
             (I::Attempt, [f]) => self.attempt(f, ty),
             (
                 I::WeakMapSet

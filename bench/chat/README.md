@@ -5,7 +5,7 @@ message and a history query per join, written once per platform to one contract
 ([SPEC.md](SPEC.md)) and checked by one smoke test (`smoke.py`, 56 checks; all four pass).
 
 ```
-velt/server.vlt   std/http + std/websocket + std/sqlite, all cores, one process
+velt/server.vlt   std/http + std/websocket + the sqlite package, all cores, one process
 velt/server-topics.vlt  the same, with rooms as std/websocket topics (subscribe, publish)
 go/main.go        net/http + gorilla/websocket + mattn/go-sqlite3, all cores
 bun/server.ts     Bun.serve websockets + bun:sqlite, pub/sub for rooms, one process

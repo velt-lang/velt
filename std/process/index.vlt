@@ -1,0 +1,25 @@
+// velt/process: command-line arguments, setting environment variables, working directory and exit
+// (rt_abi_async.md §8), byte writes to standard output (`stdout.write`) and whether the standard
+// streams are terminals (`stdout.isTTY`, `isatty(fd)`). Reading variables
+// (`process.env.NAME`) and writing strings (`process.stdout.write(s)`) are on the builtin
+// `process`, with no import (std/prelude/process.vlt). Strings are UTF-8 (the runtime uses the
+// wide APIs on Windows).
+// docs/std/process.md.
+
+export { args, argv } from "velt/process/args";
+export { chdir, cwd, envAll, removeEnv, setEnv } from "velt/process/env";
+export { exit } from "velt/process/exit";
+export { Stderr, stderr } from "velt/process/stderr";
+export {
+  lines,
+  readAll,
+  readAllBytes,
+  readAllBytesSync,
+  readAllSync,
+  readLine,
+  readLineSync,
+  Stdin,
+  stdin,
+} from "velt/process/stdin";
+export { Stdout, stdout } from "velt/process/stdout";
+export { isatty } from "velt/process/tty";

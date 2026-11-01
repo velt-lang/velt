@@ -1,16 +1,16 @@
 // check: no leaks
 // std sources as async iterables: a file's lines (`FileReader.lines()`), standard input's lines
-// (`lines()` of velt:stdin, read by this program spawned as its own child) and a `Ticker`.
+// (`lines()` of velt/process, read by this program spawned as its own child) and a `Ticker`.
 // Leaving a loop early leaves the source where it was: the reader continues at the next line,
 // the ticker keeps ticking (each loop numbers its ticks from 1).
-import { openRead, openWrite } from "velt:fs_stream";
-import { remove } from "velt:fs";
-import { tmpdir } from "velt:os";
-import { uuidv4 } from "velt:uuid";
-import { exec } from "velt:child_process";
-import { argv, args } from "velt:process";
-import { lines } from "velt:stdin";
-import { Ticker } from "velt:timers";
+import { openRead, openWrite } from "velt/fs";
+import { remove } from "velt/fs";
+import { tmpdir } from "velt/os";
+import { uuidv4 } from "velt/random/uuid";
+import { exec } from "velt/process/child";
+import { argv, args } from "velt/process";
+import { lines } from "velt/process";
+import { Ticker } from "velt/time";
 
 async function fileLines() {
   const path = `${tmpdir()}/velt-lines-${uuidv4()}.txt`;

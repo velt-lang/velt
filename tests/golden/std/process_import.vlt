@@ -1,7 +1,7 @@
-// `process` is a global, and `velt:process` exports it by name too (Node's `node:process` has it
+// `process` is a global, and `velt/process` exports it by name too (Node's `node:process` has it
 // as its default export; Velt has named exports only): an explicit import reads the same builtin.
-import { process } from "velt:process";
-import { cwd } from "velt:process";
+import { process } from "velt/process";
+import { cwd } from "velt/process";
 
 function main() {
   process.stdout.write("argv: ");

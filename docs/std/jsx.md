@@ -1,14 +1,14 @@
-# velt:jsx
-`import { renderToString, renderToStream, raw, Element } from "velt:jsx"`. Server-side rendering
+# velt/jsx
+`import { renderToString, renderToStream, raw, Element } from "velt/jsx"`. Server-side rendering
 of TSX to HTML: the default JSX provider ([provider contract](../internals/contracts/jsx.md)).
-A module containing JSX compiles to calls into `velt:jsx/jsx-runtime` and sees its types as
+A module containing JSX compiles to calls into `velt/jsx/jsx-runtime` and sees its types as
 `JSX.Element`, `JSX.IntrinsicElements`, …; this module renders the result.
 
 - `renderToString(el: Element): Promise<string>` (throws `RenderError`): the HTML, after
   awaiting the async components. `renderToStringSync(el): string` for a tree without async
   components (throws `RenderError` if it has one).
 - `renderToStream(el: Element): BodyStream`: the HTML as a streamed [response
-  body](http.md#the-response) (like React's `renderToReadableStream`), `new
+  body](../../packages/http-server/README.md#the-response) (like React's `renderToReadableStream`), `new
   Response(renderToStream(el), init)`. The markup above each pending async component is sent
   before the component is awaited, so it reaches the client while it loads; rendering stops
   once the client has gone away. A component that throws a `RenderError` cuts the response off.
@@ -20,7 +20,7 @@ A module containing JSX compiles to calls into `velt:jsx/jsx-runtime` and sees i
   (`string | i64 | f64 | bool | null`, text the precompiler folds into strings),
   `IntrinsicElements`, `ElementChildrenAttribute`, `RenderError { component; message }`.
   `Element`'s fields are internal: its markup comes from `renderToString`.
-- `velt:jsx/attrs` exports the attribute types `IntrinsicElements` is made of: `HtmlAttrs`
+- `velt/jsx/attrs` exports the attribute types `IntrinsicElements` is made of: `HtmlAttrs`
   (the global attributes) and one type per element with attributes of its own (`AnchorAttrs`,
   `ButtonAttrs`, `InputAttrs`, …, each `HtmlAttrs & { … }`; `SvgAttrs` and `MathAttrs` and the
   types built on them, such as `CircleAttrs` and `MoAttrs`, for SVG and MathML), for providers
@@ -51,7 +51,7 @@ Rendering rules:
   strings (`stretchy="false"`), as a `false` value would leave the attribute out. There are no
   event handler attributes (`onclick`): std/jsx renders on the server, and client-side
   frameworks bring their own provider.
-- Components are functions `(props: P) => Element`; `velt:jsx` calls each one as its element is
+- Components are functions `(props: P) => Element`; `velt/jsx` calls each one as its element is
   created. **Async components** `(props: P) => Promise<Element>` start then too, so siblings
   load concurrently; rendering awaits them in document order. A component that throws, or an
   async one that rejects, makes rendering throw a `RenderError` whose `component` names it
@@ -70,15 +70,15 @@ Rendering rules:
   attributes folded in through template literals (`jsxTemplate`, `jsxTemplateString`,
   `jsxEscape`, `jsxEscapeString`, `jsxAttr`), and a list such as
   `{rows.map((r) => <tr>…</tr>)}` whose rows hold only markup and text is built from strings
-  (`jsxList`), as a hand-written template would be; `velt:jsx/generic/jsx-runtime` is the same
-  provider without that mode (`/** @jsxImportSource velt:jsx/generic */`).
+  (`jsxList`), as a hand-written template would be; `velt/jsx/generic/jsx-runtime` is the same
+  provider without that mode (`/** @jsxImportSource velt/jsx/generic */`).
 
 A complete app, with components shared with a TypeScript client, async data loading and
 streamed pages: [`examples/apps/ssr-blog`](../../examples/apps/ssr-blog/README.md).
 
 ```tsx
-import { renderToStream, Element } from "velt:jsx";
-import { serve } from "velt:http";
+import { renderToStream, Element } from "velt/jsx";
+import { serve } from "http-server";
 
 async function Posts(): Promise<Element> {
   const posts = await loadPosts(); // a database query
@@ -111,8 +111,8 @@ The `tsx` block above shows TSX syntax, which the compiler lowers to the `jsx-ru
 factories. Called directly, as the compiler does:
 
 ```ts
-import { jsx, jsxAsyncComponent } from "velt:jsx/jsx-runtime";
-import { Element, raw, renderToString } from "velt:jsx";
+import { jsx, jsxAsyncComponent } from "velt/jsx/jsx-runtime";
+import { Element, raw, renderToString } from "velt/jsx";
 
 async function Greeting(props: { name: string }): Promise<Element> {
   await sleep(1);

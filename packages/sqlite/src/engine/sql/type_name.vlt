@@ -1,0 +1,45 @@
+// sqlite/engine/sql/type_name (internal): a type name of SQLite's grammar (`typetoken`), as CAST and
+// column definitions write it.
+
+import { T_INTEGER, T_REAL } from "./token";
+import { ExprParser } from "./expr_parser";
+
+extend ExprParser {
+  /**
+   * A type name (`typetoken`): words (names or strings), then an optional `(n)` or `(n, m)` of
+   * signed numbers, as written in the source (a column keeps it so; SQLite dequotes it). Keywords that fall back to names are words of it, GENERATED ALWAYS included (a
+   * column definition strips those, engine/sql/column_def).
+   */
+  typeName(): string {
+    const first = this.peek();
+    if (!this.isAlias()) {
+      return "";
+    }
+    let last = this.advance();
+    while (this.isAlias()) {
+      last = this.advance();
+    }
+    if (this.isOp("(")) {
+      this.pos++;
+      this.signedNumber();
+      if (this.eatOp(",")) {
+        this.signedNumber();
+      }
+      last = this.peek();
+      this.expectOp(")");
+    }
+    return this.text(first.start, last.end);
+  }
+
+  /** `signed`: an optional + or -, then an integer or a real, written without separators. */
+  signedNumber() {
+    if (!this.eatOp("+")) {
+      this.eatOp("-");
+    }
+    const t = this.peek();
+    if ((t.kind != T_INTEGER && t.kind != T_REAL) || this.raw(t).includes("_")) {
+      this.fail();
+    }
+    this.pos++;
+  }
+}

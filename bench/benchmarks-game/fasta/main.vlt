@@ -2,7 +2,7 @@
 // https://benchmarksgame-team.pages.debian.net/benchmarksgame/description/fasta.html
 // Written the way a TypeScript developer would: classes, arrays and a buffered stdout writer.
 
-import { args, stdout } from "velt:process";
+import { args, stdout } from "velt/process";
 
 const LINE_LENGTH: i64 = 60;
 // Characters generated per write (a whole number of lines).

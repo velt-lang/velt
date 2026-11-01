@@ -3,7 +3,7 @@
 // tasks' system calls may have replaced it (and the task may resume on another worker thread),
 // so only the value read before the `await`, kept in a local, is pinned here. `close(-1)` sets
 // EBADF (9); `unlink` of a path under a directory that doesn't exist sets ENOENT (2).
-import { lastOsError } from "velt:os";
+import { lastOsError } from "velt/os";
 
 declare system function close(fd: i32): i32;
 declare system function unlink(path: readonly u8[]): i32;

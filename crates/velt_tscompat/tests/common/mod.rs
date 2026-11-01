@@ -1,6 +1,6 @@
 //! Linting a file the way `velt check --ts-compat` does, for the rule fixtures (cases.rs) and
 //! the `tsc` oracle (oracle.rs): the file is loaded with the prelude and what it imports (the
-//! standard library's `velt:` modules, files next to it, its JSX runtime), checked for the
+//! standard library's `velt/` modules, files next to it, its JSX runtime), checked for the
 //! editor (`velt_sema::ide::check_for_ide`) and linted as the only file in scope
 //! (`velt_tscompat::lint_program`).
 
@@ -80,13 +80,13 @@ pub fn load(path: &Path, src: &str) -> Loaded {
         sm: SourceMap::new(),
         files: vec![],
     };
-    let mut prelude: Vec<PathBuf> = std::fs::read_dir(std_dir().join("prelude"))
-        .expect("std/prelude")
-        .map(|e| e.expect("entry").path())
-        .filter(|p| p.extension().is_some_and(|e| e == "vlt"))
-        .collect();
-    prelude.sort();
-    for file in prelude {
+    // In the order std/prelude/index.vlt lists the files, as veltc's loader reads them.
+    let index = std::fs::read_to_string(std_dir().join("prelude/index.vlt")).expect("index");
+    let order = velt_common::std_modules::prelude_order(&index).expect("std/prelude/index.vlt");
+    for file in order
+        .iter()
+        .map(|n| std_dir().join(format!("prelude/{n}.vlt")))
+    {
         let stem = file.file_stem().unwrap().to_string_lossy().into_owned();
         let text = std::fs::read_to_string(&file).expect("read the prelude");
         l.add(format!("std/prelude/{stem}"), true, &file, text);
@@ -120,6 +120,7 @@ impl Loader {
         self.modules.push(SourceModule {
             path,
             is_std,
+            is_dependency: false,
             file: id,
             ast,
             imports: vec![],
@@ -158,15 +159,29 @@ impl Loader {
 
     /// The module `spec` names from module `from`, loaded if new.
     fn import(&mut self, from: usize, spec: &str) -> Option<usize> {
-        let (path, is_std, file) = match spec.strip_prefix("velt:") {
-            Some(rest) => (
-                format!("std/{rest}"),
-                true,
-                std_dir().join(format!("{rest}.vlt")),
-            ),
+        let (path, is_std, file) = match spec.strip_prefix("velt/") {
+            Some(rest) => {
+                let file = std_dir().join(format!("{rest}.vlt"));
+                // A folder module: `velt/fs` is `std/fs/index.vlt`.
+                let file = if file.is_file() {
+                    file
+                } else {
+                    std_dir().join(rest).join("index.vlt")
+                };
+                (format!("std/{rest}"), true, file)
+            }
             None => {
                 let file = relative(self.files[from].parent()?, spec)?;
-                (file.to_string_lossy().into_owned(), false, file)
+                // A std file's relative import names a std module (`./number` in
+                // std/lang/hooks/index.vlt is `std/lang/hooks/number`).
+                let std = std_dir().canonicalize().expect("std");
+                match file.strip_prefix(&std) {
+                    Ok(rel) if self.modules[from].is_std => {
+                        let rel = rel.with_extension("").to_string_lossy().replace('\\', "/");
+                        (format!("std/{rel}"), true, file)
+                    }
+                    _ => (file.to_string_lossy().into_owned(), false, file),
+                }
             }
         };
         if let Some(i) = self.modules.iter().position(|m| m.path == path) {
@@ -201,7 +216,7 @@ impl Loader {
                     .ast
                     .jsx_import_source
                     .clone()
-                    .unwrap_or_else(|| "velt:jsx".into());
+                    .unwrap_or_else(|| "velt/jsx".into());
                 let spec = format!("{}/jsx-runtime", source.trim_end_matches('/'));
                 if let Some(target) = self.import(m, &spec) {
                     let path = self.modules[target].path.clone();

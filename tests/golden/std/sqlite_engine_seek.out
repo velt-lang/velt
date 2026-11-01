@@ -1,6 +1,0 @@
-rowid seeks: 3248 checks, all the same
-backward scan: 3000 checks, all the same
-index seeks: 390 checks, all the same
-NOCASE DESC seeks: 64 checks, all the same
-last page kind 13
-seek: database disk image is malformed: varint past the end of the file

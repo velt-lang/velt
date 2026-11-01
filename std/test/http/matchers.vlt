@@ -1,0 +1,31 @@
+// velt/test/http (internal): matchers for a `Response` (`velt/net/http/fetch/fetch`), for tests
+// of HTTP servers and clients (docs/book/testing.md): `import "velt/test/http"` adds them to
+// `expect(response)`.
+
+import { Response } from "velt/net/http/fetch/fetch";
+import { Expect } from "velt/test/expect";
+
+extend Expect<Response> {
+  /** The response's status is `status`. */
+  toHaveStatus(status: number) {
+    this.check(
+      this.actual.status == status,
+      `expected status ${status}, got ${this.actual.status}`,
+      `expected status not to be ${status}`,
+    );
+  }
+
+  /** The response has the header `name` (in any case); with `value`, with that value. */
+  toHaveHeader(name: string, value?: string) {
+    const got = this.actual.headers.get(name);
+    if (value == null) {
+      this.check(got != null, `expected header ${name}`, `expected no header ${name}, got ${got}`);
+      return;
+    }
+    this.check(
+      got == value,
+      `expected header ${name}: ${value}, got ${got ?? "none"}`,
+      `expected header ${name} not to be ${value}`,
+    );
+  }
+}

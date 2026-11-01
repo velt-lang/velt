@@ -3,7 +3,7 @@
 // although each worker thread buffers its output: before `spawn` and before a channel `send`, the
 // line is made visible (#249). `main` keeps computing after each
 // hand-off, so without that the other task, running on another worker, would print first.
-import { channel, Channel } from "velt:channel";
+import { channel, Channel } from "velt/sync";
 
 async function report(i: i64, done: Channel<i64>): Promise<void> {
   console.log(`task ${i}`);

@@ -18,8 +18,8 @@ use super::{cint, ice, FnLower};
 use crate::system::Func;
 use crate::vir::{BinOp, Callee, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
-/// The std function giving a view's length in bytes (std/typed_array/core.vlt).
-const VIEW_BYTES: &str = "std/typed_array/core::__viewBytes";
+/// The std function giving a view's length in bytes (std/lang/typed_array/buffer_view.vlt).
+const VIEW_BYTES: &str = velt_common::std_hook!(view_bytes);
 
 impl FnLower<'_, '_> {
     /// The bytes of `a`, when it is a view: `None` for a `u8[]` (the caller takes its header).
@@ -103,14 +103,14 @@ impl FnLower<'_, '_> {
         let (buf, bt) = buf;
         let (bytes, at) = self.class_field(&buf, bt, "bytes");
         let (data, blen) = self.header_parts(&bytes, at);
-        // `len * __size()`, through std (a typed array's element size is a method). A view the
-        // program forged by overriding `__size()` or with a constructor of its own can make
+        // `len * [RECORD_SIZE]()`, through std (a typed array's element size is a method). A view the
+        // program forged by overriding `[RECORD_SIZE]()` or with a constructor of its own can make
         // this huge or `off` wrap; the two checks below are non-wrapping, so the range stays
         // inside the buffer's own bytes whatever the view claims.
         let d = self
             .cx
             .prelude_def(VIEW_BYTES)
-            .unwrap_or_else(|| ice("no `__viewBytes` in std/typed_array/core"));
+            .unwrap_or_else(|| ice("no `viewBytes` in std/lang/typed_array/buffer_view"));
         let f = self.cx.func_for_direct(d, vec![], self.mode);
         let n = Place::local(self.temp(Ty::U64));
         self.call(Callee::Func(f), vec![v], Some(n.clone()), false);

@@ -7,7 +7,7 @@
 #   lib/velt/lld  lib/targets/<host>/ (the link kit)
 # and the target packs dist/velt-<version>-target-<triple>.tar.gz (`velt target add`): this host's
 # runtime and kit, and on Linux <arch>-unknown-linux-musl's.
-#   std/**  share/velt/lldb/velt_lldb.py  share/velt/warm/*.vlt  README.md  LICENSE-MIT  LICENSE-APACHE  NOTICE
+#   std/** (without its *.test.vlt files)  share/velt/lldb/velt_lldb.py  share/velt/warm/*.vlt  README.md  LICENSE-MIT  LICENSE-APACHE  NOTICE
 #
 # Usage: scripts/package.sh [--std-dir <dir>] [--skip-build] [--no-archive] [--lld <path>]
 #                           [--no-bundled-linker] [--no-musl]
@@ -92,6 +92,9 @@ for p in $(grep -v '^#' "$repo/share/velt/warm/programs.txt"); do
 done
 if [ -d "$std_dir" ]; then
     cp -R "$std_dir/." "$out/std/"
+    # std's white-box tests (`velt test std/`, docs/internals/design/std-layout.md §9) are not
+    # part of the toolchain.
+    find "$out/std" -name '*.test.vlt' -type f -exec rm -f {} +
 else
     echo "warning: no std sources at $std_dir; shipping an empty std/ (pass --std-dir)" >&2
 fi

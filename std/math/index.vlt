@@ -1,0 +1,6 @@
+// velt/math: integer helpers (explicit import: `import { clamp } from "velt/math"`) and
+// `BigInt`. Float math lives on the prelude's `Math` class. docs/std/math.md.
+
+export { BigInt } from "velt/math/bigint";
+export { BigIntError } from "velt/math/errors";
+export { clamp, fib, gcd, isPrime, lcm } from "velt/math/integer";

@@ -1,7 +1,7 @@
 // One access-log line → a typed entry.
 //   203.0.113.7 - - [30/Sep/2026:12:00:01 +0000] "GET /api/users/42 HTTP/1.1" 200 5123 12.345
 // (client, identity, user, time, request line, status, response bytes, response time in ms).
-import { RegExp } from "velt:regex";
+import { RegExp } from "velt/text";
 
 export type Entry = {
   ip: string;

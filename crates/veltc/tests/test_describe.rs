@@ -1,5 +1,5 @@
 //! `velt test` with tests registered at run time (`describe`, `it`, `test` and the hooks of
-//! `velt:test`, also imported as `vitest`) and `expect`: files whose top level only registers
+//! `velt/test`, also imported as `vitest`) and `expect`: files whose top level only registers
 //! share one harness with the other files, each file collects its tests in its own process and
 //! lists them for the runner, `--filter` matches the full names, and a test that ends its
 //! process is followed by a new one that collects again.
@@ -35,7 +35,11 @@ fn built(dir: &Path) -> Vec<String> {
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .filter(|n| !n.contains('.') || n.ends_with(".exe"))
-        .map(|n| n.trim_end_matches(".exe").to_string())
+        // `<name>_<key>`: a harness is named by what it is built from.
+        .map(|n| {
+            let n = n.trim_end_matches(".exe");
+            n.rsplit_once('_').map_or(n, |(stem, _)| stem).to_string()
+        })
         .collect();
     stems.sort();
     stems
@@ -54,7 +58,7 @@ fn block<'s>(stdout: &'s str, file: &str) -> Vec<&'s str> {
 
 /// Nested groups, hooks in order, sync and `async` tests, `expect` and a `test_*` function.
 const MATH: &str = "\
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from \"velt:test\";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from \"velt/test\";
 
 const log: string[] = [];
 
@@ -127,7 +131,7 @@ describe(\"crash\", () => {
 /// A `describe` callback that throws: a test named after the group fails with the error, and
 /// none of the group's tests run, what it registered before the throw included (as in Vitest).
 const COLLECT: &str = "\
-import { describe, it } from \"velt:test\";
+import { describe, it } from \"velt/test\";
 
 describe(\"setup\", () => {
   it(\"registered first\", () => {});
@@ -193,7 +197,7 @@ fn describe_it_and_expect() {
     );
     assert!(stdout.contains("6 passed; 4 failed"), "{stdout}");
     // Their top levels only register: one harness for the three, and the runner.
-    assert_eq!(built(dir), ["harness_1", "runner_0"]);
+    assert_eq!(built(dir), ["harness", "runner"]);
 
     // `--filter` matches the full names, which only the test programs know.
     let o = velt_test(dir, &["t", "--filter", "math > async"]);
@@ -219,7 +223,7 @@ fn describe_it_and_expect() {
 /// built-in ones do, `.not` included, located at their `check` (not yet at the call in the test:
 /// caller tracking is for standard-library functions).
 const MATCHERS: &str = "\
-import { Expect, expect, it } from \"velt:test\";
+import { Expect, expect, it } from \"velt/test\";
 
 extend<T extends Comparable<T>> Expect<T> {
   toBeWithin(lo: T, hi: T) {
@@ -275,7 +279,7 @@ fn custom_matchers() {
 /// Every built-in matcher passing, failing and with `.not`, with Vitest's messages (checked
 /// against Vitest 3.2.4 for the same file: they differ only in Vitest's `+0` for a zero and in
 /// the "promise rejected / resolved instead of …" messages being plain `Error`s there).
-const EVERY_MATCHER: &str = r#"import { describe, expect, it } from "velt:test";
+const EVERY_MATCHER: &str = r#"import { describe, expect, it } from "velt/test";
 
 class P {
   x: number;
@@ -468,7 +472,7 @@ fn every_matcher_passes_and_fails_as_in_vitest() {
 ///   `beforeAll` fails the test; a failing `afterAll` fails the run.
 /// - A name with a line break is escaped.
 /// - With registrations, a `--filter` that matches nothing says so.
-const SEMANTICS: &str = r#"import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "velt:test";
+const SEMANTICS: &str = r#"import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "velt/test";
 
 describe("order", () => {
   afterEach(() => console.log("outer ae1"));
@@ -599,7 +603,7 @@ fn hooks_and_groups_as_in_vitest() {
 /// `-0` and `NaN` equal to itself; cycles by Vitest's rule (the same pair met again is equal, an
 /// object met again with another partner differs: rings of two lengths), through classes and
 /// object literals; `toBe` still compares identity.
-const TO_EQUAL: &str = r#"import { expect, it } from "velt:test";
+const TO_EQUAL: &str = r#"import { expect, it } from "velt/test";
 
 class P {
   x: number;

@@ -5,7 +5,7 @@
 //! program (`==` uses it); in a program that converts an `any` to a number
 //! (`Boxing::any_number`) every table has it: `null` is 0, `undefined` NaN, a symbol stops
 //! with Node's `TypeError`, and an object or a function gives NaN (sema converts those with
-//! `ToPrimitive` before, through the prelude's `__anyObjectNumber`).
+//! `ToPrimitive` before, through the hook `anyObjectNumber`).
 //!
 //! An `any` holding a number of another numeric type than the one it is converted to (an `i64`
 //! read back as a `number`, a `number` as an `i64`, a generic `P = i64` boxed and converted to

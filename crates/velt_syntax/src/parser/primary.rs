@@ -326,7 +326,7 @@ impl<'a> Parser<'a> {
     /// `[key]: value` with any expression as the key (a symbol key or a module constant,
     /// `[KEY]`, is [`Self::parse_symbol_key`]'s). A string or integer literal key is the plain
     /// key (`["a"]: 1` is `a: 1`). Any other key is known only at run time: the property is
-    /// written as a spread of a call of the prelude's [`COMPUTED_KEY_FN`], `...__computed_key(key,
+    /// written as a spread of a call of the prelude's [`COMPUTED_KEY_FN`], `...computedKey(key,
     /// value)`, which sema checks where a `Record` is built (the object has string keys).
     fn parse_computed_prop(&mut self) -> PResult<ObjectProp> {
         let lo = self.cur_lo();

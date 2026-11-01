@@ -1,8 +1,8 @@
 // A client session against the server running in this process (golden: demo.out): commands
 // one at a time, then a pipeline of them in one write, with the raw RESP replies shown.
-import { connect, TcpStream } from "velt:net";
-import { exit } from "velt:process";
-import { utf8DecodeLossy, utf8Encode } from "velt:encoding";
+import { connect, TcpStream } from "velt/net";
+import { exit } from "velt/process";
+import { utf8DecodeLossy, utf8Encode } from "velt/encoding";
 import { keyspace, serve, start } from "./src/server";
 
 function encode(argv: string[]): string {

@@ -207,7 +207,7 @@ fn floating_promise_can_be_awaited_or_spawned() {
 
 #[test]
 fn no_spawn_fix_for_a_scope_spawn() {
-    // A stand-in for `velt:task`'s `TaskScope` (the test loader has no standard library).
+    // A stand-in for `velt/task`'s `TaskScope` (the test loader has no standard library).
     let text = "class TaskScope {
   spawn(p: Promise<i64>): Promise<i64> {
     return p;

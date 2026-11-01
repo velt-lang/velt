@@ -11,7 +11,8 @@
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
 // `Number(s)` and `parseFloat(s)` are Velt code (#1658).
-import { toNumber, parseFloatOf } from "velt:number/parse";
+import { toNumber, parseFloatOf } from "velt/lang/number/parse";
+import { strCharCodeAt } from "velt/lang/intrinsics";
 
 declare function velt_rt_str_slice(s: string, start: i64, end: i64): string;
 declare function velt_rt_str_index_of(s: string, needle: string, from: i64): i64;
@@ -20,7 +21,6 @@ declare function velt_rt_str_includes(s: string, needle: string): bool;
 declare function velt_rt_str_starts_with(s: string, affix: string): bool;
 declare function velt_rt_str_ends_with(s: string, affix: string): bool;
 declare function velt_rt_str_split(s: string, sep: string): string[];
-declare function velt_rt_str_code_points(s: string): string[];
 declare function velt_rt_str_trim(s: string): string;
 declare function velt_rt_str_trim_start(s: string): string;
 declare function velt_rt_str_trim_end(s: string): string;
@@ -62,28 +62,42 @@ extend string {
   }
 
   /**
-   * Returns true if `needle` appears as a substring of this string; otherwise, returns false.
-   * Unlike JS, there is no `position` argument.
+   * Returns true if `needle` appears as a substring of this string at or after `position` (a
+   * code-unit index, clamped to the string); otherwise, returns false.
    * @param needle - search string
    */
-  includes(needle: string): bool {
-    return velt_rt_str_includes(this, needle);
+  includes(needle: string, position: i64 = 0): bool {
+    if (position <= 0) {
+      return velt_rt_str_includes(this, needle);
+    }
+    return velt_rt_str_index_of(this, needle, position) >= 0;
   }
 
   /**
-   * Returns true if this string starts with `prefix`. Otherwise returns false. Unlike JS, there
-   * is no `position` argument.
+   * Returns true if this string has `prefix` at `position` (a code-unit index, clamped to the
+   * string). Otherwise returns false.
    */
-  startsWith(prefix: string): bool {
-    return velt_rt_str_starts_with(this, prefix);
+  startsWith(prefix: string, position: i64 = 0): bool {
+    if (position <= 0) {
+      return velt_rt_str_starts_with(this, prefix);
+    }
+    const len = this.length as i64;
+    const start = position < len ? position : len;
+    return this.slice(start, start + (prefix.length as i64)) == prefix;
   }
 
   /**
-   * Returns true if this string ends with `suffix`. Otherwise returns false. Unlike JS, there is
-   * no `endPosition` argument.
+   * Returns true if the first `endPosition` code units of this string (all of it by default)
+   * end with `suffix`. Otherwise returns false.
    */
-  endsWith(suffix: string): bool {
-    return velt_rt_str_ends_with(this, suffix);
+  endsWith(suffix: string, endPosition: i64 = END): bool {
+    const len = this.length as i64;
+    if (endPosition >= len) {
+      return velt_rt_str_ends_with(this, suffix);
+    }
+    const end = endPosition > 0 ? endPosition : 0;
+    const n = suffix.length as i64;
+    return end >= n && this.slice(end - n, end) == suffix;
   }
 
   /**
@@ -92,14 +106,6 @@ extend string {
    */
   split(sep: string): string[] {
     return velt_rt_str_split(this, sep);
-  }
-
-  /**
-   * The characters (code points, a surrogate pair as one string), as JS's string iterator:
-   * what `for (const c of s)` and `[...s]` iterate. Internal to the compiler.
-   */
-  __codePoints(): string[] {
-    return velt_rt_str_code_points(this);
   }
 
   /** Strips JS whitespace and line terminators. */
@@ -223,7 +229,7 @@ extend string {
    * (JS: NaN). Reads an ASCII string inline.
    */
   charCodeAt(i: i64 = 0): i64 {
-    return __intrinsic_str_char_code_at(this, i);
+    return strCharCodeAt(this, i);
   }
 
   /**
@@ -232,12 +238,12 @@ extend string {
    * `i` is out of range, as in JS.
    */
   codePointAt(i: i64 = 0): number | undefined {
-    const high = __intrinsic_str_char_code_at(this, i);
+    const high = strCharCodeAt(this, i);
     if (high < 0) {
       return undefined;
     }
     if (high >= 0xd800 && high < 0xdc00) {
-      const low = __intrinsic_str_char_code_at(this, i + 1);
+      const low = strCharCodeAt(this, i + 1);
       if (low >= 0xdc00 && low < 0xe000) {
         return (0x10000 + ((high - 0xd800) << 10) + (low - 0xdc00)) as number;
       }

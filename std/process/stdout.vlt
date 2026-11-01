@@ -1,0 +1,27 @@
+// velt/process (internal): `Stdout`, standard output as a synchronous byte sink, and `stdout`.
+
+import { velt_rt_isatty, velt_rt_stdout_write_bytes } from "velt/process/rt";
+
+/**
+ * Standard output as a synchronous byte sink (for strings, `process.stdout.write(s)` needs no
+ * import). Writes are ordered with `console.log` and buffered the same way; a large array
+ * (64 KiB or more) goes straight to the OS from the caller's buffer, without a copy. Portable: no
+ * `/dev/stdout` needed.
+ */
+export struct Stdout {
+  /** Writes raw bytes (the array stays the caller's, ready to be refilled). */
+  write(bytes: u8[]) {
+    velt_rt_stdout_write_bytes(bytes);
+  }
+
+  /**
+   * Whether standard output is a terminal (Node's `process.stdout.isTTY`): false when it is
+   * redirected to a file or a pipe, so a CLI can leave out colours. Asked once, then cached.
+   */
+  get isTTY(): bool {
+    return velt_rt_isatty(1);
+  }
+}
+
+/** Standard output, as a byte sink (`stdout.write(bytes)`). */
+export const stdout: Stdout = {};

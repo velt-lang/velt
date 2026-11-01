@@ -4,7 +4,7 @@
 //! delete (`Boxing::any_delete`). The slot answers `DEL_FALSE`, `DEL_TRUE` or
 //! `DEL_UNSUPPORTED` (a `TypeError`):
 //!
-//! - a `Record<string, V>`: its entry is removed (`__delete`), `true`;
+//! - a `Record<string, V>`: its entry is removed (`[RECORD_DELETE]`), `true`;
 //! - class instances and object types: an object type's optional field is made absent, `true`;
 //!   a key the value does not have as its own (a class's methods and accessors live on its
 //!   prototype) is `true`; a fixed field and a class's field, optional or not, which Velt cannot
@@ -152,15 +152,15 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// `delete r[key]` for a `Record<string, V>`: its `__delete`.
+    /// `delete r[key]` for a `Record<string, V>`: its `[RECORD_DELETE]`.
     fn any_delete_record(&mut self, data: vir::Local, key: vir::Local, ty: TyId) {
         let (k, _) = self
             .prelude_record(ty)
             .unwrap_or_else(|| super::ice("record"));
         let del = self.plain_adt(ty).and_then(|(d, _)| {
-            self.dyn_members_of(d)
-                .into_iter()
-                .find(|m| m.name == "__delete" && m.kind == DynMemberKind::Method)
+            self.dyn_members_of(d).into_iter().find(|m| {
+                m.name == velt_common::std_key!(record_delete) && m.kind == DynMemberKind::Method
+            })
         });
         let ready = del.and_then(|m| self.ready(ty, &m));
         let Some(r) = ready.filter(|_| matches!(self.cx.kind(k), TyKind::Str)) else {

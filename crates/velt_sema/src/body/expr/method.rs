@@ -195,7 +195,7 @@ impl FnCx<'_, '_> {
 
     /// The method `name` of an `extend` block of a base class of class `recv`, nearest base
     /// first: a subclass has its bases' extension methods as it has their own methods
-    /// (`class MyRes extends Response {}` has `Response`'s `bytes()`, std/fetch/typed.vlt).
+    /// (`class MyRes extends Response {}` has `Response`'s `bytes()`, std/net/http/fetch/typed.vlt).
     fn inherited_extension_method(&mut self, recv: TyId, name: &str) -> Option<Resolved> {
         let base = self.cx.base_of(recv)?;
         self.base_extension_method(base, name)

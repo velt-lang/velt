@@ -1,0 +1,11 @@
+// sqlite/engine/sql/errors (internal): the error of SQL that does not parse.
+
+/** A SQL syntax error, with the byte offset it was found at. */
+export class SqlError extends Error {
+  at: usize;
+
+  constructor(message: string, at: usize) {
+    super(message);
+    this.at = at;
+  }
+}

@@ -4,8 +4,8 @@
 // call writes), and closed twice; the second `CloseHandle` fails with ERROR_INVALID_HANDLE (6),
 // which `lastOsError()` reads. (`ReadFile`, `WriteFile`, `LockFileEx` and `UnlockFileEx` are not
 // callable yet: docs/reference/system-functions.md.)
-import { lastOsError } from "velt:os";
-import { removeSync } from "velt:fs";
+import { lastOsError } from "velt/os";
+import { removeSync } from "velt/fs";
 
 struct LargeInteger {
   QuadPart: i64;

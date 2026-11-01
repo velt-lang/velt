@@ -1,19 +1,19 @@
-//! Indexing a class of the standard library that defines `__index(i)`, and `__setIndex(i, v)`
-//! for writes: the typed arrays (`Uint8Array`, `Float64Array`, …, std/typed_array.vlt), whose
+//! Indexing a class of the standard library that defines `[INDEX](i)`, and `[SET_INDEX](i, v)`
+//! for writes: the typed arrays (`Uint8Array`, `Float64Array`, …, std/lang/typed_array/index.vlt), whose
 //! elements live in an `ArrayBuffer` rather than in a Velt array, and `RegExpMatch`. `xs[i]`
-//! reads `xs.__index(i)`; `xs[i] = v` is `xs.__setIndex(i, v)`, and `xs[i] op= v`, `xs[i]++`
+//! reads `xs[INDEX](i)`; `xs[i] = v` is `xs[SET_INDEX](i, v)`, and `xs[i] op= v`, `xs[i]++`
 //! and `xs[i] ??= v` read, then write, as in JS:
 //!
 //! ```text
 //! { const <receiver> = xs;           // only when evaluating `xs` may have an effect
 //!   const <index> = i;               // only when `i` is not a literal
-//!   const <old> = <receiver>.__index(<index>);
+//!   const <old> = <receiver>[INDEX](<index>);
 //!   const <new> = <old> op v;
-//!   <receiver>.__setIndex(<index>, <new>);
+//!   <receiver>[SET_INDEX](<index>, <new>);
 //!   <old> or <new> }                 // the value, where one is wanted
 //! ```
 //!
-//! Only std classes are indexed this way: `__index` is not a protocol user classes can join.
+//! Only std classes are indexed this way: the keys (std/lang/hooks/keys.vlt) are std's own.
 
 use velt_common::Span;
 use velt_syntax::ast;
@@ -25,11 +25,11 @@ use crate::body::{FnCx, Want};
 use crate::hir::{self, ExprKind as H, Nothing, TyId};
 
 /// The read method's name.
-const INDEX: &str = "__index";
+const INDEX: &str = velt_common::std_key!(index);
 /// The write method's name.
-const SET_INDEX: &str = "__setIndex";
+const SET_INDEX: &str = velt_common::std_key!(set_index);
 /// An array's checked read (`T | undefined`), std/prelude/array.vlt.
-const GET: &str = "__get";
+const GET: &str = velt_common::std_key!(array_get);
 const INDEX_TEMP: &str = "<index>";
 const OLD: &str = "<old>";
 const NEW: &str = "<new>";
@@ -59,19 +59,19 @@ fn index_parts(target: &ast::Expr) -> Option<(&ast::Expr, &ast::Expr)> {
 }
 
 impl FnCx<'_, '_> {
-    /// Is `t` a std class that defines `__index`?
+    /// Is `t` a std class that defines `[INDEX]`?
     pub(crate) fn has_indexer(&mut self, t: TyId) -> bool {
         let Some((d, _)) = self.cx.class_of(t) else {
             return false;
         };
-        let std = self
-            .cx
-            .adt(d)
-            .is_some_and(|a| a.qual_name.starts_with("std/"));
+        let std = self.cx.adt(d).is_some_and(|a| {
+            a.qual_name
+                .starts_with(velt_common::std_modules::CANONICAL_PREFIX)
+        });
         std && self.resolve_method(t, INDEX).is_some()
     }
 
-    /// `obj[index]` read through `__index`.
+    /// `obj[index]` read through `[INDEX]`.
     pub(super) fn indexer_read(
         &mut self,
         obj: hir::Expr,
@@ -83,7 +83,7 @@ impl FnCx<'_, '_> {
 
     /// `xs[i]` on an array where the read is expected to be `T | undefined` (`return xs[0]`
     /// from a function returning `T | undefined`, `const v: T | undefined = xs[i]`): a checked
-    /// read, `xs.__get(i)`, which gives `undefined` for a position outside the array, as in
+    /// read, `xs[ARRAY_GET](i)`, which gives `undefined` for a position outside the array, as in
     /// JS (`T | undefined` at `T = U | undefined` is `U | undefined` itself). A read typed `T`
     /// stays the plain index (an out-of-range one panics); `Err` gives the object back for it.
     pub(super) fn checked_array_read(
@@ -317,7 +317,7 @@ impl FnCx<'_, '_> {
         self.mk(H::Block(b), ty, span)
     }
 
-    /// `(xs[i] = v)` used as a value on an indexer class: `v`, written through `__setIndex`
+    /// `(xs[i] = v)` used as a value on an indexer class: `v`, written through `[SET_INDEX]`
     /// after the object and index are evaluated.
     fn indexer_assign_value(
         &mut self,
@@ -357,7 +357,7 @@ impl FnCx<'_, '_> {
         name_ref(INDEX_TEMP, index.span)
     }
 
-    /// Is `index` passed to `__index` as it is: a literal, or a variable or field path that
+    /// Is `index` passed to `[INDEX]` as it is: a literal, or a variable or field path that
     /// holds a number (an integer one is converted, and any other index is evaluated once,
     /// after the object: [`Self::index_once`])?
     fn number_index(&mut self, index: &ast::Expr) -> bool {

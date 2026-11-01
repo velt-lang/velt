@@ -63,7 +63,7 @@ hidden classes and no runtime shape checks.
   its own inherits its base's, with the same rule. `JSON.parse<C>` (and `v.as<C>()`) cannot
   decode such a class, alone or inside another type, since decoding fills the fields without
   running a constructor; `JSON.stringify` writes it as usual
-  ([`velt:json`](../std/json.md)).
+  ([`velt/encoding/json`](../std/encoding/json.md)).
 - **Single inheritance**: `class B extends A`. The base's fields are a prefix of the subclass
   layout, so upcasts are free. A subclass may declare an inherited field again with the same
   type and an initializer of its own (`class Dog extends Animal { kind: string = "dog" }`): it is
@@ -81,7 +81,8 @@ hidden classes and no runtime shape checks.
 - **Abstract classes** (TypeScript's rules): `abstract class C` cannot be created with `new`
   (``cannot create an instance of abstract class `C` ``), only its subclasses can. It may declare
   abstract methods and accessors, `abstract area(): number;` / `abstract get name(): string;`,
-  which have no body and must declare their return type, and abstract properties, `abstract
+  which have no body and must declare their return type (and take no parameter defaults:
+  `x?: T`, the subclasses give the default; TypeScript's TS2371), and abstract properties, `abstract
   readonly name: string;` / `abstract count: number;` (an abstract getter, and a setter unless
   `readonly`). A subclass implements an abstract property with a field (`readonly name = "q"`) or
   accessors, and an abstract method with a method or a field of its function type (`run: () =>
@@ -423,7 +424,9 @@ console.log(t.names, t.tags); // [ 'a', 'b' ] [ 'x' ]
 
 - `this` as a method's result type (the polymorphic `this` type) is the class of the object
   the method is called on: `register` called on a `Tagged` gives a `Tagged`, so chained calls
-  keep the subclass's methods, as in TypeScript. An override returns `this` too: written
+  keep the subclass's methods, as in TypeScript; called on a value of a type parameter bounded
+  by the class (`x.register(n)` with `x: T` and `T extends Registry`), it gives a `T`. An
+  override returns `this` too: written
   (`override register(name: string): this`) or left out, when it returns `this` (or
   `super.register(name)`). An override with another result type (`override register(name:
   string): Registry`) is TypeScript's error TS2416.
@@ -560,7 +563,10 @@ console.log(p.len(), q.len());  // 4 4
   (``cannot assign to `id`: it is a readonly field``). Reads go through a getter in the
   interface's table and writes through a setter that only interfaces the program writes
   through get, so other programs pay nothing; through a `T extends I` both are direct calls. An
-  object literal implementing such an interface with `get f()` must give `set f(v)` too.
+  object literal implementing such an interface with `get f()` must give `set f(v)` too. A
+  class implements an optional field `x?: T` with a field `x?: T` or, as in TypeScript, with a
+  plain `x: T`: read through the interface it is present, and writing `undefined` through the
+  interface stops with a `TypeError` (the class's field holds no `undefined`).
   Changing a part of a field (`x.t[0] = 5` on a tuple field, `x.pos.p[1] += 1`, `x.t[0]++`)
   changes the field the object holds, as in JS: the field is read through its getter, the part
   changed and the field written back through its setter. The receiver is evaluated once, and a
@@ -596,6 +602,11 @@ console.log(p.len(), q.len());  // 4 4
 - A default body can be `async` (`async load(): Promise<T> { … }`), with the rules of an async
   class method ([Async](async.md#errors)). A method without a body cannot be: like in TypeScript,
   it declares a `Promise` result, and implementations may be `async`.
+- A method without a body declares that a parameter may be left out with `x?: T`; a default
+  value (`x: T = 1`) is an error, as in TypeScript ("a parameter initializer is only allowed in
+  a function or constructor implementation"): each implementation gives its own
+  (`step(by: number | undefined = 1)` in the class). A default body may have defaults, as any
+  method.
 
 ```ts
 interface Named {
@@ -723,7 +734,12 @@ interface value by its own interface and the ones it extends, so `f<Person>` fit
 `function f<T extends Named>` with `interface Person extends Named`, and its methods are
 called through the value's table) or, as in
 TypeScript, other types a type argument must be assignable to (`T extends Record<string, V>`,
-`T extends string | number`; [Generic functions](functions.md#generic-functions)). Type
+`T extends string | number`; [Generic functions](functions.md#generic-functions)). A **class
+bound** (`T extends Base`, `E extends Error`) is satisfied by the class and its subclasses
+(classes are nominal: another class with the same fields is not one), and inside the generic
+body a `T` has the class's fields, getters, setters and methods, and converts to the class
+(`const b: Base = x`). Each instantiation reads them from its own class: an overriding method
+runs, and a `T` returned keeps the subclass's type (`touch(new Sub()).extra`). Type
 parameters may have **defaults** (`interface Iterator<T, E = never>`), used when a type leaves
 the argument out (`Iterator<i64>` is `Iterator<i64, never>`) and when nothing infers
 it in a `new` or a static method call (`new D(1)` of `class D<T = i64>` is a `D<i64>`);
@@ -749,6 +765,37 @@ const s = new Stack<string>();
 s.push("a");
 s.push("b");
 console.log(s.pop() ?? "empty", s.items.length);
+```
+
+```ts
+class Shape {
+  name: string = "shape";
+  area(): number {
+    return 0;
+  }
+}
+
+class Square extends Shape {
+  side: number = 2;
+  override area(): number {
+    return this.side * this.side;
+  }
+}
+
+function label<T extends Shape>(s: T): T {
+  s.name = `${s.name} of ${s.area()}`;
+  return s;
+}
+
+class NotFound extends Error {}
+
+function describe<E extends Error>(e: E): string {
+  return `${e.name}: ${e.message}`;
+}
+
+const sq = label(new Square());
+console.log(sq.name, sq.side);                    // shape of 4 2
+console.log(describe(new NotFound("no user")));   // Error: no user
 ```
 
 ## `extend`

@@ -2,8 +2,8 @@
 // partial vector (`loadPartial` / `storePartial`): `partial <loop|partial> <length> <calls>`
 // counts a byte and XORs the array with a 4-byte key, `calls` times (partial.sh runs it).
 // Every call changes a byte first, so no call repeats the one before.
-import { args } from "velt:process";
-import { u8x16, mask8x16 } from "velt:simd";
+import { args } from "velt/process";
+import { u8x16, mask8x16 } from "velt/simd";
 
 function countLoop(d: u8[], b: u8): u64 {
   const needle = u8x16.splat(b);

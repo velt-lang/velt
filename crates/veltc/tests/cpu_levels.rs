@@ -48,7 +48,7 @@ fn the_flag_wins_over_the_environment_and_the_package() {
     std::fs::write(root.join("src/main.vlt"), PROGRAM).unwrap();
     let manifest = |build: &str| {
         let text = format!(
-            "import type {{ Package }} from \"velt:package\";\n\nexport const pkg: Package = \
+            "import type {{ Package }} from \"velt/package\";\n\nexport const pkg: Package = \
              {{ name: \"app\", version: \"0.1.0\"{build} }};\n"
         );
         std::fs::write(root.join("package.vlt"), text).unwrap();

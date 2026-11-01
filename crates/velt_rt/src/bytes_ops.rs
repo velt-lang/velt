@@ -129,6 +129,36 @@ pub unsafe extern "C" fn velt_rt_bytes_set(
     1
 }
 
+/// Copies `src[source_start..source_end)` into `dst` at `target_start` (Node's
+/// `src.copy(dst, targetStart, sourceStart, sourceEnd)`): as many bytes as fit, their number
+/// returned; `source_end` is clamped to `src`'s length. -1 (a `RangeError` in std) for a negative
+/// position or a `source_start` past `src`'s end. `src` may be `dst` (memmove).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_bytes_copy(
+    dst: *const VeltBytes,
+    src: *const VeltBytes,
+    target_start: i64,
+    source_start: i64,
+    source_end: i64,
+) -> i64 {
+    let (d, s) = (&*dst, &*src);
+    if target_start < 0 || source_start < 0 || source_end < 0 || source_start as u64 > s.len {
+        return -1;
+    }
+    let end = (source_end as u64).min(s.len);
+    if target_start as u64 >= d.len || source_start as u64 >= end {
+        return 0;
+    }
+    let count = (end - source_start as u64).min(d.len - target_start as u64);
+    // memmove: `src` and `dst` may be the same array.
+    std::ptr::copy(
+        s.ptr.add(source_start as usize),
+        d.ptr.add(target_start as usize),
+        count as usize,
+    );
+    count as i64
+}
+
 /// Copies `[start, end)` to `target` within the array (JS `copyWithin`, relative indices).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_bytes_copy_within(

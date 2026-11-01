@@ -1,0 +1,36 @@
+// velt/net/http (internal): `RequestInit`, the options of `fetch(input, init)` and `new
+// Request(input, init)`, and the methods they name.
+
+import { AbortSignal } from "velt/task";
+import { BodyInit } from "velt/net/http/fetch/body";
+import { HeadersInit } from "velt/net/http/fetch/headers";
+
+/** What `fetch` does with a redirect: follow it (default, up to 20), fail, or return it. */
+export type RequestRedirect = "follow" | "error" | "manual";
+
+/** The options of `fetch(input, init)` and `new Request(input, init)`. */
+export struct RequestInit {
+  /** Default "GET"; `get`, `post`, `put`, `delete`, `head` and `options` are uppercased. */
+  method?: string;
+  headers?: HeadersInit;
+  body?: BodyInit;
+  redirect?: RequestRedirect;
+  /**
+   * Aborting it rejects the `fetch` (and a body read in progress) with its `AbortError`
+   * (`TimeoutError` for `AbortSignal.timeout(ms)`), and cancels the request.
+   */
+  signal?: AbortSignal;
+  /** Velt: extra trusted CA certificates (PEM) for `https://`, e.g. a private or test CA. */
+  ca?: string;
+}
+
+/** The method as the Fetch standard normalizes it (std only: `fetch` uses it too). */
+export function normalizeMethod(m: string): string {
+  const up = m.toUpperCase();
+  if (
+    up == "DELETE" || up == "GET" || up == "HEAD" || up == "OPTIONS" || up == "POST" || up == "PUT"
+  ) {
+    return up;
+  }
+  return m;
+}

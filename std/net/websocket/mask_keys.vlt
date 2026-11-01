@@ -1,0 +1,43 @@
+// velt/net/websocket (internal): masking keys (RFC 6455 §5.3), from the OS random source.
+
+import { randomBytes } from "velt/crypto";
+
+/** A fresh masking key (RFC 6455 §5.3: from the OS random source), drawn on its own. */
+export function maskKey(): u32 {
+  return keyAt(randomBytes(4), 0);
+}
+
+// The key in the four bytes of `p` from `i` (most significant first).
+function keyAt(p: u8[], i: usize): u32 {
+  return ((p[i] as u32) << 24) |
+    ((p[i + 1] as u32) << 16) |
+    ((p[i + 2] as u32) << 8) |
+    (p[i + 3] as u32);
+}
+
+/** Keys taken from one draw of the OS random source. */
+const KEYS_PER_DRAW: usize = 64;
+
+/**
+ * Masking keys for a client connection (RFC 6455 §5.3, §10.3: unpredictable, from the OS random
+ * source): drawn 64 at a time with `randomBytes`, so a frame costs no system call.
+ */
+export class MaskKeys {
+  private pool: u8[] = [];
+  private at: usize = 0;
+
+  /** The next key. */
+  next(): u32 {
+    if (this.at == this.pool.length) {
+      this.pool = randomBytes(KEYS_PER_DRAW * 4);
+      this.at = 0;
+    }
+    const p = this.pool;
+    const i = this.at;
+    this.at = i + 4;
+    return ((p[i] as u32) << 24) |
+      ((p[i + 1] as u32) << 16) |
+      ((p[i + 2] as u32) << 8) |
+      (p[i + 3] as u32);
+  }
+}

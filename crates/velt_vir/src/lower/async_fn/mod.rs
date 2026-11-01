@@ -20,7 +20,7 @@
 //!
 //! `await` of a direct call to a compiled async function embeds the child's state in the
 //! parent's (no allocation); other awaits poll heap futures (suspend.rs). Task/promise
-//! intrinsics are in tasks.rs, shared-state intrinsics in sync.rs, http handlers in handler.rs.
+//! intrinsics are in tasks.rs, shared-state intrinsics in sync.rs.
 
 mod all;
 mod all_settle;
@@ -31,7 +31,6 @@ mod foreign_promise;
 mod gen_object;
 mod gen_send;
 mod generator;
-mod handler;
 mod kept;
 mod spawn;
 mod spill;
@@ -143,8 +142,7 @@ impl Cx<'_> {
         let f = self.fn_def(def);
         let (mut func, inputs, result) = {
             let mut lw = FnLower::bare(self, targs.to_vec());
-            let shared = lw.cx.shared_envs.get(&(def, targs.to_vec())).cloned();
-            let inputs = lw.lower_poll_body(f, shared);
+            let inputs = lw.lower_poll_body(f);
             let result = lw.result_region();
             let sym = format!("{}$poll", lw.cx.instance_symbol(&f.name, targs));
             (
@@ -180,7 +178,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
 
     /// Params `(state, cx)`, the dispatch switch, then the body. Returns the VIR local of each
     /// input (param/capture) for the state layout.
-    fn lower_poll_body(&mut self, f: &FnDef, shared: Option<Vec<PassMode>>) -> Vec<Option<Local>> {
+    fn lower_poll_body(&mut self, f: &FnDef) -> Vec<Option<Local>> {
         let state = self.new_local(Ty::Ptr, Some("state".into()));
         let cx = self.new_local(Ty::Ptr, Some("cx".into()));
         let targs = self.targs.clone();
@@ -210,7 +208,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let scan = FlagScan::run_picking(hir, &f.body, Some(&mut pick));
         self.ref_bindings = scan.ref_bindings.iter().copied().collect();
         self.epoch_exempt = f.name.starts_with(super::epoch_sections::EPOCH_MODULE);
-        let inputs = self.declare_async_locals(f, shared);
+        let inputs = self.declare_async_locals(f);
         self.declare_drop_flags(f, &scan);
         self.lower_body(f);
         self.emit_dispatch();
@@ -218,18 +216,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
     }
 
     /// Params and captures are values stored in the state (owned/copied), or pointers for
-    /// borrowed aggregates; every other local is declared as in a sync function. `shared`
-    /// overrides the capture modes (http handlers borrow from their shared environment).
-    fn declare_async_locals(
-        &mut self,
-        f: &FnDef,
-        shared: Option<Vec<PassMode>>,
-    ) -> Vec<Option<Local>> {
+    /// borrowed aggregates; every other local is declared as in a sync function.
+    fn declare_async_locals(&mut self, f: &FnDef) -> Vec<Option<Local>> {
         let mut info: Vec<Option<LInfo>> = f.body.locals.iter().map(|_| None).collect();
-        let modes: FxHashMap<hir::LocalId, PassMode> = match shared {
-            Some(ms) => f.captures.iter().map(|c| c.inner).zip(ms).collect(),
-            None => f.captures.iter().map(|c| (c.inner, c.mode)).collect(),
-        };
+        let modes: FxHashMap<hir::LocalId, PassMode> =
+            f.captures.iter().map(|c| (c.inner, c.mode)).collect();
         let mut inputs = vec![];
         for p in &f.params {
             let mode = modes.get(&p.local).copied().unwrap_or(p.mode);

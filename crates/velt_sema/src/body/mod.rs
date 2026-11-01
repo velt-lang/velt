@@ -55,6 +55,7 @@ mod for_map;
 mod forward_consts;
 mod frame;
 mod gated;
+mod generated_bodies;
 mod generators;
 mod global_narrow;
 mod index_keys;
@@ -110,6 +111,7 @@ pub(crate) use driver::{
 };
 pub(crate) use expr::REPORTED;
 pub(crate) use frame::Frame;
+pub(crate) use generated_bodies::check_generated;
 pub(crate) use pattern_defaults::UNDEFINED_OR;
 
 /// What the consumer of an expression's value does with it (only matters for non-Copy types).
@@ -296,17 +298,6 @@ pub(crate) struct FnCx<'a, 'm> {
     pub packed_rest: Option<Span>,
     /// A timer's callback that is a function value, not an arrow (`expr/callback.rs`).
     pub task_callback: Option<Span>,
-    /// The handler arrow of a server call (`serve`) that is not `async`: checked as an async
-    /// arrow (`expr/callback.rs`).
-    pub thread_task: Option<Span>,
-    /// The handler of a server call that is a function value, not an arrow.
-    pub thread_callback: Option<Span>,
-    /// An arrow checked as `async` by `thread_arrow`: its expression body is awaited when it is
-    /// a promise.
-    pub await_body: Option<Span>,
-    /// The wrapper arrow `serve`'s adapter makes for a handler function value: the async
-    /// closure it becomes is recorded in `Ctx::thread_adapters`.
-    pub thread_adapter: Option<Span>,
     /// The member of a union of function types each arrow (by span) was typed by, for the
     /// members it was tried against and the types of the locals it names (`expr/closure.rs`).
     pub member_choices: FxHashMap<(Span, Vec<TyId>, Vec<TyId>), TyId>,
@@ -422,10 +413,6 @@ impl<'a, 'm> FnCx<'a, 'm> {
             void_task: None,
             packed_rest: None,
             task_callback: None,
-            thread_task: None,
-            thread_callback: None,
-            await_body: None,
-            thread_adapter: None,
             member_choices: FxHashMap::default(),
             arrow_scans: Default::default(),
             detached: false,

@@ -1,0 +1,237 @@
+// velt/lang/hooks (internal): the built-in methods of strings, numbers and booleans called through `any`
+// (issue #924, docs/reference/types.md "any and unknown"). A call `x.name(args)` on an `any`
+// is one call through the descriptor of the value held (`AnyCall`); for a string it runs
+// `anyStr_<name>(s, args)`, for an array of `T` `anyArr_<name><T>(a, args)`, for a number
+// `anyNum_<name>(n, args)` and for a boolean `anyBool_<name>(b, args)` (velt_vir
+// any_builtin.rs finds them by name). The arguments come as an `any[]` and are converted as
+// JavaScript converts them (`ToString`, `ToIntegerOrInfinity`); the result goes back as an
+// `any`. A name without a function here is a `TypeError` naming #924. Arrays' and maps' are in
+// any_array_methods.vlt.
+
+import { anyString, anyText } from "./any_text";
+
+/** Argument `k` of `args`, `undefined` when it was left out. */
+export function anyArg(args: any[], k: i64): any {
+  return k < (args.length as i64) ? args[k as usize] : undefined;
+}
+
+/** Argument `k` as JavaScript's `ToIntegerOrInfinity` makes it (`d` when left out or `undefined`). */
+export function anyIntArg(args: any[], k: i64, d: i64): i64 {
+  const v = anyArg(args, k);
+  if (v === undefined) {
+    return d;
+  }
+  const n: number = +v;
+  if (n !== n) {
+    return 0;
+  }
+  if (n >= 9007199254740992) {
+    return 9223372036854775807;
+  }
+  if (n <= -9007199254740992) {
+    return -9223372036854775807;
+  }
+  return Math.trunc(n) as i64;
+}
+
+/** Argument `k` as JavaScript's `ToString` writes it (`"undefined"` when left out). */
+export function anyStrArg(args: any[], k: i64): string {
+  return anyString(anyArg(args, k), "");
+}
+
+/** The function argument `k` of an array method, or Node's `TypeError`. */
+export function anyFnArg(args: any[], k: i64): any {
+  const f = anyArg(args, k);
+  if (typeof f !== "function") {
+    const t = typeof f;
+    const what =
+      f === undefined || f === null
+        ? anyText(f, "")
+        : t === "object"
+          ? "#<Object>"
+          : t === "string" ? `${t} "${anyText(f, "")}"` : `${t} ${anyText(f, "")}`;
+    panic(`TypeError: ${what} is not a function`);
+  }
+  return f;
+}
+
+// Strings.
+
+export function anyStr_trim(s: string, args: any[]): any {
+  return s.trim();
+}
+
+export function anyStr_trimStart(s: string, args: any[]): any {
+  return s.trimStart();
+}
+
+export function anyStr_trimEnd(s: string, args: any[]): any {
+  return s.trimEnd();
+}
+
+export function anyStr_toUpperCase(s: string, args: any[]): any {
+  return s.toUpperCase();
+}
+
+export function anyStr_toLowerCase(s: string, args: any[]): any {
+  return s.toLowerCase();
+}
+
+export function anyStr_toString(s: string, args: any[]): any {
+  return s;
+}
+
+export function anyStr_valueOf(s: string, args: any[]): any {
+  return s;
+}
+
+export function anyStr_slice(s: string, args: any[]): any {
+  return s.slice(anyIntArg(args, 0, 0), anyIntArg(args, 1, 9223372036854775807));
+}
+
+export function anyStr_substring(s: string, args: any[]): any {
+  return s.substring(anyIntArg(args, 0, 0), anyIntArg(args, 1, 9223372036854775807));
+}
+
+export function anyStr_indexOf(s: string, args: any[]): any {
+  return s.indexOf(anyStrArg(args, 0), anyIntArg(args, 1, 0)) as number;
+}
+
+export function anyStr_lastIndexOf(s: string, args: any[]): any {
+  return s.lastIndexOf(anyStrArg(args, 0), anyIntArg(args, 1, 9223372036854775807)) as number;
+}
+
+export function anyStr_includes(s: string, args: any[]): any {
+  const from = anyIntArg(args, 1, 0);
+  return s.indexOf(anyStrArg(args, 0), from < 0 ? 0 : from) >= 0;
+}
+
+export function anyStr_startsWith(s: string, args: any[]): any {
+  const from = anyIntArg(args, 1, 0);
+  return s.slice(from < 0 ? 0 : from).startsWith(anyStrArg(args, 0));
+}
+
+export function anyStr_endsWith(s: string, args: any[]): any {
+  const end = anyIntArg(args, 1, 9223372036854775807);
+  return s.slice(0, end < 0 ? 0 : end).endsWith(anyStrArg(args, 0));
+}
+
+export function anyStr_split(s: string, args: any[]): any {
+  // The limit is `ToUint32` (`-1` is 4294967295), converted before the separator.
+  const limit = anyArg(args, 1);
+  const lim: number = limit === undefined ? 4294967295 : anyUint32(+limit);
+  if (lim === 0) {
+    const none: string[] = [];
+    return none;
+  }
+  if (anyArg(args, 0) === undefined) {
+    const whole: string[] = [s.slice(0)];
+    return whole;
+  }
+  const parts = s.split(anyStrArg(args, 0));
+  if (lim < (parts.length as number)) {
+    return parts.slice(0, lim as i64);
+  }
+  return parts;
+}
+
+/** JavaScript's `ToUint32` of the number `n`. */
+function anyUint32(n: number): number {
+  if (n !== n || n === Infinity || n === -Infinity) {
+    return 0;
+  }
+  const r = Math.trunc(n) % 4294967296;
+  return r < 0 ? r + 4294967296 : r;
+}
+
+export function anyStr_replace(s: string, args: any[]): any {
+  return s.replace(anyStrArg(args, 0), anyStrArg(args, 1));
+}
+
+export function anyStr_replaceAll(s: string, args: any[]): any {
+  return s.replaceAll(anyStrArg(args, 0), anyStrArg(args, 1));
+}
+
+export function anyStr_charAt(s: string, args: any[]): any {
+  return s.charAt(anyIntArg(args, 0, 0));
+}
+
+export function anyStr_charCodeAt(s: string, args: any[]): any {
+  const i = anyIntArg(args, 0, 0);
+  if (i < 0 || i >= (s.length as i64)) {
+    return NaN;
+  }
+  return s.charCodeAt(i) as number;
+}
+
+export function anyStr_codePointAt(s: string, args: any[]): any {
+  return s.codePointAt(anyIntArg(args, 0, 0));
+}
+
+export function anyStr_at(s: string, args: any[]): any {
+  return s.at(anyIntArg(args, 0, 0));
+}
+
+export function anyStr_repeat(s: string, args: any[]): any {
+  const n = anyIntArg(args, 0, 0);
+  if (n < 0 || n === 9223372036854775807) {
+    panic(`RangeError: Invalid count value: ${anyText(anyArg(args, 0), "")}`);
+  }
+  return s.repeat(n);
+}
+
+export function anyStr_padStart(s: string, args: any[]): any {
+  const fill = anyArg(args, 1) === undefined ? " " : anyStrArg(args, 1);
+  return s.padStart(anyIntArg(args, 0, 0), fill);
+}
+
+export function anyStr_padEnd(s: string, args: any[]): any {
+  const fill = anyArg(args, 1) === undefined ? " " : anyStrArg(args, 1);
+  return s.padEnd(anyIntArg(args, 0, 0), fill);
+}
+
+export function anyStr_concat(s: string, args: any[]): any {
+  let out = s;
+  for (let k: i64 = 0; k < (args.length as i64); k++) {
+    out += anyStrArg(args, k);
+  }
+  return out;
+}
+
+export function anyStr_localeCompare(s: string, args: any[]): any {
+  return s.localeCompare(anyStrArg(args, 0)) as number;
+}
+
+// Numbers and booleans.
+
+export function anyNum_toFixed(n: number, args: any[]): any {
+  return n.toFixed(anyIntArg(args, 0, 0));
+}
+
+export function anyNum_toString(n: number, args: any[]): any {
+  const radix = anyArg(args, 0);
+  if (radix === undefined) {
+    return anyText(n, "");
+  }
+  return n.toString(anyIntArg(args, 0, 10) as number);
+}
+
+export function anyNum_toPrecision(n: number, args: any[]): any {
+  const p = anyArg(args, 0);
+  if (p === undefined) {
+    return anyText(n, "");
+  }
+  return n.toPrecision(+p);
+}
+
+export function anyNum_valueOf(n: number, args: any[]): any {
+  return n;
+}
+
+export function anyBool_toString(b: boolean, args: any[]): any {
+  return b ? "true" : "false";
+}
+
+export function anyBool_valueOf(b: boolean, args: any[]): any {
+  return b;
+}

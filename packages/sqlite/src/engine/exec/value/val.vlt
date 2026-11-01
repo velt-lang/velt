@@ -1,0 +1,58 @@
+// sqlite/engine/exec/value/val (internal): SQLite's dynamically typed value (`Val`): its storage
+// class and the field for it, made from each kind of value (https://sqlite.org/datatype3.html).
+
+import { NULL, INTEGER, REAL, TEXT, BLOB } from "../../storage_class";
+import { Blob } from "./blob";
+
+/** One value: its storage class `t` (engine/btree's NULL … BLOB) and the field for it. */
+export struct Val {
+  t: u8;
+  i: i64;
+  r: f64;
+  s: string;
+  o: Blob | null;
+
+  /** A BLOB's bytes (empty for other values). */
+  get b(): u8[] {
+    return this.o == null ? [] : this.o!.bytes;
+  }
+}
+
+/** NULL. */
+export function nullVal(): Val {
+  return Val { t: NULL, i: 0, r: 0, s: "", o: null };
+}
+
+/** An INTEGER. */
+export function intVal(i: i64): Val {
+  return Val { t: INTEGER, i: i, r: 0, s: "", o: null };
+}
+
+/** A REAL (NaN becomes NULL, as in SQLite). */
+export function realVal(r: f64): Val {
+  // NaN is NULL in SQLite.
+  if (r != r) {
+    return nullVal();
+  }
+  return Val { t: REAL, i: 0, r: r, s: "", o: null };
+}
+
+/** A TEXT value. */
+export function textVal(s: string): Val {
+  return Val { t: TEXT, i: 0, r: 0, s: s, o: null };
+}
+
+/** A BLOB value. */
+export function blobVal(b: u8[]): Val {
+  return Val { t: BLOB, i: 0, r: 0, s: "", o: new Blob(b) };
+}
+
+/** A boolean as SQLite has them: the INTEGER 1 or 0. */
+export function boolVal(x: bool): Val {
+  return intVal(x ? 1 : 0);
+}
+
+/** Whether a value is NULL (for closures that test it often). */
+export function isNull(v: Val): bool {
+  return v.t == NULL;
+}

@@ -1,0 +1,17 @@
+// sqlite/engine/exec/out (internal): the rows a query produced (`Out`), filled by its output stage.
+
+import { Val } from "./value/val";
+
+/** Rows a query produced, `width` values each. Producers stop once `stop` is set. */
+export class Out {
+  vals: Val[] = [];
+  width: usize = 0;
+  rows: usize = 0;
+  stop: bool = false;
+
+  reset() {
+    this.vals.truncate(0);
+    this.rows = 0;
+    this.stop = false;
+  }
+}

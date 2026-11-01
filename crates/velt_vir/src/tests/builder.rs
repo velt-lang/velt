@@ -103,6 +103,7 @@ impl PB {
             lock_free_callbacks: Default::default(),
             any_fn_views: vec![],
             unchecked: Default::default(),
+            generated: Default::default(),
             cpu_targets: Default::default(),
             type_names: Default::default(),
             generic_dyn_methods: Default::default(),

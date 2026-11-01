@@ -199,7 +199,7 @@ impl Cx<'_> {
 }
 
 /// Intrinsics that only read their arguments and compute: no user code (unlike `MutexWith`,
-/// `JsonStringify`, `Print` or `ToString`, which call methods), no allocation, nothing dropped.
+/// `Print` or `ToString`, which call methods), no allocation, nothing dropped.
 fn pure_intrinsic(i: hir::Intrinsic) -> bool {
     use hir::Intrinsic as I;
     matches!(

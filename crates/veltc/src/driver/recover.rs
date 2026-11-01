@@ -34,6 +34,7 @@ pub(super) fn check_recovering(
         .collect();
     let sema_opts = velt_sema::CheckOptions {
         require_main: scope.require_main,
+        eager_std: scope.eager_std,
     };
     // The recovered trees can hold shapes no clean parse produces: a type checker failure on
     // them costs these findings only, never the syntax errors already reported.

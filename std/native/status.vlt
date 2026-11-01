@@ -1,0 +1,17 @@
+// velt/native (internal): `IoStatus`, the result of a runtime or native-package operation that
+// produces nothing (the 32-byte `VeltErr` prefix of `IoResult`, velt/native/result).
+
+import { ioError } from "velt/native/error";
+
+/** Result slot of a runtime operation producing nothing (`VeltErr`). */
+export struct IoStatus {
+  code: i32;
+  message: string;
+}
+
+/** Throws `IoError` if the operation failed. */
+export function checkIo(s: IoStatus) {
+  if (s.code != 0) {
+    throw ioError(s.code, s.message);
+  }
+}

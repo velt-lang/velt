@@ -314,7 +314,10 @@ pub(super) fn modes_of(cx: &Ctx, d: DefId) -> Vec<PassMode> {
 /// would be accepted, and a table is read-only data.
 fn extern_written_param(symbol: &str) -> Option<usize> {
     Some(match symbol {
-        "velt_rt_bytes_set" | "velt_rt_bytes_copy_within" | "velt_rt_bytes_fill" => 0,
+        "velt_rt_bytes_set"
+        | "velt_rt_bytes_copy"
+        | "velt_rt_bytes_copy_within"
+        | "velt_rt_bytes_fill" => 0,
         "velt_rt_regex_exec" => 3,
         // `readInto(buf)` reads into the buffer's bytes.
         "velt_rt_tcp_try_read_into" => 1,

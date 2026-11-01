@@ -1,0 +1,155 @@
+// velt/collections (internal): the key and value slots of B+ tree leaves, their lines and rank
+// orders, and prefetching. An `extend` block of `Pool`, which velt/collections/btree/pool loads.
+
+import { Line, Order } from "velt/collections/btree/line";
+import { F, LEAF_MASK, LEAF_SHIFT, Pool, SLOT_MASK, SLOT_SHIFT } from "velt/collections/btree/pool";
+
+extend<K extends Comparable<K>, V> Pool<K, V> {
+  /** The key in slot `s` (`leaf * F + i`). */
+  keyAt(s: usize): K {
+    return this.leafKeys[s >> SLOT_SHIFT][s & SLOT_MASK];
+  }
+
+  /** `t.compareTo` the key in slot `s`, read in place (no share of it). */
+  cmpKey(t: K, s: usize): i64 {
+    return t.compareTo(this.leafKeys[s >> SLOT_SHIFT][s & SLOT_MASK]);
+  }
+
+  /** The wide word (`inlineQuad`) of the key in slot `s` past prefix `pre`, read in place. */
+  slotQuad(s: usize, pre: u32): u32 {
+    return this.leafKeys[s >> SLOT_SHIFT][s & SLOT_MASK].inlineQuad(pre as usize);
+  }
+
+  /** The word of the key in slot `s` past prefix `pre`, read in place. */
+  slotWord(s: usize, pre: u32): u16 {
+    return this.leafKeys[s >> SLOT_SHIFT][s & SLOT_MASK].inlineWord(pre as usize);
+  }
+
+  /** Stores `k` in slot `s`, dropping what it held. */
+  setKey(s: usize, k: K) {
+    this.leafKeys[s >> SLOT_SHIFT][s & SLOT_MASK] = k;
+  }
+
+  /** `leaf`'s line. */
+  lineOf(leaf: u32): Line {
+    return this.leafLines[(leaf >> LEAF_SHIFT) as usize][((leaf & LEAF_MASK) as usize) <<
+      this.lineShift];
+  }
+
+  setLine(leaf: u32, line: Line) {
+    this.leafLines[(leaf >> LEAF_SHIFT) as usize][((leaf & LEAF_MASK) as usize) << this.lineShift] =
+      line;
+  }
+
+  /** `leaf`'s second line (wide words only). */
+  lineBOf(leaf: u32): Line {
+    return this.leafLines[(leaf >> LEAF_SHIFT) as usize][(((leaf & LEAF_MASK) as usize) << 1) + 1];
+  }
+
+  setLineB(leaf: u32, line: Line) {
+    this.leafLines[(leaf >> LEAF_SHIFT) as usize][(((leaf & LEAF_MASK) as usize) << 1) + 1] = line;
+  }
+
+  /** Inner `node`'s line. */
+  innerLineOf(node: u32): Line {
+    return this.innerLines[(node as usize) << this.lineShift];
+  }
+
+  setInnerLine(node: u32, line: Line) {
+    this.innerLines[(node as usize) << this.lineShift] = line;
+  }
+
+  /** Inner `node`'s second line (wide words only). */
+  innerLineBOf(node: u32): Line {
+    return this.innerLines[((node as usize) << 1) + 1];
+  }
+
+  setInnerLineB(node: u32, line: Line) {
+    this.innerLines[((node as usize) << 1) + 1] = line;
+  }
+
+  /** `leaf`'s rank order. */
+  orderOf(leaf: u32): Order {
+    return this.leafOrder[(leaf >> LEAF_SHIFT) as usize][(leaf & LEAF_MASK) as usize];
+  }
+
+  setOrder(leaf: u32, order: Order) {
+    this.leafOrder[(leaf >> LEAF_SHIFT) as usize][(leaf & LEAF_MASK) as usize] = order;
+  }
+
+  /** Starts loading the cache line of key slot `s`. */
+  keyPrefetch(s: usize) {
+    this.leafKeys[s >> SLOT_SHIFT].prefetch(s & SLOT_MASK);
+  }
+
+  /** Starts loading the line of `node`, an inner node when `inner`, else a leaf. */
+  prefetchNode(node: u32, inner: bool) {
+    if (inner) {
+      this.innerLines.prefetch((node as usize) << this.lineShift);
+    } else {
+      const c = (node >> LEAF_SHIFT) as usize;
+      this.leafLines[c].prefetch(((node & LEAF_MASK) as usize) << this.lineShift);
+    }
+  }
+
+  /**
+   * Starts loading all of `leaf`: its line, its order, and its key and value slots (four cache
+   * lines each at 8 bytes a slot, the ones a walk reads).
+   */
+  prefetchLeaf(leaf: u32) {
+    const c = (leaf >> LEAF_SHIFT) as usize;
+    const at = (leaf & LEAF_MASK) as usize;
+    this.leafLines[c].prefetch(at << this.lineShift);
+    this.leafOrder[c].prefetch(at);
+    const base = (leaf as usize) * F;
+    for (let j: usize = 0; j < F; j += 8) {
+      this.keyPrefetch(base + j);
+      this.valPrefetch(base + j);
+    }
+  }
+
+  /**
+   * Exchanges the keys of slots `a` and `b` (of two leaves, maybe in two chunks): a swap within
+   * a chunk; across chunks, through a local, since one call may not change two chunks.
+   */
+  keySwap(a: usize, b: usize) {
+    const ca = a >> SLOT_SHIFT;
+    const cb = b >> SLOT_SHIFT;
+    if (ca == cb) {
+      this.leafKeys[ca].swap(a & SLOT_MASK, b & SLOT_MASK);
+    } else {
+      this.leafKeys.swapIn(ca, a & SLOT_MASK, cb, b & SLOT_MASK);
+    }
+  }
+
+  /** The value in slot `s`, shared as `Map.get` gives it. */
+  valAt(s: usize): V {
+    return this.vals[s >> SLOT_SHIFT][s & SLOT_MASK];
+  }
+
+  /** Stores `v` in slot `s`, dropping what it held. */
+  valSet(s: usize, v: V) {
+    this.vals[s >> SLOT_SHIFT][s & SLOT_MASK] = v;
+  }
+
+  /** Empties slot `s`: the filler replaces (and drops) its value. */
+  valClear(s: usize) {
+    this.vals[s >> SLOT_SHIFT][s & SLOT_MASK] = this.valFill[0];
+  }
+
+  /** Exchanges the values in slots `a` and `b`, as `keySwap` the keys. */
+  valSwap(a: usize, b: usize) {
+    const ca = a >> SLOT_SHIFT;
+    const cb = b >> SLOT_SHIFT;
+    if (ca == cb) {
+      this.vals[ca].swap(a & SLOT_MASK, b & SLOT_MASK);
+    } else {
+      this.vals.swapIn(ca, a & SLOT_MASK, cb, b & SLOT_MASK);
+    }
+  }
+
+  /** Starts loading the cache line of value slot `s`. */
+  valPrefetch(s: usize) {
+    this.vals[s >> SLOT_SHIFT].prefetch(s & SLOT_MASK);
+  }
+}

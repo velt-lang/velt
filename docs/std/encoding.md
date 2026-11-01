@@ -1,9 +1,9 @@
-# velt:encoding
+# velt/encoding
 
-`import { base64Encode, hexEncode } from "velt:encoding"`. Converts between bytes and text:
+`import { base64Encode, hexEncode } from "velt/encoding"`. Converts between bytes and text:
 Base64 (RFC 4648 standard and URL-safe alphabets), lowercase hex, and UTF-8. Decoders throw
 `EncodingError`. The functions work on `u8[]`, Velt's byte array; `Uint8Array.fromBytes(b)` and
-`xs.toBytes()` convert ([typed arrays](typed_array.md)).
+`xs.toBytes()` convert ([typed arrays](prelude/typed_array.md)).
 
 - `base64Encode(data: u8[])` (padded), `base64Decode(s): u8[]` (padding optional).
 - `base64UrlEncode(data)` (unpadded), `base64UrlDecode(s)`.
@@ -21,7 +21,7 @@ Base64 (RFC 4648 standard and URL-safe alphabets), lowercase hex, and UTF-8. Dec
   a character.
 
 ```ts
-import { utf8ByteAt, utf8Length, utf8Substring } from "velt:encoding";
+import { utf8ByteAt, utf8Length, utf8Substring } from "velt/encoding";
 
 const line = "naïve=café";
 let eq: usize = 0;
@@ -32,7 +32,7 @@ console.log(utf8Substring(line, 0, eq), utf8Substring(line, eq + 1, utf8Length(l
 ```
 - `TextEncoder` and `TextDecoder`, the WHATWG classes, are globals as in Node (no import).
   `new TextEncoder().encode(s)` gives the UTF-8 bytes in a `Uint8Array` ([typed
-  arrays](typed_array.md)), and `encodeInto(s, dest)` writes as many whole characters as fit
+  arrays](prelude/typed_array.md)), and `encodeInto(s, dest)` writes as many whole characters as fit
   into a `Uint8Array`, returning `{ read, written }` (code units read, bytes written).
   `new TextDecoder(label = "utf-8", { fatal, ignoreBOM })` takes UTF-8 only: another label
   throws `EncodingError` (`The "latin1" encoding is not supported`), where Node also decodes
@@ -71,7 +71,7 @@ function main() {
 ```
 
 ```ts
-import { base64Encode, base64DecodeString, hexEncode, hexDecode, utf8Encode, utf8Decode } from "velt:encoding";
+import { base64Encode, base64DecodeString, hexEncode, hexDecode, utf8Encode, utf8Decode } from "velt/encoding";
 
 function main() {
   const bytes = utf8Encode("héllo?");

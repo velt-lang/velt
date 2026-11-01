@@ -1,7 +1,7 @@
 // Type arguments are inferred from the expected type of a call (#223), as in TypeScript: an
 // annotated binding, a return statement, a typed parameter and a class field initializer type
 // the arguments before untyped number literals default to `i64`.
-import { Set } from "velt:collections/set";
+import { Set } from "velt/collections";
 
 function id<T>(x: T): T {
   return x;

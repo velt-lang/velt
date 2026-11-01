@@ -192,7 +192,7 @@ fn read_pin_of(src: &str, binding: &str) -> Result<Option<(Requirement, usize)>,
 mod tests {
     use super::*;
 
-    const HEADER: &str = "import type { Package } from \"velt:package\";\n\n";
+    const HEADER: &str = "import type { Package } from \"velt/package\";\n\n";
 
     fn pin(body: &str) -> Result<Option<(String, usize)>, (String, usize)> {
         read_pin(&format!("{HEADER}export const pkg: Package = {body};\n"))

@@ -2,8 +2,8 @@
 // (#635: an item's bytes were moved through the queue one at a time). The difference between the
 // two shows what an item's size costs. `chan_item_size small|big <n>` runs one of them with n
 // items (instruction counts per item: the difference between two n under cachegrind).
-import { channel } from "velt:channel";
-import { args } from "velt:process";
+import { channel } from "velt/sync";
+import { args } from "velt/process";
 
 struct Big {
   a: f64;

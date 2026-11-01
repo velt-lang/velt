@@ -1,0 +1,460 @@
+// The Velt SQLite reader (src/engine/format, src/engine/btree, #1715) on damaged files: a file
+// C SQLite wrote, with bytes changed the way a torn write or a hostile file would change them.
+// Every case either reads (with bounded work and memory) or throws CorruptError; none panics.
+import { open } from "../src/lib";
+import { CorruptError } from "../src/engine/errors";
+import { DbFile } from "../src/engine/db_file";
+import { localSize, readU16, readU32 } from "../src/engine/format";
+import { readVarint } from "../src/engine/varint";
+import { Cursor } from "../src/engine/cursor";
+import { RecordBuilder, pushVarint } from "../src/engine/record_builder";
+import { tmpdir } from "velt/os";
+import { uuidv4 } from "velt/random/uuid";
+import { readFileBytesSync, removeSync } from "velt/fs";
+
+const PAGE: usize = 1024;
+
+struct Root {
+  name: string;
+  rootpage: i64;
+}
+
+/** Reads every row and column of every tree, and seeks the index. */
+function scan(data: u8[], roots: u32[]): string {
+  const f = new DbFile(data);
+  let rows = 0;
+  for (const r of roots) {
+    const c = new Cursor(f, r);
+    let more = c.first();
+    while (more) {
+      for (let i: usize = 0; i < c.columnCount(); i++) {
+        c.text(i);
+        c.blob(i);
+      }
+      rows++;
+      more = c.next();
+    }
+  }
+  const k = new RecordBuilder();
+  k.addText("hello");
+  new Cursor(f, roots[2]).seekKey(k.finish(), 1, [], []);
+  return `ok, ${rows} rows`;
+}
+
+/** What scanning `data` gives: "ok, <n> rows", or the CorruptError's message. */
+function attempt(data: u8[], roots: u32[]): string {
+  try {
+    return scan(data, roots);
+  } catch (e) {
+    if (e instanceof CorruptError) {
+      return e.message.clone();
+    }
+    return `unexpected ${e.message}`;
+  }
+}
+
+function copy(data: u8[]): u8[] {
+  return data.slice(0);
+}
+
+function page(n: u32): usize {
+  return ((n - 1) as usize) * PAGE;
+}
+
+/** The offset of cell `i` of the leaf page `n`. */
+function cell(data: u8[], n: u32, i: usize): usize {
+  return page(n) + readU16(data, page(n) + 8 + 2 * i);
+}
+
+function put16(data: u8[], at: usize, v: usize) {
+  data[at] = (v >> 8) as u8;
+  data[at + 1] = (v & 0xff) as u8;
+}
+
+function put32(data: u8[], at: usize, v: u32) {
+  for (let i: usize = 0; i < 4; i++) {
+    data[at + i] = ((v >> ((24 - 8 * i) as u32)) & 0xff) as u8;
+  }
+}
+
+/** Writes a table leaf cell header at `at`: payload size `size` (a varint) and rowid 2. */
+function cellHeader(data: u8[], at: usize, size: u64): usize {
+  const h: u8[] = [];
+  pushVarint(h, size);
+  h.push(2);
+  for (let i: usize = 0; i < h.length; i++) {
+    data[at + i] = h[i];
+  }
+  return h.length;
+}
+
+const M = "database disk image is malformed: ";
+
+/** A file C SQLite wrote, its trees' root pages and its page count. */
+struct Fixture {
+  base: u8[];
+  s: u32;
+  t: u32;
+  sv: u32;
+  uv: u32;
+  roots: u32[];
+  pages: u32;
+}
+
+function fixture(): Fixture {
+  const path = `${tmpdir()}/velt-sqlite-corrupt-${uuidv4()}.db`;
+  const db = open(path);
+  db.exec(`
+    PRAGMA page_size = 1024; PRAGMA journal_mode = DELETE;
+    CREATE TABLE s (id INTEGER PRIMARY KEY, v);
+    CREATE INDEX s_v ON s (v);
+    INSERT INTO s VALUES (1, 'hello'), (2, zeroblob(3000)), (3, 42);
+    CREATE TABLE u (v);
+    WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 3000)
+    INSERT INTO u SELECT printf('%050d', i) FROM n;
+    CREATE INDEX u_v ON u (v);
+    CREATE TABLE t (id INTEGER PRIMARY KEY, v);
+    WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 300)
+    INSERT INTO t SELECT i, printf('%050d', i) FROM n;
+  `);
+  const rs: Root[] = db.prepare("SELECT name, rootpage FROM sqlite_schema ORDER BY name").all();
+  db.close();
+  let s: u32 = 0;
+  let t: u32 = 0;
+  let sv: u32 = 0;
+  let uv: u32 = 0;
+  for (const r of rs) {
+    if (r.name == "s") {
+      s = r.rootpage as u32;
+    } else if (r.name == "t") {
+      t = r.rootpage as u32;
+    } else if (r.name == "s_v") {
+      sv = r.rootpage as u32;
+    } else if (r.name == "u_v") {
+      uv = r.rootpage as u32;
+    }
+  }
+  const base = readFileBytesSync(path);
+  removeSync(path);
+  return Fixture {
+    base: base,
+    s: s,
+    t: t,
+    sv: sv,
+    uv: uv,
+    roots: [s, t, sv, uv],
+    pages: readU32(base, 28),
+  };
+}
+
+export function test_intact_file_reads() {
+  const f = fixture();
+  assertEq(attempt(f.base, f.roots), "ok, 3306 rows");
+}
+
+// Cell pointers: past the page, into the page header, more cells than the page holds.
+export function test_cell_pointers() {
+  const f = fixture();
+  let d = copy(f.base);
+  put16(d, page(f.s) + 8, 0xfff0);
+  assertEq(attempt(d, f.roots), `${M}cell offset 65520 out of range`);
+  d = copy(f.base);
+  put16(d, page(f.s) + 8, 4);
+  assertEq(attempt(d, f.roots), `${M}cell offset 4 out of range`);
+  d = copy(f.base);
+  put16(d, page(f.s) + 3, 0xffff);
+  assertEq(attempt(d, f.roots), `${M}cell count 65535 overflows its page`);
+}
+
+// Row 2's payload spills: its overflow chain, then its payload size.
+export function test_overflow_chains_and_payload_sizes() {
+  const f = fixture();
+  const base = f.base;
+  const s = f.s;
+  const roots = f.roots;
+  const row2 = cell(base, s, 1);
+  const size = readVarint(base, row2);
+  const keep = localSize(PAGE, true, size.value as usize);
+  const ovfAt = row2 + size.len + 1 + keep;
+  const first = readU32(base, ovfAt);
+  // The chain loops, but the payload size is in range.
+  let d = copy(base);
+  put32(d, page(first), first);
+  assertEq(attempt(d, roots), "ok, 3306 rows");
+  d = copy(base);
+  put32(d, ovfAt, 0);
+  assertEq(attempt(d, roots), `${M}overflow chain ends early`);
+  d = copy(base);
+  put32(d, ovfAt, 9999);
+  assertEq(attempt(d, roots), `${M}page 9999 out of range`);
+  d = copy(base);
+  put32(d, page(first), first);
+  // A payload past 2^31 - 1, and one larger than all the file's pages could hold.
+  let n = cellHeader(d, row2, 1099511627776);
+  assertEq(attempt(d, roots), `${M}payload size 1099511627776`);
+  d = copy(base);
+  const big: u64 = 103 + 1019 + 1020 * ((f.pages as u64) + 10);
+  n = cellHeader(d, row2, big);
+  put32(d, row2 + n + 103, first);
+  put32(d, page(first), first);
+  assertEq(attempt(d, roots), `${M}payload size 404022 exceeds the file`);
+}
+
+// Row 1's record: [header size 3][type 0: the rowid's NULL][type 23: text of 5]'hello'.
+export function test_records() {
+  const f = fixture();
+  const rec = cell(f.base, f.s, 0) + 2;
+  const got: string[] = [];
+  // The record header size past the payload.
+  let d = copy(f.base);
+  d[rec] = 0x7f;
+  got.push(attempt(d, f.roots));
+  // Serial types 10 and 11.
+  d = copy(f.base);
+  d[rec + 2] = 10;
+  got.push(attempt(d, f.roots));
+  d = copy(f.base);
+  d[rec + 2] = 11;
+  got.push(attempt(d, f.roots));
+  // Text longer than the payload.
+  d = copy(f.base);
+  d[rec + 2] = 25;
+  got.push(attempt(d, f.roots));
+  // A serial type varint running into the body.
+  d = copy(f.base);
+  d[rec + 1] = 0x81;
+  d[rec + 2] = 0x80;
+  got.push(attempt(d, f.roots));
+  assertEq(got, [
+    `${M}record header size`,
+    `${M}serial type 10`,
+    `${M}serial type 11`,
+    `${M}record body larger than its payload`,
+    `${M}record body larger than its payload`,
+  ]);
+}
+
+export function test_index_entries() {
+  const f = fixture();
+  // The index's first entry ('hello', 1) gets a reserved serial type: seeks compare it.
+  const ix = cell(f.base, f.sv, 0);
+  const d = copy(f.base);
+  d[ix + 2] = 11;
+  assertEq(attempt(d, f.roots), `${M}serial type 11`);
+  // A key whose only serial type is a 9-byte varint: -1.
+  let negative = "no error";
+  try {
+    const key: u8[] = [10, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff];
+    new Cursor(new DbFile(f.base), f.sv).seekKey(key, 1, [], []);
+  } catch (e) {
+    negative = e.message.clone();
+  }
+  assertEq(negative, `${M}serial type -1`);
+}
+
+// t's root is an interior page: its children.
+export function test_interior_pages() {
+  const f = fixture();
+  const base = f.base;
+  const t = f.t;
+  const right = readU32(base, page(t) + 8);
+  const got: string[] = [];
+  // An empty leaf below the root.
+  let d = copy(base);
+  put16(d, page(right) + 3, 0);
+  got.push(attempt(d, f.roots));
+  // A child page past the file.
+  d = copy(base);
+  put32(d, page(t) + 8, 9999);
+  got.push(attempt(d, f.roots));
+  // A child pointing at its own root.
+  d = copy(base);
+  put32(d, page(t) + 8, t);
+  got.push(attempt(d, f.roots));
+  // An unknown page type.
+  d = copy(base);
+  d[page(t)] = 7;
+  got.push(attempt(d, f.roots));
+  // A page below the root of the other kind of tree (SQLite's getAndInitPage): a table leaf
+  // made an index leaf, and an interior page of u_v (three levels) made a table interior page,
+  // which would otherwise read as a leaf and skip its subtrees.
+  d = copy(base);
+  d[page(right)] = 10;
+  got.push(attempt(d, f.roots));
+  const uvChild = readU32(base, page(f.uv) + readU16(base, page(f.uv) + 12));
+  d = copy(base);
+  if (d[page(uvChild)] == 2) {
+    d[page(uvChild)] = 5;
+  }
+  got.push(attempt(d, f.roots));
+  assertEq(got, [
+    `${M}page 385 is an empty leaf below the root`,
+    `${M}page 9999 out of range`,
+    `${M}b-tree too deep`,
+    `${M}page 367 is not a b-tree root`,
+    `${M}page 385 is not a table b-tree page`,
+    `${M}page 208 is not an index b-tree page`,
+  ]);
+}
+
+export function test_varints_running_off_the_end_of_the_file() {
+  const f = fixture();
+  const pages = f.pages;
+  // The last page's first cell moved to its last 4 bytes, all 0xff: the varints run past the
+  // end of the file. (If the last page is not a leaf of t, the scan reads past it anyway.)
+  let d = copy(f.base);
+  const last = page(pages);
+  if (d[last] == 13) {
+    put16(d, last + 8, 1020);
+    for (let i: usize = 1020; i < 1024; i++) {
+      d[last + i] = 0xff;
+    }
+  }
+  assertEq(attempt(d, f.roots), `${M}varint past the end of the file`);
+  // The same with 12 reserved bytes a page: a table leaf cell's two varints (up to 18 bytes)
+  // start in the last 4 usable bytes and run past the reserved ones, off the end of the file.
+  d = copy(f.base);
+  if (d[last] == 13) {
+    d[20] = 12;
+    put16(d, last + 3, 1);
+    put16(d, last + 8, 1008);
+    for (let i: usize = 1008; i < 1024; i++) {
+      d[last + i] = 0xff;
+    }
+  }
+  let reserved = "no error";
+  try {
+    const c = new Cursor(new DbFile(d), pages);
+    let more = c.first();
+    while (more) {
+      more = c.next();
+    }
+  } catch (e) {
+    reserved = e.message.clone();
+  }
+  assertEq(reserved, `${M}varint past the end of the file`);
+}
+
+export function test_header_fields() {
+  const f = fixture();
+  const got: string[] = [];
+  // The header: reserved bytes leaving less than 480 usable (usable size 257), a page size that
+  // is no power of 2 (768).
+  let d = copy(f.base);
+  d[20] = 255;
+  d[16] = 2;
+  d[17] = 0;
+  got.push(attempt(d, f.roots));
+  d = copy(f.base);
+  d[16] = 3;
+  d[17] = 0;
+  got.push(attempt(d, f.roots));
+  // The header checks C SQLite makes when it opens a file: the read version (offset 19) at most
+  // 2, where 2 (WAL) reads as the last checkpoint, and the payload fractions 64, 32, 32.
+  d = copy(f.base);
+  d[19] = 3;
+  got.push(attempt(d, f.roots));
+  d = copy(f.base);
+  d[18] = 2;
+  d[19] = 2;
+  got.push(attempt(d, f.roots));
+  d = copy(f.base);
+  d[21] = 63;
+  got.push(attempt(d, f.roots));
+  d = copy(f.base);
+  d[23] = 33;
+  got.push(attempt(d, f.roots));
+  assertEq(got, [
+    `${M}usable page size 257`,
+    `${M}page size 768`,
+    `${M}file format read version 3 is not supported`,
+    "ok, 3306 rows",
+    `${M}payload fractions 63, 32, 32`,
+    `${M}payload fractions 64, 32, 33`,
+  ]);
+}
+
+export function test_files_cut_short() {
+  const f = fixture();
+  assertEq(attempt(f.base.slice(0, 60), f.roots), `${M}file is shorter than its header`);
+  assertEq(
+    attempt(f.base.slice(0, ((f.pages as i64) - 1) * 1024 + 10), f.roots),
+    `${M}file is shorter than its page count`,
+  );
+}
+
+/**
+ * A 17 MiB file made in memory: one row whose record header is 2^24 bytes of serial type 10.
+ * Each counts as more body than any payload has, and the sum must not wrap around to fit.
+ */
+export function test_serial_type_sizes_do_not_wrap() {
+  const P: usize = 65536;
+  const hsize: usize = (1 << 24) + 4;
+  const payload: u8[] = [];
+  pushVarint(payload, hsize as u64);
+  for (let i: usize = 0; i < 1 << 24; i++) {
+    payload.push(10);
+  }
+  const keep = localSize(P, true, hsize);
+  const overflow = (hsize - keep + P - 5) / (P - 4);
+  const pages = 1 + overflow;
+  const d: u8[] = [];
+  for (let i: usize = 0; i < pages * P; i++) {
+    d.push(0);
+  }
+  const magic = "SQLite format 3";
+  for (let i: usize = 0; i < 15; i++) {
+    d[i] = magic.charCodeAt(i as i64) as u8;
+  }
+  d[16] = 0;
+  d[17] = 1;
+  d[18] = 1;
+  d[19] = 1;
+  d[21] = 64;
+  d[22] = 32;
+  d[23] = 32;
+  put32(d, 24, 1);
+  put32(d, 28, pages as u32);
+  put32(d, 44, 4);
+  put32(d, 56, 1);
+  put32(d, 92, 1);
+  // Page 1: a table leaf with one cell at 200, its payload spilling onto pages 2, 3, ….
+  d[100] = 13;
+  put16(d, 103, 1);
+  put16(d, 105, 200);
+  put16(d, 108, 200);
+  const h: u8[] = [];
+  pushVarint(h, hsize as u64);
+  h.push(1);
+  let at: usize = 200;
+  for (const b of h) {
+    d[at] = b;
+    at++;
+  }
+  for (let i: usize = 0; i < keep; i++) {
+    d[at + i] = payload[i];
+  }
+  put32(d, at + keep, 2);
+  let from = keep;
+  for (let pg: usize = 2; pg <= pages; pg++) {
+    const base = (pg - 1) * P;
+    put32(d, base, pg < pages ? (pg + 1) as u32 : 0);
+    let k: usize = 0;
+    while (k < P - 4 && from < hsize) {
+      d[base + 4 + k] = payload[from];
+      k++;
+      from++;
+    }
+  }
+  const size: usize = d.length;
+  assertEq(size, 16842752);
+  let got = "";
+  try {
+    const c = new Cursor(new DbFile(d), 1);
+    c.first();
+    got = `${c.columnCount()} columns, no error`;
+  } catch (e) {
+    got = e.message.clone();
+  }
+  assertEq(got, "database disk image is malformed: serial type 10");
+}

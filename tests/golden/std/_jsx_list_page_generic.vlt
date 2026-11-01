@@ -1,6 +1,6 @@
-/** @jsxImportSource velt:jsx/generic */
+/** @jsxImportSource velt/jsx/generic */
 
-// The page of `jsx_list` under `velt:jsx/generic`: `_jsx_list_page.vlt` under the generic
+// The page of `jsx_list` under `velt/jsx/generic`: `_jsx_list_page.vlt` under the generic
 // runtime.
 
 function Name(props: { name: string }): JSX.Element {

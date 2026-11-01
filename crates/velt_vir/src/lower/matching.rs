@@ -53,6 +53,12 @@ impl FnLower<'_, '_> {
         let moved_local = matches!(&scrutinee.kind,
             hir::ExprKind::Local(id, UseMode::Move) if self.info[id.0 as usize].droppable);
         let owned = moved_local || self.take_temp(&sp);
+        // A reference `Atomic`'s `load` is borrowed (atomic_ref.rs): what an arm binds by move
+        // (`a.load()!`, `a.load() ?? d`) refers to it without owning it, and a consumer that
+        // keeps it counts it (`consume`).
+        if !owned && self.is_ref_load(scrutinee) {
+            arms.iter().for_each(|a| self.borrow_bindings(&a.pat));
+        }
         // A moved-from local may be reassigned inside an arm: match on a private copy.
         let sp = if moved_local && svt != Ty::Unit {
             Place::local(self.copy_to_temp(Operand::Copy(sp), svt))
@@ -133,6 +139,21 @@ impl FnLower<'_, '_> {
         self.pop_scope();
         self.pop_scope();
         self.goto(cx.join);
+    }
+
+    /// The bindings by move of `pat`, which matches a value nothing owns: they borrow it.
+    fn borrow_bindings(&mut self, pat: &Pat) {
+        use hir::PatKind as P;
+        match &pat.kind {
+            P::Binding(id, UseMode::Move) => self.info[id.0 as usize].droppable = false,
+            P::Variant { args: ps, .. } | P::Tuple(ps) | P::Or(ps) => {
+                ps.iter().for_each(|p| self.borrow_bindings(p))
+            }
+            P::Adt { fields } => fields.iter().for_each(|(_, p)| self.borrow_bindings(p)),
+            P::Array { elems, .. } => elems.iter().for_each(|p| self.borrow_bindings(p)),
+            P::Some(p) => self.borrow_bindings(p),
+            _ => {}
+        }
     }
 
     /// Moved-out bindings of a matched arm become owned by the current scope.

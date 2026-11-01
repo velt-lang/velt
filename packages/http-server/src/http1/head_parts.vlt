@@ -1,0 +1,47 @@
+// http-server (internal): `HeadParts`, the fixed parts of an HTTP/1.1 response head and the
+// default content types, encoded once per connection (not module state, #1487) and copied as
+// bytes, and the `Date` value, encoded once a second.
+
+import { utf8Encode } from "velt/encoding";
+
+/// Indexes of `HeadParts.types`.
+export const TYPE_TEXT: i64 = 0;
+export const TYPE_BYTES: i64 = 1;
+export const TYPE_JSON: i64 = 2;
+export const TYPE_HTML: i64 = 3;
+export const TYPE_SSE: i64 = 4;
+
+/// A connection's encoded head parts.
+export class HeadParts {
+  ok: u8[] = utf8Encode("HTTP/1.1 200 OK\r\nServer: Velt\r\nDate: ");
+  statusStart: u8[] = utf8Encode("HTTP/1.1 ");
+  serverDate: u8[] = utf8Encode("\r\nServer: Velt\r\nDate: ");
+  dateOnly: u8[] = utf8Encode("\r\nDate: ");
+  typeHead: u8[] = utf8Encode("\r\nContent-Type: ");
+  lengthHead: u8[] = utf8Encode("\r\nContent-Length: ");
+  chunkedHead: u8[] = utf8Encode("\r\nTransfer-Encoding: chunked");
+  closeHead: u8[] = utf8Encode("\r\nConnection: close");
+  keepAliveHead: u8[] = utf8Encode("\r\nConnection: keep-alive");
+  continue_: u8[] = utf8Encode("HTTP/1.1 100 Continue\r\n\r\n");
+  types: u8[][] = [
+    utf8Encode("text/plain; charset=utf-8"),
+    utf8Encode("application/octet-stream"),
+    utf8Encode("application/json"),
+    utf8Encode("text/html; charset=utf-8"),
+    utf8Encode("text/event-stream"),
+  ];
+  /// The `Date` header value for `dateSecond`.
+  date: u8[] = [];
+  private dateSecond: i64 = -1;
+
+  /// The time now (`Date.now()`), and a new `date` when the second changed.
+  tick(): i64 {
+    const now = Date.now();
+    const second = (now / 1000) as i64;
+    if (second != this.dateSecond) {
+      this.dateSecond = second;
+      this.date = utf8Encode(new Date(now).toUTCString());
+    }
+    return now as i64;
+  }
+}

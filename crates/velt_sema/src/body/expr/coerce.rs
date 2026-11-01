@@ -106,6 +106,10 @@ impl FnCx<'_, '_> {
             Ok(h) => return Ok(h),
             Err(h) => h,
         };
+        let h = match self.class_bound_value(h, exp) {
+            Ok(h) => return Ok(h),
+            Err(h) => h,
+        };
         self.coerce_as_written(h, exp, false)
     }
 

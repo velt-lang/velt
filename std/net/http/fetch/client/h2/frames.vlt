@@ -1,0 +1,348 @@
+// velt/net/http (internal): what an HTTP/2 client session does with the frames it receives
+// (RFC 9113 §6); h2/outbound.vlt sends its requests.
+//
+// A violation of the connection's rules ends the session with GOAWAY and fails its requests.
+// Header blocks are decoded in order, also those of cancelled streams, to keep the HPACK table.
+
+import {
+  CONTINUATION,
+  DATA,
+  END_HEADERS,
+  END_STREAM,
+  FLOW_CONTROL_ERROR,
+  FRAME_SIZE_ERROR,
+  GOAWAY,
+  HEADER_LENGTH,
+  HEADERS,
+  MAX_WINDOW,
+  MIN_MAX_FRAME_SIZE,
+  PADDED,
+  PING,
+  PRIORITY_FLAG,
+  PROTOCOL_ERROR,
+  PUSH_PROMISE,
+  REFUSED_STREAM,
+  RST_STREAM,
+  SETTINGS,
+  WINDOW_UPDATE,
+  ACK,
+  COMPRESSION_ERROR,
+  errorName,
+  frameLength,
+  readStreamId,
+  readU32,
+} from "velt/net/http/h2";
+import {
+  EVENT_DATA,
+  EVENT_END,
+  EVENT_HEAD,
+  errorEvent,
+  RETRY_ALWAYS,
+  RETRY_IDEMPOTENT,
+  RETRY_NEVER,
+} from "velt/net/http/fetch/client/h2/event";
+import { ClientSession } from "velt/net/http/fetch/client/h2/session";
+import { pump, pumpAll } from "velt/net/http/fetch/client/h2/outbound";
+import { ClientStream } from "velt/net/http/fetch/client/h2/stream";
+import { applySettings } from "velt/net/http/fetch/client/h2/settings";
+
+/// Processes the complete frames in `s.rbuf[s.rpos..s.rlen)`.
+export function frames(s: ClientSession) {
+  while (!s.done) {
+    const avail = s.rlen - s.rpos;
+    if (avail < HEADER_LENGTH) {
+      return;
+    }
+    const b = s.rbuf;
+    const at = s.rpos;
+    const len = frameLength(b, at);
+    if (len > MIN_MAX_FRAME_SIZE) {
+      fail(s, FRAME_SIZE_ERROR, "a frame larger than SETTINGS_MAX_FRAME_SIZE");
+      return;
+    }
+    if (avail < HEADER_LENGTH + len) {
+      return;
+    }
+    const type = b[at + 3] as i64;
+    const flags = b[at + 4] as i64;
+    const id = readStreamId(b, at + 5);
+    const p = at + HEADER_LENGTH;
+    s.rpos = p + len;
+    if (s.blockStream != 0 && (type != CONTINUATION || id != s.blockStream)) {
+      fail(s, PROTOCOL_ERROR, "a header block was interrupted");
+      return;
+    }
+    if (type == DATA) {
+      data(s, flags, id, p, len);
+    } else if (type == HEADERS || type == CONTINUATION) {
+      headers(s, type, flags, id, p, len);
+    } else if (type == SETTINGS) {
+      if ((flags & ACK) == 0) {
+        if (id != 0 || len % 6 != 0) {
+          fail(s, PROTOCOL_ERROR, "a malformed SETTINGS frame");
+        } else if (applySettings(s, p, len)) {
+          pumpAll(s);
+        }
+      }
+    } else if (type == WINDOW_UPDATE) {
+      windowUpdate(s, id, p, len);
+    } else if (type == PING) {
+      if (len != 8) {
+        fail(s, FRAME_SIZE_ERROR, "PING of a length other than 8");
+      } else if ((flags & ACK) == 0) {
+        s.out.pingAck(b, p);
+      }
+    } else if (type == RST_STREAM) {
+      const st = s.streams.get(id);
+      if (st != undefined && len == 4) {
+        const code = readU32(b, p);
+        // REFUSED_STREAM: not processed (RFC 9113 §8.7). NO_ERROR before the head: the server
+        // may have processed it.
+        const retry =
+          code == REFUSED_STREAM
+            ? RETRY_ALWAYS
+            : !st.headSeen && code == 0 ? RETRY_IDEMPOTENT : RETRY_NEVER;
+        st.events.trySend(errorEvent(`fetch failed: stream reset (${errorName(code)})`, retry));
+        s.forget(st);
+      }
+    } else if (type == GOAWAY) {
+      goaway(s, p, len);
+    } else if (type == PUSH_PROMISE) {
+      fail(s, PROTOCOL_ERROR, "PUSH_PROMISE was disabled");
+    }
+  }
+}
+
+/// A connection error: GOAWAY, then the session ends.
+function fail(s: ClientSession, code: i64, debug: string) {
+  s.out.goaway(0, code, debug);
+  s.finish(`HTTP/2 ${errorName(code)}: ${debug}`);
+}
+
+/// GOAWAY: streams above its last one were not processed (they may be sent again elsewhere).
+function goaway(s: ClientSession, p: i64, len: i64) {
+  if (len < 8) {
+    fail(s, FRAME_SIZE_ERROR, "GOAWAY shorter than 8 bytes");
+    return;
+  }
+  const last = readStreamId(s.rbuf, p);
+  const gone: ClientStream[] = [];
+  for (const st of s.streams.values()) {
+    if (st.id > last) {
+      gone.push(st);
+    }
+  }
+  for (const st of gone) {
+    st.events.trySend(
+      errorEvent("fetch failed: the server is closing the connection", RETRY_ALWAYS),
+    );
+    s.streams.delete(st.id);
+  }
+  s.stopTaking();
+}
+
+function data(s: ClientSession, flags: i64, id: i64, p: i64, len: i64) {
+  let start = p;
+  let end = p + len;
+  if ((flags & PADDED) != 0) {
+    const pad = len < 1 ? len : s.rbuf[p] as i64;
+    if (len < 1 || pad >= len) {
+      fail(s, PROTOCOL_ERROR, "padding longer than the frame");
+      return;
+    }
+    start++;
+    end -= pad;
+  }
+  const st = s.streams.get(id);
+  // The connection window of what no request reads (padding, a cancelled stream) comes back now.
+  const unread = st == undefined ? len : len - (end - start);
+  if (unread > 0) {
+    s.credit(0, unread);
+  }
+  if (st == undefined) {
+    return;
+  }
+  if (len > st.recvWindow) {
+    fail(s, FLOW_CONTROL_ERROR, "DATA beyond the stream window");
+    return;
+  }
+  st.recvWindow -= len;
+  if (end > start) {
+    const sent = st.events.trySend({
+      kind: EVENT_DATA,
+      id: id,
+      status: 0,
+      fields: [],
+      ended: false,
+      data: s.rbuf.slice(start, end),
+      message: "",
+      retry: RETRY_NEVER,
+    });
+    if (!sent) {
+      // The request gave up on the response (its channel is closed): nobody reads this.
+      s.credit(0, end - start);
+      st.remoteEnded = (flags & END_STREAM) != 0;
+      s.drop(st);
+      return;
+    }
+  }
+  if ((flags & END_STREAM) != 0) {
+    ended(s, st);
+  }
+}
+
+/// The response of `st` is complete.
+function ended(s: ClientSession, st: ClientStream) {
+  st.remoteEnded = true;
+  st.events.trySend({
+    kind: EVENT_END,
+    id: st.id,
+    status: 0,
+    fields: [],
+    ended: true,
+    data: [],
+    message: "",
+    retry: RETRY_NEVER,
+  });
+  if (st.localEnded) {
+    s.forget(st);
+  }
+}
+
+function headers(s: ClientSession, type: i64, flags: i64, id: i64, p: i64, len: i64) {
+  let start = p;
+  let end = p + len;
+  if (type == HEADERS) {
+    let pad: i64 = 0;
+    if ((flags & PADDED) != 0) {
+      pad = len > 0 ? s.rbuf[start] as i64 : 0;
+      start++;
+    }
+    if ((flags & PRIORITY_FLAG) != 0) {
+      start += 5;
+    }
+    end -= pad;
+    if (start > end) {
+      fail(s, PROTOCOL_ERROR, "padding longer than the frame");
+      return;
+    }
+    s.blockStream = id;
+    s.blockFlags = flags & END_STREAM;
+    s.blockLength = 0;
+  } else if (s.blockStream == 0) {
+    fail(s, PROTOCOL_ERROR, "CONTINUATION without HEADERS");
+    return;
+  }
+  const n = end - start;
+  if (s.blockLength + n > 4 * 65536) {
+    fail(s, PROTOCOL_ERROR, "a header block too large");
+    return;
+  }
+  if (s.blockLength + n > (s.block.length as i64)) {
+    const grown: u8[] = Buffer.alloc(((s.blockLength + n) * 2) as usize);
+    s.block.copy(grown, 0, 0, s.blockLength);
+    s.block = grown;
+  }
+  s.rbuf.copy(s.block, s.blockLength, start, end);
+  s.blockLength += n;
+  if ((flags & END_HEADERS) != 0) {
+    s.blockStream = 0;
+    block(s, id, s.blockFlags);
+  }
+}
+
+/// A complete header block of stream `id`: the response head (1xx skipped), or trailers.
+function block(s: ClientSession, id: i64, flags: i64) {
+  const f = s.scratch;
+  f.clear();
+  if (!s.decoder.decode(s.block, 0, s.blockLength, f)) {
+    fail(s, COMPRESSION_ERROR, "a header block HPACK cannot decode");
+    return;
+  }
+  const st = s.streams.get(id);
+  if (st == undefined) {
+    return;
+  }
+  if (!st.headSeen) {
+    let status: i64 = -1;
+    const fields: string[] = [];
+    for (let i: i64 = 0; i < f.count; i++) {
+      if (f.nameIs(i, ":status")) {
+        const v = parseInt(f.value(i), 10);
+        status = Number.isNaN(v) ? -1 : v as i64;
+      } else if (f.nameByte(i) != 0x3a) {
+        fields.push(f.name(i), f.value(i));
+      }
+    }
+    if (status < 100 || status > 999 || f.overflow) {
+      s.out.rstStream(id, PROTOCOL_ERROR);
+      st.events.trySend(errorEvent("fetch failed: invalid HTTP/2 response head", RETRY_NEVER));
+      s.forget(st);
+      return;
+    }
+    if (status < 200) {
+      // An informational response (100, 103): the final one follows.
+      return;
+    }
+    st.headSeen = true;
+    const end = (flags & END_STREAM) != 0;
+    const sent = st.events.trySend({
+      kind: EVENT_HEAD,
+      id: id,
+      status: status,
+      fields: fields,
+      ended: end,
+      data: [],
+      message: "",
+      retry: RETRY_NEVER,
+    });
+    if (!sent) {
+      // The request gave up (aborted) before its response's head.
+      if (end) {
+        st.remoteEnded = true;
+      }
+      s.drop(st);
+      return;
+    }
+    if (end) {
+      ended(s, st);
+    }
+    return;
+  }
+  // Trailers: the end of the body (fetch has no API for them).
+  if ((flags & END_STREAM) != 0) {
+    ended(s, st);
+  }
+}
+
+function windowUpdate(s: ClientSession, id: i64, p: i64, len: i64) {
+  if (len != 4) {
+    fail(s, FRAME_SIZE_ERROR, "WINDOW_UPDATE of a length other than 4");
+    return;
+  }
+  const inc = readU32(s.rbuf, p) & 0x7fffffff;
+  if (id == 0) {
+    s.sendWindow += inc;
+    if (inc == 0 || s.sendWindow > MAX_WINDOW) {
+      fail(s, inc == 0 ? PROTOCOL_ERROR : FLOW_CONTROL_ERROR, "a bad connection WINDOW_UPDATE");
+      return;
+    }
+    pumpAll(s);
+    return;
+  }
+  const st = s.streams.get(id);
+  if (st != undefined) {
+    st.sendWindow += inc;
+    if (inc == 0 || st.sendWindow > MAX_WINDOW) {
+      // A stream error (RFC 9113 §6.9, §6.9.1).
+      const code = inc == 0 ? PROTOCOL_ERROR : FLOW_CONTROL_ERROR;
+      s.out.rstStream(id, code);
+      st.events.trySend(
+        errorEvent(`fetch failed: a bad WINDOW_UPDATE (${errorName(code)})`, RETRY_NEVER),
+      );
+      s.forget(st);
+      return;
+    }
+    pump(s, st);
+  }
+}

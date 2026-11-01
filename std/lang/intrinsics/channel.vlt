@@ -1,0 +1,19 @@
+// velt/lang/intrinsics (internal): the runtime's channels below velt/sync's `Channel`
+// (std/sync/channel.vlt). `ch` is the channel's handle.
+
+import type { Owned } from "./modes";
+
+/** Moves `value` into the channel; false (and `value` dropped) if it is closed. */
+export declare intrinsic function chanSend<T>(ch: u64, value: Owned<T>): Promise<bool, never>;
+
+/** The oldest value, or null once the channel is closed and drained. */
+export declare intrinsic function chanReceive<T>(ch: u64): Promise<T | null, never>;
+
+/**
+ * Moves `value` into the channel if it has room; false (and `value` dropped) if it is full or
+ * closed.
+ */
+export declare intrinsic function chanTrySend<T>(ch: u64, value: Owned<T>): bool;
+
+/** The oldest value if one is queued. */
+export declare intrinsic function chanTryReceive<T>(ch: u64): T | null;

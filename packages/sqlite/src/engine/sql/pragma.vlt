@@ -1,0 +1,55 @@
+// sqlite/engine/sql/pragma (internal): PRAGMA of SQLite's grammar: a name, and a value after `=` or in
+// parentheses.
+
+import { Parser } from "./parser";
+import { T_INTEGER, T_REAL, T_STRING } from "./token";
+import { E_COLUMN, Expr, S_PRAGMA, Statement } from "./types";
+import { literal, negated, qualified } from "./clauses";
+
+export function pragma(p: Parser): Statement {
+  const s = new Statement(S_PRAGMA);
+  qualified(p, s);
+  s.name = s.name.toLowerCase();
+  if (p.eatOp("=")) {
+    s.value = pragmaValue(p);
+  } else if (p.eatOp("(")) {
+    s.value = pragmaValue(p);
+    p.expectOp(")");
+  }
+  return s;
+}
+
+/**
+ * A pragma's value, as SQLite's grammar allows: a signed number (no digit separators), a
+ * string, or a name, upper case (ON, FULL, WAL, TRUE; the keywords ON, DELETE and DEFAULT too).
+ */
+function pragmaValue(p: Parser): Expr {
+  const t = p.peek();
+  if (p.isOp("+") || p.isOp("-")) {
+    const sign = p.advance();
+    const e = pragmaNumber(p);
+    return sign.text == "-" ? negated(e, sign.start) : e;
+  }
+  if (t.kind == T_INTEGER || t.kind == T_REAL) {
+    return pragmaNumber(p);
+  }
+  if (t.kind == T_STRING) {
+    return literal(p);
+  }
+  if (p.isName() || p.isKw("ON") || p.isKw("DELETE") || p.isKw("DEFAULT")) {
+    p.advance();
+    const e = new Expr(E_COLUMN, t.start);
+    e.name = t.upper;
+    return e;
+  }
+  p.fail();
+}
+
+/** An integer or a real, written without separators (`plus_num`). */
+function pragmaNumber(p: Parser): Expr {
+  const t = p.peek();
+  if ((t.kind != T_INTEGER && t.kind != T_REAL) || p.raw(t).includes("_")) {
+    p.fail();
+  }
+  return p.primary();
+}

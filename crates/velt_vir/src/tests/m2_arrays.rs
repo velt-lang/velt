@@ -307,7 +307,7 @@ fn index_out_of_bounds_panics() {
     assert_eq!(out.code, 101);
 }
 
-/// swap / remove / truncate / with_capacity / clone / eq / hash on arrays of strings.
+/// swap / remove / truncate / with_capacity / clone / `==` / hash on arrays of strings.
 #[test]
 fn array_intrinsics() {
     let mut pb = PB::new();
@@ -338,10 +338,7 @@ fn array_intrinsics() {
         )),
         se(intr(I::ArraySwap, vec![f.bm(xs), u(0), u(2)], t.unit)),
         let_(ys, intr(I::Clone, vec![f.bw(xs)], sa)),
-        se(print(
-            vec![f.bw(xs), intr(I::Eq, vec![f.bw(xs), f.bw(ys)], t.bool)],
-            t,
-        )),
+        se(print(vec![f.bw(xs), cmp(B::Eq, f.bw(xs), f.bw(ys), t)], t)),
         let_(removed, intr(I::ArrayRemove, vec![f.bm(xs), u(0)], t.str)),
         se(intr(I::ArrayTruncate, vec![f.bm(ys), u(1)], t.unit)),
         se(print(
@@ -349,7 +346,7 @@ fn array_intrinsics() {
                 f.bw(removed),
                 f.bw(xs),
                 f.bw(ys),
-                intr(I::Eq, vec![f.bw(xs), f.bw(ys)], t.bool),
+                cmp(B::Eq, f.bw(xs), f.bw(ys), t),
             ],
             t,
         )),

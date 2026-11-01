@@ -1,0 +1,80 @@
+// `JSON.parse<T>` of unions decoded by the code velt/encoding/json's generator writes: members
+// told apart by the kind of JSON value, literals and enum members by value, several object
+// members by a discriminant or a key only one of them requires (looked ahead, also through
+// nested unions); the messages and paths of their errors.
+enum Dir {
+  Up = "up",
+  Down = "down",
+}
+
+enum Code {
+  Ok = 200,
+  Missing = 404,
+}
+
+type Shape = { kind: "circle"; r: f64 } | { kind: "rect"; w: f64; h: f64 };
+type ByKey = { url: string } | { path: string; depth?: i32 };
+type Mixed = string | i32 | boolean | i64[] | Shape;
+type Lits = "auto" | f64;
+type Codes = Code | string;
+type Flags = true | string[];
+type DirOr = Dir | 0 | { n: i8 };
+const docs: [string, string][] = [
+  ["shape", `[{"kind":"circle","r":1.5},{"w":2,"h":3,"kind":"rect"},{"kind":"tri"}]`],
+  ["shape", `[{"r":1}]`],
+  ["shape", `[{"kind":7}]`],
+  ["shape", `[{"zz":[1,,2],"kind":"circle","r":1}]`],
+  ["shape", `[{"kind":"rect","w":1}]`],
+  ["shape", `[[1]]`],
+  ["bykey", `[{"url":"u"},{"depth":2,"path":"p"},{"other":1}]`],
+  ["bykey", `[{"path":1}]`],
+  ["mixed", `["s", 3, true, [1, 2], {"kind":"circle","r":2}, null]`],
+  ["mixed", `[3.5]`],
+  ["mixed", `[[1, "x"]]`],
+  ["lits", `["auto", 2.5, "manual"]`],
+  ["lits", `[true]`],
+  ["codes", `[200, "x", 404, 500]`],
+  ["flags", `[true, ["a"], false]`],
+  ["dir", `["up", 0, {"n":1}, "down", 1]`],
+  ["dir", `["left"]`],
+];
+for (const [kind, text] of docs) {
+  try {
+    if (kind == "shape") {
+      console.log(JSON.stringify(JSON.parse<Shape[]>(text, { comments: "skip" })));
+    }
+    if (kind == "bykey") {
+      console.log(JSON.stringify(JSON.parse<ByKey[]>(text, { comments: "skip" })));
+    }
+    if (kind == "mixed") {
+      console.log(JSON.stringify(JSON.parse<(Mixed | null)[]>(text, { comments: "skip" })));
+    }
+    if (kind == "lits") {
+      console.log(JSON.stringify(JSON.parse<Lits[]>(text, { comments: "skip" })));
+    }
+    if (kind == "codes") {
+      console.log(JSON.stringify(JSON.parse<Codes[]>(text, { comments: "skip" })));
+    }
+    if (kind == "flags") {
+      console.log(JSON.stringify(JSON.parse<Flags[]>(text, { comments: "skip" })));
+    }
+    if (kind == "dir") {
+      console.log(JSON.stringify(JSON.parse<DirOr[]>(text, { comments: "skip" })));
+    }
+  } catch (e) {
+    console.log(kind, e.message);
+  }
+}
+const one: Shape = JSON.parse(`{"kind":"rect","w":1,"h":2}`);
+console.log(one.kind, JSON.parse<Mixed>(`"top"`), JSON.parse<Codes>(`404`));
+type Outer = { inner: Shape[]; tag: "a" } | { more: Outer[]; tag: "b" };
+console.log(
+  JSON.stringify(
+    JSON.parse<Outer>(`{"more":[{"inner":[{"h":1,"w":2,"kind":"rect"}],"tag":"a"}],"tag":"b"}`),
+  ),
+);
+try {
+  JSON.parse<Outer>(`{"more":[{"inner":[{"h":1,"w":2,"kind":"oval"}],"tag":"a"}],"tag":"b"}`);
+} catch (e) {
+  console.log(e.message);
+}

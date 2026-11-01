@@ -1,7 +1,7 @@
 // Untrusted JSON can't forge a runtime handle: std types keep theirs in private fields, and a
 // type with a private field has no JSON form, neither for `JSON.parse` nor for `JSON.stringify`.
-import { BigInt } from "velt:bigint";
-import { RegExp } from "velt:regex";
+import { BigInt } from "velt/math";
+import { RegExp } from "velt/text";
 
 type Boxed = { n: BigInt };
 

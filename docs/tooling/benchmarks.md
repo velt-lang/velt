@@ -55,9 +55,8 @@ The full list of benchmarks, which languages each has and what is not covered ar
   the memory cells empty if they do not report different peaks. Servers' peak RSS comes from
   `/proc` (`VmHWM`) over all their processes.
 - **Velt's servers are written in Velt**: the HTTP, TSX page and WebSocket chat rows run on
-  `velt:http/server`, the HTTP/1.1 server written in Velt on std/net (with `velt:websocket` for
-  the chat), with its default options, not on `velt:http`, whose `serve` is hyper in the
-  runtime.
+  the `http-server` package, the HTTP server written in Velt on std/net (with
+  `velt/net/websocket` for the chat), with its default options.
 - **What could not be made equal is labelled**: the Bun and Node chat servers keep each room's
   members in the process, so they cannot run as several processes without shared state. They
   run as one process each, labelled "single process; rooms need shared state", and are

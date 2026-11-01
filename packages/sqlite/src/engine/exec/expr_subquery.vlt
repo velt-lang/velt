@@ -1,0 +1,66 @@
+// sqlite/engine/exec/expr_subquery (internal): subqueries in expressions compiled by the expression
+// compiler (engine/exec/expr_compiler): EXISTS, `x IN (SELECT ...)` and scalar subqueries, run
+// again for each row only when correlated.
+
+import { NULL } from "../storage_class";
+import { E_EXISTS, E_SUBQUERY, Expr } from "../sql/types";
+import { prepareError } from "./errors";
+import { Scope } from "./scope";
+import { compareAff, comparisonAffinity } from "./value/ops";
+import { intVal, nullVal } from "./value/val";
+import { C, binaryColl, plain } from "./c";
+import { ExprCompiler } from "./expr_compiler";
+
+export function compileSubquery(c: ExprCompiler, e: Expr, sc: Scope): C {
+  const q = c.subquery(e.select!, sc);
+  const p = c.params;
+  const not = e.not;
+  if (e.kind == E_EXISTS) {
+    q.need.n = 1;
+    return plain(() => {
+      q.runFor(p);
+      return intVal((q.out.rows > 0) != not ? 1 : 0);
+    });
+  }
+  if (q.names.length != 1) {
+    prepareError(`sub-select returns ${q.names.length} columns - expected 1`);
+  }
+  if (e.kind == E_SUBQUERY) {
+    q.need.n = 1;
+    return C {
+      ev: () => {
+        q.runFor(p);
+        return q.first();
+      },
+      aff: q.affs[0],
+      coll: q.colls[0],
+      explicit: false,
+    };
+  }
+  // IN (SELECT ...)
+  const x = c.expr(e.a!, sc);
+  const xe = x.ev;
+  const aff = comparisonAffinity(q.affs[0], x.aff);
+  const coll = binaryColl(x, C { ev: xe, aff: q.affs[0], coll: q.colls[0], explicit: false });
+  return plain(() => {
+    const v = xe();
+    q.runFor(p);
+    const out = q.out;
+    if (out.rows == 0) {
+      return intVal(not ? 1 : 0);
+    }
+    if (v.t == NULL) {
+      return nullVal();
+    }
+    let sawNull = false;
+    for (let i: usize = 0; i < out.rows; i++) {
+      const w = out.vals[i];
+      if (w.t == NULL) {
+        sawNull = true;
+      } else if (compareAff(v, w, aff, coll) == 0) {
+        return intVal(not ? 0 : 1);
+      }
+    }
+    return sawNull ? nullVal() : intVal(not ? 1 : 0);
+  });
+}

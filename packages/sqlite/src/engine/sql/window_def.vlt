@@ -1,0 +1,138 @@
+// sqlite/engine/sql/window_def (internal): window definitions of SQLite's grammar (parse.y's
+// `over_clause`, `window_clause` and `frame_opt`): OVER's window and the WINDOW clause, with
+// PARTITION BY, ORDER BY, the ROWS / RANGE / GROUPS frame and its bounds, and EXCLUDE.
+
+import {
+  BOUND_CURRENT,
+  BOUND_FOLLOWING,
+  BOUND_PRECEDING,
+  BOUND_UNBOUNDED_FOLLOWING,
+  BOUND_UNBOUNDED_PRECEDING,
+  Expr,
+  FRAME_GROUPS,
+  FRAME_RANGE,
+  FRAME_ROWS,
+  SelectCore,
+  Window,
+} from "./types";
+import { Parser } from "./parser";
+
+/** After WINDOW: `name AS (...)`, comma-separated, into `c.windows`. */
+export function windowClause(p: Parser, c: SelectCore) {
+  while (true) {
+    const name = p.name();
+    p.expectKw("AS");
+    p.expectOp("(");
+    const w = windowBody(p);
+    p.expectOp(")");
+    w.name = name;
+    c.windows.push(w);
+    if (!p.eatOp(",")) {
+      break;
+    }
+  }
+}
+
+/** After OVER: a window's name, or its definition in parentheses. */
+export function overWindow(p: Parser): Window {
+  if (!p.isOp("(")) {
+    const w = new Window();
+    w.base = p.name();
+    return w;
+  }
+  p.pos++;
+  const w = windowBody(p);
+  p.expectOp(")");
+  return w;
+}
+
+/** `[base] [PARTITION BY ...] [ORDER BY ...] [frame]`, inside parentheses. */
+function windowBody(p: Parser): Window {
+  const w = new Window();
+  const from = p.peek().start;
+  if (
+    p.isName() &&
+    !p.isKw("PARTITION") &&
+    !p.isKw("ORDER") &&
+    !p.isKw("ROWS") &&
+    !p.isKw("RANGE") &&
+    !p.isKw("GROUPS")
+  ) {
+    w.base = p.name();
+  }
+  if (p.isKw("PARTITION")) {
+    p.pos++;
+    p.expectKw("BY");
+    w.partition.push(p.expr());
+    while (p.eatOp(",")) {
+      w.partition.push(p.expr());
+    }
+  }
+  if (p.isKw("ORDER")) {
+    p.pos++;
+    p.expectKw("BY");
+    w.orderBy = p.orderTerms();
+  }
+  let kind: u8 = 0;
+  if (p.eatKw("ROWS")) {
+    kind = FRAME_ROWS;
+  } else if (p.eatKw("RANGE")) {
+    kind = FRAME_RANGE;
+  } else if (p.eatKw("GROUPS")) {
+    kind = FRAME_GROUPS;
+  }
+  if (kind != 0) {
+    w.frame = kind;
+    if (p.eatKw("BETWEEN")) {
+      frameBound(p, w, true);
+      p.expectKw("AND");
+      frameBound(p, w, false);
+    } else {
+      frameBound(p, w, true);
+      w.end = BOUND_CURRENT;
+    }
+    if (p.eatKw("EXCLUDE")) {
+      if (p.eatKw("NO")) {
+        p.expectKw("OTHERS");
+      } else if (p.eatKw("CURRENT")) {
+        p.expectKw("ROW");
+        w.exclude = "CURRENT ROW";
+      } else if (p.eatKw("GROUP")) {
+        w.exclude = "GROUP";
+      } else {
+        p.expectKw("TIES");
+        w.exclude = "TIES";
+      }
+    }
+  }
+  w.text = p.pos > 0 && p.toks[p.pos - 1].end > from ? p.text(from, p.toks[p.pos - 1].end) : "";
+  return w;
+}
+
+function frameBound(p: Parser, w: Window, start: bool) {
+  let kind: u8 = BOUND_CURRENT;
+  let e: Expr | null = null;
+  if (p.eatKw("UNBOUNDED")) {
+    // SQLite's grammar: a frame starts UNBOUNDED PRECEDING and ends UNBOUNDED FOLLOWING only
+    // (the other is a syntax error at that keyword).
+    p.expectKw(start ? "PRECEDING" : "FOLLOWING");
+    kind = start ? BOUND_UNBOUNDED_PRECEDING : BOUND_UNBOUNDED_FOLLOWING;
+  } else if (p.eatKw("CURRENT")) {
+    p.expectKw("ROW");
+  } else {
+    e = p.expr();
+    if (p.eatKw("PRECEDING")) {
+      kind = BOUND_PRECEDING;
+    } else {
+      p.expectKw("FOLLOWING");
+      kind = BOUND_FOLLOWING;
+    }
+  }
+  if (start) {
+    w.start = kind;
+    w.startExpr = e;
+  } else {
+    w.end = kind;
+    w.endExpr = e;
+  }
+}

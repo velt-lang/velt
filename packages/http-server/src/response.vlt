@@ -1,0 +1,100 @@
+// http-server (internal): `HttpResponse`, the response a `serveHttp` handler writes: an
+// abstract class, the same over HTTP/1.1 (`Http1Response`, http1/response.vlt) and HTTP/2
+// (`H2Response`, h2/response.vlt), which extend it, so the compiler rejects one that misses a
+// method. What only the server calls (`begin`, `flush`, `tick`, ...) is on those classes. Why
+// not an interface: request.vlt.
+
+import { BodyStream } from "velt/net/http";
+import { TcpStream } from "velt/net";
+import { AbortSignal } from "velt/task";
+import { EventStream } from "./event_stream";
+import { HttpStream } from "./http_stream";
+
+/**
+ * A response being written: `status`, `header`, then one of the `send` methods (the whole
+ * response) or `stream` / `sse` (a body written piece by piece). Valid while the handler runs.
+ */
+export abstract class HttpResponse {
+  /** Sets the status code (200 by default); throws `RangeError` outside 100–999, as Node. */
+  abstract status(code: number): void;
+
+  /**
+   * Adds header `name: value` (a `content-type` or `server` replaces the default one). Throws
+   * `TypeError` for a name that is not a token or a value with a control character other than
+   * TAB (CR, LF, NUL), as Node: a value from the client cannot add a header of its own. The
+   * server frames the body, so `Content-Length` and `Transfer-Encoding` are its own: a handler's
+   * are not sent, except a Content-Length for the response to a HEAD request (the length a GET
+   * would get). Over HTTP/2 names are sent in lowercase, and the fields HTTP/2 does not have
+   * (`Connection`, `Keep-Alive`, `Transfer-Encoding`, `Upgrade`) are not sent.
+   */
+  abstract header(name: string, value: string): void;
+
+  /**
+   * Adds trailers: fields sent after the body (Node's `res.addTrailers`), checked as `header`
+   * checks names and values. Over HTTP/1.1 they end a chunked body: a streamed one always, one
+   * written at once (`send` and the like) when the request said `TE: trailers` (it is then sent
+   * chunked); otherwise they are not sent. Over HTTP/2 they are a HEADERS frame after the body.
+   * Name them in a `Trailer` header if the client needs to know in advance. Call it before the
+   * body ends.
+   */
+  abstract addTrailers(trailers: [string, string][]): void;
+
+  /** Writes the response with body `body` (default type `text/plain; charset=utf-8`). */
+  abstract send(body: string): void;
+
+  /** Writes the response with body `body` (default type `application/octet-stream`). */
+  abstract sendBytes(body: u8[]): void;
+
+  /** Writes the response with JSON text `json` (type `application/json`). */
+  abstract json(json: string): void;
+
+  /** Writes the response with HTML `html` (type `text/html; charset=utf-8`). */
+  abstract html(html: string): void;
+
+  /**
+   * Starts a streamed response (default type `text/plain; charset=utf-8`): its head goes out
+   * now, the body piece by piece through the returned stream (`write`, `end`). For large or
+   * unbounded bodies, proxies and Server-Sent Events: nothing of the body is buffered beyond
+   * the piece being written.
+   */
+  abstract stream(type?: string): Promise<HttpStream>;
+
+  /**
+   * Streams `body` as the response (default type `text/html; charset=utf-8`): each chunk is
+   * written as it comes, once the client took the one before. For `renderToStream` of
+   * [velt/jsx](jsx.md): the markup above a pending async component reaches the client while it
+   * loads. A client that goes away ends it quietly (the source is closed, so rendering stops;
+   * `signal()` is aborted).
+   */
+  abstract sendStream(body: BodyStream, type?: string): Promise<void>;
+
+  /**
+   * Starts a Server-Sent Events response (`text/event-stream`, not cached): `send` writes an
+   * event, `comment` a line clients ignore (a keep-alive), `end` finishes it.
+   */
+  abstract sse(): Promise<EventStream>;
+
+  /**
+   * Aborted when the client can no longer be written to (it went away while a response was
+   * being written, or reset its HTTP/2 stream) or the server closes: give it to the work done
+   * for this request.
+   */
+  abstract signal(): AbortSignal;
+
+  /**
+   * Switches to `protocol` (see `HttpRequest.isUpgrade`). Over HTTP/1.1: queues `101 Switching
+   * Protocols` with `Upgrade: protocol`, `Connection: Upgrade` and `headers` (after the
+   * responses to earlier requests), and hands the connection over: the returned stream is the
+   * caller's, the server reads, writes and closes it no more. The client waits for the 101
+   * before it sends in the new protocol. Over HTTP/2: accepts an extended CONNECT (200 with
+   * `headers`) and returns a stream carrying the protocol over that one HTTP/2 stream. Throws if
+   * a response was started, or the request is not one asking for `protocol` (or is HTTP/1.0).
+   */
+  abstract upgrade(protocol: string, headers?: [string, string][]): TcpStream;
+
+  /** Whether a response was started for the current request. */
+  abstract sent(): bool;
+
+  /** Whether `upgrade` handed the connection over (never over HTTP/2). */
+  abstract upgraded(): bool;
+}

@@ -1,6 +1,6 @@
 use super::*;
 
-const HEAD: &str = "import type { Package } from \"velt:package\";\n\nexport const pkg: Package = ";
+const HEAD: &str = "import type { Package } from \"velt/package\";\n\nexport const pkg: Package = ";
 
 /// `src` with the cursor at `|` (removed): the text and the offset.
 fn at(src: &str) -> (String, u32) {
@@ -101,7 +101,7 @@ fn values_from_fixed_sets() {
 #[test]
 fn nothing_outside_the_manifest_object() {
     let (text, offset) =
-        at("import type { | } from \"velt:package\";\nexport const pkg: Package = {};");
+        at("import type { | } from \"velt/package\";\nexport const pkg: Package = {};");
     assert!(completions(&text, offset).is_empty());
     let (text, offset) = at(&format!("{HEAD}{{ name: \"a\" }};\n|"));
     assert!(completions(&text, offset).is_empty());

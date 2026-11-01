@@ -1,0 +1,171 @@
+// The generator of _generators/index.vlt: runs at compile time, writes Velt source.
+import { InstanceRequest, Output, Type } from "velt/generate";
+
+export function describe(req: InstanceRequest, out: Output): void {
+  const t = req.model.type(req.args[0]);
+  let text = `${t.display}: ${t.kind}`;
+  if (t.kind == "union") {
+    const arms: string[] = [];
+    for (const a of t.arms) {
+      arms.push(req.model.type(a).display);
+    }
+    text += ` of ${arms.join(", ")}`;
+  }
+  if (t.kind == "map" || t.kind == "record" || t.kind == "set" || t.kind == "shared") {
+    const args: string[] = [];
+    for (const a of t.args) {
+      args.push(req.model.type(a).display);
+    }
+    text += ` of ${args.join(", ")}`;
+  }
+  for (const f of t.fields) {
+    const opt = f.optional ? "?" : "";
+    const vis = f.isPrivate ? "private " : "";
+    const get = f.isGetter ? "get " : "";
+    const ft = req.model.type(f.type);
+    const shown = ["function", "map", "record", "set", "shared"].includes(ft.kind);
+    const kind = shown ? ` (${ft.kind})` : "";
+    text += `; ${vis}${get}${f.name}${opt}: ${ft.display}${kind}`;
+  }
+  for (const m of t.members) {
+    text += `; ${m.name} = ${m.value}`;
+  }
+  for (const m of t.methods) {
+    text += `; ${m.name}(${m.params}): ${req.model.type(m.ret).display}`;
+  }
+  if (t.subclasses.length > 0) {
+    const subs: string[] = [];
+    for (const s of t.subclasses) {
+      subs.push(req.model.type(s).display);
+    }
+    text += ` (extended by ${subs.join(", ")})`;
+  }
+  out.line(`return ${out.literal(text)};`);
+}
+
+export function show(req: InstanceRequest, out: Output): void {
+  const t = req.model.type(req.args[0]);
+  const v = req.params[0];
+  if (t.kind == "number" || t.kind == "boolean") {
+    out.line(`return \`\${${v}}\`;`);
+  } else if (t.kind == "string") {
+    out.line(`return "'" + ${v} + "'";`);
+  } else if (t.kind == "option") {
+    out.line(`if (${v} == null) { return "null"; }`);
+    const inner = out.instance("show", [t.args[0]]);
+    out.line(`return ${inner}(${v});`);
+  } else if (t.kind == "array") {
+    const elem = out.instance("show", [t.args[0]]);
+    out.line(`const parts: string[] = [];`);
+    out.line(`for (const e of ${v}) { parts.push(${elem}(e)); }`);
+    out.line(`return "[" + parts.join(", ") + "]";`);
+  } else if (t.kind == "class" || t.kind == "struct" || t.kind == "object") {
+    const name = t.kind == "object" ? "" : t.display + " ";
+    out.line(`let s = ${out.literal(name + "{")};`);
+    let first = true;
+    for (const f of t.fields) {
+      if (f.isPrivate) {
+        continue;
+      }
+      const sep = first ? " " : ", ";
+      first = false;
+      const key = out.literal(sep + f.name + ": ");
+      const field = out.instance("show", [f.type]);
+      if (f.optional) {
+        // An optional field reads as `T | undefined`.
+        const local = out.fresh("f");
+        out.line(`const ${local} = ${v}.${f.name};`);
+        out.line(`s += ${key} + (${local} == null ? "undefined" : ${field}(${local}));`);
+      } else {
+        out.line(`s += ${key} + ${field}(${v}.${f.name});`);
+      }
+    }
+    out.line(`return s + " }";`);
+  } else {
+    out.error(`show cannot write a ${t.kind} (\`${t.display}\`)`, t.at);
+    out.line(`return "";`);
+  }
+}
+
+// Code with a closure, which the checker rewrites before a check starts: checked in a check of
+// its own rather than added to the check that asked for it.
+export function marked(req: InstanceRequest, out: Output): void {
+  const t = req.model.type(req.args[0]);
+  const names: string[] = [];
+  for (const f of t.fields) {
+    names.push(out.literal(f.name));
+  }
+  out.line(`const names: string[] = [${names.join(", ")}];`);
+  out.line(`return names.map((n) => n + "!").join(",");`);
+}
+
+export function broken(req: InstanceRequest, out: Output): void {
+  out.line(`return ${req.params[0]}.noSuchField;`);
+}
+
+export function crash(req: InstanceRequest, out: Output): void {
+  throw new Error(`crash asked for ${req.model.type(req.args[0]).display}`);
+}
+
+// Code generated for a type has that type's access: it reads private fields.
+export function peek(req: InstanceRequest, out: Output): void {
+  const t = req.model.type(req.args[0]);
+  const v = req.params[0];
+  const parts: string[] = [];
+  for (const f of t.fields) {
+    parts.push(`${f.name}=\${${v}.${f.name}}`);
+  }
+  out.line("return `" + parts.join(" ") + "`;");
+}
+
+// `__construct` builds a class without running its constructor: fields with an initializer
+// that it leaves out take the initializer's value.
+export function rebuild(req: InstanceRequest, out: Output): void {
+  const t = req.model.type(req.args[0]);
+  const v = req.params[0];
+  const inits: string[] = [];
+  for (const f of t.fields) {
+    if (!f.hasDefault) {
+      inits.push(`${f.name}: ${v}.${f.name}`);
+    }
+  }
+  out.line(`return __construct<${out.typeName(t.id)}>({ ${inits.join(", ")} });`);
+}
+
+// Builds a type its request does not hold: not allowed.
+export function forge(req: InstanceRequest, out: Output): void {
+  out.line(`return __construct<Hidden>({ code: 1 }).code;`);
+}
+
+// `__arm(v, i)` tests whether the union `v` holds its member `i` and narrows `v` to it, also
+// for members no JavaScript test tells apart (`i32 | f64`, `i32[] | f64[]`).
+export function armOf(req: InstanceRequest, out: Output): void {
+  const t = req.model.type(req.args[0]);
+  const v = req.params[0];
+  for (let i: i64 = 0; i < (t.arms.length as i64); i++) {
+    const a = req.model.type(t.arms[i]);
+    const label = out.literal(`${i} ${a.display}: `);
+    out.line(`if (__arm(${v}, ${i})) { return ${label} + \`\${${v}}\`; }`);
+  }
+  out.line(`return "none";`);
+}
+
+// A body that keeps its parameter (converts it to `any`) next to bodies that only read theirs:
+// they share one ABI, so it keeps a share of its argument, not the caller's value.
+export function hold(req: InstanceRequest, out: Output): void {
+  const t = req.model.type(req.args[0]);
+  const v = req.params[0];
+  if (t.kind == "class") {
+    out.line(`const kept: any = ${v};`);
+    out.line(`let s = typeof kept;`);
+    for (const f of t.fields) {
+      const inner = out.instance("hold", [f.type]);
+      out.line(`s += " " + ${inner}(${v}.${f.name});`);
+    }
+    out.line(`return s;`);
+  } else if (t.kind == "array") {
+    out.line(`return \`\${${v}.length}\`;`);
+  } else {
+    out.line(`return "";`);
+  }
+}

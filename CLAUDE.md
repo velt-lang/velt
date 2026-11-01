@@ -58,6 +58,10 @@ follow it. The essentials for agents:
    comments its tag on those issues (CONTRIBUTING.md "The website's docs"); never open pull
    requests on the website from here.
 6. Never commit secrets, tokens or personal data.
+7. Standard library code follows CONTRIBUTING.md "The standard library": a module is a folder whose
+   `index.vlt` only re-exports; one exported class per file, at most 400 lines; std code imports
+   from the defining file, user code from `velt/<module>`. `scripts/std-lint` (run by precheck)
+   checks it; its allow list only shrinks: fix files, never add them to it.
 
 ## Pitfalls (each cost a session real time)
 - **Measuring on a busy machine.** With other builds running, wall-clock times are off by 2-4x.

@@ -270,7 +270,9 @@ impl FnLower<'_, '_> {
     /// Is `d` a standard library class (not an object type or record the library declares)?
     pub(super) fn std_class(&self, d: DefId) -> bool {
         let a = self.cx.adt_def(d);
-        a.kind == hir::AdtKind::Class && a.name.starts_with("std/")
+        a.kind == hir::AdtKind::Class
+            && a.name
+                .starts_with(velt_common::std_modules::CANONICAL_PREFIX)
     }
 
     /// The JavaScript built-in `d` or its nearest standard library base class stands for.
@@ -278,7 +280,9 @@ impl FnLower<'_, '_> {
         let mut cur = Some(d);
         while let Some(c) = cur {
             let a = self.cx.adt_def(c);
-            if a.name.starts_with("std/") {
+            if a.name
+                .starts_with(velt_common::std_modules::CANONICAL_PREFIX)
+            {
                 let short = a.name.rsplit("::").next().unwrap_or(&a.name);
                 if let Some(names) = builtin_proto(short) {
                     let typed_len = (short == "TypedArray").then(|| {

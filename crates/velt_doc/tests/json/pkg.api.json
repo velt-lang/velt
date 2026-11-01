@@ -1541,7 +1541,7 @@
           "name": "readFile",
           "kind": "re-export",
           "modifiers": [],
-          "signature": "export { readFile } from \"velt:fs\"",
+          "signature": "export { readFile } from \"velt/fs\"",
           "spans": [],
           "doc": null,
           "summary": null,

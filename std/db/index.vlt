@@ -1,0 +1,12 @@
+// velt/db: what database drivers share (docs/std/db.md): rows of any source into typed values,
+// and the parameters of a statement out of them. A driver written in Velt (a database's wire
+// protocol parsed in place, a file format) implements `RowSource`, and `readRows<T>` fills a `T`
+// per row: each column the field of its name, as `JSON.parse<T>` fills fields from keys, with the
+// same conversions and the same messages for a row that does not fit. A native driver (a package
+// with a Rust library) hands over a row cursor instead, which `decodeRows<T>` reads the same way,
+// and takes a statement's parameters as typed values through `bindParams<P>`.
+
+export { decodeRow, decodeRows, bindParams } from "velt/db/native";
+export { readRow, readRows } from "velt/db/read";
+export { RowError } from "velt/db/errors";
+export { CellKind, RowSource } from "velt/db/row_source";

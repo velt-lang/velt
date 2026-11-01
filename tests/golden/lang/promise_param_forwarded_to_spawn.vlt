@@ -1,7 +1,7 @@
 // Regression (double free): a `Promise` param forwarded into `spawn(fire(ms, task))` used to be
 // copied (a shallow clone of the future); promises have no clone, so the param is owned and moved.
 // `say` reports on `said` once it printed, so `main` prints `done` after it.
-import { channel, Channel } from "velt:channel";
+import { channel, Channel } from "velt/sync";
 
 async function fire(ms: i64, task: Promise<void>): Promise<void> {
   await sleep(ms);

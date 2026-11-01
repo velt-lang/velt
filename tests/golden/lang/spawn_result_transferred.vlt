@@ -5,7 +5,7 @@
 // object, and the joining task's copy stays as delivered. The task reports over a channel once
 // it is done with its object, which orders its output before the next line of `main`; it prints
 // only once `main` printed what it got (`go`).
-import { channel, Channel } from "velt:channel";
+import { channel, Channel } from "velt/sync";
 
 class Obj {
   n: i64 = 0;

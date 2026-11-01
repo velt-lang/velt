@@ -1,9 +1,9 @@
-// Brotli decompression (`velt:compress/brotli`): the 1 MB JSON of `json.q5.br` and `json.q11.br`
+// Brotli decompression (`velt/compress`): the 1 MB JSON of `json.q5.br` and `json.q11.br`
 // (rust/src/bin/gen_inputs.rs, written by run.sh), each decoded 50 times. The Rust port uses
 // `brotli-decompressor`, which the runtime's `fetch` decoded `br` bodies with before the client
 // was Velt code.
-import { readFileBytesSync } from "velt:fs";
-import { brotliDecompress } from "velt:compress/brotli";
+import { readFileBytesSync } from "velt/fs";
+import { brotliDecompress } from "velt/compress";
 
 function main() {
   let total: i64 = 0;

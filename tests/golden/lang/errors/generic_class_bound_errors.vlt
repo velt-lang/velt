@@ -1,0 +1,18 @@
+// A class bound takes the class and its subclasses only: classes are nominal, so another class
+// with the same fields does not satisfy it; and a `T` has only the class's members.
+class Base {
+  tag: string = "b";
+}
+
+class Other {
+  tag: string = "o";
+}
+
+function f<T extends Base>(x: T): string {
+  return x.tag + x.nope;
+}
+
+function main() {
+  f(new Other());
+  f(42);
+}

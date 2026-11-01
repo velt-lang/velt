@@ -420,15 +420,20 @@ impl FnCx<'_, '_> {
                 self.record_index_read(obj, index, span)
             }
             TyKind::Array(elem) => self.array_index(obj, elem, index, want, span),
-            // `m[1]` on a match of `s.matchAll(re)`: its group (std/regex `__index`).
-            TyKind::Adt(..) if self.is_std_class(t, "std/regex::RegExpMatch") => {
+            // `m[1]` on a match of `s.matchAll(re)`: its group (std/regex `[INDEX]`).
+            TyKind::Adt(..)
+                if self.is_std_class(
+                    t,
+                    velt_common::std_item!(text_regex_regexp_match, "RegExpMatch"),
+                ) =>
+            {
                 let prop = ast::Ident {
-                    name: "__index".into(),
+                    name: velt_common::std_key!(index).into(),
                     span,
                 };
                 self.method_call_on(obj, &prop, &[], std::slice::from_ref(index), None, span)
             }
-            // `xs[i]` on a typed array: `xs.__index(i)` (`indexers`).
+            // `xs[i]` on a typed array: `xs[INDEX](i)` (`indexers`).
             TyKind::Adt(..)
                 if self.has_indexer(t)
                     && literal_key(index).is_none()

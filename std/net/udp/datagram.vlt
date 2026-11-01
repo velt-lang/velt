@@ -1,0 +1,20 @@
+// velt/net/udp (internal): `Datagram`, a received datagram.
+
+import { utf8DecodeLossy } from "velt/encoding";
+
+/** A received datagram. */
+export class Datagram {
+  data: u8[];
+  /** The sender, "ip:port" (reply with `socket.sendTo(x, d.addr)`). */
+  addr: string;
+
+  constructor(data: u8[], addr: string) {
+    this.data = data;
+    this.addr = addr;
+  }
+
+  /** The payload as UTF-8 text (invalid bytes become U+FFFD). */
+  text(): string {
+    return utf8DecodeLossy(this.data);
+  }
+}

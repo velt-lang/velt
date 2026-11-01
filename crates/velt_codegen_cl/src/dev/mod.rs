@@ -23,7 +23,6 @@
 
 mod classify;
 mod facts;
-mod handlers;
 mod roles;
 mod trampoline;
 mod version;
@@ -33,8 +32,6 @@ use std::time::Duration;
 
 use cranelift_jit::JITModule;
 use velt_vir::vir;
-
-pub use handlers::HandlerCode;
 
 use crate::module::DevFunction;
 use classify::Decision;
@@ -53,10 +50,6 @@ pub struct DevSession {
     slots: FxHashMap<String, (Slot, usize)>,
     /// Pinned functions by key: their newest code.
     pinned: FxHashMap<String, usize>,
-    /// Pinned code of every version → its key (to find a running handler's newer code).
-    owners: FxHashMap<usize, String>,
-    /// Newest state size and alignment per handler `$init` key.
-    handler_states: FxHashMap<String, (u64, u64)>,
     running: Option<Facts>,
     swaps: u32,
     /// Register each version's line tables with debuggers (`debug_info::jit`).
@@ -100,8 +93,6 @@ impl DevSession {
             versions: vec![],
             slots: FxHashMap::default(),
             pinned: FxHashMap::default(),
-            owners: FxHashMap::default(),
-            handler_states: FxHashMap::default(),
             running: None,
             swaps: 0,
             debug_info: true,
@@ -182,25 +173,6 @@ impl DevSession {
         }
     }
 
-    /// The newest code for the HTTP handler whose descriptor has `init` as its init function,
-    /// if a swap recompiled it since.
-    pub fn handler_update(&self, init: usize) -> Option<HandlerCode> {
-        let key = self.owners.get(&init)?;
-        let newest = *self.pinned.get(key)?;
-        if newest == init {
-            return None;
-        }
-        let (poll, drop) = handlers::state_machine_keys(key)?;
-        let (state_size, state_align) = *self.handler_states.get(key)?;
-        Some(HandlerCode {
-            init: newest,
-            poll: *self.pinned.get(&poll)?,
-            drop: *self.pinned.get(&drop)?,
-            state_size,
-            state_align,
-        })
-    }
-
     /// Compile the functions of `program` in `define` as a new version and switch to them.
     /// Returns the code address of each defined function.
     fn install(
@@ -228,12 +200,6 @@ impl DevSession {
             };
             if roles::is_pinned(&func.symbol) {
                 self.pinned.insert(func.symbol.clone(), code);
-                self.owners.insert(code, func.symbol.clone());
-                if roles::is_handler_init(&func.symbol) {
-                    if let Some(layout) = handlers::state_layout(func, program) {
-                        self.handler_states.insert(func.symbol.clone(), layout);
-                    }
-                }
             }
         }
         let mut new_slots = new_slots.into_iter();

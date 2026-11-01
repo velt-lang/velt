@@ -20,7 +20,11 @@ fn enum_key_names_pass_the_member_with_that_value() {
     for (c, args) in calls(func(&p, "main")) {
         let Callee::Def(d, _) = c else { continue };
         let Def::Fn(f) = p.def(*d) else { continue };
-        if f.name.ends_with("Record.__at") || f.name.ends_with("Record.__set") {
+        if f.name
+            .ends_with(concat!("Record.", velt_common::std_key!(record_at)))
+            || f.name
+                .ends_with(concat!("Record.", velt_common::std_key!(record_set)))
+        {
             assert!(
                 matches!(args[1].kind, ExprKind::Variant { .. }),
                 "{}: {:?}",
@@ -98,6 +102,7 @@ fn record_internals_are_not_methods() {
         "function main() { const r: Record<\"a\" | \"b\", i64> = { a: 1, b: 2 };
            r.__delete(\"a\"); }",
     );
-    assert!(e.contains("`__delete` is internal to `Record`"), "{e}");
+    assert!(e.contains("a record has no methods of its own"), "{e}");
+    assert!(!e.contains("__"), "{e}");
     assert!(e.contains("delete r[k]"), "{e}");
 }

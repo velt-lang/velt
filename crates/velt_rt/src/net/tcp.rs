@@ -64,36 +64,6 @@ impl ListenerObj {
     }
 }
 
-/// An accepted connection on its way to the task that serves it. With the per-core scheduler a
-/// socket is registered with the I/O driver of the worker that accepted it; when its task runs on
-/// another worker, the socket is detached here and registered again (`attach`) by that task, with
-/// its own worker's driver, so its wakes go there. One registration of a listening socket serves
-/// every accept: per-worker duplicates woke every worker for each connection (3–5× slower
-/// connection churn on a loaded machine) and, on Windows, left losers of an accept race blocked
-/// in `accept` (#993).
-pub(crate) enum Handoff {
-    Here(TcpStream),
-    Detached(std::net::TcpStream),
-}
-
-impl Handoff {
-    /// `moves`: the stream will be used on another worker (detach it from this one's driver).
-    pub(crate) fn new(stream: TcpStream, moves: bool) -> io::Result<Handoff> {
-        if !moves {
-            return Ok(Handoff::Here(stream));
-        }
-        stream.into_std().map(Handoff::Detached)
-    }
-
-    /// The stream, registered with this thread's driver (call it where it will be used).
-    pub(crate) fn attach(self) -> io::Result<TcpStream> {
-        match self {
-            Handoff::Here(s) => Ok(s),
-            Handoff::Detached(s) => TcpStream::from_std(s),
-        }
-    }
-}
-
 /// Opaque listener handle.
 pub type ListenerHandle = Key<ListenerObj>;
 /// Opaque stream handle.
@@ -205,7 +175,8 @@ pub unsafe extern "C" fn velt_rt_tcp_accept(l: ListenerHandle) -> *mut VeltFut {
                     let tls = tokio::time::timeout(TLS_HANDSHAKE, acceptor.accept(stream))
                         .await
                         .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "TLS handshake"))??;
-                    Ok(Ready::other(Box::new(tls), Some(peer)))
+                    let alpn = tls.get_ref().1.alpn_protocol().unwrap_or_default().to_vec();
+                    Ok(Ready::other_alpn(Box::new(tls), Some(peer), alpn))
                 })))
             })
         })
@@ -260,7 +231,8 @@ pub unsafe extern "C" fn velt_rt_tcp_connect_tls(
             let tls = tokio::time::timeout(TLS_HANDSHAKE, connect)
                 .await
                 .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "TLS handshake"))??;
-            Ok(Ready::other(Box::new(tls), peer))
+            let alpn = tls.get_ref().1.alpn_protocol().unwrap_or_default().to_vec();
+            Ok(Ready::other_alpn(Box::new(tls), peer, alpn))
         }
         .await;
         IoResult::from_io(r, |ready| STREAMS.insert(StreamObj::ready(ready)))
@@ -322,6 +294,29 @@ pub unsafe extern "C" fn velt_rt_tcp_read_string(s: StreamHandle, max: u64) -> *
             IoResult::from_io(read_text(&obj, max).await, |t| {
                 VeltStr::from_bytes(t.as_bytes())
             })
+        })
+    })
+}
+
+/// `streamPair()`: two connected in-memory streams (what one writes, the other reads; a
+/// `shutdown` is the other's end of stream), as two stream handles. For a protocol carried over
+/// another one (a WebSocket over an HTTP/2 stream), where the inner protocol's code expects a
+/// stream.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_tcp_pair(out: *mut crate::array::VeltArray<u64>) {
+    let (a, b) = tokio::io::duplex(64 << 10);
+    let a = STREAMS.insert(StreamObj::ready(Ready::other(Box::new(a), None)));
+    let b = STREAMS.insert(StreamObj::ready(Ready::other(Box::new(b), None)));
+    out.write(crate::array::VeltArray::from_vec(vec![a.bits(), b.bits()]));
+}
+
+/// `alpnProtocol()` → `IoResult<VeltStr>` once the stream is set up (a TLS stream's handshake
+/// done): the protocol ALPN chose, "" for none or a plain TCP stream.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_tcp_alpn(s: StreamHandle) -> *mut VeltFut {
+    STREAMS.op::<VeltStr>(s, |obj| {
+        new_leaf(async move {
+            IoResult::from_io(obj.alpn_protocol().await, |p| VeltStr::from_bytes(&p))
         })
     })
 }

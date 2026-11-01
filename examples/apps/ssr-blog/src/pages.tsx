@@ -2,7 +2,7 @@
 // Each async component starts when its element is created, so the loads of one page overlap;
 // renderToStream sends the markup above one while it still loads.
 
-import { Channel } from "velt:channel";
+import { Channel } from "velt/sync";
 import { CommentList, NotFound, Page, PostBody, PostList } from "./shared/components";
 import type { Post } from "./shared/model";
 import { findPost, loadComments, loadPosts } from "./store";

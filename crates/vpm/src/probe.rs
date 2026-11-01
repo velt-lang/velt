@@ -85,12 +85,25 @@ pub struct Seen {
 
 thread_local! {
     static SEEN: RefCell<Option<Seen>> = const { RefCell::new(None) };
+    /// The reads of an earlier recording [`record_reusing`] runs with.
+    static KNOWN: RefCell<BTreeMap<PathBuf, Read>> = const { RefCell::new(BTreeMap::new()) };
 }
 
 /// Run `f`, noting what it looks at through this module.
 pub fn record<T>(f: impl FnOnce() -> T) -> (T, Seen) {
+    record_reusing(BTreeMap::new(), f)
+}
+
+/// [`record`], given files an earlier recording read (by absolute path): a file [`read_to_string`]
+/// finds with the size and time `known` has for it (settled, so not modified since within the
+/// clock's granularity) gets the hash `known` has, instead of hashing its contents again. Only
+/// reads made with a size and time old enough to trust (the rule a build stamp checks files by)
+/// belong in `known`.
+pub fn record_reusing<T>(known: BTreeMap<PathBuf, Read>, f: impl FnOnce() -> T) -> (T, Seen) {
     let outer = SEEN.with(|s| s.borrow_mut().replace(Seen::default()));
+    let outer_known = KNOWN.with(|k| k.replace(known));
     let out = f();
+    KNOWN.with(|k| k.replace(outer_known));
     let seen = SEEN.with(|s| std::mem::replace(&mut *s.borrow_mut(), outer));
     (out, seen.unwrap_or_default())
 }
@@ -155,7 +168,7 @@ pub fn read_to_string(path: &Path) -> std::io::Result<String> {
     let read = std::fs::read_to_string(path);
     match &read {
         Ok(text) => {
-            let hash = content_hash(text.as_bytes());
+            let hash = known_hash(path, before).unwrap_or_else(|| content_hash(text.as_bytes()));
             note(path, |seen, p| {
                 seen.read.entry(p).or_insert(Read { stat: before, hash });
             });
@@ -165,6 +178,19 @@ pub fn read_to_string(path: &Path) -> std::io::Result<String> {
         }
     }
     read
+}
+
+/// The hash [`record_reusing`] was given for `path` when it had size and time `stat` then too.
+fn known_hash(path: &Path, stat: Option<(u64, u128)>) -> Option<String> {
+    let stat = stat?;
+    KNOWN.with(|k| {
+        let k = k.borrow();
+        if k.is_empty() {
+            return None;
+        }
+        let read = k.get(&crate::relpath::absolute(path))?;
+        (read.stat == Some(stat)).then(|| read.hash.clone())
+    })
 }
 
 /// Whether a file last modified at `time` (nanoseconds since 1970) was modified long enough

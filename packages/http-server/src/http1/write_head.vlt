@@ -1,0 +1,102 @@
+// http-server (internal): `writeHead`, the head of an HTTP/1.1 response (`Http1Response`): its
+// status line, `Server`, `Date`, the content type, the body's framing (`Content-Length`, chunks,
+// or none) and `Connection`, then the handler's headers, into the connection's `Out`.
+
+import { statusText } from "velt/net/http";
+import { Http1Response } from "./response";
+
+const SP: u8 = 32;
+
+/**
+ * Writes the head of `r`: content type `parts.types[type]` (or `custom` when `type` < 0) unless
+ * the handler set one; `length` < 0 starts a streamed body. Throws if a response was started.
+ */
+export function writeHead(r: Http1Response, type: i64, custom: string | null, length: i64) {
+  if (r.done) {
+    throw new Error("the response was already sent");
+  }
+  r.done = true;
+  const out = r.out;
+  const p = r.parts;
+  // A client that holds its body back until `100 Continue`: a streamed head goes out before
+  // the handler may read the body, so the 100 goes first, as Node sends it, and the connection
+  // stays open. A head written at once stays buffered until the handler returns, so a read
+  // before that still sends its 100 ahead of it.
+  const req = r.request;
+  if (length < 0 && req.expectsContinue && !req.continueSent) {
+    req.continueSent = true;
+    const continue_ = p.continue_;
+    out.bytes(continue_);
+  }
+  const code = r.statusCode as i64;
+  // No body (RFC 9110 §6.4.1): for HEAD the head says what GET's body would be, for 1xx, 204
+  // and 304 there is none to describe.
+  const noContent = (code >= 100 && code < 200) || code == 204 || code == 304;
+  r.noBody = r.headOnly || noContent;
+  if (code == 200 && !r.hasServer) {
+    const ok = p.ok;
+    out.bytes(ok);
+  } else {
+    const start = p.statusStart;
+    out.bytes(start);
+    out.number(code);
+    out.byte(SP);
+    out.text(statusText(r.statusCode));
+    if (r.hasServer) {
+      const dateOnly = p.dateOnly;
+      out.bytes(dateOnly);
+    } else {
+      const serverDate = p.serverDate;
+      out.bytes(serverDate);
+    }
+  }
+  const date = p.date;
+  out.bytes(date);
+  if (!r.hasType && !noContent) {
+    const typeHead = p.typeHead;
+    out.bytes(typeHead);
+    if (custom != null) {
+      out.text(custom);
+    } else {
+      const t = p.types[type];
+      out.bytes(t);
+    }
+  }
+  if (noContent) {
+    // Neither a length nor chunks: a streamed body is dropped.
+    r.streaming = length < 0;
+    r.chunked = false;
+  } else if (length >= 0) {
+    const lengthHead = p.lengthHead;
+    out.bytes(lengthHead);
+    out.number(r.headOnly && r.headLength >= 0 ? r.headLength : length);
+  } else {
+    r.streaming = true;
+    r.chunked = r.http11;
+    if (r.chunked) {
+      const chunkedHead = p.chunkedHead;
+      out.bytes(chunkedHead);
+    } else {
+      r.keepAlive = false;
+    }
+  }
+  // The client holds its body back until `100 Continue`, which the handler has not asked for
+  // (it did not read yet): if it answers without reading, the body is not waited for, so the
+  // connection closes after this response (RFC 9110 §10.1.1).
+  if (req.expectsContinue && !req.continueSent) {
+    r.keepAlive = false;
+  }
+  if (!r.keepAlive) {
+    const closeHead = p.closeHead;
+    out.bytes(closeHead);
+  } else if (!r.http11) {
+    // HTTP/1.0 closes unless told otherwise.
+    const keepAliveHead = p.keepAliveHead;
+    out.bytes(keepAliveHead);
+  }
+  const extra = r.extra;
+  out.crlf();
+  const e = extra.buf;
+  out.bytesOf(e, extra.length);
+  out.crlf();
+}

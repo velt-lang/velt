@@ -22,7 +22,7 @@ from collections import Counter
 
 PACKAGES = ["reactivity", "runtime-core", "server-renderer", "serialize", "sigx", "runtime-dom"]
 
-PACKAGE_VLT = """import type { Package } from "velt:package";
+PACKAGE_VLT = """import type { Package } from "velt/package";
 
 export const pkg: Package = {
   name: "sigx-audit",

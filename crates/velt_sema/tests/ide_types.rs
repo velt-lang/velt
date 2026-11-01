@@ -235,7 +235,7 @@ function main() { console.log(first([1])); }
 
 #[test]
 fn sets_and_std_classes() {
-    let src = "import { Set } from \"velt:collections/set\";
+    let src = "import { Set } from \"velt/collections\";
 function main() {
   const s = new Set<string>();
   const d = new Date(0);

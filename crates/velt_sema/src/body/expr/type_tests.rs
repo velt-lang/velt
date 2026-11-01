@@ -402,6 +402,9 @@ impl FnCx<'_, '_> {
 
     /// The class named after `instanceof` (reports errors).
     fn instanceof_class(&mut self, ty: &ast::TypeExpr) -> Option<DefId> {
+        if let Some(d) = self.cx.qualified_class(ty) {
+            return Some(d);
+        }
         if let ast::TypeExprKind::Named { args, .. } = &ty.kind {
             if !args.is_empty() {
                 self.cx.err(
@@ -430,6 +433,10 @@ impl FnCx<'_, '_> {
 
     /// The class named after `instanceof`, without diagnostics (for flow narrowing).
     pub(crate) fn instanceof_class_quiet(&self, ty: &ast::TypeExpr) -> Option<DefId> {
+        // Generated code names a class it cannot import `__qualified<"<module>", "<name>">`.
+        if let Some(d) = self.cx.qualified_class(ty) {
+            return Some(d);
+        }
         let ast::TypeExprKind::Named { path, .. } = &ty.kind else {
             return None;
         };

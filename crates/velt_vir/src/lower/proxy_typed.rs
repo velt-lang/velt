@@ -11,8 +11,8 @@
 //!
 //! | operation | bit 0 clear | bit 0 set (cold, outlined per field type) |
 //! |---|---|---|
-//! | `s.f` | the load | `__get("f", receiver)` checked as the field's type (`Glue::ProxyGet`) |
-//! | `s.f = v` | the store | `__set("f", v, receiver)`; `false` is Node's `TypeError` (`Glue::ProxySet`) |
+//! | `s.f` | the load | `[PROXY_GET]("f", receiver)` checked as the field's type (`Glue::ProxyGet`) |
+//! | `s.f = v` | the store | `[PROXY_SET]("f", v, receiver)`; `false` is Node's `TypeError` (`Glue::ProxySet`) |
 //! | `s.f op= v` | both of the above | both of the above |
 //! | `s.m()` | the call, `this` = `s` | the call with `this` = the proxy, so `this.x` runs the traps |
 //! | retain / release | the count | the `Proxy` object's count (the bit cleared first) |
@@ -70,7 +70,9 @@ impl Cx<'_> {
     /// in the standard library are not counted.
     pub(super) fn note_proxy_target(&mut self, t: TyId) {
         let std = self.cur_def.is_some_and(|d| match self.hir.def(d) {
-            hir::Def::Fn(f) => f.name.starts_with("std/"),
+            hir::Def::Fn(f) => f
+                .name
+                .starts_with(velt_common::std_modules::CANONICAL_PREFIX),
             _ => false,
         });
         if !std {
@@ -586,9 +588,9 @@ impl FnLower<'_, '_> {
                 let m = lw
                     .dyn_members_of(d)
                     .into_iter()
-                    .find(|m| m.name == "__hasGet" && m.kind == hir::DynMemberKind::Method);
+                    .find(|m| m.name == velt_common::std_key!(proxy_has_get) && m.kind == hir::DynMemberKind::Method);
                 let Some(m) = m else {
-                    super::ice("the `Proxy` class without `__hasGet`")
+                    super::ice("the `Proxy` class without `[PROXY_HAS_GET]`")
                 };
                 let fid = lw.cx.func_for(m.def, vec![]);
                 let b = lw.cx.intern(TyKind::Bool);
@@ -681,8 +683,14 @@ impl FnLower<'_, '_> {
         let k = self.proxy_key(ProxyKey::Str(key));
         let r = self.proxy_receiver(data, pty);
         let res = Place::local(self.temp(avt));
-        if !self.proxy_invoke("__get", data, pty, vec![(k, any), (r, any)], &res) {
-            super::ice("the `Proxy` class without `__get`");
+        if !self.proxy_invoke(
+            velt_common::std_key!(proxy_get),
+            data,
+            pty,
+            vec![(k, any), (r, any)],
+            &res,
+        ) {
+            super::ice("the `Proxy` class without `[PROXY_GET]`");
         }
         let v = self.any_unbox(&res, any, fty);
         let op = self.deref_param(out, fty);
@@ -712,8 +720,8 @@ impl FnLower<'_, '_> {
         let r = self.proxy_receiver(data, pty);
         let res = Place::local(self.temp(avt));
         let args = vec![(k, any), (val, any), (r, any)];
-        if !self.proxy_invoke("__set", data, pty, args, &res) {
-            super::ice("the `Proxy` class without `__set`");
+        if !self.proxy_invoke(velt_common::std_key!(proxy_set), data, pty, args, &res) {
+            super::ice("the `Proxy` class without `[PROXY_SET]`");
         }
         let b = self.cx.intern(TyKind::Bool);
         let ok = self.any_unbox(&res, any, b);

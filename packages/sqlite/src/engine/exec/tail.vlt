@@ -1,0 +1,11 @@
+// sqlite/engine/exec/tail (internal): the ORDER BY, LIMIT and OFFSET of the SELECT a core is the
+// whole of (`Tail`).
+
+import { Expr, OrderTerm } from "../sql/types";
+
+/** ORDER BY, LIMIT and OFFSET of the SELECT a core is the whole of. */
+export class Tail {
+  orderBy: OrderTerm[] = [];
+  limit: Expr | null = null;
+  offset: Expr | null = null;
+}

@@ -470,13 +470,15 @@ impl FnCx<'_, '_> {
     }
 
     /// `for (const c of s)` over a string iterates its characters (code points: a surrogate pair
-    /// is one), as JS's string iterator: the prelude's `s.__codePoints()`.
+    /// is one), as JS's string iterator: the hook `stringCodePoints(s)`.
     pub(super) fn chars_of(&mut self, s: hir::Expr, span: Span) -> hir::Expr {
-        let prop = ast::Ident {
-            name: "__codePoints".into(),
+        let ret = self.cx.ty.intern(hir::TyKind::Array(self.cx.ty.str_));
+        self.prelude_hir_call(
+            velt_common::std_hook!(string_code_points),
+            vec![s],
+            ret,
             span,
-        };
-        self.method_call_on(s, &prop, &[], &[], None, span)
+        )
     }
 
     /// `for (const [k, v] of m)` over a class value iterates `m.entries()`.

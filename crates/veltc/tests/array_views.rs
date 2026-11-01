@@ -44,16 +44,19 @@ fn a_conversion_to_an_array_type_makes_views() {
     let src = format!("const kids: any = [\"a\", 1];\nconst v = kids as (string | number)[];\nconsole.log(v.length);\n{PLAIN}");
     let vir = vir_of(&src);
     assert!(
-        calls(&vir, "__arrayViewNew") > 0,
-        "no call of `__arrayViewNew`"
+        calls(&vir, velt_common::std_hook_name!(array_view_new)) > 0,
+        "no call of `arrayViewNew`"
     );
-    assert!(calls(&vir, "__arrayViewSync") > 0, "no sync of a view");
+    assert!(
+        calls(&vir, velt_common::std_hook_name!(array_view_sync)) > 0,
+        "no sync of a view"
+    );
 }
 
 #[test]
 fn a_program_without_one_has_no_view_code() {
     let vir = vir_of(PLAIN);
-    assert_eq!(calls(&vir, "__arrayView"), 0, "view code without a view");
+    assert_eq!(calls(&vir, "arrayView"), 0, "view code without a view");
 }
 
 #[test]
@@ -66,8 +69,8 @@ fn other_array_types_are_unchanged() {
     let alone =
         vir_of("const kids: any = [\"a\"];\nconst v = kids as string[];\nconsole.log(v.length);\n");
     assert_eq!(
-        calls(&with, "__arrayViewSync"),
-        calls(&alone, "__arrayViewSync")
+        calls(&with, velt_common::std_hook_name!(array_view_sync)),
+        calls(&alone, velt_common::std_hook_name!(array_view_sync))
     );
 }
 

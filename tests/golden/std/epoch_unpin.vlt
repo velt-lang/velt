@@ -1,6 +1,6 @@
 // A stray `unpin()` (more than the `pin()`s before it on this thread) is an error: wrapping the
 // depth around would make every later `pin()` on the thread announce nothing.
-import { pin, unpin } from "velt:sync/epoch";
+import { pin, unpin } from "velt/sync/epoch";
 
 function main() {
   pin();

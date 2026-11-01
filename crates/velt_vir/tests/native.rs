@@ -1,7 +1,6 @@
 //! Native runs of lowered M3/M4 programs: HIR (the same hand-built programs the interpreter
 //! tests use) → `velt_vir::lower` → Cranelift object → linked with the real `velt_rt` (tokio
-//! executor, timers, TCP, JSON reader, hyper server) → executed; stdout is compared with the
-//! goldens (the http server is exercised with real requests from the test).
+//! executor, timers, TCP, JSON reader) → executed; stdout is compared with the goldens.
 
 // The shared builders are written for the unit-test tree; each test crate uses a subset.
 #[allow(dead_code)]
@@ -17,18 +16,11 @@ mod builder_m3;
 #[path = "../src/tests/builder_prelude.rs"]
 mod builder_prelude;
 #[allow(dead_code)]
-#[path = "../src/tests/programs_http.rs"]
-mod programs_http;
-#[allow(dead_code)]
 #[path = "../src/tests/programs_m3.rs"]
 mod programs_m3;
 
-use std::io::{BufRead, BufReader, Read, Write};
-use std::net::TcpStream;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use std::sync::Once;
-use std::time::Duration;
 
 use velt_sema::hir;
 
@@ -125,67 +117,6 @@ fn tcp_echo() {
     let (out, code) = run_native("tcp_echo", &programs_m3::tcp_echo());
     assert_eq!(out, golden("m3", "tcp_echo"));
     assert_eq!(code, 0);
-}
-
-/// One HTTP/1.1 request on a fresh connection; returns (status, body).
-fn http_request(port: u16, method: &str, path: &str, body: &str) -> (u32, String) {
-    let mut s = TcpStream::connect(("127.0.0.1", port)).expect("connect");
-    s.set_read_timeout(Some(Duration::from_secs(20)))
-        .expect("timeout");
-    let req = format!(
-        "{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\
-         Content-Length: {}\r\n\r\n{body}",
-        body.len()
-    );
-    s.write_all(req.as_bytes()).expect("send request");
-    let mut resp = String::new();
-    s.read_to_string(&mut resp).expect("read response");
-    let status = resp
-        .split(' ')
-        .nth(1)
-        .and_then(|c| c.parse().ok())
-        .unwrap_or_else(|| panic!("bad response: {resp}"));
-    let body = resp.split("\r\n\r\n").nth(1).unwrap_or("").to_string();
-    (status, body)
-}
-
-#[test]
-fn http_server_handles_real_requests() {
-    let exe = build_native("http_server", &programs_http::http_server());
-    let mut child = command(&exe)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("start server");
-    let mut out = BufReader::new(child.stdout.take().expect("stdout"));
-    let mut first = String::new();
-    out.read_line(&mut first).expect("read port line");
-    let port: u16 = first
-        .trim()
-        .strip_prefix("listening ")
-        .and_then(|p| p.parse().ok())
-        .unwrap_or_else(|| panic!("unexpected first line {first:?}"));
-    let got = vec![
-        http_request(port, "GET", "/a", ""),
-        http_request(port, "POST", "/echo", "hi"),
-        http_request(port, "GET", "/missing", ""),
-    ];
-    let expected = vec![
-        (200, "GET http://localhost/a #1".to_string()),
-        (200, "POST http://localhost/echo #2".to_string()),
-        (404, "GET http://localhost/missing #3".to_string()),
-    ];
-    assert_eq!(got, expected);
-    let mut rest = String::new();
-    out.read_to_string(&mut rest).expect("read rest");
-    let status = child.wait().expect("server exit");
-    let mut err = String::new();
-    if let Some(mut e) = child.stderr.take() {
-        e.read_to_string(&mut err).expect("stderr");
-    }
-    assert!(err.is_empty(), "stderr: {err}");
-    assert_eq!(rest.replace("\r\n", "\n"), "hits 3\n");
-    assert_eq!(status.code(), Some(0));
 }
 
 #[path = "../../../tests/common/command.rs"]

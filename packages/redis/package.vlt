@@ -1,0 +1,18 @@
+import type { Package } from "velt/package";
+
+export const pkg: Package = {
+  name: "redis",
+  version: "0.1.0",
+  description: "A Redis client (RESP2, multiplexed): commands, pipelines, transactions, pub/sub",
+  // The client is a Rust crate (native/), RESP2 over rustls; `velt publish` uploads a
+  // prebuilt library per target, so users of the package need no Rust toolchain.
+  native: {
+    targets: [
+      "x86_64-unknown-linux-gnu",
+      "aarch64-unknown-linux-gnu",
+      "x86_64-apple-darwin",
+      "aarch64-apple-darwin",
+      "x86_64-pc-windows-msvc",
+    ],
+  },
+};

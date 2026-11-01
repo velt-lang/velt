@@ -278,14 +278,14 @@ surprise ([Error handling](errors.md)).
   and `reject` may be kept and called later from any task. `setTimeout`, `setInterval` and
   their `clear` functions are globals and take any callback (`() => console.log("x")`,
   `() => save(doc)`, `async () => { … }`), and a pending timer keeps the
-  process alive unless it is `unref()`ed, as in Node ([`velt:timers`](../std/timers.md)). To wait, `await sleep(ms)`.
+  process alive unless it is `unref()`ed, as in Node ([`velt/time`](../std/time/timers.md)). To wait, `await sleep(ms)`.
 - A promise is a shared value, as in TypeScript: `const q = p`, `m.get(k)` on a `Map` of
   promises, `arr[i]`, a class or object field read by several callers, and `p.then(f); await p`
   all hold the same promise, and every `await` of it gets the result (the same object for an
   object result). A holder that goes to another task (`spawn`, a channel, a timer callback) is
   awaited there through a copy of the result
   ([Promises](../reference/async.md#promises)).
-- Std streams are async iterables: `for await` over a [channel](../std/channel.md), a file's
+- Std streams are async iterables: `for await` over a [channel](../std/sync/channel.md), a file's
   `lines()`, standard input's `lines()`, a WebSocket, a Redis subscriber or a `Ticker`. Unlike
   a Node stream, whose iterator destroys the stream when the loop is left early, leaving the
   loop keeps the source open (a channel may have other receivers): close it yourself
@@ -304,7 +304,7 @@ reference count. Reference cycles are not freed (**planned**: `weak` references)
 ## Modules
 
 - Named exports only: `export default` and default imports are errors with a fix.
-- Standard library modules use the `velt:` prefix: `import { readFile } from "velt:fs"`.
+- Standard library modules are imported as `velt/<module>`: `import { readFile } from "velt/fs"`.
 - Relative imports drop the extension: `import { x } from "./util"`. A folder is a module
   through its `index.vlt`, `index.ts` or `index.tsx`. `paths` aliases in `package.vlt` work like `compilerOptions.paths`.
 - Modules can be `.ts` and `.tsx` files as well as `.vlt`, so a folder can be shared with a
@@ -316,11 +316,11 @@ reference count. Reference cycles are not freed (**planned**: `weak` references)
 `var` in nested blocks and loops, `eval`, prototypes, `delete` (other than on a `Record`),
 `with`, getters on object literals, decorators, `Symbol` (other
 than `Symbol.dispose`, `Symbol.asyncDispose`, `Symbol.iterator` and `Symbol.asyncIterator` as
-method names), `BigInt` values (the type `bigint` has none yet, [Types](../reference/types.md#bigint); use [`velt:bigint`](../std/bigint.md)), Unicode
+method names), `BigInt` values (the type `bigint` has none yet, [Types](../reference/types.md#bigint); use [`velt/math`](../std/math/bigint.md)), Unicode
 identifiers. `x!` is checked (a `null` panics) where TypeScript trusts it, and `as const` keeps
 the value as it is. `Date` follows JS (months 0-11, local-time getters); its `toString()` has no
 time zone name and its `toLocale…` methods always format as `en-US`. JSX is supported for
-server-side rendering ([TSX](../reference/tsx.md), [`velt:jsx`](../std/jsx.md)).
+server-side rendering ([TSX](../reference/tsx.md), [`velt/jsx`](../std/jsx.md)).
 
 ## Quick reference
 
@@ -348,8 +348,8 @@ server-side rendering ([TSX](../reference/tsx.md), [`velt:jsx`](../std/jsx.md)).
 | `xs.length = 0` | the same: setting `length` drops the elements past it; a larger `length` panics (arrays have no holes) | — |
 | `xs.splice(i, n, a, b)`, `xs.push(a, b)` | `splice(i, n)` removes; one `push(x)` per element | inserting `splice` and `push` with rest parameters |
 | `p.then(f).catch(g)` | the same; `catch(g)` gives the promise's value type | `catch` changing the value type |
-| `process.stdout.write(s)`, `process.stderr.write(s)`, `process.env.X` | the same on the builtin `process` (`process.env.X` is `string \| null`, with no `undefined`, so `process.env.NOPE !== null` is `false`; assigning to it is `setEnv` and `delete` is `removeEnv`, from `velt:process`) | — |
-| `Object.keys(process.env)`, `{ ...process.env }` | `envAll()` from `velt:process`: a `Record<string, string>` snapshot, in the same order | — |
+| `process.stdout.write(s)`, `process.stderr.write(s)`, `process.env.X` | the same on the builtin `process` (`process.env.X` is `string \| null`, with no `undefined`, so `process.env.NOPE !== null` is `false`; assigning to it is `setEnv` and `delete` is `removeEnv`, from `velt/process`) | — |
+| `Object.keys(process.env)`, `{ ...process.env }` | `envAll()` from `velt/process`: a `Record<string, string>` snapshot, in the same order | — |
 | `process.argv` | the same layout, `[runtime, script, ...args]`: the script is the source file under `velt run`, the executable for a built program; each read is a new array, so changing it in place is an error (copy it first) | — |
 | `a.localeCompare(b, locale, options)` (the host's locale by default) | `a.localeCompare(b)`: the CLDR root collation, like `new Intl.Collator("und").compare(a, b)`; no locales | — |
 | `export default` | named exports only | — |
@@ -363,4 +363,4 @@ server-side rendering ([TSX](../reference/tsx.md), [`velt:jsx`](../std/jsx.md)).
 | an unreachable generator is never closed: its `finally` blocks never run | dropping the last reference to a suspended generator closes it: its `finally` blocks run and its `using` values are disposed then (there is no garbage collector to wait for) | — |
 | `next()` on a generator from inside its own body throws a catchable `TypeError` | it panics (`generator is already running`) | — |
 | (no equivalent) | `extend` adds members to any type, and `extend X implements I` makes any type implement an interface | module-scoped extensions |
-| JSX | server-side rendering through a `jsxImportSource` provider ([`velt:jsx`](../std/jsx.md)) | no client-side DOM; the differences are in [the reference](../reference/tsx.md#differences-from-typescript) |
+| JSX | server-side rendering through a `jsxImportSource` provider ([`velt/jsx`](../std/jsx.md)) | no client-side DOM; the differences are in [the reference](../reference/tsx.md#differences-from-typescript) |

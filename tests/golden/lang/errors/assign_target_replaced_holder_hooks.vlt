@@ -1,10 +1,11 @@
 // Class hooks that glue calls without a call in the program (#876): toString() from String(x),
-// join and templates, toJSON() from JSON.stringify, __inspect() from console.log, and
+// join and templates, toJSON() from JSON.stringify, [INSPECT]() from console.log, and
 // [Symbol.dispose]() from drop glue, reached directly, through containers, generic code, a base
 // class and a using declaration, and a resource class's own clone(), which spawn runs to copy
 // the arguments and receiver of an async call through a function value, a vtable or an
 // interface. Each hook calls a function value that replaces o.inner, so each assignment is an
 // error (JavaScript writes into the old object and prints 100).
+const INSPECT = Symbol.for("nodejs.util.inspect.custom");
 type Inner = { v: number };
 type Outer = { inner: Inner };
 // 01 (q08)
@@ -107,7 +108,7 @@ function t11(): void {
   console.log(o.inner.v);
 }
 // 12 (e01)
-class T_12 { f: () => number; constructor(f: () => number) { this.f = f; } toString(): string { this.f(); return "abcdefghijklm"; } toJSON(): string { this.f(); return "abcdefghijk"; } __inspect(): string { this.f(); return "T_12"; } }
+class T_12 { f: () => number; constructor(f: () => number) { this.f = f; } toString(): string { this.f(); return "abcdefghijklm"; } toJSON(): string { this.f(); return "abcdefghijk"; } [INSPECT](): string { this.f(); return "T_12"; } }
 
 function t12(): void {
   const o: Outer = { inner: { v: 0 } };
@@ -117,7 +118,7 @@ function t12(): void {
   console.log(o.inner.v);
 }
 // 13 (e02)
-class T_13 { f: () => number; constructor(f: () => number) { this.f = f; } toString(): string { this.f(); return "abcdefghijklm"; } toJSON(): string { this.f(); return "abcdefghijk"; } __inspect(): string { this.f(); return "T_13"; } }
+class T_13 { f: () => number; constructor(f: () => number) { this.f = f; } toString(): string { this.f(); return "abcdefghijklm"; } toJSON(): string { this.f(); return "abcdefghijk"; } [INSPECT](): string { this.f(); return "T_13"; } }
 function logIt_13(x: T_13): number { console.log(x); return 13; }
 
 function t13(): void {
@@ -128,7 +129,7 @@ function t13(): void {
   console.log(o.inner.v);
 }
 // 14 (e04)
-class T_14 { f: () => number; constructor(f: () => number) { this.f = f; } toString(): string { this.f(); return "abcdefghijklm"; } toJSON(): string { this.f(); return "abcdefghijk"; } __inspect(): string { this.f(); return "T_14"; } }
+class T_14 { f: () => number; constructor(f: () => number) { this.f = f; } toString(): string { this.f(); return "abcdefghijklm"; } toJSON(): string { this.f(); return "abcdefghijk"; } [INSPECT](): string { this.f(); return "T_14"; } }
 
 function t14(): void {
   const o: Outer = { inner: { v: 0 } };
@@ -139,7 +140,7 @@ function t14(): void {
   console.log(o.inner.v);
 }
 // 15 (e05)
-class T_15 { f: () => number; constructor(f: () => number) { this.f = f; } toString(): string { this.f(); return "abcdefghijklm"; } toJSON(): string { this.f(); return "abcdefghijk"; } __inspect(): string { this.f(); return "T_15"; } }
+class T_15 { f: () => number; constructor(f: () => number) { this.f = f; } toString(): string { this.f(); return "abcdefghijklm"; } toJSON(): string { this.f(); return "abcdefghijk"; } [INSPECT](): string { this.f(); return "T_15"; } }
 function show_15<X>(x: X): number { return String(x).length; }
 
 function t15(): void {
@@ -162,7 +163,7 @@ function t16(): void {
 }
 // 17 (e13)
 class Box_17<X> { x: X; constructor(x: X) { this.x = x; } toString(): string { return String(this.x); } }
-class T_17 { f: () => number; constructor(f: () => number) { this.f = f; } toString(): string { this.f(); return "abcdefghijklm"; } toJSON(): string { this.f(); return "abcdefghijk"; } __inspect(): string { this.f(); return "T_17"; } }
+class T_17 { f: () => number; constructor(f: () => number) { this.f = f; } toString(): string { this.f(); return "abcdefghijklm"; } toJSON(): string { this.f(); return "abcdefghijk"; } [INSPECT](): string { this.f(); return "T_17"; } }
 
 function t17(): void {
   const o: Outer = { inner: { v: 0 } };
@@ -172,7 +173,7 @@ function t17(): void {
   console.log(o.inner.v);
 }
 // 18 (e14)
-class T_18 { f: () => number; constructor(f: () => number) { this.f = f; } toString(): string { this.f(); return "abcdefghijklm"; } toJSON(): string { this.f(); return "abcdefghijk"; } __inspect(): string { this.f(); return "T_18"; } }
+class T_18 { f: () => number; constructor(f: () => number) { this.f = f; } toString(): string { this.f(); return "abcdefghijklm"; } toJSON(): string { this.f(); return "abcdefghijk"; } [INSPECT](): string { this.f(); return "T_18"; } }
 function logAll_18(xs: T_18[]): number { console.log(xs); return 13; }
 
 function t18(): void {
@@ -183,7 +184,7 @@ function t18(): void {
   console.log(o.inner.v);
 }
 // 19 (e15)
-class T_19 { f: () => number; constructor(f: () => number) { this.f = f; } toString(): string { this.f(); return "abcdefghijklm"; } toJSON(): string { this.f(); return "abcdefghijk"; } __inspect(): string { this.f(); return "T_19"; } }
+class T_19 { f: () => number; constructor(f: () => number) { this.f = f; } toString(): string { this.f(); return "abcdefghijklm"; } toJSON(): string { this.f(); return "abcdefghijk"; } [INSPECT](): string { this.f(); return "T_19"; } }
 type W_19 = { items: T_19[] };
 
 function t19(): void {
@@ -194,7 +195,7 @@ function t19(): void {
   console.log(o.inner.v);
 }
 // 20 (e16)
-class T_20 { f: () => number; constructor(f: () => number) { this.f = f; } toString(): string { this.f(); return "abcdefghijklm"; } toJSON(): string { this.f(); return "abcdefghijk"; } __inspect(): string { this.f(); return "T_20"; } }
+class T_20 { f: () => number; constructor(f: () => number) { this.f = f; } toString(): string { this.f(); return "abcdefghijklm"; } toJSON(): string { this.f(); return "abcdefghijk"; } [INSPECT](): string { this.f(); return "T_20"; } }
 
 function t20(): void {
   const o: Outer = { inner: { v: 0 } };
@@ -216,7 +217,7 @@ function t21(): void {
   console.log(o.inner.v);
 }
 // 22 (e20)
-class T_22 { f: () => number; constructor(f: () => number) { this.f = f; } toString(): string { this.f(); return "abcdefghijklm"; } toJSON(): string { this.f(); return "abcdefghijk"; } __inspect(): string { this.f(); return "T_22"; } }
+class T_22 { f: () => number; constructor(f: () => number) { this.f = f; } toString(): string { this.f(); return "abcdefghijklm"; } toJSON(): string { this.f(); return "abcdefghijk"; } [INSPECT](): string { this.f(); return "T_22"; } }
 function tpl_22(ts: T_22[]): number { return `${ts}`.length; }
 
 function t22(): void {
@@ -227,7 +228,7 @@ function t22(): void {
   console.log(o.inner.v);
 }
 // 23 (e22)
-class T_23 { f: () => number; constructor(f: () => number) { this.f = f; } toString(): string { this.f(); return "abcdefghijklm"; } toJSON(): string { this.f(); return "abcdefghijk"; } __inspect(): string { this.f(); return "T_23"; } }
+class T_23 { f: () => number; constructor(f: () => number) { this.f = f; } toString(): string { this.f(); return "abcdefghijklm"; } toJSON(): string { this.f(); return "abcdefghijk"; } [INSPECT](): string { this.f(); return "T_23"; } }
 
 function t23(): void {
   const o: Outer = { inner: { v: 0 } };

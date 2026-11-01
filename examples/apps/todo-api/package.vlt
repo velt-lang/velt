@@ -1,3 +1,12 @@
-import type { Package } from "velt:package";
+import type { Package } from "velt/package";
 
-export const pkg: Package = { name: "todo-api", version: "0.1.0" };
+export const pkg: Package = {
+  name: "todo-api",
+  version: "0.1.0",
+  // The HTTP server and the SQLite store: the repository's packages (sqlite's native library is
+  // built with cargo).
+  dependencies: {
+    "http-server": { path: "../../../packages/http-server" },
+    sqlite: { path: "../../../packages/sqlite" },
+  },
+};

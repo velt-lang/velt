@@ -1,0 +1,393 @@
+// sqlite/engine/exec/select_compiler (internal): the SELECT compiler (`SelectCompiler`): whole
+// SELECT statements, with WITH (common table expressions: engine/exec/cte_def,
+// engine/exec/select_recursive), compound selects (UNION [ALL], INTERSECT, EXCEPT:
+// engine/exec/select_compound) and the FROM items that read tables, subqueries and CTEs. Each core
+// is compiled by engine/exec/core.
+
+import { DbFile } from "../db_file";
+import { BINARY } from "../collation";
+import { Schema } from "../schema/schema";
+import { Table } from "../schema/table";
+import { View } from "../schema/view";
+import { FromItem, Select, SelectCore } from "../sql/types";
+import { SRC_ROWS, Source } from "./source";
+import { Params } from "./params";
+import { Query } from "./query";
+import { Scope } from "./scope";
+import { prepareError } from "./errors";
+import { ExprCompiler } from "./expr_compiler";
+import { hasAggregate } from "./agg/agg_fn";
+import { hasWindow } from "./window/calls";
+import { Tail } from "./tail";
+import { compileCore } from "./core";
+import { compileCompound } from "./select_compound";
+import { compileRecursive } from "./select_recursive";
+import { CteDef, circular, refersTo } from "./cte_def";
+
+// The FROM terms of `core` once SQLite's query flattener merged the simple subqueries, CTEs and
+// views it reads into it (an approximation of flattenSubquery's rules; stops past 200).
+function flatTerms(c: SelectCompiler, core: SelectCore, depth: usize): i64 {
+  if (core.flat >= 0) {
+    return core.flat;
+  }
+  let n: i64 = 0;
+  for (const item of core.from) {
+    n += itemTerms(c, item, depth);
+    if (n > 200) {
+      break;
+    }
+  }
+  core.flat = n;
+  return n;
+}
+
+function itemTerms(c: SelectCompiler, item: FromItem, depth: usize): i64 {
+  if (depth > 64) {
+    return 1;
+  }
+  if (item.subquery != null) {
+    const s = item.subquery!;
+    return flattenable(s) ? flatTerms(c, s.cores[0], depth + 1) : 1;
+  }
+  if (item.schema == "") {
+    const def = c.cteNamed(item.name);
+    if (def != null) {
+      const d = def!;
+      if (d.flat < 0) {
+        d.flat = 1;
+        if (!d.active && !refersTo(d.select, d.name) && flattenable(d.select)) {
+          d.active = true;
+          d.flat = flatTerms(c, d.select.cores[0], depth + 1);
+          d.active = false;
+        }
+      }
+      return d.flat;
+    }
+  }
+  const v = c.schema.view(item.name);
+  if (v != null && flattenable(v!.select)) {
+    return flatTerms(c, v!.select.cores[0], depth + 1);
+  }
+  return 1;
+}
+
+// Whether SQLite's flattener merges `s` into the query reading it: one plain core.
+function flattenable(s: Select): bool {
+  if (s.cores.length != 1 || s.limit != null || s.with.length > 0) {
+    return false;
+  }
+  const core = s.cores[0];
+  if (core.distinct || core.groupBy.length > 0 || core.having != null || core.values.length > 0) {
+    return false;
+  }
+  if (core.from.length == 0) {
+    return false;
+  }
+  for (const rc of core.columns) {
+    if (hasAggregate(rc.expr) || hasWindow(rc.expr)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Out-of-line messages (they keep the frames of the functions that report them small).
+/**
+ * The deepest nesting of views, subqueries and CTEs: SQLite stops nested views at 1000; this
+ * engine at a depth its compile and run recursion hold on an 8 MiB stack.
+ */
+const MAX_NESTING: usize = 1000;
+
+function tooDeep(): never {
+  prepareError("VIEWs and/or subqueries nested too deep");
+}
+
+function noSuchFunction(name: string): never {
+  prepareError(`no such table-valued function: ${name}`);
+}
+
+function cteWidth(name: string, got: usize, want: usize): never {
+  prepareError(`table ${name} has ${got} values for ${want} columns`);
+}
+
+function noSuchTable(schema: string, name: string): never {
+  prepareError(`no such table: ${schema != "" ? schema + "." + name : name}`);
+}
+
+// INDEXED BY must name an index of the table (the planner treats it as a hint).
+function checkIndexedBy(t: Table, name: string) {
+  for (const ix of t.indexes) {
+    if (ix.name.toUpperCase() == name.toUpperCase()) {
+      return;
+    }
+  }
+  prepareError(`no such index: ${name}`);
+}
+
+function subqueryName(n: i64): string {
+  return `(subquery-${n})`;
+}
+
+/** Compiles SELECT statements of one database. */
+export class SelectCompiler extends ExprCompiler {
+  ctes: CteDef[] = [];
+  anon: i64 = 0;
+  /** How many SELECTs (subqueries, views, CTEs) the one compiling is nested in. */
+  depth: usize = 0;
+  viewsOpen: string[] = [];
+  /** References to each table and view in the statement, CTEs expanded (SQLite's nTabRef). */
+  tableRefs: Map<string, i64> = new Map();
+  refNames: string[] = [];
+  refCounts: i64[] = [];
+
+  constructor(db: DbFile, schema: Schema, params: Params, sql: string) {
+    super(db, schema, params);
+    this.sql = sql;
+  }
+
+  subquery(s: Select, sc: Scope): Query {
+    return this.select(s, sc);
+  }
+
+  /** Compiles `s`, whose names may also resolve in `outer` (null at the top). */
+  select(s: Select, outer: Scope | null): Query {
+    // Each nested SELECT compiles (and runs) a level deeper on the stack.
+    this.depth++;
+    if (this.depth > MAX_NESTING) {
+      tooDeep();
+    }
+    const q = this.selectIn(s, outer);
+    this.depth--;
+    return q;
+  }
+
+  selectIn(s: Select, outer: Scope | null): Query {
+    const mark = this.ctes.length;
+    for (const c of s.with) {
+      this.ctes.push(new CteDef(c.name, c.columns, c.select, outer));
+    }
+    let q: Query;
+    if (s.cores.length == 1) {
+      const tail = new Tail();
+      tail.orderBy = s.orderBy;
+      tail.limit = s.limit;
+      tail.offset = s.offset;
+      q = compileCore(this, s.cores[0], outer, tail);
+    } else {
+      q = this.compound(s, outer);
+    }
+    this.ctes.truncate(mark as i64);
+    return q;
+  }
+
+  // The functions on the path a nested FROM item compiles through keep small stack frames
+  // (messages are made out of line): views and subqueries nest a thousand deep.
+
+  fromSource(item: FromItem, outer: Scope | null): Source {
+    if (item.subquery != null) {
+      return this.subquerySource(item, outer);
+    }
+    if (item.args.length > 0) {
+      noSuchFunction(item.name);
+    }
+    if (item.schema == "") {
+      const at = this.cteAt(item.name);
+      if (at >= 0) {
+        return this.cteSource(at as usize, item);
+      }
+    }
+    return this.tableSource(item);
+  }
+
+  subquerySource(item: FromItem, outer: Scope | null): Source {
+    const q = this.select(item.subquery!, outer);
+    this.anon++;
+    return this.rowsSource(q, item.alias != "" ? item.alias : subqueryName(this.anon), []);
+  }
+
+  /** The position in `ctes` of the CTE `name` stands for, or -1. */
+  cteAt(name: string): i64 {
+    const want = name.toUpperCase();
+    for (let i = this.ctes.length; i > 0; i--) {
+      if (this.ctes[i - 1].name.toUpperCase() == want) {
+        return (i - 1) as i64;
+      }
+    }
+    return -1;
+  }
+
+  cteSource(at: usize, item: FromItem): Source {
+    const def = this.ctes[at];
+    const name = item.alias != "" ? item.alias : def.name;
+    if (def.current != null) {
+      return this.rowsSource(def.current!, name, def.cols);
+    }
+    if (def.active) {
+      circular(def.name);
+    }
+    // Compiled once and shared by every use (its rows made once per run), unless it reads an
+    // enclosing query: then each use runs its own.
+    if (def.query != null && !def.query!.correlated) {
+      // Each use counts the tables the CTE reads again, as SQLite expands it per use.
+      for (let r: usize = 0; r < def.refNames.length; r++) {
+        this.reference(def.refNames[r], def.refCounts[r]);
+      }
+      return this.rowsSource(def.query!, name, def.cols);
+    }
+    const refsFrom: usize = this.refNames.length;
+    // The CTE's SELECT sees the CTEs before it, not those after.
+    const later: CteDef[] = [];
+    while (this.ctes.length > at + 1) {
+      later.push(this.ctes.pop()!);
+    }
+    def.active = true;
+    const q =
+      refersTo(def.select, def.name) ? this.recursive(def) : this.select(def.select, def.outer);
+    def.active = false;
+    while (later.length > 0) {
+      this.ctes.push(later.pop()!);
+    }
+    if (def.cols.length > 0 && def.cols.length != q.names.length) {
+      cteWidth(def.name, q.names.length, def.cols.length);
+    }
+    def.query = q;
+    this.countCteRefs(def, refsFrom);
+    return this.rowsSource(q, name, def.cols);
+  }
+
+  /** The references a CTE's compile counted (from `from` on), summed per table. */
+  countCteRefs(def: CteDef, from: usize) {
+    for (let r = from; r < this.refNames.length; r++) {
+      const n = this.refNames[r];
+      const at = def.refNames.indexOf(n);
+      if (at < 0) {
+        def.refNames.push(n);
+        def.refCounts.push(this.refCounts[r]);
+      } else {
+        def.refCounts[at as usize] += this.refCounts[r];
+      }
+    }
+  }
+
+  tableSource(item: FromItem): Source {
+    // The main schema only (no other database is attached; the temporary one is empty).
+    if (item.schema != "" && item.schema.toLowerCase() != "main") {
+      noSuchTable(item.schema, item.name);
+    }
+    let name = item.name;
+    if (name.toUpperCase() == "SQLITE_MASTER") {
+      name = "sqlite_schema";
+    }
+    const view = this.schema.view(name);
+    if (view != null) {
+      return this.viewSource(view!, item.alias != "" ? item.alias : item.name);
+    }
+    const t = this.schema.table(name);
+    if (t == null) {
+      noSuchTable(item.schema, item.name);
+    }
+    if (t!.withoutRowid) {
+      prepareError("WITHOUT ROWID tables are not supported yet");
+    }
+    if (item.indexedBy != "") {
+      checkIndexedBy(t!, item.indexedBy);
+    }
+    this.reference(t!.name, 1);
+    return Source.ofTable(this.db, t!, item.alias != "" ? item.alias : item.name);
+  }
+
+  /**
+   * A recursive CTE: `initial UNION [ALL] recursive`. Rows go through a queue: each row taken
+   * from it is output, then the recursive part runs with the CTE standing for that row alone,
+   * and its rows join the queue (UNION drops rows seen before), as SQLite runs them.
+   */
+  recursive(def: CteDef): Query {
+    return compileRecursive(this, def);
+  }
+
+  /** A FROM clause past SQLite's 200 terms once flattened: reported after the whole statement. */
+  tooManyTerms: bool = false;
+
+  noteFromTerms(core: SelectCore) {
+    if (!this.tooManyTerms && flatTerms(this, core, 0) > 200) {
+      this.tooManyTerms = true;
+    }
+  }
+
+  /** The CTE `name` resolves to here, or null. */
+  cteNamed(name: string): CteDef | null {
+    const want = name.toUpperCase();
+    for (let i = this.ctes.length; i > 0; i--) {
+      if (this.ctes[i - 1].name.toUpperCase() == want) {
+        return this.ctes[i - 1];
+      }
+    }
+    return null;
+  }
+
+  refMark(): usize {
+    return this.refNames.length;
+  }
+
+  rewindRefs(mark: usize) {
+    for (let r = mark; r < this.refNames.length; r++) {
+      const key = this.refNames[r].toLowerCase();
+      this.tableRefs.set(key, this.tableRefs.get(key)! - this.refCounts[r]);
+    }
+    this.refNames.truncate(mark as i64);
+    this.refCounts.truncate(mark as i64);
+  }
+
+  /** Counts `n` more references to a table or view: SQLite's limit is 65535 a statement. */
+  reference(name: string, n: i64) {
+    const key = name.toLowerCase();
+    const now = (this.tableRefs.has(key) ? this.tableRefs.get(key)! : 0) + n;
+    if (now >= 65535) {
+      prepareError(`too many references to "${name}": max 65535`);
+    }
+    this.tableRefs.set(key, now);
+    this.refNames.push(name);
+    this.refCounts.push(n);
+  }
+
+  /** A view, compiled like a subquery in FROM (it sees no enclosing query). */
+  viewSource(v: View, name: string): Source {
+    this.reference(v.name, 1);
+    if (this.viewsOpen.includes(v.name.toUpperCase())) {
+      prepareError(`view ${v.name} is circularly defined`);
+    }
+    this.viewsOpen.push(v.name.toUpperCase());
+    // CTEs of the statement are not visible inside the view.
+    const saved: CteDef[] = this.ctes;
+    this.ctes = [];
+    const q = this.select(v.select, null);
+    this.ctes = saved;
+    this.viewsOpen.pop();
+    if (v.columns.length > 0 && v.columns.length != q.names.length) {
+      prepareError(
+        `expected ${v.columns.length} columns for '${v.name}' but got ${q.names.length}`,
+      );
+    }
+    return this.rowsSource(q, name, v.columns);
+  }
+
+  /** A source over the rows `q` produces. */
+  rowsSource(q: Query, name: string, cols: string[]): Source {
+    const src = new Source(SRC_ROWS, name);
+    for (let i: usize = 0; i < q.names.length; i++) {
+      src.cols.push(cols.length > 0 ? cols[i] : q.names[i]);
+      src.affs.push(q.affs[i]);
+      src.colls.push(q.colls[i] >= 0 ? q.colls[i] as u8 : BINARY);
+      src.hidden.push(false);
+    }
+    src.rows = q.out;
+    src.width = q.names.length;
+    this.rowsSrc.push(src);
+    this.rowsQ.push(q);
+    return src;
+  }
+
+  compound(s: Select, outer: Scope | null): Query {
+    return compileCompound(this, s, outer);
+  }
+}

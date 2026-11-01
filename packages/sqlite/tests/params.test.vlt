@@ -1,0 +1,142 @@
+// Parameters reach SQLite with the types their JSON text would give them, whether the package
+// hands them over value by value (numbers, bools, strings, `T | null`, blobs in arrays and
+// objects) or as JSON text (any other type): an integral number is an INTEGER, NaN is NULL, a
+// lone surrogate becomes U+FFFD, a `u8[]` member is a BLOB.
+import { open, Database } from "../src/lib";
+
+struct Stored {
+  kind: string;
+  shown: string;
+}
+
+struct Named {
+  a: number;
+  b: i64;
+  c: bool;
+  d: string;
+  e: string | null;
+  f: u8[];
+}
+
+// Bound as JSON text: an optional member (left out when absent).
+struct Optional {
+  a?: number;
+}
+
+function setup(): Database {
+  const db = open(":memory:");
+  db.exec("CREATE TABLE t (n INTEGER PRIMARY KEY, v)");
+  return db;
+}
+
+// "typeof quote" of every stored value, in insertion order.
+function stored(db: Database): string[] {
+  const show = db.prepare("SELECT typeof(v) AS kind, quote(v) AS shown FROM t ORDER BY n");
+  const out: string[] = [];
+  for (const r of show.all<Stored>()) {
+    out.push(`${r.kind} ${r.shown}`);
+  }
+  return out;
+}
+
+export function test_positional_values_keep_their_json_types() {
+  const db = setup();
+  const put = db.prepare("INSERT INTO t (v) VALUES (?)");
+  const values: number[] = [5, -0, 1.5, 1e21, 9.3e18, NaN, Infinity];
+  for (const v of values) {
+    put.runWith([v]);
+  }
+  put.runWith([18446744073709551615u64]);
+  put.runWith([true]);
+  put.runWith(["x" + String.fromCharCode(0xd800) + "y"]);
+  put.runWith([null as string | null]);
+  const bytes: u8[] = [1, 2, 255];
+  put.runWith([bytes]);
+  db.prepare("INSERT INTO t (v) VALUES (?), (?)").runWith(["tuple", 2] as [string, i64]);
+  assertEq(stored(db), [
+    "integer 5",
+    "integer 0",
+    "real 1.5",
+    "real 1.0e+21",
+    "real 9.3e+18",
+    "null NULL",
+    "null NULL",
+    "real 1.8446744073709552e+19",
+    "integer 1",
+    "text 'x\u{FFFD}y'",
+    "null NULL",
+    "blob X'0102FF'",
+    "text 'tuple'",
+    "integer 2",
+  ]);
+  db.close();
+}
+
+export function test_named_values_keep_their_json_types() {
+  const db = setup();
+  const named = db.prepare("INSERT INTO t (v) VALUES (:a), (@b), ($c), (:d), (:e), (:f)");
+  named.runWith(Named { a: 2.0, b: 3, c: false, d: "é", e: null, f: [9] });
+  assertEq(stored(db), [
+    "integer 2",
+    "integer 3",
+    "integer 0",
+    "text 'é'",
+    "null NULL",
+    "blob X'09'",
+  ]);
+  db.close();
+}
+
+export function test_parameters_read_back() {
+  const db = setup();
+  // Named and positional parameters read back.
+  const one = db.prepare("SELECT quote(:x) AS kind, quote($y) AS shown");
+  const r = one.getWith<Stored, { x: number; y: string }>({ x: 7, y: "z" });
+  assertEq(r?.kind, "7");
+  assertEq(r?.shown, "'z'");
+  const opt = db.prepare("SELECT quote(:a) AS kind, 'opt' AS shown");
+  assertEq(opt.getWith<Stored, Optional>({ a: 4 })?.kind, "4");
+  db.close();
+}
+
+// The message of the error `f` throws, "no error" if it throws none.
+function failure(f: () => void throws Error): string {
+  try {
+    f();
+  } catch (e) {
+    return e.message.clone();
+  }
+  return "no error";
+}
+
+export function test_missing_or_extra_parameters_fail() {
+  const db = setup();
+  const put = db.prepare("INSERT INTO t (v) VALUES (?)");
+  const named = db.prepare("INSERT INTO t (v) VALUES (:a), (@b), ($c), (:d), (:e), (:f)");
+  // What is missing or extra fails as with JSON text.
+  assertEq(
+    failure(() => {
+      put.runWith([1, 2]);
+    }),
+    "the statement has 1 parameter(s) but 2 value(s) were given",
+  );
+  assertEq(
+    failure(() => {
+      put.runWith([] as i64[]);
+    }),
+    "the statement has 1 parameter(s) but 0 value(s) were given",
+  );
+  assertEq(
+    failure(() => {
+      named.runWith({ a: 1 });
+    }),
+    'missing named parameter "b"',
+  );
+  assertEq(
+    failure(() => {
+      put.runWith({ a: 1 });
+    }),
+    "parameter 1 is positional (`?`); pass an array to bind it",
+  );
+  db.close();
+}

@@ -31,6 +31,11 @@ pub extern "C" fn velt_rt_module_with() -> u8 {
 #[no_mangle]
 pub extern "C" fn velt_rt_module_with_end(_took: u8) {}
 
+/// `velt_rt_statics_drop`: the WebAssembly runtime has no leak counters, so nothing is dropped
+/// at exit.
+#[no_mangle]
+pub extern "C" fn velt_rt_statics_drop(_f: extern "C" fn()) {}
+
 /// Initialize the 8-byte lock word at `p` (unlocked).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_mutex_init(p: *mut u64) {

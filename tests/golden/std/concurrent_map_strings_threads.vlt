@@ -4,7 +4,7 @@
 // deleter removing a known set, and readers checking, in place, that every value they find is
 // their key's. At the end every key has its last value, and the deleted ones are gone.
 
-import { ConcurrentMap } from "velt:collections/concurrent_map";
+import { ConcurrentMap } from "velt/collections";
 
 const N: u64 = 20000;
 

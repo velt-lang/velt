@@ -1,6 +1,6 @@
 // std/datetime against JS Date (UTC): construction with rollover, parsing, ISO / HTTP strings,
 // getters, pattern formatting, calendar arithmetic, durations.
-import { DateTime, Duration, DateTimeError } from "velt:datetime";
+import { DateTime, Duration, DateTimeError } from "velt/time";
 
 function line(d: DateTime) {
   console.log(

@@ -8,7 +8,7 @@
 //!   value (step 1): a constant, a small integer, or another local narrowed to `i32`.
 //! - `-0` is the one double an integer cannot hold. A local that may be `-0` is narrowed only
 //!   when no read can tell `-0` from 0: comparisons, conversions to integers, ToInt32,
-//!   `__floatIndex`, the divisor of `%`, adding a value that is never `-0`, subtracting a
+//!   `floatIndex`, the divisor of `%`, adding a value that is never `-0`, subtracting a
 //!   non-zero one, and the operands of other narrowed definitions (whose own facts account for
 //!   the `-0`). That last rule makes this a greatest fixpoint.
 

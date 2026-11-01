@@ -1,0 +1,128 @@
+// sqlite/engine/btree_back (internal): moving a b-tree cursor backwards: to the last entry, to the previous
+// one, and to the last entry at or before a key, for scans in descending order (ORDER BY ... DESC
+// through the rowid or an index, without a sort).
+//
+// The cursor's path follows engine/cursor's convention: on an interior page, `cells[d] = i` means
+// the cursor is inside child `i` (the right pointer when i is the cell count) or, for an index,
+// on the entry of cell `i` itself when the path ends there.
+
+import { CorruptError, corrupt } from "./errors";
+import { INTERIOR_INDEX, INTERIOR_TABLE, LEAF_INDEX, LEAF_TABLE, readU16, readU32 } from "./format";
+import { Cursor, MAX_DEPTH } from "./cursor";
+import { KeyRec } from "./key_rec";
+
+extend Cursor {
+  /** Moves to the last entry; false if the tree is empty. */
+  last(): bool {
+    this.pages.truncate(0);
+    this.cells.truncate(0);
+    return this.descendRight(this.root);
+  }
+
+  /** Follows rightmost children from `page` to a leaf and loads its last cell. */
+  descendRight(page0: u32): bool {
+    const data = this.db.data;
+    let page = page0;
+    while (true) {
+      if (this.pages.length >= MAX_DEPTH) {
+        corrupt("b-tree too deep");
+      }
+      const h = this.db.header(page);
+      const t = data[h];
+      // Every page must be of the root's kind (as engine/cursor's descendLeft checks).
+      if (
+        this.table ? t != LEAF_TABLE && t != INTERIOR_TABLE : t != LEAF_INDEX && t != INTERIOR_INDEX
+      ) {
+        throw new CorruptError(
+          `page ${page} is not ${this.table ? "a table" : "an index"} b-tree page`,
+        );
+      }
+      const n = readU16(data, h + 3);
+      this.pages.push(page);
+      if (t == LEAF_TABLE || t == LEAF_INDEX) {
+        if (n == 0) {
+          if (this.pages.length > 1) {
+            corrupt(`page ${page} is an empty leaf below the root`);
+          }
+          this.cells.push(0);
+          this.valid = false;
+          return false;
+        }
+        this.cells.push(n - 1);
+        return this.load();
+      }
+      if (t != INTERIOR_TABLE && t != INTERIOR_INDEX) {
+        throw new CorruptError(`page ${page} is not a b-tree page`);
+      }
+      this.cells.push(n);
+      page = readU32(data, h + 8);
+    }
+  }
+
+  /** Moves to the previous entry; false (and not `valid`) before the first. */
+  prev(): bool {
+    if (!this.valid) {
+      return false;
+    }
+    const data = this.db.data;
+    let depth = this.pages.length - 1;
+    const h0 = this.db.header(this.pages[depth]);
+    const i0 = this.cells[depth];
+    if (data[h0] == INTERIOR_INDEX) {
+      // On an interior entry: the previous one is the last of the subtree left of it.
+      const child = this.childAt(h0, i0);
+      return this.descendRight(child);
+    }
+    if (i0 > 0) {
+      this.cells[depth] = i0 - 1;
+      return this.load();
+    }
+    // Climb to the first ancestor with something left of where the cursor came from.
+    while (depth > 0) {
+      this.pages.pop();
+      this.cells.pop();
+      depth--;
+      const h = this.db.header(this.pages[depth]);
+      const i = this.cells[depth];
+      if (i == 0) {
+        continue;
+      }
+      this.cells[depth] = i - 1;
+      if (!this.table) {
+        // An index interior cell holds an entry: the one before the child the cursor left.
+        return this.load();
+      }
+      const child = this.childAt(h, i - 1);
+      return this.descendRight(child);
+    }
+    this.valid = false;
+    return false;
+  }
+
+  /**
+   * On an index b-tree, moves to the last entry whose first `fields` fields compare <= `k`
+   * (< `k` when `strict`); false when there is none.
+   */
+  seekLastBefore(k: KeyRec, fields: usize, colls: u8[], desc: bool[], strict: bool): bool {
+    // The first entry past the bound, then one back (or the last entry when none is past it).
+    const past =
+      strict
+        ? this.seekKeyRec(k, fields, colls, desc)
+        : this.seekKeyRecAfter(k, fields, colls, desc);
+    if (!past) {
+      return this.last();
+    }
+    return this.prev();
+  }
+
+  /** On a table b-tree, moves to the last row with key <= `rowid`; false when there is none. */
+  seekRowidLe(rowid: i64): bool {
+    if (rowid == 9223372036854775807) {
+      return this.last();
+    }
+    if (!this.seekRowidGe(rowid + 1)) {
+      return this.last();
+    }
+    return this.prev();
+  }
+}

@@ -1,0 +1,11 @@
+// sqlite/engine/schema/schema_row (internal): one row of `sqlite_schema` (https://sqlite.org/schematab.html),
+// as stored.
+
+/** One row of sqlite_schema, as stored: every row is kept, whether this engine can use it or not. */
+export struct SchemaRow {
+  type: string;
+  name: string;
+  tableName: string;
+  root: u32;
+  sql: string;
+}

@@ -13,6 +13,7 @@ use velt_syntax::ast::{self, Item, ItemKind};
 
 use crate::comment::{self, DocComment};
 use crate::sig::Printer;
+use crate::ts::{TsDecl, TsPrinter, Widened};
 
 /// The kind of a documented declaration.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -90,6 +91,9 @@ pub struct DocItem {
     pub generics: Vec<String>,
     /// For an item another module declares and this one re-exports: where it is declared.
     pub origin: Option<Origin>,
+    /// A top-level item's declaration in TypeScript, for the `velt` type package
+    /// ([`crate::dts`]); empty for members.
+    pub ts: TsDecl,
 }
 
 /// Where a re-exported item is declared.
@@ -117,6 +121,9 @@ pub struct DocModule {
     /// `export { … } from` / `export * from` (and exported imports), in source order; resolved
     /// into `items` by [`crate::resolve`].
     pub reexports: Vec<ReExport>,
+    /// Whether it is a folder's `index` file, whose relative imports start in that folder
+    /// (set by [`crate::extract_all`]; `false` from [`extract`]).
+    pub index: bool,
 }
 
 /// A name bound by an import.
@@ -144,7 +151,13 @@ pub struct ReExport {
 /// Extract the documentation of module `name` from its `source`. Syntax errors are tolerated:
 /// whatever the parser recovered is documented. Re-exports are recorded, not yet resolved.
 pub fn extract(name: &str, source: &str) -> DocModule {
-    extract_with(name, source).0
+    extract_with(name, source, &Widened::new()).0
+}
+
+/// [`extract`], the TypeScript declarations with the bounds of `widened` widened
+/// ([`crate::ts::Widened`]; the type package's, [`crate::dts`]).
+pub(crate) fn extract_widened(name: &str, source: &str, widened: &Widened) -> DocModule {
+    extract_with(name, source, widened).0
 }
 
 /// The declarations that [`extract`] documents without a doc comment although a plain comment
@@ -152,10 +165,10 @@ pub fn extract(name: &str, source: &str) -> DocModule {
 /// the doc comment syntax, such a comment was the documentation; std's tests use this to keep
 /// plain comments from hiding docs.
 pub fn plain_comments_above_docs(source: &str) -> Vec<u32> {
-    extract_with("", source).1
+    extract_with("", source, &Widened::new()).1
 }
 
-fn extract_with(name: &str, source: &str) -> (DocModule, Vec<u32>) {
+fn extract_with(name: &str, source: &str, widened: &Widened) -> (DocModule, Vec<u32>) {
     let (module, _) = velt_syntax::parse_file(FileId(0), source);
     let text = Source {
         printer: Printer { src: source },
@@ -164,6 +177,7 @@ fn extract_with(name: &str, source: &str) -> (DocModule, Vec<u32>) {
             .chain(source.match_indices('\n').map(|(i, _)| i as u32 + 1))
             .collect(),
         plain_above: RefCell::default(),
+        widened,
     };
     let mut imports = vec![];
     for item in &module.items {
@@ -222,6 +236,7 @@ fn extract_with(name: &str, source: &str) -> (DocModule, Vec<u32>) {
         items,
         imports,
         reexports,
+        index: false,
     };
     (module, text.plain_above.into_inner())
 }
@@ -248,6 +263,9 @@ fn merge_interfaces(items: Vec<DocItem>) -> Vec<DocItem> {
             first.deprecated = item.deprecated;
         }
         first.members.extend(item.members);
+        // TypeScript merges them too.
+        first.ts.text = format!("{}\n{}", first.ts.text, item.ts.text);
+        first.ts.refs.extend(item.ts.refs);
     }
     out
 }
@@ -278,6 +296,7 @@ fn imported_names(i: &ast::Import) -> Vec<Import> {
 fn declared_name(item: &Item) -> Option<&String> {
     Some(match &item.kind {
         ItemKind::Function(f) => &f.sig.name.name,
+        ItemKind::ExternFn(s) if s.is_intrinsic => &s.name.name,
         ItemKind::Struct(t) | ItemKind::Class(t) => &t.name.name,
         ItemKind::Interface(i) => &i.name.name,
         ItemKind::Enum(e) => &e.name.name,
@@ -307,6 +326,8 @@ struct Source<'a> {
     line_starts: Vec<u32>,
     /// Documented declarations without a doc comment and with a plain comment right above.
     plain_above: RefCell<Vec<u32>>,
+    /// The bounds the TypeScript declarations widen.
+    widened: &'a Widened,
 }
 
 impl Source<'_> {
@@ -351,18 +372,46 @@ impl Source<'_> {
             members: vec![],
             generics: generic_names(generics),
             origin: None,
+            ts: TsDecl::default(),
         }
     }
 
     /// The documentation of a top-level item: exported ones and extensions, or any
     /// declaration with `any` (one named in an `export { … }` list).
     fn item(&self, item: &Item, any: bool) -> Option<DocItem> {
+        let mut doc = self.item_docs(item, any)?;
+        let ts = TsPrinter {
+            p: &self.printer,
+            doc: &|lo| {
+                comment::doc_before_in(self.printer.src, &self.comments, lo)
+                    .unwrap_or_default()
+                    .render_markdown()
+            },
+            refs: Default::default(),
+            scope: Default::default(),
+            subst: Default::default(),
+            widened: self.widened,
+        };
+        doc.ts = ts.decl(
+            item,
+            declared_name(item).map_or(doc.name.as_str(), |n| n.as_str()),
+        );
+        Some(doc)
+    }
+
+    fn item_docs(&self, item: &Item, any: bool) -> Option<DocItem> {
         if !(item.exported || any) && !matches!(item.kind, ItemKind::Extend(_)) {
             return None;
         }
         let doc = self.doc_before(item.span.lo);
         let p = &self.printer;
         Some(match &item.kind {
+            // std's intrinsics (std/lang/intrinsics) are documented like functions: the
+            // declaration is their signature.
+            ItemKind::ExternFn(s) if s.is_intrinsic => DocItem {
+                signature: format!("declare intrinsic function {}", p.fn_sig(s)),
+                ..self.leaf(Kind::Function, &s.name.name, &s.generics, doc, item.span.lo)
+            },
             ItemKind::Function(f) => {
                 // An overloaded function is called through its signatures, one per line; the
                 // implementation's own signature is not callable.
@@ -595,7 +644,7 @@ impl Source<'_> {
 mod tests {
     use super::*;
 
-    const SRC: &str = "// Module docs.\n// Second line.\n\nimport { x } from \"velt:io\";\n\n/// Adds.\n/// Twice.\nexport function add(a: i64, b: i64): i64 {\n  return a + b;\n}\n\nfunction hidden() {}\n\n/** A point. */\nexport class Point {\n  /** X coordinate. */\n  x: f64;\n  private secret: i64 = 0;\n\n  constructor(x: f64) {\n    this.x = x;\n  }\n\n  /**\n   * Length.\n   */\n  len(): f64 {\n    return this.x;\n  }\n}\n\nexport enum Color {\n  Red,\n  Green = 5,\n}\n\nexport const LIMIT: i64 = 10;\n\nexport async function wait(ms: i64) {}\n";
+    const SRC: &str = "// Module docs.\n// Second line.\n\nimport { x } from \"velt/io\";\n\n/// Adds.\n/// Twice.\nexport function add(a: i64, b: i64): i64 {\n  return a + b;\n}\n\nfunction hidden() {}\n\n/** A point. */\nexport class Point {\n  /** X coordinate. */\n  x: f64;\n  private secret: i64 = 0;\n\n  constructor(x: f64) {\n    this.x = x;\n  }\n\n  /**\n   * Length.\n   */\n  len(): f64 {\n    return this.x;\n  }\n}\n\nexport enum Color {\n  Red,\n  Green = 5,\n}\n\nexport const LIMIT: i64 = 10;\n\nexport async function wait(ms: i64) {}\n";
 
     #[test]
     fn exported_items_with_docs() {
@@ -664,6 +713,22 @@ mod tests {
             ["m(a: f64): f64\nm(a: f64, b: f64): f64", "static m2(): C"]
         );
         assert_eq!(m.items[1].members[0].doc, "Scales.");
+    }
+
+    /// std's intrinsics are documented as functions; other `declare`s are not.
+    #[test]
+    fn intrinsic_declarations_are_documented() {
+        let src = "/** Swaps two elements. */\nexport declare intrinsic function arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void;\n\n/** Hidden. */\nexport declare function velt_rt_x(): void;\n";
+        let m = extract("std/lang/intrinsics/array", src);
+        let names: Vec<&str> = m.items.iter().map(|i| i.name.as_str()).collect();
+        assert_eq!(names, ["arraySwap"]);
+        let f = &m.items[0];
+        assert_eq!(f.kind, Kind::Function);
+        assert_eq!(
+            f.signature,
+            "declare intrinsic function arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void"
+        );
+        assert_eq!(f.doc, "Swaps two elements.");
     }
 
     #[test]

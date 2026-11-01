@@ -19,13 +19,12 @@ use velt_syntax::ast;
 
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
-use crate::hir;
 use crate::SourceModule;
 use velt_common::{Diagnostics, Span};
 
 /// What one check returns: the program, the diagnostics, and the variables module state
 /// refused ([`refused`]).
-pub(crate) type Checked = ((Option<hir::Program>, Diagnostics), Refused);
+pub(crate) type Checked = ((Option<crate::Checked>, Diagnostics), Refused);
 
 /// The root module's variables that module state refused in a check.
 #[derive(Default)]
@@ -219,6 +218,7 @@ fn with_moved(
             .map(|(k, s)| SourceModule {
                 path: s.path.clone(),
                 is_std: s.is_std,
+                is_dependency: s.is_dependency,
                 file: s.file,
                 ast: ast::Module {
                     items: if k == root {
@@ -255,6 +255,7 @@ mod tests {
         let m = SourceModule {
             path: "main".into(),
             is_std: false,
+            is_dependency: false,
             file: FileId(0),
             ast,
             imports: vec![],

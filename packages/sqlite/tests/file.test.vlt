@@ -1,0 +1,58 @@
+// sqlite on a file: WAL mode, a second connection, persistence across reopen; the files
+// are deleted afterwards.
+import { open } from "../src/lib";
+import { tmpdir } from "velt/os";
+import { uuidv4 } from "velt/random/uuid";
+import { existsSync, removeSync } from "velt/fs";
+
+class Note {
+  id: i64;
+  body: string;
+
+  constructor(id: i64, body: string) {
+    this.id = id;
+    this.body = body;
+  }
+}
+
+export function test_wal_file_second_connection_and_reopen() {
+  const path = `${tmpdir()}/velt-sqlite-${uuidv4()}.db`;
+  const db = open(path, { wal: true });
+  assertEq(db.pragma("journal_mode"), "wal");
+  db.exec("CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL)");
+  const ins = db.prepare("INSERT INTO notes (body) VALUES (:body)");
+  const errors: string[] = [];
+  db.transaction(() => {
+    for (let i = 0; i < 1000; i++) {
+      try {
+        ins.runWith({ body: `note ${i}` });
+      } catch (e) {
+        errors.push(e.message.clone());
+      }
+    }
+    return 0;
+  });
+  assertEq(errors, [] as string[]);
+
+  // A second connection sees committed data (WAL lets readers and the writer overlap).
+  const reader = open(path, { readonly: true, fileMustExist: true });
+  const last: Note | null = reader.prepare("SELECT * FROM notes ORDER BY id DESC").get();
+  assertEq(last?.id, 1000);
+  assertEq(last?.body, "note 999");
+  reader.close();
+  ins.close();
+  db.close();
+
+  const again = open(path, { fileMustExist: true });
+  assertEq(again.pragma("journal_mode"), "wal");
+  const notes: Note[] = again.prepare("SELECT * FROM notes WHERE id % 250 = 0").all();
+  assertEq(notes.map((n) => n.body), ["note 249", "note 499", "note 749", "note 999"]);
+  again.close();
+
+  for (const suffix of ["", "-wal", "-shm"]) {
+    if (existsSync(path + suffix)) {
+      removeSync(path + suffix);
+    }
+  }
+  assertEq(existsSync(path), false);
+}

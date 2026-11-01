@@ -8,8 +8,8 @@
 //   render [both|small|large] [scale]    20000 small and 500 large renders, divided by scale
 //   render html <small|large>            prints the page itself
 
-import { renderToStringSync } from "velt:jsx";
-import { args } from "velt:process";
+import { renderToStringSync } from "velt/jsx";
+import { args } from "velt/process";
 import { items, Page } from "./_page";
 
 function hash(s: string): number {

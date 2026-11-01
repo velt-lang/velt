@@ -134,19 +134,22 @@ fn keeps_nothing(i: Intrinsic) -> bool {
         Intrinsic::Print
             | Intrinsic::PrintErr
             | Intrinsic::Same
-            | Intrinsic::Eq
-            | Intrinsic::DeepEq
             | Intrinsic::KeyEq
             | Intrinsic::IncludesEq
             | Intrinsic::Hash
             | Intrinsic::Clone
-            | Intrinsic::JsonStringify
             | Intrinsic::AnyStrictEq
             | Intrinsic::AnyLooseEq
             | Intrinsic::AnyTypeof
             | Intrinsic::AnyTruthy
             | Intrinsic::AnyTag
             | Intrinsic::AnyToNumber
+            | Intrinsic::Identity
+            | Intrinsic::ToAny
+            | Intrinsic::IsTypedProxy
+            | Intrinsic::AnyReflectInfo
+            | Intrinsic::AnyReflectCount
+            | Intrinsic::AnyReflectName
     )
 }
 

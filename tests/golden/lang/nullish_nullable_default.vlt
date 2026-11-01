@@ -1,0 +1,13 @@
+// `x ?? (c ? y : null)`: a default that may be null makes the result `T | null`, as in
+// TypeScript, also with no type annotation to go by.
+function pick(a: string | null, c: boolean): string | null {
+  return a ?? (c ? "x" : null);
+}
+
+function main() {
+  console.log(pick(null, true), pick(null, false), pick("a", false));
+  const d: string | null = null;
+  const e = d ?? (true ? "y" : null);
+  const f = d ?? (false ? "z" : undefined);
+  console.log(e, f);
+}

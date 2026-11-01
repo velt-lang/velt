@@ -1,0 +1,15 @@
+// velt/lang/hooks (internal): what an iterable object literal (`{ *[Symbol.iterator]() { ... }
+// }`, docs/reference/types.md "Iterable object literals") is: sema writes it as an instance of
+// `IterableObject` (`AsyncIterableObject` for `[Symbol.asyncIterator]`) holding the method.
+
+/**
+ * An object literal whose member is a `[Symbol.iterator]()` method (`{ *[Symbol.iterator]() {
+ * ... } }`, docs/reference/types.md): the method as a function, called by each loop.
+ */
+export class IterableObject<T, E = never> implements Iterable<T, E> {
+  constructor(private iterator: () => Iterator<T, E>) {}
+
+  [Symbol.iterator](): Iterator<T, E> {
+    return this.iterator();
+  }
+}

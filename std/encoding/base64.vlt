@@ -1,0 +1,189 @@
+// velt/encoding (internal): Base64 (RFC 4648 §4, and the URL-safe alphabet of §5).
+
+import { STD_DIGITS, STD_VALUES, URL_DIGITS, URL_VALUES } from "velt/encoding/tables";
+import { EncodingError } from "velt/encoding/errors";
+import { velt_rt_bytes_from_str } from "velt/encoding/rt";
+import { utf8Decode, validToString } from "velt/encoding/utf8";
+import { arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
+
+/** `=` */
+export const PAD: u8 = 61;
+
+/** Standard Base64 (`+/` alphabet) with `=` padding. */
+export function base64Encode(data: u8[]): string {
+  return encode64(data, false, true);
+}
+
+/**
+ * Decodes standard Base64; padding is optional. Throws `EncodingError` on a character outside the
+ * alphabet or a length or padding that cannot come from whole bytes.
+ */
+export function base64Decode(s: string): u8[] {
+  return decode64(s, false);
+}
+
+/** URL-safe Base64 (`-_` alphabet, RFC 4648 §5) without padding. */
+export function base64UrlEncode(data: u8[]): string {
+  return encode64(data, true, false);
+}
+
+/** Decodes URL-safe Base64; padding is optional. Throws `EncodingError`. */
+export function base64UrlDecode(s: string): u8[] {
+  return decode64(s, true);
+}
+
+/** Base64 of the UTF-8 bytes of `s`. */
+export function base64EncodeString(s: string): string {
+  return encode64(velt_rt_bytes_from_str(s), false, true);
+}
+
+/** Decodes Base64 to bytes and those as UTF-8. Throws `EncodingError` on bad Base64 or UTF-8. */
+export function base64DecodeString(s: string): string {
+  return utf8Decode(decode64(s, false));
+}
+
+function encode64(data: u8[], url: bool, pad: bool): string {
+  const n = data.length;
+  const rest = n % 3;
+  const full = n - rest;
+  let size = full / 3 * 4;
+  if (rest > 0) {
+    size += pad ? 4 : rest + 1;
+  }
+  // Sized once and written by index: no growth check per character.
+  const out = unfilled(size);
+  let o: usize = 0;
+  for (let i: usize = 0; i < full; i += 3) {
+    const t = ((data[i] as u32) << 16) | ((data[i + 1] as u32) << 8) | (data[i + 2] as u32);
+    out[o] = digit(t >> 18, url);
+    out[o + 1] = digit((t >> 12) & 63, url);
+    out[o + 2] = digit((t >> 6) & 63, url);
+    out[o + 3] = digit(t & 63, url);
+    o += 4;
+  }
+  if (rest > 0) {
+    let t = (data[full] as u32) << 16;
+    if (rest == 2) {
+      t = t | ((data[full + 1] as u32) << 8);
+    }
+    out[o] = digit(t >> 18, url);
+    out[o + 1] = digit((t >> 12) & 63, url);
+    if (rest == 2) {
+      out[o + 2] = digit((t >> 6) & 63, url);
+      if (pad) {
+        out[o + 3] = PAD;
+      }
+    } else if (pad) {
+      out[o + 2] = PAD;
+      out[o + 3] = PAD;
+    }
+  }
+  return validToString(out);
+}
+
+// Texts of at least this many digits (without their padding) are read from a copy of their
+// bytes, which makes a digit two loads; shorter ones are read where they stand, one `charCodeAt`
+// per digit, which saves the copy (in instructions, the two meet at about 20 digits).
+const COPY_FROM: i64 = 24;
+
+// Throws on characters outside the alphabet (`url`: the URL-safe one), on `=` anywhere but the
+// (at most two) final positions, and on a length that cannot come from whole bytes. Leftover
+// bits are ignored. A short text is read where it stands, a long one from a copy of its bytes;
+// they agree up to the first character that is not ASCII, which is not a digit either way.
+function decode64(s: string, url: bool): u8[] {
+  let n = s.length as i64;
+  if (n == 0) {
+    return [];
+  }
+  let pads: i64 = 0;
+  while (n > 0 && pads < 2 && s.charCodeAt(n - 1) == (PAD as i64)) {
+    n--;
+    pads++;
+  }
+  const tail = n % 4;
+  const out = unfilled((n / 4 * 3 + (tail == 3 ? 2 : tail == 2 ? 1 : 0)) as usize);
+  let o: usize = 0;
+  let i: i64 = 0;
+  if (n >= COPY_FROM) {
+    const text = velt_rt_bytes_from_str(s);
+    while (i + 4 <= n) {
+      const at = i as usize;
+      const a = value(text[at] as usize, url);
+      const b = value(text[at + 1] as usize, url);
+      const c = value(text[at + 2] as usize, url);
+      const d = value(text[at + 3] as usize, url);
+      if ((a | b | c | d) < 0) {
+        break;
+      }
+      put3(out, o, (a << 18) | (b << 12) | (c << 6) | d);
+      o += 3;
+      i += 4;
+    }
+  } else {
+    while (i + 4 <= n) {
+      const a = unitValue(s.charCodeAt(i), url);
+      const b = unitValue(s.charCodeAt(i + 1), url);
+      const c = unitValue(s.charCodeAt(i + 2), url);
+      const d = unitValue(s.charCodeAt(i + 3), url);
+      if ((a | b | c | d) < 0) {
+        break;
+      }
+      put3(out, o, (a << 18) | (b << 12) | (c << 6) | d);
+      o += 3;
+      i += 4;
+    }
+  }
+  // The last one to three digits, or the group with a character that is not a digit.
+  let acc: i64 = 0;
+  let bits: i64 = 0;
+  while (i < n) {
+    const v = unitValue(s.charCodeAt(i), url);
+    if (v < 0) {
+      throw new EncodingError(`Invalid base64 character at offset ${i}`);
+    }
+    acc = (acc << 6) | v;
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      out[o] = ((acc >> bits) & 0xff) as u8;
+      o++;
+    }
+    i++;
+  }
+  if (tail == 1 || (pads > 0 && (n + pads) % 4 != 0)) {
+    throw new EncodingError("Invalid base64: bad length or padding");
+  }
+  return out;
+}
+
+/**
+ * `n` bytes that are not set to anything: each caller writes every one of them before it returns
+ * the array, and throws it away otherwise. Cheaper than `Buffer.alloc`, which zeroes them first.
+ */
+export function unfilled(n: usize): u8[] {
+  const out: u8[] = arrayWithCapacity(n);
+  arraySetLen(out, n);
+  return out;
+}
+
+// Writes the 24 bits of `t` as three bytes at `out[o]`.
+function put3(out: u8[], o: usize, t: i64) {
+  out[o] = (t >> 16) as u8;
+  out[o + 1] = ((t >> 8) & 0xff) as u8;
+  out[o + 2] = (t & 0xff) as u8;
+}
+
+// The digit for 6-bit value `v`.
+function digit(v: u32, url: bool): u8 {
+  return url ? URL_DIGITS[v as usize] : STD_DIGITS[v as usize];
+}
+
+// The value of UTF-16 code unit `c` as a digit, -1 if it is not one.
+function unitValue(c: i64, url: bool): i64 {
+  return c >= 0 && c < 256 ? value(c as usize, url) : -1;
+}
+
+// The value of byte `c` as a digit, -1 if it is not one.
+function value(c: usize, url: bool): i64 {
+  return (url ? URL_VALUES[c] : STD_VALUES[c]) as i64;
+}

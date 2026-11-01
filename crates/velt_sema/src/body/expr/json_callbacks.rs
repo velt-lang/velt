@@ -12,7 +12,7 @@ use crate::hir::{self, TyKind};
 
 impl FnCx<'_, '_> {
     /// Does the annotation `t` name the prelude's `JsonValue`, however it is written (`JsonValue`,
-    /// velt:json's `Value`, a local alias)? Its own errors are left to the parameter's check.
+    /// velt/encoding/json's `Value`, a local alias)? Its own errors are left to the parameter's check.
     fn names_json_value(&mut self, t: &ast::TypeExpr) -> bool {
         let errors = self.cx.diags.len();
         let env = self.env.clone();

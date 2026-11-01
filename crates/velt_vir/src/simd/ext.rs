@@ -19,7 +19,7 @@ impl Ext {
     /// Every extension.
     pub const ALL: [Ext; 4] = [Ext::ShaArm, Ext::ShaX86, Ext::ClmulX86, Ext::ClmulArm];
 
-    /// The name `__intrinsic_target` takes: `sha-arm`, `sha-x86`, `clmul-x86`, `clmul-arm`.
+    /// The name `targetFeature` takes: `sha-arm`, `sha-x86`, `clmul-x86`, `clmul-arm`.
     pub fn name(self) -> &'static str {
         match self {
             Ext::ShaArm => "sha-arm",
@@ -29,7 +29,7 @@ impl Ext {
         }
     }
 
-    /// The extension `__intrinsic_target(name)` names.
+    /// The extension `targetFeature(name)` names.
     pub fn named(name: &str) -> Option<Ext> {
         Ext::ALL.into_iter().find(|e| e.name() == name)
     }

@@ -1,0 +1,31 @@
+// A `StringBuilder` parameter that the function appends to is modified by it: the optimizer
+// must not read the builder's fields once before the loop (they change with every append).
+
+function fill(b: StringBuilder, n: i64): i64 {
+  let seen: i64 = 0;
+  for (let i: i64 = 0; i < n; i++) {
+    b.appendInt(i);
+    seen += b.length;
+  }
+  return seen;
+}
+
+// Literal appends are compiled inline, against the buffer's address and capacity, which the
+// runtime appends between them change as the buffer grows.
+function grow(b: StringBuilder, n: i64): void {
+  for (let i: i64 = 0; i < n; i++) {
+    b.append("[");
+    b.appendInt(i);
+    b.append("],");
+  }
+}
+
+function main() {
+  const b = new StringBuilder();
+  console.log(fill(b, 5));
+  console.log(b.toString());
+  const small = new StringBuilder(4);
+  grow(small, 40);
+  const text = small.take();
+  console.log(text.length, text.slice(0, 24), text.slice(text.length - 12));
+}

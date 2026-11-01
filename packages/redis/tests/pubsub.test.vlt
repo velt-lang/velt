@@ -1,0 +1,122 @@
+// The Redis client against a real server ($VELT_TEST_REDIS_URL; every test returns at once
+// without it): pub/sub with pulled messages (`next()` and `for await`), pattern subscriptions
+// and close() from another task.
+import { connect, subscribe, psubscribe, RedisSubscriber, RedisMessage } from "../src/lib";
+import { redisUrl, freshPrefix } from "./support/redis";
+
+function show(m: RedisMessage | null, p: string): string {
+  if (m == null) {
+    return "null";
+  }
+  const n = p.length as i64;
+  // `?.slice` rather than `m.pattern ?? "-"`, which moves the field (tests/golden/bugs/
+  // sema_ternary_moves_place.vlt).
+  const pattern = m.pattern?.slice(n) ?? "-";
+  return `${m.channel.slice(n)} ${m.message} (pattern ${pattern})`;
+}
+
+async function closeLater(sub: RedisSubscriber): Promise<void> {
+  await sleep(50);
+  sub.close();
+}
+
+// subscribe() resolves once the server confirmed, so nothing published afterwards is lost.
+export async function test_subscribe_and_publish() {
+  const url = redisUrl();
+  if (url == null) {
+    return;
+  }
+  const p = freshPrefix();
+  const c = await connect(url);
+  const sub = await subscribe(url, [`${p}news`]);
+  assertEq(await c.publish(`${p}news`, "hello"), 1);
+  await c.publish(`${p}other`, "not subscribed");
+  await c.publish(`${p}news`, "world ✓");
+  assertEq(show(await sub.next(), p), "news hello (pattern -)");
+  assertEq(show(await sub.next(), p), "news world ✓ (pattern -)");
+  sub.close();
+  c.close();
+}
+
+// More channels on the same subscriber, then fewer.
+export async function test_subscribe_and_unsubscribe_channels() {
+  const url = redisUrl();
+  if (url == null) {
+    return;
+  }
+  const p = freshPrefix();
+  const c = await connect(url);
+  const sub = await subscribe(url, [`${p}news`]);
+  await sub.subscribe([`${p}alerts`]);
+  await c.publish(`${p}alerts`, "fire");
+  assertEq(show(await sub.next(), p), "alerts fire (pattern -)");
+  await sub.unsubscribe([`${p}news`]);
+  assertEq(await c.publish(`${p}news`, "dropped"), 0);
+  await c.publish(`${p}alerts`, "second");
+  assertEq(show(await sub.next(), p), "alerts second (pattern -)");
+  sub.close();
+  c.close();
+}
+
+// Pattern subscription, opened from a client (same server and database).
+export async function test_pattern_subscription() {
+  const url = redisUrl();
+  if (url == null) {
+    return;
+  }
+  const p = freshPrefix();
+  const c = await connect(url);
+  const psub = await psubscribe(c, [`${p}room.*`]);
+  await c.publish(`${p}room.1`, "a");
+  await c.publish(`${p}room.2`, "b");
+  assertEq(show(await psub.next(), p), "room.1 a (pattern room.*)");
+  assertEq(show(await psub.next(), p), "room.2 b (pattern room.*)");
+  psub.close();
+  c.close();
+}
+
+// A pull loop, ended by close() from another task while `next()` waits (the closer starts after
+// the first message, so the result does not depend on timing).
+export async function test_pull_loop_ended_by_close() {
+  const url = redisUrl();
+  if (url == null) {
+    return;
+  }
+  const p = freshPrefix();
+  const c = await connect(url);
+  const sub = await subscribe(url, [`${p}alerts`]);
+  await c.publish(`${p}alerts`, "last");
+  const seen: string[] = [];
+  let m = await sub.next();
+  while (m != null) {
+    seen.push(show(m, p));
+    if (seen.length == 1) {
+      spawn(closeLater(sub));
+    }
+    m = await sub.next();
+  }
+  assertEq(seen, ["alerts last (pattern -)"]);
+  assertEq(show(await sub.next(), p), "null");
+  c.close();
+}
+
+// The same with `for await` over a subscriber, ended by close() from another task.
+export async function test_for_await_ended_by_close() {
+  const url = redisUrl();
+  if (url == null) {
+    return;
+  }
+  const p = freshPrefix();
+  const c = await connect(url);
+  const sub2 = await subscribe(url, [`${p}alerts`]);
+  await c.publish(`${p}alerts`, "again");
+  const seen: string[] = [];
+  for await (const m2 of sub2) {
+    seen.push(show(m2, p));
+    if (seen.length == 1) {
+      spawn(closeLater(sub2));
+    }
+  }
+  assertEq(seen, ["alerts again (pattern -)"]);
+  c.close();
+}

@@ -1,8 +1,8 @@
 // The HTTP side: opens the store, serves `route`, and persists the store after each change.
 // The store is picked by the file name: `*.sqlite`, `*.sqlite3` and `*.db` are SQLite
 // databases, anything else is a JSON file.
-import { serve, Server } from "velt:http";
-import { readFile, writeFile, rename, exists } from "velt:fs";
+import { serve, HttpServer } from "http-server";
+import { readFile, writeFile, rename, exists } from "velt/fs";
 import { TodoStore } from "./store";
 import { SqliteTodoStore } from "./sqlite_store";
 import { TodoRepository, JsonRepository, SqliteRepository } from "./repository";
@@ -64,13 +64,13 @@ async function serveStore<S extends TodoRepository>(
   store: S,
   file: string,
   port: i64,
-): Promise<Server> {
+): Promise<HttpServer> {
   const sharedStore = shared(new Mutex<S>(store));
   return await serve({ port: port as number }, async (req) => await handle(req, sharedStore, file));
 }
 
 // Serves the todo API on `port` (0 = any free port), persisting to `file` (see the header).
-export async function startServer(file: string, port: i64): Promise<Server> {
+export async function startServer(file: string, port: i64): Promise<HttpServer> {
   if (isSqlitePath(file)) {
     return await serveStore(new SqliteRepository(new SqliteTodoStore(file)), file, port);
   }

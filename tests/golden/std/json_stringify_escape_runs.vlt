@@ -1,5 +1,5 @@
 // `JSON.stringify` of strings with escapes at every offset and plain runs of every length
-// between them (velt:json/writer's escaper: a few bytes one at a time after each escape, then
+// between them (velt/encoding/json/writer's escaper: a few bytes one at a time after each escape, then
 // sixteen-byte blocks, then the bytes before the end). Each result is checked against an
 // escaper that goes unit by unit; strings 0-64 long, one or two special characters in a filler
 // of ASCII, two-byte or Hangul text (0xED lead bytes that are no lone surrogate).

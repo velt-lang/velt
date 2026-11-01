@@ -1,0 +1,12 @@
+// `SetOptions`: `set` options: expiry in seconds (`ex`) or milliseconds (`px`); set only if the …
+
+/**
+ * `set` options: expiry in seconds (`ex`) or milliseconds (`px`); set only if the key does not
+ * exist (`nx`) or only if it does (`xx`).
+ */
+export struct SetOptions {
+  ex?: number;
+  px?: number;
+  nx?: bool;
+  xx?: bool;
+}

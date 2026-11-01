@@ -1,0 +1,26 @@
+// velt/net/websocket (internal): `Opened`, a client connection after its opening handshake.
+
+import { connect, connectTls } from "velt/net/connect";
+import { TcpStream } from "velt/net/tcp_stream";
+import { handshake } from "velt/net/websocket/handshake";
+import { target } from "velt/net/websocket/target";
+
+/** An open client connection: the stream, and what was read from it past the handshake. */
+export struct Opened {
+  stream: TcpStream;
+  rest: u8[];
+}
+
+/** Connects to a `ws://` or `wss://` URL (`ca`: extra trusted PEM CAs, "" for none) and shakes hands. */
+export async function open(url: string, ca: string): Promise<Opened> {
+  const t = target(url);
+  const addr = t.host.includes(":") ? `[${t.host}]:${t.port}` : `${t.host}:${t.port}`;
+  const stream =
+    t.secure ? await connectTls(addr, { serverName: t.host, ca: ca }) : await connect(addr);
+  try {
+    return Opened { stream: stream, rest: await handshake(stream, t) };
+  } catch (e) {
+    stream.close();
+    throw e;
+  }
+}

@@ -1,0 +1,9 @@
+// `PoolOptions`: `createPool` options.
+
+/** `createPool` options. */
+export struct PoolOptions {
+  /** Connection string (as for `connect`). */
+  url: string;
+  /** Most connections open at once (default 10); further operations wait for a free one. */
+  max?: i64;
+}

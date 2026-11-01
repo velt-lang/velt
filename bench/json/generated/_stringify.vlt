@@ -1,0 +1,10 @@
+// `JSON.stringify` written with the source-generated `writeJson<T>` of velt/encoding/json
+// (docs/internals/design/source-generators.md), for comparing it with the compiler's glue.
+import { writeJson } from "velt/encoding/json";
+
+/** The JSON text of `value`, as `JSON.stringify` writes it. */
+export function stringify<T>(value: T): string {
+  const w = new StringBuilder();
+  writeJson(w, value);
+  return w.take();
+}

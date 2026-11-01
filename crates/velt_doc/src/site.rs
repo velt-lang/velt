@@ -3,6 +3,9 @@
 //! index over both. Output is a static directory (GitHub Pages, any web server).
 //!
 //! `pages.txt`: one `Title = path/to/page.md` per line (relative to the file; `#` comments).
+//! `* = path/to/dir/` stands for every page in that folder and below that no other line names,
+//! sorted by path (`net.md`, then `net/dns.md`) and titled by their first `# ` heading: the
+//! standard library's pages follow its tree that way.
 //! The first page becomes the landing page `index.html`. Every other page keeps its path as
 //! written, without leading `../` (`../book/tour.md` → `book/tour.html`), so the site mirrors
 //! the documentation tree and relative links between pages keep working.
@@ -50,7 +53,7 @@ fn output_path(path: &str) -> String {
 
 /// Parse `pages.txt` (paths relative to `base`).
 pub fn parse_pages(text: &str, base: &Path) -> Result<Vec<Page>, String> {
-    let mut pages = vec![];
+    let mut lines = vec![];
     for (n, line) in text.lines().enumerate() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -59,18 +62,77 @@ pub fn parse_pages(text: &str, base: &Path) -> Result<Vec<Page>, String> {
         let (title, path) = line
             .split_once('=')
             .ok_or_else(|| format!("pages.txt:{}: expected `Title = path.md`", n + 1))?;
-        let output = if pages.is_empty() {
-            "index.html".to_string()
-        } else {
-            output_path(path.trim())
+        lines.push((title.trim(), path.trim()));
+    }
+    let named: Vec<String> = lines
+        .iter()
+        .filter(|(title, _)| *title != "*")
+        .map(|(_, path)| path.replace('\\', "/"))
+        .collect();
+    let mut pages = vec![];
+    for (title, path) in lines {
+        let entries = match title {
+            "*" => folder_pages(base, path, &named)?,
+            _ => vec![(title.to_string(), path.to_string())],
         };
-        pages.push(Page {
-            title: title.trim().to_string(),
-            source: base.join(path.trim()),
-            output,
-        });
+        for (title, path) in entries {
+            let output = if pages.is_empty() {
+                "index.html".to_string()
+            } else {
+                output_path(&path)
+            };
+            pages.push(Page {
+                title,
+                source: base.join(&path),
+                output,
+            });
+        }
     }
     Ok(pages)
+}
+
+/// The pages of `* = dir/`: `(title, path as pages.txt would write it)` for every `.md` file
+/// in `dir` (relative to `base`) and below, except those `named` lists, sorted by path without
+/// the extension, each titled by its first `# ` heading.
+fn folder_pages(base: &Path, dir: &str, named: &[String]) -> Result<Vec<(String, String)>, String> {
+    let dir = dir.replace('\\', "/");
+    let dir = dir.trim_end_matches('/');
+    let mut found = vec![];
+    collect_md(&base.join(dir), "", &mut found)?;
+    found.sort_by(|a, b| a.trim_end_matches(".md").cmp(b.trim_end_matches(".md")));
+    let mut out = vec![];
+    for rel in found {
+        let path = format!("{dir}/{rel}");
+        if named.contains(&path) {
+            continue;
+        }
+        let file = base.join(&path);
+        let text = std::fs::read_to_string(&file)
+            .map_err(|e| format!("cannot read `{}`: {e}", file.display()))?;
+        let title = text
+            .lines()
+            .find_map(|l| l.strip_prefix("# "))
+            .map(|t| t.trim().to_string())
+            .ok_or_else(|| format!("`{}` has no `# ` heading for its title", file.display()))?;
+        out.push((title, path));
+    }
+    Ok(out)
+}
+
+/// The `.md` files below `dir`, as paths relative to it (`/`-separated, `prefix` first).
+fn collect_md(dir: &Path, prefix: &str, out: &mut Vec<String>) -> Result<(), String> {
+    let entries =
+        std::fs::read_dir(dir).map_err(|e| format!("cannot read `{}`: {e}", dir.display()))?;
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let rel = format!("{prefix}{name}");
+        if entry.path().is_dir() {
+            collect_md(&entry.path(), &format!("{rel}/"), out)?;
+        } else if name.ends_with(".md") {
+            out.push(rel);
+        }
+    }
+    Ok(())
 }
 
 /// Build the site from `pages_file` and the std library at `std_dir` into `out`.
@@ -106,7 +168,8 @@ pub fn build_site(pages_file: &Path, std_dir: &Path, out: &Path) -> Result<usize
         .chain(module_nav(&modules, "std/"))
         .collect();
     write_module_pages(SITE, &modules, &std_nav, &out.join("std"), "../")?;
-    let intro = "The modules under `std/` are imported with `import { … } from \"velt:<name>\"`; \
+    let intro =
+        "The modules under `std/` are imported with `import { … } from \"velt/<module>\"`; \
                  `std/prelude/*` is available everywhere without an import.";
     let index = html::index_body("Standard library", intro, &modules);
     write(
@@ -161,6 +224,41 @@ mod tests {
         let search = std::fs::read_to_string(out.join("search-index.js")).unwrap();
         assert!(search.contains("std/std.fs.html#function.read") && search.contains("\"Guide\""));
         assert!(parse_pages("bad line", tmp.path()).is_err());
+    }
+
+    #[test]
+    fn a_folder_of_pages_follows_its_tree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let docs = tmp.path();
+        for (path, text) in [
+            ("std/README.md", "# Guide\n"),
+            ("std/net.md", "# velt/net\n"),
+            ("std/net/http.md", "Intro.\n\n# velt/net/http: fetch\n"),
+            ("std/net/http/h2.md", "# velt/net/http/h2\n"),
+            ("std/fs.md", "# velt/fs\n"),
+            ("std/netx.md", "# velt/netx\n"),
+        ] {
+            std::fs::create_dir_all(docs.join(path).parent().unwrap()).unwrap();
+            std::fs::write(docs.join(path), text).unwrap();
+        }
+        let text = "Home = std/README.md\n* = std/\n";
+        let pages = parse_pages(text, docs).unwrap();
+        let got: Vec<(&str, String)> = pages.iter().map(|p| (p.title.as_str(), p.file())).collect();
+        assert_eq!(
+            got,
+            [
+                ("Home", "index.html".to_string()),
+                ("velt/fs", "std/fs.html".to_string()),
+                ("velt/net", "std/net.html".to_string()),
+                ("velt/net/http: fetch", "std/net/http.html".to_string()),
+                ("velt/net/http/h2", "std/net/http/h2.html".to_string()),
+                ("velt/netx", "std/netx.html".to_string()),
+            ]
+        );
+        std::fs::write(docs.join("std/fs.md"), "No heading.\n").unwrap();
+        assert!(parse_pages(text, docs)
+            .unwrap_err()
+            .contains("no `# ` heading"));
     }
 
     #[test]

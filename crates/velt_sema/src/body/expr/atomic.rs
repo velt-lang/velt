@@ -1,4 +1,4 @@
-//! `Atomic<T>` (std/prelude/sync.vlt, docs/internals/design/atomics.md): `new Atomic<T>(x)`
+//! `Atomic<T>` (std/prelude/atomic.vlt, docs/internals/design/atomics.md): `new Atomic<T>(x)`
 //! is the struct holding `x`, and a call of one of its methods is an `Atomic*` intrinsic whose
 //! orderings are integer literals (hir/intrinsic.rs), so lowering emits the one instruction
 //! with the ordering the call site names. The methods' declarations give the signatures, their
@@ -27,11 +27,7 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
-        // `(x: T) -> Atomic<T>`: `AtomicStore`'s value parameter, and its receiver type.
-        let mut c = self.intrinsic_sig(Intrinsic::AtomicStore, span);
-        c.what = "`Atomic` constructor".into();
-        c.ret = c.params[0].ty;
-        c.params = vec![c.params[1].clone()];
+        let c = self.value_cell_ctor(d, "`Atomic` constructor", span);
         let mut slots = vec![None];
         match targs {
             [] => {}

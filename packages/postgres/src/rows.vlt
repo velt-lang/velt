@@ -1,0 +1,79 @@
+// postgres (internal): rows from the library into typed values: a row cursor read by velt/db's
+// `decodeRows`, batch results as JSON text.
+
+import {
+  velt_postgres__close_rows,
+  velt_postgres__note_error,
+  velt_postgres__query_batch,
+} from "./native";
+import { decodeRow, decodeRows } from "velt/db";
+import { check, PgError } from "./errors";
+
+// A row did not fit the requested type; counted against `client` (0 for a pool) so an
+// enclosing `transaction` rolls back.
+export function mismatch(client: u64, detail: string): PgError {
+  const message = `row does not match the requested type: ${detail}`;
+  velt_postgres__note_error(client, "EMISMATCH", message);
+  return new PgError("EMISMATCH", message);
+}
+
+// The decoder reads the rows from the cursor, which is given back once, whatever happens: a
+// value the driver could not read comes first, then a row that does not fit.
+export function cursorRows<T>(client: u64, cursor: u64): T[] {
+  let out: T[] = [];
+  let failure: string | null = null;
+  try {
+    out = decodeRows<T>(cursor);
+  } catch (e) {
+    failure = e.message;
+  }
+  check(velt_postgres__close_rows(cursor));
+  if (failure != null) {
+    throw mismatch(client, failure);
+  }
+  return out;
+}
+
+export function cursorRow<T>(client: u64, cursor: u64): T | null {
+  if (cursor == 0) {
+    return null;
+  }
+  let out: T | null = null;
+  let failure: string | null = null;
+  try {
+    out = decodeRow<T>(cursor);
+  } catch (e) {
+    failure = e.message;
+  }
+  check(velt_postgres__close_rows(cursor));
+  if (failure != null) {
+    throw mismatch(client, failure);
+  }
+  return out;
+}
+
+// Batch results (`velt_postgres__query_batch` modes 0, 1 and 2): every execution's rows, or its first
+// row or null.
+export function rowSets<T>(client: u64, json: string): T[][] {
+  try {
+    return JSON.parse<T[][]>(json);
+  } catch (e) {
+    throw mismatch(client, e.message);
+  }
+}
+
+export function firstRows<T>(client: u64, json: string): (T | null)[] {
+  try {
+    return JSON.parse<(T | null)[]>(json);
+  } catch (e) {
+    throw mismatch(client, e.message);
+  }
+}
+
+export function counts(client: u64, json: string): i64[] {
+  try {
+    return JSON.parse<i64[]>(json);
+  } catch (e) {
+    throw mismatch(client, e.message);
+  }
+}
