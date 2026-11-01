@@ -240,6 +240,7 @@ fn verify_rejects_misused_atomic_externs() {
         params: vec![Ty::Ptr],
         ret: Ty::U8,
         noreturn,
+        host: None,
     };
     let mut p = base_program();
     p.externs.push(atomic("velt_atomic_load_08_acq", false));

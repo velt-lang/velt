@@ -296,7 +296,7 @@ fn imported_names(i: &ast::Import) -> Vec<Import> {
 fn declared_name(item: &Item) -> Option<&String> {
     Some(match &item.kind {
         ItemKind::Function(f) => &f.sig.name.name,
-        ItemKind::ExternFn(s) if s.is_intrinsic => &s.name.name,
+        ItemKind::ExternFn(s) if s.is_intrinsic || s.host.is_some() => &s.name.name,
         ItemKind::Struct(t) | ItemKind::Class(t) => &t.name.name,
         ItemKind::Interface(i) => &i.name.name,
         ItemKind::Enum(e) => &e.name.name,
@@ -410,6 +410,10 @@ impl Source<'_> {
             // declaration is their signature.
             ItemKind::ExternFn(s) if s.is_intrinsic => DocItem {
                 signature: format!("declare intrinsic function {}", p.fn_sig(s)),
+                ..self.leaf(Kind::Function, &s.name.name, &s.generics, doc, item.span.lo)
+            },
+            ItemKind::ExternFn(s @ ast::FnSig { host: Some(h), .. }) => DocItem {
+                signature: format!("declare host({:?}) function {}", h.module, p.fn_sig(s)),
                 ..self.leaf(Kind::Function, &s.name.name, &s.generics, doc, item.span.lo)
             },
             ItemKind::Function(f) => {
@@ -715,13 +719,17 @@ mod tests {
         assert_eq!(m.items[1].members[0].doc, "Scales.");
     }
 
-    /// std's intrinsics are documented as functions; other `declare`s are not.
+    /// std's intrinsics and host functions are documented as functions; other `declare`s are not.
     #[test]
     fn intrinsic_declarations_are_documented() {
-        let src = "/** Swaps two elements. */\nexport declare intrinsic function arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void;\n\n/** Hidden. */\nexport declare function velt_rt_x(): void;\n";
+        let src = "/** Swaps two elements. */\nexport declare intrinsic function arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void;\n\n/** Hidden. */\nexport declare function velt_rt_x(): void;\nexport declare host(\"env\") function now(): f64;\n";
         let m = extract("std/lang/intrinsics/array", src);
         let names: Vec<&str> = m.items.iter().map(|i| i.name.as_str()).collect();
-        assert_eq!(names, ["arraySwap"]);
+        assert_eq!(names, ["arraySwap", "now"]);
+        assert_eq!(
+            m.items[1].signature,
+            "declare host(\"env\") function now(): f64"
+        );
         let f = &m.items[0];
         assert_eq!(f.kind, Kind::Function);
         assert_eq!(

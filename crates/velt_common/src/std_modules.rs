@@ -130,6 +130,9 @@ table! {
     encoding_json_reader => "encoding/json/reader",
     encoding_json_writer => "encoding/json/writer",
     encoding_json_generated => "encoding/json/generated",
+    /// `velt/host`: `HostRef`, the handle to a JS value host functions pass (https://veltlang.com/docs/reference/host-functions/).
+    host => "host",
+    host_host_ref => "host/host_ref",
     /// The default JSX provider (`jsxImportSource`).
     jsx => "jsx",
     net_http_fetch_response => "net/http/fetch/response",

@@ -375,3 +375,93 @@ fn host_layouts_match_the_c_library() {
     assert_eq!(off(st, "st_uid"), offset_of!(libc::stat, st_uid));
     assert_eq!(off(st, "st_rdev"), offset_of!(libc::stat, st_rdev));
 }
+
+const NOW: &str = "declare host(\"env\") function now(): f64;\n";
+
+/// A host function is a JS host's: declaring one is allowed anywhere, and lowering a call of it
+/// for any other target is the error, naming the target and the caller. It is no native
+/// library's `declare function`.
+#[test]
+fn host_functions_need_a_js_host() {
+    let call = format!("{NOW}function main() {{\n  console.log(now());\n}}\n");
+    assert_eq!(lower_for(&call, "wasm32-unknown-unknown"), "");
+    for t in [
+        "aarch64-apple-darwin",
+        "x86_64-unknown-linux-gnu",
+        "x86_64-pc-windows-msvc",
+        "wasm32-wasip1",
+    ] {
+        let d = lower_for(&call, t);
+        assert!(
+            d.contains(&format!("host function `now` is not available on {t}")),
+            "{t}: {d}"
+        );
+        assert!(d.contains("`main` calls it"), "{d}");
+        assert!(
+            d.contains("only a JS host (wasm32-unknown-unknown) provides host functions"),
+            "{d}"
+        );
+        assert_eq!(d.matches("error:").count(), 1, "{d}");
+    }
+    let unused = format!("{NOW}function main() {{}}\n");
+    assert_eq!(lower_for(&unused, "x86_64-unknown-linux-gnu"), "");
+    // A view argument where the call is an error is no ICE either.
+    let view = "declare host(\"env\") function send(b: readonly u8[]): void;\n\
+                function main() {\n  const b: u8[] = [1, 2];\n  send(b.subarray(0, 1));\n}\n";
+    let d = lower_for(view, "wasm32-wasip1");
+    assert!(
+        d.contains("host function `send` is not available") && !d.contains("ICE"),
+        "{d}"
+    );
+}
+
+/// Two modules may declare one import with the same types; other types are an error, and so
+/// are `u8[]` and `readonly u8[]` (one type, which crosses as a live view or as a copy).
+#[test]
+fn one_host_import_has_one_signature() {
+    let tmp = tempfile::tempdir().unwrap();
+    let main = tmp.path().join("main.vlt");
+    // `other` declares `f(param): ret` and calls it; main declares `f(param2): ret2`.
+    let lower = |other: &str, mine: &str, arg: &str| {
+        let decl = |sig: &str| format!("export declare host(\"env\") function f{sig};\n");
+        write(
+            &tmp.path().join("other.vlt"),
+            &format!(
+                "{}export function later(): void {{\n  const b: u8[] = [0];\n  f({arg});\n}}\n",
+                decl(other)
+            ),
+        );
+        write(
+            &main,
+            &format!(
+                "import {{ later }} from \"./other\";\n{}function main() {{\n  const b: u8[] = [0];\n  f({arg});\n  later();\n}}\n",
+                decl(mine).trim_start_matches("export ")
+            ),
+        );
+        let opts = BuildOptions {
+            input: main.clone(),
+            target: Some("wasm32-unknown-unknown".into()),
+            ..Default::default()
+        };
+        let mut sess = Session::new();
+        match driver::compile_to_vir(&mut sess, &opts) {
+            Ok(_) => String::new(),
+            Err(_) => sess.render_diagnostics(),
+        }
+    };
+    let twice = "host function `f` of `env` is declared twice with different types";
+    assert_eq!(lower("(x: f64): f64", "(y: f64): f64", "1"), "");
+    assert_eq!(lower("(b: u8[]): void", "(c: u8[]): void", "b"), "");
+    let d = lower("(x: f64): f64", "(x: f64): i32", "1");
+    assert!(d.contains(twice) && !d.contains("readonly"), "{d}");
+    for (other, mine) in [
+        ("(b: readonly u8[]): void", "(b: u8[]): void"),
+        ("(b: u8[]): void", "(b: readonly u8[]): void"),
+    ] {
+        let d = lower(other, mine, "b");
+        assert!(
+            d.contains(twice) && d.contains("`readonly u8[]` differ"),
+            "{d}"
+        );
+    }
+}

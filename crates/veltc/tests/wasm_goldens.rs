@@ -364,3 +364,54 @@ fn goldens_in_the_browser_glue() {
     );
     assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
 }
+
+/// Host functions (https://veltlang.com/docs/reference/host-functions/) under node: tests/wasm_host/main.vlt, built
+/// for wasm32-unknown-unknown in debug and release mode, calls the host functions host.mjs
+/// passes with every type that crosses, holds and drops `HostRef`s (host.mjs checks the glue's
+/// table is empty at the end), and fails to start without the functions.
+#[test]
+fn host_functions_under_node() {
+    if let Some(missing) = missing_tools("wasm32-unknown-unknown", "node") {
+        eprintln!("note: {missing} not available; skipping the host functions test");
+        return;
+    }
+    let root = root();
+    build_runtime(&root, "wasm32-unknown-unknown");
+    let dir = root.join("crates/veltc/tests/wasm_host");
+    let want = std::fs::read_to_string(dir.join("main.out"))
+        .expect("main.out")
+        .replace("\r\n", "\n");
+    let work = work_dir::work_dir(&root, "golden-work-host");
+    for mode in [None, Some("--release")] {
+        let _ = std::fs::remove_dir_all(&work);
+        std::fs::create_dir_all(&work).expect("work dir");
+        let module = work.join("main.wasm");
+        let o = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
+            .args(["build", "--target", "wasm32-unknown-unknown"])
+            .args(mode)
+            .arg(dir.join("main.vlt"))
+            .arg("-o")
+            .arg(&module)
+            .output()
+            .expect("run velt");
+        assert!(
+            o.status.success(),
+            "velt build {mode:?}:\n{}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+        let o = crate::no_window::command("node")
+            .arg(dir.join("host.mjs"))
+            .arg(work.join("velt_web.mjs"))
+            .arg(&module)
+            .output()
+            .expect("run node");
+        let got = String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n");
+        assert!(
+            o.status.success() && got == want,
+            "{mode:?}: exit {:?}\n--- want ---\n{want}--- got ---\n{got}--- stderr ---\n{}",
+            o.status.code(),
+            String::from_utf8_lossy(&o.stderr)
+        );
+    }
+    let _ = std::fs::remove_dir_all(&work);
+}

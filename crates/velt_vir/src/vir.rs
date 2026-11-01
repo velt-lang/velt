@@ -55,7 +55,10 @@
 use std::fmt;
 
 mod debug;
+mod host;
+mod print;
 pub use debug::*;
+pub use host::{HostImport, HostValue, MANIFEST_SECTION};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct FuncId(pub u32);
@@ -342,6 +345,9 @@ pub struct ExternFn {
     pub ret: Ty,
     /// Never returns (e.g. `velt_rt_panic`); calls to it are followed by `Unreachable`.
     pub noreturn: bool,
+    /// A host function (additive): not a link symbol but the WebAssembly import this names
+    /// (`symbol` is only its name in the object). `None` for every other extern.
+    pub host: Option<HostImport>,
 }
 
 /// Read-only data (string literal bytes, vtables, …), or a word the program writes.
@@ -715,86 +721,5 @@ impl Program {
             }
             Terminator::Unreachable => "unreachable".into(),
         }
-    }
-}
-
-impl fmt::Display for Program {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (i, a) in self.aggs.iter().enumerate() {
-            let fields: Vec<String> = a.fields.iter().map(|(t, o)| format!("{t}@{o}")).collect();
-            writeln!(
-                f,
-                "agg#{} {} size={} align={} {{ {} }}",
-                i,
-                a.name,
-                a.size,
-                a.align,
-                fields.join(", ")
-            )?;
-        }
-        for (i, s) in self.statics.iter().enumerate() {
-            let mutable = s.mutable.map(|id| format!(" mutable={id:x}"));
-            writeln!(
-                f,
-                "static#{} align={} {:?}{}",
-                i,
-                s.align,
-                String::from_utf8_lossy(&s.bytes),
-                mutable.unwrap_or_default()
-            )?;
-        }
-        for (i, e) in self.externs.iter().enumerate() {
-            let nr = if e.noreturn { " noreturn" } else { "" };
-            let (sym, params) = (&e.symbol, fmt_tys(&e.params));
-            writeln!(f, "extern#{i} {sym}({params}) -> {}{nr}", e.ret)?;
-        }
-        for (i, func) in self.funcs.iter().enumerate() {
-            let link = match func.linkage {
-                Linkage::Export => "export",
-                Linkage::Internal => "internal",
-                Linkage::Import => "import",
-            };
-            writeln!(f)?;
-            let open = if func.blocks.is_empty() { "" } else { " {" };
-            writeln!(
-                f,
-                "fn#{} {} {}({}) -> {}{}{open}",
-                i,
-                link,
-                func.symbol,
-                fmt_tys(&func.params),
-                func.ret,
-                if func.cold { " cold" } else { "" }
-            )?;
-            if open.is_empty() {
-                continue;
-            }
-            for (li, l) in func.locals.iter().enumerate() {
-                let kind = if li < func.params.len() {
-                    "param"
-                } else {
-                    "let"
-                };
-                let attrs = func.param_attr(li);
-                let attrs = if li < func.params.len() && !attrs.is_empty() {
-                    format!(" {attrs}")
-                } else {
-                    String::new()
-                };
-                match &l.name {
-                    Some(n) => writeln!(f, "  {kind} _{li}: {}{attrs} // {n}", l.ty)?,
-                    None => writeln!(f, "  {kind} _{li}: {}{attrs}", l.ty)?,
-                }
-            }
-            for (bi, b) in func.blocks.iter().enumerate() {
-                writeln!(f, "  bb{bi}:")?;
-                for s in &b.stmts {
-                    writeln!(f, "    {s}")?;
-                }
-                writeln!(f, "    {}", self.fmt_term(&b.term))?;
-            }
-            writeln!(f, "}}")?;
-        }
-        Ok(())
     }
 }

@@ -29,13 +29,14 @@ impl Ctx<'_> {
     /// Is module `m` part of a package with a native library? A package has one when one of
     /// its modules declares a function of it: outside std, a `declare function` may only name
     /// an export of the package's own native library (the driver checks that), so it marks the
-    /// package. A `declare system function` (the C library's) does not.
+    /// package. A `declare system function` (the C library's) or `declare host` function (the JS
+    /// host's) does not.
     fn in_native_library(&self, m: usize) -> bool {
         let libs = self.native_libraries.get_or_init(|| {
             let mut libs = NativeLibraries::default();
             for module in self.modules.iter().filter(|m| !m.is_std) {
                 let declares = module.ast.items.iter().any(
-                    |i| matches!(&i.kind, ItemKind::ExternFn(s) if !s.is_system && !s.is_intrinsic),
+                    |i| matches!(&i.kind, ItemKind::ExternFn(s) if !s.is_system && !s.is_intrinsic && s.host.is_none()),
                 );
                 match (declares, module.is_dependency) {
                     (false, _) => {}

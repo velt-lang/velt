@@ -230,6 +230,7 @@ fn lifted_arrow(v: &ast::VarDecl, rest: bool) -> Option<ast::FnDecl> {
         is_system: false,
         is_intrinsic: false,
         generator: None,
+        host: None,
         is_generator: false,
         this_param: None,
         span: v.span,

@@ -61,6 +61,7 @@ pub(crate) fn build_defs(cx: &mut Ctx) -> rustc_hash::FxHashSet<DefId> {
                 ret: f.ret,
                 is_async: f.is_async,
                 system: f.system.clone(),
+                host: f.host.clone(),
                 span: f.span,
             })),
             DefInfo::Adt(_) => Some(Def::Adt(adt_def(cx, d, &mut memo, assigned.contains(&d)))),
@@ -78,6 +79,7 @@ pub(crate) fn build_defs(cx: &mut Ctx) -> rustc_hash::FxHashSet<DefId> {
         };
         cx.defs[i] = def;
     }
+    crate::collect::host_sig::same_imports(cx);
     unchecked
 }
 

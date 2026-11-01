@@ -230,6 +230,13 @@ impl Builder<'_, '_, '_> {
                 DefKind::ExternFunction,
                 format!("declare intrinsic function {short}{sig}: {ret}"),
             ),
+            FnKind::Extern if f.host.is_some() => (
+                DefKind::ExternFunction,
+                format!(
+                    "declare host({:?}) function {short}{sig}: {ret}",
+                    f.host.as_ref().map_or("", |h| h.module.as_str())
+                ),
+            ),
             FnKind::Extern => (
                 DefKind::ExternFunction,
                 format!("declare function {short}{sig}: {ret}"),

@@ -1,0 +1,26 @@
+// velt/host natively: a host function may be declared and left uncalled, and a value that may
+// hold a `HostRef` (always `null` here: only a JS host makes one) is dropped like any other.
+import { HostRef } from "velt/host";
+
+declare host("app") function lookup(key: string): HostRef | null;
+
+class Session {
+  ref: HostRef | null = null;
+  name: string;
+
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+
+// Not reached: a call of `lookup` that a native build reaches is a compile error.
+function find(key: string): HostRef | null {
+  return lookup(key);
+}
+
+function main() {
+  const s = new Session("a");
+  console.log(s.name, s.ref == null);
+  const all = [new Session("b"), new Session("c")];
+  console.log(all.length, all[1].name);
+}
