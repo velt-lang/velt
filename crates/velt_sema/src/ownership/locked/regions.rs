@@ -346,7 +346,7 @@ fn part_holds_shared(cx: &mut Ctx, p: TyId, depth: u32) -> bool {
 }
 
 /// The classes extending class `d`, directly or not.
-fn subclasses(cx: &mut Ctx, d: DefId) -> Vec<DefId> {
+pub(super) fn subclasses(cx: &mut Ctx, d: DefId) -> Vec<DefId> {
     if cx.subclasses.is_none() {
         let mut map: FxHashMap<DefId, Vec<DefId>> = FxHashMap::default();
         let base_of = |cx: &Ctx, c: DefId| {

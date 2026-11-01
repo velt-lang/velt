@@ -524,7 +524,72 @@ pub(super) fn read_part(
     e: &Expr,
     (dest, bits): (u8, u8),
 ) -> bool {
-    r.read.is_some() && dest & OUT != 0 && bits & IN != 0 && holds_part(cx, r, d, e)
+    r.read.is_some()
+        && dest & OUT != 0
+        && bits & IN != 0
+        && may_hold_lock_type(cx, r, e.ty)
+        && holds_part(cx, r, d, e)
+}
+
+/// Can a value of type `t` be, or hold, a part of the value a `read` callback reads? Only
+/// through a type the value can hold (`Regions::lock_tys`), a class one of whose subclasses it
+/// holds, or a type that may hide one (a type parameter, an interface, a function, `any`). A
+/// fresh `{ status: number, body: string }` a function returns cannot.
+fn may_hold_lock_type(cx: &mut Ctx, r: &Regions, t: crate::hir::TyId) -> bool {
+    let mut seen = FxHashSet::default();
+    reaches_lock(cx, r, t, &mut seen)
+}
+
+fn reaches_lock(
+    cx: &mut Ctx,
+    r: &Regions,
+    t: crate::hir::TyId,
+    seen: &mut FxHashSet<crate::hir::TyId>,
+) -> bool {
+    if cx.is_copy(t) || cx.is_string_value(t) || !seen.insert(t) {
+        return false;
+    }
+    if seen.len() > 256 || r.lock_tys.contains(&t) {
+        return true;
+    }
+    if let Some(ms) = cx.union_members(t) {
+        return ms.into_iter().any(|m| reaches_lock(cx, r, m, seen));
+    }
+    match cx.ty.kind(t).clone() {
+        TyKind::Array(e) | TyKind::Option(e, _) => reaches_lock(cx, r, e, seen),
+        TyKind::Tuple(ts) => ts.into_iter().any(|x| reaches_lock(cx, r, x, seen)),
+        TyKind::Adt(d, args) => {
+            let Some(a) = cx.adt(d) else {
+                return true;
+            };
+            let fields: Vec<crate::hir::TyId> = a.fields.iter().map(|f| f.ty).collect();
+            let mut parts: Vec<crate::hir::TyId> =
+                fields.into_iter().map(|f| cx.subst(f, &args)).collect();
+            parts.extend(args.iter().copied());
+            // A value of a class may be one of its subclasses.
+            if cx.class_of(t).is_some() {
+                let lock_classes: Vec<DefId> = r
+                    .lock_tys
+                    .iter()
+                    .filter_map(|&l| match cx.ty.kind(l) {
+                        TyKind::Adt(ld, _) => Some(*ld),
+                        _ => None,
+                    })
+                    .collect();
+                for s in super::regions::subclasses(cx, d) {
+                    if lock_classes.contains(&s) {
+                        return true;
+                    }
+                    if let Some(sa) = cx.adt(s) {
+                        parts.extend(sa.fields[sa.own_fields_start..].iter().map(|f| f.ty));
+                    }
+                }
+            }
+            parts.into_iter().any(|p| reaches_lock(cx, r, p, seen))
+        }
+        // Type parameters, interfaces, functions, `any`: they may hide anything.
+        _ => true,
+    }
 }
 
 /// May `e` (in body `d`) be, or hold, a part of the value the callback reads (`read_part`)?

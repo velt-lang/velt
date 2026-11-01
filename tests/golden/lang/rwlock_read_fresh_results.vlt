@@ -1,0 +1,25 @@
+// check: no leaks
+// A `read` callback returning fresh plain values built from the store by functions of another
+// module: an object of a type the store cannot hold (also `T | null`), an array of numbers, an
+// array of tuples. None can be a part of the store, so each is returned as it is (#1541).
+import { Item, Store, route, prices, pairs } from "./_rwlock_read_routes_lib";
+
+function main() {
+  const store = new RwLock(new Store());
+  store.write((s) => {
+    s.items.push(new Item("a", 1));
+    s.items.push(new Item("b", 2));
+  });
+  const hit = store.read((s) => route(s, "/items"));
+  const miss = store.read((s) => route(s, "/none"));
+  const ps = store.read((s) => prices(s));
+  const pp = store.read((s) => pairs(s));
+  ps.push(3);
+  pp[0][1] = 10;
+  store.write((s) => {
+    s.items[0].price = 5;
+  });
+  console.log(hit === null ? "none" : `${hit.status} ${hit.body}`, miss === null);
+  console.log(JSON.stringify(ps), JSON.stringify(pp));
+  store.read((s) => console.log(s.items[0].price));
+}
