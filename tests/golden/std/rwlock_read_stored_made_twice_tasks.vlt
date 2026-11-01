@@ -10,9 +10,9 @@ async function reader(a: shared<RwLock<Box>>, n: number): Promise<number> {
   const out: number[][][] = [];
   for (let i = 0; i < n; i++) {
     a.read((x) => {
-      const c = x.items.concat([[i]]);
-      out.push(structuredClone(c));
-      out.push(structuredClone(c));
+      const c = structuredClone(x.items.concat([[i]]));
+      out.push(c);
+      out.push(c);
     });
   }
   let same = 0;

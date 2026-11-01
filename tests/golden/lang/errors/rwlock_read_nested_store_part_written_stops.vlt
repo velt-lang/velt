@@ -1,9 +1,6 @@
 // An array a `read` nested in another stores into a container of the code outside every read,
-// into which the outer callback then stores a part of the lock's value: the nested store makes
-// it the caller's, as the same object, and that later store through the outer callback's
-// variable stops the program instead of changing only a copy (#1523, #1541; Node shares the
-// array, and the part with it). A class object in its place stops at the nested store,
-// rwlock_read_nested_store_part_stops.
+// into which the outer callback then stores a part of the lock's value: an error at the store,
+// since JavaScript would share that part with the caller (#1523, #1541).
 class Rows {
   items: number[][] = [[1, 2], [3]];
 }
@@ -15,7 +12,7 @@ function main() {
   c.read((x) => {
     const l: number[][][] = [[[1]]];
     d.read((y) => {
-      rows.push(structuredClone(l[0]));
+      rows.push(l[0]);
     });
     console.log("stored", rows[0] === l[0]);
     l[0].push(x.items[0]);

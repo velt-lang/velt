@@ -8,8 +8,8 @@ class Box {
 function pick(a: RwLock<Box>, out: number[][][]): number {
   return a.read((x) => {
     for (let i = 0; i < 5; i++) {
-      const c = x.items.slice(i % 2);
-      out.push(structuredClone(c));
+      const c = structuredClone(x.items.slice(i % 2));
+      out.push(c);
       if (out.length == 3) {
         return c.length;
       }

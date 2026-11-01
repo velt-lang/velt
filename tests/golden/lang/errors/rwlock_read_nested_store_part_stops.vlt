@@ -1,7 +1,6 @@
 // A class object a `read` nested in another stores into a container of the code outside every
-// read, into which the callbacks also store a part of the lock's value, stops the program at
-// the nested store while they still reference it (as before nested stores kept objects the
-// readers' own): stored as a copy, it would miss their later changes (#1523; Node shares it).
+// read, into which the outer callback also stores a part of the lock's value: an error at the
+// store, since JavaScript would share that part (#1523, #1541).
 class Node2 {
   v: number[] = [];
   kids: Node2[] = [];
@@ -19,7 +18,7 @@ function main() {
     const n = new Node2();
     console.log("before");
     b.read((y) => {
-      top.push(n.clone());
+      top.push(n);
     });
     console.log("after");
     n.v.push(1);
