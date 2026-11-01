@@ -567,3 +567,60 @@ fn runs_of_different_tests_build_harnesses_of_their_own() {
         .collect();
     assert_eq!(harnesses.len(), 2, "{harnesses:?}");
 }
+
+/// Many runs of the same tests at once in one package (an editor and a terminal; std's tests run
+/// every folder of tests/std, debug and release), while a test file changes: the runs build the
+/// runner and each harness under one name, so one run links a harness again while another run
+/// starts it. None may start a file the linker is still writing: a run that did failed with
+/// `cannot run ...: Permission denied` (#2026); on Windows the start failed (`being used by
+/// another process`), or the link failed on the running harness and its files were built alone.
+#[test]
+fn concurrent_runs_never_start_a_program_being_linked() {
+    runtime_support::build_native_runtime(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    // Versions of `a` that compile to different code, each written whole (renamed into place).
+    let write_a = |version: usize, by: usize| {
+        let text = format!("export function test_a() {{\n  assertEq({version}, {version});\n}}\n");
+        let part = dir.join(format!("a-{by}.part"));
+        std::fs::write(&part, text).unwrap();
+        std::fs::rename(&part, dir.join("t/a.test.vlt")).unwrap();
+    };
+    std::fs::create_dir_all(dir.join("t")).unwrap();
+    write_a(0, 0);
+    write(dir, "t/b.test.vlt", "export function test_b() {}\n");
+    write(dir, "t/c.test.vlt", C);
+    let runs: usize = std::env::var("VELT_CONCURRENT_RUNS")
+        .ok()
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(12);
+    let outputs: Vec<Output> = std::thread::scope(|s| {
+        let threads: Vec<_> = (0..runs)
+            .map(|i| {
+                s.spawn(move || {
+                    (0..4)
+                        .map(|round| {
+                            write_a(i * 4 + round, i);
+                            velt_test(dir, &["t"])
+                        })
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        threads
+            .into_iter()
+            .flat_map(|t| t.join().unwrap())
+            .collect()
+    });
+    for o in outputs {
+        let stdout = String::from_utf8_lossy(&o.stdout);
+        let stderr = String::from_utf8_lossy(&o.stderr);
+        assert!(
+            o.status.success() && stdout.contains("3 passed; 0 failed"),
+            "{}\n{stdout}{stderr}",
+            o.status
+        );
+    }
+    // No file was built alone because its shared harness failed to link.
+    assert_eq!(built(dir), ["c_test", "harness", "runner"]);
+}
