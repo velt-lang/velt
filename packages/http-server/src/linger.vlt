@@ -5,26 +5,30 @@
 
 import { TcpStream } from "velt/net";
 
-/// The most of the peer's remaining input that is read, and for how long.
+/// The most of the peer's remaining input that is read, the longest pause in it, and the
+/// longest the lingering lasts (nginx's `lingering_timeout` and `lingering_time`).
 const LINGER_BYTES: i64 = 1048576;
-const LINGER_MS: i64 = 2000;
+const LINGER_PAUSE_MS: i64 = 2000;
+const LINGER_MAX_MS: i64 = 10000;
 
-/// Reads (and drops, into `scratch`) what the peer still sends, up to `LINGER_BYTES` for
-/// `LINGER_MS`, so closing with unread input does not reset the connection before the peer read
-/// the response (or the GOAWAY). The sending side is shut down already.
+/// Reads (and drops, into `scratch`) what the peer still sends, so closing with unread input
+/// does not reset the connection before the peer read the response (or the GOAWAY): until the
+/// peer closes, or sends nothing for `LINGER_PAUSE_MS`, or `LINGER_BYTES` came, or
+/// `LINGER_MAX_MS` passed. The sending side is shut down already.
 export async function linger(conn: TcpStream, scratch: u8[]) {
-  const until = Date.now() + LINGER_MS;
+  const until = Date.now() + LINGER_MAX_MS;
   let left = LINGER_BYTES;
   while (left > 0) {
-    const wait = until - Date.now();
-    if (wait <= 0) {
-      return;
-    }
     const n = conn.tryRead(scratch);
     if (n == null) {
       return;
     }
     if (n == 0) {
+      const rest = until - Date.now();
+      if (rest <= 0) {
+        return;
+      }
+      const wait = rest < LINGER_PAUSE_MS ? rest : LINGER_PAUSE_MS;
       if (!(await conn.readableWithin(wait as number))) {
         return;
       }
