@@ -1,0 +1,37 @@
+// Elements of an array view read as several operands of one call (#1942): each read converts
+// its element into the view's mirror, which may move the mirror's buffer, so an element read
+// before it is held with a reference of its own, as in Node.
+interface VNode {
+  tag: string;
+}
+type El = VNode | string | number | boolean | null;
+
+function make(): any[] {
+  return ["a", "b", "c", "d", "e"];
+}
+const out = make() as El[];
+console.log(out[0], out[1], out[2], out[3], out[4]);
+
+// Past several growths of the mirror, in a call of the program's own function.
+function many(): any[] {
+  return ["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11"];
+}
+function join(...xs: El[]): string {
+  return xs.map((x) => String(x)).join(",");
+}
+function five(a: El, b: El, c: El, d: El, e: El): string {
+  return `${a}|${b}|${c}|${d}|${e}`;
+}
+const m = many() as El[];
+console.log(five(m[0], m[1], m[2], m[3], m[4]));
+const m2 = many() as El[];
+console.log(join(m2[0], m2[1], m2[2], m2[3], m2[4], m2[5], m2[6], m2[7], m2[8], m2[9], m2[10]));
+const m3 = many() as El[];
+console.log(`${m3[0]} ${m3[1]} ${m3[2]} ${m3[3]} ${m3[4]} ${m3[5]} ${m3[6]} ${m3[7]} ${m3[8]}`);
+
+// Objects among the elements.
+function mixed(): any[] {
+  return [{ tag: "div" }, "t", 1, true, null, { tag: "span" }];
+}
+const x = mixed() as El[];
+console.log((x[0] as VNode).tag, x[1], x[2], x[3], x[4], (x[5] as VNode).tag);
