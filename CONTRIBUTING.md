@@ -112,12 +112,13 @@ Two checks catch them before that:
   with the end of its output (all of it in `target/repeat/logs`). A change of whole-line comments
   only (a `// timing:` marker) is skipped. `--times <n>`, `--jobs <n>` and `--time-limit <s>`
   (default 600: no new run starts after it) change the defaults, as do `VELT_REPEAT_TIMES`,
-  `VELT_REPEAT_JOBS`, `VELT_REPEAT_TIME_LIMIT` and `VELT_REPEAT_BURNERS` (the spinning threads); `--paths <files>` repeats given files. Pull
-  requests run it in the `test` job on Linux, from that job's build, and in a Windows job that
-  starts only when a test file changed or the change touches a package, networking
-  (`std/net/`, the runtime's), timers or the test runner (it also runs those packages' tests:
-  `windows_packages` in `crates/xtask/src/os.rs`). Run it yourself before pushing a new test
-  that waits on a server, a socket, a task or a timer.
+  `VELT_REPEAT_JOBS`, `VELT_REPEAT_TIME_LIMIT` and `VELT_REPEAT_BURNERS` (the spinning
+  threads); `--paths <files>` repeats given files. Pull requests run it 50 times per file in the
+  `test` job on Linux, from that job's build, and 20 times in a Windows job that starts only
+  when a test file changed or the change touches a package, networking (`std/net/`, the
+  runtime's), timers or the test runner (it also runs those packages' tests: `windows_packages`
+  in `crates/xtask/src/os.rs`). Run it yourself before pushing a new test that waits on a
+  server, a socket, a task or a timer.
 - The timing lint (`crates/xtask/src/timing_lint.rs`; the gate's `lint` part and `cargo xtask
   precheck`) flags `sleep(`, `delay(`, `setTimeout(` and `setInterval(` in test files, in
   `tests/std/` and in the goldens outside `tests/golden/lang/` and `m1/`…`m4/` (language programs
@@ -125,7 +126,9 @@ Two checks catch them before that:
   observes instead: an await, a channel, a promise the server resolves. Where time is what the
   test checks (an idle timeout, a timer's order, a guard timer that must never fire), say so with
   `// timing: <reason>` on the line, in the comments right above it, at the top of the test, or
-  at the top or the end of the file (a golden's end: no line number in its output moves).
+  at the top or the end of the file (a golden's end: no line number in its output moves). The
+  marker is for tests whose subject is time; a test that needs one event before another waits
+  on a gate (a promise, a channel, a counter it polls), never on a marked sleep.
 
 Install [cargo-nextest](https://nexte.st) (`cargo install cargo-nextest --locked`): with it the
 gate runs only the selected tests, and test binaries in parallel; without it every test runs, one

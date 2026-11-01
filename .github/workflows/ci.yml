@@ -67,13 +67,15 @@ jobs:
         run: >-
           cargo xtask check --part ${{ matrix.part }} --fast --base HEAD^1
           ${{ contains(github.event.pull_request.labels.*.name, 'ci:full') && '--full' || '' }}
-      # The test files the change adds or edits (velt test files, goldens), 20 times each at once
-      # on twice as many threads as the runner has cores, from the build above: a test that
-      # orders events by timing fails here instead of in the merge queue (crates/xtask/src/
-      # repeat.rs). With no test file changed it says so and stops, before building anything.
+      # The test files the change adds or edits (velt test files, goldens), 50 times each at once
+      # on twice as many threads as the runner has cores beside a spinning thread per core, from
+      # the build above: a test that orders events by timing fails here instead of in the merge
+      # queue (crates/xtask/src/repeat.rs). 50, not the default 20: on the 4-vCPU runner a race
+      # with a few milliseconds of slack passed 20 runs. With no test file changed it says so and
+      # stops, before building anything.
       - name: cargo xtask repeat (the changed tests, under load)
         if: matrix.part == 'test'
-        run: cargo xtask repeat --base HEAD^1
+        run: cargo xtask repeat --base HEAD^1 --times 50
 
   # Whether the change touches OS-specific code, so the pull request is linted on Windows and
   # macOS too (xtask builds with the runner's stable Rust in seconds, as for queue-plan).
