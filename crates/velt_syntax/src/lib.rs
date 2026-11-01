@@ -7,6 +7,7 @@
 
 pub mod ast;
 mod ast_names;
+mod codec;
 mod js_number;
 mod lexer;
 #[cfg(test)]
@@ -18,6 +19,8 @@ mod work;
 
 use rustc_hash::FxHashMap;
 
+/// A parsed module in a compact binary form, for caches of parsed modules (`codec`).
+pub use codec::{decode_module, encode_module, FORMAT as AST_FORMAT};
 pub use js_number::js_number;
 /// The names code reads without declaring them, scope-aware (sema checks the root file's early
 /// uses with these).
