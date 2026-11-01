@@ -26,7 +26,7 @@ pub const DEFAULT_X86_CPU: &str = "x86-64-v2";
 /// The x86 features the start-up check knows, by bit of its mask: the name `velt_rt_check_cpu`
 /// reports and the Cranelift ISA flag (`None`: Cranelift does not use the feature). The order is
 /// the runtime's (crates/velt_rt/src/cpu.rs), part of rt_abi.md "CPU check".
-pub const X86_FEATURES: [(&str, Option<&str>); 26] = [
+pub const X86_FEATURES: [(&str, Option<&str>); 23] = [
     ("SSE3", Some("has_sse3")),
     ("SSSE3", Some("has_ssse3")),
     ("SSE4.1", Some("has_sse41")),
@@ -50,9 +50,6 @@ pub const X86_FEATURES: [(&str, Option<&str>); 26] = [
     ("AVX512BITALG", Some("has_avx512bitalg")),
     ("SHA", None),
     ("PCLMULQDQ", None),
-    ("AES", None),
-    ("AVXVNNI", None),
-    ("AVX512VNNI", None),
 ];
 
 /// The bits of [`X86_FEATURES`] a CPU extension of the SIMD operations needs (`velt_vir::simd::Ext`,
@@ -73,7 +70,7 @@ pub fn ext_x86_features(ext: velt_vir::simd::Ext) -> u32 {
 
 /// The macro clang defines (`clang -dM -E -march=<cpu>`) for each feature of [`X86_FEATURES`], in
 /// its order: how the LLVM backend learns what a named CPU lets clang use.
-pub const X86_FEATURE_MACROS: [&str; 26] = [
+pub const X86_FEATURE_MACROS: [&str; 23] = [
     "__SSE3__",
     "__SSSE3__",
     "__SSE4_1__",
@@ -97,9 +94,6 @@ pub const X86_FEATURE_MACROS: [&str; 26] = [
     "__AVX512BITALG__",
     "__SHA__",
     "__PCLMUL__",
-    "__AES__",
-    "__AVXVNNI__",
-    "__AVX512VNNI__",
 ];
 
 /// The features of [`X86_FEATURES`] whose macro `defines` (clang's `-dM -E` output) defines.
@@ -312,7 +306,7 @@ pub fn required_features(target: &str, cpu: Option<&str>) -> Result<u32, String>
 fn host_x86_features() -> u32 {
     #[cfg(target_arch = "x86_64")]
     {
-        let has: [bool; 26] = [
+        let has: [bool; 23] = [
             std::arch::is_x86_feature_detected!("sse3"),
             std::arch::is_x86_feature_detected!("ssse3"),
             std::arch::is_x86_feature_detected!("sse4.1"),
@@ -336,9 +330,6 @@ fn host_x86_features() -> u32 {
             std::arch::is_x86_feature_detected!("avx512bitalg"),
             std::arch::is_x86_feature_detected!("sha"),
             std::arch::is_x86_feature_detected!("pclmulqdq"),
-            std::arch::is_x86_feature_detected!("aes"),
-            std::arch::is_x86_feature_detected!("avxvnni"),
-            std::arch::is_x86_feature_detected!("avx512vnni"),
         ];
         has.iter()
             .enumerate()

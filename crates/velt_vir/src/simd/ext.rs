@@ -35,7 +35,8 @@ impl Ext {
     }
 
     /// The runtime's byte that says whether the CPU has it (1) or not (0): set before any Velt
-    /// code runs, and 0 with `VELT_SIMD_DISABLE=sha` (or `clmul`; rt_abi.md "SIMD").
+    /// code runs, and 0 with `VELT_SIMD_DISABLE=sha` (or `clmul`; rt_abi.md "SIMD"). Code built
+    /// for a CPU that has the extension (`--cpu`) does not read it.
     pub fn flag_symbol(self) -> &'static str {
         match self {
             Ext::ShaArm => "velt_cpu_sha_arm",

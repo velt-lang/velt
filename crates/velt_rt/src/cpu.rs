@@ -2,7 +2,9 @@
 //! extension, 1 when this CPU has it, set by `init` before any Velt code runs and never changed
 //! after, so generated code reads it as invariant. `VELT_SIMD_DISABLE=sha` (or `clmul`, or
 //! `sha,clmul`) leaves those 0, which makes `velt/simd` emulate the instructions and std use its
-//! portable code (to test those paths on a CPU that has the extension).
+//! portable code (to test those paths on a CPU that has the extension). It affects only code that
+//! checks at run time: release code built for a CPU that has the extension (`--cpu`, whose
+//! features the start-up check checks) takes the check as true and never reads the flag.
 
 use std::sync::atomic::AtomicU8;
 
@@ -66,7 +68,7 @@ fn init_clmul() {
 
 /// The x86 features `velt_rt_check_cpu` checks, by bit of its mask (rt_abi.md "CPU check"; the
 /// order of `velt_codegen_cl::X86_FEATURES`). `VELT_CPU_DISABLE` names them in lowercase.
-const X86_FEATURES: [&str; 26] = [
+const X86_FEATURES: [&str; 23] = [
     "SSE3",
     "SSSE3",
     "SSE4.1",
@@ -90,9 +92,6 @@ const X86_FEATURES: [&str; 26] = [
     "AVX512BITALG",
     "SHA",
     "PCLMULQDQ",
-    "AES",
-    "AVXVNNI",
-    "AVX512VNNI",
 ];
 
 /// The psABI levels' masks, to name the level a program was built for.
@@ -106,7 +105,7 @@ const X86_LEVELS: [(&str, u32); 3] = [
 fn x86_features() -> u32 {
     #[cfg(target_arch = "x86_64")]
     {
-        let has: [bool; 26] = [
+        let has: [bool; 23] = [
             std::arch::is_x86_feature_detected!("sse3"),
             std::arch::is_x86_feature_detected!("ssse3"),
             std::arch::is_x86_feature_detected!("sse4.1"),
@@ -130,9 +129,6 @@ fn x86_features() -> u32 {
             std::arch::is_x86_feature_detected!("avx512bitalg"),
             std::arch::is_x86_feature_detected!("sha"),
             std::arch::is_x86_feature_detected!("pclmulqdq"),
-            std::arch::is_x86_feature_detected!("aes"),
-            std::arch::is_x86_feature_detected!("avxvnni"),
-            std::arch::is_x86_feature_detected!("avx512vnni"),
         ];
         has.iter()
             .enumerate()
