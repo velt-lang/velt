@@ -4,17 +4,20 @@
 // pooled connection across an `await`.
 import { serve } from "../src/lib";
 import { connect } from "velt/net";
+import { timeout } from "velt/task";
 import { describe, expect, it } from "velt/test";
+import { arrivals, arrive, gate, shut } from "./_gate";
 
 describe("a client that hangs up", () => {
   it("lets the handler it left finish", async () => {
-    const started = shared(0);
-    const finished = shared(0);
+    const started = gate();
+    const finished = gate();
     const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
       if (new URL(req.url).pathname == "/slow") {
-        started.add(1);
+        arrive(started);
+        // Its work, during which the client hangs up.
         await sleep(200);
-        finished.add(1);
+        arrive(finished);
       }
       return new Response("ok");
     });
@@ -22,15 +25,16 @@ describe("a client that hangs up", () => {
     try {
       const s = await connect(addr);
       await s.write("GET /slow HTTP/1.1\r\nHost: x\r\n\r\n");
-      await sleep(50);
+      // Hang up once the handler runs.
+      await timeout(arrivals(started), 5000);
       s.close();
-      // Long enough for the abandoned handler's wait to end.
-      await sleep(400);
-      expect(started.get()).toBe(1);
-      expect(finished.get()).toBe(1);
+      // The abandoned handler gets to its end (a cancelled one never would).
+      await timeout(arrivals(finished), 5000);
       expect(await (await fetch(`http://${addr}/fast`)).text()).toBe("ok");
     } finally {
       await server.shutdown();
+      shut(started);
+      shut(finished);
     }
   });
 });
