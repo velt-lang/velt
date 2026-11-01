@@ -12,7 +12,7 @@ pub enum Intrinsic {
 
 impl Intrinsic {
     /// The operand types and the result type.
-    pub fn signature(self) -> (Vec<Ty>, Ty) {
+    pub fn signature(self) -> (&'static [Ty], Ty) {
         match self {
             Intrinsic::Math(op) => op.signature(),
         }

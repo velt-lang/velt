@@ -59,7 +59,7 @@ fn check_math_extern(i: usize, e: &ExternFn, errs: &mut Vec<String>) {
     let Some(op) = crate::math::MathOp::of_symbol(&e.symbol) else {
         return;
     };
-    if op.signature() != (e.params.clone(), e.ret) || e.noreturn {
+    if op.signature() != (e.params.as_slice(), e.ret) || e.noreturn {
         errs.push(format!(
             "extern#{i} {}: signature differs from the math operation's",
             e.symbol

@@ -312,10 +312,10 @@ fn math_intrinsics(pb: &mut ProgramBuilder) -> Vec<(FuncId, Vec<Operand>, Ty, &'
     for (op, args, exp) in cases {
         let (params, ret) = op.signature();
         if !pb.p.externs.iter().any(|e| e.symbol == op.symbol()) {
-            pb.ext(op.symbol(), &params, ret, false);
+            pb.ext(op.symbol(), params, ret, false);
         }
         let n = pb.p.funcs.len();
-        let mut fb = FuncBuilder::internal(&format!("rv{n}_{}", op.name()), &params, ret);
+        let mut fb = FuncBuilder::internal(&format!("rv{n}_{}", op.name()), params, ret);
         let r = fb.local(ret);
         let b = fb.block();
         let operands = (0..params.len() as u32)
