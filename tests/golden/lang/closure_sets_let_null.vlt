@@ -1,0 +1,12 @@
+// A `let` that a closure assigns is read as its declared type after a call that may have run the
+// closure (#1481): the initializer's narrowing doesn't survive the call.
+let n: number | null = 1;
+const f = () => (n = null);
+f();
+console.log(n);
+
+let s: string | undefined = "x";
+function reset(): void { s = undefined; }
+const g = () => reset();
+g();
+console.log(s === undefined, s);
