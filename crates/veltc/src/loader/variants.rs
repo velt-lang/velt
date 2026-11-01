@@ -55,6 +55,8 @@ enum Entry {
         spec: String,
         name: String,
     },
+    /// Brought in by `export *` from several files that disagree: why.
+    Ambiguous(String),
 }
 
 /// A file's exports as written: name → entry and where it is exported, and the specifiers of
@@ -62,8 +64,21 @@ enum Entry {
 #[derive(Debug)]
 pub(super) struct Table {
     names: BTreeMap<String, (Entry, Span)>,
-    stars: Vec<String>,
+    stars: Vec<Star>,
 }
+
+/// An `export * from "<spec>"` of a file: the file it names (`None` outside the package or when
+/// there is none) and where it is written.
+#[derive(Debug)]
+struct Star {
+    spec: String,
+    file: Option<PathBuf>,
+    span: Span,
+}
+
+/// The names `export *` brings into a file: name → the (file, name) each comes from (more than
+/// one: the name is ambiguous unless they agree), or why they cannot be listed.
+pub(super) type StarResult = Rc<Result<BTreeMap<String, Vec<(PathBuf, String)>>, String>>;
 
 /// A file's [`Table`], or why it cannot be read (`reported`: a diagnostic already says why).
 pub(super) type TableResult = Rc<Result<Table, (String, bool)>>;
@@ -160,17 +175,32 @@ impl Loader<'_, '_> {
                 return None;
             }
         };
-        if let Some(spec) = table.stars.first() {
-            let msg = format!(
-                "`{}`: variant `{target}` re-exports `export * from \"{spec}\"`: list the names, so the variants' APIs can be compared",
-                r.name
-            );
-            self.diags.push(Diagnostic::error(msg, r.span));
-            return None;
+        // What `export *` brings in, besides the names the variant writes itself (which win).
+        let mut entries: Vec<(String, Entry, Span)> = (table.names.iter())
+            .map(|(n, (e, s))| (n.clone(), e.clone(), *s))
+            .collect();
+        if let Some(star) = table.stars.first() {
+            let span = star.span;
+            match &*self.star_names(file, &r.base) {
+                Err(why) => {
+                    let msg = format!("`{}`: variant `{target}` cannot be compared: {why}", r.name);
+                    self.diags
+                        .push(Diagnostic::error(msg, span).with_note(SAME_API));
+                    return None;
+                }
+                Ok(names) => {
+                    for (name, sources) in names {
+                        if !table.names.contains_key(name) {
+                            let entry = self.star_entry(name, sources, &r.base);
+                            entries.push((name.clone(), entry, span));
+                        }
+                    }
+                }
+            }
         }
         let mut api = Api::new();
         let mut ok = true;
-        for (name, (entry, span)) in &table.names {
+        for (name, entry, span) in &entries {
             match self.entry_sig(entry, &r.base) {
                 Ok(sig) => {
                     api.insert(name.clone(), Export { sig, span: *span });
@@ -183,6 +213,7 @@ impl Loader<'_, '_> {
                     );
                     self.diags
                         .push(Diagnostic::error(msg, *span).with_note(SAME_API));
+                    continue;
                 }
             }
         }
@@ -197,6 +228,7 @@ impl Loader<'_, '_> {
     fn entry_sig(&mut self, entry: &Entry, base: &Path) -> Result<String, String> {
         let (mut file, mut name) = match entry {
             Entry::Sig(sig) | Entry::Outside(sig) => return Ok(sig.clone()),
+            Entry::Ambiguous(why) => return Err(why.clone()),
             Entry::Link {
                 file: None, spec, ..
             } => {
@@ -228,7 +260,13 @@ impl Loader<'_, '_> {
                 Err((why, _)) => break Err(format!("`{shown}` {why}")),
                 Ok(t) => match t.names.get(&name) {
                     Some((Entry::Sig(sig) | Entry::Outside(sig), _)) => break Ok(sig.clone()),
-                    Some((Entry::Link { file: None, spec, .. }, _)) => {
+                    Some((Entry::Ambiguous(why), _)) => break Err(why.clone()),
+                    Some((
+                        Entry::Link {
+                            file: None, spec, ..
+                        },
+                        _,
+                    )) => {
                         break Err(format!("`{spec}` (in `{shown}`) names no file"));
                     }
                     Some((
@@ -239,11 +277,22 @@ impl Loader<'_, '_> {
                         },
                         _,
                     )) => (f.clone(), n.clone()),
-                    None => match t.stars.first() {
-                        Some(spec) => break Err(format!(
-                            "`{name}` comes from `export * from \"{spec}\"` in `{shown}`: list the names there"
-                        )),
-                        None => break Err(format!("`{shown}` does not export `{name}`")),
+                    None if t.stars.is_empty() => {
+                        break Err(format!("`{shown}` does not export `{name}`"))
+                    }
+                    None => match &*self.star_names(&file, base) {
+                        Err(why) => break Err(why.clone()),
+                        Ok(names) => match names.get(&name).map(|s| s.as_slice()) {
+                            None => break Err(format!("`{shown}` does not export `{name}`")),
+                            Some([one]) => one.clone(),
+                            Some(many) => {
+                                let many = many.to_vec();
+                                match self.star_entry(&name, &many, base) {
+                                    Entry::Sig(sig) => break Ok(sig),
+                                    _ => break Err(ambiguous(&name, &many, base)),
+                                }
+                            }
+                        },
                     },
                 },
             };
@@ -253,6 +302,84 @@ impl Loader<'_, '_> {
             self.variant_sigs.insert(key, result.clone());
         }
         result
+    }
+
+    /// The names the `export *` statements of `file` bring in (see [`StarResult`]), once per
+    /// load: the files they reach, breadth first with a visited set (a cycle of stars ends), each
+    /// file's own exports but `default`; a name found at a smaller depth hides the same name
+    /// deeper (a file's own exports win over what its stars bring), and two sources at one depth
+    /// make it ambiguous. A star from outside the package cannot be listed: an error.
+    fn star_names(&mut self, file: &Path, base: &Path) -> StarResult {
+        let key = super::file_key(file);
+        if let Some(done) = self.variant_stars.get(&key) {
+            return done.clone();
+        }
+        let result = Rc::new(self.read_star_names(file, base));
+        self.variant_stars.insert(key, result.clone());
+        result
+    }
+
+    fn read_star_names(
+        &mut self,
+        file: &Path,
+        base: &Path,
+    ) -> Result<BTreeMap<String, Vec<(PathBuf, String)>>, String> {
+        let mut found: BTreeMap<String, (usize, Vec<(PathBuf, String)>)> = BTreeMap::new();
+        let mut seen: HashSet<PathBuf> = HashSet::from([super::file_key(file)]);
+        let mut queue: std::collections::VecDeque<(PathBuf, usize)> =
+            std::collections::VecDeque::from([(file.to_path_buf(), 0)]);
+        while let Some((at, depth)) = queue.pop_front() {
+            let table = self.table(&at);
+            let shown = vpm::relpath::relative(&at, base);
+            let t = match &*table {
+                Ok(t) => t,
+                Err((why, _)) => return Err(format!("`{shown}` {why}")),
+            };
+            if depth > 0 {
+                for name in t.names.keys().filter(|n| *n != "default") {
+                    let (at_depth, sources) =
+                        found.entry(name.clone()).or_insert_with(|| (depth, vec![]));
+                    let source = (super::file_key(&at), name.clone());
+                    if *at_depth == depth && !sources.contains(&source) {
+                        sources.push(source);
+                    }
+                }
+            }
+            for star in &t.stars {
+                let Some(next) = &star.file else {
+                    return Err(format!(
+                        "`export * from \"{}\"` in `{shown}` brings in names that cannot be listed here: list them",
+                        star.spec
+                    ));
+                };
+                if seen.insert(super::file_key(next)) {
+                    queue.push_back((next.clone(), depth + 1));
+                }
+            }
+        }
+        Ok(found.into_iter().map(|(n, (_, s))| (n, s)).collect())
+    }
+
+    /// The entry for `name`, which `export *` brings in from `sources`: a link to the one source,
+    /// the signature when several agree, an ambiguity (an unresolvable link) when they don't.
+    fn star_entry(&mut self, name: &str, sources: &[(PathBuf, String)], base: &Path) -> Entry {
+        let link = |(file, name): &(PathBuf, String)| Entry::Link {
+            file: Some(file.clone()),
+            spec: String::new(),
+            name: name.clone(),
+        };
+        if let [one] = sources {
+            return link(one);
+        }
+        let sigs: Vec<Result<String, String>> = (sources.iter())
+            .map(|s| self.entry_sig(&link(s), base))
+            .collect();
+        match sigs.first() {
+            Some(Ok(first)) if sigs.iter().all(|s| s.as_ref().ok() == Some(first)) => {
+                Entry::Sig(first.clone())
+            }
+            _ => Entry::Ambiguous(ambiguous(name, sources, base)),
+        }
     }
 
     /// `file`'s exports as written ([`Table`]), read and parsed once per load.
@@ -275,38 +402,74 @@ impl Loader<'_, '_> {
             .filter_map(|item| item_name(item).map(|n| (n, item)))
             .collect();
         let dir = file.parent().unwrap_or(Path::new(""));
+        // The bindings the file imports by name: local name → (specifier, name there).
+        let imported: BTreeMap<&str, (&str, &str)> = (module.items.iter())
+            .filter(|item| !item.exported)
+            .filter_map(|item| match &item.kind {
+                ItemKind::Import(imp) if !imp.from.is_empty() => Some(imp),
+                _ => None,
+            })
+            .flat_map(|imp| {
+                imp.names.iter().map(move |n| {
+                    let local = n.alias.as_ref().unwrap_or(&n.name);
+                    (
+                        local.name.as_str(),
+                        (imp.from.as_str(), n.name.name.as_str()),
+                    )
+                })
+            })
+            .collect();
+        // `name` of module `spec`: a link to its file for a relative one, else the specifier.
+        let link = |spec: &str, name: &str| {
+            if !(spec.starts_with("./") || spec.starts_with("../")) {
+                return Entry::Outside(format!("`{name}` from \"{spec}\""));
+            }
+            let target = vpm::relpath::normalize(&dir.join(spec));
+            let file = super::locate::relative_files(target)
+                .into_iter()
+                .flatten()
+                .find(|f| vpm::probe::is_file(f));
+            Entry::Link {
+                file,
+                spec: spec.to_string(),
+                name: name.to_string(),
+            }
+        };
         let mut table = Table {
             names: BTreeMap::new(),
             stars: vec![],
         };
         for item in module.items.iter().filter(|i| i.exported) {
             match &item.kind {
-                ItemKind::Import(imp) if imp.all => table.stars.push(imp.from.clone()),
-                ItemKind::Import(imp) => {
-                    let local = imp.from.is_empty();
+                ItemKind::Import(imp) if imp.all => {
                     let relative = imp.from.starts_with("./") || imp.from.starts_with("../");
-                    let linked = relative.then(|| {
-                        let target = vpm::relpath::normalize(&dir.join(&imp.from));
-                        super::locate::relative_files(target)
-                            .into_iter()
-                            .flatten()
-                            .find(|f| vpm::probe::is_file(f))
+                    let file = relative
+                        .then(|| {
+                            let target = vpm::relpath::normalize(&dir.join(&imp.from));
+                            super::locate::relative_files(target)
+                                .into_iter()
+                                .flatten()
+                                .find(|f| vpm::probe::is_file(f))
+                        })
+                        .flatten();
+                    table.stars.push(Star {
+                        spec: imp.from.clone(),
+                        file,
+                        span: imp.from_span,
                     });
+                }
+                ItemKind::Import(imp) => {
                     for n in &imp.names {
                         let shown = n.alias.as_ref().unwrap_or(&n.name);
-                        let entry = match (&linked, local) {
-                            (_, true) => Entry::Sig(match locals.get(n.name.name.as_str()) {
-                                Some(item) => signature(item, &src),
-                                None => format!("`{}`", n.name.name),
-                            }),
-                            (Some(found), _) => Entry::Link {
-                                file: found.clone(),
-                                spec: imp.from.clone(),
-                                name: n.name.name.clone(),
+                        let name = &n.name.name;
+                        let entry = match (imp.from.is_empty(), locals.get(name.as_str())) {
+                            (true, Some(item)) => Entry::Sig(signature(item, &src)),
+                            // `export { a }` of a binding the file imports: where it comes from.
+                            (true, None) => match imported.get(name.as_str()) {
+                                Some((spec, original)) => link(spec, original),
+                                None => Entry::Sig(format!("`{name}`")),
                             },
-                            (None, _) => {
-                                Entry::Outside(format!("`{}` from \"{}\"", n.name.name, imp.from))
-                            }
+                            (false, _) => link(&imp.from, name),
                         };
                         table.names.insert(shown.name.clone(), (entry, shown.span));
                     }
@@ -342,6 +505,17 @@ impl Loader<'_, '_> {
         }
         Ok((id, module))
     }
+}
+
+/// Why `name` is ambiguous: `export *` brings it in from several files that disagree.
+fn ambiguous(name: &str, sources: &[(PathBuf, String)], base: &Path) -> String {
+    let files: Vec<String> = (sources.iter())
+        .map(|(f, _)| format!("`{}`", vpm::relpath::relative(f, base)))
+        .collect();
+    format!(
+        "`{name}` is ambiguous: `export *` brings it in from {} with different signatures",
+        files.join(" and ")
+    )
 }
 
 /// The note on every mismatch.

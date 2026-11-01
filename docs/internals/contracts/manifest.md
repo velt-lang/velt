@@ -219,8 +219,16 @@ directory (`NpmResolver::resolve_in`) before Node's search.
   files relative to `std/`). Not supported, each a manifest error: `#x/*` patterns, nested
   condition objects, arrays, `null` and bare-package targets, unknown conditions. An npm
   package's `#name` resolves through its `package.json` `imports` (`NpmResolver::resolve_import`,
-  Node's PACKAGE_IMPORTS_RESOLVE, `SERVER_CONDITIONS`), never a Velt package's map; its package
-  scope is the nearest `package.json` below the Velt package root. `velt manifest --json` prints a name's variants as
+  Node's PACKAGE_IMPORTS_RESOLVE, `SERVER_CONDITIONS`; a target naming another package is an
+  error), never a Velt package's map. The importer's package scope is its nearest `package.json`
+  (`NpmResolver::package_scope`); it is an npm package's (`loader::conditional::npm_scope`)
+  outside every Velt package, and inside one unless it is the Velt root's own or a nameless
+  folder file without `exports` or `imports` that no workspace lists
+  (`NpmResolver::is_npm_package`); below `node_modules` and a git dependency's provided packages
+  always. Variants are compared through relative re-exports, local `export { a }` of imported
+  bindings and `export *` (expanded breadth first, `default` left out; a name two stars bring in
+  with different signatures, or a star from outside the package, is an error). `velt manifest
+  --json` prints a name's variants as
   `[condition, file]` pairs, in order.
 - `entry` is a `/`-separated path inside the package (not empty, not absolute, no `..`).
 - `description` (additive, #184): one line of at most 300 characters (Unicode scalar values), no

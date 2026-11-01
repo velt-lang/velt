@@ -160,6 +160,7 @@ pub fn load_with_roots(
         variant_checks: vec![],
         variant_tables: HashMap::new(),
         variant_sigs: HashMap::new(),
+        variant_stars: HashMap::new(),
     };
     if let Some(std) = &opts.std_root {
         match prelude_files(std) {
@@ -268,6 +269,8 @@ struct Loader<'a, 'o> {
     variant_tables: HashMap<PathBuf, variants::TableResult>,
     /// The signature each (file, name) re-export chain resolves to, for [`variants`].
     variant_sigs: HashMap<(PathBuf, String), Result<String, String>>,
+    /// What each file's `export *` brings in, for [`variants`].
+    variant_stars: HashMap<PathBuf, variants::StarResult>,
 }
 
 impl Loader<'_, '_> {

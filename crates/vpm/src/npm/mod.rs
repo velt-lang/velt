@@ -91,6 +91,8 @@ pub struct NpmResolver {
 /// A workspace's packages by name, and the pattern whose walk was cut short, if one was.
 struct Workspace {
     by_name: HashMap<String, PathBuf>,
+    /// Every member directory (named or not), canonical.
+    members: Vec<PathBuf>,
     cut: Option<String>,
 }
 
@@ -216,6 +218,9 @@ impl NpmResolver {
             let found = workspace::patterns(dir).map(|patterns| {
                 let listing = workspace::package_dirs_limited(dir, &patterns, max);
                 let mut by_name = HashMap::new();
+                let members = (listing.dirs.iter())
+                    .map(|d| std::fs::canonicalize(d).unwrap_or_else(|_| d.clone()))
+                    .collect();
                 for pkg in listing.dirs {
                     if let Some(name) = self.manifest_name(&pkg) {
                         by_name.entry(name).or_insert(pkg);
@@ -223,6 +228,7 @@ impl NpmResolver {
                 }
                 Workspace {
                     by_name,
+                    members,
                     cut: listing.cut,
                 }
             });
@@ -323,6 +329,30 @@ impl NpmResolver {
             &found.all,
             found.runtime,
         )
+    }
+
+    /// Whether the `package.json` in `dir` is an npm package's rather than a folder's settings
+    /// (`{ "type": "module" }`): it names a package, has `exports` or `imports`, or a workspace
+    /// around it (`pnpm-workspace.yaml`, `workspaces` in a `package.json` above) lists `dir`.
+    pub fn is_npm_package(&mut self, dir: &Path) -> bool {
+        let declares = self.manifest(dir).is_some_and(|m| {
+            ["name", "exports", "imports"]
+                .iter()
+                .any(|k| m.get(k).is_some())
+        });
+        if declares {
+            return true;
+        }
+        let dir = crate::relpath::absolute(dir);
+        let key = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        let own = key(&dir);
+        let ancestors: Vec<PathBuf> = dir.ancestors().skip(1).map(Path::to_path_buf).collect();
+        for above in ancestors {
+            if let Some(ws) = self.workspace(&above) {
+                return ws.by_name.values().any(|d| key(d) == own) || ws.members.contains(&own);
+            }
+        }
+        false
     }
 
     /// The `name` of the `package.json` in `dir`, if it has one.

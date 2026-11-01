@@ -129,11 +129,13 @@ impl Loader<'_, '_> {
 
 /// The npm package scope of `importer` when it belongs to an npm package rather than to a Velt
 /// package: the nearest directory above it with a `package.json` (Node's package scope), when
-/// that is an npm package's: outside every Velt package (a workspace package, a plain
-/// TypeScript program), below a `node_modules` directory, or one a git dependency of the Velt
-/// package provides. Its `#name`s resolve through that `package.json`'s `imports`, as in Node,
-/// never through a Velt package's map. Any other `package.json` inside a Velt package (its root's
-/// for TypeScript tools, a folder's `{ "type": "module" }`) leaves its `#name`s to `package.vlt`.
+/// that is an npm package's. Outside every Velt package (a plain TypeScript program, a workspace
+/// package outside it) any `package.json` is. Inside one, every `package.json` but the Velt
+/// root's own is, unless it is a nameless folder file with neither `exports` nor `imports` (a
+/// folder's `{ "type": "module" }`) that no workspace lists: one that names a package, has
+/// `exports` or its own `imports`, is a workspace member (`pnpm-workspace.yaml`, `workspaces`),
+/// lies below `node_modules` or comes from a git dependency is an npm package. Its `#name`s resolve
+/// through its `imports`, as in Node, never through a Velt package's map.
 fn npm_scope(
     npm: &mut vpm::npm::NpmResolver,
     importer: &Path,
@@ -148,12 +150,15 @@ fn npm_scope(
     let Ok(below) = npm_key.strip_prefix(&root) else {
         return None;
     };
+    if below.as_os_str().is_empty() {
+        return None;
+    }
     let in_node_modules = below.components().any(|c| c.as_os_str() == "node_modules");
     let provided = npm.package_name(&scope).is_some_and(|name| {
         let dir = packages.and_then(|p| p.npm_package(importer, &name));
         dir.is_some_and(|d| key(&d) == npm_key)
     });
-    (in_node_modules || provided).then_some(scope)
+    (in_node_modules || provided || npm.is_npm_package(&scope)).then_some(scope)
 }
 
 /// The package `importer` belongs to, whose `imports` its `#name`s resolve in.

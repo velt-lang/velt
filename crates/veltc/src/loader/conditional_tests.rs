@@ -377,6 +377,57 @@ fn an_npm_package_resolves_its_own_names() {
     );
 }
 
+/// A Velt program at the root of an npm workspace (sigx's layout): a workspace package below it
+/// (`pnpm-workspace.yaml` `packages/*`, or a `workspaces` field) resolves its own `#name`s through
+/// its `package.json`, as Node does, whether or not it names itself.
+#[test]
+fn a_workspace_package_resolves_its_own_names() {
+    for (named, listing) in [(true, "pnpm"), (false, "pnpm"), (false, "npm")] {
+        let t = Tree::new();
+        t.write(
+            "app/src/util.vlt",
+            "export function u(): string { return \"app\"; }\n",
+        );
+        match listing {
+            "pnpm" => t.write("app/pnpm-workspace.yaml", "packages:\n  - packages/*\n"),
+            _ => t.write(
+                "app/package.json",
+                r#"{ "private": true, "workspaces": ["packages/*"] }"#,
+            ),
+        };
+        let name = if named {
+            r#""name": "foo", "exports": "./dist/index.js", "#
+        } else {
+            ""
+        };
+        t.write(
+            "app/packages/foo/package.json",
+            &format!(r##"{{ {name}"imports": {{ "#util": "./dist/util.js" }} }}"##),
+        );
+        t.write(
+            "app/packages/foo/src/index.ts",
+            "import { u } from \"#util\";\nexport function f(): number { return u(); }\n",
+        );
+        t.write(
+            "app/packages/foo/src/util.ts",
+            "export function u(): number { return 2; }\n",
+        );
+        let root = t.write(
+            "app/src/main.vlt",
+            "import { f } from \"../packages/foo/src/index\";\nimport { u } from \"#util\";\nfunction main() { f(); u(); }\n",
+        );
+        let g = graph(&t, map(&[("#util", &[("default", "./src/util.vlt")])]));
+        let (l, d, _) = load(&root, opts(&g, "aarch64-apple-darwin"));
+        assert!(d.is_empty(), "{named} {listing}: {:?}", messages(&d));
+        let files: Vec<&str> = paths(&l);
+        assert!(
+            files.iter().any(|p| p.ends_with("foo/src/util")),
+            "{named} {listing}: {files:?}"
+        );
+        assert!(files.contains(&"util"), "{files:?}");
+    }
+}
+
 /// A `package.json` inside a Velt package that is not an npm package's (a folder's
 /// `{ "type": "module" }`, the root's for TypeScript tools) leaves its files' `#name`s to
 /// `package.vlt`.
@@ -385,10 +436,7 @@ fn a_package_json_in_a_velt_package_is_not_an_npm_scope() {
     let t = Tree::new();
     let root = io_package(&t);
     t.write("app/package.json", r#"{ "name": "app", "type": "module" }"#);
-    t.write(
-        "app/src/sub/package.json",
-        r##"{ "type": "module", "imports": { "#io": "./other.js" } }"##,
-    );
+    t.write("app/src/sub/package.json", r#"{ "type": "module" }"#);
     t.write(
         "app/src/sub/w.vlt",
         "import { name } from \"#io\";\nexport function w(): string { return name(); }\n",
@@ -455,7 +503,7 @@ fn re_export_cycles_and_many_names_are_read_once() {
 }
 
 /// A name that a re-export chain cannot pin down is an error, not a match by specifier: a cycle
-/// that declares it nowhere, or an `export *` on the way.
+/// that declares it nowhere.
 #[test]
 fn names_that_cannot_be_resolved_are_errors() {
     let t = Tree::new();
@@ -467,14 +515,9 @@ fn names_that_cannot_be_resolved_are_errors() {
         "app/src/io/js.vlt",
         &format!("export {{ f }} from \"./c\";\n{tail}"),
     );
-    t.write("app/src/io/js/impl.vlt", "export * from \"./real\";\n");
-    t.write(
-        "app/src/io/js/real.vlt",
-        "export function g(x: string): string { return x; }\n",
-    );
     t.write(
         "app/src/io/wasi.vlt",
-        &format!("export {{ g as f }} from \"./js/impl\";\n{tail}"),
+        &format!("export function f(): i64 {{ return 1; }}\n{tail}"),
     );
     t.write(
         "app/src/io/native.vlt",
@@ -482,22 +525,111 @@ fn names_that_cannot_be_resolved_are_errors() {
     );
     let g = graph(&t, map(&[("#io", IO)]));
     let (_, d, _) = load(&root, check(&g));
-    let m = messages(&d);
-    assert!(
-        m.iter()
-            .any(|m| m.contains("`f` of `./src/io/js.vlt` cannot be compared")),
-        "{m:?}"
+    assert_eq!(
+        messages(&d),
+        ["`#io`: `f` of `./src/io/js.vlt` cannot be compared: `f` is re-exported in a cycle through `src/io/c.vlt` and declared nowhere on it"]
     );
-    assert!(
-        d.iter().any(
-            |d| d.message.contains("`./src/io/wasi.vlt` cannot be compared") && !d.notes.is_empty()
-        ),
-        "{m:?}"
+}
+
+/// `export *` is expanded through the files it names: variants that each re-export a common
+/// file agree; what one of them brings in through nested stars is compared like any name; a
+/// name two stars bring in with different signatures, or a star from outside the package, is
+/// an error.
+#[test]
+fn export_star_variants_are_expanded() {
+    let t = Tree::new();
+    let root = io_package(&t);
+    let common = "export function shared(x: i64): i64 { return x; }\n";
+    t.write("app/src/io/common.vlt", common);
+    t.write(
+        "app/src/io/nested.vlt",
+        "export * from \"./common\";\nexport * from \"./nested\";\n",
     );
-    let all = format!("{:?}", d);
+    for (v, from) in [
+        ("native", "./common"),
+        ("js", "./nested"),
+        ("wasi", "./common"),
+    ] {
+        t.write(
+            &format!("app/src/io/{v}.vlt"),
+            &format!(
+                "export * from \"{from}\";\nexport function name(): string {{ return \"{v}\"; }}\n"
+            ),
+        );
+    }
+    let g = graph(&t, map(&[("#io", IO)]));
+    let (_, d, _) = load(&root, check(&g));
+    assert!(d.is_empty(), "{:?}", messages(&d));
+    // A difference behind a star is found.
+    t.write(
+        "app/src/io/other.vlt",
+        "export function shared(x: f64): f64 { return x; }\n",
+    );
+    t.write(
+        "app/src/io/wasi.vlt",
+        "export * from \"./other\";\nexport function name(): string { return \"\"; }\n",
+    );
+    let (_, d, _) = load(&root, check(&g));
+    assert_eq!(
+        messages(&d),
+        ["`#io`: `shared` has another signature in `./src/io/wasi.vlt` than in `./src/io/js.vlt`"]
+    );
+    // Two stars bringing in one name with different signatures: ambiguous.
+    t.write(
+        "app/src/io/wasi.vlt",
+        "export * from \"./other\";\nexport * from \"./common\";\nexport function name(): string { return \"\"; }\n",
+    );
+    let (_, d, _) = load(&root, check(&g));
     assert!(
-        all.contains("in a cycle") && all.contains("export * from"),
-        "{m:?}"
+        d.iter()
+            .any(|d| d.message.contains("`shared` is ambiguous")),
+        "{:?}",
+        messages(&d)
+    );
+    // A star from outside the package cannot be listed.
+    t.write(
+        "app/src/io/wasi.vlt",
+        "export * from \"lib\";\nexport function name(): string { return \"\"; }\n",
+    );
+    let (_, d, _) = load(&root, check(&g));
+    assert!(
+        d.iter().any(|d| d.message.contains("cannot be listed")),
+        "{:?}",
+        messages(&d)
+    );
+}
+
+/// `export { a }` of a binding the file imports is compared by where it is declared.
+#[test]
+fn a_local_export_of_an_import_is_followed() {
+    let t = Tree::new();
+    let root = io_package(&t);
+    let tail = "export function name(): string { return \"\"; }\n";
+    t.write(
+        "app/src/io/a.vlt",
+        "export function f(x: i64): i64 { return x; }\n",
+    );
+    t.write(
+        "app/src/io/b.vlt",
+        "export function f(x: f64): f64 { return x; }\n",
+    );
+    t.write(
+        "app/src/io/js.vlt",
+        &format!("import {{ f }} from \"./a\";\nexport {{ f }};\n{tail}"),
+    );
+    t.write(
+        "app/src/io/wasi.vlt",
+        &format!("import {{ f as g }} from \"./a\";\nexport {{ g as f }};\n{tail}"),
+    );
+    t.write(
+        "app/src/io/native.vlt",
+        &format!("import {{ f }} from \"./b\";\nexport {{ f }};\n{tail}"),
+    );
+    let g = graph(&t, map(&[("#io", IO)]));
+    let (_, d, _) = load(&root, check(&g));
+    assert_eq!(
+        messages(&d),
+        ["`#io`: `f` has another signature in `./src/io/native.vlt` than in `./src/io/js.vlt`"]
     );
 }
 
