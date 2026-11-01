@@ -270,3 +270,31 @@ class Holder<T> {{
     );
     assert_eq!(shown(&inside), ["string"]);
 }
+
+/// A function that calls one leading to a generated function at type arguments of which some are
+/// concrete and some its own (`rows<T>` calling `pair<T, Rows>`) has an instance of its own and
+/// leads to more through its callers: `bench/sqlite/engine.vlt`'s `Statement.all<T>` reading rows
+/// with `decodeRows<T, Rows>`.
+#[test]
+fn demand_follows_a_call_with_concrete_and_generic_type_arguments() {
+    let src = r#"
+declare generated("./gen") function describe<T>(): string;
+
+class Rows {
+  n: i32 = 0;
+}
+
+function pair<T, S>(): string {
+  return describe<T>() + describe<S>();
+}
+
+function rows<T>(): string {
+  return pair<T, Rows>();
+}
+
+function main() {
+  console.log(rows<i32>());
+}
+"#;
+    assert_eq!(shown(src), ["Rows", "i32"]);
+}

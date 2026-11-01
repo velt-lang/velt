@@ -43,17 +43,19 @@ pub(crate) struct Walked {
     calls: Calls,
 }
 
-/// Every call and function value of the checked code ([`may_reach`]): caller (a function, a
-/// module constant or [`FIELD`]), callee and the range of its type arguments in `targs`.
+/// Every call and function value of the checked code ([`may_reach`]): caller (a function or a
+/// module constant), callee and the range of its type arguments in `targs`, recorded once per
+/// body; and the callees of the calls in fields' defaults, listed again each time.
 #[derive(Default)]
 struct Calls {
-    upto: usize,
+    /// Per definition, whether its body (a function's, a module constant's initializer) is
+    /// recorded: one checked on demand after an earlier computation is recorded when it is
+    /// checked (a checked body does not change).
+    done: Vec<bool>,
     calls: Vec<(u32, DefId, std::ops::Range<usize>)>,
     targs: Vec<TyId>,
+    fields: Vec<DefId>,
 }
-
-/// The caller of a call in a field's default ([`Calls`]).
-const FIELD: u32 = u32::MAX;
 
 /// Every concrete instance of a generated function the checked program reaches, in the order
 /// they were found.
@@ -204,8 +206,17 @@ fn may_reach(cx: &mut Ctx, generated: &FxHashSet<DefId>, recorded: &mut Calls) -
     use crate::defs::DefInfo;
     use crate::types::collect_params;
     record_calls(cx, recorded);
-    let Calls { calls, targs, .. } = &*recorded;
-    let constant = |c: u32| c != FIELD && matches!(cx.info[c as usize], DefInfo::Global(_));
+    let Calls {
+        calls,
+        targs,
+        fields,
+        ..
+    } = &*recorded;
+    // A field's default runs wherever its class is constructed: not followed.
+    if fields.iter().any(|d| generated.contains(d)) {
+        return Reach::All;
+    }
+    let constant = |c: u32| matches!(cx.info[c as usize], DefInfo::Global(_));
     // The functions leading to an instance, with the type parameters it depends on.
     let mut leads: FxHashMap<DefId, Vec<u32>> = FxHashMap::default();
     // The units with a concrete call of a generated function or of one of `leads`.
@@ -213,9 +224,6 @@ fn may_reach(cx: &mut Ctx, generated: &FxHashSet<DefId>, recorded: &mut Calls) -
     for (caller, callee, range) in calls {
         if !generated.contains(callee) {
             continue;
-        }
-        if *caller == FIELD {
-            return Reach::All;
         }
         let mut params = vec![];
         for t in &targs[range.clone()] {
@@ -234,9 +242,6 @@ fn may_reach(cx: &mut Ctx, generated: &FxHashSet<DefId>, recorded: &mut Calls) -
             let Some(needed) = leads.get(callee).cloned() else {
                 continue;
             };
-            if *caller == FIELD {
-                return Reach::All;
-            }
             let args = &targs[range.clone()];
             let mut params = vec![];
             let mut reaches = constant(*caller);
@@ -251,13 +256,20 @@ fn may_reach(cx: &mut Ctx, generated: &FxHashSet<DefId>, recorded: &mut Calls) -
                 reaches |= mentioned.is_empty();
                 add_params(&mut params, &mentioned);
             }
+            // Both can hold: `f<T>` calling `g<T, Rows>` (an instance of each kind of need of
+            // `g`'s) is a unit with a concrete call and leads to an instance through its own
+            // callers, at `T`.
             if reaches {
                 concrete.insert(DefId(*caller));
-            } else {
+            }
+            if !params.is_empty() {
                 let own = leads.entry(DefId(*caller)).or_default();
                 grew |= add_params(own, &params);
             }
         }
+    }
+    if fields.iter().any(|d| leads.contains_key(d)) {
+        return Reach::All;
     }
     let mut targets: Option<FxHashSet<DefId>> = None;
     let elsewhere = leads.keys().any(|d| {
@@ -281,32 +293,44 @@ fn may_reach(cx: &mut Ctx, generated: &FxHashSet<DefId>, recorded: &mut Calls) -
     Reach::Units(concrete)
 }
 
-/// Record the calls of the definitions made since the last time into `recorded` (a checked
-/// body does not change, so each is walked once per check).
+/// Record the calls of the bodies checked since the last time (each body once), and list the
+/// callees of the fields' defaults again.
 fn record_calls(cx: &mut Ctx, recorded: &mut Calls) {
     use crate::hir::{Callee, Def, ExprKind as E};
-    let from = std::mem::replace(&mut recorded.upto, cx.info.len());
-    let Calls { calls, targs, .. } = recorded;
-    let mut look = |caller: u32, e: &mut crate::hir::Expr| {
-        let (E::Call {
-            callee: Callee::Def(d, args),
-            ..
+    let Calls {
+        done,
+        calls,
+        targs,
+        fields,
+    } = recorded;
+    done.resize(cx.info.len().max(cx.defs.len()), false);
+    fields.clear();
+    fn callee(e: &crate::hir::Expr) -> Option<(DefId, &[TyId])> {
+        match &e.kind {
+            E::Call {
+                callee: Callee::Def(d, args),
+                ..
+            }
+            | E::FnRef(d, args) => Some((*d, args.as_slice())),
+            _ => None,
         }
-        | E::FnRef(d, args)) = &e.kind
-        else {
-            return;
-        };
-        calls.push((caller, *d, targs.len()..targs.len() + args.len()));
-        targs.extend_from_slice(args);
+    }
+    let mut look = |caller: u32, e: &mut crate::hir::Expr| {
+        if let Some((d, args)) = callee(e) {
+            calls.push((caller, d, targs.len()..targs.len() + args.len()));
+            targs.extend_from_slice(args);
+        }
     };
-    for (i, d) in cx.defs.iter_mut().enumerate().skip(from) {
-        if let Some(Def::Fn(f)) = d {
+    for (i, d) in cx.defs.iter_mut().enumerate() {
+        if let (Some(Def::Fn(f)), false) = (d, done[i]) {
+            done[i] = true;
             crate::visit::exprs_mut(&mut f.body.block, &mut |e| look(i as u32, e));
         }
     }
-    for (i, info) in cx.info.iter_mut().enumerate().skip(from) {
+    for (i, info) in cx.info.iter_mut().enumerate() {
         if let crate::defs::DefInfo::Global(g) = info {
-            if let Some(init) = g.init.as_mut() {
+            if let (Some(init), false) = (g.init.as_mut(), done[i]) {
+                done[i] = true;
                 crate::visit::exprs_in(init, &mut |e| look(i as u32, e));
             }
         }
@@ -317,7 +341,7 @@ fn record_calls(cx: &mut Ctx, recorded: &mut Calls) {
                 .filter_map(|x| x.default.as_mut());
             let redefined = a.redefined.iter_mut().filter_map(|r| r.init.as_mut());
             for e in own.chain(redefined) {
-                crate::visit::exprs_in(e, &mut |e| look(FIELD, e));
+                crate::visit::exprs_in(e, &mut |e| fields.extend(callee(e).map(|(d, _)| d)));
             }
         }
     }
