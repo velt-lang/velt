@@ -181,6 +181,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             self.switch_to(unique);
             // Moved out of a `read` callback: no longer the reader's own (locks.rs).
             self.leave_read(o.clone(), ty);
+            self.unless_kept_before(o.clone(), done, entered);
         }
         // A view leaves the table of views before its target may be copied (any_view.rs).
         let view_of = match self.cx.kind(ty) {
@@ -258,6 +259,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.switch_to(unique);
         // Moved out of a `read` callback: no longer the reader's own (locks.rs).
         self.leave_read(p.clone(), ty);
+        self.unless_kept_before(p.clone(), done, entered);
         let pp = self.operand_place(p, Ty::Ptr);
         let value = proj(&pp, Proj::Deref(payload));
         match self.cx.kind(ty) {
@@ -452,6 +454,43 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.enter_kept(entered);
         self.goto(unique);
         self.switch_to(other);
+    }
+
+    /// In read mode, goes to `done` when a store in these reads kept the object `o` (now moved
+    /// on, its count back at 1) as itself already: its parts were kept then, and counting the
+    /// caller's objects among them again would leak them (velt_rt `velt_rt_lk_kept_before`).
+    /// (`entered`: it came here from a keep of its own, which recorded it just now.)
+    fn unless_kept_before(&mut self, o: Operand, done: vir::BlockId, entered: vir::Local) {
+        let kept = self.temp(Ty::U8);
+        self.assign(Place::local(kept), Rvalue::Use(cint(0, Ty::U8)));
+        let fresh = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(
+                BinOp::Eq,
+                Operand::Copy(Place::local(entered)),
+                cint(0, Ty::U8),
+            ),
+        );
+        let (ask, join) = (self.new_block(), self.new_block());
+        self.branch(fresh, ask, join);
+        self.switch_to(ask);
+        self.lk_split(
+            |_| {},
+            |lw| lw.call_rt(Rt::LkKeptBefore, vec![o], Some(Place::local(kept))),
+        );
+        self.goto(join);
+        self.switch_to(join);
+        let seen = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(
+                BinOp::Eq,
+                Operand::Copy(Place::local(kept)),
+                cint(1, Ty::U8),
+            ),
+        );
+        let go = self.new_block();
+        self.branch(seen, done, go);
+        self.switch_to(go);
     }
 
     /// Goes to `done` when a store in these reads kept the object `o` already: its parts were

@@ -264,8 +264,21 @@ thread_local! {
     /// holds is inside (`velt_rt_xfer_keep_shared`).
     static KEPT_UNDER: Cell<u32> = const { Cell::new(0) };
     /// The objects the readers still reference that stores kept as themselves in this
-    /// thread's reads (`velt_rt_lk_kept_again`), until the outermost read ends.
+    /// thread's reads (`velt_rt_lk_kept_again`), by address, until the outermost read ends.
+    /// Sound because such an object is never freed, and its address never reused, before then:
+    /// the store that kept it holds a reference, and one its parts are kept under holds the
+    /// reference `velt_rt_lk_leave` adds until the reads end.
     static KEPT: RefCell<std::collections::HashSet<usize>> = RefCell::new(std::collections::HashSet::new());
+}
+
+/// 1 when a store in these reads kept the object `obj` as itself (`velt_rt_lk_kept_again`),
+/// else 0: moved on again, its parts are not counted again.
+#[no_mangle]
+pub extern "C" fn velt_rt_lk_kept_before(obj: *mut u8) -> u8 {
+    KEPT.with(|k| {
+        let k = k.borrow();
+        u8::from(!k.is_empty() && k.contains(&(obj as usize)))
+    })
 }
 
 /// A store keeps the object `obj`, which the readers still reference, as itself: 1 when a store

@@ -219,6 +219,12 @@ pub unsafe extern "C" fn velt_rt_xfer_keep_shared(enter: u8) {
     }
 }
 
+/// velt_rt `read_mode::velt_rt_lk_kept_before`.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_lk_kept_before(obj: *mut u8) -> u8 {
+    u8::from((*std::ptr::addr_of!(KEPT)).contains(&(obj as usize)))
+}
+
 /// velt_rt `read_mode::velt_rt_lk_kept_again`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_lk_kept_again(obj: *mut u8) -> u8 {
