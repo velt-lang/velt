@@ -205,7 +205,7 @@ impl FnLower<'_, '_> {
 
     /// The frame the transfer whose arguments start at `key` stores into (module docs).
     fn store_levels(&mut self, key: usize) -> u64 {
-        if self.leave_levels.is_none() {
+        if self.read_info.leave_levels.is_none() {
             let mut stores = Stores::default();
             if let Some(hir::Def::Fn(f)) = self.cx.cur_def.map(|d| self.cx.hir.def(d)) {
                 stores.block(&f.body.block);
@@ -238,9 +238,10 @@ impl FnLower<'_, '_> {
                     found.insert(k, levels);
                 }
             }
-            self.leave_levels = Some(found);
+            self.read_info.leave_levels = Some(found);
         }
         let levels = self
+            .read_info
             .leave_levels
             .as_ref()
             .and_then(|m| m.get(&key).copied());
@@ -256,7 +257,7 @@ impl FnLower<'_, '_> {
         if !self.own_captures {
             return false;
         }
-        if self.share_dests.is_none() {
+        if self.read_info.share_dests.is_none() {
             let mut stores = Stores::default();
             if let Some(hir::Def::Fn(f)) = self.cx.cur_def.map(|d| self.cx.hir.def(d)) {
                 stores.block(&f.body.block);
@@ -275,9 +276,9 @@ impl FnLower<'_, '_> {
                     found.insert(k, callers);
                 }
             }
-            self.share_dests = Some(found);
+            self.read_info.share_dests = Some(found);
         }
-        let dests = self.share_dests.as_ref();
+        let dests = self.read_info.share_dests.as_ref();
         dests.and_then(|m| m.get(&key).copied()).unwrap_or(false)
     }
 

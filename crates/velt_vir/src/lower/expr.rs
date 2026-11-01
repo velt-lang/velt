@@ -114,7 +114,7 @@ impl FnLower<'_, '_> {
     pub(super) fn consume_each(&mut self, es: &[hir::Expr]) -> Vec<Operand> {
         // The elements of an array literal going into the caller's container in a `read`
         // callback (caller_stores.rs `Held::Elems`).
-        let to_caller = std::mem::take(&mut self.elems_to_caller);
+        let to_caller = std::mem::take(&mut self.read_info.elems_to_caller);
         let later = self.later_each(es);
         let mut vals = Vec::with_capacity(es.len());
         for (e, later) in es.iter().zip(later) {

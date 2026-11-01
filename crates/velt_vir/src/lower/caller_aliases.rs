@@ -3,11 +3,29 @@
 //! method or function takes out of or reads from such a part (`const g = first(mine)`). Code
 //! changing what they name changes the caller's containers.
 
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use velt_sema::hir::{self, ExprKind as K, Intrinsic, LocalId};
 
 use super::frozen::place_root;
 use super::FnLower;
+
+/// What a `read` callback's body says, each part once asked.
+#[derive(Default)]
+pub(super) struct ReadInfo {
+    /// Its variables naming the caller's objects (`caller_alias`).
+    pub(super) aliases: Option<Aliases>,
+    /// The frames its stores put what they transfer in, by the address of each transfer's
+    /// arguments (leave_levels.rs).
+    pub(super) leave_levels: Option<FxHashMap<usize, u64>>,
+    /// Whether each transfer's store goes into a container of the code outside every read
+    /// (leave_levels.rs `share_dest`).
+    pub(super) share_dests: Option<FxHashMap<usize, bool>>,
+    /// Its variables holding only what it made of literals (`plain_made`).
+    pub(super) plain: Option<FxHashSet<LocalId>>,
+    /// The array literal lowered next gives each element to the caller's container on its own
+    /// (caller_stores.rs `Held::Elems`).
+    pub(super) elems_to_caller: bool,
+}
 
 /// What `caller_alias` and `call_alias` found in a `read` callback's body, once asked.
 #[derive(Default)]
@@ -29,7 +47,7 @@ impl FnLower<'_, '_> {
     /// directly or as a `for…of` element, and never given another value? Code changing what it
     /// names changes the caller's containers.
     pub(super) fn caller_alias(&mut self, l: LocalId) -> bool {
-        if self.caller_aliases.is_none() {
+        if self.read_info.aliases.is_none() {
             let found = match self.cx.cur_def.map(|d| self.cx.hir.def(d)) {
                 Some(hir::Def::Fn(f)) => {
                     let caps: Vec<LocalId> = f.captures.iter().map(|c| c.inner).collect();
@@ -43,9 +61,10 @@ impl FnLower<'_, '_> {
                 }
                 _ => Aliases::default(),
             };
-            self.caller_aliases = Some(found);
+            self.read_info.aliases = Some(found);
         }
-        self.caller_aliases
+        self.read_info
+            .aliases
             .as_ref()
             .is_some_and(|a| a.places.contains(&l))
     }
@@ -56,7 +75,7 @@ impl FnLower<'_, '_> {
     /// changes it asks which at run time (array/ops.rs `caller_or_own_op`).
     pub(super) fn call_alias(&mut self, l: LocalId) -> bool {
         self.caller_alias(l);
-        let Some(a) = self.caller_aliases.as_mut() else {
+        let Some(a) = self.read_info.aliases.as_mut() else {
             return false;
         };
         if a.calls.is_none() {
@@ -92,12 +111,17 @@ impl FnLower<'_, '_> {
     }
 
     fn add_call_alias(&mut self, l: LocalId) -> bool {
-        let calls = self.caller_aliases.as_mut().and_then(|a| a.calls.as_mut());
+        let calls = self
+            .read_info
+            .aliases
+            .as_mut()
+            .and_then(|a| a.calls.as_mut());
         calls.is_some_and(|c| c.insert(l))
     }
 
     fn call_alias_known(&self, l: LocalId) -> bool {
-        self.caller_aliases
+        self.read_info
+            .aliases
             .as_ref()
             .and_then(|a| a.calls.as_ref())
             .is_some_and(|c| c.contains(&l))
@@ -251,6 +275,139 @@ impl Bindings {
                 self.changed.insert(l);
                 self.assigned.insert(l);
             }
+        }
+        match &e.kind {
+            K::Block(b) => self.block(b),
+            _ => super::frame_envs::children(e, &mut |x| self.expr(x)),
+        }
+    }
+}
+
+impl FnLower<'_, '_> {
+    /// Is `l` a variable of this `read` callback that holds only what the callback made of
+    /// literals (`const c = [[i, n]]`), and that nothing changes or captures? Stored into the
+    /// caller's containers it holds nothing of the caller's or the store's, so it needs no
+    /// transfer: it stays the reader's own (`LOCAL`), which code outside read mode ignores and
+    /// a later transfer clears (caller_stores.rs `keep_for_caller`).
+    pub(super) fn plain_made(&mut self, l: LocalId) -> bool {
+        if self.read_info.plain.is_none() {
+            let mut p = Plain::default();
+            if let Some(hir::Def::Fn(f)) = self.cx.cur_def.map(|d| self.cx.hir.def(d)) {
+                p.block(&f.body.block);
+            }
+            let Plain {
+                lets,
+                mut changed,
+                closures,
+            } = p;
+            // A closure may change what it captures.
+            for n in closures {
+                changed.extend(self.cx.fn_def(n).captures.iter().map(|c| c.outer));
+            }
+            let mut found = FxHashSet::default();
+            for (v, init) in lets {
+                if !changed.contains(&v) && self.plain_literal(&init) {
+                    found.insert(v);
+                }
+            }
+            self.read_info.plain = Some(found);
+        }
+        self.read_info
+            .plain
+            .as_ref()
+            .is_some_and(|p| p.contains(&l))
+    }
+
+    /// Is `e` an array or object literal of such literals and of values that reach no
+    /// lock-set object (numbers, strings)?
+    fn plain_literal(&mut self, e: &hir::Expr) -> bool {
+        match &e.kind {
+            K::ArrayLit(xs) | K::Tuple(xs) | K::AdtLit { fields: xs, .. } => xs.iter().all(|x| {
+                let t = self.sub(x.ty);
+                !self.cx.reaches_lock_set(t) || self.plain_literal(x)
+            }),
+            _ => false,
+        }
+    }
+}
+
+/// `plain_made`'s walk: each variable's initializer, and the variables changed, given to a
+/// call that may change them, captured, or bound twice.
+#[derive(Default)]
+struct Plain {
+    lets: Vec<(LocalId, hir::Expr)>,
+    changed: FxHashSet<LocalId>,
+    closures: Vec<hir::DefId>,
+}
+
+impl Plain {
+    fn block(&mut self, b: &hir::Block) {
+        b.stmts.iter().for_each(|s| self.stmt(s));
+        if let Some(e) = &b.value {
+            self.expr(e);
+        }
+    }
+
+    fn stmt(&mut self, s: &hir::Stmt) {
+        use hir::StmtKind as S;
+        match &s.kind {
+            S::Let { local, init } => {
+                if self.lets.iter().any(|(v, _)| v == local) {
+                    self.changed.insert(*local);
+                }
+                match init {
+                    Some(init) => {
+                        self.lets.push((*local, init.clone()));
+                        self.expr(init);
+                    }
+                    None => {
+                        self.changed.insert(*local);
+                    }
+                }
+            }
+            S::LetPat { init, .. } | S::Expr(init) | S::Return(Some(init)) => self.expr(init),
+            S::Return(None) | S::Break(_) | S::Continue(_) => {}
+            S::If { cond, then, els } => {
+                self.expr(cond);
+                self.block(then);
+                els.iter().for_each(|b| self.block(b));
+            }
+            S::While {
+                cond, body, step, ..
+            } => {
+                self.expr(cond);
+                self.block(body);
+                step.iter().for_each(|e| self.expr(e));
+            }
+            S::ForOf { iter, body, .. } => {
+                self.expr(iter);
+                self.block(body);
+            }
+            S::Try {
+                body,
+                catch,
+                finally,
+            } => {
+                self.block(body);
+                catch.iter().for_each(|(_, b)| self.block(b));
+                finally.iter().for_each(|b| self.block(b));
+            }
+            S::Block(b) => self.block(b),
+        }
+    }
+
+    fn expr(&mut self, e: &hir::Expr) {
+        match &e.kind {
+            K::Local(l, hir::UseMode::BorrowMut) => {
+                self.changed.insert(*l);
+            }
+            K::Assign { place, .. } | K::CompoundAssign { place, .. } => {
+                if let Some(l) = place_root(place) {
+                    self.changed.insert(l);
+                }
+            }
+            K::Closure(n) => self.closures.push(*n),
+            _ => {}
         }
         match &e.kind {
             K::Block(b) => self.block(b),

@@ -43,12 +43,17 @@ impl FnLower<'_, '_> {
         if self.mode == LkMode::Plain {
             return self.consume(value);
         }
+        // A variable holding only what the callback made of literals, and never changed, needs
+        // no transfer: it holds nothing of the caller's or the store's (`plain_made`).
+        if self.plain_made_value(value) {
+            return self.consume(value);
+        }
         let ty = self.sub(value.ty);
         let held = self.held_of(value);
         if held == Held::Elems {
-            self.elems_to_caller = true;
+            self.read_info.elems_to_caller = true;
             let v = self.consume(value);
-            self.elems_to_caller = false;
+            self.read_info.elems_to_caller = false;
             // A new array of the reader's, which the caller's counts hold from now on.
             if !self.dead() && self.lock_ref(ty).is_some() {
                 self.in_caller_frame(|lw| lw.leave_read(v.clone(), ty));
@@ -57,6 +62,22 @@ impl FnLower<'_, '_> {
         }
         let v = self.consume(value);
         self.keep_value(v, held, ty)
+    }
+
+    /// Is `e` a variable `plain_made` finds (through a share)?
+    fn plain_made_value(&mut self, e: &hir::Expr) -> bool {
+        let mut x = e;
+        while let K::Call {
+            callee: hir::Callee::Intrinsic(Intrinsic::Share),
+            args,
+        } = &x.kind
+        {
+            match args.as_slice() {
+                [a] => x = a,
+                _ => return false,
+            }
+        }
+        matches!(x.kind, K::Local(l, _) if self.plain_made(l))
     }
 
     /// What the stored value `e` is made of, for `keep_value`.

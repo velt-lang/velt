@@ -509,12 +509,10 @@ struct Cx<'h> {
     cur_def: Option<DefId>,
     /// The read mode of the function being built (`Work::Checked`, `Work::Read`).
     cur_mode: LkMode,
-    /// Whether the function being built is a `Work::ReadOwn`.
+    /// Whether the function being built is a `Work::ReadOwn`, and one in a `Work::Deferred`.
     cur_own: bool,
-    /// Whether it is one in a `Work::Deferred` instance (`FnLower::own_deep`).
     cur_own_deep: bool,
-    /// Each closure literal lowered so far: the function it is in, and whether it is a `read`
-    /// callback running in read mode (leave_levels.rs).
+    /// Each closure literal's function, and whether it is a `read` callback in read mode.
     closure_parents: FxHashMap<DefId, (Option<DefId>, bool)>,
     /// Functions whose instances made an option of an option with another nothing (`T | null`
     /// at `T = U | undefined`, or the reverse; types.rs `intern`), which this phase cannot
@@ -702,10 +700,7 @@ struct FnLower<'c, 'h> {
     /// A `read` callback that code outside read mode calls (`Work::ReadOwn`): the caller's
     /// variables it captured hold none of a store's objects.
     own_captures: bool,
-    /// A `Work::ReadOwn` callback literal in a function instance that counts by the counts
-    /// outside read mode (`Work::Deferred`, which read mode calls): that code is outside read
-    /// mode for its callbacks, but the thread may be in other reads around it, so what leaves
-    /// for it goes out of every read (leave_levels.rs).
+    /// A `Work::ReadOwn` callback in a `Work::Deferred` instance (leave_levels.rs).
     own_deep: bool,
     /// The closure literal a `with`, `write` or `read` is about to call, and the read mode its
     /// code runs in.
@@ -725,18 +720,8 @@ struct FnLower<'c, 'h> {
     kept_handed: Vec<(Operand, TyId, Option<Local>)>,
     /// Those of them the call's own values, dropped after that in the mode given.
     kept_drops: Vec<(Place, TyId, LkMode)>,
-    /// A `read` callback's variables naming the caller's objects (caller_aliases.rs), once
-    /// asked.
-    caller_aliases: Option<caller_aliases::Aliases>,
-    /// The frames the stores of this `read` callback put what they transfer in, by the
-    /// address of each transfer's arguments (leave_levels.rs), once asked.
-    leave_levels: Option<FxHashMap<usize, u64>>,
-    /// Whether each transfer's store goes into a container of the code outside every read
-    /// (leave_levels.rs `share_dest`), once asked.
-    share_dests: Option<FxHashMap<usize, bool>>,
-    /// The array literal lowered next gives each element to the caller's container on its own
-    /// (caller_stores.rs `Held::Elems`).
-    elems_to_caller: bool,
+    /// What a `read` callback's body says, and how its stores go (caller_aliases.rs).
+    read_info: caller_aliases::ReadInfo,
     /// With debug info: where the block declaring a local ends (debug_vars.rs).
     scope_ends: FxHashMap<LocalId, SrcLoc>,
     /// Set while lowering the body of an async function (a poll function).
