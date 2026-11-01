@@ -43,3 +43,5 @@ async function main() {
   // `tick` can't report back, so it is the last timer: the process waits for it after `main`.
   setTimeout(tick, 1);
 }
+
+// timing: timers are the subject; follow-up #1999: the 30 ms interval may run twice

@@ -126,3 +126,5 @@ async function quiet(name: string): Promise<string> {
   await sleep(5);
   return name;
 }
+
+// timing: cancellation timing is the subject; channels fix the order

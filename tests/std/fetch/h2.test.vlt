@@ -65,6 +65,7 @@ async function handler(req: HttpRequest, res: HttpResponse) {
   } else if (req.pathIs("/slow")) {
     const s = await res.stream();
     await s.write("a");
+    // timing: follow-up #1999: assumes the client aborts within 2 s of the first byte
     await delay(2000);
     await s.end();
   } else {
@@ -104,6 +105,7 @@ describe("fetch over HTTP/2", () => {
       req: HttpRequest,
       res: HttpResponse,
     ) => {
+      // timing: keeps the requests concurrent; one connection either way
       await delay(20);
       res.send(`${req.path()} ${req.remoteAddr()}`);
     });

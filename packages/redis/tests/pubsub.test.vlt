@@ -16,6 +16,7 @@ function show(m: RedisMessage | null, p: string): string {
 }
 
 async function closeLater(sub: RedisSubscriber): Promise<void> {
+  // timing: closes from another task; the same result in either order
   await sleep(50);
   sub.close();
 }

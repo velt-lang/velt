@@ -79,3 +79,5 @@ async function main() {
   }
   console.log("left", left, ref.deref() == null);
 }
+
+// timing: the waits only move tasks between workers

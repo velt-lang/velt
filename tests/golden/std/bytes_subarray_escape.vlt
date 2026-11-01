@@ -99,3 +99,5 @@ async function main() {
   d = Buffer.alloc(0);
   console.log(dv.getUint32(0).toString(16), d.length);
 }
+
+// timing: the waits only suspend tasks whose results are awaited

@@ -55,3 +55,5 @@ async function main() {
 
   setTimeout(tick, 1);
 }
+
+// timing: timers are the subject

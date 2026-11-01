@@ -28,3 +28,5 @@ async function main() {
   await Promise.race([tick(), never.signal.whenAborted()]);
   console.log("race done");
 }
+
+// timing: a timeout timer's cancellation is the subject

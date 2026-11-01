@@ -180,7 +180,10 @@ not a reason for another round.
   `tests/common/process_work.rs`, compared between interleaved sizes; a thread's or a child
   process's against a generous bound), and a speed check belongs in `bench/`. Tests and goldens
   order events by awaits, channels or observed state, not by sleeps; a wait loop's deadline is a
-  hang guard (a minute), not an assertion. Tests that build executables must not reuse a path a
+  hang guard (a minute), not an assertion. Pull requests repeat their changed test files under
+  load (`cargo xtask repeat`, on Linux and Windows) and lint tests for fixed waits (`// timing:
+  <reason>` marks a test of time; CONTRIBUTING.md "Testing"); the nightly `flake` job repeats
+  the async goldens, the reload goldens and the packages' tests on Windows and macOS. Tests that build executables must not reuse a path a
   crashed process may still lock.
 - **A red nightly** gets an answer the same day, so red doesn't become the normal state:
   - The bench guard holds its baseline until a run passes, so every later run fails again and

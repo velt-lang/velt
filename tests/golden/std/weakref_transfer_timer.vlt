@@ -11,3 +11,5 @@ async function main() {
   await sleep(10);
   console.log(keep.n);
 }
+
+// timing: a timer callback's task is the subject
