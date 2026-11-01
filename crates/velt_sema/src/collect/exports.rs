@@ -33,6 +33,9 @@ pub(crate) struct Memo {
     tables: FxHashMap<usize, Rc<[(String, Item)]>>,
     /// The modules whose tables are being built (a cycle of `export *` reaches one again).
     building: FxHashSet<usize>,
+    /// The standard library's modules by path ([`std_module`]), and how many modules the check
+    /// had when they were listed (generated ones are added during it).
+    std_paths: (usize, FxHashMap<String, usize>),
 }
 
 impl Memo {
@@ -60,6 +63,22 @@ pub(crate) fn export_of(cx: &Ctx, t: usize, name: &str) -> Option<Item> {
         Some(all) => lookup(&all, name),
         None => export_at(cx, t, name, 0),
     }
+}
+
+/// The index of the standard library's module `path`: a hash lookup, where finding it among the
+/// program's modules compared it with each of them, for each of the compiler's lookups of a
+/// std definition by name (`Ctx::std_def`).
+pub(crate) fn std_module(cx: &Ctx, path: &str) -> Option<usize> {
+    let mut memo = cx.export_memo.borrow_mut();
+    if memo.std_paths.0 != cx.modules.len() {
+        let paths = (cx.modules.iter().enumerate())
+            .filter(|(_, m)| m.is_std)
+            .rev()
+            .map(|(i, m)| (m.path.clone(), i))
+            .collect();
+        memo.std_paths = (cx.modules.len(), paths);
+    }
+    memo.std_paths.1.get(path).copied()
 }
 
 /// Every name module `t` exports, with its item (sorted by name).

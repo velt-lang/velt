@@ -65,14 +65,16 @@ impl Ctx<'_> {
     /// identifier the compiler writes may be spelled so ([`Self::lookup_item`]); no source can
     /// write one, so it names a hook in user code too, where `lang/` cannot be imported.
     pub fn std_def(&self, qualified: &str) -> Option<Item> {
-        let (module, item) = qualified.rsplit_once("::")?;
+        // `rsplit_once("::")`, without setting up a substring search for each lookup.
+        let b = qualified.as_bytes();
+        let at = (1..b.len())
+            .rev()
+            .find(|&i| b[i - 1] == b':' && b[i] == b':')?;
+        let (module, item) = (&qualified[..at - 1], &qualified[at + 1..]);
         if !velt_common::std_modules::is_std(module) {
             return None;
         }
-        let m = self
-            .modules
-            .iter()
-            .position(|m| m.is_std && m.path == module)?;
+        let m = crate::collect::exports::std_module(self, module)?;
         self.scopes[m].items.get(item).copied()
     }
 
