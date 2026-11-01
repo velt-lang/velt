@@ -330,3 +330,103 @@ fn std_variants_are_internal_files_and_its_map_is_checked() {
         d[0].render(&sm)
     );
 }
+
+/// An npm package's `#name` resolves through its own `package.json` `imports`, as in Node, never
+/// through the map of the Velt package around it.
+#[test]
+fn an_npm_package_resolves_its_own_names() {
+    let t = Tree::new();
+    t.write(
+        "app/src/util.vlt",
+        "export function u(): i64 { return 1; }\n",
+    );
+    t.write(
+        "app/node_modules/foo/package.json",
+        r##"{ "name": "foo", "exports": "./dist/index.js", "imports": { "#util": "./dist/util.js", "#dep": "other-package" } }"##,
+    );
+    t.write(
+        "app/node_modules/foo/src/index.ts",
+        "import { u } from \"#util\";\nexport function f(): number { return u(); }\n",
+    );
+    t.write(
+        "app/node_modules/foo/src/util.ts",
+        "export function u(): number { return 2; }\n",
+    );
+    let root = t.write(
+        "app/src/main.vlt",
+        "import { f } from \"foo\";\nimport { u } from \"#util\";\nfunction main() { f(); u(); }\n",
+    );
+    let g = graph(&t, map(&[("#util", &[("default", "./src/util.vlt")])]));
+    let (l, d, _) = load(&root, opts(&g, "aarch64-apple-darwin"));
+    assert!(d.is_empty(), "{:?}", messages(&d));
+    let files: Vec<String> = l.modules.iter().map(|m| m.path.clone()).collect();
+    assert!(
+        files.iter().any(|p| p.ends_with("foo/src/util")),
+        "{files:?}"
+    );
+    assert!(files.iter().any(|p| p == "util"), "{files:?}");
+    // A name the npm package does not define is its error, not a lookup in app's map.
+    t.write(
+        "app/node_modules/foo/src/index.ts",
+        "import { u } from \"#dep\";\nexport function f(): number { return 1; }\n",
+    );
+    let (_, d, _) = load(&root, opts(&g, "aarch64-apple-darwin"));
+    assert_eq!(
+        messages(&d),
+        ["npm package `foo` does not define `#dep` (`imports` in its package.json)"]
+    );
+}
+
+/// The variant check reads each file once: many names re-exported from files that re-export
+/// each other in a cycle.
+#[test]
+fn re_export_cycles_and_many_names_are_read_once() {
+    let t = Tree::new();
+    let root = io_package(&t);
+    let names: Vec<String> = (0..40).map(|i| format!("n{i}")).collect();
+    let list = names.join(", ");
+    let decls: String = names
+        .iter()
+        .map(|n| format!("export function {n}(): i64 {{ return 0; }}\n"))
+        .collect();
+    for v in ["js", "wasi", "native"] {
+        t.write(
+            &format!("app/src/io/{v}.vlt"),
+            &format!("export {{ {list} }} from \"./c\";\nexport function name(): string {{ return \"\"; }}\n"),
+        );
+    }
+    // `c` re-exports from `d`, which re-exports `c`'s names back and declares them.
+    t.write(
+        "app/src/io/c.vlt",
+        &format!("export {{ {list} }} from \"./d\";\n"),
+    );
+    t.write(
+        "app/src/io/d.vlt",
+        &format!("export {{ {list} }} from \"./c\";\n{decls}")
+            .replace("export function", "function"),
+    );
+    let g = graph(&t, map(&[("#io", IO)]));
+    let start = std::time::Instant::now();
+    let (_, d, sm) = load(&root, check(&g));
+    // Agreeing variants; the cycle ends at the file being read.
+    assert!(
+        d.iter().all(|d| !d.message.contains("another signature")),
+        "{:?}",
+        messages(&d)
+    );
+    assert!(start.elapsed() < std::time::Duration::from_secs(20));
+    // Each of c and d was parsed once.
+    let parsed = |name: &str| sm.files().filter(|(_, f)| f.path.ends_with(name)).count();
+    assert_eq!((parsed("c.vlt"), parsed("d.vlt")), (1, 1));
+}
+
+/// A variant file that does not exist is the import's error, not a second one from the check.
+#[test]
+fn a_missing_variant_is_one_error() {
+    let t = Tree::new();
+    let root = io_package(&t);
+    std::fs::remove_file(t.path("app/src/io/native.vlt")).unwrap();
+    let g = graph(&t, map(&[("#io", IO)]));
+    let (_, d, _) = load(&root, check(&g));
+    assert_eq!(d.len(), 1, "{:?}", messages(&d));
+}

@@ -479,3 +479,37 @@ fn the_root_fallback_comes_last() {
         "{notes:?}"
     );
 }
+
+#[test]
+fn a_package_s_imports_map_its_names_as_node_does() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    write(
+        root,
+        "foo/package.json",
+        r##"{ "name": "foo", "imports": { "#util": { "node": "./dist/util.js", "default": "./dist/web.js" }, "#internal/*": "./dist/internal/*.js", "#dep": "other" } }"##,
+    );
+    write(root, "foo/src/util.ts", "");
+    write(root, "foo/src/web.ts", "");
+    write(root, "foo/src/internal/a.ts", "");
+    write(root, "foo/src/index.ts", "");
+    let mut npm = NpmResolver::default();
+    let scope = npm.package_scope(&root.join("foo/src/index.ts")).unwrap();
+    assert_eq!(scope, root.join("foo"));
+    // `node` is a server condition: Node's server build's file, from its source.
+    assert_eq!(
+        npm.resolve_import(&scope, "#util").unwrap(),
+        root.join("foo/src/util.ts")
+    );
+    assert_eq!(
+        npm.resolve_import(&scope, "#internal/a").unwrap(),
+        root.join("foo/src/internal/a.ts")
+    );
+    for spec in ["#dep", "#nope"] {
+        let (msg, _) = npm.resolve_import(&scope, spec).unwrap_err();
+        assert_eq!(
+            msg,
+            format!("npm package `foo` does not define `{spec}` (`imports` in its package.json)")
+        );
+    }
+}

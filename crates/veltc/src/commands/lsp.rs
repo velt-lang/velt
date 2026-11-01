@@ -146,9 +146,10 @@ impl ProgramLoader for CliLoader {
             overlay: Some(overlay),
             std_root_as_std: true,
             test_harness: false,
-            // For the default target; the variants of each `#name` are compared as `velt
-            // check` does.
-            target: None,
+            // For the default target, unless the document is a `#name` variant only another
+            // target uses (`js.vlt`): then for that one. The variants of each `#name` are
+            // compared as `velt check` does.
+            target: graph.as_deref().and_then(|g| variant_target(g, root)),
             check_variants: true,
         };
         let loaded = loader::load_program(sm, root, opts, diags)?;
@@ -184,6 +185,19 @@ impl ProgramLoader for CliLoader {
     fn resolves_modules(&self) -> bool {
         true
     }
+}
+
+/// A target whose build uses `file`, when it is a variant of a `#name` of its package that the
+/// host's build does not use (`vpm::imports::target_selecting`).
+fn variant_target(graph: &PackageGraph, file: &Path) -> Option<String> {
+    let (_, root, imports) = graph.imports_of(file)?;
+    if imports.is_empty() {
+        return None;
+    }
+    let key = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let rel = vpm::relpath::relative(&key(file), &key(root));
+    let host = velt_codegen_cl::host_triple();
+    vpm::imports::target_selecting(imports, &format!("./{rel}"), &host).map(str::to_string)
 }
 
 /// The modules of the dependencies of the package containing `file`, in `graph`.

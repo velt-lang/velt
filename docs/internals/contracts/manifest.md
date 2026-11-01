@@ -216,7 +216,11 @@ directory (`NpmResolver::resolve_in`) before Node's search.
   the first variant whose condition it has is the module a `#name` import of the package's own
   modules loads (`loader::conditional`). The standard library's map is `std/imports.vlt`
   (`export const imports: Imports = { … }`, read by `vpm::manifest::read::read_std_imports`,
-  files relative to `std/`). `velt manifest --json` prints a name's variants as
+  files relative to `std/`). Not supported, each a manifest error: `#x/*` patterns, nested
+  condition objects, arrays, `null` and bare-package targets, unknown conditions. An npm
+  package's `#name` resolves through its `package.json` `imports` (`NpmResolver::resolve_import`,
+  Node's PACKAGE_IMPORTS_RESOLVE, `SERVER_CONDITIONS`), never a Velt package's map; its package
+  scope is the nearest `package.json` below the Velt package root. `velt manifest --json` prints a name's variants as
   `[condition, file]` pairs, in order.
 - `entry` is a `/`-separated path inside the package (not empty, not absolute, no `..`).
 - `description` (additive, #184): one line of at most 300 characters (Unicode scalar values), no

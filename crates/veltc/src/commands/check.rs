@@ -85,8 +85,11 @@ fn report_findings(sess: &Session, findings: &[Finding]) {
 fn resolve(
     args: &CheckArgs,
 ) -> Result<(driver::BuildOptions, CheckScope, Vec<Vec<PathBuf>>), BuildError> {
+    if let Some(target) = &args.target {
+        check_target(target)?;
+    }
     if args.std {
-        return std_scope(args.locked);
+        return std_scope(args.locked, args.target.clone());
     }
     let (input, scope, same_path) = match &args.input {
         Some(file) => {
@@ -105,6 +108,7 @@ fn resolve(
 /// below an empty root, each definition checked whether or not anything reaches it.
 fn std_scope(
     locked: bool,
+    target: Option<String>,
 ) -> Result<(driver::BuildOptions, CheckScope, Vec<Vec<PathBuf>>), BuildError> {
     let std = crate::loader::std_root().ok_or_else(|| {
         BuildError::Failed("cannot find the standard library; set VELT_STD".into())
@@ -121,22 +125,36 @@ fn std_scope(
     let imports = std.join(vpm::imports::STD_IMPORTS_FILE);
     extra_roots.retain(|f| *f != imports);
     extra_roots.sort();
-    // std's own `#name` variants that the host does not use, as for a package.
-    if let Ok(src) = std::fs::read_to_string(&imports) {
-        let map = vpm::manifest::read::read_std_imports(velt_common::FileId(0), &src);
-        let target = crate::driver::BuildOptions::default().target();
-        let unused = unselected_variants(&std, &map.unwrap_or_default(), &target);
-        extra_roots.retain(|f| !unused.contains(&file_key(f)));
-    }
     let input = std.join("__velt_check_std.vlt");
     let mut opts = options_for(&input, locked)?;
     opts.root_source = Some(String::new());
+    opts.target = target;
+    // std's own `#name` variants that the target does not use, as for a package.
+    if let Ok(src) = std::fs::read_to_string(&imports) {
+        let map = vpm::manifest::read::read_std_imports(velt_common::FileId(0), &src);
+        let unused = unselected_variants(&std, &map.unwrap_or_default(), &opts.target());
+        extra_roots.retain(|f| !unused.contains(&file_key(f)));
+    }
     let scope = CheckScope {
         require_main: false,
         extra_roots,
         eager_std: true,
     };
     Ok((opts, scope, vec![]))
+}
+
+/// `--target`'s triple is one velt builds for: x86_64 or aarch64 on Windows, macOS or Linux, or
+/// one of the WebAssembly targets (a typo would otherwise check for the conditions of `native`).
+fn check_target(target: &str) -> Result<(), BuildError> {
+    let arch = target.starts_with("x86_64-") || target.starts_with("aarch64-");
+    let native = arch && velt_link::TargetOs::from_triple(target).is_some();
+    if native || super::wasm::is_wasm(target) {
+        return Ok(());
+    }
+    Err(BuildError::Failed(format!(
+        "unsupported target `{target}` (velt builds for x86_64 and aarch64 on Windows, macOS and \
+         Linux, wasm32-wasip1 and wasm32-unknown-unknown)"
+    )))
 }
 
 /// Build options for checking `input` (inside its package, if any), comparing the variants of
@@ -164,6 +182,9 @@ fn without_other_variants(mut scope: CheckScope, opts: &driver::BuildOptions) ->
     let Some((_, root, imports)) = graph.imports_of(&opts.input) else {
         return scope;
     };
+    if imports.is_empty() {
+        return scope;
+    }
     let unused = unselected_variants(root, imports, &opts.target());
     scope.extra_roots.retain(|f| !unused.contains(&file_key(f)));
     scope

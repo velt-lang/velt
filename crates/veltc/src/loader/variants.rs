@@ -17,6 +17,7 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::rc::Rc;
 
 use velt_common::{Diagnostic, FileId, Span};
 use velt_syntax::ast::{self, ExprKind, ItemKind, Lit, PatternKind};
@@ -24,20 +25,23 @@ use velt_syntax::ast::{self, ExprKind, ItemKind, Lit, PatternKind};
 use super::conditional::Resolved;
 use super::Loader;
 
-/// How many relative re-exports are followed to a declaration.
-const MAX_REEXPORT_DEPTH: usize = 8;
-
 /// One exported name of a variant.
 #[derive(Clone, Debug)]
-struct Export {
+pub(super) struct Export {
     /// Its signature, normalized for comparing.
     sig: String,
     /// Where it is exported.
     span: Span,
 }
 
-/// A variant's API: name → export, or why it cannot be compared.
+/// A variant's API: name → export.
 type Api = BTreeMap<String, Export>;
+
+/// A file's API, or why it cannot be compared; shared by every re-export that reaches it.
+pub(super) type ApiResult = Rc<Result<Api, String>>;
+
+/// What a file's API is while it is being read: a re-export cycle back to it.
+const IN_PROGRESS: &str = "re-exports itself through a cycle";
 
 impl Loader<'_, '_> {
     /// Compare the variants of every `#name` the program imported (none unless
@@ -49,15 +53,20 @@ impl Loader<'_, '_> {
     }
 
     fn compare(&mut self, r: &Resolved) {
-        let mut apis: Vec<(&str, Api)> = vec![];
+        // The import's own error says why the build's variant did not load.
+        if !self.by_file.contains_key(&super::file_key(&r.selected)) {
+            return;
+        }
+        let mut apis: Vec<(&str, ApiResult)> = vec![];
         for v in &r.variants {
             let file = vpm::relpath::normalize(&r.base.join(v.target.trim_start_matches("./")));
             // The same file under two conditions is one API.
             if apis.iter().any(|(t, _)| *t == v.target) {
                 continue;
             }
-            match self.api(&file, 0) {
-                Ok(api) => apis.push((&v.target, api)),
+            let api = self.api(&file);
+            match &*api {
+                Ok(_) => apis.push((&v.target, api)),
                 Err(msg) => {
                     let msg = format!("`{}`: variant `{}` {msg}", r.name, v.target);
                     self.diags.push(Diagnostic::error(msg, r.span));
@@ -68,7 +77,13 @@ impl Loader<'_, '_> {
         let Some(((first, reference), rest)) = apis.split_first() else {
             return;
         };
+        let Ok(reference) = &**reference else {
+            return;
+        };
         for (other, api) in rest {
+            let Ok(api) = &**api else {
+                continue;
+            };
             for (name, export) in reference {
                 match api.get(name) {
                     None => self.diags.push(
@@ -112,8 +127,23 @@ impl Loader<'_, '_> {
         }
     }
 
-    /// The API of the module `file` (`depth`: re-exports followed to get here).
-    fn api(&mut self, file: &Path, depth: usize) -> Result<Api, String> {
+    /// The API of the module `file`, read once per load: a file that re-exports from another
+    /// one reached again (many names from one file, or a cycle) costs a lookup, not another
+    /// parse. A file still being read when a cycle reaches it again gives [`IN_PROGRESS`].
+    fn api(&mut self, file: &Path) -> ApiResult {
+        let key = super::file_key(file);
+        match self.variant_apis.get(&key) {
+            Some(Some(done)) => return done.clone(),
+            Some(None) => return Rc::new(Err(IN_PROGRESS.into())),
+            None => {}
+        }
+        self.variant_apis.insert(key.clone(), None);
+        let api = Rc::new(self.read_api(file));
+        self.variant_apis.insert(key, Some(api.clone()));
+        api
+    }
+
+    fn read_api(&mut self, file: &Path) -> Result<Api, String> {
         let (id, module) = self.parsed(file)?;
         let src = self.sm.get(id).src.clone();
         let locals: BTreeMap<&str, &ast::Item> = module
@@ -147,7 +177,7 @@ impl Loader<'_, '_> {
                 ItemKind::Import(imp) => {
                     for n in &imp.names {
                         let shown = n.alias.as_ref().unwrap_or(&n.name);
-                        let sig = self.reexported(file, &imp.from, &n.name.name, depth);
+                        let sig = self.reexported(file, &imp.from, &n.name.name);
                         let export = Export {
                             sig,
                             span: shown.span,
@@ -171,9 +201,9 @@ impl Loader<'_, '_> {
 
     /// The signature of `name`, which `file` re-exports from `spec`: its declaration's, through
     /// relative re-exports; for another module (std, a package), the specifier.
-    fn reexported(&mut self, file: &Path, spec: &str, name: &str, depth: usize) -> String {
+    fn reexported(&mut self, file: &Path, spec: &str, name: &str) -> String {
         let outside = format!("`{name}` from \"{spec}\"");
-        if !(spec.starts_with("./") || spec.starts_with("../")) || depth >= MAX_REEXPORT_DEPTH {
+        if !(spec.starts_with("./") || spec.starts_with("../")) {
             return outside;
         }
         let dir = file.parent().unwrap_or(Path::new(""));
@@ -182,9 +212,12 @@ impl Loader<'_, '_> {
             .into_iter()
             .flatten()
             .find(|f| vpm::probe::is_file(f));
-        match found.map(|f| self.api(&f, depth + 1)) {
-            Some(Ok(api)) => api.get(name).map_or(outside, |e| e.sig.clone()),
-            _ => outside,
+        let Some(found) = found else {
+            return outside;
+        };
+        match &*self.api(&found) {
+            Ok(api) => api.get(name).map_or(outside, |e| e.sig.clone()),
+            Err(_) => outside,
         }
     }
 
@@ -305,7 +338,7 @@ fn type_sig(kind: &str, t: &ast::TypeDecl, item: &ast::Item, src: &str) -> Strin
     let rest = src
         .get(t.name.span.lo as usize..item.span.hi as usize)
         .unwrap_or("");
-    let heading = normalize(&rest[..rest.find('{').unwrap_or(rest.len())]);
+    let heading = normalize(&rest[..body_start(rest)]);
     let abstract_ = if t.is_abstract { "abstract " } else { "" };
     let mut members = vec![];
     if let (Some(ctor), ast::CtorVisibility::Public) = (&t.constructor, t.ctor_visibility) {
@@ -350,6 +383,28 @@ fn type_sig(kind: &str, t: &ast::TypeDecl, item: &ast::Item, src: &str) -> Strin
         members.push(format!("{flags}{}", sig.trim_start_matches("function ")));
     }
     format!("{abstract_}{kind} {heading} {{ {} }}", members.join("; "))
+}
+
+/// Where a class's body starts in `text` (its heading on): the first `{` outside `<…>` and
+/// `(…)`, so an object type in a bound (`<T extends { id: i64 }>`) or a type argument
+/// (`extends Base<{ a: T }>`) stays part of the heading.
+fn body_start(text: &str) -> usize {
+    let mut depth = 0usize;
+    let mut prev = ' ';
+    for (i, c) in text.char_indices() {
+        let arrow = c == '>' && prev == '=';
+        prev = c;
+        match c {
+            '<' | '(' | '[' => depth += 1,
+            '>' if arrow => {}
+            '>' | ')' | ']' => depth = depth.saturating_sub(1),
+            '{' if depth == 0 => return i,
+            '{' => depth += 1,
+            '}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    text.len()
 }
 
 /// `text` without comments, and with whitespace only where it separates two words: `a : T`,

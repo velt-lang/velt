@@ -54,9 +54,9 @@ pub fn is_specifier(spec: &str) -> bool {
 /// The conditions of a build for target triple `triple`, [`DEFAULT`] included.
 pub fn conditions(triple: &str) -> Vec<&'static str> {
     let mut out = vec![];
-    if triple.starts_with("wasm32-wasi") {
+    if triple.starts_with("wasm") && triple.contains("-wasi") {
         out.extend(["wasm", "wasi"]);
-    } else if triple.starts_with("wasm32") {
+    } else if triple.starts_with("wasm") {
         out.extend(["wasm", "js"]);
     } else {
         out.push("native");
@@ -79,6 +79,31 @@ pub fn select<'a>(variants: &'a [Variant], conditions: &[&str]) -> Option<&'a Va
         .find(|v| conditions.contains(&v.condition.as_str()))
 }
 
+/// One target per set of conditions a build can have: what [`target_selecting`] tries.
+const REPRESENTATIVE_TARGETS: &[&str] = &[
+    "x86_64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+    "wasm32-wasip1",
+    "wasm32-unknown-unknown",
+];
+
+/// A target whose build uses the file `target` (a variant's `./`-relative path) for some `#name`
+/// of `map`, when a build for `host` does not: the editor checks an open variant as the build
+/// that uses it. `None` when `host` uses it, or no `#name` names it.
+pub fn target_selecting(map: &ImportMap, target: &str, host: &str) -> Option<&'static str> {
+    let uses = |triple: &str| {
+        let conditions = conditions(triple);
+        map.values()
+            .filter_map(|variants| select(variants, &conditions))
+            .any(|v| v.target == target)
+    };
+    if uses(host) {
+        return None;
+    }
+    REPRESENTATIVE_TARGETS.iter().copied().find(|t| uses(t))
+}
+
 /// Check a key: `#` and `/`-separated segments of ASCII letters, digits, `_` and `-`.
 pub(crate) fn check_key(key: &str) -> Result<(), String> {
     let ok = key.strip_prefix('#').is_some_and(|name| {
@@ -92,6 +117,10 @@ pub(crate) fn check_key(key: &str) -> Result<(), String> {
     });
     if ok {
         Ok(())
+    } else if key.contains('*') {
+        Err(format!(
+            "`{key}`: patterns (`#name/*`) are not supported: list each name (`#io/file`)"
+        ))
     } else {
         Err(format!(
             "`{key}` is not a conditional import: write `#` and a name (`#transport`, `#io/file`)"
@@ -198,13 +227,51 @@ mod tests {
     }
 
     #[test]
+    fn a_variant_the_host_does_not_use_gets_a_target_that_does() {
+        let map = ImportMap::from([(
+            "#io".to_string(),
+            variants(&[
+                ("js", "./src/io/js.vlt"),
+                ("win32", "./src/io/win.vlt"),
+                ("default", "./src/io/native.vlt"),
+            ]),
+        )]);
+        let host = "aarch64-apple-darwin";
+        assert_eq!(
+            target_selecting(&map, "./src/io/js.vlt", host),
+            Some("wasm32-unknown-unknown")
+        );
+        assert_eq!(
+            target_selecting(&map, "./src/io/win.vlt", host),
+            Some("x86_64-pc-windows-msvc")
+        );
+        assert_eq!(target_selecting(&map, "./src/io/native.vlt", host), None);
+        assert_eq!(target_selecting(&map, "./src/other.vlt", host), None);
+        // Any WebAssembly triple is `wasm`, never `native`.
+        assert_eq!(
+            conditions("wasm64-unknown-unknown"),
+            ["wasm", "js", "default"]
+        );
+    }
+
+    #[test]
     fn keys_conditions_and_targets() {
         for ok in ["#transport", "#io/file", "#a-b_c1"] {
             assert!(check_key(ok).is_ok(), "{ok}");
         }
-        for bad in ["transport", "#", "#/x", "#x/", "#a b", "#x//y", "##x"] {
+        for bad in [
+            "transport",
+            "#",
+            "#/x",
+            "#x/",
+            "#a b",
+            "#x//y",
+            "##x",
+            "#a.b",
+        ] {
             assert!(check_key(bad).is_err(), "{bad}");
         }
+        assert!(check_key("#io/*").unwrap_err().contains("patterns"));
         assert!(check_condition("js").is_ok());
         let err = check_condition("node").unwrap_err();
         assert!(err.contains("native, darwin"), "{err}");

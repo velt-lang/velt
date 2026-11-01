@@ -22,6 +22,9 @@ pub(super) struct Resolved {
     pub base: PathBuf,
     /// Its variants, in the order written.
     pub variants: Vec<Variant>,
+    /// The file of the variant this build uses (not compared when it failed to load: the
+    /// import's error says why).
+    pub selected: PathBuf,
     /// Where it was first imported.
     pub span: Span,
 }
@@ -54,6 +57,11 @@ impl Loader<'_, '_> {
         from: &Origin,
         span: Span,
     ) -> Result<PathBuf, LocateError> {
+        if !matches!(from, Origin::Std(_)) {
+            if let Some(npm) = npm_scope(&mut self.npm, importer, self.opts.packages) {
+                return self.npm.resolve_import(&npm, spec);
+            }
+        }
         let scope = match from {
             Origin::Std(root) => Scope {
                 owner: "the standard library".into(),
@@ -88,6 +96,7 @@ impl Loader<'_, '_> {
                 name: spec.to_string(),
                 base: scope.base,
                 variants: variants.clone(),
+                selected: file.clone(),
                 span,
             });
         }
@@ -115,6 +124,29 @@ impl Loader<'_, '_> {
             self.std_imports = Some(map);
         }
         self.std_imports.get_or_insert_with(ImportMap::new)
+    }
+}
+
+/// The npm package scope of `importer` when it belongs to an npm package (`node_modules`, a
+/// workspace package, one a git dependency provides) rather than to a Velt package: the nearest
+/// directory above it with a `package.json`, when that lies below the Velt package containing
+/// it (or no Velt package does). Its `#name`s resolve through that `package.json`'s `imports`,
+/// as in Node, never through a Velt package's map. A Velt package's own `package.json` (at its
+/// root, for TypeScript tools) is not one.
+fn npm_scope(
+    npm: &mut vpm::npm::NpmResolver,
+    importer: &Path,
+    packages: Option<&dyn PackageResolver>,
+) -> Option<PathBuf> {
+    let scope = npm.package_scope(importer)?;
+    let key = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let velt = packages
+        .and_then(|p| p.imports(importer))
+        .map(|p| key(&p.root));
+    let npm_key = key(&scope);
+    match velt {
+        Some(root) if !npm_key.starts_with(&root) || npm_key == root => None,
+        _ => Some(scope),
     }
 }
 
@@ -219,7 +251,13 @@ pub(super) fn resolve(
                 std: true,
             }
         }
-        None => package_scope(spec, importer, packages).ok()?,
+        None => {
+            let mut npm = vpm::npm::NpmResolver::default();
+            if let Some(scope) = npm_scope(&mut npm, importer, packages) {
+                return npm.resolve_import(&scope, spec).ok();
+            }
+            package_scope(spec, importer, packages).ok()?
+        }
     };
     let variants = scope.map.get(spec)?;
     select(spec, variants, &build_conditions(target), &scope).ok()

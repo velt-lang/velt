@@ -270,9 +270,74 @@ impl NpmResolver {
             }
             None => vec![subpath.to_string()],
         };
+        self.source_of(dir, name, subpath, spec, &manifest, &targets, runtime)
+    }
+
+    /// The `#name` `spec` imported by `importer`, a file of an npm package (its package scope:
+    /// the nearest directory above it with a `package.json`, `scope`): the source file its
+    /// `imports` maps `spec` to, under the conditions of [`SERVER_CONDITIONS`], mapped back to
+    /// its TypeScript source as for `exports`. Node's PACKAGE_IMPORTS_RESOLVE, `#x/*` patterns
+    /// included; a target that is a bare package name is not followed (an error).
+    pub fn resolve_import(&mut self, scope: &Path, spec: &str) -> Result<PathBuf, NpmError> {
+        let shown = scope.join("package.json").display().to_string();
+        let manifest = self
+            .manifest(scope)
+            .cloned()
+            .ok_or_else(|| (format!("cannot read `{shown}`"), vec![]))?;
+        let name = manifest
+            .get("name")
+            .and_then(Json::as_str)
+            .unwrap_or("<unnamed>")
+            .to_string();
+        let not_defined = || {
+            (
+                format!("npm package `{name}` does not define `{spec}` (`imports` in its package.json)"),
+                vec![format!(
+                    "the conditions Velt matches are {}; a target must be a `./` path in the package",
+                    conditions_list()
+                )],
+            )
+        };
+        let imports = manifest.get("imports").ok_or_else(not_defined)?;
+        let found = exports::resolve_import_targets(imports, spec, SERVER_CONDITIONS)
+            .map_err(|_| not_defined())?;
+        self.source_of(
+            scope,
+            &name,
+            spec,
+            spec,
+            &manifest,
+            &found.all,
+            found.runtime,
+        )
+    }
+
+    /// The package scope of `file` as Node finds it: the nearest directory above it with a
+    /// `package.json`.
+    pub fn package_scope(&mut self, file: &Path) -> Option<PathBuf> {
+        let start = crate::relpath::absolute(file.parent()?);
+        start
+            .ancestors()
+            .find(|dir| crate::probe::is_file(&dir.join("package.json")))
+            .map(Path::to_path_buf)
+    }
+
+    /// The source file of the first of `targets` (of `subpath` of package `name` in `dir`, for
+    /// specifier `spec`) that has one; the root export (`.`) falls back to [`ROOT_FALLBACK`].
+    #[allow(clippy::too_many_arguments)]
+    fn source_of(
+        &mut self,
+        dir: &Path,
+        name: &str,
+        subpath: &str,
+        spec: &str,
+        manifest: &Json,
+        targets: &[String],
+        runtime: Option<(String, String)>,
+    ) -> Result<PathBuf, NpmError> {
         let out_dirs = self.ts_out_dirs(dir);
         let mut tried = vec![];
-        for target in &targets {
+        for target in targets {
             for candidate in source_candidates(target, &out_dirs) {
                 let file = dir.join(&candidate);
                 if crate::probe::is_file(&file) {

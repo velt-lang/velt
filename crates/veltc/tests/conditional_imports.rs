@@ -28,10 +28,14 @@ fn write(dir: &Path, rel: &str, src: &str) {
 }
 
 fn velt(dir: &Path, args: &[&str]) -> Output {
+    velt_with_home(dir, &dir.join(".home"), args)
+}
+
+fn velt_with_home(dir: &Path, home: &Path, args: &[&str]) -> Output {
     no_window::command(env!("CARGO_BIN_EXE_velt"))
         .args(args)
         .current_dir(dir)
-        .env("VELT_HOME", dir.join(".home"))
+        .env("VELT_HOME", home)
         .env_remove("VELT_REGISTRY")
         .env_remove("VELT_LAUNCHER")
         .env("NO_COLOR", "1")
@@ -102,4 +106,25 @@ fn check_checks_the_variant_of_its_target() {
     let err = String::from_utf8_lossy(&o.stderr);
     assert!(!o.status.success(), "{err}");
     assert!(err.contains("src/io/js.vlt:2"), "{err}");
+}
+
+#[test]
+fn check_rejects_a_target_it_does_not_build_for() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    package(dir);
+    for args in [
+        &["check", "--target", "bogus-triple"][..],
+        &["check", "--std", "--target", "riscv64gc-unknown-linux-gnu"],
+    ] {
+        let o = velt(dir, args);
+        let err = String::from_utf8_lossy(&o.stderr);
+        assert!(!o.status.success(), "{args:?}: {err}");
+        assert!(err.contains("unsupported target"), "{args:?}: {err}");
+    }
+    // The golden fixture checks as a package.
+    let golden =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/golden/lang/conditional_imports");
+    let o = velt_with_home(&golden, &dir.join(".home"), &["check"]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
 }

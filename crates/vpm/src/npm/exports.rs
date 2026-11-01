@@ -70,6 +70,30 @@ pub fn resolve_targets(
         }
         return found(targets(exports, None, conditions));
     };
+    lookup(fields, subpath, conditions)
+}
+
+/// The targets a package's `imports` (`package.json`) maps `#name` `spec` to under
+/// `conditions`, as Node's PACKAGE_IMPORTS_RESOLVE does: an exact key, else the best `#x/*`
+/// pattern. A target that is not a `./` path inside the package (a bare package name) gives none.
+pub fn resolve_import_targets(
+    imports: &Json,
+    spec: &str,
+    conditions: &[&str],
+) -> Result<Targets, ExportsError> {
+    match imports {
+        Json::Obj(fields) => lookup(fields, spec, conditions),
+        _ => Err(ExportsError::NotExported),
+    }
+}
+
+/// The entry of `fields` (an `exports` subpath map or an `imports` map) for `subpath`: the exact
+/// key, else the pattern whose part before `*` is longest (Node's PATTERN_KEY_COMPARE).
+fn lookup(
+    fields: &[(String, Json)],
+    subpath: &str,
+    conditions: &[&str],
+) -> Result<Targets, ExportsError> {
     if let Some((_, entry)) = fields
         .iter()
         .find(|(k, _)| k == subpath && !k.contains('*'))

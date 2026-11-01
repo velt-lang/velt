@@ -370,7 +370,7 @@ fn goldens_in_the_browser_glue() {
 #[test]
 fn conditional_imports_pick_the_target_variant() {
     let root = root();
-    let program = root.join("tests/golden/lang/conditional_imports/main.vlt");
+    let program = root.join("tests/golden/lang/conditional_imports/src/main.vlt");
     for (target, runner, variant) in [
         ("wasm32-wasip1", "wasmtime", "wasi"),
         ("wasm32-unknown-unknown", "node", "js"),
