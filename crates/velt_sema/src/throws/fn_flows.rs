@@ -1,5 +1,5 @@
 //! Which site a function value is stored into, and where the values of a site go
-//! (`fn_types`, docs/reference/errors.md "Dynamic calls").
+//! (`fn_types`, https://veltlang.com/docs/reference/errors/ "Dynamic calls").
 //!
 //! A closure created where a value of a site's type is stored (an argument for a parameter,
 //! the initializer of a typed variable, a returned value, a field's value) throws into that

@@ -1,4 +1,4 @@
-//! Number-keyed records (docs/reference/types.md "Record"): `Record<number, V>` and
+//! Number-keyed records (https://veltlang.com/docs/reference/types/ "Record"): `Record<number, V>` and
 //! `{ [id: number]: V }` are string-keyed records (`crate::record_keys`), and a variable or
 //! parameter declared with one keeps TypeScript's errors for keys that are not numbers: a
 //! string key that is not a number's name (`r["abc"]`, TS7015; `r.abc`, TS2339) and such a key

@@ -96,7 +96,7 @@ Decided and implemented with stage 1: `/` yields `f64` unless both operands have
 integer types, so `const a = 7; a / 2` is `3.5` like JS. Integer speed is kept where it matters
 (loop counters, array indexes, values declared `i64`, `u8`, …); integer division is explicit
 (`Math.trunc(a / b)` on integers lowers to one instruction). The rules are in
-[the Reference](../../reference/types.md#numbers).
+[the Reference](https://veltlang.com/docs/reference/types/#numbers).
 
 ## Promises
 

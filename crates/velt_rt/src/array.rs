@@ -9,7 +9,7 @@
 #[repr(C)]
 #[derive(Debug)]
 pub struct VeltArray<T: Copy> {
-    /// First element (dangling when `cap == 0`).
+    /// First element (dangling when `cap == 0`; never odd: `bytes::empty_data`).
     pub ptr: *mut T,
     /// Number of elements.
     pub len: u64,
@@ -25,7 +25,7 @@ impl<T: Copy> VeltArray<T> {
     pub fn from_vec(v: Vec<T>) -> VeltArray<T> {
         if v.capacity() == 0 {
             return VeltArray {
-                ptr: std::ptr::NonNull::dangling().as_ptr(),
+                ptr: crate::bytes::empty_data(),
                 len: 0,
                 cap: 0,
             };
@@ -68,5 +68,8 @@ mod tests {
         }
         let empty = VeltArray::<i64>::from_vec(vec![]);
         assert_eq!(empty.cap, 0);
+        // Even, also for one-byte elements: bit 0 marks an array view's header (#1963).
+        let bools = VeltArray::<bool>::from_vec(vec![]);
+        assert_eq!(bools.ptr as usize & 1, 0);
     }
 }

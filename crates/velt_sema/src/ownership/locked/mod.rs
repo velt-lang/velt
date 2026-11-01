@@ -1,4 +1,4 @@
-//! `m.with(f)` callbacks (docs/reference/async.md "Thread safety"). The lock protects the value
+//! `m.with(f)` callbacks (https://veltlang.com/docs/reference/async/ "Thread safety"). The lock protects the value
 //! only while `f` runs, and the value's counts are not atomic, so nothing `f` does may leave a
 //! reference to a part of the value outside the lock, or one to an outside object inside it
 //! (#398). `with`'s result is transferred as it leaves the lock (velt_vir async_fn/sync.rs
@@ -311,9 +311,10 @@ fn crossings(
             inward.extend(i);
             stored_fns.extend(fns);
         }
-        if let (Some(true), Some((_, f))) = (read, bodies.iter().find(|(d, _)| *d == c)) {
+        if let (Some(_), Some((_, f))) = (read, bodies.iter().find(|(d, _)| *d == c)) {
             unfixable.extend(read_results(cx, &r, c, f));
         }
+        unfixable.extend(stored_then_given(&r));
     }
     Crossings {
         made,
@@ -370,9 +371,9 @@ fn check_callback(
     made_copied(cx, found.made_stored, reported);
 }
 
-/// Report an object a `read` callback made (of a type the value cannot hold) that it gives the
-/// caller's containers while still holding it (`stores::note_made`): they get a copy, also of
-/// the caller's objects inside it, where JavaScript shares the object.
+/// Report a closure a `read` callback made that it gives the caller's containers while still
+/// holding it (`stores::note_made`): they get a copy of what it captures, where JavaScript
+/// shares the closure.
 fn made_copied(
     cx: &mut Ctx,
     stored: Vec<(DefId, crate::hir::LocalId, Span)>,
@@ -388,10 +389,10 @@ fn made_copied(
         };
         cx.error(
             Diagnostic::error(
-                format!("this gives the caller's containers a copy of what `{name}` holds, an object the `read` callback made and still holds, where JavaScript would share it"),
+                format!("this gives the caller's containers a copy of `{name}`, which the `read` callback made and still uses, where JavaScript would share it"),
                 at,
             )
-            .with_note(format!("the copy would not see later changes on either side; store `{name}` once it is complete, as its last use in the callback (it then stays the same object), or build it outside the `read`")),
+            .with_note(format!("the copy would not see what the callback changes through `{name}` afterwards; store a closure as its last use in the callback (it then stays the same closure), move an object's items in the callback itself, or make it outside the `read`")),
         );
     }
 }
@@ -507,6 +508,24 @@ fn resource_results(
                 span: e.span,
                 kind: stores::Cross::Resource,
             });
+        }
+    }
+    out
+}
+
+/// What may be the caller's objects stored into a variable of a `read` callback's bodies after
+/// that variable went into the caller's containers: from the first store on, the callback no
+/// longer counts the object as its own.
+fn stored_then_given(r: &regions::Regions) -> Vec<stores::Unfixable> {
+    let mut out = vec![];
+    for &(d, l, at) in &r.inbound {
+        let after = r
+            .outed
+            .iter()
+            .any(|&(d2, l2, s)| d2 == d && l2 == l && s.hi <= at.lo);
+        if after {
+            let kind = stores::Cross::AfterStored;
+            out.push(stores::Unfixable { span: at, kind });
         }
     }
     out
@@ -659,9 +678,17 @@ fn unfixable_error(cx: &mut Ctx, u: stores::Unfixable) {
             "the function might store a part of one in the other, shared by threads without the lock; call a function or a closure written here (`const f = (s) => ...`), or pass a copy (`x.clone()`)",
         ),
         stores::Cross::ResourceInPlace(_) => return,
+        stores::Cross::CallAlias => (
+            "a closure made in a `read` callback changes a variable bound to a function's result, which may be the caller's object".to_string(),
+            "inside such a closure the compiler cannot tell the caller's object from one the callback made; change it in the callback itself, or after `read`",
+        ),
+        stores::Cross::AfterStored => (
+            "this puts what may be the caller's object into an object the `read` callback made, after storing that object into the caller's containers".to_string(),
+            "from that store on, the callback no longer counts the object as its own; put the caller's objects in before storing it, or make the change after `read`",
+        ),
         stores::Cross::ReadPart { returned } => {
             let what = match returned {
-                true => "this `read`, nested in another, returns",
+                true => "this `read` returns",
                 false => "this stores",
             };
             (

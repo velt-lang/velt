@@ -157,12 +157,15 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let out = self.temp(Ty::Ptr);
         self.assign(Place::local(out), Rvalue::Use(o.clone()));
         let done = self.new_block();
+        // Set when the fields are kept under an object the reader still references.
+        let entered = self.temp(Ty::U8);
+        self.assign(Place::local(entered), Rvalue::Use(cint(0, Ty::U8)));
         if self.cx.counted(ty) {
             let (unique, shared) = (self.new_block(), self.new_block());
             let one = self.unique_of(o.clone(), ty);
             self.branch(one, unique, shared);
             self.switch_to(shared);
-            let keep = self.keep_callers(o.clone(), ty, done, unique);
+            let keep = self.keep_callers(o.clone(), ty, [done, unique], entered);
             self.find_copy(o.clone(), ty, |lw, copy| {
                 lw.defer_release(o.clone(), ty);
                 lw.assign(Place::local(out), Rvalue::Use(copy));
@@ -197,6 +200,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
         self.goto(done);
         self.switch_to(done);
+        self.leave_kept(entered);
         self.terminate(Terminator::Return(Operand::Copy(Place::local(out))));
     }
 
@@ -227,13 +231,17 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let payload = self.cx.payload_ty(ty);
         let p = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(place.clone())));
         let done = self.new_block();
+        // Set when the parts are kept under an object the reader still references (velt_rt
+        // `velt_rt_xfer_keep_shared`).
+        let entered = self.temp(Ty::U8);
+        self.assign(Place::local(entered), Rvalue::Use(cint(0, Ty::U8)));
         let nn = self.non_null(p.clone());
         self.when(nn, done);
         let (unique, shared) = (self.new_block(), self.new_block());
         let one = self.unique_of(p.clone(), ty);
         self.branch(one, unique, shared);
         self.switch_to(shared);
-        let keep = self.keep_callers(p.clone(), ty, done, unique);
+        let keep = self.keep_callers(p.clone(), ty, [done, unique], entered);
         self.find_copy(p.clone(), ty, |lw, copy| {
             lw.defer_release(p.clone(), ty);
             lw.assign(place.clone(), Rvalue::Use(copy));
@@ -266,6 +274,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
         self.goto(done);
         self.switch_to(done);
+        self.leave_kept(entered);
     }
 
     /// The still-shared counted value `v` (a pointer) of type `ty`: a deep copy made by `copy`
@@ -327,10 +336,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
         &mut self,
         o: Operand,
         ty: TyId,
-        done: vir::BlockId,
-        unique: vir::BlockId,
+        [done, unique]: [vir::BlockId; 2],
+        entered: vir::Local,
     ) -> Option<vir::Local> {
         if !self.cx.lock_counted(ty) {
+            self.keep_made_unshared(o, ty, [done, unique], entered);
             return None;
         }
         let keep = self.temp(Ty::U8);
@@ -362,17 +372,104 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.goto(done);
         self.switch_to(made);
         match self.holds_lock_set(ty) {
-            // The caller's only reference from now on, unless a nested reader's store keeps
-            // it the reader's own until the reads end (velt_rt `velt_rt_lk_keep_made`).
+            // The caller's reference from now on; the readers still reference it, so it and
+            // its parts stay their own until the reads end (velt_rt `velt_rt_lk_keep_made`,
+            // `velt_rt_xfer_keep_shared`).
             true => {
+                self.unless_kept_again(o.clone(), done);
                 let c = self.count_addr(o);
                 self.call_rt(Rt::LkKeepMade, vec![c], None);
+                self.enter_kept(entered);
                 self.goto(unique);
             }
             false => self.goto(done),
         }
         self.switch_to(go);
         Some(keep)
+    }
+
+    /// The parts of an object kept under one the reader still references are done
+    /// (`enter_kept`).
+    fn leave_kept(&mut self, entered: vir::Local) {
+        let was = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(
+                BinOp::Eq,
+                Operand::Copy(Place::local(entered)),
+                cint(1, Ty::U8),
+            ),
+        );
+        let (leave, out) = (self.new_block(), self.new_block());
+        self.branch(was, leave, out);
+        self.switch_to(leave);
+        self.call_rt(Rt::XferKeepShared, vec![cint(0, Ty::U8)], None);
+        self.goto(out);
+        self.switch_to(out);
+    }
+
+    /// The parts of the object being kept go on under an object the reader still references.
+    fn enter_kept(&mut self, entered: vir::Local) {
+        self.call_rt(Rt::XferKeepShared, vec![cint(1, Ty::U8)], None);
+        self.assign(Place::local(entered), Rvalue::Use(cint(1, Ty::U8)));
+    }
+
+    /// In a transfer `velt_rt_xfer_keep_begin` started, in read mode, the still-shared object
+    /// `o` of type `ty`, which is not a lock-set type (so the reader counts it) but holds
+    /// lock-set objects: the reader made it, so it holds nothing of the lock's value (sema
+    /// refuses such stores) and stays itself, as in JavaScript, with the caller's reference, and
+    /// its parts are kept in turn (at `unique`), staying the readers' own until the reads end.
+    /// Outside such a transfer, or for a type holding no lock-set object, the caller goes on
+    /// (a copy, as in any transfer).
+    fn keep_made_unshared(
+        &mut self,
+        o: Operand,
+        ty: TyId,
+        [done, unique]: [vir::BlockId; 2],
+        entered: vir::Local,
+    ) {
+        if !self.holds_lock_set(ty) {
+            return;
+        }
+        let keep = self.temp(Ty::U8);
+        self.assign(Place::local(keep), Rvalue::Use(cint(0, Ty::U8)));
+        self.lk_split(
+            |_| {},
+            |lw| lw.call_rt(Rt::XferKeeps, vec![], Some(Place::local(keep))),
+        );
+        let k = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(
+                BinOp::Eq,
+                Operand::Copy(Place::local(keep)),
+                cint(1, Ty::U8),
+            ),
+        );
+        let (keeping, other) = (self.new_block(), self.new_block());
+        self.branch(k, keeping, other);
+        // The reference the transfer was given (counted: not a lock-set type) is the caller's.
+        self.switch_to(keeping);
+        self.unless_kept_again(o, done);
+        self.enter_kept(entered);
+        self.goto(unique);
+        self.switch_to(other);
+    }
+
+    /// Goes to `done` when a store in these reads kept the object `o` already: its parts were
+    /// kept then, and are not counted again (velt_rt `velt_rt_lk_kept_again`).
+    fn unless_kept_again(&mut self, o: Operand, done: vir::BlockId) {
+        let again = self.temp(Ty::U8);
+        self.call_rt(Rt::LkKeptAgain, vec![o], Some(Place::local(again)));
+        let seen = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(
+                BinOp::Eq,
+                Operand::Copy(Place::local(again)),
+                cint(1, Ty::U8),
+            ),
+        );
+        let first = self.new_block();
+        self.branch(seen, done, first);
+        self.switch_to(first);
     }
 
     /// In a transfer `velt_rt_xfer_share_begin` started (`keep` is 2: a value sema transferred

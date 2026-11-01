@@ -1,4 +1,4 @@
-//! Shared state (docs/reference/async.md): `new Mutex<T>(x)` and `m.with((v) => ...)`
+//! Shared state (https://veltlang.com/docs/reference/async/): `new Mutex<T>(x)` and `m.with((v) => ...)`
 //! on a `Mutex<T>` or `shared<Mutex<T>>`, and `new RwLock<T>(x)` with `rw.write(f)` (the same as
 //! `with`) and `rw.read(f)` (`Intrinsic::LockRead`: the callback may not modify the value,
 //! checked once modes are inferred, `ownership/locked`). The callback runs synchronously under the

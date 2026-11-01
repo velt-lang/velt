@@ -10,7 +10,7 @@ use crate::str::VeltStr;
 #[repr(C)]
 #[derive(Debug)]
 pub struct VeltBytes {
-    /// First byte (dangling or null when `len == 0`).
+    /// First byte (dangling or null when `len == 0`; never odd: [`empty_data`]).
     pub ptr: *mut u8,
     /// Number of bytes.
     pub len: u64,
@@ -50,12 +50,19 @@ pub(crate) fn array_too_long() -> ! {
     crate::panic::fatal("RangeError: Invalid array length: an array holds at most 2^52 - 1 elements, and its elements at most 2^52 - 1 bytes")
 }
 
+/// The data pointer of an empty array the runtime hands to generated code: dangling, aligned for
+/// `T` and even. Rust's own dangling pointer of a byte array is 1, and an array header whose data
+/// pointer has bit 0 set is an array view's (rt_abi.md "Views"), so a plain array's never does.
+pub fn empty_data<T>() -> *mut T {
+    std::ptr::without_provenance_mut(std::mem::align_of::<T>().max(2))
+}
+
 impl VeltBytes {
     /// Take ownership of a Vec's buffer.
     pub fn from_vec(v: Vec<u8>) -> VeltBytes {
         if v.capacity() == 0 {
             return VeltBytes {
-                ptr: std::ptr::NonNull::dangling().as_ptr(),
+                ptr: empty_data(),
                 len: 0,
                 cap: 0,
             };
@@ -172,6 +179,18 @@ mod tests {
         unsafe { crate::str::velt_rt_str_drop(&mut r.err.message) };
         let mut bad = bad;
         unsafe { velt_rt_bytes_drop(&mut bad) };
+    }
+
+    /// An empty array's data pointer is even: bit 0 marks an array view's header (#1963).
+    #[test]
+    fn empty_arrays_have_an_even_data_pointer() {
+        let b = VeltBytes::from_vec(Vec::new());
+        assert_eq!((b.len, b.cap, b.ptr as usize & 1), (0, 0, 0));
+        let mut z = MaybeUninit::<VeltBytes>::uninit();
+        unsafe { crate::bytes_ops::velt_rt_bytes_zeroed(0, z.as_mut_ptr()) };
+        assert_eq!(unsafe { z.assume_init() }.ptr as usize & 1, 0);
+        assert_eq!(empty_data::<u8>() as usize & 1, 0);
+        assert_eq!(empty_data::<u64>() as usize % 8, 0);
     }
 }
 

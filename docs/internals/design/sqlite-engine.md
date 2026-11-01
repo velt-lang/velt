@@ -98,7 +98,7 @@ declare system function fcntl(fd: i32, cmd: i32, lock: mut Flock): i32;   // a #
 This replaces the Rust in `std/fs` (`velt_rt_fs_*`) over time; std's file API is rewritten on
 it, starting with positioned I/O for the pager.
 
-**Built** (#1716, docs/reference/system-functions.md), with these decisions:
+**Built** (#1716, https://veltlang.com/docs/reference/system-functions/), with these decisions:
 
 - The written/read distinction is spelled with TypeScript's own `readonly` array type instead of
   a new `mut` modifier: `buf: u8[]` is a buffer the C function writes, `buf: readonly u8[]` one

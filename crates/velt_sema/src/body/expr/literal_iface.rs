@@ -1,5 +1,5 @@
 //! Object literals with no expected type whose methods use `this`, or that have getters or
-//! setters (docs/reference/types.md "`this` in object-literal methods"). TypeScript types
+//! setters (https://veltlang.com/docs/reference/types/ "`this` in object-literal methods"). TypeScript types
 //! `this` in such a literal as the literal's own type; Velt makes that type an interface no
 //! source names, with the literal's members, which the literal then implements as one written
 //! where an interface is expected does (`iface_object.rs`):

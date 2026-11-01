@@ -292,9 +292,10 @@ fn generics(cx: &Ctx, d: DefId) -> u32 {
     }
 }
 
-/// The expansion graph as adjacency lists over dense node indices.
-struct Graph {
-    index: FxHashMap<Node, usize>,
+/// The expansion graph as adjacency lists over dense node indices (also of type definitions'
+/// parameters, `crate::expansive_types`).
+pub(crate) struct Graph {
+    pub(crate) index: FxHashMap<Node, usize>,
     /// Outgoing edges (indices into the edge list) per node.
     out: Vec<Vec<usize>>,
     /// Target node per edge.
@@ -303,14 +304,20 @@ struct Graph {
 
 impl Graph {
     fn new(edges: &[Edge]) -> Graph {
+        let pairs: Vec<(Node, Node)> = edges.iter().map(|e| (e.from, e.to)).collect();
+        Graph::of(&pairs)
+    }
+
+    /// The graph of these edges (`(from, to)`), numbered in order.
+    pub(crate) fn of(edges: &[(Node, Node)]) -> Graph {
         let mut g = Graph {
             index: FxHashMap::default(),
             out: vec![],
             to: vec![],
         };
-        for e in edges {
-            let a = g.node(e.from);
-            let b = g.node(e.to);
+        for &(from, to) in edges {
+            let a = g.node(from);
+            let b = g.node(to);
             g.out[a].push(g.to.len());
             g.to.push(b);
         }
@@ -328,7 +335,7 @@ impl Graph {
 
     /// The strongly connected component of each node (Tarjan's algorithm, iterative so a long
     /// call chain cannot overflow the stack).
-    fn components(&self) -> Vec<usize> {
+    pub(crate) fn components(&self) -> Vec<usize> {
         let n = self.out.len();
         let (mut low, mut num) = (vec![0usize; n], vec![usize::MAX; n]);
         let (mut comp, mut on_stack) = (vec![usize::MAX; n], vec![false; n]);

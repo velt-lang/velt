@@ -1,4 +1,4 @@
-//! `for await (const x of src)` (docs/reference/control-flow.md "for await...of",
+//! `for await (const x of src)` (https://veltlang.com/docs/reference/control-flow/ "for await...of",
 //! docs/internals/design/iteration.md §4), only in async functions and async generators:
 //!
 //! - over an async iterable (a `[Symbol.asyncIterator]()` method returning an

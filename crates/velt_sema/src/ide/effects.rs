@@ -12,7 +12,7 @@ use crate::ctx::Ctx;
 use crate::defs::{DefInfo, FnInfo, FnKind};
 use crate::hir::{DefId, PassMode, TyKind};
 
-/// What a function modifies (docs/reference/memory.md, "Mutation is inferred").
+/// What a function modifies (https://veltlang.com/docs/reference/memory/, "Mutation is inferred").
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Mutation {
     /// A method that modifies `this` (directly, through a field, a callee or a closure); never

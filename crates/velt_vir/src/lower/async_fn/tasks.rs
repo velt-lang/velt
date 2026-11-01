@@ -1,4 +1,4 @@
-//! Task and promise intrinsics (docs/reference/async.md): `spawn` (spawn.rs), `sleep`,
+//! Task and promise intrinsics (https://veltlang.com/docs/reference/async/): `spawn` (spawn.rs), `sleep`,
 //! `yieldNow()` as a value, `Promise.all`, `performance.now()`, `Date.now()`. Shared-state
 //! intrinsics are in sync.rs.
 //!

@@ -1,5 +1,5 @@
 //! A value that may be `undefined` passed for a parameter with a default (issue #930,
-//! docs/reference/types.md "Null and undefined"): JavaScript applies the default where the value
+//! https://veltlang.com/docs/reference/types/ "Null and undefined"): JavaScript applies the default where the value
 //! is `undefined`. The default of a parameter whose type has no `undefined` is evaluated at the
 //! call site (`defaults.rs`), so the argument is tested there:
 //! `{ const <arg> = h; typeof <arg> === "undefined" ? <default> : <arg>! }`.

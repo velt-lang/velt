@@ -75,8 +75,14 @@ pub(super) enum Cross {
     /// value from a field or an element (it stays there too).
     ResourceInPlace(crate::hir::TyId),
     /// A part of the value an `RwLock`'s `read` callback reads, stored outside the callback
-    /// (`returned`: returned by a `read` nested in another): JavaScript would share it.
+    /// (`returned`: returned by the callback): JavaScript would share it.
     ReadPart { returned: bool },
+    /// A closure made in a `read` callback changes a variable of the callback bound to a call's
+    /// result.
+    CallAlias,
+    /// What may be the caller's object goes into an object the callback made after that object
+    /// went into the caller's containers.
+    AfterStored,
 }
 
 struct Stores<'a, 'r, 's, 'm> {
@@ -125,7 +131,8 @@ impl Stores<'_, '_, '_, '_> {
             && root.is_some_and(|l| !self.r.is_home(self.def, l));
         if self.rewrite && !rebind {
             self.note_stored_fn(value, dest);
-            self.note_made(value, dest);
+            self.note_made(value, dest, false);
+            self.note_order(root, value, (dest, b), true);
         }
         if rebind || dest == 0 || !crosses(dest, b) {
             if let (false, Some(root)) = (self.rewrite, root) {
@@ -228,7 +235,21 @@ impl Stores<'_, '_, '_, '_> {
             if self.rewrite {
                 self.note_stored_fn(&args[a], dest);
                 if k < stores {
-                    self.note_made(&args[a], dest);
+                    // A function of the program's may store a part of the argument only.
+                    let whole = match callee {
+                        Callee::Def(g, _) => self.cx.scopes[self.cx.fn_info(*g).module].is_std,
+                        Callee::Intrinsic(_) => true,
+                        _ => false,
+                    };
+                    self.note_made(&args[a], dest, !whole);
+                    self.note_order(root, &args[a], (dest, bits[a]), whole);
+                }
+                if k < stores && b == Some(0) && self.changes_call_alias(&args[0]) {
+                    if done.insert(a) {
+                        let kind = Cross::CallAlias;
+                        self.unfixable.push(Unfixable { span, kind });
+                    }
+                    continue;
                 }
             }
             if !crosses(dest, bits[a]) || !self.rewrite || !done.insert(a) {
@@ -246,32 +267,84 @@ impl Stores<'_, '_, '_, '_> {
         }
     }
 
-    /// An object a `read` callback made, of a type the value cannot hold that holds objects of the
-    /// value's types (not an array), given to the caller's containers while the callback still
-    /// holds it (not moved): the store gets a copy, also of the caller's objects inside it
-    /// (`super::made_copied`).
-    fn note_made(&mut self, value: &Expr, dest: u8) {
-        if self.r.read.is_none() || dest & OUT == 0 {
+    /// For a `read` callback, where variables of its bodies go into the caller's containers, and
+    /// where what may be the caller's objects go into variables of its bodies
+    /// (`super::stored_then_given`).
+    fn note_order(
+        &mut self,
+        root: Option<LocalId>,
+        value: &Expr,
+        (dest, bits): (u8, u8),
+        whole: bool,
+    ) {
+        if self.r.read.is_none() {
             return;
         }
         let x = unshared(value);
+        if let (true, E::Local(l, _)) = (whole && dest & OUT != 0, &x.kind) {
+            let l = *l;
+            if !self.r.is_home(self.def, l) {
+                let (d, l) = self.r.key((self.def, l));
+                self.r.outed.push((d, l, value.span));
+            }
+        }
+        let Some(root) = root.filter(|&r| !self.r.is_home(self.def, r)) else {
+            return;
+        };
+        let counted = self.cx.is_shared_value(value.ty) && !self.cx.is_string_value(value.ty);
+        if bits & OUT != 0 && counted && !is_copy(self.cx, x) {
+            let (d, l) = self.r.key((self.def, root));
+            self.r.inbound.push((d, l, value.span));
+        }
+    }
+
+    /// Does a closure made in a `read` callback change, through `recv`, a variable of the
+    /// callback bound to a call's result (`const g = first(mine)`)? It may name the caller's
+    /// object or the callback's own, which a closure cannot tell apart.
+    fn changes_call_alias(&mut self, recv: &Expr) -> bool {
+        if self.r.read.is_none() || self.def == self.r.callback {
+            return false;
+        }
+        let Some(root) = place_root(recv) else {
+            return false;
+        };
+        let k = self.r.key((self.def, root));
+        k.0 == self.r.callback
+            && self.r.call_locals.contains(&k)
+            && outer_mode(recv) == Some(UseMode::BorrowMut)
+    }
+
+    /// A closure a `read` callback made, given to the caller's containers while the callback
+    /// still holds it (not moved): the store gets a copy of what it captures
+    /// (`super::made_copied`). So does an object it made (not an array) given to a function or
+    /// method of the program's (`user_call`) that moves its parts into the caller's containers
+    /// (velt_vir call.rs). An object it made stored there stays itself (velt_vir
+    /// glue/transfer.rs `keep_made_unshared`).
+    fn note_made(&mut self, value: &Expr, dest: u8, user_call: bool) {
+        if self.r.read.is_none() || dest & OUT == 0 {
+            return;
+        }
+        let mut x = unshared(value);
+        while let E::Upcast(inner) | E::WrapSome(inner) = &x.kind {
+            x = unshared(inner);
+        }
         let Some(l) = place_root(x).filter(|_| is_place(x)) else {
             return;
         };
-        let ty = value.ty;
-        if outer_mode(x) == Some(UseMode::Move)
+        let closure = matches!(
+            self.cx.ty.kind(value.ty),
+            TyKind::Closure(_) | TyKind::FnPtr { .. }
+        );
+        // A type the value can hold is kept as the same object (velt_vir caller_stores.rs).
+        let object = user_call
+            && !matches!(self.cx.ty.kind(x.ty), TyKind::Array(_))
+            && !self.r.lock_tys.contains(&x.ty)
+            && holds_shared(self.cx, x.ty);
+        if !(closure || object)
+            || outer_mode(x) == Some(UseMode::Move)
             || !self.r.made_locals.contains(&(self.def, l))
             || self.r.is_home(self.def, l)
-            || self.r.get(self.def, l) & IN != 0
-            || self.r.lock_tys.contains(&ty)
-            || matches!(self.cx.ty.kind(ty), TyKind::Array(_))
         {
-            return;
-        }
-        let mut inside = FxHashSet::default();
-        super::regions::lock_types(self.cx, ty, &mut inside);
-        inside.remove(&ty);
-        if inside.is_disjoint(&self.r.lock_tys) {
             return;
         }
         self.r.made_stored.push((self.def, l, value.span));
@@ -465,6 +538,33 @@ fn holds_part(cx: &mut Ctx, r: &Regions, d: DefId, e: &Expr) -> bool {
     }
 }
 
+/// Is `x` an explicit copy (`x.clone()`, `structuredClone(x)`)?
+fn is_copy(cx: &Ctx, x: &Expr) -> bool {
+    match &x.kind {
+        E::Call {
+            callee: Callee::Intrinsic(Intrinsic::Clone),
+            ..
+        } => true,
+        E::Call {
+            callee: Callee::Def(g, _),
+            ..
+        } => Some(*g) == cx.prelude_fn("structuredClone"),
+        _ => false,
+    }
+}
+
+/// Is `x` the result of a function or method call (not a share, copy or transfer)?
+fn is_call_result(x: &Expr) -> bool {
+    match &x.kind {
+        E::Call {
+            callee: Callee::Intrinsic(i),
+            ..
+        } => !matches!(i, Intrinsic::Share | Intrinsic::Clone | Intrinsic::Transfer),
+        E::Call { .. } => true,
+        _ => false,
+    }
+}
+
 /// Is the object type `d` the standard library's?
 fn std_def(cx: &Ctx, d: DefId) -> bool {
     let module = match cx.info.get(d.0 as usize) {
@@ -505,8 +605,15 @@ impl VisitMut for Stores<'_, '_, '_, '_> {
                 local,
                 init: Some(init),
             } => {
-                if matches!(unshared(init).kind, E::New { .. } | E::AdtLit { .. }) {
+                let x = unshared(init);
+                if matches!(x.kind, E::New { .. } | E::AdtLit { .. } | E::Closure(_)) {
                     self.r.made_locals.insert((self.def, *local));
+                }
+                if let (true, Some(root)) = (is_place(x), place_root(x)) {
+                    self.r.link(self.def, *local, root);
+                }
+                if is_call_result(x) {
+                    self.r.call_locals.insert((self.def, *local));
                 }
                 let b = self.mentions(init);
                 self.r.add(self.def, *local, b);

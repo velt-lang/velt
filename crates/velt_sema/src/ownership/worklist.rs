@@ -10,6 +10,7 @@
 //! and dynamic dispatch send work back to bodies already visited.
 
 use rustc_hash::FxHashMap;
+use std::collections::hash_map::Entry;
 use std::collections::BTreeSet;
 
 use crate::ctx::Ctx;
@@ -30,6 +31,9 @@ pub(super) struct Worklist {
     groups: FxHashMap<DefId, Vec<usize>>,
     bodies: BTreeSet<usize>,
     joins: BTreeSet<usize>,
+    /// Per pending group: the members that changed since its last join, or `None` when the
+    /// whole group is joined again (at the start).
+    changed_members: FxHashMap<usize, Option<Vec<DefId>>>,
 }
 
 impl Worklist {
@@ -48,6 +52,7 @@ impl Worklist {
         Worklist {
             bodies: (0..order.len()).collect(),
             joins: (0..dispatch.len()).collect(),
+            changed_members: (0..dispatch.len()).map(|g| (g, None)).collect(),
             order,
             readers,
             groups: dispatch.membership(),
@@ -58,8 +63,19 @@ impl Worklist {
     pub(super) fn changed(&mut self, d: DefId) {
         self.bodies
             .extend(self.readers.get(&d).into_iter().flatten().copied());
-        self.joins
-            .extend(self.groups.get(&d).into_iter().flatten().copied());
+        for &g in self.groups.get(&d).into_iter().flatten() {
+            self.joins.insert(g);
+            match self.changed_members.entry(g) {
+                Entry::Occupied(mut e) => {
+                    if let Some(members) = e.get_mut() {
+                        members.push(d);
+                    }
+                }
+                Entry::Vacant(e) => {
+                    e.insert(Some(vec![d]));
+                }
+            }
+        }
     }
 
     /// The next body to visit (earliest in visiting order), taken off the list.
@@ -67,9 +83,11 @@ impl Worklist {
         self.bodies.pop_first().map(|p| self.order[p])
     }
 
-    /// The next dispatch group to join, taken off the list.
-    pub(super) fn next_join(&mut self) -> Option<usize> {
-        self.joins.pop_first()
+    /// The next dispatch group to join, taken off the list, with the members that changed
+    /// since its last join (`None`: join it whole).
+    pub(super) fn next_join(&mut self) -> Option<(usize, Option<Vec<DefId>>)> {
+        let g = self.joins.pop_first()?;
+        Some((g, self.changed_members.remove(&g).flatten()))
     }
 }
 

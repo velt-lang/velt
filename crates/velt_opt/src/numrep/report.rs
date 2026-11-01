@@ -64,7 +64,7 @@ pub(super) fn unnarrowed(env: &Env, flow: &Flow, func: &Function) -> Vec<Unnarro
     out
 }
 
-/// The words for each reason; `docs/tooling/cli.md` (`--report numbers`) lists the same ones.
+/// The words for each reason; `https://veltlang.com/docs/tooling/cli/` (`--report numbers`) lists the same ones.
 fn describe(r: Reason, func: &Function) -> String {
     match r {
         Reason::NotWhole => "it may hold a fraction".into(),

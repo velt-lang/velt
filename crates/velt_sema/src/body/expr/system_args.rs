@@ -1,5 +1,5 @@
 //! Arguments of a `declare system function`'s byte buffer parameters (`u8[]`, `readonly u8[]`;
-//! docs/reference/system-functions.md). Besides a `u8[]`, such a parameter takes a view of bytes
+//! https://veltlang.com/docs/reference/system-functions/). Besides a `u8[]`, such a parameter takes a view of bytes
 //! (#1718):
 //!
 //! - a typed array or a `DataView` (a class extending std's `BufferView`), passed as it is:

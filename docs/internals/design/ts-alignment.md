@@ -29,7 +29,7 @@ switch (s.kind) { case "circle": return s.r; case "rect": return s.w * s.h; }
   when switching on a discriminant or a union (`never` in `default`).
 - Payload `enum`s and `match` are removed. TypeScript's numeric enums (`enum Color { Red,
   Green = 5 }`) and string enums (`enum Dir { Up = "UP" }`) stay.
-- As built ([the Reference](../../reference/types.md#discriminated-unions)): any object types
+- As built ([the Reference](https://veltlang.com/docs/reference/types/#discriminated-unions)): any object types
   can be members (anonymous object types, structs, classes); literal expressions take literal
   types only where one is expected (also for `const`); each `case` body is its own scope; case
   values that are not literals compare with `==`; fields every member has are readable without
@@ -50,7 +50,7 @@ switch (s.kind) { case "circle": return s.r; case "rect": return s.w * s.h; }
 - Hot reload constraint ([hot reload](hot-reload.md)): futures keep their own `poll`/`drop` in
   the future header; no other place caches code pointers.
 - Panics (bounds, division by zero, `unwrap` of `null`) stay separate from throws.
-- As built ([Errors](../../reference/errors.md), [Async](../../reference/async.md)): `throws`
+- As built ([Errors](https://veltlang.com/docs/reference/errors/), [Async](https://veltlang.com/docs/reference/async/)): `throws`
   follows the return type (`function f(): T throws E`, also on methods, constructors, arrows
   `(x): R throws E => …`, and `async function f(): Promise<T> throws E`); function types
   `(x: T) => U throws E`, where `throws` after a `Promise` result is the promise's rejection

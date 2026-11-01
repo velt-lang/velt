@@ -44,7 +44,7 @@ pub(super) struct Regions {
     /// making the callback).
     callback_captures: FxHashMap<LocalId, LocalId>,
     /// The callback.
-    callback: DefId,
+    pub(super) callback: DefId,
     /// The named functions among what each resolved function value may be.
     pub(super) named: FxHashMap<Span, Vec<DefId>>,
     /// Set when [`Regions::add`] grew a set (the fixpoint goes on).
@@ -53,12 +53,21 @@ pub(super) struct Regions {
     pub(super) read: Option<bool>,
     /// The types the value a `read` callback reads may hold (`lock_types`).
     pub(super) lock_tys: FxHashSet<TyId>,
-    /// Variables of a `read` callback's bodies holding an object it made, of a type the value
-    /// cannot hold, stored into the caller's containers (body, variable, store): one still used
-    /// afterwards is stored as a copy (`super::made_copied`).
+    /// Variables of a `read` callback's bodies holding a closure it made, stored into the
+    /// caller's containers while still used (body, variable, store; `super::made_copied`).
     pub(super) made_stored: Vec<(DefId, LocalId, Span)>,
     /// Variables declared with a new object (`const h = new Holder()`, an object literal).
     pub(super) made_locals: FxHashSet<Key>,
+    /// Variables bound to a place rooted in another variable of the bodies (`const d = c`,
+    /// `const r = c.rows`) → those roots: what is stored into the first reaches the root too.
+    pub(super) roots: FxHashMap<Key, Vec<Key>>,
+    /// Variables of the bodies bound to a call's result (`const g = first(mine)`).
+    pub(super) call_locals: FxHashSet<Key>,
+    /// Stores of a variable of the bodies into the caller's containers (body, variable, where).
+    pub(super) outed: Vec<(DefId, LocalId, Span)>,
+    /// Stores of what may be the caller's objects into a variable of the bodies (body, variable,
+    /// where): after the variable was stored into the caller's containers, an error.
+    pub(super) inbound: Vec<(DefId, LocalId, Span)>,
 }
 
 impl Regions {
@@ -80,6 +89,10 @@ impl Regions {
             lock_tys: FxHashSet::default(),
             made_stored: vec![],
             made_locals: FxHashSet::default(),
+            roots: FxHashMap::default(),
+            call_locals: FxHashSet::default(),
+            outed: vec![],
+            inbound: vec![],
         };
         let Sites { parent, passed, .. } = closure_sites(bodies);
         for (d, f) in bodies.iter() {
@@ -123,7 +136,7 @@ impl Regions {
         r
     }
 
-    fn key(&self, mut k: Key) -> Key {
+    pub(super) fn key(&self, mut k: Key) -> Key {
         while let Some(&a) = self.alias.get(&k) {
             k = a;
         }
@@ -137,10 +150,34 @@ impl Regions {
 
     /// Local `l` of body `d` may reach `b` too.
     pub(super) fn add(&mut self, d: DefId, l: LocalId, b: u8) {
-        let k = self.key((d, l));
-        let e = self.bits.entry(k).or_insert(0);
-        if *e | b != *e {
-            *e |= b;
+        let mut todo = vec![self.key((d, l))];
+        let mut seen = FxHashSet::default();
+        while let Some(k) = todo.pop() {
+            if !seen.insert(k) {
+                continue;
+            }
+            let e = self.bits.entry(k).or_insert(0);
+            if *e | b != *e {
+                *e |= b;
+                self.changed = true;
+            }
+            // What a variable naming a part of another's holds, that one holds too.
+            if let Some(rs) = self.roots.get(&k) {
+                let rs = rs
+                    .iter()
+                    .map(|r| self.key(*r))
+                    .filter(|r| !self.homes.contains(r));
+                todo.extend(rs.collect::<Vec<Key>>());
+            }
+        }
+    }
+
+    /// Local `l` of body `d` names a part of local `root` (of the same body).
+    pub(super) fn link(&mut self, d: DefId, l: LocalId, root: LocalId) {
+        let (k, r) = (self.key((d, l)), (d, root));
+        let rs = self.roots.entry(k).or_default();
+        if !rs.contains(&r) {
+            rs.push(r);
             self.changed = true;
         }
     }
@@ -214,7 +251,7 @@ pub(super) fn reach(
 
 /// The types a value of `t` may hold at any depth, `t` included.
 pub(super) fn lock_types(cx: &mut Ctx, t: TyId, out: &mut FxHashSet<TyId>) {
-    if cx.is_copy(t) || cx.is_string_value(t) || !out.insert(t) || out.len() > 512 {
+    if cx.is_copy(t) || cx.is_string_value(t) || out.len() > 512 || !out.insert(t) {
         return;
     }
     let parts: Vec<TyId> = match cx.ty.kind(t).clone() {

@@ -1,4 +1,4 @@
-//! Which CPU a build is for (docs/tooling/platforms.md "CPU"): `--cpu`, else `$VELT_CPU`, else the
+//! Which CPU a build is for (https://veltlang.com/docs/tooling/platforms/ "CPU"): `--cpu`, else `$VELT_CPU`, else the
 //! root package's `build.cpu`, else the target's default; a program built to run here and now
 //! (`velt run` and `velt test` without `--release`, `velt dev --exe`) is for this machine's CPU
 //! (`native`) unless one of them names another.

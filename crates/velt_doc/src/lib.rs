@@ -1,15 +1,13 @@
-//! API documentation for Velt code, and the docs website.
+//! API documentation for Velt code.
 //!
 //! - [`comment`]: doc comments (`/** … */`, `///`) and their JSDoc tags;
 //! - [`extract`]: exported items, public members, signatures and doc comments of a module;
 //! - [`resolve`]: re-exports across modules (`export { x } from`, `export * from`);
 //! - `sig`: signatures in one canonical form, however the source is laid out;
-//! - [`markdown`]: the Markdown subset doc comments and the docs are written in;
+//! - [`markdown`]: the Markdown subset doc comments are written in;
 //! - [`html`]: page layout, module pages (type names in signatures link to their types),
 //!   index and the client-side search index;
-//! - [`json`]: the same documentation as one JSON document (`velt doc --format json`);
-//! - [`site`]: the website (the pages in `docs/site/pages.txt` + std API reference) built by
-//!   `velt-site`.
+//! - [`json`]: the same documentation as one JSON document (`velt doc --format json`).
 //!
 //! [`write_api_docs`] is what `velt doc` runs: one page per module, an index with a search box;
 //! [`api_json`] is `velt doc --format json`.
@@ -22,7 +20,6 @@ pub mod json;
 pub mod markdown;
 pub mod resolve;
 mod sig;
-pub mod site;
 mod ts;
 mod ts_extend;
 

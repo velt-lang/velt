@@ -1,5 +1,5 @@
 //! The polymorphic `this` type as a method's result (`register(): this { ...; return this; }`,
-//! docs/reference/classes.md "Returning `this`"). The signature resolves `this` to the class
+//! https://veltlang.com/docs/reference/classes/ "Returning `this`"). The signature resolves `this` to the class
 //! declaring the method (`resolve::TyEnv::this_ty`); a call on a receiver of a subclass gives
 //! the receiver's own type, as in TypeScript, so chained calls keep the subclass's methods.
 //!
