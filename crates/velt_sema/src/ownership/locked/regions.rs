@@ -172,6 +172,32 @@ impl Regions {
         }
     }
 
+    /// Local `l` of body `d` and the variables it may name the object (or a part) of, through
+    /// `link`s either way (`const d = c`): a store into one is a store into the others.
+    pub(super) fn same_object(&self, d: DefId, l: LocalId) -> Vec<Key> {
+        let mut out = vec![self.key((d, l))];
+        let mut i = 0;
+        while i < out.len() && out.len() < 64 {
+            let k = out[i];
+            let mut next: Vec<Key> = vec![];
+            if let Some(rs) = self.roots.get(&k) {
+                next.extend(rs.iter().map(|r| self.key(*r)));
+            }
+            for (from, rs) in &self.roots {
+                if rs.iter().any(|r| self.key(*r) == k) {
+                    next.push(self.key(*from));
+                }
+            }
+            for n in next {
+                if !out.contains(&n) {
+                    out.push(n);
+                }
+            }
+            i += 1;
+        }
+        out
+    }
+
     /// Local `l` of body `d` names a part of local `root` (of the same body).
     pub(super) fn link(&mut self, d: DefId, l: LocalId, root: LocalId) {
         let (k, r) = (self.key((d, l)), (d, root));

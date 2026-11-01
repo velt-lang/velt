@@ -289,8 +289,9 @@ impl Stores<'_, '_, '_, '_> {
         if let (true, E::Local(l, _)) = (whole && dest & OUT != 0, &x.kind) {
             let l = *l;
             if !self.r.is_home(self.def, l) {
-                let (d, l) = self.r.key((self.def, l));
-                self.r.outed.push((d, l, value.span));
+                for (d, l) in self.r.same_object(self.def, l) {
+                    self.r.outed.push((d, l, value.span));
+                }
             }
         }
         let Some(root) = root.filter(|&r| !self.r.is_home(self.def, r)) else {
@@ -298,8 +299,9 @@ impl Stores<'_, '_, '_, '_> {
         };
         let counted = self.cx.is_shared_value(value.ty) && !self.cx.is_string_value(value.ty);
         if bits & OUT != 0 && counted && !is_copy(self.cx, x) {
-            let (d, l) = self.r.key((self.def, root));
-            self.r.inbound.push((d, l, value.span));
+            for (d, l) in self.r.same_object(self.def, root) {
+                self.r.inbound.push((d, l, value.span));
+            }
         }
     }
 
