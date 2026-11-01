@@ -1,0 +1,25 @@
+// `rotateLeft`, `rotateRight` and `swapBytes` on every integer type, against values computed by
+// Rust's `rotate_left`, `rotate_right` and `swap_bytes` (rotation counts wrap at the width).
+function main() {
+  const n = process.argv.length as u32; // 2 under `velt run`: the counts are not constants
+  const u8v: u8 = 0b1001_0110;
+  console.log("u8", u8v.rotateLeft(n + 2), u8v.rotateRight(n + 2), u8v.rotateLeft(n + 8), u8v.swapBytes());
+  const i8v: i8 = -106;
+  console.log("i8", i8v.rotateLeft(n), i8v.rotateRight(n), i8v.swapBytes());
+  const u16v: u16 = 0x12f4;
+  console.log("u16", u16v.rotateLeft(n + 3), u16v.rotateRight(n + 3), u16v.swapBytes());
+  const i16v: i16 = -2;
+  console.log("i16", i16v.rotateLeft(n), i16v.rotateRight(n + 14), i16v.swapBytes());
+  const u32v: u32 = 0x80000001;
+  console.log("u32", u32v.rotateLeft(n), u32v.rotateRight(n), u32v.rotateLeft(n + 31), u32v.swapBytes());
+  const i32v: i32 = 0x12345678;
+  console.log("i32", i32v.rotateLeft(n + 7), i32v.rotateRight(n + 7), i32v.swapBytes());
+  const u64v: u64 = 0x0123456789abcdef;
+  console.log("u64", u64v.rotateLeft(n + 3), u64v.rotateRight(n + 3), u64v.rotateLeft(n + 63), u64v.swapBytes());
+  const i64v: i64 = -0x0123456789abcdef;
+  console.log("i64", i64v.rotateLeft(n), i64v.rotateRight(n), i64v.swapBytes());
+  const us: usize = 0xff;
+  console.log("usize", us.rotateRight(n + 7), us.swapBytes());
+  const is: isize = -1;
+  console.log("isize", is.rotateLeft(n + 40), is.swapBytes());
+}

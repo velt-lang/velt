@@ -1,5 +1,7 @@
 // Prelude: bit counts on integers, `x.leadingZeros()`, `x.trailingZeros()` and `x.countOnes()`,
-// each one instruction (velt_rt_math_clz64, _ctz64, _popcount64 are compiled inline). Counted
+// each one instruction (velt_rt_math_clz64, _ctz64, _popcount64 are compiled inline), and
+// `x.rotateLeft(n)`, `x.rotateRight(n)` and `x.swapBytes()`, plain shifts and masks that LLVM
+// compiles to one rotate or byte-reverse instruction (#1981 step 6). Counted
 // over the type's own width, a signed type's by its two's-complement bits: `(0 as u8)
 // .leadingZeros()` is 8, `(-1 as i32).countOnes()` 32.
 
@@ -35,6 +37,22 @@ extend u64 {
   countOnes(): usize {
     return velt_rt_math_popcount64(this) as usize;
   }
+  /** The bits rotated left by `n` places (`n` modulo 64): those shifted out come back at the bottom. */
+  rotateLeft(n: u32): u64 {
+    const k = (n & 63) as u64;
+    return (this << k) | (this >>> (((64 as u64) - k) & 63));
+  }
+  /** The bits rotated right by `n` places (`n` modulo 64). */
+  rotateRight(n: u32): u64 {
+    const k = (n & 63) as u64;
+    return (this >>> k) | (this << (((64 as u64) - k) & 63));
+  }
+  /** The bytes in reverse order (big-endian to little-endian and back). */
+  swapBytes(): u64 {
+    let x = ((this & 0x00ff00ff00ff00ff) << 8) | ((this >>> 8) & 0x00ff00ff00ff00ff);
+    x = ((x & 0x0000ffff0000ffff) << 16) | ((x >>> 16) & 0x0000ffff0000ffff);
+    return (x << 32) | (x >>> 32);
+  }
 }
 
 extend usize {
@@ -49,6 +67,22 @@ extend usize {
   /** The set bits. */
   countOnes(): usize {
     return velt_rt_math_popcount64(this as u64) as usize;
+  }
+  /** The bits rotated left by `n` places (`n` modulo 64): those shifted out come back at the bottom. */
+  rotateLeft(n: u32): usize {
+    const k = (n & 63) as usize;
+    return (this << k) | (this >>> (((64 as usize) - k) & 63));
+  }
+  /** The bits rotated right by `n` places (`n` modulo 64). */
+  rotateRight(n: u32): usize {
+    const k = (n & 63) as usize;
+    return (this >>> k) | (this << (((64 as usize) - k) & 63));
+  }
+  /** The bytes in reverse order (big-endian to little-endian and back). */
+  swapBytes(): usize {
+    let x = ((this & 0x00ff00ff00ff00ff) << 8) | ((this >>> 8) & 0x00ff00ff00ff00ff);
+    x = ((x & 0x0000ffff0000ffff) << 16) | ((x >>> 16) & 0x0000ffff0000ffff);
+    return (x << 32) | (x >>> 32);
   }
 }
 
@@ -65,6 +99,18 @@ extend i64 {
   countOnes(): usize {
     return velt_rt_math_popcount64(this as u64) as usize;
   }
+  /** The two's-complement bits rotated left by `n` places (`n` modulo 64). */
+  rotateLeft(n: u32): i64 {
+    return (this as u64).rotateLeft(n) as i64;
+  }
+  /** The two's-complement bits rotated right by `n` places (`n` modulo 64). */
+  rotateRight(n: u32): i64 {
+    return (this as u64).rotateRight(n) as i64;
+  }
+  /** The bytes in reverse order (big-endian to little-endian and back). */
+  swapBytes(): i64 {
+    return (this as u64).swapBytes() as i64;
+  }
 }
 
 extend isize {
@@ -79,6 +125,18 @@ extend isize {
   /** The set bits. */
   countOnes(): usize {
     return velt_rt_math_popcount64(this as u64) as usize;
+  }
+  /** The two's-complement bits rotated left by `n` places (`n` modulo 64). */
+  rotateLeft(n: u32): isize {
+    return (this as usize).rotateLeft(n) as isize;
+  }
+  /** The two's-complement bits rotated right by `n` places (`n` modulo 64). */
+  rotateRight(n: u32): isize {
+    return (this as usize).rotateRight(n) as isize;
+  }
+  /** The bytes in reverse order (big-endian to little-endian and back). */
+  swapBytes(): isize {
+    return (this as usize).swapBytes() as isize;
   }
 }
 
@@ -95,6 +153,21 @@ extend u32 {
   countOnes(): usize {
     return velt_rt_math_popcount64(this as u64) as usize;
   }
+  /** The bits rotated left by `n` places (`n` modulo 32): those shifted out come back at the bottom. */
+  rotateLeft(n: u32): u32 {
+    const k = (n & 31) as u32;
+    return (this << k) | (this >>> (((32 as u32) - k) & 31));
+  }
+  /** The bits rotated right by `n` places (`n` modulo 32). */
+  rotateRight(n: u32): u32 {
+    const k = (n & 31) as u32;
+    return (this >>> k) | (this << (((32 as u32) - k) & 31));
+  }
+  /** The bytes in reverse order (big-endian to little-endian and back). */
+  swapBytes(): u32 {
+    const x = ((this & 0x00ff00ff) << 8) | ((this >>> 8) & 0x00ff00ff);
+    return (x << 16) | (x >>> 16);
+  }
 }
 
 extend i32 {
@@ -109,6 +182,18 @@ extend i32 {
   /** The set bits. */
   countOnes(): usize {
     return velt_rt_math_popcount64((this as u32) as u64) as usize;
+  }
+  /** The two's-complement bits rotated left by `n` places (`n` modulo 32). */
+  rotateLeft(n: u32): i32 {
+    return (this as u32).rotateLeft(n) as i32;
+  }
+  /** The two's-complement bits rotated right by `n` places (`n` modulo 32). */
+  rotateRight(n: u32): i32 {
+    return (this as u32).rotateRight(n) as i32;
+  }
+  /** The bytes in reverse order (big-endian to little-endian and back). */
+  swapBytes(): i32 {
+    return (this as u32).swapBytes() as i32;
   }
 }
 
@@ -125,6 +210,20 @@ extend u16 {
   countOnes(): usize {
     return velt_rt_math_popcount64(this as u64) as usize;
   }
+  /** The bits rotated left by `n` places (`n` modulo 16): those shifted out come back at the bottom. */
+  rotateLeft(n: u32): u16 {
+    const k = (n & 15) as u16;
+    return (this << k) | (this >>> (((16 as u16) - k) & 15));
+  }
+  /** The bits rotated right by `n` places (`n` modulo 16). */
+  rotateRight(n: u32): u16 {
+    const k = (n & 15) as u16;
+    return (this >>> k) | (this << (((16 as u16) - k) & 15));
+  }
+  /** The bytes in reverse order (big-endian to little-endian and back). */
+  swapBytes(): u16 {
+    return (this << 8) | (this >>> 8);
+  }
 }
 
 extend i16 {
@@ -139,6 +238,18 @@ extend i16 {
   /** The set bits. */
   countOnes(): usize {
     return velt_rt_math_popcount64((this as u16) as u64) as usize;
+  }
+  /** The two's-complement bits rotated left by `n` places (`n` modulo 16). */
+  rotateLeft(n: u32): i16 {
+    return (this as u16).rotateLeft(n) as i16;
+  }
+  /** The two's-complement bits rotated right by `n` places (`n` modulo 16). */
+  rotateRight(n: u32): i16 {
+    return (this as u16).rotateRight(n) as i16;
+  }
+  /** The bytes in reverse order (big-endian to little-endian and back). */
+  swapBytes(): i16 {
+    return (this as u16).swapBytes() as i16;
   }
 }
 
@@ -155,6 +266,20 @@ extend u8 {
   countOnes(): usize {
     return velt_rt_math_popcount64(this as u64) as usize;
   }
+  /** The bits rotated left by `n` places (`n` modulo 8): those shifted out come back at the bottom. */
+  rotateLeft(n: u32): u8 {
+    const k = (n & 7) as u8;
+    return (this << k) | (this >>> (((8 as u8) - k) & 7));
+  }
+  /** The bits rotated right by `n` places (`n` modulo 8). */
+  rotateRight(n: u32): u8 {
+    const k = (n & 7) as u8;
+    return (this >>> k) | (this << (((8 as u8) - k) & 7));
+  }
+  /** The bytes in reverse order (big-endian to little-endian and back); with one byte, this itself. */
+  swapBytes(): u8 {
+    return this;
+  }
 }
 
 extend i8 {
@@ -169,5 +294,17 @@ extend i8 {
   /** The set bits. */
   countOnes(): usize {
     return velt_rt_math_popcount64((this as u8) as u64) as usize;
+  }
+  /** The two's-complement bits rotated left by `n` places (`n` modulo 8). */
+  rotateLeft(n: u32): i8 {
+    return (this as u8).rotateLeft(n) as i8;
+  }
+  /** The two's-complement bits rotated right by `n` places (`n` modulo 8). */
+  rotateRight(n: u32): i8 {
+    return (this as u8).rotateRight(n) as i8;
+  }
+  /** The bytes in reverse order (big-endian to little-endian and back); with one byte, this itself. */
+  swapBytes(): i8 {
+    return (this as u8).swapBytes() as i8;
   }
 }
