@@ -340,8 +340,12 @@ first half of its 8-byte slot. Functions (`std/lang/symbol/index.vlt`; `string` 
 runtime's start-up (baseline code) and before any code that may use the features. `required` is
 a mask of features, by bit: 0 SSE3, 1 SSSE3, 2 SSE4.1, 3 SSE4.2, 4 POPCNT, 5 CMPXCHG16B, 6 AVX,
 7 AVX2, 8 BMI1, 9 BMI2, 10 FMA, 11 LZCNT, 12 MOVBE, 13 F16C, 14 AVX512F, 15 AVX512BW,
-16 AVX512CD, 17 AVX512DQ, 18 AVX512VL, 19 AVX512VBMI, 20 AVX512BITALG
-(`velt_codegen_cl::X86_FEATURES`; x86-64-v2 is bits 0–5, v3 0–13, v4 0–18). When the CPU lacks
+16 AVX512CD, 17 AVX512DQ, 18 AVX512VL, 19 AVX512VBMI, 20 AVX512BITALG, 21 SHA [additive],
+22 PCLMULQDQ (`velt_codegen_cl::X86_FEATURES`; x86-64-v2 is bits 0–5, v3 0–13, v4 0–18). A
+feature joins the list when generated code uses it: a feature in the mask that the CPU (or a
+VM) hides stops the program at start-up. Code whose features hold an extension's (SHA with SSSE3 and
+SSE4.1 for `sha-x86`, PCLMULQDQ with them for `clmul-x86`) takes its check
+(`velt_simd_has_<ext>`, "SIMD") as true; the LLVM backend folds it. When the CPU lacks
 one, it prints to stderr ``error: this program was built for <level> (<features>); this CPU
 lacks <missing>; rebuild it with `--cpu <lower>` `` (`<lower>`: the highest level the CPU has,
 or `baseline`) and exits with code 1. `VELT_CPU_DISABLE` (comma-separated feature names, any case) removes features from what the CPU
@@ -404,7 +408,9 @@ architecture with the extension that check reads the runtime's flag byte, otherw
 architecture, wasm, Cranelift) it is `false` and the operation, dead behind it, gives zeros.
 The runtime exports the flags, set in `velt_rt_start` (`init`) before any Velt code runs and never
 changed after (so generated code reads them as invariant); `VELT_SIMD_DISABLE=sha` (`clmul`)
-leaves the SHA (carry-less) ones 0:
+leaves the SHA (carry-less) ones 0. Code built for a CPU whose features include the extension's
+("CPU check") reads no flag: LLVM takes the check as true there, so `VELT_SIMD_DISABLE` changes
+nothing in it:
 
 ```c
 uint8_t velt_cpu_sha_arm;    /* 1: aarch64 with the ARMv8 SHA-1/SHA-256 instructions */

@@ -8,7 +8,9 @@
 // (std/simd/sha_emulation.vlt, from the ARM Architecture Reference Manual's and the Intel SDM's
 // pseudocode). The checks are false on another architecture, on WebAssembly and in debug
 // (Cranelift) builds, and with `VELT_SIMD_DISABLE=sha`, which runs the emulation on a CPU that has
-// the instructions.
+// the instructions. In release code built for a CPU that has them (`--cpu native`, or a CPU name
+// with SHA) `u32x4.hasShaX86()` is true without reading the flag, and `VELT_SIMD_DISABLE`
+// changes nothing.
 //
 // The instructions are as fast as the checks around them allow: in a loop of them the flag is
 // read once, before the loop, and tested in every iteration. In a function gated on the
@@ -63,7 +65,7 @@ extend u32x4 {
     return velt_simd_has_sha_arm();
   }
 
-  /** Whether the CPU has the x86 SHA extensions, with SSSE3 and SSE4.1 (false off x86-64, in debug builds, and with `VELT_SIMD_DISABLE=sha`). */
+  /** Whether the CPU has the x86 SHA extensions, with SSSE3 and SSE4.1 (false off x86-64, in debug builds, and with `VELT_SIMD_DISABLE=sha`; true in release code built for a CPU that has them, `--cpu`). */
   static hasShaX86(): bool {
     return velt_simd_has_sha_x86();
   }
