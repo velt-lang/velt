@@ -12,12 +12,10 @@ pub(super) fn float_op(rv: &Rvalue) -> bool {
         .is_some_and(|(op, _)| op.rounding().is_some() || op == velt_vir::math::MathOp::ToInt32)
 }
 
-/// Does `callee` round a float, take its ToInt32 or index with it?
+/// Does `callee` index with a float (`floatIndex`)? (Rounding and ToInt32 are statements:
+/// `float_op`.)
 pub(super) fn float_call(env: &Env, callee: &Callee) -> bool {
-    match callee {
-        Callee::Extern(id) => env.is_rounding(*id) || env.is_to_int32(callee),
-        c => env.is_float_index(c),
-    }
+    env.is_float_index(callee)
 }
 
 /// Loop levels a conversion is assumed to repeat: each multiplies its weight by `PER_LEVEL`.

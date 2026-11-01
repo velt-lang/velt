@@ -13,13 +13,12 @@ use velt_vir::vir::{
 use super::fact::Fact;
 use super::flow::is_comparison;
 use super::narrow::Plan;
-use super::Env;
 use crate::constfold::normalize;
 use crate::srclocs::{push_stmt, rewrite_stmts};
 use crate::visit::{stmt_operands_mut, term_operands_mut};
 
 /// Rewrite `func` per `plan`; returns whether anything changed.
-pub(super) fn apply(env: &Env, func: &mut Function, plan: &Plan) -> bool {
+pub(super) fn apply(func: &mut Function, plan: &Plan) -> bool {
     if plan.to.iter().all(Option::is_none) {
         return false;
     }
@@ -49,7 +48,7 @@ pub(super) fn apply(env: &Env, func: &mut Function, plan: &Plan) -> bool {
             rw.stmt(s, (bi, si), out);
             si += 1;
         });
-        rw.terminator(env, func, bi);
+        rw.terminator(func, bi);
     }
     func.locals
         .extend(rw.temps.into_iter().map(|ty| LocalDecl::new(ty, None)));
@@ -270,27 +269,10 @@ impl Rewriter<'_> {
         *op = self.conv_to(Operand::Copy(Place::local(tw)), tt, ty, out);
     }
 
-    /// ToInt32 of a narrowed local truncates its twin; other terminators read converted values.
-    fn terminator(&mut self, env: &Env, func: &mut Function, bi: usize) {
+    /// A terminator reads converted values.
+    fn terminator(&mut self, func: &mut Function, bi: usize) {
         let mut term = std::mem::replace(&mut func.blocks[bi].term, Terminator::Unreachable);
         let mut stmts = vec![];
-        if let Terminator::Call {
-            callee,
-            args,
-            dest,
-            next,
-        } = &term
-        {
-            if let (true, [a]) = (env.is_to_int32(callee), args.as_slice()) {
-                if let Some((tw, tt)) = self.twin(a) {
-                    let v = self.conv_to(Operand::Copy(Place::local(tw)), tt, Ty::I32, &mut stmts);
-                    if let Some(d) = dest {
-                        stmts.push(Stmt::Assign(d.clone(), Rvalue::Use(v)));
-                    }
-                    term = Terminator::Goto(*next);
-                }
-            }
-        }
         term_operands_mut(&mut term, &mut |op| self.widen_read(op, &mut stmts));
         for s in stmts {
             push_stmt(func, bi, s, None);

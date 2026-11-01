@@ -58,7 +58,7 @@ pub(crate) fn run(program: &mut Program) -> bool {
         return false;
     }
     let signatures = signatures(program);
-    let fold = constfold::Program::of(&signatures, &program.externs);
+    let fold = constfold::Program::of(&signatures);
     for fi in made {
         let func = &mut program.funcs[fi];
         constfold::run(&fold, func);

@@ -3,6 +3,7 @@
 use super::*;
 use crate::testkit::builder::*;
 use crate::testkit::validate::assert_valid;
+use velt_vir::math::MathOp;
 use velt_vir::vir::{BlockId, FuncId, Intrinsic, Program, Rvalue};
 
 fn fold(f: Function) -> Function {
@@ -10,10 +11,7 @@ fn fold(f: Function) -> Function {
     p.add(f);
     let mut program = p.finish();
     let sigs = crate::callgraph::signatures(&program);
-    run(
-        &super::Program::of(&sigs, &program.externs),
-        &mut program.funcs[0],
-    );
+    run(&super::Program::of(&sigs), &mut program.funcs[0]);
     assert_valid(&program);
     program.funcs.remove(0)
 }
@@ -162,10 +160,7 @@ fn devirtualizes_constant_function_pointers() {
     pb.add(fb.finish());
     let mut program: Program = pb.finish();
     let sigs = crate::callgraph::signatures(&program);
-    assert!(run(
-        &super::Program::of(&sigs, &program.externs),
-        &mut program.funcs[1]
-    ));
+    assert!(run(&super::Program::of(&sigs), &mut program.funcs[1]));
     assert_valid(&program);
     assert!(matches!(
         program.funcs[1].blocks[0].term,
@@ -176,15 +171,15 @@ fn devirtualizes_constant_function_pointers() {
     ));
 }
 
-/// `f() { x = <arg>; r = <op>(x); return r }` with `op` the runtime math function `symbol`, folded.
+/// `f() { x = <arg>; r = math.<op>(x); return r }`, folded.
 fn fold_math(op: MathOp, args: Vec<Operand>) -> Function {
     let (params, ret) = op.signature();
     let mut pb = ProgramBuilder::new();
-    let ext = pb.ext(op.symbol(), params, ret, false);
+    pb.ext(op.symbol(), params, ret, false);
     let mut fb = FuncBuilder::export("f", &[], ret);
     let r = fb.local(ret);
     let b = fb.block();
-    // Through a local, so the constant reaches the call by propagation.
+    // Through a local, so the constant reaches the operation by propagation.
     let mut through = vec![];
     for a in args {
         let Operand::Const(_, ty) = &a else {
@@ -195,32 +190,26 @@ fn fold_math(op: MathOp, args: Vec<Operand>) -> Function {
         fb.assign(b, l, Rvalue::Use(a));
         through.push(copy_local(l));
     }
-    let next = fb.call(b, Callee::Extern(ext), through, Some(r));
-    fb.ret(next, copy_local(r));
+    fb.assign(b, r, Rvalue::Intrinsic(Intrinsic::Math(op), through));
+    fb.ret(b, copy_local(r));
     pb.add(fb.finish());
     let mut program = pb.finish();
     let sigs = crate::callgraph::signatures(&program);
-    run(
-        &super::Program::of(&sigs, &program.externs),
-        &mut program.funcs[0],
-    );
+    run(&super::Program::of(&sigs), &mut program.funcs[0]);
     assert_valid(&program);
     program.funcs.remove(0)
 }
 
-/// The value the folded function assigns to its result in block 0, if the call was folded.
+/// The constant the folded function returns, if the operation was folded.
 fn folded_result(f: &Function) -> Option<Const> {
-    if !matches!(f.blocks[0].term, Terminator::Goto(_)) {
-        return None;
-    }
-    f.blocks[0].stmts.iter().rev().find_map(|s| match s {
-        Stmt::Assign(_, Rvalue::Use(Operand::Const(c, _))) => Some(c.clone()),
+    match &f.blocks[0].term {
+        Terminator::Return(Operand::Const(c, _)) => Some(c.clone()),
         _ => None,
-    })
+    }
 }
 
 #[test]
-fn math_calls_on_constants_fold() {
+fn math_operations_on_constants_fold() {
     let f64c = |x: f64| Operand::Const(Const::Float(x), Ty::F64);
     let cases = [
         (MathOp::Sqrt, vec![f64c(16.0)], Const::Float(4.0)),
@@ -253,7 +242,7 @@ fn math_calls_on_constants_fold() {
 }
 
 #[test]
-fn math_calls_that_could_differ_from_running_stay_calls() {
+fn math_operations_that_could_differ_from_running_stay() {
     let f64c = |x: f64| Operand::Const(Const::Float(x), Ty::F64);
     // A NaN result's bits depend on the instruction; `pow` on doubles is the runtime's fdlibm.
     for (op, args) in [
@@ -263,10 +252,9 @@ fn math_calls_that_could_differ_from_running_stay_calls() {
     ] {
         let f = fold_math(op, args);
         assert_eq!(folded_result(&f), None, "{op:?}");
-        assert!(
-            matches!(f.blocks[0].term, Terminator::Call { .. }),
-            "{op:?}"
-        );
+        let kept =
+            (f.blocks[0].stmts.iter()).any(|s| matches!(s, Stmt::Assign(_, Rvalue::Intrinsic(..))));
+        assert!(kept, "{op:?}");
     }
 }
 
@@ -292,10 +280,7 @@ fn intrinsics_on_constants_fold_through_locals() {
     pb.add(fb.finish());
     let mut program = pb.finish();
     let sigs = crate::callgraph::signatures(&program);
-    run(
-        &super::Program::of(&sigs, &program.externs),
-        &mut program.funcs[0],
-    );
+    run(&super::Program::of(&sigs), &mut program.funcs[0]);
     assert_valid(&program);
     let f = &program.funcs[0];
     assert_eq!(*returned(f, 0), Operand::Const(Const::Float(4.0), Ty::F64));

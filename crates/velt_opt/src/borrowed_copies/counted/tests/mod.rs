@@ -42,8 +42,8 @@ enum Between {
     ClosureCall,
     /// A string runtime function (an error message built): frees no counted object.
     StringExtern,
-    /// A math runtime function (`f64.fromBits`).
-    MathExtern,
+    /// A math operation (`f64.fromBits`), a statement.
+    MathOperation,
     /// A string from a byte range of `data` itself.
     BytesRangeExtern,
     /// A pointer into the object (`&(*v).len`) read through.
@@ -63,7 +63,6 @@ struct Kit {
     alloc: ExternId,
     panic: ExternId,
     concat: ExternId,
-    bits: ExternId,
     range: ExternId,
     quiet: FuncId,
     freeing: FuncId,
@@ -90,7 +89,7 @@ fn kit() -> Kit {
         Ty::Unit,
         false,
     );
-    let bits = pb.ext("velt_rt_math_bits_f64", &[Ty::U64], Ty::F64, false);
+    pb.ext("velt_rt_math_bits_f64", &[Ty::U64], Ty::F64, false);
     let range_params = [Ty::Ptr, Ty::I64, Ty::I64, Ty::Ptr];
     let range = pb.ext("velt_rt_bytes_range_to_str", &range_params, Ty::Unit, false);
     // quiet(a) = a.len
@@ -130,7 +129,6 @@ fn kit() -> Kit {
         alloc,
         panic,
         concat,
-        bits,
         range,
         quiet,
         freeing,
@@ -211,9 +209,11 @@ fn program(between: Between) -> (Program, FuncId) {
             let args = vec![copy_local(this), copy_local(this), copy_local(this)];
             b = call(&mut fb, b, Callee::Extern(k.concat), args)
         }
-        Between::MathExtern => {
+        Between::MathOperation => {
+            // `f = math.bits_f64(7)`, a statement (its extern `k.bits` stays declared).
             let f = fb.local(Ty::F64);
-            b = fb.call(b, Callee::Extern(k.bits), vec![int(7, Ty::U64)], Some(f))
+            let op = velt_vir::vir::Intrinsic::Math(velt_vir::math::MathOp::BitsF64);
+            fb.assign(b, f, Rvalue::Intrinsic(op, vec![int(7, Ty::U64)]));
         }
         Between::BytesRangeExtern => {
             let args = vec![
@@ -377,7 +377,7 @@ fn a_copy_only_read_borrows() {
         Between::NoReturn,
         Between::NoReturnFreeing,
         Between::StringExtern,
-        Between::MathExtern,
+        Between::MathOperation,
         Between::BytesRangeExtern,
         Between::InteriorPointer,
     ] {

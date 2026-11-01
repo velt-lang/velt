@@ -139,7 +139,9 @@ Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exi
   `MathOp::symbol`, which the program must declare (checked by `verify`); backends emit it
   inline as they do the call, and call that function for `pow` and ToInt32's cold path.
   Lowering emits every call of a math operation's runtime function in this form (`call` in
-  `lower/cfg.rs`), so passes see no math call. `velt_opt`'s `constfold` evaluates it on
+  `lower/cfg.rs`), and `verify` rejects a direct call of one, so passes and backends know math
+  operations in this form only (an indirect call through the function's address is an
+  ordinary call). `velt_opt`'s `constfold` evaluates it on
   constants (`MathOp::eval`) and `numrep` narrows through it; the interpreters run it as the
   call.
 

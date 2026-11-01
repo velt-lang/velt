@@ -109,24 +109,17 @@ impl<M: Module> Translator<'_, '_, M> {
         if params != types {
             bail!("call argument types {types:?} do not match parameters {params:?}");
         }
-        let inline = match self.math_op(callee) {
-            Some(op) => Some(self.math_value(op, callee, &values)?),
-            None => None,
-        };
-        let result = match inline {
-            Some(v) => Some(v),
-            None => match self
-                .inline_simd(callee, args, &values, &params, ret)
-                .or_else(|| self.inline_atomic(callee, &values, &params, ret))
-                .or_else(|| self.inline_tls(callee, &values))
-            {
-                Some(Inlined::Value(v)) => Some(v),
-                Some(Inlined::Unit) => None,
-                None => {
-                    let inst = self.emit_call(callee, &values)?;
-                    self.builder.inst_results(inst).first().copied()
-                }
-            },
+        let result = match self
+            .inline_simd(callee, args, &values, &params, ret)
+            .or_else(|| self.inline_atomic(callee, &values, &params, ret))
+            .or_else(|| self.inline_tls(callee, &values))
+        {
+            Some(Inlined::Value(v)) => Some(v),
+            Some(Inlined::Unit) => None,
+            None => {
+                let inst = self.emit_call(callee, &values)?;
+                self.builder.inst_results(inst).first().copied()
+            }
         };
         if let (Some(dest), Some(result)) = (dest, result) {
             let loc = self.place(dest)?;
@@ -189,14 +182,6 @@ impl<M: Module> Translator<'_, '_, M> {
                 }
             },
         }
-    }
-
-    /// The runtime math operation `callee` is (`velt_vir::math`), if it is one.
-    fn math_op(&self, callee: &Callee) -> Option<MathOp> {
-        let Callee::Extern(id) = callee else {
-            return None;
-        };
-        MathOp::of_extern(self.program.externs.get(id.0 as usize)?)
     }
 
     /// The runtime math operations that are exactly one Cranelift instruction

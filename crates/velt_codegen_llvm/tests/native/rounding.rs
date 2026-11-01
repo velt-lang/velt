@@ -2,9 +2,8 @@
 //! against Rust's `f64::floor` & co. and the runtime's `Math.round`, bit for bit, over edge
 //! values: zeros of both signs, halves, the 2^52 and 2^53 boundaries, `i64` limits, the
 //! largest doubles, infinities and NaN. The runtime functions are defined to return a marker,
-//! so a call left in the code shows as a mismatch (#535). Each function is compiled twice: as
-//! the call of its runtime function (`entry_*`) and as the `Rvalue::Intrinsic` that stands for
-//! it (`rv_*`, #1981).
+//! so a call left in the code shows as a mismatch (#535). Each function is the
+//! `Rvalue::Intrinsic` statement lowering emits for it (`rv_*`, #1981).
 
 use std::fmt::Write;
 
@@ -12,7 +11,7 @@ use crate::common::builder::*;
 use crate::harness;
 use velt_vir::math::MathOp;
 use velt_vir::vir::Ty::*;
-use velt_vir::vir::{Callee, Intrinsic, Program, Rvalue, Terminator};
+use velt_vir::vir::{Intrinsic, Program, Rvalue, Terminator};
 
 const FUNCTIONS: [(&str, &str); 4] = [
     ("velt_rt_math_floor", "x.floor()"),
@@ -21,18 +20,11 @@ const FUNCTIONS: [(&str, &str); 4] = [
     ("velt_rt_math_round", "js_round(x)"),
 ];
 
-/// `velt_main` and, per function, an exported `entry_<symbol>(x) = symbol(x)`.
+/// `velt_main` and, per function, an exported `rv_<symbol>(x) = math.<op>(x)`.
 fn program() -> Program {
     let mut pb = ProgramBuilder::new();
     for (symbol, _) in FUNCTIONS {
-        let ext = pb.ext(symbol, &[F64], F64, false);
-        let mut fb = FuncBuilder::export(&format!("entry_{symbol}"), &[F64], F64);
-        let r = fb.local(F64);
-        let b = fb.block();
-        let arg = vec![copy_local(fb.param(0))];
-        let b = fb.call(b, Callee::Extern(ext), arg, Some(r));
-        fb.term(b, Terminator::Return(copy_local(r)));
-        pb.add(fb.finish());
+        pb.ext(symbol, &[F64], F64, false);
         let op = MathOp::of_symbol(symbol).expect("a math operation");
         let mut fb = FuncBuilder::export(&format!("rv_{symbol}"), &[F64], F64);
         let r = fb.local(F64);
@@ -93,16 +85,13 @@ fn harness_source() -> String {
     }
     s.push_str("extern \"C\" {\n");
     for (symbol, _) in FUNCTIONS {
-        let _ = writeln!(s, "    fn entry_{symbol}(x: f64) -> f64;");
         let _ = writeln!(s, "    fn rv_{symbol}(x: f64) -> f64;");
     }
     s.push_str("}\nfn main() {\n    let mut bad = 0;\n    for x in values() {\n");
     for (symbol, reference) in FUNCTIONS {
         let _ = writeln!(
             s,
-            "        let (got, want) = (unsafe {{ entry_{symbol}(x) }}, {reference});
-        if !same(got, want) {{ bad += 1; println!(\"{symbol}({{x:e}}) = {{got:e}}, want {{want:e}}\"); }}
-        let got = unsafe {{ rv_{symbol}(x) }};
+            "        let (got, want) = (unsafe {{ rv_{symbol}(x) }}, {reference});
         if !same(got, want) {{ bad += 1; println!(\"rv {symbol}({{x:e}}) = {{got:e}}, want {{want:e}}\"); }}"
         );
     }

@@ -61,7 +61,7 @@ fn param_program(other: bool) -> (Program, Local) {
     let b2 = fb.call(b1, Callee::Func(g_id), vec![arg], Some(b));
     fb.ret(b2, copy_local(a));
     pb.add(fb.finish());
-    (pb.finish(), k)
+    (as_intrinsics(pb.finish()), k)
 }
 
 #[test]
@@ -134,7 +134,7 @@ fn length_loop(array_agg: &str, op: BinOp, extra: f64) -> (Program, Local) {
     let k = counting_by(&mut fb, op, copy_local(bound));
     fb.goto(pre, BlockId(1));
     pb.add(fb.finish());
-    (pb.finish(), k)
+    (as_intrinsics(pb.finish()), k)
 }
 
 #[test]
@@ -217,7 +217,7 @@ fn a_copy_of_a_compared_value_is_refined_too() {
     fb.goto(next, head);
     fb.ret(exit, copy_local(s));
     pb.add(fb.finish());
-    let p = pb.finish();
+    let p = as_intrinsics(pb.finish());
     let q = narrowed(&p);
     assert!(!assigned(&q.funcs[0], s), "s stays in [0, 1000)");
     assert_eq!(call(&p, &[]), call(&q, &[]));
@@ -238,9 +238,9 @@ fn to_int32_of_a_constant_is_folded() {
     );
     fb.ret(b1, copy_local(r));
     pb.add(fb.finish());
-    let p = pb.finish();
+    let p = as_intrinsics(pb.finish());
     let q = narrowed(&p);
-    assert_eq!(count_calls(&q.funcs[0]), 0);
+    assert_eq!(math_ops(&q.funcs[0]), 0);
     assert_eq!(call(&q, &[]).expect("runs") as u32, 5);
 }
 
@@ -280,7 +280,7 @@ fn a_counter_added_to_a_64_bit_sum_is_64_bit() {
     fb.goto(body, head);
     fb.ret(exit, copy_local(s));
     pb.add(fb.finish());
-    let p = pb.finish();
+    let p = as_intrinsics(pb.finish());
     let q = narrowed(&p);
     let f = &q.funcs[0];
     assert_eq!(local_ty_count(f, Ty::I32), 0, "{f:?}");

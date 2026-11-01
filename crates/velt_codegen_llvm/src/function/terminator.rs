@@ -151,7 +151,7 @@ impl Emitter<'_> {
             self.line(format!("br label {next}"));
             return Ok(());
         }
-        let target = match self.math_intrinsic(callee, &params, ret) {
+        let target = match self.simd_helper(callee, &params, ret) {
             Some(name) => name,
             None => match self.string_fast_path(callee, &params, ret, args) {
                 Some(name) => name,
@@ -233,10 +233,9 @@ impl Emitter<'_> {
         })
     }
 
-    /// `@llvm.<op>.f64` when `callee` is a runtime math function with an exact intrinsic
-    /// equivalent (declaring the intrinsic), or the module's inline helper for it
-    /// (`rounding::helper`, `runtime::inline_helper`, defining the helper).
-    fn math_intrinsic(&mut self, callee: &Callee, params: &[Ty], ret: Ty) -> Option<String> {
+    /// The module's inline helper for the SIMD extern `callee` (`simd::helper`, defining it).
+    /// (Math operations are statements, `math_target`.)
+    fn simd_helper(&mut self, callee: &Callee, params: &[Ty], ret: Ty) -> Option<String> {
         let Callee::Extern(id) = callee else {
             return None;
         };
@@ -252,8 +251,7 @@ impl Emitter<'_> {
             }
             return Some(name);
         }
-        // `params`/`ret` are the extern's own, which `of_extern` checks.
-        self.math_target(MathOp::of_extern(e)?)
+        None
     }
 
     /// What to call for math operation `op` instead of its runtime function: an LLVM

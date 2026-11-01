@@ -372,3 +372,46 @@ fn verify_checks_intrinsics() {
         "intrinsic math.sqrt takes [F64], got [I64]",
     );
 }
+
+#[test]
+fn verify_rejects_a_direct_call_of_a_math_operation() {
+    // t: x = velt_rt_pow_i64(2, 10) as a call: math operations are statements.
+    let call = |p: &vir::Program| {
+        let pow = ExternId(p.externs.len() as u32 - 1);
+        block(
+            vec![],
+            Terminator::Call {
+                callee: Callee::Extern(pow),
+                args: vec![
+                    Operand::Const(Const::Int(2), Ty::I64),
+                    Operand::Const(Const::Int(10), Ty::I64),
+                ],
+                dest: Some(Place::local(Local(1))),
+                next: BlockId(1),
+            },
+        )
+    };
+    let mut p = with_test_fn(vec![]);
+    p.externs.push(ExternFn {
+        symbol: "velt_rt_pow_i64".into(),
+        params: vec![Ty::I64, Ty::I64],
+        ret: Ty::I64,
+        noreturn: false,
+        host: None,
+    });
+    let t = p.funcs.len() - 1;
+    p.funcs[t].blocks = vec![call(&p), block(vec![], ret_x())];
+    expect_err(
+        &p,
+        "a call of `velt_rt_pow_i64`: math operations are statements",
+    );
+    // The same operation as a statement is accepted.
+    let pow = Intrinsic::Math(crate::math::MathOp::PowI64);
+    let args = vec![
+        Operand::Const(Const::Int(2), Ty::I64),
+        Operand::Const(Const::Int(10), Ty::I64),
+    ];
+    let stmt = Stmt::Assign(Place::local(Local(1)), Rvalue::Intrinsic(pow, args));
+    p.funcs[t].blocks = vec![block(vec![stmt], ret_x())];
+    assert_eq!(crate::verify(&p), Ok(()));
+}

@@ -10,7 +10,10 @@ use super::*;
 use crate::interp::{Host, Interp, Memory, Trap};
 use crate::testkit::builder::*;
 use crate::testkit::validate::assert_valid;
-use velt_vir::vir::{BinOp, BlockId, LocalDecl, Place, Program, UnOp};
+use velt_vir::vir::{BinOp, BlockId, Intrinsic, LocalDecl, Place, Program, UnOp};
+
+/// The runtime's ToInt32, which the tests' programs call (`as_intrinsics` makes it a statement).
+pub(in crate::numrep) const TO_INT32: &str = velt_vir::math::MathOp::ToInt32.symbol();
 
 /// Runs the math externs like the runtime.
 pub(super) struct MathHost;
@@ -33,6 +36,48 @@ impl Host for MathHost {
             s => return Err(Trap::Invalid(format!("unexpected call to {s}"))),
         })
     }
+}
+
+/// `p` with every call of a math operation's runtime function as the `Rvalue::Intrinsic`
+/// statement that stands for it, followed by a jump to the call's successor: the tests build
+/// programs with calls, and lowering emits statements (vir.rs invariant 12).
+pub(in crate::numrep) fn as_intrinsics(p: Program) -> Program {
+    let mut q = p;
+    let ops: Vec<_> = q
+        .externs
+        .iter()
+        .map(velt_vir::math::MathOp::of_extern)
+        .collect();
+    for f in &mut q.funcs {
+        for bi in 0..f.blocks.len() {
+            let Terminator::Call {
+                callee: Callee::Extern(id),
+                args,
+                dest: Some(d),
+                next,
+            } = f.blocks[bi].term.clone()
+            else {
+                continue;
+            };
+            let Some(op) = ops[id.0 as usize] else {
+                continue;
+            };
+            let s = Stmt::Assign(d, Rvalue::Intrinsic(Intrinsic::Math(op), args));
+            crate::srclocs::push_stmt(f, bi, s, None);
+            f.blocks[bi].term = Terminator::Goto(next);
+        }
+    }
+    assert_valid(&q);
+    q
+}
+
+/// The math operations left in `f`, in either form.
+pub(in crate::numrep) fn math_ops(f: &Function) -> usize {
+    let stmts = f.blocks.iter().flat_map(|b| &b.stmts);
+    let in_stmts = stmts
+        .filter(|s| matches!(s, Stmt::Assign(_, Rvalue::Intrinsic(..))))
+        .count();
+    in_stmts + count_calls(f)
 }
 
 /// `f(args)` in the interpreter, as raw bits.
@@ -92,7 +137,7 @@ fn counter_program(start: f64, bound: f64) -> (Program, Local, Local) {
     fb.assign(exit, r, bin(BinOp::Add, copy_local(s), copy_local(n)));
     fb.ret(exit, copy_local(r));
     pb.add(fb.finish());
-    (pb.finish(), s, k)
+    (as_intrinsics(pb.finish()), s, k)
 }
 
 #[test]
@@ -160,7 +205,7 @@ fn remainder_program(use_: impl Fn(&mut FuncBuilder, BlockId, Local) -> Local) -
     fb.ret(body, copy_local(r));
     fb.ret(out, float(0.5, Ty::F64));
     pb.add(fb.finish());
-    (pb.finish(), x)
+    (as_intrinsics(pb.finish()), x)
 }
 
 fn all_remainders_agree(p: &Program, q: &Program) {
@@ -218,7 +263,7 @@ fn remainders_that_may_be_nan_stay_doubles() {
     fb.assign(b, c, bin(BinOp::Eq, copy_local(x), copy_local(x)));
     fb.ret(b, copy_local(c));
     pb.add(fb.finish());
-    let p = pb.finish();
+    let p = as_intrinsics(pb.finish());
     let q = narrowed(&p);
     assert!(assigned(&q.funcs[0], x));
     for v in [0i32, 1, -5] {
@@ -246,7 +291,7 @@ fn rounding_program() -> Program {
     fb.ret(yes, copy_local(x));
     fb.ret(no, float(-1.0, Ty::F64));
     pb.add(fb.finish());
-    pb.finish()
+    as_intrinsics(pb.finish())
 }
 
 #[test]
@@ -254,7 +299,7 @@ fn facts_fold_rounding_calls_and_decided_branches() {
     let p = rounding_program();
     let q = narrowed(&p);
     let f = &q.funcs[0];
-    assert_eq!(count_calls(f), 0, "trunc of a whole number is the number");
+    assert_eq!(math_ops(f), 0, "trunc of a whole number is the number");
     assert!(
         !f.blocks
             .iter()
@@ -311,7 +356,7 @@ fn strict_below_program(below: i64, at_most: i64) -> Program {
     fb.ret(two, float(2.0, Ty::F64));
     fb.ret(out, copy_local(af));
     pb.add(fb.finish());
-    pb.finish()
+    as_intrinsics(pb.finish())
 }
 
 #[test]
@@ -373,7 +418,7 @@ fn a_conversion_bounded_by_2_53_does_not_bound_the_integer() {
     fb.ret(two, float(2.0, Ty::F64));
     fb.ret(out, float(0.0, Ty::F64));
     pb.add(fb.finish());
-    let p = pb.finish();
+    let p = as_intrinsics(pb.finish());
     let q = narrowed(&p);
     for a in [two_53 as i64 - 1, two_53 as i64, two_53 as i64 + 1] {
         let args = [a as u64];
@@ -403,7 +448,7 @@ fn remainder_of_whole_program(signed: bool) -> Program {
     fb.assign(b, x, bin(BinOp::Rem, copy_local(af), float(7.0, Ty::F64)));
     fb.ret(b, copy_local(x));
     pb.add(fb.finish());
-    pb.finish()
+    as_intrinsics(pb.finish())
 }
 
 fn float_remainders(f: &Function) -> usize {
@@ -475,7 +520,7 @@ fn formatted_program(half: bool) -> Program {
     let b2 = fb.call(b1, Callee::Extern(push), args, None);
     fb.ret(b2, Operand::Const(velt_vir::vir::Const::Unit, Ty::Unit));
     pb.add(fb.finish());
-    let mut p = pb.finish();
+    let mut p = as_intrinsics(pb.finish());
     print::declare(&mut p.externs);
     p
 }
@@ -557,7 +602,7 @@ fn index_bounded_program(len_ty: Ty) -> (Program, Local) {
     fb.ret(fail, float(-1.0, Ty::F64));
     fb.ret(exit, copy_local(k));
     pb.add(fb.finish());
-    (pb.finish(), k)
+    (as_intrinsics(pb.finish()), k)
 }
 
 #[test]

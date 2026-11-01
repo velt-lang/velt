@@ -121,13 +121,11 @@ impl Reads<'_> {
         crate::visit::stmt_operands(s, &mut |op| self.push(op, at, false, None, IntUse::No));
     }
 
-    /// Reads in a terminator: ToInt32 and `floatIndex` take integers and cannot see `-0`;
-    /// other calls and returns can.
+    /// Reads in a terminator: `floatIndex` takes integers and cannot see `-0`; other calls and
+    /// returns can.
     pub fn terminator(&mut self, env: &Env, t: &Terminator, at: (usize, usize)) {
         let int = match t {
-            Terminator::Call { callee, .. } => {
-                env.is_to_int32(callee) || env.is_float_index(callee)
-            }
+            Terminator::Call { callee, .. } => env.is_float_index(callee),
             _ => false,
         };
         let int_use = if int { IntUse::Yes } else { IntUse::No };

@@ -322,8 +322,6 @@ impl Flow {
         let ty = func.locals[d.local.0 as usize].ty;
         let arg = args.first().and_then(|a| self.operand(st, func, a));
         match (callee, arg) {
-            (Callee::Extern(id), Some(a)) if env.is_rounding(*id) => fact::rounded(a),
-            (Callee::Extern(id), Some(a)) if env.is_abs(*id) => fact::abs(a),
             // A UTF-16 code unit, or -1 past the end (rt_abi.md).
             (Callee::Extern(id), _) if env.symbol(*id) == CHAR_CODE_AT => Fact::int(-1, 65535),
             _ => Fact::top(ty),

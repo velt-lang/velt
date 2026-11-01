@@ -144,7 +144,6 @@ pub(crate) struct Rt {
     pub str_concat: ExternId,
     pub str_drop: ExternId,
     pub str_cmp: ExternId,
-    pub pow_i64: ExternId,
 }
 
 impl ProgramBuilder {
@@ -173,7 +172,6 @@ impl ProgramBuilder {
             str_concat: pb.ext("velt_rt_str_concat", &[Ptr, Ptr, Ptr], Unit, false),
             str_drop: pb.ext("velt_rt_str_drop", &[Ptr], Unit, false),
             str_cmp: pb.ext("velt_rt_str_cmp", &[Ptr, Ptr], I32, false),
-            pow_i64: pb.ext("velt_rt_pow_i64", &[I64, I64], I64, false),
         };
         (pb, rt)
     }

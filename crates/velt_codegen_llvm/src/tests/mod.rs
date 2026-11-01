@@ -277,19 +277,22 @@ fn relocated_statics_and_memory_intrinsics() {
     }
 }
 
-/// `velt_main` calling runtime functions the backend knows: math with an exact intrinsic,
-/// `Math.round` (an inline helper), a read-only string compare and the allocator.
+/// `velt_main` using runtime functions the backend knows: math with an exact intrinsic and
+/// `Math.round` (an inline helper), as statements; a read-only string compare and the allocator.
 fn runtime_sample() -> Program {
     let mut pb = ProgramBuilder::new();
-    let sqrt = pb.ext("velt_rt_math_sqrt", &[F64], F64, false);
-    let round = pb.ext("velt_rt_math_round", &[F64], F64, false);
+    pb.ext("velt_rt_math_sqrt", &[F64], F64, false);
+    pb.ext("velt_rt_math_round", &[F64], F64, false);
     let cmp = pb.ext("velt_rt_str_cmp", &[Ptr, Ptr], I32, false);
     let alloc = pb.ext("velt_rt_alloc", &[U64, U64], Ptr, false);
     let mut fb = FuncBuilder::export("velt_main", &[], I32);
     let (x, y, c, p) = (fb.local(F64), fb.local(F64), fb.local(I32), fb.local(Ptr));
     let b = fb.block();
-    let b = fb.call(b, Callee::Extern(sqrt), vec![float(2.0, F64)], Some(x));
-    let b = fb.call(b, Callee::Extern(round), vec![copy_local(x)], Some(y));
+    let math = |op| Intrinsic::Math(op);
+    let sqrt = Rvalue::Intrinsic(math(velt_vir::math::MathOp::Sqrt), vec![float(2.0, F64)]);
+    fb.assign(b, x, sqrt);
+    let round = Rvalue::Intrinsic(math(velt_vir::math::MathOp::Round), vec![copy_local(x)]);
+    fb.assign(b, y, round);
     let size = vec![int(8, U64), int(8, U64)];
     let b = fb.call(b, Callee::Extern(alloc), size, Some(p));
     let b = fb.call(
