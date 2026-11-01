@@ -294,11 +294,11 @@ Everything in the repository moves in the same change:
 
 - the templates and the code behind `velt init`/`velt new`;
 - the example apps and the golden tests that carry a manifest;
-- the documents that show a manifest, and `docs/site/pages.txt`;
+- the documents that show a manifest;
 - the CLI help;
 - the Rust tests that write manifest text.
 
-The contract `contracts/velt_toml.md` becomes `contracts/manifest.md`. `docs/tooling/manifest.md`
+The contract `contracts/velt_toml.md` becomes `contracts/manifest.md`. https://veltlang.com/docs/tooling/manifest/
 is rewritten, with the `jsx` and `native` sections the current page lacks.
 
 Implementation order:

@@ -1,4 +1,4 @@
-//! Exclusive access (docs/reference/memory.md "Exclusive access"): within one call, a place the callee
+//! Exclusive access (https://veltlang.com/docs/reference/memory/ "Exclusive access"): within one call, a place the callee
 //! may modify is reachable through no other argument. Checked over the final HIR (after
 //! ownership / mutation inference and the move analysis, so pass modes and clones are settled).
 //!

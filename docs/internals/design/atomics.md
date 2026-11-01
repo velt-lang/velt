@@ -213,7 +213,7 @@ reason to spin. `max` and `min` are the prelude's `max2` and `min2` (`Math.max`,
 
 1. **`Atomic<T>`** (implemented): the type, the sema rules, the inline code in both backends,
    `shared<int>`'s atomics through the same path (their runtime functions are gone),
-   `velt/sync`'s `Backoff` and `VersionLatch`, docs (docs/std/sync.md, reference async.md),
+   `velt/sync`'s `Backoff` and `VersionLatch`, docs (https://veltlang.com/docs/std/sync/, reference async.md),
    goldens (`tests/golden/std/atomic*.vlt`, `sync_latch.vlt`: every operation at every width,
    the errors, a counter, a spin lock and latch-checked reads on worker threads), and
    `bench/atomics` against Rust (results below).

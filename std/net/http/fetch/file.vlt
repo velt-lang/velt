@@ -1,4 +1,4 @@
-// velt/net/http (internal): the WHATWG `File` (docs/std/net/http.md): a `Blob` with a file name
+// velt/net/http (internal): the WHATWG `File` (https://veltlang.com/docs/std/net/http/): a `Blob` with a file name
 // and a modification time, as `FormData` holds a file.
 
 import { Blob, BlobPart } from "velt/net/http/fetch/blob";

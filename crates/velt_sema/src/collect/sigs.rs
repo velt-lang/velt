@@ -246,7 +246,7 @@ fn fill_sig(cx: &mut Ctx, d: DefId, sig: &ast::FnSig, owner: &Generics, module: 
         );
     }
     // A runtime function std declares writes the `string` it takes as `out` or `buf`: a string
-    // builder it appends to, or the slot it puts its result in (docs/reference/modules.md
+    // builder it appends to, or the slot it puts its result in (https://veltlang.com/docs/reference/modules/
     // "Runtime declarations"). Its argument is a mutable borrow, so the owner of the place is
     // modified too: a `StringBuilder` param of a function that appends to it is no read-only
     // (`frozen`) one whose fields the optimizer may read once.
@@ -269,7 +269,7 @@ fn fill_sig(cx: &mut Ctx, d: DefId, sig: &ast::FnSig, owner: &Generics, module: 
     f.generics = generics;
     f.params = ps;
     // A system function writes every buffer and struct not written `readonly`
-    // (docs/reference/system-functions.md): its argument is a mutable borrow from the start, so
+    // (https://veltlang.com/docs/reference/system-functions/): its argument is a mutable borrow from the start, so
     // the call is checked as one (a read-only array is rejected, a module constant is not
     // copied, another argument may not reach it) before ownership inference runs.
     if let Some(readonly) = f.system.clone() {
@@ -361,7 +361,7 @@ fn async_ret(cx: &mut Ctx, ret: TyId, sig: &ast::FnSig) -> TyId {
     cx.ty.promise(ret)
 }
 
-/// Params of async functions are moved into the future (docs/reference/async.md):
+/// Params of async functions are moved into the future (https://veltlang.com/docs/reference/async/):
 /// always owned (or copied), never borrowed.
 pub(super) fn owned_async_params(cx: &mut Ctx, ps: &mut [ParamSig]) {
     for p in ps.iter_mut() {

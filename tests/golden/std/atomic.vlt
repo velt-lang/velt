@@ -1,5 +1,5 @@
 // check: no leaks
-// `Atomic<T>` (docs/std/sync.md): every operation at every width, wrapping and signed / unsigned
+// `Atomic<T>` (https://veltlang.com/docs/std/sync/): every operation at every width, wrapping and signed / unsigned
 // `max` / `min`, the orderings, and an `Atomic` in a local, a class field, a struct, an array and
 // a `shared` value, changed in place.
 

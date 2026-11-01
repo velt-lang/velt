@@ -2,7 +2,7 @@
 #
 #   irm https://github.com/velt-lang/velt/releases/latest/download/get-velt.ps1 | iex
 #
-# Versions install side by side (#948, docs/tooling/platforms.md): the toolchain goes into
+# Versions install side by side (#948, https://veltlang.com/docs/tooling/platforms/): the toolchain goes into
 # <root>\toolchains\<version>\, and the launcher into <root>\bin\velt.exe, the one directory on
 # PATH. It runs the version each package pins (`velt` in package.vlt), else the default. Running
 # this again with another version adds it beside the others.

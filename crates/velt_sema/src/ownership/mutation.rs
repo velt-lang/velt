@@ -1,4 +1,4 @@
-//! Mutation inference (docs/reference/memory.md "Mutation is inferred"): turns a body's
+//! Mutation inference (https://veltlang.com/docs/reference/memory/ "Mutation is inferred"): turns a body's
 //! [`Evidence`](super::evidence::Evidence) into pass modes, and joins the modes of methods that
 //! share a dispatch slot. Runs inside the ownership fixpoint (`super::infer`); modes only grow
 //! (`Borrow` → `BorrowMut` → `Owned`), so the iteration terminates.

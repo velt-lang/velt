@@ -1,5 +1,5 @@
 //! JavaScript's `Object` built-ins beyond `keys` / `values` / `entries` (object_keys.rs), and
-//! `Array.isArray` (docs/reference/types.md "`Object` built-ins"). Each is checked here against the static types
+//! `Array.isArray` (https://veltlang.com/docs/reference/types/ "`Object` built-ins"). Each is checked here against the static types
 //! of its arguments and becomes ordinary code over them; a program that doesn't call them gets
 //! none of it.
 //!

@@ -1,4 +1,4 @@
-//! `using` and `await using` declarations (docs/reference/memory.md "Resource cleanup").
+//! `using` and `await using` declarations (https://veltlang.com/docs/reference/memory/ "Resource cleanup").
 //!
 //! - `using x = e;` is a `const` whose value must have a `[Symbol.dispose]()` drop hook (or be
 //!   `null`). Locals are dropped at the end of their block, in reverse declaration order and on

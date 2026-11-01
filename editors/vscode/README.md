@@ -1,6 +1,6 @@
 # Velt for Visual Studio Code
 
-Language support for Velt (`.vlt` files; see the [language reference](https://github.com/velt-lang/velt/tree/main/docs/reference)):
+Language support for Velt (`.vlt` files; see the [language reference](https://veltlang.com/docs/reference/)):
 
 - Syntax highlighting (keywords, types, strings, template literals with `${}` substitutions,
   numbers with type suffixes such as `10u8` / `1.5f32`, comments).
@@ -42,7 +42,7 @@ irm https://github.com/velt-lang/velt/releases/latest/download/get-velt.ps1 | ie
 
 The installer puts `velt` on your `PATH`; `velt doctor` checks the setup. If `velt` lives
 elsewhere, point the `velt.serverPath` setting at it. Other options:
-[Platforms and installation](https://github.com/velt-lang/velt/blob/main/docs/tooling/platforms.md).
+[Platforms and installation](https://veltlang.com/docs/tooling/platforms/).
 
 ## Debugging
 

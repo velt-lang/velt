@@ -7,7 +7,7 @@
 // kept until every thread that was in a section then has left it. The global epoch moves on
 // only when every thread in a section has seen the current one, so a value retired at epoch `g`
 // is unreachable once the epoch is `g + 2` steps on, and is dropped then.
-// docs/std/sync.md.
+// https://veltlang.com/docs/std/sync/.
 
 export {
   collect,

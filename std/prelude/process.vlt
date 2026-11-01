@@ -1,7 +1,7 @@
 // Prelude: `process.memoryUsage()` (`processMemoryUsage`), which the compiler turns into a call
 // of this module's function. The other members of the builtin `process` namespace that compile
 // to calls are hooks (std/lang/hooks/process.vlt); the rest of Node's `process` is in
-// `velt/process` (docs/std/process.md).
+// `velt/process` (https://veltlang.com/docs/std/process/).
 
 declare function velt_rt_memory_rss(): i64;
 declare function velt_rt_memory_heap(): i64;

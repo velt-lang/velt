@@ -57,7 +57,7 @@ pub struct TypeDecl {
     pub is_abstract: bool,
 }
 
-/// Who may call a class's constructor (TypeScript's rules, docs/reference/classes.md): anyone;
+/// Who may call a class's constructor (TypeScript's rules, https://veltlang.com/docs/reference/classes/): anyone;
 /// the class body and its subclasses (`protected`); only the class body, and the class cannot
 /// be extended (`private`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

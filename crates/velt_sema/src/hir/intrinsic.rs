@@ -88,7 +88,7 @@ pub enum Intrinsic {
     /// inner arrays, which one call may not otherwise change both of. Additive.
     ArraySwapNested,
     /// `xs.subarray(begin, end)` of a `u8[]` as the argument of a `declare system function`'s
-    /// buffer parameter (docs/reference/system-functions.md): `(xs: u8[] (borrowed, modified
+    /// buffer parameter (https://veltlang.com/docs/reference/system-functions/): `(xs: u8[] (borrowed, modified
     /// for a buffer the function writes), begin, end)`, of type `u8[]`, the bytes
     /// `begin..end` of `xs` with JS's `subarray` positions (negative counts from the end,
     /// clamped to the array); a position is an `i64`, or a `usize` when it is never negative.
@@ -236,7 +236,7 @@ pub enum Intrinsic {
     /// `shared(x)` (user-visible) -> `Shared<T>`
     SharedNew,
 
-    // M3 async & concurrency (user-visible builtins; see docs/reference/async.md)
+    // M3 async & concurrency (user-visible builtins; see https://veltlang.com/docs/reference/async/)
     /// `spawn(p: Promise<T>): Promise<T>` — start now on the runtime, returns a join handle.
     Spawn,
     /// `spawnHandled(p)` (standard library only): `spawn(p)` whose rejection the

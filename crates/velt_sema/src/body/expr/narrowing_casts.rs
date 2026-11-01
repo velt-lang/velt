@@ -1,4 +1,4 @@
-//! Type assertions that narrow (docs/reference/types.md "Type assertions"): `x as T` with
+//! Type assertions that narrow (https://veltlang.com/docs/reference/types/ "Type assertions"): `x as T` with
 //! `x: T | null` (or `| undefined`), `u as A` with `u` a union that has the member `A`, and
 //! `u as A | B` (also with `| undefined`) with `u` a union that has those members and more,
 //! and a tuple as a tuple whose elements are each one of these (or an `any` as a static type).

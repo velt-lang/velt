@@ -1,5 +1,5 @@
 // `switch` on a nullable (non-union) value: `default` after `case null` sees the value narrowed to
-// non-null (docs/reference/control-flow.md "switch"), as does a literal case; a `case null` that falls into
+// non-null (https://veltlang.com/docs/reference/control-flow/ "switch"), as does a literal case; a `case null` that falls into
 // `default` does not narrow it. Regression (docs agent): `return x` in `default` was
 // "mismatched types: expected string, found string | null".
 function describe(x: string | null): string {

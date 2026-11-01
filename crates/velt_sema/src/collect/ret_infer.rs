@@ -1,5 +1,5 @@
 //! Functions and methods without a return type take it from their body, as in TypeScript
-//! (docs/reference/functions.md "Return types"). Collection decides which ones do: a body with
+//! (https://veltlang.com/docs/reference/functions/ "Return types"). Collection decides which ones do: a body with
 //! a `return` that has a value (any other body returns `void`, known right away). Dispatch needs
 //! signatures before bodies are checked, so an unannotated method that overrides a base method
 //! or implements an interface method takes that method's result type (the body is checked

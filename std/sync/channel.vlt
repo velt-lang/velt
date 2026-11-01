@@ -1,4 +1,4 @@
-// velt/sync (internal): `Channel<T>`, a typed queue between tasks (docs/std/sync/channel.md). Any number
+// velt/sync (internal): `Channel<T>`, a typed queue between tasks (https://veltlang.com/docs/std/sync/channel/). Any number
 // of tasks may send and receive through clones of one channel. A bounded channel makes `send` wait
 // while it is full (backpressure); an unbounded one never waits. `close()` ends the stream: sends
 // fail from then on, and receivers get what is queued, then `null`.
@@ -6,7 +6,7 @@
 // A sent value crosses to the receiver's task like a `spawn` argument: it moves when the sender
 // no longer uses it, and is deep-copied otherwise (objects are never shared between tasks).
 //
-// `Channel<T>` is a handle struct, like `TcpStream` (docs/std/README.md "Handles"): copies share
+// `Channel<T>` is a handle struct, like `TcpStream` (https://veltlang.com/docs/std/ "Handles"): copies share
 // one channel, so pass it to producers and consumers (also `spawn`ed tasks) freely. Close it
 // when done: a closed channel is freed once it is drained, and an unclosed one lives until the
 // program ends. Values nobody receives are dropped when the program ends.

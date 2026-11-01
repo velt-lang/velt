@@ -1,4 +1,4 @@
-//! Variables that closures written before them use (#1142, docs/reference/functions.md "A
+//! Variables that closures written before them use (#1142, https://veltlang.com/docs/reference/functions/ "A
 //! closure using the constant it initializes"): `const effectFn = () => { … runJob(); }; const
 //! runJob = () => { … };`, `queueMicrotask(() => stop()); … const stop = () => { … };`, and the
 //! same with `let`.

@@ -1,4 +1,4 @@
-//! `this` in object-literal methods, getters and setters (docs/reference/types.md "`this` in
+//! `this` in object-literal methods, getters and setters (https://veltlang.com/docs/reference/types/ "`this` in
 //! object-literal methods"). The parser gives a method whose body uses `this` a leading
 //! parameter named `this` (`ast::METHOD_THIS`): `{ m(x) { return this.n + x; } }` is
 //! `{ m: (this, x) => { ... } }`. Where the literal implements an interface

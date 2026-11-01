@@ -1,4 +1,4 @@
-//! Object literals that implement an interface with methods (docs/reference/types.md "Object
+//! Object literals that implement an interface with methods (https://veltlang.com/docs/reference/types/ "Object
 //! literals implementing interfaces"). Where such an interface is expected, a literal gives
 //! each of its members:
 //!

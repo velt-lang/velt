@@ -1,4 +1,4 @@
-//! Abstract classes and methods (TypeScript's rules, docs/reference/classes.md): an abstract
+//! Abstract classes and methods (TypeScript's rules, https://veltlang.com/docs/reference/classes/): an abstract
 //! method is a vtable slot whose body never runs; a concrete subclass implements it, with or
 //! without `override`, and must implement every abstract member it inherits.
 

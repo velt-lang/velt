@@ -1,4 +1,4 @@
-//! Signatures of generators (`function*`, `*name()`; docs/reference/functions.md
+//! Signatures of generators (`function*`, `*name()`; https://veltlang.com/docs/reference/functions/
 //! "Generators"): the declared result must be one of the iteration protocol types the prelude's
 //! `Generator<T, E>` class provides — `Generator<T, E>`, `Iterator<T, E>` or `Iterable<T, E>` —
 //! or for an async generator (`async function*`, `async *name()`) those of `AsyncGenerator<T,

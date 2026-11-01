@@ -1,6 +1,6 @@
 // check: no leaks
 // An argument may change the inside of a class instance or an array another argument passes
-// (docs/reference/memory.md "Exclusive access"): the callee sees the change, as in Node.
+// (https://veltlang.com/docs/reference/memory/ "Exclusive access"): the callee sees the change, as in Node.
 
 class Src {
   n: number = 0;

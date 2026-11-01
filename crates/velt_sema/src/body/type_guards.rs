@@ -1,4 +1,4 @@
-//! Compile-time type tests (std/prelude/type_tests.vlt, docs/reference/functions.md "Type
+//! Compile-time type tests (std/prelude/type_tests.vlt, https://veltlang.com/docs/reference/functions/ "Type
 //! tests"): `typeIs<A, B>()` is a call of the prelude function, which lowering replaces by a
 //! constant per instantiation (velt_vir `lower/type_tests.rs`). Inside the `then` branch of
 //! `if (typeIs<A, B>())` (`Frame::type_guards`), `asType<B>(x)` with `x: A` converts between the

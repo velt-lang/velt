@@ -1,4 +1,4 @@
-// velt/encoding (internal): the WHATWG `TextEncoder` (a global, as in Node: docs/std/encoding.md).
+// velt/encoding (internal): the WHATWG `TextEncoder` (a global, as in Node: https://veltlang.com/docs/std/encoding/).
 
 import { Uint8Array } from "velt/lang/typed_array/uint8_array";
 import { TextEncoderEncodeIntoResult } from "velt/encoding/encode_into_result";

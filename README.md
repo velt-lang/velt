@@ -3,7 +3,7 @@
 **Your TypeScript, compiled to a native executable. Rust-class speed, every core, no runtime.**
 
 [Install](#get-started) · [VS Code extension](https://marketplace.visualstudio.com/items?itemName=andtii.velt)
-(with F5 debugging) · [Getting started](docs/book/getting-started.md) · [Tour](docs/book/tour.md) ·
+(with F5 debugging) · [Getting started](https://veltlang.com/docs/book/getting-started/) · [Tour](https://veltlang.com/docs/book/tour/) ·
 [Docs](docs/README.md)
 
 Velt compiles TypeScript ahead of time to machine code through LLVM. It is not a JavaScript
@@ -80,9 +80,9 @@ In VS Code, install the [Velt extension](https://marketplace.visualstudio.com/it
 (`code --install-extension andtii.velt`). It gives you diagnostics as you type, completion, go to
 definition, quick fixes and F5 debugging. Other editors can use the language server, `velt lsp`.
 
-Next, read [Getting started](docs/book/getting-started.md) and
-[the tour](docs/book/tour.md). Other platforms, options and building from source are covered in
-[Platforms and installation](docs/tooling/platforms.md).
+Next, read [Getting started](https://veltlang.com/docs/book/getting-started/) and
+[the tour](https://veltlang.com/docs/book/tour/). Other platforms, options and building from source are covered in
+[Platforms and installation](https://veltlang.com/docs/tooling/platforms/).
 
 ## Why Velt
 
@@ -187,7 +187,7 @@ async function main() {
 - **Typed JSON.** `JSON.parse<User>(text)` checks the shape and builds the object in one pass.
 
 For the full list, and the few places where Velt deliberately differs from TypeScript, read
-[Velt for TypeScript developers](docs/book/ts-developers.md).
+[Velt for TypeScript developers](https://veltlang.com/docs/book/ts-developers/).
 
 ## Any Rust crate, a few lines away
 
@@ -258,7 +258,7 @@ Programs then use it like any other package: `velt add zstd`, then
   closes them at a known point.
 
 The full walkthrough, including strings, errors, handles and publishing for several platforms,
-is [Packages with native code](docs/book/native-packages.md).
+is [Packages with native code](https://veltlang.com/docs/book/native-packages/).
 
 ## Performance
 
@@ -302,13 +302,13 @@ Rust, though it stays well ahead of Node. The remaining gaps are tracked in
 
 ## Documentation
 
-- [The Book](docs/book/README.md): [getting started](docs/book/getting-started.md),
-  [a tour of Velt](docs/book/tour.md), [Velt for TypeScript developers](docs/book/ts-developers.md),
+- [The Book](https://veltlang.com/docs/book/): [getting started](https://veltlang.com/docs/book/getting-started/),
+  [a tour of Velt](https://veltlang.com/docs/book/tour/), [Velt for TypeScript developers](https://veltlang.com/docs/book/ts-developers/),
   and guides for HTTP servers, CLIs, async, errors, memory, packages, testing and hot reload.
-- [The Reference](docs/reference/README.md): the precise language rules.
-- [The standard library](docs/std/README.md): files, HTTP, WebSockets, JSON, regex, dates,
+- [The Reference](https://veltlang.com/docs/reference/): the precise language rules.
+- [The standard library](https://veltlang.com/docs/std/): files, HTTP, WebSockets, JSON, regex, dates,
   crypto, collections, databases, and more.
-- [Tooling](docs/tooling/README.md): the `velt` command, `velt dev`, packages, formatter,
+- [Tooling](https://veltlang.com/docs/tooling/): the `velt` command, `velt dev`, packages, formatter,
   editors, debugging, WebAssembly, platforms.
 - [Internals](docs/internals/README.md): the compiler pipeline and design notes.
 

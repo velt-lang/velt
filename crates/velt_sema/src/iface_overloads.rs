@@ -1,4 +1,4 @@
-//! TypeScript's overloads in an interface (#964, docs/reference/functions.md "Overloads"):
+//! TypeScript's overloads in an interface (#964, https://veltlang.com/docs/reference/functions/ "Overloads"):
 //! several signatures of one method, which a class or object literal implements with one
 //! method that takes every form.
 //!

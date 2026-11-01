@@ -336,7 +336,7 @@ first half of its 8-byte slot. Functions (`std/lang/symbol/index.vlt`; `string` 
 ## CPU check [additive]
 
 `velt_rt_check_cpu(required: u32)`: x86_64 code built for more than the baseline CPU
-(`--cpu`, docs/tooling/platforms.md "CPU") calls it first thing in `velt_main`, after the
+(`--cpu`, https://veltlang.com/docs/tooling/platforms/ "CPU") calls it first thing in `velt_main`, after the
 runtime's start-up (baseline code) and before any code that may use the features. `required` is
 a mask of features, by bit: 0 SSE3, 1 SSSE3, 2 SSE4.1, 3 SSE4.2, 4 POPCNT, 5 CMPXCHG16B, 6 AVX,
 7 AVX2, 8 BMI1, 9 BMI2, 10 FMA, 11 LZCNT, 12 MOVBE, 13 F16C, 14 AVX512F, 15 AVX512BW,

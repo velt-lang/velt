@@ -1,7 +1,7 @@
 # Design: `unknown` for dynamic JSON
 
 Status: proposed (issue #18). Nothing here is implemented. The language has no `any` or `unknown`
-([types](../../reference/types.md)); dynamic JSON is `JsonValue`, read through methods.
+([types](https://veltlang.com/docs/reference/types/)); dynamic JSON is `JsonValue`, read through methods.
 
 ## Problem
 

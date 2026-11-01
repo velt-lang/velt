@@ -515,7 +515,7 @@ fn analyze(
 
 /// Should the program be checked again with held closures and `const me = this` sharing?
 /// Borrowing in them only changes the cost, never which programs are accepted
-/// (docs/reference/functions.md "Captures"). So when some of them borrowed and a pass from
+/// (https://veltlang.com/docs/reference/functions/ "Captures"). So when some of them borrowed and a pass from
 /// `demote_local_closures` on reported an error, the program is checked again with them
 /// sharing, as it was before. Errors from the earlier passes (type errors) don't depend on
 /// borrowing and never cause a second check. The CLI and the IDE both use this rule.

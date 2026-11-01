@@ -25,7 +25,7 @@
 //!    Backends use them for debug info only; panic messages already carry their location.
 //! 9. Parameter attributes (additive, optional): `Function::param_attrs` is either empty (no
 //!    information) or has one [`ParamAttrs`] per param (checked by `verify`). Attributes are only
-//!    set on `Ptr` params and only where sema's exclusivity guarantees hold (docs/reference/memory.md
+//!    set on `Ptr` params and only where sema's exclusivity guarantees hold (https://veltlang.com/docs/reference/memory/
 //!    \"Exclusive access"): during a call, memory reachable through a `BorrowMut` param is
 //!    reachable through no other param, and `Borrow` params never alias a `BorrowMut`/`Owned`
 //!    one. Lowering sets them for user functions from `PassMode` (`BorrowMut` aggregate or

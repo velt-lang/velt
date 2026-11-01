@@ -1,6 +1,6 @@
 // Callbacks the handler never gets to, of a type it calls, are errors too (#873): what one
 // object of a class holds may be reached through what it shares, which the check does not
-// follow, so it errs on the side of rejecting (docs/std/http.md). Each assigns a variable that
+// follow, so it errs on the side of rejecting (https://veltlang.com/docs/packages/http-server/). Each assigns a variable that
 // only `main` (or `start`) uses: another `Input` than the handler's, another `Emitter`.
 import { serve } from "http-server";
 

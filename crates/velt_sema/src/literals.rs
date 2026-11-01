@@ -1,4 +1,4 @@
-//! Literal types (`"circle"`, `42`, `-1`, `1.5`, `true`; docs/reference/types.md "Literal types"):
+//! Literal types (`"circle"`, `42`, `-1`, `1.5`, `true`; https://veltlang.com/docs/reference/types/ "Literal types"):
 //! `TyKind::Literal`, a zero-sized singleton type whose *base* is `string`, a number type or
 //! `bool`. A literal type converts implicitly to its base (and a union of literals to the base
 //! they share); literal expressions only take a literal type where one is expected

@@ -1,6 +1,6 @@
 //! Function values that outlive a call. A closure literal passed directly as an argument is
 //! non-escaping: it captures by reference and its environment lives in the caller's frame
-//! (docs/reference/functions.md "Captures"), so the callee's parameter must never be kept past the call.
+//! (https://veltlang.com/docs/reference/functions/ "Captures"), so the callee's parameter must never be kept past the call.
 //! - A function-typed parameter that the body stores, returns, captures in an escaping closure,
 //!   copies (`.clone()`) or passes to an async call is inferred as owned (`super::infer`), and
 //!   a closure literal passed to an owned parameter becomes escaping ([`escape_closure`]): it

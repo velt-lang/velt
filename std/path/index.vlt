@@ -3,7 +3,7 @@
 // The separator is always "/", on every platform (the runtime's file APIs accept "/" on Windows
 // too); a backslash is an ordinary character. Results match Node; like every string method,
 // offsets count UTF-16 code units.
-// docs/std/path.md.
+// https://veltlang.com/docs/std/path/.
 
 export {
   basename,

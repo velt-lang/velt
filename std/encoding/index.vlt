@@ -4,7 +4,7 @@
 // Strings are stored as UTF-8, so `utf8Encode` is a copy of a string's bytes (a lone surrogate
 // written as U+FFFD) and decoding validates them. Encoders build the output as ASCII bytes and turn them into a string with one
 // runtime copy. Decoders throw `EncodingError` on malformed input.
-// docs/std/encoding.md.
+// https://veltlang.com/docs/std/encoding/.
 
 export {
   base64Decode,

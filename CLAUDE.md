@@ -2,8 +2,9 @@
 
 Compiler written in Rust: `.vlt` → AST → HIR (typed, ownership-checked) → VIR (MIR-like) →
 Cranelift (debug, JIT) or LLVM (release) → object → system linker + `velt_rt` (Rust staticlib
-runtime; tokio-based async). Architecture: `docs/internals/README.md`. Language:
-`docs/reference/`. Interfaces between crates: `docs/internals/contracts/README.md`.
+runtime; tokio-based async). Architecture: `docs/internals/README.md`. Language and std docs for
+users: https://veltlang.com/docs/ (the website repository, `velt-lang/velt-lang.github.io`).
+Interfaces between crates: `docs/internals/contracts/README.md`.
 
 Build, test tiers, coding standards and the language-change process are in `CONTRIBUTING.md`;
 follow it. The essentials for agents:
@@ -13,7 +14,6 @@ follow it. The essentials for agents:
 - Unit tests for one crate: `cargo test -p <crate>`
 - End-to-end tests: `cargo test --workspace --test golden` (filter: `VELT_GOLDEN=m1/strings`;
   `--workspace` resolves features like the gate's build, where `-p veltc` rebuilds crates)
-- Documentation tests: `cargo test -p veltc --test docs`
 - Lint: `cargo clippy -p <crate> --all-targets -- -D warnings`
 - Quality gate: `scripts/check.sh` on macOS and Linux, `pwsh scripts/check.ps1` on Windows. It
   runs the checks your changes need, selected from the files changed since `origin/main`
@@ -52,9 +52,9 @@ follow it. The essentials for agents:
    OS-specific; CONTRIBUTING.md).
 4. Compiler code must not panic on user input; report `Diagnostic`s. Internal invariant
    violations may panic with a message starting `ICE:`.
-5. Every bug fix gets a regression test (end-to-end or unit). Every user-visible change updates
-   the docs; `ts` code blocks in the docs must compile. It also files a docs-sync issue on
-   `velt-lang/velt-lang.github.io` before merge, linked from the pull request, and a release
+5. Every bug fix gets a regression test (end-to-end or unit). Every user-visible change files a
+   docs-sync issue on `velt-lang/velt-lang.github.io` (the user docs live on the website, not in
+   this repository) before merge, linked from the pull request, and a release
    comments its tag on those issues (CONTRIBUTING.md "The website's docs"); never open pull
    requests on the website from here.
 6. Never commit secrets, tokens or personal data.

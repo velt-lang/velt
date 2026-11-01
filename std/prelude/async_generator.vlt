@@ -8,7 +8,7 @@ import {
 } from "velt/lang/intrinsics";
 
 /**
- * An async generator (`async function*`, docs/reference/functions.md "Async generators"): what
+ * An async generator (`async function*`, https://veltlang.com/docs/reference/functions/ "Async generators"): what
  * calling one creates. Each `next()` runs the body up to its next `yield`, awaiting what the body
  * awaits on the way; its promise rejects with what the body throws (`E`). `return()` closes a
  * generator suspended at a `yield`: its `finally` blocks run (and may `await`) and its `using`

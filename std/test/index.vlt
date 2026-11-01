@@ -1,4 +1,4 @@
-// velt/test: the test runner (docs/book/testing.md). `velt test` finds the test files, compiles
+// velt/test: the test runner (https://veltlang.com/docs/book/testing/). `velt test` finds the test files, compiles
 // them with a generated `main` that registers their tests here (`registerFile`, `registerTest`,
 // `registerAsyncTest`) and calls `runRegistered`, and starts the program. Everything after that
 // is this module:

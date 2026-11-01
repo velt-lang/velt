@@ -73,7 +73,7 @@ fn first_launch_check(took: Duration) -> Check {
         Status::Warn,
         format!("a new program took {ms} ms to start (macOS checks every new executable)"),
         "add your terminal app under System Settings → Privacy & Security → Developer Tools\n\
-         no Developer Tools entry? run `sudo spctl developer-mode enable-terminal` (docs/tooling/platforms.md)",
+         no Developer Tools entry? run `sudo spctl developer-mode enable-terminal` (https://veltlang.com/docs/tooling/platforms/)",
     )
 }
 
