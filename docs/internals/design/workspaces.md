@@ -14,7 +14,7 @@ or only those a change touched: CI scripts loop over directories and start `velt
 package.
 
 Velt already reads pnpm, npm and Yarn workspaces, but only to find the TypeScript sources of npm
-packages ([packages.md](../../tooling/packages.md#npm-packages)). Its own packages have no
+packages ([packages.md](https://veltlang.com/docs/tooling/packages/#npm-packages)). Its own packages have no
 workspace. The [manifest design](package-manifest.md) left the field for "when that feature
 exists".
 
@@ -27,7 +27,7 @@ pnpm does is work Velt does not need:
   plus downloads of what is missing, and a no-op install reads two files.
 - **One process, one shared code cache.** pnpm and Turborepo start a tool per package. Velt
   can run every member's build in one process and in parallel. The machine's
-  [build cache](../../tooling/cli.md#build-cache) already stores compiled functions by content,
+  [build cache](https://veltlang.com/docs/tooling/cli/#build-cache) already stores compiled functions by content,
   so a library that five members import is compiled once, for all of them.
 - **Strict by construction.** pnpm's strictness (no phantom dependencies) comes from its link
   layout. Velt's package graph already resolves an import only through the importing package's
@@ -241,8 +241,8 @@ packages/core/velt.lock.json: error: a member of a workspace has no lock of its 
 6. The benchmarks above, against pnpm and Turborepo, in `bench/`.
 
 Steps 1 and 2 make a working monorepo; each step updates
-[packages.md](../../tooling/packages.md), [manifest.md](../../tooling/manifest.md) and
-[cli.md](../../tooling/cli.md).
+[packages.md](https://veltlang.com/docs/tooling/packages/), [manifest.md](https://veltlang.com/docs/tooling/manifest/) and
+[cli.md](https://veltlang.com/docs/tooling/cli/).
 
 ## Open questions
 

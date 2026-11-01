@@ -13,14 +13,14 @@ source. This round removes the errors a TypeScript developer meets in a first sm
 > **Superseded** by the number model (#525, step 3): there are no inferred integers any more.
 > A `number` is an `f64` in sema, integers from the standard library are converted to it in
 > user code, and `velt_opt`'s `numrep` stores numbers as integers where that is exact
-> ([Numbers](../../reference/types.md#numbers)). The text below is the design as it was.
+> ([Numbers](https://veltlang.com/docs/reference/types/#numbers)). The text below is the design as it was.
 
 **Problem.** `for (let i = 0; i < xs.length; i++)` was `expected i64, found usize`;
 `xs.length / 2` truncated although the user wrote no integer type; `xs[i]` with `i: number`
 was an error; `s.slice(0, s.length - 1)` mixed `usize` and `i64`.
 
 **Semantics.** Every integer is *declared* (its type is written) or *inferred* (a JS number held
-as an integer, [Numbers](../../reference/types.md#numbers)). Inferred now also covers integers the
+as an integer, [Numbers](https://veltlang.com/docs/reference/types/#numbers)). Inferred now also covers integers the
 standard library hands to user code: `ArrayLen` / `StrLen`, results of calls to `std/` functions
 and methods (`indexOf`, `size` getters, `Date.now()`), bindings destructured from such results
 (the `entries()` index), unannotated integer parameters of callbacks passed to `std/` functions,

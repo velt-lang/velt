@@ -1,4 +1,4 @@
-//! Shared promises (docs/reference/async.md "Promises", #212): a promise that several places
+//! Shared promises (https://veltlang.com/docs/reference/async/ "Promises", #212): a promise that several places
 //! hold, each of which may await it and gets the result, as in JS.
 //!
 //! The first share (`velt_rt_fut_share`) turns the future into a shared one in place: its

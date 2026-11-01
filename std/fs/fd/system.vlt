@@ -1,6 +1,6 @@
 // velt/fs (internal): the system functions of Node's file-descriptor API (`openSync`,
 // `readSync`, ...) and the C layout they fill. Each call of the API is one call of the C library,
-// with nothing in between (docs/reference/system-functions.md). On macOS and Linux; calling it for
+// with nothing in between (https://veltlang.com/docs/reference/system-functions/). On macOS and Linux; calling it for
 // another target is a compile error that names the system function it lacks.
 
 import { platform } from "velt/os/machine";

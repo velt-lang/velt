@@ -1,6 +1,6 @@
-// Prelude: `any` and `unknown`, the dynamic value (issue #924, docs/reference/types.md "any
+// Prelude: `any` and `unknown`, the dynamic value (issue #924, https://veltlang.com/docs/reference/types/ "any
 // and unknown"), and `object` and `Function`, the dynamic value restricted to objects and to
-// functions (issue #926, docs/reference/types.md "object and Function").
+// functions (issue #926, https://veltlang.com/docs/reference/types/ "object and Function").
 //
 // Both are interfaces every type implements (the compiler adds the implementation): a value
 // converted to one is boxed with its type's descriptor, the interface table. They share one

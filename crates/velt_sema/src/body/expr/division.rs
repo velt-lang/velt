@@ -1,4 +1,4 @@
-//! `/` (docs/reference/types.md "Numbers"): on numbers it is float division as in JS, on
+//! `/` (https://veltlang.com/docs/reference/types/ "Numbers"): on numbers it is float division as in JS, on
 //! declared integers integer division (truncating), and `Math.trunc(a / b)` on integers is
 //! integer division too.
 

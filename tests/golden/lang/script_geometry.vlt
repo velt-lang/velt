@@ -1,4 +1,4 @@
-// A script: top-level statements run in a generated `main` (docs/reference/modules.md).
+// A script: top-level statements run in a generated `main` (https://veltlang.com/docs/reference/modules/).
 // The vector exercise from Comprehensive Rust, written as plain TypeScript.
 const UNIT = 1.0;
 

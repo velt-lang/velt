@@ -1,4 +1,4 @@
-//! Ownership and mutation inference (docs/reference/memory.md "Ownership",
+//! Ownership and mutation inference (https://veltlang.com/docs/reference/memory/ "Ownership",
 //! "Mutation is inferred"), a fixpoint over all checked bodies:
 //! - a non-Copy parameter (or `this`) that its body moves from becomes `Owned`, unless the
 //!   function's ABI is fixed (closures, dynamically dispatched methods, externs);

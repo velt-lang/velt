@@ -1,4 +1,4 @@
-// Prelude: `Promise.allSettled` and `Promise.any` (docs/reference/async.md). The compiler compiles
+// Prelude: `Promise.allSettled` and `Promise.any` (https://veltlang.com/docs/reference/async/). The compiler compiles
 // `Promise.allSettled(ps)` and `Promise.any(ps)` to calls of `promiseAllSettled` / `promiseAny`.
 
 import { firstFulfilled } from "velt/lang/intrinsics";
@@ -131,7 +131,7 @@ export async function promiseReject<T, E>(reason: E): Promise<T> throws E {
   throw reason;
 }
 
-// `then`, `catch` and `finally` (docs/reference/async.md "Callbacks"). The compiler compiles
+// `then`, `catch` and `finally` (https://veltlang.com/docs/reference/async/ "Callbacks"). The compiler compiles
 // `p.then(f)` to `promiseThen(p, f)`, or to `promiseThenAsync` when `f` returns a promise (which
 // is then awaited: flattened, like JS), and so on for the other forms. Each takes the promise,
 // waits until it settles, then for its turn in the task's microtask queue, then runs the

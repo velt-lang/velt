@@ -2,7 +2,7 @@
 //! own method, or one of an `extend` block of its own). `extend` methods are not virtual: a
 //! call through the base type would run the `extend` method, not the subclass's, which is a
 //! wrong result rather than an error. Until `extend` methods can be overridden, the redefinition
-//! is an error (docs/reference/classes.md, "extend"; #1133 makes them virtual).
+//! is an error (https://veltlang.com/docs/reference/classes/, "extend"; #1133 makes them virtual).
 
 use rustc_hash::FxHashMap;
 

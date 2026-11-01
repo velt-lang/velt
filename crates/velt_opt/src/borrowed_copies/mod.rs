@@ -6,7 +6,7 @@
 //! zeroing). Both runtime calls are atomic count updates. When the local is only read and
 //! nothing can change the source while the local's text is still used, the count changes are
 //! not needed: the local can hold a plain copy of the source's words (a borrow), as call
-//! arguments already do (docs/reference/memory.md "calls borrow").
+//! arguments already do (https://veltlang.com/docs/reference/memory/ "calls borrow").
 //!
 //! The pass works on a *family*: the string locals a clone's value moves through (whole copies,
 //! a rebuild from its words), the register locals derived from their data word or address (data

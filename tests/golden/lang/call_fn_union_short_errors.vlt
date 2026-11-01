@@ -2,7 +2,7 @@
 // with a spread of an array, is an error, never a crash, and the errors after it are still
 // reported. TypeScript reports the first, third and fourth too (tsc --strict: TS2554, TS2556);
 // it accepts `f(1)`, which leaves out an optional parameter of a function type, not supported
-// yet (docs/reference/functions.md).
+// yet (https://veltlang.com/docs/reference/functions/).
 type F = ((a: number, b?: number) => void) | (() => void);
 type G = ((a: number, b: string) => number) | ((a: number) => number);
 

@@ -1,6 +1,6 @@
 //! Eager ("hybrid") promises: `velt_rt_fut_start` runs a stored promise's compiled state until
 //! its first suspension right away, like calling an async function in JS, and from then on the
-//! task that started it drives it as a *local* promise (docs/reference/async.md).
+//! task that started it drives it as a *local* promise (https://veltlang.com/docs/reference/async/).
 //!
 //! Every task root (`block_on`, spawned tasks, HTTP handlers) polls through [`Locals`], which
 //! makes the task's local set current (a thread-local pointer, valid only during the poll) and

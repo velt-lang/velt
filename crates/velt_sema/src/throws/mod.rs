@@ -1,4 +1,4 @@
-//! Typed errors (docs/reference/errors.md): what every function, `try` block and function value can
+//! Typed errors (https://veltlang.com/docs/reference/errors/): what every function, `try` block and function value can
 //! throw.
 //!
 //! - A function's error type is the canonical union of the types it `throw`s outside a `try`

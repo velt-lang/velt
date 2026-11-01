@@ -1,4 +1,4 @@
-//! `(v as Record<symbol, unknown>)[KEY]` (docs/reference/types.md "Record"): a look at a value's
+//! `(v as Record<symbol, unknown>)[KEY]` (https://veltlang.com/docs/reference/types/ "Record"): a look at a value's
 //! symbol-keyed member, as sigx's brand checks do (`isCell`). Velt has no record with symbol
 //! keys, so this one form is supported: the read goes through `any`, as `(v as any)[KEY]`
 //! does, and gives the record's value type (`unknown`, or `any`). A key that is not a symbol

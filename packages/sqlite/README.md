@@ -8,15 +8,24 @@ better-sqlite3. The package also holds a SQLite engine written in Velt, `sqlite/
 ```ts ignore
 // package.vlt
 dependencies: {
-  sqlite: "0.2",                                  // from the registry: a prebuilt library
-  // sqlite: { path: "../velt/packages/sqlite" },  // or a checkout: cargo builds the library
+  // From the Velt repository (there is no public registry yet):
+  sqlite: {
+    git: "https://github.com/velt-lang/velt",
+    branch: "main",
+    path: "packages/sqlite",
+  },
+  // Or a checkout: sqlite: { path: "../velt/packages/sqlite" },
 },
 ```
 
-From the registry, `velt` downloads the library prebuilt for your platform: no Rust toolchain is
-needed. A path dependency (this repository's examples use one) builds the crate in `native/` with
-cargo the first time, into `packages/sqlite/target/velt-native/`, and again when it changes
-([Packages with native code](../../docs/book/native-packages.md)). It is
+The package has native code (a Rust crate in `native/`), which `velt` builds with cargo, so a
+Rust toolchain is needed. A git dependency builds it only when you allow that with
+`VELT_NATIVE_FROM_SOURCE=1` (it runs the crate's build scripts):
+`VELT_NATIVE_FROM_SOURCE=1 velt install`. A path dependency (this repository's examples use one)
+builds it the first time, into `packages/sqlite/target/velt-native/`, and again when it changes.
+The full guide: https://veltlang.com/docs/packages/sqlite/.
+
+([Packages with native code](https://veltlang.com/docs/book/native-packages/).) The driver is
 **synchronous**: a typical query takes microseconds, which is less than handing it to a thread
 pool and back would cost. Run a long query inside `spawn(...)`.
 
@@ -108,17 +117,3 @@ can't be used there).
 
 The package uses only public std APIs: velt/db (`decodeRows`, `bindParams`, `readRows`),
 velt/native (`IoResult`), velt/encoding (`utf8ByteAt`, `utf8Length`), velt/fs.
-
-## From the prototype (0.1)
-
-The first `packages/sqlite` (0.1.0) was a prototype of native packages with a smaller API of its
-own. 0.2 is the standard library's former `velt/sqlite` instead, and the prototype's API is gone:
-
-| 0.1 | 0.2 |
-|---|---|
-| `new Database(path)` | `open(path, opts)` (or `Database.open`) |
-| `db.query<T>(sql, "[1, \"two\"]")` (parameters as JSON text) | `db.prepare(sql).allWith<T>([1, "two"])` (parameters as values) |
-| `db.exec(sql)` | `db.exec(sql)` |
-| `db.ref.query<T>(…)` (async, on the blocking pool) | `spawn(() => db.prepare(sql).all<T>())`: queries are synchronous |
-| `version()` | `db.prepare("SELECT sqlite_version() AS v").get<V>()` |
-| `Database` disposed with `using` | `db.close()`; a `Statement` releases itself when dropped |

@@ -8,7 +8,7 @@
 // Randomness comes from the OS generator through the runtime. SHA-1 is broken for collision
 // resistance: use it only for legacy protocols (WebSocket handshakes, HMAC-SHA1 in TOTP, git
 // object ids).
-// docs/std/crypto.md.
+// https://veltlang.com/docs/std/crypto/.
 
 export { timingSafeEqual } from "velt/crypto/compare";
 export { CryptoError } from "velt/crypto/errors";

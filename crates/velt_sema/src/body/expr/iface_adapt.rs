@@ -1,5 +1,5 @@
 //! A generic interface value where the same interface with `unknown` (or `any`) type arguments
-//! is expected (#1153; docs/reference/types.md "Generic interfaces with `unknown` arguments"):
+//! is expected (#1153; https://veltlang.com/docs/reference/types/ "Generic interfaces with `unknown` arguments"):
 //! `Handler<Date, number>` as a `Handler` (`Handler<unknown, unknown>`). TypeScript accepts it,
 //! since it checks method parameters bivariantly; Velt checks the arguments at run time instead.
 //!

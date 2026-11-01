@@ -2,7 +2,7 @@
 // reference while it runs (#564). The values the callback receives stay valid when the
 // collection grows or drops them. Set visits as JS's `Set` does (Node prints the same);
 // Deque and SortedMap visit by position, reading the length again after each call, as a `for`
-// loop over an array does (docs/std/collections).
+// loop over an array does (https://veltlang.com/docs/std/collections/).
 
 import { Deque } from "velt/collections";
 import { Set } from "velt/collections";

@@ -58,7 +58,7 @@ A, which keeps one shape and the name.
 
 - `RenderError` gains `cause: Error | null`; `message` and `component` stay as they are.
 - `jsxComponent` and the async path (`settle`) set it from the caught error.
-- The docs (`docs/std/jsx.md`, the TSX reference) show the `instanceof` narrowing above.
+- The docs (https://veltlang.com/docs/std/jsx/, the TSX reference) show the `instanceof` narrowing above.
 
 ### The missing piece: a caught `E` as an `Error`
 

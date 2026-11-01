@@ -6,7 +6,7 @@ It changes only through a reviewed contract change. Everything from `rt_abi.md` 
 `u8`, `VeltStr` = static / inline / refcounted heap string, see rt_abi.md "Strings").
 All functions are `extern "C"`, `#[no_mangle]`; VIR signatures are scalar/pointer only.
 
-Semantics follow docs/reference/async.md: a stored promise **starts when it
+Semantics follow https://veltlang.com/docs/reference/async/: a stored promise **starts when it
 is created** (`velt_rt_fut_start`, §1.1) and runs as a local promise of the task that created it;
 directly awaited calls are embedded state machines; tasks run on a tokio multi-thread runtime.
 
@@ -158,7 +158,7 @@ each polled until done, done-flags in the state): no allocation.
 
 ### 1.2 Shared promises
 
-A promise is a shared value (docs/reference/async.md "Promises"): where sema shares a promise
+A promise is a shared value (https://veltlang.com/docs/reference/async/ "Promises"): where sema shares a promise
 place (`Intrinsic::Share`, or a clone of a value holding a promise), lowering calls
 `velt_rt_fut_share(f, ...)` and gives the new holder the future it returns. A program that never
 shares a promise never calls it, and its futures are unchanged.
@@ -446,7 +446,7 @@ value or a `u64` where a 64-bit pointer is expected, but WebAssembly links only 
 signatures (wasm32 pointers are 32 bits). `crates/velt_rt/tests/std_externs.rs` compares every
 declaration in `std/` with velt_rt's and velt_rt_wasm's definitions.
 
-`declare system function` (docs/reference/system-functions.md) is not this ABI: it binds a C
+`declare system function` (https://veltlang.com/docs/reference/system-functions/) is not this ABI: it binds a C
 library function, not the runtime, and lowering (velt_vir `lower/system.rs`) calls it with the
 C signature the table of system functions (velt_vir `system/`) states for the target. Integers
 are passed as themselves; a `u8[]` / `readonly u8[]` parameter is two C arguments, its `ptr`
@@ -1116,7 +1116,7 @@ away with the value; a channel's lives as long as the channel.
 
 ## 14. Standard library breadth (stream std-net; additive)
 
-New runtime symbols behind the std modules of docs/std/README.md. Same conventions as above: string
+New runtime symbols behind the std modules of https://veltlang.com/docs/std/. Same conventions as above: string
 arguments are borrowed `const VeltStr*`, `out` parameters receive owned values, handles are
 opaque pointers (`u64` in Velt). None of them store code pointers (§13.5): callbacks in these
 modules are compiled Velt code (timers are tasks), never function pointers kept by the runtime.

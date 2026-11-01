@@ -7,7 +7,7 @@ inline non-ASCII form, the header on non-ASCII heap buffers, `push_wtf8`); lone 
 handled at every boundary; and `length`, every position (`slice`, `indexOf` & co., `charCodeAt`,
 `padStart`, `split("")`, regex offsets) and the order of `<` and `sort()` follow JavaScript's
 code units, with the half-pair cases, lone surrogates from `String.fromCharCode` and `JSON.parse`
-escapes, and `Buffer.byteLength` ([types](../../reference/types.md#strings),
+escapes, and `Buffer.byteLength` ([types](https://veltlang.com/docs/reference/types/#strings),
 [rt_abi.md "Strings"](../contracts/rt_abi.md)). Left: strength reduction and `for...of` as a
 decode loop (phase 3), the new APIs including literal escapes for lone surrogates (phase 4),
 and the regex minimum (phase 5). Phase 2b remembers positions per thread instead of in a

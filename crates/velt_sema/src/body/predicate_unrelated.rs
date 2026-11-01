@@ -1,4 +1,4 @@
-//! Type predicates whose object type no member of the tested union can be (docs/reference/types.md
+//! Type predicates whose object type no member of the tested union can be (https://veltlang.com/docs/reference/types/
 //! "Type predicates"; sigx's `isComputed(children)` on a `JSXChild`): TypeScript narrows to the
 //! intersection of the member and the predicate's type. A member is ruled out only when the
 //! predicate's type has a required member that no value of the member's type has: a string, an

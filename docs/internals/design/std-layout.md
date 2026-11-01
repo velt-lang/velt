@@ -227,10 +227,10 @@ The loader gains:
 | One primary type per file | A file exports at most one class (or class-like interface) and names the file after it: `Deque` in `deque.vlt`. Its small helpers may come along: option interfaces, a result union, its iterator. Type-only files (`types.vlt`) and the module's errors (`errors.vlt`) are the exceptions. |
 | Header | The first line is `// velt/<module>: <role>.` (`// velt/<module> (internal): …` for files that are not `index.vlt`). |
 | Doc comments | Every name an `index.vlt` exports has a doc comment (docs/internals/design/doc-comments.md). `velt doc --std` runs with warnings as errors. |
-| Errors | One error class per module, or a few in `errors.vlt`, extending `Error`; messages as in docs/std/README.md "Conventions". |
+| Errors | One error class per module, or a few in `errors.vlt`, extending `Error`; messages as in https://veltlang.com/docs/std/ "Conventions". |
 | Names | Files and folders `snake_case`; `*Sync` for blocking twins; Node's name where Node has the function. |
 | No duplicate exports | Rule 6 of §2, across all `index.vlt`. |
-| Docs mirror the tree | `docs/std/<module path>.md` exists for every module (`docs/std/net/http.md`), with a page per part of a module below it (`docs/std/time/datetime.md`); the site lists docs/std by following the tree (`* = ../std/` in `docs/site/pages.txt`). |
+| Docs mirror the tree | The website has a page for every module at its path (https://veltlang.com/docs/std/net/http/), with a page per part of a module below it (https://veltlang.com/docs/std/time/datetime/). The pages moved from `docs/std` to the website's repository; std-lint no longer checks them. |
 | Tests mirror the tree | Every module has end-to-end tests under `tests/golden/std/<module path>/`. |
 
 **How to split a file.** The size limit only detects the problem; the goal is files that each
@@ -273,7 +273,7 @@ what is wrong:
 | A new export in an implementation file that no `index.vlt` re-exports, or a re-export without a doc comment | `Deque is exported from collections/deque.vlt but not re-exported by collections/index.vlt` |
 | `export *` in an `index.vlt` | `re-export by name so the module's API is reviewable` |
 | A file over 400 lines besides its doc comments, or one more exported class in a file | `split by type: one exported class per file (docs/internals/design/std-layout.md §6)` |
-| A module (an `index.vlt`) without `docs/std/<path>.md`, or without tests: an end-to-end test that imports it (`tests/golden`, `tests/std`) or white-box tests in its folder | `velt/text has no page: write docs/std/text.md (docs/std mirrors std's tree; the site lists it by itself)` |
+| A module (an `index.vlt`) without tests: an end-to-end test that imports it (`tests/golden`, `tests/std`) or white-box tests in its folder | `velt/text has no tests: add an end-to-end test that imports it (tests/golden/std, tests/std) or white-box tests in std/text/` |
 | A file added to an allow list in `layout.vlt` (`oversize` …) | `the allow lists only shrink` |
 | Header line missing or naming the wrong module | the expected first line |
 
@@ -315,7 +315,7 @@ The move was one-time, and the scripts are deleted. What a user needs from the o
 lives in the compiler: `crates/veltc/src/loader/moved.rs` names, for a `velt:<old>` specifier or
 a `cannot find module velt/<old>`, the module each former one went to, that its names are
 globals, or the package it left std for (tested by
-`tests/golden/lang/errors/std_moved_modules`); docs/std/README.md has the migration table, and
+`tests/golden/lang/errors/std_moved_modules`); https://veltlang.com/docs/std/ has the migration table, and
 the appendix below the tree after the move.
 
 The rules of §2 and §6 stay checked after that by a permanent `std-lint` (in Velt, run by
@@ -501,9 +501,9 @@ building and passing its tests:
    in `precheck` and `check.sh`, `std-lint new`, the CLAUDE.md and CONTRIBUTING.md rules (§7).
 10. Quality, area by area (one commit per area): one class per file, files under 400 lines,
     `index.vlt` doc comments, `errors.vlt`, docs pages per module, tests per module.
-11. Docs: `docs/std` mirrors the tree, `std/README.md` points to CONTRIBUTING.md; the
+11. Docs: the website's std pages (https://veltlang.com/docs/std/) mirror the tree, `std/README.md` points to CONTRIBUTING.md; the
     docs-sync issue on the website; the `velt` type package for `tsc` (`velt doc --std --format
-    types`, docs/tooling/cli.md "TypeScript declarations"), so ts-compat accepts `import type`
+    types`, https://veltlang.com/docs/tooling/cli/ "TypeScript declarations"), so ts-compat accepts `import type`
     from std.
 
 ## Open questions

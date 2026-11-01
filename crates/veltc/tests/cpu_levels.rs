@@ -1,4 +1,4 @@
-//! `--cpu` (#1613, docs/tooling/platforms.md "CPU"): which setting wins (`--cpu`, `$VELT_CPU`,
+//! `--cpu` (#1613, https://veltlang.com/docs/tooling/platforms/ "CPU"): which setting wins (`--cpu`, `$VELT_CPU`,
 //! the package's `build.cpu`), the start-up check x86_64 code above the baseline makes
 //! (`velt_rt_check_cpu`, seen in the object on any host), and its message on an x86_64 host, where
 //! `$VELT_CPU_DISABLE` takes a feature away.

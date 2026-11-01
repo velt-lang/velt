@@ -1,5 +1,5 @@
 // velt/lang/hooks (internal): `Object.*` and `delete` on `any` values (issue #924,
-// docs/reference/types.md "any and unknown"): spreads, own keys, values and entries,
+// https://veltlang.com/docs/reference/types/ "any and unknown"): spreads, own keys, values and entries,
 // prototypes, the `Object.prototype.toString` tag, a constructor's name and deleting a key. A
 // program that loads `Proxy` calls the versions in proxy_ops.vlt instead, which ask a proxy's
 // traps (velt_sema `body/expr/proxy.rs`).

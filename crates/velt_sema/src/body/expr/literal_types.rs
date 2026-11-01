@@ -1,4 +1,4 @@
-//! Literal types in expressions (docs/reference/types.md "Literal types"). A literal (`"circle"`, `-1`,
+//! Literal types in expressions (https://veltlang.com/docs/reference/types/ "Literal types"). A literal (`"circle"`, `-1`,
 //! `true`) checked where a literal type is expected — the literal type itself or a union with
 //! literal members — takes that literal type; its HIR value is `Lit(Unit)` (literal types are
 //! zero-sized). Everywhere else literals keep their base types (TS widening, simplified).

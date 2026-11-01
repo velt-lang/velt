@@ -1,4 +1,4 @@
-//! velt/db's API for native drivers end to end (docs/std/db.md "Native drivers"): the test
+//! velt/db's API for native drivers end to end (https://veltlang.com/docs/std/db/ "Native drivers"): the test
 //! package `native_rows/rows` (a path dependency, its library built from source with cargo) offers
 //! a row cursor and a parameter sink, and the program reads rows with `decodeRows` and
 //! `decodeRow` (plain fields, a nested-free struct read by column, a class read through the JSON

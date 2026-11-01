@@ -1,4 +1,4 @@
-//! TypeScript's type operators on values and keys (docs/reference/types.md "Type queries and
+//! TypeScript's type operators on values and keys (https://veltlang.com/docs/reference/types/ "Type queries and
 //! `keyof`"):
 //!
 //! - `typeof x` in a type: the type of a local, module constant or function, and `typeof a.b`

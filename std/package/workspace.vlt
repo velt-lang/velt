@@ -1,10 +1,10 @@
 // velt/package (internal): the type of a workspace manifest, `velt.workspace.vlt`
-// (docs/tooling/packages.md "Workspaces").
+// (https://veltlang.com/docs/tooling/packages/ "Workspaces").
 
 import type { Dependency } from "./manifest";
 
 /// A workspace: the one `export const workspace: Workspace = { … }` of a `velt.workspace.vlt` at
-/// a repository's root (docs/tooling/packages.md "Workspaces"). Its members share one
+/// a repository's root (https://veltlang.com/docs/tooling/packages/ "Workspaces"). Its members share one
 /// `velt.lock.json`, `velt` and `registry`.
 export type Workspace = {
   /// The member packages: `/`-separated globs relative to the workspace root, such as

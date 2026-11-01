@@ -1,4 +1,4 @@
-// velt/simd: the 128-bit SIMD vector types and their masks (docs/std/simd.md).
+// velt/simd: the 128-bit SIMD vector types and their masks (https://veltlang.com/docs/std/simd/).
 //
 //   import { u8x16, mask8x16 } from "velt/simd";
 //

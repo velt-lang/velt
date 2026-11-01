@@ -1,4 +1,4 @@
-//! `k in o` with a string key (docs/reference/types.md "The `in` operator"). A literal key
+//! `k in o` with a string key (https://veltlang.com/docs/reference/types/ "The `in` operator"). A literal key
 //! (`"a" in o`) is answered from `o`'s type while compiling, like a symbol key
 //! (`symbol_keys.rs`): a declared member is always there, an optional one is tested at run
 //! time, and the members every object inherits from `Object.prototype` (`"toString"`) are
