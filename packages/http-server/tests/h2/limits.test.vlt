@@ -339,4 +339,33 @@ describe("HTTP/2 limits", () => {
     expect(lines[lines.length - 1]).toBe("EOF");
     c.close();
   });
+
+  it("sends GOAWAY to a connection idle for idleTimeout, not to one kept busy", async () => {
+    const opts = h2Options();
+    opts.idleTimeout = 300;
+    const server = await startServer(
+      async (req: HttpRequest, res: HttpResponse) => {
+        res.send("ok");
+      },
+      opts,
+    );
+    const c = await Client.open(server.port);
+    // 8 requests 100 ms apart: more than twice the timeout in all.
+    let id: i64 = 1;
+    for (let i = 0; i < 8; i++) {
+      c.get(id, "/");
+      await c.flush();
+      const sid = id;
+      expect(await timeout(c.until(endOf(sid)), 5000)).toBe(
+        `HEADERS ${sid} :status=200\nDATA ${sid} es 2:ok`,
+      );
+      id += 2;
+      await delay(100);
+    }
+    const idleFrom = Date.now();
+    expect(await timeout(c.until((f) => false), 5000)).toBe(`GOAWAY ${id - 2} NO_ERROR\nEOF`);
+    expect(Date.now() - idleFrom >= 150).toBe(true);
+    c.close();
+    server.close();
+  });
 });

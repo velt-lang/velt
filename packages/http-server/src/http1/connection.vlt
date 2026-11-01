@@ -11,6 +11,7 @@ import { BadRequest } from "./bad_request";
 import { H2Options } from "../h2/options";
 import { serveH2 } from "../h2/serve";
 import { linger } from "../linger";
+import { ReadDeadline } from "../read_deadline";
 import { HttpRequest } from "../request";
 import { HttpResponse } from "../response";
 import { BODY_CHUNKED, BODY_LENGTH } from "./head";
@@ -30,12 +31,6 @@ export struct Limits {
   headMs: i64;
   requestMs: i64;
   maxHeaders: i64;
-}
-
-/// Waits until `conn` may have input: true, or false once `stopped` is aborted or `idle`
-/// milliseconds passed (the connection then closes).
-async function more(conn: TcpStream, stopped: AbortSignal, idle: i64): Promise<bool> {
-  return !stopped.aborted && (await conn.readableWithin(idle as number, stopped));
 }
 
 export async function connection<E>(
@@ -70,6 +65,8 @@ export async function connection<E>(
   let headStart: i64 = -1;
   // Nothing was read yet: the connection may still turn out to be HTTP/2.
   let first = true;
+  // One timer for the waits for the next request and for the rest of a head.
+  const waits = new ReadDeadline();
   try {
     while (open) {
       const n = parser.readFrom(conn);
@@ -78,12 +75,11 @@ export async function connection<E>(
       }
       if (n == 0) {
         // The idle timeout, but no later than the head's deadline.
-        let wait = idle;
-        if (headStart >= 0) {
-          const left = headStart + limits.headMs - Date.now();
-          wait = left < wait ? left : wait;
+        let deadline = (Date.now() as i64) + idle;
+        if (headStart >= 0 && headStart + limits.headMs < deadline) {
+          deadline = headStart + limits.headMs;
         }
-        if (wait <= 0 || !(await more(conn, stopped, wait))) {
+        if (!(await waits.readable(conn, deadline, stopped))) {
           if (headStart >= 0 && Date.now() >= headStart + limits.headMs && !stopped.aborted) {
             res.begin(false, true);
             res.status(408);

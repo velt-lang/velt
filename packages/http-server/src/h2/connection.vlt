@@ -41,6 +41,7 @@ import { CLOSED, H2Stream } from "./stream";
 import { frames } from "./inbound";
 import { expire, startHandlers } from "./streams";
 import { linger } from "../linger";
+import { ReadDeadline } from "../read_deadline";
 import { waitForInput } from "./wait";
 
 /// Queued output beyond which the connection reads no more frames until the peer has read most
@@ -118,6 +119,9 @@ export class H2Connection {
   stopped: AbortSignal;
   /// Aborted to end a wait for input early (a draining connection whose last stream ended).
   wakeLoop: AbortController | null = null;
+  /// One timer for the waits for input, and the signal of those made with streams (h2/wait.vlt).
+  waits: ReadDeadline = new ReadDeadline();
+  busy: AbortSignal | null = null;
 
   constructor(
     conn: TcpStream,

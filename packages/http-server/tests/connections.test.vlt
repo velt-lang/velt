@@ -5,6 +5,7 @@ import { IoError } from "velt/io";
 import { connect, connectTls, TcpStream } from "velt/net";
 import { platform } from "velt/os";
 import { describe, expect, it } from "velt/test";
+import { delay } from "velt/time";
 import { TEST_CA, TEST_CERT, TEST_KEY } from "./_tls";
 
 async function readAll(conn: TcpStream): Promise<string> {
@@ -140,6 +141,42 @@ describe("a burst of connects", () => {
       expect(ok).toBe(n);
     } finally {
       await server.shutdown();
+    }
+  });
+});
+
+describe("velt/net/http's idle timeout", () => {
+  // A kept-alive connection closes after `idleTimeout` without a request, counted from the end
+  // of the last one: requests closer together than that keep it open as long as they come.
+  it("closes a connection idle for idleTimeout, and not one kept busy", async () => {
+    const server = await serveHttp({ port: 0, idleTimeout: 300 }, async (
+      req: HttpRequest,
+      res: HttpResponse,
+    ) => {
+      res.send("ok");
+    });
+    try {
+      const c = await connect(`127.0.0.1:${server.port}`);
+      // 8 requests 100 ms apart: 700 ms in all, more than twice the timeout.
+      let answers = 0;
+      for (let i = 0; i < 8; i++) {
+        await c.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+        const got = await c.readString();
+        if (got.startsWith("HTTP/1.1 200")) {
+          answers++;
+        }
+        await delay(100);
+      }
+      expect(answers).toBe(8);
+      // Then idle: closed after the timeout (counted from the last request), not before.
+      const idleFrom = Date.now();
+      expect(await readAll(c)).toBe("");
+      const waited = Date.now() - idleFrom;
+      expect(waited >= 150).toBe(true);
+      expect(waited < 3000).toBe(true);
+      c.close();
+    } finally {
+      server.close();
     }
   });
 });
