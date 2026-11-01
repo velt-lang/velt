@@ -153,6 +153,7 @@ pub mod atomic;
 pub mod fingerprint;
 mod lower;
 pub mod mangle;
+pub mod math;
 pub mod simd;
 pub mod system;
 pub mod tls;

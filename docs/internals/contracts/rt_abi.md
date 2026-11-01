@@ -351,6 +351,18 @@ lacks <missing>; rebuild it with `--cpu <lower>` `` (`<lower>`: the highest leve
 or `baseline`) and exits with code 1. `VELT_CPU_DISABLE` (comma-separated feature names, any case) removes features from what the CPU
 has, to test it.
 
+## Math operations [additive]
+
+The scalar math functions `velt_rt_math_*` (`sqrt floor ceil round trunc fabs f64_bits bits_f64
+umulh to_int32 mul_int32 add_int32 clz32 clz64 ctz64 popcount64`) and `velt_rt_pow_f64` /
+`velt_rt_pow_i64` are runtime functions (velt_rt's `math.rs`, the reference for what each
+computes) that compiled code treats as operations: `velt_vir::math::MathOp` gives each symbol's
+operation and VIR signature, the verifier rejects one of these externs with another signature,
+and backends emit all but `pow` inline (an instruction, or a helper whose slow path calls the
+runtime). `velt_vir::math::effects` is the one list of what a runtime function may do to memory
+(none for every math operation; read-only, read-caching or cold for some string and array
+functions), which LLVM's declarations and `velt_opt` both read.
+
 ## SIMD [additive]
 
 A SIMD value (HIR `TyKind::Simd`, the ten vector and four mask types) is a VIR `V128`: 16 bytes,

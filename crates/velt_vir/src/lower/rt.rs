@@ -2,6 +2,7 @@
 //! signatures. M2 additions (hash, math, refcounts) and the M3/M4 functions (futures, tasks,
 //! atomics, mutex, string builder, JSON reader) are in `docs/internals/contracts/rt_abi_async.md`.
 
+use crate::math::MathOp;
 use crate::vir::Ty;
 
 /// A `velt_rt` function used by lowering.
@@ -192,7 +193,10 @@ impl Rt {
     /// (symbol, params, ret, noreturn). `bool` is passed as VIR `Bool` (one byte, 0/1 — rt's `u8`).
     pub(super) fn sig(self) -> (&'static str, Vec<Ty>, Ty, bool) {
         use Ty::*;
-        let math = |s| (s, vec![F64], F64, false);
+        let math = |op: MathOp| {
+            let (params, ret) = op.signature();
+            (op.symbol(), params, ret, false)
+        };
         match self {
             Rt::StrConcat => ("velt_rt_str_concat", vec![Ptr, Ptr, Ptr], Unit, false),
             Rt::StrAppend => ("velt_rt_str_append", vec![Ptr, Ptr], Unit, false),
@@ -216,18 +220,18 @@ impl Rt {
             Rt::UncaughtReport => ("velt_rt_uncaught_report", vec![], Unit, false),
             Rt::SetThrowLoc => ("velt_rt_set_throw_loc", vec![Ptr], Unit, false),
             Rt::ThrowLoc => ("velt_rt_throw_loc", vec![], Ptr, false),
-            Rt::PowF64 => ("velt_rt_pow_f64", vec![F64, F64], F64, false),
-            Rt::PowI64 => ("velt_rt_pow_i64", vec![I64, I64], I64, false),
+            Rt::PowF64 => math(MathOp::PowF64),
+            Rt::PowI64 => math(MathOp::PowI64),
             Rt::Alloc => ("velt_rt_alloc", vec![U64, U64], Ptr, false),
             Rt::Realloc => ("velt_rt_realloc", vec![Ptr, U64, U64, U64], Ptr, false),
             Rt::Free => ("velt_rt_free", vec![Ptr, U64, U64], Unit, false),
             Rt::StrHash => ("velt_rt_str_hash", vec![Ptr], U64, false),
-            Rt::Sqrt => math("velt_rt_math_sqrt"),
-            Rt::Floor => math("velt_rt_math_floor"),
-            Rt::Ceil => math("velt_rt_math_ceil"),
-            Rt::Round => math("velt_rt_math_round"),
-            Rt::Trunc => math("velt_rt_math_trunc"),
-            Rt::FAbs => math("velt_rt_math_fabs"),
+            Rt::Sqrt => math(MathOp::Sqrt),
+            Rt::Floor => math(MathOp::Floor),
+            Rt::Ceil => math(MathOp::Ceil),
+            Rt::Round => math(MathOp::Round),
+            Rt::Trunc => math(MathOp::Trunc),
+            Rt::FAbs => math(MathOp::Abs),
             Rt::RcInc => ("velt_rt_rc_inc", vec![Ptr], Unit, false),
             Rt::RcDec => ("velt_rt_rc_dec", vec![Ptr], U8, false),
             Rt::CellNew => ("velt_rt_cell_new", vec![Ptr, Ptr], Unit, false),

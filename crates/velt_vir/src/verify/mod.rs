@@ -53,6 +53,20 @@ fn check_atomic_extern(i: usize, e: &ExternFn, errs: &mut Vec<String>) {
     }
 }
 
+/// A runtime math function (`crate::math`) likewise: backends and passes treat a call of it as
+/// its operation, so the extern must have the operation's signature.
+fn check_math_extern(i: usize, e: &ExternFn, errs: &mut Vec<String>) {
+    let Some(op) = crate::math::MathOp::of_symbol(&e.symbol) else {
+        return;
+    };
+    if op.signature() != (e.params.clone(), e.ret) || e.noreturn {
+        errs.push(format!(
+            "extern#{i} {}: signature differs from the math operation's",
+            e.symbol
+        ));
+    }
+}
+
 pub(crate) fn verify_program(p: &Program) -> Result<(), Vec<String>> {
     let mut errs = vec![];
     check_aggs(p, &mut errs);
@@ -65,6 +79,7 @@ pub(crate) fn verify_program(p: &Program) -> Result<(), Vec<String>> {
         }
         check_simd_extern(i, e, &mut errs);
         check_atomic_extern(i, e, &mut errs);
+        check_math_extern(i, e, &mut errs);
     }
     check_symbols(p, &mut errs);
     check_statics(p, &mut errs);

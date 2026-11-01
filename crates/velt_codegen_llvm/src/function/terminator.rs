@@ -12,6 +12,7 @@ use crate::string_compare;
 use crate::strings;
 use crate::types::{abi_ret, abi_type, as_int, global_name, int_bits, int_literal, scalar_type};
 use crate::CodegenResult;
+use velt_vir::math::MathOp;
 
 impl Emitter<'_> {
     pub(super) fn terminator(&mut self, t: &Terminator) -> CodegenResult<()> {
@@ -239,18 +240,9 @@ impl Emitter<'_> {
         let Callee::Extern(id) = callee else {
             return None;
         };
-        let symbol = &self.program.externs.get(id.0 as usize)?.symbol;
-        if let Some((name, definitions)) = rounding::helper(symbol, self.rounds_by_conversion) {
-            if params != [Ty::F64] || ret != Ty::F64 {
-                return None;
-            }
-            for d in definitions {
-                self.intrinsics.need(d.to_string());
-            }
-            return Some(name.to_string());
-        }
+        let e = self.program.externs.get(id.0 as usize)?;
         if let Some((name, definitions, want_params, want_ret)) =
-            crate::simd::helper(symbol, self.simd)
+            crate::simd::helper(&e.symbol, self.simd)
         {
             if params != want_params || ret != want_ret {
                 return None;
@@ -260,19 +252,19 @@ impl Emitter<'_> {
             }
             return Some(name);
         }
-        if let Some((name, definitions, want_params, want_ret)) = runtime::inline_helper(symbol) {
-            if params != want_params || ret != want_ret {
-                return None;
-            }
+        // `params`/`ret` are the extern's own, which `of_extern` checks.
+        let op = MathOp::of_extern(e)?;
+        let helper = match op.rounding() {
+            Some(how) => rounding::helper(how, self.rounds_by_conversion),
+            None => runtime::inline_helper(op),
+        };
+        if let Some((name, definitions)) = helper {
             for d in definitions {
                 self.intrinsics.need(d.to_string());
             }
             return Some(name.to_string());
         }
-        let name = runtime::math_intrinsic(symbol)?;
-        if params != [Ty::F64] || ret != Ty::F64 {
-            return None;
-        }
+        let name = runtime::math_intrinsic(op)?;
         self.intrinsics
             .need(format!("declare double @{name}(double)"));
         Some(format!("@{name}"))
