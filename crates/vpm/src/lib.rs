@@ -2,7 +2,7 @@
 //! Manifest format is a contract: docs/internals/contracts/manifest.md.
 //!
 //! - [`manifest`]: the `package.vlt` model, read by [`manifest::read`] without running anything
-//!   ([`paths`]: its import aliases); [`edit`]: comment-preserving `velt add`; [`scaffold`]:
+//!   ([`paths`]: its import aliases, [`imports`]: its conditional imports); [`edit`]: comment-preserving `velt add`; [`scaffold`]:
 //!   `velt new`.
 //! - [`registry`]: the registry (`publish`, index), local or remote ([`remote`], packages as
 //!   [`archive`]s over HTTP); [`yank`] and [`search`]; [`cache`]: verified extraction.
@@ -17,6 +17,7 @@ pub mod credentials;
 pub mod edit;
 pub mod git;
 pub mod graph;
+pub mod imports;
 pub mod install;
 pub mod json_file;
 pub mod locations;

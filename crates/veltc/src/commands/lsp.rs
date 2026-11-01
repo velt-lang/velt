@@ -146,6 +146,10 @@ impl ProgramLoader for CliLoader {
             overlay: Some(overlay),
             std_root_as_std: true,
             test_harness: false,
+            // For the default target; the variants of each `#name` are compared as `velt
+            // check` does.
+            target: None,
+            check_variants: true,
         };
         let loaded = loader::load_program(sm, root, opts, diags)?;
         Ok(LoadedProgram {
@@ -161,7 +165,7 @@ impl ProgramLoader for CliLoader {
     }
 
     fn resolve_module(&self, spec: &str, from: &Path) -> Option<PathBuf> {
-        // Only bare specifiers (dependencies, `paths` aliases) need a package graph: the one
+        // Only bare specifiers (dependencies, `paths` aliases, `#name`s) need a package graph: the one
         // already installed for a document that contains `from` (its own package or one of its
         // dependencies), as `load` resolves a dependency's imports. Nothing is installed here: a
         // dependency is never installed as a project of its own.
@@ -173,7 +177,8 @@ impl ProgramLoader for CliLoader {
             None
         };
         let packages = graph.as_deref().map(|g| g as &dyn loader::PackageResolver);
-        loader::resolve_module(spec, from, loader::std_root().as_deref(), packages)
+        // `#name`s resolve for the default target, as the documents are checked.
+        loader::resolve_module(spec, from, loader::std_root().as_deref(), packages, None)
     }
 
     fn resolves_modules(&self) -> bool {

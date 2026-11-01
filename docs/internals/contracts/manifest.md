@@ -25,6 +25,9 @@ export const pkg: Package = {
     targets: ["x86_64-unknown-linux-gnu", "aarch64-apple-darwin"],  // published prebuilt
   },
   tsCompat: ["src/models"],     // optional: folders kept TypeScript-compatible (additive)
+  imports: {                    // optional conditional imports (additive)
+    "#io": { js: "./src/io/js.vlt", default: "./src/io/native.vlt" },
+  },
 };
 ```
 
@@ -204,6 +207,17 @@ directory (`NpmResolver::resolve_in`) before Node's search.
   matching pattern wins (like TypeScript's `compilerOptions.paths`, but one target per pattern).
   Targets must stay inside the package (no `..`, not absolute). Each package's aliases apply to
   its own modules only (`vpm::PackageGraph::path_alias`).
+- `imports` (additive): conditional imports, Node's `imports` field (`vpm::imports`). A key is
+  `#` and `/`-separated segments of `[A-Za-z0-9_-]`; a value is a file or an object of
+  conditions to files, kept in the order written (`Manifest::imports`, `GraphPackage::imports`).
+  Conditions are `vpm::imports::CONDITIONS` (`native`, `darwin`, `linux`, `win32`, `wasm`,
+  `wasi`, `js`, `default`); `default` comes last; files are `./`-relative, below `./src/`, with
+  a source extension. A build's conditions come from its target (`vpm::imports::conditions`);
+  the first variant whose condition it has is the module a `#name` import of the package's own
+  modules loads (`loader::conditional`). The standard library's map is `std/imports.vlt`
+  (`export const imports: Imports = { … }`, read by `vpm::manifest::read::read_std_imports`,
+  files relative to `std/`). `velt manifest --json` prints a name's variants as
+  `[condition, file]` pairs, in order.
 - `entry` is a `/`-separated path inside the package (not empty, not absolute, no `..`).
 - `description` (additive, #184): one line of at most 300 characters (Unicode scalar values), no
   control characters, no leading or trailing whitespace, not empty. `keywords`: at most 10

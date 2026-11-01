@@ -95,7 +95,9 @@ fn resolve(
         }
         None => package_scope().map_err(BuildError::Failed)?,
     };
-    let opts = options_for(&input, args.locked)?;
+    let mut opts = options_for(&input, args.locked)?;
+    opts.target = args.target.clone();
+    let scope = without_other_variants(scope, &opts);
     Ok((opts, scope, same_path))
 }
 
@@ -115,7 +117,17 @@ fn std_scope(
             name.is_some_and(|n| n.ends_with(".vlt") && !n.ends_with(".test.vlt"))
         })
         .collect();
+    // std's conditional imports are data the loader reads, as a manifest is, not a module.
+    let imports = std.join(vpm::imports::STD_IMPORTS_FILE);
+    extra_roots.retain(|f| *f != imports);
     extra_roots.sort();
+    // std's own `#name` variants that the host does not use, as for a package.
+    if let Ok(src) = std::fs::read_to_string(&imports) {
+        let map = vpm::manifest::read::read_std_imports(velt_common::FileId(0), &src);
+        let target = crate::driver::BuildOptions::default().target();
+        let unused = unselected_variants(&std, &map.unwrap_or_default(), &target);
+        extra_roots.retain(|f| !unused.contains(&file_key(f)));
+    }
     let input = std.join("__velt_check_std.vlt");
     let mut opts = options_for(&input, locked)?;
     opts.root_source = Some(String::new());
@@ -127,7 +139,8 @@ fn std_scope(
     Ok((opts, scope, vec![]))
 }
 
-/// Build options for checking `input` (inside its package, if any).
+/// Build options for checking `input` (inside its package, if any), comparing the variants of
+/// its `#name` imports.
 pub(super) fn options_for(input: &Path, locked: bool) -> Result<driver::BuildOptions, BuildError> {
     let build = BuildArgs {
         input: Some(input.to_path_buf()),
@@ -136,7 +149,50 @@ pub(super) fn options_for(input: &Path, locked: bool) -> Result<driver::BuildOpt
         emit: Emit::Vir,
         ..Default::default()
     };
-    super::build::build_options(&build).map_err(BuildError::Failed)
+    let mut opts = super::build::build_options(&build).map_err(BuildError::Failed)?;
+    opts.check_variants = true;
+    Ok(opts)
+}
+
+/// `scope` without the variants of the package's `#name` imports that this target does not
+/// select: they are compared with the selected one instead of checked as code of this build,
+/// which they may not compile for (`velt check --target` checks them for theirs).
+fn without_other_variants(mut scope: CheckScope, opts: &driver::BuildOptions) -> CheckScope {
+    let Some(graph) = &opts.packages else {
+        return scope;
+    };
+    let Some((_, root, imports)) = graph.imports_of(&opts.input) else {
+        return scope;
+    };
+    let unused = unselected_variants(root, imports, &opts.target());
+    scope.extra_roots.retain(|f| !unused.contains(&file_key(f)));
+    scope
+}
+
+/// The files of `imports` (variants relative to `base`) that a build for `target` uses for no
+/// `#name`, as [`file_key`]s.
+fn unselected_variants(
+    base: &Path,
+    imports: &vpm::imports::ImportMap,
+    target: &str,
+) -> Vec<PathBuf> {
+    let conditions = vpm::imports::conditions(target);
+    let file = |t: &str| file_key(&base.join(t.trim_start_matches("./")));
+    let used: Vec<PathBuf> = imports
+        .values()
+        .filter_map(|variants| vpm::imports::select(variants, &conditions))
+        .map(|v| file(&v.target))
+        .collect();
+    imports
+        .values()
+        .flatten()
+        .map(|v| file(&v.target))
+        .filter(|f| !used.contains(f))
+        .collect()
+}
+
+fn file_key(f: &Path) -> PathBuf {
+    std::fs::canonicalize(f).unwrap_or_else(|_| f.to_path_buf())
 }
 
 /// The whole current package, like `tsc` checks a project: its root module (see

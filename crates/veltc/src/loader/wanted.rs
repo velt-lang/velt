@@ -115,7 +115,8 @@ impl super::Loader<'_, '_> {
             None => {
                 let importer = &self.origins[index].0;
                 let std = self.opts.std_root.as_deref();
-                let found = resolve::resolve_module(spec, importer, std, None);
+                let target = self.opts.target.as_deref();
+                let found = resolve::resolve_module(spec, importer, std, None, target);
                 let found = found.map(|f| (file_key(&f), f));
                 self.skipped.insert(memo, found.clone());
                 found

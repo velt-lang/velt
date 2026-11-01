@@ -16,6 +16,8 @@ pub struct GraphPackage {
     pub dependencies: BTreeMap<String, PathBuf>,
     /// The package's `paths` import aliases (`crate::paths`).
     pub paths: BTreeMap<String, String>,
+    /// The package's conditional imports (`crate::imports`).
+    pub imports: crate::imports::ImportMap,
     /// The package's native library for the build target (packages with native code, when the
     /// install had a target).
     pub native: Option<crate::native::NativeLib>,
@@ -70,6 +72,7 @@ impl PackageGraph {
             root: root.to_path_buf(),
             dependencies,
             paths: BTreeMap::new(),
+            imports: BTreeMap::new(),
             native: None,
             jsx_import_source: None,
             define: BTreeMap::new(),
@@ -90,6 +93,13 @@ impl PackageGraph {
         let package = self.package_of(importer)?;
         let module = crate::paths::resolve(&package.paths, spec)?;
         Some(package.root.join(module))
+    }
+
+    /// The package containing `importer`, when it has conditional imports: its name, root and
+    /// `imports` (`crate::imports`).
+    pub fn imports_of(&self, importer: &Path) -> Option<(&str, &Path, &crate::imports::ImportMap)> {
+        let package = self.package_of(importer)?;
+        Some((&package.name, &package.root, &package.imports))
     }
 
     /// The `jsx.importSource` of the package containing `importer`, as a specifier `importer`

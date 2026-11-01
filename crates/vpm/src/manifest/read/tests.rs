@@ -653,3 +653,78 @@ fn missing_ts_compat_folders_are_warnings_at_their_string() {
     // An unreadable manifest is the reader's to report.
     assert!(missing_ts_compat_dirs(FILE, "export const", tmp.path()).is_empty());
 }
+
+#[test]
+fn imports_keep_their_variants_in_order() {
+    let m = read(&with(
+        r##"imports: { "#io": { js: "./src/io/js.vlt", wasm: "./src/io/wasm.vlt", default: "./src/io/native.vlt" }, "#config": "./src/config.ts" }"##,
+    ));
+    let conditions: Vec<&str> = m.imports["#io"]
+        .iter()
+        .map(|v| v.condition.as_str())
+        .collect();
+    assert_eq!(conditions, ["js", "wasm", "default"]);
+    assert_eq!(m.imports["#io"][0].target, "./src/io/js.vlt");
+    assert_eq!(m.imports["#config"][0].condition, "default");
+    assert_eq!(m.imports["#config"][0].target, "./src/config.ts");
+    // Written back as it was read.
+    let again = Manifest::read(FILE, &m.to_vlt()).unwrap();
+    assert_eq!(again.imports, m.imports);
+}
+
+#[test]
+fn imports_are_checked_where_written() {
+    for (fields, message, at) in [
+        (
+            r#"imports: { io: "./src/io.vlt" }"#,
+            "`io` is not a conditional import",
+            "io",
+        ),
+        (
+            r##"imports: { "#io": { default: "./src/a.vlt", js: "./src/b.vlt" } }"##,
+            "`js` comes after `default`",
+            "js",
+        ),
+        (
+            r##"imports: { "#io": { node: "./src/a.vlt" } }"##,
+            "unknown condition `node`",
+            "node",
+        ),
+        (
+            r##"imports: { "#io": { js: "./lib/a.vlt" } }"##,
+            "a variant is one of the package's modules, below `./src/`",
+            "\"./lib/a.vlt\"",
+        ),
+        (r##"imports: { "#io": {} }"##, "`#io` has no variants", "{}"),
+        (
+            r##"imports: { "#io": 1 }"##,
+            "`#io` must be a file or an object of conditions",
+            "1",
+        ),
+    ] {
+        let (msg, covered) = error(&with(fields));
+        assert!(msg.contains(message), "{fields}: {msg}");
+        assert_eq!(covered, at, "{fields}");
+    }
+}
+
+#[test]
+fn std_imports_file() {
+    let src = "import type { Imports } from \"velt/package\";\n\nexport const imports: Imports = { \"#t\": { js: \"./net/js.vlt\", default: \"./net/native.vlt\" } };\n";
+    let map = read_std_imports(FILE, src).unwrap();
+    assert_eq!(map["#t"][1].target, "./net/native.vlt");
+    // Not below `src/`: relative to the std root.
+    let err = read_std_imports(
+        FILE,
+        "export const imports: Imports = { \"#t\": \"net/x.vlt\" };\n",
+    )
+    .unwrap_err();
+    assert!(
+        err[0].message.contains("`./`-relative"),
+        "{:?}",
+        err[0].message
+    );
+    // The repository's own.
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std/imports.vlt");
+    read_std_imports(FILE, &std::fs::read_to_string(path).unwrap()).unwrap();
+}

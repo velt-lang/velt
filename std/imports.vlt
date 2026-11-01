@@ -1,0 +1,10 @@
+// std/imports.vlt: the standard library's conditional imports, as a package's `imports` field
+// (docs/reference/modules.md "Conditional imports"). A std module imports `#name`, and the build's
+// conditions pick the file: `"#transport": { js: "./net/http/fetch/client/transport/js.vlt",
+// default: "./net/http/fetch/client/transport/native.vlt" }`. Paths are relative to std/; each
+// variant is an internal file of the module that imports it, and the variants of one name export
+// the same API (`velt check --std`, `velt test` and the loader's tests compare them).
+
+import type { Imports } from "velt/package";
+
+export const imports: Imports = {};

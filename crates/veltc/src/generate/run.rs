@@ -358,7 +358,7 @@ fn locate_generator(
 ) -> Option<(PathBuf, PathBuf, String)> {
     let std_root = crate::loader::std_root();
     let resolver = packages.map(|g| g as &dyn crate::loader::PackageResolver);
-    let file = crate::loader::resolve_module(spec, decl, std_root.as_deref(), resolver)?;
+    let file = crate::loader::resolve_module(spec, decl, std_root.as_deref(), resolver, None)?;
     if let Some(std) = std_root
         .as_deref()
         .filter(|s| crate::loader::in_std(&file, s))

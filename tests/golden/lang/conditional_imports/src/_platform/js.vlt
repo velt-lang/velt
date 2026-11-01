@@ -1,0 +1,18 @@
+// The `js` variant of `#platform`: the same API as the others.
+
+/** Where the program runs. */
+export class Platform {
+  readonly name: string;
+
+  constructor(name: string) {
+    this.name = name;
+  }
+
+  describe(): string {
+    return `running on ${this.name}`;
+  }
+}
+
+export function platform(): Platform {
+  return new Platform("js");
+}
