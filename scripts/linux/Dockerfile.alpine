@@ -1,5 +1,5 @@
 # Toolchain image for scripts/linux-check.sh --distro alpine: Alpine (musl libc) with the C
-# toolchain, clang 19 and rustup stable. musl is a "try it" target: see docs/tooling/platforms.md.
+# toolchain, clang 19 and rustup stable. musl is a "try it" target: see https://veltlang.com/docs/tooling/platforms/.
 FROM alpine:3.21
 RUN apk add --no-cache build-base clang19 lld git curl ca-certificates python3 bash procps openssl
 ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo PATH=/opt/cargo/bin:$PATH

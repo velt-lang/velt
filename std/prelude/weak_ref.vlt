@@ -1,4 +1,4 @@
-// Prelude: `WeakRef<T>` (docs/std/prelude.md#weakmap-weakset-and-weakref), a reference that does not
+// Prelude: `WeakRef<T>` (https://veltlang.com/docs/std/prelude/#weakmap-weakset-and-weakref), a reference that does not
 // keep its target alive, on velt_rt's weak-reference core (docs/internals/design/weak-refs.md).
 
 import { weakRefDeref, weakRefNew } from "velt/lang/intrinsics";

@@ -4,7 +4,7 @@
 #   curl -fsSL https://github.com/velt-lang/velt/releases/latest/download/get-velt.sh | sh
 #   curl -fsSL https://github.com/velt-lang/velt/releases/latest/download/get-velt.sh | sh -s -- --version 0.1.1
 #
-# Versions install side by side (#948, docs/tooling/platforms.md): the toolchain goes into
+# Versions install side by side (#948, https://veltlang.com/docs/tooling/platforms/): the toolchain goes into
 # <root>/toolchains/<version>/, and the launcher into <root>/bin/velt, the one directory on PATH.
 # It runs the version each package pins (`velt` in package.vlt), else the default. Running this
 # again with another version adds it beside the others.
@@ -84,7 +84,7 @@ detect_target() {
         Linux)
             # The C library itself: glibc systems can have musl installed too (/lib/ld-musl-*).
             if ldd --version 2>&1 | grep -qi musl; then
-                err "no prebuilt Velt for musl (Alpine); build it from source (docs/tooling/platforms.md)"
+                err "no prebuilt Velt for musl (Alpine); build it from source (https://veltlang.com/docs/tooling/platforms/)"
             fi
             echo "$arch-unknown-linux-gnu" ;;
         Darwin)

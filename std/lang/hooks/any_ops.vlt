@@ -1,5 +1,5 @@
 // velt/lang/hooks (internal): operators on `any` values holding objects and functions (issue
-// #924, docs/reference/types.md "any and unknown"). Sema converts primitives itself; an object
+// #924, https://veltlang.com/docs/reference/types/ "any and unknown"). Sema converts primitives itself; an object
 // goes through JavaScript's `ToPrimitive` here first (`anyToPrimitive`), and the operator then
 // runs on the primitive it gives.
 

@@ -1,5 +1,5 @@
 // Global (loaded when a module names one of these): `Blob`, `File` and `FormData`, as in Node
-// (docs/std/net/http.md).
+// (https://veltlang.com/docs/std/net/http/).
 export { Blob, BlobPart } from "velt/net/http/fetch/blob";
 export { BlobPropertyBag } from "velt/net/http/fetch/blob_property_bag";
 export { File } from "velt/net/http/fetch/file";

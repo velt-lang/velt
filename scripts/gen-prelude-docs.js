@@ -13,7 +13,7 @@
 // comments are never touched. It prints the names it found no TypeScript doc for.
 //
 // The text is TypeScript's, written for JS: review every inserted comment for Velt's
-// differences (docs/std/prelude.md: byte offsets in strings, `i64`/`f64`, `null` for
+// differences (https://veltlang.com/docs/std/prelude/: byte offsets in strings, `i64`/`f64`, `null` for
 // `undefined`, no `thisArg`, async timer tasks, thrown error types) before committing it.
 // TypeScript's lib is Apache-2.0, © Microsoft Corporation: see NOTICE. Velt never reads .d.ts
 // files at build time; only this script does.

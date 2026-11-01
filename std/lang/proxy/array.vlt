@@ -1,6 +1,6 @@
 // velt/lang/proxy (internal): the array methods called on a proxy of an array (`push`, `pop`,
 // `shift`, `unshift`, `splice`, `map`, `filter`, `forEach`, `some`, `every`, `find`, `includes`,
-// `indexOf`, `join`, `slice`, `reverse`, `sort`; issue #823, docs/reference/types.md "Proxy and
+// `indexOf`, `join`, `slice`, `reverse`, `sort`; issue #823, https://veltlang.com/docs/reference/types/ "Proxy and
 // Reflect").
 //
 // `p.push(x)` on a proxy reads `push` through the `get` trap. When the trap forwards to an array

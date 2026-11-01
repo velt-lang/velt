@@ -1,5 +1,5 @@
 // Prelude: `WeakMap<K, V>` (`WeakSet<T>` and `WeakRef<T>` are in weak_set.vlt and weak_ref.vlt)
-// (docs/std/prelude.md#weakmap-weakset-and-weakref), on velt_rt's weak-reference core
+// (https://veltlang.com/docs/std/prelude/#weakmap-weakset-and-weakref), on velt_rt's weak-reference core
 // (docs/internals/design/weak-refs.md, rt_abi.md "Weak references").
 //
 // A key (a `WeakSet` member, a `WeakRef` target) must be an object: a class instance, an object

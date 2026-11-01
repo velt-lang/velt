@@ -2,5 +2,5 @@
 
 import { JsonValue } from "velt/prelude/json/json_value";
 
-/** A JSON value of unknown shape: the prelude's `JsonValue` (docs/std/encoding/json.md). */
+/** A JSON value of unknown shape: the prelude's `JsonValue` (https://veltlang.com/docs/std/encoding/json/). */
 export type Value = JsonValue;

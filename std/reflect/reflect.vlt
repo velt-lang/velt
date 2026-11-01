@@ -1,5 +1,5 @@
 // velt/reflect (internal): reading a dynamic value's type and entries, identities and the
-// visit stack (the module's functions; docs/std/reflect.md).
+// visit stack (the module's functions; https://veltlang.com/docs/std/reflect/).
 
 import {
   anyReflectCount,
