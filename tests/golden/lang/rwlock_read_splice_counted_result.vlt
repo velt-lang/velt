@@ -14,12 +14,12 @@ function main() {
   const out: number[][][] = [[[1]], [[2]], [[3]], [[4]], [[5]], [[6]], [[7]]];
   a.read((x) => {
     console.log("splice", out.splice(1, 2));
-    console.log("splice in", out.splice(0, 1, structuredClone(x.items.slice())));
+    console.log("splice in", out.splice(0, 1, [[x.items.length]]));
     const all = out.splice(3);
     console.log("rest", all.length, all);
     b.read((y) => {
       console.log("nested", out.splice(0, 1));
-      console.log("nested in", out.splice(1, 1, structuredClone(y.items.map((e) => e)), [[8]]));
+      console.log("nested in", out.splice(1, 1, [[y.items[0].length]], [[8]]));
     });
   });
   console.log(out.length, out, groups.size);
