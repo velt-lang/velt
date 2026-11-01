@@ -299,14 +299,26 @@ impl FnLower<'_, '_> {
                 lets,
                 mut changed,
                 closures,
+                uses,
+                reads,
             } = p;
             // A closure may change what it captures.
             for n in closures {
                 changed.extend(self.cx.fn_def(n).captures.iter().map(|c| c.outer));
             }
+            // A read that yields what can reach a lock-set object (`c[0]`) hands out a part.
+            for (v, t) in reads {
+                let t = self.sub(t);
+                if self.cx.reaches_lock_set(t) {
+                    changed.insert(v);
+                }
+            }
             let mut found = FxHashSet::default();
             for (v, init) in lets {
-                if !changed.contains(&v) && self.plain_literal(&init) {
+                // Used once as a whole: the store itself. Any other whole use (bound to another
+                // variable, put in a literal, iterated, passed on) could change it or keep it.
+                let once = uses.get(&v).copied().unwrap_or(0) <= 1;
+                if once && !changed.contains(&v) && self.plain_literal(&init) {
                     found.insert(v);
                 }
             }
@@ -331,13 +343,16 @@ impl FnLower<'_, '_> {
     }
 }
 
-/// `plain_made`'s walk: each variable's initializer, and the variables changed, given to a
-/// call that may change them, captured, or bound twice.
+/// `plain_made`'s walk: each variable's initializer; the variables changed, given to a call
+/// that may change them, captured, or bound twice; how often each is used as a whole; and what
+/// is read out of each (`c.length`, `c[0][1]`), by type.
 #[derive(Default)]
 struct Plain {
     lets: Vec<(LocalId, hir::Expr)>,
     changed: FxHashSet<LocalId>,
     closures: Vec<hir::DefId>,
+    uses: rustc_hash::FxHashMap<LocalId, u32>,
+    reads: Vec<(LocalId, hir::TyId)>,
 }
 
 impl Plain {
@@ -401,12 +416,32 @@ impl Plain {
             K::Local(l, hir::UseMode::BorrowMut) => {
                 self.changed.insert(*l);
             }
+            K::Local(l, _) => *self.uses.entry(*l).or_insert(0) += 1,
             K::Assign { place, .. } | K::CompoundAssign { place, .. } => {
                 if let Some(l) = place_root(place) {
                     self.changed.insert(l);
                 }
             }
             K::Closure(n) => self.closures.push(*n),
+            K::Field { .. } | K::Index { .. } => {
+                // A read out of a variable (`c[0][1]`): what it yields, not the variable.
+                let mut x = e;
+                let mut indices = vec![];
+                while let K::Field { base, .. } | K::Index { base, .. } = &x.kind {
+                    if let K::Index { index, .. } = &x.kind {
+                        indices.push(&**index);
+                    }
+                    x = base;
+                }
+                if let K::Local(l, m) = &x.kind {
+                    if *m == hir::UseMode::BorrowMut {
+                        self.changed.insert(*l);
+                    }
+                    self.reads.push((*l, e.ty));
+                    indices.into_iter().for_each(|i| self.expr(i));
+                    return;
+                }
+            }
             _ => {}
         }
         match &e.kind {
