@@ -6,7 +6,7 @@ mod no_window;
 mod test_dir;
 
 const SRC: &str = "function f(x: number, n: u64): number {
-  return Math.sqrt(x) + Math.floor(x) + Math.round(x) + Math.clz32(x) + n.countOnes();
+  return Math.sqrt(x) + Math.floor(x) + Math.round(x) + Math.clz32(x) + (n.countOnes() as number);
 }
 const k = process.argv.length;
 console.log(f(k + 1.5, (k as u64) * 255));
