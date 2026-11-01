@@ -1,0 +1,38 @@
+// A handler that captures a `Record` compiles, also when the program stores elsewhere a closure
+// that changes what it captured: a `Record`'s accessor slot holds closures only in a program that
+// defines accessors (`Object.defineProperty`), so it does not make every closure of that shape a
+// handler's (the sigx-ssr example was refused, "stored in a `Record<string, string>`").
+import { serve } from "http-server";
+
+class Sig {
+  subs: number[] = [];
+  get value(): number {
+    this.subs.push(1);
+    return this.subs.length;
+  }
+}
+
+class Comp {
+  run: () => number;
+  constructor(f: () => number) {
+    this.run = f;
+  }
+}
+
+function counter(): Comp {
+  const count = new Sig();
+  return new Comp(() => count.value * 2);
+}
+
+async function main() {
+  const c = counter();
+  c.run();
+  console.log(c.run());
+  const mime: Record<string, string> = { html: "text/html" };
+  const s = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    return new Response(mime["html"] ?? "");
+  });
+  const r = await fetch(`http://127.0.0.1:${s.port}/`);
+  console.log(await r.text());
+  await s.shutdown();
+}

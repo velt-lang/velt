@@ -1,0 +1,43 @@
+// A new render context that holds a captured app may change its own parts (#854): `ctx.out`
+// and `ctx.stats` cannot hold the captured `App`, so `ctx.emit(…)` and `ctx.stats.n++` change
+// only the request's own objects, as in Node.
+import { serve } from "http-server";
+
+class App {
+  name: string = "app";
+}
+
+class Stats {
+  n: number = 0;
+}
+
+class RenderCtx {
+  app: App;
+  out: string[] = [];
+  stats: Stats = new Stats();
+  constructor(app: App) {
+    this.app = app;
+  }
+  emit(s: string) {
+    this.out.push(s);
+  }
+}
+
+function render(app: App): string {
+  const ctx = new RenderCtx(app);
+  ctx.emit(`<p>${ctx.app.name}</p>`);
+  ctx.stats.n++;
+  const out = ctx.out;
+  out.push(`${ctx.stats.n}`);
+  return ctx.out.join("");
+}
+
+async function main() {
+  const app = new App();
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    return new Response(render(app));
+  });
+  const r = await fetch(`http://127.0.0.1:${server.port}/`);
+  console.log(await r.text());
+  await server.shutdown();
+}

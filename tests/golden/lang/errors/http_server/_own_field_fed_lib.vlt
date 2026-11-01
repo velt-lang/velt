@@ -1,0 +1,24 @@
+// Helper for http_handler_own_field_fed: an interface implemented by a literal a factory in
+// another module builds.
+export class Box {
+  n: number = 0;
+}
+
+export class BoxCtx {
+  box: Box;
+  constructor(b: Box) {
+    this.box = b;
+  }
+}
+
+export interface Runner {
+  run(c: BoxCtx): void;
+}
+
+export function makeRunner(): Runner {
+  return {
+    run(c: BoxCtx): void {
+      c.box.n++;
+    },
+  };
+}

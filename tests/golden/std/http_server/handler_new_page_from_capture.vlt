@@ -1,0 +1,28 @@
+// A handler may change a new object that holds a captured array (#854): `new Page(cfg.list)`
+// is the request's own, so `page.n++` changes nothing captured; the array it holds is not
+// written.
+import { serve } from "http-server";
+
+class Cfg {
+  list: string[] = ["a", "b"];
+}
+
+class Page {
+  rows: string[];
+  n: number = 0;
+  constructor(rows: string[]) {
+    this.rows = rows;
+  }
+}
+
+async function main() {
+  const cfg = new Cfg();
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const page = new Page(cfg.list);
+    page.n++;
+    return new Response(`${page.rows.join(",")} ${page.n}`);
+  });
+  const r = await fetch(`http://127.0.0.1:${server.port}/`);
+  console.log(await r.text());
+  await server.shutdown();
+}

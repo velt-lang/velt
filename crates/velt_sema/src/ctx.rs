@@ -339,6 +339,9 @@ pub(crate) struct Ctx<'m> {
     /// Captured variables reported as modified by a closure that crosses threads, with the
     /// closure's span: the move analysis doesn't report the follow-on "use of moved value".
     pub reported_captures: Vec<(String, velt_common::Span)>,
+    /// Callbacks a library runs on other threads, checked for changes through calls once
+    /// mutation inference is done (`ownership::local_async::changes`).
+    pub crossing_callbacks: Vec<crate::ownership::Crossing>,
     /// Side tables for [`crate::ide`] (`None` when compiling).
     pub ide: Option<Box<crate::ide::record::Recorder>>,
     /// Memoized `Ctx::is_shared_value` answers (asked for every local of every body).
@@ -568,6 +571,7 @@ impl<'m> Ctx<'m> {
             jsx_providers: FxHashMap::default(),
             callback_wrappers: Default::default(),
             reported_captures: vec![],
+            crossing_callbacks: vec![],
             ide: None,
             recovered: FxHashMap::default(),
             poisoned: FxHashSet::default(),

@@ -600,6 +600,9 @@ fn ownership_passes(cx: &mut ctx::Ctx) {
         ownership::infer_local_async(cx)
     });
     timings::pass("ownership::infer_modes", || ownership::infer_modes(cx));
+    timings::pass("ownership::check_crossing_changes", || {
+        ownership::check_crossing_changes(cx)
+    });
     timings::pass("throws::infer_all", || throws::infer_all(cx));
     // The program is checked again with the error types of function types written without
     // `throws` that this check found (`throws::fn_types`): the rest would be redone.

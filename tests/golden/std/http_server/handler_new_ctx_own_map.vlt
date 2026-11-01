@@ -1,0 +1,37 @@
+// A new object's own `Map` is the request's even when the captured class has a field of the
+// same `Map` type (#854): `ctx.seen` is only ever filled with `new Map()`, so `ctx.seen.set(…)`
+// changes nothing captured. Prints what Node prints.
+import { serve } from "http-server";
+
+class App {
+  name: string = "app";
+  routes: Map<string, string> = new Map();
+}
+
+class RenderCtx {
+  app: App;
+  seen: Map<string, string> = new Map();
+  constructor(app: App) {
+    this.app = app;
+  }
+  mark(k: string): void {
+    this.seen.set(k, this.app.name);
+  }
+}
+
+function render(app: App): string {
+  const ctx = new RenderCtx(app);
+  ctx.mark("a");
+  ctx.seen.set("b", "x");
+  return `${ctx.seen.size}${ctx.app.routes.size}`;
+}
+
+async function main() {
+  const app = new App();
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    return new Response(render(app));
+  });
+  const r = await fetch(`http://127.0.0.1:${server.port}/`);
+  console.log(await r.text());
+  await server.shutdown();
+}

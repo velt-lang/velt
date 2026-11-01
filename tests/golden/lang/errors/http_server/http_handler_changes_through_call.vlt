@@ -1,0 +1,199 @@
+// An HTTP handler runs on other threads, each request with its own copy of what the handler
+// captured, so a change it makes to a captured object would be lost: Node answers `1 2 3 4 5`
+// to five requests where each copy would answer `1` (#854). A write in the handler itself is
+// reported already; this file holds the changes made another way, each an error naming the
+// field: through a method changing its receiver (sync or async), a function changing its
+// argument, a closure the handler makes, a value reached from a capture (an element, `Map.get`,
+// `find`, an alias, a loop variable, an optional chain, a conditional, an `any`), a library
+// collection's own method (`Map.set`, `BTreeMap.set`), an interface method, a constructor
+// (also an inherited one) changing its argument, and a captured value held by a new object
+// (`new Holder(t).t.n++`, an element of `list.slice()`, an object literal's field). A new
+// object's own fields are the request's (std/http_server/handler_new_ctx_from_capture and its
+// neighbours). Reads stay quiet: also through a user function reading a captured `Headers`
+// (whose `get` fills a cache), a function that changes another object, and a `shared` count.
+import { serve } from "http-server";
+import { BTreeMap } from "velt/collections";
+
+class C {
+  count: number = 0;
+  hits: string[] = [];
+  handle(req: Request): Response {
+    this.count++;
+    return new Response(`${this.count}`);
+  }
+  async later(): Promise<void> {
+    this.hits.push("x");
+  }
+  peek(): number {
+    return this.count;
+  }
+}
+
+interface Counter {
+  inc(): void;
+}
+
+class Totals implements Counter {
+  n: number = 0;
+  inc() {
+    this.n++;
+  }
+}
+
+class User {
+  id: string = "a";
+  visits: number = 0;
+}
+
+class Cfg {
+  h: Headers = new Headers({ "x-a": "1" });
+  lookup(k: string): string {
+    return this.h.get(k) ?? "";
+  }
+}
+
+function bump(t: Totals) {
+  t.n += 1;
+}
+
+// Changes another object: its parameter is assigned first.
+function fresh(t: Totals): number {
+  t = new Totals();
+  t.n = 1;
+  return t.n;
+}
+
+class Holder {
+  t: Totals;
+  depth: number = 0;
+  constructor(t: Totals) {
+    this.t = t;
+  }
+}
+
+class Counting {
+  constructor(t: Totals) {
+    t.n++;
+  }
+}
+
+class CountingToo extends Counting {}
+
+function lookup(h: Headers, k: string): string {
+  return h.get(k) ?? "";
+}
+
+async function main() {
+  const c = new C();
+  const s1 = await serve({ port: 0 }, async (req: Request): Promise<Response> => c.handle(req));
+  const d = new C();
+  const s2 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    await d.later();
+    return new Response("ok");
+  });
+  const t = new Totals();
+  const s3 = await serve({ port: 0 }, (req: Request): Response => {
+    bump(t);
+    return new Response("ok");
+  });
+  const u = new Totals();
+  const s4 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const inner = () => {
+      bump(u);
+    };
+    inner();
+    return new Response("ok");
+  });
+  // A store kept in memory: an element of a captured `Map` or array.
+  const users = new Map<string, User>();
+  users.set("a", new User());
+  const s5 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    users.get("a")!.visits++;
+    return new Response("ok");
+  });
+  const list = [new User()];
+  const s6 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const found = list.find((x) => x.id == "a");
+    if (found != null) {
+      found.visits++;
+    }
+    return new Response("ok");
+  });
+  const all = [new Totals()];
+  const s7 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    for (const x of all) {
+      x.inc();
+    }
+    return new Response("ok");
+  });
+  const a = new Totals();
+  const b = new Totals();
+  const s8 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    (req.url.length > 3 ? a : b).inc();
+    return new Response("ok");
+  });
+  const maybe: Totals | null = new Totals();
+  const s9 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    maybe?.inc();
+    return new Response("ok");
+  });
+  const dynamic: any = new Totals();
+  const s10 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    dynamic.n = 5;
+    return new Response("ok");
+  });
+  const seen = new Map<string, number>();
+  const tree = new BTreeMap<string, number>();
+  const s11 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    seen.set(req.url, 1);
+    tree.set(req.url, 1);
+    return new Response("ok");
+  });
+  const counter: Counter = new Totals();
+  const s12 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    counter.inc();
+    return new Response("ok");
+  });
+  // A captured value held by a new object is still the captured one.
+  const held = new Totals();
+  const s14 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const ctx = new Holder(held);
+    ctx.depth++;
+    ctx.t.n++;
+    return new Response("ok");
+  });
+  const counted = new Totals();
+  const s17 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const c = new CountingToo(counted);
+    return new Response("ok");
+  });
+  const people = [new User()];
+  const s15 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    people.slice()[0].visits++;
+    return new Response("ok");
+  });
+  const rows = [new User()];
+  const s16 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const page = { rows: rows, n: 0 };
+    page.n = page.rows.length;
+    page.rows[0].visits++;
+    return new Response("ok");
+  });
+  // Not reported: reads, a function that changes another object, and a count in a `shared`.
+  const r = new C();
+  const w = new Totals();
+  const h = new Headers({ "x-a": "1" });
+  const cfg = new Cfg();
+  const hits = shared(0);
+  const total = hits.clone();
+  const s13 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    total.add(1);
+    const v = users.get("a")?.visits ?? 0;
+    return new Response(
+      `${r.peek()} ${fresh(w)} ${h.get("x-a") ?? ""} ${cfg.lookup("x-a")} ${lookup(h, "x-a")} ${v}`,
+    );
+  });
+  for (const x of [s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, s12, s13, s14, s15, s16, s17]) {
+    await x.shutdown();
+  }
+}

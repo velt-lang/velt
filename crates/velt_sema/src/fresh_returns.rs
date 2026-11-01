@@ -105,7 +105,7 @@ fn report(cx: &mut Ctx, d: DefId, c: &FreshCheck) {
 /// The functions among `roots` (and the functions their results depend on) that return fresh
 /// values: start from those whose own `return`s qualify, then drop any that depends on one that
 /// does not, until nothing changes.
-fn fresh_functions(cx: &Ctx, roots: impl Iterator<Item = DefId>) -> FxHashSet<DefId> {
+pub(crate) fn fresh_functions(cx: &Ctx, roots: impl Iterator<Item = DefId>) -> FxHashSet<DefId> {
     let mut deps: FxHashMap<DefId, Option<Vec<DefId>>> = FxHashMap::default();
     let mut work: Vec<DefId> = roots.collect();
     while let Some(d) = work.pop() {

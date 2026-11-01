@@ -1,0 +1,31 @@
+// A handler may change what a factory makes from a captured value (#854): `makeCtx(cfg)` returns
+// `new Ctx(cfg.title)`, a new object holding only a string, so `c.n++` changes nothing captured.
+import { serve } from "http-server";
+
+class Cfg {
+  title: string = "home";
+}
+
+class Ctx {
+  title: string;
+  n: number = 0;
+  constructor(title: string) {
+    this.title = title;
+  }
+}
+
+function makeCtx(c: Cfg): Ctx {
+  return new Ctx(c.title);
+}
+
+async function main() {
+  const cfg = new Cfg();
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const c = makeCtx(cfg);
+    c.n++;
+    return new Response(`${c.title} ${c.n}`);
+  });
+  const r = await fetch(`http://127.0.0.1:${server.port}/`);
+  console.log(await r.text());
+  await server.shutdown();
+}

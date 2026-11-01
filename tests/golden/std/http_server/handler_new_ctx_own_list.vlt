@@ -1,0 +1,39 @@
+// A new object's own list is the request's even when the captured class has a list field of
+// the same type (#854): `ctx.out` is only ever filled with a new array (`out: string[] = []`),
+// so `ctx.emit(…)` pushing to it and `ctx.out.push("!")` change nothing captured, although
+// `App` has `plugins: string[]`. sigx's SSR shape with a realistic `App`. Prints what Node prints.
+import { serve } from "http-server";
+
+class App {
+  name: string = "app";
+  plugins: string[] = ["a"];
+}
+
+class RenderCtx {
+  app: App;
+  out: string[] = [];
+  constructor(app: App) {
+    this.app = app;
+  }
+  emit(s: string): void {
+    this.out.push(s);
+  }
+}
+
+function render(app: App): string {
+  const ctx = new RenderCtx(app);
+  ctx.emit(app.name);
+  ctx.out.push("!");
+  ctx.emit(`${ctx.app.plugins.length}`);
+  return ctx.out.join("");
+}
+
+async function main() {
+  const app = new App();
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    return new Response(render(app));
+  });
+  const r = await fetch(`http://127.0.0.1:${server.port}/`);
+  console.log(await r.text());
+  await server.shutdown();
+}

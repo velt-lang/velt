@@ -1,0 +1,57 @@
+// Handing the render context to a callback does not make it reachable by a store by key
+// elsewhere in the program (#854): no function the call may run converts it, so its own `out`
+// stays the request's. A plugin hook, as SSR renderers call them. Prints what Node prints.
+import { serve } from "http-server";
+
+class App {
+  name: string = "app";
+  plugins: string[] = ["a"];
+}
+
+class RenderCtx {
+  app: App;
+  out: string[] = [];
+  constructor(app: App) {
+    this.app = app;
+  }
+  emit(s: string): void {
+    this.out.push(s);
+  }
+}
+
+function setAny(o: any, k: string, v: any): void {
+  o[k] = v;
+}
+
+const hooks: ((c: RenderCtx) => void)[] = [
+  (c: RenderCtx) => {
+    c.out.push("h");
+  },
+];
+
+function render(app: App): string {
+  const ctx = new RenderCtx(app);
+  ctx.emit(app.name);
+  ctx.out.push("!");
+  hooks[0](ctx);
+  ctx.emit(`${ctx.app.plugins.length}`);
+  return ctx.out.join("");
+}
+
+async function main() {
+  const cfgAny: any = { x: [] as string[] };
+  setAny(cfgAny, "x", ["y"]);
+  const bag: any = { a: [] as string[], b: [] as string[] };
+  for (const k of ["a", "b"]) {
+    const v = [k];
+    bag[k] = v;
+  }
+  console.log(cfgAny.x[0], bag.b[0]);
+  const app = new App();
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    return new Response(render(app));
+  });
+  const r = await fetch(`http://127.0.0.1:${server.port}/`);
+  console.log(await r.text());
+  await server.shutdown();
+}

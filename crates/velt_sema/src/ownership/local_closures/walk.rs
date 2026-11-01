@@ -76,7 +76,7 @@ pub(in crate::ownership) fn expr(e: &Expr, v: &mut dyn Visit) {
 }
 
 /// The direct sub-expressions of `e` (a block's statements are left to the caller).
-pub(super) fn children(e: &Expr, f: &mut dyn FnMut(&Expr)) {
+pub(in crate::ownership) fn children(e: &Expr, f: &mut dyn FnMut(&Expr)) {
     match &e.kind {
         E::Lit(_) | E::Global(_) | E::FnRef(..) | E::Closure(_) | E::Local(..) => {}
         E::Unary { expr: x, .. }

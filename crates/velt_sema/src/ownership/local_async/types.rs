@@ -73,9 +73,16 @@ pub(super) fn crossing_fns(
 
 /// What a value of class, struct or union `d<args>` holds: its fields (with those of every
 /// subclass, whose own parameters are not followed) or its variants' payloads.
-fn adt_parts(cx: &mut Ctx, d: crate::hir::DefId, args: &[TyId]) -> Vec<TyId> {
+pub(super) fn adt_parts(cx: &mut Ctx, d: crate::hir::DefId, args: &[TyId]) -> Vec<TyId> {
+    // A `Record`'s accessors (`Object.defineProperty`) hold closures only in a program that
+    // defines accessors; elsewhere the field is always `null`, and its function types stand
+    // for no closure of the program.
+    let record = Some(d) == cx.prelude_adt("Record") && !cx.objects.record_accessors;
     let raw: Vec<TyId> = match &cx.info[d.0 as usize] {
-        DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
+        DefInfo::Adt(a) => (a.fields.iter())
+            .filter(|f| !(record && f.name == "accessors"))
+            .map(|f| f.ty)
+            .collect(),
         DefInfo::Enum(e) => e
             .variants
             .iter()

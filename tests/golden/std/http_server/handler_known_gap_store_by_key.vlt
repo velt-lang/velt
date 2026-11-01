@@ -1,0 +1,151 @@
+// KNOWN GAP (#854): a field of a new value filled from the capture by key is not seen, so these
+// handlers compile and each change goes to the request's copy of `app.plugins`, where Node
+// shares it (a second request would show Node's list growing). Each class fills `out` with the
+// captured list by key: through an `any` (`self.out = …`), `Reflect.set` with a literal or a
+// computed key, a helper storing by key into the `this` it is given, a generic one reached
+// through an interface, or one taken as a function value. Reporting them needs the declared
+// write effects decided on #854 (its acceptance tests: D6, E2, F2, G1, G4); see the known limits
+// in packages/http-server/README.md. Prints one request's lengths, which match Node.
+import { serve } from "http-server";
+
+class App {
+  name: string = "app";
+  plugins: string[] = ["a"];
+}
+
+class ThroughAny {
+  app: App;
+  out: string[] = [];
+  constructor(a: App) {
+    this.app = a;
+    this.fill();
+  }
+  fill(): void {
+    const self: any = this;
+    self.out = this.app.plugins;
+  }
+}
+
+class ByReflect {
+  app: App;
+  out: string[] = [];
+  constructor(a: App) {
+    this.app = a;
+    Reflect.set(this, "out", a.plugins);
+  }
+}
+
+class ByComputedKey {
+  app: App;
+  rows: string[] = [];
+  constructor(a: App, key: string) {
+    this.app = a;
+    Reflect.set(this, key, a.plugins);
+  }
+}
+
+function setKey(o: any, k: string, v: any): void {
+  o[k] = v;
+}
+
+class ByHelper {
+  app: App;
+  out: string[] = [];
+  constructor(a: App) {
+    this.app = a;
+    setKey(this, "out", a.plugins);
+  }
+}
+
+interface Setter {
+  put<T>(x: T, k: string, v: any): void;
+}
+
+class AnySetter implements Setter {
+  put<T>(x: T, k: string, v: any): void {
+    const o: any = x;
+    const key = k + "";
+    o[key] = v;
+  }
+}
+
+class ThroughIface {
+  app: App;
+  out: string[] = [];
+  constructor(a: App, s: Setter) {
+    this.app = a;
+    s.put(this, "out", a.plugins);
+  }
+}
+
+function setK<T>(x: T, k: string, v: any): void {
+  const o: any = x;
+  const key = k + "";
+  o[key] = v;
+}
+
+function viaCb<T>(x: T, f: (x: T, k: string, v: any) => void, k: string, v: any): void {
+  f(x, k, v);
+}
+
+class ThroughValue {
+  app: App;
+  out: string[] = [];
+  constructor(a: App) {
+    this.app = a;
+    viaCb(this, setK, "out", a.plugins);
+  }
+}
+
+async function one(port: number): Promise<string> {
+  const r = await fetch(`http://127.0.0.1:${port}/`);
+  return await r.text();
+}
+
+async function main() {
+  const setter: Setter = new AnySetter();
+  const outs: string[] = [];
+  const a5 = new App();
+  const s5 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const c = new ThroughAny(a5);
+    c.out.push("x");
+    return new Response(`${c.out.length}`);
+  });
+  const a6 = new App();
+  const s6 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const c = new ByReflect(a6);
+    c.out.push("x");
+    return new Response(`${c.out.length}`);
+  });
+  const a7 = new App();
+  const s7 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const c = new ByComputedKey(a7, "rows");
+    c.rows.push("x");
+    return new Response(`${c.rows.length}`);
+  });
+  const a8 = new App();
+  const s8 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const c = new ByHelper(a8);
+    c.out.push("x");
+    return new Response(`${c.out.length}`);
+  });
+  const a9 = new App();
+  const s9 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const c = new ThroughIface(a9, setter);
+    c.out.push("x");
+    return new Response(`${c.out.length}`);
+  });
+  const a10 = new App();
+  const s10 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const c = new ThroughValue(a10);
+    c.out.push("x");
+    return new Response(`${c.out.length}`);
+  });
+  for (const s of [s5, s6, s7, s8, s9, s10]) {
+    outs.push(await one(s.port));
+  }
+  console.log(outs.join(" "));
+  for (const s of [s5, s6, s7, s8, s9, s10]) {
+    await s.shutdown();
+  }
+}
