@@ -14,6 +14,10 @@ pub struct Changes {
     /// The Rust files under `crates/` among `paths` whose code is unchanged: only comments
     /// differ (crates/xtask/src/comments.rs).
     pub comment_only: BTreeSet<String>,
+    /// The Velt files among `paths` (`.vlt`, `.ts`, `.tsx`) that differ only in whole-line
+    /// comments (crates/xtask/src/repeat.rs, [`crate::repeat::same_vlt_code`]): `repeat` and the
+    /// pull request's Windows package tests skip them. The plan still checks them.
+    pub vlt_comment_only: BTreeSet<String>,
 }
 
 /// The default base: `origin/main`, else a local `main`.
@@ -54,9 +58,25 @@ pub fn changes(root: &Path, base: &str) -> Result<Changes, String> {
         })
         .cloned()
         .collect();
+    let vlt_comment_only = paths
+        .iter()
+        .filter(|p| [".vlt", ".ts", ".tsx"].iter().any(|e| p.ends_with(e)))
+        .filter(|p| {
+            ["packages/", "std/", "tests/", "examples/"]
+                .iter()
+                .any(|d| p.starts_with(d))
+        })
+        .filter(|p| {
+            let old = git(root, &["show", &format!("{merge_base}:{p}")]);
+            let new = std::fs::read_to_string(root.join(p));
+            matches!((old, new), (Ok(old), Ok(new)) if crate::repeat::same_vlt_code(&old, &new))
+        })
+        .cloned()
+        .collect();
     Ok(Changes {
         paths,
         comment_only,
+        vlt_comment_only,
     })
 }
 

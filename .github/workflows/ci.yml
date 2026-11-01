@@ -3,11 +3,13 @@
 # unit and integration tests) and golden (end-to-end, debug mode). A change to OS-specific code
 # (crates/xtask/src/os.rs) is also linted on Windows and macOS, where `cfg(windows)` and
 # `cfg(unix)` code compiles differently: clippy's findings there otherwise surface only in the
-# merge queue. The label `ci:full` makes them check everything, the parser's robustness test
-# cutting every golden at every character too (add it before pushing, or close and reopen the
-# pull request). The WebAssembly goldens run only when the change touches WebAssembly code, in
-# pull requests and in the queue; the nightly runs them all (on Linux, Windows and macOS), and so
-# do the checks after merging when they run.
+# merge queue. The test files a pull request adds or edits run 20 times at once under load
+# (`cargo xtask repeat`), in the `test` job and on Windows (`pr-windows`): a test ordering events
+# by timing fails there, not in the queue. The label `ci:full` makes them check
+# everything, the parser's robustness test cutting every golden at every character too (add it
+# before pushing, or close and reopen the pull request). The WebAssembly goldens run only when
+# the change touches WebAssembly code, in pull requests and in the queue; the nightly runs them
+# all (on Linux, Windows and macOS), and so do the checks after merging when they run.
 #
 # The merge queue checks everything against the pull request merged with the latest main: per OS
 # one job lints and tests, and the goldens (debug and release mode) are built once and checked in
@@ -64,6 +66,13 @@ jobs:
         run: >-
           cargo xtask check --part ${{ matrix.part }} --fast --base HEAD^1
           ${{ contains(github.event.pull_request.labels.*.name, 'ci:full') && '--full' || '' }}
+      # The test files the change adds or edits (velt test files, goldens), 20 times each at once
+      # on twice as many threads as the runner has cores, from the build above: a test that
+      # orders events by timing fails here instead of in the merge queue (crates/xtask/src/
+      # repeat.rs). With no test file changed it says so and stops, before building anything.
+      - name: cargo xtask repeat (the changed tests, under load)
+        if: matrix.part == 'test'
+        run: cargo xtask repeat --base HEAD^1
 
   # Whether the change touches OS-specific code, so the pull request is linted on Windows and
   # macOS too (xtask builds with the runner's stable Rust in seconds, as for queue-plan).
@@ -73,6 +82,8 @@ jobs:
     timeout-minutes: 10
     outputs:
       other_os: ${{ steps.plan.outputs.other_os }}
+      # `true` when the change adds or edits a test file (`cargo xtask repeat` has work).
+      repeat: ${{ steps.plan.outputs.repeat }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -110,6 +121,33 @@ jobs:
         run: >-
           cargo xtask check --part lint --fast --base HEAD^1
           ${{ contains(github.event.pull_request.labels.*.name, 'ci:full') && '--full' || '' }}
+
+  # Windows, where timing differs most (timer resolution, sockets, process start-up), before the
+  # merge queue: the changed test files repeated under load (`cargo xtask repeat`, as the `test`
+  # job does on Linux). A change with no test file starts no Windows runner.
+  pr-windows:
+    needs: pr-plan
+    if: needs.pr-plan.outputs.repeat == 'true'
+    name: windows (changed tests under load)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: ./.github/actions/setup
+        with:
+          tools: false
+      # Resolved as the gate's `--all-targets` build (a test target resolves the dev-dependencies'
+      # features).
+      - name: build
+        shell: bash
+        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+        run: cargo build --workspace --exclude xtask --lib --bins --test golden
+      - name: cargo xtask repeat (the changed tests, under load)
+        shell: bash
+        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+        run: cargo xtask repeat --base HEAD^1
 
   # Which OSes the queue checks. xtask has no dependencies, so the runner's stable Rust builds
   # it in seconds (no pinned toolchain, no cache).
@@ -316,13 +354,13 @@ jobs:
 
   ci:
     if: always()
-    needs: [pr, pr-plan, pr-lint-os, queue-plan, queue, queue-golden]
+    needs: [pr, pr-plan, pr-lint-os, pr-windows, queue-plan, queue, queue-golden]
     runs-on: ubuntu-latest
     steps:
       - name: every gate that ran passed
         run: |
           for r in "${{ needs.pr.result }}" "${{ needs.pr-plan.result }}" "${{ needs.pr-lint-os.result }}" \
-            "${{ needs.queue-plan.result }}" "${{ needs.queue.result }}" "${{ needs.queue-golden.result }}"; do
+            "${{ needs.pr-windows.result }}" "${{ needs.queue-plan.result }}" "${{ needs.queue.result }}" "${{ needs.queue-golden.result }}"; do
             case "$r" in success|skipped) ;; *) echo "a gate failed: $r"; exit 1 ;; esac
           done
       # Fail closed in the queue: unless queue-plan found the entry gone (`os` is `[]`), the

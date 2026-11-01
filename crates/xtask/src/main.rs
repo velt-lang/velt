@@ -5,6 +5,7 @@
 //! cargo xtask check --full           the whole gate (what the merge queue runs)
 //! cargo xtask affected               print what `check` would run, and why
 //! cargo xtask precheck               fmt, file sizes and clippy on the changed files (fast)
+//! cargo xtask repeat                 run the changed test files many times at once (flakiness)
 //! cargo xtask install-hooks          a pre-push hook that runs `precheck`
 //! cargo xtask pr-lint                check a pull request's text and commits
 //! ```
@@ -28,6 +29,7 @@ mod plan;
 mod pr_lint;
 mod pr_size;
 mod precheck;
+mod repeat;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -46,6 +48,9 @@ Commands:
   precheck    The fast checks most failed pull requests miss, on the changed files only:
               cargo fmt, velt fmt (std/, examples/), the file-size rule, and clippy of the
               changed crates and their dependents
+  repeat      Run each test file the changes add or edit (velt test files, goldens) many times at
+              once, on twice as many threads as there are cores, and fail naming the file and
+              the repetition that failed (crates/xtask/src/repeat.rs)
   install-hooks
               Install a git pre-push hook that runs `precheck` (shared by every worktree;
               `git push --no-verify` skips it)
@@ -72,6 +77,10 @@ Options:
                        (VELT_GOLDEN_SHARD=<i>/<n>, VELT_WASM_SHARD=<i>/<n>: one of n shards)
   --dry-run            Print the commands without running them
   --github             (affected) Write the plan to $GITHUB_OUTPUT and $GITHUB_STEP_SUMMARY
+  --times <n>          (repeat) Runs per file (default 20, or VELT_REPEAT_TIMES)
+  --jobs <n>           (repeat) Runs at once (default: twice the cores, or VELT_REPEAT_JOBS)
+  --time-limit <s>     (repeat) No new run after this many seconds (default 600, or
+                       VELT_REPEAT_TIME_LIMIT)
   --force              (install-hooks) Replace a pre-push hook xtask didn't install (kept as
                        pre-push.orig)
 ";
@@ -91,6 +100,9 @@ struct Args {
     dry_run: bool,
     github: bool,
     force: bool,
+    times: Option<usize>,
+    jobs: Option<usize>,
+    time_limit: Option<u64>,
 }
 
 fn parse(argv: Vec<String>) -> Result<Args, String> {
@@ -111,6 +123,17 @@ fn parse(argv: Vec<String>) -> Result<Args, String> {
             "--dry-run" => args.dry_run = true,
             "--github" => args.github = true,
             "--force" => args.force = true,
+            "--times" | "--jobs" | "--time-limit" => {
+                let v = value(&arg)?;
+                let n: u64 = v
+                    .parse()
+                    .map_err(|_| format!("{arg} {v}: expected a whole number"))?;
+                match arg.as_str() {
+                    "--times" => args.times = Some(n as usize),
+                    "--jobs" => args.jobs = Some(n as usize),
+                    _ => args.time_limit = Some(n),
+                }
+            }
             "--paths" => {
                 let mut paths = vec![];
                 while let Some(p) = it.next_if(|p| !p.starts_with("--")) {
@@ -176,10 +199,24 @@ fn run() -> Result<(), String> {
             let plan = plan(&root, &args)?;
             println!("root: {}", root.display());
             print!("{}", plan.describe());
+            let flake = flake_guards(&root, &args);
+            print!("{}", flake.describe());
             if args.github {
-                github_outputs(&plan)?;
+                github_outputs(&plan, &flake)?;
             }
             Ok(())
+        }
+        "repeat" => {
+            let (sel, reason) = repeat_selection(&root, &args)?;
+            println!("repeat: {reason}");
+            let mut opts = repeat::Options::from_env()?;
+            opts.times = args.times.unwrap_or(opts.times);
+            opts.jobs = args.jobs.unwrap_or(opts.jobs);
+            if let Some(secs) = args.time_limit {
+                opts.time_limit = std::time::Duration::from_secs(secs);
+            }
+            opts.dry_run = args.dry_run;
+            repeat::run(&root, &sel, &opts)
         }
         "precheck" => {
             let (paths, reason) = precheck_paths(&root, &args)?;
@@ -222,6 +259,60 @@ fn plan(root: &Path, args: &Args) -> Result<Plan, String> {
         Ok(c) => Ok(Plan::for_changes(&graph, &c.paths, &c.comment_only)),
         Err(e) => Ok(Plan::unknown_changes(e)),
     }
+}
+
+/// The test files `repeat` runs (`--paths`, else the changes since the merge base with the
+/// base revision), and where they come from.
+fn repeat_selection(root: &Path, args: &Args) -> Result<(repeat::Selection, String), String> {
+    let exists = |p: &str| root.join(p).is_file();
+    let list_dir = |dir: &str| -> Vec<String> {
+        let Ok(entries) = std::fs::read_dir(root.join(dir)) else {
+            return vec![];
+        };
+        entries
+            .flatten()
+            .filter(|e| e.path().is_file())
+            .map(|e| format!("{dir}/{}", e.file_name().to_string_lossy()))
+            .collect()
+    };
+    if let Some(paths) = &args.paths {
+        let sel = repeat::select(paths, &Default::default(), exists, list_dir);
+        return Ok((sel, format!("{} given path(s)", paths.len())));
+    }
+    let base = args
+        .base
+        .clone()
+        .or_else(|| changes::default_base(root))
+        .ok_or("no base revision (origin/main or main) to compare with: pass --base or --paths")?;
+    let c = changes::changes(root, &base)?;
+    let sel = repeat::select(&c.paths, &c.vlt_comment_only, exists, list_dir);
+    Ok((sel, format!("{} file(s) changed since {base}", c.paths.len())))
+}
+
+/// What a pull request runs against flaky tests besides the plan: the changed test files
+/// repeated under load (`repeat`, on Linux and Windows).
+struct FlakeGuards {
+    repeat: Vec<String>,
+}
+
+impl FlakeGuards {
+    fn describe(&self) -> String {
+        let repeat = match self.repeat.len() {
+            0 => "none (no test file changed)".to_string(),
+            _ => self.repeat.join(", "),
+        };
+        format!("  repeated under load (cargo xtask repeat): {repeat}\n")
+    }
+}
+
+/// [`FlakeGuards`] for the changes: none with `--full` (the merge queue knows no changes) or when
+/// the changes can't be told.
+fn flake_guards(root: &Path, args: &Args) -> FlakeGuards {
+    let repeat = match (args.full, repeat_selection(root, args)) {
+        (false, Ok((sel, _))) => sel.velt_tests.into_iter().chain(sel.goldens).collect(),
+        _ => vec![],
+    };
+    FlakeGuards { repeat }
 }
 
 /// The files `precheck` looks at, and why: `--paths`, else the changes since the merge base
@@ -299,7 +390,7 @@ fn github_output_text(plan: &Plan) -> String {
 }
 
 /// For CI: which parts have anything to do, and the plan as the job summary.
-fn github_outputs(plan: &Plan) -> Result<(), String> {
+fn github_outputs(plan: &Plan, flake: &FlakeGuards) -> Result<(), String> {
     let append = |var: &str, text: &str| -> Result<(), String> {
         let Some(path) = std::env::var_os(var) else {
             return Ok(());
@@ -314,9 +405,11 @@ fn github_outputs(plan: &Plan) -> Result<(), String> {
             .map_err(|e| format!("{var}: {e}"))
     };
     append("GITHUB_OUTPUT", &github_output_text(plan))?;
+    let repeat = if flake.repeat.is_empty() { "false" } else { "true" };
+    append("GITHUB_OUTPUT", &format!("repeat={repeat}\n"))?;
     append(
         "GITHUB_STEP_SUMMARY",
-        &format!("```\n{}```\n", plan.describe()),
+        &format!("```\n{}{}```\n", plan.describe(), flake.describe()),
     )
 }
 

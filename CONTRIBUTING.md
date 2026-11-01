@@ -100,6 +100,22 @@ The quality gate is `cargo xtask check` (crates/xtask), with two ways to run it:
   `scripts/linux-check.sh` runs the gate in Docker from macOS or Linux (`--services` starts
   PostgreSQL and Redis so the database tests run).
 
+**Tests that order events by timing** pass on an idle machine and fail on a loaded one, often only
+on Windows or macOS, and then in the merge queue, where they drop other people's pull requests.
+`cargo xtask repeat` catches them before that:
+
+- `cargo xtask repeat` runs each test file your change adds or edits (`*.test.vlt` under
+  `packages/`, `std/`, `tests/std/` and `examples/`, a helper's neighbouring test files, and the
+  goldens whose `.vlt`, `.out`, `.stderr` or `.code` changed) 20 times, all at once on twice as
+  many threads as there are cores, and fails naming the file and the repetition that failed,
+  with the end of its output (all of it in `target/repeat/logs`). A change of whole-line comments
+  only (a `// timing:` marker) is skipped. `--times <n>`, `--jobs <n>` and `--time-limit <s>`
+  (default 600: no new run starts after it) change the defaults, as do `VELT_REPEAT_TIMES`,
+  `VELT_REPEAT_JOBS` and `VELT_REPEAT_TIME_LIMIT`; `--paths <files>` repeats given files. Pull
+  requests run it in the `test` job on Linux, from that job's build, and in a Windows job that
+  starts only when a test file changed. Run it yourself before pushing a new test that waits on
+  a server, a socket, a task or a timer.
+
 Install [cargo-nextest](https://nexte.st) (`cargo install cargo-nextest --locked`): with it the
 gate runs only the selected tests, and test binaries in parallel; without it every test runs, one
 binary at a time (over ten minutes; the gate prints a warning). Local runs keep incremental
@@ -427,7 +443,8 @@ go through this list:
 5. **Performance**: a change on a hot path (the runtime, generated code, the compiler's inner
    loops) comes with benchmark numbers before and after (`bench/`), within ±3%.
 6. **Timing**: tests and goldens order events by awaits, channels or observed state, not by
-   sleeps or wall-clock limits.
+   sleeps or wall-clock limits; `cargo xtask repeat` passes for the test files you added or
+   changed.
 7. **Size**: under about 1,500 changed lines, or split into a stack.
 8. **std**: a changed std API has its `index.vlt` re-export with a doc comment, a docs-sync
    issue for its page and a test; `std-lint` passes (`cargo xtask precheck` runs it).
