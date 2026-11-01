@@ -17,7 +17,17 @@ impl FnLower<'_, '_> {
     /// A new reference to the value `v` of concrete type `ty`, in a fresh (unregistered)
     /// temporary owned by the caller.
     pub(super) fn share_value(&mut self, v: Operand, ty: TyId) -> Operand {
+        self.share_value_as(v, ty, true)
+    }
+
+    /// `share_value`; `named`: the new reference is a second name for a tuple in the value,
+    /// which a write through either name must reach (boxing/tuples.rs), rather than one only
+    /// read (`consume_read`).
+    pub(super) fn share_value_as(&mut self, v: Operand, ty: TyId, named: bool) -> Operand {
         self.cx.note_share(ty);
+        if named {
+            self.cx.note_tuple_copy(ty);
+        }
         if self.cx.share_kind(ty) == ShareKind::Plain {
             return v;
         }

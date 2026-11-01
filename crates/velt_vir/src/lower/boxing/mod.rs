@@ -12,10 +12,12 @@ mod kinds;
 mod locks;
 mod module_reach;
 mod transfers;
+mod tuples;
 mod weak;
 
 use crate::lower::fresh_fns::FnKey;
-use rustc_hash::FxHashSet;
+use crate::vir::FuncId;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::BTreeSet;
 
 use velt_sema::hir::{self, AdtKind, DefId, TyId, TyKind};
@@ -208,6 +210,14 @@ pub(super) struct Facts {
     /// Value types a callee may change in place while it borrows them out of an array other
     /// references reach (stabilize.rs): counted, so the borrow can share the value itself.
     identity_borrows: FxHashSet<TyId>,
+    /// Tuple types written in place (`t[0] = v`; tuples.rs).
+    tuple_writes: FxHashSet<TyId>,
+    /// Types of values copied out of a place that keeps its own (tuples.rs).
+    tuple_copies: FxHashSet<TyId>,
+    /// Per function: the tuple types it writes in place, and the types of the `Copy`
+    /// parameters it only reads (tuples.rs).
+    fn_tuple_writes: FxHashMap<FuncId, Vec<TyId>>,
+    fn_read_params: FxHashMap<FuncId, Vec<TyId>>,
     /// Types of values transferred to another thread as a whole (transfers.rs).
     transfers: FxHashSet<TyId>,
     /// Function values are compared (or hashed) somewhere.
@@ -503,6 +513,7 @@ impl Cx<'_> {
         }
         next.boxes
             .extend(self.facts.identity_borrows.iter().copied());
+        self.close_tuples(&mut next);
         self.close_proxies(&mut next);
         self.close_array_views(&mut next);
         let mut work: Vec<TyId> = self.facts.shares.iter().copied().collect();

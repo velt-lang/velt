@@ -442,6 +442,10 @@ struct Cx<'h> {
     aggs: Vec<AggLayout>,
     externs: Vec<ExternFn>,
     extern_map: FxHashMap<String, ExternId>,
+    /// The tuple types the function being built writes in place, and those of its `Copy`
+    /// parameters it only reads (boxing/tuples.rs).
+    cur_tuple_writes: Vec<TyId>,
+    cur_read_params: Vec<TyId>,
     statics: Vec<StaticData>,
     /// The module state's descriptor, once a slot is used (module_state.rs).
     module_desc: Option<StaticId>,
@@ -660,6 +664,12 @@ struct FnLower<'c, 'h> {
     pending_borrows: Vec<stabilize::PendingBorrow>,
     /// While binding a pattern inside a counted value: owned bindings take shares (pattern.rs).
     share_binds: bool,
+    /// Set by `consume_read` for the `consume` it calls: the new owner only reads the value, so
+    /// copying a tuple out of a place there is not a second name for it (boxing/tuples.rs).
+    read_copy: bool,
+    /// While binding a pattern to a copy of the value destructured (matching.rs `let_pat`): a
+    /// binding by reference into it names a copy of the part (pattern.rs `bind_local`).
+    binds_copy: bool,
     /// While binding a destructuring `const` of a place others may change (matching.rs
     /// `let_pat`): bindings by reference take owned shares instead (pattern.rs).
     stable_binds: bool,

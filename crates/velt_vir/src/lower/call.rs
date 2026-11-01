@@ -415,7 +415,7 @@ impl FnLower<'_, '_> {
                     // A fresh copy the callee now owns (Owned) or only reads (Copy structs).
                     let v = match mode {
                         PassMode::Owned => self.owned_arg(a),
-                        _ => self.consume(a),
+                        _ => self.consume_read(a),
                     };
                     let tmp = self.copy_to_temp(v, t);
                     if *mode == PassMode::Owned {

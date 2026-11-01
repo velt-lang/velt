@@ -94,6 +94,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
             retain_hops: false,
             pending_borrows: vec![],
             share_binds: false,
+            read_copy: false,
+            binds_copy: false,
             stable_binds: false,
             transfer_args: false,
             transfer_call: false,
@@ -473,6 +475,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
         self.pop_scope();
         self.pop_scope();
+        self.note_read_params(f);
     }
 
     /// A Copy aggregate param the body modifies gets its own copy: calls through the borrow ABI
@@ -480,14 +483,19 @@ impl<'c, 'h> FnLower<'c, 'h> {
     /// (Not for `Mutex.with` callbacks, which write the locked value on purpose.)
     fn copy_modified_param(&mut self, f: &FnDef, p: &hir::Param) {
         let l = p.local.0 as usize;
-        let info = &self.info[l];
-        let (Some(ptr), true) = (info.vir, info.indirect) else {
-            return;
-        };
         if p.mode != PassMode::Copy || !f.body.locals[l].mutable {
             return;
         }
-        let vt = self.cx.ty(info.ty);
+        // A tuple the body changes is the caller's tuple in JavaScript: its type is counted once
+        // the program also writes it (boxing/tuples.rs), and the param then points to it. (The
+        // caller records nothing for a `Copy` argument, call.rs `lower_args`.)
+        let info = &self.info[l];
+        let ty = info.ty;
+        self.cx.note_tuple_copy(ty);
+        let (Some(ptr), true) = (info.vir, info.indirect) else {
+            return;
+        };
+        let vt = self.cx.ty(ty);
         let copy = self.new_local(vt, Some(f.body.locals[l].name.clone()));
         let src = Place {
             local: ptr,

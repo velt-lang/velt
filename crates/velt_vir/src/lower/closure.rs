@@ -310,7 +310,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
                     let v = self.clone_value(Operand::Copy(outer), ty);
                     self.maybe_transfer(v, ty)
                 }
-                PassMode::Owned if c.share => {
+                // Also a tuple out of a variable that does not own it (a borrowed parameter):
+                // sema moves it as a value, but it may be counted (boxing/tuples.rs).
+                PassMode::Owned if c.share || self.borrowed_tuple(c.outer) => {
                     let ty = self.info[c.outer.0 as usize].ty;
                     let v = self.share_value(Operand::Copy(outer), ty);
                     self.maybe_transfer(v, ty)
@@ -319,7 +321,12 @@ impl<'c, 'h> FnLower<'c, 'h> {
                     let ty = self.info[c.outer.0 as usize].ty;
                     self.maybe_transfer(Operand::Copy(outer), ty)
                 }
-                _ => Operand::Copy(outer),
+                _ => {
+                    // A copy the closure keeps: a tuple in it is the captured one.
+                    let ty = self.info[c.outer.0 as usize].ty;
+                    self.cx.note_tuple_copy(ty);
+                    Operand::Copy(outer)
+                }
             };
             self.assign(slot, Rvalue::Use(v));
             if c.mode == PassMode::Owned && !c.share && !self.frozen.contains(&c.outer) {

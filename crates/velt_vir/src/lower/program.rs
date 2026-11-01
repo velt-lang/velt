@@ -41,6 +41,8 @@ impl<'h> Cx<'h> {
                 fields: vec![(Ty::U64, 0), (Ty::U64, 8), (Ty::U64, 16)],
             }],
             externs: vec![],
+            cur_tuple_writes: vec![],
+            cur_read_params: vec![],
             extern_map: FxHashMap::default(),
             statics: vec![],
             module_desc: None,
@@ -259,6 +261,7 @@ impl<'h> Cx<'h> {
         let site = self.fn_sites.get(&fid).copied();
         let outer_site = std::mem::replace(&mut self.user_site, site.unwrap_or_default());
         let outer_mode = std::mem::take(&mut self.cur_mode);
+        let outer_tuples = self.start_fn_tuples();
         let func = match work {
             Work::Checked(w) | Work::Read(w) | Work::ReadOwn(w) | Work::Deferred(w) => {
                 let deep = matches!(work, Work::ReadOwn(w) if matches!(**w, Work::Deferred(_)));
@@ -284,6 +287,7 @@ impl<'h> Cx<'h> {
         self.cur_mode = outer_mode;
         self.cur_def = outer;
         self.user_site = outer_site;
+        self.finish_fn_tuples(fid, outer_tuples);
         self.bind_unique_params(fid);
         self.funcs[fid.0 as usize] = Some(func);
         self.building.remove(&fid);

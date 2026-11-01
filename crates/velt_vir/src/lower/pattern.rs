@@ -285,16 +285,20 @@ impl FnLower<'_, '_> {
     fn bind_local(&mut self, id: hir::LocalId, owns: bool, moving: bool, place: &Place) {
         let info = &self.info[id.0 as usize];
         let Some(l) = info.vir else { return };
-        if info.indirect {
+        // A second name for the part (`const [p] = pairs`): a tuple in it is one tuple. A binding
+        // by reference names the part itself, unless the part is in a copy of the value
+        // destructured (matching.rs `let_pat`, which records nothing for the copy).
+        let ty = info.ty;
+        if !info.indirect || self.binds_copy {
+            self.cx.note_tuple_copy(ty);
+        }
+        if self.info[id.0 as usize].indirect {
             let a = self.addr(place.clone());
             self.assign(Place::local(l), Rvalue::Use(a));
             return;
         }
         let v = match moving && self.share_binds {
-            true => {
-                let ty = self.info[id.0 as usize].ty;
-                self.share_value(Operand::Copy(place.clone()), ty)
-            }
+            true => self.share_value(Operand::Copy(place.clone()), ty),
             false => Operand::Copy(place.clone()),
         };
         self.assign(Place::local(l), Rvalue::Use(v));
@@ -364,6 +368,8 @@ impl FnLower<'_, '_> {
             return;
         };
         let elem = self.elem_ty(ty);
+        // The rest array holds copies of the elements (`const [...rest] = pairs`).
+        self.cx.note_tuple_copy(elem);
         let len = Operand::Copy(proj(place, Proj::Field(1)));
         let n = self.rvalue_temp(
             Ty::U64,

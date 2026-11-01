@@ -401,6 +401,7 @@ impl FnLower<'_, '_> {
                 .unwrap_or_else(|| ice("static atomic")),
             K::Field { base, index, .. } => {
                 let bty = self.sub(base.ty);
+                self.cx.note_tuple_write(bty);
                 let bp = self.place_expr_with(base, pre);
                 if !self.captured_root(base) {
                     self.target_barrier(&bp, bty);
