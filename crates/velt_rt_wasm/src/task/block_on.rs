@@ -96,7 +96,7 @@ pub unsafe fn run_until_idle(root: &mut Root) -> bool {
                 return true;
             }
         }
-        let quiet = with_exec(|e| e.locals == 0 && e.keep_alive == 0 && e.spawned.is_empty());
+        let quiet = with_exec(|e| e.locals == 0 && e.keep_alive == 0 && e.spawned == 0);
         if root.after && quiet {
             return true;
         }

@@ -3,7 +3,7 @@
 //! allocation) while the owner only observes completion. Everything runs on the one thread, so
 //! this is JS's concurrency model exactly; when one finishes, its awaiter runs next (a JS
 //! microtask). Dropped unfinished, a started promise keeps running and its task disposes of the
-//! result; `block_on` waits for started promises (see executor.rs).
+//! result; after a `main` that returned 0 the program waits for started promises (block_on.rs).
 
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
@@ -33,7 +33,7 @@ pub struct Started {
     handled: bool,
     /// In `WATCHED`: the checkpoint frees the promise if its owner dropped it meanwhile.
     watched: bool,
-    /// It runs a timer's callback (`mark_starting_timer`): `block_on` does not wait for it (a
+    /// It runs a timer's callback (`mark_starting_timer`): the program does not wait for it (a
     /// ref'd timer holds a keep-alive reference instead).
     timer: bool,
 }

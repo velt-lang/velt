@@ -24,8 +24,7 @@ use std::sync::Mutex;
 
 /// Goldens that cannot run on WebAssembly: the runtime has no sockets (nor `velt/http`), a
 /// `resolve` called later, or a shared promise settling, resumes its waiters at the executor's
-/// next step instead of queueing them as microtasks (https://veltlang.com/docs/reference/async/), and the tasks a
-/// synchronous `main` spawns never run (its executor runs only under an `async main`).
+/// next step instead of queueing them as microtasks (https://veltlang.com/docs/reference/async/).
 const UNSUPPORTED: &[&str] = &[
     "tcp_echo",
     "http_server",
@@ -36,10 +35,6 @@ const UNSUPPORTED: &[&str] = &[
     "promise_shared_orphan_task",
     "promise_shared_sync_main",
     "promise_shared_sync_main_module",
-    "process_lifetime_sync_main_tasks",
-    "process_lifetime_sync_main_rejection",
-    "process_lifetime_top_level_tasks",
-    "process_lifetime_spawned_finally",
     // A shared promise settling resumes its waiters at the executor's next step (the order of
     // the log), and a converted promise's rejection is reported as its own (no views, #1682).
     "promise_identity_bounded",

@@ -50,6 +50,8 @@ struct Task {
     join: Option<Rc<RefCell<JoinState>>>,
     /// The logical task it runs for ([`logical_task`]).
     logical: u64,
+    /// `spawn` started it (counted in [`Executor::spawned`]).
+    spawned: bool,
 }
 
 /// The logical task of the `block_on` root.
@@ -112,7 +114,8 @@ struct Executor {
     timer_seq: u64,
     /// Inside `block_on` (promises can only be started while tasks run).
     running: bool,
-    /// Started promises that have not finished (`block_on` waits for them, like JS).
+    /// Started promises that have not finished (after a `main` that returned 0, the program
+    /// waits for them, as native programs do).
     locals: usize,
     /// The poll being run: a promise created during it ([`super::boxed`] stamps it) can only
     /// have been woken by that poll's own code, never by a timer (velt_rt's turns, #150).
@@ -123,11 +126,11 @@ struct Executor {
     polling: Vec<(usize, u32)>,
     /// The last turn in which something yielded (`yieldNow()`).
     yielded: u32,
-    /// Keep-alive references (ref'd timers): `block_on` also waits while any is held.
+    /// Keep-alive references (ref'd timers): the program also waits while any is held.
     keep_alive: usize,
     /// The tasks `spawn` started that have not finished: the program goes on after `main` while
     /// any is left, as on native targets.
-    spawned: std::collections::HashSet<usize>,
+    spawned: usize,
     /// The microtask queue (`then` callbacks, `queueMicrotask`): it runs before the ready
     /// tasks, so it is drained after every task poll, like Node's microtask checkpoint
     /// (velt_rt task/local/micro.rs).
@@ -490,7 +493,12 @@ pub fn spawn(fut: *mut VeltFut, result_size: usize, join: Option<Rc<RefCell<Join
 /// [`spawn`] for `spawn(…)`: the program goes on after `main` until the task finishes.
 pub fn spawn_task(fut: *mut VeltFut, result_size: usize, join: Option<Rc<RefCell<JoinState>>>) {
     let id = spawn(fut, result_size, join);
-    with_exec(|e| e.spawned.insert(id));
+    with_exec(|e| {
+        if let Some(Some(t)) = e.tasks.get_mut(id - 1) {
+            t.spawned = true;
+            e.spawned += 1;
+        }
+    });
 }
 
 /// [`spawn`] for logical task `logical` (`None`: a new one). A started promise's driving task
@@ -513,6 +521,7 @@ pub fn spawn_for(
         result_size,
         join,
         logical,
+        spawned: false,
     };
     let id = with_exec(|e| match e.free.pop() {
         Some(slot) => {
@@ -541,7 +550,7 @@ pub fn cancel(id: usize) {
         e.queued.remove(&id);
         let task = e.tasks.get_mut(id - 1)?.take()?;
         e.free.push(id - 1);
-        e.spawned.remove(&id);
+        e.spawned -= usize::from(task.spawned);
         Some(task)
     });
     if let Some(task) = task {
@@ -565,8 +574,9 @@ unsafe fn run_task(id: usize) {
     }
     let task = with_exec(|e| {
         e.free.push(id - 1);
-        e.spawned.remove(&id);
-        e.tasks[id - 1].take()
+        let task = e.tasks[id - 1].take();
+        e.spawned -= usize::from(task.as_ref().is_some_and(|t| t.spawned));
+        task
     })
     .expect("ICE: a running task has a slot");
     if let Some(join) = &task.join {

@@ -1,5 +1,5 @@
 // `main` returning an exit code other than 0 ends the program at once: the promises still
-// running do not keep it alive, as in Node with `process.exitCode` and an exit.
+// running do not keep it alive (only after a `main` that returned 0 does the program wait).
 
 async function slow(): Promise<string> {
   await sleep(50);

@@ -62,6 +62,8 @@ thread_local! {
     static PROGRAM: RefCell<Option<Program>> = const { RefCell::new(None) };
     /// `velt_main` handed its root over (so `velt_start` does not report the end itself).
     static HOSTED: Cell<bool> = const { Cell::new(false) };
+    /// A program runs (from `velt_rt_host_main` until `velt.done`), also during a turn.
+    static RUNNING: Cell<bool> = const { Cell::new(false) };
 }
 
 /// `velt_rt_host_main(poll, state, size, align, finish)`: run the root task `poll`, whose
@@ -75,7 +77,7 @@ pub unsafe extern "C" fn velt_rt_host_main(
     align: u64,
     finish: FinishFn,
 ) {
-    if PROGRAM.with(|p| p.borrow().is_some()) {
+    if RUNNING.replace(true) {
         crate::panic::fatal("`velt_start` ran while a program is running");
     }
     let layout = Layout::from_size_align(size.max(1) as usize, align.max(1) as usize)
@@ -136,6 +138,7 @@ pub unsafe extern "C" fn velt_turn() {
     };
     imports::set_timer(-1.0);
     executor::stop();
+    RUNNING.set(false);
     crate::io::flush_stdout();
     imports::done(code);
 }
@@ -241,10 +244,12 @@ mod tests {
         }
     }
 
-    /// A root that spawns a task waiting for host promise 6, and finishes.
+    /// A root that spawns a task waiting for host promise 6, holds a keep-alive reference (a
+    /// ref'd timer's), and finishes.
     unsafe extern "C" fn spawns(_: *mut u8, _: *mut c_void) -> u32 {
         let leaf = crate::host_promise::velt_rt_host_promise(6);
         executor::spawn_task(leaf, 72, None);
+        executor::velt_rt_keep_alive_acquire();
         READY
     }
 
@@ -257,6 +262,7 @@ mod tests {
         unsafe {
             velt_rt_host_main(spawns, [0usize].as_ptr() as *const u8, 8, 8, returns_0);
             assert_eq!(imports::DONE.get(), None, "the spawned task waits");
+            executor::velt_rt_keep_alive_release();
             velt_settle(6);
             assert_eq!(imports::DONE.get(), Some(0));
         }
@@ -265,7 +271,8 @@ mod tests {
     #[test]
     fn an_exit_code_ends_the_program_at_once() {
         unsafe {
-            // `finish` gives 40: an exit code, with the spawned task still waiting.
+            // `finish` gives 40: an exit code, with the spawned task waiting and a keep-alive
+            // reference held.
             velt_rt_host_main(spawns, [0usize].as_ptr() as *const u8, 8, 8, finish);
             assert_eq!(imports::DONE.get(), Some(40));
         }

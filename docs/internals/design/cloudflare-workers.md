@@ -98,9 +98,10 @@ convention. A rejection becomes an `IoError` (the JS error's `name` and `message
 module: `velt_main` hands `main`'s root task to the runtime (`velt_rt_host_main`, which keeps
 its state on the heap) and returns. Each turn runs microtasks, ready tasks and due timers until
 none is left, asks the host for a wake-up at the next deadline (`set_timer(ms)`, which calls
-`velt_turn()`), and returns. When the root is done and nothing keeps the program open, the
-runtime runs the code after the root (the uncaught error, the exit code) and reports the end
-through the import `done(code)`. A Worker keeps the program open after `main` (the accept loop
+`velt_turn()`), and returns. When the root is done, the runtime runs the code after it (the
+uncaught error, the exit code) at once; after a `main` that returned 0 the turns go on while
+spawned tasks, started promises or ref'd timers remain, as native programs do. The end reaches
+the host through the import `done(code)`. A Worker keeps the program open after `main` (the accept loop
 awaits a host promise) and drives requests with the same turns. Velt's `async` functions are
 state machines, so waiting on the host needs no stack switching (no Asyncify, no JSPI). The
 browser glue uses the same protocol, so `sleep` does not busy-wait there.
