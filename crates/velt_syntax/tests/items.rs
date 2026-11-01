@@ -153,6 +153,46 @@ fn declare_generated_function() {
     assert!(matches!(&m.items[3].kind, ItemKind::ExternFn(s) if s.generator.is_none()));
 }
 
+/// `declare host("<module>") function`: a function the JS host provides, from that import
+/// module; `host` is a word only there, and `async` parses (sema rejects it).
+#[test]
+fn declare_host_function() {
+    let src = "export declare host(\"cloudflare\") function r2Get(bucket: HostRef, key: string): HostRef | null;
+         declare host(\"m\") async function later(): Promise<i32>;
+         function host(): i32 { return 1; }
+         declare function host2(): i32;";
+    let m = parse_ok(src);
+    let ItemKind::ExternFn(sig) = &m.items[0].kind else {
+        panic!("{:?}", m.items[0].kind)
+    };
+    let h = sig.host.as_ref().expect("a host module");
+    assert_eq!(h.module, "cloudflare");
+    assert_eq!(
+        &src[h.span.lo as usize..h.span.hi as usize],
+        "\"cloudflare\""
+    );
+    assert!(m.items[0].exported && !sig.is_system && !sig.is_async);
+    assert_eq!(sig.name.name, "r2Get");
+    assert_eq!(sig.params.len(), 2);
+    let ItemKind::ExternFn(sig) = &m.items[1].kind else {
+        panic!()
+    };
+    assert!(sig.is_async && sig.host.as_ref().is_some_and(|h| h.module == "m"));
+    assert!(matches!(&m.items[2].kind, ItemKind::Function(f) if f.sig.name.name == "host"));
+    assert!(matches!(&m.items[3].kind, ItemKind::ExternFn(s) if s.host.is_none()));
+}
+
+/// The module of `declare host(…)` must be a string.
+#[test]
+fn declare_host_needs_a_module_string() {
+    let errs = errors("declare host(cloudflare) function f(): void;");
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("the host's import module as a string")),
+        "{errs:?}"
+    );
+}
+
 #[test]
 fn structs_and_classes() {
     let m = parse_ok(

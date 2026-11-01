@@ -84,9 +84,10 @@ impl FnLower<'_, '_> {
         // one names (through a module `let` it reassigns, or another reference), so a captured
         // buffer or view is retained across them (`hold_buffer`, `system_view`).
         let laters = self.later_each(args);
+        let callee = format!("system function `{}`", func.name);
         for ((a, p), later) in args.iter().zip(declared).zip(laters) {
             let name = system::param_name(p);
-            if let Some(v) = self.system_view(func, name, a, later) {
+            if let Some(v) = self.system_view(&callee, &format!("`{name}`"), a, later) {
                 vals.push(v);
                 continue;
             }
@@ -257,7 +258,7 @@ impl FnLower<'_, '_> {
     /// function (the call is a compile error, reported once lowering is done). A view argument is
     /// `Intrinsic::Subarray`, which only [`Self::system_view`] knows how to lower; here its
     /// sub-expressions are evaluated (JS order) and the view itself is dropped.
-    fn system_arg_effects(&mut self, a: &hir::Expr) {
+    pub(super) fn system_arg_effects(&mut self, a: &hir::Expr) {
         if let hir::ExprKind::Call {
             callee: hir::Callee::Intrinsic(hir::Intrinsic::Subarray),
             args,
@@ -333,7 +334,7 @@ impl FnLower<'_, '_> {
     }
 
     /// The data pointer and length (`u64`) of a buffer argument: an array's or a view's.
-    fn buffer(&mut self, arg: Option<Arg>) -> (Operand, Operand) {
+    pub(super) fn buffer(&mut self, arg: Option<Arg>) -> (Operand, Operand) {
         match arg {
             Some(Arg::Value(place, t)) => self.header_parts(&place, t),
             Some(Arg::View { place, t, outside }) => self.view_bytes(&place, t, &outside),
@@ -604,7 +605,7 @@ impl FnLower<'_, '_> {
 }
 
 impl super::Cx<'_> {
-    /// The errors for calls of system functions the target lacks. One the standard library
+    /// The errors for calls of system and host functions the target lacks. One the standard library
     /// calls is reported at the user's call that reached it, as that call of std's function.
     pub(super) fn unavailable_diagnostics(&self) -> Vec<velt_common::Diagnostic> {
         let mut seen_decls = rustc_hash::FxHashSet::default();
@@ -613,6 +614,10 @@ impl super::Cx<'_> {
         for &(d, caller, site) in &self.unavailable {
             let hir::Def::ExternFn(x) = self.hir.def(d) else {
                 continue;
+            };
+            let kind = match x.host {
+                Some(_) => "host function",
+                None => "system function",
             };
             let in_std = self.locs.as_ref().is_some_and(|m| m.is_std(x.span));
             let entry = self.std_calls.get(&site).map(|&e| self.hir.def(e));
@@ -629,20 +634,20 @@ impl super::Cx<'_> {
                         ),
                         site,
                     )
-                    .with_note(format!(
-                        "it calls the system function `{}`, which {} lacks",
-                        x.symbol, self.target
-                    ))
+                    .with_note(match x.host {
+                        Some(_) => format!("it calls the host function `{}`", x.symbol),
+                        None => format!(
+                            "it calls the system function `{}`, which {} lacks",
+                            x.symbol, self.target
+                        ),
+                    })
                 }
                 _ => {
                     if !seen_decls.insert(d) {
                         continue;
                     }
                     let diag = velt_common::Diagnostic::error(
-                        format!(
-                            "system function `{}` is not available on {}",
-                            x.symbol, self.target
-                        ),
+                        format!("{kind} `{}` is not available on {}", x.symbol, self.target),
                         x.span,
                     );
                     match caller.map(|c| self.hir.def(c)) {
@@ -651,28 +656,33 @@ impl super::Cx<'_> {
                     }
                 }
             };
-            let note = match system::target_os(&self.target) {
-                None => "this target has no system functions".to_string(),
-                Some(_) => {
-                    let mut on: Vec<&str> = system::TARGETS
-                        .iter()
-                        .copied()
-                        .filter(|t| system::available(t, &x.symbol))
-                        .collect();
-                    on.dedup();
-                    match on.is_empty() {
-                        true => "no target can call it yet: a Windows function that waits for \
-                                 an `OVERLAPPED` is checked but not callable \
-                                 (https://veltlang.com/docs/reference/system-functions/)"
-                            .to_string(),
-                        false => format!("it is available on {}", on.join(", ")),
-                    }
-                }
-            };
-            diag = diag.with_note(note);
+            diag = diag.with_note(match x.host {
+                Some(_) => "only a JS host (wasm32-unknown-unknown) provides host functions".into(),
+                None => self.system_note(&x.symbol),
+            });
             out.push(diag);
         }
         out
+    }
+
+    /// Where the system function `symbol` is available, for the error of a call on a target
+    /// that lacks it.
+    fn system_note(&self, symbol: &str) -> String {
+        if system::target_os(&self.target).is_none() {
+            return "this target has no system functions".to_string();
+        }
+        let mut on: Vec<&str> = system::TARGETS
+            .iter()
+            .copied()
+            .filter(|t| system::available(t, symbol))
+            .collect();
+        on.dedup();
+        match on.is_empty() {
+            true => "no target can call it yet: a Windows function that waits for an \
+                     `OVERLAPPED` is checked but not callable (https://veltlang.com/docs/reference/system-functions/)"
+                .to_string(),
+            false => format!("it is available on {}", on.join(", ")),
+        }
     }
 }
 

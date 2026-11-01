@@ -27,6 +27,7 @@ pub(super) fn insert(program: &mut Program, required: u32) {
         params: vec![Ty::U32],
         ret: Ty::Unit,
         noreturn: false,
+        host: None,
     });
     let f = &mut program.funcs[main];
     let moved = BlockId(f.blocks.len() as u32);

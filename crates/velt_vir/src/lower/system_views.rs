@@ -15,7 +15,6 @@ use velt_sema::hir::{self, Callee as HCallee, Intrinsic, TyId};
 use super::operand::proj;
 use super::system::Arg;
 use super::{cint, ice, FnLower};
-use crate::system::Func;
 use crate::vir::{BinOp, Callee, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
 /// The std function giving a view's length in bytes (std/lang/typed_array/buffer_view.vlt).
@@ -29,10 +28,11 @@ impl FnLower<'_, '_> {
     /// order), retained when a later operand could replace it; its header is read and the
     /// positions are clamped only when the C arguments are assembled ([`Self::subarray_bytes`]),
     /// after every argument, so a later one (or a position) that grows the array cannot leave
-    /// the pointer at freed bytes.
+    /// the pointer at freed bytes. `callee` and `name` (the parameter) name the bytes in the
+    /// message of a view outside its buffer.
     pub(super) fn system_view(
         &mut self,
-        func: &Func,
+        callee: &str,
         name: &str,
         a: &hir::Expr,
         later: super::sequence::Later,
@@ -79,9 +79,8 @@ impl FnLower<'_, '_> {
             place,
             t,
             outside: format!(
-                "system function `{}`: the bytes `{name}` views are outside its buffer, which \
-                 is shorter than when the view was made",
-                func.name
+                "{callee}: the bytes {name} views are outside its buffer, which is shorter \
+                 than when the view was made"
             ),
         })
     }

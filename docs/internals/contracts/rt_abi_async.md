@@ -446,6 +446,10 @@ value or a `u64` where a 64-bit pointer is expected, but WebAssembly links only 
 signatures (wasm32 pointers are 32 bits). `crates/velt_rt/tests/std_externs.rs` compares every
 declaration in `std/` with velt_rt's and velt_rt_wasm's definitions.
 
+`declare host("m") function` (https://veltlang.com/docs/reference/host-functions/) is not this ABI either: it is a
+WebAssembly import the JS glue provides, called with the signature velt_vir's `vir/host.rs`
+states (rt_abi.md "Host values").
+
 `declare system function` (https://veltlang.com/docs/reference/system-functions/) is not this ABI: it binds a C
 library function, not the runtime, and lowering (velt_vir `lower/system.rs`) calls it with the
 C signature the table of system functions (velt_vir `system/`) states for the target. Integers

@@ -494,7 +494,7 @@ impl Checker<'_, '_> {
         // argument that changes the array (`h.b.length = 0` beside `h.b.subarray(0, 8)`) would
         // free bytes the view covers, so its arguments keep the strict rule.
         let system = matches!(callee, Some(Callee::Def(d, _))
-            if self.cx.try_fn(*d).is_some_and(|f| f.system.is_some()));
+            if self.cx.try_fn(*d).is_some_and(|f| f.has_buffer_params()));
         for a in args.iter_mut() {
             let (mut direct, mut nested) = (vec![], vec![]);
             col.direct(a, &mut direct, &mut nested);

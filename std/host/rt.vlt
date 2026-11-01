@@ -1,0 +1,7 @@
+// velt/host (internal): the runtime functions behind `HostRef` (rt_abi.md "Host values").
+
+/** Tells the host to forget the value in slot `handle` of its table. */
+export declare function velt_rt_host_release(handle: u32): void;
+
+/** A new slot of the host's table holding the value of slot `handle`. */
+export declare function velt_rt_host_clone(handle: u32): u32;

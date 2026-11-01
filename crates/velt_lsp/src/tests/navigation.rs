@@ -233,6 +233,24 @@ fn hover_uses_sema_types_when_the_program_checks() {
     client.shutdown();
 }
 
+/// A host function's call hovers as its declaration and goes to it.
+#[test]
+fn host_functions_hover_and_go_to_their_declaration() {
+    let mut client = Client::start();
+    let doc = uri("host.vlt");
+    let text = "declare host(\"env\") function now(scale: f64): f64;\n\nfunction main() {\n  console.log(now(2));\n}\n";
+    client.open(&doc, text);
+    assert_eq!(client.diagnostics(&doc)["diagnostics"], json!([]));
+    assert_eq!(
+        hover_text(&mut client, &doc, text, "now(2)", 0),
+        "declare host(\"env\") function now(scale: f64): f64"
+    );
+    let (line, col) = pos_of(text, "now(2)", 0);
+    let loc = client.request("textDocument/definition", at(&doc, line, col));
+    assert_eq!(loc["range"]["start"]["line"], 0, "{loc}");
+    client.shutdown();
+}
+
 #[test]
 fn abstract_classes_hover_and_complete() {
     let mut client = Client::start();

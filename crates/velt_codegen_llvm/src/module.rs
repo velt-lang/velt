@@ -14,7 +14,7 @@ use crate::runtime::{self, Allocator, Effects};
 use crate::statics::static_data;
 use crate::statics::StaticDefinition;
 use crate::target::Target;
-use crate::types::{abi_ret, abi_type, global_name, validate_aggregates};
+use crate::types::{abi_ret, abi_type, escape_bytes, global_name, validate_aggregates};
 use crate::units::{Shared, Unit};
 use crate::CodegenResult;
 
@@ -185,6 +185,9 @@ pub(crate) fn emit_unit(
     if let Some(debug) = debug {
         out.push_str(&debug.finish(target));
     }
+    if unit_defines_main(program, unit) {
+        out.push_str(&host_manifest(program));
+    }
     Ok(out)
 }
 
@@ -265,10 +268,45 @@ fn plain_declaration(e: &vir::ExternFn) -> CodegenResult<String> {
         (false, Effects::Any) => EXTERN_ATTRS,
     };
     Ok(format!(
-        "declare {} {}({params}) {attrs}\n",
+        "declare {} {}({params}) {attrs}{}\n",
         abi_ret(e.ret)?,
-        global_name(&e.symbol)
+        global_name(&e.symbol),
+        import_attrs(e)
     ))
+}
+
+/// The attributes that make a host function's declaration the WebAssembly import it is
+/// (`vir::HostImport`); none for any other extern.
+fn import_attrs(e: &vir::ExternFn) -> String {
+    let Some(h) = &e.host else {
+        return String::new();
+    };
+    format!(
+        " \"wasm-import-module\"=\"{}\" \"wasm-import-name\"=\"{}\"",
+        escape_bytes(h.module.as_bytes()),
+        escape_bytes(h.name.as_bytes())
+    )
+}
+
+/// The metadata id of the custom section listing the host functions: far above the ids debug
+/// info numbers from 0.
+const HOST_MANIFEST_ID: u32 = 2_000_000_000;
+
+/// The custom section listing the program's host functions (`vir::MANIFEST_SECTION`, one line
+/// each), which the JS glue reads to convert their values; nothing without any.
+fn host_manifest(program: &vir::Program) -> String {
+    let lines: BTreeSet<String> = (program.externs.iter())
+        .filter_map(|e| e.host.as_ref().map(vir::HostImport::manifest_line))
+        .collect();
+    if lines.is_empty() {
+        return String::new();
+    }
+    let text: String = lines.into_iter().collect();
+    format!(
+        "!wasm.custom_sections = !{{!{HOST_MANIFEST_ID}}}\n!{HOST_MANIFEST_ID} = !{{!\"{}\", !\"{}\"}}\n",
+        escape_bytes(vir::MANIFEST_SECTION.as_bytes()),
+        escape_bytes(text.as_bytes())
+    )
 }
 
 /// `declare` line of a runtime allocator function (see `runtime::Allocator`).

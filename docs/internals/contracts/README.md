@@ -87,6 +87,26 @@ Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exi
   test fails on a declaration without a table entry or an entry without a declaration
   (docs/internals/design/std-layout.md §10).
 
+## Host functions (additive AST, HIR and VIR extension, #1735)
+- `FnSig::host: Option<HostModule { module, span }>` (`ast.rs`): `declare host("<module>")
+  function name(…): R;`, an `ItemKind::ExternFn` like `declare system function` (`host` is a
+  word only between `declare` and `(`; `async` parses, sema rejects it). Any module may declare
+  one (https://veltlang.com/docs/reference/host-functions/).
+- `hir::ExternFnDef::host: Option<HostImport { module, params: Vec<HostTy>, ret: HostTy }>`
+  (`hir/extern_fn.rs`): a function the JS host provides, the WebAssembly import
+  `module`.`symbol`, with what crosses per parameter and for the result (`HostTy`: an integer,
+  `F64`, `Bool`, `Str`, `Bytes { readonly }`, `Ref { nullable }` for std's `HostRef`, `Void`). Not
+  an extern of the link: sema has checked the types, and every declaration of one import has the
+  same ones. Calls pass `u8[]` parameters `BorrowMut` and take views of bytes there, as for
+  system functions (hir_encodings.md).
+- `vir::ExternFn::host: Option<HostImport { module, name, params: Vec<HostValue>, ret }>`
+  (`vir/host.rs`): the extern is that import, not a link symbol; its `symbol` only names it in
+  the object. The extern's signature per value and the manifest the glue reads (the custom
+  section `velt.host`, a line per import) are in `vir/host.rs`. Lowering makes one only for
+  `wasm32-unknown-unknown`; on any other target a reachable call is an error, as for a system
+  function the target lacks. The LLVM backend declares it with `wasm-import-module` /
+  `wasm-import-name` and writes the manifest; other backends never see one.
+
 ## Who owns what
 | Area | Crates / files |
 |---|---|
