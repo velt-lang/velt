@@ -51,6 +51,14 @@ pub(super) struct Regions {
     pub(super) changed: bool,
     /// The callback is an `RwLock`'s `read` callback (`Some(true)`: one nested in another's).
     pub(super) read: Option<bool>,
+    /// The types the value a `read` callback reads may hold (`lock_types`).
+    pub(super) lock_tys: FxHashSet<TyId>,
+    /// Variables of a `read` callback's bodies holding an object it made, of a type the value
+    /// cannot hold, stored into the caller's containers (body, variable, store): one still used
+    /// afterwards is stored as a copy (`super::made_copied`).
+    pub(super) made_stored: Vec<(DefId, LocalId, Span)>,
+    /// Variables declared with a new object (`const h = new Holder()`, an object literal).
+    pub(super) made_locals: FxHashSet<Key>,
 }
 
 impl Regions {
@@ -69,6 +77,9 @@ impl Regions {
             callback: c,
             changed: false,
             read: None,
+            lock_tys: FxHashSet::default(),
+            made_stored: vec![],
+            made_locals: FxHashSet::default(),
         };
         let Sites { parent, passed, .. } = closure_sites(bodies);
         for (d, f) in bodies.iter() {
@@ -198,6 +209,29 @@ pub(super) fn reach(
             kids.iter()
                 .fold(0, |b, k| b | reach(cx, k, local, captured))
         }
+    }
+}
+
+/// The types a value of `t` may hold at any depth, `t` included.
+pub(super) fn lock_types(cx: &mut Ctx, t: TyId, out: &mut FxHashSet<TyId>) {
+    if cx.is_copy(t) || cx.is_string_value(t) || !out.insert(t) || out.len() > 512 {
+        return;
+    }
+    let parts: Vec<TyId> = match cx.ty.kind(t).clone() {
+        TyKind::Array(e) | TyKind::Option(e, _) => vec![e],
+        TyKind::Tuple(ts) => ts,
+        TyKind::Adt(d, args) => {
+            let fields: Vec<TyId> = cx
+                .adt(d)
+                .map_or(vec![], |a| a.fields.iter().map(|f| f.ty).collect());
+            let mut parts: Vec<TyId> = fields.into_iter().map(|f| cx.subst(f, &args)).collect();
+            parts.extend(args.iter().copied());
+            parts
+        }
+        _ => vec![],
+    };
+    for p in parts {
+        lock_types(cx, p, out);
     }
 }
 

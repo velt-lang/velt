@@ -653,12 +653,15 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   it through what they reach it by, also after moving it on into another of the caller's
   containers (`keep.push(top.pop()!)`), and the caller sees those changes, as in JavaScript.
   Sent on a channel before then, it is sent as a copy.
-  One whose type the value cannot hold, and a
-  function value, that the callback still uses after storing it is stored as a copy. So is a
-  container of the callback's own whose type the value cannot hold, or a `Map` or `Set` of its
-  own, holding objects of the value's types, given to a method or function that changes the
-  caller's containers (`mvBag(out, bag)`, `bag.moveTo(out)`): that call gets a copy, so what it
-  moves into `out` is a copy and `bag` keeps what it held. An array of its own given to such a
+  An object of a type the value cannot hold (a class of the program's own, a `Map`, a `Set`)
+  that the callback made and that holds objects of the value's types is stored as that same
+  object when the store is its last use in the callback (`hs.push(h)`). Given to the caller's
+  containers while the callback still holds it, it would be stored as a copy, the caller's
+  objects inside it too, so that is an error (``this gives the caller's containers a copy of
+  what `h` holds …``): after `hs.push(h); h.rows.push([9])`, or passed to a method or function
+  that moves its items into the caller's containers (`mvBag(out, bag)`, `bag.moveTo(out)`).
+  Store it once it is complete. A function value that the callback still uses after storing it
+  is stored as a copy. An array of its own given to such a
   function (`mv(out, list)`, moving `list`'s elements into `out`) loses what the function
   moved, as in JavaScript, and stays the callback's own when the function did not keep it. What it
   removes or replaces there is freed once the outermost `read` returns, so a variable still

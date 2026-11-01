@@ -1,0 +1,37 @@
+// #1525 probe s6a: an object a `read` callback made, holding the caller's array, stored into the caller's
+// array while the callback still changes it: the store would keep a copy, where JavaScript shares
+// the object (and the caller's array inside). An error.
+class Box {
+  items: number[][] = [[1, 2], [3]];
+}
+class Holder {
+  rows: number[][] = [];
+}
+function first(xs: number[][][]): number[][] {
+  return xs[0];
+}
+function main() {
+  const a = new RwLock(new Box());
+  const b = new RwLock(new Box());
+  const mine: number[][][] = [[[1]], [[2]]];
+  const hs: Holder[] = [];
+  a.read((x) => {
+    const h = new Holder();
+    h.rows.push(mine[0][0]);
+    hs.push(h);
+    h.rows.push([9]);
+    b.read((y) => {
+      const g = first(mine);
+      g.push([7]);
+      const k = g;
+      k.push(y.items[0].slice());
+    });
+    const g2 = first(mine);
+    for (const r of g2) {
+      console.log(r.length);
+    }
+  });
+  mine[0][0].push(5);
+  a.write((q) => { q.items = []; });
+  console.log(JSON.stringify(mine), hs.length, JSON.stringify(hs[0].rows[0]));
+}

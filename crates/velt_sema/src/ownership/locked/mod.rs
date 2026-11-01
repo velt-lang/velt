@@ -253,6 +253,7 @@ struct Crossings {
     unfixable: Vec<stores::Unfixable>,
     inward: Vec<(crate::hir::LocalId, Span, bool)>,
     stored_fns: Vec<(DefId, Span)>,
+    made_stored: Vec<(DefId, crate::hir::LocalId, Span)>,
 }
 
 /// Run the checks of callback `c` on its `bodies` (`take_bodies`), rewriting them.
@@ -267,6 +268,17 @@ fn crossings(
 ) -> Crossings {
     let mut r = regions::Regions::new(c, bodies, moved);
     r.read = read;
+    if read.is_some() {
+        let value = bodies.iter().find(|(d, _)| *d == c).and_then(|(_, f)| {
+            let n = f.captures.len();
+            f.params.get(n).map(|p| p.ty)
+        });
+        if let Some(t) = value {
+            let mut tys = FxHashSet::default();
+            regions::lock_types(cx, t, &mut tys);
+            r.lock_tys = tys;
+        }
+    }
     r.resolved = resolved;
     r.named = named;
     loop {
@@ -308,6 +320,7 @@ fn crossings(
         unfixable,
         inward,
         stored_fns,
+        made_stored: std::mem::take(&mut r.made_stored),
     }
 }
 
@@ -354,6 +367,33 @@ fn check_callback(
         unfixable_error(cx, u);
     }
     later_uses(cx, res, c, found.inward, reported);
+    made_copied(cx, found.made_stored, reported);
+}
+
+/// Report an object a `read` callback made (of a type the value cannot hold) that it gives the
+/// caller's containers while still holding it (`stores::note_made`): they get a copy, also of
+/// the caller's objects inside it, where JavaScript shares the object.
+fn made_copied(
+    cx: &mut Ctx,
+    stored: Vec<(DefId, crate::hir::LocalId, Span)>,
+    reported: &mut FxHashSet<Span>,
+) {
+    for (d, l, at) in stored {
+        if !reported.insert(at) {
+            continue;
+        }
+        let name = match &cx.defs[d.0 as usize] {
+            Some(Def::Fn(body)) => body.body.locals[l.0 as usize].name.clone(),
+            _ => continue,
+        };
+        cx.error(
+            Diagnostic::error(
+                format!("this gives the caller's containers a copy of what `{name}` holds, an object the `read` callback made and still holds, where JavaScript would share it"),
+                at,
+            )
+            .with_note(format!("the copy would not see later changes on either side; store `{name}` once it is complete, as its last use in the callback (it then stays the same object), or build it outside the `read`")),
+        );
+    }
 }
 
 /// A weak collection used across the lock (docs/internals/design/weak-refs.md "Threads and

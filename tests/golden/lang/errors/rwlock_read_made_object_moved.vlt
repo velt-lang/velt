@@ -1,7 +1,7 @@
-// A `read` callback passing a container it made, of a type the value can't hold (a class, a
-// `Map`), that holds the caller's objects to a method or function moving them into the
-// caller's containers: the call gets a copy (async.md), so what it moves there is a copy,
-// counted there, and the callback's container keeps what it held. Nothing is freed early.
+// A `read` callback giving the caller's containers an object it made, of a type the value can't
+// hold (a class, a `Map`), that holds the caller's objects, while it still holds that object
+// (a function or method moving its items into the caller's containers): the store would get a
+// copy, also of the caller's objects inside, where JavaScript shares them. An error.
 class Item {
   v: i64 = 0;
   constructor(v: i64) {

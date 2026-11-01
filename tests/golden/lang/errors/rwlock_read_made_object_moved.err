@@ -1,0 +1,4 @@
+rwlock_read_made_object_moved.vlt:51:18: error: this gives the caller's containers a copy of what `bag` holds, an object the `read` callback made and still holds, where JavaScript would share it
+rwlock_read_made_object_moved.vlt:53:7: error: this gives the caller's containers a copy of what `bag` holds, an object the `read` callback made and still holds, where JavaScript would share it
+rwlock_read_made_object_moved.vlt:56:18: error: this gives the caller's containers a copy of what `h` holds, an object the `read` callback made and still holds, where JavaScript would share it
+rwlock_read_made_object_moved.vlt:71:18: error: this gives the caller's containers a copy of what `m` holds, an object the `read` callback made and still holds, where JavaScript would share it

@@ -125,6 +125,7 @@ impl Stores<'_, '_, '_, '_> {
             && root.is_some_and(|l| !self.r.is_home(self.def, l));
         if self.rewrite && !rebind {
             self.note_stored_fn(value, dest);
+            self.note_made(value, dest);
         }
         if rebind || dest == 0 || !crosses(dest, b) {
             if let (false, Some(root)) = (self.rewrite, root) {
@@ -226,6 +227,9 @@ impl Stores<'_, '_, '_, '_> {
             }
             if self.rewrite {
                 self.note_stored_fn(&args[a], dest);
+                if k < stores {
+                    self.note_made(&args[a], dest);
+                }
             }
             if !crosses(dest, bits[a]) || !self.rewrite || !done.insert(a) {
                 continue;
@@ -240,6 +244,37 @@ impl Stores<'_, '_, '_, '_> {
                 self.unfixable.push(Unfixable { span, kind });
             }
         }
+    }
+
+    /// An object a `read` callback made, of a type the value cannot hold that holds objects of the
+    /// value's types (not an array), given to the caller's containers while the callback still
+    /// holds it (not moved): the store gets a copy, also of the caller's objects inside it
+    /// (`super::made_copied`).
+    fn note_made(&mut self, value: &Expr, dest: u8) {
+        if self.r.read.is_none() || dest & OUT == 0 {
+            return;
+        }
+        let x = unshared(value);
+        let Some(l) = place_root(x).filter(|_| is_place(x)) else {
+            return;
+        };
+        let ty = value.ty;
+        if outer_mode(x) == Some(UseMode::Move)
+            || !self.r.made_locals.contains(&(self.def, l))
+            || self.r.is_home(self.def, l)
+            || self.r.get(self.def, l) & IN != 0
+            || self.r.lock_tys.contains(&ty)
+            || matches!(self.cx.ty.kind(ty), TyKind::Array(_))
+        {
+            return;
+        }
+        let mut inside = FxHashSet::default();
+        super::regions::lock_types(self.cx, ty, &mut inside);
+        inside.remove(&ty);
+        if inside.is_disjoint(&self.r.lock_tys) {
+            return;
+        }
+        self.r.made_stored.push((self.def, l, value.span));
     }
 
     /// A closure literal stored into the value (`v.f = () => r.deref()`).
@@ -449,6 +484,9 @@ impl VisitMut for Stores<'_, '_, '_, '_> {
                 local,
                 init: Some(init),
             } => {
+                if matches!(unshared(init).kind, E::New { .. } | E::AdtLit { .. }) {
+                    self.r.made_locals.insert((self.def, *local));
+                }
                 let b = self.mentions(init);
                 self.r.add(self.def, *local, b);
             }

@@ -1,0 +1,1 @@
+rwlock_read_made_still_held_s2.vlt:17:13: error: this gives the caller's containers a copy of what `h` holds, an object the `read` callback made and still holds, where JavaScript would share it
