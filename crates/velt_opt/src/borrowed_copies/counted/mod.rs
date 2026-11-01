@@ -53,9 +53,10 @@ use velt_vir::vir::{
 use crate::callgraph::CallGraph;
 use crate::locals::Usage;
 
-/// Runtime functions that free no counted object, besides those that write no memory compiled code reads (`velt_vir::math::effects`): allocation, and
-/// the string functions, which free only string buffers (never a counted object) and run no
-/// code of the program (an error's message built for a throw: `corrupt(\`page ${n}\`)`).
+/// Runtime functions that free no counted object, besides those that write no memory compiled
+/// code reads (`velt_vir::math::effects`): allocation, and the string functions, which free
+/// only string buffers (never a counted object) and run no code of the program (an error's
+/// message built for a throw: `corrupt(\`page ${n}\`)`).
 const NO_FREE: [&str; 19] = [
     "velt_rt_alloc",
     "velt_rt_realloc",
