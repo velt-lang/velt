@@ -86,7 +86,9 @@ pub unsafe extern "C" fn velt_rt_rwlock_read_unlock(p: *mut u64, _how: u64) {
     READ_DEPTH -= 1;
     *p -= 1;
     if READ_DEPTH == 0
-        && !((*std::ptr::addr_of!(WAITING)).is_empty() && (*std::ptr::addr_of!(LEAVING)).is_empty())
+        && !((*std::ptr::addr_of!(WAITING)).is_empty()
+            && (*std::ptr::addr_of!(LEAVING)).is_empty()
+            && (*std::ptr::addr_of!(KEPT)).is_empty())
     {
         free_waiting();
     }
@@ -138,6 +140,7 @@ pub unsafe extern "C" fn velt_rt_free_after_reads(p: *mut u8, drop: DropGlue) {
 
 #[cold]
 unsafe fn free_waiting() {
+    (*std::ptr::addr_of_mut!(KEPT)).clear();
     while let Some((c, p, drop)) = (*std::ptr::addr_of_mut!(LEAVING)).pop() {
         *c &= !(LOCAL | STORED);
         let mut slot = p;
@@ -180,13 +183,12 @@ pub extern "C" fn velt_rt_lk_mode() -> u8 {
 /// velt_rt `read_mode::velt_rt_lk_leave`: in a nested read, the bit goes when the reads end.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_lk_leave(p: *mut u64, obj: *mut u8, drop: DropGlue) {
-    if READ_DEPTH as u64 > LEAVE_TO {
+    if READ_DEPTH as u64 > LEAVE_TO || leaving(p) {
         return;
     }
-    if READ_DEPTH <= 1 {
-        if !leaving(p) {
-            *p &= !LOCAL;
-        }
+    let unique = *p & (STORED - 1) == 1 && KEPT_UNDER == 0;
+    if unique || (READ_DEPTH <= 1 && crate::transfer_map::velt_rt_xfer_keeps() != 1) {
+        *p &= !LOCAL;
         return;
     }
     *p += 1;
@@ -196,9 +198,36 @@ pub unsafe extern "C" fn velt_rt_lk_leave(p: *mut u64, obj: *mut u8, drop: DropG
 /// velt_rt `read_mode::velt_rt_lk_keep_made`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_lk_keep_made(p: *mut u64) {
-    if (READ_DEPTH <= 1 || READ_DEPTH as u64 > LEAVE_TO) && !leaving(p) {
+    if READ_DEPTH as u64 > LEAVE_TO && !leaving(p) {
         *p = 1;
     }
+}
+
+/// velt_rt `read_mode::KEPT_UNDER` (one thread).
+static mut KEPT_UNDER: u32 = 0;
+
+/// velt_rt `read_mode::KEPT` (one thread).
+static mut KEPT: Vec<usize> = Vec::new();
+
+/// velt_rt `read_mode::velt_rt_xfer_keep_shared`.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_xfer_keep_shared(enter: u8) {
+    let k = &mut *std::ptr::addr_of_mut!(KEPT_UNDER);
+    match enter {
+        1 => *k += 1,
+        _ => *k = k.saturating_sub(1),
+    }
+}
+
+/// velt_rt `read_mode::velt_rt_lk_kept_again`.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_lk_kept_again(obj: *mut u8) -> u8 {
+    let k = &mut *std::ptr::addr_of_mut!(KEPT);
+    if k.contains(&(obj as usize)) {
+        return 1;
+    }
+    k.push(obj as usize);
+    0
 }
 
 /// velt_rt `read_mode::velt_rt_lk_share_made`.
