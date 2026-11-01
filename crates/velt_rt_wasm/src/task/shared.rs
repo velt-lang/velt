@@ -124,6 +124,33 @@ pub unsafe extern "C" fn velt_rt_fut_share(
     new_handle(h)
 }
 
+/// What promise holder `f` stands for (task/identity.rs): `Ok(orig)`, the original future of
+/// its shared promise; `Err(proxy)`, the proxy of a holder handed to this task; `None` when `f`
+/// is not a holder.
+///
+/// # Safety
+/// `f` must be a live heap future.
+pub(super) unsafe fn origin(f: *mut VeltFut) -> Option<Result<*mut VeltFut, *mut VeltFut>> {
+    if !is_shared(f) {
+        return None;
+    }
+    if let Some((p, _)) = forwarded(f) {
+        return Some(Err(p));
+    }
+    let orig = hub(f).borrow().orig;
+    Some(Ok(orig))
+}
+
+/// Another holder of shared promise `f` (`f` is a holder, not handed over).
+///
+/// # Safety
+/// `f` must be a live holder of a shared promise, not handed to another task.
+pub(super) unsafe fn another_holder(f: *mut VeltFut) -> *mut VeltFut {
+    let h = hub(f);
+    on_its_task(&h);
+    new_handle(h)
+}
+
 /// A new holder of the promise of `h`: a handle of its own.
 unsafe fn new_handle(h: HubRef) -> *mut VeltFut {
     let size = {

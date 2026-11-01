@@ -1,8 +1,8 @@
 // log-pipeline: generate a synthetic access log, or stream one into a report (see README.md).
 //   log-pipeline gen access.log --lines 1000000
 //   log-pipeline report access.log
-import { ArgParser } from "velt:cli";
-import { args, exit } from "velt:process";
+import { ArgParser } from "velt/cli";
+import { args, exit } from "velt/process";
 import { generate } from "./generate";
 import { analyze } from "./analyze";
 import { report } from "./report";

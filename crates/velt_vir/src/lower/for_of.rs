@@ -1,7 +1,10 @@
 //! `for…of` over arrays. Elements are visited in order with a counter `k` that is advanced
 //! before the body runs, so `continue` jumps straight back to the condition.
 //!
-//! - Borrowing loop: the binding borrows (or copies) element `k` of the iterated place.
+//! - Borrowing loop: the binding borrows (or copies) element `k` of the iterated place. When
+//!   the body may replace or remove that element (`ForOf { share_elems: true }`, `xs[i] = …`),
+//!   each borrowing binding takes a share of what it binds instead, owned by the iteration
+//!   (`stable_binds`), so the old element lives as long as the binding, as in JS.
 //! - Consuming loop (`ForOf { consume: true }`, an owned temporary array): element `k` is
 //!   moved into the (owned) binding. The array is owned by a scope entry
 //!   ([`DropEntry::ConsumedArray`]) that drops the elements `k..len` not reached yet — none after
@@ -24,6 +27,7 @@ impl FnLower<'_, '_> {
         iter: &hir::Expr,
         body: &hir::Block,
         consume: bool,
+        share_elems: bool,
     ) {
         // A table is iterated where it is stored, whatever arrays of its type are in this
         // program: its header is the inline value.
@@ -112,7 +116,9 @@ impl FnLower<'_, '_> {
             self.bind_pat(binding, &ep, elem, false);
             self.frozen_binds = outer;
         } else {
+            let outer = std::mem::replace(&mut self.stable_binds, share_elems);
             self.bind_pat(binding, &ep, elem, false);
+            self.stable_binds = outer;
         }
         self.block(body);
         self.pop_scope();

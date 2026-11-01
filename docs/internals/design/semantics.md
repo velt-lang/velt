@@ -20,7 +20,7 @@ while Velt keeps Rust-level performance and memory behavior.
 | Kind | Semantics (user-visible) | Implementation |
 |---|---|---|
 | numbers, bool, Copy structs | values (JS primitives) | registers and stack, unchanged |
-| `string` | immutable value; copy freely, never `.clone()` | small strings inline (≤ 23 bytes, no heap); longer ones in a refcounted immutable buffer; a copy is a refcount increment, elided by the compiler when the source is dead (a move) |
+| `string` | immutable value; copy freely, never `.clone()` | small strings inline (≤ 23 bytes, no heap); longer ones in a refcounted immutable buffer; a copy is a refcount increment, elided by the compiler when the source is dead (a move) or when the copy is only read while nothing can change the source (a borrow, `velt_opt` `borrowed_copies`) |
 | objects (class instances), arrays, `Map`, closures | **shared references like JS** (`const b = a; b.push(1)` changes `a`) | ownership inference first: a value with a provably single owner uses today's code (no refcount, `noalias`); only values that are actually aliased get a refcount |
 | values crossing threads (`spawn`, handlers) | only thread-safe values (`shared`, `Mutex`, immutable data): a compile-time check | atomic counts only for values that cross threads; everything else non-atomic |
 | `x.clone()` | explicit independent deep copy (like `structuredClone`) | deep copy |

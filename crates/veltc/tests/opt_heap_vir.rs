@@ -57,3 +57,19 @@ fn objects_under_several_names_leave_the_heap() {
     );
     assert_eq!(allocs.len(), 1, "{allocs:?}\n{vir}");
 }
+
+#[test]
+fn objects_with_counted_fields_leave_the_heap() {
+    let vir = release_vir("lang/opt_heap_counted_field_loop.vlt");
+    // The loop's `Holder` has a counted field (`res`): its drop reads the field through a copy,
+    // so the object's address doesn't escape and the holder never reaches the heap. The one
+    // allocation left is the shared `Res`, made once outside the loop. Passing the field's
+    // address to the drop glue (as before) leaves a second allocation, the holder's, in the
+    // loop.
+    let allocs = allocations(&vir);
+    assert_eq!(
+        allocs.iter().map(|(_, n)| n).sum::<usize>(),
+        1,
+        "{allocs:?}\n{vir}"
+    );
+}

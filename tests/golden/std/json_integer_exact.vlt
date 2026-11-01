@@ -1,0 +1,36 @@
+// An integer field reads a number with a fraction or an exponent exactly when its value is an
+// integer (docs/std/json.md), not through a double: 9007199254740993.0 stays 9007199254740993,
+// and u64's top of range reads with a fraction too. A non-integer or out-of-range value fails.
+function readI64(doc: string) {
+  try {
+    console.log(doc, "->", JSON.parse<i64[]>(doc).join(","));
+  } catch (e) {
+    console.log(doc, "->", e.message);
+  }
+}
+
+function readU64(doc: string) {
+  try {
+    console.log(doc, "->", JSON.parse<u64[]>(doc).join(","));
+  } catch (e) {
+    console.log(doc, "->", e.message);
+  }
+}
+
+function main() {
+  readI64("[9007199254740993.0, 9007199254740993e0, 900719925474099.3e1, 90071992547409930e-1]");
+  readI64("[-9223372036854775808.0, 9223372036854775807.000, -0.0, 0e5, 1.5e1]");
+  readI64("[12e-1]");
+  readI64("[9223372036854775808.0]");
+  readI64("[-9223372036854775809e0]");
+  readI64("[2.5]");
+  readI64("[1e19]");
+  readI64("[100000000000000000000000e-5]");
+  readI64("[1e-1000000000]");
+  readU64("[18446744073709551615.0, 1844674407370955161.5e1, 18446744073709551615000e-3]");
+  readU64("[0.0, -0.0, -0e9, 1E2, 1e+2, 0.000e1000000000]");
+  readU64("[18446744073709551616.0]");
+  readU64("[18446744073709551615.5]");
+  readU64("[-1.0]");
+  readU64("[1e20]");
+}

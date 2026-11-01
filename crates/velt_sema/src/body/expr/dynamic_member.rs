@@ -16,7 +16,7 @@ use crate::hir::{self, ExprKind as H, Intrinsic, Lit, Nothing, TyId, TyKind, Use
 impl FnCx<'_, '_> {
     /// A member of an `any` is read, called or written here: lowering adds the member slots
     /// (`Program::dyn_members`). The standard library's own dynamic operations (`Proxy` and
-    /// `Reflect`, std/proxy.vlt) don't count: they run only in a program whose own
+    /// `Reflect`, std/lang/proxy/index.vlt) don't count: they run only in a program whose own
     /// code constructs a `Proxy` or calls `Reflect`, which counts there (`proxy.rs`).
     pub(crate) fn note_dyn_members(&mut self) {
         if !self.cx.scopes[self.module].is_std {
@@ -102,6 +102,76 @@ impl FnCx<'_, '_> {
                 .with_note("narrow it with `typeof` or `instanceof` first, or convert it with `as T` (checked at run time)")
         };
         self.cx.error(diag);
+    }
+
+    /// Is `t` a symbol (also a `unique symbol`) or `string | symbol`, a key that may name a
+    /// record's symbol table (std/lang/record/symbols.vlt)?
+    pub(crate) fn symbolic_key_type(&mut self, t: TyId) -> bool {
+        let w = self.cx.widened(t);
+        matches!(self.cx.ty.kind(w), TyKind::Symbol) || self.string_or_symbol(t)
+    }
+
+    /// Is `t` a union of strings, numbers and symbols with a number and a string or symbol
+    /// member (`PropertyKey`, `"a" | 1 | symbol`)? A record takes such a key as a
+    /// `string | symbol`, a number as its string ([`Self::property_key_of`]).
+    pub(crate) fn number_property_key(&mut self, t: TyId) -> bool {
+        let Some(members) = self.cx.union_members(t) else {
+            return false;
+        };
+        let (str_, f64_) = (self.cx.ty.str_, self.cx.ty.f64);
+        let (mut num, mut other) = (false, false);
+        for m in members {
+            let w = self.cx.widened(m);
+            if w == f64_ || self.cx.ty.is_numeric(w) {
+                num = true;
+            } else if w == str_ || matches!(self.cx.ty.kind(w), TyKind::Symbol) {
+                other = true;
+            } else {
+                return false;
+            }
+        }
+        num && other
+    }
+
+    /// The checked key `h` (a [`Self::number_property_key`]) as a `string | symbol`, as
+    /// JavaScript's `ToPropertyKey` makes it: `typeof k === "symbol" ? k : String(k)`, so a
+    /// number is its string (`rec[1]` is `rec["1"]`).
+    pub(crate) fn property_key_of(&mut self, h: hir::Expr) -> hir::Expr {
+        let span = h.span;
+        let members = self.cx.union_members(h.ty).unwrap_or_default();
+        let symbol = members.iter().any(|&m| {
+            let w = self.cx.widened(m);
+            matches!(self.cx.ty.kind(w), TyKind::Symbol)
+        });
+        self.with_temp("<key>", h, span, span, |cx, k| {
+            let syn = |kind| synth(kind, span);
+            let text = syn(ast::ExprKind::Call {
+                callee: Box::new(syn(ast::ExprKind::Ident(ast::Ident {
+                    name: "String".into(),
+                    span,
+                }))),
+                type_args: vec![],
+                args: vec![k.clone()],
+                optional: false,
+            });
+            if !symbol {
+                return cx.expr(&text, None, Want::Move);
+            }
+            let test = syn(ast::ExprKind::Binary {
+                op: ast::BinaryOp::StrictEq,
+                lhs: Box::new(syn(ast::ExprKind::Unary {
+                    op: ast::UnaryOp::TypeOf,
+                    expr: Box::new(k.clone()),
+                })),
+                rhs: Box::new(syn(ast::ExprKind::Lit(ast::Lit::Str("symbol".into())))),
+            });
+            let cond = syn(ast::ExprKind::Cond {
+                cond: Box::new(test),
+                then: Box::new(k.clone()),
+                els: Box::new(text),
+            });
+            cx.expr(&cond, None, Want::Move)
+        })
     }
 
     /// Is `t` a union of strings and symbols (`string | symbol`, a proxy trap's key)? Such a
@@ -196,9 +266,14 @@ impl FnCx<'_, '_> {
             if !self.uses_proxy() {
                 return Ok(self.any_op(Intrinsic::AnyGet, vec![obj, key], any, span));
             }
-            // A proxy's `get` trap sees the symbol itself (`__anyGetSym`).
+            // A proxy's `get` trap sees the symbol itself (`anyGetSym`).
             let sym = self.expr(index, None, Want::Borrow);
-            return Ok(self.prelude_hir_call("__anyGetSym", vec![obj, key, sym], any, span));
+            return Ok(self.prelude_hir_call(
+                velt_common::std_hook!(any_get_sym),
+                vec![obj, key, sym],
+                any,
+                span,
+            ));
         }
         let k = self.expr(index, None, Want::Borrow);
         let Some(any) = any else {
@@ -222,8 +297,19 @@ impl FnCx<'_, '_> {
             let k = self.coerce_number(k, f64_);
             return Ok(self.any_op(Intrinsic::AnyIndex, vec![obj, k], any, span));
         }
-        if self.string_or_symbol(k.ty) {
+        // A plain `symbol` key needs `Proxy`'s helpers (velt/lang/hooks/proxy), which a program
+        // loads with `Proxy` or `Reflect`.
+        if self.string_or_symbol(k.ty) || (self.uses_proxy() && self.symbolic_key_type(k.ty)) {
             let k = self.coerce(k, any);
+            if self.uses_proxy() {
+                // A proxy's `get` trap and a record's symbol table see the symbol.
+                return Ok(self.prelude_hir_call(
+                    velt_common::std_hook!(any_get_key),
+                    vec![obj, k],
+                    any,
+                    span,
+                ));
+            }
             return Ok(self.any_op(Intrinsic::AnyGet, vec![obj, k], any, span));
         }
         // A key of a type parameter's keys (`K extends keyof T`): its string.
@@ -255,6 +341,7 @@ impl FnCx<'_, '_> {
                 return Ok(h);
             }
         }
+        let typed_callbacks = self.narrowed_dynamic_instance(&recv);
         let (recv, any) = self.dynamic_receiver(recv, Some(Some(&prop.name)))?;
         let Some(any) = any else {
             self.check_args_loose(args);
@@ -267,18 +354,67 @@ impl FnCx<'_, '_> {
             return Ok(self.with_temp("<list>", recv, span, span, |lw, v| {
                 let undefined = || synth(ast::ExprKind::Lit(ast::Lit::Undefined), span);
                 let sep = args.first().cloned().unwrap_or_else(undefined);
-                lw.text_helper_call("__anyJoinMethod", vec![v.clone(), sep], span)
+                lw.text_helper_call(
+                    velt_common::std_hook!(any_join_method),
+                    vec![v.clone(), sep],
+                    span,
+                )
             }));
         }
         let key = self.key_lit(&prop.name, prop.span);
         let text = format!("{}.{}", self.callee_text(&recv), prop.name);
         let text = self.key_lit(&text, span);
         let mut all = vec![recv, key, text];
-        let Some(boxed) = self.dynamic_args(args, any) else {
+        let outer = self.any_callback;
+        let boxed = self.dynamic_args(args, any, typed_callbacks);
+        self.any_callback = outer;
+        let Some(boxed) = boxed else {
             return Ok(self.error_expr(span));
         };
         all.extend(boxed);
         Ok(self.intrinsic(Intrinsic::AnyCall, all, any, span))
+    }
+
+    /// Is `recv` a variable declared `object` or `unknown` that a test narrowed to an instance
+    /// of a generic class or to an array (`x instanceof Map`, `Array.isArray(x)`), which it is
+    /// read as an `any` for? TypeScript types it `Map<any, any>` / `any[]`, so an arrow passed
+    /// to its method takes `any` parameters there (`raw.forEach((v, k) => …)`), where on an
+    /// `any` it needs them written.
+    fn narrowed_dynamic_instance(&self, recv: &hir::Expr) -> bool {
+        // The read of a narrowed `object` / `unknown` is the value it holds, checked (`AnyTo`)
+        // of a share of the variable (`downcast_narrowed`). The result of an array method that
+        // returns an array (`u.filter(…)` in `u.filter(…).map(…)`) is TypeScript's `any[]`
+        // again when its receiver is one.
+        let mut inner = recv;
+        for _ in 0..16 {
+            inner = match &inner.kind {
+                H::Downcast(x) => x.as_ref(),
+                H::Call {
+                    callee: hir::Callee::Intrinsic(Intrinsic::AnyTo | Intrinsic::Share),
+                    args,
+                } if args.len() == 1 => &args[0],
+                H::Block(b) => match &b.value {
+                    Some(v) => v.as_ref(),
+                    None => return false,
+                },
+                H::Call {
+                    callee: hir::Callee::Intrinsic(Intrinsic::AnyCall),
+                    args,
+                } => match args.get(1).map(|k| &k.kind) {
+                    Some(H::Lit(Lit::Str(name))) if ARRAY_RESULTS.contains(&name.as_str()) => {
+                        &args[0]
+                    }
+                    _ => return false,
+                },
+                _ => break,
+            };
+        }
+        let H::Local(l, _) = &inner.kind else {
+            return false;
+        };
+        let declared = self.cx.dynamic(self.local_ty(*l));
+        matches!(declared, Some(Dynamic::Object | Dynamic::Unknown))
+            && (self.narrowed_class(*l)).is_some_and(|t| self.cx.dynamic(t) == Some(Dynamic::Any))
     }
 
     /// `f.call(thisArg, ...args)` and `f.apply(thisArg, list)` of a `Function` `f`: the call
@@ -299,11 +435,40 @@ impl FnCx<'_, '_> {
             return None;
         }
         let bind = prop.name == "bind";
+        // `f.bind(thisArg, ...args)` in a program with function expressions taking `this`:
+        // the member call through `any`, which such a function answers (std/lang/this_fn/index.vlt).
+        if bind
+            && args.len() > 1
+            && self
+                .cx
+                .prelude_adt(velt_common::std_hook!(this_fn))
+                .is_some()
+        {
+            let any = self.any_ty()?;
+            let key = self.key_lit(&prop.name, prop.span);
+            let text = format!("{}.{}", self.callee_text(f), prop.name);
+            let text = self.key_lit(&text, span);
+            let mut all = vec![f.clone(), key, text];
+            all.extend(self.dynamic_args(args, any, false)?);
+            return Some(self.intrinsic(Intrinsic::AnyCall, all, any, span));
+        }
         let (this, rest) = match args.split_first() {
             Some((this, _)) if matches!(this.kind, ast::ExprKind::Spread(_)) => return None,
             Some((this, rest)) => (Some(this), rest),
             None => (None, args),
         };
+        // `f.apply(thisArg, null)` / `undefined`: no arguments, as in JavaScript.
+        let no_list = |l: &ast::Expr| {
+            matches!(
+                l.kind,
+                ast::ExprKind::Lit(ast::Lit::Null | ast::Lit::Undefined)
+            )
+        };
+        let rest = match (prop.name.as_str(), rest) {
+            ("apply", [l]) if no_list(l) => &[],
+            _ => rest,
+        };
+        let given = rest;
         let rest = match (prop.name.as_str(), rest) {
             ("call", _) => rest.to_vec(),
             ("apply" | "bind", []) => vec![],
@@ -326,6 +491,7 @@ impl FnCx<'_, '_> {
         };
         let mut stmts = vec![];
         let f = self.hoist_dynamic(f.clone(), &mut stmts);
+        let held = f.clone();
         let t = self.expr(this, Some(any), Want::Borrow);
         if self.cx.ty.is_bottom(t.ty) && t.ty != self.cx.ty.never {
             return Some(t);
@@ -339,14 +505,27 @@ impl FnCx<'_, '_> {
         };
         let null = self.dynamic_nothing(Nothing::Null, any, span);
         let b = self.cx.ty.bool_;
-        let nullish = self.intrinsic(Intrinsic::AnyLooseEq, vec![t, null], b, span);
+        let nullish = self.intrinsic(Intrinsic::AnyLooseEq, vec![t.clone(), null], b, span);
         let msg = format!(
             "TypeError: `{}` with a `this` other than `null` or `undefined` is not supported yet (#926): a function value has no `this`",
             prop.name
         );
         let msg = self.key_lit(&msg, span);
         let never = self.cx.ty.never;
-        let stop = self.intrinsic(Intrinsic::Panic, vec![msg], never, span);
+        let stop = match self.cx.prelude_adt(velt_common::std_hook!(this_fn)) {
+            // A program with function expressions taking `this` (std/lang/this_fn/index.vlt): the member
+            // call `f.call(thisArg, ...)` through `any`, which such a function answers.
+            Some(_) => {
+                let key = self.key_lit(&prop.name, prop.span);
+                let text =
+                    self.key_lit(&format!("{}.{}", self.callee_text(&held), prop.name), span);
+                let boxed = self.dynamic_args(given, any, false)?;
+                let mut all = vec![held, key, text, t.clone()];
+                all.extend(boxed);
+                self.intrinsic(Intrinsic::AnyCall, all, any, span)
+            }
+            None => self.intrinsic(Intrinsic::Panic, vec![msg], never, span),
+        };
         let kind = H::If {
             cond: Box::new(nullish),
             then: Box::new(call),
@@ -371,7 +550,7 @@ impl FnCx<'_, '_> {
         let text = self.callee_text(&f);
         let text = self.key_lit(&text, span);
         let mut all = vec![f, text];
-        let Some(boxed) = self.dynamic_args(args, any) else {
+        let Some(boxed) = self.dynamic_args(args, any, false) else {
             return Ok(self.error_expr(span));
         };
         all.extend(boxed);
@@ -381,7 +560,12 @@ impl FnCx<'_, '_> {
     /// The arguments of a dynamic call, each boxed as an `any` (moved into the call). With a
     /// spread (`f(a, ...xs)`), the arguments are one `any[]` built as the array literal
     /// `[a, ...xs]`, whose elements the call takes (hir_encodings.md "any and unknown").
-    fn dynamic_args(&mut self, args: &[ast::Expr], any: TyId) -> Option<Vec<hir::Expr>> {
+    fn dynamic_args(
+        &mut self,
+        args: &[ast::Expr],
+        any: TyId,
+        typed_callbacks: bool,
+    ) -> Option<Vec<hir::Expr>> {
         if args
             .iter()
             .any(|a| matches!(a.kind, ast::ExprKind::Spread(_)))
@@ -397,6 +581,9 @@ impl FnCx<'_, '_> {
         }
         let mut out = vec![];
         for a in args {
+            if typed_callbacks && matches!(a.kind, ast::ExprKind::Arrow { .. }) {
+                self.any_callback = Some(a.span);
+            }
             let h = self.expr(a, Some(any), Want::Move);
             out.push(self.coerce(h, any));
         }
@@ -484,3 +671,22 @@ impl FnCx<'_, '_> {
         self.mk(hir::ExprKind::Cast(Box::new(h)), f64_, span)
     }
 }
+
+/// The array methods whose result is an array of the same kind (`any[]` on an `any[]`).
+const ARRAY_RESULTS: &[&str] = &[
+    "concat",
+    "copyWithin",
+    "fill",
+    "filter",
+    "flat",
+    "flatMap",
+    "map",
+    "reverse",
+    "slice",
+    "sort",
+    "splice",
+    "toReversed",
+    "toSorted",
+    "toSpliced",
+    "with",
+];

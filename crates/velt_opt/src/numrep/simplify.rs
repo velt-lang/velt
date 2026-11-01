@@ -3,7 +3,7 @@
 //!   known (or one of whose edges the refinement rules out) becomes a jump;
 //! - `trunc`/`floor`/`ceil`/`round` of a whole value is the value (also for ±∞ and NaN);
 //! - `abs` of a value that is never negative or `-0` is the value;
-//! - `__floatIndex(x)` of a whole `x` in `[0, 2^64)`, never NaN, is `x as u64` (the path the
+//! - `floatIndex(x)` of a whole `x` in `[0, 2^64)`, never NaN, is `x as u64` (the path the
 //!   helper takes for it);
 //! - ToInt32 of a constant is that constant, and of a whole value in the int32 range a
 //!   conversion;
@@ -25,11 +25,11 @@ use crate::srclocs::push_stmt;
 /// Apply the simplifications to `func`; returns whether anything changed.
 pub(super) fn run(env: &Env, flow: &Flow, func: &mut Function) -> bool {
     let mut changed = false;
+    let mut st: State = flow.scratch();
     for bi in 0..func.blocks.len() {
-        let Some(entry) = flow.entry(bi) else {
+        if !flow.load(bi, &mut st) {
             continue;
-        };
-        let mut st: State = entry.clone();
+        }
         let mut remainders = vec![];
         for si in 0..func.blocks[bi].stmts.len() {
             if integer_remainder(flow, func, &st, &func.blocks[bi].stmts[si]) {
@@ -286,7 +286,7 @@ fn js_to_int32(x: f64) -> i32 {
     m as u32 as i32
 }
 
-/// Integer comparisons of a local with itself (`x == x` once a NaN test like `__floatIndex`'s
+/// Integer comparisons of a local with itself (`x == x` once a NaN test like `floatIndex`'s
 /// `trunc(x) == x` compares integers) become constants, and branches on them jumps.
 pub(crate) fn self_comparisons(func: &mut Function) -> bool {
     let mut changed = false;

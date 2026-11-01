@@ -1,0 +1,8 @@
+// velt/net/http (internal): the options of `new File(parts, name, options)`.
+
+/** The options of `new File(parts, name, options)`. */
+export struct FilePropertyBag {
+  type?: string;
+  /** Milliseconds since the epoch; default now. */
+  lastModified?: i64;
+}

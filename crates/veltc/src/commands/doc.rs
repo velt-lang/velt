@@ -1,28 +1,90 @@
 //! `velt doc`: HTML API docs (velt_doc) for the current package, given files/directories, or
-//! the standard library (`--std`).
+//! the standard library (`--std`); `--format json` writes the same documentation as one JSON
+//! document (`api.json`) for tools such as the docs website, and `--format types` the standard
+//! library's TypeScript declarations as the `velt` type package ([`velt_doc::dts`]).
 
 use std::path::{Path, PathBuf};
 
 use velt_doc::Input;
 
 use super::project::Project;
-use crate::cli::DocArgs;
+use crate::cli::{DocArgs, DocFormat};
 
 /// Generate the docs and print where they are.
 pub fn doc_command(args: &DocArgs) -> Result<(), String> {
+    if args.format == DocFormat::Types {
+        return types_command(args);
+    }
     let (title, intro, inputs, default_out) = collect(args)?;
     if inputs.is_empty() {
         return Err("no .vlt, .ts or .tsx files to document".into());
     }
-    let out = args.output.clone().unwrap_or(default_out);
-    let index = velt_doc::write_api_docs(&title, &intro, &inputs, &out)?;
     let plural = if inputs.len() == 1 { "" } else { "s" };
+    let written = if args.format == DocFormat::Json {
+        let json = velt_doc::api_json(&title, &inputs);
+        let file = match &args.output {
+            Some(out) if out.as_os_str() == "-" => {
+                print!("{json}");
+                return Ok(());
+            }
+            Some(out) if out.extension().is_some_and(|e| e == "json") => out.clone(),
+            Some(dir) => dir.join("api.json"),
+            None => default_out.join("api.json"),
+        };
+        velt_doc::write(&file, &json)?;
+        file
+    } else {
+        let out = args.output.clone().unwrap_or(default_out);
+        velt_doc::write_api_docs(&title, &intro, &inputs, &out)?
+    };
     eprintln!(
         "velt doc: {} module{plural} → {}",
         inputs.len(),
-        vpm::relpath::absolute(&index).display()
+        vpm::relpath::absolute(&written).display()
     );
     Ok(())
+}
+
+/// `--format types`: the `velt` type package in `-o` (default `target/velt-types`).
+fn types_command(args: &DocArgs) -> Result<(), String> {
+    if !args.std || !args.paths.is_empty() {
+        return Err(
+            "`--format types` writes the standard library's declarations: use it with \
+                    `--std` and no paths"
+                .into(),
+        );
+    }
+    let root = crate::loader::std_root().ok_or("cannot find the standard library; set VELT_STD")?;
+    let inputs = velt_doc::inputs_from_dir(&root, "std")?;
+    let out = args
+        .output
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("target").join("velt-types"));
+    let files = velt_doc::dts::type_package(&inputs, env!("CARGO_PKG_VERSION"));
+    for (path, text) in &files {
+        velt_doc::write(&out.join(path), text)?;
+    }
+    eprintln!(
+        "velt doc: the `velt` type package, {} files → {}",
+        files.len(),
+        vpm::relpath::absolute(&out).display()
+    );
+    Ok(())
+}
+
+/// `inputs` with their files shown under `base` (`std`, `src`, a directory given).
+fn under(base: &str, inputs: Vec<Input>) -> Vec<Input> {
+    let base = base.replace('\\', "/");
+    inputs
+        .into_iter()
+        .map(|mut i| {
+            i.file = match base.trim_end_matches('/') {
+                "" | "." => i.file,
+                base => format!("{base}/{}", i.file),
+            };
+            i
+        })
+        .collect()
 }
 
 type Collected = (String, String, Vec<Input>, PathBuf);
@@ -32,8 +94,9 @@ fn collect(args: &DocArgs) -> Result<Collected, String> {
     if args.std {
         let root =
             crate::loader::std_root().ok_or("cannot find the standard library; set VELT_STD")?;
-        let intro = "`import { … } from \"velt:<name>\"`; `std/prelude/*` is available everywhere.";
-        let inputs = velt_doc::inputs_from_dir(&root, "std")?;
+        let intro =
+            "`import { … } from \"velt/<module>\"`; `std/prelude/*` is available everywhere.";
+        let inputs = under("std", velt_doc::inputs_from_dir(&root, "std")?);
         return Ok((
             "Velt standard library".into(),
             intro.into(),
@@ -56,7 +119,7 @@ fn collect(args: &DocArgs) -> Result<Collected, String> {
     let root = Project::current_root()?;
     let manifest = vpm::Manifest::from_dir(&root)?;
     let name = manifest.package.name.clone();
-    let inputs = velt_doc::inputs_from_dir(&root.join("src"), &name)?
+    let inputs = under("src", velt_doc::inputs_from_dir(&root.join("src"), &name)?)
         .into_iter()
         .map(|mut i| {
             // `import … from "pkg"` is src/lib.vlt.
@@ -75,14 +138,44 @@ fn inputs_for_path(path: &Path) -> Result<Vec<Input>, String> {
         let prefix = path
             .file_name()
             .map_or(String::new(), |n| n.to_string_lossy().into_owned());
-        return velt_doc::inputs_from_dir(path, &prefix);
+        let inputs = velt_doc::inputs_from_dir(path, &prefix)?;
+        return Ok(under(&shown(path, &cwd()), inputs));
     }
     let source = std::fs::read_to_string(path)
         .map_err(|e| format!("cannot read `{}`: {e}", path.display()))?;
     let module = path
         .file_stem()
         .map_or("main".into(), |s| s.to_string_lossy().into_owned());
-    Ok(vec![Input { module, source }])
+    Ok(vec![Input {
+        module,
+        source,
+        file: shown(path, &cwd()),
+    }])
+}
+
+fn cwd() -> PathBuf {
+    std::env::current_dir().unwrap_or_default()
+}
+
+/// How `path`, given on the command line, is shown as a source file in the docs: relative to
+/// `cwd` when it is under it (`src/lib.vlt` for `./src/lib.vlt`, or for `D:/pkg/src/lib.vlt`
+/// run in `D:/pkg`), so the output does not depend on the machine or on how the path was
+/// spelled; otherwise as given, normalized. `/`-separated; `""` for `cwd` itself.
+fn shown(path: &Path, cwd: &Path) -> String {
+    use vpm::relpath::normalize;
+    let abs = normalize(&cwd.join(path));
+    let base = normalize(cwd);
+    let rel = match abs.strip_prefix(&base) {
+        Ok(rel) => Some(rel.to_path_buf()),
+        // Another spelling of the same directory (drive letter case, a link).
+        Err(_) => match (std::fs::canonicalize(&abs), std::fs::canonicalize(&base)) {
+            (Ok(a), Ok(b)) => a.strip_prefix(&b).ok().map(Path::to_path_buf),
+            _ => None,
+        },
+    };
+    rel.unwrap_or_else(|| normalize(path))
+        .to_string_lossy()
+        .replace('\\', "/")
 }
 
 #[cfg(test)]
@@ -102,17 +195,69 @@ mod tests {
             paths: vec![file, dir],
             std: false,
             output: Some(out.clone()),
+            format: DocFormat::Html,
         };
         doc_command(&args).unwrap();
         assert!(out.join("one.html").is_file());
         assert!(out.join("lib.two.html").is_file());
         let empty = DocArgs {
             paths: vec![tmp.path().join("doc")],
-            ..args
+            ..args.clone()
         };
         assert!(doc_command(&empty)
             .unwrap_err()
             .contains("no .vlt, .ts or .tsx files"));
+        // `--format json`: `api.json` in a directory, or the `.json` file named.
+        let json = DocArgs {
+            output: Some(tmp.path().join("json")),
+            format: DocFormat::Json,
+            ..args.clone()
+        };
+        doc_command(&json).unwrap();
+        let text = std::fs::read_to_string(tmp.path().join("json/api.json")).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let files: Vec<&str> = v["modules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["file"].as_str().unwrap())
+            .collect();
+        let dir = args.paths[1].to_string_lossy().replace('\\', "/");
+        assert_eq!(files[1], format!("{dir}/two.vlt"));
+        let file = tmp.path().join("one.json");
+        doc_command(&DocArgs {
+            output: Some(file.clone()),
+            ..json
+        })
+        .unwrap();
+        assert!(file.is_file() && !tmp.path().join("one.json/api.json").exists());
+    }
+
+    #[test]
+    fn paths_are_shown_relative_to_the_current_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path().join("pkg");
+        std::fs::create_dir_all(cwd.join("src")).unwrap();
+        std::fs::write(cwd.join("src/lib.vlt"), "").unwrap();
+        // Under the current directory: relative, however it is spelled.
+        for given in [
+            cwd.join("src"),
+            PathBuf::from("src"),
+            PathBuf::from("./src"),
+            PathBuf::from("./src/"),
+            PathBuf::from("src/../src"),
+        ] {
+            assert_eq!(shown(&given, &cwd), "src", "{}", given.display());
+        }
+        assert_eq!(shown(&cwd.join("src/lib.vlt"), &cwd), "src/lib.vlt");
+        assert_eq!(shown(Path::new("./src/lib.vlt"), &cwd), "src/lib.vlt");
+        assert_eq!(shown(&cwd, &cwd), "");
+        assert_eq!(shown(Path::new("."), &cwd), "");
+        // Elsewhere: as given, normalized.
+        assert_eq!(shown(Path::new("../other/x.vlt"), &cwd), "../other/x.vlt");
+        let outside = tmp.path().join("other");
+        let want = outside.to_string_lossy().replace('\\', "/");
+        assert_eq!(shown(&outside, &cwd), want);
     }
 
     #[test]
@@ -126,5 +271,42 @@ mod tests {
         doc_command(&args).unwrap();
         let fs = std::fs::read_to_string(tmp.path().join("std.fs.html")).unwrap();
         assert!(fs.contains("readFile"), "{fs}");
+    }
+
+    #[test]
+    fn std_type_package() {
+        let tmp = tempfile::tempdir().unwrap();
+        let args = DocArgs {
+            std: true,
+            output: Some(tmp.path().to_path_buf()),
+            format: DocFormat::Types,
+            ..Default::default()
+        };
+        doc_command(&args).unwrap();
+        let fs = std::fs::read_to_string(tmp.path().join("fs/index.d.ts")).unwrap();
+        assert!(
+            fs.contains("export declare function readFile(path: string): Promise<string>;"),
+            "{fs}"
+        );
+        let json = std::fs::read_to_string(tmp.path().join("package.json")).unwrap();
+        assert!(
+            json.contains("\"./fs\": { \"types\": \"./fs/index.d.ts\" }"),
+            "{json}"
+        );
+        // The package is std's: not a package's, nor given files'.
+        for args in [
+            DocArgs {
+                std: false,
+                ..args.clone()
+            },
+            DocArgs {
+                paths: vec![tmp.path().into()],
+                ..args.clone()
+            },
+        ] {
+            assert!(doc_command(&args)
+                .unwrap_err()
+                .contains("`--std` and no paths"));
+        }
     }
 }

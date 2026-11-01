@@ -1,0 +1,59 @@
+// velt/net/url (internal): the URL record and its serializer (WHATWG "URL serializer").
+
+/**
+ * A parsed URL. `path` is serialized (it starts with "/" unless it is empty or `opaque`, e.g.
+ * `mailto:` paths); `port` is "" when absent or the scheme's default. Optional components are
+ * a flag plus a string (not `string | null`) so they can be read without cloning.
+ */
+export class UrlRecord {
+  scheme: string = "";
+  username: string = "";
+  password: string = "";
+  hasHost: bool = false;
+  host: string = "";
+  port: string = "";
+  path: string = "";
+  opaque: bool = false;
+  hasQuery: bool = false;
+  query: string = "";
+  hasFragment: bool = false;
+  fragment: string = "";
+}
+
+/** The serialized URL (WHATWG "URL serializer"). */
+export function serialize(r: UrlRecord): string {
+  // Appended in place: one buffer that grows, not a new string per component.
+  let out = `${r.scheme}:`;
+  if (r.hasHost) {
+    out += "//";
+    out += userinfo(r);
+    out += r.host;
+    if (r.port.length > 0) {
+      out += ":";
+      out += r.port;
+    }
+  } else if (!r.opaque && r.path.startsWith("//")) {
+    out += "/.";
+  }
+  out += r.path;
+  if (r.hasQuery) {
+    out += "?";
+    out += r.query;
+  }
+  if (r.hasFragment) {
+    out += "#";
+    out += r.fragment;
+  }
+  return out;
+}
+
+/** `user:pass@`, `user@` or "". */
+export function userinfo(r: UrlRecord): string {
+  if (r.username.length == 0 && r.password.length == 0) {
+    return "";
+  }
+  if (r.password.length == 0) {
+    return `${r.username}@`;
+  }
+  return `${r.username}:${r.password}@`;
+}

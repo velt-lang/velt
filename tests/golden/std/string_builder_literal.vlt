@@ -1,0 +1,20 @@
+// `b.append("literal")` is compiled to the builder's fast path inline (string-building.md step 2,
+// #1677): it must still copy a buffer that `toString()` shared, grow a full one, and leave
+// non-ASCII text to the runtime.
+function main() {
+  const b = new StringBuilder(64);
+  b.append("a heap buffer, longer than 23 bytes");
+  const first = b.toString();
+  b.append("cd");
+  b.append("!");
+  console.log(first);
+  console.log(b.toString());
+  for (let i = 0; i < 40; i++) {
+    b.append(",\"k\":");
+  }
+  const mid = b.toString();
+  b.append("x");
+  console.log(mid.length, b.toString().length, b.take().endsWith("\"k\":x"));
+  b.append("é");
+  console.log(b.toString());
+}

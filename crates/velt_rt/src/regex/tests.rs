@@ -155,7 +155,7 @@ fn exec_all_and_escape() {
 }
 
 /// U+2028/U+2029: `.` excludes them as in JS, but multiline `^`/`$` do not stop at them (JS:
-/// `">a\u2028>b"`), the documented difference in docs/std/regex.md.
+/// `">a\u2028>b"`), the documented difference in docs/std/text/regex.md.
 #[test]
 fn line_separators() {
     assert_eq!(replace(".", "g", "a\u{2028}b", "-"), "-\u{2028}-");

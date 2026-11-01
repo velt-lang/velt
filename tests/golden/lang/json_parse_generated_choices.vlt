@@ -1,0 +1,113 @@
+// `JSON.parse<T>` of options (absent, `null`, `a?: T`, `as T`), literal types, enums, unions of
+// literal types, `Map<string, V>` and `Record<K, V>` (string, literal and enum keys), decoded by
+// the code velt/encoding/json's generator writes; the messages and paths of their errors.
+enum Color {
+  Red = 1,
+  Green = 5,
+}
+
+enum Dir {
+  Up = "up",
+  Down = "down",
+}
+
+type Level = "low" | "high" | 3 | false;
+
+class Opts {
+  a?: string;
+  b?: string | null;
+  c: i32 | null = null;
+  lvl: Level = "low";
+  color: Color = Color.Red;
+  dir: Dir = Dir.Up;
+  lit: "x" = "x";
+  tags: Map<string, i64[]> = new Map();
+  rec: Record<string, bool> = {};
+  keyed: Record<"cpu" | "mem", f64> = { cpu: 0, mem: 0 };
+  byDir?: Record<Dir, string>;
+}
+
+function show(o: Opts) {
+  console.log(
+    o.a,
+    o.b,
+    o.c,
+    o.lvl,
+    o.color,
+    o.dir,
+    o.lit,
+    o.tags,
+    o.rec,
+    o.keyed,
+    o.byDir,
+    "a" in o,
+    "b" in o,
+  );
+  console.log(JSON.stringify(o));
+}
+
+const full = `{"a":"A","b":null,"c":7,"lvl":3,"color":5,"dir":"down","lit":"x","tags":{"t":[1,2],"u":[]},"rec":{"1":true,"z":false,"0":true},"keyed":{"mem":2,"cpu":1.5,"other":0},"byDir":{"up":"u","down":"d"}}`;
+show(JSON.parse<Opts>(full));
+show(
+  JSON.parse<Opts>(
+    `{"a":null,"lvl":false,"color":1,"dir":"up","lit":"x","tags":{},"rec":{},"keyed":{"cpu":1,"mem":2}}`,
+  ),
+);
+const asT =
+  JSON.parse(
+    `{"lvl":"high","color":1,"dir":"up","lit":"x","tags":{},"rec":{},"keyed":{"cpu":1,"mem":2},"b":null}`,
+  ) as Opts;
+show(asT);
+try {
+  JSON.parse(
+    `{"lvl":"high","color":1,"dir":"up","lit":"x","tags":{},"rec":{},"keyed":{"cpu":1,"mem":2},"a":null}`,
+  ) as Opts;
+} catch (e) {
+  console.log(e.message);
+}
+const bad = [
+  `{"lvl":"mid","color":1,"dir":"up","lit":"x","tags":{},"rec":{},"keyed":{"cpu":1,"mem":2}}`,
+  `{"lvl":[1],"color":1,"dir":"up","lit":"x","tags":{},"rec":{},"keyed":{"cpu":1,"mem":2}}`,
+  `{"lvl":true,"color":1,"dir":"up","lit":"x","tags":{},"rec":{},"keyed":{"cpu":1,"mem":2}}`,
+  `{"lvl":4,"color":1,"dir":"up","lit":"x","tags":{},"rec":{},"keyed":{"cpu":1,"mem":2}}`,
+  `{"lvl":3,"color":2,"dir":"up","lit":"x","tags":{},"rec":{},"keyed":{"cpu":1,"mem":2}}`,
+  `{"lvl":3,"color":1,"dir":"left","lit":"x","tags":{},"rec":{},"keyed":{"cpu":1,"mem":2}}`,
+  `{"lvl":3,"color":1,"dir":"up","lit":"y","tags":{},"rec":{},"keyed":{"cpu":1,"mem":2}}`,
+  `{"lvl":3,"color":1,"dir":"up","lit":"x","tags":{"a":[1,"2"]},"rec":{},"keyed":{"cpu":1,"mem":2}}`,
+  `{"lvl":3,"color":1,"dir":"up","lit":"x","tags":{},"rec":{"q":1},"keyed":{"cpu":1,"mem":2}}`,
+  `{"lvl":3,"color":1,"dir":"up","lit":"x","tags":{},"rec":{},"keyed":{"cpu":1}}`,
+  `{"lvl":3,"color":1,"dir":"up","lit":"x","tags":{},"rec":{},"keyed":{"cpu":1,"mem":"2"}}`,
+  `{"lvl":3,"color":1,"dir":"up","lit":"x","tags":{},"rec":{},"keyed":{"cpu":1,"mem":2},"byDir":{"up":"u"}}`,
+  `{"lvl":3,"color":1,"dir":"up","lit":"x","tags":{},"rec":{},"keyed":{"cpu":1,"mem":2},"c":"7"}`,
+  `{"lvl":3,"color":1,"dir":"up","lit":"x","tags":{},"rec":{},"keyed":{"cpu":1,"mem":2},"a":5}`,
+  `{"lvl":3,"color":1,"dir":"up","lit":"x","tags":{},"rec":{},"keyed":{"cpu":1,"mem":2},"keyed":{"cpu":1,"mem":2,"x":[}`,
+  `{"color":1,"dir":"up","lit":"x","tags":{},"rec":{},"keyed":{"cpu":1,"mem":2}}`,
+];
+for (const t of bad) {
+  try {
+    show(JSON.parse<Opts>(t, { comments: "skip" }));
+  } catch (e) {
+    console.log(e.message);
+  }
+  try {
+    show(JSON.parse(t, { comments: "skip", unknownKeys: "reject" }) as Opts);
+  } catch (e) {
+    console.log(e.message);
+  }
+}
+console.log(
+  JSON.parse<Color[]>("[5,1]"),
+  JSON.parse<Level | null>("null"),
+  JSON.parse<(string | null)[]>(`["a",null]`),
+);
+console.log(JSON.parse<Map<string, Dir>>(`{"k":"down"}`), JSON.parse<"a\\tb" | 1.5>(`1.5`));
+try {
+  JSON.parse<"a\\tb" | 1.5 | true>(`"a"`);
+} catch (e) {
+  console.log(e.message);
+}
+try {
+  JSON.parse<Record<"b\\nc" | "d", i8>>(`{}`);
+} catch (e) {
+  console.log(e.message);
+}

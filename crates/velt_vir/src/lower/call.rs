@@ -5,7 +5,9 @@
 
 use velt_sema::hir::{self, DefId, PassMode, TyId, TyKind, UseMode};
 
+use super::foreign::ForeignBuf;
 use super::operand::proj;
+use super::sequence::Later;
 use super::view_unswitch_plain::FLOAT_INDEX;
 use super::{ice, unit, FnLower, LkMode, Work};
 use crate::vir::{self, Operand, Place, Proj, Rvalue, Ty};
@@ -21,12 +23,20 @@ impl FnLower<'_, '_> {
         match callee {
             hir::Callee::Intrinsic(i) => self.intrinsic(*i, args, ty),
             hir::Callee::Def(def, targs) => match self.cx.hir.def(*def) {
-                hir::Def::Fn(_) => {
+                hir::Def::Fn(f) => {
+                    self.note_std_call(*def, f.span);
                     let targs: Vec<TyId> = targs.iter().map(|&t| self.sub(t)).collect();
+                    if let Some(v) = self.type_test_call(*def, &targs, args) {
+                        return v;
+                    }
+                    if let Some(v) = self.builder_append_literal(&f.name, args) {
+                        return v;
+                    }
                     let v = self.call_def(*def, targs, vec![], args);
                     self.after_super_inits(*def);
                     v
                 }
+                hir::Def::ExternFn(x) if x.system.is_some() => self.system_call(*def, args),
                 hir::Def::ExternFn(_) => self.extern_call(*def, args),
                 _ => ice("call of a non-function definition"),
             },
@@ -50,6 +60,18 @@ impl FnLower<'_, '_> {
                     // An interface value instantiating a type parameter bound by an
                     // interface its interface is or extends (#1368): through its table.
                     return self.call_dyn(slot, method_type_args, args, ty, transfer);
+                }
+                if let Some(field) = self.dyn_getter_only(*iface, *slot, recv_ty) {
+                    // A write to a field the value has only a getter for: Node's `TypeError`
+                    // in strict code.
+                    self.panic_msg(&format!(
+                        "TypeError: Cannot set property {field} of #<Object> which has only a getter"
+                    ));
+                    self.terminate(vir::Terminator::Unreachable);
+                    let dead = self.new_block();
+                    self.switch_to(dead);
+                    let vt = self.cx.ty(ty);
+                    return self.zero_value(vt);
                 }
                 let iargs: Vec<TyId> = iface_args.iter().map(|&t| self.sub(t)).collect();
                 let (def, mut targs) = self.resolve_param_method(*iface, &iargs, *slot, recv_ty);
@@ -117,13 +139,18 @@ impl FnLower<'_, '_> {
             }
         }
         let mut argv = pre;
-        // A quiet callee (quiet.rs) cannot reach what a borrow goes through: no shares.
-        let how = match self.cx.quiet(def) {
+        // A quiet callee (quiet.rs) cannot reach what a borrow goes through: no shares. Nor can
+        // one quiet for borrows, except that it may move the buffer of an array it pushes onto:
+        // an argument in an array's buffer is shared then.
+        let quiet = self.cx.quiet(def);
+        let how = match quiet
+            || self.cx.quiet_for_borrows(def) && !args.iter().any(|a| self.in_array_buffer(a))
+        {
             true => Stabilize::Facts,
             false => Stabilize::Share,
         };
         // An index's conversion (`xs[i]` with a number `i`) reads only the number it is given.
-        if how == Stabilize::Facts || f.name == FLOAT_INDEX {
+        if quiet || f.name == FLOAT_INDEX {
             self.note_quiet_call(fid, def);
         }
         let outer = std::mem::replace(&mut self.frozen_args, frozen != 0);
@@ -135,7 +162,15 @@ impl FnLower<'_, '_> {
         let kept = std::mem::replace(&mut self.kept_args, kept);
         let handed = std::mem::take(&mut self.kept_handed);
         let drops = std::mem::take(&mut self.kept_drops);
+        // A modified param of a function also used as a value is `Borrow` (sema demotes it, as
+        // calls through a value may alias it): the argument must still be the caller's object.
+        let changed = (f.params[f.params.len() - modes.len()..].iter().enumerate())
+            .filter(|(i, p)| *i < 64 && p.mode == PassMode::Borrow)
+            .filter(|(_, p)| f.body.locals[p.local.0 as usize].mutable)
+            .fold(0u64, |m, (i, _)| m | 1 << i);
+        let changed = std::mem::replace(&mut self.changed_args, changed);
         argv.extend(self.lower_args(args, &modes, how));
+        self.changed_args = changed;
         argv.extend(loc_arg);
         let handed = std::mem::replace(&mut self.kept_handed, handed);
         let drops = std::mem::replace(&mut self.kept_drops, drops);
@@ -235,12 +270,8 @@ impl FnLower<'_, '_> {
                 s => Some(s),
             })
             .collect();
-        // The SIMD helpers are inlined, synchronous, and only read an array's header: they get
-        // the header where it is instead of a copy, so after inlining nothing reads the copy
-        // (which LLVM would redo after every element store, tbaa.rs in velt_codegen_llvm).
-        let in_place = x.symbol.starts_with("velt_simd_");
         let mut bufs = vec![];
-        let mut argv = self.foreign_args(&x.params, args, in_place, &mut bufs);
+        let mut argv = self.foreign_args(&x.params, args, true, &mut bufs);
         let fret = self.cx.foreign_ty(x.ret);
         let ret = match fret {
             Ty::Agg(_) => Ty::Unit,
@@ -265,14 +296,21 @@ impl FnLower<'_, '_> {
     }
 
     /// Arguments of an extern as foreign views (borrowed: the caller keeps ownership); the
-    /// buffers of array views go to `bufs`, to free once the extern returned. `in_place`: an
-    /// array is passed as its own header rather than a view of it.
+    /// buffers of array views go to `bufs`, to free once the extern returned.
+    ///
+    /// `in_place` (a synchronous extern): an array whose elements need no converting is passed
+    /// as its own header (the box's, when its type is boxed), not a copy, so an extern that
+    /// writes it (an out parameter, `velt_rt_regex_exec`'s offsets; `velt_rt_bytes_fill`'s
+    /// elements) changes the array itself (#1831). A view (array_view.rs) passes its mirror,
+    /// written back to the original after the call. It also keeps the inlined SIMD helpers
+    /// from reading a copy (which LLVM would redo after every element store, tbaa.rs in
+    /// velt_codegen_llvm).
     fn foreign_args(
         &mut self,
         params: &[TyId],
         args: &[hir::Expr],
         in_place: bool,
-        bufs: &mut Vec<super::foreign::ForeignBuf>,
+        bufs: &mut Vec<ForeignBuf>,
     ) -> Vec<Operand> {
         let mut argv = vec![];
         for (&p, a) in params.iter().zip(args) {
@@ -282,9 +320,14 @@ impl FnLower<'_, '_> {
                 Ty::Agg(_) => {
                     let vt = self.cx.ty(p);
                     let place = self.operand_place(v, vt);
-                    let view = match in_place && matches!(self.cx.kind(p), TyKind::Array(_)) {
-                        true => self.content(&place, p),
-                        false => self.foreign_view(&place, p, bufs),
+                    let view = match self.cx.kind(p) {
+                        TyKind::Array(e) if in_place && !self.cx.foreign_differs(e) => {
+                            if self.cx.array_view(p) {
+                                bufs.push(ForeignBuf::flush(Operand::Copy(place.clone()), p));
+                            }
+                            self.content(&place, p)
+                        }
+                        _ => self.foreign_view(&place, p, bufs),
                     };
                     argv.push(self.addr(view));
                 }
@@ -310,6 +353,10 @@ impl FnLower<'_, '_> {
         let outer = self.start_borrows();
         let mut recv = self.proxy_recv.take();
         let kept = std::mem::take(&mut self.kept_args);
+        let changed = std::mem::take(&mut self.changed_args);
+        // Owned arguments evaluated before a later one that may throw: dropped on that path
+        // until the call takes them (`pending_owned`).
+        let mut pending: Vec<Place> = vec![];
         for (i, ((a, mode), later)) in args.iter().zip(modes).zip(later).enumerate() {
             self.owner_write = false;
             if *mode == PassMode::BorrowMut {
@@ -351,8 +398,14 @@ impl FnLower<'_, '_> {
                     };
                     // A value the callee modifies stays where it is (it may only be shared). A
                     // frozen one changes for nobody, and is not counted (frozen.rs).
-                    let v = match mode {
-                        PassMode::Borrow if !self.frozen_root(a) => self.hold(v, a.ty, later),
+                    let held = match i < 64 && changed >> i & 1 == 1 {
+                        true => self.changed_hold(args, i, later),
+                        false => Some(later),
+                    };
+                    let v = match (mode, held) {
+                        (PassMode::Borrow, Some(l)) if !self.frozen_root(a) => {
+                            self.hold(v, a.ty, l)
+                        }
                         _ => v,
                     };
                     argv.push(self.operand_addr(v, t));
@@ -364,11 +417,15 @@ impl FnLower<'_, '_> {
                         _ => self.consume(a),
                     };
                     let tmp = self.copy_to_temp(v, t);
+                    if *mode == PassMode::Owned {
+                        self.pending_owned(Place::local(tmp), a.ty, later, &mut pending);
+                    }
                     argv.push(self.addr(Place::local(tmp)));
                 }
                 (_, PassMode::Owned) => {
                     let v = self.owned_arg(a);
-                    argv.push(self.hold_owned(v, a.ty, later));
+                    let v = self.hold_owned(v, a.ty, later);
+                    argv.push(self.pending_scalar(v, a.ty, later, &mut pending));
                 }
                 (_, m) => {
                     let v = match m {
@@ -391,11 +448,52 @@ impl FnLower<'_, '_> {
             }
         }
         self.owner_write = false;
+        // The call takes them now.
+        for p in pending {
+            self.take_temp(&p);
+        }
         if let (Some(r), Some(v)) = (recv, argv.first()) {
             self.proxy_recv_lowered(r, &v.clone());
         }
         self.finish_borrows(outer);
         argv
+    }
+
+    /// The owned argument at `p` (of type `ty`), when an argument after it (`later`) may throw:
+    /// registered for dropping until the call takes it, so an error a later argument throws
+    /// frees it (`f(x, g())` where `g` throws), as it does a temporary. Unregistered (`take_temp`)
+    /// once every argument is evaluated.
+    pub(super) fn pending_owned(
+        &mut self,
+        p: Place,
+        ty: TyId,
+        later: Later,
+        pending: &mut Vec<Place>,
+    ) {
+        if !later.memory || self.dead() || !self.needs_drop(ty) {
+            return;
+        }
+        let ty = self.sub(ty);
+        self.own_place(p.clone(), ty);
+        pending.push(p);
+    }
+
+    /// [`pending_owned`](Self::pending_owned) for an owned scalar argument `v` (a pointer to
+    /// its object), first copied to a temporary of its own when it needs to be.
+    pub(super) fn pending_scalar(
+        &mut self,
+        v: Operand,
+        ty: TyId,
+        later: Later,
+        pending: &mut Vec<Place>,
+    ) -> Operand {
+        if !later.memory || self.dead() || !self.needs_drop(ty) {
+            return v;
+        }
+        let vt = self.vty(ty);
+        let tmp = self.copy_to_temp(v, vt);
+        self.pending_owned(Place::local(tmp), ty, later, pending);
+        Operand::Copy(Place::local(tmp))
     }
 
     /// Borrow-ABI arguments: every aggregate by pointer, the caller keeps ownership (a value
@@ -443,6 +541,14 @@ impl FnLower<'_, '_> {
                     // A value the callee modifies stays where it is; a frozen one changes for
                     // nobody, and is not counted (frozen.rs).
                     Some(PassMode::BorrowMut) if !t.is_scalar() => v,
+                    // Through a function value, a `Borrow` param may be one the callee changes
+                    // (a closure's, or a named function's demoted by sema): the change must
+                    // reach the caller's object.
+                    None | Some(PassMode::Borrow) => match self.changed_hold(args, i, later) {
+                        None => v,
+                        Some(_) if self.frozen_root(a) && !super::place::number(t) => v,
+                        Some(l) => self.hold(v, a.ty, l),
+                    },
                     _ if self.frozen_root(a) && !super::place::number(t) => v,
                     _ => self.hold(v, a.ty, later),
                 }
@@ -528,6 +634,12 @@ impl FnLower<'_, '_> {
         self.fill_throw_loc();
         self.route_error(payload, err);
         self.switch_to(ok_bb);
+        if self.cx.is_never(ret) {
+            // A `never` callee returns only its error (`Function::cold`): no Ok follows, and
+            // nothing after the call runs on this path.
+            self.terminate(vir::Terminator::Unreachable);
+            return unit();
+        }
         if self.cx.is_unit(ret) {
             return unit();
         }

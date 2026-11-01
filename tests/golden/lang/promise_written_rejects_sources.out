@@ -1,0 +1,18 @@
+fb: b
+svc: svc
+map: a
+nw: x
+fine
+typed ok
+deferred ok
+rejected: not fine
+rejected: typed
+rejected: deferred
+ok
+override: no bad
+base
+ok
+caught boom
+caught null
+caught str x
+3

@@ -1,0 +1,27 @@
+// sqlite/engine/affinity (internal): column affinities (https://sqlite.org/datatype3.html#type_affinity):
+// their codes, and the affinity of a declared type.
+
+/** Column affinities. */
+export const A_BLOB: u8 = 0; // "none"
+export const A_TEXT: u8 = 1;
+export const A_NUMERIC: u8 = 2;
+export const A_INTEGER: u8 = 3;
+export const A_REAL: u8 = 4;
+
+/** The affinity of a declared type, by SQLite's rules (§3.1 of datatype3). */
+export function affinityOf(type: string): u8 {
+  const t = type.toUpperCase();
+  if (t.includes("INT")) {
+    return A_INTEGER;
+  }
+  if (t.includes("CHAR") || t.includes("CLOB") || t.includes("TEXT")) {
+    return A_TEXT;
+  }
+  if (t.includes("BLOB") || t.length == 0) {
+    return A_BLOB;
+  }
+  if (t.includes("REAL") || t.includes("FLOA") || t.includes("DOUB")) {
+    return A_REAL;
+  }
+  return A_NUMERIC;
+}

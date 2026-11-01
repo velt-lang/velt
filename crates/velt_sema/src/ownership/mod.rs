@@ -14,6 +14,7 @@
 
 mod boundary;
 mod cells;
+mod closure_names;
 mod derived;
 mod evidence;
 mod exclusive;
@@ -42,7 +43,7 @@ pub(crate) use kept_fns::KeptFns;
 pub(crate) use local_async::infer_local_async;
 pub(crate) use local_closures::{demote_local_closures, held_closures};
 pub(crate) use locked::{check_locked, WeakCrossings};
-pub(crate) use many::check_many_threads;
+pub(crate) use many::{check_closure as check_copied_closure, check_many_threads, Copied};
 pub(crate) use shares::soften_moves;
 pub(crate) use soft::clone_reused;
 pub(crate) use validate::validate_moves;

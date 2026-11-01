@@ -1,0 +1,355 @@
+// velt/net/http's request framing, seen from a raw socket.
+import { HttpRequest, HttpResponse, serveHttp } from "../src/lib";
+import { connect, TcpStream } from "velt/net";
+import { afterAll, beforeAll, describe, expect, it } from "velt/test";
+
+async function readAll(c: TcpStream): Promise<string> {
+  let all = "";
+  while (true) {
+    const chunk = await c.readString();
+    if (chunk == "") {
+      break;
+    }
+    all += chunk;
+  }
+  return all;
+}
+
+async function exchange(port: number, raw: string): Promise<string> {
+  const c = await connect(`127.0.0.1:${port}`);
+  await c.write(raw);
+  c.shutdown();
+  const all = await readAll(c);
+  c.close();
+  return all;
+}
+
+// The status lines of the responses, and the bodies the echo route sent back.
+function summary(text: string): string {
+  const out: string[] = [];
+  for (const m of text.match(/HTTP\/1\.1 \d\d\d[^\r]*|echo:[^\r]*/g) ?? []) {
+    out.push(m.startsWith("HTTP/") ? m.substring(9) : m);
+  }
+  return out.join(" | ");
+}
+
+const H = "Host: x\r\n";
+
+describe("request framing", () => {
+  // velt/net/http frames requests as RFC 9112 asks, so a proxy in front of it cannot see
+  // other request boundaries than it does (request smuggling): Transfer-Encoding with
+  // Content-Length, a coding other than chunked last, Transfer-Encoding in HTTP/1.0, two
+  // Content-Lengths, bytes that are not allowed in the request line or a header, bare LF in
+  // chunked framing, a missing or second Host, too many headers. Each is answered (400, 431,
+  // 501) and the connection closes. The Connection header's tokens, HTTP/1.0 keep-alive, and 100
+  // Continue after earlier responses. (Was the golden std/http_server_framing.)
+  let port = 0;
+  let close = () => {};
+  // The body length the /send-then-read handler read after it answered.
+  const sendThenReadGot = shared(-1 as i64);
+  beforeAll(async () => {
+    // A long idle timeout: nothing here may wait for one to answer.
+    const server = await serveHttp({ port: 0, idleTimeout: 120000 }, async (
+      req: HttpRequest,
+      res: HttpResponse,
+    ) => {
+      if (req.pathIs("/echo")) {
+        res.send(`echo:${await req.bodyText()}\r\n`);
+      } else if (req.pathIs("/noread")) {
+        res.send("ok");
+      } else if (req.pathIs("/late")) {
+        // The head is read after the body: it must still be this request's.
+        const body = await req.body();
+        res.send(`${req.method()} ${req.path()} ${req.header("x-a")} ${body.length}`);
+      } else if (req.pathIs("/send-then-read")) {
+        res.send("sent first");
+        const body = await req.body();
+        sendThenReadGot.set(body.length);
+      } else if (req.pathIs("/stream-then-read")) {
+        const s = await res.stream();
+        await s.write("head;");
+        const body = await req.body();
+        await s.write(`got ${body.length}`);
+        await s.end();
+      } else {
+        res.send(`${req.method()} ${req.target()}`);
+      }
+    });
+    port = server.port;
+    close = () => server.close();
+  });
+  afterAll(() => close());
+
+  // Each case: its name, the raw request bytes, and the summary of the answer.
+  function probes(cases: [string, string, string][]) {
+    for (const [name, raw, expected] of cases) {
+      it(name, async () => {
+        expect(summary(await exchange(port, raw))).toBe(expected);
+      });
+    }
+  }
+
+  describe("Transfer-Encoding and Content-Length", () => {
+    probes([
+      [
+        "TE + CL, then a pipelined GET",
+        `POST /echo HTTP/1.1\r\n${H}Content-Length: 4\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\nGET / HTTP/1.1\r\n${H}\r\n`,
+        "400 Bad Request",
+      ],
+      [
+        "TE gzip + CL",
+        `POST /echo HTTP/1.1\r\n${H}Transfer-Encoding: gzip\r\nContent-Length: 3\r\n\r\nabc`,
+        "400 Bad Request",
+      ],
+      [
+        "TE gzip",
+        `POST /echo HTTP/1.1\r\n${H}Transfer-Encoding: gzip\r\n\r\nabc`,
+        "400 Bad Request",
+      ],
+      [
+        "TE chunked, identity",
+        `POST /echo HTTP/1.1\r\n${H}Transfer-Encoding: chunked, identity\r\n\r\n3\r\nabc\r\n0\r\n\r\n`,
+        "400 Bad Request",
+      ],
+      [
+        "TE chunked twice",
+        `POST /echo HTTP/1.1\r\n${H}Transfer-Encoding: chunked\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n`,
+        "400 Bad Request",
+      ],
+      [
+        "TE gzip, chunked",
+        `POST /echo HTTP/1.1\r\n${H}Transfer-Encoding: gzip, chunked\r\n\r\n0\r\n\r\n`,
+        "501 Not Implemented",
+      ],
+      [
+        "TE in HTTP/1.0",
+        "POST /echo HTTP/1.0\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n0\r\n\r\n",
+        "400 Bad Request",
+      ],
+      [
+        "TE Chunked (any case)",
+        `POST /echo HTTP/1.1\r\n${H}Transfer-Encoding: Chunked\r\nConnection: close\r\n\r\n3\r\nabc\r\n0\r\n\r\n`,
+        "200 OK | echo:abc",
+      ],
+      [
+        "CL 0 then CL 5",
+        `POST /echo HTTP/1.1\r\n${H}Content-Length: 0\r\nContent-Length: 5\r\n\r\nhello`,
+        "400 Bad Request",
+      ],
+      [
+        "CL 5 twice",
+        `POST /echo HTTP/1.1\r\n${H}Content-Length: 5\r\nContent-Length: 5\r\n\r\nhello`,
+        "400 Bad Request",
+      ],
+      ["CL +5", `POST /echo HTTP/1.1\r\n${H}Content-Length: +5\r\n\r\nhello`, "400 Bad Request"],
+    ]);
+  });
+
+  describe("the request line and headers", () => {
+    probes([
+      [
+        "bare LF in a value",
+        `POST /echo HTTP/1.1\r\n${H}X: a\nTransfer-Encoding: chunked\r\nContent-Length: 3\r\n\r\nabc`,
+        "400 Bad Request",
+      ],
+      ["NUL in a value", `GET / HTTP/1.1\r\n${H}X: a\0b\r\n\r\n`, "400 Bad Request"],
+      ["control in a name", `GET / HTTP/1.1\r\n${H}X\u0001Y: a\r\n\r\n`, "400 Bad Request"],
+      ["( in a name", `GET / HTTP/1.1\r\n${H}X(Y: a\r\n\r\n`, "400 Bad Request"],
+      ["line folding", `GET / HTTP/1.1\r\n${H}X: a\r\n b\r\n\r\n`, "400 Bad Request"],
+      ["space before the colon", `GET / HTTP/1.1\r\n${H}X : a\r\n\r\n`, "400 Bad Request"],
+      ["( in the method", `G(T / HTTP/1.1\r\n${H}\r\n`, "400 Bad Request"],
+      ["control in the target", `GET /a\u0001b HTTP/1.1\r\n${H}\r\n`, "400 Bad Request"],
+      ["HTXX/1.1", `GET / HTXX/1.1\r\n${H}\r\n`, "400 Bad Request"],
+      ["HTTP/1.9", `GET / HTTP/1.9\r\n${H}\r\n`, "400 Bad Request"],
+      ["HTTP/2.0", `GET / HTTP/2.0\r\n${H}\r\n`, "400 Bad Request"],
+      [
+        "tab and UTF-8 in a value",
+        `GET /ok HTTP/1.1\r\n${H}X: a\tb é\r\nConnection: close\r\n\r\n`,
+        "200 OK",
+      ],
+    ]);
+  });
+
+  describe("chunked framing", () => {
+    probes([
+      [
+        "bare LF lines",
+        `POST /echo HTTP/1.1\r\n${H}Transfer-Encoding: chunked\r\n\r\n3\nabc\n0\n\n`,
+        "400 Bad Request",
+      ],
+      [
+        "junk after the size",
+        `POST /echo HTTP/1.1\r\n${H}Transfer-Encoding: chunked\r\n\r\n3 zz\r\nabc\r\n0\r\n\r\n`,
+        "400 Bad Request",
+      ],
+      [
+        "extensions and whitespace",
+        `POST /echo HTTP/1.1\r\n${H}Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n3 ;a=1\r\nabc\r\n2;b\r\nde\r\n0\r\nX-T: t\r\n\r\n`,
+        "200 OK | echo:abcde",
+      ],
+      [
+        "no CR LF after a chunk",
+        `POST /echo HTTP/1.1\r\n${H}Transfer-Encoding: chunked\r\n\r\n3\r\nabcX\r\n0\r\n\r\n`,
+        "400 Bad Request",
+      ],
+    ]);
+  });
+
+  describe("Host and limits", () => {
+    probes([
+      ["no Host in HTTP/1.1", "GET / HTTP/1.1\r\n\r\n", "400 Bad Request"],
+      ["two Hosts", `GET / HTTP/1.1\r\n${H}${H}\r\n`, "400 Bad Request"],
+      ["no Host in HTTP/1.0", "GET /old HTTP/1.0\r\n\r\n", "200 OK"],
+      [
+        "101 headers",
+        `GET / HTTP/1.1\r\n${H}${"a: b\r\n".repeat(100)}\r\n`,
+        "431 Request Header Fields Too Large",
+      ],
+      [
+        "100 headers",
+        `GET /ok HTTP/1.1\r\n${H}${"a: b\r\n".repeat(98)}Connection: close\r\n\r\n`,
+        "200 OK",
+      ],
+      [
+        "a 17 KiB head",
+        `GET / HTTP/1.1\r\n${H}X: ${"a".repeat(17000)}\r\n\r\n`,
+        "431 Request Header Fields Too Large",
+      ],
+    ]);
+  });
+
+  describe("Connection", () => {
+    it("keep-alive, close", async () => {
+      const both = await exchange(
+        port,
+        `GET /a HTTP/1.1\r\n${H}Connection: keep-alive, close\r\n\r\nGET /b HTTP/1.1\r\n${H}\r\n`,
+      );
+      expect(summary(both)).toBe("200 OK");
+      expect(both).toContain("Connection: close");
+    });
+
+    it("HTTP/1.0 keep-alive", async () => {
+      const old = await exchange(
+        port,
+        "GET /a HTTP/1.0\r\nConnection: Keep-Alive\r\n\r\nGET /b HTTP/1.0\r\n\r\n",
+      );
+      expect(summary(old)).toBe("200 OK | 200 OK");
+      expect(old).toContain("Connection: keep-alive");
+      expect(old).toContain("Connection: close");
+    });
+  });
+
+  describe("100 Continue", () => {
+    it("comes after the responses before it", async () => {
+      const c = await connect(`127.0.0.1:${port}`);
+      await c.write(
+        `GET /noread HTTP/1.1\r\n${H}\r\nPOST /echo HTTP/1.1\r\n${H}Content-Length: 5\r\nExpect: 100-continue\r\nConnection: close\r\n\r\n`,
+      );
+      let seen = "";
+      while (!seen.includes("100 Continue")) {
+        seen += await c.readString();
+      }
+      expect(seen.indexOf("200 OK")).toBeGreaterThanOrEqual(0);
+      expect(seen.indexOf("200 OK")).toBeLessThan(seen.indexOf("100 Continue"));
+      await c.write("hello");
+      c.shutdown();
+      const rest = await readAll(c);
+      c.close();
+      expect(summary(seen + rest)).toBe("200 OK | 100 Continue | 200 OK | echo:hello");
+    });
+
+    it("is not sent when the handler does not read", async () => {
+      // The handler does not read: the response goes out at once, without a 100, and the
+      // connection closes instead of waiting for the body.
+      const noread = await exchange(
+        port,
+        `POST /noread HTTP/1.1\r\n${H}Content-Length: 3\r\nExpect: 100-continue\r\n\r\n`,
+      );
+      expect(summary(noread)).toBe("200 OK");
+      expect(noread).toContain("Connection: close");
+    });
+
+    it("is not sent in HTTP/1.0", async () => {
+      // HTTP/1.0 ignores the expectation: no 100.
+      const d = await connect(`127.0.0.1:${port}`);
+      await d.write("POST /echo HTTP/1.0\r\nContent-Length: 5\r\nExpect: 100-continue\r\n\r\n");
+      await d.write("hello");
+      d.shutdown();
+      const all = await readAll(d);
+      d.close();
+      expect(summary(all)).toBe("200 OK | echo:hello");
+    });
+  });
+
+  describe("a body that arrives after the head", () => {
+    for (const size of [3, 200000]) {
+      it(`${size} bytes after 100 Continue, the head still this request's`, async () => {
+        const late = await connect(`127.0.0.1:${port}`);
+        await late.write(
+          `POST /late HTTP/1.1\r\n${H}X-A: yes\r\nContent-Length: ${size}\r\nExpect: 100-continue\r\nConnection: close\r\n\r\n`,
+        );
+        let got = "";
+        while (!got.includes("100 Continue")) {
+          got += await late.readString();
+        }
+        await late.write("y".repeat(size));
+        const all = got + (await readAll(late));
+        late.close();
+        expect(all.substring(all.lastIndexOf("\r\n\r\n") + 4)).toBe(`POST /late yes ${size}`);
+      });
+    }
+
+    it("without Expect, a handler that does not read answers before the body", async () => {
+      const held = await connect(`127.0.0.1:${port}`);
+      await held.write(
+        `POST /noread HTTP/1.1\r\n${H}Content-Length: 3\r\nConnection: close\r\n\r\n`,
+      );
+      let first = "";
+      while (!first.includes("ok")) {
+        first += await held.readString();
+      }
+      await held.write("abc");
+      const rest = await readAll(held);
+      held.close();
+      expect(summary(first + rest)).toBe("200 OK");
+    });
+
+    // A client that sends its body only after `100 Continue` (as Node's does), to a handler
+    // that answers first and reads after: the 100 still comes, ahead of the response.
+    const routes: [string, string, string][] = [
+      ["/send-then-read", "100 Continue | 200 OK", "sent first"],
+      [
+        "/stream-then-read",
+        "100 Continue | 200 OK | 200 OK",
+        "5\r\nhead;\r\n5\r\ngot 3\r\n0\r\n\r\n",
+      ],
+    ];
+    for (const [route, expected, expectedBody] of routes) {
+      it(`${route} gets its 100 Continue first`, async () => {
+        const c2 = await connect(`127.0.0.1:${port}`);
+        await c2.write(
+          `POST ${route} HTTP/1.1\r\n${H}Content-Length: 3\r\nExpect: 100-continue\r\n\r\n`,
+        );
+        let wire = "";
+        while (!wire.includes("100 Continue")) {
+          wire += await c2.readString();
+        }
+        // Then a GET on the same connection: a streamed response keeps it open.
+        await c2.write(`abcGET /after HTTP/1.1\r\n${H}\r\n`);
+        c2.shutdown();
+        wire += await readAll(c2);
+        c2.close();
+        // The first response's body (the next response, if any, starts with its status line).
+        const body = wire
+          .substring(wire.indexOf("\r\n\r\n", wire.indexOf("200 OK")) + 4)
+          .split("HTTP/1.1")[0];
+        expect(summary(wire)).toBe(expected);
+        expect(body).toBe(expectedBody);
+      });
+    }
+
+    it("/send-then-read's handler still reads the body after it answered", () => {
+      expect(sendThenReadGot.get()).toBe(3);
+    });
+  });
+});

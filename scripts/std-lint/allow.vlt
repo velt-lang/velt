@@ -1,0 +1,16 @@
+// scripts/std-lint: the files allowed to break a rule until they are fixed. The lists only
+// shrink: `cargo xtask precheck` rejects an entry its base revision did not have, and std-lint
+// reports an entry that no longer breaks its rule.
+
+import type { Allow } from "./types";
+
+export const allow: Allow = {
+  oversize: [
+  ],
+  multiClass: [
+  ],
+  indexCode: [
+  ],
+  unowned: [
+  ],
+};

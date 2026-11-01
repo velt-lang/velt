@@ -1,0 +1,14 @@
+update
+1 12 x:2
+hook takes no argument
+true true
+two 101 hi!
+hooked 9
+done
+5 5
+6
+inner update
+inner hook 3
+class update 7
+8
+20 102

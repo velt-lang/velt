@@ -233,6 +233,27 @@ fn hover_uses_sema_types_when_the_program_checks() {
     client.shutdown();
 }
 
+#[test]
+fn abstract_classes_hover_and_complete() {
+    let mut client = Client::start();
+    let doc = uri("shapes.vlt");
+    let text = "abstract class Shape {\n  abstract area(): f64;\n}\n\nclass Square extends Shape {\n  area(): f64 {\n    return 4;\n  }\n}\n\nfunction main() {\n  const s: Shape = new Square();\n  console.log(s.area());\n  \n}\n";
+    client.open(&doc, text);
+    assert_eq!(client.diagnostics(&doc)["diagnostics"], json!([]));
+    assert_eq!(
+        hover_text(&mut client, &doc, text, "Shape = new", 0),
+        "abstract class Shape"
+    );
+    assert_eq!(
+        hover_text(&mut client, &doc, text, "Square extends", 0),
+        "class Square"
+    );
+    let (line, col) = pos_of(text, "  \n}\n", 2);
+    let items = labels(&client.request("textDocument/completion", at(&doc, line, col)));
+    assert!(items.contains(&"abstract".to_string()), "{items:?}");
+    client.shutdown();
+}
+
 fn labels(result: &Value) -> Vec<String> {
     result
         .as_array()

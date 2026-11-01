@@ -1,0 +1,4 @@
+// velt/time (internal): `DateTimeError`.
+
+/** Thrown by `DateTime.parse` / `parseHttpDate` for malformed or out-of-range input. */
+export class DateTimeError extends Error {}

@@ -468,6 +468,9 @@ fn decl(
             ret: Some(ret),
             throws,
             is_async,
+            is_system: false,
+            is_intrinsic: false,
+            generator: None,
             is_generator: false,
             this_param: None,
             span,
@@ -589,9 +592,11 @@ impl Subst<'_> {
                 }
                 args.iter_mut().for_each(|a| self.ty(a));
             }
-            K::Array(e) | K::KeyOf(e) | K::Construct(e) | K::TupleRest(e) | K::TupleOptional(e) => {
-                self.ty(e)
-            }
+            K::Array(e)
+            | K::KeyOf(e)
+            | K::Construct { ty: e, .. }
+            | K::TupleRest(e)
+            | K::TupleOptional(e) => self.ty(e),
             K::Tuple(ts) | K::Union(ts) | K::Intersection(ts) => {
                 ts.iter_mut().for_each(|t| self.ty(t))
             }

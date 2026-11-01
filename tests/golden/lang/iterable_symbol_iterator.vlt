@@ -4,7 +4,7 @@
 // runs are visited) and, once it reported `done`, stays done. A string's yields characters (code
 // points). A map's and a set's iterate their entries as of when the iterator was made, like
 // `for...of` over them (JS's are live; this program does not change them meanwhile).
-import { Set } from "velt:collections/set";
+import { Set } from "velt/collections";
 
 function show<T>(r: IteratorResult<T>): string {
   if (r.done) {

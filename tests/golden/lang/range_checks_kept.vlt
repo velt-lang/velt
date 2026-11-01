@@ -1,0 +1,18 @@
+// A check a dominating range check does not cover stays: `b + 8` is one past the 8 elements
+// proved, so the access panics, in debug and in release.
+
+function at(xs: u64[], b: u64, off: u64): u64 {
+  if (xs.length < 8 || b > (xs.length as u64) - 8) {
+    return 999;
+  }
+  return xs[b + off];
+}
+
+function main() {
+  const xs: u64[] = [];
+  for (let i: u64 = 0; i < 10; i++) {
+    xs.push(i);
+  }
+  console.log(at(xs, 2, 7), at(xs, 18446744073709551615, 1));
+  console.log(at(xs, 2, 8));
+}

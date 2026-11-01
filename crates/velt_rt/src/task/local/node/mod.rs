@@ -74,6 +74,9 @@ const LOC: u32 = 512;
 /// Its owner handed it to another task (`velt_rt_fut_transfer`): the task driving it no longer
 /// reports its rejection at a checkpoint, the task holding it now awaits it or gives it up.
 const HANDED_OVER: u32 = 1024;
+/// It stands for another promise (a converted one, `velt_rt_fut_alias`): its owner's drop ends
+/// that (task/identity.rs).
+const ALIASED: u32 = 2048;
 
 /// `owner` bit of a lazy node: its state finished (it is polled by its owner only).
 const OWNER_DONE: u32 = 1;
@@ -190,10 +193,23 @@ unsafe fn free(f: *mut VeltFut) {
     if fl & SET_REF != 0 {
         drop(Arc::from_raw(h.set));
     }
-    loc::forget(f, fl);
+    if fl & (LOC | ALIASED) != 0 {
+        forget_side_records(f, fl);
+    }
     let l = layout(h.state_size);
     std::ptr::drop_in_place(&mut h.awaiter);
     std::alloc::dealloc((f as *mut u8).sub(HEAD), l);
+}
+
+/// The side records of node `f` (flags `fl`) go with it: where it threw (loc.rs), what it stood
+/// for (task/identity.rs; on any thread).
+#[cold]
+#[inline(never)]
+unsafe fn forget_side_records(f: *mut VeltFut, fl: u32) {
+    loc::forget(f, fl);
+    if fl & ALIASED != 0 {
+        crate::task::identity::release(f);
+    }
 }
 
 /// Drop one reference; the last one frees the node.
@@ -243,10 +259,82 @@ unsafe extern "C" fn lazy_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
 
 unsafe extern "C" fn lazy_drop(f: *mut VeltFut) {
     let h = head(f);
+    forget_alias(f, h.flags.load(Ordering::Relaxed));
     if h.owner.get() & OWNER_DONE == 0 {
         (h.drop)(state(f));
     }
     free(f);
+}
+
+/// Node `f` stands for another promise ([`ALIASED`]); false when `f` is not a node. A lazy node
+/// marked so is never started by `velt_rt_fut_start` ([`mark_started`] does not keep the bit);
+/// one that is given up first ends that (`velt_rt_fut_detach`).
+pub(super) unsafe fn mark_aliased(f: *mut VeltFut) -> bool {
+    if !is_lazy(f) && !is_started(f) {
+        return false;
+    }
+    head(f).flags.fetch_or(ALIASED, Ordering::Relaxed);
+    true
+}
+
+/// Does node `f` stand for another promise?
+#[inline(always)]
+pub(super) unsafe fn is_aliased(f: *mut VeltFut) -> bool {
+    head(f).flags.load(Ordering::Relaxed) & ALIASED != 0
+}
+
+/// Flags `fl` of node `f` say it stands for another promise, which its owner drops (or gives to
+/// another task): it no longer does.
+#[inline(always)]
+pub(super) unsafe fn forget_alias(f: *mut VeltFut, fl: u32) {
+    if fl & ALIASED != 0 {
+        forget_alias_slow(f, fl);
+    }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn forget_alias_slow(f: *mut VeltFut, fl: u32) {
+    crate::task::identity::forget(f);
+    // Finished, its result claimed or handled (or it cannot reject): no rejection of it is
+    // decided later, so its record goes now rather than when the node is freed, which may wait
+    // until the task yields (a woken node waits in its set's queue).
+    let h = head(f);
+    let settled = h.owner.get() & OWNER_DELIVERED != 0
+        || h.flags.load(Ordering::Relaxed) & HANDLED != 0
+        || crate::task::identity::handled_elsewhere(f).is_some();
+    // A promise that cannot reject has no rejection to decide at all.
+    let rejectable = h.flags.load(Ordering::Relaxed) & REJECTABLE != 0;
+    if !rejectable || fl & DONE != 0 && settled {
+        crate::task::identity::release(f);
+        h.flags.fetch_and(!ALIASED, Ordering::Relaxed);
+    }
+}
+
+/// The owner of aliased node `f` takes or hands on its result: a claim of the promise it stands
+/// for (task/identity.rs).
+#[cold]
+#[inline(never)]
+pub(super) unsafe fn alias_claimed(f: *mut VeltFut) {
+    crate::task::identity::claimed(f);
+}
+
+/// The owner gives node `f` up or hands it to another task: it stands for nothing any more, and
+/// its record goes (task/identity.rs).
+#[inline(always)]
+pub(super) unsafe fn drop_alias(f: *mut VeltFut) {
+    let fl = head(f).flags.load(Ordering::Relaxed);
+    if fl & ALIASED != 0 {
+        drop_alias_slow(f);
+    }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn drop_alias_slow(f: *mut VeltFut) {
+    crate::task::identity::forget(f);
+    crate::task::identity::release(f);
+    head(f).flags.fetch_and(!ALIASED, Ordering::Relaxed);
 }
 
 /// Turn lazy node `f` into a started node driven by the set `shared` (not counted yet: see
@@ -339,6 +427,16 @@ unsafe fn watch_rejection(f: *mut VeltFut, prev: u32) {
 
 /// Is `f`'s rejection (see [`watch_rejection`]) still unclaimed: its owner neither awaited it
 /// nor gave it up or handed it to a combinator or another task?
+/// Could the rejection of started node `f`, watched since it finished, still be unclaimed at the
+/// checkpoint ([`rejection_unclaimed`] without registering anything)?
+pub(super) unsafe fn rejection_open(f: *mut VeltFut) -> bool {
+    let h = head(f);
+    let fl = h.flags.load(Ordering::Acquire);
+    fl & (DETACHED | HANDLED | ADOPTED | HANDED_OVER) == 0
+        && h.owner.get() & OWNER_DELIVERED == 0
+        && h.transfer.load(Ordering::Acquire).is_null()
+}
+
 pub(super) unsafe fn rejection_unclaimed(f: *mut VeltFut) -> bool {
     let h = head(f);
     let fl = h.flags.load(Ordering::Acquire);

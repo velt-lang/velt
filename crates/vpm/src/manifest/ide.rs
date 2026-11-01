@@ -311,6 +311,25 @@ struct Scan {
     hovered: Option<(Vec<String>, String, Range<u32>)>,
 }
 
+/// Where `key` of the object at `path` (keys from the top object down) is written in manifest
+/// text `src`: the contents of its value when that is a string, else the key. For messages that
+/// point at a field of a manifest that read without errors (`crate::workspace`).
+pub(crate) fn locate(src: &str, path: &[&str], key: &str) -> Option<Range<u32>> {
+    let scan = scan(src, u32::MAX);
+    let frame = scan
+        .frames
+        .iter()
+        .find(|f| f.object && f.path.iter().map(String::as_str).eq(path.iter().copied()))?;
+    let value = frame.values.iter().find(|(k, ..)| k == key);
+    value.map(|(_, _, range)| range.clone()).or_else(|| {
+        frame
+            .keys
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, r)| r.clone())
+    })
+}
+
 /// Walk the manifest object of `src`, noting where `offset` is.
 fn scan(src: &str, offset: u32) -> Scan {
     let tokens = tokenize(src);
@@ -319,7 +338,7 @@ fn scan(src: &str, offset: u32) -> Scan {
         cursor: None,
         hovered: None,
     };
-    // Before the manifest value: `import type { … } from "velt:package"; export const pkg … =`.
+    // Before the manifest value: `import type { … } from "velt/package"; export const pkg … =`.
     let Some(start) = tokens.iter().position(|t| t.tok == Tok::Eq) else {
         return scan;
     };

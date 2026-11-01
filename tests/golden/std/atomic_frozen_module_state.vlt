@@ -1,0 +1,75 @@
+// A borrowed param holding an `Atomic` is read once (`frozen`) only when module state cannot
+// reach its type (param_attrs.rs "Module state"): a module `const` holding one, written by a
+// callee through that variable, is seen by the loop reading the param, in debug and release.
+
+class Ctr {
+  hits: Atomic<u64> = new Atomic<u64>(0);
+  limit: u64 = 3;
+}
+
+const ctr = new Ctr();
+
+function bumpCtr(): void {
+  ctr.limit = 10;
+}
+
+function countCtr(c: Ctr): u64 {
+  let n: u64 = 0;
+  while (n < c.limit) {
+    c.hits.add(1, "relaxed");
+    n++;
+    if (n == 2) {
+      bumpCtr();
+    }
+  }
+  return n;
+}
+
+console.log(countCtr(ctr), ctr.hits.load("relaxed"));
+
+// The same with integer fields and no atomic (#1624 review).
+class Cfg {
+  limit: i64 = 3;
+}
+
+const cfg = new Cfg();
+
+function bump(): void {
+  cfg.limit = 10;
+}
+
+function count(c: Cfg): i64 {
+  let n = 0;
+  while (n < c.limit) {
+    n++;
+    if (n == 2) {
+      bump();
+    }
+  }
+  return n;
+}
+
+console.log(count(cfg));
+
+// A holder that only locals reach keeps its fields read once, and still sees its atomic change.
+class Gate {
+  open: Atomic<bool> = new Atomic<bool>(false);
+  limit: u64 = 4;
+}
+
+function openGate(g: Gate): void {
+  g.open.store(true, "release");
+}
+
+function waitGate(g: Gate): u64 {
+  let n: u64 = 0;
+  while (!g.open.load("acquire")) {
+    n++;
+    if (n == g.limit) {
+      openGate(g);
+    }
+  }
+  return n;
+}
+
+console.log(waitGate(new Gate()));

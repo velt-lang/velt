@@ -30,6 +30,17 @@ pub struct DocComment {
     pub deprecated: Option<String>,
     /// One entry per `@see`.
     pub see: Vec<String>,
+    /// The `{@link}`s to names (not URLs) in the body and the tags, in order.
+    pub links: Vec<DocLink>,
+}
+
+/// An inline `{@link target}` to a name, which the text shows as `` `target` `` or its label.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DocLink {
+    /// The target as written (`readFile`, `Point.len`, `Point#len`).
+    pub target: String,
+    /// What the Markdown shows in its place.
+    pub text: String,
 }
 
 impl DocComment {
@@ -349,7 +360,11 @@ fn parse_lines(lines: &[String]) -> DocComment {
         finish_tag(&mut doc, &mut body, &name, text);
     }
     trim_blank_lines(&mut body);
-    doc.body = links(&body.join("\n"));
+    // The body's links come before the tags'.
+    let mut found = vec![];
+    doc.body = links(&body.join("\n"), &mut found);
+    found.append(&mut doc.links);
+    doc.links = found;
     doc
 }
 
@@ -360,9 +375,10 @@ fn finish_tag(doc: &mut DocComment, body: &mut Vec<String>, name: &str, mut line
         doc.examples.push(lines.join("\n"));
         return;
     }
-    let text = |lines: &[String]| -> String {
+    let mut found = vec![];
+    let mut text = |lines: &[String]| -> String {
         let joined: Vec<&str> = lines.iter().map(|l| l.trim()).collect();
-        links(joined.join("\n").trim())
+        links(joined.join("\n").trim(), &mut found)
     };
     match name {
         "param" | "arg" | "argument" => {
@@ -397,6 +413,7 @@ fn finish_tag(doc: &mut DocComment, body: &mut Vec<String>, name: &str, mut line
             body.extend(lines.into_iter().skip(1));
         }
     }
+    doc.links.append(&mut found);
 }
 
 /// Skips a leading `{type}` (braces may nest): `(rest, type)`.
@@ -455,8 +472,8 @@ fn param_name(text: &str) -> (String, &str) {
 
 /// Replaces inline `{@link target}` and `{@link target text}` (also `target | text`,
 /// `{@linkcode}`, `{@linkplain}`) outside code: `` `target` ``, the text, or a Markdown link
-/// for a URL.
-fn links(text: &str) -> String {
+/// for a URL. The links to names are added to `found`.
+fn links(text: &str, found: &mut Vec<DocLink>) -> String {
     let mut out = String::with_capacity(text.len());
     let mut in_fence = false;
     for (i, line) in text.split('\n').enumerate() {
@@ -482,8 +499,11 @@ fn links(text: &str) -> String {
                 continue;
             }
             match (in_code, inline_link(rest)) {
-                (false, Some((rendered, after))) => {
-                    out.push_str(&rendered);
+                (false, Some((link, after))) => {
+                    out.push_str(&link.text);
+                    if !is_url(&link.target) {
+                        found.push(link);
+                    }
                     rest = after;
                 }
                 _ => {
@@ -497,8 +517,12 @@ fn links(text: &str) -> String {
     out
 }
 
-/// `{@link …}` at the start of `s`: its rendering and the text after it.
-fn inline_link(s: &str) -> Option<(String, &str)> {
+fn is_url(target: &str) -> bool {
+    target.starts_with("http://") || target.starts_with("https://")
+}
+
+/// `{@link …}` at the start of `s`: its target and rendering, and the text after it.
+fn inline_link(s: &str) -> Option<(DocLink, &str)> {
     let inner = s
         .strip_prefix("{@linkcode")
         .or_else(|| s.strip_prefix("{@linkplain"))
@@ -515,14 +539,17 @@ fn inline_link(s: &str) -> Option<(String, &str)> {
             None => (content, ""),
         },
     };
-    let url = target.starts_with("http://") || target.starts_with("https://");
-    let rendered = match (url, label.is_empty()) {
+    let rendered = match (is_url(target), label.is_empty()) {
         (true, true) => format!("[{target}]({target})"),
         (true, false) => format!("[{label}]({target})"),
         (false, true) => format!("`{target}`"),
         (false, false) => label.to_string(),
     };
-    Some((rendered, &inner[end + 1..]))
+    let link = DocLink {
+        target: target.to_string(),
+        text: rendered,
+    };
+    Some((link, &inner[end + 1..]))
 }
 
 #[cfg(test)]
@@ -696,6 +723,13 @@ mod tests {
             doc.body,
             "See `Foo.bar`, the baz and `{@link no}`.\n\n@since 1.0"
         );
+        let doc = parse("/**\n * See {@link Foo.bar}, {@link https://x.dev x}.\n * @returns a {@link Baz the baz}\n */");
+        let links: Vec<(&str, &str)> = doc
+            .links
+            .iter()
+            .map(|l| (l.target.as_str(), l.text.as_str()))
+            .collect();
+        assert_eq!(links, [("Foo.bar", "`Foo.bar`"), ("Baz", "the baz")]);
     }
 
     #[test]

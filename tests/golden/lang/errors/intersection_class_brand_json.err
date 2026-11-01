@@ -1,0 +1,1 @@
+intersection_class_brand_json.vlt:4:13: error: cannot convert to or from JSON: `Set<f64>` has a private field `items`, so it has no JSON form

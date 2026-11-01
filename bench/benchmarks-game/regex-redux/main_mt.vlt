@@ -3,8 +3,8 @@
 // the counts in order. Async parameters are owned, so every task gets its own copy of the
 // sequence (see NOTES.md).
 
-import { readAll } from "velt:stdin";
-import { RegExp, RegExpError } from "velt:regex";
+import { readAll } from "velt/process";
+import { RegExp, RegExpError } from "velt/text";
 
 async function countMatches(pattern: string, sequence: string): Promise<string> {
   return `${pattern} ${new RegExp(pattern, "g").matches(sequence).length}`;

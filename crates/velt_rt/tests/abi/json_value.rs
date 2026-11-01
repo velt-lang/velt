@@ -285,7 +285,7 @@ fn builder_embeds_values() {
         velt_rt_strbuf_new(0, b.as_mut_ptr());
         let mut b = b.assume_init();
         velt_rt_strbuf_push_bytes(&mut b, b"{\"v\":".as_ptr(), 5);
-        velt_rt_strbuf_push_json_value(&mut b, v.ptr());
+        velt_rt_strbuf_push_json_value(&mut b, v.ptr() as u64);
         velt_rt_strbuf_push_byte(&mut b, b'}');
         velt_rt_strbuf_finish(&mut b, out.as_mut_ptr());
     }
@@ -303,12 +303,12 @@ fn reader_reads_values_as_trees() {
     let src = r#"{"a":[1,{"handle":4096}],"b":"s","c":[1,}"#;
     unsafe {
         let r = velt_rt_json_reader_new(&borrow(src));
-        assert_eq!(velt_rt_json_reader_expect_object_start(r), 1);
+        assert_eq!(velt_rt_json_reader_expect_object_start(r as u64), 1);
         let mut key = MaybeUninit::uninit();
         let mut values = Vec::new();
-        while velt_rt_json_reader_next_key(r, key.as_mut_ptr()) == 1 {
+        while velt_rt_json_reader_next_key(r as u64, key.as_mut_ptr()) == 1 {
             let mut h = MaybeUninit::uninit();
-            if velt_rt_json_reader_read_value(r, h.as_mut_ptr()) == 0 {
+            if velt_rt_json_reader_read_value(r as u64, h.as_mut_ptr()) == 0 {
                 break;
             }
             let h = h.assume_init();
@@ -317,12 +317,12 @@ fn reader_reads_values_as_trees() {
         }
         assert_eq!(values, [r#"[1,{"handle":4096}]"#, r#""s""#]);
         let mut msg = MaybeUninit::uninit();
-        velt_rt_json_error(r, &borrow("value"), &borrow("$.c"), msg.as_mut_ptr());
+        velt_rt_json_error(r as u64, &borrow("value"), &borrow("$.c"), msg.as_mut_ptr());
         assert_eq!(
             owned_text(msg.assume_init()),
             "Unexpected token '}', ...\"s\",\"c\":[1,}\" is not valid JSON"
         );
-        velt_rt_json_reader_free(r);
+        velt_rt_json_reader_free(r as u64);
     }
 }
 

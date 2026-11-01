@@ -1,5 +1,6 @@
 //! `velt clean`: delete the package's `target/` directory (build outputs, test binaries, docs)
-//! and report how much space that freed.
+//! and report how much space that freed. `velt clean --cache`: delete the machine's build cache
+//! (`crate::build_cache`) instead.
 
 use std::path::Path;
 
@@ -29,6 +30,45 @@ pub fn clean_command() -> Result<(), String> {
         &format!(
             "{} ({files} file{}, {})",
             target.display(),
+            if files == 1 { "" } else { "s" },
+            human_bytes(bytes)
+        ),
+    );
+    Ok(())
+}
+
+/// `velt clean --cache`: remove the build cache that every build on this machine shares.
+pub fn clean_cache_command() -> Result<(), String> {
+    let Some(root) = crate::build_cache::root() else {
+        style::status(
+            "Clean",
+            "nothing to remove (the build cache is off: $VELT_BUILD_CACHE)",
+        );
+        return Ok(());
+    };
+    if !root.is_dir() {
+        style::status(
+            "Clean",
+            &format!("nothing to remove ({} does not exist)", root.display()),
+        );
+        return Ok(());
+    }
+    let (files, bytes) = measure(&root);
+    velt_build_cache::Cache::new(&root, crate::build_cache::limit())
+        .clear()
+        .map_err(|e| format!("cannot remove `{}`: {e}", root.display()))?;
+    // Only the cache's own files went: count what is gone.
+    let (files_left, bytes_left) = measure(&root);
+    // A build running meanwhile may have added files.
+    let (files, bytes) = (
+        files.saturating_sub(files_left),
+        bytes.saturating_sub(bytes_left),
+    );
+    style::status(
+        "Removed",
+        &format!(
+            "{} ({files} file{}, {})",
+            root.display(),
             if files == 1 { "" } else { "s" },
             human_bytes(bytes)
         ),

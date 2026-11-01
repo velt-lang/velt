@@ -3,19 +3,42 @@
 //!   whole-local write kills it; a partial (field) write is neither;
 //! - forward **maybe-written**: has any write/address-of of the local happened on some path —
 //!   over the *semantic* CFG, where a resume/cancel block is entered from the block that
-//!   suspended (set the tag, returned 0), not from the dispatch block;
-//! - flow-insensitive **points-to**: `pts[x]` = locals whose address may be stored in `x` or in
-//!   memory reached through `x`.
+//!   suspended (set the tag, returned 0), not from the dispatch block.
+//!
+//! Both are per-local problems (a local's facts never depend on another local's), so they are
+//! computed only where and for whom they are asked: liveness per local by walking back from
+//! its uses (cost: the size of its live range), maybe-written over a [`Universe`] of the
+//! locals in question. A large function with one `await` costs time linear in its size, not
+//! blocks × locals.
 
 use crate::lower::successors;
 use crate::vir::{Function, Operand, Place, Proj, Rvalue, Stmt, Terminator};
 
-/// A fixed-size bit set over local indexes.
-#[derive(Clone, PartialEq)]
+/// A fixed-size bit set over local indexes (or over the indexes of a [`Universe`]).
+#[derive(PartialEq)]
 pub(super) struct Bits(Vec<u64>);
+
+#[cfg(test)]
+thread_local! {
+    /// Words of every `Bits` made or cloned: the work of the dense dataflow, which tests bound.
+    pub(super) static WORDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn count_words(_n: usize) {
+    #[cfg(test)]
+    WORDS.with(|w| w.set(w.get() + _n));
+}
+
+impl Clone for Bits {
+    fn clone(&self) -> Self {
+        count_words(self.0.len());
+        Bits(self.0.clone())
+    }
+}
 
 impl Bits {
     pub(super) fn new(n: usize) -> Self {
+        count_words(n.div_ceil(64));
         Bits(vec![0; n.div_ceil(64)])
     }
     pub(super) fn get(&self, i: usize) -> bool {
@@ -44,9 +67,68 @@ impl Bits {
             *a &= !b;
         }
     }
+    /// The set indexes in ascending order.
     pub(super) fn iter(&self) -> impl Iterator<Item = usize> + '_ {
-        (0..self.0.len() * 64).filter(|&i| self.get(i))
+        self.0.iter().enumerate().flat_map(|(w, &word)| {
+            let mut rest = word;
+            std::iter::from_fn(move || {
+                (rest != 0).then(|| {
+                    let i = rest.trailing_zeros() as usize;
+                    rest &= rest - 1;
+                    w * 64 + i
+                })
+            })
+        })
     }
+}
+
+/// A subset of the locals, numbered densely in ascending local order, so a [`Bits`] per block
+/// over it costs the subset's size rather than the function's local count.
+pub(super) struct Universe {
+    /// Per local: its index in the universe, or `u32::MAX`.
+    idx: Vec<u32>,
+    /// Per index: the local.
+    members: Vec<usize>,
+}
+
+impl Universe {
+    /// The universe of `set` (over `n` locals).
+    pub(super) fn of_set(n: usize, set: &Bits) -> Self {
+        let mut idx = vec![u32::MAX; n];
+        let members: Vec<usize> = set.iter().filter(|&l| l < n).collect();
+        for (i, &l) in members.iter().enumerate() {
+            idx[l] = i as u32;
+        }
+        Universe { idx, members }
+    }
+    pub(super) fn len(&self) -> usize {
+        self.members.len()
+    }
+    /// Index of local `l`, if it is a member.
+    pub(super) fn index(&self, l: usize) -> Option<usize> {
+        self.idx
+            .get(l)
+            .and_then(|&i| (i != u32::MAX).then_some(i as usize))
+    }
+    /// `locals` (local indexes) as a set over the universe.
+    pub(super) fn project(&self, locals: &[usize]) -> Bits {
+        let mut out = Bits::new(self.len());
+        for &l in locals {
+            if let Some(i) = self.index(l) {
+                out.set(i);
+            }
+        }
+        out
+    }
+}
+
+/// The suspension structure of a poll function: `extra` edges of the semantic CFG
+/// (suspending block → resume/cancel block), and the start blocks entered with the `inputs`
+/// (params/captures, written by whoever built the state).
+pub(super) struct Susp {
+    pub(super) extra: Vec<(usize, usize)>,
+    pub(super) starts: Vec<usize>,
+    pub(super) inputs: Vec<usize>,
 }
 
 /// One access of a local by a statement or terminator, in evaluation order.
@@ -128,75 +210,99 @@ pub(super) fn has_deref(p: &Place) -> bool {
     p.proj.iter().any(|x| matches!(x, Proj::Deref(_)))
 }
 
-/// Live-in set of every block.
-pub(super) fn liveness(f: &Function) -> Vec<Bits> {
+/// Live-in locals (ascending) of every block in `query`; other blocks get an empty list.
+///
+/// A local is live into block `b` if some path from `b`'s start reaches a use of it without
+/// first passing a whole write. Each local is traced back from the blocks that use it before
+/// any whole write in them, through predecessors, stopping at blocks that kill it.
+pub(super) fn live_in_at(f: &Function, query: &[usize]) -> Vec<Vec<usize>> {
     let (n, nb) = (f.locals.len(), f.blocks.len());
-    let mut gen = vec![Bits::new(n); nb];
-    let mut kill = vec![Bits::new(n); nb];
+    // Per local: blocks with an upward-exposed use, and blocks that kill it.
+    let mut gens: Vec<Vec<u32>> = vec![vec![]; n];
+    let mut kills: Vec<Vec<u32>> = vec![vec![]; n];
+    // `killed[l] == b + 1`: local `l` was killed earlier in block `b` (same for `genned`).
+    let (mut killed, mut genned) = (vec![0u32; n], vec![0u32; n]);
     for b in 0..nb {
+        let mark = b as u32 + 1;
         for acc in block_acc(f, b) {
-            let (p, uses, kills) = match acc {
+            let (p, uses, kill) = match acc {
                 Acc::Read(p) | Acc::Addr(p) => (p, true, false),
                 Acc::Write(p) if has_deref(p) => (p, true, false),
                 Acc::Write(p) => (p, false, p.proj.is_empty()),
             };
             let l = p.local.0 as usize;
-            if kills {
-                kill[b].set(l);
-            } else if uses && !kill[b].get(l) {
-                gen[b].set(l);
+            if kill {
+                if killed[l] != mark {
+                    killed[l] = mark;
+                    kills[l].push(b as u32);
+                }
+            } else if uses && killed[l] != mark && genned[l] != mark {
+                genned[l] = mark;
+                gens[l].push(b as u32);
             }
         }
     }
-    let succs: Vec<Vec<usize>> = f
-        .blocks
-        .iter()
-        .map(|blk| successors(&blk.term).iter().map(|s| s.0 as usize).collect())
-        .collect();
-    let mut live_in = gen.clone();
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for b in (0..nb).rev() {
-            let mut out = Bits::new(n);
-            for &s in &succs[b] {
-                out.union(&live_in[s]);
-            }
-            out.minus(&kill[b]);
-            out.union(&gen[b]);
-            if out != live_in[b] {
-                live_in[b] = out;
-                changed = true;
-            }
+    let mut preds: Vec<Vec<u32>> = vec![vec![]; nb];
+    for (b, blk) in f.blocks.iter().enumerate() {
+        for s in successors(&blk.term) {
+            preds[s.0 as usize].push(b as u32);
         }
     }
-    live_in
-}
-
-/// Maybe-written set at the end of every block over the semantic CFG: ordinary edges except
-/// those leaving the dispatch block 0, plus `extra` edges (suspending block → resume/cancel
-/// block); `seeds` are (block, locals written before it runs).
-pub(super) fn maybe_written(
-    f: &Function,
-    extra: &[(usize, usize)],
-    seeds: &[(usize, Bits)],
-) -> Vec<Bits> {
-    let (n, nb) = (f.locals.len(), f.blocks.len());
-    let mut writes = vec![Bits::new(n); nb];
-    for (b, w) in writes.iter_mut().enumerate() {
-        for acc in block_acc(f, b) {
-            if let Acc::Write(p) | Acc::Addr(p) = acc {
-                if !has_deref(p) {
-                    w.set(p.local.0 as usize);
+    let mut is_query = vec![false; nb];
+    for &q in query {
+        is_query[q] = true;
+    }
+    let mut out = vec![vec![]; nb];
+    // `seen[b] == l + 1`: `l` is known live into `b` (same for `kill_mark`).
+    let (mut seen, mut kill_mark) = (vec![0u32; nb], vec![0u32; nb]);
+    let mut work = vec![];
+    for l in 0..n {
+        let mark = l as u32 + 1;
+        for &b in &kills[l] {
+            kill_mark[b as usize] = mark;
+        }
+        for &b in &gens[l] {
+            if seen[b as usize] != mark {
+                seen[b as usize] = mark;
+                work.push(b as usize);
+            }
+        }
+        while let Some(b) = work.pop() {
+            if is_query[b] {
+                out[b].push(l);
+            }
+            for &p in &preds[b] {
+                let p = p as usize;
+                if seen[p] != mark && kill_mark[p] != mark {
+                    seen[p] = mark;
+                    work.push(p);
                 }
             }
         }
     }
-    let edges = semantic_edges(f, extra);
-    let mut out = writes.clone();
-    for (b, s) in seeds {
-        out[*b].union(s);
+    out
+}
+
+/// Maybe-written set (over universe `u`) at the end of every block over the semantic CFG:
+/// ordinary edges except those leaving the dispatch block 0, plus the suspension edges; the
+/// start blocks are entered with the inputs written.
+pub(super) fn maybe_written(f: &Function, s: &Susp, u: &Universe) -> Vec<Bits> {
+    let nb = f.blocks.len();
+    let mut out = vec![Bits::new(u.len()); nb];
+    for (b, w) in out.iter_mut().enumerate() {
+        for acc in block_acc(f, b) {
+            if let Acc::Write(p) | Acc::Addr(p) = acc {
+                if let Some(i) = u.index(p.local.0 as usize).filter(|_| !has_deref(p)) {
+                    w.set(i);
+                }
+            }
+        }
     }
+    let ins = u.project(&s.inputs);
+    for &b in &s.starts {
+        out[b].union(&ins);
+    }
+    let edges = semantic_edges(f, &s.extra);
     let mut changed = true;
     while changed {
         changed = false;
@@ -216,125 +322,4 @@ pub(super) fn semantic_edges(f: &Function, extra: &[(usize, usize)]) -> Vec<(usi
         edges.extend(successors(&blk.term).iter().map(|s| (b, s.0 as usize)));
     }
     edges
-}
-
-/// Number of dereferences in a place's projection.
-fn derefs(p: &Place) -> usize {
-    p.proj
-        .iter()
-        .filter(|x| matches!(x, Proj::Deref(_)))
-        .count()
-}
-
-/// `pts` after `k` dereferences of local `l`: the locals whose addresses may be stored in the
-/// memory reached through `k` pointer hops (`k = 0`: in `l` itself).
-fn deref_level(pts: &[Bits], l: usize, k: usize) -> Bits {
-    let mut cur = pts[l].clone();
-    for _ in 0..k {
-        let mut next = Bits::new(pts.len());
-        for z in cur.iter() {
-            next.union(&pts[z]);
-        }
-        cur = next;
-    }
-    cur
-}
-
-/// Locals whose addresses may be in the value read from `p` (the memory `p` denotes: `p`'s
-/// local itself, or the pointees after its dereferences).
-fn read_srcs(pts: &[Bits], p: &Place) -> Bits {
-    deref_level(pts, p.local.0 as usize, derefs(p))
-}
-
-/// Locals the address of `p` may point into.
-fn addr_srcs(pts: &[Bits], p: &Place, n: usize) -> Bits {
-    let mut out = match derefs(p) {
-        0 => Bits::new(n),
-        k => deref_level(pts, p.local.0 as usize, k - 1),
-    };
-    out.set(p.local.0 as usize);
-    out
-}
-
-/// Points-to sets. `MemCopy`/`MemCopyDyn` copy pointers between the pointed-to locals. Calls create no
-/// such pointers: borrows never escape a Velt callee (no returned references, no stored
-/// borrowed params), and the runtime copies what it keeps (`fut_box`, `spawn`).
-pub(super) fn points_to(f: &Function) -> Vec<Bits> {
-    let n = f.locals.len();
-    let mut pts = vec![Bits::new(n); n];
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for b in &f.blocks {
-            for st in &b.stmts {
-                let mut accs = vec![];
-                stmt_acc(st, &mut accs);
-                changed |= flow(&mut pts, &accs, n);
-                if let Stmt::MemCopy {
-                    dst: Operand::Copy(d),
-                    src: Operand::Copy(s),
-                    ..
-                }
-                | Stmt::MemCopyDyn {
-                    dst: Operand::Copy(d),
-                    src: Operand::Copy(s),
-                    ..
-                } = st
-                {
-                    changed |= copy_pointees(&mut pts, d, s);
-                }
-            }
-            if !matches!(b.term, Terminator::Call { .. }) {
-                let mut accs = vec![];
-                term_acc(&b.term, &mut accs);
-                changed |= flow(&mut pts, &accs, n);
-            }
-        }
-    }
-    pts
-}
-
-/// Values written by one instruction may carry any address it read or took.
-fn flow(pts: &mut [Bits], accs: &[Acc], n: usize) -> bool {
-    let mut src = Bits::new(n);
-    for a in accs {
-        match a {
-            Acc::Read(p) => {
-                src.union(&read_srcs(pts, p));
-            }
-            Acc::Addr(p) => {
-                src.union(&addr_srcs(pts, p, n));
-            }
-            Acc::Write(_) => {}
-        }
-    }
-    let mut changed = false;
-    for a in accs {
-        if let Acc::Write(p) = a {
-            let l = p.local.0 as usize;
-            changed |= pts[l].union(&src);
-            // A write through pointers lands in the pointees after all but the last hop.
-            if let Some(k) = derefs(p).checked_sub(1) {
-                for z in deref_level(pts, l, k).iter() {
-                    changed |= pts[z].union(&src);
-                }
-            }
-        }
-    }
-    changed
-}
-
-/// `memcopy dst, src`: the pointed-to memory of `dst` receives what `src`'s memory holds.
-fn copy_pointees(pts: &mut [Bits], dst: &Place, src: &Place) -> bool {
-    let from = read_srcs(pts, src);
-    let mut carried = from.clone();
-    for z in from.iter() {
-        let extra = pts[z].clone();
-        carried.union(&extra);
-    }
-    let mut changed = false;
-    for z in read_srcs(pts, dst).iter() {
-        changed |= pts[z].union(&carried);
-    }
-    changed
 }

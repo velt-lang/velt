@@ -1,8 +1,8 @@
 // A search worker: takes files from the walk, searches each, and sends the formatted output of
 // every file with a match to the printer. Output is formatted here, in parallel, so the printer
 // only writes.
-import { Channel } from "velt:channel";
-import { readFileSync } from "velt:fs";
+import { Channel } from "velt/sync";
+import { readFileSync } from "velt/fs";
 import { LineMatch, Matcher } from "./matcher";
 import { Options } from "./options";
 import { FileJob } from "./walk";

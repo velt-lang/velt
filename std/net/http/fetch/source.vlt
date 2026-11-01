@@ -1,0 +1,43 @@
+// velt/net/http (internal): a request a server received, as the web-standard `Request` its
+// handler reads: the server implements `RequestSource`, and `serverRequest` makes the `Request`
+// that reads it when first asked for (its method, URL, headers and body), as Deno's and Bun's
+// servers hand their handlers a `Request`.
+
+import { IoError } from "velt/io/error";
+import { Request } from "velt/net/http/fetch/request";
+
+/**
+ * What a server gives the `Request` a handler reads (`serverRequest`). Each method is called
+ * when the handler first asks for that part, so a server can keep the request where it read it
+ * (in its connection's buffer) until then.
+ */
+export interface RequestSource {
+  method(): string;
+  /** The absolute URL, `http://host/path?query` (as in Deno and Bun). */
+  url(): string;
+  /** The values of header `name` (any case) joined with ", ", as `Headers.get` reads them. */
+  header(name: string): string | null;
+  hasHeader(name: string): bool;
+  /** Every header as it came, in order. */
+  headers(): [string, string][];
+  /** Whether a body is left to read. */
+  hasBody(): bool;
+  /** The next piece of the body, or null at its end. */
+  read(): Promise<u8[] | null, IoError>;
+  /** The rest of the body. */
+  body(): Promise<u8[], IoError>;
+}
+
+/** The `Request` a handler reads for a request a server received from `source`. */
+export function serverRequest(source: RequestSource): Request {
+  return Request.ofSource(source);
+}
+
+/**
+ * The source of a request a server received (`serverRequest`), null for one made with
+ * `new Request`: the server reads what is its own from it (a connection to upgrade, the
+ * client's address).
+ */
+export function requestSource(req: Request): RequestSource | null {
+  return req.serverSide();
+}

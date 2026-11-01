@@ -1,9 +1,11 @@
 //! Expression checking (bidirectional: `exp` is the type demanded by context, if any).
 //! One submodule per concern.
 
+mod abstract_ctor;
 mod access;
 mod accessor_rmw;
 mod any_prim;
+mod any_record_cast;
 mod any_text;
 mod arg_order;
 mod args;
@@ -14,9 +16,12 @@ pub(crate) mod assign_paths;
 mod assign_pattern;
 mod atomic;
 mod bound_values;
+mod lit_members;
+mod thread_local;
 pub(crate) use assign_pattern::REPORTED;
 mod attempt;
 mod await_union;
+mod brand_members;
 mod builtins;
 mod call;
 mod call_apply;
@@ -24,7 +29,9 @@ mod callables;
 mod callback;
 mod callback_sig;
 mod callback_wrap;
+mod cast_member;
 mod chain;
+mod class_bound;
 mod closure;
 mod closure_sig;
 mod coerce;
@@ -46,7 +53,10 @@ mod dynamic;
 mod dynamic_arith;
 mod dynamic_concat;
 mod dynamic_enum;
+mod dynamic_fill;
+pub(crate) mod dynamic_fn_views;
 mod dynamic_member;
+mod dynamic_members;
 mod dynamic_narrow;
 mod dynamic_optional;
 mod dynamic_relational;
@@ -55,7 +65,10 @@ mod dynamic_whole;
 mod dynamic_write;
 mod env_globals;
 mod generic_dynamic;
+mod proxy_getters;
+mod static_call;
 pub(crate) use env_globals::NODE_GLOBALS;
+pub(crate) use primitive_statics::primitive_this;
 mod array_view_cast;
 pub(crate) mod await_value;
 mod checked_key;
@@ -87,6 +100,7 @@ mod iface_nested;
 mod iface_notes;
 mod iface_object;
 mod iface_object_setters;
+mod iface_overload_impls;
 mod iface_write;
 mod in_keys;
 mod in_place_chain;
@@ -94,6 +108,7 @@ mod indexers;
 mod int32;
 mod intrinsics;
 mod js_list;
+mod json_callbacks;
 mod json_layout;
 pub(crate) mod jsx;
 mod key_index;
@@ -136,18 +151,21 @@ mod overload_arg;
 mod overload_call;
 mod param_member;
 mod per_use;
+mod primitive_statics;
 mod process;
 mod promise_new;
+mod promise_same;
 mod promise_then;
 mod promise_union;
-mod proxy;
+mod prop_values;
+pub(crate) mod proxy;
 mod push_items;
 mod record;
 mod record_call;
 mod record_compound;
 mod record_literal;
 mod record_logical;
-mod record_symbol_key;
+mod record_props;
 mod record_view;
 mod regex_args;
 mod rest_shapes;
@@ -160,14 +178,16 @@ mod spread_array;
 mod spread_cond;
 mod spread_optional;
 pub(crate) mod static_copy;
-mod std_glue;
 mod structured_clone;
 mod supers;
 mod symbol_keys;
 mod symbol_record;
 mod sync;
+mod system_args;
 pub(crate) mod tasks;
 mod ternary;
+mod this_fn_call;
+mod this_fn_expr;
 mod this_param;
 mod this_type;
 mod three_state;
@@ -190,24 +210,17 @@ use velt_common::Span;
 use velt_syntax::ast;
 
 use super::{FnCx, Want};
-use crate::hir::{self, TyId, TyKind};
+use crate::hir::{self, TyId};
 pub(crate) use args::deferred;
+pub(crate) use atomic::static_atomic_init;
 pub(crate) use call_apply::{is_member_read, read_root};
 pub(crate) use callables::{property_writes, PendingWrites};
+pub(crate) use cast_member::{is_cast_member, CastTest};
 
 impl FnCx<'_, '_> {
     /// Check `e` against `exp`, converting (`WrapSome`/`Upcast`/`ToDyn`) or reporting a mismatch.
     pub fn expr_coerce(&mut self, e: &ast::Expr, exp: TyId, want: Want) -> hir::Expr {
-        // `const f: (s: string) => void = count`: a named function adapted to the type.
-        let fn_ty = self.cx.ty.core(exp).unwrap_or(exp);
-        if let Some(h) = self.frameless_named_fn(e, Some(exp)) {
-            return self.coerce(h, exp);
-        }
-        let adapted = match self.cx.ty.kind(fn_ty) {
-            TyKind::FnPtr { .. } => self.callback_adapter(e, exp, callback::CallbackMode::Plain),
-            _ => None,
-        };
-        let h = match adapted {
+        let h = match self.adapted_fn_value(e, exp) {
             Some(h) => h,
             None => self.expr(e, Some(exp), want),
         };
@@ -242,6 +255,11 @@ impl FnCx<'_, '_> {
         let h = self.collapse_dynamic_option(h);
         // A generic union holding `null` / `undefined` through a member, in its written form.
         let h = self.flatten_hidden_nothings(h);
+        // The operand of a reflective operation sees a class instance brand's class.
+        let h = match !self.instance_args.is_empty() && self.instance_args.contains(&e.id) {
+            true => self.unbrand_instance(h),
+            false => h,
+        };
         if want == Want::Move {
             // `const t = (K ?? d)!`, `K!.a`, `N.a`: what a module constant gives taken over.
             self.per_use_taken(e, h.ty);
@@ -300,6 +318,15 @@ impl FnCx<'_, '_> {
             }
             A::Update { op, prefix, target } => self.update(*op, *prefix, target, true, span),
             A::Cond { cond, then, els } => self.ternary(cond, then, els, exp, span),
+            // A member call that may pass its object to a function taking `this` (this_fn_call.rs).
+            A::Call {
+                callee,
+                type_args,
+                args,
+                optional,
+            } if self.this_fn_call_site(callee, type_args, *optional) => {
+                self.this_fn_member_call(callee, args, *optional, span)
+            }
             A::Call {
                 callee,
                 type_args,

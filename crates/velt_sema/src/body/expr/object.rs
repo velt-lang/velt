@@ -258,47 +258,13 @@ impl FnCx<'_, '_> {
         out
     }
 
-    pub(super) fn prop_value(
-        &mut self,
-        name: &ast::Ident,
-        value: Option<&ast::Expr>,
-        exp: Option<TyId>,
-    ) -> hir::Expr {
-        match value {
-            Some(v) => self.stored_value(v, |s| s.expr(v, exp, Want::Move)),
-            None => self.ident_expr(name, exp, Want::Move),
-        }
-    }
-
-    /// [`Self::prop_value`] for a field of an object type. A value that may be null written
-    /// for an optional field without a presence flag (`watched`, `anon::absent_is_null`) is
-    /// remembered: Node finds the key of `{ b: undefined }`, which such a field cannot hold
-    /// (`crate::absent_fields`).
-    pub(super) fn field_value(
-        &mut self,
-        name: &ast::Ident,
-        value: Option<&ast::Expr>,
-        exp: Option<TyId>,
-        watched: bool,
-    ) -> hir::Expr {
-        let h = self.prop_value(name, value, exp);
-        if !watched {
-            return h;
-        }
-        let nullable = crate::absent_fields::literal_may_be_null(self.cx, &h);
-        if nullable {
-            let store = (name.name.clone(), h.span);
-            self.cx.object_copies.null_literals.push(store);
-        }
-        h
-    }
-
     pub(crate) fn object_lit(
         &mut self,
         props: &[ast::ObjectProp],
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        self.instance_spreads(props);
         if props
             .iter()
             .any(|p| matches!(p, ast::ObjectProp::Method(_)))
@@ -400,6 +366,7 @@ impl FnCx<'_, '_> {
             hs.push(h);
         }
         let (def, type_args) = self.anon_def(&fields);
+        self.note_anon_written(def, ps.iter().map(|(_, v)| *v));
         let ty = self.cx.ty.intern(TyKind::Adt(def, type_args.clone()));
         let kind = H::AdtLit {
             def,
@@ -423,7 +390,7 @@ impl FnCx<'_, '_> {
 
     /// `props` with each `[x]: v` whose `x` is a local (a key known only at run time, not a
     /// module constant naming a symbol or string) written as the parser writes other such keys
-    /// (`...__computed_key(x, v)`, `record_literal::computed_entry`); `None` if there is none.
+    /// (`...computedKey(x, v)`, `record_literal::computed_entry`); `None` if there is none.
     fn local_computed_keys(&self, props: &[ast::ObjectProp]) -> Option<Vec<ast::ObjectProp>> {
         let local = |p: &ast::ObjectProp| match p {
             ast::ObjectProp::KeyValue(k, _) if crate::symbols::is_computed_key(k) => {
@@ -582,7 +549,7 @@ impl FnCx<'_, '_> {
         Some((d, slots))
     }
 
-    fn fill_struct(
+    pub(crate) fn fill_struct(
         &mut self,
         d: DefId,
         mut slots: Vec<Option<TyId>>,

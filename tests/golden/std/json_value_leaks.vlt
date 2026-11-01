@@ -1,0 +1,39 @@
+// check: no leaks
+// Every block a `JsonValue` takes is freed (#1660): a parsed value (a tape) and its children,
+// clones, an edited child (a runtime tree made from the tape), a `JsonValue` field decoded by
+// `JSON.parse<T>` and written back, `console.log` of one (a runtime tree made for printing),
+// the hash index of a wide object, and a failed parse.
+struct Msg {
+  id: i64;
+  body: JsonValue;
+}
+
+function main() {
+  const doc = JSON.parseValue('{"a":[1,"x",{"k":"é\\n"}],"2":true,"a":{"b":null},"1":0}');
+  const a = doc.get("a")!;
+  console.log(doc.len(), doc.keys().join(","), a.stringify(), doc.at(0)!.stringify());
+  const arr = JSON.parseValue('[1,"x",{"k":"é"}]');
+  const k = arr.at(2)!.get("k")!.asString()!;
+  const copy = arr.clone();
+  const child = arr.at(2)!;
+  child.set("z", JsonValue.of(1));
+  copy.push(child);
+  console.log(k, child.stringify(), copy.stringify(), arr.stringify());
+  console.log(doc);
+
+  const m = JSON.parse<Msg>('{"id":7,"body":{"x":[1,2],"y":"s"}}');
+  console.log(m.id, m.body.get("x")!.at(1)!.asNumber(), JSON.stringify(m));
+
+  const parts: string[] = [];
+  for (let i = 0; i < 20; i++) {
+    parts.push(`"k${i}":${i}`);
+  }
+  const wide = JSON.parseValue(`{${parts.join(",")}}`);
+  console.log(wide.get("k19")!.asNumber(), wide.get("k3")!.asNumber(), wide.get("q") == null);
+
+  try {
+    JSON.parseValue('{"a":[1,]}');
+  } catch (e) {
+    console.log(e.message);
+  }
+}

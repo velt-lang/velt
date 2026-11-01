@@ -1,0 +1,5 @@
+// `String.fromCodePoint` of a value that is no code point (here past U+10FFFF) is a RangeError
+// with Node's message (Node throws it; Velt panics with the same text, exit code 101, as for
+// other runtime RangeErrors).
+console.log(String.fromCodePoint(0x10ffff).length);
+console.log(String.fromCodePoint(0x110000));

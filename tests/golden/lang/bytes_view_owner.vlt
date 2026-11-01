@@ -1,0 +1,19 @@
+// A view of a `u8[]` (`subarray`) is the array plus a range: it sees the array's bytes after
+// the array grows (and moves its buffer), and an access past the array's current length panics
+// like any index, so a view never reads memory the array gave up.
+function main() {
+  const b: u8[] = Buffer.alloc(4);
+  b.write("abcd");
+  const v = b.subarray(1, 4);
+  for (let i = 0; i < 1000; i++) {
+    b.push(120);
+  }
+  v[0] = 66;
+  console.log(b.utf8Slice(0, 4), v.length, v[2]);
+  b.pop();
+  while (b.length > 2) {
+    b.pop();
+  }
+  console.log(v[0]);
+  console.log(v[2]);
+}

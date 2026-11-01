@@ -4,6 +4,14 @@
 use crate::style::{paint, Stream, Style};
 use crate::templates::Template;
 
+mod environment;
+mod options;
+use environment::ENVIRONMENT;
+use options::{
+    AFFECTED, BACKEND, CPU, DEBUG_INFO, FAIL_FAST, LOCKED, MEMBER, PACKAGE, RELEASE, REPORT,
+    TARGET, TEMPLATE, TIMINGS, VERBOSE, WORKSPACE,
+};
+
 /// One `velt` command's help.
 pub struct CommandHelp {
     /// The command word.
@@ -33,34 +41,6 @@ impl CommandHelp {
         flags
     }
 }
-
-const RELEASE: (&str, &str) = (
-    "--release",
-    "optimize (LLVM when clang is found) and link without debug info",
-);
-const DEBUG_INFO: (&str, &str) = ("-g", "keep debug info in a --release build");
-const TARGET: (&str, &str) = (
-    "--target <triple>",
-    "target triple (default: the host); wasm32-wasip1 and wasm32-unknown-unknown build WebAssembly",
-);
-const BACKEND: (&str, &str) = (
-    "--backend <name>",
-    "cranelift | llvm (default: llvm for --release when clang is found)",
-);
-const LOCKED: (&str, &str) = ("--locked", "fail if velt.lock.json would change");
-const VERBOSE: (&str, &str) = ("-v, --verbose", "print per-stage timings to stderr");
-const TIMINGS: (&str, &str) = (
-    "--timings",
-    "like -v, plus the time of each optimizer pass and codegen step",
-);
-const REPORT: (&str, &str) = (
-    "--report numbers",
-    "list the `number` variables in loops that stay doubles (not integers), and why",
-);
-const TEMPLATE: (&str, &str) = (
-    "--template <name>",
-    "app | cli | api | websocket | lib (default: app)",
-);
 
 /// Every command, in the order `velt --help` lists them.
 pub const COMMANDS: &[CommandHelp] = &[
@@ -108,15 +88,23 @@ pub const COMMANDS: &[CommandHelp] = &[
     CommandHelp {
         name: "build",
         summary: "Compile a file or the current package",
-        usage: &["build [<file.vlt>] [-o <out>] [--release] [-g] [--target <triple>] [--backend <name>] [--emit <kind>] [--locked] [--json] [-v] [--timings] [--report numbers]"],
+        usage: &[
+            "build [<file.vlt>] [-o <out>] [--release] [-g] [--target <triple>] [--cpu <name>] [--backend <name>] [--emit <kind>] [--locked] [--json] [-v] [--timings] [--report numbers]",
+            "build (--workspace | -p <glob>... | --affected [<base>]) [--fail-fast] [<build options>]",
+        ],
         about: "Without a file, builds the package found by searching upward for package.vlt \
                 (output: <package>/target/velt/<name>[.exe]). A single file builds to \
                 ./target/velt/<stem>[.exe].",
         options: &[
+            WORKSPACE,
+            PACKAGE,
+            AFFECTED,
+            FAIL_FAST,
             ("-o, --output <path>", "output file"),
             RELEASE,
             DEBUG_INFO,
             TARGET,
+            CPU,
             BACKEND,
             ("--emit <kind>", "vir | llvm (print VIR / LLVM IR and stop) | obj (object file only) | exe"),
             LOCKED,
@@ -141,12 +129,13 @@ pub const COMMANDS: &[CommandHelp] = &[
         name: "run",
         summary: "Build and run a file or the current package",
         usage: &[
-            "run [--release] [-g] [--target <triple>] [--backend <name>] [--locked] [-v] <file.vlt> [<program args>...]",
-            "run [--release] [-g] [--target <triple>] [--backend <name>] [--locked] [-v] [-- <program args>...]",
+            "run [--release] [-g] [--target <triple>] [--cpu <name>] [--backend <name>] [--locked] [-v] <file.vlt> [<program args>...]",
+            "run [--release] [-g] [--target <triple>] [--cpu <name>] [--backend <name>] [--locked] [-v] [-- <program args>...]",
+            "run -p <member> [<run options>]",
         ],
         about: "Exits with the program's exit code. Arguments after the file (or after `--`) go \
                 to the program; Velt's options come before the file.",
-        options: &[RELEASE, DEBUG_INFO, TARGET, BACKEND, LOCKED, VERBOSE],
+        options: &[MEMBER, RELEASE, DEBUG_INFO, TARGET, CPU, BACKEND, LOCKED, VERBOSE],
         examples: &[
             ("velt run", "run the current package"),
             ("velt run hello.vlt", "run one file"),
@@ -160,6 +149,8 @@ pub const COMMANDS: &[CommandHelp] = &[
         usage: &[
             "check [<file.vlt>] [--json] [--locked] [-v]",
             "check --ts-compat [<file|dir>...] [--json] [--locked] [-v]",
+            "check --std [--json] [-v]",
+            "check (--workspace | -p <glob>... | --affected [<base>]) [--fail-fast] [<check options>]",
         ],
         about: "Parses and type-checks like `velt build`, prints the diagnostics and exits \
                 with 1 if there are errors. Nothing is lowered, compiled or linked. With a \
@@ -169,14 +160,21 @@ pub const COMMANDS: &[CommandHelp] = &[
                 `src/lib.vlt`, with no `main`). With `--ts-compat`, checks the given files \
                 (directories: their `.vlt`, `.ts` and `.tsx` files), or without paths the \
                 folders the package's `tsCompat` lists, then reports what in them `tsc` would \
-                reject or run differently, for code shared with TypeScript.",
+                reject or run differently, for code shared with TypeScript. With `--std`, checks \
+                every file of the standard library and every definition in it, also those no \
+                program reaches (for the standard library's own development).",
         options: &[
+            WORKSPACE,
+            PACKAGE,
+            AFFECTED,
+            FAIL_FAST,
             ("--json", "diagnostics as one JSON document on stdout (for editors and tools)"),
             (
                 "--ts-compat [<file|dir>...]",
                 "lint the given files and directories (default: the package's `tsCompat` \
                  folders) for the TypeScript/Velt common subset",
             ),
+            ("--std", "check all of the standard library ($VELT_STD), every definition"),
             LOCKED,
             VERBOSE,
         ],
@@ -190,15 +188,20 @@ pub const COMMANDS: &[CommandHelp] = &[
     CommandHelp {
         name: "dev",
         summary: "Run, then rebuild and restart on every change",
-        usage: &["dev [<file.vlt>] [--exe] [--locked] [-v] [--timings] [-- <program args>...]"],
+        usage: &[
+            "dev [<file.vlt>] [--exe [--release] [-g] [--cpu <name>] [--backend <name>]] [--locked] [-v] [--timings] [-- <program args>...]",
+            "dev -p <member> [<dev options>]",
+        ],
         about: "Runs the program like `velt run`, then rebuilds and restarts it whenever a file \
                 it imports (or package.vlt/velt.lock.json) changes; a failed build leaves the old \
                 version running. The program runs JIT-compiled inside `velt`, and listening \
                 sockets stay open across restarts.",
         options: &[
+            MEMBER,
             ("--exe", "link an executable for each version instead of the JIT"),
             RELEASE,
             DEBUG_INFO,
+            CPU,
             BACKEND,
             LOCKED,
             VERBOSE,
@@ -213,23 +216,36 @@ pub const COMMANDS: &[CommandHelp] = &[
         name: "test",
         summary: "Run the tests (`export function test_*` in *.test.vlt, .ts, .tsx)",
         usage: &[
-            "test [<file|dir>] [--filter <text> [--exact]] [--release] [--locked] [--watch]",
-            "test [<file|dir>] [--filter <text> [--exact]] [--release] [--locked] --no-run [--json]",
+            "test [<file|dir>] [--filter <text> [--exact]] [--release] [--cpu <name>] [--locked] [--jobs <n>] [--watch] [--no-cache]",
+            "test [<file|dir>] [--filter <text> [--exact]] [--release] [--cpu <name>] [--locked] --no-run [--json]",
+            "test (--workspace | -p <glob>... | --affected [<base>]) [--fail-fast] [<test options>]",
         ],
         about: "Every `export function test_*()` (or `export async function test_*()`) in a \
                 *.test.vlt (or .test.ts, .test.tsx) file is a test. Prints `ok <name>` / `FAILED <name>` and exits \
-                with 1 if any test failed.",
+                with 1 if any test failed. A file whose program didn't change since its tests passed, and \
+                reaches nothing outside itself (files, network, clock, environment, random numbers), \
+                isn't run again: its report is printed as `(cached)`.",
         options: &[
+            WORKSPACE,
+            PACKAGE,
+            AFFECTED,
+            FAIL_FAST,
             ("--filter <text>", "only the tests whose name contains <text>"),
             ("--exact", "with --filter: only the test named <text>"),
             ("--release", "build the tests optimized"),
+            CPU,
             LOCKED,
             ("--watch", "rerun on every change"),
+            (
+                "--jobs <n>, -j <n>",
+                "run <n> test files at once (default: one per core)",
+            ),
             (
                 "--no-run",
                 "build the test programs without running them, and print their paths",
             ),
             ("--json", "with --no-run: print the programs and their tests as JSON"),
+            ("--no-cache", "run every test file, keeping and using no results"),
         ],
         examples: &[
             ("velt test", "every test of the package (or under the current directory)"),
@@ -241,10 +257,19 @@ pub const COMMANDS: &[CommandHelp] = &[
     CommandHelp {
         name: "fmt",
         summary: "Format .vlt (and .ts, .tsx) files",
-        usage: &["fmt [<file|dir>...] [--check]"],
+        usage: &[
+            "fmt [<file|dir>...] [--check]",
+            "fmt (--workspace | -p <glob>... | --affected [<base>]) [--fail-fast] [<fmt options>]",
+        ],
         about: "Without paths, formats the package's package.vlt and the .vlt, .ts and .tsx \
                 files of src/ (or every .vlt file under the current directory).",
-        options: &[("--check", "write nothing; list unformatted files and exit 1 if any")],
+        options: &[
+            WORKSPACE,
+            PACKAGE,
+            AFFECTED,
+            FAIL_FAST,
+            ("--check", "write nothing; list unformatted files and exit 1 if any"),
+        ],
         examples: &[
             ("velt fmt", "format the package"),
             ("velt fmt --check src tests", "check formatting (CI)"),
@@ -252,12 +277,32 @@ pub const COMMANDS: &[CommandHelp] = &[
     },
     CommandHelp {
         name: "clean",
-        summary: "Remove the package's target/ directory",
-        usage: &["clean"],
+        summary: "Remove the package's target/ directory, or the build cache",
+        usage: &["clean [--cache]"],
         about: "Deletes <package>/target (build outputs, test binaries, docs) and reports the \
-                space freed.",
-        options: &[],
-        examples: &[("velt clean", "remove the build outputs of the current package")],
+                space freed. With --cache, deletes the build cache instead: the compiled code \
+                every build on this machine shares ($VELT_BUILD_CACHE, default \
+                $VELT_HOME/build-cache), which builds keep under $VELT_BUILD_CACHE_SIZE (2G) on \
+                their own.",
+        options: &[("--cache", "remove the machine's build cache instead of target/")],
+        examples: &[
+            ("velt clean", "remove the build outputs of the current package"),
+            ("velt clean --cache", "remove the build cache shared by all projects"),
+        ],
+    },
+    CommandHelp {
+        name: "cache",
+        summary: "Compile the standard library into the build cache ahead of time",
+        usage: &["cache warm [--background]"],
+        about: "Compiles a set of programs that reach most of the standard library (shipped in \
+                share/velt/warm/), for this machine's CPU and the default one, so the first \
+                build of a project compiles little more than its own code. Runs once per \
+                toolchain; the installers start it after installing a version.",
+        options: &[(
+            "--background",
+            "start it detached at low priority and return at once",
+        )],
+        examples: &[("velt cache warm", "fill the build cache now")],
     },
     CommandHelp {
         name: "add",
@@ -455,17 +500,40 @@ pub const COMMANDS: &[CommandHelp] = &[
     },
     CommandHelp {
         name: "doc",
-        summary: "Generate HTML API docs",
-        usage: &["doc [<file|dir>...] [--std] [-o <dir>]"],
+        summary: "Generate HTML API docs (or JSON for other tools)",
+        usage: &[
+            "doc [<file|dir>...] [--std] [--format html|json|types] [-o <dir|file>]",
+            "doc (--workspace | -p <glob>... | --affected [<base>]) [--fail-fast] [<doc options>]",
+        ],
         about: "Documents exported items and the `///` comments above them. Without paths: the \
                 package's src/ into <package>/target/doc.",
         options: &[
+            WORKSPACE,
+            PACKAGE,
+            AFFECTED,
+            FAIL_FAST,
             ("--std", "document the standard library"),
-            ("-o, --output <dir>", "output directory"),
+            (
+                "--format <html|json|types>",
+                "HTML pages (the default), one JSON document (api.json) for tools, or (with \
+                 --std) the `velt` type package: TypeScript declarations for tsc",
+            ),
+            (
+                "-o, --output <dir|file>",
+                "output directory; with --format json also a .json file, or - for stdout",
+            ),
         ],
         examples: &[
             ("velt doc", "docs for the package"),
             ("velt doc --std -o std-docs", "standard library docs"),
+            (
+                "velt doc --std --format json -o std.json",
+                "standard library docs as JSON",
+            ),
+            (
+                "velt doc --std --format types -o velt-types",
+                "the `velt` type package for tsc",
+            ),
         ],
     },
     CommandHelp {
@@ -556,65 +624,6 @@ pub fn find(name: &str) -> Option<&'static CommandHelp> {
 pub fn command_names() -> Vec<&'static str> {
     COMMANDS.iter().map(|c| c.name).collect()
 }
-
-const ENVIRONMENT: &[(&str, &str)] = &[
-    ("VELT_STD", "standard library directory"),
-    ("VELT_HOME", "vpm home (default ~/.velt: cache/, registry/)"),
-    (
-        "VELT_REGISTRY",
-        "package registry: a directory (default $VELT_HOME/registry) or an http(s):// URL",
-    ),
-    (
-        "VELT_REGISTRY_TOKEN",
-        "a registry token for every registry server, overriding `velt login` (for CI)",
-    ),
-    (
-        "VELT_CA_FILE",
-        "PEM file of extra CA certificates to trust for https:// registries",
-    ),
-    (
-        "VELT_CLANG",
-        "clang used by the LLVM backend (default: PATH, then the standard LLVM install)",
-    ),
-    (
-        "VELT_RT_LIB",
-        "runtime library (default: next to velt, or <prefix>/lib when installed)",
-    ),
-    (
-        "VELT_RT_LINK",
-        "`static`: debug builds link the static runtime instead of the shared one",
-    ),
-    ("VELT_LINKER", "`bundled`, `system`, or a linker program"),
-    (
-        "VELT_LLVM_BIN",
-        "LLVM bin directory with opt/llc for WebAssembly (default: rustup's llvm-tools)",
-    ),
-    (
-        "VELT_WASI_SYSROOT",
-        "directory with wasi-libc's crt1-command.o and libc.a (default: rustup's)",
-    ),
-    (
-        "VELT_WASM_RUNNER",
-        "program running wasm32-wasip1 modules for `velt run` (default: wasmtime)",
-    ),
-    (
-        "VELT_TOOLCHAIN",
-        "the toolchain the launcher runs for this command: a version or a linked name",
-    ),
-    (
-        "VELT_TOOLCHAIN_AUTO_INSTALL",
-        "`0`: the launcher does not install a missing pinned version",
-    ),
-    (
-        "VELT_INSTALL_BASE_URL",
-        "where toolchains and target packs are downloaded from (a mirror)",
-    ),
-    (
-        "VELT_INSTALL_PUBLIC_KEY",
-        "keys release signatures are checked with instead of velt's (another build's releases)",
-    ),
-    ("NO_COLOR", "set to disable colored output"),
-];
 
 fn heading(text: &str) -> String {
     paint(Stream::Stdout, Style::Heading, text)

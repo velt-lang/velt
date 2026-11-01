@@ -1,0 +1,62 @@
+// http-server (internal): `ReadDeadline`, how a connection waits for input until a deadline
+// (its idle timeout, a request's time limit) with one timer for many waits. A timer of its own
+// for each wait (`readableWithin(ms)`) costs a runtime timer armed and dropped per request on a
+// kept-alive connection; the deadline moves later with each request, so the timer armed for an
+// earlier one is kept, and only re-armed when it fires before the deadline it is waited for now
+// (or that deadline is earlier than the one it was armed for).
+
+import { TcpStream } from "velt/net";
+import { AbortSignal } from "velt/task";
+
+/// No deadline (`Date.now()` never reaches it).
+export const NO_DEADLINE: i64 = 9007199254740991;
+
+/// The waits for input of one connection.
+export class ReadDeadline {
+  /// The deadline the timer was armed for, and the signal it aborts (with the stop signal it
+  /// was armed with).
+  private armed: i64 = 0;
+  private signal: AbortSignal | null = null;
+  private stop: AbortSignal | null = null;
+
+  /**
+   * Waits until `conn` may have input: true, or false once `deadline` (a `Date.now()` time;
+   * `NO_DEADLINE`: none) passed or `stop` was aborted.
+   */
+  async readable(conn: TcpStream, deadline: i64, stop: AbortSignal): Promise<bool> {
+    // The timer armed fires no later than `deadline`: wait on it (aborted already, by itself or
+    // by `stop`, the wait ends at once and the slow path tells which).
+    const s = this.signal;
+    if (s != null && this.armed <= deadline && this.stop === stop) {
+      if (await conn.readableWithin(-1, s)) {
+        return true;
+      }
+    }
+    return await this.slow(conn, deadline, stop);
+  }
+
+  /// `readable` when the timer armed cannot serve: re-armed for `deadline`.
+  private async slow(conn: TcpStream, deadline: i64, stop: AbortSignal): Promise<bool> {
+    while (!stop.aborted) {
+      if (deadline == NO_DEADLINE) {
+        return await conn.readableWithin(-1, stop);
+      }
+      let s = this.signal;
+      if (s == null || s.aborted || this.armed > deadline || this.stop !== stop) {
+        const now = Date.now() as i64;
+        if (now >= deadline) {
+          return false;
+        }
+        s = AbortSignal.any([stop, AbortSignal.timeout(deadline - now)]);
+        this.signal = s;
+        this.armed = deadline;
+        this.stop = stop;
+      }
+      if (await conn.readableWithin(-1, s)) {
+        return true;
+      }
+      // The stop, the deadline, or a timer armed for an earlier deadline: the loop tells.
+    }
+    return false;
+  }
+}

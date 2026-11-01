@@ -12,7 +12,7 @@ use crate::hir::{self, DefId, ExprKind as H, PatKind as P, TyId, TyKind};
 use crate::object_copies::Seen;
 use crate::symbols::Presence;
 
-/// The well-known symbols (std/symbol.vlt `SymbolConstructor`), which name members as
+/// The well-known symbols (std/lang/symbol/index.vlt `SymbolConstructor`), which name members as
 /// `[Symbol.<name>]`.
 const WELL_KNOWN: [&str; 15] = [
     "asyncDispose",
@@ -91,7 +91,7 @@ impl FnCx<'_, '_> {
     }
 
     /// `props` with each `[E.M]: v` whose key is an enum member (which the parser writes as a
-    /// key known only at run time, `...__computed_key(E.M, v)`) as the property its value
+    /// key known only at run time, `...computedKey(E.M, v)`) as the property its value
     /// names; `None` if there is none.
     pub(crate) fn enum_computed_keys(
         &mut self,
@@ -186,6 +186,7 @@ impl FnCx<'_, '_> {
     /// (`[KEY]?: T`, `a?: T`) or a record's entry, whether it is present (tested at run time).
     /// A key known only at run time is `in_keys.rs`'s.
     pub(crate) fn key_in(&mut self, lhs: &ast::Expr, rhs: &ast::Expr, span: Span) -> hir::Expr {
+        self.instance_arg(rhs);
         // `"a" in #tmp`, built by a destructuring default for an optional field with a presence
         // flag (`pattern_defaults.rs`); source code cannot write it (no node id).
         if let (ast::NodeId(u32::MAX), ast::ExprKind::Lit(ast::Lit::Str(name))) =
@@ -203,6 +204,14 @@ impl FnCx<'_, '_> {
         let Some(key) = self.in_key_of(lhs) else {
             return self.dynamic_key_in(lhs, rhs, span);
         };
+        if matches!(key, InKey::Symbol(_)) {
+            // `KEY in r` on a string-keyed record: its symbol table, tested at run time.
+            let str_ = self.cx.ty.str_;
+            let t = self.trial_expr(rhs).ty;
+            if self.record_args(t).is_some_and(|(k, _)| k == str_) {
+                return self.dynamic_key_in(lhs, rhs, span);
+            }
+        }
         if matches!(key, InKey::Str(_)) {
             if self.typed_proxy_once(rhs) {
                 // `"k" in f()` of a typed proxy: the operand once, then as below.
@@ -298,7 +307,14 @@ impl FnCx<'_, '_> {
                                 kind: ast::ExprKind::Lit(ast::Lit::Str(key.name().to_string())),
                                 span: lhs.span,
                             };
-                            self.record_call(obj, "__has", &[lit], span)
+                            // A record's accessors too, in a program that defines them.
+                            let keyed = self.cx.objects.record_accessors
+                                && self.has_record_method(velt_common::std_key!(record_has_keyed));
+                            let has = match keyed {
+                                true => velt_common::std_key!(record_has_keyed),
+                                false => velt_common::std_key!(record_has),
+                            };
+                            self.record_call(obj, has, &[lit], span)
                         }
                         _ => self.mk(H::Lit(hir::Lit::Bool(false)), b, span),
                     };

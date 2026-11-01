@@ -82,6 +82,7 @@ pub(super) unsafe fn run_transfer(f: *mut VeltFut) {
 }
 
 unsafe extern "C" fn boxed_drop(f: *mut VeltFut) {
+    super::identity::forget(f);
     let t = trailer(f);
     if (*t).live != 0 {
         ((*t).drop)(state(f));

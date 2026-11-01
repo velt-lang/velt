@@ -319,3 +319,71 @@ fn a_sum_of_bounded_values_is_capped_by_its_trips() {
     assert!(!assigned(&q.funcs[0], c));
     agree(&p, &q);
 }
+
+/// `nest`, with the counter started from another local plus 4 (`x = start; c = x + 4`), as
+/// `let q = at + 4` starts a varint's position before the loop reading it.
+fn nest_from_local(start: f64, levels: &[Level]) -> (Program, Local) {
+    let (mut p, c) = nest(start, 1.0, levels, true);
+    let f = &mut p.funcs[0];
+    let x = Local(f.locals.len() as u32);
+    f.locals.push(velt_vir::vir::LocalDecl::new(Ty::F64, None));
+    let at = f.blocks[0]
+        .stmts
+        .iter()
+        .position(|s| matches!(s, Stmt::Assign(d, _) if d.local == c))
+        .expect("the counter's start");
+    f.blocks[0].stmts[at] = Stmt::Assign(
+        Place::local(c),
+        bin(BinOp::Add, copy_local(x), float(4.0, Ty::F64)),
+    );
+    f.blocks[0].stmts.insert(
+        at,
+        Stmt::Assign(Place::local(x), Rvalue::Use(float(start, Ty::F64))),
+    );
+    if let Some(locs) = f.locs.get_mut(0) {
+        locs.insert(at.min(locs.len()), None);
+    }
+    (p, c)
+}
+
+#[test]
+fn a_counter_may_start_from_a_bounded_local() {
+    let (p, c) = nest_from_local(40.0, &f64_loops(&[1000.0]));
+    assert_eq!(cap_of(&p, c), Some(Fact::int(44, 44 + 1001)));
+    let q = narrowed(&p);
+    assert!(!assigned(&q.funcs[0], c), "the counter is narrowed");
+    agree(&p, &q);
+}
+
+#[test]
+fn an_integer_counter_read_as_a_double_is_capped_by_an_integer_loop() {
+    // `q: i64 = 0; for (j: i32 = 0; j < 8; j++) { x = q as f64; q = q + 1 }; return q as f64`:
+    // `page[q++]` once an earlier round made `q` an `i64`. The loop's test compares an `i32`,
+    // which only the cap of `q` needs tracked (#1718).
+    let mut pb = ProgramBuilder::new();
+    let mut fb = FuncBuilder::export("f", &[Ty::F64], Ty::F64);
+    let (q, j, cond) = (fb.local(Ty::I64), fb.local(Ty::I32), fb.local(Ty::Bool));
+    let (x, t, u, r) = (
+        fb.local(Ty::F64),
+        fb.local(Ty::I64),
+        fb.local(Ty::I32),
+        fb.local(Ty::F64),
+    );
+    let (entry, head, body, exit) = (fb.block(), fb.block(), fb.block(), fb.block());
+    fb.assign(entry, q, Rvalue::Use(int(0, Ty::I64)));
+    fb.assign(entry, j, Rvalue::Use(int(0, Ty::I32)));
+    fb.goto(entry, head);
+    fb.assign(head, cond, bin(BinOp::Lt, copy_local(j), int(8, Ty::I32)));
+    fb.branch(head, cond, body, exit);
+    fb.assign(body, x, Rvalue::Cast(copy_local(q), Ty::F64));
+    fb.assign(body, t, bin(BinOp::Add, copy_local(q), int(1, Ty::I64)));
+    fb.assign(body, q, Rvalue::Use(copy_local(t)));
+    fb.assign(body, u, bin(BinOp::Add, copy_local(j), int(1, Ty::I32)));
+    fb.assign(body, j, Rvalue::Use(copy_local(u)));
+    fb.goto(body, head);
+    fb.assign(exit, r, Rvalue::Cast(copy_local(q), Ty::F64));
+    fb.ret(exit, copy_local(r));
+    pb.add(fb.finish());
+    let p = pb.finish();
+    assert_eq!(cap_of(&p, q), Some(Fact::int(0, 9)));
+}

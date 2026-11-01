@@ -40,6 +40,17 @@ impl FnCx<'_, '_> {
             h.ty = exp;
             return Ok(h);
         }
+        // An instance of a class to a brand of it whose object part every instance has.
+        let h = match self.instance_brand_target(exp) {
+            Some(base) => match self.try_coerce(h, base) {
+                Ok(mut c) => {
+                    c.ty = exp;
+                    return Ok(c);
+                }
+                Err(h) => h,
+            },
+            None => h,
+        };
         if self.cx.brand_base(h.ty).is_none() {
             return self.try_coerce_value(h, exp);
         }
@@ -92,6 +103,10 @@ impl FnCx<'_, '_> {
             false => h,
         };
         let h = match self.try_coerce_typed(h, exp) {
+            Ok(h) => return Ok(h),
+            Err(h) => h,
+        };
+        let h = match self.class_bound_value(h, exp) {
             Ok(h) => return Ok(h),
             Err(h) => h,
         };
@@ -187,6 +202,11 @@ impl FnCx<'_, '_> {
             Ok(h) => return Ok(h),
             Err(h) => h,
         };
+        // Stored into a `Promise<T>` written without an error type: the program is checked
+        // again with this promise's errors written there (`throws::promise_sites`).
+        if self.cx.seed_promise_site(h.ty, exp) {
+            return Err(h);
+        }
         if let Some(widens) = self.cx.fn_throws_differ(h.ty, exp) {
             return match widens {
                 true => self.adapt_fn(h, exp),
@@ -501,6 +521,11 @@ impl FnCx<'_, '_> {
     }
 
     pub fn report_mismatch(&mut self, expected: TyId, found: &hir::Expr) {
+        // `reject(v)` of a promise without a written error type, a union with a `Promise<T>`
+        // member or a closure's `return`: the program is checked again with what was stored
+        // there, which drops this report (`throws::promise_sites`).
+        self.cx.seed_reject(found.ty, expected);
+        self.cx.seed_promise_site(found.ty, expected);
         // The comparisons don't see variables in the fields of anonymous object types yet
         // (`throws::vars`): such a mismatch may come from them.
         if self.cx.anon_vars_may_mismatch(expected, found.ty) {
@@ -584,6 +609,10 @@ impl FnCx<'_, '_> {
         }
         if self.cx.is_generic_fn(expected) {
             d = d.with_note(super::generic_conversions::fixed_note(&e, &f));
+        } else if let Some(name) = self.bound_only_iface(expected) {
+            d = d.with_note(format!(
+                "`{name}` is only a bound for type parameters (`T extends {name}`): no value has it as its type"
+            ));
         } else if let TyKind::Dyn(..) = self.cx.ty.kind(expected) {
             d = match (
                 self.adapt_refusal(expected, found.ty),

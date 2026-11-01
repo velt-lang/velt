@@ -1,0 +1,8 @@
+// An imported module's top-level statements print before the root file's statements also when
+// the program starts tasks, which run the root's statements on a worker thread (#1399): what
+// the statements printed on the main thread is written out before the root starts.
+import { f } from "./_module_script_tasks/m";
+
+console.log("main", f());
+queueMicrotask(() => console.log("microtask"));
+setTimeout(() => console.log("timer"), 0);

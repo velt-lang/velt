@@ -1,0 +1,12 @@
+json_callbacks_untyped.vlt:6:37: error: the value parameter of a callback of `JSON.stringify` must be written `v: JsonValue` (#924)
+the callback gets each value as a `JsonValue`, not as a JavaScript value: `typeof`, arithmetic and comparisons on it would not do what they do in Node until `any` has its JavaScript meaning (#924)
+write `(key, v: JsonValue) => …` and read the value with `v.isNumber()`, `v.asNumber()` and the other `JsonValue` methods
+json_callbacks_untyped.vlt:7:48: error: the value parameter of a callback of `JSON.stringify` must be written `v: JsonValue` (#924)
+the callback gets each value as a `JsonValue`, not as a JavaScript value: `typeof`, arithmetic and comparisons on it would not do what they do in Node until `any` has its JavaScript meaning (#924)
+write `(key, v: JsonValue) => …` and read the value with `v.isNumber()`, `v.asNumber()` and the other `JsonValue` methods
+json_callbacks_untyped.vlt:8:47: error: the value parameter of a callback of `JsonValue.revive` must be written `v: JsonValue` (#924)
+the callback gets each value as a `JsonValue`, not as a JavaScript value: `typeof`, arithmetic and comparisons on it would not do what they do in Node until `any` has its JavaScript meaning (#924)
+write `(key, v: JsonValue) => …` and read the value with `v.isNumber()`, `v.asNumber()` and the other `JsonValue` methods
+json_callbacks_untyped.vlt:9:38: error: `JSON.parse(text, reviver)` is not supported yet: it needs `any` to have its JavaScript meaning (#924)
+parse the document as a `JsonValue` and revive that: `JSON.parseValue(text).revive((key: string, v: JsonValue) => …)`
+`JSON.parse`'s second argument is its options (`{ maxDepth, comments, trailingCommas }`)

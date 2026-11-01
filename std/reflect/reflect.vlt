@@ -1,0 +1,105 @@
+// velt/reflect (internal): reading a dynamic value's type and entries, identities and the
+// visit stack (the module's functions; docs/std/reflect.md).
+
+import {
+  anyReflectCount,
+  anyReflectHook,
+  anyReflectInfo,
+  anyReflectName,
+  anyReflectValue,
+  identity as valueIdentity,
+  isTypedProxy,
+  toAny,
+} from "velt/lang/intrinsics";
+import { RuntimeType } from "velt/reflect/runtime_type";
+
+declare function velt_rt_visit_enter(id: u64): u8;
+declare function velt_rt_visit_leave();
+
+/** What `v` holds at run time. */
+export function typeOf(v: any): RuntimeType {
+  const info = anyReflectInfo(v);
+  const parts = info.split("|");
+  const hooks: string[] = parts[3].length == 0 ? [] : parts[3].split(",");
+  return new RuntimeType(parts[0], parts[1], parts[2], hooks);
+}
+
+/** The kind of what `v` holds (`typeOf(v).kind`), without the rest. */
+export function kindOf(v: any): string {
+  const info = anyReflectInfo(v);
+  return info.slice(0, info.indexOf("|"));
+}
+
+/**
+ * How many entries `v` lists, or -1 when it cannot list them (a proxy, a `Map` with keys that
+ * are not strings, an object with a field no `any` can hold):
+ * - an object, a class instance or a struct: its fields, in JavaScript's key order (array index
+ *   names first), without ES private fields (`#x`), symbol keys and functions; an object
+ *   literal's getter is listed with the fields;
+ * - an array or a tuple: its elements;
+ * - a `Map<string, V>` or a `Record<string, V>`: its entry positions, in insertion order (a
+ *   deleted entry is listed with the name `""` and the value `undefined`);
+ * - a `shared` cell: the value it holds;
+ * - anything else: none.
+ */
+export function entryCount(v: any): i64 {
+  return anyReflectCount(v);
+}
+
+/** The name of entry `i` of `v` (`entryCount`): a field's or a key's; `""` for an element. */
+export function entryName(v: any, i: i64): string {
+  return anyReflectName(v, i);
+}
+
+/**
+ * The value of entry `i` of `v` (`entryCount`): `undefined` for an absent optional field, a
+ * deleted entry or an `i` out of range. Reading a getter's entry runs the getter.
+ */
+export function entryValue(v: any, i: i64): any {
+  return anyReflectValue(v, i);
+}
+
+/**
+ * What the `toJSON(key)` method of the class instance `v` holds returns (`typeOf(v).hasHook(
+ * "toJSON")`), `undefined` when it has none. For a proxy (kind `"proxy"`), the plain value
+ * Node's `JSON.stringify` reads through its traps: an array of its elements for an array
+ * target, else an object of its own enumerable keys and their values.
+ */
+export function callToJSON(v: any, key: string): any {
+  return anyReflectHook(v, key);
+}
+
+/**
+ * The identity of `v`: the same number for the same object, array or function (an `any` holding
+ * one included), 0 for a value without one (a number, a string, a struct held by value).
+ */
+export function identity<T>(v: T): u64 {
+  return valueIdentity(v);
+}
+
+/**
+ * `v` as an `any`, converted when it runs: what a walk does with a typed `Proxy` (`isProxy`) or
+ * an interface value. Unlike `v as any`, it asks nothing more of `T`'s values than reading them.
+ */
+export function dynamicOf<T>(v: T): any {
+  return toAny(v);
+}
+
+/** Whether `v`, of a class or object type, is a typed `Proxy` (always false for other types). */
+export function isProxy<T>(v: T): bool {
+  return isTypedProxy(v);
+}
+
+/**
+ * Starts visiting the value with identity `id` (`identity`): false when it is being visited
+ * already, so it contains itself. Visits nest per thread; each successful `beginVisit` needs an
+ * `endVisit`.
+ */
+export function beginVisit(id: u64): bool {
+  return velt_rt_visit_enter(id) != 0;
+}
+
+/** Ends the innermost visit `beginVisit` started. */
+export function endVisit(): void {
+  velt_rt_visit_leave();
+}

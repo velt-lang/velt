@@ -1,0 +1,96 @@
+// check: no leaks
+// Bindings destructured from distinct parts of one value (tuple elements, array elements,
+// object fields) are distinct places: one may be modified or kept by a call while another
+// argument of the same call uses the other (#1873).
+
+const later: (() => void)[] = [];
+
+function run(name: string, f: () => void) {
+  later.push(() => {
+    console.log(name);
+    f();
+  });
+}
+
+function all(cases: [string, string][]) {
+  for (const [name, raw] of cases) {
+    run(name, () => console.log(raw));
+  }
+}
+
+function append(to: number[], from: number[]) {
+  for (const x of from) {
+    to.push(x);
+  }
+}
+
+class Pair {
+  xs: number[] = [1];
+  ys: number[] = [2, 3];
+}
+
+function tuples() {
+  const t: [number[], number[]] = [[1], [2]];
+  const [a, b] = t;
+  append(a, b);
+  console.log(t[0].join(","), t[1].join(","));
+}
+
+function objects() {
+  const p = new Pair();
+  const { xs, ys } = p;
+  append(xs, ys);
+  console.log(p.xs.join(","));
+}
+
+function nested() {
+  const t: [[number[], number[]], number[]] = [[[1], [2]], [3]];
+  const [[a, b], c] = t;
+  append(a, b);
+  append(b, c);
+  console.log(t[0][0].join(","), t[0][1].join(","));
+}
+
+function arrays() {
+  const rows: number[][] = [[1], [2], [3]];
+  const [a, b, ...rest] = rows;
+  append(a, b);
+  append(b, rest[0]);
+  console.log(rows.map((r) => r.join(",")).join(" "));
+}
+
+function loops() {
+  const ps: [number[], number[]][] = [[[1], [2]], [[3], [4]]];
+  for (const [a, b] of ps) {
+    append(a, b);
+  }
+  console.log(ps.map(([a, b]) => a.join(",") + "/" + b.join(",")).join(" "));
+}
+
+// One array in two places: the call gets it twice, as JavaScript's does.
+function addLen(to: number[], from: number[]) {
+  to.push(from.length);
+  to.push(from.length);
+}
+
+function oneArrayTwice() {
+  const x = [1];
+  const t: [number[], number[]] = [x, x];
+  const [a, b] = t;
+  addLen(a, b);
+  const { u, v } = { u: x, v: x };
+  addLen(u, v);
+  console.log(x.join(","), t[1].join(","));
+}
+
+all([
+  ["a", "b"],
+  ["c", "d"],
+]);
+for (const f of later) f();
+tuples();
+objects();
+nested();
+arrays();
+loops();
+oneArrayTwice();

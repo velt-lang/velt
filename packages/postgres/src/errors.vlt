@@ -1,0 +1,65 @@
+// postgres (internal): `PgError`, the package's error, and the checks that turn a failed native
+// result into one.
+
+import { IoResult, IoStatus } from "velt/native";
+
+/**
+ * A failed PostgreSQL operation. `code` is the server's SQLSTATE ("23505" unique violation,
+ * "42P01" undefined table, "42601" syntax error, "25P02" aborted transaction …) or, for
+ * failures outside the server: "ECONNREFUSED" and the other std/io names, "ECONNRESET" (the
+ * connection was lost), "ECLOSED" (closed client or ended pool), "EINVAL" (bad connection
+ * string or parameters), "ETLS" (TLS handshake or certificate), "ENOTSUP" (a column type
+ * that cannot be decoded) or "EMISMATCH" (a row that does not fit the requested type).
+ */
+export class PgError extends Error {
+  code: string;
+  /** The server's DETAIL field ("Key (id)=(1) already exists."), if any. */
+  detail: string | null;
+  /** The violated constraint's name, if any. */
+  constraint: string | null;
+
+  constructor(
+    code: string,
+    message: string,
+    detail: string | null = null,
+    constraint: string | null = null,
+  ) {
+    super(message);
+    this.code = code;
+    this.detail = detail;
+    this.constraint = constraint;
+  }
+}
+
+// The library's error JSON (docs/native_abi.md).
+struct ErrorFields {
+  code: string;
+  message: string;
+  detail: string | null;
+  constraint: string | null;
+}
+
+/** The `PgError` of a failure the library reported (its error JSON). */
+export function pgError(json: string): PgError {
+  try {
+    const f = JSON.parse<ErrorFields>(json);
+    return new PgError(f.code, f.message, f.detail, f.constraint);
+  } catch (e) {
+    return new PgError("UNKNOWN", json);
+  }
+}
+
+/** Throws the error of a failed status. */
+export function check(s: IoStatus) {
+  if (s.code != 0) {
+    throw pgError(s.message);
+  }
+}
+
+/** The value of a successful result; throws its error otherwise. */
+export function unwrap<T>(r: IoResult<T>): T {
+  if (r.code != 0) {
+    throw pgError(r.message);
+  }
+  return r.value;
+}

@@ -1,0 +1,7 @@
+true true
+false false false false
+collection object primitive
+7 false true 1,2 3
+caught get Symbol(key)
+caught set Symbol(key)
+caught get other

@@ -103,6 +103,21 @@ impl Ctx<'_> {
         self.inline_op(t, env, None)
     }
 
+    /// Parameter type `t` of a callable alias's call signature, resolved in the alias's `env`
+    /// (`Ctx::alias_body`): when it needs an argument that is still a type parameter, the form
+    /// deferred on its own (`TyOp::Inline` over the alias's parameters).
+    pub(crate) fn resolve_param_form(&mut self, t: &ast::TypeExpr, env: &TyEnv) -> TyId {
+        let outer_stuck = std::mem::replace(&mut self.type_level.stuck, false);
+        let reported = self.diags.len();
+        let r = self.resolve_type(t, env);
+        let stuck = std::mem::replace(&mut self.type_level.stuck, outer_stuck);
+        if !stuck {
+            return r;
+        }
+        self.diags.truncate(reported);
+        self.inline_op(t, env, None)
+    }
+
     /// The requirement that the read (or `write`) `x[k]` of the form `t` (`T[K]`) names one
     /// key at every instantiation (`Form::read`), written at `span`.
     pub(crate) fn key_read_requirement(
@@ -215,6 +230,10 @@ impl Ctx<'_> {
         }
         let o = self.resolve_type(object, env);
         let o = self.subst(o, &env.args);
+        // On an `any` (a proxy, say), each key is read through `any` (velt_vir key_any.rs).
+        if matches!(self.dynamic(o), Some(crate::any::Dynamic::Any)) {
+            return body;
+        }
         let fields = self.public_fields(o);
         let mut tys = vec![];
         for m in &members {
@@ -257,9 +276,11 @@ fn names_in<'t>(t: &'t ast::TypeExpr, out: &mut Vec<&'t str>) {
                 names_in(a, out);
             }
         }
-        K::Array(e) | K::KeyOf(e) | K::TupleRest(e) | K::TupleOptional(e) | K::Construct(e) => {
-            add(e)
-        }
+        K::Array(e)
+        | K::KeyOf(e)
+        | K::TupleRest(e)
+        | K::TupleOptional(e)
+        | K::Construct { ty: e, .. } => add(e),
         K::Tuple(ts) | K::Union(ts) | K::Intersection(ts) => ts.iter().for_each(add),
         K::Indexed { object, key } => {
             add(object);

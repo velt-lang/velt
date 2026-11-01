@@ -1,0 +1,51 @@
+// velt/encoding (internal): the WHATWG `TextEncoder` (a global, as in Node: docs/std/encoding.md).
+
+import { Uint8Array } from "velt/lang/typed_array/uint8_array";
+import { TextEncoderEncodeIntoResult } from "velt/encoding/encode_into_result";
+import { velt_rt_bytes_from_str } from "velt/encoding/rt";
+
+/**
+ * The WHATWG `TextEncoder` (a global, as in Node): strings to UTF-8 bytes, in a `Uint8Array`.
+ */
+export class TextEncoder {
+  /** Always `"utf-8"`. */
+  readonly encoding: string = "utf-8";
+
+  /** The UTF-8 bytes of `input` (a lone surrogate is written as U+FFFD, as in JS). */
+  encode(input: string = ""): Uint8Array {
+    return Uint8Array.wrap(velt_rt_bytes_from_str(input));
+  }
+
+  /**
+   * Writes the UTF-8 bytes of `source` into `destination`, as many whole characters as fit:
+   * `read` counts the UTF-16 code units taken, `written` the bytes.
+   */
+  encodeInto(source: string, destination: Uint8Array): TextEncoderEncodeIntoResult {
+    const room = destination.len;
+    // Room for all of it (the usual case): written in place, with no copy in between.
+    if (Buffer.byteLength(source) <= room) {
+      const written = destination.buf.bytes.write(source, destination.off);
+      return { read: source.length as number, written: written as number };
+    }
+    const bytes = velt_rt_bytes_from_str(source);
+    let written: usize = 0;
+    let read: usize = 0;
+    let i: usize = 0;
+    const n = bytes.length as usize;
+    while (i < n) {
+      const b = bytes[i];
+      // The length of the UTF-8 sequence starting at `i`, and the code units it encodes.
+      const size: usize = b < 0x80 ? 1 : b < 0xe0 ? 2 : b < 0xf0 ? 3 : 4;
+      if (written + size > room) {
+        break;
+      }
+      for (let k: usize = 0; k < size; k++) {
+        destination.buf.bytes[destination.off + written + k] = bytes[i + k];
+      }
+      written += size;
+      read += size == 4 ? 2 : 1;
+      i += size;
+    }
+    return { read: read as number, written: written as number };
+  }
+}

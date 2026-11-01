@@ -1,0 +1,4 @@
+# Built for the CPU it runs on, as bench/btree's Rust maps are: Velt builds for the generic
+# target, so this favors Rust.
+[build]
+rustflags = ["-C", "target-cpu=native"]

@@ -1,0 +1,13 @@
+// velt/io: `IoError`, the error of failed file, network and process operations (with a
+// Node-style `code`), and WHATWG streams (`ReadableStream`, also a global). docs/std/io.md.
+
+export { IoError } from "velt/io/error";
+export { ReadableStreamDefaultController } from "velt/io/streams/controller";
+export { ReadableStreamDefaultReader } from "velt/io/streams/reader";
+export { ReadableStream } from "velt/io/streams/streams";
+export {
+  CancelReason,
+  QueuingStrategy,
+  ReadableStreamReadResult,
+  UnderlyingSource,
+} from "velt/io/streams/types";

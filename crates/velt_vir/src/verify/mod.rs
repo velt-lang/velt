@@ -201,7 +201,9 @@ fn check_symbols(p: &Program, errs: &mut Vec<String>) {
     }
     match p.funcs.iter().find(|f| f.symbol == "velt_main") {
         Some(m) if m.params.is_empty() && m.ret == Ty::I32 && m.linkage == Linkage::Export => {}
-        Some(_) => errs.push("velt_main must be `export velt_main() -> I32`".into()),
+        // Code compiled on its own to link into a program declares the entry (invariant 5).
+        Some(m) if m.params.is_empty() && m.ret == Ty::I32 && m.linkage == Linkage::Import => {}
+        Some(_) => errs.push("velt_main must be `export velt_main() -> I32` (or `import`, in code compiled to link into a program)".into()),
         None => errs.push("missing exported entry `velt_main`".into()),
     }
 }
@@ -211,6 +213,16 @@ fn check_statics(p: &Program, errs: &mut Vec<String>) {
     for (i, s) in p.statics.iter().enumerate() {
         if !s.align.is_power_of_two() {
             errs.push(format!("static#{i}: bad alignment {}", s.align));
+        }
+        if s.mutable.is_some() && !s.relocs.is_empty() {
+            errs.push(format!("static#{i}: writable data with relocations"));
+        }
+        // One word: `velt dev` keeps each in an 8-byte cell (velt_codegen_cl dev/mod.rs).
+        let word = matches!(s.bytes.len(), 1 | 2 | 4 | 8) && s.align as usize == s.bytes.len();
+        if s.mutable.is_some() && !word {
+            errs.push(format!(
+                "static#{i}: writable data that is not one aligned word"
+            ));
         }
         let mut offsets: Vec<u32> = s.relocs.iter().map(|(off, _)| *off).collect();
         offsets.sort_unstable();
@@ -330,7 +342,10 @@ impl FnCheck<'_> {
             }
         }
         if f.blocks.is_empty() {
-            self.err(None, "has no blocks".into());
+            // A declaration of a function the link adds (invariant 11): nothing more to check.
+            if f.linkage != Linkage::Import {
+                self.err(None, "has no blocks".into());
+            }
             return false;
         }
         true

@@ -1,0 +1,2 @@
+fn_value_extra_required_param.vlt:15:29: error: mismatched types
+  = note: expected (f64) => void, found (f64, f64) => void

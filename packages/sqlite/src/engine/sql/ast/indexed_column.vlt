@@ -1,0 +1,10 @@
+// `IndexedColumn`: An indexed column of CREATE INDEX or a table constraint.
+
+import { Expr } from "./expr";
+
+/** An indexed column of CREATE INDEX or a table constraint. */
+export struct IndexedColumn {
+  expr: Expr;
+  collate: string;
+  desc: bool;
+}

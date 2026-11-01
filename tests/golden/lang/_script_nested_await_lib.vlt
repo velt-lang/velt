@@ -1,0 +1,36 @@
+// Imported by script_nested_await.vlt: top-level statements that only make `async` functions
+// and pass them on, with `await` inside them, don't await at the top level (#1859).
+
+const queued: (() => Promise<void, unknown>)[] = [];
+
+export function later(f: () => Promise<void, unknown>) {
+  queued.push(f);
+}
+
+export async function runAll() {
+  for (const f of queued) {
+    await f();
+  }
+}
+
+later(async () => {
+  await Promise.resolve(1);
+  console.log("arrow ran");
+});
+
+later(async function named() {
+  const xs = [1, 2];
+  for await (const x of xs) {
+    console.log(`function ran ${x}`);
+  }
+});
+
+const o = {
+  async m(): Promise<void, unknown> {
+    await Promise.resolve(2);
+    console.log("method ran");
+  },
+};
+later(() => o.m());
+
+console.log("lib top");

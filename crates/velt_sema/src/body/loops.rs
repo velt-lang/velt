@@ -199,8 +199,21 @@ impl FnCx<'_, '_> {
         let label = lp.hir_label();
         let c = self.cond(cond);
         let cspan = c.span;
-        let brk = self.break_unless(c);
         let t = self.true_lit(span);
+        if matches!(cond.kind, ast::ExprKind::Lit(ast::Lit::Bool(true))) {
+            // `do … while (true)` loops like `while (true)`: no test that can leave it, so
+            // `flow::block_diverges` sees it never ends without a `break`, as TypeScript does
+            // (for the literal only: `while ((true))` can end there).
+            let w = S::While {
+                label,
+                cond: t,
+                body: b,
+                step: None,
+            };
+            Self::push(out, w, span);
+            return;
+        }
+        let brk = self.break_unless(c);
         if lp.has_continue {
             // `continue` must still evaluate the condition: put the check into `step`.
             let step_block = hir::Block {
@@ -321,7 +334,9 @@ impl FnCx<'_, '_> {
     pub(super) fn for_of_source(&mut self, iter: &ast::Expr) -> hir::Expr {
         // Not an in-place use of an adapted array (`iface_field`): Node also visits an element
         // the body adds to the original.
+        // A branded value iterates as its primitive or class instance (`crate::brands`).
         let it = self.receiver_expr(iter);
+        let it = self.unbrand(it);
         // `for (const x of s)` over a `shared<T>`: the value inside (#36), whatever it iterates
         // (an array, a string, a `Map`, a `Set`, a typed array).
         let it = match *self.cx.ty.kind(it.ty) {
@@ -386,6 +401,7 @@ impl FnCx<'_, '_> {
             iter: it,
             body: b,
             consume,
+            share_elems: false,
         };
         Self::push(out, f, p.span);
     }
@@ -454,13 +470,15 @@ impl FnCx<'_, '_> {
     }
 
     /// `for (const c of s)` over a string iterates its characters (code points: a surrogate pair
-    /// is one), as JS's string iterator: the prelude's `s.__codePoints()`.
+    /// is one), as JS's string iterator: the hook `stringCodePoints(s)`.
     pub(super) fn chars_of(&mut self, s: hir::Expr, span: Span) -> hir::Expr {
-        let prop = ast::Ident {
-            name: "__codePoints".into(),
+        let ret = self.cx.ty.intern(hir::TyKind::Array(self.cx.ty.str_));
+        self.prelude_hir_call(
+            velt_common::std_hook!(string_code_points),
+            vec![s],
+            ret,
             span,
-        };
-        self.method_call_on(s, &prop, &[], &[], None, span)
+        )
     }
 
     /// `for (const [k, v] of m)` over a class value iterates `m.entries()`.

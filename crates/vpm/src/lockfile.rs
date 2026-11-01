@@ -32,7 +32,10 @@
 //! accepts it, so every machine builds a commit with the same compiler; `--locked` fails on
 //! another. Optional: a lock without it is still format 1.
 //! Path sources are relative to the root package, `/`-separated. The root package itself is not
-//! listed (its dependencies come from package.vlt). The former `velt.lock` (TOML) is not read: a
+//! listed (its dependencies come from package.vlt). A workspace has one lockfile, at its root,
+//! for all its members ([`crate::workspace`]): they are listed, as
+//! `{ "name": "core", "version": "0.1.0", "source": "workspace+packages/core", "dependencies": […] }`,
+//! and path sources are relative to the workspace root. The former `velt.lock` (TOML) is not read: a
 //! package that still has one gets an error saying to run `velt install`.
 
 use std::collections::BTreeMap;
@@ -66,7 +69,8 @@ pub struct LockedPackage {
     pub name: String,
     /// Exact version.
     pub version: String,
-    /// `"registry"` or `"path+<dir relative to the root package>"`.
+    /// `"registry"`, `"path+<dir relative to the root package>"`, or a workspace member's
+    /// `"workspace+<dir relative to the workspace root>"`.
     pub source: String,
     /// Content checksum (registry packages only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -81,6 +85,8 @@ pub struct LockedPackage {
 
 /// The `source` value for registry packages.
 pub const REGISTRY_SOURCE: &str = "registry";
+/// The `source` prefix of a workspace's members: `workspace+packages/core`.
+pub const WORKSPACE_SOURCE: &str = "workspace";
 
 impl Lockfile {
     /// A lockfile over `packages` (sorted by name for stable diffs).

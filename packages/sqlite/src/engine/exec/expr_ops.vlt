@@ -1,0 +1,266 @@
+// sqlite/engine/exec/expr_ops (internal): operators compiled by the expression compiler
+// (engine/exec/expr_compiler), with SQLite's affinity, collation and NULL rules: unary and binary
+// operators, IS, IS NULL and BETWEEN, IN lists, CASE (https://sqlite.org/lang_expr.html).
+
+import { NULL } from "../storage_class";
+import { BINARY } from "../collation";
+import { A_BLOB } from "../affinity";
+import { E_COLUMN, E_IS, E_ISNULL, E_NULL, Expr } from "../sql/types";
+import { prepareError } from "./errors";
+import { Ev } from "./types";
+import { Scope } from "./scope";
+import {
+  AFF_NONE,
+  BIT_NOT,
+  OP_GE,
+  OP_LE,
+  arithOp,
+  bitOp,
+  compareAff,
+  comparisonAffinity,
+  holds,
+  negate,
+  truth,
+} from "./value/ops";
+import { intVal, nullVal } from "./value/val";
+import { concatOp } from "./value/value_text";
+import { C, binaryColl, constant, joinedColl, plain } from "./c";
+import { arithCode, bitCode, bound, comparisonOp } from "./value/op_codes";
+import { ExprCompiler } from "./expr_compiler";
+
+export function compileUnary(c: ExprCompiler, e: Expr, sc: Scope): C {
+  const x = c.expr(e.a!, sc);
+  const xe = x.ev;
+  if (e.op == "-") {
+    return plain(() => negate(xe()));
+  }
+  if (e.op == "+") {
+    // +x has no affinity but keeps x's collation.
+    return C { ev: xe, aff: AFF_NONE, coll: x.coll, explicit: x.explicit };
+  }
+  if (e.op == "~") {
+    return plain(() => bitOp(BIT_NOT, xe(), xe()));
+  }
+  // NOT
+  return plain(() => {
+    const t = truth(xe());
+    return t < 0 ? nullVal() : intVal(1 - t);
+  });
+}
+
+export function compileBinary(c: ExprCompiler, e: Expr, sc: Scope): C {
+  const op = e.op;
+  const x = c.expr(e.a!, sc);
+  const y = c.expr(e.b!, sc);
+  const xe = x.ev;
+  const ye = y.ev;
+  const cmp = comparisonOp(op);
+  if (cmp >= 0) {
+    const aff = comparisonAffinity(x.aff, y.aff);
+    const coll = binaryColl(x, y);
+    const o = cmp as u8;
+    return plain(() => {
+      const p = xe();
+      const q = ye();
+      if (p.t == NULL || q.t == NULL) {
+        return nullVal();
+      }
+      return intVal(holds(o, compareAff(p, q, aff, coll)) ? 1 : 0);
+    });
+  }
+  if (op == "AND") {
+    return plain(() => {
+      const a = truth(xe());
+      if (a == 0) {
+        return intVal(0);
+      }
+      const b = truth(ye());
+      if (b == 0) {
+        return intVal(0);
+      }
+      return a < 0 || b < 0 ? nullVal() : intVal(1);
+    });
+  }
+  if (op == "OR") {
+    return plain(() => {
+      const a = truth(xe());
+      if (a == 1) {
+        return intVal(1);
+      }
+      const b = truth(ye());
+      if (b == 1) {
+        return intVal(1);
+      }
+      return a < 0 || b < 0 ? nullVal() : intVal(0);
+    });
+  }
+  if (op == "||") {
+    return joinedColl(() => concatOp(xe(), ye()), x, y);
+  }
+  const ar = arithCode(op);
+  if (ar >= 0) {
+    const a = ar as u8;
+    return joinedColl(() => arithOp(a, xe(), ye()), x, y);
+  }
+  const bit = bitCode(op);
+  if (bit >= 0) {
+    const b = bit as u8;
+    return joinedColl(() => bitOp(b, xe(), ye()), x, y);
+  }
+  prepareError(`the ${op} operator is not supported yet`);
+}
+
+/** IS, IS NOT, ISNULL, NOTNULL, BETWEEN. */
+export function compileNullTests(c: ExprCompiler, e: Expr, sc: Scope): C {
+  const x = c.expr(e.a!, sc);
+  const xe = x.ev;
+  const not = e.not;
+  if (e.kind == E_ISNULL || (e.kind == E_IS && e.b!.kind == E_NULL)) {
+    // A column of c query is tested without decoding its value.
+    const a = e.a!;
+    if (a.kind == E_COLUMN && sc.agg == null) {
+      const f = c.lookup(a, sc);
+      if (f != null) {
+        const src = f!.src;
+        const col = f!.col;
+        return plain(() => intVal(src.isNull(col) != not ? 1 : 0));
+      }
+    }
+    return plain(() => intVal((xe().t == NULL) != not ? 1 : 0));
+  }
+  if (e.kind == E_IS) {
+    const y = c.expr(e.b!, sc);
+    const ye = y.ev;
+    const aff = comparisonAffinity(x.aff, y.aff);
+    const coll = binaryColl(x, y);
+    return plain(() => {
+      const p = xe();
+      const q = ye();
+      let same = false;
+      if (p.t == NULL || q.t == NULL) {
+        same = p.t == q.t;
+      } else {
+        same = compareAff(p, q, aff, coll) == 0;
+      }
+      return intVal(same != not ? 1 : 0);
+    });
+  }
+  // BETWEEN: x >= lo AND x <= hi, each comparison with its own affinity and collation.
+  const lo = c.expr(e.b!, sc);
+  const hi = c.expr(e.c!, sc);
+  const affLo = comparisonAffinity(x.aff, lo.aff);
+  const affHi = comparisonAffinity(x.aff, hi.aff);
+  const collLo = binaryColl(x, lo);
+  const collHi = binaryColl(x, hi);
+  const le = lo.ev;
+  const he = hi.ev;
+  return plain(() => {
+    // Every operand is evaluated (its errors count), as SQLite does.
+    const v = xe();
+    const lv = le();
+    const hv = he();
+    const a = v.t == NULL ? -1 : bound(v, lv, affLo, collLo, OP_GE);
+    const b = v.t == NULL ? -1 : bound(v, hv, affHi, collHi, OP_LE);
+    const r: i64 = a == 0 || b == 0 ? 0 : a < 0 || b < 0 ? -1 : 1;
+    if (r < 0) {
+      return nullVal();
+    }
+    return intVal((r == 1) != not ? 1 : 0);
+  });
+}
+
+export function compileInList(c: ExprCompiler, e: Expr, sc: Scope): C {
+  const x = c.expr(e.a!, sc);
+  const xe = x.ev;
+  const aff = x.aff == AFF_NONE ? A_BLOB : x.aff;
+  const coll: u8 = x.coll >= 0 ? x.coll as u8 : BINARY;
+  const not = e.not;
+  if (e.args.length == 0) {
+    return constant(intVal(not ? 1 : 0));
+  }
+  const items: Ev[] = [];
+  for (const a of e.args) {
+    items.push(c.ev(a, sc));
+  }
+  return plain(() => {
+    const v = xe();
+    if (v.t == NULL) {
+      return nullVal();
+    }
+    let sawNull = false;
+    for (const it of items) {
+      const w = it();
+      if (w.t == NULL) {
+        sawNull = true;
+      } else if (compareAff(v, w, aff, coll) == 0) {
+        return intVal(not ? 0 : 1);
+      }
+    }
+    return sawNull ? nullVal() : intVal(not ? 1 : 0);
+  });
+}
+
+export function compileCase(c: ExprCompiler, e: Expr, sc: Scope): C {
+  const whens: Ev[] = [];
+  const thens: Ev[] = [];
+  const affs: u8[] = [];
+  const colls: u8[] = [];
+  let base: Ev | null = null;
+  let bc: C | null = null;
+  // An explicit COLLATE in the operand, else in the first WHEN, THEN or ELSE that has one,
+  // is the result's (SQLite's EP_Collate).
+  let coll: i64 = -1;
+  if (e.a != null) {
+    bc = c.expr(e.a!, sc);
+    base = bc!.ev;
+    if (bc!.explicit) {
+      coll = bc!.coll;
+    }
+  }
+  for (let i: usize = 0; i + 1 < e.args.length; i += 2) {
+    const w = c.expr(e.args[i], sc);
+    whens.push(w.ev);
+    const t = c.expr(e.args[i + 1], sc);
+    thens.push(t.ev);
+    if (coll < 0 && w.explicit) {
+      coll = w.coll;
+    }
+    if (coll < 0 && t.explicit) {
+      coll = t.coll;
+    }
+    if (bc != null) {
+      affs.push(comparisonAffinity(bc!.aff, w.aff));
+      colls.push(binaryColl(bc!, w));
+    }
+  }
+  let other: Ev | null = null;
+  if (e.b != null) {
+    const o = c.expr(e.b!, sc);
+    other = o.ev;
+    if (coll < 0 && o.explicit) {
+      coll = o.coll;
+    }
+  }
+  const ev: Ev = () => {
+    if (base != null) {
+      const b = base!();
+      for (let i: usize = 0; i < whens.length; i++) {
+        const w = whens[i]();
+        if (b.t != NULL && w.t != NULL && compareAff(b, w, affs[i], colls[i]) == 0) {
+          return thens[i]();
+        }
+      }
+    } else {
+      for (let i: usize = 0; i < whens.length; i++) {
+        if (truth(whens[i]()) == 1) {
+          return thens[i]();
+        }
+      }
+    }
+    return other == null ? nullVal() : other!();
+  };
+  if (coll >= 0) {
+    return C { ev: ev, aff: AFF_NONE, coll: coll, explicit: true };
+  }
+  return plain(ev);
+}

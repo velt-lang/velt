@@ -1,0 +1,244 @@
+// sqlite/engine/exec/plan/plan (internal): how each FROM item is read: the planner splits WHERE
+// into AND terms and, per FROM level (in FROM order), picks a rowid lookup, a rowid range, an index
+// prefix of equalities with a range on the next column, or a full scan; then the loop of each
+// level.
+//
+// A term an access path answers exactly (a rowid or index equality) is not checked again; a range
+// term still is, so the index only narrows the rows. A term is checked at the innermost level it
+// reads (a LEFT JOIN's ON terms at its own level, before the NULL row decision).
+
+import { Cursor } from "../../cursor";
+import { A_BLOB, A_TEXT } from "../../affinity";
+import { Index } from "../../schema/table_index";
+import { E_BINARY, E_IS, E_ISNULL, Expr } from "../../sql/types";
+import { ROWID, SRC_ROWS, Source } from "../source";
+import { Scope } from "../scope";
+import { OP_EQ, OP_GE, OP_GT, OP_LE, OP_LT, isNumericAff } from "../value/ops";
+import { ExprCompiler } from "../expr_compiler";
+import { ACC_INDEX, ACC_ROWID_EQ, ACC_ROWID_IN, ACC_ROWID_RANGE, ACC_ROWS, Access } from "./access";
+import { Term } from "./term";
+import { Bound, OP_IN, boundsOf } from "./bound";
+
+// An equality a lookup answers: `=`/`==`, `IS`, `IS NULL`.
+function eqTerm(e: Expr): bool {
+  return e.kind == E_BINARY || e.kind == E_IS || e.kind == E_ISNULL;
+}
+
+// Whether a comparison under `aff` can use an index on a column of affinity `colAff`.
+function affinityOk(aff: u8, colAff: u8): bool {
+  if (aff == A_BLOB) {
+    return true;
+  }
+  if (aff == A_TEXT) {
+    return colAff == A_TEXT;
+  }
+  return isNumericAff(colAff);
+}
+
+function isRowid(src: Source, col: i64): bool {
+  return col == ROWID || (col >= 0 && col == src.rowidCol);
+}
+
+/** Picks how level `lv` is read. */
+export function chooseAccess(
+  c: ExprCompiler,
+  terms: Term[],
+  sc: Scope,
+  lv: usize,
+  left: bool,
+): Access {
+  const src = sc.sources[lv];
+  const acc = new Access();
+  if (src.kind == SRC_ROWS) {
+    acc.kind = ACC_ROWS;
+    return acc;
+  }
+  const bounds = boundsOf(c, terms, sc, lv, left);
+  // A rowid equality: one row.
+  for (const b of bounds) {
+    if (isRowid(src, b.col) && b.op == OP_EQ && eqTerm(b.term.expr)) {
+      acc.kind = ACC_ROWID_EQ;
+      acc.eq.push(b.value);
+      acc.eqAff.push(b.aff);
+      acc.eqIs.push(b.isIs);
+      acc.uses.push(b.term);
+      return acc;
+    }
+  }
+  for (const b of bounds) {
+    if (isRowid(src, b.col) && b.op == OP_IN) {
+      acc.kind = ACC_ROWID_IN;
+      acc.inList = b.list;
+      acc.inQuery = b.inQuery;
+      acc.inAff = b.aff;
+      acc.uses.push(b.term);
+      return acc;
+    }
+  }
+  const t = src.table!;
+  let best: Index | null = null;
+  let bestScore: i64 = 0;
+  // Newest index first, as SQLite keeps a table's indexes: it wins a tie.
+  for (let i = t.indexes.length; i > 0; i--) {
+    const ix = t.indexes[i - 1];
+    if (ix.partial) {
+      continue;
+    }
+    const s = indexScore(src, ix, bounds);
+    if (s > bestScore) {
+      best = ix;
+      bestScore = s;
+    }
+  }
+  if (best != null) {
+    useIndex(src, acc, best!, bounds);
+    return acc;
+  }
+  for (const b of bounds) {
+    if (isRowid(src, b.col) && b.op != OP_EQ && b.op != OP_IN) {
+      acc.kind = ACC_ROWID_RANGE;
+      setRange(acc, b);
+    }
+  }
+  return acc;
+}
+
+function setRange(acc: Access, b: Bound) {
+  if (b.op == OP_GT || b.op == OP_GE) {
+    if (acc.lo == null) {
+      acc.lo = b.value;
+      acc.loAff = b.aff;
+      acc.loIncl = b.op == OP_GE;
+    }
+  } else if (b.op == OP_LT || b.op == OP_LE) {
+    if (acc.hi == null) {
+      acc.hi = b.value;
+      acc.hiAff = b.aff;
+      acc.hiIncl = b.op == OP_LE;
+    }
+  }
+}
+
+// The bound on index column `k` usable for op class `eq` (equality) or a range.
+function boundFor(src: Source, ix: Index, k: usize, b: Bound): bool {
+  const col = ix.columns[k];
+  if (col == -2) {
+    return false;
+  }
+  const same = col == -1 ? isRowid(src, b.col) : b.col == col;
+  if (!same) {
+    return false;
+  }
+  if (col == -1) {
+    return true;
+  }
+  return b.coll == ix.colls[k] && affinityOk(b.aff, src.affs[col as usize]);
+}
+
+function indexScore(src: Source, ix: Index, bounds: Bound[]): i64 {
+  let k: usize = 0;
+  while (k < ix.columns.length) {
+    let found = false;
+    for (const b of bounds) {
+      if (b.op == OP_EQ && eqTerm(b.term.expr) && boundFor(src, ix, k, b)) {
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      break;
+    }
+    k++;
+  }
+  if (k < ix.columns.length) {
+    for (const b of bounds) {
+      if (b.op == OP_IN && boundFor(src, ix, k, b)) {
+        // One lookup per value: as good as an equality, a little less.
+        const unique = ix.unique && k + 1 == ix.columns.length ? 1000 : 0;
+        return unique + ((k + 1) as i64) * 4 - 1;
+      }
+    }
+  }
+  let range = false;
+  if (k < ix.columns.length) {
+    for (const b of bounds) {
+      if (b.op != OP_EQ && b.op != OP_IN && boundFor(src, ix, k, b)) {
+        range = true;
+      }
+    }
+  }
+  if (k == 0 && !range) {
+    return 0;
+  }
+  const unique = ix.unique && k == ix.columns.length ? 1000 : 0;
+  return unique + (k as i64) * 4 + (range ? 2 : 0);
+}
+
+function useIndex(src: Source, acc: Access, ix: Index, bounds: Bound[]) {
+  acc.kind = ACC_INDEX;
+  acc.index = ix;
+  let k: usize = 0;
+  while (k < ix.columns.length) {
+    let found: Bound | null = null;
+    for (const b of bounds) {
+      if (b.op == OP_EQ && eqTerm(b.term.expr) && boundFor(src, ix, k, b)) {
+        found = b;
+        break;
+      }
+    }
+    if (found == null) {
+      break;
+    }
+    acc.eq.push(found!.value);
+    acc.eqAff.push(found!.aff);
+    acc.eqIs.push(found!.isIs);
+    acc.uses.push(found!.term);
+    k++;
+  }
+  if (k < ix.columns.length) {
+    for (const b of bounds) {
+      if (b.op == OP_IN && boundFor(src, ix, k, b)) {
+        acc.inList = b.list;
+        acc.inQuery = b.inQuery;
+        acc.inAff = b.aff;
+        acc.inColl = ix.colls[k];
+        acc.uses.push(b.term);
+        return;
+      }
+    }
+    for (const b of bounds) {
+      if (b.op != OP_EQ && b.op != OP_IN && boundFor(src, ix, k, b)) {
+        setRange(acc, b);
+      }
+    }
+    // A descending column holds larger values first: the bounds swap in the index's order.
+    if (ix.desc[k]) {
+      const lo = acc.lo;
+      const loAff = acc.loAff;
+      const loIncl = acc.loIncl;
+      acc.lo = acc.hi;
+      acc.loAff = acc.hiAff;
+      acc.loIncl = acc.hiIncl;
+      acc.hi = lo;
+      acc.hiAff = loAff;
+      acc.hiIncl = loIncl;
+    }
+  }
+}
+
+/** Prepares `src` to read through `ix` (an ordered or constrained index scan). */
+export function attachIndex(src: Source, ix: Index) {
+  const t = src.table!;
+  src.ix = new Cursor(src.cur!.db, ix.root);
+  src.viaIndex = true;
+  src.ixMap = [];
+  for (let i: usize = 0; i < t.columns.length; i++) {
+    let at: i64 = -1;
+    for (let k: usize = 0; k < ix.columns.length; k++) {
+      if (ix.columns[k] == (i as i64)) {
+        at = k as i64;
+      }
+    }
+    src.ixMap.push(at);
+  }
+}

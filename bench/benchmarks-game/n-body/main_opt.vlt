@@ -5,7 +5,7 @@
 // pair distance vectors, then the 10 magnitudes (independent sqrt/div, which pipeline and
 // vectorize), then applies them. Bodies are Copy structs (`Vec3`, `Body`) stored inline in the
 // array instead of class instances. Compare with main.vlt (Node #6 loop shape, classes).
-import { argv } from "velt:process";
+import { argv } from "velt/process";
 
 const SOLAR_MASS: f64 = 4.0 * Math.PI * Math.PI;
 const DAYS_PER_YEAR: f64 = 365.24;

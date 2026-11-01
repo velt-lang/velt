@@ -1,0 +1,18 @@
+// Modules of the standard library's former layout: the error names where each one went (a
+// module, the globals, or a package), for `velt:` specifiers and `velt/<old name>` alike.
+import { parse } from "velt:json";
+import { JSON5 } from "velt/json";
+import { Regex } from "velt/regex";
+import { fetch } from "velt/fetch";
+import { URL } from "velt:url";
+import { Symbol } from "velt:symbol";
+import { open } from "velt/sqlite";
+import { connect } from "velt:postgres";
+import { serve } from "velt/http";
+import { readFile } from "velt:fs";
+import { stableSort } from "velt:sort";
+import { Response } from "velt:fetch/response";
+import { Headers } from "velt/fetch/headers";
+import { ImportMeta } from "velt:import_meta";
+
+function main() {}

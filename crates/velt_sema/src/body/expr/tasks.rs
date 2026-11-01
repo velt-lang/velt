@@ -248,7 +248,8 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
-        let Some(Item::Def(d)) = self.cx.prelude.get(name).cloned() else {
+        let found = self.cx.prelude.get(name).cloned();
+        let Some(Item::Def(d)) = found.or_else(|| self.cx.std_def(name)) else {
             self.cx
                 .err(format!("`{what}` needs the prelude (std/prelude)"), span);
             self.check_args_loose(args);
@@ -373,8 +374,16 @@ impl FnCx<'_, '_> {
         }
         let never = self.cx.ty.never;
         let observed = self.cx.ty.promise_error(ret).filter(|e| *e != never);
+        let mut srcs = vec![ThrowSrc::Call(d, targs.to_vec(), span)];
+        // A synchronous member of a promise group returns a `Promise<T>` written without an
+        // error type, which rejects with what is stored into it (`throws::promise_sites`).
+        let written = self.cx.ty.promise_error(self.cx.fn_info(d).ret);
+        if let Some(w) = written.filter(|w| *w != never && !self.cx.fn_info(d).is_async) {
+            let w = self.cx.subst(w, targs);
+            srcs.push(ThrowSrc::Direct(w, span));
+        }
         self.cx.throw_checks.push(ThrowCheck {
-            srcs: vec![ThrowSrc::Call(d, targs.to_vec(), span)],
+            srcs,
             observed,
             exact: true,
             span,
@@ -465,6 +474,10 @@ impl FnCx<'_, '_> {
         };
         if as_arrow(arg).is_none() {
             let mut e = self.simple_intrinsic(Intrinsic::Spawn, "`spawn`", args, exp, span);
+            if let H::Call { args, .. } = &mut e.kind {
+                args.iter_mut()
+                    .for_each(super::promise_same::unconvert_spawned);
+            }
             self.no_spawned_generators(&e);
             self.spawned_promises(&e);
             if let H::Call { args, .. } = &mut e.kind {

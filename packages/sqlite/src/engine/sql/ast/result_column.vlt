@@ -1,0 +1,11 @@
+// `ResultColumn`: A result column: an expression and its alias (`*` and `t.*` are E_STAR).
+
+import { Expr } from "./expr";
+
+/** A result column: an expression and its alias (`*` and `t.*` are E_STAR). */
+export struct ResultColumn {
+  expr: Expr;
+  alias: string;
+  /** The expression's source text (an unaliased column of the result is named by it). */
+  span: string;
+}

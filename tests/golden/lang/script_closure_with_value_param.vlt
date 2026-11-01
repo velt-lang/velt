@@ -1,0 +1,21 @@
+// check: no leaks
+// A `Mutex` `with` callback that calls a function value whose body uses a top-level `let` a
+// closure assigns (#1872), where the value comes from elsewhere than a variable's initializer:
+// sema moves the variables of the closures the code around the callback makes into `main`.
+// The value is a parameter of a function the callback calls.
+const m = shared(new Mutex<number>(0));
+let c = 1;
+const b = () => {
+  c++;
+};
+
+function apply(f: () => number): number {
+  return f();
+}
+
+const add = () => c * 10;
+b();
+m.with((v) => {
+  v += apply(add);
+});
+console.log(m.with((v) => v));

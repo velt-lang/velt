@@ -1,0 +1,40 @@
+// Prints `JSON.stringify` and the generated `stringify` of the same values: the lines must
+// match pairwise.
+import { stringify } from "./_stringify";
+
+class Point {
+  x: f64 = 1.5;
+  y: f64 = -0;
+}
+
+class Tagged {
+  id: u64 = 18446744073709551615;
+  label: string = "a \"quoted\" \\ line\n\u0001";
+  note?: string;
+  next: Tagged | null = null;
+  points: Point[] = [new Point()];
+}
+
+enum Level {
+  Low,
+  High = 7,
+}
+
+type Row = { name: string; level: Level; extra?: i32; ok: bool };
+
+function main() {
+  const t = new Tagged();
+  t.next = new Tagged();
+  t.next!.note = "here";
+  const rows: Row[] = [
+    { name: "é✓", level: Level.High, ok: true },
+    { name: "", level: Level.Low, extra: 3, ok: false },
+  ];
+  console.log(JSON.stringify(t));
+  console.log(stringify(t));
+  console.log(JSON.stringify(rows));
+  console.log(stringify(rows));
+  const nums: (f64 | null)[] = [NaN, 1e21, 0.1, null, -5];
+  console.log(JSON.stringify(nums));
+  console.log(stringify(nums));
+}

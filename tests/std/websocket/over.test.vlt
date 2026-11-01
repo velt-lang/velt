@@ -1,0 +1,29 @@
+// What a server written in Velt builds its WebSockets on: `webSocketAccept`, the handshake's
+// answer to a client's key, and `webSocketOver`, a WebSocket over a stream whose handshake is
+// done (here the two ends of a `streamPair`, one the server's, one the client's).
+import { streamPair } from "velt/net";
+import { webSocketAccept, webSocketOver } from "velt/net/websocket";
+import { describe, expect, it } from "velt/test";
+
+describe("webSocketAccept", () => {
+  it("answers RFC 6455's example key", () => {
+    expect(webSocketAccept("dGhlIHNhbXBsZSBub25jZQ==")).toBe("s3pPLMBiTxaQ9kYGzzhZRbK+xOo=");
+  });
+});
+
+describe("webSocketOver", () => {
+  it("carries messages both ways between a server's end and a client's", async () => {
+    const [a, b] = streamPair();
+    const server = webSocketOver(a, true);
+    const client = webSocketOver(b, false);
+    await client.send("hi");
+    const got = await server.receive();
+    expect(got!.text).toBe("hi");
+    await server.sendBytes([1, 2, 3]);
+    const back = await client.receive();
+    expect([back!.isBinary, back!.data.join(",")]).toEqual([true, "1,2,3"]);
+    await client.close();
+    expect(await server.receive() == null).toBe(true);
+    await server.close();
+  });
+});

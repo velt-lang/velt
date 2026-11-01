@@ -1,0 +1,22 @@
+// A parsed value's strings and keys at and past the tape writer's 2 KB chunks: ASCII, non-ASCII,
+// escaped and lone-surrogate text, longer than a chunk or ending right at its edge, written as
+// Node writes them.
+const parts: string[] = [];
+for (let n = 2040; n < 2130; n += 7) {
+  parts.push(`${"a".repeat(n)}`);
+  parts.push(`${"é".repeat(n / 2)}`);
+}
+parts.push("x".repeat(5000) + '"\\\n');
+const obj: Record<string, string> = {};
+obj["k".repeat(2100)] = "v";
+obj["ü".repeat(1100)] = "w".repeat(2200);
+// A lone surrogate comes only from JSON text (its escape).
+const rest = JSON.stringify({ parts, obj });
+const text = `{"lone":"\\ud800${"z".repeat(3000)}",${rest.slice(1)}`;
+const out = JSON.parseValue(text).stringify();
+console.log(out == text, out.length);
+let h = 0;
+for (let i = 0; i < out.length; i++) {
+  h = (h * 31 + out.charCodeAt(i)) % 1000000007;
+}
+console.log(h);

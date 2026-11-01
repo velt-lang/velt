@@ -1,0 +1,29 @@
+// A failed `assert`, `assertEq` or `assertThrows` throws an `AssertionError`, as Node's `assert`
+// does: it can be caught, its message shows the values as `console.log` prints them, and
+// uncaught it is reported like any error (exit code 1), where the assertion was called.
+
+function caught(f: () => void throws AssertionError) {
+  try {
+    f();
+  } catch (e) {
+    console.log(e instanceof AssertionError, e instanceof Error, e.name);
+    console.log(e.message);
+  }
+}
+
+function main() {
+  caught(() => assert(1 + 1 == 3));
+  caught(() => assert(false, "custom"));
+  caught(() => assertEq([1, 2], [1, 3]));
+  caught(() => assertEq({ name: "ada", tags: ["x"] }, { name: "ada", tags: [] }, "user"));
+  caught(() => assertEq("a", "b"));
+  caught(() => {
+    assertThrows(() => 1);
+  });
+  // Passing assertions throw nothing.
+  assertEq(new Map([["k", 1]]), new Map([["k", 1]]));
+  assert(true);
+  console.log("before");
+  assert(2 > 3, "two is not more than three");
+  console.log("not reached");
+}

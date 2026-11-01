@@ -1,0 +1,42 @@
+// A `RegExp` method called through `any` (#1831): `exec` still finds its match. The call glue
+// once made `i64[]` an array-view type, and `exec` then gave the runtime a copy of its offsets
+// array's header, so the offsets it wrote were lost.
+const re = /[&<]/;
+const a: any = /b/;
+console.log(a.test("abc"));
+console.log(re.exec("x & y")?.index);
+console.log(a.exec("abc")?.index, a.source, a instanceof RegExp);
+
+// `escapeHtml` of sigx's server renderer, the program this was found in.
+function escapeHtml(s: string): string {
+  const escapeRE = /["'&<>]/;
+  const m = escapeRE.exec(s);
+  if (!m) return s;
+  let out = "";
+  let last = 0;
+  for (let i = m.index; i < s.length; i++) {
+    let esc = "";
+    switch (s.charCodeAt(i)) {
+      case 34: esc = "&quot;"; break;
+      case 38: esc = "&amp;"; break;
+      case 39: esc = "&#39;"; break;
+      case 60: esc = "&lt;"; break;
+      case 62: esc = "&gt;"; break;
+      default: continue;
+    }
+    if (last !== i) out += s.slice(last, i);
+    last = i + 1;
+    out += esc;
+  }
+  return last !== s.length ? out + s.slice(last) : out;
+}
+console.log(escapeHtml("a < b & \"c\""), escapeHtml("plain"));
+
+// Groups, a global pattern's `lastIndex`, and `matchAll`, the other paths that read offsets.
+const g = /(\d+)-(\d+)/g;
+const m1 = g.exec("a 12-345 b 6-7");
+console.log(m1?.index, m1?.[1], m1?.[2], g.lastIndex);
+const m2 = g.exec("a 12-345 b 6-7");
+console.log(m2?.index, m2?.[0], g.lastIndex);
+console.log([..."x1y22".matchAll(/\d+/g)].map((m) => m.index));
+console.log("a&b<c".replace(/[&<]/g, "_"), "k=v; k2=v2".match(/(\w+)=(\w+)/)?.[2]);

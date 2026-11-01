@@ -1,0 +1,5 @@
+promise promise
+anything anything
+sync: ok
+async: ok
+async rejects: Error: rejected

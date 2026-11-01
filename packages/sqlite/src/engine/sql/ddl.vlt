@@ -1,0 +1,99 @@
+// sqlite/engine/sql/ddl (internal): the statements of SQLite's grammar that change the schema: CREATE
+// TABLE / INDEX / VIEW, DROP and ALTER TABLE. CREATE TABLE's definitions are in
+// engine/sql/table.
+
+import { Parser } from "./parser";
+import { SqlError } from "./errors";
+import { T_IDENT } from "./token";
+import { S_ALTER, S_CREATE_INDEX, S_CREATE_VIEW, S_DROP, Statement } from "./types";
+import { columnDef } from "./column_def";
+import { columnNames, ifNotExists, indexedColumns, qualified } from "./clauses";
+import { createTable } from "./table";
+
+export function create(p: Parser): Statement {
+  const temp = p.eatKw("TEMP") || p.eatKw("TEMPORARY");
+  if (p.eatKw("TABLE")) {
+    const s = createTable(p);
+    s.temp = temp;
+    return s;
+  }
+  if (p.eatKw("VIEW")) {
+    const s = new Statement(S_CREATE_VIEW);
+    s.temp = temp;
+    s.ifNotExists = ifNotExists(p);
+    qualified(p, s);
+    if (p.isOp("(")) {
+      s.columns = columnNames(p);
+    }
+    p.expectKw("AS");
+    s.select = p.select();
+    return s;
+  }
+  if (p.isKw("TRIGGER") || (!temp && p.isKw("VIRTUAL"))) {
+    throw new SqlError(`CREATE ${p.peek().upper} is not supported yet`, p.peek().start);
+  }
+  if (temp) {
+    // An index is never TEMP (its table decides).
+    p.fail();
+  }
+  const s = new Statement(S_CREATE_INDEX);
+  s.unique = p.eatKw("UNIQUE");
+  p.expectKw("INDEX");
+  s.ifNotExists = ifNotExists(p);
+  qualified(p, s);
+  p.expectKw("ON");
+  s.table = p.name();
+  s.indexed = indexedColumns(p);
+  if (p.eatKw("WHERE")) {
+    s.where = p.expr();
+  }
+  return s;
+}
+
+export function drop(p: Parser): Statement {
+  const s = new Statement(S_DROP);
+  const w = p.peek().upper;
+  if (p.peek().kind != T_IDENT || (w != "TABLE" && w != "INDEX" && w != "VIEW" && w != "TRIGGER")) {
+    p.fail();
+  }
+  p.advance();
+  s.what = w;
+  if (p.eatKw("IF")) {
+    p.expectKw("EXISTS");
+    s.ifExists = true;
+  }
+  qualified(p, s);
+  return s;
+}
+
+export function alter(p: Parser): Statement {
+  const s = new Statement(S_ALTER);
+  p.expectKw("TABLE");
+  qualified(p, s);
+  if (p.eatKw("RENAME")) {
+    if (p.eatKw("TO")) {
+      s.action = "RENAME";
+      s.newName = p.name();
+      return s;
+    }
+    p.eatKw("COLUMN");
+    s.action = "RENAME COLUMN";
+    s.columns = [p.name()];
+    p.expectKw("TO");
+    s.newName = p.name();
+    return s;
+  }
+  if (p.eatKw("ADD")) {
+    p.eatKw("COLUMN");
+    s.action = "ADD COLUMN";
+    s.column = columnDef(p);
+    return s;
+  }
+  if (p.eatKw("DROP")) {
+    p.eatKw("COLUMN");
+    s.action = "DROP COLUMN";
+    s.columns = [p.name()];
+    return s;
+  }
+  p.fail();
+}

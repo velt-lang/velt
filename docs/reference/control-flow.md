@@ -17,7 +17,13 @@
   `[Symbol.iterator]()` method returning an `Iterator<T>` (see [below](#iterables)).
 - The loop variable is each element itself (objects are references): you can call its methods
   (including modifying ones), assign its fields, and store it elsewhere, which shares the
-  element. Index the array to replace an element.
+  element. Index the array to replace an element: the loop variable keeps the element it was
+  given until the iteration ends, as in JS (`for (const v of vs) { vs[0] = new V(); v.n }` reads
+  the old `vs[0]`). Such a loop takes a reference to each element it visits; a loop whose body
+  does not replace elements takes none. Changing the iterated array itself in the body
+  (`push`, `pop`, `splice`, `length = …`, assigning the variable, or passing it to a call that
+  may change it) is a compile error (``cannot modify `xs` while a `for...of` loop iterates over
+  `xs` ``): loop over indexes instead.
 - Iterating a temporary (a call result, `await …`, a literal) **consumes** it: each element is
   handed to the loop variable without a count.
 
@@ -107,7 +113,7 @@ interface Iterable<T, E = never> {
 - `AsyncIterator<T, E>` (`next(): Promise<IteratorResult<T>, E>`) and `AsyncIterable<T, E>`
   (`[Symbol.asyncIterator]()`) are their async counterparts, iterated with
   [`for await`](#for-await).
-- **Builtin iterables**: arrays, strings, `Map`s and `Set`s (`velt:collections/set`) are
+- **Builtin iterables**: arrays, strings, `Map`s and `Set`s (`velt/collections`) are
   `Iterable<T>` (`Iterable<[K, V]>` for a map, `Iterable<string>` for a string), so they convert
   to an `Iterable<T>` value and satisfy an `Iterable<T>` bound: `sum(xs: Iterable<number>)`
   takes `[1, 2, 3]`, a set, `m.values()` or (with `Iterable<string>`) a string. An array
@@ -217,7 +223,7 @@ no generator object, and stopping early closes the iterator):
   map)`. A nested pattern takes its values after the outer pattern has taken all of its own
   (JS goes element by element; only an outer generator with effects can tell).
 - **`new Map(iterable)`** of `[key, value]` pairs and **`new Set(iterable)`**
-  ([velt:collections/set](../std/collections/set.md)).
+  ([velt/collections](../std/collections/set.md)).
 - An object literal with a `*[Symbol.iterator]()` method is an iterable
   ([Iterable object literals](types.md#iterable-object-literals)).
 

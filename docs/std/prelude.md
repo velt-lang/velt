@@ -4,20 +4,20 @@ The prelude is the part of the standard library that every module sees without a
 lives in `std/prelude/*.vlt`; some of it (arrays' `push`/`pop`, `length`, `clone`, `spawn`,
 `shared`) is implemented by the compiler.
 
-Node's web globals need no import either: `fetch`, `Request`, `Response` and `Headers`
-([fetch](fetch.md)), `URL` and `URLSearchParams` ([velt:url](url.md)), and `AbortController` and
-`AbortSignal` ([velt:task](task.md)), `Set` ([velt:collections/set](collections/set.md)),
-`RegExp` ([velt:regex](regex.md); a regex literal counts as naming it), `TextEncoder`,
-`TextDecoder`, `btoa` and `atob` ([velt:encoding](encoding.md)), `DOMException`
+Node's web globals need no import either: `fetch`, `Request`, `Response`, `Headers`, `Blob`,
+`File` and `FormData` ([fetch](net/http.md)), `URL` and `URLSearchParams` ([velt/net/url](net/url.md)), and `AbortController` and
+`AbortSignal` ([velt/task](task.md)), `Set` ([velt/collections](collections/set.md)),
+`RegExp` ([velt/text](text/regex.md); a regex literal counts as naming it), `TextEncoder`,
+`TextDecoder`, `btoa` and `atob` ([velt/encoding](encoding.md)), `DOMException`
 ([Errors](#errors)), `ArrayBuffer`, `DataView`, `Uint8Array` and the other typed arrays
-([typed arrays](typed_array.md)), and `ReadableStream` and its reader and controller
-([streams](streams.md)), and `Proxy`, `Reflect`, `ProxyHandler` and `PropertyDescriptor`
+([typed arrays](prelude/typed_array.md)), and `ReadableStream` and its reader and controller
+([streams](io/streams.md)), and `Proxy`, `Reflect`, `ProxyHandler` and `PropertyDescriptor`
 ([Proxy and Reflect](../reference/types.md#proxy-and-reflect)). They are loaded when a module names one and
 doesn't bind that name itself. `structuredClone(x)` is a deep copy (`x.clone()`); a value that
 JS can't clone (a function, at any depth) or would copy as a plain object (an instance of a
 class of your own: write `x.clone()`) is a compile error. The builtin `process`
 (`process.stdout.write(s)`, `process.env`, `process.argv`, `process.exit(code)`,
-`process.memoryUsage()`; [velt:process](process.md)) needs no import either.
+`process.memoryUsage()`; [velt/process](process.md)) needs no import either.
 
 Every export and public member in `std/prelude` has a doc comment, which `velt doc --std` shows
 under its signature. Where TypeScript has the same function, the text is adapted from the JSDoc
@@ -41,9 +41,10 @@ two), and a negative position counts from the end. `Buffer.byteLength(s)` is the
 | `split(sep): string[]` | `split("")` gives the code units (a pair splits into two halves); `for (const c of s)` and `[...s]` give characters |
 | `trim()`, `trimStart()`, `trimEnd()` | |
 | `toUpperCase()`, `toLowerCase()` | |
-| `replace(from, to)`, `replaceAll(from, to)` | `from` is plain text, or a `RegExp` (as in `match`, `matchAll`, `search` and `split` with a regex: [`velt:regex`](regex.md#string-methods-with-a-regex)) |
+| `replace(from, to)`, `replaceAll(from, to)` | `from` is plain text, or a `RegExp` (as in `match`, `matchAll`, `search` and `split` with a regex: [`velt/text`](text/regex.md#string-methods-with-a-regex)) |
 | `repeat(n)`, `padStart(n, fill = " ")`, `padEnd(n, fill = " ")` | `repeat` panics on a negative `n` (JS's RangeError); the pads fill up to `n` code units |
 | `charCodeAt(i = 0)` | the code unit at `i` (one half of a pair for an emoji); `-1` out of range (JS: `NaN`) |
+| `codePointAt(i = 0): number \| undefined` | the character at `i` when `i` is at the high half of a pair, otherwise the code unit there; `undefined` out of range, as in JS |
 | `localeCompare(t): i64` | -1, 0 or 1 in the CLDR root collation, like `new Intl.Collator("und").compare(s, t)` (`"a" < "A" < "b"`, `"e" < "é" < "f"`; Node's own `localeCompare` uses the host's locale). Exact for strings made of U+0020..U+024F, U+0370..U+04FF, U+1E00..U+1EFF, U+2000..U+206F and U+20A0..U+20CF (Latin with Vietnamese, Greek, Cyrillic, general punctuation, currency signs), except a few characters that stand for three or more (`¼`, `½`, `¾`, `ϗ`); approximate for everything else. No locale or options arguments |
 
 `<`, `>` and `sort()` order strings by code units, as JS. A position between the two halves of
@@ -53,7 +54,9 @@ half).
 
 Conversions: `String.fromCharCode(...codes)` (any number of code units, each taken modulo
 2^16 as in JS, with `NaN` and the infinities 0; a lone surrogate gives a lone surrogate, a
-surrogate pair its character),
+surrogate pair its character), `String.fromCodePoint(...codePoints)` (one or two code units
+each; a code point that is not an integer from 0 to 0x10FFFF panics with JS's RangeError,
+`Invalid code point 1114112`),
 `parseInt(s, radix = 0)` and `parseFloat(s)` (both return `f64`, `NaN` on failure),
 `Number(s)`, and `String(x)`, which writes any printable value as `` `${x}` `` does
 (`String(1e21)` is `"1e+21"`, `String(null)` is `"null"`, `String([[1], [2, 3]])` is `"1,2,3"`).
@@ -93,6 +96,20 @@ surrogate pair its character),
   32-bit wrapping product, one multiply instruction) and `clz32` (leading zero bits) take the low
   32 bits of their operands like JS. `umulh(a, b)` (not in JS) is the high 64 bits of the
   128-bit product of two `u64`s, one multiply instruction as well.
+- Bit casts (not in JS): `x.toBits()` is the IEEE 754 bits of an `f64` as a `u64` (sign,
+  exponent, fraction), and `f64.fromBits(b)` the `f64` with the bits of a `u64` (Rust's
+  `to_bits` / `from_bits`); each is one move between registers. They keep every bit pattern,
+  NaN payloads and signalling NaNs included, so `f64.fromBits(b).toBits() == b` for every `b`.
+  The bits of a NaN made by arithmetic (`0 / 0`) or of the `NaN` constant are not specified:
+  they depend on the processor (`fff8000000000000` on x86-64, `7ff8000000000000` on AArch64), as
+  in Rust. `f32` has no bit casts yet.
+
+  ```ts
+  const x: f64 = -1.5;
+  console.log(x.toBits().toString(16)); // bff8000000000000
+  console.log(f64.fromBits(0x7ff0000000000000)); // Infinity
+  ```
+
 - Integers (not in JS): `x.leadingZeros()`, `x.trailingZeros()` and `x.countOnes()`, counted
   over the type's own width (`(0 as u8).leadingZeros()` is 8, `(-1 as i32).countOnes()` is 32),
   one instruction each. They return a `usize`, in user code too, so the result indexes an array
@@ -129,7 +146,7 @@ so elements pushed meanwhile are not visited. Elements removed meanwhile:
 | `reverse()`, `fill(v, start?, end?)`, `sort()` | in place, returning nothing (JS returns the array: returning it would share it, which makes every array of its type reference counted). A member access chained on the call reads the changed array, as in JS: `xs.sort().join(",")`, `xs.reverse()[0]`, `s.split(",").sort().map(f)`. Such a chain changes the array, so it can't be an argument of a call that also reads the array (`console.log(xs.sort().join(), xs)` is an error, like any call that changes an argument another one reads): sort on its own line first. On a temporary array, which nothing else holds, the result is that array, as in JS: `const keys = Object.keys(r).sort()`, `return [...xs].sort(cmp)`. Any other use of the result on a variable, field or element (`return xs.sort()`, `const ys = xs.sort()`, `f(xs.sort())`) is an error: call the method on its own line and then use `xs`, or use `toSorted()` / `toReversed()` for a changed copy |
 | `toSorted(cmp?)`, `toReversed()`, `toSpliced(start, deleteCount?, ...items)`, `with(i, v)` | ES2023's copying forms: a new array, the receiver unchanged (the elements themselves are shared, as in JS); `toSorted()` without a comparator orders like `sort()`; `with` panics on an index out of range (JS's RangeError) |
 | `splice(start, deleteCount?, ...items): T[]` | removes and returns `deleteCount` elements (the rest when omitted) and inserts `items` there |
-| `shift(): T \| undefined`, `unshift(...items): i64` | take the first element (`undefined` when empty) / insert `items` at the front and return the new length, like JS; both O(length), as in V8 for large arrays: a queue that takes from the front belongs in a `Deque` ([velt:collections/deque](collections/deque.md)) |
+| `shift(): T \| undefined`, `unshift(...items): i64` | take the first element (`undefined` when empty) / insert `items` at the front and return the new length, like JS; both O(length), as in V8 for large arrays: a queue that takes from the front belongs in a `Deque` ([velt/collections](collections/deque.md)) |
 | `swap(i, j)`, `rotateLeft(start, end)`, `rotateRight(start, end)` | not in JS: exchange two elements, or move the elements of `[start, end)` one place down (the first to the end) or up (the last to the front), in place; each element's bits move, nothing is copied or dropped. A RangeError panic for an index or range outside the array |
 | `prefetch(i)`, `reserve(n)` | not in JS: a hint that element `i` is read soon, so the CPU starts loading it (it changes nothing; an index past the end does nothing); room for `n` more elements without growing again |
 | `xss.swapIn(a, i, b, j)` | not in JS, on `T[][]`: exchanges `xss[a][i]` and `xss[b][j]`, also between two inner arrays, which `[x, y] = [y, x]` does by copying (and counting) both elements. For data kept in chunks |
@@ -142,8 +159,9 @@ so elements pushed meanwhile are not visited. Elements removed meanwhile:
 | `Array.from(src)`, `Array.from(src, (v, i) => f(v, i))` | the values of anything `for...of` takes (an array, a string's characters, a map's entries, a generator, an iterable), mapped as they arrive |
 
 Byte arrays are plain `u8[]` with faster versions of `indexOf`, `lastIndexOf`, `includes`,
-`fill`, `slice` and `concat`, plus `set(src, offset)` and `copyWithin(target, start, end)` like
-Node's `Buffer`, and `xorMask(mask: u32, start?, end?)`, which XORs the bytes with the four bytes
+`fill`, `slice` and `concat`, plus `set(src, offset)`, `copyWithin(target, start, end)` and
+`copy(target, targetStart, sourceStart, sourceEnd)` (a range into another array, returning the
+number of bytes copied) like Node's `Buffer`, and `xorMask(mask: u32, start?, end?)`, which XORs the bytes with the four bytes
 of `mask` (most significant first) repeating from `start`: WebSocket masking (RFC 6455 §5.3).
 Text goes in and out of byte arrays without intermediate copies, as a server written in Velt
 needs on its read and write buffers: `write(s, offset = 0)` writes the UTF-8 bytes of `s` and
@@ -157,13 +175,44 @@ past the array is its end (Node's `buf.utf8Slice` throws for both instead). `wri
 code in the prelude: they read the string's bytes where it keeps them, sixteen at a time with
 SIMD vectors, and are compiled into their caller.
 
+`subarray(begin?, end?)` of a `u8[]` (Node's `buf.subarray`) is a
+[`Uint8Array`](prelude/typed_array.md) over the array's bytes, sharing them: writes through either are
+seen by both, and its `buffer` is the array. It is the array plus a range, so it is valid
+whatever happens to the array or to the variable that held it: kept in a field, returned,
+captured by a closure or held across an `await`, it keeps the array alive (a program that keeps
+such a view counts its byte arrays' references; one that doesn't pays nothing), and it sees the
+array after it grows. A Node `Buffer` cannot become shorter; a `u8[]` can (`length = 0`, `pop`,
+`splice`), and then the view (and any typed array over its `buffer`) has the elements the array
+still has in its range: its `length` counts those, `xs[i]` past them panics like any index, a
+write past them does nothing (as one past a view's end in JS), and a method that needs the
+missing elements (`join`, `fill`, …) panics. `slice`, `subarray`, `with`, `toReversed` and
+`toSorted` take the elements that are left, as they take `length` (a `subarray` of a view of
+which not even the start is left is empty, with a buffer of its own). Growing the array back
+brings the elements back. The view's `buffer` follows the array's length (`byteLength`), though
+its `resizable` is `false` and its `maxByteLength` is its `byteLength` at each read. Each
+`subarray` of a `u8[]` has a `buffer` object of its own over the same array: they share the
+bytes, but unlike Node, where `b.subarray(0, 8).buffer === b.subarray(4, 12).buffer`, they are
+different objects (`!==`).
+
+```ts
+const buf: u8[] = Buffer.alloc(8);
+buf.write("abcdefgh");
+const head = buf.subarray(0, 4);
+head[0] = 65;
+console.log(buf.utf8Slice(0, 4), head.length); // Abcd 4
+buf.length = 2;
+console.log(head.length); // 2
+```
+
 ```ts
 const buf: u8[] = Buffer.alloc(16);
 const n = buf.write("GET /");
 console.log(buf.utf8Equals("GET", 0, 3), buf.utf8Slice(0, n)); // true GET /
 ```
 
-`Buffer.alloc(n)` creates `n` zero bytes. `Buffer.byteLength(s, encoding = "utf8")` is the
+`Buffer.alloc(n)` creates `n` zero bytes, and `Buffer.allocUnsafe(n)`, as in Node, `n` bytes whose
+values are whatever the memory held: for a buffer the program fills before it reads it (a
+decoder's output), which zeroing would write twice. `Buffer.byteLength(s, encoding = "utf8")` is the
 number of bytes `s` takes, as in Node: UTF-8 by default (O(1); a lone surrogate counts the 3
 bytes of U+FFFD), two per code unit for `utf16le`/`ucs2`, one for `latin1`/`binary`/`ascii`,
 the decoded size for `base64`/`base64url` and `hex`.
@@ -381,7 +430,6 @@ The iteration protocol behind `for...of` and `for await` ([Control flow](../refe
 | `interface AsyncIterableIterator<T, E = never>` | `extends AsyncIterator<T, E>, AsyncIterable<T, E>`; `AsyncGenerator` implements it, and a value converts to an `AsyncIterable<T, E>` |
 | `[Symbol.iterator](): Iterator<T>` on `T[]`, `string` (`Iterator<string>`), `Map<K, V>` (`Iterator<[K, V]>`) | makes them `Iterable`: they convert to `Iterable<T>` values and satisfy `Iterable<T>` bounds. An array's iterator is a live view (JS's: it reads the length at each step); a string's yields characters (code points); a map's iterates the entries as of the call (`entries()`) |
 | `class ArrayIterator<T>`, `class StringIterator` | the iterators of arrays and strings (TS's names): `implements IterableIterator<T>, IteratorObject<T>` |
-| `class __IterableObject<T, E = never>`, `class __AsyncIterableObject<T, E = never>` | an [iterable object literal](../reference/types.md#iterable-object-literals) (`{ *[Symbol.iterator]() { ... } }`): `implements Iterable<T, E>` (`AsyncIterable<T, E>`) by calling the method it holds |
 
 An `extend` block defining `[Symbol.iterator](): Iterator<T, E>` (or
 `[Symbol.asyncIterator](): AsyncIterator<T, E>`) makes its type an `Iterable<T, E>` (or
@@ -391,7 +439,7 @@ An `extend` block defining `[Symbol.iterator](): Iterator<T, E>` (or
 ## JSON
 
 `JSON.stringify<T>(x)`, `JSON.parse<T>(text, options?)` (throws `JsonError`) and
-`JSON.parseValue(text, options?): JsonValue` ([`velt:json`](json.md)); arrays and objects may
+`JSON.parseValue(text, options?): JsonValue` ([`velt/encoding/json`](encoding/json.md)); arrays and objects may
 nest 128 levels deep unless `options.maxDepth` says otherwise.
 
 ## Errors
@@ -422,9 +470,13 @@ console.log(abort.code == DOMException.ABORT_ERR); // true
 
 - `attempt(() => f())`: a throwing call as a value, `T | E`.
 - `AggregateError`, thrown by `Promise.any` when every promise rejects.
-- `assert(cond, msg?)`, `assertEq(a, b, msg?)` (compares with `deepEqual`), `panic(msg)`:
-  panics, for bugs. `assertThrows(() => f(), msg?)` returns the error `f` throws and panics if
-  it returns normally.
+- `assert(cond, msg?)`, `assertEq(a, b, msg?)` (compares with `deepEqual`; the message shows
+  both values): throw an `AssertionError` (an `Error`, as Node's `assert` does) when they fail.
+  `assertThrows(() => f(), msg?)` returns the error `f` throws and throws an `AssertionError`
+  if it returns normally. `panic(msg)` panics, for bugs: it ends the program and can't be
+  caught. In a function that can't throw (a sort comparator, a promise executor, `toString`),
+  `assert` is a compile error, as any throw is; check an invariant there with
+  `if (!cond) panic(msg)` ([Errors](../reference/errors.md)).
 - `deepEqual(a, b): bool`: content comparison. Arrays, structs and object literals compare
   their contents recursively. A `Map` or `Record` equals another with the same keys, each with
   a deeply equal value, in any order (a key is matched as `get` matches it, and an object key
@@ -432,7 +484,9 @@ console.log(abort.code == DOMException.ABORT_ERR); // true
   instances compare by identity; `==` compares every object by identity. This is Node's
   `util.isDeepStrictEqual` except for `-0`: floats compare as map keys do (SameValueZero), so
   `deepEqual([NaN], [NaN])` is `true` like Node, and `deepEqual([0], [-0])` is `true` (Node
-  says `false`).
+  says `false`). Values that hold themselves stop at the cycle: an object met again while it
+  is being compared is equal if it meets the same partner again (two rings of one length),
+  else different (rings of two lengths, a cycle on one side only), as Node answers.
 
 ```ts
 const a: Record<string, i64[]> = { x: [1], y: [2] };
@@ -444,7 +498,7 @@ console.log(deepEqual(a, b), a == b); // true false
 
 `Date` is JavaScript's: an instant in milliseconds since the epoch (`NaN` when invalid), with
 months 0-11, local-time getters and setters (the OS time zone, DST-aware) and their `UTC`
-variants. It is built on [`velt:datetime`](datetime.md), whose `DateTime` (UTC-first, months
+variants. It is built on [`velt/time`](time/datetime.md), whose `DateTime` (UTC-first, months
 1-12) is the better choice for new code.
 
 - `new Date()`, `new Date(ms)`, `new Date(string)`, `new Date(date)`,
@@ -471,15 +525,15 @@ console.log(start.toISOString(), end.getUTCMonth(), start < end); // 2024-01-31T
 ## Async and concurrency
 
 `sleep(ms)`, `yieldNow()`, `spawn(p, options?)` (options: `{ worker }`, see
-[velt:task](task.md#task-placement)), `Promise.all`, `Promise.race`, `Promise.allSettled`
+[velt/task](task.md#task-placement)), `Promise.all`, `Promise.race`, `Promise.allSettled`
 (with `PromiseSettledResult<T, E>`), `Promise.any`, `Promise.withResolvers` (with
 `PromiseWithResolvers<T, E>`), `Promise.resolve`, `Promise.reject`, the promise methods
 `then`, `catch` and `finally` with `queueMicrotask(f)`
 ([Async](../reference/async.md#then-catch-and-finally)), `shared(x)`, `Mutex<T>`, `RwLock<T>`,
-`Atomic<T>` (lock-free numbers and flags, [Atomics](sync.md)),
+`Atomic<T>` (lock-free numbers and flags, [Atomics and velt/sync](sync.md)),
 `performance.now()` and `Date.now()` ([Async](../reference/async.md)), and the timer
 functions `setTimeout`, `clearTimeout`, `setInterval`, `clearInterval`, `setImmediate` and
-`clearImmediate` with their `Timer` handle ([velt:timers](timers.md)).
+`clearImmediate` with their `Timer` handle ([velt/time](time/timers.md)).
 
 ```ts
 const words = "the cat and the hat".split(" ");

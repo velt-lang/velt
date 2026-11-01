@@ -1,0 +1,24 @@
+// check: no leaks
+// A `Mutex` `with` callback that calls a function value whose body uses a top-level `let` a
+// closure assigns (#1872), where the value comes from elsewhere than a variable's initializer:
+// sema moves the variables of the closures the code around the callback makes into `main`.
+// The value is a loop variable over an array of closures.
+const m = shared(new Mutex<number>(0));
+let c = 1;
+let other = 0;
+const b = () => {
+  c++;
+};
+const bump = () => {
+  other++;
+};
+const fs = [() => c, () => c * 3];
+b();
+bump();
+bump();
+m.with((v) => {
+  for (const f of fs) {
+    v += f();
+  }
+});
+console.log(m.with((v) => v), other);

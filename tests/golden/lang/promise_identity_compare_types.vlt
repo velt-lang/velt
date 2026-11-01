@@ -1,0 +1,23 @@
+// A promise and its conversion to `Promise<unknown>` are one promise for `===`, `!==` and
+// `Object.is`, compared as TypeScript allows (#1682).
+async function f(n: number): Promise<number> {
+  return n;
+}
+
+function keep(p: Promise<unknown>): Promise<unknown> {
+  return p;
+}
+
+async function main() {
+  const p = f(1);
+  const q = f(2);
+  const k = keep(p);
+  const xs: Promise<unknown>[] = [p];
+  console.log(Object.is(k, p), Object.is(xs[0], p), Object.is(xs[0], k), Object.is(p, p));
+  console.log(Object.is(k, q), Object.is(q, xs[0]));
+  const u: Promise<unknown> = p;
+  console.log(u === p, p === u, u !== p, k === u, u === q, q !== u);
+  console.log(await p, await q);
+}
+
+main();

@@ -7,7 +7,7 @@
 use velt_syntax::ast;
 
 use crate::body::{FnCx, Want};
-use crate::hir::{self, ExprKind as H, Nothing, TyId, TyKind};
+use crate::hir::{self, ExprKind as H, Nothing, PatKind as P, TyId, TyKind, UseMode};
 
 /// The temporary holding the argument (no source name can be this).
 const ARG: &str = "<maybe undefined arg>";
@@ -58,6 +58,15 @@ impl FnCx<'_, '_> {
             // `f(undefined)`: the default itself.
             return Ok(self.placed_default(default, type_args, h.span));
         }
+        // `T | null | undefined` for a `T | null` parameter: the default where it is
+        // `undefined`, the value or its `null` otherwise.
+        if takes_default
+            && self.cx.dynamic(h.ty).is_none()
+            && self.is_three_state(h.ty)
+            && self.cx.ty.nothing_of(target) == Some(Nothing::Null)
+        {
+            return Ok(self.default_where_three_state(h, target, default, type_args));
+        }
         let applies = self.cx.dynamic(target).is_none()
             && self.cx.dynamic(h.ty).is_none()
             && matches!(self.cx.ty.kind(h.ty), TyKind::Option(inner, Nothing::Undefined)
@@ -98,5 +107,47 @@ impl FnCx<'_, '_> {
         let pick = self.mk(pick, target, span);
         let b = super::accessor_rmw::block(stmts, Some(pick), span);
         Ok(self.mk(H::Block(b), target, span))
+    }
+
+    /// [`Self::default_where_undefined`] of a `T | null | undefined` argument `h` for a
+    /// `T | null` parameter: a match on its outer nothing, which is `undefined`
+    /// (`three_state`).
+    fn default_where_three_state(
+        &mut self,
+        mut h: hir::Expr,
+        target: TyId,
+        default: &hir::Expr,
+        type_args: &[TyId],
+    ) -> hir::Expr {
+        let span = h.span;
+        let sty = h.ty;
+        let mid = (self.cx.ty)
+            .opt_payload(sty)
+            .expect("ICE: three-state option without a payload");
+        let (l, mode) = self.option_binding(&h, mid, ARG, true);
+        if mode == UseMode::Move {
+            self.force_move(&mut h);
+        }
+        let value = self.mk(H::Local(l, mode), mid, span);
+        let value = self.coerce(value, target);
+        let d = self.placed_default(default, type_args, span);
+        let bind = self.pat(P::Binding(l, mode), mid, span);
+        let arms = vec![
+            hir::Arm {
+                pat: self.pat(P::Some(Box::new(bind)), sty, span),
+                guard: None,
+                body: value,
+            },
+            hir::Arm {
+                pat: self.pat(P::None, sty, span),
+                guard: None,
+                body: d,
+            },
+        ];
+        let kind = H::Match {
+            scrutinee: Box::new(h),
+            arms,
+        };
+        self.mk(kind, target, span)
     }
 }

@@ -8,9 +8,9 @@
 // `wait` (when given) before finishing and then sends its id to `notify`. A later sibling that
 // finishes first is one the earlier sibling waits for, so rendering in document order still
 // works only because siblings run concurrently.
-import { jsx, Fragment, jsxAsyncComponent, jsxComponent, jsxTemplate } from "velt:jsx/jsx-runtime";
-import { Element, renderToString, renderToStringSync } from "velt:jsx";
-import { channel, Channel } from "velt:channel";
+import { jsx, Fragment, jsxAsyncComponent, jsxComponent, jsxTemplate } from "velt/jsx/jsx-runtime";
+import { Element, renderToString, renderToStringSync } from "velt/jsx";
+import { channel, Channel } from "velt/sync";
 
 class NotFound extends Error {}
 

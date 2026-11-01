@@ -1,0 +1,48 @@
+// velt/net/http (internal): what an HTTP/2 client session's task sends back to a request
+// (`H2Event`): the response's head, its body pieces, its end, or an error.
+
+// `H2Event.kind`.
+/// The response's head: `status`, `fields`, and `id` the stream; `ended` when it has no body.
+export const EVENT_HEAD: i64 = 0;
+/// A piece of the body.
+export const EVENT_DATA: i64 = 1;
+/// The body is complete.
+export const EVENT_END: i64 = 2;
+/// The request failed (`message`); `retry` says whether it may be sent again.
+export const EVENT_ERROR: i64 = 3;
+
+// `H2Event.retry`.
+/// The request may have been processed: it is not sent again.
+export const RETRY_NEVER: i64 = 0;
+/// The request may have been processed, but sending it twice does no harm if its method is
+/// idempotent (a session that failed before the response's head).
+export const RETRY_IDEMPOTENT: i64 = 1;
+/// The server did not process the request (RFC 9113 §8.7: REFUSED_STREAM, a GOAWAY's streams
+/// above its last one, a request never sent): sent again whatever its method.
+export const RETRY_ALWAYS: i64 = 2;
+
+/// A message to a request.
+export struct H2Event {
+  kind: i64;
+  id: i64;
+  status: i64;
+  fields: string[];
+  ended: bool;
+  data: u8[];
+  message: string;
+  retry: i64;
+}
+
+/// An error event.
+export function errorEvent(message: string, retry: i64): H2Event {
+  return {
+    kind: EVENT_ERROR,
+    id: 0,
+    status: 0,
+    fields: [],
+    ended: true,
+    data: [],
+    message: message,
+    retry: retry,
+  };
+}

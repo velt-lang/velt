@@ -12,6 +12,7 @@
 //! a declared integer needs `as T`. Comparing an integer with a number is exact (`compare`).
 
 use velt_common::Span;
+use velt_syntax::ast;
 
 use crate::body::{FnCx, LocalKind};
 use crate::hir::{self, DefId, ExprKind as H, Intrinsic, LocalId, TyId, TyKind, UseMode};
@@ -38,7 +39,7 @@ impl FnCx<'_, '_> {
 
     /// Is function `d` part of the JavaScript API the standard library provides (the prelude's
     /// globals: `Array`, `String`, `Map`, `Date`, `Math`, `fetch`, `URL`, …), called from user
-    /// code? Its integers are numbers there. Velt's own modules (`velt:sqlite`, `velt:hash`, …),
+    /// code? Its integers are numbers there. Velt's own modules (`velt/db`, `velt/hash`, …),
     /// the prelude modules JS has no counterpart of (`js_api::VELT_PRELUDE`: the ordering
     /// protocol, bit counts) and the SIMD types keep their declared integer types.
     pub(crate) fn is_js_api(&self, d: DefId) -> bool {
@@ -426,12 +427,14 @@ impl FnCx<'_, '_> {
     }
 
     /// A `number` passed as a position or lane index of a SIMD method (`u8x16.load(d, i)`), as
-    /// a `usize` through the prelude's `__floatPosition`: a whole number from 0 up as itself,
+    /// a `usize` through std's `floatPosition` (a hook): a whole number from 0 up as itself,
     /// anything else (negative, fractional, NaN, ±Infinity) as `usize`'s maximum, which no
     /// array or vector has room at, so `fits` gives `false` and the others their `RangeError`.
     pub(super) fn simd_position(&mut self, h: hir::Expr) -> hir::Expr {
         let span = h.span;
-        let Some(crate::ctx::Item::Def(d)) = self.cx.prelude.get("__floatPosition").copied() else {
+        let Some(crate::ctx::Item::Def(d)) =
+            self.cx.std_def(velt_common::std_hook!(float_position))
+        else {
             let usize_ = self.cx.ty.usize;
             return self.mk(H::Cast(Box::new(h)), usize_, span);
         };
@@ -452,10 +455,11 @@ impl FnCx<'_, '_> {
     }
 
     /// A float index (`xs[i]` with `i: number`, `xs[Math.floor(n / 2)]`) as a `usize`, through
-    /// the prelude's `__floatIndex`: a whole number indexes as usual, anything else panics (in
+    /// std's `floatIndex` (a hook): a whole number indexes as usual, anything else panics (in
     /// JS it reads `undefined`).
     pub(super) fn float_index(&mut self, h: hir::Expr) -> hir::Expr {
-        let Some(crate::ctx::Item::Def(d)) = self.cx.prelude.get("__floatIndex").copied() else {
+        let Some(crate::ctx::Item::Def(d)) = self.cx.std_def(velt_common::std_hook!(float_index))
+        else {
             return h;
         };
         let span = h.span;
@@ -473,5 +477,15 @@ impl FnCx<'_, '_> {
             self.cx.ty.usize,
             span,
         )
+    }
+}
+
+/// Does the untyped number expression `e` contain a float literal (`0.0`, `-(1 + 0.5)`)?
+pub(super) fn has_float_lit(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ast::ExprKind::Lit(ast::Lit::Float { .. }) => true,
+        ast::ExprKind::Unary { expr, .. } | ast::ExprKind::Paren(expr) => has_float_lit(expr),
+        ast::ExprKind::Binary { lhs, rhs, .. } => has_float_lit(lhs) || has_float_lit(rhs),
+        _ => false,
     }
 }

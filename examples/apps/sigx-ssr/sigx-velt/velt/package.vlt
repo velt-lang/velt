@@ -1,4 +1,4 @@
-import type { Package } from "velt:package";
+import type { Package } from "velt/package";
 
 // The Velt half of the npm package `@sigx/velt`: sigx's server renderer as a Velt JSX provider.
 // An app depends on it by path (`node_modules/@sigx/velt/velt`) under the name `sigx`, so its
@@ -9,4 +9,5 @@ export const pkg: Package = {
   version: "0.0.1",
   description: "sigx server rendering for Velt (the provider behind @sigx/velt)",
   jsx: { importSource: "./src" },
+  dependencies: { "http-server": { path: "../../../../../packages/http-server" } },
 };

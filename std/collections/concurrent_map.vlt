@@ -1,0 +1,234 @@
+// velt/collections (internal): `ConcurrentMap`, a map from `u64` or `string` keys to values
+// that many threads read and write at once, through a `shared` value: a B+ tree with optimistic
+// lock coupling (Leis et al., "The ART of Practical Synchronization"; bbtree's concurrent map
+// uses the same protocol). Built only on public std APIs: `Atomic<u64>`, velt/simd
+// (`loadOptimistic`), `Atomic.fence`, array `prefetch`.
+//
+// Every node is 128 words of one `Atomic<u64>[]` arena (allocated whole by `create`), addressed
+// by index and never moved, so a reader that holds a stale index still reads a node and finds
+// its version changed. Readers write nothing. A delete that empties a leaf unlinks it, with any
+// inner nodes above it left with no other child, from the lowest ancestor that keeps a child,
+// and puts them on a free list (`spare`) that `alloc` takes from first. A node's version only
+// grows, through being freed and reused too, so a reader that read it before sees it changed.
+//
+// Node layout (words):
+//   0: latch (bit 0 exclusive, then shared holders, the version from bit 21: velt/sync's
+//      `VersionLatch` word)
+//   1: meta: the number of keys | `LEAF_BIT` for a leaf | an inner node's level from bit 40
+//   leaf:  16-bit tags (hashes) of the keys, 4 to a word, at 2..16, tag 0 for an empty slot; key
+//          i at 16 + 2i, its value at 17 + 2i. Unsorted (a lookup only needs equality, a split
+//          sorts): a key sits in its home slot (other bits of its hash) when that was free, else
+//          in any free slot, so most lookups read the home pair without waiting for the tags.
+//   inner: an index at 2..8 (key 8g + 7 for group g), then from word 16 groups of 16 words, one
+//          cache line each: 8 keys, then the 8 children left of them (child 8g + j between keys
+//          8g + j - 1 and 8g + j); unused key slots hold `MAX_KEY`. A level reads the index line
+//          and one group line. Key i separates child i (keys below it) from child i + 1.
+// A reader reads a node's words with relaxed loads (several at a time with `loadOptimistic`),
+// then checks its version (`isUnchanged`), and starts over from the root when a writer changed
+// it. A writer takes the node's latch at the version it read, so a node that changed since
+// fails the take; a full node is split on the way down while its parent is held as well, so a
+// parent always has room for the separator.
+//
+// String keys: the tree's key words are the strings' first 8 bytes in order (`inlineKey(0)`, so
+// a < b gives word(a) <= word(b)), and the strings themselves sit beside the nodes, in `skeys`:
+// a leaf's key in slot j at `node * SKEYS + j`, and the string of the separator left of a node
+// in its parent at `node * SKEYS + FENCE` (the node's fence: separator i of an inner node is the
+// fence of its child i + 1, so separators move between slots without their strings). Words that
+// tie are told apart by the strings: an inner node's separators with the key's word that are
+// greater than the key send it left of them (`backTies`, a binary search over the tied run), and
+// a leaf slot whose tag and word match is the key's only if its string is (`sameKey`). Tags and
+// home slots hash the whole string, so keys that share a prefix do not share tags. A reader reads
+// the strings as it reads the words, optimistically: borrowed, inside the epoch section the
+// compiler opens around the function that loads them, so one that a writer replaces meanwhile
+// stays readable until the section ends, and the node's version check after says whether what it
+// compared was the node's (a fence is read through the parent's child word, and changes only
+// while the parent is held: set before its node is linked, cleared when the node is unlinked or
+// becomes its parent's first child, whose fence is never read). A writer changes strings only
+// while it holds their node (or before the node is linked), and moves as few as it can: each one
+// replaced is retired to the epoch.
+
+import {
+  atomicShared,
+  ENTRIES_PER_NODE,
+  keyWord,
+  LEAF_BIT,
+  LEAF_CAP,
+  MAX_KEY,
+  NODE,
+  rangeError,
+  SKEYS,
+} from "velt/collections/concurrent/layout";
+import { addWord, deleteWord, findBoxed, getWord, setWord } from "velt/collections/concurrent/ops";
+import { trySetBoxed } from "velt/collections/concurrent/insert";
+import { getManyInto } from "velt/collections/concurrent/batch";
+
+/**
+ * A map from `K` keys (`u64` or `string`; `u64` when not written) to `V` values (`u64` when not
+ * written) for many threads at once: share it (`shared(ConcurrentMap.create(n))`) and call its
+ * methods from any task. A value other than a `u64` is boxed once, and read in place by `read`;
+ * a string key is kept once, beside its leaf. Lookups write no shared memory, so readers on many
+ * cores never slow each other; writers take a latch per node. A lookup waits (spins) while a
+ * writer holds its node, so it is not lock-free. Its keys are kept in key ranges, but a leaf's
+ * are unsorted and leaves are not linked: there is no ordered walk, iteration or size yet
+ * (#1688). Its room is fixed when it is created, and given back as leaves empty.
+ */
+export class ConcurrentMap<K = u64, V extends Frozen = u64> {
+  /**
+   * The values of a map whose `V` is not `u64`: one `shared<V>` per leaf slot (`node * LEAF_CAP +
+   * slot`), read borrowed inside the reader's epoch section. A `u64` `V` sits in the pair's value
+   * word instead, and this stays empty.
+   */
+  private vals: Atomic<shared<V> | null>[] = [];
+  /**
+   * The keys of a map whose `K` is `string`: one per leaf slot (`node * SKEYS + slot`), `null`
+   * where it has none, then each node's fence (`node * SKEYS + FENCE`), the string of the
+   * separator left of it, shared with the key it was copied from; read like `vals`. Empty for
+   * `u64` keys.
+   */
+  private skeys: Atomic<shared<string> | null>[] = [];
+  private w: Atomic<u64>[] = [];
+  private root: Atomic<u64> = new Atomic<u64>(0);
+  private next: Atomic<u64> = new Atomic<u64>(1);
+  private spare: Atomic<u64> = new Atomic<u64>(0);
+  private nodes: u64 = 0;
+
+  /**
+   * An empty map with room for at least `capacity` entries (its memory, about 40 bytes an
+   * entry, and 17 more for string keys, is taken now; a string key's own copy when it is set).
+   * A `set` that needs more room panics with a RangeError. A deleted
+   * entry frees a slot in its leaf, and a leaf whose last entry is deleted is reused, so keys
+   * that keep moving to new ranges (ids or timestamps that only grow, old ones deleted) fit for
+   * as long as the entries present at once do. Leaves are not merged, though: entries spread
+   * thinly over many leaves (most of a large map's keys deleted at random) can hold a node each
+   * and need more room than their number. A `set` of a key the map holds can also need room,
+   * when its leaf is full and splits first. Panics with a RangeError above 10^11 entries, and
+   * for keys other than `u64` and `string`.
+   */
+  static create(capacity: usize): ConcurrentMap<K, V> {
+    if (!typeIs<K, u64>()) {
+      if (!typeIs<K, string>()) {
+        rangeError("create: keys other than u64 and string are not supported");
+      }
+    }
+    const m = new ConcurrentMap<K, V>();
+    if ((capacity as u64) > 100000000000) {
+      rangeError("create: at most 10^11 entries");
+    }
+    m.nodes = (capacity as u64) / ENTRIES_PER_NODE + 64;
+    const words = m.nodes * NODE;
+    m.w.reserve(words as usize);
+    for (let i: u64 = 0; i < words; i++) {
+      m.w.push(new Atomic<u64>(0));
+    }
+    m.w[1].store(LEAF_BIT, "relaxed");
+    if (!typeIs<V, u64>()) {
+      const slots = m.nodes * LEAF_CAP;
+      m.vals.reserve(slots as usize);
+      for (let i: u64 = 0; i < slots; i++) {
+        m.vals.push(new Atomic<shared<V> | null>(null));
+      }
+    }
+    if (typeIs<K, string>()) {
+      const slots = m.nodes * SKEYS;
+      m.skeys.reserve(slots as usize);
+      for (let i: u64 = 0; i < slots; i++) {
+        m.skeys.push(new Atomic<shared<string> | null>(null));
+      }
+    }
+    return m;
+  }
+
+  /** The value of `key`, or `undefined` if the map has none (a boxed value is copied). */
+  get(key: K): V | undefined {
+    const k = keyWord(key);
+    if (typeIs<V | undefined, u64 | undefined>()) {
+      return asType<V | undefined>(getWord(this, k, key));
+    }
+    const s = findBoxed(this, k, key);
+    if (s == null) {
+      return undefined;
+    }
+    return s;
+  }
+
+  /**
+   * Runs `f` on the value of `key` (the map's own, not a copy; for a 64-bit integer `V`, whose
+   * `shared` is an atomic integer, a box of its own) and returns what it returns, or
+   * `undefined` if the map has no `key`.
+   */
+  read<R, E>(key: K, f: (value: shared<V>) => R throws E): R | undefined throws E {
+    const k = keyWord(key);
+    if (typeIs<V, u64>()) {
+      const w = getWord(this, k, key);
+      return w == undefined ? undefined : f(shared(asType<V>(w)));
+    }
+    const s = findBoxed(this, k, key);
+    if (s == null) {
+      return undefined;
+    }
+    // A `shared` 64-bit integer is an atomic one (`add`, `set`): the callback gets a box of its
+    // own, so it cannot change the map's value outside the leaf's latch.
+    if (atomicShared<V>()) {
+      const v: V = s;
+      return f(shared(v));
+    }
+    return f(s);
+  }
+
+  /** Whether the map has `key`. */
+  has(key: K): bool {
+    const k = keyWord(key);
+    if (typeIs<V, u64>()) {
+      return getWord(this, k, key) != undefined;
+    }
+    return findBoxed(this, k, key) != null;
+  }
+
+  /**
+   * Makes `value` the value of `key`, adding the key if the map has none (a value other than a
+   * `u64` is boxed once, a string key copied once). Panics with a RangeError for the `u64` key
+   * 2^64 - 1 (the one key a map cannot hold) and when the map is out of room.
+   */
+  set(key: K, value: V) {
+    const k = keyWord(key);
+    if (typeIs<V, u64>()) {
+      setWord(this, k, key, asType<u64>(value));
+      return;
+    }
+    if (k == MAX_KEY) {
+      rangeError("set: the key 2^64 - 1 cannot be held");
+    }
+    const boxed = shared(value);
+    while (!trySetBoxed(this, k, key, boxed)) {}
+  }
+
+  /**
+   * Adds `delta` to the `u64` value of `key` (wrapping), atomically: the value before, or
+   * `undefined` if the map has no `key`. Only for `u64` values.
+   */
+  add(key: K, delta: u64): u64 | undefined {
+    if (typeIs<V, u64>()) {
+      return addWord(this, keyWord(key), key, delta);
+    }
+    rangeError("add: only for u64 values");
+  }
+
+  /** Removes `key`; whether the map had it (a boxed value is dropped once no reader has it). */
+  delete(key: K): bool {
+    return deleteWord(this, keyWord(key), key);
+  }
+
+  /**
+   * Looks up `keys` (at most 64) together into `values`: where bit `i` of the result is set,
+   * `values[i]` is the value of `keys[i]` (`values` grows to `keys.length` if shorter; its other
+   * elements are unspecified). Unlike `BTreeMap.getMany`, which returns a new array, it fills the
+   * caller's, so a loop of batches allocates nothing. Faster than one `get` per key when the map
+   * is larger than the caches: the keys descend the tree in lockstep, and each prefetches its next
+   * node while the others search theirs, so their cache misses overlap. For `u64` keys and values
+   * only for now (other maps panic with a RangeError). Panics with a RangeError for more than 64
+   * keys.
+   */
+  getManyInto(keys: K[], values: V[]): u64 {
+    return getManyInto(this, keys, values);
+  }
+}

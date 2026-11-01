@@ -1,0 +1,2 @@
+Uncaught RangeError: -300 is below absolute zero at
+any_accessor_throws_uncaught.vlt:10:19

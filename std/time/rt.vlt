@@ -1,0 +1,3 @@
+// velt/time (internal): the runtime function velt/time calls: the OS time zone's offset.
+
+export declare function velt_rt_local_offset_minutes(epochMs: i64): i32;

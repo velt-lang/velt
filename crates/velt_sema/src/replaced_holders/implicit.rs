@@ -8,7 +8,7 @@
 //! 1. **Class hooks called by formatting and serialising glue** (`hir::AdtDef::to_string`,
 //!    `to_json`, `inspect`): `String(x)`, template literals, `+` on a string and `join` /
 //!    `toString` of arrays (std code over a `T`) call `toString()`; `JSON.stringify` calls
-//!    `toJSON()`; `console.log` / `console.error` call `__inspect()`, all for the value and for
+//!    `toJSON()`; `console.log` / `console.error` call `[INSPECT]()`, all for the value and for
 //!    every value it holds. Counted for the arguments of the intrinsics in [`glue_args`] whose
 //!    type reaches a class with such a method ([`Implicit::reach`]).
 //! 2. **A class's own `clone()`**, which a deep copy calls instead of copying a resource owner
@@ -50,7 +50,7 @@
 //!    nothing they could drop.
 //!
 //! Lowering also calls std methods from glue (`Map` methods for equality and hashing of
-//! dictionaries, `Record.__positions` / `__decoded` / `set` for JSON): std code that runs no
+//! dictionaries, `Record[RECORD_POSITIONS]` / `[RECORD_DECODED]` / `set` for JSON): std code that runs no
 //! user code. Equality, hashing, sharing and truthiness are generated and call nothing.
 
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -62,7 +62,7 @@ use crate::defs::DefInfo;
 use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, TyId, TyKind};
 
 /// The methods glue calls on a class (1 and 2).
-const GLUE_HOOKS: [&str; 4] = ["toString", "toJSON", "__inspect", "clone"];
+const GLUE_HOOKS: [&str; 4] = ["toString", "toJSON", crate::hooks::INSPECT, "clone"];
 
 /// What dropping, formatting or copying a value of some type may reach.
 #[derive(Clone, Default, PartialEq, Eq)]
@@ -105,6 +105,10 @@ pub(crate) struct Implicit {
     /// [`Reach`] of each type seen without type arguments known (types mentioning type
     /// parameters keep them as [`Reach::param`]).
     memo: RefCell<FxHashMap<TyId, std::rc::Rc<Reach>>>,
+    /// The lowest position on the walk's stack a walk below the current object type found its
+    /// way back to (`usize::MAX`: none): a type whose walk returned to no type above it is
+    /// complete, and its [`Reach`] goes into `memo` (#859: types sharing parts are walked once).
+    cut: std::cell::Cell<usize>,
 }
 
 impl Implicit {
@@ -189,6 +193,7 @@ impl Implicit {
             weak_entries,
             captures_reach: false,
             memo: RefCell::new(FxHashMap::default()),
+            cut: std::cell::Cell::new(usize::MAX),
         };
         im.captures_reach = im.captures.iter().any(|&t| {
             let r = im.reach(cx, t);
@@ -267,44 +272,36 @@ impl Implicit {
             }
             TyKind::Adt(d, args) => {
                 let (d, args) = (*d, args.clone());
-                if stack.contains(&d) {
+                if let Some(at) = stack.iter().position(|x| *x == d) {
+                    self.cut.set(self.cut.get().min(at));
+                    // The same definition with other type arguments (`Box<Hooked>` inside
+                    // `Box<number>`): the walk on the stack covers its fields, not what its
+                    // arguments reach.
+                    for &a in &args {
+                        self.reach_in(cx, a, env, stack, out);
+                    }
                     return;
                 }
-                let argr: Vec<Reach> = args
-                    .iter()
-                    .map(|&a| {
-                        let mut r = Reach::default();
-                        self.reach_in(cx, a, env, stack, &mut r);
-                        r
-                    })
-                    .collect();
-                stack.push(d);
-                // A weak map drops its values (8).
-                if Some(d) == self.weak_map {
-                    if let Some(v) = argr.get(1) {
-                        out.add(v);
-                    }
-                } else if self.weak_map.is_some_and(|w| cx.class_extends(d, w)) {
-                    // A subclass of one: its base class, in terms of its own type parameters.
-                    if let Some(b) = cx.adt(d).and_then(|a| a.base) {
-                        self.reach_in(cx, b, Some(&argr), stack, out);
+                // A type without type parameters reaches the same whatever `env` is.
+                let concrete = !super::has_params(cx, t);
+                if concrete {
+                    if let Some(r) = self.memo.borrow().get(&t) {
+                        out.add(r);
+                        return;
                     }
                 }
-                self.weak_values(cx, t, Some(d), stack, out);
-                let family = self.family.get(&d).cloned().unwrap_or_else(|| vec![d]);
-                for m in family {
-                    if let Some(h) = self.hooks.get(&m) {
-                        if !h.0.is_empty() || !h.1.is_empty() {
-                            out.adts.insert(m);
-                        }
-                    }
-                    // A relative's fields: its own type parameters are not this type's.
-                    let e = if m == d { Some(&argr[..]) } else { None };
-                    for f in field_tys(cx, m) {
-                        self.reach_in(cx, f, e, stack, out);
-                    }
+                let depth = stack.len();
+                let outer = self.cut.replace(usize::MAX);
+                let mut mine = Reach::default();
+                self.adt_reach(cx, (t, d, &args), env, stack, &mut mine);
+                let cut = self.cut.get();
+                self.cut.set(outer.min(cut));
+                if concrete && cut >= depth {
+                    self.memo
+                        .borrow_mut()
+                        .insert(t, std::rc::Rc::new(mine.clone()));
                 }
-                stack.pop();
+                out.add(&mine);
             }
             TyKind::Dyn(i, _) => {
                 let i = *i;
@@ -313,6 +310,52 @@ impl Implicit {
                 }
             }
         }
+    }
+
+    /// [`Self::reach_in`] of the object type `t` (`d` with `args`), not on the stack.
+    fn adt_reach(
+        &self,
+        cx: &Ctx,
+        (t, d, args): (TyId, DefId, &[TyId]),
+        env: Option<&[Reach]>,
+        stack: &mut Vec<DefId>,
+        out: &mut Reach,
+    ) {
+        let argr: Vec<Reach> = args
+            .iter()
+            .map(|&a| {
+                let mut r = Reach::default();
+                self.reach_in(cx, a, env, stack, &mut r);
+                r
+            })
+            .collect();
+        stack.push(d);
+        // A weak map drops its values (8).
+        if Some(d) == self.weak_map {
+            if let Some(v) = argr.get(1) {
+                out.add(v);
+            }
+        } else if self.weak_map.is_some_and(|w| cx.class_extends(d, w)) {
+            // A subclass of one: its base class, in terms of its own type parameters.
+            if let Some(b) = cx.adt(d).and_then(|a| a.base) {
+                self.reach_in(cx, b, Some(&argr), stack, out);
+            }
+        }
+        self.weak_values(cx, t, Some(d), stack, out);
+        let family = self.family.get(&d).cloned().unwrap_or_else(|| vec![d]);
+        for m in family {
+            if let Some(h) = self.hooks.get(&m) {
+                if !h.0.is_empty() || !h.1.is_empty() {
+                    out.adts.insert(m);
+                }
+            }
+            // A relative's fields: its own type parameters are not this type's.
+            let e = if m == d { Some(&argr[..]) } else { None };
+            for f in field_tys(cx, m) {
+                self.reach_in(cx, f, e, stack, out);
+            }
+        }
+        stack.pop();
     }
 
     /// What releasing a value of type `t` (an object type `d`, or an array) as a weak map's key
@@ -486,8 +529,9 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         I::Print
         | I::PrintErr
         | I::ToString
+        | I::ErrorText
+        | I::Inspect
         | I::TemplateToString
-        | I::JsonStringify
         | I::Clone
         | I::Transfer
         | I::Spawn
@@ -513,17 +557,27 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::AnySetIndex
         // `key in p` runs a proxy's `has` trap (and a proxy's `get` / `set` slots its traps).
         | I::AnyHas
-        // A record's `__delete` removes an entry.
-        | I::AnyDelete => true,
+        // A record's `[RECORD_DELETE]` removes an entry.
+        | I::AnyDelete
+        // Reading an entry runs an object literal's getter; a hook is a method.
+        | I::AnyReflectValue
+        | I::AnyReflectHook => true,
         // Run no user code (what they drop is counted as drops; the function values they call
         // as callbacks; generator resumes apart).
         I::StrConcat
+        | I::ThrowLoc
         | I::AnyTo
+        | I::AnyToExact
         | I::AnyTypeof
         | I::AnyIsArray
         | I::AnyKeys
         | I::AnyTruthy
         | I::AnyTag
+        | I::Identity
+        | I::ToAny
+        | I::AnyReflectInfo
+        | I::AnyReflectCount
+        | I::AnyReflectName
         | I::AnyToNumber
         | I::AnyStrictEq
         | I::AnyLooseEq
@@ -549,12 +603,14 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::AtomicCasWeak
         | I::AtomicFence
         | I::AtomicSpinHint
+        | I::ThreadLocalGet
+        | I::ThreadLocalSet
         | I::ArrayRotateRight
         | I::ArrayRotateLeft
         | I::ArraySwapNested
+        | I::Subarray
         | I::ParamOrdering
         | I::Hash
-        | I::Eq
         | I::KeyEq
         | I::IncludesEq
         | I::Same
@@ -593,6 +649,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::ChanTryReceive
         | I::SourceLocation
         | I::PromiseWiden
+        | I::PromiseSame
         | I::PerfNow
         | I::ProxyArrayCall
         | I::ProxyArrayHole
@@ -601,16 +658,6 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::SharedAdd
         | I::SharedGet
         | I::SharedRead
-        | I::JsonParse
-        | I::JsonParseRows
-        | I::JsonParseCursor
-        | I::DbBind
-        // The `RowSource` methods these call are not hooks; std/db calls the same methods
-        // itself on the path that reads rows as JSON, in the same function, so the analysis of
-        // `readRows` / `readRow` sees them.
-        | I::ReadRows
-        | I::ReadRow
-        | I::HttpHandler
         | I::StrCharCodeAt
         | I::StrByteAt
         | I::StrLoadU8x16

@@ -1,0 +1,7 @@
+// `Symbol.iterator in` a string held in an `any` stops with Node's `TypeError`, which shows the
+// key as `Symbol(Symbol.iterator)`.
+function main(): void {
+  const s: any = "s";
+  console.log("before");
+  console.log(Symbol.iterator in s);
+}

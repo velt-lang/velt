@@ -1,0 +1,25 @@
+// sqlite/engine/exec/types (internal): plain types and constants the execution's files share:
+// compiled expressions, conditions and loop steps, and the order a FROM level's access gives.
+
+import { Val } from "./value/val";
+import { Index } from "../schema/table_index";
+
+/** A compiled expression: evaluates to a value against the rows the loops stand on. */
+export type Ev = () => Val throws Error;
+/** A compiled condition: true when the expression is true (not false, not NULL). */
+export type Pred = () => bool throws Error;
+/** A compiled step of a query's loops. */
+export type Step = () => void throws Error;
+
+/** An index whose full scan gives the ORDER BY order (or its first `terms` terms). */
+export class OrderPick {
+  index: Index | null = null;
+  dir: i64 = ORDER_NONE;
+  /** How many leading terms it orders (all of them, or a prefix sorted further). */
+  terms: usize = 0;
+}
+
+/** Directions an access can give an order in. */
+export const ORDER_NONE: i64 = 0;
+export const ORDER_FORWARD: i64 = 1;
+export const ORDER_REVERSE: i64 = 2;

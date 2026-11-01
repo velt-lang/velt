@@ -44,6 +44,7 @@ pub(super) fn run(
     let scope = CheckScope {
         require_main: false,
         extra_roots: rest.to_vec(),
+        eager_std: false,
     };
     let same_path = super::check::same_path_groups(&files);
     match driver::check_for_lint(sess, &opts, &scope) {

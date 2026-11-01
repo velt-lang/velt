@@ -1,0 +1,12 @@
+// A field an object converted to an interface holds as a value of another type is converted at
+// each read (#1886): changing a part of it through the interface would change a copy.
+interface Ctx {
+  props: { a: number };
+  run(): void;
+}
+
+function main(): void {
+  const init = { props: { a: 1 } as any, run: () => {} };
+  const c = init as unknown as Ctx;
+  c.props.a = 2;
+}

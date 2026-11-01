@@ -321,7 +321,7 @@ registry's records of module constants `const R = Symbol.for("r")` too (`key` 1,
 description being the key, in the static string form), and lists them in a read-only table
 (`Intrinsic::SymbolRegistry`): their addresses, one per 8-byte slot, then a null slot. Records are
 never freed; one made at run time is one allocation. On wasm32 each table address takes the
-first half of its 8-byte slot. Functions (`std/symbol.vlt`; `string` parameters by pointer, a
+first half of its 8-byte slot. Functions (`std/lang/symbol/index.vlt`; `string` parameters by pointer, a
 `string` result through an out pointer):
 - `velt_rt_symbol_new(desc: *const VeltStr, described: u8) -> *const SymbolRec`: `Symbol(desc)`
   (`described` = 0: `Symbol()`, `desc` unread); keeps a reference to `desc`.
@@ -333,6 +333,20 @@ first half of its 8-byte slot. Functions (`std/symbol.vlt`; `string` parameters 
 - `velt_rt_strbuf_push_symbol(buf: *mut VeltStrBuf, s)`: appends `Symbol(<description>)`
   (`console.log`, `String(s)`).
 
+## CPU check [additive]
+
+`velt_rt_check_cpu(required: u32)`: x86_64 code built for more than the baseline CPU
+(`--cpu`, docs/tooling/platforms.md "CPU") calls it first thing in `velt_main`, after the
+runtime's start-up (baseline code) and before any code that may use the features. `required` is
+a mask of features, by bit: 0 SSE3, 1 SSSE3, 2 SSE4.1, 3 SSE4.2, 4 POPCNT, 5 CMPXCHG16B, 6 AVX,
+7 AVX2, 8 BMI1, 9 BMI2, 10 FMA, 11 LZCNT, 12 MOVBE, 13 F16C, 14 AVX512F, 15 AVX512BW,
+16 AVX512CD, 17 AVX512DQ, 18 AVX512VL, 19 AVX512VBMI, 20 AVX512BITALG
+(`velt_codegen_cl::X86_FEATURES`; x86-64-v2 is bits 0–5, v3 0–13, v4 0–18). When the CPU lacks
+one, it prints to stderr ``error: this program was built for <level> (<features>); this CPU
+lacks <missing>; rebuild it with `--cpu <lower>` `` (`<lower>`: the highest level the CPU has,
+or `baseline`) and exits with code 1. `VELT_CPU_DISABLE` (comma-separated feature names, any case) removes features from what the CPU
+has, to test it.
+
 ## SIMD [additive]
 
 A SIMD value (HIR `TyKind::Simd`, the ten vector and four mask types) is a VIR `V128`: 16 bytes,
@@ -341,17 +355,34 @@ Velt functions. Lanes are in memory order: lane 0 is the lowest-addressed bytes,
 A mask lane is all ones or all zeros.
 
 The operations are externs `velt_simd_<type>_<op>` (`velt_simd_u8x16_add`,
-`velt_simd_mask8x16_any`) declared by `std/simd/*.vlt` (`velt:simd`). **No runtime defines
+`velt_simd_mask8x16_any`) declared by `std/simd/*.vlt` (`velt/simd`). **No runtime defines
 them**: `velt_vir::simd` gives each symbol's operation and VIR signature (`SimdCall`), the
 verifier rejects a `velt_simd_*` extern that is not one, and both backends emit every call
 inline. They never cross the C ABI, so no target's vector calling convention is involved.
 `load` and `store` take the array (a pointer to its header) and an element index, and do not
 check it: the prelude's methods do. `load_partial` and `store_partial` take a count of elements
-too, below the lane count, and touch only those elements.
+too, below the lane count, and touch only those elements. `load_optimistic` [additive] is `load`
+from an array of `Atomic` words other threads may be storing to (`T.loadOptimistic`): LLVM
+emits a plain vector load, without an alias tag, and `freeze`s it, so a lane read while a store
+raced it is some value rather than `undef` and nothing computed from it is undefined; Cranelift
+emits a plain load. Correctness does not depend on how the hardware splits the load: a lane no
+thread wrote during the load is the word, whatever the width of the accesses, and a lane a store
+raced is rejected by the latch check whatever its bytes are (arm64 happens to read a 128-bit load
+as two single-copy-atomic 64-bit reads; x86-64 documents no such guarantee for a 16-byte SSE
+load; Velt's wasm targets have no threads).
+
+What the latch check relies on: a racing plain load reads from no store, so in LLVM's model
+nothing makes the version re-read see the writer's lock. It works, as Linux's seqlock and
+crossbeam's `AtomicCell` do, because the load stays where the source puts it, between the
+latch's acquire load and its acquire fence, and the hardware keeps that order (x86-64 TSO; on
+arm64 the fence is `dmb ishld`, before the re-read). So no backend or VIR pass may hoist a
+`load_optimistic` out of a loop, merge two of them, or move one across an atomic operation or a
+fence. LLVM and Cranelift treat acquire loads and fences as clobbers of all memory, and velt_opt
+moves no call.
 
 `velt_simd_prefetch(void* addr)` (`-> void`, additive) starts loading the cache line at `addr`
 for a read soon, as a hint: LLVM emits `llvm.prefetch` (read, every cache level, data), which
-never faults; Cranelift emits nothing. Std reaches it through `__intrinsic_array_prefetch(xs, i)`
+never faults; Cranelift emits nothing. Std reaches it through `arrayPrefetch(xs, i)`
 (HIR `Intrinsic::ArrayPrefetch`, the address of element `i`, not bounds-checked).
 
 A shuffle is `velt_simd_<type>_shuffle_<i0>_<i1>…`, one lane index per lane spelled in the symbol
@@ -364,25 +395,32 @@ integer lanes) reverses the bytes within each lane.
 **CPU extensions (#1330).** `velt_simd_u32x4_<op>` for the SHA instructions (`sha1c`, `sha1p`,
 `sha1m`, `sha1h`, `sha1su0`, `sha1su1`, `sha256h`, `sha256h2`, `sha256su0`, `sha256su1` on
 aarch64; `sha256rnds2`, `sha256msg1`, `sha256msg2`, `sha1rnds4_<0-3>`, `sha1nexte`, `sha1msg1`,
-`sha1msg2` on x86-64; `velt_vir::simd::ShaOp`) are the instructions themselves: a caller runs one
-only where `velt_simd_has_sha_arm()` / `velt_simd_has_sha_x86()` (`-> bool`) is true. On the
+`sha1msg2` on x86-64), and `velt_simd_u64x2_<op>` for the carry-less multiplications
+(`pclmulqdq_<imm>` on x86-64, `pmull_<imm>` on aarch64, `imm` 0, 1, 16 or 17 choosing the 64-bit
+lanes as PCLMULQDQ's immediate does; additive), `velt_vir::simd::ExtOp`, are the instructions
+themselves: a caller runs one only where `velt_simd_has_sha_arm()` / `velt_simd_has_sha_x86()` /
+`velt_simd_has_clmul_x86()` / `velt_simd_has_clmul_arm()` (`-> bool`) is true. On the
 architecture with the extension that check reads the runtime's flag byte, otherwise (another
 architecture, wasm, Cranelift) it is `false` and the operation, dead behind it, gives zeros.
 The runtime exports the flags, set in `velt_rt_start` (`init`) before any Velt code runs and never
-changed after (so generated code reads them as invariant); `VELT_SIMD_DISABLE=sha` leaves them 0:
+changed after (so generated code reads them as invariant); `VELT_SIMD_DISABLE=sha` (`clmul`)
+leaves the SHA (carry-less) ones 0:
 
 ```c
-uint8_t velt_cpu_sha_arm;  /* 1: aarch64 with the ARMv8 SHA-1/SHA-256 instructions */
-uint8_t velt_cpu_sha_x86;  /* 1: x86-64 with SHA, SSSE3 and SSE4.1 */
+uint8_t velt_cpu_sha_arm;    /* 1: aarch64 with the ARMv8 SHA-1/SHA-256 instructions */
+uint8_t velt_cpu_sha_x86;    /* 1: x86-64 with SHA, SSSE3 and SSE4.1 */
+uint8_t velt_cpu_clmul_x86;  /* 1: x86-64 with PCLMULQDQ, SSSE3 and SSE4.1 */
+uint8_t velt_cpu_clmul_arm;  /* 1: aarch64 with PMULL (64-bit polynomial multiply) */
 ```
 
 LLVM gives a function that calls one of these operations the extension's own feature (`+sha2`,
-`+sha`), which it uses for nothing else; a *gated* function (VIR `Function::target`, HIR
-`Program::cpu_targets`, from std's `__intrinsic_target("sha-arm" | "sha-x86")`, every call of
+`+sha`, `+pclmul`, `+aes`), which it uses for nothing else; a *gated* function (VIR
+`Function::target`, HIR `Program::cpu_targets`, from std's `targetFeature("sha-arm" |
+"sha-x86" | "clmul-x86" | "clmul-arm")`, every call of
 which sema keeps behind the check) gets the extension's whole set (`+sha,+ssse3,+sse4.1` on x86),
 and the check of its own extension (`velt_simd_has_<ext>`) is the constant `1` there, so the
 emulation behind it is dead code. The ordinary functions it calls that check that extension
-(the `velt:simd` methods), themselves or through their callees, are cloned for it by `velt_opt`
+(the `velt/simd` methods), themselves or through their callees, are cloned for it by `velt_opt`
 with the check `true`, so this holds whether or not they would be inlined. A gated function is never inlined into an ordinary one or one
 gated on another target (`velt_opt`, and `noinline` on the call for LLVM); ordinary code may be
 inlined into a gated function.
@@ -421,7 +459,27 @@ read-modify-write calls an `__aarch64_*` helper (libgcc's or compiler-rt's, the 
 `velt_rt` included) that uses LSE when the CPU has it; `max` and `min` have no helper and stay
 LL/SC loops, as in Rust. Cranelift's
 atomics are all sequentially consistent, which is correct for every ordering. On wasm without
-threads they are plain loads and stores.
+threads they are plain loads and stores. `velt_rt_thread_yield()`
+(a real runtime function, rt_abi_async.md §9) is what `velt/sync`'s `Backoff` yields with.
+
+## Thread-local values [additive]
+
+A module constant `new ThreadLocal<T>(init)` (std/prelude/sync.vlt; `T` a number type or `bool`,
+`init` a literal) is one value per thread. Lowering calls `velt_tls_get_<id>_<bits>_<init>`
+(`() -> uN`, this thread's value) and `velt_tls_set_<id>_<bits>_<init>` (`(uN)`): `id` is the
+64-bit FNV-1a hash of the constant's qualified name (decimal; `velt_vir::tls::stable_id`, so it
+stays the same when other declarations change), `bits` 8, 16, 32 or 64, and `init` the starting
+word in lowercase hex. Values are passed as unsigned integers of the width, as for the atomics (a
+float's bits, a `bool` as 0 or 1). **No runtime defines them**: `velt_vir::tls` gives each
+symbol's meaning and VIR signature (`TlsCall`), and each backend implements them.
+
+| Backend and target | Storage | A call |
+|---|---|---|
+| LLVM (every target) | `@velt_tls_data_<id> = hidden thread_local(initialexec) global iN init`, defined by the unit that defines `velt_main` and declared by the others | a load or store through `llvm.threadlocal.address` |
+| Cranelift on ELF, Mach-O, x86-64 COFF | a thread-local data object `velt_tls_data_<id>` (`tls_model` `elf_gd`, `macho`, `coff`) | a load or store through `tls_value` |
+| Cranelift JIT (`velt dev`), arm64 COFF | an operating system thread key, made the first time it is used, in `velt_tls_key_<id>` (the key plus one): defined by the object, or, in `velt dev`, a slot the session owns and every version imports, so all versions use one key | a call of the extern, which the module defines on `pthread_getspecific`/`pthread_setspecific` (`TlsGetValue`/`TlsSetValue` on Windows); the key holds the word XOR `init`, so a thread that never set it reads `init`. A failed key creation traps rather than use another key |
+
+LLVM strips thread-local globals to plain ones for single-threaded WebAssembly.
 
 ## Module state [additive, #76]
 
@@ -456,15 +514,39 @@ The call takes the process-wide *module lock* unless the thread holds it: inside
 the end of the poll, and every later poll of that task takes it at its start; outside a task (a
 synchronous `main`) until `velt_rt_block_on` or until `main` returns. A program that never
 calls it pays nothing per task (a process-wide flag the first call sets). `velt_rt_mutex_lock`
-keeps the module lock while it blocks; taking the module lock while the thread holds a `Mutex`
-stops with an `ICE:` panic (sema rejects module state in a `with` callback). On WebAssembly (one
-thread) there is no lock.
+keeps the module lock while it blocks; waiting for the module lock while the thread holds a
+`Mutex` stops with an `ICE:` panic (sema rejects module state in a `with` callback). On
+WebAssembly (one thread) there is no lock.
+
+`uint8_t velt_rt_module_with(void)` and `void velt_rt_module_with_end(uint8_t took)` [additive,
+#924]: the first takes the module lock unless the thread holds it and answers whether it took it
+(1); the second, called after the `Mutex` or `RwLock` unlock with that answer, gives it back
+(unless the callback reached module state: the poll, or the code outside a task, keeps it
+then). A program that gives functions properties through `any` calls them around each `with`,
+`read` and `write` whose callback may reach a declared function's properties (below), which are
+module state: every callback sema does not list in `Program::lock_free_callbacks`
+(hir_encodings.md "Module state"). Such a callback holds the module lock already, so no thread
+waits for it while holding a `Mutex`; the other callbacks never reach module state, so a thread
+holding the module lock that waits for their `Mutex` only waits for them to finish.
 
 Within one call of a compiled function (until the poll ends, or until `velt_rt_block_on` or
 `main` returns), a successful `velt_rt_module_state(desc, s)` stays valid for every slot `<= s`:
 the same block, still initialized up to `s`, with the lock still held. The compiler reuses it
 instead of calling again (`velt_opt` `module_state`, #1571), so a runtime change must keep this
 [additive, #1571].
+
+## Static atomics at exit [additive]
+
+```c
+void velt_rt_statics_drop(void (*f)(void));
+```
+
+A program with static atomics holding a reference (a module `const X = new Atomic<shared<T> |
+null>(null)`, hir_encodings.md "Static atomics") calls it from `velt_main` before returning,
+with a generated function that releases the reference each such word holds and stores null
+into it. The runtime calls `f` once at exit, after dropping the module state, and only when it
+drops the module state (the leak counters of the debug runtime, `VELT_RC_STATS=1`; § Module
+state). The WebAssembly runtime ignores it.
 
 ## Array length limit [additive, #1572]
 
@@ -479,10 +561,10 @@ array adopted from native code, and the growth of an array of zero-sized element
 `panic: RangeError: Invalid array length: an array holds at most 2^52 - 1 elements, and its elements at most 2^52 - 1 bytes`
 (exit code 101). Optimizations may rely on it: `velt_opt`'s `numrep` takes an array's `len` to be
 at most 2^53 - 3 (all an index running to `len` inclusive needs). A typed array's byte length is
-below 2^52 for the same reason (its buffer is a `u8[]`). `velt_rt_bytes_zeroed(n)` checks `n`
-against the limit too. A buffer within the limit that the target cannot allocate is out of
+below 2^52 for the same reason (its buffer is a `u8[]`). `velt_rt_bytes_zeroed(n)` and
+`velt_rt_bytes_uninit(n)` check `n` against the limit too. A buffer within the limit that the target cannot allocate is out of
 memory (`velt_rt_alloc` above), never a smaller block: on wasm32 a byte size past 2^31 - 1
-stops the program there, in `velt_rt_realloc`, in `velt_rt_bytes_zeroed` and in
+stops the program there, in `velt_rt_realloc`, in `velt_rt_bytes_zeroed`, `velt_rt_bytes_uninit` and in
 `velt_rt_bytes_concat`.
 
 ## Array methods on a proxy [additive, #823]
@@ -492,7 +574,7 @@ int64_t velt_rt_proxy_array_call(const void *target, int64_t op);
 int64_t velt_rt_proxy_array_hole(const void *array, int64_t index, int64_t op);
 ```
 
-The state of the generic array methods `velt:proxy/array` runs on a proxy of an array
+The state of the generic array methods `velt/lang/proxy/array` runs on a proxy of an array
 (`p.push(…)`, `p.pop()`, …), per thread, so that the standard library keeps no module state.
 Arrays are identified by the data pointer of the `any` holding them. Only a running method's
 target is ever recorded: its proxy keeps it alive, so its address is not reused while the
@@ -508,7 +590,7 @@ trap calls (`has`, `get`, `set`, `deleteProperty` on the proxy), -2 ends it. Bet
 `op` 0 answers whether element `index` is one (1 or 0); 1 records it, only during a trap call of
 a method on `array` (answering whether it was one), else answers -1 and records nothing; 2
 forgets it (whether it was one); 3 forgets the holes from `index` on (a shorter length; 0); 4
-answers the first hole below `index`, or -1. std/proxy.vlt's `Reflect` records them (a delete,
+answers the first hole below `index`, or -1. std/lang/proxy/index.vlt's `Reflect` records them (a delete,
 the gap before an element written past the end) and reports them as absent; elsewhere both are
 `TypeError`s. Both runtimes provide them (`velt_rt/src/proxy_array.rs`, compiled into
 velt_rt_wasm too).
@@ -547,7 +629,7 @@ The `velt_rt_array_view_*` functions keep a second table the same way for array 
 within the program) to `view`, the view's box. A conversion asks it first and records the view
 it makes; the view's drop glue removes the entry, and so does a transfer that turns the view
 into a plain array in place. `velt_rt_array_view_remove` takes the view's view object (the
-`__ArrayView`, untagged) and removes the entry if it is that object's view: if the entry's box
+`ArrayView`, untagged) and removes the entry if it is that object's view: if the entry's box
 header holds `object | 1`. So the view's own box never reaches the runtime, and the backend
 need not assume that a call may change a box of a view type.
 
@@ -555,6 +637,56 @@ need not assume that a call may change a box of a view type.
 (`lower/view_unswitch.rs`) calls it when the box is a view, on the way into the loop's
 original, and the LLVM backend declares it `cold` (and touching only memory compiled code
 never reads), so that it treats the loop's copy for a plain array as the one that runs.
+
+## Function properties [additive, #924]
+
+```c
+const uint8_t *velt_rt_fnprop_get(const uint8_t *env, const VeltStr *key);
+void velt_rt_fnprop_set(uint8_t *env, const VeltStr *key, const uint8_t *value);
+uint8_t velt_rt_fnprop_delete(const uint8_t *env, const VeltStr *key);
+uint64_t velt_rt_fnprop_len(const uint8_t *env);
+void velt_rt_fnprop_key(const uint8_t *env, uint64_t i, VeltStr *out);
+uint8_t *velt_rt_fnprop_identity(const uint8_t *code);
+uint8_t *velt_rt_fnprop_identity_of(const uint8_t *code);
+```
+
+Properties a program adds to a function value through `any` (velt_vir `lower/any_fn_props.rs`):
+JavaScript functions are objects. The function's identity is its closure environment (a
+program with writes through `any` that holds functions there gives every closure a counted
+one), so the table maps the environment's address to its properties in insertion order, each
+value an `any` (`{ data, table }`, two pointers). `get` answers the address of the value held
+(borrowed: the caller shares it at once) or null; `set` takes the `any` at `value` and drops the
+one it replaces after the store; `delete` answers 1 when there was one; `len` and `key` list the
+names (`key` writes an owned string).
+
+A function value without an environment (a declared function's) is one function in
+JavaScript, whichever reference reaches it: `identity(code)` answers the environment the runtime
+keeps for the function with that code address (an environment holding nothing, made on first
+use, which the caller stores into the value as its environment), and `identity_of(code)` the
+same without making one (null when there is none). A value converted to `any` gets it there, so
+`===`, `Map` keys and properties see one function. An identity's entries change no count (its
+drop does nothing, its clone and transfer answer the same environment), so every thread may hold
+it, and a value holding one takes it along to another task: the function there is the same one.
+Its properties are module state (above), since their values are not atomic: `get`, `set`,
+`delete`, `len` and `key` on an identity take the module lock first, as an access of a
+module-level `let` does, and the task keeps it in its polls from then on; a program that may
+give functions properties calls `velt_rt_module_with` before each `Mutex` and `RwLock` lock
+whose callback may reach them, so such a callback holds it already. The `set` on an identity
+keeps its entries. The table keeps identities to the end; with the leak counters on
+(`VELT_RC_STATS=1`), they are freed at exit with their properties, as module state is.
+
+The first `set` on an environment replaces its drop entry (its first word) and its transfer
+entry (its third) with the runtime's. The drop calls the original and, with the last reference
+(a count of 1 in front of the environment), first removes the entry, puts the original entries
+back and drops the names and values. The transfer (the function enters another thread) moves a
+unique environment and transfers each value in place; a shared one is copied (by its original
+transfer entry, or as a new environment holding nothing), and the copy gets a share of each
+value, transferred, so every thread has properties of its own, as a copied object has members
+of its own. A tagged pointer (the many-threads check) goes to the original entry. Values are
+dropped, shared and transferred through their table's slots (8 bytes each on every target),
+never under the table's lock. One table for the process, behind a lock. Both runtimes provide
+them (`velt_rt/src/fn_props.rs`, compiled into velt_rt_wasm too). Programs without a write
+through `any` never call them.
 
 ## Output [M1]
 `stream`: 1 = stdout (buffered, flushed at exit / before any stderr write / on `velt_rt_flush`), 2 = stderr.
@@ -630,9 +762,12 @@ hashing, math).
 Declared in std (Velt signatures; `u8[]`/`string` are passed as in rt_abi_async.md, handles are
 `u64`), checked against the runtime by `crates/velt_rt/tests/std_externs.rs`:
 - `u8[]` (`std/prelude/bytes.vlt`): `velt_rt_bytes_zeroed(n: u64): u8[]`,
+  `velt_rt_bytes_uninit(n: u64): u8[]` (contents not set: `Buffer.allocUnsafe`),
   `velt_rt_bytes_index_of(b: u8[], byte: u8, from: i64): i64`,
   `velt_rt_bytes_last_index_of(b: u8[], byte: u8, from: i64): i64` (−1 if absent),
   `velt_rt_bytes_set(dst: u8[], src: u8[], offset: u64): bool` (false: out of range),
+  `velt_rt_bytes_copy(dst: u8[], src: u8[], targetStart: i64, sourceStart: i64, sourceEnd: i64): i64`
+  (Node's `src.copy(dst, …)`: the bytes copied, −1 for a position out of range),
   `velt_rt_bytes_copy_within(b: u8[], target: i64, start: i64, end: i64)`,
   `velt_rt_bytes_fill(b: u8[], byte: u8, start: i64, end: i64)`,
   `velt_rt_bytes_slice(b: u8[], start: i64, end: i64): u8[]`,
@@ -640,23 +775,25 @@ Declared in std (Velt signatures; `u8[]`/`string` are passed as in rt_abi_async.
   vectors there, and UTF-8 validation (`utf8Valid`, the WebSocket reader) in
   `std/encoding/utf8.vlt`.
 - For protocols written in Velt (`u8[]`'s `utf8Slice` in `std/prelude/bytes.vlt`;
-  `std/websocket/bytes.vlt`), on a range `[start, end)` (relative indices) so no slice is made:
+  `std/net/websocket/text.vlt`), on a range `[start, end)` (relative indices) so no slice is made:
   `velt_rt_bytes_range_to_str(b: u8[], start: i64, end: i64): IoResult<string>` (`INVALID_DATA` if
   not UTF-8) and `velt_rt_bytes_range_to_str_lossy(b: u8[], start: i64, end: i64): string` (an
   invalid sequence as U+FFFD, one per maximal invalid subpart): making a string is the runtime's.
   Writing a string's bytes and comparing them (`write`, `utf8Equals`) is Velt code that reads the
   string's bytes in place (intrinsics `StrByteAt`, `StrLoadU8x16`, `StrLoadPartialU8x16`).
-- BigInt (`std/bigint.vlt`, handle `u64`, freed by `velt_rt_bigint_free`): `from_i64`, `from_f64`,
+- BigInt (`std/math/bigint.vlt`, handle `u64`, freed by `velt_rt_bigint_free`): `from_i64`, `from_f64`,
   `parse(s, radix)`, `clone`, `assign(dst, a)`, `neg(dst, a)`, `op(dst, a, b, op: u32): bool` and
   `op_i64(dst, a, k: i64, op: u32): bool` (false: division by zero or a negative or huge shift; `dst` unchanged), `cmp`/`cmp_i64` (−1/0/1),
-  `to_i64`, `to_f64`, `to_string(a, radix)`. `op` codes are defined in `std/bigint.vlt`.
+  `to_i64`, `to_f64`, `to_string(a, radix)`. `op` codes are defined in `std/math/bigint.vlt`.
 - Numbers: `velt_rt_f64_to_fixed(x: f64, digits: i64): string` (JS `toFixed` rounding),
   `velt_rt_f64_to_exponential(x: f64, digits: i64): string` (JS `toExponential`; `digits < 0`:
   omitted), `velt_rt_f64_to_precision(x: f64, precision: i64): string` (JS `toPrecision`),
   `velt_rt_f64_to_radix(x: f64, radix: i64): string` (JS `toString(radix)` with V8's digits, for
   a finite `x`; `radix` clamped to 2..36), `velt_rt_i64_to_radix(x: i64, radix: i64): string`
   and `velt_rt_u64_to_radix(x: u64, radix: i64): string` (exact integer digits) (additive),
-  `velt_rt_math_umulh(a: u64, b: u64): u64` (high 64 bits of the product).
+  `velt_rt_math_umulh(a: u64, b: u64): u64` (high 64 bits of the product),
+  `velt_rt_math_f64_bits(x: f64): u64` and `velt_rt_math_bits_f64(b: u64): f64` (IEEE 754 bit
+  casts, `x.toBits()` / `f64.fromBits(b)`; both backends emit them inline).
 - Binary stdio: `velt_rt_stdout_write_bytes(bytes: u8[])` (synchronous, ordered with
   `console.log`), `async velt_rt_stdin_read_all_bytes(): IoResult<u8[]>` and
   `velt_rt_stdin_read_all_bytes_sync(): IoResult<u8[]>` (hand over the runtime's buffer).

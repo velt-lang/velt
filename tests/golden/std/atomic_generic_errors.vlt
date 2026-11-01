@@ -1,0 +1,85 @@
+// `Atomic<T>` over a type parameter: it needs the `AtomicValue` bound, generic code has only the
+// operations every `AtomicValue` has the same way, and an instantiation must satisfy the bound.
+
+function unbounded<T>(a: Atomic<T>): T {
+  return a.load();
+}
+
+function bounded<T extends AtomicValue>(a: Atomic<T>, v: T): T {
+  a.add(v);
+  a.compareExchange(v, v);
+  return a.load();
+}
+
+class Holder<T extends AtomicValue> {
+  word: Atomic<T>;
+
+  constructor(v: T) {
+    this.word = new Atomic<T>(v);
+  }
+}
+
+interface Obj {
+  v: u64;
+}
+
+const h = new Holder<Obj>({ v: 1 });
+
+// A user type cannot become an `AtomicValue` by declaring it: the bound means exactly the types
+// an `Atomic` holds.
+class Foo implements AtomicValue {
+  x: string = "";
+}
+
+struct P {
+  a: u64;
+  b: u64;
+}
+
+extend P implements AtomicValue {}
+
+interface Shaped extends AtomicValue {
+  v: u64;
+}
+
+function viaObj<T extends AtomicValue>(v: T): T {
+  return new Atomic<T>(v).load();
+}
+
+const foo = new Holder<Foo>(new Foo());
+const p = new Holder<P>({ a: 1, b: 2 });
+
+function shaped(o: Shaped): Shaped {
+  return viaObj<Shaped>(o);
+}
+
+// Nor through a type parameter: one bounded by an interface declared to extend `AtomicValue`,
+// or by an interface a blanket `extend` makes an `AtomicValue`, does not satisfy the bound.
+struct Q {
+  a: u64;
+  s: string;
+}
+
+interface Marked extends AtomicValue {}
+
+extend Q implements Marked {}
+
+function viaParam<T extends AtomicValue>(v: T, w: T): T {
+  const a = new Atomic<T>(v);
+  a.store(w);
+  return a.exchange(v);
+}
+
+function outer<T extends Marked>(v: T, w: T): T {
+  return viaParam<T>(v, w);
+}
+
+interface Tag {}
+
+extend<T extends Tag> T implements AtomicValue {}
+
+function tagged<T extends Tag>(v: T, w: T): T {
+  return viaParam<T>(v, w);
+}
+
+function main() {}

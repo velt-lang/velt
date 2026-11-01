@@ -1,5 +1,5 @@
 //! The fields of `package.vlt`, in one table: the reader's known keys, and what editors complete
-//! and explain ([`super::ide`]). `std/package.vlt` declares the same fields as Velt types (a test
+//! and explain ([`super::ide`]). `std/package/` (manifest.vlt, workspace.vlt) declares the same fields as Velt types (a test
 //! keeps them in line).
 
 use super::NATIVE_TARGETS;
@@ -9,7 +9,7 @@ use super::NATIVE_TARGETS;
 pub struct Field {
     pub key: &'static str,
     pub kind: Kind,
-    /// Its type as `std/package.vlt` writes it.
+    /// Its type as `std/package/manifest.vlt` writes it.
     pub ty: &'static str,
     /// Whether the field must be written.
     pub required: bool,
@@ -148,6 +148,52 @@ pub const PACKAGE: &[Field] = &[
               `[\"src/components\", \"src/models\"]`: `/`-separated paths relative to the \
               package root. `velt check --ts-compat` and the editor lint them.",
     },
+    Field {
+        key: "build",
+        kind: Kind::Object(BUILD),
+        ty: "Build",
+        required: false,
+        doc: "How the package's program is built. Only the root package's applies.",
+    },
+];
+
+/// The workspace object of `velt.workspace.vlt`: `export const workspace: Workspace = { … }`
+/// ([`crate::workspace`]).
+pub const WORKSPACE: &[Field] = &[
+    Field {
+        key: "members",
+        kind: Kind::StrArray { values: &[] },
+        ty: "string[]",
+        required: true,
+        doc: "The member packages: `/`-separated globs relative to the workspace root \
+              (`\"packages/*\"`, `\"apps/**\"`), each matching directories that hold a \
+              `package.vlt`; a `!` prefix excludes (`\"!packages/old\"`), and `\".\"` is \
+              the root's own package.",
+    },
+    Field {
+        key: "velt",
+        kind: Kind::Str,
+        ty: "string",
+        required: false,
+        doc: "The velt versions that build every member, as a package's `velt` field. Members \
+              of a workspace leave it out.",
+    },
+    Field {
+        key: "registry",
+        kind: Kind::Str,
+        ty: "string",
+        required: false,
+        doc: "The registry of every member, as a package's `registry` field. Members of a \
+              workspace leave it out.",
+    },
+    Field {
+        key: "dependencies",
+        kind: Kind::Map(Entry::Dependency),
+        ty: "Record<string, Dependency>",
+        required: false,
+        doc: "Requirements the members share: a member's `name: \"workspace\"` uses the one \
+              written here.",
+    },
 ];
 
 /// The object form of a dependency.
@@ -164,7 +210,38 @@ pub const DEPENDENCY: &[Field] = &[
         kind: Kind::Str,
         ty: "string",
         required: false,
-        doc: "A local package directory, relative to this manifest.",
+        doc: "A local package directory, relative to this manifest; with `git`, the \
+              package's directory in the repository.",
+    },
+    Field {
+        key: "git",
+        kind: Kind::Str,
+        ty: "string",
+        required: false,
+        doc: "A git repository URL (`https://…`, `ssh://…`, `git@host:path`): the package \
+              comes from it, at the commit `velt.lock.json` records.",
+    },
+    Field {
+        key: "branch",
+        kind: Kind::Str,
+        ty: "string",
+        required: false,
+        doc: "With `git`: the branch to follow (default: the repository's default branch); \
+              `velt update` moves to its newest commit.",
+    },
+    Field {
+        key: "tag",
+        kind: Kind::Str,
+        ty: "string",
+        required: false,
+        doc: "With `git`: a tag.",
+    },
+    Field {
+        key: "rev",
+        kind: Kind::Str,
+        ty: "string",
+        required: false,
+        doc: "With `git`: a full commit hash.",
     },
 ];
 
@@ -174,9 +251,21 @@ pub const JSX: &[Field] = &[Field {
     kind: Kind::Str,
     ty: "string",
     required: false,
-    doc: "The module whose `jsx-runtime` compiles JSX: a dependency, `\"velt:jsx\"` (the \
+    doc: "The module whose `jsx-runtime` compiles JSX: a dependency, `\"velt/jsx\"` (the \
           default), a `paths` alias, or `./dir` relative to the package root. A \
           `// @jsxImportSource` comment in a file wins.",
+}];
+
+/// `build`.
+pub const BUILD: &[Field] = &[Field {
+    key: "cpu",
+    kind: Kind::Str,
+    ty: "string",
+    required: false,
+    doc: "The CPU the program is built for, as `velt build --cpu`: `\"baseline\"`, \
+          `\"x86-64-v2\"` (the default on x86-64), `\"x86-64-v3\"`, `\"x86-64-v4\"`, \
+          `\"native\"` or an LLVM CPU name such as `\"znver4\"`. `--cpu` and `VELT_CPU` take \
+          precedence; a CPU of another architecture does not apply to a build for this one.",
 }];
 
 /// `native`.

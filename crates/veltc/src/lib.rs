@@ -6,11 +6,13 @@
 //! The binary (`src/main.rs`) is a thin wrapper so tests can drive everything directly.
 
 pub mod backend;
+pub mod build_cache;
 pub mod cli;
 pub mod commands;
 pub mod debugger;
 pub mod dev;
 pub mod driver;
+pub mod generate;
 pub mod link;
 pub mod loader;
 pub mod native;

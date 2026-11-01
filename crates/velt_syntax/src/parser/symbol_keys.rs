@@ -255,9 +255,43 @@ impl<'a> Parser<'a> {
         Fail
     }
 
+    /// At `[Symbol.for("key")]`, a member keyed by a registered symbol (Node's
+    /// `[Symbol.for("nodejs.util.inspect.custom")]()`), which is the same symbol wherever it is
+    /// written?
+    fn at_registered_symbol_key(&mut self) -> bool {
+        self.at_inline_symbol_key()
+            && self.nth(2) == Tok::Dot
+            && matches!(self.nth(5), Tok::Str(_))
+            && self.nth(6) == Tok::RParen
+            && self.nth(7) == Tok::RBracket
+    }
+
+    /// `[Symbol.for("key")]` ([`Self::at_registered_symbol_key`]) as the member name
+    /// `[Symbol.for("key")]`, which sema names as it names the registered symbol `key`.
+    fn parse_registered_symbol_key(&mut self) -> Ident {
+        let lo = self.cur_lo();
+        for _ in 0..5 {
+            self.bump(); // [ Symbol . for (
+        }
+        let key = match self.peek() {
+            Tok::Str(idx) => self.payload_text(idx),
+            _ => String::new(),
+        };
+        for _ in 0..3 {
+            self.bump(); // "key" ) ]
+        }
+        Ident {
+            name: format!("[Symbol.for({key:?})]"),
+            span: self.span_from(lo),
+        }
+    }
+
     /// A member name in a declaration: an identifier, a keyword, or a computed key
     /// ([`Self::member_key_len`]).
     pub(super) fn parse_member_name(&mut self) -> PResult<Ident> {
+        if self.at_registered_symbol_key() {
+            return Ok(self.parse_registered_symbol_key());
+        }
         if self.at_inline_symbol_key() {
             return Err(self.reject_inline_symbol_key());
         }

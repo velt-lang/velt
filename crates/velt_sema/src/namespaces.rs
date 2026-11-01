@@ -55,6 +55,7 @@ pub(crate) fn flatten(
             SourceModule {
                 path: m.path.clone(),
                 is_std: m.is_std,
+                is_dependency: m.is_dependency,
                 file: m.file,
                 ast,
                 imports: m.imports.clone(),
@@ -537,9 +538,11 @@ impl Rewrite<'_> {
                 }
                 args.iter_mut().for_each(|a| self.ty(a));
             }
-            K::Array(e) | K::KeyOf(e) | K::Construct(e) | K::TupleRest(e) | K::TupleOptional(e) => {
-                self.ty(e)
-            }
+            K::Array(e)
+            | K::KeyOf(e)
+            | K::Construct { ty: e, .. }
+            | K::TupleRest(e)
+            | K::TupleOptional(e) => self.ty(e),
             K::Tuple(ts) | K::Union(ts) | K::Intersection(ts) => {
                 ts.iter_mut().for_each(|t| self.ty(t))
             }

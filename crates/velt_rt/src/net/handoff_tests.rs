@@ -8,7 +8,6 @@ use crate::io::handoff_probe::{buffer_output, published};
 use crate::registry::Key;
 use crate::result::VeltErr;
 use crate::str::VeltStr;
-use crate::str_array::VeltStrArray;
 use crate::task::{velt_rt_fut_drop, VeltFut};
 
 /// Buffers output, runs `send`, and checks the output was published; drops the returned future.
@@ -59,36 +58,4 @@ fn udp_send_publishes_first() {
     publishes("sendTo", || unsafe {
         super::udp::velt_rt_udp_send_to(Key::NULL, &bytes, &addr)
     });
-}
-
-#[test]
-fn a_fetch_request_publishes_first() {
-    let method = VeltStr::from_text("GET");
-    let url = VeltStr::from_text("http://127.0.0.1:1/");
-    let headers = VeltStrArray::from_vec(Vec::new());
-    let mut text = VeltStr::empty();
-    let mut bytes = VeltBytes::from_vec(Vec::new());
-    let ca = VeltStr::empty();
-    // SAFETY: valid values; no body (kind 0), no signal.
-    publishes("fetch", || unsafe {
-        crate::http::client::velt_rt_http_fetch_send(
-            &method, &url, &headers, 0, &mut text, &mut bytes, 0, 0, &ca,
-        )
-    });
-}
-
-#[test]
-fn a_response_body_chunk_publishes_first() {
-    use crate::http::stream::*;
-    let closed = Key::NULL;
-    let bytes = VeltBytes::from_vec(b"x".to_vec());
-    // SAFETY: valid values; the writer is never open.
-    unsafe {
-        publishes_now("a body chunk", || {
-            velt_rt_http_resp_stream_write_bytes(closed, &bytes);
-        });
-        publishes("flush", || velt_rt_http_resp_stream_flush(closed));
-        publishes("close", || velt_rt_http_resp_stream_close(closed));
-        publishes_now("abort", || velt_rt_http_resp_stream_abort(closed));
-    }
 }

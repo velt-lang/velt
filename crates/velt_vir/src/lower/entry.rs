@@ -9,6 +9,9 @@
 //! on that task, as in Node, where `main end` prints before the callbacks `main` queued. A
 //! program that never does calls `main` directly.
 //!
+//! Before it returns, `velt_main` hands the runtime the function releasing what static atomics
+//! hold at exit, when there are any (static_atomic.rs).
+//!
 //! Before anything else, `velt_main` initializes the native libraries of packages
 //! (native_abi.md "Start-up"): for each, `rc = velt_native_init_<pkg>(velt_rt_native_api())`
 //! then `velt_rt_native_check(rc, &"<pkg>")`, which stops the program when `rc != 0`.
@@ -40,6 +43,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         if f.is_async {
             lw.push_scope(ScopeKind::Block);
             let code = lw.run_async_main(def);
+            lw.register_statics_drop();
             lw.terminate(Terminator::Return(code));
             lw.scopes.clear();
             return lw.finish_export();
@@ -70,6 +74,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         } else {
             lw.call_main(def, None)
         };
+        lw.register_statics_drop();
         lw.terminate(Terminator::Return(code));
         lw.scopes.clear();
         lw.finish_export()
@@ -222,33 +227,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
     /// `Uncaught <Name>: <message>` (an `Error`) or `Uncaught <value>` (anything else) on stderr
     /// for the error value at `ep` (for a union, of the member it holds).
     pub(super) fn report_uncaught(&mut self, ep: &Place, err: TyId) {
-        if self.cx.is_union(err) {
-            let done = self.new_block();
-            self.for_each_member(ep, err, |lw, payload, m| {
-                let vt = lw.cx.ty(m);
-                let p = match vt {
-                    Ty::Unit => Place::local(lw.temp(Ty::U8)),
-                    _ => Place::local(lw.copy_to_temp(payload, vt)),
-                };
-                lw.report_uncaught(&p, m);
-                lw.goto(done);
-            });
-            self.switch_to(done);
-            return;
-        }
         // Only the first uncaught error is reported: another thread failing at the same time
         // waits for the process to end.
         self.call_rt(Rt::UncaughtReport, vec![], None);
         // Built whole and written in one write, so no other thread's output lands inside it.
         let (_, buf) = self.new_strbuf(0);
         self.push_text(&buf, "Uncaught ");
-        if let Some(root) = self.error_root(err) {
-            self.push_error_header(&buf, ep, err, root);
-        } else if self.cx.is_dynamic(err) {
-            self.push_dynamic_thrown(&buf, ep, err);
-        } else {
-            self.push_thrown_value(&buf, ep, err);
-        }
+        self.push_error_text(&buf, ep, err);
         self.push_throw_loc(&buf);
         self.push_text(&buf, "\n");
         const STR: Ty = Ty::Agg(crate::vir::STR_AGG);
@@ -257,6 +242,75 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.call_rt(Rt::StrbufFinish, vec![buf, tp.clone()], None);
         self.call_rt(Rt::WriteStr, vec![cint(2, Ty::U32), tp.clone()], None);
         self.call_rt(Rt::StrDrop, vec![tp], None);
+    }
+
+    /// What an uncaught report writes after `Uncaught ` for the error value at `ep` (for a
+    /// union, of the member it holds), appended to the builder at `buf`: Node's header for an
+    /// `Error`, else the value (the location follows: `push_throw_loc`). Also
+    /// `Intrinsic::ErrorText`, so a test runner reports a caught error as it would be reported
+    /// uncaught.
+    pub(super) fn push_error_text(&mut self, buf: &Operand, ep: &Place, err: TyId) {
+        if self.cx.is_union(err) {
+            if let Some(root) = self.common_error_root(err) {
+                return self.push_union_error_header(buf, ep, err, root);
+            }
+            let done = self.new_block();
+            self.for_each_member(ep, err, |lw, payload, m| {
+                let vt = lw.cx.ty(m);
+                let p = match vt {
+                    Ty::Unit => Place::local(lw.temp(Ty::U8)),
+                    _ => Place::local(lw.copy_to_temp(payload, vt)),
+                };
+                lw.push_error_text(buf, &p, m);
+                lw.goto(done);
+            });
+            self.switch_to(done);
+            return;
+        }
+        if let Some(root) = self.error_root(err) {
+            self.push_error_header(buf, ep, err, root);
+        } else if self.cx.is_dynamic(err) {
+            self.push_dynamic_thrown(buf, ep, err);
+        } else {
+            self.push_thrown_value(buf, ep, err);
+        }
+    }
+
+    /// The `Error` class every member of the union `err` extends, when they all do (the errors
+    /// `velt/fs` throws: `IoError | RangeError | TypeError`).
+    fn common_error_root(&mut self, err: TyId) -> Option<DefId> {
+        let mut root = None;
+        for k in 0..self.union_len(err) {
+            let m = self.cx.variant_tys(err, k)[0];
+            if self.cx.is_never(m) {
+                continue;
+            }
+            let r = self.error_root(m)?;
+            if root.is_some_and(|x| x != r) {
+                return None;
+            }
+            root = Some(r);
+        }
+        root
+    }
+
+    /// [`push_error_text`](Self::push_error_text) for a union of `Error` classes extending
+    /// `root`: each member only names its class, and one call writes the header, so a `main`
+    /// calling functions that throw three kinds of error has one header, not three.
+    fn push_union_error_header(&mut self, buf: &Operand, ep: &Place, err: TyId, root: DefId) {
+        const STR: Ty = Ty::Agg(crate::vir::STR_AGG);
+        let obj = Place::local(self.temp(Ty::Ptr));
+        let name = Place::local(self.temp(STR));
+        let tail = self.new_block();
+        self.for_each_member(ep, err, |lw, payload, m| {
+            lw.assign(obj.clone(), Rvalue::Use(payload));
+            let cls = lw.error_class_name(&obj, m);
+            lw.assign(name.clone(), Rvalue::Use(Operand::Copy(cls)));
+            lw.goto(tail);
+        });
+        self.terminate(Terminator::Unreachable);
+        self.switch_to(tail);
+        self.push_class_error_header(buf, &obj, root, &name);
     }
 
     /// A thrown `any` (or `unknown`) value at `ep`: Node's header for an `Error` it holds
@@ -297,10 +351,17 @@ impl<'c, 'h> FnLower<'c, 'h> {
     }
 
     /// The first line Node prints for an uncaught error of class `err` (extending the prelude
-    /// `Error` class `root`): `Error.__uncaughtHeader(<dynamic class name>)`, which writes
+    /// `Error` class `root`): `uncaughtHeader(e, <dynamic class name>)` (std/lang/hooks/error.vlt), which writes
     /// `<name>: <message>` from the (possibly overridden) `name`, and the class in front when
     /// they differ (`E [TypeError]: m`).
     fn push_error_header(&mut self, buf: &Operand, ep: &Place, err: TyId, root: DefId) {
+        let cls = self.error_class_name(ep, err);
+        self.push_class_error_header(buf, ep, root, &cls);
+    }
+
+    /// The name of the class of the error of class type `err` at `ep` that the header shows (a
+    /// string the place holds, not owned).
+    fn error_class_name(&mut self, ep: &Place, err: TyId) -> Place {
         // A standard library class stands for the error Node throws (`UrlError` for a
         // `TypeError`): named as that class, so the header is its `name` alone, as for
         // `JsonError`.
@@ -312,7 +373,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             TyKind::Adt(d, _) => std_class.is_none() && self.cx.has_header(d),
             _ => false,
         };
-        let cls = if self.is_json_error(err) {
+        if self.is_json_error(err) {
             // `JSON.parse`'s error stands for the `SyntaxError` Node throws: `SyntaxError: <m>`.
             let s = self.str_lit("SyntaxError");
             Place::local(self.copy_to_temp(s, Ty::Agg(crate::vir::STR_AGG)))
@@ -328,10 +389,16 @@ impl<'c, 'h> FnLower<'c, 'h> {
             let name = std_class.unwrap_or_else(|| self.cx.type_name(err));
             let s = self.str_lit(&name);
             Place::local(self.copy_to_temp(s, Ty::Agg(crate::vir::STR_AGG)))
-        };
-        let m = self.class_method(root, "__uncaughtHeader");
+        }
+    }
+
+    /// The hook `uncaughtHeader(e, cls)` of the error at `ep` (a class extending `root`),
+    /// appended to the builder at `buf`.
+    fn push_class_error_header(&mut self, buf: &Operand, ep: &Place, root: DefId, cls: &Place) {
+        let m = (self.cx.prelude_def(velt_common::std_hook!(uncaught_header)))
+            .unwrap_or_else(|| super::ice("std without the hook `uncaughtHeader`"));
         let root_ty = self.cx.intern(TyKind::Adt(root, vec![]));
-        let (text, ty) = self.call_hook(m, Operand::Copy(ep.clone()), root_ty, Some(&cls));
+        let (text, ty) = self.call_hook(m, Operand::Copy(ep.clone()), root_ty, Some(cls));
         let a = self.addr(text.clone());
         self.push_str(buf, a);
         self.drop_glue(text, ty);
@@ -346,7 +413,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
     }
 
     /// ` at <path>:<line>:<col>` of the last `throw` on this thread, if recorded.
-    fn push_throw_loc(&mut self, buf: &Operand) {
+    pub(super) fn push_throw_loc(&mut self, buf: &Operand) {
         if self.cx.locs.is_none() {
             return;
         }

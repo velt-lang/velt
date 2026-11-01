@@ -1,0 +1,18 @@
+// velt/net/http (internal): the state of a `Request` (request.vlt) beyond its key, URL and headers.
+
+import { AbortSignal } from "velt/task";
+import { BodyParts } from "velt/net/http/fetch/body";
+import { Sending } from "velt/net/http/fetch/request_sending";
+
+/**
+ * What a request has beyond its key, URL and headers (`Request.#extra`), null while all of it is
+ * default, as it is for a received request until its body is read: `fetch`'s options, the body
+ * of a request made here, and whether the body was used.
+ */
+export class Extra {
+  sending: Sending | null = null;
+  body: BodyParts | null = null;
+  used: bool = false;
+  /** The signal of a request made without one, made when `signal` is first read. */
+  idle: AbortSignal | null = null;
+}

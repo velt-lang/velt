@@ -1,0 +1,11 @@
+// An error thrown by a function called through `any`, through two more calls through `any`,
+// that nothing catches: Node's `Uncaught` report and exit code 1 (#1938).
+const leaf: any = (n: number) => {
+  if (n === 3) throw new TypeError("three");
+  return n * 10;
+};
+const mid: any = (n: number) => leaf(n) + 1;
+const top: any = (n: number) => mid(n) + 1;
+console.log(top(1));
+console.log(top(3));
+console.log("not reached");

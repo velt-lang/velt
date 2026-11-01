@@ -1,0 +1,3 @@
+# As bbtree's own benchmark builds: for the CPU it runs on (bbtree/bench/.cargo/config.toml).
+[build]
+rustflags = ["-C", "target-cpu=native"]

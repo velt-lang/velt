@@ -1,0 +1,12 @@
+// velt/lang/intrinsics (internal): the operations of `ThreadLocal<T>` (std/prelude/sync.vlt).
+// The `ThreadLocal` is always the module `const` initialized with `new ThreadLocal<T>(literal)`
+// (the compiler checks it): lowering never evaluates it, but names the value by that constant
+// and reads the starting value from the literal.
+
+import type { Copied } from "./modes";
+
+/** This thread's value. */
+export declare intrinsic function threadLocalGet<T>(tl: ThreadLocal<T>): T;
+
+/** Makes `value` this thread's value. */
+export declare intrinsic function threadLocalSet<T>(tl: ThreadLocal<T>, value: Copied<T>): void;

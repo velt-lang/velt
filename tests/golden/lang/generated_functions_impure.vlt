@@ -1,0 +1,7 @@
+// A generator may not reach outside the compiler's request (here: the clock), so its output is
+// a function of its request and running it at compile time is safe.
+import { stamped } from "./_generators";
+
+function main() {
+  console.log(stamped<i32>());
+}

@@ -1,0 +1,27 @@
+// sqlite/engine/sql/token (internal): a token of SQLite's SQL, as engine/sql/lexer cuts it: its kind,
+// its source bytes and its decoded text.
+
+/** Token kinds. */
+export const T_EOF: u8 = 0;
+export const T_IDENT: u8 = 1; // bare word (keyword or name)
+export const T_QUOTED: u8 = 2; // "x", [x], `x`: always a name (or a string, by SQLite's fallback)
+export const T_STRING: u8 = 3;
+export const T_BLOB: u8 = 4;
+export const T_INTEGER: u8 = 5;
+export const T_REAL: u8 = 6;
+export const T_PARAM: u8 = 7;
+export const T_OP: u8 = 8;
+export const T_SEMI: u8 = 9;
+
+/** One token: its kind, its source bytes `[start, end)`, and its decoded text. */
+export struct Token {
+  kind: u8;
+  start: usize;
+  end: usize;
+  /** Identifier text (upper-cased for T_IDENT in `upper`), string contents, blob hex digits,
+   *  the number's digits, the parameter's name with its sigil, or the operator. */
+  text: string;
+  upper: string;
+  /** A bare word's keyword class (K_ID … K_CONTEXT); K_ID for every other token. */
+  kw: u8;
+}

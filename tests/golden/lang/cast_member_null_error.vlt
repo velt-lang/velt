@@ -1,0 +1,8 @@
+// `(u as M).f` on a `null` is Node's `TypeError`, as any read of a property of `null` is.
+type V = { type: string; props: number };
+type C = V | string | null;
+function f(c: C): boolean {
+  return (c as V).type ? true : false;
+}
+console.log(f("s"));
+console.log(f(null));

@@ -97,12 +97,14 @@ fn attributes_follow_pass_modes() {
     let mutable = ParamAttrs {
         noalias: true,
         readonly: false,
+        frozen: false,
         nonnull: true,
         dereferenceable: 24,
     };
     let shared = ParamAttrs {
         noalias: false,
         readonly: true,
+        frozen: true,
         ..mutable
     };
     let out = ParamAttrs {
@@ -114,6 +116,7 @@ fn attributes_follow_pass_modes() {
     let object = |noalias| ParamAttrs {
         noalias,
         readonly: !noalias,
+        frozen: !noalias,
         nonnull: true,
         dereferenceable: 8,
     };
@@ -135,7 +138,9 @@ fn modified_class_param_is_seen_by_the_caller() {
 
 /// A borrowed param holding one of the prelude's `Mutex`, `RwLock` or `Atomic` in its own memory
 /// is never `readonly`: the runtime writes a lock's word, and an `Atomic`'s methods write its
-/// word, through a borrow. A plain struct of the same shape stays `readonly`.
+/// word, through a borrow. A plain struct of the same shape stays `readonly`. One holding an
+/// `Atomic` is still `frozen` (only the atomic's word changes); one holding a `Mutex` is not
+/// (the value it guards changes in place).
 #[test]
 fn borrowed_locks_and_atomics_are_not_readonly() {
     let mut pb = PB::new();
@@ -174,10 +179,11 @@ fn borrowed_locks_and_atomics_are_not_readonly() {
     }
     pb.add_main(f.build(body));
     let v = lower_ok(&pb.finish());
-    let readonly = |sym: &str| {
+    let attr = |sym: &str| {
         let f = v.funcs.iter().find(|f| f.symbol.contains(sym)).expect(sym);
-        f.param_attrs.first().is_some_and(|a| a.readonly)
+        f.param_attrs.first().copied().unwrap_or_default()
     };
+    let readonly = |sym: &str| attr(sym).readonly;
     assert!(
         !readonly("peek0"),
         "a Mutex param is written by the runtime"
@@ -187,4 +193,7 @@ fn borrowed_locks_and_atomics_are_not_readonly() {
         "an Atomic param is written by its methods"
     );
     assert!(readonly("peek2"), "a plain struct param is only read");
+    assert!(!attr("peek0").frozen, "a Mutex's value changes in place");
+    assert!(attr("peek1").frozen, "only an Atomic's word changes");
+    assert!(attr("peek2").frozen, "a plain struct param does not change");
 }

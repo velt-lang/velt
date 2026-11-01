@@ -1,0 +1,71 @@
+// Number(s), parseFloat(s) and JSON.parse of numeric strings (valid TypeScript): random literals
+// with whitespace (Unicode spaces too), signs, 0x/0o/0b, Infinity, `.5`, `5.`, exponents with and
+// without digits, 16- to 30-digit mantissas, huge exponents and trailing junk. The same program
+// under Node and Velt must print the same bytes (bench/json/fuzz/run.sh); `-0` prints as `-0`.
+let seed = 1658;
+
+function rnd(n: number): number {
+  seed = (seed * 48271) % 2147483647;
+  return seed % n;
+}
+
+function digits(n: number): string {
+  let s = "";
+  for (let i = 0; i < n; i++) {
+    s += String(rnd(10));
+  }
+  return s;
+}
+
+function show(x: number): string {
+  return x === 0 && 1 / x < 0 ? "-0" : String(x);
+}
+
+function literal(): string {
+  const k = rnd(14);
+  if (k == 0) {
+    return "0x" + "0123456789abcdefABCDEF".slice(rnd(10), 10 + rnd(12)) + digits(rnd(20));
+  }
+  if (k == 1) {
+    return "0o" + digits(rnd(30)).replace(/[89]/g, "7");
+  }
+  if (k == 2) {
+    return "0b" + digits(rnd(70)).replace(/[2-9]/g, "1");
+  }
+  if (k == 3) {
+    return ["Infinity", "-Infinity", "+Infinity", "Infinityx", "infinity", "NaN", "", ".", "e5", "-", "+-1", "0x", "1_000"][rnd(13)];
+  }
+  const sign = ["", "-", "+"][rnd(3)];
+  const intDigits = rnd(4) == 0 ? 0 : 1 + rnd(k >= 10 ? 30 : 12);
+  let s = sign + (intDigits > 0 ? String(1 + rnd(9)) + digits(intDigits - 1) : "");
+  if (rnd(2) == 0) {
+    s += "." + digits(rnd(k >= 10 ? 25 : 10));
+  }
+  const e = rnd(5);
+  if (e == 0) {
+    s += "e" + ["", "+", "-"][rnd(3)] + String(rnd(400));
+  } else if (e == 1) {
+    s += "E" + digits(rnd(3));
+  } else if (e == 2 && rnd(4) == 0) {
+    s += "e999999";
+  }
+  return s;
+}
+
+function run() {
+  const spaces = ["", " ", "\t", "\n", " ", " ", "﻿", "　"];
+  for (let i = 0; i < 60000; i++) {
+    let s = spaces[rnd(8)] + literal() + spaces[rnd(8)];
+    if (rnd(10) == 0) {
+      s += ["x", "1", ".", "e", " 2"][rnd(5)];
+    }
+    let json = "-";
+    const t = s.trim();
+    if (/^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$/.test(t)) {
+      const v: number = JSON.parse(t);
+      json = show(v);
+    }
+    console.log(JSON.stringify(s), show(Number(s)), show(parseFloat(s)), json);
+  }
+}
+run();

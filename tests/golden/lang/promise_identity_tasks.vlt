@@ -1,0 +1,41 @@
+// Identity stays on the task holding a promise (docs/reference/async.md, #1682): a `Set` of
+// promises moved to a spawned task holds other promises there, which it does not find by the
+// hashes it took here. Node, where nothing moves, prints `in task 5 found 5 sum 10` and
+// `in task true 7`.
+async function f(n: number): Promise<number> {
+  await Promise.resolve();
+  return n;
+}
+
+async function check(s: Set<Promise<number>>): Promise<string> {
+  let found = 0;
+  for (const x of s) if (s.has(x)) found++;
+  let sum = 0;
+  for (const x of s) sum += await x;
+  return "in task " + s.size + " found " + found + " sum " + sum;
+}
+
+async function checkOne(s: Set<Promise<number>>, p: Promise<number>): Promise<string> {
+  return "in task " + s.has(p) + " " + (await p);
+}
+
+async function main() {
+  const s = new Set<Promise<number>>();
+  const keepers: Promise<number>[] = [];
+  for (let i = 0; i < 5; i++) {
+    const p = f(i);
+    keepers.push(p);
+    s.add(p);
+  }
+  console.log(await spawn(check(s)));
+  let t = 0;
+  for (const k of keepers) t += await k;
+  console.log(t);
+  const p = f(7);
+  const one = new Set<Promise<number>>();
+  one.add(p);
+  const p2 = p;
+  console.log(await spawn(checkOne(one, p2)));
+}
+
+main();

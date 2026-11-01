@@ -20,6 +20,17 @@ impl Ctx<'_> {
         if t == self.ty.never || depth > 32 {
             return;
         }
+        // `E | null` is `E` and `null`: sets of thrown values stay flat.
+        if let TyKind::Option(p, n) = *self.ty.kind(t) {
+            if p != self.ty.never {
+                self.collect_error_members(p, out, depth + 1);
+                let null = self.ty.intern(TyKind::Option(self.ty.never, n));
+                if !out.contains(&null) {
+                    out.push(null);
+                }
+                return;
+            }
+        }
         match self.union_members(t) {
             Some(ms) => {
                 for m in ms {
@@ -62,6 +73,20 @@ impl Ctx<'_> {
         if flat.is_empty() {
             return None;
         }
+        // `null` and `undefined` and nothing else can't form a type yet: any thrown value.
+        let nothings =
+            |cx: &Self, t: TyId| matches!(cx.ty.kind(t), TyKind::Option(p, _) if *p == cx.ty.never);
+        let kinds: Vec<_> = (flat.iter())
+            .filter_map(|t| match self.ty.kind(*t) {
+                TyKind::Option(p, n) if *p == self.ty.never => Some(*n),
+                _ => None,
+            })
+            .collect();
+        if flat.iter().all(|t| nothings(self, *t)) && kinds.windows(2).any(|w| w[0] != w[1]) {
+            if let Some(defs) = self.any {
+                return Some(self.ty.intern(TyKind::Dyn(defs.unknown, vec![])));
+            }
+        }
         Some(self.union_of(&flat, false, Span::DUMMY))
     }
 
@@ -93,7 +118,12 @@ impl Ctx<'_> {
 
     /// Can an error of type `m` be stored as a `b` (equal, or `b` is a base class of `m`)?
     fn error_fits(&mut self, m: TyId, b: TyId) -> bool {
-        if m == b || self.ty.is_bottom(b) {
+        // `unknown` (or `any`) holds any thrown value, boxed (vir `widen_error`).
+        let top = matches!(
+            self.dynamic(b),
+            Some(crate::any::Dynamic::Any | crate::any::Dynamic::Unknown)
+        );
+        if m == b || self.ty.is_bottom(b) || top {
             return true;
         }
         let mut cur = m;

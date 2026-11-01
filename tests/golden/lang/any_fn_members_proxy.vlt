@@ -1,0 +1,14 @@
+// In a program that makes proxies, an object converted to an object type of other members is a
+// view of it, and a function member of another type converts at each read (#1935): the calls
+// give Node's results, from an object literal and from a record.
+const px = new Proxy({ a: 1 }, {});
+const lit: any = { default: (p?: any): any[] => ["L", p === undefined], n: 1, extra: 2 };
+const s = lit as { default: () => (string | boolean)[]; n: number };
+const rec: any = Object.create(null);
+rec.default = (p?: any, q?: any): any[] => ["R", String(q)];
+const r = rec as { default: () => string[] };
+let total = 0;
+for (let i = 0; i < 1000; i++) {
+  total += r.default().length + s.default().length;
+}
+console.log(total, s.default(), r.default(), s.n, px.a);

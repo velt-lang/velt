@@ -175,6 +175,241 @@ fn debug_links_are_skipped_when_nothing_changed() {
     assert_eq!(text(&run_copy(&exe, "ho").stdout), "ho\n");
 }
 
+#[test]
+fn code_compiled_once_comes_from_the_build_cache() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    let cache = dir.join("cache");
+    let cache = cache.to_str().unwrap();
+    let main = "import { greet } from \"./lib\";\nfunction main() {\n  greet();\n}\n";
+    std::fs::write(dir.join("hello.vlt"), main).unwrap();
+    let lib = "export function greet() {\n  console.log(\"hi\");\n}\n";
+    std::fs::write(dir.join("lib.vlt"), lib).unwrap();
+    // `(found, of)` from the codegen line of `-v`.
+    let build = || {
+        // Without the build stamp, which would skip compiling an unchanged program.
+        let env = [("VELT_BUILD_CACHE", cache), ("VELT_BUILD_STAMP", "off")];
+        let o = velt(dir, &["build", "hello.vlt", "-v"], &env);
+        let err = text(&o.stderr);
+        assert!(o.status.success(), "{err}");
+        let line = err
+            .lines()
+            .find(|l| l.contains("from the build cache"))
+            .unwrap_or_else(|| panic!("no cache counts:\n{err}"));
+        let counts: Vec<u32> = line
+            .split(['(', ' '])
+            .filter_map(|w| w.parse().ok())
+            .collect();
+        assert_eq!(counts.len(), 2, "{line}");
+        (counts[0], counts[1])
+    };
+    let (found, of) = build();
+    assert!(
+        found < of,
+        "a new cache has not seen the program: {found} of {of}"
+    );
+    let (found, of) = build();
+    assert_eq!(
+        found, of,
+        "compiling again takes every function from the cache"
+    );
+    // An edit compiles only the functions whose code changed: here `greet`. (Changing only a
+    // string would change none: functions refer to their data by a name the key leaves out.)
+    let edited = lib.replace(
+        "console.log(\"hi\");",
+        "console.log(\"ho\");\n  console.log(\"!\");",
+    );
+    std::fs::write(dir.join("lib.vlt"), edited).unwrap();
+    let (found, of) = build();
+    assert_eq!(found + 1, of, "{found} of {of}");
+    let exe = dir
+        .join("target/velt")
+        .join(if cfg!(windows) { "hello.exe" } else { "hello" });
+    assert_eq!(text(&run_copy(&exe, "cached").stdout), "ho\n!\n");
+}
+
+#[test]
+fn unchanged_builds_compile_nothing() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    let main = "import { greet } from \"./lib\";\nfunction main() {\n  greet();\n}\n";
+    std::fs::write(dir.join("hello.vlt"), main).unwrap();
+    let lib = "export function greet() {\n  console.log(\"hi\");\n}\n";
+    std::fs::write(dir.join("lib.vlt"), lib).unwrap();
+    let unchanged = || {
+        let o = velt(dir, &["build", "hello.vlt", "-v"], &[]);
+        let err = text(&o.stderr);
+        assert!(o.status.success(), "{err}");
+        (err.contains("nothing to compile"), err)
+    };
+    assert!(!unchanged().0, "first build");
+    let (skipped, err) = unchanged();
+    assert!(skipped, "an unchanged build compiles nothing:\n{err}");
+    // Saving a file without changing it changes nothing; changing an import does.
+    std::fs::write(dir.join("lib.vlt"), lib).unwrap();
+    assert!(unchanged().0);
+    std::fs::write(dir.join("lib.vlt"), lib.replace("hi", "ho")).unwrap();
+    assert!(!unchanged().0);
+    assert!(unchanged().0);
+    // A new file where imports look is a change too.
+    std::fs::write(dir.join("notes.txt"), "").unwrap();
+    assert!(!unchanged().0);
+    let off = velt(
+        dir,
+        &["build", "hello.vlt", "-v"],
+        &[("VELT_BUILD_STAMP", "off")],
+    );
+    assert!(!text(&off.stderr).contains("nothing to compile"));
+    let exe = dir
+        .join("target/velt")
+        .join(if cfg!(windows) { "hello.exe" } else { "hello" });
+    assert_eq!(text(&run_copy(&exe, "stamped").stdout), "ho\n");
+}
+
+#[test]
+fn a_package_nearer_the_importer_is_a_change() {
+    let tmp = test_dir::TestDir::new();
+    let ws = tmp.path();
+    let write = |rel: &str, text: &str| {
+        let path = ws.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    let package = |dir: &str, name: &str, says: &str| {
+        write(
+            &format!("{dir}/package.json"),
+            &format!("{{ \"name\": \"{name}\" }}"),
+        );
+        let src = format!("export function say(): string {{\n  return \"{says}\";\n}}\n");
+        write(&format!("{dir}/index.ts"), &src);
+    };
+    package("node_modules/b", "b", "outer b");
+    write("p/package.json", "{ \"name\": \"p\" }");
+    package("p/node_modules/a", "a", "a");
+    let main = "import { say as a } from \"a\";\nimport { say as b } from \"b\";\n\nconsole.log(a());\nconsole.log(b());\n";
+    write("p/main.ts", main);
+    let run = || {
+        let o = velt(&ws.join("p"), &["run", "main.ts"], &[]);
+        assert!(o.status.success(), "{}", text(&o.stderr));
+        text(&o.stdout)
+    };
+    assert_eq!(run(), "a\nouter b\n");
+    // Module resolution looked for `b` in `p/node_modules` before `node_modules`.
+    package("p/node_modules/b", "b", "INNER b");
+    assert_eq!(run(), "a\nINNER b\n");
+}
+
+/// A build that writes the program or its object without a stamp (the stamp off, `--report`,
+/// `--emit obj` onto the stamped object) leaves no stamp the next build could trust: the
+/// program must always be built from the sources as they are.
+#[test]
+fn outputs_written_without_a_stamp_are_a_change() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    let main = "import { word } from \"./lib\";\nfunction main() {\n  console.log(word());\n}\n";
+    std::fs::write(dir.join("main.vlt"), main).unwrap();
+    let lib = |w: &str| {
+        let src = format!("export function word(): string {{\n  return \"{w}\";\n}}\n");
+        std::fs::write(dir.join("lib.vlt"), src).unwrap();
+    };
+    let build = |args: &[&str], env: &[(&str, &str)]| {
+        let o = velt(dir, args, env);
+        assert!(o.status.success(), "{}", text(&o.stderr));
+    };
+    let exe = dir
+        .join("target/velt")
+        .join(if cfg!(windows) { "main.exe" } else { "main" });
+    let object = || {
+        let entries = std::fs::read_dir(dir.join("target/velt")).unwrap();
+        (entries.flatten().map(|e| e.path()))
+            .find(|p| {
+                let ext = p.extension().unwrap_or_default();
+                p.file_stem().unwrap_or_default() == "main" && (ext == "o" || ext == "obj")
+            })
+            .unwrap()
+    };
+    type Build<'a> = (&'a [&'a str], &'a [(&'a str, &'a str)]);
+    let middle: [Build; 2] = [
+        (&["build", "main.vlt"], &[("VELT_BUILD_STAMP", "off")]),
+        (&["build", "main.vlt", "--report", "numbers"], &[]),
+    ];
+    for (i, (args, env)) in middle.iter().enumerate() {
+        lib("BBBB");
+        build(&["build", "main.vlt"], &[]);
+        lib("AAAA");
+        build(args, env);
+        lib("BBBB");
+        build(&["build", "main.vlt"], &[]);
+        let out = run_copy(&exe, &format!("case{i}"));
+        assert_eq!(text(&out.stdout), "BBBB\n", "case {i}");
+    }
+    // An object written by `--emit obj` where the stamped build keeps its own.
+    lib("BBBB");
+    build(&["build", "main.vlt"], &[]);
+    let obj = object();
+    lib("AAAA");
+    let obj_arg = obj.to_str().unwrap();
+    build(&["build", "main.vlt", "--emit", "obj", "-o", obj_arg], &[]);
+    lib("BBBB");
+    build(&["build", "main.vlt"], &[]);
+    assert_eq!(text(&run_copy(&exe, "obj").stdout), "BBBB\n");
+}
+
+#[test]
+fn cache_warm_compiles_the_warm_up_programs_once() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    let warm = dir.join("share/warm");
+    std::fs::create_dir_all(&warm).unwrap();
+    let program = "function main() {\n  const m = new Map<string, number>();\n  m.set(\"a\", 1);\n  console.log(m.get(\"a\"));\n}\n";
+    std::fs::write(warm.join("map.vlt"), program).unwrap();
+    let cache = dir.join("cache");
+    let env = [
+        (
+            "VELT_SHARE",
+            dir.join("share").to_str().unwrap().to_string(),
+        ),
+        ("VELT_BUILD_CACHE", cache.to_str().unwrap().to_string()),
+    ];
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let o = velt(dir, &["cache", "warm"], &env);
+    let err = text(&o.stderr);
+    assert!(o.status.success(), "{err}");
+    assert!(
+        err.contains("warmed the build cache with 1 programs"),
+        "{err}"
+    );
+    let again = velt(dir, &["cache", "warm"], &env);
+    assert!(text(&again.stderr).contains("warm for this velt already"));
+
+    // A build of the same code then takes every function from the cache.
+    std::fs::write(dir.join("app.vlt"), program).unwrap();
+    let mut build_env = env.clone();
+    build_env.push(("VELT_BUILD_STAMP", "off"));
+    let o = velt(
+        dir,
+        &["build", "app.vlt", "-v", "--cpu", "native"],
+        &build_env,
+    );
+    let err = text(&o.stderr);
+    let line = err.lines().find(|l| l.contains("from the build cache"));
+    let counts: Vec<u32> = line
+        .unwrap_or_else(|| panic!("{err}"))
+        .split(['(', ' '])
+        .filter_map(|w| w.parse().ok())
+        .collect();
+    assert!(counts.len() == 2 && counts[0] == counts[1], "{err}");
+
+    // A program that does not compile is reported, and leaves the cache unmarked.
+    std::fs::remove_dir_all(&cache).unwrap();
+    std::fs::write(warm.join("broken.vlt"), "function main() {\n  nope();\n}\n").unwrap();
+    let o = velt(dir, &["cache", "warm"], &env);
+    let err = text(&o.stderr);
+    assert!(!o.status.success() && err.contains("broken.vlt"), "{err}");
+    let o = velt(dir, &["cache", "warm"], &env);
+    assert!(text(&o.stderr).contains("warmed the build cache with 2 programs"));
+}
+
 /// Run a copy of `exe` named after `tag`, beside it (where Windows finds the runtime DLL). The
 /// test relinks `exe` afterwards, and on Windows a program that has just exited can keep its file
 /// locked for a moment (an antivirus scan), so the relink must never target a file that ran.

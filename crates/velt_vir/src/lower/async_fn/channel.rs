@@ -1,4 +1,4 @@
-//! The std-only channel intrinsics (std/channel.vlt): a value enters the runtime's queue as its
+//! The std-only channel intrinsics (std/sync/channel.vlt): a value enters the runtime's queue as its
 //! bytes (transferred like a `spawn` argument: moved, or deep-copied if the sender still shares
 //! it) and comes back out as the bytes of a `T | null` (rt_abi_async.md §2.2). The
 //! runtime learns the item size, and where `T | null` keeps its payload, from each call.
@@ -42,8 +42,8 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// `__intrinsic_chan_send(ch, value)` (`r`: `Rt::ChanSend`, a future) and
-    /// `__intrinsic_chan_try_send(ch, value)` (`Rt::ChanTrySend`, a `bool` now): the value's bytes
+    /// `chanSend(ch, value)` (`r`: `Rt::ChanSend`, a future) and
+    /// `chanTrySend(ch, value)` (`Rt::ChanTrySend`, a `bool` now): the value's bytes
     /// (and its ownership) go to the runtime, with the drop glue it uses if the value is not
     /// queued. A channel is a thread boundary like `spawn`: a value the sender still shares is
     /// deep-copied (transfer.rs).
@@ -74,7 +74,7 @@ impl FnLower<'_, '_> {
     /// A nullable item type is its own `T | null` (TyTable::intern): the item is the whole value
     /// (payload offset 0), and the runtime zeroes the slot for "nothing", which is that option's
     /// `null`, as in JavaScript. The intrinsics are only called from `Channel<T>`'s methods
-    /// (std/channel.vlt), so the instance's first type argument is the item type.
+    /// (std/sync/channel.vlt), so the instance's first type argument is the item type.
     fn option_payload(&mut self, opt: TyId) -> (Operand, Operand) {
         if self.targs.first() == Some(&opt) {
             let vt = self.cx.ty(opt);

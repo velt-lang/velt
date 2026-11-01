@@ -1,0 +1,109 @@
+// check: no leaks
+// check: also with VELT_THREADS=4
+// In a program that gives functions properties (#924) and uses `Proxy`: a proxy stored into a
+// typed slot through an `any` (`push`, `unshift`, an index or field set, `Reflect.set`) runs its
+// trap when a typed callback reads the slot, so that callback takes the module lock; and so does
+// a callback dropping a generic class nested in itself whose inner instance holds a value with
+// a `[Symbol.dispose]()` that writes a property (Velt runs it when the value is dropped, Node
+// never does, so its count is not printed). Each part runs in a task that reaches no
+// property outside the callbacks.
+
+function decl(): number {
+  return 1;
+}
+
+const d: any = decl;
+d.k = 1;
+
+class P {
+  n: number = 0;
+}
+
+interface I {
+  k: number;
+}
+
+function mk(): any {
+  return new Proxy(
+    { k: 0 },
+    {
+      get: (t: any, key: any) => d.k,
+      set: (t: any, key: any, v: any) => {
+        d.k2 = v;
+        return true;
+      },
+    },
+  );
+}
+
+async function at(a: shared<Mutex<P>>, arr: I[], i: number): Promise<number> {
+  return a.with((x) => arr[i].k);
+}
+
+class Holder {
+  q: I = { k: 5 };
+}
+
+async function field(a: shared<Mutex<P>>, h: Holder): Promise<number> {
+  return a.with((x) => h.q.k);
+}
+
+class Hooked {
+  [Symbol.dispose](): void {
+    d.k3 = (d.k3 ?? 0) + 1;
+  }
+}
+
+class Box<T> {
+  v: T;
+  other: Box<Hooked> | null = null;
+  constructor(v: T) {
+    this.v = v;
+  }
+}
+
+class BoxHolder {
+  b: Box<number> | null = null;
+}
+
+function fill(h: BoxHolder): void {
+  const b = new Box<number>(1);
+  b.other = new Box<Hooked>(new Hooked());
+  h.b = b;
+}
+
+async function dropped(m: shared<Mutex<P>>): Promise<number> {
+  const h = new BoxHolder();
+  fill(h);
+  m.with((x) => {
+    h.b = null;
+  });
+  return 1;
+}
+
+async function main(): Promise<void> {
+  const a = shared(new Mutex<P>(new P()));
+  const pushed: I[] = [{ k: 5 }];
+  const pa: any = pushed;
+  pa.push(mk());
+  const shifted: I[] = [{ k: 5 }];
+  const sa: any = shifted;
+  sa.unshift(mk());
+  const set: I[] = [{ k: 5 }];
+  const xa: any = set;
+  xa[0] = mk();
+  console.log(
+    await spawn(at(a, pushed, 1)),
+    await spawn(at(a, shifted, 0)),
+    await spawn(at(a, set, 0)),
+  );
+  const h = new Holder();
+  const ha: any = h;
+  ha.q = mk();
+  const r = new Holder();
+  Reflect.set(r, "q", mk());
+  console.log(await spawn(field(a, h)), await spawn(field(a, r)), d.k);
+  console.log(await spawn(dropped(a)));
+}
+
+await main();

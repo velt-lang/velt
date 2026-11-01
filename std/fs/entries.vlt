@@ -1,0 +1,60 @@
+// velt/fs (internal): removing, renaming, copying and probing entries (`remove`, `rename`,
+// `copyFile`, `exists` and their `*Sync` twins).
+
+import { checkIo } from "velt/native/status";
+import {
+  velt_rt_fs_copy_file,
+  velt_rt_fs_copy_file_sync,
+  velt_rt_fs_exists,
+  velt_rt_fs_exists_sync,
+  velt_rt_fs_remove,
+  velt_rt_fs_remove_sync,
+  velt_rt_fs_rename,
+  velt_rt_fs_rename_sync,
+} from "velt/fs/rt";
+
+/** The options of `remove`. */
+export struct RemoveOptions {
+  /** Remove a directory and everything in it (otherwise only files, symlinks, empty dirs). */
+  recursive?: bool;
+}
+
+/** Removes a file, symlink or empty directory (with `recursive`, a directory and its contents). */
+export async function remove(path: string, opts: RemoveOptions = {}): Promise<void> {
+  checkIo(await velt_rt_fs_remove(path, opts.recursive ?? false));
+}
+
+/** Renames (moves) `from` to `to`, replacing a file at `to`. */
+export async function rename(from: string, to: string): Promise<void> {
+  checkIo(await velt_rt_fs_rename(from, to));
+}
+
+/** Copies the file `from` to `to`, replacing a file at `to`. */
+export async function copyFile(from: string, to: string): Promise<void> {
+  checkIo(await velt_rt_fs_copy_file(from, to));
+}
+
+/** Never throws: any failure to reach `path` reads as `false`. */
+export async function exists(path: string): Promise<bool> {
+  return await velt_rt_fs_exists(path);
+}
+
+/** `remove`, blocking the calling thread. */
+export function removeSync(path: string, opts: RemoveOptions = {}) {
+  checkIo(velt_rt_fs_remove_sync(path, opts.recursive ?? false));
+}
+
+/** `rename`, blocking the calling thread. */
+export function renameSync(from: string, to: string) {
+  checkIo(velt_rt_fs_rename_sync(from, to));
+}
+
+/** `copyFile`, blocking the calling thread. */
+export function copyFileSync(from: string, to: string) {
+  checkIo(velt_rt_fs_copy_file_sync(from, to));
+}
+
+/** `exists`, blocking the calling thread. */
+export function existsSync(path: string): bool {
+  return velt_rt_fs_exists_sync(path);
+}

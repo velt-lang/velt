@@ -5,10 +5,16 @@
 
 use velt_sema::hir::{self, DynMemberKind, TyId, TyKind};
 
+use super::any_glue::{Ready, OBJECT_PROTO};
+use super::any_member::{SLOT_APPLY, ST_OK, ST_UNSUPPORTED};
 use super::glue::VtableKey;
 use super::operand::proj;
 use super::{cint, FnLower};
-use crate::vir::{BinOp, Const, Operand, Place, Proj, Rvalue, Ty};
+use crate::vir::{self, BinOp, Const, Operand, Place, Proj, Rvalue, Terminator, Ty};
+
+/// How deep an object's members are filled from a record's or object's members, one inside
+/// another (`{ inner: { deep: { f } } }`): a type that contains itself ends there.
+pub(super) const FILL_DEPTH: u32 = 4;
 
 impl FnLower<'_, '_> {
     /// The value of type `ty` the `any` at `p` (owned, consumed here) holds.
@@ -75,7 +81,7 @@ impl FnLower<'_, '_> {
             return;
         };
         if !self.cx.hir.record_fills
-            || self.record_fill
+            || self.record_fill >= FILL_DEPTH
             || self.cx.is_class(ty)
             || a.fields.is_empty()
         {
@@ -100,7 +106,11 @@ impl FnLower<'_, '_> {
         let any = self.cx.any_ty();
         let avt = self.cx.ty(any);
         let tys = self.cx.adt_field_tys(ty);
-        let filling = std::mem::replace(&mut self.record_fill, true);
+        let filling = self.record_fill;
+        self.record_fill += 1;
+        // The value is a record here, never a proxy: its reads route no trap's error (a
+        // conversion that throws nothing, proxy_throws.rs).
+        let routes = std::mem::replace(&mut self.proxy_routes, false);
         let mut ops = vec![];
         let mut flags = vec![];
         // Whether the record has each field's key (`record_fill_order`).
@@ -176,6 +186,7 @@ impl FnLower<'_, '_> {
             }
         }
         self.record_fill = filling;
+        self.proxy_routes = routes;
         self.record_fill_order(&data, rec, &names, &present);
         ops.extend(flags);
         self.drop_glue(p.clone(), from);
@@ -201,7 +212,7 @@ impl FnLower<'_, '_> {
     /// lacks, or its keys in another order: Velt's object has its type's fields in their order,
     /// where JavaScript's object would have the record's (decision 5 in
     /// docs/internals/design/deferred-types.md), so it is a `TypeError`. The record's keys
-    /// (`__keyNames`, in JavaScript's order) must be the names of the fields it holds
+    /// (`[RECORD_KEY_NAMES]`, in JavaScript's order) must be the names of the fields it holds
     /// (`present`), in order.
     fn record_fill_order(
         &mut self,
@@ -211,9 +222,9 @@ impl FnLower<'_, '_> {
         present: &[Operand],
     ) {
         let key_names = self.plain_adt(rec).and_then(|(d, _)| {
-            self.dyn_members_of(d)
-                .into_iter()
-                .find(|m| m.name == "__keyNames" && m.kind == DynMemberKind::Method)
+            self.dyn_members_of(d).into_iter().find(|m| {
+                m.name == velt_common::std_key!(record_key_names) && m.kind == DynMemberKind::Method
+            })
         });
         let Some(r) = key_names.and_then(|m| self.ready(rec, &m)) else {
             return;
@@ -271,5 +282,100 @@ impl FnLower<'_, '_> {
         self.terminate(crate::vir::Terminator::Unreachable);
         self.switch_to(ok);
         self.drop_glue(keys, keys_ty);
+    }
+}
+
+impl FnLower<'_, '_> {
+    /// `r[key]` on a `Record<string, V>`: its `[RECORD_GET]` (a missing key is `undefined`). A record
+    /// has no members of its own; `Object.prototype`'s come later.
+    pub(super) fn any_get_record(
+        &mut self,
+        data: vir::Local,
+        key: vir::Local,
+        out: &Place,
+        ty: TyId,
+    ) {
+        let Some(r) = self.record_get_ready(ty) else {
+            return self.ret_status(ST_UNSUPPORTED);
+        };
+        for name in OBJECT_PROTO {
+            let next = self.on_key(key, name);
+            self.ret_status(ST_UNSUPPORTED);
+            self.switch_to(next);
+        }
+        self.record_get_into(&r, (data, key), out, ty);
+        self.ret_status(ST_OK);
+    }
+
+    /// The record type `ty`'s `[RECORD_GET]`, ready to call from glue, when its keys are strings.
+    fn record_get_ready(&mut self, ty: TyId) -> Option<Ready> {
+        let (k, _) = self
+            .prelude_record(ty)
+            .unwrap_or_else(|| super::ice("record"));
+        let get = self.plain_adt(ty).and_then(|(d, _)| {
+            self.dyn_members_of(d).into_iter().find(|m| {
+                m.name == velt_common::std_key!(record_get) && m.kind == DynMemberKind::Method
+            })
+        });
+        let ready = get.and_then(|m| self.ready(ty, &m));
+        ready.filter(|_| matches!(self.cx.kind(k), TyKind::Str))
+    }
+
+    /// The value the record (`data`, of type `ty`) holds at the string `key`, boxed into `out`
+    /// (`undefined` for a key it lacks), read with its `[RECORD_GET]` `r`.
+    fn record_get_into(
+        &mut self,
+        r: &Ready,
+        (data, key): (vir::Local, vir::Local),
+        out: &Place,
+        ty: TyId,
+    ) {
+        let (k, _) = self
+            .prelude_record(ty)
+            .unwrap_or_else(|| super::ice("record"));
+        let kvt = self.cx.ty(k);
+        let kp = self.deref_param(key, k);
+        let ks = self.share_value(Operand::Copy(kp), k);
+        let kslot = Place::local(self.copy_to_temp(ks, kvt));
+        let this = self.any_this(data, ty);
+        self.any_invoke(r, this, vec![(kslot, k)], out);
+    }
+
+    /// `rec.k(args)` on a record with string keys held by an `any` (`Object.create(null)`
+    /// with functions stored into it): the value at `k` called through its own apply slot, as
+    /// a field of type `any` is (`any_call_body`), with the record as `this` for a function
+    /// that uses it. A key the record lacks is `undefined`, so the call is "not a function".
+    /// The slot owns the arguments and writes `*out`.
+    pub(super) fn any_record_value_call(
+        &mut self,
+        (data, key, argv, argc, out): (vir::Local, vir::Local, vir::Local, vir::Local, vir::Local),
+        ty: TyId,
+    ) {
+        let Some(r) = self.record_get_ready(ty) else {
+            self.any_drop_args(argv, 0, argc);
+            return self.ret_status(ST_UNSUPPORTED);
+        };
+        // The members every object has (later): one shared exit for all of them.
+        let unsupported = self.new_block();
+        for name in OBJECT_PROTO {
+            let next = self.on_key(key, name);
+            self.goto(unsupported);
+            self.switch_to(next);
+        }
+        let any = self.cx.any_ty();
+        let avt = self.cx.ty(any);
+        let held = Place::local(self.temp(avt));
+        self.record_get_into(&r, (data, key), &held, ty);
+        let (fd, fdesc) = self.any_parts(Operand::Copy(held.clone()), any);
+        self.this_fn_method_call((&held, any, &fd, &fdesc), (data, argv, argc, out), ty);
+        let a = [argv, argc, out].map(|l| Operand::Copy(Place::local(l)));
+        let a = vec![fd, a[0].clone(), a[1].clone(), a[2].clone()];
+        let p = vec![Ty::Ptr, Ty::Ptr, Ty::U64, Ty::Ptr];
+        let st = self.any_slot(fdesc, SLOT_APPLY, a, p);
+        self.drop_glue(held, any);
+        self.terminate(Terminator::Return(st));
+        self.switch_to(unsupported);
+        self.any_drop_args(argv, 0, argc);
+        self.ret_status(ST_UNSUPPORTED);
     }
 }

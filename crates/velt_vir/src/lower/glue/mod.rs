@@ -10,7 +10,6 @@
 //! | Eq        | `(a: ptr, b: ptr) -> bool`         | structural equality                      |
 //! | Same      | `(a: ptr, b: ptr) -> bool`         | JS `===`: objects inside by identity (same.rs) |
 //! | SameValue | `(a: ptr, b: ptr) -> bool`         | `Object.is`: Same with floats by SameValue (same.rs) |
-//! | KeyEq     | `(a: ptr, b: ptr) -> bool`         | Eq with floats compared by SameValueZero (eq.rs) |
 //! | KeySame   | `(a: ptr, b: ptr) -> bool`         | Same with floats compared by SameValueZero: `Map` keys (same.rs) |
 //! | Hash      | `(p: ptr) -> u64`                  | FxHash-style combine                     |
 //! | ObjDrop   | `(obj: ptr)`                       | drop a class object's fields and free it |
@@ -23,10 +22,6 @@
 //! | TransferRoot | `(p: ptr)`                      | Transfer of a whole value: one copy per object reached twice (velt_rt `transfer_map`) |
 //! | ObjTransfer/DynTransfer | `(obj: ptr) -> ptr`  | the same for a class object / interface data (a tagged pointer: check for many threads, many.rs) |
 //! | ManyCheck | `(p: ptr)`                         | panic if `*p` holds a function value that cannot be called from several threads (many.rs) |
-//! | JsonWrite | `(buf: ptr, p: ptr)`               | append `JSON.stringify(*p)` to a builder |
-//! | JsonWriteKey | `(buf: ptr, p: ptr, key: ptr)`  | JsonWrite of a type that passes its key (a string) to a `toJSON(key)` (json/key.rs) |
-//! | JsonRead  | `(r: ptr, out: ptr, ctx: ptr) -> bool` | decode one value (json/read.rs)      |
-//! | JsonParse | `(src: ptr, flags: u32, max_depth: u32, out: ptr, err: ptr) -> bool` | whole-document `JSON.parse<T>` |
 //! | Trace     | `(obj: ptr, visit: ptr, ctx: ptr)` | weak maps: visit the counted objects `obj` refers to (trace.rs) |
 //! | TraceIn   | `(p: ptr, visit: ptr, ctx: ptr)`   | the same for an inline value at `p`      |
 //! | WeakRetain / WeakRelease | `(word: u64)`       | retain / release a weak map value word   |
@@ -45,6 +40,8 @@ mod drop;
 mod drop_chain;
 mod drop_depth;
 mod eq;
+mod eq_cycles;
+mod eq_numbers;
 mod format;
 mod format_array;
 mod format_map;
@@ -83,7 +80,6 @@ pub(crate) enum Glue {
     Eq,
     Same,
     SameValue,
-    KeyEq,
     KeySame,
     Hash,
     ObjDrop,
@@ -99,12 +95,6 @@ pub(crate) enum Glue {
     ObjTransfer,
     DynTransfer,
     ManyCheck,
-    JsonWrite,
-    JsonWriteKey,
-    JsonRead,
-    JsonParse,
-    DbBind,
-    RowsRead,
     Trace,
     TraceIn,
     WeakRetain,
@@ -123,11 +113,21 @@ pub(crate) enum Glue {
     AnyHas,
     AnyDelete,
     AnyKeys,
-    AnyJson,
+    /// `(data, op, index, text, value) -> u64`: reflection (any_reflect.rs).
+    AnyReflect,
     ProxyGet,
     ProxySet,
     /// `(data, desc, out) -> bool`: an `any` as the interface type (any_iface.rs).
     AnyIface,
+    /// `(data, desc, out) -> bool`: a number of another numeric type in an `any`, converted
+    /// (any_number.rs).
+    AnyNumeric,
+    /// `(data, desc, out)`: as `AnyNumeric`, stopping with the `TypeError` on a value that is
+    /// not a number (any_number.rs).
+    AnyNumericOrError,
+    /// `(desc)`, never returning: the `TypeError` of a value that is not a number, for
+    /// `AnyNumericOrError` (any_number.rs).
+    AnyNumberError,
     JsText,
     ViewDrop,
     MirrorDrop,
@@ -155,7 +155,6 @@ impl Glue {
             Glue::Eq => "eq",
             Glue::Same => "same",
             Glue::SameValue => "samevalue",
-            Glue::KeyEq => "keyeq",
             Glue::KeySame => "keysame",
             Glue::Hash => "hash",
             Glue::ObjDrop => "objdrop",
@@ -171,12 +170,6 @@ impl Glue {
             Glue::ObjTransfer => "objtransfer",
             Glue::DynTransfer => "dyntransfer",
             Glue::ManyCheck => "manycheck",
-            Glue::JsonWrite => "jsonwrite",
-            Glue::JsonWriteKey => "jsonwritekey",
-            Glue::JsonRead => "jsonread",
-            Glue::JsonParse => "jsonparse",
-            Glue::DbBind => "dbbind",
-            Glue::RowsRead => "rowsread",
             Glue::Trace => "trace",
             Glue::TraceIn => "tracein",
             Glue::WeakRetain => "weakretain",
@@ -195,10 +188,13 @@ impl Glue {
             Glue::AnyHas => "anyhas",
             Glue::AnyDelete => "anydelete",
             Glue::AnyKeys => "anykeys",
-            Glue::AnyJson => "anyjson",
+            Glue::AnyReflect => "anyreflect",
             Glue::ProxyGet => "proxyget",
             Glue::ProxySet => "proxyset",
             Glue::AnyIface => "anyiface",
+            Glue::AnyNumeric => "anynumeric",
+            Glue::AnyNumericOrError => "anynumericorerror",
+            Glue::AnyNumberError => "anynumbererror",
             Glue::JsText => "jstext",
             Glue::ViewDrop => "viewdrop",
             Glue::MirrorDrop => "mirrordrop",
@@ -225,16 +221,8 @@ impl Glue {
             | Glue::ObjTransfer
             | Glue::DynTransfer => (vec![Ptr], Ptr),
             Glue::Format | Glue::ObjFormat | Glue::DynFormat => (vec![Ptr, Ptr, U32], Unit),
-            Glue::Eq | Glue::Same | Glue::SameValue | Glue::KeyEq | Glue::KeySame => {
-                (vec![Ptr, Ptr], Bool)
-            }
+            Glue::Eq | Glue::Same | Glue::SameValue | Glue::KeySame => (vec![Ptr, Ptr], Bool),
             Glue::Hash => (vec![Ptr], U64),
-            Glue::JsonWrite => (vec![Ptr, Ptr], Unit),
-            Glue::JsonWriteKey => (vec![Ptr, Ptr, Ptr], Unit),
-            Glue::JsonRead => (vec![Ptr, Ptr, Ptr], Bool),
-            Glue::JsonParse => (vec![Ptr, U32, U32, Ptr, Ptr], Bool),
-            Glue::DbBind => (vec![Ptr, Ptr], Unit),
-            Glue::RowsRead => (vec![Ptr, Ptr, Ptr], Bool),
             Glue::Trace | Glue::TraceIn | Glue::WeakBoxTrace => (vec![Ptr, Ptr, Ptr], Unit),
             Glue::WeakRetain | Glue::WeakRelease => (vec![U64], Unit),
             Glue::AnyTruthy => (vec![Ptr], Bool),
@@ -247,9 +235,12 @@ impl Glue {
             Glue::AnyApply => (vec![Ptr, Ptr, U64, Ptr], U8),
             Glue::AnySet => (vec![Ptr, Ptr, Ptr], U8),
             Glue::AnySetIndex => (vec![Ptr, F64, Ptr], U8),
-            Glue::AnyHas | Glue::AnyDelete | Glue::AnyKeys | Glue::AnyJson => (vec![Ptr, Ptr], U8),
+            Glue::AnyHas | Glue::AnyDelete | Glue::AnyKeys => (vec![Ptr, Ptr], U8),
+            Glue::AnyReflect => (vec![Ptr, U64, U64, Ptr, Ptr], U64),
             Glue::ProxyGet | Glue::ProxySet => (vec![Ptr, Ptr, Ptr], Unit),
-            Glue::AnyIface => (vec![Ptr, Ptr, Ptr], Bool),
+            Glue::AnyIface | Glue::AnyNumeric => (vec![Ptr, Ptr, Ptr], Bool),
+            Glue::AnyNumericOrError => (vec![Ptr, Ptr, Ptr], Unit),
+            Glue::AnyNumberError => (vec![Ptr], Unit),
             Glue::JsText => (vec![Ptr, Ptr], Unit),
         }
     }
@@ -271,7 +262,6 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::Eq => lw.eq_body(args[0], args[1], ty),
             Glue::Same => lw.same_body(args[0], args[1], ty),
             Glue::SameValue => lw.same_value_body(args[0], args[1], ty),
-            Glue::KeyEq => lw.key_eq_body(args[0], args[1], ty),
             Glue::KeySame => lw.key_same_body(args[0], args[1], ty),
             Glue::Hash => lw.hash_body(args[0], ty),
             Glue::ObjDrop => lw.obj_drop_body(args[0], ty),
@@ -287,14 +277,6 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::ObjTransfer => lw.obj_transfer_body(args[0], ty),
             Glue::DynTransfer => lw.dyn_transfer_body(args[0], ty),
             Glue::ManyCheck => lw.many_check_body(args[0], ty),
-            Glue::JsonWrite => lw.json_write_body(a(0), args[1], None, ty),
-            Glue::JsonWriteKey => lw.json_write_body(a(0), args[1], Some(args[2]), ty),
-            Glue::JsonRead => lw.json_read_body(args[0], args[1], args[2], ty),
-            Glue::JsonParse => {
-                lw.json_parse_body(args[0], (args[1], args[2]), args[3], args[4], ty)
-            }
-            Glue::DbBind => lw.db_bind_body(a(0), args[1], ty),
-            Glue::RowsRead => lw.rows_read_body(a(0), args[1], args[2], ty),
             Glue::Trace => lw.trace_body(args[0], args[1], args[2], ty),
             Glue::TraceIn => lw.trace_in_body(args[0], args[1], args[2], ty),
             Glue::WeakBoxTrace => lw.weak_box_trace_body(args[0], args[1], args[2], ty),
@@ -311,10 +293,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::AnyHas => lw.any_has_glue(args[0], args[1], ty),
             Glue::AnyDelete => lw.any_delete_glue(args[0], args[1], ty),
             Glue::AnyKeys => lw.any_keys_glue(args[0], args[1], ty),
-            Glue::AnyJson => lw.any_json_glue(args[0], args[1], ty),
+            Glue::AnyReflect => lw.any_reflect_glue(&args, ty),
             Glue::ProxyGet => lw.proxy_get_glue(args[0], args[1], args[2], ty),
             Glue::ProxySet => lw.proxy_set_glue(args[0], args[1], args[2], ty),
             Glue::AnyIface => lw.any_iface_body(args[0], args[1], args[2], ty),
+            Glue::AnyNumeric => lw.any_numeric_body(args[0], args[1], args[2], ty, false),
+            Glue::AnyNumericOrError => lw.any_numeric_body(args[0], args[1], args[2], ty, true),
+            Glue::AnyNumberError => lw.any_type_error(a(0), ty),
             Glue::JsText => lw.js_text_body(args[0], a(1), ty),
             Glue::ViewDrop => lw.view_drop_body(args[0], ty),
             Glue::MirrorDrop => {
@@ -357,7 +342,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
     pub(super) fn call_glue(&mut self, g: Glue, ty: TyId, args: Vec<Operand>) -> Operand {
         if matches!(
             g,
-            Glue::Eq | Glue::Same | Glue::SameValue | Glue::KeyEq | Glue::KeySame | Glue::Hash
+            Glue::Eq | Glue::Same | Glue::SameValue | Glue::KeySame | Glue::Hash
         ) {
             self.note_fn_compared_in(ty);
         }

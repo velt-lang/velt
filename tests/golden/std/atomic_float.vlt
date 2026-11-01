@@ -1,0 +1,153 @@
+// `Atomic<f64>` and `Atomic<f32>`: the word holds the float's bits. `load`, `store`,
+// `exchange` and `compareExchange` are the integer word's; `add`, `sub`, `max` and `min` are
+// compare-and-swap loops. `max` and `min` are `Math.max` and `Math.min`: NaN wins, and +0 is
+// larger than -0. `compareExchange` compares bits: -0 is not +0, and a NaN matches its own bits.
+// Threads adding at once lose no update, on 64-bit and 32-bit words; `max`, `min`, `add` and
+// `sub` match `Math.max`, `Math.min`, `+` and `-` on every pair of special values.
+
+function sign(x: f64): string {
+  return x == 0 && 1 / x < 0 ? "-0" : `${x}`;
+}
+
+async function adder(s: shared<Atomic<f64>>, n: u64): Promise<void> {
+  for (let i: u64 = 0; i < n; i++) {
+    s.add(0.5, "relaxed");
+  }
+}
+
+async function maxer(s: shared<Atomic<f64>>, t: u64): Promise<void> {
+  for (let i: u64 = 0; i < 20000; i++) {
+    s.max((i * 8 + t) as f64);
+  }
+}
+
+// The 32-bit compare-and-swap (on arm64 without LSE, Cranelift's workaround path).
+async function adder32(s: shared<Atomic<f32>>, n: u64): Promise<void> {
+  for (let i: u64 = 0; i < n; i++) {
+    s.add(1, "acqrel");
+  }
+}
+
+async function miner32(s: shared<Atomic<f32>>, t: u64): Promise<void> {
+  for (let i: u64 = 0; i < 20000; i++) {
+    s.min(-((i * 8 + t) as f32));
+  }
+}
+
+function same(x: f64, y: f64): bool {
+  return x == y ? x != 0 || 1 / x == 1 / y : x != x && y != y;
+}
+
+/** `max`, `min`, `add` and `sub` on every pair of special values against `Math` and `+`/`-`. */
+function matrix(): u64 {
+  const vs: f64[] = [-0, 0, NaN, 1, -Infinity];
+  let bad: u64 = 0;
+  for (const x of vs) {
+    for (const y of vs) {
+      const a = new Atomic<f64>(x);
+      a.max(y);
+      const b = new Atomic<f64>(x);
+      b.min(y);
+      const c = new Atomic<f64>(x);
+      const before = c.add(y);
+      const d = new Atomic<f64>(x);
+      d.sub(y);
+      const e = new Atomic<f32>(x as f32);
+      e.max(y as f32);
+      const f = new Atomic<f32>(x as f32);
+      f.min(y as f32);
+      if (!same(a.load(), Math.max(x, y))) {
+        bad++;
+      }
+      if (!same(b.load(), Math.min(x, y))) {
+        bad++;
+      }
+      if (!same(c.load(), x + y) || !same(before, x)) {
+        bad++;
+      }
+      if (!same(d.load(), x - y)) {
+        bad++;
+      }
+      if (!same(e.load() as f64, Math.max(x, y))) {
+        bad++;
+      }
+      if (!same(f.load() as f64, Math.min(x, y))) {
+        bad++;
+      }
+    }
+  }
+  return bad;
+}
+
+async function main() {
+  const a = new Atomic(1.5);
+  console.log(a.load(), a.exchange(2.25), a.load("acquire"));
+  a.store(-3, "release");
+  console.log(a.add(1), a.sub(0.5, "acqrel"), a.load());
+  console.log(a.compareExchange(-2.5, 10), a.compareExchange(-2.5, 11), a.load());
+  console.log(a.compareExchangeWeak(10, 12) || a.compareExchangeWeak(10, 12), a.load());
+
+  // max and min: larger and smaller, -0 below +0, NaN in either place wins.
+  console.log(a.max(4), a.load(), a.max(20), a.load(), a.min(-1), a.load());
+  a.store(-0);
+  a.max(0);
+  const z = a.load();
+  a.min(-0);
+  console.log(sign(z), sign(a.load()));
+  a.store(0);
+  a.min(-0);
+  console.log(sign(a.load()));
+  a.max(NaN);
+  console.log(a.load());
+  a.store(1);
+  a.add(NaN);
+  console.log(a.load(), a.max(5), a.load());
+
+  // Bits compared: -0 does not match +0; a NaN read back matches itself.
+  a.store(-0);
+  console.log(sign(a.compareExchange(0, 1)), sign(a.load()));
+  a.store(NaN);
+  const nan = a.load();
+  console.log(a.compareExchange(nan, 7), a.load());
+
+  // Infinity and the largest finite values.
+  a.store(1.7976931348623157e308);
+  a.add(1.7976931348623157e308);
+  console.log(a.load(), a.min(-Infinity), a.load());
+
+  const g = new Atomic<f32>(0.25);
+  console.log(g.add(0.5), g.max(-1), g.min(-1), g.exchange(3), g.load());
+
+  // 8 tasks add 0.5 each 50,000 times: every sum on the way is exact in an f64.
+  const s = shared(new Atomic<f64>(0));
+  const ts: Promise<void>[] = [];
+  for (let t = 0; t < 8; t++) {
+    ts.push(spawn(adder(s, 50000)));
+  }
+  await Promise.all(ts);
+  console.log(s.load());
+
+  const m = shared(new Atomic<f64>(-Infinity));
+  const ms: Promise<void>[] = [];
+  for (let t: u64 = 0; t < 8; t++) {
+    ms.push(spawn(maxer(m, t)));
+  }
+  await Promise.all(ms);
+  console.log(m.load());
+
+  // The same on 32-bit words: 400000 is exact in an f32 (below 2^24).
+  const s32 = shared(new Atomic<f32>(0));
+  const ts32: Promise<void>[] = [];
+  for (let t = 0; t < 8; t++) {
+    ts32.push(spawn(adder32(s32, 50000)));
+  }
+  await Promise.all(ts32);
+  const m32 = shared(new Atomic<f32>(Infinity as f32));
+  const ms32: Promise<void>[] = [];
+  for (let t: u64 = 0; t < 8; t++) {
+    ms32.push(spawn(miner32(m32, t)));
+  }
+  await Promise.all(ms32);
+  console.log(s32.load(), m32.load());
+  console.log("special values: bad", matrix());
+}

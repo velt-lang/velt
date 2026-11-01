@@ -55,6 +55,7 @@ impl Cx<'_> {
             bytes: vec![0; 8],
             align: 8,
             relocs: vec![],
+            mutable: None,
         });
         let id = StaticId(self.statics.len() as u32 - 1);
         self.lay.slot_tables.insert(memo, id);

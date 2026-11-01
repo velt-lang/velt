@@ -1,0 +1,27 @@
+// velt/fs (internal): `Dirent`, a directory entry with its type, as Node's `fs.Dirent`.
+
+/**
+ * A directory entry from `readDirEntries`, as Node's `fs.Dirent`. Its type comes with the listing
+ * (no `stat` per entry) and describes the entry itself: a symlink is `isSymbolicLink()`, whatever
+ * it points to.
+ */
+export struct Dirent {
+  /** The entry's name (not a path). */
+  name: string;
+  private kind: u8;
+
+  /** True for a regular file. */
+  isFile(): bool {
+    return this.kind == 1;
+  }
+
+  /** True for a directory. */
+  isDirectory(): bool {
+    return this.kind == 2;
+  }
+
+  /** True for a symbolic link (not followed). */
+  isSymbolicLink(): bool {
+    return this.kind == 3;
+  }
+}

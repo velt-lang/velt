@@ -61,6 +61,18 @@ pub extern "C" fn velt_rt_pow_f64(a: f64, b: f64) -> f64 {
     libm::pow(a, b)
 }
 
+/// `x.toBits()`: the IEEE 754 bits of `x` (both backends emit a bitcast instead of calling it).
+#[no_mangle]
+pub extern "C" fn velt_rt_math_f64_bits(x: f64) -> u64 {
+    x.to_bits()
+}
+
+/// `f64.fromBits(b)`: the double with the IEEE 754 bits `b` (emitted inline like `f64_bits`).
+#[no_mangle]
+pub extern "C" fn velt_rt_math_bits_f64(b: u64) -> f64 {
+    f64::from_bits(b)
+}
+
 /// High 64 bits of the 128-bit product `a * b` (`Math.umulh`, for 64-bit limb arithmetic).
 #[no_mangle]
 pub extern "C" fn velt_rt_math_umulh(a: u64, b: u64) -> u64 {

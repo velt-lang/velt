@@ -1,9 +1,9 @@
 // check: no leaks
-// velt:task taskScope: the scope settles only after its body and every child it spawned (so
+// velt/task taskScope: the scope settles only after its body and every child it spawned (so
 // children never outlive it); a failing child aborts the scope's signal, the siblings stop
 // cooperatively, and the scope fails with the first error in time, even one nobody awaited.
-import { channel, Channel } from "velt:channel";
-import { AbortSignal, AbortError, TaskScope, taskScope } from "velt:task";
+import { channel, Channel } from "velt/sync";
+import { AbortSignal, AbortError, TaskScope, taskScope } from "velt/task";
 
 class Failed extends Error {}
 

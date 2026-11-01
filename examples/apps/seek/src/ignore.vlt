@@ -1,6 +1,6 @@
 // .gitignore rules: glob lines compiled to regexes, matched against paths relative to the
 // directory that holds the .gitignore. The last matching rule wins; `!` re-includes.
-import { RegExp } from "velt:regex";
+import { RegExp } from "velt/text";
 
 /// One rule. Plain data, so it can travel between walker tasks; each task compiles the regex
 /// itself (see `RuleCache`). A rule holding its `RegExp` panics when sent down a channel (#690).

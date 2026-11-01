@@ -2,8 +2,8 @@
 //! program with typed proxies, an `any` holding an object of another type converted to a
 //! proxiable object type `P` (`x as VNode` of a class instance, or of an object literal with
 //! more fields) is a *view* of that object, where Node keeps the one object. The view is
-//! `Proxy.__view(x)` (std/proxy.vlt), a `Proxy` without traps, tagged as a typed proxy
-//! (proxy_typed.rs): each field read and write goes to the object (`__get` / `__set`, the
+//! `Proxy[PROXY_VIEW](x)` (std/lang/proxy/index.vlt), a `Proxy` without traps, tagged as a typed proxy
+//! (proxy_typed.rs): each field read and write goes to the object (`[PROXY_GET]` / `[PROXY_SET]`, the
 //! value checked as the field's type, so a missing or mistyped member is a `TypeError` where
 //! it is read), and nothing is copied. Converting the view back to `any` gives the object
 //! itself (`FnLower::proxy_any_parts`), so `===` on dynamic values, weak map keys, `in` and
@@ -31,7 +31,11 @@ use super::{cint, FnLower};
 use crate::vir::{self, BinOp, Callee, Operand, Place, Proj, Rvalue, Ty};
 
 /// The qualified name of the prelude function that makes a view.
-const PROXY_VIEW: &str = "std/proxy::Proxy.__view";
+const PROXY_VIEW: &str = concat!(
+    velt_common::std_module!(lang_proxy),
+    "::Proxy.",
+    velt_common::std_key!(proxy_view)
+);
 
 impl FnLower<'_, '_> {
     /// In `AnyTo` to the proxiable `ty`, once the `any` at `p` (owned) holds neither a `ty` nor
@@ -192,9 +196,9 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// `obj.__isView()` of the (untagged, borrowed) `Proxy` object at `obj`.
+    /// `Proxy[PROXY_IS_VIEW]()` of the (untagged, borrowed) `Proxy` object at `obj`.
     fn proxy_is_view(&mut self, pd: DefId, obj: &Place) -> Operand {
-        let m = self.class_method(pd, "__isView");
+        let m = self.class_method(pd, velt_common::std_key!(proxy_is_view));
         let f = self.cx.func_for_direct(m, vec![], self.mode);
         let b = self.temp(Ty::Bool);
         let this = Operand::Copy(obj.clone());
@@ -202,9 +206,9 @@ impl FnLower<'_, '_> {
         Operand::Copy(Place::local(b))
     }
 
-    /// `obj.__target()` of the (untagged, borrowed) `Proxy` object at `obj`: an owned `any`.
+    /// `Proxy[PROXY_TARGET]()` of the (untagged, borrowed) `Proxy` object at `obj`: an owned `any`.
     fn proxy_view_target(&mut self, pd: DefId, obj: &Place) -> Place {
-        let m = self.class_method(pd, "__target");
+        let m = self.class_method(pd, velt_common::std_key!(proxy_target));
         let f = self.cx.func_for_direct(m, vec![], self.mode);
         let any = self.cx.any_ty();
         let avt = self.cx.ty(any);
@@ -261,7 +265,7 @@ impl FnLower<'_, '_> {
 }
 
 impl super::Cx<'_> {
-    /// The prelude's `Proxy.__view`, in a program that has loaded `Proxy`.
+    /// The prelude's `Proxy[PROXY_VIEW]`, in a program that has loaded `Proxy`.
     pub(super) fn view_fn(&mut self) -> Option<DefId> {
         if let Some(f) = self.view_fn {
             return f;

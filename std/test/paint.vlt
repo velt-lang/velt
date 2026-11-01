@@ -1,0 +1,28 @@
+// velt/test (internal): `Paint`, `velt`'s ANSI colors for the runner's output.
+
+/** `velt`'s ANSI colors (`veltc` `style`), when `velt test` found the stream takes them. */
+export class Paint {
+  readonly out: bool;
+  readonly err: bool;
+
+  constructor(out: bool, err: bool) {
+    this.out = out;
+    this.err = err;
+  }
+
+  good(s: string): string {
+    return this.out ? `\x1b[1;32m${s}\x1b[0m` : s;
+  }
+
+  failed(): string {
+    return this.out ? "\x1b[1;31mFAILED\x1b[0m" : "FAILED";
+  }
+
+  error(s: string): string {
+    return this.out ? `\x1b[1;31m${s}\x1b[0m` : s;
+  }
+
+  warning(s: string): string {
+    return this.err ? `\x1b[1;33m${s}\x1b[0m` : s;
+  }
+}

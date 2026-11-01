@@ -32,6 +32,7 @@ mod fields;
 mod fresh;
 mod impl_bound;
 mod intrinsic;
+mod modes;
 mod module_state;
 mod nothing;
 mod numeric;
@@ -46,6 +47,7 @@ pub use fields::{DynMember, DynMemberKind, FieldDef, FieldInit};
 pub use fresh::FreshClosure;
 pub use impl_bound::{ImplBound, ImplDef};
 pub use intrinsic::Intrinsic;
+pub use modes::{Conversion, UseMode};
 pub use module_state::{GlobalDef, ModuleState};
 pub use nothing::Nothing;
 pub use numeric::{CpuTarget, FloatTy, IntTy, SimdTy};
@@ -155,7 +157,7 @@ pub struct Program {
     /// Object types lowering counts from its first pass (hir_encodings.md "Sharing").
     pub counted_objects: Vec<TyId>,
     /// The program calls `Object.create(null)`: a record may have no prototype (its map is
-    /// marked, std/prelude/map.vlt `__markNullProto`), which printing and cloning look at.
+    /// marked, std/prelude/map.vlt `[RECORD_MARK_NULL_PROTO]`), which printing and cloning look at.
     pub null_proto_records: bool,
     /// The program builds an object type known per instantiation with `{} as D` (a record of
     /// `any` values, hir_encodings.md "Spreads and conversions in generic bodies"): lowering's
@@ -198,7 +200,7 @@ pub struct Program {
     /// Per implementation (`impls` index) of an interface in `upcasts`: the implementation of
     /// each target for the same type, in `upcasts` order. Additive.
     pub upcast_impls: HashMap<u32, Vec<u32>>,
-    /// Gated functions (`__intrinsic_target`) and the CPU extension each is compiled for
+    /// Gated functions (`targetFeature`) and the CPU extension each is compiled for
     /// (#1330): lowering gives the VIR function its target.
     pub cpu_targets: HashMap<DefId, CpuTarget>,
     /// Names of structural types for messages: aliases' and field-only interfaces'. Additive.
@@ -217,6 +219,23 @@ pub struct Program {
     pub extension_impls: HashMap<u32, Vec<ImplBound>>,
     /// Per interface, the `extend` bounds its values meet themselves (hir_encodings.md). Additive.
     pub dyn_bounds: HashMap<DefId, Vec<(DefId, Vec<TyId>)>>,
+    /// The `with` / `read` / `write` callbacks (closures and named functions, by `DefId`) that
+    /// never reach a function's properties held as `any` (hir_encodings.md "Module state"):
+    /// lowering takes the module lock before the lock of every other such call in a program
+    /// whose functions may have properties. Additive.
+    pub lock_free_callbacks: HashSet<DefId>,
+    /// Standard-library functions and module constants that no checked code reaches, left
+    /// unchecked (hir_encodings.md "Unchecked definitions"): each has a stub definition (an
+    /// empty body, a `void` constant) that lowering never builds or reads. Additive.
+    pub unchecked: HashSet<DefId>,
+    /// The functions `(f: any) => T` converting a function held as `any` to the function type
+    /// `T` (their result type) inside a conversion lowering makes (hir_encodings.md). Additive.
+    pub any_fn_views: Vec<DefId>,
+    /// The instances of generated functions (`declare generated(…) function`,
+    /// docs/internals/design/source-generators.md): `(function, concrete type arguments)` →
+    /// the generated, non-generic definition lowering builds for that instance instead of the
+    /// function's own body (which it never builds). Additive.
+    pub generated: HashMap<(DefId, Vec<TyId>), DefId>,
 }
 
 impl Program {
@@ -298,6 +317,10 @@ pub struct ExternFnDef {
     /// M3: `declare async function f(...): Promise<T>` — the symbol returns an rt leaf future
     /// (`VeltFut*`, result slot at offset 16; see rt_abi_async.md); `ret` is `Promise<T>`.
     pub is_async: bool,
+    /// `declare system function` (docs/reference/system-functions.md): per parameter, whether
+    /// its type was written `readonly` (`readonly u8[]`, a buffer the C function only reads;
+    /// `params` has `u8[]` either way). `None` for runtime and native-package functions.
+    pub system: Option<Vec<bool>>,
     pub span: Span,
 }
 
@@ -374,7 +397,7 @@ pub struct AdtDef {
     /// Drop hook: the type's `[Symbol.dispose]()` method (modifies `this`, no params, void). Drop glue calls it
     /// first, then drops the fields. Types with a dispose hook are never Copy.
     pub dispose: Option<DefId>,
-    /// Classes: the `toString()`, `toJSON()` and `__inspect()` hooks, own or inherited, that
+    /// Classes: the `toString()`, `toJSON()` and `[INSPECT]()` hooks, own or inherited, that
     /// `String(x)`, `JSON.stringify` and `console.log` call from glue (hir_encodings.md).
     pub to_string: Option<DefId>,
     pub to_json: Option<DefId>,
@@ -499,6 +522,11 @@ pub enum StmtKind {
         /// element is moved into `binding` (owned bindings, `UseMode::Move`); elements not yet
         /// visited when the loop is left early are dropped, then the buffer is freed.
         consume: bool,
+        /// A borrowing loop whose body may replace or remove (a part of) the element a binding
+        /// refers to (`xs[i] = …` on the iterated array): each borrowing binding takes a share
+        /// of what it binds, released with the iteration, as JS keeps the old element alive
+        /// (hir_encodings.md). Set by the exclusive-access check; `false` everywhere else.
+        share_elems: bool,
     },
     /// `try { body } catch (e) { handler } finally { fin }`: the catch local has the union `body`
     /// can throw (`None` / `Never`: nothing is caught; see hir_encodings.md "Errors").
@@ -519,31 +547,6 @@ pub struct Expr {
     pub kind: ExprKind,
     pub ty: TyId,
     pub span: Span,
-}
-
-/// Whether an `AdtLit` converts an object to another object type (hir_encodings.md "Object
-/// conversions"): its fields are then each absent or a read of one source place, and a
-/// source holding a typed proxy gives that proxy instead of the literal.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Conversion {
-    /// An ordinary literal.
-    No,
-    /// A conversion: a plain source is copied.
-    Copy,
-    /// A conversion whose copy the program could tell from the original (a later write, `===`,
-    /// ...), allowed only because the program creates proxies: a plain source throws a
-    /// `TypeError` instead of being copied.
-    ProxyOnly,
-}
-
-/// How a place is used by the expression that reads it (sema's ownership analysis).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum UseMode {
-    Copy,
-    /// Ownership leaves the place; lowering must not drop it at scope end (drop flags if conditional).
-    Move,
-    Borrow,
-    BorrowMut,
 }
 
 #[derive(Clone, Debug, PartialEq)]

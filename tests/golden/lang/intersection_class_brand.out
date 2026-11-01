@@ -1,0 +1,21 @@
+true true 2 object
+Map(2) { 'a' => 1, 'b' => 2 }
+a,b [["a",1],["b",2]]
+a 1
+b 2
+3
+7 14 true
+1
+2 true x|y
+1
+5 6
+replaced {"n":0}
+replaced {"n":0}
+replaced {"n":0}
+7 true
+x,y x,y true true
+{"x":1,"y":"s"}
+1 s {"x":1,"y":"s"}
+1 2
+8
+1 undefined 2 2

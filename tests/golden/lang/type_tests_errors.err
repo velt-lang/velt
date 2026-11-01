@@ -1,0 +1,26 @@
+type_tests_errors.vlt:6:10: error: `asType<u64>` of a `V` needs an enclosing `if (typeIs<V, u64>())`
+  = note: the compiler converts only where it knows the two types are the same instantiation
+
+type_tests_errors.vlt:11:12: error: `asType<u64>` of a `V` needs an enclosing `if (typeIs<V, u64>())`
+  = note: the compiler converts only where it knows the two types are the same instantiation
+
+type_tests_errors.vlt:26:12: error: `asType` takes one type argument and one argument
+  = note: write the type to convert to, `asType<B>(x)`: the type of `x` is the other
+
+type_tests_errors.vlt:33:12: error: `asType` takes one type argument and one argument
+  = note: write the type to convert to, `asType<B>(x)`: the type of `x` is the other
+
+type_tests_errors.vlt:39:10: error: `asType` takes one type argument and one argument
+  = note: write the type to convert to, `asType<B>(x)`: the type of `x` is the other
+
+type_tests_errors.vlt:43:21: error: `asType` takes one type argument and one argument
+  = note: write the type to convert to, `asType<B>(x)`: the type of `x` is the other
+
+type_tests_errors.vlt:49:12: error: `asType` takes one type argument and one argument
+  = note: write the type to convert to, `asType<B>(x)`: the type of `x` is the other
+
+type_tests_errors.vlt:55:13: error: `typeIs` can only be called directly
+  = note: the compiler decides each call where the generic is used; a function value would not be
+
+type_tests_errors.vlt:56:13: error: `asType` can only be called directly
+  = note: the compiler decides each call where the generic is used; a function value would not be

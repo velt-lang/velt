@@ -1,0 +1,93 @@
+// velt/crypto (internal): SHA-1 (FIPS 180-4): the digest, and the portable rounds over `u32` words
+// for CPUs without SHA instructions. Not collision resistant: for legacy protocols only.
+
+import { utf8Encode } from "velt/encoding/utf8";
+import { hexEncode } from "velt/encoding/hex";
+import { u32x4 } from "velt/simd";
+import {
+  BLOCK,
+  finalBlocks,
+  keyBlock,
+  loadWords,
+  wordsToBytes,
+  zeroWords,
+} from "velt/crypto/blocks";
+import { sha1Arm, sha1X86 } from "velt/crypto/sha1_simd";
+import { H1 } from "velt/crypto/tables";
+
+/** SHA-1 digest (20 bytes) of `data`. Not collision resistant; see the module comment. */
+export function sha1(data: u8[]): u8[] {
+  return sha1Of([], 0, false, data);
+}
+
+/** SHA-1 of `data`, after a keyed first block (see `sha256Of`). */
+export function sha1Of(key: u8[], pad: u8, keyed: bool, data: u8[]): u8[] {
+  if (u32x4.hasShaArm()) {
+    return sha1Arm(key, pad, keyed, data);
+  }
+  if (u32x4.hasShaX86()) {
+    return sha1X86(key, pad, keyed, data);
+  }
+  const h = H1.slice();
+  const w = zeroWords(80);
+  let before: usize = 0;
+  if (keyed) {
+    sha1Block(h, w, keyBlock(key, pad), 0);
+    before = BLOCK;
+  }
+  const full = data.length - data.length % BLOCK;
+  for (let off: usize = 0; off < full; off += BLOCK) {
+    sha1Block(h, w, data, off);
+  }
+  const tail = finalBlocks(data, full, before);
+  for (let off: usize = 0; off < tail.length; off += BLOCK) {
+    sha1Block(h, w, tail, off);
+  }
+  return wordsToBytes(h);
+}
+
+/** Lowercase hex SHA-1 of the UTF-8 bytes of `s`. */
+export function sha1Hex(s: string): string {
+  return hexEncode(sha1(utf8Encode(s)));
+}
+
+function sha1Block(h: u32[], w: u32[], data: u8[], off: usize) {
+  loadWords(w, data, off);
+  for (let t: usize = 16; t < 80; t++) {
+    const x = w[t - 3] ^ w[t - 8] ^ w[t - 14] ^ w[t - 16];
+    w[t] = (x << 1) | (x >>> 31);
+  }
+  let a = h[0];
+  let b = h[1];
+  let c = h[2];
+  let d = h[3];
+  let e = h[4];
+  for (let t: usize = 0; t < 80; t++) {
+    let f: u32 = 0;
+    let k: u32 = 0;
+    if (t < 20) {
+      f = (b & c) | (~b & d);
+      k = 0x5a827999;
+    } else if (t < 40) {
+      f = b ^ c ^ d;
+      k = 0x6ed9eba1;
+    } else if (t < 60) {
+      f = (b & c) | (b & d) | (c & d);
+      k = 0x8f1bbcdc;
+    } else {
+      f = b ^ c ^ d;
+      k = 0xca62c1d6;
+    }
+    const temp = ((a << 5) | (a >>> 27)) + f + e + k + w[t];
+    e = d;
+    d = c;
+    c = (b << 30) | (b >>> 2);
+    b = a;
+    a = temp;
+  }
+  h[0] = h[0] + a;
+  h[1] = h[1] + b;
+  h[2] = h[2] + c;
+  h[3] = h[3] + d;
+  h[4] = h[4] + e;
+}

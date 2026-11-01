@@ -2,7 +2,7 @@
 // segments, upper-case schemes and hosts, percent-encoding, credentials, an IPv4 host), 300
 // times, reading `href`, `hostname`, `pathname` and `search`. The Rust port uses the `url` crate,
 // which is what `fetch` parses with today.
-import { URL } from "velt:url";
+import { URL } from "velt/net/url";
 
 function main() {
   const shapes = [

@@ -12,9 +12,9 @@ record_key_errors.vlt:47:13: error: `u8` cannot be a `Record` key
 record keys are `string`, a union of string literals or a string enum; use `Map<K, V>` for other keys
 required because `Box` uses it as a `Record` key
 record_key_errors.vlt:48:9: error: `i64` cannot be a `Record` key
-record_key_errors.vlt:50:5: error: `__delete` is internal to `Record`: a record has no methods of its own
+record_key_errors.vlt:50:5: error: a record has no methods of its own: its keys are read, written and listed with the record syntax and `Object`'s functions
 remove a key with `delete r[k]` (on a `Record<string, V>`)
-record_key_errors.vlt:51:17: error: `__size` is internal to `Record`: a record has no methods of its own
+record_key_errors.vlt:51:17: error: a record has no methods of its own: its keys are read, written and listed with the record syntax and `Object`'s functions
 count the keys with `Object.keys(r).length`
 record_key_errors.vlt:53:5: error: `Res` has no key "Mem"
 record_key_errors.vlt:54:17: error: `Res` has no key "disk"

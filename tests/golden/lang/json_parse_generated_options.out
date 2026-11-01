@@ -1,0 +1,16 @@
+{"k":"x","e":7,"arr":["y"],"t":[1,null],"n":null}
+{"k":"x","e":7,"arr":["y"],"t":[1,null],"n":null}
+{"k":null,"arr":[],"t":[1,0],"n":3}
+{"k":null,"arr":[],"t":[1,0],"n":3}
+expected "x" at $.k
+expected "x" at $.k
+expected "y" at $.arr[0]
+expected "y" at $.arr[0]
+expected 1 at $.t[0]
+expected 1 at $.t[0]
+{"k":null,"arr":[],"t":[1,0],"n":null}
+expected one of 0, 7 at $.e
+x 7 Map(2) { 'a' => null, 'b' => 0 }
+Opt { x: 1 } {"x":1} { x: 1 } {"x":1} false
+Opt { a: 's', b: null, x: 1 } {"a":"s","b":null,"x":1} { a: 's', 'q r': 2, x: 1 } {"a":"s","q r":2,"x":1} true
+Opt { b: 3, x: 1 } {"b":3,"x":1} { x: 1 } {"x":1} false

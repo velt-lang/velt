@@ -82,7 +82,7 @@ mod tests {
 
     #[test]
     fn options_and_prefixes() {
-        let flags = ["--release", "--locked", "--target", "--backend"];
+        let flags = ["--release", "--locked", "--target", "--cpu", "--backend"];
         assert_eq!(closest("--relase", &flags), Some("--release"));
         assert_eq!(closest("--lock", &flags), Some("--locked"));
         assert_eq!(closest("--rel", &flags), Some("--release"));

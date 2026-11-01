@@ -1,6 +1,6 @@
 // Base64: a 1 MiB buffer encoded and decoded 30 times, then a 32-byte value encoded and decoded
-// 500k times. `velt:encoding` is Velt code; the Rust port uses the `base64` crate.
-import { base64Decode, base64Encode } from "velt:encoding";
+// 500k times. `velt/encoding` is Velt code; the Rust port uses the `base64` crate.
+import { base64Decode, base64Encode } from "velt/encoding";
 
 function main() {
   const data = Buffer.alloc(1048576);

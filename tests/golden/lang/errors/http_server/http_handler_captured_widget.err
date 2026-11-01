@@ -1,0 +1,4 @@
+http_handler_captured_widget.vlt:15:5: error: this function can be called on another thread, and it changes `clicks`
+http_handler_captured_widget.vlt:18:19: but it is stored in a `Widget`, which is passed here to a function that runs it on other threads
+  = note: fix: const clicks = shared(new Mutex(0))  // one value every thread shares, as in Node
+  = note: then read it with `clicks.with((v) => v)` and change it with `clicks.with((v) => { v = … })`

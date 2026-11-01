@@ -247,7 +247,7 @@ its top level, so the gate's example-apps test skips it: it needs `pnpm install`
    tools / MSVC). Bundling a linker (lld) with the toolchain would remove that last step, which
    is mostly a Windows hurdle (Visual Studio Build Tools): #803.
 5. **Embedded assets.** For example `import assets from "../dist/client" with { type: "dir" }`
-   with a `velt:http` `serveStatic`, so production is one file. `sigx/server` has a small static
+   with a `velt/http` `serveStatic`, so production is one file. `sigx/server` has a small static
    server today.
 6. **Render-local context** (#386 / #213). With it, `signal()` inside setup finds the render's
    runtime, so shared code needs no `ctx.signal`. Deep reactive objects (#385) are the largest

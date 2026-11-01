@@ -1,7 +1,11 @@
 //! Whole-program call graph: direct call edges, call-site counts, functions whose address is
 //! taken (`Const::Func` operands or static relocations), and strongly connected components in bottom-up order.
 
-use velt_vir::vir::{Callee, Const, FuncId, Function, Operand, Program, Terminator, Ty};
+use std::collections::BTreeSet;
+
+use velt_vir::vir::{
+    Callee, Const, ExternId, FuncId, Function, Linkage, Operand, Program, Terminator, Ty,
+};
 
 use crate::visit::{stmt_operands, term_operands};
 
@@ -55,6 +59,72 @@ pub(crate) fn static_refs(program: &Program) -> impl Iterator<Item = FuncId> + '
             Const::Func(id) => Some(*id),
             _ => None,
         })
+}
+
+/// The externs `program` can reach from its exported functions (its entry): called, taken as an
+/// address (`Const::Extern`), or stored in a static that reachable code refers to, following
+/// direct calls, function addresses and the functions statics hold (vtable slots). Functions
+/// whose symbol `skip` accepts are not followed (#1855: a test harness is also the test runner,
+/// and what the runner reaches says nothing about the tests).
+pub fn used_externs(program: &Program, skip: impl Fn(&str) -> bool) -> BTreeSet<ExternId> {
+    let mut externs = BTreeSet::new();
+    let mut seen = vec![false; program.funcs.len()];
+    let mut seen_statics = vec![false; program.statics.len()];
+    let mut todo: Vec<FuncId> = Vec::new();
+    let visit_func = |id: FuncId, seen: &mut Vec<bool>, todo: &mut Vec<FuncId>| {
+        let at = id.0 as usize;
+        if !seen[at] && !skip(&program.funcs[at].symbol) {
+            seen[at] = true;
+            todo.push(id);
+        }
+    };
+    for (i, f) in program.funcs.iter().enumerate() {
+        if f.linkage == Linkage::Export {
+            visit_func(FuncId(i as u32), &mut seen, &mut todo);
+        }
+    }
+    while let Some(id) = todo.pop() {
+        let func = program.func(id);
+        let mut consts: Vec<Const> = Vec::new();
+        let mut callees: Vec<Const> = Vec::new();
+        let mut collect = |op: &Operand| {
+            if let Operand::Const(c, _) = op {
+                consts.push(c.clone());
+            }
+        };
+        for b in &func.blocks {
+            for s in &b.stmts {
+                stmt_operands(s, &mut collect);
+            }
+            term_operands(&b.term, &mut collect);
+            if let Terminator::Call { callee, .. } = &b.term {
+                match callee {
+                    Callee::Func(f) => callees.push(Const::Func(*f)),
+                    Callee::Extern(e) => callees.push(Const::Extern(*e)),
+                    Callee::Ptr { .. } => {}
+                }
+            }
+        }
+        consts.extend(callees);
+        // Statics reached, then the functions and externs they hold (and statics they point to).
+        while let Some(c) = consts.pop() {
+            match c {
+                Const::Func(f) => visit_func(f, &mut seen, &mut todo),
+                Const::Extern(e) => {
+                    externs.insert(e);
+                }
+                Const::Static(st) => {
+                    let at = st.0 as usize;
+                    if let Some(data) = program.statics.get(at).filter(|_| !seen_statics[at]) {
+                        seen_statics[at] = true;
+                        consts.extend(data.relocs.iter().map(|(_, target)| target.clone()));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    externs
 }
 
 /// Call graph facts for the whole program.
@@ -150,6 +220,48 @@ mod tests {
         assert_eq!(pos(1), pos(2));
         assert!(pos(3) < pos(1));
         assert!(pos(1) < pos(0));
+    }
+
+    /// `main` calls `pure`, `runner` and `ext_a`, takes `vt`'s address (a static holding `slot`,
+    /// which calls `ext_b`); `runner` calls `ext_c`; `unused` calls `ext_d` and nothing calls it.
+    #[test]
+    fn used_externs_follow_calls_addresses_and_statics_but_not_skipped_functions() {
+        let mut pb = ProgramBuilder::new();
+        let [a, b, c, d] =
+            ["ext_a", "ext_b", "ext_c", "ext_d"].map(|n| pb.ext(n, &[], Ty::Unit, false));
+        let calling = |name: &str, callees: &[Callee], export: bool| {
+            let mut fb = match export {
+                true => FuncBuilder::export(name, &[], Ty::Unit),
+                false => FuncBuilder::internal(name, &[], Ty::Unit),
+            };
+            let mut blk = fb.block();
+            for callee in callees {
+                blk = fb.call(blk, callee.clone(), vec![], None);
+            }
+            fb.ret(blk, Operand::Const(Const::Unit, Ty::Unit));
+            fb.finish()
+        };
+        let slot = pb.add(calling("slot", &[Callee::Extern(b)], false));
+        let vt = pb.stat_with(&[0; 8], 8, vec![(0, Const::Func(slot))]);
+        let runner = pb.add(calling("runner", &[Callee::Extern(c)], false));
+        pb.add(calling("unused", &[Callee::Extern(d)], false));
+        let mut fb = FuncBuilder::export("main", &[], Ty::Unit);
+        let mut blk = fb.block();
+        let p = fb.local(Ty::Ptr);
+        fb.assign(
+            blk,
+            p,
+            Rvalue::Use(Operand::Const(Const::Static(vt), Ty::Ptr)),
+        );
+        blk = fb.call(blk, Callee::Func(runner), vec![], None);
+        blk = fb.call(blk, Callee::Extern(a), vec![], None);
+        fb.ret(blk, Operand::Const(Const::Unit, Ty::Unit));
+        pb.add(fb.finish());
+        let program = pb.finish();
+        let all = used_externs(&program, |_| false);
+        assert_eq!(all, BTreeSet::from([a, b, c]));
+        let without_runner = used_externs(&program, |s| s == "runner");
+        assert_eq!(without_runner, BTreeSet::from([a, b]));
     }
 
     #[test]

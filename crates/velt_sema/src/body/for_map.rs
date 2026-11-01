@@ -1,14 +1,14 @@
 //! `for...of` over a `Map` (or its `keys()`, `values()`, `entries()`) held in a place iterates
 //! live, as in JS: entries added by the body are visited, deleted ones are not (#624). The loop
-//! is desugared into a cursor walk over the map's entries (std/prelude/map.vlt, "Live
-//! iteration"):
+//! is desugared into a cursor walk over the map's entries (std/prelude/map.vlt; "Live
+//! iteration" in std/lang/map/layout.vlt):
 //!
 //! ```text
 //! {
 //!   const <map@N> = m;                          // the map object, as JS holds it
-//!   let <cursor@N> = <map@N>.__cursor();        // a struct: no allocation
-//!   label: while (<map@N>.__advance(<cursor@N>)) {
-//!     kind pattern = <map@N>.__entryAt(<cursor@N>);   // __keyAt, __valueAt
+//!   let <cursor@N> = <map@N>.[MAP_CURSOR]();        // a struct: no allocation
+//!   label: while (<map@N>.[MAP_ADVANCE](<cursor@N>)) {
+//!     kind pattern = <map@N>.[MAP_ENTRY_AT](<cursor@N>);   // [MAP_KEY_AT], [MAP_VALUE_AT]
 //!     { body }
 //!   }
 //! }
@@ -110,7 +110,7 @@ impl FnCx<'_, '_> {
     ) -> Option<(&'e ast::Expr, &'static str, bool)> {
         if self.is_prelude_map(it.ty) {
             let fixed = self.fixed_source(it);
-            return liftable(iter).then_some((iter, "__entryAt", fixed));
+            return liftable(iter).then_some((iter, velt_common::std_key!(map_entry_at), fixed));
         }
         let ast::ExprKind::Call { callee, args, .. } = &iter.kind else {
             return None;
@@ -124,9 +124,9 @@ impl FnCx<'_, '_> {
             return None;
         };
         let read = match prop.name.as_str() {
-            "keys" => "__keyAt",
-            "values" => "__valueAt",
-            "entries" => "__entryAt",
+            "keys" => velt_common::std_key!(map_key_at),
+            "values" => velt_common::std_key!(map_value_at),
+            "entries" => velt_common::std_key!(map_entry_at),
             _ => return None,
         };
         let H::Call { args: hargs, .. } = &it.kind else {
@@ -202,7 +202,7 @@ impl<'e> CursorLoop<'e> {
         let cursor = self.var(
             ast::VarKind::Let,
             self.ident_pat(&self.cursor),
-            self.on_map("__cursor", vec![]),
+            self.on_map(velt_common::std_key!(map_cursor), vec![]),
         );
         let value = ast::Expr {
             span: self.iter,
@@ -214,7 +214,7 @@ impl<'e> CursorLoop<'e> {
             span: p.body.span,
         };
         let mut lp = self.stmt(ast::StmtKind::While {
-            cond: self.on_map("__advance", vec![self.name()]),
+            cond: self.on_map(velt_common::std_key!(map_advance), vec![self.name()]),
             body: self.block(vec![bind, body]),
         });
         if let Some(l) = p.label {

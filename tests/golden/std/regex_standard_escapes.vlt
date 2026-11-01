@@ -1,6 +1,6 @@
 // Regression (difftest regex-standard-escapes): `\0`, `\cA`, and (Annex B) a lone `{` / `}` or
 // `a{,3}` as literal text are accepted, as in JS.
-import { RegExp } from "velt:regex";
+import { RegExp } from "velt/text";
 
 function check(p: string, s: string) {
   try {

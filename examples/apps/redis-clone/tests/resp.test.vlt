@@ -1,5 +1,5 @@
 // The protocol layer: incremental parsing, inline commands, errors, and reply encoding.
-import { utf8DecodeLossy, utf8Encode } from "velt:encoding";
+import { utf8DecodeLossy, utf8Encode } from "velt/encoding";
 import { protocolErrorReply, RespParser, Writer } from "../src/resp";
 
 function all(p: RespParser): string[] {

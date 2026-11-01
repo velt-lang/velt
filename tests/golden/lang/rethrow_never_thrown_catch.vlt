@@ -1,6 +1,6 @@
 // Regression: rethrowing the catch variable of a `try` whose body cannot throw (`e: never`, the
 // catch is dead code) crashed the compiler, also in a generic async wrapper awaiting a callback
-// (`try { return await fn(); } catch (e) { cleanup; throw e; }`, std/postgres `transaction`).
+// (`try { return await fn(); } catch (e) { cleanup; throw e; }`, the postgres package's `transaction`).
 function f() {
   try {
     console.log(1);

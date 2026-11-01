@@ -22,8 +22,9 @@ use crate::vir::{
 };
 
 /// Qualified names of the prelude's generator classes (std/prelude/iter.vlt).
-const PRELUDE_GENERATOR: &str = "std/prelude/iter::Generator";
-const PRELUDE_ASYNC_GENERATOR: &str = "std/prelude/iter::AsyncGenerator";
+const PRELUDE_GENERATOR: &str = velt_common::std_item!(prelude_iter, "Generator");
+const PRELUDE_ASYNC_GENERATOR: &str =
+    velt_common::std_item!(prelude_async_generator, "AsyncGenerator");
 
 impl Cx<'_> {
     /// Is `t` the prelude's `Generator<T, E>` or `AsyncGenerator<T, E>` class?
@@ -116,6 +117,7 @@ impl Cx<'_> {
             bytes,
             align: 8,
             relocs,
+            mutable: None,
         });
         let id = StaticId(self.statics.len() as u32 - 1);
         self.lay.gen_tables.insert((def, targs.to_vec()), id);

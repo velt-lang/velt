@@ -1,0 +1,52 @@
+// check: no leaks
+// A top-level `let` the code assigns (or a constant holding a new `Map`) that a closure the
+// statements make refers to is the module's variable, as in Node (#1872): a task on another
+// thread or a timer callback assigns it or changes what it holds, and a closure reads it after a
+// statement assigned it. Before, such a variable became a local of the generated `main`, and
+// closures got their own copy of it (a compile error for a closure that runs on another thread
+// and assigns it). `fact`, above the first statement, still moves into `main`, and its arrow
+// calls itself there (it was "cannot find `fact`").
+const fact = (n: number): number => (n <= 1 ? 1 : n * fact(n - 1));
+
+let hits = 0;
+const byKey = new Map<string, number>();
+let label = "first";
+let local = 1;
+
+async function work(): Promise<void> {
+  await Promise.resolve();
+}
+
+const show = () => `${label}: ${hits} hits, ${byKey.size} keys`;
+console.log(show());
+label = "second";
+console.log(show());
+
+const tasks: Promise<void>[] = [];
+for (const key of ["a", "b", "a", "c"]) {
+  tasks.push(
+    spawn(
+      (async () => {
+        await work();
+        hits++;
+        byKey.set(key, (byKey.get(key) ?? 0) + 1);
+      })(),
+    ),
+  );
+}
+await Promise.all(tasks);
+console.log(hits, byKey.get("a"), byKey.get("b"), byKey.get("c"));
+
+await new Promise<void>((resolve) => {
+  setTimeout(
+    () => {
+      label = "timer";
+      resolve();
+    },
+    0,
+  );
+});
+console.log(label);
+
+local += fact(5);
+console.log(local);

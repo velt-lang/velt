@@ -200,11 +200,13 @@ pub(super) fn vtable_program() -> Program {
                     (8, Const::Func(FuncId(2))),
                     (16, Const::Static(StaticId(1))),
                 ],
+                mutable: None,
             },
             StaticData {
                 bytes: b"hi".to_vec(),
                 align: 1,
                 relocs: vec![],
+                mutable: None,
             },
         ],
         ..Default::default()

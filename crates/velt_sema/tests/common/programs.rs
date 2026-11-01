@@ -56,6 +56,7 @@ impl Loader {
         self.modules.push(SourceModule {
             path: canonical.to_string(),
             is_std: canonical.starts_with("std/"),
+            is_dependency: false,
             file: FileId(id.0),
             ast,
             imports: vec![],
@@ -85,17 +86,25 @@ impl Loader {
             specs.extend(runtime.clone());
             let dir = self.files[m].parent().unwrap().to_path_buf();
             for spec in specs {
-                let (canonical, file) = if let Some(rest) = spec.strip_prefix("velt:") {
-                    (format!("std/{rest}"), std_dir.join(format!("{rest}.vlt")))
+                let (canonical, file) = if let Some(rest) = spec.strip_prefix("velt/") {
+                    let file = std_dir.join(format!("{rest}.vlt"));
+                    // A folder module: `velt/fs` is `std/fs/index.vlt`.
+                    let file = if file.is_file() {
+                        file
+                    } else {
+                        std_dir.join(rest).join("index.vlt")
+                    };
+                    (format!("std/{rest}"), file)
                 } else {
                     let file =
                         normalize(&dir.join(format!("{}.vlt", spec.trim_start_matches("./"))));
-                    let rel = file
-                        .strip_prefix(root_dir)
-                        .unwrap_or(&file)
-                        .with_extension("")
-                        .to_string_lossy()
-                        .replace('\\', "/");
+                    // A std file's relative import names a std module (`./number` in
+                    // std/lang/hooks/index.vlt is `std/lang/hooks/number`).
+                    let rel = match file.strip_prefix(normalize(&std_dir)) {
+                        Ok(in_std) => Path::new("std").join(in_std),
+                        Err(_) => file.strip_prefix(root_dir).unwrap_or(&file).to_path_buf(),
+                    };
+                    let rel = rel.with_extension("").to_string_lossy().replace('\\', "/");
                     (rel, file)
                 };
                 if !self.modules.iter().any(|x| x.path == canonical) {
@@ -223,14 +232,12 @@ fn normalize(p: &Path) -> PathBuf {
 }
 
 fn prelude(l: &mut Loader) {
+    // In the order std/prelude/index.vlt lists the files, as veltc's loader reads them.
     let dir = repo_root().join("std/prelude");
-    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
-        .map(|rd| rd.flatten().map(|e| e.path()).collect())
-        .unwrap_or_default();
-    files.retain(|f| f.extension().is_some_and(|e| e == "vlt"));
-    files.sort();
-    for f in files {
-        let name = f.file_stem().unwrap().to_string_lossy().to_string();
+    let index = std::fs::read_to_string(dir.join("index.vlt")).expect("std/prelude/index.vlt");
+    let order = velt_common::std_modules::prelude_order(&index).expect("std/prelude/index.vlt");
+    for name in order {
+        let f = dir.join(format!("{name}.vlt"));
         let src = std::fs::read_to_string(&f).unwrap();
         l.add(&format!("std/prelude/{name}"), &f, src);
     }

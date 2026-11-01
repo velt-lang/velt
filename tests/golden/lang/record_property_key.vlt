@@ -1,0 +1,50 @@
+// `PropertyKey` (`string | number | symbol`) values as keys of a `Record<PropertyKey, V>`
+// (#1629): reads, writes, `Object.hasOwn`, `delete` and `in` take them, a number as its string,
+// as JavaScript converts it (`rec[1]` and `rec["1"]` are one key).
+
+const S = Symbol("s");
+
+function get(rec: Record<PropertyKey, number>, k: PropertyKey) {
+  return rec[k];
+}
+
+function set(rec: Record<PropertyKey, number>, k: PropertyKey, v: number) {
+  rec[k] = v;
+}
+
+function own(rec: Record<PropertyKey, number>, k: PropertyKey) {
+  return Object.hasOwn(rec, k);
+}
+
+function del(rec: Record<PropertyKey, number>, k: PropertyKey) {
+  return delete rec[k];
+}
+
+function has(rec: Record<PropertyKey, number>, k: PropertyKey) {
+  return k in rec;
+}
+
+function lit(rec: Record<PropertyKey, number>, k: "a" | 7 | symbol) {
+  rec[k] = (rec[k] ?? 0) + 1;
+  return rec[k];
+}
+
+function main() {
+  const rec: Record<PropertyKey, number> = {};
+  set(rec, 2, 2);
+  set(rec, "y", 4);
+  set(rec, S, 5);
+  set(rec, 7, 6);
+  set(rec, 1.5, 9);
+  console.log(rec, get(rec, "2"), get(rec, 2), get(rec, S), get(rec, 7));
+  console.log(own(rec, 7), own(rec, "7"), has(rec, S), has(rec, 2), has(rec, 3), own(rec, 1.5));
+  console.log(del(rec, 1.5), has(rec, "1.5"), del(rec, S), has(rec, S), del(rec, 99));
+  const counts = [lit(rec, 7), lit(rec, "a"), lit(rec, S)];
+  console.log(counts, rec);
+  const both: Record<string, number> = { k: 1 };
+  const sn: string | number = Math.random() > 2 ? "k" : 3;
+  both[sn] = 8;
+  console.log(both, Object.hasOwn(both, sn), Reflect.ownKeys(rec));
+}
+
+main();

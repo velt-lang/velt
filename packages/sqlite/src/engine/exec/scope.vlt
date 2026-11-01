@@ -1,0 +1,92 @@
+// sqlite/engine/exec/scope (internal): where names resolve (`Scope`): the FROM items of one SELECT,
+// then the enclosing ones, and what the compile of the core they belong to is in the middle of.
+
+import { Expr, ResultColumn, SelectCore, Window } from "../sql/types";
+import { Source } from "./source";
+import { AggCtx } from "./agg/agg_ctx";
+import { WinCtx } from "./window/win_ctx";
+
+/** Where names resolve: the FROM items of one SELECT, then the enclosing ones. */
+export class Scope {
+  /** The FROM items in the order the loops run them. */
+  sources: Source[] = [];
+  /** The FROM items as written (for `*`), when the loops run them in another order. */
+  fromOrder: Source[] = [];
+  parent: Scope | null = null;
+  /** The result columns, for names that are their aliases. */
+  aliases: ResultColumn[] = [];
+  /** Aliases being expanded (an alias defined by itself is an error). */
+  expanding: string[] = [];
+  /** In an aggregate query's output: columns read the group's saved values. */
+  agg: AggCtx | null = null;
+  /** In output mode, the same scope in row mode (for aggregate arguments). */
+  base: Scope | null = null;
+  /** Set when a name resolved in an enclosing scope. */
+  outer: bool = false;
+  /**
+   * In the output of a query with window functions: the windows, and the scope the rows are
+   * collected in (expressions without window functions are computed there and read back).
+   */
+  win: WinCtx | null = null;
+  winBase: Scope | null = null;
+  /** The named windows of the WINDOW clause. */
+  windows: Window[] = [];
+  /**
+   * Set on a query with window functions while its result columns and ORDER BY compile. SQLite
+   * computes the windows in a query around the rest (sqlite3WindowRewrite), so a subquery's
+   * aggregate of this query is allowed only where `winAgg` is set.
+   */
+  windowed: bool = false;
+  /** Set while the terms, arguments and FILTER of a window function computed last compile. */
+  winAgg: bool = false;
+  /** The window function calls among the result columns whose windows are computed last. */
+  lastWins: Expr[] = [];
+  /** The core whose FROM items these are, and whether its output (result columns on) compiles. */
+  core: SelectCore | null = null;
+  output: bool = false;
+  /** Set while the result columns of a core that is not (yet) an aggregate query compile. */
+  results: bool = false;
+  /** Set while an aggregate's arguments or FILTER compile: no aggregate is allowed there. */
+  inAggArgs: bool = false;
+  /**
+   * Set while the core's WHERE and ON terms compile: an aggregate is allowed there only when
+   * the core is an aggregate query, whichever query the aggregate belongs to.
+   */
+  where: bool = false;
+  /**
+   * Set while the core's GROUP BY terms compile: an aggregate the core owns is not allowed
+   * there, even inside a subquery; one an enclosing query owns is.
+   */
+  groupBy: bool = false;
+
+  /** The same sources in the output of a query with window functions. */
+  forWindows(win: WinCtx, windows: Window[]): Scope {
+    const s = new Scope();
+    s.sources = this.sources;
+    s.fromOrder = this.fromOrder;
+    s.parent = this.parent;
+    s.aliases = this.aliases;
+    s.agg = this.agg;
+    s.base = this.base;
+    s.core = this.core;
+    s.output = true;
+    s.win = win;
+    s.winBase = this;
+    s.windows = windows;
+    return s;
+  }
+
+  /** The same sources in an aggregate query's output mode. */
+  forOutput(agg: AggCtx): Scope {
+    const s = new Scope();
+    s.sources = this.sources;
+    s.fromOrder = this.fromOrder;
+    s.parent = this.parent;
+    s.aliases = this.aliases;
+    s.agg = agg;
+    s.base = this;
+    s.core = this.core;
+    s.output = true;
+    return s;
+  }
+}

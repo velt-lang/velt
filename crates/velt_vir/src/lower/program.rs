@@ -4,7 +4,7 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
 
-use velt_sema::hir::{self, DefId};
+use velt_sema::hir::{self, DefId, TyId};
 
 use super::layout::Layouts;
 use super::rt::Rt;
@@ -25,8 +25,13 @@ impl<'h> Cx<'h> {
             prelude_proxy: None,
             native_inits: vec![],
             view_fn: None,
+            std_fns: std::cell::OnceCell::new(),
             uses_placement: false,
             cell_checks: false,
+            target: String::new(),
+            unavailable: vec![],
+            std_calls: FxHashMap::default(),
+            system_aggs: FxHashMap::default(),
             no_await_steps: false,
             types,
             aggs: vec![AggLayout {
@@ -39,6 +44,7 @@ impl<'h> Cx<'h> {
             extern_map: FxHashMap::default(),
             statics: vec![],
             module_desc: None,
+            static_atomics: FxHashMap::default(),
             reassigned_slots: None,
             prelude_error: None,
             tla_marks: None,
@@ -48,10 +54,11 @@ impl<'h> Cx<'h> {
             work_map: FxHashMap::default(),
             queue: VecDeque::new(),
             iface_glues: vec![],
+            unique_params: vec![],
+            declared_unique: vec![],
             building: FxHashSet::default(),
             asyncs: FxHashMap::default(),
             by_ref_params: FxHashSet::default(),
-            shared_envs: FxHashMap::default(),
             lay: Layouts::default(),
             locs: None,
             debug: None,
@@ -68,8 +75,8 @@ impl<'h> Cx<'h> {
             own_clones: None,
             honoured_clones: FxHashMap::default(),
             dyn_modes_memo: FxHashMap::default(),
-            json_key_memo: None,
             anon: Default::default(),
+            generated_canon: None,
             cur_def: None,
             cur_mode: super::LkMode::Plain,
             cur_own: false,
@@ -175,10 +182,12 @@ impl<'h> Cx<'h> {
                 | Work::Deferred(_)
                 | Work::Main
                 | Work::ModuleInit(..)
+                | Work::StaticsDrop
                 | Work::ArrayGrow
                 | Work::ArrayTooLong
                 | Work::Oob(_)
         ) || !self.has_lock_set();
+        let work = self.generated_instance(work);
         let work = match (fixed, mode) {
             (true, _) | (false, M::Plain) => work,
             (false, M::Read) => Work::Read(Box::new(work)),
@@ -198,6 +207,39 @@ impl<'h> Cx<'h> {
         id
     }
 
+    /// `work` for an instance of a generated function built from its generated definition
+    /// instead (`hir::Program::generated`; docs/internals/design/source-generators.md).
+    fn generated_instance(&mut self, mut work: Work) -> Work {
+        if self.hir.generated.is_empty() {
+            return work;
+        }
+        if self.generated_canon.is_none() {
+            // Work items carry canonical type arguments (one type per anonymous shape), which
+            // the instances' own may not be (a generic object type at its arguments).
+            let hir = self.hir;
+            let canon = (hir.generated.iter())
+                .map(|((g, targs), body)| {
+                    let targs = targs.iter().map(|t| self.canon(*t)).collect();
+                    ((*g, targs), *body)
+                })
+                .collect();
+            self.generated_canon = Some(canon);
+        }
+        let map = self.generated_canon.as_ref().expect("ICE: made above");
+        if let Some((d, targs)) = work_target(&mut work) {
+            if let Some(&body) = map.get(&(*d, targs.clone())) {
+                *d = body;
+                targs.clear();
+            } else if map.keys().any(|(g, _)| g == d) {
+                let name = &self.fn_def(*d).name;
+                ice(format_args!(
+                    "no generated code for an instance of `{name}`"
+                ));
+            }
+        }
+        work
+    }
+
     /// Build the function for `work` now unless it is already built or being built (in which
     /// case the caller sees no result: recursion through eagerly built poll functions).
     pub(super) fn build_now(&mut self, fid: FuncId, work: &Work) {
@@ -205,6 +247,12 @@ impl<'h> Cx<'h> {
             return;
         }
         let outer = self.cur_def;
+        if let Some(d) = work_def(work).filter(|d| self.hir.unchecked.contains(d)) {
+            let name = &self.fn_def(d).name;
+            ice(format_args!(
+                "`{name}` was left unchecked: no checked code reaches it"
+            ));
+        }
         self.cur_def = work_def(work).or(outer);
         let site = self.fn_sites.get(&fid).copied();
         let outer_site = std::mem::replace(&mut self.user_site, site.unwrap_or_default());
@@ -234,6 +282,7 @@ impl<'h> Cx<'h> {
         self.cur_mode = outer_mode;
         self.cur_def = outer;
         self.user_site = outer_site;
+        self.bind_unique_params(fid);
         self.funcs[fid.0 as usize] = Some(func);
         self.building.remove(&fid);
     }
@@ -309,6 +358,7 @@ impl<'h> Cx<'h> {
             bytes: key.0.clone(),
             align,
             relocs: vec![],
+            mutable: None,
         });
         self.static_map.insert(key, id);
         id
@@ -332,6 +382,7 @@ impl<'h> Cx<'h> {
             bytes: object,
             align: 8,
             relocs: vec![(0, vir::Const::Static(text))],
+            mutable: None,
         });
         self.str_objects.insert(s.to_string(), id);
         id
@@ -339,6 +390,30 @@ impl<'h> Cx<'h> {
 }
 
 /// The function `work` builds an instance (or a part) of.
+/// The function and type arguments `work` builds code for.
+fn work_target(work: &mut Work) -> Option<(&mut DefId, &mut Vec<TyId>)> {
+    match work {
+        Work::Checked(w) | Work::Read(w) | Work::ReadOwn(w) | Work::Deferred(w) => work_target(w),
+        Work::Fn(d, a)
+        | Work::Thunk(_, d, a)
+        | Work::EnvDrop(d, a)
+        | Work::EnvDropFrame(d, a)
+        | Work::EnvClone(d, a)
+        | Work::EnvTransfer(d, a)
+        | Work::Tracked(d, a, _)
+        | Work::Frozen(d, a, _, _, _)
+        | Work::Poll(d, a)
+        | Work::AsyncDrop(d, a)
+        | Work::AsyncCloseStart(d, a)
+        | Work::GenThrow(d, a)
+        | Work::ValuePoll(d, a)
+        | Work::ValueDrop(d, a)
+        | Work::GenNew(d, a)
+        | Work::GenFree(d, a) => Some((d, a)),
+        _ => None,
+    }
+}
+
 fn work_def(work: &Work) -> Option<DefId> {
     match work {
         Work::Checked(w) | Work::Read(w) | Work::ReadOwn(w) | Work::Deferred(w) => work_def(w),
@@ -356,7 +431,6 @@ fn work_def(work: &Work) -> Option<DefId> {
         | Work::GenThrow(d, _)
         | Work::ValuePoll(d, _)
         | Work::ValueDrop(d, _)
-        | Work::HandlerInit(d, _)
         | Work::GenNew(d, _)
         | Work::GenFree(d, _) => Some(*d),
         _ => None,

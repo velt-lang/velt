@@ -1,8 +1,8 @@
 // chat: a WebSocket chat server and a terminal client (see README.md).
 //   chat serve [--port 8080]
 //   chat connect <name> [--url ws://127.0.0.1:8080/chat]
-import { ArgParser } from "velt:cli";
-import { args, exit } from "velt:process";
+import { ArgParser } from "velt/cli";
+import { args, exit } from "velt/process";
 import { startChat } from "./server";
 import { runClient } from "./client";
 

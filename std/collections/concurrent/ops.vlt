@@ -1,0 +1,188 @@
+// velt/collections (internal): the word-level operations behind `ConcurrentMap`'s `get`, `has`,
+// `set`, `add` and `delete`: a reader's descent and a writer's retries.
+
+import { ConcurrentMap } from "velt/collections/concurrent_map";
+import {
+  ADD_ABSENT,
+  ADD_DONE,
+  DEL_DONE,
+  DEL_LAST,
+  DEL_RETRY,
+  LEAF_BIT,
+  LEAF_CAP,
+  LEVEL_SHIFT,
+  MAX_KEY,
+  NODE,
+  PAIRS,
+  rangeError,
+} from "velt/collections/concurrent/layout";
+import { isUnchanged, readVersion } from "velt/collections/concurrent/latch";
+import { childFor, findSlot } from "velt/collections/concurrent/search";
+import { tryAdd, trySet } from "velt/collections/concurrent/insert";
+import { tryDelete, tryDeleteLast } from "velt/collections/concurrent/delete";
+
+/** `get` of a `u64` value; `key` (word `k`) breaks ties for string keys. */
+export function getWord<K, V extends Frozen>(
+  cm: ConcurrentMap<K, V>,
+  k: u64,
+  key: K,
+): u64 | undefined {
+  // The one key a map cannot hold (and inner nodes' padding: a descent for it would follow
+  // a slot no separator covers).
+  if (k == MAX_KEY) {
+    return undefined;
+  }
+  restart: while (true) {
+    const n = cm.root.load("acquire");
+    let b = n * NODE;
+    // One check that the node's words are in the arena; the reads below follow from it.
+    if ((cm.w.length as u64) < NODE || b > (cm.w.length as u64) - NODE) {
+      continue restart;
+    }
+    let v = readVersion(cm, b);
+    if (cm.root.load("acquire") != n) {
+      continue restart;
+    }
+    let meta = cm.w[b + 1].load("relaxed");
+    // The tree's height, so the descent runs the same number of steps every time (a branch
+    // predictor learns it; a leaf test at every level would miss once per lookup).
+    const levels = (meta >> LEVEL_SHIFT) & 255;
+    for (let l: u64 = 0; l < levels; l++) {
+      const c = cm.w[childFor(cm, b, k, key)].load("relaxed");
+      const cb = c * NODE;
+      if (c >= cm.nodes || (cm.w.length as u64) < NODE || cb > (cm.w.length as u64) - NODE) {
+        continue restart;
+      }
+      // The child's version first, then the parent's check: a child read while a writer
+      // changed the parent fails that check.
+      const vc = readVersion(cm, cb);
+      if (!isUnchanged(cm, b, v)) {
+        continue restart;
+      }
+      b = cb;
+      v = vc;
+      meta = cm.w[b + 1].load("relaxed");
+    }
+    if ((meta & LEAF_BIT) == 0) {
+      continue restart;
+    }
+    const i = findSlot(cm, b, k, key);
+    const found = i < LEAF_CAP;
+    // Without the key, read the meta word (already in cache) instead of a pair.
+    const value = cm.w[found ? b + PAIRS + 1 + 2 * i : b + 1].load("relaxed");
+    if (!isUnchanged(cm, b, v)) {
+      continue restart;
+    }
+    return found ? value : undefined;
+  }
+}
+
+/** The boxed value of `key` (`V` other than `u64`), read as `getWord` reads a value word. */
+export function findBoxed<K, V extends Frozen>(
+  cm: ConcurrentMap<K, V>,
+  k: u64,
+  key: K,
+): shared<V> | null {
+  if (k == MAX_KEY) {
+    return null;
+  }
+  restart: while (true) {
+    const n = cm.root.load("acquire");
+    let node = n;
+    let b = n * NODE;
+    if ((cm.w.length as u64) < NODE || b > (cm.w.length as u64) - NODE) {
+      continue restart;
+    }
+    let v = readVersion(cm, b);
+    if (cm.root.load("acquire") != n) {
+      continue restart;
+    }
+    let meta = cm.w[b + 1].load("relaxed");
+    const levels = (meta >> LEVEL_SHIFT) & 255;
+    for (let l: u64 = 0; l < levels; l++) {
+      const c = cm.w[childFor(cm, b, k, key)].load("relaxed");
+      const cb = c * NODE;
+      if (c >= cm.nodes || (cm.w.length as u64) < NODE || cb > (cm.w.length as u64) - NODE) {
+        continue restart;
+      }
+      const vc = readVersion(cm, cb);
+      if (!isUnchanged(cm, b, v)) {
+        continue restart;
+      }
+      node = c;
+      b = cb;
+      v = vc;
+      meta = cm.w[b + 1].load("relaxed");
+    }
+    if ((meta & LEAF_BIT) == 0) {
+      continue restart;
+    }
+    const i = findSlot(cm, b, k, key);
+    if (i >= LEAF_CAP) {
+      if (!isUnchanged(cm, b, v)) {
+        continue restart;
+      }
+      return null;
+    }
+    // The reference stays valid while it is read (the epoch section around the load), even
+    // if a writer replaces it; the version check then says whether it was `key`'s.
+    const s = cm.vals[node * LEAF_CAP + i].load("acquire");
+    if (!isUnchanged(cm, b, v)) {
+      continue restart;
+    }
+    return s;
+  }
+}
+
+/**
+ * Makes `value` the value of `key`, adding the key if the map has none. Panics with a
+ * RangeError for `key` 2^64 - 1 (the one key a map cannot hold) and when the map is out of
+ * room.
+ */
+export function setWord<K, V extends Frozen>(cm: ConcurrentMap<K, V>, k: u64, key: K, value: u64) {
+  if (k == MAX_KEY) {
+    rangeError("set: the key 2^64 - 1 cannot be held");
+  }
+  while (!trySet(cm, k, key, value)) {}
+}
+
+/**
+ * Adds `delta` to the value of `key` (wrapping), atomically: the value before, or `undefined`
+ * if the map has no `key` (nothing is added). Like `set`, it takes the key's leaf for the
+ * moment of the change; lookups go on reading meanwhile.
+ */
+export function addWord<K, V extends Frozen>(
+  cm: ConcurrentMap<K, V>,
+  k: u64,
+  key: K,
+  delta: u64,
+): u64 | undefined {
+  if (k == MAX_KEY) {
+    return undefined;
+  }
+  while (true) {
+    const [state, before] = tryAdd(cm, k, key, delta);
+    if (state == ADD_DONE) {
+      return before;
+    }
+    if (state == ADD_ABSENT) {
+      return undefined;
+    }
+  }
+}
+
+/** Removes `key`; whether the map had it. */
+export function deleteWord<K, V extends Frozen>(cm: ConcurrentMap<K, V>, k: u64, key: K): bool {
+  if (k == MAX_KEY) {
+    return false;
+  }
+  while (true) {
+    let r = tryDelete(cm, k, key);
+    if (r == DEL_LAST) {
+      r = tryDeleteLast(cm, k, key);
+    }
+    if (r != DEL_RETRY) {
+      return r == DEL_DONE;
+    }
+  }
+}

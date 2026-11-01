@@ -169,7 +169,7 @@ fn fn_type_flags(src: &str) -> (bool, usize, bool) {
         panic!("expected a type alias")
     };
     let (construct, t) = match &a.ty.kind {
-        TypeExprKind::Construct(t) => (true, &**t),
+        TypeExprKind::Construct { ty: t, .. } => (true, &**t),
         _ => (false, &a.ty),
     };
     let (n, t) = match &t.kind {

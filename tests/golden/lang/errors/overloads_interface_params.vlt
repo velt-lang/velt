@@ -1,0 +1,29 @@
+// An implementation of an overloaded interface method takes every signature's arguments, as in
+// TypeScript (TS2322 / TS2416): each signature's parameter converts to the implementation's,
+// and a parameter it requires is required in every signature.
+interface Def {
+  name: string;
+}
+
+interface App {
+  directive(name: string, definition: Def): App;
+  directive(name: string): Def | undefined;
+}
+
+// `Def` does not convert to `number`.
+const wrongType: App = {
+  directive(name: string, definition?: number): any {
+    return undefined;
+  },
+};
+
+// The second signature leaves `definition` out.
+const required: App = {
+  directive(name: string, definition: Def): any {
+    return undefined;
+  },
+};
+
+function main() {
+  console.log(typeof wrongType, typeof required);
+}

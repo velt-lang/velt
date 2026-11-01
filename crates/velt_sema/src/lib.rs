@@ -24,7 +24,10 @@
 //!
 //! Semantic decisions other stages rely on are documented on [`body`] and the modules above.
 
+#[cfg(test)] // by its name, for the integration tests' loader (`script_locals_tests.rs`)
+extern crate self as velt_sema;
 pub mod hir;
+pub mod js_protos;
 
 mod absent_fields;
 mod alias_expand;
@@ -56,6 +59,8 @@ mod finalize;
 mod flow;
 mod fn_types;
 mod fresh_returns;
+pub mod generated;
+mod generating;
 mod generic_arrows;
 mod generic_fns;
 mod generic_override_sites;
@@ -65,16 +70,20 @@ mod global_this;
 mod hasher_tests;
 mod holds_promise;
 mod hooks;
+pub use hooks::NAMES as HOOK_NAMES;
 pub mod ide;
+mod iface_overloads;
 mod iface_writes;
 mod index_signatures;
 mod infer;
 mod inst_sites;
 mod instantiation_cycles;
 mod interface_merge;
+mod intersection_class_parts;
 mod intersection_members;
 mod intersection_records;
 mod intersections;
+mod intrinsic_decls;
 mod js_api;
 mod json;
 mod kept_consts;
@@ -88,7 +97,10 @@ mod module_state;
 mod moves;
 mod namespaces;
 mod nested_closures;
+mod object_assigns;
+mod object_call_on;
 mod object_copies;
+mod object_ifaces;
 mod overload_adapter;
 mod overloads;
 mod ownership;
@@ -100,10 +112,13 @@ mod recursive_aliases;
 mod recursive_unions;
 mod replaced_holders;
 mod resolve;
+mod script_locals;
 mod script_tdz;
+mod source_module;
 mod suggest;
 mod symbols;
 mod synth_ifaces;
+mod thread_locals;
 mod throws;
 mod timings;
 mod ts_protocol;
@@ -123,49 +138,16 @@ mod void_fields;
 mod weak_threads;
 mod written_types;
 
-use velt_common::{Diagnostic, Diagnostics, FileId, Span};
-use velt_syntax::ast;
+use velt_common::{Diagnostic, Diagnostics, Span};
 
 use crate::ctx::Item;
 use crate::defs::{DefInfo, FnKind};
 
 pub use check_work::{check_work, CheckWork};
 pub use dispatch::{instantiation_work, InstantiationWork};
-
-/// `e`, an expression checked outside any function body (a class field's initializer, run by
-/// a constructor or a `new`), with its own temporaries (a `Record` literal's, ...) renumbered
-/// from `base` on, so that they don't name the locals of the body it is lowered in (those are
-/// below `base`); and how many there are. `None`: `e` declares no local.
-pub fn rebase_detached_locals(e: &hir::Expr, base: u32) -> Option<(hir::Expr, u32)> {
-    let mut e = e.clone();
-    let n = visit::detached_locals(&mut e).len() as u32;
-    if n == 0 {
-        return None;
-    }
-    let map: Vec<hir::LocalId> = (0..n).map(|i| hir::LocalId(base + i)).collect();
-    visit::remap_expr_locals(&mut e, &map);
-    Some((e, n))
-}
-
-/// One parsed module handed to sema by the driver.
-pub struct SourceModule {
-    /// Canonical module path: `"main"` for the root file, `"std/fs"`, `"./util"` resolved to a
-    /// root-relative path like `"util"`, package modules as `"pkgname"` / `"pkgname/sub"`.
-    pub path: String,
-    /// Loaded from the standard library root (the loader's `Origin::Std`). Only std modules may
-    /// use compiler intrinsics and the private members of std types; never derived from `path`,
-    /// which user files must not be able to imitate.
-    pub is_std: bool,
-    pub file: FileId,
-    pub ast: ast::Module,
-    /// For each `import ... from "<spec>"` in this module: spec string → canonical path of the
-    /// module it resolved to (the driver already loaded it into `modules`).
-    pub imports: Vec<(String, String)>,
-    /// Canonical path of the JSX runtime (`<jsxImportSource>/jsx-runtime`, see
-    /// docs/internals/contracts/jsx.md) the driver loaded because this module contains JSX; `None` when it
-    /// has none. Sema binds it as the namespace `JSX` and lowers JSX to calls of its exports.
-    pub jsx_runtime: Option<String>,
-}
+pub use generating::{check_generating, Checked};
+pub use source_module::SourceModule;
+pub use visit::rebase_detached_locals;
 
 /// Stack for the checking thread: the passes recurse over the AST/HIR (bounded by the parser's
 /// nesting limit), which can exceed the 1 MB main-thread stack on Windows.
@@ -200,11 +182,17 @@ pub struct CheckOptions {
     /// `main` is a library module: every body is still checked and the program's `entry` is
     /// `None`; a `main` that is there is validated either way.
     pub require_main: bool,
+    /// Check every definition of std, also those the program never reaches (`velt check
+    /// --std`); otherwise std's bodies are checked as the program reaches them (lazy std).
+    pub eager_std: bool,
 }
 
 impl Default for CheckOptions {
     fn default() -> Self {
-        Self { require_main: true }
+        Self {
+            require_main: true,
+            eager_std: false,
+        }
     }
 }
 
@@ -214,20 +202,10 @@ pub fn check_with(
     root: usize,
     opts: CheckOptions,
 ) -> (Option<hir::Program>, Diagnostics) {
-    std::thread::scope(|s| {
-        let spawned = std::thread::Builder::new()
-            .name("velt-sema".into())
-            .stack_size(SEMA_STACK_BYTES)
-            .spawn_scoped(s, || {
-                check_on_current_thread(modules, root, opts, &[], SEMA_STACK_BUDGET)
-            });
-        match spawned {
-            Ok(handle) => handle
-                .join()
-                .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
-            Err(_) => check_on_current_thread(modules, root, opts, &[], FALLBACK_STACK_BUDGET),
-        }
-    })
+    let (out, diags) = generating::on_sema_thread(|budget| {
+        check_on_current_thread(modules, root, opts, &[], None, budget)
+    });
+    generating::program_or_demand_error(out, diags)
 }
 
 /// [`check_with`] of modules some of which the parser had to recover (`recovered`: their
@@ -242,21 +220,8 @@ pub fn check_recovered(
     opts: CheckOptions,
     recovered: &[(usize, &str)],
 ) -> Diagnostics {
-    std::thread::scope(|s| {
-        let spawned = std::thread::Builder::new()
-            .name("velt-sema".into())
-            .stack_size(SEMA_STACK_BYTES)
-            .spawn_scoped(s, || {
-                check_on_current_thread(modules, root, opts, recovered, SEMA_STACK_BUDGET).1
-            });
-        match spawned {
-            Ok(handle) => handle
-                .join()
-                .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
-            Err(_) => {
-                check_on_current_thread(modules, root, opts, recovered, FALLBACK_STACK_BUDGET).1
-            }
-        }
+    generating::on_sema_thread(|budget| {
+        check_on_current_thread(modules, root, opts, recovered, None, budget).1
     })
 }
 
@@ -265,11 +230,14 @@ fn check_on_current_thread(
     root: usize,
     opts: CheckOptions,
     recovered: &[(usize, &str)],
+    gen: Option<generated::GenArgs>,
     stack_budget: usize,
-) -> (Option<hir::Program>, Diagnostics) {
+) -> (Option<Checked>, Diagnostics) {
     timings::start();
     let out = timings::pass("check", || {
-        check_timed(modules, root, opts, recovered, stack_budget)
+        script_locals::check(modules, root, |m| {
+            check_timed(m, root, opts, recovered, gen, stack_budget)
+        })
     });
     timings::finish();
     out
@@ -281,8 +249,11 @@ fn check_timed(
     root: usize,
     opts: CheckOptions,
     recovered: &[(usize, &str)],
+    gen: Option<generated::GenArgs>,
     stack_budget: usize,
-) -> (Option<hir::Program>, Diagnostics) {
+) -> script_locals::Checked {
+    // Outlives every `Ctx` below, with the modules the driver generates during the check.
+    let generator = gen.and_then(|g| g.generate).map(generated::Generator::new);
     let rewrite_start = std::time::Instant::now();
     let chunks = module_chunks::split(modules, root);
     let modules = chunks.modules.as_deref().unwrap_or(modules);
@@ -315,7 +286,7 @@ fn check_timed(
     let modules = closures.as_ref().map_or(modules, |c| &c.modules[..]);
     let Some(root_mod) = modules.get(root) else {
         let d = Diagnostic::error("no root module to check", Span::DUMMY);
-        return (None, vec![d]);
+        return ((None, vec![d]), Default::default());
     };
     timings::record("source rewrites", rewrite_start.elapsed());
     let null_proto = modules
@@ -324,12 +295,19 @@ fn check_timed(
     let ctor_reads = modules
         .iter()
         .any(|m| !m.is_std && reads_constructor(&m.ast));
+    let record_accessors = modules
+        .iter()
+        .any(|m| !m.is_std && defined_accessors::defines_accessors(&m.ast));
     let new_cx = |round: &'static str,
                   held_borrows: bool,
                   seeds: &throws::FnTypeSeeds,
                   last: bool,
                   views: &union_views::Families| {
         let mut cx = ctx::Ctx::new(modules, root);
+        if opts.eager_std {
+            cx.lazy.on = false;
+        }
+        generating::install(&mut cx, gen, generator.as_ref());
         cx.union_views.assumed = views.clone();
         cx.fn_sites = throws::FnSites::new(seeds.clone(), last);
         cx.stack_budget = stack_budget;
@@ -346,6 +324,7 @@ fn check_timed(
             cx.overloaded_methods = o.methods.clone();
         }
         cx.objects.null_proto_records = null_proto;
+        cx.objects.record_accessors = record_accessors;
         cx.objects.ctor_reads = ctor_reads;
         cx.objects.brands = brands.clone();
         cx.global_props = global_props.clone();
@@ -418,11 +397,28 @@ fn check_timed(
     union_views::finish(&mut cx);
     cx.upcast_writes();
     if !recovered.is_empty() || cx.diags.iter().any(|d| d.is_error()) {
-        return (None, cx.diags);
+        let refused = script_locals::refused(&cx, root);
+        return ((None, cx.diags), refused);
     }
-    finalize::build_defs(&mut cx);
+    if let Some(out) = generating::stopped(generator.as_ref()) {
+        return ((out, cx.diags), Default::default());
+    }
+    let mut generated =
+        match timings::pass("generated::instances", || generated::instances(&mut cx)) {
+            Ok(bound) => bound,
+            Err(demand) => {
+                return (
+                    (Some(Checked::Demand(demand)), cx.diags),
+                    Default::default(),
+                )
+            }
+        };
+    if cx.diags.iter().any(|d| d.is_error()) {
+        return ((None, cx.diags), Default::default());
+    }
+    let unchecked = finalize::build_defs(&mut cx);
     layout_merge::merge(&mut cx);
-    let type_names = readonly::erase(&mut cx);
+    let type_names = readonly::erase(&mut cx, &mut generated);
     let module_state = module_state::build(&mut cx, entry);
     let type_ops = type_level::lowered_ops(&mut cx);
     let anon_shapes = anon::concrete_shapes(&cx);
@@ -444,15 +440,16 @@ fn check_timed(
         cpu_targets,
         generic_called,
         generic_fns,
+        lock_free_callbacks,
+        fn_views,
         ..
     } = cx;
-    let defs = defs
-        .into_iter()
-        .map(|d| d.expect("ICE: definition left unfilled without an error"))
-        .collect();
+    let any_fn_views = fn_views.into_program();
     let program = hir::Program {
         types: ty.table,
-        defs,
+        defs: (defs.into_iter())
+            .map(|d| d.expect("ICE: definition left unfilled without an error"))
+            .collect(),
         entry,
         impls,
         // The HIR contract keeps std maps; the checker builds Fx maps.
@@ -478,8 +475,15 @@ fn check_timed(
         fresh_closures: generic_fns.fresh.into_iter().collect(),
         extension_impls: extension_impls.into_iter().collect(),
         dyn_bounds: dyn_bounds.into_iter().collect(),
+        lock_free_callbacks: lock_free_callbacks.into_iter().collect(),
+        unchecked: unchecked.into_iter().collect(),
+        any_fn_views,
+        generated: generated.into_iter().collect(),
     };
-    (Some(program), diags)
+    (
+        (Some(Checked::Program(Box::new(program))), diags),
+        Default::default(),
+    )
 }
 
 /// How many times at most a program is checked again for the error types of function types
@@ -533,10 +537,11 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
         body::expr::virtual_defaults::build_fill_bodies(cx)
     });
     timings::pass("body::check_bodies", || body::check_bodies(cx));
+    timings::pass("generated::phase", || generated::phase::run(cx));
     timings::pass("global_this::check_sites", || global_this::check_sites(cx));
     timings::pass("module_scripts::declare", || module_scripts::declare(cx));
-    timings::pass("make_dynamic_iface_adapters", || {
-        body::expr::iface_adapt_dynamic::make_dynamic_iface_adapters(cx)
+    timings::pass("make_dynamic_impls", || {
+        body::expr::dynamic_fn_views::make_dynamic_impls(cx)
     });
     timings::pass("check_adapter_writes", || cx.check_adapter_writes());
     timings::pass("check_adapted_array_reads", || {
@@ -565,6 +570,7 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     });
     timings::pass("hooks::check_shapes", || hooks::check_shapes(cx));
     let before = error_count(cx);
+    generated::bind::fix_modes(cx);
     timings::pass("ownership_passes", || ownership_passes(cx));
     if cx.fn_sites.again() {
         return;
@@ -619,6 +625,7 @@ fn ownership_passes(cx: &mut ctx::Ctx) {
         ownership::clone_reused(cx, &moved.reused)
     });
     timings::pass("atomic_copies::check", || atomic_copies::check(cx));
+    timings::pass("thread_locals::check", || thread_locals::check(cx));
     timings::pass("ownership::box_cells", || {
         ownership::box_cells(cx, &moved.boxed, &moved.per_iteration)
     });
@@ -774,7 +781,7 @@ fn calls_object_create_null(module: &velt_syntax::ast::Module) -> bool {
 }
 
 /// Does `module` read a `constructor` property (`x.constructor`)? Only then does the prelude's
-/// `__anyConstructor` hold the dispatch over the program's classes, whose objects are module
+/// `anyConstructor` hold the dispatch over the program's classes, whose objects are module
 /// state (`body::expr::ctor_objects`); other programs get none of it.
 fn reads_constructor(module: &velt_syntax::ast::Module) -> bool {
     use velt_syntax::ast::{self, ExprKind as E};

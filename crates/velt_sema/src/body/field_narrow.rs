@@ -58,6 +58,9 @@ impl FnCx<'_, '_> {
         if self.f.field_tokens.is_empty() {
             return h;
         }
+        if self.cx.dynamic(h.ty).is_some() {
+            return self.narrowed_dynamic_field(object, prop, h, want);
+        }
         let payload = self.present_payload(h.ty);
         let union = self.cx.union_members(payload.unwrap_or(h.ty));
         if payload.is_none() && union.is_none() {
@@ -163,8 +166,22 @@ impl FnCx<'_, '_> {
             inner = x;
         }
         let outer = self.field_test.replace(inner.span);
+        let test =
+            super::expr::is_cast_member(inner).then_some((inner.span, super::expr::CastTest::AsIs));
+        let cast = std::mem::replace(&mut self.cast_member_test, test);
         let h = self.expr(e, None, Want::Borrow);
-        self.field_test = outer;
+        (self.field_test, self.cast_member_test) = (outer, cast);
+        if test.is_some() && super::places::is_place(&h) {
+            // A field read of a checked assertion (`(u as M).f` that reads no member's own
+            // property): not a place whose type answers the test, so the check runs.
+            let (ty, span) = (h.ty, h.span);
+            let block = crate::hir::Block {
+                stmts: vec![],
+                value: Some(Box::new(h)),
+                span,
+            };
+            return self.mk(crate::hir::ExprKind::Block(block), ty, span);
+        }
         h
     }
 
@@ -256,6 +273,29 @@ impl FnCx<'_, '_> {
             true => "`instanceof` does not narrow a field of a module variable: a call between the test and this read may assign the variable; copy the field into a local and test the local",
             false => "`instanceof` does not narrow this field: it is not `readonly`, so it could change between the test and this read; copy it into a local and test the local",
         })
+    }
+
+    /// `h`, the value of `object.prop` of type `any` or `unknown`, as the type a test narrowed
+    /// the path to (`typeof x.f === "string"`, a type predicate), converted from the value
+    /// held, as a narrowed variable is (`downcast_narrowed`).
+    fn narrowed_dynamic_field(
+        &mut self,
+        object: &ast::Expr,
+        prop: &ast::Ident,
+        h: hir::Expr,
+        want: Want,
+    ) -> hir::Expr {
+        let raw = Some(h.span);
+        if want == Want::BorrowMut || self.raw_read == raw || self.dynamic_raw == raw {
+            return h;
+        }
+        let Some((root, path)) = self.member_path(object, prop, false) else {
+            return h;
+        };
+        match self.find_token(root, &path) {
+            Some(t) if self.narrowed_class(t).is_some() => self.downcast_narrowed(t, h),
+            _ => h,
+        }
     }
 
     /// The token and the type (as narrowed so far) of `e` when it is a path of `readonly` class

@@ -1,8 +1,8 @@
 //! String methods called with a regex: `s.replace(/a/g, "b")`, `s.replace(re, (m, p1) => …)`,
 //! `match`, `matchAll`, `search`, `split` and `replaceAll`. Velt has no overloads, so a call
-//! whose first argument is std's `RegExp` goes to the method of std/regex's `extend string`
-//! block named after it (`__replaceRegExp`, `__matchRegExp`, …); the string-argument methods
-//! stay as they are, at no cost.
+//! whose first argument is std's `RegExp` goes to the hook named after it, which takes the string
+//! first (`replaceRegExp(s, re, r)`, `matchRegExp(s, re)`, …: std/text/regex/string_methods.vlt);
+//! the string-argument methods stay as they are, at no cost.
 //!
 //! A replacer function gets JavaScript's arguments: the match, the groups, the match's offset
 //! and the subject. std calls `(m: RegExpMatch, s: string) => string`, so the function is
@@ -35,13 +35,13 @@ const MATCH: &str = "<match>";
 const SUBJECT: &str = "<subject>";
 
 impl FnCx<'_, '_> {
-    /// `s.<prop>(re, …)` with a `RegExp` first argument: the std method to call instead, and its
-    /// arguments (a replacer function adapted). `None` for any other call.
+    /// `s.<prop>(re, …)` with a `RegExp` first argument: the hook to call instead (with `s`
+    /// first), and its other arguments (a replacer function adapted). `None` for any other call.
     pub(super) fn regex_string_call(
         &mut self,
         prop: &ast::Ident,
         args: &[ast::Expr],
-    ) -> Option<(ast::Ident, Vec<ast::Expr>)> {
+    ) -> Option<(&'static str, Vec<ast::Expr>)> {
         if !METHODS.contains(&prop.name.as_str()) {
             return None;
         }
@@ -62,20 +62,27 @@ impl FnCx<'_, '_> {
                 .with_note("JavaScript throws a TypeError for a regex without it: add `g`"),
             );
         }
-        let mut name = format!("__{}RegExp", prop.name);
         let mut out = args.to_vec();
+        let mut calling = false;
         if let (true, Some(f)) = (prop.name.starts_with("replace"), args.get(1)) {
             let groups = shape.map(|(n, _)| n);
             if let Some(adapter) = self.replacer_adapter(f, groups, &args[0]) {
                 out[1] = adapter;
-                name.push_str("Calling");
+                calling = true;
             }
         }
-        let ident = ast::Ident {
-            name,
-            span: prop.span,
+        use velt_common::std_hook as h;
+        let hook = match (prop.name.as_str(), calling) {
+            ("replace", false) => h!(replace_reg_exp),
+            ("replace", true) => h!(replace_reg_exp_calling),
+            ("replaceAll", false) => h!(replace_all_reg_exp),
+            ("replaceAll", true) => h!(replace_all_reg_exp_calling),
+            ("match", _) => h!(match_reg_exp),
+            ("matchAll", _) => h!(match_all_reg_exp),
+            ("search", _) => h!(search_reg_exp),
+            _ => h!(split_reg_exp),
         };
-        Some((ident, out))
+        Some((hook, out))
     }
 
     /// Is `e` a `RegExp`: `new RegExp(…)` (a regex literal is one) or a variable or field path
@@ -90,7 +97,9 @@ impl FnCx<'_, '_> {
             }
             _ => self.peek_ty(e),
         };
-        ty.is_some_and(|t| self.is_std_class(t, "std/regex::RegExp"))
+        ty.is_some_and(|t| {
+            self.is_std_class(t, velt_common::std_item!(text_regex_regexp, "RegExp"))
+        })
     }
 
     /// Is `t` the std class with the qualified name `qual`?
@@ -181,7 +190,7 @@ impl FnCx<'_, '_> {
         init: &ast::Expr,
         ty: TyId,
     ) -> Option<(usize, String)> {
-        if !self.is_std_class(ty, "std/regex::RegExp") {
+        if !self.is_std_class(ty, velt_common::std_item!(text_regex_regexp, "RegExp")) {
             return None;
         }
         self.regex_shape(init)
@@ -391,7 +400,11 @@ impl FnCx<'_, '_> {
                     span,
                 ),
                 None => {
-                    let method = if optional { "group" } else { "__index" };
+                    let method = if optional {
+                        "group"
+                    } else {
+                        velt_common::std_key!(index)
+                    };
                     call_method(m(), method, vec![index()], span)
                 }
             },

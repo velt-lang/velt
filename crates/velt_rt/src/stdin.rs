@@ -56,6 +56,9 @@ impl Input {
         self.start = 0;
         let len = self.buf.len();
         self.buf.resize(len + CHUNK, 0);
+        // A prompt written before the read is on the screen while the program waits (Node
+        // flushes stdout before it blocks on input too).
+        crate::io::flush_stdout();
         let read = loop {
             match std::io::stdin().lock().read(&mut self.buf[len..]) {
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
@@ -98,6 +101,7 @@ impl Input {
         rest.drain(..self.start);
         self.start = 0;
         if !self.eof {
+            crate::io::flush_stdout();
             if let Err(e) = std::io::stdin().lock().read_to_end(&mut rest) {
                 self.buf = rest;
                 return Err(e);

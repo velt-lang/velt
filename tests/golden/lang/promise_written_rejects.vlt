@@ -1,0 +1,138 @@
+// A `Promise<T>` written without an error type takes the rejections of the promises stored
+// into it, as TypeScript lets it (sigx: runtime-core lazy.tsx, async/cell.ts, server-renderer
+// render-core.ts, render-api.ts, ssr.ts).
+
+class LoadError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "LoadError";
+  }
+}
+
+async function fetchText(name: string): Promise<string> {
+  if (name.startsWith("bad")) {
+    throw new LoadError(`cannot load ${name}`);
+  }
+  return `<${name}>`;
+}
+
+async function step(n: number): Promise<void> {
+  if (n > 1) {
+    throw new RangeError(`step ${n} failed`);
+  }
+}
+
+// A function that is not `async`, declared `: Promise<T>`, returning a promise that rejects.
+function render(name: string): Promise<string> {
+  return fetchText(name);
+}
+
+function refresh(skip: boolean): Promise<void> {
+  if (skip) {
+    return Promise.resolve();
+  }
+  return step(2);
+}
+
+// A `let` of `Promise<T> | null` assigned in a nested function, then returned.
+function lazy(name: string): () => Promise<string> {
+  let pending: Promise<string> | null = null;
+  function ensure(): Promise<string> {
+    if (!pending) {
+      pending = fetchText(name).then(
+        (s) => s.toUpperCase(),
+        (err) => {
+          throw err instanceof Error ? err : new Error(String(err));
+        },
+      );
+    }
+    return pending;
+  }
+  return ensure;
+}
+
+// Pushed to a `Promise<void>[]`, then stored into an interface field of that type.
+interface RenderCtx {
+  loads: Promise<void>[];
+}
+
+function startLoads(fail: boolean): RenderCtx {
+  const loads: Promise<void>[] = [];
+  loads.push(step(1));
+  loads.push(step(fail ? 3 : 0));
+  loads.push(
+    (async () => {
+      if (fail) {
+        throw new LoadError("late chunk");
+      }
+    })(),
+  );
+  return { loads };
+}
+
+// A `Map` value and a `Promise<unknown>` parameter.
+function collect(p: Promise<unknown>, out: Promise<unknown>[]): void {
+  out.push(p);
+}
+
+async function main() {
+  console.log(await render("home"));
+  try {
+    await render("bad-page");
+  } catch (e) {
+    console.log("render:", (e as Error).name, (e as Error).message);
+  }
+  await refresh(true);
+  try {
+    await refresh(false);
+  } catch (e) {
+    console.log("refresh:", (e as Error).message);
+  }
+
+  const ok = lazy("chart");
+  console.log(await ok(), await ok());
+  const broken = lazy("bad-chart");
+  for (let i = 0; i < 2; i++) {
+    try {
+      await broken();
+    } catch (e) {
+      console.log("lazy:", (e as Error).message);
+    }
+  }
+
+  for (const fail of [false, true]) {
+    const ctx = startLoads(fail);
+    let n = 0;
+    for (const p of ctx.loads) {
+      try {
+        await p;
+        n++;
+      } catch (e) {
+        console.log("load:", (e as Error).name, (e as Error).message);
+      }
+    }
+    console.log("loaded", n, "of", ctx.loads.length);
+  }
+
+  const byIndex = new Map<number, Promise<string>>();
+  byIndex.set(0, render("a"));
+  byIndex.set(1, render("bad-b"));
+  for (const [i, p] of byIndex) {
+    try {
+      console.log(i, await p);
+    } catch (e) {
+      console.log(i, "failed:", (e as Error).message);
+    }
+  }
+
+  const seen: Promise<unknown>[] = [];
+  const doomed = fetchText("bad-x");
+  collect(doomed, seen);
+  try {
+    await seen[0];
+  } catch (e) {
+    console.log("collected:", (e as Error).message);
+  }
+}
+
+main();

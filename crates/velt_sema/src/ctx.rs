@@ -30,8 +30,10 @@ pub(crate) struct ModuleScope {
     pub type_only: FxHashSet<String>,
     /// Of those, the names their module exports only as types (`export type { x }`).
     pub via_export_type: FxHashSet<String>,
-    /// `std/...` module: may call `__intrinsic_*`.
+    /// `std/...` module: may import `velt/lang` (the intrinsics among it) and use std types' private members.
     pub is_std: bool,
+    /// A library to the program: std or a package it depends on (`SourceModule::is_dependency`).
+    pub is_library: bool,
     /// Some name has a type key (`crate::type_meanings`).
     pub type_keys: bool,
 }
@@ -41,8 +43,11 @@ pub(crate) struct ModuleScope {
 pub(crate) type ClassesBelow = std::rc::Rc<[(DefId, DefId)]>;
 
 pub(crate) struct Ctx<'m> {
-    pub modules: &'m [SourceModule],
+    /// The program's modules, then the generated ones added during the check (`add_module`).
+    pub modules: Vec<&'m SourceModule>,
     pub root: usize,
+    /// Generated functions' code and its binding in this check (`crate::generated::Gen`).
+    pub gen: crate::generated::Gen<'m>,
     pub ty: Types,
     /// Final HIR definitions, indexed by `DefId` (filled at the end).
     pub defs: Vec<Option<Def>>,
@@ -89,8 +94,7 @@ pub(crate) struct Ctx<'m> {
     /// (collect/ext_impls.rs). Their bounds must hold for an impl to fit a type, and among the
     /// fitting ones the most specific wins (`Ctx::find_impl`).
     pub ext_impls: FxHashMap<u32, usize>,
-    /// `ext_impls` by interface, in order.
-    pub ext_by_iface: FxHashMap<DefId, Vec<u32>>,
+    pub ext_by_iface: FxHashMap<DefId, Vec<u32>>, // `ext_impls` by interface, in order
     /// Finished `extend` lookups (infer/ext_impls.rs) and bound checks through blocks
     /// (infer/ext_exists.rs), valid while `impls` has `ext_memo_impls` entries.
     pub ext_memo: FxHashMap<(TyId, DefId), Option<crate::infer::FoundImpl>>,
@@ -127,8 +131,7 @@ pub(crate) struct Ctx<'m> {
     pub record_views: FxHashMap<DefId, TyId>,
     /// Field-only interface → its object type's def (`collect::field_only`).
     pub field_only: FxHashMap<DefId, DefId>,
-    /// The reverse of `field_only`.
-    pub field_only_of: FxHashMap<DefId, DefId>,
+    pub field_only_of: FxHashMap<DefId, DefId>, // the reverse of `field_only`
     /// Every declared type's fields are resolved (`collect::shapes`); before that, a utility
     /// type (`crate::utility_types`) may only read the fields of types already shaped.
     pub shapes_done: bool,
@@ -164,36 +167,43 @@ pub(crate) struct Ctx<'m> {
     /// Object types `crate::replaced_holders` accepted assignments for because they are shared:
     /// lowering counts them from its first pass (`hir::Program::counted_objects`).
     pub counted_objects: Vec<TyId>,
-    /// Concrete union defs readonly erasure replaced (`crate::union_layouts::Plan::replaced`).
-    pub replaced_unions: FxHashSet<DefId>,
+    pub replaced_unions: FxHashSet<DefId>, // union defs readonly erasure replaced (union_layouts)
     pub module_slots: Vec<DefId>, // module state, in initialization order (module_state.rs)
+    pub lock_free_callbacks: FxHashSet<DefId>, // locked_props.rs
     pub module_scripts: Vec<DefId>, // imported modules' top-level statements (module_scripts.rs)
     pub promoted_consts: FxHashSet<Span>, // `const`s kept in module state (module_chunks.rs)
-    /// The properties of `globalThis` the program uses (`crate::global_this`).
-    pub global_props: crate::global_this::GlobalProps,
-    /// Module constants found to depend on themselves so far (`body::driver::ensure_global`).
-    pub global_cycles: u32,
+    pub state_refused: Vec<DefId>, // module-level variables that can't be state (script_locals.rs)
+    pub lazy: crate::body::lazy_std::Lazy, // std definitions checked on demand (lazy_std.rs)
+    pub global_props: crate::global_this::GlobalProps, // `globalThis`'s, used (global_this.rs)
+    pub global_cycles: u32,       // constants found to depend on themselves (driver::ensure_global)
     /// How many function values (arrows, function expressions, literal methods) are being
     /// checked inside the module constant being checked: a read of the constant there runs
     /// later, once it is initialized (`body::driver::ensure_global`).
     pub fn_value_depth: u32,
+    /// The receivers of `ThreadLocal` `get`/`set` calls, checked once every module constant is
+    /// (`crate::thread_locals`): the constant's `DefId` when the receiver is one, and the span.
+    pub thread_local_uses: Vec<(Option<DefId>, velt_common::Span)>,
     /// Module constants whose initializer is being checked on trial for its type, while it
     /// reads the constant inside a function value (`body::driver::ensure_global`).
     pub typing_globals: Vec<DefId>,
-    /// Union enums by canonical member list (`crate::unions`).
-    pub unions: FxHashMap<Vec<TyId>, DefId>,
+    pub unions: FxHashMap<Vec<TyId>, DefId>, // union enums by canonical member list (unions.rs)
     pub recursive_unions: FxHashMap<u32, Option<TyId>>, // by alias (crate::recursive_unions)
     /// Generic recursive union aliases (`crate::recursive_unions`): whether alias `a` is one,
     /// and its union at each list of arguments.
     pub generic_recursive: FxHashMap<u32, bool>,
     pub recursive_union_insts: FxHashMap<(u32, Vec<TyId>), TyId>,
-    /// Names of type aliases for structural types (`type Shape = A | B`), for messages.
-    pub alias_names: FxHashMap<TyId, String>,
+    pub alias_names: FxHashMap<TyId, String>, // structural type aliases' names, for messages
     /// (class, method key) of every `override` of a generic method (no vtable slot).
     pub generic_overrides: Vec<(DefId, String)>,
     /// The throwing setters a getter-only override gets (`collect::classes`): a write through
     /// the class itself is a type error, as in TypeScript, one through a base class throws.
     pub getter_only_setters: FxHashSet<DefId>,
+    /// The static methods of `extend` blocks of primitive types, with the type's name and the
+    /// type, made on first use (`body::expr::primitive_statics`): what `this` is in their bodies.
+    pub(crate) primitive_statics: Option<FxHashMap<DefId, (&'static str, TyId)>>,
+    /// The abstract methods of abstract classes (`collect::abstracts`): never run, never called
+    /// through `super`.
+    pub abstract_methods: FxHashSet<DefId>,
     /// Setters of object literals' own interfaces that `Object.defineProperty` gives a
     /// getter-only property (`crate::defined_accessors`), by interface and method name: a
     /// write through the literal's own type is rejected, as TypeScript does (TS2540).
@@ -260,6 +270,7 @@ pub(crate) struct Ctx<'m> {
     >,
     /// Checked conversions of dynamic values to generic interfaces (`iface_adapt_dynamic`).
     pub(crate) dyn_iface_targets: Vec<crate::body::expr::iface_adapt_dynamic::DynIfaceTarget>,
+    pub(crate) fn_views: crate::body::expr::dynamic_fn_views::FnViews, // dynamic_fn_views.rs
     /// Error types committed to while checking bodies, re-checked after inference.
     pub throw_checks: Vec<crate::throws::ThrowCheck>,
     /// Function types written without `throws` and what is stored into them (`throws::fn_types`).
@@ -328,12 +339,6 @@ pub(crate) struct Ctx<'m> {
     /// Captured variables reported as modified by a closure that crosses threads, with the
     /// closure's span: the move analysis doesn't report the follow-on "use of moved value".
     pub reported_captures: Vec<(String, velt_common::Span)>,
-    /// Spans of the sync arrows passed to `serve` that are checked as async ones
-    /// (`body/expr/callback.rs` `thread_arrow`): diagnostics call them handlers, as written.
-    pub sync_handlers: Vec<velt_common::Span>,
-    /// The async adapters calling a function value passed to `serve` as its handler
-    /// (`body/expr/callback.rs`): the sync closures flowing into them are handlers.
-    pub thread_adapters: Vec<DefId>,
     /// Side tables for [`crate::ide`] (`None` when compiling).
     pub ide: Option<Box<crate::ide::record::Recorder>>,
     /// Memoized `Ctx::is_shared_value` answers (asked for every local of every body).
@@ -398,6 +403,8 @@ pub(crate) struct Ctx<'m> {
     /// (`None`: all of it), and each module the prelude's globals re-export from, with the
     /// names re-exported from it (`Some`).
     pub js_api_modules: std::cell::OnceCell<FxHashMap<usize, Option<FxHashSet<String>>>>,
+    /// Where the native libraries' modules are (`json::handles`): computed when first asked.
+    pub native_libraries: std::cell::OnceCell<crate::json::handles::NativeLibraries>,
     /// Integer types decided for locals declared from literals, by function and declaration
     /// span (`body::literal_locals`).
     pub literal_types: FxHashMap<DefId, FxHashMap<Span, TyId>>,
@@ -420,8 +427,9 @@ pub(crate) struct Ctx<'m> {
 impl<'m> Ctx<'m> {
     pub fn new(modules: &'m [SourceModule], root: usize) -> Self {
         Ctx {
-            modules,
+            modules: modules.iter().collect(),
             root,
+            gen: Default::default(),
             export_memo: Default::default(),
             import_targets: crate::collect::exports::import_targets(modules),
             ty: Types::new(),
@@ -432,6 +440,7 @@ impl<'m> Ctx<'m> {
                 .iter()
                 .map(|m| ModuleScope {
                     is_std: m.is_std,
+                    is_library: m.is_std || m.is_dependency,
                     ..Default::default()
                 })
                 .collect(),
@@ -486,11 +495,15 @@ impl<'m> Ctx<'m> {
             counted_objects: Vec::new(),
             replaced_unions: FxHashSet::default(),
             module_slots: Vec::new(),
+            lock_free_callbacks: FxHashSet::default(),
             module_scripts: Vec::new(),
             promoted_consts: FxHashSet::default(),
+            state_refused: Vec::new(),
+            lazy: crate::body::lazy_std::Lazy::new(),
             global_props: Default::default(),
             global_cycles: 0,
             fn_value_depth: 0,
+            thread_local_uses: Vec::new(),
             typing_globals: Vec::new(),
             unions: FxHashMap::default(),
             recursive_unions: FxHashMap::default(),
@@ -499,6 +512,8 @@ impl<'m> Ctx<'m> {
             alias_names: FxHashMap::default(),
             generic_overrides: vec![],
             getter_only_setters: FxHashSet::default(),
+            primitive_statics: None,
+            abstract_methods: FxHashSet::default(),
             defined_setters: FxHashSet::default(),
             display_params: vec![],
             defaults_checked: FxHashSet::default(),
@@ -523,6 +538,7 @@ impl<'m> Ctx<'m> {
             literal_display: Default::default(),
             iface_adapters: FxHashMap::default(),
             dyn_iface_targets: vec![],
+            fn_views: Default::default(),
             throw_checks: vec![],
             fn_sites: Default::default(),
             collected_defs: 0,
@@ -552,8 +568,6 @@ impl<'m> Ctx<'m> {
             jsx_providers: FxHashMap::default(),
             callback_wrappers: Default::default(),
             reported_captures: vec![],
-            sync_handlers: vec![],
-            thread_adapters: vec![],
             ide: None,
             recovered: FxHashMap::default(),
             poisoned: FxHashSet::default(),
@@ -584,6 +598,7 @@ impl<'m> Ctx<'m> {
             rechecks: vec![],
             closure_defs: vec![],
             js_api_modules: std::cell::OnceCell::new(),
+            native_libraries: std::cell::OnceCell::new(),
             literal_types: FxHashMap::default(),
             literal_found: FxHashMap::default(),
         }
@@ -598,7 +613,7 @@ impl<'m> Ctx<'m> {
     }
 
     /// `msg` for a name `name` that nothing declares: with a note naming the import when it is
-    /// one of the SIMD types, which are not global (`velt:simd`).
+    /// one of the SIMD types, which are not global (`velt/simd`).
     pub fn not_found(&mut self, msg: String, name: &str, span: Span) {
         if !self.poisoned.is_empty() && self.poisoned.contains(&(span.file, name.to_string())) {
             return;
@@ -606,7 +621,7 @@ impl<'m> Ctx<'m> {
         let mut d = Diagnostic::error(msg, span);
         if crate::hir::SimdTy::named(name).is_some() {
             d = d.with_note(format!(
-                "import it: `import {{ {name} }} from \"velt:simd\";`"
+                "import it: `import {{ {name} }} from \"velt/simd\";`"
             ));
         }
         self.diags.push(d);
@@ -729,7 +744,7 @@ impl<'m> Ctx<'m> {
     pub fn lookup_item(&self, module: usize, name: &str) -> Option<Item> {
         let own = self.scopes[module].items.get(name).copied();
         let Some(it) = own else {
-            return self.prelude.get(name).copied();
+            return self.prelude_or_hook(name);
         };
         match self.meaning(it) {
             crate::type_meanings::Meaning::Type => self.global_value(name).unwrap_or(own),

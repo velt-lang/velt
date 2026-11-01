@@ -14,10 +14,12 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
       ─▶ object file ─▶ velt_link (bundled lld or system linker) + velt_rt (runtime static library)
 ```
 
-1. **Load**: the driver (`veltc`) reads the root file, follows imports (relative, `velt:` std,
+1. **Load**: the driver (`veltc`) reads the root file, follows imports (relative, `velt/` std,
    `paths` aliases, package dependencies through `vpm`), and loads the prelude.
 2. **Parse** (`velt_syntax`): a hand-written lexer and Pratt parser with error recovery; one
-   `ast::Module` per file.
+   `ast::Module` per file. std's files are parsed once per compiler: the loader keeps their
+   modules in the build cache in a compact form (`velt_syntax::encode_module`,
+   `veltc/src/loader/std_ast.rs`), which decodes in about a third of a parse.
 3. **Check** (`velt_sema`): name resolution, type checking with literal and union types,
    narrowing, generics, ownership and mutation inference over the whole program, exclusive-access
    checks, thread-safety checks, typed `throws` inference, and JSON code generation checks. The
@@ -33,21 +35,47 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
 5. **Optimize** (`velt_opt`, release builds): inlining, constant folding, copy propagation,
    scalar replacement of aggregates, closure specialization, dead-code elimination, CFG
    simplification, Map probe reuse (a `get` and `set` of the same key probe once), module state
-   lookups once per function call, and `numrep`.
+   lookups once per function call, borrowed string copies, and `numrep`.
    The passes and their order are in `crates/velt_opt/src/lib.rs`: `dead_funcs` first, then
    `gated_clones` (a gated function's calls of callees that check its CPU extension go to clones
-   where the check is true), then up to three rounds of `inline`, `const_fields`, and per function `vtable_loads`,
-   `constfold`, `copyprop`, `addr_forward`, `heap_sroa`, `sroa`, `dce` and `simplify_cfg`; then
+   where the check is true), then up to three rounds of `inline` (bottom-up; a small member of
+   a cycle that does not call itself is inlined into the loops of callers outside its cycle
+   once, its calls back into the cycle staying calls, so a rarely taken recursion such as
+   `Cursor.int` ⇄ `Cursor.real` does not keep its entry out of the loops that call it),
+   `const_fields`, and per function `vtable_loads`,
+   `constfold`, `copyprop`, `addr_forward`, `heap_sroa`, `sroa`, `dce`, `thread_tags` (a jump
+   into the test of an inlined callee's `Result` tag that the jumping block just set goes where
+   the tag sends it) and `simplify_cfg`; then
    `module_state` (a function asks the runtime for the module state block once per call, not
-   at every access to a module-level `let`), `map_probe`, `numrep`, `divisions` and
+   at every access to a module-level `let`), `map_probe`, `borrowed_copies` (a string local that
+   only reads a copy of a string, such as `const src = this.src;`, holds the source's words
+   without a reference of its own when nothing can change the source while its text is read:
+   no `velt_rt_str_clone` / `velt_rt_str_drop` pair; before that, callees first, the same for
+   counted pointers: `const data = this.db.data;` keeps no count of its own, neither increment
+   nor release, when no call that may free a counted object runs while `data` is still used and
+   the reference never leaves the local), `numrep`, `divisions` and
    `dead_fills` once per function; then `noalias` and
-   `frame_slots`, each followed by a cleanup; `dead_funcs` again at the end. Five change how objects and numbers are
+   `frame_slots`, each followed by a cleanup; `invariant_reads` (a read through object and
+   array header pointers inside a loop nest that writes no memory, calls nothing and tests only
+   counters (a type test such as `instanceof` decides which class the read sees), such as a
+   typed array's buffer and its bytes' length, is made once in front of the outermost such
+   loop, each pointer tested for null first: LLVM cannot move such a chain out of an outer loop
+   when the inner loop may run no iteration, and then keeps the inner loop's bounds check);
+   `cold_calls` (a function's calls of one callee that never returns, a bounds check's report,
+   become one call, reached from every site; the panic text keeps each site's location, an
+   argument, but the merged call instruction carries the first site's debug location, so a
+   debugger or a backtrace shows that line for every merged check); `null_exits` (a call of a
+   function that returns at once when a pointer it is passed points at null, as every drop
+   glue does, tests that pointer first, so dropping a null field costs no call); and
+   `dead_funcs` again at the end. Five change how objects and numbers are
    represented or reached:
    - `heap_sroa` keeps a class instance that never escapes its function (after inlining) in
      locals instead of on the heap: no allocation, zero fill or free. Each name of the object
      gets its own copy; a write through one name is copied to the other names that hold the
      same object on every path and are read later (a variable and an inlined method's
      `this`). When another name may hold the object on some paths only, it stays on the heap.
+     Fields holding counted values qualify too: lowering drops and shares a pointer field
+     from a copy of it, never through the field's address.
    - `sroa` then splits those aggregate locals, and others whose address is never taken, into
      one local per field.
    - `numrep` stores a `number` (`f64`) as an `i32` or `i64` where its facts (interval, whole,
@@ -141,6 +169,8 @@ Decisions and their rationale, including what is still planned:
 - [TypeScript compatibility, round 1](design/ts-compat.md): JS numbers from the standard
   library, scripts, callback indexes, arrow defaults, rest parameters, `x!`, `??=`, destructuring
   defaults, `Date`.
+- [Standard library layout](design/std-layout.md): `velt/<area>` imports, one folder per module
+  with `index.vlt` as its API, the rules `precheck` enforces, and the scripted move (proposed).
 - [Hot reload](design/hot-reload.md): `velt dev`'s supervisor, JIT host and hot swap.
 - [Variables in the debugger](design/debug-variables.md): describing source variables in VIR,
   their DWARF in debug builds, and the LLDB formatters (#958).
@@ -172,6 +202,20 @@ Decisions and their rationale, including what is still planned:
 - [Weak references without a collector](design/weak-refs.md): the weak flag, the per-thread
   side table and the ephemeron rule under `WeakMap`, `WeakSet`, `WeakRef` and `weak T` (runtime
   prototype, issues #823 and #11).
+- [The JSON engine](design/json-engine.md): key matching, a SIMD scanner, a tape for
+  `JsonValue`, bytes and streams, and compile-time `@json.*` decorators borrowed from
+  System.Text.Json (proposed, issue #1655).
+- [Building strings fast](design/string-building.md): builder appends compiled inline, a Velt
+  `StringBuilder`, and byte views of strings (proposed, issue #1677).
+- [HTTP/2](design/http2.md): the HTTP/2 server written in Velt behind `serveHttp`: frames,
+  HPACK, streams and flow control on one task per connection, ALPN and h2c, limits against
+  rapid reset and its relatives, benchmarks against hyper.
+- [Source generators](design/source-generators.md): generic functions whose bodies a library's
+  generator, written in Velt, produces per type at compile time from a read-only type model;
+  std's JSON, equality, clone and inspect move onto it (proposed).
+- [Compiling std's Velt code once](design/std-object.md): a cached, optimized object of std's
+  non-generic functions that programs link, with a VIR fingerprint check per function
+  (proposed, issue #1728).
 
 ## Testing
 

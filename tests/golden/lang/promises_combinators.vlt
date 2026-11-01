@@ -3,7 +3,7 @@
 // first fulfilled value and throws `AggregateError` for an empty array. The losers of `race` and
 // `any` finish only when `main` lets them (after `main done`), one after the other, so the order
 // is the same however the machine schedules them.
-import { channel, Channel } from "velt:channel";
+import { channel, Channel } from "velt/sync";
 
 async function after(ms: i64, name: string): Promise<string> {
   await sleep(ms);

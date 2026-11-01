@@ -5,7 +5,7 @@
 // TypeScript's `jsx(C, { ... }, key)`. A key after a spread is evaluated in its place, as
 // `createElement(C, { ...o, key })`. The output is Node's for the same source.
 
-import { renderToStringSync } from "velt:jsx";
+import { renderToStringSync } from "velt/jsx";
 
 function Counter(props: { start: number; label: string }): JSX.Element {
   return (

@@ -30,7 +30,7 @@ use crate::body::{FnCx, Want};
 use crate::hir::{self, ExprKind as H};
 
 /// The standard arrays' `map` (std/prelude/array.vlt).
-const ARRAY_MAP: &str = "std/prelude/array::T[].map";
+const ARRAY_MAP: &str = velt_common::std_item!(prelude_array, "T[].map");
 
 /// The element of `e` = `xs.map((x) => <el>)` that a fold would make a string, if `e` has that
 /// shape.

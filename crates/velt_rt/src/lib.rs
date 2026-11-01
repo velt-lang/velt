@@ -19,15 +19,18 @@ pub mod bytes_ops;
 pub mod cell_owner;
 pub mod child;
 pub mod cpu;
+pub mod db_handles;
 pub mod db_json;
 pub mod db_params;
 pub mod db_rows;
 #[cfg(all(debug_assertions, not(velt_rt_host)))]
 pub mod debug_alloc;
+pub mod deep_eq;
 pub mod dev;
 pub mod drop_depth;
 pub mod entry;
 pub mod fmt;
+pub mod fn_props;
 pub mod fnv;
 pub mod freed;
 pub mod fs;
@@ -36,7 +39,6 @@ pub mod handle;
 pub mod hash;
 pub mod hazard;
 pub mod html;
-pub mod http;
 pub mod inspect;
 mod inspect_cycles;
 mod inspect_layout;
@@ -102,9 +104,3 @@ static GLOBAL_QUARANTINE: debug_alloc::Quarantine = debug_alloc::Quarantine::new
 #[cfg(test)]
 #[path = "../tests/abi/mod.rs"]
 mod abi_tests;
-
-// std's drivers: crates on the native SDK only, linked into the runtime (their `#[export]`
-// functions are std's externs; abi_symbols lists them for the JIT host).
-use velt_std_postgres as _;
-use velt_std_redis as _;
-use velt_std_sqlite as _;

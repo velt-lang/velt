@@ -4,7 +4,7 @@ The package manifest is `package.vlt` at the package root, written in Velt and r
 compiling or running anything (design: [package-manifest.md](../design/package-manifest.md)).
 
 ```ts ignore
-import type { Package } from "velt:package";
+import type { Package } from "velt/package";
 
 export const pkg: Package = {
   name: "hello",                // [a-z][a-z0-9]* words joined by single - or _; not std, rt…, sig…, native…
@@ -28,9 +28,9 @@ export const pkg: Package = {
 };
 ```
 
-`velt:package` (`std/package.vlt`) declares the `Package` type (documentation, and the import
+`velt/package` (`std/package/manifest.vlt` and `workspace.vlt`, re-exported by its index.vlt) declares the `Package` type (documentation, and the import
 resolves). The reader below is the definition of a valid manifest; its fields are one table,
-`vpm::manifest::schema`, which a test checks against `std/package.vlt`. The language server
+`vpm::manifest::schema`, which a test checks against `std/package/index.vlt`. The language server
 does not analyze a file named `package.vlt` as a program: its diagnostics are the reader's, and
 completion and hover come from the schema (`vpm::manifest::ide`). With the package's registry
 (`$VELT_REGISTRY` when it is a URL, else `registry`, else the local one, as `velt install` picks
@@ -43,7 +43,7 @@ once, each within 5 s to connect and 15 s in all, kept five minutes); completion
 talk to hosts the checkout names); `$VELT_REGISTRY` is always asked.
 
 ## The data-only subset (`vpm::manifest::read`)
-- At most one import, `import type { … } from "velt:package"` naming at least one type; then
+- At most one import, `import type { … } from "velt/package"` naming at least one type; then
   exactly one `export const pkg: Package = <value>;`, and nothing else.
 - Values are string literals, number literals, `true`/`false`, array literals and object literals
   whose keys are identifiers or string literals. Everything else (`null`, template literals,
@@ -120,11 +120,86 @@ subpath (`.`, never another) falls back to `src/index.ts`, then `src/index.tsx`,
 target of `.` under any condition (`exports::root_targets_any_condition`) has a source. Errors: a subpath not
 exported, an `exports` mixing subpaths and conditions, a target without a source.
 
+## Workspaces (additive, #1855)
+`vpm::workspace` (docs/internals/design/workspaces.md). `velt.workspace.vlt` (`WORKSPACE_FILE`) at
+a workspace root is read by the manifest reader (`manifest::read::read_workspace`: the same data
+subset and bounds; one `export const workspace: Workspace = { … }` with `members` (required,
+non-empty `/`-separated relative globs: `*`, `**` as a whole segment, `!` to exclude, `"."` for
+the root; no `..`, `./`, `\`, duplicates), `velt`, `registry`, `dependencies` (no `"workspace"`
+values; no key naming a member)). `Workspace::find` takes the nearest workspace file at or above a
+directory; `Workspace::load` lists members with `npm::workspace::dirs_with` (marker
+`package.vlt`, never entering `target`; literal segments match entry names exactly, as `*` ones do,
+on every OS; each positive glob must list a package) and checks: distinct member names; no `velt`
+or `registry` in a member; a dependency named like a member is `"workspace"`; every
+`"workspace"` names a member or a workspace dependency; no cycle of `"workspace"` dependencies
+between members. Each error is located (`file:line:col: error: …`, via `manifest::ide::locate`
+and the globs' spans, `WorkspaceFile::member_spans`). Membership of a package below a workspace
+file is decided by its globs alone (`velt_toolchain::members::lists`, also the launcher's): a
+package they don't list installs on its own (`Installed::notes` says so) and keeps its own `velt`. `Dependency::Version("workspace")`
+(`manifest::WORKSPACE_REQUIREMENT`, `Dependency::is_workspace`) is valid in any `package.vlt`;
+resolving it outside a workspace is an error. `Workspace::effective_manifest` replaces it with the
+member's directory (an absolute `path`) or the workspace's requirement (a `path` made absolute),
+and sets the workspace's `velt` and `registry`. `vpm::install` of a member (and
+`install::workspace::install` of the whole workspace) resolves all members together
+(`resolve::resolve_members`: every member is a path requirement of the root; one version per
+name), refuses a member's own `velt.lock.json`, writes the lockfile at the workspace root (members
+as `"source": "workspace+<dir>"`, `lockfile::WORKSPACE_SOURCE`; path sources relative to the
+workspace root), and returns the member's graph: the member first, then the packages it uses
+transitively. A package below a workspace file that no glob lists installs on its own. The
+launcher's pin (`velt_toolchain::pin::find_pin`) is the nearer package's `velt`, else its
+workspace file's, with the lock beside the file that holds it. A build without `-o` writes to
+`<package of the input>/target/velt/` (relative when that is the current directory); its stamp
+records the workspace file, the globs' listings, the members' manifests and the root lockfile.
+
+## Git dependencies (additive, #1860)
+`vpm::git`. `DetailedDependency` gains `git`, `branch`, `tag`, `rev` (`Dependency::git` gives the
+`GitSpec`); `git::check_fields`: `branch`/`tag`/`rev` need `git` and at most one is given, `rev`
+is a full lowercase commit hash (`git::is_commit`, 40 or 64 digits), `git` passes
+`git::check_url` (`https`, `http`, `ssh`, `git`, `file` URLs or `user@host:path`; no leading `-`,
+whitespace, `?` or `#`; no password, and no user at all in `http(s)`), and with `git` a `path` is
+`/`-separated plain directory names (no `..`, root, drive or `:`). A git package's own `path`
+dependencies become `Want::Git` of the same URL at `GitRef::Rev(<commit>)` with their directory
+relative to the checkout, and must stay inside it (lexically and through symbolic links); so must
+the package's directory. A checked-out commit with a symbolic link that resolves outside the
+checkout (followed through the checkout's own links, at most 40, its missing parts taken as
+written; `git::check_links`) is refused before it enters the cache. The scratch repository is
+made with `--template=`, and the checkout runs with `core.hooksPath` at an empty directory. git
+runs without `git rev-parse --local-env-vars`'s variables and never prompts; the checkout runs with `GIT_CONFIG_NOSYSTEM=1`, an empty global configuration,
+`core.autocrlf=false`, `core.eol=lf`, `core.longpaths=true`, and `core.symlinks=true`
+(`false` on Windows: links are files holding the stored text, which hash as a link's text does
+elsewhere; Git for Windows would write link targets with `\`). The commit's links (`git ls-tree`
+mode `120000`) are listed in `<commit>.links` beside the checkout, outside the hashed tree; on
+Windows, resolving a git package warns about each link inside it (`git::link_warnings`, printed
+with the yanked versions by `velt install` and builds). Lock query
+values percent-encode `%`, `&`, `=`, `#` and `?`. Resolution (`resolve::Want::Git`,
+`Source::Git { spec, commit, checksum, dir }`) takes the commit the lockfile records for an equal
+spec, else `git ls-remote` of the ref (an annotated tag's `^{}` commit), and checks it out with
+`git::checkout` into `<cache>/git/<sha256(url)[..10] hex>/<commit>/` (a shallow fetch of the
+commit into a scratch bare repository, checked out into a staging directory, renamed into place;
+`GIT_TERMINAL_PROMPT=0`). The lock's `source` is `git+<url>[?branch=|tag=|rev=…][&path=…]#<commit>`
+(`GitSpec::source`/`parse_source`), and its `checksum` is `git::tree_checksum` of the whole
+checkout (every file, path order, `contents::checksum`'s encoding; symbolic links by target),
+verified on every use. Native code of a git package builds only with `VELT_NATIVE_FROM_SOURCE=1`,
+from a copy of the package in `<cache>/git-native/<name>/<commit>/`. `registry::publish` refuses a dependency with only
+`git` (a `version` beside it is published as the requirement). A target without `package.vlt` is
+an npm source (`npm::provided::packages_at`): the `package.json` there, plus a workspace root's
+packages (its globs, each a `package.json`; one without a `name` is named after its directory, as
+npm's `map-workspaces` does: `@scope/name` under a scope directory); a `package.json` that can't
+be read or doesn't parse and a duplicate name are errors (paths relative to the target), and a
+walk cut at `MAX_DIRS` is named when a package isn't found; the dependency's name must be one
+of them (else "provides no npm package named …"), its version is that package's (`0.0.0` without
+a valid one), and it has no dependencies of its own. It is `Source::Git` with `npm` (name →
+directory), locked like any git package, and no package of the graph (two git dependencies providing one npm name from different
+directories are an error, `install::check_npm_overlap`; from one checkout they agree): each
+dependent's
+`GraphPackage::npm` gets the packages, and the loader resolves a bare import of one in its
+directory (`NpmResolver::resolve_in`) before Node's search.
+
 ## Fields
-- `import ... from "json"` / `"json/sub"` resolve through `dependencies`; `"velt:x"` and `"./x"`
+- `import ... from "json"` / `"json/sub"` resolve through `dependencies`; `"velt/x"` and `"./x"`
   never do.
 - `paths`: a bare specifier matching a pattern resolves to the target, relative to the package
-  root, before `dependencies` are consulted (`"velt:x"` and `"./x"` are never aliased). A
+  root, before `dependencies` are consulted (`"velt/x"` and `"./x"` are never aliased). A
   pattern has at most one `*`, at its end, and so has its target (both or neither); the longest
   matching pattern wins (like TypeScript's `compilerOptions.paths`, but one target per pattern).
   Targets must stay inside the package (no `..`, not absolute). Each package's aliases apply to
@@ -209,12 +284,12 @@ registry: "https://registry.example.com",
 
 ## JSX import source (additive)
 ```ts ignore
-jsx: { importSource: "sigx" },  // or "velt:jsx" (the default), an "@alias" from paths, or "./ui"
+jsx: { importSource: "sigx" },  // or "velt/jsx" (the default), an "@alias" from paths, or "./ui"
 ```
 - The JSX runtime of the package's modules ([jsx.md](jsx.md) "Choosing the provider"): a module
   containing JSX imports `<importSource>/jsx-runtime`. A `/** @jsxImportSource x */` comment in a
-  file (or `// @jsxImportSource x`, which `tsc` ignores) wins; without either the source is `velt:jsx`.
-- The value is a module specifier: a dependency (`"sigx"`), `"velt:x"`, a `paths` alias, or a
+  file (or `// @jsxImportSource x`, which `tsc` ignores) wins; without either the source is `velt/jsx`.
+- The value is a module specifier: a dependency (`"sigx"`), `"velt/x"`, a `paths` alias, or a
   path starting with `./` / `../`, which is relative to the package root (not to the importing
   file, unlike a pragma). Each package's `jsx` applies to its own modules only
   (`vpm::PackageGraph::jsx_import_source`).

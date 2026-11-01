@@ -55,13 +55,16 @@ pub(crate) fn compile(
         debug_info,
     } = *inputs;
     let start = Instant::now();
-    let isa = crate::isa::make_isa(&crate::host_triple(), false, true)?;
+    // JIT code runs on this machine: its own CPU features.
+    let isa = crate::isa::make_isa(&crate::host_triple(), Some("native"), false, true)?;
     let mut builder = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
     for (name, address) in runtime.iter().chain(imports) {
         builder.symbol(name.clone(), *address as *const u8);
     }
     #[cfg(unix)]
     builder.symbol_lookup_fn(Box::new(crate::c_symbols::lookup));
+    #[cfg(windows)]
+    builder.symbol_lookup_fn(Box::new(crate::win_symbols::lookup));
     builder.memory_provider(crate::jit_memory::arena(arena_size(program, names, first))?);
     let mut module = JITModule::new(builder);
     let built = build_module(&mut module, program, &Naming::Dev(names))?;

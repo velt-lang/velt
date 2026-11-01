@@ -1,0 +1,89 @@
+// sqlite/engine/exec/value/char (internal): UTF-8 characters as code points (`Char`): counted,
+// found by number, decoded one at a time, and case folded for ASCII letters only.
+
+import { byteAt, byteLen } from "./text";
+
+/** The number of characters of `s` before its first NUL (SQLite's length() of text). */
+export function charLength(s: string): i64 {
+  const n = byteLen(s);
+  let k: i64 = 0;
+  for (let i: usize = 0; i < n; i++) {
+    const c = byteAt(s, i);
+    if (c == 0) {
+      break;
+    }
+    if ((c & 0xc0) != 0x80) {
+      k++;
+    }
+  }
+  return k;
+}
+
+/** The byte offset of character `k` of `b` (or `b.length` past the end). */
+export function charOffset(b: u8[], k: i64): usize {
+  let i: usize = 0;
+  let seen: i64 = 0;
+  while (i < b.length && seen < k) {
+    i++;
+    while (i < b.length && (b[i] & 0xc0) == 0x80) {
+      i++;
+    }
+    seen++;
+  }
+  return i;
+}
+
+/** The character starting at byte `at` of `b`, as a code point, and its length in bytes. */
+export struct Char {
+  c: i64;
+  len: usize;
+}
+
+export function charAt(b: u8[], at: usize): Char {
+  const b0 = b[at] as i64;
+  if (b0 < 0xc0) {
+    return Char { c: b0, len: 1 };
+  }
+  let n: usize = b0 >= 0xf0 ? 4 : b0 >= 0xe0 ? 3 : 2;
+  let c = b0 & (n == 4 ? 0x07 : n == 3 ? 0x0f : 0x1f);
+  let k: usize = 1;
+  while (k < n && at + k < b.length && (b[at + k] & 0xc0) == 0x80) {
+    c = (c << 6) | ((b[at + k] & 0x3f) as i64);
+    k++;
+  }
+  return Char { c: c, len: k };
+}
+
+export function lowerC(c: i64): i64 {
+  return c >= 65 && c <= 90 ? c + 32 : c;
+}
+
+function upperC(c: i64): i64 {
+  return c >= 97 && c <= 122 ? c - 32 : c;
+}
+
+/** Whether character `c` is in `set` (code points). */
+export function inSet(set: i64[], c: i64): bool {
+  for (const x of set) {
+    if (x == c) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** The code points of `b`. */
+export function chars(b: u8[]): i64[] {
+  const out: i64[] = [];
+  let i: usize = 0;
+  while (i < b.length) {
+    const ch = charAt(b, i);
+    out.push(ch.c);
+    i += ch.len;
+  }
+  return out;
+}
+
+export function upperChar(c: i64): i64 {
+  return upperC(c);
+}

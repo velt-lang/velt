@@ -1,0 +1,4 @@
+async_override_abstract_promise_errors.vlt:18:5: error: `Bad.read` throws `Other`, but `Source.read` does not allow it
+async_override_abstract_promise_errors.vlt:7:20: the allowed errors are declared here
+async_override_abstract_promise_errors.vlt:23:18: error: `Worse.read` throws `Other`, but `Base.read` does not allow it
+async_override_abstract_promise_errors.vlt:11:11: the allowed errors are declared here

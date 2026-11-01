@@ -32,6 +32,26 @@ impl Ctx<'_> {
         }
     }
 
+    /// Reports `iface` named in an `extends` or `implements` at `span` if it is the prelude's
+    /// `AtomicValue` or `Frozen`, whose types only the compiler decides; whether it was.
+    pub(crate) fn refuse_known_iface(&mut self, iface: DefId, span: velt_common::Span) -> bool {
+        let note = if Some(iface) == self.prelude_iface("AtomicValue") {
+            ("AtomicValue", "the compiler decides which types an `Atomic` holds: numbers, `bool`, `string` and `shared` values")
+        } else if Some(iface) == self.prelude_iface("Frozen") {
+            ("Frozen", "the compiler decides whose `shared` values are read in place: those nothing could change")
+        } else {
+            return false;
+        };
+        self.error(
+            velt_common::Diagnostic::error(
+                format!("`{}` cannot be extended or implemented", note.0),
+                span,
+            )
+            .with_note(note.1),
+        );
+        true
+    }
+
     /// An interface exported by the prelude under `name` (`Iterator`, `Iterable`).
     pub fn prelude_iface(&self, name: &str) -> Option<DefId> {
         match self.prelude.get(name) {
@@ -40,14 +60,45 @@ impl Ctx<'_> {
         }
     }
 
-    /// A function of the prelude named `name`, exported or not: the helpers and runtime
-    /// functions the compiler calls itself (`body/expr/int32.rs`).
+    /// The std definition with qualified name `qualified` (`std/lang/hooks/any_text::anyText`, a
+    /// compiler hook: `velt_common::std_hook!`), exported or not, if its module is loaded. An
+    /// identifier the compiler writes may be spelled so ([`Self::lookup_item`]); no source can
+    /// write one, so it names a hook in user code too, where `lang/` cannot be imported.
+    pub fn std_def(&self, qualified: &str) -> Option<Item> {
+        // `rsplit_once("::")`, without setting up a substring search for each lookup.
+        let b = qualified.as_bytes();
+        let at = (1..b.len())
+            .rev()
+            .find(|&i| b[i - 1] == b':' && b[i] == b':')?;
+        let (module, item) = (&qualified[..at - 1], &qualified[at + 1..]);
+        if !velt_common::std_modules::is_std(module) {
+            return None;
+        }
+        let m = crate::collect::exports::std_module(self, module)?;
+        self.scopes[m].items.get(item).copied()
+    }
+
+    /// The prelude's item `name`, or the compiler hook named so ([`Self::std_def`]).
+    pub fn prelude_or_hook(&self, name: &str) -> Option<Item> {
+        self.prelude
+            .get(name)
+            .copied()
+            .or_else(|| self.std_def(name))
+    }
+
+    /// A function of the prelude named `name`, exported or not, or the compiler hook with
+    /// qualified name `name` (`velt_common::std_hook!`, [`Ctx::std_def`]): the helpers and
+    /// runtime functions the compiler calls itself (`body/expr/int32.rs`).
     pub fn prelude_fn(&self, name: &str) -> Option<DefId> {
         let found = match self.prelude.get(name) {
             Some(it) => Some(*it),
+            None if name.contains("::") => self.std_def(name),
             None => (0..self.modules.len())
                 .filter(|&m| {
-                    self.scopes[m].is_std && self.modules[m].path.starts_with("std/prelude/")
+                    self.scopes[m].is_std
+                        && self.modules[m]
+                            .path
+                            .starts_with(velt_common::std_dir!(prelude))
                 })
                 .find_map(|m| self.scopes[m].items.get(name).copied()),
         };
@@ -57,7 +108,6 @@ impl Ctx<'_> {
         }
     }
 
-    /// An ADT exported by the prelude under `name`.
     /// Does the private field `private_to`/`name` hold data that JSON may skip? Only the
     /// prelude `Error`'s `#name` (behind `e.name`): it is not a runtime handle, so error classes
     /// keep their JSON form (written without it, as Node leaves out a `name` from the
@@ -66,8 +116,14 @@ impl Ctx<'_> {
         name == "#name" && private_to.is_some() && private_to == self.prelude_adt("Error")
     }
 
+    /// An ADT exported by the prelude under `name`, or the compiler hook class with qualified
+    /// name `name` (`velt_common::std_hook!`).
     pub fn prelude_adt(&self, name: &str) -> Option<DefId> {
-        match self.prelude.get(name) {
+        let found = match self.prelude.get(name) {
+            Some(it) => Some(*it),
+            None => self.std_def(name),
+        };
+        match found.as_ref() {
             Some(Item::Def(d)) if self.adt(*d).is_some() => Some(*d),
             _ => None,
         }
@@ -103,7 +159,7 @@ impl Ctx<'_> {
         let module = self
             .modules
             .iter()
-            .position(|m| m.is_std && m.path == "std/channel");
+            .position(|m| m.is_std && m.path == velt_common::std_module!(sync_channel));
         let channel = match module.and_then(|m| self.scopes[m].items.get("Channel")) {
             Some(Item::Def(d)) => *d,
             _ => return vec![],
@@ -258,12 +314,14 @@ impl Ctx<'_> {
     /// parameter, a class with subclasses, whose objects may have more fields), nor when it
     /// holds a type with a `clone()` of its own: copying what a read gets would run it on the
     /// objects other threads read, as a side effect of reading. A `shared` inside is fine: it
-    /// counts atomically.
-    pub fn frozen_readable(&mut self, t: TyId) -> bool {
-        self.frozen_readable_in(t, &mut rustc_hash::FxHashSet::default())
-    }
-
-    fn frozen_readable_in(&mut self, t: TyId, seen: &mut rustc_hash::FxHashSet<TyId>) -> bool {
+    /// counts atomically. The type parameters `frozen` (bounded by `Frozen` where the type is
+    /// read: `Ctx::frozen_readable_under`) are readable.
+    pub(crate) fn frozen_readable_in(
+        &mut self,
+        t: TyId,
+        frozen: &[u32],
+        seen: &mut rustc_hash::FxHashSet<TyId>,
+    ) -> bool {
         if !seen.insert(t) {
             return true;
         }
@@ -273,9 +331,9 @@ impl Ctx<'_> {
         }
         let parts: Vec<TyId> = match self.ty.kind(t).clone() {
             TyKind::Shared(_) => return true,
-            TyKind::Dyn(..) | TyKind::FnPtr { .. } | TyKind::Promise(..) | TyKind::Param(_) => {
-                return false
-            }
+            // `T extends Frozen` in the body being checked: whatever it is, it is readable.
+            TyKind::Param(p) => return frozen.contains(&p),
+            TyKind::Dyn(..) | TyKind::FnPtr { .. } | TyKind::Promise(..) => return false,
             TyKind::Adt(d, _)
                 if Some(d) == self.mutex_ty()
                     || Some(d) == self.rwlock_ty()
@@ -300,7 +358,9 @@ impl Ctx<'_> {
             }
             k => crate::types::children(&k),
         };
-        parts.into_iter().all(|p| self.frozen_readable_in(p, seen))
+        parts
+            .into_iter()
+            .all(|p| self.frozen_readable_in(p, frozen, seen))
     }
 
     /// Does a value of type `t` reach a `Mutex` or `RwLock`, whose value is read only under
@@ -486,6 +546,19 @@ impl Ctx<'_> {
         self.prelude_adt("Atomic")
     }
 
+    /// `struct ThreadLocal<T> { init: T }` from the prelude.
+    pub fn thread_local_ty(&self) -> Option<DefId> {
+        self.prelude_adt("ThreadLocal")
+    }
+
+    /// `T` of a `ThreadLocal<T>`.
+    pub fn thread_local_value(&self, t: TyId) -> Option<TyId> {
+        match self.ty.kind(t) {
+            TyKind::Adt(d, args) if Some(*d) == self.thread_local_ty() => args.first().copied(),
+            _ => None,
+        }
+    }
+
     /// Does a deep copy of a value of `t` copy an `Atomic` (in the value, its arrays, payloads
     /// or the objects it holds; not behind a `shared`, nor in a function, interface or `any`
     /// value)?
@@ -519,6 +592,16 @@ impl Ctx<'_> {
             k => crate::types::children(&k),
         };
         parts.into_iter().any(|p| self.holds_atomic_in(p, seen))
+    }
+
+    /// Is `t` a reference an `Atomic` word holds: `shared<U>`, `shared<U> | null` or `string`
+    /// (atomics.md "References")?
+    pub fn atomic_ref(&self, t: TyId) -> bool {
+        match self.ty.kind(t) {
+            TyKind::Shared(_) | TyKind::Str => true,
+            TyKind::Option(inner, _) => matches!(self.ty.kind(*inner), TyKind::Shared(_)),
+            _ => false,
+        }
     }
 
     /// `T` of an `Atomic<T>`.
@@ -666,11 +749,5 @@ impl Ctx<'_> {
     /// same name (that one is an ordinary class to JSON).
     pub fn is_json_value(&self, d: DefId) -> bool {
         self.prelude_adt("JsonValue") == Some(d)
-    }
-
-    /// `JsonError` (prelude class), the type `JSON.parse` throws.
-    pub fn json_error_ty(&mut self) -> Option<TyId> {
-        let d = self.prelude_adt("JsonError")?;
-        Some(self.ty.intern(TyKind::Adt(d, vec![])))
     }
 }

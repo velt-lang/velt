@@ -1,0 +1,39 @@
+// Prelude: `StringIterator`, the iterator of a string: one character (code point) per step.
+
+/**
+ * The iterator of a string (TS's `StringIterator<string>`): one character (code point) per
+ * step, as a string.
+ */
+export class StringIterator implements IterableIterator<string>, IteratorObject<string> {
+  private text: string;
+  private pos: i64 = 0;
+
+  /** An iterator over the characters of `text`. */
+  constructor(text: string) {
+    this.text = text;
+  }
+
+  /** The next character (code point) as a string, or a `done` result at the end. */
+  next(): IteratorResult<string> {
+    if (this.pos >= (this.text.length as i64)) {
+      return { done: true };
+    }
+    // A high surrogate followed by a low one is one character.
+    let n: i64 = 1;
+    const c = this.text.charCodeAt(this.pos);
+    if (c >= 0xd800 && c < 0xdc00) {
+      const d = this.text.charCodeAt(this.pos + 1);
+      if (d >= 0xdc00 && d < 0xe000) {
+        n = 2;
+      }
+    }
+    const value = this.text.slice(this.pos, this.pos + n);
+    this.pos += n;
+    return { value: value, done: false };
+  }
+
+  /** The iterator itself. */
+  [Symbol.iterator](): Iterator<string> {
+    return this;
+  }
+}

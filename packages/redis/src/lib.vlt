@@ -1,0 +1,22 @@
+// redis: a Redis client close to ioredis (README.md; the native library is a RESP2 client over
+// Velt's sockets and rustls, native/), with strings, expiry, hashes, lists, sets, sorted sets,
+// pipelines, transactions and pub/sub.
+//
+// `connect(url)` opens one connection that is multiplexed: every command from every task goes
+// over it, pipelined in order, so a `RedisClient` already works as a pool (like ioredis). Use
+// `duplicate()` for a second connection when a blocking command (BLPOP, …) must not hold up
+// the others. A lost connection is reopened automatically: commands already sent on it throw
+// `RedisError` "ECONNRESET" (they may have run), later ones wait while the client reconnects
+// with backoff (for up to 10 s, then they throw the connect error, e.g. "ECONNREFUSED").
+// Subscribers do not reconnect.
+//
+// Every failure throws `RedisError` with a `code`: the server's error code for error replies
+// ("WRONGTYPE", "ERR", "NOAUTH", …) or an I/O code ("ECONNREFUSED", "ECONNRESET", "EINVAL").
+
+export { connect, RedisClient } from "./client";
+export { RedisError } from "./errors";
+export { RedisMessage } from "./message";
+export { RedisPipeline } from "./pipeline";
+export { RedisReply, RedisReplyKind } from "./reply";
+export { psubscribe, RedisSubscriber, subscribe } from "./subscriber";
+export { RedisConnectOptions, SetOptions, ZMember } from "./types";

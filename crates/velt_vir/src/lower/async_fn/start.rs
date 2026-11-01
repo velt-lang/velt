@@ -37,6 +37,9 @@ impl FnLower<'_, '_> {
         if let (hir::Callee::Intrinsic(hir::Intrinsic::PromiseWiden), [p]) = (callee, args) {
             return self.promise_widen(p, ty, !lazy);
         }
+        if let (hir::Callee::Intrinsic(hir::Intrinsic::PromiseSame), [q, p]) = (callee, args) {
+            return self.promise_same(q, p, ty, !lazy);
+        }
         let v = self.call_expr(callee, args, ty);
         if lazy || self.dead() {
             return v;

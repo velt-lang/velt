@@ -109,7 +109,10 @@ impl Ctx<'_> {
                 );
                 self.ty.error
             }
-            ast::TypeExprKind::Construct(inner) => self.resolve_construct(inner, t, env),
+            ast::TypeExprKind::Construct {
+                ty: inner,
+                is_abstract,
+            } => self.resolve_construct(inner, *is_abstract, t, env),
             ast::TypeExprKind::GenericFunction { type_params, ty } => {
                 self.resolve_generic_fn(type_params, ty, env, t.span)
             }
@@ -182,6 +185,7 @@ impl Ctx<'_> {
                 readonly: f.readonly,
                 optional: f.optional,
             });
+            self.note_written_type(f.name.span, f.ty.span);
             spans.push(f.name.span);
         }
         if out.iter().any(|f| f.ty == self.ty.error) {
@@ -284,6 +288,15 @@ impl Ctx<'_> {
         if name == "this" {
             return self.resolve_this_type(t, args, env);
         }
+        if name == crate::generated::QUALIFIED && self.in_generated_file(t.span) {
+            return self.resolve_qualified(t, args, env);
+        }
+        if name == crate::generated::handles::TYPE && self.in_generated_file(t.span) {
+            return self.resolve_handle(t, args);
+        }
+        if name == crate::generated::UNION && self.in_generated_file(t.span) {
+            return self.resolve_generated_union(t, args, env);
+        }
         if let Some(i) = env.params.iter().rposition(|p| p == name) {
             if !args.is_empty() {
                 self.err(
@@ -294,7 +307,7 @@ impl Ctx<'_> {
             return self.ty.param(i as u32);
         }
         // The SIMD type names (`u8x16`) are built in only for std: other modules import them
-        // from `velt:simd` (#1055), whose `export type u8x16 = u8x16` names the built-in type.
+        // from `velt/simd` (#1055), whose `export type u8x16 = u8x16` names the built-in type.
         let simd_outside_std =
             crate::hir::SimdTy::named(name).is_some() && !self.scopes[env.module].is_std;
         // Velt's own type names (`u8`, `f32`, `bool`, …) are like library globals: a type the
@@ -443,7 +456,11 @@ impl Ctx<'_> {
     ) -> TyId {
         match item {
             Item::Def(d) => self.def_type(d, name, args, t),
-            Item::Alias(a) => self.expand_alias(a, args, t),
+            Item::Alias(a) => {
+                let body = self.aliases[a as usize].decl.ty.span;
+                self.fn_sites.alias_written.insert(t.span, body);
+                self.expand_alias(a, args, t)
+            }
         }
     }
 
@@ -495,6 +512,10 @@ impl Ctx<'_> {
         }
         let k = match name {
             "Array" | "ReadonlyArray" => TyKind::Array(args[0]),
+            // TypeScript's `Promise<T>` may reject: what with is inferred (`throws::promise_sites`).
+            "Promise" if args.len() == 1 => {
+                return Some(self.promise_site(args[0], t.span, env.module))
+            }
             "Promise" => {
                 let e = args.get(1).copied().unwrap_or(self.ty.never);
                 if let Some(w) = written.get(1) {
@@ -536,7 +557,7 @@ impl Ctx<'_> {
     }
 
     /// Does `item` name a type (an alias, class, struct, enum or interface)?
-    fn is_type_item(&self, item: Item) -> bool {
+    pub(crate) fn is_type_item(&self, item: Item) -> bool {
         match item {
             Item::Alias(_) => true,
             Item::Def(d) => matches!(

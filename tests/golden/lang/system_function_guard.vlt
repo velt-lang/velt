@@ -1,0 +1,10 @@
+// requires: unix
+// `fcntl`'s command decides what its third argument is: a declaration with an `int` argument
+// takes only the commands that read an `int` (`F_GETFD`, `F_SETFL`, ...), so a lock command,
+// which would read a `struct flock` at that address, stops the program.
+declare system function fcntl(fd: i32, cmd: i32, arg: i32): i32;
+
+function main() {
+  console.log(fcntl(1, 1, 0) >= 0);
+  console.log(fcntl(1, 7, 4096));
+}

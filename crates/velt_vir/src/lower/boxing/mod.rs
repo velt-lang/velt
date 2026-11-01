@@ -10,6 +10,7 @@
 
 mod kinds;
 mod locks;
+mod module_reach;
 mod transfers;
 mod weak;
 
@@ -49,6 +50,11 @@ pub(super) struct Boxing {
     /// The program writes a member through `any` (`AnySet` / `AnySetIndex`): the `any` tables
     /// have the write slots (any_set.rs).
     pub(super) any_writes: bool,
+    /// The program writes through `any` and holds functions there: a function may have
+    /// properties (any_fn_props.rs), a declared function's are module state the runtime keeps,
+    /// and every `with`, `read` and `write` takes the module lock first (velt_rt
+    /// `velt_rt_module_with`), since a callback may reach them.
+    pub(super) fn_props: bool,
     /// The program tests `key in x` on an `any` (`AnyHas`): the `any` tables have the `has`
     /// slot (any_has.rs).
     pub(super) any_has: bool,
@@ -58,9 +64,9 @@ pub(super) struct Boxing {
     /// The program lists the keys of an `any` (`AnyKeys`): the `any` tables have the keys slot
     /// (any_keys.rs).
     pub(super) any_keys: bool,
-    /// The program writes a dynamic value as JSON: the `any` tables have the JSON slot
-    /// (json/any.rs).
-    pub(super) any_json: bool,
+    /// The program reflects on `any` values (velt/reflect): the `any` tables have the
+    /// reflection slot (any_reflect.rs).
+    pub(super) any_reflect: bool,
     /// The program converts an `any` to a number (`Intrinsic::AnyToNumber`, an operator on
     /// `any`): every `any` table has the `ToNumber` slot, not only those of primitives
     /// (any_number.rs).
@@ -98,7 +104,7 @@ pub(super) struct Boxing {
     /// concrete `AnyTo` targets and `Proxy` itself. Others are opaque (a leak at worst).
     pub(super) proxy_traced: BTreeSet<TyId>,
     /// Array views (#1485, array_view.rs): the boxed array types whose header may point at an
-    /// `__ArrayView`. Empty in a program that converts no `any` to an array type.
+    /// `ArrayView`. Empty in a program that converts no `any` to an array type.
     pub(super) array_views: FxHashSet<TyId>,
     /// The value types of the program's `RwLock`s, the lock set they reach (class hierarchies
     /// by root, other counted types), and those whose `read` is exclusive (locks.rs).
@@ -224,8 +230,8 @@ pub(super) struct Facts {
     any_delete: bool,
     /// `Object.keys` of an `any` is listed.
     any_keys: bool,
-    /// A dynamic value is written as JSON.
-    any_json: bool,
+    /// An `any` is reflected on.
+    any_reflect: bool,
     /// An `any` is converted to a number.
     any_number: bool,
     /// Method names called through `any`.
@@ -330,9 +336,9 @@ impl Cx<'_> {
         self.facts.any_keys = true;
     }
 
-    /// Record that a dynamic value is written as JSON.
-    pub(super) fn note_any_json(&mut self) {
-        self.facts.any_json = true;
+    /// Record that an `any` is reflected on (velt/reflect).
+    pub(super) fn note_any_reflect(&mut self) {
+        self.facts.any_reflect = true;
     }
 
     /// Record that a method named `name` (`""`: any name) is called through `any`.
@@ -458,14 +464,20 @@ impl Cx<'_> {
     pub(super) fn close_boxing(&mut self) -> Boxing {
         let mut next = self.boxing.clone();
         self.share_from.clear();
-        next.fn_identity |= self.facts.fn_compared;
+        // A function that may get properties through `any` needs an identity to carry them
+        // (any_fn_props.rs): in a program that writes through `any` and holds functions there.
+        let fn_props = self.facts.any_set
+            && (self.facts.dyn_types.iter())
+                .any(|t| matches!(self.kind(*t), TyKind::FnPtr { .. } | TyKind::Closure(_)));
+        next.fn_identity |= self.facts.fn_compared || fn_props;
+        next.fn_props |= fn_props;
         next.generic_any |= self.facts.generic_any;
         next.any_identity |= self.facts.any_identity;
         next.any_writes |= self.facts.any_set;
         next.any_has |= self.facts.any_has;
         next.any_delete |= self.facts.any_delete;
         next.any_keys |= self.facts.any_keys;
-        next.any_json |= self.facts.any_json;
+        next.any_reflect |= self.facts.any_reflect;
         next.any_number |= self.facts.any_number;
         next.any_call_keys
             .extend(self.facts.any_call_keys.iter().cloned());

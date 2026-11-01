@@ -1,0 +1,14 @@
+// `[Symbol.for("mapAt")]` written in place is the registered symbol, never std's private key of
+// the same description (`Symbol("mapAt")`, which `Map` keeps its compiler methods under): a
+// subclass's `override` of it overrides nothing, as in TypeScript.
+class M extends Map<string, number> {
+  override [Symbol.for("mapAt")](key: string): number {
+    return 42;
+  }
+}
+
+function main() {
+  const m = new M();
+  m.set("a", 1);
+  console.log(m.get("a"));
+}

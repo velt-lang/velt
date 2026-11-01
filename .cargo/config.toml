@@ -9,3 +9,8 @@ xtask = "run --quiet --package xtask --"
 [env]
 CFLAGS_x86_64_unknown_linux_gnu = "-std=gnu17"
 CFLAGS_aarch64_unknown_linux_gnu = "-std=gnu17"
+
+# Builds run through cargo (tests, goldens, `cargo run -p veltc`) keep a smaller build cache: every
+# target directory has one (`velt-build-cache` in it, crates/veltc/src/build_cache.rs). A variable
+# already set in the environment wins.
+VELT_BUILD_CACHE_SIZE = "500M"

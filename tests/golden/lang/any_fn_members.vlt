@@ -1,0 +1,114 @@
+// A function held through `any` converts to a function type of other parameters and result
+// where it is a member of the value converted (#1935): sigx keeps `slots.default` as
+// `(scopedProps?: any) => any[]` on a prototype-less object and reads it through an object
+// type as `() => JSXElement[]`. Node calls the function as it is: extra arguments are dropped,
+// missing ones are `undefined`, and the result converts to the target's result type.
+interface VNode {
+  tag: string;
+}
+
+type El = VNode | string | number | boolean | null;
+
+interface Slots {
+  default: () => El[];
+}
+
+// A member of a record (`Object.create(null)`), read as an object type's.
+const store: any = Object.create(null);
+store.default = (scopedProps?: any): any[] => [
+  "a",
+  1,
+  { tag: "b" },
+  scopedProps === undefined,
+  null,
+];
+const slots = store as Slots;
+const out = slots.default();
+// Printed whole until #1942 is fixed; then print the elements one by one again:
+// console.log(out.length, out[0], out[1], (out[2] as VNode).tag, out[3], out[4]);
+console.log(out, (out[2] as VNode).tag);
+
+// A member of an object literal.
+const lit: any = { default: (p?: any): any[] => ["L", p === undefined] };
+console.log((lit as Slots).default());
+
+// Called many times: the conversion is made once, at `as`.
+let total = 0;
+for (let i = 0; i < 1000; i++) {
+  total += slots.default().length;
+}
+console.log(total);
+
+// Fewer and more parameters, rest parameters, results of other types.
+interface Fns {
+  one: (x: string) => string;
+  three: (a: number, b: number, c: number) => string;
+  count: (a: number, b: number) => number;
+  join: (...xs: number[]) => string;
+  num: () => number;
+  pick: (k: number) => (string | number)[];
+  done: () => void;
+}
+
+let side = 0;
+const fns: any = Object.create(null);
+fns.one = (a?: any, b?: any): any => `${a}-${b}`;
+fns.three = (): string => "three";
+fns.count = (...xs: any[]): any => xs.length;
+fns.join = (...xs: any[]): any => xs.join("+");
+fns.num = (): any => 42;
+fns.pick = (k: any, extra?: any): any[] => [k, `k${k}`, extra === undefined ? "none" : "some"];
+fns.done = (n?: number): void => {
+  side += n ?? 1;
+};
+const f = fns as Fns;
+console.log(f.one("x"), f.three(1, 2, 3), f.count(1, 2), f.join(1, 2, 3), f.num());
+console.log(f.pick(7));
+f.done();
+f.done();
+console.log(side);
+
+// Directly, and as an element of an array of functions.
+const direct: any = (x?: any): any[] => [x ?? "none", 2];
+const g = direct as () => El[];
+console.log(g());
+const arr: any = [(p?: any): any[] => [p === undefined]];
+const list = arr as (() => boolean[])[];
+console.log(list[0]());
+
+// An optional member, a result holding a function, and a target written with a type parameter.
+interface Opt {
+  header?: (p: { title: string }) => string[];
+  footer?: () => string[];
+}
+
+const o: any = Object.create(null);
+o.header = (p?: any, q?: any): any[] => [p.title, String(q)];
+const opt = o as Opt;
+console.log(opt.header!({ title: "T" }), opt.footer === undefined);
+
+interface Nested {
+  get: () => { n: number; f: () => string };
+}
+
+const n: any = Object.create(null);
+n.get = (x?: any): any => ({ n: 3, f: (y?: any): any => "inner " + String(y) });
+const got = (n as Nested).get();
+console.log(got.n, got.f());
+
+function read<T>(x: any): { list: () => T[] } {
+  return x as { list: () => T[] };
+}
+
+const r: any = Object.create(null);
+r.list = (z?: any): any[] => [1, 2, z === undefined];
+console.log(read<number | boolean>(r).list());
+
+// A promise result: an async function of the member's own type is that function.
+interface Later {
+  later: () => Promise<any>;
+}
+
+const l: any = Object.create(null);
+l.later = async (): Promise<any> => "later";
+(l as Later).later().then((v) => console.log("promise", v));

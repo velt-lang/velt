@@ -1,0 +1,94 @@
+// velt/lang/hooks (internal): the compiler's hooks for numbers (std-layout.md §10b): a number's
+// `toString(radix)` and the conversions a float index or an int32 product compiles to. Nothing
+// imports these; the compiler calls them (velt_common `std_hooks.rs`).
+
+import { trunc } from "velt/lang/intrinsics";
+
+// JS's ToInt32 (`x | 0`), as the prelude's `Math` has it.
+declare function velt_rt_math_to_int32(x: f64): i32;
+// JS's `(a * b) | 0` for int32 numbers `a`, `b` (backends emit it inline).
+declare function velt_rt_math_mul_int32(a: i32, b: i32): i32;
+// `toString(radix)` for a radix in 2..36 other than 10; the f64 one for a finite `x`.
+declare function velt_rt_f64_to_radix(x: f64, radix: i64): string;
+declare function velt_rt_i64_to_radix(x: i64, radix: i64): string;
+declare function velt_rt_u64_to_radix(x: u64, radix: i64): string;
+
+// The radix of `x.toString(radix)`: truncated as in JS (2.7 is 2, NaN is 0), 2 to 36.
+function toStringRadix(radix: f64): i64 {
+  const r = radix as i64;
+  if (r < 2 || r > 36) {
+    panic("RangeError: toString() radix argument must be between 2 and 36");
+  }
+  return r;
+}
+
+/**
+ * `x.toString(radix)` on a float: the compiler compiles a `toString` call with an argument to
+ * it. Digits as in JS (V8): `(255).toString(16)` is "ff", `(0.5).toString(2)` is "0.1",
+ * fractions are written until they tell `x` apart from its neighbours. `NaN` and ±Infinity are
+ * `String(x)`; a radix outside 2 to 36 is a RangeError.
+ */
+export function f64ToString(x: f64, radix: f64): string {
+  const r = toStringRadix(radix);
+  if (r == 10 || !isFinite(x)) {
+    return `${x}`;
+  }
+  return velt_rt_f64_to_radix(x, r);
+}
+
+/** `x.toString(radix)` on a signed integer, exact over the whole `i64` range. */
+export function i64ToString(x: i64, radix: f64): string {
+  const r = toStringRadix(radix);
+  if (r == 10) {
+    return `${x}`;
+  }
+  return velt_rt_i64_to_radix(x, r);
+}
+
+/** `x.toString(radix)` on an unsigned integer. */
+export function u64ToString(x: u64, radix: f64): string {
+  const r = toStringRadix(radix);
+  if (r == 10) {
+    return `${x}`;
+  }
+  return velt_rt_u64_to_radix(x, r);
+}
+
+/**
+ * ToInt32 of the product `a * b` of two JS numbers (`(y * k) | 0`; sema `int32.rs` inserts the
+ * call). JS multiplies doubles, so a product past 2^53 is rounded before its low 32 bits are
+ * taken. For int32 operands that is `velt_rt_math_mul_int32` (one multiply when `numrep` proves
+ * the product within 2^53); other values multiply as doubles.
+ */
+export function mulToInt32(a: f64, b: f64): i32 {
+  const x = a as i32;
+  const y = b as i32;
+  if (x as f64 == a && y as f64 == b) {
+    return velt_rt_math_mul_int32(x, y);
+  }
+  return velt_rt_math_to_int32(a * b);
+}
+
+/**
+ * `xs[i]` with a float `i` (a JS number; the compiler inserts the call, `sema` `numbers.rs`): a
+ * whole number indexes as usual. Anything else would read `undefined` in JS; here it panics like
+ * an index out of bounds.
+ */
+export function floatIndex(x: f64): usize {
+  if (x >= 0.0 && trunc(x) == x && x < 18446744073709551616.0) {
+    return x as usize;
+  }
+  panic(`index out of bounds: the index is ${x}`);
+}
+
+/**
+ * A `number` given as a position or lane index of a SIMD method (the compiler inserts the call,
+ * `sema` `numbers.rs`): a whole number from 0 up as itself. Anything else is the largest `usize`,
+ * which is out of range everywhere, so `fits` gives `false` and the others a `RangeError`.
+ */
+export function floatPosition(x: f64): usize {
+  if (x >= 0.0 && trunc(x) == x && x < 18446744073709551616.0) {
+    return x as usize;
+  }
+  return ~(0 as usize);
+}

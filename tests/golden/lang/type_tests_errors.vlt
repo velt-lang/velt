@@ -1,0 +1,57 @@
+// `asType` needs an enclosing `typeIs` test of the same two types, takes exactly `asType<B>(x)`
+// (a written second type argument would claim a type `x` does not have; with none, nothing is
+// tested), and neither function can be used as a value.
+
+function unguarded<V>(v: V): u64 {
+  return asType<u64>(v);
+}
+
+function otherTest<V>(v: V): u64 {
+  if (typeIs<V, string>()) {
+    return asType<u64>(v);
+  }
+  return 0;
+}
+
+class P {
+  name: string = "p";
+}
+
+class Q {
+  big: u64 = 123456789;
+}
+
+function writtenSource<T>(t: T, q: Q): string {
+  if (typeIs<T, P>()) {
+    return asType<P, T>(q).name;
+  }
+  return "-";
+}
+
+function writtenNumber<T>(t: T, s: string): u64 {
+  if (typeIs<T, u64>()) {
+    return asType<u64, T>(s);
+  }
+  return 0;
+}
+
+function noTypeArgument(n: u64): string {
+  return asType(n);
+}
+
+function inferred<T>(t: T): string {
+  const s: string = asType(t);
+  return s;
+}
+
+function tooMany<T>(t: T): u64 {
+  if (typeIs<T, u64>()) {
+    return asType<u64, T, T>(t);
+  }
+  return 0;
+}
+
+function main() {
+  const t = typeIs;
+  const a = asType;
+}

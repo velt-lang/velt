@@ -1,0 +1,14 @@
+[package]
+name = "concurrent_map_bench"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+bbtree = { git = "https://github.com/XiangpengHao/bbtree", rev = "8adae97a0ed97e5c98fa2790312eb0aec9719846" }
+
+[profile.release]
+codegen-units = 1
+lto = "fat"

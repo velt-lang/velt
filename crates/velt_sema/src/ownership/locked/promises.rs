@@ -199,7 +199,7 @@ impl VisitMut for Promises<'_, '_, '_, '_> {
             }
             // Widens a promise made in its argument (found there).
             E::Call {
-                callee: Callee::Intrinsic(Intrinsic::PromiseWiden),
+                callee: Callee::Intrinsic(Intrinsic::PromiseWiden | Intrinsic::PromiseSame),
                 ..
             } => {}
             E::Call { .. } | E::New { .. } => {

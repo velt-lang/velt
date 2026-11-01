@@ -7,10 +7,11 @@
 //! Linux distributions often ship an older default `clang` (Ubuntu 20.04: 10, 22.04: 14) next
 //! to a newer `clang-NN`. The result is cached per process.
 
+use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use crate::target::Target;
 use crate::CodegenResult;
@@ -166,8 +167,15 @@ fn parse_version(text: &str) -> Option<ClangVersion> {
     })
 }
 
-/// Compile `ir` to an object file for `target` and return its bytes.
-pub(crate) fn compile(ir: &str, target: &Target, optimize: bool) -> CodegenResult<Vec<u8>> {
+/// Compile `ir` to an object file for `target` and return its bytes; from `cache` when this clang
+/// compiled the same IR with the same flags before (on this machine, in any build), else storing
+/// it there.
+pub(crate) fn compile_cached(
+    ir: &str,
+    target: &Target,
+    optimize: bool,
+    cache: Option<&dyn velt_codegen_cl::CodeCache>,
+) -> CodegenResult<(Vec<u8>, bool)> {
     let Some(clang) = find_clang() else {
         let what = rejected_clang().unwrap_or_else(|| "the LLVM backend needs clang".into());
         bail!(
@@ -176,19 +184,98 @@ pub(crate) fn compile(ir: &str, target: &Target, optimize: bool) -> CodegenResul
              use `--backend cranelift`"
         )
     };
-    let mut cmd = Command::new(&clang);
-    cmd.arg(if optimize { opt_flag() } else { "-O0" })
-        .args(["-c", "-x", "ir", "-Wno-override-module"])
-        .arg(format!("--target={}", target.triple))
-        .args(target.deployment_target_arg());
+    let mut args: Vec<String> = vec![if optimize { opt_flag() } else { "-O0" }.into()];
+    args.extend(["-c", "-x", "ir", "-Wno-override-module"].map(String::from));
+    args.push(format!("--target={}", target.triple));
+    args.extend(target.cpu_arg());
+    args.extend(target.deployment_target_arg().map(String::from));
     if target.pic() {
-        cmd.arg("-fPIC");
+        args.push("-fPIC".into());
     }
     if target.outline_atomics() {
-        cmd.arg("-moutline-atomics");
+        args.push("-moutline-atomics".into());
     }
-    cmd.args(["-", "-o", "-"]);
-    run_piped(cmd, ir.as_bytes(), "clang")
+    args.extend(["-", "-o", "-"].map(String::from));
+    // The key: this clang (path, size and time of its executable), its arguments (`-march=native`
+    // means this machine's CPU: the cache is the machine's), and the IR.
+    let key = cache.map(|_| {
+        let meta = std::fs::metadata(&clang).ok();
+        let stamp = meta.map(|m| (m.len(), m.modified().ok()));
+        let id = format!(
+            "clang {clang:?} {stamp:?} {args:?} {}",
+            velt_codegen_cl::host_triple()
+        );
+        let mut key = id.into_bytes();
+        key.push(0);
+        key.extend_from_slice(ir.as_bytes());
+        key
+    });
+    if let (Some(cache), Some(key)) = (cache, &key) {
+        if let Some(obj) = cache.get(key) {
+            return Ok((obj, true));
+        }
+    }
+    let mut cmd = Command::new(&clang);
+    cmd.args(&args);
+    let obj = run_piped(cmd, ir.as_bytes(), "clang")
+        .map_err(|e| unknown_cpu(e, target.cpu.as_deref()))?;
+    if let (Some(cache), Some(key)) = (cache, &key) {
+        cache.put(key, &obj);
+    }
+    Ok((obj, false))
+}
+
+/// The x86 features clang lets code for `-march=<cpu>` on `triple` use, as a mask over
+/// `velt_codegen_cl::X86_FEATURES`: from the macros it defines (`clang -dM -E`), once per CPU
+/// and process. Without a clang, Cranelift's idea of the CPU (`velt build --emit llvm` needs no
+/// clang; everything that compiles the IR does).
+pub(crate) fn x86_features(triple: &str, cpu: &str) -> CodegenResult<u32> {
+    static FEATURES: OnceLock<Mutex<HashMap<(String, String), u32>>> = OnceLock::new();
+    let features = FEATURES.get_or_init(Default::default);
+    let key = (triple.to_string(), cpu.to_string());
+    if let Some(mask) = features.lock().ok().and_then(|f| f.get(&key).copied()) {
+        return Ok(mask);
+    }
+    let Some(clang) = find_clang() else {
+        return velt_codegen_cl::required_features(triple, Some(cpu));
+    };
+    let out = Command::new(&clang)
+        .args(["-dM", "-E", "-x", "c"])
+        .arg(format!("--target={triple}"))
+        .arg(format!("-march={cpu}"))
+        .arg("-")
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("codegen: cannot run `{}`: {e}", clang.display()))?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        return Err(unknown_cpu(
+            format!("codegen: `clang -march={cpu}` failed:\n{err}"),
+            Some(cpu),
+        ));
+    }
+    let mask = velt_codegen_cl::x86_features_from_macros(&String::from_utf8_lossy(&out.stdout));
+    if let Ok(mut f) = features.lock() {
+        f.insert(key, mask);
+    }
+    Ok(mask)
+}
+
+/// `err` from clang, as the user's error when it is that clang does not know the CPU `cpu` (a
+/// name newer than the clang in use: the names are checked before, `cpu_names.rs`).
+fn unknown_cpu(err: String, cpu: Option<&str>) -> String {
+    match cpu {
+        Some(cpu) if err.contains("unknown target CPU") => {
+            let clang = find_clang()
+                .map(|c| c.display().to_string())
+                .unwrap_or_default();
+            format!(
+                "the clang in use (`{clang}`) does not know CPU `{cpu}`: use a newer clang \
+                 ($VELT_CLANG) or name another CPU"
+            )
+        }
+        _ => err,
+    }
 }
 
 /// Run an LLVM tool that reads its input from stdin and writes its output to stdout (`-` for
@@ -237,7 +324,7 @@ pub(crate) fn run_piped(mut cmd: Command, input: &[u8], name: &str) -> CodegenRe
 
 /// clang's optimization flag for release builds: `-O3`, or `$VELT_LLVM_OPT` (`1`, `2`, `3`, `s`
 /// or `z`, with or without the `-O`) to trade code speed for compile time.
-pub(crate) fn opt_flag() -> &'static str {
+pub fn opt_flag() -> &'static str {
     static FLAG: OnceLock<&'static str> = OnceLock::new();
     FLAG.get_or_init(|| {
         let level = std::env::var("VELT_LLVM_OPT").unwrap_or_default();
@@ -262,6 +349,38 @@ mod tests {
 
     fn usable(banner: &str) -> Option<bool> {
         parse_version(banner).map(|v| v.major >= v.min_major())
+    }
+
+    #[test]
+    fn named_cpus_have_the_features_clang_gives_them() {
+        if find_clang().is_none() {
+            return;
+        }
+        let names = |mask: u32| {
+            (0..velt_codegen_cl::X86_FEATURES.len())
+                .filter(|b| mask & 1 << b != 0)
+                .map(|b| velt_codegen_cl::X86_FEATURES[b].0)
+                .collect::<Vec<_>>()
+        };
+        let linux = "x86_64-unknown-linux-gnu";
+        // Cranelift's presets of these have no AVX2 (nor MOVBE and F16C): clang's do.
+        for cpu in ["alderlake", "znver4", "haswell"] {
+            let has = names(x86_features(linux, cpu).unwrap());
+            for f in ["AVX", "AVX2", "MOVBE", "F16C", "POPCNT"] {
+                assert!(has.contains(&f), "{cpu}: {f} in {has:?}");
+            }
+        }
+        let skx = names(x86_features(linux, "skylake-avx512").unwrap());
+        assert!(
+            skx.contains(&"AVX512BW") && skx.contains(&"AVX512CD"),
+            "{skx:?}"
+        );
+        assert!(!names(x86_features(linux, "core2").unwrap()).contains(&"SSE4.1"));
+        let err = "clang: error: unknown target CPU 'apple-m9'".to_string();
+        let msg = unknown_cpu(err.clone(), Some("apple-m9"));
+        assert!(msg.contains("does not know CPU `apple-m9`"), "{msg}");
+        assert_eq!(unknown_cpu(err.clone(), None), err);
+        assert_eq!(unknown_cpu("other".into(), Some("znver4")), "other");
     }
 
     #[test]

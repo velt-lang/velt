@@ -1,8 +1,8 @@
 // The TechEmpower fortunes data and the hand-written page (bench/web/velt/server.vlt's
 // renderer): the baseline the TSX pages are measured against.
 
-import { escapeHtml } from "velt:html";
-import { jsxEscape } from "velt:jsx/factory";
+import { escapeHtml } from "velt/text";
+import { jsxEscape } from "velt/jsx/jsx-runtime";
 
 export class Fortune {
   constructor(public id: i64, public message: string) {}

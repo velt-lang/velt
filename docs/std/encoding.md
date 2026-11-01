@@ -1,9 +1,9 @@
-# velt:encoding
+# velt/encoding
 
-`import { base64Encode, hexEncode } from "velt:encoding"`. Converts between bytes and text:
+`import { base64Encode, hexEncode } from "velt/encoding"`. Converts between bytes and text:
 Base64 (RFC 4648 standard and URL-safe alphabets), lowercase hex, and UTF-8. Decoders throw
 `EncodingError`. The functions work on `u8[]`, Velt's byte array; `Uint8Array.fromBytes(b)` and
-`xs.toBytes()` convert ([typed arrays](typed_array.md)).
+`xs.toBytes()` convert ([typed arrays](prelude/typed_array.md)).
 
 - `base64Encode(data: u8[])` (padded), `base64Decode(s): u8[]` (padding optional).
 - `base64UrlEncode(data)` (unpadded), `base64UrlDecode(s)`.
@@ -15,10 +15,24 @@ Base64 (RFC 4648 standard and URL-safe alphabets), lowercase hex, and UTF-8. Dec
 - A string's bytes without a copy: `utf8Length(s): usize` (the bytes it keeps its text in, O(1);
   `Buffer.byteLength(s)` for well-formed text, a lone surrogate counting its three-byte form),
   `utf8ByteAt(s, i): u8` (a RangeError past the end), `isAscii(s): bool` (O(1)). With
-  `u8x16.loadString` ([SIMD](simd.md)), 16 bytes at a time.
+  `u8x16.loadString` ([SIMD](simd.md)), 16 bytes at a time. `utf8Substring(s, start, end)`
+  is the text between two byte positions, for parsers that scan bytes: no copy when `slice`
+  would share the text, and a RangeError unless both positions are inside `s` at the start of
+  a character.
+
+```ts
+import { utf8ByteAt, utf8Length, utf8Substring } from "velt/encoding";
+
+const line = "naïve=café";
+let eq: usize = 0;
+while (utf8ByteAt(line, eq) != 61) {
+  eq++;
+}
+console.log(utf8Substring(line, 0, eq), utf8Substring(line, eq + 1, utf8Length(line))); // naïve café
+```
 - `TextEncoder` and `TextDecoder`, the WHATWG classes, are globals as in Node (no import).
   `new TextEncoder().encode(s)` gives the UTF-8 bytes in a `Uint8Array` ([typed
-  arrays](typed_array.md)), and `encodeInto(s, dest)` writes as many whole characters as fit
+  arrays](prelude/typed_array.md)), and `encodeInto(s, dest)` writes as many whole characters as fit
   into a `Uint8Array`, returning `{ read, written }` (code units read, bytes written).
   `new TextDecoder(label = "utf-8", { fatal, ignoreBOM })` takes UTF-8 only: another label
   throws `EncodingError` (`The "latin1" encoding is not supported`), where Node also decodes
@@ -57,7 +71,7 @@ function main() {
 ```
 
 ```ts
-import { base64Encode, base64DecodeString, hexEncode, hexDecode, utf8Encode, utf8Decode } from "velt:encoding";
+import { base64Encode, base64DecodeString, hexEncode, hexDecode, utf8Encode, utf8Decode } from "velt/encoding";
 
 function main() {
   const bytes = utf8Encode("héllo?");

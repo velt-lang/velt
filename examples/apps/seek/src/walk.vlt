@@ -1,7 +1,7 @@
 // The directory walk: several tasks read directories in parallel, skipping hidden entries and
 // .gitignore'd paths, and send every file to search down a channel.
-import { channel, Channel, ChannelClosed } from "velt:channel";
-import { Dirent, existsSync, readDirEntriesSync, readFileSync, Stats, statSync } from "velt:fs";
+import { channel, Channel, ChannelClosed } from "velt/sync";
+import { Dirent, existsSync, readDirEntriesSync, readFileSync, Stats, statSync } from "velt/fs";
 import { isIgnored, parseIgnore, Rule, RuleCache } from "./ignore";
 import { Options } from "./options";
 

@@ -1,0 +1,51 @@
+// A function held through `any` converts to a member of another function type deeper in the
+// value (#1935): a member of an object one or more levels down, as a member and inside a
+// converted function's result, and a result that is an interface with a method, which only the
+// converted function's result reaches.
+interface Item {
+  name: string;
+  hello(): string;
+}
+
+interface Src {
+  get: () => Item;
+}
+
+const s: any = Object.create(null);
+s.get = (x?: any): any => ({ name: "a", hello: () => "hi a" + String(x) });
+const it = (s as Src).get();
+console.log(it.name, it.hello());
+
+interface Deep {
+  inner: { deep: { f: (a: number) => string } };
+}
+
+const d: any = Object.create(null);
+d.inner = { deep: { f: (a: any, b?: any): any => "d" + a + String(b) } };
+console.log((d as Deep).inner.deep.f(9));
+
+interface Res {
+  get: () => { inner: { g: () => string[] } };
+}
+
+const r: any = Object.create(null);
+r.get = (): any => ({ inner: { g: (w?: any): any[] => ["g", String(w)] } });
+console.log((r as Res).get().inner.g());
+
+// A type that holds itself: each level is filled from the object it reads.
+interface Node {
+  v: number;
+  next: Node | null;
+  f: () => string;
+}
+
+const a: any = Object.create(null);
+a.v = 1;
+a.f = (x?: any): any => "f" + String(x);
+const b: any = Object.create(null);
+b.v = 2;
+b.next = null;
+b.f = (): any => "g";
+a.next = b;
+const n = a as Node;
+console.log(n.v, n.f(), n.next!.v, n.next!.f(), n.next!.next === null);

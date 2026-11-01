@@ -127,6 +127,7 @@ impl<M: Module> Translator<'_, '_, M> {
             None => match self
                 .inline_simd(callee, args, &values, &params, ret)
                 .or_else(|| self.inline_atomic(callee, &values, &params, ret))
+                .or_else(|| self.inline_tls(callee, &values))
             {
                 Some(Inlined::Value(v)) => Some(v),
                 Some(Inlined::Unit) => None,
@@ -192,6 +193,14 @@ impl<M: Module> Translator<'_, '_, M> {
                 "velt_rt_math_popcount64" => return Some(self.builder.ins().popcnt(args[0])),
                 _ => {}
             }
+        }
+        if symbol == "velt_rt_math_f64_bits" && params == [Ty::F64] && ret == Ty::U64 {
+            let flags = ir::MemFlags::new();
+            return Some(self.builder.ins().bitcast(ir::types::I64, flags, args[0]));
+        }
+        if symbol == "velt_rt_math_bits_f64" && params == [Ty::U64] && ret == Ty::F64 {
+            let flags = ir::MemFlags::new();
+            return Some(self.builder.ins().bitcast(ir::types::F64, flags, args[0]));
         }
         if symbol == "velt_rt_math_umulh" && params == [Ty::U64, Ty::U64] && ret == Ty::U64 {
             return Some(self.builder.ins().umulhi(args[0], args[1]));

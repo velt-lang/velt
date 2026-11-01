@@ -18,6 +18,23 @@ use crate::hir::{DefId, PassMode, TyId, TyKind};
 use crate::resolve::TyEnv;
 
 pub(super) fn resolve_sigs(cx: &mut Ctx, items: &ItemDefs) {
+    resolve_def_sigs(cx, items);
+    let mut used = FxHashSet::default();
+    for m in 0..cx.modules.len() {
+        if cx.is_generated_module(m) {
+            continue;
+        }
+        let module = &cx.modules[m];
+        for item in &module.ast.items {
+            if let ast::ItemKind::Extend(e) = &item.kind {
+                extension(cx, m, e, &mut used);
+            }
+        }
+    }
+}
+
+/// The signatures of the definitions `items`.
+pub(super) fn resolve_def_sigs(cx: &mut Ctx, items: &ItemDefs) {
     let mut defs: Vec<DefId> = items.clone();
     defs.sort();
     for d in defs {
@@ -45,15 +62,6 @@ pub(super) fn resolve_sigs(cx: &mut Ctx, items: &ItemDefs) {
             _ => {}
         }
     }
-    let mut used = FxHashSet::default();
-    for m in 0..cx.modules.len() {
-        let module = &cx.modules[m];
-        for item in &module.ast.items {
-            if let ast::ItemKind::Extend(e) = &item.kind {
-                extension(cx, m, e, &mut used);
-            }
-        }
-    }
 }
 
 /// The signatures `resolve_sigs` deferred, now that bodies may be checked (`Ctx::bodies_ok`).
@@ -73,6 +81,13 @@ pub(crate) fn fill_pending(cx: &mut Ctx, d: DefId) {
     cx.sigq.filling_sigs.push((d, sig.name.name.clone()));
     fill_sig(cx, d, sig, &Generics::default(), module);
     cx.sigq.filling_sigs.pop();
+}
+
+/// A parameter type written `readonly T[]` (parsed as `ReadonlyArray<T>`, which is `T[]` from
+/// here on): a `declare system function` buffer the C function only reads.
+fn written_readonly(t: &ast::TypeExpr) -> bool {
+    matches!(&t.kind, ast::TypeExprKind::Named { path, .. }
+        if path.len() == 1 && path[0].name == "ReadonlyArray")
 }
 
 pub(crate) fn extern_sig<'m>(cx: &Ctx<'m>, d: DefId, module: usize) -> &'m ast::FnSig {
@@ -191,13 +206,16 @@ fn fill_sig(cx: &mut Ctx, d: DefId, sig: &ast::FnSig, owner: &Generics, module: 
         cx.fn_info_mut(d).this = Some(method_this(ty, false, resumable));
     }
     let mut ps = params(cx, &sig.params, &env);
+    if sig.is_intrinsic {
+        crate::intrinsic_decls::param_modes(cx, module, sig, &mut ps);
+    }
     if let Some(f) = cx.sigq.filling_sigs.last_mut().filter(|f| f.0 == d) {
         f.1.clone_from(&sig.name.name);
     }
     // A generator declares its result (`generator_sig`), so it is never inferred.
     let inferred = sig.ret.is_none() && !sig.is_generator && infers_ret(cx, d);
     let (mut ret, ret_span) = match &sig.ret {
-        Some(t) => (cx.resolve_type(t, &env), Some(t.span)),
+        Some(t) => (cx.resolve_async_aware(t, &env, sig.is_async), Some(t.span)),
         None if inferred => (cx.ty.error, None),
         None => (cx.ty.unit, None),
     };
@@ -221,13 +239,46 @@ fn fill_sig(cx: &mut Ctx, d: DefId, sig: &ast::FnSig, owner: &Generics, module: 
         );
         throws = None;
     }
+    if kind == FnKind::Extern && sig.is_system && !sig.generics.is_empty() {
+        cx.err(
+            "a system function has no type parameters: its C signature fixes every type",
+            sig.generics[0].name.span,
+        );
+    }
+    // A runtime function std declares writes the `string` it takes as `out` or `buf`: a string
+    // builder it appends to, or the slot it puts its result in (docs/reference/modules.md
+    // "Runtime declarations"). Its argument is a mutable borrow, so the owner of the place is
+    // modified too: a `StringBuilder` param of a function that appends to it is no read-only
+    // (`frozen`) one whose fields the optimizer may read once.
+    if kind == FnKind::Extern && !sig.is_system && !sig.is_intrinsic && cx.scopes[module].is_std {
+        for p in &mut ps {
+            let written = p.name == "out" || p.name == "buf";
+            if written && p.mode == PassMode::Borrow && matches!(cx.ty.kind(p.ty), TyKind::Str) {
+                p.mode = PassMode::BorrowMut;
+            }
+        }
+    }
     let f = cx.fn_info_mut(d);
+    if kind == FnKind::Extern && sig.is_system {
+        f.system = Some(sig.params.iter().map(|p| written_readonly(&p.ty)).collect());
+    }
     f.declared_throws = throws;
     f.is_async = sig.is_async && !sig.is_generator;
     f.is_generator = sig.is_generator;
     f.is_async_gen = sig.is_async && sig.is_generator;
     f.generics = generics;
     f.params = ps;
+    // A system function writes every buffer and struct not written `readonly`
+    // (docs/reference/system-functions.md): its argument is a mutable borrow from the start, so
+    // the call is checked as one (a read-only array is rejected, a module constant is not
+    // copied, another argument may not reach it) before ownership inference runs.
+    if let Some(readonly) = f.system.clone() {
+        for (p, ro) in f.params.iter_mut().zip(readonly) {
+            if p.mode == PassMode::Borrow && !ro {
+                p.mode = PassMode::BorrowMut;
+            }
+        }
+    }
     f.ret = ret;
     f.ret_span = ret_span;
     if inferred {
@@ -534,7 +585,17 @@ fn iface_methods(cx: &mut Ctx, d: DefId) {
                 gp.name.span,
             );
         }
+        // No promise sites in a generic interface method's parameters: what a call stores there
+        // would not reach the implementations' own parameter types, which a generic method of
+        // an object literal does not compare (`throws::promise_sites`).
+        let off = !m.sig.generics.is_empty() || cx.fn_sites.async_ret;
+        let outer = std::mem::replace(&mut cx.fn_sites.async_ret, off);
         let ps = params(cx, &m.sig.params, &env);
+        cx.fn_sites.async_ret = outer;
+        // Where its result is written, for the site there (`throws::promise_sites`).
+        if let Some(t) = &m.sig.ret {
+            cx.note_written_type(name.span, t.span);
+        }
         let mut ret = match &m.sig.ret {
             Some(t) => cx.resolve_type(t, &env),
             None => cx.ty.unit,
@@ -652,7 +713,8 @@ fn extension<'m>(cx: &mut Ctx<'m>, m: usize, e: &'m ast::ExtendDecl, used: &mut 
         }
     }
     generics.bounds = b.bounds;
-    let target = cx.resolve_type(&e.target, &env);
+    let target =
+        super::ext_fn_errors::resolve_target(cx, &e.target, &env, &mut generics, &e.methods);
     let saved = std::mem::replace(&mut cx.display_params, generics.names.clone());
     let prefix = format!("{}{}", module_prefix(cx, m), cx.display(target));
     cx.display_params = saved;
@@ -676,6 +738,13 @@ fn extension<'m>(cx: &mut Ctx<'m>, m: usize, e: &'m ast::ExtendDecl, used: &mut 
         info.is_getter = meth.is_getter;
         let resumable = meth.decl.sig.is_async || meth.decl.sig.is_generator;
         info.this = (!meth.is_static).then(|| method_this(target, always_mutates(meth), resumable));
+        // std's extension of the prelude `Record` (std/lang/record/symbols.vlt) holds
+        // methods of its own, which read its fields.
+        if let TyKind::Adt(d, _) = cx.ty.kind(target) {
+            if cx.scopes[m].is_std && Some(*d) == cx.prelude_adt("Record") {
+                info.owner = Some(*d);
+            }
+        }
         let def = cx.alloc_def(name.span, DefInfo::Fn(Box::new(info)));
         fill_sig(cx, def, &meth.decl.sig, &generics, m);
         if methods.contains_key(&key) {

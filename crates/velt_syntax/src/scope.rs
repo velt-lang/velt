@@ -210,9 +210,11 @@ impl<'a> Walker<'a, '_> {
                 }
             }
             T::Named { args, .. } => args.iter().for_each(|a| self.ty(a)),
-            T::Array(x) | T::Construct(x) | T::KeyOf(x) | T::TupleRest(x) | T::TupleOptional(x) => {
-                self.ty(x)
-            }
+            T::Array(x)
+            | T::Construct { ty: x, .. }
+            | T::KeyOf(x)
+            | T::TupleRest(x)
+            | T::TupleOptional(x) => self.ty(x),
             T::GenericFunction { ty, .. } => self.ty(ty),
             T::Tuple(xs) | T::Union(xs) | T::Intersection(xs) => {
                 xs.iter().for_each(|x| self.ty(x));

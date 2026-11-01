@@ -1,0 +1,31 @@
+// check: no leaks
+// A module `Atomic<shared<T> | null>` made with `null` is a static atomic (a word in the
+// program's data). What it holds when the program ends is released then, as module state is,
+// and so is `velt/sync/epoch`'s registry, with the values retired and not dropped yet: the leak
+// counters see every block freed.
+
+class Box {
+  n: i64;
+
+  constructor(n: i64) {
+    this.n = n;
+  }
+}
+
+const CURRENT = new Atomic<shared<Box> | null>(null);
+const CLEARED = new Atomic<shared<Box> | null>(null);
+
+function read(): i64 {
+  const b = CURRENT.load();
+  return b == null ? -1 : b.n;
+}
+
+function main() {
+  console.log(read());
+  for (let i = 0; i < 3; i++) {
+    CURRENT.store(shared(new Box(i)));
+  }
+  CLEARED.store(shared(new Box(9)));
+  CLEARED.store(null);
+  console.log(read(), CLEARED.load() == null);
+}

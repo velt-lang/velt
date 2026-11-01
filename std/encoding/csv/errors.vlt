@@ -1,0 +1,14 @@
+// velt/encoding/csv (internal): `CsvError`.
+
+/**
+ * A malformed CSV input or a bad option; `line` is the 1-based line where the problem starts
+ * (0 for option errors).
+ */
+export class CsvError extends Error {
+  line: i64;
+
+  constructor(message: string, line: i64) {
+    super(message);
+    this.line = line;
+  }
+}

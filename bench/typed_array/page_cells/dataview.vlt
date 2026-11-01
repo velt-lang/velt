@@ -1,0 +1,29 @@
+// A `DataView` per page: `getUint16` and `getUint32` (big-endian), `getUint8` for the varint.
+import { PAGE, PAGES, run } from "./_pages";
+
+function viaDataView(all: Uint8Array): number {
+  let sum = 0;
+  for (let p = 0; p < PAGES; p++) {
+    const dv = new DataView(all.buffer, p * PAGE, PAGE);
+    const n = dv.getUint16(3);
+    for (let i = 0; i < n; i++) {
+      const at = dv.getUint16(12 + 2 * i);
+      const child = dv.getUint32(at);
+      let key = 0;
+      let q = at + 4;
+      for (let j = 0; j < 8; j++) {
+        const b = dv.getUint8(q++);
+        key = key * 128 + (b & 127);
+        if (b < 128) {
+          break;
+        }
+      }
+      sum += child + key;
+    }
+  }
+  return sum;
+}
+
+function main() {
+  run(viaDataView);
+}

@@ -4,15 +4,19 @@
 //! A compiled regex is an opaque `Arc` handle (`VeltRegex*`), so clones are cheap and a handle
 //! can be shared by concurrent tasks. Matching runs on the WTF-8 bytes of the subject; the
 //! offsets the functions take and return are UTF-16 code units, like every Velt string position
-//! (#377 phase 2b), translated at entry and exit ([`Positions`]). In Unicode mode the engine
-//! never matches the bytes of a lone surrogate (#377: `.` and negated classes accepting them is
-//! phase 5), and its empty-match stepping skips one as a whole 3-byte sequence and a pair as a
-//! whole (JavaScript's non-`u` stepping is #401). The `g`/`y` flags are iteration modes that std/regex
+//! (#377 phase 2b), translated at entry and exit ([`Positions`]). Unless the pattern names a
+//! surrogate (surrogates.rs), the engine never matches the bytes of a lone surrogate (#377: `.`
+//! and negated classes accepting them is phase 5), and its empty-match stepping skips one as a
+//! whole 3-byte sequence and a pair as a whole (JavaScript's non-`u` stepping is #401). A
+//! pattern without the `u` flag that names a surrogate searches the subject's units form
+//! (units.rs), where each half of a pair is matched on its own, as in JS. The `g`/`y` flags are iteration modes that std/regex
 //! implements; the runtime only needs the others.
 
 mod matches;
 mod replace;
+mod surrogates;
 mod syntax;
+mod units;
 
 use crate::array::VeltArray;
 use crate::handle::Handle;
@@ -30,14 +34,20 @@ pub struct RegexObj {
     /// methods that update it (`exec`, `s.replace(re, …)`) read their receiver as JS code
     /// expects, without a mutable borrow. Atomic because a handle may be shared between tasks.
     last_index: AtomicU64,
+    /// The pattern matches code units: a subject with a pair is searched in its units form
+    /// (units.rs).
+    units: bool,
+    /// The units form of the last subject searched (`units` patterns), so that a loop over
+    /// one string converts it once.
+    last: parking_lot::Mutex<Option<Arc<units::Form>>>,
 }
 
 /// Opaque handle (`Arc<RegexObj>`).
 pub type RegexHandle = Handle<RegexObj>;
 
-/// Compile `pattern` with JS `flags` (`d g i m s u v y`; `g`, `y`, `d`, `u`, `v` do not change
+/// Compile `pattern` (WTF-8) with JS `flags` (`d g i m s u v y`; `g`, `y` and `d` do not change
 /// the pattern itself).
-fn compile(pattern: &str, flags: &str) -> Result<RegexObj, String> {
+fn compile(pattern: &[u8], flags: &str) -> Result<RegexObj, String> {
     let mut seen = String::new();
     for f in flags.chars() {
         if seen.contains(f) || !"dgimsuvy".contains(f) {
@@ -49,7 +59,14 @@ fn compile(pattern: &str, flags: &str) -> Result<RegexObj, String> {
     }
     let multi_line = seen.contains('m');
     let dot_all = seen.contains('s');
-    RegexBuilder::new(&syntax::translate(pattern, dot_all))
+    let unicode = seen.contains('u') || seen.contains('v');
+    let invalid = |e: &dyn std::fmt::Display| {
+        let pattern = crate::str::wtf8::to_utf8_lossy(pattern);
+        format!("Invalid regular expression: /{pattern}/{flags}: {e}")
+    };
+    let js = surrogates::prepare(pattern, unicode);
+    let t = syntax::translate(&js, dot_all, unicode).map_err(|e| invalid(&e))?;
+    RegexBuilder::new(&t.pattern)
         .case_insensitive(seen.contains('i'))
         .dot_matches_new_line(dot_all)
         .multi_line(multi_line)
@@ -60,25 +77,100 @@ fn compile(pattern: &str, flags: &str) -> Result<RegexObj, String> {
         .map(|re| RegexObj {
             re,
             last_index: AtomicU64::new(0),
+            units: t.surrogates && !unicode,
+            last: parking_lot::Mutex::new(None),
         })
-        .map_err(|e| format!("Invalid regular expression: /{pattern}/{flags}: {e}"))
+        .map_err(|e| invalid(&e))
+}
+
+/// The text the engine searches for a subject: its own bytes, or its units form.
+enum Subject<'a> {
+    Bytes(&'a [u8]),
+    Units(Arc<units::Form>),
+}
+
+impl Subject<'_> {
+    fn text(&self) -> &[u8] {
+        match self {
+            Subject::Bytes(b) => b,
+            Subject::Units(f) => f.text(),
+        }
+    }
+
+    fn is_units(&self) -> bool {
+        matches!(self, Subject::Units(_))
+    }
+}
+
+impl RegexObj {
+    /// The units form of `s` (non-ASCII), from the cache when `s` was the last subject.
+    ///
+    /// # Safety
+    /// `s` must be valid.
+    unsafe fn form(&self, s: &VeltStr) -> Arc<units::Form> {
+        // An inline string is short and has no fixed address: it is converted every time.
+        if !(s.is_heap() || s.is_static()) {
+            return Arc::new(units::Form::new(s, false));
+        }
+        let mut cache = self.last.lock();
+        if let Some(f) = cache.as_ref().filter(|f| f.is_of(s)) {
+            return f.clone();
+        }
+        let f = Arc::new(units::Form::new(s, true));
+        *cache = Some(f.clone());
+        f
+    }
+
+    /// The text the engine searches for subject `s`: its bytes, or its units form when the
+    /// pattern matches code units and `s` holds a pair.
+    ///
+    /// # Safety
+    /// `s` must be valid.
+    unsafe fn subject<'a>(&self, s: &'a VeltStr) -> Subject<'a> {
+        if !self.units || s.is_ascii() {
+            return Subject::Bytes(s.as_bytes());
+        }
+        let form = self.form(s);
+        match form.has_pairs() {
+            true => Subject::Units(form),
+            false => Subject::Bytes(s.as_bytes()),
+        }
+    }
+
+    /// The text to search for a match of subject `s` at or after code unit `from`, the byte
+    /// offset in it to start at, and the code unit that is: [`start_pos`] over the bytes of `s`,
+    /// or the position of unit `from` in the units form (a pair's low half included).
+    ///
+    /// # Safety
+    /// `s` must be valid.
+    unsafe fn search_from<'a>(&self, s: &'a VeltStr, from: u64) -> (Subject<'a>, usize, usize) {
+        let subject = self.subject(s);
+        let Subject::Units(form) = &subject else {
+            let (byte, unit) = start_pos(s, from);
+            return (subject, byte, unit);
+        };
+        let unit = usize::try_from(from).unwrap_or(usize::MAX).min(s.units());
+        let pos = s.unit_to_byte(unit);
+        let byte = form.byte_of(pos.byte) + if pos.low_half { 3 } else { 0 };
+        (subject, byte, unit)
+    }
 }
 
 unsafe fn text<'a>(s: *const VeltStr) -> &'a [u8] {
     (*s).as_bytes()
 }
 
-/// The search start for code unit `from` of `s`, as a byte offset: a position inside a pair moves
-/// to the pair's end (the engine matches code points, never half of one).
-///
-/// # Safety
-/// `s` must be valid.
-unsafe fn start_byte(s: &VeltStr, from: u64) -> usize {
-    start_pos(s, from).0
+/// Text taken out of the searched text, as a string's canonical WTF-8.
+fn canonical(bytes: Vec<u8>, units_form: bool) -> Vec<u8> {
+    match units_form {
+        true => units::to_wtf8(&bytes),
+        false => bytes,
+    }
 }
 
-/// [`start_byte`] with the code unit it stands for (`from` clamped to the length, or the unit
-/// after the pair `from` was inside).
+/// The search start for code unit `from` of `s`, as a byte offset, with the code unit it stands
+/// for (`from` clamped to the length): a position inside a pair moves to the pair's end, the
+/// unit after it (the engine matches code points, never half of one).
 ///
 /// # Safety
 /// `s` must be valid.
@@ -91,25 +183,32 @@ unsafe fn start_pos(s: &VeltStr, from: u64) -> (usize, usize) {
     }
 }
 
-/// Byte offsets of matches in `s` as code units: offsets inside a match are counted from its
-/// start, and each match start from the previous one (matches come in order), so translating
-/// every match of a string scans it once.
+/// Byte offsets of matches in the searched text as code units: offsets inside a match are
+/// counted from its start, and each match start from the previous one (matches come in order),
+/// so translating every match of a string scans it once.
 struct Positions<'a> {
-    s: &'a VeltStr,
+    text: &'a [u8],
+    ascii: bool,
     byte: usize,
     unit: usize,
 }
 
 impl<'a> Positions<'a> {
-    /// Positions of matches at or after byte `byte` of `s`, which is code unit `unit`.
-    fn new(s: &'a VeltStr, byte: usize, unit: usize) -> Positions<'a> {
-        Positions { s, byte, unit }
+    /// Positions of matches at or after byte `byte` of `text` (a subject's bytes or units form,
+    /// `ascii` when it is all ASCII), which is code unit `unit`.
+    fn new(text: &'a [u8], ascii: bool, byte: usize, unit: usize) -> Positions<'a> {
+        Positions {
+            text,
+            ascii,
+            byte,
+            unit,
+        }
     }
 
     /// The code unit of the start of a match at byte `b` (not before the previous match start).
     ///
     /// # Safety
-    /// `self.s` must be valid and `b` a code point boundary.
+    /// `b` must be a code point boundary of the text.
     unsafe fn start(&mut self, b: usize) -> i64 {
         self.unit = self.at(b);
         self.byte = b;
@@ -121,12 +220,13 @@ impl<'a> Positions<'a> {
     /// # Safety
     /// As for [`Self::start`].
     unsafe fn at(&self, b: usize) -> usize {
-        if self.s.is_ascii() {
+        use crate::str::wtf8::count_units;
+        if self.ascii {
             b
         } else if b >= self.byte {
-            self.unit + crate::str::wtf8::count_units(&self.s.as_bytes()[self.byte..b])
+            self.unit + count_units(&self.text[self.byte..b])
         } else {
-            self.s.byte_to_unit(b)
+            self.unit - count_units(&self.text[b..self.byte])
         }
     }
 
@@ -163,9 +263,8 @@ pub unsafe extern "C" fn velt_rt_regex_new(
     flags: *const VeltStr,
     out: *mut IoResult<RegexHandle>,
 ) {
-    let pattern = (*pattern).text_lossy();
     let flags = (*flags).text_lossy();
-    let r = match compile(&pattern, &flags) {
+    let r = match compile((*pattern).as_bytes(), &flags) {
         Ok(obj) => IoResult::ok(Handle::from_arc(Arc::new(obj))),
         Err(msg) => IoResult::err(VeltErr::new(code::INVALID_INPUT, &msg)),
     };
@@ -213,8 +312,8 @@ pub unsafe extern "C" fn velt_rt_regex_group_names(re: RegexHandle, out: *mut Ve
 /// Whether the subject has a match starting at or after code unit `from`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_regex_test(re: RegexHandle, s: *const VeltStr, from: u64) -> u8 {
-    let from = start_byte(&*s, from);
-    re.obj().re.find_at(text(s), from).is_some() as u8
+    let (subject, byte, _) = re.obj().search_from(&*s, from);
+    matches::find_at(&re.obj().re, subject.text(), byte).is_some() as u8
 }
 
 /// First match starting at or after code unit `from`: returns 1 and writes `2 * group_count`
@@ -230,13 +329,16 @@ pub unsafe extern "C" fn velt_rt_regex_exec(
     let st = &*s;
     // The search start's unit is known: offsets are counted from it, not from the start of the
     // subject (an `exec(s, from)` loop over a long non-ASCII subject stays linear).
-    let (byte, unit) = start_pos(st, from);
-    let Some(caps) = re.obj().re.captures_at(text(s), byte) else {
+    let (subject, byte, unit) = re.obj().search_from(st, from);
+    let text = subject.text();
+    let regex = &re.obj().re;
+    let mut locs = regex.capture_locations();
+    if matches::captures_at(regex, &mut locs, text, byte).is_none() {
         return 0;
-    };
-    let mut v = Vec::with_capacity(2 * caps.len());
-    let groups = caps.iter().map(|g| g.map(|m| (m.start(), m.end())));
-    Positions::new(st, byte, unit).push(groups, &mut v);
+    }
+    let mut v = Vec::with_capacity(2 * locs.len());
+    let groups = (0..locs.len()).map(|g| locs.get(g));
+    Positions::new(text, st.is_ascii(), byte, unit).push(groups, &mut v);
     out.write(VeltArray::from_vec(v));
     1
 }
@@ -249,16 +351,18 @@ pub unsafe extern "C" fn velt_rt_regex_exec_all(
     s: *const VeltStr,
     out: *mut VeltArray<i64>,
 ) {
+    let subject = re.obj().subject(&*s);
+    let text = subject.text();
     let re = &re.obj().re;
-    let mut pos = Positions::new(&*s, 0, 0);
+    let mut pos = Positions::new(text, (*s).is_ascii(), 0, 0);
     let mut v = Vec::new();
     if re.captures_len() == 1 {
-        matches::each_find(re, text(s), |start, end| {
+        matches::each_find(re, text, |start, end| {
             pos.push(std::iter::once(Some((start, end))), &mut v);
             true
         });
     } else {
-        matches::each_captures(re, text(s), |locs| {
+        matches::each_captures(re, text, |locs| {
             pos.push((0..locs.len()).map(|g| locs.get(g)), &mut v);
             true
         });
@@ -276,8 +380,9 @@ pub unsafe extern "C" fn velt_rt_regex_replace(
     all: u8,
     out: *mut VeltStr,
 ) {
-    let r = replace::replace(&re.obj().re, text(s), text(replacement), all != 0);
-    out.write(VeltStr::from_vec(r));
+    let subject = re.obj().subject(&*s);
+    let r = replace::replace(&re.obj().re, subject.text(), text(replacement), all != 0);
+    out.write(VeltStr::from_vec(canonical(r, subject.is_units())));
 }
 
 /// JS `s.split(re, limit)`: pieces between matches, with captured groups spliced in (`""` for
@@ -294,9 +399,13 @@ pub unsafe extern "C" fn velt_rt_regex_split(
     } else {
         limit as usize
     };
-    let parts = replace::split(&re.obj().re, text(s), limit);
+    let subject = re.obj().subject(&*s);
+    let parts = replace::split(&re.obj().re, subject.text(), limit);
     out.write(VeltStrArray::from_vec(
-        parts.into_iter().map(VeltStr::from_vec).collect(),
+        parts
+            .into_iter()
+            .map(|p| VeltStr::from_vec(canonical(p, subject.is_units())))
+            .collect(),
     ));
 }
 

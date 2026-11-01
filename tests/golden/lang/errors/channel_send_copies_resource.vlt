@@ -1,6 +1,6 @@
 // A value sent on a channel while the program still uses it is copied for the receiving task,
 // like a `spawn` argument (#690): a resource without `clone()` cannot be, so it is an error.
-import { channel, Channel } from "velt:channel";
+import { channel, Channel } from "velt/sync";
 
 class Conn {
   id: i64;

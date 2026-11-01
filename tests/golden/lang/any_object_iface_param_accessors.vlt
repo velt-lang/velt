@@ -1,0 +1,19 @@
+// An object without functions converted through `any` to a type parameter that a call gives an
+// interface with accessors (#1909): a getter and a setter are filled by plain fields, so the
+// conversion needs the interface's implementation for the object, as in Node.
+interface G {
+  get y(): number;
+  label: string;
+}
+interface S {
+  get v(): number;
+  set v(x: number);
+}
+function conv<T>(o: unknown): T {
+  return o as T;
+}
+const g = conv<G>({ y: 2, label: "g" } as unknown);
+console.log(g.y, g.label);
+const s = conv<S>({ v: 3 } as unknown);
+s.v = 4;
+console.log(s.v);

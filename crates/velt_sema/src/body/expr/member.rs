@@ -128,6 +128,9 @@ impl FnCx<'_, '_> {
         if let Some(object) = self.without_namespace(object) {
             return self.member(&object, prop, optional, exp, want, span);
         }
+        if let Some(h) = self.any_as_record_member(object, prop, optional, exp, want, span) {
+            return h;
+        }
         if let (ast::ExprKind::This, Some((this, declaring))) = (&object.kind, self.static_this) {
             // `this.NAME` / `this.f` in a static method: the class it was called on.
             if let Some(h) = self.this_static_field(this, declaring, prop, want, span) {
@@ -146,6 +149,10 @@ impl FnCx<'_, '_> {
                 prop.span,
             );
             return self.error_expr(span);
+        }
+        if let (ast::ExprKind::This, Some(prim)) = (&object.kind, self.this_primitive) {
+            // `this.f` in a static of `extend f64`: `f64.f`.
+            return self.primitive_static_value(prim, prop, exp, span);
         }
         if let ast::ExprKind::Ident(id) = &object.kind {
             if !self.is_local_name(&id.name) {
@@ -173,6 +180,9 @@ impl FnCx<'_, '_> {
                     return self.error_expr(span);
                 }
                 let item = self.lookup_item(&id.name, id.span);
+                if let (None, Some(ty)) = (item, self.primitive_named(&id.name)) {
+                    return self.primitive_static_value((id.name.as_str(), ty), prop, exp, span);
+                }
                 if let Some(c) = item.and_then(|it| self.companion_class(&id.name, it)) {
                     if let Some(h) = self.static_field(c, prop, want, span) {
                         return h;
@@ -204,8 +214,12 @@ impl FnCx<'_, '_> {
                 }
             }
         }
-        if optional {
+        let cast = self.cast_member_read(object, prop, optional, want, span);
+        if let (true, None) = (optional, &cast) {
             return self.optional_chain(object, span, |s, v| s.member_of(v, prop, want, span));
+        }
+        if let Some(h) = cast.or_else(|| self.narrowed_dynamic_member(object, prop, want, span)) {
+            return h;
         }
         // A union local narrowed to one member is read as the union here, so that a view it may
         // hold is read through its getters (`union_view`).
@@ -245,7 +259,7 @@ impl FnCx<'_, '_> {
         want: Want,
         span: Span,
     ) -> hir::Expr {
-        let obj = match self.dynamic_get(obj, &prop.name, want, span) {
+        let obj = match self.dynamic_or_brand_get(obj, &prop.name, want, span) {
             Ok(h) => return h,
             Err(obj) => obj,
         };
@@ -271,19 +285,7 @@ impl FnCx<'_, '_> {
                 return self.intrinsic(Intrinsic::ArrayLen, vec![obj], self.cx.ty.usize, span);
             }
         }
-        // `s.f` on a `shared<T>` of an object type with a field or getter `f`: the value
-        // inside's (#36). A getter is a call on it, refused where it may modify it, as a method
-        // is (`ownership/patch.rs`).
-        let shared = match self.cx.ty.kind(obj.ty) {
-            TyKind::Shared(t) => Some(*t),
-            _ => None,
-        };
-        let obj = match shared {
-            Some(t) if self.field_of(t, &prop.name).is_some() || self.has_getter(t, &prop.name) => {
-                self.frozen_view(obj, Some(&prop.name))
-            }
-            _ => obj,
-        };
+        let obj = self.shared_member_view(obj, &prop.name);
         if self.cx.frozen_reads && self.frozen_buffer_view(&obj, &prop.name, span) {
             return self.error_expr(span);
         }
@@ -324,7 +326,8 @@ impl FnCx<'_, '_> {
                 s.index_of(v, index, want, span)
             });
         }
-        if let Some(h) = self.process_env_index(object, index, span) {
+        let h = self.process_env_index(object, index, span);
+        if let Some(h) = h.or_else(|| self.any_as_record_index(object, index, exp, want, span)) {
             return h;
         }
         if let Some(h) = self.symbol_record_read(object, index, span) {
@@ -405,9 +408,10 @@ impl FnCx<'_, '_> {
             false => obj,
         };
         let t = obj.ty;
-        // `o[KEY]` with a symbol constant: the member the symbol names.
+        // `o[KEY]` with a symbol constant: the member the symbol names (a record's symbol
+        // table, `record_index_read`, holds its symbol keys).
         if let Some(key) = self.symbol_key_of(index) {
-            if self.has_fields(t, &key) {
+            if self.has_fields(t, &key) && self.record_args(t).is_none() {
                 return self.symbol_index(obj, key, index, want, span);
             }
         }
@@ -416,15 +420,20 @@ impl FnCx<'_, '_> {
                 self.record_index_read(obj, index, span)
             }
             TyKind::Array(elem) => self.array_index(obj, elem, index, want, span),
-            // `m[1]` on a match of `s.matchAll(re)`: its group (std/regex `__index`).
-            TyKind::Adt(..) if self.is_std_class(t, "std/regex::RegExpMatch") => {
+            // `m[1]` on a match of `s.matchAll(re)`: its group (std/regex `[INDEX]`).
+            TyKind::Adt(..)
+                if self.is_std_class(
+                    t,
+                    velt_common::std_item!(text_regex_regexp_match, "RegExpMatch"),
+                ) =>
+            {
                 let prop = ast::Ident {
-                    name: "__index".into(),
+                    name: velt_common::std_key!(index).into(),
                     span,
                 };
                 self.method_call_on(obj, &prop, &[], std::slice::from_ref(index), None, span)
             }
-            // `xs[i]` on a typed array: `xs.__index(i)` (`indexers`).
+            // `xs[i]` on a typed array: `xs[INDEX](i)` (`indexers`).
             TyKind::Adt(..)
                 if self.has_indexer(t)
                     && literal_key(index).is_none()
@@ -638,7 +647,20 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.empty_as_deferred(expr, target, span) {
             return h;
         }
+        // A narrowed `any` / `unknown` converts as the value it holds, which TypeScript allows
+        // where the narrowed type would not cast (`isComponent(t)`, then `t as Function`).
+        let path = matches!(
+            expr.kind,
+            ast::ExprKind::Ident(_) | ast::ExprKind::Member { .. }
+        );
+        let saved = std::mem::replace(&mut self.dynamic_raw, path.then_some(expr.span));
+        // An arrow asserted to a function type returns what it may (`returns::returned`).
+        let arrow = super::object_builtins::strip_parens(expr);
+        let asserted = matches!(arrow.kind, ast::ExprKind::Arrow { .. })
+            && matches!(self.cx.ty.kind(target), TyKind::FnPtr { .. });
+        let outer = std::mem::replace(&mut self.asserted_fn, asserted.then_some(arrow.span));
         let inner = self.expr(expr, Some(target), want);
+        (self.dynamic_raw, self.asserted_fn) = (saved, outer);
         if self.cx.dynamic(inner.ty).is_some() {
             if let Ok(h) = self.coerce_dynamic(inner.clone(), target, true) {
                 return h;

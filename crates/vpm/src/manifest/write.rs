@@ -6,7 +6,7 @@ use serde_json::{json, Map, Value};
 use super::{Dependency, Manifest, DEFAULT_ENTRY, DEFAULT_NATIVE_PATH};
 
 /// The first line of every generated manifest.
-pub(crate) const TYPES_IMPORT: &str = "import type { Package } from \"velt:package\";";
+pub(crate) const TYPES_IMPORT: &str = "import type { Package } from \"velt/package\";";
 
 pub(super) fn to_vlt(m: &Manifest) -> String {
     let mut fields = vec![
@@ -75,6 +75,10 @@ pub(super) fn to_vlt(m: &Manifest) -> String {
         let dirs: Vec<String> = m.ts_compat.iter().map(|d| string_lit(d)).collect();
         fields.push(format!("tsCompat: [{}]", dirs.join(", ")));
     }
+    if let Some(build) = &m.build {
+        let cpu = build.cpu.iter().map(|c| format!("cpu: {}", string_lit(c)));
+        fields.push(format!("build: {}", inline_object(cpu)));
+    }
     let text = format!(
         "{TYPES_IMPORT}\n\nexport const pkg: Package = {};\n",
         multiline_object(fields.into_iter())
@@ -110,8 +114,16 @@ pub(super) fn to_json(m: &Manifest) -> Value {
                     if let Some(v) = &d.version {
                         o.insert("version".into(), json!(v));
                     }
-                    if let Some(p) = &d.path {
-                        o.insert("path".into(), json!(p));
+                    for (key, value) in [
+                        ("path", &d.path),
+                        ("git", &d.git),
+                        ("branch", &d.branch),
+                        ("tag", &d.tag),
+                        ("rev", &d.rev),
+                    ] {
+                        if let Some(v) = value {
+                            o.insert(key.into(), json!(v));
+                        }
                     }
                     Value::Object(o)
                 }
@@ -139,6 +151,13 @@ pub(super) fn to_json(m: &Manifest) -> Value {
     }
     if !m.ts_compat.is_empty() {
         out.insert("tsCompat".into(), json!(m.ts_compat));
+    }
+    if let Some(build) = &m.build {
+        let mut o = Map::new();
+        if let Some(cpu) = &build.cpu {
+            o.insert("cpu".into(), json!(cpu));
+        }
+        out.insert("build".into(), Value::Object(o));
     }
     Value::Object(out)
 }
@@ -168,8 +187,16 @@ pub(crate) fn dependency_lit(dep: &Dependency) -> String {
                 .version
                 .iter()
                 .map(|v| format!("version: {}", string_lit(v)));
-            let path = d.path.iter().map(|p| format!("path: {}", string_lit(p)));
-            inline_object(version.chain(path))
+            let rest = [
+                ("git", &d.git),
+                ("branch", &d.branch),
+                ("tag", &d.tag),
+                ("rev", &d.rev),
+                ("path", &d.path),
+            ]
+            .into_iter()
+            .filter_map(|(key, value)| value.as_ref().map(|v| format!("{key}: {}", string_lit(v))));
+            inline_object(version.chain(rest))
         }
     }
 }

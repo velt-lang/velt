@@ -1,7 +1,7 @@
 // Walks the benchmark tree 5 times with `readDirEntriesSync`: the listing carries each entry's
 // type, so no `stat` is needed.
-import { readDirEntriesSync } from "velt:fs";
-import { args } from "velt:process";
+import { readDirEntriesSync } from "velt/fs";
+import { args } from "velt/process";
 
 function walk(dir: string): i64 {
   let files = 0;

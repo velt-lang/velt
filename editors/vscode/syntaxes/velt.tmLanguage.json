@@ -165,7 +165,7 @@
         },
         {
           "name": "storage.modifier.velt",
-          "match": "(?<![\\w$.])(async|static|readonly|override|extends|implements|shared)(?![\\w$])"
+          "match": "(?<![\\w$.])(async|static|readonly|abstract|override|extends|implements|shared)(?![\\w$])"
         },
         {
           "name": "keyword.operator.new.velt",

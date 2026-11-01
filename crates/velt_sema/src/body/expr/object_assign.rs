@@ -1,7 +1,7 @@
 //! `Object.assign(target, ...sources)` (object_builtins.rs): each source's own fields written to
 //! the target in order, through its setters (synthesized assignments `target.k = source.k`, so
 //! the usual checks apply), and the target itself as the result. A record target takes any keys
-//! (a record source through `__extend`); an object or class target only the fields its type
+//! (a record source through `[RECORD_EXTEND]`); an object or class target only the fields its type
 //! declares, since Velt objects can't gain fields. A variable or field path target is written in
 //! place and is the result itself; an optional source field is copied only while present.
 
@@ -101,6 +101,9 @@ impl FnCx<'_, '_> {
         if !type_args.is_empty() {
             self.cx
                 .err("`Object.assign` takes no type arguments".to_string(), span);
+        }
+        for a in args {
+            self.instance_arg(a);
         }
         if let Some(h) = self.reject_dynamic_args("Object.assign", args, span) {
             return h;
@@ -510,7 +513,7 @@ impl FnCx<'_, '_> {
         read
     }
 
-    /// `target.__extend(source)` of two records.
+    /// `target[RECORD_EXTEND](source)` of two records.
     pub(super) fn record_entries_into(
         &mut self,
         target: hir::Expr,
@@ -535,7 +538,7 @@ impl FnCx<'_, '_> {
             }
             _ => unreachable!("ICE: record source is a temporary"),
         };
-        self.record_call(target, "__extend", &[arg], span)
+        self.record_call(target, velt_common::std_key!(record_extend), &[arg], span)
     }
 
     /// The fields an `Object.assign` target of type `t` (not a record) can be given, or `None`

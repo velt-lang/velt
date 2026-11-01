@@ -27,6 +27,10 @@ pub(super) fn build_impls(cx: &mut Ctx) {
     for d in adts {
         let implements = cx.adt(d).expect("ICE: adt").implements.clone();
         for b in implements {
+            let span = cx.adt(d).map_or(velt_common::Span::DUMMY, |a| a.span);
+            if cx.refuse_known_iface(b.iface, span) {
+                continue;
+            }
             if let Some((imp, setters)) = check_impl(cx, d, &b, &mut getters) {
                 cx.impls.push(imp);
                 // A field with a getter and no setter leaves the implementation without setters.
@@ -137,7 +141,8 @@ fn check_impl(
     Some((imp, setters))
 }
 
-/// The class must have every interface field (same type); each gets a getter and a setter
+/// The class must have every interface field (same type, or for an optional one its type
+/// without `undefined`); each gets a getter and a setter
 /// source (`crate::iface_writes`), or the implementation gets none (`None`: a writable field
 /// with a getter and no setter).
 fn field_getters(
@@ -170,6 +175,22 @@ fn field_getters(
                     self_ty: p.self_ty,
                     index: i,
                     ty,
+                });
+            }
+        } else if let Some((i, ty)) = have.filter(|(_, ty)| {
+            f.optional && cx.ty.opt_payload(want).is_some_and(|w| cx.same_ty(*ty, w))
+        }) {
+            // A required field provides an optional one (`x: number` for `x?: number`), as in
+            // TypeScript and as for an object type (`object_ifaces`): read, it is present;
+            // writing `undefined` through the interface stops with a `TypeError`.
+            getters.push(super::getters::field_getter_some(
+                cx, p.d, p.self_ty, i, ty, want,
+            ));
+            if let Some(setters) = setters.as_mut() {
+                setters.push(SetterSrc::Method {
+                    def: super::getters::some_setter(cx, p.d, p.self_ty, i, want),
+                    d: p.d,
+                    name: f.name.clone(),
                 });
             }
         } else if let Some((g, set)) = accessor_slots(cx, p.d, p.self_ty, &f.name, want) {
@@ -427,6 +448,8 @@ pub(super) fn check_method_sig(
             let r = cx.subst(ret, owner_args);
             cx.same_ty(r, want_ret)
         }
+    } else if promise_results_unify(cx, def, owner_args, m, want_ret) {
+        true
     } else {
         super::ret_infer::impl_ret(cx, (def, owner_args), want_ret, (span, message.clone()))
     };
@@ -517,4 +540,28 @@ fn own_generics_match(
         return None;
     }
     Some(args)
+}
+
+/// A method returning a `Promise<T>` written without an error type implements an interface
+/// method returning one: the two reject with what either is given (`throws::promise_sites`).
+fn promise_results_unify(
+    cx: &mut Ctx,
+    def: DefId,
+    owner_args: &[TyId],
+    m: &IfaceMethod,
+    want: TyId,
+) -> bool {
+    let (ret, ret_span) = (cx.fn_info(def).ret, cx.fn_info(def).ret_span);
+    let have_site = ret_span.and_then(|s| cx.site_in(s, ret));
+    let have = cx.subst(ret, owner_args);
+    // The interface method's promise error is its `throws` (`collect::sigs::promise_throws`).
+    let want = match (cx.ty.promise_payload(want), m.throws.and_then(|t| t.ty)) {
+        (Some(v), Some(e)) => cx.ty.promise_rejecting(v, e),
+        _ => want,
+    };
+    if have_site.is_some() && have == want {
+        return true;
+    }
+    let want_site = cx.written_promise_site(m.span, want);
+    cx.unify_promise_results((have, have_site), (want, want_site))
 }

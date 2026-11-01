@@ -2,7 +2,7 @@
 // A promise converts to a promise type whose error type allows every error it can reject with:
 // `Promise<T>` (never rejects) to `Promise<T, E>`, and `Promise<T, E1>` to `Promise<T, E1 | E2>`.
 // The converted promise starts when it is created and settles like the original.
-import { channel, Channel } from "velt:channel";
+import { channel, Channel } from "velt/sync";
 
 class Oops extends Error {}
 

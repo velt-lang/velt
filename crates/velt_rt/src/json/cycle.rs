@@ -31,6 +31,20 @@ pub extern "C" fn velt_rt_json_leave() {
     });
 }
 
+/// velt/reflect `beginVisit(id)`: start visiting the value whose identity is `id` (its
+/// address): 1, or 0 if it is being visited already (it contains itself). The same stack per
+/// thread as `velt_rt_json_enter`.
+#[no_mangle]
+pub extern "C" fn velt_rt_visit_enter(id: u64) -> u8 {
+    velt_rt_json_enter(id as usize as *const u8)
+}
+
+/// velt/reflect `endVisit()`: done visiting the innermost value `velt_rt_visit_enter` started.
+#[no_mangle]
+pub extern "C" fn velt_rt_visit_leave() {
+    velt_rt_json_leave();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -36,6 +36,7 @@ pub fn add_dependency_text(
         (version, Some(path)) => Dependency::Detailed(DetailedDependency {
             version: version.clone(),
             path: Some(path.clone()),
+            ..Default::default()
         }),
     };
     // Checked before editing, so the error is not about the edited text.
@@ -160,7 +161,7 @@ mod tests {
     use super::*;
 
     const BASE: &str = "\
-import type { Package } from \"velt:package\";
+import type { Package } from \"velt/package\";
 
 // my app
 export const pkg: Package = {

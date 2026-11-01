@@ -1,0 +1,71 @@
+// sqlite/engine/exec/value/text (internal): text as SQLite handles it: on UTF-8 bytes, with case
+// folded for ASCII letters only (no ICU), C strings and hex.
+
+import { utf8ByteAt, utf8Encode, utf8Length } from "velt/encoding";
+
+/** The byte length of `s`'s UTF-8. */
+export function byteLen(s: string): usize {
+  return utf8Length(s);
+}
+
+/** Byte `i` of `s`'s UTF-8 (in range). */
+export function byteAt(s: string, i: usize): u8 {
+  return utf8ByteAt(s, i as usize);
+}
+
+/** `s` with ASCII letters in lower case. */
+export function asciiLower(s: string): string {
+  return mapAscii(s, 65, 90, 32);
+}
+
+/** `s` with ASCII letters in upper case. */
+export function asciiUpper(s: string): string {
+  return mapAscii(s, 97, 122, -32);
+}
+
+function mapAscii(s: string, lo: u8, hi: u8, delta: i64): string {
+  const n = byteLen(s);
+  let first: usize = n;
+  for (let i: usize = 0; i < n; i++) {
+    const c = byteAt(s, i);
+    if (c >= lo && c <= hi) {
+      first = i;
+      break;
+    }
+  }
+  if (first == n) {
+    return s;
+  }
+  const b = utf8Encode(s);
+  for (let i = first; i < n; i++) {
+    const c = b[i];
+    if (c >= lo && c <= hi) {
+      b[i] = ((c as i64) + delta) as u8;
+    }
+  }
+  return b.utf8Slice(0, n as i64);
+}
+
+/** Uppercase hex of bytes. */
+export function hexUpper(b: u8[]): string {
+  const digits = "0123456789ABCDEF";
+  const out: u8[] = [];
+  out.reserve(b.length * 2);
+  for (const x of b) {
+    out.push(byteAt(digits, (x >> 4) as usize));
+    out.push(byteAt(digits, (x & 15) as usize));
+  }
+  return out.utf8Slice(0, out.length as i64);
+}
+
+/** The UTF-8 of `s` up to its first NUL (functions read text as a C string). */
+export function cBytes(s: string): u8[] {
+  const b = utf8Encode(s);
+  for (let i: usize = 0; i < b.length; i++) {
+    if (b[i] == 0) {
+      b.truncate(i as i64);
+      break;
+    }
+  }
+  return b;
+}

@@ -325,15 +325,6 @@ fn a_function_changing_map_entries_it_loops_over_is_an_error() {
 }
 
 #[test]
-fn json_of_a_shared_mutex_is_an_error() {
-    // Its value is read only under the lock, which writing it as JSON doesn't take.
-    let r = err_src(
-        "function main() { const m = shared(new Mutex<number[]>([1])); console.log(JSON.stringify(m)); }",
-    );
-    assert!(r.contains("has no JSON form"), "{r}");
-}
-
-#[test]
 fn changes_through_loops_aliases_closures_and_owned_params_are_errors() {
     // Each would change a copy of a part of the shared value, where JavaScript changes the
     // value itself.
@@ -519,6 +510,9 @@ fn parts_out_of_holders_and_inline_containers_cannot_be_changed() {
         "const g = (x: Item) => { const k = (t: string[]) => { t.push(\"x\"); }; k(x.tags); }; const q = s.items[0]; g(q);",
         "const k = (y: Item) => { y.v = 50; }; const g = (x: Item) => { k(x); }; const c = s.items.slice(); c.forEach(g);",
         "let g = (x: Item) => { console.log(x.v); }; const h = () => { g = (x: Item) => { x.v = 50; }; }; h(); const q = s.items[0]; g(q);",
+        // A closure (whose own body reads no `shared`) changing a loop element it captures.
+        "for (const x of s.items) { const g = () => { x.v = 50; }; g(); }",
+        "for (const x of s.items) { const g = () => { x.tags.push(\"a\"); }; g(); }",
     ] {
         let r = err_src(&format!(
             "{defs} function main() {{ const s = shared(new Store()); {body} }}"

@@ -1,0 +1,131 @@
+// A class instance intersected with object types (`Map<K, V> & { $set(v): void }`, the type of
+// sigx's `signal(new Map())`) is that instance: the class's members, `instanceof`, iteration,
+// spreads, printing and identity are the instance's, as in TypeScript, where `t as S<T>` keeps
+// the object. A member only the object part declares (`$set`) is read from the object at run
+// time: here a proxy's `get` trap provides it.
+type S<T extends object> = T & { $set(v: T): void };
+
+function wrap<T extends object>(t: T): S<T> {
+  return t as S<T>;
+}
+
+class Counter {
+  n = 0;
+  inc(): number {
+    return ++this.n;
+  }
+  get twice(): number {
+    return this.n * 2;
+  }
+}
+
+function total(x: Map<string, number>): number {
+  let t = 0;
+  x.forEach((v) => {
+    t += v;
+  });
+  return t;
+}
+
+function sig<T extends object>(t: T): S<T> {
+  const p = new Proxy(t, {
+    get(target: any, key: string | symbol, recv: any) {
+      if (key === "$set") {
+        return (v: T) => {
+          console.log("replaced", JSON.stringify(v));
+        };
+      }
+      return Reflect.get(target, key);
+    },
+  });
+  return p as S<T>;
+}
+
+const raw = new Map<string, number>([["a", 1]]);
+const m = wrap(raw);
+m.set("b", 2);
+const plain: Map<string, number> = m;
+console.log(plain === raw, m instanceof Map, m.size, typeof m);
+console.log(m);
+console.log([...m.keys()].join(","), JSON.stringify([...m]));
+for (const [k, v] of m) {
+  console.log(k, v);
+}
+console.log(total(m));
+
+const c = wrap(new Counter());
+c.inc();
+c.n += 5;
+c.n++;
+console.log(c.n, c.twice, c instanceof Counter);
+const weak = new WeakMap<object, number>();
+weak.set(c, 1);
+console.log(weak.get(c));
+
+const s = new Set<string>(["x"]) as Set<string> & { tag?: string };
+s.add("y");
+console.log(s.size, s.has("y"), [...s].join("|"));
+
+// The object part adds nothing to the class: the type is the class itself.
+const same: Counter & { n: number } = new Counter();
+console.log(same.inc());
+
+const box = sig(new Counter());
+box.n = 5;
+console.log(box.n, box.inc());
+box.$set(new Counter());
+const set = box.$set;
+set(new Counter());
+
+// Generic code calls the object part's member through the instance too.
+function reset<T extends object>(s: S<T>, v: T): void {
+  s.$set(v);
+}
+reset(box, new Counter());
+const maybe: S<Counter> | null = Math.random() > 2 ? null : box;
+console.log(maybe?.inc(), maybe === box);
+
+// Reflective operations see the instance's fields: `Object.keys`, `for...in`, `in`,
+// `Object.hasOwn`, `Object.assign`, a spread and `JSON.stringify`.
+class Pt {
+  x = 1;
+  y = "s";
+}
+const pt = new Pt() as S<Pt>;
+const ks: string[] = [];
+for (const k in pt) {
+  ks.push(k);
+}
+console.log(Object.keys(pt).join(","), ks.join(","), "x" in pt, Object.hasOwn(pt, "y"));
+const tgt = { x: 0, y: "" };
+console.log(JSON.stringify(Object.assign(tgt, pt)));
+const copy = { ...pt };
+console.log(copy.x, copy.y, JSON.stringify(pt));
+
+// A class getter read through a proxy runs the `get` trap, which answers the getter's value.
+class Twice {
+  v = 1;
+  get twice(): number {
+    return this.v * 2;
+  }
+}
+const tp = sig(new Twice());
+console.log(tp.v, tp.twice);
+tp.v = 4;
+console.log(tp.twice);
+
+// A plain instance converts to a brand whose object part every instance has: an optional
+// member, or a method or getter the class has with that type.
+class Cn {
+  x = 1;
+  inc(): number {
+    return ++this.x;
+  }
+  get dbl(): number {
+    return this.x * 2;
+  }
+}
+const b1: Cn & { y?: number } = new Cn();
+const b2: Cn & { inc(): number } = new Cn();
+const b3: Cn & { readonly dbl: number } = new Cn();
+console.log(b1.x, b1.y, b2.inc(), b3.dbl);

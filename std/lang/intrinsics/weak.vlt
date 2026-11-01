@@ -1,0 +1,33 @@
+// velt/lang/intrinsics (internal): the runtime's weak maps and weak references below the
+// prelude's `WeakMap`, `WeakSet` and `WeakRef` (std/prelude/weak.vlt; rt_abi.md "Weak
+// references"). A map or reference is a `u32` slot; a key or target is a counted object that can
+// be referenced weakly.
+
+import type { Owned } from "./modes";
+
+/**
+ * Stores `value` for the object `key` in weak map `map`, creating the map first when `map` is 0
+ * (with `K`'s and `V`'s glue); returns the map.
+ */
+export declare intrinsic function weakMapSet<K, V>(map: u32, key: K, value: Owned<V>): u32;
+
+/**
+ * The value word stored for `key` (counted), or 0 when there is none (0 is also a stored null or
+ * zero: `weakMapHas` tells them apart).
+ */
+export declare intrinsic function weakMapGet<K>(map: u32, key: K): u64;
+
+/** Whether weak map `map` has an entry for `key`. */
+export declare intrinsic function weakMapHas<K>(map: u32, key: K): bool;
+
+/** Removes the entry for `key` (releasing its value); true if there was one. */
+export declare intrinsic function weakMapDelete<K>(map: u32, key: K): bool;
+
+/** The value a word `weakMapGet` returned (taking over its reference). */
+export declare intrinsic function weakMapValue<V>(word: u64): V;
+
+/** A weak reference slot of the object `target`. */
+export declare intrinsic function weakRefNew<T>(target: T): u32;
+
+/** The target of weak reference `ref` (counted), or null once it was freed. */
+export declare intrinsic function weakRefDeref<T>(ref: u32): T | null;

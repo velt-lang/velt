@@ -6,7 +6,8 @@
 //! gets a temporary buffer of element views, freed when the extern returns, [`ForeignBuf`]) and
 //! results are moved into fresh boxes (an array whose elements differ into a new native buffer,
 //! the foreign one freed).
-//! The `velt_simd_*` helpers get an array's header in place instead (`foreign_args`).
+//! A synchronous extern gets an array whose elements need no converting in place instead: its
+//! own header, which it may write (`foreign_args`, #1831).
 
 use velt_sema::hir::{self, TyId, TyKind};
 
@@ -16,12 +17,20 @@ use super::rt::Rt;
 use super::{Cx, FnLower};
 use crate::vir::{BinOp, Operand, Place, Proj, Rvalue, Ty};
 
-/// A view an extern call was given that holds array buffers of its own (an array whose elements
-/// differ from their native layout, at any depth): the call frees them once the extern returned
-/// ([`FnLower::free_foreign_bufs`]), walking the view as it was built.
-pub(super) struct ForeignBuf {
-    view: Place,
-    ty: TyId,
+/// What an extern call does once the extern returned ([`FnLower::free_foreign_bufs`]).
+pub(super) enum ForeignBuf {
+    /// A view it was given that holds array buffers of its own (an array whose elements differ
+    /// from their native layout, at any depth): freed, walking the view as it was built.
+    Bufs { view: Place, ty: TyId },
+    /// An array of a view type (array_view.rs) it was given in place (`foreign_args`): when the
+    /// box holds a view, the mirror the extern may have changed is written back.
+    Flush { array: Operand, ty: TyId },
+}
+
+impl ForeignBuf {
+    pub(super) fn flush(array: Operand, ty: TyId) -> Self {
+        ForeignBuf::Flush { array, ty }
+    }
 }
 
 impl Cx<'_> {
@@ -98,7 +107,7 @@ impl FnLower<'_, '_> {
     ) -> Place {
         let view = self.view_of(src, t);
         if self.holds_bufs(t) {
-            bufs.push(ForeignBuf {
+            bufs.push(ForeignBuf::Bufs {
                 view: view.clone(),
                 ty: t,
             });
@@ -366,7 +375,12 @@ impl FnLower<'_, '_> {
     /// Frees the buffers of the views an extern call was given (it returned).
     pub(super) fn free_foreign_bufs(&mut self, bufs: Vec<ForeignBuf>) {
         for b in bufs {
-            self.free_view(&b.view, b.ty);
+            match b {
+                ForeignBuf::Bufs { view, ty } => self.free_view(&view, ty),
+                ForeignBuf::Flush { array, ty } => {
+                    self.view_flush(array, ty, super::array_view::ViewFlush::All)
+                }
+            }
         }
     }
 }

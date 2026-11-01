@@ -1,0 +1,20 @@
+BASE! sub BASE! 3
+BASE!
+41 BASE!
+BASE! sub BASE! 3
+BASE!
+m 41
+BASE! hi BASE! 3
+BASE!
+BASE!
+BASE! sub BASE! 3
+BASE!
+BASE!41
+base:sub base,base:hi base,base:sub base
+base:sub base
+10 2
+3
+NotFound: no user
+Error: plain RangeError: range
+sub base
+41

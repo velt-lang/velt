@@ -1,0 +1,293 @@
+// sqlite/engine/btree_seek_index (internal): seeking an index b-tree to a key decoded once (engine/record's
+// KeyRec). Each probe of a binary search reads its cell in place (an index payload that fits
+// the page without copying, integer keys without decoding the record), with the cell checks
+// the rest of the reader makes.
+
+import { CorruptError, corrupt } from "./errors";
+import { INTERIOR_INDEX, LEAF_INDEX, readU16, readU32 } from "./format";
+import { readVarint } from "./varint";
+import { Cursor, MAX_DEPTH } from "./cursor";
+import { intValue } from "./btree_row";
+import { KeyRec, compareToKey } from "./key_rec";
+
+/**
+ * Bytes that must follow a page in the file for its index cells to be compared in place: a
+ * payload size and header size, a type byte and the bytes of an integer after a header of up
+ * to 127 bytes.
+ */
+const IN_PLACE_MARGIN: usize = 160;
+
+extend Cursor {
+  /** The current payload against a decoded key over its first `fields` fields. */
+  compareKeyRec(k: KeyRec, fields: usize, colls: u8[], desc: bool[]): i64 {
+    if (this.local) {
+      return compareToKey(this.db.data, this.start, this.size, k, fields, colls, desc);
+    }
+    return compareToKey(this.scratch, 0, this.size, k, fields, colls, desc);
+  }
+
+  /** Cell `i` of the index page at `h` against `k`: in place when its payload fits the page. */
+  probe(
+    h: usize,
+    leaf: bool,
+    i: usize,
+    cellsEnd: usize,
+    k: KeyRec,
+    fields: usize,
+    colls: u8[],
+    desc: bool[],
+  ): i64 {
+    const data = this.db.data;
+    const ptr = h + (leaf ? 8 : 12) + 2 * i;
+    const base = h == 100 ? 0 : h;
+    if (base + this.db.usable + IN_PLACE_MARGIN > data.length) {
+      this.locate(h, i);
+      return this.compareKeyRec(k, fields, colls, desc);
+    }
+    const off = ((data[ptr] as usize) << 8) | (data[ptr + 1] as usize);
+    if (base + off < cellsEnd || off + 4 > this.db.usable) {
+      corrupt(`cell offset ${off} out of range`);
+    }
+    let at = base + off;
+    if (!leaf) {
+      at += 4;
+    }
+    let size: usize = 0;
+    if (data[at] < 0x80) {
+      size = data[at] as usize;
+      at++;
+    } else {
+      const sz = readVarint(data, at);
+      size = sz.value as usize;
+      at += sz.len;
+    }
+    if (size <= this.maxIndexLocal) {
+      if (at + size > base + this.db.usable) {
+        corrupt(`cell payload of ${size} bytes overflows its page`);
+      }
+      // A one-byte header size and an integer first field: compared here.
+      if (k.firstInt && data[at] < 0x80) {
+        const t = data[at + 1] as i64;
+        if (t >= 1 && t <= 9 && t != 7) {
+          const body = at + (data[at] as usize);
+          const v =
+            t == 1
+              ? ((data[body] as i64) << 56) >> 56
+              : t == 2
+                ? ((((data[body] as i64) << 8) | (data[body + 1] as i64)) << 48) >> 48
+                : intValue(data, body, t);
+          const w = k.ints[0];
+          if (v != w) {
+            const c: i64 = v < w ? -1 : 1;
+            return desc.length > 0 && desc[0] ? -c : c;
+          }
+          if (fields == 1) {
+            return 0;
+          }
+        }
+      }
+      return compareToKey(data, at, size, k, fields, colls, desc);
+    }
+    this.locate(h, i);
+    return this.compareKeyRec(k, fields, colls, desc);
+  }
+
+  /** `seekKey` with the key decoded once. */
+  seekKeyRec(k: KeyRec, fields: usize, colls: u8[], desc: bool[]): bool {
+    return this.seekKeyIn(k, fields, colls, desc, false);
+  }
+
+  /** Moves to the first entry whose first `fields` fields compare > `k`; false when none. */
+  seekKeyRecAfter(k: KeyRec, fields: usize, colls: u8[], desc: bool[]): bool {
+    return this.seekKeyIn(k, fields, colls, desc, true);
+  }
+
+  /** The first entry >= `k` (> `k` when `after`). */
+  seekKeyIn(k: KeyRec, fields: usize, colls: u8[], desc: bool[], after: bool): bool {
+    const data = this.db.data;
+    this.pages.truncate(0);
+    this.cells.truncate(0);
+    let page = this.root;
+    while (true) {
+      if (this.pages.length >= MAX_DEPTH) {
+        corrupt("b-tree too deep");
+      }
+      const h = this.db.header(page);
+      const t = data[h];
+      if (t != LEAF_INDEX && t != INTERIOR_INDEX) {
+        throw new CorruptError(`page ${page} is not an index b-tree page`);
+      }
+      const leaf = t == LEAF_INDEX;
+      const n = readU16(data, h + 3);
+      const cellsEnd = h + (leaf ? 8 : 12) + 2 * n;
+      if (cellsEnd > (h == 100 ? 0 : h) + this.db.usable) {
+        corrupt(`cell count ${n} overflows its page`);
+      }
+      // The first cell >= key. A one-field integer key against cells whose first field is an
+      // integer (the common case) is compared right here, without a call per probe.
+      const base = h == 100 ? 0 : h;
+      const usable = this.db.usable;
+      const hl: usize = leaf ? 8 : 12;
+      const skip: usize = leaf ? 0 : 4;
+      // The in-place comparisons read a few bytes past a cell's header: not on the file's last
+      // pages, which go through the checked path (Cursor.locate).
+      const quick =
+        base + usable + IN_PLACE_MARGIN <= data.length &&
+        k.firstInt &&
+        fields == 1 &&
+        (desc.length == 0 || !desc[0]);
+      const w = quick ? k.ints[0] : 0;
+      let lo: usize = 0;
+      let hi = n;
+      if (quick) {
+        // Integer keys: guessed by interpolation; -1 when a cell is not of the common form.
+        const at = searchIndexInt(data, h, base, cellsEnd, usable, hl, skip, n, w, after);
+        if (at >= 0) {
+          lo = at as usize;
+          hi = lo;
+        }
+      }
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        let c: i64 = 2;
+        if (quick) {
+          const ptr = h + hl + 2 * mid;
+          const off = ((data[ptr] as usize) << 8) | (data[ptr + 1] as usize);
+          if (base + off < cellsEnd || off + 4 > usable) {
+            corrupt(`cell offset ${off} out of range`);
+          }
+          const at = base + off + skip;
+          // A one-byte payload size, a one-byte header size, a one- or two-byte integer type.
+          if (data[at] < 0x80 && data[at + 1] < 0x80) {
+            const ty = data[at + 2];
+            const body = at + 1 + (data[at + 1] as usize);
+            if (ty == 1) {
+              const v = ((data[body] as i64) << 56) >> 56;
+              c = v < w ? -1 : v > w ? 1 : 0;
+            } else if (ty == 2) {
+              const v = ((((data[body] as i64) << 8) | (data[body + 1] as i64)) << 48) >> 48;
+              c = v < w ? -1 : v > w ? 1 : 0;
+            }
+          }
+        }
+        if (c == 2) {
+          c = this.probe(h, leaf, mid, cellsEnd, k, fields, colls, desc);
+        }
+        if (c < 0 || (after && c == 0)) {
+          lo = mid + 1;
+        } else {
+          hi = mid;
+        }
+      }
+      this.pages.push(page);
+      if (leaf) {
+        if (lo < n) {
+          this.cells.push(lo);
+          return this.load();
+        }
+        if (n == 0) {
+          if (this.pages.length > 1) {
+            corrupt(`page ${page} is an empty leaf below the root`);
+          }
+          this.valid = false;
+          return false;
+        }
+        // Past this leaf's last entry: the next entry is in an ancestor, if any.
+        this.cells.push(n - 1);
+        this.load();
+        return this.next();
+      }
+      // Entries equal to the key may sit in the subtree left of cell `lo`.
+      this.cells.push(lo);
+      page = lo < n ? this.childAt(h, lo) : readU32(data, h + 8);
+    }
+  }
+}
+
+/**
+ * On an index page whose cells start with a one- or two-byte integer: the first of its `n`
+ * cells whose integer is >= `w` (> `w` when `after`): the end cells first, then two guesses by
+ * interpolation, then bisection. -1 when a cell probed is of another form (the caller searches
+ * the general way).
+ */
+function searchIndexInt(
+  data: u8[],
+  h: usize,
+  base: usize,
+  cellsEnd: usize,
+  usable: usize,
+  hl: usize,
+  skip: usize,
+  n: usize,
+  w: i64,
+  after: bool,
+): i64 {
+  if (n == 0) {
+    return 0;
+  }
+  // Probes: the last cell, the first, then guesses; left(lo) and !left(hi) from the third.
+  let lo: usize = 0;
+  let hi = n - 1;
+  let vlo: i64 = 0;
+  let vhi: i64 = 0;
+  let step = 0;
+  let g = hi;
+  while (true) {
+    const ptr = h + hl + 2 * g;
+    const off = ((data[ptr] as usize) << 8) | (data[ptr + 1] as usize);
+    if (base + off < cellsEnd || off + 4 > usable) {
+      corrupt(`cell offset ${off} out of range`);
+    }
+    const at = base + off + skip;
+    if (data[at] >= 0x80 || data[at + 1] >= 0x80) {
+      return -1;
+    }
+    const ty = data[at + 2];
+    const body = at + 1 + (data[at + 1] as usize);
+    let v: i64 = 0;
+    if (ty == 1) {
+      v = ((data[body] as i64) << 56) >> 56;
+    } else if (ty == 2) {
+      v = ((((data[body] as i64) << 8) | (data[body + 1] as i64)) << 48) >> 48;
+    } else {
+      return -1;
+    }
+    const left = v < w || (after && v == w);
+    if (step == 0) {
+      if (left) {
+        return n as i64;
+      }
+      if (hi == 0) {
+        return 0;
+      }
+      vhi = v;
+      g = 0;
+    } else if (step == 1) {
+      if (!left) {
+        return 0;
+      }
+      vlo = v;
+    } else if (left) {
+      lo = g;
+      vlo = v;
+    } else {
+      hi = g;
+      vhi = v;
+    }
+    step++;
+    if (step >= 2) {
+      if (hi - lo <= 1) {
+        return hi as i64;
+      }
+      g = (lo + hi) >> 1;
+      if (step < 4 && vhi > vlo) {
+        const f = ((w as f64) - (vlo as f64)) / ((vhi as f64) - (vlo as f64));
+        const x = (lo as f64) + f * ((hi - lo) as f64);
+        g =
+          x <= (lo as f64) + 1.0
+            ? lo + 1
+            : x >= (hi as f64) - 1.0 ? hi - 1 : Math.round(x) as usize;
+      }
+    }
+  }
+}

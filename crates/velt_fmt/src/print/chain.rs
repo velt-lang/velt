@@ -7,12 +7,19 @@
 //!   .filter((x) => x.ok)
 //!   .map((x) => x.name);
 //! ```
+//!
+//! A link is `.name` / `?.name` with every call, index and `!` after it up to the next member
+//! access: `.split(" ")[0]!` stays on one line, and a broken chain never starts a line with `[`
+//! (prettier attaches only literal indexes; a computed one starting a line is the `[` ASI
+//! hazard, which the parser warns about).
 
 use velt_syntax::ast::{ArrowBody, Expr, ExprKind, ObjectProp};
 
 use super::call::{is_memberish, member_suffix};
 use super::Printer;
-use crate::doc::{break_parent, cat, concat, conditional, group, hardline, indent, join, nil, Doc};
+use crate::doc::{
+    break_parent, cat, concat, conditional, group, hardline, indent, join, nil, text, Doc,
+};
 
 /// One postfix step of a chain.
 #[derive(Clone, Copy)]
@@ -21,13 +28,30 @@ enum Link<'e> {
     Member(&'e Expr),
     /// `(args)` (the expression is the call).
     Call(&'e Expr),
-    /// `[index]`.
+    /// `[index]` / `?.[index]`.
     Index(&'e Expr),
+    /// `!` (the expression is the non-null assertion).
+    NonNull(&'e Expr),
 }
 
 impl Link<'_> {
+    /// A member access or index, or `!` on one (prettier's `isMemberish`).
     fn is_memberish(&self) -> bool {
-        matches!(self, Link::Member(_) | Link::Index(_))
+        match self {
+            Link::Member(_) | Link::Index(_) => true,
+            Link::NonNull(e) => {
+                matches!(&e.kind, ExprKind::NonNull(inner) if is_memberish(inner))
+            }
+            Link::Call(_) => false,
+        }
+    }
+
+    fn is_index(&self) -> bool {
+        matches!(self, Link::Index(_))
+    }
+
+    fn is_non_null(&self) -> bool {
+        matches!(self, Link::NonNull(_))
     }
 
     fn is_call(&self) -> bool {
@@ -118,6 +142,7 @@ impl<'a> Printer<'a> {
                 } => self.index_suffix(index, *optional),
                 _ => nil(),
             },
+            Link::NonNull(_) => text("!"),
         }
     }
 }
@@ -132,6 +157,7 @@ fn flatten<'e>(mut e: &'e Expr, out: &mut Vec<Link<'e>>) -> &'e Expr {
             }
             ExprKind::Member { object, .. } => (Link::Member(e), object),
             ExprKind::Index { object, .. } => (Link::Index(e), object),
+            ExprKind::NonNull(inner) => (Link::NonNull(e), inner),
             _ => return e,
         };
         out.push(link);
@@ -140,16 +166,19 @@ fn flatten<'e>(mut e: &'e Expr, out: &mut Vec<Link<'e>>) -> &'e Expr {
     }
 }
 
-/// A call continues the chain when its callee is itself part of one (`a.b()`, `a.b()()`).
+/// A call continues the chain when its callee is itself part of one (`a.b()`, `a.b()()`,
+/// `a.b!()`).
 fn chains_through(callee: &Expr) -> bool {
-    is_memberish(callee) || matches!(callee.kind, ExprKind::Call { .. })
+    is_memberish(callee) || matches!(callee.kind, ExprKind::Call { .. } | ExprKind::NonNull(_))
 }
 
-/// Groups as index ranges into `[base, links...]`: the head, then one group per link that
-/// follows a call.
+/// Groups as index ranges into `[base, links...]`: the head, then one group per member access
+/// that follows a call. Indexes and `!` stay in the group of what they follow.
 fn split_groups(base: &Expr, links: &[Link]) -> Vec<std::ops::Range<usize>> {
     let mut i = 0;
-    while i < links.len() && (links[i].is_call() || links[i].is_literal_index()) {
+    while i < links.len()
+        && (links[i].is_call() || links[i].is_literal_index() || links[i].is_non_null())
+    {
         i += 1;
     }
     if !matches!(base.kind, ExprKind::Call { .. }) {
@@ -163,10 +192,7 @@ fn split_groups(base: &Expr, links: &[Link]) -> Vec<std::ops::Range<usize>> {
     let mut seen_call = false;
     for (k, link) in links.iter().enumerate().skip(i) {
         let at = k + 1;
-        if seen_call && link.is_memberish() {
-            if matches!(link, Link::Index(_)) && !link.is_literal_index() {
-                continue;
-            }
+        if seen_call && link.is_memberish() && !link.is_index() && !link.is_non_null() {
             groups.push(start..at);
             start = at;
             seen_call = false;
@@ -179,25 +205,25 @@ fn split_groups(base: &Expr, links: &[Link]) -> Vec<std::ops::Range<usize>> {
     groups
 }
 
-/// Keep the first link on the head's line (`this.x`, `Foo.create()`, `a[0]`): wrapping it alone
-/// reads worse.
+/// Keep the first link on the head's line (`this.x`, `Foo.create()`, `a[0]`, `a[key]()`):
+/// wrapping it alone reads worse, and a line must not start with `[`.
 fn should_merge(base: &Expr, links: &[Link], groups: &[std::ops::Range<usize>]) -> bool {
     let Some(second) = groups.get(1) else {
         return false;
     };
-    let computed = links
-        .get(second.start - 1)
-        .is_some_and(Link::is_literal_index);
+    if links.get(second.start - 1).is_some_and(Link::is_index) {
+        return true;
+    }
     if groups[0].len() == 1 {
         return match &base.kind {
             ExprKind::This => true,
-            ExprKind::Ident(id) => is_factory(&id.name) || computed,
+            ExprKind::Ident(id) => is_factory(&id.name),
             _ => false,
         };
     }
     match links.get(groups[0].end - 2) {
         Some(Link::Member(e)) => match &e.kind {
-            ExprKind::Member { prop, .. } => is_factory(&prop.name) || computed,
+            ExprKind::Member { prop, .. } => is_factory(&prop.name),
             _ => false,
         },
         _ => false,

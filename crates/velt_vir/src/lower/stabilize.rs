@@ -180,9 +180,11 @@ impl FnLower<'_, '_> {
     }
 
     /// Does the place `e` lie in an array's buffer, not behind a counted object inside an
-    /// element (which retaining keeps in place)? Called only for places `through_counted` or
-    /// `in_shared_cell` accepted, so the array is one other references may reach.
-    fn in_array_buffer(&mut self, e: &hir::Expr) -> bool {
+    /// element (which retaining keeps in place)? Called for places `through_counted` or
+    /// `in_shared_cell` accepted, so the array is one other references may reach, and for every
+    /// argument of a call of a function quiet for borrows, which may push onto an array
+    /// (quiet.rs).
+    pub(super) fn in_array_buffer(&mut self, e: &hir::Expr) -> bool {
         use hir::ExprKind as K;
         match &e.kind {
             K::Index { .. } => true,

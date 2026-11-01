@@ -39,6 +39,7 @@ pub(super) struct Layouts {
     envs: FxHashMap<(DefId, Vec<TyId>), AggId>,
     in_progress: FxHashSet<TyId>,
     array: Option<AggId>,
+    text: Option<AggId>,
     closure: Option<AggId>,
     dyn_value: Option<AggId>,
     /// Tables of generator instances (async_fn/gen_object.rs).
@@ -54,7 +55,6 @@ pub(super) struct Layouts {
     /// States of the wrappers adopting async externs' foreign results (async_fn/foreign_promise.rs).
     pub(super) adopt_boxes: FxHashMap<TyId, AggId>,
     /// Failure context of JSON decoders (json/).
-    pub(super) json_ctx: Option<AggId>,
     /// Promise-value wrappers of throwing async functions: layout and inner-state field.
     pub(super) value_wraps: FxHashMap<(DefId, Vec<TyId>), (AggId, u32)>,
     /// Vtable statics (glue/vtable.rs).
@@ -119,6 +119,16 @@ impl Cx<'_> {
         }
         let a = self.new_agg(crate::ARRAY_AGG_NAME.into(), &[Ty::Ptr, Ty::U64, Ty::U64]);
         self.lay.array = Some(a);
+        a
+    }
+
+    /// The aggregate string bytes are read through (`STR_TEXT_AGG_NAME`).
+    pub(super) fn text_agg(&mut self) -> AggId {
+        if let Some(a) = self.lay.text {
+            return a;
+        }
+        let a = self.new_agg(crate::STR_TEXT_AGG_NAME.into(), &[Ty::U8]);
+        self.lay.text = Some(a);
         a
     }
 
@@ -384,6 +394,9 @@ impl Cx<'_> {
             self.note_capture(t);
             tys.push(match mode {
                 PassMode::Borrow | PassMode::BorrowMut => Ty::Ptr,
+                // A value of no size (a literal type, `K` at `"count"`): a byte nothing reads
+                // or writes, so the captures keep their field indexes.
+                _ if self.ty(t) == Ty::Unit => Ty::U8,
                 _ => self.ty(t),
             });
         }

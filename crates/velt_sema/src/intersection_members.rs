@@ -31,6 +31,9 @@ pub(crate) struct PartIfaces {
     list: Vec<(DefId, TyId)>,
     /// (interface, object type def) pairs implemented.
     linked: FxHashSet<(DefId, DefId)>,
+    /// (interface, class instance brand def) pairs implemented by the brand's class
+    /// (`crate::intersection_class_parts`).
+    pub(crate) linked_brands: FxHashSet<(DefId, DefId)>,
 }
 
 /// A member of an intersection's object part, read through its interface's slots.
@@ -290,6 +293,9 @@ impl Ctx<'_> {
     /// for object type `r`'s definition, over that definition's own parameters, when `r`
     /// has the part's fields: one getter per field and the setters of the writable ones.
     fn link_part_iface(&mut self, iface: DefId, part: TyId, r: TyId) {
+        if self.link_class_part_iface(iface, part, r) {
+            return;
+        }
         let TyKind::Adt(d, _) = self.ty.kind(r).clone() else {
             return;
         };

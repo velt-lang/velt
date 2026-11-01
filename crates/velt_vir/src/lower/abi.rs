@@ -82,6 +82,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             own_deep: false,
             args_to_caller: false,
             kept_args: 0,
+            changed_args: 0,
             kept_handed: vec![],
             kept_drops: vec![],
             caller_aliases: None,
@@ -111,8 +112,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
             direct_siblings: FxHashMap::default(),
             self_env: None,
             in_reflect: false,
+            ref_loads: false,
+            epoch_exempt: false,
             proxy_routes: false,
-            record_fill: false,
+            record_fill: 0,
         };
         lw.mode = lw.cx.cur_mode;
         lw.own_captures = lw.cx.cur_own;
@@ -158,12 +161,12 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Work::WidenDrop(from, to) => Self::build_widen_drop(cx, *from, *to),
             Work::AdoptPoll(p) => Self::build_adopt_poll(cx, *p),
             Work::AdoptDrop(p) => Self::build_adopt_drop(cx, *p),
-            Work::HandlerInit(def, targs) => Self::build_handler_init(cx, *def, targs),
             Work::Unclaimed(t) => Self::build_unclaimed(cx, *t),
             Work::Init(t, e) => Self::build_init(cx, *t, *e),
             Work::GenNew(def, targs) => Self::build_gen_new(cx, *def, targs),
             Work::GenFree(def, targs) => Self::build_gen_free(cx, *def, targs),
             Work::ModuleInit(from, to) => Self::build_module_init(cx, *from, *to),
+            Work::StaticsDrop => Self::build_statics_drop(cx),
         }
     }
 
@@ -228,6 +231,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         lw.ret_ty = Some(ret);
         lw.throws = lw.cx.fn_throws(f, targs);
         lw.ctor_self = lw.ctor_class(def, f);
+        lw.epoch_exempt = f.name.starts_with(super::epoch_sections::EPOCH_MODULE);
         lw.in_reflect = f
             .name
             .starts_with(super::any_proxy::PRELUDE_REFLECT_METHODS);
@@ -236,6 +240,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
         lw.ref_bindings = scan.ref_bindings.iter().copied().collect();
         (lw.frame_closures, lw.direct_siblings) = super::frame_envs::scan(hir_prog, f);
         let (params, attrs) = lw.declare_locals(def, f);
+        // Lowering the body may build other functions first: their params are not these.
+        let unique = std::mem::take(&mut lw.cx.declared_unique);
         // Bit `i`: `params[i]`, whose leading entries are the captures (bound to their inner
         // locals).
         lw.frozen = (0..f.params.len().min(64))
@@ -274,11 +280,18 @@ impl<'c, 'h> FnLower<'c, 'h> {
             let c = lw.cx.instance_symbol("", &k.targs);
             symbol.push_str(&format!("_K{}_{}_{:x}{c}", k.param, k.def.0, k.captures));
         }
+        lw.cx.declared_unique = unique;
+        // A `never` function (a throw helper such as `corrupt(what): never`) returns only
+        // through its error, if at all: its calls are cold (`Function::cold`).
+        let cold = lw.cx.is_never(ret);
         let mut func = lw.finish(symbol, params, abi.ret);
         func.param_attrs = attrs;
+        func.cold = cold;
         func.target = hir_prog.cpu_targets.get(&def).map(|t| match t {
             hir::CpuTarget::ShaArm => crate::simd::Ext::ShaArm,
             hir::CpuTarget::ShaX86 => crate::simd::Ext::ShaX86,
+            hir::CpuTarget::ClmulX86 => crate::simd::Ext::ClmulX86,
+            hir::CpuTarget::ClmulArm => crate::simd::Ext::ClmulArm,
         });
         func
     }
@@ -324,7 +337,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
                     true => None,
                     false => Some(p.mode),
                 };
-                attrs.push(self.cx.param_attrs(mode, ty, shape, decl.mutable));
+                let a = self.cx.param_attrs(mode, ty, shape, decl.mutable);
+                if a.noalias || a.frozen {
+                    self.cx.note_unique_param(attrs.len(), ty);
+                }
+                attrs.push(a);
                 self.new_local(pt, Some(decl.name.clone()))
             });
             let droppable = p.mode == PassMode::Owned && self.cx.needs_drop(ty);
@@ -400,7 +417,14 @@ impl<'c, 'h> FnLower<'c, 'h> {
     }
 
     pub(super) fn lower_body(&mut self, f: &FnDef) {
-        self.proxy_routes = !f.name.starts_with("std/") || f.name.starts_with("std/proxy::");
+        self.proxy_routes = !f
+            .name
+            .starts_with(velt_common::std_modules::CANONICAL_PREFIX)
+            || velt_common::std_modules::PROXY_MODULES.iter().any(|m| {
+                f.name
+                    .strip_prefix(m)
+                    .is_some_and(|rest| rest.starts_with("::"))
+            });
         // Outermost scope: owned params, dropped on every return.
         self.push_scope(ScopeKind::Block);
         for p in &f.params[f.captures.len()..] {

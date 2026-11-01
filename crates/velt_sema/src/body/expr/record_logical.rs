@@ -69,8 +69,23 @@ impl FnCx<'_, '_> {
         );
         let key = match key {
             RecordKey::Index(e) if !(key.side_effect_free() && is_pure_value(value)) => {
-                let kh = self.index_key_arg(k, e, Want::Move);
-                let kh = self.coerce(kh, k);
+                let kh = match k == self.cx.ty.str_ {
+                    // A symbol or `string | symbol` key stays one (the record's symbol table).
+                    true => {
+                        let kh = self.payload_expr(e, None, Want::Move);
+                        if self.symbolic_key_type(kh.ty) {
+                            kh
+                        } else if self.number_property_key(kh.ty) {
+                            self.property_key_of(kh)
+                        } else {
+                            self.string_key_of(k, kh)
+                        }
+                    }
+                    false => {
+                        let kh = self.index_key_arg(k, e, Want::Move);
+                        self.coerce(kh, k)
+                    }
+                };
                 self.bind_temp(KEY, kh, &mut stmts);
                 RecordKey::Index(&key_ref)
             }
@@ -132,7 +147,13 @@ impl FnCx<'_, '_> {
             }),
             span,
         );
-        let call = self.record_call_keyed(recv, "__set", key, std::slice::from_ref(&new_ref), span);
+        let call = self.record_call_keyed(
+            recv,
+            velt_common::std_key!(record_set),
+            key,
+            std::slice::from_ref(&new_ref),
+            span,
+        );
         set.push(stmt(hir::StmtKind::Expr(call), span));
         let then_val = self.read_temp(new, v, span);
         let then_val = self.coerce(then_val, ty);

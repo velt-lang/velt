@@ -41,7 +41,12 @@ impl FnCx<'_, '_> {
             return Some(self.error_expr(span));
         };
         let hint = self.hint(exp);
-        let type_args = self.promise_type_args(class.span, targs, hint);
+        let mut type_args = self.promise_type_args(class.span, targs, hint);
+        // Without a written error type it rejects with what `reject` is called with.
+        let mut pushed = false;
+        if targs.len() < 2 && params == 2 && type_args.len() == 2 {
+            (type_args[1], pushed) = self.open_reject(type_args[0], type_args[1], span);
+        }
         let (name, type_args) = match params {
             1 => (
                 "promiseNewResolveOnly",
@@ -50,6 +55,9 @@ impl FnCx<'_, '_> {
             _ => ("promiseNew", &type_args[..]),
         };
         let mut call = self.prelude_call(name, "new Promise", type_args, &args[..1], hint, span);
+        if pushed {
+            self.cx.fn_sites.rejects.pop();
+        }
         self.finish_promise_new(&mut call);
         Some(call)
     }
@@ -67,7 +75,12 @@ impl FnCx<'_, '_> {
         let expected = hint
             .and_then(|h| self.field_of(h, "promise"))
             .map(|(_, t)| t);
-        let type_args = self.promise_type_args(span, targs, expected);
+        let mut type_args = self.promise_type_args(span, targs, expected);
+        // Without a written error type it rejects with what `reject` is called with; `reject` is
+        // called after this call, so its parameter stays registered.
+        if targs.len() < 2 && type_args.len() == 2 {
+            type_args[1] = self.open_reject(type_args[0], type_args[1], span).0;
+        }
         if type_args.is_empty() {
             self.cx.err(
                 "cannot infer the type of `Promise.withResolvers`: write `Promise.withResolvers<T>()` or `Promise.withResolvers<T, E>()`",

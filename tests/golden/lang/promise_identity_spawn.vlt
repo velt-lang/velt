@@ -1,0 +1,37 @@
+// Converted promises handed to a spawned task (#1682): as an argument converted for the
+// spawned call, kept converted and then passed, and inside a `Set` passed to the task.
+async function f(n: number): Promise<number> {
+  await Promise.resolve();
+  return n;
+}
+
+function keep(p: Promise<unknown>): Promise<unknown> {
+  return p;
+}
+
+async function waitU(p: Promise<unknown>): Promise<string> {
+  await p;
+  return "got";
+}
+
+async function size(s: Set<Promise<unknown>>): Promise<number> {
+  return s.size;
+}
+
+async function main() {
+  console.log(await spawn(waitU(f(3))));
+  const p = f(5);
+  console.log(await spawn(waitU(p)));
+  const q = f(6);
+  const q2 = q;
+  console.log(await spawn(waitU(q2)), await q);
+  const k = keep(q);
+  console.log(await spawn(waitU(k)), await q);
+  const r = f(8);
+  const su = new Set<Promise<unknown>>();
+  su.add(r);
+  console.log(await spawn(size(su)));
+  console.log(await r);
+}
+
+main();

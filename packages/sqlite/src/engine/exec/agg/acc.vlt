@@ -1,0 +1,269 @@
+// sqlite/engine/exec/agg/acc (internal): the state of one aggregate call over one group: stepped
+// with each row's values and finished into the aggregate's result, with SQLite's summation and
+// overflow rules.
+
+import { NULL, INTEGER, TEXT } from "../../storage_class";
+import { SqlRunError } from "../errors";
+import { toF64, toI64 } from "../value/ops";
+import { Val, intVal, nullVal, realVal, textVal } from "../value/val";
+import { checkLength, toText } from "../value/value_text";
+import { compareVals } from "../value/compare";
+import { parseNumeric } from "../value/numeric";
+import { KeySet } from "../value/key_set";
+import { utf8Length } from "velt/encoding";
+import { AG_AVG, AG_COUNT, AG_COUNT_STAR, AG_MAX, AG_MIN, AG_SUM, AG_TOTAL, AggFn } from "./agg_fn";
+
+/** The state of one aggregate call over one group. */
+export class Acc {
+  cnt: i64 = 0;
+  isum: i64 = 0;
+  rsum: f64 = 0;
+  rerr: f64 = 0;
+  approx: bool = false;
+  ovrfl: bool = false;
+  best: Val = nullVal();
+  has: bool = false;
+  text: string = "";
+  /** count(DISTINCT x) and the like: the values seen (`one` holds the value looked up). */
+  seen: KeySet | null = null;
+  one: Val[] = [nullVal()];
+
+  reset() {
+    this.cnt = 0;
+    this.isum = 0;
+    this.rsum = 0;
+    this.rerr = 0;
+    this.approx = false;
+    this.ovrfl = false;
+    this.has = false;
+    this.text = "";
+    this.seen = null;
+  }
+}
+
+/**
+ * Steps an aggregate with its argument's value `v` (and group_concat's separator `sep`, when
+ * `hasSep`); true when the row is not the min/max one.
+ */
+export function stepValues(f: AggFn, a: Acc, v: Val, sep: Val, hasSep: bool): bool {
+  if (f.kind == AG_COUNT_STAR) {
+    a.cnt++;
+    return false;
+  }
+  if (f.distinct) {
+    if (v.t == NULL) {
+      return false;
+    }
+    if (a.seen == null) {
+      a.seen = new KeySet(1, [f.coll]);
+    }
+    a.one[0] = v;
+    if (a.seen!.find(a.one, 0) >= 0) {
+      return false;
+    }
+  }
+  if (f.kind == AG_COUNT) {
+    if (v.t != NULL) {
+      a.cnt++;
+    }
+    return false;
+  }
+  if (f.kind == AG_SUM || f.kind == AG_TOTAL || f.kind == AG_AVG) {
+    sumStep(a, v);
+    return false;
+  }
+  if (f.kind == AG_MIN || f.kind == AG_MAX) {
+    if (v.t == NULL) {
+      return a.has;
+    }
+    if (!a.has) {
+      a.best = v;
+      a.has = true;
+      return false;
+    }
+    const c = compareVals(a.best, v, f.coll);
+    if ((f.kind == AG_MAX && c < 0) || (f.kind == AG_MIN && c > 0)) {
+      a.best = v;
+      return false;
+    }
+    return true;
+  }
+  // group_concat
+  if (v.t == NULL) {
+    return false;
+  }
+  const s = a.cnt == 0 ? "" : !hasSep ? "," : sep.t == NULL ? "" : toText(sep);
+  const t = toText(v);
+  // SQLite's buffer holds the text and a NUL within its length limit.
+  const n = utf8Length(a.text) + utf8Length(s) + utf8Length(t);
+  checkLength((n + 1) as u64);
+  a.text += s;
+  a.text += t;
+  a.cnt++;
+  return false;
+}
+
+// Kahan-Babushka-Neumaier summation, as SQLite's sum(), total() and avg().
+function kbn(a: Acc, r: f64) {
+  const s = a.rsum;
+  const t = s + r;
+  if (Math.abs(s) > Math.abs(r)) {
+    a.rerr += (s - t) + r;
+  } else {
+    a.rerr += (r - t) + s;
+  }
+  a.rsum = t;
+}
+
+function kbnInt(a: Acc, v: i64) {
+  if (v <= -4503599627370496 || v >= 4503599627370496) {
+    const sm = v % 16384;
+    kbn(a, (v - sm) as f64);
+    kbn(a, sm as f64);
+  } else {
+    kbn(a, v as f64);
+  }
+}
+
+function kbnInit(a: Acc, v: i64) {
+  if (v <= -4503599627370496 || v >= 4503599627370496) {
+    const sm = v % 16384;
+    a.rsum = (v - sm) as f64;
+    a.rerr = sm as f64;
+  } else {
+    a.rsum = v as f64;
+    a.rerr = 0;
+  }
+}
+
+// The numeric type sum() sees: text that is wholly a number counts as that number.
+function numericType(v: Val): u8 {
+  if (v.t != TEXT) {
+    return v.t;
+  }
+  // Read as a C string: up to a NUL.
+  let t = toText(v);
+  const nul = t.indexOf("\u0000");
+  if (nul >= 0) {
+    t = t.slice(0, nul);
+  }
+  const n = parseNumeric(t);
+  return n.whole ? n.v.t : v.t;
+}
+
+function sumStep(a: Acc, v: Val) {
+  const t = numericType(v);
+  if (t == NULL) {
+    return;
+  }
+  a.cnt++;
+  if (!a.approx) {
+    if (t != INTEGER) {
+      kbnInit(a, a.isum);
+      a.approx = true;
+      kbn(a, toF64(v));
+    } else {
+      const x = toI64(v);
+      const s = a.isum + x;
+      if ((a.isum >= 0) == (x >= 0) && (s >= 0) != (x >= 0)) {
+        a.ovrfl = true;
+        kbnInit(a, a.isum);
+        a.approx = true;
+        kbnInt(a, x);
+      } else {
+        a.isum = s;
+      }
+    }
+  } else if (t == INTEGER) {
+    kbnInt(a, toI64(v));
+  } else {
+    a.ovrfl = false;
+    kbn(a, toF64(v));
+  }
+}
+
+/**
+ * Takes a row's value back out of count(), sum(), total() or avg() (their xInverse, for a
+ * window frame that moves).
+ */
+export function inverseValues(f: AggFn, a: Acc, v: Val) {
+  if (f.kind == AG_COUNT_STAR) {
+    a.cnt--;
+    return;
+  }
+  if (f.kind == AG_COUNT) {
+    if (v.t != NULL) {
+      a.cnt--;
+    }
+    return;
+  }
+  const t = numericType(v);
+  if (t == NULL) {
+    return;
+  }
+  a.cnt--;
+  if (!a.approx) {
+    const x = toI64(v);
+    const d = a.isum - x;
+    if (!((a.isum >= 0) != (x >= 0) && (d >= 0) != (a.isum >= 0))) {
+      a.isum = d;
+      return;
+    }
+    // SQLite 3.54's sumInverse: the sum only turns approximate (the integer sum is left
+    // behind: the approximate one starts from nothing).
+    a.ovrfl = true;
+    a.approx = true;
+    return;
+  }
+  if (t == INTEGER) {
+    const x = toI64(v);
+    if (x != -9223372036854775807 - 1) {
+      kbnInt(a, -x);
+    } else {
+      kbnInt(a, 9223372036854775807);
+      kbnInt(a, 1);
+    }
+  } else {
+    kbn(a, -toF64(v));
+  }
+}
+
+function isOverflow(r: f64): bool {
+  return r != r || r == Infinity || r == -Infinity;
+}
+
+function approxSum(a: Acc): f64 {
+  if (!a.approx) {
+    return a.isum as f64;
+  }
+  return isOverflow(a.rerr) ? a.rsum : a.rsum + a.rerr;
+}
+
+/** An aggregate's result over what it was stepped with. */
+export function finish(f: AggFn, a: Acc): Val {
+  if (f.kind == AG_COUNT_STAR || f.kind == AG_COUNT) {
+    return intVal(a.cnt);
+  }
+  if (f.kind == AG_SUM) {
+    if (a.cnt == 0) {
+      return nullVal();
+    }
+    if (a.approx) {
+      if (a.ovrfl) {
+        throw new SqlRunError("integer overflow");
+      }
+      return realVal(approxSum(a));
+    }
+    return intVal(a.isum);
+  }
+  if (f.kind == AG_TOTAL) {
+    return realVal(approxSum(a));
+  }
+  if (f.kind == AG_AVG) {
+    return a.cnt == 0 ? nullVal() : realVal(approxSum(a) / (a.cnt as f64));
+  }
+  if (f.kind == AG_MIN || f.kind == AG_MAX) {
+    return a.has ? a.best : nullVal();
+  }
+  return a.cnt == 0 ? nullVal() : textVal(a.text);
+}

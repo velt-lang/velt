@@ -1,0 +1,55 @@
+// `Object.defineProperty` on a string-keyed record (#1629): an accessor (not enumerable, so
+// `Object.keys`, `JSON.stringify` and spreads skip it, as in Node), under a string or a symbol
+// key; and a data property with every attribute `true`, which is an ordinary entry. The record
+// sigx's reactive collections build (`collections.ts`): `Object.create(null)` typed
+// `Record<string | symbol, any>`, its methods as entries, `size` an accessor and
+// `[Symbol.iterator]` a symbol-keyed entry.
+
+const ITER = Symbol("iterate");
+
+function instrument(target: Set<number>): Record<string | symbol, any> {
+  const ins: Record<string | symbol, any> = Object.create(null);
+  ins.has = function (key: unknown): boolean {
+    return target.has(key as number);
+  };
+  Object.defineProperty(ins, "size", {
+    get() {
+      return target.size;
+    },
+  });
+  ins[Symbol.iterator] = function () {
+    return target.values();
+  };
+  ins[ITER] = 1;
+  return ins;
+}
+
+function main() {
+  const s = new Set<number>([1, 2]);
+  const ins = instrument(s);
+  console.log(ins.size, "size" in ins, "has" in ins, "toString" in ins);
+  s.add(3);
+  for (const prop of ["size", Symbol.iterator, ITER, "missing"]) {
+    const p: string | symbol = prop;
+    console.log(typeof ins[p], p in ins, Object.hasOwn(ins, p));
+  }
+  console.log(ins.size, Object.keys(ins), JSON.stringify(ins));
+  console.log(Reflect.ownKeys(ins), Object.getOwnPropertySymbols(ins));
+  console.log(ins.has(2), ins.has(9));
+
+  const r: Record<string, number> = { a: 1 };
+  Object.defineProperty(r, "b", { value: 2, enumerable: true, writable: true, configurable: true });
+  let hidden = 42;
+  Object.defineProperty(r, ITER, {
+    get: () => hidden,
+    set: (v: number) => {
+      hidden = v * 2;
+    },
+    configurable: true,
+  });
+  r[ITER] = 5;
+  console.log(r, r[ITER], ITER in r, Reflect.ownKeys(r), { ...r });
+  console.log(delete r[ITER], ITER in r, r[ITER]);
+}
+
+main();

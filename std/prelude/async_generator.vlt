@@ -1,0 +1,135 @@
+// Prelude: `AsyncGenerator<T, E, N>`, what an `async function*` returns (docs/internals/design/iteration.md).
+
+import {
+  asyncGeneratorDispose,
+  asyncGeneratorResume,
+  asyncGeneratorReturn,
+  asyncGeneratorValue,
+} from "velt/lang/intrinsics";
+
+/**
+ * An async generator (`async function*`, docs/reference/functions.md "Async generators"): what
+ * calling one creates. Each `next()` runs the body up to its next `yield`, awaiting what the body
+ * awaits on the way; its promise rejects with what the body throws (`E`). `return()` closes a
+ * generator suspended at a `yield`: its `finally` blocks run (and may `await`) and its `using`
+ * / `await using` values are disposed, as if the `yield` were a `return`. Dropping it closes it
+ * too, without awaiting: cleanup that would `await` is then cancelled (drops only), like a
+ * cancelled async function. After it finished, threw, or was closed, `next()` reports `done`.
+ *
+ * Like JS, `next()` and `return()` calls are queued: a call made while another one is still
+ * running waits for its turn, so each promise settles with its own step, in call order. A call
+ * whose promise nobody awaits still takes its turn (its value is dropped).
+ *
+ * The compiler creates these objects: the generator's state follows the class's fields, and the
+ * queue fields start at zero.
+ */
+export class AsyncGenerator<T, E = never> implements AsyncIterator<T, E>, AsyncIterable<T, E>, AsyncIterableIterator<T, E> {
+  #state: u64 = 0;
+  // The call queue (see `takeTurn`): whether a call is running, the runtime latch the running
+  // call opens when it finishes if it started alone, and the latch the last call in line opens
+  // (0: none).
+  #running: u64 = 0;
+  #head: u64 = 0;
+  #tail: u64 = 0;
+
+  /**
+   * Runs the body up to its next `yield` (awaiting what it awaits) and resolves to that value,
+   * or a `done` result; rejects with what the body throws. Calls are queued, in call order.
+   */
+  async next(): Promise<IteratorResult<T>, E> {
+    const mine = await this.takeTurn();
+    try {
+      if (await asyncGeneratorResume(this)) {
+        return { value: asyncGeneratorValue(this), done: false };
+      }
+      return { done: true };
+    } finally {
+      this.passTurn(mine);
+    }
+  }
+
+  /**
+   * Closes the generator: a body suspended at a `yield` runs its `finally` blocks (which may
+   * `await`) and disposes its `using` values. Resolves to a finished result.
+   */
+  async return(): Promise<IteratorResult<T>> {
+    const mine = await this.takeTurn();
+    try {
+      await asyncGeneratorReturn(this);
+      return { done: true };
+    } finally {
+      this.passTurn(mine);
+    }
+  }
+
+  /** An async generator is its own iterator. */
+  [Symbol.asyncIterator](): AsyncIterator<T, E> {
+    return this;
+  }
+
+  /** `await using` support: closes the generator, like `return()`. */
+  async [Symbol.asyncDispose](): Promise<void> {
+    await this.return();
+  }
+
+  /** `using` support: closes the generator without awaiting its cleanup (see the class). */
+  [Symbol.dispose](): void {
+    // A pending call keeps the object alive, so no call is queued any more.
+    asyncGeneratorDispose(this);
+  }
+
+  // Waits until the calls made before this one finished. Returns the latch this call opens
+  // when it finishes, which the call after it waits on (0: it started alone; a call queueing
+  // behind it creates `head` for it then). An uncontended call allocates nothing; each finished
+  // call wakes only the next one.
+  private async takeTurn(): Promise<u64> {
+    if (this.#running == 0) {
+      this.#running = 1;
+      return 0;
+    }
+    let before = this.#tail;
+    if (before == 0) {
+      // Only the running call, which started alone, is ahead.
+      if (this.#head == 0) {
+        this.#head = velt_rt_latch_new();
+      }
+      before = this.#head;
+    }
+    const mine = velt_rt_latch_new();
+    this.#tail = mine;
+    await velt_rt_latch_wait(before);
+    return mine;
+  }
+
+  // The call that got `mine` from `takeTurn` finished: wake the next one, if any. The latch
+  // is released by the call that opens it (a waiting call holds its own reference).
+  private passTurn(mine: u64) {
+    if (mine == 0) {
+      if (this.#head == 0) {
+        this.#running = 0;
+        return;
+      }
+      velt_rt_latch_open(this.#head);
+      velt_rt_latch_free(this.#head);
+      this.#head = 0;
+      return;
+    }
+    if (this.#tail == mine) {
+      // Nobody is in line behind this call.
+      this.#tail = 0;
+      this.#running = 0;
+      velt_rt_latch_free(mine);
+      return;
+    }
+    velt_rt_latch_open(mine);
+    velt_rt_latch_free(mine);
+  }
+}
+
+declare function velt_rt_latch_new(): u64;
+
+declare function velt_rt_latch_free(latch: u64);
+
+declare function velt_rt_latch_open(latch: u64);
+
+declare async function velt_rt_latch_wait(latch: u64): Promise<void>;

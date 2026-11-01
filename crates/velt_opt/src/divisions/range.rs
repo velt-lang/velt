@@ -366,6 +366,13 @@ pub(crate) fn binary(op: BinOp, a: Interval, b: Interval, ty: Ty) -> Option<Inte
                 hi: (1i128 << bits) - 1,
             })
         }
+        // A non-negative value shifted left by a constant: the caller drops the interval when
+        // it does not fit the type (the shift wrapped). `(b[at] << 8) | b[at + 1]` of bytes is
+        // below 2^16.
+        BinOp::Shl if a.lo >= 0 && b.lo == b.hi && (0..width).contains(&b.lo) => Some(Interval {
+            lo: a.lo << b.lo,
+            hi: a.hi << b.lo,
+        }),
         BinOp::Shr | BinOp::UShr if a.lo >= 0 && b.lo == b.hi && (0..width).contains(&b.lo) => {
             Some(Interval {
                 lo: a.lo >> b.lo,

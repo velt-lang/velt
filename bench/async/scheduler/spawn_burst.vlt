@@ -1,0 +1,17 @@
+// Small spawn bursts (atomics step 1d review): 100k rounds of 2 tiny spawned tasks, then await
+// both. What the monitor costs a program whose spawned tasks never compute for long: compare
+// wall time and CPU (`/usr/bin/time`) between runtimes, at VELT_THREADS=1, 4 and the default.
+// Not part of bench/async/run.sh (no Rust or Node version).
+async function tiny(i: i64): Promise<i64> {
+  return (i * 17 + 3) % 1009;
+}
+
+async function main() {
+  let total = 0;
+  for (let i = 0; i < 100000; i++) {
+    const a = spawn(tiny(i));
+    const b = spawn(tiny(i + 1));
+    total += (await a) + (await b);
+  }
+  console.log(total);
+}

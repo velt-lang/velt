@@ -15,6 +15,8 @@ use serde_json::Value;
 
 use super::{json, stderr, test_dir, velt};
 
+mod type_package;
+
 /// stdout of `velt run <file>` in `dir`.
 fn run_velt(dir: &Path, file: &str) -> String {
     let o = velt(dir, &["run", file]);
@@ -212,7 +214,7 @@ fn ssr_blog_shared_components_render_the_same_under_node() {
     // The server side.
     std::fs::write(
         dir.join("samples_main.vlt"),
-        r#"import { renderToStringSync } from "velt:jsx";
+        r#"import { renderToStringSync } from "velt/jsx";
 import { samples } from "./src/shared/samples";
 
 function main() {

@@ -13,7 +13,7 @@ use crate::{isa, unwind, CodegenResult};
 
 /// Emit the entry object for `target` (an object file of the target's format).
 pub(crate) fn emit_entry_object(target: &str) -> CodegenResult<Vec<u8>> {
-    let isa = isa::make_isa(target, false, false)?;
+    let isa = isa::make_isa(target, Some("baseline"), false, false)?;
     let builder = ObjectBuilder::new(
         isa.clone(),
         "velt_entry",

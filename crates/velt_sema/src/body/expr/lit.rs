@@ -23,17 +23,21 @@ impl FnCx<'_, '_> {
             ast::Lit::Undefined => return self.undefined_lit(exp, span),
             _ => self.hint(exp),
         };
-        // A literal expected as a union takes the type of the member it belongs to.
+        // A literal expected as a union takes the type of the member it belongs to; with
+        // several number members, one that holds its value (`256` as `f64 | u8`'s `f64`).
         let exp = exp.map(|t| match self.cx.union_def(t) {
-            Some(_) => self
-                .lit_member_quiet(
-                    t,
-                    ast::SignedLit {
-                        lit: l.clone(),
-                        negative: false,
-                    },
-                )
-                .map_or(t, |(_, m)| m),
+            Some(_) => {
+                let lit = ast::SignedLit {
+                    lit: l.clone(),
+                    negative: negated,
+                };
+                let fits = self.number_lit_members(t, &lit).unwrap_or_default();
+                let own = self.lit_member_quiet(t, lit).map(|(_, m)| m);
+                match own {
+                    Some(m) if fits.is_empty() || fits.iter().any(|f| f.1 == m) => m,
+                    _ => fits.first().map_or(own.unwrap_or(t), |f| f.1),
+                }
+            }
             None => t,
         });
         match l {
@@ -184,6 +188,8 @@ impl FnCx<'_, '_> {
                 self.mk(H::Lit(hir::Lit::Null), t, span)
             }
             Some(t) if !self.cx.ty.has_error(t) => {
+                let null = self.cx.ty.null_alone();
+                self.cx.seed_reject(null, t);
                 let tn = self.cx.display(t);
                 self.cx.error(
                     Diagnostic::error("mismatched types", span)
@@ -301,6 +307,12 @@ impl FnCx<'_, '_> {
 
     /// `null` / `undefined` (`what`) where `t` does not allow it (TS2322).
     fn nothing_mismatch(&mut self, what: &str, t: TyId, span: Span) -> hir::Expr {
+        // `reject(null)` of a promise without a written error type (`throws::promise_sites`).
+        let nothing = match what {
+            "null" => self.cx.ty.null_alone(),
+            _ => self.cx.ty.undefined(),
+        };
+        self.cx.seed_reject(nothing, t);
         let param = |s: &Self| {
             s.optional_slots
                 .iter()
@@ -479,10 +491,14 @@ impl FnCx<'_, '_> {
                 .filter(|&p| !matches!(self.cx.ty.kind(p), TyKind::Unit))
                 .collect(),
             TyKind::Adt(d, args) => {
-                // A class printed through its `__inspect()` shows what that returns.
+                // A class printed through its `[INSPECT]()` shows what that returns.
                 if let Some((_, ret)) = crate::hooks::hook(self.cx, d, &args, crate::hooks::INSPECT)
                 {
                     return self.printable_depth(ret, depth + 1);
+                }
+                // A record prints its entries (its accessors are not enumerable).
+                if Some(d) == self.cx.prelude_adt("Record") {
+                    return args.iter().all(|&a| self.printable_depth(a, depth + 1));
                 }
                 let tys: Vec<TyId> = match &self.cx.info[d.0 as usize] {
                     crate::defs::DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
@@ -601,6 +617,8 @@ impl FnCx<'_, '_> {
         // an array as JS's `Array.prototype.toString` writes it (`1,2`), an object by its
         // `toString()`, not as `console.log` prints it. So is a list of them (`any[]`), each
         // element as `String(x)` writes it (`[[1, 2], {}]` is `1,2,[object Object]`).
+        // A literal with accessors too (`[object Object]`), through `any`.
+        let h = self.literal_iface_as_any(h);
         let dynamic = matches!(
             self.cx.dynamic(h.ty),
             Some(Dynamic::Any | Dynamic::Unknown | Dynamic::Object)
@@ -642,7 +660,7 @@ impl FnCx<'_, '_> {
     }
 
     /// `h.<method>()` when `h` is a class or struct value with its own `method` (a template
-    /// literal uses `toString()`, as in JS; `console.log` a `__inspect()` returning a
+    /// literal uses `toString()`, as in JS; `console.log` a `[INSPECT]()` returning a
     /// `string`), else `h`. A parameter left out takes its default, and a `toString()` result
     /// that is not a `string` is written with `String(result)`, as JS does (`crate::hooks`
     /// reports the shapes this cannot call).

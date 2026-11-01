@@ -1,16 +1,18 @@
-// chatbench, the Velt server with std/websocket topics (bench/chat/SPEC.md): std/http + std/websocket + std/sqlite, all
-// cores, one process. Rooms are shared state behind a Mutex; a broadcast is a loop of queued
-// sends (std/websocket sends return once queued).
+// chatbench, the Velt server with std/websocket topics (bench/chat/SPEC.md): std/http +
+// std/websocket + the sqlite package, all cores, one process. Rooms are shared state behind a
+// Mutex; a broadcast is a loop of queued sends (std/websocket sends return once queued).
 // Usage: server [port]; env PORT, HOST (127.0.0.1), DB (chat.db), TLS_CERT and TLS_KEY (PEM
 // files: serve HTTPS/WSS instead of HTTP/WS when both are set).
 
-import { serve, ServeOptions, TlsOptions } from "velt:http";
-import { WebSocket, WsMessage, isWebSocketRequest, upgradeWebSocket, publish } from "velt:websocket";
-import { hmacSha256 } from "velt:crypto";
-import { hexEncode, utf8Encode } from "velt:encoding";
-import { open, Database } from "velt:sqlite";
-import { args } from "velt:process";
-import { existsSync, readFileSync, removeSync } from "velt:fs";
+import { serve, HttpServeOptions } from "http-server";
+import { TlsListenOptions } from "velt/net";
+import { WebSocket, WsMessage, publish } from "velt/net/websocket";
+import { isWebSocketRequest, upgradeWebSocket } from "http-server/websocket";
+import { hmacSha256 } from "velt/crypto";
+import { hexEncode, utf8Encode } from "velt/encoding";
+import { open, Database } from "sqlite";
+import { args } from "velt/process";
+import { existsSync, readFileSync, removeSync } from "velt/fs";
 
 const KEY = "chatbench-secret";
 
@@ -240,7 +242,7 @@ function portArg(): number {
 }
 
 // HTTPS/WSS when TLS_CERT and TLS_KEY name PEM files, else plain HTTP/WS.
-function tlsOptions(): TlsOptions | null {
+function tlsOptions(): TlsListenOptions | null {
   const cert = process.env.TLS_CERT;
   const key = process.env.TLS_KEY;
   if (cert == null || key == null) {
@@ -264,7 +266,7 @@ async function main() {
   const ids = shared(0);
   const tls = tlsOptions();
   const scheme = tls == null ? "http" : "https";
-  const opts: ServeOptions = { port: portArg(), host: process.env.HOST ?? "127.0.0.1" };
+  const opts: HttpServeOptions = { port: portArg(), host: process.env.HOST ?? "127.0.0.1" };
   if (tls != null) {
     opts.tls = tls;
   }

@@ -1,0 +1,20 @@
+// velt/sync/epoch: epoch-based reclamation (Fraser's scheme, as crossbeam-epoch has it) for the
+// values an `Atomic` of a `shared` value replaces (docs/internals/design/atomics.md
+// "Reclamation"). Plain Velt on `Atomic`, `ThreadLocal` and `Mutex`.
+//
+// A thread reads such values inside a *section* (`pin()` … `unpin()`), which announces the
+// global epoch it saw in its slot. A replaced value is *retired* with the epoch of its retiring:
+// kept until every thread that was in a section then has left it. The global epoch moves on
+// only when every thread in a section has seen the current one, so a value retired at epoch `g`
+// is unreachable once the epoch is `g + 2` steps on, and is dropped then.
+// docs/std/sync.md.
+
+export {
+  collect,
+  dropped,
+  outstanding,
+  pending,
+  pin,
+  retire,
+  unpin,
+} from "velt/sync/epoch/reclaim";

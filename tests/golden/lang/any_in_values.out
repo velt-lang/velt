@@ -1,0 +1,13 @@
+array true true false true true false false false false
+array true true true true true false false true
+array keys true true true false false true false
+isC false false false
+empty false true
+strs true false true
+u8 true true false true true true true false false true
+map false true true true true true false false true
+set false true true true true false true
+fn true true true true true true false false
+class true true true true true true true false false false false false
+object true true false true false
+record true false true

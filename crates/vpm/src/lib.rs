@@ -7,13 +7,15 @@
 //! - [`registry`]: the registry (`publish`, index), local or remote ([`remote`], packages as
 //!   [`archive`]s over HTTP); [`yank`] and [`search`]; [`cache`]: verified extraction.
 //! - [`resolve`]: semver resolution with backtracking; [`lockfile`]: `velt.lock.json`.
-//! - [`install`]: resolve + lock + fetch → [`PackageGraph`] for the compiler's module loader.
+//! - [`install`]: resolve + lock + fetch → [`PackageGraph`] for the compiler's module loader;
+//!   [`workspace`]: members of a `velt.workspace.vlt` share one resolution and lock.
 
 pub mod archive;
 pub mod cache;
 pub mod contents;
 pub mod credentials;
 pub mod edit;
+pub mod git;
 pub mod graph;
 pub mod install;
 pub mod json_file;
@@ -23,6 +25,7 @@ pub mod manifest;
 pub mod native;
 pub mod npm;
 pub mod paths;
+pub mod probe;
 pub mod registry;
 pub mod relpath;
 pub mod remote;
@@ -30,9 +33,10 @@ pub mod resolve;
 pub mod scaffold;
 pub mod search;
 pub mod sources;
+pub mod workspace;
 pub mod yank;
 
 pub use graph::PackageGraph;
 pub use install::{install, InstallOptions, Installed};
 pub use locations::Locations;
-pub use manifest::{Dependency, DetailedDependency, Manifest, Package};
+pub use manifest::{BuildConfig, Dependency, DetailedDependency, Manifest, Package};

@@ -1,0 +1,57 @@
+// velt/fs: file system access over the runtime (docs/internals/contracts/rt_abi_async.md §5).
+//
+// Every operation has an async form (runs on the runtime's blocking pool) and a `*Sync` form
+// (blocks the calling thread). Failures throw `IoError` (from "velt/io") with a Node-style `code`.
+// `openRead` and `openWrite` read and write files in chunks; Node's file-descriptor API
+// (`openSync`, `readSync`, `writeSync`, ...) calls the C library directly, on macOS and Linux.
+// docs/std/fs.md.
+
+export {
+  appendFile,
+  appendFileSync,
+  readFile,
+  readFileBytes,
+  readFileBytesSync,
+  readFileSync,
+  writeFile,
+  writeFileSync,
+} from "velt/fs/files";
+export {
+  mkdir,
+  MkdirOptions,
+  mkdirSync,
+  readDir,
+  readDirEntries,
+  readDirEntriesSync,
+  readDirSync,
+} from "velt/fs/dirs";
+export {
+  copyFile,
+  copyFileSync,
+  exists,
+  existsSync,
+  remove,
+  RemoveOptions,
+  removeSync,
+  rename,
+  renameSync,
+} from "velt/fs/entries";
+export {
+  lstat,
+  lstatSync,
+  readlink,
+  readlinkSync,
+  stat,
+  statSync,
+  symlink,
+  symlinkSync,
+} from "velt/fs/metadata";
+export { Dirent } from "velt/fs/dirent";
+export { Stats } from "velt/fs/stats";
+export { FileReader } from "velt/fs/file_reader";
+export { FileWriter } from "velt/fs/file_writer";
+export { openRead, openWrite, OpenWriteOptions } from "velt/fs/stream";
+export { closeSync, openSync, unlinkSync } from "velt/fs/fd/open";
+export { readSync } from "velt/fs/fd/read";
+export { writeSync } from "velt/fs/fd/write";
+export { fdatasyncSync, fstatSync, fsyncSync, ftruncateSync } from "velt/fs/fd/sync";

@@ -1,0 +1,6 @@
+defined Card function
+defined anonymous function
+render {"title":"hi"}
+card x Card component
+render {"n":2,"key":"k"} plain 3 undefined
+Card anonymous 2 function

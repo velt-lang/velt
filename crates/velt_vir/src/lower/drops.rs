@@ -220,7 +220,9 @@ impl FnLower<'_, '_> {
         if self.cx.kind(ty) == TyKind::Str {
             return self.str_drop(place);
         }
-        let a = self.addr(place);
+        // A pointer in an object drops from a copy (`read_addr`): the object stays scalar.
+        let vt = self.cx.ty(ty);
+        let a = self.read_addr(place, vt);
         let f = self.cx.func_direct(Work::Glue(Glue::Drop, ty), self.mode);
         self.call(vir::Callee::Func(f), vec![a], None, false);
     }

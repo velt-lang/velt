@@ -1,0 +1,40 @@
+-5 65535 [ 'é', 'é' ] [ 'p', 18446744073709551615 ] {"k":[1,true]}
+{ x: 1.5, y: 2.25, on: false, 'the key': -128 }
+[ 9007199254740993, 's', true ]
+[ [ 1, 2 ], [], [ -3 ] ] 0 x
+2
+SyntaxError expected u16 at $.inners[1].n
+JSON nested deeper than 2 levels at $.inners[0] (byte 17)
+SyntaxError expected string at $.inners[0].s[1]
+JSON nested deeper than 2 levels at $.inners[0] (byte 17)
+SyntaxError expected u64 at $.pair[1]
+expected u64 at $.pair[1]
+SyntaxError expected array of length 2 at $.pair
+expected array of length 2 at $.pair
+SyntaxError expected array of length 2 at $.pair
+expected array of length 2 at $.pair
+SyntaxError expected i32 at $.a
+expected i32 at $.a
+SyntaxError expected i32 at $.a
+expected i32 at $.a
+SyntaxError expected field "s" at $.inners[0]
+JSON nested deeper than 2 levels at $.inners[0] (byte 17)
+SyntaxError expected field "extra" at $
+expected field "extra" at $
+SyntaxError expected array at $.inners
+expected array at $.inners
+SyntaxError invalid JSON at $.zz: unexpected character '}' (byte 52)
+unknown field at $.zz
+SyntaxError invalid JSON at $: unexpected trailing characters (byte 45)
+invalid JSON at $: unexpected trailing characters (byte 45)
+ok 1
+unknown field at $.zz
+SyntaxError expected object at $
+expected object at $
+expected boolean at $.on
+expected i8 at $.the key
+expected field "y" at $
+expected array of length 3 at $
+expected string at $[1]
+expected i64 at $[0]
+expected i8 at $[1][1]

@@ -3,7 +3,7 @@
 // which the outer callback then sends on a channel before the reads end: the receiver gets a
 // copy (the callbacks may still change the object), on this thread or on a spawned task, also
 // after moving it through another container first (#1523).
-import { channel, Channel } from "velt:channel";
+import { channel, Channel } from "velt/sync";
 
 class Box {
   items: number[][] = [[1, 2], [3]];

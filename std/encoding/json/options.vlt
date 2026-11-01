@@ -1,0 +1,46 @@
+// velt/encoding/json (internal): `JsonParseOptions` as the reader's flags and nesting limit, for
+// `JSON.parse` and `JsonValue.parse` (std/prelude/json/json.vlt) and the compiler's hook of
+// `JSON.parse(text) as T` (std/lang/hooks/json.vlt).
+
+import {
+  FLAG_COMMENTS,
+  FLAG_REJECT_UNKNOWN,
+  FLAG_TRAILING_COMMAS,
+} from "velt/encoding/json/reader";
+import { JsonError, JsonParseOptions } from "velt/prelude/json/json_error";
+
+/** The reader's flags for `options` on top of `base` (std/encoding/json/reader.vlt `FLAG_*`). */
+export function jsonFlags(options: JsonParseOptions | null, base: i64): i64 {
+  let flags = base;
+  if (options == null) {
+    return flags;
+  }
+  if (options.unknownKeys == "reject") {
+    flags = flags | (FLAG_REJECT_UNKNOWN as i64);
+  }
+  if (options.comments == "skip") {
+    flags = flags | (FLAG_COMMENTS as i64);
+  }
+  if (options.trailingCommas == true) {
+    flags = flags | (FLAG_TRAILING_COMMAS as i64);
+  }
+  return flags;
+}
+
+// `maxDepth` when the options leave it out.
+const DEFAULT_MAX_DEPTH: i64 = 128;
+
+/** The `max_depth` the runtime gets for `options` (throws `JsonError` when out of range). */
+export function jsonMaxDepth(options: JsonParseOptions | null): i64 {
+  if (options == null) {
+    return DEFAULT_MAX_DEPTH;
+  }
+  const d = options.maxDepth;
+  if (d == null) {
+    return DEFAULT_MAX_DEPTH;
+  }
+  if (d < 1 || d > 4294967295) {
+    throw new JsonError(`maxDepth must be between 1 and 4294967295, got ${d}`);
+  }
+  return d;
+}

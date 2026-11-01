@@ -49,6 +49,7 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> (Option<Vec<SourceModule>>, B
         .map(|(m, new)| SourceModule {
             path: m.path.clone(),
             is_std: m.is_std,
+            is_dependency: m.is_dependency,
             file: m.file,
             ast: ast::Module {
                 items: (m.ast.items.iter().zip(new))
@@ -476,7 +477,7 @@ fn any_name(t: &ast::TypeExpr, f: &mut dyn FnMut(&str) -> bool) -> bool {
                 || throws.as_deref().is_some_and(|x| any_name(x, f))
         }
         K::GenericFunction { ty, .. }
-        | K::Construct(ty)
+        | K::Construct { ty, .. }
         | K::TupleRest(ty)
         | K::TupleOptional(ty) => any_name(ty, f),
         K::Indexed { object, key } => any_name(object, f) || any_name(key, f),

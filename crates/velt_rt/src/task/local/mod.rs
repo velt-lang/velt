@@ -30,9 +30,12 @@ pub(crate) use micro::{grant_step, settled, step_free, ticket_pending};
 pub use micro::{velt_rt_await_ready, velt_rt_await_tick, velt_rt_microtask};
 pub(crate) use module_state::{
     drop_at_exit as module_drop_at_exit, held as module_held, mutex_locked, mutex_unlocked,
-    release_outside as module_release_outside, used as module_used,
+    release_outside as module_release_outside, touch as module_touch, used as module_used,
 };
-pub use module_state::{velt_rt_module_block, velt_rt_module_ready, velt_rt_module_state};
+pub use module_state::{
+    velt_rt_module_block, velt_rt_module_ready, velt_rt_module_state, velt_rt_module_with,
+    velt_rt_module_with_end,
+};
 pub use order::{velt_rt_timer_again, velt_rt_timer_free, velt_rt_timer_new, velt_rt_timer_turn};
 pub(crate) use timers::TimerLeaf;
 pub use unhandled::{velt_rt_uncaught_now, velt_rt_unhandled_defer};
@@ -473,6 +476,10 @@ pub unsafe extern "C" fn velt_rt_fut_transfer(f: *mut VeltFut, transfer: Option<
     if crate::task::shared::is_shared(f) {
         return crate::task::shared::hand_over(f, transfer);
     }
+    // Its identity stays on this task (task/identity.rs).
+    if node::is_lazy(f) || node::is_started(f) {
+        node::drop_alias(f);
+    }
     // Whatever its result needs, the promise is the other task's now (#1497).
     node::mark_handed_over(f);
     if crate::task::race::pass_transfer(f, transfer) {
@@ -493,6 +500,12 @@ pub unsafe extern "C" fn velt_rt_fut_peek(f: *mut VeltFut) -> u8 {
         return crate::task::shared::peek(f) as u8;
     }
     node::peek(f) as u8
+}
+
+/// Mark node `f` as standing for another promise (task/identity.rs); false when `f` is not a
+/// node (a runtime leaf), which then cannot.
+pub(crate) unsafe fn mark_aliased(f: *mut VeltFut) -> bool {
+    node::mark_aliased(f)
 }
 
 /// Is `f` a started promise (driven by its task's set)?
@@ -582,7 +595,12 @@ pub unsafe extern "C" fn velt_rt_futs_handled(
     quiet_drop: Option<ResultDropFn>,
 ) {
     for i in 0..n as usize {
-        node::mark_handled(*futs.add(i), quiet_drop);
+        let f = *futs.add(i);
+        if node::is_started(f) && node::is_aliased(f) {
+            // A combinator handling a converted promise handles the promise it stands for.
+            node::alias_claimed(f);
+        }
+        node::mark_handled(f, quiet_drop);
         crate::task::spawn::mark_join_handled(*futs.add(i), quiet_drop);
     }
 }

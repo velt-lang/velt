@@ -1,6 +1,6 @@
-# velt:mem
+# velt/mem
 
-`import { needsDrop, Blank } from "velt:mem"`. Facts about how values are stored, for code that
+`import { needsDrop, Blank } from "velt/mem"`. Facts about how values are stored, for code that
 manages its own memory layout, such as a container with slots for many values (Rust's
 `std::mem`).
 
@@ -19,7 +19,7 @@ manages its own memory layout, such as a container with slots for many values (R
   (`extend Name implements Blank<Name> { hasBlank() { return true; } blank() { … } }`).
 
 ```ts
-import { needsDrop } from "velt:mem";
+import { needsDrop } from "velt/mem";
 
 class Point {
   x: f64 = 0;
@@ -36,7 +36,7 @@ function main() {
 ```
 
 ```ts
-import { Blank } from "velt:mem";
+import { Blank } from "velt/mem";
 
 function slots<T>(first: T, n: i64): T[] {
   const out: T[] = [first];

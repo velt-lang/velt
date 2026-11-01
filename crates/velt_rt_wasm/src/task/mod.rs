@@ -15,6 +15,7 @@ pub mod boxed;
 pub mod channel;
 pub mod executor;
 pub mod group;
+pub mod identity;
 pub mod latch;
 pub mod leaf;
 pub mod local;

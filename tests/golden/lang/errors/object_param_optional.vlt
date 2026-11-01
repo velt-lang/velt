@@ -1,0 +1,20 @@
+// An optional object is not an `object`: tsc rejects passing it to a plain `object`
+// parameter (TS2345), and so does Velt.
+interface Opts {
+  key?: string;
+}
+
+function warn(options: object): void {
+  console.log(options);
+}
+
+function read(options?: Opts): void {
+  warn(options);
+}
+
+function find(options: Opts | undefined): void {
+  warn(options);
+}
+
+read();
+find(undefined);

@@ -1,0 +1,138 @@
+// sqlite/engine/exec/window/window_call (internal): a window function call compiled (engine/exec/
+// window/win_ctx computes them): its window resolved (engine/exec/window/resolve), its arguments
+// and the window's PARTITION BY and ORDER BY compiled in the scope the rows are collected in.
+
+import { BINARY } from "../../collation";
+import { Expr, OrderTerm } from "../../sql/types";
+import { Ev } from "../types";
+import { Scope } from "../scope";
+import { AggFn, aggregateKind } from "../agg/agg_fn";
+import { prepareError } from "../errors";
+import { scalarFunction } from "../func/func";
+import { C, plain } from "../c";
+import { ExprCompiler } from "../expr_compiler";
+import { SortKey } from "../sort_key";
+import { MAX_COLUMN } from "../result";
+import { intVal, nullVal } from "../value/val";
+import { W_AGG, WinFn, windowArity, windowKind } from "./win_fn";
+import { WinCtx } from "./win_ctx";
+import { Resolved, resolveWindow } from "./resolve";
+
+/** A window function call (`... OVER ...`) in the output of a query. */
+export function windowCall(c: ExprCompiler, e: Expr, sc: Scope, lname: string): C {
+  const w = sc.win!;
+  const base = sc.winBase!;
+  const r = resolveWindow(e.over!, sc.windows);
+  // SQLite sorts by PARTITION BY and ORDER BY together, as one ORDER BY (reported by the core).
+  if (r.w.partition.length + r.w.orderBy.length > MAX_COLUMN) {
+    w.tooManyTerms = true;
+  }
+  // In a window computed last, a subquery's aggregate of the query makes it an aggregate
+  // query, as in the result columns of a query without window functions.
+  let last = false;
+  for (const x of sc.lastWins) {
+    last = last || x == e;
+  }
+  const wasResults = base.results;
+  const wasWinAgg = base.winAgg;
+  if (last) {
+    base.results = true;
+    base.winAgg = true;
+  }
+  try {
+    return windowCallIn(c, e, r, w, base, lname);
+  } finally {
+    base.results = wasResults;
+    base.winAgg = wasWinAgg;
+  }
+}
+
+function windowCallIn(
+  c: ExprCompiler,
+  e: Expr,
+  r: Resolved,
+  w: WinCtx,
+  base: Scope,
+  lname: string,
+): C {
+  let wk = windowKind(e.name);
+  let ak: i64 = -1;
+  if (wk < 0) {
+    ak = aggregateKind(e.name, e.args.length, e.star);
+    if (ak == -2) {
+      prepareError(`wrong number of arguments to function ${lname}()`);
+    }
+    if (ak < 0) {
+      const probe: Ev[] = [];
+      for (const a of e.args) {
+        probe.push(() => nullVal());
+      }
+      if (scalarFunction(e.name, lname, probe, BINARY) != null) {
+        prepareError(`${lname}() may not be used as a window function`);
+      }
+      prepareError(`no such function: ${lname}`);
+    }
+    wk = W_AGG as i64;
+  } else {
+    const ar = windowArity(wk);
+    if (e.star || e.args.length < (ar[0] as usize) || e.args.length > (ar[1] as usize)) {
+      prepareError(`wrong number of arguments to function ${lname}()`);
+    }
+    if (e.filter != null) {
+      prepareError("FILTER clause may only be used with aggregate window functions");
+    }
+  }
+  if (e.distinct) {
+    prepareError("DISTINCT is not supported for window functions");
+  }
+  const f = new WinFn(wk as u8);
+  const before = w.specs.length;
+  f.spec = w.spec(r.key);
+  if (w.specs.length > before) {
+    const sp = w.specs[f.spec];
+    for (const p of r.w.partition) {
+      const pc = c.expr(p, base);
+      sp.partition.push(pc.ev);
+      sp.terms.push(OrderTerm { expr: p, desc: false, nulls: 0 });
+      sp.sk.push(new SortKey(-1, null, false, 0, pc.coll >= 0 ? pc.coll as u8 : BINARY));
+    }
+    for (const t of r.w.orderBy) {
+      const oc = c.expr(t.expr, base);
+      sp.order.push(oc.ev);
+      sp.terms.push(t);
+      sp.sk.push(new SortKey(-1, null, t.desc, t.nulls, oc.coll >= 0 ? oc.coll as u8 : BINARY));
+    }
+  }
+  f.argAt = w.evs.length;
+  f.nargs = e.args.length;
+  for (const a of e.args) {
+    const ac = c.expr(a, base);
+    if (wk == W_AGG as i64 && w.evs.length == f.argAt) {
+      const af = new AggFn(ak as u8, e.name.toLowerCase());
+      af.coll = ac.coll >= 0 ? ac.coll as u8 : BINARY;
+      f.agg = af;
+    }
+    w.evs.push(ac.ev);
+  }
+  if (wk == W_AGG as i64 && f.agg == null) {
+    f.agg = new AggFn(ak as u8, e.name.toLowerCase());
+  }
+  if (e.filter != null) {
+    const p = c.pred(e.filter!, base);
+    f.filterAt = w.evs.length as i64;
+    w.evs.push(() => intVal(p() ? 1 : 0));
+  }
+  f.frame = r.w.frame;
+  f.start = r.w.start;
+  f.end = r.w.end;
+  f.exclude = r.w.exclude;
+  if (r.w.startExpr != null) {
+    f.startN = c.ev(r.w.startExpr!, base);
+  }
+  if (r.w.endExpr != null) {
+    f.endN = c.ev(r.w.endExpr!, base);
+  }
+  w.fns.push(f);
+  const slot: usize = w.fns.length - 1;
+  return plain(() => w.value(slot));
+}

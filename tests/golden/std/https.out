@@ -1,5 +1,0 @@
-200 text/plain secure GET https: /hello 
-200 text/html; charset=utf-8 <h1>hi</h1>
-untrusted: true
-plain http rejected
-EINVAL true

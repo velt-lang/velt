@@ -31,7 +31,7 @@ fn error(src: &str) -> (String, String) {
     all.remove(0)
 }
 
-const HEAD: &str = "import type { Package } from \"velt:package\";\n";
+const HEAD: &str = "import type { Package } from \"velt/package\";\n";
 
 /// A manifest with `fields` after a valid name and version.
 fn with(fields: &str) -> String {
@@ -44,7 +44,7 @@ fn with(fields: &str) -> String {
 fn full_manifest_matches_the_toml_one() {
     let m = read(
         r#"
-        import type { Package } from "velt:package";
+        import type { Package } from "velt/package";
 
         // The package.
         export const pkg: Package = {
@@ -161,16 +161,16 @@ fn the_file_holds_one_typed_pkg_constant() {
         format!("export const pkg: Package = {body};\nfunction f(): void {{}}"),
     ] {
         let (message, _) = error(&src);
-        assert_eq!(message, SHAPE, "{src}");
+        assert_eq!(message, PACKAGE_SHAPE.message, "{src}");
     }
     for import in [
-        "import { Package } from \"velt:package\";",
+        "import { Package } from \"velt/package\";",
         "import type { Package } from \"./types\";",
-        "import * as p from \"velt:package\";",
+        "import * as p from \"velt/package\";",
     ] {
         let (message, covered) = error(&format!("{import}\nexport const pkg: Package = {body};"));
         assert!(
-            message.contains("may only import types from `velt:package`"),
+            message.contains("may only import types from `velt/package`"),
             "{message}"
         );
         assert_eq!(covered, import);
@@ -194,9 +194,9 @@ fn keys_are_checked() {
     assert_eq!(message, "unknown key `import_source` in the manifest");
     assert_eq!(covered, "import_source");
     let (message, _) = error(&with(
-        "dependencies: { util: { path: \"../u\", git: \"x\" } }",
+        "dependencies: { util: { path: \"../u\", gitt: \"x\" } }",
     ));
-    assert_eq!(message, "unknown key `git` in the manifest");
+    assert_eq!(message, "unknown key `gitt` in the manifest");
 
     let (message, covered) = error(&with("entry: \"a\", entry: \"b\""));
     assert_eq!(message, "duplicate key `entry`");
@@ -235,7 +235,10 @@ fn field_rules_point_at_the_value() {
     assert_eq!(covered, "\"@app/*\": \"../x/*\"");
 
     let (message, covered) = error(&with("dependencies: { y: {} }"));
-    assert_eq!(message, "dependency `y` needs a `version` or a `path`");
+    assert_eq!(
+        message,
+        "dependency `y` needs a `version`, a `path` or a `git` repository"
+    );
     assert_eq!(covered, "{}");
     let (message, _) = error(&with("dependencies: { y: \"one\" }"));
     assert!(
@@ -327,23 +330,29 @@ fn edit_distance_counts_edits() {
     assert_eq!(edit_distance("dependencies", "dependecies"), 1);
     assert_eq!(edit_distance("jsx", "jsx"), 0);
     assert_eq!(edit_distance("", "abc"), 3);
+    assert_eq!(edit_distance("abc", ""), 3);
+    // A swap of two neighbours is one edit, so `jsno` suggests `json`.
+    assert_eq!(edit_distance("jsno", "json"), 1);
+    assert_eq!(edit_distance("depnedencies", "dependencies"), 1);
+    // Optimal string alignment: a swapped pair is not edited again.
+    assert_eq!(edit_distance("ca", "abc"), 3);
 }
 
 #[test]
 fn imports_name_at_least_one_type() {
     let body = "export const pkg: Package = { name: \"app\", version: \"1.0.0\" };";
     for import in [
-        "import \"velt:package\";",
-        "import type {} from \"velt:package\";",
+        "import \"velt/package\";",
+        "import type {} from \"velt/package\";",
     ] {
         let (message, covered) = error(&format!("{import}\n{body}"));
         assert!(
-            message.contains("may only import types from `velt:package`"),
+            message.contains("may only import types from `velt/package`"),
             "{import}: {message}"
         );
         assert_eq!(covered, import);
     }
-    let second = "import type { Package } from \"velt:package\";";
+    let second = "import type { Package } from \"velt/package\";";
     let (message, covered) = error(&format!("{HEAD}{second}\n{body}"));
     assert_eq!(message, "`package.vlt` may have at most one import");
     assert_eq!(covered, second);

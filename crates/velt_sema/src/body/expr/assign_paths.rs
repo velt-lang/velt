@@ -35,7 +35,13 @@ impl FnCx<'_, '_> {
         }
         let in_ctor = self.f.kind == crate::defs::FnKind::Ctor
             && matches!(base.kind, H::Local(l, _) if self.local_kind(l) == LocalKind::This);
-        if readonly && !in_ctor {
+        // Generated code builds a value field by field, as a constructor does: it may set a
+        // readonly field of the value it is building, a `const` it initialized with an object or
+        // struct literal (a decoder sets an optional one only when its key was read), never of
+        // a value given to it.
+        let generated_build =
+            matches!(base.kind, H::Local(l, _) if self.f.built_locals.contains(&l));
+        if readonly && !in_ctor && !generated_build {
             self.cx.err(
                 format!("cannot assign to `{}`: it is a readonly field", prop.name),
                 prop.span,

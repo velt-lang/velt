@@ -11,10 +11,15 @@
 //! each later poll too (it is *touched*). Tasks that never touch module state never take it, and
 //! a program without module state never sets [`USED`], which every per-task step tests first.
 //!
-//! The lock is never held across an `await` (a poll ends there), and it is never taken while a
-//! `Mutex` is held: the compiler rejects module state in a `with` callback, and taking it there
-//! anyway stops with an `ICE:`. A thread may block on a `Mutex` while it holds the module lock
-//! (the `Mutex`'s holder never needs the module lock), so lock order never cycles.
+//! The lock is never held across an `await` (a poll ends there), and it is never waited for
+//! while a `Mutex` is held: the compiler rejects module state in a `with` callback, and waiting
+//! for it there anyway stops with an `ICE:`. A thread may block on a `Mutex` while it holds the
+//! module lock (the `Mutex`'s holder never needs the module lock), so lock order never cycles.
+//! A program that may give a declared function properties through `any` (fn_props.rs: they are
+//! module state, and the compiler cannot see where a callback reaches them) takes the module
+//! lock before each `Mutex` or `RwLock` instead ([`velt_rt_module_with`]), for the callback,
+//! so a callback holds it already and never waits for it: the lock order is the module lock,
+//! then the `Mutex`.
 //!
 //! Code outside a task (a synchronous `main`) keeps the lock from its first access until it
 //! hands over to the tasks (`velt_rt_block_on`, or `main` returned): tasks wait until then, as
@@ -81,6 +86,10 @@ const NOT_HELD: u8 = 0;
 const IN_POLL: u8 = 1;
 /// Held by code outside a task (released by [`release_outside`]).
 const OUTSIDE: u8 = 2;
+/// Held for a `with`, `read` or `write` callback ([`velt_rt_module_with`]), released after its
+/// lock is ([`velt_rt_module_with_end`]), unless the callback reached module state: the poll or
+/// the code outside a task keeps it then, as for any access.
+const IN_WITH: u8 = 3;
 
 thread_local! {
     static HELD: Cell<u8> = const { Cell::new(NOT_HELD) };
@@ -150,7 +159,7 @@ fn release(how: u8) {
 /// reaches module state holds it while it runs, so values from there (a shared promise kept in a
 /// `Map`, task/shared.rs) may move between those tasks.
 pub(crate) fn held() -> bool {
-    used() && HELD.with(Cell::get) != NOT_HELD
+    used() && matches!(HELD.with(Cell::get), IN_POLL | OUTSIDE)
 }
 
 /// Code outside a task is done for now (`main` returned, or the program goes on in tasks): let
@@ -175,6 +184,44 @@ pub(crate) fn mutex_unlocked() {
     if used() {
         MUTEXES.with(|m| m.set(m.get().saturating_sub(1)));
     }
+}
+
+/// Before a `Mutex` or `RwLock` is locked for a callback that may reach a declared function's
+/// properties held as `any` (fn_props.rs; the compiler decides which): take the module lock
+/// unless this thread holds it, until [`velt_rt_module_with_end`] after the unlock. The callback
+/// then never waits for the module lock while it holds the `Mutex`, which a thread holding the
+/// module lock may be waiting for. Whether it took it (1), for the end.
+#[no_mangle]
+pub extern "C" fn velt_rt_module_with() -> u8 {
+    HELD.with(|h| match h.get() {
+        NOT_HELD => {
+            take_for_with(h);
+            1
+        }
+        _ => 0,
+    })
+}
+
+/// After the unlock that followed [`velt_rt_module_with`], with what it answered: the module
+/// lock it took goes, unless the callback reached module state (the poll keeps it then).
+#[no_mangle]
+pub extern "C" fn velt_rt_module_with_end(took: u8) {
+    if took != 0 {
+        release(IN_WITH);
+    }
+}
+
+/// [`velt_rt_module_with`] when this thread does not hold the lock.
+#[inline(never)]
+fn take_for_with(h: &Cell<u8>) {
+    if MUTEXES.with(Cell::get) != 0 && used() {
+        // A lock taken without `velt_rt_module_with` (code swapped in by `velt dev`): waiting
+        // here could wait for a thread that waits for that lock.
+        no_mutex_held();
+    }
+    USED.store(true, Ordering::Relaxed);
+    LOCK.lock();
+    h.set(IN_WITH);
 }
 
 /// About to take the module lock: never while a `Mutex` is held, which could wait for a thread
@@ -302,6 +349,14 @@ pub unsafe extern "C" fn velt_rt_module_state(desc: *const ModuleDesc, slot: u64
     block(desc, slot)
 }
 
+/// Take the module lock as an access of module state does: for what the runtime keeps per
+/// process for compiled code, whose counts are not atomic (a declared function's identity and
+/// its properties, fn_props.rs).
+pub(crate) fn touch() {
+    // SAFETY: as for an access of module state.
+    unsafe { lock_for_access() }
+}
+
 /// Take the module lock for an access unless this thread holds it ([`velt_rt_module_state`]).
 #[inline]
 unsafe fn lock_for_access() {
@@ -310,21 +365,33 @@ unsafe fn lock_for_access() {
         Some(t) => {
             let ps = &t.module;
             if !ps.took.get() {
-                no_mutex_held();
                 USED.store(true, Ordering::Relaxed);
                 *ps.touched = true;
-                if take_if_free() {
-                    ps.took.set(true);
-                }
+                HELD.with(|h| match h.get() {
+                    NOT_HELD => {
+                        no_mutex_held();
+                        LOCK.lock();
+                        h.set(IN_POLL);
+                        ps.took.set(true);
+                    }
+                    // A callback's: the poll keeps it from now on.
+                    IN_WITH => {
+                        h.set(IN_POLL);
+                        ps.took.set(true);
+                    }
+                    _ => {}
+                });
             }
         }
-        None => HELD.with(|h| {
-            if h.get() == NOT_HELD {
+        None => HELD.with(|h| match h.get() {
+            NOT_HELD => {
                 no_mutex_held();
                 USED.store(true, Ordering::Relaxed);
                 LOCK.lock();
                 h.set(OUTSIDE);
             }
+            IN_WITH => h.set(OUTSIDE),
+            _ => {}
         }),
     }
 }
@@ -367,6 +434,43 @@ mod tests {
         assert!(took);
         assert_eq!(HELD.with(Cell::get), IN_POLL);
         end_poll(took);
+        assert_eq!(HELD.with(Cell::get), NOT_HELD);
+    }
+
+    /// A `with` in a program whose callbacks may reach a declared function's properties takes
+    /// the lock before its `Mutex` and gives it back with it (the outermost one), unless the
+    /// callback reached module state, which then keeps it as any access does.
+    #[test]
+    fn a_with_holds_the_lock_while_its_mutex_is_held() {
+        USED.store(true, Ordering::Relaxed);
+        let outer = velt_rt_module_with();
+        assert_eq!((outer, HELD.with(Cell::get)), (1, IN_WITH));
+        mutex_locked();
+        let inner = velt_rt_module_with();
+        mutex_locked();
+        mutex_unlocked();
+        velt_rt_module_with_end(inner);
+        assert_eq!(HELD.with(Cell::get), IN_WITH, "a nested `with` leaves it");
+        mutex_unlocked();
+        velt_rt_module_with_end(outer);
+        assert_eq!(
+            HELD.with(Cell::get),
+            NOT_HELD,
+            "the outermost gives it back"
+        );
+        assert!(!held(), "a callback's lock is not a poll's");
+        let took = velt_rt_module_with();
+        mutex_locked();
+        // SAFETY: as for an access of module state, outside a task.
+        unsafe { lock_for_access() };
+        mutex_unlocked();
+        velt_rt_module_with_end(took);
+        assert_eq!(
+            HELD.with(Cell::get),
+            OUTSIDE,
+            "reached in the callback: kept"
+        );
+        release_outside();
         assert_eq!(HELD.with(Cell::get), NOT_HELD);
     }
 

@@ -1,0 +1,60 @@
+// check: no leaks
+// A `Mutex` `with` callback that calls a closure using top-level `let`s that a closure assigns
+// (#1872): the check can't follow a call through a function value, so sema moves the variables
+// the closures in the called variable's initializer use back into the generated `main`, with
+// the closure, as before #1872. Each was "the function passed to `with` may use module state:
+// it calls a function value".
+
+// A `const` closure that reads two of them.
+const m1 = shared(new Mutex<number>(0));
+let c1 = 1;
+let c2 = 2;
+const b1 = () => {
+  c1++;
+  c2++;
+};
+const add1 = () => c1 + c2;
+b1();
+m1.with((v) => {
+  v += add1();
+});
+console.log(m1.with((v) => v));
+
+// A `let` that holds the closure.
+const m2 = shared(new Mutex<number>(0));
+let d = 1;
+const b2 = () => {
+  d++;
+};
+let add2 = () => d * 10;
+b2();
+m2.with((v) => {
+  v += add2();
+});
+console.log(m2.with((v) => v));
+
+// A closure in an object, called as a method.
+const m3 = shared(new Mutex<number>(0));
+let e = 1;
+const b3 = () => {
+  e++;
+};
+const o = { get: () => e * 10 };
+b3();
+m3.with((v) => {
+  v += o.get();
+});
+console.log(m3.with((v) => v));
+
+// The closure declared after the call that assigns the variable.
+const m4 = shared(new Mutex<number>(0));
+let f = 1;
+const b4 = () => {
+  f++;
+};
+b4();
+const add4 = () => f + 1;
+m4.with((v) => {
+  v += add4();
+});
+console.log(m4.with((v) => v));

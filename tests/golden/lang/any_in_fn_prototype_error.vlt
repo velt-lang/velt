@@ -1,0 +1,8 @@
+// `"prototype" in f` through `any` (#823): a declared function has its own `prototype` and an
+// arrow or a method has none, and the value held does not say which it is, so it stops with a
+// `TypeError` naming #823 instead of answering (Node: `false` for this arrow).
+function main(): void {
+  const arrow: any = (x: number): number => x + 1;
+  console.log("call" in arrow);
+  console.log("prototype" in arrow);
+}

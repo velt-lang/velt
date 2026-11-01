@@ -13,8 +13,7 @@
 //! - Drop elaboration: a droppable local whose ownership state changes inside a conditional region
 //!   (relative to its declaration) gets a Bool drop flag (flags.rs); all others are tracked
 //!   statically during lowering.
-//! - Async functions (M3) become poll/drop state machines (async_fn/); JSON glue (M4) lives in
-//!   json/.
+//! - Async functions (M3) become poll/drop state machines (async_fn/); JSON glue lives in json/.
 //! - Source locations (srcloc.rs): with a source map every statement records the location of
 //!   the HIR expression/statement being lowered, and panics name their location
 //!   (track_caller.rs for standard-library helpers such as `unwrap`).
@@ -23,20 +22,27 @@ mod abi;
 mod adapters;
 mod adt;
 mod any;
+mod any_args;
 mod any_builtin;
 mod any_checks;
 mod any_delete;
 mod any_eq;
 mod any_errors;
+mod any_exact;
+mod any_fn_props;
 mod any_generic_fn;
+mod any_get_builtin;
 mod any_glue;
 mod any_has;
+mod any_has_builtin;
 mod any_iface;
 mod any_keys;
 mod any_member;
 mod any_number;
+mod any_object_fill;
 mod any_proxy;
 mod any_record;
+mod any_reflect;
 mod any_rest;
 mod any_set;
 mod any_set_site;
@@ -50,6 +56,8 @@ mod array_view_ops;
 mod assign_target;
 mod async_fn;
 mod atomic;
+mod atomic_ref;
+mod atomic_str;
 mod attempt;
 mod boxes;
 mod boxing;
@@ -67,6 +75,7 @@ mod debug_vars;
 mod dispatch;
 mod drops;
 mod entry;
+mod epoch_sections;
 mod errors;
 mod expr;
 mod ext_exists;
@@ -84,6 +93,7 @@ mod impl_lookup;
 mod intrinsics;
 mod js_string;
 mod json;
+mod key_any;
 mod keys;
 mod layout;
 mod leave_levels;
@@ -115,14 +125,20 @@ mod simd;
 mod spread_object;
 mod srcloc;
 mod stabilize;
+mod static_atomic;
 mod stmt;
 mod strbuf;
 mod strings;
 mod symbols;
+mod system;
+mod system_views;
 mod template;
+mod this_fn;
+mod thread_local;
 mod track_caller;
 mod transfer;
 mod truthy;
+mod type_tests;
 mod types;
 mod upcast;
 mod view_unswitch;
@@ -171,6 +187,9 @@ pub(crate) fn lower_program(
         let mut cx = Cx::new(hir, types, counted.clone());
         cx.native_inits = opts.native_inits.to_vec();
         cx.cell_checks = opts.cell_checks;
+        cx.target = opts
+            .target
+            .map_or_else(crate::system::host_triple, str::to_string);
         cx.no_await_steps = no_await_steps;
         cx.locs = opts
             .source_map
@@ -184,6 +203,12 @@ pub(crate) fn lower_program(
         // `velt_main` last: whether it selects the per-core scheduler depends on everything else.
         cx.func(Work::Main);
         while let Some((fid, work)) = cx.queue.pop_front() {
+            // The function releasing the static atomics at exit is built last: it releases the
+            // ones the program's code uses, which every other function has said by then.
+            if matches!(work, Work::StaticsDrop) && !cx.queue.is_empty() {
+                cx.queue.push_back((fid, work));
+                continue;
+            }
             cx.build_now(fid, &work);
         }
         cx.build_iface_glues();
@@ -203,6 +228,8 @@ pub(crate) fn lower_program(
             diags.extend(cx.fresh_fn_diagnostics());
             diags.extend(cx.counted_atomic_diagnostics());
             diags.extend(cx.atomic_copy_diagnostics());
+            diags.extend(cx.unavailable_diagnostics());
+            cx.unfreeze_module_reach();
             let types_now = cx.types.clone();
             let program = cx.finish();
             if !no_await_steps && async_fn::await_order::unobservable(&program) {
@@ -356,8 +383,6 @@ enum Work {
     /// `(slot: ptr)`: disposes of the unclaimed result of a started promise of a rejecting
     /// promise type (async_fn/start.rs).
     Unclaimed(TyId),
-    /// `(env, req, state)` initializer of an http handler closure's per-request state.
-    HandlerInit(DefId, Vec<TyId>),
     /// `(this: ptr)`: the field initializers `new` runs for class `T` (after its constructor),
     /// throwing `E`; built only for classes whose initializers construct each other in a
     /// cycle (ctor_init.rs).
@@ -369,6 +394,8 @@ enum Work {
     /// `(state: ptr)`: the initializer of module state slots `from..to` (module_state.rs):
     /// the state's own (`0..deferred`), or the root file's slots its `main` initializes.
     ModuleInit(u32, u32),
+    /// `()`: releases the references the static atomics hold, at exit (static_atomic.rs).
+    StaticsDrop,
 }
 
 /// Program-level lowering state.
@@ -380,6 +407,9 @@ struct Cx<'h> {
     native_inits: Vec<crate::NativeInit>,
     /// The prelude's `Proxy.__view` (any_view.rs), once looked up.
     view_fn: Option<Option<DefId>>,
+    /// The standard library's functions by qualified name, built on the first lookup of the
+    /// JSON glue (json/reader.rs `json_std_fn`): one map, not a scan of every def per call.
+    std_fns: std::cell::OnceCell<FxHashMap<&'h str, DefId>>,
     /// The program pins a task (`spawn(…, { worker })`): `velt_main` selects the per-core
     /// scheduler. Known once every function
     /// but `velt_main` is lowered, which is why it is built last (`lower_program`).
@@ -387,6 +417,16 @@ struct Cx<'h> {
     /// Report every use of a captured variable's cell to the debug runtime (cells.rs,
     /// `LowerOptions::cell_checks`).
     cell_checks: bool,
+    /// The target triple, for system functions (`LowerOptions::target`).
+    target: String,
+    /// Calls of system functions the target lacks: (the declaration, the calling function, the
+    /// user code being lowered then, `user_site`).
+    unavailable: Vec<(DefId, Option<DefId>, velt_common::Span)>,
+    /// Per user call site of a standard-library function, that function (call.rs): what an
+    /// unavailable system function deep in std is reported as, at the user's call.
+    std_calls: FxHashMap<velt_common::Span, DefId>,
+    /// The aggregates of C structs (system.rs), by the table's struct.
+    system_aggs: FxHashMap<usize, vir::AggId>,
     /// Lower no `await` steps (async_fn/await_order.rs): the program was lowered once and
     /// nothing in it can make a task's await word non-0.
     no_await_steps: bool,
@@ -408,13 +448,20 @@ struct Cx<'h> {
     /// The stored elements of each module constant table read so far (`table_read`): the data
     /// and the length, or `None` for a constant that is not one.
     tables: FxHashMap<hir::DefId, Option<(StaticId, usize)>>,
+    /// The data of each static atomic used so far, `None` for a global that is not one
+    /// (static_atomic.rs).
+    static_atomics: FxHashMap<hir::DefId, Option<StaticId>>,
     /// Slots are filled as the worklist is processed.
     funcs: Vec<Option<Function>>,
     work_map: FxHashMap<Work, FuncId>,
     queue: VecDeque<(FuncId, Work)>,
-    /// The `AnyIface` glues, built last (any_iface.rs): each with the number of types `any`
-    /// values held when it was built.
-    iface_glues: Vec<(FuncId, TyId, Option<usize>)>,
+    /// The glues that depend on the types `any` values hold (`AnyIface`, any_iface.rs, and
+    /// `AnyNumeric`, any_number.rs), built last, each with the number of such types then.
+    iface_glues: Vec<(FuncId, Work, Option<usize>)>,
+    /// Params given `noalias` or `frozen`, with their types, for `unfreeze_module_reach`
+    /// (boxing/module_reach.rs); those of the function being declared until it is built.
+    unique_params: Vec<(FuncId, u32, TyId)>,
+    declared_unique: Vec<(u32, TyId)>,
     /// Functions currently being built (eager builds of poll functions detect recursion).
     building: FxHashSet<FuncId>,
     /// Layout facts of every async function instance whose poll function has been built.
@@ -422,9 +469,6 @@ struct Cx<'h> {
     /// Closure instances whose declared scalar params are passed by pointer: `Mutex.with`
     /// callbacks update the locked value in place.
     by_ref_params: FxHashSet<(DefId, Vec<TyId>)>,
-    /// Async closure instances used as http handlers: the capture modes their state machine
-    /// uses, reading the shared, leaked environment (async_fn/handler.rs).
-    shared_envs: FxHashMap<(DefId, Vec<TyId>), Vec<hir::PassMode>>,
     lay: layout::Layouts,
     /// Line tables when lowering with a source map (`lower_with`).
     locs: Option<srcloc::LocMap>,
@@ -434,8 +478,8 @@ struct Cx<'h> {
     tracked: FxHashMap<DefId, bool>,
     /// HIR nodes of the standard-library functions `tracks_caller` scanned (track_caller.rs).
     tracked_size: FxHashMap<DefId, usize>,
-    /// Memoized `quiet` answers (quiet.rs).
-    quiet: FxHashMap<DefId, bool>,
+    /// Memoized `quiet` answers, per level (quiet.rs).
+    quiet: FxHashMap<(DefId, quiet::Quiet), bool>,
     /// Interned static `VeltStr` objects (`static_str_object`).
     str_objects: FxHashMap<String, StaticId>,
     /// The records of the compiler's symbols (`Intrinsic::SymbolStatic`, symbols.rs).
@@ -457,11 +501,10 @@ struct Cx<'h> {
     honoured_clones: FxHashMap<TyId, Option<DefId>>,
     /// Memoized `dyn_modes` per (interface, slot).
     dyn_modes_memo: FxHashMap<(DefId, u32), Option<Vec<hir::PassMode>>>,
-    /// Whether some class has a `toJSON(key)`, and memoized `json_needs_key` per type
-    /// (json/key.rs); `None` until first asked.
-    json_key_memo: Option<(bool, FxHashMap<TyId, bool>)>,
     /// One type per anonymous object shape (types.rs `canon`).
     anon: types::AnonShapes,
+    /// `hir::Program::generated` by work items' canonical type arguments (made on first use).
+    generated_canon: Option<FxHashMap<(DefId, Vec<TyId>), DefId>>,
     /// The function whose instance is being built (for `nothing_clashes`).
     cur_def: Option<DefId>,
     /// The read mode of the function being built (`Work::Checked`, `Work::Read`).
@@ -673,6 +716,10 @@ struct FnLower<'c, 'h> {
     /// The arguments being lowered (bit `i`: `args[i]`) that are the reader's containers a
     /// call changing the caller's containers changes (caller_stores.rs `kept_args_of`).
     kept_args: u64,
+    /// The arguments being lowered (bit `i`: `args[i]`) the callee may change although they are
+    /// passed `Borrow` (a modified param of a function also used as a value, call.rs
+    /// `call_def`): they stay where they are, not held against later arguments.
+    changed_args: u64,
     /// Those arguments as passed, handed back to the reader after the call (with whether each
     /// was the reader's own, referenced once: caller_stores.rs `hand_back`).
     kept_handed: Vec<(Operand, TyId, Option<Local>)>,
@@ -721,7 +768,7 @@ struct FnLower<'c, 'h> {
     /// read through a proxy (`call_def` takes it).
     super_call: bool,
     /// The location of the top-level `await` lowered last (velt_sema's `top_level_await.rs`
-    /// marks each with `__topLevelAwaitAt(site)`): a suspension from here on tells the runtime it
+    /// marks each with `topLevelAwaitAt(site)`): a suspension from here on tells the runtime it
     /// waits there (`velt_rt_tla_at`, async_fn/suspend.rs), only when it really suspends.
     tla_site: Option<velt_common::Span>,
     /// Building `Glue::Same`: objects inside the compared values compare by identity (same.rs).
@@ -729,9 +776,8 @@ struct FnLower<'c, 'h> {
     /// Comparing with `Object.is` (`Intrinsic::SameValue`, `Glue::SameValue`): floats compare
     /// with JS's SameValue, `NaN` equal to itself and `0` unequal to `-0` (same.rs).
     value_mode: bool,
-    /// Comparing as keys (`Intrinsic::KeyEq`: `Map` keys, `Glue::KeySame`; `Intrinsic::Eq`:
-    /// `deepEqual`, `Glue::KeyEq`): floats compare with JS's SameValueZero, as
-    /// `Intrinsic::Hash` hashes them (glue/eq.rs).
+    /// Comparing as keys (`Intrinsic::KeyEq`: `Map` keys, `Glue::KeySame`): floats compare with
+    /// JS's SameValueZero, as `Intrinsic::Hash` hashes them (glue/eq.rs).
     key_mode: bool,
     /// Lowering an expression checked outside any body (module_state.rs): the module state's
     /// initializer (`Some(0)`), or a class field's initializer, whose locals are renumbered
@@ -745,21 +791,25 @@ struct FnLower<'c, 'h> {
     /// Classes whose initializers a `new` is inlining here (ctor_init.rs): a `new` of one of
     /// them inside them calls an out-of-line initializer function instead.
     init_stack: Vec<TyId>,
-    /// Closures of this body only ever called here: their envs live in the frame
-    /// (frame_envs.rs).
+    /// Closures of this body only ever called here: their envs live in the frame (frame_envs.rs).
     frame_closures: FxHashSet<DefId>,
     /// `Intrinsic::ClosureSibling` locals only ever called: calls go straight to the member
     /// (frame_envs.rs).
     direct_siblings: FxHashMap<LocalId, DefId>,
     /// The env param of the closure being lowered (`Intrinsic::ClosureSibling`).
     self_env: Option<Local>,
+    /// This function loads an `Atomic` of a `shared` value, so it runs in an epoch section
+    /// (epoch_sections.rs), unless it is one of `velt/sync/epoch`'s own (`epoch_exempt`).
+    ref_loads: bool,
+    epoch_exempt: bool,
     /// Lowering a method of the prelude's `Reflect`, where a proxy's reads reach their target:
     /// a read `any` cannot do yet names #823 (any_member.rs `any_get_str`).
     in_reflect: bool,
     /// The body of a function of a user module or of std/proxy: its operations on `any` throw
     /// what a proxy's trap throws, as velt_sema counts them (proxy_throws.rs).
     proxy_routes: bool,
-    /// An object is being built from a record's entries (`any_record_fill`): its fields are
-    /// converted without that path, so a type that contains itself ends.
-    record_fill: bool,
+    /// How many objects are being built from a record's or object's members around this
+    /// conversion (`any_record_fill`, `any_object_fill`): a member is filled the same way up to
+    /// `any_record::FILL_DEPTH` deep, so a type that contains itself ends.
+    record_fill: u32,
 }

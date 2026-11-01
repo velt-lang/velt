@@ -1,0 +1,10 @@
+// An imported module's top-level output comes first, as in Node, also with an `async main` that
+// ends the process itself: it runs on the main thread, `main` on a worker (#1399).
+import { f } from "./_module_output_async_main_lib";
+
+async function main() {
+  await Promise.resolve(1);
+  f();
+  console.log("main");
+  process.exit(0);
+}

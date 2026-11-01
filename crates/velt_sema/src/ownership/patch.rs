@@ -74,6 +74,14 @@ pub(super) fn patch_calls(
                     let info = cx.fn_info(*d);
                     modified = info.modified_params;
                 }
+                // Through a bound (a getter slot or a method): what any implementation changes.
+                if let (true, Callee::ParamMethod { iface, slot, .. }) = (frozen, &*callee) {
+                    let (iface, slot) = (*iface, *slot as usize);
+                    modified = (cx.impls.iter())
+                        .filter(|m| m.iface == iface)
+                        .filter_map(|m| m.methods.get(slot))
+                        .fold(0, |bits, &g| bits | cx.fn_info(g).modified_params);
+                }
                 (modes, args, unknown)
             }
             E::New { def, args, .. } => match cx.adt(*def).and_then(|a| a.ctor) {
@@ -252,6 +260,20 @@ fn call_modes(cx: &mut Ctx, callee: &Callee, args: &[Expr]) -> Option<Vec<PassMo
 pub(super) fn call_reads(cx: &Ctx, e: &Expr, out: &mut Vec<DefId>) {
     match &e.kind {
         E::Call { callee, args } => match call_target(cx, callee, args) {
+            Some(Target::Iface(d, slot))
+                if cx
+                    .iface(d)
+                    .is_some_and(|i| slot as usize >= i.methods.len()) =>
+            {
+                // A getter slot reads its implementations' modes (`iface_modes`).
+                out.push(d);
+                out.extend(
+                    cx.impls
+                        .iter()
+                        .filter(|m| m.iface == d)
+                        .filter_map(|m| m.methods.get(slot as usize).copied()),
+                );
+            }
             Some(Target::Fn(d) | Target::Iface(d, _)) => out.push(d),
             None => {}
         },
@@ -273,6 +295,15 @@ pub(super) fn modes_of(cx: &Ctx, d: DefId) -> Vec<PassMode> {
         if let Some(m) = extern_written_param(&f.name).and_then(|i| modes.get_mut(i)) {
             *m = PassMode::BorrowMut;
         }
+        // A system function writes every buffer not written `readonly` and every struct it is
+        // given (docs/reference/system-functions.md): the caller's value changes.
+        if let Some(readonly) = &f.system {
+            for (m, &ro) in modes.iter_mut().zip(readonly) {
+                if *m == PassMode::Borrow && !ro {
+                    *m = PassMode::BorrowMut;
+                }
+            }
+        }
     }
     modes
 }
@@ -283,7 +314,10 @@ pub(super) fn modes_of(cx: &Ctx, d: DefId) -> Vec<PassMode> {
 /// would be accepted, and a table is read-only data.
 fn extern_written_param(symbol: &str) -> Option<usize> {
     Some(match symbol {
-        "velt_rt_bytes_set" | "velt_rt_bytes_copy_within" | "velt_rt_bytes_fill" => 0,
+        "velt_rt_bytes_set"
+        | "velt_rt_bytes_copy"
+        | "velt_rt_bytes_copy_within"
+        | "velt_rt_bytes_fill" => 0,
         "velt_rt_regex_exec" => 3,
         // `readInto(buf)` reads into the buffer's bytes.
         "velt_rt_tcp_try_read_into" => 1,
@@ -310,6 +344,24 @@ fn iface_modes(cx: &mut Ctx, iface: DefId, slot: u32) -> Option<Vec<PassMode>> {
             false => PassMode::Owned,
         };
         return Some(vec![PassMode::BorrowMut, v]);
+    }
+    if slot as usize >= i.methods.len() {
+        // A field's getter slot: the receiver borrowed, or borrowed mutably if a getter that
+        // implements it changes `this` (a plain field's reads it).
+        let getters: Vec<DefId> = cx
+            .impls
+            .iter()
+            .filter(|m| m.iface == iface)
+            .filter_map(|m| m.methods.get(slot as usize).copied())
+            .collect();
+        let mutates = getters
+            .into_iter()
+            .any(|g| modes_of(cx, g).first() == Some(&PassMode::BorrowMut));
+        return Some(vec![if mutates {
+            PassMode::BorrowMut
+        } else {
+            PassMode::Borrow
+        }]);
     }
     let m = i.methods.get(slot as usize)?;
     let this = match m.mut_this {

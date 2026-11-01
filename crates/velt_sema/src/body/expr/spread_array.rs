@@ -163,6 +163,7 @@ impl FnCx<'_, '_> {
                 // With the sets written in: the source's errors are added to the sites of the
                 // element type, and the program is checked again with them.
                 self.cx.fn_throws_differ(et, elem);
+                self.cx.seed_promise_site(et, elem);
             }
             if !fits && !self.cx.ty.has_error(et) {
                 let (from, to) = (self.cx.display(et), self.cx.display(elem));
@@ -276,6 +277,7 @@ impl FnCx<'_, '_> {
 
     /// A spread source that is not an array: an iterable (`[...gen()]`), else an error.
     fn spread_iterable(&mut self, h: hir::Expr, inner: &ast::Expr) -> Option<Consumable> {
+        let h = self.unbrand(h);
         let ty = h.ty;
         if self.is_consumable(ty) {
             return self.consumable(h);
@@ -434,6 +436,7 @@ impl FnCx<'_, '_> {
                     span,
                 },
                 consume: false,
+                share_elems: false,
             },
             span,
         }

@@ -1,0 +1,5 @@
+// velt/dev: what a program run by `velt dev` (hot reload, docs/book/hot-reload.md) can take part
+// in: the graceful stop before its next version starts, which servers join so that no request
+// in flight is cut off. docs/std/dev.md.
+
+export { drained, joinStop } from "velt/dev/stop";

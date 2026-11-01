@@ -148,7 +148,7 @@ const VALUES: [u64; 10] = [
 /// on arm64 with LSE, and without them for the host's triple) (`optimize`: Cranelift's `speed`).
 fn mismatches(target: &str, optimize: bool) -> Vec<String> {
     let calls = calls();
-    let isa = crate::isa::make_isa(target, optimize, true).expect("ISA");
+    let isa = crate::isa::make_isa(target, None, optimize, true).expect("ISA");
     let mut jb = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
     for (name, p) in super::jit::stub_symbols() {
         jb.symbol(name, p);
@@ -259,7 +259,7 @@ fn threaded_totals(target: &str, optimize: bool) -> [u64; 4] {
             order: Order::Relaxed,
         },
     ];
-    let isa = crate::isa::make_isa(target, optimize, true).expect("ISA");
+    let isa = crate::isa::make_isa(target, None, optimize, true).expect("ISA");
     let mut jb = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
     for (name, p) in super::jit::stub_symbols() {
         jb.symbol(name, p);

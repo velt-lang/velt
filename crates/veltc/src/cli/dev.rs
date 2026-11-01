@@ -5,7 +5,7 @@ use std::ffi::OsString;
 use super::build::parse_build;
 use super::{Command, DevArgs, DevMode};
 
-/// Parse `velt dev [<file>] [--exe] [--locked] [-v] [--timings] [-- <program args>...]` (and the internal
+/// Parse `velt dev [<file>] [--exe [--release] [-g] [--cpu <name>] [--backend <name>]] [--locked] [-v] [--timings] [-- <program args>...]` (and the internal
 /// `--host`, which the supervisor passes to the JIT host child).
 pub(super) fn parse_dev(args: Vec<OsString>) -> Result<Command, String> {
     let split = args.iter().position(|a| a == "--").unwrap_or(args.len());
@@ -19,10 +19,11 @@ pub(super) fn parse_dev(args: Vec<OsString>) -> Result<Command, String> {
         }
     }
     let (build, args) = parse_build(rest, "dev")?;
-    let optimized = build.release || build.debug_info || build.backend.is_some();
+    let optimized =
+        build.release || build.debug_info || build.backend.is_some() || build.cpu.is_some();
     if optimized && mode != DevMode::Exe {
         return Err(
-            "`--release`, `-g` and `--backend` need `velt dev --exe` (the JIT host always builds for development)"
+            "`--release`, `-g`, `--backend` and `--cpu` need `velt dev --exe` (the JIT host always builds for development, for this machine's CPU)"
                 .into(),
         );
     }
@@ -53,6 +54,10 @@ mod tests {
         assert_eq!(dev(&["dev", "--host", "a.vlt"]).mode, DevMode::Host);
         assert!(dev(&["dev", "--exe", "--release"]).build.release);
         assert!(p(&["dev", "--release"]).unwrap_err().contains("--exe"));
+        let cpu = dev(&["dev", "--exe", "--cpu", "x86-64-v3"]).build.cpu;
+        assert_eq!(cpu.as_deref(), Some("x86-64-v3"));
+        let jit = p(&["dev", "--cpu", "x86-64-v3", "a.vlt"]).unwrap_err();
+        assert!(jit.contains("`--cpu` need `velt dev --exe`"), "{jit}");
         assert!(p(&["dev", "-o", "x"])
             .unwrap_err()
             .contains("unknown option"));

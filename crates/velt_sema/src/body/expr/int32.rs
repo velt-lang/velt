@@ -7,7 +7,7 @@
 //!   emit inline (one conversion on the common path), and which `numrep` drops where it proves
 //!   the value an int32 already;
 //! - a product inside an operand is rounded the way JS's double multiply rounds it past 2^53:
-//!   `(y * k) | 0` goes through the prelude's `__mulToInt32`, which is one 32-bit multiply for
+//!   `(y * k) | 0` goes through the prelude's `mulToInt32`, which is one 32-bit multiply for
 //!   int32 operands;
 //! - an integer operand of 32 bits or fewer contributes its value (`as i32`);
 //! - shift counts are taken modulo 32, and the result is a number: the `i32` (or the `u32` of
@@ -264,7 +264,12 @@ impl FnCx<'_, '_> {
             rhs,
         } = x.kind
         {
-            return match self.helper_call("__mulToInt32", vec![*lhs, *rhs], i32_, span) {
+            return match self.helper_call(
+                velt_common::std_hook!(mul_to_int32),
+                vec![*lhs, *rhs],
+                i32_,
+                span,
+            ) {
                 Some(call) => call,
                 None => self.error_expr(span),
             };

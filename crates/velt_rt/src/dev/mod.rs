@@ -5,10 +5,8 @@
 //!   serves the same socket and connections arriving during a reload wait in the kernel backlog
 //!   instead of being refused.
 //! - `shutdown`: a stop request (SIGTERM on Unix, `stop` on the dev channel on Windows) stops
-//!   the HTTP accept loops, lets in-flight requests finish (bounded) and exits, so a reload does
-//!   not cut requests off.
-//! - HTTP servers re-read their handler descriptor per request (`http::handler`), the runtime
-//!   hook for hot swap.
+//!   the servers that joined (velt/dev's `joinStop`, through `velt_rt_dev_server_stop`), lets their
+//!   in-flight requests finish (bounded) and exits, so a reload does not cut requests off.
 //!
 //! Outside `velt dev` (variable not set) listeners bind directly and nothing else changes.
 
@@ -18,63 +16,12 @@ pub(crate) mod shutdown;
 use std::io;
 
 use crate::net::sys::TcpListener;
-use tokio::sync::watch;
 
 /// Names the supervisor's dev channel for listener handover.
 pub const SOCKET_ENV: &str = "VELT_DEV_SOCKET";
 
-/// Whether this process runs under `velt dev` (checked once).
-pub(crate) fn enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var_os(SOCKET_ENV).is_some_and(|s| !s.is_empty()))
-}
-
-/// Ports of servers closed whose listening socket may not be dropped yet, and the signal of
-/// each (closed once it is).
-static UNBINDING: std::sync::Mutex<Vec<(u16, watch::Receiver<()>)>> =
-    std::sync::Mutex::new(Vec::new());
-
-/// How long a bind waits for a just-closed server's socket on its port to be released.
-const UNBIND_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
-
-/// A server on `port` was closed and releases its socket asynchronously: a [`bind`] of that
-/// port waits until `released` closes (#1020).
-pub(crate) fn unbinding(port: u16, released: watch::Receiver<()>) {
-    let mut closing = UNBINDING.lock().unwrap_or_else(|e| e.into_inner());
-    // Forget the ones already released (their sender is gone), then remember this one.
-    closing.retain(|(_, r)| r.has_changed().is_ok());
-    closing.push((port, released));
-}
-
-/// Before binding `addr`: wait until a server closed on its port has released the socket.
-async fn wait_unbound(addr: &str) {
-    let Some(port) = addr
-        .rsplit_once(':')
-        .and_then(|(_, p)| p.parse::<u16>().ok())
-    else {
-        return;
-    };
-    if port == 0 {
-        return;
-    }
-    let waiting: Vec<_> = {
-        let mut closing = UNBINDING.lock().unwrap_or_else(|e| e.into_inner());
-        let (here, rest) = std::mem::take(&mut *closing)
-            .into_iter()
-            .partition(|(p, _)| *p == port);
-        *closing = rest;
-        here
-    };
-    for (_, mut released) in waiting {
-        let done = async { while released.changed().await.is_ok() {} };
-        let _ = tokio::time::timeout(UNBIND_WAIT, done).await;
-    }
-}
-
-/// Bind a listener for `addr` (`host:port`) the way the current mode requires, once a server
-/// just closed on its port has released it.
+/// Bind a listener for `addr` (`host:port`) the way the current mode requires.
 pub(crate) async fn bind(addr: &str) -> io::Result<TcpListener> {
-    wait_unbound(addr).await;
     let Some(socket) = std::env::var_os(SOCKET_ENV).filter(|s| !s.is_empty()) else {
         return bind_tcp(addr).await;
     };

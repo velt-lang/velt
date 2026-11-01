@@ -1,0 +1,27 @@
+// A typed proxy of a class whose `get` trap forwards every key with
+// `Reflect.get(target, key, receiver)` (the reactive-library idiom) reads a class getter as Node
+// does: the forwarded getter gives the target's value. So does a class instance brand of a proxy
+// without a `get` trap: nothing forwards a receiver, and the getter reads the target.
+type S<T> = T & { $set(v: T): void };
+
+class Box {
+  v = 1;
+  get twice(): number {
+    return this.v * 2;
+  }
+}
+const p = new Proxy(new Box(), {
+  get(t: any, k: string | symbol, r: any) {
+    if (k === "$set") {
+      return (v: Box) => {
+        console.log("set");
+      };
+    }
+    return Reflect.get(t, k, r);
+  },
+});
+console.log(p.v, p.twice);
+
+const np = new Proxy(new Box(), {}) as S<Box>;
+np.v = 3;
+console.log(np.twice, np.v);

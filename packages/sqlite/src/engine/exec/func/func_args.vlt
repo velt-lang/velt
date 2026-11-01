@@ -1,0 +1,18 @@
+// sqlite/engine/exec/func/func_args (internal): what SQLite's scalar functions share: their
+// argument count checks and the text of an argument.
+
+import { prepareError } from "../errors";
+import { toText } from "../value/value_text";
+import { Val } from "../value/val";
+
+// `shown`: the name as written, for the message.
+export function arity(shown: string, n: usize, lo: usize, hi: usize) {
+  if (n < lo || n > hi) {
+    prepareError(`wrong number of arguments to function ${shown}()`);
+  }
+}
+
+/** The text of a value as functions read it (`sqlite3_value_text`). */
+export function text(v: Val): string {
+  return toText(v);
+}

@@ -1,8 +1,8 @@
-// std/jsx/attrs/tables: attribute types of table cells and columns
+// velt/jsx/attrs (internal): attribute types of table cells and columns
 // (each is `HtmlAttrs`, the global attributes from attrs/global.vlt, `&` its own; public as
-// `velt:jsx/attrs`).
+// `velt/jsx/attrs`).
 
-import type { HtmlAttrs } from "velt:jsx/attrs/global";
+import type { HtmlAttrs } from "velt/jsx/attrs/global";
 
 /** `<col>` and `<colgroup>`. */
 export type ColAttrs = HtmlAttrs & { span?: string | i64 | f64 };

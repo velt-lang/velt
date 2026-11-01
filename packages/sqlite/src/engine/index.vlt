@@ -1,0 +1,17 @@
+// sqlite/engine: the SQLite engine written in Velt (docs/engine.md): queries over a database
+// file's bytes, with the statement API of the driver. Read-only for now: SELECT with joins,
+// subqueries, CTEs, aggregates and compound selects.
+//
+//   import { openDatabase } from "sqlite/engine";
+//   const db = openDatabase("app.db");
+//   const users: User[] = db.prepare("SELECT id, name FROM users").all();
+
+export { Database, openDatabase } from "./database";
+export { Rows } from "./rows";
+export { Statement } from "./statement";
+export { SqliteError } from "../errors";
+// The values `Statement.values()` returns: `Val` (its storage class `t` is one of NULL … BLOB)
+// and SQLite's quote(), which prints one as an SQL literal.
+export { Val } from "./exec/value/val";
+export { BLOB, INTEGER, NULL, REAL, TEXT } from "./storage_class";
+export { quote } from "./exec/func/func_text";

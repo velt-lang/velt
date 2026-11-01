@@ -1,0 +1,28 @@
+// The error type written in a base method's promise bounds what its `async` overrides may
+// reject with, as an interface method's does its implementations.
+class IoError extends Error {}
+class Other extends Error {}
+
+abstract class Source {
+  abstract read(): Promise<u8[], IoError>;
+}
+
+class Base {
+  read(): Promise<u8[], IoError> {
+    return Promise.resolve([]);
+  }
+}
+
+class Bad extends Source {
+  async read(): Promise<u8[]> {
+    throw new Other("o");
+  }
+}
+
+class Worse extends Base {
+  override async read(): Promise<u8[], IoError | Other> {
+    return [];
+  }
+}
+
+function main() {}

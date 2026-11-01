@@ -1,0 +1,109 @@
+// velt/reflect: what an `any` holds (`typeOf`), the entries it lists, `callToJSON`, the
+// identity of values and the visit stack.
+import {
+  beginVisit,
+  callToJSON,
+  endVisit,
+  entryCount,
+  entryName,
+  entryValue,
+  identity,
+  isProxy,
+  kindOf,
+  typeOf,
+} from "velt/reflect";
+
+enum Level {
+  Low,
+  High,
+}
+enum Color {
+  Red = "red",
+}
+
+class Point {
+  #secret: number = 1;
+  x: number = 1;
+  label?: string;
+  note: string | null = null;
+  private id: i64 = 4;
+  onMove: () => number = () => 1;
+}
+
+class Point3 extends Point {
+  z: bool = true;
+}
+
+class Stamp {
+  toJSON(key: string): string {
+    return `stamp:${key}`;
+  }
+}
+
+class Bag {
+  counts: Map<string, number> = new Map();
+  pair: [number, string] = [1, "a"];
+  big: i64 = 1152921504606846977;
+  small: u8 = 3;
+  level: Level = Level.High;
+  color: Color = Color.Red;
+}
+
+type Shape = { a: number; b?: string; c: number[]; n?: number | null };
+
+/** The kind, number type, name and hooks of `v`, and its entries with their kinds. */
+function show(v: any): void {
+  const t = typeOf(v);
+  const n = entryCount(v);
+  let s = `${t.kind} ${t.repr == "" ? "-" : t.repr} ${t.name} [${t.hooks.join(",")}] ${n}:`;
+  for (let i: i64 = 0; i < n; i++) {
+    s += ` ${entryName(v, i)}=${kindOf(entryValue(v, i))}`;
+  }
+  console.log(s);
+}
+
+function main() {
+  show(1);
+  show("s");
+  show(true);
+  show(null);
+  show(undefined);
+  const b: u8 = 4;
+  show(b);
+  show([1, 2]);
+  show(new Point());
+  const p: Point = new Point3();
+  show(p);
+  show(new Stamp());
+  console.log(callToJSON(new Stamp(), "at"), kindOf(callToJSON(new Point(), "")));
+  const bag = new Bag();
+  bag.counts.set("gone", 1);
+  bag.counts.set("kept", 2);
+  bag.counts.delete("gone");
+  show(bag);
+  show(bag.counts);
+  show(bag.pair);
+  const full: Shape = { a: 1, c: [2], n: null };
+  show(full);
+  const bare: Shape = { a: 1, c: [2] };
+  show(bare);
+  const r: Record<string, number> = { b: 2, "1": 3 };
+  show(r);
+  show({
+    get g(): number {
+      return 5;
+    },
+    h: 1,
+  });
+  console.log(entryValue(bag.counts, 1), entryValue(bag.counts, 7), entryName(bag.pair, 0) == "");
+
+  const x: any = new Point();
+  const y: any = x;
+  console.log(identity(x) == identity(y), identity(x) == identity(new Point() as any), identity(1));
+  const q = new Point();
+  console.log(identity(q) == identity(q as any), isProxy(q));
+  console.log(beginVisit(identity(q)), beginVisit(identity(q)));
+  endVisit();
+  console.log(beginVisit(identity(q)));
+  endVisit();
+}

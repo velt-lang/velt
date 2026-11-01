@@ -1,0 +1,64 @@
+// A borrow through a counted object (`h.bytes`, `h` shared with `g`) needs no stabilizing share
+// for a callee quiet for borrows (velt_vir lower/quiet.rs): one that pushes onto an array it is
+// lent and throws through a `never` helper given only a literal (`decode`). One that lends the
+// borrow to the helper still gets the share (`decodeLending`).
+class Holder {
+  bytes: u8[];
+  constructor(b: u8[]) {
+    this.bytes = b;
+  }
+}
+
+class BadInput extends Error {
+  constructor(what: string) {
+    super(`bad input: ${what}`);
+  }
+}
+
+function fail(what: string): never {
+  throw new BadInput(what);
+}
+
+function failWith(b: u8[]): never {
+  throw new BadInput(`${b.length} bytes`);
+}
+
+function decode(b: u8[], out: u32[]) {
+  for (let i: usize = 0; i < b.length; i++) {
+    if (b[i] == 255) {
+      fail("byte 255");
+    }
+    out.push(b[i] as u32);
+  }
+}
+
+function decodeLending(b: u8[], out: u32[]) {
+  if (b.length == 0) {
+    failWith(b);
+  }
+  out.push(b[0] as u32);
+}
+
+function viaDecode(h: Holder, out: u32[]) {
+  decode(h.bytes, out);
+}
+
+function viaDecodeLending(h: Holder, out: u32[]) {
+  decodeLending(h.bytes, out);
+}
+
+function main() {
+  const h = new Holder(Buffer.alloc(3));
+  const g = h;
+  g.bytes[1] = 7;
+  const out: u32[] = [];
+  viaDecode(h, out);
+  viaDecodeLending(h, out);
+  console.log(out.join(","));
+  h.bytes[2] = 255;
+  try {
+    viaDecode(h, out);
+  } catch (e) {
+    console.log((e as Error).message, out.length);
+  }
+}

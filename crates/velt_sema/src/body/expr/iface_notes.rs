@@ -41,6 +41,7 @@ impl FnCx<'_, '_> {
             self.cx.display(found),
             self.cx.display(has),
         );
-        Some(format!("`{f}` is an `{h}`, not an `{e}`"))
+        // The same interface with the same written arguments (`any` against `any`): no note.
+        (h != e).then(|| format!("`{f}` is an `{h}`, not an `{e}`"))
     }
 }

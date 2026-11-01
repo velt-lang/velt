@@ -1,0 +1,195 @@
+//! Which function results and fields of an object type fill an interface's
+//! (`crate::object_ifaces`): those a plain assignment `const x: Want = value` takes, checked and
+//! converted by the same coercion (`FnCx::try_coerce`). A result `{ v } | undefined` for
+//! `Item | undefined`, `{ a: { v } }` for `{ a: Item }` and `undefined` for `number | undefined`
+//! fit; a field fills the interface's when the assignment keeps the object itself (an `Upcast`
+//! of an object of the same layout, however deep), so a write into a part of it reaches the
+//! object, as in Node.
+
+use velt_common::Span;
+
+use crate::body::recheck::Mark;
+use crate::body::{FnCx, Frame, LocalKind, Want};
+use crate::collect::getters::{value_getter, value_setter};
+use crate::ctx::Ctx;
+use crate::defs::FnKind;
+use crate::hir::{self, Def, DefId, ExprKind as H, LocalId, StmtKind, TyId, UseMode};
+use crate::resolve::TyEnv;
+
+impl Ctx<'_> {
+    /// Does a plain assignment take a value of type `from` as a `want` (in `module`)? Tried and
+    /// rolled back: `Some(true)` when the value stays the same object (or is the value itself),
+    /// `Some(false)` when it becomes another value made of it, `None` when it does not convert.
+    pub(crate) fn assigns(&mut self, from: TyId, want: TyId, module: usize) -> Option<bool> {
+        if self.same_ty(from, want) {
+            return Some(true);
+        }
+        let mark = Mark::here(self);
+        let env = TyEnv::new(module, &[]);
+        let mut g = FnCx::new(self, module, env, Frame::new(FnKind::Free, None));
+        let span = Span::DUMMY;
+        let l = g.new_local("#value", from, false, span, LocalKind::Temp);
+        let mode = g.use_mode(from, Want::Move);
+        let h = g.mk(H::Local(l, mode), from, span);
+        let diags = g.cx.diags.len();
+        let r = g.try_coerce(h, want);
+        let clean = g.cx.diags.len() == diags;
+        drop(g);
+        mark.rollback(self);
+        match r {
+            Ok(e) if clean => Some(same_object(&e, l)),
+            _ => None,
+        }
+    }
+
+    /// The getter of an interface field of type `want` reading field `index` (of type `ty`) of
+    /// object type `d`, converted as a plain assignment converts it.
+    pub(crate) fn assign_getter(
+        &mut self,
+        d: DefId,
+        self_ty: TyId,
+        index: usize,
+        ty: TyId,
+        want: TyId,
+    ) -> DefId {
+        let fname = self.adt(d).expect("ICE: adt").fields[index].name.clone();
+        let def = value_getter(self, d, self_ty, &fname, want, |span| {
+            let this = hir::Expr {
+                kind: H::Local(LocalId(0), UseMode::Borrow),
+                ty: self_ty,
+                span,
+            };
+            let read = hir::Expr {
+                kind: H::Field {
+                    base: Box::new(this),
+                    index: index as u32,
+                    mode: UseMode::Borrow,
+                },
+                ty,
+                span,
+            };
+            hir::Expr {
+                kind: H::Call {
+                    callee: hir::Callee::Intrinsic(hir::Intrinsic::Share),
+                    args: vec![read],
+                },
+                ty,
+                span,
+            }
+        });
+        let name = format!("<object>.{fname}");
+        self.assign_result(def, d, (ty, want), (false, &name));
+        def
+    }
+
+    /// The setter of an interface field of type `want` writing field `index` (of type `ty`) of
+    /// object type `d`, the value converted as a plain assignment converts it.
+    pub(crate) fn assign_setter(
+        &mut self,
+        d: DefId,
+        self_ty: TyId,
+        index: usize,
+        ty: TyId,
+        want: TyId,
+    ) -> DefId {
+        let def = value_setter(self, d, self_ty, index, want, |v, _| v);
+        self.assign_result(def, d, (want, ty), (false, "value"));
+        // A write into a part of the field is a write into the copy the getter made, which
+        // the copy-write check reports (not `iface_writes` `converted_part`).
+        self.object_impls.assign_setters.insert(def);
+        def
+    }
+
+    /// Make synthesized method `def` (of object type `d`, its body `return <e>;` or
+    /// `this.f = <e>;` with `e` a `gives`) return or store `e` converted to `want`, as a plain
+    /// assignment converts it (`Ctx::assigns` said it does).
+    /// `result`: a method's result, else a field's value read or written (`name`, the source
+    /// a diagnostic shows).
+    pub(crate) fn assign_result(
+        &mut self,
+        def: DefId,
+        d: DefId,
+        (gives, want): (TyId, TyId),
+        (result, name): (bool, &str),
+    ) {
+        let module = self.adt(d).map_or(0, |a| a.module);
+        let Some(Def::Fn(f)) = &mut self.defs[def.0 as usize] else {
+            return;
+        };
+        let span = f.span;
+        let old_locals = f.body.locals.clone();
+        let mut stmts = std::mem::take(&mut f.body.block.stmts);
+        // A result's copy is of the fresh value the function returned, which nothing else sees:
+        // it is no copy a write is checked against. A field's copies are (`object_copies`): a
+        // write into one (`const o = c.outer; o.v = 2`) is an error, as for a plain assignment.
+        let copies = result.then(|| self.object_copies.mark());
+        let env = TyEnv::new(module, &[]);
+        let mut g = FnCx::new(self, module, env, Frame::new(FnKind::Method, Some(want)));
+        g.body_def = Some(def);
+        g.owner = Some(d);
+        g.cx.checking.push(def);
+        for (k, l) in old_locals.iter().enumerate() {
+            let kind = match k {
+                0 => LocalKind::This,
+                _ => LocalKind::Param,
+            };
+            g.new_local(&l.name, l.ty, l.mutable, span, kind);
+        }
+        let r = g.new_local(name, gives, false, span, LocalKind::Temp);
+        for s in &mut stmts {
+            let call = match &mut s.kind {
+                StmtKind::Return(Some(call)) => call,
+                StmtKind::Expr(hir::Expr {
+                    kind: H::Assign { value, .. },
+                    ..
+                }) => &mut **value,
+                _ => continue,
+            };
+            let hole = hir::Expr {
+                kind: H::Lit(hir::Lit::Unit),
+                ty: gives,
+                span,
+            };
+            let init = std::mem::replace(call, hole);
+            let mode = g.use_mode(gives, Want::Move);
+            let read = g.mk(H::Local(r, mode), gives, span);
+            let value = match g.try_coerce(read, want) {
+                Ok(v) | Err(v) => v,
+            };
+            *call = hir::Expr {
+                kind: H::Block(hir::Block {
+                    stmts: vec![hir::Stmt {
+                        kind: StmtKind::Let {
+                            local: r,
+                            init: Some(init),
+                        },
+                        span,
+                    }],
+                    value: Some(Box::new(value)),
+                    span,
+                }),
+                ty: want,
+                span,
+            };
+        }
+        g.cx.checking.pop();
+        let frame = std::mem::replace(&mut g.f, Frame::new(FnKind::Method, None));
+        drop(g);
+        if let Some(copies) = copies {
+            self.object_copies.rollback(copies);
+        }
+        if let Some(Def::Fn(f)) = &mut self.defs[def.0 as usize] {
+            f.body.locals = frame.locals;
+            f.body.block.stmts = stmts;
+        }
+    }
+}
+
+/// Is `e` the local `l` itself, or an `Upcast` of it (the same object)?
+fn same_object(e: &hir::Expr, l: LocalId) -> bool {
+    match &e.kind {
+        H::Local(x, _) => *x == l,
+        H::Upcast(inner) => same_object(inner, l),
+        _ => false,
+    }
+}

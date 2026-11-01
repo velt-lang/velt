@@ -20,7 +20,7 @@ impl Bodies {
         for (i, def) in cx.defs.iter().enumerate() {
             let d = DefId(i as u32);
             let Some(Def::Fn(f)) = def else { continue };
-            if in_std(cx, d) {
+            if in_library(cx, d) {
                 continue;
             }
             each_expr(&f.body.block, &mut |e: &Expr| match &e.kind {

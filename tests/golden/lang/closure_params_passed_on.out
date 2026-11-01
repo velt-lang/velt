@@ -1,0 +1,4 @@
+#div,#c,#span0<#c,#p
+#div,#c,#span0,#p 1 #div #c
+#c in [object Object]; #span1 in [object Object] before #c
+#c 2 true true

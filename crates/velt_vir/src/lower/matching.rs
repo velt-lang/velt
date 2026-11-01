@@ -53,6 +53,12 @@ impl FnLower<'_, '_> {
         let moved_local = matches!(&scrutinee.kind,
             hir::ExprKind::Local(id, UseMode::Move) if self.info[id.0 as usize].droppable);
         let owned = moved_local || self.take_temp(&sp);
+        // A reference `Atomic`'s `load` is borrowed (atomic_ref.rs): what an arm binds by move
+        // (`a.load()!`, `a.load() ?? d`) refers to it without owning it, and a consumer that
+        // keeps it counts it (`consume`).
+        if !owned && self.is_ref_load(scrutinee) {
+            arms.iter().for_each(|a| self.borrow_bindings(&a.pat));
+        }
         // A moved-from local may be reassigned inside an arm: match on a private copy.
         let sp = if moved_local && svt != Ty::Unit {
             Place::local(self.copy_to_temp(Operand::Copy(sp), svt))
@@ -135,6 +141,21 @@ impl FnLower<'_, '_> {
         self.goto(cx.join);
     }
 
+    /// The bindings by move of `pat`, which matches a value nothing owns: they borrow it.
+    fn borrow_bindings(&mut self, pat: &Pat) {
+        use hir::PatKind as P;
+        match &pat.kind {
+            P::Binding(id, UseMode::Move) => self.info[id.0 as usize].droppable = false,
+            P::Variant { args: ps, .. } | P::Tuple(ps) | P::Or(ps) => {
+                ps.iter().for_each(|p| self.borrow_bindings(p))
+            }
+            P::Adt { fields } => fields.iter().for_each(|(_, p)| self.borrow_bindings(p)),
+            P::Array { elems, .. } => elems.iter().for_each(|p| self.borrow_bindings(p)),
+            P::Some(p) => self.borrow_bindings(p),
+            _ => {}
+        }
+    }
+
     /// Moved-out bindings of a matched arm become owned by the current scope.
     fn own_bindings(&mut self, pat: &Pat) {
         use hir::PatKind as P;
@@ -161,6 +182,16 @@ impl FnLower<'_, '_> {
             return;
         }
         let ty = self.sub(init.ty);
+        // `const c = a.load()` of a reference `Atomic`, bound by reference (sema
+        // `borrowed_load`): the loaded reference, uncounted and never released (atomic_ref.rs).
+        if matches!(pat.kind, hir::PatKind::Binding(_, UseMode::Borrow)) && self.is_ref_load(init) {
+            let v = self.expr(init);
+            if !self.dead() {
+                let p = self.place_of(v, ty);
+                self.bind_frozen(false, pat, &p, ty);
+            }
+            return;
+        }
         if matches!(pat.kind, hir::PatKind::Binding(_, UseMode::Borrow)) && local_place(init) {
             // `const x = node.left` bound by reference (sema `const_borrow`): no copy, and the
             // place keeps ownership.

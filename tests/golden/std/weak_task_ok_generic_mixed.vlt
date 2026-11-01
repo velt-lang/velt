@@ -1,5 +1,5 @@
 // Generic helpers used both with a weak-holding class (on one task) and with an interface crossing threads.
-import { channel, Channel, ChannelClosed } from "velt:channel";
+import { channel, Channel, ChannelClosed } from "velt/sync";
 interface Job { run(): number; }
 class Add implements Job { a: number; b: number; constructor(a: number, b: number) { this.a = a; this.b = b; } run(): number { return this.a + this.b; } }
 class Node { v: number; constructor(v: number) { this.v = v; } }

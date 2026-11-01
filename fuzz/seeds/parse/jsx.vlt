@@ -3,7 +3,7 @@
 // member/namespaced names, attributes, spreads, entities, JSX whitespace, comments, generic
 // arrows). Parsing and formatting only; it is not type-checked.
 
-import { renderToString } from "velt:jsx";
+import { renderToString } from "velt/jsx";
 
 interface Post {
   id: i64;

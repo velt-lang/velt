@@ -1,0 +1,8 @@
+// velt/sync (internal): `ChannelClosed`.
+
+/** Thrown by `send` on a closed channel. */
+export class ChannelClosed extends Error {
+  constructor() {
+    super("Send on a closed channel");
+  }
+}

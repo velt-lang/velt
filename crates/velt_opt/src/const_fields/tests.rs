@@ -543,9 +543,9 @@ fn every_closure_argument_is_specialized_down_the_recursion() {
     }
 }
 
-// ───── `__intrinsic_fn_captures_nothing`: `f.env == null` ─────
+// ───── `fnCapturesNothing`: `f.env == null` ─────
 
-/// Comparisons of a closure's env with null (`__intrinsic_fn_captures_nothing` lowered).
+/// Comparisons of a closure's env with null (`fnCapturesNothing` lowered).
 fn env_null_tests(p: &Program) -> usize {
     let null = Operand::Const(Const::Int(0), Ty::Ptr);
     p.funcs
@@ -651,4 +651,32 @@ fn captures_nothing_stays_a_runtime_test_for_an_unknown_closure() {
     crate::optimize(&mut p, crate::OptLevel::Speed);
     assert_valid(&p);
     assert_eq!(env_null_tests(&p), 1, "not folded: {p}");
+}
+
+/// A declaration (an `Import` without a body) may write through what it is given: its pointer
+/// params are never read-only, so no caller keeps a field fact across a call to it. A body kept
+/// for inlining is the code itself, and is analyzed like any other.
+#[test]
+fn a_declarations_pointer_params_are_not_read_only() {
+    let leaf = |name: &str, linkage, body: bool| {
+        let mut f = Function::new(name.into(), vec![Ty::Ptr], Ty::Unit, linkage);
+        if body {
+            f.blocks.push(velt_vir::vir::BasicBlock {
+                stmts: vec![],
+                term: Terminator::Return(Operand::Const(Const::Unit, Ty::Unit)),
+            });
+        }
+        f
+    };
+    let program = Program {
+        funcs: vec![
+            leaf("_V3stdN3ext", velt_vir::vir::Linkage::Import, false),
+            leaf("_V3stdN4kept", velt_vir::vir::Linkage::Import, true),
+            leaf("_V4look", velt_vir::vir::Linkage::Internal, true),
+        ],
+        ..Program::default()
+    };
+    let ro = readonly::ReadOnly::of(&program);
+    assert!(!ro.get(0, 0), "a declaration may write through its param");
+    assert!(ro.get(1, 0) && ro.get(2, 0));
 }

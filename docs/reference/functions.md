@@ -14,8 +14,11 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
   `number`, `live = true` a `boolean`; the same literals, `new C(…)` and arrays of them that type
   [class fields](classes.md) without annotations). A missing return type is inferred from the
   body ([Return types](#return-types)).
-- Default values work on functions, methods, constructors and interface methods; calls through
-  an interface use the interface's defaults. A default may use earlier parameters, `this` and
+- Default values work on functions, methods, constructors and an interface method's default
+  body. A method an interface only declares takes none, as in TypeScript (TS2371, "a parameter
+  initializer is only allowed in a function or constructor implementation"): it declares
+  `q?: T`, and an implementation gives its own default with `q: T | undefined = 1`. A default
+  may use earlier parameters, `this` and
   closures over the function's surroundings (`q: number = p * 2`, `by: number = this.step`,
   `cb: () => number = () => local`), as in JavaScript: the function applies such a default
   itself when the call starts (also to a passed `undefined`), and so every later default that
@@ -225,10 +228,21 @@ function main() {
   Where a function type is expected (`const h: (s: string) => string = describe`, a callback
   argument), an overloaded function is the first signature that fits it; elsewhere
   (`const g = f`) it is its implementation.
+- An interface may declare a method more than once (`directive(name: string, def: Def): App;
+  directive(name: string): Def | undefined;`). As in TypeScript, an implementation, in an object
+  literal or a class, is one method that fits every signature: its result is `any` or a type
+  every signature's result takes (a result `App | Def | undefined` is an error there, TS2416).
+  An object literal's method takes each parameter as every signature writes it or wider
+  (`definition?: any`), optional where a signature leaves it out or makes it optional; a
+  class's takes `any` where the signatures differ or one leaves the parameter out
+  (`directive(name: string, definition?: any): any`), and their shared type elsewhere, and
+  returns `any` where the signatures' results differ, since a class method implements an
+  interface method with exactly its types. A call takes the first signature that accepts it, and
+  its result is tested as above. Generic signatures, rest parameters and `void` results there
+  are not supported yet, nor is an implementation with a rest parameter (`(...args: any[])`).
 - `velt doc` shows the signatures, not the implementation.
 - Not supported yet: overloaded constructors, overloads of a function declared inside a
-  function, overloaded methods in interfaces, and several declarations of one name that each
-  have a body (overloads in Velt's own form, chosen by the most specific parameter types).
+  function, and several declarations of one name that each have a body (overloads in Velt's own form, chosen by the most specific parameter types).
 
 ## Return types
 
@@ -245,6 +259,12 @@ expressions (exported ones too):
   argument is inferred from, `xs.map((x) => { throw e; })`, gives `void`); such a function
   converts to any function type with its parameters (`() => void`, `() => number`);
 - `Promise<T>` for an `async` function, `T` from its returns.
+
+A function declared to return `never` must not reach its end, as in TypeScript (TS2534): every
+path throws, loops forever (`while (true)`, `for (;;)` or `do … while (true)` without a `break`
+out of it) or calls another `never` function. `function f(x: number): never {
+if (x > 0) { throw new Error("p"); } }` is an error, and so is a `return;` in it (TS2322);
+`return fail();` with `fail(): never` is fine.
 
 Integers inferred this way are JavaScript numbers, as in TypeScript: `(await half())/2` and
 a narrowed `T | null` result divide like `number`s, and a method returning integers that a
@@ -334,7 +354,7 @@ convert to it (`const ns: Named[] = wrap(new C())` calls `wrap<Named>`;
 `const ps: (i64 | null)[] = pair(1, 2)` calls `pair<i64 | null>`):
 
 ```ts
-import { Set } from "velt:collections/set";
+import { Set } from "velt/collections";
 
 function id<T>(x: T): T {
   return x;
@@ -409,9 +429,10 @@ function main() {
 
 In the body, a value of a type parameter bounded by an array or primitive type reads the
 bound's fields and elements (`xs.length` and `xs[0]` on a `T extends number[]`), through the
-value as an `any`, converted to the bound's type. Not yet: its methods (`s.toUpperCase()` on a
-`T extends string`), the members of a class bound (`x.size` on a `T extends Map<K, V>`, which
-are resolved statically), `Object.keys(o)` on a `T extends Record<string, V>` (take the bound's
+value as an `any`, converted to the bound's type. A value of a type parameter bounded by a
+class has the class's members (`x.size` on a `T extends Map<K, V>`, `e.message` on an
+`E extends Error`; [Generics](classes.md#generics)). Not yet: its methods (`s.toUpperCase()` on
+a `T extends string`), `Object.keys(o)` on a `T extends Record<string, V>` (take the bound's
 type as the parameter's where the body needs them, #1212), and more than one such bound for a
 parameter (`T extends A & B` with both no interfaces).
 
@@ -483,6 +504,43 @@ function depth<T>(x: T): number {
 
 function main() {
   console.log(depth(3), depth([1])); // 1 0
+}
+```
+
+### Type tests
+
+`typeIs<A, B>()` tells whether two types are the same, decided where the generic is used: a
+constant for each instantiation, and an `if` on it runs only the branch it takes, so generic
+code can choose a representation per type at no cost (the other branch is not compiled for that
+instantiation). Inside `if (typeIs<A, B>())`, `asType<B>(x)` converts a value `x: A` to `B`, the
+same type there; anywhere else it is an error, and neither function can be used as a value.
+Both are Velt's (TypeScript has no counterpart).
+
+- **What counts as the guard:** only the `then` branch of an `if` whose condition is the call
+  itself, and closures written inside it. Not `!typeIs…` with its `else`, `typeIs… && c`, a
+  ternary, code after an early `if (!typeIs…) return;`, a test saved in a `const`, or a chain
+  (`typeIs<A, B>` with `asType<C>`).
+- **The call:** `asType<B>(x)`, with `B` written and nothing else: the type of `x` is the type
+  converted from.
+
+```ts
+class Slot<V> {
+  word: u64 = 0;
+  boxed: V[] = [];
+
+  put(v: V) {
+    if (typeIs<V, u64>()) {
+      this.word = asType<u64>(v); // numbers inline: one store for `Slot<u64>`
+    } else {
+      this.boxed = [v];
+    }
+  }
+}
+
+function main() {
+  const s = new Slot<u64>();
+  s.put(7);
+  console.log(s.word, s.boxed.length); // 7 0
 }
 ```
 
@@ -805,13 +863,34 @@ async function main() {
   expected, as for an arrow.
 - Its `this` is the object it is called on in TS. Without a `this` parameter, `this` in the body
   is TS's error ``'this' implicitly has type 'any' because it does not have a type
-  annotation``, as under `--strict`, also in a generator (`function* () { … }`); with one
-  (`function (this: T, …)`) it is not supported yet as a value (a function value has no
-  receiver): declare the function and call it with `call` or `apply` (below), take the object as
-  an ordinary parameter, or write a class method. A function expression that is the value of an
-  object-literal property (`{ v: 1, get: function () { return this.v; } }`) is a method of the
-  literal: `this` is the object, as in TS
+  annotation``, as under `--strict`, also in a generator (`function* () { … }`). A function
+  expression that is the value of an object-literal property
+  (`{ v: 1, get: function () { return this.v; } }`) is a method of the literal: `this` is the
+  object, as in TS
   ([`this` in object-literal methods](types.md#this-in-object-literal-methods)).
+- With a `this: any` parameter and a body that uses `this` or `arguments`, the value is a
+  `Function` whose `this` is bound at the call, as in JS. A method call passes its object:
+  `o.m(x)`, `o[k](x)` and `o.m?.(x)` on an `any` or a proxy (`p.push(x)` where the `get` trap
+  answers the function), `arr[0](x)` on an `any[]`, and `o.m(x)` on a typed `o` whose `m` is a
+  `Function`. `f.call(o, …)`, `f.apply(o, args)` (`null` or `undefined` for no arguments) and
+  `f.bind(o, …)` pass `o`, and a plain call `f(x)` passes `undefined`. `arguments` holds the
+  call's arguments (an `any[]`). A parameter of type `any` (or an optional one) is `undefined`
+  when its argument is left out; one of another type converts its argument, checked, so leaving
+  it out is a `TypeError` (Node would pass `undefined`), and so does an argument of another
+  type. A rest parameter's elements convert the same way. Not supported yet: another `this`
+  type, an async such function, such a function where a function type is expected (it is held as
+  a `Function` or `any`), and a destructured parameter; declare the function and call it with
+  `call` or `apply` (below), take the object as an ordinary parameter, or write a class method.
+
+  ```ts
+  const methods: Record<string, Function> = {};
+  methods.total = function (this: any, extra: number) {
+    return this.n + extra + arguments.length;
+  };
+  const o = { n: 1, total: methods.total };
+  console.log(methods.total.call({ n: 1 }, 10), o.total(20)); // 12 22
+  ```
+
 - A `this: T` parameter (first in a function's or method's parameter list) declares the type of
   `this` and is no parameter. `this: void` says the function doesn't use `this`. An arrow cannot
   have one (TS2730). `velt fmt` does not keep it yet, so it leaves a file with one as written
@@ -833,7 +912,11 @@ async function main() {
   `double`, also a method value or a generic callback type (`xs.reduce(plus, 0)` and
   `xs.reduce(acc.add, 0)` with a two-parameter `plus` and `add`, where `reduce` passes
   `(acc, x, i)`). A function may also take more, when the extra ones are optional or have defaults
-  (`setTimeout(tick, 10)` with `function tick(n?: number)`): they are left out. A function with
+  (`setTimeout(tick, 10)` with `function tick(n?: number)`, or `{ patch }` for a field
+  `patch: (a: VNode, b: VNode) => void` with `function patch(a: VNode, b: VNode, ns = false)`):
+  they are left out and take their defaults. A parameter with a default also takes the
+  `undefined` an optional parameter of the type may pass (`before: Node | null = null` for
+  `before?: Node | null`, at the same number of parameters too): the default applies there. A function with
   a rest parameter takes fixed ones (`(...args: unknown[]) => R` as a `(p1: T1) => R`, also
   returned from a call): the arguments past its fixed parameters become the rest array.
 - As in TS, a function whose **parameter types are wider** than the function type's is accepted
@@ -1076,6 +1159,21 @@ async function main() {
   }
   console.log(kinds.indexOf(Point3), kinds[0] === Point); // 1 true
   ```
+
+  An **abstract construct signature**, `abstract new () => Base` (TypeScript 4.2), also takes
+  [abstract classes](classes.md#classes): `.name` and `instanceof` work through such a value,
+  `new` through it is an error (``cannot create an instance through a value of type `abstract
+  new () => Base` ``), and an abstract class where a plain `new () => Base` is expected is an
+  error too.
+
+  ```ts
+  abstract class Base {}
+  class One extends Base {}
+  function nameOf(c: abstract new () => Base): string {
+    return c.name;
+  }
+  console.log(nameOf(Base), nameOf(One)); // Base One
+  ```
 - **Generic function types** (`<T>(x: T) => T`, a value each call instantiates, #943): a
   `const` of such a type is a generic function, as a generic arrow constant is, so each call
   instantiates it and nothing is boxed. The type may be written at the constant, named by a type
@@ -1246,7 +1344,7 @@ A function can carry properties, as in JavaScript: an interface or object type w
 signature and members (`interface Runner { (): number; stop(): void }`, or
 `(() => number) & { stop(): void }`) types such a value. It is called like a function, its
 members are read and written like an object's fields, `typeof` is `"function"`, and it is
-accepted where its plain function type is expected. An interface extending a function type
+accepted where its plain function type or `Function` is expected. An interface extending a function type
 (`interface Subscriber extends EffectFn { deps: string[] }`) is one too. It is built in one of
 two ways:
 
@@ -1257,6 +1355,9 @@ two ways:
   members their values (declarations of other functions may come between them, since they run
   nothing); a required member with no write there is an error (Node would read `undefined`
   before the write).
+
+Both work in generic code too, including with a type whose call signature takes a parameter
+known only once the type arguments are (`((props: Partial<T>) => R) & { name?: string }`).
 
 ```ts
 interface Runner {
@@ -1294,7 +1395,39 @@ an error; use the call's result.
 
 The value is an object with a fixed set of fields, the function among them: properties the type
 does not declare can't be added, and a function whose type has no members has no properties of
-its own (`const f = () => 1; f.label = "one"` is an error). Several call signatures next to
+its own (`const f = () => 1; f.label = "one"` is an error).
+
+Held as `any`, any function takes new properties, as in JavaScript: every reference to the
+function (copies of the `any`, a closure that captured it) sees them, and reads, method calls,
+`in`, `Object.keys` and `delete` find them. A property never written reads as `undefined`.
+
+```ts
+function component(setup: (n: number) => number, name?: string): any {
+  const factory: any = function (props: any) {
+    return { type: factory, props: props || {} };
+  };
+  factory.__setup = setup;
+  factory.__name = name;
+  return factory;
+}
+
+const C = component((n) => n * 2, "C");
+console.log(C.__name, C.__setup(21), typeof C); // C 42 function
+console.log(C({}).type === C, Object.keys(C)); // true [ '__setup', '__name' ]
+```
+
+A declared function is one function, as in JavaScript: every `any` holding it sees the same
+properties and compares `===` (also as a `Map` key), in other tasks too, as a module-level `let`
+is one variable (a task that reads or writes its properties takes the module lock, and so does
+a `with`, `read` or `write` whose callback may: [Async](async.md)). Any other function (a function
+expression, an arrow, a closure) sent to another task (`spawn`, a channel, `shared`) while it is
+still used here gets a copy of its properties there, as an object gets a copy of its members
+([Async](async.md)), so a write in one task is not seen in the other. Converted back to a
+callable interface (`f as Factory` with `interface Factory { (p: number): number; __name?:
+string }`), the function's properties fill the interface's members.
+
+Through `any`, a function's own `name` and `length`, and `call`, `apply` and `bind`, are not
+supported yet (a `TypeError` naming #924). Several call signatures next to
 members (overloads) and `Object.defineProperty` onto a function are not supported yet.
 
 ### `call` and `apply`
@@ -1546,6 +1679,20 @@ show();
   arrow, when the arrow is called). A closure created inside such a closure shares the
   constant too. In Velt this is a
   panic, which `catch` does not intercept.
+- A closure written before the declaration of a `const` or `let` of its block may use it too,
+  as in JavaScript, where the variable is in scope in its whole block: `const effectFn = () =>
+  { runJob(); }; const runJob = () => { … };`, or `queueMicrotask(() => stop());` above `const
+  stop = () => { … };`. A closure there names the later variable even where an outer function
+  or constant has the same name. The variable is treated as above from the first statement
+  using it to its declaration: closures created in between share it, and one reading it before
+  the declaration ran stops with the same `ReferenceError`. When the statements in between only
+  create values (closures, literals, objects of those), no closure can run before the
+  declaration, and the program has no such check. Without an annotation, the type is the
+  initializer's, checked as if the closures were not there yet. Not supported yet, an error
+  even where an outer name is the same: a destructuring declaration (`const { a } = o;`) or a
+  `let` without a value (`let x: T;`) used so (``…which is not supported yet for a
+  destructuring declaration``); declare the variable by itself with its value. A class declared
+  in a function body cannot use the function's variables at all, before or after it.
 - An object holding a closure that captures the object is a reference cycle, which reference
   counting does not free: each such object stays allocated until the program exits (one per
   constant initialized, for instance one per component created). Break the cycle when the

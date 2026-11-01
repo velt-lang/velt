@@ -15,10 +15,11 @@ and `ntdll`, which were on it).
 ```
 link.exe /NOLOGO /SUBSYSTEM:CONSOLE /OUT:prog.exe prog.obj velt_rt.lib ^
     psapi.lib shell32.lib user32.lib advapi32.lib bcrypt.lib kernel32.lib ntdll.lib ^
-    userenv.lib ws2_32.lib dbghelp.lib secur32.lib msvcrt.lib
+    userenv.lib ws2_32.lib dbghelp.lib msvcrt.lib
 ```
 
-`secur32.lib` came with tokio-postgres (its `whoami` dependency, std/postgres).
+(`secur32.lib` came with tokio-postgres' `whoami` while the runtime linked std's postgres driver;
+the `postgres` package's DLL brings it now.)
 
 - `/SUBSYSTEM:CONSOLE` is **required**: `main` lives in a library member, so link.exe cannot infer
   the subsystem/entry from the objects and fails with `LNK1561: entry point must be defined`
@@ -46,11 +47,12 @@ Link with `cc`/`gcc`/`clang` as the driver so crt1.o/crti.o provide `_start` →
 ## macOS (x86_64/aarch64-apple-darwin) — expected, not verified on this host
 
 ```
-cc -o prog prog.o libvelt_rt.a -framework SystemConfiguration -framework CoreFoundation \
-    -lSystem -lc -lm -liconv
+cc -o prog prog.o libvelt_rt.a -lSystem -lc -lm -liconv
 ```
-The two frameworks came with tokio-postgres (its `whoami` dependency, std/postgres); aarch64
-verified with `--print native-static-libs` (rustc 1.9x, macOS 26).
+aarch64 verified with `--print native-static-libs` (rustc 1.98, macOS 26). The SystemConfiguration
+and CoreFoundation frameworks came with tokio-postgres' `whoami` while the runtime linked std's
+postgres driver; the `postgres` package's bundle lists them now (`system_libs` in its
+`native.json`, native_abi.md "Bundles"), so only programs that use it link them.
 
 ## Shared runtime (debug builds)
 `velt` links debug builds against `crates/velt_rt_shared` instead: the same sources as a shared

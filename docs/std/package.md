@@ -1,11 +1,11 @@
-# velt:package
+# velt/package
 
-`import type { Package } from "velt:package"`. The type of the package manifest,
+`import type { Package } from "velt/package"`. The type of the package manifest,
 [`package.vlt`](../tooling/manifest.md). The module contains only types; nothing imports it at
 run time.
 
 ```ts ignore
-import type { Package } from "velt:package";
+import type { Package } from "velt/package";
 
 export const pkg: Package = {
   name: "todo-api",
@@ -22,10 +22,11 @@ type-checking the file; these types document the same fields (a test keeps them 
 
 | Type | What it describes |
 |---|---|
-| `Package` | the manifest: `name`, `version`, and the optional `velt`, `description`, `keywords`, `entry`, `registry`, `dependencies`, `paths`, `jsx`, `native`, `tsCompat` |
+| `Package` | the manifest: `name`, `version`, and the optional `velt`, `description`, `keywords`, `entry`, `registry`, `dependencies`, `paths`, `jsx`, `native`, `tsCompat`, `build` |
 | `Dependency` | `string` (a semver requirement) or a `DependencySource` |
 | `DependencySource` | `{ version?: string; path?: string }` |
 | `Jsx` | `{ importSource?: string }` |
 | `Native` | `{ path?: string; targets?: string[]; wasm?: bool }` |
+| `Build` | `{ cpu?: string }` ([CPU](../tooling/platforms.md#cpu)) |
 
 The fields and their rules are in [`package.vlt`](../tooling/manifest.md).

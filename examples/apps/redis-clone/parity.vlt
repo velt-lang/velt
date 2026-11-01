@@ -4,9 +4,9 @@
 //
 //   redis-server --port 6379 --save '' --databases 1 &   (one database, like this server)
 //   velt run parity.vlt -- 127.0.0.1:6380 127.0.0.1:6379
-import { connect, TcpStream } from "velt:net";
-import { utf8DecodeLossy, utf8Encode } from "velt:encoding";
-import { args, exit } from "velt:process";
+import { connect, TcpStream } from "velt/net";
+import { utf8DecodeLossy, utf8Encode } from "velt/encoding";
+import { args, exit } from "velt/process";
 
 /// Bytes as a string, one character per byte (Latin-1): exact to compare, readable to print.
 function latin1(b: u8[]): string {

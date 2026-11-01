@@ -1,0 +1,162 @@
+// check: no leaks
+// A `for...of` body that replaces the element the loop binding refers to (`xs[i] = …`, #1863):
+// the binding keeps the old element alive until the iteration ends, as in JS, through a
+// field array, a nested loop, destructuring, a closure, an early exit, a generic function and
+// an async loop. Changes inside the element are seen through the binding.
+
+class V {
+  n: i64;
+  constructor(n: i64) {
+    this.n = n;
+  }
+}
+
+class Holder {
+  items: V[] = [new V(1), new V(2)];
+
+  run(): void {
+    for (const v of this.items) {
+      this.items[0] = new V(9);
+      console.log("field", v.n, this.items[0].n);
+    }
+  }
+}
+
+class Box {
+  vs: V[] = [new V(1), new V(2)];
+}
+
+function rotate<T>(xs: T[], x: T, show: (t: T) => string): void {
+  for (const v of xs) {
+    xs[0] = x;
+    console.log("generic", show(v));
+  }
+}
+
+function firstTwo(vs: V[]): i64 {
+  for (const v of vs) {
+    vs[0] = new V(5);
+    if (v.n == 2) {
+      return v.n;
+    }
+  }
+  return 0;
+}
+
+async function asyncLoops(): Promise<void> {
+  const vs: V[] = [new V(1), new V(2)];
+  for await (const v of vs) {
+    vs[0] = new V(9);
+    console.log("for await", v.n);
+  }
+  for (const v of vs) {
+    await Promise.resolve(0);
+    vs[1] = new V(8);
+    console.log("await in body", v.n);
+  }
+}
+
+async function main(): Promise<void> {
+  const vs: V[] = [new V(1), new V(2), new V(3)];
+  let i = 0;
+  for (const v of vs) {
+    vs[i] = new V(10 + i);
+    i++;
+    console.log("replaced", v.n, vs[0].n, vs.length);
+  }
+
+  new Holder().run();
+
+  const grid: V[][] = [[new V(1), new V(2)], [new V(3)]];
+  for (const row of grid) {
+    for (const v of row) {
+      row[0] = new V(5);
+      console.log("nested", v.n);
+    }
+  }
+
+  const boxes: Box[] = [new Box(), new Box()];
+  for (const b of boxes) {
+    for (const v of b.vs) {
+      boxes[0].vs[0] = new V(9);
+      console.log("through boxes", v.n, b.vs.length);
+    }
+  }
+
+  const pairs: [V, V][] = [[new V(1), new V(2)], [new V(3), new V(4)]];
+  for (const [a, b] of pairs) {
+    pairs[0] = [new V(7), new V(8)];
+    console.log("pair", a.n, b.n);
+  }
+  for (const t of pairs) {
+    pairs[1] = [new V(5), new V(6)];
+    console.log("tuple", t[0].n, t[1].n);
+  }
+  for (const [a, b] of pairs) {
+    pairs[1][1] = new V(0);
+    console.log("pair part", a.n, b.n);
+  }
+
+  const arrs: V[][] = [[new V(1), new V(2)], [new V(3), new V(4)]];
+  for (const [a, b] of arrs) {
+    arrs[0][0] = new V(9);
+    arrs[1] = [new V(5), new V(6)];
+    console.log("array pattern", a.n, b.n);
+  }
+
+  const objs: { v: V }[] = [{ v: new V(1) }, { v: new V(2) }];
+  for (const { v } of objs) {
+    objs[0].v = new V(9);
+    console.log("object pattern", v.n);
+  }
+  for (const o of objs) {
+    objs[0] = { v: new V(5) };
+    console.log("object", o.v.n);
+  }
+
+  const maybe: (V | null)[] = [new V(1), new V(2)];
+  for (const v of maybe) {
+    maybe[0] = null;
+    maybe[1] = null;
+    console.log("nullable", v ? v.n : -1);
+  }
+
+  const kept: (() => i64)[] = [];
+  for (const v of vs) {
+    const f = () => v.n;
+    kept.push(f);
+    vs[0] = new V(4);
+    console.log("closure", f());
+  }
+  console.log("closures", kept.map((f) => f()).join(","));
+
+  const strs: string[] = ["a".repeat(3), "b".repeat(3)];
+  for (const s of strs) {
+    strs[0] = "x".repeat(4);
+    strs[1] += "!";
+    console.log("string", s, strs[0], strs[1]);
+  }
+
+  console.log("returned", firstTwo([new V(1), new V(2), new V(3)]));
+  outer: for (const v of vs) {
+    for (const w of vs) {
+      vs[2] = new V(7);
+      if (w.n == 4) {
+        continue outer;
+      }
+      console.log("labelled", v.n, w.n);
+    }
+  }
+
+  // In place: the binding sees the change.
+  for (const v of vs) {
+    vs[0].n += 100;
+    console.log("in place", v.n);
+  }
+
+  rotate(vs, new V(42), (v) => String(v.n));
+  rotate(strs, "z".repeat(2), (s) => s);
+  await asyncLoops();
+}
+
+await main();

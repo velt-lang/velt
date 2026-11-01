@@ -1,0 +1,124 @@
+// Surrogates in patterns (#1745): without the `u` flag a pattern matches UTF-16 code units, so a
+// surrogate range or escape matches a lone surrogate and either half of a pair; with `u` a pair
+// is one code point and only a lone surrogate matches.
+
+/** The code units of `s` in hex, so lone surrogates print the same everywhere. */
+function units(s: string): string {
+  const out: string[] = [];
+  for (let i = 0; i < s.length; i++) {
+    out.push(s.charCodeAt(i).toString(16));
+  }
+  return out.join(" ");
+}
+
+/** The code unit `u` as a string (a lone surrogate for D800-DFFF). */
+function unit(u: number): string {
+  return String.fromCharCode(u);
+}
+
+const NEEDS_ESCAPE = /["\\\x00-\x1f\uD800-\uDFFF]/;
+
+function serializer(): void {
+  console.log(NEEDS_ESCAPE.test("plain"), NEEDS_ESCAPE.test('a"b'), NEEDS_ESCAPE.test("x\u{1F600}"));
+  console.log(NEEDS_ESCAPE.test("tab\there"), NEEDS_ESCAPE.test("lone " + unit(0xdc00)), NEEDS_ESCAPE.test("é ü"));
+}
+
+function halves(): void {
+  const s = "x\u{1F600}y\u{1F601}";
+  console.log(units(s.replace(/[\uD800-\uDFFF]/g, "?")));
+  console.log(units(s.replace(/[\uD800-\uDBFF]/g, "?")));
+  console.log(units(s.replace(/[\uDC00-\uDFFF]/g, "?")));
+  console.log(units(s.replace(/\uDE00/, "<$&>")));
+  console.log(s.replace(/\uDE00/, unit(0xde02)));
+  const m = /[\uDC00-\uDFFF]/.exec("a\u{1F600}");
+  console.log(m?.index, units(m?.[0] ?? ""));
+  const all = s.match(/[\uD800-\uDFFF]/g) ?? [];
+  console.log(all.length, all.map(units).join(","));
+  console.log("a\u{1F600}b".split(/[\uD800-\uDBFF]/).map(units).join(" | "));
+  console.log("a\u{1F600}b".split(/(\uDE00)/).map(units).join(" | "));
+  console.log(units("\u{1F600}".replace(/[^\uDE00]/g, "x")));
+  console.log(units("\u{1F600}a".replace(/[\s\S]|\uD800/g, "x")));
+  console.log(units("é\u{1F600}".replace(/.|\uD800/g, "x")));
+  console.log("a\u{1F600}".split(/(?:\uD800)?/).map(units).join(" | "));
+}
+
+function iteration(): void {
+  const re = /[\uDC00-\uDFFF]/g;
+  const s = "\u{1F600}x\u{1F601}";
+  let m = re.exec(s);
+  while (m != null) {
+    console.log("low half at", m.index, "lastIndex", re.lastIndex);
+    m = re.exec(s);
+  }
+  for (const found of ("a\u{1F600}" + unit(0xd800)).matchAll(/[\uD800-\uDBFF]/g)) {
+    console.log("high at", found.index);
+  }
+}
+
+function literals(): void {
+  // Without `u`, a supplementary character in a pattern is two code units too.
+  const repeated = /😀+/.exec("\u{1F600}" + unit(0xde00) + unit(0xde00) + "!");
+  console.log(units(repeated?.[0] ?? ""));
+  console.log(units("\u{1F600}".replace(/[😀]/g, "x")));
+  // Without `u`, `\u{…}` is the letter `u` and braces, and `\x` without two hex digits is `x`.
+  console.log(/\u{1F600}/.test("u{1F600}"), /\u{2}/.test("uu"), /\x-\xZ/.test("x-xZ"));
+  console.log(new RegExp(unit(0xd800)).test("a" + unit(0xd800)), new RegExp(unit(0xd800)).test("a\u{10000}"));
+  console.log(new RegExp("[" + unit(0xdc00) + "-" + unit(0xdfff) + "]$").test("\u{1F600}"));
+}
+
+function unicodeMode(): void {
+  console.log(/[\uD800-\uDFFF]/u.test("\u{1F600}"), /[\uD800-\uDFFF]/u.test("a" + unit(0xd800)));
+  console.log(/^\uD83D\uDE00$/u.test("\u{1F600}"), /^[\uD83D\uDE00]$/u.test("\u{1F600}"));
+  console.log(/^\u{D83D}$/u.test(unit(0xd83d)), /^.$/u.test("\u{1F600}"));
+  console.log(units(("a" + unit(0xd800) + "\u{1F600}").replace(/[\uD800-\uDFFF]/gu, "?")));
+  console.log(units((unit(0xdc00) + "\u{1F600}").replace(/[^\uDC00]/gu, "x")));
+}
+
+function properties(): void {
+  console.log(/^\p{L}+$/u.test("abc"), /[\p{L}]/u.test("1"), /\P{L}/u.test("a"));
+  console.log(/\p{L}/.test("p{L}"), /\p{L}/.test("a"));
+}
+
+function errors(): void {
+  try {
+    const bad = new RegExp("[\\uDFFF-\\uD800]");
+    console.log(bad.source);
+  } catch (e) {
+    console.log(e.message);
+  }
+}
+
+// Empty matches never fall inside a surrogate's bytes; classes whose ranges reach into the
+// surrogates, and `[^]`, match them too.
+function boundariesAndRanges(): void {
+  const e = "x\u{1F600}y";
+  const lone = "a" + unit(0xd800) + "b";
+  console.log(e.split(/\B|\uD800/).map(units).join(" | "));
+  console.log(units(e.replace(/\B|\uD800/g, "-")));
+  const b = /\B|\uD800/g;
+  let m = b.exec(e);
+  while (m != null) {
+    console.log("at", m.index, units(m[0]));
+    if (m[0].length == 0) b.lastIndex++;
+    m = b.exec(e);
+  }
+  console.log(lone.split(/\B/).map(units).join(" | "));
+  console.log(units(lone.replace(/\B/g, "-")));
+  console.log(units(lone.replace(/(?:)/g, "-")));
+  console.log(units("\u{1F600}".replace(/[\x00-\uFFFF]/, "<$&>")));
+  console.log(/[\uD7FF-\uE000]/u.test(unit(0xd800)), /[\uD7FF-\uE000]/.test("\u{1F600}"));
+  console.log("literal", /[퟿-]/u.test(unit(0xd800)), /[퟿-]/.test("\u{1F600}"));
+  console.log(units("\u{1F600}a".replace(/[^\^@-\uD7FF]/g, "x")));
+  console.log(units(("\u{1F600}" + unit(0xdc00)).replace(/[^\u0000-\uD7FF]/gu, "x")));
+  console.log(units(/[^]|\uD800/.exec("\u{1F600}")?.[0] ?? "null"), /[^][\uD800-\uDFFF]/.test("\u{1F600}"));
+  console.log(/[^]/u.test(unit(0xdc00)), /^[^]$|\uD800/u.test(unit(0xdc00)));
+}
+
+serializer();
+halves();
+iteration();
+literals();
+unicodeMode();
+properties();
+errors();
+boundariesAndRanges();

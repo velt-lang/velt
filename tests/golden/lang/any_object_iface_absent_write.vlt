@@ -1,0 +1,14 @@
+// An optional interface field the object lacks reads `undefined`; writing it through the
+// interface stops with a `TypeError` (#1886): an object of a fixed shape gets no new
+// properties (#924), where Node adds the property.
+interface Ctx {
+  n: number;
+  label?: string;
+  update(): void;
+}
+const init = { n: 1, update: () => console.log("update") };
+const c = init as unknown as Ctx;
+console.log(c.label);
+c.n = 2;
+console.log(init.n);
+c.label = "x";

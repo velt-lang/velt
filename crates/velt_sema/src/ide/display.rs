@@ -192,7 +192,7 @@ impl Names {
 pub(crate) fn named_param(names: &[String], i: u32) -> String {
     names
         .get(i as usize)
-        .cloned()
+        .map(|s| crate::defs::shown_param(s).to_string())
         .unwrap_or_else(|| format!("T{i}"))
 }
 

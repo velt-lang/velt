@@ -2,7 +2,7 @@
 //! (issues #924, #926): the name of the constructor of the value held, as JavaScript gives it.
 //! A class instance gives its class's name (a subclass's when it was converted through its
 //! base); an object literal or a record `"Object"`, an array `"Array"`, a primitive its
-//! wrapper's name (`"Number"`); the prelude's `__anyCtorName` answers what is not a class
+//! wrapper's name (`"Number"`); the hook `anyCtorName` answers what is not a class
 //! instance. `x.constructor` as a value (a class object) is not supported yet.
 
 use velt_common::Span;
@@ -107,13 +107,17 @@ impl FnCx<'_, '_> {
         self.dynamic_class_match(
             s,
             str_,
-            "__anyCtorName",
+            velt_common::std_hook!(any_ctor_name),
             |lw, c, _| match lw.class_ctor_name(c) {
                 Some(n) => lw.str_lit(&n, span),
                 None => {
                     let name = lw.cx.adt(c).map_or(String::new(), |a| a.name.clone());
                     let lit = synth(ast::ExprKind::Lit(ast::Lit::Str(name)), span);
-                    lw.prelude_fn_call("__anyCtorNameUnsupported", vec![lit], span)
+                    lw.prelude_fn_call(
+                        velt_common::std_hook!(any_ctor_name_unsupported),
+                        vec![lit],
+                        span,
+                    )
                 }
             },
             span,

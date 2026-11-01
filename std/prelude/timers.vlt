@@ -1,7 +1,7 @@
 // Prelude: the global timer functions of TypeScript and Node, `setTimeout`, `clearTimeout`,
 // `setInterval`, `clearInterval`, `setImmediate` and `clearImmediate`, and the `Timer` handle they
-// return (docs/std/timers.md).
-// `velt:timers` re-exports them next to `delay` and `Ticker`.
+// return (docs/std/time/timers.md).
+// `velt/time/timers` re-exports them next to `delay` and `Ticker`.
 //
 // A timer takes a callback returning the promise to run, like JS: `setTimeout(() => save(doc),
 // 100)` or `setTimeout(async () => { ... }, 10)` (a promise can't be passed: promises start

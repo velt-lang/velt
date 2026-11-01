@@ -1,0 +1,69 @@
+// velt/encoding/json's `writeJson<T>`, generated per type at compile time by a source generator
+// written in Velt, appends what `JSON.stringify` writes.
+import { writeJson } from "velt/encoding/json";
+
+class Base {
+  id: i64 = 1;
+  private secret: string = "s";
+  #hidden: i32 = 3;
+}
+
+class Derived extends Base {
+  extra: bool = true;
+}
+
+class Stamp {
+  at: f64 = 1.5;
+  toJSON(): string {
+    return "stamp";
+  }
+}
+
+enum Color {
+  Red,
+  Green = 5,
+}
+
+enum Mood {
+  Up = "up\n",
+  Down = "down",
+}
+
+type Opt = { a?: i32; b: string | null; c: f64 | undefined; "2": i32; "1": bool };
+
+struct P {
+  x: f64;
+  y: u64;
+}
+
+function both<T>(v: T): void {
+  const w = new StringBuilder();
+  writeJson(w, v);
+  const a = w.take();
+  const b = JSON.stringify(v);
+  console.log(a == b ? "same" : "DIFF", a, b);
+}
+
+function main() {
+  both(1.5);
+  both(-3 as i32);
+  both(7 as u64);
+  both("a\"b\n\u0001");
+  both(true);
+  both([1, 2, 3]);
+  both<string | null>(null);
+  both(["x", "y"]);
+  both(new Base());
+  const b: Base = new Derived();
+  both(b);
+  both(new Stamp());
+  both(Color.Green);
+  both(Mood.Up);
+  both<Opt>({ b: null, c: undefined, "2": 2, "1": true });
+  both<Opt>({ a: 4, b: "q", c: 2.5, "2": 2, "1": false });
+  both(P { x: NaN, y: 3 });
+  const t: [i32, string] = [1, "z"];
+  both(t);
+  both<"lit">("lit");
+  both([[1.25], []]);
+}

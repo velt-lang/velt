@@ -1,8 +1,8 @@
-// std/jsx/attrs/links: attribute types of hyperlinks, document metadata and scripts
+// velt/jsx/attrs (internal): attribute types of hyperlinks, document metadata and scripts
 // (each is `HtmlAttrs`, the global attributes from attrs/global.vlt, `&` its own; public as
-// `velt:jsx/attrs`).
+// `velt/jsx/attrs`).
 
-import type { HtmlAttrs } from "velt:jsx/attrs/global";
+import type { HtmlAttrs } from "velt/jsx/attrs/global";
 
 /** `<a>`. */
 export type AnchorAttrs = HtmlAttrs & {

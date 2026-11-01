@@ -1,0 +1,4 @@
+count 400000
+guarded 80000
+a 40000 b 40000 torn 0
+some reads validated true

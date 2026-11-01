@@ -1,0 +1,236 @@
+// sqlite/engine/statement (internal): a statement prepared on a `Database`: its parameters bound, its
+// rows read as values or through velt/db's typed reads.
+
+import { Params } from "./exec/params";
+import { bindJson } from "./exec/bind";
+import { Rows } from "./rows";
+import { Query } from "./exec/query";
+import { Pull } from "./exec/loop/pull";
+import { SqlRunError } from "./exec/errors";
+import { Val, blobVal, intVal, nullVal, realVal, textVal } from "./exec/value/val";
+import { CellKind, readRow, readRows } from "velt/db";
+import { SqliteError } from "../errors";
+
+/** A prepared statement of a `Database`. */
+export class Statement {
+  sql: string;
+  query: Query;
+  params: Params;
+  /** Parameter names (`:id` → "id") by index, "" for positional ones. */
+  names: string[];
+  count: usize;
+
+  /** When the plan cache last handed it out (the engine's LRU bound). */
+  used: i64 = 0;
+
+  constructor(sql: string, query: Query, params: Params, names: string[], count: usize) {
+    this.sql = sql;
+    this.query = query;
+    this.params = params;
+    this.names = names;
+    this.count = count;
+  }
+
+  /** How the statement reads its tables, one line per FROM item of its SELECT. */
+  plan(): string[] {
+    return this.query.plan;
+  }
+
+  /** The result's column names. */
+  columns(): string[] {
+    return this.query.names;
+  }
+
+  /** Every row. */
+  all<T>(): T[] {
+    this.noParams();
+    const p = this.query.pull;
+    if (p != null) {
+      return this.pullAll<T>(p!);
+    }
+    this.exec(-1);
+    return this.decodeAll<T>();
+  }
+
+  /** Every row, with `params` bound (an array binds `?` by position, an object by name). */
+  allWith<T, P>(params: P): T[] {
+    this.bind<P>(params);
+    const p = this.query.pull;
+    if (p != null) {
+      return this.pullAll<T>(p!);
+    }
+    this.exec(-1);
+    return this.decodeAll<T>();
+  }
+
+  /** The first row, or null if there is none. */
+  get<T>(): T | null {
+    this.noParams();
+    const p = this.query.pull;
+    if (p != null) {
+      return this.pullFirst<T>(p!);
+    }
+    this.exec(1);
+    return this.decodeFirst<T>();
+  }
+
+  getWith<T, P>(params: P): T | null {
+    this.bind<P>(params);
+    const p = this.query.pull;
+    if (p != null) {
+      return this.pullFirst<T>(p!);
+    }
+    this.exec(1);
+    return this.decodeFirst<T>();
+  }
+
+  /**
+   * Every row as values, read one at a time through the getters typed reads use when the
+   * query allows it (else as `values()`): for tests comparing the two paths.
+   */
+  pulledValues(): Val[] {
+    this.noParams();
+    const p = this.query.pull;
+    if (p == null) {
+      return this.values();
+    }
+    this.params.epoch++;
+    p!.begin(-1);
+    const out: Val[] = [];
+    const n = p!.columnCount();
+    while (p!.next()) {
+      for (let i: i64 = 0; i < n; i++) {
+        const k = p!.kind(i);
+        if (k == CellKind.Int) {
+          out.push(intVal(p!.int(i)));
+        } else if (k == CellKind.Float) {
+          out.push(realVal(p!.float(i)));
+        } else if (k == CellKind.Text) {
+          out.push(textVal(p!.text(i)));
+        } else if (k == CellKind.Blob) {
+          out.push(blobVal(p!.blob(i)));
+        } else {
+          out.push(nullVal());
+        }
+      }
+    }
+    this.pulled(p!, "");
+    return out;
+  }
+
+  // The rows decoded as they are read (no values in between).
+  private pullAll<T>(p: Pull): T[] {
+    this.params.epoch++;
+    p.begin(-1);
+    let rows: T[] = [];
+    let mismatch = "";
+    try {
+      rows = readRows<T, Pull>(p);
+    } catch (e) {
+      mismatch = e.message;
+    }
+    this.pulled(p, mismatch);
+    return rows;
+  }
+
+  private pullFirst<T>(p: Pull): T | null {
+    this.params.epoch++;
+    p.begin(1);
+    let row: T | null = null;
+    let mismatch = "";
+    try {
+      row = readRow<T, Pull>(p);
+    } catch (e) {
+      mismatch = e.message;
+    }
+    this.pulled(p, mismatch);
+    return row;
+  }
+
+  // After a pulled run: the parameters dropped, and its error (a failure while running comes
+  // first: a row the decoder rejected may only be its consequence).
+  private pulled(p: Pull, mismatch: string) {
+    this.params.vals.truncate(0);
+    if (p.err != null) {
+      const e = p.err!;
+      p.err = null;
+      if (e instanceof SqlRunError) {
+        throw new SqliteError("SQLITE_ERROR", e.message);
+      }
+      throw new SqliteError("SQLITE_CORRUPT", e.message);
+    }
+    if (mismatch != "") {
+      throw new SqliteError(
+        "SQLITE_MISMATCH",
+        `row does not match the requested type: ${mismatch}`,
+      );
+    }
+  }
+
+  /** Every row as values (engine/exec/value's `Val`), `columns().length` a row. */
+  values(): Val[] {
+    this.noParams();
+    this.exec(-1);
+    return this.query.out.vals;
+  }
+
+  valuesWith<P>(params: P): Val[] {
+    this.bind<P>(params);
+    this.exec(-1);
+    return this.query.out.vals;
+  }
+
+  // Without parameters given: the driver's error when the statement has any.
+  private noParams() {
+    if (this.count > 0) {
+      throw new SqliteError(
+        "SQLITE_RANGE",
+        `the statement has ${this.count} parameter(s) but none were given (use runWith / getWith / allWith)`,
+      );
+    }
+  }
+
+  private bind<P>(params: P) {
+    const msg = bindJson(JSON.stringify(params), this.params, this.names, this.count);
+    if (msg != "") {
+      throw new SqliteError("SQLITE_RANGE", msg);
+    }
+  }
+
+  private exec(need: i64) {
+    const q = this.query;
+    this.params.epoch++;
+    q.need.n = need;
+    try {
+      q.run();
+    } catch (e) {
+      if (e instanceof SqlRunError) {
+        throw new SqliteError("SQLITE_ERROR", e.message);
+      }
+      throw new SqliteError("SQLITE_CORRUPT", e.message);
+    }
+    this.params.vals.truncate(0);
+  }
+
+  private decodeAll<T>(): T[] {
+    try {
+      return readRows<T, Rows>(new Rows(this.query.out, this.query.names));
+    } catch (e) {
+      throw new SqliteError(
+        "SQLITE_MISMATCH",
+        `row does not match the requested type: ${e.message}`,
+      );
+    }
+  }
+
+  private decodeFirst<T>(): T | null {
+    try {
+      return readRow<T, Rows>(new Rows(this.query.out, this.query.names));
+    } catch (e) {
+      throw new SqliteError(
+        "SQLITE_MISMATCH",
+        `row does not match the requested type: ${e.message}`,
+      );
+    }
+  }
+}

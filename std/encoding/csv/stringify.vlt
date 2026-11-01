@@ -1,0 +1,42 @@
+// velt/encoding/csv (internal): writing (`stringifyCsv`), quoting only the fields that need it.
+
+import { delimiterUnit } from "velt/encoding/csv/delimiter";
+import { arrayWithCapacity } from "velt/lang/intrinsics";
+
+/** Options for `stringifyCsv`. */
+export struct CsvWriteOptions {
+  /** One ASCII character (default `,`). */
+  delimiter?: string;
+  /** End records with `\r\n` as RFC 4180 says (default false: `\n`). */
+  crlf?: bool;
+}
+
+// Whether `field` must be quoted: it contains the delimiter, a quote or a line break.
+function needsQuotes(field: string, delim: string): bool {
+  return field.includes(delim) ||
+    field.includes("\"") ||
+    field.includes("\n") ||
+    field.includes("\r");
+}
+
+/**
+ * Writes records as CSV, quoting only fields that need it; every record ends with a line break.
+ * Throws `CsvError` on an invalid `delimiter`.
+ */
+export function stringifyCsv(rows: string[][], opts: CsvWriteOptions = {}): string {
+  const delim = opts.delimiter ?? ",";
+  delimiterUnit(delim);
+  const eol = (opts.crlf ?? false) ? "\r\n" : "\n";
+  const lines: string[] = arrayWithCapacity(rows.length + 1);
+  for (const row of rows) {
+    const fields: string[] = arrayWithCapacity(row.length);
+    for (const f of row) {
+      fields.push(needsQuotes(f, delim) ? `"${f.replaceAll("\"", "\"\"")}"` : f.clone());
+    }
+    lines.push(fields.join(delim));
+  }
+  if (lines.length > 0) {
+    lines.push("");
+  }
+  return lines.join(eol);
+}

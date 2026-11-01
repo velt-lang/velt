@@ -1,0 +1,20 @@
+value                  direct bound
+closure ()             thunk  thunk
+closure (x)            unary  unary
+typed (x) => string    unary  unary
+closure (...xs)        rest   rest
+async closure          thunk  thunk
+throwing closure       thunk  thunk
+named function         thunk  thunk
+throwing function      thunk  thunk
+generic function       any    any
+inline arrow           thunk  thunk
+parameter (x) => s     unary  unary
+parameter () => void   thunk  thunk
+number                 any    any
+ran: 2 ran: 2
+caught Error: boom caught Error: boom
+caught Error: boom caught Error: boom
+fine caught Error: boom
+thunk alias thunk alias thunk alias thunk alias
+[ 1, 2 ]

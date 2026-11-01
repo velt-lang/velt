@@ -473,6 +473,7 @@ fn main_rules() {
 fn library_root_needs_no_main_but_is_fully_checked() {
     let lib = velt_sema::CheckOptions {
         require_main: false,
+        eager_std: false,
     };
     let (p, d) = run_with(
         vec![func("helper", &[], Some("i64"), vec![ret(int(1))])],

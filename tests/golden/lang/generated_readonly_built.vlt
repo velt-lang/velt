@@ -1,0 +1,10 @@
+// Generated code may set a readonly field of the value it builds (a `const` made from an object
+// literal), as a constructor sets its own.
+import { setBuilt } from "./_readonly_generators";
+
+type R = { readonly id: i64 };
+
+function main() {
+  const r: R = { id: 1 };
+  console.log(setBuilt<R>(r).id, r.id);
+}

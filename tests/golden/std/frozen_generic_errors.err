@@ -1,0 +1,47 @@
+frozen_generic_errors.vlt:28:11: error: `Frozen` cannot be extended or implemented
+  = note: the compiler decides whose `shared` values are read in place: those nothing could change
+
+frozen_generic_errors.vlt:21:7: error: `Frozen` cannot be extended or implemented
+  = note: the compiler decides whose `shared` values are read in place: those nothing could change
+
+frozen_generic_errors.vlt:32:36: error: `Frozen` cannot be extended or implemented
+  = note: the compiler decides whose `shared` values are read in place: those nothing could change
+
+frozen_generic_errors.vlt:25:21: error: the type `Guarded` does not implement `Frozen`
+  = note: required by `V extends Frozen` of the constructor of `Store`
+
+frozen_generic_errors.vlt:26:21: error: the type `Claims` does not implement `Frozen`
+  = note: required by `V extends Frozen` of the constructor of `Store`
+
+frozen_generic_errors.vlt:6:10: error: mismatched types
+  = note: expected V, found shared<V>
+  = note: `shared<V>` is read like a `V` only when `V` is bounded by `Frozen` (`V extends Frozen`, checked where the generic is used)
+
+frozen_generic_errors.vlt:35:20: error: the type `T` does not implement `Frozen`
+  = note: required by `V extends Frozen` of the constructor of `Store`
+
+frozen_generic_errors.vlt:39:20: error: the type `T` does not implement `Frozen`
+  = note: required by `V extends Frozen` of the constructor of `Store`
+
+frozen_generic_errors.vlt:102:22: error: mismatched types
+  = note: expected Frozen, found f64
+  = note: `Frozen` is only a bound for type parameters (`T extends Frozen`): no value has it as its type
+
+frozen_generic_errors.vlt:103:27: error: mismatched types
+  = note: expected AtomicValue, found f64
+  = note: `AtomicValue` is only a bound for type parameters (`T extends AtomicValue`): no value has it as its type
+
+frozen_generic_errors.vlt:58:3: error: this call may modify its argument, a `V` read out of a `shared` value
+  = note: a shared value is read-only, since other tasks read it at the same time: pass a copy, or share a `Mutex`
+
+frozen_generic_errors.vlt:83:3: error: this changes a `u64`, a part of a value read out of a `shared`
+  = note: a shared value is read-only, since other tasks read it at the same time: change a copy (`.clone()`), or share a `Mutex`
+
+frozen_generic_errors.vlt:87:9: error: this changes `x`, a `u64[]` read out of a `shared` value
+  = note: a shared value is read-only, since other tasks read it at the same time: change a copy (`.clone()`, `.slice()`), or share a `Mutex`
+
+frozen_generic_errors.vlt:92:3: error: this changes a `u64`, a part of a value read out of a `shared`
+  = note: a shared value is read-only, since other tasks read it at the same time: change a copy (`.clone()`), or share a `Mutex`
+
+frozen_generic_errors.vlt:96:9: error: this changes `m`, a `Holder` read out of a `shared` value
+  = note: a shared value is read-only, since other tasks read it at the same time: change a copy (`.clone()`, `.slice()`), or share a `Mutex`

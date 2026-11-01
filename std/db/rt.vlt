@@ -1,0 +1,68 @@
+// velt/db (internal): the runtime functions velt/db calls, and the code generated for it calls.
+
+import { JsonError } from "velt/prelude/json/json_error";
+
+/**
+ * `u64 velt_rt_db_cursor(u64 handle)`: the address of the open row cursor a native driver
+ * registered under `handle` (velt_rt db_handles.rs), or 0 when the handle names none.
+ */
+export declare function velt_rt_db_cursor(handle: u64): u64;
+
+/**
+ * `u64 velt_rt_db_sink(u64 handle)`: the address of the open parameter sink a native driver
+ * registered under `handle`, or 0 when the handle names none.
+ */
+export declare function velt_rt_db_sink(handle: u64): u64;
+
+// Reading rows by column (velt_rt db_rows.rs; the code velt/db/generate/columns writes): the
+// rows state is the address the runtime gave (`u64`), a column counts from 0.
+
+/**
+ * Starts reading the rows of a native driver's row cursor (its address) into a row type whose
+ * fields are named in `names` (each name with its length in UTF-8 bytes in front: `2:id4:name`):
+ * the rows state, ended by `velt_rt_rows_end`.
+ */
+export declare function velt_rt_rows_begin_named(cursor: u64, names: string): u64;
+export declare function velt_rt_rows_end(st: u64);
+/** Steps to the next row: 1, or 0 when there is none. */
+export declare function velt_rt_rows_next(st: u64): u8;
+/** The number of columns. */
+export declare function velt_rt_rows_columns(st: u64): u64;
+/** The field column `col` fills, or -1. */
+export declare function velt_rt_rows_field(st: u64, col: u64): i64;
+/**
+ * The fields of the first 16 columns, 4 bits each (column `c` at bit `4 * c`): the field's index
+ * plus one, 0 for none (and for a field index of 15 or more).
+ */
+export declare function velt_rt_rows_field_map(st: u64): u64;
+/** Column `col` of the current row as text into `out`: 1 written, 2 NULL, 0 another kind. */
+export declare function velt_rt_rows_str(st: u64, col: u64, out: string): u8;
+/** What column `col` of the current row holds, numbered as `CellKind`. */
+export declare function velt_rt_rows_kind(st: u64, col: u64): u8;
+/** Column `col` of the current row as a `u8[]` (empty when it holds no blob). */
+export declare function velt_rt_rows_blob(st: u64, col: u64): u8[];
+declare function velt_rt_rows_fail(expected: string, row: i64, field: string, out: string);
+
+/**
+ * The `JsonError` of a row that does not fit, with `JSON.parse`'s message: `expected
+ * <expected> at $[row].field` (`row` -1: the single row, `$`; `field` empty: the row itself).
+ */
+export function rowMismatch(expected: string, row: i64, field: string): JsonError {
+  let message = "";
+  velt_rt_rows_fail(expected, row, field, message);
+  return new JsonError(message);
+}
+
+// Parameters (velt_rt db_params.rs; the code velt/db/generate/bind writes): `sink` is the
+// address of the driver's `RawSink`.
+
+/** An object's members follow, each name before its value. */
+export declare function velt_rt_param_object(sink: u64);
+export declare function velt_rt_param_name(sink: u64, name: string);
+export declare function velt_rt_param_i64(sink: u64, v: i64);
+export declare function velt_rt_param_u64(sink: u64, v: u64);
+export declare function velt_rt_param_f64(sink: u64, v: f64);
+export declare function velt_rt_param_bool(sink: u64, v: bool);
+export declare function velt_rt_param_null(sink: u64);
+export declare function velt_rt_param_str(sink: u64, v: string);
+export declare function velt_rt_param_bytes(sink: u64, v: u8[]);

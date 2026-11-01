@@ -122,6 +122,7 @@ impl FnCx<'_, '_> {
             WriteKey::Str(k) => WriteKey::Str(self.hoist_dynamic(k, &mut stmts)),
             WriteKey::Num(k) => WriteKey::Num(self.hoist_dynamic(k, &mut stmts)),
             WriteKey::Sym(n, k) => WriteKey::Sym(n, self.hoist_dynamic(k, &mut stmts)),
+            WriteKey::Keyed(k) => WriteKey::Keyed(self.hoist_dynamic(k, &mut stmts)),
         };
         let read = self.dynamic_member_read(&obj, &key, any, span);
         let cur = self.new_local("<current>", any, false, span, LocalKind::Temp);

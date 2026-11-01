@@ -1,0 +1,98 @@
+// Overloaded interface methods (TypeScript's form, sigx's `App.directive`): one method takes
+// every form, written as sigx writes it (`definition?: any): any`) in an object literal and a
+// class, or with a result every signature takes; a call has the type of the signature it
+// matches.
+interface Def {
+  name: string;
+}
+
+interface App {
+  directive(name: string, definition: Def): App;
+  directive(name: string): Def | undefined;
+  label(): string;
+}
+
+function makeApp(): App {
+  const dirs = new Map<string, Def>();
+  const app: App = {
+    directive(name: string, definition?: any): any {
+      if (definition === undefined) return dirs.get(name);
+      dirs.set(name, definition);
+      return app;
+    },
+    label() {
+      return "app";
+    },
+  };
+  return app;
+}
+
+const app = makeApp();
+const registered: App = app.directive("tooltip", { name: "tip" });
+console.log(registered.label(), registered === app);
+const found: Def | undefined = app.directive("tooltip");
+console.log(found?.name, app.directive("missing"));
+
+class Registry implements App {
+  defs: Def[] = [];
+  directive(name: string, definition?: any): any {
+    if (definition === undefined) return this.defs.find((d) => d.name === name);
+    this.defs.push(definition);
+    return this;
+  }
+  label(): string {
+    return "registry";
+  }
+}
+
+const reg: App = new Registry();
+console.log(reg.directive("a", { name: "a" }).label(), reg.directive("a")?.name);
+
+// Signatures that agree on the result: an implementation returns that type.
+interface Sizer {
+  size(x: string): number;
+  size(x: number[]): number;
+}
+const sizer: Sizer = {
+  size(x: string | number[]): number {
+    return typeof x === "string" ? x.length : x.length;
+  },
+};
+console.log(sizer.size("abc"), sizer.size([1, 2]));
+
+// A signature whose result holds `undefined` out of the implementation's wider result.
+function lookup(name: string): Def | undefined;
+function lookup(name: string, fallback: Def): Def | App;
+function lookup(name: string, fallback?: Def): Def | App | undefined {
+  if (name === "app") return app;
+  return fallback;
+}
+console.log(lookup("x"), (lookup("x", { name: "fb" }) as Def).name);
+
+// A `this` parameter, and an implementation given by reference.
+const withThis: App = {
+  directive(this: App, name: string, definition?: any): any {
+    return definition === undefined ? { name: name + "!" } : this;
+  },
+  label() {
+    return "with-this";
+  },
+};
+console.log(withThis.directive("t")?.name, withThis.directive("t", { name: "u" }).label());
+
+function lookupDirective(name: string, definition?: Def): any {
+  return definition === undefined ? { name: "ref:" + name } : app;
+}
+const byRef: App = { directive: lookupDirective, label: () => "by-ref" };
+console.log(byRef.directive("r")?.name, byRef.directive("r", { name: "s" }) === app);
+
+// A method written with no parameters that uses `this`.
+const noParams: App = {
+  directive(): any {
+    return this;
+  },
+  label() {
+    return "L";
+  },
+};
+console.log(noParams.directive("a", { name: "x" }).label());

@@ -1,0 +1,42 @@
+// `Atomic<T>` over a type parameter bounded by `AtomicValue`: a generic class holds one, and each
+// instantiation (a number, a `string`, a `shared` value) gets that type's instructions.
+// `compareExchangeWeak` in a loop is the generic compare-and-swap.
+
+interface Box {
+  n: u64;
+}
+
+class Cell<T extends AtomicValue> {
+  word: Atomic<T>;
+
+  constructor(v: T) {
+    this.word = new Atomic<T>(v);
+  }
+
+  get(): T {
+    return this.word.load("acquire");
+  }
+
+  put(v: T): T {
+    return this.word.exchange(v);
+  }
+
+  replaceIf(expected: T, v: T): bool {
+    return this.word.compareExchangeWeak(expected, v) || this.word.compareExchangeWeak(expected, v);
+  }
+}
+
+function main() {
+  const n = new Cell<u64>(1);
+  console.log(n.put(2), n.get(), n.replaceIf(2, 3), n.get());
+  const s = new Cell<string>("one");
+  console.log(s.put("two"), s.get(), s.replaceIf("two", "three"), s.get());
+  const b = new Cell<shared<Box>>(shared({ n: 1 }));
+  const first = b.get();
+  console.log(
+    b.put(shared({ n: 2 })).n,
+    b.get().n,
+    b.replaceIf(first, shared({ n: 9 })),
+    b.get().n,
+  );
+}

@@ -1,0 +1,79 @@
+// sqlite/engine/sql/utf16_index (internal): byte offsets of a string to the UTF-16 indexes `slice` takes,
+// from a running position, so cutting tokens out of a long script stays linear.
+
+import { utf8ByteAt } from "velt/encoding";
+
+/**
+ * Byte offsets of a string to UTF-16 indexes (what `slice` takes), from a running position:
+ * offsets asked for in increasing order cost one pass over the string in all, so tokenizing
+ * and cutting statements out of a long script stays linear.
+ */
+export class Utf16Index {
+  s: string;
+  byte: usize = 0;
+  unit: i64 = 0;
+  /** Bytes walked over so far, in all (what keeps cutting many pieces linear; tests read it). */
+  walked: usize = 0;
+
+  constructor(s: string) {
+    this.s = s;
+  }
+
+  /** The UTF-16 index of byte offset `at` (a character boundary). */
+  at(at: usize): i64 {
+    if (at < this.byte) {
+      if (at < this.byte - at) {
+        this.byte = 0;
+        this.unit = 0;
+      } else {
+        // Back over characters: a lead byte (not 10xxxxxx) starts one; four bytes are two units.
+        this.walked += this.byte - at;
+        while (this.byte > at) {
+          this.byte--;
+          const b = utf8ByteAt(this.s, this.byte as usize);
+          if ((b & 0xc0) != 0x80) {
+            this.unit -= b >= 0xf0 ? 2 : 1;
+          }
+        }
+        return this.unit;
+      }
+    }
+    let i = this.byte;
+    let units = this.unit;
+    while (i < at) {
+      const b = utf8ByteAt(this.s, i as usize);
+      if (b < 0x80) {
+        i += 1;
+        units += 1;
+      } else if (b < 0xe0) {
+        i += 2;
+        units += 1;
+      } else if (b < 0xf0) {
+        i += 3;
+        units += 1;
+      } else {
+        i += 4;
+        units += 2;
+      }
+    }
+    this.walked += i - this.byte;
+    this.byte = i;
+    this.unit = units;
+    return units;
+  }
+
+  /** The text of bytes [from, to). */
+  slice(from: usize, to: usize): string {
+    const a = this.at(from);
+    const b = this.at(to);
+    return this.s.slice(a, b);
+  }
+}
+
+/**
+ * The text of bytes [from, to) of `s` (token boundaries are character boundaries). It scans
+ * from the start: for one-off use (error messages); a running `Utf16Index` for many.
+ */
+export function byteSlice(s: string, from: usize, to: usize): string {
+  return new Utf16Index(s).slice(from, to);
+}

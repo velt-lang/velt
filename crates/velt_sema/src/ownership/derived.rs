@@ -102,7 +102,7 @@ fn walk(cx: &Ctx, e: &Expr, r: &mut Roots, holds: bool, depth: u32) {
             args.first().iter().for_each(|a| go(a, r, holds))
         }
         E::Call {
-            callee: Callee::Virtual { .. } | Callee::Dyn { .. },
+            callee: Callee::Virtual { .. } | Callee::Dyn { .. } | Callee::ParamMethod { .. },
             args,
         } => args.first().iter().for_each(|a| go(a, r, holds)),
         _ => {}
@@ -166,29 +166,33 @@ pub(super) fn fresh(cx: &Ctx, e: &Expr) -> bool {
 /// What that is isn't followed: `xs.map((x) => x)` holds the receiver's parts unseen.
 fn builds(cx: &Ctx, d: crate::hir::DefId) -> bool {
     let name = &cx.fn_info(d).name;
-    name.starts_with("std/") && [".map", ".flatMap"].iter().any(|m| name.ends_with(m))
+    name.starts_with(velt_common::std_modules::CANONICAL_PREFIX)
+        && [".map", ".flatMap"].iter().any(|m| name.ends_with(m))
 }
 
 /// Is `d` a std method that returns a new container of the receiver's parts (`slice()`, a
 /// map's `entries()`)?
 fn copies(cx: &Ctx, d: crate::hir::DefId) -> bool {
     let name = &cx.fn_info(d).name;
-    name.starts_with("std/")
-        && [
-            "slice",
-            "concat",
-            "filter",
-            "flat",
-            "toSorted",
-            "toReversed",
-            "toSpliced",
-            "with",
-            "entries",
-            "keys",
-            "values",
-        ]
-        .iter()
-        .any(|m| name.ends_with(&format!(".{m}")))
+    // The method name after the last `.` (no allocation: this runs for every method call a
+    // value may be derived through).
+    name.starts_with(velt_common::std_modules::CANONICAL_PREFIX)
+        && name.rsplit_once('.').is_some_and(|(_, m)| {
+            [
+                "slice",
+                "concat",
+                "filter",
+                "flat",
+                "toSorted",
+                "toReversed",
+                "toSpliced",
+                "with",
+                "entries",
+                "keys",
+                "values",
+            ]
+            .contains(&m)
+        })
 }
 
 /// That `bound` gets a part of `src` (`None`: of a value read out of a `shared`), or with

@@ -20,7 +20,9 @@
 //! So the pointer is never stored in memory, passed to a call, returned, offset, compared
 //! with another pointer (identity is not observable) or turned into the address of a field:
 //! the object does not escape, and its reference count, if it had one, would be observable
-//! only through those (counted objects are reached through an offset pointer anyway).
+//! only through those (counted objects are reached through an offset pointer anyway). A field
+//! holding a counted value is no exception: lowering drops and shares a pointer field through
+//! the address of a copy (`old = (*w).f; drop(&old)`), a read of the field.
 //!
 //! **Value semantics.** After the rewrite each local of a web carries its own copy of the
 //! object (`w_obj`), and `a = b` copies it. That equals the reference semantics as long as

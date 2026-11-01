@@ -1,0 +1,29 @@
+// An `extend` block whose target has a type parameter where the value's type has `never` applies,
+// with the parameter `never`: `Promise.reject(e)` is a `Promise<never, Error>`, an empty array
+// literal of `never` elements a `never[]` (#1869 review).
+
+class Box<T> {
+  v: T;
+  constructor(v: T) {
+    this.v = v;
+  }
+}
+
+extend<V, E> Box<Promise<V, E>> {
+  kind(): string {
+    return "a box of a promise";
+  }
+}
+
+extend<V> Box<V[]> {
+  kind(): string {
+    return `a box of ${this.v.length} elements`;
+  }
+}
+
+const rejected = Promise.reject(new Error("r"));
+rejected.catch((e) => {});
+console.log(new Box(rejected).kind());
+const none: never[] = [];
+console.log(new Box(none).kind());
+console.log(new Box(Promise.resolve(1)).kind());

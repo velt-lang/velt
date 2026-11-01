@@ -1,0 +1,63 @@
+// check: no leaks
+// A function whose borrowed param holds atomics reads the param's other fields once
+// (`velt_opt`'s `frozen` pass, release builds), but every atomic operation still reads the
+// word itself: loops that wait for an atomic another iteration, another call or another thread
+// changes end, and the fields read once keep the values they had.
+
+class Ring {
+  slots: Atomic<u64>[] = [];
+  limit: u64;
+  done: Atomic<bool> = new Atomic<bool>(false);
+  constructor(n: i64, limit: u64) {
+    this.limit = limit;
+    for (let i = 0; i < n; i++) {
+      this.slots.push(new Atomic<u64>(0));
+    }
+  }
+}
+
+function bump(r: Ring, i: i64) {
+  r.slots[i].add(1, "relaxed");
+}
+
+/** Fills the slots round-robin until the last one reaches `limit`, through a call each time. */
+function fill(r: Ring): u64 {
+  let rounds: u64 = 0;
+  let i: i64 = 0;
+  while (r.slots[r.slots.length - 1].load("acquire") < r.limit) {
+    bump(r, i);
+    i = (i + 1) % r.slots.length;
+    rounds++;
+  }
+  return rounds;
+}
+
+/** Spins until another thread sets `done`, then sums the slots. */
+function waitAndSum(r: Ring): u64 {
+  let spins: u64 = 0;
+  while (!r.done.load("acquire")) {
+    Atomic.spinHint();
+    spins++;
+  }
+  let sum: u64 = 0;
+  for (let i = 0; i < r.slots.length; i++) {
+    sum += r.slots[i].load("relaxed");
+  }
+  return spins >= 0 ? sum : 0;
+}
+
+async function finish(r: shared<Ring>) {
+  for (let i = 0; i < r.slots.length; i++) {
+    r.slots[i].add(10, "relaxed");
+  }
+  r.done.store(true, "release");
+}
+
+async function main() {
+  const r = new Ring(4, 3);
+  console.log("rounds", fill(r), "slots", r.slots[0].load(), r.slots[3].load());
+  const s = shared(r);
+  const p = spawn(finish(s));
+  console.log("sum", waitAndSum(s));
+  await p;
+}

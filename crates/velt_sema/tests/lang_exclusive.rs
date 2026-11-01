@@ -234,3 +234,203 @@ fn function_values_may_write_what_they_receive() {
         "{r}"
     );
 }
+
+#[test]
+fn an_argument_may_change_the_inside_of_an_object_another_one_passes() {
+    // `get` modifies `this.src` while the argument is evaluated, before `set` runs: JavaScript's
+    // `set` sees the changed object too.
+    ok_src(
+        "class Src { n: i64 = 0; get(i: i64): i64 { this.n++; return i + this.n; } }
+         class User {
+           src: Src = new Src(); v: i64 = 0;
+           set(x: i64) { this.v = x; }
+           step() { this.set(this.src.get(1)); }
+         }
+         function main() { const u = new User(); u.step(); console.log(u.v); }",
+    );
+    // Replacing what is passed is still a conflict: the callee would see the new array.
+    let r =
+        err_main("const b = new Box(); fill(b.items, [popIt(b.items), b.items.length as i64]);");
+    assert!(r.contains("b.items"), "{r}");
+}
+
+#[test]
+fn an_argument_may_not_change_an_inline_object_another_one_passes() {
+    // `o.pt` is held inline and passed as a copy made before `o.pt.x = 5` runs: Node's `f`
+    // would see the change, Velt's would not, so it is still a conflict.
+    let r = err_src(
+        "type Pt = { x: number; y: number };
+         class O { pt: Pt = { x: 1, y: 2 }; }
+         function f(p: Pt, n: number): number { return p.x * 10 + n; }
+         function main() { const o = new O(); console.log(f(o.pt, (o.pt.x = 5))); }",
+    );
+    assert!(r.contains("o.pt"), "{r}");
+}
+
+#[test]
+fn an_argument_may_change_the_inside_of_an_array_another_one_passes() {
+    // `grow` pushes onto `g[1]` while the argument is evaluated: `g` is passed by reference, so
+    // `h` sees the longer row, as Node's does.
+    ok_src(
+        "function grow(a: i64[]): i64 { a.push(7); return 1; }
+         function h(g: i64[][], n: i64): i64 { return g[1].length as i64 + n; }
+         function main() { const g: i64[][] = [[1], [2]]; console.log(h(g, grow(g[1]))); }",
+    );
+    // A change through the passed value itself, or replacing it, is still a conflict.
+    let r = err_src(
+        "class B { items: i64[] = [1]; }
+         function setFirst(b: B): i64 { b.items[0] = 8; return 0; }
+         function show(b: B, n: i64): i64 { return b.items[0] + n; }
+         function main() { const b = new B(); console.log(show(b, setFirst(b))); }",
+    );
+    assert!(r.contains("`b`"), "{r}");
+    let r = err_main("const b = new Box(); fill(b.items, [(b.items = []).length as i64]);");
+    assert!(r.contains("b.items"), "{r}");
+}
+
+#[test]
+fn an_argument_may_shorten_a_field_array_another_one_passes() {
+    // `h.vs.length = 0` writes through a share of `h.vs`: it changes the array `h.vs` holds,
+    // which `g` then sees, as Node's does.
+    let h = "class V { s: string = \"y\"; }
+             class H { vs: V[] = [new V(), new V()]; }
+             function g(vs: V[], n: number): number { return vs.length + n; }
+             function k(v: V, n: number): number { return v.s.length + n; }";
+    ok_src(&format!(
+        "{h} function main() {{ const h = new H(); console.log(g(h.vs, (h.vs.length = 0))); }}"
+    ));
+    // An element passed while the array is shortened would be freed under the callee.
+    let r = err_src(&format!(
+        "{h} function main() {{ const h = new H(); console.log(k(h.vs[0], (h.vs.length = 0))); }}"
+    ));
+    assert!(r.contains("cannot modify `h.vs` here"), "{r}");
+}
+
+#[test]
+fn an_argument_may_not_replace_a_field_another_one_passes_through_a_narrowed_field() {
+    // `h.b.vs = mk()` on a narrowed `h.b` is lowered as a write to `vs` through a share of
+    // `h.b`: it replaces the array (or instance) passed, so it stays an error.
+    let src = "class V { n: number = 1; }
+               class C { vs: V[] = [new V()]; }
+               class B { vs: V[] = [new V(), new V()]; c: C = new C(); }
+               class H { b: B | undefined = new B(); }
+               function mk(): V[] { return [new V()]; }
+               function mkc(): C { return new C(); }
+               function g(vs: V[], n: number): number { vs.push(new V()); return vs.length + n; }
+               function gc(c: C, n: number): number { c.vs.push(new V()); return c.vs.length + n; }";
+    for (call, place) in [
+        ("g(h.b.vs, (h.b.vs = mk()).length)", "h.b.vs"),
+        ("gc(h.b.c, (h.b.c = mkc()).vs.length)", "h.b.c"),
+    ] {
+        let r = err_src(&format!(
+            "{src} function main() {{ const h = new H(); if (h.b) {{ console.log({call}); }} }}"
+        ));
+        assert!(r.contains(&format!("`{place}`")), "{call}: {r}");
+    }
+}
+
+#[test]
+fn a_system_function_buffer_is_not_shortened_by_another_argument() {
+    // A system function's buffer is a view of bytes: a later argument shortening the array
+    // would free bytes it covers, read or written.
+    let decl = "declare system function pread(fd: i32, buf: u8[], offset: i64): isize;
+                declare system function write(fd: i32, buf: readonly u8[], n: usize): isize;
+                class Holder { b: u8[] = Buffer.alloc(16); }";
+    for call in [
+        "pread(0, h.b, (h.b.length = 0) as i64)",
+        "write(1, h.b, (h.b.length = 0) as usize)",
+        "write(1, h.b.subarray(0, 8), (h.b.length = 0) as usize)",
+    ] {
+        let r = err_src(&format!(
+            "{decl} function main() {{ const h = new Holder(); console.log({call}); }}"
+        ));
+        assert!(r.contains("`h.b` here"), "{call}: {r}");
+    }
+}
+
+/// A renderer whose nested functions are closures that call each other: `mount` passes its
+/// params on to `mountComponent` (`call`), which modifies the vnode.
+fn renderer(call: &str) -> String {
+    format!(
+        "type V = {{ type: any; dom: any; kids: V[] }};
+         type S = (v: V) => V;
+         function touch(v: V): any {{ v.kids.push({{ type: \"t\", dom: null, kids: [] }}); return null; }}
+         function make<E = any>(insert: (v: V, c: E) => void) {{
+           function mount(vnode: V, container: E, before: any = null): void {{
+             if (typeof vnode.type === \"object\") {{ {call}; return; }}
+             insert(vnode, container);
+             for (const k of vnode.kids) mount(k, container, null);
+           }}
+           function mountComponent(vnode: V, container: E, before: any, setup: S): void {{
+             vnode.dom = before;
+             mount(setup(vnode), container, null);
+           }}
+           return (v: V, c: E): void => {{ mount(v, c); }};
+         }}
+         function main() {{
+           const r = make<V>((v, c) => {{ c.kids.push(v); }});
+           const v: V = {{ type: {{ __setup: (x: V): V => ({{ type: \"p\", dom: null, kids: [] }}) }}, dom: null, kids: [] }};
+           r(v, v);
+         }}"
+    )
+}
+
+#[test]
+fn closures_pass_params_that_may_be_one_object_on_to_closures() {
+    // `mountComponent` was checked with its params as one object (#1383).
+    ok_src(&renderer(
+        "mountComponent(vnode, container, before, vnode.type.__setup as S)",
+    ));
+}
+
+#[test]
+fn closures_passing_params_on_keep_other_conflicts() {
+    // A part of one param with another: `mountComponent` was checked with a vnode and a
+    // container that can't hold it.
+    let r = err_src(&renderer(
+        "mountComponent(vnode.kids[0], container, before, vnode.type.__setup as S)",
+    ));
+    assert!(
+        r.contains("cannot use `vnode.kids[..]` here: this call may modify `container`"),
+        "{r}"
+    );
+    // A param changed while another argument is evaluated.
+    let r = err_src(&renderer(
+        "mountComponent({ type: \"y\", dom: null, kids: [] }, container, touch(vnode), vnode.type.__setup as S)",
+    ));
+    assert!(
+        r.contains("cannot use `vnode` here: this call may modify `container`"),
+        "{r}"
+    );
+}
+
+#[test]
+fn destructured_parts_are_distinct_places() {
+    // #1873: bindings of distinct tuple elements, array positions and object fields.
+    ok_main(
+        "const t: [i64[], i64[]] = [[1], [2]]; const [a, b] = t; fill(a, b);
+         const ps: [i64[], i64[]][] = [[[1], [2]]]; for (const [c, d] of ps) { fill(c, d); }
+         const rows: i64[][] = [[1], [2]]; const [e, f] = rows; fill(e, f);
+         const n: [[i64[], i64[]], i64[]] = [[[1], [2]], [3]]; const [[g, h], k] = n;
+         fill(g, h); fill(h, k);
+         const bx = new Box(); const { items, other } = bx; fill(items, other);",
+    );
+    ok_src(
+        "function run(name: string, f: () => void): void {
+           const later: (() => void)[] = []; later.push(() => { console.log(name); f(); }); }
+         function main() { const cases: [string, string][] = [[\"a\", \"b\"]];
+           for (const [name, raw] of cases) { run(name, () => console.log(raw)); } }",
+    );
+}
+
+#[test]
+fn destructured_parts_still_alias_what_they_came_from() {
+    let r = err_main("const t: [i64[], i64[]] = [[1], [2]]; const [a, b] = t; fill(t[0], a);");
+    assert!(r.contains("cannot use `a` here"), "{r}");
+    let r = err_main("const t: [i64[], i64[]] = [[1], [2]]; const [a, b] = t; fill(b, t);");
+    assert!(r.contains("cannot use `t` here"), "{r}");
+    let r = err_main("const bx = new Box(); const { items: p, items: q } = bx; fill(p, q);");
+    assert!(r.contains("cannot use `q` here"), "{r}");
+    let r = err_main("const rows: i64[][] = [[1], [2]]; const [e] = rows; fill(rows[1], e);");
+    assert!(r.contains("cannot use `e` here"), "{r}");
+}

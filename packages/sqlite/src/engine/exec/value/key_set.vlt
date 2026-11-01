@@ -1,0 +1,126 @@
+// sqlite/engine/exec/value/key_set (internal): rows of values found again (`KeySet`: DISTINCT,
+// GROUP BY, count(DISTINCT x)): a hash of each value under its collation, then the values compared
+// as SQLite compares them (an integer and a REAL of the same value are one key, 'a' and 'A' under
+// NOCASE, 'a ' and 'a' under RTRIM). No text is built per row.
+
+import { NULL, INTEGER, REAL, TEXT } from "../../storage_class";
+import { NOCASE, RTRIM } from "../../collation";
+import { Val } from "./val";
+import { compareVals } from "./compare";
+import { utf8ByteAt, utf8Length } from "velt/encoding";
+
+const PRIME: u64 = 1099511628211;
+const OFFSET: u64 = 14695981039346656037;
+
+/** A set of rows of `width` values; each row added gets an index (0, 1, …). */
+export class KeySet {
+  width: usize;
+  colls: u8[];
+  /** The newest row with each hash, and for each row the one before it with its hash. */
+  heads: Map<u64, i64> = new Map();
+  prev: i64[] = [];
+  vals: Val[] = [];
+  count: usize = 0;
+
+  constructor(width: usize, colls: u8[]) {
+    this.width = width;
+    this.colls = colls;
+  }
+
+  clear() {
+    this.heads = new Map();
+    this.prev.truncate(0);
+    this.vals.truncate(0);
+    this.count = 0;
+  }
+
+  /** The row equal to vals[from..from+width), adding it when there is none; -1 - index when new. */
+  find(vals: Val[], from: usize): i64 {
+    const h = this.hashOf(vals, from);
+    const head = this.heads.get(h);
+    let at: i64 = head == null ? -1 : head!;
+    while (at >= 0) {
+      if (this.equal(at as usize, vals, from)) {
+        return at;
+      }
+      at = this.prev[at as usize];
+    }
+    const index = this.count as i64;
+    this.prev.push(head == null ? -1 : head!);
+    for (let i: usize = 0; i < this.width; i++) {
+      this.vals.push(vals[from + i]);
+    }
+    this.heads.set(h, index);
+    this.count++;
+    return -1 - index;
+  }
+
+  equal(row: usize, vals: Val[], from: usize): bool {
+    const w = this.width;
+    for (let i: usize = 0; i < w; i++) {
+      if (compareVals(this.vals[row * w + i], vals[from + i], this.coll(i)) != 0) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  coll(i: usize): u8 {
+    return i < this.colls.length ? this.colls[i] : 0;
+  }
+
+  hashOf(vals: Val[], from: usize): u64 {
+    let h = OFFSET;
+    for (let i: usize = 0; i < this.width; i++) {
+      h = (h ^ valueHash(vals[from + i], this.coll(i))) * PRIME;
+    }
+    return h;
+  }
+}
+
+/** A hash of `v` equal for values SQLite finds equal under `coll`. */
+export function valueHash(v: Val, coll: u8): u64 {
+  if (v.t == NULL) {
+    return 1;
+  }
+  if (v.t == INTEGER) {
+    return intHash(v.i);
+  }
+  if (v.t == REAL) {
+    const r = v.r;
+    // A REAL equal to an integer hashes as that integer.
+    if (r == Math.trunc(r) && r >= -9223372036854775808.0 && r < 9223372036854775808.0) {
+      return intHash(r as i64);
+    }
+    return intHash(r.toBits() as i64) ^ 0x5555;
+  }
+  if (v.t == TEXT) {
+    const s = v.s;
+    let n = utf8Length(s);
+    if (coll == RTRIM) {
+      while (n > 0 && utf8ByteAt(s, (n - 1) as usize) == 32) {
+        n--;
+      }
+    }
+    let h: u64 = OFFSET ^ 3;
+    for (let i: usize = 0; i < n; i++) {
+      let c = utf8ByteAt(s, i as usize);
+      if (coll == NOCASE && c >= 65 && c <= 90) {
+        c += 32;
+      }
+      h = (h ^ (c as u64)) * PRIME;
+    }
+    return h;
+  }
+  let h: u64 = OFFSET ^ 4;
+  for (const c of v.b) {
+    h = (h ^ (c as u64)) * PRIME;
+  }
+  return h;
+}
+
+function intHash(i: i64): u64 {
+  let x = (i as u64) ^ 0x9e3779b97f4a7c15;
+  x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9;
+  return x ^ (x >> 27);
+}

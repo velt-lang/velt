@@ -175,3 +175,62 @@ fn class_object_fields_are_tagged_and_other_aggregates_are_not() {
         "{loads:?}"
     );
 }
+
+#[test]
+fn string_text_reads_are_element_reads_and_string_words_stay_untagged() {
+    // f(o: Holder object, i: U64) -> U8: o.0.2 = 0 (a word of the string field), o.1 = 7 (an
+    // integer field), then the byte at i of the text o.0.0 points to.
+    let mut pb = ProgramBuilder::new();
+    let text = pb.agg(velt_vir::STR_TEXT_AGG_NAME, 1, 1, &[(U8, 0)]);
+    let object = pb.agg(
+        &format!("Holder{}", velt_vir::OBJECT_AGG_SUFFIX),
+        32,
+        8,
+        &[(Agg(STR_AGG), 0), (U64, 24)],
+    );
+    let mut fb = FuncBuilder::internal("f", &[Ptr, U64], U8);
+    let (o, i) = (fb.param(0), fb.param(1));
+    let b = fb.block();
+    let (w0, data, at, byte) = (fb.local(U64), fb.local(Ptr), fb.local(Ptr), fb.local(U8));
+    let word = |n| Place {
+        local: o,
+        proj: vec![Proj::Deref(Agg(object)), Proj::Field(0), Proj::Field(n)],
+    };
+    fb.push(b, Stmt::Assign(word(2), Rvalue::Use(int(11, U64))));
+    let pos = Place {
+        local: o,
+        proj: vec![Proj::Deref(Agg(object)), Proj::Field(1)],
+    };
+    fb.push(b, Stmt::Assign(pos, Rvalue::Use(int(7, U64))));
+    fb.assign(b, w0, Rvalue::Use(copy_place(word(0))));
+    fb.assign(b, data, Rvalue::Cast(copy_local(w0), Ptr));
+    fb.assign(b, at, bin(BinOp::PtrAdd, copy_local(data), copy_local(i)));
+    let text_byte = Place {
+        local: at,
+        proj: vec![Proj::Deref(Agg(text)), Proj::Field(0)],
+    };
+    fb.assign(b, byte, Rvalue::Use(copy_place(text_byte)));
+    fb.ret(b, copy_local(byte));
+    pb.add(fb.finish());
+    let mut main = FuncBuilder::export("velt_main", &[], I32);
+    let b = main.block();
+    main.ret(b, int(0, I32));
+    pb.add(main.finish());
+    let ir = emit_ir(&pb.finish(), "aarch64-unknown-linux-gnu").expect("emit_ir");
+    let line = |needle: &str| {
+        ir.lines()
+            .find(|l| l.contains(needle))
+            .unwrap_or_else(|| panic!("no `{needle}` in\n{ir}"))
+    };
+    assert!(line("load i8").contains(ELEMENT), "{ir}");
+    assert!(!line("store i64 11").contains("!tbaa"), "{ir}");
+    assert!(
+        line("store i64 7").contains("!\"velt object field\""),
+        "{ir}"
+    );
+    let w0_load = ir
+        .lines()
+        .find(|l| l.contains("load i64"))
+        .unwrap_or_else(|| panic!("no word load in\n{ir}"));
+    assert!(!w0_load.contains("!tbaa"), "{ir}");
+}

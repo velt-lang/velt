@@ -1,0 +1,32 @@
+// velt/lang/intrinsics (internal): the dynamic value `any` (docs/internals/contracts/
+// hir_encodings.md "any and unknown") and proxies of arrays (velt/lang/proxy).
+
+/**
+ * `delete value[key]` of a value that is not a proxy (`Reflect.deleteProperty`): a record's entry
+ * is removed and an optional field made absent (`true`), a key the value does not have is `true`,
+ * an array's `length` is `false`; a `TypeError` for anything else (a fixed field).
+ */
+export declare intrinsic function anyDelete(value: any, key: string): bool;
+
+/**
+ * `ToPrimitive(value, hint)` of a class instance (the prelude's `anyPrimitive`, whose
+ * parameters must be named `hint` and `at`): its `[Symbol.toPrimitive]`, or its `valueOf()` and
+ * `toString()` in the hint's order, chosen per class by the compiler; any other value goes to
+ * `anyPrimitivePlain(value, hint, at)`.
+ */
+export declare intrinsic function anyToPrimitive(value: any, hint: string, at: string): any;
+
+/**
+ * An array method running on a proxy of the array `array` holds (identified by its data
+ * pointer): `op` 1 starts it, -1 ends it and answers the first hole it leaves (or -1), 2 and -2
+ * start and end a trap call of it (`velt_rt_proxy_array_call`).
+ */
+export declare intrinsic function proxyArrayCall(array: any, op: i64): i64;
+
+/**
+ * The holes those methods made in the array `array` holds (identified by its data pointer): `op`
+ * 0 tests element `index`, 1 records it (only in a trap call of a method on it, else -1), 2
+ * forgets it, 3 forgets those from `index` on, 4 gives the first below `index` (or -1)
+ * (`velt_rt_proxy_array_hole`).
+ */
+export declare intrinsic function proxyArrayHole(array: any, index: i64, op: i64): i64;

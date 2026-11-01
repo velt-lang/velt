@@ -117,6 +117,10 @@ impl Specializations {
             return Some(clone);
         }
         let original = program.funcs.get(func.0 as usize)?;
+        // A declaration has no body to specialize (an `Import`, vir.rs invariant 11).
+        if original.blocks.is_empty() {
+            return None;
+        }
         if self.made.len() >= MAX_CLONES || cost(original) > MAX_CLONE_COST {
             return None;
         }

@@ -1,0 +1,177 @@
+// sqlite/engine/exec/window/win_ctx (internal): window functions
+// (https://sqlite.org/windowfunctions.html) of one SELECT core (`WinCtx`): the rows are
+// collected with their partition and order keys, the window functions' arguments and every
+// other value the result reads; then sorted by partition and order, each window function is
+// computed over its frame (engine/exec/window/fn_value, engine/exec/window/moving), and the rows
+// go to the output stage in that order.
+//
+// Ranking: row_number, rank, dense_rank, percent_rank, cume_dist, ntile. Values: lag, lead,
+// first_value, last_value, nth_value. Aggregates over frames: count, sum, total, avg, min, max,
+// group_concat. Frames: ROWS and GROUPS with any bounds, RANGE with UNBOUNDED and CURRENT ROW,
+// EXCLUDE.
+
+import { Ev } from "../types";
+import { compareKeys } from "../sort_key";
+import { Val, nullVal } from "../value/val";
+import { WinFn } from "./win_fn";
+import { WinSpec } from "./win_spec";
+import { incremental, offsetOf, samePrefix } from "./frame";
+import { fnValue } from "./fn_value";
+import { moving } from "./moving";
+
+/** The window functions of one SELECT core, and its collected rows. */
+export class WinCtx {
+  specs: WinSpec[] = [];
+  /**
+   * Set when a window's PARTITION BY and ORDER BY hold more terms than an ORDER BY may: the
+   * error comes once the query's names resolve, as in SQLite's rewrite.
+   */
+  tooManyTerms: bool = false;
+  fns: WinFn[] = [];
+  /** Per-row values: function arguments and FILTER results, then captured values. */
+  evs: Ev[] = [];
+  captures: Ev[] = [];
+  rows: Val[] = [];
+  count: usize = 0;
+  /** The row being output, and every function's results (row by row). */
+  cur: usize = 0;
+  results: Val[] = [];
+
+  /** The window with key `key`, added when new. */
+  spec(key: string): usize {
+    for (let i: usize = 0; i < this.specs.length; i++) {
+      if (this.specs[i].key == key) {
+        return i;
+      }
+    }
+    this.specs.push(new WinSpec(key));
+    return this.specs.length - 1;
+  }
+
+  stride(): usize {
+    return this.evs.length + this.captures.length;
+  }
+
+  /** Collects the row the loops (or the group being output) stand on. */
+  collect() {
+    for (const s of this.specs) {
+      for (const e of s.partition) {
+        s.keys.push(e());
+      }
+      for (const e of s.order) {
+        s.keys.push(e());
+      }
+    }
+    for (const e of this.evs) {
+      this.rows.push(e());
+    }
+    for (const e of this.captures) {
+      this.rows.push(e());
+    }
+    this.count++;
+  }
+
+  /** A captured value of the row being output. */
+  capture(k: usize): Val {
+    return this.rows[this.cur * this.stride() + this.evs.length + k];
+  }
+
+  /** Window function `k`'s value for the row being output. */
+  value(k: usize): Val {
+    return this.results[this.cur * this.fns.length + k];
+  }
+
+  arg(row: usize, f: WinFn, j: usize): Val {
+    return this.rows[row * this.stride() + f.argAt + j];
+  }
+
+  /**
+   * Computes the functions and outputs each row with `emit`. As in SQLite, the last window is
+   * computed first and the first one last, each sorting (stably) the order the one before left,
+   * and the rows go out in the first window's order.
+   */
+  finish(emit: () => void throws Error, stopped: () => bool) {
+    const n = this.count;
+    // Without rows SQLite never reaches its check of the offsets.
+    for (const f of n > 0 ? this.fns : []) {
+      f.startOff = offsetOf(f.startN, f.start, true);
+      f.endOff = offsetOf(f.endN, f.end, false);
+    }
+    this.results.truncate(0);
+    for (let i: usize = 0; i < n * this.fns.length; i++) {
+      this.results.push(nullVal());
+    }
+    const order: usize[] = [];
+    for (let r: usize = 0; r < n; r++) {
+      order.push(r);
+    }
+    for (let k: usize = this.specs.length; k > 0; k--) {
+      const sp = this.specs[k - 1];
+      const keys = sp.keys;
+      const sk = sp.sk;
+      if (sk.length > 0) {
+        order.sort((a, b) => compareKeys(keys, sk, a as usize, b as usize));
+      }
+      // Partitions: runs of rows with equal partition keys.
+      let s: usize = 0;
+      while (s < n) {
+        let e = s + 1;
+        while (e < n && samePrefix(sp, order[s], order[e], 0, sp.partition.length)) {
+          e++;
+        }
+        this.compute(sp, k - 1, order, s, e);
+        s = e;
+      }
+    }
+    for (const r of order) {
+      if (stopped()) {
+        break;
+      }
+      this.cur = r;
+      emit();
+    }
+    this.reset();
+  }
+
+  /** Drops the collected rows. */
+  reset() {
+    for (const sp of this.specs) {
+      sp.keys.truncate(0);
+    }
+    this.rows.truncate(0);
+    this.count = 0;
+  }
+
+  /** The functions of window `spec` over the partition order[s..e]. */
+  compute(sp: WinSpec, spec: usize, order: usize[], s: usize, e: usize) {
+    const n = e - s;
+    const np: usize = sp.partition.length;
+    // Peer groups: runs of rows with equal ORDER BY keys (the whole partition without ORDER BY).
+    const group: usize[] = [];
+    const gs: usize[] = [0];
+    const ge: usize[] = [];
+    for (let i: usize = 0; i < n; i++) {
+      if (i > 0 && !samePrefix(sp, order[s + i - 1], order[s + i], np, sp.sk.length)) {
+        ge.push(i - 1);
+        gs.push(i);
+      }
+      group.push(gs.length - 1);
+    }
+    ge.push(n - 1);
+    const ordered = sp.order.length > 0;
+    for (let k: usize = 0; k < this.fns.length; k++) {
+      const f = this.fns[k];
+      if (f.spec != spec) {
+        continue;
+      }
+      if (incremental(f)) {
+        moving(this, f, k, order, s, n, group, gs, ge, ordered);
+        continue;
+      }
+      for (let i: usize = 0; i < n; i++) {
+        const v = fnValue(this, f, order, s, n, i, group, gs, ge, ordered);
+        this.results[order[s + i] * this.fns.length + k] = v;
+      }
+    }
+  }
+}

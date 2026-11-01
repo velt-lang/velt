@@ -43,7 +43,7 @@ pub(super) fn check_all(cx: &mut Ctx, fns: &[DefId], groups: &Groups) {
             match cx.error_outside(decl.ty, own) {
                 Some(m) if decl.from_body => {
                     let srcs = cx.fn_info(d).throw_srcs.clone();
-                    if !slots_found_late(cx, &srcs) {
+                    if !slots_found_late(cx, &srcs) && !cx.recursion_found_late(&srcs) {
                         closure_too_early(cx, d, m);
                     }
                 }
@@ -153,21 +153,12 @@ fn clause_violation(cx: &mut Ctx, d: DefId, m: TyId, allowed: Option<TyId>, clau
             Some(_) if !inferred => format!("add `{mn}` to the function type's `throws`"),
             _ => format!("write the function type with `throws {mn}`"),
         };
-        let used_ty = used_as;
         let used_as = cx.display(used_as);
         let mut diag = Diagnostic::error(
             format!("this function throws `{mn}`, but the function type it is used as {what}"),
             at,
         )
         .with_note(format!("it is used as `{used_as}`"));
-        // A `ProxyHandler` trap (std/proxy.vlt): its type can't be changed.
-        let trap = cx.is_trap_site(site, used_ty);
-        if trap && !cx.is_error_class(m) {
-            return cx.error(
-                diag.with_note("TypeScript lets a proxy trap throw any value; in Velt a trap may throw only `Error` classes, since its error type is inferred from what it throws (and a `catch` around the proxy operation gets that type)")
-                    .with_note(format!("throw an `Error` instead, such as `throw new Error(String(value))` for a `{mn}` value")),
-            );
-        }
         if matched && cx.fn_sites.is_last() {
             diag = diag.with_note(format!(
                 "the error types of function types written without `throws` are inferred from what is stored into them; that inference hit its limit ({} checks of the program) here",
@@ -324,7 +315,7 @@ fn observed(cx: &mut Ctx, c: &ThrowCheck) {
     } else {
         cx.error_outside(obs, fin).is_none()
     };
-    if ok || slots_found_late(cx, &c.srcs) {
+    if ok || slots_found_late(cx, &c.srcs) || cx.recursion_found_late(&c.srcs) {
         return;
     }
     let fs = fin.map_or("nothing".to_string(), |t| {

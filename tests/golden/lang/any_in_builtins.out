@@ -1,0 +1,27 @@
+kept true true true true true
+error true true true true false
+typeerror true true false
+apperror true true true false
+tuple true true false true true
+weakmap true false
+arrow true true false
+async arrow true true false
+method true true false
+declared true true false
+fnprops true true false true
+literal true true false
+proxy true false true true
+trap false true
+opt false true false true true
+generic true true true false
+dataview true true false false
+dataview true true true true
+dataview true true true
+buffer true true false
+f64 true false false true
+u8 true true true true
+f64 base64 false false false
+nested true true true false
+big true false false false false
+weakset true false
+wk true false true false

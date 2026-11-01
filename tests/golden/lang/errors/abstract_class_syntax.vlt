@@ -1,0 +1,25 @@
+// Abstract members (issue #1568): only in an abstract class, without a body or initializer,
+// with a return type, not `static`, `private` or `async`, and `abstract` once.
+abstract class A {
+  abstract x: number = 1;
+  abstract get h();
+  abstract abstract n(): void;
+  abstract static s(): void;
+  private abstract p(): void;
+  abstract f(): number {
+    return 1;
+  }
+  abstract g();
+}
+
+class NotAbstract {
+  abstract h(): void;
+}
+
+struct S {
+  abstract k(): void;
+}
+
+interface I {
+  abstract m(): void;
+}

@@ -1,7 +1,7 @@
 // Importing `process` twice is a duplicate name, as TypeScript reports a duplicate
 // identifier.
-import { process } from "velt:process";
-import { cwd, process } from "velt:process";
+import { process } from "velt/process";
+import { cwd, process } from "velt/process";
 
 function main() {
   console.log(process.argv.length, cwd());

@@ -1,0 +1,73 @@
+// Bodies of functions returning `never` that TypeScript accepts: every path throws, loops
+// forever or calls another `never` function. `do … while (true)` loops forever like
+// `while (true)` (its condition can't leave it).
+let n = 0;
+
+function doWhile(limit: number): never {
+  do {
+    n++;
+    if (n >= limit) throw new Error(`do-while stopped at ${n}`);
+  } while (true);
+}
+
+function doWhileContinue(limit: number): never {
+  do {
+    n++;
+    if (n % 2 == 0) continue;
+    if (n >= limit) throw new Error(`do-while with continue stopped at ${n}`);
+  } while (true);
+}
+
+function doWhileInnerBreak(limit: number): never {
+  do {
+    for (;;) {
+      n++;
+      if (n % 3 == 0) break;
+    }
+    if (n >= limit) throw new Error(`inner break stopped at ${n}`);
+  } while (true);
+}
+
+function whileTrue(limit: number): never {
+  while (true) {
+    n++;
+    if (n >= limit) throw new Error(`while stopped at ${n}`);
+  }
+}
+
+function forEver(limit: number): never {
+  for (;;) {
+    n++;
+    if (n >= limit) throw new Error(`for stopped at ${n}`);
+  }
+}
+
+function fails(why: string): never {
+  throw new Error(why);
+}
+
+function delegates(): never {
+  return fails("delegated");
+}
+
+const arrow = (): never => {
+  throw new Error("arrow");
+};
+
+const runs: Array<() => never> = [
+  () => doWhile(3),
+  () => doWhileContinue(10),
+  () => doWhileInnerBreak(20),
+  () => whileTrue(25),
+  () => forEver(30),
+  delegates,
+  arrow,
+];
+for (const run of runs) {
+  try {
+    run();
+    console.log("returned");
+  } catch (e) {
+    console.log((e as Error).message);
+  }
+}

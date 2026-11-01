@@ -1,0 +1,108 @@
+// sqlite/engine/exec/loop/rowid_range_walk (internal): the rows of a table whose rowids are in a
+// range, stepped one at a time (`RowidRangeWalk`).
+
+import { Cursor } from "../../cursor";
+import { NULL } from "../../storage_class";
+import "../../btree_back";
+import { Ev } from "../types";
+import { Access } from "../plan/access";
+import { beyondRowids, rowidKey } from "../plan/rowid_key";
+import { Walk } from "./walk";
+
+/** The rows whose rowid is in a range. */
+export class RowidRangeWalk extends Walk {
+  cur: Cursor;
+  reverse: bool;
+  lo: Ev | null;
+  hi: Ev | null;
+  loAff: u8;
+  hiAff: u8;
+  loIncl: bool;
+  hiIncl: bool;
+  hasLo: bool = false;
+  hasHi: bool = false;
+  first: i64 = 0;
+  last: i64 = 0;
+
+  constructor(cur: Cursor, acc: Access) {
+    super();
+    this.cur = cur;
+    this.reverse = acc.reverse;
+    this.lo = acc.lo;
+    this.hi = acc.hi;
+    this.loAff = acc.loAff;
+    this.hiAff = acc.hiAff;
+    this.loIncl = acc.loIncl;
+    this.hiIncl = acc.hiIncl;
+  }
+
+  start(): bool {
+    this.hasLo = false;
+    this.hasHi = false;
+    if (this.lo != null) {
+      const v = this.lo!();
+      if (v.t == NULL) {
+        return false;
+      }
+      const r = rowidKey(v, this.loAff, true);
+      if (!r.ok) {
+        // Above every integer (text, a REAL past 2^63): no row; below them all: no bound.
+        if (beyondRowids(v, this.loAff) != -1) {
+          return false;
+        }
+      } else {
+        this.hasLo = true;
+        this.first = r.value;
+        if (!this.loIncl && !r.frac) {
+          if (this.first == 9223372036854775807) {
+            return false;
+          }
+          this.first++;
+        }
+      }
+    }
+    if (this.hi != null) {
+      const v = this.hi!();
+      if (v.t == NULL) {
+        return false;
+      }
+      const r = rowidKey(v, this.hiAff, false);
+      if (r.ok) {
+        this.hasHi = true;
+        this.last = r.value;
+        if (!this.hiIncl && !r.frac) {
+          if (this.last == -9223372036854775807 - 1) {
+            return false;
+          }
+          this.last--;
+        }
+      } else if (beyondRowids(v, this.hiAff) != 1) {
+        return false;
+      }
+    }
+    const cur = this.cur;
+    let ok = false;
+    if (this.reverse) {
+      ok = this.hasHi ? cur.seekRowidLe(this.last) : cur.last();
+    } else {
+      ok = this.hasLo ? cur.seekRowidGe(this.first) : cur.first();
+    }
+    return this.inRange(ok);
+  }
+
+  step(): bool {
+    const ok = this.reverse ? this.cur.prev() : this.cur.next();
+    return this.inRange(ok);
+  }
+
+  inRange(ok: bool): bool {
+    if (!ok) {
+      return false;
+    }
+    const id = this.cur.rowid;
+    if (this.reverse) {
+      return !(this.hasLo && id < this.first);
+    }
+    return !(this.hasHi && id > this.last);
+  }
+}

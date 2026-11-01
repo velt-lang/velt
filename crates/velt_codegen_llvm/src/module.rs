@@ -69,8 +69,10 @@ pub(crate) fn emit_module(
     optimized: bool,
 ) -> CodegenResult<String> {
     validate_aggregates(program)?;
+    let imported = |i: &usize| program.funcs[*i].linkage == Linkage::Import;
     let unit = Unit {
-        defines: (0..program.funcs.len()).collect(),
+        defines: (0..program.funcs.len()).filter(|i| !imported(i)).collect(),
+        declares: (0..program.funcs.len()).filter(imported).collect(),
         statics: (0..program.statics.len()).collect(),
         ..Unit::default()
     };
@@ -116,6 +118,10 @@ pub(crate) fn emit_unit(
         )?);
     }
     out.push('\n');
+    out.push_str(&crate::function::tls_globals(
+        program,
+        unit_defines_main(program, unit),
+    ));
     out.push_str(&extern_declarations(program)?);
     for &i in &unit.declares {
         out.push_str(&function_declaration(program, i)?);
@@ -182,6 +188,18 @@ pub(crate) fn emit_unit(
     Ok(out)
 }
 
+/// Whether `unit` defines the program's entry, `velt_main` (or, in a program without one, its
+/// first function): exactly one unit does, and it defines the thread-local values too
+/// (function/tls.rs), which the other units declare.
+fn unit_defines_main(program: &vir::Program, unit: &Unit) -> bool {
+    let main = program
+        .funcs
+        .iter()
+        .position(|f| f.symbol == "velt_main")
+        .unwrap_or(0);
+    unit.defines.contains(&main) || program.funcs.is_empty()
+}
+
 /// One `declare` per distinct extern symbol not defined in this module, except the atomic
 /// operations, which are instructions (function/atomic.rs) with no function behind them.
 fn extern_declarations(program: &vir::Program) -> CodegenResult<String> {
@@ -193,6 +211,9 @@ fn extern_declarations(program: &vir::Program) -> CodegenResult<String> {
             || !declared.insert(e.symbol.as_str())
             || velt_vir::atomic::AtomicCall::of_symbol(&e.symbol).is_some()
         {
+            continue;
+        }
+        if velt_vir::tls::TlsCall::of_symbol(&e.symbol).is_some() {
             continue;
         }
         let decl = match Allocator::of(&e.symbol, &e.params, e.ret) {
@@ -219,7 +240,8 @@ fn function_declaration(program: &vir::Program, index: usize) -> CodegenResult<S
         .get(index)
         .ok_or_else(|| format!("ICE: unit declares unknown function #{index}"))?;
     let linkage = match func.linkage {
-        Linkage::Internal => "hidden",
+        // Imported: defined `hidden` by the object the link adds (vir.rs invariant 11).
+        Linkage::Internal | Linkage::Import => "hidden",
         Linkage::Export => "dso_local",
     };
     let params = parameters(func, false)?;
@@ -316,6 +338,12 @@ pub(crate) fn define_prefix(func: &vir::Function, how: Definition) -> CodegenRes
         (Linkage::Internal, Definition::Own) => "internal",
         (Linkage::Internal, Definition::Shared) => "hidden",
         (Linkage::Internal, Definition::Import) => "available_externally hidden",
+        (Linkage::Import, _) => {
+            return Err(format!(
+                "ICE: `{}` is imported (vir.rs invariant 11) but was planned as a definition",
+                func.symbol
+            ))
+        }
     };
     Ok(format!("define {linkage} {}", abi_ret(func.ret)?))
 }

@@ -1,0 +1,21 @@
+// check: no leaks
+// A request handler in a script assigns a top-level `let` and changes a top-level `Map`: both
+// are module state, which every request shares, as in Node (#1872). Before, they became locals
+// of the generated `main`, and the handler, which runs on several threads, was rejected for
+// modifying what it captured.
+import { serve } from "http-server";
+
+let hits = 0;
+const byPath = new Map<string, number>();
+const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+  hits++;
+  const path = new URL(req.url).pathname;
+  byPath.set(path, (byPath.get(path) ?? 0) + 1);
+  return new Response(`hit ${hits}`);
+});
+const base = `http://127.0.0.1:${server.port}`;
+console.log(await (await fetch(`${base}/a`)).text());
+console.log(await (await fetch(`${base}/b`)).text());
+console.log(await (await fetch(`${base}/a`)).text());
+await server.shutdown();
+console.log(hits, byPath.get("/a"), byPath.get("/b"));

@@ -1,4 +1,4 @@
-// Node twin of std/crypto for the differential harness, on `node:crypto`. Random functions can
+// Node twin of velt/crypto for the differential harness, on `node:crypto`. Random functions can
 // only be checked for their contracts (length, range), not their values.
 
 import * as nc from "node:crypto";

@@ -109,7 +109,13 @@ impl Cx<'_> {
                     e.is_union
                         && args.is_empty()
                         && e.variants.iter().all(|v| match v.payload.as_slice() {
-                            [p] => !self.is_dynamic(*p) && self.any_boxable_plain(*p),
+                            // A promise member is never held as `any`: boxing one stops
+                            // (`any_box_with`), the other members box.
+                            [p] => {
+                                !self.is_dynamic(*p)
+                                    && (self.any_boxable_plain(*p)
+                                        || matches!(self.types.kind(*p), TyKind::Promise(..)))
+                            }
                             _ => false,
                         })
                 }
@@ -148,6 +154,8 @@ impl FnLower<'_, '_> {
         }
         match self.cx.kind(t) {
             TyKind::Unit => self.any_nothing_into(Nothing::Undefined, out),
+            // A literal type (zero-sized, `flag?: false`'s payload): the value its type names.
+            TyKind::Literal(l) => self.any_literal_into(&l, out),
             TyKind::Option(inner, n) => {
                 let vt = self.cx.ty(t);
                 let p = Place::local(self.copy_to_temp(v, vt));
@@ -168,8 +176,23 @@ impl FnLower<'_, '_> {
                 // A union (`Cx::any_boxable`): the member it holds.
                 let vt = self.cx.ty(t);
                 let p = Place::local(self.copy_to_temp(v, vt));
-                self.for_each_variant(&p, t, |lw, _, parts| match parts.as_slice() {
+                self.for_each_variant(&p, t, |lw, v, parts| match parts.as_slice() {
+                    [(_, pt)] if matches!(lw.cx.kind(*pt), TyKind::Promise(..)) => {
+                        lw.panic_msg("TypeError: a promise cannot be held as `any` yet (#924)");
+                        lw.terminate(Terminator::Unreachable);
+                        let next = lw.new_block();
+                        lw.switch_to(next);
+                    }
                     [(pp, pt)] => lw.any_box_into(Operand::Copy(pp.clone()), *pt, out),
+                    // A zero-sized member (`undefined`, a literal type such as `"a"`): the value
+                    // its type names.
+                    [] => match lw.cx.variant_tys(t, v).as_slice() {
+                        [m] => match lw.cx.kind(*m) {
+                            TyKind::Literal(l) => lw.any_literal_into(&l, out),
+                            _ => lw.any_box_into(super::unit(), *m, out),
+                        },
+                        _ => ice(format_args!("a union member without one payload boxed")),
+                    },
                     _ => ice(format_args!("a union member without one payload boxed")),
                 });
             }
@@ -426,10 +449,15 @@ impl FnLower<'_, '_> {
         out: Operand,
     ) {
         self.any_nullish_check(desc, NullKey::Str(&key));
-        let done = self.proxy_branch("__get", data, desc, |lw, obj, pty, r| {
-            let k = lw.copy_to_temp(key.clone(), Ty::Ptr);
-            lw.proxy_get_direct((obj, pty, r), ProxyKey::Str(k), out.clone());
-        });
+        let done = self.proxy_branch(
+            velt_common::std_key!(proxy_get),
+            data,
+            desc,
+            |lw, obj, pty, r| {
+                let k = lw.copy_to_temp(key.clone(), Ty::Ptr);
+                lw.proxy_get_direct((obj, pty, r), ProxyKey::Str(k), out.clone());
+            },
+        );
         let args = vec![data.clone(), key.clone(), out];
         let st = self.any_slot(desc.clone(), SLOT_GET, args, vec![Ty::Ptr; 3]);
         // In `Reflect.get`, the read a proxy forwards to its target: a method of a class
@@ -443,12 +471,23 @@ impl FnLower<'_, '_> {
         self.proxy_join(done);
     }
 
-    fn any_index_at(&mut self, data: &Operand, desc: &Operand, i: Operand, out: Operand) {
+    pub(super) fn any_index_at(
+        &mut self,
+        data: &Operand,
+        desc: &Operand,
+        i: Operand,
+        out: Operand,
+    ) {
         self.any_nullish_check(desc, NullKey::Num(&i));
-        let done = self.proxy_branch("__get", data, desc, |lw, obj, pty, r| {
-            let n = lw.copy_to_temp(i.clone(), Ty::F64);
-            lw.proxy_get_direct((obj, pty, r), ProxyKey::Num(n), out.clone());
-        });
+        let done = self.proxy_branch(
+            velt_common::std_key!(proxy_get),
+            data,
+            desc,
+            |lw, obj, pty, r| {
+                let n = lw.copy_to_temp(i.clone(), Ty::F64);
+                lw.proxy_get_direct((obj, pty, r), ProxyKey::Num(n), out.clone());
+            },
+        );
         let args = vec![data.clone(), i, out];
         let st = self.any_slot(
             desc.clone(),

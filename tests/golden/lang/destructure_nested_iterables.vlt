@@ -2,7 +2,7 @@
 // Nested array patterns over iterables (#424): an inner `[...]` pattern takes apart a
 // generator, string, `Map` or other iterable it meets, in declarations and `for...of` heads,
 // as JS does.
-import { Set } from "velt:collections/set";
+import { Set } from "velt/collections";
 
 function* gen(start: i64): Generator<i64> {
   for (let i = start; i < start + 3; i++) {

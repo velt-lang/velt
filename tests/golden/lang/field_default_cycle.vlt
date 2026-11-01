@@ -2,7 +2,7 @@
 // Field initializers that construct each other in a cycle (#266) compile and run like
 // JavaScript: the recursion ends at run time, and what an initializer deep in the cycle throws
 // reaches the outer `new`.
-import { setEnv } from "velt:process";
+import { setEnv } from "velt/process";
 
 class Oops extends Error {}
 

@@ -84,7 +84,10 @@ impl FnCx<'_, '_> {
         if at == Some(span) {
             props.extend(self.take_writes(target, span));
         }
-        Some(self.object_lit(&props, Some(target), span))
+        let saved = self.asserted_fn.replace(inner.span);
+        let h = self.object_lit(&props, Some(target), span);
+        self.asserted_fn = saved;
+        Some(h)
     }
 
     /// `Object.assign(fn, { … })` (`e`) where callable object type `exp` is expected: the

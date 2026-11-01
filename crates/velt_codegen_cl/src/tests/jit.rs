@@ -114,7 +114,7 @@ extern "C" fn c_trunc(x: f64) -> f64 {
 
 /// JIT-compile `program` for the host, run `velt_main`, return (exit code, stdout).
 pub(crate) fn run(program: &vir::Program, optimize: bool) -> Result<(i32, String), String> {
-    let isa = crate::isa::make_isa(&crate::host_triple(), optimize, true)?;
+    let isa = crate::isa::make_isa(&crate::host_triple(), None, optimize, true)?;
     let mut jb = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
     for (name, p) in stub_symbols() {
         jb.symbol(name, p);

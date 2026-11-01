@@ -1,22 +1,35 @@
-// Prelude: runtime assertions for tests and invariants. Failures panic (exit code 101).
+// Prelude: assertions for tests and invariants. A failed one throws an `AssertionError`, as
+// Node's `assert` does: `velt test` reports it as the test's failure and runs the next test;
+// elsewhere it is an uncaught error like any other (exit code 1).
 
-/** Panics with `msg` (exit code 101) unless `cond` is true. */
+import { inspect } from "velt/lang/intrinsics";
+import { equalByContent } from "velt/lang/equal/generated";
+
+/** What a failed `assert`, `assertEq` or `assertThrows` throws (Node's `AssertionError`). */
+export class AssertionError extends Error {
+  /** An `AssertionError` with `message`, named `"AssertionError"`. */
+  constructor(message: string) {
+    super(message);
+    this.name = "AssertionError";
+  }
+}
+
+/** Throws an `AssertionError` with `msg` unless `cond` is true. */
 export function assert(cond: bool, msg: string = "assertion failed") {
   if (!cond) {
-    panic(msg);
+    throw new AssertionError(msg);
   }
 }
 
 /**
- * Deep equality (`deepEqual`: contents, not identity). On failure prints both values to stderr,
- * then panics.
+ * Deep equality (`deepEqual`: contents, not identity). On failure throws an `AssertionError`
+ * whose message shows both values, as Node's `util.inspect` writes them (`'a'`, `[ 1, 2 ]`).
  */
 export function assertEq<T>(left: T, right: T, msg: string = "assertEq failed") {
-  if (!__intrinsic_eq(left, right)) {
-    console.error("assertion `left == right` failed");
-    console.error("  left:", left);
-    console.error(" right:", right);
-    panic(msg);
+  if (!equalByContent(left, right)) {
+    const l = inspect(left);
+    const r = inspect(right);
+    throw new AssertionError(`${msg}\n  left: ${l}\n right: ${r}`);
   }
 }
 
@@ -26,13 +39,13 @@ export function assertEq<T>(left: T, right: T, msg: string = "assertEq failed") 
  * key order; other class instances by identity. `==` compares every object by identity, like JS.
  */
 export function deepEqual<T>(a: T, b: T): bool {
-  return __intrinsic_eq(a, b);
+  return equalByContent(a, b);
 }
 
 /**
  * Calls `f` and returns the error it throws, so a test can check it
- * (`assertEq(assertThrows(() => parse("x")).message, "bad input")`); panics if `f` returns
- * normally.
+ * (`assertEq(assertThrows(() => parse("x")).message, "bad input")`); throws an
+ * `AssertionError` if `f` returns normally.
  */
 export function assertThrows<R, E>(f: () => R throws E, msg: string = "expected an error"): E {
   try {
@@ -40,30 +53,5 @@ export function assertThrows<R, E>(f: () => R throws E, msg: string = "expected 
   } catch (e) {
     return e;
   }
-  panic(msg);
-}
-
-/**
- * `value satisfies T` (TypeScript): `value`, checked against `T` with `T` as its context, as an
- * annotated initializer is. The parser writes the operator as a call of this function.
- */
-export function __satisfies<T>(value: T): T {
-  return value;
-}
-
-/**
- * `get name() { … }` in an object literal: the parser writes the getter as an arrow passed to
- * this function. Sema reads it where the literal implements an interface (the getter runs on
- * each read); this body never runs.
- */
-export function __object_get<T>(get: () => T): T {
-  return get();
-}
-
-/**
- * `set name(v) { … }` in an object literal, written as a call of this function (see
- * `__object_get`).
- */
-export function __object_set<T>(set: (value: T) => void): (value: T) => void {
-  return set;
+  throw new AssertionError(msg);
 }

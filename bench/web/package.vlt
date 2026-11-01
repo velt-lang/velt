@@ -1,0 +1,12 @@
+import type { Package } from "velt/package";
+
+// The benchmark's Velt servers (velt/, velt-native/, velt-tsx/), on the repository's HTTP server
+// and postgres packages (postgres's native library is built with cargo the first time).
+export const pkg: Package = {
+  name: "web-bench",
+  version: "0.1.0",
+  dependencies: {
+    "http-server": { path: "../../packages/http-server" },
+    postgres: { path: "../../packages/postgres" },
+  },
+};

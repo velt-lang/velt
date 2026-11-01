@@ -1,0 +1,13 @@
+// The HTTP and WebSocket handles of std have no JSON form.
+import { HttpServer } from "http-server";
+import { WebSocket } from "velt/net/websocket";
+
+function write(r: Response, q: Request): string {
+  return JSON.stringify(r) + JSON.stringify(q);
+}
+
+function main() {
+  const s = JSON.parse<HttpServer>('{"port":1,"handle":1}');
+  const f = JSON.parse<Response>("{}");
+  const ws = JSON.parse<WebSocket>('{"handle":1}');
+}

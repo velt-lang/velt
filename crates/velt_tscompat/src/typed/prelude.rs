@@ -73,7 +73,7 @@ pub(crate) const TS_GLOBALS: &[&str] = &[
     "setTimeout",
     // A deep copy (TypeScript's baseline has it from the DOM's lib, Node as a global).
     "structuredClone",
-    // TypeScript's dynamic types (prelude interfaces in Velt, std/prelude/z_dynamic.vlt).
+    // TypeScript's dynamic types (prelude interfaces in Velt, std/prelude/dynamic.vlt).
     "any",
     "unknown",
     "object",
@@ -103,6 +103,10 @@ pub(crate) const VELT_GLOBALS: &[VeltOnly] = &[
         "keep JSON decoding out of code shared with TypeScript",
     ),
     (
+        "JsonReplacer",
+        "keep replacer functions out of code shared with TypeScript (they take a `JsonValue`)",
+    ),
+    (
         "JsonValue",
         "keep dynamic JSON out of code shared with TypeScript, or pass typed values in",
     ),
@@ -126,7 +130,23 @@ pub(crate) const VELT_GLOBALS: &[VeltOnly] = &[
         "Atomic",
         "keep thread-shared state out of code shared with TypeScript",
     ),
+    (
+        "ThreadLocal",
+        "keep thread-shared state out of code shared with TypeScript",
+    ),
+    (
+        "AtomicValue",
+        "keep thread-shared state out of code shared with TypeScript",
+    ),
+    (
+        "Frozen",
+        "keep thread-shared state out of code shared with TypeScript",
+    ),
     ("NumberConstructor", "use `Number` (`Number.isInteger(x)`)"),
+    (
+        "StringBuilder",
+        "collect the parts in a `string[]` and `join(\"\")` them, or append with `+=`",
+    ),
     // TypeScript's has one type argument; Velt's two.
     (
         "PromiseSettledResult",
@@ -159,6 +179,10 @@ pub(crate) const VELT_GLOBALS: &[VeltOnly] = &[
     (
         "assertThrows",
         "keep test assertions out of code shared with TypeScript",
+    ),
+    (
+        "AssertionError",
+        "keep test assertions out of code shared with TypeScript (Node's is `node:assert`'s)",
     ),
     (
         "deepEqual",
@@ -203,6 +227,14 @@ pub(crate) const VELT_GLOBALS: &[VeltOnly] = &[
     (
         "spawn",
         "keep tasks and threads out of code shared with TypeScript",
+    ),
+    (
+        "typeIs",
+        "keep compile-time type tests out of code shared with TypeScript",
+    ),
+    (
+        "asType",
+        "keep compile-time type tests out of code shared with TypeScript",
     ),
     (
         "shared",
@@ -357,9 +389,9 @@ pub(crate) const TS_MEMBERS: &[(&str, &[&str])] = &[
     ),
     ("Object", &["entries", "fromEntries", "keys", "values"]),
     // `Object.prototype.hasOwnProperty` read as a value: its `call` is `Function.call`.
-    ("__HasOwnProperty", &["call"]),
+    ("HasOwnProperty", &["call"]),
     // An array method read through a proxy (`Reflect.get(array, "push")`): its name.
-    ("__ArrayMethod", &["name"]),
+    ("ArrayMethod", &["name"]),
     (
         "Reflect",
         &[
@@ -372,7 +404,7 @@ pub(crate) const TS_MEMBERS: &[(&str, &[&str])] = &[
             "set",
         ],
     ),
-    ("String", &["fromCharCode"]),
+    ("String", &["fromCharCode", "fromCodePoint"]),
     ("WeakMap", &["delete", "get", "has", "set"]),
     ("WeakRef", &["deref"]),
     ("WeakSet", &["add", "delete", "has"]),
@@ -383,6 +415,7 @@ pub(crate) const TS_MEMBERS: &[(&str, &[&str])] = &[
             "at",
             "charAt",
             "charCodeAt",
+            "codePointAt",
             "endsWith",
             "includes",
             "indexOf",
@@ -432,9 +465,14 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
             ("xor", ATOMIC),
         ],
     ),
+    ("ThreadLocal", &[("get", ATOMIC), ("set", ATOMIC)]),
     (
         "Array",
         &[
+            (
+                "copy",
+                "copy with `target.set(bytes.subarray(sourceStart, sourceEnd), targetStart)`",
+            ),
             ("isEmpty", "write `xs.length === 0`"),
             ("prefetch", "leave it out: it is only a hint"),
             ("reserve", "leave it out: arrays grow as needed"),
@@ -472,6 +510,7 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
         "Buffer",
         &[
             ("alloc", "pass bytes in instead"),
+            ("allocUnsafe", "pass bytes in instead"),
             (
                 "byteLength",
                 "keep byte counting out of shared code (`TextEncoder` is planned, #377 phase 4)",
@@ -532,9 +571,11 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
             ("of", JSON_VALUE),
             ("parse", JSON_VALUE),
             ("push", JSON_VALUE),
+            ("revive", JSON_VALUE),
             ("set", JSON_VALUE),
             ("setAt", JSON_VALUE),
             ("stringify", JSON_VALUE),
+            ("toJSON", JSON_VALUE),
         ],
     ),
     (
@@ -593,7 +634,15 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
         &[
             ("compareTo", COMPARE),
             ("countOnes", "count the set bits in a loop"),
+            (
+                "fromBits",
+                "read the bits through a `DataView` (`setBigUint64`, `getFloat64`)",
+            ),
             ("leadingZeros", "use `Math.clz32(x)` (32 bits)"),
+            (
+                "toBits",
+                "write the number to a `DataView` (`setFloat64`) and read `getBigUint64`",
+            ),
             ("trailingZeros", "use `31 - Math.clz32(x & -x)` (32 bits)"),
         ],
     ),

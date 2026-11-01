@@ -1,0 +1,8 @@
+// velt/text (internal): `RegExpError`, a pattern the engine cannot compile.
+
+/** An invalid pattern or flags (JS throws `SyntaxError`). */
+export class RegExpError extends SyntaxError {
+  constructor(message: string) {
+    super(message);
+  }
+}

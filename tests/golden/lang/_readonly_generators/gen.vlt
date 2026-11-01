@@ -1,0 +1,22 @@
+// The generator of _readonly_generators/index.vlt.
+import { InstanceRequest, Output } from "velt/generate";
+
+export function setParam(req: InstanceRequest, out: Output): void {
+  const v = req.params[0];
+  out.line(`${v}.id = 2;`);
+  out.line(`return ${v};`);
+}
+
+export function setCopy(req: InstanceRequest, out: Output): void {
+  const v = req.params[0];
+  out.line(`const c = ${v};`);
+  out.line(`c.id = 3;`);
+  out.line(`return c;`);
+}
+
+export function setBuilt(req: InstanceRequest, out: Output): void {
+  const t = out.typeName(req.args[0]);
+  out.line(`const b: ${t} = { id: 0 };`);
+  out.line(`b.id = ${req.params[0]}.id + 1;`);
+  out.line(`return b;`);
+}

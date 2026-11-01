@@ -1,0 +1,21 @@
+// A call of a `never` function that throws: no Ok path follows it.
+
+function fail(what: string): never {
+  throw new Error(what);
+}
+
+function check(n: i64): i64 {
+  if (n < 0) {
+    fail("negative");
+  }
+  return n * 2;
+}
+
+function main() {
+  try {
+    console.log(check(4));
+    console.log(check(-1));
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
+}

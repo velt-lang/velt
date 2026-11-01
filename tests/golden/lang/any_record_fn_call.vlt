@@ -1,0 +1,21 @@
+// Functions stored into a record (`Object.create(null)`, a `Record<string, any>`) and called
+// through `any` as its members (#1938).
+const store: any = Object.create(null);
+store.greet = (name: string) => `hello ${name}`;
+store.count = 0;
+store.bump = (by: number) => {
+  store.count += by;
+  return store.count;
+};
+console.log(store.greet("velt"));
+console.log(store.bump(2), store.bump(3), store.count);
+const table: Record<string, any> = {};
+table["twice"] = (n: number) => n * 2;
+const t: any = table;
+console.log(t.twice(21));
+let n = 0;
+for (let i = 0; i < 100; i++) {
+  n = store.bump(1);
+}
+console.log(n);
+console.log(store.count(1));

@@ -95,6 +95,9 @@ pub(crate) struct Parser<'a> {
     /// The declarators after the first of `let a = 1, b = 2;` (`parse_var_decl`), for the
     /// statement or item list to add after the first one.
     more_vars: Vec<VarDecl>,
+    /// The abstract setter of the abstract property just parsed (`members::abstracts`), for
+    /// the class body to add after its getter.
+    abstract_setter: Option<Method>,
     /// How many `static { … }` blocks the file has had so far: each is named by its number
     /// (`static_blocks`), which formatting does not change.
     static_blocks: u32,
@@ -184,6 +187,7 @@ impl<'a> Parser<'a> {
             paren_matches: ParenMatches::default(),
             plain_ts: false,
             more_vars: Vec::new(),
+            abstract_setter: None,
             static_blocks: 0,
             accessor_type: None,
             this_param: None,
@@ -554,7 +558,10 @@ impl<'a> Parser<'a> {
     /// Is the cursor at the plain identifier `word` (a contextual keyword such as `extend`)?
     fn at_word(&mut self, word: &str) -> bool {
         let t = self.tok(self.pos);
-        t.kind == Tok::Ident && self.text(t.lo, t.hi) == word
+        // Compared as bytes: slicing the source as `str` checks character boundaries, which a
+        // comparison does not need (a token's span is on them anyway).
+        t.kind == Tok::Ident
+            && self.src.as_bytes().get(t.lo as usize..t.hi as usize) == Some(word.as_bytes())
     }
 
     fn at_ident_like(&mut self) -> bool {

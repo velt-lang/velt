@@ -1,6 +1,6 @@
 // A scripted HTTP session against the real server (golden: demo.out): create, validate, update,
 // filter, delete, then restart the server on the same file to show the data persisted.
-import { removeSync, existsSync } from "velt:fs";
+import { removeSync, existsSync } from "velt/fs";
 import { startServer } from "./src/server";
 
 const DB = "todo-demo.json";

@@ -1,8 +1,9 @@
-import type { Package } from "velt:package";
+import type { Package } from "velt/package";
 
 export const pkg: Package = {
   name: "sqlite",
-  version: "0.1.0",
+  version: "0.2.0",
+  description: "Embedded SQLite (rusqlite, compiled in) and a SQLite engine written in Velt",
   // The driver is a Rust crate (native/) built on rusqlite; `velt publish` uploads a prebuilt
   // library per target, so users of the package need no Rust toolchain.
   native: {

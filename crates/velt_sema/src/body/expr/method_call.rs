@@ -7,6 +7,7 @@ use velt_syntax::ast;
 
 use super::iface_call::IfaceSlot;
 use super::method::Resolved;
+use super::setters::synth;
 use crate::body::places::set_place_mode;
 use crate::body::{FnCx, Want};
 use crate::hir::{self, Callee, DefId, ExprKind as H, PassMode, TyId, TyKind, UseMode};
@@ -26,8 +27,21 @@ impl FnCx<'_, '_> {
             Ok(h) => return h,
             Err(recv) => recv,
         };
-        // A branded value has its primitive's methods.
+        let recv = match self.brand_tag_call(recv, prop, args, span) {
+            Ok(h) => return h,
+            Err(recv) => recv,
+        };
+        // A branded value has its primitive's (or its class's) methods.
         let recv = self.unbrand(recv);
+        if prop.name == "revive"
+            && matches!(self.cx.ty.kind(recv.ty), TyKind::Adt(d, _) if self.cx.is_json_value(*d))
+            && args
+                .first()
+                .and_then(|a| self.json_callback_typed(a, "`JsonValue.revive`"))
+                == Some(false)
+        {
+            return self.error_expr(span);
+        }
         // A `shared<T>` has `T`'s methods (#36): they read the value inside, and one that
         // modifies its receiver is an error (`frozen_write`).
         let recv = match matches!(self.cx.ty.kind(recv.ty), TyKind::Shared(_))
@@ -46,8 +60,22 @@ impl FnCx<'_, '_> {
         self.literal_use_number(&recv);
         // `s.replace(/a/g, "b")`: std/regex's method for a regex argument (`regex_args`).
         if recv.ty == self.cx.ty.str_ {
-            if let Some((prop, args)) = self.regex_string_call(prop, args) {
-                return self.method_call_at(recv, &prop, type_args, &args, exp, span, false);
+            if let Some((hook, args)) = self.regex_string_call(prop, args) {
+                return self.with_temp("<string>", recv, span, span, |lw, s| {
+                    let call = ast::ExprKind::Call {
+                        callee: Box::new(synth(
+                            ast::ExprKind::Ident(ast::Ident {
+                                name: hook.into(),
+                                span: prop.span,
+                            }),
+                            prop.span,
+                        )),
+                        type_args: type_args.to_vec(),
+                        args: std::iter::once(s.clone()).chain(args).collect(),
+                        optional: false,
+                    };
+                    lw.expr(&synth(call, span), exp, Want::Move)
+                });
             }
         }
         self.method_call_at(recv, prop, type_args, args, exp, span, false)
@@ -87,6 +115,22 @@ impl FnCx<'_, '_> {
         };
         if list_text && !getter && self.joins_dynamic(recv.ty) {
             return self.dynamic_list_join(recv, args, span);
+        }
+        // A list of literals with accessors: through `any`, each element `[object Object]`.
+        if list_text
+            && !getter
+            && matches!(self.cx.ty.kind(recv.ty), TyKind::Array(_))
+            && self.holds_literal_iface(recv.ty, 0)
+        {
+            let recv = self.share_if_place(recv);
+            let recv = self.literal_iface_as_any(recv);
+            if self.cx.dynamic(recv.ty).is_some() {
+                if let Ok(h) = self.dynamic_method_call(recv, prop, args, span) {
+                    return h;
+                }
+                return self.error_expr(span);
+            }
+            return self.method_call_at(recv, prop, type_args, args, exp, span, getter);
         }
         let writes_list = matches!(prop.name.as_str(), "join" | "toString")
             && matches!(self.cx.ty.kind(recv.ty), TyKind::Array(_));
@@ -298,7 +342,11 @@ impl FnCx<'_, '_> {
         let own = slots.iter().filter(|s| s.is_none()).count();
         self.explicit_type_args(&mut slots, own, type_args, &c.defaults, span);
         self.weak_key_args = self.weak_method(def);
+        // A promise set into a `Map` (or pushed) whose type is a site (`throws::promise_sites`).
+        let stored = self.stored_arg_site(&recv, &name, args);
+        let outer = std::mem::replace(&mut self.cx.fn_sites.push, stored);
         let ck = self.check_call(&c, slots, args, exp, span);
+        self.cx.fn_sites.push = outer;
         self.note_async_args(def, &ck.args);
         let this_recv = self.this_recv(&recv);
         let recv = self.receiver(
@@ -309,7 +357,7 @@ impl FnCx<'_, '_> {
         );
         let mut all = vec![recv];
         all.extend(ck.args);
-        if let Some(h) = self.atomic_call(def, &mut all, ck.ret, span) {
+        if let Some(h) = self.sync_call(def, &mut all, ck.ret, span) {
             return h;
         }
         self.call_throws(def, &ck.type_args, ck.ret, span);
@@ -462,7 +510,7 @@ impl FnCx<'_, '_> {
         } else if prop.name == "writeString" && self.is_std_stdout(recv.ty) {
             d = d.with_note(
                 "`writeString` was removed: write a string with `process.stdout.write(s)` (no \
-                 import); `stdout.write` of `velt:process` takes bytes",
+                 import); `stdout.write` of `velt/process` takes bytes",
             );
         }
         self.cx.error(d);
@@ -470,19 +518,19 @@ impl FnCx<'_, '_> {
         self.error_expr(span)
     }
 
-    /// Is `h` a read of a `Record` key (`r[k]`, `r.name`: `Record.__get`)?
+    /// Is `h` a read of a `Record` key (`r[k]`, `r.name`: `Record[RECORD_GET]`)?
     fn is_record_read(&self, h: &hir::Expr) -> bool {
         matches!(&h.kind, H::Call { callee: hir::Callee::Def(d, _), .. }
-            if self.cx.try_fn(*d).is_some_and(|f| f.name.ends_with("Record.__get")))
+            if self.cx.try_fn(*d).is_some_and(|f| f.name.ends_with(concat!("Record.", velt_common::std_key!(record_get)))))
     }
 
-    /// Is `t` the `Stdout` of `velt:process` (the byte sink `stdout`)?
+    /// Is `t` the `Stdout` of `velt/process` (the byte sink `stdout`)?
     fn is_std_stdout(&self, t: TyId) -> bool {
         match self.cx.ty.kind(t) {
             TyKind::Adt(d, _) => self
                 .cx
                 .adt(*d)
-                .is_some_and(|a| a.qual_name == "std/process::Stdout"),
+                .is_some_and(|a| a.qual_name == velt_common::std_item!(process_stdout, "Stdout")),
             _ => false,
         }
     }

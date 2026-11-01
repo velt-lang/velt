@@ -1,0 +1,4 @@
+// velt/random (internal): the runtime functions velt/random calls (a per-thread wyrand).
+
+export declare function velt_rt_prng_f64(): f64;
+export declare function velt_rt_prng_range(min: i64, max: i64): i64;

@@ -1,11 +1,11 @@
 // check: also with VELT_SIMD_DISABLE=sha
-// The SHA instructions of `velt:simd` (#1330): SHA-256 and SHA-1 computed with the published ARM
+// The SHA instructions of `velt/simd` (#1330): SHA-256 and SHA-1 computed with the published ARM
 // (ACLE) and Intel (SHA-NI) instruction sequences, against the FIPS 180 digests, and every
 // operation on 10,000 pseudo-random inputs folded into a checksum. Where the CPU has an extension
 // (arm64 and x86-64 release builds) its operations run as instructions, elsewhere (and in debug
 // builds, on wasm, with VELT_SIMD_DISABLE=sha) as the emulation: the same output everywhere is the
 // differential test between the two.
-import { u32x4 } from "velt:simd";
+import { u32x4 } from "velt/simd";
 
 const K256: u32[] = [
   0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,

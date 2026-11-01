@@ -2,7 +2,7 @@
 // read lock, on every core at once; every other request is routed under the write lock, one at
 // a time. `route` and `readRoute` turn errors into responses, so nothing has to be thrown out of
 // `read` or `write` (#703).
-import { serve, Server } from "velt:http";
+import { serve, HttpServer } from "http-server";
 import { readRoute, route } from "./api";
 import { Store } from "./store";
 
@@ -21,7 +21,7 @@ async function handle(req: Request, store: shared<RwLock<Store>>): Promise<Respo
 }
 
 /// Serves `store` on `port` (0 = any free port).
-export async function startServer(store: Store, port: i64): Promise<Server> {
+export async function startServer(store: Store, port: i64): Promise<HttpServer> {
   const shop = shared(new RwLock<Store>(store));
   return await serve({ port: port as number }, async (req) => await handle(req, shop));
 }

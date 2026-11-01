@@ -1,0 +1,1 @@
+symbol_for_in_place_private_key.vlt:5:12: error: method `[Symbol.for("mapAt")]` is marked `override` but no base class has a method `[Symbol.for("mapAt")]`

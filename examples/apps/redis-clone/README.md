@@ -1,6 +1,6 @@
 # redis-clone
 
-A Redis-compatible server: the RESP2 protocol over `velt:net`, with pipelining, 65 commands
+A Redis-compatible server: the RESP2 protocol over `velt/net`, with pipelining, 65 commands
 over strings, lists, hashes, sets and sorted sets, and key expiry (on access, plus a background
 sweep). `redis-cli` and `redis-benchmark` work against it unchanged, and `parity.vlt` checks
 that its replies match a real Redis (started with `--databases 1`, like this server) byte for

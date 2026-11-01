@@ -166,6 +166,9 @@ impl FnCx<'_, '_> {
         let Some(target) = self.narrowed_class(l) else {
             return e;
         };
+        if self.dynamic_raw == Some(e.span) && self.cx.dynamic(e.ty).is_some() {
+            return e; // `x as T` converts the value held (`member::type_assertion`)
+        }
         if self.cx.dynamic(target) == Some(crate::any::Dynamic::Any) && self.per_instance(e.ty) {
             // `Array.isArray(x)` on a value of a type parameter: the value, as an `any`.
             return self.generic_as_any(e).unwrap_or_else(|e| e);
@@ -249,6 +252,17 @@ impl FnCx<'_, '_> {
                 self.error_expr(span)
             }
             None => {
+                if let Some((t, _)) = self.this_primitive {
+                    // In a static of `extend f64`: only `this.f()` / `this.f` (`primitive_statics`).
+                    self.cx.error(
+                        Diagnostic::error(
+                            format!("`this` in a static method of `extend {t}` can only call or read its statics"),
+                            span,
+                        )
+                        .with_note(format!("write `this.f()` or `{t}.f()`")),
+                    );
+                    return self.error_expr(span);
+                }
                 self.cx.err(
                     "`this` is only available inside methods and constructors",
                     span,
@@ -519,6 +533,14 @@ impl FnCx<'_, '_> {
     pub(super) fn fn_ref(&mut self, d: DefId, id: &ast::Ident, exp: Option<TyId>) -> hir::Expr {
         let span = id.span;
         let f = self.cx.fn_info(d);
+        if f.intrinsic.is_some() {
+            let what = format!("intrinsic `{}` cannot be used as a value", f.name);
+            self.cx.error(
+                Diagnostic::error(what, span)
+                    .with_note("the compiler emits each call of it in place: call it directly"),
+            );
+            return self.error_expr(span);
+        }
         if f.kind == FnKind::Extern {
             self.cx.err(
                 format!("external function `{}` cannot be used as a value", id.name),
@@ -526,7 +548,7 @@ impl FnCx<'_, '_> {
             );
             return self.error_expr(span);
         }
-        if self.gated_value(d, &id.name, span) {
+        if self.gated_value(d, &id.name, span) || self.type_test_value(d, &id.name, span) {
             return self.error_expr(span);
         }
         let f = self.cx.fn_info(d);

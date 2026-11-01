@@ -5,10 +5,10 @@
 //! A class's object is a function constant of the module state (made on first use, kept in
 //! `objects.class_values`, initialized before any module runs, as the construct-signature values
 //! of `ctor_values.rs` are), so `===`, `Map` keys and `Set` members see one object per class, and
-//! `typeof` is `"function"`. It is a closure of the prelude's `__classObject` (one closure, so one
+//! `typeof` is `"function"`. It is a closure of the hook `classObject` (one closure, so one
 //! type and one `any` descriptor for every class), which keeps how Node prints it (`[class A]`,
 //! `[Function: Map]`) for velt_vir's `format.rs`; a class with static fields or accessors gets
-//! `__classObjectStatics`'s, which Node prints with them: printing it is not supported yet.
+//! `classObjectStatics`'s, which Node prints with them: printing it is not supported yet.
 //! Calling it stops with Node's `TypeError` for a class called
 //!
 //! `x.constructor` reads an own `constructor` property first, then picks the object of the class
@@ -33,7 +33,7 @@ use crate::ctx::Item;
 use crate::defs::{BodyState, DefInfo, GlobalInfo, GlobalSrc};
 use crate::hir::{self, AdtKind, DefId, TyId, TyKind};
 
-/// The kinds of values that hold no class instance, in the order `__anyCtor` takes their objects.
+/// The kinds of values that hold no class instance, in the order `anyCtor` takes their objects.
 const KINDS: [&str; 6] = ["Object", "Array", "Number", "String", "Boolean", "Function"];
 
 impl FnCx<'_, '_> {
@@ -87,18 +87,23 @@ impl FnCx<'_, '_> {
             return Ok(self.error_expr(span));
         };
         if !self.in_ctor_helper() {
-            // The program's own code: the prelude's `__anyConstructor`, whose body holds the
+            // The program's own code: the hook `anyConstructor`, whose body holds the
             // dispatch over the program's classes once.
             self.note_dyn_members();
             let s = self.share_if_place(obj);
             let s = self.coerce(s, any);
-            return Ok(self.prelude_hir_call("__anyConstructor", vec![s], any, span));
+            return Ok(self.prelude_hir_call(
+                velt_common::std_hook!(any_constructor),
+                vec![s],
+                any,
+                span,
+            ));
         }
         // A program that reads no `constructor` never calls the helper: no class objects.
         if !self.cx.objects.ctor_reads {
             return Ok(self.dynamic_nothing(hir::Nothing::Undefined, any, span));
         }
-        // The kinds' objects, for a value that holds no class instance (`__anyCtor`).
+        // The kinds' objects, for a value that holds no class instance (`anyCtor`).
         self.push_scope();
         let mut lets = vec![];
         let mut kinds = vec![];
@@ -117,7 +122,7 @@ impl FnCx<'_, '_> {
         let h = self.dynamic_class_match_where(
             obj,
             any,
-            ("__anyCtor", kinds),
+            (velt_common::std_hook!(any_ctor), kinds),
             |_, _| true,
             |lw, c, read| lw.ctor_arm(c, read, (record, &object), any, span),
             span,
@@ -126,10 +131,13 @@ impl FnCx<'_, '_> {
         Ok(self.with_lets(lets, h))
     }
 
-    /// Is this the body of the prelude's `__anyConstructor`, where `x.constructor` is the
+    /// Is this the body of the hook `anyConstructor`, where `x.constructor` is the
     /// dispatch itself?
     fn in_ctor_helper(&self) -> bool {
-        self.cx.scopes[self.module].is_std && self.fn_name.ends_with("__anyConstructor")
+        self.cx.scopes[self.module].is_std
+            && self
+                .fn_name
+                .ends_with(velt_common::std_hook!(any_constructor))
     }
 
     /// The `constructor` of an instance of class `c` held by the dynamic `read`, as an `any`;
@@ -146,13 +154,25 @@ impl FnCx<'_, '_> {
         let lit = |s: &str| synth(ast::ExprKind::Lit(ast::Lit::Str(s.to_string())), span);
         if Some(c) == record {
             // An own `constructor` key, else `Object`'s; none for `Object.create(null)`'s.
-            return self.prelude_fn_call("__anyRecordCtor", vec![read, object.clone()], span);
+            return self.prelude_fn_call(
+                velt_common::std_hook!(any_record_ctor),
+                vec![read, object.clone()],
+                span,
+            );
         }
         if self.declared_in_fn(c) {
-            return self.prelude_fn_call("__anyCtorLocal", vec![lit(&name)], span);
+            return self.prelude_fn_call(
+                velt_common::std_hook!(any_ctor_local),
+                vec![lit(&name)],
+                span,
+            );
         }
         if self.class_ctor_name(c).is_none() {
-            return self.prelude_fn_call("__anyCtorUnsupported", vec![lit(&name)], span);
+            return self.prelude_fn_call(
+                velt_common::std_hook!(any_ctor_unsupported),
+                vec![lit(&name)],
+                span,
+            );
         }
         match self.class_object(c, Want::Move, span) {
             Some(h) => self.coerce(h, any),
@@ -209,13 +229,17 @@ impl FnCx<'_, '_> {
         let key = (object, self.cx.ty.fn_ptr(vec![], tag));
         if kind != "Number" {
             let msg = format!("TypeError: calling `{kind}` through the `constructor` of a value is not supported yet (#926)");
-            let init =
-                class_object_call("__classObject", &format!("[Function: {kind}]"), msg, span);
+            let init = class_object_call(
+                velt_common::std_hook!(class_object),
+                &format!("[Function: {kind}]"),
+                msg,
+                span,
+            );
             return self.ctor_global(key, object, init, None, Want::Move, span);
         }
-        // `(s: string, ...m: __ClassMarker<number>[]): any => Number(s)`: callable as `Number`,
+        // `(s: string, ...m: ClassMarker<number>[]): any => Number(s)`: callable as `Number`,
         // and its type tells velt_vir to print it as `[Function: Number]` (`format.rs`).
-        let marker = self.cx.prelude_adt("__ClassMarker")?;
+        let marker = self.cx.prelude_adt(velt_common::std_hook!(class_marker))?;
         let mark = self.cx.ty.intern(TyKind::Adt(marker, vec![tag]));
         let params = vec![self.cx.ty.str_, self.cx.ty.array(mark)];
         let never = self.cx.ty.never;
@@ -290,8 +314,8 @@ impl FnCx<'_, '_> {
             }
         };
         let maker = match statics && !std {
-            true => "__classObjectStatics",
-            false => "__classObject",
+            true => velt_common::std_hook!(class_object_statics),
+            false => velt_common::std_hook!(class_object),
         };
         let init = class_object_call(maker, &printed, msg, span);
         self.ctor_global(key, d, init, None, want, span)
@@ -350,7 +374,7 @@ impl FnCx<'_, '_> {
     }
 }
 
-/// `maker(printed, msg)` (the prelude's `__classObject` or `__classObjectStatics`): a class's
+/// `maker(printed, msg)` (the hook `classObject` or `classObjectStatics`): a class's
 /// (or kind's) object, printed as `printed` and stopping with `msg` when called. One closure
 /// for all, so one type and one `any` descriptor whatever the number of classes.
 fn class_object_call(maker: &str, printed: &str, msg: String, span: Span) -> ast::Expr {

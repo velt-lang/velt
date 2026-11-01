@@ -1,7 +1,7 @@
 //! `any` and `unknown`, the dynamic value (issue #924, design note on #823; hir_encodings.md
 //! "any and unknown").
 //!
-//! Both are interfaces of the prelude (`std/prelude/z_dynamic.vlt`) that every type implements
+//! Both are interfaces of the prelude (`std/prelude/dynamic.vlt`) that every type implements
 //! through one generic implementation sema adds here (`Program::any_impl`, `impl<T> any for
 //! T` with no methods). A value converted to either is an interface value (`ToDyn`): the
 //! value, boxed unless it is a class instance or a counted object, and the interface table
@@ -216,6 +216,8 @@ impl Ctx<'_> {
     pub(crate) fn is_function_ty(&self, t: TyId) -> bool {
         match self.ty.kind(t) {
             TyKind::FnPtr { .. } | TyKind::Closure(_) => true,
+            // A function with properties (#921).
+            TyKind::Adt(..) => self.is_callable_object(t),
             TyKind::Dyn(..) => matches!(
                 self.dynamic(t),
                 Some(Dynamic::Function) | Some(Dynamic::Any)
@@ -304,10 +306,16 @@ pub(crate) fn dyn_members(cx: &mut Ctx) -> Option<FxHashMap<DefId, Vec<DynMember
         let (mut cur, mut cur_args) = (d, args);
         for _ in 0..64 {
             let Some(a) = cx.adt(cur) else { break };
+            // A standard-library class's `private` members are not in its `any` table: no
+            // program can name them (Node's `RegExp` has no `matchAt`), and their glue would only
+            // cost code, and make the types it converts arguments to view types (#1831). A
+            // program's own `private` members stay, as in Node.
+            let std = cx.scopes[a.module].is_std;
             let mut own: Vec<(String, DefId)> = a
                 .methods
                 .iter()
                 .filter(|(k, m)| !m.is_static && !is_private_key(k))
+                .filter(|(_, m)| !(std && cx.fn_info(m.def).is_private))
                 .map(|(k, m)| (k.clone(), m.def))
                 .collect();
             own.sort();

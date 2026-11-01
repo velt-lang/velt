@@ -12,7 +12,7 @@
 //!   around its steps (`counter`).
 //! - **Simplification** (`simplify`): comparisons and branches the facts decide become
 //!   constants and jumps; `trunc`/`floor`/`ceil`/`round` of whole values, `abs` of
-//!   non-negative ones, ToInt32 of constants and int32 values and `__floatIndex` of whole
+//!   non-negative ones, ToInt32 of constants and int32 values and `floatIndex` of whole
 //!   indexes need no call; a parameter known to be one constant is that constant.
 //! - **Narrowing** (`narrow`, `rewrite`): an `f64` local whose every value is whole, never NaN
 //!   and within ±2^53 (where integer arithmetic is exact), and that is never `-0` or only read
@@ -33,6 +33,7 @@ mod counter;
 mod fact;
 mod flow;
 mod int32;
+mod liveness;
 mod narrow;
 mod params;
 mod print;
@@ -67,11 +68,11 @@ const ROUNDING: [&str; 4] = [
 /// `Math.abs` (`f64 -> f64`).
 const ABS: &str = "velt_rt_math_fabs";
 /// The prelude's `xs[i]` with a float `i` (`std/prelude/math.vlt`).
-const FLOAT_INDEX: &str = "std/prelude/math::__floatIndex";
+const FLOAT_INDEX: &str = velt_common::std_hook!(float_index);
 
 /// The prelude's int32 helpers (`std/prelude/math.vlt`), inlined in debug builds too so that
 /// `numrep` sees their integer paths.
-const INT32_HELPERS: [&str; 1] = ["std/prelude/math::__mulToInt32"];
+const INT32_HELPERS: [&str; 1] = [velt_common::std_hook!(mul_to_int32)];
 
 /// Per function: is it (an instance of) one of the prelude functions `names`? Instances made
 /// for a caller's location (panic messages) append `_L…` to the symbol.
@@ -98,7 +99,7 @@ pub(crate) fn int32_helpers(funcs: &[Function]) -> Vec<bool> {
 /// The program-wide names `numrep` recognizes.
 pub(crate) struct Env<'p> {
     externs: &'p [ExternFn],
-    /// Per function: is it (an instance of) the prelude's `__floatIndex`?
+    /// Per function: is it (an instance of) the prelude's `floatIndex`?
     float_index: Vec<bool>,
     /// The arrays' aggregate: its field 1 is a length, below 2^53.
     array: Option<AggId>,
@@ -303,6 +304,7 @@ fn tracked(env: &Env, func: &Function, groups: &arrays::Groups) -> Vec<Local> {
     let mut in_slice = vec![false; n];
     let mut work: Vec<Local> = seeds.into_iter().filter(|&l| reg(l)).collect();
     let mut counters_seen = false;
+    let counter_cx = counter::Cx::new(func);
     loop {
         while let Some(l) = work.pop() {
             if std::mem::replace(&mut in_slice[l.0 as usize], true) {
@@ -323,13 +325,16 @@ fn tracked(env: &Env, func: &Function, groups: &arrays::Groups) -> Vec<Local> {
             }
         }
         // A counter's cap needs the trip counts of the loops around it: track what their exit
-        // tests compare too (`i < s.length` with an `i64` `i`).
-        let double_counter = |i: usize| {
+        // tests compare too (`i < s.length` with an `i64` `i`). Also for an integer counter
+        // read as a double (`page[q++]` once `q` is an `i64`: `q as f64` is whole only within
+        // the cap).
+        let counter = |i: usize| {
+            let t = ty(Local(i as u32));
             in_slice[i]
-                && ty(Local(i as u32)) == Ty::F64
-                && counter::maybe(func, Local(i as u32), true)
+                && (t == Ty::F64 || t.is_int())
+                && counter::maybe(&counter_cx, Local(i as u32), true)
         };
-        if counters_seen || !(0..n).any(double_counter) {
+        if counters_seen || !(0..n).any(counter) {
             break;
         }
         counters_seen = true;

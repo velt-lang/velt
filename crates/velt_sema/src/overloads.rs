@@ -98,6 +98,7 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> Option<Rewritten> {
                     methods(&mut d.methods, base, &classes, &mut out);
                 }
                 ast::ItemKind::Extend(x) => methods(&mut x.methods, None, &classes, &mut out),
+                ast::ItemKind::Interface(d) => crate::iface_overloads::rewrite(d, &mut out),
                 ast::ItemKind::Import(imp) => {
                     let target = match imp.from.is_empty() {
                         true => Some(&local),
@@ -118,6 +119,7 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> Option<Rewritten> {
         out.modules.push(SourceModule {
             path: m.path.clone(),
             is_std: m.is_std,
+            is_dependency: m.is_dependency,
             file: m.file,
             ast: ast::Module {
                 items,
@@ -138,6 +140,7 @@ fn has_overloads(item: &ast::Item) -> bool {
             d.methods.iter().any(|m| !m.decl.overloads.is_empty())
         }
         ast::ItemKind::Extend(x) => x.methods.iter().any(|m| !m.decl.overloads.is_empty()),
+        ast::ItemKind::Interface(d) => crate::iface_overloads::has_overloads(d),
         _ => false,
     }
 }
@@ -222,6 +225,7 @@ fn methods(
                 is_getter: false,
                 is_setter: false,
                 is_override,
+                is_abstract: false,
             });
         }
     }
@@ -323,7 +327,7 @@ fn add_sig_names(names: &mut Vec<ast::ImportName>, target: &FxHashMap<String, us
 ///   implementation's result and converts that (`return await f(a);`).
 /// - The implementation's type parameters are passed explicitly when the signature has type
 ///   parameters of the same names.
-fn signature_fn(
+pub(crate) fn signature_fn(
     mut sig: ast::FnSig,
     k: usize,
     name: &str,

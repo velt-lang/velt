@@ -1,0 +1,52 @@
+// sqlite/engine/exec/core_terms (internal): a core's WHERE and ON terms compiled, each placed at
+// the innermost level of the loops it reads (OR of equalities on one column also as an IN term).
+
+import { Expr, SelectCore } from "../sql/types";
+import { Pred } from "./types";
+import { ExprCompiler } from "./expr_compiler";
+import { Term, levelOf } from "./plan/term";
+import { orAsIn } from "./plan/or_as_in";
+import { andTerms, FromPart } from "./from_part";
+
+/** The WHERE and ON terms of `core`, whose FROM items `fp` holds. */
+export function whereTerms(c: ExprCompiler, core: SelectCore, fp: FromPart): Term[] {
+  const sc = fp.sc;
+  const terms: Term[] = [];
+  const onExprs = fp.onExprs;
+  const onLevel = fp.onLevel;
+  const whereParts: Expr[] = [];
+  andTerms(core.where, whereParts);
+  for (const e of whereParts) {
+    onExprs.push(e);
+    onLevel.push(-1);
+  }
+  for (let i: usize = 0; i < onExprs.length; i++) {
+    const mark = c.track();
+    sc.where = true;
+    let pred: Pred = () => false;
+    try {
+      pred = c.pred(onExprs[i], sc);
+    } finally {
+      sc.where = false;
+    }
+    let level = levelOf(c.touched, mark, sc.sources);
+    if (onLevel[i] > level) {
+      level = onLevel[i];
+    }
+    const t = new Term(onExprs[i], pred, level, onLevel[i]);
+    for (let k = mark; k < c.touched.length; k++) {
+      if (sc.sources.includes(c.touched[k]) && !t.srcs.includes(c.touched[k])) {
+        t.srcs.push(c.touched[k]);
+      }
+    }
+    terms.push(t);
+    const inTerm = orAsIn(onExprs[i]);
+    if (inTerm != null) {
+      const v = new Term(inTerm!, pred, level, onLevel[i]);
+      v.srcs = t.srcs;
+      v.virtual = true;
+      terms.push(v);
+    }
+  }
+  return terms;
+}

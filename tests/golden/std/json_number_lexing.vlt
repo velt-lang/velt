@@ -1,0 +1,25 @@
+// A decoder's number is valued from the digits the scanner read while lexing it: an integer of at
+// most 15 digits directly, a number of at most 19 digits with an exponent of at most 5 digits
+// through decimalValue, anything longer by the general parser. Each case sits at one of those
+// limits; all are correctly rounded, as in Node.
+function main() {
+  const doc = `[
+    0, -0, 7, -7, 999999999999999, -999999999999999, 1000000000000000, 9007199254740993,
+    -9007199254740993, 12345678901234567890, 123456789012345678901234567890,
+    0.0, -0.0, 0e0, -0e-5, 0.000000000000000000000000001, -0.0000000000000000000012345678901234567,
+    1.5, -65.613616999999977, 43.420273000000009, 1234567890123456789.5, 0.1234567890123456789,
+    1.2345678901234567890, 9.999999999999999e22, 1e22, 1e23, 8.98846567431158e307,
+    1e308, 1.7976931348623157e308, 1.7976931348623159e308, 1e309, 5e-324, 2.4703282292062328e-324,
+    2.4703282292062327e-324, 1e-400, 1e99999, 1e100000, 1e-100000, 1E+00010, 1e-00010,
+    123.456e-7, 7e0000000000000000000001
+  ]`;
+  for (const x of JSON.parse<f64[]>(doc)) {
+    console.log(x);
+  }
+  const ints =
+    "[0, -0, 123456789012345, -123456789012345, 1234567890123456, 9223372036854775807, -9223372036854775808]";
+  console.log(JSON.parse<i64[]>(ints).join(" "));
+  console.log(
+    JSON.parse<u64[]>("[0, 999999999999999, 1000000000000000, 18446744073709551615]").join(" "),
+  );
+}

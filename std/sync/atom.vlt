@@ -1,0 +1,71 @@
+// velt/sync (internal): `Atom<T>`, a shared value that threads read, replace and update.
+
+import { VersionLatch } from "velt/sync/version_latch";
+
+/**
+ * A `shared` value that threads read at once without a lock and replace whole, like Rust's
+ * `arc-swap`: `Atom.create(shared(config))`. Readers never wait and never write; a value it
+ * replaces is dropped once no thread can still be reading it (`velt/sync/epoch`).
+ *
+ * - `read((v) => …)` runs the callback on the current value, borrowed: no count, the cheapest
+ *   read. `load()` returns it as a reference of its own, to keep.
+ * - `store(v)` and `swap(v)` replace it (`swap` returns the value before).
+ * - `update((v) => …)` replaces it with what the callback makes of it. Updates take turns, so the
+ *   callback runs once per update, unless a `store` or `swap` came in between (then it runs again
+ *   on the newer value); if it throws, nothing changes. It must not `update` the same `Atom`.
+ *
+ * Keep it in a `shared` object for threads to share it, or use an `Atomic<shared<T> | null>`
+ * at module level.
+ */
+export struct Atom<T> {
+  private cell: Atomic<shared<T>>;
+  private writers: VersionLatch;
+
+  /** An `Atom` holding `value`. */
+  static create(value: shared<T>): Atom<T> {
+    return { cell: new Atomic<shared<T>>(value), writers: VersionLatch.create() };
+  }
+
+  /**
+   * The current value, borrowed by `f`: reading it there costs no count, and whatever `f`
+   * keeps of it (returns, stores, captures) takes a reference of its own.
+   */
+  read<R, E>(f: (value: shared<T>) => R throws E): R throws E {
+    const v = this.cell.load("acquire");
+    return f(v);
+  }
+
+  /** The current value, as a reference of its own. */
+  load(): shared<T> {
+    return this.cell.load("acquire");
+  }
+
+  /** Makes `value` the current value. */
+  store(value: shared<T>): void {
+    this.cell.store(value, "release");
+  }
+
+  /** Makes `value` the current value; returns the one before. */
+  swap(value: shared<T>): shared<T> {
+    return this.cell.exchange(value, "acqrel");
+  }
+
+  /**
+   * Replaces the current value with `f(current)`; returns the new value. Updates take turns,
+   * so `f` must not call `update` on the same `Atom`: it would wait for itself forever.
+   */
+  update<E>(f: (current: shared<T>) => shared<T> throws E): shared<T> throws E {
+    const version = this.writers.lockExclusive();
+    try {
+      while (true) {
+        const current = this.cell.load("acquire");
+        const next = f(current);
+        if (this.cell.compareExchange(current, next, "acqrel")) {
+          return next;
+        }
+      }
+    } finally {
+      this.writers.unlockExclusive(version);
+    }
+  }
+}

@@ -1,0 +1,21 @@
+// A `Map` subclass's own `[Symbol.for("mapAt")]` and `[Symbol.for("mapLiveAt")]` members are
+// members of its own, keyed by the registered symbols: `Map` keeps working as a `Map` (they
+// share a description with std's private keys, not a key).
+class M extends Map<string, string> {
+  [Symbol.for("mapAt")](key: string): number {
+    return 42;
+  }
+  [Symbol.for("mapLiveAt")](e: usize): bool {
+    return true;
+  }
+}
+
+function main() {
+  const m = new M();
+  for (let i = 0; i < 8; i++) m.set("key" + i, "value-" + i);
+  for (let i = 0; i < 7; i++) m.delete("key" + i);
+  console.log(m.get("key7"), m.size, [...m.keys()]);
+  const o = new M();
+  o.set("key7", "value-7");
+  console.log(deepEqual(m as Map<string, string>, o as Map<string, string>));
+}

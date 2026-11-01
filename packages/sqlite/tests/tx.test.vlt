@@ -1,0 +1,146 @@
+// sqlite transactions: transaction(fn) commits or rolls back, nests with savepoints, and
+// begin()/commit()/rollback() for explicit control.
+import { open, Database, Statement } from "../src/lib";
+
+class Count {
+  n: i64;
+
+  constructor(n: i64) {
+    this.n = n;
+  }
+}
+
+function count(db: Database): i64 {
+  const c: Count | null = db.prepare("SELECT count(*) AS n FROM t").get();
+  return c?.n ?? -1;
+}
+
+// Inserts `n`; a duplicate fails (and is recorded in `failed` with its code, since closures
+// cannot throw).
+function add(ins: Statement, n: i64, failed: string[]) {
+  try {
+    ins.runWith([n]);
+  } catch (e) {
+    failed.push(e.code.clone());
+  }
+}
+
+function setup(): Database {
+  const db = open(":memory:");
+  db.exec("CREATE TABLE t (n INTEGER PRIMARY KEY)");
+  return db;
+}
+
+// A database with rows 1..100, committed by one transaction.
+function filled(): Database {
+  const db = setup();
+  const ins = db.prepare("INSERT INTO t VALUES (?)");
+  const failed: string[] = [];
+  db.transaction(() => {
+    for (let i = 1; i <= 100; i++) {
+      add(ins, i, failed);
+    }
+    return 100;
+  });
+  ins.close();
+  return db;
+}
+
+export function test_commit_returns_the_result() {
+  const db = setup();
+  const ins = db.prepare("INSERT INTO t VALUES (?)");
+  const failed: string[] = [];
+  // Commit: the callback's result is returned.
+  const inserted = db.transaction(() => {
+    for (let i = 1; i <= 100; i++) {
+      add(ins, i, failed);
+    }
+    return 100;
+  });
+  assertEq(inserted, 100);
+  assertEq(count(db), 100);
+  assertEq(db.inTransaction, false);
+  assertEq(failed, [] as string[]);
+  ins.close();
+  db.close();
+}
+
+export function test_failure_rolls_back() {
+  const db = filled();
+  const ins = db.prepare("INSERT INTO t VALUES (?)");
+  const failed: string[] = [];
+  // Any failure inside rolls everything back and is thrown by transaction().
+  let code = "no error";
+  try {
+    db.transaction(() => {
+      add(ins, 200, failed);
+      add(ins, 1, failed);
+      add(ins, 201, failed);
+      return 0;
+    });
+  } catch (e) {
+    code = e.code.clone();
+  }
+  assertEq(failed, ["SQLITE_CONSTRAINT_PRIMARYKEY"]);
+  assertEq(code, "SQLITE_CONSTRAINT_PRIMARYKEY");
+  assertEq(count(db), 100);
+  ins.close();
+  db.close();
+}
+
+export function test_nested_rollback_undoes_only_its_savepoint() {
+  const db = filled();
+  const ins = db.prepare("INSERT INTO t VALUES (?)");
+  const failed: string[] = [];
+  let inner = "no error";
+  let innerInTransaction = false;
+  // Nested: a failed inner transaction undoes only its savepoint.
+  db.transaction(() => {
+    add(ins, 300, failed);
+    try {
+      db.transaction(() => {
+        add(ins, 301, failed);
+        add(ins, 300, failed);
+        return 0;
+      });
+    } catch (e) {
+      inner = e.message.clone();
+      innerInTransaction = db.inTransaction;
+    }
+    add(ins, 302, failed);
+    return 0;
+  });
+  assertEq(failed, ["SQLITE_CONSTRAINT_PRIMARYKEY"]);
+  assertEq(inner, "UNIQUE constraint failed: t.n");
+  assertEq(innerInTransaction, true);
+  const top: Count[] = db.prepare("SELECT n FROM t WHERE n >= 300 ORDER BY n").all();
+  assertEq(top.map((c) => c.n), [300, 302]);
+  ins.close();
+  db.close();
+}
+
+export function test_explicit_begin_commit_rollback() {
+  // The golden this comes from ran after the nested test: 100 rows plus 300 and 302.
+  const db = filled();
+  db.exec("INSERT INTO t VALUES (300), (302)");
+  const ins = db.prepare("INSERT INTO t VALUES (?)");
+  // Explicit control.
+  const tx = db.begin();
+  ins.runWith([400]);
+  assertEq(db.inTransaction, true);
+  assertEq(count(db), 103);
+  tx.rollback();
+  assertEq(db.inTransaction, false);
+  assertEq(count(db), 102);
+  const tx2 = db.begin();
+  ins.runWith([401]);
+  const inner = db.begin();
+  ins.runWith([402]);
+  inner.rollback();
+  tx2.commit();
+  const last: Count[] = db.prepare("SELECT n FROM t WHERE n >= 400").all();
+  assertEq(last.map((c) => c.n), [401]);
+  assertEq(db.inTransaction, false);
+  ins.close();
+  db.close();
+}

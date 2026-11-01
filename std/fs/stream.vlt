@@ -1,0 +1,31 @@
+// velt/fs (internal): reading and writing files in chunks (rt_abi_async.md §14.7), for files too
+// large to hold in memory or produced incrementally (logs, exports, line-by-line processing).
+//
+// `openRead` gives a `FileReader` (bytes, text chunks or lines); `openWrite` a buffered
+// `FileWriter`. Operations run on the runtime's blocking pool like the rest of std/fs and
+// throw `IoError`. Like std/net's `TcpStream`, both are Copy handles (so `await r.readLine()`
+// can be called repeatedly; async methods take `this` by copy) released by `close()`: an
+// unclosed handle leaks until exit; after `close()` through any copy, the others throw
+// `IoError` `EBADF` and closing again does nothing. A writer's `close()` also flushes and
+// reports write errors.
+
+import { unwrapIo } from "velt/native/result";
+import { FileReader } from "velt/fs/file_reader";
+import { FileWriter } from "velt/fs/file_writer";
+import { velt_rt_fs_open_read, velt_rt_fs_open_write } from "velt/fs/rt";
+
+/** The options of `openWrite`. */
+export struct OpenWriteOptions {
+  /** Append to the file instead of truncating it. */
+  append?: bool;
+}
+
+/** Opens `path` for chunked reading. */
+export async function openRead(path: string): Promise<FileReader> {
+  return FileReader { handle: unwrapIo(await velt_rt_fs_open_read(path)) };
+}
+
+/** Creates (or truncates, or with `append` extends) `path` for buffered writing. */
+export async function openWrite(path: string, opts: OpenWriteOptions = {}): Promise<FileWriter> {
+  return FileWriter { handle: unwrapIo(await velt_rt_fs_open_write(path, opts.append ?? false)) };
+}

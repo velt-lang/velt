@@ -11,8 +11,8 @@
 //!
 //! | operation | bit 0 clear | bit 0 set (cold, outlined per field type) |
 //! |---|---|---|
-//! | `s.f` | the load | `__get("f", receiver)` checked as the field's type (`Glue::ProxyGet`) |
-//! | `s.f = v` | the store | `__set("f", v, receiver)`; `false` is Node's `TypeError` (`Glue::ProxySet`) |
+//! | `s.f` | the load | `[PROXY_GET]("f", receiver)` checked as the field's type (`Glue::ProxyGet`) |
+//! | `s.f = v` | the store | `[PROXY_SET]("f", v, receiver)`; `false` is Node's `TypeError` (`Glue::ProxySet`) |
 //! | `s.f op= v` | both of the above | both of the above |
 //! | `s.m()` | the call, `this` = `s` | the call with `this` = the proxy, so `this.x` runs the traps |
 //! | retain / release | the count | the `Proxy` object's count (the bit cleared first) |
@@ -70,7 +70,9 @@ impl Cx<'_> {
     /// in the standard library are not counted.
     pub(super) fn note_proxy_target(&mut self, t: TyId) {
         let std = self.cur_def.is_some_and(|d| match self.hir.def(d) {
-            hir::Def::Fn(f) => f.name.starts_with("std/"),
+            hir::Def::Fn(f) => f
+                .name
+                .starts_with(velt_common::std_modules::CANONICAL_PREFIX),
             _ => false,
         });
         if !std {
@@ -347,6 +349,39 @@ impl FnLower<'_, '_> {
         Operand::Copy(place)
     }
 
+    /// `base.f` of a field of no size (`void`: an interface at `T = void`) of the proxiable
+    /// `bty`: when `base` holds a proxy or a view, its `get` trap (a getter) runs all the same,
+    /// as in JavaScript, and its answer is dropped.
+    pub(super) fn proxy_unit_field_read(
+        &mut self,
+        base: &hir::Expr,
+        bty: TyId,
+        index: u32,
+    ) -> Operand {
+        let v = self.expr(base);
+        let (name, _) = self.proxy_field(bty, index);
+        if self.dead() || name.starts_with('#') {
+            return super::unit();
+        }
+        let bp = self.place_of(v, bty);
+        let ptr = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(bp)));
+        let any = self.cx.any_ty();
+        self.proxy_split(
+            &ptr,
+            |lw, u| {
+                let avt = lw.cx.ty(any);
+                let slot = Place::local(lw.temp(avt));
+                let key = lw.proxy_key_addr(&name);
+                let out = lw.addr(slot.clone());
+                let f = lw.cx.func(Work::Glue(Glue::ProxyGet, any));
+                lw.call(Callee::Func(f), vec![u, key, out], None, false);
+                lw.drop_glue(slot, any);
+            },
+            |_| {},
+        );
+        super::unit()
+    }
+
     /// The value of field `index` of the `bty` value at `ptr`, in a temporary (borrowed; a
     /// proxy's answer is owned by a slot dropped with the statement's temporaries).
     pub(super) fn proxy_read_at(&mut self, ptr: &Operand, bty: TyId, index: u32) -> Place {
@@ -407,6 +442,8 @@ impl FnLower<'_, '_> {
         self.proxy_split(
             &ptr,
             |lw, _| {
+                // The slot of the trap's answer drops in this arm: the other never sets it.
+                lw.push_scope(super::ScopeKind::Temps);
                 let (_, fty) = lw.proxy_field(bty, index);
                 let fp = lw.proxy_read_at(&ptr, bty, index);
                 let some = match lw.cx.kind(fty) {
@@ -414,6 +451,7 @@ impl FnLower<'_, '_> {
                     _ => super::FnLower::ctrue(),
                 };
                 lw.assign(Place::local(out), Rvalue::Use(some));
+                lw.pop_scope();
             },
             |lw| {
                 let mut fp = lw.proxy_hot_place(&ptr, bty, index);
@@ -550,9 +588,9 @@ impl FnLower<'_, '_> {
                 let m = lw
                     .dyn_members_of(d)
                     .into_iter()
-                    .find(|m| m.name == "__hasGet" && m.kind == hir::DynMemberKind::Method);
+                    .find(|m| m.name == velt_common::std_key!(proxy_has_get) && m.kind == hir::DynMemberKind::Method);
                 let Some(m) = m else {
-                    super::ice("the `Proxy` class without `__hasGet`")
+                    super::ice("the `Proxy` class without `[PROXY_HAS_GET]`")
                 };
                 let fid = lw.cx.func_for(m.def, vec![]);
                 let b = lw.cx.intern(TyKind::Bool);
@@ -645,8 +683,14 @@ impl FnLower<'_, '_> {
         let k = self.proxy_key(ProxyKey::Str(key));
         let r = self.proxy_receiver(data, pty);
         let res = Place::local(self.temp(avt));
-        if !self.proxy_invoke("__get", data, pty, vec![(k, any), (r, any)], &res) {
-            super::ice("the `Proxy` class without `__get`");
+        if !self.proxy_invoke(
+            velt_common::std_key!(proxy_get),
+            data,
+            pty,
+            vec![(k, any), (r, any)],
+            &res,
+        ) {
+            super::ice("the `Proxy` class without `[PROXY_GET]`");
         }
         let v = self.any_unbox(&res, any, fty);
         let op = self.deref_param(out, fty);
@@ -676,8 +720,8 @@ impl FnLower<'_, '_> {
         let r = self.proxy_receiver(data, pty);
         let res = Place::local(self.temp(avt));
         let args = vec![(k, any), (val, any), (r, any)];
-        if !self.proxy_invoke("__set", data, pty, args, &res) {
-            super::ice("the `Proxy` class without `__set`");
+        if !self.proxy_invoke(velt_common::std_key!(proxy_set), data, pty, args, &res) {
+            super::ice("the `Proxy` class without `[PROXY_SET]`");
         }
         let b = self.cx.intern(TyKind::Bool);
         let ok = self.any_unbox(&res, any, b);

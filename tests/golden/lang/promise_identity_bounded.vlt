@@ -1,0 +1,53 @@
+// Converted, compared promises and a converted rejecting promise handled in every iteration of a
+// long loop (#1682): what each iteration made goes once its promises do, so memory stays bounded
+// however long the loop runs. (A loop that never yields keeps the `then` promises its awaits
+// woke until it does, converted or not; this one yields to a timer now and then.)
+async function f(n: number): Promise<number> {
+  return n;
+}
+
+async function bad(n: number): Promise<number> {
+  throw new Error("x" + n);
+}
+
+function keep(p: Promise<unknown>): Promise<unknown> {
+  return p;
+}
+
+function keepE(p: Promise<unknown, Error>): Promise<unknown, Error> {
+  return p;
+}
+
+async function rounds(n: number): Promise<number> {
+  let sum = 0;
+  const s = new Set<Promise<unknown>>();
+  for (let i = 0; i < n; i++) {
+    const p = f(i);
+    s.add(p);
+    const k = keep(keep(p));
+    if (s.has(k)) sum++;
+    s.delete(p);
+    sum += await p;
+    if (i % 1000 == 999) await new Promise<void>((r) => setTimeout(() => r(), 0));
+    const b = bad(i);
+    const se = new Set<Promise<unknown, Error>>();
+    se.add(keepE(b));
+    try {
+      await b;
+    } catch (e) {
+      sum++;
+    }
+  }
+  return sum;
+}
+
+async function main() {
+  await rounds(5000);
+  const before = process.memoryUsage().heapUsed;
+  const sum = await rounds(40000);
+  const grown = process.memoryUsage().heapUsed - before;
+  // Kept per iteration, this would be well over 40 MB.
+  console.log("sum", sum, grown < 16 * 1024 * 1024 ? "bounded" : `grew ${grown}`);
+}
+
+main();

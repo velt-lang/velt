@@ -37,6 +37,14 @@ explanation, see [Memory without a garbage collector](../book/memory.md).
   it. A parameter the body stores or returns takes ownership: a caller that does not use its
   variable again hands it over for free, one that does shares it. Returning a field of a class
   instance (a getter's `return this.ctl.sig`) shares the field and only borrows the instance.
+  Passing a field of an object other variables also refer to (`decode(this.db.data, out)`)
+  borrows it for free when the callee runs no code that could replace it while reading it
+  (it reads, computes, pushes plain values onto arrays it is given, and throws through a
+  `never` function such as `corrupt("bad header")`; a method called on it, `this.db.header(n)`,
+  counts as such a callee too); a callee that may (it calls a callback or a method a subclass
+  overrides) gets the field shared for the call, so it stays alive whatever the callee does.
+  A local that only reads such a field (`const data = this.db.data;`) borrows it the same way
+  in a release build: it takes no count when nothing that runs while it is used could free it.
 - A **promise** is shared like an object: every holder may `await` it and gets the result
   ([Async](async.md#promises)).
 - Dropping a long chain of objects never overflows the stack, however it is linked: a
@@ -100,7 +108,7 @@ explanation, see [Memory without a garbage collector](../book/memory.md).
   anything in the program. A generic function's field of type `T` counts as the type the call
   passes for `T`, or, where that is not known, as any type the program passes as a type
   argument. Code that runs without being called counts as called: a class's `toString()`,
-  `toJSON()`, `__inspect()` and own `clone()` when the right-hand side formats, serialises or
+  `toJSON()`, `[util.inspect.custom]()` and own `clone()` when the right-hand side formats, serialises or
   copies a value that may hold that class (`String(x)`, `[x].join()`, `JSON.stringify`,
   `console.log`, `x.clone()`), its `[Symbol.dispose]()` wherever such a value is dropped, the
   body of any generator in the program at each `next()`, `for...of` or spread over a
@@ -173,12 +181,45 @@ call: directly, as an overlapping place (`a` / `a.f`, `xs` / `xs[i]`), through a
 binding, or as a closure capture. `append(xs, xs)`, `append(g.rows[0], g.rows[1])` and
 `xs.forEach((x) => { xs.push(x); })` are errors
 (``cannot use `xs` here: this call may modify it through another argument``). Reading a number
-is fine (`xs.push(xs.length)`), and distinct fields are disjoint (`f(this.a, this.b)`). This rule
+is fine (`xs.push(xs.length)`), and distinct fields are disjoint (`f(this.a, this.b)`). So are
+variables destructured from distinct parts of one value: the elements of a tuple or of an array
+pattern and the fields of an object (`const [a, b] = t; append(a, b)`, or
+`for (const [name, input] of cases) it(name, () => check(input))`), while each still overlaps
+the value it came from (`append(t[0], a)` is an error). An
+argument may change the inside of a class instance or an array another argument passes while it
+is evaluated, before the call starts (`this.set(this.src.get(1))` with `get` changing
+`this.src`): JavaScript's callee sees that change too. The change must be to a place inside the
+passed value (`show(b, (b.items[0] = 8))` is allowed), or set the length of an array a field
+holds (`g(h.vs, (h.vs.length = 0))`: `g` sees the shorter array). A system function's buffer is
+not passed so: it is a view of the array's bytes, which a later argument may not change at all
+(`pread(fd, h.b.subarray(0, 8), (h.b.length = 0) as i64)` is an error). A change through the
+passed value itself is still an error: an argument that hands `xs` or `b` to a modifying call
+(`xs.push(popIt(xs))`, or `show(b, setFirst(b))` where `setFirst` only sets `b.items[0]`), and
+so is replacing it or a place on its way (`f(x.arr, (x.arr = []))`). Changing an object of an object type or a `struct`
+another argument passes (`f(o.pt, (o.pt.x = 5))` with `pt: { x: number; y: number }`) is an
+error too: Velt holds those inline and passes a copy, which would miss the change. This rule
 is what lets the compiler assume no aliasing for values with a single owner, like Rust. Two
 variables that refer to the same object (`const ys = xs; append(xs, ys)`) are allowed and work
 as in JS: the type is then reference-counted, and the compiler makes no such assumption for it.
 So is a closure argument that takes over a variable another argument only borrows
 (`derive(parts, () => parts.length)` where `derive` keeps the closure): the closure shares it.
+The parameters of a closure (or of a function used as a value) may be one object, since a call
+through a function value can pass the same object twice. Such a closure may pass two of them on
+whole to another closure, which is checked the same way (`mount(vnode, container)` calling
+`mountComponent(vnode, container)` in a renderer whose nested functions use its variables). Passing
+them to a named function that modifies one of them is still an error. So is a part of one with
+another when the check sees the callee modify one (`mountComponent(vnode.kids[0], container)`). When
+it does not (a closure or function value whose modified parameters are borrowed: `work(a, b.log)`
+where `work` replaces `x.log` and fills `ys`), the call compiles, and with `a === b` the callee
+fills the array that replaced the one it was given, unlike JS (#1801). A function that modifies a
+parameter and is also used as a value gets the caller's object for it. When a later argument may
+replace that object first (it calls a function value that replaces the field passed first, as in
+`pushes[0](p.log, swaps[0](p))`), the parameter is the object the argument was when it was
+evaluated, as in JS: the object's type is then reference-counted. A later argument that cannot reach
+the object does not do that: a literal, a standard-library call on numbers and strings
+(`Math.sqrt(4)`, `x.toFixed(2)`); nor does any later argument when the object is a variable of the
+caller's own that no closure assigns and the call's arguments do not assign: a function value called
+there cannot replace it (`hooks[0](acc, nums[0]())`).
 The key of a `Map`'s or `Set`'s `has`, `get` or `delete` (and a `WeakMap`'s or `WeakSet`'s) is
 compared by identity, so it may be the object the collection is reached through: in
 `for (const link of sub.deps) link.dep.subs.delete(sub)` the call reads only `sub`'s address. A

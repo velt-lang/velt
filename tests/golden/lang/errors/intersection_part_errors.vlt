@@ -1,10 +1,10 @@
 // An alias's own type parameter as an intersection part is reported where the alias is used,
 // and a `Record` part says what a record is (#1225).
 type Tagged<T> = T & { tag: string };
-class Point {
-  x = 1;
-}
-const p: Tagged<Point> | null = null;
+// (A class is a part: `Tagged<C>` is a brand of the instance.)
+//
+//
+const p: Tagged<string[]> | null = null;
 function sig<V>(r: Record<string, V>): void {
   const s: (Record<string, V> & { $set: () => void }) | null = null;
 }

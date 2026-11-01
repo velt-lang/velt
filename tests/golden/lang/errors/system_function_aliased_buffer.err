@@ -1,0 +1,2 @@
+system_function_aliased_buffer.vlt:8:44
+error: cannot use `xs` here: this call may modify it through another argument

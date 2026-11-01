@@ -1,0 +1,101 @@
+// An object literal of plain values converted through `any` / `unknown` to an interface with
+// methods (#1886): a property holding a function fills a method, as in Node, and the interface
+// value is the same object.
+interface Ctx {
+  n: number;
+  label?: string;
+  update(): void;
+  add(k: number): number;
+  join(prefix: string, k: number): string;
+  hook(fn: (x: number) => void): void;
+  done?(): string;
+}
+
+function triple(k: number): number {
+  return k * 3;
+}
+
+interface Shape {
+  n: number;
+  update(): void;
+  add(k: number): number;
+}
+
+class Impl implements Shape {
+  n = 7;
+  update(): void {
+    console.log("class update", this.n);
+  }
+  add(k: number): number {
+    return this.n + k;
+  }
+}
+
+// Arrows, a `function` expression and a named function; fewer parameters than the method
+// takes (the rest are not passed, as in JavaScript); a result dropped by a `void` method.
+const init = {
+  n: 1,
+  update: () => console.log("update"),
+  add: triple,
+  join: function (p: string, k: number) {
+    return p + ":" + k;
+  },
+  hook: () => {
+    console.log("hook takes no argument");
+  },
+  extra: true,
+};
+const c = init as unknown as Ctx;
+c.update();
+console.log(c.n, c.add(4), c.join("x", 2));
+c.hook((x) => console.log("never", x));
+console.log(c.label === undefined, c.done === undefined);
+
+// The optional members present, a method whose function calls its argument.
+const full = {
+  n: 2,
+  label: "two",
+  update: () => 42,
+  add: (k: number) => k + 100,
+  join: (p: string) => p + "!",
+  hook: (f: (x: number) => void) => f(9),
+  done: () => "done",
+};
+const u: unknown = full;
+const d = u as Ctx;
+d.update();
+console.log(d.label, d.add(1), d.join("hi", 5));
+d.hook((x) => console.log("hooked", x));
+console.log(d.done ? d.done() : "none");
+
+// The same object: a write through the interface is seen through the literal, and back.
+c.n = 5;
+console.log(init.n, c.n);
+init.n = 6;
+console.log(c.n);
+
+// An object nested in another one converted to `any`.
+const holder = {
+  inner: {
+    n: 3,
+    update: () => console.log("inner update"),
+    add: triple,
+    join: (p: string, k: number) => p + k,
+    hook: (f: (x: number) => void) => f(3),
+  },
+};
+const h: any = holder;
+const k = h.inner as Ctx;
+k.update();
+k.hook((x) => console.log("inner hook", x));
+
+// Class instances keep converting through their own implementation.
+const anyImpl: any = new Impl();
+const e = anyImpl as Shape;
+e.update();
+console.log(e.add(1));
+
+// A stored literal where the interface is expected is the same object too.
+const stored: Ctx = full;
+stored.n = 20;
+console.log(full.n, stored.add(2));

@@ -1,0 +1,50 @@
+N absent absent true true
+N absent undefined false false
+N absent null false false
+N undefined null false false
+N null null true true
+N 1 1 true true
+N 1 2 false false
+N null 1 false false
+N absent 1 false false
+U absent undefined false false
+U undefined undefined true true
+U undefined 1 false false
+U 1 1 true true
+NU absent undefined false false
+NU undefined null false false
+NU null null true true
+NU 1 1 true true
+NU 1 null false false
+Un x x true true
+Un x 1 false false
+Un absent undefined false false
+Rec same true true
+Rec diff false false
+Rec absent undefined false false
+Arr same true true
+Arr null false false
+Arr null null true true
+Arr absent null false false
+Obj same true true
+Obj diff false false
+Obj null false false
+nested false false
+K absent absent true
+K absent undefined true
+K absent null false
+K absent 1 false
+K undefined absent true
+K undefined undefined true
+K undefined null false
+K undefined 1 false
+K null absent false
+K null undefined false
+K null null true
+K null 1 false
+K 1 absent false
+K 1 undefined false
+K 1 null false
+K 1 1 true
+record undefined entry false false
+record same true true

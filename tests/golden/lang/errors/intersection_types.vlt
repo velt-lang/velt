@@ -1,5 +1,5 @@
-// Intersections Velt rejects, each with its fix: parts with no value in common, classes,
-// arrays and function types as parts, a class as a type parameter part's argument, a member of
+// Intersections Velt rejects, each with its fix: parts with no value in common, arrays and
+// function types as parts, a plain instance where a brand of its class is expected, a member of
 // the type parameter part of an intersection in generic code (#350), and extra or missing fields
 // in a literal.
 type Conflict = { k: string } & { k: number };

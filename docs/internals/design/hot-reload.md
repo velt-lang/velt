@@ -124,7 +124,10 @@ changed modules. Sema is now most of a reload's time (see "Measured"), so this i
    runtime keys by the program's module descriptor; swapped-in code has a new descriptor and gets a
    fresh block from its own initializers, so nothing is migrated
    ([the Reference](../../reference/variables.md#module-state)). State in `shared(...)` or
-   class instances owned by `main` or handlers carries over.
+   class instances owned by `main` or handlers carries over. So does a static atomic
+   (`const X = new Atomic<T>(literal)`, not module state) and a `ThreadLocal`'s key: the
+   session owns one word or key per constant, named by its qualified name and type, which every
+   version imports (velt_codegen_cl `dev/mod.rs`); an edit changing the type gets a new one.
 3. **Runtime rule: no cached code pointers.** Only vtables (through relocations) and future
    headers store code addresses; the HTTP handler descriptor is replaced per server on a swap,
    and every runtime API that takes callbacks must follow the same pattern.
@@ -155,11 +158,12 @@ and optionally *code* to define:
   the code itself; a later version that does not recompile one imports the newest address.
 - The handler descriptor's `init` is pinned too: `init`, `poll`, `drop` and the state size must
   come from one version. When a swap recompiles a handler, each running server gets a whole new
-  descriptor and keeps its environment. For `velt:http`'s `serve`, the user's handler is a
+  descriptor and keeps its environment. For `velt/http`'s `serve`, the user's handler is a
   closure *value* that the std wrapper calls through its trampoline, so editing a handler never
   touches the descriptor.
 
-**Classification** (`velt_codegen_cl/src/dev/`): each function key gets a 128-bit fingerprint of
+**Classification** (`velt_codegen_cl/src/dev/`; the fingerprint is `velt_vir::fingerprint`,
+`Mode::HotReload`): each function key gets a 128-bit fingerprint of
 its code that does not depend on ids (async state aggregates are fingerprinted by name, so code
 embedding a child's state is recompiled through its reference to the child's pinned `poll`
 instead). The restart rules, in order, each with its message: an ambiguous key changed; a layout

@@ -1,0 +1,79 @@
+// velt/net/websocket (internal): what receiving a message needs besides the steps of a
+// connection's `Reader` (std/websocket/reader), which `WebSocket.receive` drives itself: the
+// turn of the task that reads from the stream, and the steps that are neither a message nor a
+// read (waiting for another task's read, answering a ping or the peer's close frame, failing
+// the connection on a protocol error). Not part of the public API.
+
+import { IoError } from "velt/io/error";
+import { TcpStream } from "velt/net/tcp_stream";
+import { OP_CLOSE, closePayload } from "velt/net/websocket/frame";
+import { CLOSE, CLOSED, FAIL, PING, Step, WAIT } from "velt/net/websocket/step";
+import { Tx, closedHandle, pongRoom, settleQuietly } from "velt/net/websocket/writer";
+
+/** Bytes read at a time. */
+export const READ_CHUNK: u64 = 16384;
+
+/**
+ * Held by the task that reads from the stream (its step was `READ`): if it is dropped before
+ * it handed over what it read, or its read fails, the next task may read.
+ */
+export class ReadTurn {
+  tx: Tx | null;
+
+  constructor(tx: Tx) {
+    this.tx = tx;
+  }
+
+  done() {
+    this.tx = null;
+  }
+
+  [Symbol.dispose]() {
+    const tx = this.tx;
+    if (tx != null) {
+      tx.with((q) => q.rx.abandon());
+    }
+  }
+}
+
+// What a step that is neither a message nor a wait asks for: a ping is answered, the peer's
+// close frame is replied to (the connection is then closed: true), a protocol error fails the
+// connection with its close code and throws.
+function answer(stream: TcpStream, tx: Tx, step: Step): bool {
+  if (step.kind == PING) {
+    // A pong for a connection that is closing is not needed.
+    const payload = step.data;
+    settleQuietly(stream, tx, tx.with((q) => q.pushPong(payload)));
+    return false;
+  }
+  if (step.kind != CLOSE && step.kind != FAIL) {
+    throw closedHandle();
+  }
+  // Fails harmlessly if we closed first.
+  const reply = closePayload(step.code);
+  settleQuietly(stream, tx, tx.with((q) => q.pushBytes(OP_CLOSE, reply)));
+  if (step.kind == FAIL) {
+    throw new IoError("EILSEQ", `WebSocket protocol error: ${step.text}`);
+  }
+  return true;
+}
+
+/**
+ * Handles `step`, which is neither a message nor `READ`, and returns the reader's next step
+ * (`CLOSED` after the peer's close frame). Rare, so it is a function of its own: its state is
+ * allocated when it runs instead of being part of every `receive`.
+ */
+export async function other(stream: TcpStream, tx: Tx, step: Step): Promise<Step> {
+  if (step.kind == WAIT) {
+    const reading = tx.with((q) => q.rx.awaitTurn());
+    if (reading != null) {
+      await reading.receive();
+    }
+  } else if (answer(stream, tx, step)) {
+    return new Step(CLOSED);
+  } else {
+    // A pong was queued: past the high-water mark of pongs, read on once the peer takes them.
+    await pongRoom(tx);
+  }
+  return tx.with((q) => q.next(false));
+}

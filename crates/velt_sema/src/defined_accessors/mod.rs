@@ -70,7 +70,7 @@ fn accessor_call(e: &ast::Expr) -> Option<(&ast::Expr, &ast::Expr, &[ast::Object
 }
 
 /// Does `module` define an accessor with `Object.defineProperty`?
-fn defines_accessors(module: &ast::Module) -> bool {
+pub(crate) fn defines_accessors(module: &ast::Module) -> bool {
     struct Finds(bool);
     impl Visit<'_> for Finds {
         fn expr(&mut self, e: &ast::Expr) {
@@ -167,6 +167,7 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> (Vec<Diagnostic>, Option<Vec<
             SourceModule {
                 path: m.path.clone(),
                 is_std: m.is_std,
+                is_dependency: m.is_dependency,
                 file: m.file,
                 ast,
                 imports: m.imports.clone(),

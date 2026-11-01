@@ -60,9 +60,14 @@ impl FnCx<'_, '_> {
     fn stmts_in_scope(&mut self, stmts: &[ast::Stmt], out: &mut Vec<hir::Stmt>) {
         // The property writes a cast took as members (#921).
         let mut taken: Vec<usize> = vec![];
+        // `const`s that closures written before them use (`forward_consts`).
+        let forward = super::forward_consts::find(stmts);
         for (i, s) in stmts.iter().enumerate() {
             if taken.contains(&i) {
                 continue;
+            }
+            if forward.iter().any(|f| f.first == i) {
+                self.forward_declare(stmts, &forward, i, out);
             }
             if let ast::StmtKind::Var(v) = &s.kind {
                 if v.kind == ast::VarKind::AwaitUsing {
@@ -274,17 +279,12 @@ impl FnCx<'_, '_> {
         // Each branch starts from the state before the `if` with the condition's facts assumed,
         // and ends with what still holds there: a branch's own assignments win over the facts it
         // started from (#1226). Those end states are joined below.
-        // `if (u32x4.hasShaX86())`: the `then` branch may call functions gated on it.
-        let guard = self.cpu_guard(&c);
-        if let Some(g) = guard {
-            self.f.cpu_guards.push(g);
-        }
+        // `if (u32x4.hasShaX86())`, `if (typeIs<A, B>())`: what the `then` branch may call.
+        let guards = self.enter_guards(&c);
         let unmarked = self.instanceof_unmark(cond);
         let (t, then_facts) = self.block_narrowed_ending(then, &when_true);
         self.restore_marks(unmarked);
-        if guard.is_some() {
-            self.f.cpu_guards.pop();
-        }
+        self.exit_guards(guards);
         then_facts.iter().for_each(|f| self.narrow(f));
         let after_then = self.narrow_state();
         self.restore_narrowing(&before);
@@ -339,7 +339,8 @@ impl FnCx<'_, '_> {
         }
         let ann = v.ty.as_ref().map(|t| self.resolve(t));
         if let ast::PatternKind::Ident(name) = &v.pattern.kind {
-            if let Some(t) = &v.ty {
+            let init_ty = v.init.as_ref().and_then(crate::throws::written_init_type);
+            if let Some(t) = v.ty.as_ref().or(init_ty) {
                 self.cx.note_written_type(name.span, t.span);
             }
             self.simple_decl(v, name, ann, span, out);
@@ -486,7 +487,8 @@ impl FnCx<'_, '_> {
                 }
                 Some(t) => {
                     // Stored into the variable's site (`throws::fn_flows`).
-                    let site = v.ty.as_ref().and_then(|w| self.cx.site_in(w.span, t));
+                    let site =
+                        (v.ty.as_ref()).and_then(|w| self.cx.site_in(w.span, t).or(Some(w.span)));
                     self.stored_into(site, |s| s.expr_coerce(e, t, Want::Move))
                 }
                 None => self.copy_init(e, name, Want::Move),
@@ -587,6 +589,11 @@ impl FnCx<'_, '_> {
         {
             self.f.const_lits.insert(local, l);
         }
+        if let (LocalKind::Const, Some(h)) = (kind, &init) {
+            if matches!(h.kind, hir::ExprKind::AdtLit { .. }) && self.cx.in_generated_file(span) {
+                self.f.built_locals.insert(local);
+            }
+        }
         if let (LocalKind::Const, Some(e), Some(h)) = (kind, &v.init, &init) {
             if let Some(shape) = self.regex_const_shape(e, h.ty) {
                 self.f.regex_consts.insert(local, shape);
@@ -660,8 +667,10 @@ impl FnCx<'_, '_> {
                 let value = self.mk(hir::ExprKind::Lit(hir::Lit::Null), ret, span);
                 Self::push(out, S::Return(Some(value)), span);
             }
+            // `return;` in a `never` function is an error too, as in TypeScript (TS2322): its
+            // callers take it as never returning.
             None => {
-                if ret != self.cx.ty.unit && !self.cx.ty.is_bottom(ret) {
+                if ret != self.cx.ty.unit && ret != self.cx.ty.error {
                     let rn = self.cx.display(ret);
                     self.cx.error(
                         Diagnostic::error("mismatched types", span)

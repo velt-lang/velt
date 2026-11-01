@@ -251,6 +251,7 @@ impl FnCx<'_, '_> {
             iter,
             body,
             consume: !copy,
+            share_elems: false,
         };
         lets.push(hir::Stmt { kind, span });
         let result = self.mk(H::Local(out, UseMode::Move), exp, span);

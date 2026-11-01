@@ -86,7 +86,8 @@ fn velt_class(ty: &str) -> String {
     }
 }
 
-/// `symbol -> (params, result)` of every `declare function` under `std/`.
+/// `symbol -> (params, result)` of every `declare function` under `std/` (not `declare system
+/// function`).
 fn velt_declarations() -> BTreeMap<String, (Sig, PathBuf)> {
     let mut paths = vec![];
     files(&repo().join("std"), "vlt", &mut paths);
@@ -96,7 +97,10 @@ fn velt_declarations() -> BTreeMap<String, (Sig, PathBuf)> {
         let mut rest = text.as_str();
         while let Some(i) = rest.find("declare ") {
             let line_start = rest[..i].rfind('\n').map_or(0, |n| n + 1);
-            if !rest[line_start..i].trim().is_empty() {
+            // `export declare …`: a module's bindings file (`rt.vlt`) shares them with the
+            // module's other files.
+            let lead = rest[line_start..i].trim();
+            if !lead.is_empty() && lead != "export" {
                 // Prose (a comment) mentioning `declare`, not a declaration.
                 rest = &rest[i + "declare ".len()..];
                 continue;
@@ -105,6 +109,19 @@ fn velt_declarations() -> BTreeMap<String, (Sig, PathBuf)> {
             let end = decl.find(';').expect("declaration ends with `;`");
             rest = &decl[end..];
             let decl = &decl[..end];
+            // A system function binds the C library, not the runtime
+            // (docs/reference/system-functions.md), an intrinsic is the compiler's
+            // (std/lang/intrinsics) and a generated function's body is a source generator's.
+            if [
+                "declare system ",
+                "declare intrinsic ",
+                "declare generated(",
+            ]
+            .iter()
+            .any(|kw| decl.starts_with(kw))
+            {
+                continue;
+            }
             let Some(f) = decl.find("function ") else {
                 continue;
             };
@@ -240,12 +257,6 @@ fn mismatches(defs: &BTreeMap<String, Vec<(Sig, PathBuf)>>, required: bool) -> V
         // The SIMD operations are emitted inline by the backends (rt_abi.md "SIMD"): no
         // runtime defines them. `velt_vir`'s `simd` tests check their declarations.
         if name.starts_with("velt_simd_") {
-            continue;
-        }
-        // std's drivers (crates/velt_std_*) export through the SDK's `#[export]`: the compiler
-        // checks std's declarations of them against their signature records, as it checks a
-        // package's (veltc/src/native, `check_std_driver`).
-        if name.starts_with("velt_std_") {
             continue;
         }
         let Some(found) = defs.get(&name) else {

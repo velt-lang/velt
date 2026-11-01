@@ -14,8 +14,9 @@
 //! | 9..11 | member writes and `in` (any_set.rs, any_has.rs), when the program has them |
 //! | 12 | the weak word (weak_object.rs), when `object` is a weak key |
 //! | 13 | `AnyKeys` (any_keys.rs), when the program lists the keys of an `any` |
-//! | 14 | `AnyJson` (json/any.rs), when the program writes a dynamic value as JSON |
+//! | 14 | (unused: was the JSON writer's, now velt/encoding/json/any.vlt over reflection) |
 //! | 15 | `AnyDelete` (any_delete.rs), when the prelude deletes a property through `any` |
+//! | 18 | `AnyReflect` (any_reflect.rs), when the program reflects on `any` values (velt/reflect) |
 //!
 //! Tables are built per concrete type and memoized, so two values of one type have the same
 //! table: a checked conversion compares one pointer.
@@ -188,9 +189,9 @@ impl Cx<'_> {
             let f = Const::Func(self.func(Work::Glue(Glue::AnyKeys, ty)));
             e.push((super::any_keys::SLOT_KEYS, f));
         }
-        if self.boxing.any_json {
-            let f = Const::Func(self.func(Work::Glue(Glue::AnyJson, ty)));
-            e.push((super::json::any::SLOT_JSON, f));
+        if self.boxing.any_reflect {
+            let f = Const::Func(self.func(Work::Glue(Glue::AnyReflect, ty)));
+            e.push((super::any_reflect::SLOT_REFLECT, f));
         }
         e
     }
@@ -626,6 +627,11 @@ impl FnLower<'_, '_> {
             return self.any_unbox_str_literal(p, from, ty, &lit);
         }
         let vt = self.cx.ty(ty);
+        if vt == Ty::Unit {
+            // A `void` (a field of `{ value: T }` at `T = void`): nothing to keep.
+            self.drop_glue(p.clone(), from);
+            return super::unit();
+        }
         let out = Place::local(self.temp(vt));
         let data = Operand::Copy(proj(p, Proj::Field(0)));
         let desc = Operand::Copy(proj(p, Proj::Field(1)));
@@ -736,6 +742,8 @@ impl FnLower<'_, '_> {
         self.any_record_fill(p, from, ty, &out, done);
         // A generic function value held as `unknown` (glue/vtable.rs `ClosureAny`).
         self.any_to_generic_fn(p, ty, desc.clone(), &out, done);
+        // A function of another type (`Program::any_fn_views`, any_generic_fn.rs).
+        self.any_to_fn_view(p, ty, desc.clone(), &out, done);
         // An object implementing the interface, or the interface at other type arguments.
         self.any_to_iface(p, ty, &out, done);
         if self.cx.proxiable(ty) {
@@ -751,7 +759,15 @@ impl FnLower<'_, '_> {
             // An array of another element type: a view of it (array_view.rs).
             self.array_view_make(p, desc.clone(), ty, &out, done);
         }
-        self.any_type_error(desc, ty);
+        if !self.cx.proxiable(ty) {
+            // An object of another object type, where no view can be made: a copy of its
+            // members (any_object_fill.rs).
+            self.any_object_fill(p, from, ty, &out, done);
+        }
+        // A number of another numeric type (any_number.rs).
+        if !self.any_number_convert(p, ty, desc.clone(), &out, done) {
+            self.any_type_error(desc, ty);
+        }
         self.switch_to(done);
         Operand::Copy(out)
     }

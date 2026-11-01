@@ -64,6 +64,7 @@ impl FnCx<'_, '_> {
             (Some(_), None) if self.takes_dynamic_whole(exp, h.ty) => {
                 Ok(self.unbox_dynamic(h, exp))
             }
+            (Some(_), None) if self.dynamic_option(exp) => self.dynamic_to_dynamic_option(h, exp),
             (Some(_), None) if !checked_from_unknown => Err(h),
             (Some(_), None) => Ok(self.unbox_dynamic(h, exp)),
         }
@@ -248,6 +249,7 @@ impl FnCx<'_, '_> {
         let Some(imp) = self.cx.any_impl() else {
             return Err(h);
         };
+        self.cx.note_dyn_object_source(h.ty);
         let mut h = h;
         self.force_move(&mut h);
         Ok(self.mk(
@@ -442,11 +444,23 @@ impl FnCx<'_, '_> {
             if self.cx.union_def(core).is_some()
                 || self.cx.lit_value(core).is_some()
                 || self.plain_enum(core).is_some()
+                || matches!(self.cx.ty.kind(core), TyKind::FnPtr { .. })
             {
                 return self.dynamic_to_optional(h, exp, payload);
             }
         }
+        // A function: called through `any`, whatever types it was made with (dynamic_as_fn).
+        let mut h = h;
+        if let TyKind::FnPtr { params, .. } = self.cx.ty.kind(exp).clone() {
+            match self.dynamic_as_fn(h, exp, params.len()) {
+                Ok(g) => return g,
+                Err(back) => h = back,
+            }
+        }
         self.note_dynamic_iface(exp, span);
+        self.note_object_fill(exp);
+        self.note_fn_views(exp, span);
+        self.cx.note_dyn_object_target(exp);
         let h = self.share_if_place(h);
         self.intrinsic(Intrinsic::AnyTo, vec![h], exp, span)
     }
@@ -501,6 +515,9 @@ impl FnCx<'_, '_> {
             // `Array.isArray` tells one array member from the others, not two arrays apart.
             let tested = match self.cx.ty.kind(m) {
                 TyKind::Array(_) if arrays > 1 => None,
+                TyKind::FnPtr { .. } if self.fn_members(&members) > 1 => None,
+                // A promise is never held as `any` (it has one owner): no value is one.
+                TyKind::Promise(..) => continue,
                 _ => self.member_test(tmp, dty, m, span),
             };
             let Some((test, value)) = tested else {
@@ -538,34 +555,6 @@ impl FnCx<'_, '_> {
             span,
         };
         self.mk(H::Block(block), exp, span)
-    }
-
-    /// The one member of `members` that [`Self::member_test`] has no test for, when every other
-    /// member has one and it is an interface or object type (which `AnyTo` checks).
-    fn untested_member(&self, members: &[TyId]) -> Option<TyId> {
-        let arrays = self.array_members(members);
-        let mut untested = members.iter().copied().filter(|&m| {
-            let tested = match self.cx.ty.kind(m) {
-                TyKind::Int(_) | TyKind::Float(_) | TyKind::Str | TyKind::Bool | TyKind::Symbol => {
-                    true
-                }
-                TyKind::Array(_) => arrays == 1,
-                _ => self.cx.lit_value(m).is_some() || self.cx.class_of(m).is_some(),
-            };
-            !tested
-        });
-        let m = untested.next()?;
-        if untested.next().is_some() {
-            return None;
-        }
-        let checked = matches!(self.cx.ty.kind(m), TyKind::Dyn(..)) || self.cx.is_object_type(m);
-        (checked && self.cx.dynamic(m).is_none()).then_some(m)
-    }
-
-    /// How many of `members` are arrays.
-    fn array_members(&self, members: &[TyId]) -> usize {
-        let is_array = |m: &&TyId| matches!(self.cx.ty.kind(**m), TyKind::Array(_));
-        members.iter().filter(is_array).count()
     }
 
     /// The test that the dynamic value in `tmp` (type `dty`) holds a `m`, and the value as `m`.
@@ -620,11 +609,17 @@ impl FnCx<'_, '_> {
             TyKind::Array(_) => {
                 let x = read(self);
                 if self.uses_proxy() && !self.cx.scopes[self.module].is_std {
-                    self.prelude_hir_call("__anyIsArrayProxy", vec![x], b, span)
+                    self.prelude_hir_call(
+                        velt_common::std_hook!(any_is_array_proxy),
+                        vec![x],
+                        b,
+                        span,
+                    )
                 } else {
                     self.intrinsic(Intrinsic::AnyIsArray, vec![x], b, span)
                 }
             }
+            TyKind::FnPtr { rest: false, .. } => return self.fn_member_test(x, owned, m, span),
             _ => {
                 let (class, _) = self.cx.class_of(m)?;
                 let arms = vec![
@@ -664,23 +659,6 @@ impl FnCx<'_, '_> {
     pub(crate) fn any_ty(&mut self) -> Option<TyId> {
         let defs = self.cx.any?;
         Some(self.cx.ty.intern(TyKind::Dyn(defs.any, vec![])))
-    }
-
-    /// The variable of this function `e` names, when its type is `any` or `unknown`.
-    pub(crate) fn own_dynamic_local(&mut self, e: &velt_syntax::ast::Expr) -> Option<LocalId> {
-        use velt_syntax::ast::ExprKind as A;
-        let name = match &e.kind {
-            A::Paren(x) => return self.own_dynamic_local(x),
-            A::Ident(i) => i.name.as_str(),
-            _ => return None,
-        };
-        let l = self
-            .f
-            .scopes
-            .iter()
-            .rev()
-            .find_map(|s| s.names.get(name).copied())?;
-        self.cx.dynamic(self.local_ty(l)).map(|_| l)
     }
 
     /// `s === null` / `s == undefined` (`word`) on a dynamic value `s`.
@@ -724,7 +702,7 @@ impl FnCx<'_, '_> {
 
     /// `l === r` / `l == r` (`negate`: `!==` / `!=`) where the checked type of an operand is
     /// `any` or `unknown`: both sides boxed (`Intrinsic::AnyStrictEq` / `AnyLooseEq`, whose
-    /// lowering compares an object with a primitive through the prelude's `__anyLooseEq`).
+    /// lowering compares an object with a primitive through the hook `anyLooseEq`).
     pub(crate) fn dynamic_eq(
         &mut self,
         l: hir::Expr,
@@ -739,7 +717,7 @@ impl FnCx<'_, '_> {
         let l = self.compared_operand(l, any);
         let r = self.compared_operand(r, any);
         if !strict {
-            // An object against a primitive is the prelude's `__anyLooseEq` (velt_vir
+            // An object against a primitive is the hook `anyLooseEq` (velt_vir
             // any_eq.rs), which reads its members through `any`.
             self.note_dyn_members();
         }

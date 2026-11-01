@@ -92,7 +92,7 @@ members and in `#name in o` ([Classes](classes.md#classes)).
 
 - **Numbers**: `123`, `1_000_000`, `0xff`, `0b1010`, `0o17`, `1.5`, `1e21`, `2.5e-3`, with an
   optional type suffix: `10u8`, `5i32`, `1.0f32`. There are no `BigInt` literals (`10n`); use
-  [`velt:bigint`](../std/bigint.md).
+  [`velt/math`](../std/math/bigint.md).
 - **Strings**: `"..."` or `'...'`, with the escapes `\n \r \t \b \v \f \\ \" \' \0 \xHH \uHHHH
   \u{H…}`, cooked as JavaScript does: a backslash before a line break continues the line, a
   surrogate pair written as two escapes (`\uD83D\uDE00`) is one character, and a backslash
@@ -114,7 +114,7 @@ members and in `#name in o` ([Classes](classes.md#classes)).
     parameter without a default, an `async` one or a generator, a `void` result, type
     parameters of its own, or one that can throw.
 - **Regular expressions**: `/ab+c/gi` is `new RegExp("ab+c", "gi")` from
-  [`velt:regex`](../std/regex.md) (a global, like `RegExp` itself). A `/` after an operand is
+  [`velt/text`](../std/text/regex.md) (a global, like `RegExp` itself). A `/` after an operand is
   division.
 - `true`, `false`, `null`.
 
@@ -127,10 +127,10 @@ interface let new null of readonly return shared static struct switch this throw
 type typeof void while yield
 ```
 
-Contextual keywords: `extend`, `get`, `set`, `override`, `private`, `public`, `throws`, `using`.
+Contextual keywords: `abstract`, `extend`, `get`, `set`, `override`, `private`, `public`, `throws`, `using`.
 
 Not part of the language: `var` outside the top level of a function body or a module
-([Variables](variables.md)), `any`, `unknown`, `abstract`, `protected` (as a
+([Variables](variables.md)), `any`, `unknown`, `protected` (as a
 member modifier; accepted on constructors and constructor parameter properties), `delete` (except
 `delete r[k]` on a [`Record`](types.md#objects-arrays-tuples-and-maps)),
 `export default`, `mut`, `match`. Writing most of

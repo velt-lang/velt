@@ -136,7 +136,7 @@ fn modifying_a_capture_of_a_crossing_closure_is_an_error() {
 #[test]
 fn a_boundary_in_std_is_reported_at_the_users_call() {
     let r = err_src(
-        "import { channel } from \"velt:channel\";
+        "import { channel } from \"velt/sync\";
          async function main() {
            let n = 0;
            const ch = channel<() => Promise<void>>();

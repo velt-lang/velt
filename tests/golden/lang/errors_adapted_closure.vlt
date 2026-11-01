@@ -1,0 +1,32 @@
+// A closure literal adapted to another function type (here a `? :` whose arms take different
+// parameters, stored as `any`) throws what the closure throws: not what other values of its
+// type's shape (`() => any[]`, the array below) throw.
+let failure: Error | null = null;
+const fills: Array<() => any[]> = [];
+fills.push(() => {
+  throw failure;
+});
+
+function invoke(list: any[], props?: any): any[] {
+  if (props === "bad") throw new TypeError("bad props");
+  return list.map((i) => String(i) + String(props));
+}
+
+function make(hasFn: boolean, items: any[]): Record<string, any> {
+  const slots: Record<string, any> = {};
+  slots.default = hasFn ? (props?: any) => invoke(items, props) : () => items.slice();
+  return slots;
+}
+
+console.log(typeof make(false, ["a", "b"]).default);
+console.log(typeof make(true, ["a"]).default);
+try {
+  invoke(["a"], "bad");
+} catch (e) {
+  console.log((e as Error).name);
+}
+try {
+  fills[0]();
+} catch (e) {
+  console.log("caught", e);
+}

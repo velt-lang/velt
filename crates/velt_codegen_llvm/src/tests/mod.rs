@@ -84,6 +84,38 @@ fn module_structure() {
 }
 
 #[test]
+fn functions_that_never_return_are_cold() {
+    // `oob` has no `return` (a panic helper); `fail` returns only its error (`Function::cold`,
+    // a `never` function that throws); `helper` returns.
+    let mut p = sample();
+    let panic = ExternId(0);
+    let mut fb = FuncBuilder::internal("oob", &[Ptr], Unit);
+    let b = fb.block();
+    let n = fb.call(
+        b,
+        Callee::Extern(panic),
+        vec![copy_local(fb.param(0))],
+        None,
+    );
+    fb.term(n, Terminator::Unreachable);
+    p.funcs.push(fb.finish());
+    let mut fb = FuncBuilder::internal("fail", &[Ptr], Unit);
+    let b = fb.block();
+    fb.ret(b, Operand::Const(Const::Unit, Unit));
+    let mut fail = fb.finish();
+    fail.cold = true;
+    p.funcs.push(fail);
+    let ir = emit_ir(&p, "x86_64-unknown-linux-gnu").expect("emit_ir");
+    for needle in [
+        "define internal void @\"oob\"(ptr %p0) #0 cold noinline {",
+        "define internal void @\"fail\"(ptr %p0) #0 cold noinline {",
+        "define internal zeroext i8 @\"helper\"(i8 signext %p0, i16 zeroext %p1) #0 {",
+    ] {
+        assert!(ir.contains(needle), "missing `{needle}` in\n{ir}");
+    }
+}
+
+#[test]
 fn operations_follow_vir_semantics() {
     let ir = ir();
     for needle in [
@@ -273,7 +305,11 @@ fn runtime_sample() -> Program {
 
 #[test]
 fn runtime_functions_get_intrinsics_and_attributes() {
-    let ir = emit_ir(&runtime_sample(), "x86_64-unknown-linux-gnu").unwrap();
+    // The baseline x86-64 CPU (`--cpu baseline`) has no rounding instruction: `velt.floor` & co.
+    let baseline = crate::target::normalize("x86_64-unknown-linux-gnu")
+        .and_then(|t| t.with_cpu(Some("baseline")))
+        .unwrap();
+    let ir = crate::checked_ir(&runtime_sample(), &baseline, false).unwrap();
     for needle in [
         "declare double @llvm.sqrt.f64(double)",
         "call double @llvm.sqrt.f64(double 0x4000000000000000)",
@@ -294,13 +330,67 @@ fn runtime_functions_get_intrinsics_and_attributes() {
     }
     assert!(!ir.contains("call double @\"velt_rt_math_sqrt\""));
     assert!(!ir.contains("call double @\"velt_rt_math_round\""));
-    // Elsewhere `Math.round` floors with the one-instruction intrinsic.
-    let arm = emit_ir(&runtime_sample(), "aarch64-unknown-linux-gnu").unwrap();
-    assert!(
-        arm.contains("call double @llvm.floor.f64(double %x)"),
-        "{arm}"
+    // Elsewhere, x86_64 at its default level (x86-64-v2, SSE4.1's `roundsd`) included,
+    // `Math.round` floors with the one-instruction intrinsic.
+    for target in ["aarch64-unknown-linux-gnu", "x86_64-unknown-linux-gnu"] {
+        let ir = emit_ir(&runtime_sample(), target).unwrap();
+        assert!(
+            ir.contains("call double @llvm.floor.f64(double %x)"),
+            "{target}: {ir}"
+        );
+        assert!(!ir.contains("@velt.floor"), "{target}");
+    }
+}
+
+#[test]
+fn x86_code_is_for_the_default_cpu_level_unless_asked() {
+    let t = |cpu: Option<&str>| crate::target::normalize("x86_64-pc-windows-msvc")?.with_cpu(cpu);
+    let arg = |cpu| t(cpu).unwrap().cpu_arg();
+    assert_eq!(arg(None).as_deref(), Some("-march=x86-64-v2"));
+    assert_eq!(arg(Some("x86-64-v3")).as_deref(), Some("-march=x86-64-v3"));
+    assert_eq!(arg(Some("baseline")).as_deref(), Some("-march=x86-64"));
+    // An LLVM CPU name goes to clang as it is.
+    assert_eq!(arg(Some("znver4")).as_deref(), Some("-march=znver4"));
+    assert!(t(Some("Znver4")).is_err());
+    assert!(!t(None).unwrap().rounds_by_conversion());
+    assert!(t(Some("baseline")).unwrap().rounds_by_conversion());
+    let arm = |cpu| crate::target::normalize("aarch64-unknown-linux-gnu")?.with_cpu(cpu);
+    assert_eq!(arm(None).unwrap().cpu_arg(), None);
+    assert_eq!(arm(Some("baseline")).unwrap().cpu_arg(), None);
+    assert_eq!(
+        arm(Some("neoverse-n1")).unwrap().cpu_arg().as_deref(),
+        Some("-mcpu=neoverse-n1")
     );
-    assert!(!arm.contains("@velt.floor"));
+    assert!(arm(Some("x86-64-v2")).is_err());
+    assert!(
+        arm(Some("znver5")).is_err(),
+        "never reaches clang as -mcpu=znver5"
+    );
+    assert!(t(Some("skylkae")).is_err() && t(Some("neoverse-n1")).is_err());
+    if crate::available() {
+        // What clang enables for a CPU name, not Cranelift's preset of it (which has no AVX2).
+        const AVX2: u32 = 1 << 7;
+        for cpu in ["alderlake", "znver4"] {
+            let target = t(Some(cpu)).unwrap();
+            assert_ne!(target.x86_features & AVX2, 0, "{cpu}");
+            assert!(!target.rounds_by_conversion(), "{cpu}");
+            assert_eq!(
+                crate::required_features(&target.triple, Some(cpu)),
+                Ok(target.x86_features)
+            );
+        }
+    }
+    let host = crate::target::normalize("")
+        .unwrap()
+        .with_cpu(Some("native"));
+    let native = host.unwrap().cpu_arg().unwrap();
+    assert!(
+        native == "-march=native" || native == "-mcpu=native",
+        "{native}"
+    );
+    // WebAssembly has no CPU choice.
+    let wasm = crate::target::normalize("wasm32-wasip1").unwrap();
+    assert_eq!(wasm.with_cpu(Some("x86-64-v3")).unwrap().cpu_arg(), None);
 }
 
 #[test]
@@ -314,12 +404,14 @@ fn param_attributes_become_llvm_attributes() {
         ParamAttrs {
             noalias: true,
             readonly: false,
+            frozen: false,
             nonnull: true,
             dereferenceable: 24,
         },
         ParamAttrs {
             noalias: false,
             readonly: true,
+            frozen: false,
             nonnull: true,
             dereferenceable: 8,
         },

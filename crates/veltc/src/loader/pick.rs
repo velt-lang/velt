@@ -37,7 +37,7 @@ pub(super) fn first_existing(
 
 /// Whether `file` is on disk under exactly this name (the part below `base`, case included).
 pub(super) fn on_disk_exactly(dir_names: &DirNames, file: &Path, base: &Path) -> bool {
-    file.is_file() && !matches!(dir_names.case_of(file, base), Case::Differs(_))
+    vpm::probe::is_file(file) && !matches!(dir_names.case_of(file, base), Case::Differs(_))
 }
 
 impl Loader<'_, '_> {
@@ -81,7 +81,7 @@ impl Loader<'_, '_> {
     /// Whether `file` exists under exactly this name (the part below `base`, case included), on
     /// disk or in the overlay.
     fn exists_exactly(&self, file: &Path, base: &Path) -> bool {
-        if file.is_file() {
+        if vpm::probe::is_file(file) {
             return on_disk_exactly(&self.dir_names, file, base);
         }
         // A file only in the overlay: its key is the path as the editor spells it.
@@ -117,12 +117,22 @@ impl Loader<'_, '_> {
             self.error(msg, vec![fix, note.to_string()], span);
             return;
         }
-        let notes = target
+        let mut notes: Vec<String> = target
             .candidates
             .iter()
             .flatten()
             .map(|f| format!("tried `{}`", shown.show(f)))
             .collect();
+        // A module of the standard library's former layout: where it went.
+        let old = spec.strip_prefix(velt_common::std_modules::SPECIFIER_PREFIX);
+        if let Some(now) = old.and_then(|old| super::moved::now(old, spec)) {
+            // A package's sentence links its page; the others, the std docs.
+            let note = match now.contains("https://") {
+                true => now,
+                false => format!("{now} ({})", super::moved::STD_DOCS_URL),
+            };
+            notes.insert(0, note);
+        }
         self.error(format!("cannot find module `{spec}`"), notes, span);
     }
 

@@ -1,7 +1,7 @@
 // `T | null` with a nullable `T` is `T | null`, as in JavaScript: there is one `null`, so a
 // generic `U | null` at `U = string | null` holds `null` as itself (#350 review). Before, the
 // value was a nested option, and `id<string | null>(null) === null` was false.
-import { channel } from "velt:channel";
+import { channel } from "velt/sync";
 
 function id<U>(x: U): U | null {
   return x;

@@ -64,6 +64,7 @@ fn golden_m1_files_parse() {
                 | "global_this_declare_global.vlt"
                 | "global_this_declare_let.vlt"
                 | "_global_this_declared_lib.vlt"
+                | "abstract_class_syntax.vlt"
         ) {
             continue;
         }

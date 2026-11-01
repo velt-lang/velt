@@ -1,0 +1,192 @@
+// velt/lang/bytes (internal): text in byte arrays (std/prelude/bytes.vlt): the length of a string
+// in an encoding, writing it as UTF-8 (lone surrogates replaced), ASCII lowercasing and
+// comparing bytes with a string.
+
+import { strByteAt, strByteLen, strLoadPartialU8x16, strLoadU8x16 } from "velt/lang/intrinsics";
+
+declare function velt_simd_u8x16_splat(x: u8): u8x16;
+declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
+declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
+declare function velt_simd_u8x16_eq(a: u8x16, b: u8x16): mask8x16;
+declare function velt_simd_u8x16_load_partial(from: u8[], at: u64, count: u64): u8x16;
+declare function velt_simd_u8x16_store_partial(v: u8x16, to: u8[], at: u64, count: u64);
+declare function velt_simd_u8x16_sub(a: u8x16, b: u8x16): u8x16;
+declare function velt_simd_u8x16_or(a: u8x16, b: u8x16): u8x16;
+declare function velt_simd_u8x16_lt(a: u8x16, b: u8x16): mask8x16;
+declare function velt_simd_mask8x16_all(m: mask8x16): bool;
+declare function velt_simd_mask8x16_any(m: mask8x16): bool;
+declare function velt_simd_mask8x16_or(a: mask8x16, b: mask8x16): mask8x16;
+declare function velt_simd_u8x16_select(m: mask8x16, a: u8x16, b: u8x16): u8x16;
+
+/** `Buffer.byteLength` in a named encoding (kept out of the inlined default, UTF-8). */
+export function byteLengthIn(s: string, encoding: string): usize {
+  if (encoding == "utf8") {
+    return strByteLen(s);
+  }
+  const e = encoding.toLowerCase();
+  if (e == "utf16le" || e == "utf-16le" || e == "ucs2" || e == "ucs-2") {
+    return s.length * 2;
+  }
+  if (e == "latin1" || e == "binary" || e == "ascii") {
+    return s.length;
+  }
+  if (e == "hex") {
+    return s.length / 2;
+  }
+  if (e == "base64" || e == "base64url") {
+    // Node: up to two trailing `=` are padding; 3 bytes per 4 characters.
+    let n = s.length;
+    if (n > 0 && s.charCodeAt((n - 1) as i64) == 61) {
+      n--;
+    }
+    if (n > 1 && s.charCodeAt((n - 1) as i64) == 61) {
+      n--;
+    }
+    return n * 3 / 4;
+  }
+  return strByteLen(s);
+}
+
+/**
+ * The first `n` UTF-8 bytes of `s` into `d` from `at` (they fit), from where the string keeps
+ * them: 64 bytes per step, then sixteen, the last vector ending at the end (overlapping bytes
+ * already written); fewer than sixteen in one partial load and store. Whether a byte `ED` was
+ * among them (a lone surrogate starts with it: see `replaceLoneSurrogates`), found in the same
+ * pass.
+ */
+export function copyText(d: u8[], s: string, at: usize, n: usize): bool {
+  const ed = velt_simd_u8x16_splat(0xed);
+  if (n < 16) {
+    const v = strLoadPartialU8x16(s, 0, n as u64);
+    velt_simd_u8x16_store_partial(v, d, at as u64, n as u64);
+    return velt_simd_mask8x16_any(velt_simd_u8x16_eq(v, ed));
+  }
+  let seen = velt_simd_u8x16_eq(ed, velt_simd_u8x16_splat(0));
+  let i: usize = 0;
+  while (i + 64 <= n) {
+    const a = strLoadU8x16(s, i as u64);
+    const b = strLoadU8x16(s, (i + 16) as u64);
+    const c = strLoadU8x16(s, (i + 32) as u64);
+    const e = strLoadU8x16(s, (i + 48) as u64);
+    const to = (at + i) as u64;
+    velt_simd_u8x16_store(a, d, to);
+    velt_simd_u8x16_store(b, d, to + 16);
+    velt_simd_u8x16_store(c, d, to + 32);
+    velt_simd_u8x16_store(e, d, to + 48);
+    const ab = velt_simd_mask8x16_or(velt_simd_u8x16_eq(a, ed), velt_simd_u8x16_eq(b, ed));
+    const ce = velt_simd_mask8x16_or(velt_simd_u8x16_eq(c, ed), velt_simd_u8x16_eq(e, ed));
+    seen = velt_simd_mask8x16_or(seen, velt_simd_mask8x16_or(ab, ce));
+    i += 64;
+  }
+  while (i + 16 < n) {
+    const v = strLoadU8x16(s, i as u64);
+    velt_simd_u8x16_store(v, d, (at + i) as u64);
+    seen = velt_simd_mask8x16_or(seen, velt_simd_u8x16_eq(v, ed));
+    i += 16;
+  }
+  const last = (n - 16) as u64;
+  const v = strLoadU8x16(s, last);
+  velt_simd_u8x16_store(v, d, (at as u64) + last);
+  return velt_simd_mask8x16_any(velt_simd_mask8x16_or(seen, velt_simd_u8x16_eq(v, ed)));
+}
+
+/**
+ * A string keeps a lone surrogate as its three WTF-8 bytes (`ED A0..BF xx`), which valid UTF-8
+ * never holds; it is written as U+FFFD (`EF BF BD`), as long. Patches the `n` bytes written at
+ * `at` (only a string that is not ASCII can hold one), sixteen at a time looking for `ED`.
+ */
+export function replaceLoneSurrogates(d: u8[], at: usize, n: usize) {
+  const end = at + n;
+  const ed = velt_simd_u8x16_splat(0xed);
+  let i = at;
+  while (i < end) {
+    const count = end - i < 16 ? end - i : 16;
+    const v =
+      count == 16
+        ? velt_simd_u8x16_load(d, i as u64)
+        : velt_simd_u8x16_load_partial(d, i as u64, count as u64);
+    if (velt_simd_mask8x16_any(velt_simd_u8x16_eq(v, ed))) {
+      for (let k = i; k < i + count; k++) {
+        if (d[k] == 0xed && k + 2 < end && d[k + 1] >= 0xa0) {
+          d[k] = 0xef;
+          d[k + 1] = 0xbf;
+          d[k + 2] = 0xbd;
+        }
+      }
+    }
+    i += count;
+  }
+}
+
+/** `write` at an offset past the end (cold: kept out of the inlined `write`). */
+export function writeOutOfBounds(): never {
+  panic("RangeError: offset is out of bounds");
+}
+
+/**
+ * `write` of `s` (`n` bytes, not fitting) into `d` from `offset`: as many whole characters as
+ * fit, lone surrogates as U+FFFD.
+ */
+export function writeText(d: u8[], s: string, offset: usize, n: usize): usize {
+  if (offset > d.length) {
+    writeOutOfBounds();
+  }
+  let k = n;
+  if (k > d.length - offset) {
+    // Back to the start of the character that does not fit (continuation bytes are 10xxxxxx).
+    k = d.length - offset;
+    while (k > 0 && (strByteAt(s, k as u64) & 0xc0) == 0x80) {
+      k--;
+    }
+  }
+  if (k > 0 && copyText(d, s, offset, k)) {
+    replaceLoneSurrogates(d, offset, k);
+  }
+  return k;
+}
+
+// ASCII letters of `v` in lower case (`A`..`Z` + 32).
+function lowerAscii(v: u8x16): u8x16 {
+  const upper = velt_simd_u8x16_lt(
+    velt_simd_u8x16_sub(v, velt_simd_u8x16_splat(65)),
+    velt_simd_u8x16_splat(26),
+  );
+  return velt_simd_u8x16_or(
+    v,
+    velt_simd_u8x16_select(upper, velt_simd_u8x16_splat(32), velt_simd_u8x16_splat(0)),
+  );
+}
+
+/**
+ * Whether the `n` bytes of `d` from `at` are the `n` UTF-8 bytes of `s`, ASCII letters in any
+ * case with `ci`: sixteen at a time (the last vector ending at the end), fewer in one partial
+ * load of each side.
+ */
+export function textEquals(d: u8[], at: usize, s: string, n: usize, ci: bool): bool {
+  if (n < 16) {
+    let a = velt_simd_u8x16_load_partial(d, at as u64, n as u64);
+    let b = strLoadPartialU8x16(s, 0, n as u64);
+    if (ci) {
+      a = lowerAscii(a);
+      b = lowerAscii(b);
+    }
+    return velt_simd_mask8x16_all(velt_simd_u8x16_eq(a, b));
+  }
+  let i: usize = 0;
+  while (true) {
+    const j = i + 16 < n ? i : n - 16;
+    let a = velt_simd_u8x16_load(d, (at + j) as u64);
+    let b = strLoadU8x16(s, j as u64);
+    if (ci) {
+      a = lowerAscii(a);
+      b = lowerAscii(b);
+    }
+    if (!velt_simd_mask8x16_all(velt_simd_u8x16_eq(a, b))) {
+      return false;
+    }
+    if (j + 16 >= n) {
+      return true;
+    }
+    i += 16;
+  }
+}

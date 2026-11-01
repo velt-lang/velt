@@ -168,7 +168,11 @@ pub fn hover(text: &str, offset: u32, data: &RegistryData, dir: Option<&Path>) -
             let loc = locations_for(text)?;
             let index = match data.index(&loc, &dep.name) {
                 Lookup::Ready(index) => index,
-                Lookup::Pending | Lookup::Unavailable if dep.has_path => None,
+                Lookup::Pending | Lookup::Unavailable
+                    if dep.source != vpm::manifest::ide::registry::DependencySource::Registry =>
+                {
+                    None
+                }
                 Lookup::Pending | Lookup::Unavailable => return None,
             };
             let locked = locked(lockfile(dir).as_ref(), &dep.name);

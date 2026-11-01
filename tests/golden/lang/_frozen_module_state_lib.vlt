@@ -1,0 +1,11 @@
+// The module state of another module, for frozen_module_state.vlt.
+
+export class Limits {
+  limit: number = 3;
+}
+
+export const shared = new Limits();
+
+export function poke(): void {
+  shared.limit = 10;
+}

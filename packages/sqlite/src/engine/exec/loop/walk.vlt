@@ -1,0 +1,13 @@
+// sqlite/engine/exec/loop/walk (internal): the rows of one FROM level as a `Walk` stepped from
+// outside, one row at a time (engine/exec/loop/pull): the same access paths as
+// engine/exec/loop/loop's loops (a full scan, a rowid lookup, list or range, an index scan with a
+// prefix equality and a range on the next column, an index lookup per IN value, the rows of a
+// subquery).
+
+/** The rows of one level, in its access path's order: `start` for the first, `step` after. */
+export abstract class Walk {
+  /** Moves to the first row; false when there is none. */
+  abstract start(): bool;
+  /** Moves to the next row; false past the last. */
+  abstract step(): bool;
+}

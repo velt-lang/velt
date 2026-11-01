@@ -1,0 +1,36 @@
+// http-server (internal): `ClosedStreams`, the streams of an HTTP/2 connection closed last, and
+// which of them were reset. A frame the client sent before it saw a reset is ignored; one on a
+// stream closed otherwise is STREAM_CLOSED; one on any other id below the last stream opened is
+// PROTOCOL_ERROR (RFC 9113 §5.1).
+
+/// The ids of the last streams closed, oldest overwritten first.
+export class ClosedStreams {
+  private ids: i64[];
+  private resets: bool[];
+  private at: i64 = 0;
+
+  /// Room for `size` ids: twice the concurrency limit, so a burst of streams reset at once (each
+  /// with an upload still arriving) is remembered whole.
+  constructor(size: i64) {
+    this.ids = new Array<i64>(size).fill(0);
+    this.resets = new Array<bool>(size).fill(false);
+  }
+
+  /// Notes stream `id` as closed; `reset`: with RST_STREAM (sent, received, or refused).
+  add(id: i64, reset: bool) {
+    this.ids[this.at] = id;
+    this.resets[this.at] = reset;
+    this.at = (this.at + 1) % (this.ids.length as i64);
+  }
+
+  /// Whether stream `id` is one of them.
+  has(id: i64): bool {
+    return this.ids.includes(id);
+  }
+
+  /// Whether stream `id` is one of them, closed with a reset.
+  wasReset(id: i64): bool {
+    const i = this.ids.indexOf(id);
+    return i >= 0 && this.resets[i];
+  }
+}

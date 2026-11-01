@@ -377,6 +377,7 @@ fn arm64_linux_read_modify_writes_call_outline_helpers() {
     let opts = velt_codegen_llvm::CodegenOptions {
         target: "aarch64-unknown-linux-gnu".into(),
         optimize: true,
+        cpu: None,
     };
     let object = velt_codegen_llvm::emit_object(&program(&calls[..5]), &opts).expect("object");
     let has = |name: &str| object.windows(name.len()).any(|w| w == name.as_bytes());

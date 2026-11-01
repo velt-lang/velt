@@ -49,7 +49,12 @@ impl Project {
     pub fn open(root: &Path, opts: InstallOptions) -> Result<Project, String> {
         let root = vpm::relpath::absolute(root);
         let manifest = Manifest::from_dir(&root)?;
-        warn_toolchain_mismatch(&manifest);
+        // A member's `velt` is its workspace's; a broken workspace is reported by the install.
+        let member = vpm::workspace::Workspace::find(&root)
+            .ok()
+            .flatten()
+            .and_then(|ws| ws.member_at(&root).map(|m| ws.effective_manifest(m)));
+        warn_toolchain_mismatch(member.as_ref().unwrap_or(&manifest));
         let installed = vpm::install(&root, &Locations::from_env()?, opts)?;
         super::package::warn_yanked(&installed);
         Ok(Project {
@@ -71,6 +76,11 @@ impl Project {
             return Ok(self.root.join(entry));
         }
         Err(missing_entry_message(&self.root, &self.manifest))
+    }
+
+    /// The package's `build.cpu`.
+    pub fn build_cpu(&self) -> Option<String> {
+        self.manifest.build.as_ref()?.cpu.clone()
     }
 
     /// `<root>/target/velt`, where package builds put their outputs.
@@ -100,6 +110,13 @@ fn missing_entry_message(root: &Path, manifest: &Manifest) -> String {
 /// The error for a package command run outside any package: what is missing, and the two ways
 /// forward (a single file, if there are source files here, or making a package).
 fn no_package_message(cwd: &Path) -> String {
+    if let Some(ws) = vpm::workspace::find_root(cwd) {
+        return format!(
+            "no `package.vlt` in `{}`, which is in the workspace of `{}`\n  hint: run the command in a member's directory",
+            cwd.display(),
+            ws.join(vpm::workspace::WORKSPACE_FILE).display()
+        );
+    }
     let mut msg = format!(
         "no `package.vlt` in `{}` or any parent directory, so there is no package here",
         cwd.display()
@@ -210,7 +227,7 @@ mod tests {
     fn a_pin_this_velt_does_not_satisfy_is_a_warning() {
         let manifest = |pin: &str| {
             let src = format!(
-                "import type {{ Package }} from \"velt:package\";\nexport const pkg: Package = \
+                "import type {{ Package }} from \"velt/package\";\nexport const pkg: Package = \
                  {{ name: \"a\", version: \"1.0.0\"{pin} }};\n"
             );
             Manifest::read(velt_common::FileId(0), &src).unwrap()
@@ -291,5 +308,13 @@ mod tests {
             msg.contains("`velt run app.vlt`") && !msg.contains("files here"),
             "{msg}"
         );
+        // A workspace's root is no file to run.
+        std::fs::write(tmp.path().join("velt.workspace.vlt"), "").unwrap();
+        let msg = no_package_message(tmp.path());
+        assert!(
+            msg.contains("in the workspace of") && msg.contains("a member's directory"),
+            "{msg}"
+        );
+        assert!(!msg.contains("velt run"), "{msg}");
     }
 }

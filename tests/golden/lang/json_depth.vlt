@@ -1,6 +1,14 @@
 // The default depth limit (128 arrays and objects, like serde_json): deep documents from
 // untrusted sources fail with a JsonError instead of overflowing the stack (typed decoders
 // recurse per level). `maxDepth` raises it.
+struct Holder {
+  v: JsonValue;
+}
+
+struct Ints {
+  v: i64[];
+}
+
 class Tree {
   v: i64 = 0;
   kids: Tree[] = [];
@@ -61,4 +69,10 @@ function main() {
   show(() => height(v.as<Tree>({ maxDepth: 200 })));
   show(() => JSON.parseValue("[[[]]]", { maxDepth: 2 }));
   show(() => JSON.parseValue("[]", { maxDepth: 0 }));
+  // A `JsonValue` field counts its levels like any other: no array fits under `maxDepth: 1`.
+  show(() => JSON.parse<Holder>('{"v":[]}', { maxDepth: 1 }).v.stringify());
+  show(() => JSON.parse<Ints>('{"v":[]}', { maxDepth: 1 }).v.length);
+  show(() => JSON.parse<Holder>('{"v":7}', { maxDepth: 1 }).v.stringify());
+  show(() => JSON.parse<Holder>('{"v":[[]]}', { maxDepth: 2 }).v.stringify());
+  show(() => JSON.parse<Holder>('{"v":[[]]}', { maxDepth: 3 }).v.stringify());
 }

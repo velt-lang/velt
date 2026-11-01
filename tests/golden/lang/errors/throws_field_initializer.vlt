@@ -1,5 +1,5 @@
 // What a field initializer throws is thrown by `new` and so must be allowed where it is used.
-import { Value } from "velt:json";
+import { Value } from "velt/encoding/json";
 
 class Oops extends Error {}
 

@@ -60,7 +60,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let wa = self.cx.widen_agg(to);
         let w = self.temp(Ty::Agg(wa));
         let inner = Operand::Copy(Place::local(inner));
-        self.assign(proj(&Place::local(w), Proj::Field(1)), Rvalue::Use(inner));
+        self.assign(
+            proj(&Place::local(w), Proj::Field(1)),
+            Rvalue::Use(inner.clone()),
+        );
         let unpolled = Rvalue::Use(cint(0, Ty::U8));
         self.assign(proj(&Place::local(w), Proj::Field(2)), unpolled);
         let (size, align) = self.cx.size_align(Ty::Agg(wa));
@@ -76,6 +79,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
         ];
         let d = self.temp(Ty::Ptr);
         self.call_rt(Rt::FutBox, args, Some(Place::local(d)));
+        // In JS it is the same promise (`===`, `Set` keys; #1682).
+        let to_slot = self.cx.promise_slot(to);
+        let quiet = self
+            .result_drop_fn(to_slot)
+            .unwrap_or_else(|| cint(0, Ty::Ptr));
+        let alias = vec![Operand::Copy(Place::local(d)), inner, quiet];
+        self.call_rt(Rt::FutAlias, alias, None);
         self.owned_result(Some(d), to)
     }
 
@@ -158,7 +168,15 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.switch_to(err_bb);
         let ferr = self.cx.view(from_slot, 1);
         let e = Operand::Copy(proj(&proj(&inner, Proj::Cast(ferr)), Proj::Field(1)));
+        // Boxing into `unknown` makes temporaries: this function has no scope of its own.
+        let scoped = self.scopes.is_empty();
+        if scoped {
+            self.push_scope(crate::lower::ScopeKind::Temps);
+        }
         let widened = self.widen_error(e, e1, e2);
+        if scoped {
+            self.pop_scope();
+        }
         if self.cx.ty(e2) != Ty::Unit {
             let dst = proj(&proj(out, Proj::Cast(err_view)), Proj::Field(1));
             self.assign(dst, Rvalue::Use(widened));

@@ -1,0 +1,101 @@
+// A `subarray` of a `u8[]` that outlives the variable it was made from keeps the array's bytes:
+// returned from the function that made the array, stored in a field, captured by a closure,
+// held across an `await`, and made from an array whose variable a later argument replaces. The
+// views are counted references to the array, so the bytes stay valid whatever happens to the
+// variable. This program prints what `node` prints for it (`u8[]` read as `Buffer`).
+
+class Holder {
+  view: Uint8Array;
+  constructor(view: Uint8Array) {
+    this.view = view;
+  }
+}
+
+class Owner {
+  bytes: u8[];
+  constructor(bytes: u8[]) {
+    this.bytes = bytes;
+  }
+}
+
+// The array is a local of this function: only the view keeps it.
+function header(): Uint8Array {
+  const page: u8[] = Buffer.alloc(16);
+  page.write("header-and-body!");
+  return page.subarray(0, 6);
+}
+
+function holder(): Holder {
+  const page: u8[] = Buffer.alloc(8);
+  page.write("fielded!");
+  return new Holder(page.subarray(2, 7));
+}
+
+function reader(): () => string {
+  let page: u8[] = Buffer.alloc(8);
+  page.write("captured");
+  const v = page.subarray(1, 4);
+  page = Buffer.alloc(1);
+  return () => `${v.join(",")} ${page.length}`;
+}
+
+function both(v: Uint8Array, replaced: u8[]): string {
+  return `${v.join(",")} ${replaced.length}`;
+}
+
+async function later(v: Uint8Array): Promise<number> {
+  await new Promise<void>((resolve) => {
+    setTimeout(() => resolve(), 1);
+  });
+  return v[0] + v[v.length - 1];
+}
+
+let shared: u8[] = Buffer.alloc(4);
+
+async function main() {
+  const h = header();
+  console.log(h.length, h.join(","));
+
+  const kept = holder();
+  console.log(kept.view.length, kept.view.join(","));
+  kept.view[0] = 33;
+  console.log(kept.view[0], kept.view.byteOffset);
+
+  const r = reader();
+  console.log(r());
+
+  let b: u8[] = Buffer.alloc(6);
+  b.write("abcdef");
+  console.log(both(b.subarray(1, 3), (b = Buffer.alloc(2))));
+  console.log(b.length);
+
+  shared.write("wxyz");
+  const pending = later(shared.subarray(1, 3));
+  shared = Buffer.alloc(0);
+  console.log(await pending, shared.length);
+
+  // A view of a view: both keep the array.
+  let c: u8[] = Buffer.alloc(5);
+  c.write("12345");
+  const outer = c.subarray(1);
+  const inner = outer.subarray(1, 3);
+  c = Buffer.alloc(0);
+  console.log(inner.join(","), outer.length, c.length);
+
+  // A view of an array in a field, after the field was given another array.
+  const o = new Owner(Buffer.alloc(3));
+  o.bytes.write("xyz");
+  const ov = o.bytes.subarray(1);
+  o.bytes = Buffer.alloc(1);
+  console.log(ov.join(","), o.bytes.length);
+
+  // A `DataView` of the view's buffer, after the array's variable was replaced.
+  let d: u8[] = Buffer.alloc(4);
+  d[0] = 1;
+  d[1] = 2;
+  d[2] = 3;
+  d[3] = 4;
+  const dv = new DataView(d.subarray(0).buffer);
+  d = Buffer.alloc(0);
+  console.log(dv.getUint32(0).toString(16), d.length);
+}

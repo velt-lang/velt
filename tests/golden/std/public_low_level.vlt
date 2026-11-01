@@ -1,8 +1,8 @@
 // The low-level public APIs a fast collection is written with, as any program uses them: array
 // swaps, rotations, prefetch hints and capacity; swaps across the arrays of a `T[][]`; bit counts
 // on every integer type; and a string's UTF-8 bytes read in place.
-import { isAscii, utf8ByteAt, utf8Length } from "velt:encoding";
-import { u8x16 } from "velt:simd";
+import { isAscii, utf8ByteAt, utf8Length } from "velt/encoding";
+import { u8x16 } from "velt/simd";
 
 function arrays() {
   const xs: string[] = ["a", "b", "c", "d", "e"];

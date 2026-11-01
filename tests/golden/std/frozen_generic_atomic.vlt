@@ -1,0 +1,22 @@
+// Generic code bounded by `Frozen` reads a `shared<u64>` (an atomic integer, which other
+// threads `add` to) with the atomic load `get()` uses, not a plain load that would race.
+function rd<V extends Frozen>(s: shared<V>): V {
+  return s;
+}
+
+async function bump(c: shared<u64>) {
+  for (let i = 0; i < 200000; i++) {
+    c.add(1);
+  }
+}
+
+async function main() {
+  const c = shared<u64>(0);
+  const t = spawn(bump(c));
+  let seen: u64 = 0;
+  for (let i = 0; i < 200000; i++) {
+    seen = rd<u64>(c);
+  }
+  await t;
+  console.log(rd<u64>(c), c.get(), seen <= 200000);
+}

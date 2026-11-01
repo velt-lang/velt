@@ -1,0 +1,152 @@
+// The Redis client against a real server ($VELT_TEST_REDIS_URL; every test returns at once
+// without it): connecting, strings, expiry, counters, mget/mset, call() and database selection.
+import { connect } from "../src/lib";
+import { redisUrl, freshPrefix, cleanup } from "./support/redis";
+
+export async function test_ping_and_strings() {
+  const url = redisUrl();
+  if (url == null) {
+    return;
+  }
+  const p = freshPrefix();
+  const c = await connect(url);
+  assertEq(await c.ping(), "PONG");
+
+  // Strings.
+  assertEq(await c.get(`${p}name`), null);
+  assertEq(await c.set(`${p}name`, "Ada"), true);
+  assertEq(await c.get(`${p}name`), "Ada");
+  assertEq(await c.set(`${p}name`, "Bob", { nx: true }), false);
+  assertEq(await c.set(`${p}nobody`, "x", { xx: true }), false);
+  assertEq(await c.set(`${p}name`, "Grace", { xx: true }), true);
+  assertEq(await c.get(`${p}name`), "Grace");
+  assertEq(await c.set(`${p}ü`, "héllo ✓"), true);
+  assertEq(await c.get(`${p}ü`), "héllo ✓");
+  assertEq(await c.exists([`${p}name`, `${p}nobody`, `${p}name`]), 2);
+
+  assertEq(await cleanup(c, p), 2);
+  c.close();
+}
+
+export async function test_expiry() {
+  const url = redisUrl();
+  if (url == null) {
+    return;
+  }
+  const p = freshPrefix();
+  const c = await connect(url);
+  await c.set(`${p}name`, "Grace");
+
+  await c.set(`${p}session`, "s", { ex: 100 });
+  const ttl = await c.ttl(`${p}session`);
+  assert(ttl > 90 && ttl <= 100, `ttl in (90, 100]: ${ttl}`);
+  assertEq(await c.ttl(`${p}name`), -1);
+  assertEq(await c.ttl(`${p}nobody`), -2);
+  assertEq(await c.pexpire(`${p}name`, 50000), true);
+  const pttl = await c.pttl(`${p}name`);
+  assert(pttl > 40000 && pttl <= 50000, `pttl in (40000, 50000]: ${pttl}`);
+  assertEq(await c.persist(`${p}name`), true);
+  assertEq(await c.ttl(`${p}name`), -1);
+  assertEq(await c.expire(`${p}nobody`, 10), false);
+  await c.set(`${p}short`, "gone soon", { px: 30 });
+  await sleep(80);
+  assertEq(await c.get(`${p}short`), null);
+
+  assertEq(await cleanup(c, p), 2);
+  c.close();
+}
+
+export async function test_counters() {
+  const url = redisUrl();
+  if (url == null) {
+    return;
+  }
+  const p = freshPrefix();
+  const c = await connect(url);
+  assertEq(await c.incr(`${p}n`), 1);
+  assertEq(await c.incr(`${p}n`), 2);
+  assertEq(await c.incrBy(`${p}n`, 40), 42);
+  assertEq(await c.decr(`${p}n`), 41);
+  assertEq(await c.decrBy(`${p}n`, 10), 31);
+  assertEq(await cleanup(c, p), 1);
+  c.close();
+}
+
+export async function test_mget_and_mset() {
+  const url = redisUrl();
+  if (url == null) {
+    return;
+  }
+  const p = freshPrefix();
+  const c = await connect(url);
+  const m = new Map<string, string>();
+  m.set(`${p}a`, "1");
+  m.set(`${p}b`, "2");
+  await c.mset(m);
+  assertEq(await c.mget([`${p}a`, `${p}missing`, `${p}b`]), ["1", null, "2"]);
+  assertEq(await c.del([`${p}a`, `${p}b`, `${p}missing`]), 2);
+  assertEq((await c.keys(`${p}*`)).length, 0);
+  c.close();
+}
+
+// The generic escape hatch.
+export async function test_call() {
+  const url = redisUrl();
+  if (url == null) {
+    return;
+  }
+  const p = freshPrefix();
+  const c = await connect(url);
+  await c.set(`${p}a`, "1");
+  await c.set(`${p}name`, "Grace");
+  const echo = await c.call(["ECHO", "hi"]);
+  assertEq(echo.kind, "string");
+  assertEq(echo.asString(), "hi");
+  const kind = await c.call(["TYPE", `${p}a`]);
+  assertEq(kind.kind, "status");
+  assertEq(kind.text, "string");
+  const nothing = await c.call(["GET", `${p}missing`]);
+  assertEq(nothing.kind, "nil");
+  assertEq(nothing.isNull(), true);
+  const n = await c.call(["STRLEN", `${p}name`]);
+  assertEq(n.kind, "int");
+  assertEq(n.asInt(), 5);
+  assertEq(await cleanup(c, p), 2);
+  c.close();
+}
+
+// Database index in the URL: db 1 does not see db 0's keys.
+export async function test_database_index_in_the_url() {
+  const url = redisUrl();
+  if (url == null) {
+    return;
+  }
+  const p = freshPrefix();
+  const c = await connect(url);
+  await c.set(`${p}a`, "1");
+  const db1 = await connect(`${url}/1`);
+  assertEq(await db1.get(`${p}a`), null);
+  await db1.set(`${p}only-in-1`, "yes");
+  assertEq(await c.get(`${p}only-in-1`), null);
+  assertEq(await cleanup(db1, p), 1);
+  db1.close();
+  assertEq(await cleanup(c, p), 1);
+  assertEq((await c.keys(`${p}*`)).length, 0);
+  c.close();
+}
+
+// A duplicate is a separate connection to the same database.
+export async function test_duplicate() {
+  const url = redisUrl();
+  if (url == null) {
+    return;
+  }
+  const p = freshPrefix();
+  const c = await connect(url);
+  await c.set(`${p}a`, "1");
+  const d = await c.duplicate();
+  assertEq(await d.get(`${p}a`), "1");
+  d.close();
+  assertEq(await cleanup(c, p), 1);
+  c.close();
+}

@@ -1,0 +1,7 @@
+// velt/net/url (internal): `UrlError`, what `URL` throws for an invalid URL.
+
+/**
+ * Thrown for invalid URLs (`Invalid URL: <input>`, `Invalid base URL: <base>`): a `TypeError`, as
+ * in JS. The URI functions throw the prelude's `URIError` (`URI malformed`).
+ */
+export class UrlError extends TypeError {}

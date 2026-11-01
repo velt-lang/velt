@@ -1,0 +1,36 @@
+// A handler whose client hangs up while it waits runs to its end, so what it holds is given
+// back: it used to be cancelled at its next `await`, which leaked a database pool's connection
+// (with `max: 1`, every later request then hung). The handler here stands in for one holding a
+// pooled connection across an `await`.
+import { serve } from "../src/lib";
+import { connect } from "velt/net";
+import { describe, expect, it } from "velt/test";
+
+describe("a client that hangs up", () => {
+  it("lets the handler it left finish", async () => {
+    const started = shared(0);
+    const finished = shared(0);
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      if (new URL(req.url).pathname == "/slow") {
+        started.add(1);
+        await sleep(200);
+        finished.add(1);
+      }
+      return new Response("ok");
+    });
+    const addr = `127.0.0.1:${server.port}`;
+    try {
+      const s = await connect(addr);
+      await s.write("GET /slow HTTP/1.1\r\nHost: x\r\n\r\n");
+      await sleep(50);
+      s.close();
+      // Long enough for the abandoned handler's wait to end.
+      await sleep(400);
+      expect(started.get()).toBe(1);
+      expect(finished.get()).toBe(1);
+      expect(await (await fetch(`http://${addr}/fast`)).text()).toBe("ok");
+    } finally {
+      await server.shutdown();
+    }
+  });
+});

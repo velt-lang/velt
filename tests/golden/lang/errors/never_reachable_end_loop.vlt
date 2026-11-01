@@ -1,0 +1,9 @@
+// A `never` function that loops forever on one path only reaches its end on the other: rejected,
+// as in TypeScript (TS2534).
+function f2(x: number): never {
+  if (x > 0) {
+    for (;;) {}
+  }
+}
+f2(-1);
+console.log("f2 returned");

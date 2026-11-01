@@ -1,8 +1,8 @@
 // binary-trees (Benchmarks Game): single-threaded Velt on `std/arena`, the shape of the Rust
 // programs that use bumpalo (Rust #5): every tree's nodes live in one pool that is reset, not
 // freed node by node, before the next tree; nodes are Copy structs linked by `u32` index.
-import { args } from "velt:process";
-import { Arena } from "velt:arena";
+import { args } from "velt/process";
+import { Arena } from "velt/mem";
 
 const MIN_DEPTH = 4;
 

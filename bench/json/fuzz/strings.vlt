@@ -1,0 +1,97 @@
+// JSON.stringify of random strings, one line per case: the same program under Node and Velt
+// must print the same bytes (bench/json/fuzz/run.sh runs both; from #1066). Strings mix plain ASCII
+// runs, control characters, `"`, `\`, DEL, lone and paired surrogates, U+D000–U+D7FF, Hangul,
+// U+2028/2029 and other non-ASCII, at every length from empty to a few thousand units, also
+// sliced at a random start. 100,000 cases, 125,000 lines.
+
+let seed = 0;
+
+function rnd(n: number): number {
+  seed = (seed * 48271) % 2147483647;
+  return seed % n;
+}
+
+function unit(): string {
+  const k = rnd(20);
+  if (k < 7) {
+    return String.fromCharCode(0x20 + rnd(0x5f));
+  }
+  if (k == 7) {
+    return String.fromCharCode(rnd(0x20));
+  }
+  if (k == 8) {
+    return ["\"", "\\", "\u007f", "/", "\"\"", "\\\\"][rnd(6)];
+  }
+  if (k == 9) {
+    return String.fromCharCode(0xD800 + rnd(0x400));
+  }
+  if (k == 10) {
+    return String.fromCharCode(0xDC00 + rnd(0x400));
+  }
+  if (k == 11) {
+    return String.fromCharCode(0xD000 + rnd(0x800));
+  }
+  if (k == 12) {
+    return String.fromCharCode(0xAC00 + rnd(11172));
+  }
+  if (k == 13) {
+    return String.fromCharCode(0x80 + rnd(0x780));
+  }
+  if (k == 14) {
+    return String.fromCharCode(0x800 + rnd(0xF800));
+  }
+  if (k == 15) {
+    return [" ", " ", "￿", "﻿", "\u0000", "í", " "][rnd(7)];
+  }
+  if (k == 16) {
+    return "😀";
+  }
+  if (k == 17) {
+    return "abcdefghijklmnopqrstuvwxyz0123456789".slice(0, 1 + rnd(36));
+  }
+  if (k == 18) {
+    return " ";
+  }
+  return String.fromCharCode(0x30 + rnd(0x40));
+}
+
+function sample(): string {
+  const r = rnd(100);
+  let n = 0;
+  if (r < 60) {
+    n = rnd(24);
+  } else if (r < 90) {
+    n = rnd(80);
+  } else if (r < 99) {
+    n = rnd(400);
+  } else {
+    n = rnd(4000);
+  }
+  let s = "";
+  for (let i = 0; i < n; i++) {
+    s += unit();
+  }
+  return s;
+}
+
+function run(start: number, cases: number) {
+  seed = start;
+  let lines: string[] = [];
+  for (let c = 0; c < cases; c++) {
+    const s = sample();
+    lines.push(JSON.stringify(s));
+    if (c % 4 == 0) {
+      const from = rnd(9);
+      lines.push(JSON.stringify([s.slice(from), s.substring(1, s.length - 1), s + s]));
+    }
+    if (lines.length >= 1000) {
+      console.log(lines.join("\n"));
+      lines = [];
+    }
+  }
+  if (lines.length > 0) {
+    console.log(lines.join("\n"));
+  }
+}
+
+run(20261027, 100000);

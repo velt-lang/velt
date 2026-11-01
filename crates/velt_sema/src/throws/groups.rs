@@ -304,7 +304,8 @@ fn link_vtables(
             match base_vtable.get(slot) {
                 Some(&b) => uf.union(Node::Def(b), Node::Def(m)),
                 None => {
-                    if let Some(decl) = cx.try_fn(m).and_then(|f| f.declared_throws) {
+                    let decl = cx.try_fn(m).and_then(|f| f.declared_throws);
+                    if let Some(decl) = decl.or_else(|| written_rejection(cx, m)) {
                         let owner = cx.fn_info(m).name.clone();
                         let iface = None;
                         bounds.push((Node::Def(m), GroupBound { decl, owner, iface }));
@@ -317,6 +318,28 @@ fn link_vtables(
         }
     }
     roots
+}
+
+/// The error type written in the promise a synchronous base method returns (`read():
+/// Promise<u8[], IoError>`, abstract or not), as a bound of its group: what an `async` override
+/// may reject with, as an interface method's promise bounds its implementations
+/// (`collect::sigs::promise_throws`). A `Promise<T>` written without one is a site
+/// (`promise_sites`): its overrides give it their errors.
+fn written_rejection(cx: &mut Ctx, m: DefId) -> Option<DeclaredThrows> {
+    let f = cx.fn_info(m);
+    if f.is_async || f.is_generator || f.is_getter {
+        return None;
+    }
+    let (ret, span) = (f.ret, f.ret_span?);
+    let e = cx.ty.promise_error(ret).filter(|e| *e != cx.ty.never)?;
+    if cx.site_in(span, ret).is_some() {
+        return None;
+    }
+    Some(DeclaredThrows {
+        ty: cx.canon_error(Some(e)),
+        span,
+        from_body: false,
+    })
 }
 
 /// Bound `b` as member `m` sees it: a bound mentioning the parameters of its interface, with

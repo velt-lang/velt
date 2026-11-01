@@ -1,0 +1,27 @@
+// An implementation given by reference takes every signature's arguments too (TS2322): one
+// that requires `definition` does not fit the signature that leaves it out. A rest parameter
+// is not supported yet: it would see an `undefined` for each argument a call leaves out.
+interface Def {
+  name: string;
+}
+
+interface App {
+  directive(name: string, definition: Def): App;
+  directive(name: string): Def | undefined;
+}
+
+function strict(name: string, definition: Def): any {
+  return definition;
+}
+
+const byRef: App = { directive: strict };
+
+const rest: App = {
+  directive(...args: any[]): any {
+    return args.length;
+  },
+};
+
+function main() {
+  console.log(typeof byRef, typeof rest);
+}

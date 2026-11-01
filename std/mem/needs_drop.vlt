@@ -1,0 +1,14 @@
+// velt/mem (internal): `needsDrop`, whether a type's values own memory.
+
+import { needsDrop as typeNeedsDrop } from "velt/lang/intrinsics";
+
+/**
+ * Whether values of `value`'s type own memory that dropping one releases: strings, arrays,
+ * objects and class instances (and structs or unions holding any) do; numbers, `bool` and
+ * SIMD vectors do not. The same for every value of a type, and a constant where the type is
+ * known, so `if (needsDrop(x))` costs nothing: a generic container can skip bookkeeping that
+ * only matters for values that hold memory (Rust's `std::mem::needs_drop`).
+ */
+export function needsDrop<T>(value: T): bool {
+  return typeNeedsDrop(value);
+}

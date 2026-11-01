@@ -1,0 +1,153 @@
+// velt/collections (internal): the words and prefixes of B+ tree nodes: a node's prefix, its keys' words
+// in its lines, and the fences a node's range is between. An `extend` block of `Pool`, which
+// velt/collections/btree/pool loads.
+
+import { EMPTY, fill, Line, prefixOf, withWord } from "velt/collections/btree/line";
+import {
+  commonPrefix,
+  F,
+  LEAF_MASK,
+  LEAF_SHIFT,
+  Pool,
+  Range,
+  wordOf,
+  wordOfB,
+} from "velt/collections/btree/pool";
+
+extend<K extends Comparable<K>, V> Pool<K, V> {
+  /**
+   * The prefix of a node with range `fences`: the common prefix of the separators on either side
+   * of it, the smallest or the largest key standing in for one the tree's edge lacks. Every key
+   * between them has it, and so does every key a search brings to the node: a search first
+   * settles keys outside the smallest and the largest (velt/collections/btree/edges).
+   */
+  prefixFor(fences: Range<K>): u32 {
+    const [low, high] = fences;
+    if (this.minKey.length == 0) {
+      return 0;
+    }
+    const lo = low != null ? low : this.minKey[0];
+    const hi = high != null ? high : this.maxKey[0];
+    return commonPrefix(lo, hi);
+  }
+
+  /** Do this map's keys have words (an `InlineKey` encoding)? Only after the first insert. */
+  inline(): bool {
+    return this.fill.length > 0 && this.fill[0].hasInlineKey();
+  }
+
+  /** Whether nodes keep wide words (`InlineKey.inlineWide`). Only after the first insert. */
+  wide(): bool {
+    return this.fill.length > 0 && this.fill[0].inlineWide();
+  }
+
+  /** Sets the word of separator `i` of inner `node` from its key. */
+  innerWord(node: u32, i: usize) {
+    const n = node as usize;
+    const line = this.innerLineOf(node);
+    const pre = prefixOf(line);
+    if (this.wide()) {
+      const q = this.innerKeys[n * F + i].inlineQuad(pre as usize);
+      this.setInnerLine(node, withWord(line, i, (q >> 16) as u16));
+      this.setInnerLineB(node, withWord(this.innerLineBOf(node), i, q as u16));
+    } else {
+      this.setInnerLine(node, withWord(line, i, wordOf(this.innerKeys[n * F + i], pre)));
+    }
+  }
+
+  /** Gives `leaf` the prefix of its range `fences` and every key its word. */
+  refreshLeaf(leaf: u32, fences: Range<K>) {
+    if (this.inline()) {
+      this.refreshLeafAt(leaf, this.prefixFor(fences));
+    }
+  }
+
+  /**
+   * `refreshLeaf` only when the prefix of `fences` is not `leaf`'s: its words, kept by the
+   * edits that moved its entries at its present prefix, are then already right.
+   */
+  refreshLeafIfChanged(leaf: u32, fences: Range<K>) {
+    if (!this.inline()) {
+      return;
+    }
+    const pre = this.prefixFor(fences);
+    if (pre != prefixOf(this.lineOf(leaf))) {
+      this.refreshLeafAt(leaf, pre);
+    }
+  }
+
+  /** `leaf`'s words (and header) for prefix `pre`. */
+  refreshLeafAt(leaf: u32, pre: u32) {
+    const n = this.leafCount(leaf);
+    const c = (leaf >> LEAF_SHIFT) as usize;
+    const base = ((leaf & LEAF_MASK) as usize) * F;
+    const line = wordsOf(this.leafKeys[c], base, n, pre, this.scratch, false);
+    this.setLine(leaf, line);
+    if (this.wide()) {
+      const lineB = wordsOf(this.leafKeys[c], base, n, pre, this.scratch, true);
+      this.setLineB(leaf, lineB);
+    }
+  }
+
+  /** Gives inner `node` the prefix of its range `fences` and every separator its word. */
+  refreshInner(node: u32, fences: Range<K>) {
+    if (this.inline()) {
+      this.refreshInnerAt(node, this.prefixFor(fences));
+    }
+  }
+
+  /** Inner `node`'s words (and header) for prefix `pre`. */
+  refreshInnerAt(node: u32, pre: u32) {
+    const i = node as usize;
+    const n = this.innerCount(node);
+    const line = wordsOf(this.innerKeys, i * F, n, pre, this.scratch, false);
+    this.setInnerLine(node, line);
+    if (this.wide()) {
+      const lineB = wordsOf(this.innerKeys, i * F, n, pre, this.scratch, true);
+      this.setInnerLineB(node, lineB);
+    }
+  }
+
+  /**
+   * The range of the node at `depth` of the recorded path (0: the root; `pathNodes.length`: the
+   * leaf): the separators on either side of it, `null` at the edge of the tree.
+   */
+  fencesAt(depth: usize): Range<K> {
+    if (depth == 0) {
+      return [null, null];
+    }
+    return this.childFences(depth - 1, this.pathSlots[depth - 1]);
+  }
+
+  /** The range of child `slot` of the path's inner node at `depth`. */
+  childFences(depth: usize, slot: usize): Range<K> {
+    const node = this.pathNodes[depth];
+    const base = (node as usize) * F;
+    const n = this.innerCount(node);
+    if (slot > 0 && slot < n) {
+      return [this.innerKeys[base + slot - 1], this.innerKeys[base + slot]];
+    }
+    const [up, upHigh] = this.fencesAt(depth);
+    const low = slot > 0 ? this.innerKeys[base + slot - 1] : up;
+    const high = slot < n ? this.innerKeys[base + slot] : upHigh;
+    return [low, high];
+  }
+}
+
+// The line of a node whose `n` keys are at `keys[base..]` and whose prefix is `pre` (its second
+// line, `second`, for wide words).
+function wordsOf<K extends Comparable<K>>(
+  keys: K[],
+  base: usize,
+  n: usize,
+  pre: u32,
+  scratch: u16[],
+  second: bool,
+): Line {
+  for (let i: usize = 0; i < 31; i++) {
+    scratch[i] =
+      i >= n ? EMPTY : second ? wordOfB(keys[base + i], pre) : wordOf(keys[base + i], pre);
+  }
+  scratch[31] = ((pre as u16) << 5) | (n as u16);
+  return fill(scratch);
+}

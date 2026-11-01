@@ -1,9 +1,9 @@
-/** @jsxImportSource velt:jsx/generic */
+/** @jsxImportSource velt/jsx/generic */
 
-// The page of `jsx_tree` under `velt:jsx/generic`: `_jsx_tree_page.vlt` under the generic
+// The page of `jsx_tree` under `velt/jsx/generic`: `_jsx_tree_page.vlt` under the generic
 // runtime.
 
-import { raw } from "velt:jsx";
+import { raw } from "velt/jsx";
 
 function Item(props: { label: string }): JSX.Element {
   return <li title={props.label}>{props.label}</li>;

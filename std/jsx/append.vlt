@@ -1,0 +1,111 @@
+// velt/jsx (internal): appending children to a node that waits for an async component: the
+// markup collected in its complete parts, the waiting children kept as parts.
+
+import { escapeText } from "velt/jsx/escape";
+import { Deferred } from "velt/jsx/deferred";
+import { Child, Element } from "velt/jsx/node";
+import { markupOf } from "velt/jsx/tree";
+import { arrayWithCapacity } from "velt/lang/intrinsics";
+
+/** Appends finished markup after everything `node` holds. */
+export function appendHtml(node: Element, html: string) {
+  if (node.rest == null) {
+    if (node.html == "") {
+      node.html = html;
+    } else {
+      node.html += html;
+    }
+    return;
+  }
+  const n = node.rest.parts.length;
+  if (n > 0 && node.rest.parts[n - 1].isComplete) {
+    node.rest.parts[n - 1].html += html;
+  } else {
+    node.rest.parts.push(new Element(html));
+  }
+}
+
+/** Appends a child node: its markup when it is complete, else the node itself as a part. */
+export function appendElement(node: Element, child: Element) {
+  if (child.isComplete) {
+    appendHtml(node, markupOf(child));
+    return;
+  }
+  if (node.rest == null) {
+    const rest = new Deferred();
+    rest.parts.push(child);
+    node.rest = rest;
+  } else {
+    node.rest.parts.push(child);
+  }
+}
+
+// Appends a child: its markup when it is complete, else the incomplete nodes themselves.
+function appendChild(node: Element, child: Child) {
+  const html = childHtml(child);
+  if (html != null) {
+    appendHtml(node, html);
+    return;
+  }
+  if (child instanceof Element) {
+    appendElement(node, child);
+    return;
+  }
+  if (child != null && typeof child === "object") {
+    appendElements(node, child);
+  }
+}
+
+function appendElements(node: Element, elements: Element[]) {
+  elements.reverse();
+  while (elements.length > 0) {
+    const e = elements.pop();
+    if (e != null) {
+      appendElement(node, e);
+    }
+  }
+}
+
+/** Appends children, moving the incomplete ones into `node` (the slow path of `templateOf`). */
+export function appendChildren(node: Element, children: Child[]) {
+  const n = children.length;
+  children.reverse();
+  for (let i: usize = 0; i < n; i++) {
+    const child = children.pop();
+    if (child != null) {
+      appendChild(node, child);
+    }
+  }
+}
+
+// The markup of one child when it is complete, else null.
+function childHtml(child: Child): string | null {
+  if (child == null || typeof child === "boolean") {
+    return "";
+  }
+  if (typeof child === "string") {
+    return escapeText(child);
+  }
+  if (child instanceof Element) {
+    return child.isComplete ? markupOf(child) : null;
+  }
+  if (typeof child === "object") {
+    const pieces: string[] = arrayWithCapacity(child.length);
+    for (const e of child) {
+      if (!e.isComplete) {
+        return null;
+      }
+      pieces.push(markupOf(e));
+    }
+    return pieces.join("");
+  }
+  return formatNumber(child);
+}
+
+/**
+ * `${n}`. A separate function because formatting the narrowed union in place fails: the
+ * declared union holds an Element, whose promise cannot be formatted.
+ */
+export function formatNumber(n: i64 | f64): string {
+  return `${n}`;
+}

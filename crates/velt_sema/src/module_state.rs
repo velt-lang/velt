@@ -13,6 +13,13 @@ use crate::ctx::Ctx;
 use crate::defs::DefInfo;
 use crate::hir::{self, DefId, ExprKind as E, TyId, TyKind};
 
+#[path = "locked_props.rs"]
+mod locked_props;
+#[path = "module_state_reach.rs"]
+mod reach;
+
+use reach::{propagate, vars_reached, Reach};
+
 /// The module-level `let`s in initialization order (empty when there are none); reports reads
 /// of a `let` before its initializer runs.
 pub(crate) fn order(cx: &mut Ctx) -> Vec<DefId> {
@@ -345,24 +352,25 @@ impl crate::body::FnCx<'_, '_> {
     }
 }
 
-/// Why a function may reach module state: the `let` or kept `const` it uses, or that it calls a
-/// function value whose body is not known; with the calls that lead there.
-#[derive(Clone)]
-struct Reach {
-    what: String,
-    via: Vec<DefId>,
-}
-
 /// What one body does with module state: its own first use, and the code it may run (calls,
 /// closures it makes, functions it takes as values, the methods a dynamic call may pick, the
 /// initializers a `new` or a constant read evaluates); and the types of the values it handles,
 /// whose class hooks it may run without a call (`replaced_holders::implicit`).
 struct Facts {
     direct: Option<String>,
+    vars: Vec<DefId>, // every module state variable it uses (`script_locals`)
+    made: Vec<DefId>, // the closures and functions it makes as values (same)
+    values: bool,     // it calls a function value whose body is not known (same)
     edges: Vec<DefId>,
     tys: FxHashSet<TyId>,
     /// It resumes a generator: any generator body may run.
     resumes: bool,
+    /// It may reach a function's properties by itself (locked_props.rs).
+    props: bool,
+    /// The interface slots it calls through (`(iface, slot)`): their implementations are its
+    /// edges only when module state is checked; the walk for properties goes through the slot
+    /// once instead (locked_props.rs), so many calls of many implementations stay linear.
+    slots: Vec<(DefId, u32)>,
 }
 
 /// A `Mutex` is locked by blocking the thread, while a task holds the module lock for its whole
@@ -370,14 +378,19 @@ struct Facts {
 /// the `Mutex` another thread waits for, holding the module lock. So module state is not
 /// reachable from a `with` callback: not directly, not through the functions it calls, not
 /// through the code that runs without a call (field and constant initializers, and the
-/// `[Symbol.dispose]()`, `toString()`, `toJSON()`, `__inspect()` and `clone()` hooks that drops
+/// `[Symbol.dispose]()`, `toString()`, `toJSON()`, `[INSPECT]()` and `clone()` hooks that drops
 /// and glue run: `replaced_holders::implicit` lists them), and not through a function value whose
-/// body is not known (rt_abi.md "Module state"; the runtime stops with an `ICE:` if it happens
-/// anyway).
+/// body is not known (rt_abi.md "Module state"; the runtime stops with an `ICE:` otherwise).
+/// Every variable a refused callback reaches is recorded (`script_locals`; through a function
+/// value it calls, those of the closures the code around it makes: `reach::vars_reached`).
 pub(crate) fn check_locked_access(cx: &mut Ctx) {
-    if cx.module_slots.is_empty() {
+    // Without `any`, no function has properties (locked_props.rs).
+    let props = cx.any.is_some_and(|a| a.imp.is_some());
+    if cx.module_slots.is_empty() && !props {
         return;
     }
+    locked_props::reset();
+    let dispatch = locked_props::Dispatch::new(cx);
     let fns: Vec<DefId> = cx
         .fn_defs
         .iter()
@@ -385,18 +398,22 @@ pub(crate) fn check_locked_access(cx: &mut Ctx) {
         .filter(|d| cx.fn_info(*d).state == crate::defs::BodyState::Done)
         .collect();
     let mut withs: Vec<(hir::Expr, velt_common::Span, &'static str)> = vec![];
+    let mut callbacks: Vec<DefId> = vec![];
+    let mut proxies = locked_props::Proxies::default();
     let mut facts: FxHashMap<DefId, Facts> = FxHashMap::default();
     for &d in &fns {
         let std = cx.modules[cx.fn_info(d).module].is_std;
         let Some(hir::Def::Fn(mut f)) = cx.defs[d.0 as usize].take() else {
             continue;
         };
-        let mut v = FactsOf::new(cx, std);
+        let mut v = FactsOf::new(cx, &dispatch, std);
         if !std {
             v.facts.tys.extend(f.body.locals.iter().map(|l| l.ty));
         }
         crate::visit::block(&mut f.body.block, &mut v);
         let (fd, ws) = (v.facts, v.withs);
+        callbacks.extend(v.callbacks);
+        proxies.add(v.proxies);
         cx.defs[d.0 as usize] = Some(hir::Def::Fn(f));
         if !std {
             withs.extend(ws);
@@ -423,17 +440,18 @@ pub(crate) fn check_locked_access(cx: &mut Ctx) {
             continue;
         }
         let std = cx.modules.get(module).is_some_and(|m| m.is_std);
-        let mut v = FactsOf::new(cx, std);
+        let mut v = FactsOf::new(cx, &dispatch, std);
         for mut x in inits {
             crate::visit::expr(&mut x, &mut v);
         }
         let (fd, ws) = (v.facts, v.withs);
+        callbacks.extend(v.callbacks);
         if !std {
             withs.extend(ws);
         }
         facts.insert(DefId(i as u32), fd);
     }
-    if withs.is_empty() {
+    if withs.is_empty() && callbacks.is_empty() {
         return;
     }
     // The hooks the values a body handles may run when dropped, formatted or serialised, and
@@ -452,7 +470,19 @@ pub(crate) fn check_locked_access(cx: &mut Ctx) {
         hooks.dedup();
         f.edges.extend(hooks);
     }
+    if props {
+        let bodies = (facts.values_mut()).map(|f| (&f.tys, &mut f.props));
+        proxies.reach(cx, bodies);
+        let graph = (facts.iter())
+            .map(|(&d, f)| (d, (f.props, &f.edges[..], &f.slots[..])))
+            .collect();
+        cx.lock_free_callbacks = locked_props::lock_free(cx, &dispatch, &graph, &callbacks);
+    }
+    if cx.module_slots.is_empty() {
+        return;
+    }
     let reach = propagate(&facts);
+    let mut refused = vec![];
     for (cb, span, method) in withs {
         let found = match &cb.kind {
             E::Closure(c) => reach.get(c).cloned(),
@@ -466,6 +496,9 @@ pub(crate) fn check_locked_access(cx: &mut Ctx) {
             }),
         };
         let Some(r) = found else { continue };
+        if let E::Closure(c) | E::FnRef(c, _) = &cb.kind {
+            refused.push(*c);
+        }
         let what = match r.via.is_empty() {
             true => r.what,
             false => {
@@ -482,6 +515,7 @@ pub(crate) fn check_locked_access(cx: &mut Ctx) {
             .with_note(format!("read what you need before `{method}` and pass it in, and store what it returns after")),
         );
     }
+    cx.state_refused.extend(vars_reached(&facts, refused));
 }
 
 /// How a diagnostic names a node of the reach graph: a function, an object type's field
@@ -494,44 +528,6 @@ fn node_name(cx: &Ctx, d: DefId) -> String {
         Some(DefInfo::Global(g)) => format!("the initializer of `{}`", g.name),
         _ => "code that runs without a call".into(),
     }
-}
-
-/// Which functions may reach module state: those that use it, and those that may run one of
-/// them (backwards along the edges, to a fixpoint).
-fn propagate(facts: &FxHashMap<DefId, Facts>) -> FxHashMap<DefId, Reach> {
-    let mut reach: FxHashMap<DefId, Reach> = FxHashMap::default();
-    let mut callers: FxHashMap<DefId, Vec<DefId>> = FxHashMap::default();
-    let mut todo = vec![];
-    // In `DefId` order, so a diagnostic names the same path on every run.
-    let mut order: Vec<(&DefId, &Facts)> = facts.iter().collect();
-    order.sort_by_key(|(d, _)| **d);
-    for (&d, f) in order {
-        for &e in &f.edges {
-            callers.entry(e).or_default().push(d);
-        }
-        if let Some(what) = &f.direct {
-            let r = Reach {
-                what: what.clone(),
-                via: vec![],
-            };
-            reach.insert(d, r);
-            todo.push(d);
-        }
-    }
-    while let Some(d) = todo.pop() {
-        let r = reach[&d].clone();
-        for &c in callers.get(&d).map(Vec::as_slice).unwrap_or(&[]) {
-            if reach.contains_key(&c) {
-                continue;
-            }
-            let mut via = vec![d];
-            via.extend(r.via.iter().copied());
-            let what = r.what.clone();
-            reach.insert(c, Reach { what, via });
-            todo.push(c);
-        }
-    }
-    reach
 }
 
 /// Is `e` a closure or a named function written in place (an optional parameter's `Some`, or
@@ -549,31 +545,57 @@ fn written_fn(e: &hir::Expr) -> bool {
 /// Collects a body's [`Facts`] and the callbacks of its `with` calls.
 struct FactsOf<'a, 'm> {
     cx: &'a Ctx<'m>,
+    dispatch: &'a locked_props::Dispatch,
     std: bool,
     facts: Facts,
     withs: Vec<(hir::Expr, velt_common::Span, &'static str)>,
+    /// The callbacks of every `with`, `read` and `write` written as a closure or a named
+    /// function, also the standard library's (locked_props.rs).
+    callbacks: Vec<DefId>,
+    proxies: locked_props::Proxies,
 }
 
 impl<'a, 'm> FactsOf<'a, 'm> {
-    fn new(cx: &'a Ctx<'m>, std: bool) -> Self {
+    fn new(cx: &'a Ctx<'m>, dispatch: &'a locked_props::Dispatch, std: bool) -> Self {
         FactsOf {
             cx,
+            dispatch,
             std,
             facts: Facts {
                 direct: None,
+                vars: vec![],
+                made: vec![],
+                values: false,
                 edges: vec![],
                 tys: FxHashSet::default(),
                 resumes: false,
+                props: false,
+                slots: vec![],
             },
             withs: vec![],
+            callbacks: vec![],
+            proxies: Default::default(),
         }
     }
 
     fn unknown(&mut self, what: &str) {
         // The standard library only calls the function values it is given: those are made, or
         // taken as values, by the code that passes them, where they count (`passed`).
-        if !self.std && self.facts.direct.is_none() {
-            self.facts.direct = Some(what.into());
+        if !self.std {
+            self.facts.props = true;
+            self.facts.values = true;
+            if self.facts.direct.is_none() {
+                self.facts.direct = Some(what.into());
+            }
+        }
+    }
+
+    /// Arguments of a call into the standard library or an intrinsic: one that is or holds an
+    /// `any` may have its members read, written or listed there (locked_props.rs).
+    fn dynamic_args(&mut self, args: &[hir::Expr]) {
+        if !self.facts.props {
+            let cx = self.cx;
+            self.facts.props = args.iter().any(|a| locked_props::holds_dynamic(cx, a.ty));
         }
     }
 
@@ -623,35 +645,17 @@ impl<'a, 'm> FactsOf<'a, 'm> {
 
     /// The methods a call through slot `slot` of interface `iface` may run.
     fn iface_methods(&mut self, iface: DefId, slot: u32) {
-        for imp in &self.cx.impls {
-            if imp.iface == iface {
-                self.facts.edges.extend(imp.methods.get(slot as usize));
-            }
+        self.facts.slots.push((iface, slot));
+        if !self.cx.module_slots.is_empty() {
+            let ms = self.dispatch.iface_methods(self.cx, iface, slot);
+            self.facts.edges.extend(ms);
         }
     }
 
-    /// The methods a virtual call through slot `slot` of class `class` may run: its own and every
-    /// subclass's.
+    /// The methods a virtual call through slot `slot` of class `class` may run (also subclasses').
     fn virtual_methods(&mut self, class: DefId, slot: u32) {
-        for (i, info) in self.cx.info.iter().enumerate() {
-            let DefInfo::Adt(a) = info else { continue };
-            let Some(&m) = a.vtable.get(slot as usize) else {
-                continue;
-            };
-            let mut cur = Some(DefId(i as u32));
-            let mut depth = 0;
-            while let Some(c) = cur {
-                if c == class {
-                    self.facts.edges.push(m);
-                    break;
-                }
-                depth += 1;
-                cur = match self.cx.adt(c).and_then(|a| a.base) {
-                    Some(b) if depth < 64 => self.cx.class_of(b).map(|(d, _)| d),
-                    _ => None,
-                };
-            }
-        }
+        let ms = self.dispatch.virtual_methods(class, slot);
+        self.facts.edges.extend(ms);
     }
 }
 
@@ -659,6 +663,7 @@ impl crate::visit::VisitMut for FactsOf<'_, '_> {
     fn expr(&mut self, e: &mut hir::Expr) {
         if !self.std {
             self.facts.tys.insert(e.ty);
+            self.proxies.note(e);
         }
         match &e.kind {
             E::Global(d) => match self.cx.global(*d) {
@@ -666,6 +671,7 @@ impl crate::visit::VisitMut for FactsOf<'_, '_> {
                     if self.facts.direct.is_none() {
                         self.facts.direct = Some(format!("uses `{}`", g.name));
                     }
+                    self.facts.vars.push(*d);
                 }
                 // A constant's initializer runs at each read.
                 Some(g)
@@ -677,7 +683,10 @@ impl crate::visit::VisitMut for FactsOf<'_, '_> {
                 }
                 _ => {}
             },
-            E::Closure(c) | E::FnRef(c, _) => self.facts.edges.push(*c),
+            E::Closure(c) | E::FnRef(c, _) => {
+                self.facts.edges.push(*c);
+                self.facts.made.push(*c);
+            }
             E::New { def, args, .. } => {
                 let ctor = self.cx.adt(*def).and_then(|a| a.ctor);
                 self.facts.edges.extend(ctor);
@@ -685,6 +694,9 @@ impl crate::visit::VisitMut for FactsOf<'_, '_> {
                 self.facts.edges.push(*def);
                 if ctor.is_none_or(|c| self.is_std_def(c)) {
                     self.passed(args);
+                    if !ctor.is_some_and(|c| locked_props::has_body(self.cx, c)) {
+                        self.dynamic_args(args);
+                    }
                 }
             }
             E::AdtLit { def, .. } => self.facts.edges.push(*def),
@@ -693,11 +705,17 @@ impl crate::visit::VisitMut for FactsOf<'_, '_> {
                     self.facts.edges.push(*f);
                     if self.is_std_def(*f) {
                         self.passed(args);
+                        // A body the walk follows decides by itself (its edge); a runtime
+                        // extern may list or print what it gets.
+                        if !locked_props::has_body(self.cx, *f) {
+                            self.dynamic_args(args);
+                        }
                     }
                 }
                 hir::Callee::Indirect(_) => self.unknown("calls a function value"),
                 hir::Callee::Virtual { slot } => {
                     self.passed(args);
+                    self.dynamic_args(args);
                     match args.first().and_then(|a| self.cx.class_of(a.ty)) {
                         Some((c, _)) => self.virtual_methods(c, *slot),
                         None => self.unknown("calls a function value"),
@@ -705,6 +723,7 @@ impl crate::visit::VisitMut for FactsOf<'_, '_> {
                 }
                 hir::Callee::Dyn { slot, .. } => {
                     self.passed(args);
+                    self.dynamic_args(args);
                     let recv = args.first().map(|a| self.cx.ty.kind(a.ty).clone());
                     match recv {
                         Some(TyKind::Dyn(i, _)) => self.iface_methods(i, *slot),
@@ -713,6 +732,7 @@ impl crate::visit::VisitMut for FactsOf<'_, '_> {
                 }
                 hir::Callee::ParamMethod { iface, slot, .. } => {
                     self.passed(args);
+                    self.dynamic_args(args);
                     self.iface_methods(*iface, *slot)
                 }
                 hir::Callee::Intrinsic(
@@ -726,11 +746,18 @@ impl crate::visit::VisitMut for FactsOf<'_, '_> {
                             _ => "with",
                         };
                         self.withs.push((cb.clone(), cb.span, method));
+                        match &cb.kind {
+                            E::Closure(c) | E::FnRef(c, _) => self.callbacks.push(*c),
+                            // Lowering takes the module lock for it: the code around it may
+                            // not hold a `Mutex` then (locked_props.rs).
+                            _ => self.facts.props = true,
+                        }
                     }
                 }
                 hir::Callee::Intrinsic(i) => {
                     self.facts.resumes |= crate::replaced_holders::implicit::resumes(*i);
-                    self.passed(args)
+                    self.passed(args);
+                    self.dynamic_args(args);
                 }
             },
             _ => {}

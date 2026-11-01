@@ -30,6 +30,169 @@ velt add textkit                    # the latest version, into package.vlt and v
 import { slugify } from "textkit";
 ```
 
+## Git dependencies
+
+A package can come from a git repository, at a branch, a tag or a commit, without a registry:
+
+```ts ignore
+dependencies: {
+  // sigx's Velt half, from the main branch of its monorepo.
+  sigx: { git: "https://github.com/signalxjs/core", branch: "main", path: "packages/velt/velt" },
+  json: { git: "https://github.com/acme/json", tag: "v1.2.0" },
+  http: { git: "git@github.com:acme/http.git", rev: "3f2c1a9e0b7d4c1a8e5f6b2d9c0a1e3f4b5c6d7e" },
+}
+```
+
+- `git` is the repository: `https://…`, `ssh://…`, `git@host:path` or `file://…`, without
+  credentials in it (they would end up in `velt.lock.json`): git supplies them from your
+  credential helper or SSH keys. `branch`, `tag`
+  or `rev` (a full commit hash) say which commit, at most one of them; without one, the
+  repository's default branch. `path` is the package's directory in the repository, for a
+  repository that holds several packages. A `version` beside them is a requirement the package
+  must meet.
+- **npm packages too.** A target without a `package.vlt` but with a `package.json` is an npm
+  package, compiled from its TypeScript sources ([npm packages](#npm-packages)), as
+  `npm install git+…` takes it; a workspace's root (`pnpm-workspace.yaml`, or `workspaces` in its
+  `package.json`) provides every package of the workspace besides its own. As in npm, a
+  workspace package without a `name` is named after its directory, and two packages of one name
+  are an error; so is a `package.json` that can't be read or doesn't parse, naming the file.
+  Several dependencies can come from one repository (`sigx` and `@sigx/runtime` from its root);
+  two that provide the same package from different repositories or commits are an error. The dependency's name is one of those packages, and its `version`, if
+  written, is checked against that package's. So a framework can be tested straight from its
+  repository, with no `paths` alias and nothing installed into `node_modules`:
+
+  ```ts ignore
+  dependencies: {
+    // Every package of vuejs/core's workspace: `vue`, `@vue/runtime-core`, `@vue/server-renderer`, …
+    vue: { git: "https://github.com/vuejs/core", branch: "main" },
+    // One package of a repository.
+    "@sigx/reactivity": { git: "https://github.com/signalxjs/core", path: "packages/reactivity" },
+  }
+  ```
+
+  The packages' imports of each other resolve inside the checkout; an import of an npm package
+  the repository doesn't hold (a published dependency, such as Vue's compiler's `@babel/parser`)
+  needs that package from `node_modules` or another git dependency. A package written in
+  JavaScript without TypeScript sources (React's are Flow) can't be compiled yet.
+- **Locked.** The first install resolves the branch or tag to a commit and records it in
+  `velt.lock.json` with a checksum of the checkout
+  (`"source": "git+https://github.com/signalxjs/core?branch=main&path=packages/velt/velt#<commit>"`).
+  Builds use that commit without the network; `velt update` moves to the branch's newest commit,
+  and `--locked` fails rather than move it.
+- **Fetched once.** `velt` runs the `git` command, so your credentials and SSH keys work for
+  private repositories, and fetches just the commit, into `~/.velt/cache/git/`: each commit is
+  checked out once per machine and never changed, and every use is checked against the lock's
+  checksum. The checkout ignores your git configuration (`core.autocrlf`, filters), so it, and
+  the checksum, are the same on every machine, and the variables a git hook sets (`GIT_DIR`)
+  never redirect it.
+- **Packages of the same repository.** A `path` dependency of a package from git is another
+  package of the same commit, locked with it; a `path` that leads out of the repository is an
+  error, and so is a commit with a symbolic link that points out of it (the lock pins the
+  repository's files, not what such a link reaches). On Windows, a repository's symbolic links
+  are checked out as plain files holding their target, as git does where it can't make links,
+  so the checkout hashes the same as on Linux and macOS. Links in a git dependency are not
+  followed on Windows: a package that imports a file or a directory through one builds on Linux
+  and macOS but not on Windows, and `velt` warns about each link in such a package there. A package from git can't be a workspace member: its
+  `"workspace"` dependencies are errors. A registry requirement on the same name (another
+  package's `json: "1.2"`) is met by the git package when its version matches, as by a `path`
+  package.
+- **The whole repository is there.** The checksum covers every file of the commit, not only the
+  package's, because a package may import its repository's other packages: the TypeScript
+  packages of a pnpm, npm or Yarn workspace in the checkout compile from their sources
+  ([npm packages](#npm-packages)), with nothing installed into `node_modules`.
+- **Nothing runs.** Installing never runs code from the repository. A package with native code is
+  built from source with cargo only when you set `VELT_NATIVE_FROM_SOURCE=1`, since that runs its
+  build scripts.
+- **Publishing.** A registry package is built from the registry alone, so `velt publish` needs a
+  `version` beside `git`, which becomes the published requirement.
+
+## Workspaces
+
+A repository with several Velt packages (an app, the libraries it shares with a CLI) is a
+workspace: a `velt.workspace.vlt` at its root lists the member packages, which then share one
+`velt.lock.json`, one `velt` version and one registry, and depend on each other by name.
+
+```ts ignore
+// velt.workspace.vlt
+import type { Workspace } from "velt/package";
+
+export const workspace: Workspace = {
+  members: ["packages/*", "apps/*"],
+  velt: "0.2",                     // every member builds with this velt
+  dependencies: { json: "1.2" },   // requirements members share
+};
+```
+
+```ts ignore
+// apps/server/package.vlt
+export const pkg: Package = {
+  name: "server",
+  version: "0.4.0",
+  dependencies: {
+    core: "workspace",   // the member named `core`
+    json: "workspace",   // the workspace's requirement for `json`
+    log: "0.2",          // a requirement of this member's own
+  },
+};
+```
+
+- **Members** are the directories with a `package.vlt` that the `members` globs list: `*` matches
+  one directory name, `**` any number of them, a `!` in front excludes (`"!packages/old"`), and
+  `"."` is a `package.vlt` beside the workspace file. A glob that lists no package is an error, so
+  a typo never drops a member silently. Two members can't have the same name.
+- **`"workspace"`** names the member of that name, else the workspace's `dependencies` entry. A
+  member is always a `"workspace"` dependency: `core: "0.1"` or `core: { path: "../core" }` for a
+  member is an error that says to write `core: "workspace"`. Outside a workspace, `"workspace"`
+  is an error.
+- **One resolution, one lock.** `velt install`, `velt build` and the other commands resolve every
+  member's dependencies together, wherever in the workspace they run, into the `velt.lock.json`
+  beside the workspace file (members are listed as `"source": "workspace+packages/core"`). A
+  package name has one version in the whole workspace: two members whose requirements no version
+  meets is an error that names both. A member also stands in for a registry package of its name,
+  for the registry packages that depend on that name too, so a fork of `json` kept as a member
+  is the `json` every package in the workspace builds with. A member has no lockfile of its own.
+  `velt install` at the root installs every member. Members can't depend on each other in a
+  cycle: `members depend on each other in a cycle: a → core → b → a`.
+- **`velt` and `registry`** are the workspace's; a member that sets either is an error. The velt
+  launcher runs the version the workspace's lock records, as it does for a package.
+- **Builds.** A member's build sees only the packages it depends on, directly or not (its imports
+  resolve through its own `dependencies`, as always), and its programs go to its own
+  `target/velt/`, from the root or from the member. Every member's build stamp includes the
+  workspace file, what its globs list and the lockfile, and the machine's build cache shares
+  the code of a library every member uses: a second member compiles little more than its own
+  code.
+- **Commands on several members.** At the workspace's root (outside its packages), `velt check`,
+  `velt test`, `velt build`, `velt fmt` and `velt doc` run on every member; anywhere, they take a
+  selection:
+
+  | Selection | Members |
+  |---|---|
+  | `--workspace` | all of them |
+  | `-p <glob>` (repeatable) | those whose name matches (`-p 'server*'`); a scoped name matches whole or without its scope (`-p 'server*'` and `-p '@org/*'` both select `@org/server`) |
+  | `--affected [<base>]` | those with a file changed since `<base>` (committed or not), and every member that uses them; without a base, the merge base with the upstream branch (in CI, name it: `--affected origin/main`). A change to `velt.workspace.vlt` or `velt.lock.json` affects all |
+
+  Members run in dependency order, several at once, each in its own `velt`; each member's output
+  is printed in one piece when it finishes, and a summary names the members that failed. A failed
+  member doesn't stop the others; `--fail-fast` starts no more. `--watch`, `-o` and `--json`
+  need one member; with one, a relative `-o` is a path from where you ran `velt`. With
+  `velt test`, a member whose last run passed with every test file's result kept (none reaches
+  outside the program: [kept results](../book/testing.md#results-that-are-kept)) and of which
+  nothing changed isn't started at all: it is listed as `Unchanged core (packages/core): 3
+  passed`, so a workspace with nothing changed is tested in about the time it takes to start
+  `velt` once (also with `-p <member>`, never with `--watch`). `velt build`
+  skips libraries (the programs that use them build them), and `velt run -p <member>` and
+  `velt dev -p <member>` run one member's program from anywhere in the workspace; its arguments
+  follow `--` (`velt run -p server -- --port 8080`).
+
+  ```sh
+  velt test                       # at the root: every member
+  velt check --affected           # what this branch touched, and what uses it
+  velt build -p 'server*' -p cli  # some members, by name
+  velt run -p server              # one member's program
+  ```
+- A package below the workspace that no glob lists stays on its own, with its own lockfile and
+  its own `velt` (the launcher reads the globs too); `velt install` there says so.
+
 ## npm packages
 
 Velt compiles TypeScript packages from npm, and the packages of pnpm, npm and Yarn workspaces,

@@ -1,0 +1,29 @@
+// A promise passed where a `Promise<unknown>` is expected is the same promise, as in Node
+// (#1682): a `Set<Promise<unknown>>` counts it once, and it is `===` to itself through the
+// conversion, also converted twice.
+async function f(): Promise<string> {
+  return "x";
+}
+
+function track(s: Set<Promise<unknown>>, p: Promise<unknown>): boolean {
+  if (s.has(p)) return false;
+  s.add(p);
+  return true;
+}
+
+function keep(p: Promise<unknown>): Promise<unknown> {
+  return p;
+}
+
+async function main() {
+  const s = new Set<Promise<unknown>>();
+  const p = f();
+  const q = f();
+  console.log(track(s, p), track(s, p), track(s, q), s.size);
+  const k = keep(p);
+  const k2 = keep(k);
+  console.log(k === k2, s.has(k), s.has(k2), [k].includes(k2));
+  console.log(await p, await k2);
+}
+
+main();

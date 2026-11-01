@@ -1,0 +1,3 @@
+any_object_iface_part_convert.vlt:11:5: error: a part of `props` is changed through `Ctx`, but an object converted to `Ctx` holds `props` as a value of another type
+  = note: the object's `props` is converted to `Ctx`'s field type at each read, so this would change a copy; Node changes the object's own `props`
+  = note: give the object's `props` the type of `Ctx`'s field, or assign the whole value (`x.props = …`)

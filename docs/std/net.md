@@ -1,6 +1,6 @@
-# velt:net
+# velt/net
 
-`import { listen, connect } from "velt:net"`. TCP, and TLS over TCP. `TcpListener` and
+`import { listen, connect } from "velt/net"`. TCP, and TLS over TCP. `TcpListener` and
 `TcpStream` are structs around a handle, like file descriptors. Release each handle with
 `close()`.
 
@@ -66,12 +66,32 @@
   there: the handshake runs with the stream's first read or write, which throws if it fails
   or takes more than 10 s.
 
+- `streamPair(): [TcpStream, TcpStream]`: two connected in-memory streams, as Node's
+  `duplexPair()`: what one writes the other reads, one's `shutdown()` is the other's end of
+  stream; close both. For a protocol carried inside another one (the HTTP/2 server runs a
+  WebSocket over an HTTP/2 stream this way).
+
 A TLS stream is a `TcpStream` like any other: one task can read while another writes, and
 `shutdown()` sends TLS's close_notify. `alpn` lists the protocols to offer, most preferred
-first.
+first, and `await stream.alpnProtocol()` is the one the handshake chose (`"h2"`,
+`"http/1.1"`), or null when none was agreed or the stream is not TLS (Node's
+`socket.alpnProtocol`): it waits for the handshake, running it if no read or write did yet, and
+throws if it fails. A server that offers HTTP/2 and HTTP/1.1 reads it to know which one the
+client speaks:
 
 ```ts
-import { listen, connect, TcpListener } from "velt:net";
+import { listenTls, TcpListener } from "velt/net";
+
+async function protocolOf(l: TcpListener): Promise<string> {
+  const conn = await l.accept();
+  const p = await conn.alpnProtocol();
+  conn.close();
+  return p ?? "http/1.1";
+}
+```
+
+```ts
+import { listen, connect, TcpListener } from "velt/net";
 
 async function echoOnce(l: TcpListener): Promise<void> {
   const conn = await l.accept();
@@ -93,8 +113,8 @@ async function main() {
 ```
 
 ```ts
-import { listenTls, connectTls } from "velt:net";
-import { readFile } from "velt:fs";
+import { listenTls, connectTls } from "velt/net";
+import { readFile } from "velt/fs";
 
 async function main() {
   const l = await listenTls("127.0.0.1:0", {
@@ -116,7 +136,7 @@ async function main() {
 ```
 
 A connection taken over from an HTTP server
-([`upgradeConnection`](http.md#upgradeconnectionreq-protocol-headers)) is a `TcpStream` too.
+([`upgradeConnection`](../../packages/http-server/README.md#upgradeconnectionreq-protocol-headers)) is a `TcpStream` too.
 
 Notes: an unclosed handle leaks until the process exits. After `close()` through any copy
 (also one handed to another task), every copy's operations throw `IoError` `EBADF` and closing

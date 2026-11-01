@@ -22,7 +22,7 @@ mod work_dir;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-/// Goldens that cannot run on WebAssembly: the runtime has no sockets (nor `velt:http`), a
+/// Goldens that cannot run on WebAssembly: the runtime has no sockets (nor `velt/http`), a
 /// `resolve` called later, or a shared promise settling, resumes its waiters at the executor's
 /// next step instead of queueing them as microtasks (docs/reference/async.md), and the tasks a
 /// synchronous `main` spawns never run (its executor runs only under an `async main`).
@@ -40,6 +40,14 @@ const UNSUPPORTED: &[&str] = &[
     "process_lifetime_sync_main_rejection",
     "process_lifetime_top_level_tasks",
     "process_lifetime_spawned_finally",
+    // A shared promise settling resumes its waiters at the executor's next step (the order of
+    // the log), and a converted promise's rejection is reported as its own (no views, #1682).
+    "promise_identity_bounded",
+    "promise_identity_converted_rejects",
+    "promise_identity_defer",
+    "promise_identity_defer_rejects",
+    "promise_identity_defer_twice",
+    "promise_identity_rejection",
 ];
 /// Goldens that need a file system (not available to browser modules).
 const NEEDS_FS: &[&str] = &["fs"];
@@ -114,6 +122,12 @@ fn build_runtime(root: &Path, triple: &str) {
     assert!(st.success(), "building velt_rt_wasm for {triple} failed");
 }
 
+/// Does the program declare a system function? WebAssembly has none (declaring one is a
+/// compile error there), so such a golden never runs on it.
+fn declares_system_functions(path: &Path) -> bool {
+    std::fs::read_to_string(path).is_ok_and(|s| s.contains("declare system function"))
+}
+
 fn programs(root: &Path, dirs: &[&str], skip: &[&str]) -> Vec<PathBuf> {
     // `VELT_GOLDEN` as in tests/golden.rs: substrings separated by `,`, any of them matches.
     let filter = std::env::var("VELT_GOLDEN").unwrap_or_default();
@@ -135,6 +149,7 @@ fn programs(root: &Path, dirs: &[&str], skip: &[&str]) -> Vec<PathBuf> {
             p.extension().is_some_and(|e| e == "vlt")
                 && p.with_extension("out").exists()
                 && !skip.contains(&stem.as_ref())
+                && !declares_system_functions(p)
                 && {
                     // The path in the checkout, as in tests/golden.rs.
                     let rel = p.strip_prefix(root).unwrap_or(p);
@@ -236,7 +251,6 @@ const WASI_STD: &[&str] = &[
     "simd_values",
     "typed_arrays_basic",
     "typed_arrays_edges",
-    "utf8_prefix",
     "utf8_valid",
 ];
 

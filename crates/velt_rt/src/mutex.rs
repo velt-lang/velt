@@ -133,7 +133,7 @@ pub unsafe extern "C" fn velt_rt_mutex_init(p: *mut u64) {
 }
 
 /// Lock (blocking the thread; `with` bodies never await, so holds are short). The module lock
-/// stays held meanwhile: a `with` callback never takes it (task/local/module_state.rs).
+/// stays held meanwhile: a `with` callback never waits for it (task/local/module_state.rs).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_mutex_lock(p: *mut u64) {
     (*(p as *const Lock)).lock();

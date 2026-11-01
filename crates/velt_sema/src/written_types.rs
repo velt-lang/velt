@@ -46,7 +46,10 @@ pub(crate) fn written(t: &TypeExpr) -> String {
             let names: Vec<&str> = type_params.iter().map(|g| g.name.name.as_str()).collect();
             format!("<{}>{}", names.join(", "), written(ty))
         }
-        T::Construct(ty) => format!("new {}", written(ty)),
+        T::Construct { ty, is_abstract } => {
+            let kw = if *is_abstract { "abstract new" } else { "new" };
+            format!("{kw} {}", written(ty))
+        }
         T::TupleRest(ty) => format!("...{}", written(ty)),
         T::TupleOptional(ty) => format!("{}?", written(ty)),
         T::Union(ts) => list(ts, " | "),

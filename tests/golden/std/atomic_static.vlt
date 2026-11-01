@@ -1,0 +1,39 @@
+// check: no leaks
+// A module constant made by `new Atomic<T>(literal)` is a word in the program's data (a static
+// atomic), with no module state: every use changes the same word, from every thread, and each
+// starts as its literal. Tasks on worker threads count into the same words with no `await`.
+
+const HITS = new Atomic<u64>(0);
+const SMALL = new Atomic<u8>(250);
+const LOW = new Atomic<i32>(-5);
+const HALF = new Atomic<f64>(0.5);
+const READY = new Atomic<bool>(false);
+const MAXED = new Atomic<i64>(-1);
+
+function count(n: u64) {
+  for (let i: u64 = 0; i < n; i++) {
+    HITS.add(1, "relaxed");
+  }
+}
+
+async function worker(id: i64): Promise<void> {
+  count(100000);
+  MAXED.max(id);
+  LOW.sub(1);
+}
+
+async function main() {
+  console.log(HITS.load(), SMALL.load(), LOW.load(), HALF.load(), READY.load(), MAXED.load());
+  SMALL.add(10); // wraps at 255
+  HALF.add(0.25);
+  READY.store(true, "release");
+  console.log(SMALL.load(), HALF.load(), READY.load("acquire"));
+  console.log(LOW.compareExchange(-5, 3), LOW.compareExchange(-5, 4), LOW.load());
+
+  const ps: Promise<void>[] = [];
+  for (let t = 0; t < 8; t++) {
+    ps.push(spawn(worker(t * 10)));
+  }
+  await Promise.all(ps);
+  console.log("hits", HITS.load(), "max", MAXED.load(), "low", LOW.load());
+}

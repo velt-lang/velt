@@ -147,6 +147,36 @@ impl RunQueue {
         Some(t)
     }
 
+    /// Whether a spawn burst left tasks waiting behind the one about to run: the length of the
+    /// second queue when its first or last task is fresh (spawned and never polled; the first
+    /// is the sibling of a spawned task just taken, the last a spawn of the task that ran
+    /// before), else 0.
+    pub(super) fn fresh_behind(&self) -> usize {
+        let fresh = |t: Option<&Arc<Task>>| t.is_some_and(|t| t.fresh());
+        if fresh(self.rest.front()) || fresh(self.rest.back()) {
+            self.rest.len()
+        } else {
+            0
+        }
+    }
+
+    /// Takes up to `max` fresh tasks that are not pinned from the first `within` of the second
+    /// queue, oldest first (for idle workers to start: see `worker`'s watch).
+    pub(super) fn take_fresh(&mut self, within: usize, max: usize) -> Vec<Arc<Task>> {
+        let mut taken = Vec::new();
+        let (mut i, mut end) = (0, within.min(self.rest.len()));
+        while i < end && taken.len() < max {
+            if self.rest[i].fresh() && !self.rest[i].pinned {
+                taken.extend(self.rest.remove(i));
+                end -= 1;
+            } else {
+                i += 1;
+            }
+        }
+        self.fair_left = self.fair_left.saturating_sub(taken.len());
+        taken
+    }
+
     /// Takes the half of the input that has waited longest (for a worker to borrow; the next
     /// task stays).
     pub(super) fn take_half_input(&mut self) -> Vec<Arc<Task>> {
@@ -250,6 +280,42 @@ mod tests {
         q.push_next(task(14));
         let order: Vec<_> = (0..3).map(|_| id(q.pop(|| t))).collect();
         assert_eq!(order, [1, 10, 14]);
+    }
+
+    #[test]
+    fn tasks_never_polled_are_taken_from_those_queued_before() {
+        let t = Instant::now();
+        let mut q = RunQueue::new(t);
+        let polled = task(2);
+        assert!(matches!(polled.run(), super::super::task::Ran::Done));
+        let pinned = Task::new(Box::pin(async {}), 3, true);
+        q.extend_io([task(100)]);
+        for t2 in [task(1), polled, pinned, task(4), task(5)] {
+            q.push(t2, || t);
+        }
+        // Only the first four were queued before: of those, the fresh ones not pinned.
+        let taken: Vec<_> = q
+            .take_fresh(4, 9)
+            .into_iter()
+            .map(|t| id(Some(t)))
+            .collect();
+        assert_eq!(taken, [1, 4]);
+        let mut q2 = RunQueue::new(t);
+        for i in 1..=3 {
+            q2.push(task(i), || t);
+        }
+        assert_eq!(q2.fresh_behind(), 3);
+        // At most as many as asked for, oldest first.
+        let taken: Vec<_> = q2
+            .take_fresh(3, 2)
+            .into_iter()
+            .map(|t| id(Some(t)))
+            .collect();
+        assert_eq!(taken, [1, 2]);
+        let order: Vec<_> = (0..4).map(|_| id(q.pop(|| t))).collect();
+        assert_eq!(order, [100, 2, 3, 5]);
+        // Nothing fresh at either end: no burst behind.
+        assert_eq!(q.fresh_behind(), 0);
     }
 
     #[test]

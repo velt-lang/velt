@@ -8,7 +8,7 @@ import {
   base64UrlDecode,
   base64UrlEncode,
   hexEncode,
-} from "velt:encoding";
+} from "velt/encoding";
 
 function bytes(n: usize): u8[] {
   const data = Buffer.alloc(n);

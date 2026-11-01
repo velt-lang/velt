@@ -28,7 +28,12 @@ impl ReadOnly {
             params: program
                 .funcs
                 .iter()
-                .map(|f| f.params.iter().map(|&t| t == Ty::Ptr).collect())
+                // A declaration (an `Import` without a body, vir.rs invariant 11) may do anything
+                // with what it is given: none of its params is read-only.
+                .map(|f| {
+                    let body = !f.blocks.is_empty();
+                    f.params.iter().map(|&t| t == Ty::Ptr && body).collect()
+                })
                 .collect(),
         };
         // A function's verdicts only depend on its callees' params, so after a change only its

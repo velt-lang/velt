@@ -115,14 +115,19 @@ impl Emitter<'_> {
         if params != types {
             bail!("call argument types {types:?} do not match parameters {params:?}");
         }
-        if let Some(atomic) = self.atomic_call(callee) {
+        let inline = match (self.atomic_call(callee), self.tls_call(callee)) {
             // An atomic instruction in place of the call (atomic.rs).
-            let result = self.atomic(atomic, &params, ret, &raw)?;
+            (Some(atomic), _) => Some(self.atomic(atomic, &params, ret, &raw)?),
+            // A load or store of the thread-local value (tls.rs).
+            (None, Some(tls)) => Some(self.tls(tls, &params, ret, &raw)?),
+            (None, None) => None,
+        };
+        if let Some(result) = inline {
             if let (Some(dest), Some(result)) = (dest, result) {
                 let loc = self.place(dest)?;
                 if loc.ty() != ret && loc.ty() != Ty::Unit {
                     bail!(
-                        "atomic gives {ret:?} but destination has type {:?}",
+                        "inline extern gives {ret:?} but destination has type {:?}",
                         loc.ty()
                     );
                 }

@@ -1,0 +1,32 @@
+// A recursive generator that throws after its recursive `yield*`: what it throws is found
+// through the recursion, without a `throws` clause (the program is checked again with it).
+interface Node {
+  name: string;
+  bad: boolean;
+  children: Node[];
+}
+
+function* walk(n: Node, buf: string[]): Generator<string, void, unknown> {
+  buf.push("<" + n.name + ">");
+  for (const c of n.children) {
+    yield* walk(c, buf);
+  }
+  if (n.bad) throw new TypeError("bad node " + n.name);
+  yield n.name;
+}
+
+function render(n: Node): string {
+  const buf: string[] = [];
+  const g = walk(n, buf);
+  let r = g.next();
+  while (!r.done) r = g.next();
+  return buf.join("");
+}
+
+const leaf: Node = { name: "b", bad: false, children: [] };
+console.log(render({ name: "a", bad: false, children: [leaf] }));
+try {
+  render({ name: "a", bad: false, children: [{ name: "c", bad: true, children: [] }] });
+} catch (e) {
+  console.log((e as Error).name, (e as Error).message);
+}

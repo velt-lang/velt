@@ -1,0 +1,12 @@
+[package]
+name = "pread_bench"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Standalone: not a member of the Velt workspace (it only exists to be benchmarked).
+[workspace]
+
+[profile.release]
+codegen-units = 1
+lto = "fat"

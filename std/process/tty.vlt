@@ -1,0 +1,12 @@
+// velt/process (internal): `isatty`, whether a file descriptor is a terminal.
+
+import { velt_rt_isatty } from "velt/process/rt";
+
+/**
+ * Whether file descriptor `fd` is open and refers to a terminal (Node's `tty.isatty(fd)`): 0 is
+ * standard input, 1 standard output, 2 standard error. On Windows only those three can be
+ * terminals.
+ */
+export function isatty(fd: i32): bool {
+  return velt_rt_isatty(fd);
+}

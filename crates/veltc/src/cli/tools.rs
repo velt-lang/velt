@@ -5,7 +5,7 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 use super::build::take_value;
-use super::{Command, DocArgs, RegistryArgs};
+use super::{Command, DocArgs, DocFormat, RegistryArgs};
 use crate::playground::PlaygroundArgs;
 
 /// Default playground port.
@@ -70,13 +70,27 @@ fn parse_server(
     Ok((format!("{host}:{port}"), dir))
 }
 
-/// `velt doc [<file|dir>...] [--std] [-o <dir>]`.
+/// `velt doc [<file|dir>...] [--std] [--format html|json|types] [-o <dir|file>]`.
 pub(super) fn parse_doc(args: Vec<OsString>) -> Result<Command, String> {
     let mut doc = DocArgs::default();
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
         match arg.to_str() {
             Some("--std") => doc.std = true,
+            Some(s) if s == "--format" || s.starts_with("--format=") => {
+                let inline = s.strip_prefix("--format=");
+                doc.format = match take_value(inline, &mut it, "--format")?.as_str() {
+                    "html" => DocFormat::Html,
+                    "json" => DocFormat::Json,
+                    "types" => DocFormat::Types,
+                    other => {
+                        return Err(format!(
+                            "unknown format `{other}` for `velt doc` (expected `html`, `json` or \
+                             `types`)"
+                        ))
+                    }
+                };
+            }
             Some("-o" | "--output") => {
                 doc.output = Some(PathBuf::from(take_value(None, &mut it, "-o")?));
             }
@@ -137,5 +151,18 @@ mod tests {
         assert_eq!(d.output, Some(PathBuf::from("out")));
         assert_eq!(d.paths, [PathBuf::from("a.vlt")]);
         assert!(p(&["doc", "--nope"]).is_err());
+        assert_eq!(doc(&["doc", "--format", "json"]).format, DocFormat::Json);
+        assert_eq!(
+            doc(&["doc", "--std", "--format=types"]).format,
+            DocFormat::Types
+        );
+        assert_eq!(
+            doc(&["doc", "--format=json", "--format=html"]).format,
+            DocFormat::Html
+        );
+        assert!(p(&["doc", "--format", "xml"])
+            .unwrap_err()
+            .contains("unknown format `xml`"));
+        assert!(p(&["doc", "--format"]).is_err());
     }
 }

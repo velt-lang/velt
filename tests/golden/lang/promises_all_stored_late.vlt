@@ -5,7 +5,7 @@
 // (promises_unhandled_timing). Finished results that own memory (strings) are dropped when an
 // inline `Promise.all` rejects early. `x` rejects only once `main` releases it, after the stored
 // `Promise.all` settled, so `y` is first in time however the timers run.
-import { channel, Channel } from "velt:channel";
+import { channel, Channel } from "velt/sync";
 
 class Failed extends Error {}
 

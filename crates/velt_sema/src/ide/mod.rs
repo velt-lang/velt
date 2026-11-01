@@ -85,11 +85,20 @@ pub fn check_for_ide(modules: &[SourceModule], root: usize) -> Analysis {
 }
 
 fn check_on_current_thread(modules: &[SourceModule], root: usize, stack_budget: usize) -> Analysis {
-    analyze(modules, root, stack_budget).0
+    // As in `crate::check_with`: script variables module state refused move into `main`.
+    crate::script_locals::check(modules, root, |m| {
+        let (analysis, _, refused) = analyze(m, root, stack_budget);
+        (analysis, refused)
+    })
 }
 
-/// The analysis, and whether the program was checked again with held closures sharing.
-fn analyze(modules: &[SourceModule], root: usize, stack_budget: usize) -> (Analysis, bool) {
+/// The analysis, whether the program was checked again with held closures sharing, and the
+/// script variables module state refused (`script_locals`).
+fn analyze(
+    modules: &[SourceModule],
+    root: usize,
+    stack_budget: usize,
+) -> (Analysis, bool, crate::script_locals::Refused) {
     let lifted = crate::generic_arrows::lift(modules);
     let modules = lifted.as_ref().map_or(modules, |l| &l.modules[..]);
     let overloaded = crate::overloads::rewrite(modules);
@@ -101,6 +110,7 @@ fn analyze(modules: &[SourceModule], root: usize, stack_budget: usize) -> (Analy
         cx.fn_sites = crate::throws::FnSites::new(seeds.clone(), last);
         cx.stack_budget = stack_budget;
         cx.held_borrows = held_borrows;
+        cx.lazy.on = false;
         if let Some(l) = &lifted {
             cx.generic_arrow_fns = l.local_fns.clone();
             cx.generic_arrow_all = l.all_fns.clone();
@@ -145,7 +155,8 @@ fn analyze(modules: &[SourceModule], root: usize, stack_budget: usize) -> (Analy
             break;
         }
     }
-    (snapshot::build(cx), retried)
+    let refused = crate::script_locals::refused(&cx, root);
+    (snapshot::build(cx), retried, refused)
 }
 
 /// A span contains an offset when the offset is inside it or right after its end (a cursor
@@ -354,12 +365,13 @@ mod tests {
         let m = SourceModule {
             path: "main".into(),
             is_std: false,
+            is_dependency: false,
             file: FileId(0),
             ast,
             imports: vec![],
             jsx_runtime: None,
         };
-        let (a, retried) = analyze(&[m], 0, crate::SEMA_STACK_BUDGET);
+        let (a, retried, _) = analyze(&[m], 0, crate::SEMA_STACK_BUDGET);
         let errors = a.diagnostics().iter().filter(|d| d.is_error()).count();
         (errors, retried)
     }

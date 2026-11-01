@@ -1,0 +1,5 @@
+never_bare_return_only.vlt:3:3: error: mismatched types
+  = note: expected never, found void
+
+never_bare_return_only.vlt:6:3: error: mismatched types
+  = note: expected never, found void

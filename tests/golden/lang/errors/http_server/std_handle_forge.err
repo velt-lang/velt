@@ -1,0 +1,25 @@
+std_handle_forge.vlt:9:26: error: mismatched types
+  = note: expected BodyInit | null, found f64
+std_handle_forge.vlt:10:22: error: `adopt` is private
+  = note: it can only be used inside the body of `Response`
+std_handle_forge.vlt:10:28: error: mismatched types
+  = note: expected Fetched, found f64
+std_handle_forge.vlt:11:25: error: mismatched types
+  = note: expected string | Request | URL, found f64
+std_handle_forge.vlt:12:21: error: `Request.adopt` is not a static method
+std_handle_forge.vlt:13:22: error: `Response.built` is not a static method
+std_handle_forge.vlt:14:25: error: `handle` is private
+  = note: it can only be used inside the body of `TcpStream`
+std_handle_forge.vlt:15:26: error: `handle` is private
+  = note: it can only be used inside the body of `FileReader`
+std_handle_forge.vlt:16:26: error: `handle` is private
+  = note: it can only be used inside the body of `WebSocket`
+std_handle_forge.vlt:16:34: error: mismatched types
+  = note: expected TcpStream, found f64
+std_handle_forge.vlt:17:5: error: no field `handle` on type `HttpServer`
+  = note: objects have a fixed shape: fields cannot be added at runtime; use a `Map<string, V>` for dynamic keys
+std_handle_forge.vlt:18:17: error: `handle` is private
+  = note: it can only be used inside the body of `TcpStream`
+std_handle_forge.vlt:18:27: error: no field `handle` on type `Response`
+  = note: objects have a fixed shape: fields cannot be added at runtime; use a `Map<string, V>` for dynamic keys
+std_handle_forge.vlt:19:33: error: no method named `toServer` found for type `Response`

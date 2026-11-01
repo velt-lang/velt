@@ -1,0 +1,137 @@
+// sqlite/engine/exec/expr_call (internal): function calls compiled by the expression compiler
+// (engine/exec/expr_compiler): aggregates of the query they belong to, and scalar functions
+// (engine/exec/func/func).
+
+import { BINARY } from "../collation";
+import { E_REAL, Expr } from "../sql/types";
+import { AggRestart, prepareError } from "./errors";
+import { Ev } from "./types";
+import { Scope } from "./scope";
+import { AggFn, aggregateKind } from "./agg/agg_fn";
+import { aggOwner, aggregateCore, aggMisuse, windowedMisuse } from "./agg/agg_owner";
+import { windowKind } from "./window/win_fn";
+import { windowCall } from "./window/window_call";
+import { scalarFunction } from "./func/func";
+import { AFF_NONE } from "./value/ops";
+import { C, plain } from "./c";
+import { ExprCompiler } from "./expr_compiler";
+
+export function compileCall(ec: ExprCompiler, e: Expr, sc: Scope): C {
+  const lname = ec.written(e);
+  if (e.over != null) {
+    if (sc.win == null) {
+      prepareError(`misuse of window function ${lname}()`);
+    }
+    return windowCall(ec, e, sc, lname);
+  }
+  if (windowKind(e.name) >= 0) {
+    prepareError(`misuse of window function ${lname}()`);
+  }
+  const kind = aggregateKind(e.name, e.args.length, e.star);
+  if (kind >= 0) {
+    // Where the call is written must allow an aggregate (SQLite's name context), even one
+    // that belongs to an enclosing query.
+    if (sc.inAggArgs || sc.core == null || (sc.where && !aggregateCore(ec, sc))) {
+      aggMisuse(ec, e, sc, `misuse of aggregate function ${lname}()`);
+    }
+    // An aggregate reading only an enclosing query's columns is that query's.
+    const owner = aggOwner(ec, e, sc);
+    if (owner.groupBy) {
+      aggMisuse(ec, e, sc, "aggregate functions are not allowed in the GROUP BY clause");
+    }
+    windowedMisuse(ec, e, sc, owner, lname);
+    if (owner.agg == null) {
+      // Only from a result column: in ORDER BY it is too late (SQLite's misuse error).
+      if (owner != sc && owner.results && owner.core != null && !owner.core!.aggFromInner) {
+        owner.core!.aggFromInner = true;
+        throw new AggRestart(owner.core!);
+      }
+      const resolving = !sc.output && !aggregateCore(ec, sc);
+      aggMisuse(
+        ec,
+        e,
+        sc,
+        resolving ? `misuse of aggregate function ${lname}()` : `misuse of aggregate: ${lname}()`,
+      );
+    }
+    // The queries in between read the owner's values: they run again for each of its rows.
+    let between: Scope | null = sc;
+    while (between != null && between! != owner) {
+      between!.outer = true;
+      between = between!.parent;
+    }
+    const agg = owner.agg!;
+    const base = owner.base!;
+    const f = new AggFn(kind as u8, e.name.toLowerCase());
+    const was = base.inAggArgs;
+    base.inAggArgs = true;
+    try {
+      for (const a of e.args) {
+        const c = ec.expr(a, base);
+        if (f.args.length == 0 && c.coll >= 0) {
+          f.coll = c.coll as u8;
+        }
+        f.args.push(c.ev);
+      }
+      if (e.filter != null) {
+        f.filter = ec.pred(e.filter!, base);
+      }
+    } finally {
+      base.inAggArgs = was;
+    }
+    f.distinct = e.distinct;
+    if (e.distinct && e.args.length != 1) {
+      prepareError("DISTINCT aggregates must have exactly one argument");
+    }
+    agg.fns.push(f);
+    const slot: usize = agg.fns.length - 1;
+    return plain(() => agg.value(slot));
+  }
+  if (kind == -2) {
+    prepareError(`wrong number of arguments to function ${lname}()`);
+  }
+  if (e.filter != null) {
+    prepareError("FILTER clause may only be used with aggregate window functions");
+  }
+  if (e.star) {
+    prepareError(`wrong number of arguments to function ${lname}()`);
+  }
+  const args: C[] = [];
+  for (const a of e.args) {
+    args.push(ec.expr(a, sc));
+  }
+  // likely(), unlikely() and likelihood() are their first argument.
+  if ((e.name == "LIKELY" || e.name == "UNLIKELY") && args.length == 1) {
+    return args[0];
+  }
+  if (e.name == "LIKELIHOOD" && args.length == 2) {
+    // Its probability is a REAL literal of at most 1.0 (resolve.c's exprProbability).
+    const pr = e.args[1];
+    if (pr.kind != E_REAL || pr.rval > 1.0) {
+      prepareError("second argument to likelihood() must be a constant between 0.0 and 1.0");
+    }
+    return args[0];
+  }
+  let coll: u8 = BINARY;
+  for (const a of args) {
+    if (a.coll >= 0) {
+      coll = a.coll as u8;
+      break;
+    }
+  }
+  const evs: Ev[] = [];
+  for (const a of args) {
+    evs.push(a.ev);
+  }
+  const f = scalarFunction(e.name, lname, evs, coll);
+  if (f == null) {
+    prepareError(`no such function: ${lname}`);
+  }
+  // An explicit COLLATE in an argument carries to the result (SQLite's EP_Collate).
+  for (const a of args) {
+    if (a.explicit) {
+      return C { ev: f!, aff: AFF_NONE, coll: a.coll, explicit: true };
+    }
+  }
+  return plain(f!);
+}

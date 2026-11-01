@@ -1,0 +1,2 @@
+overloads_interface_params.vlt:15:3: error: method `directive` does not fit every signature of the interface's `directive`: its parameter `definition` (`f64 | undefined`) does not take the signature's `Def`
+overloads_interface_params.vlt:22:3: error: method `directive` does not fit every signature of the interface's `directive`: its parameter `definition` is required, and a signature leaves it out

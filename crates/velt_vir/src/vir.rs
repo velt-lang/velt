@@ -9,9 +9,10 @@
 //!    `Ty::Unit` params never appear; a `Unit` return means "returns nothing".
 //! 3. Drops, drop flags, moves, bounds checks, overflow policy, async state machines are all already
 //!    expanded into ordinary statements/calls. Backends do no semantic work.
-//! 4. Block 0 is the entry block. Locals `0..params.len()` hold the incoming params.
-//! 5. Lowering emits the program entry as an exported function `velt_main() -> I32`
-//!    (see rt_abi.md); backends need no special casing.
+//! 4. Block 0 is the entry block (an `Import`, invariant 11, may have none). Locals
+//!    `0..params.len()` hold the incoming params.
+//! 5. A program's entry is an exported `velt_main() -> I32` (rt_abi.md); code compiled on its
+//!    own to link into one (the std cache) declares it (`Import`). Backends need no special case.
 //! 7. `BinOp::Rem` on floats is C `fmod` (JS `%`). `Rvalue::Cast` also allows int → `Bool` (`!= 0`).
 //!    Lowering guards signed `MIN / -1` (wrapping neg; `MIN % -1` = 0), so backends never trap on it.
 //! 6. Every block ends in exactly one terminator; every local is assigned before it is read
@@ -32,7 +33,11 @@
 //!    and never borrowed inside a counted object, docs/design/semantics-stage2.md §3.4;
 //!    `Borrow` aggregate or class object → `readonly` unless the value holds a `Mutex` or an
 //!    `Atomic` in its own memory, or the
-//!    param is written (`LocalDef::mutable`); aggregate-return out-pointer → `noalias`;
+//!    param is written (`LocalDef::mutable`), and `frozen` under the same conditions except
+//!    that an `Atomic` is allowed (only its words change); neither `noalias` nor `frozen` when
+//!    module state can reach values of the type (a module `const` / `let`, a `static` field:
+//!    a callee may write the argument through that variable); aggregate-return out-pointer →
+//!    `noalias`;
 //!    `nonnull` + `dereferenceable(size)` on all of them; the frame of a poll function
 //!    (`Function::is_poll`) → `nonnull` + `dereferenceable(frame size)`, plus `noalias` from
 //!    `velt_opt` when no pointer into the frame ever leaves the function). Every caller must
@@ -45,6 +50,7 @@
 //!     `AggId` and field index in them names an existing aggregate field (checked by `verify`).
 //!     `velt_opt` passes keep a local's description on the local holding the variable's value
 //!     and drop it where no single local does.
+//! 11. `Linkage::Import` (additive; contracts README): defined elsewhere, never emitted; passes treat it as `Export`.
 
 use std::fmt;
 
@@ -200,6 +206,8 @@ pub enum Linkage {
     Export,
     /// Local to the object file.
     Internal,
+    /// Defined by another object of the link (invariant 11): declared, never emitted.
+    Import,
 }
 
 #[derive(Clone, Debug)]
@@ -220,11 +228,16 @@ pub struct Function {
     /// (rt_abi_async.md §1): param 0 is its frame, which the caller hands over exclusively for
     /// the duration of the call. Set by lowering; `velt_opt` keeps it on clones.
     pub is_poll: bool,
-    /// A gated function (`__intrinsic_target`, rt_abi.md "SIMD"): it runs only where the CPU has
+    /// A gated function (`targetFeature`, rt_abi.md "SIMD"): it runs only where the CPU has
     /// this extension (sema checks every call), so backends compile it with the extension's
     /// whole feature set and its SHA operations as the bare instructions. `None` for every
     /// other function. Inlining keeps a gated body out of callers with another target.
     pub target: Option<crate::simd::Ext>,
+    /// No call of it returns normally: its declared result is `never` (it panics, throws, exits
+    /// or loops forever), so every call is rare. Optimizers keep its body out of line (inlining
+    /// it only grows the hot code around the call) and backends may compile it as cold. Set by
+    /// lowering; `velt_opt` keeps it on clones. False promises nothing.
+    pub cold: bool,
 }
 
 /// What every caller guarantees about one `Ptr` param for the duration of the call
@@ -236,6 +249,13 @@ pub struct ParamAttrs {
     pub noalias: bool,
     /// The callee never writes through this pointer (or pointers derived from it).
     pub readonly: bool,
+    /// Nothing changes the pointee's bytes during the call, through this pointer or any other,
+    /// except the words of `Atomic`s (changed through `velt_atomic_*` calls; inspecting a value
+    /// also reads them as plain memory): a plain read of the pointee outside an `Atomic` gives
+    /// the same value anywhere in the call, so it may be done once on entry. An `Atomic` is the
+    /// aggregate lowering names `Atomic`. Implied by nothing else: a `readonly` pointee may still
+    /// change through other pointers.
+    pub frozen: bool,
     /// The pointer is never null.
     pub nonnull: bool,
     /// At least this many bytes behind the pointer are valid to read (0 = unknown).
@@ -268,6 +288,7 @@ impl Function {
             param_attrs: Vec::new(),
             is_poll: false,
             target: None,
+            cold: false,
         }
     }
 
@@ -323,7 +344,7 @@ pub struct ExternFn {
     pub noreturn: bool,
 }
 
-/// Read-only data (string literal bytes, vtables, …).
+/// Read-only data (string literal bytes, vtables, …), or a word the program writes.
 #[derive(Clone, Debug)]
 pub struct StaticData {
     pub bytes: Vec<u8>,
@@ -332,6 +353,14 @@ pub struct StaticData {
     /// offset is 8-aligned and the 8 bytes there are zero in `bytes`. `target` is a
     /// `Const::Func`, `Const::Extern` or `Const::Static`.
     pub relocs: Vec<(u32, Const)>,
+    /// `Some(id)`: writable data, the word of a static atomic (a module `const` made by
+    /// `new Atomic<T>(literal)`), with no relocations, which code reads and writes only
+    /// through `velt_atomic_*` externs. `bytes` is its starting value, and no pass may assume
+    /// it still holds it. `id` names it across the versions of a `velt dev` session, which
+    /// all use the session's one copy: the 64-bit FNV-1a hash of the constant's qualified
+    /// name and value type (`tls::stable_id`), so an edit changing the type gets a new word.
+    /// It is one aligned word (1, 2, 4 or 8 bytes). Every other static is read-only (`None`).
+    pub mutable: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -543,6 +572,9 @@ impl fmt::Display for ParamAttrs {
         if self.readonly {
             parts.push("readonly".to_string());
         }
+        if self.frozen {
+            parts.push("frozen".to_string());
+        }
         if self.nonnull {
             parts.push("nonnull".to_string());
         }
@@ -701,41 +733,42 @@ impl fmt::Display for Program {
             )?;
         }
         for (i, s) in self.statics.iter().enumerate() {
+            let mutable = s.mutable.map(|id| format!(" mutable={id:x}"));
             writeln!(
                 f,
-                "static#{} align={} {:?}",
+                "static#{} align={} {:?}{}",
                 i,
                 s.align,
-                String::from_utf8_lossy(&s.bytes)
+                String::from_utf8_lossy(&s.bytes),
+                mutable.unwrap_or_default()
             )?;
         }
         for (i, e) in self.externs.iter().enumerate() {
             let nr = if e.noreturn { " noreturn" } else { "" };
-            writeln!(
-                f,
-                "extern#{} {}({}) -> {}{}",
-                i,
-                e.symbol,
-                fmt_tys(&e.params),
-                e.ret,
-                nr
-            )?;
+            let (sym, params) = (&e.symbol, fmt_tys(&e.params));
+            writeln!(f, "extern#{i} {sym}({params}) -> {}{nr}", e.ret)?;
         }
         for (i, func) in self.funcs.iter().enumerate() {
             let link = match func.linkage {
                 Linkage::Export => "export",
                 Linkage::Internal => "internal",
+                Linkage::Import => "import",
             };
             writeln!(f)?;
+            let open = if func.blocks.is_empty() { "" } else { " {" };
             writeln!(
                 f,
-                "fn#{} {} {}({}) -> {} {{",
+                "fn#{} {} {}({}) -> {}{}{open}",
                 i,
                 link,
                 func.symbol,
                 fmt_tys(&func.params),
-                func.ret
+                func.ret,
+                if func.cold { " cold" } else { "" }
             )?;
+            if open.is_empty() {
+                continue;
+            }
             for (li, l) in func.locals.iter().enumerate() {
                 let kind = if li < func.params.len() {
                     "param"

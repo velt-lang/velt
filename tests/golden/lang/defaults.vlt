@@ -1,10 +1,11 @@
-// Default parameter values: across modules, on methods, statics, generics, interfaces and
+// Default parameter values: across modules, on methods, statics, generics, implementations of
+// an interface's optional parameter (the implementation's default applies, as in TypeScript) and
 // overridden (virtual) methods.
 
 import { add, withConst, Counter, gen } from "./_defaults_lib";
 
 interface Greeter {
-  greet(name: string, punct: string = "!"): string;
+  greet(name: string, punct?: string): string;
 }
 
 interface LoudGreeter extends Greeter {
@@ -14,7 +15,7 @@ interface LoudGreeter extends Greeter {
 }
 
 class En implements LoudGreeter {
-  greet(name: string, punct: string = "."): string {
+  greet(name: string, punct: string | undefined = "."): string {
     return `hello ${name}${punct}`;
   }
 }

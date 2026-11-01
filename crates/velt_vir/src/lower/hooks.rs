@@ -1,5 +1,5 @@
 //! Calls to a class's hook methods from glue (`hir::AdtDef::to_string`, `to_json`, `inspect`):
-//! `String(x)` calls `toString()`, `JSON.stringify` `toJSON()`, `console.log` `__inspect()`.
+//! `String(x)` calls `toString()`, `JSON.stringify` `toJSON()`, `console.log` `[INSPECT]()`.
 //! Sema only records a method that cannot throw and takes no arguments but `this` (and the key,
 //! for `toJSON(key)`); it gives other shapes an adapter of that form, which dispatches through
 //! the vtable and passes the defaults (sema's `hooks.rs`). So a call is a plain call with the
@@ -37,9 +37,18 @@ impl FnLower<'_, '_> {
 
     /// The result type of hook method `m` called on a `cls` value.
     pub(super) fn hook_result(&mut self, m: DefId, cls: TyId) -> TyId {
-        let targs = self.cx.method_targs(m, cls);
+        let targs = self.hook_targs(m, cls);
         let ret = self.cx.fn_def(m).ret;
         self.cx.subst(ret, &targs)
+    }
+
+    /// The type arguments of a call of `m` on a `cls` value: its class's, or none for a
+    /// function taking the object (a compiler hook, velt_common `std_hooks.rs`).
+    fn hook_targs(&mut self, m: DefId, cls: TyId) -> Vec<TyId> {
+        match self.cx.fn_def(m).self_ty {
+            Some(_) => self.cx.method_targs(m, cls),
+            None => vec![],
+        }
     }
 
     /// Call hook method `m` on the class object `obj` (of type `cls`), passing the string at
@@ -53,7 +62,7 @@ impl FnLower<'_, '_> {
         key: Option<&Place>,
     ) -> (Place, TyId) {
         let ret = self.hook_result(m, cls);
-        let targs = self.cx.method_targs(m, cls);
+        let targs = self.hook_targs(m, cls);
         let modes: Vec<PassMode> = self.cx.fn_def(m).params.iter().map(|p| p.mode).collect();
         // A method that keeps `this` (`new BodyStream(this)`) takes it owned: give it a
         // reference of its own, as a call passing a borrowed value does.

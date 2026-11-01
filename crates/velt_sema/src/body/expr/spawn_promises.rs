@@ -12,7 +12,7 @@ use crate::body::FnCx;
 use crate::hir::{self, ExprKind as H, TyId, TyKind};
 
 impl FnCx<'_, '_> {
-    /// `spawn(e)` (or the standard library's `__intrinsic_spawn_handled(e)`): a promise passed
+    /// `spawn(e)` (or the standard library's `spawnHandled(e)`): a promise passed
     /// to the spawned call moves to the task.
     pub(super) fn spawned_promises(&mut self, spawn: &hir::Expr) {
         let H::Call { args, .. } = &spawn.kind else {

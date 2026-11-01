@@ -49,7 +49,14 @@ const CLAIMS: &[(&str, Claim)] = &[
     ("throws", Claim::Rejected),
     ("promise-error-type", Claim::Rejected),
     ("interface-body", Claim::Rejected),
-    ("velt-import", Claim::Rejected),
+    (
+        "velt-import",
+        Claim::Unprovable(
+            "`tsc` resolves std's modules through the `velt` type package, which declares their \
+             types but has no JavaScript behind them: only `import type` runs under Node, which \
+             is about the runtime, not the types",
+        ),
+    ),
     (
         "outside-import",
         Claim::Unprovable(
@@ -60,7 +67,7 @@ const CLAIMS: &[(&str, Claim)] = &[
     (
         "jsx-provider",
         Claim::Unprovable(
-            "`tsc` compiles JSX against the provider the client's tsconfig names; `velt:jsx`, \
+            "`tsc` compiles JSX against the provider the client's tsconfig names; `velt/jsx`, \
              the default when a file names none, has no JavaScript runtime, so the two sides \
              would render with different providers",
         ),
@@ -200,6 +207,7 @@ fn tsc_agrees_with_the_lint() {
     let project = std::env::temp_dir().join(format!("velt-tsc-oracle-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&project);
     let (cases, rejected, behaviour) = write_project(&oracle, &project);
+    type_package(&project.join("node_modules/velt"));
     let ignored = write_ignored_fixes(&project, &behaviour);
     let diags = run_tsc(&oracle, &project);
     // The project's own diagnostics, and the stand-in JSX provider's.
@@ -277,6 +285,16 @@ fn node_ready(oracle: &Path) -> Result<(), String> {
         return Err("tests/tscompat-oracle/node_modules has no `typescript`".into());
     }
     Ok(())
+}
+
+/// The `velt` type package (`velt doc --std --format types`) in `dir`, as a client installs
+/// it: the lint passes `import type` from std because `tsc` resolves it through the package.
+fn type_package(dir: &Path) {
+    let std_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
+    let inputs = velt_doc::inputs_from_dir(&std_dir, "std").expect("read std");
+    for (path, text) in velt_doc::dts::type_package(&inputs, "0.0.0") {
+        velt_doc::write(&dir.join(path), &text).expect("write the type package");
+    }
 }
 
 /// Writes the fixtures and samples into `project` with a tsconfig extending the baseline;

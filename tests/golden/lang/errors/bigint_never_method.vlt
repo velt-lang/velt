@@ -1,4 +1,6 @@
 // `bigint` has no values yet (#1088), so `bigint[]` is `never[]`: an error about a `never`
-// in a program that names `bigint` says so (#1266).
+// in a program that names `bigint` says so (#1266). (An array method such as `find` applies to
+// a `never[]`, as `extend<T> Array<T>` does with `T` = `never`; a method arrays don't have is
+// still an error.)
 const xs: bigint[] = [];
-console.log(xs.find((x) => true));
+console.log(xs.nope());

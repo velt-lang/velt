@@ -1,0 +1,68 @@
+// check: no leaks
+// A getter literal cast to a fields-only interface (a view, #1510) in a program that also
+// fills object types from `{}` (`{} as Copy<T>`) and has a proxy trap that throws: the cast
+// throws nothing, and a field of type `void` (the interface at `T = void`, sigx's `computed`
+// of a function returning nothing) reads as `undefined`. A closure capturing a value of a
+// literal type (`K` at `"count"`) keeps it too.
+
+interface Box<T> {
+  value: T;
+  tag: string;
+}
+
+type Copy<T> = { [K in keyof T]: T[K] };
+function copy<T extends object>(o: T): Copy<T> {
+  const r = {} as Copy<T>;
+  for (const k of Object.keys(o)) {
+    (r as any)[k] = (o as any)[k];
+  }
+  return r;
+}
+const c = copy({ value: 1, tag: "e" });
+console.log(c.value, c.tag);
+
+const p = new Proxy(
+  { value: 2, tag: "p" },
+  {
+    get(t, k) {
+      if (k === "boom") throw new Error("boom");
+      return Reflect.get(t, k);
+    },
+  },
+);
+console.log(p.value, p.tag);
+try {
+  console.log((p as any).boom);
+} catch (e) {
+  console.log("caught", (e as Error).message);
+}
+
+let runs = 0;
+function make<T>(get: () => T): Box<T> {
+  const o = {
+    tag: "lit",
+    get value(): T {
+      runs++;
+      return get();
+    },
+  };
+  return o as Box<T>;
+}
+function readOnce<R>(f: () => R): R {
+  const b = make(f);
+  console.log(b.tag);
+  return b.value;
+}
+readOnce(() => {
+  console.log("side effect", runs);
+});
+const three = make(() => 3);
+console.log(three.value, three.tag, runs);
+
+function reader<T extends object, K extends keyof T>(o: T, k: K): () => T[K] {
+  return () => o[k];
+}
+const st = { count: 1 };
+const read = reader(st, "count");
+st.count = 7;
+console.log(read());

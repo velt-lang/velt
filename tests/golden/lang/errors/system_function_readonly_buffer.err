@@ -1,0 +1,8 @@
+system_function_readonly_buffer.vlt:17:19
+system_function_readonly_buffer.vlt:23:24
+system_function_readonly_buffer.vlt:24:24
+system_function_readonly_buffer.vlt:25:24
+system_function_readonly_buffer.vlt:26:24
+system_function_readonly_buffer.vlt:27:24
+system_function_readonly_buffer.vlt:28:24
+error: a read-only array cannot be passed for a buffer the system function writes

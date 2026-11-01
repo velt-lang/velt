@@ -53,6 +53,10 @@ if (-not ((Test-Path $DefaultFile) -and (Get-Content -Raw $DefaultFile).Trim()))
     [IO.File]::WriteAllText($DefaultFile, "$Version`n")
 }
 
+# Compile std into the build cache in the background, so a first build compiles little more than
+# its own code (`velt cache warm`; a velt older than the command just declines).
+try { & (Join-Path $Dest "bin\velt.exe") cache warm --background *> $null } catch { }
+
 $Bin = Join-Path $Root "bin"
 Write-Host "installed velt $Version into $Dest (default: $((Get-Content -Raw $DefaultFile).Trim()))"
 Write-Host ""

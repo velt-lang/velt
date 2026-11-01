@@ -33,9 +33,23 @@ impl<'a> Lexer<'a> {
     fn radix_number(&mut self, radix: u32) -> Payload {
         let start = self.pos;
         self.pos += 2;
-        let mut value: u128 = 0;
         let mut overflow = false;
         let mut ndigits = 0;
+        // The digits that fit a `u64` with room for one more (16 hex digits but the last):
+        // accumulated in 64 bits, a table of `u64` literals lexes without 128-bit arithmetic
+        // (#1658). The general loop below takes the rest, `_`s, errors and overflow.
+        let mut small: u64 = 0;
+        while small < (1 << 59) {
+            match hex_val(self.at(0)) {
+                Some(d) if (d as u32) < radix => {
+                    small = small * radix as u64 + d as u64;
+                    ndigits += 1;
+                    self.pos += 1;
+                }
+                _ => break,
+            }
+        }
+        let mut value = small as u128;
         loop {
             let c = self.at(0);
             if c == b'_' {

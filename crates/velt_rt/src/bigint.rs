@@ -12,7 +12,7 @@ use dashu_int::ops::UnsignedAbs;
 use dashu_int::{IBig as BigInt, Sign, UBig};
 use std::cmp::Ordering;
 
-/// Operations of [`velt_rt_bigint_op`] and [`velt_rt_bigint_op_i64`] (std/bigint.vlt `Op`).
+/// Operations of [`velt_rt_bigint_op`] and [`velt_rt_bigint_op_i64`] (std/math/bigint.vlt `Op`).
 mod op {
     pub const ADD: u32 = 0;
     pub const SUB: u32 = 1;

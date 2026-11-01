@@ -64,7 +64,25 @@ a TS or JS file, at its top-level statements: when the root file has statements 
 declarations, they run in order in a generated `main` (`async` when one of them awaits). A
 top-level `const` or `let` moves into that `main` with them, unless a function, class, struct,
 `extend` block or module constant refers to it; then it stays at module level
-([module state](variables.md#module-state)).
+([module state](variables.md#module-state)). So does one that a closure the statements make
+refers to (an arrow, a function expression, a method of an object literal, a function declared in
+a block) when the code assigns it or it holds a new object (`new Map()`, `[]`, not a
+`new Promise(…)`): as in
+Node, the closure then sees the module's variable itself, with what a statement assigns after the
+closure was made and what the closure assigns or changes, also from a request handler or a task on
+another thread (`let hits = 0;` and a `serve` handler that runs `hits++`). A closure gets a copy of
+one that nothing assigns, which is the same value. Not yet a destructuring declaration, a `let`
+without an initializer, one whose initializer awaits (`const server = await serve(…)`), an object
+literal a closure changes (`const stats = { n: 0 }`), or a new object declared with a type that
+checks narrow (`const m: object = new Map()`): those stay locals of `main`, which a closure
+captures as a copy. So does one that module state can't hold: a promise (`let p =
+Promise.resolve(1)` that a closure assigns), or one a `Mutex` `with` callback uses
+([module state](variables.md#module-state)), with the variables below it whose initializers
+read it (`let ok = p !== undefined;`). A `with` callback that calls a function value (`v +=
+add()`, a parameter, a loop variable, the locked value) may run any closure the script makes,
+so then every variable a closure in the script uses stays a local of `main`. That one
+callback turns module state off for the whole script, as before: a task or a request handler
+that assigns such a variable (`spawn(async () => { hits++; })`) is then rejected.
 
 ```ts
 const GREETING = "hello";               // a function uses it: a module constant
@@ -78,6 +96,13 @@ names.push("cy");
 for (const n of names) {
   console.log(greet(n));
 }
+
+let calls = 0;                          // a closure uses it: module state
+const shout = (n: string) => {
+  calls++;
+  return greet(n).toUpperCase();
+};
+console.log(names.map(shout).join(" "), calls); // HELLO ANN HELLO BOB HELLO CY 3
 ```
 
 The statements and the declarations between them run in source order, as in Node: a module constant,
@@ -261,7 +286,7 @@ console.log(s.ends[1].x, s.length); // 3 5
 | Specifier | Resolves to |
 |---|---|
 | `"./file"`, `"../dir/file"` | relative to the importing file, without the extension: `file.vlt`, `file.ts` or `file.tsx` ([TypeScript files](#typescript-files-ts-and-tsx)). A folder is a module through its `index` file: `"./shapes"` is `shapes.vlt` (or `.ts`, `.tsx`), else `shapes/index.vlt` (or `.ts`, `.tsx`) |
-| `"velt:x"` | the [standard library](../std/README.md) module `x` (`"velt:fs"`, `"velt:collections/set"`) |
+| `"velt/x"` | the [standard library](../std/README.md) module `x` (`"velt/fs"`, `"velt/collections"`) |
 | an alias from `paths` in `package.vlt` | `"@app/*": "src/*"` makes `"@app/util/strings"` mean `src/util/strings.vlt` (or `.ts`, `.tsx`), resolved like a relative import ([`package.vlt`](../tooling/manifest.md)) |
 | `"pkg"`, `"pkg/sub"` | a dependency from `package.vlt`: its `src/lib.vlt`, or `src/sub.vlt` / `src/sub/index.vlt` (or `.ts`, `.tsx`, as for a relative import) ([Packages](../tooling/packages.md)) |
 | `"@scope/pkg"`, `"pkg/sub"` of an npm package | when no dependency has that name: the npm package in `node_modules` or the workspace, compiled from the TypeScript source its `package.json` `exports` point back to ([npm packages](../tooling/packages.md#npm-packages)) |
@@ -271,6 +296,19 @@ every OS, as TypeScript's `forceConsistentCasingInFileNames` requires: `"./Util"
 `util.vlt` on Windows or macOS either, since it would fail on Linux. The error names the file on
 disk and the specifier to write (`import it as "./util"`). Files whose names differ only in case
 (`Util.ts` next to `util.vlt`) are different modules everywhere.
+
+A `"velt/x"` specifier names a standard library *module*: a folder of `std/` with an `index.vlt`,
+which is the module's public API (`"velt/net/http"` is `std/net/http/index.vlt`). The other files
+of `std/` are internal to the module whose folder holds them, and a program or package that
+imports one gets an error naming that module, with the import to write instead:
+
+```text
+error: `velt/encoding/json/scan` is internal to `velt/encoding/json`
+  = note: import what you need from "velt/encoding/json", the module's public API
+```
+
+The prelude (`std/prelude/`) and what implements the language and its globals (`std/lang/`) are
+never imported. Standard library code itself imports any std file.
 
 The prelude (strings, arrays, `Map`, `Math`, `JSON`, `Error`, `Comparable`, `Mutex`, `assert`,
 …) is always in scope without an import ([Built-ins](builtins.md)).
@@ -293,7 +331,7 @@ program may mix them freely, and `velt run app.ts` works like `velt run app.vlt`
 - JSX is allowed in `.tsx` and `.vlt` files. In a `.ts` file it is an error, as in TypeScript;
   rename the file to `.tsx`. The [JSX provider](../internals/contracts/jsx.md#choosing-the-provider) is chosen the same way for every file:
   the `/** @jsxImportSource x */` comment before the first token, else the package's
-  `jsx.importSource`, else `velt:jsx`. Velt also reads the comment as `// @jsxImportSource x`;
+  `jsx.importSource`, else `velt/jsx`. Velt also reads the comment as `// @jsxImportSource x`;
   `tsc` reads only the block comment, so code shared with TypeScript uses that form.
 - Two files in one directory whose names differ only in the extension (`dup.vlt` and
   `dup.ts`) have the same module path: an import without an extension can't tell them apart,
@@ -321,8 +359,17 @@ library uses them to bind `velt_rt_*`, and only it may declare those (they take 
 handles). Outside the standard library, a `declare` may only name an export of the native
 library of its own package, and must match that export exactly
 ([Packages with native code](../book/native-packages.md)). Anything else is a compile error: a
-program or a package without native code can't declare C functions such as `free` or `memcpy`. Compiler intrinsics (`__intrinsic_*`) are reserved for
-the standard library too.
+program or a package without native code can't declare C functions such as `free` or `memcpy`. Compiler intrinsics
+(`declare intrinsic function`, in `velt/lang/intrinsics`) are reserved for the standard library
+too. A runtime function std declares writes the `string` it takes as `out`
+or `buf` (a string builder, or the slot for its result), so passing a place there modifies it,
+as a modifying method does.
+
+`declare system function` is the exception every module has: it binds a function of the
+platform's C library from the compiler's table of the ones it can call safely (`pread`, `fsync`,
+`fcntl`, ...), checked against the table's C signature for the target
+([System functions](system-functions.md)). The standard library uses no other way to reach
+them, so a package can do everything std does.
 
 Whether a module belongs to the standard library depends on where it was loaded from (the std
 root), never on its name: a user module whose path would start with `std/` (a `./std/`
@@ -334,8 +381,8 @@ extensions scoped to the modules that import them.
 ## Examples
 
 ```ts
-import { join, basename } from "velt:path";
-import { gcd as greatestDivisor } from "velt:math";
+import { join, basename } from "velt/path";
+import { gcd as greatestDivisor } from "velt/math";
 
 export function describe(path: string): string {
   return `${basename(path)} in ${join("/srv", "app")}`;
@@ -345,8 +392,8 @@ console.log(describe("/tmp/a.txt"), greatestDivisor(12, 18));
 ```
 
 ```ts
-import * as path from "velt:path";
-import type { Stats } from "velt:fs";
+import * as path from "velt/path";
+import type { Stats } from "velt/fs";
 
 function size(s: Stats): u64 {
   return s.size;

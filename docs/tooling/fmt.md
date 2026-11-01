@@ -19,6 +19,10 @@ may belong to a TypeScript project, so name them as files to format them. `targe
   (single quotes are kept when the text contains `"`), semicolons, trailing commas in lists that
   break over several lines, at most one blank line between statements. Template literals are
   printed verbatim. Formatting is idempotent and never changes the program.
+- A method chain that does not fit puts each `.name(...)` on its own line; an index or `!` stays
+  on the line of the call before it (`.split(" ")[0]`, `.find(f)!`). Unlike Prettier, this holds
+  for a computed index too (`.split(" ")[i]`): a line starting with `[` continues the line
+  before it, which the parser warns about.
 - JSX is laid out like Prettier does it: an element that does not fit goes over several lines
   (in parentheses after `=`, `return` and `=>`), text is reflowed as a paragraph, and in an
   HTML element or a fragment a space next to a tag at a line break is written `{" "}` (it would

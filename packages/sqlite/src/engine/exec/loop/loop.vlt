@@ -1,0 +1,251 @@
+// sqlite/engine/exec/loop/loop (internal): the loop of one FROM level, as a closure around the
+// loops inside it: a full scan, a rowid lookup or range, an index scan (prefix equality, a range on
+// the next column), or the rows of a subquery; for a LEFT JOIN, the row of NULLs when nothing
+// matched.
+
+import { Cursor } from "../../cursor";
+import { NULL } from "../../storage_class";
+import "../../btree_back";
+import { Source } from "../source";
+import { Out } from "../out";
+import { Pred, Step } from "../types";
+import { ExprCompiler } from "../expr_compiler";
+import {
+  ACC_INDEX,
+  ACC_ROWID_EQ,
+  ACC_ROWID_IN,
+  ACC_ROWID_RANGE,
+  ACC_ROWS,
+  Access,
+} from "../plan/access";
+import { Term } from "../plan/term";
+import { beyondRowids, rowidKey } from "../plan/rowid_key";
+import { inValues } from "./in_values";
+import { indexScan } from "./index_loop";
+
+/** Whether a LEFT JOIN level found a row this time round. */
+class Matched {
+  v: bool = false;
+}
+
+export function allOf(ps: Pred[]): Pred | null {
+  if (ps.length == 0) {
+    return null;
+  }
+  if (ps.length == 1) {
+    return ps[0];
+  }
+  if (ps.length == 2) {
+    const a = ps[0];
+    const b = ps[1];
+    return () => a() && b();
+  }
+  return () => {
+    for (const p of ps) {
+      if (!p()) {
+        return false;
+      }
+    }
+    return true;
+  };
+}
+
+/**
+ * The loop of level `lv`: for each row of `src` that its terms accept, `inner` runs. Stops
+ * early once `out.stop` is set (LIMIT reached).
+ */
+export function levelLoop(
+  c: ExprCompiler,
+  src: Source,
+  acc: Access,
+  terms: Term[],
+  lv: usize,
+  left: bool,
+  out: Out,
+  inner: Step,
+): Step {
+  const wh: Pred[] = [];
+  const on: Pred[] = [];
+  for (const t of terms) {
+    if (t.level != (lv as i64) || t.used || t.virtual) {
+      continue;
+    }
+    if (left && t.on == (lv as i64)) {
+      on.push(t.pred);
+    } else {
+      wh.push(t.pred);
+    }
+  }
+  const where = allOf(wh);
+  const next: Step =
+    where == null
+      ? inner
+      : () => {
+        if (where!()) {
+          inner();
+        }
+      };
+  if (!left) {
+    return scan(c, src, acc, out, next);
+  }
+  const onp = allOf(on);
+  const m = new Matched();
+  const each: Step = () => {
+    if (onp == null || onp!()) {
+      m.v = true;
+      next();
+    }
+  };
+  const loop = scan(c, src, acc, out, each);
+  return () => {
+    m.v = false;
+    loop();
+    if (!m.v && !out.stop) {
+      src.nullRow = true;
+      next();
+      src.nullRow = false;
+    }
+  };
+}
+
+function scan(c: ExprCompiler, src: Source, acc: Access, out: Out, each: Step): Step {
+  if (acc.kind == ACC_ROWS) {
+    const q = c.rowsQuery(src);
+    const p = c.params;
+    return () => {
+      q.open(p);
+      let r: usize = 0;
+      while (!out.stop && q.has(r)) {
+        src.at = r;
+        each();
+        r++;
+      }
+    };
+  }
+  const cur = src.cur!;
+  if (acc.kind == ACC_ROWID_EQ) {
+    const ve = acc.eq[0];
+    const aff = acc.eqAff[0];
+    return () => {
+      const k = rowidKey(ve(), aff, false);
+      if (k.ok && !k.frac && cur.seekRowid(k.value)) {
+        each();
+      }
+    };
+  }
+  if (acc.kind == ACC_ROWID_RANGE) {
+    return rowidRange(cur, acc, out, each);
+  }
+  if (acc.kind == ACC_ROWID_IN) {
+    const list = acc.inList!;
+    const inq = acc.inQuery;
+    const p = c.params;
+    const aff = acc.inAff;
+    return () => {
+      for (const v of inValues(list, inq, p, aff, 0)) {
+        if (out.stop) {
+          break;
+        }
+        const k = rowidKey(v, aff, false);
+        if (k.ok && !k.frac && cur.seekRowid(k.value)) {
+          each();
+        }
+      }
+    };
+  }
+  if (acc.kind == ACC_INDEX) {
+    return indexScan(src, acc, out, each, c.params);
+  }
+  if (acc.reverse) {
+    return () => {
+      let ok = cur.last();
+      while (ok && !out.stop) {
+        each();
+        ok = cur.prev();
+      }
+    };
+  }
+  return () => {
+    let ok = cur.first();
+    while (ok && !out.stop) {
+      each();
+      ok = cur.next();
+    }
+  };
+}
+
+function rowidRange(cur: Cursor, acc: Access, out: Out, each: Step): Step {
+  const lo = acc.lo;
+  const hi = acc.hi;
+  const loAff = acc.loAff;
+  const hiAff = acc.hiAff;
+  const loIncl = acc.loIncl;
+  const hiIncl = acc.hiIncl;
+  const reverse = acc.reverse;
+  return () => {
+    let hasLo = false;
+    let start: i64 = 0;
+    if (lo != null) {
+      const v = lo!();
+      if (v.t == NULL) {
+        return;
+      }
+      const k = rowidKey(v, loAff, true);
+      if (!k.ok) {
+        // Above every integer (text, a REAL past 2^63): no row; below them all: no bound.
+        if (beyondRowids(v, loAff) != -1) {
+          return;
+        }
+      } else {
+        hasLo = true;
+        start = k.value;
+        if (!loIncl && !k.frac) {
+          if (start == 9223372036854775807) {
+            return;
+          }
+          start++;
+        }
+      }
+    }
+    let hasHi = false;
+    let end: i64 = 0;
+    if (hi != null) {
+      const v = hi!();
+      if (v.t == NULL) {
+        return;
+      }
+      const k = rowidKey(v, hiAff, false);
+      if (k.ok) {
+        hasHi = true;
+        end = k.value;
+        if (!hiIncl && !k.frac) {
+          if (end == -9223372036854775807 - 1) {
+            return;
+          }
+          end--;
+        }
+      } else if (beyondRowids(v, hiAff) != 1) {
+        return;
+      }
+    }
+    if (reverse) {
+      let ok = hasHi ? cur.seekRowidLe(end) : cur.last();
+      while (ok && !out.stop) {
+        if (hasLo && cur.rowid < start) {
+          break;
+        }
+        each();
+        ok = cur.prev();
+      }
+      return;
+    }
+    let ok = hasLo ? cur.seekRowidGe(start) : cur.first();
+    while (ok && !out.stop) {
+      if (hasHi && cur.rowid > end) {
+        break;
+      }
+      each();
+      ok = cur.next();
+    }
+  };
+}

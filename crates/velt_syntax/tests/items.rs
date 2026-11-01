@@ -6,17 +6,17 @@ use common::*;
 
 #[test]
 fn imports_and_exports() {
-    let m = parse_ok("import { a, b as c } from \"velt:fs\"; import \"./side\"; export function f() {} export const X = 1; function g() {}");
+    let m = parse_ok("import { a, b as c } from \"velt/fs\"; import \"./side\"; export function f() {} export const X = 1; function g() {}");
     let ItemKind::Import(i) = &m.items[0].kind else {
         panic!()
     };
-    assert_eq!(i.from, "velt:fs");
+    assert_eq!(i.from, "velt/fs");
     assert_eq!(i.names.len(), 2);
     assert_eq!(i.names[1].name.name, "b");
     assert_eq!(i.names[1].alias.as_ref().unwrap().name, "c");
     assert_eq!(
-        &"import { a, b as c } from \"velt:fs\";"[i.from_span.lo as usize..i.from_span.hi as usize],
-        "\"velt:fs\""
+        &"import { a, b as c } from \"velt/fs\";"[i.from_span.lo as usize..i.from_span.hi as usize],
+        "\"velt/fs\""
     );
     let ItemKind::Import(i) = &m.items[1].kind else {
         panic!()
@@ -71,7 +71,86 @@ fn declare_function() {
     };
     assert_eq!(sig.name.name, "velt_print");
     assert_eq!(sig.params.len(), 2);
+    assert!(!sig.is_system);
     assert!(m.items[1].exported);
+}
+
+/// `declare system function`: `system` is a word only between `declare` and `function` (a
+/// function or a variable may still be named `system`); `readonly u8[]` parses as itself.
+#[test]
+fn declare_system_function() {
+    let m = parse_ok(
+        "declare system function pwrite(fd: i32, buf: readonly u8[], offset: i64): isize;
+         export declare system function fcntl$lock(fd: i32, cmd: i32, lock: Lock): i32;
+         function system(): i32 { return 1; }
+         declare function system2(): i32;",
+    );
+    let ItemKind::ExternFn(sig) = &m.items[0].kind else {
+        panic!()
+    };
+    assert!(sig.is_system && !sig.is_async);
+    assert_eq!(sig.name.name, "pwrite");
+    let TypeExprKind::Named { path, .. } = &sig.params[1].ty.kind else {
+        panic!("{:?}", sig.params[1].ty.kind)
+    };
+    assert_eq!(path[0].name, "ReadonlyArray");
+    let ItemKind::ExternFn(sig) = &m.items[1].kind else {
+        panic!()
+    };
+    assert!(sig.is_system && m.items[1].exported);
+    assert_eq!(sig.name.name, "fcntl$lock");
+    assert!(matches!(&m.items[2].kind, ItemKind::Function(f) if f.sig.name.name == "system"));
+    assert!(matches!(&m.items[3].kind, ItemKind::ExternFn(s) if !s.is_system));
+}
+
+/// `declare intrinsic function`: `intrinsic` is a word only between `declare` and `function` (a
+/// function may still be named `intrinsic`), and the declaration is generic like any other.
+#[test]
+fn declare_intrinsic_function() {
+    let m = parse_ok(
+        "export declare intrinsic function arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void;
+         function intrinsic(): i32 { return 1; }
+         declare function intrinsic2(): i32;",
+    );
+    let ItemKind::ExternFn(sig) = &m.items[0].kind else {
+        panic!()
+    };
+    assert!(sig.is_intrinsic && !sig.is_system && !sig.is_async && m.items[0].exported);
+    assert_eq!(sig.name.name, "arraySwap");
+    assert_eq!(sig.generics.len(), 1);
+    assert_eq!(sig.params.len(), 3);
+    assert_eq!(sig.params[0].name.name, "xs");
+    assert!(matches!(&m.items[1].kind, ItemKind::Function(f) if f.sig.name.name == "intrinsic"));
+    assert!(matches!(&m.items[2].kind, ItemKind::ExternFn(s) if !s.is_intrinsic));
+}
+
+/// `declare generated("<spec>") function`: a generic function with an empty body whose
+/// generator module is the string; `generated` is a word only there.
+#[test]
+fn declare_generated_function() {
+    let src =
+        "export declare generated(\"./gen/write\") function write<T>(out: string, v: T): void;
+         declare generated(\"g\") async function load<T>(s: string): T;
+         function generated(): i32 { return 1; }
+         declare function generated2(): i32;";
+    let m = parse_ok(src);
+    let ItemKind::Function(f) = &m.items[0].kind else {
+        panic!("{:?}", m.items[0].kind)
+    };
+    let g = f.sig.generator.as_ref().expect("a generator");
+    assert_eq!(g.spec, "./gen/write");
+    assert_eq!(
+        &src[g.span.lo as usize..g.span.hi as usize],
+        "\"./gen/write\""
+    );
+    assert!(m.items[0].exported && f.body.stmts.is_empty() && f.sig.generics.len() == 1);
+    assert_eq!(f.sig.name.name, "write");
+    let ItemKind::Function(f) = &m.items[1].kind else {
+        panic!()
+    };
+    assert!(f.sig.is_async && f.sig.generator.as_ref().is_some_and(|g| g.spec == "g"));
+    assert!(matches!(&m.items[2].kind, ItemKind::Function(f) if f.sig.generator.is_none()));
+    assert!(matches!(&m.items[3].kind, ItemKind::ExternFn(s) if s.generator.is_none()));
 }
 
 #[test]

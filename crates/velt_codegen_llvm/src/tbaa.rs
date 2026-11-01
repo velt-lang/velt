@@ -11,21 +11,26 @@
 //! - **header**: a field of an array header, wherever the header lives (behind an array
 //!   value, inline in an object or async frame, in a local);
 //! - **element**: a scalar element read or written through a pointer computed from a header's
-//!   data field ([`element_pointers`]), and the vector loads and stores of the SIMD helpers.
-//!   One tag for every element type: a typed array reads the bytes of a `u8[]` as other types.
+//!   data field ([`element_pointers`]), the vector loads and stores of the SIMD helpers, and the
+//!   byte reads of a string's text (through `velt_vir::STR_TEXT_AGG_NAME`, #1669). One tag for
+//!   every element type: a typed array reads the bytes of a `u8[]` as other types.
 //! - **object field**: a scalar field of a class object (`velt_vir::OBJECT_AGG_SUFFIX`). One tag
 //!   for every class: an object is read through its own layout and its base classes' (prefixes
 //!   of it). A typed array's element access reads its buffer from such a field, so this keeps
 //!   the field in a register across the element stores too.
 //!
-//! No two of them touch the same memory: element memory is an array's data buffer of scalars,
-//! and no header lives in a buffer of scalars (an array of arrays holds pointers to headers, an
+//! No two of them touch the same memory: element memory is an array's data buffer of scalars or
+//! a string's text, and no header lives in a buffer of scalars (an array of arrays holds pointers to headers, an
 //! array of aggregates is read through aggregate places, which get no element tag). A class
 //! object is a heap object (or a local `heap_sroa` made of one), never inside a data buffer; a
 //! header stored inline in an object is reached by projecting its own fields, which get the
 //! header tag, and an object layout has no overlapping fields (async frames and enum views,
 //! which do, are not object layouts and stay untagged). The reference count before an object
-//! is read through an offset pointer and stays untagged.
+//! is read through an offset pointer and stays untagged. A string's text is its own buffer, or
+//! the bytes of the 24-byte string value itself (an inline string), wherever that value lives:
+//! a string field of an object is reached by projecting the string's own words, which get no
+//! tag (as do whole-string copies, `memcpy`), so a store that changes an inline string's text
+//! stays untagged and may alias the text reads.
 
 use velt_vir::vir::{self, AggId, Operand, Place, Proj, Rvalue, Stmt, Terminator, Ty};
 
@@ -65,6 +70,15 @@ pub(crate) fn object_aggs(program: &vir::Program) -> Vec<bool> {
         .iter()
         .map(|a| a.name.ends_with(velt_vir::OBJECT_AGG_SUFFIX))
         .collect()
+}
+
+/// The aggregate string bytes are read through, if the program reads any.
+pub(crate) fn text_agg(program: &vir::Program) -> Option<AggId> {
+    program
+        .aggs
+        .iter()
+        .position(|a| a.name == velt_vir::STR_TEXT_AGG_NAME)
+        .map(|i| AggId(i as u32))
 }
 
 /// The program's array header aggregate, if it has arrays.

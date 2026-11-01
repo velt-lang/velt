@@ -1,0 +1,360 @@
+// sqlite/engine/sql/lexer (internal): SQLite's SQL tokens (https://sqlite.org/lang_keywords.html,
+// tokenize.c): identifiers (bare, "double-quoted", [bracketed], `backticked`), string literals
+// with '' escapes, blob literals X'…', integers (decimal and 0x hex), reals, parameters (?, ?NNN,
+// :name, @name, $name), operators and comments. Keywords are identifiers here; the parser
+// decides by context, as SQLite's fallback rules let most keywords name things.
+
+import { utf8ByteAt, utf8Length } from "velt/encoding";
+import { K_ID, keywordClass } from "./keywords";
+import { SqlError } from "./errors";
+import { Utf16Index, byteSlice } from "./utf16_index";
+import { asciiUpper } from "./text";
+import {
+  T_BLOB,
+  T_EOF,
+  T_IDENT,
+  T_INTEGER,
+  T_OP,
+  T_PARAM,
+  T_QUOTED,
+  T_REAL,
+  T_SEMI,
+  T_STRING,
+  Token,
+} from "./token";
+
+function isIdentStart(b: u8): bool {
+  return (b >= 97 && b <= 122) || (b >= 65 && b <= 90) || b == 95 || b >= 0x80;
+}
+
+function isIdentPart(b: u8): bool {
+  return isIdentStart(b) || (b >= 48 && b <= 57) || b == 36;
+}
+
+function isDigit(b: u8): bool {
+  return b >= 48 && b <= 57;
+}
+
+function isHex(b: u8): bool {
+  return isDigit(b) || (b >= 97 && b <= 102) || (b >= 65 && b <= 70);
+}
+
+/** Splits `sql` into tokens; the last is T_EOF. Throws `SqlError` on an unclosed token. */
+export function tokenize(sql: string): Token[] {
+  const n = utf8Length(sql) as usize;
+  const u = new Utf16Index(sql);
+  const out: Token[] = [];
+  let i: usize = 0;
+  while (i < n) {
+    const b = utf8ByteAt(sql, i as usize);
+    // Whitespace and comments.
+    if (b == 32 || b == 9 || b == 10 || b == 13 || b == 12) {
+      i++;
+      continue;
+    }
+    if (b == 45 && i + 1 < n && utf8ByteAt(sql, (i + 1) as usize) == 45) {
+      while (i < n && utf8ByteAt(sql, i as usize) != 10) {
+        i++;
+      }
+      continue;
+    }
+    // `/*` at the very end is `/` and then `*`, as in tokenize.c.
+    if (b == 47 && i + 2 < n && utf8ByteAt(sql, (i + 1) as usize) == 42) {
+      i += 2;
+      while (
+        i + 1 < n && !(utf8ByteAt(sql, i as usize) == 42 && utf8ByteAt(sql, (i + 1) as usize) == 47)
+      ) {
+        i++;
+      }
+      // An unclosed block comment runs to the end, as in SQLite.
+      i = i + 1 < n ? i + 2 : n;
+      continue;
+    }
+    const start = i;
+    // Blob literal X'…'.
+    if ((b == 120 || b == 88) && i + 1 < n && utf8ByteAt(sql, (i + 1) as usize) == 39) {
+      i += 2;
+      const from = i;
+      while (i < n && isHex(utf8ByteAt(sql, i as usize))) {
+        i++;
+      }
+      if (i >= n || utf8ByteAt(sql, i as usize) != 39 || (i - from) % 2 != 0) {
+        // The bad token runs to its closing quote, or to the end.
+        while (i < n && utf8ByteAt(sql, i as usize) != 39) {
+          i++;
+        }
+        throw new SqlError(
+          `unrecognized token: "${byteSlice(sql, start, i < n ? i + 1 : n)}"`,
+          start,
+        );
+      }
+      const hex = u.slice(from, i);
+      i++;
+      out.push(Token { kind: T_BLOB, start: start, end: i, text: hex, upper: "", kw: K_ID });
+      continue;
+    }
+    if (isIdentStart(b)) {
+      while (i < n && isIdentPart(utf8ByteAt(sql, i as usize))) {
+        i++;
+      }
+      const word = u.slice(start, i);
+      const upper = asciiUpper(word);
+      out.push(Token {
+        kind: T_IDENT,
+        start: start,
+        end: i,
+        text: word,
+        upper: upper,
+        kw: keywordClass(upper),
+      });
+      continue;
+    }
+    if (isDigit(b) || (b == 46 && i + 1 < n && isDigit(utf8ByteAt(sql, (i + 1) as usize)))) {
+      out.push(number(u, n, start));
+      i = out[out.length - 1].end;
+      continue;
+    }
+    if (b == 39) {
+      out.push(quoted(u, n, start, 39, T_STRING));
+      i = out[out.length - 1].end;
+      continue;
+    }
+    if (b == 34 || b == 96) {
+      out.push(quoted(u, n, start, b, T_QUOTED));
+      i = out[out.length - 1].end;
+      continue;
+    }
+    if (b == 91) {
+      // [name]: no escapes.
+      i++;
+      while (i < n && utf8ByteAt(sql, i as usize) != 93) {
+        i++;
+      }
+      if (i >= n) {
+        throw new SqlError(`unrecognized token: "${byteSlice(sql, start, n)}"`, start);
+      }
+      const name = u.slice(start + 1, i);
+      i++;
+      out.push(Token {
+        kind: T_QUOTED,
+        start: start,
+        end: i,
+        text: name,
+        upper: asciiUpper(name),
+        kw: K_ID,
+      });
+      continue;
+    }
+    if (b == 63) {
+      i++;
+      while (i < n && isDigit(utf8ByteAt(sql, i as usize))) {
+        i++;
+      }
+      out.push(Token {
+        kind: T_PARAM,
+        start: start,
+        end: i,
+        text: u.slice(start, i),
+        upper: "",
+        kw: K_ID,
+      });
+      continue;
+    }
+    if (b == 58 || b == 64 || b == 36) {
+      i++;
+      while (i < n && isIdentPart(utf8ByteAt(sql, i as usize))) {
+        i++;
+      }
+      if (i == start + 1) {
+        throw new SqlError(`unrecognized token: "${byteSlice(sql, start, i)}"`, start);
+      }
+      out.push(Token {
+        kind: T_PARAM,
+        start: start,
+        end: i,
+        text: u.slice(start, i),
+        upper: "",
+        kw: K_ID,
+      });
+      continue;
+    }
+    if (b == 59) {
+      i++;
+      out.push(Token { kind: T_SEMI, start: start, end: i, text: ";", upper: ";", kw: K_ID });
+      continue;
+    }
+    // Operators: the two-byte ones first.
+    if (i + 1 < n) {
+      const two = u.slice(i, i + 2);
+      if (
+        two == "||" ||
+        two == "<=" ||
+        two == ">=" ||
+        two == "==" ||
+        two == "!=" ||
+        two == "<>" ||
+        two == "<<" ||
+        two == ">>" ||
+        two == "->"
+      ) {
+        i += 2;
+        if (two == "->" && i < n && utf8ByteAt(sql, i as usize) == 62) {
+          i++;
+          out.push(Token { kind: T_OP, start: start, end: i, text: "->>", upper: "->>", kw: K_ID });
+          continue;
+        }
+        out.push(Token { kind: T_OP, start: start, end: i, text: two, upper: two, kw: K_ID });
+        continue;
+      }
+    }
+    if (
+      b == 40 ||
+      b == 41 ||
+      b == 44 ||
+      b == 46 ||
+      b == 43 ||
+      b == 45 ||
+      b == 42 ||
+      b == 47 ||
+      b == 37 ||
+      b == 60 ||
+      b == 62 ||
+      b == 61 ||
+      b == 38 ||
+      b == 124 ||
+      b == 126
+    ) {
+      i++;
+      const op = u.slice(start, i);
+      out.push(Token { kind: T_OP, start: start, end: i, text: op, upper: op, kw: K_ID });
+      continue;
+    }
+    throw new SqlError(`unrecognized token: "${byteSlice(sql, start, start + 1)}"`, start);
+  }
+  out.push(Token { kind: T_EOF, start: n, end: n, text: "", upper: "", kw: K_ID });
+  return out;
+}
+
+/**
+ * A string or quoted identifier from `start` (its opening quote `q`); a doubled quote is one
+ * quote character.
+ */
+function quoted(u: Utf16Index, n: usize, start: usize, q: u8, kind: u8): Token {
+  const sql = u.s;
+  let i = start + 1;
+  let text = "";
+  let from = i;
+  while (true) {
+    if (i >= n) {
+      throw new SqlError(`unrecognized token: "${byteSlice(sql, start, n)}"`, start);
+    }
+    const b = utf8ByteAt(sql, i as usize);
+    if (b == q) {
+      if (i + 1 < n && utf8ByteAt(sql, (i + 1) as usize) == q) {
+        text += u.slice(from, i + 1);
+        i += 2;
+        from = i;
+        continue;
+      }
+      text += u.slice(from, i);
+      i++;
+      break;
+    }
+    i++;
+  }
+  return Token {
+    kind: kind,
+    start: start,
+    end: i,
+    text: text,
+    upper: kind == T_QUOTED ? asciiUpper(text) : "",
+    kw: K_ID,
+  };
+}
+
+/**
+ * A numeric literal from `start`: 0x hex integers, decimal integers, reals with a fraction
+ * and/or exponent. `_` may separate digits (SQLite 3.46): `1_000`, `0xff_ff`, `1.5e1_0`.
+ */
+function number(u: Utf16Index, n: usize, start: usize): Token {
+  const sql = u.s;
+  let i = start;
+  if (utf8ByteAt(sql, i as usize) == 48 && i + 2 < n) {
+    const x = utf8ByteAt(sql, (i + 1) as usize);
+    if ((x == 120 || x == 88) && isHex(utf8ByteAt(sql, (i + 2) as usize))) {
+      i = digits(sql, n, i + 2, true);
+      return finishNumber(u, n, start, i, T_INTEGER, true);
+    }
+  }
+  let kind = T_INTEGER;
+  i = digits(sql, n, i, false);
+  if (i < n && utf8ByteAt(sql, i as usize) == 46) {
+    kind = T_REAL;
+    i = digits(sql, n, i + 1, false);
+  }
+  if (i < n) {
+    const e = utf8ByteAt(sql, i as usize);
+    if (e == 101 || e == 69) {
+      let j = i + 1;
+      if (j < n) {
+        const s = utf8ByteAt(sql, j as usize);
+        if (s == 43 || s == 45) {
+          j++;
+        }
+      }
+      if (j < n && isDigit(utf8ByteAt(sql, j as usize))) {
+        kind = T_REAL;
+        i = digits(sql, n, j, false);
+      }
+    }
+  }
+  return finishNumber(u, n, start, i, kind, false);
+}
+
+/** The end of a run of (hex) digits and `_` separators from `i`. */
+function digits(sql: string, n: usize, from: usize, hex: bool): usize {
+  let i = from;
+  while (i < n) {
+    const b = utf8ByteAt(sql, i as usize);
+    if (!(hex ? isHex(b) : isDigit(b)) && b != 95) {
+      break;
+    }
+    i++;
+  }
+  return i;
+}
+
+function finishNumber(
+  u: Utf16Index,
+  n: usize,
+  start: usize,
+  end: usize,
+  kind: u8,
+  hex: bool,
+): Token {
+  const sql = u.s;
+  /** A number running into a name (`12abc`) is one bad token in SQLite. */
+  if (end < n && isIdentPart(utf8ByteAt(sql, end as usize))) {
+    let bad = end;
+    while (bad < n && isIdentPart(utf8ByteAt(sql, bad as usize))) {
+      bad++;
+    }
+    throw new SqlError(`unrecognized token: "${byteSlice(sql, start, bad)}"`, start);
+  }
+  let text = u.slice(start, end);
+  if (text.includes("_")) {
+    // Each separator stands between two digits (hex digits in a hex literal).
+    for (let i = start; i < end; i++) {
+      if (utf8ByteAt(sql, i as usize) != 95) {
+        continue;
+      }
+      const before = utf8ByteAt(sql, (i - 1) as usize);
+      const after = i + 1 < end ? utf8ByteAt(sql, (i + 1) as usize) : 0;
+      if (!(hex ? isHex(before) && isHex(after) : isDigit(before) && isDigit(after))) {
+        throw new SqlError(`unrecognized token: "${text}"`, start);
+      }
+    }
+    text = text.replaceAll("_", "");
+  }
+  return Token { kind: kind, start: start, end: end, text: text, upper: text, kw: K_ID };
+}

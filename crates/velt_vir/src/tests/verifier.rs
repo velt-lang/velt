@@ -260,3 +260,48 @@ fn verify_rejects_misused_atomic_externs() {
     ));
     expect_err(&p, "the address of `velt_atomic_load_8_acq` is taken");
 }
+
+/// Invariant 11: only an imported function may have no blocks; it prints as a declaration.
+#[test]
+fn only_imported_functions_have_no_blocks() {
+    let mut p = base_program();
+    let decl = Function::new(
+        "_V3stdN4twice".into(),
+        vec![Ty::I64],
+        Ty::I64,
+        Linkage::Import,
+    );
+    p.funcs.push(decl);
+    crate::verify(&p).unwrap();
+    assert!(
+        p.to_string().contains(&format!(
+            "fn#{} import _V3stdN4twice(i64) -> i64\n",
+            p.funcs.len() - 1
+        )),
+        "{p}"
+    );
+    p.funcs.last_mut().unwrap().linkage = Linkage::Internal;
+    expect_err(&p, "has no blocks");
+}
+
+/// Code compiled on its own to link into a program (the std cache) declares the entry rather
+/// than defining it (invariant 5); any other linkage, or none, is still an error.
+#[test]
+fn the_entry_may_be_declared() {
+    let mut p = base_program();
+    let main = p
+        .funcs
+        .iter()
+        .position(|f| f.symbol == "velt_main")
+        .unwrap();
+    p.funcs[main] = Function::new("velt_main".into(), vec![], Ty::I32, Linkage::Import);
+    crate::verify(&p).unwrap();
+    p.funcs[main].linkage = Linkage::Internal;
+    p.funcs[main].blocks.push(BasicBlock {
+        stmts: vec![],
+        term: Terminator::Return(Operand::Const(Const::Int(0), Ty::I32)),
+    });
+    expect_err(&p, "velt_main must be");
+    p.funcs.remove(main);
+    expect_err(&p, "missing exported entry");
+}

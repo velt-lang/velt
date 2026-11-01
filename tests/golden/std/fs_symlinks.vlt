@@ -14,7 +14,7 @@ import {
   readFile,
   remove,
   existsSync,
-} from "velt:fs";
+} from "velt/fs";
 
 async function main() {
   const dir = "velt_fs_symlinks_tmp";

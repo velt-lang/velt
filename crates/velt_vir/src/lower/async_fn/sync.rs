@@ -15,7 +15,7 @@
 //!   from the value (velt_sema ownership/locked, which also transfers what the callback
 //!   stores across the lock).
 
-use velt_sema::hir::{self, Intrinsic, TyId, TyKind};
+use velt_sema::hir::{self, IntTy, Intrinsic, TyId, TyKind};
 
 use crate::atomic::{AtomicCall, Order, Rmw};
 use crate::lower::operand::proj;
@@ -61,15 +61,7 @@ impl FnLower<'_, '_> {
                 let r = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::Add, old, n));
                 self.cast_to(r, Ty::U64, vt)
             }
-            (I::SharedGet, [s]) => {
-                let (cell, vt) = self.shared_cell(s);
-                let load = AtomicCall::Load {
-                    bits: 64,
-                    order: Order::SeqCst,
-                };
-                let r = self.atomic_call(load, vec![cell]);
-                self.cast_to(r, Ty::U64, vt)
-            }
+            (I::SharedGet, [s]) => self.shared_get(s),
             (I::SharedSet, [s, v]) => {
                 let (cell, vt) = self.shared_cell(s);
                 let v = self.expr(v);
@@ -89,6 +81,26 @@ impl FnLower<'_, '_> {
                 args.len()
             )),
         }
+    }
+
+    /// `get()` of a `shared<int>`: an atomic load, as other threads may `add` to it.
+    fn shared_get(&mut self, s: &hir::Expr) -> Operand {
+        let (cell, vt) = self.shared_cell(s);
+        let load = AtomicCall::Load {
+            bits: 64,
+            order: Order::SeqCst,
+        };
+        let r = self.atomic_call(load, vec![cell]);
+        self.cast_to(r, Ty::U64, vt)
+    }
+
+    /// Is `s` a `shared<int>` whose `add`/`get`/`set` are atomic (sema's `Ctx::atomic_int`)?
+    /// Generic code bounded by `Frozen` reads one as its `T`: that read must be the atomic
+    /// `get()`, not a plain load racing with another thread's `add`.
+    fn atomic_shared(&mut self, s: &hir::Expr) -> bool {
+        let sty = self.sub(s.ty);
+        matches!(self.cx.kind(sty), TyKind::Shared(inner)
+            if matches!(self.cx.kind(inner), TyKind::Int(IntTy::I64 | IntTy::U64 | IntTy::ISize | IntTy::USize)))
     }
 
     /// Address of the value cell of a `shared<int>` receiver, and the int's VIR type.
@@ -146,11 +158,16 @@ impl FnLower<'_, '_> {
             // assigning it by reference) is no cell, but the read keeps the box all the same.
             K::Local(l, _) => self.in_shared_cell(s) || self.body_changes(*l),
             K::Global(_) => self.in_shared_cell(s),
-            K::Field { .. }
-            | K::Index { .. }
-            | K::UnwrapSome(..)
-            | K::UnwrapVariant { .. }
-            | K::Downcast(_) => true,
+            // A narrowed variable (`x!`, `x` after `x == null` returned) changes only with the
+            // variable: a cell's or one the body assigns. (Not `in_shared_cell`, which notes
+            // the variable's own type as shared, not the narrowed one this would share.)
+            K::UnwrapSome(base, _) | K::UnwrapVariant { expr: base, .. } | K::Downcast(base) => {
+                match &base.kind {
+                    K::Local(l, _) => self.info[l.0 as usize].in_cell || self.body_changes(*l),
+                    _ => true,
+                }
+            }
+            K::Field { .. } | K::Index { .. } => true,
             _ => false,
         }
     }
@@ -170,6 +187,9 @@ impl FnLower<'_, '_> {
 
     /// [`shared_read`](Self::shared_read), `runs_code` as for [`shared_value`](Self::shared_value).
     fn shared_read_in(&mut self, s: &hir::Expr, hold: BoxHold) -> Operand {
+        if self.atomic_shared(s) {
+            return self.shared_get(s);
+        }
         let (place, inner) = self.shared_value(s, hold);
         let vt = self.cx.ty(inner);
         if vt == Ty::Unit || self.cx.holds_counted(inner) {
@@ -204,6 +224,9 @@ impl FnLower<'_, '_> {
     /// `Intrinsic::SharedRead` consumed (moved into a variable, an owned parameter, a field):
     /// a copy of the value inside, which the consumer owns.
     pub(in crate::lower) fn shared_read_owned(&mut self, s: &hir::Expr) -> Operand {
+        if self.atomic_shared(s) {
+            return self.shared_get(s);
+        }
         let (place, inner) = self.shared_value(s, BoxHold::No);
         self.clone_value(Operand::Copy(place), inner)
     }
@@ -343,6 +366,21 @@ impl FnLower<'_, '_> {
             Rvalue::Use(Operand::Copy(proj(&fp, Proj::Field(1)))),
         );
         let ret = self.sub(ty);
+        // A callback that may reach a declared function's properties held as `any`, which are
+        // module state (velt_rt fn_props.rs): the module lock comes first, so the callback
+        // never waits for it while it holds the lock. Sema lists the callbacks that never
+        // reach them (`Program::lock_free_callbacks`).
+        let lock_free = match &f.kind {
+            hir::ExprKind::Closure(d) | hir::ExprKind::FnRef(d, _) => {
+                self.cx.hir.lock_free_callbacks.contains(d)
+            }
+            _ => false,
+        };
+        let module_took = (self.cx.boxing.fn_props && !lock_free).then(|| {
+            let took = Place::local(self.temp(Ty::U8));
+            self.call_rt(Rt::ModuleWith, vec![], Some(took.clone()));
+            took
+        });
         // An `RwLock`'s lock takes this thread's reader state (0: it looks it up) and says how
         // it went in, which its unlock takes back.
         let how = match rw {
@@ -415,6 +453,9 @@ impl FnLower<'_, '_> {
         let mut unlock_args = vec![lock];
         unlock_args.extend(how);
         self.call_rt(unlock_fn, unlock_args, None);
+        if let Some(took) = module_took {
+            self.call_rt(Rt::ModuleWithEnd, vec![Operand::Copy(took)], None);
+        }
         r
     }
 

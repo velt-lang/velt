@@ -39,31 +39,41 @@ pub(crate) struct Lifted {
 /// when no module has one (the common case: nothing is copied).
 pub(crate) fn lift(modules: &[SourceModule]) -> Option<Lifted> {
     let types = typed::GenericFnTypes::new(modules);
+    // Which items declare a local one: only those are rewritten (the rewriter's scope analysis
+    // of a whole function is not run for the rest of the program).
+    let has_local: Vec<Vec<bool>> = (modules.iter().enumerate())
+        .map(|(k, m)| {
+            (m.ast.items.iter())
+                .map(|i| local::item_has_local(i, &types, k))
+                .collect()
+        })
+        .collect();
     let any = modules.iter().enumerate().any(|(k, m)| {
-        m.ast
-            .items
-            .iter()
-            .any(|i| as_function(i, k, &types).is_some() || local::item_has_local(i, &types))
+        has_local[k].contains(&true)
+            || (m.ast.items.iter()).any(|i| as_function(i, k, &types).is_some())
     });
     if !any {
         return None;
     }
     let mut locals = local::Rewriter::new(&types);
     let mut module_fns = vec![];
-    let mut lift_item = |k: usize, i: &ast::Item| {
+    let mut lift_item = |k: usize, j: usize, i: &ast::Item| {
         locals.module = k;
-        let mut i = match as_function(i, k, &types) {
+        let (mut i, has) = match as_function(i, k, &types) {
             Some(f) => {
                 if let ast::ItemKind::Function(f) = &f.kind {
                     if !f.sig.is_generator {
                         module_fns.push(f.sig.name.span);
                     }
                 }
-                f
+                let has = local::item_has_local(&f, &types, k);
+                (f, has)
             }
-            None => i.clone(),
+            None => (i.clone(), has_local[k][j]),
         };
-        locals.item(&mut i);
+        if has {
+            locals.item(&mut i);
+        }
         i
     };
     let modules = modules
@@ -72,9 +82,12 @@ pub(crate) fn lift(modules: &[SourceModule]) -> Option<Lifted> {
         .map(|(k, m)| SourceModule {
             path: m.path.clone(),
             is_std: m.is_std,
+            is_dependency: m.is_dependency,
             file: m.file,
             ast: ast::Module {
-                items: m.ast.items.iter().map(|i| lift_item(k, i)).collect(),
+                items: (m.ast.items.iter().enumerate())
+                    .map(|(j, i)| lift_item(k, j, i))
+                    .collect(),
                 span: m.ast.span,
                 jsx_import_source: m.ast.jsx_import_source.clone(),
             },
@@ -214,6 +227,9 @@ fn lifted_arrow(v: &ast::VarDecl, rest: bool) -> Option<ast::FnDecl> {
         ret: ret.clone(),
         throws: throws.clone(),
         is_async: *is_async,
+        is_system: false,
+        is_intrinsic: false,
+        generator: None,
         is_generator: false,
         this_param: None,
         span: v.span,
@@ -237,6 +253,7 @@ mod tests {
         let m = SourceModule {
             path: "main".into(),
             is_std: false,
+            is_dependency: false,
             file: FileId(0),
             ast,
             imports: vec![],
@@ -295,6 +312,7 @@ mod tests {
             let m = SourceModule {
                 path: "main".into(),
                 is_std: false,
+                is_dependency: false,
                 file: FileId(0),
                 ast,
                 imports: vec![],
@@ -359,5 +377,24 @@ mod tests {
         assert!(lifted("function f() { let id = <T,>(x: T): T => x; }").is_none());
         assert!(lifted("function f() { const id = <T,>(x) => x; }").is_none());
         assert!(lifted("function f() { const g = (x: i64): i64 => x; }").is_none());
+    }
+
+    #[test]
+    fn copies_nothing_for_constants_only_named_like_a_generic_function_type() {
+        // An alias of a function type somewhere collects the aliases; a local constant whose
+        // annotation names an alias of another named type (`Kind`, `Cell<E>`) is no generic
+        // function, and nothing is lifted: the program is not copied (#1950).
+        let src = "type Cb = (x: number) => void; type Kind_ = \"a\" | \"b\"; type Kind = Kind_;
+                   type Cell<E> = Map<string, E>;
+                   function f(t: number) { const k: Kind = t == 0 ? \"a\" : \"b\"; \
+                   const c: Cell<number> = new Map<string, number>(); console.log(k, c.size); }";
+        assert!(lifted(src).is_none());
+        // One of a generic function type through an alias of an alias still is.
+        let src = "function f() { const id: Same = (x) => x; console.log(id(1)); }
+                   type Id = <T>(x: T) => T; type Same = Id;";
+        let Some(ast::ItemKind::Function(f)) = lifted(src) else {
+            panic!("not lifted: {src}");
+        };
+        assert!(matches!(f.body.stmts[0].kind, ast::StmtKind::Item(_)));
     }
 }

@@ -1,0 +1,11 @@
+// velt/lang/hooks (internal): what an async iterable object literal (`{ async
+// *[Symbol.asyncIterator]() { ... } }`) is; iter.vlt has the synchronous one.
+
+/** The async twin: `{ async *[Symbol.asyncIterator]() { ... } }`. */
+export class AsyncIterableObject<T, E = never> implements AsyncIterable<T, E> {
+  constructor(private iterator: () => AsyncIterator<T, E>) {}
+
+  [Symbol.asyncIterator](): AsyncIterator<T, E> {
+    return this.iterator();
+  }
+}

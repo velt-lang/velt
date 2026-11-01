@@ -18,7 +18,7 @@ const EPSILON = 1e-9;                // not exported: private to the file
 ```ts ignore
 // src/main.vlt
 import { distance, type Point } from "./geometry";
-import * as path from "velt:path";
+import * as path from "velt/path";
 
 function main() {
   const a: Point = { x: 0.0, y: 0.0 };
@@ -33,7 +33,7 @@ function main() {
   form.
 - A module-level `let` is module state, one per process as in Node; importers see its current
   value ([module state](../reference/variables.md#module-state)).
-- Standard library modules use the `velt:` prefix: `"velt:fs"`, `"velt:collections/set"`.
+- Standard library modules are imported as `velt/<module>`: `"velt/fs"`, `"velt/collections"`.
 
 All rules are in [Modules and packages](../reference/modules.md) in the Reference.
 

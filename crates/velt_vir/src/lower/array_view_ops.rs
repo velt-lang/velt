@@ -17,8 +17,8 @@ use super::operand::proj;
 use super::{cint, ice, unit, FnLower};
 use crate::vir::{self, BinOp, Const, Operand, Place, Proj, Rvalue, Ty};
 
-/// The stable sort every `sort(cmp)` runs (std/sort/stable.vlt).
-const STABLE_SORT: &str = "std/sort/stable::stableSort";
+/// The stable sort every `sort(cmp)` runs (std/lang/sort/stable.vlt).
+const STABLE_SORT: &str = velt_common::std_item!(lang_sort_stable, "stableSort");
 
 impl FnLower<'_, '_> {
     /// The array intrinsic `i` on the array of the view type `aty` whose box pointer `bxp`
@@ -91,7 +91,7 @@ impl FnLower<'_, '_> {
     }
 
     /// `length` of the array of the view type `t` whose box pointer `bxp` holds: a view's is
-    /// the original's (`__arrayViewLen`), with nothing converted.
+    /// the original's (`arrayViewLen`), with nothing converted.
     fn view_len(&mut self, bxp: &Place, t: TyId) -> Operand {
         let e = self.elem_ty(t);
         let payload = self.cx.payload_ty(t);
@@ -125,7 +125,7 @@ impl FnLower<'_, '_> {
     }
 
     /// Before the direct call of `def` with `targs` and the lowered arguments `argv`: when it
-    /// is the stable sort of an array of a view type, a view is sorted by `__arrayViewSort`
+    /// is the stable sort of an array of a view type, a view is sorted by `arrayViewSort`
     /// instead (a sorted copy of its mirror becomes the mirror), since the stable sort moves
     /// elements' bits between the array and its buffer. The call then lowers in the block
     /// for other arrays, and goes on to the block answered.
@@ -188,7 +188,7 @@ impl FnLower<'_, '_> {
             let (_, view) = lw.array_view_of_hdr(&hdr);
             let last = Operand::Const(Const::Bool(false), Ty::Bool);
             lw.view_call(VIEW_SYNC_LEN, e, vec![view.clone(), last], None);
-            let seen = lw.view_field(&view, e, "__seen");
+            let seen = lw.view_field(&view, e, "seen");
             let at = Place::local(lw.copy_to_temp(Operand::Copy(seen), Ty::Ptr));
             let mirror = proj(&at, Proj::Deref(payload));
             let len = Operand::Copy(proj(&mirror, Proj::Field(1)));

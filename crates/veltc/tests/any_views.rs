@@ -57,9 +57,9 @@ console.log(price(new Product()));
 fn a_program_with_proxies_makes_views() {
     let src = format!("const tracked = new Proxy({{ hits: 0 }}, {{}});\n{CONVERSION}");
     let vir = vir_of(&src);
-    assert!(calls(&vir, "__view"), "no call of `Proxy.__view`");
+    assert!(calls(&vir, "proxyView"), "no call of `Proxy[PROXY_VIEW]`");
     assert!(
-        calls(&vir, "__isView"),
+        calls(&vir, "proxyIsView"),
         "no view test where a typed proxy goes into an `any`"
     );
     assert!(
@@ -76,11 +76,11 @@ fn a_program_with_proxies_makes_views() {
 fn a_program_without_proxies_has_no_views() {
     let vir = vir_of(CONVERSION);
     assert!(
-        !calls(&vir, "__view"),
+        !calls(&vir, "proxyView"),
         "a view in a program without proxies"
     );
     assert!(
-        !calls(&vir, "__isView"),
+        !calls(&vir, "proxyIsView"),
         "a view test in a program without proxies"
     );
     assert!(

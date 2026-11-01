@@ -6,7 +6,7 @@
 //! 1. Velt runs `main()` implicitly; JS needs the call. A numeric return becomes the exit code.
 //! 2. `panic(msg)` (a Velt builtin) gets a JS shim with the same observable behavior: `panic: msg`
 //!    on stderr and exit code 101.
-//! 3. `import … from "velt:<module>"` loads the module's Node twin, `shims/std/<module>.ts`: the
+//! 3. `import … from "velt/<module>"` loads the module's Node twin, `shims/std/<module>.ts`: the
 //!    same API on Node's own implementation (`URL`, `RegExp`, `Buffer`, `node:crypto`, `Date`)
 //!    where one exists, so the Velt standard library is checked against it.
 //!
@@ -45,9 +45,9 @@ fn shim_prefix() -> String {
     }
 }
 
-/// `src` with every `from "velt:<module>"` pointing at the module's shim.
+/// `src` with every `from "velt/<module>"` pointing at the module's shim.
 fn with_std_shims(src: &str) -> String {
-    const FROM: &str = "from \"velt:";
+    const FROM: &str = "from \"velt/";
     let mut out = String::with_capacity(src.len());
     let mut rest = src;
     while let Some(at) = rest.find(FROM) {
@@ -91,10 +91,10 @@ mod tests {
 
     #[test]
     fn std_imports_load_their_shims() {
-        let ts = to_typescript("import { URL } from \"velt:url\";\nconst a = \"from x\";\n");
+        let ts = to_typescript("import { URL } from \"velt/net/url\";\nconst a = \"from x\";\n");
         let line = ts.lines().next().unwrap_or_default();
         assert!(line.starts_with("import { URL } from \"file://"), "{line}");
-        assert!(line.ends_with("/shims/std/url.ts\";"), "{line}");
+        assert!(line.ends_with("/shims/std/net/url.ts\";"), "{line}");
         assert!(ts.contains("const a = \"from x\";"));
     }
 

@@ -1,0 +1,57 @@
+// velt/process/child (internal): `CommandSpec`, what the runtime is told to run: the program, its
+// arguments and environment, and where its standard streams go.
+
+/** The runtime's `VeltCommand`, field by field (the layout must match child/command.rs). */
+export struct CommandSpec {
+  program: string;
+  args: string[];
+  /** "" = the parent's working directory. */
+  cwd: string;
+  /** name, value, name, value, … */
+  env: string[];
+  /** stdin | stdout << 2 | stderr << 4; each 0 = inherit, 1 = pipe, 2 = ignore. */
+  stdio: u32;
+  clearEnv: bool;
+}
+
+export function stdioBits(mode: string | null | undefined, shift: u32): u32 {
+  if (mode == null || mode == "inherit") {
+    return 0;
+  }
+  if (mode == "pipe") {
+    return 1 << shift;
+  }
+  if (mode == "ignore") {
+    return 2 << shift;
+  }
+  panic(`child_process: stdio must be "pipe", "inherit" or "ignore", got "${mode}"`);
+}
+
+function envPairs(env: Map<string, string> | null | undefined): string[] {
+  const flat: string[] = [];
+  if (env != null) {
+    for (const [name, value] of env) {
+      flat.push(name.clone());
+      flat.push(value.clone());
+    }
+  }
+  return flat;
+}
+
+export function specOf(
+  program: string,
+  args: string[],
+  cwd: string | null | undefined,
+  env: Map<string, string> | null | undefined,
+  clearEnv: bool,
+  stdio: u32,
+): CommandSpec {
+  return CommandSpec {
+    program: program.clone(),
+    args: args.clone(),
+    cwd: cwd ?? "",
+    env: envPairs(env),
+    stdio: stdio,
+    clearEnv: clearEnv,
+  };
+}

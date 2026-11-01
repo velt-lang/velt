@@ -1,0 +1,12 @@
+{
+  "name": "velt-bench-showcase-tsx",
+  "private": true,
+  "type": "module",
+  "description": "React and Preact for the TSX rendering benchmarks of bench/showcase (run.sh installs them with npm ci).",
+  "dependencies": {
+    "preact": "10.27.2",
+    "preact-render-to-string": "6.6.3",
+    "react": "19.2.0",
+    "react-dom": "19.2.0"
+  }
+}

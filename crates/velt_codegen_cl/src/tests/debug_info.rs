@@ -111,6 +111,7 @@ fn objects_carry_line_tables() {
         let opts = CodegenOptions {
             target: triple.into(),
             optimize: false,
+            cpu: None,
         };
         let bytes = emit_object(&program, &opts).unwrap();
         let file = object::File::parse(&*bytes).unwrap();
@@ -304,6 +305,7 @@ fn objects_describe_variables() {
         let opts = CodegenOptions {
             target: triple.into(),
             optimize: false,
+            cpu: None,
         };
         let bytes = emit_object(&program, &opts).unwrap();
         let file = object::File::parse(&*bytes).unwrap();
@@ -438,6 +440,7 @@ fn no_debug_info_without_locations() {
     let opts = CodegenOptions {
         target: "x86_64-unknown-linux-gnu".into(),
         optimize: false,
+        cpu: None,
     };
     let bytes = emit_object(&program, &opts).unwrap();
     let file = object::File::parse(&*bytes).unwrap();
@@ -451,7 +454,7 @@ fn no_debug_info_without_locations() {
 #[test]
 fn jit_image_describes_the_code() {
     let program = located_fib();
-    let isa = crate::isa::make_isa(&crate::host_triple(), false, true).unwrap();
+    let isa = crate::isa::make_isa(&crate::host_triple(), None, false, true).unwrap();
     let mut jb = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
     for (name, p) in super::jit::stub_symbols() {
         jb.symbol(name, p);

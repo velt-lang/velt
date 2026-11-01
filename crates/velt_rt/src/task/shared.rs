@@ -52,7 +52,7 @@ type FutPoll = unsafe extern "C" fn(f: *mut VeltFut, cx: *mut c_void) -> u32;
 type FutDrop = unsafe extern "C" fn(f: *mut VeltFut);
 
 /// The side record of a shared future.
-struct Hub {
+pub(super) struct Hub {
     /// The original future (its first holder's pointer), and its own entries.
     orig: *mut VeltFut,
     poll: FutPoll,
@@ -87,6 +87,9 @@ struct HubState {
     /// The waiting holders (by address) in the order they started waiting, with their wakers
     /// and the microtask ticket each was queued as when the promise settled (0: not queued).
     waiters: Vec<(usize, Waker, u64)>,
+    /// A holder that is not a converted promise's view took the settled result (identity.rs):
+    /// someone handled the promise.
+    claimed: bool,
 }
 
 /// The hubs of the shared original futures, by address.
@@ -108,8 +111,37 @@ pub(crate) unsafe fn settled_at(f: *mut VeltFut) -> Option<u64> {
     (st != 0).then_some(st)
 }
 
-/// Bytes in front of a handle's header: its hub.
+/// Bytes in front of a handle's header: its hub, then whether it is a view (identity.rs).
 const FRONT: usize = 16;
+
+std::thread_local! {
+    /// The handles made now are views: holders a converted promise awaits its promise through
+    /// (identity.rs), whose taking the result handles nothing of its own.
+    static VIEWS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Make the handles made from now on views (`on`), or holders again.
+pub(super) fn set_views(on: bool) {
+    VIEWS.with(|c| c.set(on));
+}
+
+/// Is handle (not original future) `f` a view?
+unsafe fn is_view(f: *mut VeltFut) -> bool {
+    *((f as *mut u8).sub(FRONT - 8) as *const u64) != 0
+}
+
+/// A shared promise's record, kept by a converted promise (identity.rs).
+pub(super) type HubRef = Arc<Hub>;
+
+/// Did a holder of the promise of `h` that is not a view take its settled result?
+pub(super) fn claimed(h: &HubRef) -> bool {
+    h.st.lock().claimed
+}
+
+/// Someone handled the promise of `h` through a converted promise standing for it.
+pub(super) fn mark_claimed(h: &HubRef) {
+    h.st.lock().claimed = true;
+}
 
 fn handle_layout(size: usize) -> Layout {
     Layout::from_size_align(FRONT + FUT_RESULT_OFFSET + size, 16)
@@ -190,6 +222,7 @@ pub unsafe extern "C" fn velt_rt_fut_share(
                 result: Vec::new(),
                 loc: ThrowLoc::NONE,
                 waiters: Vec::new(),
+                claimed: false,
             }),
         });
         HUBS.lock()
@@ -203,6 +236,33 @@ pub unsafe extern "C" fn velt_rt_fut_share(
     new_handle(h)
 }
 
+/// What promise holder `f` stands for (task/identity.rs): `Ok(orig)`, the original future of
+/// its shared promise; `Err(proxy)`, the proxy of a holder handed to this task; `None` when `f`
+/// is not a holder.
+///
+/// # Safety
+/// `f` must be a live heap future.
+pub(super) unsafe fn origin(f: *mut VeltFut) -> Option<Result<*mut VeltFut, *mut VeltFut>> {
+    if !is_shared(f) {
+        return None;
+    }
+    if let Some((p, _)) = forwarded(f) {
+        return Some(Err(p));
+    }
+    Some(Ok(hub(f).orig))
+}
+
+/// Another holder of shared promise `f` (`f` is a holder, not handed over): a handle of its
+/// own, needing no result glue, and the promise's record.
+///
+/// # Safety
+/// `f` must be a live holder of a shared promise, not handed to another task.
+pub(super) unsafe fn another_holder(f: *mut VeltFut) -> (*mut VeltFut, HubRef) {
+    let h = hub(f);
+    on_its_task(&h);
+    (new_handle(h.clone()), h)
+}
+
 /// A new holder of the promise of `h`: a handle of its own.
 unsafe fn new_handle(h: Arc<Hub>) -> *mut VeltFut {
     h.st.lock().holders += 1;
@@ -212,6 +272,7 @@ unsafe fn new_handle(h: Arc<Hub>) -> *mut VeltFut {
         std::alloc::handle_alloc_error(l);
     }
     (base as *mut Arc<Hub>).write(h);
+    (base.add(FRONT - 8) as *mut u64).write(VIEWS.with(std::cell::Cell::get) as u64);
     let g = base.add(FRONT) as *mut VeltFut;
     g.write(VeltFut {
         poll: holder_poll,
@@ -509,6 +570,9 @@ unsafe fn poll_holder(h: &Arc<Hub>, f: *mut VeltFut, cx: *mut c_void) -> u32 {
             return PENDING;
         }
         st.waiters.remove(i);
+    }
+    if f == h.orig || !is_view(f) {
+        st.claimed = true;
     }
     let result = st.result.as_ptr() as *const u8;
     let loc = st.loc;

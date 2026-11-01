@@ -2,19 +2,20 @@
 # Nightly benchmark guard (Linux): counts the instructions each benchmark executes and compares
 # them with a baseline from an earlier run. Instructions, not time: a CI runner shares its
 # machine, so wall time varies by tens of percent from run to run, while the instruction count of
-# one program is the same every time (VELT_THREADS=1 keeps the async benchmarks on one worker).
+# one program is the same every time (VELT_THREADS=1 and VELT_RESCUE=0 keep the async benchmarks
+# on one worker).
 #
 #   bench/nightly.sh [--baseline FILE] [--out FILE] [--threshold PERCENT] [--velt PATH]
 #
 # Builds velt (release) unless --velt is given, builds the benchmarks below (LLVM, --release),
 # runs each once natively (it must succeed; its time is shown, not compared) and once under
-# valgrind's cachegrind for the count, plus the instructions of `velt check` over the whole
-# standard library (bench/compile/all_std.vlt: parsing and type checking). Writes the counts to
-# --out (default: $TARGET/bench-nightly/counts.tsv) and prints a Markdown table. With a baseline,
+# valgrind's cachegrind for the count, plus the instructions of `velt check --std` over the
+# whole standard library (every file, every definition: parsing and type checking). Writes the counts to --out (default:
+# $TARGET/bench-nightly/counts.tsv) and prints a Markdown table. With a baseline,
 # it exits 1 when a benchmark executes more than PERCENT (default 3, the review rule) more
 # instructions. Counts repeat to within 0.1%, so the band needs no room for noise.
 # compile/check_all_std is compared per code line of std/ (its row has a fourth column, the
-# non-blank, non-comment lines of std/**/*.vlt): the standard library grows with almost every
+# non-blank, non-comment lines of std/**/*.vlt, its tests aside): the standard library grows with almost every
 # feature, and checking more of it is not a slowdown, while checking each line more slowly is. A
 # baseline row without the lines is compared in total.
 # Benchmarks with a Node version (bench/node/<name>.js, bench/json/node/<name>.js) also run under
@@ -50,15 +51,31 @@ if [ -z "$VELT" ]; then
 fi
 
 # The benchmarks: CPU-bound programs whose work does not depend on timing (bench/async/timers
-# sleeps, the HTTP and database benchmarks need servers and load generators).
+# sleeps, the HTTP and database benchmarks need servers and load generators). bench/fetch is the
+# `fetch` client against a server in the same process, over loopback: its count repeats to within
+# about 0.2% (#601). bench/fetch/tls_h2 stays out: a throughput benchmark of HTTP/2 against
+# HTTP/1.1 over TLS, 40,000 requests by default, compared by hand (docs/internals/design/http2.md).
 BENCHES=("$ROOT"/bench/*.vlt "$ROOT"/bench/iter/*.vlt "$ROOT"/bench/json/*.vlt
-  "$ROOT"/bench/strings_utf16/*.vlt "$ROOT"/bench/stdport/*.vlt "$ROOT"/bench/spread_order/*.vlt)
+  "$ROOT"/bench/strings_utf16/*.vlt "$ROOT"/bench/stdport/*.vlt "$ROOT"/bench/spread_order/*.vlt
+  "$ROOT"/bench/fetch/loopback.vlt)
 # NIGHTLY_EXTRA_DIRS="typical …": also the benchmarks in bench/<dir>/*.vlt (for an A/B of a change).
 for dir in ${NIGHTLY_EXTRA_DIRS:-}; do
   BENCHES+=("$ROOT/bench/$dir"/*.vlt)
 done
+# Not programs (as in crates/veltc/tests/bench_programs.rs): a directory's package manifest
+# (`package.vlt`, the benchmarks there depend on the repository's packages) and the modules a
+# program imports (`_name.vlt`).
+programs=()
+for src in "${BENCHES[@]}"; do
+  case "$(basename "$src")" in
+    package.vlt | _*) ;;
+    *) programs+=("$src") ;;
+  esac
+done
+BENCHES=("${programs[@]}")
 for name in await_chain await_deep hot_loop fanout_all fanout_all_throwing all_small_stored \
-  spawn_many channel_pipeline timers_fire top_level_await timer_await timer_await_top; do
+  spawn_many channel_pipeline timers_fire top_level_await timer_await timer_await_top \
+  promise_identity_loop; do
   BENCHES+=("$ROOT/bench/async/$name.vlt")
 done
 
@@ -69,6 +86,11 @@ count() {
 import os, re, subprocess, sys, time
 name, cmd = sys.argv[1], sys.argv[2:]
 env = dict(os.environ, VELT_THREADS="1")
+# The async benchmarks spawn in long polls: without this, the runtime's rescue of a stalled
+# worker starts spares and moves tasks whenever a thread waits for its turn, which under valgrind
+# (one thread at a time) depends on timing (#1673).
+if name.startswith("async/"):
+    env["VELT_RESCUE"] = "0"
 t = time.perf_counter()
 subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, env=env)
 ms = (time.perf_counter() - t) * 1000
@@ -105,6 +127,14 @@ print(f"{name}\t{best['velt'] * 1000:.0f}\t{best['node'] * 1000:.0f}", flush=Tru
 EOF
 }
 
+# The compressed inputs of bench/stdport's decompression rows, made by its Rust side's encoders
+# as bench/stdport/run.sh makes them (only gen_inputs is built, in a directory of its own).
+echo "building bench/stdport's gen_inputs..." >&2
+cargo build --release -q --manifest-path "$ROOT/bench/stdport/rust/Cargo.toml" \
+  --target-dir "$OUT/stdport-rust" --bin gen_inputs
+export STDPORT_INPUTS="$OUT/stdport-inputs"
+"$OUT/stdport-rust/release/gen_inputs" "$STDPORT_INPUTS"
+
 NODE_FILE="${OUT_FILE%.tsv}.node.tsv"
 : > "$OUT_FILE"
 : > "$NODE_FILE"
@@ -125,13 +155,15 @@ echo "compile/check_all_std" >&2
 # Code lines only: documentation added to std/ would otherwise lower the cost per line and hide a
 # slowdown of the same size. Not blank lines, `//` lines, or the lines of a comment that starts a
 # line (`/** … */`).
-std_lines=$(find "$ROOT/std" -name '*.vlt' -exec cat {} + | awk '
+std_lines=$(find "$ROOT/std" -name '*.vlt' ! -name '*.test.vlt' -exec cat {} + | awk '
   block { if (/\*\//) block = 0; next }
   /^[ \t]*(\/\/|$)/ { next }
   /^[ \t]*\/\*/ { if (!/\*\//) block = 1; next }
   { n++ }
   END { print n + 0 }')
-row=$(count "compile/check_all_std" "$VELT" check "$ROOT/bench/compile/all_std.vlt")
+# `--std` checks every definition, as with laziness off: a program checks only the std
+# definitions it reaches (docs/internals/design/lazy-std.md), and the row measures all of std.
+row=$(VELT_STD="$ROOT/std" count "compile/check_all_std" "$VELT" check --std)
 printf '%s\t%s\n' "$row" "$std_lines" >> "$OUT_FILE"
 
 "$PYTHON" - "$OUT_FILE" "$BASELINE" "$THRESHOLD" "$NODE_FILE" <<'EOF'

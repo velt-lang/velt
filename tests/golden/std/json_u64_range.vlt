@@ -1,0 +1,28 @@
+// JSON.parse into u64 fields takes the whole range [0, 2^64) (#1658): 20 digits, 2^63 and up, an
+// exponent form; 2^64 and up, negatives (but -0) and fractions are errors. u64 is Velt-only.
+interface W {
+  x: u64;
+}
+
+for (const t of [
+  "9223372036854775807",
+  "9223372036854775808",
+  "18446744073709551615",
+  "18446744073709551616",
+  "-1",
+  "-0",
+  "0",
+  "1e19",
+  "1.5",
+  "1.8446744073709552e19",
+  "99999999999999999999",
+]) {
+  try {
+    const w = JSON.parse<W>(`{"x":${t}}`);
+    console.log(t, "->", w.x);
+  } catch (e) {
+    console.log(t, "!", e.message);
+  }
+}
+const arr = JSON.parse<u64[]>("[18446744073709551615, 1, 0]");
+console.log(arr[0], JSON.stringify(arr));

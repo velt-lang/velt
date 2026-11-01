@@ -1,0 +1,32 @@
+// An implementation of an overloaded interface method must fit every signature, as in
+// TypeScript (TS2322 / TS2416): a result that one signature's result does not take is an error.
+interface Def {
+  name: string;
+}
+
+interface App {
+  directive(name: string, definition: Def): App;
+  directive(name: string): Def | undefined;
+}
+
+const app: App = {
+  directive(name: string, definition?: Def): App | Def | undefined {
+    return definition;
+  },
+};
+
+interface M {
+  m(x: string): number;
+  m(x: number): string;
+  m(x: boolean): boolean;
+}
+
+const o: M = {
+  m(x: string | number | boolean): number | string | boolean {
+    return x;
+  },
+};
+
+function main() {
+  console.log(typeof app, typeof o);
+}

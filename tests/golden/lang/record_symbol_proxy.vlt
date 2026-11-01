@@ -1,0 +1,61 @@
+// A proxy whose target is a string-keyed record with symbol keys (#1629): the traps get the
+// symbols, and `Reflect.get`, `set`, `has`, `deleteProperty`, `ownKeys` and
+// `getOwnPropertyDescriptor` forwarding to the record reach its symbol table, as in Node; so
+// does indexing an `any` that holds the record with a `symbol`. `Object.getOwnPropertyDescriptor`
+// describes a record's data properties and accessors.
+
+const TAG = Symbol("tag");
+
+function main() {
+  const target: Record<string | symbol, number> = { a: 1 };
+  target[TAG] = 7;
+  const seen: string[] = [];
+  const p = new Proxy(target, {
+    get(t, k, r) {
+      seen.push("get " + String(k));
+      return Reflect.get(t, k, r);
+    },
+    set(t, k, v, r) {
+      seen.push("set " + String(k));
+      return Reflect.set(t, k, v, r);
+    },
+    has(t, k) {
+      seen.push("has " + String(k));
+      return Reflect.has(t, k);
+    },
+    deleteProperty(t, k) {
+      seen.push("delete " + String(k));
+      return Reflect.deleteProperty(t, k);
+    },
+    ownKeys(t) {
+      seen.push("ownKeys");
+      return Reflect.ownKeys(t);
+    },
+  });
+  const s2 = Symbol("s2");
+  const k2: string | symbol = s2;
+  console.log(p[TAG], p.a);
+  p[k2] = 3;
+  console.log(k2 in p, TAG in p, "a" in p);
+  console.log(Reflect.ownKeys(p));
+  console.log(delete p[k2], s2 in target, target[TAG]);
+  console.log(
+    Reflect.getOwnPropertyDescriptor(target, TAG),
+    Reflect.getOwnPropertyDescriptor(target, "a"),
+  );
+  console.log(
+    Object.getOwnPropertyDescriptor(target, TAG),
+    Object.getOwnPropertyDescriptor(target, "zz"),
+  );
+  Object.defineProperty(target, "g", { get: () => 5, configurable: true });
+  const d = Object.getOwnPropertyDescriptor(target, "g");
+  console.log(
+    d !== undefined && typeof d.get,
+    d !== undefined && d.set,
+    d !== undefined && d.enumerable,
+    d !== undefined && d.configurable,
+  );
+  console.log(seen.join("\n"));
+}
+
+main();

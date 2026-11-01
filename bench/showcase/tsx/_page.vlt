@@ -1,0 +1,54 @@
+// The component tree of the TSX benchmarks (render.vlt, server.vlt): a page with a title, a
+// table of rows (a `Row` component each) and a footer. page.mjs is the same tree for React and
+// Preact. The data has `<` and `&` to escape, and no quotes or `>` (Preact leaves `>` in text as
+// it is, and the libraries escape quotes differently), so every implementation renders the same
+// bytes.
+
+export class Item {
+  constructor(public id: i64, public name: string, public note: string, public done: boolean) {}
+}
+
+export function items(n: i64): Item[] {
+  const out: Item[] = [];
+  for (let i: i64 = 0; i < n; i++) {
+    const note = i % 7 == 0 ? `a < b && c ${i}` : `plain note ${i}`;
+    out.push(new Item(i, `item ${i}`, note, i % 3 == 0));
+  }
+  return out;
+}
+
+function Row(props: { item: Item }): JSX.Element {
+  const it = props.item;
+  return (
+    <tr class={it.done ? "row done" : "row"}>
+      <td>{it.id}</td>
+      <td>{it.name}</td>
+      <td>{it.note}</td>
+      <td>{it.done ? "yes" : "no"}</td>
+    </tr>
+  );
+}
+
+export function Page(props: { title: string; items: Item[] }): JSX.Element {
+  return (
+    <main class="page">
+      <h1>{props.title}</h1>
+      <table>
+        <thead>
+          <tr>
+            <th>id</th>
+            <th>name</th>
+            <th>note</th>
+            <th>done</th>
+          </tr>
+        </thead>
+        <tbody>
+          {props.items.map((it) => (
+            <Row key={it.id} item={it} />
+          ))}
+        </tbody>
+      </table>
+      <footer>{props.items.length}</footer>
+    </main>
+  );
+}

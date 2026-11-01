@@ -30,14 +30,18 @@ use crate::hir::{self, ExprKind as H, LocalId, StmtKind as S, TyId, UseMode};
 /// A frame's part in late `const`s.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct LateFrame {
-    /// The late `const`s this frame declares whose initializer is running, with their flags.
-    pub pending: FxHashMap<LocalId, LocalId>,
+    /// The late `const`s this frame declares whose initializer is running, with their flags
+    /// (none where no closure can run before the assignment, `forward_consts`).
+    pub pending: FxHashMap<LocalId, Option<LocalId>>,
     /// This frame's captures of a late `const` made while its initializer ran, with this
     /// frame's capture of the flag.
-    pub caps: FxHashMap<LocalId, LocalId>,
+    pub caps: FxHashMap<LocalId, Option<LocalId>>,
     /// The flags the statement being checked reads a late `const` through (checked before it),
     /// with the constant's name.
     pub checks: Vec<(LocalId, String)>,
+    /// The constants declared before their declaration (`forward_consts`), with their flags,
+    /// by name span.
+    pub forward: FxHashMap<Span, (LocalId, Option<LocalId>)>,
 }
 
 /// The name of the flag of late `const` `name` (no source can spell it).
@@ -90,6 +94,9 @@ impl FnCx<'_, '_> {
         span: Span,
         out: &mut Vec<hir::Stmt>,
     ) -> bool {
+        if self.forward_const_decl(v, name, span, out) {
+            return true;
+        }
         let Some(e) = v.init.as_ref() else {
             return false;
         };
@@ -100,41 +107,70 @@ impl FnCx<'_, '_> {
             Some(t) => t,
             None => self.late_trial_ty(name, e),
         };
+        let (local, flag) = self.declare_late(name, ty, (span, LocalKind::Const), true, out);
+        let h = self.expr_coerce(e, ty, Want::Move);
+        self.f.late.pending.remove(&local);
+        self.assign_late(local, flag, ty, h, name.span, span, out);
+        true
+    }
+
+    /// Late `const` `name` of type `ty` (a `let` with `kind`) and its flag when `flagged`,
+    /// declared unassigned (in `out`, at `span`) with its initializer running.
+    pub(super) fn declare_late(
+        &mut self,
+        name: &ast::Ident,
+        ty: TyId,
+        (span, kind): (Span, LocalKind),
+        flagged: bool,
+        out: &mut Vec<hir::Stmt>,
+    ) -> (LocalId, Option<LocalId>) {
         let bool_ = self.cx.ty.bool_;
-        let flag = self.new_local(
-            &flag_name(&name.name),
-            bool_,
-            true,
-            name.span,
-            LocalKind::Let,
-        );
-        let scope = self.f.scopes.last_mut().expect("ICE: no scope");
-        scope.names.insert(flag_name(&name.name), flag);
-        let no = self.mk(H::Lit(hir::Lit::Bool(false)), bool_, name.span);
-        Self::push(
-            out,
-            S::Let {
-                local: flag,
-                init: Some(no),
-            },
-            span,
-        );
-        let local = self.declare_local(name, ty, LocalKind::Const);
+        let flag = flagged.then(|| {
+            let flag = self.new_local(
+                &flag_name(&name.name),
+                bool_,
+                true,
+                name.span,
+                LocalKind::Let,
+            );
+            let scope = self.f.scopes.last_mut().expect("ICE: no scope");
+            scope.names.insert(flag_name(&name.name), flag);
+            let no = self.mk(H::Lit(hir::Lit::Bool(false)), bool_, name.span);
+            Self::push(
+                out,
+                S::Let {
+                    local: flag,
+                    init: Some(no),
+                },
+                span,
+            );
+            flag
+        });
+        let local = self.declare_local(name, ty, kind);
         self.cx.late_consts.insert(name.span);
         self.f.late.pending.insert(local, flag);
         Self::push(out, S::Let { local, init: None }, span);
-        let h = self.expr_coerce(e, ty, Want::Move);
-        self.f.late.pending.remove(&local);
+        (local, flag)
+    }
+
+    /// The assignments of late `const` `local` (of type `ty`) to `h` and of its flag, once its
+    /// initializer ran (`at`: the name's span).
+    #[allow(clippy::too_many_arguments)] // the constant, its flag, its value and the spans
+    pub(super) fn assign_late(
+        &mut self,
+        local: LocalId,
+        flag: Option<LocalId>,
+        ty: TyId,
+        h: hir::Expr,
+        at: Span,
+        span: Span,
+        out: &mut Vec<hir::Stmt>,
+    ) {
+        let bool_ = self.cx.ty.bool_;
         let unit = self.cx.ty.unit;
-        for (l, t, value) in [
-            (local, ty, h),
-            (
-                flag,
-                bool_,
-                self.mk(H::Lit(hir::Lit::Bool(true)), bool_, name.span),
-            ),
-        ] {
-            let place = self.mk(H::Local(l, UseMode::BorrowMut), t, name.span);
+        let ready = flag.map(|f| (f, bool_, self.mk(H::Lit(hir::Lit::Bool(true)), bool_, at)));
+        for (l, t, value) in std::iter::once((local, ty, h)).chain(ready) {
+            let place = self.mk(H::Local(l, UseMode::BorrowMut), t, at);
             let assign = H::Assign {
                 place: Box::new(place),
                 value: Box::new(value),
@@ -142,7 +178,6 @@ impl FnCx<'_, '_> {
             let assign = self.mk(assign, unit, span);
             Self::push(out, S::Expr(assign), span);
         }
-        true
     }
 
     /// The type of late `const` `name`'s initializer `e`, checked as a trial (rolled back)
@@ -175,7 +210,7 @@ impl FnCx<'_, '_> {
 
     /// Does `t` mention the error type, also in the fields and methods of the object types
     /// it names (an object literal method returning the constant without a result type)?
-    fn incomplete_ty(&self, t: TyId, depth: u32) -> bool {
+    pub(super) fn incomplete_ty(&self, t: TyId, depth: u32) -> bool {
         if self.cx.ty.has_error(t) {
             return true;
         }
@@ -215,35 +250,50 @@ impl FnCx<'_, '_> {
         span: Span,
     ) {
         if let Some(&flag) = self.f.late.caps.get(&inner) {
-            self.late_check(flag, name);
+            if let Some(flag) = flag {
+                self.late_check(flag, name);
+            }
             return;
         }
         let Some(j) = j else { return };
         let fr = &self.outer[j];
-        let late = fr.late.pending.contains_key(&outer) || fr.late.caps.contains_key(&outer);
-        if !late {
-            return;
-        }
-        let fname = flag_name(name);
-        let Some(flag) = self.lookup_local(&fname, span) else {
+        let Some(&flagged) = fr
+            .late
+            .pending
+            .get(&outer)
+            .or_else(|| fr.late.caps.get(&outer))
+        else {
             return;
         };
-        // Every closure frame in between captured both: their reads check too, and the
-        // closures created in them share the cells (`crate::moves`, by span).
+        let fname = flag_name(name);
+        let flag = match flagged {
+            Some(_) => match self.lookup_local(&fname, span) {
+                Some(f) => Some(f),
+                None => return,
+            },
+            None => None,
+        };
+        // Every closure frame in between captured it (and the flag): their reads check too,
+        // and the closures created in them share the cells (`crate::moves`, by span).
         let mut spans = vec![];
         for f in &mut self.outer[j + 1..] {
             let lookup = |n: &str| f.scopes.iter().rev().find_map(|s| s.names.get(n).copied());
-            if let (Some(x), Some(r)) = (lookup(name), lookup(&fname)) {
-                f.late.caps.insert(x, r);
-                spans.push(f.locals[x.0 as usize].span);
-                spans.push(f.locals[r.0 as usize].span);
+            let Some(x) = lookup(name) else { continue };
+            let r = flag.and_then(|_| lookup(&fname));
+            if flag.is_some() && r.is_none() {
+                continue;
             }
+            f.late.caps.insert(x, r);
+            spans.push(f.locals[x.0 as usize].span);
+            spans.extend(r.map(|r| f.locals[r.0 as usize].span));
         }
         spans.push(self.f.locals[inner.0 as usize].span);
-        spans.push(self.f.locals[flag.0 as usize].span);
+        spans.extend(flag.map(|f| self.f.locals[f.0 as usize].span));
         self.cx.late_consts.extend(spans);
         self.f.late.caps.insert(inner, flag);
-        self.late_check(flag, name);
+        if let Some(flag) = flag {
+            self.late_check(flag, name);
+        }
     }
 
     /// `e`, a read of a local whose lookup added checks from `from` on (`late_lookup`): a

@@ -1,0 +1,72 @@
+// Promises compare and hash by identity, as in Node (#1682): every holder of one promise is the
+// same promise for `===`, `Object.is`, `includes`, `indexOf` and `Set` / `Map` keys, through
+// arrays, fields, closures, unions with `undefined` and generic code.
+async function f(n: number): Promise<number> {
+  return n;
+}
+
+class Holder<T> {
+  v: T;
+  constructor(v: T) {
+    this.v = v;
+  }
+  is(x: T): boolean {
+    return this.v === x;
+  }
+}
+
+function same<T>(a: T, b: T): boolean {
+  return a === b;
+}
+
+function find<T>(xs: T[], x: T): number {
+  return xs.findIndex((y) => y === x);
+}
+
+async function main() {
+  const p = f(1);
+  const q = f(2);
+  const s = new Set<Promise<number>>();
+  s.add(p);
+  console.log("set", s.has(p), s.has(q), s.size);
+  s.add(p);
+  console.log("set again", s.size);
+  const arr: Promise<number>[] = [p];
+  console.log("array", arr[0] === p, arr[0] !== p, arr.includes(p), arr.includes(q));
+  console.log("Object.is", Object.is(p, p), Object.is(arr[0], p), Object.is(p, q), p === q);
+  const m = new Map<Promise<number>, string>();
+  m.set(p, "p");
+  m.set(q, "q");
+  console.log("map", m.get(p), m.get(arr[0]), m.get(q), m.size, m.has(arr[0]));
+  const opt: Promise<number> | undefined = p;
+  const none: Promise<number> | undefined = undefined;
+  console.log("optional", opt === p, opt === q, none === p, opt !== undefined);
+  const byName = new Map<string, Promise<number>>();
+  byName.set("a", p);
+  console.log("map value", byName.get("a") === p, byName.get("a") === q, byName.get("b") === p);
+  const xs = [q, p, q, p];
+  console.log("index", xs.indexOf(p), xs.lastIndexOf(p), xs.indexOf(q), find(xs, p));
+  console.log("generic", same(p, arr[0]), same(p, q));
+  const h = new Holder(p);
+  console.log("field", h.v === p, h.is(p), h.is(q));
+  const o = { p };
+  console.log("object", o.p === p, o.p === q);
+  const cap = () => p;
+  console.log("closure", cap() === p, cap() === cap());
+  const t = p.then((x) => x);
+  console.log("then is another promise", t === p);
+  const many = new Set<Promise<number>>();
+  const list: Promise<number>[] = [];
+  for (let i = 0; i < 100; i++) {
+    const r = f(i);
+    list.push(r);
+    many.add(r);
+  }
+  let found = 0;
+  for (const r of list) if (many.has(r)) found++;
+  console.log("many", many.size, found);
+  const all = await Promise.all(list);
+  console.log("values", all.reduce((a, b) => a + b, 0), await p, await arr[0], await q, await t);
+}
+
+main();

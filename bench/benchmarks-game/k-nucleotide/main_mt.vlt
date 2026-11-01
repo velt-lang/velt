@@ -3,7 +3,7 @@
 // The tasks read one `shared` sequence: a `shared<u8[]>` passes where a `u8[]` is read, so no
 // task copies it (see NOTES.md).
 
-import { readLineSync } from "velt:stdin";
+import { readLineSync } from "velt/process";
 
 const LETTERS = "ACGT";
 

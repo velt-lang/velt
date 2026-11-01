@@ -1,0 +1,17 @@
+// A rejected promise only kept, converted, in a `Set` and never awaited is an unhandled
+// rejection, reported once (#1682).
+async function bad(): Promise<string> {
+  throw new Error("boom");
+}
+function track(s: Set<Promise<unknown, Error>>, p: Promise<unknown, Error>): boolean {
+  if (s.has(p)) return false;
+  s.add(p);
+  return true;
+}
+async function main() {
+  const s = new Set<Promise<unknown, Error>>();
+  const p = bad();
+  console.log(track(s, p), s.size);
+  console.log("end");
+}
+main();

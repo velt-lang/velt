@@ -104,8 +104,8 @@ fn json_strings_decode_to_their_code_units() {
             // The pull reader (`JSON.parse<string>`).
             let r = velt_rt_json_reader_new(&rsrc.0);
             let mut out = MaybeUninit::<VeltStr>::uninit();
-            let ok = velt_rt_json_reader_read_string(r, out.as_mut_ptr()) == 1;
-            velt_rt_json_reader_free(r);
+            let ok = velt_rt_json_reader_read_string(r as u64, out.as_mut_ptr()) == 1;
+            velt_rt_json_reader_free(r as u64);
             if !ok {
                 return Err(format!("reader refused {}", show(&src)));
             }

@@ -6,8 +6,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_vir::vir::{Callee, Const, Function, Program, Rvalue, Stmt, Terminator, Ty};
 
-use super::fingerprint::{is_state_layout, Canon, Fingerprint};
 use super::roles;
+use velt_vir::fingerprint::{is_state_layout, Canon, Fingerprint, Mode};
 
 /// Facts about one function of a version.
 pub(crate) struct FunctionFacts {
@@ -35,7 +35,7 @@ pub(crate) struct Facts {
 impl Facts {
     /// Gather the facts of `program`.
     pub(crate) fn of(program: &Program) -> Facts {
-        let canon = Canon::new(program);
+        let canon = Canon::new(program, Mode::HotReload);
         let mut facts = Facts {
             funcs: FxHashMap::default(),
             layouts: FxHashMap::default(),

@@ -1,0 +1,22 @@
+// A closure in a recursive function that calls it, where the function throws more after the
+// closure: the closure throws what the function throws, without a `throws` clause.
+type Tree = string | number | Tree[];
+
+function revive(value: Tree, depth: number): unknown {
+  if (depth > 3) throw new RangeError("too deep");
+  if (Array.isArray(value)) return value.map((item) => revive(item, depth + 1));
+  if (value === "bad") throw new TypeError("bad leaf");
+  return value;
+}
+
+console.log(revive([1, ["a", ["b"]]], 0));
+try {
+  revive([[[[[1]]]]], 0);
+} catch (e) {
+  console.log((e as Error).name, (e as Error).message);
+}
+try {
+  revive(["bad"], 0);
+} catch (e) {
+  console.log((e as Error).name, (e as Error).message);
+}

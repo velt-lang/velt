@@ -1,0 +1,17 @@
+// velt/io (internal): `IoError`, the error of every failed I/O operation in std (re-exported by
+// velt/io).
+
+/**
+ * A failed I/O operation (`Error` is the prelude base class). `code` is the Node-style name:
+ * "ENOENT", "EACCES", "EEXIST", "EINVAL", "EILSEQ", "ETIMEDOUT", "ECONNREFUSED", "ECONNRESET",
+ * "EADDRINUSE", "EPIPE", "EOF", "ENOTSUP", "ENOTDIR", "ENOTEMPTY", "EISDIR", "EBADF" (a closed
+ * socket, file stream, child process or WebSocket handle) or "UNKNOWN".
+ */
+export class IoError extends Error {
+  code: string;
+
+  constructor(code: string, message: string) {
+    super(message);
+    this.code = code;
+  }
+}

@@ -1,6 +1,7 @@
-// Error types that inference cannot settle: a closure whose error type is needed while the
-// recursive function it calls is still being checked, and implementations called through one
-// interface entry whose error types depend on type parameters. Both need a `throws` clause.
+// Error types that inference cannot settle: implementations called through one interface entry
+// whose error types depend on type parameters need a `throws` clause. (A closure whose error
+// type is needed while the recursive function it calls is still being checked, `walk`, needs
+// none: the program is checked again with the error type the recursion found.)
 class TooDeep extends Error {}
 
 function walk(n: i64): i64 {

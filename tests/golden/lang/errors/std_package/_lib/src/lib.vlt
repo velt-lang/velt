@@ -1,3 +1,5 @@
+import { arrayWithCapacity } from "velt/lang/intrinsics";
+
 export function grow(n: i64): i64[] {
-  return __intrinsic_array_with_capacity<i64>(n);
+  return arrayWithCapacity<i64>(n);
 }

@@ -1,0 +1,15 @@
+// velt/os (internal): the runtime functions velt/os calls (rt_abi_async.md §14), and the
+// system function `lastOsError`.
+
+export declare function velt_rt_os_platform(): string;
+export declare function velt_rt_os_arch(): string;
+export declare function velt_rt_os_cpu_count(): u64;
+export declare function velt_rt_os_tmpdir(): string;
+export declare function velt_rt_os_hostname(): string;
+
+/**
+ * The error number the last failed system function call on this thread left (`errno`;
+ * `GetLastError()` on Windows), for code that calls system functions itself
+ * (docs/reference/system-functions.md). Read it right after the call that failed.
+ */
+export declare system function lastOsError(): i32;

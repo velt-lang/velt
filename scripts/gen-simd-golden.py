@@ -174,6 +174,6 @@ function main() {""")
     o.append("}")
     text="\n".join(o)+"\n"
     names=[t for t in SIMD_NAMES if re.search(rf"\b{t}\b", text)]
-    o.insert(4, f"import {{ {', '.join(names)} }} from \"velt:simd\";\n")
+    o.insert(4, f"import {{ {', '.join(names)} }} from \"velt/simd\";\n")
     open(f"{OUT}/simd_ints.vlt","w",encoding="utf-8",newline="\n").write("\n".join(o)+"\n")
 ints()

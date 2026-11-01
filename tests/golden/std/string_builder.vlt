@@ -1,0 +1,31 @@
+// check: no leaks
+// `StringBuilder` (#1677): appends of strings, code points, integers and numbers; `length`;
+// `toString()` and string conversion keep the text, and the builder appends on after them
+// without changing what they returned; `take()` hands the text over and leaves the builder empty
+// and reusable; `clear()`.
+function main() {
+  const b = new StringBuilder();
+  b.append("id=");
+  b.appendInt(-42);
+  b.append(", x=");
+  b.appendNumber(1.5);
+  b.appendCodePoint(0x20);
+  b.appendCodePoint(0x1f600);
+  b.appendCodePoint(0xe9);
+  console.log(b.length);
+  const kept = b.toString();
+  console.log(`${b}`, String(b).length, "<" + b + ">", b.toString() == kept, b.length);
+  b.append("!");
+  console.log(kept, b.toString());
+  const s = b.take();
+  console.log(s, s.length, b.length);
+  for (let i = 0; i < 1000; i++) {
+    b.append("ab");
+  }
+  const t = b.take();
+  console.log(t.length, t.slice(0, 6), b.toString() == "");
+  b.append("again");
+  b.clear();
+  b.append("z");
+  console.log(b.toString(), s);
+}

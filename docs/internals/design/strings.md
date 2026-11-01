@@ -89,7 +89,7 @@ Byte counts and byte views keep their JavaScript names:
   carries a split sequence across calls; labels follow the Encoding Standard (`"latin1"` is
   windows-1252), and an unknown label throws `RangeError`.
 
-There is no Velt-only byte-offset string API. A `velt:bytes` module waits until a benchmark shows
+There is no Velt-only byte-offset string API. A `velt/bytes` module waits until a benchmark shows
 a gap that the standard APIs above can't close; even then `length` keeps one meaning.
 
 ### Representation: WTF-8 with the UTF-16 length in the value
@@ -339,14 +339,14 @@ examples, so the docs test covers the new rule.
 
 ### Code in the repository that assumes byte offsets
 
-- `std/csv.vlt` scans a `u8[]` and slices the string with those byte positions. It changes to
+- `std/encoding/csv/index.vlt` scans a `u8[]` and slices the string with those byte positions. It changes to
   scan with `charCodeAt` (the delimiter is ASCII, so the ASCII fast path applies).
-- `std/regex.vlt` forwards the runtime's offsets. The runtime translates them.
-- `std/cli.vlt`: help column widths now count code units, which aligns better. Short-flag
+- `std/text/regex/regexp.vlt` forwards the runtime's offsets. The runtime translates them.
+- `std/cli/index.vlt`: help column widths now count code units, which aligns better. Short-flag
   clusters split per code unit, as in Node.
 - `std/url`: byte work moves to `u8[]` (`utf8Encode`), string positions stay positions, and
   surrogate bytes are refused.
-- `std/uuid.vlt`, `std/path.vlt` and `std/datetime`: ASCII positions are unchanged.
+- `std/random/uuid/index.vlt`, `std/path/index.vlt` and `std/datetime`: ASCII positions are unchanged.
 - Runtime functions that take or return positions (`str_ops/*`, the regex and the JSON value
   length) convert at their entry and exit.
 - Golden tests:

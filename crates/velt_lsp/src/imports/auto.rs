@@ -205,10 +205,10 @@ fn same_file(a: &Path, b: &Path) -> bool {
     a == b || std::fs::canonicalize(a).ok() == std::fs::canonicalize(b).ok()
 }
 
-/// The std root the std entries' files are in (`velt:fs` → `<root>/fs.vlt`).
+/// The std root the std entries' files are in (`velt/fs` → `<root>/fs.vlt`).
 fn std_root(entries: &[ModuleEntry]) -> Option<PathBuf> {
     let entry = entries.iter().find(|e| e.kind == ModuleKind::Std)?;
-    let rel = entry.spec.strip_prefix("velt:")?;
+    let rel = entry.spec.strip_prefix("velt/")?;
     let mut levels = rel.split('/').count();
     if entry.path.file_stem().is_some_and(|s| s == "index") && !rel.ends_with("index") {
         levels += 1;

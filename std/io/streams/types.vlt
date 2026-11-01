@@ -1,0 +1,43 @@
+// velt/io (internal): the types of WHATWG streams: what a stream reads from, how much it
+// queues, why it was cancelled, what a read gives.
+
+import { ReadableStreamDefaultController } from "velt/io/streams/controller";
+
+/** Why a stream was cancelled, as given to `cancel(reason)` (JS takes any value). */
+export type CancelReason = Error | string | null;
+
+/** One step of `reader.read()`: `{ value, done: false }`, or `{ done: true }` once closed. */
+export type ReadableStreamReadResult<R> = IteratorResult<R>;
+
+/**
+ * What a `ReadableStream` reads from (JS's underlying source). `start(controller)` runs when the
+ * stream is made, `pull(controller)` whenever the stream wants more chunks (it enqueues them, or
+ * closes the stream), and `cancel(reason)` when a consumer cancels it. Each may be `async`, and
+ * an error it throws errors the stream.
+ */
+export interface UnderlyingSource<R> {
+  start?: ((controller: ReadableStreamDefaultController<R>) => void throws unknown) | ((controller: ReadableStreamDefaultController<R>) => Promise<void, unknown>);
+  pull?: ((controller: ReadableStreamDefaultController<R>) => void throws unknown) | ((controller: ReadableStreamDefaultController<R>) => Promise<void, unknown>);
+  cancel?: ((reason: CancelReason) => void throws unknown) | ((reason: CancelReason) => Promise<void, unknown>);
+}
+
+/** How many chunks a stream queues before it stops pulling (JS's count queuing strategy). */
+export interface QueuingStrategy {
+  /** The queue length the stream pulls up to (default 1; 0 pulls only for a waiting read). */
+  highWaterMark?: number;
+}
+
+/**
+ * What a stream errors with: any value, as in JS (`controller.error(reason?: any)`). Named,
+ * since `AsyncIterator<R, unknown>` is TypeScript's spelling of a return type.
+ */
+export type Reason = unknown;
+
+/** A source's `pull` and `cancel`, as the controller keeps them. */
+export type PullCallback<R> =
+  | ((controller: ReadableStreamDefaultController<R>) => void throws unknown)
+  | ((controller: ReadableStreamDefaultController<R>) => Promise<void, unknown>);
+
+export type CancelCallback =
+  | ((reason: CancelReason) => void throws unknown)
+  | ((reason: CancelReason) => Promise<void, unknown>);

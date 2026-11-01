@@ -1,0 +1,8 @@
+// A generator reports an error at the user's code (`show` of a function type: the generator's
+// `out.error`, at the call that needs the instance).
+import { show } from "./_generators";
+
+function main() {
+  const f = (x: i32) => x + 1;
+  console.log(show(f));
+}

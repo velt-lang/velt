@@ -1,0 +1,25 @@
+  streamed 0 bytes in 0 chunks of at most 0
+nothing: 0 0
+hello: hello brotli
+empty: 0
+metadata: 0
+raw: true
+text: The Brotli format is used by the Web. THE QUICK BROWN FOX jumps over the lazy dog, and the world wide web. Hello World! <html><head><title>Example</title></head><body class="main"></body></html>
+text one byte at a time:
+  streamed 195 bytes in 85 chunks of at most 3
+true
+far: true
+far one byte at a time:
+  streamed 5244928 bytes in 2302 chunks of at most 4096
+true
+bomb:
+  streamed 3145728 bytes in 48 chunks of at most 65536
+3145728 -1
+truncated: CompressError: brotli: truncated stream
+truncated streaming: CompressError: brotli: truncated stream
+cut before the last byte: CompressError: brotli: truncated stream
+garbage: CompressError: brotli: invalid padding
+garbage streaming: CompressError: brotli: invalid padding
+data after the end: CompressError: brotli: data after the end of the stream
+data after the end streaming: CompressError: brotli: data after the end of the stream
+reserved bit: CompressError: brotli: reserved bit set

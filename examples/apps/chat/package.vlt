@@ -1,3 +1,7 @@
-import type { Package } from "velt:package";
+import type { Package } from "velt/package";
 
-export const pkg: Package = { name: "chat", version: "0.1.0" };
+export const pkg: Package = {
+  name: "chat",
+  version: "0.1.0",
+  dependencies: { "http-server": { path: "../../../packages/http-server" } },
+};

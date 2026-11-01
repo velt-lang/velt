@@ -265,7 +265,7 @@ impl FileDocs {
                 self.type_fields(ret);
             }
             ast::TypeExprKind::GenericFunction { ty, .. }
-            | ast::TypeExprKind::Construct(ty)
+            | ast::TypeExprKind::Construct { ty, .. }
             | ast::TypeExprKind::TupleRest(ty)
             | ast::TypeExprKind::TupleOptional(ty) => self.type_fields(ty),
             ast::TypeExprKind::Object(fields) => {
@@ -367,6 +367,7 @@ type Props = {
         let module = velt_sema::SourceModule {
             path: "main".into(),
             is_std: false,
+            is_dependency: false,
             file,
             ast,
             imports: vec![],

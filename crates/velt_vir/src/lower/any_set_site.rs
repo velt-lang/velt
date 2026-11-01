@@ -17,7 +17,7 @@ pub(super) const ARRAY_ID: u64 = u64::MAX - 1;
 
 /// How a write's key reaches the slot.
 #[derive(Clone)]
-enum SetKey {
+pub(super) enum SetKey {
     /// The address of a string.
     Str(Operand),
     /// An `f64`.
@@ -100,15 +100,46 @@ impl FnLower<'_, '_> {
         unit
     }
 
+    /// `o[k] = v` where the receiver `(data, desc)` and the key (a string's address or a number) are
+    /// evaluated already (a key write of a generic body on `any`, key_any.rs).
+    pub(super) fn any_set_named(
+        &mut self,
+        data: &Operand,
+        desc: &Operand,
+        key: SetKey,
+        v: &hir::Expr,
+    ) -> Operand {
+        let unit = Operand::Const(crate::vir::Const::Unit, Ty::Unit);
+        let any = self.cx.any_ty();
+        self.cx.note_identity(any);
+        self.cx.note_any_set();
+        let vt = self.sub(v.ty);
+        let vv = self.consume(v);
+        if self.dead() {
+            return unit;
+        }
+        let avt = self.cx.ty(vt);
+        let buf = Place::local(self.temp(avt));
+        self.assign(buf.clone(), Rvalue::Use(vv));
+        let va = self.addr(buf);
+        self.any_set_at(data, desc, key, va);
+        unit
+    }
+
     /// The null check, the slot call and the status check of a write with key `key`.
     fn any_set_at(&mut self, data: &Operand, desc: &Operand, key: SetKey, v: Operand) {
-        let done = self.proxy_branch("__set", data, desc, |lw, obj, pty, r| {
-            let pk = match &key {
-                SetKey::Str(k) => ProxyKey::Str(lw.copy_to_temp(k.clone(), Ty::Ptr)),
-                SetKey::Num(i) => ProxyKey::Num(lw.copy_to_temp(i.clone(), Ty::F64)),
-            };
-            lw.proxy_set_direct((obj, pty, r), pk, v.clone());
-        });
+        let done = self.proxy_branch(
+            velt_common::std_key!(proxy_set),
+            data,
+            desc,
+            |lw, obj, pty, r| {
+                let pk = match &key {
+                    SetKey::Str(k) => ProxyKey::Str(lw.copy_to_temp(k.clone(), Ty::Ptr)),
+                    SetKey::Num(i) => ProxyKey::Num(lw.copy_to_temp(i.clone(), Ty::F64)),
+                };
+                lw.proxy_set_direct((obj, pty, r), pk, v.clone());
+            },
+        );
         let (st, k) = match &key {
             SetKey::Str(k) => {
                 self.any_nullish_check_as(desc, NullKey::Str(k), true);

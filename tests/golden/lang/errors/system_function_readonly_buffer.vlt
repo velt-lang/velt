@@ -1,0 +1,30 @@
+// A system function writes a buffer parameter declared `u8[]`: a read-only array may not be
+// passed for it, whole or through `subarray`, from a variable, a parameter, a module constant,
+// a class field or a function's result (TypeScript's TS4104 for the `u8[]` parameter).
+declare system function pread(fd: i32, buf: u8[], offset: i64): isize;
+
+const R: readonly u8[] = [1, 2, 3, 4];
+
+function ro(): readonly u8[] {
+  return R;
+}
+
+class Holder {
+  readonly b: readonly u8[] = [5, 6];
+}
+
+function pass(p: readonly u8[]): isize {
+  return pread(0, p, 0);
+}
+
+function main() {
+  const r: readonly u8[] = [1, 2, 3, 4];
+  const h = new Holder();
+  console.log(pread(0, r, 0));
+  console.log(pread(0, r.subarray(0, 2), 0));
+  console.log(pread(0, R, 0));
+  console.log(pread(0, ro(), 0));
+  console.log(pread(0, h.b, 0));
+  console.log(pread(0, h.b.subarray(1), 0));
+  console.log(pass(r));
+}

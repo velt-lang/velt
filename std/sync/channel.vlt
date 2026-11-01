@@ -1,0 +1,101 @@
+// velt/sync (internal): `Channel<T>`, a typed queue between tasks (docs/std/sync/channel.md). Any number
+// of tasks may send and receive through clones of one channel. A bounded channel makes `send` wait
+// while it is full (backpressure); an unbounded one never waits. `close()` ends the stream: sends
+// fail from then on, and receivers get what is queued, then `null`.
+//
+// A sent value crosses to the receiver's task like a `spawn` argument: it moves when the sender
+// no longer uses it, and is deep-copied otherwise (objects are never shared between tasks).
+//
+// `Channel<T>` is a handle struct, like `TcpStream` (docs/std/README.md "Handles"): copies share
+// one channel, so pass it to producers and consumers (also `spawn`ed tasks) freely. Close it
+// when done: a closed channel is freed once it is drained, and an unclosed one lives until the
+// program ends. Values nobody receives are dropped when the program ends.
+
+import { ChannelClosed } from "velt/sync/errors";
+import {
+  velt_rt_chan_close,
+  velt_rt_chan_closed,
+  velt_rt_chan_len,
+  velt_rt_chan_new,
+} from "velt/sync/rt";
+import { chanReceive, chanSend, chanTryReceive, chanTrySend } from "velt/lang/intrinsics";
+
+/**
+ * A channel of `T` values. `channel<T>()` is unbounded; `channel<T>(capacity)` holds at most
+ * `capacity` values (at least 1).
+ */
+export struct Channel<T> implements AsyncIterable<T> {
+  private handle: u64;
+
+  /**
+   * Queues `value`, waiting while a bounded channel is full. Throws `ChannelClosed` (and drops
+   * `value`) if the channel is closed, also while waiting.
+   */
+  async send(value: T): Promise<void> throws ChannelClosed {
+    if (!(await chanSend<T>(this.handle, value))) {
+      throw new ChannelClosed();
+    }
+  }
+
+  /**
+   * Queues `value` if the channel has room now, without waiting: true if it was queued, false
+   * (and `value` dropped) if a bounded channel is full or the channel is closed. Synchronous, so
+   * it may be called inside `Mutex.with`.
+   */
+  trySend(value: T): bool {
+    return chanTrySend<T>(this.handle, value);
+  }
+
+  /** The oldest value, waiting for one; `null` once the channel is closed and empty. */
+  async receive(): Promise<T | null> {
+    return await chanReceive<T>(this.handle);
+  }
+
+  /** The oldest value if one is queued, else `null` (never waits). */
+  tryReceive(): T | null {
+    return chanTryReceive<T>(this.handle);
+  }
+
+  /**
+   * `for await (const v of ch)`: receives until the channel is closed and drained. Leaving the
+   * loop early does not close the channel (other tasks may receive from it).
+   */
+  async *[Symbol.asyncIterator](): AsyncIterator<T> {
+    while (true) {
+      const v = await chanReceive<T>(this.handle);
+      if (v == null) {
+        return;
+      }
+      yield v;
+    }
+  }
+
+  /**
+   * Closes the channel (closing twice does nothing). Pending and later sends throw
+   * `ChannelClosed`; receivers drain what is queued, then get `null`.
+   */
+  close() {
+    velt_rt_chan_close(this.handle);
+  }
+
+  /** Whether the channel is closed. */
+  get closed(): bool {
+    return velt_rt_chan_closed(this.handle);
+  }
+
+  /** Number of queued values. */
+  get length(): i64 {
+    return velt_rt_chan_len(this.handle) as i64;
+  }
+}
+
+/**
+ * A new channel of `T` values: unbounded with `capacity` 0, else holding at most `capacity`
+ * values. Panics if `capacity` is negative.
+ */
+export function channel<T>(capacity: i64 = 0): Channel<T> {
+  if (capacity < 0) {
+    panic(`channel capacity must not be negative, got ${capacity}`);
+  }
+  return { handle: velt_rt_chan_new(capacity as u64) };
+}

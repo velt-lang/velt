@@ -1,0 +1,2 @@
+6:15: error: the generator `./impure` failed
+= note: error: a source generator cannot reach the clock: it runs at compile time and gets everything from its request

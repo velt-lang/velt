@@ -201,7 +201,7 @@ impl FnCx<'_, '_> {
     }
 
     /// The read-only variable `h` reads (through casts, narrowing and upcasts).
-    fn readonly_local(&self, h: &hir::Expr) -> Option<LocalId> {
+    pub(crate) fn readonly_local(&self, h: &hir::Expr) -> Option<LocalId> {
         if self.f.local_marks.is_empty() {
             return None;
         }
@@ -217,7 +217,7 @@ impl FnCx<'_, '_> {
     }
 
     /// Is `t` a read-only array or collection type, also through type aliases of the module?
-    fn is_readonly_written(&self, t: &ast::TypeExpr, depth: usize) -> bool {
+    pub(crate) fn is_readonly_written(&self, t: &ast::TypeExpr, depth: usize) -> bool {
         if is_readonly_array(t) || is_readonly_collection(t) {
             return true;
         }

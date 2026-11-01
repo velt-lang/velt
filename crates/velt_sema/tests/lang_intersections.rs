@@ -125,7 +125,7 @@ fn conflicting_fields_are_an_error_not_never() {
 fn parts_that_are_not_object_types_are_errors_with_a_fix() {
     for (src, needle) in [
         (
-            "class K { x = 1 } type A = K & { y: f64 };",
+            "class K { x = 1 } class L { y = 1 } type A = K & L;",
             "`K` is a class",
         ),
         ("type A = f64[] & { y: f64 };", "is an array"),
@@ -138,13 +138,32 @@ fn parts_that_are_not_object_types_are_errors_with_a_fix() {
             "overloads are not supported",
         ),
         (
-            "class K { x = 1 } type W<T> = T & { y: f64 }; type A = W<K>;",
-            "`K` is a class",
+            "class K { x = 1 } class L { y = 1 } type W<T> = T & L; type A = W<K>;",
+            "is a class",
         ),
     ] {
         let e = err_src(&format!("{src} function main() {{}}"));
         assert!(e.contains(needle), "{src}: {e}");
     }
+}
+
+#[test]
+fn a_class_instance_with_object_types_is_a_brand_of_the_instance() {
+    // `K & { … }` is `K`'s value: its members are `K`'s, it converts to `K`, and a plain `K`
+    // converts to it only with `as` (unless the object part adds nothing to `K`).
+    ok_src(
+        "class K { x = 1; inc(): f64 { this.x += 1; return this.x; } }
+         type W<T extends object> = T & { $set(v: T): void };
+         function wrap<T extends object>(t: T): W<T> { return t as W<T>; }
+         function main() {
+           const k = new K(); const w = wrap(k); w.x = 3; const back: K = w;
+           console.log(w.inc(), back === k, w instanceof K);
+           const m = wrap(new Map<string, f64>()); m.set(\"a\", 1); console.log(m.size);
+           const same: K & { x: f64 } = new K(); console.log(same.x);
+         }",
+    );
+    let e = err_src("class K { x = 1 } function main() { const k: K & { y: f64 } = new K(); }");
+    assert!(e.contains("brand a value with"), "{e}");
 }
 
 #[test]

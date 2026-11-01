@@ -38,6 +38,83 @@ fn short_chain_stays_on_one_line() {
     );
 }
 
+/// Formats like [`assert_fmt`] and checks that the output parses without any diagnostic (a
+/// line starting with `[` gets "this line continues the expression on the line before").
+#[track_caller]
+fn assert_fmt_quiet(input: &str, expected: &str) {
+    assert_fmt(input, expected);
+    let (_, diags) = velt_syntax::parse_file(velt_common::FileId(0), expected);
+    assert!(diags.is_empty(), "{diags:?}\n{expected}");
+}
+
+#[test]
+fn index_stays_on_the_call_it_follows_in_a_broken_chain() {
+    // #1875: `[0]` used to start the line after `.split(" ")`.
+    assert_fmt_quiet(
+        "const counts = stderr.slice(at + 8).split(\" \")[0].split(\"/\").filter((x) => x != \"\").map((x) => x.trim());\n",
+        "const counts = stderr
+  .slice(at + 8)
+  .split(\" \")[0]
+  .split(\"/\")
+  .filter((x) => x != \"\")
+  .map((x) => x.trim());
+",
+    );
+}
+
+#[test]
+fn indexes_and_non_null_stay_on_their_link() {
+    // Chained, optional and computed indexes and `!` after a call, and an index ending the
+    // chain. Prettier moves a computed index to the next line (`[idx].split("/")`); Velt keeps
+    // it on the call so that no line starts with `[`.
+    assert_fmt_quiet(
+        "const a = s.slice(at + 8).split(\" \")[0][1].split(\"/\")[idx].filter((x) => x != \"\").map((x) => x.trim())[2];
+const b = s?.slice(at + 8)?.split(\" \")?.[0]?.split(\"/\").filter((x) => x != \"\").map((x) => x.trim());
+const c = s.slice(at + 8).splitSomething(\" \")[0]!.splitSomething(\"/\")!.filter((x) => x != \"\").map((x) => x.trim());
+",
+        "const a = s
+  .slice(at + 8)
+  .split(\" \")[0][1]
+  .split(\"/\")[idx]
+  .filter((x) => x != \"\")
+  .map((x) => x.trim())[2];
+const b = s
+  ?.slice(at + 8)
+  ?.split(\" \")?.[0]
+  ?.split(\"/\")
+  .filter((x) => x != \"\")
+  .map((x) => x.trim());
+const c = s
+  .slice(at + 8)
+  .splitSomething(\" \")[0]!
+  .splitSomething(\"/\")!
+  .filter((x) => x != \"\")
+  .map((x) => x.trim());
+",
+    );
+}
+
+#[test]
+fn chain_starting_with_an_index_keeps_it_on_the_head() {
+    assert_fmt_quiet(
+        "const a = items[0].filterSomethingLong((x) => x.okay && x.size > 10).mapSomethingLong((x) => x.name).join(\", \");
+const b = handlers[key](\"foo\").thenSomethingLong((x) => x.okay && x.size > 10).catchSomething((e) => e.message);
+const c = foo()[key].alpha().betaSomethingLong((x) => x + 1).gammaSomethingLong((x) => x + 2222);
+",
+        "const a = items[0]
+  .filterSomethingLong((x) => x.okay && x.size > 10)
+  .mapSomethingLong((x) => x.name)
+  .join(\", \");
+const b = handlers[key](\"foo\")
+  .thenSomethingLong((x) => x.okay && x.size > 10)
+  .catchSomething((e) => e.message);
+const c = foo()[key].alpha()
+  .betaSomethingLong((x) => x + 1)
+  .gammaSomethingLong((x) => x + 2222);
+",
+    );
+}
+
 #[test]
 fn trailing_callback_is_hugged() {
     assert_fmt(

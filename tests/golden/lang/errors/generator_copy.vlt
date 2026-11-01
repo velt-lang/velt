@@ -2,7 +2,7 @@
 // capture of an async closure (which copies what it captures when it runs) and a value sent on
 // a channel are compile-time errors, like copying a promise. That includes a generator passed as
 // an interface value made at the call (`Iterable<T>`, `AsyncIterable<T>`).
-import { channel } from "velt:channel";
+import { channel } from "velt/sync";
 
 function* nums(): Generator<i64> {
   yield 1;

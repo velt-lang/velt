@@ -1,0 +1,21 @@
+// `JSON.parse<T>` of objects and structs with readonly optional fields, decoded by the code
+// velt/encoding/json's generator writes: a field whose key is absent is absent.
+type R = { readonly id?: i64; readonly name?: string | null; x: i64 };
+
+struct S {
+  readonly a?: string;
+  b?: i8;
+  x: i64;
+}
+
+for (const d of [
+  `{"x":1}`,
+  `{"x":1,"id":2}`,
+  `{"x":1,"name":null}`,
+  `{"x":1,"id":3,"name":"n","a":"s","b":2}`,
+  `{"x":1,"a":null}`,
+]) {
+  const r = JSON.parse<R>(d);
+  const s = JSON.parse<S>(d);
+  console.log(r, JSON.stringify(r), s, JSON.stringify(s), "id" in r);
+}

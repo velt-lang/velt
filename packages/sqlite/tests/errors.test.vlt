@@ -1,0 +1,141 @@
+// sqlite errors: every failure throws SqliteError with SQLite's code name.
+import { open, Database, SqliteError } from "../src/lib";
+import { tmpdir } from "velt/os";
+import { uuidv4 } from "velt/random/uuid";
+
+class Row {
+  id: i64;
+  name: string;
+
+  constructor(id: i64, name: string) {
+    this.id = id;
+    this.name = name;
+  }
+}
+
+function report(e: SqliteError): string {
+  return `${e.code} | ${e.message}`;
+}
+
+function setup(): Database {
+  const db = open(":memory:");
+  db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE)");
+  db.prepare("INSERT INTO t (name) VALUES (?)").runWith(["a"]);
+  return db;
+}
+
+// "code | message" of the error `f` throws, "no error" if it throws none.
+function failure(f: () => void throws SqliteError): string {
+  try {
+    f();
+  } catch (e) {
+    return report(e);
+  }
+  return "no error";
+}
+
+export function test_bad_sql() {
+  const db = setup();
+  assertEq(
+    failure(() => {
+      db.prepare("SELEC * FROM t");
+    }),
+    'SQLITE_ERROR | near "SELEC": syntax error in SELEC * FROM t at offset 0',
+  );
+  assertEq(
+    failure(() => {
+      db.prepare("SELECT 1; SELECT 2");
+    }),
+    "SQLITE_MISUSE | The supplied SQL string contains more than one statement",
+  );
+  assertEq(
+    failure(() => {
+      db.exec("INSERT INTO nope VALUES (1)");
+    }),
+    "SQLITE_ERROR | no such table: nope",
+  );
+  db.close();
+}
+
+export function test_constraints_and_parameters() {
+  const db = setup();
+  const ins = db.prepare("INSERT INTO t (name) VALUES (:name)");
+  assertEq(
+    failure(() => {
+      ins.runWith({ name: "a" });
+    }),
+    "SQLITE_CONSTRAINT_UNIQUE | UNIQUE constraint failed: t.name",
+  );
+  assertEq(
+    failure(() => {
+      ins.runWith({ other: "b" });
+    }),
+    'SQLITE_RANGE | missing named parameter "name"',
+  );
+  assertEq(
+    failure(() => {
+      ins.run();
+    }),
+    "SQLITE_RANGE | the statement has 1 parameter(s) but none were given (use runWith / getWith / allWith)",
+  );
+  assertEq(
+    failure(() => {
+      db.prepare("SELECT * FROM t WHERE id = ?").allWith<Row, i64[]>([1, 2]);
+    }),
+    "SQLITE_RANGE | the statement has 1 parameter(s) but 2 value(s) were given",
+  );
+  ins.close();
+  db.close();
+}
+
+export function test_rows_that_do_not_fit() {
+  const db = setup();
+  // A row that does not fit the requested type.
+  assertEq(
+    failure(() => {
+      db.prepare("SELECT name AS id, name FROM t").all<Row>();
+    }),
+    "SQLITE_MISMATCH | row does not match the requested type: expected i64 at $[0].id",
+  );
+  assertEq(
+    failure(() => {
+      db.prepare("SELECT id FROM t").get<Row>();
+    }),
+    'SQLITE_MISMATCH | row does not match the requested type: expected field "name" at $',
+  );
+  db.close();
+}
+
+export function test_closed_database() {
+  const db = setup();
+  // Closing the database invalidates its statements, but they stay safe to use.
+  const byId = db.prepare("SELECT * FROM t WHERE id = ?");
+  db.close();
+  assertEq(
+    failure(() => {
+      byId.getWith<Row, i64>(1);
+    }),
+    "SQLITE_MISUSE | The database connection is not open",
+  );
+  byId.close();
+}
+
+export function test_open_failures() {
+  const missing = `${tmpdir()}/velt-sqlite-${uuidv4()}/none.db`;
+  let code = "no error";
+  try {
+    open(missing, { fileMustExist: true });
+  } catch (e) {
+    code = e.code.clone();
+  }
+  assertEq(code, "SQLITE_CANTOPEN");
+  const ro = open(":memory:", { readonly: true });
+  code = "no error";
+  try {
+    ro.exec("CREATE TABLE x (a)");
+  } catch (e) {
+    code = e.code.clone();
+  }
+  assertEq(code, "SQLITE_READONLY");
+  ro.close();
+}

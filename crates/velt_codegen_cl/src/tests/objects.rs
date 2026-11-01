@@ -63,11 +63,16 @@ fn check_object(bytes: &[u8], fmt: BinaryFormat, arch: Architecture, program: &P
     for f in &program.funcs {
         let s = find(&obj_name(fmt, &f.symbol))
             .unwrap_or_else(|| panic!("{ctx}: {} missing", f.symbol));
-        assert!(s.is_definition(), "{ctx}: {} must be defined", f.symbol);
         match f.linkage {
             Linkage::Export => assert!(s.is_global(), "{ctx}: {} must be global", f.symbol),
             Linkage::Internal => assert!(s.is_local(), "{ctx}: {} must be local", f.symbol),
+            // Defined by another object of the link (vir.rs invariant 11).
+            Linkage::Import => {
+                assert!(s.is_undefined(), "{ctx}: {} must be undefined", f.symbol);
+                continue;
+            }
         }
+        assert!(s.is_definition(), "{ctx}: {} must be defined", f.symbol);
     }
     // Every extern that is actually referenced must be an undefined symbol.
     let mut undefined = 0;
@@ -101,6 +106,7 @@ fn objects_for_all_targets() {
                 let opts = CodegenOptions {
                     target: triple.into(),
                     optimize,
+                    cpu: None,
                 };
                 let bytes =
                     emit_object(&tp.program, &opts).unwrap_or_else(|e| panic!("{ctx}: {e}"));
@@ -116,6 +122,7 @@ fn host_object() {
     let opts = CodegenOptions {
         target: crate::host_triple(),
         optimize: true,
+        cpu: None,
     };
     let bytes = emit_object(&tp.program, &opts).unwrap();
     let file = object::File::parse(&*bytes).unwrap();
@@ -144,6 +151,7 @@ fn macho_build_version() {
         let opts = CodegenOptions {
             target: triple.into(),
             optimize: false,
+            cpu: None,
         };
         let bytes = emit_object(&programs::fib().program, &opts).unwrap();
         let header = MachHeader64::<LittleEndian>::parse(&*bytes, 0).unwrap();
@@ -254,6 +262,7 @@ fn rt_abi_calls() {
             &CodegenOptions {
                 target: triple.into(),
                 optimize: false,
+                cpu: None,
             },
         )
         .unwrap();
@@ -276,6 +285,7 @@ fn errors_are_reported_not_panics() {
         &CodegenOptions {
             target: "riscv64gc-unknown-linux-gnu".into(),
             optimize: false,
+            cpu: None,
         },
     );
     assert!(bad_target.unwrap_err().contains("unsupported target"));
@@ -284,6 +294,7 @@ fn errors_are_reported_not_panics() {
         &CodegenOptions {
             target: "not a triple".into(),
             optimize: false,
+            cpu: None,
         },
     );
     assert!(garbage.is_err());
@@ -291,6 +302,7 @@ fn errors_are_reported_not_panics() {
     let opts = CodegenOptions {
         target: "x86_64-unknown-linux-gnu".into(),
         optimize: false,
+        cpu: None,
     };
     let mk = |f: &dyn Fn(&mut FuncBuilder, BlockId)| {
         let (pb, _rt) = ProgramBuilder::new();
@@ -359,6 +371,7 @@ fn errors_are_reported_not_panics() {
         bytes: vec![0; 8],
         align: 8,
         relocs: vec![(0, Const::Func(FuncId(9)))],
+        mutable: None,
     });
     let err = emit_object(&p, &opts).unwrap_err();
     assert!(err.contains("relocation at 0: unknown function"), "{err}");
@@ -386,6 +399,7 @@ fn windows_unwind_tables() {
             &CodegenOptions {
                 target: triple.into(),
                 optimize: true,
+                cpu: None,
             },
         )
         .unwrap();
@@ -442,6 +456,7 @@ fn eh_frame_for_elf_and_macho() {
             &CodegenOptions {
                 target: triple.into(),
                 optimize: false,
+                cpu: None,
             },
         )
         .unwrap();
@@ -520,6 +535,7 @@ fn data_relocations_for_all_targets() {
             let opts = CodegenOptions {
                 target: triple.into(),
                 optimize,
+                cpu: None,
             };
             let bytes = emit_object(&tp.program, &opts).unwrap_or_else(|e| panic!("{ctx}: {e}"));
             let file = object::File::parse(&*bytes).unwrap();

@@ -247,6 +247,7 @@ pub(super) fn for_of(binding: Pat, iter: Expr, body: Vec<Stmt>) -> Stmt {
         iter,
         body: super::builder::block(body),
         consume: false,
+        share_elems: false,
     })
 }
 pub(super) fn let_pat(p: Pat, init: Expr) -> Stmt {

@@ -1,0 +1,22 @@
+// velt/test (internal): `Case`, a test to run, and `Body`, a test or hook callback.
+
+import { Suite } from "velt/test/suite";
+
+/** A test or hook callback, run as an `async` one. */
+export type Body = () => Promise<void, unknown>;
+
+/** A test to run: its full name, its body and its suite. */
+export class Case {
+  readonly name: string;
+  readonly run: Body;
+  readonly suite: Suite;
+  /** Set when collecting it failed (its `describe` callback threw): it fails with this. */
+  readonly error: string | null;
+
+  constructor(name: string, run: Body, suite: Suite, error: string | null) {
+    this.name = name;
+    this.run = run;
+    this.suite = suite;
+    this.error = error;
+  }
+}

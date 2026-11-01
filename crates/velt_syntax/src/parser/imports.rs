@@ -202,7 +202,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Push a diagnostic built by the caller (with notes), unless speculating.
-    fn report(&mut self, d: Diagnostic) {
+    pub(super) fn report(&mut self, d: Diagnostic) {
         if self.speculating == 0 {
             self.diags.push(d);
         }

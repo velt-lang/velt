@@ -39,6 +39,26 @@ fn rmw_op(op: Rmw) -> &'static str {
 }
 
 impl Emitter<'_> {
+    /// After a locked x86 instruction that acquires (`lock cmpxchg`, `xchg`, `lock xadd`…):
+    /// two `nop`s between it and whatever comes next, a lock's critical section.
+    ///
+    /// On Intel cores, when the critical section's first uop is allocated within one uop of the
+    /// locked instruction's last, the uops depending on the locked load are dispatched before
+    /// its value is there and dispatched again (about 3 more dispatches per acquisition), and a
+    /// lock round trip takes about 5 cycles more: 29.3 instead of 24.5 on Coffee Lake, 25% more
+    /// time on Alder Lake. Any two uops in between avoid it, also `nop`s, which need no port.
+    /// A spin lock whose critical section is one increment through a pointer kept in a register
+    /// (`lock cmpxchg; je` then `incq (%r14)`) hit it once `frozen` fields (velt_opt::frozen)
+    /// took the header reloads out of the section. Counters and numbers: design/atomics.md
+    /// "Frozen fields". Relaxed read-modify-writes (counters) and other targets are unchanged.
+    fn after_acquiring_rmw(&mut self, order: Order) {
+        if self.simd == Arch::Sse2
+            && matches!(order, Order::Acquire | Order::AcqRel | Order::SeqCst)
+        {
+            self.line(r#"call void asm sideeffect "nop\0Anop", ""() nounwind"#.into());
+        }
+    }
+
     /// The atomic operation `callee` is, if it is a `velt_atomic_*` extern.
     pub(super) fn atomic_call(&self, callee: &Callee) -> Option<AtomicCall> {
         let Callee::Extern(id) = callee else {
@@ -80,13 +100,17 @@ impl Emitter<'_> {
                 ));
                 None
             }
-            AtomicCall::Rmw { op, order, .. } => Some(self.inst(format!(
-                "atomicrmw {} ptr {}, {t} {} {}, align {align}",
-                rmw_op(op),
-                args[0],
-                args[1],
-                ordering(order)
-            ))),
+            AtomicCall::Rmw { op, order, .. } => {
+                let old = self.inst(format!(
+                    "atomicrmw {} ptr {}, {t} {} {}, align {align}",
+                    rmw_op(op),
+                    args[0],
+                    args[1],
+                    ordering(order)
+                ));
+                self.after_acquiring_rmw(order);
+                Some(old)
+            }
             AtomicCall::Cas {
                 order,
                 failure,
@@ -102,6 +126,7 @@ impl Emitter<'_> {
                     ordering(order),
                     ordering(failure)
                 ));
+                self.after_acquiring_rmw(order);
                 Some(if weak {
                     let ok = self.inst(format!("extractvalue {{ {t}, i1 }} {pair}, 1"));
                     self.inst(format!("zext i1 {ok} to i8"))

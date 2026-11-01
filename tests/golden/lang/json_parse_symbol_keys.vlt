@@ -1,0 +1,29 @@
+// `JSON.parse` of types with symbol-keyed fields: no key of a document names one, so an optional
+// one stays absent and a required one fails as a missing field (as the compiler's decoder did).
+const K = Symbol("k");
+
+type R = { a: number; [K]: boolean };
+type O = { a: number; [K]?: boolean; b: string };
+
+class C {
+  a: number = 0;
+  [K]?: boolean;
+}
+
+function main() {
+  try {
+    const r: R = JSON.parse('{"a":1}');
+    console.log(r.a);
+  } catch (e) {
+    console.log((e as Error).message);
+  }
+  try {
+    JSON.parse<R>("{}");
+  } catch (e) {
+    console.log((e as Error).message);
+  }
+  const o = JSON.parse<O>('{"b":"x","[Symbol(k)]":true,"a":3}');
+  console.log(o.a, o.b, K in o, JSON.stringify(o));
+  const c = JSON.parse<C>('{"a":2}');
+  console.log(c.a, K in c);
+}

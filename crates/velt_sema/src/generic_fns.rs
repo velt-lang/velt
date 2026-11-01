@@ -430,7 +430,7 @@ impl Ctx<'_> {
                     format!("this function throws `{e}`, which `{t}` does not allow"),
                     span,
                 )
-                .with_note("only `Error` classes are kept as what a generic function type throws; a type the standard library declares throws only what it declares"),
+                .with_note("a type the standard library declares throws only what it declares"),
             );
         }
     }

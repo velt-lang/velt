@@ -1,0 +1,23 @@
+// `ColumnDef`: A column definition of CREATE TABLE.
+
+import { Expr } from "./expr";
+
+/** A column definition of CREATE TABLE. */
+export class ColumnDef {
+  name: string;
+  type: string = "";
+  primaryKey: bool = false;
+  desc: bool = false;
+  autoincrement: bool = false;
+  notNull: bool = false;
+  unique: bool = false;
+  dflt: Expr | null = null;
+  collate: string = "";
+  check: Expr[] = [];
+  generated: Expr | null = null;
+  stored: bool = false;
+
+  constructor(name: string) {
+    this.name = name;
+  }
+}

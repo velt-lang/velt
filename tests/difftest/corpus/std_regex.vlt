@@ -1,6 +1,6 @@
 // std/regex (Rust regex engine with JS syntax) against JS RegExp: test/exec with offsets,
 // sticky, captures (named, optional), matchAll with empty matches, replace templates, split.
-import { RegExp, RegExpMatch, RegExpError } from "velt:regex";
+import { RegExp, RegExpMatch, RegExpError } from "velt/text";
 
 function showMatch(m: RegExpMatch | null): string {
   if (m == null) {

@@ -52,7 +52,7 @@ async function main() {
 #[test]
 fn worker_queries_alone_make_no_scheduler_call() {
     let vir = vir_of(
-        "import { workerCount, currentWorker } from \"velt:task\";
+        "import { workerCount, currentWorker } from \"velt/task\";
 
 async function work(i: i64): Promise<i64> {
   return i + currentWorker();

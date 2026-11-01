@@ -1,0 +1,23 @@
+// requires: unix
+// A system function's buffer stays alive and in place for the whole call: a later argument that
+// replaces the module variable holding it cannot leave the call writing freed memory, and a
+// module constant's bytes are written in place, not into a copy.
+declare system function open(path: readonly u8[], oflag: i32, mode: u32): i32;
+declare system function pread(fd: i32, buf: u8[], offset: i64): isize;
+
+let g: u8[] = Buffer.alloc(4096);
+function swap(): i64 {
+  g = Buffer.alloc(1);
+  return 0;
+}
+
+const BUF: u8[] = [1, 2, 3, 4];
+
+function main() {
+  const name: u8[] = [47, 100, 101, 118, 47, 122, 101, 114, 111, 0]; // /dev/zero
+  const fd = open(name, 0, 0);
+  const n = pread(fd, g, swap());
+  console.log(n >= 0, g.length);
+  console.log(pread(fd, BUF.subarray(1, 3), 0), BUF.join(","));
+  console.log(pread(fd, BUF, 0), BUF.join(","));
+}

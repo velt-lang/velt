@@ -1,0 +1,106 @@
+// sqlite/engine/exec/agg/agg_ctx (internal): the aggregates and saved columns of one aggregate
+// query, stepped for each row of a group.
+//
+// An aggregate query runs its loops once, stepping the accumulators of each row's group; then each
+// group gives one output row. Columns read outside aggregates ("bare" columns) take the values of a
+// row of the group, saved as the group steps: the last row, or, with min() or max(), the row that
+// holds the extreme value, as SQLite does.
+
+import { Source } from "../source";
+import { Val, nullVal } from "../value/val";
+import { Acc, finish, stepValues } from "./acc";
+import { AG_CONCAT, AG_COUNT_STAR, AG_MAX, AG_MIN, AggFn } from "./agg_fn";
+import { Group } from "./group";
+
+/** The aggregates and saved columns of one aggregate query. */
+export class AggCtx {
+  fns: AggFn[] = [];
+  bareSrc: Source[] = [];
+  bareCol: i64[] = [];
+  /** The group being output. */
+  cur: Group = new Group();
+
+  /** The slot of a column read outside aggregates. */
+  bareSlot(src: Source, col: i64): usize {
+    for (let i: usize = 0; i < this.bareSrc.length; i++) {
+      if (this.bareSrc[i] == src && this.bareCol[i] == col) {
+        return i;
+      }
+    }
+    this.bareSrc.push(src);
+    this.bareCol.push(col);
+    return this.bareSrc.length - 1;
+  }
+
+  /** A group with fresh accumulators and NULL saved columns. */
+  newGroup(key: Val[]): Group {
+    const g = new Group();
+    g.key = key;
+    for (let i: usize = 0; i < this.fns.length; i++) {
+      g.accs.push(new Acc());
+    }
+    for (let i: usize = 0; i < this.bareSrc.length; i++) {
+      g.bare.push(nullVal());
+    }
+    return g;
+  }
+
+  /** Makes `g` a fresh group again (one group without GROUP BY, reused each run). */
+  resetGroup(g: Group) {
+    for (const a of g.accs) {
+      a.reset();
+    }
+    g.started = false;
+    for (let i: usize = 0; i < g.bare.length; i++) {
+      g.bare[i] = nullVal();
+    }
+  }
+
+  /** Steps every aggregate of `g` with the current row, then saves its columns. */
+  step(g: Group) {
+    // Without min() or max(), the columns are saved from the group's first row; with them,
+    // from each row that holds a new extreme (SQLite's "magnet" register).
+    let skip = g.started;
+    for (let i: usize = 0; i < this.fns.length; i++) {
+      const f = this.fns[i];
+      if (f.filter != null && !f.filter!()) {
+        continue;
+      }
+      const notBest = stepOne(f, g.accs[i]);
+      // Each min() or max() resets the flag: the last one decides (SQLite's OP_CollSeq).
+      if (f.kind == AG_MIN || f.kind == AG_MAX) {
+        skip = notBest;
+      }
+    }
+    g.started = true;
+    if (!skip) {
+      for (let i: usize = 0; i < this.bareSrc.length; i++) {
+        g.bare[i] = this.bareSrc[i].col(this.bareCol[i]);
+      }
+    }
+  }
+
+  /** Computes every aggregate of `g` (all of them, before HAVING, as SQLite's AggFinal). */
+  finishGroup(g: Group) {
+    g.done.truncate(0);
+    for (let k: usize = 0; k < this.fns.length; k++) {
+      g.done.push(finish(this.fns[k], g.accs[k]));
+    }
+  }
+
+  /** The result of aggregate `k` over the group being output. */
+  value(k: usize): Val {
+    return this.cur.done[k];
+  }
+}
+
+// Steps one aggregate; true when the row is not the min/max one (its columns are not saved).
+function stepOne(f: AggFn, a: Acc): bool {
+  if (f.kind == AG_COUNT_STAR) {
+    a.cnt++;
+    return false;
+  }
+  const v = f.args[0]();
+  const sep = f.kind == AG_CONCAT && f.args.length > 1 ? f.args[1]() : nullVal();
+  return stepValues(f, a, v, sep, f.args.length > 1);
+}

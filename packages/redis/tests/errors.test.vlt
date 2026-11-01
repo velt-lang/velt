@@ -1,0 +1,77 @@
+// The Redis client against a real server ($VELT_TEST_REDIS_URL; every test returns at once
+// without it): RedisError codes for server errors, bad URLs and failed connections.
+import { connect, RedisError, RedisClient } from "../src/lib";
+import { redisUrl, hostPort, freshPrefix, cleanup } from "./support/redis";
+
+async function tryConnect(url: string): Promise<string> {
+  try {
+    const c = await connect(url);
+    c.close();
+    return "connected";
+  } catch (e) {
+    return e.code;
+  }
+}
+
+async function tryGet(c: RedisClient, key: string): Promise<string> {
+  try {
+    return (await c.get(key)) ?? "null";
+  } catch (e) {
+    return `${e.code}: ${e.message.slice(0, 40)}`;
+  }
+}
+
+// Error replies: the code is the reply's first word.
+export async function test_error_replies() {
+  const url = redisUrl();
+  if (url == null) {
+    return;
+  }
+  const p = freshPrefix();
+  const c = await connect(url);
+
+  await c.rpush(`${p}list`, ["x"]);
+  assertEq(await tryGet(c, `${p}list`), "WRONGTYPE: WRONGTYPE Operation against a key holdin");
+  let unknown = "no error";
+  try {
+    await c.call(["NOSUCHCOMMAND", "x"]);
+  } catch (e) {
+    unknown = `${e.code} ${e instanceof RedisError}`;
+  }
+  assertEq(unknown, "ERR true");
+  await c.set(`${p}text`, "abc");
+  let incr = "no error";
+  try {
+    await c.incr(`${p}text`);
+  } catch (e) {
+    incr = `${e.code} | ${e.message}`;
+  }
+  assertEq(incr, "ERR | ERR value is not an integer or out of range");
+  let empty = "no error";
+  try {
+    await c.call([]);
+  } catch (e) {
+    empty = e.code.clone();
+  }
+  assertEq(empty, "EINVAL");
+  // The connection stays usable after error replies.
+  assertEq(await c.ping(), "PONG");
+
+  assertEq(await cleanup(c, p), 2);
+  c.close();
+}
+
+// Connection failures.
+export async function test_connection_failures() {
+  const url = redisUrl();
+  if (url == null) {
+    return;
+  }
+  assertEq(await tryConnect("redis://127.0.0.1:1"), "ECONNREFUSED");
+  assertEq(await tryConnect("http://127.0.0.1:6379"), "EINVAL");
+  assertEq(await tryConnect("redis://127.0.0.1:99999"), "EINVAL");
+  assertEq(await tryConnect(`${url}/100000`), "ERR");
+  assertEq(await tryConnect(`redis://nobody:wrong@${hostPort(url)}`), "WRONGPASS");
+  // TLS to a plain server fails.
+  assert(await tryConnect(`rediss://${hostPort(url)}`) != "connected", "TLS to a plain server");
+}

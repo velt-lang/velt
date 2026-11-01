@@ -52,6 +52,8 @@ pub(crate) struct Layouts {
 pub(crate) struct Family {
     /// The extensions' own fields, in order (each extension's twin's `FieldInfo`).
     pub added: Vec<FieldInfo>,
+    /// Per added field, the object type of the extension that declares it.
+    pub from: Vec<DefId>,
     /// The program converts between the base and an extension: the layout is widened.
     pub used: bool,
 }
@@ -97,6 +99,7 @@ pub(super) fn families(cx: &mut Ctx, pairs: &[(DefId, DefId)]) {
         // Two bases of one shape are one layout: their extensions are one family.
         let family = layouts.families.entry(base_twin).or_insert(Family {
             added: vec![],
+            from: vec![],
             used: false,
         });
         fields.extend(family.added.iter().cloned());
@@ -138,6 +141,7 @@ pub(super) fn families(cx: &mut Ctx, pairs: &[(DefId, DefId)]) {
                 fields.push(f.clone());
                 if let Some(t) = twin_fields.iter().find(|g| g.name == f.name) {
                     family.added.push(t.clone());
+                    family.from.push(*adt);
                 }
             }
             layouts.redirect.insert(ext_twin, base_twin);
@@ -267,6 +271,31 @@ impl Ctx<'_> {
         .with_note(format!(
             "give `{field}` the same type in both extensions, and a `{base}` converts to either as the same object"
         ))
+    }
+}
+
+impl Ctx<'_> {
+    /// The fields the layout of object type `d` gets from the extensions of its family, when the
+    /// program converts in that family (module docs): what an object of type `d` may hold
+    /// besides its declared fields (each optional, absent unless written through an extension),
+    /// each with the object type of the extension that declares it, through which it is read.
+    pub(crate) fn layout_added_fields(&self, d: DefId) -> Vec<(FieldInfo, DefId)> {
+        let layouts = &self.objects.layouts;
+        if layouts.families.is_empty() {
+            return vec![];
+        }
+        let twin = self.readonly_twins.get(&d).map_or(d, |t| t.0);
+        let base = layouts.redirect.get(&twin).copied().unwrap_or(twin);
+        let Some(family) = layouts.families.get(&base).filter(|f| f.used) else {
+            return vec![];
+        };
+        let own: Vec<&str> = self.adt(d).map_or(vec![], |a| {
+            a.fields.iter().map(|f| f.name.as_str()).collect()
+        });
+        (family.added.iter().zip(&family.from))
+            .filter(|(f, _)| !own.contains(&f.name.as_str()))
+            .map(|(f, e)| (f.clone(), *e))
+            .collect()
     }
 }
 

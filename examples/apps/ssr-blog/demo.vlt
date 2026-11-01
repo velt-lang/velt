@@ -1,6 +1,6 @@
 // A scripted session against the real server (golden: demo.out): the post list, tag filters, a
 // post with its comments (streamed: the comments load last), escaped user content, and a 404.
-import { channel } from "velt:channel";
+import { channel } from "velt/sync";
 import { startServer } from "./src/server";
 
 async function get(port: number, path: string) {

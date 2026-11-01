@@ -1,0 +1,36 @@
+// A class getter read through a proxy (here a class instance brand, sigx's `signal(new C())`).
+// A `get` trap that forwards with `Reflect.get(target, key)` runs the getter on the target, as
+// Node does, so its own reads skip the traps. One that forwards with
+// `Reflect.get(target, key, receiver)` would run it with `this` = the proxy in Node, so its reads
+// run the traps; Velt doesn't yet and stops with a `TypeError` naming #823 rather than give
+// another value.
+class Box {
+  n = 1;
+  get twice(): number {
+    return this.n * 2;
+  }
+}
+type S<T> = T & { $set(v: T): void };
+
+const keys: string[] = [];
+const p = new Proxy(new Box(), {
+  get(t: any, k: string | symbol, r: any) {
+    keys.push(String(k));
+    if (k === "n") {
+      return 10;
+    }
+    return Reflect.get(t, k);
+  },
+}) as S<Box>;
+console.log(p.twice, p.n, keys.join(","));
+
+const q = new Proxy(new Box(), {
+  get(t: any, k: string | symbol, r: any) {
+    if (k === "n") {
+      return 10;
+    }
+    return Reflect.get(t, k, r);
+  },
+}) as S<Box>;
+console.log(q.n);
+console.log(q.twice); // Node: 20

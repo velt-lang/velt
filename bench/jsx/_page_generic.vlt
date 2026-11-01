@@ -1,4 +1,4 @@
-/** @jsxImportSource velt:jsx/generic */
+/** @jsxImportSource velt/jsx/generic */
 
 // _page.vlt through the generic lowering (`jsx`/`Fragment` calls for every element).
 

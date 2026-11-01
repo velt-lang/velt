@@ -12,26 +12,48 @@
 //! through a pointer (an embedded child state polled via `&child`, an out-pointer result)
 //! stays live while the pointer is in use. Writes through pointers are covered too: the
 //! pointee was address-taken (counted as maybe written) and is live at the write.
+//!
+//! Every fact here is per local, so all sets range over the [`Universe`] of the spilled
+//! locals only: the cost is instructions × spilled locals, not instructions × locals.
 
-use super::flow::{has_deref, maybe_written, semantic_edges, stmt_acc, term_acc, Acc, Bits};
+use rustc_hash::FxHashMap;
+
+use super::flow::{
+    has_deref, maybe_written, semantic_edges, stmt_acc, term_acc, Acc, Bits, Susp, Universe,
+};
+use super::pts::{reach, Set};
 use crate::lower::successors;
 use crate::vir::{Function, Stmt};
 
-/// Per spilled local: the spilled locals it interferes with (symmetric).
-pub(super) fn interference(
-    f: &Function,
-    pts: &[Bits],
-    spilled: &Bits,
-    extra: &[(usize, usize)],
-    seeds: &[(usize, Bits)],
-) -> Vec<Bits> {
-    let n = f.locals.len();
-    let reach = reach_sets(pts, n);
+/// Which spilled locals interfere (symmetric), over the universe of the spilled locals.
+pub(super) struct Interference {
+    u: Universe,
+    sets: Vec<Bits>,
+}
+
+impl Interference {
+    /// Do spilled locals `a` and `b` interfere?
+    pub(super) fn conflict(&self, a: usize, b: usize) -> bool {
+        match (self.u.index(a), self.u.index(b)) {
+            (Some(i), Some(j)) => self.sets[i].get(j),
+            _ => false,
+        }
+    }
+}
+
+pub(super) fn interference(f: &Function, pts: &[Set], spilled: &Bits, s: &Susp) -> Interference {
+    let u = Universe::of_set(f.locals.len(), spilled);
+    let n = u.len();
+    let mut reach = Reach {
+        pts,
+        u: &u,
+        memo: FxHashMap::default(),
+    };
     let units: Vec<Vec<Unit>> = (0..f.blocks.len())
-        .map(|b| block_units(f, b, &reach))
+        .map(|b| block_units(f, b, &mut reach))
         .collect();
-    let live_out = live_out(f, &units, extra, n);
-    let written_in = written_in(f, extra, seeds);
+    let live_out = live_out(f, &units, &s.extra, n);
+    let written_in = written_in(f, s, &u);
     let mut interf = vec![Bits::new(n); n];
     for (b, us) in units.iter().enumerate() {
         let mut after = vec![Bits::new(n); us.len()];
@@ -48,16 +70,15 @@ pub(super) fn interference(
             w.union(&u.addrs);
             occ.intersect(&w);
             occ.union(&u.writes);
-            occ.intersect(spilled);
             for x in occ.iter() {
                 interf[x].union(&occ);
             }
         }
     }
-    interf
+    Interference { u, sets: interf }
 }
 
-/// Accesses of one statement or terminator, summarized over locals.
+/// Accesses of one statement or terminator, summarized over the spilled locals.
 struct Unit {
     /// Locals read (directly, through a pointer, or as pointees of a pointer used here).
     uses: Bits,
@@ -79,33 +100,43 @@ impl Unit {
     }
 }
 
-/// `reach[q]`: `q` and every local whose address `q` may transitively hold.
-fn reach_sets(pts: &[Bits], n: usize) -> Vec<Bits> {
-    (0..n)
-        .map(|q| {
-            let mut r = Bits::new(n);
-            r.set(q);
-            let mut work = vec![q];
-            while let Some(x) = work.pop() {
-                for y in pts[x].iter() {
-                    if !r.get(y) {
-                        r.set(y);
-                        work.push(y);
-                    }
+/// `reach(q)` restricted to the universe, memoized for the locals that hold addresses.
+struct Reach<'a> {
+    pts: &'a [Set],
+    u: &'a Universe,
+    memo: FxHashMap<usize, Bits>,
+}
+
+impl Reach<'_> {
+    /// `into |= reach(q) ∩ universe`.
+    fn add(&mut self, q: usize, into: &mut Bits) {
+        if self.pts[q].is_empty() {
+            if let Some(i) = self.u.index(q) {
+                into.set(i);
+            }
+            return;
+        }
+        let (pts, u) = (self.pts, self.u);
+        let r = self.memo.entry(q).or_insert_with(|| {
+            let mut r = Bits::new(u.len());
+            for y in reach(pts, q).iter() {
+                if let Some(i) = u.index(y) {
+                    r.set(i);
                 }
             }
             r
-        })
-        .collect()
+        });
+        into.union(r);
+    }
 }
 
 /// The units of block `b` in order: each statement, then the terminator.
-fn block_units(f: &Function, b: usize, reach: &[Bits]) -> Vec<Unit> {
-    let n = f.locals.len();
+fn block_units(f: &Function, b: usize, reach: &mut Reach) -> Vec<Unit> {
+    let (u, n) = (reach.u, reach.u.len());
     let blk = &f.blocks[b];
     let mut out = vec![];
     let mut add = |accs: Vec<Acc>| {
-        let mut u = Unit {
+        let mut unit = Unit {
             uses: Bits::new(n),
             kills: Bits::new(n),
             writes: Bits::new(n),
@@ -113,27 +144,25 @@ fn block_units(f: &Function, b: usize, reach: &[Bits]) -> Vec<Unit> {
         };
         for a in accs {
             match a {
-                Acc::Read(p) => {
-                    u.uses.union(&reach[p.local.0 as usize]);
-                }
+                Acc::Read(p) => reach.add(p.local.0 as usize, &mut unit.uses),
                 Acc::Addr(p) => {
-                    u.uses.union(&reach[p.local.0 as usize]);
-                    if !has_deref(p) {
-                        u.addrs.set(p.local.0 as usize);
+                    reach.add(p.local.0 as usize, &mut unit.uses);
+                    if let Some(i) = u.index(p.local.0 as usize).filter(|_| !has_deref(p)) {
+                        unit.addrs.set(i);
                     }
                 }
-                Acc::Write(p) if has_deref(p) => {
-                    u.uses.union(&reach[p.local.0 as usize]);
-                }
+                Acc::Write(p) if has_deref(p) => reach.add(p.local.0 as usize, &mut unit.uses),
                 Acc::Write(p) => {
-                    u.writes.set(p.local.0 as usize);
-                    if p.proj.is_empty() {
-                        u.kills.set(p.local.0 as usize);
+                    if let Some(i) = u.index(p.local.0 as usize) {
+                        unit.writes.set(i);
+                        if p.proj.is_empty() {
+                            unit.kills.set(i);
+                        }
                     }
                 }
             }
         }
-        out.push(u);
+        out.push(unit);
     };
     for s in &blk.stmts {
         add(stmt_accs(s));
@@ -186,14 +215,14 @@ fn live_out(f: &Function, units: &[Vec<Unit>], extra: &[(usize, usize)], n: usiz
 }
 
 /// Maybe-written set at the start of every block (semantic CFG, seeded with the inputs).
-fn written_in(f: &Function, extra: &[(usize, usize)], seeds: &[(usize, Bits)]) -> Vec<Bits> {
-    let n = f.locals.len();
-    let out = maybe_written(f, extra, seeds);
-    let mut ins = vec![Bits::new(n); f.blocks.len()];
-    for (b, s) in seeds {
-        ins[*b].union(s);
+fn written_in(f: &Function, s: &Susp, u: &Universe) -> Vec<Bits> {
+    let out = maybe_written(f, s, u);
+    let mut ins = vec![Bits::new(u.len()); f.blocks.len()];
+    let inputs = u.project(&s.inputs);
+    for &b in &s.starts {
+        ins[b].union(&inputs);
     }
-    for (from, to) in semantic_edges(f, extra) {
+    for (from, to) in semantic_edges(f, &s.extra) {
         ins[to].union(&out[from]);
     }
     ins

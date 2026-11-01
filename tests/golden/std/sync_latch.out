@@ -1,0 +1,10 @@
+unheld 0 0 true
+tryLockAt true unchanged while held false null
+held twice false null
+next version true stale version takes nothing false false
+shared: version kept true true writer kept out false null
+exclusive at true
+versions grow true
+per node 0 null 0
+after true
+backoff spins 10 rounds before it yields

@@ -1,0 +1,3 @@
+http_handler_reach_closure_in_async_callback.vlt:49:23: error: this async closure modifies captured `last`, so it must stay on the task that created it
+http_handler_reach_closure_in_async_callback.vlt:52:19: but it is stored in a `{ run: (string) => Promise<void> }`, which is passed here to a function that runs it on other threads
+  = note: the spawned task runs it on another thread, with its own copy of what it captured: pass `last` as a parameter instead, or share it with `shared`: `const last = shared(...)` and `last.get()` / `last.set(v)`

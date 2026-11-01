@@ -1,7 +1,7 @@
 // Field initializers run as part of the constructors (JavaScript's order), so a constructor's
 // `throws` clause must allow what the initializers it runs throw: its own class's, and those of
 // the classes up to the next constructor (#273).
-import { Value } from "velt:json";
+import { Value } from "velt/encoding/json";
 
 class Oops extends Error {}
 

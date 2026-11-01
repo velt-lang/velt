@@ -7,6 +7,8 @@
 //! `Emitter`.
 
 mod atomic;
+mod tls;
+pub(crate) use tls::tls_globals;
 mod cast;
 mod ops;
 mod place;
@@ -91,6 +93,8 @@ struct Emitter<'a> {
     simd: crate::simd::Arch,
     /// The program's array header aggregate (tbaa.rs).
     array: Option<vir::AggId>,
+    /// The aggregate string bytes are read through (tbaa.rs).
+    text: Option<vir::AggId>,
     /// Per aggregate: a class object's (tbaa.rs).
     objects: Vec<bool>,
     /// Per local: it only ever points into an array's data buffer (`tbaa::element_pointers`).
@@ -131,6 +135,7 @@ pub(crate) fn emit_function(
         rounds_by_conversion: target.rounds_by_conversion(),
         simd: crate::simd::Arch::of(target),
         array,
+        text: crate::tbaa::text_agg(program),
         objects: crate::tbaa::object_aggs(program),
         element_pointers: crate::tbaa::element_pointers(program, function, array),
         uses_simd: program
@@ -165,10 +170,11 @@ pub(crate) fn emit_function(
         },
     };
     Ok(format!(
-        "{} {}({}) {FN_ATTRS}{features}{define_dbg} {{\n{}}}\n",
+        "{} {}({}) {FN_ATTRS}{}{features}{define_dbg} {{\n{}}}\n",
         define_prefix(function, how)?,
         global_name(&function.symbol),
         definition_params(function)?,
+        cold_attrs(function),
         emitter.body
     ))
 }
@@ -192,7 +198,7 @@ fn extension_features(
         .externs
         .iter()
         .find_map(|e| match SimdCall::of_symbol(&e.symbol)? {
-            SimdCall::Sha(op) if crate::simd::has_ext(arch, op.ext()) => {
+            SimdCall::Inst(op) if crate::simd::has_ext(arch, op.ext()) => {
                 Some(op.ext().op_features())
             }
             _ => None,
@@ -306,5 +312,19 @@ impl Emitter<'_> {
         } else {
             bail!("unknown block bb{}", id.0)
         }
+    }
+}
+
+/// The attributes of a function no call of which returns normally (`Function::cold`, or no
+/// path through it returns: a panic helper such as the out-of-bounds report): `cold`, so the
+/// ways to its calls are laid out of the hot code, and `noinline`, so its body stays out of its
+/// callers and they stay cheap to inline. "Never returns" stands for "its calls are rare", not
+/// "its body is cold": a hot `for (;;)` worker loop that ends in `process.exit` gets these too.
+/// Only its call sites are affected (without a profile LLVM does not shrink a cold body).
+fn cold_attrs(function: &vir::Function) -> &'static str {
+    let returns = (function.blocks.iter()).any(|b| matches!(b.term, vir::Terminator::Return(_)));
+    match function.cold || !returns {
+        true => " cold noinline",
+        false => "",
     }
 }

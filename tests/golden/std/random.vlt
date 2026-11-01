@@ -1,5 +1,5 @@
 // std/random: fast non-cryptographic numbers in range, from every task.
-import { random, randomInt } from "velt:random";
+import { random, randomInt } from "velt/random";
 
 async function roll(n: i64): Promise<i64> {
   let inRange = 0;

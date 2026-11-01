@@ -63,7 +63,7 @@ hidden classes and no runtime shape checks.
   its own inherits its base's, with the same rule. `JSON.parse<C>` (and `v.as<C>()`) cannot
   decode such a class, alone or inside another type, since decoding fills the fields without
   running a constructor; `JSON.stringify` writes it as usual
-  ([`velt:json`](../std/json.md)).
+  ([`velt/encoding/json`](../std/encoding/json.md)).
 - **Single inheritance**: `class B extends A`. The base's fields are a prefix of the subclass
   layout, so upcasts are free. A subclass may declare an inherited field again with the same
   type and an initializer of its own (`class Dog extends Animal { kind: string = "dog" }`): it is
@@ -78,7 +78,45 @@ hidden classes and no runtime shape checks.
   `undefined`, as in JavaScript. Such a call goes through a second vtable slot whose entry in
   each class applies that class's own default, so a call passing every argument costs the same
   as before.
-  There are no abstract classes.
+- **Abstract classes** (TypeScript's rules): `abstract class C` cannot be created with `new`
+  (``cannot create an instance of abstract class `C` ``), only its subclasses can. It may declare
+  abstract methods and accessors, `abstract area(): number;` / `abstract get name(): string;`,
+  which have no body and must declare their return type (and take no parameter defaults:
+  `x?: T`, the subclasses give the default; TypeScript's TS2371), and abstract properties, `abstract
+  readonly name: string;` / `abstract count: number;` (an abstract getter, and a setter unless
+  `readonly`). A subclass implements an abstract property with a field (`readonly name = "q"`) or
+  accessors, and an abstract method with a method or a field of its function type (`run: () =>
+  number = () => 1`). Reading or writing an abstract property through `this` in its class's own
+  constructor is an error (TypeScript's TS2715): no subclass field is initialized yet. Every
+  concrete subclass implements each
+  abstract member it inherits, or it is an error naming the class and the missing members
+  (``class `Square` does not implement the abstract member `area` (from `Shape`)``); a subclass
+  that leaves some unimplemented must itself be `abstract`. An implementation overrides the
+  abstract method without `override` (writing it is allowed), and calls through the base class,
+  also from the base's own methods and constructor, dispatch to it. `abstract override m()`
+  makes an inherited method abstract again. An abstract method cannot be `static`, `private`,
+  `async`, a generator or generic, and cannot be called through `super`. Abstract classes are
+  passed as values through [abstract construct signatures](functions.md#arrow-functions-and-function-types),
+  `abstract new () => Shape`.
+
+  ```ts
+  abstract class Shape {
+    abstract area(): number;
+    describe(): string {
+      return `area ${this.area()}`;
+    }
+  }
+  class Square extends Shape {
+    constructor(public side: number) {
+      super();
+    }
+    area(): number {
+      return this.side * this.side;
+    }
+  }
+  const shapes: Shape[] = [new Square(2), new Square(3)];
+  for (const s of shapes) console.log(s.describe()); // area 4, area 9
+  ```
 - **`super(…)`**: the constructor of a subclass calls `super(…)`, as in TypeScript, also when
   the base class has no constructor (`super();`). Statements may come before it as long as they
   don't use `this` or `super.x`
@@ -386,7 +424,9 @@ console.log(t.names, t.tags); // [ 'a', 'b' ] [ 'x' ]
 
 - `this` as a method's result type (the polymorphic `this` type) is the class of the object
   the method is called on: `register` called on a `Tagged` gives a `Tagged`, so chained calls
-  keep the subclass's methods, as in TypeScript. An override returns `this` too: written
+  keep the subclass's methods, as in TypeScript; called on a value of a type parameter bounded
+  by the class (`x.register(n)` with `x: T` and `T extends Registry`), it gives a `T`. An
+  override returns `this` too: written
   (`override register(name: string): this`) or left out, when it returns `this` (or
   `super.register(name)`). An override with another result type (`override register(name:
   string): Registry`) is TypeScript's error TS2416.
@@ -523,7 +563,10 @@ console.log(p.len(), q.len());  // 4 4
   (``cannot assign to `id`: it is a readonly field``). Reads go through a getter in the
   interface's table and writes through a setter that only interfaces the program writes
   through get, so other programs pay nothing; through a `T extends I` both are direct calls. An
-  object literal implementing such an interface with `get f()` must give `set f(v)` too.
+  object literal implementing such an interface with `get f()` must give `set f(v)` too. A
+  class implements an optional field `x?: T` with a field `x?: T` or, as in TypeScript, with a
+  plain `x: T`: read through the interface it is present, and writing `undefined` through the
+  interface stops with a `TypeError` (the class's field holds no `undefined`).
   Changing a part of a field (`x.t[0] = 5` on a tuple field, `x.pos.p[1] += 1`, `x.t[0]++`)
   changes the field the object holds, as in JS: the field is read through its getter, the part
   changed and the field written back through its setter. The receiver is evaluated once, and a
@@ -559,6 +602,11 @@ console.log(p.len(), q.len());  // 4 4
 - A default body can be `async` (`async load(): Promise<T> { … }`), with the rules of an async
   class method ([Async](async.md#errors)). A method without a body cannot be: like in TypeScript,
   it declares a `Promise` result, and implementations may be `async`.
+- A method without a body declares that a parameter may be left out with `x?: T`; a default
+  value (`x: T = 1`) is an error, as in TypeScript ("a parameter initializer is only allowed in
+  a function or constructor implementation"): each implementation gives its own
+  (`step(by: number | undefined = 1)` in the class). A default body may have defaults, as any
+  method.
 
 ```ts
 interface Named {
@@ -686,7 +734,12 @@ interface value by its own interface and the ones it extends, so `f<Person>` fit
 `function f<T extends Named>` with `interface Person extends Named`, and its methods are
 called through the value's table) or, as in
 TypeScript, other types a type argument must be assignable to (`T extends Record<string, V>`,
-`T extends string | number`; [Generic functions](functions.md#generic-functions)). Type
+`T extends string | number`; [Generic functions](functions.md#generic-functions)). A **class
+bound** (`T extends Base`, `E extends Error`) is satisfied by the class and its subclasses
+(classes are nominal: another class with the same fields is not one), and inside the generic
+body a `T` has the class's fields, getters, setters and methods, and converts to the class
+(`const b: Base = x`). Each instantiation reads them from its own class: an overriding method
+runs, and a `T` returned keeps the subclass's type (`touch(new Sub()).extra`). Type
 parameters may have **defaults** (`interface Iterator<T, E = never>`), used when a type leaves
 the argument out (`Iterator<i64>` is `Iterator<i64, never>`) and when nothing infers
 it in a `new` or a static method call (`new D(1)` of `class D<T = i64>` is a `D<i64>`);
@@ -714,6 +767,37 @@ s.push("b");
 console.log(s.pop() ?? "empty", s.items.length);
 ```
 
+```ts
+class Shape {
+  name: string = "shape";
+  area(): number {
+    return 0;
+  }
+}
+
+class Square extends Shape {
+  side: number = 2;
+  override area(): number {
+    return this.side * this.side;
+  }
+}
+
+function label<T extends Shape>(s: T): T {
+  s.name = `${s.name} of ${s.area()}`;
+  return s;
+}
+
+class NotFound extends Error {}
+
+function describe<E extends Error>(e: E): string {
+  return `${e.name}: ${e.message}`;
+}
+
+const sq = label(new Square());
+console.log(sq.name, sq.side);                    // shape of 4 2
+console.log(describe(new NotFound("no user")));   // Error: no user
+```
+
 ## `extend`
 
 An `extend` block adds methods, getters, setters and static methods to an existing type,
@@ -724,8 +808,50 @@ builtins included, at zero cost (the calls are direct):
   `extend Shape { area(): f64 { switch (this.kind) … } }`).
 - **Generic and blanket** extensions: `extend<T> Array<T> { … }`,
   `extend<T extends Named> T { … }` (every implementor gets the method).
+- **Function types**: `extend<R> (() => R) { … }` applies to every function without
+  parameters (closures, named functions, values of a function type), `extend<A, R> ((a: A) =>
+  R)` to those with one, and `extend<A, R> ((...xs: A[]) => R)` to those with a rest parameter
+  only. A function type written without `throws` in a target fits a function that throws
+  anything: it has a type parameter of its own for that, so `this` in the block is the
+  receiver with its error type, and calling `this()` throws what the receiver throws. That
+  parameter has no name in the block (a type `E` in scope keeps its meaning there); messages
+  show it as `E`, or as `E1`, `E2`, … when the block, one of its methods or its scope has a
+  type of that name, and hovers leave it out of the method's type parameters. To name it,
+  write the parameter (`extend<R, E> (() => R throws E)`); a fixed error type (`() => R
+  throws Error`) is an error. A function type written without `throws` in a method's
+  signature can't hold `this` (`self(): () => R { return this; }` is an error: expected `() =>
+  R`, found `() => R throws E`), as a function type's error type parameter isn't assignable to
+  such a site anywhere; write the parameter and return `() => R throws E`. A function type in a type alias the target names (`extend<R>
+  Thunk<R>`) or inside another type (`extend<R> Array<() => R>`) is matched the same way. A
+  generic function's value is not of a function type, and gets only blanket blocks.
+
+  ```ts
+  extend<R> (() => R) {
+    twice(): R[] {
+      return [this(), this()];
+    }
+  }
+  let n = 0;
+  const next = () => ++n;
+  console.log(next.twice()); // [ 1, 2 ]
+  ```
 - **Static methods**: `extend Point { static origin(): Point { … } }` is called as
-  `Point.origin()`.
+  `Point.origin()`. A static method of a primitive type (`i8` … `u64`, `isize`, `usize`, `f32`,
+  `f64`, `bool`, `string`) is called through the type's name, `f64.half(3)`, unless the program
+  declares a value of that name. As for a class, the static is a value too (`const h =
+  f64.half;`, `f64.half?.(2)`), and `this` in such a static is the type (`this.half(x)` is
+  `f64.half(x)`). The name is no value otherwise (`const t = f64;` is an error), and `f64.m()`
+  of a method that is not static is an error naming it. Blanket extensions (`extend<T extends
+  I> T { static … }`) give no statics to primitive types, as they give none to classes.
+
+  ```ts
+  extend f64 {
+    static half(x: f64): f64 {
+      return x / 2;
+    }
+  }
+  console.log(f64.half(3)); // 1.5
+  ```
 - A type's own member wins over an extension. Among the extensions that apply (target matches,
   bounds hold), the most specific wins: block A is more specific than block B when A's target
   is an instance of B's and not the other way round, so `extend Array<string>` wins over

@@ -1,0 +1,2 @@
+generated_error_types.vlt:4:15: error: cannot find type `Nope` in this scope
+generated_error_types.vlt:5:17: error: cannot find type `Missing` in this scope

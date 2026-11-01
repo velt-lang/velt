@@ -113,9 +113,14 @@ fn latest_version(loc: &Locations, name: &str) -> Result<String, String> {
 
 /// `velt install [--locked]` and `velt update`.
 pub fn install(opts: InstallOptions) -> Result<(), String> {
-    let root = Project::current_root()?;
-    let installed = vpm::install(&root, &Locations::from_env()?, opts)?;
+    let installed = match workspace_without_package()? {
+        Some(ws) => vpm::install::workspace::install(&ws, None, &Locations::from_env()?, opts)?,
+        None => vpm::install(&Project::current_root()?, &Locations::from_env()?, opts)?,
+    };
     warn_yanked(&installed);
+    for note in &installed.notes {
+        eprintln!("note: {note}");
+    }
     let count = installed.lockfile.packages.len();
     let lock = if installed.lock_changed {
         "updated velt.lock.json"
@@ -131,6 +136,20 @@ pub fn install(opts: InstallOptions) -> Result<(), String> {
     );
     report_native(&installed.graph);
     Ok(())
+}
+
+/// The workspace around the current directory when no package of it is nearer (its root, or a
+/// directory between the root and its members): that is what `velt install` installs there.
+fn workspace_without_package() -> Result<Option<vpm::workspace::Workspace>, String> {
+    let cwd =
+        std::env::current_dir().map_err(|e| format!("cannot read the current directory: {e}"))?;
+    let Some(ws_root) = vpm::workspace::find_root(&cwd) else {
+        return Ok(None);
+    };
+    match vpm::manifest::find_package_root(&cwd) {
+        Some(pkg) if pkg.starts_with(&ws_root) => Ok(None),
+        _ => vpm::workspace::Workspace::load(&ws_root).map(Some),
+    }
 }
 
 /// `velt publish`: copy the current package into the local registry, or upload it to the

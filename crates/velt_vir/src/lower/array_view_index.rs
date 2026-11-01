@@ -175,7 +175,7 @@ impl FnLower<'_, '_> {
         self.switch_to(view);
         let (_, v) = self.array_view_of_hdr(&hdr);
         self.view_call(VIEW_SYNC_AT, e, vec![v.clone(), k.clone()], None);
-        let seen = self.view_field(&v, e, "__seen");
+        let seen = self.view_field(&v, e, "seen");
         let mp = Place::local(self.copy_to_temp(Operand::Copy(seen), Ty::Ptr));
         let m = proj(&mp, Proj::Deref(payload));
         let len = Operand::Copy(proj(&m, Proj::Field(1)));

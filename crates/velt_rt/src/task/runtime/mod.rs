@@ -35,6 +35,11 @@ pub(crate) use velt::coop as velt_coop;
 pub(crate) use velt::io as velt_io;
 
 use super::compiled::{Borrowed, Compiled};
+
+/// The stack of every thread that runs tasks: 8 MiB, as the main thread has on every platform
+/// (docs/tooling/platforms.md), so code recurses as deep in a task as in `main` (Rust's
+/// default for a spawned thread is 2 MiB). Only reserved: pages are committed as they are used.
+pub(crate) const TASK_THREAD_STACK: usize = 8 << 20;
 use super::{PollFn, SendPtr};
 use crate::panic::ThrowLoc;
 use std::cell::Cell;
@@ -370,6 +375,9 @@ unsafe extern "C" fn never_dropped(_: *mut u8) {}
 pub unsafe extern "C" fn velt_rt_block_on(poll: PollFn, state: *mut u8) {
     // The module state initialized before `main` is the tasks' from now on.
     super::local::module_release_outside();
+    // What the modules' top-level code printed on this thread comes before anything `main`
+    // prints on a worker, and is not left here for a `process.exit` there to drop (#1399).
+    crate::io::publish_before_handoff();
     let root = Compiled::from_store(poll, never_dropped, Borrowed(SendPtr(state)));
     // Run the root on a worker (not this thread) so its spawns take the fast local-queue path.
     // The worker that finished it hands over where its error (if any) was thrown: the caller

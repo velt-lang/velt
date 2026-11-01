@@ -1,39 +1,56 @@
 // Prelude: `Record<K, V>` (docs/internals/design/record.md), a dictionary keyed by strings, a
-// union of string literal types or a string enum, and the TypeScript `Object` helpers over it.
+// union of string literal types or a string enum (the TypeScript `Object` helpers over it are in
+// object.vlt).
 //
 // A record has no members of its own: `r.name` reads the key "name". Sema turns `r[k]`, `r.name`,
-// `r[k] = v`, `delete r[k]` and object literals typed as a record into calls of the `__`
-// methods below (`__get` for string keys, `__at` for literal keys, which are always present).
+// `r[k] = v`, `delete r[k]` and object literals typed as a record into calls of the keyed
+// methods below (`[RECORD_GET]` for string keys, `[RECORD_AT]` for literal keys, which are always present).
 // Entries keep JavaScript's order: keys that are array indices (canonical `"0"` to
 // `"4294967294"`) first, ascending, then the others in insertion order. A key that is an array
-// index marks the record `unordered`; then the readers (`__keyNames`, `__values`, `__entries`,
-// and the JSON and formatting glue through `__positions`) sort the entries they read, without
+// index marks the record `unordered`; then the readers (`[RECORD_KEY_NAMES]`, `[RECORD_VALUES]`, `[RECORD_ENTRIES]`,
+// and the JSON and formatting glue through `[RECORD_POSITIONS]`) sort the entries they read, without
 // changing the record (they borrow it). A record without such keys pays one byte test per new
-// key (`Map.__newestKeyDigit`, then `arrayIndex` for a key that starts with a digit). JSON reads
+// key (`Map[MAP_NEWEST_KEY_DIGIT]`, then `arrayIndex` for a key that starts with a digit). JSON reads
 // and writes a record as an object (a decoded record is checked for such keys once,
-// `__decoded`), and `console.log` shows it like one.
+// `[RECORD_DECODED]`), and `console.log` shows it like one.
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
+import {
+  MAP_AT,
+  MAP_IS_NULL_PROTO,
+  MAP_LIVE_POSITIONS,
+  MAP_MARK_NULL_PROTO,
+  MAP_NEWEST_KEY_DIGIT,
+} from "velt/lang/hooks/keys";
+import { arrayIndex, objectPrototypeKey } from "velt/lang/hooks/record";
+import {
+  RECORD_AT,
+  RECORD_DECODED,
+  RECORD_DEFINE_ACCESSOR,
+  RECORD_DELETE,
+  RECORD_ENTRIES,
+  RECORD_ENTRIES_OF,
+  RECORD_EXTEND,
+  RECORD_EXTEND_FROM,
+  RECORD_EXTEND_MAYBE,
+  RECORD_FROM_MAP,
+  RECORD_GET,
+  RECORD_HAS,
+  RECORD_IN_ANY,
+  RECORD_IS_NULL_PROTO,
+  RECORD_KEY_NAMES,
+  RECORD_MARK_NULL_PROTO,
+  RECORD_PERM,
+  RECORD_POSITIONS,
+  RECORD_PUT_SYM,
+  RECORD_SET,
+  RECORD_SIZE,
+  RECORD_VALUES,
+} from "velt/lang/hooks/keys";
+
 // The rank of a key that is not an array index: after every index.
 const NOT_INDEX: i64 = 4294967296;
-
-// The array index `s` names (canonical decimal, 0 to 2^32 - 2), or -1.
-function arrayIndex(s: string): i64 {
-  const n = s.length as i64;
-  if (n == 0 || n > 10 || (n > 1 && s.charCodeAt(0) == 48)) {
-    return -1;
-  }
-  let v: i64 = 0;
-  for (let i: i64 = 0; i < n; i++) {
-    const c = s.charCodeAt(i);
-    if (c < 48 || c > 57) {
-      return -1;
-    }
-    v = v * 10 + (c - 48);
-  }
-  return v <= 4294967294 ? v : -1;
-}
 
 /**
  * A dictionary from keys of type `K` to values of type `V`, like TypeScript's `Record<K, V>`:
@@ -42,31 +59,73 @@ function arrayIndex(s: string): i64 {
  * (array-index keys first, ascending, then insertion order).
  */
 export class Record<K, V> {
-  // Field 0: the JSON and formatting glue read it directly, in the order `__positions` gives.
+  // Field 0: the JSON and formatting glue read it directly, in the order `[RECORD_POSITIONS]` gives.
   private entries: Map<K, V> = new Map();
   // Field 1: a key that is an array index was added (or decoded), so the entries may not be in
-  // JavaScript's order (`__perm`).
+  // JavaScript's order (`[RECORD_PERM]`).
   private unordered: bool = false;
+  // Field 2: the symbol-keyed entries, a table of their own as in Node, made when the first
+  // symbol key is written (`null` until then: the string-key methods never read it).
+  private symbols: Map<symbol, V> | null = null;
+  // Field 3: the accessors `Object.defineProperty` defined (`[RECORD_DEFINE_ACCESSOR]`), by key. They
+  // are not enumerable, so `Object.keys`, `JSON.stringify`, spreads and `console.log` skip
+  // them, as in Node. Only a program that defines accessors reads this field: sema calls the
+  // `Keyed` methods there for every key (`hir::Program::record_accessors`).
+  private accessors: Map<K | symbol, [(() => V) | null, ((value: V) => void) | null, bool]> | null =
+    null;
+  // The methods that read fields 2 and 3 are in std/lang/record/symbols.vlt, which a
+  // program loads only when it mentions symbols or property definitions.
 
-  __get(key: K): V | undefined {
+  /** `r`'s string-keyed entries (the hook `recordEntriesOf`; static: in no `any` table). */
+  static [RECORD_ENTRIES_OF]<RK, RV>(r: Record<RK, RV>): Map<RK, RV> {
+    return r.entries;
+  }
+
+  /** `r[k]` / `r.name` of an open record: the value, or `undefined` (the compiler calls it). */
+  [RECORD_GET](key: K): V | undefined {
     return this.entries.get(key);
   }
 
-  /** A literal-key record holds every key (sema checks literals; JSON checks documents). */
-  __at(key: K): V {
-    return this.entries.__at(key);
-  }
-
-  __set(key: K, value: V) {
-    const n = this.entries.size;
-    this.entries.set(key, value);
-    if (this.entries.size != n && !this.unordered) {
-      this.unordered = this.entries.__newestKeyDigit() && arrayIndex(`${key}`) >= 0;
+  /** The symbol key `key` set to `value` (a spread's copy; the table made by the first). */
+  private [RECORD_PUT_SYM](key: symbol, value: V) {
+    const t = this.symbols;
+    if (t == null) {
+      const made: Map<symbol, V> = new Map();
+      made.set(key, value);
+      this.symbols = made;
+    } else {
+      t.set(key, value);
     }
   }
 
+  /** A literal-key record holds every key (sema checks literals; JSON checks documents). */
+  [RECORD_AT](key: K): V {
+    return this.entries[MAP_AT](key);
+  }
+
+  /** `r[k] = v` / `r.name = v` (the compiler calls it). */
+  [RECORD_SET](key: K, value: V) {
+    const n = this.entries.size;
+    this.entries.set(key, value);
+    if (this.entries.size != n && !this.unordered) {
+      this.unordered = this.entries[MAP_NEWEST_KEY_DIGIT]() && arrayIndex(`${key}`) >= 0;
+    }
+  }
+
+  /**
+   * A record of the entries of `m`, in its order (a JSON object's members in document order:
+   * the decoders velt/encoding/json generates make records with it), `unordered` when a key is
+   * an array index (the hook `recordFromMap`, std/lang/hooks/record.vlt).
+   */
+  static [RECORD_FROM_MAP]<RK, RV>(m: Map<RK, RV>): Record<RK, RV> {
+    const r = new Record<RK, RV>();
+    r.entries = m;
+    r[RECORD_DECODED]();
+    return r;
+  }
+
   /** After JSON decoding (in document order): `unordered` when a key is an array index. */
-  __decoded() {
+  [RECORD_DECODED]() {
     for (const k of this.entries.keys()) {
       if (arrayIndex(`${k}`) >= 0) {
         this.unordered = true;
@@ -80,7 +139,7 @@ export class Record<K, V> {
    * array indices first, ascending, then the other keys in insertion order (a stable sort).
    * Empty when the entries are in that order already.
    */
-  __perm(): usize[] {
+  [RECORD_PERM](): usize[] {
     if (!this.unordered) {
       return [];
     }
@@ -115,12 +174,12 @@ export class Record<K, V> {
    * The positions of the map's live entries in JavaScript's order (the JSON and formatting
    * glue walk them), or empty when that is insertion order.
    */
-  __positions(): usize[] {
-    const at = this.__perm();
+  [RECORD_POSITIONS](): usize[] {
+    const at = this[RECORD_PERM]();
     if (at.length == 0) {
       return at;
     }
-    const live = this.entries.__livePositions();
+    const live = this.entries[MAP_LIVE_POSITIONS]();
     const out: usize[] = [];
     for (const i of at) {
       out.push(live[i]);
@@ -128,11 +187,14 @@ export class Record<K, V> {
     return out;
   }
 
-  __delete(key: K): bool {
-    return this.entries.delete(key);
+  /** `delete r[k]`: `true`, as JavaScript's `delete` of an entry or of a missing key is. */
+  [RECORD_DELETE](key: K): bool {
+    this.entries.delete(key);
+    return true;
   }
 
-  __has(key: K): bool {
+  /** Whether the record has the key `key` (the compiler calls it for `k in r`). */
+  [RECORD_HAS](key: K): bool {
     return this.entries.has(key);
   }
 
@@ -140,61 +202,76 @@ export class Record<K, V> {
    * `key in r` through `any`: the entry `key`, or a member every object inherits from
    * `Object.prototype` (none for a record made by `Object.create(null)`).
    */
-  __inAny(key: K): bool {
-    return this.__has(key) || (!this.__isNullProto() && __objectPrototypeKey(String(key)));
+  [RECORD_IN_ANY](key: K): bool {
+    return this[RECORD_HAS](key) ||
+      (!this[RECORD_IS_NULL_PROTO]() && objectPrototypeKey(String(key)));
   }
 
   /** `{ ...other }`: every entry of `other`, later entries replacing earlier ones. */
-  __extend(other: Record<K, V>) {
-    for (const [k, v] of other.__entries()) {
-      this.__set(k, v);
+  [RECORD_EXTEND](other: Record<K, V>) {
+    for (const [k, v] of other[RECORD_ENTRIES]()) {
+      this[RECORD_SET](k, v);
+    }
+    // A spread copies the symbol keys too, as in Node.
+    const t = other.symbols;
+    if (t != null) {
+      for (const [s, v] of t.entries()) {
+        this[RECORD_PUT_SYM](s, v);
+      }
     }
   }
 
   /** `{ ...other }` of a record that may be `null` or `undefined`: nothing when it is. */
-  __extendMaybe(other: Record<K, V> | null | undefined) {
+  [RECORD_EXTEND_MAYBE](other: Record<K, V> | null | undefined) {
     if (other != null) {
-      this.__extend(other);
+      this[RECORD_EXTEND](other);
     }
   }
 
   /** `{ ...other }` of a record of another key or value type (`Record<string, string>` or
    *  `Record<"a" | "b", string>` into a `Record<string, any>`): each key converted by `key`,
    *  each value by `convert`; nothing when it is nothing. */
-  __extendFrom<J, W>(
+  [RECORD_EXTEND_FROM]<J, W>(
     other: Record<J, W> | null | undefined,
     key: (key: J) => K,
     convert: (value: W) => V,
   ) {
     if (other != null) {
-      for (const [k, v] of other.__entries()) {
-        this.__set(key(k), convert(v));
+      for (const [k, v] of other[RECORD_ENTRIES]()) {
+        this[RECORD_SET](key(k), convert(v));
+      }
+      const t = other.symbols;
+      if (t != null) {
+        for (const [s, v] of t.entries()) {
+          this[RECORD_PUT_SYM](s, convert(v));
+        }
       }
     }
   }
 
-  __size(): usize {
+  /** The number of keys. */
+  [RECORD_SIZE](): usize {
     return this.entries.size;
   }
 
   /** `Object.create(null)`: this record has no prototype (marked in its map). */
-  __markNullProto() {
-    this.entries.__markNullProto();
+  [RECORD_MARK_NULL_PROTO]() {
+    this.entries[MAP_MARK_NULL_PROTO]();
   }
 
   /** Was this record made by `Object.create(null)`? */
-  __isNullProto(): bool {
-    return this.entries.__isNullProto();
+  [RECORD_IS_NULL_PROTO](): bool {
+    return this.entries[MAP_IS_NULL_PROTO]();
   }
 
   /**
    * `Object.keys(r)`: TypeScript lists an object's keys as strings, so a string enum key is
    * listed as its value.
    */
-  __keyNames(): string[] {
+  [RECORD_KEY_NAMES](): string[] {
     const out: string[] = [];
     const keys = this.entries.keys();
-    const at = this.__perm();
+    const at = this[RECORD_PERM]();
     if (at.length == 0) {
       for (const k of keys) {
         out.push(`${k}`);
@@ -207,9 +284,10 @@ export class Record<K, V> {
     return out;
   }
 
-  __values(): V[] {
+  /** `Object.values(r)` (the compiler calls it). */
+  [RECORD_VALUES](): V[] {
     const values = this.entries.values();
-    const at = this.__perm();
+    const at = this[RECORD_PERM]();
     if (at.length == 0) {
       return values;
     }
@@ -220,9 +298,10 @@ export class Record<K, V> {
     return out;
   }
 
-  __entries(): [K, V][] {
+  /** `Object.entries(r)` (the compiler calls it). */
+  [RECORD_ENTRIES](): [K, V][] {
     const entries = this.entries.entries();
-    const at = this.__perm();
+    const at = this[RECORD_PERM]();
     if (at.length == 0) {
       return entries;
     }
@@ -232,203 +311,4 @@ export class Record<K, V> {
     }
     return out;
   }
-}
-
-/**
- * TypeScript's `Object.keys` / `Object.values` / `Object.entries`, for records (JavaScript's
- * order: array-index keys first, ascending, then insertion order).
- * Sema checks calls of them itself: `Object.keys` also lists the fields of any object
- * (crates/velt_sema/src/body/expr/object_keys.rs).
- */
-export class Object {
-  /**
-   * Returns the keys of a record as strings (a string enum key as its value): array-index keys
-   * first, ascending, then the others in insertion order.
-   * On other objects it lists their fields.
-   * @param r - The record whose keys to list.
-   */
-  static keys<K, V>(r: Record<K, V>): string[] {
-    return r.__keyNames();
-  }
-
-  /**
-   * Returns an array of the values of a record, in key order (as `keys`). An object literal works
-   * too, read as a `Record<string, V>`: `Object.values({ x: 1, y: 2 })` is `[1, 2]`.
-   * @param r - The record whose values to list.
-   */
-  static values<K, V>(r: Record<K, V>): V[] {
-    return r.__values();
-  }
-
-  /**
-   * Returns an array of the `[key, value]` pairs of a record, in key order (as `keys`). An object
-   * literal works too, read as a `Record<string, V>`.
-   * @param r - The record whose entries to list.
-   */
-  static entries<K, V>(r: Record<K, V>): [K, V][] {
-    return r.__entries();
-  }
-
-  /**
-   * Returns an object made from `[key, value]` pairs, as a `Record<string, V>`: later pairs
-   * replace earlier ones with the same key. Sema passes any other iterable (a `Map`, a
-   * generator) through `Array.from` first.
-   * @param entries - The `[key, value]` pairs.
-   */
-  static fromEntries<V>(entries: [string, V][]): Record<string, V> {
-    const r: Record<string, V> = {};
-    for (const [k, v] of entries) {
-      r.__set(k, v);
-    }
-    return r;
-  }
-}
-
-/**
- * A prototype object, as `Object.getPrototypeOf(v)` returns it and `Object.prototype` or
- * `C.prototype` names it. Velt objects have fixed layouts, so a prototype is compared (`===`
- * compares the prototypes they name: sema calls `__prototypeSame`), printed and converted to a
- * string or JSON as Node does, and nothing else. Sema writes each one's texts.
- */
-export class ObjectPrototype {
-  // Which prototype this is (`"Object"`, `"Map"`, `"class#12"`).
-  private tag: string;
-  // What `console.log` shows.
-  private shown: string;
-  // What `String(p)` gives.
-  private text: string;
-  // Whether `JSON.stringify` writes `[]` (`Array.prototype`) rather than `{}`.
-  private array: bool;
-
-  /**
-   * A prototype (sema calls this for `Object.prototype`, `C.prototype` and
-   * `Object.getPrototypeOf`).
-   * @param tag - Which prototype it is.
-   * @param shown - What `console.log` shows.
-   * @param text - What `String(p)` gives.
-   * @param array - Whether `JSON.stringify` writes `[]` rather than `{}`.
-   */
-  constructor(tag: string, shown: string, text: string, array: bool) {
-    this.tag = tag;
-    this.shown = shown;
-    this.text = text;
-    this.array = array;
-  }
-
-  __sameAs(other: ObjectPrototype): bool {
-    return this.tag == other.tag;
-  }
-
-  /**
-   * `k in p` for a key known only at run time: `Object.prototype`'s members; the members of
-   * other prototypes are not listed yet.
-   */
-  __hasKey(key: string): bool {
-    if (this.tag != "Object") {
-      panic(
-        "TypeError: `in` with a key known only at run time on this prototype is not supported yet (#924)",
-      );
-    }
-    return __objectPrototypeKey(key);
-  }
-
-  __inspect(): string {
-    return this.shown;
-  }
-
-  /** Returns what `String(p)` gives for this prototype in JavaScript (`"[object Object]"`). */
-  toString(): string {
-    return this.text;
-  }
-
-  /** Returns what `JSON.stringify` writes for this prototype: `[]` or `{}`. */
-  toJSON(): string[] | Record<string, string> {
-    if (this.array) {
-      return [];
-    }
-    return {};
-  }
-}
-
-/** `a === b` on prototypes (or `null`, a prototype-less object's). */
-export function __prototypeSame(a: ObjectPrototype | null, b: ObjectPrototype | null): bool {
-  if (a == null) {
-    return b == null;
-  }
-  if (b == null) {
-    return false;
-  }
-  return a.__sameAs(b);
-}
-
-/** `key in p` of a prototype `p` for a key known only at run time. */
-export function __prototypeIn(key: string, p: ObjectPrototype): bool {
-  return p.__hasKey(key);
-}
-
-/**
- * `k in r` for a key known only at run time: whether `key` names a member every object inherits
- * from `Object.prototype` (sema tests the record's own entries first).
- */
-export function __objectPrototypeKey(key: string): bool {
-  switch (key) {
-    case "__defineGetter__":
-    case "__defineSetter__":
-    case "__lookupGetter__":
-    case "__lookupSetter__":
-    case "__proto__":
-    case "constructor":
-    case "hasOwnProperty":
-    case "isPrototypeOf":
-    case "propertyIsEnumerable":
-    case "toLocaleString":
-    case "toString":
-    case "valueOf":
-      return true;
-    default:
-      return false;
-  }
-}
-
-/**
- * `r[k]` of a string-keyed record with a `string | symbol` key (sema calls this): the entry for a
- * string, `undefined` for a symbol, which is never one of the record's keys.
- */
-export function __recordGetKeyed<V>(r: Record<string, V>, key: string | symbol): V | undefined {
-  if (typeof key === "string") {
-    return r.__get(key);
-  }
-  return undefined;
-}
-
-/**
- * `k in r` for a key known only at run time (sema calls this): whether the record has the entry
- * `key`, or `key` names a member every object inherits from `Object.prototype`.
- */
-export function __recordIn<V>(key: string, r: Record<string, V>): bool {
-  return r.__has(key) || __objectPrototypeKey(key);
-}
-
-/**
- * `k in r` in a program that calls `Object.create(null)` (sema calls this instead of
- * `__recordIn` there): a record made by it inherits nothing from `Object.prototype`.
- */
-export function __recordInMaybeNullProto<V>(key: string, r: Record<string, V>): bool {
-  return r.__has(key) || (!r.__isNullProto() && __objectPrototypeKey(key));
-}
-
-/**
- * `{ [key]: value }` with a key known only at run time: the parser writes the property as a
- * spread of this call (a one-entry record). Where a `Record` is built, sema sets the entry
- * directly instead.
- */
-export function __computed_key<V>(key: string, value: V): Record<string, V> {
-  const r: Record<string, V> = {};
-  r[key] = value;
-  return r;
-}
-
-/** The array index `s` names (canonical decimal, 0 to 2^32 - 2), or -1. */
-export function __arrayIndex(s: string): i64 {
-  return arrayIndex(s);
 }

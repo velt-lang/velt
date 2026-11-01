@@ -12,7 +12,7 @@
 //   the length they started with, and stop at the length the callback leaves when it is
 //   shorter: `forEach`, `filter`, `reduce`, `some` and `every` skip the missing indices as JS
 //   does; JS's `find` family visits them with `undefined`, which a `T` cannot be; `map`, whose
-//   JS result would have holes, panics. `__intrinsic_may_alias(this)` is a constant, false when
+//   JS result would have holes, panics. `mayAlias(this)` is a constant, false when
 //   no other reference to an array of this type can exist: the length cannot change then, and
 //   the plain loop on `this.length` is all that is compiled. Otherwise the loop compares the
 //   index with one bound `n`, lowered after a callback shortened the array.
@@ -21,7 +21,14 @@
 //   a count increment), numbers, bool and strings are copied.
 // - Indices are `usize` internally; positions reported to users (`indexOf`, `findIndex`) are
 //   `i64` with -1 for "absent", like JS.
-// - Sorting (`sort()`, `sort(cmp)`) lives in sort.vlt. `clone()` (a deep copy) is compiler-provided.
+// - Sorting (`sort()`, `sort(cmp)`) lives in sort.vlt, the methods that edit an array in place or
+//   copy it edited in array_edit.vlt, `join` of typed arrays in array_join.vlt. `clone()` (a deep
+//   copy) is compiler-provided.
+
+import { arrayWithCapacity, includesEq, mayAlias, share } from "velt/lang/intrinsics";
+import { floatPosition } from "velt/lang/hooks/number";
+import { ARRAY_GET } from "velt/lang/hooks/keys";
+import { clampPosition } from "velt/lang/array/range";
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
@@ -34,7 +41,7 @@ extend<T> Array<T> {
    * @throws what `f` throws.
    */
   forEach<E>(f: (x: T, i: i64) => void throws E) throws E {
-    if (!__intrinsic_may_alias(this)) {
+    if (!mayAlias(this)) {
       for (let i: usize = 0; i < this.length; i++) {
         f(this[i], i as i64);
       }
@@ -58,8 +65,8 @@ extend<T> Array<T> {
    * @throws what `f` throws.
    */
   map<U, E>(f: (x: T, i: i64) => U throws E): U[] throws E {
-    const out: U[] = __intrinsic_array_with_capacity(this.length);
-    if (!__intrinsic_may_alias(this)) {
+    const out: U[] = arrayWithCapacity(this.length);
+    if (!mayAlias(this)) {
       for (let i: usize = 0; i < this.length; i++) {
         out.push(f(this[i], i as i64));
       }
@@ -89,10 +96,10 @@ extend<T> Array<T> {
    */
   filter<E>(keep: (x: T, i: i64) => bool throws E): T[] throws E {
     const out: T[] = [];
-    if (!__intrinsic_may_alias(this)) {
+    if (!mayAlias(this)) {
       for (let i: usize = 0; i < this.length; i++) {
         if (keep(this[i], i as i64)) {
-          out.push(__intrinsic_share(this[i]));
+          out.push(share(this[i]));
         }
       }
       return out;
@@ -100,7 +107,7 @@ extend<T> Array<T> {
     let n = this.length;
     for (let i: usize = 0; i < n; i++) {
       if (keep(this[i], i as i64) && i < this.length) {
-        out.push(__intrinsic_share(this[i]));
+        out.push(share(this[i]));
       }
       if (this.length < n) {
         n = this.length;
@@ -122,7 +129,7 @@ extend<T> Array<T> {
    */
   reduce<A, E>(f: (acc: A, x: T, i: i64) => A throws E, init: A): A throws E {
     let acc = init;
-    if (!__intrinsic_may_alias(this)) {
+    if (!mayAlias(this)) {
       for (let i: usize = 0; i < this.length; i++) {
         acc = f(acc, this[i], i as i64);
       }
@@ -140,10 +147,10 @@ extend<T> Array<T> {
 
   /** First element matching `pred` (see header), or `undefined`. */
   find<E>(pred: (x: T, i: i64) => bool throws E): T | undefined throws E {
-    if (!__intrinsic_may_alias(this)) {
+    if (!mayAlias(this)) {
       for (let i: usize = 0; i < this.length; i++) {
         if (pred(this[i], i as i64)) {
-          return __intrinsic_share(this[i]);
+          return share(this[i]);
         }
       }
       return undefined;
@@ -151,7 +158,7 @@ extend<T> Array<T> {
     let n = this.length;
     for (let i: usize = 0; i < n; i++) {
       if (pred(this[i], i as i64) && i < this.length) {
-        return __intrinsic_share(this[i]);
+        return share(this[i]);
       }
       if (this.length < n) {
         n = this.length;
@@ -162,7 +169,7 @@ extend<T> Array<T> {
 
   /** Index of the first element matching `pred`, or -1. */
   findIndex<E>(pred: (x: T, i: i64) => bool throws E): i64 throws E {
-    if (!__intrinsic_may_alias(this)) {
+    if (!mayAlias(this)) {
       for (let i: usize = 0; i < this.length; i++) {
         if (pred(this[i], i as i64)) {
           return i as i64;
@@ -189,8 +196,8 @@ extend<T> Array<T> {
     let i = this.length;
     while (i > 0) {
       i--;
-      if ((!__intrinsic_may_alias(this) || i < this.length) && pred(this[i], i as i64)) {
-        return __intrinsic_share(this[i]);
+      if ((!mayAlias(this) || i < this.length) && pred(this[i], i as i64)) {
+        return share(this[i]);
       }
     }
     return undefined;
@@ -201,7 +208,7 @@ extend<T> Array<T> {
     let i = this.length;
     while (i > 0) {
       i--;
-      if ((!__intrinsic_may_alias(this) || i < this.length) && pred(this[i], i as i64)) {
+      if ((!mayAlias(this) || i < this.length) && pred(this[i], i as i64)) {
         return i as i64;
       }
     }
@@ -217,7 +224,7 @@ extend<T> Array<T> {
     if (i < 0 || i >= (this.length as i64)) {
       return undefined;
     }
-    return __intrinsic_share(this[i as usize]);
+    return share(this[i as usize]);
   }
 
   /**
@@ -229,7 +236,7 @@ extend<T> Array<T> {
   fill(value: T, start: i64 = 0, end: i64 = 9223372036854775807) {
     const hi = clampPosition(end, this.length);
     for (let i = clampPosition(start, this.length); i < hi; i++) {
-      this[i] = __intrinsic_share(value);
+      this[i] = share(value);
     }
   }
 
@@ -241,7 +248,7 @@ extend<T> Array<T> {
    * @throws what `pred` throws.
    */
   some<E>(pred: (x: T, i: i64) => bool throws E): bool throws E {
-    if (!__intrinsic_may_alias(this)) {
+    if (!mayAlias(this)) {
       for (let i: usize = 0; i < this.length; i++) {
         if (pred(this[i], i as i64)) {
           return true;
@@ -269,7 +276,7 @@ extend<T> Array<T> {
    * @throws what `pred` throws.
    */
   every<E>(pred: (x: T, i: i64) => bool throws E): bool throws E {
-    if (!__intrinsic_may_alias(this)) {
+    if (!mayAlias(this)) {
       for (let i: usize = 0; i < this.length; i++) {
         if (!pred(this[i], i as i64)) {
           return false;
@@ -333,7 +340,7 @@ extend<T> Array<T> {
       return false;
     }
     for (let i: usize = 0; i < this.length; i++) {
-      if (__intrinsic_includes_eq(this[i], x)) {
+      if (includesEq(this[i], x)) {
         return true;
       }
     }
@@ -351,515 +358,23 @@ extend<T> Array<T> {
     if (hi <= lo) {
       return [];
     }
-    const out: T[] = __intrinsic_array_with_capacity(hi - lo);
+    const out: T[] = arrayWithCapacity(hi - lo);
     for (let i = lo; i < hi; i++) {
-      out.push(__intrinsic_share(this[i]));
+      out.push(share(this[i]));
     }
     return out;
   }
 
   /** New array with this array's elements followed by `other`'s. */
   concat(other: T[]): T[] {
-    const out: T[] = __intrinsic_array_with_capacity(this.length + other.length);
+    const out: T[] = arrayWithCapacity(this.length + other.length);
     for (let i: usize = 0; i < this.length; i++) {
-      out.push(__intrinsic_share(this[i]));
+      out.push(share(this[i]));
     }
     for (let i: usize = 0; i < other.length; i++) {
-      out.push(__intrinsic_share(other[i]));
+      out.push(share(other[i]));
     }
     return out;
-  }
-
-  /**
-   * Exchanges elements `i` and `j` (each must be below the length): their bits change places,
-   * nothing is copied or dropped.
-   */
-  swap(i: usize, j: usize) {
-    __intrinsic_array_swap(this, i, j);
-  }
-
-  /**
-   * Rotates the elements in `[start, end)` one place down: the one at `start` moves to `end - 1`
-   * and the others one place towards `start`, by one memory move (what `splice` would do with
-   * a removal and an insert). `end` must be at most the length, `start` at most `end`.
-   */
-  rotateLeft(start: usize, end: usize) {
-    checkRange(start, end, this.length);
-    if (end - start > 1) {
-      __intrinsic_array_rotate_left(this, start, end - 1);
-    }
-  }
-
-  /** As `rotateLeft`, one place up: the element at `end - 1` moves to `start`. */
-  rotateRight(start: usize, end: usize) {
-    checkRange(start, end, this.length);
-    if (end - start > 1) {
-      __intrinsic_array_rotate_right(this, start, end - 1);
-    }
-  }
-
-  /**
-   * A hint that element `i` is read soon: the CPU starts loading it, so that the read does not
-   * wait for memory (a hint only, it changes nothing; an index past the end does nothing).
-   */
-  prefetch(i: usize) {
-    if (i < this.length) {
-      __intrinsic_array_prefetch(this, i);
-    }
-  }
-
-  /** Makes room for `extra` more elements without growing again (the length stays). */
-  reserve(extra: usize) {
-    __intrinsic_array_reserve(this, extra);
-  }
-
-  /** Reverses in place (JS also returns the array; here the result is `void`, see `fill`). */
-  reverse() {
-    reverseRange(this, 0, this.length);
-  }
-
-  /**
-   * Removes `deleteCount` elements from `start` (positions as in `slice`; omitted: the rest),
-   * inserts `items` there, and returns the removed elements, like JS. O(length).
-   */
-  splice(start: i64, deleteCount: i64 = 9223372036854775807, ...items: T[]): T[] {
-    const len = this.length;
-    const lo = clampPosition(start, len);
-    const room = (len - lo) as i64;
-    const k: usize = deleteCount <= 0 ? 0 : (deleteCount < room ? deleteCount : room) as usize;
-    const out: T[] = __intrinsic_array_with_capacity(k);
-    if (k > 0) {
-      // [lo, len) holds the removed block X then the rest Y: reversing it gives rev(Y) rev(X),
-      // reversing rev(Y) back gives Y rev(X), so the removed elements come off the end in order.
-      reverseRange(this, lo, len);
-      reverseRange(this, lo, len - k);
-      for (let i: usize = 0; i < k; i++) {
-        out.push(__intrinsic_array_remove(this, this.length - 1));
-      }
-    }
-    if (items.length > 0) {
-      // The array is A Y; pushing the items gives A Y I, and the same two reversals of [lo, end)
-      // turn Y I into I Y.
-      const rest = this.length - lo;
-      // Moved in, not shared: `items` is the call's own array (and may hold promises).
-      const n = items.length;
-      for (let i: usize = 0; i < n; i++) {
-        this.push(__intrinsic_array_remove(items, 0));
-      }
-      reverseRange(this, lo, this.length);
-      reverseRange(this, lo, lo + n);
-      reverseRange(this, lo + n, lo + n + rest);
-    }
-    return out;
-  }
-
-  /**
-   * Removes and returns the first element, or `undefined` when the array is empty.
-   * O(length): the other elements move down by one, as V8 does for large arrays. A queue that
-   * takes from the front belongs in a `Deque` (velt:collections/deque), which does it in O(1).
-   */
-  shift(): T | undefined {
-    if (this.length == 0) {
-      return undefined;
-    }
-    return __intrinsic_array_remove(this, 0);
-  }
-
-  /**
-   * Inserts `items` at the front, in order, and returns the new length, like JS. O(length +
-   * items): the items are pushed, then rotated to the front by three reversals.
-   */
-  unshift(...items: T[]): i64 {
-    if (items.length > 0) {
-      const old = this.length;
-      for (const x of items) {
-        this.push(__intrinsic_share(x));
-      }
-      reverseRange(this, 0, this.length);
-      reverseRange(this, 0, items.length);
-      reverseRange(this, items.length, items.length + old);
-    }
-    return this.length as i64;
-  }
-
-  /**
-   * Shortens the array to `length` elements, dropping the rest (JS `xs.length = n`); a longer
-   * `length` leaves it unchanged. Panics on a negative `length`, like JS's RangeError.
-   */
-  truncate(length: i64) {
-    if (length < 0) {
-      panic(`RangeError: Invalid array length: ${length}`);
-    }
-    if ((length as u64) < (this.length as u64)) {
-      __intrinsic_array_truncate(this, length as usize);
-    }
-  }
-
-  /**
-   * The number of elements, for `xs.length -= k` and `xs.length--` (which set it through the
-   * setter below); a plain read of `xs.length` compiles to the length itself.
-   */
-  get length(): number {
-    return this.length as number;
-  }
-
-  /**
-   * `xs.length = n`, as in JS: drops the elements from `n` on (`xs.length = 0` empties the
-   * array). A length that is not a whole number from 0 to 2^52 - 1, the most elements a Velt
-   * array holds (JS stops at 2^32 - 1), panics with `RangeError: Invalid array length`
-   * (`arrayLength`). A larger `n` than the array's length panics too: JS would add empty
-   * slots, which Velt has no value for (push the elements, or build the array with
-   * `new Array<T>(n).fill(v)`).
-   */
-  set length(n: number) {
-    const len = arrayLength(n);
-    if (len > this.length) {
-      panic(
-        `cannot grow an array by setting its length (from ${this.length} to ${len}): JS would add empty slots, which Velt has no value for; push the elements instead`,
-      );
-    }
-    __intrinsic_array_truncate(this, len);
-  }
-
-  // ES2023 copying forms (`toReversed`, `toSpliced`, `with`; `toSorted` is in sort.vlt): a new
-  // array, the receiver unchanged. Like `slice`, the new array holds the same elements (objects
-  // are shared, as in JS); the arrays themselves are independent.
-
-  /** The elements in reverse order. */
-  toReversed(): T[] {
-    const out: T[] = __intrinsic_array_with_capacity(this.length);
-    let i = this.length;
-    while (i > 0) {
-      i--;
-      out.push(__intrinsic_share(this[i]));
-    }
-    return out;
-  }
-
-  /**
-   * `splice(start, deleteCount, ...items)` on a copy: the array with the elements removed and
-   * `items` inserted.
-   */
-  toSpliced(start: i64, deleteCount: i64 = 9223372036854775807, ...items: T[]): T[] {
-    const len = this.length;
-    const lo = clampPosition(start, len);
-    const room = (len - lo) as i64;
-    const k: usize = deleteCount <= 0 ? 0 : (deleteCount < room ? deleteCount : room) as usize;
-    const out: T[] = __intrinsic_array_with_capacity(len - k + items.length);
-    for (let i: usize = 0; i < lo; i++) {
-      out.push(__intrinsic_share(this[i]));
-    }
-    for (const x of items) {
-      out.push(__intrinsic_share(x));
-    }
-    for (let i = lo + k; i < len; i++) {
-      out.push(__intrinsic_share(this[i]));
-    }
-    return out;
-  }
-
-  /**
-   * A copy with `value` at `index` (negative counts from the end). Panics like JS's RangeError
-   * when `index` is out of range.
-   */
-  with(index: i64, value: T): T[] {
-    const i = index < 0 ? index + (this.length as i64) : index;
-    if (i < 0 || i >= (this.length as i64)) {
-      panic(`RangeError: Invalid index : ${index}`);
-    }
-    const out = this.slice();
-    out[i as usize] = value;
-    return out;
-  }
-
-  /** Whether the array has no elements (`xs.length == 0`). */
-  isEmpty(): bool {
-    return this.length == 0;
-  }
-
-  /**
-   * `[index, element]` pairs (see header). JS returns an iterator; an array
-   * serves the same `for (const [i, x] of xs.entries())` loops.
-   */
-  entries(): [usize, T][] {
-    const out: [usize, T][] = __intrinsic_array_with_capacity(this.length);
-    for (let i: usize = 0; i < this.length; i++) {
-      out.push([i, __intrinsic_share(this[i])]);
-    }
-    return out;
-  }
-
-  /**
-   * `join` for element types without their own (string enums, literal unions, objects): each
-   * element as JS's `String(x)` writes an array element (a class instance through its
-   * `toString()`, `[object Object]` for another object, `[object Map]` for a map). A struct
-   * with its own `toString()`, an `Error` or a `RegExp` element is a compile error: write
-   * `xs.map((x) => x.toString()).join(sep)`. Strings, numbers and bools have exact ones
-   * below; arrays of arrays and of nullable elements have JS's in array_nested.vlt.
-   */
-  join(sep: string = ","): string {
-    let s = "";
-    for (let i: usize = 0; i < this.length; i++) {
-      if (i > 0) {
-        s += sep;
-      }
-      // A one-element tuple is written as its element is written in an array (no allocation).
-      const one: [T] = [__intrinsic_share(this[i])];
-      s += `${one}`;
-    }
-    return s;
-  }
-
-  /**
-   * The elements joined with ",", each as JS's `String(x)` writes an array element: what
-   * `${xs}` writes (`[1, [2, 3], null].toString()` is `"1,2,3,"`).
-   */
-  toString(): string {
-    return `${this}`;
-  }
-}
-
-declare function velt_rt_str_join(parts: string[], sep: string): string;
-
-extend Array<string> {
-  /**
-   * Joins with `sep`: the runtime sums the lengths, then copies every piece once into a string
-   * of exactly that size.
-   */
-  join(sep: string = ","): string {
-    return velt_rt_str_join(this, sep);
-  }
-}
-
-/**
- * `join` on numbers and booleans: each element is converted like `String(x)` (the same text
- * `console.log` prints), then joined as strings. One `extend` per element type, since a generic
- * `T` has no `toString`.
- */
-extend Array<i8> {
-  /**
-   * Adds all the elements of an array into a string, separated by the specified separator string.
-   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
-   * @param sep - A string used to separate one element of the array from the next in the
-   * resulting string. If omitted, the array elements are separated with a comma.
-   */
-  join(sep: string = ","): string {
-    return this.map((x) => x.toString()).join(sep);
-  }
-}
-
-extend Array<i16> {
-  /**
-   * Adds all the elements of an array into a string, separated by the specified separator string.
-   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
-   * @param sep - A string used to separate one element of the array from the next in the
-   * resulting string. If omitted, the array elements are separated with a comma.
-   */
-  join(sep: string = ","): string {
-    return this.map((x) => x.toString()).join(sep);
-  }
-}
-
-extend Array<i32> {
-  /**
-   * Adds all the elements of an array into a string, separated by the specified separator string.
-   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
-   * @param sep - A string used to separate one element of the array from the next in the
-   * resulting string. If omitted, the array elements are separated with a comma.
-   */
-  join(sep: string = ","): string {
-    return this.map((x) => x.toString()).join(sep);
-  }
-}
-
-extend Array<i64> {
-  /**
-   * Adds all the elements of an array into a string, separated by the specified separator string.
-   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
-   * @param sep - A string used to separate one element of the array from the next in the
-   * resulting string. If omitted, the array elements are separated with a comma.
-   */
-  join(sep: string = ","): string {
-    return this.map((x) => x.toString()).join(sep);
-  }
-}
-
-extend Array<isize> {
-  /**
-   * Adds all the elements of an array into a string, separated by the specified separator string.
-   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
-   * @param sep - A string used to separate one element of the array from the next in the
-   * resulting string. If omitted, the array elements are separated with a comma.
-   */
-  join(sep: string = ","): string {
-    return this.map((x) => x.toString()).join(sep);
-  }
-}
-
-extend Array<u8> {
-  /**
-   * Adds all the elements of an array into a string, separated by the specified separator string.
-   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
-   * @param sep - A string used to separate one element of the array from the next in the
-   * resulting string. If omitted, the array elements are separated with a comma.
-   */
-  join(sep: string = ","): string {
-    return this.map((x) => x.toString()).join(sep);
-  }
-}
-
-extend Array<u16> {
-  /**
-   * Adds all the elements of an array into a string, separated by the specified separator string.
-   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
-   * @param sep - A string used to separate one element of the array from the next in the
-   * resulting string. If omitted, the array elements are separated with a comma.
-   */
-  join(sep: string = ","): string {
-    return this.map((x) => x.toString()).join(sep);
-  }
-}
-
-extend Array<u32> {
-  /**
-   * Adds all the elements of an array into a string, separated by the specified separator string.
-   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
-   * @param sep - A string used to separate one element of the array from the next in the
-   * resulting string. If omitted, the array elements are separated with a comma.
-   */
-  join(sep: string = ","): string {
-    return this.map((x) => x.toString()).join(sep);
-  }
-}
-
-extend Array<u64> {
-  /**
-   * Adds all the elements of an array into a string, separated by the specified separator string.
-   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
-   * @param sep - A string used to separate one element of the array from the next in the
-   * resulting string. If omitted, the array elements are separated with a comma.
-   */
-  join(sep: string = ","): string {
-    return this.map((x) => x.toString()).join(sep);
-  }
-}
-
-extend Array<usize> {
-  /**
-   * Adds all the elements of an array into a string, separated by the specified separator string.
-   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
-   * @param sep - A string used to separate one element of the array from the next in the
-   * resulting string. If omitted, the array elements are separated with a comma.
-   */
-  join(sep: string = ","): string {
-    return this.map((x) => x.toString()).join(sep);
-  }
-}
-
-extend Array<f32> {
-  /**
-   * Adds all the elements of an array into a string, separated by the specified separator string.
-   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
-   * @param sep - A string used to separate one element of the array from the next in the
-   * resulting string. If omitted, the array elements are separated with a comma.
-   */
-  join(sep: string = ","): string {
-    return this.map((x) => x.toString()).join(sep);
-  }
-}
-
-extend Array<f64> {
-  /**
-   * Adds all the elements of an array into a string, separated by the specified separator string.
-   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
-   * @param sep - A string used to separate one element of the array from the next in the
-   * resulting string. If omitted, the array elements are separated with a comma.
-   */
-  join(sep: string = ","): string {
-    return this.map((x) => x.toString()).join(sep);
-  }
-}
-
-extend Array<bool> {
-  /**
-   * Adds all the elements of an array into a string, separated by the specified separator string.
-   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
-   * @param sep - A string used to separate one element of the array from the next in the
-   * resulting string. If omitted, the array elements are separated with a comma.
-   */
-  join(sep: string = ","): string {
-    return this.map((x) => x.toString()).join(sep);
-  }
-}
-
-// JS relative position → index in [0, len].
-function clampPosition(pos: i64, len: usize): usize {
-  const n = len as i64;
-  if (pos < 0) {
-    const fromEnd = n + pos;
-    return fromEnd < 0 ? 0 : fromEnd as usize;
-  }
-  return pos > n ? len : pos as usize;
-}
-
-// An array length `n` as JS's `ArrayCreate` and `length` setter take it: a whole number from 0
-// up (else `RangeError: Invalid array length`, as in Node), and at most 2^52 - 1, the most
-// elements a Velt array holds (JS stops at 2^32 - 1; past it, the limit's `RangeError`).
-function arrayLength(n: number): usize {
-  if (!(n >= 0 && __intrinsic_trunc(n) == n)) {
-    panic("RangeError: Invalid array length");
-  }
-  if (n > 4503599627370495) {
-    panic(
-      "RangeError: Invalid array length: an array holds at most 2^52 - 1 elements, and its elements at most 2^52 - 1 bytes",
-    );
-  }
-  return n as usize;
-}
-
-/**
- * `new Array<T>(n).fill(v)` (the compiler rewrites it to this, `sema` `array_ctor`): `n` copies
- * of `v` in one allocation. `n` is a length as `xs.length = n` takes it (`arrayLength`):
- * `new Array(-1)`, `new Array(1.5)` and `new Array(NaN)` are a `RangeError`, as in Node.
- */
-export function __arrayFilled<T>(n: number, v: T): T[] {
-  const len = arrayLength(n);
-  const out: T[] = __intrinsic_array_with_capacity(len);
-  for (let i: usize = 0; i < len; i++) {
-    out.push(__intrinsic_share(v));
-  }
-  return out;
-}
-
-/**
- * `new Array<T>(x).fill(v)` with an `x` that is no number (sema `array_ctor`): as in JS, an
- * array of the one element `x`, which `fill` replaces with `v`. Sema passes `x` (evaluated
- * first, then dropped) and `[v]`.
- */
-export function __arrayOne<X, U>(_x: X, a: U): U {
-  return a;
-}
-
-/** `Array.from({ length: n }, (_, i) => f(i))`: `f(i)` for each index, throwing what `f` throws. */
-export function __arrayFromLength<U, E>(n: i64, f: (i: i64) => U throws E): U[] throws E {
-  const out: U[] = __intrinsic_array_with_capacity(n > 0 ? n as usize : 0);
-  for (let i = 0; i < n; i++) {
-    out.push(f(i));
-  }
-  return out;
-}
-
-// Reverses `xs[lo..hi)` in place.
-function reverseRange<T>(xs: T[], lo: usize, hi: usize) {
-  if (hi - lo < 2) {
-    return;
-  }
-  let i = lo;
-  let j = hi - 1;
-  while (i < j) {
-    __intrinsic_array_swap(xs, i, j);
-    i++;
-    j--;
   }
 }
 
@@ -871,24 +386,11 @@ extend<T> Array<T> {
    * `indexers.rs`): the element, or `undefined` when `index` is not a position in the array (out
    * of range, negative or not a whole number), as in JS.
    */
-  __get(index: number): T | undefined {
-    const i = __floatPosition(index);
+  [ARRAY_GET](index: number): T | undefined {
+    const i = floatPosition(index);
     if (i >= this.length) {
       return undefined;
     }
-    return __intrinsic_share(this[i]);
+    return share(this[i]);
   }
-}
-
-// `[start, end)` lies in an array of `len` elements, else a RangeError panic.
-function checkRange(start: usize, end: usize, len: usize) {
-  if (start > end || end > len) {
-    rangeOutside(start, end, len);
-  }
-}
-
-// The panic of `checkRange`, out of line: a function that never returns is not inlined, so the
-// message's formatting stays here instead of in every caller of a checked method.
-function rangeOutside(start: usize, end: usize, len: usize): never {
-  panic(`RangeError: the range ${start}..${end} is not inside the array (length ${len})`);
 }

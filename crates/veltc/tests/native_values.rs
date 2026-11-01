@@ -84,7 +84,7 @@ fn arrays_and_structs_cross_with_counted_types_on_both_schedulers() {
     std::fs::write(
         app.join("package.vlt"),
         format!(
-            "import type {{ Package }} from \"velt:package\";\n\nexport const pkg: Package = {{\n  name: \"app\",\n  version: \"0.1.0\",\n  dependencies: {{ vals: {{ path: \"{dep}\" }} }},\n}};\n"
+            "import type {{ Package }} from \"velt/package\";\n\nexport const pkg: Package = {{\n  name: \"app\",\n  version: \"0.1.0\",\n  dependencies: {{ vals: {{ path: \"{dep}\" }} }},\n}};\n"
         ),
     )
     .unwrap();

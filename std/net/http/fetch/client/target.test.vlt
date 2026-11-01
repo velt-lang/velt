@@ -1,0 +1,76 @@
+// velt/net/http (tests): white-box tests, run by `velt test std/`.
+//
+// White-box test of the `fetch` client's URL check (velt/net/http/fetch/client/target). (Was in
+// tests/std/fetch/wire.test.vlt.)
+import { describe, expect, it } from "velt/test";
+import { target } from "velt/net/http/fetch/client/target";
+import { URL } from "velt/net/url";
+
+function urls(): string[] {
+  return [
+    "http://example.com/",
+    "https://api.example.com:8443/v1/users?id=7",
+    "HTTP://EXAMPLE.COM/A",
+    "http://Example.com/",
+    "http://127.0.0.1:3000/x",
+    "http://127.1/",
+    "http://0x7f.0.0.1/",
+    "http://a.xn--nxasmq6b/",
+    "http://h:80/default",
+    "https://h:443/default",
+    "http://h:0080/zero",
+    "http://h/a/./b/../c",
+    "http://h/%2e/x",
+    "http://h/%2E%2e/x",
+    "http://h/a b",
+    "http://h/a\\b",
+    "http://h/q?a=1&b={x}",
+    "http://h/frag#part",
+    "https://[::1]:8443/v6?x",
+    "http://h?q",
+    "http://user:pw@h/",
+    "http://h.example./trailing-dot",
+  ];
+}
+
+describe("the client's URL check", () => {
+  // velt/net/http/fetch/client/target takes a URL as it is only when WHATWG parsing would serialize it
+  // unchanged: for each URL, the target's `href`, host, request-target and origin (its
+  // connection pool's key) agree with velt/net/url's, whichever way it was taken. (Was the golden
+  // std/fetch_target.)
+  it("agrees with velt/net/url", () => {
+    const differs: string[] = [];
+    for (const u of urls()) {
+      const t = target(u);
+      const w = new URL(u);
+      w.hash = "";
+      const agrees =
+        t.href == w.href &&
+        t.host == w.host &&
+        t.path == `${w.pathname}${w.search}` &&
+        t.origin == w.origin;
+      if (!agrees) {
+        differs.push(`${u} ${t.href} ${w.href} ${t.host} ${t.path}`);
+      }
+    }
+    expect(differs).toEqual([]);
+  });
+
+  it("refuses what is not an http: or https: URL", () => {
+    const why: string[] = [];
+    for (const bad of ["not a url", "ftp://example.com/", "http://1.2.3.256/", "http://h:65536/"]) {
+      try {
+        target(bad);
+        why.push("taken");
+      } catch (e) {
+        why.push(`${e.code} ${e.message}`);
+      }
+    }
+    expect(why).toEqual([
+      "EINVAL Invalid URL: not a url",
+      "ENOTSUP fetch supports http: and https: URLs, not ftp",
+      "EINVAL Invalid URL: http://1.2.3.256/",
+      "EINVAL Invalid URL: http://h:65536/",
+    ]);
+  });
+});

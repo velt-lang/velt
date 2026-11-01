@@ -7,6 +7,7 @@
 
 pub mod ast;
 mod ast_names;
+mod codec;
 mod js_number;
 mod lexer;
 #[cfg(test)]
@@ -18,10 +19,14 @@ mod work;
 
 use rustc_hash::FxHashMap;
 
+/// A parsed module in a compact binary form, for caches of parsed modules (`codec`).
+pub use codec::{decode_module, encode_module, FORMAT as AST_FORMAT};
 pub use js_number::js_number;
 /// The names code reads without declaring them, scope-aware (sema checks the root file's early
 /// uses with these).
-pub use parser::script_names::{expr_free_uses, stmt_free_uses, FreeUse};
+pub use parser::script_names::{
+    expr_free_uses, free_names as item_free_names, stmt_free_uses, FreeUse,
+};
 
 /// The name of the identifier a hole of an array literal parses as (`[a, , b]`): empty, so it
 /// prints as nothing and no source can name it. Only a destructuring assignment target takes
@@ -61,9 +66,12 @@ pub fn computed_key_name(key: &ast::Ident) -> Option<&str> {
 use velt_common::{Diagnostics, FileId};
 
 /// Is `import` the one the parser adds for `import.meta` (its class, [`ast::IMPORT_META_CLASS`]),
-/// not one written in the source? Tools that list or place imports skip it.
+/// not one written in the source? Its specifier's span is empty, which a written string literal's
+/// never is: the same import written by hand is the user's, and the loader checks it as such.
+/// Tools that list or place imports skip it.
 pub fn is_synthesized_import(import: &ast::Import) -> bool {
-    import.from == ast::IMPORT_META_MODULE
+    import.from_span.lo == import.from_span.hi
+        && import.from == ast::IMPORT_META_MODULE
         && matches!(import.names.as_slice(), [n]
             if n.alias.as_ref().is_some_and(|a| a.name == ast::IMPORT_META_CLASS))
 }

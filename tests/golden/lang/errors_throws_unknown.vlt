@@ -1,0 +1,29 @@
+// `throws unknown` allows any thrown value, as JavaScript does: a class, `null` (an
+// `E | null`) or a string, each caught as it was thrown.
+class E1 extends Error {}
+
+function g(n: number): number throws unknown {
+  if (n == 1) {
+    const z: E1 | null = null;
+    throw z;
+  }
+  if (n == 2) {
+    throw new E1("e1");
+  }
+  if (n == 3) {
+    throw "s";
+  }
+  return n;
+}
+
+function relay(n: number): number throws unknown {
+  return g(n) + 1;
+}
+
+for (const n of [0, 1, 2, 3]) {
+  try {
+    console.log(relay(n));
+  } catch (e) {
+    console.log("caught", e instanceof Error ? e.message : e);
+  }
+}

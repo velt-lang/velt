@@ -249,6 +249,9 @@ try {
     } finally {
         Remove-Item Env:VELT_TOOLCHAIN -ErrorAction SilentlyContinue
     }
+    # Compile std into the build cache in the background, so a first build compiles little more than
+    # its own code (`velt cache warm`; a velt older than the command just declines).
+    try { & (Join-Path $Dest "bin\velt.exe") cache warm --background *> $null } catch { }
 } finally {
     # A failed install leaves no partial toolchain behind.
     if ($Staging) { Remove-Item -Recurse -Force $Staging -ErrorAction SilentlyContinue }

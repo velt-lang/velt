@@ -16,13 +16,14 @@ use crate::resolve::TyEnv;
 const LITERAL_PASSES: usize = 3;
 
 pub(crate) fn check_bodies(cx: &mut Ctx) {
+    super::lazy_std::plan(cx);
     super::literal_hosts::find(cx);
     let all: Vec<DefId> = (0..cx.info.len() as u32).map(DefId).collect();
     for &d in &all {
         field_defaults(cx, d);
     }
     for &d in &all {
-        if cx.global(d).is_some() {
+        if cx.global(d).is_some() && !super::lazy_std::deferred(cx, d) {
             ensure_global(cx, d);
         }
     }
@@ -33,8 +34,12 @@ pub(crate) fn check_bodies(cx: &mut Ctx) {
     super::defaults::iface_defaults(cx);
     super::literal_hosts::ensure_all(cx);
     for d in fns {
-        ensure_body(cx, d);
+        if !super::lazy_std::deferred(cx, d) {
+            ensure_body(cx, d);
+        }
     }
+    // What the checked code refers to of the standard library's deferred definitions.
+    super::lazy_std::reach(cx);
     super::returns::check_deferred(cx);
     static_copy_uses(cx);
     super::expr::iface_from_object::check_unwraps(cx);
@@ -223,6 +228,12 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
     let mut fcx = detached(cx, module, &[]);
     fcx.fn_name = qual;
     fcx.owner = owner;
+    // Where its type is written, for the sites in it (`throws::promise_sites`).
+    let written = ann.or(init_expr.and_then(crate::throws::written_init_type));
+    if let (Some(w), DefInfo::Global(g)) = (written, &fcx.cx.info[d.0 as usize]) {
+        let at = g.span;
+        fcx.cx.note_written_type(at, w.span);
+    }
     let ann = ann.map(|t| fcx.cx.resolve_type(t, &TyEnv::new(module, &[])));
     if let (Some(t), DefInfo::Global(g)) = (ann, &mut fcx.cx.info[d.0 as usize]) {
         g.ty = t;
@@ -275,8 +286,14 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
         }
     }
     // A constant holding an `Atomic` is one word the program changes in place (atomics.md):
-    // evaluated at each use, every use would change a new one.
-    if let (Some(_), false) = (&init, stored) {
+    // evaluated at each use, every use would change a new one. `new Atomic<T>(literal)` is
+    // that word in the program's data instead, with no module state (a static atomic).
+    let static_atomic = !mutable
+        && owner.is_none()
+        && init
+            .as_ref()
+            .is_some_and(|i| super::expr::static_atomic_init(cx, i));
+    if let (Some(_), false) = (&init, stored || static_atomic) {
         if !cx.modules[module].is_std && ty != cx.ty.error && cx.holds_atomic(ty) {
             stored = true;
         }
@@ -339,6 +356,7 @@ pub(crate) fn promise_in_state(
     if !holds_promise_by_value(cx, ty, 0) {
         return;
     }
+    cx.state_refused.push(d);
     let name = cx.global(d).map(|g| g.name.clone()).unwrap_or_default();
     let shown = cx.display(ty);
     cx.error(
@@ -591,6 +609,7 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
         let method = fcx.cx.static_copy_of.get(&def).copied().unwrap_or(def);
         (this, fcx.cx.static_this[&method])
     });
+    fcx.this_primitive = super::expr::primitive_this(fcx.cx, def);
     fcx.enclosing_locals = enclosing_locals;
     fcx.generic_arrow = fcx.cx.generic_arrow_fns.contains(&f.name_span);
     let params = fcx.declare_params(&f);
@@ -616,6 +635,7 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
         &mut stmts,
     );
     fcx.stmts_into(&body.stmts, &mut stmts);
+    fcx.generated_placeholder(src, &f, &mut stmts);
     let mut block = hir::Block {
         stmts,
         value: None,
@@ -629,7 +649,7 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
         Some(r) => r,
         None => fcx.inferred_fn_ret(def, &mut block),
     };
-    fcx.check_returns(&f.name, frame_ret, f.name_span, &mut block);
+    fcx.check_returns(&f.name, frame_ret, f.name_span, &mut block, false);
     fcx.wrap_adopted(&mut block);
     fcx.rec_frame_scopes();
     fcx.finish_using_shares();
@@ -719,7 +739,11 @@ impl FnCx<'_, '_> {
         ret: hir::TyId,
         span: Span,
         block: &mut hir::Block,
+        from_context: bool,
     ) {
+        if self.never_end_reachable(name, ret, span, block) {
+            return;
+        }
         if ret != self.cx.ty.unit
             && !self.cx.ty.is_bottom(ret)
             && !crate::flow::block_diverges(block, &self.cx.ty)
@@ -732,6 +756,29 @@ impl FnCx<'_, '_> {
             {
                 let end = Span::new(block.span.file, block.span.hi, block.span.hi);
                 let value = self.mk(hir::ExprKind::Lit(hir::Lit::Null), ret, end);
+                block.stmts.push(hir::Stmt {
+                    kind: hir::StmtKind::Return(Some(value)),
+                    span: end,
+                });
+                return;
+            }
+            // A function declared to return `any`, or an arrow typed by its context to return
+            // `any` or `unknown` (sigx's `WatchCallback` returns `any`), returns `undefined` at
+            // its end, as in TypeScript; a function declared `unknown` must return (TS2355).
+            let dynamic = match self.cx.dynamic(ret) {
+                Some(crate::any::Dynamic::Any) => true,
+                Some(crate::any::Dynamic::Unknown) => from_context,
+                _ => false,
+            };
+            if dynamic {
+                let end = Span::new(block.span.file, block.span.hi, block.span.hi);
+                let undefined = ast::Expr {
+                    id: ast::NodeId(u32::MAX),
+                    kind: ast::ExprKind::Lit(ast::Lit::Undefined),
+                    span: end,
+                };
+                let value = self.expr(&undefined, Some(ret), Want::Move);
+                let value = self.coerce(value, ret);
                 block.stmts.push(hir::Stmt {
                     kind: hir::StmtKind::Return(Some(value)),
                     span: end,

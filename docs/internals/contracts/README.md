@@ -8,9 +8,11 @@ helper), and explain it in your final report.
 | Contract | File | Producer → Consumer |
 |---|---|---|
 | Spans & diagnostics | `crates/velt_common/src/lib.rs` | everyone |
-| AST | `crates/velt_syntax/src/ast.rs` (with `ast/blocks.rs`, `ast/type_parts.rs`, `ast/type_level.rs`, `ast/jsx.rs`) + `parse_file` (`parse_with` for the loader: `define`, ambient declarations) | frontend → sema |
-| HIR | `crates/velt_sema/src/hir/mod.rs`, `hir/intrinsic.rs`, `hir/module_state.rs` + `hir_encodings.md` + `check`, `SourceModule` (`is_std`: loaded from the std root; drivers set it, sema never derives it from the path), `effects::may_change_memory` (can evaluating an expression run code that changes memory: a call other than an intrinsic, an intrinsic handed a place to modify or move, an assignment, `new`, `await`; IR lowering holds earlier operands and re-forms element addresses on it) | sema → IR |
-| VIR | `crates/velt_vir/src/vir.rs` + `lower`, `verify`; values are built with `Function::new`, `LocalDecl::new` and `Program::default()` (struct update for the rest), where a new field gets its "no information" default | IR → codegen |
+| Well-known std modules | `crates/velt_common/src/std_modules.rs`: the std modules the compiler names (`std_module!`, `std_item!`, …; docs/internals/design/std-layout.md §5) | std ↔ every compiler crate |
+| Compiler hooks | `crates/velt_common/src/std_hooks.rs`: the std functions and classes the compiler calls (`std_hook!`), with their signatures (docs/internals/design/std-layout.md §10b) | std ↔ sema, lowering |
+| AST | `crates/velt_syntax/src/ast.rs` (with `ast/blocks.rs`, `ast/type_parts.rs`, `ast/type_level.rs`, `ast/jsx.rs`) + `parse_file` (`parse_with` for the loader: `define`, ambient declarations; `encode_module`/`decode_module`: a module in a compact binary form, `AST_FORMAT` first, spans stored without their file and decoded for the file id given, a damaged value `None`) | frontend → sema |
+| HIR | `crates/velt_sema/src/hir/mod.rs`, `hir/intrinsic.rs`, `hir/module_state.rs` + `hir_encodings.md` + `check`, `SourceModule` (`is_std`: loaded from the std root; `is_dependency`: loaded from a package the program depends on, a library like std for the analyses that report at the program's call into one, with no privilege; drivers set both, sema never derives them from the path), `effects::may_change_memory` (can evaluating an expression run code that changes memory: a call other than an intrinsic, an intrinsic handed a place to modify or move, an assignment, `new`, `await`; IR lowering holds earlier operands and re-forms element addresses on it) | sema → IR |
+| VIR | `crates/velt_vir/src/vir.rs` + `lower`, `verify`, `fingerprint::{Canon, Mode, Fingerprint, fingerprint, attrs_hold, is_state_layout}` (function fingerprints for `velt dev` and the cached std object; `Canon::reaches_mutable_static`); values are built with `Function::new`, `LocalDecl::new` and `Program::default()` (struct update for the rest), where a new field gets its "no information" default | IR → codegen |
 | Codegen API | `crates/velt_codegen_cl/src/lib.rs` (`emit_object`, `host_triple`) | codegen → driver |
 | Link API | `crates/velt_link/src/lib.rs` (`link`, `find_runtime_lib`) | tooling → driver |
 | Runtime ABI | `docs/internals/contracts/rt_abi.md` + `rt_abi_async.md` | runtime ↔ IR lowering |
@@ -24,7 +26,8 @@ helper), and explain it in your final report.
 velt build main.vlt
   └─ driver (veltc): load main.vlt, follow imports, SourceMap
       ├─ velt_syntax::parse_with       per file      → ast::Module (+ ambient declarations;
-      │                                                 parse_file for std and the formatter)
+      │                                                 parse_file for std and the formatter;
+      │                                                 std's parses come from the build cache)
       ├─ velt_sema::check              whole program → hir::Program (check_with: library roots)
       ├─ velt_vir::lower_checked (+ verify)           → vir::Program (with source locations)
       ├─ velt_opt::optimize                           → vir::Program (release: all passes)
@@ -44,7 +47,9 @@ Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exi
   calls `lower_checked`, the same with errors for what lowering cannot represent yet, see
   hir_encodings.md "Undefined"); `velt_vir::lower` keeps its signature and output (no locations). With a source map,
   compiler-emitted panics end in ` at <path>:<line>:<col>` (bounds checks, division by zero,
-  `panic()`, and standard-library helpers such as `unwrap()`/`assert*` report their caller), and an
+  `panic()`, and standard-library helpers such as `unwrap()`/`assert*` report their caller; a
+  location in a standard-library file reads `std/<path below the std root>`, the same on every
+  machine, while debug info keeps the path as loaded), and an
   uncaught error reports the location of its `throw` (`velt_rt_set_throw_loc`/`velt_rt_throw_loc`,
   rt_abi.md).
 - `velt_opt` keeps `locs` aligned with every statement it moves, splits or deletes; inlined code
@@ -72,6 +77,16 @@ Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exi
   signature alone is that function type, otherwise the intersection of the signatures and the
   members (and an interface's bases).
 
+## Declared intrinsics (additive AST extension)
+- `FnSig::is_intrinsic` (`ast.rs`): `declare intrinsic function name<T>(…): R;`, an
+  `ItemKind::ExternFn` like `declare system function` (`intrinsic` is a word only between
+  `declare` and `function`; never `async`). Only std declares them, in `std/lang/intrinsics/`
+  (`std_modules`: `lang_intrinsics`); elsewhere sema reports the declaration. A call is checked
+  against the declaration and is the same HIR `Call { Intrinsic(..) }` as before
+  (hir_encodings.md); the name maps to the `Intrinsic` in `velt_sema::intrinsic_decls`, whose
+  test fails on a declaration without a table entry or an entry without a declaration
+  (docs/internals/design/std-layout.md §10).
+
 ## Who owns what
 | Area | Crates / files |
 |---|---|
@@ -96,17 +111,34 @@ Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exi
 
 ## Parameter attributes (additive VIR extension)
 - `vir::Function::param_attrs: Vec<ParamAttrs>` — empty (no information) or one entry per param
-  (checked by `verify`); `ParamAttrs { noalias, readonly, nonnull, dereferenceable: u64 }`, only
-  on `Ptr` params. `Function::param_attr(i)` tolerates the empty list.
+  (checked by `verify`); `ParamAttrs` (`noalias`, `readonly`, `frozen`, `nonnull`,
+  `dereferenceable: u64`), only on `Ptr` params. `Function::param_attr(i)` tolerates the empty list.
 - Invariant (vir.rs 9): set only where sema's exclusivity guarantees hold, and every caller
   upholds them. Lowering sets them on user functions: `BorrowMut` (inferred-modified) aggregate
   (or class `this` borrowed mutably) → `noalias`; `Borrow` aggregate → `readonly` (not for
   values holding a `Mutex` inline, nor params the body modifies — `LocalDef::mutable`, e.g.
-  closure params); aggregate / `Result` out-pointer → `noalias`; all of these `nonnull` +
-  `dereferenceable(size)`.
+  closure params); the same `Borrow` params → `frozen` also when the value holds an `Atomic`
+  (nothing changes the pointee during the call but atomics' words, which only `velt_atomic_*`
+  calls access); neither `noalias` nor `frozen` for a type whose values module state can reach
+  (a module-level `const` / `let`, a `static` field or an imported module's variable may hold
+  the argument, and a callee may write it through that variable; `readonly` still holds, as it
+  covers only writes through the param); aggregate / `Result` out-pointer → `noalias`; all of
+  these `nonnull` + `dereferenceable(size)`.
 - `velt_opt` keeps them on clones/specializations (inlined bodies simply lose them) and uses
-  `noalias` for redundant-load elimination; LLVM emits them as parameter attributes;
-  Cranelift ignores them.
+  `noalias` and `frozen` for redundant-load elimination; LLVM emits them as parameter
+  attributes (`frozen` has no LLVM counterpart); Cranelift ignores them.
+
+## Cold functions (additive VIR extension)
+- `vir::Function::cold: bool` — no call of the function returns normally: its declared result
+  is `never` (it panics, throws, exits or loops forever). False promises nothing; `Function::new`
+  sets it false. Set by lowering on every `never` function instance; `velt_opt` keeps it on
+  clones.
+- A call of one that throws (its result through an out-pointer) is followed, as for any
+  throwing callee, by a branch on the result's tag; the Ok side of that branch is
+  `Unreachable`, so the code after the call is the error path only.
+- `velt_opt` never inlines a cold function (and `cold_calls` makes a function's calls of one a
+  single call); the LLVM backend marks it `cold noinline` (as it does the helpers that never return, such as
+  `_Goob_u64`); Cranelift ignores it.
 
 ## Debug variables (additive VIR extension)
 - `vir::Program::debug_types: Vec<DebugTy>` and `vir::LocalDecl::debug: Option<LocalDebug>`
@@ -120,3 +152,21 @@ Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exi
 - `velt_opt`: dead-code elimination keeps described locals; `numrep` moves a description to
   the narrowed local; inlined locals lose theirs. Backends turn them into debugger variables
   or ignore them.
+
+## Imported functions (additive VIR extension)
+- `vir::Linkage::Import` (vir.rs invariant 11; #1728, design/std-object.md): a function defined
+  in another object of the same executable, such as the cached std object. It has no blocks (a
+  declaration; the only functions without an entry block) or a body kept only for `velt_opt` to
+  inline; the printer shows a declaration as `fn#<i> import <symbol>(<params>) -> <ret>`.
+- Backends declare it under its symbol and never emit its body: LLVM `declare hidden` with its
+  param attributes, in every codegen unit that refers to it (no unit defines or copies it);
+  Cranelift a `Linkage::Import` function.
+- `velt_opt`: treated as `Export` for anything that rewrites a signature, param attributes or
+  caller assumptions (`numrep` param facts, the inline-once rule, specializations); a pass may
+  clone one only when its body is kept, and the clone is the program's own `Internal` function. `keys::disambiguate` never renames an
+  `Import` symbol.
+- A body-less `Import` is opaque to every pass (#1862): it may write through any pointer it is
+  given and call back; per-function passes skip it.
+- **A declared entry** (#1728 step 3): code compiled on its own to link into a program (the std
+  cache, cli.md "Std cache") declares `velt_main` (`Import`, `() -> I32`) instead of defining
+  it; verification accepts that (vir.rs invariant 5). A program still defines it.

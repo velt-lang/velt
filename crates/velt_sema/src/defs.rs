@@ -36,6 +36,16 @@ impl Generics {
     }
 }
 
+/// Ends the name of a type parameter sema adds that source can't name (the error type of a
+/// function type in an `extend` target, `collect/ext_fn_errors.rs`): no identifier holds it, so
+/// the name doesn't shadow a type in the scope, and messages show the name without it.
+pub(crate) const HIDDEN_PARAM: char = '\'';
+
+/// How messages show type parameter `name`: without the mark of a hidden one (`HIDDEN_PARAM`).
+pub(crate) fn shown_param(name: &str) -> &str {
+    name.strip_suffix(HIDDEN_PARAM).unwrap_or(name)
+}
+
 /// `T extends Iface<args>`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct Bound {
@@ -224,6 +234,13 @@ pub(crate) struct FnInfo<'m> {
     pub owner: Option<DefId>,
     /// `declare async function` (M3 rt futures); other async functions are rejected in M2.
     pub is_async: bool,
+    /// `declare system function` (`hir::ExternFnDef::system`): per parameter, whether its type
+    /// was written `readonly` (a buffer the C function only reads). `None` for anything else.
+    pub system: Option<Vec<bool>>,
+    /// `declare intrinsic function` (std/lang/intrinsics): what a call of it is. A call is
+    /// checked against its signature and becomes the intrinsic (`body::expr::intrinsic_call`),
+    /// so its `hir::ExternFnDef` is never called and lowering never declares its symbol.
+    pub intrinsic: Option<crate::intrinsic_decls::DeclaredIntrinsic>,
     /// `function*` / `*name()`: a generator. `ret` is the declared result (`Generator<T>`,
     /// `Iterator<T>` or `Iterable<T>`, its `E` moved into `declared_throws`); a call returns it
     /// with the generator's final error type as `E` (`generators.rs`).
@@ -255,6 +272,10 @@ pub(crate) struct FnInfo<'m> {
     /// (a method returning `this` it changes is `Owned`): a value read out of a `shared` cannot
     /// be the receiver of such a method (`crate::ownership::patch`).
     pub modified_params: u64,
+    /// A closure's: bit `i`, the body changes what capture `i` holds (a captured object it
+    /// writes or hands to a function that may change it), which changes the enclosing
+    /// variable's object (`ownership::evidence`, in a program that reads a `shared`).
+    pub modified_captures: u64,
     /// Async closures: the captured variables the body modifies (name, first place). Allowed
     /// when the closure stays on its task, an error when it may reach a thread boundary
     /// (`crate::ownership::local_async`).

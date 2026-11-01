@@ -2,16 +2,16 @@
 //! with TypeScript's object syntax. `K` is `string` (an *open* record: keys may be missing) or a
 //! union of string literal types / a string enum (a *closed* record: every key is present).
 //!
-//! - `r[k]`, `r.name`: `r.__get(k)` (`V | undefined`) on open records, `r.__at(k)` (`V`) on closed
+//! - `r[k]`, `r.name`: `r[RECORD_GET](k)` (`V | undefined`) on open records, `r[RECORD_AT](k)` (`V`) on closed
 //!   ones: the stored value itself, so modifying it modifies the record's entry (as in JS).
-//! - `r[k] = v`: `r.__set(k, v)`; on closed records `r[k] op= v` and `++`/`--` are
-//!   `r.__set(k, r[k] op v)`, so the receiver and key must be free of side effects (like
+//! - `r[k] = v`: `r[RECORD_SET](k, v)`; on closed records `r[k] op= v` and `++`/`--` are
+//!   `r[RECORD_SET](k, r[k] op v)`, so the receiver and key must be free of side effects (like
 //!   setters). On open records the arithmetic forms are errors (`record_compound.rs`).
 //!   `r[k] ??= v`, `||=` and `&&=` read the key once and store only when it does not decide the
 //!   result, on open and closed records (`record_logical.rs`).
-//! - `delete r[k]`: `r.__delete(k)` (open records only).
-//! - An object literal where a record is expected: `{ let t = new Record(); t.__set("a", ..);
-//!   t.__extend(spread); t }` (`record_literal.rs`).
+//! - `delete r[k]`: `r[RECORD_DELETE](k)` (open records only).
+//! - An object literal where a record is expected: `{ let t = new Record(); t[RECORD_SET]("a", ..);
+//!   t[RECORD_EXTEND](spread); t }` (`record_literal.rs`).
 //! - A type-parameter key may stand for a closed key type: such a record is read as open (`V |
 //!   undefined`), but cannot start empty (except from a spread) or lose a key.
 //!
@@ -117,7 +117,11 @@ impl FnCx<'_, '_> {
                 return self.error_expr(span);
             }
         }
-        let method = if closed { "__at" } else { "__get" };
+        let method = if closed {
+            velt_common::std_key!(record_at)
+        } else {
+            velt_common::std_key!(record_get)
+        };
         self.record_call_keyed(obj, method, key, &[], span)
     }
 
@@ -189,7 +193,17 @@ impl FnCx<'_, '_> {
                 synth(kind, span)
             }
         };
-        let set = self.record_call_keyed(obj, "__set", key, std::slice::from_ref(&value), span);
+        // A promise stored as the value of a `Record` of promises (`throws::promise_sites`).
+        let pushed = self.site_of_value(&obj).map(|s| (value.span, s));
+        let outer = std::mem::replace(&mut self.cx.fn_sites.push, pushed);
+        let set = self.record_call_keyed(
+            obj,
+            velt_common::std_key!(record_set),
+            key,
+            std::slice::from_ref(&value),
+            span,
+        );
+        self.cx.fn_sites.push = outer;
         // The key holds a value now: `r[k]` reads it until the next change (`key_narrow`).
         self.unnarrow_fields(target);
         if op.is_none() && self.cx.ty.nothing_of(v).is_none() {
@@ -200,7 +214,7 @@ impl FnCx<'_, '_> {
         set
     }
 
-    /// `r[k]++` / `--r.name` (not used as a value): `r.__set(k, r[k] + 1)`.
+    /// `r[k]++` / `--r.name` (not used as a value): `r[RECORD_SET](k, r[k] + 1)`.
     pub(super) fn record_update(
         &mut self,
         obj: hir::Expr,
@@ -295,6 +309,6 @@ impl FnCx<'_, '_> {
             return self.error_expr(span);
         }
         self.unnarrow_fields(operand);
-        self.record_call_keyed(obj, "__delete", key, &[], span)
+        self.record_call_keyed(obj, velt_common::std_key!(record_delete), key, &[], span)
     }
 }

@@ -1,0 +1,5 @@
+http_handler_reach_map_alias.vlt:52:28: error: this code runs on another thread and calls `f`, which changes `last`
+http_handler_reach_map_alias.vlt:49:33: `last` is changed here
+http_handler_reach_map_alias.vlt:50:19: but it is stored in a `Map<string, (string) => void>`, which is passed here to a function that runs it on other threads
+  = note: fix: const last = shared(new Mutex<{ value: string }>({ value: "" }))  // one value every thread shares, as in Node
+  = note: then read it with `last.with((v) => v.value)` and change it with `last.with((v) => { v.value = … })`

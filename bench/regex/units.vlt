@@ -1,0 +1,29 @@
+// Patterns without the `u` flag that name surrogates over a subject with surrogate pairs: the
+// subject is searched as code units (crates/velt_rt/src/regex/units.rs). An exec loop, a sticky
+// test loop and repeated tests over one long string must stay linear in its length:
+// `velt build --release bench/regex/units.vlt -o units && time ./units 20000` (the argument is
+// the number of "ab😀" pieces; doubling it should double the time).
+function main() {
+  const pieces = process.argv.length > 2 ? parseInt(process.argv[2]) : 20000;
+  const s = "ab\u{1F600}".repeat(pieces);
+  let n = 0;
+  const low = /[\uDC00-\uDFFF]/g;
+  let m = low.exec(s);
+  while (m != null) {
+    n += 1;
+    m = low.exec(s);
+  }
+  const step = /ab|[\uD800-\uDFFF]/y;
+  while (step.test(s)) {
+    n += 1;
+  }
+  for (let i = 0; i < 2000; i++) {
+    if (/\uD83D/.test(s)) {
+      n += 1;
+    }
+    if (/q\uD800/.test(s)) {
+      n += 1;
+    }
+  }
+  console.log(n);
+}

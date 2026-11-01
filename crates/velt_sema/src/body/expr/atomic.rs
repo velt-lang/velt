@@ -1,4 +1,4 @@
-//! `Atomic<T>` (std/prelude/sync.vlt, docs/internals/design/atomics.md): `new Atomic<T>(x)`
+//! `Atomic<T>` (std/prelude/atomic.vlt, docs/internals/design/atomics.md): `new Atomic<T>(x)`
 //! is the struct holding `x`, and a call of one of its methods is an `Atomic*` intrinsic whose
 //! orderings are integer literals (hir/intrinsic.rs), so lowering emits the one instruction
 //! with the ordering the call site names. The methods' declarations give the signatures, their
@@ -27,11 +27,7 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
-        // `(x: T) -> Atomic<T>`: `AtomicStore`'s value parameter, and its receiver type.
-        let mut c = self.intrinsic_sig(Intrinsic::AtomicStore, span);
-        c.what = "`Atomic` constructor".into();
-        c.ret = c.params[0].ty;
-        c.params = vec![c.params[1].clone()];
+        let c = self.value_cell_ctor(d, "`Atomic` constructor", span);
         let mut slots = vec![None];
         match targs {
             [] => {}
@@ -53,21 +49,20 @@ impl FnCx<'_, '_> {
     /// Reports a `T` an `Atomic<T>` cannot hold; whether it can.
     fn atomic_value_ty(&mut self, t: TyId, span: Span) -> bool {
         match self.cx.ty.kind(t) {
-            TyKind::Int(_) | TyKind::Bool | TyKind::Error => true,
-            k => {
-                let float = matches!(k, TyKind::Float(_));
+            TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Error => true,
+            _ if self.cx.atomic_ref(t) => true,
+            // `T extends AtomicValue`: checked where the generic is instantiated.
+            _ if self.atomic_value_param(t) => true,
+            _ => {
                 let shown = self.cx.display(t);
-                let mut d = Diagnostic::error(
-                    format!("`Atomic<T>` needs an integer type or `bool`, found `{shown}`"),
+                let d = Diagnostic::error(
+                    format!("`Atomic<T>` needs a number type, `bool`, `string` or a `shared` value, found `{shown}`"),
                     span,
                 )
-                .with_note(
-                    "the compiler picks the instruction by the type, so it must be known here; for other values, use a `Mutex<T>`",
-                );
-                // `new Atomic(5)`: a number literal is an `f64`.
-                if float {
-                    d = d.with_note("for an integer counter, write its type: `new Atomic<u64>(…)`");
-                }
+                .with_note(match self.cx.ty.kind(t) {
+                    TyKind::Param(_) => "bound the type parameter: `T extends AtomicValue` (checked where the generic is used)",
+                    _ => "the compiler picks the instruction by the type, so it must be known here; for other values, use a `Mutex<T>`, or `shared(…)` for an immutable one",
+                });
                 self.cx.error(d);
                 false
             }
@@ -111,14 +106,46 @@ impl FnCx<'_, '_> {
             if !self.atomic_value_ty(t, span) {
                 return Some(self.error_expr(span));
             }
-            let int = matches!(self.cx.ty.kind(t), TyKind::Int(_));
-            if op.is_some_and(|o| matches!(RMW[o as usize], "add" | "sub" | "max" | "min")) && !int
-            {
+            // On a type parameter, only what every `AtomicValue` has the same way: `load`,
+            // `store`, `exchange` and `compareExchangeWeak` (whose result is a `bool` for
+            // every `T`; `compareExchange` returns the value before for a number, whether it
+            // swapped for a reference).
+            if self.atomic_value_param(t) {
+                let generic_ok = matches!(
+                    i,
+                    Intrinsic::AtomicLoad | Intrinsic::AtomicStore | Intrinsic::AtomicCasWeak
+                ) || op == Some(0);
+                if !generic_ok {
+                    let shown = self.cx.display(args[0].ty);
+                    self.cx.error(
+                        Diagnostic::error(format!("`{name}` is not available on `{shown}`, whose `T` is a type parameter"), span)
+                            .with_note("generic code has `load`, `store`, `exchange` and `compareExchangeWeak` (in a loop); the others depend on what `T` is"),
+                    );
+                    return Some(self.error_expr(span));
+                }
+            }
+            let kind = self.cx.ty.kind(t);
+            let int = matches!(kind, TyKind::Int(_));
+            let float = matches!(kind, TyKind::Float(_));
+            let reference = self.cx.atomic_ref(t);
+            let wrong = match op.map(|o| RMW[o as usize]) {
+                Some("add" | "sub" | "max" | "min") => (!int && !float).then_some("a number"),
+                Some("and" | "or" | "xor") => {
+                    (float || reference).then_some("an integer or `bool`")
+                }
+                _ => None,
+            };
+            if let Some(needs) = wrong {
                 let shown = self.cx.display(args[0].ty);
-                self.cx.err(
-                    format!("`{name}` needs an integer `Atomic`, found `{shown}`"),
+                let mut d = Diagnostic::error(
+                    format!("`{name}` needs an `Atomic` of {needs}, found `{shown}`"),
                     span,
                 );
+                // `new Atomic(0)`: a number literal makes an `Atomic<f64>`.
+                if float {
+                    d = d.with_note("for an integer counter, write its type: `new Atomic<u64>(…)`");
+                }
+                self.cx.error(d);
                 return Some(self.error_expr(span));
             }
         }
@@ -149,6 +176,19 @@ impl FnCx<'_, '_> {
                 };
             }
         }
+        // On a reference, `compareExchange` gives whether it swapped (atomics.md "References"):
+        // the reference it replaced is retired, not handed out.
+        let ret = match (i, args.first()) {
+            (Intrinsic::AtomicCas, Some(a))
+                if self
+                    .cx
+                    .atomic_value(a.ty)
+                    .is_some_and(|t| self.cx.atomic_ref(t)) =>
+            {
+                self.cx.ty.bool_
+            }
+            _ => ret,
+        };
         let mut out: Vec<hir::Expr> = args.drain(..recv + values).collect();
         if let Some(op) = op {
             out.push(self.u8_lit(op, span));
@@ -157,6 +197,19 @@ impl FnCx<'_, '_> {
             out.push(self.u8_lit(o, span));
         }
         Some(self.intrinsic(i, out, ret, span))
+    }
+
+    /// Is `t` a type parameter bounded by the prelude's `AtomicValue`?
+    fn atomic_value_param(&self, t: TyId) -> bool {
+        let TyKind::Param(p) = self.cx.ty.kind(t) else {
+            return false;
+        };
+        let Some(iface) = self.cx.prelude_iface("AtomicValue") else {
+            return false;
+        };
+        self.bounds
+            .get(*p as usize)
+            .is_some_and(|bs| bs.iter().any(|b| b.iface == iface))
     }
 
     /// The ordering an argument names (its index in `ORDERS`): a string literal, or a value
@@ -188,4 +241,19 @@ impl FnCx<'_, '_> {
 /// span, `placed_default`)?
 fn is_default(a: &hir::Expr, call: Span) -> bool {
     a.span == call
+}
+
+/// Is `init` `new Atomic<T>(literal)`, whose word the program's data holds (velt_vir
+/// `lower/static_atomic.rs`)?
+pub(crate) fn static_atomic_init(cx: &crate::ctx::Ctx, init: &hir::Expr) -> bool {
+    match &init.kind {
+        hir::ExprKind::AdtLit { def, fields, .. } => {
+            Some(*def) == cx.atomic_ty()
+                // A `string`'s word points to a box made at run time: kept in the module state.
+                && fields
+                    .first()
+                    .is_some_and(|f| super::thread_local::is_literal(f) && f.ty != cx.ty.str_)
+        }
+        _ => false,
+    }
 }

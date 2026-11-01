@@ -19,11 +19,24 @@ use crate::visit::{self, VisitMut};
 
 use crate::ownership::validate::place_text;
 
-/// One step from a place to a part of it. `Index` stands for any element.
+/// One step from a place to a part of it. `Index` stands for any element, `Elem` for the
+/// element at a known position (one an array pattern binds: `const [a, b] = xs`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Proj {
     Field(u32),
     Index,
+    Elem(u32),
+}
+
+impl Proj {
+    /// Can the two steps reach the same part? Distinct fields or known positions can't; any
+    /// element may be at a known position.
+    pub fn may_meet(self, other: Proj) -> bool {
+        match (self, other) {
+            (Proj::Field(a), Proj::Field(b)) | (Proj::Elem(a), Proj::Elem(b)) => a == b,
+            _ => true,
+        }
+    }
 }
 
 /// A memory location rooted at a local of the function being checked.
@@ -35,13 +48,10 @@ pub(super) struct Place {
 
 impl Place {
     /// Can the two places share memory? One must be a prefix of the other; distinct fields
-    /// are disjoint, distinct indices are not (they may be equal at run time).
+    /// and distinct known positions are disjoint, distinct indices are not (they may be equal
+    /// at run time).
     pub fn overlaps(&self, other: &Place) -> bool {
-        self.root == other.root
-            && self.proj.iter().zip(&other.proj).all(|pair| match pair {
-                (Proj::Field(a), Proj::Field(b)) => a == b,
-                _ => true,
-            })
+        self.root == other.root && (self.proj.iter().zip(&other.proj)).all(|(a, b)| a.may_meet(*b))
     }
 }
 
@@ -73,6 +83,13 @@ pub(super) struct Use {
     pub text: String,
     pub captured: bool,
     pub capture: Option<(DefId, LocalId)>,
+    /// A value JavaScript holds by reference (a class instance or an array) handed to the
+    /// callee: what another argument changes inside it while being evaluated is what
+    /// JavaScript's callee sees too.
+    pub identity: bool,
+    /// A write through another reference to the place (a share temporary: `h.vs.length = 0`):
+    /// it changes the value the place holds, never which value that is.
+    pub inside: bool,
 }
 
 /// Borrowing pattern bindings (`for...of` elements, `match` / destructuring bindings) point
@@ -149,6 +166,8 @@ impl Collector<'_, '_> {
                     text,
                     captured: false,
                     capture: None,
+                    identity: super::conflict::by_reference(self.cx, e.ty),
+                    inside: false,
                 });
             }
             return self.index_operands(e, nested);
@@ -161,6 +180,19 @@ impl Collector<'_, '_> {
                 self.nested(cond, nested);
                 self.direct(then, direct, nested);
                 self.direct(els, direct, nested);
+            }
+            // `xs.subarray(begin, end)` passed to a system function's buffer: the place is the
+            // receiver `xs`, used with the receiver's own mode (`BorrowMut` for a written
+            // buffer), and `begin` / `end` are evaluated while the argument is.
+            E::Call {
+                callee: Callee::Intrinsic(Intrinsic::Subarray),
+                args,
+            } => {
+                if let Some((rest, [recv, begin])) = args.split_last_mut() {
+                    self.direct(recv, direct, nested);
+                    self.nested(begin, nested);
+                    self.nested(rest, nested);
+                }
             }
             E::Closure(def) => self.captures(*def, e.span, false, direct),
             _ => self.nested(e, nested),
@@ -189,6 +221,7 @@ impl Collector<'_, '_> {
             col: self,
             out,
             skip: FxHashSet::default(),
+            shares: FxHashMap::default(),
         };
         visit::expr(e, &mut v);
     }
@@ -199,6 +232,7 @@ impl Collector<'_, '_> {
             col: self,
             out,
             skip: FxHashSet::default(),
+            shares: FxHashMap::default(),
         };
         visit::block(b, &mut v);
     }
@@ -209,6 +243,7 @@ impl Collector<'_, '_> {
             col: self,
             out,
             skip: FxHashSet::default(),
+            shares: FxHashMap::default(),
         };
         for s in stmts {
             visit::stmt(s, &mut v);
@@ -250,6 +285,8 @@ impl Collector<'_, '_> {
                 text: self.locals[cap.outer.0 as usize].name.clone(),
                 captured: true,
                 capture: Some((def, cap.outer)),
+                identity: false,
+                inside: false,
             });
         }
     }
@@ -261,6 +298,10 @@ struct Nested<'c, 'a, 'm> {
     col: &'c Collector<'a, 'm>,
     out: &'c mut Vec<Use>,
     skip: FxHashSet<*const Expr>,
+    /// Temporaries holding another reference to a place (`let t = share(h.b)`, how a write
+    /// through a counted field is lowered: `h.b.length = 0`): a write through one is a write of
+    /// the place.
+    shares: FxHashMap<LocalId, (Place, String)>,
 }
 
 impl Nested<'_, '_, '_> {
@@ -275,8 +316,24 @@ impl Nested<'_, '_, '_> {
         }
     }
 
-    fn record(&mut self, e: &Expr, place: Place, access: Access) {
-        let text = self.col.text(e);
+    fn record(&mut self, e: &Expr, mut place: Place, access: Access) {
+        let mut text = self.col.text(e);
+        // A write through the other reference writes the place; moving the reference out
+        // takes only that reference.
+        let through = (access == Access::Unique)
+            .then(|| self.shares.get(&place.root))
+            .flatten();
+        // Only a write to the shared value itself (`t.length = 0`) changes what it holds; a write
+        // to a place under it (`t.vs = mk()`) replaces that place, as a plain write does.
+        let inside = through.is_some() && place.proj.is_empty();
+        if let Some((p, shown)) = through {
+            if place.proj.is_empty() {
+                text = shown.clone();
+            }
+            let mut full = p.clone();
+            full.proj.extend(place.proj);
+            place = full;
+        }
         self.out.push(Use {
             place,
             access,
@@ -284,11 +341,33 @@ impl Nested<'_, '_, '_> {
             text,
             captured: false,
             capture: None,
+            identity: false,
+            inside,
         });
     }
 }
 
 impl VisitMut for Nested<'_, '_, '_> {
+    fn stmt(&mut self, s: &mut Stmt) {
+        if let crate::hir::StmtKind::Let {
+            local,
+            init: Some(init),
+        } = &s.kind
+        {
+            if let E::Call {
+                callee: Callee::Intrinsic(Intrinsic::Share),
+                args,
+            } = &init.kind
+            {
+                if let Some(a) = args.first() {
+                    if let Some((p, _)) = self.col.place_of(a) {
+                        self.shares.insert(*local, (p, self.col.text(a)));
+                    }
+                }
+            }
+        }
+    }
+
     fn expr(&mut self, e: &mut Expr) {
         if self.skip.remove(&(e as *const Expr)) {
             return self.skip_bases(e);
@@ -316,5 +395,36 @@ impl VisitMut for Nested<'_, '_, '_> {
                 }
             }
         }
+    }
+}
+
+/// A place as the message names it: `` `x.f` ``, or for a parameter of a wrapper the compiler
+/// made (`#arg0`, a function adapted to a function type, `callback_wrap.rs`), which the program
+/// never named, its position: "argument 1", "`.f` of argument 1".
+pub(super) fn shown(text: &str) -> String {
+    let Some(rest) = text.strip_prefix("#arg") else {
+        return format!("`{text}`");
+    };
+    let digits = rest.chars().take_while(char::is_ascii_digit).count();
+    let Ok(n) = rest[..digits].parse::<usize>() else {
+        return format!("`{text}`");
+    };
+    match &rest[digits..] {
+        "" => format!("argument {}", n + 1),
+        part => format!("`{part}` of argument {}", n + 1),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::shown;
+
+    #[test]
+    fn wrapper_params_by_position() {
+        assert_eq!(shown("vnode"), "`vnode`");
+        assert_eq!(shown("a.items"), "`a.items`");
+        assert_eq!(shown("#arg0"), "argument 1");
+        assert_eq!(shown("#arg1.dom"), "`.dom` of argument 2");
+        assert_eq!(shown("#args"), "`#args`");
     }
 }

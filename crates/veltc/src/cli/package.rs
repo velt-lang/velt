@@ -61,6 +61,17 @@ pub(super) fn parse(name: &str, rest: Vec<OsString>) -> Result<Command, String> 
             ("test", "--exact") => flags.exact = true,
             ("test", "--no-run") => flags.no_run = true,
             ("test", "--json") => flags.json = true,
+            ("test", "--no-cache") => flags.no_cache = true,
+            ("test", "--jobs" | "-j") => {
+                let n = take_value(inline.as_deref(), &mut it, "--jobs")?;
+                match n.parse::<usize>() {
+                    Ok(n) if n > 0 => flags.jobs = Some(n),
+                    _ => return Err(format!("`--jobs` takes a number of 1 or more, not `{n}`")),
+                }
+            }
+            ("test", "--cpu") => {
+                flags.cpu = Some(super::build::take_cpu(inline.as_deref(), &mut it)?)
+            }
             _ if s.starts_with('-') && s.len() > 1 => return Err(super::unknown_option(name, &s)),
             _ => positional.push(s),
         }
@@ -78,10 +89,13 @@ struct Flags {
     locked: bool,
     release: bool,
     watch: bool,
+    cpu: Option<String>,
     filter: Option<String>,
     exact: bool,
     no_run: bool,
     json: bool,
+    jobs: Option<usize>,
+    no_cache: bool,
     path: Option<String>,
     native_artifacts: Option<PathBuf>,
     native_only: bool,
@@ -183,6 +197,9 @@ fn build_command(name: &str, positional: Vec<String>, flags: Flags) -> Result<Co
             exact: flags.exact,
             no_run: flags.no_run,
             json: flags.json,
+            cpu: flags.cpu,
+            jobs: flags.jobs,
+            no_cache: flags.no_cache,
         }),
         _ => unreachable!("ICE: `{name}` is not a package subcommand"),
     }
@@ -325,10 +342,23 @@ mod tests {
                 exact: false,
                 no_run: false,
                 json: false,
+                cpu: None,
+                jobs: None,
+                no_cache: false,
             }
         );
         assert_eq!(
-            p(&["test", "tests", "--release", "--watch"]).unwrap(),
+            p(&[
+                "test",
+                "tests",
+                "--release",
+                "--watch",
+                "--cpu",
+                "x86-64-v3",
+                "-j",
+                "3"
+            ])
+            .unwrap(),
             Command::Test {
                 path: Some(PathBuf::from("tests")),
                 release: true,
@@ -338,6 +368,9 @@ mod tests {
                 exact: false,
                 no_run: false,
                 json: false,
+                cpu: Some("x86-64-v3".into()),
+                jobs: Some(3),
+                no_cache: false,
             }
         );
         assert_eq!(
@@ -359,9 +392,18 @@ mod tests {
                 exact: false,
                 no_run: true,
                 json: true,
+                cpu: None,
+                jobs: None,
+                no_cache: false,
             }
         );
         assert!(p(&["test", "--json"]).unwrap_err().contains("`--no-run`"));
+        assert!(p(&["test", "--jobs=0"]).unwrap_err().contains("1 or more"));
+        assert!(p(&["test", "--jobs", "x"]).unwrap_err().contains("not `x`"));
+        assert!(matches!(
+            p(&["test", "--no-cache"]).unwrap(),
+            Command::Test { no_cache: true, .. }
+        ));
         assert!(p(&["test", "--exact"]).unwrap_err().contains("`--filter"));
         assert!(p(&["test", "--no-run", "--watch"])
             .unwrap_err()

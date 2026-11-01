@@ -24,6 +24,7 @@ use std::path::PathBuf;
 use crate::backend::Backend;
 use crate::playground::PlaygroundArgs;
 use crate::templates::{Editor, Template};
+pub(crate) use build::run_options;
 pub use check::CheckArgs;
 use completions::Shell;
 
@@ -34,8 +35,23 @@ pub struct DocArgs {
     pub paths: Vec<PathBuf>,
     /// `--std`: document the standard library.
     pub std: bool,
-    /// `-o`: output directory (default `target/doc`, in the package root for packages).
+    /// `-o`: output directory (default `target/doc`, in the package root for packages); with
+    /// `--format json` also a `.json` file, or `-` for stdout.
     pub output: Option<PathBuf>,
+    /// `--format`: HTML pages, one JSON document, or the `velt` type package.
+    pub format: DocFormat,
+}
+
+/// What `velt doc` writes (`--format`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DocFormat {
+    /// HTML pages (`html`, the default).
+    #[default]
+    Html,
+    /// One JSON document, `api.json` (`json`).
+    Json,
+    /// The standard library's TypeScript declarations as the `velt` type package (`types`).
+    Types,
 }
 
 /// `velt registry serve` arguments.
@@ -74,6 +90,8 @@ pub struct BuildArgs {
     pub debug_info: bool,
     /// `--target`.
     pub target: Option<String>,
+    /// `--cpu`.
+    pub cpu: Option<String>,
     /// `--emit`.
     pub emit: Emit,
     /// `--backend`; `None` → chosen by [`Backend::resolve`].
@@ -142,6 +160,12 @@ pub enum Command {
         no_run: bool,
         /// `--json` (with `--no-run`): report the harnesses as JSON.
         json: bool,
+        /// `--cpu`.
+        cpu: Option<String>,
+        /// `--jobs <n>`: how many test files run at once.
+        jobs: Option<usize>,
+        /// `--no-cache`: run every test; keep and use no results.
+        no_cache: bool,
     },
     /// `velt fmt [paths...] [--check]`: no paths → the current package's `src/` (or the cwd).
     Fmt { paths: Vec<PathBuf>, check: bool },
@@ -171,8 +195,10 @@ pub enum Command {
         editor: Editor,
         dir: Option<PathBuf>,
     },
-    /// `velt clean`: remove the package's `target/`.
-    Clean,
+    /// `velt clean`: remove the package's `target/`; `--cache`: the machine's build cache instead.
+    Clean { cache: bool },
+    /// `velt cache warm [--background]`: compile std into the build cache.
+    CacheWarm { background: bool },
     /// `velt completions <shell>`.
     Completions(Shell),
     /// `velt add <name>[@<req>] [--path <dir>]`.
@@ -283,7 +309,9 @@ fn parse_command(sub: &str, rest: Vec<OsString>) -> Result<Command, String> {
         "playground" => tools::parse_playground(rest),
         "doc" => tools::parse_doc(rest),
         "registry" => tools::parse_registry(rest),
-        "doctor" | "clean" => no_arguments(sub, rest),
+        "doctor" => no_arguments(sub, rest),
+        "clean" => parse_clean(rest),
+        "cache" => parse_cache(rest),
         "completions" => parse_completions(rest),
         "help" => parse_help(rest),
         "--version" | "-V" | "version" => Ok(Command::Version),
@@ -334,15 +362,53 @@ pub(crate) fn unknown_option(cmd: &str, flag: &str) -> String {
     )
 }
 
-/// Commands without arguments (`doctor`, `clean`).
+/// Commands without arguments (`doctor`).
 fn no_arguments(sub: &str, rest: Vec<OsString>) -> Result<Command, String> {
     if let Some(other) = strings(rest)?.first() {
         return Err(format!("unexpected argument `{other}` for `velt {sub}`"));
     }
-    Ok(match sub {
-        "doctor" => Command::Doctor,
-        _ => Command::Clean,
-    })
+    Ok(Command::Doctor)
+}
+
+/// `velt cache warm [--background]`.
+fn parse_cache(rest: Vec<OsString>) -> Result<Command, String> {
+    let args = strings(rest)?;
+    match args.split_first() {
+        Some((action, rest)) if action == "warm" => {
+            let mut background = false;
+            for arg in rest {
+                match arg.as_str() {
+                    "--background" => background = true,
+                    flag if flag.starts_with('-') => {
+                        return Err(unknown_option("cache warm", flag))
+                    }
+                    other => {
+                        return Err(format!(
+                            "unexpected argument `{other}` for `velt cache warm`"
+                        ))
+                    }
+                }
+            }
+            Ok(Command::CacheWarm { background })
+        }
+        Some((other, _)) => Err(format!(
+            "unknown action `{other}`: `velt cache warm` (`velt clean --cache` removes the cache)"
+        )),
+        None => Err("missing action: `velt cache warm`".into()),
+    }
+}
+
+/// `velt clean [--cache]`.
+fn parse_clean(rest: Vec<OsString>) -> Result<Command, String> {
+    let mut cache = false;
+    for arg in strings(rest)? {
+        match arg.as_str() {
+            "--cache" => cache = true,
+            flag if flag.starts_with('-') => return Err(unknown_option("clean", flag)),
+            other => return Err(format!("unexpected argument `{other}` for `velt clean`")),
+        }
+    }
+    Ok(Command::Clean { cache })
 }
 
 /// `velt completions <shell>`.
@@ -432,7 +498,25 @@ mod tests {
         assert_eq!(p(&["doctor"]).unwrap(), Command::Doctor);
         assert_eq!(p(&["toolchain", "list"]).unwrap(), Command::Toolchain);
         assert!(p(&["+0.2", "build"]).unwrap_err().contains("velt launcher"));
-        assert_eq!(p(&["clean"]).unwrap(), Command::Clean);
+        assert_eq!(p(&["clean"]).unwrap(), Command::Clean { cache: false });
+        assert_eq!(
+            p(&["clean", "--cache"]).unwrap(),
+            Command::Clean { cache: true }
+        );
+        assert!(p(&["clean", "--cash"]).unwrap_err().contains("--cache"));
+        assert_eq!(
+            p(&["cache", "warm"]).unwrap(),
+            Command::CacheWarm { background: false }
+        );
+        assert_eq!(
+            p(&["cache", "warm", "--background"]).unwrap(),
+            Command::CacheWarm { background: true }
+        );
+        assert!(p(&["cache"]).unwrap_err().contains("missing action"));
+        assert!(p(&["cache", "cool"])
+            .unwrap_err()
+            .contains("unknown action"));
+        assert!(p(&["cache", "warm", "x"]).is_err());
         assert!(p(&["doctor", "-x"])
             .unwrap_err()
             .contains("unexpected argument"));

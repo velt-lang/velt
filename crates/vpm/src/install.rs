@@ -8,12 +8,15 @@ use std::path::{Path, PathBuf};
 use crate::cache;
 use crate::graph::PackageGraph;
 use crate::locations::Locations;
-use crate::lockfile::{LockedPackage, Lockfile, LOCK_FILE, REGISTRY_SOURCE};
+use crate::lockfile::{LockedPackage, Lockfile, LOCK_FILE, REGISTRY_SOURCE, WORKSPACE_SOURCE};
 use crate::manifest::Manifest;
 use crate::native::build::{build, cargo_available, BuildRequest};
 use crate::native::{missing_target_message, NativeLib, NativeOrigin, NATIVE_ABI};
 use crate::relpath;
-use crate::resolve::{resolve, Resolution, Source};
+use crate::resolve::{resolve, Resolution, ResolvedPackage, Source};
+use crate::workspace::{Workspace, WorkspaceFile};
+
+pub mod workspace;
 
 /// How to treat the existing lockfile, and what to install for.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -38,16 +41,22 @@ pub struct Installed {
     pub lock_changed: bool,
     /// Installed registry versions that are yanked (pinned by `velt.lock.json`); callers warn.
     pub yanked: Vec<(String, semver::Version)>,
+    /// Warnings of the resolution, printed with the yanked versions ([`Installed::yank_warnings`]).
+    pub warnings: Vec<String>,
+    /// Things `velt install` tells the user (a package below a workspace that doesn't list it).
+    pub notes: Vec<String>,
 }
 
 impl Installed {
-    /// One `<name> <version> is yanked (pinned by velt.lock.json)` line per yanked version.
+    /// One `<name> <version> is yanked (pinned by velt.lock.json)` line per yanked version, then
+    /// the resolution's other warnings (a git package's links on Windows).
     pub fn yank_warnings(&self) -> Vec<String> {
         self.yanked
             .iter()
             .map(|(name, version)| {
                 format!("`{name}` {version} is yanked (pinned by velt.lock.json)")
             })
+            .chain(self.warnings.iter().cloned())
             .collect()
     }
 }
@@ -112,34 +121,91 @@ fn check_locked_toolchain(
     ))
 }
 
-/// Install the dependencies of the package rooted at `root`.
+/// Install the dependencies of the package rooted at `root`. A member of a workspace installs the
+/// workspace's, into its lock ([`workspace`]), and gets the graph of what it uses.
 pub fn install(root: &Path, loc: &Locations, opts: InstallOptions) -> Result<Installed, String> {
     let root = relpath::absolute(root);
+    let mut notes = vec![];
+    if let Some(ws_root) = crate::workspace::find_root(&root) {
+        // Membership by the globs alone: a package the workspace doesn't list never depends on
+        // the members being in order.
+        let file = ws_root.join(crate::workspace::WORKSPACE_FILE);
+        let globs = WorkspaceFile::from_path(&file)?.members;
+        if velt_toolchain::members::lists(&globs, &relpath::relative(&root, &ws_root)) {
+            let ws = Workspace::load(&ws_root)?;
+            if ws.member_at(&root).is_some() {
+                return workspace::install(&ws, Some(&root), loc, opts);
+            }
+        }
+        notes.push(format!(
+            "{} does not list this package, so it is installed on its own, with its own {LOCK_FILE}",
+            file.display()
+        ));
+    }
     let manifest = Manifest::from_dir(&root)?;
     let loc = &loc.clone().with_manifest(&manifest);
     let existing = Lockfile::read(&root)?;
     let prefer = if opts.update { None } else { existing.as_ref() };
     let resolution = resolve(&root, &manifest, loc, prefer)?;
-    let mut lockfile = to_lockfile(&resolution, &root);
+    let lockfile = to_lockfile(&resolution, &root, &[]);
+    let (lockfile, lock_changed) = settle_lock(
+        existing.as_ref(),
+        lockfile,
+        manifest.toolchain.as_deref(),
+        &opts,
+    )?;
+    let dirs = fetch(loc, resolution.packages.values())?;
+    let natives = natives(
+        loc,
+        Some((&root, &manifest)),
+        resolution.packages.values(),
+        (&lockfile, &dirs),
+        &opts,
+    )?;
+    if lock_changed {
+        lockfile.write(&root)?;
+    }
+    check_npm_overlap(resolution.packages.values())?;
+    let graph = build_graph(
+        Some((&manifest, &root, &resolution.root_dependencies)),
+        resolution.packages.values(),
+        &dirs,
+        natives,
+    );
+    Ok(Installed {
+        graph,
+        lockfile,
+        lock_changed,
+        yanked: resolution.yanked.clone(),
+        warnings: resolution.warnings.clone(),
+        notes,
+    })
+}
+
+/// The lockfile to keep, from the `existing` one and the resolution's `lockfile`: the toolchain
+/// recorded, `--locked` enforced, and checksums of unchanged versions checked. Returns it and
+/// whether it differs from `existing` (and must be written).
+fn settle_lock(
+    existing: Option<&Lockfile>,
+    mut lockfile: Lockfile,
+    pin: Option<&str>,
+    opts: &InstallOptions,
+) -> Result<(Lockfile, bool), String> {
     if opts.locked {
-        if let Some(old) = &existing {
+        if let Some(old) = existing {
             keep_locked_native(old, &mut lockfile);
         }
     }
     lockfile.velt = locked_toolchain(
-        existing.as_ref().and_then(|l| l.velt.as_deref()),
-        manifest.toolchain.as_deref(),
+        existing.and_then(|l| l.velt.as_deref()),
+        pin,
         TOOLCHAIN_VERSION,
-        &opts,
+        opts,
     );
     if opts.locked {
-        check_locked_toolchain(
-            lockfile.velt.as_deref(),
-            manifest.toolchain.as_deref(),
-            TOOLCHAIN_VERSION,
-        )?;
+        check_locked_toolchain(lockfile.velt.as_deref(), pin, TOOLCHAIN_VERSION)?;
     }
-    let lock_changed = existing.as_ref() != Some(&lockfile);
+    let lock_changed = existing != Some(&lockfile);
     if lock_changed && opts.locked {
         let what = if existing.is_some() {
             "needs to be updated"
@@ -150,61 +216,103 @@ pub fn install(root: &Path, loc: &Locations, opts: InstallOptions) -> Result<Ins
             "{LOCK_FILE} {what}, but --locked was passed (run `velt install` without --locked)"
         ));
     }
-    if let Some(old) = &existing {
+    if let Some(old) = existing {
         check_locked_checksums(old, &lockfile)?;
     }
+    Ok((lockfile, lock_changed))
+}
 
+/// Each package's directory: the verified cache entry of a registry package, a path package's own.
+fn fetch<'r>(
+    loc: &Locations,
+    packages: impl Iterator<Item = &'r ResolvedPackage>,
+) -> Result<BTreeMap<String, PathBuf>, String> {
     let mut dirs = BTreeMap::new();
-    for pkg in resolution.packages.values() {
+    for pkg in packages {
         let dir = match &pkg.source {
             Source::Registry { checksum, .. } => {
                 cache::fetch(loc, &pkg.name, &pkg.version, checksum)?
             }
-            Source::Path { dir } => dir.clone(),
+            // Checked out, and verified against the lock, by the resolution.
+            Source::Path { dir } | Source::Git { dir, .. } => dir.clone(),
         };
         dirs.insert(pkg.name.clone(), dir);
     }
+    Ok(dirs)
+}
+
+/// The native libraries for `opts.target` (none without one) of the `root` package and of
+/// `packages`, whose directories are in `dirs`, as `lockfile` pins them.
+fn natives<'r>(
+    loc: &Locations,
+    root: Option<(&Path, &Manifest)>,
+    packages: impl Iterator<Item = &'r ResolvedPackage>,
+    (lockfile, dirs): (&Lockfile, &BTreeMap<String, PathBuf>),
+    opts: &InstallOptions,
+) -> Result<BTreeMap<String, NativeLib>, String> {
     let mut natives = BTreeMap::new();
-    if let Some(target) = &opts.target {
-        if let Some(lib) = native_from_source(&root, &manifest, target)? {
+    let Some(target) = &opts.target else {
+        return Ok(natives);
+    };
+    if let Some((dir, manifest)) = root {
+        if let Some(lib) = native_from_source(dir, manifest, target)? {
             natives.insert(manifest.package.name.clone(), lib);
         }
-        for pkg in resolution.packages.values() {
-            let dir = &dirs[&pkg.name];
-            let lib = match &pkg.source {
-                Source::Registry { native_abi, .. } => {
-                    let locked = lockfile.get(&pkg.name).map(|p| &p.native);
-                    let published = locked.cloned().unwrap_or_default();
-                    registry_native(
-                        loc,
-                        (&pkg.name, &pkg.version),
-                        dir,
-                        &published,
-                        *native_abi,
-                        target,
-                    )?
-                }
-                Source::Path { dir } => {
-                    let m = Manifest::from_dir(dir)?;
-                    native_from_source(dir, &m, target)?
-                }
-            };
-            if let Some(lib) = lib {
-                natives.insert(pkg.name.clone(), lib);
+    }
+    for pkg in packages {
+        let dir = &dirs[&pkg.name];
+        let lib = match &pkg.source {
+            Source::Registry { native_abi, .. } => {
+                let locked = lockfile.get(&pkg.name).map(|p| &p.native);
+                let published = locked.cloned().unwrap_or_default();
+                registry_native(
+                    loc,
+                    (&pkg.name, &pkg.version),
+                    dir,
+                    &published,
+                    *native_abi,
+                    target,
+                )?
             }
+            Source::Path { dir } => {
+                // Built where the package really is: through a symlinked path (a test's copy of an
+                // app linking the repository's packages), its crate's own relative paths and its
+                // build directory are the package's, not the link's.
+                let real = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.clone());
+                let m = Manifest::from_dir(&real)?;
+                native_from_source(&real, &m, target)?
+            }
+            // npm packages from git have no native code.
+            Source::Git { npm, .. } if !npm.is_empty() => None,
+            Source::Git {
+                dir, spec, commit, ..
+            } => {
+                let m = Manifest::from_dir(dir)?;
+                // As a registry package without a prebuilt library: building runs its build
+                // scripts, so only when the user asks for it.
+                if m.native.is_some() && !from_source_allowed() {
+                    return Err(format!(
+                        "`{}` from {} has native code, which a git dependency builds from source with cargo (it runs the package's build scripts): set {FROM_SOURCE_VAR}=1 to allow it",
+                        pkg.name,
+                        spec.describe()
+                    ));
+                }
+                // Built from a copy: cargo writes `Cargo.lock` beside the crate, and the checkout
+                // must stay as fetched (its checksum is verified on every use).
+                let work = loc.cache.join("git-native").join(&pkg.name).join(commit);
+                let copy = work.join("package");
+                if m.native.is_some() && !copy.is_dir() {
+                    crate::contents::copy_package(dir, &copy)?;
+                }
+                native_from_source_in(&copy, &m, target, &work)?
+            }
+        };
+        if let Some(lib) = lib {
+            natives.insert(pkg.name.clone(), lib);
         }
     }
     check_native_names(&natives)?;
-    if lock_changed {
-        lockfile.write(&root)?;
-    }
-    let graph = build_graph(&manifest, &root, &resolution, &dirs, natives);
-    Ok(Installed {
-        graph,
-        lockfile,
-        lock_changed,
-        yanked: resolution.yanked.clone(),
-    })
+    Ok(natives)
 }
 
 /// The environment variable that allows building registry packages' native code from source.
@@ -231,6 +339,21 @@ fn native_from_source(
     manifest: &Manifest,
     target: &str,
 ) -> Result<Option<NativeLib>, String> {
+    native_from_source_in(
+        dir,
+        manifest,
+        target,
+        &dir.join("target").join("velt-native"),
+    )
+}
+
+/// [`native_from_source`], building in `work` (a git checkout in the cache stays as fetched).
+fn native_from_source_in(
+    dir: &Path,
+    manifest: &Manifest,
+    target: &str,
+    work: &Path,
+) -> Result<Option<NativeLib>, String> {
     if manifest.native.is_none() {
         return Ok(None);
     }
@@ -243,7 +366,6 @@ fn native_from_source(
             dir.display()
         ));
     }
-    let work = dir.join("target").join("velt-native");
     let out = work.join(target);
     build(BuildRequest {
         root: dir,
@@ -363,7 +485,9 @@ fn check_locked_checksums(old: &Lockfile, new: &Lockfile) -> Result<(), String> 
     Ok(())
 }
 
-fn to_lockfile(resolution: &Resolution, root: &Path) -> Lockfile {
+/// The lockfile of `resolution`, with path sources relative to `root`; the path packages in
+/// `members` (a workspace's) are `workspace+<dir>`.
+fn to_lockfile(resolution: &Resolution, root: &Path, members: &[PathBuf]) -> Lockfile {
     let packages = resolution
         .packages
         .values()
@@ -376,8 +500,21 @@ fn to_lockfile(resolution: &Resolution, root: &Path) -> Lockfile {
                     Some(checksum.clone()),
                     native.clone(),
                 ),
+                Source::Git {
+                    spec,
+                    commit,
+                    checksum,
+                    ..
+                } => (spec.source(commit), Some(checksum.clone()), BTreeMap::new()),
                 Source::Path { dir } => (
-                    format!("path+{}", relpath::relative(dir, root)),
+                    format!(
+                        "{}+{}",
+                        match members.contains(dir) {
+                            true => WORKSPACE_SOURCE,
+                            false => "path",
+                        },
+                        relpath::relative(dir, root)
+                    ),
                     None,
                     BTreeMap::new(),
                 ),
@@ -411,25 +548,80 @@ fn check_native_names(natives: &BTreeMap<String, NativeLib>) -> Result<(), Strin
     Ok(())
 }
 
-fn build_graph(
-    manifest: &Manifest,
-    root: &Path,
-    resolution: &Resolution,
+/// Two git dependencies that provide the same npm package from different directories (other
+/// repositories or commits) would leave it to chance which one an import gets: an error naming
+/// both. Two packages of one checkout (`a` and `b` both from a repository's root) provide the
+/// same directories and agree.
+fn check_npm_overlap<'r>(
+    packages: impl Iterator<Item = &'r ResolvedPackage>,
+) -> Result<(), String> {
+    let mut seen: BTreeMap<&str, (&str, &PathBuf)> = BTreeMap::new();
+    for pkg in packages {
+        let Source::Git { npm, .. } = &pkg.source else {
+            continue;
+        };
+        for (name, dir) in npm {
+            let Some((other, other_dir)) = seen.insert(name, (&pkg.name, dir)) else {
+                continue;
+            };
+            if other_dir != dir {
+                return Err(format!(
+                    "git dependencies `{other}` and `{}` both provide the npm package `{name}`; depend on one of them",
+                    pkg.name
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The graph of the `root` package (its manifest, directory and direct dependencies), added first
+/// so its `define` applies, and of `packages`. A git dependency that provides npm packages
+/// (`Source::Git::npm`) is no package of the graph: its dependents get its npm packages
+/// ([`crate::graph::GraphPackage::npm`]).
+fn build_graph<'r>(
+    root: Option<(&Manifest, &Path, &[String])>,
+    packages: impl Iterator<Item = &'r ResolvedPackage>,
     dirs: &BTreeMap<String, PathBuf>,
     mut natives: BTreeMap<String, NativeLib>,
 ) -> PackageGraph {
-    let deps_of = |names: &[String]| names.iter().map(|n| (n.clone(), dirs[n].clone())).collect();
+    let packages: Vec<&ResolvedPackage> = packages.collect();
+    let npm: BTreeMap<&str, &BTreeMap<String, PathBuf>> = packages
+        .iter()
+        .filter_map(|p| match &p.source {
+            Source::Git { npm, .. } if !npm.is_empty() => Some((p.name.as_str(), npm)),
+            _ => None,
+        })
+        .collect();
+    let add = |graph: &mut PackageGraph, name: &str, dir: &Path, deps: &[String]| {
+        let velt = deps
+            .iter()
+            .filter(|n| !npm.contains_key(n.as_str()))
+            .map(|n| (n.clone(), dirs[n].clone()))
+            .collect();
+        let added = graph.add(name, dir, velt);
+        for n in deps {
+            if let Some(provided) = npm.get(n.as_str()) {
+                added
+                    .npm
+                    .extend(provided.iter().map(|(k, v)| (k.clone(), v.clone())));
+            }
+        }
+    };
     let mut graph = PackageGraph::default();
-    let added = graph.add(
-        &manifest.package.name,
-        root,
-        deps_of(&resolution.root_dependencies),
-    );
-    configure(added, manifest);
-    added.native = natives.remove(&manifest.package.name);
-    for pkg in resolution.packages.values() {
+    if let Some((manifest, root, dependencies)) = root {
+        add(&mut graph, &manifest.package.name, root, dependencies);
+        let added = graph.last_mut();
+        configure(added, manifest);
+        added.native = natives.remove(&manifest.package.name);
+    }
+    for pkg in packages
+        .iter()
+        .filter(|p| !npm.contains_key(p.name.as_str()))
+    {
         let dir = &dirs[&pkg.name];
-        let added = graph.add(&pkg.name, dir, deps_of(&pkg.dependencies));
+        add(&mut graph, &pkg.name, dir, &pkg.dependencies);
+        let added = graph.last_mut();
         // A dependency's aliases and JSX source apply inside that dependency; an unreadable
         // manifest (already reported by resolution) simply contributes none.
         if let Ok(m) = Manifest::from_dir(dir) {

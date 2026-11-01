@@ -1,0 +1,8 @@
+// velt/crypto (internal): `CryptoError`.
+
+/** Thrown by `randomInt` for an empty or too large range, or a bound that is not a safe integer. */
+export class CryptoError extends Error {
+  constructor(message: string) {
+    super(message);
+  }
+}

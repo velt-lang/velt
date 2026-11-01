@@ -1,0 +1,43 @@
+// velt/net/websocket (internal): text in and out of byte buffers, and the UTF-8 check of text
+// that arrives in pieces (std/encoding/utf8). Public APIs only, as a package would write them.
+
+import { validPrefix } from "velt/encoding/utf8";
+
+/**
+ * How many of the bytes in [start, end) are well-formed UTF-8: all of them, fewer when they end
+ * inside a character (more bytes may complete it), or -1 when no continuation can make them
+ * valid.
+ */
+export function utf8Prefix(b: u8[], start: i64, end: i64): i64 {
+  return validPrefix(b, start as usize, end as usize);
+}
+
+/**
+ * The bytes in [start, end) (relative positions, as `slice` takes them) as a string (one copy),
+ * or null if they are not valid UTF-8.
+ */
+export function textOf(b: u8[], start: i64, end: i64): string | null {
+  const from = relative(start, b.length);
+  const to = relative(end, b.length);
+  const len = to > from ? to - from : 0;
+  if (validPrefix(b, from, from + len) != (len as i64)) {
+    return null;
+  }
+  return b.utf8Slice(from as i64, (from + len) as i64);
+}
+
+// Position `i` in `n` bytes as JS reads it: negative counts from the end; clamped to `0..=n`.
+function relative(i: i64, n: usize): usize {
+  if (i < 0) {
+    const fromEnd = (n as i64) + i;
+    return fromEnd < 0 ? 0 : fromEnd as usize;
+  }
+  return (i as usize) < n ? i as usize : n;
+}
+
+/** Copies the UTF-8 bytes of `s` to `dst[offset..]` (they must fit). */
+export function setText(dst: u8[], s: string, offset: i64) {
+  if (dst.write(s, offset as usize) != Buffer.byteLength(s)) {
+    panic("internal error: a WebSocket frame was sized wrong");
+  }
+}

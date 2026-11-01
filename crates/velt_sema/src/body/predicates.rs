@@ -46,12 +46,26 @@ impl FnCx<'_, '_> {
         args: &[ast::Expr],
         span: Span,
     ) -> (Vec<Fact>, Vec<Fact>) {
+        // On an `any` / `unknown`, the conversion where the value is read checks it.
+        if let Some(facts) = self.dynamic_predicate_call(callee, args) {
+            return facts;
+        }
         let Some(found) = self.predicate_facts_of(callee, args) else {
             return (vec![], vec![]);
         };
         let out = (found.when_true.clone(), found.when_false.clone());
         self.f.checked_predicates.insert((span.lo, span.hi), found);
         out
+    }
+
+    /// Facts of a predicate call whose argument is an `any` or `unknown` (`dynamic_narrow`).
+    fn dynamic_predicate_call(
+        &mut self,
+        callee: &ast::Expr,
+        args: &[ast::Expr],
+    ) -> Option<(Vec<Fact>, Vec<Fact>)> {
+        let (target, index) = self.predicate_of(callee, false)?;
+        self.dynamic_predicate_facts(args.get(index)?, target?)
     }
 
     fn predicate_facts_of(

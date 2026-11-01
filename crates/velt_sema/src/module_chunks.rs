@@ -53,6 +53,7 @@ pub(crate) fn split(modules: &[SourceModule], root: usize) -> Split {
         .map(|(m, items)| SourceModule {
             path: m.path.clone(),
             is_std: m.is_std,
+            is_dependency: m.is_dependency,
             file: m.file,
             ast: ast::Module {
                 items: items.unwrap_or_else(|| m.ast.items.clone()),

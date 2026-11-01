@@ -106,7 +106,7 @@ impl Ambients {
         declaration_files(&root, false, &mut files);
         declaration_files(&root.join("src"), true, &mut files);
         for file in files {
-            let Ok(src) = std::fs::read_to_string(&file) else {
+            let Ok(src) = vpm::probe::read_to_string(&file) else {
                 continue;
             };
             let id = sm.add(&file, src);
@@ -210,24 +210,25 @@ fn lit_type(lit: &Lit) -> &'static str {
 fn package_dir(path: &Path) -> Option<PathBuf> {
     let abs = vpm::relpath::absolute(path);
     abs.ancestors().skip(1).find_map(|dir| {
-        (dir.join("package.json").is_file() || dir.join(vpm::manifest::MANIFEST_FILE).is_file())
-            .then(|| dir.to_path_buf())
+        (vpm::probe::is_file(&dir.join("package.json"))
+            || vpm::probe::is_file(&dir.join(vpm::manifest::MANIFEST_FILE)))
+        .then(|| dir.to_path_buf())
     })
 }
 
 /// The `.d.ts` files in `dir`, and below it when `deep` (see the module docs), sorted.
 fn declaration_files(dir: &Path, deep: bool, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
+    let Ok(entries) = vpm::probe::read_dir(dir) else {
         return;
     };
-    let mut entries: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+    let mut entries: Vec<PathBuf> = entries.into_iter().map(|e| e.path()).collect();
     entries.sort();
     for path in entries {
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
         let link = std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink());
-        if path.is_dir() {
-            let nested = path.join("package.json").is_file()
-                || path.join(vpm::manifest::MANIFEST_FILE).is_file();
+        if vpm::probe::is_dir(&path) {
+            let nested = vpm::probe::is_file(&path.join("package.json"))
+                || vpm::probe::is_file(&path.join(vpm::manifest::MANIFEST_FILE));
             if deep && !link && !nested && !name.starts_with('.') && !SKIPPED.contains(&name) {
                 declaration_files(&path, true, out);
             }

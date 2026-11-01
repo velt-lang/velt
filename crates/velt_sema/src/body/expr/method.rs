@@ -195,7 +195,7 @@ impl FnCx<'_, '_> {
 
     /// The method `name` of an `extend` block of a base class of class `recv`, nearest base
     /// first: a subclass has its bases' extension methods as it has their own methods
-    /// (`class MyRes extends Response {}` has `Response`'s `bytes()`, std/fetch/typed.vlt).
+    /// (`class MyRes extends Response {}` has `Response`'s `bytes()`, std/net/http/fetch/typed.vlt).
     fn inherited_extension_method(&mut self, recv: TyId, name: &str) -> Option<Resolved> {
         let base = self.cx.base_of(recv)?;
         self.base_extension_method(base, name)
@@ -285,9 +285,17 @@ impl FnCx<'_, '_> {
     fn instance_args(&mut self, pattern: TyId, t: TyId) -> Option<Vec<Option<TyId>>> {
         let n = self.max_param(pattern).map_or(0, |p| p + 1);
         let mut slots = vec![None; n];
-        let ok =
-            self.cx.match_ty(pattern, t, &mut slots) && self.cx.subst_known(pattern, &slots) == t;
-        ok.then_some(slots)
+        if !self.cx.match_ty(pattern, t, &mut slots) {
+            return None;
+        }
+        if self.cx.subst_known(pattern, &slots) == t {
+            return Some(slots);
+        }
+        // `never` matches any type without binding it (for inference): where it stands for a
+        // type parameter (`Promise<never, Error>` for `Promise<V, E>`), the parameter is `never`.
+        let never = self.cx.ty.never;
+        let filled: Vec<Option<TyId>> = slots.iter().map(|s| s.or(Some(never))).collect();
+        (self.cx.subst_known(pattern, &filled) == t).then_some(filled)
     }
 
     /// The candidates (indexes into `candidates`) that no other candidate is strictly more

@@ -1,0 +1,21 @@
+// velt/package (internal): the type of a workspace manifest, `velt.workspace.vlt`
+// (docs/tooling/packages.md "Workspaces").
+
+import type { Dependency } from "./manifest";
+
+/// A workspace: the one `export const workspace: Workspace = { … }` of a `velt.workspace.vlt` at
+/// a repository's root (docs/tooling/packages.md "Workspaces"). Its members share one
+/// `velt.lock.json`, `velt` and `registry`.
+export type Workspace = {
+  /// The member packages: `/`-separated globs relative to the workspace root, such as
+  /// `["packages/*", "apps/*"]`. `*` matches one directory name, `**` any number of them, a `!`
+  /// in front excludes, and `"."` is the root's own package. Each glob must match a package.
+  members: string[];
+  /// The velt versions that build every member, as a package's `velt` field. Members leave it out.
+  velt?: string;
+  /// The registry of every member, as a package's `registry` field. Members leave it out.
+  registry?: string;
+  /// Requirements the members share: a member's `json: "workspace"` uses the `json` entry here.
+  /// A member depends on another member with `name: "workspace"`.
+  dependencies?: Record<string, Dependency>;
+};

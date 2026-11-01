@@ -40,6 +40,9 @@ pub(super) struct Task {
     pub(super) home: AtomicUsize,
     /// Placed on its worker by the program (`spawn(p, { worker })`): never offered to another.
     pub(super) pinned: bool,
+    /// Polled at least once (a task that never was has no wake pending and has not used its
+    /// worker's reactor: see `worker`'s watch for the spawn bursts it moves).
+    polled: AtomicBool,
     aborted: AtomicBool,
     fut: UnsafeCell<Option<BoxFut>>,
 }
@@ -65,6 +68,7 @@ impl Task {
             state: AtomicU8::new(SCHEDULED),
             home: AtomicUsize::new(home),
             pinned,
+            polled: AtomicBool::new(false),
             aborted: AtomicBool::new(false),
             fut: UnsafeCell::new(Some(fut)),
         })
@@ -74,6 +78,7 @@ impl Task {
     pub(super) fn run(self: &Arc<Self>) -> Ran {
         // A read-modify-write, ordered with every wake's (module docs).
         self.state.swap(RUNNING, Ordering::AcqRel);
+        self.polled.store(true, Ordering::Relaxed);
         // SAFETY: this worker holds the task (RUNNING); nobody else touches `fut`.
         let slot = unsafe { &mut *self.fut.get() };
         let finished = match slot.as_mut() {
@@ -101,6 +106,11 @@ impl Task {
                 Ran::Again
             }
         }
+    }
+
+    /// Not polled yet: just spawned (or moved before its first poll).
+    pub(super) fn fresh(&self) -> bool {
+        !self.polled.load(Ordering::Relaxed)
     }
 
     fn finish(&self, slot: &mut Option<BoxFut>) {

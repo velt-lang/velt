@@ -4,8 +4,8 @@
 // as in TSX (`onClick={async () => { await save(); }}`, `onClick={() => count++}`); handlers
 // render nothing on the server.
 
-import { renderToStringSync } from "velt:jsx";
-import { delay } from "velt:timers";
+import { renderToStringSync } from "velt/jsx";
+import { delay } from "velt/time";
 
 function main() {
   let count = 0;

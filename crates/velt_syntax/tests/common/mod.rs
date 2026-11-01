@@ -187,7 +187,10 @@ pub fn ty(t: &TypeExpr) -> String {
             let names: Vec<&str> = type_params.iter().map(|g| g.name.name.as_str()).collect();
             format!("<{}>{}", names.join(", "), ty(t))
         }
-        TypeExprKind::Construct(t) => format!("new {}", ty(t)),
+        TypeExprKind::Construct { ty: t, is_abstract } => {
+            let kw = if *is_abstract { "abstract new" } else { "new" };
+            format!("{kw} {}", ty(t))
+        }
         TypeExprKind::TupleRest(t) => format!("...{}", ty(t)),
         TypeExprKind::TupleOptional(t) => format!("{}?", ty(t)),
         TypeExprKind::Predicate {
@@ -512,7 +515,7 @@ pub const JSX_UNIT: &str =
 
 /// Source exercising every construct of the AST surface; must parse without diagnostics.
 pub const KITCHEN_SINK: &str = r#"
-import { readFile, writeFile as wf } from "velt:fs";
+import { readFile, writeFile as wf } from "velt/fs";
 import {} from "./side";
 export function add<T extends Num & Copy, U>(a: T, b: U = 1, f: (x: i64) => i64): T | null { return a; }
 export async function fetchAll(urls: string[]): Promise<string[]> { const r = await Promise.all(urls); return r; }

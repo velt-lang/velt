@@ -20,6 +20,52 @@ use crate::body::{FnCx, LocalKind};
 use crate::hir::{self, ExprKind as H, LocalId, TyId, TyKind, UseMode};
 
 impl FnCx<'_, '_> {
+    /// `e`, a function, adapted to the function type `exp` where the two differ the way TS
+    /// allows (`const f: (s: string) => void = count`, a named function taking optional
+    /// parameters past `exp`'s: `callback`), converted to `exp`; `None` when `e` is checked as
+    /// it is.
+    pub(crate) fn adapted_fn_value(&mut self, e: &ast::Expr, exp: TyId) -> Option<hir::Expr> {
+        if let Some(h) = self.frameless_named_fn(e, Some(exp)) {
+            return Some(self.coerce(h, exp));
+        }
+        let fn_ty = self.cx.ty.core(exp).unwrap_or(exp);
+        match self.cx.ty.kind(fn_ty) {
+            TyKind::FnPtr { .. } => {
+                self.callback_adapter(e, exp, super::callback::CallbackMode::Plain)
+            }
+            _ => None,
+        }
+    }
+
+    /// The value of property `name` (`value`, or the variable `name` itself for `{ name }`)
+    /// named by a function, adapted to the property's function type `exp` as a variable's
+    /// initializer is ([`Self::adapted_fn_value`]): `{ patch }` where `patch` takes a defaulted
+    /// parameter the field's type doesn't pass.
+    pub(super) fn adapted_prop_fn(
+        &mut self,
+        name: &ast::Ident,
+        value: Option<&ast::Expr>,
+        exp: Option<TyId>,
+    ) -> Option<hir::Expr> {
+        let exp = exp?;
+        let fn_ty = self.cx.ty.core(exp).unwrap_or(exp);
+        if !matches!(self.cx.ty.kind(fn_ty), TyKind::FnPtr { .. }) {
+            return None;
+        }
+        let shorthand;
+        let e = match value {
+            Some(v) => v,
+            None => {
+                shorthand = super::callback::synth(ast::ExprKind::Ident(name.clone()), name.span);
+                &shorthand
+            }
+        };
+        if !matches!(e.kind, ast::ExprKind::Ident(_)) {
+            return None;
+        }
+        self.adapted_fn_value(e, exp)
+    }
+
     /// `h`, a function, as the function type `exp` whose parameters convert to its own and
     /// whose result its result converts to (module docs); `Err` gives `h` back when they don't.
     pub(super) fn widened_params(

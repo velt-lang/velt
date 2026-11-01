@@ -11,8 +11,8 @@ engine and doesn't wrap one: there is no interpreter, no JIT warm-up, no garbage
 single-threaded event loop. Your program is a native binary that uses every core of the machine.
 
 ```ts
-// server.ts: run it with `velt run server.ts`
-import { serve } from "velt:http";
+// src/main.ts of a package made with `velt new hello --template api`: `velt run`
+import { serve } from "http-server";
 
 interface User {
   id: string;
@@ -227,7 +227,7 @@ fn velt_zstd__compress(data: Vec<u8>, level: i32) -> Result<Vec<u8>, Error> {
 Declare it in the package's Velt code and give it the API you want, with a typed error:
 
 ```ts ignore
-import { IoResult } from "velt:io";
+import { IoResult } from "velt/native";
 
 declare async function velt_zstd__compress(data: u8[], level: i32): Promise<IoResult<u8[]>>;
 

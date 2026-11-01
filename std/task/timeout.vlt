@@ -1,0 +1,45 @@
+// velt/task (internal): `timeout`, a promise raced against a deadline, and its `TimeoutError`.
+
+import { AbortController } from "velt/task/controller";
+import { AbortError } from "velt/task/errors";
+import { AbortSignal } from "velt/task/signal";
+
+/**
+ * Thrown by `timeout(p, ms)` when `p` does not settle in time, and by `throwIfAborted()` on a
+ * signal that an `AbortSignal.timeout` aborted.
+ */
+export class TimeoutError extends AbortError {
+  ms: i64;
+
+  constructor(ms: i64) {
+    super(`timed out after ${ms} ms`);
+    this.ms = ms;
+  }
+}
+
+/**
+ * `p`, unless it does not settle within `ms` milliseconds: then `TimeoutError`. `p` is raced
+ * directly, so after a timeout it is abandoned like a `Promise.race` loser: a runtime wait
+ * (`signal.whenAborted()`, a timer) is dropped, and a started task keeps running, its
+ * rejection handled (pass it a signal to stop it). When `p` wins, the timer is cancelled at
+ * once, so nothing is left waiting.
+ */
+export async function timeout<T, E>(p: Promise<T, E>, ms: i64): Promise<T> throws E | TimeoutError {
+  const stop = new AbortController();
+  const racers: Promise<T, E | TimeoutError>[] = [p, expire<T, E>(ms, stop.signal)];
+  try {
+    const result = await Promise.race(racers);
+    stop.abort();
+    return result;
+  } catch (e) {
+    stop.abort();
+    throw e;
+  }
+}
+
+// Throws `TimeoutError` after `ms`, or ends early (its error is then dropped: it lost the race)
+// once `stop` is aborted; the losing runtime leaf (the timer) is cancelled either way.
+async function expire<T, E>(ms: i64, stop: AbortSignal): Promise<T> throws E | TimeoutError {
+  await Promise.race([sleep(ms), stop.whenAborted()]);
+  throw new TimeoutError(ms);
+}

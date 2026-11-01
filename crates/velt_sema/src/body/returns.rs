@@ -19,6 +19,16 @@ use crate::hir::{self, DefId, ExprKind as H, Nothing, StmtKind as S, TyId, TyKin
 use crate::visit::{self, VisitMut};
 
 /// The `return`s of a body whose result type is being inferred.
+/// Where a closure's returned values go when they reject or throw with errors its type doesn't
+/// say (`throws::promise_sites`, `throws::fn_flows`).
+#[derive(Default, Clone, Copy)]
+pub(crate) struct ReturnSite {
+    /// Where a closure's result type is written (not for an async one: its `Promise<T>`).
+    pub ret_span: Option<Span>,
+    /// A closure's span (its errors returned into no site go where it is stored).
+    pub closure_at: Option<Span>,
+}
+
 #[derive(Default, Clone)]
 pub(crate) struct Returns {
     values: Vec<Value>,
@@ -53,6 +63,14 @@ pub(crate) fn ret_of(cx: &mut Ctx, d: DefId, at: Span) -> TyId {
         if let Some(t) = pending_sig(cx, d, at) {
             return t;
         }
+    }
+    // A deferred std function is checked before its first call is (`lazy_std`): what a caller's
+    // check learns from the callee's body is there, as when every body was checked first.
+    if cx.fn_info(d).state == BodyState::Unchecked
+        && super::lazy_std::deferred(cx, d)
+        && !stack_exhausted(cx)
+    {
+        ensure_body(cx, d);
     }
     let f = cx.fn_info(d);
     match f.ret_source.clone() {
@@ -158,9 +176,25 @@ impl FnCx<'_, '_> {
         if self.f.is_async && self.f.yield_ty.is_none() && self.adopts_promise(ret) {
             return self.async_returned(e, ret);
         }
-        // Stored into the site of the written result type (`throws::fn_flows`).
+        // In an arrow asserted to a function type, TypeScript compares the result it infers
+        // with the asserted one: an `any` / `unknown` returned converts, as `e as R` does.
+        if self.f.asserted_ret && self.cx.dynamic(ret).is_none() {
+            if let Some(t) = self.trial_type(e).filter(|t| self.cx.dynamic(*t).is_some()) {
+                let h = self.expr(e, Some(t), Want::Move);
+                return self.cast_dynamic(h, ret);
+            }
+        }
+        // Stored into the site of the written result type (`throws::fn_flows`); a closure's
+        // without one goes where the closure is stored (`throws::promise_sites`).
         let site = self.return_site(ret);
-        self.stored_into(site, |s| s.expr_coerce(e, ret, Want::Move))
+        let at = site
+            .is_none()
+            .then_some(self.f.return_site.closure_at)
+            .flatten();
+        let outer = std::mem::replace(&mut self.cx.fn_sites.closure_return, at);
+        let h = self.stored_into(site, |s| s.expr_coerce(e, ret, Want::Move));
+        self.cx.fn_sites.closure_return = outer;
+        h
     }
 
     /// Can an async function returning `ret` adopt a returned promise? Not when `ret` is itself
@@ -495,6 +529,35 @@ impl FnCx<'_, '_> {
             }
         }
         false
+    }
+
+    /// A function declared to return `never` must not reach its end, as in TypeScript
+    /// (TS2534): its callers take it as never returning, so a reachable end would return where
+    /// nothing follows. Reports it; whether it did.
+    pub(super) fn never_end_reachable(
+        &mut self,
+        name: &str,
+        ret: TyId,
+        span: Span,
+        block: &hir::Block,
+    ) -> bool {
+        let reachable = ret == self.cx.ty.never
+            && !self.f.is_async
+            && self.f.yield_ty.is_none()
+            && !crate::flow::block_diverges(block, &self.cx.ty);
+        if reachable {
+            let short = name.rsplit("::").next().unwrap_or(name);
+            self.cx.error(
+                Diagnostic::error(
+                    format!(
+                        "function `{short}` returns `never`, so it cannot have a reachable end point"
+                    ),
+                    span,
+                )
+                .with_note("throw, loop forever or call a `never` function on every path"),
+            );
+        }
+        reachable
     }
 }
 

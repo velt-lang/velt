@@ -1,3 +1,7 @@
-json_stringify_replacer.vlt:4:31: error: the replacer of `JSON.stringify` cannot be a `(string, f64) => f64`
-json_stringify_replacer.vlt:5:37: error: the `space` of `JSON.stringify` is a number or a string, not a `boolean`
-json_stringify_replacer.vlt:6:13: error: `JSON.stringify` takes 1 to 3 arguments but 4 arguments were supplied
+json_stringify_replacer.vlt:5:43: error: the value parameter of a callback of `JSON.stringify` must be written `v: JsonValue` (#924)
+the callback gets each value as a `JsonValue`, not as a JavaScript value: `typeof`, arithmetic and comparisons on it would not do what they do in Node until `any` has its JavaScript meaning (#924)
+write `(key, v: JsonValue) => …` and read the value with `v.isNumber()`, `v.asNumber()` and the other `JsonValue` methods
+json_stringify_replacer.vlt:6:37: error: the `space` of `JSON.stringify` is a number or a string, not a `boolean`
+json_stringify_replacer.vlt:7:13: error: `JSON.stringify` takes 1 to 3 arguments but 4 arguments were supplied
+json_stringify_replacer.vlt:7:31: error: cannot infer the type of `null`
+add a type annotation like `let x: T | null = null`

@@ -1,0 +1,12 @@
+// The exclusive-access check of a system function's buffer follows a field path as it follows
+// a local: a later argument may not change `h.b` while `h.b.subarray(...)` is the buffer.
+declare system function pread(fd: i32, buf: u8[], offset: i64): isize;
+
+class Holder {
+  b: u8[] = Buffer.alloc(16);
+}
+
+function main() {
+  const h = new Holder();
+  console.log(pread(0, h.b.subarray(0, 8), (h.b.length = 0) as i64));
+}

@@ -1,0 +1,93 @@
+// An `async` method overrides an abstract (or base) method returning a promise, as an `async`
+// method implements an interface method returning one (docs/reference/async.md "Errors"):
+// with the error type written in the promise, with a `throws` clause, or with the errors
+// inferred from the override's body. A call through the base type rejects with the override's
+// errors, typed by the base method's promise; a synchronous override returning a promise
+// still works.
+// check: no leaks
+class IoError extends Error {}
+
+abstract class Source {
+  abstract read(): Promise<u8[], IoError>;
+  abstract text(): Promise<string>;
+  abstract size(): Promise<number> throws IoError;
+}
+
+class File extends Source {
+  fail: bool;
+  constructor(fail: bool) {
+    super();
+    this.fail = fail;
+  }
+  async read(): Promise<u8[], IoError> {
+    if (this.fail) {
+      throw new IoError("read failed");
+    }
+    return [1, 2, 3];
+  }
+  async text(): Promise<string> {
+    if (this.fail) {
+      throw new IoError("text failed");
+    }
+    return "abc";
+  }
+  async size(): Promise<number> {
+    const bytes = await this.read();
+    return bytes.length;
+  }
+}
+
+class Copy extends Source {
+  inner: File;
+  constructor(inner: File) {
+    super();
+    this.inner = inner;
+  }
+  read(): Promise<u8[], IoError> {
+    return this.inner.read();
+  }
+  async text(): Promise<string> {
+    return `copy of ${await this.inner.text()}`;
+  }
+  async size(): Promise<number> {
+    return await this.inner.size();
+  }
+}
+
+class Base {
+  read(): Promise<u8[], IoError> {
+    return Promise.resolve([7]);
+  }
+}
+
+class Over extends Base {
+  override async read(): Promise<u8[]> {
+    if (Math.random() > 2) {
+      throw new IoError("never");
+    }
+    return [8];
+  }
+}
+
+async function use(s: Source): Promise<void> {
+  try {
+    console.log((await s.read()).length, await s.text(), await s.size());
+  } catch (e) {
+    const io: IoError = e;
+    console.log(`caught ${io.message}`);
+  }
+}
+
+async function main() {
+  const sources: Source[] = [
+    new File(false),
+    new File(true),
+    new Copy(new File(false)),
+    new Copy(new File(true)),
+  ];
+  for (const s of sources) {
+    await use(s);
+  }
+  const b: Base = new Over();
+  console.log((await b.read())[0], (await new Base().read())[0]);
+}

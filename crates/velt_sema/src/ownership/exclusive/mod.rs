@@ -9,11 +9,12 @@
 //!   moves or captures;
 //! - a place passed `Borrow` must not overlap a place another argument moves;
 //! - no argument may mutate or move (while being evaluated) a place another argument passes by
-//!   reference.
+//!   reference, except change the inside of a class instance or an array passed so (the callee
+//!   sees the change as JavaScript's would: `this.set(this.src.get(1))`).
 //!
 //! Places overlap when one is a prefix of the other (`a` / `a.f`, `xs` / `xs[i]`; `xs[i]` and
 //! `xs[j]` always overlap, `a.f` and `a.g` never do); borrowing pattern bindings count as
-//! the place they borrow from. The non-Copy params of closures and of named functions used as
+//! the part of the place they borrow from (`t[0]` for `a` in `const [a, b] = t`). The non-Copy params of closures and of named functions used as
 //! values may alias each other (calls through a function value don't check their arguments
 //! against each other), so there they count as one place, unless their types cannot be one
 //! value (instances of unrelated classes, an array and a class instance). Guarantees for code generation: during a call, memory reachable
@@ -21,6 +22,7 @@
 //! captures of a closure argument), and `Borrow` parameters may alias each other but never a
 //! `BorrowMut` or `Owned` one.
 
+mod conflict;
 mod iteration;
 mod let_borrow;
 mod this_alias;
@@ -34,13 +36,16 @@ use crate::ctx::Ctx;
 use crate::defs::BodyState;
 use crate::defs::FnKind;
 use crate::hir::{
-    Callee, Def, DefId, Expr, ExprKind as E, FnDef, Intrinsic, LocalDef, LocalId, Pat, PatKind,
-    Stmt, StmtKind as S, TyKind, UseMode,
+    Callee, Capture, Def, DefId, Expr, ExprKind as E, FnDef, Intrinsic, LocalDef, LocalId,
+    PassMode, Pat, PatKind, Stmt, StmtKind as S, TyKind, UseMode,
 };
 use crate::ownership::validate::place_text;
 use crate::visit::{self, VisitMut};
 
+use conflict::first_conflict;
 use uses::{Access, Aliases, Collector, Place, Proj, Use};
+
+use super::closure_names::Closures;
 
 pub(crate) fn check_exclusive(cx: &mut Ctx) {
     let fns: Vec<DefId> = cx
@@ -49,7 +54,14 @@ pub(crate) fn check_exclusive(cx: &mut Ctx) {
         .copied()
         .filter(|d| cx.fn_info(*d).state == BodyState::Done)
         .collect();
+    // Which closure a local names, for the closures and functions used as values of the
+    // program (`Checker::relaxed_callee`): built once, when the first of them is checked, while
+    // every body is in place.
+    let mut closures: Option<Closures> = None;
     for d in fns {
+        if closures.is_none() && !cx.modules[cx.fn_info(d).module].is_std && as_value(cx, d) {
+            closures = Some(Closures::of(cx));
+        }
         let Some(Def::Fn(mut f)) = cx.defs[d.0 as usize].take() else {
             continue;
         };
@@ -79,11 +91,15 @@ pub(crate) fn check_exclusive(cx: &mut Ctx) {
             &mut errors,
         );
         let aliases = aliasing_params(cx, d, &f);
+        let params: Vec<(LocalId, LocalId)> = aliases.iter().map(|(l, p)| (*l, p.root)).collect();
         let soft: FxHashSet<Span> = cx.fn_info(d).soft_moves.iter().copied().collect();
         let mut checker = Checker {
             cx,
             locals: &f.body.locals,
             aliases,
+            params,
+            at: (d, &f.captures),
+            closures: closures.as_ref(),
             held: &held,
             soft: &soft,
             errors: vec![],
@@ -319,11 +335,24 @@ fn share_capture(cx: &mut Ctx, c: DefId, outer: LocalId) {
 /// so they all stand for the first one.
 fn aliasing_params(cx: &mut Ctx, d: DefId, f: &FnDef) -> Aliases {
     let mut out = Aliases::default();
-    let info = cx.fn_info(d);
-    let as_value = info.kind == FnKind::Closure || cx.fn_values.iter().any(|(v, ..)| *v == d);
-    if !as_value {
+    if !as_value(cx, d) {
         return out;
     }
+    for (l, root) in alias_groups(cx, f) {
+        out.insert(l, Place { root, proj: vec![] });
+    }
+    out
+}
+
+/// Is `d` a closure or a function used as a value?
+fn as_value(cx: &Ctx, d: DefId) -> bool {
+    cx.fn_info(d).kind == FnKind::Closure || cx.fn_values.iter().any(|(v, ..)| *v == d)
+}
+
+/// The non-Copy declared params of `f`, each with the first param it may be the same value as
+/// (itself if none).
+fn alias_groups(cx: &mut Ctx, f: &FnDef) -> FxHashMap<LocalId, LocalId> {
+    let mut out = FxHashMap::default();
     let first = f.captures.len() + usize::from(f.self_ty.is_some());
     // Params that may be the same value (directly or through another, `any`) are one place.
     let params: Vec<(LocalId, crate::hir::TyId)> = f.params[first..]
@@ -350,7 +379,7 @@ fn aliasing_params(cx: &mut Ctx, d: DefId, f: &FnDef) -> Aliases {
     }
     for i in 0..params.len() {
         let root = params[find(&mut set, i)].0;
-        out.insert(params[i].0, Place { root, proj: vec![] });
+        out.insert(params[i].0, root);
     }
     out
 }
@@ -376,6 +405,12 @@ struct Checker<'a, 'm> {
     cx: &'a Ctx<'m>,
     locals: &'a [LocalDef],
     aliases: Aliases,
+    /// The params `aliases` makes one place ([`aliasing_params`]), each with that place.
+    params: Vec<(LocalId, LocalId)>,
+    /// The function checked, and its captures.
+    at: (DefId, &'a [Capture]),
+    /// Which closure a local names; `None` before a program's closure is checked.
+    closures: Option<&'a Closures>,
     /// Non-escaping closures held in a local (`crate::ownership::held_closures`).
     held: &'a FxHashMap<LocalId, DefId>,
     /// The function's soft moves (`FnInfo::soft_moves`).
@@ -399,18 +434,35 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// Borrowing bindings of `pat` point into `place`.
-    fn bind(&mut self, pat: &Pat, place: &Place) {
+    /// Borrowing bindings of `pat` point into `place`: each into the part it matches (the
+    /// element of a tuple or array, the field of an object), so bindings of distinct parts are
+    /// distinct places (`for (const [name, raw] of cases) run(name, () => raw)`, #1873). An
+    /// array pattern's rest is a new array. Under `flat` (the payload of a union or the
+    /// alternatives of an or-pattern, where one binding may match different parts) a binding
+    /// points to all of `place`.
+    fn bind(&mut self, pat: &Pat, place: &Place, flat: bool) {
+        let part = |step: Proj| {
+            let mut p = place.clone();
+            if !flat {
+                p.proj.push(step);
+            }
+            p
+        };
         match &pat.kind {
             PatKind::Binding(l, UseMode::Borrow | UseMode::BorrowMut) => {
                 self.aliases.insert(*l, place.clone());
             }
-            PatKind::Variant { args: ps, .. } | PatKind::Tuple(ps) | PatKind::Or(ps) => {
-                ps.iter().for_each(|p| self.bind(p, place))
+            PatKind::Tuple(ps) => (ps.iter().enumerate())
+                .for_each(|(i, p)| self.bind(p, &part(Proj::Field(i as u32)), flat)),
+            PatKind::Array { elems, .. } => (elems.iter().enumerate())
+                .for_each(|(i, p)| self.bind(p, &part(Proj::Elem(i as u32)), flat)),
+            PatKind::Adt { fields } => {
+                (fields.iter()).for_each(|(i, p)| self.bind(p, &part(Proj::Field(*i)), flat))
             }
-            PatKind::Array { elems, .. } => elems.iter().for_each(|p| self.bind(p, place)),
-            PatKind::Adt { fields } => fields.iter().for_each(|(_, p)| self.bind(p, place)),
-            PatKind::Some(p) => self.bind(p, place),
+            PatKind::Variant { args: ps, .. } | PatKind::Or(ps) => {
+                ps.iter().for_each(|p| self.bind(p, place, true))
+            }
+            PatKind::Some(p) => self.bind(p, place, flat),
             _ => {}
         }
     }
@@ -426,6 +478,7 @@ impl Checker<'_, '_> {
         mutex_with: bool,
         held: Option<(DefId, Span)>,
         key_only: bool,
+        callee: Option<&Callee>,
     ) {
         let col = self.collector();
         let mut uses: ArgUses = vec![];
@@ -437,9 +490,17 @@ impl Checker<'_, '_> {
         if args.len() + uses.len() < 2 {
             return;
         }
+        // A system function's buffer is a view of bytes, not a value held by reference: a later
+        // argument that changes the array (`h.b.length = 0` beside `h.b.subarray(0, 8)`) would
+        // free bytes the view covers, so its arguments keep the strict rule.
+        let system = matches!(callee, Some(Callee::Def(d, _))
+            if self.cx.try_fn(*d).is_some_and(|f| f.system.is_some()));
         for a in args.iter_mut() {
             let (mut direct, mut nested) = (vec![], vec![]);
             col.direct(a, &mut direct, &mut nested);
+            if system {
+                direct.iter_mut().for_each(|u| u.identity = false);
+            }
             uses.push((direct, nested));
         }
         // `m.with(f)`: the callback gets the lock, i.e. mutable access to `m`'s value. Behind a
@@ -457,14 +518,31 @@ impl Checker<'_, '_> {
             drop_key_through_receiver(&mut uses);
         }
         let shared = share_borrowed_captures(&mut uses);
-        if let Some(d) = first_conflict(&uses) {
+        // Two whole params passed on to a callee checked with its params as one place
+        // (`relaxed_callee`) are what it was checked for. Only such a pair of direct uses: a
+        // nested use (a param changed while another argument is evaluated) keeps its conflict.
+        let whole = |u: &Use| {
+            u.place.proj.is_empty()
+                && !u.captured
+                && (self.params.iter()).any(|(l, root)| {
+                    *root == u.place.root && self.locals[l.0 as usize].name == u.text
+                })
+        };
+        let relaxed = std::cell::OnceCell::new();
+        let skip = |u: &Use, w: &Use| {
+            whole(u)
+                && whole(w)
+                && u.text != w.text
+                && *relaxed.get_or_init(|| callee.is_some_and(|c| self.relaxed_callee(c)))
+        };
+        if let Some(d) = first_conflict(&uses, &skip) {
             self.errors.push(d);
         } else if !shared.is_empty() {
             // The conflict the shares resolve, for a closure that turns out to modify.
             for &(i, k, ..) in &shared {
                 uses[i].0[k].access = Access::Move;
             }
-            if let Some(err) = first_conflict(&uses) {
+            if let Some(err) = first_conflict(&uses, &skip) {
                 for (_, _, c, outer) in shared {
                     self.shares.push((c, outer, err.clone()));
                 }
@@ -473,15 +551,58 @@ impl Checker<'_, '_> {
     }
 }
 
+impl Checker<'_, '_> {
+    /// Is `callee` a function checked as if its params may be one value, which assumes no
+    /// exclusive access for any of them (a closure, or a function used as a value, whose
+    /// modified params are `Borrow`, `finish::demote_fn_values`)? Two whole params of this
+    /// function that may be one value (`mount(vnode, container)` passing both on, in a renderer
+    /// whose nested functions are closures) are then what that callee was checked for (#1383),
+    /// as in JavaScript, where they are one object. Not a part of one with the other (`(a.log,
+    /// b)`: the callee was checked with an array and an object it can't contain), nor a param
+    /// changed while another argument is evaluated, nor a named function that takes one of them
+    /// `BorrowMut`: its body assumes they are not one value.
+    fn relaxed_callee(&self, callee: &Callee) -> bool {
+        if self.params.is_empty() {
+            return false;
+        }
+        let h = match callee {
+            Callee::Def(h, _) => *h,
+            Callee::Indirect(c) => match c.kind {
+                E::Local(l, _) => {
+                    let cx = self.cx;
+                    let caps_of = |g: DefId| -> &[Capture] {
+                        match &cx.defs[g.0 as usize] {
+                            Some(Def::Fn(p)) => &p.captures,
+                            _ => &[],
+                        }
+                    };
+                    let Some(closures) = self.closures else {
+                        return false;
+                    };
+                    match closures.resolve(self.at.0, self.at.1, l, caps_of) {
+                        Some(h) => h,
+                        None => return false,
+                    }
+                }
+                _ => return false,
+            },
+            _ => return false,
+        };
+        let info = self.cx.fn_info(h);
+        let loose = info.kind == FnKind::Closure || self.cx.fn_values.iter().any(|(v, ..)| *v == h);
+        loose && info.this.is_none() && info.params.iter().all(|p| p.mode != PassMode::BorrowMut)
+    }
+}
+
 /// Is `callee` a `has`, `get` or `delete` of `Map`, `Set`, `WeakMap` or `WeakSet`? Their key
 /// is compared by identity when it is an object (a number, `bool` or string is copied, so it is
 /// no use here): the callee reads its address, never what it points to.
 fn identity_key_call(cx: &Ctx, callee: &Callee) -> bool {
     const METHODS: [&str; 4] = [
-        "std/prelude/map::Map.",
-        "std/collections/set::Set.",
-        "std/prelude/weak::WeakMap.",
-        "std/prelude/weak::WeakSet.",
+        velt_common::std_item!(prelude_map, "Map."),
+        velt_common::std_item!(collections_set, "Set."),
+        velt_common::std_item!(prelude_weak, "WeakMap."),
+        velt_common::std_item!(prelude_weak_set, "WeakSet."),
     ];
     let Callee::Def(d, _) = callee else {
         return false;
@@ -559,81 +680,6 @@ fn share_borrowed_captures(uses: &mut ArgUses) -> Vec<(usize, usize, DefId, Loca
     out
 }
 
-fn first_conflict(uses: &ArgUses) -> Option<Diagnostic> {
-    for (i, (direct_i, _)) in uses.iter().enumerate() {
-        for (j, (direct_j, nested_j)) in uses.iter().enumerate() {
-            if i == j {
-                continue;
-            }
-            for u in direct_i {
-                if i < j {
-                    let hit = direct_j.iter().find(|w| clash(u, w));
-                    if let Some(w) = hit {
-                        return Some(report_direct(u, w));
-                    }
-                }
-                let by_ref = matches!(u.access, Access::Shared | Access::Unique);
-                let hit = nested_j
-                    .iter()
-                    .find(|w| by_ref && u.place.overlaps(&w.place));
-                if let Some(w) = hit {
-                    return Some(report(u, w));
-                }
-            }
-        }
-    }
-    None
-}
-
-/// Do two argument uses (`u` evaluated before `w`) conflict? Two moves, or a move followed
-/// by a use, are left to the move analysis ("use of moved value").
-fn clash(u: &Use, w: &Use) -> bool {
-    if u.access == Access::Move || !u.place.overlaps(&w.place) {
-        return false;
-    }
-    u.access == Access::Unique || w.access != Access::Shared
-}
-
-/// The mutable borrow is reported as the one the call holds, the other use as the error.
-fn report_direct(u: &Use, w: &Use) -> Diagnostic {
-    if w.access == Access::Unique && u.access != Access::Unique {
-        report(w, u)
-    } else {
-        report(u, w)
-    }
-}
-
-/// `held` is what the call keeps borrowed (label), `other` the conflicting use (primary span).
-fn report(held: &Use, other: &Use) -> Diagnostic {
-    let it = if held.text == other.text {
-        "it".to_string()
-    } else {
-        format!("`{}`", held.text)
-    };
-    let name = &other.text;
-    let msg = match (held.access, other.access) {
-        (Access::Unique, _) => {
-            format!("cannot use `{name}` here: this call may modify {it} through another argument")
-        }
-        (_, Access::Move) => {
-            format!("cannot move `{name}` here: {it} is already borrowed by this call")
-        }
-        _ => format!("cannot modify `{name}` here: {it} is already borrowed by this call"),
-    };
-    let label = match (held.access, held.captured) {
-        (Access::Unique, true) => format!("`{}` is modified by this closure", held.text),
-        (Access::Unique, false) => "may be modified through this argument".to_string(),
-        (_, true) => format!("`{}` is captured by this closure", held.text),
-        (_, false) => "borrowed here".to_string(),
-    };
-    Diagnostic::error(msg, other.span)
-        .with_label(held.span, label)
-        .with_note(
-            "a value the callee may modify must not be reachable through another argument \
-             of the same call; use a separate variable or `.clone()`",
-        )
-}
-
 impl VisitMut for Checker<'_, '_> {
     fn stmt(&mut self, s: &mut Stmt) {
         match &mut s.kind {
@@ -642,6 +688,7 @@ impl VisitMut for Checker<'_, '_> {
                 iter,
                 body,
                 consume,
+                share_elems,
                 ..
             } => {
                 if let Some((mut p, _)) = self.collector().place_of(iter) {
@@ -649,17 +696,18 @@ impl VisitMut for Checker<'_, '_> {
                         let text = place_text(self.cx, self.locals, iter);
                         let col = self.collector();
                         iteration::share_moved_iterated(&col, &p, self.soft, body);
-                        let hit =
-                            iteration::modified_while_iterating(&col, &p, &text, iter.span, body);
+                        let uses = iteration::body_uses(&col, body);
+                        let hit = iteration::modified_while_iterating(&uses, &p, &text, iter.span);
                         self.errors.extend(hit);
+                        *share_elems = iteration::replaces_bound(&uses, &p, binding);
                     }
                     p.proj.push(Proj::Index);
-                    self.bind(binding, &p);
+                    self.bind(binding, &p, false);
                 }
             }
             S::LetPat { pat, init } => {
                 if let Some((p, _)) = self.collector().place_of(init) {
-                    self.bind(pat, &p);
+                    self.bind(pat, &p, false);
                 }
             }
             _ => {}
@@ -671,7 +719,7 @@ impl VisitMut for Checker<'_, '_> {
             E::Match { scrutinee, arms } => {
                 if let Some((p, _)) = self.collector().place_of(scrutinee) {
                     for a in arms.iter() {
-                        self.bind(&a.pat, &p);
+                        self.bind(&a.pat, &p, false);
                     }
                 }
             }
@@ -684,9 +732,9 @@ impl VisitMut for Checker<'_, '_> {
                 let key_only = args.len() == 2
                     && by_identity(self.cx, args[1].ty)
                     && identity_key_call(self.cx, callee);
-                self.check_call(args, mutex_with, held, key_only);
+                self.check_call(args, mutex_with, held, key_only, Some(callee));
             }
-            E::New { args, .. } => self.check_call(args, false, None, false),
+            E::New { args, .. } => self.check_call(args, false, None, false, None),
             _ => {}
         }
     }

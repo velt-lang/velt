@@ -2,7 +2,7 @@
 // A `Deque` whose element type allows `null` or `undefined` keeps a stored `null` and a stored
 // `undefined` apart from an empty deque (the slots are `(T | undefined)[]`): `peekFront`, `at`,
 // `popFront`, `toArray` and `forEach` give the stored value, as an array would.
-import { Deque } from "velt:collections/deque";
+import { Deque } from "velt/collections";
 
 function main() {
   const d = new Deque<string | null>();

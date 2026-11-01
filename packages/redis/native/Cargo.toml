@@ -1,0 +1,29 @@
+[package]
+name = "velt_redis_native"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "The redis package's native library: a RESP2 client over Velt's sockets and rustls"
+
+[lib]
+# velt_native_<package>: the library's file name (one per package next to an executable).
+name = "velt_native_redis"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+# Inside this repository; a published package would depend on these from crates.io.
+velt_native = { path = "../../../crates/velt_native", features = ["tokio"] }
+velt_tls = { path = "../../../crates/velt_tls" }
+tokio = { version = "1.53.1", default-features = false, features = ["io-util", "sync"] }
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12"] }
+futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
+itoa = "1.0.18"
+
+[dev-dependencies]
+tokio = { version = "1.53.1", default-features = false, features = ["rt", "io-util", "sync", "macros"] }
+
+[profile.release]
+panic = "unwind"
+
+# Not part of the compiler's workspace.
+[workspace]

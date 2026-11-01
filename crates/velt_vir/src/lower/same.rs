@@ -4,14 +4,16 @@
 //! one home (it has a single owner), so its identity is the address of the place holding it.
 //! An object type that is copied when shared (never changed in place) would lose its identity
 //! that way, so comparing one records a fact that makes it counted once it is shared (boxing/).
-//! Interface and function values: see `ref_identity`. As `Map` and `Set` keys (`KeyEq`), a type
-//! declared with `struct` compares by content instead, field by field.
+//! Interface and function values: see `ref_identity`. A promise is the promise its holder holds
+//! (`promise_identity`). As `Map` and `Set` keys (`KeyEq`), a type declared with `struct` compares
+//! by content instead, field by field.
 
 use velt_sema::hir::{self, TyId, TyKind};
 
 use super::operand::proj;
+use super::rt::Rt;
 use super::{FnLower, Glue};
-use crate::vir::{BinOp, Operand, Place, Proj, Rvalue, Ty};
+use crate::vir::{BinOp, Const, Operand, Place, Proj, Rvalue, Ty};
 
 impl FnLower<'_, '_> {
     /// `a === b` for the values of concrete type `ty` at two places (Bool operand).
@@ -23,6 +25,9 @@ impl FnLower<'_, '_> {
         // A `struct` key (`KeyEq`, not `===`) compares by content, field by field.
         if self.key_mode && !self.value_mode && self.cx.content_key(ty) {
             return self.same_glue(a, b, ty);
+        }
+        if let TyKind::Promise(..) = self.cx.kind(ty) {
+            return self.promise_identity(a, b);
         }
         if self.cx.is_object(ty) {
             // Function and interface values keep their identity (a code / data pointer) when
@@ -50,17 +55,64 @@ impl FnLower<'_, '_> {
 
     /// `Intrinsic::IncludesEq` (JS `includes`): `same_values`, with a number (also one an `any`
     /// or an option holds) compared by SameValueZero, so `NaN` finds `NaN`; tuples and the other
-    /// types compare their parts as `===` does (Bool operand).
+    /// types compare their parts as `===` does; so does a union, whose `NaN`s are equal
+    /// (Bool operand).
     pub(super) fn includes_values(&mut self, a: &Place, b: &Place, ty: TyId) -> Operand {
         let keyed = match self.cx.kind(ty) {
             TyKind::Option(inner, _) => self.cx.ty(inner).is_float(),
             _ => self.cx.ty(ty).is_float() || self.cx.is_dynamic(ty),
         };
         if keyed {
-            self.key_same_values(a, b, ty)
-        } else {
-            self.same_values(a, b, ty)
+            return self.key_same_values(a, b, ty);
         }
+        let same = self.same_values(a, b, ty);
+        let inner = match self.cx.kind(ty) {
+            TyKind::Option(inner, _) => inner,
+            _ => ty,
+        };
+        if !self.is_enum(inner) {
+            return same;
+        }
+        // A union (`f64 | u8`, `f64 | string`): two values that each hold a `NaN` in a float
+        // member are equal. Its other members compare as `===` does (an object by identity,
+        // where the key comparison would compare a `struct` by content; a tuple holding a `NaN`
+        // is not `===` itself, yet holds no `NaN` number).
+        let a_nan = self.holds_nan(a, ty);
+        let b_nan = self.holds_nan(b, ty);
+        let nans = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, a_nan, b_nan));
+        self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitOr, same, nans))
+    }
+
+    /// Does the union value at `p` (of type `ty`, or an option of a union) hold a `NaN` in one
+    /// of its float members (Bool operand)?
+    fn holds_nan(&mut self, p: &Place, ty: TyId) -> Operand {
+        let r = self.temp(Ty::Bool);
+        let no = Operand::Const(Const::Bool(false), Ty::Bool);
+        self.assign(Place::local(r), Rvalue::Use(no));
+        let done = self.new_block();
+        let (p, union) = match self.cx.kind(ty) {
+            TyKind::Option(inner, _) => {
+                let some = self.option_is_some(p, ty);
+                self.when(some, done);
+                (self.some_payload(p, ty), inner)
+            }
+            _ => (p.clone(), ty),
+        };
+        self.for_each_variant(&p, union, |lw, _, parts| {
+            let [(x, t)] = &parts[..] else {
+                return;
+            };
+            let vt = lw.cx.ty(*t);
+            if !vt.is_float() {
+                return;
+            }
+            let (x, y) = (Operand::Copy(x.clone()), Operand::Copy(x.clone()));
+            let nan = lw.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, x, y));
+            lw.assign(Place::local(r), Rvalue::Use(nan));
+        });
+        self.goto(done);
+        self.switch_to(done);
+        Operand::Copy(Place::local(r))
     }
 
     /// `Object.is(a, b)` (`Intrinsic::SameValue`) for the values of concrete type `ty` at two
@@ -119,6 +171,21 @@ impl FnLower<'_, '_> {
         let code = self.word_eq(a, b, 0);
         let env = self.word_eq(a, b, 1);
         self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, code, env))
+    }
+
+    /// Identity of the promises at `a` and `b`: each holder of a shared promise is a pointer
+    /// of its own, so the runtime names the promise they hold (`velt_rt_fut_id`, #1682).
+    pub(super) fn promise_identity(&mut self, a: &Place, b: &Place) -> Operand {
+        let (x, y) = (self.promise_id(a), self.promise_id(b));
+        self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, x, y))
+    }
+
+    /// The identity of the promise at `p` (U64 operand).
+    pub(super) fn promise_id(&mut self, p: &Place) -> Operand {
+        let r = self.temp(Ty::U64);
+        let f = Operand::Copy(p.clone());
+        self.call_rt(Rt::FutId, vec![f], Some(Place::local(r)));
+        Operand::Copy(Place::local(r))
     }
 
     /// The env of the closure the generic function value at `p` boxes.

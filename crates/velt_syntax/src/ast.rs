@@ -8,11 +8,13 @@
 use velt_common::Span;
 
 mod blocks;
+mod decls;
 mod jsx;
 mod type_level;
 mod type_parts;
 
 pub use blocks::*;
+pub use decls::*;
 pub use jsx::*;
 pub use type_level::*;
 pub use type_parts::*;
@@ -64,7 +66,7 @@ pub struct Item {
 
 #[derive(Clone, Debug)]
 pub enum ItemKind {
-    /// `import { a, b as c } from "velt:fs";`, `import * as ns from "./m";`. With `exported`
+    /// `import { a, b as c } from "velt/fs";`, `import * as ns from "./m";`. With `exported`
     /// set it is a re-export: `export { a, b as c } from "./m";`, `export * from "./m";`, or a
     /// local export list `export { a, b as c };` (empty `from`).
     Import(Import),
@@ -81,7 +83,9 @@ pub enum ItemKind {
     Var(VarDecl),
     /// `extend<T> Array<T> { methods }` — add methods to an existing type (used by std/prelude).
     Extend(ExtendDecl),
-    /// `declare function name(a: i64): void;` — external C-ABI symbol (used by std for rt FFI).
+    /// `declare function name(a: i64): void;` — external C-ABI symbol (used by std for rt FFI);
+    /// `declare system function pread(...)` (`FnSig::is_system`) binds the platform's C library;
+    /// `declare intrinsic function f(...)` (`FnSig::is_intrinsic`) declares a compiler intrinsic.
     ExternFn(FnSig),
     /// `declare global { … }` / `declare module "spec" { … }`: declarations that augment the
     /// global scope or another module (TypeScript's augmentation; interfaces merge into the
@@ -154,11 +158,32 @@ pub struct FnSig {
     /// `throws A | B` after the return type; `None`: the thrown types are inferred.
     pub throws: Option<TypeExpr>,
     pub is_async: bool,
+    /// `declare system function`: a function of the platform's C library, checked against the
+    /// compiler's table of system functions (docs/reference/system-functions.md). Always `false`
+    /// for anything but a `declare` item.
+    pub is_system: bool,
+    /// `declare intrinsic function arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void;`: an
+    /// operation the compiler emits itself, declared in std/lang/intrinsics (only there) so that
+    /// calls are checked against this signature (docs/internals/design/std-layout.md §10).
+    /// Always `false` for anything but a `declare` item. Additive.
+    pub is_intrinsic: bool,
+    /// `declare generated("./gen") function f<T>(…): R;`: a function whose body a source
+    /// generator writes per instance (docs/internals/design/source-generators.md). Parsed as a
+    /// [`FnDecl`] with an empty body; `None` for every other function. Additive.
+    pub generator: Option<GeneratorSpec>,
     /// `function*` / `*name()`: a generator (`yield` is allowed in its body).
     pub is_generator: bool,
     /// `function f(this: T, ...)`: the type of `this` in the body, when it is not `void` (a
     /// `this` parameter is no parameter: callers pass the receiver). `None` without one.
     pub this_param: Option<Box<TypeExpr>>,
+    pub span: Span,
+}
+
+/// The generator module of a generated function: the specifier string of
+/// `declare generated("<spec>") function`, resolved like an import of the declaring module.
+#[derive(Clone, Debug)]
+pub struct GeneratorSpec {
+    pub spec: String,
     pub span: Span,
 }
 
@@ -173,119 +198,6 @@ pub struct FnDecl {
     /// without overloads, and always for function expressions, object-literal methods and
     /// constructors.
     pub overloads: Vec<FnSig>,
-}
-
-#[derive(Clone, Debug)]
-pub struct Field {
-    pub name: Ident,
-    pub ty: TypeExpr,
-    pub default: Option<Expr>,
-    pub readonly: bool,
-    /// `name?: T` — the field has type `T | null` and defaults to `null`.
-    pub optional: bool,
-    /// `private name: T` — only accessible inside the declaring type's body.
-    pub is_private: bool,
-    /// `static readonly name: T = e;` — a per-type constant, not an instance field.
-    pub is_static: bool,
-    pub span: Span,
-}
-
-#[derive(Clone, Debug)]
-pub struct Method {
-    pub decl: FnDecl,
-    pub is_static: bool,
-    /// `private` keyword: only callable inside the declaring type's body.
-    pub is_private: bool,
-    /// `get name(): T { ... }` — read as a property (`x.name`), no parameters.
-    pub is_getter: bool,
-    /// `set name(v: T) { ... }` — runs on assignment `x.name = v`; one parameter, no return
-    /// type; it always mutates `this`. May share its name with a getter.
-    pub is_setter: bool,
-    /// `override` keyword: redefines a base-class method.
-    pub is_override: bool,
-}
-
-/// Shared by `struct` and `class`.
-#[derive(Clone, Debug)]
-pub struct TypeDecl {
-    pub name: Ident,
-    pub generics: Vec<GenericParam>,
-    /// `extends Base<T>` — classes only, at most one.
-    pub extends: Option<TypeExpr>,
-    /// `implements A, B`
-    pub implements: Vec<TypeExpr>,
-    pub fields: Vec<Field>,
-    pub constructor: Option<FnDecl>,
-    /// `private constructor` / `protected constructor` (`Public` without a constructor).
-    pub ctor_visibility: CtorVisibility,
-    pub methods: Vec<Method>,
-}
-
-/// Who may call a class's constructor (TypeScript's rules, docs/reference/classes.md): anyone;
-/// the class body and its subclasses (`protected`); only the class body, and the class cannot
-/// be extended (`private`).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum CtorVisibility {
-    #[default]
-    Public,
-    Protected,
-    Private,
-}
-
-#[derive(Clone, Debug)]
-pub struct InterfaceDecl {
-    pub name: Ident,
-    pub generics: Vec<GenericParam>,
-    pub extends: Vec<TypeExpr>,
-    /// Fields every implementor must have (same name and type).
-    pub fields: Vec<Field>,
-    pub methods: Vec<InterfaceMethod>,
-    /// Call and construct signatures, as for [`TypeExprKind::Callable`].
-    pub call_sigs: Vec<CallSig>,
-}
-
-/// Interface method: required (`body: None`) or with a default implementation.
-#[derive(Clone, Debug)]
-pub struct InterfaceMethod {
-    pub sig: FnSig,
-    pub body: Option<Block>,
-    /// `get name(): T` — read as a property, no parameters.
-    pub is_getter: bool,
-    /// `set name(v: T)` — called by `x.name = v`; one parameter; it always mutates `this`.
-    pub is_setter: bool,
-}
-
-/// `extend<T> Target<T> [implements A, B] { methods }`
-#[derive(Clone, Debug)]
-pub struct ExtendDecl {
-    pub generics: Vec<GenericParam>,
-    pub target: TypeExpr,
-    /// `implements A, B`: the interfaces the block's methods implement for the target.
-    pub implements: Vec<TypeExpr>,
-    pub methods: Vec<Method>,
-}
-
-/// `enum Color { Red, Green = 5 }` (numeric, TS-style) or `enum Dir { Up = "UP" }` (string enum).
-/// Tagged unions are written as discriminated unions of object types instead.
-#[derive(Clone, Debug)]
-pub struct EnumDecl {
-    pub name: Ident,
-    pub variants: Vec<Variant>,
-}
-
-#[derive(Clone, Debug)]
-pub struct Variant {
-    pub name: Ident,
-    /// `= 5` / `= -1` / `= "UP"`.
-    pub discriminant: Option<Expr>,
-    pub span: Span,
-}
-
-#[derive(Clone, Debug)]
-pub struct TypeAlias {
-    pub name: Ident,
-    pub generics: Vec<GenericParam>,
-    pub ty: TypeExpr,
 }
 
 // ───────────────────────────── Types ─────────────────────────────
@@ -326,9 +238,13 @@ pub enum TypeExprKind {
         type_params: Vec<GenericParam>,
         ty: Box<TypeExpr>,
     },
-    /// `new (a: A) => R`: a construct signature, the type of a class used as a value (the
-    /// function type, generic or not, after `new`).
-    Construct(Box<TypeExpr>),
+    /// `new (a: A) => R`: a construct signature, the type of a class used as a value (`ty`: the
+    /// function type, generic or not, after `new`). `abstract new (a: A) => R` (`is_abstract`)
+    /// also takes abstract classes, and cannot be called with `new`.
+    Construct {
+        ty: Box<TypeExpr>,
+        is_abstract: bool,
+    },
     /// `A | B` (a union type; `T | null` is an optional `T`).
     Union(Vec<TypeExpr>),
     /// `A & B` (an intersection; binds tighter than `|`). Generic bounds (`T extends A & B`)

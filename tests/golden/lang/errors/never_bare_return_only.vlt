@@ -1,0 +1,9 @@
+// `return;` as the whole body of a `never` function, and in a `never` arrow function.
+function g(): never {
+  return;
+}
+const h = (): never => {
+  return;
+};
+g();
+h();

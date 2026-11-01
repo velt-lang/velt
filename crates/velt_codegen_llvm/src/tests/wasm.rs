@@ -68,6 +68,7 @@ fn wasm_objects_when_llc_is_available() {
         let opts = CodegenOptions {
             target: target.into(),
             optimize,
+            cpu: None,
         };
         let obj = emit_object(&sample(), &opts).unwrap();
         assert_eq!(&obj[..4], b"\0asm", "{target}");

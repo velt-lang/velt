@@ -1,16 +1,14 @@
 //! Hot swap in the JIT host (docs/internals/design/hot-reload.md, phase 3): on each `reload` request the
 //! host builds the current sources while the program keeps running, and `DevSession::reload`
-//! either swaps the changed functions in or says why the program must restart. After a swap,
-//! HTTP servers whose handler was recompiled get a descriptor with the new code, so their new
-//! requests run it (in-flight requests finish on the code they started with).
+//! either swaps the changed functions in or says why the program must restart. New calls reach
+//! the new code through the trampolines (an HTTP server's next request runs the new handler);
+//! a future in flight finishes on the code of the version that started it.
 
 use std::time::Instant;
 
 use velt_codegen_cl::{DevSession, Reload};
 use velt_rt_host::dev::handover::reload::{reply_reload, wait_reload, Reloaded};
 use velt_rt_host::dev::handover::Stream;
-use velt_rt_host::http::handler::{update_handlers, InitFn, VeltHandler};
-use velt_rt_host::task::{DropFn, PollFn};
 
 use super::native::{source_files, Fingerprint};
 use crate::cli::BuildArgs;
@@ -94,33 +92,12 @@ fn reload(session: &mut DevSession, opts: &BuildOptions, flags: Report) -> Reloa
     sess.record_details("jit", &steps);
     report(&sess, verbose);
     match outcome {
-        Ok(Reload::Swapped { functions }) => {
-            update_handlers(|desc| handler_update(session, desc));
-            Reloaded::Swapped { functions, files }
-        }
+        Ok(Reload::Swapped { functions }) => Reloaded::Swapped { functions, files },
         Ok(Reload::Restart(reason)) => Reloaded::Restart { reason, files },
         Err(e) => Reloaded::Restart {
             reason: format!("code generation failed: {e}"),
             files,
         },
-    }
-}
-
-/// The descriptor a running server should switch to, if the swap recompiled its handler.
-fn handler_update(session: &DevSession, desc: &VeltHandler) -> Option<VeltHandler> {
-    let code = session.handler_update(desc.init as usize)?;
-    // SAFETY: the addresses are the newest JIT code of this handler's `init`, `$poll` and
-    // `$drop`, compiled with exactly the C signatures of these descriptor fields
-    // (rt_abi_async.md §7), and never freed during the session.
-    unsafe {
-        Some(VeltHandler {
-            init: std::mem::transmute::<usize, InitFn>(code.init),
-            poll: std::mem::transmute::<usize, PollFn>(code.poll),
-            drop: std::mem::transmute::<usize, DropFn>(code.drop),
-            state_size: code.state_size,
-            state_align: code.state_align,
-            env: desc.env,
-        })
     }
 }
 

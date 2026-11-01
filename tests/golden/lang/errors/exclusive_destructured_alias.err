@@ -1,0 +1,14 @@
+exclusive_destructured_alias.vlt:18:16: error: cannot use `a` here: this call may modify `t.0` through another argument
+exclusive_destructured_alias.vlt:18:10: may be modified through this argument
+exclusive_destructured_alias.vlt:19:13: error: cannot use `t.1` here: this call may modify `b` through another argument
+exclusive_destructured_alias.vlt:19:10: may be modified through this argument
+exclusive_destructured_alias.vlt:22:15: error: cannot use `two` here: this call may modify `one` through another argument
+exclusive_destructured_alias.vlt:22:10: may be modified through this argument
+exclusive_destructured_alias.vlt:25:19: error: cannot use `c` here: this call may modify `n.0.0` through another argument
+exclusive_destructured_alias.vlt:25:10: may be modified through this argument
+exclusive_destructured_alias.vlt:26:13: error: cannot use `d` here: this call may modify it through another argument
+exclusive_destructured_alias.vlt:26:10: may be modified through this argument
+exclusive_destructured_alias.vlt:29:22: error: cannot use `e` here: this call may modify `ps[..].0` through another argument
+exclusive_destructured_alias.vlt:29:12: may be modified through this argument
+exclusive_destructured_alias.vlt:30:15: error: cannot use `f` here: this call may modify it through another argument
+exclusive_destructured_alias.vlt:30:12: may be modified through this argument

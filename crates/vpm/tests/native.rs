@@ -49,6 +49,7 @@ fn bundle_dir(dir: &Path, target: &str, content: &str) -> PathBuf {
         shared,
         import_lib,
         static_obj: Some("static/db.o".into()),
+        system_libs: None,
         exports: BTreeMap::from([("velt_db__open".into(), "(string)->IoResult<u64>".into())]),
     };
     std::fs::write(b.join("native.json"), meta.to_json()).unwrap();

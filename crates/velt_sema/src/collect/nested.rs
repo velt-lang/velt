@@ -39,9 +39,10 @@ enum Found<'m> {
     Bind(&'m str),
 }
 
-pub(super) fn declare_nested(cx: &mut Ctx, defs: &mut Vec<DefId>) {
+/// Declare the nested items of modules `ms`.
+pub(super) fn declare_nested(cx: &mut Ctx, defs: &mut Vec<DefId>, ms: &[usize]) {
     let mut used = FxHashSet::default();
-    for m in 0..cx.modules.len() {
+    for &m in ms {
         let module = &cx.modules[m];
         for item in &module.ast.items {
             let Some(name) = item_name(item) else {

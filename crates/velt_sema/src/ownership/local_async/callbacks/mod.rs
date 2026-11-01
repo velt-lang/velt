@@ -1,23 +1,23 @@
-//! Sync callbacks that HTTP requests call at the same time (#873): an HTTP handler only reads
-//! what it captured, but a function value it reaches (`i.onChange("x")`, with
-//! `i.onChange = (v) => { last = v; }`) may assign a variable that function captured itself.
-//! Requests run on several threads at once and share what the handler captured, so they would
-//! all assign that one variable at once. Such a handler is an error, naming the call and the
-//! variable, with a fix-it that shares the variable with `shared(...)` as Node shares it.
+//! Sync callbacks a standard-library function runs on other threads (#873): a callback handed to
+//! one (a server's handler, run on a task per connection) only reads what it captured, but a
+//! function value it reaches (`i.onChange("x")`, with `i.onChange = (v) => { last = v; }`) may
+//! assign a variable that function captured itself. Each thread runs a copy, so the assignment
+//! changes that copy only, out of sight. Such a call is an error, naming the call and the
+//! variable, with a fix-it that shares the variable with `shared(...)` as Node shares it. A
+//! closure the program hands to `spawn` itself runs on its copy, as docs/reference/async.md says.
 //!
-//! What a handler reaches is followed on the graph of [`super`]: the values flowing into the
-//! handler `serve` passes to `Intrinsic::HttpHandler`, the captures of the closures among them,
-//! and through the heap by type ([`super::types`]): a sync closure stored in a field, element or
-//! map value is reached when a value the handler reaches has a type holding a function type of
-//! its shape, written without generic parameters (the prelude's `resolve`, a `(T) => void`,
-//! stands for no callback the user stores), and in the direction values flow ([`fits`]: a
-//! `() => void` closure is never a `() => string`). A closure is reached even when no code
-//! a request may run reads the field holding it (`w.onClick = …` while the handler reads only
-//! `w.name`): each request's copy of `w` copies the closure, and those copies share the
-//! variable it captured across threads. A variable declared in a request
-//! (a reached async closure, or a closure made inside one) is that request's own, and the
-//! standard library's closures are not the user's to change, so neither is reported. A reached
-//! closure's assignments include those of the closures it makes.
+//! What crosses is followed on the graph of [`super`]: the values flowing into a thread boundary,
+//! the captures of the closures among them, and through the heap by type ([`super::types`]): a sync
+//! closure stored in a field, element or map value is reached when a value the handler reaches has
+//! a type holding a function type of its shape, written without generic parameters (the prelude's
+//! `resolve`, a `(T) => void`, stands for no callback the user stores), and in the direction values
+//! flow ([`fits`]: a `() => void` closure is never a `() => string`). A closure is reached even
+//! when no code a request may run reads the field holding it (`w.onClick = …` while the handler
+//! reads only `w.name`): each request's copy of `w` copies the closure, and those copies share the
+//! variable it captured across threads. A variable declared in a request (a reached async closure,
+//! or a closure made inside one) is that request's own, and the closures of a library (std, a
+//! package) are not the program's to change, so neither is reported. A reached closure's
+//! assignments include those of the closures it makes.
 //!
 //! When in doubt the check reports: a missed case crashes, while a reported one has the
 //! `shared(...)` fix-it. So what a local holds is reached by type, not only when the local is
@@ -45,38 +45,44 @@ use bodies::Bodies;
 use held::{homes, root};
 use message::{call_site, declaration, report};
 
-/// Report the sync closures HTTP handlers reach that assign a variable they captured (module
-/// docs). `flags` are the propagated node flags of [`super`] (`STORED` is used); `handlers`
-/// are the sync closures passed to `serve` as handlers, checked as handlers themselves.
-pub(super) fn check_handler_callbacks(
-    cx: &mut Ctx,
-    g: &Graph,
-    flags: &[u8],
-    handlers: &FxHashMap<DefId, Option<Why>>,
-) {
+/// Whether values reaching `b` run on another thread (rather than maybe staying here).
+fn crosses(b: Boundary) -> bool {
+    !matches!(b, Boundary::FnValue)
+}
+
+/// Report the sync closures that what crosses to another thread reaches, which assign a
+/// variable they captured (module docs); returns the closures reported. `flags` are the
+/// propagated node flags of [`super`] (`STORED` is used). A closure that crosses itself (one of
+/// the seeds) has its own assignments reported by [`super`], and only those of the closures it
+/// makes here.
+pub(super) fn check_crossing_callbacks(cx: &mut Ctx, g: &Graph, flags: &[u8]) -> FxHashSet<DefId> {
     let mut work: Vec<(usize, Why)> = g
         .seeds
         .iter()
         .filter(|(_, f, _)| *f == CROSSES)
-        .filter_map(|&(n, _, w)| {
-            w.filter(|w| w.boundary == Boundary::Handler)
-                .map(|w| (n, w))
-        })
+        .filter_map(|&(n, _, w)| w.filter(|w| crosses(w.boundary)).map(|w| (n, w)))
         .collect();
     let mut roots: Vec<(TyId, Why)> = g
         .roots
         .iter()
-        .filter(|(_, w)| w.boundary == Boundary::Handler)
+        .filter(|(_, w)| crosses(w.boundary))
         .copied()
         .collect();
+    // The closures that cross themselves: a seed, or what a seed holds directly.
+    let crossing: FxHashSet<DefId> = (g.seeds.iter())
+        .filter(|(_, f, w)| *f == CROSSES && w.is_some_and(|w| crosses(w.boundary)))
+        .filter_map(|&(n, _, _)| match g.nodes[n] {
+            Node::Lit(c) => Some(c),
+            _ => None,
+        })
+        .collect();
     if work.is_empty() && roots.is_empty() {
-        return;
+        return FxHashSet::default();
     }
     // Where the program stores closures, for the message: only needed when it stores one.
-    let user =
-        g.nodes.iter().enumerate().any(
-            |(n, node)| matches!(node, Node::Lit(c) if flags[n] & STORED != 0 && !in_std(cx, *c)),
-        );
+    let user = g.nodes.iter().enumerate().any(
+        |(n, node)| matches!(node, Node::Lit(c) if flags[n] & STORED != 0 && !in_library(cx, *c)),
+    );
     let mut bodies = if user {
         Bodies::new(cx)
     } else {
@@ -86,12 +92,15 @@ pub(super) fn check_handler_callbacks(
         bodies.homes = homes(cx, g);
     }
     let mut why: Vec<Option<Why>> = vec![None; g.nodes.len()];
-    let mut seen = FxHashSet::default();
+    let mut seen = FxHashMap::default();
     let mut fns: FxHashMap<TyId, Why> = FxHashMap::default();
     let mut rooted = 0;
     loop {
         while let Some((n, w)) = work.pop() {
-            if why[n].is_some() {
+            // A node keeps its preferred reason (`Why::rank`): one found later may be better (a
+            // value the program hands to a library, after a type inside the library that only
+            // happens to have the closure's shape), and only some reasons are reported.
+            if why[n].is_some_and(|old| !w.before(&old, cx)) {
                 continue;
             }
             why[n] = Some(w);
@@ -114,15 +123,17 @@ pub(super) fn check_handler_callbacks(
         types::crossing_fns(cx, &roots[rooted..], &mut seen, &mut fns);
         rooted = roots.len();
         for (n, node) in g.nodes.iter().enumerate() {
-            if !matches!(node, Node::Lit(_)) || why[n].is_some() || flags[n] & STORED == 0 {
+            if !matches!(node, Node::Lit(_)) || flags[n] & STORED == 0 {
                 continue;
             }
             let found = fns
                 .iter()
                 .filter(|(t, _)| !types::mentions_param(cx, **t) && fits(cx, g.tys[n], **t))
                 .map(|(_, w)| *w)
-                .min_by_key(|w| (w.std, w.span.file, w.span.lo));
-            if let Some(w) = found {
+                // The preferred reason (`Why::before`, holders named on a tie), never the first
+                // in the map's order, which unrelated types change.
+                .reduce(|best, w| if w.before(&best, cx) { w } else { best });
+            if let Some(w) = found.filter(|w| why[n].is_none_or(|old| w.before(&old, cx))) {
                 work.push((n, w));
             }
         }
@@ -144,21 +155,29 @@ pub(super) fn check_handler_callbacks(
         .filter(|(c, ..)| matches!(&cx.defs[c.0 as usize], Some(Def::Fn(f)) if f.is_async))
         .map(|(c, ..)| *c)
         .collect();
+    // What a task's own async closure assigns is reported as its capture by [`super`].
+    let by_tasks: FxHashSet<(velt_common::FileId, u32)> = (requests.iter())
+        .flat_map(|c| cx.fn_info(*c).mutated_captures.iter())
+        .map(|(_, at)| (at.file, at.lo))
+        .collect();
     let mut found: Vec<(DefId, TyId, Why, LocalId, String, TyId, Span)> = vec![];
     for &(c, ty, w) in &reached {
         let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] else {
             continue;
         };
-        if in_std(cx, c) {
+        if in_library(cx, c) {
             continue;
         }
-        // A request's closure (and a handler) assigning what it captured is reported by
+        // A task's closure (and a crossing one) assigning what it captured is reported by
         // [`super`]; one it makes doing so is reported here.
-        let nested_only = f.is_async || f.is_generator || handlers.contains_key(&c);
+        let nested_only = f.is_async || f.is_generator || crossing.contains(&c);
         for (cap, at) in assigned_captures(cx, f, nested_only) {
             // A variable of the request's own closure (or of a closure it makes) is the
             // request's own.
             if request_local(cx, g, c, cap, &requests) {
+                continue;
+            }
+            if by_tasks.contains(&(at.file, at.lo)) {
                 continue;
             }
             let local = &f.body.locals[cap.0 as usize];
@@ -168,16 +187,24 @@ pub(super) fn check_handler_callbacks(
             }
         }
     }
+    // Only what a standard-library function runs on other threads (out of sight); a closure the
+    // program spawns itself runs on its own copy (docs/reference/async.md).
+    found.retain(|x| x.2.in_library && x.2.boundary == Boundary::Spawn);
+    let reported: FxHashSet<DefId> = found.iter().map(|x| x.0).collect();
     for (c, ty, w, cap, name, cap_ty, at) in found {
-        // The closure making the assigning one runs in a request itself: no call to show.
-        let call = if requests.contains(&c) || handlers.contains_key(&c) {
+        // The closure making the assigning one runs on the other thread itself: no call to show.
+        let call = if requests.contains(&c) || crossing.contains(&c) {
             None
         } else {
             call_site(cx, g, &reached, &requests, &bodies, c, ty)
         };
+        // A call the compiler made (a callback adapter's hidden `#callback1`) is not the user's:
+        // the function itself is reported.
+        let call = call.filter(|(callee, _)| !callee.starts_with('#'));
         let init = declaration(cx, g, c, cap);
         report(cx, &name, cap_ty, at, call, init, w);
     }
+    reported
 }
 
 /// Is capture `cap` of closure `c` a variable declared inside one of `requests` (a request's
@@ -214,8 +241,8 @@ fn made_by(g: &Graph, c: DefId, requests: &FxHashSet<DefId>) -> bool {
     false
 }
 
-fn in_std(cx: &Ctx, d: DefId) -> bool {
-    cx.try_fn(d).is_some_and(|i| cx.scopes[i.module].is_std)
+fn in_library(cx: &Ctx, d: DefId) -> bool {
+    cx.try_fn(d).is_some_and(|i| cx.scopes[i.module].is_library)
 }
 
 /// May a closure literal of type `lit` be a function value of type `f`? As

@@ -48,7 +48,7 @@ impl FnLower<'_, '_> {
     }
 
     /// Drop the `any` at `*v` and return `status`.
-    fn any_set_refuse(&mut self, v: vir::Local, status: i128) {
+    pub(super) fn any_set_refuse(&mut self, v: vir::Local, status: i128) {
         let any = self.cx.any_ty();
         let vp = self.any_out(v);
         self.drop_glue(vp, any);
@@ -76,6 +76,9 @@ impl FnLower<'_, '_> {
     fn any_set_body(&mut self, data: vir::Local, key: vir::Local, v: vir::Local, ty: TyId) {
         if self.is_proxy(ty) {
             return self.proxy_set_body(data, ProxyKey::Str(key), v, ty);
+        }
+        if self.fn_props(ty) {
+            return self.fn_prop_set(data, key, v, ty);
         }
         if let Some((k, val)) = self.prelude_record(ty) {
             return self.any_set_record(data, key, v, ty, (k, val));
@@ -140,7 +143,8 @@ impl FnLower<'_, '_> {
                 continue;
             }
             let next = self.on_key(key, &m.name);
-            match (m.kind, self.ready(ty, m)) {
+            let throwing = m.kind == DynMemberKind::Setter;
+            match (m.kind, self.ready_with(ty, m, throwing)) {
                 (DynMemberKind::Setter, Some(r)) => {
                     let f = self.cx.fn_def(r.def);
                     let pt = f.params.get(1).map(|p| p.ty);
@@ -223,19 +227,32 @@ impl FnLower<'_, '_> {
 
     /// The names of struct `d`'s fields as members through `any`, in order: a field holding an
     /// accessor (`accessor_fields`) is named `#` first, as a private field is, so it is no member
-    /// of its own and the accessor is found instead.
+    /// of its own and the accessor is found instead. So is a private field that a standard
+    /// library class declares (as `in` leaves it out, any_has.rs): it is the implementation, not
+    /// a property of the JavaScript built-in, and a program that read or replaced it through
+    /// `any` could break what the class relies on (an `ArrayBuffer`'s `bytes` and `fixed`, whose
+    /// views read their elements without a check of their own). Such a read gives `undefined`
+    /// and such a write is one of a property the object does not have.
     pub(super) fn member_fields(&mut self, d: velt_sema::hir::DefId) -> Vec<String> {
         let shadowed = self.accessor_fields(d);
-        let fields = self.cx.adt_def(d).fields.iter().map(|f| f.name.clone());
+        let std_prefix = match self.std_class(d) {
+            true => self.cx.adt_def(d).fields.len(),
+            false => self.std_base_fields(d),
+        };
+        let fields = self.cx.adt_def(d).fields.iter().enumerate();
+        let fields: Vec<(String, bool)> = fields
+            .map(|(i, f)| (f.name.clone(), f.private && i < std_prefix))
+            .collect();
         fields
-            .map(|n| match shadowed.contains(&n) {
+            .into_iter()
+            .map(|(n, internal)| match internal || shadowed.contains(&n) {
                 true => format!("#{n}"),
                 false => n,
             })
             .collect()
     }
 
-    /// `r[key] = v` on a `Record<string, V>`: its `__set`.
+    /// `r[key] = v` on a `Record<string, V>`: its `[RECORD_SET]`.
     fn any_set_record(
         &mut self,
         data: vir::Local,
@@ -247,10 +264,9 @@ impl FnLower<'_, '_> {
         let Some((d, _)) = self.plain_adt(ty) else {
             return self.any_set_refuse(v, ST_UNSUPPORTED);
         };
-        let set = self
-            .dyn_members_of(d)
-            .into_iter()
-            .find(|m| m.name == "__set" && m.kind == DynMemberKind::Method);
+        let set = self.dyn_members_of(d).into_iter().find(|m| {
+            m.name == velt_common::std_key!(record_set) && m.kind == DynMemberKind::Method
+        });
         let ready = set.and_then(|m| self.ready(ty, &m));
         let str_key = matches!(self.cx.kind(k), TyKind::Str);
         let Some(r) = ready.filter(|_| str_key && self.cx.any_unboxable(val)) else {

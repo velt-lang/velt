@@ -1,0 +1,20 @@
+// structuredClone of a record copies its own enumerable string keys only, as Node does: not its
+// symbol keys or its accessors (#1629). `PropertyKey` is TypeScript's `string | number | symbol`.
+
+const S = Symbol("s");
+type PK = PropertyKey;
+function main() {
+  const r: Record<string | symbol, number> = { a: 1 };
+  r[S] = 2;
+  Object.defineProperty(r, "g", { get: () => 7, configurable: true });
+  const c = structuredClone(r);
+  console.log(c, Object.keys(c), c.g, S in c, "g" in c);
+  console.log(r, r.g, S in r);
+  const pk: Record<PropertyKey, number> = {};
+  const k: PK = 1;
+  pk[k] = 1;
+  pk[S] = 2;
+  pk["x"] = 3;
+  console.log(pk, Reflect.ownKeys(pk));
+}
+main();

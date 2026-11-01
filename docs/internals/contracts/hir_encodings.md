@@ -3,6 +3,13 @@
 How sema encodes language features in HIR; lowering relies on every point here.
 Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs`.
 
+An intrinsic marked "std only" below is one std declares in `std/lang/intrinsics/`
+(`export declare intrinsic function arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void;`) and
+calls by that name (`arraySwap(xs, i, j)`, imported from `velt/lang/intrinsics`): sema checks
+the call against the declaration and makes it `Call { Intrinsic(..), args }` as before, so the
+declaration's `ExternFnDef` is never called. Its name maps to the `Intrinsic` in one table
+(`velt_sema::intrinsic_decls`).
+
 ## M2 additions
 (see docs/reference/classes.md and docs/reference/memory.md):
 - Class instances are heap-allocated and referenced by a pointer; `Option<Class>` uses null.
@@ -117,14 +124,21 @@ Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs
   `Intrinsic::Spawn`; any other call of an async function (or of a function value returning a
   `TyKind::Promise(T)`) yields a started promise: boxed via `velt_rt_fut_box`, then
   `velt_rt_fut_start` (hybrid promises, docs/reference/async.md).
-- `Intrinsic::SpawnHandled` (`__intrinsic_spawn_handled(p)`, standard library only) is
+- `Intrinsic::SpawnHandled` (`spawnHandled(p)`, standard library only) is
   `Intrinsic::Spawn` whose rejection the caller handles itself (`TaskScope.spawn`: the scope
   fails with it). A dropped `Spawn` handle reports its task's rejection as uncaught; a dropped
   `SpawnHandled` handle drops it quietly.
+- Error and value text (standard library only; `velt/test` and `assertEq` use them):
+  `Intrinsic::ErrorText` (`errorText(e)`, `e` borrowed, any type) is what an
+  uncaught report writes for `e` between `Uncaught ` and the location; `Intrinsic::ThrowLoc`
+  (`throwLoc()`) is that location, ` at <path>:<line>:<col>` of the last `throw`
+  on the thread (`velt_rt_throw_loc`), or `""` (also when lowering emits no locations);
+  `Intrinsic::Inspect` (`inspect(x)`, borrowed) is `x` as Node's `util.inspect`
+  writes it. Each yields an owned string.
 - Hybrid promises: sema rejects an expression statement of type `Promise<T>` or `Promise<T>[]`
   other than a `spawn(...)` call ("floating promise"). `Intrinsic::PromiseRace`
   (`Promise.race(ps: Promise<T, E>[]): Promise<T, E>`, `ps` owned) and the std-only
-  `Intrinsic::PromiseAny` (`__intrinsic_promise_any`, same signature: the first to fulfill, or
+  `Intrinsic::PromiseAny` (`firstFulfilled`, same signature: the first to fulfill, or
   the last rejection). `Promise.allSettled(ps)` and
   `Promise.any(ps)` are `Call { Def(promiseAllSettled / promiseAny, [T]) }` of the prelude's
   async functions (std/prelude/promise.vlt), so a directly awaited `Promise.any` throws its
@@ -137,15 +151,20 @@ Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs
   `Promise<T, E1>` where `Promise<T, E2>` is expected, every error of `E1` allowed by `E2`) is
   `Call { Intrinsic(PromiseWiden), [p] }`, `p` owned, typed as the expected promise type. The
   wrapper is lazy; used as a value (not awaited or spawned right away), it starts `p`.
+- A `Promise<T>` used where a `Promise<unknown>` / `Promise<any>` (or a `Promise<undefined>`
+  where a `Promise<void>`) is expected is `Call { Intrinsic(PromiseSame), [q, p] }`, both
+  owned, typed as `q`: `q` is `p.then` converting the value (on a temporary holding `p`), and
+  `p` the temporary itself. `q` is `p` for identity and rejection reports (rt_abi_async.md
+  §1.3, #1682); used as a value, it starts `q`.
 - `async main` → `velt_main` calls `velt_rt_block_on`.
 - std wraps rt I/O with `declare async function` externs (`ExternFnDef::is_async`); rt results
   use `IoResult` layout = Velt `struct { code: i32; message: string; value: T }`.
 
 - The prelude (`std/prelude/*.vlt`) is ordinary Velt code; methods in `extend` blocks are
   `Def::Fn`s whose `self_ty` is the extended (possibly builtin) type.
-- `Intrinsic::HoldsNull` (`__intrinsic_holds_null(probe)`, std only) is a constant per
+- `Intrinsic::HoldsNull` (`holdsNull(probe)`, std only) is a constant per
   instantiation: whether the probe's type is an option once substituted, so that a generic
-  `T | null` is `T` itself. `Intrinsic::NullAs` (`__intrinsic_null_as<T>()`, no arguments, type
+  `T | null` is `T` itself. `Intrinsic::NullAs` (`nullAs<T>()`, no arguments, type
   `T`) is that `T`'s `null`; std calls it only where `HoldsNull` is true (lowering of any other `T`
   is a run-time internal error). Lowering evaluates a condition built from `HoldsNull` with `!`,
   `&&` and `||` itself (`const_cond`): an `if` lowers only the branch taken and `&&` / `||` only
@@ -162,7 +181,7 @@ Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs
 - Text of a type parameter (issue #1462): `String(x)`, a template part `${x}` and a string
   `+` operand `x` of the type of a type parameter `T` are `If { cond: Call {
   Intrinsic(HoldsDynamic), [Call { Intrinsic(NullAs), [] }: T] }, then: <x converted to any,
-  written as `String(x)` (the prelude's `__anyString`) or a template part / `+` operand of an
+  written as `String(x)` (the hook `anyString`) or a template part / `+` operand of an
   `any` writes it>, els: Call { Intrinsic(ToString | TemplateToString), [x] } }`, each branch
   with its own copy of `x`. `HoldsDynamic` is a constant per instantiation: `true` when `T` is
   `any`, `unknown` or `object`, or an array, tuple, union or nullable type holding one; a `+`
@@ -191,8 +210,6 @@ Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs
   closure (`FnDef::shares_captures`, #208: sema proved it never reaches a thread boundary)
   instead gives each promise another reference to its owned captures (a share, as a generator
   closure does), and the cell itself for a `LocalDef::boxed` capture.
-- `__intrinsic_http_handler(closure)`: `Call { Intrinsic(HttpHandler), [closure] }`, type `u64[]`
-  (init, poll, drop, state_size, state_align, env).
 - Sema rejects: JSON of maps without `string` keys / functions / interface values, and
   `JSON.parse` of unions whose members it cannot tell apart; atomics on non-64-bit ints.
 
@@ -203,7 +220,10 @@ Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs
   every element is moved into it in order. When the loop is left early (`break`, `return`, a
   throw) the elements not reached yet are dropped; then the buffer is freed without dropping the
   elements that were moved out. `consume: false` is the borrowing loop (elements borrowed, or
-  copied when Copy).
+  copied when Copy). `share_elems: true` (only with `consume: false`; set by the exclusive-access
+  check when the body may replace, remove or move what a borrowing binding refers to, such as
+  `xs[i] = …`): each `UseMode::Borrow` binding takes a share of the part it binds, owned by the
+  iteration, so the old element stays alive while the binding does, as in JS.
 - `for...of` over an iterable (a type with `[Symbol.iterator]()`, docs/internals/design/
   iteration.md) has no HIR form of its own: sema emits a `Block` with `let <iterator@N> =
   src[Symbol.iterator]()`, a `<open@N>` flag and a `Try { finally }` around a `While` that calls
@@ -307,6 +327,17 @@ Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs
   A rest parameter typed by a tuple is never interned: `Types::intern` spreads the tuple into
   `params` and clears `rest` (`(...a: [A, B]) => R` is `(a: A, b: B) => R`).
 - `declare function` params are never inferred modified: std passes out-parameters as fresh locals.
+  A `declare system function` (`ExternFnDef::system`, per param whether it was written
+  `readonly`) writes every non-Copy param not written `readonly` (its `u8[]` buffers and its
+  structs): callers pass those `BorrowMut`.
+  An argument of such a call for a `u8[]` parameter (a buffer or a path) is a `u8[]`, a value
+  of a class extending `std/lang/typed_array/buffer_view::BufferView` (a typed array or `DataView`: the
+  argument keeps its class type, with no conversion), or `Intrinsic::Subarray(xs, begin,
+  end)` of type `u8[]` (`xs` a `u8[]` place; `begin` and `end` each an `i64`, or a `usize`
+  when never negative), which sema makes only there, from `xs.subarray(begin, end)`.
+  Lowering passes the bytes the view sees: for a `BufferView`, its fields `buf` (an
+  `ArrayBuffer`, field `bytes: u8[]`), `off` and the byte length std's `viewBytes(v)` gives;
+  for `Subarray`, JS's `subarray` positions in `xs` (#1718).
 
 ## Generic methods
 - Generic interface methods: `InterfaceDef::methods[slot]` as usual; the method's own type
@@ -411,10 +442,10 @@ function itself there, instantiated (`FnRef`), so the values compare equal to ea
 - A union converts to a type every member it can hold converts to (a union of literals to their
   base type, members to a common base class / interface): a `Match` whose arms convert each
   member (`V(m) => <m as T>`); re-tagging into a wider union may convert members the same way.
-- `Print`/`PrintErr`/`ToString`/`JsonStringify` of a union format the active member (top-level
+- `Print`/`PrintErr`/`ToString` of a union format the active member (top-level
   style for `console.log` args: a string member prints raw). `JSON.parse` into a union
-  picks the member by the JSON value (velt_vir lower/json/union.rs); sema rejects unions whose
-  members it cannot tell apart.
+  picks the member by the JSON value (velt/encoding/json/generate/read_union.vlt); its
+  generator rejects unions whose members it cannot tell apart.
 - Clone/drop/eq/hash glue is the ordinary enum glue.
 
 ## Literal types
@@ -424,7 +455,7 @@ function itself there, instantiated (`FnRef`), so the values compare equal to ea
 - Conversion to the base type (`string`, the number type, `bool`) is explicit in HIR: sema
   replaces the value by the base-typed constant (`Lit`, `Unary(Neg, Lit)` for negatives), keeping
   a non-place operand for its effects (`Block { [Expr(e)], value: Lit }`).
-- `Print`/`PrintErr`/`ToString`/`JsonStringify` of a literal type (also as a struct field or a
+- `Print`/`PrintErr`/`ToString` of a literal type (also as a struct field or a
   union member) write its value: strings raw at the top level of `console.log`, quoted `'a'` when
   nested, JSON-escaped for JSON; floats in JS number format. Eq glue is `true`, hash glue `0`,
   no drop/clone work.
@@ -567,7 +598,7 @@ function itself there, instantiated (`FnRef`), so the values compare equal to ea
   `Intrinsic::NeedsTransfer(value)` (std only, value borrowed and not read): a constant `bool`,
   whether `Transfer` of a value of that type has anything to do (it can reach a counted object).
 - `Intrinsic::ArrayMove(dst, d, src, s, n)` and `Intrinsic::ArraySetLen(xs, len)` (std only,
-  std/sort/stable.vlt): the bits of `src[s..s + n)` copied into `dst[d..d + n)` of a different
+  std/lang/sort/stable.vlt): the bits of `src[s..s + n)` copied into `dst[d..d + n)` of a different
   array (both ranges bounds-checked; nothing dropped, nothing shared), and a length change that
   neither drops nor initializes (growing the capacity when it is smaller). They bypass
   ownership: the std code keeps every element owned by exactly one array, cuts stale copies off
@@ -641,7 +672,7 @@ function itself there, instantiated (`FnRef`), so the values compare equal to ea
   `Map` and `Set` keys of such a type compare (`Intrinsic::KeyEq`) and hash
   (`Intrinsic::Hash`) by content, field by field; `===` still compares it by identity.
 - `AdtDef::to_string`, `to_json`, `inspect` (additive): a class's `toString()`, `toJSON()` and
-  `__inspect()` methods, own or inherited (sema's `hooks.rs`), as functions glue can call:
+  `[util.inspect.custom]()` methods, own or inherited (sema's `hooks.rs`), as functions glue can call:
   instance methods with no type parameters of their own, neither async nor generators, that
   cannot throw, taking only `this` (`to_json` may also take the key, a borrowed `string`:
   `(this, key)`); `to_string` returns `string`. A user method of another accepted shape is
@@ -661,9 +692,11 @@ function itself there, instantiated (`FnRef`), so the values compare equal to ea
   mutation inference counts it against the place the binding points into.
 - `==` / `!=` on non-primitive types are `Intrinsic::Same` (JS `===`: objects — class instances,
   arrays, structs, object literals, interface and function values — by identity; `T | null`,
-  unions and tuples part by part; `!=` wraps it in `Not`). `Intrinsic::Eq` is structural
-  (`__intrinsic_eq`, `deepEqual`, `assertEq`). `Map` and `Set` keys compare with
-  `Intrinsic::KeyEq` (`__intrinsic_key_eq`, JS SameValueZero: `Same` with `NaN` equal to itself
+  unions and tuples part by part; `!=` wraps it in `Not`). Structural equality (`deepEqual`,
+  `assertEq`, `velt/test`'s `toEqual`) is no intrinsic: std's `equalByContent` and
+  `equalByFields` (velt/lang/equal) are generated per type by a source generator
+  (design/source-generators.md). `Map` and `Set` keys compare with
+  `Intrinsic::KeyEq` (`keyEq`, JS SameValueZero: `Same` with `NaN` equal to itself
   and `0` to `-0`) and hash with `Intrinsic::Hash`, which agrees with it (objects hash their
   identity; a type declared with `struct`, `AdtDef::declared_struct`, compares and hashes by
   content, field by field). `Array.includes` compares with `Intrinsic::IncludesEq` (`Same`, with a
@@ -769,16 +802,30 @@ literal or named function `f` that modifies its parameter once modes are inferre
 (`ownership/locked/read_only.rs`). Lowering takes the lock shared and runs `f` in velt_rt's read
 mode (rt_abi_async.md §9.1).
 
+## `ThreadLocal<T>` (docs/internals/design/atomics.md; additive)
+
+`new ThreadLocal<T>(x)` is the prelude struct's `AdtLit` (`{ init: x }`), `T` a number type or
+`bool` and `x` a literal (a `Lit`, or `Unary(Neg, Lit)`). `tl.get()` and `tl.set(v)` are
+`Call { Intrinsic(ThreadLocalGet), [tl] }` and `Call { Intrinsic(ThreadLocalSet), [tl, v] }`,
+whose receiver is always `Global(d)` of a module `const` initialized by such an `AdtLit` (sema
+`thread_locals` reports any other). Lowering never evaluates the receiver: `d` names the value
+(`velt_tls_*` externs, rt_abi.md "Thread-local values") and the literal is its starting value.
+
 ## `Atomic<T>` (docs/internals/design/atomics.md; additive)
 
-`new Atomic<T>(x)` is the prelude struct's `AdtLit` (`{ v: x }`), `T` an integer type or `bool`
-(sema rejects any other `T`, a type parameter too). A call of one of its methods is not a
-`Callee::Def` but an `Atomic*` intrinsic (hir/intrinsic.rs): `AtomicLoad`, `AtomicStore`,
+`new Atomic<T>(x)` is the prelude struct's `AdtLit` (`{ v: x }`), `T` an integer type, `f32`,
+`f64`, `bool`, `shared<U>`, `shared<U> | null`, `string`, or a type parameter bounded by the
+prelude's `AtomicValue` (sema rejects any other `T`; on a type parameter only `AtomicLoad`,
+`AtomicStore`, the `AtomicRmw` exchange and `AtomicCasWeak` occur; lowering lays an `Atomic<string>`'s field out as `shared<string>`, atomics.md
+"Strings"). On a `shared` word, `AtomicRmw` is only the exchange (0), and `AtomicCas` has type `bool`
+(whether it swapped; atomics.md "References"); its value arguments are moved in, and its
+`expected` argument may be a `Share` that lowering reads through. A call of one of its methods
+is not a `Callee::Def` but an `Atomic*` intrinsic (hir/intrinsic.rs): `AtomicLoad`, `AtomicStore`,
 `AtomicRmw` (with the operation as a `u8` literal), `AtomicCas`, `AtomicCasWeak`, and the static
 `AtomicFence` and `AtomicSpinHint`. The receiver is the first argument, a `Borrow` place, which
 lowering reads and changes where it is, also inside a `shared` box (`SharedRead` roots go to the
 box, not a copy; a `Global` of a module state slot goes to the slot: a module `const` holding
-an `Atomic` always has one, "Module state"); every ordering is a `u8` literal (0 relaxed … 4 seqcst) that sema checked the
+an `Atomic` has one, "Module state", except a static atomic below); every ordering is a `u8` literal (0 relaxed … 4 seqcst) that sema checked the
 operation may have, with defaults placed (a compare-and-swap's failure ordering derived from the
 ordering when not written). No `Share` of an `Atomic<T>` value survives sema (`atomic_copies.rs`
 reports it), nor a share of a part of a `shared` value that holds one; lowering reports the deep
@@ -786,11 +833,21 @@ copies of frozen values holding one that sema cannot see, and an `Atomic` type t
 counted. The method bodies in the prelude (`seqcst` intrinsics) are reached only through a
 function value of a method, which sema rejects too.
 
+**Static atomics.** A module `const` (not a class's static field) whose initializer is
+`new Atomic<T>(literal)` (a number literal, negated or not, `true`/`false`, or `null` for an
+`Atomic<shared<T> | null>`), in the program
+or in std, has no slot: it is a `GlobalDef` with `slot: None` and that `AdtLit` as `init`.
+Lowering gives it one writable 8-byte-or-smaller `StaticData` (`mutable: Some(id)`, `id` the
+`tls::stable_id` of its qualified name and value type) starting as the literal, made once, and its `Global` is
+the place of that word wherever it is used: no `velt_rt_module_state`, so no module lock. The
+references such words hold are released at exit by a function `velt_main` hands the runtime
+(rt_abi.md "Static atomics at exit").
+
 ## Module state
 
 A module-level `let`, and a module `const` sema keeps instead of evaluating at each use (an
-initializer that is not a constant, a function from a call, a type holding an `Atomic`; #76,
-#802), is a `GlobalDef` with
+initializer that is not a constant, a function from a call, a type holding an `Atomic` other
+than a static atomic; #76, #802), is a `GlobalDef` with
 `slot: Some(i)`. `Program::module_state` lists the slots' globals in initialization order
 (Node's module evaluation order) and gives the state tuple `ty` (element `i` = slot `i`'s
 type); it is `None` when no global has a slot, and then nothing below is emitted.
@@ -814,6 +871,42 @@ type); it is `None` when no global has a slot, and then nothing below is emitted
   the initializer of slots `from..to` there on the block (`velt_rt_module_block`). The
   initializer that stores the last slot reports it with `u64::MAX`. The descriptor's `rest`
   initializes slots `deferred..` for a block made for swapped-in code (rt_abi.md).
+
+`Program::lock_free_callbacks` (additive, #924) lists the `with` / `read` / `write` callbacks,
+written as a closure or a named function (by `DefId`), that never reach a function's properties
+held as `any` (velt_sema `locked_props.rs`). No body they may run, along the module-state walk's
+edges, uses a member of a value that is or holds `any` / `unknown` (an intrinsic, a dynamic or
+virtual call, or a call into a runtime extern with such an argument; a type parameter is not
+one), handles a type a `Proxy` may be behind (in a program that loads `Proxy`: what an `any` is
+converted to, the object types in the fields, elements and map values of what is converted to
+`any`, since a write through it converts what it stores, and what those are upcast to), calls a
+function value whose body is not known, or runs a `with` whose callback is not a closure or a
+named function written there (lowering takes the module lock for it); and no `with` inside them
+has a callback that does. In a program whose functions may have properties, lowering calls
+`velt_rt_module_with` before the lock of every other call (rt_abi.md "Module state"). Empty in a
+program without `any`.
+
+## Unchecked definitions (#1658; additive)
+
+Sema checks standard-library definitions that only std code refers to when checked code
+reaches them (docs/internals/design/lazy-std.md). `Program::unchecked` lists the ones nothing
+reached. Each still has a definition, so every `DefId` has one:
+
+- a function or method: a `Def::Fn` with its signature (`name`, `generics`, `params` as the
+  first locals, `this` first for a method, `self_ty`, `ret`, `is_async`, `is_generator`) and an
+  empty body (no statements, no value);
+- a module constant: a `Def::Global` of type `void` whose `init` is `Lit(Unit)`.
+
+Checked code never refers to one: no `Callee::Def`, `FnRef` or `Global` names it, no checked
+expression has a type whose methods it is, and no value of such a type exists, so no
+`vtable`, `impls` entry or `dyn_members` table of a type the program uses holds one. Lowering
+never builds or reads one: building a function in `unchecked` (any `Work` of its `DefId`) or
+reading such a global is an ICE, as it would mean a reference sema did not see. Lowering may
+look up by name only what sema keeps checked: the prelude helpers (`velt_sema` `body/lazy_std.rs`
+`HELPER_NAMES`, which a test keeps in step with the `"__…"` names in lowering's code), the
+methods of the prelude's types and the modules in `EAGER`. (The JSON intrinsics, and the
+`JSON_GLUE` modules their glue called by name, are gone: `JSON.parse`, velt/db's row readers and
+its parameter binder are generated code, source-generators.md.)
 
 ## Symbols
 
@@ -987,6 +1080,13 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   interfaces it extends without generic methods, args in `D`'s params) when the listed args
   with `args` substituted are `bargs`. Converting an `any` to
   `iface` uses the same lookup for the held value's type.
+- A function type in an extension impl's `ty` (or an `extend` block's target) matches a
+  `FnPtr` part by part: its parameters, result, `rest` flag and error type (#1878). Its error
+  type (or, for one returning a `Promise`, the promise's rejection type) is always a type
+  parameter of the impl: the block's own (`throws E`) or, where the target wrote no `throws`, one
+  sema adds after the declared ones (`ImplDef::generics` counts it; the block's methods have
+  it as a type parameter too), so the impl fits a function that throws anything and `this` is
+  the receiver's type.
 - A call through a type parameter's bound that only a blanket block gives it (`k.m()` with
   `K extends Comparable<K>` and `extend<T extends Comparable<T>> T implements I`) is a
   `Callee::ParamMethod` of `I`, resolved by that lookup per instantiation.
@@ -1100,7 +1200,7 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   `R | null` rest.
 
 ## any and unknown (issue #924, phase 1a)
-- `any` and `unknown` are interfaces of the prelude (`std/prelude/z_dynamic.vlt`), so their type is
+- `any` and `unknown` are interfaces of the prelude (`std/prelude/dynamic.vlt`), so their type is
   `TyKind::Dyn(any | unknown, [])`: an interface value `{ data, vtable }`. Sema adds one
   implementation for every type, `ImplDef { ty: Param(0), generics: 1, iface: any, methods: [] }`,
   whose index is `Program::any_impl` (`Program::unknown` names the `unknown` interface). Converting a value to either type is `ToDyn` with that
@@ -1137,6 +1237,13 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   `TypeError: <text>: the value is not a <T> (it is <found>)` (additive; sema writes it for
   the arguments of an overload signature's adapted callback, `crate::overload_adapter`).
   Lowering reads the text while compiling; it is never evaluated.
+- `Intrinsic::AnyToExact` (`(x: borrow any) -> T | undefined`, `Expr::ty` an option of the
+  function type `T`; made by sema only, additive): the function `x` holds, as a new reference,
+  when its table is `T`'s (one comparison), else `undefined`. Sema converts an `any` or
+  `unknown` to a function type `T` as
+  `match AnyToExact(x) { Some(f) => f, None => <closure calling x through any> }`, so a
+  function of exactly `T` stays the one value (identity, `Set` / `Map` keys, round trips) and
+  costs no call through `any`.
 - A union with a dynamic member is that member (`any | null`, `any | string` are `any`; an
   `unknown` likewise unless `any` is also a member). An `any | null` / `unknown | null` that
   still arises (a generic `T | null` with `T = any`: `Map.get`, `find`, `Channel.receive`, a
@@ -1150,7 +1257,7 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   `AnyStrictEq` / `AnyLooseEq` (JavaScript's algorithms for primitives: numbers by value,
   `null == undefined`, `"1" == 1`, `true == 1`; objects by identity: tables of two static types
   of one object, such as a class and its base, compare the data pointers). `==` of an object
-  and a boolean, number or string is the lowering's call of the prelude's `__anyLooseEq` (the
+  and a boolean, number or string is the lowering's call of the hook `anyLooseEq` (the
   object's `ToPrimitive` with hint `"default"`, compared loosely), made only in that arm of
   `AnyLooseEq`'s tag switch; a function compares `false` with every primitive.
 - Operators on `any` (#924): `Intrinsic::AnyTag (x: borrow any) -> i64` is the `typeof` tag of
@@ -1158,11 +1265,11 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   JavaScript's `ToNumber` of a primitive held (one call of slot 3). Sema writes `a op b` with an
   `any` operand (only `Dynamic::Any`: an `object` or `Function` operand is TS2362) as a block
   binding each operand once, left to right, then `ToNumber` of each: an operand whose tag is
-  6 or more goes to the prelude's `__anyObjectNumber`, which takes `ToPrimitive(v, "number")`
-  (`__anyToPrimitive`: `[Symbol.toPrimitive](hint)`, else `valueOf` / `toString` in the hint's
+  6 or more goes to the hook `anyObjectNumber`, which takes `ToPrimitive(v, "number")`
+  (`anyPrimitive`: `[Symbol.toPrimitive](hint)`, else `valueOf` / `toString` in the hint's
   order, keeping a primitive result; the dispatch over the program's classes is sema's, written
-  where the prelude calls `__intrinsic_any_to_primitive`). `+` adds numbers when both tags are
-  at most 3, else it is `__anyAdd` (an `any`); `<` / `>` / `<=` / `>=` go to `__anyRelational`
+  where the prelude calls `anyToPrimitive`). `+` adds numbers when both tags are
+  at most 3, else it is `anyAdd` (an `any`); `<` / `>` / `<=` / `>=` go to `anyRelational`
   when a tag is 6 or more. `x op= v` and `++` / `--` on an `any` place or member read it once
   and write the boxed result; a typed number place with an `any` value (`n += a`) converts the
   result back with `AnyTo`.
@@ -1187,9 +1294,9 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   argv, argc, out) -> u8`, 8 `AnyApply (data, argv, argc, out) -> u8`, returning 0 (the result
   is in `*out`), 1 (not supported yet: a `TypeError` naming #924) or 2 (not a function). Without
   them the tables and the VIR are unchanged. The `AnyCall` slot of a string, an array, a number
-  or a boolean dispatches by name to the prelude's `__anyStr_<name>(s, args)`,
-  `__anyArr_<name><T>(a, args)`, `__anyNum_<name>(n, args)` and `__anyBool_<name>(b, args)`
-  (std/prelude/zzzz_any_methods.vlt; the arguments packed into an `any[]`, the result an `any`),
+  or a boolean dispatches by name to the hook `anyStr_<name>(s, args)`,
+  `anyArr_<name><T>(a, args)`, `anyNum_<name>(n, args)` and `anyBool_<name>(b, args)`
+  (std/lang/hooks/any_methods.vlt; the arguments packed into an `any[]`, the result an `any`),
   comparing only the names the program calls through `any` (`Boxing::any_call_keys`); another
   JavaScript built-in of that kind gives 1, any other name 2.
 - Member writes (phase 1b of #924): `x.f = v` / `x["f"] = v` / `x[k] = v` with a `string` or
@@ -1215,55 +1322,55 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   proxy's `has` trap): in `effects::runs_user_code` and `replaced_holders::implicit::glue_args`.
   The `any` tables get slot 11 `AnyHas (data, key) -> u8` (velt_vir `lower/any_has.rs`; 0 no,
   1 yes, 2 not supported yet) only when the program has such a test.
-- `Intrinsic::AnyDelete(x, key)` (std only, `__intrinsic_any_delete`) is `delete x[key]` with a
+- `Intrinsic::AnyDelete(x, key)` (std only, `anyDelete`) is `delete x[key]` with a
   `string` key on an `any` `x` that is not a proxy (borrowed), of type `bool`: a record's entry
-  is removed (its `__delete`), an optional field made absent, a key the value does not have as
+  is removed (its `[RECORD_DELETE]`), an optional field made absent, a key the value does not have as
   its own is `true`, an array's `length` `false`. It changes memory (`effects`,
   `replaced_holders::implicit::glue_args`). The `any` tables get slot 15 `AnyDelete (data,
   key) -> u8` (velt_vir `lower/any_delete.rs`; 0 false, 1 true, 2 not supported yet, a
   `TypeError`) only when the program has such a call.
-- `Intrinsic::ProxyArrayCall(x, op)` (std only, `__intrinsic_proxy_array_call`) and
-  `Intrinsic::ProxyArrayHole(x, index, op)` (std only, `__intrinsic_proxy_array_hole`), with `x`
+- `Intrinsic::ProxyArrayCall(x, op)` (std only, `proxyArrayCall`) and
+  `Intrinsic::ProxyArrayHole(x, index, op)` (std only, `proxyArrayHole`), with `x`
   an `any` (borrowed, passed by its data pointer: the target of an array method running on a
   proxy, which the proxy keeps alive, or the array a `Reflect` call reaches) and `index` / `op`
   `i64`, of type `i64`, are calls of `velt_rt_proxy_array_call` and `velt_rt_proxy_array_hole`
   (rt_abi.md "Array methods on a proxy"). They run no user code.
 - `Intrinsic::AnyKeys(x)` is `Object.keys(x)` on an `any`, `object` or `Function` `x` (borrowed),
   of type `string[]`: the own enumerable string keys of the value held, in JavaScript's order.
-  It sets `Program::dyn_members` (a record's keys are its `__keyNames()`). The `any` tables get
+  It sets `Program::dyn_members` (a record's keys are its `[RECORD_KEY_NAMES]()`). The `any` tables get
   slot 13 `AnyKeys (data, out: *string[]) -> u8` (velt_vir `lower/any_keys.rs`; 0 written, 1 not
   supported yet) only when the program has such a call; `null` / `undefined` are tested before
   the slot. An object literal spreading an `any` or `object` (`{ ...a }`) is a
-  `Record<string, any>` literal whose spread is a call of the prelude's `__spreadAny(r, a)`
-  (std/prelude/zzz_adapt.vlt). `JSON.stringify` accepts dynamic types anywhere in its argument's
+  `Record<string, any>` literal whose spread is a call of the hook `spreadAny(r, a)`
+  (std/lang/hooks). `JSON.stringify` accepts dynamic types anywhere in its argument's
   type: the writer calls slot 14 `AnyJson (data, buf) -> u8` of the value's table (velt_vir
   `lower/json/any.rs`; present only when the program writes one), after testing the tag for
   `undefined`, a function or a symbol (left out as a member, `null` as an element, a
   `TypeError` at the top).
-- Proxy and Reflect (#823): the `Proxy` class (std/proxy.vlt; `#target: any`, `#handler:
+- Proxy and Reflect (#823): the `Proxy` class (std/lang/proxy/index.vlt; `#target: any`, `#handler:
   ProxyHandler<any>`) and `Reflect` (static methods), globals that a program loads when a module
   names one of them (std/prelude/global/proxy.vlt); a program that doesn't has no proxies, and
   sema calls the prelude's helpers below, which don't test for one. Sema converts `new
   Proxy(...)` (written outside the standard library; type arguments dropped) to `any` at once
   (`ToDyn`); `AnyTo` converts it to a typed value like any other `any`. The member slots of the
-  `Proxy` class's `any` table call its `__get(key, receiver)`, `__set(key, value, receiver)`
-  and `__has(key)` (velt_vir `lower/any_proxy.rs`), which run the handler's traps or forward
+  `Proxy` class's `any` table call its `[RECORD_GET](key, receiver)`, `[RECORD_SET](key, value, receiver)`
+  and `[RECORD_HAS](key)` (velt_vir `lower/any_proxy.rs`), which run the handler's traps or forward
   to the target; its keys slot (`AnyKeys`) calls `__keys()` (the `ownKeys` and
   `getOwnPropertyDescriptor` traps). `delete o.k` / `delete o[k]` of an `any` or `object` is a
-  call of the prelude's `__anyDelete(o, k)` (`__anyDeleteProxy` once `Proxy` is loaded: a proxy's `deleteProperty` trap; another value's
+  call of the hook `anyDeleteMember(o, k)` (`anyDeleteProxy` once `Proxy` is loaded: a proxy's `deleteProperty` trap; another value's
   `Intrinsic::AnyDelete`, std only, through slot 15 `AnyDelete (data, key: *string) -> u8` of
   its table, velt_vir `lower/any_delete.rs`), and the
   versions of the prelude's spread, `Object.hasOwn`, `Object.values` and `Object.entries`
-  helpers for `any` (std/prelude/zzz_adapt.vlt) in velt:proxy/ops (`__spreadAnyProxy`, …,
+  helpers for `any` (std/lang/hooks) in velt/lang/hooks/proxy (`spreadAnyProxy`, …,
   called instead once `Proxy` is loaded) run a proxy's traps in Node's order. With a symbol constant as
   the key, `o[KEY]`, `o[KEY] = v`, `KEY in o`, `delete o[KEY]` and `Object.hasOwn(o, KEY)` of
-  an `any` in a program that has loaded `Proxy` are calls of `__anyGetSym` / `__anySetSym` / `__anyHasSym` /
-  `__anyDeleteSym` / `__anyHasOwnSym(o, name, KEY)` (std/proxy/ops.vlt), which
+  an `any` in a program that has loaded `Proxy` are calls of `anyGetSym` / `anySetSym` / `anyHasSym` /
+  `anyDeleteSym` / `anyHasOwnSym(o, name, KEY)` (std/lang/hooks/proxy.vlt), which
   pass the symbol to a proxy and use the member name `name` on other values; `new Proxy(t, h)`
-  with an `h` typed `any` is `__proxyNewAny(t, h)`. In a program whose own code has a `new
+  with an `h` typed `any` is `proxyNewAny(t, h)`. In a program whose own code has a `new
   Proxy`, `Object.keys(x)` of a class instance or object `x` is `IsTypedProxy(x) ?
-  __proxyKeysOf(x) : Object.keys(x)` (`Intrinsic::IsTypedProxy`, made by sema: a test of the
-  pointer's tag bit, `false` for a type that cannot hold a proxy) and a spread `{ ...x }` first calls `__proxySpreadCheck(x)`. The JSON slot of
+  proxyKeysOf(x) : Object.keys(x)` (`Intrinsic::IsTypedProxy`, made by sema: a test of the
+  pointer's tag bit, `false` for a type that cannot hold a proxy) and a spread `{ ...x }` first calls `proxySpreadCheck(x)`. The JSON slot of
   the `Proxy` class writes what `__json(receiver)` gives. The prelude's own dynamic operations don't set `Program::dyn_members`; a `new
   Proxy` or a `Reflect.*` call in the program's own code does, and a `Reflect.set` call counts
   as a write of every field for `object_copies` (a `new Proxy` does not: every write reaching
@@ -1272,11 +1379,11 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   named `Proxy` is its own) and numbers them last among class ids, so programs without them
   keep theirs.
 - Traps that throw (#1174, stage 1): the function types of `ProxyHandler`'s traps
-  (std/proxy.vlt) are sites like the function types a user module writes without `throws`
+  (std/lang/proxy/index.vlt) are sites like the function types a user module writes without `throws`
   (sema `throws/fn_types.rs`): a closure stored into one adds its errors (`Error` classes) to it,
-  so a call of a trap in `Proxy.__get` & co. throws them and the `Proxy` methods' error types are
-  inferred as any function's. `Intrinsic::AnyGet` / `AnyIndex` (`__get`), `AnySet` /
-  `AnySetIndex` (`__set`), `AnyHas` (`__has`) and `AnyKeys` (`__keys`) in a user module or in
+  so a call of a trap in `Proxy[RECORD_GET]` & co. throws them and the `Proxy` methods' error types are
+  inferred as any function's. `Intrinsic::AnyGet` / `AnyIndex` (`[RECORD_GET]`), `AnySet` /
+  `AnySetIndex` (`[RECORD_SET]`), `AnyHas` (`[RECORD_HAS]`) and `AnyKeys` (`__keys`) in a user module or in
   std/proxy (whose `Reflect` functions reach a target that may be a proxy) of a program that has
   loaded `Proxy` are a throw source `ThrowSrc::Call` of that `Proxy` method at the operation
   (sema `any_op`): the operation throws what the method throws, empty when no trap throws. The
@@ -1285,7 +1392,12 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   function of a user module or of std/proxy tests whether the value's descriptor is the `Proxy`
   class's table and then calls the method directly, as a call of a throwing function (its error
   goes to the innermost handler or leaves the function, errors.rs); other values take the slot.
-  A program whose traps throw nothing lowers to the same VIR as before. Everywhere else a
+  A program whose traps throw nothing lowers to the same VIR as before. An operation sema
+  writes as a call of a prelude helper instead (`x.constructor` as `anyConstructor`, a symbol
+  key as `anyGetSym` / `anySetSym`, `anyIsArrayProxy`, the text and operator helpers of an
+  `any`) is a throw source `ThrowSrc::Call` of that helper, as a written call is: its caller
+  throws what the helper's body (the class dispatch of `anyConstructor`, say) is inferred to
+  throw. Everywhere else a
   `Proxy` method that throws is called from (descriptor slots, including `AnyCall`, typed
   proxies, JSON, printing, the rest of the standard library) its error ends the process with
   Node's `Uncaught …` report (`ScopeKind::Uncaught` around the call): stage 2.
@@ -1308,7 +1420,7 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   (velt_vir `lower/proxy_method.rs`): in a program with proxiable types, `AnyGet` of a method
   name on a class object gives the method read as a value, a function value whose code is the
   method's unbound thunk (env null; called on its own it throws a `TypeError`). A method call on
-  a proxiable class whose receiver holds such a proxy first runs `__get(name, receiver)` (after
+  a proxiable class whose receiver holds such a proxy first runs `[RECORD_GET](name, receiver)` (after
   the receiver, before the other arguments) and checks that the answer is the method about to
   run read as a value (for a virtual call, the instance in the target's vtable entry); the call
   then runs with `this` the proxy. A `super.m()` call (`Program::super_calls`) does not read
@@ -1316,7 +1428,7 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   async method, or one that owns its receiver, cannot be read as a value yet: a call of one
   through a proxy with a `get` trap is a `TypeError` naming #823. A call of a function-typed field of a proxiable object
   type (`Callee::Indirect` of a `Field`) whose base holds a proxy reads the field with
-  `__get` (before the arguments) and calls the answer through its `AnyApply` slot with the
+  `[RECORD_GET]` (before the arguments) and calls the answer through its `AnyApply` slot with the
   arguments boxed, its result converted to the field's result type (velt_vir
   `lower/proxy_call.rs`). Object conversions keep a proxy's identity: `AdtLit` has
   `converted` ("Object conversions" below), and a converted literal whose source has a proxiable type gives the
@@ -1324,7 +1436,7 @@ one; an error type that was only variables solved empty is no error type (`FnDef
 - Views (#1485, velt_vir `lower/any_view.rs`): in a program with typed proxies, `AnyTo` to a
   proxiable object type (not a class) of an `any` holding an object or function of another type
   (and not a proxy) is the tagged result of the prelude's `Proxy.__view(x)`, a `Proxy` without traps whose
-  `#view` is set: field reads and writes run its forwarding `__get` / `__set` and check the value
+  `#view` is set: field reads and writes run its forwarding `[RECORD_GET]` / `[RECORD_SET]` and check the value
   as the field's type. A tagged value whose `Proxy` is a view converts to `any` as the `any` it
   holds (`__target()`, the view released), so the view is the object to every dynamic
   operation. The conversion gives the object's live view when it has one (the runtime's table of
@@ -1334,23 +1446,23 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   `object` key, by the `any` the value converts to (velt_vir `lower/weak_view.rs`). Object
   patterns, `FieldPresent` and `JSON.stringify` on a proxiable type read a tagged value through
   its traps (`JSON` as the `any` it converts to). The prelude's
-  `__proxyKeysOf`, `__proxyHas`, `__proxyHasOwnOf` and `__proxyAny`, which sema calls behind
+  `proxyKeysOf`, `proxyHas`, `proxyHasOwnOf` and `proxyAny`, which sema calls behind
   `IsTypedProxy`, take such a value (no longer a proxy once in an `any`) as a plain one.
-- Array views (#1485, velt_vir `lower/array_view.rs`, std/prelude/zzz_adapt.vlt; additive): the
+- Array views (#1485, velt_vir `lower/array_view.rs`, std/lang/hooks; additive): the
   array types that `AnyTo` targets in the program's own code (also as a union's array member),
   and the arrays their elements hold, are boxed *view types*. `AnyTo` to a view type of an `any`
   holding an array (or tuple) that is no such value is a box whose header is
-  `{ data: view | 1, len: 0, cap: 0 }`, `view` the prelude's `__ArrayView<T>` (`__target`: the
+  `{ data: view | 1, len: 0, cap: 0 }`, `view` the hook `ArrayView<T>` (`__target`: the
   original as an `any`, `__seen`: a mirror `T[]`). A view's own header has length 0, so an
   `Index` read or target below the header's length, a `for...of` step below it and a `push`
   with room are a plain array's, with no test; past the length (a view always is), for
   `ArrayLen` when the header's length is 0, before a `push` grows the array, and for every other
   access to the contents (`content`), bit 0 of `data` is tested. A view first syncs the mirror
-  as far as the access needs (`__arrayViewSyncAt` for an `Index` or a `for...of` step,
-  `__arrayViewSyncLen` before a `push` / `pop` / `truncate`, `__arrayViewSync` for the rest: an
+  as far as the access needs (`arrayViewSyncAt` for an `Index` or a `for...of` step,
+  `arrayViewSyncLen` before a `push` / `pop` / `truncate`, `arrayViewSync` for the rest: an
   element still `===` the original's is kept, others are converted again; elements are
   converted in order as first reached) and the access runs on the mirror; `ArrayLen` is the
-  original's length (`__arrayViewLen`). A loop with such tests runs as a copy without the view
+  original's length (`arrayViewLen`). A loop with such tests runs as a copy without the view
   side (`lower/view_unswitch.rs`): a test of a box in a local the loop does not change (by
   assignment or through its address) is false in the copy, entered after one test before the
   loop (a box never becomes a view); any other test that finds a view, and an `Index` past the
@@ -1361,10 +1473,10 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   captured `let`), which the copy and the original share. Array intrinsics that change
   the array, and assignments whose target goes through a view type, write the mirror back
   after the change, only the written element for an `Index` target and a swap
-  (`__arrayViewFlushAt`), the new tail or length for `push` / `pop` / `truncate`
-  (`__arrayViewFlushFrom`), else all of it (`__arrayViewFlush`). A call of
+  (`arrayViewFlushAt`), the new tail or length for `push` / `pop` / `truncate`
+  (`arrayViewFlushFrom`), else all of it (`arrayViewFlush`). A call of
   `std/sort/stable::stableSort` on a view sorts a copy of the mirror instead
-  (`__arrayViewSort`); `ArrayMove` / `ArraySetLen` on a view stop with a `TypeError`. The
+  (`arrayViewSort`); `ArrayMove` / `ArraySetLen` on a view stop with a `TypeError`. The
   runtime's table of array views (rt_abi.md "Views") keeps one live view per (original, view
   type), so two conversions give one box. A view converts to `any` as `__target`, drops by
   leaving the table and releasing the view object, and deep-copies or transfers as a plain
@@ -1394,8 +1506,8 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   adapted in turn). The struct is in `Program::counted_objects`, so a share of the converted
   value shares the adapter and the one original it holds. A parameter of type `unknown[]`,
   `Map<unknown, unknown>` or `Set<unknown>` is passed as a `const` initialized by a call of the
-  prelude's `__unknownArrayIn` / `__unknownMapIn` (std/prelude/zzz_adapt.vlt) or
-  `__unknownSetIn` (std/collections/set.vlt) on the `unknown` argument, and after the slot call
+  prelude's `unknownArrayIn` / `unknownMapIn` (std/lang/hooks) or
+  `unknownSetIn` (std/collections/set.vlt) on the `unknown` argument, and after the slot call
   (its result kept in a temporary) the matching `…Out` writes the copy back; the helpers use
   `AnyCall` / `AnyIndex` / `AnySetIndex`, and such an adapter sets `Program::dyn_members`.
   Once a field of `I` is written through an interface value (`iface_writes`), the impl gets a
@@ -1425,7 +1537,7 @@ one; an error type that was only variables solved empty is no error type (`FnDef
 - `Program::type_names` names structural types as messages do: a type alias's (`type P = …`)
   and a field-only interface's object type, after `readonly` erasure; a type two names reach
   has none. Lowering's `TypeError`s use it.
-- `object` and `Function` (issue #926) are two more interfaces of `z_dynamic.vlt`:
+- `object` and `Function` (issue #926) are two more interfaces of `prelude/dynamic.vlt`:
   `TyKind::Dyn(object | Function, [])`, named by `Program::object` / `Program::function` (set
   with `any_impl`). They are dynamic types like `any`: the same representation, `ToDyn` with
   `any_impl`, the same tables, `AnyTo` to convert out, and lowering's `is_dynamic` covers them.
@@ -1451,6 +1563,13 @@ one; an error type that was only variables solved empty is no error type (`FnDef
 - Not yet (each a compile error, phase 1b and 2 of #924): compound assignments and updates of
   members of an `any`, other operators, template literals and `String(x)`, `JSON.parse` into an
   `any`, iteration.
+- `Program::any_fn_views` (additive, #1935) lists functions `(f: any) => F` (one `Owned`
+  parameter), one per function type `F`, their result type, with no other function of that
+  result type. Each returns the closure calling `f` through `any` that a conversion of an `any`
+  to `F` makes in sema. Lowering calls the one whose result is the target when an `AnyTo` it
+  makes inside another conversion (a field of an object type filled from a record or object, an
+  array view's element) meets a function of another type than `F`; it passes the `any`, which
+  the function takes. Empty in a program without such conversions.
 
 ## Object built-ins (issue #925)
 
@@ -1462,7 +1581,7 @@ one; an error type that was only variables solved empty is no error type (`FnDef
 - `Program::null_proto_records` (additive): the program calls `Object.create(null)` (sema's scan
   of the user modules, `null` in any parentheses; sema accepts the call only when the scan found
   it). Such a call is an empty `Record<string, V>` whose map is marked with the top bit of its
-  `edits` counter (`__markNullProto`, std/prelude/map.vlt). Only when the flag is set does sema
+  `edits` counter (`[RECORD_MARK_NULL_PROTO]`, std/prelude/map.vlt). Only when the flag is set does sema
   test the mark (`in` on a record with a key known only at run time or one `Object.prototype`
   has; `structuredClone` of a record is an error then) and lowering print a marked record as `[Object: null prototype] { … }`;
   other programs are unchanged.
@@ -1491,3 +1610,12 @@ at the start of the class's block or of the function's body (`body/expr/ctor_loc
 captured by closures like any local. `new C(x)` calls `#new`
 (`Callee::Indirect` through a `Field` read) and `v instanceof C` calls `#is`. Held as `any` or
 `unknown`, its `typeof` tag is `function` (lowering tells by the first field, `#new`).
+
+## Type tests (std/prelude/type_tests.vlt; additive)
+
+`typeIs<A, B>()` and `asType<B>(x)` are ordinary `Call { Def(prelude fn, [A, B]) }` /
+`Call { Def(prelude fn, [B, A]), [x] }` nodes (sema `body/type_guards.rs` checks `asType`'s
+guard and refuses both as values). Lowering replaces them per instance (velt_vir
+`lower/type_tests.rs`): `typeIs` by the constant `A == B` (the `if` it guards then lowers one
+branch), `asType` by `x` itself when `A == B` and by a trap otherwise (only reachable in a
+branch the constant made dead).

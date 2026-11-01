@@ -1,7 +1,7 @@
 // Writes to one stream from tasks on several workers at once: each write's bytes go out
 // together, never with another write's bytes between its parts (a large write that the socket
 // cannot take at once goes on later, in its turn).
-import { connect, listen } from "velt:net";
+import { connect, listen } from "velt/net";
 
 const WRITERS = 8;
 const SIZE = 1048576;

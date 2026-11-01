@@ -1,6 +1,6 @@
 // `stdout.write` (std/process): raw bytes to stdout in order with `console.log`, small writes
 // through the output buffer and large ones (64 KiB and up) straight from the array.
-import { stdout } from "velt:process";
+import { stdout } from "velt/process";
 
 function main() {
   console.log("first");

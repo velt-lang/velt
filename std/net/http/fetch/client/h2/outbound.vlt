@@ -1,0 +1,71 @@
+// velt/net/http (internal): how an HTTP/2 client session sends a request: HEADERS (HPACK, with
+// the static table's pseudo-header entries) and the body as DATA within the server's windows.
+
+import { END_STREAM } from "velt/net/http/h2";
+import { H2Call } from "velt/net/http/fetch/client/h2/call";
+import { ClientSession, STREAM_WINDOW } from "velt/net/http/fetch/client/h2/session";
+import { ClientStream } from "velt/net/http/fetch/client/h2/stream";
+
+/// Opens a stream for `call`: HEADERS, and what the windows allow of its body.
+export function startCall(s: ClientSession, call: H2Call) {
+  const id = s.nextId;
+  s.nextId += 2;
+  const st = new ClientStream(id, call.events, call.body, s.peerInitialWindow, STREAM_WINDOW);
+  s.streams.set(id, st);
+  const out = s.out;
+  const e = s.encoder;
+  const at = out.beginHeaders();
+  e.begin(out);
+  e.request(out, call.method, call.scheme, call.authority, call.path);
+  const f = call.fields;
+  for (let i: i64 = 0; i < (f.length as i64); i += 2) {
+    e.field(out, f[i], f[i + 1]);
+  }
+  const empty = call.body.length == 0;
+  out.endHeaders(at, id, empty ? END_STREAM : 0, s.peerMaxFrame);
+  st.localEnded = empty;
+  if (!empty) {
+    pump(s, st);
+  }
+}
+
+/// Sends what the windows allow of the request body of `st`.
+export function pump(s: ClientSession, st: ClientStream) {
+  while (st.pending > 0) {
+    let n = st.sendWindow < s.sendWindow ? st.sendWindow : s.sendWindow;
+    n = n < s.peerMaxFrame ? n : s.peerMaxFrame;
+    n = n < st.pending ? n : st.pending;
+    if (n <= 0) {
+      if (!st.queued) {
+        st.queued = true;
+        s.blocked.push(st);
+      }
+      return;
+    }
+    const last = n == st.pending;
+    s.out.data(st.id, last ? END_STREAM : 0, st.body, st.at, st.at + n);
+    st.at += n;
+    st.sendWindow -= n;
+    s.sendWindow -= n;
+    if (last) {
+      st.localEnded = true;
+      st.body = [];
+      st.at = 0;
+      if (st.remoteEnded) {
+        s.forget(st);
+      }
+    }
+  }
+}
+
+/// After the connection window grew: the waiting streams send, in order.
+export function pumpAll(s: ClientSession) {
+  const waiting = s.blocked;
+  s.blocked = [];
+  for (const st of waiting) {
+    st.queued = false;
+    if (s.streams.get(st.id) === st) {
+      pump(s, st);
+    }
+  }
+}

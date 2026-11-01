@@ -1,0 +1,10 @@
+// A module that imports one name of the JSX runtime (`jsxEscape`) and also uses JSX: the JSX
+// takes the whole runtime as the namespace `JSX` (its types, its factories), not just the name
+// the import took (it reported "the JSX provider 'std/jsx' does not export `IntrinsicElements`").
+import { jsxEscape } from "velt/jsx/jsx-runtime";
+import { renderToStringSync } from "velt/jsx";
+
+function main() {
+  console.log(jsxEscape("<b>"));
+  console.log(renderToStringSync(<p class="x">{"a & b"}</p>));
+}

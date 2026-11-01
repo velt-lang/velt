@@ -1,0 +1,11 @@
+// velt/package: the type of the package manifest, `package.vlt` (docs/tooling/manifest.md).
+//
+// Types only. `velt` never compiles a manifest: it reads it as data (vpm::manifest::read). These
+// types give editors completion, hover and errors while writing one:
+//
+//   import type { Package } from "velt/package";
+//
+//   export const pkg: Package = { name: "hello", version: "0.1.0" };
+
+export type { Build, Dependency, DependencySource, Jsx, Native, Package } from "./manifest";
+export type { Workspace } from "./workspace";

@@ -1,0 +1,37 @@
+// An arrow typed by its context to return `any` or `unknown` (sigx's `WatchCallback<T>` is
+// `(value, oldValue, onCleanup) => any`) may end without a `return`: it returns `undefined`,
+// as in TypeScript. So does a function declared to return `any`.
+type WatchCallback<V> = (value: V, oldValue: V | undefined) => any;
+
+function watchOnce<T>(get: () => T, cb: WatchCallback<T>): any {
+  return cb(get(), undefined);
+}
+
+const log: string[] = [];
+const r = watchOnce(
+  () => 1,
+  (n, o) => {
+    log.push("value " + n + " " + o);
+  },
+);
+console.log(r, log.join(","));
+
+const early: () => any = () => {
+  if (log.length > 5) {
+    return "many";
+  }
+};
+console.log(early());
+
+const u: () => unknown = () => {
+  log.push("u");
+};
+console.log(u(), log.length);
+
+function declared(flag: boolean): any {
+  if (flag) {
+    return 1;
+  }
+}
+
+console.log(declared(true), declared(false));

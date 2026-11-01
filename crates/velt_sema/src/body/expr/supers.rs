@@ -163,6 +163,17 @@ impl FnCx<'_, '_> {
             false => self.this_expr(Want::Borrow, span),
         };
         let def = found.def();
+        if self.cx.abstract_methods.contains(&def) {
+            self.cx.err(
+                format!(
+                    "abstract method `{}` cannot be called through `super`: it has no implementation (TypeScript's TS2513)",
+                    prop.name
+                ),
+                prop.span,
+            );
+            self.check_args_loose(args);
+            return self.error_expr(span);
+        }
         self.cx
             .rec_ref(prop.span, crate::ide::record::Target::Def(def));
         let private_to = self.fn_private_to(def);

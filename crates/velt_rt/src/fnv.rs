@@ -1,4 +1,4 @@
-//! `velt:hash` (std/hash.vlt): 64-bit FNV-1a, a stable, non-cryptographic hash for sharding and
+//! `velt/hash` (std/hash/index.vlt): 64-bit FNV-1a, a stable, non-cryptographic hash for sharding and
 //! bucketing. The algorithm and its constants are part of the std contract: the same input gives
 //! the same hash on every platform, run and version. Not seeded, so not DoS-resistant.
 

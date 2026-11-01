@@ -1,0 +1,92 @@
+// sqlite/engine/exec/value/op_codes (internal): the operators of the SQL text as the codes of
+// engine/exec/value/ops, chosen at compile time, and a comparison with a bound value.
+
+import { NULL } from "../../storage_class";
+import {
+  BIT_AND,
+  BIT_OR,
+  BIT_SHL,
+  BIT_SHR,
+  OP_ADD,
+  OP_DIV,
+  OP_EQ,
+  OP_GE,
+  OP_GT,
+  OP_LE,
+  OP_LT,
+  OP_MUL,
+  OP_NE,
+  OP_REM,
+  OP_SUB,
+  compareAff,
+  holds,
+} from "./ops";
+import { Val } from "./val";
+
+/** A comparison operator's code, or -1. */
+export function comparisonOp(op: string): i64 {
+  if (op == "=") {
+    return OP_EQ as i64;
+  }
+  if (op == "!=") {
+    return OP_NE as i64;
+  }
+  if (op == "<") {
+    return OP_LT as i64;
+  }
+  if (op == "<=") {
+    return OP_LE as i64;
+  }
+  if (op == ">") {
+    return OP_GT as i64;
+  }
+  if (op == ">=") {
+    return OP_GE as i64;
+  }
+  return -1;
+}
+
+/** 1 when `v op w` holds, 0 when not, -1 when `w` is NULL. */
+export function bound(v: Val, w: Val, aff: u8, coll: u8, op: u8): i64 {
+  if (w.t == NULL) {
+    return -1;
+  }
+  return holds(op, compareAff(v, w, aff, coll)) ? 1 : 0;
+}
+
+/** The code of an arithmetic operator (`+ - * / %`), or -1. */
+export function arithCode(op: string): i64 {
+  if (op == "+") {
+    return OP_ADD as i64;
+  }
+  if (op == "-") {
+    return OP_SUB as i64;
+  }
+  if (op == "*") {
+    return OP_MUL as i64;
+  }
+  if (op == "/") {
+    return OP_DIV as i64;
+  }
+  if (op == "%") {
+    return OP_REM as i64;
+  }
+  return -1;
+}
+
+/** The code of a bitwise operator (`& | << >>`), or -1. */
+export function bitCode(op: string): i64 {
+  if (op == "&") {
+    return BIT_AND as i64;
+  }
+  if (op == "|") {
+    return BIT_OR as i64;
+  }
+  if (op == "<<") {
+    return BIT_SHL as i64;
+  }
+  if (op == ">>") {
+    return BIT_SHR as i64;
+  }
+  return -1;
+}

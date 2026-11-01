@@ -1,0 +1,13 @@
+1 <HEADER>
+2 failed: LoadError cannot load bad-footer
+3 <main>
+4 failed: LoadError cannot load bad-aside
+a done
+bad-b failed: cannot load bad-b
+alias home <home>
+alias broken failed: LiteralError literal alias
+inline broken failed: LiteralError literal inline
+generic broken failed: LiteralError literal generic
+returned broken failed: LiteralError literal returned
+nested broken failed: LiteralError literal nested
+index late failed: IndexError index set

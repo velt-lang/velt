@@ -324,7 +324,16 @@ impl FnCx<'_, '_> {
             Some(LitEq::Done(h)) => return h,
             Some(LitEq::Operands(l, r)) => (l, r),
             // `==` compares the value as it is.
-            None if !matches!(op, B::Eq | B::NotEq) => self.checked_operands(op, lhs, rhs, hint),
+            None if !matches!(op, B::Eq | B::NotEq) => {
+                let mark = self.cast_member_numbers.len();
+                if !matches!(op, B::Add) {
+                    self.cast_member_numbers
+                        .extend(super::cast_member::number_operands(lhs, rhs));
+                }
+                let lr = self.checked_operands(op, lhs, rhs, hint);
+                self.cast_member_numbers.truncate(mark);
+                lr
+            }
             None => self.operands(lhs, rhs, hint, Want::Borrow),
         };
         // An `any` or `unknown` operand, by its checked type (a variable, a field, an element,
@@ -360,6 +369,11 @@ impl FnCx<'_, '_> {
         } else {
             (l, r)
         };
+        // Promises of two types (one passed where a `Promise<unknown>` is expected): one promise
+        // is itself, as TypeScript allows comparing them (#1682).
+        if matches!(op, B::Eq | B::NotEq) && self.two_promise_types(l.ty, r.ty) {
+            return self.structural_eq(l, r, op == B::NotEq, span);
+        }
         // `a == b` on `T | null | undefined` values: `null == undefined`, as in JavaScript.
         if !strict && matches!(op, B::Eq | B::NotEq) {
             let (l, r) = match self.loose_three_state_eq(l, r, op == B::NotEq, span) {
@@ -577,6 +591,12 @@ impl FnCx<'_, '_> {
                 (l, r)
             }
         }
+    }
+
+    /// Are `a` and `b` two different promise types, compared by identity (#1682)?
+    pub(super) fn two_promise_types(&self, a: TyId, b: TyId) -> bool {
+        let promise = |t: TyId| matches!(self.cx.ty.kind(t), TyKind::Promise(..));
+        a != b && promise(a) && promise(b)
     }
 
     pub(crate) fn primitive_eq(&self, t: TyId) -> bool {

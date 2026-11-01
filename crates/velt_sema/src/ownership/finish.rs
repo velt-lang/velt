@@ -55,7 +55,7 @@ pub(super) fn reassigned_fixed_params(cx: &mut Ctx, d: DefId, f: &mut FnDef) {
         FnKind::Closure => "a closure",
         _ => "an overridden or interface method",
     };
-    let ev = evidence::collect(cx, &mut f.body.block);
+    let ev = evidence::collect(cx, &mut f.body.block, f.captures.len()..f.params.len());
     let first = f.captures.len() + usize::from(f.self_ty.is_some());
     for p in &f.params[first..] {
         let Some(&at) = ev.reassigned.get(&p.local) else {
@@ -113,7 +113,7 @@ pub(super) fn soft_args(cx: &mut Ctx, d: DefId, f: &mut FnDef) {
 /// elements (`Ctx::frozen_elems`), variables bound to a part (`const ps = s.ports`), and,
 /// through them, elements of loops over those (`Ctx::loop_roots`) and variables bound to them.
 pub(super) fn frozen_bindings(cx: &mut Ctx, f: &mut FnDef) {
-    if !cx.frozen_reads {
+    if !cx.frozen_reads || !reads_shared(cx, f) {
         return;
     }
     let edges = super::derived::edges(cx, f);
@@ -155,7 +155,7 @@ pub(super) fn frozen_bindings(cx: &mut Ctx, f: &mut FnDef) {
             break;
         }
     }
-    let ev = evidence::collect(cx, &mut f.body.block);
+    let ev = evidence::collect(cx, &mut f.body.block, f.captures.len()..f.params.len());
     let mut errors = direct_writes(cx, f);
     let written: Vec<velt_common::Span> = errors
         .iter()
@@ -213,6 +213,28 @@ pub(super) fn frozen_bindings(cx: &mut Ctx, f: &mut FnDef) {
         );
     }
     report(cx, errors);
+}
+
+/// Can `f` change a part of a value read out of a `shared` at all: does its body read one
+/// (`Intrinsic::SharedRead`), or is a local of it a `for…of` element of one
+/// (`Ctx::frozen_elems`)? Every binding `frozen_bindings` checks, and every write
+/// `direct_writes` reports, is derived from one of those; a program reading a `shared`
+/// somewhere does not walk every other body again.
+fn reads_shared(cx: &Ctx, f: &mut FnDef) -> bool {
+    if (f.body.locals.iter()).any(|l| cx.frozen_elems.contains(&l.span)) {
+        return true;
+    }
+    let mut found = false;
+    visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
+        found |= matches!(
+            e.kind,
+            E::Call {
+                callee: Callee::Intrinsic(crate::hir::Intrinsic::SharedRead),
+                ..
+            }
+        );
+    });
+    found
 }
 
 /// Writes through what a method or getter of a value read out of a `shared` returns, in the

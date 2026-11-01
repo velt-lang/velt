@@ -1,7 +1,7 @@
 use super::*;
 
 const FULL: &str = r#"
-import type { Package } from "velt:package";
+import type { Package } from "velt/package";
 
 export const pkg: Package = {
   name: "hello",
@@ -12,6 +12,7 @@ export const pkg: Package = {
   paths: { "@app/*": "src/*" },
   jsx: { importSource: "sigx" },
   native: { path: "rs", targets: ["x86_64-unknown-linux-gnu"] },
+  build: { cpu: "x86-64-v3" },
 };
 "#;
 
@@ -20,7 +21,7 @@ fn to_vlt_round_trips_and_is_formatted() {
     let m = Manifest::parse(FULL).unwrap();
     let text = m.to_vlt();
     assert!(
-        text.starts_with("import type { Package } from \"velt:package\";\n"),
+        text.starts_with("import type { Package } from \"velt/package\";\n"),
         "{text}"
     );
     assert!(
@@ -29,6 +30,7 @@ fn to_vlt_round_trips_and_is_formatted() {
     );
     assert_eq!(Manifest::parse(&text).unwrap(), m);
     assert_eq!(velt_fmt::format_source(&text).unwrap(), text);
+    assert_eq!(m.build.and_then(|b| b.cpu).as_deref(), Some("x86-64-v3"));
 
     // Defaults are left out.
     let minimal =
@@ -37,8 +39,21 @@ fn to_vlt_round_trips_and_is_formatted() {
             .to_vlt();
     assert_eq!(
         minimal,
-        "import type { Package } from \"velt:package\";\n\nexport const pkg: Package = { name: \"a\", version: \"1.0.0\" };\n"
+        "import type { Package } from \"velt/package\";\n\nexport const pkg: Package = { name: \"a\", version: \"1.0.0\" };\n"
     );
+}
+
+#[test]
+fn build_cpu_must_be_a_cpu_name() {
+    let parse = |build: &str| {
+        Manifest::parse(&format!(
+            "export const pkg: Package = {{ name: \"a\", version: \"1.0.0\", build: {build} }};"
+        ))
+    };
+    assert!(parse("{ cpu: \"znver4\" }").is_ok());
+    let err = parse("{ cpu: \"Zen 4\" }").unwrap_err();
+    assert!(err.contains("is not a CPU name"), "{err}");
+    assert!(parse("{ arch: \"x\" }").is_err());
 }
 
 #[test]
@@ -50,6 +65,7 @@ fn strings_are_escaped() {
         Dependency::Detailed(DetailedDependency {
             version: None,
             path: Some(path.into()),
+            ..Default::default()
         }),
     );
     let text = m.to_vlt();
@@ -195,24 +211,34 @@ fn finds_enclosing_package() {
     );
 }
 
-/// `std/package.vlt` (the type editors and `velt doc` show) declares exactly the schema's fields,
-/// with the same optionality and types.
+/// `std/package/` (`manifest.vlt` and `workspace.vlt`, which velt/package re-exports: the types
+/// editors and `velt doc` show) declares exactly the schema's fields, with the same optionality
+/// and types.
 #[test]
 fn std_package_types_match_the_schema() {
     use velt_syntax::ast::{ItemKind, TypeExprKind};
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std/package.vlt");
-    let src = std::fs::read_to_string(&path).unwrap();
-    let (module, diags) = velt_syntax::parse_file(FileId(0), &src);
-    assert!(diags.is_empty(), "{diags:?}");
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std/package");
+    let sources: Vec<(String, velt_syntax::ast::Module)> = ["manifest.vlt", "workspace.vlt"]
+        .iter()
+        .map(|file| {
+            let src = std::fs::read_to_string(dir.join(file)).unwrap();
+            let (module, diags) = velt_syntax::parse_file(FileId(0), &src);
+            assert!(diags.is_empty(), "{file}: {diags:?}");
+            (src, module)
+        })
+        .collect();
     let declared = |name: &str| -> Vec<String> {
-        let alias = module
-            .items
+        let (src, alias) = sources
             .iter()
-            .find_map(|item| match &item.kind {
-                ItemKind::TypeAlias(a) if a.name.name == name && item.exported => Some(a),
-                _ => None,
+            .find_map(|(src, module)| {
+                module.items.iter().find_map(|item| match &item.kind {
+                    ItemKind::TypeAlias(a) if a.name.name == name && item.exported => {
+                        Some((src, a))
+                    }
+                    _ => None,
+                })
             })
-            .unwrap_or_else(|| panic!("std/package.vlt exports no type `{name}`"));
+            .unwrap_or_else(|| panic!("std/package/ exports no type `{name}`"));
         let TypeExprKind::Object(fields) = &alias.ty.kind else {
             panic!("`{name}` is not an object type");
         };
@@ -238,12 +264,10 @@ fn std_package_types_match_the_schema() {
         ("DependencySource", schema::DEPENDENCY),
         ("Jsx", schema::JSX),
         ("Native", schema::NATIVE),
+        ("Build", schema::BUILD),
+        ("Workspace", schema::WORKSPACE),
     ] {
-        assert_eq!(
-            declared(name),
-            expected(fields),
-            "`{name}` in std/package.vlt"
-        );
+        assert_eq!(declared(name), expected(fields), "`{name}` in std/package/");
     }
 }
 
@@ -269,6 +293,34 @@ fn windows_device_names_are_not_package_names() {
         "auxiliary",
     ] {
         assert!(!is_windows_device_name(name), "{name}");
+        assert!(is_valid_package_name(name), "{name}");
+    }
+}
+
+/// `velt/…` (and `std/…`) are the standard library's modules: no package or dependency may be
+/// named `velt` or `std`.
+#[test]
+fn the_standard_library_names_are_reserved() {
+    for name in ["velt", "std"] {
+        let text =
+            format!("export const pkg: Package = {{ name: \"{name}\", version: \"1.0.0\" }};");
+        let err = Manifest::parse(&text).unwrap_err();
+        assert!(
+            err.contains(&format!("`{name}` is reserved for the standard library")),
+            "{err}"
+        );
+        assert!(!is_valid_package_name(name));
+        let dep = format!(
+            "export const pkg: Package = {{ name: \"a\", version: \"1.0.0\", dependencies: {{ {name}: \"1\" }} }};"
+        );
+        let err = Manifest::parse(&dep).unwrap_err();
+        assert!(
+            err.contains(&format!("`{name}` is reserved for the standard library")),
+            "{err}"
+        );
+    }
+    // Only the names themselves.
+    for name in ["velt-utils", "my-velt", "veltx"] {
         assert!(is_valid_package_name(name), "{name}");
     }
 }

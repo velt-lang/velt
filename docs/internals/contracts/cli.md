@@ -1,17 +1,18 @@
 # `velt` CLI — CONTRACT
 
 ```
-velt build [<file.vlt>] [-o <out>] [--release] [-g] [--backend cranelift|llvm] [--target <triple>] [--emit vir|llvm|obj|exe] [--locked] [--json] [-v] [--timings]
-velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--backend cranelift|llvm] [--locked] [-- <program args>...]
+velt build [<file.vlt>] [-o <out>] [--release] [-g] [--backend cranelift|llvm] [--target <triple>] [--cpu <name>] [--emit vir|llvm|obj|exe] [--locked] [--json] [-v] [--timings]
+velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--cpu <name>] [--backend cranelift|llvm] [--locked] [-- <program args>...]
 velt check [<file.vlt>] [--json] [--locked] [-v]
 velt check --ts-compat [<file|dir>...] [--json] [--locked] [-v]
-velt dev   [<file.vlt>] [--exe] [--locked] [-v] [--timings] [-- <program args>...]
-velt test  [<file|dir>] [--filter <text> [--exact]] [--release] [--locked] [--watch]
+velt dev   [<file.vlt>] [--exe [--release] [-g] [--cpu <name>] [--backend <name>]] [--locked] [-v] [--timings] [-- <program args>...]
+velt test  [<file|dir>] [--filter <text> [--exact]] [--release] [--locked] [--jobs <n>] [--watch]
 velt test  [<file|dir>] [--filter <text> [--exact]] [--release] [--locked] --no-run [--json]
 velt new   <name> [--template app|cli|api|websocket|lib] [--lib]
 velt init  [--template <t>] [--name <name>] [--force]
 velt init  --editor vscode [--dir <d>] # only .vscode/launch.json + extensions.json, kept if present
-velt clean
+velt clean [--cache]
+velt cache warm [--background]
 velt completions bash|zsh|fish|powershell
 velt help  [<command>]                 # = velt <command> --help
 velt add   <pkg>[@<req>] [--path <dir>]
@@ -22,7 +23,7 @@ velt native build [--target <triple>]
 velt fmt [<file|dir>...] [--check]
 velt lsp [--stdio]                     # language server (VS Code extension: editors/vscode)
 velt playground [--port <n>] [--host <addr>]   # browser playground (default 127.0.0.1:8090)
-velt doc [<file|dir>...] [--std] [-o <dir>]     # HTML API docs
+velt doc [<file|dir>...] [--std] [--format html|json|types] [-o <dir|file|->]     # API docs (HTML, or JSON for the docs website), std's TypeScript declarations
 velt registry serve [--dir <d>] [--port <n>] [--host <addr>]   # package registry server (default 127.0.0.1:8091)
 velt doctor                            # checks toolchain setup + smoke test
 velt toolchain list [--available] | install <v> [--default] | remove <t> [--force] | self-update | prune [--dry-run] | default [<t>] | which | link <name> <prefix> | unlink <name> | --version   # the launcher's (#948)
@@ -43,6 +44,27 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   if missing). The diagnostics are those of `check --json`, with a non-source failure (linker,
   missing runtime) as an error with `location: null`. Exit codes as for `build`. The VS Code
   extension's `velt` debug type relies on it.
+- **Member selection** (additive, #1855): `check`, `test`, `build`, `fmt` and `doc` take
+  `--workspace`, `-p <glob>` / `--package <glob>` (repeatable; `-p=`/`--package=` too),
+  `--affected [<base>]` (`--affected=<base>`) and `--fail-fast`; `run` and `dev` take `-p
+  <member>` (`run`: only before its file, whose following arguments are the program's). A glob
+  matches a member's name, or a scoped name's part after the `/`. They are read before the
+  command's own options
+  (`commands::members::intercept`): outside a workspace they are an error, and so is a file
+  argument with them. Without them, those five commands at a workspace root outside its packages
+  select every member (`run`/`dev` there: an error listing the runnable members). One selected
+  member: the command runs in its directory in this process (for `run`/`dev`, always exactly
+  one), a relative `-o` resolved against the starting directory. Several: `--watch`, `-o` and
+  `--json` are errors, and the workspace is installed once (`--locked` passed on; not for `fmt`),
+  then `velt <command> <the other arguments>` runs in each member's directory, at most half the
+  available cores at once, a member after the selected members it depends on, output captured and
+  printed per member under `Member <name> (<dir>)` / `Failed …`, then `Finished `velt <cmd>` on
+  <n> members: <p> passed[, <f> failed (<names>)][, <s> skipped after a failure (<names>)]`; exit
+  code: the first failed member's, else 0. `build` skips members with no entry (libraries).
+  `--affected` takes `git diff --name-only --relative <base>` plus untracked files below the
+  workspace root, each owned by its innermost member except under its `target/` (the workspace
+  file or lockfile: every member), plus the members that depend on them; without a base, `git
+  merge-base HEAD @{upstream}`, and an error when `CI` is set.
 - `test --filter <text>` (additive): only the tests whose name contains `<text>` run (`--exact`:
   only the test named `<text>`; a file with none is skipped; no match at all prints `no tests
   match` and exits 0). `test --no-run` (additive): builds each test file's harness without running
@@ -55,6 +77,20 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   build and of test files that do not parse, as in `check --json`. Exits 1 when a harness did not
   build. `--json` needs `--no-run`, `--exact` needs `--filter`, and `--watch` does not go with
   `--no-run`. The VS Code extension's "Run test" and "Debug test" rely on it.
+  `test --no-cache` (additive, #1855): runs every test file. A `velt test` in a package that
+  passed with every file kept writes `target/velt/test/member-stamp` (the build stamp's format;
+  key over the command line after member selection, the `velt` binary and the `VELT_*`
+  environment; `objects` = tests passed; entries = its harnesses' build-stamp entries from before
+  the run and the directories discovery listed), and removes it otherwise; `velt test` on
+  members (several, or one with `-p`) doesn't start a member whose member stamp for the same
+  command is unchanged, printing `Unchanged <name> (<dir>): <n> passed`. `--watch` has no member
+  stamp. Without it, a file whose harness is
+  unchanged since all its tests passed, and whose tests reach nothing outside the program (the
+  build stamp's `outside` record, per file of a harness), is not run: the runner prints its kept
+  report after `running <path> (cached)`; a file whose tests do reach outside prints `running
+  <path> (ran: not cacheable, it uses <what>)`. Kept in `<harness>.test-results.json`.
+  `test --jobs <n>` / `-j <n>` (additive): how many test files run at once (default: one per
+  core); the output is the same for any `n`, in file order.
 - `new` / `init` (additive): every template also writes `.vscode/launch.json` (one
   `{"type": "velt", "request": "launch", "name": "Debug"}` configuration) and
   `.vscode/extensions.json`, both kept if present. `init --editor vscode` writes only those, in
@@ -71,6 +107,22 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   machine): one unit below 32 000 VIR statements, else one per 16 000, at most 4.
   `$VELT_CODEGEN_UNITS` = N overrides it (N units, at most the core count; `1`: no split).
   `--emit obj` always writes one object and removes none.
+- **CPU** (additive): `--cpu <name>` (`velt build`, `run`, `test`, `dev --exe`), else
+  `$VELT_CPU`, else the root package's `build.cpu`, reaches both backends as
+  `CodegenOptions::cpu` (`commands::cpu::resolve_cpu`). Names: `baseline` (alias `x86-64`),
+  `x86-64-v2|v3|v4`, `native`, or a CPU name of the target's architecture (clang's names,
+  `velt_codegen_cl/src/cpu_names.rs`), checked by `velt_codegen_cl::check_cpu` (a CPU of
+  another architecture, or `native` for one other than the host's, is an error from `--cpu`
+  and does not apply from the others; a name no architecture has is an error from all three;
+  WebAssembly takes none). `--cpu` without `--exe` is an error for `velt dev`. Unset, x86_64
+  code is for `x86-64-v2` (`velt_codegen_cl::DEFAULT_X86_CPU`), other targets for their
+  default; `velt run`/`velt test`/`velt dev --exe` without `--release` use `native`. LLVM gets
+  `-march=<name>` (x86_64) or `-mcpu=<name>`; Cranelift the level's ISA flags, its preset of
+  that name, or the baseline. x86_64 code above the baseline calls `velt_rt_check_cpu` first
+  in `velt_main` (rt_abi.md "CPU check"; added to the VIR by the driver, `--emit llvm`
+  included) with the features that backend's code uses: for a CPU name, Cranelift's preset or
+  what clang defines for `-march=<name>` (`velt_codegen_llvm::required_features`). `velt dev`'s JIT
+  always uses the host's features.
 - **WebAssembly** (additive): `--target wasm32-wasip1` (alias `wasm32-wasi`)
   and `--target wasm32-unknown-unknown` build `./target/velt/<stem>.wasm` (object `<stem>.o`) with
   the LLVM backend (always; `--backend cranelift` is an error) using LLVM's `opt`/`llc`
@@ -96,6 +148,15 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   (its `.vlt`, `.ts` and `.tsx` files, not `.d.ts`; `src/lib.vlt` is named after the package) into `<pkg>/target/doc`; paths: those files and
   directories into `./target/doc`; `--std`: the standard library. `-o` overrides the output
   directory. Writes `index.html`, one page per module, and a client-side search index.
+  `--format json` (additive): the same documentation as one JSON document, `api.json` in the
+  output directory, or the `.json` file `-o` names, or stdout for `-o -`. It is
+  `{ schemaVersion, title, modules }`; `schemaVersion` (1) goes up when a field changes meaning
+  or goes away, and fields may be added without it. The fields are in docs/tooling/cli.md
+  "JSON output"; the docs website renders its API pages, search index and std catalog from it.
+  `--format types` (additive, with `--std` only): the standard library's TypeScript
+  declarations as the npm package `velt` (`package.json` with an `exports` map, an
+  `index.d.ts` per public module, `globals.d.ts`) into `-o` (default `target/velt-types`);
+  docs/tooling/cli.md "TypeScript declarations".
 - `registry serve` (additive): serves a registry directory (default: the
   local registry) over HTTP (protocol in manifest.md "Remote registries"). `publish`
   uploads when the package's `registry` (or `$VELT_REGISTRY`) is a URL.
@@ -224,6 +285,87 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   that link fails). A link whose inputs (objects, runtime library, settings, the linker:
   `velt_link::linker_identity`) are unchanged since the executable was last linked is skipped
   (`<exe>.link-stamp` beside it).
+- Build stamp and build cache (additive, #1612). `build`, `run` and `test` with `--emit exe`
+  (the default) and no `--report` skip parsing, checking and codegen when `<exe>.build-stamp`
+  matches: the compiler (version, executable size and time), the options, a generated root's
+  source, the `VELT_*` environment (but `VELT_BUILD_CACHE*`, `VELT_BUILD_STAMP`,
+  `VELT_CACHE_STATS`, `VELT_TEST_PLAN`), clang for LLVM builds, every file the build read (the
+  session's source map and the configuration files module resolution read) by content hash (the
+  size and time it had when it was read first, not recorded when it was modified less than 2 s
+  before it was read, and not trusted when not older than the stamp), what
+  module resolution looked at (`vpm::probe`: every path probed is still a file, a directory or
+  missing as it was, every directory listed has the same entries), the manifests and lockfile
+  of the package graph, and by size and time the unit objects and the executable it wrote (so
+  an output another build or tool rewrote is a change), extra link inputs, and the std cache's
+  objects the link read (`std` lines; stamp format `velt-build-stamp 3`). The objects it names
+  must exist; the link step then runs on the unit objects and the `std` objects (and checks its
+  own stamp). The stamp ends with `end <entries>`
+  and is renamed into place whole. Only builds without diagnostics write a stamp; a build that
+  does not match removes it first, as does a build of the executable that writes none
+  (`VELT_BUILD_STAMP=off`, `--report`). `VELT_BUILD_STAMP=off|0` disables it.
+  Codegen goes through the build cache (`velt_build_cache`): `$VELT_BUILD_CACHE` (a directory, or
+  `off|0|false|no|none`), default `$VELT_HOME/build-cache` (a `velt` in a cargo target directory, one holding cargo's `.rustc_info.json` or whose
+  profile directory holds its `.cargo-lock`: `<target dir>/velt-build-cache`, limit 500M from
+  `.cargo/config.toml`); the root gets a `CACHEDIR.TAG` on the first write when it is new, empty or
+  holds only what the cache makes (a directory with other files is used, never adopted), and
+  `velt clean --cache` and garbage collection act only on a root that has it, removing only layout directories,
+  `warm/` and the marker (the root too when it is then empty); layout `v4/<kind>/`
+  with kinds `cl` (Cranelift compiled functions, Cranelift's incremental-cache key with the
+  Cranelift version), `stdfn` (the std cache below: objects of single std functions, file
+  entries), `llvm`
+  (unit objects, keyed by clang's path, size, time and arguments, the host triple and the IR)
+  and `std-ast` (std files' parses, `velt_syntax::encode_module`, keyed by the compiler identity,
+  `AST_FORMAT`, plain TypeScript or not and the source's length, CRC-32 and 64-bit hash; only
+  parses without diagnostics of files read from disk, never an editor's unsaved buffer; every
+  command that loads a program uses them, `check` and the language server included).
+  Entries under 16 KiB are packed: 64 shards per kind by the key's first byte, each `<nn>.pack`
+  (values) + `<nn>.idx` (56-byte records: key, offset, length, 8-byte SHA-256 prefix of the
+  value, minutes since 1970 of the last use; the last record of a key wins) appended under an
+  exclusive lock of `<nn>.lock`; a value whose checksum does not match is a miss, and the next
+  store appends it again. Larger ones are files, `<kind>/large/<2 hex>/<62 hex>`: the value's
+  length (8 bytes) and checksum (8), then the value, synced and renamed into place, used at their
+  modification time; one that fails its check is removed (a miss) and stored again. File entries
+  (`Cache::put_file`/`path_of`/`touch`, for files a linker reads) are plain files in
+  `<kind>/files/<2 hex>/<62 hex>` with the length and checksum in a `.check` sidecar, checked
+  before the path is handed out; stored, and removed when damaged, under `<kind>/files.lock`.
+  Their time of use is the sidecar's: the file keeps its size and time while it is cached. Limit
+  `$VELT_BUILD_CACHE_SIZE` (`parse_size`: `500M`, `2G`, bytes; default 2 GiB) on the disk space
+  the files take (allocated blocks), enforced after a build that stored entries, at most hourly
+  (`gc-stamp`): entries used least recently go until 3/4 of it, packs with a quarter unreferenced
+  are rewritten, and other layout directories (`v1`) are removed. The directory must be writable only by trusted
+  users: entries are used as they are. A hit refreshes its time of use
+  when that is over an hour old. `-v` appends
+  `(<n> of <m> functions|codegen units from the build cache)` to the codegen line, and a `stamp`
+  stage, with `(unchanged: nothing to compile)` when it matched.
+- Std cache (additive, #1728 step 3; off by default). Release executables (`--emit exe`) built by
+  LLVM without debug info (`-g`), with `VELT_STD_OBJECT=1`,
+  take std functions out of the program: each std function that is not small (40 statements),
+  not a `$dup` rename, reaches no static with relocations or written (named by it or by a small
+  function it may inline) and makes no indirect call is keyed by SHA-256 over `velt std function
+  1`, `build_cache::compiler_identity()` (version line, executable size and time), clang's path,
+  size and time, clang's optimization flag (`VELT_LLVM_OPT`), the target, the CPU and the
+  optimization level; then, for it and each small internal function it reaches through small
+  ones (in that order), its symbol, `velt_vir::fingerprint::Canon::text` (`Mode::Link`) and its
+  parameter attributes; then, for each function that code calls without compiling it (what its
+  object declares), its symbol, params, return type and parameter attributes. A found entry is
+  looked up again when linking; gone by then, the build falls back as below. Before optimization,
+  each found key (kind `stdfn`, `Cache::path_of`), and each missing one when the missing
+  functions come to at least 1,000 statements (else they stay in the program), makes the function
+  an `Import` declaration; functions their objects may reference are made `Export`. After
+  optimization the objects of the functions still declared, closed over what those objects call,
+  are linked; a missing one is compiled then, alone (itself, the small functions it may inline
+  with their bodies, declarations of what they call, the statics they name; optimized at
+  `Speed`; LLVM, one unit; the entry declared, vir.rs invariant 5) and stored (`Cache::put_file`).
+  If one fails, the build optimizes the program as lowered, without the cache. Each object is
+  placed as soon as it is looked up again or stored, before codegen, in `<object stem>.std/<n>.<o|obj>`
+  beside the program's objects (hard links to the cache's files, copies where the file system has
+  none, replaced by each build; MSVC's linker reads an input without an extension as
+  `<name>.obj`); one gone from the cache by then makes the build fall back as above. The link
+  reads those, and the stamp's `std` lines name them.
+  The miss threshold is 1,000 statements unless `VELT_STD_OBJECT_MIN_MISSES` says otherwise. `VELT_STD_OBJECT_STATS=1` prints, on stderr, the std
+  statements by reason (`served`, `small`, `$dup`, `statics with identity`, `callbacks`), each
+  linked symbol (`velt: std cache: links <symbol> (<n> statements)`) and `velt: std cache: <n>
+  found, <m> compiled, <k> no longer called`.
 - The launcher (additive, #948; crates/velt_launcher, binary `velt-launcher`, installed as
   `<root>/bin/velt[.exe]`; `<root>` is the launcher's grandparent directory, else it exits 1).
   A first argument `+<toolchain>` is removed and selects that toolchain (reason `+<toolchain>`);
@@ -314,7 +456,8 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   info (`.vlt` file:line in debuggers and symbolizers); with Cranelift, DWARF line tables in ELF,
   Mach-O and COFF objects (the bundled `lld-link` keeps them in the `.exe`, beside the PDB; a
   build that `link.exe` links emits none, leaving function symbols).
-- Panics print `panic: <msg> at <path>:<line>:<col>` (path as given to the compiler) and exit 101;
+- Panics print `panic: <msg> at <path>:<line>:<col>` (path as given to the compiler; a
+  standard-library file as `std/<path below the std root>`) and exit 101;
   an uncaught error prints `Uncaught <Type>[: <message>] at <throw location>` and exits 1.
 - `run` builds then executes the program with inherited stdio and **exits with the program's exit
   code**. Compiler errors → exit code 1, nothing executed. Internal compiler errors → 101.
@@ -388,6 +531,22 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   existing `.gitignore`. Refuses (without `--force`) inside another package.
 - `clean` (additive): removes `<package>/target` (found upward from the cwd like `build`) and
   prints `Removed <dir> (<n> files, <size>)`; no `target/` → `Clean nothing to remove`.
+  `clean --cache` removes the build cache's directory instead (same output; the cache turned off
+  → `Clean nothing to remove (the build cache is off: $VELT_BUILD_CACHE)`).
+- `cache warm [--background]` (additive, #1612): with the build cache on, builds each
+  `*.vlt` of the warm-up directory (`$VELT_SHARE/warm`, else `share/velt/warm` beside the std
+  root's directory: `<prefix>/share/velt/warm`, or the checkout's) with a child `velt build
+  <file> -o <tmp>/warm[.exe]` (an executable; `VELT_BUILD_STAMP=off`, no `VELT_CPU`), once with `--cpu native` and once without, then
+  writes the marker `<cache>/warm/<hex>` (SHA-256 of the version line and the executable's size
+  and time) and prints `velt: warmed the build cache with <n> programs in <s>s`. With the marker
+  present it prints that the cache is warm and does nothing; one run per marker at a time
+  (`<marker>.lock`). A program that fails to build is reported (exit 1, no marker) after the
+  others ran. `--background` starts `velt cache warm` detached (own process group, lowest
+  priority; on Windows `CREATE_NO_WINDOW`, `IDLE_PRIORITY_CLASS`) and returns; it does nothing
+  when `$CI` is set (non-empty) or `$VELT_CACHE_WARM` is `off`. The cache off →
+  a note, exit 0; no warm-up directory → error. The launcher runs `velt cache warm --background`
+  after installing a toolchain, as do `scripts/install.*` and `scripts/get-velt.*` (ignoring
+  failures).
 - `completions <shell>` (additive): prints a completion script for bash, zsh, fish or PowerShell
   (`pwsh` accepted) covering commands, options, `--template`/`--backend`/`--emit` values and files.
 - Help (additive): `velt --help` lists commands, templates and environment variables;
@@ -423,7 +582,7 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   files, plus `.ts`/`.tsx` (not `.d.ts`) under a package's `src/` and `tests/`; skips
   `target/`, `node_modules/`, hidden dirs). `--check` writes nothing, lists unformatted files,
   exit 1 if any. Unparsable files → exit 1.
-- Imports: `velt:x` → `<std root>/x.vlt` or `x/index.vlt`; `./x`, `../x` → relative `x.vlt`,
+- Imports: `velt/x` → `<std root>/x.vlt` or `x/index.vlt`; `./x`, `../x` → relative `x.vlt`,
   `x.ts` or `x.tsx`, else folder module `x/index.vlt`, `x/index.ts` or `x/index.tsx` (two
   existing files among one of these triples: an error at the specifier naming them); `./x.vlt`,
   `./x.ts`, `./x.tsx` → exactly that file; `./x.js` → `x.ts` or `x.tsx`, `./x.jsx` → `x.tsx`
@@ -436,11 +595,11 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   disk and the corrected specifier); a file module that hides a folder module whose `index` has
   another extension gets a warning. Root files may be `.ts` or `.tsx` too; a package without
   `entry` uses `src/main.vlt`, `.ts` or `.tsx` (`src/lib.*` for a library). `std/prelude/*.vlt` is loaded implicitly before everything else.
-  Global modules in `std/prelude/global/*.vlt` (`fetch`, `Response`, `URL`, …) join the prelude
+  Global modules in `std/prelude/global/*.vlt` (`fetch`, `Response`, `URL`, `JSON`, …) join the prelude
   only when a non-std module mentions one of their names as a whole word, unless that module
   binds the name itself at the top level.
 - Environment: `VELT_STD` (std root), `VELT_HOME` (default `~/.velt`), `VELT_REGISTRY`
-  (default `$VELT_HOME/registry`), `VELT_RT_LIB` (runtime lib), `VELT_RT_LINK` (`static`: no shared runtime in debug builds), `VELT_LINKER` (`bundled`, `system`, or a linker program), `VELT_CLANG` (clang for the LLVM backend), `VELT_LLVM_OPT` (clang `-O` level of release builds, default 3), `VELT_CODEGEN_UNITS` (codegen units of LLVM release builds; default from the program's size).
+  (default `$VELT_HOME/registry`), `VELT_RT_LIB` (runtime lib), `VELT_RT_LINK` (`static`: no shared runtime in debug builds), `VELT_LINKER` (`bundled`, `system`, or a linker program), `VELT_CLANG` (clang for the LLVM backend), `VELT_LLVM_OPT` (clang `-O` level of release builds, default 3), `VELT_CODEGEN_UNITS` (codegen units of LLVM release builds; default from the program's size), `VELT_BUILD_CACHE`, `VELT_BUILD_CACHE_SIZE`, `VELT_BUILD_STAMP` (above), `VELT_EAGER_STD` (set: check every standard-library definition, not only those the program reaches; docs/internals/design/lazy-std.md).
   Set by `velt dev` for the program (not for users): `VELT_DEV_SOCKET` (a Unix socket path, or a
   named pipe `\\.\pipe\velt-dev-<pid>-<n>` on Windows).
 - Lockfile: `version = 1` + `[[package]]` entries with `name`, `version`, `source`

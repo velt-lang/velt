@@ -1,0 +1,14 @@
+// A standard library class's private fields are no properties through `any`, as `in` already
+// says: an `ArrayBuffer`'s `bytes` and `fixed` (the length its views read their elements by)
+// read as `undefined` (in JavaScript too: an `ArrayBuffer` has no such properties), so a
+// program cannot take the bytes and shorten them under the views.
+function main() {
+  const u = new Uint8Array(1 << 16);
+  const a: any = u.buffer;
+  console.log(a.bytes, a.fixed, "bytes" in a, Object.keys(a).length, u.length);
+  u[60000] = 1;
+  console.log(u[60000], u.buffer.byteLength);
+  const bytes = a.bytes as u8[];
+  bytes.length = 4;
+  console.log(u.length);
+}

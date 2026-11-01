@@ -1,0 +1,56 @@
+// velt/process/child (internal): the runtime functions velt/process/child calls (rt_abi_async.md §14.3)
+// and the layouts they return.
+
+import { IoResult } from "velt/native/result";
+import { IoStatus } from "velt/native/status";
+import { ExecResult } from "velt/process/child/exec_result";
+import { CommandSpec } from "velt/process/child/spec";
+
+// The runtime's `VeltOutput`.
+struct RawOutput {
+  code: i32;
+  stdout: string;
+  stderr: string;
+}
+
+export declare function velt_rt_child_spawn(spec: CommandSpec): IoResult<u64>;
+
+export declare function velt_rt_child_pid(c: u64): u32;
+
+export declare function velt_rt_child_exit_code(c: u64): i64;
+
+export declare async function velt_rt_child_wait(c: u64): Promise<IoResult<i32>>;
+
+export declare function velt_rt_child_kill(c: u64, signal: i32): IoStatus;
+
+export declare function velt_rt_child_close(c: u64);
+
+export declare async function velt_rt_child_read(
+  c: u64,
+  which: u32,
+  max: u64,
+): Promise<IoResult<u8[]>>;
+
+export declare async function velt_rt_child_read_string(
+  c: u64,
+  which: u32,
+  max: u64,
+): Promise<IoResult<string>>;
+
+export declare async function velt_rt_child_write(c: u64, data: string): Promise<IoStatus>;
+
+export declare async function velt_rt_child_close_stdin(c: u64): Promise<IoStatus>;
+
+export declare async function velt_rt_child_output(
+  spec: CommandSpec,
+  input: string,
+): Promise<IoResult<RawOutput>>;
+
+export declare function velt_rt_child_output_sync(
+  spec: CommandSpec,
+  input: string,
+): IoResult<RawOutput>;
+
+export function resultOf(raw: RawOutput): ExecResult {
+  return new ExecResult(raw.code, raw.stdout, raw.stderr);
+}

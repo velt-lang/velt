@@ -1,0 +1,33 @@
+// Bindings destructured from one value still alias what they were destructured from, and
+// two bindings of the same part alias each other (#1873).
+
+function append(to: number[], from: number[]) {
+  for (const x of from) {
+    to.push(x);
+  }
+}
+
+class Pair {
+  xs: number[] = [1];
+  ys: number[] = [2];
+}
+
+function main() {
+  const t: [number[], number[]] = [[1], [2]];
+  const [a, b] = t;
+  append(t[0], a);
+  append(b, t[1]);
+  const p = new Pair();
+  const { xs: one, xs: two } = p;
+  append(one, two);
+  const n: [[number[], number[]], number[]] = [[[1], [2]], [3]];
+  const [[c, d]] = n;
+  append(n[0][0], c);
+  append(d, d);
+  const ps: [number[], number[]][] = [[[1], [2]]];
+  for (const [e, f] of ps) {
+    append(ps[0][0], e);
+    append(f, f);
+  }
+  console.log(t[0].length);
+}

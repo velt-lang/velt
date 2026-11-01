@@ -18,13 +18,13 @@ async function main() {
     });
     console.log("no throw");
   } catch (e) {
-    console.log("ctor threw", e.message);
+    console.log("ctor threw", (e as Error).message);
   }
   for (const h of [-1, NaN]) {
     try {
       new ReadableStream<number>({}, { highWaterMark: h });
     } catch (e) {
-      console.log(e.name, e.message);
+      console.log((e as Error).name, (e as Error).message);
     }
   }
 
@@ -35,24 +35,24 @@ async function main() {
   }).getReader();
   const pending = r1.closed.then(
     () => console.log("closed ok"),
-    (e) => console.log("closed rejected", e.name, e.message),
+    (e) => console.log("closed rejected", (e as Error).name, (e as Error).message),
   );
   r1.releaseLock();
   await pending;
   try {
     await r1.closed;
   } catch (e) {
-    console.log("later closed", e.message);
+    console.log("later closed", (e as Error).message);
   }
   try {
     await r1.read();
   } catch (e) {
-    console.log("read", e.message);
+    console.log("read", (e as Error).message);
   }
   try {
     await r1.cancel();
   } catch (e) {
-    console.log("cancel", e.message);
+    console.log("cancel", (e as Error).message);
   }
 
   const r2 = new ReadableStream<number>({
@@ -65,7 +65,7 @@ async function main() {
   try {
     await r2.closed;
   } catch (e) {
-    console.log("closed, then released", e.message);
+    console.log("closed, then released", (e as Error).message);
   }
 
   // An errored stream used again after `await reader.closed`.
@@ -77,27 +77,27 @@ async function main() {
   try {
     await r3.closed;
   } catch (e) {
-    console.log("r3 closed", e.message);
+    console.log("r3 closed", (e as Error).message);
   }
   try {
     await r3.cancel();
   } catch (e) {
-    console.log("r3 cancel", e.message);
+    console.log("r3 cancel", (e as Error).message);
   }
   try {
     await r3.read();
   } catch (e) {
-    console.log("r3 read", e.message);
+    console.log("r3 read", (e as Error).message);
   }
   try {
     await r3.closed;
   } catch (e) {
-    console.log("r3 closed again", e.message);
+    console.log("r3 closed again", (e as Error).message);
   }
   try {
     await r3.read();
   } catch (e) {
-    console.log("r3 read again", e.message);
+    console.log("r3 read again", (e as Error).message);
   }
 
   const s4 = new ReadableStream<number>({
@@ -110,7 +110,7 @@ async function main() {
       console.log(x);
     }
   } catch (e) {
-    console.log("for await", e.message, s4.locked);
+    console.log("for await", (e as Error).message, s4.locked);
   }
 
   const pulls = { n: 0 };

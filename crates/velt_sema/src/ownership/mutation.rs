@@ -57,6 +57,16 @@ pub(super) fn apply(
         }
     }
     changed |= captures(cx, d, f, ev);
+    if cx.frozen_reads {
+        let bits = (f.captures.iter().enumerate().take(64))
+            .filter(|(_, c)| ev.modified.contains(&c.inner) || ev.mutated.contains(&c.inner))
+            .fold(0u64, |b, (i, _)| b | 1 << i);
+        let info = cx.fn_info_mut(d);
+        if info.modified_captures | bits != info.modified_captures {
+            info.modified_captures |= bits;
+            changed = true;
+        }
+    }
     let info = cx.fn_info(d);
     // Async functions and generators keep their params (owned): nothing to infer.
     let (kind, fixed, is_async) = (
@@ -184,6 +194,15 @@ impl Dispatch {
     /// The dispatch groups of the whole program.
     pub(super) fn new(cx: &Ctx) -> Dispatch {
         let mut groups: Vec<Group> = vtable_groups(cx).into_iter().map(Group::Vtable).collect();
+        // A generated function and the generated bodies of its instances share one ABI: callers
+        // are checked against the function, lowering calls the bodies (`crate::generated`).
+        let mut generated: FxHashMap<DefId, Vec<DefId>> = FxHashMap::default();
+        for ((g, _), body) in &cx.gen.binding.bound {
+            generated.entry(*g).or_insert_with(|| vec![*g]).push(*body);
+        }
+        let mut generated: Vec<Vec<DefId>> = generated.into_values().collect();
+        generated.sort();
+        groups.extend(generated.into_iter().map(Group::Vtable));
         groups.extend(iface_slots(cx));
         Dispatch { groups }
     }

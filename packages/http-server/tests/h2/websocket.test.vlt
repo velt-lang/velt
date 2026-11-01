@@ -1,0 +1,165 @@
+// WebSockets over HTTP/2 (RFC 8441): `acceptWebSocket` on an extended CONNECT, the WebSocket's
+// frames carried in the stream's DATA frames, and its close as the stream's end.
+import { HttpRequest, HttpResponse, serve, serveHttp } from "../../src/lib";
+import { acceptWebSocket, isWebSocketRequest, upgradeWebSocket } from "../../src/websocket";
+import { timeout } from "velt/task";
+import { describe, expect, it } from "velt/test";
+import { Client, Frame } from "./_h2";
+
+/// A masked client frame (mask 0): FIN, `opcode`, `payload` (under 126 bytes).
+function wsFrame(opcode: i64, payload: string): u8[] {
+  const n = Buffer.byteLength(payload) as i64;
+  const out: u8[] = Buffer.alloc((6 + n) as usize);
+  out[0] = (0x80 | opcode) as u8;
+  out[1] = (0x80 | n) as u8;
+  out.write(payload, 6);
+  return out;
+}
+
+const CONNECT = [
+  ":method",
+  "CONNECT",
+  ":protocol",
+  "websocket",
+  ":scheme",
+  "http",
+  ":path",
+  "/ws",
+  ":authority",
+  "x",
+  "sec-websocket-version",
+  "13",
+];
+
+describe("WebSockets over HTTP/2", () => {
+  it("accepts an extended CONNECT and carries the messages both ways", async () => {
+    const server = await serveHttp({ port: 0 }, async (req: HttpRequest, res: HttpResponse) => {
+      const ws = acceptWebSocket(req, res);
+      if (ws == null) {
+        return;
+      }
+      // The handler returns at once: the socket lives on in its own task.
+      spawn(async () => {
+        for await (const m of ws) {
+          await ws.send(`echo ${m.text}`);
+        }
+      });
+    });
+    const c = await Client.open(server.port);
+    try {
+      c.headers(1, CONNECT, false);
+      await c.flush();
+      expect(await timeout(c.until((f) => f.type == 1), 3000)).toBe("HEADERS 1 :status=200");
+      c.frame(0, 0, 1, wsFrame(1, "hi"));
+      await c.flush();
+      let got = "";
+      await timeout(
+        c.until((f: Frame) => {
+          if (f.type == 0) {
+            got = `${f.payload[0]} ${f.payload[1]} ${f.payload.utf8Slice(2)}`;
+          }
+          return f.type == 0;
+        }),
+        3000,
+      );
+      expect(got).toBe("129 7 echo hi");
+      // A close frame: the server answers with one and ends the stream.
+      c.frame(0, 0, 1, wsFrame(8, ""));
+      await c.flush();
+      const rest = await timeout(c.until((f) => f.id == 1 && (f.flags & 1) == 1), 3000);
+      expect(rest.startsWith("DATA 1")).toBe(true);
+    } finally {
+      c.close();
+      server.close();
+    }
+  });
+
+  it("upgrades an extended CONNECT through the web-standard serve", async () => {
+    const server = await serve({ port: 0 }, (req: Request): Response => {
+      if (!isWebSocketRequest(req)) {
+        return new Response("plain");
+      }
+      const up = upgradeWebSocket(req);
+      const ws = up.socket;
+      spawn(async () => {
+        for await (const m of ws) {
+          await ws.send(`echo ${m.text}`);
+        }
+      });
+      return up.response;
+    });
+    const c = await Client.open(server.port);
+    try {
+      c.headers(1, CONNECT, false);
+      await c.flush();
+      expect(await timeout(c.until((f) => f.type == 1), 3000)).toBe("HEADERS 1 :status=200");
+      c.frame(0, 0, 1, wsFrame(1, "hi"));
+      await c.flush();
+      let got = "";
+      await timeout(
+        c.until((f: Frame) => {
+          if (f.type == 0) {
+            got = `${f.payload[0]} ${f.payload[1]} ${f.payload.utf8Slice(2)}`;
+          }
+          return f.type == 0;
+        }),
+        3000,
+      );
+      expect(got).toBe("129 7 echo hi");
+    } finally {
+      c.close();
+      server.close();
+    }
+  });
+
+  it(
+    "announces SETTINGS_ENABLE_CONNECT_PROTOCOL, and refuses :protocol without CONNECT",
+    async () => {
+      const server = await serveHttp({ port: 0 }, async (req: HttpRequest, res: HttpResponse) => {
+        res.send("plain");
+      });
+      const c = await Client.open(server.port);
+      try {
+        const first = await c.next();
+        // Five settings: the fifth is ENABLE_CONNECT_PROTOCOL (8) = 1.
+        expect(first!.payload.slice(24, 30).join(",")).toBe("0,8,0,0,0,1");
+        c.headers(
+          1,
+          [
+            ":method",
+            "GET",
+            ":protocol",
+            "websocket",
+            ":scheme",
+            "http",
+            ":path",
+            "/",
+            ":authority",
+            "x",
+          ],
+          true,
+        );
+        await c.flush();
+        expect(await timeout(c.until((f) => f.type == 3), 3000)).toBe("RST 1 PROTOCOL_ERROR");
+      } finally {
+        c.close();
+        server.close();
+      }
+    },
+  );
+
+  it("answers a plain request for a WebSocket over HTTP/2 with 426", async () => {
+    const server = await serveHttp({ port: 0 }, async (req: HttpRequest, res: HttpResponse) => {
+      acceptWebSocket(req, res);
+    });
+    const c = await Client.open(server.port);
+    try {
+      c.get(1, "/ws");
+      await c.flush();
+      expect(await timeout(c.until((f) => f.type == 1), 3000)).toBe("HEADERS 1 :status=426");
+    } finally {
+      c.close();
+      server.close();
+    }
+  });
+});

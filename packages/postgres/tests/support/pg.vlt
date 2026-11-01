@@ -1,0 +1,12 @@
+// Shared by the package's tests: they need a PostgreSQL server, named by VELT_TEST_PG_URL
+// (e.g. postgres://postgres:velt@127.0.0.1:55432/velt_test). Without it every test returns at
+// once (the repository's test runner prints a note that the variable is unset).
+
+// The server's URL, or null when VELT_TEST_PG_URL is unset or empty.
+export function pgUrl(): string | null {
+  const url = process.env.VELT_TEST_PG_URL ?? "";
+  if (url.length == 0) {
+    return null;
+  }
+  return url;
+}

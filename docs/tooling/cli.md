@@ -14,12 +14,13 @@ prints every command's options and examples.
 | `velt dev` | run, then hot-swap or restart on every change ([`velt dev`](dev.md)) |
 | `velt test` | run the tests ([Testing](../book/testing.md)) |
 | `velt fmt` | format `.vlt` (and `.ts`, `.tsx`) files ([Formatter](fmt.md)) |
-| `velt clean` | remove the package's `target/` directory |
+| `velt clean [--cache]` | remove the package's `target/` directory; `--cache`: the machine's [build cache](#build-cache) |
+| `velt cache warm` | compile the standard library into the [build cache](#build-cache) ahead of a first build |
 | `velt add`, `install`, `update`, `publish`, `native build` | packages ([Packages](packages.md)) |
 | `velt manifest [--json]` | check the package's manifest, or print it as JSON for other tools ([`package.vlt`](manifest.md#other-tools)) |
 | `velt search`, `yank`, `owner` | find and manage published packages ([Registries](packages.md#registries)) |
 | `velt login`, `logout` | store or forget your token for a registry server ([Users, owners and yanking](packages.md#users-owners-and-yanking)) |
-| `velt doc` | generate HTML API documentation |
+| `velt doc` | generate HTML API documentation, JSON for other tools, or the standard library's TypeScript declarations ([`velt doc`](#velt-doc)) |
 | `velt lsp` | the language server ([Editors](editors.md)) |
 | `velt playground` | write and run programs in the browser ([WebAssembly](webassembly.md#the-playground)) |
 | `velt registry serve`, `registry user`, `registry owner` | serve a package registry over HTTP, and manage its users and owners ([Packages](packages.md#registries)) |
@@ -33,20 +34,35 @@ prints every command's options and examples.
 Every build command works on a single file or on a package:
 
 - **A file**: `velt run hello.vlt` builds `./target/velt/hello` (`hello.exe` on Windows),
-  relative to the current directory, and runs it. The file, and the modules it imports, may also
+  relative to the current directory, and runs it; a file inside a package is built into that
+  package's `target/velt/`, wherever `velt` runs, so the members of a
+  [workspace](packages.md#workspaces) keep their programs (and [build stamps](#build-cache))
+  apart. The file, and the modules it imports, may also
   be `.ts` or `.tsx` files ([TypeScript files](../reference/modules.md#typescript-files-ts-and-tsx)). If the file is inside a package, the package's
   dependencies are installed first.
 - **A package**: without a file argument, `velt` searches upward from the current directory for
   `package.vlt` and builds the package's entry (default `src/main.vlt`) to
   `<package>/target/velt/<name>`. A library-only package can't be run.
 
+### Workspaces
+
+In a [workspace](packages.md#workspaces), `velt check`, `test`, `build`, `fmt` and `doc` take
+`--workspace`, `-p <glob>` (repeatable; a member's name, or a scoped name without its scope) and
+`--affected [<base>]` to run on several members, and
+run on every member at the workspace's root outside its packages; `--fail-fast` starts no more
+members after a failure. `velt run -p <member>` and `velt dev -p <member>` run one member's
+program, with the program's arguments after `--` (`velt run -p server -- --port 8080`). A file
+argument doesn't go with a selection.
+
 ## `velt build` and `velt run`
 
 ```
-velt build [<file.vlt>] [-o <out>] [--release] [-g] [--target <triple>] [--backend cranelift|llvm]
-           [--emit vir|llvm|obj|exe] [--locked] [--json] [-v] [--timings] [--report numbers]
-velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--backend cranelift|llvm]
-           [--locked] [-v] [--timings] [--report numbers] [-- <program args>...]
+velt build [<file.vlt>] [-o <out>] [--release] [-g] [--target <triple>] [--cpu <name>]
+           [--backend cranelift|llvm] [--emit vir|llvm|obj|exe] [--locked] [--json] [-v]
+           [--timings] [--report numbers]
+velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--cpu <name>]
+           [--backend cranelift|llvm] [--locked] [-v] [--timings] [--report numbers]
+           [-- <program args>...]
 ```
 
 - **Debug builds** (the default) use Cranelift: fast to compile, with line tables for debuggers
@@ -62,9 +78,20 @@ velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--backend cranelif
   ±3 %, one faster). Smaller programs are one unit. `VELT_CODEGEN_UNITS=N`
   asks for N units (at most the core count); `VELT_CODEGEN_UNITS=1` turns splitting off.
 - `--backend llvm` without `--release` gives an unoptimized build with full line information.
+- Nothing is compiled twice ([below](#build-cache)): a build whose inputs did not change since
+  the last build of the same output only links (or does nothing), and code compiled once on a
+  machine is taken from the build cache by every later build, in any project.
 - `--target wasm32-wasip1` and `--target wasm32-unknown-unknown` build WebAssembly
   ([WebAssembly](webassembly.md)); `--target x86_64-apple-darwin` cross-builds on Apple
   silicon.
+- `--cpu <name>` chooses the CPU the program is built for: `baseline`, `x86-64-v2` (the default
+  on x86_64: every x86_64 CPU since about 2009), `x86-64-v3`, `x86-64-v4`, `native` (this
+  machine's CPU) or a CPU name clang knows for the target, such as `znver4` or `neoverse-n1`
+  (an unknown one is an error that names the closest). Without it,
+  `$VELT_CPU` and then the package's `build.cpu` decide; `velt run` and `velt test` without
+  `--release` build for this machine's CPU. A program built for x86-64-v2 or above checks the
+  CPU when it starts and names what is missing instead of crashing. Levels, defaults per
+  target and the check: [Platforms, CPU](platforms.md#cpu).
 - `--emit vir` / `--emit llvm` print the intermediate representation and stop; `--emit obj`
   writes only the object file.
 - `-v` prints per-stage timings; `--timings` adds each optimizer pass and code generation step.
@@ -101,11 +128,63 @@ velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--backend cranelif
   (`velt run -- --port 8080`); a `--` right after a file is accepted too. Compile errors exit
   with 1 and run nothing.
 
+### Build cache
+
+A build never compiles the same thing twice:
+
+- **Nothing changed.** `velt build`, `velt run` and `velt test` record what a build read in a
+  stamp beside the program (`<program>.build-stamp`): every source file (std, packages, `.d.ts`
+  files) by content, every path imports were looked up at and every directory listed for them,
+  `package.vlt`, `package.json`, `tsconfig.json` and `velt.lock.json`, the build's options and
+  the compiler. When none of that changed, the next build parses and compiles nothing; running
+  the program again costs only its start. Saving a file without changing it changes nothing
+  either; a file changed while a build read it counts as changed. A new file that an import
+  would now find (a `.ts` beside a `.vlt`, a package in a `node_modules` nearer the importer)
+  counts as a change. A
+  build that printed warnings gets no stamp, so the warnings show every time.
+  `VELT_BUILD_STAMP=off` compiles every time.
+- **Something changed.** The code each function compiles to is kept in a cache that every build
+  on the machine shares, whatever the project: `$VELT_HOME/build-cache` (`~/.velt/build-cache`),
+  or `VELT_BUILD_CACHE`. A debug build compiles only the functions whose code differs from any
+  compiled before, on every core; std's functions, a package's, and generic instances such as
+  `Map<string, number>` compile once per machine. A release build takes each codegen unit's
+  object from the cache when clang compiled the same code with the same flags before.
+- Entries are found by their contents, the target, the CPU and the version of what compiled them,
+  so they are never out of date, and projects pinned to different Velt versions keep their
+  entries side by side.
+- The cache stays under `VELT_BUILD_CACHE_SIZE` (default `2G`) of disk space: about once an
+  hour, a build that added code removes the code used least recently until the cache is under
+  three quarters of that. Small entries (most compiled functions) are packed into a few files
+  instead of a file each, so they take the space of their contents. `velt clean --cache` removes it all
+  (only what the cache made: a `VELT_BUILD_CACHE` directory that holds other files keeps them);
+  `VELT_BUILD_CACHE=off` builds without it.
+- Entries are used as they are, so a `VELT_BUILD_CACHE` directory must be writable only by users
+  you trust: whoever can write to it can put code into your builds.
+- **Warm from the start.** Installing a Velt version (the install scripts, `velt toolchain
+  install`, or the launcher installing the version a package pins) starts `velt cache warm` in
+  the background at low priority: it compiles a set of programs shipped with the toolchain
+  (`share/velt/warm/`) that reach most of std, for this machine's CPU (what `velt run` and
+  `velt test` build for) and the default one (`velt build`). A project's first build then
+  compiles little more than its own code. It runs once per Velt version; `velt cache warm` runs
+  it in the foreground, `--background` detached. The installers skip it in CI (`CI` set), where
+  the cache goes away with the runner, and when `VELT_CACHE_WARM=off`.
+- **Std compiled once (experimental).** With `VELT_STD_OBJECT=1`, a release build compiles each
+  larger std function it uses on its own, stores it in the build cache, and links it; the next
+  program that compiles the same std function links it from the cache instead of compiling it
+  again. `VELT_STD_OBJECT_STATS=1` shows what it found, compiled and left in the program.
+- **Std parsed once.** Every command that loads a program (`check`, `build`, `run`, `test`, the
+  language server) keeps the standard library's parsed files in the build cache, so a program
+  parses only its own files and its packages'. An edited std file (a `VELT_STD` checkout) is
+  parsed again: entries are found by the file's contents and the compiler.
+- `velt build -v` shows how much came from the cache (`codegen ... (637 of 637 functions from
+  the build cache)`) and when a build was up to date.
+
 ## `velt check`
 
 ```
 velt check [<file.vlt>] [--json] [--locked] [-v]
 velt check --ts-compat [<file|dir>...] [--json] [--locked] [-v]
+velt check --std [--json] [-v]
 ```
 
 Parses and type-checks a file with every file it imports, or the whole current package, and prints
@@ -138,6 +217,10 @@ It exits with 0 when there are no errors (warnings are allowed) and with 1 when 
   `message`, `location` (`file`, 1-based `line`/`column`, `endLine`/`endColumn`), further
   `labels` and `notes`, plus `code` and `fix` (`null` except for `--ts-compat` findings).
 - `-v` prints per-stage timings.
+- `--std` checks the whole standard library (`$VELT_STD`, else the toolchain's): every file
+  but its tests, every definition, also those no program reaches. A program checks only the std
+  code it uses, and may import only std's public modules, so this is what the standard
+  library's own development (and its CI) runs.
 
 ### Code shared with TypeScript: `--ts-compat`
 
@@ -174,6 +257,9 @@ src/models/user.ts:3:14: error: `f64` is not a TypeScript type
   and, when the replacement is mechanical, a `fix`: `{"location", "replacement", "title"}`.
 - A relative import must stay among the files passed (or in the `tsCompat` folders): `tsc`
   compiles every file a shared file imports.
+- An import of a std module (`velt/fs`) is an error, as std has no JavaScript runtime, except
+  `import type { … }`: TypeScript erases it, and the [`velt` type
+  package](#typescript-declarations-the-velt-type-package) declares the types for `tsc`.
 - Some rules need types: they ask the checker about what a name refers to and what type a
   value has (`=== null` on a `Map.get`, `${xs}` of an array, `sort()` of numbers), so the
   files are checked once more for them. That about doubles the time of the check and grows
@@ -199,10 +285,15 @@ velt init --editor vscode [--dir <dir>]
 | Template | What you get |
 |---|---|
 | `app` (default) | hello world split into a module, with a test |
-| `cli` | a command-line tool: `velt:cli` argument parsing, subcommands, `--help`, exit codes, tests |
+| `cli` | a command-line tool: `velt/cli` argument parsing, subcommands, `--help`, exit codes, tests |
 | `api` | a JSON HTTP API: routes, validation, typed errors as status codes, tests with `fetch` against a live server |
 | `websocket` | a WebSocket chat server and terminal client, with an end-to-end test |
 | `lib` | a library: exports with `/** */` doc comments for `velt doc`, tests, ready for `velt publish` |
+
+The `api` and `websocket` projects depend on the `http-server` package from the Velt repository
+on GitHub, at the tag of the toolchain's release (`tag: "v0.5.0"`), so a project gets the server
+its toolchain was released with; a toolchain built from any other commit takes it from the
+`main` branch.
 
 Every template builds, passes `velt test` and is formatted. `velt init` writes the same files
 into the current directory; it never overwrites files without `--force`, always keeps an
@@ -221,7 +312,7 @@ a package, or to `--dir`), and never overwrites one.
 ## `velt doc`
 
 ```
-velt doc [<file|dir>...] [--std] [-o <dir>]
+velt doc [<file|dir>...] [--std] [--format html|json|types] [-o <dir|file>]
 ```
 
 Generates HTML documentation for exported items: their signatures and the doc comment right
@@ -245,11 +336,127 @@ the standard library. The output has one page per module and a client-side searc
   declare or list itself, each with a link to where it is declared. A re-export from a module
   that isn't documented alongside (another package; std when documenting a package) is listed
   as one line. Names in a local `export { a, b as c };` list are documented too.
+  An interface declared more than once is documented once, with the members of every declaration.
 - **Tags** in doc comments are rendered as sections: `@param name - text` as a parameter list
   (a `{type}` is ignored, as the signature shows the type), `@returns` (`@return`), `@throws`,
   `@example` (code, shown in a code block), `@deprecated [text]` (the item is also marked
   deprecated) and `@see`. Inline `{@link name}` shows `name` as code; `{@link name text}` shows
   the text; a URL target becomes a link. Other tags stay in the text as written.
+
+### JSON output
+
+`velt doc --format json` writes the same documentation as one JSON document, for tools that
+render API pages in their own design (the docs website builds its API reference, its search
+index and the standard library catalog from it). `-o` names a `.json` file, a directory (which
+gets `api.json`; the default is the same directory as the HTML) or `-` for stdout:
+
+```
+velt doc --std --format json -o std-api.json
+```
+
+The document is `{ "schemaVersion": 1, "title": …, "modules": [ … ] }`; `schemaVersion` changes
+when a field changes meaning or goes away (new fields may be added without it). Every field is
+always present (`null` or `[]` when empty). A module's record:
+
+| Field | |
+|---|---|
+| `module` | its name in the docs (`std/fs`, `mypkg/util`); targets refer to modules by it |
+| `specifier` | how it is imported (`velt/fs`, `mypkg/util`) |
+| `file` | its source file (`std/fs/index.vlt`, `src/util.vlt`); for files and directories given on the command line, relative to the current directory when they are under it (`velt doc ./lib` and `velt doc D:/pkg/lib` run in `D:/pkg` both give `lib/util.vlt`), otherwise the path as given |
+| `doc`, `summary` | the module doc (Markdown) and its first sentence |
+| `links` | the `{@link}`s in the module doc (as for items, below) |
+| `exports` | its exported items, in source order, then the re-exported ones |
+
+An item (an export, or a member in `members`, which has the same shape):
+
+| Field | |
+|---|---|
+| `id` | a key unique in the document: `<specifier>#<name>` (`velt/fs#readFile`), `#<Type>.<member>` for a member (`velt/fs#FileWriter.close`); a setter is `<member>:set`, a static member whose name an instance member has too `static:<member>`, a type whose module exports a value of the same name (`export type Color = …; export const Color = …`) `type:<name>` (`pkg#type:Color`; the value is `pkg#Color`), an `extend` block `extend:<type>` (`~2` for a second one on the same type) |
+| `name` | its exported name |
+| `kind` | `function`, `class`, `struct`, `interface`, `enum`, `type`, `const`, `extend` (an `extend` block, named after its type), `re-export` (from a module not documented alongside); members: `field`, `method`, `getter`, `setter`, `constructor`, `member` (of an enum) |
+| `modifiers` | `static`, `async`, `readonly`, `abstract`, `protected`, `public`, `mut` as written, and `deprecated` |
+| `signature` | the canonical signature (one line per overload, and per differing header of a merged interface) |
+| `spans` | the type names in `signature` (of members too) that link to their documentation: `{start, end, role, target}`, offsets in UTF-16 code units (JavaScript string indices); `role` is where the name is: `param`, `return`, `throws`, `extends`, `implements`, `typeArg` (a bound or default of the item's own type parameters), `field` (a field's type) or `type` (a constant's or type alias's type, the type an `extend` block extends); a type argument has the role of the type it belongs to (`Promise<Point>` as a return type: `return`) |
+| `doc`, `summary` | the doc comment's text without its tags (Markdown; `{@link}` already rendered as in HTML) and its first sentence |
+| `tags` | `params` (`[{name, doc}]`), `returns`, `throws` (`[…]`), `examples` (`[…]`, verbatim), `deprecated` (`null` without a `@deprecated` tag, `""` for a tag without text, otherwise its text), `see` (`[…]`) |
+| `links` | the `{@link}`s in the doc comment and its tags: `{text, ref, target}`, `text` as the Markdown shows it, `ref` as written, `target` `null` when nothing documented has that name; a name that is both a type and a value (`type Color` and `const Color`) links to the value |
+| `source` | `{file, line}` of the declaration (a re-exported item's is where it is declared); `null` for a `re-export`; for an interface declared more than once (the declarations merge, and are one item with the members of all), the first declaration |
+| `reexportedFrom` | `{module, name}` where a re-exported item is declared, else `null` |
+| `members` | the public fields, accessors, constructor and methods (static ones too) of a class, struct or interface; an enum's members; an `extend` block's methods |
+
+A `target` is `{id, module, kind, name, member}`: the item `name` that `module` declares, with
+that `kind` (and its member `member`, or `null`); `id` is that item's (or member's) `id`, so
+cards and backlinks can key on it. For example, a method of a class in a package:
+
+```json
+{
+  "id": "pkg/lib#Point.moved",
+  "name": "moved",
+  "kind": "method",
+  "modifiers": [],
+  "signature": "moved(dx: f64, dy: f64): Point",
+  "spans": [
+    {"start": 25, "end": 30, "role": "return", "target": {"id": "pkg/lib#Point", "module": "pkg/lib", "kind": "class", "name": "Point", "member": null}}
+  ],
+  "doc": "The point moved by `dx`, `dy`.",
+  "summary": "The point moved by `dx`, `dy`.",
+  "tags": {
+    "params": [
+      {"name": "dx", "doc": "how far along x"},
+      {"name": "dy", "doc": "how far along y; see `Point.length`"}
+    ],
+    "returns": "a new point",
+    "throws": [],
+    "examples": [],
+    "deprecated": null,
+    "see": []
+  },
+  "links": [
+    {"text": "`Point.length`", "ref": "Point.length", "target": {"id": "pkg/lib#Point.length", "module": "pkg/lib", "kind": "class", "name": "Point", "member": "length"}}
+  ],
+  "source": {"file": "src/lib.vlt", "line": 64},
+  "reexportedFrom": null,
+  "members": []
+}
+```
+
+### TypeScript declarations: the `velt` type package
+
+`velt doc --std --format types` writes the standard library's declarations as an npm package
+named `velt` (into `-o`, default `target/velt-types`), so that `tsc`, editors and bundlers
+resolve `velt/*` imports in TypeScript: code shared with a client
+([`--ts-compat`](#code-shared-with-typescript---ts-compat)) can `import type` std's types.
+
+```
+velt doc --std --format types -o node_modules/velt
+```
+
+```ts
+import type { Deque } from "velt/collections";
+
+export function oldest(queue: Deque<string>): string | undefined {
+  return queue.peekFront();
+}
+```
+
+- `package.json` maps each public module to its declarations (`"./fs": { "types":
+  "./fs/index.d.ts" }`). The prelude's types that TypeScript lacks (`Mutex`, `Atomic`,
+  `StringBuilder`, …) are exported by the package's `globals.d.ts`, which the modules import
+  them from: an `import type` from `velt/…` adds nothing to the client's globals.
+- The declarations are std's in TypeScript's types: the integer and float types are
+  `number`, `bool` is `boolean`, `shared<T>` is `T`, and the error type of `Promise<T, E>` and
+  of the iterators is left out (TypeScript has no `throws`). A parameter with a default is
+  optional. Doc comments come along, for editors' hovers.
+- An `extend` block of a std type adds its methods to the type's interface; one of a narrower
+  type (`extend Box<string>`) gives each method a `this` parameter of that type, as
+  TypeScript's own `flat` does. Extensions of TypeScript's own types (`Array`, `string`,
+  numbers) are left out, since declaring them would change the client's globals; a bound that
+  such a type meets through one (`K extends Comparable<K>`, which `string` and the numbers
+  implement by extensions) takes it in: `K extends Comparable<K> | boolean | number | string`.
+- A type std uses in a public signature but doesn't export (an internal class in a constructor
+  only std calls) is opaque: `unknown`.
+- The package declares types only; the modules run in Velt. It needs a `lib` with
+  `esnext.disposable` (`"lib": ["esnext"]`, TypeScript 5.2 or newer) for `Symbol.dispose`.
 
 ## `velt toolchain`
 
@@ -369,7 +576,12 @@ velt completions powershell >> $PROFILE                # PowerShell
 | `VELT_CA_FILE` | PEM file of extra CA certificates to trust for `https://` registries |
 | `VELT_CLANG` | clang for the LLVM backend |
 | `VELT_LLVM_OPT` | optimization level for release builds (clang, or `opt` for WebAssembly): `3` (default), `2`, `1`, `s` or `z` |
+| `VELT_CPU` | the CPU builds are for when `--cpu` does not say ([CPU](platforms.md#cpu)); a CPU of another architecture does not apply |
+| `VELT_CPU_DISABLE` | read by programs: features (`popcnt,sse4.2`) the start-up CPU check treats as missing, to test the check ([CPU](platforms.md#cpu)) |
 | `VELT_CODEGEN_UNITS` | how many codegen units (parallel clang processes) an LLVM build uses, at most the core count; `1` turns splitting off; default: from the program's size (one unit below about 32 000 VIR statements) |
+| `VELT_BUILD_CACHE` | the [build cache](#build-cache)'s directory (default `$VELT_HOME/build-cache`); `off` turns it off |
+| `VELT_BUILD_CACHE_SIZE` | how large the build cache may grow (`500M`, `10G`; default `2G`) before the code used least recently is removed |
+| `VELT_BUILD_STAMP` | `off`: compile even when no input changed since the last build of the same output |
 | `VELT_RT_LIB` | runtime library (default: next to `velt`, or `<prefix>/lib` when installed) |
 | `VELT_RT_LINK` | `static`: debug builds link the static runtime instead of the shared one ([Platforms](platforms.md)) |
 | `VELT_NATIVE_FROM_SOURCE` | `1`: build a package's native library from source when no prebuilt one exists ([Packages](packages.md)) |
@@ -383,6 +595,7 @@ velt completions powershell >> $PROFILE                # PowerShell
 | `VELT_WASI_SYSROOT` | wasi-libc directory, for `wasm32-wasip1` |
 | `VELT_WASM_RUNNER` | program that runs `wasm32-wasip1` modules for `velt run` (default: wasmtime) |
 | `VELT_THREADS` | number of runtime worker threads (default: one per core) |
+| `VELT_RESCUE` | `0`: the runtime never serves a worker that makes no progress (its timers, sockets and waiting tasks) from another one, and starts no spare workers. Together with `VELT_THREADS=1`, a program's work then no longer depends on how its threads are scheduled; with more workers, tasks still move to sleeping ones. For counting instructions only ([task placement](../std/task.md#task-placement)) |
 | `MIMALLOC_*` | the allocator's options ([mimalloc](https://microsoft.github.io/mimalloc/environment.html)); Velt programs commit memory as they use it (`MIMALLOC_ARENA_EAGER_COMMIT=0`), which keeps a multi-threaded program's resident memory near what its data needs; `MIMALLOC_ARENA_EAGER_COMMIT=1` commits arenas up front again (on Linux with transparent huge pages, each worker then makes 2 MiB resident at once) |
 | `VELT_SCHEDULER` | Unset or `velt` (the default): the runtime's own scheduler. Work stays on the worker that made it, and another worker is taken on when a worker's input (tasks woken by sockets, timers or other threads) has waited 200 µs or more on average over 10 ms, or the worker was awake for 95 % of those 10 ms with input waiting; a task woken by another task runs next on the waker's worker; a worker that runs out of work runs input waiting on another awake one, and one that makes no progress for 2 ms (a long computation, or the OS took it off its core) has its sockets, timers and half of its queue served by another. TCP, the HTTP server, WebSockets, Postgres over TCP and timers run on it natively, the rest (files, processes, Redis, `fetch`, UDP, DNS) on a small tokio runtime beside it. `stealing`: tokio's work-stealing scheduler (idle workers take tasks from busy ones). `per-core` (#211): one tokio event loop per worker; a task never moves after its first poll, so a CPU-bound task delays everything on its worker. |
 | `MACOSX_DEPLOYMENT_TARGET` | oldest macOS a program runs on (default and minimum: 11.0 on arm64, 10.12 on x86_64) |

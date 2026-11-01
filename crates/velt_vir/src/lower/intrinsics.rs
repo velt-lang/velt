@@ -3,7 +3,6 @@
 use velt_sema::hir::{self, Intrinsic, TyId};
 
 use super::async_fn::BoxHold;
-use super::json::JsonSource;
 use super::operand::proj;
 use super::rt::Rt;
 use super::{ice, unit, FnLower};
@@ -27,6 +26,7 @@ impl FnLower<'_, '_> {
                 | I::AtomicSpinHint,
                 _,
             ) => self.atomic_intrinsic(i, args),
+            (I::ThreadLocalGet | I::ThreadLocalSet, _) => self.thread_local_intrinsic(i, args),
             (I::GeneratorResumeWith, [g, v]) => self.gen_resume_with(g, v),
             (I::GeneratorThrow, [g, e]) => self.gen_throw(g, e),
             (I::YieldDelegate, [g]) => self.yield_delegate(g),
@@ -85,6 +85,13 @@ impl FnLower<'_, '_> {
             }
             (I::PrintErr, _) => self.print(2, args),
             (I::ToString, [a]) => self.stringify(a, ty, false),
+            (I::ErrorText, [a]) => self.text_of(a, Self::push_error_text),
+            (I::Inspect, [a]) => self.text_of(a, Self::format_top_inspect),
+            (I::ThrowLoc, []) => {
+                let (_, buf) = self.new_strbuf(0);
+                self.push_throw_loc(&buf);
+                self.finish_text(buf)
+            }
             (I::TemplateToString, [a]) => self.stringify(a, ty, true),
             (I::StrConcat, [a, b]) => self.str_concat(a, b, ty),
             (I::StrLen, [a]) => {
@@ -247,6 +254,21 @@ impl FnLower<'_, '_> {
             (I::AnySetIndex, [o, i, v]) => self.any_set(o, i, v, true),
             (I::AnyHas, [o, k]) => self.any_has(o, k),
             (I::AnyDelete, [o, k]) => self.any_delete(o, k),
+            (I::Identity, [x]) => self.identity_of(x),
+            (I::ToAny, [x]) => self.boxed_any(x),
+            (I::AnyReflectInfo, [a]) => self.any_reflect(a, super::any_reflect::OP_INFO, None, ty),
+            (I::AnyReflectCount, [a]) => {
+                self.any_reflect(a, super::any_reflect::OP_COUNT, None, ty)
+            }
+            (I::AnyReflectName, [a, i]) => {
+                self.any_reflect(a, super::any_reflect::OP_NAME, Some(i), ty)
+            }
+            (I::AnyReflectValue, [a, i]) => {
+                self.any_reflect(a, super::any_reflect::OP_VALUE, Some(i), ty)
+            }
+            (I::AnyReflectHook, [a, k]) => {
+                self.any_reflect(a, super::any_reflect::OP_HOOK, Some(k), ty)
+            }
             (I::ProxyArrayCall, [o, op]) => {
                 let t = self.sub(o.ty);
                 let v = self.expr(o);
@@ -273,6 +295,7 @@ impl FnLower<'_, '_> {
             (I::AnyKeys, [o]) => self.any_keys(o, ty),
             (I::AnyTruthy, [a]) => self.any_truthy(a),
             (I::AnyTag, [a]) => self.any_tag_value(a),
+            (I::AnyToExact, [a]) => self.any_to_exact(a, ty),
             (I::AnyToNumber, [a]) => self.any_to_number(a),
             (I::AnyStrictEq, [a, b]) => self.any_eq(a, b, false),
             (I::AnyLooseEq, [a, b]) => self.any_eq(a, b, true),
@@ -288,11 +311,6 @@ impl FnLower<'_, '_> {
                     false => self.share_value(v, t),
                 };
                 self.own_value(c, t)
-            }
-            (I::Eq, [a, b]) => {
-                let t = self.sub(a.ty);
-                let (pa, pb) = self.two_places(a, b);
-                self.key_eq_values(&pa, &pb, t)
             }
             (I::Same, [a, b]) => {
                 let t = self.sub(a.ty);
@@ -341,26 +359,13 @@ impl FnLower<'_, '_> {
                 | I::RwLockNew
                 | I::LockRead
                 | I::PromiseWiden
+                | I::PromiseSame
                 | I::ChanSend
                 | I::ChanReceive
                 | I::ChanTrySend
                 | I::ChanTryReceive,
                 _,
             ) => self.async_intrinsic(i, args, ty),
-            (I::JsonStringify, [a]) => self.json_stringify(a, ty),
-            (I::JsonParse, [a, flags, depth]) => {
-                self.json_parse(a, flags, depth, JsonSource::Text, ty)
-            }
-            (I::JsonParseRows, [a, flags, depth]) => {
-                self.json_parse(a, flags, depth, JsonSource::Rows, ty)
-            }
-            (I::JsonParseCursor, [a, flags, depth]) => {
-                self.json_parse(a, flags, depth, JsonSource::Cursor, ty)
-            }
-            (I::DbBind, [sink, a]) => self.db_bind(sink, a),
-            (I::ReadRows, [a]) => self.read_rows(a, true, ty),
-            (I::ReadRow, [a]) => self.read_rows(a, false, ty),
-            (I::HttpHandler, [f]) => self.http_handler(f, ty),
             (I::Attempt, [f]) => self.attempt(f, ty),
             (
                 I::WeakMapSet
@@ -389,6 +394,25 @@ impl FnLower<'_, '_> {
     }
 
     /// Evaluate two operands to places (the first held if the second may change it).
+    /// `Intrinsic::ErrorText` or `Intrinsic::Inspect` of `a`: what `push` appends for it to a
+    /// new builder, as an owned string.
+    fn text_of(&mut self, a: &hir::Expr, push: fn(&mut Self, &Operand, &Place, TyId)) -> Operand {
+        let t = self.sub(a.ty);
+        let v = self.expr(a);
+        let p = self.place_of(v, t);
+        let (_, buf) = self.new_strbuf(0);
+        push(self, &buf, &p, t);
+        self.finish_text(buf)
+    }
+
+    /// The string the builder `buf` holds (an owned string; the builder is consumed).
+    fn finish_text(&mut self, buf: Operand) -> Operand {
+        let text = self.temp(Ty::Agg(STR_AGG));
+        let tp = self.addr(Place::local(text));
+        self.call_rt(Rt::StrbufFinish, vec![buf, tp], None);
+        Operand::Copy(Place::local(text))
+    }
+
     pub(super) fn two_places(&mut self, a: &hir::Expr, b: &hir::Expr) -> (Place, Place) {
         let (ta, tb) = (self.sub(a.ty), self.sub(b.ty));
         let later = self.later_of(b);

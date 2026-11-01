@@ -1,7 +1,7 @@
 # `velt dev`: hot reload
 
 ```
-velt dev [<file.vlt>] [--exe] [--locked] [-v] [--timings] [-- <program args>...]
+velt dev [<file.vlt>] [--exe [--release] [-g] [--cpu <name>] [--backend <name>]] [--locked] [-v] [--timings] [-- <program args>...]
 ```
 
 `velt dev` runs your program like `velt run`, then keeps it up to date while you edit. Save a
@@ -51,7 +51,10 @@ exiting. Press Ctrl-C twice to exit at once.
 Listening sockets survive restarts: `velt dev` owns them and hands them to each version, so no
 connection is refused during a reload and a server on port 0 keeps its port. State in values
 that `main` creates carries over a hot swap. [Module state](../reference/variables.md#module-state)
-(module-level `let`s) does not: the swapped-in code starts it over from its initializers.
+(module-level `let`s) does not: the swapped-in code starts it over from its initializers. A
+`const X = new Atomic<T>(literal)` is not module state ([sync](../std/sync.md)): it keeps its
+value across swaps, also when the edit changes its starting literal (the first version's value
+stays). An edit that changes its type gives it a new word, which starts at the new literal.
 
 ## Modes
 
@@ -60,8 +63,8 @@ that `main` creates carries over a hot swap. [Module state](../reference/variabl
   operating system's first-launch checks of new binaries on macOS and Windows.
 - **`--exe`**: each version is a linked debug executable (`target/velt/dev/<name>-<n>`), so
   you can attach a debugger to it ([Debugging](debugging.md#velt-dev-and-the-debugger)). Edits
-  restart the program instead of hot-swapping. `--release`, `-g` and `--backend` are accepted
-  with `--exe`.
+  restart the program instead of hot-swapping. `--release`, `-g`, `--cpu` and `--backend` are
+  accepted with `--exe` only (the JIT compiles for this machine's CPU).
 
 `velt test --watch` reruns the tests on every change the same way ([Testing](../book/testing.md)).
 

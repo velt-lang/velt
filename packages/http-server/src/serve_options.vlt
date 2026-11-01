@@ -1,0 +1,40 @@
+// http-server (internal): `HttpServeOptions`, what `serveHttp` and `serve` take: the address,
+// TLS, HTTP/2, and the limits and timeouts of a connection.
+
+import { TlsListenOptions } from "velt/net";
+
+/** Where and how a server listens (docs/serve-http.md). */
+export struct HttpServeOptions {
+  port: number;
+  host?: string;
+  /** The largest request head accepted, in bytes (431 beyond it). Default 16 KiB, as Node's. */
+  maxHeadSize?: number;
+  /** The most headers a request may have (431 beyond them). Default 100. */
+  maxHeaders?: number;
+  /** The largest request body accepted, in bytes (413 beyond it). Default 8 MiB. */
+  maxBodySize?: number;
+  /**
+   * Milliseconds a connection may wait for its next request (or the rest of one) before it is
+   * closed. Default 5000, as Node's `keepAliveTimeout`.
+   */
+  idleTimeout?: number;
+  /** Serve HTTPS: the certificate chain and key (PEM text), as `listenTls` takes them. */
+  tls?: TlsListenOptions;
+  /**
+   * Milliseconds a request's head may take to arrive in full, from its first byte (408 after,
+   * however steadily it trickles in). Default 60000, as Node's `headersTimeout`.
+   */
+  headersTimeout?: number;
+  /**
+   * Milliseconds a request's body may take to arrive, from its head (408 after). Default
+   * 300000, as Node's `requestTimeout`.
+   */
+  requestTimeout?: number;
+  /**
+   * Serve HTTP/2 too (default true): over TLS when the client chooses it with ALPN ("h2"),
+   * over plain TCP when it starts with the HTTP/2 preface (h2c with prior knowledge).
+   */
+  http2?: bool;
+  /** HTTP/2's SETTINGS_MAX_CONCURRENT_STREAMS: requests of a connection at once. Default 128. */
+  maxConcurrentStreams?: number;
+}

@@ -55,22 +55,32 @@ pub(crate) struct KeptFns {
     pub forced: FxHashSet<(DefId, LocalId)>,
     /// The function creating each closure.
     pub parents: FxHashMap<DefId, DefId>,
+    /// The functions of `fns` whose bodies create no closure: no local of theirs holds one
+    /// (`evidence::closure_locals`). The inference only changes modes, it adds no closures.
+    pub closure_free: FxHashSet<DefId>,
 }
 
-/// Record the function creating each closure of `fns`.
+/// Record the function creating each closure of `fns`, and those creating none.
 pub(super) fn find_parents(cx: &mut Ctx, fns: &[DefId]) {
     let mut parents = FxHashMap::default();
+    let mut closure_free = FxHashSet::default();
     for &d in fns {
         let Some(Def::Fn(f)) = &mut cx.defs[d.0 as usize] else {
             continue;
         };
+        let mut creates = false;
         visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
             if let E::Closure(c) = e.kind {
                 parents.insert(c, d);
+                creates = true;
             }
         });
+        if !creates {
+            closure_free.insert(d);
+        }
     }
     cx.kept_fns.parents = parents;
+    cx.kept_fns.closure_free = closure_free;
 }
 
 /// Where a variable of `f` (body of `d`) comes from: `Some((def, param))` for a parameter

@@ -1,0 +1,9 @@
+// sqlite/engine/storage_class (internal): the storage classes of SQLite's values
+// (https://sqlite.org/datatype3.html#storage_classes_and_datatypes).
+
+/** Storage classes, as `typeof()` names them. */
+export const NULL: u8 = 0;
+export const INTEGER: u8 = 1;
+export const REAL: u8 = 2;
+export const TEXT: u8 = 3;
+export const BLOB: u8 = 4;

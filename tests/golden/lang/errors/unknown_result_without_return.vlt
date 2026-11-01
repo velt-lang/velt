@@ -1,0 +1,7 @@
+// A function expression or arrow that writes `unknown` as its result type must return a value,
+// as in TypeScript (TS2355); only a result type `unknown` given by the context lets the body
+// end without one (it returns `undefined`).
+const f = (): unknown => {};
+const g = function (): unknown {};
+const h: () => unknown = () => {};
+console.log(f(), g(), h());

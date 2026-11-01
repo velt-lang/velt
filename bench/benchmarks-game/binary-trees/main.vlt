@@ -1,7 +1,7 @@
 // binary-trees (Benchmarks Game): idiomatic single-threaded Velt, written the way a TypeScript
 // developer would port Node #7 (Léo Sarrazin, Andrey Filatkin, Isaac Gouy): a `TreeNode` class
 // with nullable children, one heap allocation per node, trees freed when they go out of scope.
-import { args } from "velt:process";
+import { args } from "velt/process";
 
 const MIN_DEPTH = 4;
 

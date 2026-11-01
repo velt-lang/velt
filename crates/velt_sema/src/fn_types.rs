@@ -13,6 +13,10 @@
 //!   `v instanceof C` calls it;
 //! - `#name`, the class's name (`C.name`).
 //!
+//! An **abstract construct signature** (`abstract new () => Base`) has `#anew` in place of
+//! `#new`: the same function type, which `instanceof` narrows to, but a placeholder that never
+//! runs, since such a value may hold an abstract class and `new` through it is an error.
+//!
 //! A class named where a value of such a type is expected becomes that object
 //! (`body::expr::ctor_values`). Diagnostics show the type as written (`new (...) => T`).
 
@@ -28,17 +32,19 @@ use crate::resolve::TyEnv;
 pub(crate) const NEW: &str = "#new";
 pub(crate) const IS: &str = "#is";
 pub(crate) const NAME: &str = "#name";
+/// `#new` of an abstract construct signature's type.
+pub(crate) const ANEW: &str = "#anew";
 
 /// Is `name` a field of a construct signature's type?
 pub(crate) fn is_ctor_field(name: &str) -> bool {
-    [NEW, IS, NAME].contains(&name)
+    [NEW, IS, NAME, ANEW].contains(&name)
 }
 
 /// The function type forms Velt parses but doesn't support yet (#943): its error and a note. (A
 /// constant of a generic function type is a generic function, `generic_arrows::typed`.)
 pub(crate) fn unsupported_fn_type(kind: &ast::TypeExprKind) -> (&'static str, &'static str) {
     match kind {
-        ast::TypeExprKind::Construct(_) => (
+        ast::TypeExprKind::Construct { .. } => (
             "generic construct signatures (`new <T>(x: T) => C<T>`) are not supported yet",
             "give the type parameters values (`new (x: string) => C<string>`)",
         ),
@@ -54,6 +60,7 @@ impl Ctx<'_> {
     pub(crate) fn resolve_construct(
         &mut self,
         inner: &ast::TypeExpr,
+        is_abstract: bool,
         t: &ast::TypeExpr,
         env: &TyEnv,
     ) -> TyId {
@@ -66,11 +73,17 @@ impl Ctx<'_> {
         if f == self.ty.error {
             return f;
         }
-        self.ctor_type(f, t.span, env.module)
+        self.ctor_type(f, is_abstract, t.span, env.module)
     }
 
     /// The type of a construct signature whose function type is `f` (module docs).
-    pub(crate) fn ctor_type(&mut self, f: TyId, span: velt_common::Span, module: usize) -> TyId {
+    pub(crate) fn ctor_type(
+        &mut self,
+        f: TyId,
+        is_abstract: bool,
+        span: velt_common::Span,
+        module: usize,
+    ) -> TyId {
         let unknown = ast::TypeExpr {
             kind: ast::TypeExprKind::Named {
                 path: vec![ast::Ident {
@@ -94,7 +107,8 @@ impl Ctx<'_> {
             readonly: true,
             optional: false,
         };
-        let fields = [field(NEW, f), field(IS, is), field(NAME, self.ty.str_)];
+        let new = if is_abstract { ANEW } else { NEW };
+        let fields = [field(new, f), field(IS, is), field(NAME, self.ty.str_)];
         self.anon_type_with(&fields, module)
     }
 
@@ -110,7 +124,11 @@ impl Ctx<'_> {
     pub(crate) fn display_ctor(&self, t: TyId, names: &[String]) -> String {
         let (f, args) = self.ctor_sig_own(t).expect("ICE: construct signature");
         let bound: Vec<String> = args.iter().map(|t| self.display_in(*t, names)).collect();
-        format!("new {}", self.display_in(f, &bound))
+        let kw = match self.is_abstract_ctor(t) {
+            true => "abstract new",
+            false => "new",
+        };
+        format!("{kw} {}", self.display_in(f, &bound))
     }
 
     /// The function type of construct signature type `t` over its def's own type parameters,
@@ -124,7 +142,7 @@ impl Ctx<'_> {
             return None;
         }
         let names: Vec<&str> = a.fields.iter().map(|f| f.name.as_str()).collect();
-        if names != [NEW, IS, NAME] {
+        if !matches!(names[..], [NEW | ANEW, IS, NAME]) {
             return None;
         }
         Some((a.fields[0].ty, args.clone()))
@@ -143,6 +161,13 @@ impl Ctx<'_> {
             (Some(fa), Some(fb)) => self.unify_err_vars(fa, fb),
             _ => false,
         }
+    }
+
+    /// Is `t` an abstract construct signature type (`abstract new () => C`)?
+    pub(crate) fn is_abstract_ctor(&self, t: TyId) -> bool {
+        let t = self.ty.core(t).unwrap_or(t);
+        self.ctor_sig_own(t).is_some()
+            && matches!(self.ty.kind(t), TyKind::Adt(d, _) if self.adt(*d).is_some_and(|a| a.fields[0].name == ANEW))
     }
 
     /// Is `t` a construct signature type (a class value's)?

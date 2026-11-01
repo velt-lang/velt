@@ -75,11 +75,11 @@ fn list(dir: &Path) -> Vec<String> {
     } else {
         dir
     };
-    let Ok(entries) = std::fs::read_dir(dir) else {
+    let Ok(entries) = vpm::probe::read_dir(dir) else {
         return vec![];
     };
     entries
-        .filter_map(Result::ok)
+        .into_iter()
         .filter_map(|e| e.file_name().into_string().ok())
         .collect()
 }

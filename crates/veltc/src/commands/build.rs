@@ -42,7 +42,7 @@ pub fn run_command(args: &BuildArgs, prog_args: &[std::ffi::OsString]) -> ExitCo
             return ExitCode::from(1);
         }
     }
-    let (exe, script) = match build_with_input(args, false) {
+    let (exe, script) = match build_with_input(args, false, true) {
         Ok((Artifact::Executable(p), input)) => {
             (vpm::relpath::absolute(&p), vpm::relpath::absolute(&input))
         }
@@ -98,14 +98,16 @@ fn runnable_here(target: &str) -> Result<(), String> {
 /// Resolve the build inputs (file or package), run the pipeline, print diagnostics / timings.
 /// `Err` carries the process exit code.
 fn build(args: &BuildArgs) -> Result<Artifact, ExitCode> {
-    build_with_input(args, true).map(|(artifact, _)| artifact)
+    build_with_input(args, true, false).map(|(artifact, _)| artifact)
 }
 
 /// [`build`], also returning the entry source file (a package's entry when no file was given).
-/// `debug_vars`: describe variables for debuggers (`BuildOptions::debug_vars`).
+/// `debug_vars`: describe variables for debuggers (`BuildOptions::debug_vars`); `runs_here`: the
+/// program runs on this machine right away (`velt run`: [`super::cpu::for_running_here`]).
 fn build_with_input(
     args: &BuildArgs,
     debug_vars: bool,
+    runs_here: bool,
 ) -> Result<(Artifact, std::path::PathBuf), ExitCode> {
     let checked = match &args.input {
         Some(file) => super::project::check_input_file(file),
@@ -116,6 +118,9 @@ fn build_with_input(
         ExitCode::from(1)
     })?;
     opts.debug_vars = debug_vars;
+    if runs_here {
+        opts.cpu = super::cpu::for_running_here(opts.cpu.take(), &opts.target(), opts.release);
+    }
     let mut sess = Session::new();
     sess.show_details = args.timings;
     let result = driver::build(&mut sess, &opts);
@@ -232,7 +237,8 @@ pub fn failure_code(err: &BuildError) -> ExitCode {
 }
 
 /// Resolve `args` into build options: the file (inside its package, if any) or the current
-/// package's entry, the backend, and the default output.
+/// package's entry, the backend, the CPU (`--cpu`, `$VELT_CPU`, the package's `build.cpu`) and
+/// the default output.
 pub fn build_options(args: &BuildArgs) -> Result<BuildOptions, String> {
     let backend = match args.emit {
         // Printing IR needs neither clang nor a backend choice.
@@ -259,13 +265,16 @@ pub fn build_options(args: &BuildArgs) -> Result<BuildOptions, String> {
         report_numbers: args.report_numbers,
         ..Default::default()
     };
+    let config_cpu;
     match &args.input {
         Some(file) => {
             let dir = file
                 .parent()
                 .filter(|d| !d.as_os_str().is_empty())
                 .unwrap_or(Path::new("."));
-            opts.packages = Project::find(dir, args.locked, &opts.target())?.map(|p| p.graph);
+            let project = Project::find(dir, args.locked, &opts.target())?;
+            config_cpu = project.as_ref().and_then(Project::build_cpu);
+            opts.packages = project.map(|p| p.graph);
             opts.input = file.clone();
         }
         None => {
@@ -275,6 +284,7 @@ pub fn build_options(args: &BuildArgs) -> Result<BuildOptions, String> {
                 target: Some(opts.target()),
             })?;
             opts.input = project.entry()?;
+            config_cpu = project.build_cpu();
             if opts.output.is_none() {
                 opts.output = Some(package_output(
                     &project.target_dir(),
@@ -286,6 +296,13 @@ pub fn build_options(args: &BuildArgs) -> Result<BuildOptions, String> {
             opts.packages = Some(project.graph);
         }
     }
+    let env = super::cpu::env_cpu();
+    opts.cpu = super::cpu::resolve_cpu(
+        args.cpu.as_deref(),
+        env.as_deref(),
+        config_cpu.as_deref(),
+        &opts.target(),
+    )?;
     Ok(opts)
 }
 

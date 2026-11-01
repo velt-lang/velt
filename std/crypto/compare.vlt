@@ -1,0 +1,16 @@
+// velt/crypto (internal): constant-time comparison.
+
+/**
+ * Whether `a` and `b` are equal, in time that depends only on their lengths (not on where they
+ * differ), for comparing MACs and tokens. Different lengths return false at once.
+ */
+export function timingSafeEqual(a: u8[], b: u8[]): bool {
+  if (a.length != b.length) {
+    return false;
+  }
+  let diff: u8 = 0;
+  for (let i: usize = 0; i < a.length; i++) {
+    diff = diff | (a[i] ^ b[i]);
+  }
+  return diff == 0;
+}

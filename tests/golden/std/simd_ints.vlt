@@ -15,7 +15,7 @@ import {
   mask16x8,
   mask32x4,
   mask64x2,
-} from "velt:simd";
+} from "velt/simd";
 
 function lanesI8x16(what: string, got: i8x16, want: i8[]): i64 {
   for (let i: usize = 0; i < 16; i++) {

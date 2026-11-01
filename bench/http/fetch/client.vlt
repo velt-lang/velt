@@ -1,7 +1,7 @@
 // The global `fetch`: the four client scenarios (bench/http/fetch/README.md).
-import { AbortError } from "velt:task";
-import { IoError } from "velt:io";
-import { args } from "velt:process";
+import { AbortError } from "velt/task";
+import { IoError } from "velt/io";
+import { args } from "velt/process";
 
 struct User {
   id: i64;

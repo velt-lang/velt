@@ -1,0 +1,35 @@
+frozen_function_value_errors.vlt:29:10: error: this call may modify its argument, a `V` read out of a `shared` value
+  = note: a shared value is read-only, since other tasks read it at the same time: pass a copy, or share a `Mutex`
+
+frozen_function_value_errors.vlt:124:10: error: this call may modify its argument, a `V` read out of a `shared` value
+  = note: a shared value is read-only, since other tasks read it at the same time: pass a copy, or share a `Mutex`
+
+frozen_function_value_errors.vlt:129:15: error: this call may modify its argument, a `C` read out of a `shared` value
+  = note: a shared value is read-only, since other tasks read it at the same time: pass a copy, or share a `Mutex`
+
+frozen_function_value_errors.vlt:129:37: error: this call may modify its argument, a `C` read out of a `shared` value
+  = note: a shared value is read-only, since other tasks read it at the same time: pass a copy, or share a `Mutex`
+
+frozen_function_value_errors.vlt:129:58: error: this call may modify its argument, a `C` read out of a `shared` value
+  = note: a shared value is read-only, since other tasks read it at the same time: pass a copy, or share a `Mutex`
+
+frozen_function_value_errors.vlt:131:27: error: this call may modify its argument, a `B` read out of a `shared` value
+  = note: a shared value is read-only, since other tasks read it at the same time: pass a copy, or share a `Mutex`
+
+frozen_function_value_errors.vlt:131:33: error: this call may modify its argument, a `B` read out of a `shared` value
+  = note: a shared value is read-only, since other tasks read it at the same time: pass a copy, or share a `Mutex`
+
+frozen_function_value_errors.vlt:133:15: error: this call may modify its argument, a `U` read out of a `shared` value
+  = note: a shared value is read-only, since other tasks read it at the same time: pass a copy, or share a `Mutex`
+
+frozen_function_value_errors.vlt:133:27: error: this call may modify its argument, a `U` read out of a `shared` value
+  = note: a shared value is read-only, since other tasks read it at the same time: pass a copy, or share a `Mutex`
+
+frozen_function_value_errors.vlt:133:46: error: this call may modify its argument, a `U` read out of a `shared` value
+  = note: a shared value is read-only, since other tasks read it at the same time: pass a copy, or share a `Mutex`
+
+frozen_function_value_errors.vlt:133:60: error: this call may modify its argument, a `U` read out of a `shared` value
+  = note: a shared value is read-only, since other tasks read it at the same time: pass a copy, or share a `Mutex`
+
+frozen_function_value_errors.vlt:133:73: error: this call may modify its argument, a `U` read out of a `shared` value
+  = note: a shared value is read-only, since other tasks read it at the same time: pass a copy, or share a `Mutex`

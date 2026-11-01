@@ -1,0 +1,16 @@
+// sqlite/engine/exec/agg/group (internal): one group of an aggregate query: its key, the states and
+// results of its aggregates and its saved columns.
+
+import { Val } from "../value/val";
+import { Acc } from "./acc";
+
+/** One group of an aggregate query: its key, aggregates' states and results, saved columns. */
+export class Group {
+  key: Val[] = [];
+  /** The aggregates' results, once the group is complete. */
+  done: Val[] = [];
+  /** A row was stepped: without min() or max(), the saved columns are the first row's. */
+  started: bool = false;
+  accs: Acc[] = [];
+  bare: Val[] = [];
+}

@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "packages": [
+    {
+      "name": "postgres",
+      "version": "0.1.0",
+      "source": "path+../../../packages/postgres"
+    },
+    {
+      "name": "redis",
+      "version": "0.1.0",
+      "source": "path+../../../packages/redis"
+    },
+    {
+      "name": "sqlite",
+      "version": "0.2.0",
+      "source": "path+../../../packages/sqlite"
+    }
+  ]
+}

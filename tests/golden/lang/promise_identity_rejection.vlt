@@ -1,0 +1,22 @@
+// A rejected promise also kept, converted, in a `Set<Promise<unknown, Error>>` is one promise
+// (#1682): awaiting it handles its rejection, which is not reported again through the set.
+async function bad(): Promise<string> {
+  throw new Error("boom");
+}
+function track(s: Set<Promise<unknown, Error>>, p: Promise<unknown, Error>): boolean {
+  if (s.has(p)) return false;
+  s.add(p);
+  return true;
+}
+async function main() {
+  const s = new Set<Promise<unknown, Error>>();
+  const p = bad();
+  console.log(track(s, p), track(s, p), s.size);
+  try {
+    await p;
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
+  console.log("end", s.has(p));
+}
+main();

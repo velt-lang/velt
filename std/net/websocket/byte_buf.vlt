@@ -1,0 +1,65 @@
+// velt/net/websocket (internal): `ByteBuf`, a byte array that grows by doubling.
+
+import { arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
+
+/** Bytes that are appended to and taken whole: `data` holds them, with room for `cap`. */
+export class ByteBuf {
+  data: u8[] = [];
+  cap: i64 = 0;
+
+  /**
+   * Makes the buffer `extra` bytes longer and returns where those bytes start. Private: the new
+   * bytes hold whatever the memory held until the caller writes them.
+   */
+  private grow(extra: i64): i64 {
+    const at = this.data.length as i64;
+    const need = at + extra;
+    if (need > this.cap) {
+      let cap = this.cap * 2;
+      if (cap < need) {
+        cap = need;
+      }
+      if (cap < 256) {
+        cap = 256;
+      }
+      const next: u8[] = arrayWithCapacity(cap as usize);
+      arraySetLen(next, at as usize);
+      if (at > 0) {
+        next.set(this.data, 0);
+      }
+      this.data = next;
+      this.cap = cap;
+    }
+    arraySetLen(this.data, need as usize);
+    return at;
+  }
+
+  append(src: u8[]) {
+    const at = this.grow(src.length as i64);
+    this.data.set(src, at as usize);
+  }
+
+  /** Drops the first `n` bytes (0 <= n <= length). */
+  dropFront(n: i64) {
+    const rest = (this.data.length as i64) - n;
+    if (n < 0 || rest < 0) {
+      panic(`ByteBuf.dropFront(${n}) on ${this.data.length} bytes`);
+    }
+    this.data.copyWithin(0, n);
+    arraySetLen(this.data, rest as usize);
+  }
+
+  /** Replaces the contents with `bytes`. */
+  adopt(bytes: u8[]) {
+    this.cap = bytes.length as i64;
+    this.data = bytes;
+  }
+
+  /** The contents, moved out; the buffer is empty and holds no memory afterwards. */
+  take(): u8[] {
+    const out = this.data;
+    this.data = [];
+    this.cap = 0;
+    return out;
+  }
+}

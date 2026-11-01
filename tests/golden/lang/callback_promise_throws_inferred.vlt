@@ -1,0 +1,22 @@
+// A callback typed `(tx) => Promise<T> throws E`: after a `Promise` result, `throws E` is what
+// the promise rejects with, so `E` is inferred from what the async argument rejects with, as
+// for `Promise<T, E>` (it was "cannot infer type parameter `E`" outside std).
+class Rollback extends Error {}
+
+async function transaction<T, E>(fn: (tx: i64) => Promise<T> throws E): Promise<T, E> {
+  return await fn(1);
+}
+
+async function main() {
+  try {
+    const n = await transaction(async (tx: i64): Promise<i64> => {
+      if (tx == 1) {
+        throw new Rollback("undo");
+      }
+      return tx;
+    });
+    console.log(n);
+  } catch (e) {
+    console.log(e instanceof Rollback, e.message);
+  }
+}

@@ -101,7 +101,7 @@ methods are internal: calling one outside the prelude is an error.
 - `` `Record` cannot be extended ``, with the note to use composition (a `Record` field): a
   subclass's constructor would leave a closed record without its keys.
 - ``cannot `delete` from a `Record<K, ...>`: the key type `K` is a type parameter``.
-- `` `__delete` is internal to `Record`: a record has no methods of its own ``, with the
+- `` `[RECORD_DELETE]` is internal to `Record`: a record has no methods of its own ``, with the
   replacement (`delete r[k]`) as a note.
 
 ## Decisions

@@ -16,6 +16,9 @@ use crate::vir::{Operand, Place, Rvalue, Ty};
 pub(super) struct Later {
     /// Write to a local of the enclosing function (`i++`, a closure called through a value).
     pub(super) locals: bool,
+    /// With `locals`: the one local they write, when it is known (`dv.getUint8(q++)` writes
+    /// only `q`, so `dv` needs no hold).
+    pub(super) only: Option<hir::LocalId>,
     /// Change memory: a call, an assignment, `new`, `await` (`velt_sema::effects`).
     pub(super) memory: bool,
 }
@@ -23,8 +26,13 @@ pub(super) struct Later {
 impl Later {
     /// What evaluating `e` may do.
     pub(super) fn of(e: &hir::Expr) -> Later {
+        let only = match written_local(e) {
+            Written::One(l) => Some(l),
+            _ => None,
+        };
         Later {
             locals: writes_local(e),
+            only,
             memory: may_change_memory(e),
         }
     }
@@ -36,10 +44,22 @@ impl Later {
 
     /// Both effects.
     pub(super) fn or(self, o: Later) -> Later {
+        let only = match (self.locals, o.locals) {
+            (true, true) if self.only == o.only => self.only,
+            (true, true) => None,
+            (true, false) => self.only,
+            (false, _) => o.only,
+        };
         Later {
             locals: self.locals || o.locals,
+            only,
             memory: self.memory || o.memory,
         }
+    }
+
+    /// May the operands write the HIR local `l`?
+    pub(super) fn may_write(self, l: hir::LocalId) -> bool {
+        self.locals && self.only.is_none_or(|o| o == l)
     }
 }
 
@@ -70,10 +90,38 @@ pub(super) fn root_local(e: &hir::Expr) -> Option<hir::LocalId> {
 /// listed may.
 pub(super) fn may_move_local(e: &hir::Expr, l: hir::LocalId) -> bool {
     use hir::ExprKind as K;
-    let any = |es: &[hir::Expr]| es.iter().any(|x| may_move_local(x, l));
     match &e.kind {
         K::Lit(_) | K::Global(_) | K::FnRef(..) => false,
         K::Local(x, mode) => *x == l && *mode == hir::UseMode::Move,
+        _ => any_operand(e, &mut |x| may_move_local(x, l)).unwrap_or(true),
+    }
+}
+
+/// Can evaluating `e` assign local `l` in this function's own code (`l = …`, `l += …`)? A
+/// call is followed into its arguments only, as no callee assigns a variable of the caller
+/// that is not in a shared cell. This is weaker than [`written_local`], which takes any call
+/// that may run a closure as writing locals (`writes_local`: a closure called through a value
+/// may write those in cells); `changed_hold` asks it only of a variable outside a cell, where
+/// a call through a function value (`hooks[0](acc, nums[0]())`) cannot assign it.
+/// Conservative: shapes not listed may.
+fn assigns_local(e: &hir::Expr, l: hir::LocalId) -> bool {
+    use hir::ExprKind as K;
+    match &e.kind {
+        K::Lit(_) | K::Global(_) | K::FnRef(..) | K::Local(..) | K::Closure(_) => false,
+        K::Assign { place, value } | K::CompoundAssign { place, value, .. } => {
+            root_local(place) == Some(l) || assigns_local(place, l) || assigns_local(value, l)
+        }
+        _ => any_operand(e, &mut |x| assigns_local(x, l)).unwrap_or(true),
+    }
+}
+
+/// Does `f` hold for an operand of `e`, for the shapes whose operands are all the evaluation
+/// does ([`may_move_local`], [`assigns_local`]): unary and binary operators, casts and wraps,
+/// field and index reads, conditionals, array literals and calls (their arguments, and the
+/// function value of an indirect call)? `None` for any other shape.
+fn any_operand(e: &hir::Expr, f: &mut dyn FnMut(&hir::Expr) -> bool) -> Option<bool> {
+    use hir::ExprKind as K;
+    Some(match &e.kind {
         K::Unary { expr: x, .. }
         | K::Cast(x)
         | K::Upcast(x)
@@ -81,19 +129,72 @@ pub(super) fn may_move_local(e: &hir::Expr, l: hir::LocalId) -> bool {
         | K::WrapSome(x)
         | K::UnwrapSome(x, _)
         | K::UnwrapVariant { expr: x, .. }
-        | K::Field { base: x, .. } => may_move_local(x, l),
-        K::Index { base, index, .. } => may_move_local(base, l) || may_move_local(index, l),
-        K::Binary { lhs, rhs, .. } | K::Logical { lhs, rhs, .. } => {
-            may_move_local(lhs, l) || may_move_local(rhs, l)
-        }
-        K::If { cond, then, els } => {
-            may_move_local(cond, l) || may_move_local(then, l) || may_move_local(els, l)
-        }
+        | K::Field { base: x, .. } => f(x),
+        K::Index { base, index, .. } => f(base) || f(index),
+        K::Binary { lhs, rhs, .. } | K::Logical { lhs, rhs, .. } => f(lhs) || f(rhs),
+        K::If { cond, then, els } => f(cond) || f(then) || f(els),
         K::Call { callee, args } => {
-            any(args) || matches!(callee, hir::Callee::Indirect(f) if may_move_local(f, l))
+            args.iter().any(&mut *f) || matches!(callee, hir::Callee::Indirect(c) if f(c))
         }
-        K::ArrayLit(xs) => any(xs),
-        _ => true,
+        K::ArrayLit(xs) => xs.iter().any(f),
+        _ => return None,
+    })
+}
+
+/// The locals evaluating `e` may write, as far as `written_local` tells them apart.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Written {
+    Nothing,
+    One(hir::LocalId),
+    Unknown,
+}
+
+impl Written {
+    fn and(self, o: Written) -> Written {
+        match (self, o) {
+            (Written::Nothing, x) | (x, Written::Nothing) => x,
+            (Written::One(a), Written::One(b)) if a == b => Written::One(a),
+            _ => Written::Unknown,
+        }
+    }
+}
+
+/// The local evaluating `e` writes, when it writes just one and the shape says which: an
+/// assignment or update of a variable (`q++`, which is `{ let t = q; q += 1; t }`: the block's
+/// own temporaries are not visible to anything evaluated before it), whose parts write nothing
+/// else. `Unknown` for anything else that may write.
+fn written_local(e: &hir::Expr) -> Written {
+    use hir::ExprKind as K;
+    match &e.kind {
+        K::Assign { place, value } | K::CompoundAssign { place, value, .. } => match &place.kind {
+            K::Local(l, _) => Written::One(*l).and(written_local(value)),
+            _ => Written::Unknown,
+        },
+        K::Block(b) => {
+            let mut w = Written::Nothing;
+            let mut own = vec![];
+            for st in &b.stmts {
+                let x = match &st.kind {
+                    hir::StmtKind::Let { local, init } => {
+                        own.push(*local);
+                        init.as_ref().map_or(Written::Nothing, written_local)
+                    }
+                    hir::StmtKind::Expr(x) => written_local(x),
+                    _ => Written::Unknown,
+                };
+                w = w.and(match x {
+                    Written::One(l) if own.contains(&l) => Written::Nothing,
+                    x => x,
+                });
+            }
+            let v = b.value.as_deref().map_or(Written::Nothing, written_local);
+            w.and(match v {
+                Written::One(l) if own.contains(&l) => Written::Nothing,
+                x => x,
+            })
+        }
+        _ if !writes_local(e) => Written::Nothing,
+        _ => Written::Unknown,
     }
 }
 
@@ -122,6 +223,7 @@ fn writes_local(e: &hir::Expr) -> bool {
                 || args.iter().any(writes_local)
         }
         K::If { cond, then, els } => writes_local(cond) || writes_local(then) || writes_local(els),
+        K::ArrayLit(es) => es.iter().any(writes_local),
         _ => true,
     }
 }
@@ -196,7 +298,8 @@ impl FnLower<'_, '_> {
     }
 
     /// Hold the borrowed operand `op` (of type `ty`) against the operands after it (`later`):
-    /// a value that owns nothing is copied; anything else gets a reference of its own in an
+    /// a value that owns nothing is copied, except one holding an `Atomic`, which is used
+    /// where it is; anything else gets a reference of its own in an
     /// owned temporary (a share), so the parts it points at outlive what the later operands
     /// free. A share that would count a type not counted yet is replaced by a bitwise copy:
     /// holding never changes the program's counted types.
@@ -254,6 +357,12 @@ impl FnLower<'_, '_> {
             };
         }
         let cty = self.sub(ty);
+        // A value holding an `Atomic` stays where it is: a copy's atomics would take the
+        // changes (a method on a copy of the receiver), and no other code sees them.
+        let mut seen = rustc_hash::FxHashSet::default();
+        if !owned && self.cx.holds_atomic(cty, &mut seen) {
+            return op;
+        }
         if owned || !self.cx.needs_drop(cty) || !self.cx.shares_as_counted(cty) {
             // Owned already, owning nothing, or holding an uncounted object: a later operand
             // reaches such an object only through a counted container or a shared cell, and
@@ -273,6 +382,141 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// What borrowed argument `args[i]`, which the callee may change (a modified param of a
+    /// function used as a value, or any param through a function value), is held against:
+    /// `None` when it is passed where it is. Such a callee's modified params are `Borrow`, so
+    /// the exclusivity rule (velt_sema `ownership/exclusive`) does not see it change what
+    /// another argument reaches. An object stored inline (an uncounted object type, array or
+    /// tuple, or one of them or `null`) is passed where it is, as holding it would copy it and
+    /// the change would go to the copy, unless a later operand may replace it (a call through a
+    /// function value that replaces the field passed first: `pushes[0](p.log, swaps[0](p))`).
+    /// Its type is then counted, so the hold is a share of the one object, as in JavaScript.
+    /// Counting changes the type for the whole program, so only an operand that can reach the
+    /// object counts ([`reaches_objects`](Self::reaches_objects)), and never for a variable of
+    /// this function that nothing after it assigns: no operand reaches its slot.
+    pub(super) fn changed_hold(
+        &mut self,
+        args: &[hir::Expr],
+        i: usize,
+        later: Later,
+    ) -> Option<Later> {
+        let Some(obj) = self.inline_object(args[i].ty) else {
+            return Some(later);
+        };
+        if !later.memory || self.own_variable(&args[i], &args[i + 1..]) {
+            return None;
+        }
+        if !args[i + 1..].iter().any(|e| self.reaches_objects(e)) {
+            return None;
+        }
+        self.cx.note_identity_borrow(obj);
+        Some(later)
+    }
+
+    /// Is `e` a variable whose value this function holds itself (not a param or binding that
+    /// points elsewhere, nor one in a shared cell a closure may assign) that none of `later`
+    /// assigns? Only this function's code can assign such a variable: a closure that stays in
+    /// the function borrows it (sema reports a call that borrows it while such a closure
+    /// assigns it), and one that may be stored or called through a value keeps it in a cell.
+    /// So a call through a function value (`hooks[0](acc, nums[0]())`) cannot replace it.
+    fn own_variable(&self, e: &hir::Expr, later: &[hir::Expr]) -> bool {
+        use hir::ExprKind as K;
+        let mut e = e;
+        while let K::Cast(x) | K::Upcast(x) | K::Downcast(x) = &e.kind {
+            e = x;
+        }
+        let K::Local(l, _) = e.kind else {
+            return false;
+        };
+        let info = &self.info[l.0 as usize];
+        !info.indirect && !info.cell && !info.in_cell && !later.iter().any(|x| assigns_local(x, l))
+    }
+
+    /// Can evaluating `e` change an object stored inline that an earlier operand passes? As
+    /// [`may_change_memory`](Self::may_change_memory), except that a call of a
+    /// standard-library function whose arguments are all numbers, booleans or strings
+    /// (`Math.sqrt(4)`, `x.toFixed(2)`, `String(n)`) reaches no such object: it is handed no
+    /// reference to one, and the library sees none of the program's variables.
+    fn reaches_objects(&mut self, e: &hir::Expr) -> bool {
+        use hir::ExprKind as K;
+        if !self.may_change_memory(e) {
+            return false;
+        }
+        match &e.kind {
+            K::Call {
+                callee: hir::Callee::Def(h, _),
+                args,
+            } if self.std_fn(*h) && args.iter().all(|a| self.plain_arg(a)) => {
+                args.iter().any(|a| self.reaches_objects(a))
+            }
+            K::Unary { expr: x, .. } | K::Cast(x) | K::Upcast(x) | K::WrapSome(x) => {
+                self.reaches_objects(x)
+            }
+            K::Binary { lhs, rhs, .. } | K::Logical { lhs, rhs, .. } => {
+                self.reaches_objects(lhs) || self.reaches_objects(rhs)
+            }
+            K::If { cond, then, els } => {
+                self.reaches_objects(cond)
+                    || self.reaches_objects(then)
+                    || self.reaches_objects(els)
+            }
+            // An intrinsic that runs no user code: its arguments (`String(n)`, `xs.length`).
+            K::Call {
+                callee: hir::Callee::Intrinsic(i),
+                args,
+            } if !velt_sema::effects::runs_user_code(*i) => args
+                .iter()
+                .any(|a| velt_sema::effects::writes_place(a) || self.reaches_objects(a)),
+            // A new array (`Math.max(1, 2)`'s rest param, `[1, 2].length`): its elements.
+            K::ArrayLit(es) => es.iter().any(|x| self.reaches_objects(x)),
+            K::Field { base, .. } => self.reads_proxy(e) || self.reaches_objects(base),
+            _ => true,
+        }
+    }
+
+    /// Is `h` a function of the standard library?
+    fn std_fn(&self, h: hir::DefId) -> bool {
+        match (self.cx.hir.def(h), self.cx.locs.as_ref()) {
+            (hir::Def::Fn(f), Some(m)) => m.is_std(f.span),
+            _ => false,
+        }
+    }
+
+    /// Is argument `a` a number, a boolean or a string, or a new array of them (a rest
+    /// param: `Math.max(1, 2)`)? It holds no reference to the program's objects.
+    fn plain_arg(&mut self, a: &hir::Expr) -> bool {
+        match &a.kind {
+            hir::ExprKind::ArrayLit(es) => es.iter().all(|x| self.plain_arg(x)),
+            _ => self.plain_value(a.ty),
+        }
+    }
+
+    /// Is a value of type `ty` a number, a boolean or a string (it holds no reference)?
+    fn plain_value(&mut self, ty: TyId) -> bool {
+        matches!(
+            self.kind(ty),
+            hir::TyKind::Int(_) | hir::TyKind::Float(_) | hir::TyKind::Bool | hir::TyKind::Str
+        )
+    }
+
+    /// The object type a value of type `ty` stores inline (`changed_hold`).
+    fn inline_object(&mut self, ty: TyId) -> Option<TyId> {
+        let t = self.sub(ty);
+        if self.cx.counted(t) || self.vty(t).is_scalar() {
+            return None;
+        }
+        match self.cx.kind(t) {
+            hir::TyKind::Option(x, _) => self.inline_object(x),
+            hir::TyKind::Tuple(_) | hir::TyKind::Array(_) => Some(t),
+            hir::TyKind::Adt(d, _) => matches!(
+                self.cx.hir.def(d),
+                hir::Def::Adt(a) if a.kind != hir::AdtKind::Class && !a.is_copy
+            )
+            .then_some(t),
+            _ => None,
+        }
+    }
+
     /// Can what `p` holds be changed by operands that do `later`? A temporary of the lowering
     /// holds a value nobody else reaches; a variable is changed only by a local write. Anything
     /// reached through a projection (an element, a field, a variable in a cell) may change.
@@ -281,7 +525,14 @@ impl FnLower<'_, '_> {
             return true;
         }
         let named = self.locals[p.local.0 as usize].name.is_some();
-        named && later.locals
+        if !named || !later.locals {
+            return false;
+        }
+        match later.only {
+            // The one local the later operands write: is it this one?
+            Some(l) => self.info[l.0 as usize].vir == Some(p.local) && later.may_write(l),
+            None => true,
+        }
     }
 }
 

@@ -1,6 +1,0 @@
-first, bytes 2, third | early sent
-flood: 40 in order: true then: end of flood | flood sent
-crowd: [ 500, 500, 500, 500 ] each task in order: true | crowd sent
-after close(): EPIPE the WebSocket is closed
-released: EBADF handle is closed
-quiet closed

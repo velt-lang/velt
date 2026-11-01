@@ -1,0 +1,16 @@
+// A library module for abstract_classes.vlt: an exported abstract class whose constructor calls
+// an abstract method, with an abstract getter/setter pair.
+export abstract class Counter {
+  abstract kind(): string;
+  abstract get count(): number;
+  abstract set count(v: number);
+
+  constructor() {
+    // Dispatches to the subclass's method, as in JavaScript.
+    console.log(`new ${this.kind()}`);
+  }
+
+  bump(): void {
+    this.count = this.count + 1;
+  }
+}

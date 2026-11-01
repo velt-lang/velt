@@ -1,7 +1,7 @@
 // check: no leaks
 // A deleted key is released (#1545 review): the filler of unused slots was the first key ever
 // stored and outlived its entry, and an inner node's separator could be a deleted key.
-import { BTreeMap } from "velt:collections/btree_map";
+import { BTreeMap } from "velt/collections";
 
 class Key implements Comparable<Key> {
   n: i64;

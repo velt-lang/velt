@@ -27,7 +27,7 @@ fn velt(cwd: &Path, args: &[&str]) -> Output {
         .unwrap()
 }
 
-const APP_MANIFEST: &str = r#"import type { Package } from "velt:package";
+const APP_MANIFEST: &str = r#"import type { Package } from "velt/package";
 
 export const pkg: Package = {
   name: "@demo/app",
@@ -172,7 +172,7 @@ fn define_leaves_the_programs_own_names_alone() {
     write(
         root,
         "app/package.vlt",
-        "import type { Package } from \"velt:package\";\n\nexport const pkg: Package = {\n  name: \"scoped\",\n  version: \"0.1.0\",\n  entry: \"src/main.ts\",\n  define: { __DEV__: \"false\" },\n};\n",
+        "import type { Package } from \"velt/package\";\n\nexport const pkg: Package = {\n  name: \"scoped\",\n  version: \"0.1.0\",\n  entry: \"src/main.ts\",\n  define: { __DEV__: \"false\" },\n};\n",
     );
     write(
         root,

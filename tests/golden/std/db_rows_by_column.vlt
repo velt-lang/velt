@@ -1,0 +1,58 @@
+// `readRows` reads a `RowSource` column by column (the compiler's direct reader), not through the
+// JSON text of its rows: the column names are asked for once per result, not once per row. The
+// reader looked for std/db's `RowSource` under its old module name after velt/db was split into
+// files, found nothing, and read every source through JSON, four times slower for the SQLite
+// engine's rows.
+import { CellKind, readRows, RowSource } from "velt/db";
+
+class Counted implements RowSource {
+  row: i64 = -1;
+  names: i64 = 0;
+
+  columnCount(): i64 {
+    return 2;
+  }
+  columnName(i: i64): string {
+    this.names++;
+    return i == 0 ? "id" : "name";
+  }
+  next(): bool {
+    this.row++;
+    return this.row < 3;
+  }
+  kind(i: i64): CellKind {
+    return i == 0 ? CellKind.Int : CellKind.Text;
+  }
+  bool(i: i64): bool {
+    return false;
+  }
+  int(i: i64): i64 {
+    return this.row + 1;
+  }
+  float(i: i64): f64 {
+    return 0;
+  }
+  text(i: i64): string {
+    return `row ${this.row + 1}`;
+  }
+  blob(i: i64): u8[] {
+    return [];
+  }
+  json(i: i64): string {
+    return "null";
+  }
+}
+
+struct Row {
+  id: i64;
+  name: string;
+}
+
+function main() {
+  const src = new Counted();
+  const rows: Row[] = readRows<Row, Counted>(src);
+  for (const r of rows) {
+    console.log(r.id, r.name);
+  }
+  console.log("names asked:", src.names);
+}

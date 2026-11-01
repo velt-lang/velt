@@ -1,0 +1,18 @@
+0
+1 104
+0
+3
+3 hel
+0
+RangeError The value of "length" is out of range. It must be >= 0. Received -1
+RangeError The value of "position" is out of range. It must be an integer. Received 1.5
+RangeError The value of "position" is out of range. It must be >= -1 && <= 9007199254740991. Received -2
+4 hell
+0
+TypeError The argument 'buffer' is empty and cannot be written. Received <Buffer >
+8
+2
+2
+RangeError The value of "offset" is out of range. It must be <= 8. Received 12
+RangeError The value of "length" is out of range. It must be <= 8. Received 4294967296
+xyzzEFGHrld!!

@@ -1,0 +1,8 @@
+// `RawReply`: The library's `VeltRedisReply` (see reply.vlt for its layout).
+
+/** The library's `VeltRedisReply` (see reply.vlt for its layout). */
+export struct RawReply {
+  tags: u8[];
+  nums: i64[];
+  strs: string[];
+}

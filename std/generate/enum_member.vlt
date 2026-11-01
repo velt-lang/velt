@@ -1,0 +1,7 @@
+// velt/generate (internal): a member of an enum of the model (`EnumMember`).
+
+/** A member of an enum: its name and its value as JavaScript source. */
+export class EnumMember {
+  name: string = "";
+  value: string = "";
+}

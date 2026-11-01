@@ -2,7 +2,7 @@
 // cost at run time. `x as UserId` brands a value; a branded value works wherever its
 // primitive does; a plain `string` is not a `UserId` (see errors/branded_types).
 
-import { Set } from "velt:collections/set";
+import { Set } from "velt/collections";
 
 type UserId = string & { __brand: "UserId" };
 type OrderId = string & { __brand: "OrderId" };

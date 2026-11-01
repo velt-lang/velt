@@ -2,9 +2,9 @@
 //! `process.stdout.write(s)` and `process.stderr.write(s)` (a string, without a newline; `true`
 //! like Node), and `process.env.NAME` / `process.env[name]` (`string | null`: there is no
 //! `undefined`), and `process.argv` (Node's layout). They are calls of the prelude's
-//! `__processWrite` / `__processEnv` / `__processArgv`
+//! `processWrite` / `processEnv` / `processArgv`
 //! (std/prelude/process.vlt). `process.exit` is an intrinsic (`builtins`); the rest of Node's
-//! `process` lives in `velt:process`.
+//! `process` lives in `velt/process`.
 
 use velt_common::Span;
 use velt_syntax::ast;
@@ -69,7 +69,7 @@ impl FnCx<'_, '_> {
             let msg = format!("`process.{}` has no method `{}`", stream.name, prop.name);
             self.cx.error(
                 velt_common::Diagnostic::error(msg, prop.span)
-                    .with_note("use `write(s)`, or `velt:process` for byte writes"),
+                    .with_note("use `write(s)`, or `velt/process` for byte writes"),
             );
             self.check_args_loose(args);
             return Some(self.error_expr(span));
@@ -84,7 +84,14 @@ impl FnCx<'_, '_> {
         let mut full = vec![fd];
         full.extend(args.iter().cloned());
         let what = format!("process.{}.write", stream.name);
-        Some(self.prelude_call("__processWrite", &what, &[], &full, exp, span))
+        Some(self.prelude_call(
+            velt_common::std_hook!(process_write),
+            &what,
+            &[],
+            &full,
+            exp,
+            span,
+        ))
     }
 
     /// `process.env.NAME`; `None` for anything else.
@@ -102,7 +109,14 @@ impl FnCx<'_, '_> {
             ast::ExprKind::Lit(ast::Lit::Str(prop.name.clone())),
             prop.span,
         );
-        Some(self.prelude_call("__processEnv", "process.env", &[], &[name], exp, span))
+        Some(self.prelude_call(
+            velt_common::std_hook!(process_env),
+            "process.env",
+            &[],
+            &[name],
+            exp,
+            span,
+        ))
     }
 
     /// `process.argv`: Node's `[runtime, script, ...args]`, a fresh array per read; `None` for
@@ -117,7 +131,14 @@ impl FnCx<'_, '_> {
         if prop.name != "argv" || !self.is_builtin_process(object) {
             return None;
         }
-        Some(self.prelude_call("__processArgv", "process.argv", &[], &[], exp, span))
+        Some(self.prelude_call(
+            velt_common::std_hook!(process_argv),
+            "process.argv",
+            &[],
+            &[],
+            exp,
+            span,
+        ))
     }
 
     /// Is `e` the builtin `process.argv`?
@@ -188,7 +209,7 @@ impl FnCx<'_, '_> {
     }
 
     /// `process.env.NAME = v` / `process.env[name] = v` (reported): environment variables are
-    /// set with `setEnv` of `velt:process`.
+    /// set with `setEnv` of `velt/process`.
     pub(super) fn reject_env_assign(&mut self, target: &ast::Expr) -> bool {
         if !self.is_env_entry(target) {
             return false;
@@ -196,7 +217,7 @@ impl FnCx<'_, '_> {
         self.cx.error(
             velt_common::Diagnostic::error("cannot assign to `process.env`", target.span)
                 .with_note(
-                    "use `setEnv(name, value)` from `velt:process` (not synchronized with reads \
+                    "use `setEnv(name, value)` from `velt/process` (not synchronized with reads \
                      on other threads: set variables at startup)",
                 ),
         );
@@ -204,14 +225,14 @@ impl FnCx<'_, '_> {
     }
 
     /// `delete process.env.NAME` / `delete process.env[name]` (reported): environment variables
-    /// are removed with `removeEnv` of `velt:process`.
+    /// are removed with `removeEnv` of `velt/process`.
     pub(super) fn reject_env_delete(&mut self, target: &ast::Expr) -> bool {
         if !self.is_env_entry(target) {
             return false;
         }
         self.cx.error(
             velt_common::Diagnostic::error("cannot `delete` from `process.env`", target.span)
-                .with_note("use `removeEnv(name)` from `velt:process`"),
+                .with_note("use `removeEnv(name)` from `velt/process`"),
         );
         true
     }
@@ -227,28 +248,35 @@ impl FnCx<'_, '_> {
             return None;
         }
         let args = std::slice::from_ref(index);
-        Some(self.prelude_call("__processEnv", "process.env", &[], args, None, span))
+        Some(self.prelude_call(
+            velt_common::std_hook!(process_env),
+            "process.env",
+            &[],
+            args,
+            None,
+            span,
+        ))
     }
 }
 
 /// Where Node's `process.<name>` lives in Velt, for a `name` that is not a value of the builtin
 /// `process`. That namespace has `exit`, `memoryUsage()`, `stdout.write`, `stderr.write` and
-/// `env` (`super::process`); the rest is in `velt:process`.
+/// `env` (`super::process`); the rest is in `velt/process`.
 pub(super) fn process_note(name: &str) -> String {
     match name {
         "stdout" | "stderr" => format!(
-            "call `process.{name}.write(s)`; for bytes, `import {{ stdout }} from \"velt:process\"`"
+            "call `process.{name}.write(s)`; for bytes, `import {{ stdout }} from \"velt/process\"`"
         ),
         "env" => "read a variable with `process.env.NAME` or `process.env[name]` \
-                  (`string | null`); set one with `setEnv(name, value)` of `velt:process`; list \
-                  them all with `envAll()` of `velt:process` (a `Record<string, string>`)"
+                  (`string | null`); set one with `setEnv(name, value)` of `velt/process`; list \
+                  them all with `envAll()` of `velt/process` (a `Record<string, string>`)"
             .to_string(),
         "cwd" | "chdir" => {
-            format!("use `import {{ {name} }} from \"velt:process\"`: `{name}` is a function there")
+            format!("use `import {{ {name} }} from \"velt/process\"`: `{name}` is a function there")
         }
         _ => "the builtin `process` has `process.env.NAME`, `process.stdout.write(s)`, \
               `process.argv`, `process.exit(code)` and `process.memoryUsage()`; `cwd()` is in \
-              `velt:process`"
+              `velt/process`"
             .to_string(),
     }
 }

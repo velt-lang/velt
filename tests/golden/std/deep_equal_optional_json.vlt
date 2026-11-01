@@ -1,0 +1,41 @@
+// `deepEqual` (Node's `util.isDeepStrictEqual`) and `toEqual`: an optional field left out
+// differs from one set to `undefined` (`"a" in x` tells them apart), also nested; equal
+// `JsonValue`s are equal by their JSON content, an object's members in any order.
+import { expect } from "velt/test";
+
+function toEq<T>(a: T, b: T): bool {
+  try {
+    expect(a).toEqual(b);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function both<T>(name: string, a: T, b: T) {
+  console.log(name, deepEqual(a, b), toEq(a, b));
+}
+
+type Und = { a?: number; b: number };
+
+function main() {
+  const u1: Und = { b: 1 };
+  const u2: Und = { a: undefined, b: 1 };
+  both("absent vs undefined", u1, u2);
+  both("undefined vs absent", u2, u1);
+  both("both absent", u1, { b: 1 } as Und);
+  both("both undefined", u2, { a: undefined, b: 1 } as Und);
+  both("nested in array", [u1], [u2]);
+  both("nested in object", { u: u1 }, { u: u2 });
+  const j1 = JSON.parse<JsonValue>(`[1,"a",null,true,{"k":[2]}]`);
+  const j2 = JSON.parse<JsonValue>(`[1,"a",null,true,{"k":[2]}]`);
+  const j3 = JSON.parse<JsonValue>(`[1,"a",null,true,{"k":[3]}]`);
+  both("json same", j1, j2);
+  both("json diff", j1, j3);
+  both("json number", JSON.parse<JsonValue>("1"), JSON.parse<JsonValue>("1"));
+  both("json member order", JSON.parse<JsonValue>(`{"a":1,"b":2}`), JSON.parse<JsonValue>(`{"b":2,"a":1}`));
+  both("json missing member", JSON.parse<JsonValue>(`{"a":1}`), JSON.parse<JsonValue>(`{"a":1,"b":2}`));
+  both("json in array", [JSON.parse<JsonValue>("[1]")], [JSON.parse<JsonValue>("[1]")]);
+  expect(JSON.parse<JsonValue>(`[1,"a",null,true,{"k":[2]}]`)).toEqual(JSON.parse<JsonValue>(`[1,"a",null,true,{"k":[2]}]`));
+  console.log("toEqual passed");
+}

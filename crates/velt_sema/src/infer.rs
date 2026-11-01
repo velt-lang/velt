@@ -584,8 +584,34 @@ impl Ctx<'_> {
         if self.ty.is_bottom(ty) {
             return true;
         }
+        // The prelude's `AtomicValue` is the compiler's: the types an `Atomic` holds (a type
+        // parameter only through its own bound, below).
+        if Some(b.iface) == self.prelude_iface("AtomicValue")
+            && !matches!(self.ty.kind(ty), TyKind::Param(_))
+        {
+            return matches!(
+                self.ty.kind(ty),
+                TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Error
+            ) || self.atomic_ref(ty);
+        }
+        // The prelude's `Frozen`: a type `frozen_readable_in` takes (type parameters through their
+        // own `Frozen` bounds).
+        if Some(b.iface) == self.prelude_iface("Frozen")
+            && !matches!(self.ty.kind(ty), TyKind::Param(_))
+        {
+            return self.frozen_readable_under(bounds, ty);
+        }
         if let TyKind::Param(n) = self.ty.kind(ty) {
             let declared = bounds.get(*n as usize).cloned().unwrap_or_default();
+            // Only a direct `T extends AtomicValue` (or `Frozen`): nothing else can stand for the
+            // compiler's.
+            let known = [
+                self.prelude_iface("AtomicValue"),
+                self.prelude_iface("Frozen"),
+            ];
+            if known.contains(&Some(b.iface)) {
+                return declared.contains(b);
+            }
             if declared
                 .iter()
                 .any(|x| x == b || self.iface_ancestors(x).contains(b))
@@ -601,7 +627,19 @@ impl Ctx<'_> {
         if let TyKind::Dyn(d, args) = self.ty.kind(ty).clone() {
             // An interface value satisfies the interfaces its interface extends (#1368); a
             // generic method of the bound is called through its table's instantiations (#943).
-            if self.extends_iface(&Bound { iface: d, args }, b) {
+            if self.extends_iface(
+                &Bound {
+                    iface: d,
+                    args: args.clone(),
+                },
+                b,
+            ) {
+                return true;
+            }
+            // A literal with getters (its own interface) for a bound it has every member of,
+            // a getter filling a field (`T extends { v: number }`), as in TypeScript.
+            if self.literal_ifaces.contains(&d) && self.bound_upcast((d, &args), (b.iface, &b.args))
+            {
                 return true;
             }
         }
@@ -617,6 +655,16 @@ impl Ctx<'_> {
             .is_some_and(|args| args == b.args);
         self.impl_scope = saved;
         ok
+    }
+
+    /// `frozen_readable_in` of `t` with the type parameters bounded by the prelude's `Frozen` in
+    /// `bounds` taken as readable (checked where the generic is instantiated).
+    pub(crate) fn frozen_readable_under(&mut self, bounds: &[Vec<Bound>], t: TyId) -> bool {
+        let frozen = self.prelude_iface("Frozen");
+        let params: Vec<u32> = (0..bounds.len() as u32)
+            .filter(|&p| bounds[p as usize].iter().any(|x| Some(x.iface) == frozen))
+            .collect();
+        self.frozen_readable_in(t, &params, &mut rustc_hash::FxHashSet::default())
     }
 
     /// Does interface `b`, or one it extends, declare a generic method?

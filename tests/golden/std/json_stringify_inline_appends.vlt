@@ -1,0 +1,65 @@
+// JSON.stringify's glue appends its literal text (`{"key":`, `,"key":`, `}`) to the builder
+// inline (#1677), for ASCII text of at most 32 bytes; longer or non-ASCII text goes through the
+// runtime. These objects put that text at the edges: pushes of 31 to 34 bytes, a builder that
+// starts as an inline string and moves to the heap at 23 bytes in the middle of a push, and
+// non-ASCII text right before the punctuation. The file is plain TypeScript; the .out is Node's.
+
+class K27 {
+  aaaaaaaaaaaaaaaaaaaaaaaaaa1: number = 27;
+  bbbbbbbbbbbbbbbbbbbbbbbbbb2: string = "x";
+}
+
+class K28 {
+  aaaaaaaaaaaaaaaaaaaaaaaaaaa1: number = 28;
+  bbbbbbbbbbbbbbbbbbbbbbbbbbb2: string = "x";
+}
+
+class K29 {
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaa1: number = 29;
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbb2: string = "x";
+}
+
+class K30 {
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaa1: number = 30;
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbb2: string = "x";
+}
+
+// Short keys whose pushes cross 23 bytes at every offset.
+class Short {
+  a: number = 1;
+  bb: number = 22;
+  ccc: number = 333;
+  dddd: number = 4444;
+  eeeee: string = "55555";
+  ffffff: boolean = true;
+}
+
+// Non-ASCII text right before the punctuation the glue appends (Velt names are ASCII, so the
+// keys stay ASCII: the values end and start next to the inline text).
+class Wide {
+  a: string = "é";
+  b: string = "ключ";
+  c: string = "😀";
+  d: string = "x€";
+  e: boolean = false;
+}
+
+function main() {
+  console.log(JSON.stringify(new K27()));
+  console.log(JSON.stringify(new K28()));
+  console.log(JSON.stringify(new K29()));
+  console.log(JSON.stringify(new K30()));
+  console.log(JSON.stringify(new Short()));
+  console.log(JSON.stringify(new Wide()));
+  // Inside arrays: the builder is on the heap by the second element.
+  console.log(JSON.stringify([new K27(), new K30()]));
+  console.log(JSON.stringify([new Short(), new Wide(), new Short()]));
+  // An empty start, one element: each push lands at a different builder length.
+  for (let n = 0; n < 4; n++) {
+    const xs: Short[] = [];
+    for (let i = 0; i < n; i++) {
+      xs.push(new Short());
+    }
+    console.log(JSON.stringify(xs).length);
+  }
+}

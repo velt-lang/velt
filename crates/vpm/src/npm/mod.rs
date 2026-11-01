@@ -34,6 +34,7 @@
 
 pub mod exports;
 pub mod json;
+pub mod provided;
 pub mod workspace;
 
 use std::collections::HashMap;
@@ -46,7 +47,7 @@ use json::Json;
 /// own dependencies are found next to it, in the `.pnpm` directory.
 fn real_dir(dir: PathBuf) -> PathBuf {
     let link = std::fs::symlink_metadata(&dir).is_ok_and(|m| m.file_type().is_symlink());
-    match std::fs::canonicalize(&dir) {
+    match crate::probe::canonicalize(&dir) {
         Ok(real) if link => crate::relpath::plain(&real),
         _ => dir,
     }
@@ -139,6 +140,13 @@ impl NpmResolver {
         Some(self.module_in(&dir, name, &subpath, spec))
     }
 
+    /// The source file that bare specifier `spec` names in the npm package at `dir` (one a git
+    /// dependency provides, `crate::git`); `None` when `spec` is not bare.
+    pub fn resolve_in(&mut self, dir: &Path, spec: &str) -> Option<Result<PathBuf, NpmError>> {
+        let (name, subpath) = split_specifier(spec)?;
+        Some(self.module_in(dir, name, &subpath, spec))
+    }
+
     /// The directory of npm package `name` as seen from `importer` (see the module docs).
     pub fn package_dir(&mut self, importer: &Path, name: &str) -> Option<PathBuf> {
         let start = crate::relpath::absolute(importer.parent()?);
@@ -147,7 +155,7 @@ impl NpmResolver {
                 continue;
             }
             let candidate = dir.join("node_modules").join(name);
-            if candidate.join("package.json").is_file() {
+            if crate::probe::is_file(&candidate.join("package.json")) {
                 return Some(real_dir(candidate));
             }
         }
@@ -188,7 +196,7 @@ impl NpmResolver {
         self.manifests
             .entry(dir.to_path_buf())
             .or_insert_with(|| {
-                let text = std::fs::read_to_string(dir.join("package.json")).ok()?;
+                let text = crate::probe::read_to_string(&dir.join("package.json")).ok()?;
                 Json::parse(&text).ok()
             })
             .as_ref()
@@ -267,7 +275,7 @@ impl NpmResolver {
         for target in &targets {
             for candidate in source_candidates(target, &out_dirs) {
                 let file = dir.join(&candidate);
-                if file.is_file() {
+                if crate::probe::is_file(&file) {
                     return Ok(file);
                 }
                 if !tried.contains(&candidate) {
@@ -283,7 +291,7 @@ impl NpmResolver {
                 .find(|t| {
                     source_candidates(t, &out_dirs)
                         .iter()
-                        .any(|c| dir.join(c).is_file())
+                        .any(|c| crate::probe::is_file(&dir.join(c)))
                 }),
             _ => None,
         };
@@ -296,7 +304,11 @@ impl NpmResolver {
         } else {
             vec![]
         };
-        if let Some(file) = fallback.iter().map(|f| dir.join(f)).find(|f| f.is_file()) {
+        if let Some(file) = fallback
+            .iter()
+            .map(|f| dir.join(f))
+            .find(|f| crate::probe::is_file(f))
+        {
             return Ok(file);
         }
         let mut note = format!(
@@ -349,7 +361,7 @@ impl NpmResolver {
     /// `(outDir, rootDir)` pairs of the package's `tsconfig.json` (`outDir` and
     /// `declarationDir`, each with `rootDir`, default `src`), `/`-separated, without `./`.
     fn ts_out_dirs(&mut self, dir: &Path) -> Vec<(String, String)> {
-        let Ok(text) = std::fs::read_to_string(dir.join("tsconfig.json")) else {
+        let Ok(text) = crate::probe::read_to_string(&dir.join("tsconfig.json")) else {
             return vec![];
         };
         let Ok(json) = Json::parse_jsonc(&text) else {

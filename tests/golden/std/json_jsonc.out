@@ -1,0 +1,13 @@
+app true src|lib 1
+{"name":"app","strict":true,"paths":["src","lib"],"nested":{"a":1},"ignored":[1,2,{"x":[]}]}
+strict: Unexpected token '/', "// tsconfi"... is not valid JSON
+comments only: invalid JSON at $.paths[2]: unexpected character ']' (byte 126)
+unclosed: invalid JSON at $[1]: unexpected character '/' (byte 4)
+unclosed after: invalid JSON at $: unexpected trailing characters (byte 2)
+unclosed typed: invalid JSON at $: unexpected trailing characters (byte 8)
+double comma: invalid JSON at $[1]: unexpected character ',' (byte 3)
+after comment: invalid JSON at $[1]: unexpected character 'x' (byte 12)
+no colon: invalid JSON at $.b: expected ':' (byte 21)
+3
+q"//x /* a */ */ 1
+{"s":"q\"//x","t":"/* a */","u":"*/","n":[1]}

@@ -307,7 +307,9 @@ impl FnCx<'_, '_> {
         {
             return h;
         }
+        // A branded class instance is tested as that instance (`crate::brands`).
         let s = self.type_test_operand(e);
+        let s = self.unbrand(s);
         if self.is_promise_ctor(ty) {
             return self.promise_test(s, span);
         }
@@ -400,6 +402,9 @@ impl FnCx<'_, '_> {
 
     /// The class named after `instanceof` (reports errors).
     fn instanceof_class(&mut self, ty: &ast::TypeExpr) -> Option<DefId> {
+        if let Some(d) = self.cx.qualified_class(ty) {
+            return Some(d);
+        }
         if let ast::TypeExprKind::Named { args, .. } = &ty.kind {
             if !args.is_empty() {
                 self.cx.err(
@@ -428,6 +433,10 @@ impl FnCx<'_, '_> {
 
     /// The class named after `instanceof`, without diagnostics (for flow narrowing).
     pub(crate) fn instanceof_class_quiet(&self, ty: &ast::TypeExpr) -> Option<DefId> {
+        // Generated code names a class it cannot import `__qualified<"<module>", "<name>">`.
+        if let Some(d) = self.cx.qualified_class(ty) {
+            return Some(d);
+        }
         let ast::TypeExprKind::Named { path, .. } = &ty.kind else {
             return None;
         };
@@ -529,14 +538,17 @@ impl FnCx<'_, '_> {
         lit_span: Span,
         span: Span,
     ) -> hir::Expr {
+        if let Some((mut p, _)) = self.number_lit_pat(inner, lit, lit_span, span) {
+            if s.ty != inner {
+                p = self.present_pat(p, s.ty, span);
+            }
+            return self.bool_match(s, Some(p), span);
+        }
         let (v, m) = match self.lit_member(inner, lit) {
             Ok(x) => x,
             Err(msg) => {
-                let un = self.cx.display(inner);
-                self.cx.error(
-                    Diagnostic::error("mismatched types", lit_span)
-                        .with_note(format!("{msg} of `{un}`")),
-                );
+                self.cx
+                    .error(Diagnostic::error("mismatched types", lit_span).with_note(msg));
                 return self.error_expr(span);
             }
         };
@@ -565,64 +577,6 @@ impl FnCx<'_, '_> {
             p = self.present_pat(p, s.ty, span);
         }
         self.bool_match(s, Some(p), span)
-    }
-
-    /// The member of union `u` a literal pattern / operand belongs to.
-    pub(crate) fn lit_member(
-        &mut self,
-        u: TyId,
-        lit: &ast::SignedLit,
-    ) -> Result<(u32, TyId), String> {
-        let members = self.cx.union_members(u).unwrap_or_default();
-        // A literal-type member with this value wins over its base type.
-        let exact = members.iter().position(|m| {
-            self.cx
-                .lit_value(*m)
-                .is_some_and(|v| crate::literals::lit_matches(&v, lit))
-        });
-        if let Some(i) = exact {
-            return Ok((i as u32, members[i]));
-        }
-        let ty = &self.cx.ty;
-        let find = |f: &dyn Fn(TyId) -> bool| -> Vec<usize> {
-            (0..members.len()).filter(|&i| f(members[i])).collect()
-        };
-        let (found, what) = match &lit.lit {
-            ast::Lit::Str(_) => (find(&|t| t == ty.str_), "string"),
-            ast::Lit::Bool(_) => (find(&|t| t == ty.bool_), "boolean"),
-            ast::Lit::Int {
-                suffix: Some(s), ..
-            }
-            | ast::Lit::Float {
-                suffix: Some(s), ..
-            } => {
-                let st = self.cx.ty.primitive(s);
-                (find(&|t| Some(t) == st), "number")
-            }
-            ast::Lit::Int { .. } => {
-                let ints = find(&|t| ty.is_int(t));
-                if ints.is_empty() {
-                    (find(&|t| ty.is_float(t)), "number")
-                } else {
-                    (ints, "integer")
-                }
-            }
-            ast::Lit::Float { .. } => (find(&|t| ty.is_float(t)), "float"),
-            ast::Lit::Null => (vec![], "null"),
-            ast::Lit::Undefined => (vec![], "undefined"),
-        };
-        match found.as_slice() {
-            [i] => Ok((*i as u32, members[*i])),
-            [] => Err(format!("this {what} literal is not a member")),
-            _ => Err(format!(
-                "this {what} literal could be several members (add a type suffix like `5i32`)"
-            )),
-        }
-    }
-
-    /// [`lit_member`](Self::lit_member) without diagnostics.
-    pub(crate) fn lit_member_quiet(&mut self, u: TyId, lit: ast::SignedLit) -> Option<(u32, TyId)> {
-        self.lit_member(u, &lit).ok()
     }
 
     /// `match (s) { <members satisfying pred> => true, _ => false }`.

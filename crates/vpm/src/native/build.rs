@@ -1,4 +1,4 @@
-//! Building a package's native crate into a bundle: `cargo build --release --target <triple>`,
+//! Building a package's native crate into a bundle: `cargo rustc --release --target <triple>`,
 //! then reading its exports and, on Linux and macOS, prelinking the staticlib into one relocatable
 //! object whose only global symbols are the package's exports. A Rust staticlib carries its own
 //! copy of std; prelinked and localized, it cannot clash with the runtime's copy (or another
@@ -89,19 +89,16 @@ pub fn build(req: BuildRequest) -> Result<NativeMeta, String> {
         ));
     }
 
-    if let Ok(meta) = NativeMeta::read(req.out) {
-        let newest = [Some(&shared), artifacts.staticlib.as_ref()]
-            .into_iter()
-            .flatten()
-            .filter_map(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok())
-            .max();
-        let built = std::fs::metadata(req.out.join(META_FILE)).and_then(|m| m.modified());
-        let current = meta.version == req.manifest.package.version && meta.target == req.target;
-        if let (Some(newest), Ok(built)) = (newest, built) {
-            if current && built >= newest {
-                return Ok(meta);
-            }
-        }
+    let newest = [Some(&shared), artifacts.staticlib.as_ref()]
+        .into_iter()
+        .flatten()
+        .filter_map(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok())
+        .max();
+    // One process at a time checks and writes the bundle: programs built at once (goldens, tests)
+    // may all find it out of date, and one must not replace it while another reads it.
+    let _lock = lock_bundle(req.out)?;
+    if let Some(meta) = current_bundle(&req, newest) {
+        return Ok(meta);
     }
 
     let bytes =
@@ -163,6 +160,11 @@ pub fn build(req: BuildRequest) -> Result<NativeMeta, String> {
         _ => None,
     };
 
+    // The system libraries the object needs (a shared library brings its own).
+    let system_libs = match &static_rel {
+        Some(_) => Some(read_system_libs(&artifacts.system_libs, name)?),
+        None => None,
+    };
     let meta = NativeMeta {
         package: name.clone(),
         version: req.manifest.package.version.clone(),
@@ -171,6 +173,7 @@ pub fn build(req: BuildRequest) -> Result<NativeMeta, String> {
         shared: shared_rel,
         import_lib: import_rel,
         static_obj: static_rel,
+        system_libs,
         exports,
     };
     crate::json_file::write_atomic(&tmp.join(META_FILE), &meta.to_json())?;
@@ -184,6 +187,58 @@ pub fn build(req: BuildRequest) -> Result<NativeMeta, String> {
     std::fs::rename(&tmp, req.out)
         .map_err(|e| format!("cannot write `{}`: {e}", req.out.display()))?;
     Ok(meta)
+}
+
+/// An exclusive lock on the bundle directory `out` (the file `<out>.lock` beside it), released
+/// when the result is dropped.
+fn lock_bundle(out: &Path) -> Result<std::fs::File, String> {
+    let path = out.with_extension("lock");
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("cannot create `{}`: {e}", parent.display()))?;
+    }
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&path)
+        .map_err(|e| format!("cannot open `{}`: {e}", path.display()))?;
+    file.lock()
+        .map_err(|e| format!("cannot lock `{}`: {e}", path.display()))?;
+    Ok(file)
+}
+
+/// The bundle at `req.out` when it is this version's for this target, newer than cargo's outputs
+/// (`newest`) and whole (every file its `native.json` names is there): nothing to write.
+fn current_bundle(req: &BuildRequest, newest: Option<std::time::SystemTime>) -> Option<NativeMeta> {
+    let meta = NativeMeta::read(req.out).ok()?;
+    let built = std::fs::metadata(req.out.join(META_FILE))
+        .and_then(|m| m.modified())
+        .ok()?;
+    let current = meta.version == req.manifest.package.version && meta.target == req.target;
+    let whole = [
+        Some(&meta.shared),
+        meta.import_lib.as_ref(),
+        meta.static_obj.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    .all(|f| req.out.join(f).is_file());
+    // A bundle from before velt recorded the object's system libraries is built again.
+    let libs = meta.static_obj.is_none() || meta.system_libs.is_some();
+    (current && whole && libs && built >= newest?).then_some(meta)
+}
+
+/// The system libraries rustc wrote for the staticlib (`--print native-static-libs=<file>`), as
+/// linker arguments.
+fn read_system_libs(file: &Path, package: &str) -> Result<Vec<String>, String> {
+    let text = std::fs::read_to_string(file).map_err(|e| {
+        format!(
+            "package `{package}`: cannot read the native library's system libraries `{}`: {e}",
+            file.display()
+        )
+    })?;
+    Ok(text.split_whitespace().map(String::from).collect())
 }
 
 /// The crate's library must be `velt_native_<pkg>` (`[lib] name`): its file name is what links,
@@ -212,6 +267,8 @@ struct Artifacts {
     shared: Option<PathBuf>,
     import_lib: Option<PathBuf>,
     staticlib: Option<PathBuf>,
+    /// Where rustc wrote the staticlib's `native-static-libs`.
+    system_libs: PathBuf,
 }
 
 fn run_cargo(
@@ -227,10 +284,18 @@ fn run_cargo(
             crate_manifest.display()
         ));
     }
+    // `cargo rustc` to have rustc write the system libraries the staticlib needs to a file (the
+    // same argument every time, so a build with nothing new is still a no-op).
+    let system_libs = target_dir
+        .join(target)
+        .join("release")
+        .join("velt-native-static-libs.txt");
+    let mut print = std::ffi::OsString::from("native-static-libs=");
+    print.push(&system_libs);
     let out = Command::new(&cargo)
         .args(locked.then_some("--locked"))
         .args([
-            "build",
+            "rustc",
             "--release",
             "--lib",
             "--message-format=json-render-diagnostics",
@@ -241,18 +306,24 @@ fn run_cargo(
         .arg(crate_manifest)
         .arg("--target-dir")
         .arg(target_dir)
+        .arg("--")
+        .arg("--print")
+        .arg(print)
         .stdin(Stdio::null())
         .stderr(Stdio::inherit())
         .output()
         .map_err(|e| format!("cannot run `{cargo}`: {e}"))?;
     if !out.status.success() {
         return Err(format!(
-            "`{cargo} build` failed for `{}` ({target})",
+            "`{cargo} rustc` failed for `{}` ({target})",
             crate_manifest.display()
         ));
     }
     let wanted = std::fs::canonicalize(crate_manifest).unwrap_or(crate_manifest.to_path_buf());
-    let mut found = Artifacts::default();
+    let mut found = Artifacts {
+        system_libs,
+        ..Artifacts::default()
+    };
     for line in String::from_utf8_lossy(&out.stdout).lines() {
         let Ok(msg) = serde_json::from_str::<serde_json::Value>(line) else {
             continue;
@@ -364,6 +435,25 @@ fn prelink(staticlib: &Path, keep: &[String], target: &str, out: &Path) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Two processes building one package's bundle take turns: the lock beside the bundle is
+    /// exclusive until its holder drops it.
+    #[test]
+    fn the_bundle_lock_is_exclusive() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("aarch64-apple-darwin");
+        let held = lock_bundle(&out).unwrap();
+        let other = std::fs::OpenOptions::new()
+            .write(true)
+            .open(out.with_extension("lock"))
+            .unwrap();
+        assert!(matches!(
+            other.try_lock(),
+            Err(std::fs::TryLockError::WouldBlock)
+        ));
+        drop(held);
+        assert!(other.try_lock().is_ok());
+    }
 
     #[test]
     fn apple_prelinks_name_the_runtimes_minimum_macos() {

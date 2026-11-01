@@ -9,11 +9,11 @@
 //!   optional field of a struct or object type only while present; no `#` or symbol fields;
 //!   none a standard library base class declares); a class object seen through a base class's
 //!   table is handed to its own class's glue;
-//! - a `Record<string, V>`: its `__keyNames()` (insertion order);
+//! - a `Record<string, V>`: its `[RECORD_KEY_NAMES]()` (insertion order);
 //! - arrays, tuples and strings: their indexes as strings;
 //! - booleans, numbers, symbols, functions and the standard library's classes (a `Map`, a
 //!   `Set`, an `Error`): none;
-//! - a proxy: `Proxy.__keys()` (std/proxy.vlt), which runs its `ownKeys` and
+//! - a proxy: `Proxy[PROXY_KEYS]()` (std/lang/proxy/index.vlt), which runs its `ownKeys` and
 //!   `getOwnPropertyDescriptor` traps;
 //! - `JsonValue`: not yet.
 
@@ -50,10 +50,15 @@ impl FnLower<'_, '_> {
         self.switch_to(ok);
         let vt = self.cx.ty(sa);
         let out = self.temp(vt);
-        let done = self.proxy_branch("__keys", &data, &desc, |lw, obj, pty, r| {
-            let v = lw.proxy_keys_direct((obj, pty, r));
-            lw.assign(Place::local(out), Rvalue::Use(v));
-        });
+        let done = self.proxy_branch(
+            velt_common::std_key!(proxy_keys),
+            &data,
+            &desc,
+            |lw, obj, pty, r| {
+                let v = lw.proxy_keys_direct((obj, pty, r));
+                lw.assign(Place::local(out), Rvalue::Use(v));
+            },
+        );
         let oa = self.addr(Place::local(out));
         let st = self.any_slot(desc, SLOT_KEYS, vec![data, oa], vec![Ty::Ptr; 2]);
         let unsupported = self.rvalue_temp(
@@ -87,10 +92,11 @@ impl FnLower<'_, '_> {
             proj: vec![Proj::Deref(self.cx.ty(sa))],
         };
         if self.is_proxy(ty) {
-            // Its `ownKeys` and `getOwnPropertyDescriptor` traps (`Proxy.__keys`), whose
+            // Its `ownKeys` and `getOwnPropertyDescriptor` traps (`Proxy[PROXY_KEYS]`), whose
             // `string[]` goes to `*out` as it is (never boxed: a `string[]` an `any` held
             // would be a counted type in every program that loads `Proxy`).
-            let Some(v) = self.proxy_invoke_typed("__keys", data, ty) else {
+            let Some(v) = self.proxy_invoke_typed(velt_common::std_key!(proxy_keys), data, ty)
+            else {
                 return self.ret_status(ST_UNSUPPORTED);
             };
             self.store(outp, v);
@@ -101,6 +107,10 @@ impl FnLower<'_, '_> {
         }
         if self.prelude_record(ty).is_some() {
             return self.any_keys_record(data, &outp, ty);
+        }
+        if self.fn_props(ty) {
+            self.fn_prop_keys(data, &outp, ty);
+            return self.ret_status(ST_OK);
         }
         if let Some((d, _)) = self.plain_adt(ty) {
             self.any_subclass_dispatch(Glue::AnyKeys, ty, d, &[data, out]);
@@ -159,7 +169,9 @@ impl FnLower<'_, '_> {
         let a = self.cx.adt_def(d);
         let (class, std, all) = (
             a.kind == hir::AdtKind::Class,
-            a.name.starts_with("std/") && a.kind != hir::AdtKind::Anon,
+            a.name
+                .starts_with(velt_common::std_modules::CANONICAL_PREFIX)
+                && a.kind != hir::AdtKind::Anon,
             a.fields.len(),
         );
         // Fields a standard library base class declares (an `Error`'s) are not the object's
@@ -231,14 +243,16 @@ impl FnLower<'_, '_> {
 
     /// The number of fields of class `d` that its nearest standard library base class
     /// declares (0 without one).
-    fn std_base_fields(&mut self, d: hir::DefId) -> usize {
+    pub(super) fn std_base_fields(&mut self, d: hir::DefId) -> usize {
         let mut cur = self.cx.adt_def(d).base;
         while let Some(b) = cur {
             let TyKind::Adt(bd, _) = self.cx.kind(b) else {
                 break;
             };
             let a = self.cx.adt_def(bd);
-            if a.name.starts_with("std/") {
+            if a.name
+                .starts_with(velt_common::std_modules::CANONICAL_PREFIX)
+            {
                 return a.fields.len();
             }
             cur = a.base;
@@ -246,12 +260,12 @@ impl FnLower<'_, '_> {
         0
     }
 
-    /// `Object.keys(r)` of a `Record<string, V>`: its `__keyNames()`.
+    /// `Object.keys(r)` of a `Record<string, V>`: its `[RECORD_KEY_NAMES]()`.
     fn any_keys_record(&mut self, data: vir::Local, out: &Place, ty: TyId) {
         let names = self.plain_adt(ty).and_then(|(d, _)| {
-            self.dyn_members_of(d)
-                .into_iter()
-                .find(|m| m.name == "__keyNames" && m.kind == DynMemberKind::Method)
+            self.dyn_members_of(d).into_iter().find(|m| {
+                m.name == velt_common::std_key!(record_key_names) && m.kind == DynMemberKind::Method
+            })
         });
         let Some(r) = names.and_then(|m| self.ready(ty, &m)) else {
             return self.ret_status(ST_UNSUPPORTED);

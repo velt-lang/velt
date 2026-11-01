@@ -1,0 +1,7 @@
+// A value written through `(x as Record<K, V>)[k]` on an `any` is checked as a `V`, also by
+// `??=` and `+=`, as TypeScript's TS2322 says.
+const o: any = {} as Record<string, number>;
+(o as Record<string, number>)["a"] ??= "str";
+(o as Record<string, number>)["a"] += "s";
+(o as Record<string, number>).b ||= true;
+console.log(o);

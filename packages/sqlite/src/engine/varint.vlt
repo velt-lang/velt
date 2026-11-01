@@ -1,0 +1,58 @@
+// sqlite/engine/varint (internal): reading SQLite's variable-length integers
+// (https://sqlite.org/fileformat2.html#varint), checked against the end of the file.
+
+import { corrupt } from "./errors";
+
+/** A varint's value and its length in bytes. */
+export struct Varint {
+  value: i64;
+  len: usize;
+}
+
+/**
+ * The varint at `at` (1 to 9 bytes, big-endian, 7 bits a byte, all 8 in the ninth). One that
+ * would run past the end of `data` is corrupt.
+ */
+export function readVarint(data: u8[], at: usize): Varint {
+  return at + 9 <= data.length ? readVarintUnchecked(data, at) : readVarintNearEnd(data, at);
+}
+
+/**
+ * The varint at `at`, for a caller that has checked that 9 bytes follow `at` in `data` (a cell
+ * on a page that is not the file's last): no bounds check of its own.
+ */
+export function readVarintUnchecked(data: u8[], at: usize): Varint {
+  const b0 = data[at];
+  if (b0 < 0x80) {
+    return Varint { value: b0 as i64, len: 1 };
+  }
+  let v: u64 = (b0 & 0x7f) as u64;
+  for (let i: usize = 1; i < 8; i++) {
+    const b = data[at + i];
+    v = (v << 7) | ((b & 0x7f) as u64);
+    if (b < 0x80) {
+      return Varint { value: v as i64, len: i + 1 };
+    }
+  }
+  v = (v << 8) | (data[at + 8] as u64);
+  return Varint { value: v as i64, len: 9 };
+}
+
+/** A varint that may run into the end of `data`: one that does is corrupt, not a panic. */
+function readVarintNearEnd(data: u8[], at: usize): Varint {
+  let v: u64 = 0;
+  for (let i: usize = 0; i < 9; i++) {
+    if (at + i >= data.length) {
+      corrupt("varint past the end of the file");
+    }
+    const b = data[at + i];
+    if (i == 8) {
+      return Varint { value: ((v << 8) | (b as u64)) as i64, len: 9 };
+    }
+    v = (v << 7) | ((b & 0x7f) as u64);
+    if (b < 0x80) {
+      return Varint { value: v as i64, len: i + 1 };
+    }
+  }
+  corrupt("varint");
+}

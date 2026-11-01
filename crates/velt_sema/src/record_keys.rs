@@ -66,6 +66,9 @@ impl Ctx<'_> {
     /// JavaScript converts a number key to its string, so such a record holds string keys
     /// (`Object.keys` lists them, in its order: array indices first) and a number index is
     /// converted where it is used (`r[1]` is `r["1"]`, `body::expr::record_call`).
+    /// A `symbol` in the key (`Record<string | symbol, V>`, `Record<PropertyKey, V>`) is the
+    /// same record too: every string-keyed record may hold symbol keys, in a table of their own
+    /// (std/prelude/record.vlt), which `Object.keys` doesn't list, as in Node.
     pub(crate) fn number_key_as_string(&mut self, k: TyId) -> TyId {
         let str_ = self.ty.str_;
         let num = self.ty.f64;
@@ -73,7 +76,14 @@ impl Ctx<'_> {
             return str_;
         }
         match self.union_members(k) {
-            Some(ms) if ms.iter().all(|m| *m == str_ || *m == num) => str_,
+            Some(ms)
+                if ms.contains(&str_)
+                    && ms.iter().all(|m| {
+                        *m == str_ || *m == num || matches!(self.ty.kind(*m), TyKind::Symbol)
+                    }) =>
+            {
+                str_
+            }
             _ => k,
         }
     }
@@ -336,6 +346,6 @@ fn origin_note(cx: &Ctx, origin: DefId, here: DefId) -> Option<String> {
         (_, DefInfo::Adt(a)) => a.name.as_str(),
         _ => return None,
     };
-    let std = name.starts_with("std/");
+    let std = name.starts_with(velt_common::std_modules::CANONICAL_PREFIX);
     (origin != here && !std).then(|| format!("required because `{name}` uses it as a `Record` key"))
 }

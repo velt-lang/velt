@@ -10,20 +10,19 @@
 //!   Pinned functions (`roles`: async `$poll`/`$drop`, handler `$init`, …) are referenced
 //!   directly, by the code of their own version.
 //! - [`DevSession::reload`] compares the new version with the running one per function key
-//!   (`facts`, `fingerprint`, `classify`): either it compiles the changed functions into a new
+//!   (`facts`, `velt_vir::fingerprint`, `classify`): either it compiles the changed functions into a new
 //!   module and swaps them in, or it reports why the program must restart.
 //! - Each version's unwind info is registered with the system (`unwind::jit_windows` on
 //!   Windows x64, `unwind::jit_systemv` on macOS and Linux), so stack walks get through JIT
 //!   frames; Windows arm64 has none yet.
 //!
 //! Runtime functions resolve through the symbol table the host passes in (`velt_rt`'s
-//! `ABI_SYMBOLS`); C library functions (`memcpy`, `fmod`, ...) through `c_symbols` on Unix (no
+//! `ABI_SYMBOLS`); kernel32's `Tls*` functions through `win_symbols` on Windows; C library
+//! functions (`memcpy`, `fmod`, ...) through `c_symbols` on Unix (no
 //! dynamic loader needed: a static musl `velt` has none) and the loaded CRT on Windows.
 
 mod classify;
 mod facts;
-mod fingerprint;
-mod handlers;
 mod roles;
 mod trampoline;
 mod version;
@@ -33,8 +32,6 @@ use std::time::Duration;
 
 use cranelift_jit::JITModule;
 use velt_vir::vir;
-
-pub use handlers::HandlerCode;
 
 use crate::module::DevFunction;
 use classify::Decision;
@@ -53,14 +50,18 @@ pub struct DevSession {
     slots: FxHashMap<String, (Slot, usize)>,
     /// Pinned functions by key: their newest code.
     pinned: FxHashMap<String, usize>,
-    /// Pinned code of every version → its key (to find a running handler's newer code).
-    owners: FxHashMap<usize, String>,
-    /// Newest state size and alignment per handler `$init` key.
-    handler_states: FxHashMap<String, (u64, u64)>,
     running: Option<Facts>,
     swaps: u32,
     /// Register each version's line tables with debuggers (`debug_info::jit`).
     debug_info: bool,
+    /// The slot of each `ThreadLocal`'s operating-system key, by its id (`velt_vir::tls`): one
+    /// per constant for the whole session, which every version imports, so code of different
+    /// versions reads and writes the same value. Never freed (code may use it until the end).
+    tls_keys: FxHashMap<u64, Box<std::sync::atomic::AtomicU64>>,
+    /// The word of each static atomic, by its id (`vir::StaticData::mutable`): one per constant
+    /// for the whole session, starting as the first version's value, which every version
+    /// imports. Never freed.
+    static_atomics: FxHashMap<u64, Box<std::sync::atomic::AtomicU64>>,
 }
 
 /// A program loaded by [`DevSession::load`]; valid as long as its session lives.
@@ -92,11 +93,11 @@ impl DevSession {
             versions: vec![],
             slots: FxHashMap::default(),
             pinned: FxHashMap::default(),
-            owners: FxHashMap::default(),
-            handler_states: FxHashMap::default(),
             running: None,
             swaps: 0,
             debug_info: true,
+            tls_keys: FxHashMap::default(),
+            static_atomics: FxHashMap::default(),
         }
     }
 
@@ -172,25 +173,6 @@ impl DevSession {
         }
     }
 
-    /// The newest code for the HTTP handler whose descriptor has `init` as its init function,
-    /// if a swap recompiled it since.
-    pub fn handler_update(&self, init: usize) -> Option<HandlerCode> {
-        let key = self.owners.get(&init)?;
-        let newest = *self.pinned.get(key)?;
-        if newest == init {
-            return None;
-        }
-        let (poll, drop) = handlers::state_machine_keys(key)?;
-        let (state_size, state_align) = *self.handler_states.get(key)?;
-        Some(HandlerCode {
-            init: newest,
-            poll: *self.pinned.get(&poll)?,
-            drop: *self.pinned.get(&drop)?,
-            state_size,
-            state_align,
-        })
-    }
-
     /// Compile the functions of `program` in `define` as a new version and switch to them.
     /// Returns the code address of each defined function.
     fn install(
@@ -201,7 +183,9 @@ impl DevSession {
         timings: &mut Vec<(&'static str, Duration)>,
     ) -> Result<Vec<Option<usize>>, String> {
         let (names, new_slots) = self.names(program, define);
-        let imports = self.imports(program, &names)?;
+        let mut imports = self.imports(program, &names)?;
+        imports.extend(self.tls_key_slots(program));
+        imports.extend(self.static_atomic_words(program));
         let inputs = version::Inputs {
             names: &names,
             imports: &imports,
@@ -216,12 +200,6 @@ impl DevSession {
             };
             if roles::is_pinned(&func.symbol) {
                 self.pinned.insert(func.symbol.clone(), code);
-                self.owners.insert(code, func.symbol.clone());
-                if roles::is_handler_init(&func.symbol) {
-                    if let Some(layout) = handlers::state_layout(func, program) {
-                        self.handler_states.insert(func.symbol.clone(), layout);
-                    }
-                }
             }
         }
         let mut new_slots = new_slots.into_iter();
@@ -287,6 +265,42 @@ impl DevSession {
             })
             .collect();
         (names, slots)
+    }
+
+    /// The session's key slot of each `ThreadLocal` the program uses, made on first sight.
+    fn tls_key_slots(&mut self, program: &vir::Program) -> Vec<(String, usize)> {
+        let mut out = vec![];
+        for e in &program.externs {
+            let Some(call) = velt_vir::tls::TlsCall::of_symbol(&e.symbol) else {
+                continue;
+            };
+            let slot = self.tls_keys.entry(call.id()).or_default();
+            let address = &**slot as *const std::sync::atomic::AtomicU64 as usize;
+            let name = velt_vir::tls::key_symbol(call.id());
+            if !out.iter().any(|(n, _)| *n == name) {
+                out.push((name, address));
+            }
+        }
+        out
+    }
+
+    /// The session's word of each static atomic the program uses, made on first sight.
+    fn static_atomic_words(&mut self, program: &vir::Program) -> Vec<(String, usize)> {
+        let mut out = vec![];
+        for s in &program.statics {
+            let Some(id) = s.mutable else {
+                continue;
+            };
+            let word = self.static_atomics.entry(id).or_insert_with(|| {
+                let mut start = [0u8; 8];
+                let n = s.bytes.len().min(8);
+                start[..n].copy_from_slice(&s.bytes[..n]);
+                Box::new(u64::from_le_bytes(start).into())
+            });
+            let address = &**word as *const std::sync::atomic::AtomicU64 as usize;
+            out.push((velt_vir::atomic::static_symbol(id), address));
+        }
+        out
     }
 
     /// Addresses of the references a version does not define: trampolines of existing keys and

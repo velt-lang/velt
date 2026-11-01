@@ -1,0 +1,14 @@
+// sqlite/engine/exec/params (internal): the values bound to a statement's parameters.
+
+import { Val, nullVal } from "./value/val";
+
+/** The values bound to a statement's parameters, `?1` at index 0. */
+export class Params {
+  vals: Val[] = [];
+  /** Counts the statement's runs: an uncorrelated subquery runs once per run. */
+  epoch: i64 = 0;
+
+  get(i: usize): Val {
+    return i < this.vals.length ? this.vals[i] : nullVal();
+  }
+}

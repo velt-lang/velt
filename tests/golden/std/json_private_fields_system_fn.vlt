@@ -1,0 +1,20 @@
+// requires: unix
+// A program's own `declare system function` (the C library's) makes it no package with a
+// native library: its classes' `private` fields are written by `JSON.stringify`, as Node
+// writes them, nested ones too.
+declare system function fsync(fd: i32): i32;
+
+class User {
+  private pw = "secret";
+  name = "a";
+}
+
+class Team {
+  lead: User = new User();
+  private size = 2;
+}
+
+console.log(JSON.stringify(new User()));
+console.log(JSON.stringify(new Team()));
+console.log(JSON.stringify([new User()]));
+console.log(fsync(-1) == -1);

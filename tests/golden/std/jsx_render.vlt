@@ -2,8 +2,8 @@
 // elements and attributes, text and attribute escaping (XSS payloads stay inert), void
 // elements, fragments, arrays, numbers, `true`/`false`/`null` children and attributes, keys,
 // components (nested, throwing) and `raw`.
-import { jsx, Fragment, jsxComponent } from "velt:jsx/jsx-runtime";
-import { Element, raw, renderToStringSync } from "velt:jsx";
+import { jsx, Fragment, jsxComponent } from "velt/jsx/jsx-runtime";
+import { Element, raw, renderToStringSync } from "velt/jsx";
 
 type CardProps = { title: string; lines: string[] };
 

@@ -1,7 +1,8 @@
 //! Caller-tracking standard-library functions (Rust's `#[track_caller]`, implicitly): a
 //! synchronous, capture-free function defined in a standard-library file whose body calls
 //! `panic` directly (or calls another such function) reports the location of its call site
-//! when it panics. A small one (at most `COPY_LIMIT` HIR nodes) gets an instance per direct
+//! when it panics. An internal error (`panic("ICE: …")`, std's own bug) does not count: it
+//! reports where it is. A small one (at most `COPY_LIMIT` HIR nodes) gets an instance per direct
 //! call site (`Work::Tracked`), whose location is a compile-time constant; copies that small
 //! cost little and are inlined anyway. A larger one has one instance that takes the location
 //! as a hidden last parameter, as Rust passes it (`srcloc::ARG_LOC`), so a program does not
@@ -59,31 +60,30 @@ impl Cx<'_> {
     }
 }
 
-/// The prelude's text of an `any` (velt_sema `any_text.rs`): `__anyString` and
-/// `__anyConcatText` hold a dispatch over every class of the program, and the others are what
+/// The prelude's text of an `any` (velt_sema `any_text.rs`): `anyString` and
+/// `anyConcatText` hold a dispatch over every class of the program, and the others are what
 /// they call. Too large to copy per call site, each keeps one instance and takes the user's call
 /// site as its last argument (`at`, a `"path:line:col"` constant per site, like the hidden
 /// location argument of Rust's `#[track_caller]`), which its stops write into their messages:
 /// their panics get no suffix of their own ([`Cx::reports_own_site`]).
 const UNTRACKED: [&str; 12] = [
-    "__anyString",
-    "__anyConcatText",
-    "__anyConcatPlain",
-    "__anyText",
-    "__anyPrimText",
-    "__anyPrimTry",
-    "__anyTextUnsupported",
-    "__anyJoin",
-    "__anyJoinSeen",
-    "__anyToPrimitive",
-    "__anyToPrimitivePlain",
-    "__anyPrimKeep",
+    velt_common::std_hook!(any_string),
+    velt_common::std_hook!(any_concat_text),
+    velt_common::std_hook!(any_concat_plain),
+    velt_common::std_hook!(any_text),
+    velt_common::std_hook!(any_prim_text),
+    velt_common::std_hook!(any_prim_try),
+    velt_common::std_hook!(any_text_unsupported),
+    velt_common::std_hook!(any_join),
+    velt_common::std_hook!(any_join_seen),
+    velt_common::std_hook!(any_primitive),
+    velt_common::std_hook!(any_primitive_plain),
+    velt_common::std_hook!(any_prim_keep),
 ];
 
-/// Is the function named `name` (its last path segment) one of [`UNTRACKED`]?
+/// Is the function named `name` (its full name) one of [`UNTRACKED`]?
 fn untracked(name: &str) -> bool {
-    let last = name.rsplit(['.', ':', '/']).next().unwrap_or(name);
-    UNTRACKED.contains(&last)
+    UNTRACKED.contains(&name)
 }
 
 impl Cx<'_> {
@@ -159,7 +159,9 @@ fn expr_panics(e: &hir::Expr, callees: &mut Scan) -> bool {
     match &e.kind {
         K::Call { callee, args } => {
             let own = match callee {
-                hir::Callee::Intrinsic(Intrinsic::Panic) => true,
+                // An internal error (`panic("ICE: …")`) is the standard library's own bug, not
+                // its caller's: it reports where it is, and needs no caller's location.
+                hir::Callee::Intrinsic(Intrinsic::Panic) => !args.first().is_some_and(is_ice),
                 hir::Callee::Indirect(x) => expr_panics(x, callees),
                 hir::Callee::Def(d, _) => {
                     callees.callees.push(*d);
@@ -214,5 +216,20 @@ fn expr_panics(e: &hir::Expr, callees: &mut Scan) -> bool {
             f
         }
         K::Lit(_) | K::Local(..) | K::Global(_) | K::FnRef(..) | K::Closure(_) => false,
+    }
+}
+
+/// A message that starts with `ICE:`: a literal, or a template or concatenation whose first part
+/// is one.
+fn is_ice(e: &hir::Expr) -> bool {
+    use hir::ExprKind as K;
+    match &e.kind {
+        K::Lit(hir::Lit::Str(s)) => s.starts_with("ICE:"),
+        K::Binary { lhs, .. } => is_ice(lhs),
+        K::Call {
+            callee: hir::Callee::Intrinsic(Intrinsic::StrConcat | Intrinsic::TemplateToString),
+            args,
+        } => args.first().is_some_and(is_ice),
+        _ => false,
     }
 }

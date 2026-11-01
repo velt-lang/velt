@@ -5,7 +5,7 @@ on a fixed SQLite schema, HS256 auth, byte-exact JSON) as a Velt program, to com
 request costs with other implementations of the same API. The challenge scores how many users
 one vCPU serves, so CPU per request is the number that decides it.
 
-- `velt/server.vlt`: the server on `std/http` + `std/sqlite`, written the way an application
+- `velt/server.vlt`: the server on `std/http` + the `sqlite` package, written the way an application
   would be. It passes the challenge's `test/test.sh` (42 checks).
 - `measure.py`: runs each server with one worker on a fresh copy of the seed database, loads it
   with wrk per endpoint and for the load test's mix, and reports server CPU per request.

@@ -1,0 +1,31 @@
+// A `subarray` per page, read with shifts.
+import { PAGE, PAGES, run } from "./_pages";
+
+function viaSubarray(all: Uint8Array): number {
+  let sum = 0;
+  for (let p = 0; p < PAGES; p++) {
+    const page = all.subarray(p * PAGE, (p + 1) * PAGE);
+    const n = (page[3] << 8) | page[4];
+    for (let i = 0; i < n; i++) {
+      const c = 12 + 2 * i;
+      const at = (page[c] << 8) | page[c + 1];
+      const child =
+        ((page[at] << 24) | (page[at + 1] << 16) | (page[at + 2] << 8) | page[at + 3]) >>> 0;
+      let key = 0;
+      let q = at + 4;
+      for (let j = 0; j < 8; j++) {
+        const b = page[q++];
+        key = key * 128 + (b & 127);
+        if (b < 128) {
+          break;
+        }
+      }
+      sum += child + key;
+    }
+  }
+  return sum;
+}
+
+function main() {
+  run(viaSubarray);
+}

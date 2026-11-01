@@ -1,0 +1,12 @@
+// velt/lang/typed_array (internal): `NativeInspect`, what `[INSPECT]()` returns for a class that
+// stands for one of Node's own objects.
+
+/**
+ * What an `[INSPECT]()` returns for a class that stands for one of Node's own objects (std only:
+ * `ArrayBuffer`, `DataView`): `console.log` prints `text`, and `[ArrayBuffer]` (the class's
+ * name) past Node's depth limit, as Node cuts its objects, where a string `[INSPECT]()` is
+ * printed at any depth (`Date`). crates/velt_vir/src/lower/glue/format.rs knows it by name.
+ */
+export struct NativeInspect {
+  text: string;
+}

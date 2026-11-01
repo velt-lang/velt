@@ -78,8 +78,20 @@ impl Ctx<'_> {
         }
         let outer_stuck = std::mem::replace(&mut self.type_level.stuck, false);
         let reported = self.diags.len();
-        let body = self.resolve_type(&decl.ty, &env);
-        let stuck = std::mem::replace(&mut self.type_level.stuck, outer_stuck);
+        let mut body = self.resolve_type(&decl.ty, &env);
+        let mut stuck = std::mem::replace(&mut self.type_level.stuck, outer_stuck);
+        let calls = call_parts(&decl.ty);
+        if stuck && defer && !calls.is_empty() {
+            // `((props: F<T>) => R) & { __setup: S<T> }` (a function with properties, #921):
+            // only its call signature's parameter types wait for the arguments, so a generic
+            // body can build and use the value (`const f = fn as A<T>; f.__setup = …`).
+            self.diags.truncate(reported);
+            self.type_level.stuck = false;
+            let outer = std::mem::replace(&mut self.type_level.callable_params, calls);
+            body = self.resolve_type(&decl.ty, &env);
+            self.type_level.callable_params = outer;
+            stuck = std::mem::replace(&mut self.type_level.stuck, outer_stuck);
+        }
         if defer {
             self.type_level.deferring -= 1;
         }
@@ -91,6 +103,14 @@ impl Ctx<'_> {
             // Evaluated again, and reported, once the arguments are known.
             self.diags.truncate(reported);
             return self.deferred_alias(a, args, span);
+        }
+        let top = matches!(self.scopes[module].items.get(&decl.name.name), Some(crate::ctx::Item::Alias(x)) if *x == a);
+        if names.is_empty() && top {
+            self.gen
+                .binding
+                .alias_homes
+                .entry(body)
+                .or_insert_with(|| (module, decl.name.name.clone(), false));
         }
         if names.is_empty() && self.is_structural(body) {
             // `type Shape = { ... } | { ... }`: messages call the union `Shape`.
@@ -107,6 +127,22 @@ impl Ctx<'_> {
         }
         let t = self.subst(body, &args);
         self.reduce_known_intersection(t)
+    }
+}
+
+/// The spans of the function types among the parts of `t` when it is an intersection of them
+/// with other parts (a callable object type: `((p: P) => R) & { x: X }`); empty otherwise.
+fn call_parts(t: &ast::TypeExpr) -> Vec<Span> {
+    let ast::TypeExprKind::Intersection(parts) = &t.kind else {
+        return vec![];
+    };
+    let calls: Vec<Span> = (parts.iter())
+        .filter(|p| matches!(p.kind, ast::TypeExprKind::Function { .. }))
+        .map(|p| p.span)
+        .collect();
+    match calls.len() < parts.len() {
+        true => calls,
+        false => vec![],
     }
 }
 

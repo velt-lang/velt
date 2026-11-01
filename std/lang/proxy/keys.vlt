@@ -1,0 +1,155 @@
+// velt/lang/proxy (internal): property keys through a proxy and `Reflect`: array indices, symbol
+// keys by name, keys as Node's messages show them, and the receivers not supported yet.
+
+import { proxyArrayHole } from "velt/lang/intrinsics";
+import { arrayIndex } from "velt/lang/hooks/record";
+import { Reflect } from "velt/lang/proxy/reflect";
+import { Proxy } from "velt/lang/proxy";
+
+/** The array index the string `s` names (canonical decimal, 0 to 2^32 - 2), or -1. */
+export function proxyIndex(s: string): number {
+  return arrayIndex(s) as number;
+}
+
+/**
+ * Is element `i` of the array `a` a hole that an array method running on a proxy made
+ * (velt/lang/proxy/array: Node's holes, which Velt's arrays don't have)?
+ */
+export function arrayHole(a: any, i: number): boolean {
+  return proxyArrayHole(a, i as i64, 0) == 1;
+}
+
+/** The element of an array that `key` (a string or a number) names, or -1. */
+export function arrayElement(key: any): number {
+  if (typeof key === "string") {
+    return proxyIndex(key as string);
+  }
+  if (typeof key === "number") {
+    return proxyIndex(`${key as number}`);
+  }
+  return -1;
+}
+
+/**
+ * `Reflect.<op>(target, key, receiver)` on a plain target: the receiver must be the target or
+ * a proxy (whose operation forwards to the target here). Another object as the receiver, whose
+ * own property JavaScript would read or write, is not supported yet.
+ */
+export function proxyReceiverUnsupported(op: string): never {
+  panic(
+    `TypeError: Reflect.${op} with a receiver other than the target or a proxy is not supported yet (#823)`,
+  );
+}
+
+/**
+ * `Reflect.get(target, key, receiver)` of a class getter with a proxy receiver: Node runs the
+ * getter with `this` = the receiver, so the getter's own reads go through the proxy's traps.
+ * Velt runs it on the target, which could give another value, so it stops instead (#823).
+ */
+export function proxyGetterReceiverUnsupported(key: any): never {
+  panic(
+    `TypeError: Reflect.get of the getter '${String(key)}' with a proxy as the receiver is not supported yet (#823): forward with Reflect.get(target, key)`,
+  );
+}
+
+/**
+ * Is `value`, read as `target[key]`, what a class getter gave: a string key that is not an own
+ * property of a class instance (a method's value is a function, which a call runs with `this`
+ * the proxy already).
+ */
+export function classGetterValue(target: any, key: any, value: any): bool {
+  if (
+    typeof key !== "string" ||
+    value === undefined ||
+    typeof value === "function" ||
+    Array.isArray(target) ||
+    target instanceof Record ||
+    target instanceof Proxy
+  ) {
+    return false;
+  }
+  // `target` is no proxy, so no trap runs here: the `catch` only keeps the traps' errors out of
+  // what `Reflect.get` throws.
+  try {
+    return !Object.hasOwn(target, key);
+  } catch (e) {
+    return false;
+  }
+}
+
+/** JavaScript's `ToPropertyKey` of a key a trap or a `Reflect` function receives. */
+export function proxyKey(key: any): string | symbol {
+  if (typeof key === "string") {
+    return key;
+  }
+  if (typeof key === "symbol") {
+    return key;
+  }
+  if (typeof key === "number") {
+    return `${key as number}`;
+  }
+  panic("TypeError: this property key is not supported through a proxy yet (#823)");
+}
+
+/**
+ * The member name the symbol `s` keys on a typed value: `[Symbol.iterator]` for a well-known
+ * symbol, else U+FFFF and `Symbol(d)` (velt_sema's `symbols.rs`; of two symbol constants with
+ * one description, the second's name ends in ` #2`, which this doesn't give).
+ */
+export function symbolKeyName(s: symbol): string {
+  const d = String(s);
+  // The well-known symbols, as a list in a string (an array here would be a counted value in
+  // every program that loads `Proxy`).
+  const known =
+    " asyncDispose asyncIterator dispose hasInstance isConcatSpreadable iterator match matchAll replace search species split toPrimitive toStringTag unscopables ";
+  if (d.startsWith("Symbol(Symbol.") && d.endsWith(")")) {
+    const k = d.slice(14, -1);
+    if (known.includes(` ${k} `)) {
+      return `[Symbol.${k}]`;
+    }
+  }
+  return `￿${d}`;
+}
+
+/** A key a `Reflect` function passes to a plain (not proxy) value: a symbol by its name. */
+export function plainKey(key: any): any {
+  if (typeof key === "symbol") {
+    return symbolKeyName(key as symbol);
+  }
+  return key;
+}
+
+/** A key as Node's messages show it. */
+export function proxyKeyText(key: string | symbol): string {
+  if (typeof key === "string") {
+    return key;
+  }
+  return String(key);
+}
+
+/** `Reflect.<op>(target, ...)` needs an object (or function) target, as in Node. */
+export function reflectTarget(op: string, target: any): void {
+  if (target === null || (typeof target !== "object" && typeof target !== "function")) {
+    panic(`TypeError: Reflect.${op} called on non-object`);
+  }
+}
+
+/** A value as Node's "is not a valid property name" message shows it. */
+export function proxyNameText(k: any): string {
+  if (k === undefined) {
+    return "undefined";
+  }
+  if (k === null) {
+    return "null";
+  }
+  if (typeof k === "number") {
+    return `${k as number}`;
+  }
+  if (typeof k === "boolean") {
+    return (k as boolean) ? "true" : "false";
+  }
+  if (Array.isArray(k)) {
+    return "[object Array]";
+  }
+  return "#<Object>";
+}

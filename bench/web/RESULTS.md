@@ -32,7 +32,7 @@ scheduler, run today as `SERVERS=velt-per-core` (`VELT_SCHEDULER=per-core`).
 ## Fortunes in TSX (`velt-tsx`, #78)
 
 The `velt-tsx` server is `velt` with the fortunes page written in TSX (`velt-tsx/fortunes.tsx`,
-precompiled by `velt:jsx`, with the list fold of #682) instead of template literals. Both pass
+precompiled by `velt/jsx`, with the list fold of #682) instead of template literals. Both pass
 `measure.py`'s byte-exact fortunes check (the TSX page writes `'` as `&#x27;`, as react-dom
 does). Run 1: `SERVERS="velt velt-tsx" TESTS=fortunes bench/web/run.sh`; run 2:
 `SERVERS="velt-tsx velt" TESTS=fortunes bench/web/run.sh`; against the local Homebrew Postgres 17

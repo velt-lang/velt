@@ -1,0 +1,69 @@
+// velt/path (tests): white-box tests, run by `velt test std/`.
+//
+// Each function against what Node's `path.posix` returns for the same input (the expected
+// values were printed by Node 22), edge cases included: empty paths, the root, trailing
+// slashes, `..` past the start, dot files, and the quirks of Node's suffix matching in
+// `basename`. (Every path of up to 6 of the characters `a`, `.` and `/`, and suffixes of up to
+// 3, gave Node's results when `basename` took Node's algorithm.)
+import { describe, expect, it } from "velt/test";
+import { basename, dirname, extname, isAbsolute, join, joinAll, normalize } from "velt/path";
+
+describe("velt/path as Node's path.posix", () => {
+  it("normalize", () => {
+    expect(normalize("/a/b/../c/./d")).toBe("/a/c/d");
+    expect(normalize("")).toBe(".");
+    expect(normalize("a//b/")).toBe("a/b/");
+    expect(normalize("../a/..")).toBe("..");
+    expect(normalize("/..")).toBe("/");
+    expect(normalize("./")).toBe("./");
+  });
+
+  it("join and joinAll", () => {
+    expect(join("a", "b")).toBe("a/b");
+    expect(join("/a/", "../b")).toBe("/b");
+    expect(joinAll(["a", "", "b"])).toBe("a/b");
+    expect(join("", "")).toBe(".");
+    expect(joinAll([])).toBe(".");
+  });
+
+  it("dirname", () => {
+    expect(dirname("/a/b/c")).toBe("/a/b");
+    expect(dirname("/a")).toBe("/");
+    expect(dirname("a")).toBe(".");
+    expect(dirname("/a/b/")).toBe("/a");
+    expect(dirname("")).toBe(".");
+    expect(dirname("/")).toBe("/");
+  });
+
+  it("basename", () => {
+    expect(basename("/a/b.txt")).toBe("b.txt");
+    expect(basename("/a/b.txt", ".txt")).toBe("b");
+    expect(basename("/a/b/")).toBe("b");
+    expect(basename("/")).toBe("");
+    // The whole path is the suffix: "", but a segment that is the suffix stays.
+    expect(basename("b.txt", "b.txt")).toBe("");
+    expect(basename("/a/b.txt", "b.txt")).toBe("b.txt");
+    expect(basename("a.txt/", ".txt")).toBe("a");
+    expect(basename("a.txt/", "a.txt/")).toBe("");
+    expect(basename("a.txt/", "t/")).toBe("a.txt");
+    // Node's quirks: the suffix matched over the segment ends at its first character.
+    expect(basename("txt/", ".txt")).toBe("txt/");
+    expect(basename("//", "/")).toBe("//");
+    expect(basename("aaa", "a")).toBe("aa");
+  });
+
+  it("extname", () => {
+    expect(extname("a.txt")).toBe(".txt");
+    expect(extname("a.b.c")).toBe(".c");
+    expect(extname(".bashrc")).toBe("");
+    expect(extname("a.")).toBe(".");
+    expect(extname("a")).toBe("");
+    expect(extname("/x.y/z")).toBe("");
+  });
+
+  it("isAbsolute", () => {
+    expect(isAbsolute("/a")).toBe(true);
+    expect(isAbsolute("a")).toBe(false);
+    expect(isAbsolute("")).toBe(false);
+  });
+});

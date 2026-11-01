@@ -57,6 +57,8 @@ impl Emitter<'_> {
                     root,
                     tbaa: if Some(id) == self.array {
                         Some(Access::Header)
+                    } else if Some(id) == self.text {
+                        Some(Access::Element)
                     } else if self.objects.get(id.0 as usize) == Some(&true) {
                         Some(Access::Field)
                     } else {

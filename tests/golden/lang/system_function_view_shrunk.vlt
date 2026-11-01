@@ -1,0 +1,22 @@
+// requires: unix
+// A view of a `u8[]` passed as a system function's buffer, whose array a later argument
+// shrinks: the bytes are checked at the call, after every argument, and those outside the
+// array's current length stop the program (the array keeps its capacity, so the call would
+// otherwise write past its length).
+declare system function open(path: readonly u8[], oflag: i32, mode: u32): i32;
+declare system function pread(fd: i32, buf: u8[], offset: i64): isize;
+
+const ZERO: u8[] = [47, 100, 101, 118, 47, 122, 101, 114, 111, 0]; // "/dev/zero"
+let g: u8[] = Buffer.alloc(4096);
+
+function shrink(): i64 {
+  g.length = 0;
+  return 0;
+}
+
+function main() {
+  const fd = open(ZERO, 0, 0);
+  const v = g.subarray(0, 4096);
+  console.log(pread(fd, v, 0));
+  console.log(pread(fd, v, shrink()), g.length);
+}

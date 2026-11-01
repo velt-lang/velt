@@ -40,8 +40,30 @@ impl super::Cx<'_> {
             | (TyKind::Option(x, _), TyKind::Option(y, _))
             | (TyKind::Shared(x), TyKind::Shared(y)) => self.match_ty(*x, *y, binds),
             (TyKind::Result(a, b), TyKind::Result(c, d))
-            | (TyKind::Map(a, b), TyKind::Map(c, d)) => {
+            | (TyKind::Map(a, b), TyKind::Map(c, d))
+            | (TyKind::Promise(a, b), TyKind::Promise(c, d)) => {
                 self.match_ty(*a, *c, binds) && self.match_ty(*b, *d, binds)
+            }
+            // A function type's error type: a type parameter of an `extend` target, also where
+            // it wrote none (sema's collect/ext_fn_errors.rs).
+            (
+                TyKind::FnPtr {
+                    params: p,
+                    ret: r,
+                    throws: t,
+                    rest: a,
+                },
+                TyKind::FnPtr {
+                    params: q,
+                    ret: s,
+                    throws: u,
+                    rest: b,
+                },
+            ) => {
+                a == b
+                    && self.match_all(p, q, binds)
+                    && self.match_ty(*r, *s, binds)
+                    && self.match_ty(*t, *u, binds)
             }
             _ => pat == ty,
         }

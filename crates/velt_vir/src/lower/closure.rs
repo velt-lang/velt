@@ -64,7 +64,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         frozen
     }
 
-    /// `__intrinsic_fn_captures_nothing(f)`: `f.env == null` (module docs: only closures without
+    /// `fnCapturesNothing(f)`: `f.env == null` (module docs: only closures without
     /// captures and named functions have a null env).
     pub(super) fn fn_captures_nothing(&mut self, f: &hir::Expr) -> Operand {
         let fty = self.sub(f.ty);
@@ -375,8 +375,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let mut out = vec![];
         for (k, c) in f.captures.iter().enumerate() {
             let cell = f.body.locals[c.inner.0 as usize].boxed;
-            if c.mode == PassMode::Owned && !c.share && !cell {
-                let ty = self.sub(f.body.locals[c.inner.0 as usize].ty);
+            let ty = self.sub(f.body.locals[c.inner.0 as usize].ty);
+            if c.mode == PassMode::Owned && !c.share && !cell && self.cx.ty(ty) != Ty::Unit {
                 out.push((ENV_HEADER + k as u32, ty));
             }
         }
@@ -390,8 +390,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let mut out = vec![];
         for (k, c) in f.captures.iter().enumerate() {
             let cell = f.body.locals[c.inner.0 as usize].boxed;
-            if matches!(c.mode, PassMode::Copy | PassMode::Owned) && !cell {
-                let ty = self.sub(f.body.locals[c.inner.0 as usize].ty);
+            let ty = self.sub(f.body.locals[c.inner.0 as usize].ty);
+            if matches!(c.mode, PassMode::Copy | PassMode::Owned)
+                && !cell
+                && self.cx.ty(ty) != Ty::Unit
+            {
                 out.push((ENV_HEADER + k as u32, c.mode, ty));
             }
         }

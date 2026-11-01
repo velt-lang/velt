@@ -137,6 +137,9 @@ impl Builder<'_, '_, '_> {
             DefInfo::Fn(f) => Some(self.function(f)),
             DefInfo::Adt(a) => {
                 let (kind, kw) = match a.kind {
+                    AdtKind::Class if a.decl.is_some_and(|t| t.is_abstract) => {
+                        (DefKind::Class, "abstract class")
+                    }
                     AdtKind::Class => (DefKind::Class, "class"),
                     _ => (DefKind::Struct, "struct"),
                 };
@@ -222,6 +225,10 @@ impl Builder<'_, '_, '_> {
             FnKind::Free => (
                 DefKind::Function,
                 format!("{asyncness}function {short}{sig}: {ret}"),
+            ),
+            FnKind::Extern if f.intrinsic.is_some() => (
+                DefKind::ExternFunction,
+                format!("declare intrinsic function {short}{sig}: {ret}"),
             ),
             FnKind::Extern => (
                 DefKind::ExternFunction,
@@ -313,11 +320,17 @@ fn owner_generics(cx: &Ctx, f: &FnInfo) -> usize {
     }
 }
 
+/// `<T, U>`, without the parameters the compiler added (`HIDDEN_PARAM`): the error type of a
+/// function type an `extend` target writes without `throws` is no parameter the user wrote.
 fn generics(names: &[String]) -> String {
-    if names.is_empty() {
+    let shown: Vec<&str> = (names.iter())
+        .filter(|n| !n.ends_with(crate::defs::HIDDEN_PARAM))
+        .map(String::as_str)
+        .collect();
+    if shown.is_empty() {
         String::new()
     } else {
-        format!("<{}>", names.join(", "))
+        format!("<{}>", shown.join(", "))
     }
 }
 

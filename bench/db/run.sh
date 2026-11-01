@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Database client benchmark runner (macOS / Linux): Velt std/sqlite, std/redis, std/postgres
+# Database client benchmark runner (macOS / Linux): Velt's sqlite, redis and postgres packages
 # vs Node (better-sqlite3, ioredis, pg) and Rust (rusqlite, redis, tokio-postgres). Method: README.md.
 #
 #   bench/db/run.sh [--quick] [--runs N] [workload...]

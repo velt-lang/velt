@@ -4,7 +4,7 @@ Every package has a `package.vlt` at its root: the manifest, written in Velt. `v
 `velt init` write one.
 
 ```ts ignore
-import type { Package } from "velt:package";
+import type { Package } from "velt/package";
 
 export const pkg: Package = {
   name: "hello",
@@ -43,8 +43,8 @@ file and reports these errors without building anything.
 
 - `name`: lowercase letters and digits, starting with a letter, with single `-` or `_` between
   words (`text-kit`, `text_kit`; not `text--kit`, `text_-kit` or `textkit-`). Names that differ
-  only in `-` versus `_` count as the same in a registry. `std` is reserved for the standard
-  library, and names whose first word is `rt`, `sig` or `native` (`rt`, `rt-str`) because a
+  only in `-` versus `_` count as the same in a registry. `velt` and `std` are reserved for the
+  standard library (its modules are `velt/…`), and names whose first word is `rt`, `sig` or `native` (`rt`, `rt-str`) because a
   package's native functions are named `velt_<name>__…` and those prefixes are Velt's own
   (`velt_rt_…` is the runtime).
 - A name can also be scoped, as on npm: `@scope/name`, each part lowercase words as above
@@ -103,10 +103,14 @@ a requirement that names one (`"0.2.0-rc.1"`). Leave the field out to build with
 
 `import … from "json"` and `"json/sub"` resolve through `dependencies`: the dependency's
 `src/lib.vlt`, or `src/sub.vlt` / `src/sub/index.vlt` (or `.ts`, `.tsx`, tried like a relative
-import's files). Standard library imports (`"velt:x"`)
+import's files). Standard library imports (`"velt/x"`)
 and relative imports (`"./x"`) never do. Names that aren't identifiers are quoted
 (`"my-lib": "1.0"`, `"@sigx/reactivity": { path: "../reactivity" }`; a scoped dependency needs
-a `path`). `velt add` edits this object and keeps your comments. See
+a `path` or `git`). `{ git: "https://…", branch: "main", path: "packages/x" }` takes the package
+from a git repository ([git dependencies](packages.md#git-dependencies)): a Velt package, or an
+npm package (or a whole workspace of them) compiled from its TypeScript sources. `velt add` edits this object and keeps your comments. In a member of a
+[workspace](packages.md#workspaces), `name: "workspace"` depends on another member, or on the
+requirement the workspace writes for `name`. See
 [Packages](packages.md). A bare import that no dependency (and no `paths` alias) claims looks
 for an [npm package](packages.md#npm-packages).
 
@@ -115,7 +119,7 @@ for an [npm package](packages.md#npm-packages).
 Import aliases, like TypeScript's `compilerOptions.paths`, replace long `../../` chains:
 
 - A bare specifier that matches a pattern resolves to the target, relative to the package root,
-  before `dependencies` are consulted. `"velt:x"` and `"./x"` are never aliased.
+  before `dependencies` are consulted. `"velt/x"` and `"./x"` are never aliased.
 - A pattern has at most one `*`, at its end, and so does its target (both or neither). The
   longest matching pattern wins. Each pattern has one target.
 - Targets must stay inside the package (no `..`, not absolute).
@@ -127,7 +131,7 @@ Import aliases, like TypeScript's `compilerOptions.paths`, replace long `../../`
 jsx: { importSource: "sigx" },
 ```
 
-The module whose `jsx-runtime` compiles the package's JSX: a dependency, `"velt:jsx"` (the
+The module whose `jsx-runtime` compiles the package's JSX: a dependency, `"velt/jsx"` (the
 default), a `paths` alias, or `./dir` relative to the package root. A
 `/** @jsxImportSource x */` comment at the top of a file wins ([JSX](../std/jsx.md)); Velt also
 reads it from a `//` comment, `tsc` only from a block comment.
@@ -178,6 +182,20 @@ whose functions its Velt code declares ([Packages with native code](packages.md#
   missing): `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-apple-darwin`,
   `aarch64-apple-darwin`, `x86_64-pc-windows-msvc`, `aarch64-pc-windows-msvc`.
 - `wasm`: must be `false` (the default); WebAssembly libraries are not supported yet.
+
+## `build`
+
+```ts ignore
+build: { cpu: "x86-64-v3" },
+```
+
+How the package's program is built. Only the root package's applies.
+
+- `cpu`: the CPU the program is built for, as `velt build --cpu`: `"baseline"`, `"x86-64-v2"`
+  (the default on x86_64), `"x86-64-v3"`, `"x86-64-v4"`, `"native"` or a CPU name such as
+  `"znver4"` ([CPU](platforms.md#cpu)). `--cpu` and `VELT_CPU` take precedence, and a CPU of
+  another architecture does not apply to a build for this one (`"x86-64-v3"` leaves arm64
+  builds at their default, `"neoverse-n1"` x86_64 builds at x86-64-v2).
 
 ## `tsCompat`
 

@@ -1,0 +1,150 @@
+// velt/net/url (internal): `URLSearchParams`, a query's name/value pairs (JS `URLSearchParams`).
+
+import { FORM, decodeLenient, encodeSet } from "velt/net/url/encode";
+import { arraySwap, arrayTruncate } from "velt/lang/intrinsics";
+
+/**
+ * An ordered list of name/value pairs in `application/x-www-form-urlencoded` form (JS
+ * `URLSearchParams`). Names may repeat; order is kept.
+ */
+export class URLSearchParams {
+  private names: string[] = [];
+  private vals: string[] = [];
+
+  /**
+   * Parses a query string (a leading `?` is skipped; `+` means space; bad escapes stay literal).
+   */
+  constructor(init: string = "") {
+    const start: i64 = init.startsWith("?") ? 1 : 0;
+    for (const part of init.slice(start).split("&")) {
+      if (part.length == 0) {
+        continue;
+      }
+      const eq = part.indexOf("=");
+      if (eq < 0) {
+        this.append(decodeLenient(part, true), "");
+      } else {
+        this.append(
+          decodeLenient(part.slice(0, eq), true),
+          decodeLenient(part.slice(eq + 1), true),
+        );
+      }
+    }
+  }
+
+  /** Number of pairs. */
+  get size(): usize {
+    return this.names.length;
+  }
+
+  /** The first value for `name`, or null. */
+  get(name: string): string | null {
+    for (let i: usize = 0; i < this.names.length; i++) {
+      if (this.names[i] == name) {
+        return this.vals[i].clone();
+      }
+    }
+    return null;
+  }
+
+  /** Every value for `name`, in order. */
+  getAll(name: string): string[] {
+    const out: string[] = [];
+    for (let i: usize = 0; i < this.names.length; i++) {
+      if (this.names[i] == name) {
+        out.push(this.vals[i].clone());
+      }
+    }
+    return out;
+  }
+
+  /** Whether a pair named `name` (with value `value`, if given) exists. */
+  has(name: string, value: string | null = null): bool {
+    for (let i: usize = 0; i < this.names.length; i++) {
+      if (this.names[i] == name && (value == null || this.vals[i] == value)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Adds a pair at the end. */
+  append(name: string, value: string) {
+    this.names.push(name);
+    this.vals.push(value);
+  }
+
+  /** Sets the first pair named `name` to `value` and removes the others (appends if none). */
+  set(name: string, value: string) {
+    let found = false;
+    let w: usize = 0;
+    for (let i: usize = 0; i < this.names.length; i++) {
+      if (this.names[i] == name) {
+        if (found) {
+          continue;
+        }
+        found = true;
+        this.vals[i] = value.clone();
+      }
+      arraySwap(this.names, w, i);
+      arraySwap(this.vals, w, i);
+      w++;
+    }
+    arrayTruncate(this.names, w);
+    arrayTruncate(this.vals, w);
+    if (!found) {
+      this.append(name, value);
+    }
+  }
+
+  /** Removes every pair named `name` (with value `value`, if given). */
+  delete(name: string, value: string | null = null) {
+    let w: usize = 0;
+    for (let i: usize = 0; i < this.names.length; i++) {
+      if (this.names[i] == name && (value == null || this.vals[i] == value)) {
+        continue;
+      }
+      arraySwap(this.names, w, i);
+      arraySwap(this.vals, w, i);
+      w++;
+    }
+    arrayTruncate(this.names, w);
+    arrayTruncate(this.vals, w);
+  }
+
+  /** Stable sort by name, in UTF-16 code-unit order as in JS. */
+  sort() {
+    const pairs = this.entries();
+    pairs.sort((a, b) => a[0].compareTo(b[0]) as number);
+    this.names = pairs.map((p) => p[0].clone());
+    this.vals = pairs.map((p) => p[1].clone());
+  }
+
+  /** The names, in order (repeats included). */
+  keys(): string[] {
+    return this.names.clone();
+  }
+
+  /** The values, in order. */
+  values(): string[] {
+    return this.vals.clone();
+  }
+
+  /** `[name, value]` pairs, in order. */
+  entries(): [string, string][] {
+    const out: [string, string][] = [];
+    for (let i: usize = 0; i < this.names.length; i++) {
+      out.push([this.names[i].clone(), this.vals[i].clone()]);
+    }
+    return out;
+  }
+
+  /** `a=1&b=x+y` (form encoding: space as `+`, everything but `*-._` and alphanumerics escaped). */
+  toString(): string {
+    const parts: string[] = [];
+    for (let i: usize = 0; i < this.names.length; i++) {
+      parts.push(`${encodeSet(this.names[i], FORM)}=${encodeSet(this.vals[i], FORM)}`);
+    }
+    return parts.join("&");
+  }
+}

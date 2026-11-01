@@ -1,0 +1,16 @@
+rings 1 1 true
+rings 1 2 false
+rings 2 1 false
+rings 2 2 true
+rings 2 4 false
+rings 3 6 false
+rings 2 3 false
+rings 3 3 true
+values false
+values swapped false
+tail false false
+lists true false
+assertEq rings
+arrays true false
+maps true false
+unions true false

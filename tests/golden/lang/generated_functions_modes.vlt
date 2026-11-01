@@ -1,0 +1,16 @@
+// The bodies of a generated function share one ABI (callers are checked against the
+// declaration): a body that keeps its parameter, as `hold<Box>` does by converting it to
+// `any`, takes a share of its argument, so the caller's `box.items`, passed on to
+// `hold<string[]>`, is still there afterwards.
+import { hold } from "./_generators";
+
+class Box {
+  items: string[] = ["a", "b"];
+}
+
+function main() {
+  const box = new Box();
+  console.log(hold(box));
+  console.log(box.items.join(","));
+  console.log(hold(box));
+}

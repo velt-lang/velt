@@ -36,8 +36,6 @@ pub(crate) struct TrialFrames {
     literal: crate::body::literal_locals::LiteralLocals,
     std_callback: Option<Vec<bool>>,
     void_task: Option<Span>,
-    thread_task: Option<Span>,
-    await_body: Option<Span>,
 }
 
 /// A checked closure, before its locals are renumbered (captures first).
@@ -79,8 +77,6 @@ impl FnCx<'_, '_> {
             literal: self.literal.clone(),
             std_callback: self.std_callback.clone(),
             void_task: self.void_task,
-            thread_task: self.thread_task,
-            await_body: self.await_body,
         }
     }
 
@@ -91,8 +87,6 @@ impl FnCx<'_, '_> {
         self.literal = t.literal;
         self.std_callback = t.std_callback;
         self.void_task = t.void_task;
-        self.thread_task = t.thread_task;
-        self.await_body = t.await_body;
     }
 
     /// The first of `members` that arrow `e` type-checks against (each try is rolled back), or
@@ -200,10 +194,6 @@ impl FnCx<'_, '_> {
             [one] => Some(*one),
             several => Some(self.member_by_trial(e, several, escaping)),
         };
-        if !*is_async && self.thread_task == Some(e.span) {
-            self.thread_task = None;
-            return self.thread_arrow(e, exp, escaping);
-        }
         if *is_async {
             if let Some(h) = self.async_arrow_callback(e, exp) {
                 return h;
@@ -216,10 +206,6 @@ impl FnCx<'_, '_> {
         }
         if let Some(h) = self.frameless_widened_params(e, exp) {
             return h;
-        }
-        let await_body = self.await_body == Some(e.span) && *is_async;
-        if await_body {
-            self.await_body = None;
         }
         let void_task = self.void_task == Some(e.span) && self.is_void_task(params, ret, body);
         if void_task {
@@ -246,7 +232,10 @@ impl FnCx<'_, '_> {
             Some(t) => Some(self.resolve(t)),
             None => exp_throws,
         };
-        let mut ptys = self.closure_param_types(params, exp_params.as_deref());
+        let untyped = (self.any_callback == Some(span))
+            .then(|| self.any_ty())
+            .flatten();
+        let mut ptys = self.closure_param_types(params, exp_params.as_deref(), untyped);
         // Like TS, an arrow may take fewer parameters than the function type it is passed as
         // (`xs.map((x) => …)` where `map` passes `(x, i)`): the rest are unnamed and unused.
         let extra: Vec<TyId> = exp_params
@@ -286,8 +275,18 @@ impl FnCx<'_, '_> {
         // A future owns everything it uses: async closures always capture by value.
         frame.escaping = escaping || is_async;
         frame.discards_value = ret.is_none() && !is_async && ret_ty == Some(self.cx.ty.unit);
+        frame.asserted_ret = ret.is_none() && self.asserted_fn == Some(e.span);
         frame.never_end = ret.is_none() && (exp.is_none() || promise_callback);
         frame.is_async = is_async;
+        frame.return_site.ret_span = ret.filter(|_| !is_async).map(|t| t.span);
+        frame.return_site.closure_at = Some(span);
+        // Lowered in the same instantiation, so under the same type tests.
+        frame.type_guards = self.f.type_guards.clone();
+        for p in params.iter() {
+            if let Some(t) = &p.ty {
+                self.cx.note_written_type(p.name.span, t.span);
+            }
+        }
         // A JS API callback returning a number (a comparator) may return any integer.
         frame.int_returns_number = std_callback.is_some() && ret_ty == Some(self.cx.ty.f64);
         // A JS API predicate's result is tested like a condition (`xs.filter((n) => n)`).
@@ -361,8 +360,7 @@ impl FnCx<'_, '_> {
         self.cx.fn_value_depth += 1;
         let mut block = match body {
             ast::ArrowBody::Expr(x) if void_task => self.void_task_body(x),
-            ast::ArrowBody::Expr(x) if await_body => self.awaited_body(x),
-            _ => self.closure_body(body, span),
+            _ => self.closure_body(body, span, ret.is_none()),
         };
         self.cx.fn_value_depth -= 1;
         block.stmts.splice(0..0, locals);
@@ -487,7 +485,13 @@ impl FnCx<'_, '_> {
         def
     }
 
-    fn closure_body(&mut self, body: &ast::ArrowBody, span: Span) -> hir::Block {
+    /// `from_context`: the arrow writes no result type.
+    fn closure_body(
+        &mut self,
+        body: &ast::ArrowBody,
+        span: Span,
+        from_context: bool,
+    ) -> hir::Block {
         match body {
             ast::ArrowBody::Expr(e) => {
                 let h = match self.f.ret {
@@ -537,7 +541,7 @@ impl FnCx<'_, '_> {
                     Some(r) => r,
                     None => self.finish_inferred_ret(&mut block),
                 };
-                self.check_returns("closure", ret, span, &mut block);
+                self.check_returns("closure", ret, span, &mut block, from_context);
                 self.wrap_adopted(&mut block);
                 block
             }
@@ -554,7 +558,7 @@ impl FnCx<'_, '_> {
             // A `const` captured while its initializer runs, and its flag: the cell itself,
             // which closures created inside this one share too (`late_consts`).
             let late = frame.late.caps.contains_key(&c.inner)
-                || frame.late.caps.values().any(|r| *r == c.inner);
+                || frame.late.caps.values().any(|r| *r == Some(c.inner));
             let escaping = escaping || late && !c.mutated;
             let mode = match (escaping, c.mutated, copy) {
                 (false, true, _) => PassMode::BorrowMut,

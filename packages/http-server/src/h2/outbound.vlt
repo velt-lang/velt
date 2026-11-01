@@ -1,0 +1,226 @@
+// http-server (internal): the response side of an HTTP/2 stream: HEADERS encoded into the
+// connection's frame buffer, DATA within the peer's flow-control windows (RFC 9113 §5.2, §6.9).
+//
+// A body that fits in the windows goes straight into the frame buffer, text written there without
+// a copy in between. What does not fit waits in the stream's own buffer and goes out as
+// WINDOW_UPDATE frames arrive (`pumpAll`), streams served in the order they began to wait so
+// that one large response does not hold back the others.
+
+import { DATA, END_STREAM, HEADER_LENGTH } from "velt/net/http/h2";
+import { H2Connection } from "./connection";
+import { CLOSED, H2Stream } from "./stream";
+
+/**
+ * Writes the response head of `s`: `:status`, `server`, `date`, `content-type` (when not empty),
+ * `content-length` (when >= 0), then `fields` (name, value, ...: lowercase names, checked
+ * already); END_STREAM with it when `end`.
+ */
+export function writeHead(
+  c: H2Connection,
+  s: H2Stream,
+  status: i64,
+  type: string,
+  length: i64,
+  fields: string[],
+  end: bool,
+) {
+  const out = c.out;
+  const e = c.encoder;
+  const at = out.beginHeaders();
+  e.begin(out);
+  e.status(out, status);
+  if (!hasField(fields, "server")) {
+    // The handler's own `server` replaces it, as over HTTP/1.1.
+    e.field(out, "server", "Velt");
+  }
+  e.field(out, "date", c.date);
+  if (type.length > 0) {
+    e.field(out, "content-type", type);
+  }
+  if (length >= 0) {
+    e.contentLength(out, length);
+  }
+  for (let i: i64 = 0; i < (fields.length as i64); i += 2) {
+    e.field(out, fields[i], fields[i + 1]);
+  }
+  out.endHeaders(at, s.id, end ? endFlag(s) : 0, c.peerMaxFrame);
+  s.headersSent = true;
+  if (end) {
+    ended(c, s);
+  }
+}
+
+/// Whether `fields` (name, value, ...: lowercase names) has `name`.
+function hasField(fields: string[], name: string): bool {
+  for (let i: i64 = 0; i < (fields.length as i64); i += 2) {
+    if (fields[i] == name) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/// How much of the body `s` may send now: the smaller window, the peer's frame size.
+function room(c: H2Connection, s: H2Stream): i64 {
+  let n = s.sendWindow < c.sendWindow ? s.sendWindow : c.sendWindow;
+  return n < c.peerMaxFrame ? n : c.peerMaxFrame;
+}
+
+/// The body text `text` of `s` (`n` bytes), ending the stream when `end`.
+export function sendText(c: H2Connection, s: H2Stream, text: string, n: i64, end: bool) {
+  if (s.reset) {
+    return;
+  }
+  if (s.pending == 0 && n <= room(c, s)) {
+    const out = c.out;
+    out.reserve(HEADER_LENGTH + n);
+    out.header(n, DATA, end ? endFlag(s) : 0, s.id);
+    out.buf.write(text, out.length as usize);
+    out.length += n;
+    s.sendWindow -= n;
+    c.sendWindow -= n;
+    if (end) {
+      ended(c, s);
+    }
+    return;
+  }
+  const bytes: u8[] = Buffer.allocUnsafe(n as usize);
+  bytes.write(text, 0);
+  sendBytes(c, s, bytes, 0, n, end);
+}
+
+/// Body bytes `src[start..end)` of `s`, ending the stream when `last`.
+export function sendBytes(
+  c: H2Connection,
+  s: H2Stream,
+  src: u8[],
+  start: i64,
+  end: i64,
+  last: bool,
+) {
+  if (s.reset) {
+    return;
+  }
+  let at = start;
+  if (s.pending == 0) {
+    // What the windows allow goes out now, from `src` itself.
+    while (at < end) {
+      const r = room(c, s);
+      if (r <= 0) {
+        break;
+      }
+      const n = end - at < r ? end - at : r;
+      const fin = last && at + n == end;
+      c.out.data(s.id, fin ? endFlag(s) : 0, src, at, at + n);
+      at += n;
+      s.sendWindow -= n;
+      c.sendWindow -= n;
+      if (fin) {
+        ended(c, s);
+        return;
+      }
+    }
+    if (at == end) {
+      if (last) {
+        endBody(c, s);
+      }
+      return;
+    }
+  }
+  s.queue(src, at, end);
+  s.endAfter = s.endAfter || last;
+  pumpStream(c, s);
+}
+
+/// Ends the body of `s` (END_STREAM after what is waiting).
+export function endBody(c: H2Connection, s: H2Stream) {
+  if (s.reset || s.localEnded) {
+    return;
+  }
+  if (s.pending > 0) {
+    s.endAfter = true;
+    pumpStream(c, s);
+    return;
+  }
+  if (s.trailers.length == 0) {
+    c.out.data(s.id, END_STREAM, s.out, 0, 0);
+  }
+  ended(c, s);
+}
+
+/// Sends what the windows allow of the body waiting in `s`; waits in `c.blocked` for the rest.
+export function pumpStream(c: H2Connection, s: H2Stream) {
+  while (!s.reset && (s.pending > 0 || (s.endAfter && !s.localEnded))) {
+    const pending = s.pending;
+    let n = room(c, s);
+    if (n > pending) {
+      n = pending;
+    }
+    if (pending > 0 && n <= 0) {
+      if (!s.queued) {
+        s.queued = true;
+        c.blocked.push(s);
+      }
+      return;
+    }
+    const fin = s.endAfter && n == pending;
+    c.out.data(s.id, fin ? endFlag(s) : 0, s.out, s.outStart, s.outStart + n);
+    s.outStart += n;
+    s.sendWindow -= n;
+    c.sendWindow -= n;
+    if (s.outStart == s.outEnd) {
+      s.outStart = 0;
+      s.outEnd = 0;
+    }
+    if (fin) {
+      ended(c, s);
+    }
+  }
+  // A writer waiting for the buffer to drain.
+  s.wakeOut();
+}
+
+/// After the connection window grew: the waiting streams send, in order, while it lasts.
+export function pumpAll(c: H2Connection) {
+  if (c.blocked.length == 0) {
+    return;
+  }
+  const waiting = c.blocked;
+  c.blocked = [];
+  for (const s of waiting) {
+    s.queued = false;
+    if (!s.reset) {
+      pumpStream(c, s);
+    }
+  }
+}
+
+/// END_STREAM on the last frame of the body, unless trailers follow it.
+function endFlag(s: H2Stream): i64 {
+  return s.trailers.length == 0 ? END_STREAM : 0;
+}
+
+/// The body of `s` ended: its trailers go out (a HEADERS frame with END_STREAM), if it has any.
+function ended(c: H2Connection, s: H2Stream) {
+  const t = s.trailers;
+  if (t.length > 0) {
+    const out = c.out;
+    const at = out.beginHeaders();
+    c.encoder.begin(out);
+    for (let i: i64 = 0; i < (t.length as i64); i += 2) {
+      c.encoder.field(out, t[i], t[i + 1]);
+    }
+    out.endHeaders(at, s.id, END_STREAM, c.peerMaxFrame);
+    t.length = 0;
+  }
+  finished(c, s);
+}
+
+/// The END_STREAM of `s` went out.
+function finished(c: H2Connection, s: H2Stream) {
+  s.endLocal();
+  c.earn();
+  if (s.state == CLOSED) {
+    c.release(s);
+  }
+}

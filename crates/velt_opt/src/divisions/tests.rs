@@ -177,6 +177,30 @@ fn unknown_dividends_are_left_alone() {
 }
 
 #[test]
+fn a_left_shift_of_a_non_negative_value_by_a_constant_is_exact() {
+    let iv = |lo, hi| Interval { lo, hi };
+    // `(b[at] << 8) | b[at + 1]` of two bytes: below 2^16.
+    let hi = interval_binary(BinOp::Shl, iv(0, 255), iv(8, 8), Ty::I32);
+    assert_eq!(hi, Some(iv(0, 65280)));
+    let both = interval_binary(BinOp::BitOr, hi.unwrap(), iv(0, 255), Ty::I32);
+    assert_eq!(both, Some(iv(0, 65535)));
+    // Negative values, shift amounts that are not one constant or not below the width: no
+    // bound.
+    assert_eq!(
+        interval_binary(BinOp::Shl, iv(-1, 4), iv(1, 1), Ty::I32),
+        None
+    );
+    assert_eq!(
+        interval_binary(BinOp::Shl, iv(0, 4), iv(1, 2), Ty::I32),
+        None
+    );
+    assert_eq!(
+        interval_binary(BinOp::Shl, iv(0, 4), iv(32, 32), Ty::I32),
+        None
+    );
+}
+
+#[test]
 fn bitwise_or_of_non_negative_values_stays_below_the_next_power_of_two() {
     let iv = |lo, hi| Interval { lo, hi };
     let or = interval_binary(BinOp::BitOr, iv(0, 255), iv(0, 31), Ty::U64);

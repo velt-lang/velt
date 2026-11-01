@@ -72,6 +72,22 @@ impl FnCx<'_, '_> {
         })
     }
 
+    /// Does the function `sig` describes have a parameter with a default (or an optional one)
+    /// whose type has no `undefined` where the expected type `want` passes one that may be
+    /// `undefined` (`before: T | null = null` for `before?: T | null`)? Then it is wrapped even
+    /// at the same shape: the wrapper's call applies the default where the argument is
+    /// `undefined`, as JavaScript does (`default_args`).
+    pub(super) fn defaults_take_undefined(&self, sig: &FnSig, want: &[TyId]) -> bool {
+        let fixed = sig.params.len() - usize::from(sig.rest);
+        let may_be_undefined =
+            |t: TyId| (self.cx.ty.nothing_of(t)).is_some_and(|n| n.has_undefined());
+        (sig.params[..fixed].iter().zip(want))
+            .skip(sig.required)
+            .any(|(&own, &w)| {
+                may_be_undefined(w) && !may_be_undefined(own) && self.cx.dynamic(own).is_none()
+            })
+    }
+
     /// The arguments a wrapper of shape `want` (whose rest arguments are `elem`s) passes to the
     /// function `sig` describes (`callback_wrap::plan`). A parameter it fills from a rest
     /// argument that may not have been passed gets `undefined` then, as in JavaScript: its

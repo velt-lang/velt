@@ -1029,6 +1029,66 @@ unchanged (within ±2%). Deleting 80k keys from the middle of a 160k-key object,
 by two `at` calls: 9.9 s → 0.04 s (each `at` rebuilt a table of the live positions in O(n);
 it now costs O(log n)).
 
+## JSON corpora (#1657, 2026-10-28)
+
+`MEASURE=instructions bench/json/corpora/run.sh 3 50`: the three files every JSON library reports
+on (`fetch.sh`: canada.json, 2.25 MB of GeoJSON floats; citm_catalog.json, 1.73 MB of wide
+objects and integers; twitter.json, 0.63 MB of text with non-ASCII), each parsed into a dynamic
+value 50 times (`value`) and parsed once then written back 50 times (`write`), by Velt (LLVM
+release), serde_json, sonic-rs, simd-json and Node.
+
+- **What is measured**: the whole process, start-up and the file read included, with no separate
+  warm-up; the fewest instructions retired (`/usr/bin/time -l`) of 3 runs, and in brackets per
+  input byte (x 50 rounds). Instructions, not time, because the machine was loaded (load average
+  85–110) and wall clock moved by ±30% between runs. Start-up is small next to 50 rounds: an
+  empty run retires about 1.4 M instructions for Velt and 3.8 M for `node -e 0`. Instructions
+  understate what SIMD parsers gain per instruction and ignore cache misses, so read them as
+  work done, not speed.
+- **What each builds**: Velt's `JSON.parseValue` builds a flat tape (#1660); serde_json a
+  `Value` tree with `preserve_order` (IndexMap, objects keep insertion order) and
+  `float_roundtrip` (exact floats, as Velt and Node parse them; without it canada's numbers do
+  not round-trip); sonic-rs its own DOM; simd-json an `OwnedValue`, whose objects are halfbrown
+  maps that do not keep order, and which copies the input buffer every round because its API
+  parses in place; Node `JSON.parse` / `JSON.stringify`.
+- **Checks**: for `value`, every program prints the same top-level member count. For `write`,
+  each prints the last text it wrote; Velt's must equal Node's byte for byte (both follow
+  JavaScript's number formatting), and the Rust rows must parse back to the same value as
+  Node's (they print numbers their own way, such as `1.0`, and simd-json reorders objects).
+- Not covered yet (#1657): typed parse (`JSON.parse<T>` against serde derive structs) and a Bun
+  column.
+
+Apple M4, macOS 27.0.1 (arm64), rustc 1.99.0, serde_json 1.0.154, sonic-rs 0.5.10, simd-json
+0.19.0, Node 24.11.1, Velt at 0d0efe524 (main). Billions of
+instructions (per input byte); fewer is better:
+
+| corpus | op | Velt | serde_json | sonic-rs | simd-json | Node |
+|---|---|---:|---:|---:|---:|---:|
+| canada | value | 7.40 G (66/B) | 5.39 G (48/B) | 1.85 G (16/B) | 4.50 G (40/B) | 5.98 G (53/B) |
+| canada | write | 5.54 G (49/B) | 1.67 G (15/B) | 1.98 G (18/B) | 2.48 G (22/B) | 6.69 G (59/B) |
+| citm_catalog | value | 2.57 G (30/B) | 2.68 G (31/B) | 0.61 G (7/B) | 1.90 G (22/B) | 2.32 G (27/B) |
+| citm_catalog | write | 0.61 G (7/B) | 0.46 G (5/B) | 0.57 G (7/B) | 0.49 G (6/B) | 1.36 G (16/B) |
+| twitter | value | 1.39 G (44/B) | 1.06 G (34/B) | 0.26 G (8/B) | 0.78 G (25/B) | 1.03 G (33/B) |
+| twitter | write | 0.36 G (11/B) | 0.29 G (9/B) | 0.26 G (8/B) | 0.27 G (9/B) | 0.88 G (28/B) |
+
+Velt's dynamic parse retires 1.2–1.4x Node's instructions on canada and twitter and about the
+same as serde_json on citm_catalog; sonic-rs does 4–5.3x less work than Velt. Velt writes
+citm_catalog and twitter within 1.35x of serde_json and simd-json and with 2.2–2.4x fewer
+instructions than Node, but canada
+(floats) takes 3.3x serde_json's instructions: number formatting is the gap there. On x86-64 Linux (i9-8950HK, load average 26–43, Node 26.12; `nice bench/json/corpora/run.sh 2 50`,
+best wall time in ms and MB/s, measured in review with sonic-rs 0.3 and simd-json 0.14; with
+0.5 and 0.19, sonic-rs canada `write` went from about 1120 to 753 ms and `value` from 755 to
+664 ms, simd-json canada `value` from 2245 to 2050 ms, the rest within the noise) the shape is
+the same, except that Velt's canada `write` also trails Node's:
+
+| corpus | op | Velt | serde_json | sonic-rs | simd-json | Node |
+|---|---|---:|---:|---:|---:|---:|
+| canada | value | 3149 (36 MB/s) | 2722 (41 MB/s) | 795 (142 MB/s) | 2228 (51 MB/s) | 2469 (46 MB/s) |
+| canada | write | 2133 (53 MB/s) | 731 (154 MB/s) | 1035 (109 MB/s) | 878 (128 MB/s) | 1155 (97 MB/s) |
+| citm_catalog | value | 1034 (84 MB/s) | 1026 (84 MB/s) | 374 (231 MB/s) | 1014 (85 MB/s) | 881 (98 MB/s) |
+| citm_catalog | write | 261 (331 MB/s) | 210 (411 MB/s) | 201 (430 MB/s) | 210 (411 MB/s) | 543 (159 MB/s) |
+| twitter | value | 627 (50 MB/s) | 492 (64 MB/s) | 152 (207 MB/s) | 450 (70 MB/s) | 487 (65 MB/s) |
+| twitter | write | 137 (230 MB/s) | 120 (264 MB/s) | 93 (340 MB/s) | 148 (213 MB/s) | 327 (97 MB/s) |
+
 ## Generators (`bench/iter`, #62 phase 2, 2026-10-03)
 
 `bench/iter/run.sh` (`run.ps1`): 20 × 30M values summed modulo a prime (a loop-carried
@@ -1156,7 +1216,7 @@ the table is from `main` at 8949f2c7):
 ## Stable sort with a comparator (#530, 2026-10-05)
 
 `sort(cmp)` / `toSorted(cmp)` moved from an in-place SymMerge (O(n log² n) swaps) to a stable
-sort shaped like Rust's driftsort through a scratch buffer (std/sort/stable.vlt), and velt_opt
+sort shaped like Rust's driftsort through a scratch buffer (std/lang/sort/stable.vlt), and velt_opt
 now inlines the comparator through `cmp: F | null` and through every closure argument of a
 recursive helper. Instructions and branch mispredictions of the sort alone (a run with the sort
 minus a run with only the setup), valgrind cachegrind on Linux (WSL2), clang 18; before is
@@ -1376,3 +1436,110 @@ What changed:
   executable. `bench/nightly.sh` also runs each benchmark that has a Node version under `node`
   (best of 3 interleaved, wall time) and marks the rows where Velt takes longer than Node in a
   second table; wall time on a shared runner is a guide, so those rows don't fail the job.
+
+## Positioned file I/O over system functions (`bench/fs/pread`, #1716, 2026-10-27)
+
+`velt/fs`'s `readSync`/`writeSync`/`fsyncSync` are Velt code calling `pread`/`pwrite`/`fcntl`
+directly (`declare system function`), against Rust (`FileExt::read_at`, `sync_all`) and Node
+(`fs.readSync` with a position). Workloads: 200,000 random 4 KiB reads of a cached 64 MiB file,
+8 sequential passes in 64 KiB reads, 200 100-byte writes each followed by an fsync.
+
+User-space instructions (cachegrind, Linux arm64 VM; the kernel's share of a read is the same
+for all, and it is most of the time):
+
+| program | instructions |
+|---|---:|
+| Velt, the whole benchmark through `velt/fs` | 12.85 M |
+| Rust, the whole benchmark | 8.18 M |
+| Velt, the random reads through a bare `declare system function pread` | 8.03 M |
+| Velt, an empty program (runtime start-up) | 0.40 M |
+
+A `pread` from Velt costs what it costs from Rust (about 38 instructions per random read with
+the loop, in both); Node's argument checks in `readSync` (descriptor, offset, length, position)
+add about 22 instructions per call, under 1% of a cached 4 KiB read. Wall time (macOS, M-series,
+best of 10 interleaved) was taken on a machine at load 100+ from other builds, so it only says
+that the three are within noise of each other for `random_4k` (Velt 824 ms, Rust 1167, Node
+1567 in one run; 640, 565, 867 in another), and that fsync is the disk's (about 4 ms each with
+`F_FULLFSYNC` in all three): rerun `bench/fs/pread/run.sh 10` on an idle machine for the table.
+
+Build cost of a program using the fd API (`openSync` + `readSync` + `closeSync`) against one
+using `readFileBytesSync` (Rust runtime): 8,215 against 2,427 lines of `--emit llvm`, and a
+`velt build --release` of 0.54–0.63 s against 0.19–0.39 s (same loaded machine).
+
+With byte views (#1718: `readSync` / `writeSync` take typed arrays and `DataView`s, system
+function buffers take views, the errno table one string, one uncaught-error report for a union
+of `Error` classes), the same program is 9,082 lines (from 8,291 on the branch before; the
+`readFileBytesSync` program 2,463) and its `velt build --release` takes 640–657 M instructions
+against 623–691 M before (`/usr/bin/time -l`, the compiler process; the `readFileBytesSync`
+program 509–512 M). What the lines are: `main` with `openSync`, `readSync` and `closeSync`
+inlined and the uncaught-error report (5,106), `readInto` (1,141: the range checks, the two
+system calls each with its `subarray` clamped, the errors), `osError` (1,094: the errno table
+lookup and the message), `integer` (458), and the error classes' drop, format and clone glue.
+Most of it is string and error code: a template, a string drop or a `length` is written out
+inline at each use, which is where a smaller IR would come from next.
+
+## Byte views: decoding b-tree page cells (`bench/typed_array/page_cells`, #1718, 2026-10-28)
+
+SQLite-like b-tree pages (64 pages of 4 KiB, 26,181 cells) in a `Uint8Array`, decoded in plain
+TypeScript: per cell a 2-byte big-endian cell pointer, a 4-byte big-endian child page number and
+a varint key. Four Velt programs read the same bytes: a `DataView` per page (`getUint16`,
+`getUint32`, `getUint8`), a `subarray` per page with shifts, the whole `Uint8Array` with shifts,
+and Velt's `u8[]` with integer types (the baseline the views should reach); Rust reads `&[u8]`
+with `u16::from_be_bytes` / `u32::from_be_bytes` (bounds-checked). User-space instructions per
+cell (`/usr/bin/time -l`, macOS arm64; the difference between 110 and 10 rounds, so building the
+pages cancels out), LLVM release:
+
+| program | before | after |
+|---|---:|---:|
+| `DataView` | 188.6 | 67.9 |
+| `subarray` per page | 116.1 | 108.9 |
+| whole `Uint8Array` | 109.9 | 105.6 |
+| `u8[]`, integer types | 59.9 | 60.9 |
+| Rust `&[u8]` | 40.8 | 40.8 |
+
+What changed: a `DataView` big-endian load checks its range once and reads its bytes as one load
+and a byte swap (`ldrh`+`rev16`, `ldr`+`rev`); a counter that starts from a bounded local (`q =
+at + 4` before a varint loop) is an integer to `numrep`; a conversion `i as usize` uses the facts
+the branches before it established (`i >= 0`); a throwing callee's `Result`, once inlined, lives
+in registers (`enum_sroa`), so the `number` a `DataView` read returns is an integer to the
+passes after it; and a receiver is no longer counted around a call whose later arguments only
+write another local (`dv.getUint8(q++)`).
+
+What is left, per cell: the views check each access twice (the view's length, as JS requires,
+and the buffer's current length, which keeps them memory-safe); the varint's position is still
+converted to a double and back in the `Uint8Array` programs; and the key and the sum are
+`number`s (doubles), as in JS, where Rust and the `u8[]` program use `u64`.
+
+### Views of a `u8[]`, checked against the array (#1718, 2026-10-29)
+
+A `u8[]`'s `subarray` is now a `Uint8Array` over the array itself, which can become shorter, so
+a typed array's `length` is the elements its buffer still has in its range and every access is
+checked against it. The same programs, user-space instructions per cell (macOS arm64, LLVM
+release; the base is `main` at cb434f935; differences under 0.5 are noise):
+
+| program | before | after |
+|---|---:|---:|
+| `DataView` | 69.9 | 70.1 |
+| `subarray` per page | 109.3 | 70.4 |
+| whole `Uint8Array` | 105.6 | 68.2 |
+| `u8[]`, integer types | 60.2 | 60.5 |
+| Rust `&[u8]` | 40.8 | 40.8 |
+
+What changed: a byte's `xs[i]` tests that it is inside the view and inside the buffer in one
+integer test, which the byte read's own check follows from; and the varint's position (`q =
+at + 4`, then `page[q++]`) stays an integer through the inlined `xs[i]` (numrep tracks the tests
+of the loops around an integer counter, which its cap needs). The views of other element types
+test `i < length`, the same as a loop up to `length` does, so such a loop still drops it and
+vectorizes. `bench/typed_array/loops.ts`, instructions against the base (the same compiler with
+the base's std): `u8`, `axpy`, `i32`, `xor`, `nested` within 0.3%, and `dot` -1.1%. (A value is
+converted before it is stored, so the buffer is not counted around the conversion; since #1850
+`main`'s std no longer counts it there either, so `i32` is the same.)
+`dot` needed a compiler change: `main` inlines all six kernels, and LLVM kept the bound check of
+the second array in the dot product's loop (+199.7%), because that array's length is now read
+from its buffer through two pointers LLVM cannot prove valid when the inner loop runs no
+iteration, so the length stayed inside the outer loop (with `dot` alone, LLVM unswitches the outer
+loop instead; with six kernels in one function its cost limit turns that off). `opt`'s
+`invariant_reads` now reads such a chain once in front of the loop nest, each pointer tested for
+null first, when the loops write no memory and call nothing. Against `main`'s own compiler the
+kernels take 37-80% fewer instructions (`nested` the same): there `numrep` skips this `main`,
+which has grown past its size limit, and the counters stay doubles.

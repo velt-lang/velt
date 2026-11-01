@@ -1,0 +1,204 @@
+// http-server (internal): `Parser`, an HTTP/1.1 connection's read buffer and the requests in it.
+//
+// A connection reads into one buffer of its own; a request's head is ranges of that buffer
+// (`Head`, parsed by `HeadParser`), valid until the connection reads the next one, so nothing is
+// copied or allocated per request unless the handler asks for a string. The body is not waited
+// for: the request's `BodyReader` (http1/body_reader.vlt) reads it from here as the handler
+// asks. The end of a head is found 16 bytes at a time (`velt/simd`: lanes equal to LF).
+
+import { TcpStream } from "velt/net";
+import { u8x16 } from "velt/simd";
+import { BadRequest } from "./bad_request";
+import { Head } from "./head";
+import { HeadParser } from "./head_parser";
+
+const CR: u8 = 13;
+const LF: u8 = 10;
+/// Room past the data, so a 16-byte load at any byte of it stays inside the buffer.
+const SLACK: i64 = 16;
+/// The buffer a connection starts with; it grows for a request that does not fit.
+const INITIAL: i64 = 16384;
+/// Read at least this much at a time.
+const MIN_READ: i64 = 4096;
+
+/// A connection's read buffer and the requests in it.
+export class Parser {
+  buf: u8[] = Buffer.alloc((INITIAL + SLACK) as usize);
+  /// The first byte of the next request, and the bytes read.
+  pos: i64 = 0;
+  end: i64 = 0;
+  /// The head's end was searched for up to here.
+  private scanned: i64 = 0;
+  /// The request being answered points into `buf` (its `Head`): until `release()`, reads must
+  /// not move or overwrite what was read before them.
+  private held: bool = false;
+  /// The largest head and body accepted (431 and 413 past them).
+  private maxHead: i64;
+  private maxBody: i64;
+  private lf: u8x16 = u8x16.splat(LF);
+  private heads: HeadParser;
+
+  constructor(maxHead: i64, maxBody: i64, maxHeaders: i64) {
+    this.maxHead = maxHead;
+    this.maxBody = maxBody;
+    this.heads = new HeadParser(maxBody, maxHeaders);
+  }
+
+  /// Reads what `conn` has into the buffer: the bytes read, 0 when nothing has arrived yet,
+  /// null at the end of the stream.
+  readFrom(conn: TcpStream): number | null {
+    if (this.pos == this.end && !this.held) {
+      this.pos = 0;
+      this.end = 0;
+      this.scanned = 0;
+    }
+    if (this.end + MIN_READ + SLACK > (this.buf.length as i64)) {
+      this.room(MIN_READ);
+    }
+    const limit = (this.buf.length as i64) - SLACK;
+    const n = conn.tryRead(this.buf, this.end as number, limit as number);
+    if (n != null && n > 0) {
+      this.end += n as i64;
+    }
+    return n;
+  }
+
+  /// Whether input is left that no request took yet (a pipelined request, or part of one).
+  pending(): bool {
+    return this.pos < this.end;
+  }
+
+  /// The request being answered is finished: its bytes in the buffer may be reused.
+  release() {
+    this.held = false;
+  }
+
+  /// Room for `n` more bytes while the request being answered holds the buffer: its head stays
+  /// where it is (its `Head` keeps the buffer), and what is left to parse moves to a new one.
+  private moveOut(n: i64) {
+    let size = this.buf.length as i64;
+    while (size < this.end - this.pos + n + SLACK) {
+      size *= 2;
+    }
+    const moved: u8[] = Buffer.alloc(size as usize);
+    moved.set(this.buf.slice(this.pos, this.end), 0);
+    this.buf = moved;
+    this.end -= this.pos;
+    this.scanned = this.scanned > this.pos ? this.scanned - this.pos : 0;
+    this.pos = 0;
+    this.held = false;
+  }
+
+  /// Room for `n` more bytes past the data: drops what was parsed, then grows by doubling.
+  private room(n: i64) {
+    if (this.held) {
+      this.moveOut(n);
+      return;
+    }
+    if (this.pos > 0) {
+      this.buf.copyWithin(0, this.pos, this.end);
+      this.end -= this.pos;
+      this.scanned = this.scanned > this.pos ? this.scanned - this.pos : 0;
+      this.pos = 0;
+    }
+    if (this.end + n + SLACK > (this.buf.length as i64)) {
+      let size = (this.buf.length as i64) * 2;
+      while (size < this.end + n + SLACK) {
+        size *= 2;
+      }
+      const grown: u8[] = Buffer.alloc(size as usize);
+      grown.set(this.buf.slice(0, this.end), 0);
+      this.buf = grown;
+    }
+  }
+
+  /// The index past the CR LF CR LF that ends the head starting at `start`, or -1.
+  private headEnd(start: i64): i64 {
+    const b = this.buf;
+    let at = this.scanned > start ? this.scanned : start;
+    while (at < this.end) {
+      // 16 bytes without an LF are skipped at once.
+      if (
+        !u8x16
+          .load(b, at as usize)
+          .eq(this.lf)
+          .any()
+      ) {
+        at += 16;
+        continue;
+      }
+      const stop = at + 16 < this.end ? at + 16 : this.end;
+      for (let i = at; i < stop; i++) {
+        if (b[i] == LF && i - 3 >= start && b[i - 1] == CR && b[i - 2] == LF && b[i - 3] == CR) {
+          return i + 1;
+        }
+      }
+      at = stop;
+    }
+    // Searched up to the data's end; the last three bytes are searched again with more.
+    this.scanned = this.end - 3 > start ? this.end - 3 : start;
+    return -1;
+  }
+
+  /// The next request's head into `req`: true when there is one, false when more input is
+  /// needed. The body is not waited for: a body already read is `BODY_BUFFERED`, else the
+  /// request's reader reads it (`BODY_LENGTH`, `BODY_CHUNKED`). Throws `BadRequest` for input
+  /// that is not a request (`HeadParser.parse`).
+  next(req: Head): bool {
+    // Empty lines before a request are ignored (RFC 9112 §2.2).
+    while (this.pos + 1 < this.end && this.buf[this.pos] == CR && this.buf[this.pos + 1] == LF) {
+      this.pos += 2;
+    }
+    const headEnd = this.headEnd(this.pos);
+    if (headEnd < 0) {
+      if (this.end - this.pos > this.maxHead) {
+        throw new BadRequest(431);
+      }
+      return false;
+    }
+    if (headEnd - this.pos > this.maxHead) {
+      throw new BadRequest(431);
+    }
+    this.pos = this.heads.parse(this.buf, this.pos, headEnd, this.end, req);
+    this.scanned = this.pos;
+    this.held = true;
+    return true;
+  }
+
+  /// The bytes read and not taken yet.
+  available(): i64 {
+    return this.end - this.pos;
+  }
+
+  /// The next `n` bytes read (`n <= available()`), copied, and taken.
+  take(n: i64): u8[] {
+    const out = this.buf.slice(this.pos, this.pos + n);
+    this.pos += n;
+    return out;
+  }
+
+  /// Drops the next `n` bytes read (`n <= available()`).
+  skip(n: i64) {
+    this.pos += n;
+  }
+
+  /// The index of the next LF in what was read, or -1.
+  lineEnd(): i64 {
+    for (let i = this.pos; i < this.end; i++) {
+      if (this.buf[i] == LF) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  /// The byte at index `i` of the buffer.
+  byteAt(i: i64): u8 {
+    return this.buf[i];
+  }
+
+  /// The largest body `body()` collects.
+  maxBodySize(): i64 {
+    return this.maxBody;
+  }
+}

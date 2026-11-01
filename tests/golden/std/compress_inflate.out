@@ -1,0 +1,13 @@
+2264 fox inflate velt brown over inflate dog 
+true true
+true true
+204 204
+abcd
+true true true true
+204 abcd
+0 0
+truncated rejected: unexpected end of file
+bad crc rejected: incorrect data check
+bad header rejected: incorrect header check
+bad block type rejected: invalid block type
+truncated, streamed: unexpected end of file

@@ -46,8 +46,11 @@ impl FnLower<'_, '_> {
     pub(super) fn field_expr(&mut self, base: &hir::Expr, index: u32, mode: UseMode) -> Operand {
         let bty = self.sub(base.ty);
         let write = std::mem::take(&mut self.owner_write);
-        if self.cx.proxiable(bty) && !self.is_unit_field(bty, index) {
-            return self.proxy_field_read(base, bty, index, mode);
+        if self.cx.proxiable(bty) {
+            return match self.is_unit_field(bty, index) {
+                true => self.proxy_unit_field_read(base, bty, index),
+                false => self.proxy_field_read(base, bty, index, mode),
+            };
         }
         if mode == UseMode::Move && (self.counted_part(base) || self.in_module_state(base)) {
             // Other owners still see the field (semantics stage 2): share it instead.
@@ -223,6 +226,12 @@ impl FnLower<'_, '_> {
         let v = self.expr(inner);
         let p = self.place_of(v, oty);
         self.check_narrowed_field(inner, &p, oty);
+        if pty != oty && self.cx.is_unit(pty) {
+            // A zero-sized payload (`"x"` of `"x" | null`) has nothing to read: the option's
+            // flag is not the payload, and a store of it would write a `bool` into the
+            // payload's place (a zero-sized field has none).
+            return unit();
+        }
         let payload = if pty == oty {
             p.clone()
         } else {
@@ -366,7 +375,7 @@ impl FnLower<'_, '_> {
                 out.push_back(self.freeze(i, index.ty));
             }
             K::Local(..) => {}
-            K::Global(d) if self.slot_of(*d).is_some() => {}
+            K::Global(d) if self.slot_of(*d).is_some() || self.is_static_atomic(*d) => {}
             // A root that is not a place (`get().v = r()`, `m.get(k)!.v = r()`) is evaluated
             // once, before the right-hand side; every later forming of the place reuses it.
             _ => {
@@ -387,6 +396,9 @@ impl FnLower<'_, '_> {
                 let slot = self.slot_of(*d).unwrap_or_default();
                 self.module_slot(slot)
             }
+            K::Global(d) if self.is_static_atomic(*d) => self
+                .static_atomic(*d)
+                .unwrap_or_else(|| ice("static atomic")),
             K::Field { base, index, .. } => {
                 let bty = self.sub(base.ty);
                 let bp = self.place_expr_with(base, pre);

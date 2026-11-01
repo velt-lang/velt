@@ -39,9 +39,20 @@ impl FnLower<'_, '_> {
             ShareKind::Str => self.str_share(src, dst),
             ShareKind::Object => self.share_object(src, dst, ty),
             ShareKind::Value => {
-                let (s, d) = (self.addr(src), self.addr(dst));
+                // A pointer value (`T | null`) goes through temporaries rather than the
+                // address of an object's field (`read_addr`); the glue only writes `dst`.
+                let vt = self.cx.ty(ty);
+                let s = self.read_addr(src, vt);
+                let out = (vt == Ty::Ptr && Self::inside(&dst)).then(|| self.temp(vt));
+                let d = match out {
+                    Some(t) => self.addr(Place::local(t)),
+                    None => self.addr(dst.clone()),
+                };
                 let f = self.cx.func_direct(Work::Glue(Glue::Share, ty), self.mode);
                 self.call(vir::Callee::Func(f), vec![s, d], None, false);
+                if let Some(t) = out {
+                    self.assign(dst, Rvalue::Use(Operand::Copy(Place::local(t))));
+                }
             }
             ShareKind::Closure => self.share_closure(&src, &dst),
             ShareKind::Dyn => self.share_dyn(&src, &dst),

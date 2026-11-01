@@ -1,0 +1,66 @@
+// `typeIs<A, B>()` is decided where a generic is used, and an `if` on it runs only the branch
+// it takes; inside, `asType<B>(x)` converts the value to the type the test named. One generic
+// class keeps numbers inline and anything else boxed, with no test left at run time.
+
+class Slot<V> {
+  word: u64 = 0;
+  boxed: V[] = [];
+
+  put(v: V) {
+    if (typeIs<V, u64>()) {
+      this.word = asType<u64>(v);
+    } else {
+      this.boxed = [v];
+    }
+  }
+
+  get(fallback: V): V {
+    if (typeIs<V, u64>()) {
+      return asType<V>(this.word);
+    }
+    return this.boxed.length > 0 ? this.boxed[0] : fallback;
+  }
+}
+
+function describe<T>(): string {
+  if (typeIs<T, string>()) {
+    return "string";
+  } else if (typeIs<T, u64>()) {
+    return "u64";
+  }
+  return "other";
+}
+
+// A closure inside the test's branch is compiled in the same instantiation, so it converts too.
+function adder<T>(t: T, xs: u64[]): u64 {
+  if (typeIs<T, u64>()) {
+    const plus = () => asType<u64>(t) + 1;
+    return xs.map((e) => e + asType<u64>(t)).reduce((a, b) => a + b, 0) + plus();
+  }
+  return 0;
+}
+
+// So does a generator function expression, iterated after the function returned it.
+function counter<T>(t: T): () => Generator<u64> {
+  if (typeIs<T, u64>()) {
+    return function* () {
+      yield asType<u64>(t) + 100;
+    };
+  }
+  return function* () {
+    yield 0;
+  };
+}
+
+function main() {
+  const n = new Slot<u64>();
+  n.put(42);
+  const s = new Slot<string>();
+  s.put("hello");
+  console.log(n.get(0), n.boxed.length, s.get(""), s.word);
+  console.log(describe<string>(), describe<u64>(), describe<bool>());
+  console.log(adder<u64>(10, [1, 2]), adder<string>("x", [1, 2]));
+  for (const v of counter<u64>(5)()) {
+    console.log(v, [...counter<string>("x")()][0]);
+  }
+}

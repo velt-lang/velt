@@ -1,0 +1,8 @@
+true 2
+true y
+true 3
+false 1
+true 4
+set a receiver is proxy: true
+set b receiver is proxy: true
+typed set a

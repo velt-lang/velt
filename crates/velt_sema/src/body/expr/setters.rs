@@ -124,6 +124,7 @@ impl FnCx<'_, '_> {
         if let Some(f) = self.iface_field_of(obj.ty, &prop.name) {
             return self.iface_setter_call(obj, f, arg, span);
         }
+        self.abstract_in_ctor(&obj, &prop.name, true, prop.span);
         self.method_call_on(obj, &key, &[], args, None, span)
     }
 

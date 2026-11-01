@@ -26,8 +26,8 @@ pub(crate) fn static_name(i: usize) -> String {
     format!("@.s{i}")
 }
 
-/// The global definition of static `index`. Zero-sized data is padded to one byte, like the
-/// Cranelift backend does.
+/// The global definition of static `index`, a constant except a static atomic's word.
+/// Zero-sized data is padded to one byte, like the Cranelift backend does.
 pub(crate) fn static_data(
     program: &vir::Program,
     index: usize,
@@ -48,6 +48,14 @@ pub(crate) fn static_data(
         );
     }
     let name = static_name(index);
+    // A static atomic's word: written through atomic instructions, so neither constant nor
+    // merged with equal data.
+    if data.mutable.is_some() {
+        return Ok(format!(
+            "{name} = {linkage} global {}, align {align}\n",
+            byte_run(&data.bytes)
+        ));
+    }
     if data.relocs.is_empty() {
         let bytes: &[u8] = if data.bytes.is_empty() {
             &[0]
