@@ -30,6 +30,7 @@ mod pr_lint;
 mod pr_size;
 mod precheck;
 mod repeat;
+mod timing_lint;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;

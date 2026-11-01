@@ -8,6 +8,7 @@ import { delay } from "velt/time";
 type Box = { n: number };
 
 async function load(): Promise<Box> {
+  // timing: makes the loader pending within one render
   await delay(5);
   return { n: 42 };
 }

@@ -165,6 +165,7 @@ describe("velt/net/http's idle timeout", () => {
         if (got.startsWith("HTTP/1.1 200")) {
           answers++;
         }
+        // timing: the idle timeout is the subject
         await delay(100);
       }
       expect(answers).toBe(8);

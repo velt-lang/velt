@@ -16,3 +16,5 @@ async function main() {
 }
 
 await main();
+
+// timing: an unref'd guard timer that never fires

@@ -25,3 +25,5 @@ later(() => {
   throw new Failed("late");
 }, 5);
 console.log("end");
+
+// timing: timers are the subject

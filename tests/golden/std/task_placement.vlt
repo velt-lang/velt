@@ -84,3 +84,5 @@ async function main() {
   console.log("cond:", (await spawn(pick ? where() : where(), { worker: 0 })) == 0);
   console.log("empty options:", (await spawn(where(), {})) >= 0);
 }
+
+// timing: suspension kinds are the subject

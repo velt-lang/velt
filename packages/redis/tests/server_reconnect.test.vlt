@@ -28,6 +28,7 @@ async function kill(c: RedisClient, admin: RedisClient, p: string): Promise<i64>
     if (await blockedInBlpop(admin, id)) {
       break;
     }
+    // timing: a bounded poll for the server's state
     await sleep(1);
   }
   const killed = await admin.call(["CLIENT", "KILL", "ID", `${id}`]);

@@ -23,3 +23,5 @@ async function main() {
     console.log("cut off");
   }
 }
+
+// timing: the waits only make a body or a component pending

@@ -164,3 +164,5 @@ async function main() {
   secondLoaded.close();
   lines.close();
 }
+
+// timing: the waits only make a body or a component pending
