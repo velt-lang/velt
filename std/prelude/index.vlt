@@ -17,6 +17,7 @@ import "./async_generator";
 import "./atomic";
 import "./bits";
 import "./int_arith";
+import "./int_arith_wide";
 import "./bytes";
 import "./clone";
 import "./compare";
