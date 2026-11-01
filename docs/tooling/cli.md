@@ -172,6 +172,10 @@ A build never compiles the same thing twice:
   larger std function it uses on its own, stores it in the build cache, and links it; the next
   program that compiles the same std function links it from the cache instead of compiling it
   again. `VELT_STD_OBJECT_STATS=1` shows what it found, compiled and left in the program.
+- **Std parsed once.** Every command that loads a program (`check`, `build`, `run`, `test`, the
+  language server) keeps the standard library's parsed files in the build cache, so a program
+  parses only its own files and its packages'. An edited std file (a `VELT_STD` checkout) is
+  parsed again: entries are found by the file's contents and the compiler.
 - `velt build -v` shows how much came from the cache (`codegen ... (637 of 637 functions from
   the build cache)`) and when a build was up to date.
 

@@ -17,7 +17,9 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
 1. **Load**: the driver (`veltc`) reads the root file, follows imports (relative, `velt/` std,
    `paths` aliases, package dependencies through `vpm`), and loads the prelude.
 2. **Parse** (`velt_syntax`): a hand-written lexer and Pratt parser with error recovery; one
-   `ast::Module` per file.
+   `ast::Module` per file. std's files are parsed once per compiler: the loader keeps their
+   modules in the build cache in a compact form (`velt_syntax::encode_module`,
+   `veltc/src/loader/std_ast.rs`), which decodes in about a third of a parse.
 3. **Check** (`velt_sema`): name resolution, type checking with literal and union types,
    narrowing, generics, ownership and mutation inference over the whole program, exclusive-access
    checks, thread-safety checks, typed `throws` inference, and JSON code generation checks. The
