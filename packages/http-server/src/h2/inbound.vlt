@@ -33,6 +33,7 @@ import {
 import { H2Connection } from "./connection";
 import { onData, onHeaderBlock, onWindowUpdate, streamError } from "./streams";
 import { applyPeerSettings } from "./settings";
+import { copyBytes } from "../bytes";
 
 /// A header block may take this many CONTINUATION frames (a flood of tiny ones is refused).
 const MAX_CONTINUATIONS: i64 = 128;
@@ -187,10 +188,10 @@ function append(c: H2Connection, start: i64, end: i64): bool {
   }
   if (c.blockLength + n > (c.block.length as i64)) {
     const grown: u8[] = Buffer.alloc(((c.blockLength + n) * 2) as usize);
-    c.block.copy(grown, 0, 0, c.blockLength);
+    copyBytes(c.block, grown, 0, 0, c.blockLength);
     c.block = grown;
   }
-  c.rbuf.copy(c.block, c.blockLength, start, end);
+  copyBytes(c.rbuf, c.block, c.blockLength, start, end);
   c.blockLength += n;
   return true;
 }

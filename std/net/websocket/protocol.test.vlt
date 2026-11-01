@@ -138,7 +138,7 @@ class RawClient {
     const out = Buffer.alloc((headSize(len, masked) + len) as usize);
     const mask = masked ? maskKey() : 0u32;
     const at = writeHead(out, 0, op, len, masked, mask);
-    out.set(payload, at as usize);
+    out.set(payload, at as number);
     if (masked) {
       out.xorMask(mask, at, at + len);
     }
@@ -467,7 +467,7 @@ function encode(op: i64, payload: u8[], masked: bool): u8[] {
   const out = Buffer.alloc((headSize(len, masked) + len) as usize);
   const mask = masked ? maskKey() : 0u32;
   const at = writeHead(out, 0, op, len, masked, mask);
-  out.set(payload, at as usize);
+  out.set(payload, at as number);
   if (masked) {
     out.xorMask(mask, at, at + len);
   }

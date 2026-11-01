@@ -1,0 +1,13 @@
+// Copying into byte buffers the server sized itself. `u8[]`'s `set` throws a `RangeError` for an
+// offset out of range, since offsets usually come from outside a program; here the buffer is
+// made big enough first, so one out of range is a bug: this stops the program instead, and the
+// functions calling it keep their error types.
+
+/** `d.set(src, offset)`. */
+export function setBytes(d: u8[], src: u8[], offset: usize) {
+  try {
+    d.set(src, offset as number);
+  } catch (e) {
+    panic(`ICE: redis-clone: ${e.message}`);
+  }
+}

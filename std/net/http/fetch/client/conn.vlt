@@ -12,6 +12,7 @@ import { IoResult, unwrapIo } from "velt/native/result";
 import { TcpStream } from "velt/net";
 import { AbortController, AbortError, AbortSignal } from "velt/task";
 import { Target } from "velt/net/http/fetch/client/target";
+import { setBytes } from "velt/lang/bytes/copy";
 
 declare async function velt_rt_tcp_connect(addr: string): Promise<IoResult<u64>>;
 declare async function velt_rt_tcp_connect_tls(
@@ -127,7 +128,7 @@ export class Conn {
       this.buf.copyWithin(0, this.pos, this.end);
     } else {
       const bigger: u8[] = Buffer.allocUnsafe((this.buf.length * 2) as usize);
-      bigger.set(this.buf.slice(this.pos, this.end), 0);
+      setBytes(bigger, this.buf.slice(this.pos, this.end), 0);
       this.buf = bigger;
     }
     this.pos = 0;

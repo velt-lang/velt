@@ -34,6 +34,7 @@ import {
 import { ClientStream } from "velt/net/http/fetch/client/h2/stream";
 import { frames } from "velt/net/http/fetch/client/h2/frames";
 import { startCall } from "velt/net/http/fetch/client/h2/outbound";
+import { copyBytes, writeUtf8 } from "velt/lang/bytes/copy";
 
 /// A session without streams for this long closes (undici's keep-alive default is 4 s).
 const IDLE_MS: number = 4000;
@@ -88,7 +89,7 @@ export class ClientSession {
   /// Serves the connection until it ends.
   async run() {
     this.out.reserve(24);
-    this.out.length += this.out.buf.write("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", 0) as i64;
+    this.out.length += writeUtf8(this.out.buf, "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", 0) as i64;
     this.out.settings([
       SETTINGS_ENABLE_PUSH,
       0,
@@ -287,7 +288,7 @@ export class ClientSession {
     const want = this.rlen + HEADER_LENGTH + this.peerMaxFrameRead();
     if (want > (this.rbuf.length as i64)) {
       const grown: u8[] = Buffer.alloc((want * 2) as usize);
-      this.rbuf.copy(grown, 0, 0, this.rlen);
+      copyBytes(this.rbuf, grown, 0, 0, this.rlen);
       this.rbuf = grown;
     }
   }

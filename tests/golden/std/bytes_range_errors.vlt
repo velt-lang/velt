@@ -1,0 +1,95 @@
+// check: no leaks
+// Offsets into a byte buffer usually come from outside the program, so `u8[]`'s `write`, `set`
+// and `copy` throw a catchable RangeError with Node's message where Node throws (#1565), instead
+// of stopping the program. Expected output is Node's (Buffer).
+function attempt(what: string, f: () => void throws RangeError) {
+  try {
+    f();
+    console.log(what, "ok");
+  } catch (e) {
+    console.log(what, e.name, e.message);
+  }
+}
+
+function main() {
+  const buf: u8[] = Buffer.alloc(4);
+  attempt("write past end", () => {
+    buf.write("ab", 9);
+  });
+  attempt("write at end", () => {
+    console.log(buf.write("ab", 4));
+  });
+  attempt("write far", () => {
+    buf.write("ab", 12345678901);
+  });
+  attempt("set", () => {
+    buf.set([1, 2], 3);
+  });
+  const twenty: u8[] = Buffer.alloc(20);
+  const big: u8[] = Buffer.alloc(24);
+  attempt("set fast path", () => {
+    big.set(twenty, 5);
+  });
+  const dst: u8[] = Buffer.alloc(4);
+  attempt("copy targetStart", () => {
+    buf.copy(dst, -1);
+  });
+  attempt("copy sourceStart", () => {
+    buf.copy(dst, 0, 9);
+  });
+  attempt("copy negative sourceStart", () => {
+    buf.copy(dst, 0, -1);
+  });
+  attempt("copy sourceEnd", () => {
+    buf.copy(dst, 0, 0, -1);
+  });
+  attempt("copy past target", () => {
+    console.log(buf.copy(dst, 9));
+  });
+  // Positions computed as numbers are read as Node reads them: `write` takes only a whole
+  // number, `set` truncates (`NaN` is 0), `copy` rounds down (`NaN` is 0).
+  const neg: number = -1;
+  const nan: number = NaN;
+  const half: number = 1.5;
+  attempt("write -1", () => {
+    buf.write("ab", neg);
+  });
+  attempt("write NaN", () => {
+    buf.write("ab", nan);
+  });
+  attempt("write 1.5", () => {
+    buf.write("ab", half);
+  });
+  attempt("write Infinity", () => {
+    buf.write("ab", Infinity);
+  });
+  attempt("write 2**64", () => {
+    buf.write("ab", 2 ** 64);
+  });
+  attempt("set -1", () => {
+    buf.set([1], neg);
+  });
+  attempt("set Infinity", () => {
+    buf.set([1], Infinity);
+  });
+  const t: u8[] = Buffer.alloc(4);
+  attempt("set NaN", () => {
+    t.set([7], nan);
+  });
+  attempt("set 1.5", () => {
+    t.set([8], half);
+  });
+  console.log(t.join(","));
+  attempt("copy targetStart -0.5", () => {
+    buf.copy(dst, -0.5);
+  });
+  attempt("copy targetStart 1.5", () => {
+    console.log(t.copy(dst, half));
+  });
+  attempt("copy sourceStart NaN", () => {
+    console.log(t.copy(dst, 0, nan));
+  });
+  console.log(dst.join(","));
+  // The program goes on, and the buffer is unchanged.
+  console.log(buf.join(","), big.join(",").length);
+}

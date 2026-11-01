@@ -43,6 +43,7 @@ import { expire, startHandlers } from "./streams";
 import { linger } from "../linger";
 import { ReadDeadline } from "../read_deadline";
 import { waitForInput } from "./wait";
+import { copyBytes } from "../bytes";
 
 /// Queued output beyond which the connection reads no more frames until the peer has read most
 /// of it: a peer that sends PINGs or requests but does not read the answers gets no more.
@@ -162,7 +163,7 @@ export class H2Connection {
       this.out.windowUpdate(0, o.connectionWindow - DEFAULT_WINDOW);
     }
     this.room(initial.length as i64);
-    initial.copy(this.rbuf, 0);
+    copyBytes(initial, this.rbuf, 0);
     this.rlen = initial.length as i64;
     let preface = false;
     let deferred = 0;
@@ -377,7 +378,7 @@ export class H2Connection {
     }
     if (this.rlen + n > (this.rbuf.length as i64)) {
       const grown: u8[] = Buffer.alloc(((this.rlen + n) * 2) as usize);
-      this.rbuf.copy(grown, 0, 0, this.rlen);
+      copyBytes(this.rbuf, grown, 0, 0, this.rlen);
       this.rbuf = grown;
     }
   }

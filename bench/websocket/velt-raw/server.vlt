@@ -201,7 +201,7 @@ function encode(opcode: i64, payload: u8[]): u8[] {
       out[2 + i] = ((len >> (56 - 8 * i)) & 0xff) as u8;
     }
   }
-  out.set(payload, head as usize);
+  out.set(payload, head as number);
   return out;
 }
 
@@ -290,7 +290,7 @@ async function echo(r: Reader, s: TcpStream) {
       const out = Buffer.alloc(total as usize);
       let at: i64 = 0;
       for (const p of parts) {
-        out.set(p, at as usize);
+        out.set(p, at as number);
         at += p.length as i64;
       }
       await s.writeBytes(out);
@@ -321,7 +321,7 @@ async function writer(s: TcpStream, queue: Channel<u8[]>) {
       const out = Buffer.alloc(total as usize);
       let at: i64 = 0;
       for (const p of parts) {
-        out.set(p, at as usize);
+        out.set(p, at as number);
         at += p.length as i64;
       }
       try {

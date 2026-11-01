@@ -2,6 +2,7 @@
 
 import { CryptoError } from "velt/crypto/errors";
 import { velt_rt_random_bytes, velt_rt_random_u64 } from "velt/crypto/rt";
+import { received } from "velt/lang/bytes/text";
 
 /** `n` cryptographically secure random bytes (OS generator). */
 export function randomBytes(n: usize): u8[] {
@@ -24,12 +25,12 @@ export function randomInt(min: i64, max: i64): i64 {
   checkSafeInteger("max", max);
   if (max <= min) {
     throw new CryptoError(
-      `The value of "max" is out of range. It must be greater than the value of "min" (${min}). Received ${received(max)}`,
+      `The value of "max" is out of range. It must be greater than the value of "min" (${min}). Received ${received(max as number)}`,
     );
   }
   if (max - min > RANDOM_INT_RANGE) {
     throw new CryptoError(
-      `The value of "max - min" is out of range. It must be <= ${RANDOM_INT_RANGE}. Received ${received(max - min)}`,
+      `The value of "max - min" is out of range. It must be <= ${RANDOM_INT_RANGE}. Received ${received((max - min) as number)}`,
     );
   }
   const range = (max - min) as u64;
@@ -50,21 +51,4 @@ function checkSafeInteger(name: string, n: i64) {
       `The "${name}" argument must be a safe integer. Received type number (${n})`,
     );
   }
-}
-
-// A number as Node's range errors write what they received: beyond 2^32, in groups of three
-// digits separated by `_` (`1_000_000_000_000`).
-function received(n: i64): string {
-  const s = `${n}`;
-  if (n >= -4294967296 && n <= 4294967296) {
-    return s;
-  }
-  const start: i64 = n < 0 ? 1 : 0;
-  let out = "";
-  let i = s.length as i64;
-  while (i >= start + 4) {
-    out = `_${s.slice(i - 3, i)}${out}`;
-    i -= 3;
-  }
-  return `${s.slice(0, i)}${out}`;
 }

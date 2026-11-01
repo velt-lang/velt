@@ -11,6 +11,7 @@ import { TcpStream } from "velt/net";
 import { BodyTooLarge } from "../errors";
 import { BODY_BUFFERED, BODY_CHUNKED, BODY_LENGTH, BODY_NONE, Head } from "./head";
 import { Parser } from "./parser";
+import { setBytes } from "../bytes";
 
 const CR: u8 = 13;
 
@@ -116,7 +117,7 @@ export class BodyReader {
     const all: u8[] = Buffer.alloc(total as usize);
     let at: usize = 0;
     for (const p of pieces) {
-      all.set(p, at);
+      setBytes(all, p, at);
       at += p.length;
     }
     return all;

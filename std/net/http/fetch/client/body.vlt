@@ -19,6 +19,7 @@ import {
   BODY_NONE,
   malformed,
 } from "velt/net/http/fetch/client/head";
+import { setBytes } from "velt/lang/bytes/copy";
 
 /** The most a `content-length` sizes the buffer of `all` for before any of the body arrived. */
 const MAX_RESERVE: i64 = 4194304;
@@ -211,10 +212,10 @@ export class BodyReader {
           size = at + n;
         }
         const bigger: u8[] = Buffer.allocUnsafe(size as usize);
-        bigger.set(out.slice(0, at), 0);
+        setBytes(bigger, out.slice(0, at), 0);
         out = bigger;
       }
-      out.set(piece, at as usize);
+      setBytes(out, piece, at as usize);
       at += n;
     }
     out.truncate(at);
@@ -230,13 +231,13 @@ export class BodyReader {
     if (at > total) {
       at = total;
     }
-    out.set(c.buf.slice(c.pos, c.pos + at), 0);
+    setBytes(out, c.buf.slice(c.pos, c.pos + at), 0);
     c.pos += at;
     while (at < total) {
       if (at == (out.length as i64)) {
         const size = at * 2 < total ? at * 2 : total;
         const bigger: u8[] = Buffer.allocUnsafe(size as usize);
-        bigger.set(out, 0);
+        setBytes(bigger, out, 0);
         out = bigger;
       }
       at += await this.readInto(out, at, out.length as i64);

@@ -3,6 +3,8 @@
 // `heads` (name start, name end, value start, value end), as h1's `Head` keeps a request's
 // headers, so a request's accessors read either the same way.
 
+import { setBytes, writeUtf8 } from "velt/lang/bytes/copy";
+
 /// Decoded header fields: bytes and ranges.
 export class FieldList {
   buf: u8[] = Buffer.alloc(512);
@@ -38,7 +40,7 @@ export class FieldList {
       size *= 2;
     }
     const grown: u8[] = Buffer.alloc(size as usize);
-    grown.set(this.buf.slice(0, this.length), 0);
+    setBytes(grown, this.buf.slice(0, this.length), 0);
     this.buf = grown;
   }
 
@@ -46,7 +48,7 @@ export class FieldList {
   text(s: string) {
     const n = Buffer.byteLength(s) as i64;
     this.reserve(n);
-    this.buf.write(s, this.length as usize);
+    writeUtf8(this.buf, s, this.length as usize);
     this.length += n;
   }
 
@@ -54,7 +56,7 @@ export class FieldList {
   bytes(b: u8[]) {
     const n = b.length as i64;
     this.reserve(n);
-    this.buf.set(b, this.length as usize);
+    setBytes(this.buf, b, this.length as usize);
     this.length += n;
   }
 

@@ -13,6 +13,7 @@ import { Reader } from "velt/net/websocket/reader";
 import { BINARY, Step, TEXT } from "velt/net/websocket/step";
 import { setText } from "velt/net/websocket/text";
 import { arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
+import { setBytes } from "velt/lang/bytes/copy";
 
 /** Queued bytes past which a `send` completes only once the flusher has caught up. */
 export const HIGH_WATER: i64 = 1048576;
@@ -152,7 +153,7 @@ export class SendQueue {
       const next: u8[] = arrayWithCapacity(cap as usize);
       arraySetLen(next, at as usize);
       if (at > 0) {
-        next.set(this.out, 0);
+        setBytes(next, this.out, 0);
       }
       this.out = next;
       this.cap = cap;
@@ -222,7 +223,7 @@ export class SendQueue {
     const len = payload.length as i64;
     const mask = this.client ? this.maskKey() : 0u32;
     const p = this.frame(op, len, mask);
-    this.out.set(payload, p as usize);
+    setBytes(this.out, payload, p as usize);
     if (this.client) {
       this.out.xorMask(mask, p, p + len);
     }
@@ -247,7 +248,7 @@ export class SendQueue {
       return (r & DIRECT) != 0 ? (r & ~(DIRECT | OVER)) | START : r & ~OVER;
     }
     const at = this.grow(frame.length as i64);
-    this.out.set(frame, at as usize);
+    setBytes(this.out, frame, at as usize);
     return this.queued(false) & ~OVER;
   }
 

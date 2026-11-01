@@ -9,6 +9,7 @@ import { HttpRequest } from "../request";
 import { H2Connection } from "./connection";
 import { H2Stream } from "./stream";
 import { consumed } from "./streams";
+import { copyBytes } from "../bytes";
 
 /// A request on an HTTP/2 stream (the methods are documented on `HttpRequest`). Valid while the
 /// handler runs.
@@ -211,7 +212,7 @@ export class H2Request extends HttpRequest {
     const all: u8[] = Buffer.allocUnsafe(total as usize);
     let at: i64 = 0;
     for (const p of pieces) {
-      p.copy(all, at);
+      copyBytes(p, all, at);
       at += p.length as i64;
     }
     return all;

@@ -29,6 +29,7 @@ import {
 import { giveUp, H2Body, nextEvent } from "velt/net/http/fetch/client/h2/body";
 import { claim, forget, sessionOf } from "velt/net/http/fetch/client/h2/registry";
 import { ClientSession } from "velt/net/http/fetch/client/h2/session";
+import { writeUtf8 } from "velt/lang/bytes/copy";
 
 /// What an HTTP/2 attempt gave: the response, or the HTTP/1.1 connection ALPN chose instead
 /// (both null: use HTTP/1.1 as usual).
@@ -93,9 +94,9 @@ function headOf(status: i64, fields: string[]): Head {
   let at: i64 = 0;
   for (let i: i64 = 0; i + 1 < (fields.length as i64); i += 2) {
     const ns = at;
-    at += buf.write(fields[i], at as usize) as i64;
+    at += writeUtf8(buf, fields[i], at as usize) as i64;
     const vs = at;
-    at += buf.write(fields[i + 1], at as usize) as i64;
+    at += writeUtf8(buf, fields[i + 1], at as usize) as i64;
     h.fields.push(ns, vs, vs, at);
     if (fields[i] == "content-encoding") {
       h.codingStart = vs;

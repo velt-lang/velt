@@ -3,6 +3,7 @@
 import { Uint8Array } from "velt/lang/typed_array/uint8_array";
 import { TextEncoderEncodeIntoResult } from "velt/encoding/encode_into_result";
 import { velt_rt_bytes_from_str } from "velt/encoding/rt";
+import { writeUtf8 } from "velt/lang/bytes/copy";
 
 /**
  * The WHATWG `TextEncoder` (a global, as in Node): strings to UTF-8 bytes, in a `Uint8Array`.
@@ -24,7 +25,7 @@ export class TextEncoder {
     const room = destination.len;
     // Room for all of it (the usual case): written in place, with no copy in between.
     if (Buffer.byteLength(source) <= room) {
-      const written = destination.buf.bytes.write(source, destination.off);
+      const written = writeUtf8(destination.buf.bytes, source, destination.off);
       return { read: source.length as number, written: written as number };
     }
     const bytes = velt_rt_bytes_from_str(source);

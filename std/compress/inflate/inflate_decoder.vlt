@@ -10,6 +10,7 @@ import { CompressError } from "velt/compress/errors";
 import { Blocks, FULL, NEED_INPUT, STREAM_END } from "velt/compress/inflate/blocks";
 import { MAX_MATCH, SLACK } from "velt/compress/inflate/codes";
 import { adler32, crc32 } from "velt/compress/inflate/checksum";
+import { setBytes } from "velt/lang/bytes/copy";
 
 export { CompressError } from "velt/compress/errors";
 
@@ -106,7 +107,7 @@ export class InflateDecoder {
       this.slide();
       if ((b.out.length as i64) < b.op + max + MAX_MATCH + SLACK) {
         const bigger: u8[] = Buffer.allocUnsafe((b.op + max + MAX_MATCH + SLACK) as usize);
-        bigger.set(b.out.slice(0, b.op), 0);
+        setBytes(bigger, b.out.slice(0, b.op), 0);
         b.out = bigger;
       }
       this.advance(b.op + max, false);

@@ -2,6 +2,7 @@
 // or inline lines (`PING\r\n`); replies are written into a growable byte buffer.
 import { utf8Encode } from "velt/encoding";
 import { TcpStream } from "velt/net";
+import { setBytes } from "./bytes";
 
 const CR: u8 = 13;
 const LF: u8 = 10;
@@ -22,7 +23,7 @@ export class ProtocolError extends Error {
 export function protocolErrorReply(detail: u8[]): u8[] {
   const head = utf8Encode("-ERR Protocol error: ");
   const out = Buffer.alloc(head.length + detail.length + 2);
-  out.set(head, 0);
+  setBytes(out, head, 0);
   for (let i = 0; i < detail.length; i++) {
     const b = detail[i];
     out[head.length + i] = b === CR || b === LF ? 32u8 : b;
@@ -110,7 +111,7 @@ export class RespParser {
         size *= 2;
       }
       const grown = Buffer.alloc(size);
-      grown.set(this.buf.slice(0, this.end), 0);
+      setBytes(grown, this.buf.slice(0, this.end), 0);
       this.buf = grown;
     }
   }
@@ -139,11 +140,11 @@ export class RespParser {
           size *= 2;
         }
         const grown = Buffer.alloc(size);
-        grown.set(this.buf.slice(0, this.end), 0);
+        setBytes(grown, this.buf.slice(0, this.end), 0);
         this.buf = grown;
       }
     }
-    this.buf.set(data, this.end as usize);
+    setBytes(this.buf, data, this.end as usize);
     this.end += data.length as i64;
     this.buf[this.end] = CR;
     this.buf[this.end + 1] = LF;
@@ -219,7 +220,7 @@ export class RespParser {
         const got = this.buf[at];
         const prefix = utf8Encode("expected '$', got '");
         const detail = Buffer.alloc(prefix.length + 2);
-        detail.set(prefix, 0);
+        setBytes(detail, prefix, 0);
         detail[prefix.length] = got; // the raw byte, as Redis sends it
         detail[prefix.length + 1] = 39;
         throw new ProtocolError(`expected '$', got byte ${got}`, detail);
@@ -297,13 +298,13 @@ export class Writer {
       size *= 2;
     }
     const grown = Buffer.alloc(size);
-    grown.set(this.buf.slice(0, this.length), 0);
+    setBytes(grown, this.buf.slice(0, this.length), 0);
     this.buf = grown;
   }
 
   bytes(data: u8[]) {
     this.reserve(data.length as i64);
-    this.buf.set(data, this.length as usize);
+    setBytes(this.buf, data, this.length as usize);
     this.length += data.length as i64;
   }
 
@@ -387,7 +388,7 @@ export class Writer {
   bulk(data: u8[]) {
     this.header(36, data.length as i64);
     this.reserve((data.length as i64) + 2);
-    this.buf.set(data, this.length as usize);
+    setBytes(this.buf, data, this.length as usize);
     this.length += data.length as i64;
     this.crlf();
   }

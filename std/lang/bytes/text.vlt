@@ -118,19 +118,30 @@ export function replaceLoneSurrogates(d: u8[], at: usize, n: usize) {
   }
 }
 
-/** `write` at an offset past the end (cold: kept out of the inlined `write`). */
-export function writeOutOfBounds(): never {
-  panic("RangeError: offset is out of bounds");
+/**
+ * A number as Node's range errors write what they received (`String(n)`): an integer beyond
+ * 2^32 in groups of three digits separated by `_` (`1_000_000_000_000`).
+ */
+export function received(n: number): string {
+  const s = `${n}`;
+  if (!Number.isInteger(n) || Math.abs(n) <= 4294967296 || s.includes("e")) {
+    return s;
+  }
+  const start: i64 = n < 0 ? 1 : 0;
+  let out = "";
+  let i = s.length as i64;
+  while (i >= start + 4) {
+    out = `_${s.slice(i - 3, i)}${out}`;
+    i -= 3;
+  }
+  return `${s.slice(0, i)}${out}`;
 }
 
 /**
- * `write` of `s` (`n` bytes, not fitting) into `d` from `offset`: as many whole characters as
- * fit, lone surrogates as U+FFFD.
+ * `write` of `s` (`n` bytes, not fitting) into `d` from `offset` (at most `d.length`, which the
+ * caller checked): as many whole characters as fit, lone surrogates as U+FFFD.
  */
 export function writeText(d: u8[], s: string, offset: usize, n: usize): usize {
-  if (offset > d.length) {
-    writeOutOfBounds();
-  }
   let k = n;
   if (k > d.length - offset) {
     // Back to the start of the character that does not fit (continuation bytes are 10xxxxxx).

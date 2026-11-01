@@ -3,6 +3,7 @@
 
 import { u8x16 } from "velt/simd";
 import { arrayWithCapacity } from "velt/lang/intrinsics";
+import { setBytes } from "velt/lang/bytes/copy";
 
 /** Bytes per compression block of both hashes (and the HMAC key block). */
 export const BLOCK: usize = 64;
@@ -65,7 +66,7 @@ export function wordsToBytes(h: u32[]): u8[] {
  */
 export function keyBlock(k: u8[], byte: u8): u8[] {
   const out = Buffer.alloc(BLOCK);
-  out.set(k, 0);
+  setBytes(out, k, 0);
   const x = u8x16.splat(byte);
   for (let i: usize = 0; i < BLOCK; i += 16) {
     u8x16.load(out, i).xor(x).store(out, i);

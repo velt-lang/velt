@@ -11,6 +11,7 @@ import { u8x16 } from "velt/simd";
 import { BadRequest } from "./bad_request";
 import { Head } from "./head";
 import { HeadParser } from "./head_parser";
+import { setBytes } from "../bytes";
 
 const CR: u8 = 13;
 const LF: u8 = 10;
@@ -81,7 +82,7 @@ export class Parser {
       size *= 2;
     }
     const moved: u8[] = Buffer.alloc(size as usize);
-    moved.set(this.buf.slice(this.pos, this.end), 0);
+    setBytes(moved, this.buf.slice(this.pos, this.end), 0);
     this.buf = moved;
     this.end -= this.pos;
     this.scanned = this.scanned > this.pos ? this.scanned - this.pos : 0;
@@ -107,7 +108,7 @@ export class Parser {
         size *= 2;
       }
       const grown: u8[] = Buffer.alloc(size as usize);
-      grown.set(this.buf.slice(0, this.end), 0);
+      setBytes(grown, this.buf.slice(0, this.end), 0);
       this.buf = grown;
     }
   }

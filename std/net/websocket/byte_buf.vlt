@@ -1,6 +1,7 @@
 // velt/net/websocket (internal): `ByteBuf`, a byte array that grows by doubling.
 
 import { arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
+import { setBytes } from "velt/lang/bytes/copy";
 
 /** Bytes that are appended to and taken whole: `data` holds them, with room for `cap`. */
 export class ByteBuf {
@@ -25,7 +26,7 @@ export class ByteBuf {
       const next: u8[] = arrayWithCapacity(cap as usize);
       arraySetLen(next, at as usize);
       if (at > 0) {
-        next.set(this.data, 0);
+        setBytes(next, this.data, 0);
       }
       this.data = next;
       this.cap = cap;
@@ -36,7 +37,7 @@ export class ByteBuf {
 
   append(src: u8[]) {
     const at = this.grow(src.length as i64);
-    this.data.set(src, at as usize);
+    setBytes(this.data, src, at as usize);
   }
 
   /** Drops the first `n` bytes (0 <= n <= length). */
