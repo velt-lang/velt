@@ -100,6 +100,36 @@ The quality gate is `cargo xtask check` (crates/xtask), with two ways to run it:
   `scripts/linux-check.sh` runs the gate in Docker from macOS or Linux (`--services` starts
   PostgreSQL and Redis so the database tests run).
 
+**Tests that order events by timing** pass on an idle machine and fail on a loaded one, often only
+on Windows or macOS, and then in the merge queue, where they drop other people's pull requests.
+Two checks catch them before that:
+
+- `cargo xtask repeat` runs each test file your change adds or edits (`*.test.vlt` under
+  `packages/`, `std/`, `tests/std/` and `examples/`, a helper's neighbouring test files, and the
+  goldens whose `.vlt`, `.out`, `.stderr` or `.code` changed) 20 times, all at once on twice as
+  many threads as there are cores beside a spinning thread per core (so the runs compete for the
+  CPU as on a loaded runner), and fails naming the file and the repetition that failed,
+  with the end of its output (all of it in `target/repeat/logs`). A change of whole-line comments
+  only (a `// timing:` marker) is skipped. `--times <n>`, `--jobs <n>` and `--time-limit <s>`
+  (default 600: no new run starts after it) change the defaults, as do `VELT_REPEAT_TIMES`,
+  `VELT_REPEAT_JOBS`, `VELT_REPEAT_TIME_LIMIT` and `VELT_REPEAT_BURNERS` (the spinning
+  threads); `--paths <files>` repeats given files. Pull requests run it 50 times per file in the
+  `test` job on Linux, from that job's build, and 20 times in a Windows job that starts only
+  when a test file changed or the change touches a package, networking (`std/net/`, the
+  runtime's), timers or the test runner (it also runs those packages' tests: `windows_packages`
+  in `crates/xtask/src/os.rs`). Run it yourself before pushing a new test that waits on a
+  server, a socket, a task or a timer.
+- The timing lint (`crates/xtask/src/timing_lint.rs`; the gate's `lint` part and `cargo xtask
+  precheck`) flags `sleep(`, `delay(`, `setTimeout(` and `setInterval(` in test files, in
+  `tests/std/` and in the goldens outside `tests/golden/lang/` and `m1/`…`m4/` (language programs
+  on one event loop, where timers fire in deadline order as in Node). Wait for what the test
+  observes instead: an await, a channel, a promise the server resolves. Where time is what the
+  test checks (an idle timeout, a timer's order, a guard timer that must never fire), say so with
+  `// timing: <reason>` on the line, in the comments right above it, at the top of the test, or
+  at the top or the end of the file (a golden's end: no line number in its output moves). The
+  marker is for tests whose subject is time; a test that needs one event before another waits
+  on a gate (a promise, a channel, a counter it polls), never on a marked sleep.
+
 Install [cargo-nextest](https://nexte.st) (`cargo install cargo-nextest --locked`): with it the
 gate runs only the selected tests, and test binaries in parallel; without it every test runs, one
 binary at a time (over ten minutes; the gate prints a warning). Local runs keep incremental
@@ -111,7 +141,7 @@ files changed since the merge base with `origin/main` (plus uncommitted and untr
 when anything under `std/`, `examples/` or `packages/` changed or the formatter (`velt_fmt`) or a crate it depends on
 did, the file-size rule (below) on the changed Rust files, and clippy with
 `-D warnings` on the changed crates and the crates depending on them (`tests/difftest` too when
-it changed). It runs every check and then lists what failed with how to fix it; warm, it takes
+it changed), and the timing lint (above) on the changed test files and goldens. It runs every check and then lists what failed with how to fix it; warm, it takes
 well under a minute. `cargo xtask install-hooks` installs a git `pre-push` hook that runs it
 before every push; worktrees share the clone's hooks, so once per clone is enough. The hook never
 replaces a `pre-push` hook it didn't install (`--force` does, keeping the old one as
@@ -427,7 +457,9 @@ go through this list:
 5. **Performance**: a change on a hot path (the runtime, generated code, the compiler's inner
    loops) comes with benchmark numbers before and after (`bench/`), within ±3%.
 6. **Timing**: tests and goldens order events by awaits, channels or observed state, not by
-   sleeps or wall-clock limits.
+   sleeps or wall-clock limits; `cargo xtask repeat` passes for the test files you added or
+   changed, and a wait the timing lint flags is either gone or marked `// timing: <reason>`
+   because time is what the test checks.
 7. **Size**: under about 1,500 changed lines, or split into a stack.
 8. **std**: a changed std API has its `index.vlt` re-export with a doc comment, a docs-sync
    issue for its page and a test; `std-lint` passes (`cargo xtask precheck` runs it).

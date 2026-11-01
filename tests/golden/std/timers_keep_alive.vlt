@@ -50,3 +50,5 @@ async function main() {
   console.log("main returns");
   printed.trySend(true);
 }
+
+// timing: timers are the subject

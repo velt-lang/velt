@@ -75,3 +75,5 @@ async function main() {
   const results = await Promise.all(rings);
   console.log("virtual", results[0] + results[1], await b.ring()); // 100 + 200 in any order
 }
+
+// timing: the waits only yield inside one event loop

@@ -70,3 +70,5 @@ async function demo() {
 }
 
 await demo();
+
+// timing: timers are the subject

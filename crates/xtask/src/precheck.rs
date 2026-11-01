@@ -13,7 +13,8 @@
 //! - the file-size rule (crates/xtask/src/file_size.rs) on the changed Rust files;
 //! - `cargo clippy -p <changed crates and their dependents> --all-targets -- -D warnings`, or
 //!   `--workspace` when the build configuration changed;
-//! - `cargo fmt` and clippy of `tests/difftest` when it changed.
+//! - `cargo fmt` and clippy of `tests/difftest` when it changed;
+//! - the timing lint (crates/xtask/src/timing_lint.rs) on the changed test files and goldens.
 //!
 //! Every check runs, and the summary lists each failure with how to fix it.
 
@@ -26,6 +27,7 @@ use crate::check::{cargo, exe, show, target_dir, workspace_args};
 use crate::file_size;
 use crate::graph::Graph;
 use crate::plan::DIFFTEST;
+use crate::timing_lint;
 
 /// Changes to these lint the whole workspace.
 const WORKSPACE_CONFIG: &[&str] = &[
@@ -104,6 +106,8 @@ pub struct Selection {
     /// The std layout and quality rules (scripts/std-lint, docs/internals/design/std-layout.md
     /// §6): the changed std files, or all of std when the lint itself changed.
     pub std_lint: StdLint,
+    /// Changed test files and goldens the timing lint covers.
+    pub timed: Vec<String>,
 }
 
 /// What `std-lint` checks.
@@ -124,6 +128,7 @@ pub fn select(graph: &Graph, paths: &[String], exists: impl Fn(&str) -> bool) ->
         sized: vec![],
         difftest: false,
         std_lint: StdLint::None,
+        timed: vec![],
     };
     let mut changed = BTreeSet::new();
     let mut formatted = BTreeSet::new();
@@ -169,6 +174,9 @@ pub fn select(graph: &Graph, paths: &[String], exists: impl Fn(&str) -> bool) ->
         }
         if file_size::applies(path) {
             sel.sized.push(path.clone());
+        }
+        if timing_lint::linted(path) {
+            sel.timed.push(path.clone());
         }
     }
     if workspace {
@@ -256,6 +264,7 @@ pub fn run(root: &Path, sel: &Selection, reason: &str) -> Result<(), String> {
         std_lint(&mut r, &sel.std_lint);
     }
     file_sizes(&mut r, &sel.sized);
+    timing(&mut r, &sel.timed);
     clippy(&mut r, &sel.clippy);
     if sel.difftest {
         let manifest = root.join(DIFFTEST).join("Cargo.toml");
@@ -325,6 +334,24 @@ fn std_lint(r: &mut Runner, which: &StdLint) {
         "follow the message of each problem: std files live in module folders, an index.vlt only \
          re-exports, one exported class per file, at most 400 lines",
     );
+}
+
+fn timing(r: &mut Runner, files: &[String]) {
+    if files.is_empty() {
+        return;
+    }
+    let name = "timing lint (crates/xtask/src/timing_lint.rs)";
+    println!("\x1b[36m==> {name}\x1b[0m");
+    let found = timing_lint::check_files(r.root, files);
+    for line in &found {
+        println!("    {line}");
+    }
+    if !found.is_empty() {
+        r.fail(
+            name,
+            "wait for what the test observes, or mark a test of time with `// timing: <reason>`",
+        );
+    }
 }
 
 fn file_sizes(r: &mut Runner, files: &[String]) {
@@ -429,6 +456,24 @@ mod tests {
         assert!(s.velt_fmt);
         assert!(!s.difftest);
         assert!(!sel(&["crates/xtask/src/main.rs"]).velt_fmt);
+    }
+
+    #[test]
+    fn changed_tests_get_the_timing_lint() {
+        let s = sel(&[
+            "packages/redis/tests/basic.test.vlt",
+            "tests/golden/std/timers.vlt",
+            "tests/golden/lang/timer_order.vlt",
+            "std/net/listen.vlt",
+            "tests/std/deleted.test.vlt",
+        ]);
+        assert_eq!(
+            s.timed,
+            [
+                "packages/redis/tests/basic.test.vlt",
+                "tests/golden/std/timers.vlt"
+            ]
+        );
     }
 
     #[test]

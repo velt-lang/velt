@@ -107,3 +107,5 @@ async function main() {
     both[1]?.lane(1),
   );
 }
+
+// timing: the waits only yield inside one event loop

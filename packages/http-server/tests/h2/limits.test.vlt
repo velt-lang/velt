@@ -24,6 +24,7 @@ async function getWhenFree(c: Client, id: i64, path: string): Promise<string> {
     sid += 2;
     // Waiting for the server's own task to take back the slot: a condition polled within a
     // bound, not an order assumed.
+    // timing: a bounded poll until the slot is free
     await delay(5);
   }
   return "still refused";
@@ -148,6 +149,7 @@ describe("HTTP/2 limits", () => {
       try {
         for (let i = 0; i < 1000 && !signal.aborted; i++) {
           await out.write("tick ");
+          // timing: paces the handler's writes
           await delay(5);
         }
       } catch (e) {
@@ -207,6 +209,7 @@ describe("HTTP/2 limits", () => {
     for (let i = 0; Date.now() - started < 2500; i++) {
       c.frame(6, 0, 0, [0, 0, 0, 0, 0, 0, 0, (i & 255) as u8]);
       await c.flush();
+      // timing: the lingering window is the subject
       await delay(5);
     }
     const out = await timeout(c.until((f) => false), 8000);

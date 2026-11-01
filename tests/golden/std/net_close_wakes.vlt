@@ -60,3 +60,5 @@ async function main() {
   s2.close();
   server.close();
 }
+
+// timing: follow-up #1999: assumes the spawned read or accept is waiting before the close

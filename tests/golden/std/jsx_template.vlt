@@ -132,3 +132,5 @@ async function main() {
     console.log(`identical: ${precompiled == generic}`);
   }
 }
+
+// timing: the waits only make a body or a component pending

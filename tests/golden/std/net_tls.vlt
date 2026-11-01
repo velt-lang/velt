@@ -120,3 +120,5 @@ async function main() {
   c.close();
   plain.close();
 }
+
+// timing: follow-up #1999: assumes the spawned read or accept is waiting before the close
