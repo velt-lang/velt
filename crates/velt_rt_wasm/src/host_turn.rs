@@ -6,9 +6,10 @@
 //! settles (host_promise.rs). A turn runs the microtasks, the ready tasks and the due timers
 //! until none is left, as `velt_rt_block_on` does between its sleeps, then asks the host for a
 //! wake-up at the earliest timer (`velt.set_timer`; every turn asks again, as hosts round
-//! delays). Once the program may end (the root is done and nothing keeps it), or nothing can wake
-//! a task any more, the runtime runs the code after the root (`finish`: the uncaught error, the
-//! exit code) and reports the exit code with `velt.done`. Nothing unwinds through the module.
+//! delays). Once the root is done, the runtime runs the code after it (`finish`: the uncaught
+//! error, the exit code); when that is 0, the tasks `main` started go on, as natively, until they
+//! are done or nothing can wake them. The exit code reaches the host through `velt.done`.
+//! Nothing unwinds through the module.
 
 use std::alloc::Layout;
 use std::cell::{Cell, RefCell};
@@ -74,6 +75,9 @@ pub unsafe extern "C" fn velt_rt_host_main(
     align: u64,
     finish: FinishFn,
 ) {
+    if PROGRAM.with(|p| p.borrow().is_some()) {
+        crate::panic::fatal("`velt_start` ran while a program is running");
+    }
     let layout = Layout::from_size_align(size.max(1) as usize, align.max(1) as usize)
         .unwrap_or_else(|_| crate::panic::fatal("the state of `main` has no valid layout"));
     let heap = std::alloc::alloc(layout);
@@ -104,26 +108,34 @@ pub unsafe extern "C" fn velt_turn() {
     let Some(mut program) = PROGRAM.with(|p| p.borrow_mut().take()) else {
         return;
     };
-    let ended = executor::run_until_idle(&mut program.root) || !can_wake();
-    crate::io::flush_stdout();
-    if !ended {
-        let now = crate::platform::monotonic_ms();
-        let ms = executor::next_deadline().map_or(-1.0, |d| (d - now).max(0.0));
-        imports::set_timer(ms);
-        PROGRAM.with(|p| *p.borrow_mut() = Some(program));
-        return;
-    }
+    let code = loop {
+        let settled = executor::run_until_idle(&mut program.root);
+        crate::io::flush_stdout();
+        if !settled && can_wake() {
+            let now = crate::platform::monotonic_ms();
+            let ms = executor::next_deadline().map_or(-1.0, |d| (d - now).max(0.0));
+            imports::set_timer(ms);
+            PROGRAM.with(|p| *p.borrow_mut() = Some(program));
+            return;
+        }
+        if !program.root.done() {
+            // Nothing can settle the top-level `await` the root waits at, as Node ends.
+            std::alloc::dealloc(program.root.state(), program.layout);
+            break crate::top_level_await::unfinished_exit_code();
+        }
+        if program.root.after_main() {
+            break 0;
+        }
+        // `main` is done: the code after it, then (when it returned 0) its tasks, as natively.
+        let code = (program.finish)(program.root.state());
+        std::alloc::dealloc(program.root.state(), program.layout);
+        if code != 0 {
+            break code;
+        }
+        program.root.go_on_after_main();
+    };
     imports::set_timer(-1.0);
     executor::stop();
-    let code = match program.root.done() {
-        true => {
-            let code = (program.finish)(program.root.state());
-            std::alloc::dealloc(program.root.state(), program.layout);
-            code
-        }
-        // Nothing can settle the top-level `await` the root waits at, as Node ends.
-        false => crate::top_level_await::unfinished_exit_code(),
-    };
     crate::io::flush_stdout();
     imports::done(code);
 }
@@ -226,6 +238,36 @@ mod tests {
             imports::DONE.set(None);
             velt_turn();
             assert_eq!(imports::DONE.get(), None);
+        }
+    }
+
+    /// A root that spawns a task waiting for host promise 6, and finishes.
+    unsafe extern "C" fn spawns(_: *mut u8, _: *mut c_void) -> u32 {
+        let leaf = crate::host_promise::velt_rt_host_promise(6);
+        executor::spawn_task(leaf, 72, None);
+        READY
+    }
+
+    unsafe extern "C" fn returns_0(_: *mut u8) -> i32 {
+        0
+    }
+
+    #[test]
+    fn spawned_tasks_keep_the_program_after_main_returns_0() {
+        unsafe {
+            velt_rt_host_main(spawns, [0usize].as_ptr() as *const u8, 8, 8, returns_0);
+            assert_eq!(imports::DONE.get(), None, "the spawned task waits");
+            velt_settle(6);
+            assert_eq!(imports::DONE.get(), Some(0));
+        }
+    }
+
+    #[test]
+    fn an_exit_code_ends_the_program_at_once() {
+        unsafe {
+            // `finish` gives 40: an exit code, with the spawned task still waiting.
+            velt_rt_host_main(spawns, [0usize].as_ptr() as *const u8, 8, 8, finish);
+            assert_eq!(imports::DONE.get(), Some(40));
         }
     }
 }

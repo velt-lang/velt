@@ -125,6 +125,9 @@ struct Executor {
     yielded: u32,
     /// Keep-alive references (ref'd timers): `block_on` also waits while any is held.
     keep_alive: usize,
+    /// The tasks `spawn` started that have not finished: the program goes on after `main` while
+    /// any is left, as on native targets.
+    spawned: std::collections::HashSet<usize>,
     /// The microtask queue (`then` callbacks, `queueMicrotask`): it runs before the ready
     /// tasks, so it is drained after every task poll, like Node's microtask checkpoint
     /// (velt_rt task/local/micro.rs).
@@ -484,6 +487,12 @@ pub fn spawn(fut: *mut VeltFut, result_size: usize, join: Option<Rc<RefCell<Join
     spawn_for(fut, result_size, join, None)
 }
 
+/// [`spawn`] for `spawn(…)`: the program goes on after `main` until the task finishes.
+pub fn spawn_task(fut: *mut VeltFut, result_size: usize, join: Option<Rc<RefCell<JoinState>>>) {
+    let id = spawn(fut, result_size, join);
+    with_exec(|e| e.spawned.insert(id));
+}
+
 /// [`spawn`] for logical task `logical` (`None`: a new one). A started promise's driving task
 /// runs for the logical task that started it, as on native targets, where the task's own set
 /// drives it.
@@ -532,6 +541,7 @@ pub fn cancel(id: usize) {
         e.queued.remove(&id);
         let task = e.tasks.get_mut(id - 1)?.take()?;
         e.free.push(id - 1);
+        e.spawned.remove(&id);
         Some(task)
     });
     if let Some(task) = task {
@@ -555,6 +565,7 @@ unsafe fn run_task(id: usize) {
     }
     let task = with_exec(|e| {
         e.free.push(id - 1);
+        e.spawned.remove(&id);
         e.tasks[id - 1].take()
     })
     .expect("ICE: a running task has a slot");
@@ -679,7 +690,9 @@ unsafe fn fire_due_now() {
 
 #[path = "block_on.rs"]
 mod block_on;
-pub use block_on::{next_deadline, run_until_idle, start_root, stop, velt_rt_block_on, Root};
+pub use block_on::{
+    after_main, next_deadline, run_until_idle, start_root, stop, velt_rt_block_on, Root,
+};
 
 #[cfg(test)]
 #[path = "executor_tests.rs"]

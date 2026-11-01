@@ -1,0 +1,17 @@
+// An error escaping `main` is reported at once and ends the program: it does not wait for the
+// promises still running (the race's loser), as in Node.
+
+async function slow(): Promise<string> {
+  await sleep(50);
+  console.log("the loser finished");
+  return "slow";
+}
+
+async function fails(): Promise<string> {
+  await sleep(1);
+  throw new Error("bad");
+}
+
+async function main() {
+  console.log(await Promise.race([slow(), fails()]));
+}

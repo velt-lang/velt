@@ -20,6 +20,11 @@ pub fn run_main(velt_main: extern "C" fn() -> i32) -> i32 {
 /// test process (`cargo test`) would exit the process instead of unwinding.
 fn run_program(velt_main: extern "C" fn() -> i32) -> i32 {
     let code = velt_main();
+    // Tasks that can still make progress keep the program alive after `main` returns, but not
+    // after it failed (an uncaught error, an exit code), as natively and in Node.
+    if code == 0 {
+        crate::task::executor::after_main();
+    }
     io::flush_stdout();
     code
 }

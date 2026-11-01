@@ -65,8 +65,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
             let s = lw.temp(sync_root_ty(abi.ret, abi.out, throws));
             let root = super::cfunc(lw.cx.func(Work::SyncMainRoot));
             match lw.run_root(root, s) {
-                true => lw.sync_main_tail(s, ret, throws),
-                false => cint(0, Ty::I32),
+                Some(_) => lw.sync_main_tail(s, ret, throws),
+                None => cint(0, Ty::I32),
             }
         } else {
             lw.call_main(def, None)
@@ -132,20 +132,20 @@ impl<'c, 'h> FnLower<'c, 'h> {
     }
 
     /// The root task `poll` with its state in `s` (unpolled): natively `velt_rt_block_on`, and
-    /// true (the code after it follows); on a JS host `velt_rt_host_main`, and false (the runtime
-    /// runs the code after it, `MainFinish`; module docs).
-    fn run_root(&mut self, poll: Operand, s: vir::Local) -> bool {
+    /// the state's address (the code after it follows); on a JS host `velt_rt_host_main`, and
+    /// `None` (the runtime runs the code after it, `MainFinish`; module docs).
+    fn run_root(&mut self, poll: Operand, s: vir::Local) -> Option<Operand> {
         let a = self.addr(Place::local(s));
         if !super::host::js_host(&self.cx.target) {
-            self.call_rt(Rt::BlockOn, vec![poll, a], None);
-            return true;
+            self.call_rt(Rt::BlockOn, vec![poll, a.clone()], None);
+            return Some(a);
         }
         let (size, align) = self.cx.size_align(self.locals[s.0 as usize].ty);
         let finish = super::cfunc(self.cx.func(Work::MainFinish));
         let size = cint(size as i128, Ty::U64);
         let args = vec![poll, a, size, cint(align as i128, Ty::U64), finish];
         self.call_rt(Rt::HostMain, args, None);
-        false
+        None
     }
 
     /// `(state: ptr) -> i32`: the code after the root of `main` is done, on a JS host (module
@@ -196,11 +196,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
             .unwrap_or_else(|| super::ice("async main has no state layout"));
         let s = self.temp(Ty::Agg(info.state));
         self.init_state(&info, &Place::local(s), vec![]);
-        if !self.run_root(super::cfunc(info.poll), s) {
-            return cint(0, Ty::I32);
+        match self.run_root(super::cfunc(info.poll), s) {
+            Some(a) => self.async_main_tail(def, a),
+            None => cint(0, Ty::I32),
         }
-        let a = self.addr(Place::local(s));
-        self.async_main_tail(def, a)
     }
 
     /// The exit code of `async main` whose state is at `a`.

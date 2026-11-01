@@ -431,8 +431,10 @@ fn host_functions_under_node() {
 /// tests/wasm_host_async/main.vlt awaits host promises of every result type, a rejection as an
 /// `IoError`, promises settled out of order and interleaved with timers, drops a disposable and
 /// a `HostRef` held across awaits, and sleeps while the host's event loop runs (host.mjs counts
-/// its ticks); uncaught.vlt ends with a rejection nothing catches after it waited, and ends.vlt
-/// and sync_main.vlt end in later turns with `main`'s code, `process.exit` and exit code 13;
+/// its ticks); uncaught.vlt ends with a rejection nothing catches after it waited; ends.vlt,
+/// stuck.vlt and sync_main.vlt end in later turns with `main`'s code, `process.exit`, exit code
+/// 13, a spawned task waiting for a host promise after `main`, and an uncaught error reported at
+/// once while a host promise is pending;
 /// many.vlt runs thousands of turns, after which the wasm stack
 /// pointer and the memory are as they were (many.mjs); order.vlt's promises, microtasks and
 /// timers print what the native build prints. Debug and release mode.
@@ -461,37 +463,36 @@ fn async_host_functions_under_node() {
         .output()
         .expect("run velt");
     let order = String::from_utf8_lossy(&native.stdout).replace("\r\n", "\n");
-    assert_eq!(order, read("order.out"), "the native build's order");
+    assert_eq!(
+        order,
+        read("order.out"),
+        "the native build's order; stderr:\n{}",
+        String::from_utf8_lossy(&native.stderr)
+    );
     for mode in [None, Some("--release")] {
         let _ = std::fs::remove_dir_all(&work);
         std::fs::create_dir_all(&work).expect("work dir");
         let host = || Some(dir.join("host.mjs"));
-        for (program, runner, how, want) in [
+        // ends.vlt, by what `how()` returns: the end and the exit code.
+        let ends = [
+            ("return", "exit 7"),
+            ("exit", "exit 3"),
+            ("stuck", "exit 0"),
+            ("spawn", "background got 42\nexit 0"),
+            ("uncaught", "Uncaught Error: bad at ends.vlt:18:3\nexit 1"),
+        ]
+        .map(|(how, end)| {
+            let want = format!("ending by {how}\n{end}, 0 values held\n");
+            ("ends", host(), Some(how), want)
+        });
+        for (program, runner, how, want) in ends.into_iter().chain([
             ("main", host(), None, read("main.out")),
             ("uncaught", host(), None, read("uncaught.out")),
-            (
-                "ends",
-                host(),
-                Some("return"),
-                "ending by return\nexit 7, 0 values held\n".into(),
-            ),
-            (
-                "ends",
-                host(),
-                Some("exit"),
-                "ending by exit\nexit 3, 0 values held\n".into(),
-            ),
-            (
-                "ends",
-                host(),
-                Some("stuck"),
-                "ending by stuck\nexit 0, 0 values held\n".into(),
-            ),
             ("sync_main", host(), None, read("sync_main.out")),
             ("stuck", host(), None, read("stuck.out")),
             ("many", Some(dir.join("many.mjs")), None, read("many.out")),
             ("order", None, None, order.clone()),
-        ] {
+        ]) {
             let module = work.join(format!("{program}.wasm"));
             // Built where it was copied, so messages name it by its file name.
             let source = format!("{program}.vlt");

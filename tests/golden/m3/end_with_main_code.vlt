@@ -1,0 +1,14 @@
+// `main` returning an exit code other than 0 ends the program at once: the promises still
+// running do not keep it alive, as in Node with `process.exitCode` and an exit.
+
+async function slow(): Promise<string> {
+  await sleep(50);
+  console.log("the loser finished");
+  return "slow";
+}
+
+async function main(): Promise<i32> {
+  const winner = await Promise.race([slow(), Promise.resolve("fast")]);
+  console.log(`race ${winner}`);
+  return 7;
+}

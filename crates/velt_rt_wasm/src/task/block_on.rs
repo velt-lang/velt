@@ -37,12 +37,14 @@ fn wait_for_timers() -> bool {
     }
 }
 
-/// The root task `block_on` drives: its poll function, its state, and whether it finished.
+/// The root task `block_on` drives: its poll function, its state, whether it finished, and
+/// whether the code after it ran (`main` returned 0: the program goes on while tasks run).
 #[derive(Clone, Copy)]
 pub struct Root {
     poll: PollFn,
     state: *mut u8,
     done: bool,
+    after: bool,
 }
 
 impl Root {
@@ -55,6 +57,16 @@ impl Root {
     pub fn done(&self) -> bool {
         self.done
     }
+
+    /// Has `main` returned 0, with the program going on until its tasks are done?
+    pub fn after_main(&self) -> bool {
+        self.after
+    }
+
+    /// `main` returned 0: from now on the program ends once its tasks are done.
+    pub fn go_on_after_main(&mut self) {
+        self.after = true;
+    }
 }
 
 /// Start running tasks with the root task `poll` (state at `state`) queued.
@@ -66,18 +78,26 @@ pub fn start_root(poll: PollFn, state: *mut u8) -> Root {
         poll,
         state,
         done: false,
+        after: false,
     }
 }
 
-/// Run the microtasks, the ready tasks and the due timers until none is left. True once the
-/// program may end: the root finished, every started promise finished and no keep-alive
-/// reference (a ref'd timer) is held.
+/// Run the microtasks, the ready tasks and the due timers until none is left (false), or until
+/// what the program waits for is done (true): until `main` (the root) finished and the
+/// microtasks it queued ran, so the code after it reports an uncaught error at once, as on
+/// native targets; after `main` returned 0 ([`Root::after_main`]), until every task `spawn`
+/// started and every started promise finished and no keep-alive reference (a ref'd timer) is
+/// held, as native programs wait for them before they exit.
 pub unsafe fn run_until_idle(root: &mut Root) -> bool {
     loop {
         if root.done && with_exec(|e| e.micro.is_empty()) && !resuming() {
             crate::task::local::flush_unhandled();
+            if !root.after {
+                return true;
+            }
         }
-        if root.done && with_exec(|e| e.locals == 0 && e.keep_alive == 0) {
+        let quiet = with_exec(|e| e.locals == 0 && e.keep_alive == 0 && e.spawned.is_empty());
+        if root.after && quiet {
             return true;
         }
         fire_due_now();
@@ -112,11 +132,16 @@ pub fn stop() {
     set_running_word(false);
 }
 
+thread_local! {
+    /// The root `velt_rt_block_on` returned with, for the tasks after `main` ([`after_main`]).
+    static RETURNED: std::cell::Cell<Option<Root>> = const { std::cell::Cell::new(None) };
+}
+
 /// `async main`: drive the compiled root state machine (and every task it spawns) until the
-/// root is ready, every started promise finished and no keep-alive reference (a ref'd timer) is
-/// held, or until nothing can wake any of them (the program ends then, with exit code 0 when the
-/// root never finished, or 13 when it waits at a top-level `await`). Spawned tasks still running
-/// afterwards are abandoned.
+/// root is ready and the microtasks it queued ran, or until nothing can wake any task (the
+/// program ends then, with exit code 0 when the root never finished, or 13 when it waits at a
+/// top-level `await`). `velt_main` then runs the code after it; when `main` returned 0, the
+/// runtime runs the tasks on until they are done ([`after_main`]).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_block_on(poll: PollFn, state: *mut u8) {
     let mut root = start_root(poll, state);
@@ -125,5 +150,17 @@ pub unsafe extern "C" fn velt_rt_block_on(poll: PollFn, state: *mut u8) {
         // Nothing can settle the top-level `await` the root waits at, as Node ends.
         crate::panic::velt_rt_exit(crate::top_level_await::unfinished_exit_code());
     }
+    RETURNED.set(Some(root));
+}
+
+/// `main` returned 0 after `velt_rt_block_on`: run the tasks still running until they are done
+/// or nothing can wake them (natively and under WASI; a JS host runs them in its turns).
+pub fn after_main() {
+    let Some(mut root) = RETURNED.take() else {
+        return;
+    };
+    root.go_on_after_main();
+    // SAFETY: the executor's own loop, on its thread; the root is done and never polled again.
+    unsafe { while !run_until_idle(&mut root) && wait_for_timers() {} }
     stop();
 }

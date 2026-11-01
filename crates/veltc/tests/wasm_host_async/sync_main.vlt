@@ -1,9 +1,9 @@
-// A synchronous `main` that starts timers: they run in later turns, then the program ends with
-// `main`'s code (crates/veltc/tests/wasm_goldens.rs `async_host_functions_under_node`).
+// A synchronous `main` that starts timers: it returns 0, so they run in later turns before the
+// program ends (crates/veltc/tests/wasm_goldens.rs `async_host_functions_under_node`).
 
 function main(): i32 {
-  setTimeout(() => console.log("timer"), 1);
+  setTimeout(() => console.log("timer"), 30);
   queueMicrotask(() => console.log("microtask"));
   console.log("main returns");
-  return 5;
+  return 0;
 }

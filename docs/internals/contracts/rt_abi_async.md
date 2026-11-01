@@ -444,11 +444,15 @@ call `velt_rt_block_on`: it hands `main`'s root task to the runtime and returns.
 - `void velt_turn(void)` (export): a turn: run the microtasks, the ready tasks and the due timers
   until none is left, as `velt_rt_block_on` does between its sleeps, so Velt's own order is the
   native one; then ask for a wake-up at the earliest timer (every turn asks again: a host may
-  call early, as hosts round delays). When the program may end (the root is done, no started
-  promise is running and no keep-alive reference is held) or no timer or unsettled host promise
-  can wake a task any more, the program ends: `finish` (or exit code 13 when the root waits at a
-  top-level `await` nothing can settle), then the import `velt.done(code)`. No-op once the
-  program ended.
+  call early, as hosts round delays). The end follows native programs (velt_rt `entry.rs`
+  `finish`): once the root is done and the microtasks it queued ran, the runtime runs `finish`
+  at once (an uncaught error is reported then, whatever is still pending). A code other than 0
+  ends the program; with 0 the turns go on until no task `spawn` started and no started promise
+  is running and no keep-alive reference is held. When no timer or unsettled host promise can
+  wake a task any more, the program ends too (exit code 13 when the root waits at a top-level
+  `await` nothing can settle). Then the import `velt.done(code)`. No-op once the program ended.
+  WASI and the unit tests' `velt_rt_block_on` return to `velt_main` at the same point, and the
+  runtime runs the tasks on after a `main` that returned 0, sleeping between turns.
 - `void velt_settle(u32 id)` (export): host promise `id` settled: wake the task its leaf
   registered (none if the leaf is gone), then `velt_turn()`.
 - `velt_start` (export) runs `velt_main`; a `main` that hands no root over ends at once, with
