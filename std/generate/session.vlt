@@ -13,6 +13,12 @@ export class Session {
   params: Map<string, string[]> = new Map();
   queue: Pending[] = [];
   next: i64 = 0;
+  /** What starts every record (the compiler's input names it). */
+  #marker: string;
+
+  constructor(marker: string) {
+    this.#marker = marker;
+  }
 
   instance(fn: string, args: i64[]): string {
     const k = this.key + " " + fn + "<" + args.join(",") + ">";
@@ -30,16 +36,20 @@ export class Session {
     p.args = args;
     this.queue.push(p);
     // Tells the compiler about it before its body comes.
-    frame(`instance ${name} ${this.key} ${fn} ${args.join(",")}`, "");
+    this.frame(`instance ${name} ${this.key} ${fn} ${args.join(",")}`, "");
     return name;
   }
 
   report(kind: string, name: string, at: i64, message: string): void {
-    frame(`${kind} ${name} ${at}`, message);
+    this.frame(`${kind} ${name} ${at}`, message);
   }
-}
 
-/** Writes one record: a header line, then `text` with its length in bytes. */
-export function frame(header: string, text: string): void {
-  process.stdout.write(`#${header} ${Buffer.byteLength(text)}\n${text}\n`);
+  /**
+   * Writes one record: `#<marker> <header> <length>`, a newline, then `text` (`length` bytes)
+   * and a newline. The compiler skips anything a generator prints between records, which
+   * cannot start one: generators never see the marker.
+   */
+  frame(header: string, text: string): void {
+    process.stdout.write(`\n#${this.#marker} ${header} ${Buffer.byteLength(text)}\n${text}\n`);
+  }
 }

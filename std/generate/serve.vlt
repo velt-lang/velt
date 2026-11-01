@@ -8,7 +8,7 @@ import { Method } from "velt/generate/method";
 import { Output } from "velt/generate/output";
 import { Pending } from "velt/generate/pending";
 import { InstanceRequest } from "velt/generate/instance_request";
-import { Session, frame } from "velt/generate/session";
+import { Session } from "velt/generate/session";
 import { Type } from "velt/generate/type";
 
 /** A generated function the host can generate: its generator's key, its name, the generator. */
@@ -132,7 +132,7 @@ function readType(id: i64, v: JsonValue): Type {
  */
 export function serve(generators: GeneratorEntry[]): void {
   const doc = JsonValue.parse(readAllSync());
-  const s = new Session();
+  const s = new Session(str(doc.get("marker")));
   s.prefix = str(doc.get("prefix"));
   const types = doc.get("types");
   if (types != null) {
@@ -190,15 +190,15 @@ export function serve(generators: GeneratorEntry[]): void {
       } catch (e) {
         s.report("error", p.name, -1, `the generator of \`${p.fn}\` threw: ${e.message}`);
       }
-      frame(`body ${p.name}`, out.takeBody());
+      s.frame(`body ${p.name}`, out.takeBody());
       const helpers = out.takeHelpers();
       if (helpers.length > 0) {
-        frame(`helper ${p.name}`, helpers);
+        s.frame(`helper ${p.name}`, helpers);
       }
     }
     if (!found) {
       s.report("error", p.name, -1, `the generator module exports no function \`${p.fn}\``);
     }
   }
-  frame("done", "");
+  s.frame("done", "");
 }

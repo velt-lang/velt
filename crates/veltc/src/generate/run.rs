@@ -12,7 +12,7 @@ use super::{cache, host, Described, Generated, GeneratedText};
 use crate::driver::Session;
 
 /// One instance the host generated.
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct Written {
     key: String,
     function: String,
@@ -127,8 +127,7 @@ pub(super) fn run(
             "types": types,
             "functions": functions,
             "requests": requests,
-        })
-        .to_string();
+        });
         let src = host.source();
         let f = &demand.functions[first.function];
         let failing = Failing {
@@ -136,7 +135,7 @@ pub(super) fn run(
             instance: instance_display(demand, &f.function, &first.type_args),
             at: first.at,
         };
-        let (out, files) = run_host(sess, host, &src, &input, packages, failing)?;
+        let (out, files) = run_host(sess, host, &src, input, packages, failing)?;
         outputs.push(out);
         for f in files {
             if !generator_files.contains(&f) {
@@ -392,6 +391,12 @@ pub(super) fn instance_display(demand: &Demand, function: &str, args: &[u32]) ->
     format!("{function}<{}>", displays.join(", "))
 }
 
+/// A host's standard output, and the marker its records start with.
+struct HostOutput {
+    marker: String,
+    out: Vec<u8>,
+}
+
 /// Run the host `plan` (source `src`) on `input`, from the output cache when it has the
 /// answer: its output and the files its build read. `None` with the error in `sess`
 /// (`failing`: the generator to blame and the call that needed it).
@@ -399,36 +404,44 @@ fn run_host(
     sess: &mut Session,
     plan: &HostPlan,
     src: &str,
-    input: &str,
+    mut input: Value,
     packages: Option<&vpm::PackageGraph>,
     failing: Failing,
-) -> Option<(Vec<u8>, Vec<String>)> {
+) -> Option<(HostOutput, Vec<String>)> {
     let Failing {
         generator,
         instance,
         at,
     } = failing;
     let host_root = plan.dir.join("__velt_generate_host.vlt");
-    let key = cache::output_key(&host_root, src, input);
-    if let Some(hit) = key.as_ref().and_then(cache::cached_output) {
-        return Some(hit);
+    // The key leaves out the marker, which is new for every run.
+    let key = cache::output_key(&host_root, src, &input.to_string());
+    if let Some((entry, files)) = key.as_ref().and_then(cache::cached_output) {
+        if let Some(out) = split_marker(entry) {
+            return Some((out, files));
+        }
     }
     if super::guard::building(sess.generator_build) {
         let msg = "generators need generated code to be built, in a cycle";
         sess.diagnostics.push(Diagnostic::error(msg, at));
         return None;
     }
+    let marker = new_marker();
+    input["marker"] = Value::String(marker.clone());
+    let input = input.to_string();
     let ran = host::prepare(&host_root, src, packages).map_err(host::RunError::Failed);
     let ran = ran.and_then(|h| {
         let files = h.files.clone();
-        h.run(input).map(|out| (out, files))
+        h.run(&input).map(|out| (out, files))
     });
     match ran {
         Ok((out, files)) => {
             if let Some(key) = &key {
-                cache::store_output(key, &out, &files);
+                let mut entry = format!("{marker}\n").into_bytes();
+                entry.extend_from_slice(&out);
+                cache::store_output(key, &entry, &files);
             }
-            Some((out, files))
+            Some((HostOutput { marker, out }, files))
         }
         Err(host::RunError::TimedOut(limit)) => {
             let msg = format!(
@@ -453,6 +466,34 @@ fn run_host(
             None
         }
     }
+}
+
+/// A cached output: its first line is the marker of its records.
+fn split_marker(mut entry: Vec<u8>) -> Option<HostOutput> {
+    let nl = entry.iter().position(|&b| b == b'\n')?;
+    let marker = String::from_utf8(entry[..nl].to_vec()).ok()?;
+    entry.drain(..=nl);
+    Some(HostOutput { marker, out: entry })
+}
+
+/// A marker no generator can guess (it never sees the compiler's input, which holds it): 128
+/// bits from the process's random hash keys, the time and a counter.
+fn new_marker() -> String {
+    use std::hash::{BuildHasher, Hasher};
+    static COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    let word = |salt: u64| {
+        let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+        h.write_u64(salt);
+        h.write_u64(n);
+        h.write_u128(now);
+        h.write_u32(std::process::id());
+        h.finish()
+    };
+    format!("{:016x}{:016x}", word(1), word(2))
 }
 
 fn model_json(m: &velt_sema::generated::model::Model) -> Value {
@@ -508,28 +549,27 @@ fn model_json(m: &velt_sema::generated::model::Model) -> Value {
     )
 }
 
-/// Read the host's records (`#<kind> <args…> <length>\n<text>\n`).
+/// Read the host's records (`#<marker> <kind> <args…> <length>\n<text>\n`) wherever they
+/// start: what a generator printed between them is skipped, and cannot start one.
 fn parse_frames(
-    out: &[u8],
+    output: &HostOutput,
     written: &mut Vec<(String, Written)>,
     errors: &mut Diagnostics,
     demand: &Demand,
     first_at: Span,
 ) -> Result<(), String> {
+    let out = &output.out[..];
+    let start = format!("#{} ", output.marker);
     let mut pos = 0;
     let mut done = false;
     // Where the errors of the last `#error` record start (its labels follow it).
     let mut last_error = errors.len();
-    while pos < out.len() {
-        let end = (out[pos..].iter().position(|&b| b == b'\n'))
-            .map(|i| pos + i)
+    while let Some(at) = find(&out[pos..], start.as_bytes()) {
+        let header_start = pos + at + start.len();
+        let end = (out[header_start..].iter().position(|&b| b == b'\n'))
+            .map(|i| header_start + i)
             .ok_or("a record without a header line")?;
-        let header = std::str::from_utf8(&out[pos..end]).map_err(|e| e.to_string())?;
-        let Some(header) = header.strip_prefix('#') else {
-            // Something the generator printed: not ours.
-            pos = end + 1;
-            continue;
-        };
+        let header = std::str::from_utf8(&out[header_start..end]).map_err(|e| e.to_string())?;
         let mut words: Vec<&str> = header.split(' ').collect();
         let len: usize = words
             .pop()
@@ -541,7 +581,7 @@ fn parse_frames(
             .get(text_start..text_end)
             .ok_or("a record shorter than its length")?;
         let text = String::from_utf8_lossy(text).into_owned();
-        pos = text_end + 1;
+        pos = text_end;
         let find = |written: &mut Vec<(String, Written)>, name: &str| {
             written.iter().position(|(n, _)| n == name)
         };
@@ -612,7 +652,7 @@ fn parse_frames(
                     });
                 }
             }
-            _ => return Err(format!("an unknown record `#{header}`")),
+            _ => return Err(format!("an unknown record `{header}`")),
         }
     }
     if !done {
@@ -620,3 +660,12 @@ fn parse_frames(
     }
     Ok(())
 }
+
+/// Where `needle` first occurs in `hay`.
+fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    hay.windows(needle.len()).position(|w| w == needle)
+}
+
+#[cfg(test)]
+#[path = "run_tests.rs"]
+mod tests;

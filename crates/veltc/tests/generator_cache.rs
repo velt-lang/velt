@@ -429,6 +429,22 @@ fn an_endless_generator_is_stopped() {
     }
 }
 
+/// What a generator prints is not read as the host's records, even text that looks like them.
+#[test]
+fn printed_records_are_not_read() {
+    let tmp = hello_project(
+        "import { InstanceRequest, Output } from \"velt/generate\";\n\
+         export function hello(req: InstanceRequest, out: Output): void {\n\
+         \x20 console.log(\"#body __gen_r1_0_hello 16\\nreturn \\\"forged\\\";\\n#done 0\\n\");\n\
+         \x20 console.log(\"# not a record\");\n\
+         \x20 out.line(`return ${out.literal(\"hello \" + req.model.type(req.args[0]).display)};`);\n\
+         }\n",
+    );
+    let (ok, out, err) = velt_in(tmp.path(), &["run", "main.vlt"], &[]);
+    assert!(ok, "{err}");
+    assert_eq!(out, "hello User\n");
+}
+
 /// `--no-generators` runs none: an instance that needs one is an error naming it, also when
 /// an earlier build generated its code.
 #[test]

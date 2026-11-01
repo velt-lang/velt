@@ -613,6 +613,10 @@ goldens:
   within 30 s ``, naming the instance), and nothing of the run is cached (`generate/host.rs`).
   The limit covers the run of the host, not its build (a JIT host without a build cache
   compiles inside it, so the limit includes that).
+- The host's records start with a marker the compiler draws for each run and passes in the
+  input (`#<marker> <kind> … <length>`), which generators never see: what a generator prints
+  is skipped, and cannot forge a record of another generator. The output cache stores the
+  marker with the output, and its key leaves the marker out.
 - `--no-generators` (§11) on `velt build`, `velt run` and `velt check`: one check with no
   offered or generated code, each instance that needs code an error naming its generator
   (`generate::check_without_generators`); a build with it is never a stamp no-op.
