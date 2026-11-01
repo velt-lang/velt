@@ -179,3 +179,10 @@ the line of the generated code in a note.
 Generators are built once and cached, and so is what they write: a build that needs the same
 code for the same types reuses it without running the generator. Changing a generator, or a
 type it was given, runs it again.
+
+A run of the generators may take 30 seconds; one that takes longer (an endless loop) is
+stopped and reported at the call that needed it (`` the generator `./gen` did not finish within
+30 s ``), with the instance it was generating, and nothing of it is cached.
+`VELT_GENERATOR_TIMEOUT=<seconds>` changes the limit (`0`: none). `velt build
+--no-generators` (and `velt check`, `velt run`) runs none: each call that needs generated code
+is an error naming the generator, for audits.

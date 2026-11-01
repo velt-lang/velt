@@ -40,6 +40,7 @@ pub(super) fn parse_build(
             "--release" => b.release = true,
             "-g" => b.debug_info = true,
             "--locked" => b.locked = true,
+            "--no-generators" => b.no_generators = true,
             "--json" if cmd == "build" => b.json = true,
             "-v" | "--verbose" => b.verbose = true,
             "--timings" => {

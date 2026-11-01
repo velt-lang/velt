@@ -8,8 +8,8 @@ mod environment;
 mod options;
 use environment::ENVIRONMENT;
 use options::{
-    AFFECTED, BACKEND, CPU, DEBUG_INFO, FAIL_FAST, LOCKED, MEMBER, PACKAGE, RELEASE, REPORT,
-    TARGET, TEMPLATE, TIMINGS, VERBOSE, WORKSPACE,
+    AFFECTED, BACKEND, CPU, DEBUG_INFO, FAIL_FAST, LOCKED, MEMBER, NO_GENERATORS, PACKAGE, RELEASE,
+    REPORT, TARGET, TEMPLATE, TIMINGS, VERBOSE, WORKSPACE,
 };
 
 /// One `velt` command's help.
@@ -108,6 +108,7 @@ pub const COMMANDS: &[CommandHelp] = &[
             BACKEND,
             ("--emit <kind>", "vir | llvm (print VIR / LLVM IR and stop) | obj (object file only) | exe"),
             LOCKED,
+            NO_GENERATORS,
             (
                 "--json",
                 "the output path, whether it has debug info, and the diagnostics as one JSON \
@@ -135,7 +136,7 @@ pub const COMMANDS: &[CommandHelp] = &[
         ],
         about: "Exits with the program's exit code. Arguments after the file (or after `--`) go \
                 to the program; Velt's options come before the file.",
-        options: &[MEMBER, RELEASE, DEBUG_INFO, TARGET, CPU, BACKEND, LOCKED, VERBOSE],
+        options: &[MEMBER, RELEASE, DEBUG_INFO, TARGET, CPU, BACKEND, LOCKED, NO_GENERATORS, VERBOSE],
         examples: &[
             ("velt run", "run the current package"),
             ("velt run hello.vlt", "run one file"),
@@ -176,6 +177,7 @@ pub const COMMANDS: &[CommandHelp] = &[
             ),
             ("--std", "check all of the standard library ($VELT_STD), every definition"),
             LOCKED,
+            NO_GENERATORS,
             VERBOSE,
         ],
         examples: &[

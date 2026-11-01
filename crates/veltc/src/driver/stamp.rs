@@ -83,6 +83,7 @@ pub(super) fn options_key(opts: &BuildOptions, backend: Backend) -> Key {
         backend: _,
         report_numbers,
         debug_vars,
+        no_generators: _, // A build with it is never stamped.
     } = opts;
     h.part(format!("{:?}", vpm::relpath::absolute(input)).as_bytes());
     h.part(format!("{root_source:?} {test_harness}").as_bytes());

@@ -10,6 +10,8 @@
 use std::io::{Read, Write};
 use std::path::Path;
 use std::process::{Command, ExitCode, Stdio};
+use std::sync::mpsc::RecvTimeoutError;
+use std::time::{Duration, Instant};
 
 use crate::driver::{self, stamp, Artifact, BuildError, BuildOptions, Session};
 
@@ -119,40 +121,133 @@ fn jit_command(root: &Path, src: &str) -> Result<Command, String> {
     Ok(cmd)
 }
 
+/// How long one run of a generator host may take, in seconds (`0`: no limit).
+pub(super) const TIMEOUT_ENV: &str = "VELT_GENERATOR_TIMEOUT";
+
+/// The limit without [`TIMEOUT_ENV`].
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Why a host run gave no output.
+pub(super) enum RunError {
+    /// It did not build, did not start or failed: the message, with the host's errors.
+    Failed(String),
+    /// It ran longer than the limit and was stopped.
+    TimedOut(Duration),
+}
+
+/// The time a host run may take: [`TIMEOUT_ENV`], else [`DEFAULT_TIMEOUT`]; `None`: no limit.
+fn timeout() -> Option<Duration> {
+    let Some(v) = std::env::var_os(TIMEOUT_ENV) else {
+        return Some(DEFAULT_TIMEOUT);
+    };
+    let secs = match v.to_str().map(str::trim).map(str::parse::<f64>) {
+        Some(Ok(s)) if s >= 0.0 && s.is_finite() => s,
+        _ => {
+            crate::style::warning(&format!(
+                "{TIMEOUT_ENV} must be a number of seconds; using {}",
+                show_duration(DEFAULT_TIMEOUT)
+            ));
+            return Some(DEFAULT_TIMEOUT);
+        }
+    };
+    (secs > 0.0).then(|| Duration::from_secs_f64(secs))
+}
+
+/// `30 s`, `1.5 s` or `200 ms`.
+pub(super) fn show_duration(d: Duration) -> String {
+    let ms = d.as_millis();
+    match ms {
+        _ if ms < 1000 => format!("{ms} ms"),
+        _ if ms.is_multiple_of(1000) => format!("{} s", ms / 1000),
+        _ => format!("{} s", ms as f64 / 1000.0),
+    }
+}
+
 impl Host {
-    /// Run the host on `input` (the requests) and return its standard output.
-    pub fn run(mut self, input: &str) -> Result<Vec<u8>, String> {
+    /// Run the host on `input` (the requests) and return its standard output. A host that runs
+    /// longer than [`timeout`] is killed.
+    pub fn run(mut self, input: &str) -> Result<Vec<u8>, RunError> {
+        let failed = |e: String| RunError::Failed(e);
+        let deadline = timeout().map(|t| (Instant::now() + t, t));
         let mut child = (self.command)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|e| format!("cannot start the generator host: {e}"))?;
-        let mut stdin = child.stdin.take().ok_or("no stdin")?;
+            .map_err(|e| failed(format!("cannot start the generator host: {e}")))?;
+        let (Some(mut stdin), Some(mut stdout), Some(mut stderr)) =
+            (child.stdin.take(), child.stdout.take(), child.stderr.take())
+        else {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(failed("the generator host has no standard streams".into()));
+        };
         let input = input.to_string();
         let writer = std::thread::spawn(move || {
             let _ = stdin.write_all(input.as_bytes());
         });
-        let mut out = vec![];
-        let mut err = vec![];
-        let mut stdout = child.stdout.take().ok_or("no stdout")?;
-        let mut stderr = child.stderr.take().ok_or("no stderr")?;
         let errs = std::thread::spawn(move || {
+            let mut err = vec![];
             let _ = stderr.read_to_end(&mut err);
             err
         });
-        let _ = stdout.read_to_end(&mut out);
-        let status = child.wait().map_err(|e| e.to_string())?;
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut out = vec![];
+            let _ = stdout.read_to_end(&mut out);
+            let _ = tx.send(out);
+        });
+        // Its output ends when it exits (or closes it); then it is waited for, within what is
+        // left of the limit.
+        let out = match deadline {
+            Some((at, _)) => rx.recv_timeout(at.saturating_duration_since(Instant::now())),
+            None => rx.recv().map_err(|_| RecvTimeoutError::Disconnected),
+        };
+        let status = match out {
+            Err(RecvTimeoutError::Timeout) => None,
+            Ok(_) | Err(RecvTimeoutError::Disconnected) => wait_until(&mut child, deadline),
+        };
+        let Some(status) = status else {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = writer.join();
+            let _ = errs.join();
+            let limit = deadline.map_or(DEFAULT_TIMEOUT, |(_, t)| t);
+            return Err(RunError::TimedOut(limit));
+        };
+        let status = status.map_err(|e| failed(e.to_string()))?;
         let _ = writer.join();
         let err = errs.join().unwrap_or_default();
         if !status.success() {
             let err = String::from_utf8_lossy(&err);
-            return Err(format!(
+            return Err(failed(format!(
                 "the generator host exited with {status}:\n{}",
                 err.trim_end()
-            ));
+            )));
         }
-        Ok(out)
+        Ok(out.unwrap_or_default())
+    }
+}
+
+/// The exit status of `child`, waiting at most until `deadline`; `None` when it runs past it.
+fn wait_until(
+    child: &mut std::process::Child,
+    deadline: Option<(Instant, Duration)>,
+) -> Option<std::io::Result<std::process::ExitStatus>> {
+    let Some((at, _)) = deadline else {
+        return Some(child.wait());
+    };
+    // Its output has ended, so it is exiting: poll briefly.
+    let mut pause = Duration::from_millis(1);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Some(Ok(status)),
+            Ok(None) if Instant::now() >= at => return None,
+            Ok(None) => {}
+            Err(e) => return Some(Err(e)),
+        }
+        std::thread::sleep(pause);
+        pause = (pause * 2).min(Duration::from_millis(20));
     }
 }
 

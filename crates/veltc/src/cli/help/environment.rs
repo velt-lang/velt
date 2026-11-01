@@ -51,6 +51,10 @@ pub(super) const ENVIRONMENT: &[(&str, &str)] = &[
         "`off`: compile even when nothing changed since the last build of the same output",
     ),
     (
+        "VELT_GENERATOR_TIMEOUT",
+        "seconds one run of the source generators may take before it is stopped (default 30; `0`: no limit)",
+    ),
+    (
         "VELT_LLVM_BIN",
         "LLVM bin directory with opt/llc for WebAssembly (default: rustup's llvm-tools)",
     ),

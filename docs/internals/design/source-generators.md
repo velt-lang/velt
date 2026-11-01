@@ -608,6 +608,14 @@ goldens:
   executable in the build cache (`generate/host.rs`), and the generators' files in the
   program's build stamp.
 - The no-I/O rule (§5): `driver::check_generator_host`, from what the generators reach.
+- A host run's time limit (§5): 30 s, `VELT_GENERATOR_TIMEOUT` seconds (`0`: none); a host
+  that runs longer is killed and reported at the call (`` the generator `…` did not finish
+  within 30 s ``, naming the instance), and nothing of the run is cached (`generate/host.rs`).
+  The limit covers the run of the host, not its build (a JIT host without a build cache
+  compiles inside it, so the limit includes that).
+- `--no-generators` (§11) on `velt build`, `velt run` and `velt check`: one check with no
+  offered or generated code, each instance that needs code an error naming its generator
+  (`generate::check_without_generators`); a build with it is never a stamp no-op.
 - Generator modules resolved as imports of the declaring module: relative, package, std.
 - The model's methods (§4): `Type.methods` lists the hooks std's operations call by name
   (`toJSON`, `toString`, `[util.inspect.custom]`) when a class has one callable that way (velt_sema

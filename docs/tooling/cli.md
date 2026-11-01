@@ -59,10 +59,10 @@ argument doesn't go with a selection.
 ```
 velt build [<file.vlt>] [-o <out>] [--release] [-g] [--target <triple>] [--cpu <name>]
            [--backend cranelift|llvm] [--emit vir|llvm|obj|exe] [--locked] [--json] [-v]
-           [--timings] [--report numbers]
+           [--timings] [--report numbers] [--no-generators]
 velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--cpu <name>]
            [--backend cranelift|llvm] [--locked] [-v] [--timings] [--report numbers]
-           [-- <program args>...]
+           [--no-generators] [-- <program args>...]
 ```
 
 - **Debug builds** (the default) use Cranelift: fast to compile, with line tables for debuggers
@@ -122,6 +122,14 @@ velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--cpu <name>]
   numbers: 1 `number` variable in loops stays doubles
     grid.vlt:7:7: `s`: it may hold a fraction
   ```
+- `--no-generators` runs no [source generator](../reference/source-generators.md), for
+  audits: each call that needs generated code is an error naming the generator that would
+  write it (`` `hello<User>` needs code from the generator `./gen` ``), also when an
+  earlier build generated it. Std's `JSON.stringify`, `JSON.parse`, `deepEqual` and `toEqual`
+  are generated too.
+- A run of the source generators that takes longer than 30 seconds (`VELT_GENERATOR_TIMEOUT`
+  seconds; `0`: no limit) is stopped, and reported as `` the generator `./gen` did not finish
+  within 30 s ``, naming the instance it was generating; nothing of it is cached.
 - `run` exits with the program's exit code. As with `node file.js a b`, the arguments after the
   file go to the program (`velt run app.vlt --port 8080`), so options for Velt come before
   the file. Without a file (the package's entry) program arguments follow `--`
@@ -182,7 +190,7 @@ A build never compiles the same thing twice:
 ## `velt check`
 
 ```
-velt check [<file.vlt>] [--json] [--locked] [-v]
+velt check [<file.vlt>] [--json] [--locked] [--no-generators] [-v]
 velt check --ts-compat [<file|dir>...] [--json] [--locked] [-v]
 velt check --std [--json] [-v]
 ```
@@ -217,6 +225,7 @@ It exits with 0 when there are no errors (warnings are allowed) and with 1 when 
   `message`, `location` (`file`, 1-based `line`/`column`, `endLine`/`endColumn`), further
   `labels` and `notes`, plus `code` and `fix` (`null` except for `--ts-compat` findings).
 - `-v` prints per-stage timings.
+- `--no-generators` runs no source generator, as for [`velt build`](#velt-build-and-velt-run).
 - `--std` checks the whole standard library (`$VELT_STD`, else the toolchain's): every file
   but its tests, every definition, also those no program reaches. A program checks only the std
   code it uses, and may import only std's public modules, so this is what the standard
@@ -582,6 +591,7 @@ velt completions powershell >> $PROFILE                # PowerShell
 | `VELT_BUILD_CACHE` | the [build cache](#build-cache)'s directory (default `$VELT_HOME/build-cache`); `off` turns it off |
 | `VELT_BUILD_CACHE_SIZE` | how large the build cache may grow (`500M`, `10G`; default `2G`) before the code used least recently is removed |
 | `VELT_BUILD_STAMP` | `off`: compile even when no input changed since the last build of the same output |
+| `VELT_GENERATOR_TIMEOUT` | seconds one run of the [source generators](../reference/source-generators.md) may take before it is stopped and reported (default `30`; decimals allowed; `0`: no limit) |
 | `VELT_RT_LIB` | runtime library (default: next to `velt`, or `<prefix>/lib` when installed) |
 | `VELT_RT_LINK` | `static`: debug builds link the static runtime instead of the shared one ([Platforms](platforms.md)) |
 | `VELT_NATIVE_FROM_SOURCE` | `1`: build a package's native library from source when no prebuilt one exists ([Packages](packages.md)) |

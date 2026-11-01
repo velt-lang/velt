@@ -18,6 +18,10 @@ pub(super) const BACKEND: (&str, &str) = (
     "cranelift | llvm (default: llvm for --release when clang is found)",
 );
 pub(super) const LOCKED: (&str, &str) = ("--locked", "fail if velt.lock.json would change");
+pub(super) const NO_GENERATORS: (&str, &str) = (
+    "--no-generators",
+    "run no source generator: code that needs one is an error naming it (for audits)",
+);
 pub(super) const VERBOSE: (&str, &str) = ("-v, --verbose", "print per-stage timings to stderr");
 pub(super) const TIMINGS: (&str, &str) = (
     "--timings",

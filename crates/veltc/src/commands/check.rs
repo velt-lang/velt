@@ -95,7 +95,8 @@ fn resolve(
         }
         None => package_scope().map_err(BuildError::Failed)?,
     };
-    let opts = options_for(&input, args.locked)?;
+    let mut opts = options_for(&input, args.locked)?;
+    opts.no_generators = args.no_generators;
     Ok((opts, scope, same_path))
 }
 

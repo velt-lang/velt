@@ -130,9 +130,13 @@ pub(super) fn run(
         })
         .to_string();
         let src = host.source();
-        let at = first.at;
-        let generator = &demand.functions[first.function].generator;
-        let (out, files) = run_host(sess, host, &src, &input, packages, (generator, at))?;
+        let f = &demand.functions[first.function];
+        let failing = Failing {
+            generator: &f.generator,
+            instance: instance_display(demand, &f.function, &first.type_args),
+            at: first.at,
+        };
+        let (out, files) = run_host(sess, host, &src, &input, packages, failing)?;
         outputs.push(out);
         for f in files {
             if !generator_files.contains(&f) {
@@ -142,7 +146,8 @@ pub(super) fn run(
     }
     let mut errors: Diagnostics = vec![];
     for output in &outputs {
-        if let Err(msg) = parse_frames(output, &mut written, &mut errors, demand, first_at) {
+        let read = parse_frames(output, &mut written, &mut errors, demand, first_at);
+        if let Err(msg) = read {
             let d = Diagnostic::error("a generator's output could not be read", first_at)
                 .with_note(msg);
             sess.diagnostics.push(d);
@@ -370,6 +375,23 @@ fn locate_generator(
     Some((file, decl.parent()?.to_path_buf(), spec.to_string()))
 }
 
+/// The generator a failed host run is blamed on, the instance it ran for and the call that
+/// needed it.
+struct Failing<'a> {
+    generator: &'a str,
+    instance: String,
+    at: Span,
+}
+
+/// `fn<T, U>` for an instance of `function` at model types `args`.
+pub(super) fn instance_display(demand: &Demand, function: &str, args: &[u32]) -> String {
+    let displays: Vec<&str> = (args.iter())
+        .filter_map(|a| demand.model.types.get(*a as usize))
+        .map(|t| t.display.as_str())
+        .collect();
+    format!("{function}<{}>", displays.join(", "))
+}
+
 /// Run the host `plan` (source `src`) on `input`, from the output cache when it has the
 /// answer: its output and the files its build read. `None` with the error in `sess`
 /// (`failing`: the generator to blame and the call that needed it).
@@ -379,9 +401,13 @@ fn run_host(
     src: &str,
     input: &str,
     packages: Option<&vpm::PackageGraph>,
-    failing: (&str, Span),
+    failing: Failing,
 ) -> Option<(Vec<u8>, Vec<String>)> {
-    let (generator, at) = failing;
+    let Failing {
+        generator,
+        instance,
+        at,
+    } = failing;
     let host_root = plan.dir.join("__velt_generate_host.vlt");
     let key = cache::output_key(&host_root, src, input);
     if let Some(hit) = key.as_ref().and_then(cache::cached_output) {
@@ -392,7 +418,8 @@ fn run_host(
         sess.diagnostics.push(Diagnostic::error(msg, at));
         return None;
     }
-    let ran = host::prepare(&host_root, src, packages).and_then(|h| {
+    let ran = host::prepare(&host_root, src, packages).map_err(host::RunError::Failed);
+    let ran = ran.and_then(|h| {
         let files = h.files.clone();
         h.run(input).map(|out| (out, files))
     });
@@ -403,7 +430,23 @@ fn run_host(
             }
             Some((out, files))
         }
-        Err(msg) => {
+        Err(host::RunError::TimedOut(limit)) => {
+            let msg = format!(
+                "the generator `{generator}` did not finish within {}",
+                host::show_duration(limit)
+            );
+            let d = Diagnostic::error(msg, at)
+                .with_note(format!(
+                    "it was generating `{instance}`; its process was stopped"
+                ))
+                .with_note(format!(
+                    "`{}=<seconds>` sets how long a generator may run",
+                    host::TIMEOUT_ENV
+                ));
+            sess.diagnostics.push(d);
+            None
+        }
+        Err(host::RunError::Failed(msg)) => {
             let d =
                 Diagnostic::error(format!("the generator `{generator}` failed"), at).with_note(msg);
             sess.diagnostics.push(d);

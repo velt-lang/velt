@@ -45,6 +45,9 @@ pub(crate) fn check(
     opts: CheckOptions,
     packages: Option<&vpm::PackageGraph>,
 ) -> Option<hir::Program> {
+    if sess.no_generators {
+        return check_without_generators(sess, modules, root, opts);
+    }
     let declares = modules.iter().any(declares_generated);
     // Absolute: the offer is the program's, not that of whichever program has the same path
     // relative to its working directory.
@@ -69,6 +72,41 @@ pub(crate) fn check(
     sess.generator_inputs
         .extend(std::mem::take(&mut st.offer.generator_files));
     Some(program)
+}
+
+/// `--no-generators` (docs/internals/design/source-generators.md §11): one check, with no
+/// generated code offered or generated; each instance that needs code is an error naming the
+/// generator that would write it.
+fn check_without_generators(
+    sess: &mut Session,
+    modules: &[SourceModule],
+    root: usize,
+    opts: CheckOptions,
+) -> Option<hir::Program> {
+    let t = Instant::now();
+    let (out, diags) =
+        velt_sema::check_generating(modules, root, opts, &GenInput::default(), &[], None);
+    sess.timings.push(("sema", t.elapsed()));
+    sess.diagnostics.extend(diags);
+    let demand = match out {
+        Some(Checked::Program(p)) => return Some(*p),
+        Some(Checked::Demand(d)) => d,
+        Some(Checked::Again) | None => return None,
+    };
+    for r in &demand.requests {
+        let f = &demand.functions[r.function];
+        let instance = run::instance_display(&demand, &f.function, &r.type_args);
+        let msg = format!(
+            "`{instance}` needs code from the generator `{}`, and `--no-generators` runs none",
+            f.generator
+        );
+        let d = Diagnostic::error(msg, r.at).with_note(format!(
+            "`{}` is declared `generated` in `{}`",
+            f.function, f.module
+        ));
+        sess.diagnostics.push(d);
+    }
+    None
 }
 
 /// One check of `modules` with the offered generated modules appended: the program when they
