@@ -130,6 +130,10 @@ pub(super) enum Rt {
     ChanTrySend,
     ChanTryReceive,
     BlockOn,
+    /// Hand the root of `main` to the turns a JS host drives (entry.rs).
+    HostMain,
+    /// The leaf of a host promise (async host functions).
+    HostPromise,
     Spawn,
     SpawnTransfer,
     SpawnFut,
@@ -313,6 +317,8 @@ impl Rt {
             Rt::ChanTrySend => f("velt_rt_chan_try_send", vec![U64, Ptr, U64, Ptr], Bool),
             Rt::ChanTryReceive => f("velt_rt_chan_try_receive", vec![U64, Ptr, U64, U64], Unit),
             Rt::BlockOn => f("velt_rt_block_on", vec![Ptr, Ptr], Unit),
+            Rt::HostMain => f("velt_rt_host_main", vec![Ptr, Ptr, U64, U64, Ptr], Unit),
+            Rt::HostPromise => f("velt_rt_host_promise", vec![U32], Ptr),
             Rt::Spawn => f(
                 "velt_rt_spawn",
                 vec![Ptr, Ptr, Ptr, U64, U64, U64, Ptr],

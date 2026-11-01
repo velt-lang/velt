@@ -1,0 +1,6 @@
+// A top-level `await` that nothing can settle, reached in a later turn: exit code 13, as in Node
+// and native builds (crates/veltc/tests/wasm_goldens.rs `async_host_functions_under_node`).
+
+await sleep(1);
+console.log("waiting");
+await new Promise<void>((resolve) => {});

@@ -103,7 +103,7 @@ function main() {}
     assert!(r.contains("`HostRef` and `HostRef | null`"), "{r}");
 }
 
-/// A result of another type, `async` and a `Promise` result are errors.
+/// A result of another type, and a `Promise` result without `async`, are errors.
 #[test]
 fn results_and_async() {
     let r = err_src(
@@ -111,11 +111,16 @@ fn results_and_async() {
   x: f64 = 0;
 }
 declare host("env") function point(): Point;
+declare host("env") async function later(): Promise<Point>;
 function main() {}
 "#,
     );
     assert!(
         r.contains("host function `point` returns `Point`, which cannot cross to the host"),
+        "{r}"
+    );
+    assert!(
+        r.contains("host function `later` fulfills with `Point`, which cannot cross to the host"),
         "{r}"
     );
     assert!(
@@ -130,17 +135,76 @@ function main() {}
 "#,
     );
     assert!(r.contains("host function `find` returns"), "{r}");
-    for src in [
-        "declare host(\"env\") async function later(): Promise<i32>;\nfunction main() {}\n",
-        "declare host(\"env\") function later(): Promise<i32>;\nfunction main() {}\n",
-    ] {
-        let r = err_src(src);
-        assert!(
-            r.contains("host function `later` cannot be `async` or return a `Promise`"),
-            "{r}"
-        );
-        assert!(!r.contains("cannot cross"), "{r}");
-    }
+    let r = err_src("declare host(\"env\") function later(): Promise<i32>;\nfunction main() {}\n");
+    assert!(
+        r.contains("host function `later` returns a `Promise` but is not `async`"),
+        "{r}"
+    );
+    assert!(
+        r.contains("declare host(\"env\") async function later(…)"),
+        "{r}"
+    );
+    assert!(!r.contains("cannot cross"), "{r}");
+    let r = err_src(
+        "declare host(\"env\") async function twice(): Promise<Promise<i32>>;\nfunction main() {}\n",
+    );
+    assert!(
+        r.contains("host function `twice` fulfills with `Promise<i32>`, which cannot cross"),
+        "{r}"
+    );
+    let r = err_src(
+        r#"import { HostRef } from "velt/host";
+declare host("env") async function find(): Promise<HostRef | null | undefined>;
+function main() {}
+"#,
+    );
+    assert!(r.contains("host function `find` fulfills with"), "{r}");
+    // The host could keep a live view of the bytes past the call.
+    let r = err_src(
+        "declare host(\"env\") async function fill(into: u8[]): Promise<void>;\nfunction main() {}\n",
+    );
+    assert!(
+        r.contains("parameter `into` of async host function `fill` is a `u8[]` the host could write after the call"),
+        "{r}"
+    );
+}
+
+/// An async host function's promise settles with a type that crosses, and rejects with
+/// `IoError`, which `await` throws.
+#[test]
+fn async_host_functions() {
+    let p = ok_src(
+        r#"import { HostRef } from "velt/host";
+import { IoError } from "velt/io";
+
+declare host("env") async function wait(ms: u32): Promise<void>;
+declare host("env") async function load(key: string, data: readonly u8[]): Promise<string>;
+declare host("env") async function open(): Promise<HostRef | null>;
+
+async function main() {
+  await wait(1);
+  try {
+    const text: string = await load("a", [0]);
+    console.log(text);
+  } catch (e) {
+    const err: IoError = e;
+    console.log(err.code, err.message);
+  }
+  const r = await open();
+  console.log(r == null);
+}
+"#,
+    );
+    let wait = host_fn(&p, "wait");
+    assert!(wait.is_async);
+    assert_eq!(wait.host.as_ref().unwrap().ret, HostTy::Void);
+    let load = host_fn(&p, "load").host.as_ref().unwrap();
+    assert_eq!(load.params, [HostTy::Str, HostTy::Bytes { readonly: true }]);
+    assert_eq!(load.ret, HostTy::Str);
+    assert_eq!(
+        host_fn(&p, "open").host.as_ref().unwrap().ret,
+        HostTy::Ref { nullable: true }
+    );
 }
 
 /// Type parameters, optional and rest parameters and the runtime's own import module are errors

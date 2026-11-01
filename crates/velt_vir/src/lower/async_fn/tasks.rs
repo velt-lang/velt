@@ -31,7 +31,7 @@ impl Cx<'_> {
     }
 
     /// `T` of a `Promise<T, E>` type.
-    pub(super) fn promise_result(&self, t: TyId) -> TyId {
+    pub(in crate::lower) fn promise_result(&self, t: TyId) -> TyId {
         match self.types.kind(t) {
             TyKind::Promise(r, _) => *r,
             k => ice(format_args!("expected a promise type, found {k:?}")),

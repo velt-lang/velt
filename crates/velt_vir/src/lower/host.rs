@@ -5,17 +5,30 @@
 //! address of its value, a `HostRef` its slot (std's hooks in std/host/host_ref.vlt read and
 //! make them). On a target without a JS host a call is an error, reported once lowering is done
 //! (system.rs `unavailable_diagnostics`).
+//!
+//! The call of an async host function is the import, which calls the JS function and returns the
+//! id of its promise, then the promise leaf of that id (`velt_rt_host_promise`), which yields
+//! std's `HostSettled<W>` (std/host/promise.vlt), and the promise of std's hook awaiting it: it
+//! throws an `IoError` for a rejection and makes the value (a `HostRef` of a slot).
 
-use velt_sema::hir::{self, DefId, HostTy, IntTy, TyId};
+use velt_sema::hir::{self, DefId, HostTy, IntTy, TyId, TyKind};
 
+use super::rt::Rt;
 use super::system::Arg;
-use super::{ice, unit, FnLower};
+use super::{ice, unit, Cx, FnLower};
 use crate::vir::{self, HostImport, HostValue, Operand, Place, Rvalue, Ty};
 
 /// std's hooks that make a `HostRef` of a slot and read the slot of one.
 const REF_OF: &str = velt_common::std_hook!(host_ref_of);
 const REF_OR_NULL: &str = velt_common::std_hook!(host_ref_or_null);
 const REF_HANDLE: &str = velt_common::std_hook!(host_ref_handle);
+
+/// What a host promise's leaf yields, and std's hooks awaiting it.
+const SETTLED: &str = velt_common::std_hook!(host_settled);
+const AWAIT: &str = velt_common::std_hook!(host_await);
+const AWAIT_VOID: &str = velt_common::std_hook!(host_await_void);
+const AWAIT_REF: &str = velt_common::std_hook!(host_await_ref);
+const AWAIT_REF_OR_NULL: &str = velt_common::std_hook!(host_await_ref_or_null);
 
 /// Does `target` run under a JS host, which provides host functions? Only the browser flavor of
 /// WebAssembly does; native targets and WASI hosts do not.
@@ -56,7 +69,7 @@ impl FnLower<'_, '_> {
         let Some(h) = x.host.clone() else {
             ice("not a host function")
         };
-        let (name, ret) = (x.symbol.clone(), x.ret);
+        let (name, ret, is_async) = (x.symbol.clone(), x.ret, x.is_async);
         if !js_host(&self.cx.target) {
             self.cx
                 .unavailable
@@ -104,8 +117,75 @@ impl FnLower<'_, '_> {
             name,
             params: h.params.iter().map(|&t| value(t)).collect(),
             ret: value(h.ret),
+            is_async,
         };
+        if is_async {
+            return self.host_promise(import, h.ret, argv, params, ret);
+        }
         self.host_result(import, h.ret, argv, params, ret)
+    }
+
+    /// The call of an async host function (module docs): a promise of type `ret`.
+    fn host_promise(
+        &mut self,
+        mut import: HostImport,
+        t: HostTy,
+        argv: Vec<Operand>,
+        params: Vec<Ty>,
+        ret: TyId,
+    ) -> Operand {
+        if import.ret == HostValue::ReadonlyBytes {
+            import.ret = HostValue::Bytes;
+        }
+        let start = self.cx.host_extern(import, params, Ty::U32);
+        let id = self.temp(Ty::U32);
+        self.call(
+            vir::Callee::Extern(start),
+            argv,
+            Some(Place::local(id)),
+            false,
+        );
+        let leaf = self.temp(Ty::Ptr);
+        let args = vec![Operand::Copy(Place::local(id))];
+        self.call_rt(Rt::HostPromise, args, Some(Place::local(leaf)));
+        let ret = self.sub(ret);
+        let (hook, targs, wire) = match t {
+            HostTy::Void => (AWAIT_VOID, vec![], self.cx.intern(TyKind::Bool)),
+            HostTy::Ref { nullable } => {
+                let hook = if nullable {
+                    AWAIT_REF_OR_NULL
+                } else {
+                    AWAIT_REF
+                };
+                (hook, vec![], self.cx.intern(TyKind::Int(IntTy::U32)))
+            }
+            _ => {
+                let value = self.cx.promise_result(ret);
+                (AWAIT, vec![value], value)
+            }
+        };
+        let settled = hook_def(self.cx, SETTLED);
+        let slot = self.cx.intern(TyKind::Adt(settled, vec![wire]));
+        let never = self.cx.intern(TyKind::Never);
+        let leaf_ty = self.cx.intern(TyKind::Promise(slot, never));
+        let mut fut = Operand::Copy(Place::local(leaf));
+        if self.cx.foreign_differs(slot) {
+            fut = self.adopt_foreign_promise(fut, leaf_ty);
+            if let Operand::Copy(p) = &fut {
+                self.take_temp(p);
+            }
+        }
+        let f = self
+            .cx
+            .func_for_direct(hook_def(self.cx, hook), targs, self.mode);
+        let out = self.temp(Ty::Ptr);
+        self.call(
+            vir::Callee::Func(f),
+            vec![fut],
+            Some(Place::local(out)),
+            false,
+        );
+        self.owned_result(Some(out), ret)
     }
 
     /// Append the operands of one argument (`v`, crossing as `t`) and their VIR types.
@@ -219,10 +299,7 @@ impl FnLower<'_, '_> {
     /// A call of std's `HostRef` hook `qualified` with the one argument `arg`, into a temporary
     /// of type `ret`.
     fn hook_call(&mut self, qualified: &str, arg: Operand, ret: Ty) -> Operand {
-        let d = self
-            .cx
-            .prelude_def(qualified)
-            .unwrap_or_else(|| ice(format_args!("no `{qualified}` in std/host/host_ref")));
+        let d = hook_def(self.cx, qualified);
         let f = self.cx.func_for_direct(d, vec![], self.mode);
         let out = self.temp(ret);
         self.call(
@@ -242,4 +319,17 @@ impl FnLower<'_, '_> {
             vt => Operand::Copy(Place::local(self.temp(vt))),
         }
     }
+}
+
+impl Cx<'_> {
+    /// Is `def` an async host function (whose call returns the promise of std's hook)?
+    pub(super) fn is_async_host(&self, def: DefId) -> bool {
+        matches!(self.hir.def(def), hir::Def::ExternFn(x) if x.host.is_some() && x.is_async)
+    }
+}
+
+/// The definition of std's host hook `qualified` (velt/host is checked whole when loaded).
+fn hook_def(cx: &Cx<'_>, qualified: &str) -> DefId {
+    cx.prelude_def(qualified)
+        .unwrap_or_else(|| ice(format_args!("no `{qualified}` in velt/host")))
 }

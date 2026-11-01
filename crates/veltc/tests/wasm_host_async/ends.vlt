@@ -1,0 +1,20 @@
+// How a program ends in a later turn than its first (crates/veltc/tests/wasm_goldens.rs
+// `async_host_functions_under_node`), chosen by the host function `how`: `main` returns a code,
+// `process.exit` in a timer's callback, or an `await` in `main` nothing can settle (exit code 0,
+// as in Node; stuck.vlt's top-level `await` gives 13).
+
+declare host("test") async function how(): Promise<string>;
+
+async function main(): Promise<i32> {
+  const way = await how();
+  await sleep(1);
+  console.log(`ending by ${way}`);
+  if (way == "exit") {
+    setTimeout(() => process.exit(3), 1);
+    await sleep(50);
+  }
+  if (way == "stuck") {
+    await new Promise<void>((resolve) => {});
+  }
+  return 7;
+}

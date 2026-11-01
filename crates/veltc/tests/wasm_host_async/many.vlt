@@ -1,0 +1,38 @@
+// Thousands of turns: host promises settled one at a time, and timers the host wakes. Every
+// turn returns to the host normally, so the wasm stack pointer and the memory are where they
+// were (crates/veltc/tests/wasm_goldens.rs `async_host_functions_under_node`; many.mjs checks).
+
+declare host("test") async function next(n: u32): Promise<u32>;
+declare host("test") function probe(label: string): void;
+
+class Counter {
+  n: u32 = 0;
+
+  [Symbol.dispose]() {
+    this.n = 0;
+  }
+}
+
+async function round(count: u32): Promise<u32> {
+  let sum: u32 = 0;
+  for (let i: u32 = 0; i < count; i++) {
+    using c = new Counter();
+    c.n = await next(i);
+    sum += c.n;
+  }
+  for (let i = 0; i < count / 30; i++) {
+    await sleep(1);
+  }
+  return sum;
+}
+
+async function main() {
+  // A first round grows what the allocator and the executor need once.
+  await round(300);
+  await next(0);
+  probe("start");
+  const sum = await round(3000);
+  await next(0);
+  probe("end");
+  console.log(sum);
+}

@@ -1,23 +1,35 @@
 // JS glue for Velt programs built with `--target wasm32-unknown-unknown`.
 //
-// The module imports its host services from `velt` (see crates/velt_rt_wasm/src/platform.rs):
+// The module imports its host services from `velt` (crates/velt_rt_wasm/src/platform.rs,
+// host.rs, host_turn.rs and host_promise.rs):
 //   write(stream, ptr, len)  bytes for stdout (1) / stderr (2)
-//   exit(code)               stop the program (thrown as VeltExit, caught by runVelt)
+//   exit(code)               stop the program at once (thrown as VeltExit: `process.exit`, a panic)
+//   done(code)               the program ended with `code`
 //   now_ms()                 performance.now()
 //   date_ms()                Date.now()
 //   host_release(slot)       forget a HostRef's value (HostRefs below)
 //   host_clone(slot)         a second slot for a HostRef's value
-// and exports `velt_start()` (runs `main`, returns the exit code) and `memory`.
+//   set_timer(ms)            call velt_turn() in `ms` milliseconds, replacing the last request
+//                            (none when `ms` is negative)
+//   host_take(id, out)       write how host promise `id` settled to `out`, and forget it
+//   host_forget(id)          forget host promise `id`
+// and exports `memory`, `velt_start()` (runs `main`'s first turn), `velt_turn()` and
+// `velt_settle(id)`. Each call returns normally; the program runs in turns of the host's event
+// loop, while a timer (`setTimeout`) calls `velt_turn` and a settled host promise `velt_settle`,
+// until it reports its end through `done`.
 //
 // Host functions (`declare host("m") function f(...)`, https://veltlang.com/docs/reference/host-functions/) are
 // imports from module "m", which the embedder passes as `imports: { m: { f } }`. The module's
 // custom section "velt.host" lists each one, a line "m<TAB>f<TAB>params<TAB>result" (velt_vir's
-// vir/host.rs), and the glue wraps the embedder's function to convert what crosses.
+// vir/host.rs), and the glue wraps the embedder's function to convert what crosses. An async one
+// (result "async:<type>") returns the id of its promise, whose outcome the glue writes as
+// `HostSettled<T>` (std/host/promise.vlt) when the program takes it.
 //
 // Browser:  import { runVelt } from "./velt_web.mjs";
 //           const code = await runVelt(fetch("hello.wasm"), { write: (s, bytes) => ..., imports });
 // Node:     node velt_web.mjs hello.wasm [args...]   (what `velt run --target
 //           wasm32-unknown-unknown` does)
+// Other hosts drive the module themselves with `loadVelt` (their own entries and turns).
 
 /** Thrown by the `exit` import to unwind out of the module. */
 export class VeltExit extends Error {
@@ -34,12 +46,55 @@ export class VeltExit extends Error {
  *           imports?: Record<string, Record<string, Function>>, refs?: HostRefs }} host output
  *        sink, the functions of the program's host functions by import module, and the table of
  *        the JS values it holds as `HostRef`s (to inspect; a new one by default)
- * @returns {Promise<number>} the exit code (101 for a panic, 134 for a WebAssembly trap)
+ * @returns {Promise<number>} the exit code (101 for a panic, 134 for a WebAssembly trap), once
+ *          the program ended
  */
 export async function runVelt(source, host = {}) {
+  const rt = await loadVelt(source, host);
+  rt.enter(() => rt.exports.velt_start());
+  return rt.done;
+}
+
+/**
+ * Instantiate a Velt program without running it. `enter(f)` runs `f`, which calls into the
+ * module (`exports.velt_start()`, `exports.velt_turn()`, another entry); `done` settles with the
+ * exit code once the program reports its end, exits or traps, or rejects with what a host
+ * function threw (the instance is then unusable).
+ */
+export async function loadVelt(source, host = {}) {
   const write = host.write ?? defaultWrite();
   const refs = host.refs ?? new HostRefs();
-  const rt = { memory: null, exports: null, refs };
+  let resolve, reject, timer;
+  const rt = {
+    memory: null,
+    exports: null,
+    refs,
+    ended: false,
+    promises: new Map(),
+    nextPromise: 1,
+    done: new Promise((res, rej) => ((resolve = res), (reject = rej))),
+    end(code, error) {
+      if (rt.ended) return;
+      rt.ended = true;
+      clearTimeout(timer);
+      rt.promises.clear();
+      if (error === undefined) resolve(code);
+      else reject(error);
+    },
+    enter(f) {
+      if (rt.ended) return;
+      try {
+        f();
+      } catch (e) {
+        if (e instanceof VeltExit) return rt.end(e.code);
+        if (e instanceof WebAssembly.RuntimeError) {
+          write(2, new TextEncoder().encode(`wasm trap: ${e.message}\n`));
+          return rt.end(134);
+        }
+        rt.end(0, e);
+      }
+    },
+  };
   const imports = {
     velt: {
       write(stream, ptr, len) {
@@ -48,10 +103,24 @@ export async function runVelt(source, host = {}) {
       exit(code) {
         throw new VeltExit(code);
       },
+      done: (code) => rt.end(code),
       now_ms: () => performance.now(),
       date_ms: () => Date.now(),
       host_release: (slot) => refs.release(slot >>> 0),
       host_clone: (slot) => refs.add(refs.get(slot >>> 0)),
+      set_timer(ms) {
+        clearTimeout(timer);
+        // Rounded up: hosts round a delay down to whole milliseconds. Hosts fire a delay longer
+        // than 2^31 - 1 ms at once; a turn that comes early asks again.
+        const delay = Math.min(Math.ceil(ms), 0x7fffffff);
+        if (ms >= 0) timer = setTimeout(() => rt.enter(() => rt.exports.velt_turn()), delay);
+      },
+      host_take(id, out) {
+        const p = rt.promises.get(id >>> 0);
+        rt.promises.delete(id >>> 0);
+        p.take(out >>> 0);
+      },
+      host_forget: (id) => rt.promises.delete(id >>> 0),
     },
   };
   const module = await compile(await source);
@@ -59,16 +128,7 @@ export async function runVelt(source, host = {}) {
   const instance = await WebAssembly.instantiate(module, imports);
   rt.exports = instance.exports;
   rt.memory = instance.exports.memory;
-  try {
-    return instance.exports.velt_start();
-  } catch (e) {
-    if (e instanceof VeltExit) return e.code;
-    if (e instanceof WebAssembly.RuntimeError) {
-      write(2, new TextEncoder().encode(`wasm trap: ${e.message}\n`));
-      return 134;
-    }
-    throw e;
-  }
+  return rt;
 }
 
 async function compile(source) {
@@ -202,21 +262,88 @@ function hostFunction(label, fn, params, result, rt) {
     },
     "ref?": (v) => (v == null ? 0 : rt.refs.add(v)),
   };
-  return (...raw) => {
-    const args = [];
+  const args = (raw) => {
+    const out = [];
     let i = 0;
     for (const p of params) {
       if (p === "bytes" || p === "rbytes") {
         const view = bytes(raw[i], raw[i + 1]);
-        args.push(p === "bytes" ? view : view.slice());
+        out.push(p === "bytes" ? view : view.slice());
         i += 2;
       } else {
-        args.push(fromWasm[p](raw[i++]));
+        out.push(fromWasm[p](raw[i++]));
       }
     }
-    const value = fn(...args);
-    return toWasm[result](value, raw[i]);
+    return [out, raw[i]];
   };
+  const promised = result.startsWith("async:") ? result.slice(6) : null;
+  if (promised === null) {
+    return (...raw) => {
+      const [values, out] = args(raw);
+      return toWasm[result](fn(...values), out);
+    };
+  }
+  // `HostSettled<T>` at `out`: the value at +48, converted (and checked) as a result of its type
+  // is; or the rejection's name at +0 and message at +24.
+  const SETTERS = {
+    i8: "setInt8", u8: "setUint8", bool: "setUint8", i16: "setInt16", u16: "setUint16",
+    i32: "setInt32", u32: "setUint32", i64: "setBigInt64", u64: "setBigInt64", f64: "setFloat64",
+    ref: "setUint32", "ref?": "setUint32",
+  };
+  const store = (v, at) => {
+    const setter = SETTERS[promised];
+    if (setter) {
+      const w = toWasm[promised](v);
+      new DataView(rt.memory.buffer)[setter](at, w, true);
+    } else if (promised !== "void") {
+      toWasm[promised](v, at);
+    }
+  };
+  const settle = (id, ok, value) => {
+    if (!rt.promises.has(id)) return;
+    rt.promises.get(id).take = (out) => {
+      if (ok) {
+        try {
+          return store(value, out + 48);
+        } catch (e) {
+          value = e;
+        }
+      }
+      const [name, message] = described(value);
+      toWasm.str(name, out);
+      toWasm.str(message, out + 24);
+    };
+    rt.enter(() => rt.exports.velt_settle(id));
+  };
+  return (...raw) => {
+    // A u32 that no pending promise has (ids wrap in a long-lived instance).
+    let id = rt.nextPromise;
+    while (rt.promises.has(id)) id = (id + 1) >>> 0 || 1;
+    rt.nextPromise = (id + 1) >>> 0 || 1;
+    rt.promises.set(id, {});
+    let promise;
+    try {
+      promise = Promise.resolve(fn(...args(raw)[0]));
+    } catch (e) {
+      promise = Promise.reject(e);
+    }
+    promise.then((v) => settle(id, true, v), (e) => settle(id, false, e));
+    return id;
+  };
+}
+
+/**
+ * The `IoError` code and message of what a host promise rejected with: its `name` and `message`
+ * when it has them, else `Error` and the value as a string.
+ */
+function described(value) {
+  try {
+    const name = typeof value?.name === "string" && value.name !== "" ? value.name : "Error";
+    const message = typeof value?.message === "string" ? value.message : String(value);
+    return [name, message];
+  } catch {
+    return ["Error", "a host promise rejected with a value that cannot be shown"];
+  }
 }
 
 /** console-based output for browsers: decodes UTF-8 per stream and logs whole lines. */

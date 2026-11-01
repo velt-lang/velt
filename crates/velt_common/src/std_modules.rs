@@ -133,6 +133,9 @@ table! {
     /// `velt/host`: `HostRef`, the handle to a JS value host functions pass (https://veltlang.com/docs/reference/host-functions/).
     host => "host",
     host_host_ref => "host/host_ref",
+    host_promise => "host/promise",
+    /// `IoError`, what an async host function's promise rejects with.
+    io_error => "io/error",
     /// The default JSX provider (`jsxImportSource`).
     jsx => "jsx",
     net_http_fetch_response => "net/http/fetch/response",

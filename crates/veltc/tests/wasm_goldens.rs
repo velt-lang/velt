@@ -1,9 +1,9 @@
 //! The goldens on WebAssembly: every `tests/golden/{m1,m2,m3,m4,lang}/*.vlt` with a `.out`
 //! file, except the ones using sockets or threads-only features (see [`UNSUPPORTED`]), built
 //! with `--target wasm32-wasip1` (debug and `--release`) and run under wasmtime by
-//! `velt run`, must print exactly that output and exit with its `.code` (default 0). The M1 and
-//! M2 goldens also run as browser modules (`wasm32-unknown-unknown`) through the JS glue under
-//! node.
+//! `velt run`, must print exactly that output and exit with its `.code` (default 0). The M1, M2
+//! and M3 (async) goldens also run as browser modules (`wasm32-unknown-unknown`) through the JS
+//! glue under node, in the turns it drives.
 //!
 //! Needs the rustup targets (`rustup target add wasm32-wasip1 wasm32-unknown-unknown`), LLVM's
 //! `opt`/`llc` (`rustup component add llvm-tools`), wasmtime and node; each part is skipped with
@@ -364,7 +364,7 @@ fn goldens_in_the_browser_glue() {
     let root = root();
     build_runtime(&root, "wasm32-unknown-unknown");
     let skip: Vec<&str> = UNSUPPORTED.iter().chain(NEEDS_FS).copied().collect();
-    let files = programs(&root, &["m1", "m2"], &skip);
+    let files = programs(&root, &["m1", "m2", "m3"], &skip);
     let work = work_dir::work_dir(&root, "golden-work-web");
     let failures = run_all(&files, "wasm32-unknown-unknown", &[None], &work, 4);
     let _ = std::fs::remove_dir_all(&work);
@@ -423,6 +423,108 @@ fn host_functions_under_node() {
             o.status.code(),
             String::from_utf8_lossy(&o.stderr)
         );
+    }
+    let _ = std::fs::remove_dir_all(&work);
+}
+
+/// Async host functions and the turns the host drives (rt_abi_async.md §1.4, §2.5) under node:
+/// tests/wasm_host_async/main.vlt awaits host promises of every result type, a rejection as an
+/// `IoError`, promises settled out of order and interleaved with timers, drops a disposable and
+/// a `HostRef` held across awaits, and sleeps while the host's event loop runs (host.mjs counts
+/// its ticks); uncaught.vlt ends with a rejection nothing catches after it waited, and ends.vlt
+/// and sync_main.vlt end in later turns with `main`'s code, `process.exit` and exit code 13;
+/// many.vlt runs thousands of turns, after which the wasm stack
+/// pointer and the memory are as they were (many.mjs); order.vlt's promises, microtasks and
+/// timers print what the native build prints. Debug and release mode.
+#[test]
+fn async_host_functions_under_node() {
+    if let Some(missing) = missing_tools("wasm32-unknown-unknown", "node") {
+        eprintln!("note: {missing} not available; skipping the async host functions test");
+        return;
+    }
+    let root = root();
+    build_runtime(&root, "wasm32-unknown-unknown");
+    let dir = root.join("crates/veltc/tests/wasm_host_async");
+    let read = |name: &str| {
+        std::fs::read_to_string(dir.join(name))
+            .expect("expected output")
+            .replace("\r\n", "\n")
+    };
+    let work = work_dir::work_dir(&root, "golden-work-host-async");
+    let velt = || crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
+    // Built in the work directory: a build leaves its files next to the program.
+    std::fs::create_dir_all(&work).expect("work dir");
+    std::fs::copy(dir.join("order.vlt"), work.join("order.vlt")).expect("copy order.vlt");
+    let native = velt()
+        .arg("run")
+        .arg(work.join("order.vlt"))
+        .output()
+        .expect("run velt");
+    let order = String::from_utf8_lossy(&native.stdout).replace("\r\n", "\n");
+    assert_eq!(order, read("order.out"), "the native build's order");
+    for mode in [None, Some("--release")] {
+        let _ = std::fs::remove_dir_all(&work);
+        std::fs::create_dir_all(&work).expect("work dir");
+        let host = || Some(dir.join("host.mjs"));
+        for (program, runner, how, want) in [
+            ("main", host(), None, read("main.out")),
+            ("uncaught", host(), None, read("uncaught.out")),
+            (
+                "ends",
+                host(),
+                Some("return"),
+                "ending by return\nexit 7, 0 values held\n".into(),
+            ),
+            (
+                "ends",
+                host(),
+                Some("exit"),
+                "ending by exit\nexit 3, 0 values held\n".into(),
+            ),
+            (
+                "ends",
+                host(),
+                Some("stuck"),
+                "ending by stuck\nexit 0, 0 values held\n".into(),
+            ),
+            ("sync_main", host(), None, read("sync_main.out")),
+            ("stuck", host(), None, read("stuck.out")),
+            ("many", Some(dir.join("many.mjs")), None, read("many.out")),
+            ("order", None, None, order.clone()),
+        ] {
+            let module = work.join(format!("{program}.wasm"));
+            // Built where it was copied, so messages name it by its file name.
+            let source = format!("{program}.vlt");
+            std::fs::copy(dir.join(&source), work.join(&source)).expect("copy the program");
+            let o = velt()
+                .current_dir(&work)
+                .args(["build", "--target", "wasm32-unknown-unknown"])
+                .args(mode)
+                .arg(&source)
+                .arg("-o")
+                .arg(&module)
+                .output()
+                .expect("run velt");
+            assert!(
+                o.status.success(),
+                "velt build {program} {mode:?}:\n{}",
+                String::from_utf8_lossy(&o.stderr)
+            );
+            let o = crate::no_window::command("node")
+                .args(runner)
+                .arg(work.join("velt_web.mjs"))
+                .arg(&module)
+                .args(how)
+                .output()
+                .expect("run node");
+            let got = String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n");
+            assert!(
+                o.status.success() && got == want,
+                "{program} {how:?} {mode:?}: exit {:?}\n--- want ---\n{want}--- got ---\n{got}--- stderr ---\n{}",
+                o.status.code(),
+                String::from_utf8_lossy(&o.stderr)
+            );
+        }
     }
     let _ = std::fs::remove_dir_all(&work);
 }

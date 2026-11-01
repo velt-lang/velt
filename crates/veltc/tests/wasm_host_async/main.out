@@ -1,0 +1,23 @@
+40 9007199254740994 1.5 true -3
+hello, wörld!
+0,10,20,30
+a true 1
+a 2
+0
+TypeError: no TypeError
+Error: a plain value
+TypeError: velt: host function test.tooBig returned 300, which is not a u8
+TypeError
+gate 3 opened with 300
+gate 1 opened with 100
+gate 2 opened with 200
+timeout 0
+slept 15
+gate 4: 400
+microtask
+after sleep(0)
+holding held 1
+released after awaits
+released 0
+true true
+exit 0, 0 values held

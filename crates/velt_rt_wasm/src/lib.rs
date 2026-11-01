@@ -13,7 +13,8 @@
 //!   occupies the first half of its 8-byte VIR slot (see `velt_codegen_llvm`'s
 //!   `Target::wide_pointer_slots`): identical layouts, identical behavior.
 //! - **own**: `platform` (host services per target), `host` (what host functions and `HostRef`
-//!   need of the JS glue), `entry`, `io`, `localtime` (UTC),
+//!   need of the JS glue), `host_promise` and `host_turn` (async host functions, and the turns a
+//!   JS host drives), `entry`, `io`, `localtime` (UTC),
 //!   `memory_usage`, `panic`, `prng`, `process`, `shared`, `net` and the current-thread executor in
 //!   `task` (no tokio, no threads). Every
 //!   function has exactly the signature `std/*.vlt` declares (WebAssembly links only exact
@@ -50,6 +51,10 @@ pub mod handle;
 #[path = "../../velt_rt/src/hash.rs"]
 pub mod hash;
 pub mod host;
+#[cfg(any(test, all(target_family = "wasm", target_os = "unknown")))]
+pub mod host_promise;
+#[cfg(any(test, all(target_family = "wasm", target_os = "unknown")))]
+pub mod host_turn;
 #[path = "../../velt_rt/src/html.rs"]
 pub mod html;
 #[path = "../../velt_rt/src/inspect.rs"]
