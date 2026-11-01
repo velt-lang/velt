@@ -2,9 +2,8 @@
 // (several at once), and the reports read back from them, in file order.
 
 import { JSON } from "velt/prelude/json/json";
-import { exec } from "velt/process/child/exec";
 import { ExecResult } from "velt/process/child/exec_result";
-import { spawn } from "velt/process/child/child_process";
+import { fileTimeout, leakWait, NOT_ENDED, runTimed, TIMED_OUT } from "velt/test/timed";
 import { writeFileSync } from "velt/fs/files";
 import { Paint } from "velt/test/paint";
 import { MARK } from "velt/test/run";
@@ -211,18 +210,22 @@ async function runFrom(run: FileRun, from: usize, report: Report, paint: Paint):
     env.set("VELT_TEST_EXACT", run.plan.exact ? "1" : "0");
   }
   // Counting blocks, the process returns from `main` after its tests and waits for what is
-  // still running, as Node does: one that is still running after `LEAK_WAIT` is ended.
+  // still running, as Node does: one that is still running `leakWait()` after it said its tests
+  // are done is ended. However long the tests take does not count; a process still running
+  // `fileTimeout()` after it started is ended in any case (a test that never ends).
   const counting = process.env.VELT_RC_STATS == "1";
   let r: ExecResult;
-  let ended = false;
+  let ended: i64 = NOT_ENDED;
   try {
-    if (counting) {
-      const timed = await runTimed(run.exe, env, LEAK_WAIT);
-      r = timed.result;
-      ended = timed.ended;
-    } else {
-      r = await exec(run.exe, [], { env: env });
-    }
+    const timed = await runTimed(
+      run.exe,
+      env,
+      counting ? leakWait() : 0,
+      fileTimeout(),
+      `${mark}done`,
+    );
+    r = timed.result;
+    ended = timed.ended;
   } catch (e) {
     const text = errorText(e);
     report.lines.push(`${paint.error("error:")} cannot run \`${run.exe}\`: ${text}`);
@@ -267,9 +270,11 @@ async function runFrom(run: FileRun, from: usize, report: Report, paint: Paint):
       report.lines.push(`    ${rest.slice(2)}`);
     }
   }
+  const limit = `${fileTimeout() / 1000} s`;
   if (!started) {
     // It ended before running a test: in a module's top-level code, or collecting the tests.
-    report.lines.push(`${paint.failed()} ${f.path} (exit code ${r.code} before its tests ran)`);
+    const why = ended == TIMED_OUT ? `timed out after ${limit}` : `exit code ${r.code}`;
+    report.lines.push(`${paint.failed()} ${f.path} (${why} before its tests ran)`);
     pushStderr(report, r.stderr);
     const left = (run.tests?.length ?? f.tests.length) - from;
     report.failed += left > 0 ? left : 1;
@@ -278,9 +283,20 @@ async function runFrom(run: FileRun, from: usize, report: Report, paint: Paint):
   }
   const tests = run.tests ?? listed;
   run.tests = tests;
-  if (ended) {
+  if (ended == TIMED_OUT && next < tests.length) {
+    // Ended inside test `next`: it fails, and a new process runs the tests after it.
     report.lines.push(
-      `${paint.failed()} ${f.path} (still running ${LEAK_WAIT / 1000} s after its tests: a server, a connection or a timer left open)`,
+      `${paint.failed()} ${tests[next]} (timed out after ${limit} with this test running)`,
+    );
+    pushStderr(report, r.stderr);
+    report.failed++;
+    return next + 1;
+  }
+  if (ended != NOT_ENDED) {
+    const after =
+      ended == TIMED_OUT ? `at the ${limit} limit` : `${leakWait() / 1000} s after its tests`;
+    report.lines.push(
+      `${paint.failed()} ${f.path} (still running ${after}: a server, a connection or a timer left open)`,
     );
     report.failed++;
     return tests.length;
@@ -310,45 +326,6 @@ async function runFrom(run: FileRun, from: usize, report: Report, paint: Paint):
   pushStderr(report, r.stderr);
   report.failed++;
   return next + 1;
-}
-
-/** How long a test process counting blocks may keep running after its tests (ms). */
-const LEAK_WAIT = 120000;
-
-/** What `runTimed` ran: as `exec` returns it, and whether it was ended for taking too long. */
-struct Timed {
-  result: ExecResult;
-  ended: bool;
-}
-
-/** Run `exe` with `env` to its end, as `exec` does, but end it after `limit` ms. */
-async function runTimed(exe: string, env: Map<string, string>, limit: number): Promise<Timed> {
-  const child = spawn(exe, [], { env: env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-  const ended = shared(0 as i64);
-  const timer = setTimeout(
-    () => {
-      ended.set(1);
-      child.kill("SIGKILL");
-    },
-    limit as i64,
-  );
-  const out = await Promise.all([drain(() => child.readStdout()), drain(() => child.readStderr())]);
-  const code = await child.wait();
-  clearTimeout(timer);
-  child.close();
-  return { result: new ExecResult(code as number, out[0], out[1]), ended: ended.get() == 1 };
-}
-
-/** Everything `read` gives until it gives `""` (the end of the output). */
-async function drain(read: () => Promise<string, unknown>): Promise<string, unknown> {
-  let all = "";
-  while (true) {
-    const chunk = await read();
-    if (chunk == "") {
-      return all;
-    }
-    all += chunk;
-  }
 }
 
 /**
