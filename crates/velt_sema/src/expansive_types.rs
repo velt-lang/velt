@@ -102,6 +102,19 @@ pub(crate) fn check(cx: &mut Ctx) -> bool {
             reported = true;
         }
     }
+    // A walk stopped at one (`ObjectState::expansive_cut`) and nothing above mentions it: the
+    // definition itself, so the walk's answer is never used.
+    if let Some(d) = cx.objects.expansive_cut.filter(|_| !reported) {
+        let span = match &cx.info[d.0 as usize] {
+            DefInfo::Adt(a) => a.span,
+            DefInfo::Enum(e) => e.span,
+            DefInfo::Iface(f) => f.span,
+            _ => return reported,
+        };
+        let shown = expansive.get(&d).map(|e| e.own.clone()).unwrap_or_default();
+        report_at(cx, &expansive, d, span, shown, None);
+        reported = true;
+    }
     reported
 }
 
@@ -338,10 +351,23 @@ fn report(
     (ty, shown): (TyId, String),
     call: Option<DefId>,
 ) {
-    let Some(root) = reaches(cx, ty, bad) else {
+    if let Some(root) = reaches(cx, ty, bad) {
+        report_at(cx, expansive, root, span, shown, call);
+    }
+}
+
+/// The error for a mention of a type that reaches the expansive definition `root`.
+fn report_at(
+    cx: &mut Ctx,
+    expansive: &FxHashMap<DefId, Expansive>,
+    root: DefId,
+    span: Span,
+    shown: String,
+    call: Option<DefId>,
+) {
+    let Some(e) = expansive.get(&root) else {
         return;
     };
-    let e = &expansive[&root];
     let what = match call.map(|g| callee_name(cx, g)) {
         Some(n) if n == "JSON.parse" => "so `JSON.parse` cannot read it".to_string(),
         Some(n) if n == "JSON.stringify" => "so `JSON.stringify` cannot write it".to_string(),

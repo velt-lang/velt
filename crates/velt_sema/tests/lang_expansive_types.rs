@@ -133,6 +133,17 @@ fn a_growing_type_converted_to_any_is_reported() {
         e.contains("so a value of `L<f64>` cannot be compiled"),
         "{e}"
     );
+    // Only that error: the walk that looks for a lock in it stopped without one.
+    assert_eq!(e.matches("error:").count(), 1, "{e}");
+    let e = errors(
+        "function main() {
+           const a: L<number> = { v: 1, n: null };
+           const u: unknown = a;
+           console.log(typeof u);
+         }",
+    );
+    assert!(!e.contains("lock"), "{e}");
+    assert_eq!(e.matches("error:").count(), 1, "{e}");
 }
 
 #[test]
