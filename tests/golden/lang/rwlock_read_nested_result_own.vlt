@@ -19,7 +19,7 @@ class Grid {
 }
 
 function firstRows(g: shared<RwLock<Grid>>): Row[] {
-  return g.read((x) => x.rows.slice());
+  return g.read((x) => x.rows.slice().clone());
 }
 
 function main() {

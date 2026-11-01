@@ -1,0 +1,1 @@
+rwlock_read_probe_m31.vlt:11:13: error: this gives the caller's containers a copy of `f`, which the `read` callback made and still uses, where JavaScript would share it

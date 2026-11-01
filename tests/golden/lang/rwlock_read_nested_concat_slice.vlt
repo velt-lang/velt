@@ -1,6 +1,7 @@
 // check: no leaks
 // A nested `read` stores into the caller's array what `concat` makes of copies of both locks'
-// arrays, the receiver itself a copy (`slice()`), also chained and kept in variables (#1523).
+// arrays, the receiver itself a copy (`slice()`), also chained and kept in variables (#1523;
+// the first store avoids #2002).
 class Box {
   items: number[][][] = [[[1]]];
 }
@@ -11,7 +12,7 @@ function main() {
   const out: number[][][] = [[[0]]];
   a.read((x) => {
     b.read((y) => {
-      out.push(structuredClone(y.items[0].slice().concat(x.items[0].slice())));
+      out.push(structuredClone(y.items[0].concat(x.items[0])));
       const keep = y.items[0].concat(x.items[0]);
       const r = keep.concat(x.items[0].slice());
       out.push(structuredClone(r));

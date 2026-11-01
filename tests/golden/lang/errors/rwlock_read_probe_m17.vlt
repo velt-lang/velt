@@ -1,0 +1,14 @@
+// An RwLock read probe (#1559): a compile error, where a silent copy would differ from Node.
+class Box {
+  items: number[][] = [[1, 2], [3]];
+}
+function withRead<T, R>(rw: RwLock<T>, f: (v: T) => R): R {
+  return rw.read(f);
+}
+function main() {
+  const a = new RwLock(new Box());
+  const out: number[][] = [];
+  withRead(a, (x) => { out.push(x.items[0]); return 0; });
+  a.write((q) => { q.items[0].push(5); });
+  console.log(JSON.stringify(out));
+}

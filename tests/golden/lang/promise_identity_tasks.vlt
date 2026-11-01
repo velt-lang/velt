@@ -1,4 +1,4 @@
-// Identity stays on the task holding a promise (docs/reference/async.md, #1682): a `Set` of
+// Identity stays on the task holding a promise (https://veltlang.com/docs/reference/async/, #1682): a `Set` of
 // promises moved to a spawned task holds other promises there, which it does not find by the
 // hashes it took here. Node, where nothing moves, prints `in task 5 found 5 sum 10` and
 // `in task true 7`.

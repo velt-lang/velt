@@ -1,0 +1,1 @@
+rwlock_read_made_nested_moved.vlt:48:18: error: this gives the caller's containers a copy of `b`, which the `read` callback made and still uses, where JavaScript would share it

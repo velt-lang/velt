@@ -1,7 +1,7 @@
 // check: no leaks
 // `spawn` of a conditional runs the chosen call as a task of its own, with its arguments and
 // receiver copied for it like `spawn(f(x))` (#270); a stored promise is already started on this
-// task and stays here (docs/reference/async.md "Tasks"), so the caller's objects are never
+// task and stays here (https://veltlang.com/docs/reference/async/ "Tasks"), so the caller's objects are never
 // used from two threads. Each form counts on an object while this task counts on its own.
 class Box {
   n: i64 = 0;

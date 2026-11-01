@@ -1,4 +1,4 @@
-// Strings are values (docs/reference/types.md "Strings"): copy, store, capture and take them
+// Strings are values (https://veltlang.com/docs/reference/types/ "Strings"): copy, store, capture and take them
 // out of fields, elements and maps without `.clone()`; the source stays usable.
 class User {
   name: string;

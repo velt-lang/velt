@@ -1,0 +1,23 @@
+// check: no leaks
+// #1525 probe s6a's shape in one `read`: an object the callback made, holding the caller's
+// array, stored into the caller's array while the callback still changes it: the same object,
+// with the caller's array in it, as in JavaScript (#1541).
+class Box {
+  items: number[][] = [[1, 2], [3]];
+}
+class Holder {
+  rows: number[][] = [];
+}
+function main() {
+  const a = new RwLock(new Box());
+  const mine: number[][][] = [[[1]], [[2]]];
+  const hs: Holder[] = [];
+  a.read((x) => {
+    const h = new Holder();
+    h.rows.push(mine[0][0]);
+    hs.push(h);
+    h.rows.push([9]);
+  });
+  mine[0][0].push(5);
+  console.log(JSON.stringify(hs[0].rows[0]));
+}

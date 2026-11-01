@@ -1,7 +1,8 @@
-// A `read` callback giving the caller's containers an object it made, of a type the value can't
-// hold (a class, a `Map`), that holds the caller's objects, while it still holds that object
-// (a function or method moving its items into the caller's containers): the store would get a
-// copy, also of the caller's objects inside, where JavaScript shares them. An error.
+// A `read` callback giving objects it made, of types the value can't hold (a class, a `Map`),
+// that hold the caller's objects, to a function or method of the program's that moves their
+// items into the caller's containers, while it still uses them: the call would get a copy, where
+// JavaScript shares them (#1541). An error; storing such an object itself keeps it the same
+// object (rwlock_read_made_still_held).
 class Item {
   v: i64 = 0;
   constructor(v: i64) {
