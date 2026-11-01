@@ -59,6 +59,16 @@ fn root() -> PathBuf {
         .expect("repo root")
 }
 
+/// `path` as node takes it. `canonicalize` gives a verbatim path (`\\?\E:\…`) on Windows, which
+/// node can't run as its main module (`EISDIR: illegal operation on a directory, lstat 'E:'`)
+/// and `pathToFileURL` turns into a wrong URL.
+fn for_node(path: &Path) -> PathBuf {
+    match path.to_str().and_then(|p| p.strip_prefix(r"\\?\")) {
+        Some(plain) if !plain.starts_with(r"UNC\") => PathBuf::from(plain),
+        _ => path.to_path_buf(),
+    }
+}
+
 fn has_rust_target(triple: &str) -> bool {
     let Ok(out) = crate::no_window::command("rustc")
         .args(["--print", "sysroot"])
@@ -400,9 +410,9 @@ fn host_functions_under_node() {
             String::from_utf8_lossy(&o.stderr)
         );
         let o = crate::no_window::command("node")
-            .arg(dir.join("host.mjs"))
-            .arg(work.join("velt_web.mjs"))
-            .arg(&module)
+            .arg(for_node(&dir.join("host.mjs")))
+            .arg(for_node(&work.join("velt_web.mjs")))
+            .arg(for_node(&module))
             .output()
             .expect("run node");
         let got = String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n");
