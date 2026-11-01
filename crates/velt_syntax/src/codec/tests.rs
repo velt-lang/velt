@@ -28,6 +28,7 @@ export { q } from "./q";
 // @ts-ignore
 declare function ext(a: i64): void;
 declare system function pread(fd: i32, n: usize): isize;
+export declare host("m") function hostFn(s: string): HostRef | null;
 export struct P { x: f64, y: f64; len(): f64 { return Math.sqrt(this.x ** 2 + this.y ** 2); } }
 abstract class K<T extends A & B = D> extends Base<T> implements I {
   static #n = 1n;

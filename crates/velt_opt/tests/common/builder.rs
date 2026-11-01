@@ -125,6 +125,7 @@ impl ProgramBuilder {
             params: params.to_vec(),
             ret,
             noreturn,
+            host: None,
         });
         ExternId(self.p.externs.len() as u32 - 1)
     }

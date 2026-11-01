@@ -91,6 +91,8 @@ struct Emitter<'a> {
     rounds_by_conversion: bool,
     /// What the SIMD helpers depend on of the target.
     simd: crate::simd::Arch,
+    /// The x86 features the code may use without checking (`Target::x86_features`, `--cpu`).
+    x86_features: u32,
     /// The program's array header aggregate (tbaa.rs).
     array: Option<vir::AggId>,
     /// The aggregate string bytes are read through (tbaa.rs).
@@ -134,6 +136,7 @@ pub(crate) fn emit_function(
         wide_pointer_slots: target.wide_pointer_slots(),
         rounds_by_conversion: target.rounds_by_conversion(),
         simd: crate::simd::Arch::of(target),
+        x86_features: target.x86_features,
         array,
         text: crate::tbaa::text_agg(program),
         objects: crate::tbaa::object_aggs(program),

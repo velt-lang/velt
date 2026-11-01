@@ -1,0 +1,28 @@
+// With `fetch` in the program (its HTTP/2 client spawns sessions holding an
+// `onClose: (() => void) | null`), a callback the HTTP handler does reach is still an error
+// (#873), named at the `serve` call that hands the handler over.
+import { serve } from "http-server";
+
+class Holder {
+  cb: (() => void) | null = null;
+}
+
+async function status(url: string): Promise<number> {
+  const res = await fetch(url);
+  return res.status;
+}
+
+async function main() {
+  let hits = 0;
+  const h = new Holder();
+  h.cb = () => {
+    hits++;
+  };
+  const server = await serve({ port: 0 }, async (req) => {
+    if (h.cb) h.cb();
+    return new Response("ok");
+  });
+  await server.shutdown();
+  console.log(hits);
+  if (hits < 0) console.log(await status("https://example.com/"));
+}

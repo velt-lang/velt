@@ -85,7 +85,7 @@ pub(crate) fn fill_pending(cx: &mut Ctx, d: DefId) {
 
 /// A parameter type written `readonly T[]` (parsed as `ReadonlyArray<T>`, which is `T[]` from
 /// here on): a `declare system function` buffer the C function only reads.
-fn written_readonly(t: &ast::TypeExpr) -> bool {
+pub(super) fn written_readonly(t: &ast::TypeExpr) -> bool {
     matches!(&t.kind, ast::TypeExprKind::Named { path, .. }
         if path.len() == 1 && path[0].name == "ReadonlyArray")
 }
@@ -258,7 +258,10 @@ fn fill_sig(cx: &mut Ctx, d: DefId, sig: &ast::FnSig, owner: &Generics, module: 
             }
         }
     }
+    let host = (kind == FnKind::Extern && sig.host.is_some())
+        .then(|| super::host_sig::host_import(cx, sig, &ps, ret));
     let f = cx.fn_info_mut(d);
+    f.host = host;
     if kind == FnKind::Extern && sig.is_system {
         f.system = Some(sig.params.iter().map(|p| written_readonly(&p.ty)).collect());
     }
@@ -269,10 +272,10 @@ fn fill_sig(cx: &mut Ctx, d: DefId, sig: &ast::FnSig, owner: &Generics, module: 
     f.generics = generics;
     f.params = ps;
     // A system function writes every buffer and struct not written `readonly`
-    // (https://veltlang.com/docs/reference/system-functions/): its argument is a mutable borrow from the start, so
-    // the call is checked as one (a read-only array is rejected, a module constant is not
-    // copied, another argument may not reach it) before ownership inference runs.
-    if let Some(readonly) = f.system.clone() {
+    // (https://veltlang.com/docs/reference/system-functions/), a host function every `u8[]`: its argument is a
+    // mutable borrow from the start, so the call is checked as one (a read-only array is
+    // rejected, a module constant is not copied, another argument may not reach it).
+    if let Some(readonly) = f.buffer_params() {
         for (p, ro) in f.params.iter_mut().zip(readonly) {
             if p.mode == PassMode::Borrow && !ro {
                 p.mode = PassMode::BorrowMut;

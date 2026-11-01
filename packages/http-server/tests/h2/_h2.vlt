@@ -30,6 +30,24 @@ export class TestServer {
   }
 }
 
+// The servers and clients made, for `closeAll`.
+let servers: TestServer[] = [];
+let clients: Client[] = [];
+
+/// Closes every server and client made so far (closing twice does nothing): a test file's
+/// `afterEach`, so a test that fails before its own closing leaves nothing running (a server
+/// left running keeps the file's process alive past its tests).
+export function closeAll() {
+  for (const c of clients) {
+    c.close();
+  }
+  for (const s of servers) {
+    s.close();
+  }
+  clients = [];
+  servers = [];
+}
+
 /// Serves `handler` over HTTP/2 with prior knowledge on a free port.
 export async function startServer(
   handler: (req: HttpRequest, res: HttpResponse) => Promise<void>,
@@ -49,7 +67,9 @@ export async function startServer(
       }
     }
   });
-  return new TestServer(l, stop);
+  const server = new TestServer(l, stop);
+  servers.push(server);
+  return server;
 }
 
 /// A frame read by the client.
@@ -76,6 +96,7 @@ export class Client {
   /// server's SETTINGS.
   static async open(port: number, settings: i64[] = []): Promise<Client> {
     const c = new Client(await connect(`127.0.0.1:${port}`));
+    clients.push(c);
     await c.conn.write("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
     c.w.settings(settings);
     await c.flush();

@@ -32,13 +32,15 @@ use crate::hir::{self, Callee, DefId, ExprKind as E, TyId, TyKind};
 
 /// Std modules (path prefixes) checked whole: lowering looks up their definitions by name
 /// (`velt_vir` `STABLE_SORT`, the proxy and typed-array glue, the epoch sections' `pin`,
-/// `unpin` and `retire`, `this_fn`'s glue) and calls them.
+/// `unpin` and `retire`, `this_fn`'s glue, the `HostRef` hooks of host function calls) and calls
+/// them.
 const EAGER: &[&str] = &[
     velt_common::std_module!(lang_sort),
     velt_common::std_module!(lang_proxy),
     velt_common::std_module!(lang_typed_array),
     velt_common::std_module!(sync_epoch),
     velt_common::std_module!(lang_this_fn),
+    velt_common::std_module!(host),
 ];
 
 /// Prelude classes whose methods are checked once the type is used, as a class outside the

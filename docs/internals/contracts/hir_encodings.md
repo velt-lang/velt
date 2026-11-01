@@ -338,6 +338,9 @@ declaration's `ExternFnDef` is never called. Its name maps to the `Intrinsic` in
   Lowering passes the bytes the view sees: for a `BufferView`, its fields `buf` (an
   `ArrayBuffer`, field `bytes: u8[]`), `off` and the byte length std's `viewBytes(v)` gives;
   for `Subarray`, JS's `subarray` positions in `xs` (#1718).
+  A `declare host` function (`ExternFnDef::host`) does the same for its `u8[]` parameters
+  (`HostTy::Bytes { readonly: false }` ones are `BorrowMut`; `readonly u8[]` ones `Borrow`);
+  its `string` and `HostRef` parameters are `Borrow`.
 
 ## Generic methods
 - Generic interface methods: `InterfaceDef::methods[slot]` as usual; the method's own type

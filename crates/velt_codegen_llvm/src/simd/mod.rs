@@ -244,6 +244,14 @@ fn vector(b: &mut Body, lanes: Lanes, op: Op) -> Option<String> {
         Op::Neg | Op::Abs | Op::Sqrt | Op::Not => unary(b, lanes, op),
         Op::Shl | Op::Shr => shift(b, lanes, op),
         Op::Select => select(b, lanes),
+        // `llvm.fma` rounds once on every target (a library call per lane without FMA);
+        // `llvm.fmuladd` fuses only where that is faster.
+        Op::MulAdd | Op::MulAddFast => {
+            let (_, _, suffix) = spell(lanes);
+            let (x, y, z) = (b.arg(0, &ty), b.arg(1, &ty), b.arg(2, &ty));
+            let name = if op == Op::MulAdd { "fma" } else { "fmuladd" };
+            b.intrinsic(name, &suffix, &ty, &[&x, &y, &z], "")
+        }
         _ => {
             let (x, y) = (b.arg(0, &ty), b.arg(1, &ty));
             binary(b, lanes, op, &x, &y)

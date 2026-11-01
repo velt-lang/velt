@@ -340,8 +340,12 @@ first half of its 8-byte slot. Functions (`std/lang/symbol/index.vlt`; `string` 
 runtime's start-up (baseline code) and before any code that may use the features. `required` is
 a mask of features, by bit: 0 SSE3, 1 SSSE3, 2 SSE4.1, 3 SSE4.2, 4 POPCNT, 5 CMPXCHG16B, 6 AVX,
 7 AVX2, 8 BMI1, 9 BMI2, 10 FMA, 11 LZCNT, 12 MOVBE, 13 F16C, 14 AVX512F, 15 AVX512BW,
-16 AVX512CD, 17 AVX512DQ, 18 AVX512VL, 19 AVX512VBMI, 20 AVX512BITALG
-(`velt_codegen_cl::X86_FEATURES`; x86-64-v2 is bits 0–5, v3 0–13, v4 0–18). When the CPU lacks
+16 AVX512CD, 17 AVX512DQ, 18 AVX512VL, 19 AVX512VBMI, 20 AVX512BITALG, 21 SHA [additive],
+22 PCLMULQDQ (`velt_codegen_cl::X86_FEATURES`; x86-64-v2 is bits 0–5, v3 0–13, v4 0–18). A
+feature joins the list when generated code uses it: a feature in the mask that the CPU (or a
+VM) hides stops the program at start-up. Code whose features hold an extension's (SHA with SSSE3 and
+SSE4.1 for `sha-x86`, PCLMULQDQ with them for `clmul-x86`) takes its check
+(`velt_simd_has_<ext>`, "SIMD") as true; the LLVM backend folds it. When the CPU lacks
 one, it prints to stderr ``error: this program was built for <level> (<features>); this CPU
 lacks <missing>; rebuild it with `--cpu <lower>` `` (`<lower>`: the highest level the CPU has,
 or `baseline`) and exits with code 1. `VELT_CPU_DISABLE` (comma-separated feature names, any case) removes features from what the CPU
@@ -392,6 +396,12 @@ std file declares one: sema checks the literals of `T.shuffle(a, b, …)` and lo
 extern (HIR `Intrinsic::SimdShuffle`). `velt_simd_<type>_reverse_bytes` (16-, 32- and 64-bit
 integer lanes) reverses the bytes within each lane.
 
+`velt_simd_f32x4_mul_add` and `velt_simd_f64x2_mul_add` [additive] compute `a * b + c` with one
+rounding on every target: the FMA instruction where the CPU has it, and otherwise libm's `fmaf` /
+`fma` per lane (which the link provides: `-lm`, the C runtime, compiler-builtins on wasm).
+`_mul_add_fast` may fuse or not, whichever is faster (LLVM's `llvm.fmuladd`; a multiply and an add
+in Cranelift).
+
 **CPU extensions (#1330).** `velt_simd_u32x4_<op>` for the SHA instructions (`sha1c`, `sha1p`,
 `sha1m`, `sha1h`, `sha1su0`, `sha1su1`, `sha256h`, `sha256h2`, `sha256su0`, `sha256su1` on
 aarch64; `sha256rnds2`, `sha256msg1`, `sha256msg2`, `sha1rnds4_<0-3>`, `sha1nexte`, `sha1msg1`,
@@ -404,7 +414,9 @@ architecture with the extension that check reads the runtime's flag byte, otherw
 architecture, wasm, Cranelift) it is `false` and the operation, dead behind it, gives zeros.
 The runtime exports the flags, set in `velt_rt_start` (`init`) before any Velt code runs and never
 changed after (so generated code reads them as invariant); `VELT_SIMD_DISABLE=sha` (`clmul`)
-leaves the SHA (carry-less) ones 0:
+leaves the SHA (carry-less) ones 0. Code built for a CPU whose features include the extension's
+("CPU check") reads no flag: LLVM takes the check as true there, so `VELT_SIMD_DISABLE` changes
+nothing in it:
 
 ```c
 uint8_t velt_cpu_sha_arm;    /* 1: aarch64 with the ARMv8 SHA-1/SHA-256 instructions */
@@ -594,6 +606,31 @@ answers the first hole below `index`, or -1. std/lang/proxy/index.vlt's `Reflect
 the gap before an element written past the end) and reports them as absent; elsewhere both are
 `TypeError`s. Both runtimes provide them (`velt_rt/src/proxy_array.rs`, compiled into
 velt_rt_wasm too).
+
+## Host values [additive, #1735]
+
+```c
+void velt_rt_host_release(uint32_t slot);
+uint32_t velt_rt_host_clone(uint32_t slot);
+/* WebAssembly (velt_rt_wasm), exported from browser modules for the JS glue: */
+const uint8_t *velt_host_str_ptr(const VeltStr *s);
+size_t velt_host_str_len(const VeltStr *s);
+uint8_t *velt_host_alloc(size_t len);
+void velt_host_str_new(VeltStr *out, uint8_t *buf, size_t len);
+void velt_host_bytes_new(VeltBytes *out, uint8_t *buf, size_t len);
+```
+
+What host functions (https://veltlang.com/docs/reference/host-functions/) need. A `HostRef` (std/host/host_ref.vlt)
+holds a slot of the JS glue's table of values (`velt_web.mjs`), 0 once released (and natively); its drop calls
+`velt_rt_host_release` and `clone()` `velt_rt_host_clone`, which on `wasm32-unknown-unknown`
+call the glue's imports `velt.host_release` / `velt.host_clone`. Natively and under WASI no
+`HostRef` exists (no host function can be called): velt_rt's versions do nothing and return 0.
+
+The glue reads a string argument (passed as `const VeltStr *`) through `velt_host_str_ptr` and
+`velt_host_str_len`. A string or `u8[]` result goes through a trailing out-pointer: the glue
+gets a buffer from `velt_host_alloc`, writes the bytes, and `velt_host_str_new` (UTF-8; it
+copies and frees the buffer) or `velt_host_bytes_new` (it adopts the buffer) writes the value.
+velt_link exports the five from every browser module.
 
 ## Views [additive, #1485]
 

@@ -237,6 +237,8 @@ pub(crate) struct FnInfo<'m> {
     /// `declare system function` (`hir::ExternFnDef::system`): per parameter, whether its type
     /// was written `readonly` (a buffer the C function only reads). `None` for anything else.
     pub system: Option<Vec<bool>>,
+    /// `declare host("m") function` (`hir::ExternFnDef::host`): the import and what crosses.
+    pub host: Option<crate::hir::HostImport>,
     /// `declare intrinsic function` (std/lang/intrinsics): what a call of it is. A call is
     /// checked against its signature and becomes the intrinsic (`body::expr::intrinsic_call`),
     /// so its `hir::ExternFnDef` is never called and lowering never declares its symbol.
@@ -283,6 +285,25 @@ pub(crate) struct FnInfo<'m> {
 }
 
 impl FnInfo<'_> {
+    /// For a system or host function, per parameter whether the callee leaves it as it is: its
+    /// other byte buffers (`u8[]`) and a system function's structs are written, so their
+    /// arguments are mutable borrows, and a buffer parameter takes views of bytes too
+    /// (`body::expr::system_args`). `None` for every other function.
+    pub fn buffer_params(&self) -> Option<Vec<bool>> {
+        if let Some(h) = &self.host {
+            let unwritten = |t: &crate::hir::HostTy| {
+                !matches!(t, crate::hir::HostTy::Bytes { readonly: false })
+            };
+            return Some(h.params.iter().map(unwritten).collect());
+        }
+        self.system.clone()
+    }
+
+    /// Is this a system or host function ([`Self::buffer_params`])?
+    pub fn has_buffer_params(&self) -> bool {
+        self.system.is_some() || self.host.is_some()
+    }
+
     /// Is this a function declared with a `this` parameter (`function f(this: T)`), whose
     /// `this` is a leading parameter that callers pass (`body::expr::this_param`)?
     pub fn has_this_param(&self) -> bool {

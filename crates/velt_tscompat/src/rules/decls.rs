@@ -49,6 +49,19 @@ pub(super) fn item(item: &ast::Item, cx: &mut Cx) {
                  functions that use them from shared code",
             ],
         ),
+        I::ExternFn(sig) if sig.host.is_some() => cx.error(
+            "declare-fn",
+            cx.keyword(item.span, "declare"),
+            format!(
+                "`declare host(…) function {}` is not TypeScript syntax",
+                sig.name.name
+            ),
+            &[
+                "in JavaScript the host's function is called directly, with no declaration",
+                "keep host functions in modules only Velt compiles, and call the functions \
+                 that use them from shared code",
+            ],
+        ),
         I::ExternFn(sig) => cx.error(
             "declare-fn",
             cx.keyword(item.span, "declare"),
