@@ -2,7 +2,8 @@
 //! generators'): one job at a time, on a thread of its own, for a document's latest analysis
 //! [`DELAY`] after it (later analyses push it back). What a job finds is published with the
 //! document's other diagnostics when it is done, if the document is still at the version the job
-//! ran on, and again with each analysis of that version. Requests never wait for a job.
+//! ran on, and with each later analysis until the next job reports (so an error that stays does
+//! not blink out at each edit). Requests never wait for a job.
 
 use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -24,8 +25,8 @@ pub(super) struct Slow {
     running: Option<Running>,
     /// Documents analyzed since their last job started, with when their job is due.
     wanted: HashMap<Url, Instant>,
-    /// What the last finished job of each document found, and the version it ran on.
-    found: HashMap<Url, (i32, Diagnostics)>,
+    /// What the last finished job of each document found.
+    found: HashMap<Url, Diagnostics>,
 }
 
 /// The job running: its document, the document's version, and where its findings come.
@@ -36,12 +37,11 @@ struct Running {
 }
 
 impl Slow {
-    /// What the last job found for `uri` if it ran on `version` (and nothing for another one).
-    pub(super) fn found(&self, uri: &Url, version: i32) -> &[Diagnostic] {
-        match self.found.get(uri) {
-            Some((v, found)) if *v == version => found,
-            _ => &[],
-        }
+    /// What the last finished job found for `uri`, also when it ran on an earlier version: shown
+    /// until the next job reports, so that an error that stays does not blink out at each edit
+    /// (where it still fits the text, [`diagnostics::for_document`]).
+    pub(super) fn found(&self, uri: &Url) -> &[Diagnostic] {
+        self.found.get(uri).map_or(&[], |found| &found[..])
     }
 
     /// Run a job for `uri`'s analysis after [`DELAY`].
@@ -125,7 +125,7 @@ impl Server<'_> {
                 let diags = diagnostics::for_document(analysis, &found, &|p| self.uri_of(p));
                 self.publish(run.uri.clone(), diags, Some(run.version));
             }
-            self.slow.found.insert(run.uri, (run.version, found));
+            self.slow.found.insert(run.uri, found);
         }
         self.start_slow();
     }

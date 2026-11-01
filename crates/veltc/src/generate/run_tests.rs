@@ -1,6 +1,7 @@
 //! The host's records: only those starting with the run's marker count.
 
 use super::*;
+use velt_sema::generated::GenFunction;
 
 fn read(marker: &str, out: &str) -> Result<Vec<(String, Written)>, String> {
     let output = HostOutput {
@@ -9,13 +10,28 @@ fn read(marker: &str, out: &str) -> Result<Vec<(String, Written)>, String> {
     };
     let mut written = vec![("i1".to_string(), Written::default())];
     let mut errors = vec![];
-    parse_frames(
+    // One generated function, `hello` of generator `g0`; a model without types.
+    let demand = Demand {
+        functions: vec![GenFunction {
+            module: "main".into(),
+            function: "hello".into(),
+            generator: "./gen".into(),
+            generator_span: Span::DUMMY,
+            params: vec![],
+            ret: "string".into(),
+            is_async: false,
+            throws: None,
+        }],
+        ..Demand::default()
+    };
+    let fn_keys = ["g0".to_string()];
+    let read = parse_frames(
         &output,
-        &mut written,
-        &mut errors,
-        &Demand::default(),
+        (&mut written, &mut errors),
+        (&demand, &fn_keys),
         Span::DUMMY,
-    )?;
+    );
+    read?;
     assert!(errors.is_empty());
     Ok(written)
 }
@@ -54,4 +70,36 @@ fn records_without_the_marker_are_ignored() {
 fn markers_differ() {
     assert_ne!(new_marker(), new_marker());
     assert_eq!(new_marker().len(), 32);
+}
+
+/// A length past the end of the output (or of `usize`) is an error, not a crash.
+#[test]
+fn a_length_past_the_output_is_an_error() {
+    let m = "abababababababababababababababab";
+    for len in ["18446744073709551615", "99"] {
+        let out = format!("\n#{m} body i1 {len}\nx\n");
+        let err = read(m, &out).expect_err("a bad length");
+        assert!(
+            err.contains("longer than the output") || err.contains("shorter"),
+            "{err}"
+        );
+    }
+}
+
+/// An instance of anything but a generated function of the same generator, or at a type the
+/// model does not have, is refused.
+#[test]
+fn only_generated_functions_get_instances() {
+    let m = "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd";
+    let rec = |header: &str| format!("\n#{m} {header} 0\n\n#{m} done 0\n\n");
+    assert!(read(m, &rec("instance n1 g0 hello")).is_ok());
+    for (header, want) in [
+        ("instance n1 g0 nope", "not a generated function"),
+        ("instance n1 g1 hello", "not a generated function"),
+        ("instance n1 g0 hello 0", "unknown type"),
+        ("instance n1 g0 hello -1", "invalid digit"),
+    ] {
+        let err = read(m, &rec(header)).expect_err(header);
+        assert!(err.contains(want), "{header}: {err}");
+    }
 }

@@ -464,3 +464,43 @@ fn no_generators_names_the_generator() {
         );
     }
 }
+
+/// A generator may name only its own generated functions: one that asks for an instance of a
+/// name with a newline in it (which could choose the record's length) is an error, not a crash.
+#[test]
+fn a_generator_asks_only_for_its_own_functions() {
+    let tmp = hello_project(
+        "import { InstanceRequest, Output } from \"velt/generate\";\n\
+         export function hello(req: InstanceRequest, out: Output): void {\n\
+         \x20 out.instance(\" 18446744073709551615\\n\", []);\n\
+         \x20 out.line(`return \"x\";`);\n\
+         }\n",
+    );
+    let (ok, _, err) = velt_in(tmp.path(), &["check", "main.vlt"], &[]);
+    assert!(!ok, "{err}");
+    assert!(
+        err.contains("is not a generated function of this generator"),
+        "{err}"
+    );
+    assert!(!err.contains("panicked"), "{err}");
+}
+
+/// A generator that prints without end is stopped once it wrote 128 MB.
+#[test]
+fn a_generator_that_prints_too_much_is_stopped() {
+    let tmp = hello_project(
+        "import { InstanceRequest, Output } from \"velt/generate\";\n\
+         export function hello(req: InstanceRequest, out: Output): void {\n\
+         \x20 const line = \"x\".repeat(1 << 20);\n\
+         \x20 let n: i64 = 0;\n\
+         \x20 while (n >= 0) { console.log(line); n = (n + 1) % 1000; }\n\
+         \x20 out.line(`return \"never\";`);\n\
+         }\n",
+    );
+    let (ok, _, err) = velt_in(tmp.path(), &["check", "main.vlt"], &[]);
+    assert!(!ok, "{err}");
+    assert!(
+        err.contains("wrote more than 128 MB to its standard output"),
+        "{err}"
+    );
+}

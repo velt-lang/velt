@@ -14,6 +14,7 @@
 mod cache;
 pub(crate) mod editor;
 mod host;
+mod process;
 mod run;
 
 use std::path::{Path, PathBuf};
@@ -27,6 +28,7 @@ use velt_syntax::ast::ItemKind;
 use crate::driver::Session;
 
 pub use host::host_main;
+pub(crate) use process::stop_all;
 
 /// The internal command a JIT host runs as (`velt __generate-host <virtual root path>`).
 pub const HOST_COMMAND: &str = "__generate-host";

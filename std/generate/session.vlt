@@ -9,6 +9,8 @@ export class Session {
   prefix: string = "";
   /** The generator key of the instance being generated. */
   key: string = "";
+  /** The name of the instance being generated. */
+  current: string = "";
   names: Map<string, string> = new Map();
   params: Map<string, string[]> = new Map();
   queue: Pending[] = [];
@@ -21,6 +23,13 @@ export class Session {
   }
 
   instance(fn: string, args: i64[]): string {
+    // Only the generated functions of this generator's module: anything else (a name with a
+    // space or a newline in it) could not be read back, nor generated.
+    if (!this.params.has(this.key + " " + fn)) {
+      const msg = `\`${fn}\` is not a generated function of this generator`;
+      this.report("error", this.current, -1, msg);
+      return "";
+    }
     const k = this.key + " " + fn + "<" + args.join(",") + ">";
     const known = this.names.get(k);
     if (known != null) {

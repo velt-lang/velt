@@ -21,10 +21,15 @@ struct Server {
 
 impl Server {
     fn start(dir: &Path) -> Server {
+        Server::start_with(dir, &[])
+    }
+
+    fn start_with(dir: &Path, env: &[(&str, &str)]) -> Server {
         let mut child = Command::new(env!("CARGO_BIN_EXE_velt"))
             .arg("lsp")
             .current_dir(dir)
             .env("VELT_BUILD_CACHE", dir.join("cache"))
+            .envs(env.iter().copied())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -164,7 +169,9 @@ fn generator_errors_are_shown_and_cleared() {
     });
     let hover = server.request(2, "textDocument/hover", at);
     assert!(hover["result"].is_object(), "{hover:#}");
-    assert_eq!(server.diagnostics(2), Vec::<Value>::new());
+    // The error is kept until the generators ran on the fixed text (no blinking).
+    let kept = server.diagnostics(2);
+    assert!(kept.iter().any(undefined), "{kept:#?}");
     assert_eq!(server.diagnostics(2), Vec::<Value>::new());
     // Broken again: shown again (from the generators' cache).
     let change = json!({
@@ -187,4 +194,99 @@ fn url(path: &Path) -> String {
         true => format!("file://{text}"),
         false => format!("file:///{text}"),
     }
+}
+
+/// A generator that never returns, for `hello<User>()` in `main.vlt`.
+const ENDLESS: &str = "import { InstanceRequest, Output } from \"velt/generate\";\n\
+     export function hello(req: InstanceRequest, out: Output): void {\n\
+     \x20 let n: i64 = 0;\n\
+     \x20 while (n >= 0) { n = (n + 1) % 1000; }\n\
+     \x20 out.line(`return \"never\";`);\n\
+     }\n";
+
+const HELLO: &str = "declare generated(\"./gen\") function hello<T>(): string;\n\
+     class User {}\n\
+     function main() { console.log(hello<User>()); }\n";
+
+/// How many processes run a generator host built into the build cache `cache`.
+fn hosts_running(cache: &Path) -> usize {
+    // As the server names it, and with links resolved (without Windows' `\\?\` prefix).
+    let dir = cache.join("generate-host");
+    let dirs: Vec<String> = [dir.clone(), dir.canonicalize().unwrap_or(dir)]
+        .iter()
+        .map(|d| d.to_string_lossy().replace("\\\\?\\", "").to_lowercase())
+        .collect();
+    let listing = if cfg!(windows) {
+        let script = "Get-Process | ForEach-Object { $_.Path }";
+        Command::new("powershell")
+            .args(["-NoProfile", "-Command", script])
+            .output()
+    } else {
+        Command::new("ps").args(["-eo", "args="]).output()
+    };
+    let listing = listing.expect("list processes");
+    let text = String::from_utf8_lossy(&listing.stdout).to_lowercase();
+    text.lines()
+        // The program, not an argument (the linker building the host names it too).
+        .filter(|l| dirs.iter().any(|d| l.trim_start().starts_with(d.as_str())))
+        .count()
+}
+
+/// Wait (polling, up to `limit`) until `done` holds.
+fn eventually(limit: Duration, what: &str, done: impl Fn() -> bool) {
+    let end = Instant::now() + limit;
+    while !done() {
+        assert!(Instant::now() < end, "{what}");
+        std::thread::sleep(Duration::from_millis(200));
+    }
+}
+
+/// A project whose generator never returns, open in a language server without a time limit,
+/// once the server runs its host.
+fn endless_host() -> (tempfile::TempDir, Server) {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let main = tmp.path().join("main.vlt");
+    std::fs::write(&main, HELLO).expect("main");
+    std::fs::write(tmp.path().join("gen.vlt"), ENDLESS).expect("gen");
+    let mut server = Server::start_with(tmp.path(), &[("VELT_GENERATOR_TIMEOUT", "0")]);
+    server.request(1, "initialize", json!({ "capabilities": {} }));
+    server.notify("initialized", json!({}));
+    let doc = json!({ "uri": url(&main), "languageId": "velt", "version": 1, "text": HELLO });
+    server.notify("textDocument/didOpen", json!({ "textDocument": doc }));
+    let cache = tmp.path().join("cache");
+    eventually(Duration::from_secs(600), "the host never started", || {
+        hosts_running(&cache) > 0
+    });
+    (tmp, server)
+}
+
+/// A host the server started stops when the server exits.
+#[test]
+fn a_host_stops_with_the_language_server() {
+    let (tmp, mut server) = endless_host();
+    server.request(2, "shutdown", Value::Null);
+    server.notify("exit", Value::Null);
+    let _ = server.child.wait();
+    let cache = tmp.path().join("cache");
+    eventually(
+        Duration::from_secs(30),
+        "the host outlived the server",
+        || hosts_running(&cache) == 0,
+    );
+}
+
+/// A host the server started dies with it when the server is killed (Linux: the parent-death
+/// signal; Windows: the kill-on-close job). macOS stops hosts only at a clean exit.
+#[cfg(any(target_os = "linux", windows))]
+#[test]
+fn a_host_dies_with_a_killed_language_server() {
+    let (tmp, mut server) = endless_host();
+    server.child.kill().expect("kill the server");
+    let _ = server.child.wait();
+    let cache = tmp.path().join("cache");
+    eventually(
+        Duration::from_secs(30),
+        "the host outlived the killed server",
+        || hosts_running(&cache) == 0,
+    );
 }

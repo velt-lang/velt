@@ -16,7 +16,10 @@ use crate::loader::{self, LoadOptions};
 
 /// Serve until the client exits.
 pub fn lsp_command() -> Result<(), String> {
-    velt_lsp::serve_stdio(&CliLoader::default())
+    let served = velt_lsp::serve_stdio(&CliLoader::default());
+    // A generator host still running for a background check must not outlive the server.
+    crate::generate::stop_all();
+    served
 }
 
 /// [`ProgramLoader`] over [`loader::load_program`]. A package's dependency graph is installed like

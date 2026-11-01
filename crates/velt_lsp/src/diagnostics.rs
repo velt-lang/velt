@@ -30,8 +30,12 @@ pub fn for_document(
     let index = LineIndex::new(analysis.text());
     let files = analysis.sm.files().count();
     // A slow diagnostic is shown at places of the analyzed files only (not in a file only its
-    // job made), and once.
-    let known = |span: Span| span == Span::DUMMY || (span.file.0 as usize) < files;
+    // job made, nor past the end of a file that got shorter since it ran), and once.
+    let known = |span: Span| {
+        span == Span::DUMMY
+            || ((span.file.0 as usize) < files
+                && span.hi as usize <= analysis.sm.get(span.file).src.len())
+    };
     let slow = slow.iter().filter_map(|d| {
         let primary = d.labels.first().map(|l| l.span)?;
         let shown = |e: &&Diagnostic| {

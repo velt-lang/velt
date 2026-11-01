@@ -179,6 +179,7 @@ export function serve(generators: GeneratorEntry[]): void {
       }
       found = true;
       s.key = p.key;
+      s.current = p.name;
       const req = new InstanceRequest();
       req.fn = p.fn;
       req.args = p.args;

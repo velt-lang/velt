@@ -342,7 +342,7 @@ impl Server<'_> {
         }
         let overlay = self.docs.overlay();
         let analysis = analysis::analyze(self.loader, &path, &overlay, &mut self.ts_folders);
-        let slow = self.slow.found(uri, version);
+        let slow = self.slow.found(uri);
         let diags = diagnostics::for_document(&analysis, slow, &|p| self.uri_of(p));
         if analysis.loaded_cleanly {
             self.slow.want(uri);

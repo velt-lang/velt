@@ -8,7 +8,7 @@ use velt_common::{Diagnostic, Diagnostics, Span};
 use velt_sema::generated::{spell, Demand, GenInstance};
 use velt_sema::SourceModule;
 
-use super::{cache, host, Described, Generated, GeneratedText};
+use super::{cache, host, process, Described, Generated, GeneratedText};
 use crate::driver::Session;
 
 /// One instance the host generated.
@@ -144,7 +144,12 @@ pub(super) fn run(
     }
     let mut errors: Diagnostics = vec![];
     for output in &outputs {
-        let read = parse_frames(output, &mut written, &mut errors, demand, first_at);
+        let read = parse_frames(
+            output,
+            (&mut written, &mut errors),
+            (demand, &fn_keys),
+            first_at,
+        );
         if let Err(msg) = read {
             let d = Diagnostic::error("a generator's output could not be read", first_at)
                 .with_note(msg);
@@ -428,7 +433,7 @@ fn run_host(
     let marker = new_marker();
     input["marker"] = Value::String(marker.clone());
     let input = input.to_string();
-    let ran = host::prepare(&host_root, src, packages).map_err(host::RunError::Failed);
+    let ran = host::prepare(&host_root, src, packages).map_err(process::RunError::Failed);
     let ran = ran.and_then(|h| {
         let files = h.files.clone();
         h.run(&input).map(|out| (out, files))
@@ -442,10 +447,10 @@ fn run_host(
             }
             Some((HostOutput { marker, out }, files))
         }
-        Err(host::RunError::TimedOut(limit)) => {
+        Err(process::RunError::TimedOut(limit)) => {
             let msg = format!(
                 "the generator `{generator}` did not finish within {}",
-                host::show_duration(limit)
+                process::show_duration(limit)
             );
             let d = Diagnostic::error(msg, at)
                 .with_note(format!(
@@ -453,12 +458,12 @@ fn run_host(
                 ))
                 .with_note(format!(
                     "`{}=<seconds>` sets how long a generator may run",
-                    host::TIMEOUT_ENV
+                    process::TIMEOUT_ENV
                 ));
             super::report(sess, d);
             None
         }
-        Err(host::RunError::Failed(msg)) => {
+        Err(process::RunError::Failed(msg)) => {
             let d =
                 Diagnostic::error(format!("the generator `{generator}` failed"), at).with_note(msg);
             super::report(sess, d);
@@ -552,9 +557,8 @@ fn model_json(m: &velt_sema::generated::model::Model) -> Value {
 /// start: what a generator printed between them is skipped, and cannot start one.
 fn parse_frames(
     output: &HostOutput,
-    written: &mut Vec<(String, Written)>,
-    errors: &mut Diagnostics,
-    demand: &Demand,
+    (written, errors): (&mut Vec<(String, Written)>, &mut Diagnostics),
+    (demand, fn_keys): (&Demand, &[String]),
     first_at: Span,
 ) -> Result<(), String> {
     let out = &output.out[..];
@@ -575,7 +579,7 @@ fn parse_frames(
             .and_then(|l| l.parse().ok())
             .ok_or("a record without a length")?;
         let text_start = end + 1;
-        let text_end = text_start + len;
+        let text_end = (text_start.checked_add(len)).ok_or("a record longer than the output")?;
         let text = out
             .get(text_start..text_end)
             .ok_or("a record shorter than its length")?;
@@ -587,22 +591,27 @@ fn parse_frames(
         match words.as_slice() {
             ["done"] => done = true,
             ["files"] => {}
-            ["instance", name, key, function, args] => {
-                let args = (args.split(',').filter(|a| !a.is_empty()))
+            ["instance", name, key, function, args @ ..] if args.len() <= 1 => {
+                // Only an instance of a generated function of the same generator, at types of
+                // the model, can be generated.
+                let generated = (demand.functions.iter().zip(fn_keys))
+                    .any(|(f, k)| k == key && f.function == *function);
+                if !generated {
+                    return Err(format!(
+                        "an instance of `{function}`, not a generated function"
+                    ));
+                }
+                let args = (args.first().into_iter())
+                    .flat_map(|a| a.split(',').filter(|a| !a.is_empty()))
                     .map(|a| a.parse::<u32>().map_err(|e| e.to_string()))
                     .collect::<Result<Vec<_>, _>>()?;
+                if args.iter().any(|a| *a as usize >= demand.model.types.len()) {
+                    return Err(format!("an instance of `{function}` at an unknown type"));
+                }
                 let w = Written {
                     key: key.to_string(),
                     function: function.to_string(),
                     args,
-                    ..Written::default()
-                };
-                written.push((name.to_string(), w));
-            }
-            ["instance", name, key, function] => {
-                let w = Written {
-                    key: key.to_string(),
-                    function: function.to_string(),
                     ..Written::default()
                 };
                 written.push((name.to_string(), w));

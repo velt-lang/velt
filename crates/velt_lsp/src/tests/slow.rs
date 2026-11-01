@@ -94,10 +94,13 @@ fn slow_diagnostics_follow_the_document_s_own() {
     );
     let range = &found["diagnostics"][0]["range"];
     assert_eq!(range["start"], json!({ "line": 1, "character": 21 }));
-    // Changed again: the old findings go.
-    client.change(&doc, 3, "function main() {}\n");
+    // Changed again: the findings stay until the next job reports (no blinking), then go.
+    client.change(&doc, 3, &text.replace("// slow", "// fast"));
     let own = client.diagnostics(&doc);
-    assert_eq!((own["version"].clone(), messages(&own)), (json!(3), vec![]));
+    assert_eq!(
+        (own["version"].clone(), messages(&own)),
+        (json!(3), vec!["slow!".to_string()])
+    );
     started.recv().unwrap();
     go.send(()).unwrap();
     let found = client.diagnostics(&doc);
@@ -105,5 +108,19 @@ fn slow_diagnostics_follow_the_document_s_own() {
         (found["version"].clone(), messages(&found)),
         (json!(3), vec![])
     );
+    // Findings that no longer fit the text (past its end) are not shown.
+    client.change(&doc, 4, text);
+    let own = client.diagnostics(&doc);
+    assert_eq!((own["version"].clone(), messages(&own)), (json!(4), vec![]));
+    started.recv().unwrap();
+    go.send(()).unwrap();
+    let found = client.diagnostics(&doc);
+    assert_eq!(messages(&found), ["slow!"]);
+    client.change(&doc, 5, "function main() {}\n");
+    let own = client.diagnostics(&doc);
+    assert_eq!((own["version"].clone(), messages(&own)), (json!(5), vec![]));
+    started.recv().unwrap();
+    go.send(()).unwrap();
+    client.diagnostics(&doc);
     client.shutdown();
 }
