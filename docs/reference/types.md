@@ -32,23 +32,6 @@ name](modules.md#types-and-values-of-one-name)). `any` and `unknown` hold a valu
 type, checked at run time ([any and unknown](#any-and-unknown)); dynamic JSON is `JsonValue`
 ([`velt/encoding/json`](../std/encoding/json.md)).
 
-A generic type may refer to itself with the same type arguments (`type List<T> = { v: T; next:
-List<T> | null }`), but not with growing ones. Velt compiles each instantiation of a type
-separately (its layout, drop, equality, `JSON` code), and `L<number>` below would need
-`L<number[]>`, `L<number[][]>` and so on without end. TypeScript accepts such a type, and so does
-Velt while nothing uses it; a function that uses one gets an error, at the call when it passes the
-type to a generic function such as `JSON.parse` or `deepEqual`, as generic functions that call
-themselves with growing type arguments do ([Generic functions](functions.md#generic-functions)):
-
-```ts error
-type L<T> = { v: T; n: L<T[]> | null };
-function main() {
-  // error: `L<T>` refers to itself at a growing type argument (`L<T[]>`), so `JSON.parse` cannot read it
-  const l = JSON.parse<L<number>>('{"v":1,"n":null}');
-  console.log(l.v);
-}
-```
-
 The names TypeScript does not have (`i8`…`i64`, `isize`, `u8`…`u64`, `usize`, `f32`, `f64`,
 `bool`) are like library globals: a type alias, class, interface or enum of the module with
 one of these names, or one it imports, takes their place there, as a local `Map` would in

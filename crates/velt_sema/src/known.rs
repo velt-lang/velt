@@ -289,8 +289,11 @@ impl Ctx<'_> {
             TyKind::Shared(_) | TyKind::FnPtr { .. } => return false,
             TyKind::Dyn(_, args) if hiding.is_some() => args,
             TyKind::Dyn(..) => return false,
-            // A type that grows without end (reported by `crate::expansive_types`).
-            TyKind::Adt(_, args) if self.ty.args_too_deep(&args) => return false,
+            // A type whose fields never end (`crate::expansive_types`, which reports it): the
+            // safe answer. A deep type that is not one is walked to its end.
+            TyKind::Adt(d, args) if self.ty.args_too_deep(&args) && self.expansive(d) => {
+                return true
+            }
             TyKind::Adt(d, args) => {
                 let tys: Vec<TyId> = match &self.info[d.0 as usize] {
                     DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
@@ -346,8 +349,11 @@ impl Ctx<'_> {
             TyKind::Adt(d, _) if self.has_subclass(d) || self.own_clone(d).is_some() => {
                 return false
             }
-            // A type that grows without end (reported by `crate::expansive_types`).
-            TyKind::Adt(_, args) if self.ty.args_too_deep(&args) => return false,
+            // A type whose fields never end (`crate::expansive_types`, which reports it): the
+            // safe answer. A deep type that is not one is walked to its end.
+            TyKind::Adt(d, args) if self.ty.args_too_deep(&args) && self.expansive(d) => {
+                return false
+            }
             TyKind::Adt(d, args) => {
                 let tys: Vec<TyId> = match &self.info[d.0 as usize] {
                     DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
@@ -385,8 +391,11 @@ impl Ctx<'_> {
             TyKind::Adt(d, _) if Some(d) == self.mutex_ty() || Some(d) == self.rwlock_ty() => {
                 return true
             }
-            // A type that grows without end (reported by `crate::expansive_types`).
-            TyKind::Adt(_, args) if self.ty.args_too_deep(&args) => return false,
+            // A type whose fields never end (`crate::expansive_types`, which reports it): the
+            // safe answer. A deep type that is not one is walked to its end.
+            TyKind::Adt(d, args) if self.ty.args_too_deep(&args) && self.expansive(d) => {
+                return true
+            }
             TyKind::Adt(d, args) => {
                 let tys: Vec<TyId> = match &self.info[d.0 as usize] {
                     DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
@@ -402,6 +411,12 @@ impl Ctx<'_> {
             k => crate::types::children(&k),
         };
         parts.into_iter().any(|p| self.holds_lock_in(p, seen))
+    }
+
+    /// Is `d` a generic type that refers to itself at a growing type argument? Asked only of a
+    /// type whose arguments nest deeper than `types::MAX_ARG_DEPTH`.
+    fn expansive(&self, d: DefId) -> bool {
+        crate::expansive_types::is_expansive(self, d)
     }
 
     /// Does some class extend class `d`?
@@ -426,8 +441,11 @@ impl Ctx<'_> {
         let parts: Vec<TyId> = match self.ty.kind(t).clone() {
             TyKind::FnPtr { .. } | TyKind::Closure(_) => return true,
             TyKind::Shared(_) | TyKind::Dyn(..) => return false,
-            // A type that grows without end (reported by `crate::expansive_types`).
-            TyKind::Adt(_, args) if self.ty.args_too_deep(&args) => return false,
+            // A type whose fields never end (`crate::expansive_types`, which reports it): the
+            // safe answer. A deep type that is not one is walked to its end.
+            TyKind::Adt(d, args) if self.ty.args_too_deep(&args) && self.expansive(d) => {
+                return true
+            }
             TyKind::Adt(d, args) => {
                 let tys: Vec<TyId> = match &self.info[d.0 as usize] {
                     DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
@@ -459,8 +477,11 @@ impl Ctx<'_> {
         let parts: Vec<TyId> = match self.ty.kind(t).clone() {
             TyKind::Adt(d, _) if self.is_generator_class(d) => return true,
             TyKind::Shared(_) | TyKind::FnPtr { .. } | TyKind::Dyn(..) => return false,
-            // A type that grows without end (reported by `crate::expansive_types`).
-            TyKind::Adt(_, args) if self.ty.args_too_deep(&args) => return false,
+            // A type whose fields never end (`crate::expansive_types`, which reports it): the
+            // safe answer. A deep type that is not one is walked to its end.
+            TyKind::Adt(d, args) if self.ty.args_too_deep(&args) && self.expansive(d) => {
+                return true
+            }
             TyKind::Adt(d, args) => {
                 let tys: Vec<TyId> = match &self.info[d.0 as usize] {
                     DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
@@ -587,8 +608,11 @@ impl Ctx<'_> {
             | TyKind::Closure(_)
             | TyKind::Param(_) => return false,
             TyKind::Adt(d, _) if Some(d) == self.atomic_ty() => return true,
-            // A type that grows without end (reported by `crate::expansive_types`).
-            TyKind::Adt(_, args) if self.ty.args_too_deep(&args) => return false,
+            // A type whose fields never end (`crate::expansive_types`, which reports it): the
+            // safe answer. A deep type that is not one is walked to its end.
+            TyKind::Adt(d, args) if self.ty.args_too_deep(&args) && self.expansive(d) => {
+                return true
+            }
             TyKind::Adt(d, args) => {
                 let tys: Vec<TyId> = match &self.info[d.0 as usize] {
                     DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),

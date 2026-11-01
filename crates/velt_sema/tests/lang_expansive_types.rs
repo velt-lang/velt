@@ -149,3 +149,29 @@ fn a_growing_type_that_is_never_used_is_accepted() {
          function main() { console.log(1); }",
     );
 }
+
+/// `Box<Box<…<inner>…>>`, `n` boxes deep: a legitimate type whose type arguments nest deeper
+/// than the walks' cutoff for growing types (`MAX_ARG_DEPTH`, 64).
+fn boxed(n: usize, inner: &str) -> String {
+    format!("{}{inner}{}", "Box<".repeat(n), ">".repeat(n))
+}
+
+const BOX: &str = "class Box<T> { constructor(public v: T) {} }\n";
+
+#[test]
+fn a_deep_type_that_does_not_grow_is_walked_to_its_end() {
+    // The lock 80 boxes down is found: converting the value to `any` is still an error.
+    let deep = boxed(80, "shared<Mutex<number>>");
+    let e = err_src(&format!(
+        "{BOX}function f(b: {deep}): any {{ return b; }}
+         function main() {{ console.log(1); }}"
+    ));
+    assert!(e.contains("it holds a lock"), "{e}");
+    assert!(!e.contains("growing type argument"), "{e}");
+    // Without one, the same conversion compiles.
+    let plain = boxed(80, "number");
+    ok_src(&format!(
+        "{BOX}function f(b: {plain}): any {{ return b; }}
+         function main() {{ console.log(1); }}"
+    ));
+}

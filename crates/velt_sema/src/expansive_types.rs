@@ -147,9 +147,17 @@ fn named_in(cx: &Ctx, t: TyId, f: &mut impl FnMut(DefId, &[TyId], TyId)) {
 /// `(from, to, grows, the mention)`.
 type TypeEdge = ((DefId, u32), (DefId, u32), bool, TyId);
 
-/// The expansive definitions, with what makes each so: every definition with a parameter in a
-/// strongly connected component that has a growing edge.
-fn expansive_defs(cx: &mut Ctx, members: &[(DefId, Vec<TyId>)]) -> FxHashMap<DefId, Expansive> {
+/// Is `d` an expansive definition (module docs)? For the walks that substitute field types and
+/// run before [`check`] (`Ctx::holds_lock` and the others in known.rs): they stop at such a type,
+/// whose fields never end, and [`check`] reports every function that mentions it.
+pub(crate) fn is_expansive(cx: &Ctx, d: DefId) -> bool {
+    let members = type_members(cx);
+    cycle_defs(cx, &members).iter().any(|x| x.0 == d)
+}
+
+/// The definitions with a parameter in a strongly connected component of the expansion graph
+/// that has a growing edge, each with a mention of its own in that component.
+fn cycle_defs(cx: &Ctx, members: &[(DefId, Vec<TyId>)]) -> Vec<(DefId, TyId)> {
     let mut edges: Vec<TypeEdge> = vec![];
     for (d, tys) in members {
         if generic_names(cx, *d).is_empty() {
@@ -168,9 +176,8 @@ fn expansive_defs(cx: &mut Ctx, members: &[(DefId, Vec<TyId>)]) -> FxHashMap<Def
             });
         }
     }
-    let mut out = FxHashMap::default();
     if !edges.iter().any(|e| e.2) {
-        return out;
+        return vec![];
     }
     let pairs: Vec<_> = edges.iter().map(|e| (e.0, e.1)).collect();
     let graph = Graph::of(&pairs);
@@ -179,7 +186,6 @@ fn expansive_defs(cx: &mut Ctx, members: &[(DefId, Vec<TyId>)]) -> FxHashMap<Def
         .filter(|(from, to, grows, _)| *grows && comp[graph.index[from]] == comp[graph.index[to]])
         .map(|(from, _, _, _)| comp[graph.index[from]])
         .collect();
-    // The definitions in those components, each with an edge of its own there.
     let mut defs: Vec<(DefId, TyId)> = vec![];
     for (from, to, _, at) in &edges {
         let c = comp[graph.index[from]];
@@ -188,6 +194,13 @@ fn expansive_defs(cx: &mut Ctx, members: &[(DefId, Vec<TyId>)]) -> FxHashMap<Def
             defs.push((from.0, *at));
         }
     }
+    defs
+}
+
+/// The expansive definitions, with what makes each so.
+fn expansive_defs(cx: &mut Ctx, members: &[(DefId, Vec<TyId>)]) -> FxHashMap<DefId, Expansive> {
+    let mut out = FxHashMap::default();
+    let defs = cycle_defs(cx, members);
     let in_cycle: FxHashSet<DefId> = defs.iter().map(|x| x.0).collect();
     for (d, at) in defs {
         let names = generic_names(cx, d).to_vec();
