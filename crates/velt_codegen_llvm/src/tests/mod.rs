@@ -433,3 +433,36 @@ mod placement;
 mod tbaa;
 mod units;
 mod wasm;
+
+/// `velt_main` returning `velt_simd_has_sha_x86()` (#1981 step 5).
+fn sha_check_sample() -> Program {
+    let mut pb = ProgramBuilder::new();
+    let has = pb.ext("velt_simd_has_sha_x86", &[], Bool, false);
+    let mut fb = FuncBuilder::export("velt_main", &[], I32);
+    let (r, w) = (fb.local(Bool), fb.local(I32));
+    let b = fb.block();
+    let b2 = fb.call(b, Callee::Extern(has), vec![], Some(r));
+    fb.assign(b2, w, Rvalue::Cast(copy_local(r), I32));
+    fb.ret(b2, copy_local(w));
+    pb.add(fb.finish());
+    pb.finish()
+}
+
+#[test]
+fn extension_checks_are_true_on_a_cpu_built_for_with_the_extension() {
+    let p = sha_check_sample();
+    let target = crate::target::normalize("x86_64-unknown-linux-gnu").unwrap();
+    // The default CPU (x86-64-v2) may lack SHA: the check reads the runtime's flag.
+    let checked = crate::checked_ir(&p, &target, false).unwrap();
+    assert!(checked.contains("@velt_cpu_sha_x86"), "{checked}");
+    // Built for a CPU with SHA (`--cpu`), whose start-up check checks it: the check is true.
+    let mut sha = target.clone();
+    sha.x86_features |= velt_codegen_cl::ext_x86_features(velt_vir::simd::Ext::ShaX86);
+    let folded = crate::checked_ir(&p, &sha, false).unwrap();
+    assert!(!folded.contains("@velt_cpu_sha_x86"), "{folded}");
+    // SHA alone, without the SSSE3 and SSE4.1 the extension also needs, is not enough.
+    let mut partial = target.clone();
+    partial.x86_features = 1 << 21;
+    let partial = crate::checked_ir(&p, &partial, false).unwrap();
+    assert!(partial.contains("@velt_cpu_sha_x86"), "{partial}");
+}

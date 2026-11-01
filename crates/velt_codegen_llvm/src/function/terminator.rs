@@ -138,8 +138,10 @@ impl Emitter<'_> {
             return Ok(());
         }
         if self.own_extension_check(callee) {
-            // `velt_simd_has_<ext>()` in a function gated on `ext` (#1330): it runs only where
-            // the CPU has it, so the check is true and the emulation behind it is dead code.
+            // `velt_simd_has_<ext>()` in a function gated on `ext` (#1330), or in code built for
+            // a CPU that has `ext` (`--cpu`, whose features the start-up check checks): it runs
+            // only where the CPU has it, so the check is true and the emulation behind it is
+            // dead code.
             if let Some(dest) = dest {
                 let loc = self.place(dest)?;
                 self.write(loc, Val::Scalar("1".into()))?;
@@ -192,7 +194,15 @@ impl Emitter<'_> {
             .is_some_and(|f| f.target.is_some() && f.target != self.function.target)
     }
 
-    /// Whether `callee` is `velt_simd_has_<ext>` and this function is gated on `ext`.
+    /// Whether the CPU the code is built for has `ext` (`--cpu`'s x86 features hold all it
+    /// needs).
+    fn baseline_has(&self, ext: velt_vir::simd::Ext) -> bool {
+        let needs = velt_codegen_cl::ext_x86_features(ext);
+        needs != 0 && self.x86_features & needs == needs
+    }
+
+    /// Whether `callee` is `velt_simd_has_<ext>` and this function is gated on `ext`, or the
+    /// code is built for a CPU that has `ext`.
     fn own_extension_check(&self, callee: &Callee) -> bool {
         let Callee::Extern(id) = callee else {
             return false;
@@ -203,7 +213,8 @@ impl Emitter<'_> {
         matches!(
             velt_vir::simd::SimdCall::of_symbol(&e.symbol),
             Some(velt_vir::simd::SimdCall::Has(ext))
-                if self.function.target == Some(ext) && crate::simd::has_ext(self.simd, ext)
+                if (self.function.target == Some(ext) || self.baseline_has(ext))
+                    && crate::simd::has_ext(self.simd, ext)
         )
     }
 

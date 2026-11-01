@@ -26,7 +26,7 @@ pub const DEFAULT_X86_CPU: &str = "x86-64-v2";
 /// The x86 features the start-up check knows, by bit of its mask: the name `velt_rt_check_cpu`
 /// reports and the Cranelift ISA flag (`None`: Cranelift does not use the feature). The order is
 /// the runtime's (crates/velt_rt/src/cpu.rs), part of rt_abi.md "CPU check".
-pub const X86_FEATURES: [(&str, Option<&str>); 21] = [
+pub const X86_FEATURES: [(&str, Option<&str>); 26] = [
     ("SSE3", Some("has_sse3")),
     ("SSSE3", Some("has_ssse3")),
     ("SSE4.1", Some("has_sse41")),
@@ -48,11 +48,32 @@ pub const X86_FEATURES: [(&str, Option<&str>); 21] = [
     ("AVX512VL", Some("has_avx512vl")),
     ("AVX512VBMI", Some("has_avx512vbmi")),
     ("AVX512BITALG", Some("has_avx512bitalg")),
+    ("SHA", None),
+    ("PCLMULQDQ", None),
+    ("AES", None),
+    ("AVXVNNI", None),
+    ("AVX512VNNI", None),
 ];
+
+/// The bits of [`X86_FEATURES`] a CPU extension of the SIMD operations needs (`velt_vir::simd::Ext`,
+/// rt_abi.md "SIMD"): code built for a CPU whose features hold them all may use the extension
+/// without checking for it. 0 for an extension x86 does not have.
+pub fn ext_x86_features(ext: velt_vir::simd::Ext) -> u32 {
+    use velt_vir::simd::Ext;
+    let bit = |name: &str| {
+        let i = X86_FEATURES.iter().position(|(n, _)| *n == name);
+        1 << i.expect("ICE: an x86 feature the list lacks")
+    };
+    match ext {
+        Ext::ShaX86 => bit("SHA") | bit("SSSE3") | bit("SSE4.1"),
+        Ext::ClmulX86 => bit("PCLMULQDQ") | bit("SSSE3") | bit("SSE4.1"),
+        Ext::ShaArm | Ext::ClmulArm => 0,
+    }
+}
 
 /// The macro clang defines (`clang -dM -E -march=<cpu>`) for each feature of [`X86_FEATURES`], in
 /// its order: how the LLVM backend learns what a named CPU lets clang use.
-pub const X86_FEATURE_MACROS: [&str; 21] = [
+pub const X86_FEATURE_MACROS: [&str; 26] = [
     "__SSE3__",
     "__SSSE3__",
     "__SSE4_1__",
@@ -74,6 +95,11 @@ pub const X86_FEATURE_MACROS: [&str; 21] = [
     "__AVX512VL__",
     "__AVX512VBMI__",
     "__AVX512BITALG__",
+    "__SHA__",
+    "__PCLMUL__",
+    "__AES__",
+    "__AVXVNNI__",
+    "__AVX512VNNI__",
 ];
 
 /// The features of [`X86_FEATURES`] whose macro `defines` (clang's `-dM -E` output) defines.
@@ -286,7 +312,7 @@ pub fn required_features(target: &str, cpu: Option<&str>) -> Result<u32, String>
 fn host_x86_features() -> u32 {
     #[cfg(target_arch = "x86_64")]
     {
-        let has: [bool; 21] = [
+        let has: [bool; 26] = [
             std::arch::is_x86_feature_detected!("sse3"),
             std::arch::is_x86_feature_detected!("ssse3"),
             std::arch::is_x86_feature_detected!("sse4.1"),
@@ -308,6 +334,11 @@ fn host_x86_features() -> u32 {
             std::arch::is_x86_feature_detected!("avx512vl"),
             std::arch::is_x86_feature_detected!("avx512vbmi"),
             std::arch::is_x86_feature_detected!("avx512bitalg"),
+            std::arch::is_x86_feature_detected!("sha"),
+            std::arch::is_x86_feature_detected!("pclmulqdq"),
+            std::arch::is_x86_feature_detected!("aes"),
+            std::arch::is_x86_feature_detected!("avxvnni"),
+            std::arch::is_x86_feature_detected!("avx512vnni"),
         ];
         has.iter()
             .enumerate()
@@ -537,6 +568,32 @@ mod tests {
             ["SSE3", "CMPXCHG16B", "AVX2"]
         );
         assert_eq!(X86_FEATURE_MACROS.len(), X86_FEATURES.len());
+    }
+
+    #[test]
+    fn extensions_need_their_features() {
+        use velt_vir::simd::Ext;
+        let names = |mask: u32| -> Vec<&str> {
+            (0..X86_FEATURES.len())
+                .filter(|b| mask & 1 << b != 0)
+                .map(|b| X86_FEATURES[b].0)
+                .collect()
+        };
+        assert_eq!(
+            names(ext_x86_features(Ext::ShaX86)),
+            ["SSSE3", "SSE4.1", "SHA"]
+        );
+        assert_eq!(
+            names(ext_x86_features(Ext::ClmulX86)),
+            ["SSSE3", "SSE4.1", "PCLMULQDQ"]
+        );
+        assert_eq!(ext_x86_features(Ext::ShaArm), 0);
+        // No psABI level has SHA or PCLMULQDQ: only a CPU name or `native` folds the checks.
+        for (level, mask) in X86_LEVELS {
+            let sha = ext_x86_features(Ext::ShaX86);
+            assert_ne!(mask & sha, sha, "{level}");
+        }
+        assert_eq!(X86_FEATURES.len(), X86_FEATURE_MACROS.len());
     }
 
     #[test]

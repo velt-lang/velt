@@ -66,7 +66,7 @@ fn init_clmul() {
 
 /// The x86 features `velt_rt_check_cpu` checks, by bit of its mask (rt_abi.md "CPU check"; the
 /// order of `velt_codegen_cl::X86_FEATURES`). `VELT_CPU_DISABLE` names them in lowercase.
-const X86_FEATURES: [&str; 21] = [
+const X86_FEATURES: [&str; 26] = [
     "SSE3",
     "SSSE3",
     "SSE4.1",
@@ -88,6 +88,11 @@ const X86_FEATURES: [&str; 21] = [
     "AVX512VL",
     "AVX512VBMI",
     "AVX512BITALG",
+    "SHA",
+    "PCLMULQDQ",
+    "AES",
+    "AVXVNNI",
+    "AVX512VNNI",
 ];
 
 /// The psABI levels' masks, to name the level a program was built for.
@@ -101,7 +106,7 @@ const X86_LEVELS: [(&str, u32); 3] = [
 fn x86_features() -> u32 {
     #[cfg(target_arch = "x86_64")]
     {
-        let has: [bool; 21] = [
+        let has: [bool; 26] = [
             std::arch::is_x86_feature_detected!("sse3"),
             std::arch::is_x86_feature_detected!("ssse3"),
             std::arch::is_x86_feature_detected!("sse4.1"),
@@ -123,6 +128,11 @@ fn x86_features() -> u32 {
             std::arch::is_x86_feature_detected!("avx512vl"),
             std::arch::is_x86_feature_detected!("avx512vbmi"),
             std::arch::is_x86_feature_detected!("avx512bitalg"),
+            std::arch::is_x86_feature_detected!("sha"),
+            std::arch::is_x86_feature_detected!("pclmulqdq"),
+            std::arch::is_x86_feature_detected!("aes"),
+            std::arch::is_x86_feature_detected!("avxvnni"),
+            std::arch::is_x86_feature_detected!("avx512vnni"),
         ];
         has.iter()
             .enumerate()
