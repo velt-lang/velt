@@ -9,7 +9,10 @@ LSP client; the repository ships a Visual Studio Code extension in `editors/vsco
 - **Diagnostics** from the parser, the module loader and the type checker, as you type. Unsaved
   changes of other open files are taken into account. A standard library file opened from the
   toolchain (go to definition into `velt/fs`, say) is checked as that std module, as it is when
-  your program imports it.
+  your program imports it. What [source generators](../reference/source-generators.md) report
+  (`JSON.parse` into a type it cannot decode, say) follows a moment later: they run in the
+  background after the file is checked, never delaying hover or completion, and their output
+  is cached, so after their first run an edit costs one more check.
 - **Formatting** with [`velt fmt`](fmt.md).
 - **Navigation**: document outline, go to definition (also through `ns.x` namespace imports and
   re-exports, landing on the original declaration), find references, rename, document highlight

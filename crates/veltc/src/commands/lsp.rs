@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use velt_common::{Diagnostics, SourceMap};
-use velt_lsp::{LoadedProgram, ModuleEntry, ProgramLoader};
+use velt_lsp::{LoadedProgram, ModuleEntry, ProgramLoader, SlowJob};
+use velt_sema::SourceModule;
 use vpm::{InstallOptions, PackageGraph};
 
 use crate::loader::{self, LoadOptions};
@@ -178,6 +179,19 @@ impl ProgramLoader for CliLoader {
 
     fn resolves_modules(&self) -> bool {
         true
+    }
+
+    fn slow_diagnostics(
+        &self,
+        path: &Path,
+        sm: &SourceMap,
+        modules: &[SourceModule],
+        root: usize,
+    ) -> Option<SlowJob> {
+        // The package `load` installed for it, if any (a std file has none).
+        let graph = self.installed_graph(path);
+        let program = crate::generate::editor::Program::copy(sm, modules, root, graph)?;
+        Some(Box::new(move || program.generator_diagnostics()))
     }
 }
 

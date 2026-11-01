@@ -620,6 +620,12 @@ goldens:
 - `--no-generators` (§11) on `velt build`, `velt run` and `velt check`: one check with no
   offered or generated code, each instance that needs code an error naming its generator
   (`generate::check_without_generators`); a build with it is never a stamp no-op.
+- The editor (§10): `velt_sema::ide::check_for_ide` runs no generator. After each analysis of a
+  document, `velt lsp` runs a check with generators of a copy of its program on a thread of its
+  own (`velt_lsp::ProgramLoader::slow_diagnostics`, `generate/editor.rs`), one job at a time,
+  300 ms after the analysis, and adds the errors the generators gave
+  (`Session::generator_reports`) to the document's diagnostics while it is at the version the
+  job checked. Requests never wait for it; with the caches warm it costs one more check.
 - Generator modules resolved as imports of the declaring module: relative, package, std.
 - The model's methods (§4): `Type.methods` lists the hooks std's operations call by name
   (`toJSON`, `toString`, `[util.inspect.custom]`) when a class has one callable that way (velt_sema
@@ -648,8 +654,8 @@ goldens:
 - What `JSON.stringify` cannot write is reported by the generator (step 5:
   std/encoding/json/generate/check.vlt, from the model, at the call), with the messages sema
   gave; sema names no JSON function. Generators run during the check whatever else it reports,
-  so their errors come with the program's others; a check without a generator (the editor's)
-  does not report them. The model grew what the check needs: the kind `generator`,
+  so their errors come with the program's others. The editor's own check runs no generator;
+  `velt lsp` gets their errors from a check with them in the background (below). The model grew what the check needs: the kind `generator`,
   `hasProperties`, `classValue`, `dynamic`, a std type's `privateField` and a field's
   `stdPrivate`; `Output.error` takes notes (the lines after the first). A call of any generated
   function looks at its type arguments' shapes for `object_copies` (`Seen::Serialized`). The

@@ -170,6 +170,9 @@ pub struct Session {
     pub generator_build: bool,
     /// Run no source generator: what would need one is an error ([`BuildOptions::no_generators`]).
     pub no_generators: bool,
+    /// The errors source generators gave (also in `diagnostics`): what they reported, and their
+    /// failures (`crate::generate::report`). The editor shows these after its own check.
+    pub generator_reports: Diagnostics,
 }
 
 impl Session {

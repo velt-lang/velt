@@ -12,6 +12,7 @@
 //! dropped, and the program is checked again from scratch, so a stale offer is never reported.
 
 mod cache;
+pub(crate) mod editor;
 mod host;
 mod run;
 
@@ -204,8 +205,10 @@ fn rounds(
         let mut sources = sources;
         sources.append(&mut st.sources);
         st.sources = sources;
-        let diags = blame_generators(&sess.sm, diags, &st.files);
+        let mut blamed = vec![];
+        let diags = blame_generators(&sess.sm, diags, &st.files, &mut blamed);
         sess.diagnostics.extend(diags);
+        sess.generator_reports.extend(blamed);
         let sema = t.elapsed().saturating_sub(spent);
         sess.timings
             .push((if round == 1 { "sema" } else { "sema (again)" }, sema));
@@ -230,7 +233,7 @@ fn rounds(
                     "`{}` still needs generated code after {MAX_ROUNDS} rounds of generating",
                     f.function
                 );
-                sess.diagnostics.push(Diagnostic::error(msg, r.at));
+                report(sess, Diagnostic::error(msg, r.at));
             }
             return None;
         }
@@ -294,8 +297,10 @@ fn generate_now(
             for e in &errors {
                 d = d.with_note(e.message.clone());
             }
-            sess.diagnostics.push(d);
-            sess.diagnostics.extend(errors);
+            report(sess, d);
+            for e in errors {
+                report(sess, e);
+            }
             return None;
         }
         if let Some(i) = ast
@@ -310,7 +315,7 @@ fn generate_now(
                     file_path_of(&sess.sm, file),
                     sess.sm.line_col(file, i.span.lo).0
                 ));
-            sess.diagnostics.push(d);
+            report(sess, d);
             return None;
         }
         let Some(gm) = generated_module(current, &g.declaring, &path, file, ast) else {
@@ -446,12 +451,20 @@ struct Described {
     at: Span,
 }
 
+/// Report `d`, an error of a generator or of its run (also kept in
+/// [`Session::generator_reports`], for the editor).
+pub(super) fn report(sess: &mut Session, d: Diagnostic) {
+    sess.generator_reports.push(d.clone());
+    sess.diagnostics.push(d);
+}
+
 /// An error located in generated code is a bug in the generator: it is reported at the call
-/// that needed the code, with the error in the generated file as a note.
+/// that needed the code, with the error in the generated file as a note (and in `blamed`).
 fn blame_generators(
     sm: &velt_common::SourceMap,
     diags: Diagnostics,
     files: &[(FileId, Vec<Described>)],
+    blamed: &mut Diagnostics,
 ) -> Diagnostics {
     diags
         .into_iter()
@@ -488,6 +501,7 @@ fn blame_generators(
             for n in d.notes {
                 out = out.with_note(n);
             }
+            blamed.push(out.clone());
             out
         })
         .collect()

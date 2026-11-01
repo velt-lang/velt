@@ -121,6 +121,7 @@ pub fn of_parsed(sm: SourceMap, file: FileId, ast: ast::Module) -> ModuleExports
         modules: vec![module],
         root: 0,
         diagnostics: vec![],
+        loaded_cleanly: false,
         ide: None,
         ts_compat: vec![],
         docs: Default::default(),

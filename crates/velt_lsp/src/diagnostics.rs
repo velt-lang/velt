@@ -18,16 +18,37 @@ use crate::analysis::Analysis;
 use crate::line_index::LineIndex;
 use crate::text_scan::{self, TokenKind};
 
-/// The LSP diagnostics of `analysis` that belong to its document.
+/// The LSP diagnostics of `analysis` that belong to its document, with `slow`: those the
+/// document's slow diagnostics found ([`crate::ProgramLoader::slow_diagnostics`]) that analysis
+/// did not.
 pub fn for_document(
     analysis: &Analysis,
+    slow: &[Diagnostic],
     uri_of: &dyn Fn(&std::path::Path) -> Option<Url>,
 ) -> Vec<lsp_types::Diagnostic> {
     let file = analysis.file();
     let index = LineIndex::new(analysis.text());
+    let files = analysis.sm.files().count();
+    // A slow diagnostic is shown at places of the analyzed files only (not in a file only its
+    // job made), and once.
+    let known = |span: Span| span == Span::DUMMY || (span.file.0 as usize) < files;
+    let slow = slow.iter().filter_map(|d| {
+        let primary = d.labels.first().map(|l| l.span)?;
+        let shown = |e: &&Diagnostic| {
+            e.message == d.message && e.labels.first().map(|l| l.span) == Some(primary)
+        };
+        if !known(primary) || analysis.diagnostics.iter().any(|e| shown(&e)) {
+            return None;
+        }
+        let mut d = d.clone();
+        d.labels.retain(|l| known(l.span));
+        Some(d)
+    });
+    let slow: Vec<Diagnostic> = slow.collect();
     analysis
         .diagnostics
         .iter()
+        .chain(&slow)
         .filter_map(|d| {
             let span = d.labels.first().map_or(Span::DUMMY, |l| l.span);
             let range = if span == Span::DUMMY {

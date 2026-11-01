@@ -26,6 +26,8 @@ pub struct Analysis {
     pub root: usize,
     /// Load, parse and sema diagnostics (all files).
     pub diagnostics: Diagnostics,
+    /// Loading and parsing reported no error (so sema's diagnostics are shown).
+    pub loaded_cleanly: bool,
     /// Sema's query tables (also for programs with errors), unless sema could not run.
     pub ide: Option<ide::Analysis>,
     /// The TypeScript-compatibility findings in the document (none outside `tsCompat` folders).
@@ -86,11 +88,13 @@ pub fn analyze(
         Err(_) => return standalone(path, overlay, "internal error while loading".into()),
     };
     let LoadedProgram { modules, root } = loaded;
+    let loaded_cleanly = !diagnostics.iter().any(Diagnostic::is_error);
     let mut analysis = Analysis {
         sm,
         modules,
         root,
         diagnostics,
+        loaded_cleanly,
         ide: None,
         ts_compat: vec![],
         docs: Default::default(),
@@ -105,7 +109,7 @@ pub fn analyze(
 }
 
 fn run_sema(analysis: &mut Analysis) {
-    let loaded_cleanly = !analysis.diagnostics.iter().any(Diagnostic::is_error);
+    let loaded_cleanly = analysis.loaded_cleanly;
     let checked = catch_unwind(AssertUnwindSafe(|| {
         ide::check_for_ide(&analysis.modules, analysis.root)
     }));
@@ -149,6 +153,7 @@ fn standalone(path: &Path, overlay: &HashMap<PathBuf, String>, msg: String) -> A
         modules: vec![module],
         root: 0,
         diagnostics,
+        loaded_cleanly: false,
         ide: None,
         ts_compat: vec![],
         docs: Default::default(),

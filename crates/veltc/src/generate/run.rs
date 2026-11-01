@@ -52,8 +52,7 @@ pub(super) fn run(
         let decl_path = vpm::relpath::absolute(&sess.sm.get(decl.file).path);
         let Some((file, dir, spec)) = locate_generator(&decl_path, &f.generator, packages) else {
             let msg = format!("cannot find the generator module `{}`", f.generator);
-            sess.diagnostics
-                .push(Diagnostic::error(msg, f.generator_span));
+            super::report(sess, Diagnostic::error(msg, f.generator_span));
             return None;
         };
         let i = files.iter().position(|k| *k == file).unwrap_or_else(|| {
@@ -149,7 +148,7 @@ pub(super) fn run(
         if let Err(msg) = read {
             let d = Diagnostic::error("a generator's output could not be read", first_at)
                 .with_note(msg);
-            sess.diagnostics.push(d);
+            super::report(sess, d);
             return None;
         }
     }
@@ -161,7 +160,7 @@ pub(super) fn run(
                 d.message == e.message && d.notes == e.notes && primary(d) == primary(&e)
             };
             if !sess.diagnostics.iter().any(same) {
-                sess.diagnostics.push(e);
+                super::report(sess, e);
             }
         }
         return None;
@@ -423,7 +422,7 @@ fn run_host(
     }
     if super::guard::building(sess.generator_build) {
         let msg = "generators need generated code to be built, in a cycle";
-        sess.diagnostics.push(Diagnostic::error(msg, at));
+        super::report(sess, Diagnostic::error(msg, at));
         return None;
     }
     let marker = new_marker();
@@ -456,13 +455,13 @@ fn run_host(
                     "`{}=<seconds>` sets how long a generator may run",
                     host::TIMEOUT_ENV
                 ));
-            sess.diagnostics.push(d);
+            super::report(sess, d);
             None
         }
         Err(host::RunError::Failed(msg)) => {
             let d =
                 Diagnostic::error(format!("the generator `{generator}` failed"), at).with_note(msg);
-            sess.diagnostics.push(d);
+            super::report(sess, d);
             None
         }
     }

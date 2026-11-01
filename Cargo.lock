@@ -1567,6 +1567,7 @@ dependencies = [
 name = "velt_lsp"
 version = "0.4.0"
 dependencies = [
+ "crossbeam-channel",
  "lsp-server",
  "lsp-types",
  "serde",

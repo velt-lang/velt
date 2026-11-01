@@ -187,3 +187,6 @@ stopped and reported at the call that needed it (`` the generator `./gen` did no
 (`console.log` while debugging it) is not mistaken for its output. `velt build
 --no-generators` (and `velt check`, `velt run`) runs none: each call that needs generated code
 is an error naming the generator, for audits.
+
+In the editor, the generators run in the background after each check of the file, from the
+same caches, and what they report is added to the file's diagnostics when they are done.
