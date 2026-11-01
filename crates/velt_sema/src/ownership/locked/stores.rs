@@ -445,12 +445,33 @@ fn holds_part(cx: &mut Ctx, r: &Regions, d: DefId, e: &Expr) -> bool {
             callee: Callee::Def(g, _),
             ..
         } if Some(*g) == cx.prelude_fn("structuredClone") => false,
+        // A standard collection made from another (`new Map(s.m)`) holds its elements, which
+        // can be parts only when its type arguments can.
+        E::New { def, args, .. } if std_def(cx, *def) => {
+            let elems = match cx.ty.kind(x.ty).clone() {
+                TyKind::Adt(_, targs) => targs,
+                _ => vec![],
+            };
+            let shared = elems
+                .into_iter()
+                .any(|t| cx.is_shared_value(t) && !cx.is_string_value(t));
+            shared && args.iter().any(|y| holds_part(cx, r, d, y))
+        }
         // A new array or object holds what it is made of.
         E::ArrayLit(xs) | E::Tuple(xs) | E::New { args: xs, .. } | E::AdtLit { fields: xs, .. } => {
             xs.iter().any(|y| holds_part(cx, r, d, y))
         }
         _ => !(crate::fresh_returns::fresh_value(cx, x) && !holds_shared(cx, x.ty)),
     }
+}
+
+/// Is the object type `d` the standard library's?
+fn std_def(cx: &Ctx, d: DefId) -> bool {
+    let module = match cx.info.get(d.0 as usize) {
+        Some(crate::defs::DefInfo::Adt(a)) => a.module,
+        _ => return false,
+    };
+    cx.modules.get(module).is_some_and(|m| m.is_std)
 }
 
 /// `e` without the shares around it.
