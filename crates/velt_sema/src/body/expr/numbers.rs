@@ -1,4 +1,4 @@
-//! JS numbers next to Velt's integer types (docs/reference/types.md "Numbers").
+//! JS numbers next to Velt's integer types (https://veltlang.com/docs/reference/types/ "Numbers").
 //!
 //! A `number` is an `f64`, always: an integer literal where no integer type is expected, a
 //! local declared from one (unless `literal_locals` types it from its uses), arithmetic on

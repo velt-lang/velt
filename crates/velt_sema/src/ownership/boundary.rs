@@ -1,4 +1,4 @@
-//! Thread boundaries (docs/reference/async.md "Tasks"): a value that enters a spawned task while
+//! Thread boundaries (https://veltlang.com/docs/reference/async/ "Tasks"): a value that enters a spawned task while
 //! the program still uses it is deep-copied for the task, and a deep copy of a resource calls
 //! the type's own `clone()` (velt_vir `transfer.rs`). A value owning a `[Symbol.dispose]`
 //! resource without one cannot be copied, so passing it to `spawn` while it is still in use is

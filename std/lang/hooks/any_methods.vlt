@@ -1,5 +1,5 @@
 // velt/lang/hooks (internal): the built-in methods of strings, numbers and booleans called through `any`
-// (issue #924, docs/reference/types.md "any and unknown"). A call `x.name(args)` on an `any`
+// (issue #924, https://veltlang.com/docs/reference/types/ "any and unknown"). A call `x.name(args)` on an `any`
 // is one call through the descriptor of the value held (`AnyCall`); for a string it runs
 // `anyStr_<name>(s, args)`, for an array of `T` `anyArr_<name><T>(a, args)`, for a number
 // `anyNum_<name>(n, args)` and for a boolean `anyBool_<name>(b, args)` (velt_vir

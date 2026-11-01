@@ -1,4 +1,4 @@
-//! Inferred result types (docs/reference/functions.md "Return types"). A function, method or
+//! Inferred result types (https://veltlang.com/docs/reference/functions/ "Return types"). A function, method or
 //! arrow function without a return type returns what its `return` expressions give, as in
 //! TypeScript: the one of their types that every other converts to (`i64` and `f64` give `f64`,
 //! a class and its base class give the base), else their union; a `return null` makes it

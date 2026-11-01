@@ -1,4 +1,4 @@
-//! `m.with(f)` callbacks (docs/reference/async.md "Thread safety"). The lock protects the value
+//! `m.with(f)` callbacks (https://veltlang.com/docs/reference/async/ "Thread safety"). The lock protects the value
 //! only while `f` runs, and the value's counts are not atomic, so nothing `f` does may leave a
 //! reference to a part of the value outside the lock, or one to an outside object inside it
 //! (#398). `with`'s result is transferred as it leaves the lock (velt_vir async_fn/sync.rs

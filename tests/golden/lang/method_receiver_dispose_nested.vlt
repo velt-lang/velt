@@ -2,7 +2,7 @@
 // A dispose hook that drops a value whose own dispose hook reassigns the `let`.
 // The method on a module `let` runs code only through dispose hooks drops run: the receiver
 // stays alive for the method (#1188). Node does not dispose dropped values
-// (docs/reference/memory.md), so this output is Velt's.
+// (https://veltlang.com/docs/reference/memory/), so this output is Velt's.
 class State {
   n: number = 1;
   label: string = "lbl" + String(1);

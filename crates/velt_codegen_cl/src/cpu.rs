@@ -1,4 +1,4 @@
-//! `--cpu`: the CPU generated code is for (docs/tooling/platforms.md "CPU"), shared with the LLVM
+//! `--cpu`: the CPU generated code is for (https://veltlang.com/docs/tooling/platforms/ "CPU"), shared with the LLVM
 //! backend so both read a name the same way:
 //! - `baseline` (alias `x86-64`): the target's first generation (SSE2 on x86_64, armv8-a);
 //! - `x86-64-v2`, `x86-64-v3`, `x86-64-v4`: the x86-64 psABI levels; `x86-64-v2` is the default

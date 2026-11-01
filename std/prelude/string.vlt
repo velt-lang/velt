@@ -3,7 +3,7 @@
 //
 // Positions and lengths count UTF-16 code units, as in JavaScript (`"😀".length` is 2): a
 // position may fall between the two halves of a surrogate pair, and slicing there keeps the
-// half as a lone surrogate (docs/reference/types.md "Strings"). Positions are `i64` so negative
+// half as a lone surrogate (https://veltlang.com/docs/reference/types/ "Strings"). Positions are `i64` so negative
 // arguments keep their JS meaning; "absent" is -1 (`indexOf`, `charCodeAt`) where JS would say
 // -1 or NaN. Inputs are borrowed; every returned string is owned by the caller (a substring of a
 // static string may itself be static, which is free to drop).

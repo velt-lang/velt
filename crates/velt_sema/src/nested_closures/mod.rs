@@ -1,5 +1,5 @@
 //! Nested function declarations that use the enclosing function's locals
-//! (docs/reference/functions.md "Declarations").
+//! (https://veltlang.com/docs/reference/functions/ "Declarations").
 //!
 //! In JS such a declaration is a closure, hoisted to the start of its block. Before collection,
 //! each one becomes the closure constant `const name = (params): R => { body };` (a generator

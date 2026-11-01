@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 # Build a release Velt toolchain and assemble dist/velt-<version>-<host triple>/ (+ .tar.gz).
 #
-# Layout (see docs/tooling/platforms.md):
+# Layout (see https://veltlang.com/docs/tooling/platforms/):
 #   bin/velt  bin/velt-launcher (installed as <root>/bin/velt, #948)
 #   lib/libvelt_rt.a  lib/libvelt_rt_shared.{so,dylib}  lib/NATIVE_LIBS.md
 #   lib/velt/lld  lib/targets/<host>/ (the link kit)
@@ -114,7 +114,7 @@ Then add \`~/.velt/bin\` to PATH and run \`velt doctor\`.
 
 Layout: bin/ (the velt CLI, and the launcher), lib/ (runtime library linked into every program),
 std/ (standard library sources), share/ (debugger scripts). Full guide:
-docs/tooling/platforms.md in the Velt repository.
+https://veltlang.com/docs/tooling/platforms/.
 EOF
 
 cp "$repo/LICENSE-MIT" "$repo/LICENSE-APACHE" "$repo/NOTICE" "$out/"
@@ -135,7 +135,7 @@ if [ "$bundled" = 1 ]; then
     after=$(du -sk "$out" | cut -f1)
     echo "bundled linker: lld $(du -sk "$out/lib/velt" | cut -f1) KiB, kit $(du -sk "$out/lib/targets" | cut -f1) KiB; toolchain $before -> $after KiB"
 
-    # Target packs (`velt target add`, docs/tooling/platforms.md): a target's runtime and link
+    # Target packs (`velt target add`, https://veltlang.com/docs/tooling/platforms/): a target's runtime and link
     # kit, for toolchains on other hosts (this host's) and for musl (Linux).
     packs="$dist/packs"
     rm -rf "$packs"

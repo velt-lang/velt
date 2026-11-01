@@ -1,4 +1,4 @@
-// velt/encoding (internal): the WHATWG `TextDecoder` (a global, as in Node: docs/std/encoding.md),
+// velt/encoding (internal): the WHATWG `TextDecoder` (a global, as in Node: https://veltlang.com/docs/std/encoding/),
 // apart from the rest of velt/encoding so that a program using only Base64 or hex does not load
 // the typed arrays it takes. The globals' module (std/prelude/global/encoding.vlt) imports
 // `TextEncoder` and `TextDecoderOptions` from here too.

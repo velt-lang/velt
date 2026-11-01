@@ -405,6 +405,95 @@ fn a_leak_check_without_block_counts_fails_the_file() {
     );
 }
 
+/// Counting blocks, the runner's wait for a test file's process to end starts after its tests:
+/// a file whose tests take longer than the wait passes (its process was ended mid-test, and the
+/// file failed as `still running … after its tests`, when the wait counted from the start), and
+/// one that leaves a timer running still fails.
+#[cfg(unix)]
+#[test]
+fn the_wait_for_a_process_to_end_starts_after_its_tests() {
+    runtime_support::build_native_runtime(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    // Busy for twice the wait, then done: the process ends as soon as the tests are.
+    write(
+        dir,
+        "t/slow.test.vlt",
+        "export function test_slow() {\n  const end = Date.now() + 4000;\n  \
+         while (Date.now() < end) {}\n}\n\nexport function test_after() {}\n",
+    );
+    write(
+        dir,
+        "t/open.test.vlt",
+        "export function test_leaves_a_timer() {\n  setInterval(async () => {}, 1000);\n}\n",
+    );
+    let mut command = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
+    let o = command
+        .args(["test", "--no-cache", "t"])
+        .current_dir(dir)
+        .env("VELT_HOME", dir.join("home"))
+        .env("VELT_RC_STATS", "1")
+        .env("VELT_TEST_LEAK_WAIT", "2000")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&o.stdout);
+    assert_eq!(
+        block(&stdout, "slow.test.vlt")[1..],
+        ["ok test_slow", "ok test_after"],
+        "{stdout}"
+    );
+    assert_eq!(
+        block(&stdout, "open.test.vlt")[1..],
+        [
+            "ok test_leaves_a_timer",
+            "FAILED t/open.test.vlt (still running 2 s after its tests: a server, a connection \
+             or a timer left open)",
+        ],
+        "{stdout}"
+    );
+    assert_eq!(o.status.code(), Some(1), "{stdout}");
+}
+
+/// A test that never ends fails once its process reaches the time limit (`VELT_TEST_TIMEOUT`, in
+/// ms), naming the test; the tests after it run in a new process, and other files are reported.
+#[test]
+fn a_test_that_never_ends_times_out() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    write(
+        dir,
+        "t/loops.test.vlt",
+        "export function test_before() {}\n\nexport function test_loops() {\n  let i = 0;\n  \
+         while (i >= 0) {\n    i = (i + 1) % 10;\n  }\n}\n\nexport function test_after() {}\n",
+    );
+    write(dir, "t/other.test.vlt", "export function test_other() {}\n");
+    let mut command = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
+    let o = command
+        .args(["test", "--no-cache", "t"])
+        .current_dir(dir)
+        .env("VELT_HOME", dir.join("home"))
+        .env("VELT_TEST_TIMEOUT", "3000")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&o.stdout);
+    assert_eq!(
+        block(&stdout, "loops.test.vlt")[1..],
+        [
+            "ok test_before",
+            "FAILED test_loops (timed out after 3 s with this test running)",
+            "ok test_after",
+        ],
+        "{stdout}"
+    );
+    assert_eq!(
+        block(&stdout, "other.test.vlt")[1..],
+        ["ok test_other"],
+        "{stdout}"
+    );
+    assert!(stdout.contains("3 passed; 1 failed"), "{stdout}");
+    assert_eq!(o.status.code(), Some(1), "{stdout}");
+}
+
 /// Failures whose messages have several lines: `toEqual` on two values too long for one line,
 /// and an error whose message has a line break.
 const MULTI_LINE: &str = r#"import { expect } from "velt/test";

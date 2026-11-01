@@ -1,5 +1,5 @@
 //! A member read on a union value asserted to one of its members, `(u as M).f`
-//! (docs/reference/types.md "Type assertions"): as in JavaScript, where `as` converts nothing.
+//! (https://veltlang.com/docs/reference/types/ "Type assertions"): as in JavaScript, where `as` converts nothing.
 //! The assertion `u as M` used as a value stays checked (`narrowing_casts.rs`); read for one
 //! field, a value of another member gives its own property `f`, as Node reads it: an object
 //! type's field `f`, an array's or string's `length`, `undefined` for a property the value does

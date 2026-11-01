@@ -2,16 +2,16 @@
 
 `import { serveHttp, HttpRequest, HttpResponse, HttpServer, HttpStream, EventStream } from
 "http-server"`. The HTTP/1.1 and [HTTP/2](#http2) server [`serve`](../README.md) runs on, written in
-Velt on [velt/net](../../../docs/std/net.md), built to be fast: keep-alive and pipelining, each
+Velt on [velt/net](https://veltlang.com/docs/std/net/), built to be fast: keep-alive and pipelining, each
 request parsed in place in its connection's read buffer (nothing is copied or allocated for a
 request unless the handler asks for a string), and every response to the requests one read brought
 written in one go. Request and response bodies can also be streamed, with backpressure and
 cancellation, for uploads, large downloads, proxies and Server-Sent Events. On the TechEmpower
 plaintext and JSON tests it is ahead of Rust's axum (`bench/web`, `velt-native`).
 
-It uses only public APIs: [velt/net](../../../docs/std/net.md)'s `TcpStream` (`tryRead` into its own
-buffer, `writeBytesLater`), SIMD vectors from [velt/simd](../../../docs/std/simd.md) to find line
-ends, and the byte-array text methods of the [prelude](../../../docs/std/prelude.md) (`write`,
+It uses only public APIs: [velt/net](https://veltlang.com/docs/std/net/)'s `TcpStream` (`tryRead` into its own
+buffer, `writeBytesLater`), SIMD vectors from [velt/simd](https://veltlang.com/docs/std/simd/) to find line
+ends, and the byte-array text methods of the [prelude](https://veltlang.com/docs/std/prelude/) (`write`,
 `utf8Slice`, `utf8Equals`, themselves Velt code on SIMD vectors). A package written in Velt can
 build a server, or another protocol, as fast in the same way.
 
@@ -57,7 +57,7 @@ maxBodySize?; idleTimeout?; tls?; headersTimeout?; requestTimeout?; http2?; maxC
 `headersTimeout` (60 s) the most a head may take from its first byte, and `requestTimeout` (300 s)
 the most a body may take from its head, however steadily they trickle in: past either, the request
 gets 408 and the connection closes (Node's limits of the same names). With `tls: { cert, key }` (PEM
-text, as [`listenTls`](../../../docs/std/net.md) takes them) the server speaks HTTPS. One task
+text, as [`listenTls`](https://veltlang.com/docs/std/net/) takes them) the server speaks HTTPS. One task
 serves each connection; requests on one connection are answered in order.
 
 - A head (request line and headers) larger than `maxHeadSize` (16 KiB, Node's default) or with
@@ -138,13 +138,13 @@ HTTP/1.0 request's expectation is ignored.
   piece by piece: `await s.write(data)` (a `string`, `u8[]` or `Uint8Array`) sends one chunk
   (`Transfer-Encoding: chunked`; to an HTTP/1.0 client the body ends with the connection). What the
   handler writes before it next waits leaves in one write (the head with the first pieces;
-  [`writeLater`](../../../docs/std/net.md)), and `write` resolves at once unless more than 64 KiB
+  [`writeLater`](https://veltlang.com/docs/std/net/)), and `write` resolves at once unless more than 64 KiB
   are still to be sent, so a fast producer waits for a slow client; `await s.end()` ends the body
   (the server ends one the handler leaves open). A write to a client that went away throws `IoError`
   and aborts `signal()`.
 - `sendStream(body: BodyStream, type = "text/html; charset=utf-8")`: streams a
-  [`BodyStream`](../../../docs/std/net/http.md#bodystream) as the response, each chunk as it comes, for
-  `renderToStream` of [velt/jsx](../../../docs/std/jsx.md): the markup above a pending async
+  [`BodyStream`](https://veltlang.com/docs/std/net/http/#bodystream) as the response, each chunk as it comes, for
+  `renderToStream` of [velt/jsx](https://veltlang.com/docs/std/jsx/): the markup above a pending async
   component reaches the client while it loads. A client that goes away ends it quietly: the source
   is closed, so rendering stops.
 - `sse(): Promise<EventStream>`: Server-Sent Events (`text/event-stream`, `Cache-Control:

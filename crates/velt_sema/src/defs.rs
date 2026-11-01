@@ -91,7 +91,7 @@ pub(crate) enum BodyState {
     Done,
 }
 
-/// Where a function's result type comes from (docs/reference/functions.md "Return types").
+/// Where a function's result type comes from (https://veltlang.com/docs/reference/functions/ "Return types").
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum RetSource {
     /// Written, implied (`void` without a `return` that has a value), or already inferred.
@@ -263,7 +263,7 @@ pub(crate) struct FnInfo<'m> {
     pub escaping: bool,
     /// Closures: the function values passed as parameters are always heap closures, so the
     /// body may keep them (a share). Set for the executor of `new Promise`, whose `resolve`
-    /// and `reject` the prelude creates (docs/reference/functions.md "Captures").
+    /// and `reject` the prelude creates (https://veltlang.com/docs/reference/functions/ "Captures").
     pub keeps_fn_params: bool,
     /// Indices of params that are `Owned` only because the body reassigns them: a caller that
     /// uses the argument again passes a clone (`crate::ownership::mutation`).

@@ -1,5 +1,5 @@
-// velt/dev: what a program run by `velt dev` (hot reload, docs/book/hot-reload.md) can take part
+// velt/dev: what a program run by `velt dev` (hot reload, https://veltlang.com/docs/book/hot-reload/) can take part
 // in: the graceful stop before its next version starts, which servers join so that no request
-// in flight is cut off. docs/std/dev.md.
+// in flight is cut off. https://veltlang.com/docs/std/dev/.
 
 export { drained, joinStop } from "velt/dev/stop";

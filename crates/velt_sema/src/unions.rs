@@ -1,4 +1,4 @@
-//! Union types `A | B | C` (docs/reference/types.md "Union types", hir_encodings.md): each distinct
+//! Union types `A | B | C` (https://veltlang.com/docs/reference/types/ "Union types", hir_encodings.md): each distinct
 //! member set is a compiler-generated enum (`EnumDef::is_union`) with one single-payload variant
 //! per member.
 //!

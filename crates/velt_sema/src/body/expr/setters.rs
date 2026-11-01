@@ -1,4 +1,4 @@
-//! Setters (`set name(v: T) { ... }`, docs/reference/classes.md): `x.name = v` on a value
+//! Setters (`set name(v: T) { ... }`, https://veltlang.com/docs/reference/classes/): `x.name = v` on a value
 //! whose type has a setter `name` (and no field of that name) is the call `x.set name(v)` —
 //! setters live under their own method-table key ([`member_key`]), so a getter and a setter
 //! may share a name. Compound assignment and `++`/`--` read through the getter and write

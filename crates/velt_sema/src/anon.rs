@@ -72,6 +72,10 @@ pub(crate) struct ObjectState {
     /// Each class's value per construct signature type, a module-state constant
     /// (`body::expr::ctor_values`), in the order they were made.
     pub class_values: Vec<((DefId, TyId), DefId)>,
+    /// A walk that substitutes field types (`Ctx::holds_lock` and the others in known.rs)
+    /// stopped at a type of this expansive definition: its answer was not looked for, and
+    /// `crate::expansive_types::check` reports the definition if nothing else does.
+    pub expansive_cut: Option<DefId>,
 }
 
 impl Ctx<'_> {

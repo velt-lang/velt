@@ -1,4 +1,4 @@
-//! Function expressions with a `this: any` parameter whose body uses `this` (docs/reference/
+//! Function expressions with a `this: any` parameter whose body uses `this` (https://veltlang.com/docs/reference/
 //! functions.md "Function expressions"): `this` is the object the function is called on, as in
 //! JavaScript. The value is `ThisFn` (std/lang/this_fn/index.vlt, a global loaded on demand by
 //! std/prelude/global/this_fn.vlt) held as a `Function`:

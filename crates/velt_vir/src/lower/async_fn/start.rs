@@ -1,4 +1,4 @@
-//! Eager start of promise values (hybrid promises, docs/reference/async.md). A call of an async
+//! Eager start of promise values (hybrid promises, https://veltlang.com/docs/reference/async/). A call of an async
 //! function — or of a function value returning a promise — whose promise is kept as a value
 //! (stored, put in an array, passed on, returned) is started at once with `velt_rt_fut_start`:
 //! its body runs until its first suspension, like calling an async function in JS, and the

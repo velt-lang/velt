@@ -1,4 +1,4 @@
-// velt/lang/hooks (internal): the text of an `any` value (issue #924, docs/reference/types.md
+// velt/lang/hooks (internal): the text of an `any` value (issue #924, https://veltlang.com/docs/reference/types/
 // "any and unknown"; velt_sema `body/expr/any_text.rs`): `String(v)`, a template part or `+`
 // operand (`ToString` after `ToPrimitive`), and `xs.join(sep)` of an array held. Each takes the
 // call site its `TypeError`s name (`at`), which velt_vir's `track_caller` fills in.

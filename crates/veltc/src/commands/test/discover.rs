@@ -316,7 +316,7 @@ fn resolve(base: &Path) -> Option<PathBuf> {
 }
 
 /// Does evaluating `module` do anything but declare? Every module a program imports is evaluated
-/// when it starts (docs/reference/modules.md), so a test file in a shared harness is evaluated in
+/// when it starts (https://veltlang.com/docs/reference/modules/), so a test file in a shared harness is evaluated in
 /// every test file's process: only one that just declares can share one. Top-level statements,
 /// and a variable or static field initialized with a call (`const C = component(...)`), run code;
 /// literals, names, operators and functions do not.

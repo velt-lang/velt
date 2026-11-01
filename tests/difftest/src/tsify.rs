@@ -11,7 +11,7 @@
 //!    where one exists, so the Velt standard library is checked against it.
 //!
 //! `console.log` keeps Node's default layout: Velt breaks long values across lines and groups
-//! arrays into columns as `util.inspect` does (`docs/reference/builtins.md`).
+//! arrays into columns as `util.inspect` does (`https://veltlang.com/docs/reference/builtins/`).
 //!
 //! Everything else must already mean the same thing in both languages; `README.md` lists the
 //! semantic differences programs have to avoid.

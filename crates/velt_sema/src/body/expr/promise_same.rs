@@ -1,6 +1,6 @@
 //! A promise converted for an argument of a spawned call (`spawn(g(p))`, `g` taking a
 //! `Promise<unknown>`) is not `Intrinsic::PromiseSame`: the call's arguments move to the new
-//! task, where a promise has an identity of its own (docs/reference/async.md), and the second
+//! task, where a promise has an identity of its own (https://veltlang.com/docs/reference/async/), and the second
 //! operand would read the temporary the first one moved.
 
 use crate::hir::{self, Callee, ExprKind as H, Intrinsic};

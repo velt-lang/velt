@@ -1,6 +1,6 @@
 # Design: fast dev loop and hot reload (`velt dev`)
 
-Status: implemented (phases 0–3). User documentation: [`velt dev`](../../tooling/dev.md).
+Status: implemented (phases 0–3). User documentation: [`velt dev`](https://veltlang.com/docs/tooling/dev/).
 
 Goal: building applications in Velt should feel like Node with `--watch` or Vite. You save a
 file, and the running backend reflects the change in well under 100 ms. When possible it keeps
@@ -30,7 +30,7 @@ Each phase is useful on its own, and the next builds on it.
 
 Terminals listed under System Settings → Privacy & Security → Developer Tools skip the
 first-launch check for programs they start. Documented in
-[Platforms](../../tooling/platforms.md#macos-notes); `velt doctor` reports the first-launch time.
+[Platforms](https://veltlang.com/docs/tooling/platforms/#macos-notes); `velt doctor` reports the first-launch time.
 
 ### Phase 1: watch, rebuild, restart, keep sockets open
 
@@ -123,7 +123,7 @@ changed modules. Sema is now most of a reload's time (see "Measured"), so this i
 2. **Module state starts over.** Module-level `let`s (#76) live in a process-wide block the
    runtime keys by the program's module descriptor; swapped-in code has a new descriptor and gets a
    fresh block from its own initializers, so nothing is migrated
-   ([the Reference](../../reference/variables.md#module-state)). State in `shared(...)` or
+   ([the Reference](https://veltlang.com/docs/reference/variables/#module-state)). State in `shared(...)` or
    class instances owned by `main` or handlers carries over. So does a static atomic
    (`const X = new Atomic<T>(literal)`, not module state) and a `ThreadLocal`'s key: the
    session owns one word or key per constant, named by its qualified name and type, which every

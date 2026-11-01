@@ -2,7 +2,7 @@
 // (std-layout.md §10b): `process.stdout.write(s)` / `process.stderr.write(s)` (`processWrite`),
 // `process.env.NAME` / `process.env[name]` (`processEnv`), `process.argv` (`processArgv`) and
 // the mark of a top-level `await` (`topLevelAwaitAt`). The rest of Node's `process` is in
-// `velt/process` (docs/std/process.md).
+// `velt/process` (https://veltlang.com/docs/std/process/).
 
 declare function velt_rt_write_str(stream: u32, s: string);
 

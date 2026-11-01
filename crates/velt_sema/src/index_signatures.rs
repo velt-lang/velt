@@ -1,4 +1,4 @@
-//! Index signatures (docs/reference/types.md "Objects, arrays, tuples and maps"): an object type
+//! Index signatures (https://veltlang.com/docs/reference/types/ "Objects, arrays, tuples and maps"): an object type
 //! or interface with only an index signature, `{ [key: string]: V }`, is `Record<string, V>`, as
 //! the two are interchangeable in TypeScript. `readonly` is not checked yet, as for
 //! `readonly T[]`. Named members next to an index signature whose values are `any` or `unknown`

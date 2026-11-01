@@ -1,4 +1,4 @@
-//! Array spread `[a, ...xs, b]` (docs/reference/types.md "Objects, arrays, tuples and maps"),
+//! Array spread `[a, ...xs, b]` (https://veltlang.com/docs/reference/types/ "Objects, arrays, tuples and maps"),
 //! desugared without new HIR into
 //! `{ let out = with_capacity(len); out.push(a); for (e of xs) out.push(<share of e>); ...; out }`
 //! (Copy elements are copied), each element converted to the literal's element type

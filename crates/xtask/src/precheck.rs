@@ -466,7 +466,7 @@ mod tests {
 
     #[test]
     fn std_changes_lint_their_files_and_a_lint_change_lints_all_of_std() {
-        let s = sel(&["std/fs/index.vlt", "std/deleted.vlt", "docs/std/fs.md"]);
+        let s = sel(&["std/fs/index.vlt", "std/deleted.vlt", "docs/README.md"]);
         assert_eq!(s.std_lint, StdLint::Files(vec!["std/fs/index.vlt".into()]));
         assert_eq!(sel(&["crates/xtask/src/main.rs"]).std_lint, StdLint::None);
         assert_eq!(
@@ -500,7 +500,7 @@ mod tests {
         for path in [
             "tests/golden/m1/hello.vlt",
             "tests/golden/errors/bad.vlt",
-            "docs/book/intro.md",
+            "docs/internals/README.md",
             "stdlib.md",
             "crates/velt_fmt/examples/x.vlt",
         ] {

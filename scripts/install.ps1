@@ -1,5 +1,5 @@
 # Install a Velt dist directory (from scripts/package.ps1, or an unpacked release .zip) beside the
-# other installed versions (#948, docs/tooling/platforms.md): as <root>\toolchains\<version>, with
+# other installed versions (#948, https://veltlang.com/docs/tooling/platforms/): as <root>\toolchains\<version>, with
 # its launcher as <root>\bin\velt.exe. Replaces an installed copy of the same version (a rebuild).
 # Does not modify PATH; prints the command to do so.
 #

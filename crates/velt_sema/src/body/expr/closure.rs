@@ -2,7 +2,7 @@
 //! sharing the enclosing function's generics) checked in a nested frame; names of enclosing
 //! locals become captures.
 //!
-//! Capture modes (docs/reference/functions.md "Captures"):
+//! Capture modes (https://veltlang.com/docs/reference/functions/ "Captures"):
 //! - non-escaping (direct call argument to a function-typed parameter, or immediately called):
 //!   mutated → `BorrowMut`, Copy → `Copy`, otherwise `Borrow`;
 //! - escaping (stored / returned): Copy and never mutated → `Copy`, otherwise `Owned` (the

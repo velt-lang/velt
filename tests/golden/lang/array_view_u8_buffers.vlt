@@ -1,0 +1,33 @@
+// A `u8[]` field set through `any` makes `u8[]` an array view type (#1485), whose views are told
+// apart by bit 0 of the data pointer. A plain byte array must never look like one (#1963): an
+// empty array the runtime makes (`Buffer.alloc(0)`, the buffer behind a `subarray` or an
+// encoder's output) has an even data pointer, as every other plain array.
+
+class Holder {
+  data: u8[] = [];
+}
+
+function main() {
+  // The issue's program: a subarray (a buffer over the array) and a write through `any`.
+  const b: u8[] = Buffer.alloc(16);
+  const v = b.subarray(0, 16);
+  console.log("view", v.length);
+  const h = new Holder();
+  const a: any = h;
+  a.data = [1, 2, 3];
+  console.log("set", h.data.length, h.data[2]);
+
+  // An encoder's output is adopted by a buffer the same way.
+  const e = new TextEncoder().encode("héllo");
+  console.log("encoded", e.length, e[1]);
+
+  // Empty arrays from the runtime, kept, dropped and replaced.
+  const empty: u8[] = Buffer.alloc(0);
+  console.log("empty", empty.length, empty.includes(0));
+  h.data = Buffer.alloc(0);
+  console.log("replaced", h.data.length);
+  a.data = [9];
+  console.log("again", h.data[0]);
+  const none = new TextEncoder().encode("");
+  console.log("encoded empty", none.length);
+}

@@ -1,0 +1,7 @@
+expansive_types.vlt:13:13: error: `L<T>` refers to itself at a growing type argument (`L<T[]>`), so `JSON.parse` cannot read it
+Velt compiles each instantiation of a type separately, and each `L<T>` needs one with a longer type argument, without end (TypeScript accepts the type); give the member a type that does not grow, or a `JsonValue`
+expansive_types.vlt:18:15: error: `L<T>` refers to itself at a growing type argument (`L<T[]>`), so `JSON.stringify` cannot write it
+expansive_types.vlt:23:15: error: `L<T>` refers to itself at a growing type argument (`L<T[]>`), so `deepEqual` cannot compare it
+expansive_types.vlt:27:10: error: `L<T>` refers to itself at a growing type argument (`L<T[]>`), so a value of `L<T>` cannot be compiled
+expansive_types.vlt:31:15: error: `L<T>` refers to itself at a growing type argument (`L<T[]>`), so a value of `L<boolean>` cannot be compiled
+expansive_types.vlt:36:3: error: `L<T>` refers to itself at a growing type argument (`L<T[]>`), so `toEqual` cannot compare it

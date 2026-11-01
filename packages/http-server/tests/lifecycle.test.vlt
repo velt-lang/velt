@@ -5,6 +5,7 @@ import { connect, listen, TcpStream } from "velt/net";
 import { timeout } from "velt/task";
 import { describe, expect, it } from "velt/test";
 import { delay } from "velt/time";
+import { arrivals, gate, hold, open, shut } from "./_gate";
 import { TEST_CERT } from "./_tls";
 
 async function hello(req: Request): Promise<Response> {
@@ -180,13 +181,12 @@ describe("shutdown", () => {
     "waits for requests in flight, closes idle connections, then releases the handler",
     async () => {
       const released = shared<i64>(0);
-      const started = shared<i64>(0);
       const finished = shared<i64>(0);
+      const g = gate();
       const store = new Owner(released.clone());
       const server = await serveHttp({ port: 0 }, async (req: HttpRequest, res: HttpResponse) => {
         if (req.pathIs("/slow")) {
-          started.set(1);
-          await delay(300);
+          await hold(g);
           finished.set(1);
         }
         res.send(store.name);
@@ -199,21 +199,23 @@ describe("shutdown", () => {
       // A request in flight when shutdown starts.
       const busy = await connect(`127.0.0.1:${port}`);
       await busy.write("GET /slow HTTP/1.1\r\nHost: x\r\n\r\n");
-      for (let i = 0; i < 1000 && started.get() == 0; i++) {
-        await delay(5);
-      }
-      expect(started.get()).toBe(1);
+      await timeout(arrivals(g), 5000);
       expect(released.get()).toBe(0);
-      await timeout(server.shutdown(), 10000);
+      const stopping = server.shutdown();
+      // The idle connection is closed at once, while the request in flight is still held.
+      expect(await timeout(readUntil(idle), 5000)).toBe("");
+      expect(finished.get()).toBe(0);
+      // Then the request finishes, is answered, and only then is the handler released.
+      open(g);
+      await timeout(stopping, 10000);
       expect(finished.get()).toBe(1);
       expect(released.get()).toBe(1);
       const answer = await timeout(readUntil(busy), 5000);
       expect(answer.startsWith("HTTP/1.1 200")).toBe(true);
       expect(answer.includes("kept")).toBe(true);
-      // The idle connection was closed by the server.
-      expect(await timeout(readUntil(idle), 5000)).toBe("");
       idle.close();
       busy.close();
+      shut(g);
     },
   );
 });

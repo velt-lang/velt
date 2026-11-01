@@ -97,7 +97,7 @@ executed (cachegrind, Linux arm64, `VELT_THREADS=1`):
 |---|---:|---:|---:|---:|
 | hex | 9,179 M | 2,285 M | 17,420 M | 0.13 |
 
-The Velt code works on SIMD vectors (docs/std/simd.md), sixteen bytes per step when encoding
+The Velt code works on SIMD vectors (https://veltlang.com/docs/std/simd/), sixteen bytes per step when encoding
 and 32 digits when decoding; the crate goes digit by digit through a table.
 
 ## Ported

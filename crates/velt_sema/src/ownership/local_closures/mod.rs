@@ -1,4 +1,4 @@
-//! Closures held in a `const` that are only ever called (docs/reference/functions.md
+//! Closures held in a `const` that are only ever called (https://veltlang.com/docs/reference/functions/
 //! "Captures"): `const f = () => this.items.length; f();`. Checking treats every closure that
 //! is not passed directly as an argument as escaping (it captures by value, and a by-value
 //! capture of `this` or of an object makes its type reference-counted). This pass, run before

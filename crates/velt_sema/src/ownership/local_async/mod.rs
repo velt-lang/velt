@@ -1,4 +1,4 @@
-//! Local async closures (#208, docs/reference/functions.md "Captures"): an async closure that
+//! Local async closures (#208, https://veltlang.com/docs/reference/functions/ "Captures"): an async closure that
 //! never reaches a thread boundary captures like a sync closure, so it may modify what it
 //! captured and the enclosing code may assign the variables it captured, as in JavaScript.
 //!
@@ -250,7 +250,7 @@ fn instances(cx: &mut Ctx, g: &Graph, c: DefId, ty: TyId) -> Vec<TyId> {
 /// server's handler: a copy on each connection's task) would change only those copies of what it
 /// captured, out of sight, so modifying a capture is an error there, as for an async closure. A
 /// closure the program hands to `spawn` itself is copied for the task with what it captures, as
-/// docs/reference/async.md says, and may change its copy. A library's closures (std's, a
+/// https://veltlang.com/docs/reference/async/ says, and may change its copy. A library's closures (std's, a
 /// package's) are not the program's to change.
 fn crossing_sync(cx: &mut Ctx, c: DefId, why: Option<Why>) {
     let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] else {

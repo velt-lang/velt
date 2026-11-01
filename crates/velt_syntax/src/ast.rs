@@ -159,7 +159,7 @@ pub struct FnSig {
     pub throws: Option<TypeExpr>,
     pub is_async: bool,
     /// `declare system function`: a function of the platform's C library, checked against the
-    /// compiler's table of system functions (docs/reference/system-functions.md). Always `false`
+    /// compiler's table of system functions (https://veltlang.com/docs/reference/system-functions/). Always `false`
     /// for anything but a `declare` item.
     pub is_system: bool,
     /// `declare intrinsic function arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void;`: an

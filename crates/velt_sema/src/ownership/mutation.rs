@@ -1,4 +1,4 @@
-//! Mutation inference (docs/reference/memory.md "Mutation is inferred"): turns a body's
+//! Mutation inference (https://veltlang.com/docs/reference/memory/ "Mutation is inferred"): turns a body's
 //! [`Evidence`](super::evidence::Evidence) into pass modes, and joins the modes of methods that
 //! share a dispatch slot. Runs inside the ownership fixpoint (`super::infer`); modes only grow
 //! (`Borrow` → `BorrowMut` → `Owned`), so the iteration terminates.
@@ -177,6 +177,10 @@ fn join_into(modes: &mut [PassMode], other: &[PassMode]) {
 pub(super) struct Dispatch {
     /// Vtable groups first, then interface slots (a slot reads the joined method modes).
     groups: Vec<Group>,
+    /// Per vtable group, the join of its members' modes at its last join: a later join of a
+    /// few changed members compares them with it rather than walking the whole group (a
+    /// generated function's group holds every instance's body).
+    joined: std::cell::RefCell<Vec<Option<Vec<PassMode>>>>,
 }
 
 enum Group {
@@ -204,7 +208,8 @@ impl Dispatch {
         generated.sort();
         groups.extend(generated.into_iter().map(Group::Vtable));
         groups.extend(iface_slots(cx));
-        Dispatch { groups }
+        let joined = std::cell::RefCell::new(vec![None; groups.len()]);
+        Dispatch { groups, joined }
     }
 
     /// Number of groups.
@@ -241,10 +246,20 @@ impl Dispatch {
         methods
     }
 
-    /// Join the modes of group `g`; pushes the defs (methods, interface) whose modes changed.
-    pub(super) fn join(&self, cx: &mut Ctx, g: usize, changed: &mut Vec<DefId>) {
+    /// Join the modes of group `g`, of which `members` changed since its last join (`None`:
+    /// any may have); pushes the defs (methods, interface) whose modes changed.
+    pub(super) fn join(
+        &self,
+        cx: &mut Ctx,
+        g: usize,
+        members: Option<&[DefId]>,
+        changed: &mut Vec<DefId>,
+    ) {
         match &self.groups[g] {
-            Group::Vtable(methods) => join_group(cx, methods, changed),
+            Group::Vtable(methods) => {
+                let mut joined = self.joined.borrow_mut();
+                join_group(cx, methods, members, &mut joined[g], changed)
+            }
             Group::Iface {
                 iface,
                 slot,
@@ -304,12 +319,21 @@ fn vtable_groups(cx: &Ctx) -> Vec<Vec<DefId>> {
 /// Raise every method of `group` to the join of their modes (only `Borrow` → `BorrowMut`;
 /// signatures that don't match were reported when the methods were collected). Pushes the
 /// methods whose modes changed.
-fn join_group(cx: &mut Ctx, group: &[DefId], changed: &mut Vec<DefId>) {
-    let mut join = modes_of(cx, group[0]);
-    for &m in &group[1..] {
-        join_into(&mut join, &modes_of(cx, m));
-    }
-    for &m in group {
+///
+/// `joined`: the join at the last call, kept for the next. With it and the `members` that
+/// changed since, only those are joined in, and only they are raised unless the join grew
+/// (modes only grow, so every other member is at the old join already); the same modes as
+/// joining the whole group.
+fn join_group(
+    cx: &mut Ctx,
+    group: &[DefId],
+    members: Option<&[DefId]>,
+    joined: &mut Option<Vec<PassMode>>,
+    changed: &mut Vec<DefId>,
+) {
+    let (join, raise) = group_join(group, members, joined.take(), |m| modes_of(cx, m));
+    *joined = Some(join.clone());
+    for &m in raise {
         let mut own = modes_of(cx, m);
         let before = own.clone();
         join_into(&mut own, &join);
@@ -324,6 +348,34 @@ fn join_group(cx: &mut Ctx, group: &[DefId], changed: &mut Vec<DefId>) {
         }
         for (p, j) in f.params.iter_mut().zip(it) {
             p.mode = j;
+        }
+    }
+}
+
+/// The join of `group`'s modes and the members to raise to it (see [`join_group`]).
+fn group_join<'g>(
+    group: &'g [DefId],
+    members: Option<&'g [DefId]>,
+    joined: Option<Vec<PassMode>>,
+    mut modes_of: impl FnMut(DefId) -> Vec<PassMode>,
+) -> (Vec<PassMode>, &'g [DefId]) {
+    // The join starts from the first member's modes, so a change of that member joins all.
+    let members = members.filter(|ms| !ms.contains(&group[0]));
+    match (joined, members) {
+        (Some(mut join), Some(members)) => {
+            let before = join.clone();
+            for &m in members {
+                join_into(&mut join, &modes_of(m));
+            }
+            let raise = if join == before { members } else { group };
+            (join, raise)
+        }
+        _ => {
+            let mut join = modes_of(group[0]);
+            for &m in &group[1..] {
+                join_into(&mut join, &modes_of(m));
+            }
+            (join, group)
         }
     }
 }
@@ -396,4 +448,38 @@ fn join_iface_slot(cx: &mut Ctx, iface: DefId, slot: usize, methods: &[DefId]) -
         }
     }
     changed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use PassMode::{Borrow, BorrowMut};
+
+    #[test]
+    fn a_join_of_changed_members_raises_the_group_only_when_it_grows() {
+        let group = [DefId(1), DefId(2), DefId(3)];
+        let modes = |mutated: &'static [u32]| {
+            move |d: DefId| {
+                vec![if mutated.contains(&d.0) {
+                    BorrowMut
+                } else {
+                    Borrow
+                }]
+            }
+        };
+        let (join, raise) = group_join(&group, None, None, modes(&[]));
+        assert_eq!((join.clone(), raise), (vec![Borrow], &group[..]));
+        // One member turns `BorrowMut` after the group was joined: every member is raised.
+        let changed = [DefId(2)];
+        let (join, raise) = group_join(&group, Some(&changed), Some(join), modes(&[2]));
+        assert_eq!((join.clone(), raise), (vec![BorrowMut], &group[..]));
+        // Another one does too, but the join stays: only that member is looked at.
+        let changed = [DefId(3)];
+        let (join, raise) = group_join(&group, Some(&changed), Some(join), modes(&[2, 3]));
+        assert_eq!((join, raise), (vec![BorrowMut], &changed[..]));
+        // The first member changed: the group is joined whole.
+        let changed = [DefId(1)];
+        let (_, raise) = group_join(&group, Some(&changed), Some(vec![Borrow]), modes(&[1]));
+        assert_eq!(raise, &group[..]);
+    }
 }

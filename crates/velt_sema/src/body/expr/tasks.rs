@@ -1,4 +1,4 @@
-//! M3 async expressions (docs/reference/async.md): `await`, and `spawn` of a promise or
+//! M3 async expressions (https://veltlang.com/docs/reference/async/): `await`, and `spawn` of a promise or
 //! of an async task body (`spawn(async () => { ... })`). The other task builtins (`sleep`,
 //! `yieldNow`, `Promise.all`, `performance.now`, `Date.now`) are plain intrinsic calls.
 
@@ -64,7 +64,7 @@ impl FnCx<'_, '_> {
     }
 
     /// The value of `yield a` in an async generator yielding `t`: a promise is awaited, as in
-    /// JS (its rejection is thrown at the `yield`; docs/reference/functions.md "Async
+    /// JS (its rejection is thrown at the `yield`; https://veltlang.com/docs/reference/functions/ "Async
     /// generators").
     pub(crate) fn yielded_awaiting(&mut self, a: &ast::Expr, t: TyId) -> hir::Expr {
         let h = self.expr(a, Some(t), Want::Move);
@@ -736,7 +736,7 @@ impl FnCx<'_, '_> {
 /// The place an argument passes (under re-wrapping: `Some`, an up- or downcast, a union member), and
 /// the interface value coercion it went through, if any.
 /// The argument lists of the calls `spawn(p)` starts: `p`'s, or each branch's of a conditional
-/// (`spawn(c ? f(x) : g(y))`, docs/reference/async.md) and of a block's value (also
+/// (`spawn(c ? f(x) : g(y))`, https://veltlang.com/docs/reference/async/) and of a block's value (also
 /// `crate::weak_threads`).
 pub(crate) fn spawned_calls<'e>(p: &'e hir::Expr, out: &mut Vec<&'e [hir::Expr]>) {
     match &p.kind {
