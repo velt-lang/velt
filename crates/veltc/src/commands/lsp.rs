@@ -178,8 +178,11 @@ impl ProgramLoader for CliLoader {
             None
         };
         let packages = graph.as_deref().map(|g| g as &dyn loader::PackageResolver);
-        // `#name`s resolve for the default target, as the documents are checked.
-        loader::resolve_module(spec, from, loader::std_root().as_deref(), packages, None)
+        // `#name`s resolve for the target `from` is checked for: the default one, or the one
+        // whose build uses `from` when it is a variant only another target uses.
+        let target = graph.as_deref().and_then(|g| variant_target(g, from));
+        let std = loader::std_root();
+        loader::resolve_module(spec, from, std.as_deref(), packages, target.as_deref())
     }
 
     fn resolves_modules(&self) -> bool {

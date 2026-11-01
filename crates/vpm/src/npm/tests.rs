@@ -505,11 +505,22 @@ fn a_package_s_imports_map_its_names_as_node_does() {
         npm.resolve_import(&scope, "#internal/a").unwrap(),
         root.join("foo/src/internal/a.ts")
     );
-    for spec in ["#dep", "#nope"] {
+    // A bare target Node would load stops the walk, before a later condition: an error.
+    let (msg, _) = npm.resolve_import(&scope, "#dep").unwrap_err();
+    assert!(msg.contains("to the package `other`"), "{msg}");
+    write(
+        root,
+        "foo/package.json",
+        r##"{ "name": "foo", "imports": { "#util": { "node": "dep-x", "default": "./dist/util.js" }, "#arr": ["dep-y", "./dist/util.js"] } }"##,
+    );
+    let mut npm = NpmResolver::default();
+    for spec in ["#util", "#arr"] {
         let (msg, _) = npm.resolve_import(&scope, spec).unwrap_err();
-        assert_eq!(
-            msg,
-            format!("npm package `foo` does not define `{spec}` (`imports` in its package.json)")
-        );
+        assert!(msg.contains("to the package `dep-"), "{spec}: {msg}");
     }
+    let (msg, _) = npm.resolve_import(&scope, "#nope").unwrap_err();
+    assert_eq!(
+        msg,
+        "npm package `foo` does not define `#nope` (`imports` in its package.json)"
+    );
 }

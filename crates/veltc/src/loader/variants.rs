@@ -9,14 +9,17 @@
 //!   other than `private` ones, without bodies;
 //! - a type alias, interface, enum or namespace: the whole declaration;
 //! - a `const`/`let`: its type annotation (a literal's kind without one);
-//! - a re-export: the signature where it is declared, followed through relative imports.
+//! - a re-export: the signature where it is declared, followed through relative re-exports
+//!   (each file read, and each (file, name) resolved, once per load); one from another package
+//!   or std: that module's specifier and the name. A name that comes from `export *`, or that
+//!   no file on its chain declares, is an error: it cannot be compared.
 //!
 //! The first variant written is the reference the others are compared with. The check runs where
 //! [`super::LoadOptions::check_variants`] asks for it (`velt check`, `velt test`, the language
 //! server), for every `#name` the program imports.
 
-use std::collections::BTreeMap;
-use std::path::Path;
+use std::collections::{BTreeMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use velt_common::{Diagnostic, FileId, Span};
@@ -25,9 +28,9 @@ use velt_syntax::ast::{self, ExprKind, ItemKind, Lit, PatternKind};
 use super::conditional::Resolved;
 use super::Loader;
 
-/// One exported name of a variant.
+/// One exported name of a variant, resolved to its signature.
 #[derive(Clone, Debug)]
-pub(super) struct Export {
+struct Export {
     /// Its signature, normalized for comparing.
     sig: String,
     /// Where it is exported.
@@ -37,11 +40,33 @@ pub(super) struct Export {
 /// A variant's API: name → export.
 type Api = BTreeMap<String, Export>;
 
-/// A file's API, or why it cannot be compared; shared by every re-export that reaches it.
-pub(super) type ApiResult = Rc<Result<Api, String>>;
+/// What a file exports under one name, as the file writes it.
+#[derive(Clone, Debug)]
+enum Entry {
+    /// Declared in the file: its signature.
+    Sig(String),
+    /// Re-exported from a module outside the package (std, a dependency): compared by that
+    /// module's specifier and the name.
+    Outside(String),
+    /// Re-exported from a relative module: its file (`None` when there is none), the specifier,
+    /// and the name there.
+    Link {
+        file: Option<PathBuf>,
+        spec: String,
+        name: String,
+    },
+}
 
-/// What a file's API is while it is being read: a re-export cycle back to it.
-const IN_PROGRESS: &str = "re-exports itself through a cycle";
+/// A file's exports as written: name → entry and where it is exported, and the specifiers of
+/// its `export * from …`.
+#[derive(Debug)]
+pub(super) struct Table {
+    names: BTreeMap<String, (Entry, Span)>,
+    stars: Vec<String>,
+}
+
+/// A file's [`Table`], or why it cannot be read (`reported`: a diagnostic already says why).
+pub(super) type TableResult = Rc<Result<Table, (String, bool)>>;
 
 impl Loader<'_, '_> {
     /// Compare the variants of every `#name` the program imported (none unless
@@ -57,33 +82,27 @@ impl Loader<'_, '_> {
         if !self.by_file.contains_key(&super::file_key(&r.selected)) {
             return;
         }
-        let mut apis: Vec<(&str, ApiResult)> = vec![];
+        let mut apis: Vec<(&str, Api)> = vec![];
+        let mut failed = false;
         for v in &r.variants {
             let file = vpm::relpath::normalize(&r.base.join(v.target.trim_start_matches("./")));
             // The same file under two conditions is one API.
             if apis.iter().any(|(t, _)| *t == v.target) {
                 continue;
             }
-            let api = self.api(&file);
-            match &*api {
-                Ok(_) => apis.push((&v.target, api)),
-                Err(msg) => {
-                    let msg = format!("`{}`: variant `{}` {msg}", r.name, v.target);
-                    self.diags.push(Diagnostic::error(msg, r.span));
-                    return;
-                }
+            // Every variant's problems are reported; the comparison needs them all.
+            match self.api(r, &v.target, &file) {
+                Some(api) => apis.push((&v.target, api)),
+                None => failed = true,
             }
+        }
+        if failed {
+            return;
         }
         let Some(((first, reference), rest)) = apis.split_first() else {
             return;
         };
-        let Ok(reference) = &**reference else {
-            return;
-        };
         for (other, api) in rest {
-            let Ok(api) = &**api else {
-                continue;
-            };
             for (name, export) in reference {
                 match api.get(name) {
                     None => self.diags.push(
@@ -127,23 +146,127 @@ impl Loader<'_, '_> {
         }
     }
 
-    /// The API of the module `file`, read once per load: a file that re-exports from another
-    /// one reached again (many names from one file, or a cycle) costs a lookup, not another
-    /// parse. A file still being read when a cycle reaches it again gives [`IN_PROGRESS`].
-    fn api(&mut self, file: &Path) -> ApiResult {
-        let key = super::file_key(file);
-        match self.variant_apis.get(&key) {
-            Some(Some(done)) => return done.clone(),
-            Some(None) => return Rc::new(Err(IN_PROGRESS.into())),
-            None => {}
+    /// The API of variant `target` (its file `file`) of `r`: each name it exports with the
+    /// signature where it is declared. `None` after reporting why it cannot be compared.
+    fn api(&mut self, r: &Resolved, target: &str, file: &Path) -> Option<Api> {
+        let table = self.table(file);
+        let table = match &*table {
+            Ok(t) => t,
+            Err((why, reported)) => {
+                if !reported {
+                    let msg = format!("`{}`: variant `{target}` {why}", r.name);
+                    self.diags.push(Diagnostic::error(msg, r.span));
+                }
+                return None;
+            }
+        };
+        if let Some(spec) = table.stars.first() {
+            let msg = format!(
+                "`{}`: variant `{target}` re-exports `export * from \"{spec}\"`: list the names, so the variants' APIs can be compared",
+                r.name
+            );
+            self.diags.push(Diagnostic::error(msg, r.span));
+            return None;
         }
-        self.variant_apis.insert(key.clone(), None);
-        let api = Rc::new(self.read_api(file));
-        self.variant_apis.insert(key, Some(api.clone()));
-        api
+        let mut api = Api::new();
+        let mut ok = true;
+        for (name, (entry, span)) in &table.names {
+            match self.entry_sig(entry, &r.base) {
+                Ok(sig) => {
+                    api.insert(name.clone(), Export { sig, span: *span });
+                }
+                Err(why) => {
+                    ok = false;
+                    let msg = format!(
+                        "`{}`: `{name}` of `{target}` cannot be compared: {why}",
+                        r.name
+                    );
+                    self.diags
+                        .push(Diagnostic::error(msg, *span).with_note(SAME_API));
+                }
+            }
+        }
+        ok.then_some(api)
     }
 
-    fn read_api(&mut self, file: &Path) -> Result<Api, String> {
+    /// The signature `entry` stands for: its own, or the declaration a chain of relative
+    /// re-exports reaches. Each (file, name) on a chain is resolved once per load, iteratively
+    /// (a long chain does not deepen the stack); a chain that comes back to a (file, name) on it
+    /// is a cycle that declares nothing, an error for every name on it. `base`: what file paths
+    /// in messages are relative to.
+    fn entry_sig(&mut self, entry: &Entry, base: &Path) -> Result<String, String> {
+        let (mut file, mut name) = match entry {
+            Entry::Sig(sig) | Entry::Outside(sig) => return Ok(sig.clone()),
+            Entry::Link {
+                file: None, spec, ..
+            } => {
+                return Err(format!("`{spec}` names no file"));
+            }
+            Entry::Link {
+                file: Some(file),
+                name,
+                ..
+            } => (file.clone(), name.clone()),
+        };
+        let mut path: Vec<(PathBuf, String)> = vec![];
+        let mut on_path: HashSet<(PathBuf, String)> = HashSet::new();
+        let result = loop {
+            let key = (super::file_key(&file), name.clone());
+            if let Some(done) = self.variant_sigs.get(&key) {
+                break done.clone();
+            }
+            if !on_path.insert(key.clone()) {
+                break Err(format!(
+                    "`{name}` is re-exported in a cycle through `{}` and declared nowhere on it",
+                    vpm::relpath::relative(&file, base)
+                ));
+            }
+            path.push(key);
+            let table = self.table(&file);
+            let shown = vpm::relpath::relative(&file, base);
+            let next = match &*table {
+                Err((why, _)) => break Err(format!("`{shown}` {why}")),
+                Ok(t) => match t.names.get(&name) {
+                    Some((Entry::Sig(sig) | Entry::Outside(sig), _)) => break Ok(sig.clone()),
+                    Some((Entry::Link { file: None, spec, .. }, _)) => {
+                        break Err(format!("`{spec}` (in `{shown}`) names no file"));
+                    }
+                    Some((
+                        Entry::Link {
+                            file: Some(f),
+                            name: n,
+                            ..
+                        },
+                        _,
+                    )) => (f.clone(), n.clone()),
+                    None => match t.stars.first() {
+                        Some(spec) => break Err(format!(
+                            "`{name}` comes from `export * from \"{spec}\"` in `{shown}`: list the names there"
+                        )),
+                        None => break Err(format!("`{shown}` does not export `{name}`")),
+                    },
+                },
+            };
+            (file, name) = next;
+        };
+        for key in path {
+            self.variant_sigs.insert(key, result.clone());
+        }
+        result
+    }
+
+    /// `file`'s exports as written ([`Table`]), read and parsed once per load.
+    fn table(&mut self, file: &Path) -> TableResult {
+        let key = super::file_key(file);
+        if let Some(done) = self.variant_tables.get(&key) {
+            return done.clone();
+        }
+        let table = Rc::new(self.read_table(file));
+        self.variant_tables.insert(key, table.clone());
+        table
+    }
+
+    fn read_table(&mut self, file: &Path) -> Result<Table, (String, bool)> {
         let (id, module) = self.parsed(file)?;
         let src = self.sm.get(id).src.clone();
         let locals: BTreeMap<&str, &ast::Item> = module
@@ -151,91 +274,71 @@ impl Loader<'_, '_> {
             .iter()
             .filter_map(|item| item_name(item).map(|n| (n, item)))
             .collect();
-        let mut api = Api::new();
+        let dir = file.parent().unwrap_or(Path::new(""));
+        let mut table = Table {
+            names: BTreeMap::new(),
+            stars: vec![],
+        };
         for item in module.items.iter().filter(|i| i.exported) {
             match &item.kind {
-                ItemKind::Import(imp) if imp.all => {
-                    return Err(format!(
-                        "re-exports `export * from \"{}\"`: list the names, so the variants' APIs can be compared",
-                        imp.from
-                    ));
-                }
-                ItemKind::Import(imp) if imp.from.is_empty() => {
-                    for n in &imp.names {
-                        let shown = n.alias.as_ref().unwrap_or(&n.name);
-                        let sig = match locals.get(n.name.name.as_str()) {
-                            Some(local) => signature(local, &src),
-                            None => format!("`{}`", n.name.name),
-                        };
-                        let export = Export {
-                            sig,
-                            span: shown.span,
-                        };
-                        api.insert(shown.name.clone(), export);
-                    }
-                }
+                ItemKind::Import(imp) if imp.all => table.stars.push(imp.from.clone()),
                 ItemKind::Import(imp) => {
+                    let local = imp.from.is_empty();
+                    let relative = imp.from.starts_with("./") || imp.from.starts_with("../");
+                    let linked = relative.then(|| {
+                        let target = vpm::relpath::normalize(&dir.join(&imp.from));
+                        super::locate::relative_files(target)
+                            .into_iter()
+                            .flatten()
+                            .find(|f| vpm::probe::is_file(f))
+                    });
                     for n in &imp.names {
                         let shown = n.alias.as_ref().unwrap_or(&n.name);
-                        let sig = self.reexported(file, &imp.from, &n.name.name);
-                        let export = Export {
-                            sig,
-                            span: shown.span,
+                        let entry = match (&linked, local) {
+                            (_, true) => Entry::Sig(match locals.get(n.name.name.as_str()) {
+                                Some(item) => signature(item, &src),
+                                None => format!("`{}`", n.name.name),
+                            }),
+                            (Some(found), _) => Entry::Link {
+                                file: found.clone(),
+                                spec: imp.from.clone(),
+                                name: n.name.name.clone(),
+                            },
+                            (None, _) => {
+                                Entry::Outside(format!("`{}` from \"{}\"", n.name.name, imp.from))
+                            }
                         };
-                        api.insert(shown.name.clone(), export);
+                        table.names.insert(shown.name.clone(), (entry, shown.span));
                     }
                 }
                 _ => {
                     if let Some(name) = item_name(item) {
-                        let export = Export {
-                            sig: signature(item, &src),
-                            span: name_span(item).unwrap_or(item.span),
-                        };
-                        api.insert(name.to_string(), export);
+                        let span = name_span(item).unwrap_or(item.span);
+                        let entry = Entry::Sig(signature(item, &src));
+                        table.names.insert(name.to_string(), (entry, span));
                     }
                 }
             }
         }
-        Ok(api)
-    }
-
-    /// The signature of `name`, which `file` re-exports from `spec`: its declaration's, through
-    /// relative re-exports; for another module (std, a package), the specifier.
-    fn reexported(&mut self, file: &Path, spec: &str, name: &str) -> String {
-        let outside = format!("`{name}` from \"{spec}\"");
-        if !(spec.starts_with("./") || spec.starts_with("../")) {
-            return outside;
-        }
-        let dir = file.parent().unwrap_or(Path::new(""));
-        let target = vpm::relpath::normalize(&dir.join(spec));
-        let found = super::locate::relative_files(target)
-            .into_iter()
-            .flatten()
-            .find(|f| vpm::probe::is_file(f));
-        let Some(found) = found else {
-            return outside;
-        };
-        match &*self.api(&found) {
-            Ok(api) => api.get(name).map_or(outside, |e| e.sig.clone()),
-            Err(_) => outside,
-        }
+        Ok(table)
     }
 
     /// `file` parsed: the loaded module when the program has it, else read and parsed (its
-    /// syntax errors are reported: nothing else checks a variant the build does not use).
-    fn parsed(&mut self, file: &Path) -> Result<(FileId, ast::Module), String> {
+    /// syntax errors are reported: nothing else checks a variant the build does not use;
+    /// `true` in the error: a diagnostic says why).
+    fn parsed(&mut self, file: &Path) -> Result<(FileId, ast::Module), (String, bool)> {
         if let Some(&i) = self.by_file.get(&super::file_key(file)) {
             return Ok((self.modules[i].file, self.modules[i].ast.clone()));
         }
         let src = self
             .read(file)
-            .map_err(|e| format!("cannot be read: {e}"))?;
+            .map_err(|e| (format!("cannot be read: {e}"), false))?;
         let id = self.sm.add(file, src);
         let (module, diags) = velt_syntax::parse_file(id, &self.sm.get(id).src);
         let failed = diags.iter().any(Diagnostic::is_error);
         self.diags.extend(diags);
         if failed {
-            return Err("has syntax errors".into());
+            return Err(("has syntax errors".into(), true));
         }
         Ok((id, module))
     }

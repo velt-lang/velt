@@ -158,7 +158,8 @@ pub fn load_with_roots(
         conditions: conditional::build_conditions(opts.target.as_deref()),
         std_imports: None,
         variant_checks: vec![],
-        variant_apis: HashMap::new(),
+        variant_tables: HashMap::new(),
+        variant_sigs: HashMap::new(),
     };
     if let Some(std) = &opts.std_root {
         match prelude_files(std) {
@@ -263,8 +264,10 @@ struct Loader<'a, 'o> {
     std_imports: Option<vpm::imports::ImportMap>,
     /// The `#name` imports resolved, once each, whose variants [`variants`] compares.
     variant_checks: Vec<conditional::Resolved>,
-    /// Each file's API for [`variants`], by [`file_key`] (`None` while it is being read).
-    variant_apis: HashMap<PathBuf, Option<variants::ApiResult>>,
+    /// Each file's exports as written, for [`variants`], by [`file_key`].
+    variant_tables: HashMap<PathBuf, variants::TableResult>,
+    /// The signature each (file, name) re-export chain resolves to, for [`variants`].
+    variant_sigs: HashMap<(PathBuf, String), Result<String, String>>,
 }
 
 impl Loader<'_, '_> {

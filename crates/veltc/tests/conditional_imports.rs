@@ -116,6 +116,8 @@ fn check_rejects_a_target_it_does_not_build_for() {
     for args in [
         &["check", "--target", "bogus-triple"][..],
         &["check", "--std", "--target", "riscv64gc-unknown-linux-gnu"],
+        &["check", "--target", "aarch64-apple-ios"],
+        &["check", "--target", "aarch64-linux-android"],
     ] {
         let o = velt(dir, args);
         let err = String::from_utf8_lossy(&o.stderr);

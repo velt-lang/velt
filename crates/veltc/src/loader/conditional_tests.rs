@@ -373,51 +373,132 @@ fn an_npm_package_resolves_its_own_names() {
     let (_, d, _) = load(&root, opts(&g, "aarch64-apple-darwin"));
     assert_eq!(
         messages(&d),
-        ["npm package `foo` does not define `#dep` (`imports` in its package.json)"]
+        ["npm package `foo` maps `#dep` to the package `other-package` (`imports` in its package.json), which Velt does not follow"]
     );
 }
 
-/// The variant check reads each file once: many names re-exported from files that re-export
-/// each other in a cycle.
+/// A `package.json` inside a Velt package that is not an npm package's (a folder's
+/// `{ "type": "module" }`, the root's for TypeScript tools) leaves its files' `#name`s to
+/// `package.vlt`.
+#[test]
+fn a_package_json_in_a_velt_package_is_not_an_npm_scope() {
+    let t = Tree::new();
+    let root = io_package(&t);
+    t.write("app/package.json", r#"{ "name": "app", "type": "module" }"#);
+    t.write(
+        "app/src/sub/package.json",
+        r##"{ "type": "module", "imports": { "#io": "./other.js" } }"##,
+    );
+    t.write(
+        "app/src/sub/w.vlt",
+        "import { name } from \"#io\";\nexport function w(): string { return name(); }\n",
+    );
+    t.write(
+        "app/src/main.vlt",
+        "import { name } from \"#io\";\nimport { w } from \"./sub/w\";\nfunction main() { name(); w(); }\n",
+    );
+    let g = graph(&t, map(&[("#io", IO)]));
+    let (l, d, _) = load(&root, opts(&g, "aarch64-apple-darwin"));
+    assert!(d.is_empty(), "{:?}", messages(&d));
+    assert!(paths(&l).contains(&"io/native"), "{:?}", paths(&l));
+}
+
+/// The variant check reads each file once and resolves each (file, name) once: many names
+/// through two files that re-export from each other, entered at either one. Whichever variant
+/// is read first, equal APIs compare equal.
 #[test]
 fn re_export_cycles_and_many_names_are_read_once() {
     let t = Tree::new();
     let root = io_package(&t);
-    let names: Vec<String> = (0..40).map(|i| format!("n{i}")).collect();
-    let list = names.join(", ");
-    let decls: String = names
-        .iter()
-        .map(|n| format!("export function {n}(): i64 {{ return 0; }}\n"))
-        .collect();
-    for v in ["js", "wasi", "native"] {
-        t.write(
-            &format!("app/src/io/{v}.vlt"),
-            &format!("export {{ {list} }} from \"./c\";\nexport function name(): string {{ return \"\"; }}\n"),
-        );
-    }
-    // `c` re-exports from `d`, which re-exports `c`'s names back and declares them.
+    let (a, b): (Vec<String>, Vec<String>) = (
+        (0..200).map(|i| format!("a{i}")).collect(),
+        (0..200).map(|i| format!("b{i}")).collect(),
+    );
+    let decls = |names: &[String]| -> String {
+        names
+            .iter()
+            .map(|n| format!("export function {n}(x: i64): i64 {{ return x; }}\n"))
+            .collect()
+    };
+    let all = format!("{}, {}", a.join(", "), b.join(", "));
+    // `c` declares the b's and takes the a's from `d`, which declares the a's and takes the
+    // b's from `c`.
     t.write(
         "app/src/io/c.vlt",
-        &format!("export {{ {list} }} from \"./d\";\n"),
+        &format!("export {{ {} }} from \"./d\";\n{}", a.join(", "), decls(&b)),
     );
     t.write(
         "app/src/io/d.vlt",
-        &format!("export {{ {list} }} from \"./c\";\n{decls}")
-            .replace("export function", "function"),
+        &format!("export {{ {} }} from \"./c\";\n{}", b.join(", "), decls(&a)),
+    );
+    let tail = "export function name(): string { return \"\"; }\n";
+    t.write(
+        "app/src/io/js.vlt",
+        &format!("export {{ {all} }} from \"./c\";\n{tail}"),
+    );
+    t.write(
+        "app/src/io/wasi.vlt",
+        &format!("export {{ {all} }} from \"./d\";\n{tail}"),
+    );
+    t.write(
+        "app/src/io/native.vlt",
+        &format!("{}{}{tail}", decls(&a), decls(&b)),
     );
     let g = graph(&t, map(&[("#io", IO)]));
     let start = std::time::Instant::now();
     let (_, d, sm) = load(&root, check(&g));
-    // Agreeing variants; the cycle ends at the file being read.
-    assert!(
-        d.iter().all(|d| !d.message.contains("another signature")),
-        "{:?}",
-        messages(&d)
-    );
+    assert!(d.is_empty(), "{:?}", &messages(&d)[..d.len().min(3)]);
     assert!(start.elapsed() < std::time::Duration::from_secs(20));
     // Each of c and d was parsed once.
     let parsed = |name: &str| sm.files().filter(|(_, f)| f.path.ends_with(name)).count();
     assert_eq!((parsed("c.vlt"), parsed("d.vlt")), (1, 1));
+}
+
+/// A name that a re-export chain cannot pin down is an error, not a match by specifier: a cycle
+/// that declares it nowhere, or an `export *` on the way.
+#[test]
+fn names_that_cannot_be_resolved_are_errors() {
+    let t = Tree::new();
+    let root = io_package(&t);
+    let tail = "export function name(): string { return \"\"; }\n";
+    t.write("app/src/io/c.vlt", "export { f } from \"./e\";\n");
+    t.write("app/src/io/e.vlt", "export { f } from \"./c\";\n");
+    t.write(
+        "app/src/io/js.vlt",
+        &format!("export {{ f }} from \"./c\";\n{tail}"),
+    );
+    t.write("app/src/io/js/impl.vlt", "export * from \"./real\";\n");
+    t.write(
+        "app/src/io/js/real.vlt",
+        "export function g(x: string): string { return x; }\n",
+    );
+    t.write(
+        "app/src/io/wasi.vlt",
+        &format!("export {{ g as f }} from \"./js/impl\";\n{tail}"),
+    );
+    t.write(
+        "app/src/io/native.vlt",
+        &format!("export function f(): i64 {{ return 1; }}\n{tail}"),
+    );
+    let g = graph(&t, map(&[("#io", IO)]));
+    let (_, d, _) = load(&root, check(&g));
+    let m = messages(&d);
+    assert!(
+        m.iter()
+            .any(|m| m.contains("`f` of `./src/io/js.vlt` cannot be compared")),
+        "{m:?}"
+    );
+    assert!(
+        d.iter().any(
+            |d| d.message.contains("`./src/io/wasi.vlt` cannot be compared") && !d.notes.is_empty()
+        ),
+        "{m:?}"
+    );
+    let all = format!("{:?}", d);
+    assert!(
+        all.contains("in a cycle") && all.contains("export * from"),
+        "{m:?}"
+    );
 }
 
 /// A variant file that does not exist is the import's error, not a second one from the check.

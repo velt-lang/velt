@@ -254,6 +254,10 @@ impl NpmResolver {
                     format!("package `{name}` does not export `{subpath}` (`exports` in its package.json)"),
                     vec![format!("the conditions Velt matches are {}", conditions_list())],
                 ),
+                exports::ExportsError::Package(dep) => (
+                    format!("package `{name}` maps `{subpath}` to the package `{dep}`, which Velt does not follow"),
+                    vec![],
+                ),
                 exports::ExportsError::Invalid => (
                     format!("package `{name}` has an invalid `exports` map: its keys mix subpaths (`.`, `./x`) and conditions"),
                     vec![],
@@ -299,8 +303,17 @@ impl NpmResolver {
             )
         };
         let imports = manifest.get("imports").ok_or_else(not_defined)?;
-        let found = exports::resolve_import_targets(imports, spec, SERVER_CONDITIONS)
-            .map_err(|_| not_defined())?;
+        let found = exports::resolve_import_targets(imports, spec, SERVER_CONDITIONS).map_err(
+            |e| match e {
+                exports::ExportsError::Package(dep) => (
+                    format!(
+                        "npm package `{name}` maps `{spec}` to the package `{dep}` (`imports` in its package.json), which Velt does not follow"
+                    ),
+                    vec![format!("Node loads `{dep}` there; import `{dep}` directly")],
+                ),
+                _ => not_defined(),
+            },
+        )?;
         self.source_of(
             scope,
             &name,
@@ -310,6 +323,11 @@ impl NpmResolver {
             &found.all,
             found.runtime,
         )
+    }
+
+    /// The `name` of the `package.json` in `dir`, if it has one.
+    pub fn package_name(&mut self, dir: &Path) -> Option<String> {
+        self.manifest_name(dir)
     }
 
     /// The package scope of `file` as Node finds it: the nearest directory above it with a

@@ -127,12 +127,13 @@ impl Loader<'_, '_> {
     }
 }
 
-/// The npm package scope of `importer` when it belongs to an npm package (`node_modules`, a
-/// workspace package, one a git dependency provides) rather than to a Velt package: the nearest
-/// directory above it with a `package.json`, when that lies below the Velt package containing
-/// it (or no Velt package does). Its `#name`s resolve through that `package.json`'s `imports`,
-/// as in Node, never through a Velt package's map. A Velt package's own `package.json` (at its
-/// root, for TypeScript tools) is not one.
+/// The npm package scope of `importer` when it belongs to an npm package rather than to a Velt
+/// package: the nearest directory above it with a `package.json` (Node's package scope), when
+/// that is an npm package's: outside every Velt package (a workspace package, a plain
+/// TypeScript program), below a `node_modules` directory, or one a git dependency of the Velt
+/// package provides. Its `#name`s resolve through that `package.json`'s `imports`, as in Node,
+/// never through a Velt package's map. Any other `package.json` inside a Velt package (its root's
+/// for TypeScript tools, a folder's `{ "type": "module" }`) leaves its `#name`s to `package.vlt`.
 fn npm_scope(
     npm: &mut vpm::npm::NpmResolver,
     importer: &Path,
@@ -140,14 +141,19 @@ fn npm_scope(
 ) -> Option<PathBuf> {
     let scope = npm.package_scope(importer)?;
     let key = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
-    let velt = packages
-        .and_then(|p| p.imports(importer))
-        .map(|p| key(&p.root));
-    let npm_key = key(&scope);
-    match velt {
-        Some(root) if !npm_key.starts_with(&root) || npm_key == root => None,
-        _ => Some(scope),
-    }
+    let Some(velt) = packages.and_then(|p| p.imports(importer)) else {
+        return Some(scope);
+    };
+    let (root, npm_key) = (key(&velt.root), key(&scope));
+    let Ok(below) = npm_key.strip_prefix(&root) else {
+        return None;
+    };
+    let in_node_modules = below.components().any(|c| c.as_os_str() == "node_modules");
+    let provided = npm.package_name(&scope).is_some_and(|name| {
+        let dir = packages.and_then(|p| p.npm_package(importer, &name));
+        dir.is_some_and(|d| key(&d) == npm_key)
+    });
+    (in_node_modules || provided).then_some(scope)
 }
 
 /// The package `importer` belongs to, whose `imports` its `#name`s resolve in.

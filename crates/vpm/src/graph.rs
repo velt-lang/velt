@@ -95,8 +95,8 @@ impl PackageGraph {
         Some(package.root.join(module))
     }
 
-    /// The package containing `importer`, when it has conditional imports: its name, root and
-    /// `imports` (`crate::imports`).
+    /// The package containing `importer` (the innermost one): its name, root and conditional
+    /// imports (`crate::imports`, empty when it has none).
     pub fn imports_of(&self, importer: &Path) -> Option<(&str, &Path, &crate::imports::ImportMap)> {
         let package = self.package_of(importer)?;
         Some((&package.name, &package.root, &package.imports))

@@ -60,7 +60,7 @@ pub fn conditions(triple: &str) -> Vec<&'static str> {
         out.extend(["wasm", "js"]);
     } else {
         out.push("native");
-        if triple.contains("-darwin") {
+        if triple.contains("-darwin") || triple.contains("-apple-") {
             out.push("darwin");
         } else if triple.contains("-linux") {
             out.push("linux");
@@ -92,11 +92,19 @@ const REPRESENTATIVE_TARGETS: &[&str] = &[
 /// of `map`, when a build for `host` does not: the editor checks an open variant as the build
 /// that uses it. `None` when `host` uses it, or no `#name` names it.
 pub fn target_selecting(map: &ImportMap, target: &str, host: &str) -> Option<&'static str> {
+    // `./src//js.vlt` and `./src/./js.vlt` name `src/js.vlt`.
+    let file = |t: &str| -> Vec<String> {
+        t.split('/')
+            .filter(|s| !s.is_empty() && *s != ".")
+            .map(str::to_string)
+            .collect()
+    };
+    let wanted = file(target);
     let uses = |triple: &str| {
         let conditions = conditions(triple);
         map.values()
             .filter_map(|variants| select(variants, &conditions))
-            .any(|v| v.target == target)
+            .any(|v| file(&v.target) == wanted)
     };
     if uses(host) {
         return None;
@@ -247,6 +255,14 @@ mod tests {
         );
         assert_eq!(target_selecting(&map, "./src/io/native.vlt", host), None);
         assert_eq!(target_selecting(&map, "./src/other.vlt", host), None);
+        assert_eq!(
+            target_selecting(&map, "./src//io/./js.vlt", host),
+            Some("wasm32-unknown-unknown")
+        );
+        assert_eq!(
+            conditions("aarch64-apple-macos"),
+            ["native", "darwin", "default"]
+        );
         // Any WebAssembly triple is `wasm`, never `native`.
         assert_eq!(
             conditions("wasm64-unknown-unknown"),

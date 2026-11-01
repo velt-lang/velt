@@ -146,8 +146,16 @@ fn std_scope(
 /// `--target`'s triple is one velt builds for: x86_64 or aarch64 on Windows, macOS or Linux, or
 /// one of the WebAssembly targets (a typo would otherwise check for the conditions of `native`).
 fn check_target(target: &str) -> Result<(), BuildError> {
-    let arch = target.starts_with("x86_64-") || target.starts_with("aarch64-");
-    let native = arch && velt_link::TargetOs::from_triple(target).is_some();
+    let rest = target
+        .strip_prefix("x86_64-")
+        .or_else(|| target.strip_prefix("aarch64-"));
+    let native = rest.is_some_and(|rest| {
+        matches!(
+            rest,
+            "pc-windows-msvc" | "unknown-linux-gnu" | "unknown-linux-musl"
+        ) || rest.starts_with("apple-darwin")
+            || rest.starts_with("apple-macos")
+    });
     if native || super::wasm::is_wasm(target) {
         return Ok(());
     }
