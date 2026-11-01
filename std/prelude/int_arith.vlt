@@ -7,7 +7,6 @@
 
 declare function velt_rt_math_umulh(a: u64, b: u64): u64;
 
-
 extend u8 {
   /** `this + b`, or null when it leaves the range of `u8`. */
   checkedAdd(b: u8): u8 | null {
@@ -473,7 +472,10 @@ extend i64 {
     if (this == 0 || b == 0) {
       return 0;
     }
-    if ((this == -1 && b == (-9223372036854775807 - 1)) || (b == -1 && this == (-9223372036854775807 - 1))) {
+    if (
+      (this == -1 && b == (-9223372036854775807 - 1)) ||
+      (b == -1 && this == (-9223372036854775807 - 1))
+    ) {
       return null;
     }
     const r = this * b;
@@ -592,7 +594,10 @@ extend isize {
     if (this == 0 || b == 0) {
       return 0;
     }
-    if ((this == -1 && b == (-9223372036854775807 - 1)) || (b == -1 && this == (-9223372036854775807 - 1))) {
+    if (
+      (this == -1 && b == (-9223372036854775807 - 1)) ||
+      (b == -1 && this == (-9223372036854775807 - 1))
+    ) {
       return null;
     }
     const r = this * b;
