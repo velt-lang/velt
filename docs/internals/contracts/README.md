@@ -129,6 +129,18 @@ Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exi
   `velt_simd_*` externs, which backends emit inline (`velt_vir::simd`, rt_abi.md "SIMD").
 - `hir::TyKind::Simd(SimdTy)`: the vector and mask types; Copy, no drop, not equatable.
 
+## Intrinsics (additive VIR extension)
+- `vir::Rvalue::Intrinsic(Intrinsic, Vec<Operand>)` and `vir::Intrinsic` (#1981; vir.rs
+  invariant 12): a pure operation the compiler knows, as a statement instead of a call: it reads
+  only its operands and touches no memory, so passes may fold, move, duplicate or delete it like
+  arithmetic. `Intrinsic::signature` gives operand and result types, `Intrinsic::name` its
+  spelling in dumps (`math.sqrt(_3)`). `verify` checks the types.
+- `Intrinsic::Math(MathOp)` (`velt_vir::math`): means exactly the call of the runtime function
+  `MathOp::symbol`, which the program must declare (checked by `verify`); backends emit it
+  inline as they do the call, and call that function for `pow` and ToInt32's cold path.
+  `velt_opt`'s `constfold` evaluates it on constants (`MathOp::eval`); the interpreters run it
+  as the call.
+
 ## Parameter attributes (additive VIR extension)
 - `vir::Function::param_attrs: Vec<ParamAttrs>` — empty (no information) or one entry per param
   (checked by `verify`); `ParamAttrs` (`noalias`, `readonly`, `frozen`, `nonnull`,

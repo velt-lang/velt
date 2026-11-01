@@ -742,7 +742,9 @@ fn stmt_locals(s: &mut vir::Stmt, f: &mut impl FnMut(&mut Local)) {
                     op_locals(b, f);
                 }
                 Rvalue::AddrOf(p) => f(&mut p.local),
-                Rvalue::Aggregate(_, os) => os.iter_mut().for_each(|o| op_locals(o, f)),
+                Rvalue::Aggregate(_, os) | Rvalue::Intrinsic(_, os) => {
+                    os.iter_mut().for_each(|o| op_locals(o, f))
+                }
             }
         }
         vir::Stmt::MemCopy { dst, src, .. } => {

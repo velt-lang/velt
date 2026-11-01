@@ -342,6 +342,10 @@ impl<'p> Canon<'p> {
                 out.push_str(self.agg(*id));
                 ops.iter().for_each(|op| self.operand(out, op));
             }
+            Rvalue::Intrinsic(i, ops) => {
+                let _ = write!(out, " {}", i.name());
+                ops.iter().for_each(|op| self.operand(out, op));
+            }
         }
     }
 
@@ -468,7 +472,7 @@ fn operands(func: &Function) -> Vec<&Operand> {
                 Stmt::Assign(_, rv) => match rv {
                     Rvalue::Use(a) | Rvalue::Unary(_, a) | Rvalue::Cast(a, _) => out.push(a),
                     Rvalue::Binary(_, a, b) => out.extend([a, b]),
-                    Rvalue::Aggregate(_, ops) => out.extend(ops),
+                    Rvalue::Aggregate(_, ops) | Rvalue::Intrinsic(_, ops) => out.extend(ops),
                     Rvalue::AddrOf(_) => {}
                 },
                 Stmt::MemCopy { dst, src, .. } => out.extend([dst, src]),

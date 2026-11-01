@@ -1,10 +1,10 @@
 //! Statements: assignments of rvalues, aggregate construction, memory copies and fills
 //! (`llvm.memcpy` / `llvm.memmove` / `llvm.memset`).
 
-use velt_vir::vir::{AggId, Operand, Place, Rvalue, Stmt};
+use velt_vir::vir::{AggId, Intrinsic, Operand, Place, Rvalue, Stmt};
 
 use super::{Emitter, Loc, Val};
-use crate::types::aggregate;
+use crate::types::{abi_ret, abi_type, aggregate, global_name};
 use crate::CodegenResult;
 
 impl Emitter<'_> {
@@ -67,6 +67,17 @@ impl Emitter<'_> {
                 Loc::Unit => bail!("cannot take the address of a unit place"),
             },
             Rvalue::Aggregate(id, ops) => return self.aggregate(place, *id, ops),
+            Rvalue::Intrinsic(Intrinsic::Math(op), ops) => {
+                let mut args = Vec::with_capacity(ops.len());
+                for o in ops {
+                    let (v, ty) = self.scalar(o)?;
+                    args.push(format!("{} {v}", abi_type(ty)?));
+                }
+                // The runtime function for `pow` (declared: the verifier checks).
+                let target = (self.math_target(*op)).unwrap_or_else(|| global_name(op.symbol()));
+                let ret = abi_ret(op.signature().1)?;
+                Val::Scalar(self.inst(format!("call {ret} {target}({})", args.join(", "))))
+            }
         };
         let loc = self.place(place)?;
         self.write(loc, val)

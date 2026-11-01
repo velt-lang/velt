@@ -253,7 +253,13 @@ impl Emitter<'_> {
             return Some(name);
         }
         // `params`/`ret` are the extern's own, which `of_extern` checks.
-        let op = MathOp::of_extern(e)?;
+        self.math_target(MathOp::of_extern(e)?)
+    }
+
+    /// What to call for math operation `op` instead of its runtime function: an LLVM
+    /// intrinsic (declaring it) or the module's inline helper (`rounding::helper`,
+    /// `runtime::inline_helper`, defining it); `None` for `pow`, which calls the runtime.
+    pub(super) fn math_target(&mut self, op: MathOp) -> Option<String> {
         let helper = match op.rounding() {
             Some(how) => rounding::helper(how, self.rounds_by_conversion),
             None => runtime::inline_helper(op),

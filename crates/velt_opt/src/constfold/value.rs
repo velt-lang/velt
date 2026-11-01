@@ -57,6 +57,32 @@ impl Value {
         }
     }
 
+    /// The bits of this value at type `ty` as `MathOp::eval` takes them: an integer's pattern
+    /// zero-extended from its width, a double's IEEE 754 bits. `None` for other types.
+    pub fn bits(self, ty: Ty) -> Option<u64> {
+        match self {
+            Value::Float(x) if ty == Ty::F64 => Some(x.to_bits()),
+            Value::Int(v) if ty.is_int() => {
+                let width = ty.scalar_size()? * 8;
+                let mask = if width >= 64 {
+                    u64::MAX
+                } else {
+                    (1u64 << width) - 1
+                };
+                Some(v as u64 & mask)
+            }
+            _ => None,
+        }
+    }
+
+    /// The value of type `ty` (an integer type or `F64`) with the bits `MathOp::eval` gives.
+    pub fn of_bits(bits: u64, ty: Ty) -> Value {
+        match ty {
+            Ty::F64 => Value::Float(f64::from_bits(bits)),
+            _ => Value::Int(normalize(i128::from(bits), ty)),
+        }
+    }
+
     /// The constant that represents this value at type `ty`.
     pub fn to_const(self, ty: Ty) -> Const {
         match self {

@@ -259,7 +259,9 @@ fn places_mut(f: &mut Function, g: &mut impl FnMut(&mut Place)) {
                             operand_mut(b, g);
                         }
                         Rvalue::AddrOf(p) => g(p),
-                        Rvalue::Aggregate(_, ops) => ops.iter_mut().for_each(|o| operand_mut(o, g)),
+                        Rvalue::Aggregate(_, ops) | Rvalue::Intrinsic(_, ops) => {
+                            ops.iter_mut().for_each(|o| operand_mut(o, g))
+                        }
                     }
                 }
                 Stmt::MemCopy { dst, src, .. } => {

@@ -3,7 +3,7 @@
 
 use cranelift_codegen::ir::{self, types, InstBuilder};
 use cranelift_module::Module;
-use velt_vir::vir::{AggId, Operand, Place, Rvalue, Stmt, Ty, UnOp};
+use velt_vir::vir::{AggId, Callee, ExternId, Intrinsic, Operand, Place, Rvalue, Stmt, Ty, UnOp};
 
 use super::place::add_offset;
 use super::{Loc, Translator, Val};
@@ -84,6 +84,18 @@ impl<M: Module> Translator<'_, '_, M> {
                 _ => bail!("cannot take the address of a register or unit place"),
             },
             Rvalue::Aggregate(id, ops) => return self.aggregate(place, *id, ops),
+            Rvalue::Intrinsic(Intrinsic::Math(op), ops) => {
+                let mut values = Vec::with_capacity(ops.len());
+                for o in ops {
+                    values.push(self.scalar(o)?.0);
+                }
+                let Some(id) = (self.program.externs.iter()).position(|e| e.symbol == op.symbol())
+                else {
+                    bail!("math operation {op:?} without its runtime function declared");
+                };
+                let callee = Callee::Extern(ExternId(id as u32));
+                Val::Scalar(self.math_value(*op, &callee, &values)?)
+            }
         };
         let loc = self.place(place)?;
         self.write(loc, val)

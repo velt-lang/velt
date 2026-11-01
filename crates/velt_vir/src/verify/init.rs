@@ -301,7 +301,9 @@ impl BlockScan<'_> {
             }
             Rvalue::AddrOf(p) if starts_with_deref(p) => self.use_local(p.local),
             Rvalue::AddrOf(_) => {}
-            Rvalue::Aggregate(_, ops) => ops.iter().for_each(|o| self.use_operand(o)),
+            Rvalue::Aggregate(_, ops) | Rvalue::Intrinsic(_, ops) => {
+                ops.iter().for_each(|o| self.use_operand(o))
+            }
         }
     }
 }

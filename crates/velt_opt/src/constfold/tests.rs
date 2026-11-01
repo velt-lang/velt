@@ -3,7 +3,7 @@
 use super::*;
 use crate::testkit::builder::*;
 use crate::testkit::validate::assert_valid;
-use velt_vir::vir::{BlockId, FuncId, Program, Rvalue};
+use velt_vir::vir::{BlockId, FuncId, Intrinsic, Program, Rvalue};
 
 fn fold(f: Function) -> Function {
     let mut p = ProgramBuilder::new();
@@ -268,4 +268,39 @@ fn math_calls_that_could_differ_from_running_stay_calls() {
             "{op:?}"
         );
     }
+}
+
+#[test]
+fn intrinsics_on_constants_fold_through_locals() {
+    // x = 16.0; r = math.sqrt(x); y = math.clz32(1); return r
+    let mut pb = ProgramBuilder::new();
+    pb.ext("velt_rt_math_sqrt", &[Ty::F64], Ty::F64, false);
+    pb.ext("velt_rt_math_clz32", &[Ty::I32], Ty::I32, false);
+    let mut fb = FuncBuilder::export("f", &[], Ty::F64);
+    let (x, r, y) = (fb.local(Ty::F64), fb.local(Ty::F64), fb.local(Ty::I32));
+    let b = fb.block();
+    let sqrt = Intrinsic::Math(MathOp::Sqrt);
+    let clz = Intrinsic::Math(MathOp::Clz32);
+    fb.assign(
+        b,
+        x,
+        Rvalue::Use(Operand::Const(Const::Float(16.0), Ty::F64)),
+    );
+    fb.assign(b, r, Rvalue::Intrinsic(sqrt, vec![copy_local(x)]));
+    fb.assign(b, y, Rvalue::Intrinsic(clz, vec![int(1, Ty::I32)]));
+    fb.ret(b, copy_local(r));
+    pb.add(fb.finish());
+    let mut program = pb.finish();
+    let sigs = crate::callgraph::signatures(&program);
+    run(
+        &super::Program::of(&sigs, &program.externs),
+        &mut program.funcs[0],
+    );
+    assert_valid(&program);
+    let f = &program.funcs[0];
+    assert_eq!(*returned(f, 0), Operand::Const(Const::Float(4.0), Ty::F64));
+    assert!(f.blocks[0].stmts.iter().any(|s| matches!(
+        s,
+        Stmt::Assign(_, Rvalue::Use(Operand::Const(Const::Int(31), Ty::I32)))
+    )));
 }

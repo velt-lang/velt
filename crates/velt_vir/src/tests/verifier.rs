@@ -333,3 +333,42 @@ fn verify_rejects_math_externs_with_another_signature() {
     noreturn.externs.last_mut().expect("the extern").noreturn = true;
     expect_err(&noreturn, "signature differs from the math operation's");
 }
+
+/// `_n = math.sqrt(x)` appended to `main`'s first block, with `sqrt`'s extern declared or not.
+fn with_sqrt(x: Operand, declare: bool) -> vir::Program {
+    let mut p = base_program();
+    if declare {
+        p.externs.push(ExternFn {
+            symbol: "velt_rt_math_sqrt".into(),
+            params: vec![Ty::F64],
+            ret: Ty::F64,
+            noreturn: false,
+            host: None,
+        });
+    }
+    let f = &mut p.funcs[0];
+    f.locals.push(LocalDecl::new(Ty::F64, None));
+    let l = Local(f.locals.len() as u32 - 1);
+    let op = crate::math::MathOp::Sqrt;
+    f.blocks[0].stmts.push(Stmt::Assign(
+        Place::local(l),
+        Rvalue::Intrinsic(Intrinsic::Math(op), vec![x]),
+    ));
+    if let Some(locs) = f.locs.get_mut(0) {
+        let at = locs.len().saturating_sub(1);
+        locs.insert(at, None);
+    }
+    p
+}
+
+#[test]
+fn verify_checks_intrinsics() {
+    let two = Operand::Const(Const::Float(2.0), Ty::F64);
+    assert_eq!(crate::verify(&with_sqrt(two.clone(), true)), Ok(()));
+    expect_err(&with_sqrt(two, false), "without its runtime function");
+    let int = Operand::Const(Const::Int(2), Ty::I64);
+    expect_err(
+        &with_sqrt(int, true),
+        "intrinsic math.sqrt takes [F64], got [I64]",
+    );
+}
