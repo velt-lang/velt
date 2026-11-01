@@ -6,22 +6,15 @@ const SP: u8 = 32;
 const TAB: u8 = 9;
 const DEL: u8 = 127;
 
+/// The bytes that may be in a token, one bit each: letters, digits and
+/// ! # $ % & ' * + - . ^ _ ` | ~ (bytes 0-63, then 64-127).
+const TCHAR_LO: i64 = 0x3ff6cfa00000000;
+const TCHAR_HI: i64 = 0x57ffffffc7fffffe;
+
 /// Whether `c` may be in a token: a method, a header name (RFC 9110 §5.6.2).
 export function isTchar(c: u8): bool {
-  const l = c | 32;
-  if ((l >= 97 && l <= 122) || (c >= 48 && c <= 57)) {
-    return true;
-  }
-  // ! # $ % & ' * + - . ^ _ ` | ~
-  return c == 33 ||
-    (c >= 35 && c <= 39) ||
-    c == 42 ||
-    c == 43 ||
-    c == 45 ||
-    c == 46 ||
-    (c >= 94 && c <= 96) ||
-    c == 124 ||
-    c == 126;
+  const i = c as i64;
+  return i < 64 ? ((TCHAR_LO >> i) & 1) == 1 : i < 128 && ((TCHAR_HI >> (i - 64)) & 1) == 1;
 }
 
 /// Throws `TypeError` unless `b[nameStart..nameEnd)` is a token and `b[valueStart..valueEnd)` has
@@ -37,7 +30,8 @@ export function checkField(b: u8[], nameStart: i64, nameEnd: i64, valueStart: i6
   }
   for (let i = valueStart; i < valueEnd; i++) {
     const c = b[i];
-    if (c < SP ? c != TAB : c == DEL) {
+    // Rare: a control byte or DEL (TAB is allowed).
+    if ((c < SP || c == DEL) && c != TAB) {
       throw new TypeError(`invalid character in header ${b.utf8Slice(nameStart, nameEnd)}`);
     }
   }

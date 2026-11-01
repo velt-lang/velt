@@ -81,14 +81,17 @@ export class Http1Response extends HttpResponse implements BodySink {
   header(name: string, value: string) {
     const start = this.extra.length;
     const nameLength = this.extra.add(name, value);
-    if (nameLength == 14 && name.toLowerCase() == "content-length") {
+    // The name as written into the buffer, compared in place (no lowercase copy).
+    const b = this.extra.buf;
+    const end = start + nameLength;
+    if (nameLength == 14 && b.utf8EqualsIgnoreCase("content-length", start, end)) {
       this.extra.length = start;
       this.headLength = lengthValue(value);
-    } else if (nameLength == 17 && name.toLowerCase() == "transfer-encoding") {
+    } else if (nameLength == 17 && b.utf8EqualsIgnoreCase("transfer-encoding", start, end)) {
       this.extra.length = start;
-    } else if (nameLength == 12 && name.toLowerCase() == "content-type") {
+    } else if (nameLength == 12 && b.utf8EqualsIgnoreCase("content-type", start, end)) {
       this.hasType = true;
-    } else if (nameLength == 6 && name.toLowerCase() == "server") {
+    } else if (nameLength == 6 && b.utf8EqualsIgnoreCase("server", start, end)) {
       this.hasServer = true;
     }
   }
