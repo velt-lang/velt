@@ -4,8 +4,10 @@
 //! converts the twin back to the original type (exactly: the values are whole and within
 //! ±2^53, and never `-0` where that read could tell).
 
+use velt_vir::math::MathOp;
 use velt_vir::vir::{
-    BinOp, Const, Function, Local, LocalDecl, Operand, Place, Rvalue, Stmt, Terminator, Ty, UnOp,
+    BinOp, Const, Function, Intrinsic, Local, LocalDecl, Operand, Place, Rvalue, Stmt, Terminator,
+    Ty, UnOp,
 };
 
 use super::fact::Fact;
@@ -126,6 +128,15 @@ impl Rewriter<'_> {
         match s {
             Stmt::Assign(d, rv) if d.proj.is_empty() && self.map[d.local.0 as usize].is_some() => {
                 self.definition(d.local, rv, at, out)
+            }
+            // ToInt32 of a narrowed local truncates its twin (as `terminator` for the call).
+            Stmt::Assign(d, Rvalue::Intrinsic(Intrinsic::Math(MathOp::ToInt32), ops)) if matches!(ops.as_slice(), [a] if self.twin(a).is_some()) =>
+            {
+                let (tw, tt) = self
+                    .twin(&ops[0])
+                    .expect("ICE: numrep ToInt32 without a twin");
+                let v = self.conv_to(Operand::Copy(Place::local(tw)), tt, Ty::I32, out);
+                out.push(Stmt::Assign(d, Rvalue::Use(v)));
             }
             Stmt::Assign(d, Rvalue::Binary(op, a, b))
                 if is_comparison(op) && self.int_comparable(&a, &b) =>

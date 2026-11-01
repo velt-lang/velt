@@ -17,8 +17,10 @@
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
+use velt_vir::math::MathOp;
 use velt_vir::vir::{
-    AggId, BinOp, Callee, Function, Local, Operand, Place, Proj, Rvalue, Stmt, Terminator, Ty, UnOp,
+    AggId, BinOp, Callee, Function, Intrinsic, Local, Operand, Place, Proj, Rvalue, Stmt,
+    Terminator, Ty, UnOp,
 };
 
 use super::fact::{self, Fact, TWO_53};
@@ -281,6 +283,12 @@ impl Flow {
             Rvalue::Unary(op @ UnOp::Neg, a) => arg(a).map(|x| fact::unary(*op, optype(a), x)),
             Rvalue::Binary(op, a, b) => match (arg(a), arg(b)) {
                 (Some(x), Some(y)) => Some(fact::binary(*op, optype(a), x, y)),
+                _ => None,
+            },
+            // As `call_result` for the call of the operation's runtime function.
+            Rvalue::Intrinsic(Intrinsic::Math(op), ops) => match (op, ops.first().and_then(arg)) {
+                (op, Some(a)) if op.rounding().is_some() => Some(fact::rounded(a)),
+                (MathOp::Abs, Some(a)) => Some(fact::abs(a)),
                 _ => None,
             },
             _ => None,

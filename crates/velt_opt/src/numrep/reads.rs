@@ -2,7 +2,10 @@
 //! `-0` from 0, and whether it gains from an integer (otherwise narrowing a value that is only
 //! converted from an integer and used as a double would add a conversion).
 
-use velt_vir::vir::{BinOp, Function, Local, Operand, Place, Rvalue, Stmt, Terminator, Ty};
+use velt_vir::math::MathOp;
+use velt_vir::vir::{
+    BinOp, Function, Intrinsic, Local, Operand, Place, Rvalue, Stmt, Terminator, Ty,
+};
 
 use super::fact::Fact;
 use super::flow::{is_comparison, Flow, State};
@@ -75,6 +78,15 @@ impl Reads<'_> {
         let into = (d.proj.is_empty() && self.cand[d.local.0 as usize]).then_some(d.local);
         let def_use = into.map_or(IntUse::No, IntUse::With);
         match rv {
+            // As for the call of the operation's runtime function (`terminator`): ToInt32 takes
+            // an integer and cannot see `-0`; the others can.
+            Rvalue::Intrinsic(Intrinsic::Math(op), ops) => {
+                let int = *op == MathOp::ToInt32;
+                let int_use = if int { IntUse::Yes } else { IntUse::No };
+                for a in ops {
+                    self.push(a, at, int, None, int_use);
+                }
+            }
             Rvalue::Binary(op, a, b) if is_comparison(*op) => {
                 self.push(a, at, true, into, compared_with(b));
                 self.push(b, at, true, into, compared_with(a));

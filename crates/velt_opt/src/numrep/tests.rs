@@ -3,6 +3,7 @@
 //! after the pass (`random.rs`).
 
 mod context;
+mod intrinsics;
 mod random;
 
 use super::*;
