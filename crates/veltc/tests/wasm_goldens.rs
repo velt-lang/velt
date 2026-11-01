@@ -507,9 +507,9 @@ fn async_host_functions_under_node() {
                 String::from_utf8_lossy(&o.stderr)
             );
             let o = crate::no_window::command("node")
-                .args(runner)
-                .arg(work.join("velt_web.mjs"))
-                .arg(&module)
+                .args(runner.as_deref().map(for_node))
+                .arg(for_node(&work.join("velt_web.mjs")))
+                .arg(for_node(&module))
                 .args(how)
                 .output()
                 .expect("run node");
