@@ -22,3 +22,5 @@ async function main() {
   escaped.cancel("late");
   console.log("after cancel:", escaped.signal.aborted, escaped.signal.reason);
 }
+
+// timing: an abort from another task; the same output in either order

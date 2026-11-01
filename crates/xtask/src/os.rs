@@ -58,6 +58,44 @@ pub fn other_os_reason(graph: &Graph, paths: &[String], full: bool) -> Option<St
     None
 }
 
+/// Paths whose change runs every package's tests on Windows in a pull request (besides a change
+/// to a package itself, which runs its own): the networking the HTTP server and the database
+/// drivers stand on (std's and the runtime's), timers, and the test runner (std's `velt/test`
+/// and the `velt test` command). Pull requests otherwise test on Linux only, and these behave
+/// differently on Windows (sockets, timer resolution, process handling): the merge queue was
+/// where they failed, for every pull request queued behind them.
+const WINDOWS_PACKAGE_TESTS: &[&str] = &[
+    "std/net/",
+    "std/test/",
+    "std/prelude/timers.vlt",
+    "crates/velt_rt/src/net/",
+    "crates/velt_rt/src/tls.rs",
+    "crates/velt_rt/src/timer.rs",
+    "crates/veltc/src/commands/test/",
+];
+
+/// The packages whose tests a pull request runs on Windows (`VELT_PACKAGES` of veltc's `packages`
+/// test): `""` for none, `"all"`, or their names separated by `,`. `skip` are files where only
+/// comments changed.
+pub fn windows_packages(paths: &[String], skip: &std::collections::BTreeSet<String>) -> String {
+    let mut names = std::collections::BTreeSet::new();
+    for path in paths.iter().filter(|p| !skip.contains(*p)) {
+        if WINDOWS_PACKAGE_TESTS.iter().any(|p| path.starts_with(p)) {
+            return "all".into();
+        }
+        if let Some((name, rest)) = path
+            .strip_prefix("packages/")
+            .and_then(|r| r.split_once('/'))
+        {
+            // Documentation alone changes no test.
+            if !rest.ends_with(".md") {
+                names.insert(name.to_string());
+            }
+        }
+    }
+    names.into_iter().collect::<Vec<_>>().join(",")
+}
+
 /// Files that key or fill the build cache (Swatinem/rust-cache in `.github/actions/setup`): the
 /// toolchain and the dependencies. Only the pushes to `main` save the cache. A dependency change
 /// reaches `Cargo.lock`. Once #1135 C5 keys the cache by `rust-toolchain.toml` and `Cargo.lock`'s
@@ -143,6 +181,34 @@ fn shards_json(table: &[(&str, usize)], oses: &[&str]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn package_and_networking_changes_test_packages_on_windows() {
+        let none = std::collections::BTreeSet::new();
+        let p = |paths: &[&str]| {
+            let paths: Vec<String> = paths.iter().map(|s| s.to_string()).collect();
+            windows_packages(&paths, &none)
+        };
+        assert_eq!(p(&["crates/velt_sema/src/lib.rs", "docs/std/net.md"]), "");
+        assert_eq!(p(&["packages/http-server/README.md"]), "");
+        assert_eq!(
+            p(&[
+                "packages/sqlite/src/db.vlt",
+                "packages/http-server/tests/h2.test.vlt"
+            ]),
+            "http-server,sqlite"
+        );
+        for every in [
+            "std/net/tcp_stream.vlt",
+            "std/test/run.vlt",
+            "crates/velt_rt/src/net/tcp.rs",
+            "crates/veltc/src/commands/test/mod.rs",
+        ] {
+            assert_eq!(p(&["packages/sqlite/src/db.vlt", every]), "all", "{every}");
+        }
+        let skip = std::collections::BTreeSet::from(["std/net/listen.vlt".to_string()]);
+        assert_eq!(windows_packages(&["std/net/listen.vlt".into()], &skip), "");
+    }
 
     #[test]
     fn every_os_gets_its_shards() {

@@ -118,6 +118,7 @@ pub fn run(root: &Path, graph: &Graph, plan: &Plan, opts: &Options) -> Result<()
             "cargo fmt --check",
             &mut cargo(&["fmt", "--all", "--check"]),
         )?;
+        gate.timing_lint()?;
     }
     let goldens = part.has(Part::Golden) && plan.goldens != Goldens::None;
     let wasm = part.has(Part::Wasm) && plan.wasm_goldens();
@@ -510,6 +511,31 @@ impl Gate<'_> {
                 self.step("doctests", &mut doc)?;
             }
         }
+        Ok(())
+    }
+
+    /// The timing lint (crates/xtask/src/timing_lint.rs) on every test file and golden it
+    /// covers: a few hundred files, read in well under a second.
+    fn timing_lint(&mut self) -> Result<(), String> {
+        let name = "timing lint";
+        println!("\x1b[36m==> {name}\x1b[0m");
+        let start = Instant::now();
+        let files: Vec<String> = crate::changes::git(self.root, &["ls-files"])?
+            .lines()
+            .map(|l| l.trim().replace('\\', "/"))
+            .filter(|l| crate::timing_lint::linted(l))
+            .collect();
+        let found = crate::timing_lint::check_files(self.root, &files);
+        self.timings
+            .push((name.to_string(), start.elapsed().as_secs()));
+        for line in &found {
+            println!("    {line}");
+        }
+        if !found.is_empty() {
+            self.summary();
+            return Err(format!("FAILED: {name} ({} unmarked waits)", found.len()));
+        }
+        println!("\x1b[32m    ok ({} files)\x1b[0m", files.len());
         Ok(())
     }
 

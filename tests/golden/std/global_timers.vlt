@@ -58,3 +58,5 @@ async function main() {
   console.log("cleared:", interval.cleared, never.cleared, alsoNever.cleared, stopped.cleared);
   console.log("started:", interval.started, never.started);
 }
+
+// timing: timers are the subject

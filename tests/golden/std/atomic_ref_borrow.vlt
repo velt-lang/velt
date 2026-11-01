@@ -45,3 +45,5 @@ async function main() {
   }
   console.log(r != null ? r.name : "none", total);
 }
+
+// timing: the waits only suspend tasks whose results are awaited

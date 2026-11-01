@@ -16,6 +16,7 @@ describe("a client that hangs up", () => {
       if (new URL(req.url).pathname == "/slow") {
         arrive(started);
         // Its work, during which the client hangs up.
+        // timing: the slow handler is what the hang-up leaves running
         await sleep(200);
         arrive(finished);
       }

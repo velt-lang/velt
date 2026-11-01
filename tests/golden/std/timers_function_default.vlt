@@ -9,3 +9,5 @@ async function main() {
   console.log("set");
   setTimeout(withDefault, 1);
 }
+
+// timing: timers are the subject

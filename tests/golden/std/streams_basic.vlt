@@ -166,3 +166,5 @@ async function main() {
     console.log("s11", (e as Error).name, (e as Error).message);
   }
 }
+
+// timing: a 0 ms timer drains the queued microtasks

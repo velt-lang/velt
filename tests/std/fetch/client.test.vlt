@@ -361,6 +361,7 @@ function twice(): u8[] {
 async function* threeParts(): AsyncGenerator<u8[]> {
   for (let i = 0; i < 3; i++) {
     yield utf8Encode("x".repeat(1000));
+    // timing: paces a streamed body; the test checks only the bytes
     await sleep(20);
   }
 }

@@ -49,6 +49,7 @@ export async function test_expiry() {
   assertEq(await c.ttl(`${p}name`), -1);
   assertEq(await c.expire(`${p}nobody`, 10), false);
   await c.set(`${p}short`, "gone soon", { px: 30 });
+  // timing: the key's expiry is the subject
   await sleep(80);
   assertEq(await c.get(`${p}short`), null);
 

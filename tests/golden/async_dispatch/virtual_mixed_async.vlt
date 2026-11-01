@@ -131,3 +131,5 @@ async function main() {
     }
   }
 }
+
+// timing: the waits only yield inside one event loop

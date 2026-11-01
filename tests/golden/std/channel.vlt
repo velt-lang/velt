@@ -101,3 +101,5 @@ async function main() {
   }
   console.log("closed:", tickets.closed, "receive:", await tickets.receive());
 }
+
+// timing: lets a producer on the same loop run ahead; the channel fixes the order

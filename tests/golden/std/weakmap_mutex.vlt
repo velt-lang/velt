@@ -40,3 +40,5 @@ async function main() {
   }
   console.log(t, m.with((v) => wm.has(v.k)));
 }
+
+// timing: the waits only suspend tasks whose results are awaited

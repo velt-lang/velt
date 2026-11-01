@@ -96,3 +96,5 @@ async function main() {
   console.log("across loop", acrossLoop());
   console.log("across await", await acrossAwait());
 }
+
+// timing: the waits only suspend tasks whose results are awaited
