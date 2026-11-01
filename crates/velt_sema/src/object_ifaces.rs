@@ -109,6 +109,8 @@ impl Ctx<'_> {
                 continue;
             }
             match self.ty.kind(t).clone() {
+                // A type that grows without end (reported by `crate::expansive_types`).
+                TyKind::Adt(_, a) if self.ty.args_too_deep(&a) => {}
                 TyKind::Adt(d, a) if self.is_object_type(t) => {
                     // One with type arguments (made in a generic function) does not convert
                     // yet; its fields may hold functions (`{ setup }` in `inObj<P>`).

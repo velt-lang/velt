@@ -55,6 +55,7 @@ mod dispatch;
 mod display;
 pub mod effects;
 mod enum_keys;
+mod expansive_types;
 mod finalize;
 mod flow;
 mod fn_types;
@@ -555,10 +556,10 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     timings::pass("generic_fns::mark_shared_values", || {
         generic_fns::mark_shared_values(cx)
     });
-    // Growing generic recursion has infinitely many instantiations: the passes below propagate
-    // requirements per instantiation and would never finish.
+    // Growing generic recursion, and generic types that refer to themselves at a growing type
+    // argument, have infinitely many instantiations: the passes below would never finish.
     if timings::pass("instantiation_cycles::check", || {
-        instantiation_cycles::check(cx)
+        instantiation_cycles::check(cx) || expansive_types::check(cx)
     }) {
         return;
     }
