@@ -107,14 +107,17 @@ Two checks catch them before that:
 - `cargo xtask repeat` runs each test file your change adds or edits (`*.test.vlt` under
   `packages/`, `std/`, `tests/std/` and `examples/`, a helper's neighbouring test files, and the
   goldens whose `.vlt`, `.out`, `.stderr` or `.code` changed) 20 times, all at once on twice as
-  many threads as there are cores, and fails naming the file and the repetition that failed,
+  many threads as there are cores beside a spinning thread per core (so the runs compete for the
+  CPU as on a loaded runner), and fails naming the file and the repetition that failed,
   with the end of its output (all of it in `target/repeat/logs`). A change of whole-line comments
   only (a `// timing:` marker) is skipped. `--times <n>`, `--jobs <n>` and `--time-limit <s>`
   (default 600: no new run starts after it) change the defaults, as do `VELT_REPEAT_TIMES`,
-  `VELT_REPEAT_JOBS` and `VELT_REPEAT_TIME_LIMIT`; `--paths <files>` repeats given files. Pull
+  `VELT_REPEAT_JOBS`, `VELT_REPEAT_TIME_LIMIT` and `VELT_REPEAT_BURNERS` (the spinning threads); `--paths <files>` repeats given files. Pull
   requests run it in the `test` job on Linux, from that job's build, and in a Windows job that
-  starts only when a test file changed. Run it yourself before pushing a new test that waits on
-  a server, a socket, a task or a timer.
+  starts only when a test file changed or the change touches a package, networking
+  (`std/net/`, the runtime's), timers or the test runner (it also runs those packages' tests:
+  `windows_packages` in `crates/xtask/src/os.rs`). Run it yourself before pushing a new test
+  that waits on a server, a socket, a task or a timer.
 - The timing lint (`crates/xtask/src/timing_lint.rs`; the gate's `lint` part and `cargo xtask
   precheck`) flags `sleep(`, `delay(`, `setTimeout(` and `setInterval(` in test files, in
   `tests/std/` and in the goldens outside `tests/golden/lang/` and `m1/`…`m4/` (language programs

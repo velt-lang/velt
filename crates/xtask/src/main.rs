@@ -287,13 +287,18 @@ fn repeat_selection(root: &Path, args: &Args) -> Result<(repeat::Selection, Stri
         .ok_or("no base revision (origin/main or main) to compare with: pass --base or --paths")?;
     let c = changes::changes(root, &base)?;
     let sel = repeat::select(&c.paths, &c.vlt_comment_only, exists, list_dir);
-    Ok((sel, format!("{} file(s) changed since {base}", c.paths.len())))
+    Ok((
+        sel,
+        format!("{} file(s) changed since {base}", c.paths.len()),
+    ))
 }
 
 /// What a pull request runs against flaky tests besides the plan: the changed test files
-/// repeated under load (`repeat`, on Linux and Windows).
+/// repeated under load (`repeat`, on Linux and Windows) and the packages' tests on Windows.
 struct FlakeGuards {
     repeat: Vec<String>,
+    /// `VELT_PACKAGES` for Windows: `""` none, `"all"`, or names ([`os::windows_packages`]).
+    windows_packages: String,
 }
 
 impl FlakeGuards {
@@ -302,18 +307,47 @@ impl FlakeGuards {
             0 => "none (no test file changed)".to_string(),
             _ => self.repeat.join(", "),
         };
-        format!("  repeated under load (cargo xtask repeat): {repeat}\n")
+        let packages = match self.windows_packages.as_str() {
+            "" => "none",
+            other => other,
+        };
+        format!(
+            "  repeated under load (cargo xtask repeat): {repeat}\n  \
+             package tests on Windows (pull request): {packages}\n"
+        )
     }
 }
 
-/// [`FlakeGuards`] for the changes: none with `--full` (the merge queue knows no changes) or when
-/// the changes can't be told.
+/// [`FlakeGuards`] for the changes: none with `--full` (the merge queue tests every package on
+/// every OS it checks) or when the changes can't be told.
 fn flake_guards(root: &Path, args: &Args) -> FlakeGuards {
-    let repeat = match (args.full, repeat_selection(root, args)) {
-        (false, Ok((sel, _))) => sel.velt_tests.into_iter().chain(sel.goldens).collect(),
-        _ => vec![],
+    let none = FlakeGuards {
+        repeat: vec![],
+        windows_packages: String::new(),
     };
-    FlakeGuards { repeat }
+    if args.full {
+        return none;
+    }
+    let (paths, skip) = match &args.paths {
+        Some(paths) => (paths.clone(), Default::default()),
+        None => {
+            let Some(base) = args.base.clone().or_else(|| changes::default_base(root)) else {
+                return none;
+            };
+            match changes::changes(root, &base) {
+                Ok(c) => (c.paths, c.vlt_comment_only),
+                Err(_) => return none,
+            }
+        }
+    };
+    let repeat = match repeat_selection(root, args) {
+        Ok((sel, _)) => sel.velt_tests.into_iter().chain(sel.goldens).collect(),
+        Err(_) => vec![],
+    };
+    FlakeGuards {
+        repeat,
+        windows_packages: os::windows_packages(&paths, &skip),
+    }
 }
 
 /// The files `precheck` looks at, and why: `--paths`, else the changes since the merge base
@@ -406,8 +440,18 @@ fn github_outputs(plan: &Plan, flake: &FlakeGuards) -> Result<(), String> {
             .map_err(|e| format!("{var}: {e}"))
     };
     append("GITHUB_OUTPUT", &github_output_text(plan))?;
-    let repeat = if flake.repeat.is_empty() { "false" } else { "true" };
-    append("GITHUB_OUTPUT", &format!("repeat={repeat}\n"))?;
+    let repeat = if flake.repeat.is_empty() {
+        "false"
+    } else {
+        "true"
+    };
+    append(
+        "GITHUB_OUTPUT",
+        &format!(
+            "repeat={repeat}\nwindows_packages={}\n",
+            flake.windows_packages
+        ),
+    )?;
     append(
         "GITHUB_STEP_SUMMARY",
         &format!("```\n{}{}```\n", plan.describe(), flake.describe()),
