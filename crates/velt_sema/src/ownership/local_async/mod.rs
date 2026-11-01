@@ -20,7 +20,10 @@
 //! - through the heap, by type ([`types`]): a closure stored in a field, element or map value
 //!   is non-local when a value crossing a boundary has a type reaching a function type of the
 //!   same shape. A value of unknown origin keeps the type it had where it flowed in, so a
-//!   generic parameter that crosses brings its callers' concrete types.
+//!   generic parameter that crosses brings its callers' concrete types. A boundary inside a
+//!   library (std, a package) reaches the program's closures only through values the program
+//!   hands to the library ([`heap_reaches`]): the types of what the library itself makes and
+//!   sends to another thread stand for the library's own closures.
 //!
 //! A local async closure (`FnDef::shares_captures`) shares its by-value captures with each call
 //! (lowering's `take_capture`) and its assigned captured variables live in cells
@@ -62,26 +65,18 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
         rooted = p.roots.len();
         let mut changed = false;
         for (n, node) in g.nodes.iter().enumerate() {
-            if !matches!(node, Node::Lit(_))
-                || p.flags[n] & CROSSES != 0
-                || p.flags[n] & STORED == 0
-            {
+            let Node::Lit(c) = *node else { continue };
+            if p.flags[n] & CROSSES != 0 || p.flags[n] & STORED == 0 {
                 continue;
             }
             // A callback wrapper of an async closure (`body/expr/callback.rs`) is matched by the
             // async closure's type, or by its own type only where nothing generic stands for it:
             // `input.onChange = async (v) => …` in a `(v: string) => void` field is not the
             // prelude's `resolve`, a `(T) => void`, but is any `(v: string) => void` that crosses.
-            let wrapped = match node {
-                Node::Lit(c) => cx.callback_wrappers.get(c).copied(),
-                _ => None,
-            };
+            let wrapped = cx.callback_wrappers.get(&c).copied();
             // A sync closure is matched the same strict way: `resolve`'s `(T) => void` stands for
             // no sync callback the user stores.
-            let sync = match node {
-                Node::Lit(c) => matches!(&cx.defs[c.0 as usize], Some(Def::Fn(f)) if !f.is_async),
-                _ => false,
-            };
+            let sync = matches!(&cx.defs[c.0 as usize], Some(Def::Fn(f)) if !f.is_async);
             let matches = |t: TyId| match wrapped {
                 Some(inner) => {
                     types::may_be(cx, inner, t)
@@ -93,7 +88,7 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
             // Several crossing types may match: report one in user code, the earliest.
             let why = fns
                 .iter()
-                .filter(|(t, _)| matches(**t))
+                .filter(|(t, w)| heap_reaches(cx, w, c) && matches(**t))
                 .map(|(_, w)| *w)
                 .min_by_key(|w| w.rank(cx));
             if let Some(w) = why {
@@ -124,6 +119,18 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
             crate::ownership::check_copied_closure(cx, c, &copied);
         }
     }
+}
+
+/// May the crossing types of `w` (the function types a value crossing there holds) stand for
+/// closure literal `c` stored in the heap? A library's closures, yes. The program's closures only
+/// when `w` is in the program: a boundary inside a library (`w.library`) reaches what the program
+/// hands to the library through the graph, as a value passed at the program's call into it
+/// ([`Why::step`]), and the types of what the library makes there itself only hold the
+/// library's own closures. Matching those by shape alone would make every program closure stored
+/// in a `(() => void) | null` cross once a library spawns anything holding such a field (fetch's
+/// HTTP/2 session and its `onClose`).
+fn heap_reaches(cx: &Ctx, w: &Why, c: DefId) -> bool {
+    !w.library || cx.try_fn(c).is_some_and(|i| cx.scopes[i.module].is_library)
 }
 
 /// A closure whose declared parameter crosses (the prelude's `resolve`, a callback that spawns
@@ -163,7 +170,14 @@ fn crossing_params(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> bool {
             }
             if let Some(&a) = args.get(k) {
                 if p.flags[a] & CROSSES == 0 && types::may_be(cx, ty, *callee) {
-                    p.set(a, CROSSES, why.map(|w| w.through(Some((*span, *library)))));
+                    let arg_why = match why {
+                        Some(w) => match w.step(false, Some((*span, *library))) {
+                            Some(w) => Some(w),
+                            None => continue,
+                        },
+                        None => None,
+                    };
+                    p.set(a, CROSSES, arg_why);
                     changed = true;
                 }
             }
@@ -401,6 +415,19 @@ impl Propagation {
 
     fn set(&mut self, n: usize, f: u8, why: Option<Why>) {
         if self.flags[n] & f != 0 {
+            // A path fewer calls deep inside a library replaces a deeper one: only a path at the
+            // library's own level may leave it for the program (`Why::step`).
+            let slot = match f {
+                CROSSES => 0,
+                INDIRECT => 1,
+                _ => return,
+            };
+            if let (Some(old), Some(new)) = (self.why[n][slot], why) {
+                if old.library && new.library && new.depth < old.depth {
+                    self.why[n][slot] = Some(new);
+                    self.work.push((n, f));
+                }
+            }
             return;
         }
         self.flags[n] |= f;
@@ -423,7 +450,14 @@ impl Propagation {
                 self.root(cx, g, n, f, w);
             }
             for &(m, site) in &g.srcs[n] {
-                self.set(m, f, why.map(|w| w.through(site)));
+                match why {
+                    Some(w) => {
+                        if let Some(w) = w.step(matches!(g.nodes[m], Node::Ret(_)), site) {
+                            self.set(m, f, Some(w));
+                        }
+                    }
+                    None => self.set(m, f, None),
+                }
             }
             // A closure that leaves (or may) takes what it captured with it.
             if f != STORED {
@@ -457,8 +491,8 @@ impl Propagation {
                 INDIRECT => types::fn_like(cx, t),
                 _ => false,
             };
-            if take && t != ty {
-                self.roots.push((t, w.through(site)));
+            if let (true, Some(w)) = (take && t != ty, w.step(false, site)) {
+                self.roots.push((t, w));
             }
         }
     }

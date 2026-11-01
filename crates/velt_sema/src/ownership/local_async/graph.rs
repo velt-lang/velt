@@ -69,37 +69,78 @@ pub(super) struct Why {
     pub in_library: bool,
     /// A value of this type reaches the boundary, and the closure is stored in it.
     pub via: Option<TyId>,
+    /// While the reason is inside a library (`library`): how many calls deep the path from the
+    /// boundary is in functions it entered through their results (`Node::Ret`), whose callers are
+    /// that many calls up the path ([`Why::step`]).
+    pub depth: u8,
 }
 
 impl Why {
     /// The order in which reasons are preferred: one in user code, the earliest, and between
     /// two at one place the holder whose name sorts first, so that the choice never depends on
     /// how types happen to be numbered.
-    pub(super) fn rank(&self, cx: &crate::ctx::Ctx) -> (bool, u32, u32, String) {
+    pub(super) fn rank(&self, cx: &crate::ctx::Ctx) -> (bool, u32, u32, u8, String) {
         let via = self.via.map(|t| cx.display(t)).unwrap_or_default();
-        (self.library, self.span.file.0, self.span.lo, via)
+        (
+            self.library,
+            self.span.file.0,
+            self.span.lo,
+            self.depth,
+            via,
+        )
     }
 
     /// `self.rank(cx) < other.rank(cx)`, naming the holders only when the rest is equal.
     pub(super) fn before(&self, other: &Why, cx: &crate::ctx::Ctx) -> bool {
-        let key = |w: &Why| (w.library, w.span.file.0, w.span.lo);
+        let key = |w: &Why| (w.library, w.span.file.0, w.span.lo, w.depth);
         match key(self).cmp(&key(other)) {
             std::cmp::Ordering::Equal if self.via != other.via => self.rank(cx) < other.rank(cx),
             o => o.is_lt(),
         }
     }
 
-    /// `self`, seen from an argument passed at `site` (`(span, in a library)`): a boundary inside
-    /// a library is reported at the program's call into it.
-    pub(super) fn through(self, site: Option<(Span, bool)>) -> Why {
-        match site {
-            Some((span, false)) if self.library => Why {
+    /// `self`, followed from a node to a value flowing into it: `into_ret` when that value is
+    /// what a function returns (the path enters the function from its call), `site` the call
+    /// passing it when it is an argument (the path leaves a function for its caller). A boundary
+    /// inside a library is reported at the program's call into it. `None` for a path no run
+    /// takes: one that entered a function through its result, from a call in the library, and
+    /// leaves it through a parameter for the program, a caller of another call of it. The graph
+    /// has one node per function, not per call, so without this a library helper that the
+    /// boundary's code and the program both call (a result flowing to the boundary) would take
+    /// what the program passes to it across too.
+    pub(super) fn step(self, into_ret: bool, site: Site) -> Option<Why> {
+        if !self.library {
+            return Some(self);
+        }
+        let w = match site {
+            Some((span, false)) if self.depth == 0 => Why {
                 span,
                 library: false,
                 in_library: true,
                 ..self
             },
-            _ => self,
+            Some((_, false)) => return None,
+            Some((_, true)) => Why {
+                depth: self.depth.saturating_sub(1),
+                ..self
+            },
+            None => self,
+        };
+        Some(match into_ret && w.library {
+            true => Why {
+                depth: w.depth.saturating_add(1),
+                ..w
+            },
+            false => w,
+        })
+    }
+
+    /// `self` for the values a spawned call's function returns: the path starts inside it, one
+    /// call deep.
+    pub(super) fn entered(self) -> Why {
+        match self.library {
+            true => Why { depth: 1, ..self },
+            false => self,
         }
     }
 }
@@ -228,6 +269,7 @@ impl Walk<'_, '_> {
             library: self.library,
             in_library: false,
             via: None,
+            depth: 0,
         })
     }
 
@@ -626,7 +668,7 @@ impl Walk<'_, '_> {
                 // The task's result comes back to whoever awaits its handle on another task.
                 if matches!(&self.cx.defs[g.0 as usize], Some(Def::Fn(_))) {
                     let n = self.ret_node(*g);
-                    self.connect(n, cross);
+                    self.connect(n, To::Flag(CROSSES, why.map(Why::entered)));
                 }
                 self.value(p, To::Drop);
             }

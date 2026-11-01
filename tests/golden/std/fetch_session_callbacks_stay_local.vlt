@@ -1,0 +1,52 @@
+// A program using `fetch` keeps its own stored callbacks on its task, as in Node. The HTTP/2
+// client of `fetch` spawns a task for each connection with a session object holding an
+// `onClose: (() => void) | null`; the cross-thread callback check (#873) took every closure of
+// that shape the program stores in a field as crossing too, so a callback assigning a variable
+// it captured (`count++` here, through `get`) was "this code runs on another thread and calls
+// `get`", pointing at the program's own `install(...)` call. What a library makes and sends to
+// another thread itself holds none of the program's closures. Valid TypeScript; prints what
+// Node prints.
+class Holder {
+  cb: (() => void) | null = null;
+}
+
+function install(h: Holder, get: () => number): void {
+  h.cb = () => {
+    get();
+  };
+}
+
+class Scope {
+  disposers: (() => void)[] = [];
+  add(f: () => void): void {
+    this.disposers.push(f);
+  }
+  stop(): void {
+    for (const d of this.disposers) d();
+  }
+}
+
+async function status(url: string): Promise<number> {
+  const res = await fetch(url);
+  return res.status;
+}
+
+async function main(): Promise<void> {
+  let count = 0;
+  const h = new Holder();
+  install(h, () => {
+    count++;
+    return count;
+  });
+  if (h.cb) h.cb();
+  if (h.cb) h.cb();
+  let stopped = false;
+  const scope = new Scope();
+  scope.add(() => {
+    stopped = true;
+  });
+  scope.stop();
+  console.log("count", count, "stopped", stopped);
+  if (count < 0) console.log(await status("https://example.com/"));
+}
+main();

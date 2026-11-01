@@ -105,7 +105,9 @@ pub(super) fn check_crossing_callbacks(cx: &mut Ctx, g: &Graph, flags: &[u8]) ->
             }
             why[n] = Some(w);
             for &(m, site) in &g.srcs[n] {
-                work.push((m, w.through(site)));
+                if let Some(w) = w.step(matches!(g.nodes[m], Node::Ret(_)), site) {
+                    work.push((m, w));
+                }
             }
             if let Some(caps) = g.captures.get(&n) {
                 work.extend(caps.iter().map(|&i| (i, w)));
@@ -115,8 +117,8 @@ pub(super) fn check_crossing_callbacks(cx: &mut Ctx, g: &Graph, flags: &[u8]) ->
                 roots.push((ty, w));
             }
             for &(t, site) in &g.inflows[n] {
-                if t != ty {
-                    roots.push((t, w.through(site)));
+                if let (true, Some(w)) = (t != ty, w.step(false, site)) {
+                    roots.push((t, w));
                 }
             }
         }
@@ -128,6 +130,11 @@ pub(super) fn check_crossing_callbacks(cx: &mut Ctx, g: &Graph, flags: &[u8]) ->
             }
             let found = fns
                 .iter()
+                // Only what crosses from the program: a library's own boundary reaches the
+                // program's callbacks along the values the program hands it (`Why::step`), never
+                // by the shape of a closure the library keeps (fetch's HTTP/2 session holds an
+                // `onClose: (() => void) | null`; its helpers' closures are one per function).
+                .filter(|(_, w)| !w.library)
                 .filter(|(t, _)| !types::mentions_param(cx, **t) && fits(cx, g.tys[n], **t))
                 .map(|(_, w)| *w)
                 // The preferred reason (`Why::before`, holders named on a tie), never the first

@@ -1574,7 +1574,9 @@ console.log(sum(5, 6)); // 11
   into `shared(...)` or a `Mutex`, is sent on a channel or settles a promise; when a parameter it
   is passed to (a generic one included), a variable holding it, a closure capturing it or a
   task returning it does; when it is stored in an
-  object, array or map whose type reaches one of those places; and when it is passed directly to
+  object, array or map whose type reaches one of those places, in the program or in what it
+  hands to a library (the objects a library makes and sends to another thread itself, such as
+  `fetch`'s connections, hold none of the program's closures); and when it is passed directly to
   a function value or an interface or overridden method, which may keep it. A timer callback
   (`setTimeout`, `setInterval`) runs on the task that created the timer, so it stays (it
   shares its captures, as in Node) unless it leaves another way.
