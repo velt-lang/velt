@@ -91,6 +91,14 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   <path> (ran: not cacheable, it uses <what>)`. Kept in `<harness>.test-results.json`.
   `test --jobs <n>` / `-j <n>` (additive): how many test files run at once (default: one per
   core); the output is the same for any `n`, in file order.
+  Time limits (additive): a test file's process that is still running `$VELT_TEST_TIMEOUT` ms
+  (default 600 s) after it started is killed; the test it was running fails as `FAILED <test>
+  (timed out after <n> s with this test running)` and a new process runs the tests after it.
+  With `VELT_RC_STATS=1` the process prints the marker line `<mark>done` after its last test and
+  the `afterAll` hooks (`<mark>` holds a token made for each file's run, `$VELT_TEST_MARK`);
+  one still running `$VELT_TEST_LEAK_WAIT` ms (default 120 s) after that line is killed and the
+  file fails as `still running <n> s after its tests: a server, a connection or a timer left
+  open`. The time the tests take does not count toward that wait.
 - `new` / `init` (additive): every template also writes `.vscode/launch.json` (one
   `{"type": "velt", "request": "launch", "name": "Debug"}` configuration) and
   `.vscode/extensions.json`, both kept if present. `init --editor vscode` writes only those, in
