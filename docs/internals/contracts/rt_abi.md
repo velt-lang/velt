@@ -392,6 +392,12 @@ std file declares one: sema checks the literals of `T.shuffle(a, b, …)` and lo
 extern (HIR `Intrinsic::SimdShuffle`). `velt_simd_<type>_reverse_bytes` (16-, 32- and 64-bit
 integer lanes) reverses the bytes within each lane.
 
+`velt_simd_f32x4_mul_add` and `velt_simd_f64x2_mul_add` [additive] compute `a * b + c` with one
+rounding on every target: the FMA instruction where the CPU has it, and otherwise libm's `fmaf` /
+`fma` per lane (which the link provides: `-lm`, the C runtime, compiler-builtins on wasm).
+`_mul_add_fast` may fuse or not, whichever is faster (LLVM's `llvm.fmuladd`; a multiply and an add
+in Cranelift).
+
 **CPU extensions (#1330).** `velt_simd_u32x4_<op>` for the SHA instructions (`sha1c`, `sha1p`,
 `sha1m`, `sha1h`, `sha1su0`, `sha1su1`, `sha256h`, `sha256h2`, `sha256su0`, `sha256su1` on
 aarch64; `sha256rnds2`, `sha256msg1`, `sha256msg2`, `sha1rnds4_<0-3>`, `sha1nexte`, `sha1msg1`,
