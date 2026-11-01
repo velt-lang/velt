@@ -531,6 +531,30 @@ fn stored_then_given(r: &regions::Regions) -> Vec<stores::Unfixable> {
     out
 }
 
+/// The variables whose objects (or parts of them) value `e` holds as themselves, not through
+/// a plain value read from them (`l.length`).
+fn held_locals(cx: &mut Ctx, e: &Expr, out: &mut Vec<crate::hir::LocalId>) {
+    if !cx.is_shared_value(e.ty) || cx.is_string_value(e.ty) {
+        return;
+    }
+    match &e.kind {
+        E::Local(l, _) => out.push(*l),
+        E::Field { base: x, .. }
+        | E::Index { base: x, .. }
+        | E::UnwrapSome(x, _)
+        | E::Upcast(x)
+        | E::WrapSome(x) => held_locals(cx, x, out),
+        E::Call {
+            callee: Callee::Intrinsic(crate::hir::Intrinsic::Share),
+            args,
+        } => args.iter().for_each(|a| held_locals(cx, a, out)),
+        E::ArrayLit(xs) | E::Tuple(xs) | E::AdtLit { fields: xs, .. } => {
+            xs.iter().for_each(|x| held_locals(cx, x, out))
+        }
+        _ => {}
+    }
+}
+
 /// What body `f` returns: its `return`s' values and its block's value.
 fn results(f: &FnDef) -> Vec<Expr> {
     struct Results(Vec<Expr>);
@@ -556,6 +580,21 @@ fn read_results(cx: &mut Ctx, r: &regions::Regions, c: DefId, f: &FnDef) -> Vec<
         let bits = r.mentions(cx, c, &e);
         if stores::read_part(cx, r, c, &e, (regions::OUT, bits)) {
             let kind = stores::Cross::ReadPart { returned: true };
+            out.push(stores::Unfixable { span: e.span, kind });
+            continue;
+        }
+        // An object it also stored into the caller's containers would leave as a copy.
+        if !cx.is_shared_value(e.ty) || cx.is_string_value(e.ty) {
+            continue;
+        }
+        let mut held = vec![];
+        held_locals(cx, &e, &mut held);
+        let stored = held.into_iter().any(|l| {
+            let k = r.key((c, l));
+            r.outed.iter().any(|&(d, v, _)| (d, v) == k)
+        });
+        if stored {
+            let kind = stores::Cross::ReturnStored;
             out.push(stores::Unfixable { span: e.span, kind });
         }
     }
@@ -678,6 +717,14 @@ fn unfixable_error(cx: &mut Ctx, u: stores::Unfixable) {
             "the function might store a part of one in the other, shared by threads without the lock; call a function or a closure written here (`const f = (s) => ...`), or pass a copy (`x.clone()`)",
         ),
         stores::Cross::ResourceInPlace(_) => return,
+        stores::Cross::ReturnStored => (
+            "this `read` returns an object it also stored into the caller's containers, which would leave the `read` as a copy, where JavaScript returns that same object".to_string(),
+            "use it through the caller's container after `read` (`out[0]`), or return a value made for the result",
+        ),
+        stores::Cross::CaughtPart => (
+            "this changes, through an object the `read` callback made, what may be the caller's object, which the compiler cannot tell from the value's own here".to_string(),
+            "change the caller's object through the caller's own variable (`mine[0].push(5)`), or after `read`",
+        ),
         stores::Cross::CallAlias => (
             "a closure made in a `read` callback changes a variable bound to a function's result, which may be the caller's object".to_string(),
             "inside such a closure the compiler cannot tell the caller's object from one the callback made; change it in the callback itself, or after `read`",

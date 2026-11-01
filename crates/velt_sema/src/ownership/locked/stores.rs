@@ -80,6 +80,11 @@ pub(super) enum Cross {
     /// A closure made in a `read` callback changes a variable of the callback bound to a call's
     /// result.
     CallAlias,
+    /// A `read` returns an object it also stored into the caller's containers.
+    ReturnStored,
+    /// A change through an element of an object the callback made that holds the caller's
+    /// objects (`h.rows[0].push(5)`).
+    CaughtPart,
     /// What may be the caller's object goes into an object the callback made after that object
     /// went into the caller's containers.
     AfterStored,
@@ -296,6 +301,31 @@ impl Stores<'_, '_, '_, '_> {
             let (d, l) = self.r.key((self.def, root));
             self.r.inbound.push((d, l, value.span));
         }
+    }
+
+    /// Does a change through `recv` (a call changing it) reach an element of an object the
+    /// `read` callback made that may hold the caller's objects (`h.rows[0].push(5)`)? At run
+    /// time the callback cannot tell such an element from the value's own.
+    fn writes_caller_part(&mut self, recv: &Expr) -> bool {
+        if self.r.read.is_none() || outer_mode(recv) != Some(UseMode::BorrowMut) {
+            return false;
+        }
+        let mut x = recv;
+        let mut indexed = false;
+        loop {
+            match &x.kind {
+                E::Index { base, .. } => {
+                    indexed = true;
+                    x = base;
+                }
+                E::Field { base, .. } | E::UnwrapSome(base, _) => x = base,
+                _ => break,
+            }
+        }
+        let E::Local(l, _) = x.kind else {
+            return false;
+        };
+        indexed && self.r.made_locals.contains(&(self.def, l)) && self.r.get(self.def, l) & OUT != 0
     }
 
     /// Does a closure made in a `read` callback change, through `recv`, a variable of the
@@ -643,6 +673,10 @@ impl VisitMut for Stores<'_, '_, '_, '_> {
             } => {}
             E::Call { callee, args } => {
                 let callee = callee.clone();
+                if self.rewrite && args.first().is_some_and(|a| self.writes_caller_part(a)) {
+                    let kind = Cross::CaughtPart;
+                    self.unfixable.push(Unfixable { span: e.span, kind });
+                }
                 self.call(e.span, &callee, args);
             }
             E::Match { scrutinee, arms } if !self.rewrite => {
