@@ -3,7 +3,7 @@
 
 import { JSON } from "velt/prelude/json/json";
 import { ExecResult } from "velt/process/child/exec_result";
-import { ChildProcess, spawn } from "velt/process/child/child_process";
+import { fileTimeout, leakWait, NOT_ENDED, runTimed, TIMED_OUT } from "velt/test/timed";
 import { writeFileSync } from "velt/fs/files";
 import { Paint } from "velt/test/paint";
 import { MARK } from "velt/test/run";
@@ -326,132 +326,6 @@ async function runFrom(run: FileRun, from: usize, report: Report, paint: Paint):
   pushStderr(report, r.stderr);
   report.failed++;
   return next + 1;
-}
-
-/** How long a test process counting blocks may keep running after its tests (ms). */
-const LEAK_WAIT = 120000;
-
-/** How long a test process may run in all (ms): a test that never ends fails after it. */
-const FILE_TIMEOUT = 600000;
-
-/** `LEAK_WAIT`, or the milliseconds `$VELT_TEST_LEAK_WAIT` sets. */
-function leakWait(): number {
-  return msFrom(process.env.VELT_TEST_LEAK_WAIT, LEAK_WAIT);
-}
-
-/** `FILE_TIMEOUT`, or the milliseconds `$VELT_TEST_TIMEOUT` sets. */
-function fileTimeout(): number {
-  return msFrom(process.env.VELT_TEST_TIMEOUT, FILE_TIMEOUT);
-}
-
-/** The positive number of milliseconds `set` holds, else `otherwise`. */
-function msFrom(set: string | undefined, otherwise: number): number {
-  const ms = Number(set ?? "");
-  return Number.isNaN(ms) || ms <= 0 ? otherwise : ms;
-}
-
-/** Why `runTimed` ended a process: it didn't, it outlived the leak wait, or the time limit. */
-const NOT_ENDED: i64 = 0;
-const LEFT_OPEN: i64 = 1;
-const TIMED_OUT: i64 = 2;
-
-/** What `runTimed` ran: as `exec` returns it, and whether (and why) it was ended. */
-struct Timed {
-  result: ExecResult;
-  ended: i64;
-}
-
-/**
- * Run `exe` with `env` to its end, as `exec` does, but end it `wait` ms after its stdout says
- * its tests are done (the line `done`; never when `wait` is 0), or `timeout` ms after it starts:
- * the tests themselves may take as long as they take, up to `timeout`.
- */
-async function runTimed(
-  exe: string,
-  env: Map<string, string>,
-  wait: number,
-  timeout: number,
-  done: string,
-): Promise<Timed> {
-  const child = spawn(exe, [], { env: env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-  const ended = shared(NOT_ENDED);
-  const ends = ended.clone();
-  const limit = setTimeout(
-    () => {
-      end(child, ends, TIMED_OUT);
-    },
-    timeout as i64,
-  );
-  const stderr = drain(() => child.readStderr());
-  const out = await watch(child, done, wait, ended.clone());
-  const err = await stderr;
-  const code = await child.wait();
-  clearTimeout(limit);
-  const timer = out.timer;
-  if (timer != null) {
-    clearTimeout(timer);
-  }
-  child.close();
-  return { result: new ExecResult(code as number, out.text, err), ended: ended.get() };
-}
-
-/** Kill `child` for `why`, unless the other timer already did. */
-function end(child: ChildProcess, ended: shared<i64>, why: i64) {
-  if (ended.get() == NOT_ENDED) {
-    ended.set(why);
-    child.kill("SIGKILL");
-  }
-}
-
-/** A test process's stdout, and the timer `watch` armed when it said its tests are done. */
-struct Watched {
-  text: string;
-  timer: Timer | null;
-}
-
-/**
- * All of `child`'s stdout; once it holds `done`, a timer that kills `child` after `wait` ms
- * (`ended` becomes `LEFT_OPEN`) unless it ends first. `done` starts with the run's marker, which
- * holds a token made for each file's run (`token()`), so a test's own output cannot arm it.
- */
-async function watch(
-  child: ChildProcess,
-  done: string,
-  wait: number,
-  ended: shared<i64>,
-): Promise<Watched, unknown> {
-  let text = "";
-  let timer: Timer | null = null;
-  while (true) {
-    const chunk = await child.readStdout();
-    if (chunk == "") {
-      return { text: text, timer: timer };
-    }
-    // The marker may come in two chunks: look from just before where this one starts.
-    const back = (text.length as i64) - (done.length as i64);
-    text += chunk;
-    if (wait > 0 && timer == null && text.indexOf(done, back > 0 ? back : 0) >= 0) {
-      const ends = ended.clone();
-      timer = setTimeout(
-        () => {
-          end(child, ends, LEFT_OPEN);
-        },
-        wait as i64,
-      );
-    }
-  }
-}
-
-/** Everything `read` gives until it gives `""` (the end of the output). */
-async function drain(read: () => Promise<string, unknown>): Promise<string, unknown> {
-  let all = "";
-  while (true) {
-    const chunk = await read();
-    if (chunk == "") {
-      return all;
-    }
-    all += chunk;
-  }
 }
 
 /**
