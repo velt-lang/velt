@@ -633,6 +633,10 @@ into a plain array in place. `velt_rt_array_view_remove` takes the view's view o
 header holds `object | 1`. So the view's own box never reaches the runtime, and the backend
 need not assume that a call may change a box of a view type.
 
+A view's header is told apart by bit 0 of its data pointer, so an array the runtime hands to
+generated code never has an odd data pointer: an empty one has an even dangling pointer
+(`velt_rt::bytes::empty_data`, not Rust's `NonNull::dangling()`, which is 1 for bytes).
+
 `velt_rt_array_view_cold()` does nothing. The test before a loop versioned for a box
 (`lower/view_unswitch.rs`) calls it when the box is a view, on the way into the loop's
 original, and the LLVM backend declares it `cold` (and touching only memory compiled code

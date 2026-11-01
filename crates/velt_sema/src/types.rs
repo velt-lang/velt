@@ -237,6 +237,21 @@ impl Types {
         found
     }
 
+    /// Is a type argument among `args` nested more than [`MAX_ARG_DEPTH`] deep? A generic type
+    /// that refers to itself at a growing type argument (`L<T>` holding an `L<T[]>`, which
+    /// `crate::expansive_types` reports) gets there in a walk that substitutes field types,
+    /// which then asks whether it is one before it stops (a deep type that is not one is
+    /// walked to its end). Cheap: it looks no deeper than the limit.
+    pub(crate) fn args_too_deep(&self, args: &[TyId]) -> bool {
+        fn deeper(ty: &Types, t: TyId, budget: u32) -> bool {
+            budget == 0
+                || children(ty.kind(t))
+                    .into_iter()
+                    .any(|c| deeper(ty, c, budget - 1))
+        }
+        args.iter().any(|a| deeper(self, *a, MAX_ARG_DEPTH))
+    }
+
     pub(crate) fn visit(&self, t: TyId, f: &mut dyn FnMut(&TyKind)) {
         let k = self.kind(t);
         f(k);
@@ -394,6 +409,9 @@ pub(crate) fn velt_only_type_name(name: &str) -> bool {
             | "bool"
     )
 }
+
+/// How deep type arguments may nest before [`Types::args_too_deep`] calls them grown without end.
+pub(crate) const MAX_ARG_DEPTH: u32 = 64;
 
 /// Direct component types of a type.
 pub(crate) fn children(k: &TyKind) -> Vec<TyId> {
