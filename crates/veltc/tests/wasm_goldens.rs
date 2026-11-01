@@ -367,10 +367,12 @@ fn goldens_in_the_browser_glue() {
 
 /// Conditional imports pick the target's variant: tests/golden/lang/conditional_imports prints
 /// `native` natively (its `.out`, a golden), `wasi` under wasmtime and `js` in the browser glue.
+/// The package is copied into a work directory and runs there: a package's build goes to its
+/// `target/velt`, which must not be in the source tree.
 #[test]
 fn conditional_imports_pick_the_target_variant() {
     let root = root();
-    let program = root.join("tests/golden/lang/conditional_imports/src/main.vlt");
+    let fixture = root.join("tests/golden/lang/conditional_imports");
     for (target, runner, variant) in [
         ("wasm32-wasip1", "wasmtime", "wasi"),
         ("wasm32-unknown-unknown", "node", "js"),
@@ -380,12 +382,13 @@ fn conditional_imports_pick_the_target_variant() {
             continue;
         }
         build_runtime(&root, target);
-        let work = work_dir::work_dir(&root, "golden-work-conditional").join(target);
+        let work = work_dir::work_dir(&root, "golden-work-conditional")
+            .join(format!("{target}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&work);
-        std::fs::create_dir_all(&work).expect("work dir");
+        copy_dir(&fixture, &work);
         let o = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
             .args(["run", "--target", target])
-            .arg(&program)
+            .arg(work.join("src/main.vlt"))
             .current_dir(&work)
             .output()
             .expect("run velt");
@@ -397,5 +400,20 @@ fn conditional_imports_pick_the_target_variant() {
             "{target}: {}",
             String::from_utf8_lossy(&o.stderr)
         );
+    }
+}
+
+/// `from`'s files below `to`, its `target/` left out.
+fn copy_dir(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).expect("work dir");
+    for entry in std::fs::read_dir(from).expect("fixture").flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if entry.file_name() != "target" {
+                copy_dir(&path, &to.join(entry.file_name()));
+            }
+        } else {
+            std::fs::copy(&path, to.join(entry.file_name())).expect("copy");
+        }
     }
 }
