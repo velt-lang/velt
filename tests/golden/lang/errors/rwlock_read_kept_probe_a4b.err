@@ -1,0 +1,1 @@
+rwlock_read_kept_probe_a4b.vlt:15:5: error: this changes, through an object the `read` callback made, what may be the caller's object, which the compiler cannot tell from the value's own here

@@ -1,0 +1,18 @@
+// check: no leaks
+// An RwLock read probe (#1559): prints what Node prints.
+class Box {
+  items: number[][] = [[1, 2], [3]];
+}
+function main() {
+  const a = new RwLock(new Box());
+  const out: number[][][] = [];
+  a.read((x) => {
+    const c: number[][] = [];
+    out.push(c);
+    c.push([9]);
+    out.length = 0;
+    c.push([10]);
+    out.push(c);
+  });
+  console.log(JSON.stringify(out));
+}
