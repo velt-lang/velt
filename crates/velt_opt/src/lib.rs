@@ -221,6 +221,7 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
                 &program.statics,
             );
             let signatures = t.time("signatures", || callgraph::signatures(program));
+            let fold = constfold::Program::of(&signatures, &program.externs);
             for func in with_bodies(&mut program.funcs) {
                 if t.time("numrep", || numrep::run(&env, func)) {
                     numrep_cleanup(&program.aggs, func, t);
@@ -228,7 +229,7 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
                 t.time("frozen", || frozen::run(&program.aggs, func));
                 if func.param_attrs.iter().any(|a| a.frozen) {
                     // `a || b` as two branches (threaded), the shape `bounds` reads facts from.
-                    t.time("constfold", || constfold::run(&signatures, func));
+                    t.time("constfold", || constfold::run(&fold, func));
                     t.time("copyprop", || copyprop::run(func));
                     t.time("dce", || dce::run(&program.aggs, func));
                     t.time("simplify_cfg", || simplify_cfg::run(func));
@@ -321,12 +322,13 @@ fn numrep_cleanup(aggs: &[vir::AggLayout], func: &mut vir::Function, t: &mut Pas
 /// bodies they live in), then clean up the loads and stores it moved.
 fn promote_memory(program: &mut vir::Program, t: &mut PassTimings) {
     let signatures = t.time("signatures", || callgraph::signatures(program));
+    let fold = constfold::Program::of(&signatures, &program.externs);
     for func in with_bodies(&mut program.funcs) {
         let mut changed = t.time("noalias", || noalias::run(&program.aggs, func));
         changed |= t.time("frozen", || frozen::run(&program.aggs, func));
         changed |= t.time("frame_slots", || frame_slots::run(&program.aggs, func));
         if changed {
-            t.time("constfold", || constfold::run(&signatures, func));
+            t.time("constfold", || constfold::run(&fold, func));
             t.time("copyprop", || copyprop::run(func));
             t.time("dce", || dce::run(&program.aggs, func));
             t.time("simplify_cfg", || simplify_cfg::run(func));
@@ -344,6 +346,7 @@ fn speed_round(
     let mut changed = t.time("inline", || inline::run(program, budget));
     changed |= t.time("const_fields", || const_fields::run(program, specs));
     let signatures = t.time("signatures", || callgraph::signatures(program));
+    let fold = constfold::Program::of(&signatures, &program.externs);
     let allocator = heap_sroa::Allocator::find(program);
     // A function inlining left without callers (one called once, now in its caller) is removed
     // at the end: optimizing it again would only double the work on its body.
@@ -353,7 +356,7 @@ fn speed_round(
         changed |= t.time("vtable_loads", || {
             vtable_loads::run(&program.aggs, &program.statics, allocator, func)
         });
-        changed |= t.time("constfold", || constfold::run(&signatures, func));
+        changed |= t.time("constfold", || constfold::run(&fold, func));
         changed |= t.time("copyprop", || copyprop::run(func));
         changed |= t.time("addr_forward", || addr_forward::run(&program.aggs, func));
         changed |= t.time("heap_sroa", || {

@@ -132,7 +132,8 @@ fn devirtualized(original: &Program) -> bool {
     let allocator = Allocator::find(&p);
     run(&aggs, &statics, allocator, &mut p.funcs[main]);
     let signatures = crate::callgraph::signatures(&p);
-    crate::constfold::run(&signatures, &mut p.funcs[main]);
+    let fold = crate::constfold::Program::of(&signatures, &p.externs);
+    crate::constfold::run(&fold, &mut p.funcs[main]);
     assert_valid(&p);
     for n in [0, 3, 7] {
         assert_eq!(run_main(original, n), run_main(&p, n), "n = {n}\n{p}");
