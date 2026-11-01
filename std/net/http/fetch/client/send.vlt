@@ -12,7 +12,7 @@ import { URL } from "velt/net/url";
 import { utf8Encode } from "velt/encoding";
 import { BodyReader } from "velt/net/http/fetch/client/body";
 import { Conn, keyOf, open } from "velt/net/http/fetch/client/conn";
-import { h2Exchange } from "velt/net/http/fetch/client/h2/exchange";
+import { h2Exchange, H2Outcome } from "velt/net/http/fetch/client/h2/exchange";
 import { acceptEncoding } from "velt/net/http/fetch/client/decode";
 import { Fetched } from "velt/net/http/fetch/client/fetched";
 import { ofUrl, Target, target } from "velt/net/http/fetch/client/target";
@@ -86,18 +86,22 @@ export async function send(o: ClientRequest): Promise<Fetched, IoError | AbortEr
     // Recomputed for each hop, as undici does: `br` is offered over HTTPS only (#606).
     const codings = acceptEncoding(t.https);
     const req = encode(o.method, t, o.headers, codings, o.kind, o.text, o.bytes);
-    // HTTPS origins that speak HTTP/2 (ALPN) get the request on their shared session.
-    const viaH2 = await h2Exchange(
-      o.method,
-      t,
-      o.headers,
-      codings,
-      bodyOf(o),
-      o.signal,
-      o.ca,
-      redirected,
-      !idempotent(o.method),
-    );
+    // HTTPS origins that speak HTTP/2 (ALPN) get the request on their shared session; plain
+    // `http:` is always HTTP/1.1 (no call, nothing to await).
+    const viaH2: H2Outcome =
+      t.https
+        ? await h2Exchange(
+          o.method,
+          t,
+          o.headers,
+          codings,
+          bodyOf(o),
+          o.signal,
+          o.ca,
+          redirected,
+          !idempotent(o.method),
+        )
+        : { fetched: null, stream: null, reused: false };
     const f = viaH2.fetched;
     if (f != null) {
       const at = redirects(f.status) && o.redirect != MANUAL ? f.location() : null;
