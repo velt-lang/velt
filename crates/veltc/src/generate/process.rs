@@ -44,7 +44,7 @@ fn parse_timeout(v: Option<&str>) -> Result<Option<Duration>, ()> {
         return Ok(Some(DEFAULT_TIMEOUT));
     };
     match v.trim().parse::<f64>() {
-        Ok(s) if s == 0.0 => Ok(None),
+        Ok(0.0) => Ok(None),
         Ok(s) if s > 0.0 && s.is_finite() => Ok(Duration::try_from_secs_f64(s).ok()),
         _ => Err(()),
     }
