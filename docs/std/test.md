@@ -73,7 +73,9 @@ With `VELT_RC_STATS=1` (the debug runtime's block counters), the process for a f
 reports the blocks left (`rc stats: … blocks=A/F`); the runner fails the file if A ≠ F, or if
 its process reported no counts (a runtime without the debug counters). Such a
 process waits for what is still running, as a program does after `main`: the runner ends one
-still running 120 s after its tests and fails the file.
+still running 120 s (`$VELT_TEST_LEAK_WAIT` ms) after its tests and fails the file. The wait
+starts when the process prints its `done` marker line, after the last test and the `afterAll`
+hooks, so the time the tests take doesn't count.
 
 The generated `main` registers the tests and starts the runner through compiler hooks
 (`registerFile`, `registerTest`, `registerAsyncTest`, `runRegistered` in velt/test's internal

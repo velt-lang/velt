@@ -4,7 +4,7 @@
 import { JSON } from "velt/prelude/json/json";
 import { exec } from "velt/process/child/exec";
 import { ExecResult } from "velt/process/child/exec_result";
-import { spawn } from "velt/process/child/child_process";
+import { ChildProcess, spawn } from "velt/process/child/child_process";
 import { writeFileSync } from "velt/fs/files";
 import { Paint } from "velt/test/paint";
 import { MARK } from "velt/test/run";
@@ -211,13 +211,14 @@ async function runFrom(run: FileRun, from: usize, report: Report, paint: Paint):
     env.set("VELT_TEST_EXACT", run.plan.exact ? "1" : "0");
   }
   // Counting blocks, the process returns from `main` after its tests and waits for what is
-  // still running, as Node does: one that is still running after `LEAK_WAIT` is ended.
+  // still running, as Node does: one that is still running `leakWait()` after it said its tests
+  // are done is ended. However long the tests take does not count.
   const counting = process.env.VELT_RC_STATS == "1";
   let r: ExecResult;
   let ended = false;
   try {
     if (counting) {
-      const timed = await runTimed(run.exe, env, LEAK_WAIT);
+      const timed = await runTimed(run.exe, env, leakWait(), `${mark}done`);
       r = timed.result;
       ended = timed.ended;
     } else {
@@ -280,7 +281,7 @@ async function runFrom(run: FileRun, from: usize, report: Report, paint: Paint):
   run.tests = tests;
   if (ended) {
     report.lines.push(
-      `${paint.failed()} ${f.path} (still running ${LEAK_WAIT / 1000} s after its tests: a server, a connection or a timer left open)`,
+      `${paint.failed()} ${f.path} (still running ${leakWait() / 1000} s after its tests: a server, a connection or a timer left open)`,
     );
     report.failed++;
     return tests.length;
@@ -315,28 +316,78 @@ async function runFrom(run: FileRun, from: usize, report: Report, paint: Paint):
 /** How long a test process counting blocks may keep running after its tests (ms). */
 const LEAK_WAIT = 120000;
 
+/** `LEAK_WAIT`, or the milliseconds `$VELT_TEST_LEAK_WAIT` sets. */
+function leakWait(): number {
+  const set = Number(process.env.VELT_TEST_LEAK_WAIT ?? "");
+  return Number.isNaN(set) || set <= 0 ? LEAK_WAIT : set;
+}
+
 /** What `runTimed` ran: as `exec` returns it, and whether it was ended for taking too long. */
 struct Timed {
   result: ExecResult;
   ended: bool;
 }
 
-/** Run `exe` with `env` to its end, as `exec` does, but end it after `limit` ms. */
-async function runTimed(exe: string, env: Map<string, string>, limit: number): Promise<Timed> {
+/**
+ * Run `exe` with `env` to its end, as `exec` does, but end it `limit` ms after its stdout says
+ * its tests are done (a line `done`): the tests themselves may take as long as they take.
+ */
+async function runTimed(
+  exe: string,
+  env: Map<string, string>,
+  limit: number,
+  done: string,
+): Promise<Timed> {
   const child = spawn(exe, [], { env: env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
   const ended = shared(0 as i64);
-  const timer = setTimeout(
-    () => {
-      ended.set(1);
-      child.kill("SIGKILL");
-    },
-    limit as i64,
-  );
-  const out = await Promise.all([drain(() => child.readStdout()), drain(() => child.readStderr())]);
+  const stderr = drain(() => child.readStderr());
+  const out = await watch(child, done, limit, ended.clone());
+  const err = await stderr;
   const code = await child.wait();
-  clearTimeout(timer);
+  const timer = out.timer;
+  if (timer != null) {
+    clearTimeout(timer);
+  }
   child.close();
-  return { result: new ExecResult(code as number, out[0], out[1]), ended: ended.get() == 1 };
+  return { result: new ExecResult(code as number, out.text, err), ended: ended.get() == 1 };
+}
+
+/** A test process's stdout, and the timer `watch` armed when it said its tests are done. */
+struct Watched {
+  text: string;
+  timer: Timer | null;
+}
+
+/**
+ * All of `child`'s stdout; once it holds `done`, a timer that kills `child` after `limit` ms
+ * (setting `ended` to 1) unless it ends first.
+ */
+async function watch(
+  child: ChildProcess,
+  done: string,
+  limit: number,
+  ended: shared<i64>,
+): Promise<Watched, unknown> {
+  let text = "";
+  let timer: Timer | null = null;
+  while (true) {
+    const chunk = await child.readStdout();
+    if (chunk == "") {
+      return { text: text, timer: timer };
+    }
+    // The marker may come in two chunks: look from just before where this one starts.
+    const back = (text.length as i64) - (done.length as i64);
+    text += chunk;
+    if (timer == null && text.indexOf(done, back > 0 ? back : 0) >= 0) {
+      timer = setTimeout(
+        () => {
+          ended.set(1);
+          child.kill("SIGKILL");
+        },
+        limit as i64,
+      );
+    }
+  }
 }
 
 /** Everything `read` gives until it gives `""` (the end of the output). */

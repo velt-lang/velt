@@ -262,8 +262,9 @@ allocates (debug builds; the standard library's own tests run this way). A file 
 something allocated fails with `FAILED <file> (N blocks not freed)`, and one whose process
 reported no counts (a runtime without the debug counters) with `no block counts on its stderr`.
 Close every server and
-connection a test opens: one still running 120 s after the file's tests fails the file as
-`still running … after its tests`.
+connection a test opens: one still running 120 s after the file's tests are done fails the file
+as `still running … after its tests` (`VELT_TEST_LEAK_WAIT=<ms>` sets another wait). The 120 s
+start when the last test and its `afterAll` hooks are done, so slow tests don't count.
 
 ## How tests are built
 
