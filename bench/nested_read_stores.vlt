@@ -1,0 +1,31 @@
+// A `read` nested in another storing many arrays it made into the caller's array, and a single
+// `read` doing the same: each store keeps the array the same object (#1559).
+class Box {
+  items: number[][] = [[1, 2], [3]];
+}
+
+function main() {
+  const a = new RwLock(new Box());
+  const b = new RwLock(new Box());
+  const out: number[][][] = [];
+  const n = 80000;
+  a.read((x) => {
+    b.read((y) => {
+      for (let i = 0; i < n; i++) {
+        const c: number[][] = [[i, y.items.length]];
+        out.push(c);
+      }
+    });
+  });
+  a.read((x) => {
+    for (let i = 0; i < n; i++) {
+      const c: number[][] = [[i, x.items.length]];
+      out.push(c);
+    }
+  });
+  let total = 0;
+  for (const c of out) {
+    total += c[0][0] + c[0][1];
+  }
+  console.log(out.length, total);
+}
