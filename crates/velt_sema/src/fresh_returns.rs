@@ -63,7 +63,8 @@ fn fresh_intrinsic(i: Intrinsic) -> bool {
 
 /// Report the widened call results whose callees may return a value something else references.
 pub(crate) fn check(cx: &mut Ctx) {
-    let checks = std::mem::take(&mut cx.fresh_checks);
+    let mut checks = std::mem::take(&mut cx.fresh_checks);
+    checks.append(&mut cx.object_impls.fresh_checks);
     if checks.is_empty() {
         return;
     }

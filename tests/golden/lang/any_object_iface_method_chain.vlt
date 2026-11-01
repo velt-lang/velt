@@ -1,0 +1,97 @@
+// An object literal whose methods return object literals with methods, converted through
+// `any` to interfaces whose methods return interfaces (#1952): each result is the same object
+// as an interface value, however deep, as in Node.
+interface L3 {
+  hi(): string;
+}
+interface L2 {
+  mk(): L3;
+}
+interface L1 {
+  down(): L2;
+}
+
+const o = {
+  down() {
+    return {
+      mk() {
+        return {
+          hi() {
+            return "hello" + "!";
+          },
+        };
+      },
+    };
+  },
+};
+const l = o as unknown as L1;
+console.log(l.down().mk().hi());
+
+// Two levels.
+const two = { mk() { return { hi() { return "two"; } }; } };
+console.log((two as unknown as L2).mk().hi());
+
+// Four levels, with a field beside the method.
+interface M4 {
+  n: number;
+  hi(): string;
+}
+interface M3 {
+  go(): M4;
+}
+interface M2 {
+  go(): M3;
+}
+interface M1 {
+  go(): M2;
+}
+const four: any = {
+  go() {
+    return { go() { return { go() { return { n: 4, hi() { return "four"; } }; } }; } };
+  },
+};
+const m = (four as M1).go().go().go();
+console.log(m.n, m.hi());
+
+// Without `any`: the object literal where the interface is expected.
+const direct: L1 = { down() { return { mk() { return { hi() { return "direct"; } }; } }; } };
+console.log(direct.down().mk().hi());
+
+// A method whose result is a helper's `any` (no return type written, or `any`): the result
+// converts to the interface's result type when the method is called, as in Node. (Interfaces
+// of their own, with members no other interface here has: only the implementations' results
+// convert to them.)
+interface H3 {
+  greet(): string;
+}
+interface H2 {
+  make(): H3;
+}
+interface H1 {
+  open(): H2;
+}
+function inner(): any {
+  return { greet() { return "from inner"; } };
+}
+const viaHelper = { open() { return { make() { return inner(); } }; } };
+console.log((viaHelper as unknown as H1).open().make().greet());
+const typed = { make(): any { return inner(); } };
+console.log((typed as unknown as H2).make().greet());
+
+// Through two helpers, each result an `any`.
+function middle(): any {
+  return { make() { return inner(); } };
+}
+const twice = { open() { return middle(); } };
+console.log((twice as unknown as H1).open().make().greet());
+
+// A method whose result is the interface at a growing type argument: compiling it makes no
+// endless chain of implementations.
+interface Grow<T> {
+  next(): Grow<T[]>;
+}
+function grow(): any {
+  return { next(): any { return grow(); } };
+}
+const g = grow() as Grow<number>;
+console.log(typeof g);

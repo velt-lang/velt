@@ -68,7 +68,8 @@ pub(super) fn check_all(cx: &mut Ctx, fns: &[DefId], groups: &Groups) {
         }
         super::conventions::check_group(cx, g);
     }
-    let checks = std::mem::take(&mut cx.throw_checks);
+    let mut checks = std::mem::take(&mut cx.throw_checks);
+    checks.append(&mut cx.object_impls.throw_checks);
     for c in checks {
         observed(cx, &c);
     }
