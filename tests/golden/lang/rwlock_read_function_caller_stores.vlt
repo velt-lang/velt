@@ -9,17 +9,17 @@ class Box {
 
 function stash(b: RwLock<Box>, s: Set<number[][]>, m: Map<number, number[][]>, out: number[][][]) {
   b.read((y) => {
-    s.add(y.items.slice());
-    m.set(out.length, y.items.map((e) => e));
-    out.push(y.items.slice());
+    s.add(structuredClone(y.items.slice()));
+    m.set(out.length, structuredClone(y.items.map((e) => e)));
+    out.push(structuredClone(y.items.slice()));
   });
 }
 
 function stash2(b: RwLock<Box>, c: RwLock<Box>, out: number[][][], s: Set<number[][]>) {
   b.read((y) => {
     c.read((z) => {
-      out.push(z.items.slice());
-      s.add(y.items.map((e) => e));
+      out.push(structuredClone(z.items.slice()));
+      s.add(structuredClone(y.items.map((e) => e)));
     });
   });
 }

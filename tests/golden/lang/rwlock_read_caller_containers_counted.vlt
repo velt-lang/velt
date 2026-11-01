@@ -36,14 +36,14 @@ function main() {
     out.push(new Item(5));
     out[0].tags.push("t");
     for (const it of s.items) {
-      byV.set(it.v, it);
+      byV.set(it.v, it.clone());
     }
     let sum: i64 = 0;
     for (const o of seen) {
       sum += o.v;
     }
     pts.push(sum);
-    all = all.concat(s.items);
+    all = (all.concat(s.items)).clone();
     swapEnds(out);
   });
   for (let i = 0; i < 50; i++) {

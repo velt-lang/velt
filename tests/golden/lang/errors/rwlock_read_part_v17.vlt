@@ -1,0 +1,24 @@
+// A nested read storing the lock's own array, returned by a function it declares, into the caller's array (#1525 probe v17):
+// JavaScript would share those parts with code that does not hold the lock. An error that says
+// to store an explicit copy (`structuredClone(…)`) or change the value in `write`.
+class Box {
+  items: string[][] = [["a"], ["b"]];
+}
+function main() {
+  const a = new RwLock(new Box());
+  const b = new RwLock(new Box());
+  const mine: string[][] = [["p"]];
+  const got: string[][] = [];
+  a.read((x) => {
+    b.read((y) => {
+      function pick(xs: string[][]): string[] {
+        return y.items[0];
+      }
+      got.push(pick(mine));
+    });
+  });
+  got[0].push("z");
+  b.write((q) => { q.items[0].push("B"); });
+  console.log(JSON.stringify(got));
+  b.read((y) => { console.log(JSON.stringify(y.items)); });
+}

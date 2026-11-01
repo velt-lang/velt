@@ -28,9 +28,9 @@ function main() {
     xs[0] = s.items[1].v;
     mine.v = s.items[2].v;
     for (const it of s.items) {
-      out.push(it);
+      out.push(it.clone());
       made.push(new Item(it.v * 10));
-      byV.set(it.v, it);
+      byV.set(it.v, it.clone());
       seen.add(it.v);
     }
   });

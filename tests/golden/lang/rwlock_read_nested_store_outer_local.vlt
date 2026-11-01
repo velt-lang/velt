@@ -9,7 +9,7 @@ class Box {
 
 function fill(b: RwLock<Box>, out: number[][][]) {
   b.read((y) => {
-    out.push(y.items.slice());
+    out.push(structuredClone(y.items.slice()));
   });
 }
 
@@ -20,9 +20,9 @@ function main() {
   const res = a.read((x) => {
     const mine: number[][][] = [];
     b.read((y) => {
-      mine.push(y.items.slice());
+      mine.push(structuredClone(y.items.slice()));
       c.read((z) => {
-        mine.push(z.items.map((e) => e));
+        mine.push(structuredClone(z.items.map((e) => e)));
       });
     });
     mine[0].push([5]);

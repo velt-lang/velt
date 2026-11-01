@@ -13,8 +13,8 @@ function main() {
   const run = () => {
     a.read((x) => {
       b.read((y) => {
-        out.push(y.items.slice());
-        s.add(x.items.map((e) => e));
+        out.push(structuredClone(y.items.slice()));
+        s.add(structuredClone(x.items.map((e) => e)));
       });
     });
   };
@@ -36,7 +36,7 @@ function main() {
   console.log(JSON.stringify(out), s.size);
   const once = () => {
     a.read((x) => {
-      out.push(x.items.slice(0, 1));
+      out.push(structuredClone(x.items.slice(0, 1)));
     });
   };
   once();

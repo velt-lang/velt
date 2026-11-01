@@ -30,8 +30,8 @@ function main() {
     fromMutex = c.items.concat(out);
   });
   rw.read((c) => {
-    fromRead = c.items.concat(out);
-    helper = joined(c.items, out);
+    fromRead = structuredClone(c.items.concat(out));
+    helper = structuredClone(joined(c.items, out));
   });
   out.push([8]);
   mx.with((c) => {

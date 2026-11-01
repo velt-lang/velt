@@ -634,22 +634,25 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   containers is that same object, as in JavaScript (`out.push(out[0])`, `out[0] = a`,
   `out2.push(out.pop()!)`, `a.splice(1, 0, a[0])`), also inside an array or object the callback
   made (`g.push([out[0]])`) and as what a closure it made captures (`fs.push(() => out[0].v)`);
-  anything else it did not make itself is a copy (an element of the value, what a function
-  returns, a closure capturing a part of the value). An array or object the callback made that
-  holds objects of the value's types is the caller's once stored there, as that same object
-  (`const c = s.items.slice(); out.push(c)`: `out[0] === c`, also when stored twice); what it
-  shares with the value inside it becomes a copy. The callback can still read it through its
-  own variables, but a write through them stops the program (``cannot change an object a
-  `read` callback made after storing it outside the callback …``): store it once it is
-  complete. One a `read` nested in another stores there that the callbacks hold nowhere else
-  stays the readers' own until the outermost `read` returns, so the callbacks around it can
-  still change it through what they reach it by, also after moving it on into another of the
-  caller's containers (`keep.push(top.pop()!)`), and the caller sees those changes, as in
-  JavaScript. Sent on a channel before then, it is sent as a copy. One they still reference
-  elsewhere (`const l = [[1]]; … top.push(l[0])`) is the caller's at the store, as in a single
-  `read`, when the callbacks store a part of the value into it (`l[0].push(x.items[0])`,
-  which then stops the program); a class object of that kind stops the program at the nested
-  store.
+  storing a part of the value there is an error, also inside an array, an object or a closure
+  the callback makes, or through a function it calls (``this stores a part of the value an
+  `RwLock` holds outside the `read` callback, where JavaScript would share it``): JavaScript
+  shares the lock's own object with code that does not hold the lock, which threads cannot do
+  safely, and a silent copy would not see later changes on either side. Store a copy made
+  explicitly (`out.push(structuredClone(s.items[0]))`, or a new object made from its fields),
+  or change the value in `write`. A new array of plain values (`s.names.slice()` of a
+  `string[]`) holds no part and is stored as it is. A `read` nested in another cannot return a
+  part of its value either (JavaScript would hand the outer callback the lock's own object);
+  what a single `read` returns stays a copy, as above. An array or object the callback made of
+  its own and the caller's objects is the caller's once stored there, as that same object
+  (`out[0] === c`, also when stored twice). The callback can still read it through its own
+  variables, but a write through them stops the program (``cannot change an object a `read`
+  callback made after storing it outside the callback …``): store it once it is complete. One
+  a `read` nested in another stores there that the callbacks hold nowhere else stays the
+  readers' own until the outermost `read` returns, so the callbacks around it can still change
+  it through what they reach it by, also after moving it on into another of the caller's
+  containers (`keep.push(top.pop()!)`), and the caller sees those changes, as in JavaScript.
+  Sent on a channel before then, it is sent as a copy.
   One whose type the value cannot hold, and a
   function value, that the callback still uses after storing it is stored as a copy. So is a
   container of the callback's own whose type the value cannot hold, or a `Map` or `Set` of its

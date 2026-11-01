@@ -29,9 +29,9 @@ function main() {
   const r = rw.read((s) => {
     let n = 0;
     // a nested read's copy
-    rw.read((s2) => s2.items[0]).kids.push(new Item(4));
-    rw.read((s2) => s2.items).push(new Item(3));
-    n += rw.read((s2) => s2.items).pop()!.v;
+    rw.read((s2) => s2.items[0].clone()).kids.push(new Item(4));
+    rw.read((s2) => s2.items.clone()).push(new Item(3));
+    n += rw.read((s2) => s2.items.clone()).pop()!.v;
     // a new object a function builds
     mk(out).kids.push(new Item(2));
     mk(out).kids.push(out[0]);
@@ -41,9 +41,9 @@ function main() {
       mk(out).kids.push(new Item(i));
       mk(out).kids.push(out[1]);
       const k = mk(out).kids;
-      k.push(s.items[0]);
+      k.push(s.items[0].clone());
       n += k.length;
-      rw.read((s2) => s2.items[1]).kids.push(new Item(i));
+      rw.read((s2) => s2.items[1].clone()).kids.push(new Item(i));
     }
     for (let i = 0; i < 4; i++) {
       (i % 2 == 0 ? mk(out) : firstOf(out)).kids.push(new Item(i));
@@ -58,7 +58,7 @@ function main() {
       const m = mk(out);
       m.kids[0] = new Item(4);
       n += m.kids[0].v;
-      rw.read((s2) => s2.items[0]).kids = [new Item(5)];
+      rw.read((s2) => s2.items[0].clone()).kids = [new Item(5)];
       mk(out).v = 8;
     }
     // the caller's array, reached through a call

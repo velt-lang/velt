@@ -19,7 +19,7 @@ function main() {
     const n = new Node2();
     console.log("before");
     b.read((y) => {
-      top.push(n);
+      top.push(n.clone());
     });
     console.log("after");
     n.v.push(1);

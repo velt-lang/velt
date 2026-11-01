@@ -30,15 +30,15 @@ function main() {
   const rows: Row[] = [];
   let count = 0;
   a.read((x) => {
-    const inner = b.read((y) => y.items.map((e) => e));
+    const inner = b.read((y) => structuredClone(y.items.map((e) => e)));
     inner.push([5]);
     inner[0].push(7);
     out.push(inner[2]);
     out.push(inner[0]);
-    const lit = b.read((y) => [y.items[0], x.items[1]]);
+    const lit = b.read((y) => structuredClone([y.items[0], x.items[1]]));
     lit.push([8]);
     count = lit.length + x.items.length;
-    const dropped = b.read((y) => y.items.slice());
+    const dropped = b.read((y) => structuredClone(y.items.slice()));
     count += dropped.length;
     const rs = firstRows(g);
     rs[1].cells.push(9);

@@ -22,8 +22,8 @@ function main() {
   m.set("k", new Item(4));
   for (let i = 0; i < 100; i++) {
     rw.read((s) => {
-      bx.it = s.items[0];
-      m.set("k", s.items[0]);
+      bx.it = s.items[0].clone();
+      m.set("k", s.items[0].clone());
     });
   }
   rw.write((s) => {

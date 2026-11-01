@@ -11,7 +11,7 @@ function main() {
   const out: number[][][] = [];
   a.read((x) => {
     const c = x.items.concat([[5]]);
-    out.push(c);
+    out.push(structuredClone(c));
     console.log("stored", out[0] === c);
     c.push([8]);
   });

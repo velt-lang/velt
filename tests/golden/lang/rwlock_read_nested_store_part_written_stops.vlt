@@ -15,7 +15,7 @@ function main() {
   c.read((x) => {
     const l: number[][][] = [[[1]]];
     d.read((y) => {
-      rows.push(l[0]);
+      rows.push(structuredClone(l[0]));
     });
     console.log("stored", rows[0] === l[0]);
     l[0].push(x.items[0]);

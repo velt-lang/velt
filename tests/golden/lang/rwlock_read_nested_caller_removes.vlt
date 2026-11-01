@@ -26,16 +26,16 @@ function main() {
       console.log("pop", out.pop());
       console.log("shift", out.shift());
       out[0] = [[9]];
-      out[1] = y.items.slice();
+      out[1] = structuredClone(y.items.slice());
       console.log("splice", out.splice(2, 1));
-      console.log("splice in", out.splice(2, 1, y.items.map((e) => e), [[12]]));
+      console.log("splice in", out.splice(2, 1, structuredClone(y.items.map((e) => e)), [[12]]));
       console.log("delete", m.delete("a"), s.delete(kept));
-      m.set("b", y.items.filter((e) => e.length > 1));
-      mine.push(y.items.slice());
+      m.set("b", structuredClone(y.items.filter((e) => e.length > 1)));
+      mine.push(structuredClone(y.items.slice()));
       console.log("mine", mine.pop(), mine.length);
       c.read((z) => {
         console.log("deep", out.pop(), out.shift());
-        out[0] = z.items.slice();
+        out[0] = structuredClone(z.items.slice());
       });
     });
     console.log("outer", mine);

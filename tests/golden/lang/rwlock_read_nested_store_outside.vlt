@@ -16,13 +16,13 @@ function main() {
   const out: number[][][] = [];
   a.read((x) => {
     b.read((y) => {
-      s.add(y.items.slice());
-      s.add(y.items.map((e) => e));
-      m.set("k", y.items.filter((e) => e.length > 1));
-      out.push(y.items.slice());
-      out.unshift(y.items.map((e) => e));
+      s.add(structuredClone(y.items.slice()));
+      s.add(structuredClone(y.items.map((e) => e)));
+      m.set("k", structuredClone(y.items.filter((e) => e.length > 1)));
+      out.push(structuredClone(y.items.slice()));
+      out.unshift(structuredClone(y.items.map((e) => e)));
       c.read((z) => {
-        s.add(z.items.slice());
+        s.add(structuredClone(z.items.slice()));
       });
     });
   });

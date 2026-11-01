@@ -43,8 +43,8 @@ function main() {
           m.delete(k);
         }
       }
-      out.push(mine[1]);
-      out.push(y.items);
+      out.push(structuredClone(mine[1]));
+      out.push(structuredClone(y.items));
       out.shift();
     });
     console.log("outer sees", out.length, s.size, m.size, mine.length);

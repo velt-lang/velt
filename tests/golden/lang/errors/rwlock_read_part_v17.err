@@ -1,0 +1,1 @@
+rwlock_read_part_v17.vlt:17:16: error: this stores a part of the value an `RwLock` holds outside the `read` callback, where JavaScript would share it

@@ -13,8 +13,8 @@ function main() {
   a.read((x) => {
     b.read((y) => {
       const c = y.items.concat(x.items);
-      out.push(c);
-      out2.push(c);
+      out.push(structuredClone(c));
+      out2.push(structuredClone(c));
       console.log("stored", out[0] === out2[0], out[0] === c, c.length);
       c.push([8]);
     });

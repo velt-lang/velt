@@ -19,26 +19,26 @@ function main() {
   a.read((x) => {
     b.read((y) => {
       const c = y.items.concat(x.items);
-      out.push(c);
-      out.push(c.map((e) => e));
-      out.push(x.items.concat(y.items).slice(1, 3));
+      out.push(structuredClone(c));
+      out.push(structuredClone(c.map((e) => e)));
+      out.push(structuredClone(x.items.concat(y.items).slice(1, 3)));
     });
   });
   a.read((x) => {
     b.read((y) => {
       const unused = y.items.concat(x.items);
-      out.push([x.items[0], y.items[1]]);
+      out.push(structuredClone([x.items[0], y.items[1]]));
       console.log(unused.length);
     });
   });
   const m = new Mutex(new Bag());
   m.with((g) => {
     a.read((x) => {
-      g.list.push(x.items.slice());
-      out.push(x.items.map((e) => e));
+      g.list.push(structuredClone(x.items.slice()));
+      out.push(structuredClone(x.items.map((e) => e)));
       b.read((y) => {
-        g.list.push(y.items.concat(x.items));
-        out.push(y.items.slice());
+        g.list.push(structuredClone(y.items.concat(x.items)));
+        out.push(structuredClone(y.items.slice()));
       });
     });
   });

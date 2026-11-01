@@ -11,12 +11,12 @@ function main() {
   const out: number[][][] = [[[0]]];
   a.read((x) => {
     b.read((y) => {
-      out.push(y.items[0].slice().concat(x.items[0].slice()));
+      out.push(structuredClone(y.items[0].slice().concat(x.items[0].slice())));
       const keep = y.items[0].concat(x.items[0]);
       const r = keep.concat(x.items[0].slice());
-      out.push(r);
+      out.push(structuredClone(r));
       y.items[0].concat(x.items[0].slice());
-      out.push(y.items[0].concat(x.items[0].slice()).concat(out[0]));
+      out.push(structuredClone(y.items[0].concat(x.items[0].slice()).concat(out[0])));
     });
   });
   out[1].push([2]);

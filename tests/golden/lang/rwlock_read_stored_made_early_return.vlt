@@ -9,7 +9,7 @@ function pick(a: RwLock<Box>, out: number[][][]): number {
   return a.read((x) => {
     for (let i = 0; i < 5; i++) {
       const c = x.items.slice(i % 2);
-      out.push(c);
+      out.push(structuredClone(c));
       if (out.length == 3) {
         return c.length;
       }

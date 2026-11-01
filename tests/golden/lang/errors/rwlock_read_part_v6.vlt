@@ -1,0 +1,38 @@
+// A read callback storing what a function returns from the lock's value into the caller's arrays (#1525 probe v6):
+// JavaScript would share those parts with code that does not hold the lock. An error that says
+// to store an explicit copy (`structuredClone(…)`) or change the value in `write`.
+class Box {
+  items: string[][] = [["a"], ["b"]];
+}
+function first(xs: string[][]): string[] {
+  return xs[0];
+}
+function same(xs: string[][]): string[][] {
+  return xs;
+}
+function main() {
+  const a = new RwLock(new Box());
+  const b = new RwLock(new Box());
+  const mine: string[][] = [["p"]];
+  const got: string[][] = [];
+  const got2: string[][][] = [];
+  a.read((x) => {
+    got.push(first(mine));
+    got.push(first(x.items));
+    got2.push(same(x.items));
+    got2.push(same(mine));
+    b.read((y) => {
+      got.push(first(y.items));
+      got.push(first(mine));
+      got2.push(same(y.items));
+    });
+  });
+  got[0].push("z");
+  got[1].push("w");
+  got2[0][0].push("q");
+  got2[0].push(["n"]);
+  a.write((q) => { q.items[0].push("A"); q.items = []; });
+  b.write((q) => { q.items[0].push("B"); });
+  console.log(JSON.stringify(mine), JSON.stringify(got), JSON.stringify(got2));
+  b.read((y) => { console.log(JSON.stringify(y.items)); });
+}

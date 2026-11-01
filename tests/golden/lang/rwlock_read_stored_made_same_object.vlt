@@ -14,23 +14,23 @@ function main() {
   const twice: number[][][][] = [];
   a.read((x) => {
     const c = x.items.slice();
-    out.push(c);
+    out.push(structuredClone(c));
     console.log(c.length, out[0] === c, out[0][0] === c[0]);
     b.read((y) => {
       const d = y.items.concat([[5]]);
-      out.push(d);
+      out.push(structuredClone(d));
       console.log(out[1] === d, d.length);
     });
     const e = x.items.slice(1);
     const g = [e, e];
-    twice.push(g);
+    twice.push(structuredClone(g));
     console.log(twice[0][0] === twice[0][1], g.length);
   });
   const same: boolean[] = [];
   for (let i = 0; i < 20; i++) {
     a.read((x) => {
       const c = x.items.map((r) => r);
-      out.push(c);
+      out.push(structuredClone(c));
       same.push(out[out.length - 1] === c);
     });
   }

@@ -1,0 +1,37 @@
+// Read callbacks storing a concat holding the lock's arrays into the caller's array (#1525 probe v8):
+// JavaScript would share those parts with code that does not hold the lock. An error that says
+// to store an explicit copy (`structuredClone(…)`) or change the value in `write`.
+class Box {
+  items: number[][] = [[1, 2], [3], [4, 5]];
+}
+function main() {
+  const a = new RwLock(new Box());
+  const b = new RwLock(new Box());
+  const out: number[][][] = [[[0]], [[1]], [[2]], [[3]]];
+  const m = new Map<string, number[][]>();
+  m.set("k", [[1]]);
+  const r1 = a.read((x) => {
+    const c = x.items.concat(out[0]);
+    c.push([6]);
+    out.push(c);
+    out.push(x.items.slice(1));
+    const removed = out.splice(0, 2);
+    out.push(removed[0]);
+    return removed;
+  });
+  r1[1].push([7]);
+  const r2 = a.read((x) => {
+    return b.read((y) => {
+      const c = y.items.concat(x.items);
+      out.push(c);
+      out.push(c.map((e) => e));
+      const rem = out.splice(1, 2, y.items.slice(0, 1));
+      m.set("j", rem[0]);
+      return rem;
+    });
+  });
+  r2.push([[8]]);
+  a.write((q) => { q.items[0].push(9); q.items = []; });
+  b.write((q) => { q.items[1].push(9); q.items = []; });
+  console.log(JSON.stringify(out), JSON.stringify(r1), JSON.stringify(r2), JSON.stringify([...m.entries()]));
+}

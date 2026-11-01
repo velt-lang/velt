@@ -1,0 +1,4 @@
+rwlock_read_part_v6.vlt:21:14: error: this stores a part of the value an `RwLock` holds outside the `read` callback, where JavaScript would share it
+rwlock_read_part_v6.vlt:22:15: error: this stores a part of the value an `RwLock` holds outside the `read` callback, where JavaScript would share it
+rwlock_read_part_v6.vlt:25:16: error: this stores a part of the value an `RwLock` holds outside the `read` callback, where JavaScript would share it
+rwlock_read_part_v6.vlt:27:17: error: this stores a part of the value an `RwLock` holds outside the `read` callback, where JavaScript would share it

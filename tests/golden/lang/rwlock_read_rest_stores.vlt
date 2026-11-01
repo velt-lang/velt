@@ -21,22 +21,23 @@ function main() {
   const pairs: Pair[] = [];
   const byName = new Map<string, number[][][]>();
   rw.read((x) => {
-    holder.unshift(x.items.map((e) => e));
-    holder.unshift(x.items.slice(), keep);
-    holder.unshift(...[x.items.slice()]);
-    holder.splice(0, 0, x.items.filter((e) => e.length > 0));
-    holder.splice(1, 0, x.items.slice(), x.items.filter((e) => e.length > 1));
-    holder.splice(0, 0, ...[x.items.slice(), x.items.slice()]);
-    holder.push(...[x.items.slice()]);
-    pairs.unshift(new Pair(x.items.map((e) => e)));
-    byName.set("k", [x.items.slice(), keep]);
+    holder.unshift(structuredClone(x.items.map((e) => e)));
+    holder.unshift(structuredClone(x.items.slice()), keep);
+    holder.unshift(...[structuredClone(x.items.slice())]);
+    holder.splice(0, 0, structuredClone(x.items.filter((e) => e.length > 0)));
+    holder.splice(1, 0, structuredClone(x.items.slice()), structuredClone(x.items.filter((e) => e.length > 1)));
+    holder.splice(0, 0, ...[structuredClone(x.items.slice()), structuredClone(x.items.slice())]);
+    const c = structuredClone(x.items.slice());
+    holder.push(...[c]);
+    pairs.unshift(new Pair(structuredClone(x.items.map((e) => e))));
+    byName.set("k", [structuredClone(x.items.slice()), keep]);
   });
   console.log(holder.length, holder);
   rw.read((x) => {
-    holder.fill(x.items.slice(), 0, 2);
+    holder.fill(structuredClone(x.items.slice()), 0, 2);
   });
   rw.read((x) => {
-    holder.fill(x.items.map((e) => e));
+    holder.fill(structuredClone(x.items.map((e) => e)));
   });
   rw.write((x) => {
     x.items = [];

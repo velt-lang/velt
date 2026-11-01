@@ -1,0 +1,35 @@
+// Nested reads returning parts of the inner lock's value: JavaScript gives the outer callback the lock's own arrays (#1525 probe p3):
+// JavaScript would share those parts with code that does not hold the lock. An error that says
+// to store an explicit copy (`structuredClone(…)`) or change the value in `write`.
+class Box {
+  items: number[][] = [[1, 2], [3]];
+  name: string = "b";
+}
+function main() {
+  const a = new RwLock(new Box());
+  const b = new RwLock(new Box());
+  const c = new RwLock(new Box());
+  const r1 = a.read((x) => b.read((y) => y.items.map((e) => e)));
+  r1.push([7]);
+  r1[0].push(8);
+  const r2 = a.read((x) => {
+    const inner = b.read((y) => y.items.slice());
+    inner.push([x.items.length]);
+    return inner;
+  });
+  r2[0].push(9);
+  let fs: (() => number)[] = [];
+  a.read((x) => {
+    const inner = b.read((y) => y.items.map((e) => e.slice()));
+    fs.push(() => inner.length);
+    inner.push([1]);
+  });
+  const deep = a.read((x) => b.read((y) => c.read((z) => z.items.concat(y.items))));
+  deep.push([0]);
+  deep[0].push(5);
+  a.write((q) => { q.items[0].push(100); });
+  b.write((q) => { q.items = []; });
+  console.log(r1, r2, fs[0](), deep);
+  a.read((x) => console.log(x.items));
+  c.read((x) => console.log(x.items));
+}

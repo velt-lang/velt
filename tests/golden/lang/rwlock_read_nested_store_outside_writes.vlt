@@ -23,7 +23,7 @@ function main() {
     const l1: number[][][] = [];
     b.read((y) => {
       c.read((z) => {
-        l1.push(z.items.map((e) => e));
+        l1.push(structuredClone(z.items.map((e) => e)));
         top.push(l1[0]);
       });
       l1[0].push([5]);

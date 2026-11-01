@@ -33,7 +33,7 @@ function main() {
   let outer: Item = new Item(5);
   for (let i = 0; i < 100; i++) {
     rw.read((s) => {
-      outer = s.items[0];
+      outer = new Item(s.items[0].v);
     });
   }
   const last = rw.read((s) => s.items.findLast((i) => i.v == 1));

@@ -1,0 +1,16 @@
+// A read callback storing a concat holding the lock's arrays into the caller's array, then changing it (#1541):
+// JavaScript would share those parts with code that does not hold the lock. An error that says
+// to store an explicit copy (`structuredClone(…)`) or change the value in `write`.
+class Box {
+  items: number[][] = [[1, 2], [3]];
+}
+function main() {
+  const a = new RwLock(new Box());
+  const out: number[][][] = [];
+  a.read((x) => {
+    const c = x.items.concat([[5]]);
+    out.push(c);
+    c.push([8]);
+  });
+  console.log(JSON.stringify(out));
+}
