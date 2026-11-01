@@ -11,7 +11,8 @@ engine and doesn't wrap one: there is no interpreter, no JIT warm-up, no garbage
 single-threaded event loop. Your program is a native binary that uses every core of the machine.
 
 ```ts
-// src/main.ts of a package made with `velt new hello --template api`: `velt run`
+// src/main.vlt of a package made with `velt new hello --template api`
+// (its package.vlt depends on the http-server package): `velt run`
 import { serve } from "http-server";
 
 interface User {
@@ -19,19 +20,17 @@ interface User {
   name: string;
 }
 
-async function main() {
-  const users = new Map<string, User>();
-  users.set("42", { id: "42", name: "Ada" });
+const users = new Map<string, User>();
+users.set("42", { id: "42", name: "Ada" });
 
-  await serve({ port: 8080 }, async (req: Request): Promise<Response> => {
-    const id = new URL(req.url).searchParams.get("id") ?? "";
-    const user = users.get(id);
-    if (user === undefined) {
-      return Response.json({ error: `no user ${id}` }, { status: 404 });
-    }
-    return Response.json(user);
-  });
-}
+await serve({ port: 8080 }, async (req: Request): Promise<Response> => {
+  const id = new URL(req.url).searchParams.get("id") ?? "";
+  const user = users.get(id);
+  if (user === undefined) {
+    return Response.json({ error: `no user ${id}` }, { status: 404 });
+  }
+  return Response.json(user);
+});
 ```
 
 That is a complete HTTP server, and every core answers requests. On the TechEmpower-style suite
@@ -159,21 +158,19 @@ function sumOfSquares(from: i64, to: i64): i64 {
   return total;
 }
 
-async function main() {
-  try {
-    console.log(findUser("7"));
-  } catch (e) {                     // e: NotFound, never `unknown`
-    console.log(e.message);
-  }
-  console.log(fnv1a("velt"));
-
-  // Four tasks on four cores; Promise.all collects the results.
-  const parts: Promise<i64>[] = [];
-  for (let c = 0; c < 4; c++) {
-    parts.push(spawn(async () => sumOfSquares(c * 1000000, (c + 1) * 1000000)));
-  }
-  console.log((await Promise.all(parts)).reduce((a, b) => a + b, 0));
+try {
+  console.log(findUser("7"));
+} catch (e) {                     // e: NotFound, never `unknown`
+  console.log(e.message);
 }
+console.log(fnv1a("velt"));
+
+// Four tasks on four cores; Promise.all collects the results.
+const parts: Promise<i64>[] = [];
+for (let c = 0; c < 4; c++) {
+  parts.push(spawn(async () => sumOfSquares(c * 1000000, (c + 1) * 1000000)));
+}
+console.log((await Promise.all(parts)).reduce((a, b) => a + b, 0));
 ```
 
 - **Typed errors.** `catch (e)` knows exactly what its `try` block can throw. Errors compile to
@@ -192,14 +189,15 @@ For the full list, and the few places where Velt deliberately differs from TypeS
 ## Any Rust crate, a few lines away
 
 Velt's goal is an ecosystem written in Velt itself, because Velt code is what the compiler
-optimizes best, and the standard library is moving that way: the Redis client and the CSV parser,
-for example, are already Velt code. A young language can't have a library for everything yet,
+optimizes best, and the libraries are moving that way: the HTTP server (the
+[`http-server`](packages/http-server) package), the CSV parser and a read-only SQLite engine, for
+example, are already Velt code. A young language can't have a library for everything yet,
 though, so until one exists in Velt you don't have to wait: **any Velt package can include a Rust crate**,
 which puts all of crates.io within reach. Need image processing, compression, PDF generation or
 ML inference today? Wrap the crate that already does it, typically in a few dozen lines, and
 replace it with a Velt version whenever one arrives; your users' code doesn't change. The SQLite driver in
-[`packages/sqlite`](packages/sqlite) is a complete example: 160 lines of Rust around `rusqlite`,
-and 110 lines of Velt.
+[`packages/sqlite`](packages/sqlite) is a complete example: Rust around `rusqlite` in
+`native/`, and an API close to better-sqlite3 in Velt.
 
 Here is zstd compression as a package, end to end. Add the crate to the package's
 `native/Cargo.toml`, next to `velt_native`:
@@ -242,14 +240,15 @@ export async function compress(data: u8[], level: i32 = 3): Promise<u8[], ZstdEr
 }
 ```
 
-Programs then use it like any other package: `velt add zstd`, then
-`const packed = await compress(bytes);`.
+Programs then use it like any other package (`velt add zstd` from a registry, or a git or path
+dependency in `package.vlt`), then `const packed = await compress(bytes);`.
 
 - **Checked at compile time.** `velt` compares every `declare` with what the library actually
   exports, so a wrong name or type is a compile error, not a crash at run time.
-- **Your users never need Rust.** `velt native build` and `velt publish` ship a prebuilt library
-  for each platform. `velt add` downloads the right one and verifies its checksum against the
-  lockfile.
+- **Your users never need Rust** when you publish to a registry (`velt registry` serves one;
+  there is no public registry yet). `velt native build` and `velt publish` ship a prebuilt
+  library for each platform, and `velt add` downloads the right one and verifies its checksum
+  against the lockfile. A git or path dependency builds the crate with cargo instead.
 - **It works everywhere a Velt program does.** `velt run`, `velt build --release` (still one
   self-contained executable) and `velt dev` all work as usual, and your Velt edits keep
   hot-swapping.
@@ -306,8 +305,9 @@ Rust, though it stays well ahead of Node. The remaining gaps are tracked in
   [a tour of Velt](https://veltlang.com/docs/book/tour/), [Velt for TypeScript developers](https://veltlang.com/docs/book/ts-developers/),
   and guides for HTTP servers, CLIs, async, errors, memory, packages, testing and hot reload.
 - [The Reference](https://veltlang.com/docs/reference/): the precise language rules.
-- [The standard library](https://veltlang.com/docs/std/): files, HTTP, WebSockets, JSON, regex, dates,
-  crypto, collections, databases, and more.
+- [The standard library](https://veltlang.com/docs/std/): files, `fetch`, WebSockets, JSON, regex, dates,
+  crypto, collections, and more. The HTTP server and the SQLite, PostgreSQL and Redis drivers
+  are [packages](packages).
 - [Tooling](https://veltlang.com/docs/tooling/): the `velt` command, `velt dev`, packages, formatter,
   editors, debugging, WebAssembly, platforms.
 - [Internals](docs/internals/README.md): the compiler pipeline and design notes.
