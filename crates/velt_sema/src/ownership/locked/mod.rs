@@ -72,6 +72,7 @@ pub(crate) fn check_locked(cx: &mut Ctx) -> WeakCrossings {
     }
     let callbacks = found.callbacks;
     let mutex_literals = found.mutex_literals;
+    let reads = read_callbacks(cx, &mut res, &found.reads);
     let mut seen_named = FxHashSet::default();
     for &(g, span) in &found.named {
         if seen_named.insert((g, span)) {
@@ -97,12 +98,38 @@ pub(crate) fn check_locked(cx: &mut Ctx) -> WeakCrossings {
             &summaries,
             &mut res,
             (c, direct),
-            mutex_literals.contains(&c),
+            (mutex_literals.contains(&c), reads.get(&c).copied()),
             &mut reported,
             &mut weak,
         );
     }
     weak
+}
+
+/// The `read` callbacks among `reads` (callback, the function its `read` call is in), each with
+/// whether it is nested in another `read` callback: its `read` call is in one, or in a closure
+/// made in one.
+fn read_callbacks(
+    cx: &mut Ctx,
+    res: &mut values::Resolver,
+    reads: &[(DefId, DefId)],
+) -> FxHashMap<DefId, bool> {
+    let all: FxHashSet<DefId> = reads.iter().map(|r| r.0).collect();
+    let mut out = FxHashMap::default();
+    for &(c, d) in reads {
+        let mut at = Some(d);
+        let mut nested = false;
+        for _ in 0..64 {
+            let Some(x) = at else { break };
+            if all.contains(&x) {
+                nested = true;
+                break;
+            }
+            at = res.parent(cx, x);
+        }
+        *out.entry(c).or_insert(false) |= nested;
+    }
+    out
 }
 
 /// A named function passed to `with` (`m.with(fire)`), checked like `(v) => fire(v)`: it has
@@ -236,9 +263,10 @@ fn crossings(
     bodies: &mut [(DefId, FnDef)],
     resolved: FxHashSet<Span>,
     named: FxHashMap<Span, Vec<DefId>>,
-    moved: &FxHashSet<crate::hir::LocalId>,
+    (moved, read): (&FxHashSet<crate::hir::LocalId>, Option<bool>),
 ) -> Crossings {
     let mut r = regions::Regions::new(c, bodies, moved);
+    r.read = read;
     r.resolved = resolved;
     r.named = named;
     loop {
@@ -271,6 +299,9 @@ fn crossings(
             inward.extend(i);
             stored_fns.extend(fns);
         }
+        if let (Some(true), Some((_, f))) = (read, bodies.iter().find(|(d, _)| *d == c)) {
+            unfixable.extend(read_results(cx, &r, c, f));
+        }
     }
     Crossings {
         made,
@@ -288,7 +319,7 @@ fn check_callback(
     s: &summary::Summaries,
     res: &mut values::Resolver,
     (c, direct): (DefId, bool),
-    at_mutex: bool,
+    (at_mutex, read): (bool, Option<bool>),
     reported: &mut FxHashSet<Span>,
     weak: &mut WeakCrossings,
 ) {
@@ -299,7 +330,7 @@ fn check_callback(
     };
     let (mut bodies, resolved, named) = take_bodies(cx, res, c);
     weak_across(cx, (c, direct), &bodies, reported, weak);
-    let found = crossings(cx, s, c, &mut bodies, resolved, named, &moved);
+    let found = crossings(cx, s, c, &mut bodies, resolved, named, (&moved, read));
     for (d, f) in bodies {
         cx.defs[d.0 as usize] = Some(Def::Fn(f));
     }
@@ -417,20 +448,8 @@ fn resource_results(
     c: DefId,
     f: &FnDef,
 ) -> Vec<stores::Unfixable> {
-    struct Results(Vec<Expr>);
-    impl VisitMut for Results {
-        fn stmt(&mut self, s: &mut crate::hir::Stmt) {
-            if let crate::hir::StmtKind::Return(Some(e)) = &s.kind {
-                self.0.push(e.clone());
-            }
-        }
-    }
-    let mut body = f.body.block.clone();
-    let mut found = Results(vec![]);
-    visit::block(&mut body, &mut found);
-    found.0.extend(f.body.block.value.as_deref().cloned());
     let mut out = vec![];
-    for e in found.0 {
+    for e in results(f) {
         let mut x = &e;
         while let E::Call {
             callee: Callee::Intrinsic(crate::hir::Intrinsic::Share),
@@ -448,6 +467,37 @@ fn resource_results(
                 span: e.span,
                 kind: stores::Cross::Resource,
             });
+        }
+    }
+    out
+}
+
+/// What body `f` returns: its `return`s' values and its block's value.
+fn results(f: &FnDef) -> Vec<Expr> {
+    struct Results(Vec<Expr>);
+    impl VisitMut for Results {
+        fn stmt(&mut self, s: &mut crate::hir::Stmt) {
+            if let crate::hir::StmtKind::Return(Some(e)) = &s.kind {
+                self.0.push(e.clone());
+            }
+        }
+    }
+    let mut body = f.body.block.clone();
+    let mut found = Results(vec![]);
+    visit::block(&mut body, &mut found);
+    found.0.extend(f.body.block.value.as_deref().cloned());
+    found.0
+}
+
+/// The results of a `read` callback `c` nested in another that hold a part of the value it
+/// reads (`stores::read_part`): JavaScript gives the outer callback that part itself.
+fn read_results(cx: &mut Ctx, r: &regions::Regions, c: DefId, f: &FnDef) -> Vec<stores::Unfixable> {
+    let mut out = vec![];
+    for e in results(f) {
+        let bits = r.mentions(cx, c, &e);
+        if stores::read_part(cx, r, c, &e, (regions::OUT, bits)) {
+            let kind = stores::Cross::ReadPart { returned: true };
+            out.push(stores::Unfixable { span: e.span, kind });
         }
     }
     out
@@ -569,6 +619,16 @@ fn unfixable_error(cx: &mut Ctx, u: stores::Unfixable) {
             "the function might store a part of one in the other, shared by threads without the lock; call a function or a closure written here (`const f = (s) => ...`), or pass a copy (`x.clone()`)",
         ),
         stores::Cross::ResourceInPlace(_) => return,
+        stores::Cross::ReadPart { returned } => {
+            let what = match returned {
+                true => "this `read`, nested in another, returns",
+                false => "this stores",
+            };
+            (
+                format!("{what} a part of the value an `RwLock` holds outside the `read` callback, where JavaScript would share it"),
+                "Velt cannot share the lock's own objects with code that does not hold the lock, and a silent copy would not see later changes on either side; store a copy you make explicitly (`structuredClone(…)`, or a new object made from the part's fields), or make the change inside `write`",
+            )
+        }
         stores::Cross::Resource => (
             "this would copy an object that owns a resource without `clone()` across the `with` lock".to_string(),
             "a part of the locked value stored outside it, returned from `with`, or kept by a promise made here must be copied; give the resource type a `clone()` method, or use it inside the callback",

@@ -45,6 +45,17 @@ pub(crate) fn fresh_callees(h: &Expr) -> Option<Vec<DefId>> {
     }
 }
 
+/// Is `h` a value nothing else references yet: a literal, `new`, a builtin copy, or a call of a
+/// function that returns fresh values (`slice()`, `map`, `concat`)? Only the value itself is
+/// new: what it holds may be shared.
+pub(crate) fn fresh_value(cx: &Ctx, h: &Expr) -> bool {
+    let Some(cs) = fresh_callees(h) else {
+        return false;
+    };
+    let fresh = fresh_functions(cx, cs.iter().copied());
+    cs.iter().all(|c| fresh.contains(c))
+}
+
 /// Builtins whose result is a new value.
 fn fresh_intrinsic(i: Intrinsic) -> bool {
     matches!(i, Intrinsic::ArrayWithCapacity | Intrinsic::Clone)

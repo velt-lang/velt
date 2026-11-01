@@ -74,6 +74,9 @@ pub(super) enum Cross {
     /// An outside object of this type owning a resource without `clone()`, stored into the
     /// value from a field or an element (it stays there too).
     ResourceInPlace(crate::hir::TyId),
+    /// A part of the value an `RwLock`'s `read` callback reads, stored outside the callback
+    /// (`returned`: returned by a `read` nested in another): JavaScript would share it.
+    ReadPart { returned: bool },
 }
 
 struct Stores<'a, 'r, 's, 'm> {
@@ -129,6 +132,11 @@ impl Stores<'_, '_, '_, '_> {
             }
         } else if self.rewrite {
             let span = value.span;
+            if read_part(self.cx, self.r, self.def, value, (dest, b)) {
+                let kind = Cross::ReadPart { returned: false };
+                self.unfixable.push(Unfixable { span, kind });
+                return;
+            }
             if let Err(kind) = self.transfer_owned(value, dest) {
                 self.unfixable.push(Unfixable { span, kind });
             }
@@ -174,6 +182,8 @@ impl Stores<'_, '_, '_, '_> {
         // objects (velt_vir call.rs `changes_captured`): what may be the value's goes in as a
         // copy, whether or not the method stores it.
         let mut flows = flows;
+        // The flows that store (the others give the method a copy it only reads).
+        let stores = flows.len();
         if let (Callee::Def(g, _), Some(recv)) = (callee, args.first()) {
             let method = matches!(
                 &self.cx.defs[g.0 as usize],
@@ -183,7 +193,7 @@ impl Stores<'_, '_, '_, '_> {
                 flows.extend((1..args.len()).map(|a| (a, Some(0))));
             }
         }
-        for (a, b) in flows {
+        for (k, (a, b)) in flows.into_iter().enumerate() {
             let fn_value = match (b, callee) {
                 (None, Callee::Indirect(c)) => Some(c.span),
                 (Some(b), _) if is_fn_value(self.cx, &args[b]) => Some(args[b].span),
@@ -218,6 +228,12 @@ impl Stores<'_, '_, '_, '_> {
                 self.note_stored_fn(&args[a], dest);
             }
             if !crosses(dest, bits[a]) || !self.rewrite || !done.insert(a) {
+                continue;
+            }
+            if k < stores && read_part(self.cx, self.r, self.def, &args[a], (dest, bits[a])) {
+                let kind = Cross::ReadPart { returned: false };
+                let span = args[a].span;
+                self.unfixable.push(Unfixable { span, kind });
                 continue;
             }
             if let Err(kind) = self.transfer_arg(&mut args[a], dest) {
@@ -353,6 +369,52 @@ fn is_handle(cx: &mut Ctx, s: &Summaries, t: crate::hir::TyId, depth: u32) -> bo
             })
         }
         _ => false,
+    }
+}
+
+/// Does storing `e` (reaching `bits`) into a place reaching `dest`, in an `RwLock`'s `read`
+/// callback, put a part of the value it reads outside the callback? JavaScript would share that
+/// part, while Velt copies it, so changes on either side would not show on the other: an error,
+/// unless the value is an explicit copy (`structuredClone(…)`, `.clone()`) or a new object that
+/// holds nothing that can be shared (`s.items.slice()` of a `number[]`).
+pub(super) fn read_part(
+    cx: &mut Ctx,
+    r: &Regions,
+    d: DefId,
+    e: &Expr,
+    (dest, bits): (u8, u8),
+) -> bool {
+    r.read.is_some() && dest & OUT != 0 && bits & IN != 0 && holds_part(cx, r, d, e)
+}
+
+/// May `e` (in body `d`) be, or hold, a part of the value the callback reads (`read_part`)?
+fn holds_part(cx: &mut Ctx, r: &Regions, d: DefId, e: &Expr) -> bool {
+    if !cx.is_shared_value(e.ty) || cx.is_string_value(e.ty) || r.mentions(cx, d, e) & IN == 0 {
+        return false;
+    }
+    let mut x = unshared(e);
+    while let E::Upcast(inner) | E::WrapSome(inner) = &x.kind {
+        x = unshared(inner);
+    }
+    match &x.kind {
+        E::Call {
+            callee: Callee::Intrinsic(Intrinsic::Clone),
+            ..
+        } => false,
+        // Transferred by the check of a `read` nested in this one (what it does not report).
+        E::Call {
+            callee: Callee::Intrinsic(Intrinsic::Transfer),
+            args,
+        } if args.len() == 1 => holds_part(cx, r, d, &args[0]),
+        E::Call {
+            callee: Callee::Def(g, _),
+            ..
+        } if Some(*g) == cx.prelude_fn("structuredClone") => false,
+        // A new array or object holds what it is made of.
+        E::ArrayLit(xs) | E::Tuple(xs) | E::New { args: xs, .. } | E::AdtLit { fields: xs, .. } => {
+            xs.iter().any(|y| holds_part(cx, r, d, y))
+        }
+        _ => !(crate::fresh_returns::fresh_value(cx, x) && !holds_shared(cx, x.ty)),
     }
 }
 

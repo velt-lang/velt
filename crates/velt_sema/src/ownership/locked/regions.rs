@@ -49,6 +49,8 @@ pub(super) struct Regions {
     pub(super) named: FxHashMap<Span, Vec<DefId>>,
     /// Set when [`Regions::add`] grew a set (the fixpoint goes on).
     pub(super) changed: bool,
+    /// The callback is an `RwLock`'s `read` callback (`Some(true)`: one nested in another's).
+    pub(super) read: Option<bool>,
 }
 
 impl Regions {
@@ -66,6 +68,7 @@ impl Regions {
             callback_captures: FxHashMap::default(),
             callback: c,
             changed: false,
+            read: None,
         };
         let Sites { parent, passed, .. } = closure_sites(bodies);
         for (d, f) in bodies.iter() {
@@ -179,6 +182,16 @@ pub(super) fn reach(
         E::Match { arms, .. } => arms
             .iter()
             .fold(0, |b, a| b | reach(cx, &a.body, local, captured)),
+        // A copy of anything (`x.clone()`, `structuredClone(x)`) is a new value holding nothing
+        // of either side.
+        E::Call {
+            callee: Callee::Intrinsic(crate::hir::Intrinsic::Clone),
+            ..
+        } => 0,
+        E::Call {
+            callee: Callee::Def(g, _),
+            ..
+        } if Some(*g) == cx.prelude_fn("structuredClone") => 0,
         _ => {
             let mut kids = vec![];
             children(e, &mut kids);
