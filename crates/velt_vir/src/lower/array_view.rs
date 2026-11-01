@@ -8,7 +8,9 @@
 //! union such as `JSXChild`). They are boxed. A view is a box whose header is
 //! `{ data: view | 1, len: 0, cap: 0 }`, `view` the hook `ArrayView<U>`: the original
 //! array as an `any` (`__target`) and a mirror `U[]` of its elements (`__seen`). No pointer is
-//! tagged, so retain and release are those of any box. On a view type:
+//! tagged, so retain and release are those of any box. A plain array's data pointer is never odd
+//! (#1963): buffers come from the allocator, and the runtime's empty arrays have an even dangling
+//! pointer (`velt_rt::bytes::empty_data`; Rust's own for bytes is 1). On a view type:
 //!
 //! | operation | `data & 1` clear | `data & 1` set (a view) |
 //! |---|---|---|
