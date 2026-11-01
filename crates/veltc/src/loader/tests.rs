@@ -475,8 +475,8 @@ fn windows_std_specifiers_cannot_leave_the_std_root() {
         .to_string()
         .replace('\\', "/");
     for spec in [
-        r"velt:..\evil".to_string(),
-        r"velt:..\std\..\evil".to_string(),
+        r"velt/..\evil".to_string(),
+        r"velt/..\std\..\evil".to_string(),
         format!("velt/{absolute}"),
     ] {
         // In the source text a `\` is written `\\`.

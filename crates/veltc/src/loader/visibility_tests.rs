@@ -306,3 +306,50 @@ fn only_the_test_harness_imports_the_runners_hooks() {
     let (_, d, _) = load(&root, opts(false));
     assert_eq!(messages(&d), ["`velt/test/run` is internal to `velt/test`"]);
 }
+
+/// The generator host of a std generator is a virtual root placed in std, loaded as std
+/// (`std_root_as_std`): it may import the generator, an internal std file. The root's file does
+/// not exist, so its key is its directory's canonical path joined with its name: on Windows a
+/// canonical path is verbatim (`\?\C:\…`), and a std root reached through a link canonicalizes
+/// to its target, where the plain absolute path of the virtual file matched neither.
+fn host_in_std(std_root: PathBuf, host_dir: &Path) -> Vec<String> {
+    let (l, d, _) = load(
+        &host_dir.join("__velt_generate_host.vlt"),
+        LoadOptions {
+            std_root: Some(std_root),
+            std_root_as_std: true,
+            root_source: Some(
+                "import { one } from \"velt/x/inner\";\nfunction main() { one(); }\n".into(),
+            ),
+            ..Default::default()
+        },
+    );
+    assert!(
+        l.modules.iter().any(|m| m.path == "std/x/inner"),
+        "{:?}",
+        paths(&l)
+    );
+    messages(&d)
+}
+
+#[test]
+fn a_virtual_root_in_std_is_std() {
+    let t = Tree::new();
+    let std = std_with_a_test(&t);
+    // The key of the virtual root agrees with its directory's, as std's own key does.
+    let virtual_file = std.join("__velt_generate_host.vlt");
+    assert!(file_key(&virtual_file).starts_with(file_key(&std)));
+    assert_eq!(host_in_std(std.clone(), &std), Vec::<String>::new());
+}
+
+/// The same with the std root named through a link (`std` → a directory elsewhere), which the
+/// keys resolve as Windows' verbatim prefix differs: the host placed beside it is std all the same.
+#[cfg(unix)]
+#[test]
+fn a_virtual_root_in_a_linked_std_is_std() {
+    let t = Tree::new();
+    let real = std_with_a_test(&t);
+    let link = t.path("linked-std");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    assert_eq!(host_in_std(link.clone(), &link), Vec::<String>::new());
+}

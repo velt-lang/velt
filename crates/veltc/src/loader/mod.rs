@@ -748,9 +748,20 @@ fn shown_in_package(file: &Path) -> String {
     }
 }
 
-/// Identity of a file for deduplication (canonical path when it exists).
+/// Identity of a file for deduplication (canonical path when it exists). A file that does not
+/// exist (a virtual root: the generator host beside std's modules, `velt test`'s harness) is
+/// named below its directory's canonical path, so it compares with the keys of real files and
+/// of the std root: on Windows a canonical path is a verbatim one (`\\?\C:\…`), and on any
+/// system the directory may be reached through a link.
 fn file_key(path: &Path) -> PathBuf {
-    std::fs::canonicalize(path).unwrap_or_else(|_| vpm::relpath::absolute(path))
+    if let Ok(p) = std::fs::canonicalize(path) {
+        return p;
+    }
+    let abs = vpm::relpath::absolute(path);
+    match (abs.parent(), abs.file_name()) {
+        (Some(dir), Some(name)) => std::fs::canonicalize(dir).map_or(abs.clone(), |d| d.join(name)),
+        _ => abs,
+    }
 }
 
 /// How a message names `file`, a candidate for an import in directory `dir`: relative to `dir`
