@@ -117,17 +117,3 @@ can't be used there).
 
 The package uses only public std APIs: velt/db (`decodeRows`, `bindParams`, `readRows`),
 velt/native (`IoResult`), velt/encoding (`utf8ByteAt`, `utf8Length`), velt/fs.
-
-## From the prototype (0.1)
-
-The first `packages/sqlite` (0.1.0) was a prototype of native packages with a smaller API of its
-own. 0.2 is the standard library's former `velt/sqlite` instead, and the prototype's API is gone:
-
-| 0.1 | 0.2 |
-|---|---|
-| `new Database(path)` | `open(path, opts)` (or `Database.open`) |
-| `db.query<T>(sql, "[1, \"two\"]")` (parameters as JSON text) | `db.prepare(sql).allWith<T>([1, "two"])` (parameters as values) |
-| `db.exec(sql)` | `db.exec(sql)` |
-| `db.ref.query<T>(…)` (async, on the blocking pool) | `spawn(() => db.prepare(sql).all<T>())`: queries are synchronous |
-| `version()` | `db.prepare("SELECT sqlite_version() AS v").get<V>()` |
-| `Database` disposed with `using` | `db.close()`; a `Statement` releases itself when dropped |
