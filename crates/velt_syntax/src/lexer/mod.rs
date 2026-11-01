@@ -354,12 +354,7 @@ impl<'a> Lexer<'a> {
                 _ if self.at_unicode_line_break() => self.pos += 3,
                 b'/' if self.at(1) == b'/' => {
                     let start = self.pos;
-                    while self.pos < self.src.len()
-                        && self.src[self.pos] != b'\n'
-                        && !self.at_unicode_line_break()
-                    {
-                        self.pos += 1;
-                    }
+                    self.line_comment_end();
                     self.comment_done(start);
                 }
                 b'/' if self.at(1) == b'*' => {
@@ -368,6 +363,28 @@ impl<'a> Lexer<'a> {
                     self.comment_done(start);
                 }
                 _ => return,
+            }
+        }
+    }
+
+    /// Moves to the end of the line comment at `self.pos`: the next `\n`, U+2028 or U+2029
+    /// (whose UTF-8 starts with `E2`), or the end of the source. Comments are much of the
+    /// standard library's source, so the scan looks only for those two bytes.
+    fn line_comment_end(&mut self) {
+        loop {
+            let rest = &self.src[self.pos..];
+            match rest.iter().position(|&b| b == b'\n' || b == 0xE2) {
+                None => {
+                    self.pos = self.src.len();
+                    return;
+                }
+                Some(n) => {
+                    self.pos += n;
+                    if self.src[self.pos] == b'\n' || self.at_unicode_line_break() {
+                        return;
+                    }
+                    self.pos += 1;
+                }
             }
         }
     }
@@ -387,11 +404,16 @@ impl<'a> Lexer<'a> {
         let start = self.pos;
         self.pos += 2;
         loop {
-            if self.pos >= self.src.len() {
-                self.error("unterminated block comment", start, start + 2);
-                return;
+            // The next `*`: only there can the comment end.
+            match self.src[self.pos..].iter().position(|&b| b == b'*') {
+                None => {
+                    self.pos = self.src.len();
+                    self.error("unterminated block comment", start, start + 2);
+                    return;
+                }
+                Some(n) => self.pos += n,
             }
-            if self.src[self.pos] == b'*' && self.at(1) == b'/' {
+            if self.at(1) == b'/' {
                 self.pos += 2;
                 return;
             }

@@ -165,6 +165,10 @@ impl Lexer<'_> {
             return;
         }
         let comment = &self.text[start..self.pos];
+        // Most comments have no `@`: no substring search for them.
+        if !comment.as_bytes().contains(&b'@') {
+            return;
+        }
         let Some(at) = comment.find("@jsxImportSource") else {
             return;
         };
