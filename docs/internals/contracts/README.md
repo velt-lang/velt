@@ -138,8 +138,10 @@ Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exi
 - `Intrinsic::Math(MathOp)` (`velt_vir::math`): means exactly the call of the runtime function
   `MathOp::symbol`, which the program must declare (checked by `verify`); backends emit it
   inline as they do the call, and call that function for `pow` and ToInt32's cold path.
-  `velt_opt`'s `constfold` evaluates it on constants (`MathOp::eval`); the interpreters run it
-  as the call.
+  Lowering emits every call of a math operation's runtime function in this form (`call` in
+  `lower/cfg.rs`), so passes see no math call. `velt_opt`'s `constfold` evaluates it on
+  constants (`MathOp::eval`) and `numrep` narrows through it; the interpreters run it as the
+  call.
 
 ## Parameter attributes (additive VIR extension)
 - `vir::Function::param_attrs: Vec<ParamAttrs>` — empty (no information) or one entry per param
