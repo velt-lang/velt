@@ -4,7 +4,9 @@ import { HttpRequest, HttpResponse, serveHttp } from "../src/lib";
 import { IoError } from "velt/io";
 import { connect, connectTls, TcpStream } from "velt/net";
 import { platform } from "velt/os";
+import { timeout } from "velt/task";
 import { describe, expect, it } from "velt/test";
+import { arrivals, gate, hold, open, shut } from "./_gate";
 import { delay } from "velt/time";
 import { TEST_CA, TEST_CERT, TEST_KEY } from "./_tls";
 
@@ -147,36 +149,39 @@ describe("a burst of connects", () => {
 
 describe("velt/net/http's idle timeout", () => {
   // A kept-alive connection closes after `idleTimeout` without a request, counted from the end
-  // of the last one: requests closer together than that keep it open as long as they come.
+  // of the last one; one with a request in flight is not idle, however long that request takes.
   it("closes a connection idle for idleTimeout, and not one kept busy", async () => {
+    const g = gate();
     const server = await serveHttp({ port: 0, idleTimeout: 300 }, async (
       req: HttpRequest,
       res: HttpResponse,
     ) => {
+      if (req.pathIs("/held")) {
+        await hold(g);
+      }
       res.send("ok");
     });
+    const c = await connect(`127.0.0.1:${server.port}`);
     try {
-      const c = await connect(`127.0.0.1:${server.port}`);
-      // 8 requests 100 ms apart: 700 ms in all, more than twice the timeout.
-      let answers = 0;
-      for (let i = 0; i < 8; i++) {
-        await c.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
-        const got = await c.readString();
-        if (got.startsWith("HTTP/1.1 200")) {
-          answers++;
-        }
-        await delay(100);
-      }
-      expect(answers).toBe(8);
-      // Then idle: closed after the timeout (counted from the last request), not before.
+      // Busy: a request held for three times the timeout, however long that really takes; it
+      // is answered on the same connection.
+      await c.write("GET /held HTTP/1.1\r\nHost: x\r\n\r\n");
+      await timeout(arrivals(g), 5000);
+      await delay(900);
+      open(g);
+      expect((await timeout(c.readString(), 5000)).startsWith("HTTP/1.1 200")).toBe(true);
+      // And the next one too, sent at once.
+      await c.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+      expect((await timeout(c.readString(), 5000)).startsWith("HTTP/1.1 200")).toBe(true);
+      // Then idle: closed no sooner than the timeout after the last response (a little less as
+      // measured here, from after it arrived), and closed.
       const idleFrom = Date.now();
-      expect(await readAll(c)).toBe("");
-      const waited = Date.now() - idleFrom;
-      expect(waited >= 150).toBe(true);
-      expect(waited < 3000).toBe(true);
-      c.close();
+      expect(await timeout(readAll(c), 10000)).toBe("");
+      expect(Date.now() - idleFrom >= 250).toBe(true);
     } finally {
+      c.close();
       server.close();
+      shut(g);
     }
   });
 });

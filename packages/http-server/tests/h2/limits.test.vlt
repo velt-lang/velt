@@ -2,13 +2,13 @@
 // handlers of reset streams too), rapid reset (CVE-2023-44487), empty DATA frames, a client
 // reset aborting the handler's signal, and a graceful stop.
 import { timeout } from "velt/task";
-import { describe, expect, it } from "velt/test";
+import { afterEach, describe, expect, it } from "velt/test";
 import { delay } from "velt/time";
 import { h2Options } from "../../src/h2/options";
 import { HttpRequest } from "../../src/request";
 import { HttpResponse } from "../../src/response";
 import { arrivals, arrive, Gate, gate, hold, nextArrival, open, release, shut } from "../_gate";
-import { bytes, Client, endOf, goaway, startServer, TestServer } from "./_h2";
+import { bytes, Client, closeAll, endOf, goaway, startServer, TestServer } from "./_h2";
 
 /// Sends GETs on fresh streams from `id` on until one is answered (not refused): a handler's
 /// slot is given back just after it returns, so the first try may still be refused.
@@ -38,6 +38,9 @@ async function stopWhileHeld(server: TestServer, c: Client, g: Gate): Promise<st
 }
 
 describe("HTTP/2 limits", () => {
+  // A test that fails before its own closing leaves no server or client running.
+  afterEach(() => closeAll());
+
   it("refuses streams past the limit, counting handlers still running after a reset", async () => {
     const opts = h2Options();
     opts.maxConcurrentStreams = 2;
@@ -396,29 +399,35 @@ describe("HTTP/2 limits", () => {
   it("sends GOAWAY to a connection idle for idleTimeout, not to one kept busy", async () => {
     const opts = h2Options();
     opts.idleTimeout = 300;
+    const g = gate();
     const server = await startServer(
       async (req: HttpRequest, res: HttpResponse) => {
+        await hold(g);
         res.send("ok");
       },
       opts,
     );
     const c = await Client.open(server.port);
-    // 8 requests 100 ms apart: more than twice the timeout in all.
-    let id: i64 = 1;
-    for (let i = 0; i < 8; i++) {
-      c.get(id, "/");
+    try {
+      // Busy: a stream open (its handler held) for three times the timeout, however long that
+      // really takes. The server still answers a PING, and has sent no GOAWAY.
+      c.get(1, "/");
       await c.flush();
-      const sid = id;
-      expect(await timeout(c.until(endOf(sid)), 5000)).toBe(
-        `HEADERS ${sid} :status=200\nDATA ${sid} es 2:ok`,
-      );
-      id += 2;
-      await delay(100);
+      await timeout(arrivals(g), 5000);
+      await delay(900);
+      c.frame(6, 0, 0, [0, 0, 0, 0, 0, 0, 0, 1]);
+      await c.flush();
+      expect(await timeout(c.until((f) => f.type == 6), 5000)).toBe("");
+      open(g);
+      expect(await timeout(c.until(endOf(1)), 5000)).toBe("HEADERS 1 :status=200\nDATA 1 es 2:ok");
+      // Idle from the end of the response: the GOAWAY comes no sooner than the timeout (a
+      // little less as measured here, from after the response arrived), and comes.
+      const idleFrom = Date.now();
+      expect(await timeout(c.until(goaway), 10000)).toBe("GOAWAY 1 NO_ERROR");
+      expect(Date.now() - idleFrom >= 250).toBe(true);
+      expect(await timeout(c.until((f) => false), 10000)).toBe("EOF");
+    } finally {
+      shut(g);
     }
-    const idleFrom = Date.now();
-    expect(await timeout(c.until((f) => false), 5000)).toBe(`GOAWAY ${id - 2} NO_ERROR\nEOF`);
-    expect(Date.now() - idleFrom >= 150).toBe(true);
-    c.close();
-    server.close();
   });
 });
