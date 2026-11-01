@@ -38,6 +38,7 @@ mod any_has_builtin;
 mod any_iface;
 mod any_keys;
 mod any_member;
+mod any_not_fn;
 mod any_number;
 mod any_object_fill;
 mod any_proxy;
@@ -457,6 +458,8 @@ struct Cx<'h> {
     fn_writes: Option<write_effects::FnWrites>,
     /// The prelude's `Error` class, once looked up (js_string.rs).
     prelude_error: Option<Option<hir::DefId>>,
+    /// The prelude's `TypeError` class, once looked up (any_not_fn.rs).
+    prelude_type_error: Option<Option<hir::DefId>>,
     /// The prelude's top-level `await` mark and what it forwards to (async_fn/suspend.rs).
     tla_marks: Option<[Option<hir::DefId>; 2]>,
     static_map: FxHashMap<(Vec<u8>, u32), StaticId>,
@@ -725,9 +728,14 @@ struct FnLower<'c, 'h> {
     /// The body of a function of a user module or of std/proxy: its operations on `any` throw
     /// what a proxy's trap throws, as velt_sema counts them (proxy_throws.rs).
     proxy_routes: bool,
+    /// While a `finally` block is lowered, the number of scopes outside it: a `try` among them
+    /// does not enclose its code (any_not_fn.rs).
+    finally_floor: usize,
     /// The held bases of the assignment target being formed, by the address of their HIR
     /// expression (index_order.rs `target_base`).
     held_targets: Vec<(usize, Operand)>,
+    /// The body of a function of a user module (not the standard library's).
+    user_body: bool,
     /// How many objects are being built from a record's or object's members around this
     /// conversion (`any_record_fill`, `any_object_fill`): a member is filled the same way up to
     /// `any_record::FILL_DEPTH` deep, so a type that contains itself ends.

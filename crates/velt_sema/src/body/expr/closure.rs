@@ -108,7 +108,7 @@ impl FnCx<'_, '_> {
 
     /// The types of the locals (of this function and of those it is nested in) named like a
     /// value arrow `e` takes from its surroundings, or `this`.
-    fn named_local_types(&mut self, e: &ast::Expr) -> Vec<TyId> {
+    pub(super) fn named_local_types(&mut self, e: &ast::Expr) -> Vec<TyId> {
         let free = self.arrow_scans.free_names(e);
         let frames = self.outer.iter().chain(std::iter::once(&self.f));
         frames

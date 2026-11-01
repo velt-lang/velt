@@ -340,12 +340,14 @@ impl FnLower<'_, '_> {
         self.call_rt(Rt::Panic, vec![allp], None);
     }
 
-    /// After a slot call: a `TypeError` for a status other than `ST_OK`.
+    /// After a slot call: a `TypeError` for a status other than `ST_OK`. `not_fn`: the callee's
+    /// text for `ST_NOT_FN`, and whether the error is thrown where a `catch` of this function
+    /// takes it (a call through `any` in user code, any_not_fn.rs) rather than a panic.
     pub(super) fn any_status_check(
         &mut self,
         st: Operand,
         unsupported: (&str, Option<&Operand>, &str),
-        not_fn: Option<&str>,
+        not_fn: Option<(&str, bool)>,
     ) {
         let ok = self.rvalue_temp(
             Ty::Bool,
@@ -354,7 +356,7 @@ impl FnLower<'_, '_> {
         let (good, bad) = (self.new_block(), self.new_block());
         self.branch(ok, good, bad);
         self.switch_to(bad);
-        if let Some(text) = not_fn {
+        if let Some((text, thrown)) = not_fn {
             let nf = self.rvalue_temp(
                 Ty::Bool,
                 Rvalue::Binary(BinOp::Eq, st, cint(ST_NOT_FN, Ty::U8)),
@@ -362,8 +364,13 @@ impl FnLower<'_, '_> {
             let (yes, no) = (self.new_block(), self.new_block());
             self.branch(nf, yes, no);
             self.switch_to(yes);
-            self.panic_msg(&format!("TypeError: {text} is not a function"));
-            self.terminate(Terminator::Unreachable);
+            match thrown {
+                true => self.not_fn_error(text),
+                false => {
+                    self.panic_msg(&format!("TypeError: {text} is not a function"));
+                    self.terminate(Terminator::Unreachable);
+                }
+            }
             self.switch_to(no);
         }
         let (before, key, after) = unsupported;
@@ -620,7 +627,7 @@ impl FnLower<'_, '_> {
         let what = "TypeError: calling '";
         let tail = "' through `any` is not supported for this value yet (#924)";
         match &ka {
-            Some(k) => self.any_status_check(st, (what, Some(k), tail), Some(&text)),
+            Some(k) => self.any_status_check(st, (what, Some(k), tail), Some((&text, true))),
             None => self.any_status_check(
                 st,
                 (
@@ -628,7 +635,7 @@ impl FnLower<'_, '_> {
                     None,
                     "",
                 ),
-                Some(&text),
+                Some((&text, true)),
             ),
         }
         self.own_value(Operand::Copy(Place::local(out)), ty)

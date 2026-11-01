@@ -51,6 +51,7 @@ impl<'h> Cx<'h> {
             assigned_fields: None,
             fn_writes: None,
             prelude_error: None,
+            prelude_type_error: None,
             tla_marks: None,
             static_map: FxHashMap::default(),
             tables: FxHashMap::default(),

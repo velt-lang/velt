@@ -38,11 +38,24 @@ impl FnCx<'_, '_> {
         self.f.tries.push(vec![]);
         let catches = u32::from(catch.is_some());
         self.f.catch_depth += catches;
+        let any_calls = self.f.any_calls;
+        let (outer, before) = (self.f.locals.len(), self.narrow_state());
         let b = self.block(body);
+        let calls_any = self.f.any_calls != any_calls;
+        let calls_any = match calls_any {
+            false => super::catch_any::AnyTry::No,
+            true if before == self.narrow_state()
+                && super::catch_any::plain_try(&b, outer, self.cx.ty.never) =>
+            {
+                super::catch_any::AnyTry::Plain
+            }
+            true => super::catch_any::AnyTry::Changes,
+        };
         self.f.catch_depth -= catches;
         let srcs = self.f.tries.pop().expect("ICE: try stack");
+        let calls_any = (calls_any, crate::flow::block_diverges(&b, &self.cx.ty));
         let c = match catch {
-            Some((pat, blk)) => Some(self.catch_clause(srcs, pat.as_ref(), blk, span)),
+            Some((pat, blk)) => Some(self.catch_clause(srcs, pat.as_ref(), blk, calls_any, span)),
             None => {
                 srcs.into_iter().for_each(|s| self.throw_src(s));
                 None
@@ -64,9 +77,23 @@ impl FnCx<'_, '_> {
         srcs: Vec<ThrowSrc>,
         pat: Option<&ast::Pattern>,
         blk: &ast::Block,
+        calls_any: (super::catch_any::AnyTry, bool),
         span: Span,
     ) -> (Option<LocalId>, hir::Block) {
         let ety = self.catch_type(srcs.clone(), span);
+        let ety = self.not_fn_catch_type(ety, calls_any, pat, blk, &srcs, span);
+        self.handler(srcs, pat, blk, ety, span)
+    }
+
+    /// A `catch` clause's variable `pat` of type `ety` declared, and its body `blk` checked.
+    pub(super) fn handler(
+        &mut self,
+        srcs: Vec<ThrowSrc>,
+        pat: Option<&ast::Pattern>,
+        blk: &ast::Block,
+        ety: TyId,
+        span: Span,
+    ) -> (Option<LocalId>, hir::Block) {
         self.push_scope_until(blk.span.hi);
         let local = match pat.map(|p| (&p.kind, p.span)) {
             Some((ast::PatternKind::Ident(n), _)) => {

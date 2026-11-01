@@ -306,6 +306,10 @@ pub(crate) struct FnCx<'a, 'm> {
     /// The member of a union of function types each arrow (by span) was typed by, for the
     /// members it was tried against and the types of the locals it names (`expr/closure.rs`).
     pub member_choices: FxHashMap<(Span, Vec<TyId>, Vec<TyId>), TyId>,
+    /// Whether a `catch` body (by span, with the types of the enclosing locals it names) takes
+    /// Node's `TypeError` (`expr::catch_any`): decided once, not once per trial check of an
+    /// enclosing `catch` body (exponential in their nesting).
+    pub catch_choices: FxHashMap<(Span, Vec<TyId>), bool>,
     /// What scans of each arrow's syntax found (`arrow_scans`).
     pub arrow_scans: arrow_scans::ArrowScans,
     /// Checking an expression outside any body (a field initializer, a parameter default, a
@@ -420,6 +424,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             packed_rest: None,
             task_callback: None,
             member_choices: FxHashMap::default(),
+            catch_choices: FxHashMap::default(),
             arrow_scans: Default::default(),
             detached: false,
             immediate_hint: None,

@@ -1,0 +1,15 @@
+// Calling an `any` that holds no function where no `catch` of the same function takes the
+// `TypeError` stops the program with Node's message (#1422). The error does not leave the
+// function that made the call, so the caller's `catch` below does not run, where Node's does
+// (https://veltlang.com/docs/reference/errors/).
+function callMissing(x: any): number {
+  return x.missing() as number;
+}
+
+const o: any = { a: 1 };
+console.log("before");
+try {
+  callMissing(o);
+} catch (e) {
+  console.log("caught", (e as Error).message);
+}

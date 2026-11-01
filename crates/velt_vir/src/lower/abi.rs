@@ -115,7 +115,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
             ref_loads: false,
             epoch_exempt: false,
             proxy_routes: false,
+            finally_floor: 0,
             held_targets: vec![],
+            user_body: false,
             record_fill: 0,
         };
         lw.mode = lw.cx.cur_mode;
@@ -421,6 +423,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
     }
 
     pub(super) fn lower_body(&mut self, f: &FnDef) {
+        self.user_body = !(f.name).starts_with(velt_common::std_modules::CANONICAL_PREFIX);
         self.proxy_routes = !f
             .name
             .starts_with(velt_common::std_modules::CANONICAL_PREFIX)
