@@ -176,7 +176,7 @@ fn variants_must_export_the_same_api() {
     assert!(
         d[1].notes
             .iter()
-            .any(|n| n == "`./src/io/wasi.vlt`: function name(n:i64):string"),
+            .any(|n| n == "`./src/io/wasi.vlt`: function (n:i64):string"),
         "{:?}",
         d[1].notes
     );
@@ -428,6 +428,43 @@ fn a_workspace_package_resolves_its_own_names() {
     }
 }
 
+/// A file under a nameless folder `package.json` inside a workspace npm package belongs to that
+/// package: its `#name`s are the npm package's business (Node: the folder file is its scope,
+/// with no `imports`, so an error), never the Velt root's map.
+#[test]
+fn a_folder_package_json_inside_an_npm_package_is_not_the_velt_package() {
+    let t = Tree::new();
+    t.write(
+        "app/src/util.vlt",
+        "export function u(): string { return \"app\"; }\n",
+    );
+    t.write("app/pnpm-workspace.yaml", "packages:\n  - packages/*\n");
+    t.write(
+        "app/packages/foo/package.json",
+        r##"{ "name": "foo", "exports": "./dist/index.js", "imports": { "#util": "./dist/util.js" } }"##,
+    );
+    t.write(
+        "app/packages/foo/src/esm/package.json",
+        r#"{ "type": "module" }"#,
+    );
+    t.write(
+        "app/packages/foo/src/esm/inner.ts",
+        "import { u } from \"#util\";\nexport function v(): number { return u(); }\n",
+    );
+    let root = t.write(
+        "app/src/main.vlt",
+        "import { v } from \"../packages/foo/src/esm/inner\";\nfunction main() { v(); }\n",
+    );
+    let g = graph(&t, map(&[("#util", &[("default", "./src/util.vlt")])]));
+    let (_, d, _) = load(&root, opts(&g, "aarch64-apple-darwin"));
+    assert_eq!(d.len(), 1, "{:?}", messages(&d));
+    assert!(
+        d[0].message.contains("does not define `#util`"),
+        "{}",
+        d[0].message
+    );
+}
+
 /// A `package.json` inside a Velt package that is not an npm package's (a folder's
 /// `{ "type": "module" }`, the root's for TypeScript tools) leaves its files' `#name`s to
 /// `package.vlt`.
@@ -597,6 +634,102 @@ fn export_star_variants_are_expanded() {
         "{:?}",
         messages(&d)
     );
+}
+
+/// Stars and re-exports that come back to the variant itself: the name resolves through the
+/// star that does declare it (ES `resolveSet`), with no endless recursion.
+#[test]
+fn a_cycle_through_a_star_resolves_through_the_other_star() {
+    let t = Tree::new();
+    let root = io_package(&t);
+    let tail = "export function name(): string { return \"\"; }\n";
+    t.write(
+        "app/src/io/js.vlt",
+        &format!("export * from \"./a\";\nexport * from \"./b\";\n{tail}"),
+    );
+    t.write("app/src/io/a.vlt", "export { x } from \"./js\";\n");
+    t.write("app/src/io/b.vlt", "export const x: i64 = 1;\n");
+    t.write(
+        "app/src/io/wasi.vlt",
+        &format!("export const x: i64 = 5;\n{tail}"),
+    );
+    t.write(
+        "app/src/io/native.vlt",
+        &format!("export const x: i64 = 5;\n{tail}"),
+    );
+    let g = graph(&t, map(&[("#io", IO)]));
+    let (_, d, _) = load(&root, check(&g));
+    assert!(d.is_empty(), "{:?}", messages(&d));
+    // The same with the variants read in the other order.
+    let g = graph(
+        &t,
+        map(&[(
+            "#io",
+            &[
+                ("wasi", "./src/io/wasi.vlt"),
+                ("js", "./src/io/js.vlt"),
+                ("default", "./src/io/native.vlt"),
+            ],
+        )]),
+    );
+    let (_, d, _) = load(&root, check(&g));
+    assert!(d.is_empty(), "{:?}", messages(&d));
+}
+
+/// Two stars of one file bringing in a name with different signatures make it ambiguous at any
+/// depth (as Node's conflicting star exports), so the check never picks one the build doesn't.
+#[test]
+fn stars_at_different_depths_that_disagree_are_ambiguous() {
+    let t = Tree::new();
+    let root = io_package(&t);
+    let tail = "export function name(): string { return \"\"; }\n";
+    t.write(
+        "app/src/io/native.vlt",
+        &format!("export * from \"./b\";\nexport * from \"./a\";\n{tail}"),
+    );
+    t.write("app/src/io/a.vlt", "export const x: i64 = 1;\n");
+    t.write("app/src/io/b.vlt", "export * from \"./c\";\n");
+    t.write("app/src/io/c.vlt", "export const x: string = \"c\";\n");
+    t.write(
+        "app/src/io/js.vlt",
+        &format!("export const x: i64 = 1;\n{tail}"),
+    );
+    t.write(
+        "app/src/io/wasi.vlt",
+        &format!("export const x: i64 = 1;\n{tail}"),
+    );
+    let g = graph(&t, map(&[("#io", IO)]));
+    let (_, d, _) = load(&root, check(&g));
+    assert!(
+        d.iter().any(|d| d.message.contains("`x` is ambiguous")),
+        "{:?}",
+        messages(&d)
+    );
+}
+
+/// A name re-exported under another one compares by what it is, not by its declared name.
+#[test]
+fn renamed_re_exports_compare_by_what_they_are() {
+    let t = Tree::new();
+    let root = io_package(&t);
+    let tail = "export function name(): string { return \"\"; }\n";
+    t.write(
+        "app/src/io/m.vlt",
+        "export function f(): i64 { return 1; }\nexport class K { n: i64 = 0; }\nexport interface I { a: i64; }\n",
+    );
+    t.write(
+        "app/src/io/js.vlt",
+        &format!("export {{ f as h, K as C, I as J }} from \"./m\";\n{tail}"),
+    );
+    for v in ["wasi", "native"] {
+        t.write(
+            &format!("app/src/io/{v}.vlt"),
+            &format!("export function h(): i64 {{ return 2; }}\nexport class C {{ n: i64 = 1; }}\nexport interface J {{ a: i64; }}\n{tail}"),
+        );
+    }
+    let g = graph(&t, map(&[("#io", IO)]));
+    let (_, d, _) = load(&root, check(&g));
+    assert!(d.is_empty(), "{:?}", messages(&d));
 }
 
 /// `export { a }` of a binding the file imports is compared by where it is declared.

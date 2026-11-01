@@ -297,11 +297,15 @@ impl NpmResolver {
         let name = manifest
             .get("name")
             .and_then(Json::as_str)
-            .unwrap_or("<unnamed>")
+            .unwrap_or("")
             .to_string();
+        let who = match name.as_str() {
+            "" => format!("the npm package at `{}`", scope.display()),
+            name => format!("npm package `{name}`"),
+        };
         let not_defined = || {
             (
-                format!("npm package `{name}` does not define `{spec}` (`imports` in its package.json)"),
+                format!("{who} does not define `{spec}` (`imports` in its package.json)"),
                 vec![format!(
                     "the conditions Velt matches are {}; a target must be a `./` path in the package",
                     conditions_list()
@@ -313,16 +317,20 @@ impl NpmResolver {
             |e| match e {
                 exports::ExportsError::Package(dep) => (
                     format!(
-                        "npm package `{name}` maps `{spec}` to the package `{dep}` (`imports` in its package.json), which Velt does not follow"
+                        "{who} maps `{spec}` to the package `{dep}` (`imports` in its package.json), which Velt does not follow"
                     ),
                     vec![format!("Node loads `{dep}` there; import `{dep}` directly")],
                 ),
                 _ => not_defined(),
             },
         )?;
+        let shown_name = match name.as_str() {
+            "" => scope.display().to_string(),
+            name => name.to_string(),
+        };
         self.source_of(
             scope,
-            &name,
+            &shown_name,
             spec,
             spec,
             &manifest,
@@ -347,9 +355,12 @@ impl NpmResolver {
         let key = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
         let own = key(&dir);
         let ancestors: Vec<PathBuf> = dir.ancestors().skip(1).map(Path::to_path_buf).collect();
+        // Every workspace around it, not only the nearest (a member may be a workspace itself).
         for above in ancestors {
             if let Some(ws) = self.workspace(&above) {
-                return ws.by_name.values().any(|d| key(d) == own) || ws.members.contains(&own);
+                if ws.by_name.values().any(|d| key(d) == own) || ws.members.contains(&own) {
+                    return true;
+                }
             }
         }
         false

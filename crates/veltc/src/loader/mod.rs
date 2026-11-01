@@ -51,6 +51,7 @@ mod locate;
 mod moved;
 mod pick;
 mod resolve;
+mod signature;
 mod spec;
 mod std_ast;
 mod std_root;
@@ -161,6 +162,9 @@ pub fn load_with_roots(
         variant_tables: HashMap::new(),
         variant_sigs: HashMap::new(),
         variant_stars: HashMap::new(),
+        variant_busy: Default::default(),
+        variant_star_busy: Default::default(),
+        variant_cut: false,
     };
     if let Some(std) = &opts.std_root {
         match prelude_files(std) {
@@ -271,6 +275,11 @@ struct Loader<'a, 'o> {
     variant_sigs: HashMap<(PathBuf, String), Result<String, String>>,
     /// What each file's `export *` brings in, for [`variants`].
     variant_stars: HashMap<PathBuf, variants::StarResult>,
+    /// The (file, name)s and files [`variants`] is resolving (a cycle comes back to one), and
+    /// whether a resolution in progress met one (its result is then not kept).
+    variant_busy: std::collections::HashSet<(PathBuf, String)>,
+    variant_star_busy: std::collections::HashSet<PathBuf>,
+    variant_cut: bool,
 }
 
 impl Loader<'_, '_> {

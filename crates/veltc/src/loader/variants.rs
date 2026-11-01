@@ -18,15 +18,20 @@
 //! [`super::LoadOptions::check_variants`] asks for it (`velt check`, `velt test`, the language
 //! server), for every `#name` the program imports.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use velt_common::{Diagnostic, FileId, Span};
-use velt_syntax::ast::{self, ExprKind, ItemKind, Lit, PatternKind};
+use velt_syntax::ast::{self, ItemKind};
+
+use super::signature::{item_name, name_span, signature};
 
 use super::conditional::Resolved;
 use super::Loader;
+
+/// The result of [`Loader::star_exports`] before it is shared: see [`StarResult`].
+type StarNames = Result<BTreeMap<String, (Result<String, String>, Span)>, (String, Span)>;
 
 /// One exported name of a variant, resolved to its signature.
 #[derive(Clone, Debug)]
@@ -76,9 +81,9 @@ struct Star {
     span: Span,
 }
 
-/// The names `export *` brings into a file: name → the (file, name) each comes from (more than
-/// one: the name is ambiguous unless they agree), or why they cannot be listed.
-pub(super) type StarResult = Rc<Result<BTreeMap<String, Vec<(PathBuf, String)>>, String>>;
+/// The names `export *` brings into a file: name → its signature (or why it has none: an
+/// ambiguous name) and the star it comes through; or why they cannot be listed, at that star.
+pub(super) type StarResult = Rc<StarNames>;
 
 /// A file's [`Table`], or why it cannot be read (`reported`: a diagnostic already says why).
 pub(super) type TableResult = Rc<Result<Table, (String, bool)>>;
@@ -179,20 +184,23 @@ impl Loader<'_, '_> {
         let mut entries: Vec<(String, Entry, Span)> = (table.names.iter())
             .map(|(n, (e, s))| (n.clone(), e.clone(), *s))
             .collect();
-        if let Some(star) = table.stars.first() {
-            let span = star.span;
-            match &*self.star_names(file, &r.base) {
-                Err(why) => {
+        if !table.stars.is_empty() {
+            match &*self.star_exports(file, &r.base) {
+                Err((why, span)) => {
                     let msg = format!("`{}`: variant `{target}` cannot be compared: {why}", r.name);
+                    let span = if *span == Span::DUMMY { r.span } else { *span };
                     self.diags
                         .push(Diagnostic::error(msg, span).with_note(SAME_API));
                     return None;
                 }
                 Ok(names) => {
-                    for (name, sources) in names {
+                    for (name, (sig, span)) in names {
                         if !table.names.contains_key(name) {
-                            let entry = self.star_entry(name, sources, &r.base);
-                            entries.push((name.clone(), entry, span));
+                            let entry = match sig {
+                                Ok(sig) => Entry::Sig(sig.clone()),
+                                Err(why) => Entry::Ambiguous(why.clone()),
+                            };
+                            entries.push((name.clone(), entry, *span));
                         }
                     }
                 }
@@ -241,13 +249,16 @@ impl Loader<'_, '_> {
             } => (file.clone(), name.clone()),
         };
         let mut path: Vec<(PathBuf, String)> = vec![];
-        let mut on_path: HashSet<(PathBuf, String)> = HashSet::new();
+        let outer = std::mem::replace(&mut self.variant_cut, false);
         let result = loop {
             let key = (super::file_key(&file), name.clone());
             if let Some(done) = self.variant_sigs.get(&key) {
                 break done.clone();
             }
-            if !on_path.insert(key.clone()) {
+            // A (file, name) on this chain, or on one that an `export *` being expanded is
+            // resolving: a cycle.
+            if !self.variant_busy.insert(key.clone()) {
+                self.variant_cut = true;
                 break Err(format!(
                     "`{name}` is re-exported in a cycle through `{}` and declared nowhere on it",
                     vpm::relpath::relative(&file, base)
@@ -280,106 +291,146 @@ impl Loader<'_, '_> {
                     None if t.stars.is_empty() => {
                         break Err(format!("`{shown}` does not export `{name}`"))
                     }
-                    None => match &*self.star_names(&file, base) {
-                        Err(why) => break Err(why.clone()),
-                        Ok(names) => match names.get(&name).map(|s| s.as_slice()) {
+                    None => match &*self.star_exports(&file, base) {
+                        Err((why, _)) => break Err(why.clone()),
+                        Ok(names) => match names.get(&name) {
+                            Some((sig, _)) => break sig.clone(),
                             None => break Err(format!("`{shown}` does not export `{name}`")),
-                            Some([one]) => one.clone(),
-                            Some(many) => {
-                                let many = many.to_vec();
-                                match self.star_entry(&name, &many, base) {
-                                    Entry::Sig(sig) => break Ok(sig),
-                                    _ => break Err(ambiguous(&name, &many, base)),
-                                }
-                            }
                         },
                     },
                 },
             };
             (file, name) = next;
         };
-        for key in path {
-            self.variant_sigs.insert(key, result.clone());
+        for key in &path {
+            self.variant_busy.remove(key);
+        }
+        let cut = self.end_cut(outer);
+        // A result a cycle cut short is this path's, not the name's: not kept.
+        if !cut {
+            for key in path {
+                self.variant_sigs.insert(key, result.clone());
+            }
         }
         result
     }
 
-    /// The names the `export *` statements of `file` bring in (see [`StarResult`]), once per
-    /// load: the files they reach, breadth first with a visited set (a cycle of stars ends), each
-    /// file's own exports but `default`; a name found at a smaller depth hides the same name
-    /// deeper (a file's own exports win over what its stars bring), and two sources at one depth
-    /// make it ambiguous. A star from outside the package cannot be listed: an error.
-    fn star_names(&mut self, file: &Path, base: &Path) -> StarResult {
+    /// Ends a resolution begun with `outer` saved from `variant_cut`: whether a cycle cut it
+    /// short (the enclosing one is then cut short too).
+    fn end_cut(&mut self, outer: bool) -> bool {
+        let cut = self.variant_cut;
+        self.variant_cut = outer || cut;
+        cut
+    }
+
+    /// The names `export *` brings into `file` (see [`StarResult`]), each with its signature,
+    /// once per load. Each star target contributes everything it exports (its own names, then
+    /// what its stars bring in) but `default` and the names `file` exports itself. A name that
+    /// two stars bring in with different signatures is ambiguous; one whose resolution came back
+    /// to a file or name still being resolved (a cycle) is no candidate, as in ES modules'
+    /// `resolveSet`. Results that a cycle cut short are not kept, so a later question from
+    /// elsewhere in the cycle gets the whole answer.
+    fn star_exports(&mut self, file: &Path, base: &Path) -> StarResult {
         let key = super::file_key(file);
         if let Some(done) = self.variant_stars.get(&key) {
             return done.clone();
         }
-        let result = Rc::new(self.read_star_names(file, base));
-        self.variant_stars.insert(key, result.clone());
+        if !self.variant_star_busy.insert(key.clone()) {
+            self.variant_cut = true;
+            return Rc::new(Ok(BTreeMap::new()));
+        }
+        let outer = std::mem::replace(&mut self.variant_cut, false);
+        let result = Rc::new(self.read_star_exports(file, base));
+        let cut = self.end_cut(outer);
+        self.variant_star_busy.remove(&key);
+        if !cut {
+            self.variant_stars.insert(key, result.clone());
+        }
         result
     }
 
-    fn read_star_names(
+    fn read_star_exports(&mut self, file: &Path, base: &Path) -> StarNames {
+        let table = self.table(file);
+        let shown = vpm::relpath::relative(file, base);
+        let t = match &*table {
+            Ok(t) => t,
+            Err((why, _)) => return Err((format!("`{shown}` {why}"), Span::DUMMY)),
+        };
+        let mut out: BTreeMap<String, (Result<String, String>, Span)> = BTreeMap::new();
+        for star in &t.stars {
+            let Some(next) = &star.file else {
+                let why = if star.spec.starts_with('.') {
+                    format!(
+                        "`export * from \"{}\"` in `{shown}` names no file",
+                        star.spec
+                    )
+                } else {
+                    format!(
+                        "`export * from \"{}\"` in `{shown}` brings in names from outside the package, which cannot be listed: list them",
+                        star.spec
+                    )
+                };
+                return Err((why, star.span));
+            };
+            let theirs = self
+                .all_exports(next, base)
+                .map_err(|(why, _)| (why, star.span))?;
+            for (name, (sig, cycle)) in theirs {
+                if name == "default" || t.names.contains_key(&name) || (cycle && sig.is_err()) {
+                    continue;
+                }
+                match out.get(&name) {
+                    None => {
+                        out.insert(name, (sig, star.span));
+                    }
+                    Some((Ok(have), _)) if sig.as_ref().is_ok_and(|s| s != have) => {
+                        let why = format!(
+                            "`{name}` is ambiguous: two `export *` of `{shown}` bring it in with different signatures"
+                        );
+                        out.insert(name, (Err(why), star.span));
+                    }
+                    Some(_) => {}
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// Everything `file` exports, its own names and what its stars bring in, each with its
+    /// signature and whether a cycle cut its resolution short.
+    #[allow(clippy::type_complexity)]
+    fn all_exports(
         &mut self,
         file: &Path,
         base: &Path,
-    ) -> Result<BTreeMap<String, Vec<(PathBuf, String)>>, String> {
-        let mut found: BTreeMap<String, (usize, Vec<(PathBuf, String)>)> = BTreeMap::new();
-        let mut seen: HashSet<PathBuf> = HashSet::from([super::file_key(file)]);
-        let mut queue: std::collections::VecDeque<(PathBuf, usize)> =
-            std::collections::VecDeque::from([(file.to_path_buf(), 0)]);
-        while let Some((at, depth)) = queue.pop_front() {
-            let table = self.table(&at);
-            let shown = vpm::relpath::relative(&at, base);
-            let t = match &*table {
-                Ok(t) => t,
-                Err((why, _)) => return Err(format!("`{shown}` {why}")),
-            };
-            if depth > 0 {
-                for name in t.names.keys().filter(|n| *n != "default") {
-                    let (at_depth, sources) =
-                        found.entry(name.clone()).or_insert_with(|| (depth, vec![]));
-                    let source = (super::file_key(&at), name.clone());
-                    if *at_depth == depth && !sources.contains(&source) {
-                        sources.push(source);
-                    }
-                }
+    ) -> Result<Vec<(String, (Result<String, String>, bool))>, (String, Span)> {
+        let table = self.table(file);
+        let own: Vec<(String, Entry)> = match &*table {
+            Ok(t) => (t.names.iter())
+                .map(|(n, (e, _))| (n.clone(), e.clone()))
+                .collect(),
+            Err((why, _)) => {
+                let shown = vpm::relpath::relative(file, base);
+                return Err((format!("`{shown}` {why}"), Span::DUMMY));
             }
-            for star in &t.stars {
-                let Some(next) = &star.file else {
-                    return Err(format!(
-                        "`export * from \"{}\"` in `{shown}` brings in names that cannot be listed here: list them",
-                        star.spec
-                    ));
-                };
-                if seen.insert(super::file_key(next)) {
-                    queue.push_back((next.clone(), depth + 1));
-                }
-            }
-        }
-        Ok(found.into_iter().map(|(n, (_, s))| (n, s)).collect())
-    }
-
-    /// The entry for `name`, which `export *` brings in from `sources`: a link to the one source,
-    /// the signature when several agree, an ambiguity (an unresolvable link) when they don't.
-    fn star_entry(&mut self, name: &str, sources: &[(PathBuf, String)], base: &Path) -> Entry {
-        let link = |(file, name): &(PathBuf, String)| Entry::Link {
-            file: Some(file.clone()),
-            spec: String::new(),
-            name: name.clone(),
         };
-        if let [one] = sources {
-            return link(one);
+        let mut out = vec![];
+        for (name, entry) in own {
+            let outer = std::mem::replace(&mut self.variant_cut, false);
+            let sig = self.entry_sig(&entry, base);
+            let cut = self.end_cut(outer);
+            out.push((name, (sig, cut)));
         }
-        let sigs: Vec<Result<String, String>> = (sources.iter())
-            .map(|s| self.entry_sig(&link(s), base))
-            .collect();
-        match sigs.first() {
-            Some(Ok(first)) if sigs.iter().all(|s| s.as_ref().ok() == Some(first)) => {
-                Entry::Sig(first.clone())
+        let outer = std::mem::replace(&mut self.variant_cut, false);
+        let stars = self.star_exports(file, base);
+        let cut = self.end_cut(outer);
+        match &*stars {
+            Ok(names) => {
+                out.extend((names.iter()).map(|(n, (sig, _))| (n.clone(), (sig.clone(), cut))))
             }
-            _ => Entry::Ambiguous(ambiguous(name, sources, base)),
+            Err(e) => return Err(e.clone()),
         }
+        Ok(out)
     }
 
     /// `file`'s exports as written ([`Table`]), read and parsed once per load.
@@ -507,257 +558,6 @@ impl Loader<'_, '_> {
     }
 }
 
-/// Why `name` is ambiguous: `export *` brings it in from several files that disagree.
-fn ambiguous(name: &str, sources: &[(PathBuf, String)], base: &Path) -> String {
-    let files: Vec<String> = (sources.iter())
-        .map(|(f, _)| format!("`{}`", vpm::relpath::relative(f, base)))
-        .collect();
-    format!(
-        "`{name}` is ambiguous: `export *` brings it in from {} with different signatures",
-        files.join(" and ")
-    )
-}
-
 /// The note on every mismatch.
 const SAME_API: &str = "the variants of a conditional import export the same names with the \
                         same signatures: a build uses one of them";
-
-/// The name an item declares, if one.
-fn item_name(item: &ast::Item) -> Option<&str> {
-    Some(match &item.kind {
-        ItemKind::Function(f) => &f.sig.name.name,
-        ItemKind::ExternFn(sig) => &sig.name.name,
-        ItemKind::Struct(t) | ItemKind::Class(t) => &t.name.name,
-        ItemKind::Interface(i) => &i.name.name,
-        ItemKind::Enum(e) => &e.name.name,
-        ItemKind::TypeAlias(a) => &a.name.name,
-        ItemKind::Namespace(n) => &n.name.name,
-        ItemKind::Var(v) => match &v.pattern.kind {
-            PatternKind::Ident(id) => &id.name,
-            _ => return None,
-        },
-        _ => return None,
-    })
-}
-
-fn name_span(item: &ast::Item) -> Option<Span> {
-    Some(match &item.kind {
-        ItemKind::Function(f) => f.sig.name.span,
-        ItemKind::ExternFn(sig) => sig.name.span,
-        ItemKind::Struct(t) | ItemKind::Class(t) => t.name.span,
-        ItemKind::Interface(i) => i.name.span,
-        ItemKind::Enum(e) => e.name.span,
-        ItemKind::TypeAlias(a) => a.name.span,
-        ItemKind::Namespace(n) => n.name.span,
-        ItemKind::Var(v) => v.pattern.span,
-        _ => return None,
-    })
-}
-
-/// The signature of a declaration ([`variants`](self) says what that is).
-fn signature(item: &ast::Item, src: &str) -> String {
-    let text = |span: Span| normalize(src.get(span.lo as usize..span.hi as usize).unwrap_or(""));
-    match &item.kind {
-        ItemKind::Function(f) if !f.overloads.is_empty() => f
-            .overloads
-            .iter()
-            .map(|o| fn_sig(o, src))
-            .collect::<Vec<_>>()
-            .join("; "),
-        ItemKind::Function(f) => fn_sig(&f.sig, src),
-        ItemKind::ExternFn(sig) => fn_sig(sig, src),
-        ItemKind::Struct(t) | ItemKind::Class(t) => {
-            let kind = if matches!(item.kind, ItemKind::Struct(_)) {
-                "struct"
-            } else {
-                "class"
-            };
-            type_sig(kind, t, item, src)
-        }
-        ItemKind::Var(v) => {
-            let ty = match (&v.ty, &v.init) {
-                (Some(ty), _) => text(ty.span),
-                (None, Some(e)) => match &e.kind {
-                    ExprKind::Lit(Lit::Str(_)) => "string".into(),
-                    ExprKind::Lit(Lit::Bool(_)) => "boolean".into(),
-                    ExprKind::Lit(Lit::Int { .. } | Lit::Float { .. }) => "number".into(),
-                    _ => format!("typeof ({})", text(e.span)),
-                },
-                (None, None) => "unknown".into(),
-            };
-            format!(
-                "{} {}: {ty}",
-                v.kind.keyword(),
-                item_name(item).unwrap_or("")
-            )
-        }
-        _ => text(item.span)
-            .trim_start_matches("export")
-            .trim_start()
-            .to_string(),
-    }
-}
-
-/// `async name<T>(a: A): R throws E`, from the name on (a `declare` function and one with a body
-/// have the same signature).
-fn fn_sig(sig: &ast::FnSig, src: &str) -> String {
-    let text = src
-        .get(sig.name.span.lo as usize..sig.span.hi as usize)
-        .unwrap_or("");
-    let text = normalize(text.trim_end().trim_end_matches(';'));
-    let star = if sig.is_generator { "*" } else { "" };
-    let async_ = if sig.is_async { "async " } else { "" };
-    format!("{async_}function{star} {text}")
-}
-
-/// A class's or struct's heading and its non-private members, without bodies.
-fn type_sig(kind: &str, t: &ast::TypeDecl, item: &ast::Item, src: &str) -> String {
-    let rest = src
-        .get(t.name.span.lo as usize..item.span.hi as usize)
-        .unwrap_or("");
-    let heading = normalize(&rest[..body_start(rest)]);
-    let abstract_ = if t.is_abstract { "abstract " } else { "" };
-    let mut members = vec![];
-    if let (Some(ctor), ast::CtorVisibility::Public) = (&t.constructor, t.ctor_visibility) {
-        let params: Vec<String> = ctor
-            .sig
-            .params
-            .iter()
-            .map(|p| {
-                normalize(
-                    src.get(p.span.lo as usize..p.span.hi as usize)
-                        .unwrap_or(""),
-                )
-            })
-            .collect();
-        members.push(format!("constructor({})", params.join(", ")));
-    }
-    for f in t.fields.iter().filter(|f| !f.is_private) {
-        let ty = normalize(
-            src.get(f.ty.span.lo as usize..f.ty.span.hi as usize)
-                .unwrap_or(""),
-        );
-        let flags = format!(
-            "{}{}",
-            if f.is_static { "static " } else { "" },
-            if f.readonly { "readonly " } else { "" }
-        );
-        let opt = if f.optional { "?" } else { "" };
-        members.push(format!("{flags}{}{opt}: {ty}", f.name.name));
-    }
-    for m in t.methods.iter().filter(|m| !m.is_private) {
-        let flags = [
-            (m.is_static, "static "),
-            (m.is_abstract, "abstract "),
-            (m.is_getter, "get "),
-            (m.is_setter, "set "),
-        ]
-        .iter()
-        .filter(|(on, _)| *on)
-        .map(|(_, s)| *s)
-        .collect::<String>();
-        let sig = fn_sig(&m.decl.sig, src);
-        members.push(format!("{flags}{}", sig.trim_start_matches("function ")));
-    }
-    format!("{abstract_}{kind} {heading} {{ {} }}", members.join("; "))
-}
-
-/// Where a class's body starts in `text` (its heading on): the first `{` outside `<…>` and
-/// `(…)`, so an object type in a bound (`<T extends { id: i64 }>`) or a type argument
-/// (`extends Base<{ a: T }>`) stays part of the heading.
-fn body_start(text: &str) -> usize {
-    let mut depth = 0usize;
-    let mut prev = ' ';
-    for (i, c) in text.char_indices() {
-        let arrow = c == '>' && prev == '=';
-        prev = c;
-        match c {
-            '<' | '(' | '[' => depth += 1,
-            '>' if arrow => {}
-            '>' | ')' | ']' => depth = depth.saturating_sub(1),
-            '{' if depth == 0 => return i,
-            '{' => depth += 1,
-            '}' => depth = depth.saturating_sub(1),
-            _ => {}
-        }
-    }
-    text.len()
-}
-
-/// `text` without comments, and with whitespace only where it separates two words: `a : T`,
-/// `a: T` and `a:T` read the same. A separator before a closing bracket goes too (`(a, b,)`).
-fn normalize(text: &str) -> String {
-    let word = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
-    let mut out = String::with_capacity(text.len());
-    let mut space = false;
-    let mut chars = text.chars().peekable();
-    while let Some(c) = chars.next() {
-        match c {
-            '/' if chars.peek() == Some(&'/') => {
-                for c in chars.by_ref() {
-                    if c == '\n' {
-                        break;
-                    }
-                }
-                space = true;
-            }
-            '/' if chars.peek() == Some(&'*') => {
-                chars.next();
-                let mut prev = ' ';
-                for c in chars.by_ref() {
-                    if prev == '*' && c == '/' {
-                        break;
-                    }
-                    prev = c;
-                }
-                space = true;
-            }
-            c if c.is_whitespace() => space = true,
-            '"' | '\'' | '`' => {
-                if space && out.ends_with(word) {
-                    out.push(' ');
-                }
-                space = false;
-                out.push(c);
-                let mut escaped = false;
-                for d in chars.by_ref() {
-                    out.push(d);
-                    if !escaped && d == c {
-                        break;
-                    }
-                    escaped = !escaped && d == '\\';
-                }
-            }
-            c => {
-                if matches!(c, ')' | ']' | '}' | '>') && (out.ends_with(',') || out.ends_with(';'))
-                {
-                    out.pop();
-                }
-                if space && word(c) && out.ends_with(word) {
-                    out.push(' ');
-                }
-                space = false;
-                out.push(c);
-            }
-        }
-    }
-    out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::normalize;
-
-    #[test]
-    fn normalize_ignores_layout_and_comments() {
-        assert_eq!(
-            normalize(
-                "send(req : Request, /* the body */ opts ?: Options,)\n  : Promise<Response> // x"
-            ),
-            "send(req:Request,opts?:Options):Promise<Response>"
-        );
-        assert_eq!(normalize("async   function f"), "async function f");
-        assert_eq!(normalize("x: \"a  //b\""), "x:\"a  //b\"");
-        assert_ne!(normalize("f(a: i64)"), normalize("f(a: f64)"));
-    }
-}
