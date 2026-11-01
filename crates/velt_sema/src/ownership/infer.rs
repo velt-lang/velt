@@ -110,8 +110,8 @@ fn fixpoint(cx: &mut Ctx, fns: &[DefId], dispatch: &super::mutation::Dispatch) {
         if body_changed {
             work.changed(d);
         }
-        while let Some(g) = work.next_join() {
-            dispatch.join(cx, g, &mut changed);
+        while let Some((g, members)) = work.next_join() {
+            dispatch.join(cx, g, members.as_deref(), &mut changed);
             changed.drain(..).for_each(|m| work.changed(m));
         }
     }
