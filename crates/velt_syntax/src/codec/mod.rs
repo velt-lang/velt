@@ -8,13 +8,19 @@
 //! - A [`Span`] is stored without its file: the module is decoded for the file id its source
 //!   has in the decoding session's source map, so spans (and the diagnostics, debug info and
 //!   editor positions made from them) come out exactly as a parse there would give them. A span
-//!   of another file (none in a parsed module so far) keeps its file id.
+//!   of another file (none in a parsed module so far) keeps its file id, and [`Span::DUMMY`]
+//!   has a tag of its own, so it stays `DUMMY` whatever file the module is decoded for. (A
+//!   module parsed as file 0 cannot tell `DUMMY` from its own empty span at 0: encode such a
+//!   module parsed under another id.)
 //! - Every type's encoding is written out field by field ([`nodes`]): a field or variant added
 //!   to the AST fails to compile until it is encoded too, so the form cannot fall behind it.
 //! - [`FORMAT`] starts every encoding; a value of another format, or one that is cut short or
 //!   damaged, decodes to `None` (never a panic), and the caller parses the source instead. A
 //!   cache keys its entries by the compiler that wrote them as well, since the parser decides
 //!   what a source parses to.
+//! - Integrity is the store's job, not the encoding's: damaged bytes can still decode to a
+//!   well-formed module (a flipped bit in a string or a span), so a cache must check its entries
+//!   (the build cache's CRC-32 does) before they reach [`decode_module`].
 //! - Decoding returns values, not `Result`s (each layer of `Result` around a large node costs a
 //!   copy of it): the first problem marks the [`Reader`] failed and empties it, so everything
 //!   after decodes as zeros (the first variant, empty lists) and the whole value is dropped.
@@ -28,7 +34,7 @@ use velt_common::{FileId, Span};
 use crate::ast;
 
 /// The version of the encoding: the first bytes of every encoded module.
-pub const FORMAT: &[u8; 8] = b"vast\x00\x00\x00\x01";
+pub const FORMAT: &[u8; 8] = b"vast\x00\x00\x00\x02";
 
 /// How deeply decoded nodes may nest: far more than a parse produces (the parser stops at 256
 /// syntactic levels, each a handful of nodes), so only a damaged value reaches it.
@@ -334,25 +340,43 @@ impl<A: Codec, B: Codec> Codec for (A, B) {
     }
 }
 
-/// `lo << 1 | foreign`, then `hi - lo` (wrapping), then the file when `foreign`.
+/// How a span is stored: the low two bits of its first varint.
+const SPAN_OWN: u64 = 0;
+const SPAN_FOREIGN: u64 = 1;
+const SPAN_DUMMY: u64 = 2;
+
+/// [`Span::DUMMY`]: the tag alone. Otherwise `lo << 2 | tag`, then `hi - lo` (wrapping), then
+/// the file for a span of another file.
 impl Codec for Span {
     fn enc(&self, w: &mut Writer) {
-        let foreign = self.file != w.file;
-        w.uint((u64::from(self.lo) << 1) | u64::from(foreign));
+        if *self == Span::DUMMY {
+            w.uint(SPAN_DUMMY);
+            return;
+        }
+        let tag = if self.file == w.file {
+            SPAN_OWN
+        } else {
+            SPAN_FOREIGN
+        };
+        w.uint((u64::from(self.lo) << 2) | tag);
         w.uint(u64::from(self.hi.wrapping_sub(self.lo)));
-        if foreign {
+        if tag == SPAN_FOREIGN {
             w.uint(u64::from(self.file.0));
         }
     }
     #[inline(always)]
     fn dec(r: &mut Reader) -> Self {
         let first = r.uint();
-        if first >> 33 != 0 {
+        let tag = first & 3;
+        if first >> 34 != 0 || tag == 3 || (tag == SPAN_DUMMY && first != SPAN_DUMMY) {
             r.fail();
         }
-        let lo = (first >> 1) as u32;
+        if tag == SPAN_DUMMY {
+            return Span::DUMMY;
+        }
+        let lo = (first >> 2) as u32;
         let hi = lo.wrapping_add(r.u32());
-        let file = if first & 1 == 1 {
+        let file = if tag == SPAN_FOREIGN {
             FileId(r.u32())
         } else {
             r.file

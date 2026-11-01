@@ -35,11 +35,35 @@ pub(super) fn parse(
     plain_ts: bool,
     cacheable: bool,
 ) -> (ast::Module, Diagnostics) {
-    match crate::build_cache::cache().filter(|_| cacheable) {
-        Some(cache) => parse_cached(cache, prefix(), file, src, plain_ts),
+    parse_in(
+        crate::build_cache::cache(),
+        prefix(),
+        file,
+        src,
+        plain_ts,
+        cacheable,
+    )
+}
+
+/// [`parse`] with `cache` (`None`: off) and keys starting with `prefix`.
+pub(crate) fn parse_in(
+    cache: Option<&Cache>,
+    prefix: &KeyHasher,
+    file: FileId,
+    src: &str,
+    plain_ts: bool,
+    cacheable: bool,
+) -> (ast::Module, Diagnostics) {
+    match cache.filter(|_| cacheable) {
+        Some(cache) => parse_cached(cache, prefix, file, src, plain_ts),
         None => parse_source(file, src, plain_ts),
     }
 }
+
+/// The file id for parses whose spans nobody reads (the loader's look at a module's re-exports
+/// and effects), and the one a module of file 0 is parsed under before it is stored: no source
+/// map has this many files, and its spans cannot be mistaken for [`velt_common::Span::DUMMY`]'s.
+pub(super) const NO_FILE: FileId = FileId(u32::MAX);
 
 /// [`parse`] with `cache`, keys starting with `prefix` (the compiler and the format).
 pub(crate) fn parse_cached(
@@ -56,11 +80,25 @@ pub(crate) fn parse_cached(
     if let Some(module) = hit {
         return (module, Vec::new());
     }
-    let (module, diags) = parse_source(file, src, plain_ts);
-    if diags.is_empty() {
-        cache.put_key(KIND, &key, &velt_syntax::encode_module(&module, file));
+    // File 0's empty spans at 0 are `Span::DUMMY`: parsed as file 0, a module would store them
+    // as the dummy, which another build would not take for a span of its file.
+    let parsed_as = if file == FileId(0) { NO_FILE } else { file };
+    let (module, diags) = parse_source(parsed_as, src, plain_ts);
+    if !diags.is_empty() {
+        return match parsed_as == file {
+            true => (module, diags),
+            false => parse_source(file, src, plain_ts),
+        };
     }
-    (module, diags)
+    let bytes = velt_syntax::encode_module(&module, parsed_as);
+    cache.put_key(KIND, &key, &bytes);
+    if parsed_as == file {
+        return (module, diags);
+    }
+    match velt_syntax::decode_module(&bytes, file) {
+        Some(module) => (module, diags),
+        None => parse_source(file, src, plain_ts),
+    }
 }
 
 fn parse_source(file: FileId, src: &str, plain_ts: bool) -> (ast::Module, Diagnostics) {

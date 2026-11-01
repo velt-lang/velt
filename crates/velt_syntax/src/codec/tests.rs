@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use velt_common::FileId;
+use velt_common::{FileId, Span};
 
 use super::*;
 use crate::{dump, parse_file, parse_ts_file};
@@ -85,6 +85,19 @@ fn spans_of_another_file_keep_their_file() {
     let decoded = decode_module(&bytes, FileId(5)).unwrap();
     assert_eq!(decoded.span.file, FileId(42));
     assert_eq!(decoded.items[0].span.file, FileId(5));
+}
+
+/// `Span::DUMMY` is file 0's: a module encoded as file 0 still keeps it apart from its own
+/// spans, so it does not become a real span of the file the module is decoded for.
+#[test]
+fn a_dummy_span_stays_dummy() {
+    for file in [FileId(0), FileId(3)] {
+        let mut m = parse(file, "const a = 1;", false);
+        m.items[0].span = Span::DUMMY;
+        let decoded = decode_module(&encode_module(&m, file), FileId(7)).unwrap();
+        assert_eq!(decoded.items[0].span, Span::DUMMY);
+        assert_eq!(decoded.span.file, FileId(7));
+    }
 }
 
 #[test]

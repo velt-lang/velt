@@ -132,9 +132,9 @@ impl super::Loader<'_, '_> {
         }
         let effects = match self.read(&file) {
             Ok(src) => {
-                let file = velt_common::FileId(u32::MAX);
                 let on_disk = !self.overlay.contains_key(&key);
-                let (module, _) = super::std_ast::parse(file, &src, false, on_disk);
+                let no_file = super::std_ast::NO_FILE;
+                let (module, _) = super::std_ast::parse(no_file, &src, false, on_disk);
                 has_effects(&module)
             }
             Err(_) => true,

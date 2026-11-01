@@ -169,3 +169,42 @@ fn every_std_file_round_trips_through_the_cache() {
         }
     });
 }
+
+/// A module of file 0 is stored as parsed under another id: its empty span at 0 (here the
+/// module's own) is a span of the file in a build that decodes it as another file, not the
+/// dummy.
+#[test]
+fn an_entry_written_for_file_0_decodes_for_any_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cache = Cache::new(tmp.path(), u64::MAX);
+    let p = prefix("c1");
+    let src = "";
+    let (first, _) = parse_cached(&cache, &p, FileId(0), src, false);
+    assert_eq!(dump(&first), fresh(src, FileId(0)));
+    let (other, _) = parse_cached(&cache, &p, FileId(7), src, false);
+    assert_eq!(other.span.file, FileId(7));
+    assert_eq!(dump(&other), fresh(src, FileId(7)));
+}
+
+/// A std file the editor has unsaved changes in (the language server's overlay) is parsed: its
+/// entry is neither read nor written.
+#[test]
+fn an_unsaved_buffer_is_neither_read_nor_stored() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cache = Cache::new(tmp.path(), u64::MAX);
+    let p = prefix("c1");
+    // An entry under A's key that decodes to B: reading it would show.
+    let planted = velt_syntax::encode_module(&parse_source(FileId(1), B, false).0, FileId(1));
+    cache.put_key(KIND, &key(&p, A, false), &planted);
+    let (m, _) = parse_in(Some(&cache), &p, FileId(1), A, false, false);
+    assert_eq!(dump(&m), fresh(A, FileId(1)));
+    // Not stored.
+    let (m, _) = parse_in(Some(&cache), &p, FileId(1), B, false, false);
+    assert_eq!(dump(&m), fresh(B, FileId(1)));
+    assert!(Cache::new(tmp.path(), u64::MAX)
+        .get_key(KIND, &key(&p, B, false))
+        .is_none());
+    // The same source read from disk does use the cache.
+    let (m, _) = parse_in(Some(&cache), &p, FileId(1), A, false, true);
+    assert_eq!(dump(&m), fresh(B, FileId(1)));
+}

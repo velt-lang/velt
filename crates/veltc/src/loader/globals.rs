@@ -63,7 +63,7 @@ pub(super) fn global_modules(std_root: &Path) -> Vec<Global> {
 
 /// The names a global module's `export { … } from "…"` items re-export (under their aliases).
 fn reexported_names(src: &str) -> Vec<String> {
-    let (module, _) = super::std_ast::parse(velt_common::FileId(0), src, false, true);
+    let (module, _) = super::std_ast::parse(super::std_ast::NO_FILE, src, false, true);
     let mut names = vec![];
     for item in &module.items {
         if let ast::ItemKind::Import(imp) = &item.kind {
