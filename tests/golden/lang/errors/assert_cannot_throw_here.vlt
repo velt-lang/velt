@@ -1,6 +1,6 @@
 // A failed `assert` throws an `AssertionError`, so it can't be used where nothing may throw: a
 // sort comparator, a promise executor, `toString`. There, an invariant check is
-// `if (!cond) panic(msg)` (docs/reference/errors.md).
+// `if (!cond) panic(msg)` (https://veltlang.com/docs/reference/errors/).
 
 const xs = [3, 1, 2];
 xs.sort((a, b) => {

@@ -305,7 +305,7 @@ value's captures, an interface value's implementor) panics (glue/clone.rs). Stri
   block end; an explicit `x[Symbol.dispose]()` of a shared object releases that reference only.
 - Threads: deep copies at `spawn`/handler boundaries do not preserve aliasing inside the copied
   graph. (A stored promise handed to `spawn` already runs on its creator's task and stays there,
-  [Async — tasks](../../reference/async.md#tasks); only its result crosses, transferred.) A
+  [Async — tasks](https://veltlang.com/docs/reference/async/#tasks); only its result crosses, transferred.) A
   promise created outside any task (synchronous `main`) is lazy, and spawning it runs it on
   the new task with its arguments as they were passed, not transferred (a gap: the caller must
   not use them afterwards).

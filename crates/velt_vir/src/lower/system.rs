@@ -70,7 +70,7 @@ impl FnLower<'_, '_> {
         // `lastOsError()` reads the errno captured right after the last system call this thread
         // made (set below), not errno itself, so a temporary freed between the failing call and
         // this one cannot change the value, and a callee's failing call is seen by its caller
-        // (docs/reference/system-functions.md).
+        // (https://veltlang.com/docs/reference/system-functions/).
         if let (Ret::Errno, Some((get, _))) = (func.ret, self.errno_tls()) {
             for a in args {
                 self.expr(a);
@@ -451,7 +451,7 @@ impl FnLower<'_, '_> {
         };
         self.switch_to(bad);
         self.panic_msg(&format!(
-            "system function `{}`: `{name}` {why} (docs/reference/system-functions.md)",
+            "system function `{}`: `{name}` {why} (https://veltlang.com/docs/reference/system-functions/)",
             func.name
         ));
         self.terminate(Terminator::Unreachable);
@@ -663,7 +663,7 @@ impl super::Cx<'_> {
                     match on.is_empty() {
                         true => "no target can call it yet: a Windows function that waits for \
                                  an `OVERLAPPED` is checked but not callable \
-                                 (docs/reference/system-functions.md)"
+                                 (https://veltlang.com/docs/reference/system-functions/)"
                             .to_string(),
                         false => format!("it is available on {}", on.join(", ")),
                     }

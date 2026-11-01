@@ -167,6 +167,7 @@ describe("velt/net/http's idle timeout", () => {
       // is answered on the same connection.
       await c.write("GET /held HTTP/1.1\r\nHost: x\r\n\r\n");
       await timeout(arrivals(g), 5000);
+      // timing: the idle timeout is the subject; a request stays in flight past it.
       await delay(900);
       open(g);
       expect((await timeout(c.readString(), 5000)).startsWith("HTTP/1.1 200")).toBe(true);

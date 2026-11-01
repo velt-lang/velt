@@ -1,20 +1,20 @@
 # http-server
 
 `import { serve, ServeInfo, HttpServer } from "http-server"`. An HTTP server written in Velt on
-[velt/net](../../docs/std/net.md)'s TCP and TLS streams: HTTP/1.1 keep-alive and pipelining,
+[velt/net](https://veltlang.com/docs/std/net/)'s TCP and TLS streams: HTTP/1.1 keep-alive and pipelining,
 [HTTP/2](docs/serve-http.md#http2) (h2c with prior knowledge, or ALPN over TLS), HTTPS, response
 streaming with backpressure, graceful stops (also under `velt dev`, through
-[velt/dev](../../docs/std/dev.md)) and [WebSockets](docs/websocket.md). Handlers take the global
-[`Request`](../../docs/std/net/http.md#request) and return the global
-[`Response`](../../docs/std/net/http.md#response), the classes `fetch` uses, as in Deno and Bun;
+[velt/dev](https://veltlang.com/docs/std/dev/)) and [WebSockets](docs/websocket.md). Handlers take the global
+[`Request`](https://veltlang.com/docs/std/net/http/#request) and return the global
+[`Response`](https://veltlang.com/docs/std/net/http/#response), the classes `fetch` uses, as in Deno and Bun;
 they run concurrently on every core. A listening server keeps the process alive after `main`
 returns, like Node, until `server.close()`; dropping the `HttpServer` value does not stop it. A
 `main` that fails (an uncaught error, or a nonzero exit code) ends the process at once, servers
-or not. For a walkthrough, see [Building an HTTP server](../../docs/book/http-server.md).
+or not. For a walkthrough, see [Building an HTTP server](https://veltlang.com/docs/book/http-server/).
 
 It is a package, not part of the standard library, and it uses only public APIs: what std offers
-any server ([`RequestSource`, `responseParts`, `statusText`](../../docs/std/net/http.md#for-servers),
-[velt/net/http/h2](../../docs/std/net/http.md#http2)'s HPACK and frames, velt/dev, velt/net/websocket's
+any server ([`RequestSource`, `responseParts`, `statusText`](https://veltlang.com/docs/std/net/http/#for-servers),
+[velt/net/http/h2](https://veltlang.com/docs/std/net/http/#http2)'s HPACK and frames, velt/dev, velt/net/websocket's
 `webSocketOver`). The lower-level API it is built on, `serveHttp` with `HttpRequest` and
 `HttpResponse` (each request read in place in its connection's buffer, each response written
 straight into it), is in [docs/serve-http.md](docs/serve-http.md).
@@ -31,6 +31,8 @@ dependencies: {
   // Or a checkout: "http-server": { path: "../velt/packages/http-server" },
 },
 ```
+
+It is written in Velt, with no native code. The full guide: https://veltlang.com/docs/packages/http-server/.
 
 ```ts
 import { serve } from "http-server";
@@ -71,7 +73,7 @@ key that does not parse) throws `IoError`.
   captured, so a handler (and the callbacks it reaches) must not change a variable it captured:
   `(req) => { count++; … }` is a compile error at the `serve` call, with the `shared(...)` fix,
   as for any library function that runs a callback on other threads
-  ([Async](../../docs/reference/async.md#tasks)). Changing an object's fields through a captured
+  ([Async](https://veltlang.com/docs/reference/async/#tasks)). Changing an object's fields through a captured
   variable changes that request's copy, not the caller's object (unlike Node, which shares it;
   #854). A captured resource (`[Symbol.dispose]`) needs a `clone()`, or capture it as
   `shared(new Mutex(…))`.
@@ -121,7 +123,7 @@ key that does not parse) throws `IoError`.
 
 ## The request
 
-The handler's `req` is a [`Request`](../../docs/std/net/http.md#request) that reads the server's
+The handler's `req` is a [`Request`](https://veltlang.com/docs/std/net/http/#request) that reads the server's
 request lazily: a handler pays only for what it reads.
 
 - `req.url` is absolute, as in Deno and Bun: `http://` (`https://` over TLS), the `host` header
@@ -132,7 +134,7 @@ request lazily: a handler pays only for what it reads.
 - The body is received while the handler reads it, not before the handler starts: `await req.text()`
   (invalid UTF-8 becomes U+FFFD), `await req.json<T>()`, `await req.bytes()`, or chunk by chunk with
   `for await (const chunk of body)` over `req.body` (a
-  [`BodyStream`](../../docs/std/net/http.md#bodystream), `null` for a request without a body), so an
+  [`BodyStream`](https://veltlang.com/docs/std/net/http/#bodystream), `null` for a request without a body), so an
   upload need not be held in memory. A body is read once; a read that fails (the client went away)
   throws `IoError`.
 - A `Request` is valid until its handler settles: what the handler read stays readable, but
@@ -144,7 +146,7 @@ request lazily: a handler pays only for what it reads.
 
 ## The response
 
-The handler returns any [`Response`](../../docs/std/net/http.md#response): `new Response(body, {
+The handler returns any [`Response`](https://veltlang.com/docs/std/net/http/#response): `new Response(body, {
 status, statusText, headers })` or `Response.json(value, init)`, `Response.redirect(url, status)`,
 or a response `fetch` returned (a proxy: its body is passed on as it arrives).
 
@@ -194,7 +196,7 @@ A handler can take over its connection for another protocol (an HTTP/1.1 `Upgrad
 `upgradeConnection(req: Request, protocol: string, headers?: HeadersInit): ConnectionUpgrade {
 stream: TcpStream; response: Response }` takes the connection. Return `response` (`101 Switching
 Protocols`, with `upgrade: protocol`, `connection: Upgrade` and `headers`) from the handler; from
-then on the connection is `stream`, a [`velt/net`](../../docs/std/net.md) byte stream (over TLS if
+then on the connection is `stream`, a [`velt/net`](https://veltlang.com/docs/std/net/) byte stream (over TLS if
 the server is), released with `close()`.
 
 ```ts

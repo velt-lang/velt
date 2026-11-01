@@ -3,7 +3,7 @@
 //! catalog). The same model as the HTML pages ([`crate::extract`], [`crate::resolve`]) with
 //! the same links ([`crate::html::Links`]), but the doc comment's tags kept apart and every link
 //! a target (module and name) rather than a URL. The schema is documented in
-//! `docs/tooling/cli.md` ("JSON output"); bump [`SCHEMA_VERSION`] when a field changes meaning
+//! `https://veltlang.com/docs/tooling/cli/` ("JSON output"); bump [`SCHEMA_VERSION`] when a field changes meaning
 //! or goes away (new fields don't need it).
 
 use std::collections::{HashMap, HashSet};

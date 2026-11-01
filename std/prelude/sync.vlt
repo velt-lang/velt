@@ -1,4 +1,4 @@
-// Prelude: `Mutex<T>` for `shared(new Mutex<T>(x))` (docs/reference/async.md; `RwLock<T>` is in
+// Prelude: `Mutex<T>` for `shared(new Mutex<T>(x))` (https://veltlang.com/docs/reference/async/; `RwLock<T>` is in
 // rw_lock.vlt, `Atomic<T>` in atomic.vlt, `ThreadLocal<T>` in thread_local.vlt).
 //
 // The compiler implements `new Mutex<T>(x)` (initializes the lock word) and `m.with((v) => ...)`

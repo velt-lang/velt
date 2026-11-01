@@ -1,4 +1,4 @@
-//! Recursive closure groups (docs/reference/functions.md "Declarations"): nested functions
+//! Recursive closure groups (https://veltlang.com/docs/reference/functions/ "Declarations"): nested functions
 //! that use the enclosing function's locals and call each other (or themselves), made closure
 //! constants by `crate::nested_closures`, which records each group (`ClosureGroup`).
 //!

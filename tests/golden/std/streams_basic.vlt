@@ -42,7 +42,7 @@ async function main() {
     }
     console.log("read", r.value);
     // (Velt's `await` resumes before the microtasks queued earlier, Node's after them: a tick
-    // keeps both in step. docs/reference/async.md "Callbacks")
+    // keeps both in step. https://veltlang.com/docs/reference/async/ "Callbacks")
     await tick();
   }
   console.log(s);

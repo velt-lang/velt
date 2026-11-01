@@ -1,0 +1,46 @@
+// A generic type that refers to itself at a growing type argument: `L<number>` needs
+// `L<number[]>`, `L<number[][]>`, … Velt compiles each instantiation separately, so each
+// function that uses one gets an error (at the call that instantiates a generic function with
+// it) instead of the compiler overflowing its stack.
+import { expect, test } from "velt/test";
+
+type L<T> = { v: T; n: L<T[]> | null };
+
+// Recursion at the same type argument is fine.
+type List<T> = { v: T; next: List<T> | null };
+
+function parse(): void {
+  const x = JSON.parse<L<number>>('{"v":1,"n":null}');
+  console.log(x.v);
+}
+
+function write(a: L<string>): void {
+  console.log(JSON.stringify(a));
+}
+
+function compare(): void {
+  const a: L<number> = { v: 1, n: null };
+  console.log(deepEqual(a, a));
+}
+
+function make<T>(v: T): L<T> {
+  return { v, n: null };
+}
+
+function instantiate(): void {
+  console.log(make<bool>(true).v);
+}
+
+test("equal", () => {
+  const a: L<number> = { v: 1, n: null };
+  expect(a).toEqual({ v: 1, n: null });
+});
+
+function main() {
+  const l: List<number> = { v: 1, next: null };
+  console.log(JSON.stringify(l), deepEqual(l, l));
+  parse();
+  write({ v: "a", n: null });
+  compare();
+  instantiate();
+}

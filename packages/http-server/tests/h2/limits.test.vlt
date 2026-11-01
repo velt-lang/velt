@@ -414,6 +414,7 @@ describe("HTTP/2 limits", () => {
       c.get(1, "/");
       await c.flush();
       await timeout(arrivals(g), 5000);
+      // timing: the idle timeout is the subject; a stream stays open past it.
       await delay(900);
       c.frame(6, 0, 0, [0, 0, 0, 0, 0, 0, 0, 1]);
       await c.flush();

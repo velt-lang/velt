@@ -14,7 +14,7 @@ use crate::defs::{
 };
 use crate::hir::AdtKind;
 
-/// Name of the drop-hook method, `[Symbol.dispose]` (docs/reference/memory.md "Resource cleanup").
+/// Name of the drop-hook method, `[Symbol.dispose]` (https://veltlang.com/docs/reference/memory/ "Resource cleanup").
 pub(crate) const DISPOSE: &str = ast::SYMBOL_DISPOSE;
 
 /// Name of the async cleanup method that `await using` awaits, `[Symbol.asyncDispose]`.

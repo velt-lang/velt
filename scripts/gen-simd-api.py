@@ -357,7 +357,7 @@ open(f"{OUT}/masks.vlt","w",encoding="utf-8",newline="\n").write(head+"\n".join(
 reexports = "".join(
     f"export {{ {', '.join(name(l,n) for l,n in ts)} }} from \"velt/simd/{part}\";\n"
     for part,(_,ts) in files.items())
-open(f"{STD}/simd.vlt","w",encoding="utf-8",newline="\n").write(f"""// velt/simd: the 128-bit SIMD vector types and their masks (docs/std/simd.md).
+open(f"{STD}/simd.vlt","w",encoding="utf-8",newline="\n").write(f"""// velt/simd: the 128-bit SIMD vector types and their masks (https://veltlang.com/docs/std/simd/).
 //
 //   import {{ u8x16, mask8x16 }} from "velt/simd";
 //

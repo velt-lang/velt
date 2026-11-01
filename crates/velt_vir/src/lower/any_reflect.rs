@@ -1,4 +1,4 @@
-//! Reflection on `any` values (velt/reflect, docs/std/reflect.md): what a dynamic value holds
+//! Reflection on `any` values (velt/reflect, https://veltlang.com/docs/std/reflect/): what a dynamic value holds
 //! and the entries it lists, read through slot 18 of the descriptor, `AnyReflect (data, op,
 //! index, text: *string, value: *any) -> u64`, present only when the program reflects
 //! (`Boxing::any_reflect`). It is the runtime type description any library may read; std's

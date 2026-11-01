@@ -4,7 +4,7 @@
 // (`process.env.NAME`) and writing strings (`process.stdout.write(s)`) are on the builtin
 // `process`, with no import (std/prelude/process.vlt). Strings are UTF-8 (the runtime uses the
 // wide APIs on Windows).
-// docs/std/process.md.
+// https://veltlang.com/docs/std/process/.
 
 export { args, argv } from "velt/process/args";
 export { chdir, cwd, envAll, removeEnv, setEnv } from "velt/process/env";

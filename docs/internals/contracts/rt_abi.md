@@ -336,7 +336,7 @@ first half of its 8-byte slot. Functions (`std/lang/symbol/index.vlt`; `string` 
 ## CPU check [additive]
 
 `velt_rt_check_cpu(required: u32)`: x86_64 code built for more than the baseline CPU
-(`--cpu`, docs/tooling/platforms.md "CPU") calls it first thing in `velt_main`, after the
+(`--cpu`, https://veltlang.com/docs/tooling/platforms/ "CPU") calls it first thing in `velt_main`, after the
 runtime's start-up (baseline code) and before any code that may use the features. `required` is
 a mask of features, by bit: 0 SSE3, 1 SSSE3, 2 SSE4.1, 3 SSE4.2, 4 POPCNT, 5 CMPXCHG16B, 6 AVX,
 7 AVX2, 8 BMI1, 9 BMI2, 10 FMA, 11 LZCNT, 12 MOVBE, 13 F16C, 14 AVX512F, 15 AVX512BW,
@@ -632,6 +632,10 @@ into a plain array in place. `velt_rt_array_view_remove` takes the view's view o
 `ArrayView`, untagged) and removes the entry if it is that object's view: if the entry's box
 header holds `object | 1`. So the view's own box never reaches the runtime, and the backend
 need not assume that a call may change a box of a view type.
+
+A view's header is told apart by bit 0 of its data pointer, so an array the runtime hands to
+generated code never has an odd data pointer: an empty one has an even dangling pointer
+(`velt_rt::bytes::empty_data`, not Rust's `NonNull::dangling()`, which is 1 for bytes).
 
 `velt_rt_array_view_cold()` does nothing. The test before a loop versioned for a box
 (`lower/view_unswitch.rs`) calls it when the box is a view, on the way into the loop's

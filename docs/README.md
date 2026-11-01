@@ -1,18 +1,14 @@
 # Velt documentation
 
-Velt compiles your TypeScript to a native executable: Rust-class speed, every core, and no
-runtime to install. It reads `.ts` and `.tsx` files as they are, and adds what a compiler makes
-possible: typed errors, integer types, `extend` and parallel tasks.
+The user documentation lives on the website, **[veltlang.com/docs](https://veltlang.com/docs/)**:
+[the Book](https://veltlang.com/docs/book/) (getting started, a tour, guides),
+[the Reference](https://veltlang.com/docs/reference/) (the language rules),
+[the standard library](https://veltlang.com/docs/std/), [packages](https://veltlang.com/docs/packages/)
+and [tooling](https://veltlang.com/docs/tooling/). Its source is
+[`velt-lang/velt-lang.github.io`](https://github.com/velt-lang/velt-lang.github.io); a change here
+that users see files a docs-sync issue there ([CONTRIBUTING.md](../CONTRIBUTING.md#the-websites-docs)).
 
-| | |
-|---|---|
-| **[The Book](book/README.md)** | Learn Velt: [getting started](book/getting-started.md), [a tour](book/tour.md), [Velt for TypeScript developers](book/ts-developers.md), and guides for servers, CLIs, async, errors, memory, packages, testing and hot reload. |
-| **[The Reference](reference/README.md)** | The precise rules: [types](reference/types.md), [functions](reference/functions.md), [classes](reference/classes.md), [errors](reference/errors.md), [async](reference/async.md), [memory model](reference/memory.md), [modules](reference/modules.md), [diagnostics](reference/diagnostics.md), … |
-| **[The standard library](std/README.md)** | One page per module: [fs](std/fs.md), [fetch](std/net/http.md), [json](std/encoding/json.md), [process](std/process.md), [collections](std/collections.md), … and the always-available [prelude](std/prelude.md). |
-| **[Tooling](tooling/README.md)** | The [`velt` command](tooling/cli.md), [`velt dev`](tooling/dev.md), [`package.vlt`](tooling/manifest.md), [packages](tooling/packages.md), [formatter](tooling/fmt.md), [editors](tooling/editors.md), [debugging](tooling/debugging.md), [WebAssembly](tooling/webassembly.md), [platforms](tooling/platforms.md). |
-| **[Internals](internals/README.md)** | How the compiler works: the pipeline, the interfaces between stages, and the design notes behind the language. |
-
-New here? Start with [Getting started](book/getting-started.md), then take
-[the tour](book/tour.md).
+This folder holds the compiler team's documentation: [Internals](internals/README.md), the
+compiler pipeline, the contracts between crates and the design notes behind the language.
 
 Contributing: [CONTRIBUTING.md](../CONTRIBUTING.md). Plans: [ROADMAP.md](../ROADMAP.md).

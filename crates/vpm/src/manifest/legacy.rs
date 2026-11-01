@@ -34,7 +34,7 @@ pub fn migration_error(dir: &Path) -> String {
             m.to_vlt()
         ),
         Err(e) => format!(
-            "{head}\n  = note: it could not be converted ({e}); see docs/tooling/manifest.md"
+            "{head}\n  = note: it could not be converted ({e}); see https://veltlang.com/docs/tooling/manifest/"
         ),
     }
 }

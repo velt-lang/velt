@@ -1,5 +1,7 @@
-//! Doc tests: every ```` ```ts ```` block in the user-facing docs compiles (parse, sema, lowering,
-//! VIR verification — no codegen or linking, so the whole set checks in seconds).
+//! Doc tests: every ```` ```ts ```` block in the repository's own user-facing Markdown (the README
+//! and the http-server package's docs) compiles (parse, sema, lowering, VIR verification — no
+//! codegen or linking, so the whole set checks in seconds). The language and std docs live on the
+//! website (https://veltlang.com/docs/), which checks its examples itself.
 //!
 //! Checked files: every Markdown file under [`DOCS`] (a file, or a directory searched
 //! recursively). A snippet may import the repository's packages without native code
@@ -15,7 +17,7 @@
 //! every other top-level statement moves, in order, into a generated `async function main()`.
 //!
 //! Filter with `VELT_DOCS=<substring of "file:line">`; `VELT_DOCS_DUMP=<dir>` also writes the
-//! completed programs there. Owned by the docs agent.
+//! completed programs there.
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
@@ -30,10 +32,6 @@ use veltc::driver::{self, BuildError, BuildOptions, Session};
 /// listed: design notes show syntax that is not built yet.
 const DOCS: &[&str] = &[
     "README.md",
-    "docs/book",
-    "docs/reference",
-    "docs/std",
-    "docs/tooling",
     "packages/http-server/README.md",
     "packages/http-server/docs",
 ];
@@ -48,7 +46,7 @@ enum Expect {
 
 /// One fenced `ts` block.
 struct Snippet {
-    /// `docs/book/tour.md:42` (the fence line).
+    /// `README.md:42` (the fence line).
     origin: String,
     expect: Expect,
     source: String,
@@ -263,8 +261,8 @@ fn compile(root: &Path, program: &str) -> Result<(), (bool, String)> {
         input: dir.join("__doc_snippet.vlt"),
         root_source: Some(program.to_string()),
         emit: Emit::Vir,
-        // The examples that call system functions call POSIX ones (docs/reference/
-        // system-functions.md), which a Windows target lacks: there they are checked for Linux.
+        // An example that calls system functions calls POSIX ones (`declare system function`),
+        // which a Windows target lacks: there they are checked for Linux.
         target: cfg!(windows).then(|| "x86_64-unknown-linux-gnu".to_string()),
         ..Default::default()
     };

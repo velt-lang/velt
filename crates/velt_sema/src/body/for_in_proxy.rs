@@ -1,5 +1,5 @@
 //! `for (const k in o) body` in a program that loads `Proxy`, where `o` is an `any` or a value of
-//! a class or object type that may be a typed proxy (issue #823; docs/reference/types.md
+//! a class or object type that may be a typed proxy (issue #823; https://veltlang.com/docs/reference/types/
 //! "Proxy and Reflect"). Node evaluates `o` once, lists a proxy's keys with its `ownKeys` trap
 //! and runs its `getOwnPropertyDescriptor` trap just before each key's turn. So:
 //!

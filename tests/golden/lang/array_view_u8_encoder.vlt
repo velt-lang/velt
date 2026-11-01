@@ -1,0 +1,15 @@
+// #1963: an encoder's output (a buffer that adopts it, made empty first) in a program where a
+// `u8[]` field is set through `any`, which makes `u8[]` an array view type.
+
+class Holder {
+  data: u8[] = [];
+}
+
+function main() {
+  const e = new TextEncoder().encode("héllo");
+  console.log("enc", e.length);
+  const h = new Holder();
+  const a: any = h;
+  a.data = [1, 2, 3];
+  console.log("set", h.data.length);
+}

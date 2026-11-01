@@ -1,5 +1,5 @@
 //! `velt_native`: write the native half of a Velt package in Rust
-//! (docs/internals/contracts/native_abi.md, docs/book/native-packages.md).
+//! (docs/internals/contracts/native_abi.md, https://veltlang.com/docs/book/native-packages/).
 //!
 //! ```ignore
 //! use velt_native::{export, Error};

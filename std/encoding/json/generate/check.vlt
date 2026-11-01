@@ -1,6 +1,6 @@
 // velt/encoding/json (internal): what `JSON.stringify` cannot write, found on the model by the
 // generator of `writeJsonTop` (write.vlt) and reported at the call that writes it, with the
-// messages the language reference gives (docs/std/encoding/json.md). Generated code is checked
+// messages the language reference gives (https://veltlang.com/docs/std/encoding/json/). Generated code is checked
 // only for a program whose types can all be written.
 
 import { Model, Type } from "velt/generate";

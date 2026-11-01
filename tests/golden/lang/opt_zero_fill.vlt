@@ -4,7 +4,7 @@
 // field before it is written, a throw half-way, calls between the stores and a bool next to a
 // number (padding) must all behave as with the fill. So must an overridden method that a base
 // constructor calls, which reads the subclass's fields before their initializers ran (zero and
-// empty, docs/reference/classes.md), and a throw before a string or array field is written.
+// empty, https://veltlang.com/docs/reference/classes/), and a throw before a string or array field is written.
 class Item {
   id: number;
   ok: boolean;

@@ -1,4 +1,4 @@
-//! Generator function expressions (docs/reference/functions.md "Generator function
+//! Generator function expressions (https://veltlang.com/docs/reference/functions/ "Generator function
 //! expressions"): `function* (params): Generator<T> { body }` and `async function* (...):
 //! AsyncGenerator<T> { body }`, optionally named. Arrows cannot be generators, so this is the
 //! one form of `function` expression Velt has; any other is an error asking for an arrow.

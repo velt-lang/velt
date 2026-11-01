@@ -1,4 +1,4 @@
-//! Side-by-side toolchain versions (#948, docs/tooling/platforms.md "Toolchain versions").
+//! Side-by-side toolchain versions (#948, https://veltlang.com/docs/tooling/platforms/ "Toolchain versions").
 //!
 //! A machine keeps each velt version in its own prefix, `<root>/toolchains/<version>/`, beside
 //! the launcher `<root>/bin/velt`, which runs the version a package asks for:

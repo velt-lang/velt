@@ -1,6 +1,6 @@
 //! Field reads through interface values (`x.f` with `x: I` or `x: T extends I`), and the
 //! reads of arrays of interface values through an interface at a dynamic argument (`kids` of a
-//! `Tree<any>`, or a method's result of such a type; docs/reference/types.md "Generic
+//! `Tree<any>`, or a method's result of such a type; https://veltlang.com/docs/reference/types/ "Generic
 //! interfaces with `unknown` arguments"). An adapter from another instance of the interface
 //! (`iface_adapt`) reads such an array as a new array of its elements, each adapted
 //! (`adapt_array`): a change made through that array, an alias of it or its identity would not

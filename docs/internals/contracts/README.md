@@ -19,7 +19,7 @@ helper), and explain it in your final report.
 | CLI | `docs/internals/contracts/cli.md` | tooling ↔ golden tests |
 | Manifest, lockfile, registry | `docs/internals/contracts/manifest.md` | vpm ↔ tooling, registries |
 | Native libraries of packages | `docs/internals/contracts/native_abi.md` + `crates/velt_native` | packages' Rust crates ↔ runtime, vpm, compiler |
-| Language semantics | `docs/reference/` + `tests/golden/**` | everyone |
+| Language semantics | https://veltlang.com/docs/reference/ + `tests/golden/**` | everyone |
 
 ## Pipeline
 ```

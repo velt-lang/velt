@@ -7,7 +7,7 @@ function), runs each with `velt run` and with Node (`--experimental-strip-types`
 stdout and the exit code.
 
 Every program that differs is put in a class: `documented` when it uses a form whose order
-docs/reference/async.md lists as different from Node's (`Promise.all`, `Promise.race`),
+https://veltlang.com/docs/reference/async/ lists as different from Node's (`Promise.all`, `Promise.race`),
 `unexpected` otherwise. A non-zero count of `unexpected` is a bug.
 
 usage: promise-order-diff.py <velt executable> <work dir> [count] [seed] [jobs] [mode]

@@ -1,6 +1,6 @@
 # Design: the JSON engine, fastest in class with System.Text.Json's features
 
-Status: proposed. Nothing here is implemented beyond what [velt/encoding/json](../../std/encoding/json.md)
+Status: proposed. Nothing here is implemented beyond what [velt/encoding/json](https://veltlang.com/docs/std/encoding/json/)
 documents today. Tracking: #1655, with one sub-issue per step; survey #529 has the `navigate` and `parse_value` rows.
 
 ## Where we are
@@ -316,7 +316,7 @@ the generated code: each element is decoded only once its bytes are complete.
 
 ### 9. Decorators (compile time only)
 
-Velt has no decorators today (`docs/book/ts-developers.md`). This step adds the TypeScript
+Velt has no decorators today (https://veltlang.com/docs/book/ts-developers/). This step adds the TypeScript
 syntax for them, with the meaning of .NET attributes:
 
 ```ts ignore
@@ -445,7 +445,7 @@ decodes.
 Each step is one pull request:
 - a step that changes speed has `bench/json/run.sh` numbers before and after, plus build time
   and IR size, with every row within 3% or better;
-- a step that users see updates `docs/std/encoding/json.md` (marked **Planned** until it lands) and adds
+- a step that users see updates https://veltlang.com/docs/std/encoding/json/ (marked **Planned** until it lands) and adds
   goldens.
 
 ## Open questions

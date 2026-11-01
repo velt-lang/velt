@@ -5,7 +5,7 @@ objects with the runtime (`velt_rt`) into an executable. Linking used to need th
 linker and SDK: Visual Studio Build Tools on Windows, Xcode's command line tools on macOS,
 `build-essential` on Linux. Released toolchains now bring their own (#803): **LLVM's `lld`**
 and, per target, a **link kit** that stands in for the SDK. This page explains how the pieces
-were chosen and how they are made. Users' view: [Platforms](../tooling/platforms.md#the-bundled-linker).
+were chosen and how they are made. Users' view: [Platforms](https://veltlang.com/docs/tooling/platforms/#the-bundled-linker).
 
 Code: `crates/velt_link` (`bundled.rs` chooses the linker, `lld.rs` builds lld's arguments,
 `kit/` describes and builds kits, `src/bin/velt-kit.rs` is the tool that builds them and

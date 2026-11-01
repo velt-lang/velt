@@ -132,7 +132,10 @@ const NOTHING: &[&str] = &[
 /// Paths outside `crates/` that tests read: (prefix, packages whose tests read it, `veltc` test
 /// binaries that read it).
 const READ_BY_TESTS: &[(&str, &[&str], &[&str])] = &[
-    ("docs/", &["velt_doc"], &["docs"]),
+    // velt_rt_host's ABI test reads the runtime ABI contracts; no test reads the rest of docs/
+    // (below).
+    ("docs/internals/contracts/", &["velt_rt_host"], &[]),
+    // `docs` compiles the README's examples.
     ("README.md", &[], &["docs"]),
     // velt_sema's scaling test reads bench/compile; `bench_programs` compiles every program.
     ("bench/", &["velt_sema"], &["bench_programs"]),
@@ -721,6 +724,10 @@ fn classify(graph: &Graph, path: &str) -> Effect {
         if under(prefix) {
             return Effect::ReadByTests(packages, binaries);
         }
+    }
+    // The internals docs (the user docs are on the website).
+    if path.starts_with("docs/") {
+        return Effect::Nothing;
     }
     if under(VSCODE) {
         return Effect::Vscode;

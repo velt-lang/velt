@@ -1,4 +1,4 @@
-//! Signature callbacks adapted to the implementation's (docs/reference/functions.md
+//! Signature callbacks adapted to the implementation's (https://veltlang.com/docs/reference/functions/
 //! "Overloads"). A signature's function parameter that takes fixed parameters where the
 //! implementation's takes a rest parameter (`setup: (ctx: Ctx, p1: T1) => R` for `setup: (ctx:
 //! Ctx, ...args: unknown[]) => R`) fits, as TypeScript relates the two loosely (bivariantly).

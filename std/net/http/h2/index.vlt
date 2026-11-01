@@ -1,7 +1,7 @@
 // velt/net/http/h2: HTTP/2's wire format (RFC 9113) and HPACK (RFC 7541), which the `fetch`
 // client and HTTP/2 servers share: frame types, flags, settings and error codes, a frame writer,
 // and the HPACK encoder and decoder with the header fields they produce. A server written in
-// Velt (packages/http-server) speaks HTTP/2 on it. docs/std/net/http.md.
+// Velt (packages/http-server) speaks HTTP/2 on it. https://veltlang.com/docs/std/net/http/.
 
 export {
   ACK,

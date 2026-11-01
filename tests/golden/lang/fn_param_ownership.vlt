@@ -1,4 +1,4 @@
-// Function-typed params that the callee keeps are owned (docs/reference/functions.md "Captures"): storing
+// Function-typed params that the callee keeps are owned (https://veltlang.com/docs/reference/functions/ "Captures"): storing
 // one (`push`, a field, a generic `T`), copying it (`.clone()`) or passing it to an async
 // function makes the closure literal at the call site escaping (it captures by value), so it
 // stays valid after the caller's frame is gone. Run with junk allocations in between so a

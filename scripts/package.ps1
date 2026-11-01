@@ -1,7 +1,7 @@
 # Build a release Velt toolchain and assemble dist/velt-<version>-<host triple>/ (+ .zip and
 # .tar.gz).
 #
-# Layout (see docs/tooling/platforms.md):
+# Layout (see https://veltlang.com/docs/tooling/platforms/):
 #   bin/velt.exe  bin/velt-launcher.exe (installed as <root>\bin\velt.exe, #948)
 #   lib/velt_rt.lib  lib/velt_rt_shared.dll(.lib)  lib/NATIVE_LIBS.md
 #   lib/velt/lld.exe  lib/targets/<triple>/ (link kit)
@@ -134,7 +134,7 @@ Then add ``%LOCALAPPDATA%\velt\bin`` to PATH and run ``velt doctor``.
     velt new app; cd app; velt run
 
 Layout: bin/ (the velt CLI, and the launcher), lib/ (runtime library linked into every program),
-std/ (standard library sources). Full guide: docs/tooling/platforms.md in the Velt repository.
+std/ (standard library sources). Full guide: https://veltlang.com/docs/tooling/platforms/.
 "@ | Set-Content -Encoding utf8 (Join-Path $Out "README.md")
 
 Copy-Item (Join-Path $Repo "LICENSE-MIT"), (Join-Path $Repo "LICENSE-APACHE"), (Join-Path $Repo "NOTICE") $Out
@@ -144,7 +144,7 @@ if (-not $NoBundledLinker) {
     Write-Host "bundled linker: lld $(& $Size (Join-Path $Out 'lib\velt')) MB, kit $(& $Size (Join-Path $Out 'lib\targets')) MB; toolchain $(& $Size $Out) MB"
 }
 
-# The target pack (`velt target add`, docs/tooling/platforms.md): this host's runtime and link
+# The target pack (`velt target add`, https://veltlang.com/docs/tooling/platforms/): this host's runtime and link
 # kit, for toolchains on other hosts.
 if (-not $NoBundledLinker) {
     $Packs = Join-Path $Dist "packs"

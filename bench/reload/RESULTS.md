@@ -110,7 +110,7 @@ change. Not on Windows: there a spare host on every save made the hot swap about
   no downtime.
 - `--exe` also pays for linking (~50 ms) and, on macOS, for the first-launch check of every new
   executable (200–600 ms, much more under load). The Developer Tools setting in
-  `docs/tooling/platforms.md` removes that check. I have not measured it with the setting enabled, because
+  https://veltlang.com/docs/tooling/platforms/ removes that check. I have not measured it with the setting enabled, because
   that needs admin rights and a System Settings change on this machine.
 - For comparison, `velt run examples/http_hello.vlt` to the first response took ~240 ms in the
   design doc's measurements (before the sema regression).

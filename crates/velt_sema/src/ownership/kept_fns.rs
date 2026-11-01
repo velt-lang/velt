@@ -2,7 +2,7 @@
 //! interface methods): `onCleanup((fn) => cleanupFn = fn)`, `subscribe(handler) {
 //! subscribers.push(handler); }`. Their function-typed parameters are borrowed, and a closure
 //! literal passed directly to a borrowed parameter may capture by reference and live in its
-//! caller's frame (docs/reference/functions.md "Captures"), so keeping a copy of one is an
+//! caller's frame (https://veltlang.com/docs/reference/functions/ "Captures"), so keeping a copy of one is an
 //! error (`super::fn_values`) unless every value that can reach the parameter is a closure
 //! with an environment of its own.
 //!

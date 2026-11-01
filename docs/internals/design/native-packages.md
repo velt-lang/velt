@@ -27,7 +27,7 @@ How a program uses the binary depends on the mode:
 - Packages hold only `velt.toml` and `src/**`. Both `vpm::contents` and `vpm::archive::check_path`
   reject anything else.
 - `declare function` already declares a C-ABI symbol. The parser produces `ItemKind::ExternFn`,
-  which becomes `hir::Def::ExternFn` and then `vir::ExternFn` (`docs/reference/modules.md`). User
+  which becomes `hir::Def::ExternFn` and then `vir::ExternFn` (https://veltlang.com/docs/reference/modules/). User
   modules may use it, but every symbol must come from `velt_rt`:
   - `velt_link::LinkRequest` takes only objects plus one runtime library.
   - The dev JIT resolves only `velt_rt_host::abi_symbols::symbol_table()` and `c_symbols`.
@@ -356,7 +356,7 @@ Each step below lands with its own tests:
    - `velt run`
    - `velt build --release`: the executable has no dynamic dependency on the library
    - `velt dev`, where a Velt edit still hot-swaps
-9. **Docs:** `docs/tooling/packages.md` and `manifest.md`, and a book page "Writing a package with
+9. **Docs:** https://veltlang.com/docs/tooling/packages/ and https://veltlang.com/docs/tooling/manifest/, and a book page "Writing a package with
    native code".
 
 ## Decisions

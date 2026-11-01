@@ -159,12 +159,12 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `--format json` (additive): the same documentation as one JSON document, `api.json` in the
   output directory, or the `.json` file `-o` names, or stdout for `-o -`. It is
   `{ schemaVersion, title, modules }`; `schemaVersion` (1) goes up when a field changes meaning
-  or goes away, and fields may be added without it. The fields are in docs/tooling/cli.md
+  or goes away, and fields may be added without it. The fields are in https://veltlang.com/docs/tooling/cli/
   "JSON output"; the docs website renders its API pages, search index and std catalog from it.
   `--format types` (additive, with `--std` only): the standard library's TypeScript
   declarations as the npm package `velt` (`package.json` with an `exports` map, an
   `index.d.ts` per public module, `globals.d.ts`) into `-o` (default `target/velt-types`);
-  docs/tooling/cli.md "TypeScript declarations".
+  https://veltlang.com/docs/tooling/cli/ "TypeScript declarations".
 - `registry serve` (additive): serves a registry directory (default: the
   local registry) over HTTP (protocol in manifest.md "Remote registries"). `publish`
   uploads when the package's `registry` (or `$VELT_REGISTRY`) is a URL.

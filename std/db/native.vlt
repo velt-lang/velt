@@ -1,5 +1,5 @@
 // velt/db (internal): what a native driver (a package with a Rust library on the native SDK,
-// docs/book/native-packages.md) hands std to decode its rows and to bind a statement's
+// https://veltlang.com/docs/book/native-packages/) hands std to decode its rows and to bind a statement's
 // parameters: a row cursor and a parameter sink (docs/internals/contracts/native_abi.md "Row
 // cursors" and "Parameter sinks"). Both are handles, `u64` keys the runtime gave the driver when
 // it registered the cursor or sink (`velt_text::rows_cursor::open_cursor` / `open_sink`), never

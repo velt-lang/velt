@@ -1,4 +1,4 @@
-// Prelude: `WeakSet<T>` (docs/std/prelude.md#weakmap-weakset-and-weakref), a set of objects that does
+// Prelude: `WeakSet<T>` (https://veltlang.com/docs/std/prelude/#weakmap-weakset-and-weakref), a set of objects that does
 // not keep them alive, on velt_rt's weak maps (weak.vlt; docs/internals/design/weak-refs.md).
 
 import { weakMapDelete, weakMapHas, weakMapSet } from "velt/lang/intrinsics";
