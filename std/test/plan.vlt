@@ -2,7 +2,6 @@
 // (several at once), and the reports read back from them, in file order.
 
 import { JSON } from "velt/prelude/json/json";
-import { exec } from "velt/process/child/exec";
 import { ExecResult } from "velt/process/child/exec_result";
 import { ChildProcess, spawn } from "velt/process/child/child_process";
 import { writeFileSync } from "velt/fs/files";
@@ -212,18 +211,21 @@ async function runFrom(run: FileRun, from: usize, report: Report, paint: Paint):
   }
   // Counting blocks, the process returns from `main` after its tests and waits for what is
   // still running, as Node does: one that is still running `leakWait()` after it said its tests
-  // are done is ended. However long the tests take does not count.
+  // are done is ended. However long the tests take does not count; a process still running
+  // `fileTimeout()` after it started is ended in any case (a test that never ends).
   const counting = process.env.VELT_RC_STATS == "1";
   let r: ExecResult;
-  let ended = false;
+  let ended: i64 = NOT_ENDED;
   try {
-    if (counting) {
-      const timed = await runTimed(run.exe, env, leakWait(), `${mark}done`);
-      r = timed.result;
-      ended = timed.ended;
-    } else {
-      r = await exec(run.exe, [], { env: env });
-    }
+    const timed = await runTimed(
+      run.exe,
+      env,
+      counting ? leakWait() : 0,
+      fileTimeout(),
+      `${mark}done`,
+    );
+    r = timed.result;
+    ended = timed.ended;
   } catch (e) {
     const text = errorText(e);
     report.lines.push(`${paint.error("error:")} cannot run \`${run.exe}\`: ${text}`);
@@ -268,9 +270,11 @@ async function runFrom(run: FileRun, from: usize, report: Report, paint: Paint):
       report.lines.push(`    ${rest.slice(2)}`);
     }
   }
+  const limit = `${fileTimeout() / 1000} s`;
   if (!started) {
     // It ended before running a test: in a module's top-level code, or collecting the tests.
-    report.lines.push(`${paint.failed()} ${f.path} (exit code ${r.code} before its tests ran)`);
+    const why = ended == TIMED_OUT ? `timed out after ${limit}` : `exit code ${r.code}`;
+    report.lines.push(`${paint.failed()} ${f.path} (${why} before its tests ran)`);
     pushStderr(report, r.stderr);
     const left = (run.tests?.length ?? f.tests.length) - from;
     report.failed += left > 0 ? left : 1;
@@ -279,9 +283,20 @@ async function runFrom(run: FileRun, from: usize, report: Report, paint: Paint):
   }
   const tests = run.tests ?? listed;
   run.tests = tests;
-  if (ended) {
+  if (ended == TIMED_OUT && next < tests.length) {
+    // Ended inside test `next`: it fails, and a new process runs the tests after it.
     report.lines.push(
-      `${paint.failed()} ${f.path} (still running ${leakWait() / 1000} s after its tests: a server, a connection or a timer left open)`,
+      `${paint.failed()} ${tests[next]} (timed out after ${limit} with this test running)`,
+    );
+    pushStderr(report, r.stderr);
+    report.failed++;
+    return next + 1;
+  }
+  if (ended != NOT_ENDED) {
+    const after =
+      ended == TIMED_OUT ? `at the ${limit} limit` : `${leakWait() / 1000} s after its tests`;
+    report.lines.push(
+      `${paint.failed()} ${f.path} (still running ${after}: a server, a connection or a timer left open)`,
     );
     report.failed++;
     return tests.length;
@@ -316,40 +331,76 @@ async function runFrom(run: FileRun, from: usize, report: Report, paint: Paint):
 /** How long a test process counting blocks may keep running after its tests (ms). */
 const LEAK_WAIT = 120000;
 
+/** How long a test process may run in all (ms): a test that never ends fails after it. */
+const FILE_TIMEOUT = 600000;
+
 /** `LEAK_WAIT`, or the milliseconds `$VELT_TEST_LEAK_WAIT` sets. */
 function leakWait(): number {
-  const set = Number(process.env.VELT_TEST_LEAK_WAIT ?? "");
-  return Number.isNaN(set) || set <= 0 ? LEAK_WAIT : set;
+  return msFrom(process.env.VELT_TEST_LEAK_WAIT, LEAK_WAIT);
 }
 
-/** What `runTimed` ran: as `exec` returns it, and whether it was ended for taking too long. */
+/** `FILE_TIMEOUT`, or the milliseconds `$VELT_TEST_TIMEOUT` sets. */
+function fileTimeout(): number {
+  return msFrom(process.env.VELT_TEST_TIMEOUT, FILE_TIMEOUT);
+}
+
+/** The positive number of milliseconds `set` holds, else `otherwise`. */
+function msFrom(set: string | undefined, otherwise: number): number {
+  const ms = Number(set ?? "");
+  return Number.isNaN(ms) || ms <= 0 ? otherwise : ms;
+}
+
+/** Why `runTimed` ended a process: it didn't, it outlived the leak wait, or the time limit. */
+const NOT_ENDED: i64 = 0;
+const LEFT_OPEN: i64 = 1;
+const TIMED_OUT: i64 = 2;
+
+/** What `runTimed` ran: as `exec` returns it, and whether (and why) it was ended. */
 struct Timed {
   result: ExecResult;
-  ended: bool;
+  ended: i64;
 }
 
 /**
- * Run `exe` with `env` to its end, as `exec` does, but end it `limit` ms after its stdout says
- * its tests are done (a line `done`): the tests themselves may take as long as they take.
+ * Run `exe` with `env` to its end, as `exec` does, but end it `wait` ms after its stdout says
+ * its tests are done (the line `done`; never when `wait` is 0), or `timeout` ms after it starts:
+ * the tests themselves may take as long as they take, up to `timeout`.
  */
 async function runTimed(
   exe: string,
   env: Map<string, string>,
-  limit: number,
+  wait: number,
+  timeout: number,
   done: string,
 ): Promise<Timed> {
   const child = spawn(exe, [], { env: env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-  const ended = shared(0 as i64);
+  const ended = shared(NOT_ENDED);
+  const ends = ended.clone();
+  const limit = setTimeout(
+    () => {
+      end(child, ends, TIMED_OUT);
+    },
+    timeout as i64,
+  );
   const stderr = drain(() => child.readStderr());
-  const out = await watch(child, done, limit, ended.clone());
+  const out = await watch(child, done, wait, ended.clone());
   const err = await stderr;
   const code = await child.wait();
+  clearTimeout(limit);
   const timer = out.timer;
   if (timer != null) {
     clearTimeout(timer);
   }
   child.close();
-  return { result: new ExecResult(code as number, out.text, err), ended: ended.get() == 1 };
+  return { result: new ExecResult(code as number, out.text, err), ended: ended.get() };
+}
+
+/** Kill `child` for `why`, unless the other timer already did. */
+function end(child: ChildProcess, ended: shared<i64>, why: i64) {
+  if (ended.get() == NOT_ENDED) {
+    ended.set(why);
+    child.kill("SIGKILL");
+  }
 }
 
 /** A test process's stdout, and the timer `watch` armed when it said its tests are done. */
@@ -359,13 +410,14 @@ struct Watched {
 }
 
 /**
- * All of `child`'s stdout; once it holds `done`, a timer that kills `child` after `limit` ms
- * (setting `ended` to 1) unless it ends first.
+ * All of `child`'s stdout; once it holds `done`, a timer that kills `child` after `wait` ms
+ * (`ended` becomes `LEFT_OPEN`) unless it ends first. `done` starts with the run's marker, which
+ * holds a token made for each file's run (`token()`), so a test's own output cannot arm it.
  */
 async function watch(
   child: ChildProcess,
   done: string,
-  limit: number,
+  wait: number,
   ended: shared<i64>,
 ): Promise<Watched, unknown> {
   let text = "";
@@ -378,13 +430,13 @@ async function watch(
     // The marker may come in two chunks: look from just before where this one starts.
     const back = (text.length as i64) - (done.length as i64);
     text += chunk;
-    if (timer == null && text.indexOf(done, back > 0 ? back : 0) >= 0) {
+    if (wait > 0 && timer == null && text.indexOf(done, back > 0 ? back : 0) >= 0) {
+      const ends = ended.clone();
       timer = setTimeout(
         () => {
-          ended.set(1);
-          child.kill("SIGKILL");
+          end(child, ends, LEFT_OPEN);
         },
-        limit as i64,
+        wait as i64,
       );
     }
   }

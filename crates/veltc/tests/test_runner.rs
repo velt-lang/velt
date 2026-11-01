@@ -454,6 +454,46 @@ fn the_wait_for_a_process_to_end_starts_after_its_tests() {
     assert_eq!(o.status.code(), Some(1), "{stdout}");
 }
 
+/// A test that never ends fails once its process reaches the time limit (`VELT_TEST_TIMEOUT`, in
+/// ms), naming the test; the tests after it run in a new process, and other files are reported.
+#[test]
+fn a_test_that_never_ends_times_out() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    write(
+        dir,
+        "t/loops.test.vlt",
+        "export function test_before() {}\n\nexport function test_loops() {\n  let i = 0;\n  \
+         while (i >= 0) {\n    i = (i + 1) % 10;\n  }\n}\n\nexport function test_after() {}\n",
+    );
+    write(dir, "t/other.test.vlt", "export function test_other() {}\n");
+    let mut command = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
+    let o = command
+        .args(["test", "--no-cache", "t"])
+        .current_dir(dir)
+        .env("VELT_HOME", dir.join("home"))
+        .env("VELT_TEST_TIMEOUT", "3000")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&o.stdout);
+    assert_eq!(
+        block(&stdout, "loops.test.vlt")[1..],
+        [
+            "ok test_before",
+            "FAILED test_loops (timed out after 3 s with this test running)",
+            "ok test_after",
+        ],
+        "{stdout}"
+    );
+    assert_eq!(
+        block(&stdout, "other.test.vlt")[1..],
+        ["ok test_other"],
+        "{stdout}"
+    );
+    assert!(stdout.contains("3 passed; 1 failed"), "{stdout}");
+    assert_eq!(o.status.code(), Some(1), "{stdout}");
+}
+
 /// Failures whose messages have several lines: `toEqual` on two values too long for one line,
 /// and an error whose message has a line break.
 const MULTI_LINE: &str = r#"import { expect } from "velt/test";
