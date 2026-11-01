@@ -1,6 +1,6 @@
 // velt/collections: containers beyond the prelude's arrays and `Map`: a double-ended queue,
 // a priority queue, key-ordered maps (sorted arrays and a B+ tree), a concurrent map, and `Set`
-// (also a global). docs/std/collections.md.
+// (also a global). https://veltlang.com/docs/std/collections/.
 
 export { BTreeMap, InlineKey } from "velt/collections/btree_map";
 export { ConcurrentMap } from "velt/collections/concurrent_map";

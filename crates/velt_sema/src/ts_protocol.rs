@@ -1,4 +1,4 @@
-//! TypeScript's spellings of the iteration protocol types (docs/book/ts-developers.md).
+//! TypeScript's spellings of the iteration protocol types (https://veltlang.com/docs/book/ts-developers/).
 //!
 //! TypeScript's `Generator<T, TReturn, TNext>` (and `Iterator`, `Iterable`, `IterableIterator`,
 //! `IteratorObject` and their async twins) take the return type second and the type

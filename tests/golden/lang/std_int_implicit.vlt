@@ -1,6 +1,6 @@
 // An integer from the standard library (`xs.length`, `m.size`, `s.indexOf(t)`) is a `number` in
 // user code, and converts implicitly, as the integer itself, where an integer type that holds
-// every value it can have is expected (docs/reference/types.md "Numbers", #1602): a length into
+// every value it can have is expected (https://veltlang.com/docs/reference/types/ "Numbers", #1602): a length into
 // `usize`, `u64`, `i64` or `isize`, an `indexOf` into `i64` or `isize`.
 function at(xs: string[], i: usize): string {
   return xs[i];

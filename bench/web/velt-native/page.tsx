@@ -18,7 +18,7 @@ export class Fortune {
 /// The rows for one request: the twelve, one added at request time, sorted by message.
 export function fortunes(): Fortune[] {
   // Made per request, as rows from a database would be (no module state on the request path,
-  // docs/std/http_server.md).
+  // https://veltlang.com/docs/packages/http-server/).
   const messages: string[] = [
     "fortune: No such file or directory",
     "A computer scientist is someone who fixes things that aren't broken.",

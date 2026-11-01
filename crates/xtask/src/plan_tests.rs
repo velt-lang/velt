@@ -259,12 +259,23 @@ fn the_standard_library_runs_every_test_but_no_clippy() {
 }
 
 #[test]
-fn docs_run_the_documentation_tests() {
-    let p = plan(&["docs/reference/types.md"]);
-    assert_eq!(p.packages, set(&["velt_doc"]));
+fn the_readme_runs_the_documentation_tests() {
+    let p = plan(&["README.md"]);
+    assert!(p.packages.is_empty());
     assert_eq!(p.veltc, Veltc::Some(set(&["docs"])));
     assert_eq!(p.goldens, Goldens::None);
     assert!(p.needs_build());
+}
+
+/// The user docs live on the website; of docs/, only the runtime ABI contracts are read by a test.
+#[test]
+fn internals_docs_run_only_the_tests_that_read_them() {
+    let p = plan(&["docs/internals/contracts/rt_abi.md"]);
+    assert_eq!(p.packages, set(&["velt_rt_host"]));
+    for path in ["docs/internals/design/semantics.md", "docs/README.md"] {
+        let p = plan(&[path]);
+        assert!(p.packages.is_empty() && !p.needs_build(), "{path}");
+    }
 }
 
 /// The benchmarks compile whenever they, the compiler or the standard library change (#429).
@@ -299,18 +310,18 @@ fn the_lldb_script_runs_the_install_layout_and_debugger_tests() {
 #[test]
 fn rules_combine() {
     let p = plan(&[
-        "docs/std/fs.md",
+        "README.md",
         "crates/velt_lsp/src/a.rs",
         "tests/golden/std/fs.vlt",
     ]);
-    assert!(p.packages.contains("velt_doc") && p.packages.contains("velt_lsp"));
+    assert!(p.packages.contains("velt_lsp"));
     let Veltc::Some(binaries) = &p.veltc else {
         panic!("{:?}", p.veltc)
     };
     assert!(binaries.contains("docs") && binaries.contains("wasm_goldens"));
     assert_eq!(p.golden_env().unwrap(), "tests/golden/std/fs.");
     // A pipeline crate on top makes the end-to-end tests run in full.
-    let more = plan(&["docs/std/fs.md", "crates/velt_syntax/src/lexer.rs"]);
+    let more = plan(&["README.md", "crates/velt_syntax/src/lexer.rs"]);
     assert_eq!(more.veltc, Veltc::All);
     assert_eq!(more.goldens, Goldens::All);
 }
@@ -387,7 +398,7 @@ fn portable_changes_check_linux_only() {
         "crates/velt_sema/src/check.rs",
         "crates/velt_lsp/src/hover.rs",
         "crates/velt_fmt/src/jsx.rs",
-        "docs/reference/types.md",
+        "docs/internals/design/semantics.md",
         "CONTRIBUTING.md",
     ] {
         assert_eq!(plan(&[path]).other_os, None, "{path}");
@@ -438,14 +449,13 @@ fn comment_only_changes_check_the_crate_alone_on_linux() {
     let paths = vec![
         "crates/velt_rt/src/postgres/batch/abi.rs".to_string(),
         "crates/velt_sema/src/check.rs".to_string(),
-        "docs/reference/types.md".to_string(),
+        "README.md".to_string(),
     ];
     let p = Plan::for_changes(&graph(), &paths, &paths[..2].iter().cloned().collect());
     assert!(!p.full && p.rust);
     assert_eq!(
         p.packages,
         set(&[
-            "velt_doc",
             "velt_rt",
             "velt_rt_host",
             "velt_rt_shared",
@@ -576,7 +586,7 @@ fn other_changes_sweep_the_changed_goldens_in_full_and_sample_the_rest() {
     for path in [
         "crates/velt_sema/src/check.rs",
         "std/string.vlt",
-        "docs/reference/README.md",
+        "docs/internals/README.md",
         ".github/workflows/ci.yml",
     ] {
         assert_eq!(plan(&[path]).sweep, Sweep::Sampled(set(&[])), "{path}");
@@ -729,7 +739,7 @@ fn main_runs_the_windows_and_macos_gate_after_a_linux_only_queue_run() {
     for path in [
         "crates/velt_sema/src/check.rs",
         "crates/velt_lsp/src/hover.rs",
-        "docs/reference/types.md",
+        "docs/internals/design/semantics.md",
         "CONTRIBUTING.md",
     ] {
         let p = plan(&[path]);

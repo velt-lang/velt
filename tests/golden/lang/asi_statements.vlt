@@ -1,4 +1,4 @@
-// Automatic semicolon insertion (docs/reference/lexical.md, "Comments and semicolons"): a line
+// Automatic semicolon insertion (https://veltlang.com/docs/reference/lexical/, "Comments and semicolons"): a line
 // break, a `}` or the end of the file ends a statement, as in TypeScript and Node, and the
 // restricted productions end at a line break. Output compared with Node.
 

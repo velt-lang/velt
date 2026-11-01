@@ -8,10 +8,22 @@ to the server is async.
 ```ts ignore
 // package.vlt
 dependencies: {
-  postgres: "0.1",                                    // from the registry: a prebuilt library
-  // postgres: { path: "../velt/packages/postgres" },  // or a checkout: cargo builds the library
+  // From the Velt repository (there is no public registry yet):
+  postgres: {
+    git: "https://github.com/velt-lang/velt",
+    branch: "main",
+    path: "packages/postgres",
+  },
+  // Or a checkout: postgres: { path: "../velt/packages/postgres" },
 },
 ```
+
+The package has native code (a Rust crate in `native/`), which `velt` builds with cargo, so a
+Rust toolchain is needed. A git dependency builds it only when you allow that with
+`VELT_NATIVE_FROM_SOURCE=1` (it runs the crate's build scripts):
+`VELT_NATIVE_FROM_SOURCE=1 velt install`. A path dependency (this repository's examples use one)
+builds it the first time, into `packages/postgres/target/velt-native/`, and again when it changes.
+The full guide: https://veltlang.com/docs/packages/postgres/.
 
 - `connect(url): Promise<Client>`. `url` is `postgres://user:password@host:port/db?options` or
   a libpq string (`host=… user=… dbname=…`). Supported options include `connect_timeout`,

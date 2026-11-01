@@ -1,4 +1,4 @@
-//! The table of system functions (docs/reference/system-functions.md): the functions of the
+//! The table of system functions (https://veltlang.com/docs/reference/system-functions/): the functions of the
 //! platform's C library that `declare system function` may bind, per target, with their C
 //! signatures. Velt code reaches the OS through them without a runtime in between, and stays
 //! memory-safe because the compiler, not the declaration, decides what crosses:

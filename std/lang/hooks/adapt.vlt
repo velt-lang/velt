@@ -1,5 +1,5 @@
 // velt/lang/hooks (internal): the containers of interface adapters (issue #1153;
-// docs/reference/types.md "Generic interfaces with `unknown` arguments"; velt_sema
+// https://veltlang.com/docs/reference/types/ "Generic interfaces with `unknown` arguments"; velt_sema
 // `body/expr/iface_adapt.rs`).
 //
 // A `Handler<Map<unknown, unknown>, E>` converted to `Handler<unknown, unknown>` receives an

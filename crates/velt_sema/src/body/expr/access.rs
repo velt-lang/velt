@@ -1,4 +1,4 @@
-//! Member access rules (docs/reference/classes.md):
+//! Member access rules (https://veltlang.com/docs/reference/classes/):
 //! - `private` fields, methods and static fields are usable only inside the body of the type
 //!   declaring them (its methods, constructor, field initializers and the closures, functions
 //!   and classes declared inside them; not subclasses, like TypeScript). The standard library is one trusted unit: its modules may

@@ -298,7 +298,7 @@ text, borrowed until the next step) — and registers it with the runtime: `open
 functions (`RawCursor`) in the runtime's table of open cursors (`db_open`, below) and returns the
 key, a `u64` handle like every other native handle, which the library hands its Velt side. The
 Velt side decodes with velt/db's `decodeRows<T>(cursor)` (or `decodeRow<T>` for a cursor opened
-for one row; [velt/db](../../std/db.md) "Native drivers"): std looks the handle up
+for one row; [velt/db](https://veltlang.com/docs/std/db/) "Native drivers"): std looks the handle up
 (`velt_rt_db_cursor`), throws `RowError` when it names no open cursor (a made-up number, a
 closed cursor's handle, a sink's), and otherwise runs the generated decoder over the cursor
 (reader flag 8, rt_abi_async.md). No Velt code ever holds an address. Then it gives the handle
@@ -314,7 +314,7 @@ When the row type is an object of plain fields (numbers, bools, strings, `T | nu
 (`velt_rt_rows_*`, rt_abi_async.md; velt/db/generate/columns.vlt), with the same results and
 messages. packages/sqlite and
 packages/postgres use cursors. A driver written in Velt offers its rows as std/db' `RowSource`
-instead ([velt/db](../../std/db.md)), read the same way through its own methods.
+instead ([velt/db](https://veltlang.com/docs/std/db/)), read the same way through its own methods.
 
 ## Parameter sinks
 

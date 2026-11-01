@@ -1,4 +1,4 @@
-//! The `velt` on PATH (#948, docs/tooling/platforms.md "Toolchain versions").
+//! The `velt` on PATH (#948, https://veltlang.com/docs/tooling/platforms/ "Toolchain versions").
 //!
 //! Installed as `<root>/bin/velt`, it picks a toolchain ([`select`]): a first argument
 //! `+<toolchain>` (`velt +0.2 build`), else `$VELT_TOOLCHAIN`, else the `velt` field of the

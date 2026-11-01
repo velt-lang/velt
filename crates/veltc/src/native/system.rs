@@ -1,4 +1,4 @@
-//! `declare system function` (docs/reference/system-functions.md): every declaration, in std or
+//! `declare system function` (https://veltlang.com/docs/reference/system-functions/): every declaration, in std or
 //! any package or program, must bind a function of the compiler's table of system functions
 //! (`velt_vir::system`) with the Velt types the table states for it. A function the target
 //! lacks but another target has is accepted here; calling it is an error from lowering.

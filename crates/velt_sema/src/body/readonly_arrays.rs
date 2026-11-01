@@ -1,4 +1,4 @@
-//! Read-only arrays (docs/reference/types.md "Read-only arrays"): `readonly T[]` and
+//! Read-only arrays (https://veltlang.com/docs/reference/types/ "Read-only arrays"): `readonly T[]` and
 //! `ReadonlyArray<T>` are `T[]` (the parser reads the first as the second), and a variable or
 //! parameter declared with one of them may not be written through: a mutating method
 //! (`push`, `sort`, …) is TypeScript's TS2339 and an element assignment TS2542. The check

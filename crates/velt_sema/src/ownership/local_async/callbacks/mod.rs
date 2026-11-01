@@ -4,7 +4,7 @@
 //! assign a variable that function captured itself. Each thread runs a copy, so the assignment
 //! changes that copy only, out of sight. Such a call is an error, naming the call and the
 //! variable, with a fix-it that shares the variable with `shared(...)` as Node shares it. A
-//! closure the program hands to `spawn` itself runs on its copy, as docs/reference/async.md says.
+//! closure the program hands to `spawn` itself runs on its copy, as https://veltlang.com/docs/reference/async/ says.
 //!
 //! What crosses is followed on the graph of [`super`]: the values flowing into a thread boundary,
 //! the captures of the closures among them, and through the heap by type ([`super::types`]): a sync
@@ -188,7 +188,7 @@ pub(super) fn check_crossing_callbacks(cx: &mut Ctx, g: &Graph, flags: &[u8]) ->
         }
     }
     // Only what a standard-library function runs on other threads (out of sight); a closure the
-    // program spawns itself runs on its own copy (docs/reference/async.md).
+    // program spawns itself runs on its own copy (https://veltlang.com/docs/reference/async/).
     found.retain(|x| x.2.in_library && x.2.boundary == Boundary::Spawn);
     let reported: FxHashSet<DefId> = found.iter().map(|x| x.0).collect();
     for (c, ty, w, cap, name, cap_ty, at) in found {

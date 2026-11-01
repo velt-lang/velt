@@ -1,5 +1,5 @@
 // An integer field reads a number with a fraction or an exponent exactly when its value is an
-// integer (docs/std/json.md), not through a double: 9007199254740993.0 stays 9007199254740993,
+// integer (https://veltlang.com/docs/std/encoding/json/), not through a double: 9007199254740993.0 stays 9007199254740993,
 // and u64's top of range reads with a fraction too. A non-integer or out-of-range value fails.
 function readI64(doc: string) {
   try {

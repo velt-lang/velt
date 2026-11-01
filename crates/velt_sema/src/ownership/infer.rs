@@ -1,4 +1,4 @@
-//! Ownership and mutation inference (docs/reference/memory.md "Ownership",
+//! Ownership and mutation inference (https://veltlang.com/docs/reference/memory/ "Ownership",
 //! "Mutation is inferred"), a fixpoint over all checked bodies:
 //! - a non-Copy parameter (or `this`) that its body moves from becomes `Owned`, unless the
 //!   function's ABI is fixed (closures, dynamically dispatched methods, externs);
@@ -110,8 +110,8 @@ fn fixpoint(cx: &mut Ctx, fns: &[DefId], dispatch: &super::mutation::Dispatch) {
         if body_changed {
             work.changed(d);
         }
-        while let Some(g) = work.next_join() {
-            dispatch.join(cx, g, &mut changed);
+        while let Some((g, members)) = work.next_join() {
+            dispatch.join(cx, g, members.as_deref(), &mut changed);
             changed.drain(..).for_each(|m| work.changed(m));
         }
     }

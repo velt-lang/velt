@@ -1,6 +1,6 @@
 #!/usr/bin/env sh
 # Install a Velt dist directory (from scripts/package.sh, or an unpacked release .tar.gz) beside
-# the other installed versions (#948, docs/tooling/platforms.md): as <root>/toolchains/<version>,
+# the other installed versions (#948, https://veltlang.com/docs/tooling/platforms/): as <root>/toolchains/<version>,
 # with its launcher as <root>/bin/velt. Replaces an installed copy of the same version (a rebuild).
 # Does not modify PATH; prints the command to do so.
 #

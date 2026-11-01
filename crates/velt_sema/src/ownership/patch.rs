@@ -296,7 +296,7 @@ pub(super) fn modes_of(cx: &Ctx, d: DefId) -> Vec<PassMode> {
             *m = PassMode::BorrowMut;
         }
         // A system function writes every buffer not written `readonly` and every struct it is
-        // given (docs/reference/system-functions.md): the caller's value changes.
+        // given (https://veltlang.com/docs/reference/system-functions/): the caller's value changes.
         if let Some(readonly) = &f.system {
             for (m, &ro) in modes.iter_mut().zip(readonly) {
                 if *m == PassMode::Borrow && !ro {

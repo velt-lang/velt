@@ -8,7 +8,7 @@
 //! A shared promise stays on its logical task, as on native targets: the tasks share the one
 //! thread here, but a holder that goes to another task (`spawn`, a channel, a timer callback)
 //! is handed over the same way, and is shared again there as a promise of that task, so two
-//! tasks never use one result object (docs/reference/async.md).
+//! tasks never use one result object (https://veltlang.com/docs/reference/async/).
 
 use std::alloc::Layout;
 use std::cell::RefCell;

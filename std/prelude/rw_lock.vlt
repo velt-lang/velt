@@ -1,4 +1,4 @@
-// Prelude: `RwLock<T>` for `shared(new RwLock<T>(x))` (docs/reference/async.md): many readers or
+// Prelude: `RwLock<T>` for `shared(new RwLock<T>(x))` (https://veltlang.com/docs/reference/async/): many readers or
 // one writer. The compiler implements `new RwLock<T>(x)`, `rw.read(f)` and `rw.write(f)`; this
 // declaration only fixes the layout they use (the runtime's 19 words, rt_abi_async.md §9.2).
 

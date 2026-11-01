@@ -109,6 +109,14 @@ impl Ctx<'_> {
                 continue;
             }
             match self.ty.kind(t).clone() {
+                // A type whose fields never end: the program is rejected
+                // (`crate::expansive_types`). A deep type that is not one is walked to its end.
+                TyKind::Adt(d, a)
+                    if self.ty.args_too_deep(&a)
+                        && crate::expansive_types::is_expansive(self, d) =>
+                {
+                    self.objects.expansive_cut = Some(d);
+                }
                 TyKind::Adt(d, a) if self.is_object_type(t) => {
                     // One with type arguments (made in a generic function) does not convert
                     // yet; its fields may hold functions (`{ setup }` in `inObj<P>`).

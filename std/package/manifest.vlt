@@ -1,5 +1,5 @@
 // velt/package (internal): the types of a package manifest, `package.vlt`
-// (docs/tooling/manifest.md): `Package` and the types of its fields.
+// (https://veltlang.com/docs/tooling/manifest/): `Package` and the types of its fields.
 
 /// A package manifest: the one `export const pkg: Package = { … }` of a `package.vlt`.
 export type Package = {
@@ -78,7 +78,7 @@ export type Jsx = {
   importSource?: string;
 };
 
-/// How a package's program is built (docs/tooling/platforms.md "CPU").
+/// How a package's program is built (https://veltlang.com/docs/tooling/platforms/ "CPU").
 export type Build = {
   /// The CPU the program is built for, as `velt build --cpu`: `"baseline"`, `"x86-64-v2"` (the
   /// default on x86-64), `"x86-64-v3"`, `"x86-64-v4"`, `"native"` or a CPU name such as
@@ -87,7 +87,7 @@ export type Build = {
   cpu?: string;
 };
 
-/// A package's native library (docs/book/native-packages.md).
+/// A package's native library (https://veltlang.com/docs/book/native-packages/).
 export type Native = {
   /// The crate's directory, one directory name in the package root (default `"native"`).
   path?: string;

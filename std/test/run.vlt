@@ -117,6 +117,11 @@ async function runTests(file: TestFile, from: usize, mark: string | null): Promi
   while (entered.length > 0) {
     teardownFailed = (await leave(entered.pop()!)) || teardownFailed;
   }
+  if (mark != null) {
+    // The runner's wait for the process to end (counting blocks) starts here.
+    console.log(`${mark}done`);
+    velt_rt_flush();
+  }
   return { failed: failed, teardownFailed: teardownFailed };
 }
 

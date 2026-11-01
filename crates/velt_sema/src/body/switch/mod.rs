@@ -1,4 +1,4 @@
-//! `switch` statements (docs/reference/control-flow.md "switch", hir_encodings.md "switch"): JS semantics —
+//! `switch` statements (https://veltlang.com/docs/reference/control-flow/ "switch", hir_encodings.md "switch"): JS semantics —
 //! the first case whose value equals the discriminant is entered (`default` when none does),
 //! bodies fall through into the next case unless they `break` / return / throw.
 //!

@@ -927,7 +927,7 @@ def main():
     others = [c for c, *_ in KINDS if c != "Uint8Array"]
     write(os.path.join(GLOBAL, "typed_array.vlt"),
           "// Global (loaded when a module names one of these): `ArrayBuffer`, `DataView` and `Uint8Array`,\n"
-          "// as in Node (docs/std/prelude/typed_array.md); the other typed arrays are in typed_array_kinds.vlt.\n"
+          "// as in Node (https://veltlang.com/docs/std/prelude/typed_array/); the other typed arrays are in typed_array_kinds.vlt.\n"
           + GENERATED
           + "export { ArrayBuffer } from \"velt/lang/typed_array/core\";\n"
           + "export { ArrayBufferView } from \"velt/lang/typed_array/buffer_view\";\n"
@@ -935,7 +935,7 @@ def main():
           + "export { Uint8Array } from \"velt/lang/typed_array/uint8_array\";\n")
     write(os.path.join(GLOBAL, "typed_array_kinds.vlt"),
           "// Global (loaded when a module names one of these): the typed arrays other than `Uint8Array`,\n"
-          "// as in Node (docs/std/prelude/typed_array.md).\n"
+          "// as in Node (https://veltlang.com/docs/std/prelude/typed_array/).\n"
           + GENERATED
           + "".join("export { %s } from \"velt/lang/typed_array/%s\";\n" % (c, snake(c)) for c in others))
 

@@ -11,7 +11,7 @@ declaration's `ExternFnDef` is never called. Its name maps to the `Intrinsic` in
 (`velt_sema::intrinsic_decls`).
 
 ## M2 additions
-(see docs/reference/classes.md and docs/reference/memory.md):
+(see https://veltlang.com/docs/reference/classes/ and https://veltlang.com/docs/reference/memory/):
 - Class instances are heap-allocated and referenced by a pointer; `Option<Class>` uses null.
   `new C(args)` is `ExprKind::New`: lowering allocates and calls the constructor (a `Def::Fn`
   whose first param is `this` with `PassMode::BorrowMut`). `super(args)` in a constructor is a
@@ -123,7 +123,7 @@ declaration's `ExternFnDef` is never called. Its name maps to the `Intrinsic` in
   the direct operand of `Await` and given its own task when it is the direct operand of
   `Intrinsic::Spawn`; any other call of an async function (or of a function value returning a
   `TyKind::Promise(T)`) yields a started promise: boxed via `velt_rt_fut_box`, then
-  `velt_rt_fut_start` (hybrid promises, docs/reference/async.md).
+  `velt_rt_fut_start` (hybrid promises, https://veltlang.com/docs/reference/async/).
 - `Intrinsic::SpawnHandled` (`spawnHandled(p)`, standard library only) is
   `Intrinsic::Spawn` whose rejection the caller handles itself (`TaskScope.spawn`: the scope
   fails with it). A dropped `Spawn` handle reports its task's rejection as uncaught; a dropped
@@ -230,11 +230,11 @@ declaration's `ExternFnDef` is never called. Its name maps to the `Intrinsic` in
   `next()`, binds `value` and runs the body; the `finally` calls `return()` when the body was
   left early (a direct generator call has its own form, "Generators"). `StmtKind::ForOf` stays
   the array loop. Locals named `<…>` are compiler-made.
-- Exclusive access (docs/reference/memory.md) is checked by sema; lowering relies on it for VIR
+- Exclusive access (https://veltlang.com/docs/reference/memory/) is checked by sema; lowering relies on it for VIR
   parameter attributes (vir.rs invariant 9, `noalias` etc.).
 
 ## Generators
-(docs/reference/functions.md "Generators", docs/internals/design/iteration.md §3)
+(https://veltlang.com/docs/reference/functions/ "Generators", docs/internals/design/iteration.md §3)
 - `FnDef::is_generator`: a `function*` / `*name()`. `FnDef::ret` is its declared result —
   `Generator<T, E>` (the prelude class `std/prelude/iter::Generator`), `Iterator<T, E>` or
   `Iterable<T, E>` — with `E` = `FnDef::throws` (or `never`); `T` is the yield type. A call of
@@ -278,7 +278,7 @@ declaration's `ExternFnDef` is never called. Its name maps to the `Intrinsic` in
   final `E` and it does not throw.
 
 ## Async generators
-(docs/reference/functions.md "Async generators", docs/internals/design/iteration.md §4)
+(https://veltlang.com/docs/reference/functions/ "Async generators", docs/internals/design/iteration.md §4)
 - An `async function*` / `async *name()` has `FnDef::is_generator` **and** `FnDef::is_async`.
   `ret` is `AsyncGenerator<T, E>` (prelude class `std/prelude/iter::AsyncGenerator`),
   `AsyncIterator<T, E>` or `AsyncIterable<T, E>`, with `E` = `FnDef::throws`; a call has type
@@ -302,7 +302,7 @@ declaration's `ExternFnDef` is never called. Its name maps to the `Intrinsic` in
 - `yield* src` in an async generator is the desugared `for await` that yields each value.
 
 ## Mutation inference (no `mut` in the language)
-- Pass modes are inferred (docs/reference/memory.md): `BorrowMut` = the callee may
+- Pass modes are inferred (https://veltlang.com/docs/reference/memory/): `BorrowMut` = the callee may
   modify the value behind the pointer; it is never assigned as a whole (reassigned non-Copy
   params are `Owned`). `BorrowMut` has the same ABI as `Borrow` for every type (aggregates by
   pointer, scalars — class objects, `Class | null`, `shared<T>` — by value); only the attributes

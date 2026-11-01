@@ -1,7 +1,7 @@
 //! An `await` among the program's top-level statements (the root file's generated `async main`,
 //! modules.md), not inside a function they define: it tells the runtime where it waits, so that
 //! a program ending there writes Node's `Warning: Detected unsettled top-level await at
-//! <file>:<line>` and exits with code 13 (velt_rt `top_level_await.rs`, docs/reference/async.md):
+//! <file>:<line>` and exits with code 13 (velt_rt `top_level_await.rs`, https://veltlang.com/docs/reference/async/):
 //! `{ topLevelAwaitAt(site); await <operand> }`. The mark is no call: velt_vir lowers it to a
 //! `velt_rt_tla_at(site)` on the paths where the `await`s after it suspend, so an `await` that
 //! goes straight on costs nothing. An `await` in the operand of another one marks the outer

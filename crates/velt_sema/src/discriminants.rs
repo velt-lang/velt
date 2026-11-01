@@ -1,4 +1,4 @@
-//! Discriminated unions (docs/reference/types.md "Discriminated unions"): a union whose members are
+//! Discriminated unions (https://veltlang.com/docs/reference/types/ "Discriminated unions"): a union whose members are
 //! object types (anonymous object types, structs, classes, interfaces) that all have a field of
 //! a literal type — the *discriminant*, `kind` in `{ kind: "circle"; r: f64 } | { kind: "rect"; ... }`.
 //! No extra encoding: the union is an ordinary union enum and the member's variant index is the

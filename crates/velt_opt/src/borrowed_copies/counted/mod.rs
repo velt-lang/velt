@@ -4,7 +4,7 @@
 //! increments the object's count word (`retain`, `lower/rc.rs`) and releases it where the local
 //! dies (the count is 1: free it, else decrement). When nothing can free the object while the
 //! local is still used, neither is needed: the source's own reference keeps the object alive,
-//! as it does for call arguments (docs/reference/memory.md "calls borrow"). The same holds for
+//! as it does for call arguments (https://veltlang.com/docs/reference/memory/ "calls borrow"). The same holds for
 //! any counted object (arrays, class objects) behind a pointer.
 //!
 //! A *family* is the pointer register the increment is made through (`r`, written once) and

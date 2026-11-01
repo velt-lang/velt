@@ -680,7 +680,7 @@ goldens:
 - `__arm(v, i)` in generated code (`generated/arm.rs`): whether the union `v` holds its model
   member `i`, a test narrowing understands (`Fact::Members`), so a generator writes a union as
   its active member without a JavaScript test per member (none tells `i32 | f64` apart).
-- `velt/reflect` (docs/std/reflect.md, json port step 1): reflection on `any` values from the
+- `velt/reflect` (https://veltlang.com/docs/std/reflect/, json port step 1): reflection on `any` values from the
   descriptor (slot 18, velt_vir `any_reflect.rs`), the identity of a value, `isProxy` and a
   per-thread visit stack. It is the public runtime API the `any` path of `JSON.stringify` is
   written on, replacing the descriptor's JSON slot.

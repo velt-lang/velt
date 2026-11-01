@@ -1,4 +1,4 @@
-//! Inferred error types of function types written without `throws` (docs/reference/errors.md
+//! Inferred error types of function types written without `throws` (https://veltlang.com/docs/reference/errors/
 //! "Dynamic calls").
 //!
 //! Every function type written without a `throws` clause in a user module is a *site*, and so
@@ -247,7 +247,7 @@ impl Ctx<'_> {
             e
         });
         // `Promise<T>` with a written `throws E`: the promise rejects with `E` and nothing else
-        // (docs/reference/async.md "Errors"), so `E` is what an argument's promise rejects with,
+        // (https://veltlang.com/docs/reference/async/ "Errors"), so `E` is what an argument's promise rejects with,
         // not one member of a union with the inferred rejections of a `Promise<T>` site.
         let mut ret = match (promise_payload_written(ret), err) {
             (Some(payload), Some(e)) => {

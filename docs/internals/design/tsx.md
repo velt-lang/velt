@@ -1,6 +1,6 @@
 # Design: TSX for server-side rendering
 
-Status: implemented, as described in [the reference](../../reference/tsx.md) and
+Status: implemented, as described in [the reference](https://veltlang.com/docs/reference/tsx/) and
 [the provider contract](../contracts/jsx.md); open: elements in the props of a component that
 takes ownership of them (after semantics stage 2), class components and `ref`. This note keeps
 the original design and its reasons; where it differs from the reference, the reference is
@@ -114,7 +114,7 @@ Velt is TypeScript-shaped, so a component written in the common subset (typed pr
 `undefined`, template literals for text) compiles with both
 `tsc` (for the client) and `velt` (for the server). That makes "write once, render on the server
 in Velt, hydrate in the browser" possible without a second implementation.
-`velt check --ts-compat` ([the CLI](../../tooling/cli.md#code-shared-with-typescript---ts-compat))
+`velt check --ts-compat` ([the CLI](https://veltlang.com/docs/tooling/cli/#code-shared-with-typescript---ts-compat))
 flags constructs outside the subset (#13).
 
 ### The common subset
@@ -269,7 +269,7 @@ Documented but not linted: `i64` past 2^53, integer `/ 0`, out-of-bounds indexin
 exit codes.
 
 **Where it runs** (step 4). `tsCompat: ["src/components", "src/models"]` in `package.vlt` lists
-the shared folders ([the manifest](../../tooling/manifest.md#tscompat)): `/`-separated, inside the
+the shared folders ([the manifest](https://veltlang.com/docs/tooling/manifest/#tscompat)): `/`-separated, inside the
 package, each once and none inside another. `velt check --ts-compat` without paths lints their
 files; outside a package or without `tsCompat` it fails with a message pointing at the field. A
 plain `velt check` doesn't lint them: the lint stays opt-in (one flag for CI), so a package's
@@ -278,7 +278,7 @@ inside the folders on its own analysis (`velt_tscompat::lint_program` takes the 
 and the checker's diagnostics, so nothing is checked twice, and lints only the document, though
 its imports are judged against every loaded file in the folders), publishes the findings as
 diagnostics (code = rule, source `velt ts-compat`) and offers each fix as a preferred quick fix
-([editors](../../tooling/editors.md#code-shared-with-typescript)). It caches each package's
+([editors](https://veltlang.com/docs/tooling/editors/#code-shared-with-typescript)). It caches each package's
 folders by the manifest's text or modification time and re-analyzes the open documents when a
 manifest closes or changes on disk, or a folder appears or disappears. In both, the files in
 scope are those in the folders, found by one walk (`vpm::sources::walks_into`: no

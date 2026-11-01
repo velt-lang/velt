@@ -1,4 +1,4 @@
-//! Object spread in literals (docs/reference/types.md "Objects, arrays, tuples and maps"),
+//! Object spread in literals (https://veltlang.com/docs/reference/types/ "Objects, arrays, tuples and maps"),
 //! desugared without new HIR: `{ ...a, b: 1 }` is a compile-time merged struct: the fields of
 //! each spread source, then the explicit properties, where a later name overrides an earlier one
 //! but keeps its position (JS key order). Typed by context it fills that struct (extra spread

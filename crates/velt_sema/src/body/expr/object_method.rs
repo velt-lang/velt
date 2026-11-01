@@ -1,4 +1,4 @@
-//! Iterable object literals (docs/reference/types.md "Iterable object literals"): an object
+//! Iterable object literals (https://veltlang.com/docs/reference/types/ "Iterable object literals"): an object
 //! literal whose one member is a `[Symbol.iterator]()` method (`*[Symbol.iterator]()` for a
 //! generator; `[Symbol.asyncIterator]()` / `async *[Symbol.asyncIterator]()` for an async
 //! iterable). The method is a function value — a generator function expression

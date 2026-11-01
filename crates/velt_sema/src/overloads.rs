@@ -1,4 +1,4 @@
-//! TypeScript-form overloads (docs/reference/functions.md "Overloads"): bodiless signatures
+//! TypeScript-form overloads (https://veltlang.com/docs/reference/functions/ "Overloads"): bodiless signatures
 //! written before one implementation (`ast::FnDecl::overloads`).
 //!
 //! Before collection, each signature `k` of a function or method `f` becomes a function or

@@ -1,5 +1,5 @@
 //! Parameter attributes of user functions (vir.rs invariant 9), derived from each param's
-//! `PassMode` and relying on sema's exclusivity rule (docs/reference/memory.md "Exclusive
+//! `PassMode` and relying on sema's exclusivity rule (https://veltlang.com/docs/reference/memory/ "Exclusive
 //! access"): during a call, memory reachable through a `BorrowMut` param is reachable through
 //! no other param, and `Borrow` params never alias a `BorrowMut` or `Owned` one.
 //!

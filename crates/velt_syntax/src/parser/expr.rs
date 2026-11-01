@@ -1,7 +1,7 @@
 //! Operator expressions: assignment, ternary, binary precedence climbing and prefix unary
 //! operators. Postfix forms (member access, calls, `?`) are in `postfix`.
 //!
-//! Precedence follows JS (docs/reference/lexical.md); `as` and `instanceof` bind like the relational operators and `-x ** 2`
+//! Precedence follows JS (https://veltlang.com/docs/reference/lexical/); `as` and `instanceof` bind like the relational operators and `-x ** 2`
 //! parses as `-(x ** 2)`.
 
 use super::{PResult, Parser};

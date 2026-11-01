@@ -7,16 +7,45 @@ import { delay } from "velt/time";
 import { h2Options } from "../../src/h2/options";
 import { HttpRequest } from "../../src/request";
 import { HttpResponse } from "../../src/response";
-import { bytes, Client, endOf, goaway, startServer } from "./_h2";
+import { arrivals, arrive, Gate, gate, hold, nextArrival, open, release, shut } from "../_gate";
+import { bytes, Client, endOf, goaway, startServer, TestServer } from "./_h2";
+
+/// Sends GETs on fresh streams from `id` on until one is answered (not refused): a handler's
+/// slot is given back just after it returns, so the first try may still be refused.
+async function getWhenFree(c: Client, id: i64, path: string): Promise<string> {
+  let sid = id;
+  for (let tries = 0; tries < 200; tries++) {
+    c.get(sid, path);
+    await c.flush();
+    const out = await timeout(c.until(endOf(sid)), 5000);
+    if (out != `RST ${sid} REFUSED_STREAM`) {
+      return out.split(`${sid}`).join("N");
+    }
+    sid += 2;
+    // Waiting for the server's own task to take back the slot: a condition polled within a
+    // bound, not an order assumed.
+    await delay(5);
+  }
+  return "still refused";
+}
+
+/// Stops `server` once its handler is held at `g`, reads up to the GOAWAY, then lets the
+/// handler go on: the GOAWAY is out before the response, whatever the timers do.
+async function stopWhileHeld(server: TestServer, c: Client, g: Gate): Promise<string> {
+  await timeout(arrivals(g), 5000);
+  server.close();
+  return await timeout(c.until(goaway), 5000);
+}
 
 describe("HTTP/2 limits", () => {
   it("refuses streams past the limit, counting handlers still running after a reset", async () => {
     const opts = h2Options();
     opts.maxConcurrentStreams = 2;
+    const g = gate();
     const server = await startServer(
       async (req: HttpRequest, res: HttpResponse) => {
         if (req.pathIs("/slow")) {
-          await delay(300);
+          await hold(g);
         }
         res.send("done");
       },
@@ -25,18 +54,20 @@ describe("HTTP/2 limits", () => {
     const c = await Client.open(server.port);
     c.get(1, "/slow");
     c.get(3, "/slow");
-    // Reset: the handler of stream 3 still runs, so its slot is still taken.
+    await c.flush();
+    await timeout(arrivals(g, 2), 5000);
+    // Reset: the handler of stream 3 still runs (held), so its slot is still taken.
     c.frame(3, 0, 3, [0, 0, 0, 8]);
     c.get(5, "/fast");
     await c.flush();
     expect(await c.until((f) => f.id == 5)).toBe("RST 5 REFUSED_STREAM");
+    open(g);
     expect(await c.until(endOf(1))).toBe("HEADERS 1 :status=200\nDATA 1 es 4:done");
-    await delay(100);
-    c.get(7, "/fast");
-    await c.flush();
-    expect(await c.until(endOf(7))).toBe("HEADERS 7 :status=200\nDATA 7 es 4:done");
+    // Both handlers returned: a slot is free again.
+    expect(await getWhenFree(c, 7, "/fast")).toBe("HEADERS N :status=200\nDATA N es 4:done");
     c.close();
     server.close();
+    shut(g);
   });
 
   it("answers 408 when a request body does not arrive within requestTimeout", async () => {
@@ -67,8 +98,9 @@ describe("HTTP/2 limits", () => {
   });
 
   it("ends a connection that keeps resetting its streams (rapid reset)", async () => {
+    const g = gate();
     const server = await startServer(async (req: HttpRequest, res: HttpResponse) => {
-      await delay(50);
+      await hold(g);
       res.send("late");
     });
     const c = await Client.open(server.port);
@@ -83,8 +115,10 @@ describe("HTTP/2 limits", () => {
     }
     const lines = (await c.until(goaway)).split("\n");
     expect(lines[lines.length - 1].endsWith("ENHANCE_YOUR_CALM")).toBe(true);
+    open(g);
     c.close();
     server.close();
+    shut(g);
   });
 
   it("ends a connection sending empty DATA frames", async () => {
@@ -104,7 +138,7 @@ describe("HTTP/2 limits", () => {
   });
 
   it("aborts the handler's signal when the client resets its stream", async () => {
-    const seen = shared(0 as i64);
+    const g = gate();
     const server = await startServer(async (req: HttpRequest, res: HttpResponse) => {
       const out = await res.stream();
       const signal = res.signal();
@@ -116,9 +150,7 @@ describe("HTTP/2 limits", () => {
       } catch (e) {
         // The write after the reset throws.
       }
-      if (signal.aborted) {
-        seen.set(1);
-      }
+      arrive(g, signal.aborted ? 1 : 0);
     });
     const c = await Client.open(server.port);
     c.get(1, "/");
@@ -126,42 +158,46 @@ describe("HTTP/2 limits", () => {
     await c.until((f) => f.type == 0);
     c.frame(3, 0, 1, [0, 0, 0, 8]);
     await c.flush();
-    await delay(100);
-    expect(seen.get()).toBe(1);
+    expect(await timeout(nextArrival(g), 5000)).toBe(1);
     c.close();
     server.close();
+    shut(g);
   });
 
   it("stops gracefully: GOAWAY, then the streams in flight finish", async () => {
+    const g = gate();
     const server = await startServer(async (req: HttpRequest, res: HttpResponse) => {
-      await delay(100);
+      await hold(g);
       res.send("finished");
     });
     const c = await Client.open(server.port);
     c.get(1, "/");
     await c.flush();
-    await delay(20);
-    server.close();
-    expect(await c.until((f) => f.type == 7)).toBe("GOAWAY 1 NO_ERROR");
-    expect(await c.until((f) => false)).toBe("HEADERS 1 :status=200\nDATA 1 es 8:finished\nEOF");
+    expect(await stopWhileHeld(server, c, g)).toBe("GOAWAY 1 NO_ERROR");
+    open(g);
+    expect(await timeout(c.until((f) => false), 8000)).toBe(
+      "HEADERS 1 :status=200\nDATA 1 es 8:finished\nEOF",
+    );
     c.close();
+    shut(g);
   });
 
   it("closes without resetting a client that is still sending when it stops", async () => {
     // A socket closed with input unread is reset (RST), and the client then loses what it had
     // not read yet: here the GOAWAY and the response. The connection lingers instead: it
     // shuts its sending side and reads (and drops) what still comes, for a bounded time.
+    const g = gate();
     const server = await startServer(async (req: HttpRequest, res: HttpResponse) => {
-      await delay(100);
+      await hold(g);
       res.send("finished");
     });
     const c = await Client.open(server.port);
     c.get(1, "/");
     await c.flush();
-    await delay(20);
-    server.close();
-    // PINGs for 2.5 s while the stream finishes (100 ms) and the connection closes; nothing is
-    // read meanwhile. A window of time, not a count of waits (a `delay(5)` takes 15 ms with
+    expect(await stopWhileHeld(server, c, g)).toBe("GOAWAY 1 NO_ERROR");
+    open(g);
+    // PINGs for 2.5 s while the stream finishes and the connection closes; nothing is read
+    // meanwhile. A window of time, not a count of waits (a `delay(5)` takes 15 ms with
     // Windows' default timer, more on a loaded machine), longer than a pause ends the
     // lingering (2 s): it lasts while the client keeps sending.
     const started = Date.now();
@@ -171,35 +207,43 @@ describe("HTTP/2 limits", () => {
       await delay(5);
     }
     const out = await timeout(c.until((f) => false), 8000);
-    expect(out).toBe("GOAWAY 1 NO_ERROR\nHEADERS 1 :status=200\nDATA 1 es 8:finished\nEOF");
+    expect(out).toBe("HEADERS 1 :status=200\nDATA 1 es 8:finished\nEOF");
     c.close();
+    shut(g);
   });
 
   it("ignores a request the client sent after the GOAWAY, and its body", async () => {
+    const g = gate();
     const server = await startServer(async (req: HttpRequest, res: HttpResponse) => {
-      await delay(100);
+      await hold(g);
       res.send("finished");
     });
     const c = await Client.open(server.port);
     c.get(1, "/");
     await c.flush();
-    await delay(20);
-    server.close();
-    expect(await c.until((f) => f.type == 7)).toBe("GOAWAY 1 NO_ERROR");
-    // Sent before the client saw the GOAWAY: a POST with a body, then its reset.
+    expect(await stopWhileHeld(server, c, g)).toBe("GOAWAY 1 NO_ERROR");
+    // Sent as if before the client saw the GOAWAY: a POST with a body, then its reset; then a
+    // PING, whose acknowledgement says the server read them all while stream 1 still runs.
     c.headers(3, [":method", "POST", ":scheme", "http", ":path", "/", ":authority", "x"], false);
     c.frame(0, 0, 3, bytes("body"));
     c.frame(8, 0, 3, [0, 0, 0, 1]);
     c.frame(3, 0, 3, [0, 0, 0, 8]);
+    c.frame(6, 0, 0, [0, 0, 0, 0, 0, 0, 0, 7]);
     await c.flush();
-    expect(await c.until((f) => false)).toBe("HEADERS 1 :status=200\nDATA 1 es 8:finished\nEOF");
+    expect(await timeout(c.until((f) => f.type == 6), 5000)).toBe("");
+    open(g);
+    expect(await timeout(c.until((f) => false), 8000)).toBe(
+      "HEADERS 1 :status=200\nDATA 1 es 8:finished\nEOF",
+    );
     c.close();
+    shut(g);
   });
 
   it("gives the window of a body the handler does not read back", async () => {
+    const g = gate();
     const server = await startServer(async (req: HttpRequest, res: HttpResponse) => {
       // The body arrives (and waits, unread) before the handler answers.
-      await delay(50);
+      await hold(g);
       res.send("no thanks");
     });
     const c = await Client.open(server.port);
@@ -211,10 +255,14 @@ describe("HTTP/2 limits", () => {
       for (let k = 0; k < 15; k++) {
         c.frame(0, 0, id, chunk);
       }
+      c.frame(6, 0, 0, [0, 0, 0, 0, 0, 0, 0, id as u8]);
       await c.flush();
+      await timeout(c.until((f) => f.type == 6), 5000);
+      release(g);
       const out = await c.until(endOf(id));
       expect(out.endsWith(`HEADERS ${id} :status=200\nDATA ${id} es 9:no thanks`)).toBe(true);
     }
+    open(g);
     c.get(11, "/");
     await c.flush();
     expect(
@@ -222,6 +270,7 @@ describe("HTTP/2 limits", () => {
     ).toBe(true);
     c.close();
     server.close();
+    shut(g);
   });
 
   it("ignores the rest of uploads it answered early: no resets, no GOAWAY", async () => {
@@ -311,28 +360,28 @@ describe("HTTP/2 limits", () => {
     });
     const c = await Client.open(server.port);
     const chunk: u8[] = new Array<u8>(16384).fill(120);
+    const seen: string[] = [];
     const n: i64 = 70;
     for (let i: i64 = 0; i < n; i++) {
       const id = i * 2 + 1;
       const head = [":method", "POST", ":scheme", "http", ":path", `/u${id}`, ":authority", "x"];
       c.headers(id, head, false);
       await c.flush();
-      // The handler answers before the upload arrives; nothing is read meanwhile.
-      await delay(10);
+      // The upload goes out once the handler answered and the stream was reset (NO_ERROR, the
+      // response complete): the case where the stream used to be recycled twice.
+      seen.push(await timeout(c.until((f) => f.id == id && f.type == 3), 5000));
       c.frame(0, 1, id, chunk);
       await c.flush();
     }
     server.close();
-    // Each stream is reset (NO_ERROR) after its response if its upload had not ended by then,
-    // which depends on timing: those resets are left out.
-    const lines = (await timeout(c.until((f) => false), 10000))
-      .split("\n")
-      .filter((l) => !(l.startsWith("RST ") && l.endsWith(" NO_ERROR")));
+    seen.push(await timeout(c.until((f) => false), 10000));
+    const lines = seen.join("\n").split("\n");
     const want: string[] = [`GOAWAY ${n * 2 - 1} NO_ERROR`];
     for (let i: i64 = 0; i < n; i++) {
       const id = i * 2 + 1;
       const path = `/u${id}`;
       want.push(`HEADERS ${id} :status=401`, `DATA ${id} es ${path.length}:${path}`);
+      want.push(`RST ${id} NO_ERROR`);
     }
     want.push("EOF");
     const sorted = lines.slice();

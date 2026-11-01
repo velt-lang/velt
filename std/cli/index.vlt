@@ -15,7 +15,7 @@
 // next), `--` (everything after is positional) and `-` (a positional). An option's value is
 // taken verbatim even if it starts with `-`. Repeated options keep every value (`getAll`).
 // Every parser has `-h, --help`.
-// docs/std/cli.md.
+// https://veltlang.com/docs/std/cli/.
 
 export { ArgParser } from "velt/cli/arg_parser";
 export { CliError } from "velt/cli/errors";

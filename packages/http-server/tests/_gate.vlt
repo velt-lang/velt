@@ -1,0 +1,55 @@
+// Test helpers: a gate between a test and its handlers, which run on the server's tasks, so a
+// test orders what happens instead of waiting for it to have happened: a handler says it got
+// somewhere (`arrive`) and may wait there (`hold`) until the test lets it go on (`release`,
+// `open`). A `Channel` is shared by its copies, so a handler closure can hold a `Gate`.
+import { channel, Channel } from "velt/sync";
+
+/// Handlers arriving, and the test letting them go on.
+export struct Gate {
+  arrived: Channel<i64>;
+  go: Channel<i64>;
+}
+
+/// A new gate, closed: a handler that holds waits.
+export function gate(): Gate {
+  return { arrived: channel<i64>(), go: channel<i64>() };
+}
+
+/// In a handler: tells the test it got here (`value`, for a test that wants to know more).
+export function arrive(g: Gate, value: i64 = 0) {
+  g.arrived.trySend(value);
+}
+
+/// In a handler: tells the test it got here, then waits until the test lets it go on.
+export async function hold(g: Gate) {
+  g.arrived.trySend(0);
+  await g.go.receive();
+}
+
+/// In the test: waits until `n` handlers arrived.
+export async function arrivals(g: Gate, n: i64 = 1) {
+  for (let i: i64 = 0; i < n; i++) {
+    await g.arrived.receive();
+  }
+}
+
+/// In the test: the value of the next handler to arrive (null once the gate is shut).
+export async function nextArrival(g: Gate): Promise<i64 | null> {
+  return await g.arrived.receive();
+}
+
+/// In the test: lets one held handler go on.
+export function release(g: Gate) {
+  g.go.trySend(1);
+}
+
+/// In the test: lets every handler go on, those held and those to come.
+export function open(g: Gate) {
+  g.go.close();
+}
+
+/// In the test, at its end: the gate is done with (its channels are freed).
+export function shut(g: Gate) {
+  g.go.close();
+  g.arrived.close();
+}

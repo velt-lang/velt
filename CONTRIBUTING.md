@@ -37,7 +37,7 @@ set `CARGO_PROFILE_DEV_DEBUG=full` when you want to inspect local variables in a
 | `cargo test -p <crate>` | one crate's unit and integration tests |
 | `cargo test --workspace --test golden` | the end-to-end tests: every `tests/golden/**/*.vlt` with an expected `.out`, built and run in debug and release mode (filter with `VELT_GOLDEN=m1/strings`) |
 | `cargo test -p veltc --test std_tests` | the standard library's tests: `velt test` over each `tests/std/<module>/` (black-box) and over `std/` (its white-box `*.test.vlt` files), in debug mode with a leak check and in release mode (filter with `VELT_STD_TESTS=http`, `VELT_STD_TESTS=std` for the white-box ones) |
-| `cargo test -p veltc --test docs` | the documentation tests: every `ts` code block under `README.md`, `docs/book`, `docs/reference`, `docs/std` and `docs/tooling` must compile (filter with `VELT_DOCS=<file:line>`) |
+| `cargo test -p veltc --test docs` | the documentation tests: every `ts` code block in `README.md` and the http-server package's `README.md` and `docs/` must compile (filter with `VELT_DOCS=<file:line>`); the user docs are on the website, which checks its own examples |
 | `cargo test -p veltc --test packages` | `velt test` in each of the repository's packages (`packages/<name>/`, the database drivers), in debug and release mode, after building a package's native crate, whose `cargo test` runs too; the database tests need `VELT_TEST_PG_URL`, `VELT_TEST_REDIS_URL` (and `VELT_TEST_REDISS_URL` + `_CA`), which `scripts/linux-check.sh --services` sets (filter with `VELT_PACKAGES=sqlite`) |
 | `cargo test -p veltc --test example_apps` | `velt test --locked` for every example application with tests (`examples/apps/<app>/tests/`), each in a copy of the app (filter with `VELT_EXAMPLE_APPS=chat,seek`) |
 | `cargo test -p veltc --test standards` | the coding standards below (file sizes) |
@@ -231,8 +231,9 @@ shrinks.
   names in std.
 - **The prelude's load order** is the list in `std/prelude/index.vlt`; a new prelude file is
   added there.
-- **A new module**: its folder and `index.vlt`, a row in the areas of std-layout.md §3, its page
-  under `docs/std/`, and end-to-end tests under `tests/golden/std/` or `tests/std/`.
+- **A new module**: its folder and `index.vlt`, a row in the areas of std-layout.md §3,
+  end-to-end tests under `tests/golden/std/` or `tests/std/`, and a docs-sync issue for its page
+  on the website ([The website's docs](#the-websites-docs)).
 - Callbacks rethrow what they throw (`map<U, E>(f: (x: T) => U throws E): U[] throws E`);
   element-returning methods clone, iteration and callbacks borrow.
 - Only `export` the public surface; helpers stay module-private. `extend` blocks apply wherever
@@ -288,7 +289,7 @@ contract document in the same change.
 
 ## Proposing a language change
 
-Velt's rules (see [the Reference](docs/reference/README.md#the-velt-reference)): adopt
+Velt's rules (see [the Reference](https://veltlang.com/docs/reference/)): adopt
 TypeScript's best parts and never JavaScript's bug sources; one way of doing things; valid
 TypeScript runs as it does in Node, and Velt adds its own opt-in features wherever they make
 programs faster. Velt is a native backend language, not a way to compile to JavaScript, so a
@@ -305,9 +306,9 @@ proposal for a Velt-only feature is welcome when it shows the speed it buys.
    `bench/runtime_ab.sh` links the same programs against `origin/main`'s runtime and yours; for
    a compiler or std change, `bench/compiler_ab.sh BASE HEAD` builds them with each commit's
    toolchain.
-4. Once the design is accepted, the implementation lands with end-to-end tests, documentation
-   updates (the Reference marks unbuilt parts **Planned**), and a migration note if existing code
-   breaks.
+4. Once the design is accepted, the implementation lands with end-to-end tests, a docs-sync
+   issue for the website ([The website's docs](#the-websites-docs)), and a migration note if
+   existing code breaks.
 
 Maintainers: how pull requests are reviewed, queued and planned is in
 [docs/internals/maintaining.md](docs/internals/maintaining.md).
@@ -416,20 +417,20 @@ go through this list:
 1. **Node**: every new or changed golden that is valid TypeScript was run with Node
    (`node --experimental-strip-types <file>.ts`, a copy of the `.vlt` file) and prints the same
    output; where Velt deliberately differs, the golden or the docs say why.
-2. **Docs**: user-visible changes are in the docs (the reference, `docs/`, the README), with
-   compiling `ts` examples, and have a docs-sync issue on the website repo, linked from the pull
-   request ([The website's docs](#the-websites-docs)); otherwise there is no user-visible
-   change.
+2. **Docs**: user-visible changes have a docs-sync issue on the website repo, linked from the
+   pull request ([The website's docs](#the-websites-docs)), and the README or a package's docs
+   in this repository are updated where they describe the change; otherwise there is no
+   user-visible change.
 3. **Tests**: each bug fix has a regression test that fails without the fix.
-4. **Panics**: no `unwrap()` or `expect()` on a path user input reaches (source, `velt.json`,
+4. **Panics**: no `unwrap()` or `expect()` on a path user input reaches (source, `package.vlt`,
    command-line arguments, files, the network); `expect("ICE: …")` only for invariants.
 5. **Performance**: a change on a hot path (the runtime, generated code, the compiler's inner
    loops) comes with benchmark numbers before and after (`bench/`), within ±3%.
 6. **Timing**: tests and goldens order events by awaits, channels or observed state, not by
    sleeps or wall-clock limits.
 7. **Size**: under about 1,500 changed lines, or split into a stack.
-8. **std**: a changed std API has its `index.vlt` re-export with a doc comment, its docs page
-   and a test; `std-lint` passes (`cargo xtask precheck` runs it).
+8. **std**: a changed std API has its `index.vlt` re-export with a doc comment, a docs-sync
+   issue for its page and a test; `std-lint` passes (`cargo xtask precheck` runs it).
 
 Post the result as the first comment on the pull request: each item with what you did (or "n/a"),
 and the gate you ran. Keep it out of the description: the description becomes the commit message
@@ -441,12 +442,12 @@ comment is a required change in review.
 The docs on [veltlang.com](https://veltlang.com) live in their own repository,
 [`velt-lang/velt-lang.github.io`](https://github.com/velt-lang/velt-lang.github.io), and describe
 the latest release. Its docs agent writes them from an issue queue there; this repository feeds
-the queue and does not open pull requests on the website. `docs/` here stays the compiler team's
-reference and the website's first draft, so a user-visible change still updates it in the same
-pull request.
+the queue and does not open pull requests on the website. The user docs (the book, the language
+reference, the standard library and tooling pages) live only there; `docs/` here holds the
+internals.
 
 A change is user-visible when it adds or changes public API or behavior: syntax or semantics, a
-standard-library module or function, a diagnostic, a `velt` command or flag, `velt.json`, or what
+standard-library module or function, a diagnostic, a `velt` command or flag, `package.vlt`, or what
 a program prints or how fast it runs where the docs make a claim. Feed the queue at two moments:
 
 - **Before merging such a pull request, file a docs-sync issue** on the website repository,

@@ -1,6 +1,6 @@
 // velt/encoding/json (internal): what `JSON.parse` cannot decode, found on the model by the
 // generator of `parseJsonTop` (read.vlt) and reported at each call that parses it, with the
-// messages the language reference gives (docs/std/encoding/json.md): a value that may be
+// messages the language reference gives (https://veltlang.com/docs/std/encoding/json/): a value that may be
 // `undefined`, a function with properties, a union whose members a document cannot tell apart,
 // a class whose constructor is not public, a private field, a dynamic value, and any other
 // type without a JSON form.

@@ -1,8 +1,8 @@
 # Design: doc comments
 
 Status: implemented in `velt doc` (issue #513, part of #512) and in the language server (#514).
-User documentation: [Lexical structure](../../reference/lexical.md#comments-and-semicolons),
-[`velt doc`](../../tooling/cli.md#velt-doc).
+User documentation: [Lexical structure](https://veltlang.com/docs/reference/lexical/#comments-and-semicolons),
+[`velt doc`](https://veltlang.com/docs/tooling/cli/#velt-doc).
 
 ## Problem
 
@@ -117,7 +117,7 @@ and plain comments document nothing.
 - **`velt doc`** (and `velt doc --std`, the docs website) shows the rendered Markdown under each
   item: the text, then the sections of the table above, in that order. A deprecated item's name
   is struck through and labelled "deprecated".
-- **The editor** (`velt_lsp::docs`, [editors](../../tooling/editors.md#features)): hover shows
+- **The editor** (`velt_lsp::docs`, [editors](https://veltlang.com/docs/tooling/editors/#features)): hover shows
   the same Markdown under the signature; completion items show it when resolved (items of
   modules outside the program, inside `import { … }` and from auto-import, carry it in the
   list); signature help shows the description, returns and throws, and each parameter's

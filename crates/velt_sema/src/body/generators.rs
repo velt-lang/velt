@@ -1,4 +1,4 @@
-//! Generator bodies and calls (docs/reference/functions.md "Generators", hir_encodings.md
+//! Generator bodies and calls (https://veltlang.com/docs/reference/functions/ "Generators", hir_encodings.md
 //! "Generators").
 //!
 //! - `yield v` checks `v` against the generator's yield type `T` and is

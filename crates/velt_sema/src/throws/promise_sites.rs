@@ -1,4 +1,4 @@
-//! Inferred rejection types of promise types written without one (docs/reference/async.md
+//! Inferred rejection types of promise types written without one (https://veltlang.com/docs/reference/async/
 //! "Errors").
 //!
 //! TypeScript's `Promise<T>` may reject with any value, so a `Promise<T>` written without an

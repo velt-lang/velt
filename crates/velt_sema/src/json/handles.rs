@@ -1,5 +1,5 @@
 //! Which types keep handles in their private fields, which JSON must never carry or forge
-//! (docs/std/encoding/json.md, "Private fields"): std's, and those of a package with a native
+//! (https://veltlang.com/docs/std/encoding/json/, "Private fields"): std's, and those of a package with a native
 //! library.
 
 use velt_syntax::ast::ItemKind;

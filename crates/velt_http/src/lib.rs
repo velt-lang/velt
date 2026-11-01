@@ -2,8 +2,9 @@
 //! [`server`] (a thread-per-connection server with a clean shutdown) and [`client`] (one
 //! request per connection over `std::net`; `https://` with rustls, configured by [`tls`]).
 //!
-//! Every connection carries exactly one request (`Connection: close`), bodies are sized by
-//! `Content-Length` (no chunked encoding), and request bodies are capped by the server.
+//! Every connection carries exactly one request (`Connection: close`). Request bodies are sized
+//! by `Content-Length` and capped by the server; the client reads a response body sized by
+//! `Content-Length`, in chunked transfer encoding, or up to the end of the connection.
 
 pub mod client;
 pub mod message;

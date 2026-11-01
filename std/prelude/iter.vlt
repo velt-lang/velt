@@ -1,4 +1,4 @@
-// Prelude: the iteration protocol (docs/reference/control-flow.md "for...of").
+// Prelude: the iteration protocol (https://veltlang.com/docs/reference/control-flow/ "for...of").
 //
 // `for (const x of src)` works on arrays, on `Map`s and other classes with `entries()`, and on
 // any `Iterable<T, E>`: it calls `src[Symbol.iterator]()` once, then `next()` until a result
@@ -146,7 +146,7 @@ extend string {
 }
 
 /**
- * A generator (`function*`, docs/reference/functions.md "Generators"): what calling one creates.
+ * A generator (`function*`, https://veltlang.com/docs/reference/functions/ "Generators"): what calling one creates.
  * The body runs lazily, one `next()` at a time, up to its next `yield`. `return()` (or dropping
  * the generator, or `using`) closes a generator suspended at a `yield`: its `finally` blocks run
  * and its `using` values are disposed, as if the `yield` were a `return`. After it finished,

@@ -1,4 +1,4 @@
-//! Hybrid promises (docs/reference/async.md): a directly awaited call is embedded in the caller's
+//! Hybrid promises (https://veltlang.com/docs/reference/async/): a directly awaited call is embedded in the caller's
 //! state (no allocation, nothing started), a stored call is boxed and started at once
 //! (`velt_rt_fut_start`), and `Promise.race` hands its promises to `velt_rt_race`.
 

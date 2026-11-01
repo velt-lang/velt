@@ -1,4 +1,4 @@
-// velt/net/http (internal): the WHATWG `Request` (docs/std/net/http.md; `RequestInit` is in
+// velt/net/http (internal): the WHATWG `Request` (https://veltlang.com/docs/std/net/http/; `RequestInit` is in
 // request_init.vlt): a request
 // `fetch` can send, made from a URL and the same options `fetch` takes, or one a server received
 // (`serverRequest`, source.vlt).

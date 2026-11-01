@@ -1,4 +1,4 @@
-//! `const`s that closures in their own initializer use (#750, docs/reference/functions.md
+//! `const`s that closures in their own initializer use (#750, https://veltlang.com/docs/reference/functions/
 //! "A closure using the constant it initializes"): `const app: App = { use(p) { p(app); return
 //! app; } }`, `const effectFn: Subscriber = () => { … effectFn.flags … }`.
 //!
@@ -17,7 +17,7 @@
 //!
 //! An object that holds a closure capturing the object is a reference cycle, which counting
 //! does not free: one object per such constant created stays allocated (documented in
-//! docs/reference/functions.md).
+//! https://veltlang.com/docs/reference/functions/).
 
 use rustc_hash::FxHashMap;
 

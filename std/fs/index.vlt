@@ -4,7 +4,7 @@
 // (blocks the calling thread). Failures throw `IoError` (from "velt/io") with a Node-style `code`.
 // `openRead` and `openWrite` read and write files in chunks; Node's file-descriptor API
 // (`openSync`, `readSync`, `writeSync`, ...) calls the C library directly, on macOS and Linux.
-// docs/std/fs.md.
+// https://veltlang.com/docs/std/fs/.
 
 export {
   appendFile,

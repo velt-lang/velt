@@ -1,4 +1,4 @@
-//! Symbols as values and as member names (docs/reference/types.md "Symbols").
+//! Symbols as values and as member names (https://veltlang.com/docs/reference/types/ "Symbols").
 //!
 //! A `symbol` is a pointer-sized value compared by identity (`TyKind::Symbol`); `Symbol(d)`,
 //! `Symbol.for(k)` and the well-known symbols live in std/lang/symbol/index.vlt. Velt objects have fixed

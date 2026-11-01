@@ -1,5 +1,5 @@
 // An `async` method overrides an abstract (or base) method returning a promise, as an `async`
-// method implements an interface method returning one (docs/reference/async.md "Errors"):
+// method implements an interface method returning one (https://veltlang.com/docs/reference/async/ "Errors"):
 // with the error type written in the promise, with a `throws` clause, or with the errors
 // inferred from the override's body. A call through the base type rejects with the override's
 // errors, typed by the base method's promise; a synchronous override returning a promise

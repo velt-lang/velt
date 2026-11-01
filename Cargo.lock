@@ -1471,7 +1471,7 @@ checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
 
 [[package]]
 name = "velt_build_cache"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "crc32fast",
  "sha2",
@@ -1480,7 +1480,7 @@ dependencies = [
 
 [[package]]
 name = "velt_codegen_cl"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "cranelift-codegen",
  "cranelift-frontend",
@@ -1497,7 +1497,7 @@ dependencies = [
 
 [[package]]
 name = "velt_codegen_llvm"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "object",
  "rustc-hash",
@@ -1508,11 +1508,11 @@ dependencies = [
 
 [[package]]
 name = "velt_common"
-version = "0.4.0"
+version = "0.5.0"
 
 [[package]]
 name = "velt_doc"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "serde_json",
  "tempfile",
@@ -1522,7 +1522,7 @@ dependencies = [
 
 [[package]]
 name = "velt_fmt"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "velt_common",
  "velt_syntax",
@@ -1530,7 +1530,7 @@ dependencies = [
 
 [[package]]
 name = "velt_http"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "rustls",
  "tempfile",
@@ -1539,7 +1539,7 @@ dependencies = [
 
 [[package]]
 name = "velt_launcher"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "flate2",
  "ring",
@@ -1553,7 +1553,7 @@ dependencies = [
 
 [[package]]
 name = "velt_link"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "cc",
  "cranelift-codegen",
@@ -1565,7 +1565,7 @@ dependencies = [
 
 [[package]]
 name = "velt_lsp"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "crossbeam-channel",
  "lsp-server",
@@ -1603,7 +1603,7 @@ dependencies = [
 
 [[package]]
 name = "velt_opt"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "rustc-hash",
  "velt_codegen_cl",
@@ -1614,7 +1614,7 @@ dependencies = [
 
 [[package]]
 name = "velt_registry"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "getrandom 0.2.17",
  "semver",
@@ -1628,7 +1628,7 @@ dependencies = [
 
 [[package]]
 name = "velt_rt"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "bytes",
  "cc",
@@ -1660,7 +1660,7 @@ dependencies = [
 
 [[package]]
 name = "velt_rt_host"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "bytes",
  "dashu-int",
@@ -1691,7 +1691,7 @@ dependencies = [
 
 [[package]]
 name = "velt_rt_shared"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "bytes",
  "dashu-int",
@@ -1722,7 +1722,7 @@ dependencies = [
 
 [[package]]
 name = "velt_rt_wasm"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "dashu-int",
  "itoa",
@@ -1734,7 +1734,7 @@ dependencies = [
 
 [[package]]
 name = "velt_sema"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "rustc-hash",
  "velt_common",
@@ -1743,7 +1743,7 @@ dependencies = [
 
 [[package]]
 name = "velt_syntax"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "rustc-hash",
  "velt_common",
@@ -1751,7 +1751,7 @@ dependencies = [
 
 [[package]]
 name = "velt_text"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "itoa",
  "memchr",
@@ -1761,7 +1761,7 @@ dependencies = [
 
 [[package]]
 name = "velt_tls"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "rustls",
  "webpki-roots",
@@ -1769,7 +1769,7 @@ dependencies = [
 
 [[package]]
 name = "velt_toolchain"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "flate2",
  "ring",
@@ -1785,7 +1785,7 @@ dependencies = [
 
 [[package]]
 name = "velt_tscompat"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "velt_common",
  "velt_doc",
@@ -1795,7 +1795,7 @@ dependencies = [
 
 [[package]]
 name = "velt_vir"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "rustc-hash",
  "velt_codegen_cl",
@@ -1806,7 +1806,7 @@ dependencies = [
 
 [[package]]
 name = "veltc"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "crc32fast",
  "flate2",
@@ -1847,7 +1847,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vpm"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "object",
  "semver",
@@ -2106,7 +2106,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.4.0"
+version = "0.5.0"
 
 [[package]]
 name = "yoke"

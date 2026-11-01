@@ -10,10 +10,22 @@ it in order, so it already works as a connection pool (there is no separate `cre
 ```ts ignore
 // package.vlt
 dependencies: {
-  redis: "0.1",                                 // from the registry: a prebuilt library
-  // redis: { path: "../velt/packages/redis" },  // or a checkout: cargo builds the library
+  // From the Velt repository (there is no public registry yet):
+  redis: {
+    git: "https://github.com/velt-lang/velt",
+    branch: "main",
+    path: "packages/redis",
+  },
+  // Or a checkout: redis: { path: "../velt/packages/redis" },
 },
 ```
+
+The package has native code (a Rust crate in `native/`), which `velt` builds with cargo, so a
+Rust toolchain is needed. A git dependency builds it only when you allow that with
+`VELT_NATIVE_FROM_SOURCE=1` (it runs the crate's build scripts):
+`VELT_NATIVE_FROM_SOURCE=1 velt install`. A path dependency (this repository's examples use one)
+builds it the first time, into `packages/redis/target/velt-native/`, and again when it changes.
+The full guide: https://veltlang.com/docs/packages/redis/.
 
 - `connect(url, opts: RedisConnectOptions { ca? } = {}): Promise<RedisClient>`: URL
   `redis://[[user]:password@]host[:port][/db]` (`AUTH` and `SELECT` are sent for you);

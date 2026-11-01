@@ -1,4 +1,4 @@
-//! Error-set variables of function types written without `throws` (`fn_types`, docs/reference/
+//! Error-set variables of function types written without `throws` (`fn_types`, https://veltlang.com/docs/reference/
 //! errors.md "Dynamic calls"; hir_encodings.md "Inferred error types of function types").
 //!
 //! Each site's function type is interned once, during collection, with a variable as its error

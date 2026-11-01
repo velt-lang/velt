@@ -119,7 +119,7 @@ field-only interface gets the error above.
   object type written in place keeps one layout. **Contract change:** `ast::ObjectTypeField`
   gains `accessors: Vec<TypeFieldAccessor>` (each accessor as written: a setter's parameter
   name, its type, its span; empty for a plain field), which `velt fmt` prints back. A type alias
-  of such an object type becomes the interface it spells out (docs/reference/types.md).
+  of such an object type becomes the interface it spells out (https://veltlang.com/docs/reference/types/).
 
 ### 3. Utility types
 
@@ -199,8 +199,8 @@ struct, whose public fields are used) and gives a new object type:
    the conversion error, structural field-only bounds).
 3. The utility types.
 
-Each step updates `docs/reference/classes.md`, `docs/reference/types.md` and
-`docs/book/ts-developers.md` (which lists utility types as unavailable).
+Each step updates https://veltlang.com/docs/reference/classes/, https://veltlang.com/docs/reference/types/ and
+https://veltlang.com/docs/book/ts-developers/ (which lists utility types as unavailable).
 
 ## Decisions
 

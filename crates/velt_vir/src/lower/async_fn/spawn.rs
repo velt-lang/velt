@@ -1,4 +1,4 @@
-//! `spawn(p)` (docs/reference/async.md "Tasks"). A direct call of a compiled async function
+//! `spawn(p)` (https://veltlang.com/docs/reference/async/ "Tasks"). A direct call of a compiled async function
 //! or an async closure literal (or one called at once) becomes a task from its initial state, with its arguments or
 //! captures transferred (transfer.rs); a call through a function value, vtable or interface
 //! passes the task copies. `spawn(c ? f(x) : g(y))` spawns the chosen call the same way, as
