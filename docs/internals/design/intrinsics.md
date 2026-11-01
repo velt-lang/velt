@@ -102,10 +102,15 @@ The families are internal: programs use `Math`, `velt/simd`, `Atomic` and the in
 4. **A reference for every always-inline operation** and a differential test of each through
    LLVM, Cranelift and wasm; Cranelift calls the reference where it has no instruction instead
    of giving zeros behind a false check.
-5. **CPU features as a table**: an instruction-set hierarchy (x86-64-v2/v3/v4, POPCNT, LZCNT,
-   BMI2, F16C, FMA, AVX2, AVX-VNNI, AVX-512, AES; aarch64 crc, aes, sha3, dotprod, fp16, i8mm),
-   implied sets in `targetFeature`, and `--cpu` making a baseline extension's check the
-   constant `1` (today `has_ext` depends on the architecture only).
+5. **One CPU-feature model.** Today there are two: `--cpu` gives a compile-time mask of x86
+   features (`velt_codegen_cl::cpu::X86_FEATURES`, checked at start-up by
+   `velt_rt_check_cpu`; aarch64 has none), and the `Ext` extensions (SHA, carry-less multiply)
+   have runtime flags of their own (`velt_rt/src/cpu.rs`), read at every check because
+   `has_ext` depends on the architecture only. The step joins them: SHA, PCLMULQDQ, AES,
+   AVX-VNNI and AVX512-VNNI appended to the x86 list (additive in rt_abi.md "CPU check"), an
+   aarch64 list (sha2, aes/pmull, crc, sha3, dotprod, fp16, i8mm), each `Ext` mapped to its
+   feature bit, and a check whose extension `--cpu`'s mask holds the constant `1` in both
+   backends. New extensions (`Ext`) for step 7 are rows of these lists.
 6. **Scalar operations**: rotate, byte swap, FMA, overflow-reporting and saturating
    arithmetic, `min`/`max` as `llvm.minimum`/`maximum` (JS semantics), `assume`.
 7. **Numeric operations for #1866**: f16/bf16 conversions, `mulAdd`, int8 dot products
