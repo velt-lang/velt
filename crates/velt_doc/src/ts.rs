@@ -5,7 +5,7 @@
 //! optional, and a declaration has no body or initializer.
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use velt_syntax::ast::{self, GenericParam, Item, ItemKind, TypeExpr, TypeExprKind};
 
@@ -46,6 +46,10 @@ pub(crate) struct TsPrinter<'a> {
     /// Type names printed as something else (an extension's type parameters in the `this`
     /// form's conditional types: `infer T`, `unknown`).
     pub(crate) subst: RefCell<HashMap<String, String>>,
+    /// The constants the members printed so far are keyed by (`[INSPECT]`).
+    pub(crate) keys: RefCell<BTreeSet<String>>,
+    /// The file's top-level items: where a key's constant is when the file does not export it.
+    pub(crate) items: &'a [Item],
     /// The bounds that TypeScript's own types satisfy through Velt's extensions.
     pub(crate) widened: &'a Widened,
 }
@@ -76,6 +80,10 @@ pub struct TsDecl {
     /// For an extension: its target and its members in both forms ([`TsExtension`]); `text` is
     /// empty.
     pub ext: Option<TsExtension>,
+    /// The constants its members are keyed by (`[INSPECT](): string`), each with the declaration
+    /// to make where nothing exported declares it: the file's own constant (`const SETTLE:
+    /// unique symbol;`), or a symbol.
+    pub keys: Vec<(String, String)>,
 }
 
 /// An extension's methods, to be added to its target's interface. They merge as written when
@@ -112,6 +120,7 @@ impl TsPrinter<'_> {
     /// `item` (declared as `name`) as TypeScript.
     pub(crate) fn decl(&self, item: &Item, name: &str) -> TsDecl {
         self.refs.borrow_mut().clear();
+        self.keys.borrow_mut().clear();
         let mut ext = None;
         let (body, generics): (String, Vec<String>) = match &item.kind {
             ItemKind::Function(f) => {
@@ -164,6 +173,7 @@ impl TsPrinter<'_> {
             | ItemKind::Augment(_)
             | ItemKind::Namespace(_) => return TsDecl::default(),
         };
+        let keys = self.key_decls();
         let refs = self
             .refs
             .borrow()
@@ -186,7 +196,37 @@ impl TsPrinter<'_> {
             refs,
             merges,
             ext,
+            keys,
         }
+    }
+
+    /// Member name `name` as written (`f`, `[KEY]`, `[Symbol.iterator]`), recording the constant
+    /// a computed key names.
+    pub(crate) fn member(&self, name: &ast::Ident) -> String {
+        if let Some(key) = velt_syntax::computed_key_name(name) {
+            self.keys.borrow_mut().insert(key.to_string());
+        }
+        name.name.clone()
+    }
+
+    /// The keys recorded, each with its fallback declaration ([`TsDecl::keys`]).
+    fn key_decls(&self) -> Vec<(String, String)> {
+        let keys: Vec<String> = self.keys.borrow().iter().cloned().collect();
+        keys.into_iter()
+            .map(|key| {
+                let own = self.items.iter().find_map(|it| match &it.kind {
+                    ItemKind::Var(v) if matches!(&v.pattern.kind, ast::PatternKind::Ident(n) if n.name == key) => {
+                        Some(v)
+                    }
+                    _ => None,
+                });
+                let text = match own {
+                    Some(v) => self.constant(v, &key),
+                    None => format!("const {key}: unique symbol;"),
+                };
+                (key, text)
+            })
+            .collect()
     }
 
     fn class(&self, t: &ast::TypeDecl, name: &str) -> String {
@@ -307,7 +347,11 @@ impl TsPrinter<'_> {
         }
         if setter {
             let params: Vec<String> = sig.params.iter().map(|p| self.param(p)).collect();
-            return format!("{out}set {}({});", sig.name.name, params.join(", "));
+            return format!(
+                "{out}set {}({});",
+                self.member(&sig.name),
+                params.join(", ")
+            );
         }
         if getter {
             out.push_str("get ");
@@ -328,6 +372,11 @@ impl TsPrinter<'_> {
             .unwrap_or_default();
         if is_literal(&init) {
             return format!("const {name} = {init};");
+        }
+        // `Symbol("d")` and `Symbol.for("k")` make a `unique symbol` in TypeScript, which a
+        // computed key (`[KEY]`) may name.
+        if init.starts_with("Symbol(") || init.starts_with("Symbol.for(") {
+            return format!("const {name}: unique symbol;");
         }
         let class = init
             .strip_prefix("new ")
@@ -403,7 +452,8 @@ impl TsPrinter<'_> {
         generics.extend(sig.generics.iter().cloned());
         let generics = self.generics(&generics);
         self.scope.borrow_mut().truncate(mark);
-        format!("{}{generics}({}): {ret}", sig.name.name, params.join(", "))
+        let name = self.member(&sig.name);
+        format!("{name}{generics}({}): {ret}", params.join(", "))
     }
 
     /// Bring type parameters `generics` into scope; returns what to truncate the scope to after.
@@ -509,7 +559,7 @@ impl TsPrinter<'_> {
             false => self.ty(&f.ty),
         };
         let q = if f.optional { "?" } else { "" };
-        out.push_str(&format!("{}{q}: {ty};", f.name.name));
+        out.push_str(&format!("{}{q}: {ty};", self.member(&f.name)));
         out
     }
 
@@ -591,8 +641,12 @@ impl TsPrinter<'_> {
     fn object_field(&self, f: &ast::ObjectTypeField) -> String {
         let readonly = if f.readonly { "readonly " } else { "" };
         match f.optional {
-            true => format!("{readonly}{}?: {}", f.name.name, self.ty_optional(&f.ty)),
-            false => format!("{readonly}{}: {}", f.name.name, self.ty(&f.ty)),
+            true => format!(
+                "{readonly}{}?: {}",
+                self.member(&f.name),
+                self.ty_optional(&f.ty)
+            ),
+            false => format!("{readonly}{}: {}", self.member(&f.name), self.ty(&f.ty)),
         }
     }
 

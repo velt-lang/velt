@@ -117,6 +117,9 @@ impl<'p, 'a> DeclFile<'p, 'a> {
         for (r, arity) in &it.ts.refs {
             self.reference(at.0, r, *arity);
         }
+        for (key, fallback) in &it.ts.keys {
+            self.key(at.0, key, fallback);
+        }
         self.decls[slot] = text;
     }
 
@@ -197,6 +200,21 @@ impl<'p, 'a> DeclFile<'p, 'a> {
         }
     }
 
+    /// Make constant `key`, which a computed member key written in module `from` names
+    /// (`[INSPECT]`), resolve here: imported from the module that exports it, declared here,
+    /// or, where no module exports it (a file's own key), declared here privately as
+    /// `fallback` says (`const SETTLE: unique symbol;`). An `import type` of a `unique symbol`
+    /// is enough for a key in a declaration file.
+    fn key(&mut self, from: usize, key: &str, fallback: &str) {
+        if self.package.resolve_ref(from, key).is_some() {
+            return self.reference(from, key, 0);
+        }
+        if !self.declared.contains_key(key) {
+            self.declared.insert(key.to_string(), false);
+            self.decls.push(format!("declare {fallback}"));
+        }
+    }
+
     /// The extensions in the files `wanted` picks, added to their targets' interfaces: merged
     /// with the declaration made here, or in a `declare module` block for another module's type
     /// (globals.d.ts's for the prelude's). An extension of TypeScript's own types (`Array`,
@@ -234,6 +252,9 @@ impl<'p, 'a> DeclFile<'p, 'a> {
                 }
                 for (r, arity) in it.ts.refs.iter().filter(|(r, _)| *r != ext.target) {
                     self.reference(f, r, *arity);
+                }
+                for (key, fallback) in &it.ts.keys {
+                    self.key(f, key, fallback);
                 }
                 let params = match params.is_empty() {
                     true => String::new(),

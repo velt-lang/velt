@@ -178,6 +178,7 @@ fn extract_with(name: &str, source: &str, widened: &Widened) -> (DocModule, Vec<
             .collect(),
         plain_above: RefCell::default(),
         widened,
+        items: &module.items,
     };
     let mut imports = vec![];
     for item in &module.items {
@@ -328,6 +329,8 @@ struct Source<'a> {
     plain_above: RefCell<Vec<u32>>,
     /// The bounds the TypeScript declarations widen.
     widened: &'a Widened,
+    /// The file's top-level items.
+    items: &'a [Item],
 }
 
 impl Source<'_> {
@@ -390,6 +393,8 @@ impl Source<'_> {
             refs: Default::default(),
             scope: Default::default(),
             subst: Default::default(),
+            keys: Default::default(),
+            items: self.items,
             widened: self.widened,
         };
         doc.ts = ts.decl(
