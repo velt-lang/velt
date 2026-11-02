@@ -149,7 +149,7 @@ impl Ctx<'_> {
                     return Err("intrinsic operand count".into());
                 }
                 for (op, want) in ops.iter().zip(params) {
-                    expect(self.operand_ty(op)?, want)?;
+                    expect(self.operand_ty(op)?, *want)?;
                 }
                 ret
             }

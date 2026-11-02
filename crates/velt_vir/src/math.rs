@@ -118,11 +118,12 @@ impl MathOp {
     pub fn of_extern(e: &ExternFn) -> Option<MathOp> {
         let op = MathOp::of_symbol(&e.symbol)?;
         let (params, ret) = op.signature();
-        (e.params == params && e.ret == ret && !e.noreturn).then_some(op)
+        (e.params.as_slice() == params && e.ret == ret && !e.noreturn).then_some(op)
     }
 
-    /// The VIR signature the extern must have.
-    pub fn signature(self) -> (Vec<Ty>, Ty) {
+    /// The VIR signature the extern must have (no allocation: backends and passes ask for it
+    /// at every call of an extern).
+    pub fn signature(self) -> (&'static [Ty], Ty) {
         use Ty::{F64, I32, I64, U64};
         match self {
             MathOp::Sqrt
@@ -130,17 +131,17 @@ impl MathOp {
             | MathOp::Ceil
             | MathOp::Round
             | MathOp::Trunc
-            | MathOp::Abs => (vec![F64], F64),
-            MathOp::PowF64 => (vec![F64, F64], F64),
-            MathOp::PowI64 => (vec![I64, I64], I64),
-            MathOp::F64Bits => (vec![F64], U64),
-            MathOp::BitsF64 => (vec![U64], F64),
-            MathOp::Umulh => (vec![U64, U64], U64),
-            MathOp::ToInt32 => (vec![F64], I32),
-            MathOp::MulInt32 => (vec![I32, I32], I32),
-            MathOp::AddInt32 => (vec![I32, F64], I32),
-            MathOp::Clz32 => (vec![I32], I32),
-            MathOp::Clz64 | MathOp::Ctz64 | MathOp::Popcount64 => (vec![U64], U64),
+            | MathOp::Abs => (&[F64], F64),
+            MathOp::PowF64 => (&[F64, F64], F64),
+            MathOp::PowI64 => (&[I64, I64], I64),
+            MathOp::F64Bits => (&[F64], U64),
+            MathOp::BitsF64 => (&[U64], F64),
+            MathOp::Umulh => (&[U64, U64], U64),
+            MathOp::ToInt32 => (&[F64], I32),
+            MathOp::MulInt32 => (&[I32, I32], I32),
+            MathOp::AddInt32 => (&[I32, F64], I32),
+            MathOp::Clz32 => (&[I32], I32),
+            MathOp::Clz64 | MathOp::Ctz64 | MathOp::Popcount64 => (&[U64], U64),
         }
     }
 

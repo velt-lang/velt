@@ -180,7 +180,7 @@ fn devirtualizes_constant_function_pointers() {
 fn fold_math(op: MathOp, args: Vec<Operand>) -> Function {
     let (params, ret) = op.signature();
     let mut pb = ProgramBuilder::new();
-    let ext = pb.ext(op.symbol(), &params, ret, false);
+    let ext = pb.ext(op.symbol(), params, ret, false);
     let mut fb = FuncBuilder::export("f", &[], ret);
     let r = fb.local(ret);
     let b = fb.block();

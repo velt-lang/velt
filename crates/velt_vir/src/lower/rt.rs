@@ -195,7 +195,7 @@ impl Rt {
         use Ty::*;
         let math = |op: MathOp| {
             let (params, ret) = op.signature();
-            (op.symbol(), params, ret, false)
+            (op.symbol(), params.to_vec(), ret, false)
         };
         match self {
             Rt::StrConcat => ("velt_rt_str_concat", vec![Ptr, Ptr, Ptr], Unit, false),
