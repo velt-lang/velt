@@ -467,9 +467,8 @@ fn extension_checks_are_true_on_a_cpu_built_for_with_the_extension() {
     assert!(partial.contains("@velt_cpu_sha_x86"), "{partial}");
 }
 
-#[test]
-fn the_dot_product_is_sdot_where_every_cpu_has_it() {
-    // `velt_main` returning lane 0 of `i32x4.dotAdd` on zeros.
+/// `velt_main` returning lane 0 of `i32x4.dotAdd` on zeros.
+fn dot_sample() -> Program {
     let mut pb = ProgramBuilder::new();
     let dot = pb.ext("velt_simd_i32x4_dot_add", &[V128, V128, V128], V128, false);
     let lane = pb.ext("velt_simd_i32x4_lane", &[V128, U64], I32, false);
@@ -491,7 +490,12 @@ fn the_dot_product_is_sdot_where_every_cpu_has_it() {
     );
     fb.ret(b, copy_local(r));
     pb.add(fb.finish());
-    let p = pb.finish();
+    pb.finish()
+}
+
+#[test]
+fn the_dot_product_is_sdot_where_every_cpu_has_it() {
+    let p = dot_sample();
     let ir = |triple: &str| emit_ir(&p, triple).expect("emit_ir");
     // Every Apple arm64 CPU has Arm's dot-product instructions.
     assert!(ir("aarch64-apple-darwin").contains("@llvm.aarch64.neon.sdot.v4i32.v16i8"));
@@ -521,4 +525,18 @@ fn an_arm64_cpu_with_the_dot_product_gets_sdot_anywhere() {
     };
     assert!(target("neoverse-n1").has_dotprod());
     assert!(!target("cortex-a53").has_dotprod());
+    // A `--cpu` names the CPU on Apple's target too: one without the extension gets none.
+    let apple = |cpu| {
+        let t = crate::target::normalize("aarch64-apple-darwin").unwrap();
+        t.with_cpu(cpu).unwrap()
+    };
+    assert!(apple(None).has_dotprod() && apple(Some("baseline")).has_dotprod());
+    assert!(apple(Some("apple-m4")).has_dotprod());
+    assert!(!apple(Some("cortex-a53")).has_dotprod());
+    // And the emitted code follows: `sdot` for a dotprod CPU on Linux, none for an ARMv8.0 one
+    // on Apple's target.
+    let p = dot_sample();
+    let ir = |t: &crate::target::Target| crate::checked_ir(&p, t, false).unwrap();
+    assert!(ir(&target("neoverse-n1")).contains("@llvm.aarch64.neon.sdot"));
+    assert!(!ir(&apple(Some("cortex-a53"))).contains("sdot"));
 }

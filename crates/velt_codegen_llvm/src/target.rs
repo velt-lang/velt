@@ -191,10 +191,15 @@ impl Target {
     /// Whether every CPU code for this target runs on has Arm's dot-product instructions
     /// (`sdot`/`udot`, FEAT_DotProd): Apple arm64 (macOS), whose every CPU, M1 and later, has
     /// them. Other arm64 CPUs may lack them (ARMv8.2 made them optional).
-    /// `--cpu` naming a CPU with them (or `native` on one) gives them on any arm64 target.
+    /// That holds for Apple arm64 with no `--cpu` (or `baseline`, clang's default there, Apple
+    /// M1); a `--cpu` names the CPU instead, which has them or not as clang says
+    /// (`required_features`): `native` on one or a CPU name with them gives them on any arm64
+    /// target, `--cpu cortex-a53` takes them away on Apple's too.
     pub fn has_dotprod(&self) -> bool {
         const DOTPROD: u32 = 1;
-        self.has_neon() && (self.os == Os::Darwin || self.cpu_features & DOTPROD != 0)
+        let apple_default =
+            self.os == Os::Darwin && matches!(self.cpu.as_deref(), None | Some("baseline"));
+        self.has_neon() && (apple_default || self.cpu_features & DOTPROD != 0)
     }
 
     /// Whether the target has NEON (`simd.rs` counts mask lanes with its widening sum).
