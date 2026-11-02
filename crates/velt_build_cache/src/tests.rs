@@ -398,6 +398,49 @@ fn a_reader_during_a_store_does_not_undo_it() {
     assert_eq!(missing, 0, "entries undone by the reader");
 }
 
+/// Storing into a shard while another thread rewrites it (garbage collection) must not deadlock:
+/// both take the shard's mutex and its file lock, in the same order (#2028).
+#[test]
+fn storing_while_collecting_does_not_deadlock() {
+    let tmp = tempfile::tempdir().unwrap();
+    let packs = std::sync::Arc::new(pack::Packs::new(tmp.path().join("cl")));
+    // Every key in shard 0.
+    let key = |i: u32| {
+        let mut k = Key::of(&[&i.to_le_bytes()]).0;
+        k[0] = 0;
+        Key(k)
+    };
+    packs.put(&key(0), b"first");
+    let (done, finished) = std::sync::mpsc::channel();
+    let putter = {
+        let (packs, done) = (std::sync::Arc::clone(&packs), done.clone());
+        std::thread::spawn(move || {
+            for i in 1..500 {
+                packs.put(&key(i), &small(i % 50));
+            }
+            let _ = done.send(());
+        })
+    };
+    let collector = {
+        let packs = std::sync::Arc::clone(&packs);
+        std::thread::spawn(move || {
+            // A cutoff in the future drops every entry: each call rewrites the shard.
+            for _ in 0..500 {
+                let _ = packs.compact(0, u32::MAX);
+            }
+            let _ = done.send(());
+        })
+    };
+    for _ in 0..2 {
+        // timing: a bounded wait, so that a deadlock fails the test instead of hanging it.
+        finished
+            .recv_timeout(Duration::from_secs(30))
+            .expect("storing and collecting deadlocked");
+    }
+    putter.join().unwrap();
+    collector.join().unwrap();
+}
+
 #[test]
 fn collects_only_when_due() {
     let tmp = tempfile::tempdir().unwrap();
