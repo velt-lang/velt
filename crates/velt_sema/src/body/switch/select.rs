@@ -52,6 +52,11 @@ impl FnCx<'_, '_> {
             }
             (ScrutKind::TypeOf, Some(l)) => self.typeof_sel(s, &l, test.span),
             (ScrutKind::Union, Some(l)) => self.union_lit_sel(s, &l, test.span),
+            // An `f16`/`bf16` compares as `==` does, by value in `f32` (#2049), not by a pattern
+            // on its bits.
+            (ScrutKind::Plain, Some(_)) if self.cx.ty.is_storage_float(s.expr.ty) => {
+                self.guard_sel(s, test)
+            }
             (ScrutKind::Plain, Some(l)) => self.plain_lit_sel(s, &l, test.span),
             (ScrutKind::Enum(d), _) => match self.enum_member_of(*d, test) {
                 Some(v) => self
@@ -346,6 +351,20 @@ impl FnCx<'_, '_> {
         let l = self.new_local("<case>", ty, false, span, LocalKind::Bind);
         // Converted to the discriminant's type where it can be (`case 1:` on a `u8`); otherwise
         // the values compare like `===` does (`case t:` with `t: string | null`, #337).
+        // An `f16`/`bf16` compares in `f32`, with a literal case an `f32` (#2049, as `==`).
+        if self.cx.ty.is_storage_float(ty) {
+            let f32_ = self.cx.ty.primitive("f32");
+            let v = self.expr(test, f32_, Want::Borrow);
+            let cur = self.mk(hir::ExprKind::Local(l, mode), ty, span);
+            let (cur, v) = (self.storage_widened(cur), self.storage_widened(v));
+            let guard = self.eq_values(cur, v, span);
+            return Sel {
+                pat: self.pat(P::Binding(l, mode), ty, span),
+                guard: Some(guard),
+                touched: (0..s.slots.len()).collect(),
+                covered: vec![],
+            };
+        }
         let v = self.expr(test, Some(ty), Want::Borrow);
         let v = self.try_coerce(v, ty).unwrap_or_else(|v| v);
         let cur = self.mk(hir::ExprKind::Local(l, mode), ty, span);

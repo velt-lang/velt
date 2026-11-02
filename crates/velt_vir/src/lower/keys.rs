@@ -36,6 +36,8 @@ impl Cx<'_> {
             TyKind::Int(i) => int_key(*i).into(),
             TyKind::Float(FloatTy::F32) => "f32".into(),
             TyKind::Float(FloatTy::F64) => "f64".into(),
+            TyKind::Float(FloatTy::F16) => "f16".into(),
+            TyKind::Float(FloatTy::BF16) => "bf16".into(),
             TyKind::Bool => "bool".into(),
             TyKind::Str => "string".into(),
             TyKind::Symbol => "symbol".into(),
@@ -269,6 +271,8 @@ fn lit_key(v: &LitValue) -> String {
         LitValue::Int(i, n) => format!("{n}{}", int_key(*i)),
         LitValue::Float(FloatTy::F32, bits) => format!("{bits:#x}f32"),
         LitValue::Float(FloatTy::F64, bits) => format!("{bits:#x}f64"),
+        LitValue::Float(FloatTy::F16, bits) => format!("{bits:#x}f16"),
+        LitValue::Float(FloatTy::BF16, bits) => format!("{bits:#x}bf16"),
         LitValue::Bool(b) => b.to_string(),
     }
 }

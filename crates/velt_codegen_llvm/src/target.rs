@@ -207,10 +207,14 @@ impl Target {
     /// F16C (x86-64-v3 and later), none elsewhere (x86-64-v2, the default; wasm).
     pub(crate) fn half_native(&self) -> crate::half::HalfNative {
         use crate::half::HalfNative;
-        const F16C: u32 = 1 << 13;
+        // F16C's bit, by name in the shared x86 feature list (rt_abi.md "CPU check").
+        let f16c = velt_codegen_cl::X86_FEATURES
+            .iter()
+            .position(|(name, _)| *name == "F16C")
+            .map_or(0, |bit| 1u32 << bit);
         if self.has_neon() {
             HalfNative::All
-        } else if self.triple.starts_with("x86_64") && self.cpu_features & F16C != 0 {
+        } else if self.triple.starts_with("x86_64") && f16c != 0 && self.cpu_features & f16c != 0 {
             HalfNative::F32
         } else {
             HalfNative::None

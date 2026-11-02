@@ -127,8 +127,14 @@ impl FnCx<'_, '_> {
             let kind = self.cx.ty.kind(t);
             let int = matches!(kind, TyKind::Int(_));
             let float = matches!(kind, TyKind::Float(_));
+            // An `Atomic<f16>`/`<bf16>` is its bits (#2049): load, store, exchange and
+            // compare-exchange, no arithmetic on them.
+            let storage = matches!(kind, TyKind::Float(f) if f.is_storage());
             let reference = self.cx.atomic_ref(t);
             let wrong = match op.map(|o| RMW[o as usize]) {
+                Some("add" | "sub" | "max" | "min") if storage => {
+                    Some("an integer, `f32` or `f64` (an `f16`/`bf16` atomic is its bits)")
+                }
                 Some("add" | "sub" | "max" | "min") => (!int && !float).then_some("a number"),
                 Some("and" | "or" | "xor") => {
                     (float || reference).then_some("an integer or `bool`")

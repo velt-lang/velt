@@ -149,7 +149,7 @@ pub(crate) fn lit_matches(v: &LitValue, l: &ast::SignedLit) -> bool {
         }
     };
     let float = |f: f64| if l.negative { -f } else { f };
-    let float_name = |ft: &FloatTy| if *ft == FloatTy::F32 { "f32" } else { "f64" };
+    let float_name = |ft: &FloatTy| crate::generated::spell::float_name(*ft);
     match (v, &l.lit) {
         (LitValue::Str(a), ast::Lit::Str(b)) => !l.negative && a == b,
         (LitValue::Bool(a), ast::Lit::Bool(b)) => !l.negative && a == b,
@@ -186,7 +186,7 @@ pub(crate) fn display_lit(v: &LitValue) -> String {
             };
             match ft {
                 FloatTy::F64 => shown,
-                FloatTy::F32 => format!("{shown}f32"),
+                _ => format!("{shown}{}", crate::generated::spell::float_name(*ft)),
             }
         }
     }

@@ -28,11 +28,11 @@ pub(super) fn is_simd_method(name: &str) -> bool {
 
 impl FnCx<'_, '_> {
     /// Does every value of type `t` convert to a `number` exactly (`i8`..`i32`, `u8`..`u32`,
-    /// `f32`)? Those convert implicitly.
+    /// `f32`, `f16`, `bf16`)? Those convert implicitly.
     pub(crate) fn exact_in_number(&self, t: TyId) -> bool {
         match self.cx.ty.kind(t) {
             TyKind::Int(i) => i.bits() <= 32,
-            TyKind::Float(f) => *f == hir::FloatTy::F32,
+            TyKind::Float(f) => *f != hir::FloatTy::F64,
             _ => false,
         }
     }
@@ -265,6 +265,10 @@ impl FnCx<'_, '_> {
             let f64_ = self.cx.ty.f64;
             return self.int_to_float(v, f64_);
         }
+        // An `f16`/`bf16` added to an `f32` place is an `f32` (`sum += w`, #2049).
+        if matches!(self.cx.ty.kind(place.ty), TyKind::Float(hir::FloatTy::F32)) {
+            return self.storage_widened(v);
+        }
         v
     }
 
@@ -406,6 +410,17 @@ impl FnCx<'_, '_> {
         if expected == ty.f64 && ty.is_int(found) && !self.exact_in_number(found) {
             return Some(format!(
                 "`{f}` converts to `number` only with `as number` (not every value is exact)"
+            ));
+        }
+        // Into an `f16`/`bf16` (#2049): only `as` narrows, rounding to the nearest value.
+        if ty.is_storage_float(expected) && ty.is_storage_float(found) {
+            return Some(format!(
+                "`{f}` and `{e}` don't convert to each other implicitly: write `as {e}`"
+            ));
+        }
+        if ty.is_storage_float(expected) && (ty.is_numeric(found)) {
+            return Some(format!(
+                "`{f}` doesn't convert to `{e}` implicitly: write `as {e}` (rounds to the nearest `{e}`)"
             ));
         }
         None

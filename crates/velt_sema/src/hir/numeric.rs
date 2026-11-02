@@ -37,6 +37,27 @@ impl IntTy {
 pub enum FloatTy {
     F32,
     F64,
+    /// IEEE 754 binary16, a storage type (#2049): a value is its 16-bit pattern (`u16` in
+    /// VIR), it widens to `f32`/`f64`/`number` implicitly, and arithmetic on it runs in `f32`
+    /// (sema widens the operands; no HIR operator has an `F16` operand).
+    F16,
+    /// bfloat16 (`f32`'s top 16 bits), a storage type like [`FloatTy::F16`].
+    BF16,
+}
+
+impl FloatTy {
+    /// Whether this is a storage type (`f16`, `bf16`), which arithmetic never runs in.
+    pub fn is_storage(self) -> bool {
+        matches!(self, FloatTy::F16 | FloatTy::BF16)
+    }
+
+    /// The type arithmetic on a value of this type runs in: `f32` for the storage types.
+    pub fn compute(self) -> FloatTy {
+        match self {
+            FloatTy::F16 | FloatTy::BF16 => FloatTy::F32,
+            f => f,
+        }
+    }
 }
 
 /// A 128-bit SIMD type (`u8x16`: sixteen `u8` lanes; `mask8x16`: what comparing two of them

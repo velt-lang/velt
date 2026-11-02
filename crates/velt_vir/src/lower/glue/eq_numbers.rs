@@ -36,8 +36,11 @@ impl FnLower<'_, '_> {
             .filter(|&t| !self.cx.is_unit(t))
             .collect();
         if let [t] = parts[..] {
+            // Not an `f16`/`bf16`, whose VIR value is its bits (#2049): it compares through
+            // the equality glue, which widens it.
             return matches!(self.cx.kind(t), TyKind::Int(_) | TyKind::Float(_))
-                .then(|| (self.cx.ty(t), None));
+                .then(|| (self.cx.ty(t), None))
+                .filter(|_| self.cx.half(t).is_none());
         }
         let [t] = tys[..] else {
             return None;

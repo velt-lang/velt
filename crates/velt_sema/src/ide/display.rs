@@ -6,7 +6,7 @@ use rustc_hash::FxHashMap;
 
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
-use crate::hir::{FloatTy, TyId, TyKind, TyTable};
+use crate::hir::{TyId, TyKind, TyTable};
 use crate::types::int_name;
 
 /// How a type definition is displayed.
@@ -71,8 +71,7 @@ impl Names {
         }
         match self.table.kind(t) {
             TyKind::Int(i) => int_name(*i).to_string(),
-            TyKind::Float(FloatTy::F32) => "f32".into(),
-            TyKind::Float(FloatTy::F64) => "f64".into(),
+            TyKind::Float(f) => crate::generated::spell::float_name(*f).into(),
             TyKind::Bool => "boolean".into(),
             TyKind::Str => "string".into(),
             TyKind::Symbol => "symbol".into(),

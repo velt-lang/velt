@@ -111,7 +111,7 @@ impl FnLower<'_, '_> {
         let from = self.cx.ty(ty);
         match self.cx.kind(ty) {
             TyKind::Float(_) => {
-                let v = self.cast_to(v, from, Ty::F64);
+                let v = self.float_as_f64(v, ty);
                 self.call_rt(Rt::WriteF64, vec![stream, v], None);
             }
             TyKind::Bool => self.call_rt(Rt::WriteBool, vec![stream, v], None),

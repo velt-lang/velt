@@ -12,6 +12,10 @@ export function sizes(xs: Map<string, usize[]>): f32 {
   return xs.size as f32; //~ velt-number-type
 }
 
+export function weight(w: f16, b: bf16): number { //~ velt-number-type velt-number-type
+  return w + b;
+}
+
 export function fine(x: number): number {
   return x / 2;
 }

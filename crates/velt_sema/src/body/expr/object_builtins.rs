@@ -401,6 +401,8 @@ impl FnCx<'_, '_> {
             (l, r)
         };
         let (l, r) = self.mix_numbers(l, r);
+        // An `f16`/`bf16` is compared as the `f32` it widens to, as the operators do (#2049).
+        let (l, r) = (self.storage_widened(l), self.storage_widened(r));
         if l.ty != r.ty {
             // Values of unrelated types are never the same value: both are evaluated, in order.
             let stmts = [l, r]

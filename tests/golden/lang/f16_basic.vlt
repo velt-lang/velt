@@ -1,0 +1,42 @@
+// `f16` and `bf16` (#2049): storage types that compute in `f32`. A literal and `as` round once
+// to nearest even; values widen to `f32` and `number` exactly; arithmetic and comparisons run
+// in `f32`, with a literal beside a storage float an `f32` too. The expected output was made
+// with Node's `Math.f16round` / `Math.fround` (and an exact round-to-nearest-even for bf16).
+function main() {
+  // Literals: the f64 value rounded once.
+  const tenth: f16 = 0.1;
+  const btenth: bf16 = 0.1;
+  const neg: f16 = -1.5;
+  const nz: f16 = -0;
+  console.log(tenth, btenth, neg, nz, Object.is(nz, -0));
+  // Widening is exact.
+  const x: f32 = tenth;
+  const y: number = btenth;
+  console.log(x, y);
+  // `as` from every number type: ties to even, subnormals, overflow, NaN.
+  const ds: number[] = [2049, 2051, 65504, 65519, 65520, 1e-7, 5.96e-8, 2.98e-8, 2.99e-8, -1e9];
+  for (const d of ds) {
+    console.log(d, d as f16, d as bf16);
+  }
+  const nan = (0 / 0) as f16;
+  console.log(nan, nan == nan, Infinity as bf16, -Infinity as f16);
+  const f: f32 = 3.14159;
+  console.log(f as f16, f as bf16, (f as f16) as bf16);
+  const small: i32 = 33333;
+  const big: i64 = 4503599627370497;
+  console.log(small as f16, small as bf16, big as bf16, (-big) as bf16);
+  console.log((2.5 as f16) as u8, (-3.75 as bf16) as i32, (300.5 as f16) as i64);
+  // Arithmetic runs in `f32`; the result is an `f32` (`as f16` rounds it back).
+  const a: f16 = 1.1;
+  const b: f16 = 2.2;
+  console.log(a + b, a * b, b / a, a - b, -a, (a * b) as f16);
+  // A literal beside a storage float is an `f32`, as JS reads a `Float16Array` element.
+  console.log(tenth == 0.1, tenth < 0.1, tenth > 0.0999, tenth * 0.1, tenth + 1);
+  const close: f16 = 0.0999755859375;
+  console.log(close == tenth, close == 0.0999755859375, btenth == 0.10009765625);
+  // Mixed with `number`: the `f64` arithmetic.
+  const n = 0.1;
+  console.log(tenth * n, tenth == n, btenth + n);
+  // Text.
+  console.log(`${tenth}|${btenth}|${nz}`, String(neg), [tenth, nz, nan]);
+}

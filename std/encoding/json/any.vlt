@@ -109,7 +109,7 @@ function enter(v: any): void {
 
 /** A number as its type writes it: an integer exactly, a float as JavaScript does. */
 function writeNumber(w: StringBuilder, v: any, repr: string): void {
-  if (repr == "f64" || repr == "f32") {
+  if (repr == "f64" || repr == "f32" || repr == "f16" || repr == "bf16") {
     appendJsonNumber(w, v as f64);
   } else if (repr.startsWith("u")) {
     appendJsonUint(w, v as u64);

@@ -89,6 +89,7 @@ use state::{DropEntry, LInfo, LState, Scope, ScopeKind};
 mod fresh_fns;
 mod frozen;
 mod glue;
+mod half;
 mod hand_result;
 mod hooks;
 mod host;

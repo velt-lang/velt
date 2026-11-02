@@ -23,15 +23,17 @@ impl FnLower<'_, '_> {
             ice("a ThreadLocal constant not made by `new ThreadLocal`");
         };
         let aty = self.sub(args[0].ty);
-        let vt = match self.cx.kind(aty) {
-            TyKind::Adt(_, targs) if targs.len() == 1 => self.cx.ty(targs[0]),
+        let (vt, half) = match self.cx.kind(aty) {
+            TyKind::Adt(_, targs) if targs.len() == 1 => {
+                (self.cx.ty(targs[0]), self.cx.half(targs[0]))
+            }
             k => ice(format_args!("ThreadLocal intrinsic on {k:?}")),
         };
         let bits = match vt {
             Ty::Bool => 8,
             t => t.scalar_size().unwrap_or(8) * 8,
         };
-        let init = literal_word(&fields[0], vt, bits);
+        let init = literal_word(&fields[0], vt, half, bits);
         // Named by its qualified name and type, not its `DefId`: the same constant keeps its
         // storage across `velt dev` versions in which other declarations come and go, and an
         // edit changing its type gets new storage.
@@ -89,8 +91,14 @@ impl FnLower<'_, '_> {
     }
 }
 
-/// The word of `bits` a literal of VIR type `vt` is (sema `thread_local` checked the shape).
-pub(super) fn literal_word(e: &hir::Expr, vt: Ty, bits: u32) -> u64 {
+/// The word of `bits` a literal of VIR type `vt` is (sema `thread_local` checked the shape);
+/// `half` says the value type is a storage float, whose word is the literal's rounded bits.
+pub(super) fn literal_word(
+    e: &hir::Expr,
+    vt: Ty,
+    half: Option<velt_sema::hir::FloatTy>,
+    bits: u32,
+) -> u64 {
     let (neg, lit) = match &e.kind {
         K::Unary {
             op: UnOp::Neg,
@@ -99,6 +107,20 @@ pub(super) fn literal_word(e: &hir::Expr, vt: Ty, bits: u32) -> u64 {
         k => (false, k),
     };
     let w = match lit {
+        // An `f16`/`bf16`: the bits of the value rounded once (#2049).
+        K::Lit(Lit::Int(_) | Lit::Float(_)) if half.is_some() => {
+            let f = match lit {
+                K::Lit(Lit::Int(n)) => *n as f64,
+                K::Lit(Lit::Float(f)) => *f,
+                _ => 0.0,
+            };
+            let f = if neg { -f } else { f };
+            let bits = match half {
+                Some(velt_sema::hir::FloatTy::F16) => crate::math::half::f64_to_f16(f.to_bits()),
+                _ => crate::math::half::f64_to_bf16(f.to_bits()),
+            };
+            return u64::from(bits);
+        }
         K::Lit(Lit::Bool(b)) => u64::from(*b),
         // A static atomic's reference word that starts empty.
         K::Lit(Lit::Null) => 0,

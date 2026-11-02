@@ -59,6 +59,8 @@ pub fn float_name(ft: FloatTy) -> &'static str {
     match ft {
         FloatTy::F32 => "f32",
         FloatTy::F64 => "f64",
+        FloatTy::F16 => "f16",
+        FloatTy::BF16 => "bf16",
     }
 }
 

@@ -223,6 +223,12 @@ impl FnLower<'_, '_> {
             self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, x, y))
         } else if matches!(self.cx.kind(ty), TyKind::Option(..) | TyKind::Unit) {
             Operand::Const(Const::Bool(true), Ty::Bool)
+        } else if let Some(h) = self.cx.half(ty) {
+            // An `f16`/`bf16` by value (#2049): `-0` is `0`, NaN is not itself.
+            let (pa, pb) = (self.deref_param(a, ty), self.deref_param(b, ty));
+            let x = self.widen_half(Operand::Copy(pa), h);
+            let y = self.widen_half(Operand::Copy(pb), h);
+            self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, x, y))
         } else if matches!(
             self.cx.kind(ty),
             TyKind::Bool | TyKind::Int(_) | TyKind::Float(_) | TyKind::Symbol
@@ -285,6 +291,8 @@ impl FnLower<'_, '_> {
             k if !matches!(k, TyKind::Int(_) | TyKind::Float(_)) => {
                 return self.any_number_other(ty)
             }
+            // A float (an `f16`/`bf16` widened from its bits) or an integer.
+            TyKind::Float(_) => self.float_as_f64(v, ty),
             _ => {
                 let from = self.cx.ty(ty);
                 self.cast_to(v, from, Ty::F64)

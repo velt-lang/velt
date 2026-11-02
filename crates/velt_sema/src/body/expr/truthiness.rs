@@ -71,7 +71,11 @@ impl FnCx<'_, '_> {
                 let zero = self.mk(H::Lit(hir::Lit::Int(0)), h.ty, span);
                 self.compare(BinOp::NotEq, h, zero)
             }
-            Test::Float => self.float_truthy(h),
+            // An `f16`/`bf16` tests the `f32` it widens to (#2049).
+            Test::Float => {
+                let h = self.storage_widened(h);
+                self.float_truthy(h)
+            }
             Test::Str => {
                 let h = self.unbrand(h);
                 let usize_ = self.cx.ty.usize;

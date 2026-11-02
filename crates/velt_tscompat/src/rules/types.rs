@@ -40,6 +40,16 @@ fn named(t: &ast::TypeExpr, path: &[ast::Ident], args: &[ast::TypeExpr], cx: &mu
                 "write `number`",
             ],
         ),
+        (name @ ("f16" | "bf16"), []) => cx.error(
+            "velt-number-type",
+            t.span,
+            format!("`{name}` is not a TypeScript type"),
+            &[
+                "TypeScript has one number type, `number` (a 64-bit float); Velt's `f16` and \
+                 `bf16` are 16-bit storage floats, which round when written",
+                "write `number`, and `Math.f16round(x)` where the value is written",
+            ],
+        ),
         ("bool", []) => bool_type(t, cx),
         (int, []) if INT_TYPES.contains(&int) => cx.error(
             "velt-number-type",

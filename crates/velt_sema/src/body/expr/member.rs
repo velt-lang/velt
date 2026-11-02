@@ -576,7 +576,8 @@ impl FnCx<'_, '_> {
         if let Some(base) = self.cx.brand_base(target) {
             return self.brand_cast(expr, target, base, want, span);
         }
-        if !self.cx.ty.is_numeric(target) && target != self.cx.ty.bool_ {
+        let storage = self.cx.ty.is_storage_float(target);
+        if !self.cx.ty.is_numeric(target) && !storage && target != self.cx.ty.bool_ {
             return self.type_assertion(expr, target, want, span);
         }
         // An integer literal cast to an integer type is an exact integer first, so the cast
@@ -584,6 +585,9 @@ impl FnCx<'_, '_> {
         let hint = (untyped_int(expr) && self.cx.ty.is_int(target)).then_some(self.cx.ty.i64);
         let inner = self.expr(expr, hint, Want::Borrow);
         if self.cx.dynamic(inner.ty).is_some() {
+            if storage {
+                return self.any_as_storage(target, span);
+            }
             return self.cast_dynamic(inner, target);
         }
         // `id as string`: a brand's value as its primitive.
@@ -603,12 +607,14 @@ impl FnCx<'_, '_> {
         let src = inner.ty;
         let t = &self.cx.ty;
         let c_like = self.is_c_like_enum(src) && !self.is_string_enum(src);
+        // The storage floats (`f16`, `bf16`) convert to and from every number type (#2049).
+        let num = |x| t.is_numeric(x) || t.is_storage_float(x);
         let ok = t.is_bottom(src)
             || t.is_bottom(target)
-            || (t.is_numeric(src) && t.is_numeric(target))
+            || (num(src) && num(target))
             || (src == t.bool_ && t.is_int(target))
             || (c_like && t.is_int(target))
-            || src == target && (t.is_numeric(src) || src == t.bool_);
+            || src == target && (num(src) || src == t.bool_);
         if !ok {
             let (s, d) = (self.cx.display(src), self.cx.display(target));
             self.cx.err(format!("cannot cast `{s}` as `{d}`"), span);

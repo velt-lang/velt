@@ -181,6 +181,10 @@ impl FnLower<'_, '_> {
             }
             K::Cast(inner) => {
                 let v = self.expr(inner);
+                // Through the conversion operations to or from an `f16`/`bf16` (`half.rs`).
+                if self.cx.half(inner.ty).is_some() || self.cx.half(e.ty).is_some() {
+                    return self.num_cast(v, inner.ty, e.ty);
+                }
                 let (from, to) = (self.vty(inner.ty), self.vty(e.ty));
                 self.cast_to(v, from, to)
             }
@@ -385,6 +389,19 @@ impl FnLower<'_, '_> {
     /// negated or cast (with `as` semantics), or a module constant that is one. `None` for
     /// anything else (sema's `table_elem` accepts exactly what this folds).
     fn table_const(&mut self, e: &hir::Expr, to: Ty, depth: u32) -> Option<Const> {
+        // An `f16`/`bf16` element (#2049): a literal's rounded bits into a table of the type;
+        // anything else is code, which converts it (a cast here would truncate its value).
+        if let Some(h) = self.cx.half(e.ty) {
+            let f = match &e.kind {
+                hir::ExprKind::Lit(hir::Lit::Float(f)) => *f,
+                hir::ExprKind::Lit(hir::Lit::Int(n)) => *n as f64,
+                _ => return None,
+            };
+            return match (to, super::half::half_lit(f, h)) {
+                (Ty::U16, Operand::Const(c, _)) => Some(c),
+                _ => None,
+            };
+        }
         let at = self.vty(e.ty);
         let v = match &e.kind {
             hir::ExprKind::Lit(hir::Lit::Int(n)) if at.is_float() => Const::Float(*n as f64),
@@ -431,6 +448,16 @@ impl FnLower<'_, '_> {
 
     fn unary(&mut self, op: hir::UnOp, inner: &hir::Expr, ty: TyId) -> Operand {
         let t = self.vty(ty);
+        // A negated literal of a storage float (`-1.5` as an `f16`): its bits, `-0` included.
+        // Sema widens every other operand of `-` to `f32`.
+        if let Some(h) = self.cx.half(ty) {
+            let f = match &inner.kind {
+                hir::ExprKind::Lit(hir::Lit::Float(f)) if op == hir::UnOp::Neg => *f,
+                hir::ExprKind::Lit(hir::Lit::Int(n)) if op == hir::UnOp::Neg => *n as f64,
+                _ => super::ice("an operator on a storage float (sema widens its operands)"),
+            };
+            return super::half::half_lit(-f, h);
+        }
         // Fold negative literals (sema encodes `-5` as `Neg(5)`).
         if op == hir::UnOp::Neg {
             match &inner.kind {

@@ -386,7 +386,10 @@ f64 first), keeps subnormals, overflows to infinity, and keeps a NaN as a quiet 
 and the payload's top bits; widening a NaN sets the quiet bit (Arm's `fcvt`/`bfcvt` and x86's
 F16C give the same bits; `velt_vir::math::half` is the reference). LLVM emits `fcvt` on arm64
 and F16C under a `--cpu` with it, and the reference's branchless integer sequences elsewhere
-(never compiler-rt's `__extendhfsf2` & co.); Cranelift always emits the sequences.
+(never compiler-rt's `__extendhfsf2` & co.); Cranelift always emits the sequences. F16C's
+`vcvtps2ph` rounds by its immediate (nearest even); on AVX512-FP16 CPUs LLVM picks `vcvtss2sh`,
+which rounds by MXCSR: the same bits, since Velt never changes MXCSR from round-to-nearest (code
+that does, through a native package, changes these conversions too).
 
 ## SIMD [additive]
 

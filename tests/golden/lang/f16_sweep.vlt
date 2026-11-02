@@ -1,0 +1,77 @@
+// A sweep of `as f16` and `as bf16` (#2049) over every exponent both formats have and beyond:
+// grid points, the midpoints between neighbours (ties to even) and the values next to them,
+// from `number` (f64), from `f32` and from `i64`. Each line sums one block of converted values,
+// so a wrong rounding anywhere changes it. The expected output is Node's (`Math.f16round`, and
+// an exact round-to-nearest-even in BigInt for bf16).
+function main() {
+  // Powers of two from 2^-140 to 2^140, built exactly by halving and doubling.
+  const pow: number[] = [];
+  let p = 1.0;
+  for (let i = 0; i < 140; i++) {
+    p = p / 2;
+  }
+  for (let i = 0; i <= 280; i++) {
+    pow.push(p);
+    p = p * 2;
+  }
+  // Fractions on the f16 grid (1/1024), its midpoints (1/2048) and one past (1/4096); and on
+  // the bf16 grid (1/128) with its midpoints (1/256).
+  const fracs: number[] = [];
+  for (let m = 0; m < 1024; m += 37) {
+    for (const d of [0, 1 / 2048, 1 / 2048 + 1 / 4096, -1 / 4096]) {
+      fracs.push(1 + m / 1024 + d);
+    }
+  }
+  for (let m = 0; m < 128; m += 5) {
+    for (const d of [1 / 256, 1 / 256 + 1 / 65536, 1 / 256 - 1 / 65536]) {
+      fracs.push(1 + m / 128 + d);
+    }
+  }
+  let line = 0;
+  for (let e = 0; e < pow.length; e += 10) {
+    let s16 = 0;
+    let sb16 = 0;
+    let s16f = 0;
+    let special = 0;
+    for (let k = e; k < e + 10 && k < pow.length; k++) {
+      for (const f of fracs) {
+        for (const sign of [1, -1]) {
+          const x = sign * f * pow[k];
+          const h = x as f16;
+          const b = x as bf16;
+          const hf = (x as f32) as f16;
+          // Negative values weigh a quarter (exactly), so they don't cancel the positive ones.
+          const w = sign > 0 ? 1 : 0.25;
+          if (h != h || h == Infinity || h == -Infinity) {
+            special += 1;
+          } else {
+            s16 += h * w;
+          }
+          if (b == Infinity || b == -Infinity) {
+            special += 1000;
+          } else {
+            sb16 += b * w;
+          }
+          if (!(hf != hf || hf == Infinity || hf == -Infinity)) {
+            s16f += hf * w;
+          }
+        }
+      }
+    }
+    console.log(line, s16, sb16, s16f, special);
+    line++;
+  }
+  // Integers into bf16, above 2^53 too, where rounding through f64 would round twice.
+  let si = 0;
+  let base: i64 = 1;
+  for (let e = 0; e < 62; e++) {
+    for (const d of [0, 1, -1, 3]) {
+      const half: i64 = e >= 8 ? base >> 8 : 0;
+      const v: i64 = base + half + (d as i64);
+      si += (v as bf16) / pow[140 + e];
+      si += ((-v) as bf16) / pow[140 + e] / 3;
+    }
+    base = base * 2;
+  }
+  console.log("ints", si);
+}
