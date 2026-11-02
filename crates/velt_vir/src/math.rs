@@ -147,6 +147,113 @@ impl MathOp {
     }
 }
 
+impl MathOp {
+    /// The operation on constants, for folding: each argument and the result as the bits of its
+    /// type ([`MathOp::signature`]) zero-extended to 64 (an `i32` is its 32-bit pattern, an
+    /// `f64` its IEEE 754 bits). Computes exactly what velt_rt's function does (a test of
+    /// veltc compares the two). `None` where folding could differ from running: `pow` on
+    /// doubles (the runtime's fdlibm), and a NaN argument or result of a double operation (a
+    /// NaN's bits depend on the instruction that makes it).
+    pub fn eval(self, args: &[u64]) -> Option<u64> {
+        let f = |i: usize| args.get(i).map(|&b| f64::from_bits(b));
+        let i32_ = |i: usize| args.get(i).map(|&b| b as u32 as i32);
+        let u = |i: usize| args.get(i).copied();
+        let double = |x: f64| (!x.is_nan()).then(|| x.to_bits());
+        let int32 = |x: i32| Some(u64::from(x as u32));
+        if args.len() != self.signature().0.len() {
+            return None;
+        }
+        match self {
+            MathOp::Sqrt
+            | MathOp::Floor
+            | MathOp::Ceil
+            | MathOp::Round
+            | MathOp::Trunc
+            | MathOp::Abs => {
+                let x = f(0).filter(|x| !x.is_nan())?;
+                double(match self {
+                    MathOp::Sqrt => x.sqrt(),
+                    MathOp::Floor => x.floor(),
+                    MathOp::Ceil => x.ceil(),
+                    MathOp::Trunc => x.trunc(),
+                    MathOp::Abs => x.abs(),
+                    _ => js_round(x),
+                })
+            }
+            MathOp::PowF64 => None,
+            MathOp::PowI64 => Some(pow_i64(u(0)? as i64, u(1)? as i64) as u64),
+            MathOp::F64Bits => u(0).filter(|&b| !f64::from_bits(b).is_nan()),
+            MathOp::BitsF64 => double(f64::from_bits(u(0)?)),
+            MathOp::Umulh => Some(((u128::from(u(0)?) * u128::from(u(1)?)) >> 64) as u64),
+            MathOp::ToInt32 => int32(to_int32(f(0).filter(|x| !x.is_nan())?)),
+            MathOp::MulInt32 => {
+                let p = i64::from(i32_(0)?) * i64::from(i32_(1)?);
+                int32((p as f64) as i64 as i32)
+            }
+            MathOp::AddInt32 => {
+                let x = f(1).filter(|x| !x.is_nan())?;
+                int32(to_int32(f64::from(i32_(0)?) + x))
+            }
+            MathOp::Clz32 => int32(i32_(0)?.leading_zeros() as i32),
+            MathOp::Clz64 => Some(u64::from(u(0)?.leading_zeros())),
+            MathOp::Ctz64 => Some(u64::from(u(0)?.trailing_zeros())),
+            MathOp::Popcount64 => Some(u64::from(u(0)?.count_ones())),
+        }
+    }
+}
+
+/// JS's `Math.round` (velt_rt's `velt_rt_math_round`).
+fn js_round(x: f64) -> f64 {
+    if !x.is_finite() {
+        return x;
+    }
+    let f = x.floor();
+    let r = if x - f >= 0.5 { f + 1.0 } else { f };
+    if r == 0.0 && x.is_sign_negative() {
+        -0.0
+    } else {
+        r
+    }
+}
+
+/// JS's ToInt32 (velt_rt's `velt_rt_math_to_int32`).
+fn to_int32(x: f64) -> i32 {
+    if !x.is_finite() {
+        return 0;
+    }
+    if x.abs() < 9_223_372_036_854_775_808.0 {
+        return x as i64 as i32;
+    }
+    let bits = x.to_bits();
+    let shift = ((bits >> 52) & 0x7ff) as i64 - 1075;
+    let mantissa = (bits & ((1 << 52) - 1)) | (1 << 52);
+    let low = if shift >= 32 {
+        0
+    } else {
+        (mantissa << shift) as u32
+    };
+    let low = if x < 0.0 { low.wrapping_neg() } else { low };
+    low as i32
+}
+
+/// Wrapping integer power (velt_rt's `velt_rt_pow_i64`).
+fn pow_i64(a: i64, b: i64) -> i64 {
+    if b < 0 {
+        return if a == 1 { 1 } else { 0 };
+    }
+    let (mut base, mut exp, mut acc) = (a, b as u64, 1i64);
+    while exp > 0 {
+        if exp & 1 == 1 {
+            acc = acc.wrapping_mul(base);
+        }
+        exp >>= 1;
+        if exp > 0 {
+            base = base.wrapping_mul(base);
+        }
+    }
+    acc
+}
+
 /// How `Math.floor`, `ceil`, `trunc` and `round` round a double to a whole one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Rounding {

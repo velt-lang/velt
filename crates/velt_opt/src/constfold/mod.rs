@@ -1,23 +1,45 @@
 //! Constant folding and propagation: known values of register-like locals replace their
 //! reads, operations on constants are evaluated, integer identities (`x + 0`, `x * 1`,
 //! `x & 0`, …) are simplified, branches/switches on constants become jumps, and indirect
-//! calls through a constant function address become direct calls (so they can be inlined).
+//! calls through a constant function address become direct calls (so they can be inlined), and
+//! calls of a runtime math operation (`velt_vir::math`) on constants become their result.
 
 mod dataflow;
 mod liveness;
 mod value;
 
-use velt_vir::vir::{BinOp, Callee, Const, Function, Operand, Rvalue, Stmt, Terminator, Ty, UnOp};
+use velt_vir::math::MathOp;
+use velt_vir::vir::{
+    BinOp, BlockId, Callee, Const, ExternFn, Function, Operand, Rvalue, Stmt, Terminator, Ty, UnOp,
+};
 
 use crate::callgraph::Signature;
+use crate::srclocs::push_stmt;
 use crate::visit::{rvalue_operands_mut, stmt_operands_mut, term_operands_mut};
 use dataflow::{Facts, Lat, State};
 pub(crate) use value::normalize;
 use value::Value;
 
-/// Fold constants in `func`; `signatures` are all functions' signatures (for
-/// devirtualization). Returns whether anything changed.
-pub(crate) fn run(signatures: &[Signature], func: &mut Function) -> bool {
+/// What constant folding needs of the program: all functions' signatures (for
+/// devirtualization) and which externs are math operations.
+pub(crate) struct Program<'p> {
+    pub signatures: &'p [Signature],
+    /// Per extern, the math operation it is (`MathOp::of_extern`).
+    pub math: Vec<Option<MathOp>>,
+}
+
+impl<'p> Program<'p> {
+    pub(crate) fn of(signatures: &'p [Signature], externs: &[ExternFn]) -> Program<'p> {
+        Program {
+            signatures,
+            math: externs.iter().map(MathOp::of_extern).collect(),
+        }
+    }
+}
+
+/// Fold constants in `func`. Returns whether anything changed.
+pub(crate) fn run(program: &Program, func: &mut Function) -> bool {
+    let signatures = program.signatures;
     if func.blocks.is_empty() {
         return false;
     }
@@ -25,6 +47,7 @@ pub(crate) fn run(signatures: &[Signature], func: &mut Function) -> bool {
     let solved = dataflow::solve(func, &facts);
     let mut changed = false;
     let mut st = facts.unknown();
+    let mut folded = vec![];
     for (bi, block) in func.blocks.iter_mut().enumerate() {
         if let Some((liveness, entries)) = &solved {
             let Some(entry) = &entries[bi] else { continue };
@@ -35,13 +58,74 @@ pub(crate) fn run(signatures: &[Signature], func: &mut Function) -> bool {
             facts.transfer(&mut st, s);
         }
         changed |= rewrite_term(&facts, &st, signatures, &mut block.term);
+        if let Some(fold) = fold_math_call(program, &block.term) {
+            folded.push((bi, fold));
+        }
         match &solved {
             Some((liveness, _)) => dataflow::reset(&mut st, liveness, bi),
             // Without global facts every block starts from nothing known.
             None => forget_assigned(&facts, &mut st, &block.stmts),
         }
     }
+    changed |= !folded.is_empty();
+    for (bi, (assign, next)) in folded {
+        // The assignment takes the call's location (the last of the block's).
+        let at = func.locs.get(bi).and_then(|l| l.last().copied().flatten());
+        if let Some(assign) = assign {
+            push_stmt(func, bi, assign, at);
+        }
+        func.blocks[bi].term = Terminator::Goto(next);
+    }
     changed
+}
+
+/// A call of a math operation whose arguments are all constants (after substitution): the
+/// assignment of its result to the call's destination, and the block it continues in.
+fn fold_math_call(program: &Program, t: &Terminator) -> Option<(Option<Stmt>, BlockId)> {
+    let Terminator::Call {
+        callee: Callee::Extern(id),
+        args,
+        dest,
+        next,
+    } = t
+    else {
+        return None;
+    };
+    let op = (*program.math.get(id.0 as usize)?)?;
+    let bits = args.iter().map(const_bits).collect::<Option<Vec<_>>>()?;
+    let result = op.eval(&bits)?;
+    let ret = op.signature().1;
+    let assign = dest.as_ref().map(|d| {
+        let c = match ret {
+            Ty::F64 => Const::Float(f64::from_bits(result)),
+            Ty::I32 => Const::Int(i128::from(result as u32 as i32)),
+            Ty::I64 => Const::Int(i128::from(result as i64)),
+            _ => Const::Int(i128::from(result)),
+        };
+        Stmt::Assign(d.clone(), Rvalue::Use(Operand::Const(c, ret)))
+    });
+    Some((assign, *next))
+}
+
+/// The bits of a constant scalar operand as `MathOp::eval` takes them: an integer's pattern
+/// zero-extended from its width, a double's IEEE 754 bits.
+fn const_bits(op: &Operand) -> Option<u64> {
+    let Operand::Const(c, ty) = op else {
+        return None;
+    };
+    match Value::from_const(c, *ty)? {
+        Value::Float(x) if *ty == Ty::F64 => Some(x.to_bits()),
+        Value::Int(v) if ty.is_int() => {
+            let width = ty.scalar_size()? * 8;
+            let mask = if width >= 64 {
+                u64::MAX
+            } else {
+                (1u64 << width) - 1
+            };
+            Some(v as u64 & mask)
+        }
+        _ => None,
+    }
 }
 
 /// Return the slots the statements assign to `Varying` (call results never leave it).

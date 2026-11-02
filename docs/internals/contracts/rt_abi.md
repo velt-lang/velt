@@ -361,7 +361,10 @@ operation and VIR signature, the verifier rejects one of these externs with anot
 and backends emit all but `pow` inline (an instruction, or a helper whose slow path calls the
 runtime). `velt_vir::math::effects` is the one list of what a runtime function may do to memory
 (none for every math operation; read-only, read-caching or cold for some string and array
-functions), which LLVM's declarations and `velt_opt` both read.
+functions), which LLVM's declarations and `velt_opt` both read. `velt_opt` folds a call whose arguments are
+constants (`MathOp::eval`, which a test of veltc checks against the runtime's functions), except
+`pow` on doubles and a double operation with a NaN argument or result, whose bits the hardware
+chooses.
 
 ## SIMD [additive]
 
