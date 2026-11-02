@@ -1,0 +1,1 @@
+rwlock_read_hidden_q28.vlt:11:28: error: this `read` returns a part of the value an `RwLock` holds outside the `read` callback, where JavaScript would share it

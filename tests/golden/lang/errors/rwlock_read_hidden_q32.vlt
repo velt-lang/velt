@@ -1,0 +1,18 @@
+// An RwLock read probe (#1559): a compile error, where a silent copy would differ from Node.
+// Single read: a made object stored outside, then a part hidden behind a subclass put into it
+class Node2 { v: number[] = []; kids: Node2[] = []; }
+class Base { n: number = 0; }
+class Der extends Base { items: Node2[] = [new Node2()]; }
+class Box { b: Base = new Der(); }
+function main() {
+  const a = new RwLock(new Box());
+  const top: Node2[] = [];
+  a.read((x) => {
+    const n = new Node2();
+    top.push(n);
+    const d = x.b;
+    if (d instanceof Der) n.kids.push(d.items[0]);
+  });
+  a.write((x) => { const d = x.b; if (d instanceof Der) d.items[0].v.push(5); x.b = new Base(); });
+  console.log(top.length, top[0].kids.length, JSON.stringify(top[0].kids[0].v));
+}

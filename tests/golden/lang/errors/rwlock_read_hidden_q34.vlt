@@ -1,0 +1,19 @@
+// An RwLock read probe (#1559): a compile error, where a silent copy would differ from Node.
+// Nested: an interface-typed lock field's class part put into a made object the inner read stored
+interface Shape { area(): number; }
+class Node2 implements Shape { v: number[] = []; kids: Node2[] = []; area(): number { return 0; } }
+class Box { sh: Shape = new Node2(); }
+class Cfg { n: number = 0; }
+function main() {
+  const a = new RwLock(new Box());
+  const b = new RwLock(new Cfg());
+  const top: Node2[] = [];
+  a.read((x) => {
+    const n = new Node2();
+    b.read((y) => { top.push(n); });
+    const sh = x.sh;
+    if (sh instanceof Node2) n.kids.push(sh);
+  });
+  a.write((x) => { const sh = x.sh; if (sh instanceof Node2) sh.v.push(5); x.sh = new Node2(); });
+  console.log(top.length, top[0].kids.length, JSON.stringify(top[0].kids[0].v));
+}
