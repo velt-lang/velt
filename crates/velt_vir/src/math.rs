@@ -13,6 +13,8 @@
 
 use crate::vir::{ExternFn, Ty};
 
+pub mod half;
+
 /// A scalar math operation of the runtime.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum MathOp {
@@ -57,11 +59,29 @@ pub enum MathOp {
     F32Bits,
     /// `(u32) -> f32`: the float with those bits, `f32.fromBits(b)` (no runtime function).
     BitsF32,
+    /// `(u16) -> f32`: the f16 with those bits, widened (exact; [`half`]; no runtime function).
+    F16ToF32,
+    /// `(f32) -> u16`: the bits of the nearest f16 (no runtime function).
+    F32ToF16,
+    /// `(f64) -> u16`: the bits of the nearest f16, rounded once (no runtime function).
+    F64ToF16,
+    /// `(u16) -> f32`: the bf16 with those bits, widened (exact; no runtime function).
+    Bf16ToF32,
+    /// `(f32) -> u16`: the bits of the nearest bf16 (no runtime function).
+    F32ToBf16,
+    /// `(f64) -> u16`: the bits of the nearest bf16, rounded once (no runtime function).
+    F64ToBf16,
+    /// `(i64) -> u16`: the bits of the bf16 nearest the integer, rounded once (no runtime
+    /// function).
+    I64ToBf16,
+    /// `(u64) -> u16`: the bits of the bf16 nearest the integer, rounded once (no runtime
+    /// function).
+    U64ToBf16,
 }
 
 impl MathOp {
     /// Every operation.
-    pub const ALL: [MathOp; 20] = [
+    pub const ALL: [MathOp; 28] = [
         MathOp::Sqrt,
         MathOp::Floor,
         MathOp::Ceil,
@@ -82,6 +102,14 @@ impl MathOp {
         MathOp::Popcount64,
         MathOp::F32Bits,
         MathOp::BitsF32,
+        MathOp::F16ToF32,
+        MathOp::F32ToF16,
+        MathOp::F64ToF16,
+        MathOp::Bf16ToF32,
+        MathOp::F32ToBf16,
+        MathOp::F64ToBf16,
+        MathOp::I64ToBf16,
+        MathOp::U64ToBf16,
     ];
 
     /// The runtime function's symbol.
@@ -107,6 +135,14 @@ impl MathOp {
             MathOp::Popcount64 => "velt_rt_math_popcount64",
             MathOp::F32Bits => "velt_math_f32_bits",
             MathOp::BitsF32 => "velt_math_bits_f32",
+            MathOp::F16ToF32 => "velt_math_f16_to_f32",
+            MathOp::F32ToF16 => "velt_math_f32_to_f16",
+            MathOp::F64ToF16 => "velt_math_f64_to_f16",
+            MathOp::Bf16ToF32 => "velt_math_bf16_to_f32",
+            MathOp::F32ToBf16 => "velt_math_f32_to_bf16",
+            MathOp::F64ToBf16 => "velt_math_f64_to_bf16",
+            MathOp::I64ToBf16 => "velt_math_i64_to_bf16",
+            MathOp::U64ToBf16 => "velt_math_u64_to_bf16",
         }
     }
 
@@ -142,7 +178,7 @@ impl MathOp {
     /// The VIR signature the extern must have (no allocation: backends and passes ask for it
     /// at every call of an extern).
     pub fn signature(self) -> (&'static [Ty], Ty) {
-        use Ty::{F32, F64, I32, I64, U32, U64};
+        use Ty::{F32, F64, I32, I64, U16, U32, U64};
         match self {
             MathOp::Sqrt
             | MathOp::Floor
@@ -162,6 +198,11 @@ impl MathOp {
             MathOp::Clz64 | MathOp::Ctz64 | MathOp::Popcount64 => (&[U64], U64),
             MathOp::F32Bits => (&[F32], U32),
             MathOp::BitsF32 => (&[U32], F32),
+            MathOp::F16ToF32 | MathOp::Bf16ToF32 => (&[U16], F32),
+            MathOp::F32ToF16 | MathOp::F32ToBf16 => (&[F32], U16),
+            MathOp::F64ToF16 | MathOp::F64ToBf16 => (&[F64], U16),
+            MathOp::I64ToBf16 => (&[I64], U16),
+            MathOp::U64ToBf16 => (&[U64], U16),
         }
     }
 
@@ -233,6 +274,34 @@ impl MathOp {
             MathOp::F32Bits | MathOp::BitsF32 => {
                 u(0).filter(|&b| !f32::from_bits(b as u32).is_nan() && b >> 32 == 0)
             }
+            // The f16/bf16 conversions: a NaN in or out is not folded (as for doubles).
+            MathOp::F16ToF32 | MathOp::Bf16ToF32 => {
+                let b = u(0).filter(|&b| b >> 16 == 0)? as u16;
+                let r = if self == MathOp::F16ToF32 {
+                    half::f16_to_f32(b)
+                } else {
+                    half::bf16_to_f32(b)
+                };
+                (!f32::from_bits(r).is_nan()).then_some(u64::from(r))
+            }
+            MathOp::F32ToF16 | MathOp::F32ToBf16 => {
+                let b = u(0).filter(|&b| b >> 32 == 0)? as u32;
+                (!f32::from_bits(b).is_nan()).then_some(u64::from(if self == MathOp::F32ToF16 {
+                    half::f32_to_f16(b)
+                } else {
+                    half::f32_to_bf16(b)
+                }))
+            }
+            MathOp::F64ToF16 | MathOp::F64ToBf16 => {
+                let b = u(0).filter(|&b| !f64::from_bits(b).is_nan())?;
+                Some(u64::from(if self == MathOp::F64ToF16 {
+                    half::f64_to_f16(b)
+                } else {
+                    half::f64_to_bf16(b)
+                }))
+            }
+            MathOp::I64ToBf16 => Some(u64::from(half::i64_to_bf16(u(0)? as i64))),
+            MathOp::U64ToBf16 => Some(u64::from(half::u64_to_bf16(u(0)?))),
         }
     }
 }

@@ -260,7 +260,9 @@ impl Emitter<'_> {
     pub(super) fn math_target(&mut self, op: MathOp) -> Option<String> {
         let helper = match op.rounding() {
             Some(how) => rounding::helper(how, self.rounds_by_conversion),
-            None => runtime::inline_helper(op),
+            None => {
+                crate::half::helper(op, self.half_native).or_else(|| runtime::inline_helper(op))
+            }
         };
         if let Some((name, definitions)) = helper {
             for d in definitions {

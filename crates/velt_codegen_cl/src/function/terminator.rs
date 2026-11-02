@@ -192,6 +192,9 @@ impl<M: Module> Translator<'_, '_, M> {
         if let Some(how) = op.rounding() {
             return Some(self.round_f64(args[0], how));
         }
+        if let Some(v) = self.half_conversion(op, args[0]) {
+            return Some(v);
+        }
         let flags = ir::MemFlags::new();
         Some(match op {
             MathOp::Sqrt => self.builder.ins().sqrt(args[0]),
@@ -214,6 +217,14 @@ impl<M: Module> Translator<'_, '_, M> {
                 let t = self.builder.ins().fcvt_to_sint_sat(I64, d);
                 self.builder.ins().ireduce(I32, t)
             }
+            MathOp::F16ToF32
+            | MathOp::F32ToF16
+            | MathOp::F64ToF16
+            | MathOp::Bf16ToF32
+            | MathOp::F32ToBf16
+            | MathOp::F64ToBf16
+            | MathOp::I64ToBf16
+            | MathOp::U64ToBf16 => unreachable!("ICE: half conversions are handled above"),
             MathOp::ToInt32
             | MathOp::AddInt32
             | MathOp::PowF64

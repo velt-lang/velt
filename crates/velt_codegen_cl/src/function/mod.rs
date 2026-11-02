@@ -23,6 +23,7 @@
 mod atomic;
 mod binary;
 mod cast;
+mod half;
 mod operand;
 mod place;
 mod rounding;

@@ -5,6 +5,7 @@ mod atomics;
 #[cfg(unix)]
 mod debug_info;
 mod entry;
+mod half;
 mod hot_swap;
 mod jit;
 mod jit_relocs;
