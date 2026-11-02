@@ -606,6 +606,8 @@ impl Run<'_> {
             cpu: self.cpu.clone(),
             // What `--no-run` builds is for a debugger.
             debug_vars: self.opts.no_run,
+            // Tests are where a package's `#name` variants are compared, as `velt check` does.
+            check_variants: true,
             ..Default::default()
         };
         self.builds += 1;

@@ -7,5 +7,14 @@
 //
 //   export const pkg: Package = { name: "hello", version: "0.1.0" };
 
-export type { Build, Dependency, DependencySource, Jsx, Native, Package } from "./manifest";
+export type {
+  Build,
+  Dependency,
+  DependencySource,
+  Import,
+  Imports,
+  Jsx,
+  Native,
+  Package,
+} from "./manifest";
 export type { Workspace } from "./workspace";

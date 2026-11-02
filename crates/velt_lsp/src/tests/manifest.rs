@@ -70,6 +70,7 @@ fn completion_and_hover_come_from_the_schema() {
             "entry",
             "registry",
             "paths",
+            "imports",
             "jsx",
             "define",
             "tsCompat",

@@ -632,9 +632,10 @@ fn build_graph<'r>(
     graph
 }
 
-/// The per-package compile settings of `manifest`: `paths` and `jsx`.
+/// The per-package compile settings of `manifest`: `paths`, `imports`, `jsx` and `define`.
 fn configure(package: &mut crate::graph::GraphPackage, manifest: &Manifest) {
     package.paths = manifest.paths.clone();
+    package.imports = manifest.imports.clone();
     package.jsx_import_source = manifest.jsx.as_ref().and_then(|j| j.import_source.clone());
     package.define = manifest.define.clone();
 }

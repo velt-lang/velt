@@ -3,7 +3,7 @@
 ```
 velt build [<file.vlt>] [-o <out>] [--release] [-g] [--backend cranelift|llvm] [--target <triple>] [--cpu <name>] [--emit vir|llvm|obj|exe] [--locked] [--json] [-v] [--timings]
 velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--cpu <name>] [--backend cranelift|llvm] [--locked] [-- <program args>...]
-velt check [<file.vlt>] [--json] [--locked] [-v]
+velt check [<file.vlt>] [--target <triple>] [--json] [--locked] [-v]
 velt check --ts-compat [<file|dir>...] [--json] [--locked] [-v]
 velt dev   [<file.vlt>] [--exe [--release] [-g] [--cpu <name>] [--backend <name>]] [--locked] [-v] [--timings] [-- <program args>...]
 velt test  [<file|dir>] [--filter <text> [--exact]] [--release] [--locked] [--jobs <n>] [--watch]

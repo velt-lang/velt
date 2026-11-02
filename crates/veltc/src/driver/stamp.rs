@@ -83,12 +83,13 @@ pub(super) fn options_key(opts: &BuildOptions, backend: Backend) -> Key {
         backend: _,
         report_numbers,
         debug_vars,
+        check_variants,
     } = opts;
     h.part(format!("{:?}", vpm::relpath::absolute(input)).as_bytes());
     h.part(format!("{root_source:?} {test_harness}").as_bytes());
     let settings = format!(
         "{output:?} {release} {debug_info} {} {cpu:?} {emit:?} {backend:?} {report_numbers} \
-         {debug_vars} {}",
+         {debug_vars} {check_variants} {}",
         opts.target(),
         opts.has_line_info()
     );

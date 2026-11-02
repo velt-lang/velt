@@ -22,16 +22,28 @@ pub struct CheckArgs {
     /// `--std`: check every file of the standard library, every definition, reached or not
     /// (for the standard library's own development).
     pub std: bool,
+    /// `--target <triple>`: check for that target (the `#name` variants it selects, the system
+    /// functions it has); `None` → the host.
+    pub target: Option<String>,
 }
 
-/// Parse `velt check [<file.vlt>] [--json] [--locked] [-v]`, `velt check --std` and
-/// `velt check --ts-compat [<file|dir>...] [--json] [--locked] [-v]`.
+/// Parse `velt check [<file.vlt>] [--target <triple>] [--json] [--locked] [-v]`, `velt check
+/// --std` and `velt check --ts-compat [<file|dir>...] [--json] [--locked] [-v]`.
 pub(super) fn parse_check(args: Vec<OsString>) -> Result<Command, String> {
     let mut c = CheckArgs::default();
     let mut ts_compat = false;
     let mut paths = vec![];
-    for arg in super::strings(args)? {
+    let mut it = super::strings(args)?.into_iter();
+    while let Some(arg) = it.next() {
+        if let Some(triple) = arg.strip_prefix("--target=") {
+            c.target = Some(triple.to_string());
+            continue;
+        }
         match arg.as_str() {
+            "--target" => {
+                let triple = it.next().ok_or("`--target` expects a value")?;
+                c.target = Some(triple);
+            }
             "--json" => c.json = true,
             "--locked" => c.locked = true,
             "--std" => c.std = true,
@@ -85,6 +97,21 @@ mod tests {
             .unwrap_err()
             .contains("unexpected argument `b.vlt`"));
         assert!(p(&["check", "--jsn"]).unwrap_err().contains("`--json`"));
+        for args in [
+            &["check", "--target", "wasm32-unknown-unknown"][..],
+            &["check", "--target=wasm32-unknown-unknown"],
+        ] {
+            assert_eq!(
+                p(args).unwrap(),
+                Command::Check(CheckArgs {
+                    target: Some("wasm32-unknown-unknown".into()),
+                    ..CheckArgs::default()
+                })
+            );
+        }
+        assert!(p(&["check", "--target"])
+            .unwrap_err()
+            .contains("expects a value"));
     }
 
     #[test]

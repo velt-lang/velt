@@ -479,3 +479,48 @@ fn the_root_fallback_comes_last() {
         "{notes:?}"
     );
 }
+
+#[test]
+fn a_package_s_imports_map_its_names_as_node_does() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    write(
+        root,
+        "foo/package.json",
+        r##"{ "name": "foo", "imports": { "#util": { "node": "./dist/util.js", "default": "./dist/web.js" }, "#internal/*": "./dist/internal/*.js", "#dep": "other" } }"##,
+    );
+    write(root, "foo/src/util.ts", "");
+    write(root, "foo/src/web.ts", "");
+    write(root, "foo/src/internal/a.ts", "");
+    write(root, "foo/src/index.ts", "");
+    let mut npm = NpmResolver::default();
+    let scope = npm.package_scope(&root.join("foo/src/index.ts")).unwrap();
+    assert_eq!(scope, root.join("foo"));
+    // `node` is a server condition: Node's server build's file, from its source.
+    assert_eq!(
+        npm.resolve_import(&scope, "#util").unwrap(),
+        root.join("foo/src/util.ts")
+    );
+    assert_eq!(
+        npm.resolve_import(&scope, "#internal/a").unwrap(),
+        root.join("foo/src/internal/a.ts")
+    );
+    // A bare target Node would load stops the walk, before a later condition: an error.
+    let (msg, _) = npm.resolve_import(&scope, "#dep").unwrap_err();
+    assert!(msg.contains("to the package `other`"), "{msg}");
+    write(
+        root,
+        "foo/package.json",
+        r##"{ "name": "foo", "imports": { "#util": { "node": "dep-x", "default": "./dist/util.js" }, "#arr": ["dep-y", "./dist/util.js"] } }"##,
+    );
+    let mut npm = NpmResolver::default();
+    for spec in ["#util", "#arr"] {
+        let (msg, _) = npm.resolve_import(&scope, spec).unwrap_err();
+        assert!(msg.contains("to the package `dep-"), "{spec}: {msg}");
+    }
+    let (msg, _) = npm.resolve_import(&scope, "#nope").unwrap_err();
+    assert_eq!(
+        msg,
+        "npm package `foo` does not define `#nope` (`imports` in its package.json)"
+    );
+}

@@ -237,13 +237,24 @@ fn check_file(velt: &str, f: &Path, rel: &str, work: &Path) -> Vec<String> {
         ));
         return failures;
     }
+    // A golden in a package is built with `-o` into its work directory: without it a package's
+    // build goes to the package's `target/velt`, in the source tree, where the debug and release
+    // runs (and `cargo xtask repeat`'s copies of the test running at once) would share one
+    // executable, which Windows keeps locked for a moment after it ran.
+    let package = f.parent().and_then(vpm::manifest::find_package_root);
+    let had_target = package.as_ref().map(|p| p.join("target").exists());
+    let stem = f
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
     if err_file.exists() {
-        let o = crate::no_window::command(velt)
-            .arg("build")
-            .arg(f)
-            .current_dir(work)
-            .output()
-            .unwrap();
+        let mut cmd = crate::no_window::command(velt);
+        cmd.arg("build");
+        if package.is_some() {
+            cmd.arg("-o").arg(work.join("bin").join(&stem));
+        }
+        let o = cmd.arg(f).current_dir(work).output().unwrap();
         let stderr = norm(&String::from_utf8_lossy(&o.stderr));
         if o.status.success() {
             failures.push(format!(
@@ -279,8 +290,46 @@ fn check_file(velt: &str, f: &Path, rel: &str, work: &Path) -> Vec<String> {
             // (Defender scan), so the release link must not overwrite the debug executable.
             let dir = work.join(if mode.is_some() { "release" } else { "debug" });
             std::fs::create_dir_all(&dir).unwrap();
-            let mut cmd = crate::no_window::command(velt);
-            cmd.arg("run").args(mode).arg(f).current_dir(&dir);
+            // In a package: `velt build -o` into this directory, then the program itself.
+            let mut built_stderr = String::new();
+            let mut cmd = match &package {
+                None => {
+                    let mut cmd = crate::no_window::command(velt);
+                    cmd.arg("run").args(mode).arg(f);
+                    cmd
+                }
+                Some(_) => {
+                    // `-o` with the platform's suffix: a stem with a dot (`a.b`) would get no
+                    // `.exe` on Windows otherwise.
+                    let exe = dir.join(format!("{stem}{}", std::env::consts::EXE_SUFFIX));
+                    let mut build = crate::no_window::command(velt);
+                    build.arg("build").args(mode);
+                    // As `velt run` builds to run here: a debug build for this CPU. (It also
+                    // leaves out the variable descriptions for debuggers, which `velt build`
+                    // has no flag for; they don't change what a program does.)
+                    if mode.is_none() && std::env::var_os("VELT_CPU").is_none() {
+                        build.args(["--cpu", "native"]);
+                    }
+                    build.arg("-o").arg(&exe).arg(f).current_dir(&dir);
+                    let o = run_with_timeout(build);
+                    built_stderr = norm(&String::from_utf8_lossy(&o.stderr));
+                    if !o.status.success() {
+                        failures.push(format!(
+                            "{rel} [{}]: the build failed\n--- stderr ---\n{built_stderr}",
+                            mode.unwrap_or("debug")
+                        ));
+                        continue;
+                    }
+                    let mut cmd = crate::no_window::command(exe);
+                    // What `velt run` tells the program it runs (`process.argv[1]`).
+                    cmd.env(
+                        "VELT_SCRIPT",
+                        std::path::absolute(f).unwrap_or(f.to_path_buf()),
+                    );
+                    cmd
+                }
+            };
+            cmd.current_dir(&dir);
             if let Some((name, value)) = &env {
                 cmd.env(name, value);
             }
@@ -312,7 +361,7 @@ fn check_file(velt: &str, f: &Path, rel: &str, work: &Path) -> Vec<String> {
                     failures.push(format!("{rel} [debug]: {e}"));
                 }
             }
-            let stderr = norm(&String::from_utf8_lossy(&o.stderr));
+            let stderr = built_stderr + &norm(&String::from_utf8_lossy(&o.stderr));
             for line in std::fs::read_to_string(f.with_extension("stderr"))
                 .unwrap_or_default()
                 .lines()
@@ -339,6 +388,15 @@ fn check_file(velt: &str, f: &Path, rel: &str, work: &Path) -> Vec<String> {
         }
     } else {
         failures.push(format!("{rel}: no .out or .err expectation file"));
+    }
+    // Nothing a golden builds lands in the source tree.
+    if let (Some(root), Some(false)) = (&package, had_target) {
+        if root.join("target").exists() {
+            failures.push(format!(
+                "{rel}: the build wrote `{}` into the source tree",
+                root.join("target").display()
+            ));
+        }
     }
     failures
 }
