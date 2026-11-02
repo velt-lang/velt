@@ -246,8 +246,7 @@ const EMPTY_BLOCK: u64 = 32;
 /// module-level `let` does, and the task keeps it in its polls from then on.
 type Identities = ByAddr<usize>;
 
-static IDENTITIES: Mutex<Identities> =
-    Mutex::new(HashMap::with_hasher(BuildHasherDefault::new()));
+static IDENTITIES: Mutex<Identities> = Mutex::new(HashMap::with_hasher(BuildHasherDefault::new()));
 
 /// The identity environment of the function value with code `code` and no environment, made
 /// on first use (an environment holding nothing, whose entries change no count): the function
@@ -260,8 +259,7 @@ pub extern "C" fn velt_rt_fnprop_identity(code: *const u8) -> *mut u8 {
     }
     let key = code as usize;
     let mut t = IDENTITIES.lock().unwrap_or_else(PoisonError::into_inner);
-    *t.entry(key)
-        .or_insert_with(|| identity_env() as usize) as *mut u8
+    *t.entry(key).or_insert_with(|| identity_env() as usize) as *mut u8
 }
 
 /// A new identity environment.
