@@ -1,0 +1,6 @@
+panic: index out of bounds: the len is 2 but the index is 5
+panic: before the first await
+panic: in a promise it awaits
+panic: index out of bounds: the len is 0 but the index is 4
+panic: index out of bounds: the len is 2 but the index is 9
+panic: index out of bounds: the len is 2 but the index is 7

@@ -120,6 +120,12 @@ key that does not parse) throws `IoError`.
 - A handler that throws, or whose promise rejects, gets a 500 response (`Internal Server Error`)
   and its error is printed to stderr, as in Deno and Bun. So does a response with an invalid
   header name or value.
+- A handler that panics (an index out of bounds, `panic(msg)`) gets a 500 too, and the server
+  keeps serving; the panic's message is printed to stderr. Over HTTP/2 only its stream fails. The
+  handler's work is abandoned, not undone (`catchPanic` in `velt/task`): what it held is leaked,
+  a `Mutex` it held stays locked, and an object it was changing keeps the change half made. A
+  response already streaming when the panic happens can't become a 500: its connection (or
+  HTTP/2 stream) is closed. A panic in a task the handler `spawn`s still ends the process.
 
 ## The request
 

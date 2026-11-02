@@ -36,7 +36,7 @@ struct Echo {
     fut: *mut VeltFut,
 }
 
-unsafe extern "C" fn echo_poll(s: *mut u8, cx: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn echo_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut Echo);
     loop {
         match st.tag {
@@ -74,7 +74,7 @@ unsafe extern "C" fn echo_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     }
 }
 
-unsafe extern "C" fn echo_drop(s: *mut u8) {
+unsafe extern "C-unwind" fn echo_drop(s: *mut u8) {
     let st = &mut *(s as *mut Echo);
     if !st.fut.is_null() {
         velt_rt_fut_drop(st.fut);
@@ -98,7 +98,7 @@ struct Client {
 
 const MSG: &str = "ping → pong";
 
-unsafe extern "C" fn client_poll(s: *mut u8, cx: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn client_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut Client);
     loop {
         match st.tag {

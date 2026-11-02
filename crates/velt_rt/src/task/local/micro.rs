@@ -223,7 +223,7 @@ pub(crate) fn ticket_pending(ticket: u64, w: &Waker) -> bool {
 /// entry queued for the caller, which then suspends and goes on once `velt_rt_await_ready`
 /// says the queue reached it.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_await_tick(cx: *mut c_void) -> u64 {
+pub unsafe extern "C-unwind" fn velt_rt_await_tick(cx: *mut c_void) -> u64 {
     let Some(t) = tcx() else {
         return 0;
     };
@@ -239,7 +239,7 @@ pub unsafe extern "C" fn velt_rt_await_tick(cx: *mut c_void) -> u64 {
 /// Has the queue reached `ticket` (from `velt_rt_await_tick`)? 1 to go on; 0 while it waits
 /// (the caller suspends again: whoever polls now is resumed when it is reached).
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_await_ready(ticket: u64, cx: *mut c_void) -> u32 {
+pub unsafe extern "C-unwind" fn velt_rt_await_ready(ticket: u64, cx: *mut c_void) -> u32 {
     // SAFETY: the set of the task being polled, used only by this task's polls.
     let Some(q) = (unsafe { super::current_set().as_mut() }).map(|s| &mut s.micro) else {
         return 1;
@@ -297,7 +297,7 @@ impl Future for Microtask {
 /// `await` one microtask: completes (unit result) once the queue of the task that polls it
 /// reached it, after the microtasks queued before it. Outside a task it completes at once.
 #[no_mangle]
-pub extern "C" fn velt_rt_microtask() -> *mut VeltFut {
+pub extern "C-unwind" fn velt_rt_microtask() -> *mut VeltFut {
     leaf::new_inner_leaf(Microtask { ticket: 0 })
 }
 

@@ -44,6 +44,9 @@ async function handler(req: HttpRequest, res: HttpResponse) {
     res.send("ignored");
   } else if (req.pathIs("/throw")) {
     throw new Error("boom (expected in this test)");
+  } else if (req.pathIs("/panic")) {
+    const xs: i64[] = [];
+    res.header("x-seen", `${xs[3]!}`);
   } else if (req.pathIs("/silent")) {
     // Nothing: an empty 200.
   } else {
@@ -186,6 +189,21 @@ describe("HTTP/2 exchanges", () => {
     );
     c.close();
   });
+
+  it(
+    "answers a handler that panics with 500 and keeps the connection's other streams",
+    async () => {
+      // #2008: the panic fails its own stream; the next stream on the same connection is served.
+      const c = await Client.open(port);
+      c.get(1, "/panic");
+      c.get(3, "/silent");
+      await c.flush();
+      expect(await c.until(endOf(3))).toBe(
+        "HEADERS 1 :status=500\nDATA 1 es 21:Internal Server Error\nHEADERS 3 es :status=200",
+      );
+      c.close();
+    },
+  );
 
   it("sends trailers after a body, whole or streamed", async () => {
     const c = await Client.open(port);

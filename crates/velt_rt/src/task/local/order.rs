@@ -472,7 +472,7 @@ struct Handle {
 /// [`velt_rt_timer_turn`], [`velt_rt_timer_again`], [`velt_rt_timer_clear`] and
 /// [`velt_rt_timer_free`].
 #[no_mangle]
-pub extern "C" fn velt_rt_timer_new(ms: i64) -> u64 {
+pub extern "C-unwind" fn velt_rt_timer_new(ms: i64) -> u64 {
     let task = super::with_gate(Arc::clone);
     let (key, at) = ORDER.lock().insert(ms, task.clone(), None);
     Box::into_raw(Box::new(Handle {
@@ -489,7 +489,7 @@ pub extern "C" fn velt_rt_timer_new(ms: i64) -> u64 {
 /// # Safety
 /// `h` is a live handle from [`velt_rt_timer_new`].
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_timer_again(h: u64, ms: i64) {
+pub unsafe extern "C-unwind" fn velt_rt_timer_again(h: u64, ms: i64) {
     let h = &mut *(h as *mut Handle);
     let current = super::with_gate(Arc::clone);
     let mut order = ORDER.lock();
@@ -507,7 +507,7 @@ pub unsafe extern "C" fn velt_rt_timer_again(h: u64, ms: i64) {
 /// # Safety
 /// `h` is a live handle from [`velt_rt_timer_new`].
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_timer_clear(h: u64) {
+pub unsafe extern "C-unwind" fn velt_rt_timer_clear(h: u64) {
     let h = h as *mut Handle;
     let current = super::with_gate(Arc::clone);
     let mut order = ORDER.lock();
@@ -529,7 +529,7 @@ pub unsafe extern "C" fn velt_rt_timer_clear(h: u64) {
 /// # Safety
 /// `h` is a live handle from [`velt_rt_timer_new`], not used afterwards.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_timer_free(h: u64) {
+pub unsafe extern "C-unwind" fn velt_rt_timer_free(h: u64) {
     let mut h = Box::from_raw(h as *mut Handle);
     let mut order = ORDER.lock();
     if let Some(key) = h.key.take() {
@@ -548,7 +548,7 @@ pub unsafe extern "C" fn velt_rt_timer_free(h: u64) {
 /// `h` is a live handle from [`velt_rt_timer_new`] that outlives the future; `gate` is 0 or a
 /// live handle from `velt_rt_task_gate`.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_timer_turn(h: u64, gate: u64) -> *mut VeltFut {
+pub unsafe extern "C-unwind" fn velt_rt_timer_turn(h: u64, gate: u64) -> *mut VeltFut {
     leaf::new_inner_leaf(Turn::new(h as *mut Handle, gate::borrow(gate)))
 }
 

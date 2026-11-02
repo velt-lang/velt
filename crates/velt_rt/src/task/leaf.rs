@@ -63,7 +63,10 @@ where
     p as *mut VeltFut
 }
 
-unsafe extern "C" fn leaf_poll<R, F: Future<Output = R>>(f: *mut VeltFut, cx: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn leaf_poll<R, F: Future<Output = R>>(
+    f: *mut VeltFut,
+    cx: *mut c_void,
+) -> u32 {
     let leaf = &mut *(f as *mut Leaf<R, F>);
     let Some(fut) = leaf.fut.as_mut() else {
         return READY; // already completed: polling again is harmless
@@ -79,7 +82,7 @@ unsafe extern "C" fn leaf_poll<R, F: Future<Output = R>>(f: *mut VeltFut, cx: *m
     }
 }
 
-unsafe extern "C" fn leaf_drop<R, F>(f: *mut VeltFut) {
+unsafe extern "C-unwind" fn leaf_drop<R, F>(f: *mut VeltFut) {
     // The result slot is `MaybeUninit`: its value (if any) belongs to the awaiter.
     drop(Box::from_raw(f as *mut Leaf<R, F>));
 }

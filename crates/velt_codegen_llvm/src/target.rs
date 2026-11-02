@@ -110,7 +110,7 @@ impl Target {
         if self.is_wasm() {
             return vec!["nounwind"];
         }
-        let mut attrs = vec!["nounwind", "uwtable"];
+        let mut attrs = vec!["uwtable"];
         if self.os == Os::Darwin {
             attrs.push("\"frame-pointer\"=\"non-leaf\"");
         }

@@ -101,7 +101,7 @@ struct Job {
     sleep: *mut VeltFut,
 }
 
-unsafe extern "C" fn job_poll(s: *mut u8, cx: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn job_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut Job);
     if st.tag == 0 {
         log(st.id, "start");
@@ -126,7 +126,7 @@ unsafe extern "C" fn job_poll(s: *mut u8, cx: *mut c_void) -> u32 {
 /// only its own ids.
 static JOB_CANCELS: [AtomicUsize; 64] = [const { AtomicUsize::new(0) }; 64];
 
-unsafe extern "C" fn job_drop(s: *mut u8) {
+unsafe extern "C-unwind" fn job_drop(s: *mut u8) {
     let st = &mut *(s as *mut Job);
     if st.tag == 1 {
         JOB_CANCELS[st.id as usize].fetch_add(1, Ordering::SeqCst);
@@ -137,7 +137,7 @@ unsafe extern "C" fn job_drop(s: *mut u8) {
 /// Unclaimed results of `job(10, ..)` (the only job whose result is never awaited).
 static ORPHAN_RESULT_DROPS: AtomicUsize = AtomicUsize::new(0);
 
-unsafe extern "C" fn count_result_drop(slot: *mut u8) {
+unsafe extern "C-unwind" fn count_result_drop(slot: *mut u8) {
     if *(slot as *const i64) == 10 {
         ORPHAN_RESULT_DROPS.fetch_add(1, Ordering::SeqCst);
     }
@@ -183,7 +183,7 @@ unsafe fn take(f: *mut VeltFut, cx: *mut c_void) -> Option<i64> {
     Some(v)
 }
 
-unsafe extern "C" fn main_poll(s: *mut u8, cx: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn main_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut Main);
     if st.tag == 0 {
         st.a = started_job(1, GATED);
@@ -244,7 +244,7 @@ fn started_promises_run_now_and_progress_while_the_creator_waits() {
 }
 
 // async function fire() { job(10, GATED) is started and dropped at once; return 0; }
-unsafe extern "C" fn fire_poll(s: *mut u8, _: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn fire_poll(s: *mut u8, _: *mut c_void) -> u32 {
     velt_rt_fut_drop(started_job(10, GATED));
     *(s as *mut i64) = 0;
     READY
@@ -273,14 +273,14 @@ fn a_dropped_started_promise_runs_to_completion() {
 /// Results of `job(11, ..)` disposed of by the quiet drop a combinator installed.
 static QUIET_RESULT_DROPS: AtomicUsize = AtomicUsize::new(0);
 
-unsafe extern "C" fn count_quiet_drop(slot: *mut u8) {
+unsafe extern "C-unwind" fn count_quiet_drop(slot: *mut u8) {
     if *(slot as *const i64) == 11 {
         QUIET_RESULT_DROPS.fetch_add(1, Ordering::SeqCst);
     }
 }
 
 // async function lose() { job(11, 20) is started, handed to a combinator and dropped; return 0; }
-unsafe extern "C" fn lose_poll(s: *mut u8, _: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn lose_poll(s: *mut u8, _: *mut c_void) -> u32 {
     let f = started_job(11, 20);
     velt_rt_futs_handled(&f, 1, Some(count_quiet_drop));
     velt_rt_fut_drop(f);
@@ -306,7 +306,7 @@ fn a_handled_promise_disposes_of_its_result_quietly() {
 /// Results of `job(40, ..)` disposed of by the quiet drop given to `velt_rt_fut_detach`.
 static DETACHED_RESULT_DROPS: AtomicUsize = AtomicUsize::new(0);
 
-unsafe extern "C" fn count_detached_drop(slot: *mut u8) {
+unsafe extern "C-unwind" fn count_detached_drop(slot: *mut u8) {
     if *(slot as *const i64) == 40 {
         DETACHED_RESULT_DROPS.fetch_add(1, Ordering::SeqCst);
     }
@@ -314,7 +314,7 @@ unsafe extern "C" fn count_detached_drop(slot: *mut u8) {
 
 // The owner of lazy `job(40, 5)` (an inline `Promise.all` child) polls it once, then gives it
 // up without cancelling it (a sibling rejected) and goes on.
-unsafe extern "C" fn detach_poll(s: *mut u8, cx: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn detach_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let f = job(40, 5);
     assert_eq!(velt_rt_fut_poll(f, cx), PENDING);
     velt_rt_fut_detach(f, Some(count_detached_drop));
@@ -352,7 +352,7 @@ fn outside_a_task_a_promise_stays_lazy() {
 }
 
 // async function hold() { const p = job(30, GATED); await never; } (its gate never opens)
-unsafe extern "C" fn hold_poll(s: *mut u8, _: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn hold_poll(s: *mut u8, _: *mut c_void) -> u32 {
     let st = &mut *(s as *mut [*mut VeltFut; 2]);
     if st[1].is_null() {
         st[1] = started_job(30, GATED);
@@ -360,7 +360,7 @@ unsafe extern "C" fn hold_poll(s: *mut u8, _: *mut c_void) -> u32 {
     PENDING
 }
 
-unsafe extern "C" fn hold_drop(s: *mut u8) {
+unsafe extern "C-unwind" fn hold_drop(s: *mut u8) {
     velt_rt_fut_drop((*(s as *mut [*mut VeltFut; 2]))[1]);
 }
 
@@ -388,7 +388,7 @@ fn cancelling_a_task_cancels_its_unfinished_promises() {
 }
 
 // async function first() { return await Promise.race([job(41, GATED), job(42, 5), job(43, GATED)]); }
-unsafe extern "C" fn race_poll(s: *mut u8, cx: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn race_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut [i64; 2]);
     if st[1] == 0 {
         let futs = [

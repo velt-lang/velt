@@ -115,7 +115,7 @@ fn try_receive_writes_null_when_empty() {
 
 static TRY_DROPPED: AtomicUsize = AtomicUsize::new(0);
 
-unsafe extern "C" fn count_try_drop(item: *mut u8) {
+unsafe extern "C-unwind" fn count_try_drop(item: *mut u8) {
     TRY_DROPPED.fetch_add(*(item as *const u64) as usize, Ordering::SeqCst);
 }
 
@@ -243,7 +243,7 @@ fn items_queued_before_close_are_still_received_whole() {
 /// The ids of the items `record_drop` dropped (the leftover tests use ids of their own).
 static LEFTOVERS_DROPPED: std::sync::Mutex<Vec<u64>> = std::sync::Mutex::new(Vec::new());
 
-unsafe extern "C" fn record_drop(item: *mut u8) {
+unsafe extern "C-unwind" fn record_drop(item: *mut u8) {
     assert_eq!(item as usize % 16, 0, "drop glue gets an aligned item");
     let id = *(item as *const u64);
     LEFTOVERS_DROPPED.lock().unwrap().push(id);

@@ -13,6 +13,7 @@
 //! Directly awaited calls never get here: `await f()` embeds `f`'s state in the caller's (no
 //! allocation), and `spawn(f())` gives `f` its own task.
 
+mod catch;
 mod gate;
 mod losers;
 mod micro;
@@ -23,6 +24,10 @@ mod set;
 mod timers;
 mod unhandled;
 
+pub use catch::{
+    velt_rt_catch_arm, velt_rt_catch_free, velt_rt_catch_message, velt_rt_catch_settled,
+    velt_rt_catch_take,
+};
 pub use gate::{velt_rt_task_gate, velt_rt_task_gate_free, velt_rt_task_gate_wait};
 pub(crate) use losers::give_up;
 pub use losers::velt_rt_fut_detach;
@@ -375,7 +380,7 @@ impl Future for Orphan {
 /// appears at the future's result slot, offset 16. The future is lazy: it runs when polled, or
 /// from its first suspension on after `velt_rt_fut_start`.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_fut_box(
+pub unsafe extern "C-unwind" fn velt_rt_fut_box(
     poll: PollFn,
     drop: DropFn,
     state_ptr: *const u8,
@@ -395,7 +400,10 @@ pub unsafe extern "C" fn velt_rt_fut_box(
 /// as it is, as is every future when no task is running (a promise created by synchronous `main`
 /// runs when it is awaited or spawned).
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_fut_start(f: *mut VeltFut, result_drop: Option<ResultDropFn>) {
+pub unsafe extern "C-unwind" fn velt_rt_fut_start(
+    f: *mut VeltFut,
+    result_drop: Option<ResultDropFn>,
+) {
     start(f, result_drop, false);
 }
 
@@ -403,7 +411,7 @@ pub unsafe extern "C" fn velt_rt_fut_start(f: *mut VeltFut, result_drop: Option<
 /// rejection its owner has not claimed by the next microtask checkpoint is reported as uncaught
 /// then, as in Node (unhandled.rs).
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_fut_start_rejecting(
+pub unsafe extern "C-unwind" fn velt_rt_fut_start_rejecting(
     f: *mut VeltFut,
     result_drop: Option<ResultDropFn>,
 ) {
@@ -425,6 +433,10 @@ unsafe fn start(f: *mut VeltFut, result_drop: Option<ResultDropFn>, rejecting: b
     if rejecting {
         node::mark_rejectable(f);
     }
+    // Started inside a poll that catches panics, or by `catchPanic`: it catches its own
+    // (node/panicked.rs, catch.rs).
+    node::catches_here(f);
+    catch::take_arming(f);
     // The creator goes on after this first run, so the run's `await`s take their steps through
     // the queue (micro.rs).
     let t = &*tcx;
@@ -472,7 +484,10 @@ fn current_set_or_new() -> *mut LocalSet {
 /// to transfer. A null `transfer` (a result with nothing to move or copy) only hands over a
 /// holder of a shared promise (task/shared.rs).
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_fut_transfer(f: *mut VeltFut, transfer: Option<ResultDropFn>) {
+pub unsafe extern "C-unwind" fn velt_rt_fut_transfer(
+    f: *mut VeltFut,
+    transfer: Option<ResultDropFn>,
+) {
     if crate::task::shared::is_shared(f) {
         return crate::task::shared::hand_over(f, transfer);
     }
@@ -495,7 +510,7 @@ pub unsafe extern "C" fn velt_rt_fut_transfer(f: *mut VeltFut, transfer: Option<
 /// Nothing is polled, claimed or moved. A future that only runs when it is awaited (a runtime
 /// leaf, a join handle, a combinator, a promise created outside a task) reads as pending.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_fut_peek(f: *mut VeltFut) -> u8 {
+pub unsafe extern "C-unwind" fn velt_rt_fut_peek(f: *mut VeltFut) -> u8 {
     if crate::task::shared::is_shared(f) {
         return crate::task::shared::peek(f) as u8;
     }
@@ -589,7 +604,7 @@ pub(crate) unsafe fn node_done(f: *mut VeltFut) -> bool {
 /// unhandled rejection, like in JS; `quiet_drop` disposes of its result slot (null if nothing to
 /// drop). Call before handing the futures over.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_futs_handled(
+pub unsafe extern "C-unwind" fn velt_rt_futs_handled(
     futs: *const *mut VeltFut,
     n: u64,
     quiet_drop: Option<ResultDropFn>,
@@ -611,7 +626,7 @@ pub unsafe extern "C" fn velt_rt_futs_handled(
 /// on its task or must be copied for another one (stage 2: counted objects never cross tasks,
 /// docs/internals/design/semantics-stage2.md §6).
 #[no_mangle]
-pub extern "C" fn velt_rt_task_id() -> u64 {
+pub extern "C-unwind" fn velt_rt_task_id() -> u64 {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     let tcx = CURRENT.with(Cell::get);
     if tcx.is_null() {

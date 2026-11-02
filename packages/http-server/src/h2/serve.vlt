@@ -3,7 +3,7 @@
 // whose TLS handshake chose "h2" (ALPN), with what it read already.
 
 import { TcpStream } from "velt/net";
-import { AbortSignal } from "velt/task";
+import { AbortSignal, catchPanic, PanicError } from "velt/task";
 import { HttpRequest } from "../request";
 import { HttpResponse } from "../response";
 import { H2Connection } from "./connection";
@@ -26,7 +26,8 @@ export async function serveH2<E>(
 ): Promise<void> {
   const c = new H2Connection(conn, opts, stopped, async (req: H2Request, res: H2Response) => {
     try {
-      await handler(req, res);
+      // A panic in the handler fails this stream only (#2008).
+      await catchPanic(() => handler(req, res));
     } catch (e) {
       try {
         if (req.bodyTooLarge() || req.timedOut()) {
@@ -39,7 +40,10 @@ export async function serveH2<E>(
             res.status(500);
             res.send("Internal Server Error");
           }
-          console.error("request handler failed:", e);
+          // A panic's message was printed when it happened.
+          if (!(e instanceof PanicError)) {
+            console.error("request handler failed:", e);
+          }
         }
       } catch (e2) {
         // Nothing more can be sent.

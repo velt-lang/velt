@@ -33,14 +33,14 @@ thread_local! {
 /// `uncaught`): it ends the process at once, as Node's uncaught exception does, instead of
 /// waiting for the microtask queue.
 #[no_mangle]
-pub extern "C" fn velt_rt_uncaught_now() {
+pub extern "C-unwind" fn velt_rt_uncaught_now() {
     // Its report shows where the callback threw, not where the prelude throws it again.
     NOW.with(|c| c.set(Some(crate::panic::velt_rt_throw_loc())));
 }
 
 /// Drop the unclaimed result of started node `f` with `d` (its `result_drop`), letting an
 /// unhandled rejection wait for the queue when it runs inside a task.
-pub(super) unsafe fn drop_result(f: *mut VeltFut, d: unsafe extern "C" fn(*mut u8)) {
+pub(super) unsafe fn drop_result(f: *mut VeltFut, d: unsafe extern "C-unwind" fn(*mut u8)) {
     // A converted promise whose promise was handled elsewhere is dropped quietly now, not kept
     // for the checkpoint (task/identity.rs).
     if node::is_aliased(f) {
@@ -66,7 +66,7 @@ pub(super) unsafe fn drop_result(f: *mut VeltFut, d: unsafe extern "C" fn(*mut u
 /// Called by a rejection's report before it reports: 1 when the runtime keeps the promise and
 /// reports it later ([`flush`]), 0 to report now.
 #[no_mangle]
-pub extern "C" fn velt_rt_unhandled_defer() -> u8 {
+pub extern "C-unwind" fn velt_rt_unhandled_defer() -> u8 {
     let f = DROPPING.with(|c| c.replace(std::ptr::null_mut()));
     let set = super::current_set();
     if let Some(loc) = NOW.with(|c| c.take()) {

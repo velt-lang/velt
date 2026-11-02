@@ -27,13 +27,13 @@ static GROUPS: Registry<Group> = Registry::new();
 
 /// A new scope's group (no children).
 #[no_mangle]
-pub extern "C" fn velt_rt_group_new() -> Key<Group> {
+pub extern "C-unwind" fn velt_rt_group_new() -> Key<Group> {
     GROUPS.insert(Group::default())
 }
 
 /// A child is about to start; false (nothing counted) if the scope already ended or is closing.
 #[no_mangle]
-pub extern "C" fn velt_rt_group_enter(g: Key<Group>) -> bool {
+pub extern "C-unwind" fn velt_rt_group_enter(g: Key<Group>) -> bool {
     GROUPS.get(g).is_some_and(|grp| {
         let mut n = grp.live.load(Ordering::Acquire);
         while n & CLOSED == 0 {
@@ -51,7 +51,7 @@ pub extern "C" fn velt_rt_group_enter(g: Key<Group>) -> bool {
 
 /// A child finished (fulfilled or rejected).
 #[no_mangle]
-pub extern "C" fn velt_rt_group_leave(g: Key<Group>) {
+pub extern "C-unwind" fn velt_rt_group_leave(g: Key<Group>) {
     if let Some(grp) = GROUPS.get(g) {
         crate::io::publish_before_handoff();
         if grp.live.fetch_sub(1, Ordering::AcqRel) == 1 {
@@ -63,7 +63,7 @@ pub extern "C" fn velt_rt_group_leave(g: Key<Group>) {
 /// A future (unit result) that completes once no child is live, and closes the group then
 /// (later `enter`s fail).
 #[no_mangle]
-pub extern "C" fn velt_rt_group_wait(g: Key<Group>) -> *mut VeltFut {
+pub extern "C-unwind" fn velt_rt_group_wait(g: Key<Group>) -> *mut VeltFut {
     let grp = GROUPS.get(g);
     new_inner_leaf(async move {
         let Some(grp) = grp else { return };
@@ -82,7 +82,7 @@ pub extern "C" fn velt_rt_group_wait(g: Key<Group>) -> *mut VeltFut {
 
 /// The scope ended: later `enter`s fail.
 #[no_mangle]
-pub extern "C" fn velt_rt_group_free(g: Key<Group>) {
+pub extern "C-unwind" fn velt_rt_group_free(g: Key<Group>) {
     GROUPS.remove(g);
 }
 

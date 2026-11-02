@@ -1,0 +1,80 @@
+// `catchPanic` (velt/task, #2008): a panic in the code a promise runs throws `PanicError` at the
+// `catchPanic` instead of ending the process; a panic outside one still ends it (exit 101).
+import { catchPanic, PanicError } from "velt/task";
+
+class Refused extends Error {}
+
+async function at(i: i64): Promise<i64> {
+  const xs: i64[] = [10, 20];
+  await yieldNow();
+  return xs[i]!;
+}
+
+async function early(): Promise<i64> {
+  panic("before the first await");
+  await yieldNow();
+  return 1;
+}
+
+async function refuses(): Promise<i64> {
+  await yieldNow();
+  throw new Refused("refused");
+}
+
+async function inner(): Promise<string> {
+  await yieldNow();
+  panic("in a promise it awaits");
+  return "unreachable";
+}
+
+async function outer(): Promise<string> {
+  const p = inner();
+  await yieldNow();
+  return await p;
+}
+
+async function sorts(): Promise<string> {
+  await yieldNow();
+  const xs = [3, 1, 2];
+  xs.sort((a: number, b: number): number => {
+    const none: number[] = [];
+    return a - b + none[4]!;
+  });
+  return "sorted";
+}
+
+async function nested(): Promise<string> {
+  try {
+    await catchPanic(() => at(9));
+  } catch (e) {
+    return `inner catchPanic: ${e instanceof PanicError}`;
+  }
+  return "no panic";
+}
+
+async function report(name: string, body: () => Promise<string, Error>) {
+  try {
+    console.log(name, await catchPanic(body));
+  } catch (e) {
+    if (e instanceof PanicError) {
+      console.log(name, "PanicError:", e.message.split(" at ")[0]);
+    } else {
+      console.log(name, "other error:", (e as Error).message);
+    }
+  }
+}
+
+async function main() {
+  await report("value", async () => `${await at(1)}`);
+  await report("index", async () => `${await at(5)}`);
+  await report("early", async () => `${await early()}`);
+  await report("rejects", async () => `${await refuses()}`);
+  await report("awaited", () => outer());
+  await report("comparator", () => sorts());
+  await report("nested", () => nested());
+  const started = at(1);
+  await report("not its own", async () => `${await started}`);
+  console.log("still running");
+  console.log(await at(7));
+  console.log("not printed");
+}

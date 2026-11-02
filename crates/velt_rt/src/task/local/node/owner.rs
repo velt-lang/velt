@@ -17,7 +17,7 @@ use crate::task::{context, VeltFut, PENDING, READY};
 /// drives it and not woken meanwhile, the owner polls the state itself ("adopts" it, like a
 /// parent polling its children: the leaves then wake the owner directly, with no trip through
 /// the set); otherwise it waits for the set to finish it.
-pub(super) unsafe extern "C" fn started_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
+pub(super) unsafe extern "C-unwind" fn started_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
     let h = head(f);
     let fl = h.flags.load(Ordering::Acquire);
     if fl & DONE == 0 {
@@ -28,6 +28,10 @@ pub(super) unsafe extern "C" fn started_poll(f: *mut VeltFut, cx: *mut c_void) -
         if !done {
             return PENDING;
         }
+    }
+    if h.flags.load(Ordering::Acquire) & super::PANICKED != 0 {
+        // It panicked: so does the await (panic.rs).
+        super::panicked::raise(f);
     }
     h.owner.set(OWNER_DELIVERED);
     if fl & super::ALIASED != 0 {
@@ -89,9 +93,11 @@ unsafe fn drive_adopted(set: *mut LocalSet, f: *mut VeltFut, cx: *mut c_void, fl
         h.awaiter.register(context(cx).waker());
     }
     (*set).adopting += 1;
-    let r = super::super::set::polling(set, f, || (h.poll)(state(f), cx));
+    let done = super::super::set::polling(set, f, || {
+        super::panicked::caught(f, || (h.poll)(state(f), cx) == READY)
+    });
     (*set).adopting -= 1;
-    if r != READY {
+    if !done {
         return false;
     }
     super::super::set::finish_adopted(set, f);
@@ -123,7 +129,7 @@ unsafe fn wait(f: *mut VeltFut, cx: *mut c_void, fl: u32) -> bool {
 
 /// The owner drops a started node. JS semantics: an unfinished promise keeps running (its set
 /// drives it to completion and drops the result); a finished, unclaimed result is dropped here.
-pub(super) unsafe extern "C" fn started_drop(f: *mut VeltFut) {
+pub(super) unsafe extern "C-unwind" fn started_drop(f: *mut VeltFut) {
     let h = head(f);
     // Finished: the set is done with the result, no need to tell it the owner is gone.
     let fl = h.flags.load(Ordering::Acquire);

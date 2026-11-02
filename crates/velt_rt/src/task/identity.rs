@@ -77,7 +77,7 @@ pub(crate) fn converted_from(f: *mut VeltFut) -> Option<*mut VeltFut> {
 /// # Safety
 /// `f` must be null or a live heap future.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_fut_id(f: *mut VeltFut) -> u64 {
+pub unsafe extern "C-unwind" fn velt_rt_fut_id(f: *mut VeltFut) -> u64 {
     let mut f = f;
     // Each step goes to a promise created before (a wrapper's inner promise, a holder's
     // original, a proxy), so the chain ends; the bound only guards against a broken table.
@@ -109,7 +109,7 @@ pub unsafe extern "C" fn velt_rt_fut_id(f: *mut VeltFut) -> u64 {
 /// `w` and `inner` must be live heap futures (or null), `w` owned by the caller and not yet
 /// handed to anyone; `quiet` must match `w`'s result.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_fut_alias(
+pub unsafe extern "C-unwind" fn velt_rt_fut_alias(
     w: *mut VeltFut,
     inner: *mut VeltFut,
     quiet: Option<ResultDropFn>,
@@ -165,7 +165,7 @@ pub(crate) fn claimed(f: *mut VeltFut) {
 /// `velt_rt_fut_views(1)`: the holders shared from now on are views, through which a converted
 /// promise awaits the promise it stands for (module docs); `velt_rt_fut_views(0)` ends that.
 #[no_mangle]
-pub extern "C" fn velt_rt_fut_views(on: u8) {
+pub extern "C-unwind" fn velt_rt_fut_views(on: u8) {
     shared::set_views(on != 0);
 }
 

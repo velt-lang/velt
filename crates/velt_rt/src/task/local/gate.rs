@@ -144,7 +144,7 @@ pub(super) unsafe fn borrow(gate: u64) -> Option<Arc<Gate>> {
 /// The gate of the task being polled (a counted handle for [`velt_rt_task_gate_wait`], released
 /// with [`velt_rt_task_gate_free`]); 0 outside a task.
 #[no_mangle]
-pub extern "C" fn velt_rt_task_gate() -> u64 {
+pub extern "C-unwind" fn velt_rt_task_gate() -> u64 {
     super::with_gate(|g| Arc::into_raw(g.clone()) as u64).unwrap_or(0)
 }
 
@@ -154,7 +154,7 @@ pub extern "C" fn velt_rt_task_gate() -> u64 {
 /// # Safety
 /// `gate` is 0 or a live handle from [`velt_rt_task_gate`].
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_task_gate_wait(gate: u64) -> *mut VeltFut {
+pub unsafe extern "C-unwind" fn velt_rt_task_gate_wait(gate: u64) -> *mut VeltFut {
     leaf::new_inner_leaf(Wait::new(borrow(gate)))
 }
 
@@ -163,7 +163,7 @@ pub unsafe extern "C" fn velt_rt_task_gate_wait(gate: u64) -> *mut VeltFut {
 /// # Safety
 /// `gate` is 0 or a live handle from [`velt_rt_task_gate`], not used afterwards.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_task_gate_free(gate: u64) {
+pub unsafe extern "C-unwind" fn velt_rt_task_gate_free(gate: u64) {
     if gate != 0 {
         drop(Arc::from_raw(gate as *const Gate));
     }

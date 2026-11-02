@@ -128,7 +128,7 @@ fn new_fut(shared: Arc<Shared>, start: Option<Work>) -> *mut VeltFut {
     }
 }
 
-pub(super) unsafe extern "C" fn native_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
+pub(super) unsafe extern "C-unwind" fn native_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
     let m = meta(f);
     if let Some(mut work) = m.start.take() {
         let shared = m.shared.clone();
@@ -172,7 +172,7 @@ pub(super) unsafe extern "C" fn native_poll(f: *mut VeltFut, cx: *mut c_void) ->
     }
 }
 
-pub(super) unsafe extern "C" fn native_drop(f: *mut VeltFut) {
+pub(super) unsafe extern "C-unwind" fn native_drop(f: *mut VeltFut) {
     let base = (f as *mut u8).sub(META) as *mut Meta;
     let m = base.read();
     drop(m.start); // never polled: its context is freed by `Work::drop`

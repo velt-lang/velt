@@ -265,6 +265,37 @@ the outcome to the zeroed slot (the value as the import's result convention writ
 its type, or the rejection's name and message as strings) and forgets the promise. Dropped before
 that, it calls `velt.host_forget(id)`.
 
+### 1.5 Promises that catch panics (`catchPanic`) [additive, #2008]
+
+`velt_rt_panic` (rt_abi.md) ends the process unless the thread is polling a started promise that
+catches panics. Then it prints the message as usual and unwinds (a Rust unwind with a private
+payload) through the compiled frames to the runtime's poll of the nearest such promise. Compiled
+functions therefore have unwind tables and are not `nounwind` (LLVM; Cranelift emits unwind
+tables already), and contain no landing pads: nothing in an unwound frame is dropped. Every
+runtime function an unwind can pass through is `extern "C-unwind"`: `velt_rt_panic`, the task
+ABI (§1, §2: `PollFn`, `DropFn` and the functions that poll promises) and the futures behind it.
+The others stay `extern "C"`; a callback they run (drop, transfer, trace glue) runs no user code.
+
+A promise catches when `catchPanic` marked it (below) or when it was started, or is polled, while
+a catching poll runs up the stack. A panic stopped at its poll marks it panicked: it counts as
+finished, its result slot is never read, transferred or dropped, its state is leaked, and the
+node is never freed. Its owner's await raises the panic again (unwinding further or ending the
+process), so a panic travels through `await`s as through calls. WebAssembly does not unwind: there
+a panic always ends the program (velt_rt_wasm defines the functions below as no-ops).
+
+| Function | Signature | Semantics |
+|---|---|---|
+| `velt_rt_catch_arm` | `() -> void` | the next promise started on this thread (`velt_rt_fut_start*`) catches panics |
+| `velt_rt_catch_take` | `() -> u64` | the promise that took the arming, as a counted handle, or 0; disarms |
+| `velt_rt_catch_settled` | `(u64 h) -> VeltFut*` | future of `bool`: waits until `h` finished, without claiming its result; true when it panicked |
+| `velt_rt_catch_message` | `(u64 h, VeltStr* out) -> void` | the panic message of `h` (empty if it did not panic) |
+| `velt_rt_catch_free` | `(u64 h) -> void` | releases `h` (0 is ignored) |
+
+std's `catchPanic(body)` (std/task/panic.vlt) arms, calls `body` and stores its promise (which
+starts it and takes the arming before its first poll), takes the handle, awaits `settled`, and
+throws `PanicError(message)` or awaits the promise. Arming and taking happen in one poll with no
+`await` between them.
+
 ## 2. Tasks
 
 | Symbol | Signature | Notes |

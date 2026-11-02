@@ -63,3 +63,13 @@ fn other_items_after_the_attribute_are_not_functions() {
     let src = "#[no_mangle]\npub static VELT_RT_X: u8 = 0;\nfn helper() {}\n#[no_mangle]\npub extern \"C\" fn main() {}\n";
     assert!(exported_functions(src).is_empty());
 }
+
+#[test]
+fn unwinding_functions_are_exported_too() {
+    // The functions a Velt panic unwinds through are `extern "C-unwind"` (src/panic.rs).
+    let src = "#[no_mangle]\npub unsafe extern \"C-unwind\" fn velt_rt_unwinds() {}\n#[no_mangle]\npub extern \"C\" fn velt_rt_plain() {}\n";
+    assert_eq!(
+        exported_functions(src),
+        ["velt_rt_unwinds", "velt_rt_plain"]
+    );
+}

@@ -20,6 +20,7 @@ const PURE_RUNTIME: &[&str] = &[
     "bigint",
     "block",
     "bytes",
+    "catch",
     "cell",
     "chan",
     "check",

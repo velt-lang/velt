@@ -1,7 +1,17 @@
 //! Panics and process exit: `velt_rt_panic`, `velt_rt_exit`, plus the hook that turns internal
-//! Rust panics into the same `panic: <msg>` / exit 101 behavior. No Rust panic ever unwinds across
-//! the C ABI: every exported function is `extern "C"` (non-unwinding, aborts as a last resort), and
-//! the hook installed by [`install_hook`] exits the process before unwinding starts.
+//! Rust panics into the same `panic: <msg>` / exit 101 behavior. Internal Rust panics never unwind
+//! across the C ABI: the hook installed by [`install_hook`] exits the process before unwinding
+//! starts.
+//!
+//! A Velt panic (`velt_rt_panic`) ends the process too, unless the thread is polling a promise
+//! that catches panics ([`Catching`], `catchPanic` in `velt/task`, #2008). Then it prints the
+//! message and unwinds, with a [`VeltPanic`] payload, through the compiled frames (they have
+//! unwind tables and no landing pads, so nothing in them is dropped) to the poll of the nearest
+//! promise node, which stops it there: the node is marked as panicked and its state is leaked,
+//! never polled or dropped again (task/local/node). Awaiting such a node raises the panic again
+//! in the awaiter ([`raise`]), so a panic travels through `await`s as a call would, until a
+//! `catchPanic` takes it or a poll that catches nothing ends the process with it. Every runtime
+//! function an unwind can pass through is `extern "C-unwind"`.
 //!
 //! Also the per-thread "where was the last error thrown" slot (`velt_rt_set_throw_loc` /
 //! `velt_rt_throw_loc`) that compiled code fills at each `throw` and reads when it reports an
@@ -77,11 +87,110 @@ pub fn install_hook() {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_panic(msg: *const VeltStr) -> ! {
-    if msg.is_null() {
-        die(b"")
+pub unsafe extern "C-unwind" fn velt_rt_panic(msg: *const VeltStr) -> ! {
+    let text = if msg.is_null() {
+        Vec::new()
+    } else {
+        (*msg).text_lossy().into_owned().into_bytes()
+    };
+    if CATCHING.with(Cell::get) == 0 {
+        die(&text)
     }
-    die((*msg).text_lossy().as_bytes())
+    {
+        use std::io::Write;
+        io::try_flush_stdout();
+        let _ = std::io::stderr().lock().write_all(&panic_message(&text));
+    }
+    unwind(text.into_boxed_slice())
+}
+
+/// Velt panics stopped at a catching promise so far (the leak-check report, str/stats.rs).
+static CAUGHT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Count a Velt panic stopped at a catching promise.
+pub(crate) fn count_caught() {
+    CAUGHT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// How many Velt panics were stopped at a catching promise.
+pub(crate) fn caught_count() -> u64 {
+    CAUGHT.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The payload of a Velt panic unwinding to a promise poll that catches it: the message.
+pub(crate) struct VeltPanic(pub Box<[u8]>);
+
+thread_local! {
+    /// How many polls up this thread's stack catch Velt panics ([`Catching`]).
+    static CATCHING: Cell<u32> = const { Cell::new(0) };
+}
+
+/// Unwind with message `msg` (already printed) to the nearest catching poll.
+#[cold]
+fn unwind(msg: Box<[u8]>) -> ! {
+    // `resume_unwind` does not run the hook (which would end the process).
+    std::panic::resume_unwind(Box::new(VeltPanic(msg)))
+}
+
+/// Raise the panic of a promise that panicked in the code awaiting it (its message was printed
+/// when it happened): unwind if a poll up the stack catches it, end the process otherwise.
+#[cold]
+pub(crate) fn raise(msg: &[u8]) -> ! {
+    if CATCHING.with(Cell::get) == 0 {
+        // The process ends with the message, as it would have at the panic itself.
+        io::try_flush_stdout();
+        std::process::exit(PANIC_EXIT_CODE)
+    }
+    unwind(msg.into())
+}
+
+/// While alive, Velt panics on this thread unwind instead of ending the process. Held around
+/// the polls of promises that catch panics.
+pub(crate) struct Catching(());
+
+impl Catching {
+    pub(crate) fn enter() -> Catching {
+        CATCHING.with(|c| c.set(c.get() + 1));
+        Catching(())
+    }
+}
+
+impl Drop for Catching {
+    fn drop(&mut self) {
+        CATCHING.with(|c| c.set(c.get() - 1));
+    }
+}
+
+/// Is a poll up this thread's stack catching Velt panics?
+pub(crate) fn catching() -> bool {
+    CATCHING.with(Cell::get) > 0
+}
+
+/// Set once anything arms `catchPanic` (task/local/catch.rs): until then no poll can catch, and
+/// promise polls skip the thread-local [`catching`] check (one load of this flag instead).
+static MAY_CATCH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Promises may catch panics from now on.
+pub(crate) fn enable_catching() {
+    MAY_CATCH.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Can any poll catch a panic yet (something armed `catchPanic`)?
+#[inline(always)]
+pub(crate) fn may_catch() -> bool {
+    MAY_CATCH.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Run `poll`, stopping a Velt panic that unwinds out of it: `Err(message)`. Any other panic
+/// (a runtime bug, which ends the process in the hook before it unwinds) keeps unwinding.
+pub(crate) fn catch<R>(poll: impl FnOnce() -> R) -> Result<R, Box<[u8]>> {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(poll)) {
+        Ok(r) => Ok(r),
+        Err(payload) => match payload.downcast::<VeltPanic>() {
+            Ok(p) => Err(p.0),
+            Err(other) => std::panic::resume_unwind(other),
+        },
+    }
 }
 
 thread_local! {
@@ -240,5 +349,42 @@ mod tests {
             super::panic_message(b"division by zero"),
             b"panic: division by zero\n"
         );
+    }
+}
+
+#[cfg(test)]
+mod catch_tests {
+    use super::*;
+
+    #[test]
+    fn a_velt_panic_unwinds_only_while_something_catches() {
+        assert!(!catching());
+        let caught = {
+            let _c = Catching::enter();
+            assert!(catching());
+            catch(|| -> u32 { unwind(b"boom".to_vec().into_boxed_slice()) })
+        };
+        assert_eq!(caught.err().as_deref(), Some(&b"boom"[..]));
+        assert!(!catching(), "the guard restores the depth");
+    }
+
+    #[test]
+    fn nested_catches_stop_at_the_innermost() {
+        let _outer = Catching::enter();
+        let outer = catch(|| {
+            let _inner = Catching::enter();
+            let inner = catch(|| -> u32 { unwind(b"inner".to_vec().into_boxed_slice()) });
+            assert_eq!(inner.err().as_deref(), Some(&b"inner"[..]));
+            7
+        });
+        assert_eq!(outer.ok(), Some(7));
+    }
+
+    #[test]
+    fn other_panics_are_not_taken_for_velt_panics() {
+        let r = std::panic::catch_unwind(|| {
+            catch(|| -> u32 { std::panic::resume_unwind(Box::new(5u8)) })
+        });
+        assert!(r.is_err(), "a non-Velt panic keeps unwinding past `catch`");
     }
 }

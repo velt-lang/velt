@@ -46,10 +46,10 @@ use super::all::ResultDropFn;
 use super::{context, raw_cx, VeltFut, FUT_RESULT_OFFSET, PENDING, READY};
 
 /// Compiled share glue of a result slot: writes another reference to `*src` into `dst`.
-pub type ShareFn = unsafe extern "C" fn(src: *const u8, dst: *mut u8);
+pub type ShareFn = unsafe extern "C-unwind" fn(src: *const u8, dst: *mut u8);
 
-type FutPoll = unsafe extern "C" fn(f: *mut VeltFut, cx: *mut c_void) -> u32;
-type FutDrop = unsafe extern "C" fn(f: *mut VeltFut);
+type FutPoll = unsafe extern "C-unwind" fn(f: *mut VeltFut, cx: *mut c_void) -> u32;
+type FutDrop = unsafe extern "C-unwind" fn(f: *mut VeltFut);
 
 /// The side record of a shared future.
 pub(super) struct Hub {
@@ -188,7 +188,7 @@ pub(crate) unsafe fn is_shared(f: *mut VeltFut) -> bool {
 /// # Safety
 /// `f` must be null or a live heap future held by the caller; the glue must match its result.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_fut_share(
+pub unsafe extern "C-unwind" fn velt_rt_fut_share(
     f: *mut VeltFut,
     result_size: u64,
     share: Option<ShareFn>,
@@ -286,7 +286,7 @@ unsafe fn slot(f: *mut VeltFut) -> *mut u8 {
 }
 
 /// `poll` of every holder, the original future and the handles alike.
-unsafe extern "C" fn holder_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn holder_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
     if let Some((p, size)) = forwarded(f) {
         if super::velt_rt_fut_poll(p, cx) != READY {
             return PENDING;
@@ -298,7 +298,7 @@ unsafe extern "C" fn holder_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
 }
 
 /// `drop` of every holder: a handle also frees its own block.
-unsafe extern "C" fn holder_drop(f: *mut VeltFut) {
+unsafe extern "C-unwind" fn holder_drop(f: *mut VeltFut) {
     let fwd = FORWARDS
         .lock()
         .as_mut()
@@ -449,7 +449,7 @@ unsafe fn new_proxy(h: Arc<Hub>, transfer: Option<ResultDropFn>) -> *mut VeltFut
 }
 
 /// Poll of a proxy ([`hand_over`]): awaits its role, then moves the result into its state.
-unsafe extern "C" fn proxy_poll(state: *mut u8, cx: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn proxy_poll(state: *mut u8, cx: *mut c_void) -> u32 {
     let role = *(state as *mut *mut VeltFut);
     if super::velt_rt_fut_poll(role, cx) != READY {
         return PENDING;
@@ -461,7 +461,7 @@ unsafe extern "C" fn proxy_poll(state: *mut u8, cx: *mut c_void) -> u32 {
 }
 
 /// Drop of a proxy that has not settled: its role goes away.
-unsafe extern "C" fn proxy_drop(state: *mut u8) {
+unsafe extern "C-unwind" fn proxy_drop(state: *mut u8) {
     super::velt_rt_fut_drop(*(state as *mut *mut VeltFut));
 }
 

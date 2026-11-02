@@ -77,7 +77,7 @@ fn module_structure() {
         "define internal zeroext i8 @\"helper\"(i8 signext %p0, i16 zeroext %p1) #0 {",
         "define dso_local i32 @\"velt_main\"() #0 {",
         "\"probe-stack\"=\"inline-asm\"",
-        "attributes #2 = { noreturn nounwind }",
+        "attributes #2 = { noreturn }",
     ] {
         assert!(ir.contains(needle), "missing `{needle}` in\n{ir}");
     }

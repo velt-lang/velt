@@ -137,7 +137,7 @@ pub(crate) unsafe fn signal_of(h: u64) -> Option<Arc<Signal>> {
 
 /// A new signal that is not aborted.
 #[no_mangle]
-pub extern "C" fn velt_rt_signal_new() -> Handle<Signal> {
+pub extern "C-unwind" fn velt_rt_signal_new() -> Handle<Signal> {
     Handle::from_arc(Arc::new(Signal::default()))
 }
 
@@ -146,7 +146,7 @@ pub extern "C" fn velt_rt_signal_new() -> Handle<Signal> {
 /// # Safety
 /// `h` must be a live signal handle.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_signal_retain(h: Handle<Signal>) -> Handle<Signal> {
+pub unsafe extern "C-unwind" fn velt_rt_signal_retain(h: Handle<Signal>) -> Handle<Signal> {
     Handle::from_arc(h.clone_arc())
 }
 
@@ -155,7 +155,7 @@ pub unsafe extern "C" fn velt_rt_signal_retain(h: Handle<Signal>) -> Handle<Sign
 /// # Safety
 /// `h` must be a live signal handle, not used afterwards.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_signal_free(h: Handle<Signal>) {
+pub unsafe extern "C-unwind" fn velt_rt_signal_free(h: Handle<Signal>) {
     h.release();
 }
 
@@ -165,7 +165,7 @@ pub unsafe extern "C" fn velt_rt_signal_free(h: Handle<Signal>) {
 /// # Safety
 /// `h` must be a live signal handle; `reason` a valid string.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_signal_abort(h: Handle<Signal>, reason: *const VeltStr) {
+pub unsafe extern "C-unwind" fn velt_rt_signal_abort(h: Handle<Signal>, reason: *const VeltStr) {
     let text = (*reason).text_lossy().into_owned();
     h.obj().abort(&Reason {
         text,
@@ -178,7 +178,7 @@ pub unsafe extern "C" fn velt_rt_signal_abort(h: Handle<Signal>, reason: *const 
 /// # Safety
 /// `h` must be a live signal handle.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_signal_aborted(h: Handle<Signal>) -> bool {
+pub unsafe extern "C-unwind" fn velt_rt_signal_aborted(h: Handle<Signal>) -> bool {
     h.obj().is_aborted()
 }
 
@@ -187,7 +187,7 @@ pub unsafe extern "C" fn velt_rt_signal_aborted(h: Handle<Signal>) -> bool {
 /// # Safety
 /// `h` must be a live signal handle; `out` receives an owned string.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_signal_reason(h: Handle<Signal>, out: *mut VeltStr) {
+pub unsafe extern "C-unwind" fn velt_rt_signal_reason(h: Handle<Signal>, out: *mut VeltStr) {
     out.write(VeltStr::from_vec(h.obj().reason().text.into_bytes()));
 }
 
@@ -197,7 +197,7 @@ pub unsafe extern "C" fn velt_rt_signal_reason(h: Handle<Signal>, out: *mut Velt
 /// # Safety
 /// `h` must be a live signal handle.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_signal_timeout_ms(h: Handle<Signal>) -> i64 {
+pub unsafe extern "C-unwind" fn velt_rt_signal_timeout_ms(h: Handle<Signal>) -> i64 {
     h.obj().reason().timeout_ms.unwrap_or(-1)
 }
 
@@ -209,7 +209,7 @@ pub unsafe extern "C" fn velt_rt_signal_timeout_ms(h: Handle<Signal>) -> i64 {
 /// # Safety
 /// `h` must be a live signal handle.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_signal_wait(h: Handle<Signal>) -> *mut VeltFut {
+pub unsafe extern "C-unwind" fn velt_rt_signal_wait(h: Handle<Signal>) -> *mut VeltFut {
     let s = h.clone_arc();
     let timed = s.timed();
     let wait = async move {
@@ -235,7 +235,10 @@ pub unsafe extern "C" fn velt_rt_signal_wait(h: Handle<Signal>) -> *mut VeltFut 
 /// # Safety
 /// `reason` must be a valid string.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_signal_timeout(ms: i64, reason: *const VeltStr) -> Handle<Signal> {
+pub unsafe extern "C-unwind" fn velt_rt_signal_timeout(
+    ms: i64,
+    reason: *const VeltStr,
+) -> Handle<Signal> {
     let s = Arc::new(Signal::default());
     let weak = Arc::downgrade(&s);
     let reason = Reason {
@@ -287,7 +290,9 @@ mod live_timers {
 /// # Safety
 /// `signals` must be a valid array of live signal handles.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_signal_any(signals: *const VeltArray<u64>) -> Handle<Signal> {
+pub unsafe extern "C-unwind" fn velt_rt_signal_any(
+    signals: *const VeltArray<u64>,
+) -> Handle<Signal> {
     let child = Arc::new(Signal::default());
     let a = &*signals;
     for i in 0..a.len as usize {

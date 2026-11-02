@@ -42,14 +42,14 @@ pub(crate) fn drop_abandoned_items() -> u64 {
 
 /// A new channel; `capacity == 0` is unbounded. Items are passed with their size (align <= 16).
 #[no_mangle]
-pub extern "C" fn velt_rt_chan_new(capacity: u64) -> Key<Chan> {
+pub extern "C-unwind" fn velt_rt_chan_new(capacity: u64) -> Key<Chan> {
     CHANNELS.insert(Chan::new(capacity as usize))
 }
 
 /// Closes the channel: `send` fails from now on (pending sends too); receivers get what is
 /// queued, then `null`.
 #[no_mangle]
-pub extern "C" fn velt_rt_chan_close(h: Key<Chan>) {
+pub extern "C-unwind" fn velt_rt_chan_close(h: Key<Chan>) {
     if let Some(c) = CHANNELS.get(h) {
         c.close();
         retire_if_done(h, &c);
@@ -58,13 +58,13 @@ pub extern "C" fn velt_rt_chan_close(h: Key<Chan>) {
 
 /// Whether the channel is closed.
 #[no_mangle]
-pub extern "C" fn velt_rt_chan_closed(h: Key<Chan>) -> bool {
+pub extern "C-unwind" fn velt_rt_chan_closed(h: Key<Chan>) -> bool {
     CHANNELS.get(h).is_none_or(|c| c.is_closed())
 }
 
 /// Number of queued items.
 #[no_mangle]
-pub extern "C" fn velt_rt_chan_len(h: Key<Chan>) -> u64 {
+pub extern "C-unwind" fn velt_rt_chan_len(h: Key<Chan>) -> u64 {
     CHANNELS.get(h).map_or(0, |c| c.len() as u64)
 }
 
@@ -77,7 +77,7 @@ pub extern "C" fn velt_rt_chan_len(h: Key<Chan>) -> u64 {
 /// # Safety
 /// `src` must hold a `size`-byte item.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_chan_send(
+pub unsafe extern "C-unwind" fn velt_rt_chan_send(
     h: Key<Chan>,
     src: *const u8,
     size: u64,
@@ -121,7 +121,7 @@ pub unsafe extern "C" fn velt_rt_chan_send(
 /// # Safety
 /// `src` must hold a `size`-byte item.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_chan_try_send(
+pub unsafe extern "C-unwind" fn velt_rt_chan_try_send(
     h: Key<Chan>,
     src: *const u8,
     size: u64,
@@ -145,7 +145,7 @@ pub unsafe extern "C" fn velt_rt_chan_try_send(
 /// # Safety
 /// `payload` and `slot_size` describe `T | null`, with `T` of `size` bytes.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_chan_receive(
+pub unsafe extern "C-unwind" fn velt_rt_chan_receive(
     h: Key<Chan>,
     size: u64,
     payload: u64,
@@ -197,7 +197,7 @@ pub unsafe extern "C" fn velt_rt_chan_receive(
 /// # Safety
 /// `dst` must hold a `T | null` as `payload` describes, with `T` of `size` bytes.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_chan_try_receive(
+pub unsafe extern "C-unwind" fn velt_rt_chan_try_receive(
     h: Key<Chan>,
     dst: *mut u8,
     size: u64,

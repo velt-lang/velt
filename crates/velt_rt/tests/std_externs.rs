@@ -209,11 +209,16 @@ fn rust_definitions(paths: &[PathBuf]) -> BTreeMap<String, Vec<(Sig, PathBuf)>> 
         while let Some(i) = rest.find("#[no_mangle]") {
             let item = &rest[i..];
             rest = &item["#[no_mangle]".len()..];
-            let Some(f) = item.find("extern \"C\" fn ") else {
+            // `C-unwind`: the functions a Velt panic unwinds through (src/panic.rs).
+            let Some((f, kw)) = ["extern \"C\" fn ", "extern \"C-unwind\" fn "]
+                .into_iter()
+                .filter_map(|kw| item.find(kw).map(|f| (f, kw)))
+                .min()
+            else {
                 continue;
             };
             let open = f + item[f..].find('(').expect("parameter list");
-            let name = item[f + "extern \"C\" fn ".len()..open].trim().to_string();
+            let name = item[f + kw.len()..open].trim().to_string();
             let close = closing_paren(item, open);
             let body = close + item[close..].find('{').expect("function body");
             let ret = item[close + 1..body].trim().trim_start_matches("->");
