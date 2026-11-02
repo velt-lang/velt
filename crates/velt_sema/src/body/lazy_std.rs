@@ -23,9 +23,9 @@
 //!
 //! A user module's code is always checked, and so is a std module it imports: `velt check`
 //! reports everything in what a program imports, except the prelude's unreached free functions,
-//! statics and extension methods. All of std is checked with laziness off (`VELT_EAGER_STD=1`), as veltc's
-//! `all_of_std_checks_without_diagnostics` does for bench/compile/all_std.vlt. The editor's
-//! analysis checks everything.
+//! statics and extension methods. All of std is checked with laziness off (`VELT_EAGER_STD=1`),
+//! as veltc's `all_of_std_checks_without_diagnostics` does for bench/compile/all_std.vlt. The
+//! editor's analysis checks everything.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -257,8 +257,8 @@ fn decide(cx: &Ctx, d: DefId) -> bool {
                 Mode::Lazy => true,
                 Mode::Helpers => !is_helper(&f.name),
             },
-            // A type's methods, where the type is declared (an `extend` of a prelude type
-            // keeps its methods checked).
+            // A type's methods, where the type is declared (an `extend` of a prelude class
+            // keeps its methods checked); an `extend` of a primitive type's.
             FnKind::Method | FnKind::Ctor => match f.owner {
                 Some(o) => match &cx.info[o.0 as usize] {
                     DefInfo::Adt(a) => match cx.lazy.modules[a.module] {
@@ -304,7 +304,7 @@ fn primitive_extension(cx: &Ctx, f: &crate::defs::FnInfo<'_>) -> bool {
 /// names.
 fn impl_methods(cx: &Ctx, found: &mut Vec<DefId>) {
     for imp in &cx.impls {
-        // Only the extension methods: a lazy class's methods wait for the class to be used.
+        // Not a class's methods: those wait for the class to be used.
         let extension = |d: DefId| {
             matches!(&cx.info[d.0 as usize], DefInfo::Fn(f) if f.owner.is_none()) && deferred(cx, d)
         };
