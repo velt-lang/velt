@@ -110,15 +110,7 @@ impl<M: Module> Translator<'_, '_, M> {
             bail!("call argument types {types:?} do not match parameters {params:?}");
         }
         let inline = match self.math_op(callee) {
-            // ToInt32(x); the slow path calls the runtime with the same arguments.
-            Some(MathOp::ToInt32) => Some(self.inline_to_int32(callee, values[0], &values)?),
-            // ToInt32(a + x), always through the double sum (`velt_rt_math_add_int32`).
-            Some(MathOp::AddInt32) => {
-                let af = self.builder.ins().fcvt_from_sint(ir::types::F64, values[0]);
-                let sum = self.builder.ins().fadd(af, values[1]);
-                Some(self.inline_to_int32(callee, sum, &values)?)
-            }
-            Some(op) => self.inline_math(op, &values),
+            Some(op) => Some(self.math_value(op, callee, &values)?),
             None => None,
         };
         let result = match inline {
@@ -166,6 +158,37 @@ impl<M: Module> Translator<'_, '_, M> {
             }
             Callee::Ptr { params, ret, .. } => (params.clone(), *ret),
         })
+    }
+
+    /// The math operation `op` on `values`: inline where Cranelift has an instruction or a
+    /// sequence for it, otherwise (`pow`) a call of its runtime function `callee`, which the
+    /// inline ToInt32 also calls on its cold path.
+    pub(super) fn math_value(
+        &mut self,
+        op: MathOp,
+        callee: &Callee,
+        values: &[ir::Value],
+    ) -> CodegenResult<ir::Value> {
+        match op {
+            // ToInt32(x); the slow path calls the runtime with the same arguments.
+            MathOp::ToInt32 => self.inline_to_int32(callee, values[0], values),
+            // ToInt32(a + x), always through the double sum (`velt_rt_math_add_int32`).
+            MathOp::AddInt32 => {
+                let af = self.builder.ins().fcvt_from_sint(ir::types::F64, values[0]);
+                let sum = self.builder.ins().fadd(af, values[1]);
+                self.inline_to_int32(callee, sum, values)
+            }
+            _ => match self.inline_math(op, values) {
+                Some(v) => Ok(v),
+                None => {
+                    let inst = self.emit_call(callee, values)?;
+                    match self.builder.inst_results(inst).first() {
+                        Some(&v) => Ok(v),
+                        None => bail!("math operation {op:?} gave no value"),
+                    }
+                }
+            },
+        }
     }
 
     /// The runtime math operation `callee` is (`velt_vir::math`), if it is one.

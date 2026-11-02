@@ -99,6 +99,15 @@ impl MathOp {
         }
     }
 
+    /// The operation's name: the symbol without its `velt_rt_math_` / `velt_rt_` prefix
+    /// (`sqrt`, `pow_f64`).
+    pub fn name(self) -> &'static str {
+        let s = self.symbol();
+        s.strip_prefix("velt_rt_math_")
+            .or_else(|| s.strip_prefix("velt_rt_"))
+            .unwrap_or(s)
+    }
+
     /// The operation the runtime function `symbol` is, if it is one.
     pub fn of_symbol(symbol: &str) -> Option<MathOp> {
         MathOp::ALL.into_iter().find(|op| op.symbol() == symbol)

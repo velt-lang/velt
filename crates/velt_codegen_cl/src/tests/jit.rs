@@ -83,6 +83,19 @@ extern "C" fn rt_pow_i64(a: i64, b: i64) -> i64 {
     }
     a.wrapping_pow(b as u32)
 }
+extern "C" fn rt_pow_f64(a: f64, b: f64) -> f64 {
+    a.powf(b)
+}
+/// JS ToInt32: the whole part modulo 2^32 (`%` on doubles is exact).
+extern "C" fn rt_to_int32(x: f64) -> i32 {
+    if !x.is_finite() {
+        return 0;
+    }
+    (x.trunc() % 4_294_967_296.0) as i64 as u32 as i32
+}
+extern "C" fn rt_add_int32(a: i32, x: f64) -> i32 {
+    rt_to_int32(f64::from(a) + x)
+}
 extern "C" fn c_memcpy(d: *mut u8, s: *const u8, n: usize) -> *mut u8 {
     unsafe { std::ptr::copy_nonoverlapping(s, d, n) };
     d
@@ -145,7 +158,7 @@ pub(super) fn call_capturing(main: extern "C" fn() -> i32) -> (i32, String) {
 }
 
 /// The stub runtime: rt functions plus the libc/libm symbols Cranelift may call.
-pub(super) fn stub_symbols() -> [(&'static str, *const u8); 24] {
+pub(super) fn stub_symbols() -> [(&'static str, *const u8); 27] {
     [
         ("velt_rt_write_str", rt_write_str as *const u8),
         ("velt_rt_write_i64", rt_write_i64 as *const u8),
@@ -163,6 +176,9 @@ pub(super) fn stub_symbols() -> [(&'static str, *const u8); 24] {
         ("velt_rt_str_drop", rt_str_drop as *const u8),
         ("velt_rt_str_cmp", rt_str_cmp as *const u8),
         ("velt_rt_pow_i64", rt_pow_i64 as *const u8),
+        ("velt_rt_pow_f64", rt_pow_f64 as *const u8),
+        ("velt_rt_math_to_int32", rt_to_int32 as *const u8),
+        ("velt_rt_math_add_int32", rt_add_int32 as *const u8),
         ("memcpy", c_memcpy as *const u8),
         ("memmove", c_memmove as *const u8),
         ("memset", c_memset as *const u8),

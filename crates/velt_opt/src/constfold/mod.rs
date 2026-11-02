@@ -96,36 +96,18 @@ fn fold_math_call(program: &Program, t: &Terminator) -> Option<(Option<Stmt>, Bl
     let result = op.eval(&bits)?;
     let ret = op.signature().1;
     let assign = dest.as_ref().map(|d| {
-        let c = match ret {
-            Ty::F64 => Const::Float(f64::from_bits(result)),
-            Ty::I32 => Const::Int(i128::from(result as u32 as i32)),
-            Ty::I64 => Const::Int(i128::from(result as i64)),
-            _ => Const::Int(i128::from(result)),
-        };
+        let c = Value::of_bits(result, ret).to_const(ret);
         Stmt::Assign(d.clone(), Rvalue::Use(Operand::Const(c, ret)))
     });
     Some((assign, *next))
 }
 
-/// The bits of a constant scalar operand as `MathOp::eval` takes them: an integer's pattern
-/// zero-extended from its width, a double's IEEE 754 bits.
+/// The bits of a constant scalar operand as `MathOp::eval` takes them.
 fn const_bits(op: &Operand) -> Option<u64> {
     let Operand::Const(c, ty) = op else {
         return None;
     };
-    match Value::from_const(c, *ty)? {
-        Value::Float(x) if *ty == Ty::F64 => Some(x.to_bits()),
-        Value::Int(v) if ty.is_int() => {
-            let width = ty.scalar_size()? * 8;
-            let mask = if width >= 64 {
-                u64::MAX
-            } else {
-                (1u64 << width) - 1
-            };
-            Some(v as u64 & mask)
-        }
-        _ => None,
-    }
+    Value::from_const(c, *ty)?.bits(*ty)
 }
 
 /// Return the slots the statements assign to `Varying` (call results never leave it).
@@ -206,6 +188,7 @@ fn result_ty(facts: &Facts, rv: &Rvalue) -> Option<Ty> {
         Rvalue::Binary(_, a, b) => facts.known_ty(a).or_else(|| facts.known_ty(b))?,
         Rvalue::Unary(_, a) | Rvalue::Use(a) => facts.known_ty(a)?,
         Rvalue::Aggregate(id, _) => Ty::Agg(*id),
+        Rvalue::Intrinsic(i, _) => i.signature().1,
     })
 }
 

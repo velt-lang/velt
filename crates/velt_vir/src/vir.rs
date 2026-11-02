@@ -51,14 +51,21 @@
 //!     `velt_opt` passes keep a local's description on the local holding the variable's value
 //!     and drop it where no single local does.
 //! 11. `Linkage::Import` (additive; contracts README): defined elsewhere, never emitted; passes treat it as `Export`.
+//! 12. Intrinsics (additive, #1981): `Rvalue::Intrinsic(op, operands)` is a pure operation the
+//!     compiler knows, with the operand and result types of `Intrinsic::signature`; for
+//!     `Intrinsic::Math(op)` the program declares `op`'s runtime function (`velt_vir::math`),
+//!     which backends call where they have no inline code for it (both checked by `verify`).
+//!     It reads only its operands and never touches memory, panics or unwinds.
 
 use std::fmt;
 
 mod debug;
 mod host;
+mod intrinsic;
 mod print;
 pub use debug::*;
 pub use host::{HostImport, HostValue, MANIFEST_SECTION};
+pub use intrinsic::Intrinsic;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct FuncId(pub u32);
@@ -470,6 +477,10 @@ pub enum Rvalue {
     AddrOf(Place),
     /// Build an aggregate from field operands in field order.
     Aggregate(AggId, Vec<Operand>),
+    /// A pure operation the compiler knows (`Intrinsic`): reads only its operands, touches no
+    /// memory, never panics or unwinds, so passes may fold, duplicate, move or delete it like
+    /// arithmetic. Its operand and result types are the operation's signature.
+    Intrinsic(Intrinsic, Vec<Operand>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -640,6 +651,10 @@ impl fmt::Display for Rvalue {
             Rvalue::Aggregate(a, ops) => {
                 let ops: Vec<String> = ops.iter().map(|o| o.to_string()).collect();
                 write!(f, "agg#{} {{ {} }}", a.0, ops.join(", "))
+            }
+            Rvalue::Intrinsic(i, ops) => {
+                let ops: Vec<String> = ops.iter().map(|o| o.to_string()).collect();
+                write!(f, "{}({})", i.name(), ops.join(", "))
             }
         }
     }

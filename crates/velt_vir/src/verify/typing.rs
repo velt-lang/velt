@@ -120,7 +120,34 @@ impl FnCheck<'_> {
             }
             Rvalue::AddrOf(pl) => self.place_ty(pl).map(|_| Ty::Ptr),
             Rvalue::Aggregate(a, ops) => self.aggregate_ty(*a, ops),
+            Rvalue::Intrinsic(i, ops) => self.intrinsic_ty(*i, ops),
         }
+    }
+
+    /// The result type of intrinsic `i` on `ops`, which must have its operand types.
+    fn intrinsic_ty(&self, i: Intrinsic, ops: &[Operand]) -> R<Ty> {
+        let (params, ret) = i.signature();
+        let tys = ops
+            .iter()
+            .map(|o| self.scalar_operand(o))
+            .collect::<R<Vec<_>>>()?;
+        if tys != params {
+            return Err(format!(
+                "intrinsic {} takes {params:?}, got {tys:?}",
+                i.name()
+            ));
+        }
+        // Backends call the runtime function where they have no inline code (`pow`, ToInt32's
+        // cold path), so it must be declared.
+        let Intrinsic::Math(op) = i;
+        if !self.p.externs.iter().any(|e| e.symbol == op.symbol()) {
+            return Err(format!(
+                "intrinsic {} without its runtime function {} declared",
+                i.name(),
+                op.symbol()
+            ));
+        }
+        Ok(ret)
     }
 
     fn binary_ty(&self, op: BinOp, ta: Ty, tb: Ty) -> R<Ty> {

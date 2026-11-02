@@ -143,6 +143,16 @@ impl Ctx<'_> {
                 }
                 Ty::Agg(*id)
             }
+            Rvalue::Intrinsic(i, ops) => {
+                let (params, ret) = i.signature();
+                if params.len() != ops.len() {
+                    return Err("intrinsic operand count".into());
+                }
+                for (op, want) in ops.iter().zip(params) {
+                    expect(self.operand_ty(op)?, want)?;
+                }
+                ret
+            }
         })
     }
 
@@ -342,7 +352,9 @@ fn reads_of_stmt(s: &Stmt, f: &mut impl FnMut(usize)) {
                     operand_reads(a, f);
                     operand_reads(b, f);
                 }
-                Rvalue::Aggregate(_, ops) => ops.iter().for_each(|o| operand_reads(o, f)),
+                Rvalue::Aggregate(_, ops) | Rvalue::Intrinsic(_, ops) => {
+                    ops.iter().for_each(|o| operand_reads(o, f))
+                }
                 Rvalue::AddrOf(p) if p.proj.iter().any(|x| matches!(x, Proj::Deref(_))) => {
                     f(p.local.0 as usize)
                 }
