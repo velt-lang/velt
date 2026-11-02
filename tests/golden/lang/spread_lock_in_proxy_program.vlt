@@ -1,0 +1,35 @@
+// check: no leaks
+// `{ ...options }` of an object type that holds a lock (an `AbortSignal` field, #924) in a
+// program that makes proxies: the spread asks whether the value is a typed proxy without
+// converting a plain value to `any`, which a value holding a lock cannot be.
+interface ContextOptions {
+  onError?: (e: Error) => void;
+  nonce?: string;
+}
+interface DocumentOptions extends ContextOptions {
+  template: string;
+  mode?: "stream" | "blocking";
+  signal?: AbortSignal;
+}
+
+function resolve(options: DocumentOptions, mode: "stream" | "blocking"): DocumentOptions {
+  return { ...options, mode: options.mode ?? mode };
+}
+
+function describe(o: DocumentOptions): string {
+  return `${o.template} ${o.mode} ${o.signal === undefined ? "no signal" : o.signal.aborted ? "aborted" : "live"} ${o.nonce ?? "-"}`;
+}
+
+const state = new Proxy({ count: 1 } as Record<string, number>, {
+  get(t, k) {
+    return (t[k as string] ?? 0) * 10;
+  },
+});
+console.log(state["count"]);
+
+const controller = new AbortController();
+console.log(describe(resolve({ template: "a" }, "blocking")));
+console.log(describe(resolve({ template: "b", mode: "stream", nonce: "n1" }, "blocking")));
+const live = resolve({ template: "c", signal: controller.signal }, "stream");
+controller.abort();
+console.log(describe(live));

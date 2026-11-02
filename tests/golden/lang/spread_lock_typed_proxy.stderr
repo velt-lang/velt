@@ -1,0 +1,1 @@
+TypeError: spreading a proxy typed as a class or object type is not supported yet (#823)

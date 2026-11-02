@@ -385,6 +385,39 @@ impl FnCx<'_, '_> {
         self.with_temp("<operand>", h, e.span, span, f)
     }
 
+    /// `{ ...e }` of a value of type `t` that may be a typed proxy: `proxySpreadCheck(e)`. A
+    /// value whose type holds a lock cannot convert to `any` (`coerce_dynamic`), so for one
+    /// only a typed proxy (or a view) is converted, under the test of its tag:
+    /// `if (IsTypedProxy(e)) proxySpreadCheck(e)`. Its fields are its traps' or the viewed
+    /// object's, which no lock guards.
+    pub(super) fn proxy_spread_check(&mut self, e: &ast::Expr, t: hir::TyId) -> hir::Expr {
+        let hook = velt_common::std_hook!(proxy_spread_check);
+        let (Some(any), true) = (self.any_ty(), self.cx.holds_lock(t)) else {
+            return self.prelude_fn_call(hook, vec![e.clone()], e.span);
+        };
+        let span = e.span;
+        let x = self.expr(e, None, crate::body::Want::Borrow);
+        let cond = self.intrinsic(
+            hir::Intrinsic::IsTypedProxy,
+            vec![x],
+            self.cx.ty.bool_,
+            span,
+        );
+        let x = self.expr(e, None, crate::body::Want::Borrow);
+        let x = self.share_if_place(x);
+        let Ok(boxed) = self.box_value_dynamic(x, any, crate::any::Dynamic::Any) else {
+            return self.prelude_fn_call(hook, vec![e.clone()], span);
+        };
+        let unit = self.cx.ty.unit;
+        let then = self.prelude_hir_call(hook, vec![boxed], unit, span);
+        let kind = H::If {
+            cond: Box::new(cond),
+            then: Box::new(then),
+            els: Box::new(self.unit_expr(span)),
+        };
+        self.mk(kind, unit, span)
+    }
+
     /// A call of the prelude function `name` with the checked arguments `args`, of type `ret`.
     /// It throws what `name` throws, as any call does (`anyConstructor`'s dispatch, for one,
     /// throws what a proxy's traps throw).

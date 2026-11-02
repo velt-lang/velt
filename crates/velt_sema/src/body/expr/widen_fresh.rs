@@ -11,6 +11,8 @@
 //!   same ones in another order, by copying (`object_copy`).
 //!
 //! Anything else (a variable, a field) stays an error with a fix: copy it (`[...xs]`, `map`).
+//! An existing array where an `any[]` or `unknown[]` is expected is the exception: it is a
+//! view of that array, as `xs as any[]` makes (`array_view_cast.rs`).
 //! The conversion costs one pass over the value, paid only where a program writes it.
 
 use velt_common::Diagnostic;
@@ -120,7 +122,10 @@ impl FnCx<'_, '_> {
 
     /// The fresh value `h` widened to `exp` (`Err` gives it back).
     pub(super) fn widen_fresh(&mut self, h: hir::Expr, exp: TyId) -> Result<hir::Expr, hir::Expr> {
-        if !is_fresh(&h) || !self.widens(h.ty, exp) {
+        if !is_fresh(&h) {
+            return self.dynamic_array_view(h, exp);
+        }
+        if !self.widens(h.ty, exp) {
             return Err(h);
         }
         if self.detached {

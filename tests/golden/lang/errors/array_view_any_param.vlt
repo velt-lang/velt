@@ -1,0 +1,7 @@
+// Only an `any[]` or `unknown[]` takes an existing array of another element type as a view
+// (#924): a `string[]` variable where a `(string | number)[]` is expected stays an error.
+function total(xs: (string | number)[]): number {
+  return xs.length;
+}
+const names: string[] = ["a", "b"];
+console.log(total(names));
