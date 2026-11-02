@@ -150,6 +150,11 @@ impl ProgramLoader for CliLoader {
             overlay: Some(overlay),
             std_root_as_std: true,
             test_harness: false,
+            // For the default target, unless the document is a `#name` variant only another
+            // target uses (`js.vlt`): then for that one. The variants of each `#name` are
+            // compared as `velt check` does.
+            target: graph.as_deref().and_then(|g| variant_target(g, root)),
+            check_variants: true,
         };
         let loaded = loader::load_program(sm, root, opts, diags)?;
         Ok(LoadedProgram {
@@ -165,7 +170,7 @@ impl ProgramLoader for CliLoader {
     }
 
     fn resolve_module(&self, spec: &str, from: &Path) -> Option<PathBuf> {
-        // Only bare specifiers (dependencies, `paths` aliases) need a package graph: the one
+        // Only bare specifiers (dependencies, `paths` aliases, `#name`s) need a package graph: the one
         // already installed for a document that contains `from` (its own package or one of its
         // dependencies), as `load` resolves a dependency's imports. Nothing is installed here: a
         // dependency is never installed as a project of its own.
@@ -177,7 +182,11 @@ impl ProgramLoader for CliLoader {
             None
         };
         let packages = graph.as_deref().map(|g| g as &dyn loader::PackageResolver);
-        loader::resolve_module(spec, from, loader::std_root().as_deref(), packages)
+        // `#name`s resolve for the target `from` is checked for: the default one, or the one
+        // whose build uses `from` when it is a variant only another target uses.
+        let target = graph.as_deref().and_then(|g| variant_target(g, from));
+        let std = loader::std_root();
+        loader::resolve_module(spec, from, std.as_deref(), packages, target.as_deref())
     }
 
     fn resolves_modules(&self) -> bool {
@@ -196,6 +205,19 @@ impl ProgramLoader for CliLoader {
         let program = crate::generate::editor::Program::copy(sm, modules, root, graph)?;
         Some(Box::new(move || program.generator_diagnostics()))
     }
+}
+
+/// A target whose build uses `file`, when it is a variant of a `#name` of its package that the
+/// host's build does not use (`vpm::imports::target_selecting`).
+fn variant_target(graph: &PackageGraph, file: &Path) -> Option<String> {
+    let (_, root, imports) = graph.imports_of(file)?;
+    if imports.is_empty() {
+        return None;
+    }
+    let key = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let rel = vpm::relpath::relative(&key(file), &key(root));
+    let host = velt_codegen_cl::host_triple();
+    vpm::imports::target_selecting(imports, &format!("./{rel}"), &host).map(str::to_string)
 }
 
 /// The modules of the dependencies of the package containing `file`, in `graph`.

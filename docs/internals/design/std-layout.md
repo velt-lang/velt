@@ -105,6 +105,7 @@ have their own docs page.
 | `velt/encoding/csv` | `parseCsv`, `stringifyCsv`, `CsvError` (csv) |
 | `velt/fs` | file system, `FileReader`, `FileWriter` (fs, fs_stream) |
 | `velt/hash` | stable non-cryptographic hash (hash) |
+| `velt/host` | `HostRef`, the JS values host functions pass |
 | `velt/io` | `IoError`, WHATWG streams (io, streams) |
 | `velt/jsx`, `velt/jsx/jsx-runtime` | TSX rendering, the JSX provider (jsx, jsx/*) |
 | `velt/math` | `clamp gcd lcm …`, `BigInt` (math, bigint) |
@@ -214,7 +215,16 @@ The loader gains:
   `velt test std/` imports; `velt/sqlite`, `velt/postgres` and `velt/redis` stay importable whole
   until they move to `packages/`);
 - the error for a `velt:` specifier (§1);
-- the explicit prelude order.
+- the explicit prelude order;
+- conditional imports (`#name`, `crates/veltc/src/loader/conditional.rs`): std's map is
+  `std/imports.vlt`, `export const imports: Imports = { … }`, the same data as a package's
+  `imports` field (`vpm::imports`), read by the manifest's reader and only when a std module
+  imports a `#name`. It is a std file rather than a table in `velt_common` so that std authors
+  change it beside the variants, in the package form, and the packaged std carries it. Its
+  `#name`s resolve only in std's modules; a variant must be an internal file (never an
+  `index.vlt`), and the variants of one name export the same API (`loader/variants.rs`, run by
+  `velt check --std`, `velt test` and the editor). `std-lint` exempts the file from the rule that
+  every std file lies in a module's folder.
 
 ### 6. Quality rules for std code, checked by `std-lint`
 

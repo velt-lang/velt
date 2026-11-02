@@ -6,7 +6,9 @@
 // Every method always works: it is the instruction where the CPU has it (`u64x2.hasClmulX86()`,
 // `u64x2.hasClmulArm()`: the runtime's flags, rt_abi.md "SIMD") and otherwise an exact
 // emulation, a shift and XOR per bit. The checks are false on WebAssembly, in debug (Cranelift)
-// builds and with `VELT_SIMD_DISABLE=clmul`. Code that would be slower on the emulation than
+// builds and with `VELT_SIMD_DISABLE=clmul`, and true without reading the flag in release code
+// built for a CPU that has the instruction (`--cpu native`, or a CPU name with PCLMULQDQ), where
+// `VELT_SIMD_DISABLE` changes nothing. Code that would be slower on the emulation than
 // without the instruction (a table-driven CRC) checks `u64x2.hasClmul()` first; in a function
 // gated on the extension (`targetFeature("clmul-x86")`, std only) the methods are the bare
 // instructions.
@@ -23,7 +25,7 @@ declare function velt_simd_u64x2_pmull_16(a: u64x2, b: u64x2): u64x2;
 declare function velt_simd_u64x2_pmull_17(a: u64x2, b: u64x2): u64x2;
 
 extend u64x2 {
-  /** Whether the CPU has x86's PCLMULQDQ, with SSSE3 and SSE4.1 (false off x86-64, in debug builds, and with `VELT_SIMD_DISABLE=clmul`). */
+  /** Whether the CPU has x86's PCLMULQDQ, with SSSE3 and SSE4.1 (false off x86-64, in debug builds, and with `VELT_SIMD_DISABLE=clmul`; true in release code built for a CPU that has it, `--cpu`). */
   static hasClmulX86(): bool {
     return velt_simd_has_clmul_x86();
   }

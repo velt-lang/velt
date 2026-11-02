@@ -170,7 +170,9 @@ fn visit(f: &vir::Function, each: &mut dyn FnMut(&Operand)) {
                         each(a);
                         each(c);
                     }
-                    Rvalue::Aggregate(_, ops) => ops.iter().for_each(&mut *each),
+                    Rvalue::Aggregate(_, ops) | Rvalue::Intrinsic(_, ops) => {
+                        ops.iter().for_each(&mut *each)
+                    }
                     Rvalue::AddrOf(_) => {}
                 },
                 Stmt::MemCopy { dst, src, .. } => {

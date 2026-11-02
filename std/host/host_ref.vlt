@@ -1,0 +1,53 @@
+// velt/host (internal): `HostRef`, a slot of the JS host's table of values, and the functions
+// lowering calls to pass one to a host function and to take one from it.
+
+import { velt_rt_host_clone, velt_rt_host_release } from "velt/host/rt";
+
+/**
+ * A JS value the host keeps for the program: a slot of the table the JS glue keeps
+ * (crates/velt_rt_wasm/js/velt_web.mjs). Only host functions make one.
+ */
+export class HostRef {
+  private handle: u32;
+
+  private constructor(handle: u32) {
+    this.handle = handle;
+  }
+
+  /** A second reference to the same JS value (a slot of its own). */
+  clone(): HostRef {
+    return new HostRef(velt_rt_host_clone(this.handle));
+  }
+
+  /** Drop hook: the host forgets the value. */
+  [Symbol.dispose]() {
+    if (this.handle != 0) {
+      velt_rt_host_release(this.handle);
+      this.handle = 0;
+    }
+  }
+}
+
+/**
+ * The `HostRef` of slot `handle`, which a host function returned (std only: lowering calls it,
+ * crates/velt_vir/src/lower/host.rs).
+ */
+export function hostRefOf(handle: u32): HostRef {
+  return new HostRef(handle);
+}
+
+/** The `HostRef` of slot `handle`, or `null` for 0 (std only, as `hostRefOf`). */
+export function hostRefOrNull(handle: u32): HostRef | null {
+  if (handle == 0) {
+    return null;
+  }
+  return new HostRef(handle);
+}
+
+/** The slot of `r`, or 0 for `null`, passed to a host function (std only, as `hostRefOf`). */
+export function hostRefHandle(r: HostRef | null): u32 {
+  if (r == null) {
+    return 0;
+  }
+  return r.handle;
+}

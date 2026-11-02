@@ -14,7 +14,8 @@ use velt_vir::vir::{
 };
 
 use super::{Env, TO_INT32};
-use crate::srclocs::push_stmt;
+use crate::srclocs::{push_stmt, split_after};
+use velt_vir::math::MathOp;
 
 pub(super) fn small_int(ty: Ty) -> bool {
     matches!(ty, Ty::I32 | Ty::I16 | Ty::I8 | Ty::U16 | Ty::U8)
@@ -31,13 +32,59 @@ pub(super) fn from_small_int(func: &Function, rv: &Rvalue) -> bool {
 /// Guard the int32 sums of `func`; returns whether anything changed.
 pub(super) fn guarded_sums(env: &Env, func: &mut Function) -> bool {
     let mut changed = false;
-    for bi in 0..func.blocks.len() {
-        if let Some(sum) = double_sum(env, func, bi) {
-            split_double_sum(func, bi, sum);
+    // Blocks split off below are visited too: a block may hold several such sums.
+    let mut bi = 0;
+    while bi < func.blocks.len() {
+        if let Some((si, sum)) = statement_sum(func, bi) {
+            // `d = math.to_int32(t)` as the call would be: the end of its block, so that
+            // the slow side computes it and both sides continue with the statements after it.
+            let rest = split_after(func, bi, si);
+            let s = func.blocks[bi]
+                .stmts
+                .pop()
+                .expect("ICE: numrep split lost its statement");
+            if let Some(locs) = func.locs.get_mut(bi) {
+                locs.remove(si);
+            }
+            let Stmt::Assign(d, _) = &s else {
+                unreachable!("ICE: numrep sum is not an assignment")
+            };
+            split_double_sum(
+                func,
+                bi,
+                sum,
+                Some(d.clone()),
+                rest,
+                (vec![s], Terminator::Goto(rest)),
+            );
+            changed = true;
+        } else if let Some(sum) = double_sum(env, func, bi) {
+            let Terminator::Call { dest, next, .. } = func.blocks[bi].term.clone() else {
+                unreachable!("ICE: numrep sum without its call")
+            };
+            let call = std::mem::replace(&mut func.blocks[bi].term, Terminator::Unreachable);
+            split_double_sum(func, bi, sum, dest, next, (vec![], call));
             changed = true;
         }
+        bi += 1;
     }
     changed
+}
+
+/// The first `d = math.to_int32(t)` of block `bi` (`Rvalue::Intrinsic`) with `t = x ± y` set
+/// before it in the block from two converted `i64`s: its index, the operation and the `i64`s.
+fn statement_sum(func: &Function, bi: usize) -> Option<(usize, (BinOp, Operand, Operand))> {
+    let stmts = &func.blocks[bi].stmts;
+    stmts.iter().enumerate().find_map(|(si, s)| {
+        let Stmt::Assign(d, rv) = s else { return None };
+        let (MathOp::ToInt32, [Operand::Copy(t)]) = super::math_rvalue(rv)? else {
+            return None;
+        };
+        if !d.proj.is_empty() {
+            return None;
+        }
+        sum_before(func, bi, t, si).map(|sum| (si, sum))
+    })
 }
 
 fn new_temp(func: &mut Function, ty: Ty) -> Local {
@@ -110,8 +157,19 @@ fn double_sum(env: &Env, func: &Function, bi: usize) -> Option<(BinOp, Operand, 
     let [Operand::Copy(t)] = calls(env, func, bi, TO_INT32)? else {
         return None;
     };
+    sum_before(func, bi, t, func.blocks[bi].stmts.len())
+}
+
+/// `t = x ± y`, the last assignment to `t` among the first `end` statements of block `bi`,
+/// from two converted `i64`s (`i64_behind`): the operation and the two `i64`s.
+fn sum_before(
+    func: &Function,
+    bi: usize,
+    t: &Place,
+    end: usize,
+) -> Option<(BinOp, Operand, Operand)> {
     let stmts = &func.blocks[bi].stmts;
-    let (i, rv) = last_def(stmts, t, stmts.len())?;
+    let (i, rv) = last_def(stmts, t, end)?;
     let Rvalue::Binary(op @ (BinOp::Add | BinOp::Sub), x, y) = rv else {
         return None;
     };
@@ -121,12 +179,17 @@ fn double_sum(env: &Env, func: &Function, bi: usize) -> Option<(BinOp, Operand, 
     matches!((&a, &b), (Operand::Copy(_), _) | (_, Operand::Copy(_))).then(|| (*op, a, b))
 }
 
-/// Branch on |a|, |b| <= 2^52 to the truncated `i64` sum, keeping the double sum otherwise.
-fn split_double_sum(func: &mut Function, bi: usize, (op, a, b): (BinOp, Operand, Operand)) {
-    let Terminator::Call { dest, next, .. } = &func.blocks[bi].term else {
-        return;
-    };
-    let (dest, next) = (dest.clone(), *next);
+/// End block `bi` with a branch on |a|, |b| <= 2^52 to the truncated `i64` sum in `dest`, then
+/// `next`; otherwise to a block of `slow` (statements and terminator), which computes the
+/// double sum's ToInt32 into `dest` and continues to `next` itself.
+fn split_double_sum(
+    func: &mut Function,
+    bi: usize,
+    (op, a, b): (BinOp, Operand, Operand),
+    dest: Option<Place>,
+    next: BlockId,
+    slow: (Vec<Stmt>, Terminator),
+) {
     let sum = new_temp(func, Ty::I64);
     let mut fast_stmts = vec![Stmt::Assign(
         Place::local(sum),
@@ -138,9 +201,8 @@ fn split_double_sum(func: &mut Function, bi: usize, (op, a, b): (BinOp, Operand,
             Rvalue::Cast(Operand::Copy(Place::local(sum)), Ty::I32),
         ));
     }
-    let call = std::mem::replace(&mut func.blocks[bi].term, Terminator::Unreachable);
     let fast = add_block(func, fast_stmts, Terminator::Goto(next));
-    let slow = add_block(func, vec![], call);
+    let slow = add_block(func, slow.0, slow.1);
     let mut ok = None;
     for v in [a, b] {
         if let Operand::Copy(_) = v {
@@ -212,4 +274,4 @@ fn add_block(func: &mut Function, stmts: Vec<Stmt>, term: Terminator) -> BlockId
 
 #[cfg(test)]
 #[path = "int32_tests.rs"]
-mod tests;
+pub(super) mod tests;

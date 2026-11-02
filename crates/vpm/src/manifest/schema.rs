@@ -38,6 +38,8 @@ pub enum Entry {
     Str,
     /// A semver requirement, or an object with [`DEPENDENCY`]'s fields.
     Dependency,
+    /// A conditional import: a file, or an object of conditions to files (`crate::imports`).
+    Import,
 }
 
 /// The manifest object: `export const pkg: Package = { … }`.
@@ -114,6 +116,16 @@ pub const PACKAGE: &[Field] = &[
         doc: "Import aliases, like TypeScript's `compilerOptions.paths`: \
               `{ \"@app/*\": \"src/*\" }`. A pattern and its target have at most one `*`, at \
               the end; targets stay inside the package.",
+    },
+    Field {
+        key: "imports",
+        kind: Kind::Map(Entry::Import),
+        ty: "Record<string, Import>",
+        required: false,
+        doc: "Conditional imports, like Node's `imports`: `#name` → a file, or the files per \
+              build condition, `{ \"#io\": { js: \"./src/io/js.vlt\", default: \
+              \"./src/io/native.vlt\" } }`. The first condition the build has wins; `default` \
+              comes last. A `#name` resolves only in the package's own modules.",
     },
     Field {
         key: "jsx",

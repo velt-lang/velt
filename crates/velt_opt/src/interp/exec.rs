@@ -2,8 +2,8 @@
 //! and calls (direct, extern via the host, indirect via address tokens).
 
 use velt_vir::vir::{
-    BlockId, Callee, Const, ExternId, FuncId, Function, Operand, Place, Proj, Rvalue, Stmt,
-    Terminator, Ty,
+    BlockId, Callee, Const, ExternId, FuncId, Function, Intrinsic, Operand, Place, Proj, Rvalue,
+    Stmt, Terminator, Ty,
 };
 
 use super::{scalar, Host, Interp, Trap};
@@ -266,6 +266,17 @@ impl<H: Host> Interp<'_, H> {
             }
             Rvalue::AddrOf(p) => self.place(frame, p)?.0,
             Rvalue::Aggregate(id, ops) => return self.aggregate(frame, *id, ops),
+            // As the call of the runtime function it stands for (declared: the verifier checks).
+            Rvalue::Intrinsic(Intrinsic::Math(op), ops) => {
+                let mut args = Vec::with_capacity(ops.len());
+                for o in ops {
+                    args.push(self.scalar(frame, o)?.0);
+                }
+                let id = (self.program.externs.iter())
+                    .position(|e| e.symbol == op.symbol())
+                    .ok_or_else(|| Trap::Invalid(format!("{op:?} without its extern")))?;
+                self.call_extern(ExternId(id as u32), &args)?.0
+            }
         }))
     }
 

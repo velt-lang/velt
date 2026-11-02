@@ -9,6 +9,7 @@
 //!   version: "0.1.0",
 //!   dependencies: { json: "1.2", util: { path: "../util" } },
 //!   paths: { "@app/*": "src/*" },
+//!   imports: { "#io": { js: "./src/io/js.vlt", default: "./src/io/native.vlt" } },
 //!   jsx: { importSource: "sigx" },
 //!   native: { targets: ["x86_64-unknown-linux-gnu"] },
 //!   tsCompat: ["src/models"],
@@ -311,6 +312,7 @@ impl Reader<'_> {
             toolchain: None,
             dependencies: BTreeMap::new(),
             paths: BTreeMap::new(),
+            imports: BTreeMap::new(),
             native: None,
             jsx: None,
             define: BTreeMap::new(),
@@ -364,6 +366,7 @@ impl Reader<'_> {
                 }
                 "dependencies" => manifest.dependencies = self.dependencies(v),
                 "paths" => manifest.paths = self.paths(v),
+                "imports" => manifest.imports = self.imports(v, true),
                 "jsx" => manifest.jsx = self.jsx(v),
                 "define" => manifest.define = self.define(v),
                 "native" => manifest.native = self.native(v),
@@ -643,12 +646,14 @@ pub(crate) fn edit_distance(a: &str, b: &str) -> usize {
     prev[b.len()]
 }
 
+mod imports;
 mod native;
 #[cfg(test)]
 mod tests;
 mod ts_compat;
 mod workspace;
 
+pub use imports::read_std_imports;
 pub use workspace::read_workspace;
 
 pub use ts_compat::missing_ts_compat_dirs;

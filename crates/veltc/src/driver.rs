@@ -62,6 +62,10 @@ pub struct BuildOptions {
     /// `--no-generators`: an instance of a generated function that has no code is an error
     /// naming the generator that would write it, and no generator runs (`crate::generate`).
     pub no_generators: bool,
+    /// Compare the variants of every `#name` import the program resolves
+    /// ([`loader::LoadOptions::check_variants`]): `velt check` and `velt test`, not the builds
+    /// that only run.
+    pub check_variants: bool,
 }
 
 impl BuildOptions {
@@ -292,6 +296,8 @@ fn load_modules(
         // A source generator host for std's generators sits in the std root and imports their
         // internal files: it is std code (docs/internals/design/source-generators.md §5).
         std_root_as_std: sess.generator_build,
+        target: Some(opts.target()),
+        check_variants: opts.check_variants,
     };
     let loaded = loader::load_with_roots(
         &mut sess.sm,

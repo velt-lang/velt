@@ -240,6 +240,7 @@ fn verify_rejects_misused_atomic_externs() {
         params: vec![Ty::Ptr],
         ret: Ty::U8,
         noreturn,
+        host: None,
     };
     let mut p = base_program();
     p.externs.push(atomic("velt_atomic_load_08_acq", false));
@@ -304,4 +305,70 @@ fn the_entry_may_be_declared() {
     expect_err(&p, "velt_main must be");
     p.funcs.remove(main);
     expect_err(&p, "missing exported entry");
+}
+
+/// The program with one more extern, `symbol(params) -> ret`.
+fn with_extern(symbol: &str, params: Vec<Ty>, ret: Ty) -> vir::Program {
+    let mut p = base_program();
+    p.externs.push(ExternFn {
+        symbol: symbol.into(),
+        params,
+        ret,
+        noreturn: false,
+        host: None,
+    });
+    p
+}
+
+#[test]
+fn verify_rejects_math_externs_with_another_signature() {
+    // `velt_rt_math_clz64` is `(u64) -> u64` (`velt_vir::math::MathOp::Clz64`).
+    let ok = with_extern("velt_rt_math_clz64", vec![Ty::U64], Ty::U64);
+    assert_eq!(crate::verify(&ok), Ok(()));
+    let wrong_param = with_extern("velt_rt_math_clz64", vec![Ty::I64], Ty::U64);
+    expect_err(&wrong_param, "signature differs from the math operation's");
+    let wrong_ret = with_extern("velt_rt_pow_f64", vec![Ty::F64, Ty::F64], Ty::I64);
+    expect_err(&wrong_ret, "signature differs from the math operation's");
+    let mut noreturn = with_extern("velt_rt_math_sqrt", vec![Ty::F64], Ty::F64);
+    noreturn.externs.last_mut().expect("the extern").noreturn = true;
+    expect_err(&noreturn, "signature differs from the math operation's");
+}
+
+/// `_n = math.sqrt(x)` appended to `main`'s first block, with `sqrt`'s extern declared or not.
+fn with_sqrt(x: Operand, declare: bool) -> vir::Program {
+    let mut p = base_program();
+    if declare {
+        p.externs.push(ExternFn {
+            symbol: "velt_rt_math_sqrt".into(),
+            params: vec![Ty::F64],
+            ret: Ty::F64,
+            noreturn: false,
+            host: None,
+        });
+    }
+    let f = &mut p.funcs[0];
+    f.locals.push(LocalDecl::new(Ty::F64, None));
+    let l = Local(f.locals.len() as u32 - 1);
+    let op = crate::math::MathOp::Sqrt;
+    f.blocks[0].stmts.push(Stmt::Assign(
+        Place::local(l),
+        Rvalue::Intrinsic(Intrinsic::Math(op), vec![x]),
+    ));
+    if let Some(locs) = f.locs.get_mut(0) {
+        let at = locs.len().saturating_sub(1);
+        locs.insert(at, None);
+    }
+    p
+}
+
+#[test]
+fn verify_checks_intrinsics() {
+    let two = Operand::Const(Const::Float(2.0), Ty::F64);
+    assert_eq!(crate::verify(&with_sqrt(two.clone(), true)), Ok(()));
+    expect_err(&with_sqrt(two, false), "without its runtime function");
+    let int = Operand::Const(Const::Int(2), Ty::I64);
+    expect_err(
+        &with_sqrt(int, true),
+        "intrinsic math.sqrt takes [F64], got [I64]",
+    );
 }

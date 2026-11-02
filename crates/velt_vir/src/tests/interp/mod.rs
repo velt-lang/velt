@@ -419,6 +419,17 @@ impl Interp<'_> {
             }
             Rvalue::AddrOf(p) => V::S(self.place(f, slots, p).0),
             Rvalue::Aggregate(a, ops) => self.aggregate(f, slots, *a, ops),
+            // As the call of the runtime function it stands for.
+            Rvalue::Intrinsic(Intrinsic::Math(op), ops) => {
+                let raw: Vec<u64> = ops
+                    .iter()
+                    .map(|o| self.operand(f, slots, o).0.s())
+                    .collect();
+                match self.rt(op.symbol(), &raw) {
+                    Ok(v) => V::S(v),
+                    Err(code) => panic!("math operation {op:?} exited with {code}"),
+                }
+            }
         }
     }
 

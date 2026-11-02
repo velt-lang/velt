@@ -23,7 +23,7 @@ impl Host for ToInt32Host {
 
 /// `f(n, seed)`: `state = 0.0 + ((seed + 1) | 0)`, then `n` times `state = ((state ^ k) + acc) | 0`
 /// and `acc = (acc + state) | 0` on `f64` locals; returns `acc + state` as `f64` bits.
-fn hash_program() -> Program {
+pub(in crate::numrep) fn hash_program() -> Program {
     let mut pb = ProgramBuilder::new();
     let to_int32 = pb.ext(TO_INT32, &[Ty::F64], Ty::I32, false);
     let mut fb = FuncBuilder::export("f", &[Ty::I64, Ty::I32], Ty::F64);

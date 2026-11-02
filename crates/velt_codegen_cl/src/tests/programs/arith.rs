@@ -251,6 +251,7 @@ pub(crate) fn math() -> TestProgram {
         fb.term(b, Terminator::Return(copy_local(r)));
         fns.push((pb.add(fb.finish()), vec![float(x, F64)], F64, exp));
     }
+    let intrinsics = math_intrinsics(&mut pb);
     let (mut fb, b0) = main_fb();
     let mut cs = Cases {
         o: Out {
@@ -263,6 +264,9 @@ pub(crate) fn math() -> TestProgram {
     for (f, args, rty, exp) in fns {
         cs.call(f, args, rty, exp);
     }
+    for (f, args, rty, exp) in intrinsics {
+        cs.call(f, args, rty, exp);
+    }
     let (cur, expected) = (cs.o.cur, cs.expected);
     pb.add(finish_main(fb, cur, 0));
     TestProgram {
@@ -271,4 +275,55 @@ pub(crate) fn math() -> TestProgram {
         stdout: expected,
         exit: 0,
     }
+}
+
+/// Functions computing one math operation each as an `Rvalue::Intrinsic` (#1981), with their
+/// arguments and the line they print: inline where Cranelift has the instruction, the runtime
+/// function for `pow` and ToInt32's slow path.
+fn math_intrinsics(pb: &mut ProgramBuilder) -> Vec<(FuncId, Vec<Operand>, Ty, &'static str)> {
+    use velt_vir::math::MathOp as M;
+    let f = |x: f64| float(x, F64);
+    let cases = [
+        (M::Sqrt, vec![f(2.0)], "1.4142135623730951"),
+        (M::Floor, vec![f(-2.5)], "-3"),
+        (M::Ceil, vec![f(-2.5)], "-2"),
+        (M::Trunc, vec![f(-2.7)], "-2"),
+        (M::Round, vec![f(-2.5)], "-2"),
+        (M::Round, vec![f(2.5)], "3"),
+        (M::Abs, vec![f(-0.5)], "0.5"),
+        (M::Clz32, vec![int(1, I32)], "31"),
+        (M::Clz64, vec![int(1, U64)], "63"),
+        (M::Ctz64, vec![int(8, U64)], "3"),
+        (M::Popcount64, vec![int(255, U64)], "8"),
+        (
+            M::Umulh,
+            vec![int(i128::from(u64::MAX), U64), int(2, U64)],
+            "1",
+        ),
+        (M::ToInt32, vec![f(4_294_967_297.0)], "1"),
+        // Beyond 2^63: the runtime's ToInt32 on the cold path.
+        (M::ToInt32, vec![f(1e20)], "1661992960"),
+        (M::MulInt32, vec![int(-3, I32), int(7, I32)], "-21"),
+        (M::AddInt32, vec![int(5, I32), f(2.5)], "7"),
+        (M::PowI64, vec![int(3, I64), int(4, I64)], "81"),
+        (M::PowF64, vec![f(2.0), f(10.0)], "1024"),
+    ];
+    let mut out = vec![];
+    for (op, args, exp) in cases {
+        let (params, ret) = op.signature();
+        if !pb.p.externs.iter().any(|e| e.symbol == op.symbol()) {
+            pb.ext(op.symbol(), params, ret, false);
+        }
+        let n = pb.p.funcs.len();
+        let mut fb = FuncBuilder::internal(&format!("rv{n}_{}", op.name()), params, ret);
+        let r = fb.local(ret);
+        let b = fb.block();
+        let operands = (0..params.len() as u32)
+            .map(|i| copy_local(Local(i)))
+            .collect();
+        fb.assign(b, r, Rvalue::Intrinsic(Intrinsic::Math(op), operands));
+        fb.term(b, Terminator::Return(copy_local(r)));
+        out.push((pb.add(fb.finish()), args, ret, exp));
+    }
+    out
 }

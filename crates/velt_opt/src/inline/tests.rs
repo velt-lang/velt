@@ -436,3 +436,43 @@ fn debug_builds_inline_std_forwarders_only() {
     // std/lang/equal's helpers are only called by generated code: inlined too.
     assert!(helpers[pair.0 as usize]);
 }
+
+/// A callee between `SMALL_COST` and `LEAF_COST`: `adds` additions, then (`math`) the square
+/// root of the result as a math statement (`Rvalue::Intrinsic`).
+fn math_callee(math: bool) -> Program {
+    let mut pb = ProgramBuilder::new();
+    pb.ext("velt_rt_math_sqrt", &[Ty::F64], Ty::F64, false);
+    let mut fb = FuncBuilder::new("f", &[Ty::F64], Ty::F64, Linkage::Internal);
+    let x = fb.param(0);
+    let b = fb.block();
+    for _ in 0..60 {
+        fb.assign(b, x, bin(BinOp::Add, copy_local(x), float(1.0, Ty::F64)));
+    }
+    if math {
+        let sqrt = velt_vir::vir::Intrinsic::Math(velt_vir::math::MathOp::Sqrt);
+        fb.assign(b, x, Rvalue::Intrinsic(sqrt, vec![copy_local(x)]));
+    }
+    fb.ret(b, copy_local(x));
+    let f = pb.add(fb.finish());
+    let mut main = FuncBuilder::export("main", &[], Ty::F64);
+    let r = main.local(Ty::F64);
+    let mut b = main.block();
+    for _ in 0..2 {
+        b = main.call(b, Callee::Func(f), vec![float(2.0, Ty::F64)], Some(r));
+    }
+    main.ret(b, copy_local(r));
+    pb.add(main.finish());
+    pb.finish()
+}
+
+#[test]
+fn math_statements_keep_a_callee_from_being_a_leaf() {
+    // Without math, `f` is a leaf of cost above `SMALL_COST`: inlined at both calls.
+    let mut p = math_callee(false);
+    inline(&mut p);
+    assert_eq!(calls_to(&p.funcs[1], FuncId(0)), 0);
+    // A math operation counts as the call it was lowered from: `f` stays a call.
+    let mut p = math_callee(true);
+    inline(&mut p);
+    assert_eq!(calls_to(&p.funcs[1], FuncId(0)), 2);
+}

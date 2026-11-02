@@ -12,6 +12,7 @@
 //!   smaller than `b`), not a call to `fmod`: `permIndex % 2` with a counter that may reach
 //!   2^53.
 
+use velt_vir::math::MathOp;
 use velt_vir::vir::{
     BinOp, Callee, Const, Function, Local, LocalDecl, Operand, Place, Rvalue, Stmt, Terminator, Ty,
 };
@@ -39,6 +40,12 @@ pub(super) fn run(env: &Env, flow: &Flow, func: &mut Function) -> bool {
             if let Some(v) = decided(flow, func, &st, &func.blocks[bi].stmts[si]) {
                 if let Stmt::Assign(_, rv) = &mut func.blocks[bi].stmts[si] {
                     *rv = Rvalue::Use(Operand::Const(Const::Bool(v), Ty::Bool));
+                    changed = true;
+                }
+            }
+            if let Some(new) = folded_statement(flow, func, &st, &func.blocks[bi].stmts[si]) {
+                if let Stmt::Assign(_, rv) = &mut func.blocks[bi].stmts[si] {
+                    *rv = new;
                     changed = true;
                 }
             }
@@ -244,13 +251,24 @@ fn branch_target(
     }
 }
 
+/// The rvalue replacing a math operation in statement `s` (`Rvalue::Intrinsic`) that the
+/// facts about its operand make unnecessary, as `folded_call` for the call.
+fn folded_statement(flow: &Flow, func: &Function, st: &State, s: &Stmt) -> Option<Rvalue> {
+    let Stmt::Assign(_, rv) = s else {
+        return None;
+    };
+    let (op, [a]) = super::math_rvalue(rv)? else {
+        return None;
+    };
+    folded_math(op, a, flow.operand(st, func, a)?)
+}
+
 /// The value of a call the facts about its argument `a` make unnecessary.
 fn folded_call(env: &Env, callee: &Callee, a: &Operand, f: Fact) -> Option<Rvalue> {
+    if let Some(op) = env.callee_op(callee) {
+        return folded_math(op, a, f);
+    }
     match callee {
-        Callee::Extern(id) if env.is_rounding(*id) && f.integral => Some(Rvalue::Use(a.clone())),
-        Callee::Extern(id) if env.is_abs(*id) && f.lo >= 0.0 && !f.neg_zero && !f.nan => {
-            Some(Rvalue::Use(a.clone()))
-        }
         c if env.is_float_index(c)
             && f.integral
             && !f.nan
@@ -259,17 +277,25 @@ fn folded_call(env: &Env, callee: &Callee, a: &Operand, f: Fact) -> Option<Rvalu
         {
             Some(Rvalue::Cast(a.clone(), Ty::U64))
         }
+        _ => None,
+    }
+}
+
+/// The value of math operation `op` on `a` that the facts `f` about `a` make unnecessary:
+/// rounding a whole value, `abs` of a non-negative one, ToInt32 of a constant or of a whole
+/// value within the int32 range.
+fn folded_math(op: MathOp, a: &Operand, f: Fact) -> Option<Rvalue> {
+    match op {
+        op if op.rounding().is_some() && f.integral => Some(Rvalue::Use(a.clone())),
+        MathOp::Abs if f.lo >= 0.0 && !f.neg_zero && !f.nan => Some(Rvalue::Use(a.clone())),
         // ToInt32 of a constant (`x | 0`'s `0`), or of a whole value within the int32 range,
         // which converts exactly.
-        c if env.is_to_int32(c) && !f.nan && f.lo == f.hi => {
+        MathOp::ToInt32 if !f.nan && f.lo == f.hi => {
             let v = js_to_int32(f.lo);
             Some(Rvalue::Use(Operand::Const(Const::Int(v.into()), Ty::I32)))
         }
-        c if env.is_to_int32(c)
-            && f.integral
-            && !f.nan
-            && f.lo >= -2_147_483_648.0
-            && f.hi <= 2_147_483_647.0 =>
+        MathOp::ToInt32
+            if f.integral && !f.nan && f.lo >= -2_147_483_648.0 && f.hi <= 2_147_483_647.0 =>
         {
             Some(Rvalue::Cast(a.clone(), Ty::I32))
         }

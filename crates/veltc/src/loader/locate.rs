@@ -6,6 +6,8 @@
 
 use std::path::{Path, PathBuf};
 
+use velt_common::std_modules;
+
 use super::spec::ModuleRef;
 
 /// Answers "where is dependency `name` of the package containing `importer`?" (implemented by
@@ -24,6 +26,13 @@ pub trait PackageResolver {
     /// The `jsx.importSource` of the package containing `importer`, as a specifier
     /// `importer` can import from.
     fn jsx_import_source(&self, importer: &Path) -> Option<String> {
+        let _ = importer;
+        None
+    }
+
+    /// The package containing `importer`: its name, root directory and conditional imports
+    /// (`imports` in its manifest, [`vpm::imports`]).
+    fn imports(&self, importer: &Path) -> Option<PackageImports> {
         let _ = importer;
         None
     }
@@ -54,6 +63,15 @@ impl PackageResolver for vpm::PackageGraph {
         vpm::PackageGraph::jsx_import_source(self, importer)
     }
 
+    fn imports(&self, importer: &Path) -> Option<PackageImports> {
+        let (name, root, map) = self.imports_of(importer)?;
+        Some(PackageImports {
+            name: name.to_string(),
+            root: root.to_path_buf(),
+            map: map.clone(),
+        })
+    }
+
     fn defines(&self) -> std::collections::BTreeMap<String, String> {
         vpm::PackageGraph::defines(self)
     }
@@ -61,6 +79,17 @@ impl PackageResolver for vpm::PackageGraph {
     fn npm_package(&self, importer: &Path, name: &str) -> Option<PathBuf> {
         vpm::PackageGraph::npm_package(self, importer, name)
     }
+}
+
+/// The conditional imports of one package ([`PackageResolver::imports`]).
+#[derive(Clone, Debug)]
+pub struct PackageImports {
+    /// The package's name.
+    pub name: String,
+    /// Its root directory (holding `package.vlt`): the variants' paths are relative to it.
+    pub root: PathBuf,
+    /// `#name` → its variants.
+    pub map: vpm::imports::ImportMap,
 }
 
 /// The tree a module belongs to.
@@ -225,7 +254,7 @@ fn common_ancestor(a: &Path, b: &Path) -> PathBuf {
 ///   (`./x.js` → `x.ts` or `x.tsx`, `./x.jsx` → `x.tsx`);
 /// - otherwise `x.vlt`, `x.ts` or `x.tsx`, then the folder module `x/index.vlt`, `x/index.ts`
 ///   or `x/index.tsx` (never a declaration file: `./types.d` does not name `types.d.ts`).
-fn relative_files(file: PathBuf) -> Vec<Vec<PathBuf>> {
+pub(super) fn relative_files(file: PathBuf) -> Vec<Vec<PathBuf>> {
     let Some(name) = file.to_str() else {
         return vec![vec![file]];
     };
@@ -248,6 +277,39 @@ fn relative_files(file: PathBuf) -> Vec<Vec<PathBuf>> {
         vpm::sources::source_files(name),
         vpm::sources::source_files(index),
     ]
+}
+
+/// The npm package module bare specifier `spec` names ([`vpm::npm`]), unless the importing
+/// package has a Velt dependency of that name (which wins) or `spec` is not bare
+/// (`classified`: what [`resolve_spec`] made of it). `None`: no npm package of that name.
+pub(super) fn npm_module(
+    npm: &mut vpm::npm::NpmResolver,
+    packages: Option<&dyn PackageResolver>,
+    importer: &Path,
+    spec: &str,
+    classified: &Result<ModuleRef, String>,
+) -> Option<Result<PathBuf, vpm::npm::NpmError>> {
+    let bare = match classified {
+        Ok(ModuleRef::Package { name, .. }) => {
+            packages.is_none_or(|p| p.dependency_root(importer, name).is_err())
+        }
+        Ok(_) => false,
+        Err(_) => {
+            spec != "std"
+                && !std_modules::is_std(spec)
+                && !spec.starts_with(std_modules::SPECIFIER_PREFIX)
+        }
+    };
+    if !bare {
+        return None;
+    }
+    // A package a git dependency provides, before Node's search of `node_modules`.
+    let provided = vpm::npm::split_specifier(spec)
+        .and_then(|(name, _)| packages.and_then(|p| p.npm_package(importer, name)));
+    if let Some(dir) = provided {
+        return npm.resolve_in(&dir, spec);
+    }
+    npm.resolve(importer, spec)
 }
 
 #[cfg(test)]

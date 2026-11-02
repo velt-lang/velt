@@ -148,7 +148,7 @@ pub const COMMANDS: &[CommandHelp] = &[
         name: "check",
         summary: "Type-check a file or the current package without building it",
         usage: &[
-            "check [<file.vlt>] [--json] [--locked] [-v]",
+            "check [<file.vlt>] [--target <triple>] [--json] [--locked] [-v]",
             "check --ts-compat [<file|dir>...] [--json] [--locked] [-v]",
             "check --std [--json] [-v]",
             "check (--workspace | -p <glob>... | --affected [<base>]) [--fail-fast] [<check options>]",
@@ -176,6 +176,11 @@ pub const COMMANDS: &[CommandHelp] = &[
                  folders) for the TypeScript/Velt common subset",
             ),
             ("--std", "check all of the standard library ($VELT_STD), every definition"),
+            (
+                "--target <triple>",
+                "check for this target: the variants of `#name` imports it selects, the system \
+                 functions it has (default: the host)",
+            ),
             LOCKED,
             NO_GENERATORS,
             VERBOSE,

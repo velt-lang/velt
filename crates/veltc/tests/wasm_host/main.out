@@ -1,0 +1,36 @@
+200 -128 -9223372036854775808 9007199254740992 4294967295
+10000000257
+false true
+hello, wörld!
+4 7,7,7,7
+2 7,9,9,7
+6 9 1,2,3
+3,2,1 1,2,3
+a 1
+true false 2
+b 3
+2
+true
+a 3
+2
+41943040 5 2,3
+exit 0, 0 values held
+TypeError: velt: host function test.small returned 300, which is not a u8
+TypeError: velt: host function test.small returned -1, which is not a u8
+TypeError: velt: host function test.small returned 1.5, which is not a u8
+TypeError: velt: host function test.small returned "7", which is not a u8
+TypeError: velt: host function test.small returned undefined, which is not a u8
+TypeError: velt: host function test.tiny returned 128, which is not an i8
+TypeError: velt: host function test.word returned -1, which is not a u32
+TypeError: velt: host function test.word returned 4294967296, which is not a u32
+TypeError: velt: host function test.wide returned 9223372036854775808n, which is not an i64
+TypeError: velt: host function test.wide returned 1.5, which is not an i64
+TypeError: velt: host function test.wide returned "12", which is not an i64
+TypeError: velt: host function test.wideU returned -1, which is not a u64
+TypeError: velt: host function test.wideU returned 18446744073709551616n, which is not a u64
+TypeError: velt: host function test.add returned "1", which is not a number
+TypeError: velt: host function test.flag returned 1, which is not a boolean
+TypeError: velt: host function test.greet returned 7, which is not a string
+TypeError: velt: host function test.reversed returned [1,2], which is not a Uint8Array or an ArrayBuffer
+TypeError: velt: host function test.makeBox returned null, which is not a value for a HostRef
+velt: the program imports host function test.add, which imports.test lacks

@@ -3,7 +3,8 @@
 //
 // The hashes are Velt: where the CPU has SHA instructions (`velt/simd`, #1330: ARMv8 SHA2, x86
 // SHA-NI with SSSE3 and SSE4.1) whole blocks go through functions gated on them, which run the
-// bare instructions; elsewhere (other CPUs, WebAssembly, debug builds, `VELT_SIMD_DISABLE=sha`)
+// bare instructions; elsewhere (other CPUs, WebAssembly, debug builds, `VELT_SIMD_DISABLE=sha` in
+// code that checks at run time)
 // through portable rounds over `u32` words (integer arithmetic wraps, `>>>` is a logical shift).
 // Randomness comes from the OS generator through the runtime. SHA-1 is broken for collision
 // resistance: use it only for legacy protocols (WebSocket handshakes, HMAC-SHA1 in TOTP, git

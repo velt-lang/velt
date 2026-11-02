@@ -12,7 +12,7 @@ pub(crate) fn rvalue_operands(rv: &Rvalue, f: &mut impl FnMut(&Operand)) {
             f(a);
             f(b);
         }
-        Rvalue::Aggregate(_, ops) => ops.iter().for_each(f),
+        Rvalue::Aggregate(_, ops) | Rvalue::Intrinsic(_, ops) => ops.iter().for_each(f),
         Rvalue::AddrOf(_) => {}
     }
 }
@@ -25,7 +25,7 @@ pub(crate) fn rvalue_operands_mut(rv: &mut Rvalue, f: &mut impl FnMut(&mut Opera
             f(a);
             f(b);
         }
-        Rvalue::Aggregate(_, ops) => ops.iter_mut().for_each(f),
+        Rvalue::Aggregate(_, ops) | Rvalue::Intrinsic(_, ops) => ops.iter_mut().for_each(f),
         Rvalue::AddrOf(_) => {}
     }
 }

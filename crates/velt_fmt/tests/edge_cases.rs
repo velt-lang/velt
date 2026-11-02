@@ -419,6 +419,21 @@ declare function velt_rt_x(): void;",
 }
 
 #[test]
+fn host_function_declarations() {
+    holds(
+        "declare host(\"app\") function greet(name: string, buf: readonly u8[]): string;
+export declare host('dom') function query(selector: string): HostRef | null;
+declare host(\"app\") async function later(): Promise<i32>;",
+    );
+    let out =
+        velt_fmt::format_source("export  declare host( 'dom' )  function  q(a:i32):void").unwrap();
+    assert_eq!(
+        out,
+        "export declare host(\"dom\") function q(a: i32): void;\n"
+    );
+}
+
+#[test]
 fn intrinsic_function_declarations() {
     holds(
         "export declare intrinsic function arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void;

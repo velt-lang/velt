@@ -129,7 +129,9 @@ fn remap(
                         op(a);
                         op(c);
                     }
-                    Rvalue::Aggregate(_, ops) => ops.iter_mut().for_each(&mut op),
+                    Rvalue::Aggregate(_, ops) | Rvalue::Intrinsic(_, ops) => {
+                        ops.iter_mut().for_each(&mut op)
+                    }
                     Rvalue::AddrOf(_) => {}
                 },
                 Stmt::MemCopy { dst, src, .. } => {

@@ -3,7 +3,7 @@
 //! statement keeps the source location it was lowered from. Functions without location
 //! information (`locs` empty) stay without.
 
-use velt_vir::vir::{BasicBlock, Function, SrcLoc, Stmt};
+use velt_vir::vir::{BasicBlock, BlockId, Function, SrcLoc, Stmt, Terminator};
 
 /// Keep the statements of block `bi` for which `keep` holds (with their locations); returns
 /// whether any was removed.
@@ -51,6 +51,22 @@ pub(crate) fn rewrite_stmts(
         new_locs.push(term);
         func.locs[bi] = new_locs;
     }
+}
+
+/// Split block `bi` after its statement `si`: the statements after it and the terminator move
+/// (with their locations) to a new block, which `bi` jumps to; returns the new block.
+pub(crate) fn split_after(func: &mut Function, bi: usize, si: usize) -> BlockId {
+    let rest = func.blocks[bi].stmts.split_off(si + 1);
+    let term = std::mem::replace(&mut func.blocks[bi].term, Terminator::Unreachable);
+    let new = BlockId(func.blocks.len() as u32);
+    if let Some(locs) = func.locs.get_mut(bi) {
+        let moved = locs.split_off((si + 1).min(locs.len()));
+        locs.push(None);
+        func.locs.push(moved);
+    }
+    func.blocks.push(BasicBlock { stmts: rest, term });
+    func.blocks[bi].term = Terminator::Goto(new);
+    new
 }
 
 /// Insert `stmts` (compiler-made, without location) at the start of block `bi`.

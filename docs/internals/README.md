@@ -216,6 +216,9 @@ Decisions and their rationale, including what is still planned:
 - [Compiling std's Velt code once](design/std-object.md): a cached, optimized object of std's
   non-generic functions that programs link, with a VIR fingerprint check per function
   (proposed, issue #1728).
+- [Intrinsics](design/intrinsics.md): operations the compiler knows, one registry per family
+  in `velt_vir`, pure ones as `Rvalue::Intrinsic` statements, the runtime function as the
+  reference, and the checklist for adding one (proposed, issue #1981).
 
 ## Testing
 

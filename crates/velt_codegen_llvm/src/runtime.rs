@@ -11,18 +11,19 @@
 //! - the allocator functions carry LLVM allocator attributes (`Allocator`), like rustc's
 //!   `__rust_alloc` family.
 
+use velt_vir::math::MathOp;
 use velt_vir::vir::Ty;
 
-/// LLVM intrinsic computing exactly what the runtime function `symbol` of type
-/// `(f64) -> f64` computes, where `rounding::helper` has no inline code for it. `Math.round` is
-/// not here: JS rounds ties toward +Infinity, unlike `llvm.round`.
-pub(crate) fn math_intrinsic(symbol: &str) -> Option<&'static str> {
-    Some(match symbol {
-        "velt_rt_math_sqrt" => "llvm.sqrt.f64",
-        "velt_rt_math_floor" => "llvm.floor.f64",
-        "velt_rt_math_ceil" => "llvm.ceil.f64",
-        "velt_rt_math_trunc" => "llvm.trunc.f64",
-        "velt_rt_math_fabs" => "llvm.fabs.f64",
+/// LLVM intrinsic computing exactly what the runtime math function `op` of type `(f64) -> f64`
+/// computes, where `rounding::helper` has no inline code for it. `Math.round` is not here: JS
+/// rounds ties toward +Infinity, unlike `llvm.round`.
+pub(crate) fn math_intrinsic(op: MathOp) -> Option<&'static str> {
+    Some(match op {
+        MathOp::Sqrt => "llvm.sqrt.f64",
+        MathOp::Floor => "llvm.floor.f64",
+        MathOp::Ceil => "llvm.ceil.f64",
+        MathOp::Trunc => "llvm.trunc.f64",
+        MathOp::Abs => "llvm.fabs.f64",
         _ => return None,
     })
 }
@@ -140,94 +141,31 @@ const BITS_F64: &str = "define internal double @velt.bits_f64(i64 %b) alwaysinli
   ret double %r
 }";
 
-/// A runtime function the backend calls through a helper defined in the module instead: the
-/// helper's name and its definition (with what it declares), for the signature
-/// `(params) -> ret`.
-pub(crate) fn inline_helper(symbol: &str) -> Option<InlineHelper> {
-    Some(match symbol {
-        "velt_rt_math_to_int32" => ("@velt.to_int32", &[TO_INT32], &[Ty::F64], Ty::I32),
-        "velt_rt_math_mul_int32" => (
-            "@velt.mul_int32",
-            &[MUL_INT32],
-            &[Ty::I32, Ty::I32],
-            Ty::I32,
-        ),
-        "velt_rt_math_add_int32" => (
-            "@velt.add_int32",
-            &[FABS, ADD_INT32, TO_INT32],
-            &[Ty::I32, Ty::F64],
-            Ty::I32,
-        ),
-        "velt_rt_math_clz32" => ("@velt.clz32", &[CLZ32], &[Ty::I32], Ty::I32),
-        "velt_rt_math_clz64" => ("@velt.clz64", &[CLZ64_DECL, CLZ64], &[Ty::U64], Ty::U64),
-        "velt_rt_math_ctz64" => ("@velt.ctz64", &[CTZ64_DECL, CTZ64], &[Ty::U64], Ty::U64),
-        "velt_rt_math_popcount64" => (
-            "@velt.popcount64",
-            &[POPCOUNT64_DECL, POPCOUNT64],
-            &[Ty::U64],
-            Ty::U64,
-        ),
-        "velt_rt_math_umulh" => ("@velt.umulh", &[UMULH], &[Ty::U64, Ty::U64], Ty::U64),
-        "velt_rt_math_f64_bits" => ("@velt.f64_bits", &[F64_BITS], &[Ty::F64], Ty::U64),
-        "velt_rt_math_bits_f64" => ("@velt.bits_f64", &[BITS_F64], &[Ty::U64], Ty::F64),
+/// A runtime math function the backend calls through a helper defined in the module instead:
+/// the helper's name and its definition (with what it declares). The helper has the
+/// operation's signature (`MathOp::signature`).
+pub(crate) fn inline_helper(op: MathOp) -> Option<InlineHelper> {
+    Some(match op {
+        MathOp::ToInt32 => ("@velt.to_int32", &[TO_INT32]),
+        MathOp::MulInt32 => ("@velt.mul_int32", &[MUL_INT32]),
+        MathOp::AddInt32 => ("@velt.add_int32", &[FABS, ADD_INT32, TO_INT32]),
+        MathOp::Clz32 => ("@velt.clz32", &[CLZ32]),
+        MathOp::Clz64 => ("@velt.clz64", &[CLZ64_DECL, CLZ64]),
+        MathOp::Ctz64 => ("@velt.ctz64", &[CTZ64_DECL, CTZ64]),
+        MathOp::Popcount64 => ("@velt.popcount64", &[POPCOUNT64_DECL, POPCOUNT64]),
+        MathOp::Umulh => ("@velt.umulh", &[UMULH]),
+        MathOp::F64Bits => ("@velt.f64_bits", &[F64_BITS]),
+        MathOp::BitsF64 => ("@velt.bits_f64", &[BITS_F64]),
         _ => return None,
     })
 }
 
-/// A helper's name, its definitions (with what they declare), and its signature.
-pub(crate) type InlineHelper = (&'static str, &'static [&'static str], &'static [Ty], Ty);
+/// A helper's name and its definitions (with what they declare).
+pub(crate) type InlineHelper = (&'static str, &'static [&'static str]);
 
-/// How much memory a runtime function may touch.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Effects {
-    /// Anything (the default for externs).
-    Any,
-    /// Reads memory, writes none (string comparison, hashing).
-    ReadOnly,
-    /// Reads memory and writes only state of its own that compiled code never reads: a string's
-    /// position-translation table and lone-surrogate count, built on first use (#377 phase 2b:
-    /// `charCodeAt` on non-ASCII text, `indexOf`).
-    ReadCaching,
-    /// Touches no memory (arithmetic).
-    None,
-    /// Does nothing; a call marks the way it is on as rare (`velt_rt_array_view_cold`).
-    Cold,
-}
-
-/// Memory effects of the runtime function `symbol`.
-pub(crate) fn effects(symbol: &str) -> Effects {
-    match symbol {
-        "velt_rt_math_sqrt"
-        | "velt_rt_math_floor"
-        | "velt_rt_math_ceil"
-        | "velt_rt_math_round"
-        | "velt_rt_math_trunc"
-        | "velt_rt_math_fabs"
-        | "velt_rt_pow_f64"
-        | "velt_rt_pow_i64"
-        | "velt_rt_math_to_int32"
-        | "velt_rt_math_clz32"
-        | "velt_rt_math_clz64"
-        | "velt_rt_math_ctz64"
-        | "velt_rt_math_popcount64"
-        | "velt_rt_math_umulh"
-        | "velt_rt_math_f64_bits"
-        | "velt_rt_math_bits_f64"
-        | "velt_rt_math_mul_int32"
-        | "velt_rt_math_add_int32" => Effects::None,
-        "velt_rt_str_cmp"
-        | "velt_rt_str_eq"
-        | "velt_rt_str_hash"
-        | "velt_rt_str_starts_with"
-        | "velt_rt_str_ends_with" => Effects::ReadOnly,
-        "velt_rt_str_char_code_at"
-        | "velt_rt_str_index_of"
-        | "velt_rt_str_last_index_of"
-        | "velt_rt_str_includes" => Effects::ReadCaching,
-        "velt_rt_array_view_cold" => Effects::Cold,
-        _ => Effects::Any,
-    }
-}
+/// How much memory a runtime function may touch: `velt_vir::math` holds the one list, which
+/// `velt_opt` reads too.
+pub(crate) use velt_vir::math::{effects, Effects};
 
 /// A function of the runtime allocator (rt_abi.md "Memory"), declared the way rustc declares
 /// `__rust_alloc` / `__rust_realloc` / `__rust_dealloc`: LLVM then knows the result is a fresh
@@ -306,13 +244,18 @@ mod tests {
 
     #[test]
     fn classification() {
-        assert_eq!(math_intrinsic("velt_rt_math_sqrt"), Some("llvm.sqrt.f64"));
-        assert_eq!(math_intrinsic("velt_rt_math_round"), None);
-        assert_eq!(effects("velt_rt_math_round"), Effects::None);
-        assert_eq!(effects("velt_rt_str_cmp"), Effects::ReadOnly);
-        assert_eq!(effects("velt_rt_str_index_of"), Effects::ReadCaching);
-        assert_eq!(effects("velt_rt_array_view_cold"), Effects::Cold);
-        assert_eq!(effects("velt_rt_write_i64"), Effects::Any);
+        assert_eq!(math_intrinsic(MathOp::Sqrt), Some("llvm.sqrt.f64"));
+        assert_eq!(math_intrinsic(MathOp::Round), None);
+        // Every math operation is an instruction, a helper, or a runtime call (`pow`).
+        for op in MathOp::ALL {
+            let inline = math_intrinsic(op).is_some()
+                || inline_helper(op).is_some()
+                || op.rounding().is_some();
+            assert!(
+                inline || matches!(op, MathOp::PowF64 | MathOp::PowI64),
+                "{op:?}"
+            );
+        }
         assert_eq!(
             Allocator::of("velt_rt_alloc", &[Ty::U64, Ty::U64], Ty::Ptr),
             Some(Allocator::Alloc)

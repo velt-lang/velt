@@ -198,6 +198,13 @@ pub enum Op {
     Ge,
     /// `(mask, a, b) -> v`: the lanes of `a` where the mask is set, of `b` elsewhere.
     Select,
+    /// `(a, b, c) -> v`: `a * b + c` with one rounding (fused), the same bits on every CPU: one
+    /// instruction where the CPU has FMA (arm64, x86 with `--cpu x86-64-v3`), a library call
+    /// per lane elsewhere. Floats only.
+    MulAdd,
+    /// `(a, b, c) -> v`: `a * b + c`, fused where that is faster and rounded twice elsewhere,
+    /// so the last bit may differ between CPUs. Floats only.
+    MulAddFast,
     /// `(v) -> v`: the same bits as another vector type.
     As(Lanes),
     /// `(a, b) -> v`: the lanes of the low halves of `a` and `b` in turn (a0, b0, a1, b1, …).
@@ -335,7 +342,7 @@ impl SimdCall {
                 | Op::ReverseBytes
                 | Op::Convert(_) => (vec![V128], V128),
                 Op::Shl | Op::Shr => (vec![V128, U32], V128),
-                Op::Select => (vec![V128, V128, V128], V128),
+                Op::Select | Op::MulAdd | Op::MulAddFast => (vec![V128, V128, V128], V128),
                 _ => (vec![V128, V128], V128),
             },
         }
@@ -448,6 +455,8 @@ fn vector_op(name: &str) -> Option<Op> {
         "gt" => Op::Gt,
         "ge" => Op::Ge,
         "select" => Op::Select,
+        "mul_add" => Op::MulAdd,
+        "mul_add_fast" => Op::MulAddFast,
         "zip_low" => Op::ZipLow,
         "zip_high" => Op::ZipHigh,
         "widen_low" => Op::WidenLow,
@@ -465,7 +474,7 @@ fn supported(lanes: Lanes, op: Op) -> bool {
     let float = lanes.is_float();
     let bits = lanes.bits();
     match op {
-        Op::Div | Op::Sqrt => float,
+        Op::Div | Op::Sqrt | Op::MulAdd | Op::MulAddFast => float,
         Op::Mul => float || bits != 8,
         Op::Neg => float || lanes.is_signed(),
         Op::Abs => float || (lanes.is_signed() && bits != 64),
@@ -573,7 +582,17 @@ mod tests {
             SimdCall::of_symbol("velt_simd_i16x8_widen_high"),
             Some(SimdCall::Vector(Lanes::I16, Op::WidenHigh))
         );
+        assert_eq!(
+            SimdCall::of_symbol("velt_simd_f64x2_mul_add"),
+            Some(SimdCall::Vector(Lanes::F64, Op::MulAdd))
+        );
+        assert_eq!(
+            SimdCall::of_symbol("velt_simd_f32x4_mul_add_fast"),
+            Some(SimdCall::Vector(Lanes::F32, Op::MulAddFast))
+        );
         for unsupported in [
+            "velt_simd_i32x4_mul_add",
+            "velt_simd_u16x8_mul_add_fast",
             "velt_simd_i64x2_widen_low",
             "velt_simd_u8x16_narrow",
             "velt_simd_f32x4_to_f64x2",

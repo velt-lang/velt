@@ -12,6 +12,12 @@
 //! collection rewrites a shard under the same lock, renaming the new pack, then the new index, into
 //! place. Reads take no lock: a reader whose index and pack come from different rewrites (or that
 //! sees half of an append) finds a checksum that does not match, which is a miss, never wrong code.
+//!
+//! Lock order: a shard's mutex (`Packs::shards[n]`), then its file lock (`<nn>.lock`), never the
+//! other way round, and neither is taken again while held. A thread that held the file lock and
+//! waited for the mutex would deadlock with one storing into the shard, and every other process
+//! using the shard would wait for the file lock behind them. Within a `Packs`, the mutex also means
+//! two threads never wait on each other for the file lock.
 
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
@@ -130,8 +136,9 @@ impl Packs {
         }
     }
 
-    /// Under the shard's lock: append `value` (if any) to the pack, then `records` to the index
-    /// (a stored value's record gets its offset). Returns the last record written.
+    /// Under the shard's file lock: append `value` (if any) to the pack, then `records` to the
+    /// index (a stored value's record gets its offset). Returns the last record written. The
+    /// caller holds the shard's mutex (see the lock order above).
     fn append(
         &self,
         n: usize,
@@ -194,13 +201,16 @@ impl Packs {
             .sum()
     }
 
-    /// Under the shard's lock: rewrite shard `n` keeping its entries used at or after `cutoff`
-    /// (minutes), when that removes any or when a quarter of its pack is no longer referenced.
-    /// Returns whether it was rewritten.
+    /// Under the shard's mutex and file lock: rewrite shard `n` keeping its entries used at or
+    /// after `cutoff` (minutes), when that removes any or when a quarter of its pack is no longer
+    /// referenced. Returns whether it was rewritten.
     pub(crate) fn compact(&self, n: usize, cutoff: u32) -> std::io::Result<bool> {
         if !self.idx(n).exists() {
             return Ok(false);
         }
+        let mut shard = self.shards[n]
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         let _lock = self.lock(n)?;
         let entries = read_index(&self.idx(n)).unwrap_or_default();
         let pack_len = fs::metadata(self.pack(n)).map_or(0, |m| m.len());
@@ -242,9 +252,7 @@ impl Packs {
         fs::rename(&tmp_pack, self.pack(n))?;
         fs::rename(&tmp_idx, self.idx(n))?;
         // This process re-reads the shard on its next use.
-        *self.shards[n]
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Shard::default();
+        *shard = Shard::default();
         Ok(true)
     }
 
@@ -252,12 +260,13 @@ impl Packs {
     #[cfg(test)]
     pub(crate) fn set_time(&self, key: &Key, time: u32) {
         let n = shard_of(key);
+        let mut shard = self.shards[n]
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         let entry = read_index(&self.idx(n)).unwrap_or_default()[&key.0];
         self.append(n, None, &[(key.0, Entry { time, ..entry })])
             .unwrap();
-        *self.shards[n]
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Shard::default();
+        *shard = Shard::default();
     }
 
     fn lock(&self, n: usize) -> std::io::Result<File> {

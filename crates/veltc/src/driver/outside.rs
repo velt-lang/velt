@@ -319,6 +319,7 @@ mod tests {
             params: vec![],
             ret: Ty::Unit,
             noreturn: false,
+            host: None,
         };
         let r0 = func(
             "_V12____velt__r0",

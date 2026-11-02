@@ -21,6 +21,9 @@ pub enum ExportsError {
     NotExported,
     /// The map mixes `"."`-keys with condition names.
     Invalid,
+    /// An `imports` entry maps the name to another package (`"#dep": "dep"`): Node resolves
+    /// that bare specifier; Velt does not follow it.
+    Package(String),
 }
 
 /// What `exports` maps a subpath to under the build's conditions.
@@ -32,6 +35,9 @@ pub struct Targets {
     /// The target Node loads and the condition that chose it (empty for a target without
     /// one; `None` when a `velt` target stands for it).
     pub runtime: Option<(String, String)>,
+    /// For `imports`: the package a matching condition maps the name to, which Node would
+    /// load (the walk stops there, as Node's does).
+    pub package: Option<String>,
 }
 
 /// The targets `exports` maps `subpath` (`"."` or `"./x"`) to under `conditions`, best first,
@@ -68,13 +74,38 @@ pub fn resolve_targets(
         if subpath != "." {
             return Err(ExportsError::NotExported);
         }
-        return found(targets(exports, None, conditions));
+        return found(targets(exports, None, conditions, false));
     };
+    lookup(fields, subpath, conditions, false)
+}
+
+/// The targets a package's `imports` (`package.json`) maps `#name` `spec` to under
+/// `conditions`, as Node's PACKAGE_IMPORTS_RESOLVE does: an exact key, else the best `#x/*`
+/// pattern. A target that is not a `./` path inside the package (a bare package name) gives none.
+pub fn resolve_import_targets(
+    imports: &Json,
+    spec: &str,
+    conditions: &[&str],
+) -> Result<Targets, ExportsError> {
+    match imports {
+        Json::Obj(fields) => lookup(fields, spec, conditions, true),
+        _ => Err(ExportsError::NotExported),
+    }
+}
+
+/// The entry of `fields` (an `exports` subpath map or an `imports` map) for `subpath`: the exact
+/// key, else the pattern whose part before `*` is longest (Node's PATTERN_KEY_COMPARE).
+fn lookup(
+    fields: &[(String, Json)],
+    subpath: &str,
+    conditions: &[&str],
+    imports: bool,
+) -> Result<Targets, ExportsError> {
     if let Some((_, entry)) = fields
         .iter()
         .find(|(k, _)| k == subpath && !k.contains('*'))
     {
-        return found(targets(entry, None, conditions));
+        return found(targets(entry, None, conditions, imports));
     }
     // Patterns: the one with the longest part before `*` wins (Node's PATTERN_KEY_COMPARE).
     let mut best: Option<(&str, &Json, String)> = None;
@@ -99,12 +130,15 @@ pub fn resolve_targets(
         }
     }
     match best {
-        Some((_, entry, matched)) => found(targets(entry, Some(&matched), conditions)),
+        Some((_, entry, matched)) => found(targets(entry, Some(&matched), conditions, imports)),
         None => Err(ExportsError::NotExported),
     }
 }
 
 fn found(targets: Targets) -> Result<Targets, ExportsError> {
+    if let Some(package) = targets.package {
+        return Err(ExportsError::Package(package));
+    }
     if targets.all.is_empty() {
         Err(ExportsError::NotExported)
     } else {
@@ -127,20 +161,24 @@ fn pattern_cmp(a: &str, b: &str) -> bool {
 const HINTS: &[&str] = &["velt", "types"];
 
 /// The targets `entry` gives under `conditions` (see the module docs); `matched` replaces the
-/// `*` of a pattern's targets. A target must start with `./` and stay inside the package.
-fn targets(entry: &Json, matched: Option<&str>, conditions: &[&str]) -> Targets {
+/// `*` of a pattern's targets. A target must start with `./` and stay inside the package; in
+/// `imports` (`imports`), a bare package name is taken too, as Node takes it ([`Targets::package`]).
+fn targets(entry: &Json, matched: Option<&str>, conditions: &[&str], imports: bool) -> Targets {
     let mut walk = Walk {
         matched,
         conditions,
         out: vec![],
         runtime: None,
         path: vec![],
+        imports,
+        package: None,
     };
     if walk.entry(entry) != Outcome::Taken {
         // Nothing Node would load (only `types`, or `null`): not exported.
         return Targets {
             all: vec![],
             runtime: None,
+            package: None,
         };
     }
     // Stable: written order within each rank.
@@ -148,6 +186,7 @@ fn targets(entry: &Json, matched: Option<&str>, conditions: &[&str]) -> Targets 
     Targets {
         all: walk.out.into_iter().map(|(t, _)| t).collect(),
         runtime: walk.runtime,
+        package: walk.package,
     }
 }
 
@@ -182,6 +221,10 @@ struct Walk<'a> {
     runtime: Option<(String, String)>,
     /// The conditions leading to the entry being walked.
     path: Vec<String>,
+    /// Walking `imports`, where a bare target names a package.
+    imports: bool,
+    /// The package a bare `imports` target names, once the walk took one.
+    package: Option<String>,
 }
 
 impl Walk<'_> {
@@ -193,6 +236,11 @@ impl Walk<'_> {
                     None => target.clone(),
                 };
                 if !is_valid_target(&target) {
+                    let bare = !target.starts_with('.') && !target.starts_with('/');
+                    if self.imports && bare && !target.is_empty() {
+                        self.package = Some(target);
+                        return Outcome::Taken;
+                    }
                     return Outcome::NoMatch;
                 }
                 let hint = self.path.iter().any(|c| HINTS.contains(&c.as_str()));

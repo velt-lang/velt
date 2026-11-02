@@ -12,6 +12,7 @@ use crate::string_compare;
 use crate::strings;
 use crate::types::{abi_ret, abi_type, as_int, global_name, int_bits, int_literal, scalar_type};
 use crate::CodegenResult;
+use velt_vir::math::MathOp;
 
 impl Emitter<'_> {
     pub(super) fn terminator(&mut self, t: &Terminator) -> CodegenResult<()> {
@@ -138,8 +139,10 @@ impl Emitter<'_> {
             return Ok(());
         }
         if self.own_extension_check(callee) {
-            // `velt_simd_has_<ext>()` in a function gated on `ext` (#1330): it runs only where
-            // the CPU has it, so the check is true and the emulation behind it is dead code.
+            // `velt_simd_has_<ext>()` in a function gated on `ext` (#1330), or in code built for
+            // a CPU that has `ext` (`--cpu`, whose features the start-up check checks): it runs
+            // only where the CPU has it, so the check is true and the emulation behind it is
+            // dead code.
             if let Some(dest) = dest {
                 let loc = self.place(dest)?;
                 self.write(loc, Val::Scalar("1".into()))?;
@@ -192,7 +195,15 @@ impl Emitter<'_> {
             .is_some_and(|f| f.target.is_some() && f.target != self.function.target)
     }
 
-    /// Whether `callee` is `velt_simd_has_<ext>` and this function is gated on `ext`.
+    /// Whether the CPU the code is built for has `ext` (`--cpu`'s x86 features hold all it
+    /// needs).
+    fn baseline_has(&self, ext: velt_vir::simd::Ext) -> bool {
+        let needs = velt_codegen_cl::ext_x86_features(ext);
+        needs != 0 && self.x86_features & needs == needs
+    }
+
+    /// Whether `callee` is `velt_simd_has_<ext>` and this function is gated on `ext`, or the
+    /// code is built for a CPU that has `ext`.
     fn own_extension_check(&self, callee: &Callee) -> bool {
         let Callee::Extern(id) = callee else {
             return false;
@@ -203,7 +214,8 @@ impl Emitter<'_> {
         matches!(
             velt_vir::simd::SimdCall::of_symbol(&e.symbol),
             Some(velt_vir::simd::SimdCall::Has(ext))
-                if self.function.target == Some(ext) && crate::simd::has_ext(self.simd, ext)
+                if (self.function.target == Some(ext) || self.baseline_has(ext))
+                    && crate::simd::has_ext(self.simd, ext)
         )
     }
 
@@ -228,18 +240,9 @@ impl Emitter<'_> {
         let Callee::Extern(id) = callee else {
             return None;
         };
-        let symbol = &self.program.externs.get(id.0 as usize)?.symbol;
-        if let Some((name, definitions)) = rounding::helper(symbol, self.rounds_by_conversion) {
-            if params != [Ty::F64] || ret != Ty::F64 {
-                return None;
-            }
-            for d in definitions {
-                self.intrinsics.need(d.to_string());
-            }
-            return Some(name.to_string());
-        }
+        let e = self.program.externs.get(id.0 as usize)?;
         if let Some((name, definitions, want_params, want_ret)) =
-            crate::simd::helper(symbol, self.simd)
+            crate::simd::helper(&e.symbol, self.simd)
         {
             if params != want_params || ret != want_ret {
                 return None;
@@ -249,19 +252,25 @@ impl Emitter<'_> {
             }
             return Some(name);
         }
-        if let Some((name, definitions, want_params, want_ret)) = runtime::inline_helper(symbol) {
-            if params != want_params || ret != want_ret {
-                return None;
-            }
+        // `params`/`ret` are the extern's own, which `of_extern` checks.
+        self.math_target(MathOp::of_extern(e)?)
+    }
+
+    /// What to call for math operation `op` instead of its runtime function: an LLVM
+    /// intrinsic (declaring it) or the module's inline helper (`rounding::helper`,
+    /// `runtime::inline_helper`, defining it); `None` for `pow`, which calls the runtime.
+    pub(super) fn math_target(&mut self, op: MathOp) -> Option<String> {
+        let helper = match op.rounding() {
+            Some(how) => rounding::helper(how, self.rounds_by_conversion),
+            None => runtime::inline_helper(op),
+        };
+        if let Some((name, definitions)) = helper {
             for d in definitions {
                 self.intrinsics.need(d.to_string());
             }
             return Some(name.to_string());
         }
-        let name = runtime::math_intrinsic(symbol)?;
-        if params != [Ty::F64] || ret != Ty::F64 {
-            return None;
-        }
+        let name = runtime::math_intrinsic(op)?;
         self.intrinsics
             .need(format!("declare double @{name}(double)"));
         Some(format!("@{name}"))

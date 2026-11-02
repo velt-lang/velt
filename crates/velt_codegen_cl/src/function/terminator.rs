@@ -5,9 +5,9 @@ use rustc_hash::FxHashSet;
 use cranelift_codegen::ir::{self, InstBuilder, TrapCode};
 use cranelift_frontend::Switch;
 use cranelift_module::Module;
+use velt_vir::math::MathOp;
 use velt_vir::vir::{BlockId, Callee, Operand, Place, Terminator, Ty};
 
-use super::rounding::Rounding;
 use super::simd::Inlined;
 use super::{Translator, Val};
 use crate::abi::{as_int, int_bits, make_signature};
@@ -109,18 +109,9 @@ impl<M: Module> Translator<'_, '_, M> {
         if params != types {
             bail!("call argument types {types:?} do not match parameters {params:?}");
         }
-        let inline = match self.int32_extern(callee, &params, ret) {
-            // ToInt32(x); the slow path calls the runtime with the same arguments.
-            Some("velt_rt_math_to_int32") => {
-                Some(self.inline_to_int32(callee, values[0], &values)?)
-            }
-            // ToInt32(a + x), always through the double sum (`velt_rt_math_add_int32`).
-            Some("velt_rt_math_add_int32") => {
-                let af = self.builder.ins().fcvt_from_sint(ir::types::F64, values[0]);
-                let sum = self.builder.ins().fadd(af, values[1]);
-                Some(self.inline_to_int32(callee, sum, &values)?)
-            }
-            _ => self.inline_math(callee, &values, &params, ret),
+        let inline = match self.math_op(callee) {
+            Some(op) => Some(self.math_value(op, callee, &values)?),
+            None => None,
         };
         let result = match inline {
             Some(v) => Some(v),
@@ -169,64 +160,81 @@ impl<M: Module> Translator<'_, '_, M> {
         })
     }
 
-    /// The runtime math functions that are exactly one Cranelift instruction
-    /// (rt_abi_async.md §9, `Math.clz32`, `Math.umulh`, JS's int32 multiply) or a short sequence
-    /// (the rounding functions, `rounding.rs`) are emitted inline instead of called.
-    fn inline_math(
+    /// The math operation `op` on `values`: inline where Cranelift has an instruction or a
+    /// sequence for it, otherwise (`pow`) a call of its runtime function `callee`, which the
+    /// inline ToInt32 also calls on its cold path.
+    pub(super) fn math_value(
         &mut self,
+        op: MathOp,
         callee: &Callee,
-        args: &[ir::Value],
-        params: &[Ty],
-        ret: Ty,
-    ) -> Option<ir::Value> {
+        values: &[ir::Value],
+    ) -> CodegenResult<ir::Value> {
+        match op {
+            // ToInt32(x); the slow path calls the runtime with the same arguments.
+            MathOp::ToInt32 => self.inline_to_int32(callee, values[0], values),
+            // ToInt32(a + x), always through the double sum (`velt_rt_math_add_int32`).
+            MathOp::AddInt32 => {
+                let af = self.builder.ins().fcvt_from_sint(ir::types::F64, values[0]);
+                let sum = self.builder.ins().fadd(af, values[1]);
+                self.inline_to_int32(callee, sum, values)
+            }
+            _ => match self.inline_math(op, values) {
+                Some(v) => Ok(v),
+                None => {
+                    let inst = self.emit_call(callee, values)?;
+                    match self.builder.inst_results(inst).first() {
+                        Some(&v) => Ok(v),
+                        None => bail!("math operation {op:?} gave no value"),
+                    }
+                }
+            },
+        }
+    }
+
+    /// The runtime math operation `callee` is (`velt_vir::math`), if it is one.
+    fn math_op(&self, callee: &Callee) -> Option<MathOp> {
         let Callee::Extern(id) = callee else {
             return None;
         };
-        let symbol = self.program.externs.get(id.0 as usize)?.symbol.as_str();
-        if symbol == "velt_rt_math_clz32" && params == [Ty::I32] && ret == Ty::I32 {
-            return Some(self.builder.ins().clz(args[0]));
+        MathOp::of_extern(self.program.externs.get(id.0 as usize)?)
+    }
+
+    /// The runtime math operations that are exactly one Cranelift instruction
+    /// (rt_abi_async.md §9, `Math.clz32`, `Math.umulh`, JS's int32 multiply) or a short sequence
+    /// (the rounding functions, `rounding.rs`) are emitted inline instead of called; `None` for
+    /// the others (`pow`), which stay calls.
+    fn inline_math(&mut self, op: MathOp, args: &[ir::Value]) -> Option<ir::Value> {
+        if let Some(how) = op.rounding() {
+            return Some(self.round_f64(args[0], how));
         }
-        if params == [Ty::U64] && ret == Ty::U64 {
-            match symbol {
-                "velt_rt_math_clz64" => return Some(self.builder.ins().clz(args[0])),
-                "velt_rt_math_ctz64" => return Some(self.builder.ins().ctz(args[0])),
-                "velt_rt_math_popcount64" => return Some(self.builder.ins().popcnt(args[0])),
-                _ => {}
+        let flags = ir::MemFlags::new();
+        Some(match op {
+            MathOp::Sqrt => self.builder.ins().sqrt(args[0]),
+            MathOp::Abs => self.builder.ins().fabs(args[0]),
+            MathOp::Clz32 | MathOp::Clz64 => self.builder.ins().clz(args[0]),
+            MathOp::Ctz64 => self.builder.ins().ctz(args[0]),
+            MathOp::Popcount64 => self.builder.ins().popcnt(args[0]),
+            MathOp::F64Bits => self.builder.ins().bitcast(ir::types::I64, flags, args[0]),
+            MathOp::BitsF64 => self.builder.ins().bitcast(ir::types::F64, flags, args[0]),
+            MathOp::Umulh => self.builder.ins().umulhi(args[0], args[1]),
+            MathOp::MulInt32 => {
+                // The exact product, rounded through a double like JS's multiply (|p| < 2^62).
+                use ir::types::{F64, I32, I64};
+                let x = self.builder.ins().sextend(I64, args[0]);
+                let y = self.builder.ins().sextend(I64, args[1]);
+                let p = self.builder.ins().imul(x, y);
+                let d = self.builder.ins().fcvt_from_sint(F64, p);
+                let t = self.builder.ins().fcvt_to_sint_sat(I64, d);
+                self.builder.ins().ireduce(I32, t)
             }
-        }
-        if symbol == "velt_rt_math_f64_bits" && params == [Ty::F64] && ret == Ty::U64 {
-            let flags = ir::MemFlags::new();
-            return Some(self.builder.ins().bitcast(ir::types::I64, flags, args[0]));
-        }
-        if symbol == "velt_rt_math_bits_f64" && params == [Ty::U64] && ret == Ty::F64 {
-            let flags = ir::MemFlags::new();
-            return Some(self.builder.ins().bitcast(ir::types::F64, flags, args[0]));
-        }
-        if symbol == "velt_rt_math_umulh" && params == [Ty::U64, Ty::U64] && ret == Ty::U64 {
-            return Some(self.builder.ins().umulhi(args[0], args[1]));
-        }
-        if symbol == "velt_rt_math_mul_int32" && params == [Ty::I32, Ty::I32] && ret == Ty::I32 {
-            // The exact product, rounded through a double like JS's multiply (|p| < 2^62).
-            use ir::types::{F64, I32, I64};
-            let x = self.builder.ins().sextend(I64, args[0]);
-            let y = self.builder.ins().sextend(I64, args[1]);
-            let p = self.builder.ins().imul(x, y);
-            let d = self.builder.ins().fcvt_from_sint(F64, p);
-            let t = self.builder.ins().fcvt_to_sint_sat(I64, d);
-            return Some(self.builder.ins().ireduce(I32, t));
-        }
-        if params != [Ty::F64] || ret != Ty::F64 {
-            return None;
-        }
-        let x = args[0];
-        if let Some(how) = Rounding::of_symbol(symbol) {
-            return Some(self.round_f64(x, how));
-        }
-        let ins = self.builder.ins();
-        Some(match symbol {
-            "velt_rt_math_sqrt" => ins.sqrt(x),
-            "velt_rt_math_fabs" => ins.fabs(x),
-            _ => return None,
+            MathOp::ToInt32
+            | MathOp::AddInt32
+            | MathOp::PowF64
+            | MathOp::PowI64
+            | MathOp::Floor
+            | MathOp::Ceil
+            | MathOp::Trunc
+            | MathOp::Round => return None,
         })
     }
 
@@ -261,22 +269,6 @@ impl<M: Module> Translator<'_, '_, M> {
         self.builder.ins().jump(done, &[called.into()]);
         self.builder.switch_to_block(done);
         Ok(r)
-    }
-
-    /// The runtime's ToInt32 functions with control flow emitted inline, by symbol (when the
-    /// signature is the expected one).
-    fn int32_extern(&self, callee: &Callee, params: &[Ty], ret: Ty) -> Option<&'static str> {
-        let Callee::Extern(id) = callee else {
-            return None;
-        };
-        let symbol = self.program.externs.get(id.0 as usize)?.symbol.as_str();
-        match (symbol, params, ret) {
-            ("velt_rt_math_to_int32", [Ty::F64], Ty::I32) => Some("velt_rt_math_to_int32"),
-            ("velt_rt_math_add_int32", [Ty::I32, Ty::F64], Ty::I32) => {
-                Some("velt_rt_math_add_int32")
-            }
-            _ => None,
-        }
     }
 
     fn emit_call(&mut self, callee: &Callee, args: &[ir::Value]) -> CodegenResult<ir::Inst> {

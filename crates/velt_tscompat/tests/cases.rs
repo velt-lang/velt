@@ -123,6 +123,21 @@ fn declare_function_is_reported() {
 }
 
 #[test]
+fn a_host_function_is_not_typescript() {
+    let src = "export declare host(\"env\") function now(): number;\n";
+    let findings = lint_syntax(Path::new("host.vlt"), src);
+    let codes: Vec<&str> = findings.iter().map(|f| f.code).collect();
+    assert_eq!(codes, ["declare-fn"]);
+    assert!(
+        findings[0]
+            .message
+            .contains("`declare host(…) function now` is not TypeScript syntax"),
+        "{}",
+        findings[0].message
+    );
+}
+
+#[test]
 fn jsx_with_a_named_provider_is_not_reported() {
     let src = "/** @jsxImportSource some-provider */\n\
                export function A(): JSX.Element { return <a />; }\n";

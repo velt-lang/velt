@@ -43,6 +43,15 @@ pub(super) fn to_vlt(m: &Manifest) -> String {
             .map(|(pattern, target)| format!("{}: {}", key(pattern), string_lit(target)));
         fields.push(format!("paths: {}", multiline_object(paths)));
     }
+    if !m.imports.is_empty() {
+        let imports = m.imports.iter().map(|(name, variants)| {
+            let conditions = variants
+                .iter()
+                .map(|v| format!("{}: {}", key(&v.condition), string_lit(&v.target)));
+            format!("{}: {}", key(name), inline_object(conditions))
+        });
+        fields.push(format!("imports: {}", multiline_object(imports)));
+    }
     if let Some(jsx) = &m.jsx {
         let source = jsx
             .import_source
@@ -133,6 +142,22 @@ pub(super) fn to_json(m: &Manifest) -> Value {
         .collect();
     out.insert("dependencies".into(), Value::Object(deps));
     out.insert("paths".into(), json!(m.paths));
+    if !m.imports.is_empty() {
+        // An object's keys keep their order in `serde_json` only with `preserve_order`: the
+        // variants are a list of `[condition, file]` pairs, in the order written.
+        let imports: Map<String, Value> = m
+            .imports
+            .iter()
+            .map(|(name, variants)| {
+                let pairs: Vec<Value> = variants
+                    .iter()
+                    .map(|v| json!([v.condition, v.target]))
+                    .collect();
+                (name.clone(), Value::Array(pairs))
+            })
+            .collect();
+        out.insert("imports".into(), Value::Object(imports));
+    }
     if let Some(jsx) = &m.jsx {
         let mut o = Map::new();
         if let Some(source) = &jsx.import_source {

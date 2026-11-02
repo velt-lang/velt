@@ -1,0 +1,5 @@
+f64 mulAdd -5.551115123125783e-17 22
+f64 mulAddFast true 22
+f64 Infinity * 0 + 1 is NaN true
+f32 mulAdd -1.4901161193847656e-8 22 Infinity 3.0000000054977558e+38
+f32 mulAddFast true 22

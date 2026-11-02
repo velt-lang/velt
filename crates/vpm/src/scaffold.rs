@@ -88,6 +88,7 @@ pub fn manifest_text_depending(
             .map(|(n, d)| (n.to_string(), d.clone()))
             .collect(),
         paths: BTreeMap::new(),
+        imports: BTreeMap::new(),
         native: None,
         jsx: None,
         define: BTreeMap::new(),

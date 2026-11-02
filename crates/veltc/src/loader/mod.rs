@@ -13,6 +13,8 @@
 //! - `"std/x"` → `<std root>/x.vlt` or `<std root>/x/index.vlt` ([`std_root`]);
 //! - a `paths` alias of the importing package (`"@app/*": "src/*"` in `package.vlt`) → the
 //!   aliased file, like a relative import ([`PackageResolver::path_alias`]);
+//! - `"#name"` → the variant of the importing package's (or std's) conditional import `#name`
+//!   that the build's conditions select ([`conditional`]);
 //! - `"pkg"` / `"pkg/sub"` → `src/lib.vlt` / `src/sub.vlt` (or `src/sub/index.vlt`; `.ts` and
 //!   `.tsx` as for relative imports) of a dependency of the importing package, found through a
 //!   [`PackageResolver`] (vpm's installed package graph);
@@ -41,6 +43,7 @@
 
 mod ambient;
 mod case;
+mod conditional;
 mod globals;
 mod import_meta;
 mod jsx;
@@ -48,9 +51,11 @@ mod locate;
 mod moved;
 mod pick;
 mod resolve;
+mod signature;
 mod spec;
 mod std_ast;
 mod std_root;
+mod variants;
 mod visibility;
 mod wanted;
 
@@ -61,7 +66,7 @@ use velt_common::{std_modules, Diagnostic, Diagnostics, SourceMap, Span};
 use velt_sema::SourceModule;
 use velt_syntax::ast;
 
-pub use locate::{module_path, Origin, PackageResolver};
+pub use locate::{module_path, Origin, PackageImports, PackageResolver};
 pub use resolve::resolve_module;
 pub use spec::{resolve_spec, ModuleRef};
 pub use std_root::{in_std, prelude_files, std_root};
@@ -85,6 +90,12 @@ pub struct LoadOptions<'a> {
     /// The root is `velt test`'s generated harness: its imports of velt/test's internal files
     /// (the runner's hooks, velt_common `std_hooks.rs`) are the compiler's, not the user's.
     pub test_harness: bool,
+    /// The build's target triple, which sets the conditions `#name` imports resolve by
+    /// (`vpm::imports::conditions`); `None`: the host's.
+    pub target: Option<String>,
+    /// Check that the variants of each `#name` import the program resolves export the same API
+    /// ([`variants`]): `velt check`, `velt test` and the language server ask for it.
+    pub check_variants: bool,
 }
 
 /// Result of loading a program: the modules and the index of the root (`main`).
@@ -145,6 +156,15 @@ pub fn load_with_roots(
         effects: HashMap::new(),
         skipped: HashMap::new(),
         harness: None,
+        conditions: conditional::build_conditions(opts.target.as_deref()),
+        std_imports: None,
+        variant_checks: vec![],
+        variant_tables: HashMap::new(),
+        variant_sigs: HashMap::new(),
+        variant_stars: HashMap::new(),
+        variant_busy: Default::default(),
+        variant_star_busy: Default::default(),
+        variant_cut: false,
     };
     if let Some(std) = &opts.std_root {
         match prelude_files(std) {
@@ -191,6 +211,7 @@ pub fn load_with_roots(
         loader.add_extra_root(file, &origin, &mut queue);
         loader.resolve_all(&mut queue);
     }
+    loader.check_variants();
     loader.check_ambients();
     loader.declare_global_types();
     Ok(Loaded {
@@ -241,6 +262,24 @@ struct Loader<'a, 'o> {
     /// module outside std that may import std's test files and the test runner's hooks
     /// ([`visibility`]).
     harness: Option<usize>,
+    /// The build's conditions ([`LoadOptions::target`]).
+    conditions: Vec<&'static str>,
+    /// std's conditional imports (`std/imports.vlt`), read when a std module first imports a
+    /// `#name`.
+    std_imports: Option<vpm::imports::ImportMap>,
+    /// The `#name` imports resolved, once each, whose variants [`variants`] compares.
+    variant_checks: Vec<conditional::Resolved>,
+    /// Each file's exports as written, for [`variants`], by [`file_key`].
+    variant_tables: HashMap<PathBuf, variants::TableResult>,
+    /// The signature each (file, name) re-export chain resolves to, for [`variants`].
+    variant_sigs: HashMap<(PathBuf, String), Result<String, String>>,
+    /// What each file's `export *` brings in, for [`variants`].
+    variant_stars: HashMap<PathBuf, variants::StarResult>,
+    /// The (file, name)s and files [`variants`] is resolving (a cycle comes back to one), and
+    /// whether a resolution in progress met one (its result is then not kept).
+    variant_busy: std::collections::HashSet<(PathBuf, String)>,
+    variant_star_busy: std::collections::HashSet<PathBuf>,
+    variant_cut: bool,
 }
 
 impl Loader<'_, '_> {
@@ -569,7 +608,13 @@ impl Loader<'_, '_> {
     ) -> Option<usize> {
         let (importer, from) = self.origins[index].clone();
         let dir = importer.parent().unwrap_or(Path::new(""));
-        let alias = self.path_alias(&importer, spec);
+        let alias = match vpm::imports::is_specifier(spec) {
+            true => match self.conditional(spec, &importer, &from, span) {
+                Ok(file) => Some(file),
+                Err((msg, notes)) => return self.error(msg, notes, span),
+            },
+            false => self.path_alias(&importer, spec),
+        };
         let mut aliased = alias.is_some();
         // No npm package was found for the specifier: an error that follows says why the
         // workspace walk may have missed it.
@@ -578,7 +623,7 @@ impl Loader<'_, '_> {
             Some(file) => ModuleRef::Relative { file },
             None => {
                 let classified = resolve_spec(spec, dir);
-                match npm_module(
+                match locate::npm_module(
                     &mut self.npm,
                     self.opts.packages,
                     &importer,
@@ -700,39 +745,6 @@ impl Loader<'_, '_> {
     }
 }
 
-/// The npm package module bare specifier `spec` names ([`vpm::npm`]), unless the importing
-/// package has a Velt dependency of that name (which wins) or `spec` is not bare
-/// (`classified`: what [`resolve_spec`] made of it). `None`: no npm package of that name.
-fn npm_module(
-    npm: &mut vpm::npm::NpmResolver,
-    packages: Option<&dyn PackageResolver>,
-    importer: &Path,
-    spec: &str,
-    classified: &Result<ModuleRef, String>,
-) -> Option<Result<PathBuf, vpm::npm::NpmError>> {
-    let bare = match classified {
-        Ok(ModuleRef::Package { name, .. }) => {
-            packages.is_none_or(|p| p.dependency_root(importer, name).is_err())
-        }
-        Ok(_) => false,
-        Err(_) => {
-            spec != "std"
-                && !std_modules::is_std(spec)
-                && !spec.starts_with(std_modules::SPECIFIER_PREFIX)
-        }
-    };
-    if !bare {
-        return None;
-    }
-    // A package a git dependency provides, before Node's search of `node_modules`.
-    let provided = vpm::npm::split_specifier(spec)
-        .and_then(|(name, _)| packages.and_then(|p| p.npm_package(importer, name)));
-    if let Some(dir) = provided {
-        return npm.resolve_in(&dir, spec);
-    }
-    npm.resolve(importer, spec)
-}
-
 /// Whether canonical module path `path` is in the standard library's namespace (`std`, `std/…`).
 fn is_std_path(path: &str) -> bool {
     path == "std" || std_modules::is_std(path)
@@ -776,6 +788,8 @@ fn shown_path(file: &Path, dir: &Path, relative: bool) -> String {
 
 #[cfg(test)]
 mod case_tests;
+#[cfg(test)]
+mod conditional_tests;
 #[cfg(test)]
 mod globals_tests;
 #[cfg(test)]

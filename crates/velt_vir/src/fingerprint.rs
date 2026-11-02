@@ -227,12 +227,16 @@ impl<'p> Canon<'p> {
         };
     }
 
-    /// An extern by symbol; link mode adds its declaration.
+    /// An extern by symbol; link mode adds its declaration (a host function's import too).
     fn extern_ref(&self, out: &mut String, id: u32) {
         let _ = write!(out, " E{}", self.extern_name(id));
         if let Some(e) = self.program.externs.get(id as usize) {
             if self.mode == Mode::Link {
                 let _ = write!(out, "({:?}){:?}{}", e.params, e.ret, e.noreturn);
+                // A host function's import and manifest line (what crosses) are part of it.
+                if let Some(h) = &e.host {
+                    let _ = write!(out, " H{:?}", h.manifest_line());
+                }
             }
         }
     }
@@ -336,6 +340,10 @@ impl<'p> Canon<'p> {
             Rvalue::Aggregate(id, ops) => {
                 out.push_str(" agg ");
                 out.push_str(self.agg(*id));
+                ops.iter().for_each(|op| self.operand(out, op));
+            }
+            Rvalue::Intrinsic(i, ops) => {
+                let _ = write!(out, " {}", i.name());
                 ops.iter().for_each(|op| self.operand(out, op));
             }
         }
@@ -464,7 +472,7 @@ fn operands(func: &Function) -> Vec<&Operand> {
                 Stmt::Assign(_, rv) => match rv {
                     Rvalue::Use(a) | Rvalue::Unary(_, a) | Rvalue::Cast(a, _) => out.push(a),
                     Rvalue::Binary(_, a, b) => out.extend([a, b]),
-                    Rvalue::Aggregate(_, ops) => out.extend(ops),
+                    Rvalue::Aggregate(_, ops) | Rvalue::Intrinsic(_, ops) => out.extend(ops),
                     Rvalue::AddrOf(_) => {}
                 },
                 Stmt::MemCopy { dst, src, .. } => out.extend([dst, src]),
