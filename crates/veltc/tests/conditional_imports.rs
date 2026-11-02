@@ -105,7 +105,9 @@ fn check_checks_the_variant_of_its_target() {
     let o = velt(dir, &["check", "--target", "wasm32-unknown-unknown"]);
     let err = String::from_utf8_lossy(&o.stderr);
     assert!(!o.status.success(), "{err}");
-    assert!(err.contains("src/io/js.vlt:2"), "{err}");
+    // The location is a path as the system writes it: `src\io\js.vlt` on Windows.
+    let path = Path::new("src").join("io").join("js.vlt");
+    assert!(err.contains(&format!("{}:2", path.display())), "{err}");
 }
 
 #[test]
