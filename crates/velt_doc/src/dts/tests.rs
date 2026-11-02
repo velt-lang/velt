@@ -126,3 +126,74 @@ fn globals_and_extensions() {
         "{json}"
     );
 }
+
+/// Members keyed by symbols (`[KEY]`): each file that declares one has its key, as TypeScript
+/// requires (#2055).
+#[test]
+fn symbol_keyed_members_have_their_keys() {
+    let inputs = [
+        input(
+            "lang/keys.vlt",
+            "export const INSPECT = Symbol.for(\"nodejs.util.inspect.custom\");\n",
+        ),
+        // The compiler's hooks: no program names them, so they are no globals.
+        input(
+            "lang/hooks/keys.vlt",
+            "export const INDEX = Symbol(\"index\");\n\
+             export function recordOf<K, V>(m: Map<K, V>): Record<K, V> { panic(\"\"); }\n",
+        ),
+        input("io/index.vlt", "export { Source, CHUNKS } from \"./source\";\n"),
+        input(
+            "io/source.vlt",
+            "export const CHUNKS = Symbol(\"chunks\");\n\
+             export const LIMIT = \"limit\";\n\
+             export class Source {\n  [CHUNKS](): i64 { return 0; }\n  [LIMIT]: i64 = 0;\n\
+             \x20 [Symbol.iterator](): Iterator<i64> { panic(\"\"); }\n}\n",
+        ),
+        input("net/index.vlt", "export { Body } from \"./body\";\n"),
+        input(
+            "net/body.vlt",
+            "import { Source, CHUNKS } from \"velt/io\";\n\
+             import { INDEX } from \"velt/lang/hooks/keys\";\n\
+             const SETTLE = Symbol(\"settle\");\n\
+             export class Body extends Source {\n  [CHUNKS](): i64 { return 1; }\n\
+             \x20 [SETTLE](): void {}\n  [INDEX](i: i64): i64 { return i; }\n  [INSPECT](): string { return \"\"; }\n\
+             \x20 get [KIND](): string { return \"\"; }\n}\n",
+        ),
+    ];
+    let files: BTreeMap<String, String> = type_package(&inputs, "1.2.3").into_iter().collect();
+    let g = &files["globals.d.ts"];
+    assert!(
+        g.contains("export declare const INSPECT: unique symbol;"),
+        "{g}"
+    );
+    assert!(!g.contains("INDEX") && !g.contains("recordOf"), "{g}");
+    let io = &files["io/index.d.ts"];
+    for w in [
+        "export declare const CHUNKS: unique symbol;",
+        // A key not exported publicly is declared where it is used.
+        "declare const LIMIT = \"limit\";",
+        "  [CHUNKS](): number;",
+        "  [LIMIT]: number;",
+        "  [Symbol.iterator](): Iterator<number>;",
+    ] {
+        assert!(io.contains(w), "missing {w:?} in:\n{io}");
+    }
+    assert!(!io.contains("declare const Symbol"), "{io}");
+    let net = &files["net/index.d.ts"];
+    for w in [
+        "import type { INSPECT } from \"../globals.js\";",
+        "import type { CHUNKS, Source } from \"velt/io\";",
+        // A file's own key, and one the file does not declare (a symbol).
+        "declare const SETTLE: unique symbol;",
+        "declare const KIND: unique symbol;",
+        // A hook's key, which no public module exports.
+        "declare const INDEX: unique symbol;",
+        "  [INDEX](i: number): number;",
+        "  [SETTLE](): void;",
+        "  [INSPECT](): string;",
+        "  get [KIND](): string;",
+    ] {
+        assert!(net.contains(w), "missing {w:?} in:\n{net}");
+    }
+}

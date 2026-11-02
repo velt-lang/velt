@@ -104,7 +104,7 @@ impl TsPrinter<'_> {
         self.subst.borrow_mut().clear();
         Some(format!(
             "readonly {}: {FIRST_PARAM} extends {pattern} ? {} : never;",
-            m.decl.sig.name.name,
+            self.member(&m.decl.sig.name),
             ret.unwrap_or_else(|| "void".into())
         ))
     }
