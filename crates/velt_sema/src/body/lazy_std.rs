@@ -424,6 +424,9 @@ pub(crate) fn reach(cx: &mut Ctx) {
         used_types(cx, std::mem::take(&mut sc.types), &mut sc.found);
         if !cx.lazy.record_hooks && record_hooks_needed(cx) {
             cx.lazy.record_hooks = true;
+            // They read the members of the object through `any` (std's own dynamic reads
+            // don't add the member slots, `FnCx::note_dyn_members`).
+            cx.note_dyn_members();
             sc.found
                 .extend(RECORD_HOOKS.iter().filter_map(|h| cx.prelude_fn(h)));
         }

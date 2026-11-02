@@ -1,0 +1,13 @@
+// An `any` converted to a `Record<string, V>` in a program whose own code reads no member of an
+// `any` (#1219): the conversion reads the object's members itself (an object literal, an
+// array), and a program that converts nothing to a record doesn't check how.
+function main() {
+  const o: any = { a: 1, b: "two" };
+  const r = o as Record<string, any>;
+  console.log(Object.keys(r), r["b"]);
+  const xs: any = ["p", "q"];
+  const byIndex: Record<string, string> = xs;
+  console.log(Object.keys(byIndex), byIndex["1"]);
+}
+
+main();

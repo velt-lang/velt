@@ -45,10 +45,13 @@ impl FnLower<'_, '_> {
             true => (TO_RECORD_ANY, vec![]),
             false => (TO_RECORD, vec![v]),
         };
-        // sema checks the hooks only for a program that may convert to a record (velt_sema
-        // `lazy_std::RECORD_HOOKS`); without them the conversion stays the `TypeError`.
+        // sema checks the hooks, and adds the member slots of the `any` tables they read, only
+        // for a program that may convert to a record (velt_sema `lazy_std::RECORD_HOOKS`);
+        // without them the conversion stays the `TypeError`.
         let hook = self.cx.prelude_def(name);
-        let Some(d) = hook.filter(|d| !self.cx.hir.unchecked.contains(d)) else {
+        let usable =
+            |d: &DefId| !self.cx.hir.unchecked.contains(d) && self.cx.hir.dyn_members.is_some();
+        let Some(d) = hook.filter(usable) else {
             return;
         };
         let desc = Operand::Copy(proj(p, Proj::Field(1)));
