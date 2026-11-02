@@ -1,0 +1,12 @@
+// A record whose values are a union, held in an `any`: its member reads box the value the union
+// holds (the `any` call slot of such a record boxes each member, #1219).
+function main() {
+  const r: Record<string, string | number> = { a: 1, b: "x" };
+  const u: any = r;
+  console.log(typeof u, u.a, u.b, u["a"]);
+  const flags: Record<string, boolean | string> = { on: true, name: "n" };
+  const f: any = flags;
+  console.log(typeof f, f.on, f.name);
+}
+
+main();

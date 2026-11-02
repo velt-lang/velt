@@ -176,7 +176,7 @@ impl FnLower<'_, '_> {
                 // A union (`Cx::any_boxable`): the member it holds.
                 let vt = self.cx.ty(t);
                 let p = Place::local(self.copy_to_temp(v, vt));
-                self.for_each_variant(&p, t, |lw, v, parts| match parts.as_slice() {
+                self.for_each_variant_total(&p, t, |lw, v, parts| match parts.as_slice() {
                     [(_, pt)] if matches!(lw.cx.kind(*pt), TyKind::Promise(..)) => {
                         lw.panic_msg("TypeError: a promise cannot be held as `any` yet (#924)");
                         lw.terminate(Terminator::Unreachable);

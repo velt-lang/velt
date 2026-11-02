@@ -1,0 +1,10 @@
+// A record whose values are a union, put into an `any` and converted back: the same record
+// (#1219).
+function main() {
+  const r: Record<string, string | number> = { a: 1, b: "x" };
+  const u: any = r;
+  const back = u as Record<string, string | number>;
+  console.log(back.a, back.b, back === r);
+}
+
+main();

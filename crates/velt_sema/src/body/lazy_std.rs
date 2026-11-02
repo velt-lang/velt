@@ -169,12 +169,14 @@ pub(crate) struct Lazy {
     /// function, decided when asked). What decides it for a function (its module, kind and
     /// owner) does not change during a check, and the passes ask about every definition.
     fn_deferred: Vec<Option<bool>>,
-    /// Has checked code of a non-std module an `any` (or another dynamic type) in it?
-    user_dynamic: bool,
     /// Has checked code of a non-std module a type holding a record with string keys in it?
     user_record: bool,
-    /// Has checked code an explicit conversion of an `any` to a type holding a record with
-    /// string keys (an `AnyTo`)?
+    /// Does checked code of a non-std module convert a value of a type parameter to or from an
+    /// `any` (`<T>(x: any): T`), which may be a record at run time?
+    generic_any: bool,
+    /// Does checked code convert an `any` to a type holding a record with string keys (an
+    /// `AnyTo`), or a non-std module put a value whose members, elements or values hold one
+    /// into an `any` (where a member written through the `any` converts to it)?
     record_conversion: bool,
     /// Have [`RECORD_HOOKS`] been reached?
     record_hooks: bool,
@@ -193,8 +195,8 @@ impl Lazy {
             subclasses: FxHashMap::default(),
             defaults_scanned: 0,
             fn_deferred: vec![],
-            user_dynamic: false,
             user_record: false,
+            generic_any: false,
             record_conversion: false,
             record_hooks: false,
         }
@@ -394,6 +396,7 @@ pub(crate) fn reach(cx: &mut Ctx) {
             };
             let user = !cx.modules[module].is_std;
             let first_type = sc.types.len();
+            let (first_conv, first_into) = (sc.conversions.len(), sc.into_any.len());
             match (&mut cx.defs[i], &mut cx.info[i]) {
                 (Some(hir::Def::Fn(f)), info) => {
                     if let (true, DefInfo::Fn(fi)) = (deferred_fn, info) {
@@ -413,15 +416,16 @@ pub(crate) fn reach(cx: &mut Ctx) {
                 }
                 _ => {}
             }
-            if user && !cx.lazy.user_dynamic {
-                let mut seen = FxHashSet::default();
-                cx.lazy.user_dynamic =
-                    (sc.types[first_type..].iter()).any(|&t| holds_dynamic(cx, t, &mut seen));
-            }
-            if user && !cx.lazy.user_record {
-                let mut seen = FxHashSet::default();
-                cx.lazy.user_record =
-                    (sc.types[first_type..].iter()).any(|&t| holds_string_record(cx, t, &mut seen));
+            // Only a non-std module's values put into an `any` count (std's own code puts its
+            // records into `any` values in every program).
+            let into: Vec<(TyId, TyId)> = sc.into_any.drain(first_into..).collect();
+            if user && !cx.lazy.record_hooks {
+                note_user_conversions(
+                    cx,
+                    &sc.types[first_type..],
+                    &sc.conversions[first_conv..],
+                    &into,
+                );
             }
         }
         for t in std::mem::take(&mut sc.conversions) {
@@ -508,12 +512,50 @@ fn used_types(cx: &mut Ctx, mut todo: Vec<TyId>, found: &mut Vec<DefId>) {
 }
 
 /// Does the program need [`RECORD_HOOKS`]: an explicit conversion of an `any` to a type holding
-/// a record with string keys, or, for the conversions lowering's glue makes (a member written
-/// through `any`, an object converted to a class), a non-std module handling both an `any` and
-/// a type holding such a record? A program that converts nothing to a record, or whose own code
-/// has no `any` or no record (std's code has many), does not check them.
+/// a record with string keys; for the conversions lowering's glue makes (a member written
+/// through `any`), a non-std module putting a value whose members, elements or values hold such
+/// a record into an `any`; or a non-std module with such a record converting a value of a type
+/// parameter to or from an `any`? A program that converts nothing to a record does not check
+/// them, whatever `any` values and records it has.
 fn record_hooks_needed(cx: &Ctx) -> bool {
-    cx.lazy.record_conversion || (cx.lazy.user_dynamic && cx.lazy.user_record)
+    cx.lazy.record_conversion || (cx.lazy.generic_any && cx.lazy.user_record)
+}
+
+/// What one definition of a non-std module tells [`record_hooks_needed`]: the types in its
+/// code, its `AnyTo` targets and the `(value, any)` types of its `ToDyn`s.
+fn note_user_conversions(cx: &mut Ctx, types: &[TyId], to: &[TyId], into: &[(TyId, TyId)]) {
+    if !cx.lazy.user_record {
+        let mut seen = FxHashSet::default();
+        cx.lazy.user_record = types.iter().any(|&t| holds_string_record(cx, t, &mut seen));
+    }
+    let held: Vec<TyId> = (into.iter())
+        .filter(|(_, d)| cx.dynamic(*d).is_some())
+        .map(|(v, _)| *v)
+        .collect();
+    if !cx.lazy.generic_any {
+        cx.lazy.generic_any = to.iter().chain(&held).any(|&t| has_param(cx, t));
+    }
+    if !cx.lazy.record_conversion {
+        cx.lazy.record_conversion = held.iter().any(|&t| holds_record_inside(cx, t));
+    }
+}
+
+/// Does a value of type `t` held in an `any` have a member, element or value of a type holding a
+/// record with string keys, which a write through the `any` converts to? (A record of numbers
+/// put into an `any` does not.)
+fn holds_record_inside(cx: &Ctx, t: TyId) -> bool {
+    let mut seen = FxHashSet::default();
+    match cx.record_type_args(t) {
+        Some((k, v)) if k == cx.ty.str_ => holds_string_record(cx, v, &mut seen),
+        _ => holds_string_record(cx, t, &mut seen),
+    }
+}
+
+/// Does `t` mention a type parameter?
+fn has_param(cx: &Ctx, t: TyId) -> bool {
+    let kind = cx.ty.kind(t);
+    matches!(kind, TyKind::Param(_))
+        || (crate::types::children(kind).into_iter()).any(|c| has_param(cx, c))
 }
 
 /// Does `t` hold a record with string keys: itself, a part of it, or a field of a class or struct
@@ -536,15 +578,6 @@ fn holds_string_record(cx: &Ctx, t: TyId, seen: &mut FxHashSet<TyId>) -> bool {
         }
     }
     (crate::types::children(&kind).into_iter()).any(|c| holds_string_record(cx, c, seen))
-}
-
-/// Is `t`, or a part of it, `any` or another dynamic type?
-fn holds_dynamic(cx: &Ctx, t: TyId, seen: &mut FxHashSet<TyId>) -> bool {
-    if !seen.insert(t) {
-        return false;
-    }
-    cx.dynamic(t).is_some()
-        || (crate::types::children(cx.ty.kind(t)).into_iter()).any(|c| holds_dynamic(cx, c, seen))
 }
 
 /// The field defaults and redefined initializers of class or struct `a`.
@@ -652,6 +685,8 @@ struct Scan {
     types: Vec<TyId>,
     /// The types its explicit conversions of an `any` give (`AnyTo`).
     conversions: Vec<TyId>,
+    /// The `(value, interface)` types of its conversions to an interface value (`ToDyn`).
+    into_any: Vec<(TyId, TyId)>,
 }
 
 /// The definitions and types `e` refers to, into `sc` (`visit` walks mutable HIR; nothing is
@@ -681,6 +716,7 @@ fn refs_of(e: &hir::Expr, sc: &mut Scan) {
             callee: Callee::Intrinsic(hir::Intrinsic::AnyTo | hir::Intrinsic::AnyToExact),
             ..
         } => sc.conversions.push(e.ty),
+        E::ToDyn { expr, .. } => sc.into_any.push((expr.ty, e.ty)),
         E::Call {
             callee: Callee::Dyn {
                 method_type_args, ..

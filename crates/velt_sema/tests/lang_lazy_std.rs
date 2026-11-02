@@ -399,12 +399,25 @@ fn the_record_hooks_are_checked_only_for_a_program_that_may_convert_to_a_record(
     for h in RECORD_HOOKS {
         assert!(names.contains(&h.to_string()), "{h} is checked: {names:?}");
     }
+    // A record and an `any` that has nothing to do with it, and a record of numbers put into
+    // an `any`: still nothing converts to a record.
+    let p = ok_src(&format!(
+        "{load}function main() {{\n  const r: Record<string, number> = {{ a: 1 }};\n  const x: any = 5;\n  const y: any = r;\n  console.log(r.a, x, y);\n}}\n"
+    ));
+    let names = unchecked(&p);
+    for h in RECORD_HOOKS {
+        assert!(
+            names.contains(&h.to_string()),
+            "{h} is checked with an unrelated any"
+        );
+    }
     // `any` converted to a record, explicitly; through a member written through `any` (the
     // glue converts it to the field's type); to an object type holding a record.
     for body in [
         "const x: any = { a: 1 };\n  const r = x as Record<string, any>;\n  console.log(r.a);",
         "const n: { props: Record<string, any> } = { props: {} };\n  const h: any = n;\n  h.props = { id: 1 };\n  console.log(n.props.id);",
         "const x: any = { props: { a: 1 } };\n  const n = x as { props: Record<string, number> };\n  console.log(n.props.a);",
+        "const n = conv<Record<string, number>>({ a: 1 });\n  console.log(n.a);\n}\nfunction conv<T>(x: any): T {\n  return x;",
     ] {
         let p = ok_src(&format!("{load}function main() {{\n  {body}\n}}\n"));
         let names = unchecked(&p);
