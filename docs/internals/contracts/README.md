@@ -187,7 +187,8 @@ Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exi
   (`velt_codegen_cl` `function/slots`): a local whose address a call receives is live up to the
   call, or up to the last use of a `Ptr` the call returns.
 - A function's out-pointer (its last param, which lowering names `ret.out`) points to memory
-  the caller has not initialized: the callee writes its result there before it reads it.
+  the caller has not initialized: the callee writes its whole result there before it reads it,
+  so a call that passes `&x` there writes all of `x` (lowering passes a local of the result's type).
 
 ## Cold functions (additive VIR extension)
 - `vir::Function::cold: bool` — no call of the function returns normally: its declared result

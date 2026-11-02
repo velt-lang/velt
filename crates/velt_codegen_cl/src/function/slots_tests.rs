@@ -552,3 +552,57 @@ fn liveness_work_is_bounded_in_a_long_loop() {
         "{visits} block visits for {n} results in a loop"
     );
 }
+
+#[test]
+fn a_local_whose_walk_hits_the_budget_keeps_a_slot_of_its_own() {
+    // bb0: a = …; goto head — head: read a — then a chain of more than WALK_BUDGET blocks with
+    // u = …; read u in its middle, and a branch back to head. a is live all around the loop,
+    // so its walk stops at the budget: it must still overlap u, and share its slot with no
+    // other local (not even the unaccessed z).
+    let mut fb = FuncBuilder::internal("f", &[], Ty::Unit);
+    let sum = fb.local(Ty::U64);
+    let cond = fb.local(Ty::Bool);
+    let a = fb.local(S);
+    let u = fb.local(S);
+    let z = fb.local(S);
+    let b0 = fb.block();
+    let head = fb.block();
+    fb.assign(b0, a, str_value());
+    fb.assign(
+        b0,
+        cond,
+        Rvalue::Use(Operand::Const(Const::Bool(true), Ty::Bool)),
+    );
+    fb.term(b0, Terminator::Goto(head));
+    fb.assign(head, sum, Rvalue::Use(field(a, 0)));
+    let n = WALK_BUDGET as usize + 100;
+    let mut b = head;
+    for i in 0..n {
+        let next = fb.block();
+        if i == n / 2 {
+            fb.assign(next, u, str_value());
+            fb.assign(next, sum, Rvalue::Use(field(u, 0)));
+        }
+        fb.term(b, Terminator::Goto(next));
+        b = next;
+    }
+    let exit = fb.block();
+    fb.term(
+        b,
+        Terminator::Branch {
+            cond: copy_local(cond),
+            then: head,
+            els: exit,
+        },
+    );
+    ret(exit, &mut fb);
+    let f = fb.finish();
+    let (slots, _) = slots_of(&f, &memory(&f));
+    let own = slots[a.0 as usize];
+    assert!(own.is_some());
+    assert_ne!(own, slots[u.0 as usize], "a overlaps u");
+    for (l, s) in slots.iter().enumerate() {
+        assert!(l == a.0 as usize || *s != own, "local {l} shares a's slot");
+    }
+    assert!(slots[z.0 as usize].is_some());
+}
