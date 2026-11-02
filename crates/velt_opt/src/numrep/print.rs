@@ -4,8 +4,11 @@
 //! digits, so they become the integer formatters (`…_i64`) of `x as i64`: no conversion to
 //! `f64` and no test in the runtime once `x` is an integer. `console.log` prints `-0` as `-0`,
 //! so there `x` must not be `-0` either (`` `${-0}` `` is `0`, which the integer prints).
+//! std's own formatters in Velt pair up the same way: a call of the hook `numberText` or
+//! `numberPush` (std/lang/hooks/number.vlt) becomes one of `intText` or `intPush`.
 
-use velt_vir::vir::{Callee, ExternFn, ExternId, Function, Local, LocalDecl, Operand, Place};
+use velt_vir::vir::Place;
+use velt_vir::vir::{Callee, ExternFn, ExternId, FuncId, Function, Local, LocalDecl, Operand};
 use velt_vir::vir::{Rvalue, Stmt, Terminator, Ty};
 
 use super::fact::{Fact, TWO_53};
@@ -51,45 +54,93 @@ pub(crate) fn declare(externs: &mut Vec<ExternFn>) {
     }
 }
 
-/// The formatters of `externs`: (float one, integer one, prints `-0`).
-pub(super) fn pairs(externs: &[ExternFn]) -> Vec<(ExternId, ExternId, bool)> {
+/// The float formatters' hooks and their integer twins: (float one, integer one), each taking
+/// the number where the externs above take it.
+const HOOK_PAIRS: [(&str, &str); 2] = [
+    (
+        velt_common::std_hook!(number_push),
+        velt_common::std_hook!(int_push),
+    ),
+    (
+        velt_common::std_hook!(number_text),
+        velt_common::std_hook!(int_text),
+    ),
+];
+
+/// The formatters of `externs` and `funcs`: (float one, integer one, prints `-0`, the index of
+/// the number among the arguments).
+pub(super) fn pairs(
+    externs: &[ExternFn],
+    funcs: &[Function],
+) -> Vec<(Callee, Callee, bool, usize)> {
     let id = |s: &str| {
         externs
             .iter()
             .position(|e| e.symbol == s)
             .map(|i| ExternId(i as u32))
     };
-    PAIRS
+    let mut out: Vec<_> = PAIRS
         .iter()
-        .filter_map(|(f, i, neg_zero, _)| Some((id(f)?, id(i)?, *neg_zero)))
-        .collect()
+        .filter_map(|(f, i, neg_zero, p)| {
+            let at = usize::from(p[0] != Ty::I64);
+            Some((
+                Callee::Extern(id(f)?),
+                Callee::Extern(id(i)?),
+                *neg_zero,
+                at,
+            ))
+        })
+        .collect();
+    // A hook has one function per lock mode (`_L…` after its symbol); each pairs with the
+    // integer hook of its mode.
+    for (float, int) in HOOK_PAIRS {
+        let (fb, ib) = (
+            velt_vir::mangle::mangle(float),
+            velt_vir::mangle::mangle(int),
+        );
+        for (fi, f) in funcs.iter().enumerate() {
+            let Some(rest) = f.symbol.strip_prefix(fb.as_str()) else {
+                continue;
+            };
+            if !(rest.is_empty() || rest.starts_with("_L")) {
+                continue;
+            }
+            let twin = format!("{ib}{rest}");
+            if let Some(ii) = funcs.iter().position(|g| g.symbol == twin) {
+                let at = usize::from(float == HOOK_PAIRS[0].0);
+                out.push((
+                    Callee::Func(FuncId(fi as u32)),
+                    Callee::Func(FuncId(ii as u32)),
+                    false,
+                    at,
+                ));
+            }
+        }
+    }
+    out
 }
 
-/// The number a call of the float formatter `id` prints (`None` for other callees).
-pub(super) fn number<'a>(env: &Env, id: ExternId, args: &'a [Operand]) -> Option<&'a Operand> {
-    let &(_, int, _) = env.formatters.iter().find(|p| p.0 == id)?;
-    args.get(number_arg(env, int))
+/// The number a call of the float formatter `callee` prints (`None` for other callees).
+pub(super) fn number<'a>(env: &Env, callee: &Callee, args: &'a [Operand]) -> Option<&'a Operand> {
+    let (.., at) = env.formatters.iter().find(|p| p.0 == *callee)?;
+    args.get(*at)
 }
 
 /// Block `bi` ends in a float formatter call whose number `x` (with fact `f`) prints as an
 /// integer: call the integer formatter with `x as i64` instead. Returns whether it did.
 pub(super) fn as_integer(env: &Env, func: &mut Function, bi: usize, f: Fact) -> bool {
-    let Terminator::Call {
-        callee: Callee::Extern(id),
-        args,
-        ..
-    } = &func.blocks[bi].term
+    let Terminator::Call { callee, args, .. } = &func.blocks[bi].term else {
+        return false;
+    };
+    let Some((_, int, prints_neg_zero, pos)) = env.formatters.iter().find(|p| p.0 == *callee)
     else {
         return false;
     };
-    let Some(&(_, int, prints_neg_zero)) = env.formatters.iter().find(|p| p.0 == *id) else {
-        return false;
-    };
     let whole = f.integral && !f.nan && f.lo > -TWO_53 && f.hi < TWO_53;
-    if !whole || (prints_neg_zero && f.neg_zero) || args.len() != 2 {
+    if !whole || (*prints_neg_zero && f.neg_zero) || args.len() != 2 {
         return false;
     }
-    let pos = number_arg(env, int);
+    let pos = *pos;
     let x = args[pos].clone();
     func.locals.push(LocalDecl::new(Ty::I64, None));
     let t = Local(func.locals.len() as u32 - 1);
@@ -101,16 +152,8 @@ pub(super) fn as_integer(env: &Env, func: &mut Function, bi: usize, f: Fact) -> 
         at,
     );
     if let Terminator::Call { callee, args, .. } = &mut func.blocks[bi].term {
-        *callee = Callee::Extern(int);
+        *callee = int.clone();
         args[pos] = Operand::Copy(Place::local(t));
     }
     true
-}
-
-/// The index of the number among the arguments of the integer formatter `int`.
-fn number_arg(env: &Env, int: ExternId) -> usize {
-    let first_is_number = PAIRS
-        .iter()
-        .any(|(_, i, _, p)| *i == env.symbol(int) && p[0] == Ty::I64);
-    usize::from(!first_is_number)
 }

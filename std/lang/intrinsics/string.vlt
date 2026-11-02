@@ -1,6 +1,8 @@
 // velt/lang/intrinsics (internal): a string's UTF-8 bytes, read where the string keeps them.
 // The public surface is velt/encoding's `utf8Length`, `utf8ByteAt` and `utf8Substring`.
 
+import type { Mut } from "./modes";
+
 /** The length of `s`'s UTF-8, which a string stores (no call). */
 export declare intrinsic function strByteLen(s: string): usize;
 
@@ -14,3 +16,31 @@ export declare intrinsic function strByteAt(s: string, i: u64): u8;
 
 /** The byte at `i`, or -1 when `i` is out of range; inline code, no call. */
 export declare intrinsic function strCharCodeAt(s: string, i: i64): i64;
+
+/**
+ * The ASCII string of `len` bytes (at most 23) held in three words, byte `i` in bits
+ * `8 * (i % 8)` of word `i / 8`; every byte past `len` must be 0. No call and no allocation:
+ * the string's inline form.
+ */
+export declare intrinsic function strAsciiWords(w0: u64, w1: u64, w2: u64, len: usize): string;
+
+/**
+ * Appends the first `len` bytes (at most 24, ASCII) of the three words, byte `i` in bits
+ * `8 * (i % 8)` of word `i / 8`, to the builder `buf` (a string the runtime's builder functions
+ * append to): inline stores when its buffer has room, a runtime call when it must grow. `buf`
+ * is `Mut`: a function that passes its own parameter here modifies it (no `readonly`).
+ */
+export declare intrinsic function strbufPushAsciiWords(
+  buf: Mut<string>,
+  w0: u64,
+  w1: u64,
+  w2: u64,
+  len: usize,
+): void;
+
+/**
+ * Appends the first `len` bytes (at most 8, ASCII) of the word `w`, byte `i` in bits `8 * i`, to
+ * the builder `buf`: as `strbufPushAsciiWords`, with less to do for a short text (a number below
+ * 10^4).
+ */
+export declare intrinsic function strbufPushAsciiWord(buf: Mut<string>, w: u64, len: usize): void;

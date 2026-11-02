@@ -95,11 +95,26 @@ impl FnCx<'_, '_> {
         if exp_elem.is_none() && !self.is_fn_elem(elem) {
             return self.mixed_array(elems, out, elem, span);
         }
+        // A table of number literals (std's powers of ten, a lookup table): each element is a
+        // literal of the element type, checked as one without the bookkeeping every other
+        // expression gets (temporaries, module constants taken over, std integers in user
+        // code), none of which a literal has. The editor's analysis takes the general path.
+        let literals = matches!(self.cx.ty.kind(elem), TyKind::Int(_) | TyKind::Float(_))
+            && !self.cx.recording();
         let mut hs = vec![];
         for (i, e) in elems.iter().enumerate() {
             let h = match out[i].take() {
                 Some(h) => self.coerce(h, elem),
-                None => self.expr_coerce(e, elem, Want::Move),
+                None => match &e.kind {
+                    ast::ExprKind::Lit(l @ (ast::Lit::Int { .. } | ast::Lit::Float { .. }))
+                        if literals =>
+                    {
+                        crate::check_work::add_expr_check();
+                        let h = self.lit(l, Some(elem), e.span, false);
+                        self.coerce(h, elem)
+                    }
+                    _ => self.expr_coerce(e, elem, Want::Move),
+                },
             };
             hs.push(h);
         }

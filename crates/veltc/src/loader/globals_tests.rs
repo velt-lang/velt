@@ -159,6 +159,29 @@ fn a_program_that_names_no_json_loads_no_json_modules() {
     assert!(json_modules(csv).contains(&"std/prelude/json/json".to_string()));
 }
 
+/// Std's number printing (velt/lang/number) is loaded for a program that may convert a number
+/// to text (std/prelude/global/number_text.vlt): a template with an expression, `String(…)`,
+/// `.toString(…)`, `+` with a string. Hello world, and a program that only logs numbers (the
+/// runtime prints those), parse none of it.
+#[test]
+fn a_program_that_prints_no_number_loads_no_number_printing() {
+    let printing = |main: &str| {
+        std_modules(main, &["std/lang/hooks/number_text", "std/lang/number/"])
+            .contains(&"std/lang/number/format".to_string())
+    };
+    assert!(!printing("console.log(\"hello, world\");\n"));
+    assert!(!printing("const n = 7;\nconsole.log(n, n + 1);\n"));
+    for main in [
+        "const n = 7;\nconsole.log(`n=${n}`);\n",
+        "const n = 7;\nconsole.log(String(n));\n",
+        "const n = 7;\nconsole.log(n.toString());\n",
+        "const n = 7;\nconsole.log(\"n=\" + n);\n",
+        "let s = \"\";\ns += `${1}`;\nconsole.log(s);\n",
+    ] {
+        assert!(printing(main), "{main}");
+    }
+}
+
 /// `expect`'s pattern matchers take a `Pattern` (std/text/regex/pattern), so a test file compiles the
 /// regex engine only when it has a regex (#1889).
 #[test]

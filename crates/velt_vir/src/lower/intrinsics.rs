@@ -127,6 +127,31 @@ impl FnLower<'_, '_> {
                 let count = self.expr(count);
                 self.str_load_u8x16(v, at, Some(count))
             }
+            (I::StrAsciiWords, [w0, w1, w2, len]) => {
+                let words = [self.expr(w0), self.expr(w1), self.expr(w2)];
+                let len = self.expr_as_u64(len);
+                self.str_ascii_words(words, len, ty)
+            }
+            (I::StrbufPushAsciiWord, [buf, w, len]) => {
+                let w = self.expr(w);
+                let len = self.expr_as_u64(len);
+                let v = self.projection_base(buf, BoxHold::No);
+                let p = self.operand_place(v, Ty::Agg(STR_AGG));
+                let bp = self.addr(p);
+                self.strbuf_push_ascii_word(bp, w, len);
+                unit()
+            }
+            (I::StrbufPushAsciiWords, [buf, w0, w1, w2, len]) => {
+                // The words first: `buf`'s place is taken last, so nothing runs between taking
+                // its address and the stores.
+                let words = [self.expr(w0), self.expr(w1), self.expr(w2)];
+                let len = self.expr_as_u64(len);
+                let v = self.projection_base(buf, BoxHold::No);
+                let p = self.operand_place(v, Ty::Agg(STR_AGG));
+                let bp = self.addr(p);
+                self.strbuf_push_ascii_words(bp, words, len);
+                unit()
+            }
             (I::StrCharCodeAt, [s, i]) => {
                 let hold = match self.may_write(i) {
                     true => BoxHold::Yes,

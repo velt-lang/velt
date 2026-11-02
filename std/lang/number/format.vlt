@@ -1,0 +1,169 @@
+// velt/lang/number (internal): floats as text, in Velt (#1982): the shortest digits that read
+// back as the double (velt/lang/number/shortest), laid out as ECMAScript's Number::toString
+// lays them out in four words (velt/lang/number/text), at most 25 bytes
+// (`-0.0000012345678901234567`), stored as an inline string or appended as words. Out of line
+// (`noInline()`), and checked only in programs that convert a value that may hold a float to
+// text (velt_common `std_hooks::ON_DEMAND`).
+
+import { noInline, strAsciiWords, strbufPushAsciiWords } from "velt/lang/intrinsics";
+import { digitCount, digits8, intWords } from "velt/lang/number/integer";
+import { shortest } from "velt/lang/number/shortest";
+import {
+  between,
+  DOT,
+  insert,
+  MINUS,
+  or,
+  placed,
+  shift,
+  Text,
+  ZEROS,
+  lowBytes,
+} from "velt/lang/number/text";
+
+/** `String(x)` of a finite `x` that is not 0: its text and length (at most 25 bytes). */
+struct FloatText {
+  t: Text;
+  len: i64;
+}
+
+function floatText(x: f64): FloatText {
+  const neg = x < 0;
+  const sh = shortest(neg ? -x : x);
+  // The digits without their trailing zeros (at most 17 digits, so at most 16 zeros).
+  let m = sh.f;
+  let e = sh.e;
+  if (m % 10 == 0) {
+    // Most shortest digits end in another digit; the zeros of the rest, sixteen, eight, four,
+    // two, then one at a time.
+    if (m % 10000000000000000 == 0) {
+      m = m / 10000000000000000;
+      e += 16;
+    }
+    if (m % 100000000 == 0) {
+      m = m / 100000000;
+      e += 8;
+    }
+    if (m % 10000 == 0) {
+      m = m / 10000;
+      e += 4;
+    }
+    if (m % 100 == 0) {
+      m = m / 100;
+      e += 2;
+    }
+    if (m % 10 == 0) {
+      m = m / 10;
+      e += 1;
+    }
+  }
+  const k = digitCount(m) as i64;
+  // The value is 0.d1..dk * 10^n (ECMAScript's Number::toString names).
+  const n = k + e;
+  const d = intWords(m, false);
+  let t = Text { w0: d.w0, w1: d.w1, w2: d.w2, w3: 0 };
+  let len = k;
+  if (k <= n && n <= 21) {
+    // An integer: the digits, then zeros.
+    t = or(t, between(t, k, n, ZEROS));
+    len = n;
+  } else if (0 < n && n <= 21) {
+    // A point inside the digits.
+    t = insert(t, n, DOT);
+    len = k + 1;
+  } else if (-6 < n && n <= 0) {
+    // `0.`, then -n zeros, then the digits.
+    const p = 2 - n;
+    const head = (ZEROS & lowBytes(p)) ^ ((0x30 ^ DOT) << 8);
+    t = or(shift(t, p), Text { w0: head, w1: 0, w2: 0, w3: 0 });
+    len = k + p;
+  } else {
+    // `d.ddde+x`: the first digit, the others after a point, the exponent (up to three digits).
+    if (k > 1) {
+      t = insert(t, 1, DOT);
+      len = k + 1;
+    }
+    const ex = n - 1;
+    const a = ex < 0 ? -ex : ex;
+    const nd: i64 = a >= 100 ? 3 : a >= 10 ? 2 : 1;
+    const digits = digits8(a as u64) >> ((8 * (8 - nd)) as u64);
+    const sign: u64 = ex < 0 ? 0x2d : 0x2b;
+    t = or(t, placed(0x65 | (sign << 8) | (digits << 16), len));
+    len += 2 + nd;
+  }
+  if (neg) {
+    t = or(shift(t, 1), Text { w0: MINUS, w1: 0, w2: 0, w3: 0 });
+    len++;
+  }
+  return FloatText { t, len };
+}
+
+/**
+ * `String(x)` of a float that is not a whole number below 2^53 (those are `i64Text`'s). Kept
+ * out of its callers: a copy at every `${x}` would cost more build time than the call costs.
+ */
+export function f64Text(x: f64): string {
+  noInline();
+  if (x != x) {
+    return "NaN";
+  }
+  if (x == Infinity) {
+    return "Infinity";
+  }
+  if (x == -Infinity) {
+    return "-Infinity";
+  }
+  const f = floatText(x);
+  const t = f.t;
+  if (f.len <= 23) {
+    return strAsciiWords(t.w0, t.w1, t.w2, f.len as usize);
+  }
+  // 24 or 25 bytes: appended to an empty string, which makes a heap string of its own.
+  let s = "";
+  const w0 = t.w0;
+  const w1 = t.w1;
+  const w2 = t.w2;
+  const w3 = t.w3;
+  const rest = (f.len - 24) as usize;
+  strbufPushAsciiWords(s, w0, w1, w2, 24);
+  strbufPushAsciiWords(s, w3, 0, 0, rest);
+  return s;
+}
+
+/**
+ * Appends `String(x)` of a float that is not a whole number below 2^53 to the builder `buf`. Out
+ * of its callers, as `f64Text`.
+ */
+export function pushF64(buf: string, x: f64): void {
+  noInline();
+  if (x != x) {
+    strbufPushAsciiWords(buf, 0x4e614e, 0, 0, 3);
+    return;
+  }
+  if (x == Infinity || x == -Infinity) {
+    // `Infinity`, after a minus for -Infinity.
+    const inf: u64 = 0x7974696e69666e49;
+    if (x > 0) {
+      strbufPushAsciiWords(buf, inf, 0, 0, 8);
+    } else {
+      const w0 = (inf << 8) | MINUS;
+      const w1 = inf >> 56;
+      strbufPushAsciiWords(buf, w0, w1, 0, 9);
+    }
+    return;
+  }
+  const f = floatText(x);
+  const t = f.t;
+  const w0 = t.w0;
+  const w1 = t.w1;
+  const w2 = t.w2;
+  if (f.len <= 24) {
+    const len = f.len as usize;
+    strbufPushAsciiWords(buf, w0, w1, w2, len);
+    return;
+  }
+  const w3 = t.w3;
+  const rest = (f.len - 24) as usize;
+  strbufPushAsciiWords(buf, w0, w1, w2, 24);
+  strbufPushAsciiWords(buf, w3, 0, 0, rest);
+}

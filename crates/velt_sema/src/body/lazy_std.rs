@@ -119,7 +119,8 @@ pub(crate) const HELPER_NAMES: &[&str] = &[
 /// of a value held as `any` (`any<Type>_<method>`, `velt_vir` `builtin_methods`)?
 pub(crate) fn is_helper(qualified: &str) -> bool {
     let name = qualified.rsplit(['.', ':']).next().unwrap_or(qualified);
-    velt_common::std_hooks::is_lowered(qualified)
+    (velt_common::std_hooks::is_lowered(qualified)
+        && !velt_common::std_hooks::is_on_demand(qualified))
         || HELPER_NAMES.contains(&name)
         || name
             .strip_prefix("any")
@@ -180,6 +181,11 @@ pub(crate) struct Lazy {
     record_conversion: bool,
     /// Have [`RECORD_HOOKS`] been reached?
     record_hooks: bool,
+    /// The program's code converts a number (any value but a string or a boolean) to text: the
+    /// integer printing hooks are reached (`velt_common::std_hooks::ON_DEMAND_TEXT`).
+    number_text: bool,
+    /// It converts a value that may hold a float: the float hooks are (`ON_DEMAND_FLOAT`).
+    float_text: bool,
 }
 
 impl Lazy {
@@ -199,6 +205,8 @@ impl Lazy {
             generic_any: false,
             record_conversion: false,
             record_hooks: false,
+            number_text: false,
+            float_text: false,
         }
     }
 
@@ -398,6 +406,11 @@ pub(crate) fn reach(cx: &mut Ctx) {
             let user = !cx.modules[module].is_std;
             let first_type = sc.types.len();
             let (first_conv, first_into) = (sc.conversions.len(), sc.into_any.len());
+            // Text conversions count only in the program's own modules. Std code is checked
+            // whether or not the program uses it (the prelude's methods, and what they call), so
+            // its conversions would make every program check the on-demand hooks; where lowering
+            // builds such std code and needs a hook that stayed unchecked, it calls the runtime.
+            let texts_before = sc.texts.len();
             match (&mut cx.defs[i], &mut cx.info[i]) {
                 (Some(hir::Def::Fn(f)), info) => {
                     if let (true, DefInfo::Fn(fi)) = (deferred_fn, info) {
@@ -428,6 +441,9 @@ pub(crate) fn reach(cx: &mut Ctx) {
                     &into,
                 );
             }
+            if !user {
+                sc.texts.truncate(texts_before);
+            }
         }
         for t in std::mem::take(&mut sc.conversions) {
             if !cx.lazy.record_conversion {
@@ -451,6 +467,24 @@ pub(crate) fn reach(cx: &mut Ctx) {
             cx.note_dyn_members();
         }
         impl_methods(cx, &mut sc.found);
+        let texts = std::mem::take(&mut sc.texts);
+        let number = !cx.lazy.number_text && texts.iter().any(|&t| is_number_text(cx, t));
+        let float = !cx.lazy.float_text && texts.iter().any(|&t| may_hold_float(cx, t));
+        for (now, names) in [
+            (number, velt_common::std_hooks::ON_DEMAND_TEXT),
+            (float, velt_common::std_hooks::ON_DEMAND_FLOAT),
+        ] {
+            if !now {
+                continue;
+            }
+            for q in velt_common::std_hooks::on_demand(names) {
+                if let Some(crate::ctx::Item::Def(d)) = cx.std_def(&q) {
+                    sc.found.push(d);
+                }
+            }
+        }
+        cx.lazy.number_text |= number;
+        cx.lazy.float_text |= float;
         let mut checked = false;
         for d in std::mem::take(&mut sc.found) {
             if !deferred(cx, d) {
@@ -475,6 +509,32 @@ pub(crate) fn reach(cx: &mut Ctx) {
             break;
         }
     }
+}
+
+/// May the text of a value of type `t` need std's integer printing: is it anything but a
+/// string or a boolean?
+fn is_number_text(cx: &Ctx, t: TyId) -> bool {
+    !matches!(
+        cx.ty.kind(t),
+        TyKind::Bool
+            | TyKind::Str
+            | TyKind::Literal(hir::LitValue::Bool(_) | hir::LitValue::Str(_))
+    )
+}
+
+/// Can a value of type `t` hold a float, so that its text may need std's float printing? Only
+/// integers, booleans and strings are known not to; anything else (an object, an array, `any`,
+/// a type parameter) may, and is printed through glue that can reach a float.
+fn may_hold_float(cx: &Ctx, t: TyId) -> bool {
+    !matches!(
+        cx.ty.kind(t),
+        TyKind::Int(_)
+            | TyKind::Bool
+            | TyKind::Str
+            | TyKind::Literal(
+                hir::LitValue::Int(..) | hir::LitValue::Bool(_) | hir::LitValue::Str(_)
+            )
+    )
 }
 
 /// Record the types `todo` and their parts as met; each class or struct met for the first time
@@ -688,6 +748,8 @@ struct Scan {
     conversions: Vec<TyId>,
     /// The `(value, interface)` types of its conversions to an interface value (`ToDyn`).
     into_any: Vec<(TyId, TyId)>,
+    /// Types of the values it converts to text (`ToString`, `TemplateToString`).
+    texts: Vec<TyId>,
 }
 
 /// The definitions and types `e` refers to, into `sc` (`visit` walks mutable HIR; nothing is
@@ -718,6 +780,10 @@ fn refs_of(e: &hir::Expr, sc: &mut Scan) {
             ..
         } => sc.conversions.push(e.ty),
         E::ToDyn { expr, .. } => sc.into_any.push((expr.ty, e.ty)),
+        E::Call {
+            callee: Callee::Intrinsic(hir::Intrinsic::ToString | hir::Intrinsic::TemplateToString),
+            args,
+        } => sc.texts.extend(args.iter().map(|a| a.ty)),
         E::Call {
             callee: Callee::Dyn {
                 method_type_args, ..

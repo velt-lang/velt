@@ -1,0 +1,86 @@
+//! Numbers as text in std's Velt code (#1982): `tests/golden/std/number_format.vlt` checks that
+//! the output stays Node's; this checks the release build's shape: no call into the runtime's
+//! formatters, and the float path is one function marked `noInline()` (#1884) that every `${x}`
+//! calls instead of a copy at each site.
+
+use std::path::Path;
+
+use veltc::cli::Emit;
+use veltc::driver::{self, BuildOptions, Session};
+
+/// The release VIR of a golden program.
+fn release_vir(golden: &str) -> String {
+    let input = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/golden")
+        .join(golden);
+    let opts = BuildOptions {
+        input,
+        release: true,
+        emit: Emit::Vir,
+        ..Default::default()
+    };
+    let mut sess = Session::new();
+    match driver::compile(&mut sess, &opts) {
+        Ok(program) => program.to_string(),
+        Err(e) => panic!("{e:?}\n{}", sess.render_diagnostics()),
+    }
+}
+
+#[test]
+fn numbers_print_without_the_runtime_and_floats_through_one_function() {
+    let vir = release_vir("std/number_format.vlt");
+    // The bodies of the functions that may run often: the out-of-bounds report (`_Goob_…`
+    // glue, which prints the length and index) and cold functions are left as they are.
+    let mut hot = vec![];
+    let mut keep = false;
+    for line in vir.lines() {
+        if line.starts_with("fn#") {
+            keep = !line.contains(" cold") && !line.contains(" _Goob_");
+        } else if keep {
+            hot.push(line);
+        }
+    }
+    for runtime in [
+        "velt_rt_str_from_i64",
+        "velt_rt_str_from_u64",
+        "velt_rt_str_from_f64",
+        "velt_rt_strbuf_push_i64",
+        "velt_rt_strbuf_push_u64",
+        "velt_rt_strbuf_push_f64",
+    ] {
+        assert!(
+            !hot.iter().any(|l| l.contains(runtime)),
+            "a call of `{runtime}`\n{vir}"
+        );
+    }
+    let float_fns: Vec<&str> = vir
+        .lines()
+        .filter(|l| l.starts_with("fn#") && (l.contains("N7f64Text") || l.contains("N7pushF64")))
+        .collect();
+    assert!(!float_fns.is_empty(), "no float formatter\n{vir}");
+    for header in float_fns {
+        assert!(header.contains(" noinline"), "inlinable: {header}");
+    }
+}
+
+#[test]
+fn a_builder_param_that_is_appended_to_is_not_readonly() {
+    // `pushF64(buf, x)` appends to `buf` through `strbufPushAsciiWords`, whose `buf` is
+    // `Mut<string>`: the parameter is written, so it must not be `readonly` (LLVM would let the
+    // caller keep the builder's length from before the call) or `frozen`.
+    let vir = release_vir("std/number_format.vlt");
+    let mut lines = vir.lines();
+    let mut seen = 0;
+    while let Some(line) = lines.next() {
+        if line.starts_with("fn#") && line.contains("N7pushF64(") {
+            let param = lines.next().unwrap_or_default();
+            assert!(param.contains("// buf"), "{line}\n{param}");
+            assert!(
+                !param.contains("readonly") && !param.contains("frozen"),
+                "{line}\n{param}"
+            );
+            seen += 1;
+        }
+    }
+    assert!(seen > 0, "no pushF64\n{vir}");
+}

@@ -103,6 +103,28 @@ pub unsafe extern "C" fn velt_rt_strbuf_push_bytes(buf: *mut VeltStrBuf, ptr: *c
     }
 }
 
+/// Append the first `n` (at most 24) bytes of the words `w0`, `w1`, `w2`, ASCII text, byte `i` in
+/// bits `8 * (i % 8)` of word `i / 8`: the slow path of std's `strbufPushAsciiWords` (#1982),
+/// which takes the words by value so that the compiled caller needs no stack for them and can
+/// make this a tail call.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_strbuf_push_words(
+    buf: *mut VeltStrBuf,
+    w0: u64,
+    w1: u64,
+    w2: u64,
+    n: u64,
+) {
+    let mut bytes = [0u8; 24];
+    bytes[..8].copy_from_slice(&w0.to_le_bytes());
+    bytes[8..16].copy_from_slice(&w1.to_le_bytes());
+    bytes[16..].copy_from_slice(&w2.to_le_bytes());
+    let n = (n as usize).min(24);
+    if n > 0 {
+        push_ascii(buf, &bytes[..n]);
+    }
+}
+
 /// Append the first `len` bytes of the `u8[]` `bytes`: canonical WTF-8 text that Velt code
 /// built in a byte array (std/encoding/json/writer.vlt's escaped string literals). `units` is their
 /// UTF-16 length: equal to `len` for ASCII text, any other count for text with no lone
@@ -353,6 +375,25 @@ mod tests {
         unsafe { s.release() };
         assert!(b.is_empty() && b.is_static());
         text
+    }
+
+    #[test]
+    fn push_words_appends_the_first_n_bytes_of_three_words() {
+        // Words as std builds them: byte `i` in bits `8 * (i % 8)` of word `i / 8`.
+        let text = b"abcdefghijklmnopqrstuvwx";
+        let word = |i: usize| u64::from_le_bytes(text[i * 8..i * 8 + 8].try_into().unwrap());
+        for n in [0u64, 1, 7, 8, 9, 23, 24] {
+            for cap in [0u64, 40] {
+                // Inline (cap 0) and heap builders, after some text already there.
+                let mut b = new_buf(cap);
+                unsafe {
+                    velt_rt_strbuf_push_bytes(&mut b, b"id=".as_ptr(), 3 | (3 << 32));
+                    velt_rt_strbuf_push_words(&mut b, word(0), word(1), word(2), n);
+                }
+                let want = format!("id={}", std::str::from_utf8(&text[..n as usize]).unwrap());
+                assert_eq!(finish(b), want, "n {n}, cap {cap}");
+            }
+        }
     }
 
     #[test]

@@ -53,7 +53,11 @@ pub(super) fn global_modules(std_root: &Path) -> Vec<Global> {
             let src = vpm::probe::read_to_string(&file).ok()?;
             let mut names = reexported_names(&src);
             if names.is_empty() {
-                let marked = [(THIS_FN_LINE, THIS_FN), (ASYNC_HOST_LINE, ASYNC_HOST)];
+                let marked = [
+                    (THIS_FN_LINE, THIS_FN),
+                    (ASYNC_HOST_LINE, ASYNC_HOST),
+                    (NUMBER_TEXT_LINE, NUMBER_TEXT),
+                ];
                 names.extend(
                     marked
                         .iter()
@@ -148,6 +152,62 @@ pub(super) fn names_global(src: &str, module: &ast::Module, name: &str) -> bool 
         || (name == "RegExp" && src.contains('/') && has_regex(module))
         || (name == THIS_FN && mentions(src, "this") && has_this_fn(module))
         || (name == ASYNC_HOST && mentions(src, "host") && has_async_host(module))
+        || (name == NUMBER_TEXT && may_print(src) && has_text_conversion(module))
+}
+
+/// The trigger of the global holding the hooks for a number in a template or `String()`
+/// (std/prelude/global/number_text.vlt: std's number printing). No source can mention it as a
+/// word.
+const NUMBER_TEXT: &str = "<number converted to text>";
+
+/// The line that marks that global ([`NUMBER_TEXT`]).
+const NUMBER_TEXT_LINE: &str = "// load for: a number converted to text";
+
+/// Whether source `src` has what [`has_text_conversion`] looks for, as text: a cheap test first.
+fn may_print(src: &str) -> bool {
+    src.contains("${") || src.contains("String") || src.contains('+')
+}
+
+/// Whether `module` may convert a number to text the way lowering prints one through std: a
+/// template literal with an expression, `String(…)`, a `.toString(…)` call, or `+` (or `+=`)
+/// with a string literal or a template on either side. The types are not known yet: this only
+/// keeps std's number printing out of programs that cannot use it (hello world). A conversion
+/// it misses is printed by the runtime, and sema checks the hooks only once the program's code
+/// really converts a number (`velt_sema` `lazy_std`).
+fn has_text_conversion(module: &ast::Module) -> bool {
+    struct Find(bool);
+    fn texty(e: &ast::Expr) -> bool {
+        matches!(
+            e.kind,
+            ast::ExprKind::Lit(ast::Lit::Str(_)) | ast::ExprKind::Template { .. }
+        )
+    }
+    impl<'a> Visit<'a> for Find {
+        fn expr(&mut self, e: &'a ast::Expr) {
+            self.0 |= match &e.kind {
+                ast::ExprKind::Template { exprs, .. } => !exprs.is_empty(),
+                ast::ExprKind::Call { callee, .. } => match &callee.kind {
+                    ast::ExprKind::Ident(id) => id.name == "String",
+                    ast::ExprKind::Member { prop, .. } => prop.name == "toString",
+                    _ => false,
+                },
+                ast::ExprKind::Binary {
+                    op: ast::BinaryOp::Add,
+                    lhs,
+                    rhs,
+                } => texty(lhs) || texty(rhs),
+                ast::ExprKind::Assign {
+                    op: Some(ast::BinaryOp::Add),
+                    value,
+                    ..
+                } => texty(value),
+                _ => false,
+            };
+        }
+    }
+    let mut find = Find(false);
+    visit::walk_module(module, &mut find);
+    find.0
 }
 
 /// The trigger of the global an async host function loads (std/prelude/global/host_async.vlt:

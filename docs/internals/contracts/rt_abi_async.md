@@ -881,6 +881,16 @@ and the text fits (`(w1 as u32) + n <= w2`), it stores the bytes after the text 
 does not check the buffer's count: that builder is fresh and no other code reaches it before
 `finish`. So the heap form's `w1`/`w2` layout is part of this contract.
 
+**Words appended inline (#1982).** std's intrinsic `strbufPushAsciiWords(buf, w0, w1, w2, len)`
+(numbers as text, std/lang/number) appends up to 24 ASCII bytes held in three words the same
+way, with room for all 24: when the builder is a plain heap string with
+`(w1 as u32) + 24 <= w2`, it copies the 24 bytes after the text and adds `len * 0x1_0000_0001`
+to `w1` (the bytes past the new end are spare capacity). An inline ASCII builder (byte 23 is
+`0x80 | n`, its bytes past `n` are 0) with `n + len <= 23` gets the words shifted `n` bytes on
+and OR'd into its own, and byte 23 becomes `0x80 | (n + len)`. Otherwise it calls
+`velt_rt_strbuf_push_words` with the words by value. Like the literal appends, it does not check
+the buffer's count, for the reason given there.
+
 **Invariant:** a count-1 buffer is appended to or adopted (and so possibly reallocated, and for
 an adoption its text moved within it) only while no borrowed static-form view into it is live.
 The only such views today are the JSON reader's borrowed keys (§12.3), which point into the
@@ -895,10 +905,11 @@ buffer grows. An adopted string's head must not lie in its buffer.
 | `velt_rt_strbuf_adopt` | `(VeltStr* part, const VeltStr* head, u64 cap, VeltStrBuf* out) -> u8` | a builder holding `head + *part` in `part`'s own buffer, grown to `cap` (clamped like `new`'s hint): 1 when `part` is the only reference to a heap buffer of its own (not a slice, literal or inline string) whose layout fits the result, and `head` has no lone surrogate; `*out` is then the builder and `*part` empty. Otherwise 0 and nothing changes. `head` must not lie in `part`'s buffer. Template literals use it for a long fresh part |
 | `velt_rt_strbuf_push_str` | `(VeltStrBuf* b, const VeltStr* s)` | `s` may be `b` itself or lie in its buffer |
 | `velt_rt_strbuf_push_bytes` | `(VeltStrBuf* b, const u8* p, u64 len)` | static text chunks of a template; `len == 0` ⇒ `p` unused. The low 32 bits of `len` are the byte count; the high 32 bits may carry the UTF-16 unit count (as a string's `w1`): equal to the byte count, the text is ASCII and is not scanned; 0 means unknown (counted) |
+| `velt_rt_strbuf_push_words` | `(VeltStrBuf* b, u64 w0, u64 w1, u64 w2, u64 n)` | the first `n` (at most 24) bytes of the three words, ASCII, byte `i` in bits `8 * (i % 8)` of word `i / 8`: the slow path of `strbufPushAsciiWords`, by value so the caller needs no stack for the words (#1982) |
 | `velt_rt_strbuf_push_u8s` | `(VeltStrBuf* b, const VeltBytes* bytes, u64 len, u64 units)` | the first `len` bytes of a `u8[]` (canonical WTF-8 Velt code built, e.g. std/encoding/json/writer.vlt); `units == len`: ASCII, not scanned; otherwise counted |
 | `velt_rt_bytes_put_f64` | `(VeltBytes* bytes, u64 at, f64 v) -> u64` | writes finite `v` as JS `String(v)` (`-0` is `0`) into the `u8[]`'s bytes from `at` and returns the position after it; needs 32 bytes of the array's length from `at`, else writes nothing and returns `at`. A writer that gathers text in a byte array (std/encoding/json/tape.vlt) prints a double there |
-| `velt_rt_strbuf_push_i64` / `_u64` | `(VeltStrBuf* b, i64 / u64 v)` | decimal |
-| `velt_rt_strbuf_push_f64` | `(VeltStrBuf* b, f64 v)` | JS `String(v)` (`-0` is `0`) |
+| `velt_rt_strbuf_push_i64` / `_u64` | `(VeltStrBuf* b, i64 / u64 v)` | decimal. Templates no longer call them for integers (std's `intPush`, words appended inline); `StringBuilder.appendInt`, the JSON writer and C-like enums still do |
+| `velt_rt_strbuf_push_f64` | `(VeltStrBuf* b, f64 v)` | JS `String(v)` (`-0` is `0`). Templates no longer call it (std's `numberPush`, in Velt); `StringBuilder.appendNumber`, the JSON writer and generated glue still do |
 | `velt_rt_strbuf_push_inspect_f64` | `(VeltStrBuf* b, f64 v)` | what `console.log` prints, as `velt_rt_write_f64` (`-0` is `-0`) [additive, #525] |
 | `velt_rt_strbuf_push_json_f64` | `(VeltStrBuf* b, f64 v)` | like `JSON.stringify`: JS format, `null` for NaN/±Infinity |
 | `velt_rt_strbuf_push_inspect_str` | `(VeltStrBuf* b, const VeltStr* s)` | a string as `console.log` shows it inside a container (node `util.inspect` quoting and escaping) |

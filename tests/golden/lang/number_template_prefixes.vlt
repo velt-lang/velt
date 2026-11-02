@@ -1,0 +1,503 @@
+// Integers in templates after literal prefixes of 0 to 23 bytes, ASCII and with a non-ASCII
+// letter (#1982): short templates build an inline string, and an integer of up to 8 bytes is
+// stored into it as one word, at the byte where its text ends. Every width and sign of i64, u64
+// and i32, alone, before a suffix and after another number. Each prefix length prints its number
+// and a hash of the strings it built. The expected output was printed by the runtime's formatter
+// (itoa, before #1982), against which the Velt one must agree byte for byte.
+
+function hash(h: i64, s: string): i64 {
+  let x = (h * 31 + s.length) % 1000000007;
+  for (let i = 0; i < s.length; i++) {
+    x = (x * 131 + s.charCodeAt(i)) % 1000000007;
+  }
+  return x;
+}
+
+function prefix0(h0: i64, a: i64, b: u64, c: i32): i64 {
+  let h = h0;
+  h = hash(h, `${a}`);
+  h = hash(h, `${a}z`);
+  h = hash(h, `${b}`);
+  h = hash(h, `${b}z`);
+  h = hash(h, `${c}`);
+  h = hash(h, `${c}z`);
+  h = hash(h, `${c}${c}`);
+  h = hash(h, `${c}-${a}`);
+  h = hash(h, `${a}${c}${b}`);
+  return h;
+}
+
+function prefix1(h0: i64, a: i64, b: u64, c: i32): i64 {
+  let h = h0;
+  h = hash(h, `a${a}`);
+  h = hash(h, `a${a}z`);
+  h = hash(h, `${a}`);
+  h = hash(h, `a${b}`);
+  h = hash(h, `a${b}z`);
+  h = hash(h, `${b}`);
+  h = hash(h, `a${c}`);
+  h = hash(h, `a${c}z`);
+  h = hash(h, `${c}`);
+  h = hash(h, `a${c}${c}`);
+  h = hash(h, `a${c}-${a}`);
+  h = hash(h, `a${a}${c}${b}`);
+  return h;
+}
+
+function prefix2(h0: i64, a: i64, b: u64, c: i32): i64 {
+  let h = h0;
+  h = hash(h, `ab${a}`);
+  h = hash(h, `ab${a}z`);
+  h = hash(h, `é${a}`);
+  h = hash(h, `ab${b}`);
+  h = hash(h, `ab${b}z`);
+  h = hash(h, `é${b}`);
+  h = hash(h, `ab${c}`);
+  h = hash(h, `ab${c}z`);
+  h = hash(h, `é${c}`);
+  h = hash(h, `ab${c}${c}`);
+  h = hash(h, `ab${c}-${a}`);
+  h = hash(h, `ab${a}${c}${b}`);
+  return h;
+}
+
+function prefix3(h0: i64, a: i64, b: u64, c: i32): i64 {
+  let h = h0;
+  h = hash(h, `abc${a}`);
+  h = hash(h, `abc${a}z`);
+  h = hash(h, `éa${a}`);
+  h = hash(h, `abc${b}`);
+  h = hash(h, `abc${b}z`);
+  h = hash(h, `éa${b}`);
+  h = hash(h, `abc${c}`);
+  h = hash(h, `abc${c}z`);
+  h = hash(h, `éa${c}`);
+  h = hash(h, `abc${c}${c}`);
+  h = hash(h, `abc${c}-${a}`);
+  h = hash(h, `abc${a}${c}${b}`);
+  return h;
+}
+
+function prefix4(h0: i64, a: i64, b: u64, c: i32): i64 {
+  let h = h0;
+  h = hash(h, `abcd${a}`);
+  h = hash(h, `abcd${a}z`);
+  h = hash(h, `éab${a}`);
+  h = hash(h, `abcd${b}`);
+  h = hash(h, `abcd${b}z`);
+  h = hash(h, `éab${b}`);
+  h = hash(h, `abcd${c}`);
+  h = hash(h, `abcd${c}z`);
+  h = hash(h, `éab${c}`);
+  h = hash(h, `abcd${c}${c}`);
+  h = hash(h, `abcd${c}-${a}`);
+  h = hash(h, `abcd${a}${c}${b}`);
+  return h;
+}
+
+function prefix5(h0: i64, a: i64, b: u64, c: i32): i64 {
+  let h = h0;
+  h = hash(h, `abcde${a}`);
+  h = hash(h, `abcde${a}z`);
+  h = hash(h, `éabc${a}`);
+  h = hash(h, `abcde${b}`);
+  h = hash(h, `abcde${b}z`);
+  h = hash(h, `éabc${b}`);
+  h = hash(h, `abcde${c}`);
+  h = hash(h, `abcde${c}z`);
+  h = hash(h, `éabc${c}`);
+  h = hash(h, `abcde${c}${c}`);
+  h = hash(h, `abcde${c}-${a}`);
+  h = hash(h, `abcde${a}${c}${b}`);
+  return h;
+}
+
+function prefix6(h0: i64, a: i64, b: u64, c: i32): i64 {
+  let h = h0;
+  h = hash(h, `abcdef${a}`);
+  h = hash(h, `abcdef${a}z`);
+  h = hash(h, `éabcd${a}`);
+  h = hash(h, `abcdef${b}`);
+  h = hash(h, `abcdef${b}z`);
+  h = hash(h, `éabcd${b}`);
+  h = hash(h, `abcdef${c}`);
+  h = hash(h, `abcdef${c}z`);
+  h = hash(h, `éabcd${c}`);
+  h = hash(h, `abcdef${c}${c}`);
+  h = hash(h, `abcdef${c}-${a}`);
+  h = hash(h, `abcdef${a}${c}${b}`);
+  return h;
+}
+
+function prefix7(h0: i64, a: i64, b: u64, c: i32): i64 {
+  let h = h0;
+  h = hash(h, `abcdefg${a}`);
+  h = hash(h, `abcdefg${a}z`);
+  h = hash(h, `éabcde${a}`);
+  h = hash(h, `abcdefg${b}`);
+  h = hash(h, `abcdefg${b}z`);
+  h = hash(h, `éabcde${b}`);
+  h = hash(h, `abcdefg${c}`);
+  h = hash(h, `abcdefg${c}z`);
+  h = hash(h, `éabcde${c}`);
+  h = hash(h, `abcdefg${c}${c}`);
+  h = hash(h, `abcdefg${c}-${a}`);
+  h = hash(h, `abcdefg${a}${c}${b}`);
+  return h;
+}
+
+function prefix8(h0: i64, a: i64, b: u64, c: i32): i64 {
+  let h = h0;
+  h = hash(h, `abcdefgh${a}`);
+  h = hash(h, `abcdefgh${a}z`);
+  h = hash(h, `éabcdef${a}`);
+  h = hash(h, `abcdefgh${b}`);
+  h = hash(h, `abcdefgh${b}z`);
+  h = hash(h, `éabcdef${b}`);
+  h = hash(h, `abcdefgh${c}`);
+  h = hash(h, `abcdefgh${c}z`);
+  h = hash(h, `éabcdef${c}`);
+  h = hash(h, `abcdefgh${c}${c}`);
+  h = hash(h, `abcdefgh${c}-${a}`);
+  h = hash(h, `abcdefgh${a}${c}${b}`);
+  return h;
+}
+
+function prefix9(h0: i64, a: i64, b: u64, c: i32): i64 {
+  let h = h0;
+  h = hash(h, `abcdefghi${a}`);
+  h = hash(h, `abcdefghi${a}z`);
+  h = hash(h, `éabcdefg${a}`);
+  h = hash(h, `abcdefghi${b}`);
+  h = hash(h, `abcdefghi${b}z`);
+  h = hash(h, `éabcdefg${b}`);
+  h = hash(h, `abcdefghi${c}`);
+  h = hash(h, `abcdefghi${c}z`);
+  h = hash(h, `éabcdefg${c}`);
+  h = hash(h, `abcdefghi${c}${c}`);
+  h = hash(h, `abcdefghi${c}-${a}`);
+  h = hash(h, `abcdefghi${a}${c}${b}`);
+  return h;
+}
+
+function prefix10(h0: i64, a: i64, b: u64, c: i32): i64 {
+  let h = h0;
+  h = hash(h, `abcdefghij${a}`);
+  h = hash(h, `abcdefghij${a}z`);
+  h = hash(h, `éabcdefgh${a}`);
+  h = hash(h, `abcdefghij${b}`);
+  h = hash(h, `abcdefghij${b}z`);
+  h = hash(h, `éabcdefgh${b}`);
+  h = hash(h, `abcdefghij${c}`);
+  h = hash(h, `abcdefghij${c}z`);
+  h = hash(h, `éabcdefgh${c}`);
+  h = hash(h, `abcdefghij${c}${c}`);
+  h = hash(h, `abcdefghij${c}-${a}`);
+  h = hash(h, `abcdefghij${a}${c}${b}`);
+  return h;
+}
+
+function prefix11(h0: i64, a: i64, b: u64, c: i32): i64 {
+  let h = h0;
+  h = hash(h, `abcdefghijk${a}`);
+  h = hash(h, `abcdefghijk${a}z`);
+  h = hash(h, `éabcdefghi${a}`);
+  h = hash(h, `abcdefghijk${b}`);
+  h = hash(h, `abcdefghijk${b}z`);
+  h = hash(h, `éabcdefghi${b}`);
+  h = hash(h, `abcdefghijk${c}`);
+  h = hash(h, `abcdefghijk${c}z`);
+  h = hash(h, `éabcdefghi${c}`);
+  h = hash(h, `abcdefghijk${c}${c}`);
+  h = hash(h, `abcdefghijk${c}-${a}`);
+  h = hash(h, `abcdefghijk${a}${c}${b}`);
+  return h;
+}
+
+function prefix12(h0: i64, a: i64, b: u64, c: i32): i64 {
+  let h = h0;
+  h = hash(h, `abcdefghijkl${a}`);
+  h = hash(h, `abcdefghijkl${a}z`);
+  h = hash(h, `éabcdefghij${a}`);
+  h = hash(h, `abcdefghijkl${b}`);
+  h = hash(h, `abcdefghijkl${b}z`);
+  h = hash(h, `éabcdefghij${b}`);
+  h = hash(h, `abcdefghijkl${c}`);
+  h = hash(h, `abcdefghijkl${c}z`);
+  h = hash(h, `éabcdefghij${c}`);
+  h = hash(h, `abcdefghijkl${c}${c}`);
+  h = hash(h, `abcdefghijkl${c}-${a}`);
+  h = hash(h, `abcdefghijkl${a}${c}${b}`);
+  return h;
+}
+
+function prefix13(h0: i64, a: i64, b: u64, c: i32): i64 {
+  let h = h0;
+  h = hash(h, `abcdefghijklm${a}`);
+  h = hash(h, `abcdefghijklm${a}z`);
+  h = hash(h, `éabcdefghijk${a}`);
+  h = hash(h, `abcdefghijklm${b}`);
+  h = hash(h, `abcdefghijklm${b}z`);
+  h = hash(h, `éabcdefghijk${b}`);
+  h = hash(h, `abcdefghijklm${c}`);
+  h = hash(h, `abcdefghijklm${c}z`);
+  h = hash(h, `éabcdefghijk${c}`);
+  h = hash(h, `abcdefghijklm${c}${c}`);
+  h = hash(h, `abcdefghijklm${c}-${a}`);
+  h = hash(h, `abcdefghijklm${a}${c}${b}`);
+  return h;
+}
+
+function prefix14(h0: i64, a: i64, b: u64, c: i32): i64 {
+  let h = h0;
+  h = hash(h, `abcdefghijklmn${a}`);
+  h = hash(h, `abcdefghijklmn${a}z`);
+  h = hash(h, `éabcdefghijkl${a}`);
+  h = hash(h, `abcdefghijklmn${b}`);
+  h = hash(h, `abcdefghijklmn${b}z`);
+  h = hash(h, `éabcdefghijkl${b}`);
+  h = hash(h, `abcdefghijklmn${c}`);
+  h = hash(h, `abcdefghijklmn${c}z`);
+  h = hash(h, `éabcdefghijkl${c}`);
+  h = hash(h, `abcdefghijklmn${c}${c}`);
+  h = hash(h, `abcdefghijklmn${c}-${a}`);
+  h = hash(h, `abcdefghijklmn${a}${c}${b}`);
+  return h;
+}
+
+function prefix15(h0: i64, a: i64, b: u64, c: i32): i64 {
+  let h = h0;
+  h = hash(h, `abcdefghijklmno${a}`);
+  h = hash(h, `abcdefghijklmno${a}z`);
+  h = hash(h, `éabcdefghijklm${a}`);
+  h = hash(h, `abcdefghijklmno${b}`);
+  h = hash(h, `abcdefghijklmno${b}z`);
+  h = hash(h, `éabcdefghijklm${b}`);
+  h = hash(h, `abcdefghijklmno${c}`);
+  h = hash(h, `abcdefghijklmno${c}z`);
+  h = hash(h, `éabcdefghijklm${c}`);
+  h = hash(h, `abcdefghijklmno${c}${c}`);
+  h = hash(h, `abcdefghijklmno${c}-${a}`);
+  h = hash(h, `abcdefghijklmno${a}${c}${b}`);
+  return h;
+}
+
+function prefix16(h0: i64, a: i64, b: u64, c: i32): i64 {
+  let h = h0;
+  h = hash(h, `abcdefghijklmnop${a}`);
+  h = hash(h, `abcdefghijklmnop${a}z`);
+  h = hash(h, `éabcdefghijklmn${a}`);
+  h = hash(h, `abcdefghijklmnop${b}`);
+  h = hash(h, `abcdefghijklmnop${b}z`);
+  h = hash(h, `éabcdefghijklmn${b}`);
+  h = hash(h, `abcdefghijklmnop${c}`);
+  h = hash(h, `abcdefghijklmnop${c}z`);
+  h = hash(h, `éabcdefghijklmn${c}`);
+  h = hash(h, `abcdefghijklmnop${c}${c}`);
+  h = hash(h, `abcdefghijklmnop${c}-${a}`);
+  h = hash(h, `abcdefghijklmnop${a}${c}${b}`);
+  return h;
+}
+
+function prefix17(h0: i64, a: i64, b: u64, c: i32): i64 {
+  let h = h0;
+  h = hash(h, `abcdefghijklmnopq${a}`);
+  h = hash(h, `abcdefghijklmnopq${a}z`);
+  h = hash(h, `éabcdefghijklmno${a}`);
+  h = hash(h, `abcdefghijklmnopq${b}`);
+  h = hash(h, `abcdefghijklmnopq${b}z`);
+  h = hash(h, `éabcdefghijklmno${b}`);
+  h = hash(h, `abcdefghijklmnopq${c}`);
+  h = hash(h, `abcdefghijklmnopq${c}z`);
+  h = hash(h, `éabcdefghijklmno${c}`);
+  h = hash(h, `abcdefghijklmnopq${c}${c}`);
+  h = hash(h, `abcdefghijklmnopq${c}-${a}`);
+  h = hash(h, `abcdefghijklmnopq${a}${c}${b}`);
+  return h;
+}
+
+function prefix18(h0: i64, a: i64, b: u64, c: i32): i64 {
+  let h = h0;
+  h = hash(h, `abcdefghijklmnopqr${a}`);
+  h = hash(h, `abcdefghijklmnopqr${a}z`);
+  h = hash(h, `éabcdefghijklmnop${a}`);
+  h = hash(h, `abcdefghijklmnopqr${b}`);
+  h = hash(h, `abcdefghijklmnopqr${b}z`);
+  h = hash(h, `éabcdefghijklmnop${b}`);
+  h = hash(h, `abcdefghijklmnopqr${c}`);
+  h = hash(h, `abcdefghijklmnopqr${c}z`);
+  h = hash(h, `éabcdefghijklmnop${c}`);
+  h = hash(h, `abcdefghijklmnopqr${c}${c}`);
+  h = hash(h, `abcdefghijklmnopqr${c}-${a}`);
+  h = hash(h, `abcdefghijklmnopqr${a}${c}${b}`);
+  return h;
+}
+
+function prefix19(h0: i64, a: i64, b: u64, c: i32): i64 {
+  let h = h0;
+  h = hash(h, `abcdefghijklmnopqrs${a}`);
+  h = hash(h, `abcdefghijklmnopqrs${a}z`);
+  h = hash(h, `éabcdefghijklmnopq${a}`);
+  h = hash(h, `abcdefghijklmnopqrs${b}`);
+  h = hash(h, `abcdefghijklmnopqrs${b}z`);
+  h = hash(h, `éabcdefghijklmnopq${b}`);
+  h = hash(h, `abcdefghijklmnopqrs${c}`);
+  h = hash(h, `abcdefghijklmnopqrs${c}z`);
+  h = hash(h, `éabcdefghijklmnopq${c}`);
+  h = hash(h, `abcdefghijklmnopqrs${c}${c}`);
+  h = hash(h, `abcdefghijklmnopqrs${c}-${a}`);
+  h = hash(h, `abcdefghijklmnopqrs${a}${c}${b}`);
+  return h;
+}
+
+function prefix20(h0: i64, a: i64, b: u64, c: i32): i64 {
+  let h = h0;
+  h = hash(h, `abcdefghijklmnopqrst${a}`);
+  h = hash(h, `abcdefghijklmnopqrst${a}z`);
+  h = hash(h, `éabcdefghijklmnopqr${a}`);
+  h = hash(h, `abcdefghijklmnopqrst${b}`);
+  h = hash(h, `abcdefghijklmnopqrst${b}z`);
+  h = hash(h, `éabcdefghijklmnopqr${b}`);
+  h = hash(h, `abcdefghijklmnopqrst${c}`);
+  h = hash(h, `abcdefghijklmnopqrst${c}z`);
+  h = hash(h, `éabcdefghijklmnopqr${c}`);
+  h = hash(h, `abcdefghijklmnopqrst${c}${c}`);
+  h = hash(h, `abcdefghijklmnopqrst${c}-${a}`);
+  h = hash(h, `abcdefghijklmnopqrst${a}${c}${b}`);
+  return h;
+}
+
+function prefix21(h0: i64, a: i64, b: u64, c: i32): i64 {
+  let h = h0;
+  h = hash(h, `abcdefghijklmnopqrstu${a}`);
+  h = hash(h, `abcdefghijklmnopqrstu${a}z`);
+  h = hash(h, `éabcdefghijklmnopqrs${a}`);
+  h = hash(h, `abcdefghijklmnopqrstu${b}`);
+  h = hash(h, `abcdefghijklmnopqrstu${b}z`);
+  h = hash(h, `éabcdefghijklmnopqrs${b}`);
+  h = hash(h, `abcdefghijklmnopqrstu${c}`);
+  h = hash(h, `abcdefghijklmnopqrstu${c}z`);
+  h = hash(h, `éabcdefghijklmnopqrs${c}`);
+  h = hash(h, `abcdefghijklmnopqrstu${c}${c}`);
+  h = hash(h, `abcdefghijklmnopqrstu${c}-${a}`);
+  h = hash(h, `abcdefghijklmnopqrstu${a}${c}${b}`);
+  return h;
+}
+
+function prefix22(h0: i64, a: i64, b: u64, c: i32): i64 {
+  let h = h0;
+  h = hash(h, `abcdefghijklmnopqrstuv${a}`);
+  h = hash(h, `abcdefghijklmnopqrstuv${a}z`);
+  h = hash(h, `éabcdefghijklmnopqrst${a}`);
+  h = hash(h, `abcdefghijklmnopqrstuv${b}`);
+  h = hash(h, `abcdefghijklmnopqrstuv${b}z`);
+  h = hash(h, `éabcdefghijklmnopqrst${b}`);
+  h = hash(h, `abcdefghijklmnopqrstuv${c}`);
+  h = hash(h, `abcdefghijklmnopqrstuv${c}z`);
+  h = hash(h, `éabcdefghijklmnopqrst${c}`);
+  h = hash(h, `abcdefghijklmnopqrstuv${c}${c}`);
+  h = hash(h, `abcdefghijklmnopqrstuv${c}-${a}`);
+  h = hash(h, `abcdefghijklmnopqrstuv${a}${c}${b}`);
+  return h;
+}
+
+function prefix23(h0: i64, a: i64, b: u64, c: i32): i64 {
+  let h = h0;
+  h = hash(h, `abcdefghijklmnopqrstuvw${a}`);
+  h = hash(h, `abcdefghijklmnopqrstuvw${a}z`);
+  h = hash(h, `éabcdefghijklmnopqrstu${a}`);
+  h = hash(h, `abcdefghijklmnopqrstuvw${b}`);
+  h = hash(h, `abcdefghijklmnopqrstuvw${b}z`);
+  h = hash(h, `éabcdefghijklmnopqrstu${b}`);
+  h = hash(h, `abcdefghijklmnopqrstuvw${c}`);
+  h = hash(h, `abcdefghijklmnopqrstuvw${c}z`);
+  h = hash(h, `éabcdefghijklmnopqrstu${c}`);
+  h = hash(h, `abcdefghijklmnopqrstuvw${c}${c}`);
+  h = hash(h, `abcdefghijklmnopqrstuvw${c}-${a}`);
+  h = hash(h, `abcdefghijklmnopqrstuvw${a}${c}${b}`);
+  return h;
+}
+
+function main() {
+  const as: i64[] = [0, 7, -7, 42, -42, 999, -999, 1000, 9999, -9999, 10000, -10000, 99999, 123456, -123456, 999999, 1000000, 9999999, -9999999, 10000000, -10000000, 12345678, -12345678, 99999999, -99999999, 100000000, -100000000, 1234567890123, -1234567890123, 9223372036854775807, -9223372036854775807 - 1];
+  const bs: u64[] = [0, 5, 9999, 10000, 99999999, 100000000, 18446744073709551615];
+  const cs: i32[] = [0, -1, 2147483647, -2147483647 - 1, 65535, -65536];
+  let h0: i64 = 0;
+  let h1: i64 = 0;
+  let h2: i64 = 0;
+  let h3: i64 = 0;
+  let h4: i64 = 0;
+  let h5: i64 = 0;
+  let h6: i64 = 0;
+  let h7: i64 = 0;
+  let h8: i64 = 0;
+  let h9: i64 = 0;
+  let h10: i64 = 0;
+  let h11: i64 = 0;
+  let h12: i64 = 0;
+  let h13: i64 = 0;
+  let h14: i64 = 0;
+  let h15: i64 = 0;
+  let h16: i64 = 0;
+  let h17: i64 = 0;
+  let h18: i64 = 0;
+  let h19: i64 = 0;
+  let h20: i64 = 0;
+  let h21: i64 = 0;
+  let h22: i64 = 0;
+  let h23: i64 = 0;
+  for (let i = 0; i < as.length; i++) {
+    const a = as[i];
+    const b = bs[i % bs.length];
+    const c = cs[i % cs.length];
+    h0 = prefix0(h0, a, b, c);
+    h1 = prefix1(h1, a, b, c);
+    h2 = prefix2(h2, a, b, c);
+    h3 = prefix3(h3, a, b, c);
+    h4 = prefix4(h4, a, b, c);
+    h5 = prefix5(h5, a, b, c);
+    h6 = prefix6(h6, a, b, c);
+    h7 = prefix7(h7, a, b, c);
+    h8 = prefix8(h8, a, b, c);
+    h9 = prefix9(h9, a, b, c);
+    h10 = prefix10(h10, a, b, c);
+    h11 = prefix11(h11, a, b, c);
+    h12 = prefix12(h12, a, b, c);
+    h13 = prefix13(h13, a, b, c);
+    h14 = prefix14(h14, a, b, c);
+    h15 = prefix15(h15, a, b, c);
+    h16 = prefix16(h16, a, b, c);
+    h17 = prefix17(h17, a, b, c);
+    h18 = prefix18(h18, a, b, c);
+    h19 = prefix19(h19, a, b, c);
+    h20 = prefix20(h20, a, b, c);
+    h21 = prefix21(h21, a, b, c);
+    h22 = prefix22(h22, a, b, c);
+    h23 = prefix23(h23, a, b, c);
+  }
+  console.log(0, h0);
+  console.log(1, h1);
+  console.log(2, h2);
+  console.log(3, h3);
+  console.log(4, h4);
+  console.log(5, h5);
+  console.log(6, h6);
+  console.log(7, h7);
+  console.log(8, h8);
+  console.log(9, h9);
+  console.log(10, h10);
+  console.log(11, h11);
+  console.log(12, h12);
+  console.log(13, h13);
+  console.log(14, h14);
+  console.log(15, h15);
+  console.log(16, h16);
+  console.log(17, h17);
+  console.log(18, h18);
+  console.log(19, h19);
+  console.log(20, h20);
+  console.log(21, h21);
+  console.log(22, h22);
+  console.log(23, h23);
+  console.log(`w${as[17]}`, `user ${as[13]}`, `${as[29]}`, `${as[30]}`, `${bs[6]}`, `é${cs[3]}`);
+}
