@@ -16,11 +16,14 @@
 //!   helpers that lowering looks up by name ([`is_helper`]);
 //! - outside the prelude, module constants, and the methods and constructors of its classes and
 //!   structs;
+//! - the methods of its `extend` blocks on number types, `bool` and `string`, the prelude's
+//!   included ([`primitive_extension`]): reached by a call or a function value, or through an
+//!   interface implementation that holds one ([`impl_methods`]);
 //! - nothing in the modules lowering looks into by name for other definitions ([`EAGER`]).
 //!
 //! A user module's code is always checked, and so is a std module it imports: `velt check`
-//! reports everything in what a program imports, except the prelude's unreached free functions
-//! and statics. All of std is checked with laziness off (`VELT_EAGER_STD=1`), as veltc's
+//! reports everything in what a program imports, except the prelude's unreached free functions,
+//! statics and extension methods. All of std is checked with laziness off (`VELT_EAGER_STD=1`), as veltc's
 //! `all_of_std_checks_without_diagnostics` does for bench/compile/all_std.vlt. The editor's
 //! analysis checks everything.
 

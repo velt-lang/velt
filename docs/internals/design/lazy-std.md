@@ -39,9 +39,20 @@ The definitions of a lazy module that are *deferred*:
   not. So a used class makes its subclasses used too, transitively: printing an `Error` checks
   the methods of every `Error` subclass the program loads (their `[util.inspect.custom]`, `toJSON`, …).
 
+The methods of an `extend` block on a number type, `bool` or `string` in a lazy module, the
+prelude's included (`extend u32 { rotateLeft(…) }`, the checked, saturating and wrapping
+arithmetic): checked once checked code calls one or takes it as a value (`Callee::Def`, `FnRef`),
+as a free function is, or once an interface implementation holds one (`hir::Program::impls`:
+`Comparable`'s `compareTo` of every number type, `extend u64 implements InlineKey`, a number
+converted to an interface), since lowering calls those through the implementation (a bound's
+method, a `dyn` table) without checked code naming them. Every program uses the primitive
+types, so waiting for the type to be used, as for a class, would check them all. No class's
+`any` table or subclass dispatch lists such a method, and a value of `any` holding a number
+reaches none of them (its built-in methods are the `__any<Type>_<method>` helpers below).
+
 The prelude (`std/prelude/`, `std/record`, `std/collections`) is lazy in a narrower way:
 lowering looks up its types' methods and its helper functions by name, so only its free
-functions and static methods are deferred, except the helpers (`HELPER_NAMES`: every `"__…"`
+functions and static methods (and the extension methods above) are deferred, except the helpers (`HELPER_NAMES`: every `"__…"`
 name in the code of lowering, the optimizer and the backends, which a unit test checks, and the
 `__any<Type>_<method>` built-ins of `any` values). Module `let`s and static fields are never
 deferred: they are module state.

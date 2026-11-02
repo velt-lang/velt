@@ -907,7 +907,8 @@ never builds or reads one: building a function in `unchecked` (any `Work` of its
 reading such a global is an ICE, as it would mean a reference sema did not see. Lowering may
 look up by name only what sema keeps checked: the prelude helpers (`velt_sema` `body/lazy_std.rs`
 `HELPER_NAMES`, which a test keeps in step with the `"__…"` names in lowering's code), the
-methods of the prelude's types and the modules in `EAGER`. (The JSON intrinsics, and the
+methods of the prelude's types (not those of its `extend` blocks on number types, `bool` and
+`string`, which are deferred like its free functions) and the modules in `EAGER`. (The JSON intrinsics, and the
 `JSON_GLUE` modules their glue called by name, are gone: `JSON.parse`, velt/db's row readers and
 its parameter binder are generated code, source-generators.md.)
 
