@@ -542,7 +542,7 @@ impl FnLower<'_, '_> {
             _ if self.is_enum(t) && self.union_payloads(t) => {
                 let vt = self.cx.ty(t);
                 let p = Place::local(self.copy_to_temp(v, vt));
-                self.for_each_variant(&p, t, |lw, k, parts| match parts.as_slice() {
+                self.for_each_variant_total(&p, t, |lw, k, parts| match parts.as_slice() {
                     [(pp, pt)] => lw.object_into(Operand::Copy(pp.clone()), *pt, ty, out),
                     _ => match lw.variant_literal(t, k) {
                         Some(l) => {

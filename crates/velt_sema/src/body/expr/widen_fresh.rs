@@ -207,7 +207,7 @@ impl FnCx<'_, '_> {
     }
 
     /// `{ let src = h; let out = with_capacity(src.length); for (e of src) out.push(<e>); out }`
-    /// (a consuming loop unless the elements are Copy).
+    /// (a consuming loop unless the elements are Copy; no loop for a `never[]`).
     fn widen_array(&mut self, h: hir::Expr, exp: TyId, to_elem: TyId) -> hir::Expr {
         let span = h.span;
         let from_elem = self
@@ -222,6 +222,13 @@ impl FnCx<'_, '_> {
         let len = self.intrinsic(Intrinsic::ArrayLen, vec![src_read], usize_, span);
         let init = self.intrinsic(Intrinsic::ArrayWithCapacity, vec![len], exp, span);
         let out = self.let_temp("<widened>", init, true, &mut lets);
+        if self.cx.ty.is_bottom(from_elem) {
+            // A `never[]` (`[]` where nothing gave it a type, `xs ?? []`) has no elements: the
+            // new array stays empty, without a loop converting a `never` (which lowering would
+            // store as `()` into a view's elements).
+            let result = self.mk(H::Local(out, UseMode::Move), exp, span);
+            return self.with_lets(lets, result);
+        }
         let copy = self.cx.is_copy(from_elem);
         let mode = if copy { UseMode::Copy } else { UseMode::Move };
         let e = self.new_local("<elem>", from_elem, false, span, LocalKind::Bind);
