@@ -87,6 +87,13 @@ pub fn unreachable_conditions(graph: &crate::PackageGraph) -> Vec<String> {
     out
 }
 
+/// Whether `name` is one of the build's files: compared without ASCII case, since a
+/// case-insensitive file system (macOS's and Windows's defaults) takes `.VELT-HOST` for
+/// `.velt-host`.
+pub fn is_build_file(name: &str) -> bool {
+    BUILD_FILES.iter().any(|f| f.eq_ignore_ascii_case(name))
+}
+
 /// Check `target`: a target triple (no spaces).
 pub(crate) fn check_target(target: &str) -> Result<(), String> {
     if target.is_empty() || target.contains(char::is_whitespace) || target.split('-').count() < 2 {
@@ -102,7 +109,7 @@ pub(crate) fn check_entry(entry: &str) -> Result<(), String> {
     crate::host_modules::check_file(entry)
         .map_err(|e| e.replace("a host module is", "the entry is"))?;
     let name = entry.rsplit('/').next().unwrap_or(entry);
-    if BUILD_FILES.contains(&name) {
+    if is_build_file(name) {
         return Err(format!(
             "`{entry}`: the build writes its own `{name}`; name the entry otherwise"
         ));
@@ -113,9 +120,12 @@ pub(crate) fn check_entry(entry: &str) -> Result<(), String> {
 /// Check a `scaffold` entry: `path` (where it goes, a `/`-separated path below the build's
 /// directory that the build doesn't write) and `file` (the package's, below `./src/`).
 pub(crate) fn check_scaffold(path: &str, file: &str, entry: &str) -> Result<(), String> {
+    // Every component a name: no `conf/` (a trailing `/`) or `a//b`, which the build could not
+    // write as a file.
     let normal = |p: &str| {
         !p.is_empty()
             && !p.contains('\\')
+            && p.split('/').all(|c| !c.is_empty())
             && Path::new(p)
                 .components()
                 .all(|c| matches!(c, Component::Normal(_)))
@@ -129,7 +139,8 @@ pub(crate) fn check_scaffold(path: &str, file: &str, entry: &str) -> Result<(), 
     }
     // The first component too: `worker.mjs/x` would let the build's directory check pass a
     // user's `worker.mjs`, which the entry then replaces.
-    if BUILD_FILES.contains(&first) || first == entry_name {
+    // Without ASCII case, as a case-insensitive file system compares (`.VELT-HOST/x`, `Worker.mjs`).
+    if is_build_file(first) || first.eq_ignore_ascii_case(entry_name) {
         return Err(format!(
             "`{path}` is a file the build writes itself: scaffold another one"
         ));
@@ -162,6 +173,7 @@ mod tests {
             ("./src/../w.mjs", "below `./src/`"),
             ("./src/w.toml", "`.mjs` or `.js`"),
             ("./src/velt_serve.mjs", "writes its own `velt_serve.mjs`"),
+            ("./src/VELT_SERVE.mjs", "writes its own `VELT_SERVE.mjs`"),
         ] {
             let err = check_entry(bad).unwrap_err();
             assert!(err.contains(why), "{bad}: {err}");
@@ -194,6 +206,11 @@ mod tests {
                 "./src/x",
                 "the build writes itself",
             ),
+            (".VELT-HOST", "./src/x", "the build writes itself"),
+            ("Program.wasm", "./src/x", "the build writes itself"),
+            ("W.MJS/x", "./src/x", "the build writes itself"),
+            ("conf/", "./src/x", "inside the build's directory"),
+            ("a//b", "./src/x", "inside the build's directory"),
             ("app.toml", "./app.toml", "below `./src/`"),
             ("app.toml", "./src/../app.toml", "below `./src/`"),
         ] {

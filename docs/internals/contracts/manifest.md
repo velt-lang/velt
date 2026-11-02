@@ -260,8 +260,9 @@ directory (`NpmResolver::resolve_in`) before Node's search.
   build writes: `program.wasm`, `velt_web.mjs`, `velt_serve.mjs`, `velt_modules.mjs`, `hosts`,
   `.velt-host`, and the by-products `program.o`, `program.entry.o`, `program.wasm.build-stamp`,
   `program.wasm.link-stamp`; `vpm::host::BUILD_FILES`), and `scaffold` (optional: a
-  `/`-separated path inside the build's directory whose first component is neither one the build
-  writes nor the entry's name, → a file below `./src/`; `{{name}}` in it
+  `/`-separated path inside the build's directory, every component a name (no trailing `/`),
+  whose first component is neither one the build writes nor the entry's name (both compared
+  without ASCII case), → a file below `./src/`; `{{name}}` in it
   becomes the program's name). Missing `target`, `condition` or `entry`, or an unknown key, is
   an error. `to_vlt` writes it after `hostModules`; `velt manifest --json` prints it.
 - `entry` is a `/`-separated path inside the package (not empty, not absolute, no `..`).

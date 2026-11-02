@@ -24,7 +24,11 @@ platform's services (packages/cloudflare, #1738).
   `program.o`, `program.entry.o` and the stamps included) and the entries and scaffolded files
   the marker lists (`entry <name>`, `scaffold <name>`, one per line). The entry replaces only a
   listed entry, never a scaffolded file. Otherwise the build fails before compiling, so it never
-  writes over the user's files, whichever host an earlier build was for. It holds `program.wasm` (with the build's object and stamps), `velt_web.mjs` (the core
+  writes over the user's files, whichever host an earlier build was for. Names are compared with
+  the build's files without ASCII case (`vpm::host::is_build_file`; a case-insensitive file
+  system takes `.VELT-HOST` for `.velt-host`), and the marker is read before the build writes
+  anything. The build writes through what the directory holds: a symbolic link the user put
+  there under a build file's name is followed (packages ship plain files only). It holds `program.wasm` (with the build's object and stamps), `velt_web.mjs` (the core
   glue every browser build gets), `velt_serve.mjs` (the server core below), `velt_modules.mjs`
   (generated: `export const modules = { ["<module>"]: <its default export>, … }` with computed
   keys, so `__proto__` is a key), the host modules of packages under

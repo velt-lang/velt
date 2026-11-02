@@ -242,6 +242,26 @@ fn a_host_switch_keeps_the_user_s_files() {
     assert!(err.contains("(`README.mjs`…)"), "{err}");
 }
 
+/// The marker is read before the build writes anything: a scaffolded file that a
+/// case-insensitive file system takes for `.velt-host` (the reader rejects such a key; this
+/// config skips the reader) adds nothing to what it lists. Meaningful where the temporary
+/// directory is case-insensitive (macOS, Windows), harmless elsewhere.
+#[test]
+fn a_scaffold_cannot_write_into_the_marker() {
+    let tmp = tempfile::tempdir().unwrap();
+    let g = graph(tmp.path());
+    let mut host = resolve("host-edge", Some(&g), None, "app").unwrap();
+    std::fs::write(host.root.join("src/evil"), "entry victim.mjs\n").unwrap();
+    host.config.scaffold = BTreeMap::from([(".VELT-HOST".into(), "./src/evil".into())]);
+    let dir = tmp.path().join("out");
+    std::fs::create_dir_all(&dir).unwrap();
+    let wasm = dir.join("program.wasm");
+    std::fs::write(&wasm, module(&[])).unwrap();
+    write(&wasm, &host, Some(&g)).unwrap();
+    let (written, _) = recorded(&dir);
+    assert!(!written.iter().any(|e| e == "victim.mjs"), "{written:?}");
+}
+
 /// vpm rejects the name `__proto__` (`host_modules::check_name`); the map's computed keys would
 /// keep it a key all the same.
 #[test]

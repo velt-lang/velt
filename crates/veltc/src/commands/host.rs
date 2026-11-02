@@ -10,7 +10,7 @@
 use std::path::{Path, PathBuf};
 
 use vpm::graph::GraphPackage;
-use vpm::host::{HostConfig, BUILD_FILES, MARKER};
+use vpm::host::{is_build_file, HostConfig, BUILD_FILES, MARKER};
 use vpm::host_modules::RUNTIME_PREFIX;
 use vpm::PackageGraph;
 
@@ -112,8 +112,7 @@ fn check_dir(dir: &Path, config: &HostConfig) -> Result<(), String> {
     };
     let listed = |list: &[String], name: &str| list.iter().any(|r| r == name);
     let owned = |name: &str| {
-        marked
-            && (BUILD_FILES.contains(&name) || listed(&written, name) || listed(&scaffolds, name))
+        marked && (is_build_file(name) || listed(&written, name) || listed(&scaffolds, name))
     };
     let entry = config.entry_name();
     let mut foreign: Vec<String> = entries
@@ -141,6 +140,9 @@ pub fn write(
     packages: Option<&PackageGraph>,
 ) -> Result<(), String> {
     let dir = module.parent().unwrap_or(Path::new("."));
+    // What earlier builds wrote, read before this one writes anything: nothing a package ships
+    // can end up in the marker.
+    let (mut written, mut scaffolds) = recorded(dir);
     let bytes =
         std::fs::read(module).map_err(|e| format!("cannot read `{}`: {e}", module.display()))?;
     let mut modules = vec![];
@@ -186,7 +188,6 @@ pub fn write(
         create_parent(&to)?;
         write_file(&to, &text.replace(NAME_PLACEHOLDER, &name))?;
     }
-    let (mut written, mut scaffolds) = recorded(dir);
     let add = |list: &mut Vec<String>, name: &str| {
         if !list.iter().any(|e| e == name) {
             list.push(name.to_string());
