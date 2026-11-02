@@ -83,16 +83,25 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// The type of the first parameter of `t`'s method `method` (an indexer's index), when it
-    /// is a known type (not one of the method's own type parameters).
+    /// The type of the first parameter of `t`'s method `method` (an indexer's index) at `t`'s
+    /// type arguments (`i: K` of `Grid<K>` is `usize` on a `Grid<usize>`), when it is known.
     fn index_param(&mut self, t: TyId, method: &str) -> Option<TyId> {
         use super::method::Resolved;
-        let def = match self.resolve_method(t, method)? {
-            Resolved::Def { def, .. } | Resolved::Virtual { def, .. } => def,
-            _ => return None,
+        let (p, args) = match self.resolve_method(t, method)? {
+            Resolved::Def { def, slots, .. } | Resolved::Virtual { def, slots, .. } => {
+                let p = self.cx.fn_info(def).params.first()?.ty;
+                (p, slots.into_iter().collect::<Option<Vec<_>>>())
+            }
+            Resolved::Iface {
+                method, iface_args, ..
+            } => (method.params.first()?.ty, Some(iface_args)),
+            Resolved::Builtin(_) => return None,
         };
-        let p = self.cx.fn_info(def).params.first()?.ty;
-        (!matches!(self.cx.ty.kind(p), crate::hir::TyKind::Param(_))).then_some(p)
+        let p = match args {
+            Some(args) if !args.is_empty() => self.cx.subst(p, &args),
+            _ => p,
+        };
+        (!super::iface_adapt::has_params(self.cx, p)).then_some(p)
     }
 
     /// `obj[index]` read through `[INDEX]`.

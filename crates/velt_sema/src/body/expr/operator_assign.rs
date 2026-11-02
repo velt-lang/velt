@@ -72,35 +72,38 @@ impl FnCx<'_, '_> {
         if !self.operator_type(place.ty) || operators::binary_method(op).is_none() {
             return Err(place);
         }
+        // The place's indices are evaluated once, first (`arr[f(0)] += arr[f(1)]` calls `f(0)`
+        // first).
+        let mut place = place;
+        let mut stmts = vec![];
+        self.hoist_indices(&mut place, &mut stmts);
         // `v += v`, `m.a += m.a.b`: the value names the target's variable. It is passed as a
         // share of the same object (the method sees `other` change as it writes `this`), which
         // keeps the exclusive-access rule from refusing the call.
         if root_name(target).is_some() && root_name(target) == root_name(value) {
-            let mut stmts = vec![];
             self.push_scope();
-            let v = self.expr(value, Some(place.ty), Want::Borrow);
+            let v = self.expr(value, None, Want::Borrow);
             let v = self.share_if_place(v);
             self.bind_temp(VALUE, v, &mut stmts);
             let e = self.place_compound(place, op, &name_ref(VALUE, span), true, span);
             self.pop_scope();
             return Ok(self.with_temps_value(stmts, e));
         }
-        Ok(self.place_compound(place, op, value, true, span))
+        let e = self.place_compound(place, op, value, true, span);
+        Ok(self.with_temps(stmts, e))
     }
 
-    /// `place op= value`: in place when `in_place` allows it and the type has
-    /// `[Symbol.opAssign]`, else `place = place op value`. The place's indices are evaluated
-    /// once, first.
+    /// `place op= value` with the place's indices already hoisted: in place when `in_place`
+    /// allows it and the type has `[Symbol.opAssign]`, else `place = place op value`.
     fn place_compound(
         &mut self,
-        mut place: hir::Expr,
+        place: hir::Expr,
         op: ast::BinaryOp,
         value: &ast::Expr,
         in_place: bool,
         span: Span,
     ) -> hir::Expr {
         let mut stmts = vec![];
-        self.hoist_indices(&mut place, &mut stmts);
         let assign = operators::assign_method(op).expect("ICE: a binary operator");
         if in_place && self.has_instance_op(place.ty, assign) {
             let prop = ast::Ident {
@@ -157,11 +160,13 @@ impl FnCx<'_, '_> {
             return Ok(self.with_temps(stmts, e));
         }
         if prefix {
-            // `{ place += 1; place }`.
-            let read = self.place_read(&place, Want::Borrow);
-            let read = self.share_if_place(read);
+            // `{ place += 1; place }`: the value read after the update (a new object when the
+            // type has no `[Symbol.addAssign]`).
+            let after = place.clone();
             let e = self.place_compound(place, bop, &one(span), true, span);
             stmts.push(stmt(hir::StmtKind::Expr(e), span));
+            let read = self.place_read(&after, Want::Borrow);
+            let read = self.share_if_place(read);
             let b = block(stmts, Some(read), span);
             return Ok(self.mk(H::Block(b), lty, span));
         }

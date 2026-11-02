@@ -69,3 +69,23 @@ const pre = ++c;
 console.log(pre.n, c.n);
 c--;
 console.log(c.n);
+
+// The target's indices come first, then the value: `f(0)` before `f(1)`, aliased or not.
+function f(n: number): number {
+  console.log(`f${n}`);
+  return n;
+}
+const ps: P[] = [{ x: 1, y: 1 }, { x: 2, y: 2 }];
+ps[f(0)] += ps[f(1)];
+const accs = [new Acc(1), new Acc(2)];
+accs[f(0)] += accs[f(1)];
+console.log(ps[0].x, accs[0].v);
+
+// A prefix `++` without `[Symbol.addAssign]` gives the new value.
+class Step {
+  constructor(public n: i64) {}
+  [Symbol.add](k: i64): Step { return new Step(this.n + k); }
+}
+let s = new Step(1);
+const s2 = ++s;
+console.log(s2.n, s.n);
