@@ -292,7 +292,11 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `-fuse-ld=mold`/`lld` when `mold`/`ld.lld` is on `PATH` (falling back to the default linker if
   that link fails). A link whose inputs (objects, runtime library, settings, the linker:
   `velt_link::linker_identity`) are unchanged since the executable was last linked is skipped
-  (`<exe>.link-stamp` beside it).
+  (`<exe>.link-stamp` beside it). The linker writes `<stem>.link-<pid>-<n>` beside the
+  executable, which is then renamed into place (#2026): a program started from its path while it
+  is linked again (two `velt test` runs in one package) starts the old executable or the new one,
+  never a file the linker is still writing. On Windows, an executable that cannot be replaced
+  while it runs is renamed to `<exe>.old-<pid>-<n>` first and removed once nothing runs it.
 - Build stamp and build cache (additive, #1612). `build`, `run` and `test` with `--emit exe`
   (the default) and no `--report` skip parsing, checking and codegen when `<exe>.build-stamp`
   matches: the compiler (version, executable size and time), the options, a generated root's
