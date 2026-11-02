@@ -6,7 +6,7 @@ use velt_vir::vir::{
     LocalDecl, Operand, Place, Program, Proj, Rvalue, SrcLoc, Stmt, Terminator, Ty, STR_AGG,
 };
 
-use super::slots::plan;
+use super::slots::{plan, plan_counted, WALK_BUDGET};
 use crate::tests::{copy_local, int, str_agg, FuncBuilder};
 
 const S: Ty = Ty::Agg(STR_AGG);
@@ -32,8 +32,23 @@ fn program() -> Program {
                 host: None,
             },
         ],
+        funcs: vec![callee("ret.out"), callee("s")],
         ..Default::default()
     }
+}
+
+/// Function 0, `mk(ret.out: ptr)`, writes its result through its out-pointer; function 1,
+/// `take(s: ptr)`, borrows a string.
+const MK: Callee = Callee::Func(vir::FuncId(0));
+const TAKE: Callee = Callee::Func(vir::FuncId(1));
+
+fn callee(param: &str) -> vir::Function {
+    let mut fb = FuncBuilder::internal(param, &[Ty::Ptr], Ty::Unit);
+    let b = fb.block();
+    ret(b, &mut fb);
+    let mut f = fb.finish();
+    f.locals[0].name = Some(param.into());
+    f
 }
 
 fn str_value() -> Rvalue {
@@ -329,4 +344,211 @@ fn described_locals_and_params_keep_keyed_slots() {
     in_memory[0] = true;
     let p = plan(&program(), &g, &in_memory, &|_| false).unwrap();
     assert_eq!(p.slots[p.local_slot[0].unwrap() as usize].key, Some(0));
+}
+
+/// `n` string results of calls of `callee` (`p = &t; callee(p)`, then a read of `t`), each in
+/// blocks of its own; inside a loop when `in_loop`.
+fn call_results(n: usize, callee: Callee, in_loop: bool) -> vir::Function {
+    let mut fb = FuncBuilder::internal("f", &[], Ty::Unit);
+    let sum = fb.local(Ty::U64);
+    let cond = fb.local(Ty::Bool);
+    let entry = fb.block();
+    fb.assign(entry, sum, Rvalue::Use(int(0, Ty::U64)));
+    fb.assign(
+        entry,
+        cond,
+        Rvalue::Use(Operand::Const(Const::Bool(true), Ty::Bool)),
+    );
+    let head = fb.block();
+    fb.term(entry, Terminator::Goto(head));
+    let mut b = head;
+    for _ in 0..n {
+        let t = fb.local(S);
+        let p = fb.local(Ty::Ptr);
+        fb.assign(b, p, Rvalue::AddrOf(Place::local(t)));
+        b = fb.call(b, callee.clone(), vec![copy_local(p)], None);
+        fb.assign(
+            b,
+            sum,
+            Rvalue::Binary(BinOp::Add, copy_local(sum), field(t, 0)),
+        );
+    }
+    let exit = fb.block();
+    let back = if in_loop { head } else { exit };
+    fb.term(
+        b,
+        Terminator::Branch {
+            cond: copy_local(cond),
+            then: back,
+            els: exit,
+        },
+    );
+    ret(exit, &mut fb);
+    fb.finish()
+}
+
+/// The slot count and the liveness walks' block visits of `f`.
+fn plan_cost(f: &vir::Function) -> (usize, u64) {
+    let (p, visits) = plan_counted(&program(), f, &memory(f), &|_| false).unwrap();
+    (p.slots.len(), visits)
+}
+
+#[test]
+fn liveness_work_grows_linearly_with_call_results() {
+    // Each temporary's walk stops where no write can have happened (before its call), and in
+    // a loop at the call that writes it through its out-pointer, so twice the temporaries is
+    // twice the work. Walking back to the entry from each call made it four times.
+    for (callee, in_loop) in [
+        (Callee::Extern(ExternId(0)), false),
+        (MK, false),
+        (MK, true),
+    ] {
+        let (slots, small) = plan_cost(&call_results(500, callee.clone(), in_loop));
+        let (_, large) = plan_cost(&call_results(1000, callee.clone(), in_loop));
+        assert_eq!(slots, 1, "{callee:?} in a loop: {in_loop}");
+        assert!(
+            large <= 2 * small + 64 && large <= 8 * 1000,
+            "{callee:?} in a loop: {in_loop}: {small} block visits for 500, {large} for 1000"
+        );
+    }
+}
+
+#[test]
+fn an_out_pointer_call_in_a_loop_writes_the_whole_local() {
+    // loop { p = &t; mk(p); read t; u = …; read u }: mk writes all of t, so t is dead across
+    // the back edge and u can share its slot.
+    let mut f2 = call_results(1, MK, true);
+    let u = Local(f2.locals.len() as u32);
+    f2.locals.push(LocalDecl::new(S, None));
+    let last = BlockId(2);
+    f2.blocks[last.0 as usize].stmts.extend([
+        Stmt::Assign(Place::local(u), str_value()),
+        Stmt::Assign(Place::local(Local(0)), Rvalue::Use(field(u, 0))),
+    ]);
+    let (slots2, count) = slots_of(&f2, &memory(&f2));
+    assert_eq!(slots2[2], slots2[u.0 as usize]);
+    assert_eq!(count, 1);
+}
+
+#[test]
+fn a_borrowed_pointer_argument_in_a_loop_reads_the_local() {
+    // t = … before the loop; loop { p = &t; take(p); read t; u = …; read u }: take only reads
+    // t (its param is not an out-pointer), so t stays live around the loop and u needs a slot
+    // of its own.
+    let mut fb = FuncBuilder::internal("f", &[], Ty::Unit);
+    let sum = fb.local(Ty::U64);
+    let cond = fb.local(Ty::Bool);
+    let t = fb.local(S);
+    let u = fb.local(S);
+    let p = fb.local(Ty::Ptr);
+    let (b0, b1) = (fb.block(), fb.block());
+    fb.assign(b0, t, str_value());
+    fb.assign(
+        b0,
+        cond,
+        Rvalue::Use(Operand::Const(Const::Bool(true), Ty::Bool)),
+    );
+    fb.term(b0, Terminator::Goto(b1));
+    fb.assign(b1, p, Rvalue::AddrOf(Place::local(t)));
+    let b2 = fb.call(b1, TAKE, vec![copy_local(p)], None);
+    fb.assign(b2, sum, Rvalue::Use(field(t, 0)));
+    fb.assign(b2, u, str_value());
+    fb.assign(b2, sum, Rvalue::Use(field(u, 0)));
+    let b3 = fb.block();
+    fb.term(
+        b2,
+        Terminator::Branch {
+            cond: copy_local(cond),
+            then: b1,
+            els: b3,
+        },
+    );
+    ret(b3, &mut fb);
+    let f = fb.finish();
+    let (slots, _) = slots_of(&f, &memory(&f));
+    assert_ne!(slots[t.0 as usize], slots[u.0 as usize]);
+}
+
+#[test]
+fn an_out_pointer_that_may_point_elsewhere_writes_nothing_whole() {
+    // bb1: p = &t, or bb2: p = &a; u = …; read u — then mk(p): p is not exactly `&t`, so the
+    // call only reads through it, and a (written before the branch, last used by the call)
+    // overlaps u. (bb2 runs before bb1 in reverse postorder, so ts range doesnt cover u.)
+    let mut fb = FuncBuilder::internal("f", &[], Ty::Unit);
+    let sum = fb.local(Ty::U64);
+    let cond = fb.local(Ty::Bool);
+    let a = fb.local(S);
+    let t = fb.local(S);
+    let u = fb.local(S);
+    let p = fb.local(Ty::Ptr);
+    let (b0, b1, b2, b3) = (fb.block(), fb.block(), fb.block(), fb.block());
+    fb.assign(b0, a, str_value());
+    fb.assign(
+        b0,
+        cond,
+        Rvalue::Use(Operand::Const(Const::Bool(true), Ty::Bool)),
+    );
+    fb.term(
+        b0,
+        Terminator::Branch {
+            cond: copy_local(cond),
+            then: b1,
+            els: b2,
+        },
+    );
+    fb.assign(b1, p, Rvalue::AddrOf(Place::local(t)));
+    fb.term(b1, Terminator::Goto(b3));
+    fb.assign(b2, p, Rvalue::AddrOf(Place::local(a)));
+    fb.assign(b2, u, str_value());
+    fb.assign(b2, sum, Rvalue::Use(field(u, 0)));
+    fb.term(b2, Terminator::Goto(b3));
+    let b4 = fb.call(b3, MK, vec![copy_local(p)], None);
+    ret(b4, &mut fb);
+    let f = fb.finish();
+    let (slots, _) = slots_of(&f, &memory(&f));
+    assert_ne!(slots[a.0 as usize], slots[u.0 as usize]);
+}
+
+#[test]
+fn temporaries_in_blocks_laid_out_apart_share_a_slot() {
+    // Each temporary is written in a_i and read in c_i, which runs next but is laid out after
+    // every a_j (as inlined code is): in the order control runs them the ranges are disjoint.
+    let n = 8;
+    let mut fb = FuncBuilder::internal("f", &[], Ty::Unit);
+    let sum = fb.local(Ty::U64);
+    let entry = fb.block();
+    fb.assign(entry, sum, Rvalue::Use(int(0, Ty::U64)));
+    let a: Vec<BlockId> = (0..n).map(|_| fb.block()).collect();
+    let c: Vec<BlockId> = (0..n).map(|_| fb.block()).collect();
+    let exit = fb.block();
+    fb.term(entry, Terminator::Goto(a[0]));
+    for i in 0..n {
+        let t = fb.local(S);
+        fb.assign(a[i], t, str_value());
+        fb.term(a[i], Terminator::Goto(c[i]));
+        fb.assign(
+            c[i],
+            sum,
+            Rvalue::Binary(BinOp::Add, copy_local(sum), field(t, 0)),
+        );
+        fb.term(c[i], Terminator::Goto(*a.get(i + 1).unwrap_or(&exit)));
+    }
+    ret(exit, &mut fb);
+    let f = fb.finish();
+    let (_, count) = slots_of(&f, &memory(&f));
+    assert_eq!(count, 1);
+}
+
+#[test]
+fn liveness_work_is_bounded_in_a_long_loop() {
+    // An extern's pointer argument is only read as far as the planner knows, so each result
+    // is live all around the loop: a walk stops after WALK_BUDGET blocks and the local keeps
+    // a slot of its own, instead of every walk visiting the whole loop.
+    let n = 2000;
+    let (_, visits) = plan_cost(&call_results(n, Callee::Extern(ExternId(0)), true));
+    let bound = n as u64 * (u64::from(WALK_BUDGET) + 8);
+    assert!(
+        visits <= bound,
+        "{visits} block visits for {n} results in a loop"
+    );
 }

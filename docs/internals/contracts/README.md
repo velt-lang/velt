@@ -178,6 +178,17 @@ Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exi
   `noalias` and `frozen` for redundant-load elimination; LLVM emits them as parameter
   attributes (`frozen` has no LLVM counterpart); Cranelift ignores them.
 
+## Pointer arguments
+- A callee only borrows a `Ptr` argument for the duration of the call: it carries the
+  argument's address, or one computed from it, out of the call only through a `Ptr` result,
+  never by storing it in memory (module state, memory it was given, an aggregate it returns
+  through its out-pointer). `velt_rt_set_throw_loc` keeps its pointer, which is always a
+  static string's. The Cranelift backend relies on this to share stack slots
+  (`velt_codegen_cl` `function/slots`): a local whose address a call receives is live up to the
+  call, or up to the last use of a `Ptr` the call returns.
+- A function's out-pointer (its last param, which lowering names `ret.out`) points to memory
+  the caller has not initialized: the callee writes its result there before it reads it.
+
 ## Cold functions (additive VIR extension)
 - `vir::Function::cold: bool` — no call of the function returns normally: its declared result
   is `never` (it panics, throws, exits or loops forever). False promises nothing; `Function::new`

@@ -10,20 +10,32 @@
 //! 1. **Live range.** A local's value matters from a write to a later read, so it is *live* at
 //!    a point when some path reaches the point from an access (a write, possibly partial) and
 //!    goes on to a read before any write of the whole local (strong liveness intersected with
-//!    "maybe written", per block). Its *range* is the hull of the points, in block order, where
-//!    it is live or accessed (every write, dead or not, writes the slot).
+//!    "maybe written", per block). Its *range* is the hull of the points, in reverse
+//!    postorder, where it is live or accessed (every write, dead or not, writes the slot).
 //! 2. **Pointers.** `p = &x` gives `p` (and what is computed from `p`: copies, offsets, casts,
-//!    a `Ptr` returned by a call that received it) the *origin* `x`. Each use of such a pointer
-//!    (a dereference, a call argument, a memory copy or fill) counts as a read of `x` there. A
+//!    a `Ptr` returned by a call that received it) the *origin* `x`. Taking the address is an
+//!    access of `x` (its range covers it) but reads nothing; each use of such a pointer (a
+//!    dereference, a call argument, a memory copy or fill) counts as a read of `x` there. A
 //!    callee only borrows its pointer arguments for the call (calls borrow,
-//!    docs/reference/memory), so the call is the last point it uses them. A pointer that
-//!    leaves the function's registers (stored to memory, returned) makes `x` *escaped*: it
-//!    keeps a slot of its own.
+//!    https://veltlang.com/docs/reference/memory/), and carries an argument's address out only
+//!    through a `Ptr` result (docs/internals/contracts/README.md "Pointer arguments"), so the
+//!    call is the last point it uses them. A pointer that leaves the function's registers
+//!    (stored to memory, returned) makes `x` *escaped*: it keeps a slot of its own. The
+//!    exception is a function's out-pointer (its last param, which lowering names `ret.out`):
+//!    the callee writes its result there without reading what was there, so a call that passes
+//!    exactly `&x` for it writes all of `x`.
 //! 3. **Assignment.** Locals are assigned in order of range start to the best-fitting slot whose
 //!    locals' ranges have all ended (linear scan); a slot grows to its largest local.
 //!
 //! Locals that debug info describes keep a keyed slot of their own (debug_info finds them by
-//! key), as do parameters and escaped locals.
+//! key), as do parameters; escaped locals keep a slot of their own without a key.
+//!
+//! The liveness walk of a local only visits blocks some access of it can reach: where no write
+//! can have happened, a read has no value to keep (the intersection above drops those blocks
+//! anyway). With the out-pointer writes, a temporary's walk stops at the call that writes it,
+//! so the work grows with the function's length, not with its square (one walk back to the
+//! entry per temporary). A walk that still visits more than `WALK_BUDGET` blocks (a value used
+//! all over a long loop) stops, and its local keeps a slot of its own.
 
 use std::cmp::Reverse;
 use std::collections::{BTreeSet, BinaryHeap};
@@ -32,6 +44,9 @@ use velt_vir::vir::{self, Callee, Operand, Place, Proj, Rvalue, Stmt, Terminator
 
 use crate::abi::size_align;
 use crate::CodegenResult;
+
+mod cfg;
+use cfg::Cfg;
 
 /// Where each memory local goes: `local_slot[i]` indexes `slots` for a memory local `i`.
 pub(super) struct SlotPlan {
@@ -50,8 +65,10 @@ pub(super) struct PlannedSlot {
 /// How an access at a point uses a local's bytes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Kind {
-    /// Reads them (or may: a pointer use, an address taken).
+    /// Reads them (or may: a pointer use).
     Read,
+    /// Takes their address: an access, but the bytes are read where the pointer is used.
+    Addr,
     /// Writes part of them.
     Partial,
     /// Writes all of them.
@@ -66,6 +83,16 @@ pub(super) fn plan(
     in_memory: &[bool],
     keyed: &dyn Fn(usize) -> bool,
 ) -> CodegenResult<SlotPlan> {
+    plan_counted(program, function, in_memory, keyed).map(|(plan, _)| plan)
+}
+
+/// [`plan`], and the number of block visits its liveness walks made (for tests of its cost).
+pub(super) fn plan_counted(
+    program: &vir::Program,
+    function: &vir::Function,
+    in_memory: &[bool],
+    keyed: &dyn Fn(usize) -> bool,
+) -> CodegenResult<(SlotPlan, u64)> {
     let size_align = |ty| size_align(program, ty);
     let n = function.locals.len();
     let mut local_slot = vec![None; n];
@@ -89,10 +116,10 @@ pub(super) fn plan(
         }
     }
     if !shared.contains(&true) {
-        return Ok(SlotPlan { local_slot, slots });
+        return Ok((SlotPlan { local_slot, slots }, 0));
     }
     let scan = Scan::new(program, function, in_memory, &shared);
-    let ranges = scan.ranges(function);
+    let (ranges, visits) = scan.ranges();
 
     // Escaped and unaccessed locals first: each escaped one alone, the unaccessed ones
     // (never named by the code) in one slot.
@@ -169,7 +196,7 @@ pub(super) fn plan(
             local_slot[i] = Some(s);
         }
     }
-    Ok(SlotPlan { local_slot, slots })
+    Ok((SlotPlan { local_slot, slots }, visits))
 }
 
 /// The pointer origins and the accesses of the shared locals.
@@ -177,10 +204,16 @@ struct Scan {
     /// Per local: the shared locals a value of it may point into (sorted).
     origins: Vec<Vec<u32>>,
     escaped: Vec<bool>,
+    /// Per register local: `Some(x)` when every value it is given is `&x` for a shared local
+    /// `x` (the whole local), so it points to exactly `x`.
+    addr_of: Vec<Option<u32>>,
     /// Per shared local: its accesses as (block, point, kind), in program order.
     accesses: Vec<Vec<(u32, u32, Kind)>>,
-    /// Per block: its first point (block start) and its last (block end).
+    /// Per block: its first point (block start) and its last (block end). Points follow the
+    /// blocks in reverse postorder, the order control reaches them, so a range is a short
+    /// hull even where blocks are laid out apart from where they run (inlined code).
     bounds: Vec<(u32, u32)>,
+    cfg: Cfg,
 }
 
 /// The value-producing parts of a statement or terminator, for the origin analysis.
@@ -203,6 +236,23 @@ impl Ctx<'_> {
             Callee::Extern(id) => self.program.externs.get(id.0 as usize).map(|e| e.ret),
             Callee::Ptr { ret, .. } => Some(*ret),
         }
+    }
+
+    /// Whether a call of `callee` with `nargs` arguments passes its last one as the callee's
+    /// out-pointer: the last param of a function, which lowering names `ret.out` and the
+    /// callee writes before it reads it (vir.rs invariant 2).
+    fn out_call(&self, callee: &Callee, nargs: usize) -> bool {
+        let Callee::Func(id) = callee else {
+            return false;
+        };
+        let Some(f) = self.program.funcs.get(id.0 as usize) else {
+            return false;
+        };
+        nargs > 0
+            && nargs == f.params.len()
+            && f.ret == Ty::Unit
+            && f.params[nargs - 1] == Ty::Ptr
+            && f.locals.get(nargs - 1).and_then(|l| l.name.as_deref()) == Some("ret.out")
     }
 
     /// Whether a register local of this type can carry a pointer.
@@ -231,8 +281,10 @@ impl Scan {
         let mut scan = Scan {
             origins: vec![Vec::new(); n],
             escaped: vec![false; n],
+            addr_of: addr_of(&ctx, function),
             accesses: vec![Vec::new(); n],
-            bounds: Vec::with_capacity(function.blocks.len()),
+            bounds: vec![(0, 0); function.blocks.len()],
+            cfg: Cfg::new(function),
         };
         // Origins and escapes: a flow-insensitive fixpoint (both only grow).
         loop {
@@ -249,7 +301,9 @@ impl Scan {
         }
         // Accesses, in program order.
         let mut point = 0u32;
-        for (bi, block) in function.blocks.iter().enumerate() {
+        for i in 0..scan.cfg.order.len() {
+            let bi = scan.cfg.order[i] as usize;
+            let block = &function.blocks[bi];
             let start = point;
             point += 1;
             let mut events = Vec::new();
@@ -258,10 +312,10 @@ impl Scan {
                 scan.record(bi as u32, point, &mut events);
                 point += 1;
             }
-            term_events(&ctx, &scan.origins, &block.term, &mut events);
+            term_events(&ctx, &scan.origins, &scan.addr_of, &block.term, &mut events);
             scan.record(bi as u32, point, &mut events);
             point += 1;
-            scan.bounds.push((start, point));
+            scan.bounds[bi] = (start, point);
             point += 1;
         }
         scan
@@ -388,6 +442,49 @@ impl Scan {
     }
 }
 
+/// Per register local: the shared local `x` when its only values are `&x` (`Scan::addr_of`).
+fn addr_of(ctx: &Ctx, function: &vir::Function) -> Vec<Option<u32>> {
+    // Per local: `None` before any value, then `Some(Some(x))` while every value was `&x`.
+    let mut seen: Vec<Option<Option<u32>>> = vec![None; function.locals.len()];
+    let mut give = |dest: &Place, value: Option<u32>| {
+        let value = if dest.proj.is_empty() { value } else { None };
+        if let Some(s) = seen.get_mut(dest.local.0 as usize) {
+            *s = match *s {
+                None => Some(value),
+                Some(v) if v == value => Some(v),
+                Some(_) => Some(None),
+            };
+        }
+    };
+    for block in &function.blocks {
+        for s in &block.stmts {
+            if let Stmt::Assign(dest, rv) = s {
+                let x = match rv {
+                    Rvalue::AddrOf(p)
+                        if p.proj.is_empty()
+                            && ctx.is_memory(p.local.0)
+                            && ctx.shared.get(p.local.0 as usize).copied().unwrap_or(false) =>
+                    {
+                        Some(p.local.0)
+                    }
+                    _ => None,
+                };
+                give(dest, x);
+            }
+        }
+        if let Terminator::Call { dest: Some(d), .. } = &block.term {
+            give(d, None);
+        }
+    }
+    seen.into_iter()
+        .enumerate()
+        .map(|(i, s)| match s {
+            Some(Some(x)) if !ctx.is_memory(i as u32) => Some(x),
+            _ => None,
+        })
+        .collect()
+}
+
 /// The accesses `place` makes: to its local's bytes when the local is in memory (`kind` for
 /// a destination, a read otherwise), through the pointer it dereferences otherwise.
 fn place_events(
@@ -448,11 +545,13 @@ fn stmt_events(ctx: &Ctx, origins: &[Vec<u32>], s: &Stmt, out: &mut Vec<(u32, Ki
                     operand_events(ctx, origins, b, out);
                 }
                 Rvalue::AddrOf(p) => {
-                    // Taking the address reads a pointer the place goes through, and counts
-                    // as an access of a memory local (its range then covers the pointer).
+                    // Taking the address of a memory local is an access (its range then
+                    // covers the pointer) that reads nothing, unless the place goes through
+                    // a pointer the local holds.
                     let local = p.local.0;
                     if ctx.is_memory(local) {
-                        out.push((local, Kind::Read));
+                        let derefs = p.proj.iter().any(|q| matches!(q, Proj::Deref(_)));
+                        out.push((local, if derefs { Kind::Read } else { Kind::Addr }));
                     }
                 }
                 Rvalue::Aggregate(_, ops) | Rvalue::Intrinsic(_, ops) => {
@@ -490,7 +589,13 @@ fn stmt_events(ctx: &Ctx, origins: &[Vec<u32>], s: &Stmt, out: &mut Vec<(u32, Ki
     }
 }
 
-fn term_events(ctx: &Ctx, origins: &[Vec<u32>], t: &Terminator, out: &mut Vec<(u32, Kind)>) {
+fn term_events(
+    ctx: &Ctx,
+    origins: &[Vec<u32>],
+    addr_of: &[Option<u32>],
+    t: &Terminator,
+    out: &mut Vec<(u32, Kind)>,
+) {
     match t {
         Terminator::Branch { cond: op, .. }
         | Terminator::Switch { value: op, .. }
@@ -501,8 +606,19 @@ fn term_events(ctx: &Ctx, origins: &[Vec<u32>], t: &Terminator, out: &mut Vec<(u
             if let Callee::Ptr { target, .. } = callee {
                 pointer_operand(ctx, origins, target, out);
             }
-            for a in args {
-                pointer_operand(ctx, origins, a, out);
+            let out_call = ctx.out_call(callee, args.len());
+            for (i, a) in args.iter().enumerate() {
+                // Exactly `&x` as the callee's out-pointer: the call writes all of `x`.
+                let whole = match a {
+                    Operand::Copy(p) if out_call && i + 1 == args.len() && p.proj.is_empty() => {
+                        addr_of.get(p.local.0 as usize).copied().flatten()
+                    }
+                    _ => None,
+                };
+                match whole {
+                    Some(x) => out.push((x, Kind::Full)),
+                    None => pointer_operand(ctx, origins, a, out),
+                }
             }
             if let Some(dest) = dest {
                 place_events(ctx, origins, dest, Kind::Full, out);
@@ -512,40 +628,23 @@ fn term_events(ctx: &Ctx, origins: &[Vec<u32>], t: &Terminator, out: &mut Vec<(u
     }
 }
 
-fn successors(t: &Terminator) -> Vec<u32> {
-    match t {
-        Terminator::Goto(b) => vec![b.0],
-        Terminator::Branch { then, els, .. } => vec![then.0, els.0],
-        Terminator::Switch { cases, default, .. } => {
-            let mut v: Vec<u32> = cases.iter().map(|(_, b)| b.0).collect();
-            v.push(default.0);
-            v
-        }
-        Terminator::Call { next, .. } => vec![next.0],
-        Terminator::Return(_) | Terminator::Unreachable => vec![],
-    }
-}
+/// The most blocks one local's liveness walk visits. A local live in more (all over a long
+/// loop) keeps a slot of its own, so the planner's work stays linear in the function's length.
+pub(super) const WALK_BUDGET: u32 = 1024;
 
 impl Scan {
     /// Per local: the hull (first, last point) of where it is accessed or live, or `None`
     /// when it is never accessed.
-    fn ranges(&self, function: &vir::Function) -> Vec<Option<(u32, u32)>> {
-        let nb = function.blocks.len();
-        let succs: Vec<Vec<u32>> = function
-            .blocks
-            .iter()
-            .map(|b| {
-                let mut s = successors(&b.term);
-                s.retain(|&x| (x as usize) < nb);
-                s
-            })
-            .collect();
-        let mut preds: Vec<Vec<u32>> = vec![Vec::new(); nb];
-        for (b, ss) in succs.iter().enumerate() {
-            for &s in ss {
-                preds[s as usize].push(b as u32);
-            }
-        }
+    fn ranges(&self) -> (Vec<Option<(u32, u32)>>, u64) {
+        let nb = self.bounds.len();
+        let Cfg {
+            succs,
+            preds,
+            num,
+            reached_from,
+            ..
+        } = &self.cfg;
+        let mut visits = 0u64;
         // Per-block marks, stamped with the local being processed (no clearing between locals).
         let mut live_in = vec![u32::MAX; nb];
         let mut live_out = vec![u32::MAX; nb];
@@ -565,6 +664,9 @@ impl Scan {
             // Upward-exposed reads (a read before any whole write in its block) and kills.
             work.clear();
             live_blocks.clear();
+            // A block can have been written in (entered after an access) only if some access
+            // block reaches it: `reached_from[b] >= first`.
+            let first = acc.iter().map(|a| num[a.0 as usize]).min().unwrap_or(0);
             let mut prev_block = u32::MAX;
             let mut killed = false;
             for &(b, p, kind) in acc {
@@ -576,7 +678,11 @@ impl Scan {
                     touched[b as usize] = stamp;
                 }
                 match kind {
-                    Kind::Read if !killed && live_in[b as usize] != stamp => {
+                    Kind::Read
+                        if !killed
+                            && live_in[b as usize] != stamp
+                            && reached_from[b as usize] >= first =>
+                    {
                         live_in[b as usize] = stamp;
                         live_blocks.push(b);
                         work.push(b);
@@ -589,15 +695,30 @@ impl Scan {
                 }
             }
             // Backward liveness from the upward-exposed reads.
+            let mut budget = WALK_BUDGET;
             while let Some(b) = work.pop() {
+                visits += 1;
+                budget -= 1;
+                if budget == 0 {
+                    break;
+                }
                 for &p in &preds[b as usize] {
                     live_out[p as usize] = stamp;
-                    if kills[p as usize] != stamp && live_in[p as usize] != stamp {
+                    if kills[p as usize] != stamp
+                        && live_in[p as usize] != stamp
+                        && reached_from[p as usize] >= first
+                    {
                         live_in[p as usize] = stamp;
                         live_blocks.push(p);
                         work.push(p);
                     }
                 }
+            }
+            if budget == 0 {
+                // Too long a walk (a value used all over a long loop): the whole function is
+                // a range that holds, and leaves the local a slot of its own.
+                ranges[local] = Some((0, u32::MAX));
+                continue;
             }
             // "Maybe written" within the live blocks: forward from the accessing blocks.
             work.clear();
@@ -607,6 +728,7 @@ impl Scan {
                 }
             }
             while let Some(b) = work.pop() {
+                visits += 1;
                 for &s in &succs[b as usize] {
                     if live_in[s as usize] == stamp && init_in[s as usize] != stamp {
                         init_in[s as usize] = stamp;
@@ -632,6 +754,6 @@ impl Scan {
             }
             ranges[local] = Some((lo, hi));
         }
-        ranges
+        (ranges, visits)
     }
 }
