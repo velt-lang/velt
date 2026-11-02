@@ -1,0 +1,14 @@
+// `then(f)` rejects with what the promise rejects with and what `f` throws: a promise type with
+// Velt's error type that allows only one of them does not take the result.
+async function checked(n: number): Promise<number> {
+  if (n < 0) throw new RangeError("negative");
+  return n;
+}
+
+function half(n: number): number {
+  if (n % 2 !== 0) throw new TypeError("odd");
+  return n / 2;
+}
+
+const p: Promise<number, RangeError> = checked(4).then(half);
+p.catch(() => 0);

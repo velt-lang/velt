@@ -131,6 +131,55 @@ impl FnCx<'_, '_> {
         Some((v, f))
     }
 
+    /// The one callback of `then(f)` / `finally(h)` converted to throw (or, async, reject with)
+    /// `j`, the union of its errors and the promise's. False after reporting a callback that
+    /// doesn't convert.
+    fn callback_throws_as(
+        &mut self,
+        callbacks: &mut [(hir::Expr, bool)],
+        j: TyId,
+        all_async: bool,
+    ) -> bool {
+        let Some((h, _)) = callbacks.first_mut() else {
+            return true;
+        };
+        let TyKind::FnPtr {
+            params, rest, ret, ..
+        } = self.cx.ty.kind(h.ty).clone()
+        else {
+            return true;
+        };
+        let never = self.cx.ty.never;
+        let (ret, throws) = match (all_async, self.cx.ty.kind(ret)) {
+            (true, &TyKind::Promise(v, _)) => (self.cx.ty.promise_rejecting(v, j), never),
+            _ => (ret, j),
+        };
+        let exp = self.cx.ty.intern(TyKind::FnPtr {
+            params,
+            ret,
+            throws,
+            rest,
+        });
+        if exp == h.ty {
+            return true;
+        }
+        let placeholder = self.error_expr(h.span);
+        let taken = std::mem::replace(h, placeholder);
+        match self
+            .try_coerce(taken, exp)
+            .or_else(|w| self.adapt_fn(w, exp))
+        {
+            Ok(w) => {
+                *h = w;
+                true
+            }
+            Err(w) => {
+                self.report_mismatch(exp, &w);
+                false
+            }
+        }
+    }
+
     /// The callback `h` as a function taking `params` (what the promise passes it): one whose
     /// parameters are wider (`(v: any) => …` for a `Promise<number>`) is wrapped so each
     /// argument converts (`fn_widen`). `None` after reporting a parameter the value doesn't
@@ -301,19 +350,23 @@ impl FnCx<'_, '_> {
             .collect();
         let never = self.cx.ty.never;
         // `then(f)` and `finally(h)` reject with what the promise rejects with and what the
-        // callback throws: one type (the error types are type parameters of their own).
+        // callback throws: one type (the error types are type parameters of their own), their
+        // union, to which the promise and the callback convert (`any` when either is `any`).
         let joined = |s: &mut Self, x: Option<TyId>| -> Result<(TyId, bool), ()> {
             match x {
                 None => Ok((e, false)),
                 Some(x) if e == never || e == x => Ok((x, true)),
-                Some(x) => {
-                    let (a, b) = (s.cx.display(e), s.cx.display(x));
-                    s.cx.err(
-                        format!("the callback of `{method}` throws `{b}` but the promise rejects with `{a}`"),
-                        span,
-                    );
-                    Err(())
-                }
+                Some(x) => match s.cx.error_union(&[e, x]) {
+                    Some(j) => Ok((j, true)),
+                    None => {
+                        let (a, b) = (s.cx.display(e), s.cx.display(x));
+                        s.cx.err(
+                            format!("the callback of `{method}` throws `{b}` but the promise rejects with `{a}`"),
+                            span,
+                        );
+                        Err(())
+                    }
+                },
             }
         };
         // The prelude function, its type arguments, the receiver's type, and the new promise's
@@ -323,6 +376,9 @@ impl FnCx<'_, '_> {
                 let Ok((j, throws)) = joined(self, *x) else {
                     return self.error_expr(span);
                 };
+                if throws && !self.callback_throws_as(&mut callbacks, j, all_async) {
+                    return self.error_expr(span);
+                }
                 let name = match (all_async, throws) {
                     (false, false) => "promiseThen",
                     (false, true) => "promiseThenThrows",
@@ -424,6 +480,9 @@ impl FnCx<'_, '_> {
                 let Ok((j, throws)) = joined(self, *x) else {
                     return self.error_expr(span);
                 };
+                if throws && !self.callback_throws_as(&mut callbacks, j, all_async) {
+                    return self.error_expr(span);
+                }
                 let name = match (all_async, throws) {
                     (false, false) => "promiseFinally",
                     (false, true) => "promiseFinallyThrows",
