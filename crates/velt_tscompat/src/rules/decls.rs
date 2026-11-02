@@ -165,12 +165,19 @@ pub(super) fn operator_method(name: &ast::Ident, cx: &mut Cx) {
     if !velt_syntax::OPERATOR_SYMBOLS.contains(&key) {
         return;
     }
+    let unknown = format!(
+        "`tsc` knows no `Symbol.{key}`, and an operator on objects is a type error there \
+         (JavaScript's `a + b` converts objects to primitives)"
+    );
     cx.error(
         "operator",
         name.span,
-        format!("`{}` is a Velt operator method: TypeScript has no operator overloading", name.name),
+        format!(
+            "`{}` is a Velt operator method: TypeScript has no operator overloading",
+            name.name
+        ),
         &[
-            "`tsc` knows no `Symbol.{key}`, and an operator on objects is a type error there              (`a + b` calls `toString` in JavaScript)",
+            &unknown,
             "write a method with a name (`add(other)`) and call it",
         ],
     );
