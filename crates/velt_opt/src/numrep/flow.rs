@@ -308,23 +308,20 @@ impl Flow {
         st[i] = self.capped(i, self.rvalue(st, func, rv, self.tys[i]));
     }
 
-    /// Facts about the result of a call ending a block in state `st`.
-    pub fn call_result(&self, st: &State, func: &Function, env: &Env, t: &Terminator) -> Fact {
+    /// Facts about the result of a call ending a block.
+    pub fn call_result(&self, func: &Function, env: &Env, t: &Terminator) -> Fact {
         let Terminator::Call {
             callee,
-            args,
             dest: Some(d),
             ..
         } = t
         else {
             return Fact::top(Ty::Unit);
         };
-        let ty = func.locals[d.local.0 as usize].ty;
-        let arg = args.first().and_then(|a| self.operand(st, func, a));
-        match (callee, arg) {
+        match callee {
             // A UTF-16 code unit, or -1 past the end (rt_abi.md).
-            (Callee::Extern(id), _) if env.symbol(*id) == CHAR_CODE_AT => Fact::int(-1, 65535),
-            _ => Fact::top(ty),
+            Callee::Extern(id) if env.symbol(*id) == CHAR_CODE_AT => Fact::int(-1, 65535),
+            _ => Fact::top(func.locals[d.local.0 as usize].ty),
         }
     }
 
@@ -398,7 +395,7 @@ impl Flow {
                 t @ Terminator::Call { dest, next, .. } => {
                     if let Some(d) = dest.as_ref().filter(|d| d.proj.is_empty()) {
                         if let Some(i) = self.slot[d.local.0 as usize] {
-                            st[i] = self.call_result(&st, func, env, t);
+                            st[i] = self.call_result(func, env, t);
                         }
                     }
                     arrive(self, next.0 as usize, &st);
