@@ -1,5 +1,6 @@
-//! Error-set variables of function types written without `throws` (`fn_types`, https://veltlang.com/docs/reference/
-//! errors.md "Dynamic calls"; hir_encodings.md "Inferred error types of function types").
+//! Error-set variables of function types written without `throws` (`fn_types`,
+//! https://veltlang.com/docs/reference/errors/ "Dynamic calls"; hir_encodings.md "Inferred error
+//! types of function types").
 //!
 //! Each site's function type is interned once, during collection, with a variable as its error
 //! type (`TyOp::ErrSite`), so signatures, fields, interface members and the derived tables never
