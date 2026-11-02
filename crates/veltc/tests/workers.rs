@@ -172,14 +172,16 @@ fn a_host_module_nothing_provides_is_an_error() {
     );
     let o = velt(&work, &["build", "--host", "workers", "glue.vlt"]);
     let err = String::from_utf8_lossy(&o.stderr);
-    assert!(
-        !o.status.success()
-            && err.contains(
-                "the `workers` glue's host module `velt:worker` has no function `nosuch`"
-            )
-            && err.contains("glue.vlt:4:"),
-        "{err}"
-    );
+    for want in [
+        "glue.vlt:4:",
+        "the `workers` glue's host module `velt:worker` has no function `nosuch`",
+        "glue.vlt:5:",
+        "`velt:worker.method` is declared with other types than the `workers` glue's",
+        "glue.vlt:6:",
+        "the `workers` glue has no host module `velt:other`",
+    ] {
+        assert!(!o.status.success() && err.contains(want), "{want}:\n{err}");
+    }
     // A plain browser build leaves the host functions to its embedder.
     let o = velt(&work, &["build", "--target", TRIPLE, "missing.vlt"]);
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));

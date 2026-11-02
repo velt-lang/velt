@@ -44,7 +44,7 @@ workers.rs`, `driver/host_modules.rs`), and the Velt code that serves on Workers
 - The module is instantiated on the first request, once per isolate, and `main` runs once
   (`velt_start`); the instance serves every later request. Instantiation and `main` run in the
   first request's handler.
-- The end of a program (`velt.done(code)`, velt_web.mjs `loadVelt`'s `done`): a program that
+- The end of a program (`velt.done(code)`, reaching the glue through `loadVelt`'s `ended`): a program that
   ends with 0 before it accepted a request keeps its instance; queued and later requests get a
   500 "the program does not accept requests", logged once. Any other end (code 0 after it
   accepted, a panic's 101, a trap's 134, `process.exit(n)`, an uncaught error's 1), a host
@@ -62,8 +62,10 @@ workers.rs`, `driver/host_modules.rs`), and the Velt code that serves on Workers
   request settled from its pump (velt_web.mjs's `Deferred`, which runs the turn on the caller's
   stack instead of in a reaction of a promise another request made), a host promise's
   settlement in the context of the turn that started it (`loadVelt`'s `owner`/`resuming`), the
-  program's timer in the pump holding it (`loadVelt`'s `setTimer`): the newest request's, moved
-  there on every request.
+  program's timer in the pump holding it (`loadVelt`'s `setTimer`): the newest request not
+  answered yet, else the newest request; it moves when that changes (its timeout is cleared in
+  the pump that set it), and a turn asking for the same deadline keeps it. A queued request
+  whose client went away (`request.signal`) leaves the queue.
 - `ctx.waitUntil(p)`: a request whose pump must go on after its response calls it with the
   pump: while host promises started in its context are pending, while it holds the program's
   timer, or while the program still writes its body. Work that outlives Cloudflare's limit for

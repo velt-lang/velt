@@ -180,22 +180,28 @@ class Program {
 
   /** The program asks to be woken in `delay` ms (negative: never). */
   setTimer(delay, fire) {
-    const old = this.timer?.holder;
-    this.timer = delay < 0 ? null : { delay, at: performance.now() + delay, fire, holder: null };
+    const at = performance.now() + delay;
+    const timer = this.timer;
+    // Every turn asks again: the same deadline keeps the timeout armed.
+    if (delay >= 0 && timer !== null && Math.abs(timer.at - at) < 1) return;
+    if (timer !== null) disarm(timer);
+    this.timer = delay < 0 ? null : { at, fire, holder: null, handle: null };
     this.armTimer();
-    old?.poke();
   }
 
-  /** Arm the program's timer in the newest pump, whose context lasts longest. */
+  /**
+   * Arm the program's timer in the newest request not answered yet, whose context lasts while it
+   * waits (else in the newest pump, kept by `waitUntil`); called when that may have changed.
+   */
   armTimer() {
     const timer = this.timer;
-    const holder = this.pumps.at(-1);
+    const holder = this.pumps.findLast((p) => !p.answered) ?? this.pumps.at(-1);
     if (timer === null || holder === undefined || timer.holder === holder) return;
-    const old = timer.holder;
+    disarm(timer);
     timer.holder = holder;
     holder.post(() => {
       if (this.timer !== timer || timer.holder !== holder) return;
-      setTimeout(() => {
+      timer.handle = setTimeout(() => {
         if (this.timer !== timer || timer.holder !== holder) return;
         this.timer = null;
         this.current = holder;
@@ -203,7 +209,6 @@ class Program {
         holder.poke();
       }, Math.max(0, timer.at - performance.now()));
     });
-    old?.poke();
   }
 
   /** The program ended with `code`. */
@@ -265,6 +270,21 @@ class WorkerRequest {
     this.answered = false; // the program answered (or will not)
     this.done = false; // the answer is complete
     this.response = new Promise((resolve) => (this.resolveResponse = resolve));
+    // The client went away (with `request.signal`): nothing waits for the answer.
+    request.signal?.addEventListener?.("abort", () => this.gone());
+  }
+
+  /** The client went away before the answer: the program no longer gets it from `accept()`. */
+  gone() {
+    const program = this.program;
+    const queued = program.queue.indexOf(this);
+    if (this.answered || queued < 0) return;
+    program.queue.splice(queued, 1);
+    this.handing = false;
+    this.answered = true;
+    this.post(() => this.finish(answer(499, "the client went away")));
+    program.schedule();
+    program.armTimer();
   }
 
   /** Whether the pump may stop: answered, and nothing of the program's lives in its context. */
@@ -367,6 +387,7 @@ class WorkerRequest {
   claim() {
     if (this.answered) throw new Error(`velt: ${this.method} ${this.url} was answered already`);
     this.answered = true;
+    this.program.armTimer();
   }
 
   /** `make()`'s response, or a 500 when the program's status or headers make none. */
@@ -395,6 +416,7 @@ class WorkerRequest {
   abandon(why) {
     if (this.answered) return this.stream?.abort();
     this.answered = true;
+    this.program.armTimer();
     if (why !== null) console.error(`velt: ${this.method} ${this.url}: ${why}`);
     this.post(() => this.finish(answer(500, "Internal Server Error")));
   }
@@ -459,6 +481,16 @@ class ResponseStream {
   dropped() {
     this.abort();
   }
+}
+
+/** Take `timer` from its pump: its timeout is cleared there, in the context that made it. */
+function disarm(timer) {
+  const { holder, handle } = timer;
+  timer.holder = null;
+  timer.handle = null;
+  if (holder === null) return;
+  if (handle !== null) holder.post(() => clearTimeout(handle));
+  holder.poke();
 }
 
 /** A `Response`'s init from the program's status and `name: value` lines. */
