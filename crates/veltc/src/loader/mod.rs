@@ -91,8 +91,7 @@ pub struct LoadOptions<'a> {
     pub test_harness: bool,
     /// The build's target triple (`None`: this machine's), whose conditions `#name` imports use.
     pub target: Option<String>,
-    /// The condition of `--host`'s host package (`vpm::host`), a condition of `#name` imports on
-    /// top of the target's.
+    /// `--host`'s host package's condition (`vpm::host`), added to the target's for `#name`s.
     pub host_condition: Option<String>,
     /// Check that the variants of each `#name` import the program resolves export the same API
     /// ([`variants`]): `velt check`, `velt test` and the language server ask for it.

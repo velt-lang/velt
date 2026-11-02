@@ -50,7 +50,10 @@ impl Reader<'_> {
             }
         }
         for (path, file, span) in scaffold {
-            self.check(check_scaffold(&path.name, &file, &config.entry), path.span.to(span));
+            self.check(
+                check_scaffold(&path.name, &file, &config.entry),
+                path.span.to(span),
+            );
             config.scaffold.insert(path.name, file);
         }
         Some(config)

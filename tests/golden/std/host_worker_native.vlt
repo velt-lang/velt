@@ -1,0 +1,15 @@
+// velt/host/worker natively: the request queue of `velt build --host` builds may be imported and
+// left uncalled (a native build that reaches a call of a host function is a compile error).
+import { HostRef } from "velt/host";
+import { utf8Encode } from "velt/encoding";
+import { accept, method, respond, url } from "velt/host/worker";
+
+// Not reached: on a `--host` build, one request answered with its method and URL.
+async function answerOne(): Promise<void> {
+  const req: HostRef = await accept();
+  respond(req, 200, "content-type: text/plain", utf8Encode(`${method(req)} ${url(req)}`));
+}
+
+function main() {
+  console.log("velt/host/worker imports natively");
+}

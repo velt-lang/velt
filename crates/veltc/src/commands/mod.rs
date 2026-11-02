@@ -14,6 +14,7 @@ mod create;
 mod doc;
 mod doctor;
 mod fmt;
+mod host;
 pub mod lsp;
 pub mod members;
 mod package;
@@ -25,7 +26,6 @@ mod ts_compat;
 pub(crate) mod version;
 mod warm;
 mod wasm;
-mod host;
 
 use std::process::ExitCode;
 

@@ -80,7 +80,11 @@ pub fn resolve(
 /// The module of a `--host` build of the program `host.program`, inside its directory: `-o`,
 /// else `<program>-<condition>` in `base` (a build's default directory); the driver adds `.wasm`.
 /// The directory must be one a host build may write into ([`check_dir`]).
-pub fn module_path(output: Option<&Path>, base: &Path, host: &HostBuild) -> Result<PathBuf, String> {
+pub fn module_path(
+    output: Option<&Path>,
+    base: &Path,
+    host: &HostBuild,
+) -> Result<PathBuf, String> {
     let dir = output.map_or_else(
         || base.join(format!("{}-{}", host.program, host.config.condition)),
         Path::to_path_buf,
@@ -121,7 +125,11 @@ fn check_dir(dir: &Path, config: &HostConfig) -> Result<(), String> {
 }
 
 /// After `module` was built into its directory: the rest of the build beside it.
-pub fn write(module: &Path, host: &HostBuild, packages: Option<&PackageGraph>) -> Result<(), String> {
+pub fn write(
+    module: &Path,
+    host: &HostBuild,
+    packages: Option<&PackageGraph>,
+) -> Result<(), String> {
     let dir = module.parent().unwrap_or(Path::new("."));
     let bytes =
         std::fs::read(module).map_err(|e| format!("cannot read `{}`: {e}", module.display()))?;
@@ -136,8 +144,11 @@ pub fn write(module: &Path, host: &HostBuild, packages: Option<&PackageGraph>) -
             package.name,
             file.trim_start_matches("./src/")
         );
-        copy(&package.root.join(file.trim_start_matches("./")), &dir.join(&rel))
-            .map_err(|e| format!("cannot copy host module `{name}`: {e}"))?;
+        copy(
+            &package.root.join(file.trim_start_matches("./")),
+            &dir.join(&rel),
+        )
+        .map_err(|e| format!("cannot copy host module `{name}`: {e}"))?;
         modules.push((name, rel));
     }
     write_file(&dir.join(CORE_FILE), CORE)?;
@@ -147,7 +158,12 @@ pub fn write(module: &Path, host: &HostBuild, packages: Option<&PackageGraph>) -
         &host.root.join(config.entry.trim_start_matches("./")),
         &dir.join(config.entry_name()),
     )
-    .map_err(|e| format!("cannot copy the entry of host package `{}`: {e}", host.package))?;
+    .map_err(|e| {
+        format!(
+            "cannot copy the entry of host package `{}`: {e}",
+            host.package
+        )
+    })?;
     let name = program_name(&host.program);
     for (path, file) in &config.scaffold {
         let to = dir.join(path);
@@ -193,7 +209,10 @@ fn modules_map(modules: &[(String, String)]) -> String {
          --host` (each build writes it again).\n",
     );
     for (i, (_, path)) in modules.iter().enumerate() {
-        out.push_str(&format!("import m{i} from {};\n", lit(&format!("./{path}"))));
+        out.push_str(&format!(
+            "import m{i} from {};\n",
+            lit(&format!("./{path}"))
+        ));
     }
     let fields: Vec<String> = modules
         .iter()

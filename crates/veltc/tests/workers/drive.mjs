@@ -55,20 +55,36 @@ globalThis.setTimeout = (f, ms, ...args) => {
     f(...args);
   }, ms);
 };
-/** `body`, read only in request `id`'s context. */
-function watchBody(body, id) {
+/** `body` (`what`'s), read only in request `id`'s context. */
+function watchBody(body, id, what = `request ${id}'s body`) {
   const getReader = body.getReader.bind(body);
   body.getReader = (...args) => {
     const reader = getReader(...args);
     const read = reader.read.bind(reader);
     reader.read = () => {
-      if (contexts.getStore() !== id) console.log(`context: request ${id}'s body read elsewhere`);
+      if (contexts.getStore() !== id) console.log(`context: ${what} read elsewhere`);
       return read();
     };
     return reader;
   };
   return body;
 }
+
+// The program's `fetch` of `https://upstream.test/…`: a response whose body must be read in the
+// context of the request that fetched it.
+const nativeFetch = globalThis.fetch;
+globalThis.fetch = async (input, init) => {
+  const url = String(input instanceof Request ? input.url : input);
+  if (!url.startsWith("https://upstream.test/")) return nativeFetch(input, init);
+  const id = contexts.getStore();
+  const body = new ReadableStream({
+    start(c) {
+      for (const p of ["up", "stream"]) c.enqueue(encoder.encode(p));
+      c.close();
+    },
+  });
+  return new Response(watchBody(body, id, `the upstream response of request ${id}`));
+};
 
 let instances = 0;
 const instantiate = WebAssembly.instantiate;
@@ -191,6 +207,14 @@ const scenarios = {
     await env.gates.reached("start");
     env.gates.open("start");
     await again;
+  },
+  // relay/: a response fetched in one request's context, read from another's turn.
+  async relay() {
+    const fetching = send("fetch-start");
+    await env.gates.reached("fetch");
+    await send("fetch-read");
+    env.gates.open("fetch");
+    await fetching;
   },
 };
 

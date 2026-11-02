@@ -321,8 +321,12 @@ pub fn build_options(args: &BuildArgs) -> Result<BuildOptions, String> {
                 let package = &project.manifest.package.name;
                 // `@scope/name` → `name`.
                 let stem = package.rsplit('/').next().unwrap_or(package).to_string();
-                let host =
-                    super::host::resolve(name, Some(&project.graph), args.target.as_deref(), &stem)?;
+                let host = super::host::resolve(
+                    name,
+                    Some(&project.graph),
+                    args.target.as_deref(),
+                    &stem,
+                )?;
                 if opts.target.as_deref() != Some(host.config.target.as_str()) {
                     opts.target = Some(host.config.target.clone());
                     project = install(opts.target())?;
@@ -333,7 +337,11 @@ pub fn build_options(args: &BuildArgs) -> Result<BuildOptions, String> {
             config_cpu = project.build_cpu();
             if let (Some(host), Emit::Exe) = (&opts.host, args.emit) {
                 let base = project.target_dir();
-                opts.output = Some(super::host::module_path(args.output.as_deref(), &base, host)?);
+                opts.output = Some(super::host::module_path(
+                    args.output.as_deref(),
+                    &base,
+                    host,
+                )?);
             } else if opts.output.is_none() {
                 opts.output = Some(package_output(
                     &project.target_dir(),

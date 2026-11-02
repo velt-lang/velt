@@ -28,7 +28,13 @@ pub(super) fn check_build(
     let Some(host) = &opts.host else {
         return Ok(());
     };
-    let diags = check(hir, program, &sess.sm, opts.packages.as_ref(), &host.package);
+    let diags = check(
+        hir,
+        program,
+        &sess.sm,
+        opts.packages.as_ref(),
+        &host.package,
+    );
     sess.diagnostics.extend(diags);
     sess.stop_if_errors()
 }

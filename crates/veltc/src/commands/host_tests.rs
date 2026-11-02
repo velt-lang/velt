@@ -77,15 +77,34 @@ fn a_host_package_is_resolved_by_name() {
     let g = graph(tmp.path());
     let host = resolve("host-edge", Some(&g), None, "My_App").unwrap();
     assert_eq!(
-        (host.program.as_str(), host.package.as_str(), host.config.condition.as_str()),
+        (
+            host.program.as_str(),
+            host.package.as_str(),
+            host.config.condition.as_str()
+        ),
         ("My_App", "host-edge", "edge")
     );
     assert!(resolve("host-edge", Some(&g), Some("wasm32-unknown-unknown"), "a").is_ok());
     for (name, target, packages, want) in [
-        ("host-edge", Some("wasm32-wasip1"), Some(&g), "builds for `wasm32-unknown-unknown`: leave out `--target wasm32-wasip1`"),
-        ("nope", None, Some(&g), "no package `nope` among the build's dependencies"),
+        (
+            "host-edge",
+            Some("wasm32-wasip1"),
+            Some(&g),
+            "builds for `wasm32-unknown-unknown`: leave out `--target wasm32-wasip1`",
+        ),
+        (
+            "nope",
+            None,
+            Some(&g),
+            "no package `nope` among the build's dependencies",
+        ),
         ("kv", None, Some(&g), "package `kv` is not a host package"),
-        ("host-edge", None, None, "`--host host-edge` builds a package"),
+        (
+            "host-edge",
+            None,
+            None,
+            "`--host host-edge` builds a package",
+        ),
     ] {
         let err = resolve(name, packages, target, "a").unwrap_err();
         assert!(err.contains(want), "{name}: {err}");
@@ -95,9 +114,14 @@ fn a_host_package_is_resolved_by_name() {
         target: "wasm32-wasip1".into(),
         ..host_package(&tmp.path().join("host-wasi"))
     };
-    native.add("host-wasi", &tmp.path().join("host-wasi"), BTreeMap::new()).host = Some(wasi);
+    native
+        .add("host-wasi", &tmp.path().join("host-wasi"), BTreeMap::new())
+        .host = Some(wasi);
     let err = resolve("host-wasi", Some(&native), None, "a").unwrap_err();
-    assert!(err.contains("which the JavaScript glue does not run"), "{err}");
+    assert!(
+        err.contains("which the JavaScript glue does not run"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -164,7 +188,10 @@ fn a_directory_of_the_user_s_is_refused() {
 #[test]
 fn a_module_named_proto_is_a_key() {
     let map = modules_map(&[("__proto__".into(), "hosts/p/p.mjs".into())]);
-    assert!(map.contains("export const modules = { [\"__proto__\"]: m0 };"), "{map}");
+    assert!(
+        map.contains("export const modules = { [\"__proto__\"]: m0 };"),
+        "{map}"
+    );
     assert!(modules_map(&[]).ends_with("export const modules = {};\n"));
 }
 

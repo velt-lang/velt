@@ -78,9 +78,7 @@ pub fn conditions(triple: &str, host: Option<&str>) -> Vec<String> {
 
 /// The variant a build with `conditions` uses: the first whose condition it has.
 pub fn select<'a>(variants: &'a [Variant], conditions: &[String]) -> Option<&'a Variant> {
-    variants
-        .iter()
-        .find(|v| conditions.contains(&v.condition))
+    variants.iter().find(|v| conditions.contains(&v.condition))
 }
 
 /// One target per set of conditions a build can have: what [`target_selecting`] tries.
@@ -266,10 +264,16 @@ mod tests {
                 .all(|c| CONDITIONS.contains(&c.as_str())));
         }
         for ok in ["edge", "my-host2"] {
-            assert!(check_condition(ok, true).is_ok() && check_host_condition(ok).is_ok(), "{ok}");
+            assert!(
+                check_condition(ok, true).is_ok() && check_host_condition(ok).is_ok(),
+                "{ok}"
+            );
         }
         for bad in ["Edge", "2x", "", "a_b", "a.b"] {
-            assert!(check_condition(bad, true).is_err() && check_host_condition(bad).is_err(), "{bad}");
+            assert!(
+                check_condition(bad, true).is_err() && check_host_condition(bad).is_err(),
+                "{bad}"
+            );
         }
         let err = check_host_condition("js").unwrap_err();
         assert!(err.contains("built-in condition"), "{err}");
@@ -358,7 +362,9 @@ mod tests {
         }
         assert!(check_key("#io/*").unwrap_err().contains("patterns"));
         assert!(check_condition("js", false).is_ok());
-        assert!(check_condition("edge", false).unwrap_err().contains("only the built-in"));
+        assert!(check_condition("edge", false)
+            .unwrap_err()
+            .contains("only the built-in"));
         let err = check_condition("No_de", true).unwrap_err();
         assert!(err.contains("native, darwin"), "{err}");
         assert!(check_target("./src/a/b.vlt", true).is_ok());

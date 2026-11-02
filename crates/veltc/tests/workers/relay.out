@@ -1,0 +1,3 @@
+fetch-read: 200 content-type=text/plain | upstream | waitUntil 0
+fetch-start: 200 content-type=text/plain | fetched | waitUntil 0
+instances 1

@@ -129,13 +129,24 @@ mod tests {
         ] {
             let err = check_entry(bad).unwrap_err();
             assert!(err.contains(why), "{bad}: {err}");
-            assert!(err.contains("the entry is") || err.contains("writes its own"), "{err}");
+            assert!(
+                err.contains("the entry is") || err.contains("writes its own"),
+                "{err}"
+            );
         }
         assert!(check_scaffold("app.toml", "./src/app.toml", "./src/w.mjs").is_ok());
         assert!(check_scaffold("conf/app.json", "./src/c/app.json", "./src/w.mjs").is_ok());
         for (path, file, why) in [
-            ("../app.toml", "./src/app.toml", "inside the build's directory"),
-            ("/etc/app.toml", "./src/app.toml", "inside the build's directory"),
+            (
+                "../app.toml",
+                "./src/app.toml",
+                "inside the build's directory",
+            ),
+            (
+                "/etc/app.toml",
+                "./src/app.toml",
+                "inside the build's directory",
+            ),
             ("a\\b", "./src/app.toml", "inside the build's directory"),
             ("program.wasm", "./src/x", "the build writes itself"),
             ("hosts/x.mjs", "./src/x", "the build writes itself"),

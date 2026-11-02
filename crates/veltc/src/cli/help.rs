@@ -94,11 +94,10 @@ pub const COMMANDS: &[CommandHelp] = &[
         ],
         about: "Without a file, builds the package found by searching upward for package.vlt \
                 (output: <package>/target/velt/<name>[.exe]). A single file builds to \
-                ./target/velt/<stem>[.exe]. With `--host <package>`, the build is for the JavaScript \
-                platform of a host package among the dependencies (its package.vlt's `host`): a \
-                directory (target/velt/<name>-<condition>/, or `-o <dir>`) with the WebAssembly \
-                module, the runtime's glue, the host modules of the packages it uses, the host \
-                package's entry and its configuration files (written when absent).",
+                ./target/velt/<stem>[.exe]. `--host <package>` builds for the platform of a host \
+                package among the dependencies: a directory (target/velt/<name>-<condition>/, \
+                or `-o <dir>`) with the module, the runtime's glue, the packages' host modules, \
+                the host package's entry and its configuration files (written when absent).",
         options: &[
             WORKSPACE,
             PACKAGE,

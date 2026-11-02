@@ -70,8 +70,11 @@ export async function runVelt(source, host = {}) {
  * `host.owner()` is called when the program starts a host promise (one that is not a
  * `Deferred`) and gives the context that made it; `host.resuming(owner)` comes before the turn
  * its settling runs, and `host.released(owner)` once the program no longer waits for it.
- * `host.ended(code, error)`, if given, takes the place of `done`: the outcome, told at once in
- * the context that ended the program.
+ * `host.context()` gives the context the program runs in now, without holding it, and
+ * `host.within(context, job)` runs `job` (which returns a promise) in that context and gives its
+ * promise: the glue's own I/O for a host object a context made (a `fetch` response's body) runs
+ * there, wherever the program reads it. `host.ended(code, error)`, if given, takes the place of
+ * `done`: the outcome, told at once in the context that ended the program.
  */
 export async function loadVelt(source, host = {}) {
   const write = host.write ?? defaultWrite();
@@ -154,7 +157,8 @@ export async function loadVelt(source, host = {}) {
     },
   };
   const module = await compile(await source);
-  const provided = { "velt:fetch": fetchHost(), ...host.imports };
+  const contexts = { context: host.context, within: host.within };
+  const provided = { "velt:fetch": fetchHost(undefined, contexts), ...host.imports };
   Object.assign(imports, hostImports(module, provided, rt));
   const instance = await WebAssembly.instantiate(module, imports);
   rt.exports = instance.exports;
@@ -492,9 +496,13 @@ const fromByteString = (bytes) =>
  * AbortController, then its Response, the reader of its body and the piece last read. What a
  * call rejects with is named as native `fetch` names the failure (the program's `IoError.code`):
  * `AbortError` once the call was aborted, else the code of the error's `cause` (`fetchCode`).
- * Header values cross as UTF-8, as native `fetch` sends and reads them.
+ * Header values cross as UTF-8, as native `fetch` sends and reads them. A call remembers the
+ * context it started in (`contexts.context()`, `loadVelt`'s `host.context`), and its body is
+ * read and cancelled there (`contexts.within`), wherever the program asks.
  */
-export function fetchHost(hostFetch = (url, init) => globalThis.fetch(url, init)) {
+export function fetchHost(hostFetch = (url, init) => globalThis.fetch(url, init), contexts = {}) {
+  const within = (call, job) =>
+    call.owner !== undefined && contexts.within ? contexts.within(call.owner, job) : job();
   const failed = (call, e) => {
     if (call.ctrl.signal.aborted) return { name: "AbortError", message: "This operation was aborted" };
     const cause = e?.cause ?? e;
@@ -518,7 +526,13 @@ export function fetchHost(hostFetch = (url, init) => globalThis.fetch(url, init)
     return all;
   };
   return {
-    requestStart: () => ({ ctrl: new AbortController(), res: null, reader: null, piece: null }),
+    requestStart: () => ({
+      ctrl: new AbortController(),
+      res: null,
+      reader: null,
+      piece: null,
+      owner: contexts.context?.(),
+    }),
     async requestSend(call, method, url, headers, redirect, kind, text, body) {
       try {
         const list = headers === "" ? [] : headers.split("\n");
@@ -533,6 +547,7 @@ export function fetchHost(hostFetch = (url, init) => globalThis.fetch(url, init)
       }
       call.reader = call.res.body?.getReader() ?? null;
     },
+    // Not through `within`: no I/O, and it must not wait behind a read it ends.
     requestAbort: (call) => call.ctrl.abort(),
     responseStatus: (call) => call.res.status,
     responseStatusText: (call) => call.res.statusText,
@@ -542,7 +557,7 @@ export function fetchHost(hostFetch = (url, init) => globalThis.fetch(url, init)
       [...call.res.headers].map(([k, v]) => `${k}\n${fromByteString(v)}`).join("\n"),
     async bodyRead(call, all) {
       try {
-        call.piece = await (all ? rest(call) : next(call));
+        call.piece = await within(call, () => (all ? rest(call) : next(call)));
       } catch (e) {
         throw failed(call, e);
       }
@@ -553,8 +568,9 @@ export function fetchHost(hostFetch = (url, init) => globalThis.fetch(url, init)
       return piece;
     },
     bodyCancel(call) {
-      call.reader?.cancel().catch(() => {});
+      const reader = call.reader;
       call.reader = null;
+      if (reader) within(call, () => reader.cancel()).catch(() => {});
     },
   };
 }

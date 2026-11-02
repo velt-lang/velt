@@ -1,7 +1,7 @@
-// velt/host/worker: the runtime glue's `velt:worker` host module, the request queue of a
-// `velt build --host <package>` build (docs/internals/contracts/workers.md). Std declares these
-// functions once, so their types are the glue's: a `declare host("velt:…")` outside std is an
-// error.
+// velt/host/worker (internal): the runtime glue's `velt:worker` host module, the request queue
+// of a `velt build --host <package>` build (docs/internals/contracts/workers.md). Std declares
+// these functions once, so their types are the glue's: a `declare host("velt:…")` outside std is
+// an error.
 
 import { HostRef } from "velt/host/host_ref";
 

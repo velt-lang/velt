@@ -107,6 +107,8 @@ class Program {
         refs: new RequestRefs(),
         setTimer: (ms, fire) => this.setTimer(ms, fire),
         owner: () => this.current?.pin(),
+        context: () => this.current ?? undefined,
+        within: (req, job) => req.run(job),
         resuming: (owner) => (this.current = owner ?? this.current),
         released: (owner) => owner?.unpin(),
         // Told at once: a reaction to `done` would run in the first request's context.
@@ -321,7 +323,18 @@ class WorkerRequest {
       await job();
     }
     pumps.splice(pumps.indexOf(this), 1);
+    this.pumpEnded = true;
     this.reader?.cancel().catch(() => {});
+  }
+
+  /**
+   * Run `job` (async) in this request's handler and give its promise: I/O of an object this
+   * request's context made (a `fetch` response), wherever the program asks for it. Once the pump
+   * has ended, the context is gone and `job` runs where it is asked.
+   */
+  run(job) {
+    if (this.pumpEnded) return job();
+    return new Promise((resolve, reject) => this.post(() => job().then(resolve, reject)));
   }
 
   /** Have the pump run `job`. */

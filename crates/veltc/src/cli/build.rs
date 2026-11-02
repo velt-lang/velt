@@ -264,11 +264,20 @@ mod tests {
     fn host_names_a_package() {
         // The package (a host package of the build's dependencies) sets the target, later.
         let b = build(&["build", "--host", "host-edge", "a.vlt"]);
-        assert_eq!((b.host.as_deref(), b.target.as_deref()), (Some("host-edge"), None));
+        assert_eq!(
+            (b.host.as_deref(), b.target.as_deref()),
+            (Some("host-edge"), None)
+        );
         let b = build(&["build", "--host=@acme/host", "--target", "t"]);
-        assert_eq!((b.host.as_deref(), b.target.as_deref()), (Some("@acme/host"), Some("t")));
+        assert_eq!(
+            (b.host.as_deref(), b.target.as_deref()),
+            (Some("@acme/host"), Some("t"))
+        );
         let err = p(&["run", "--host", "host-edge", "a.vlt"]).unwrap_err();
-        assert!(err.contains("`velt run` cannot run a `--host` build"), "{err}");
+        assert!(
+            err.contains("`velt run` cannot run a `--host` build"),
+            "{err}"
+        );
         assert!(p(&["build", "--host"])
             .unwrap_err()
             .contains("expects a value"));

@@ -134,6 +134,24 @@ fn an_accept_loop_serves_requests() {
     let _ = std::fs::remove_dir_all(&work);
 }
 
+/// A `fetch` response's body is read in the context of the request that fetched it, even when
+/// another request's turn reads it (platforms tie I/O to the request that made it).
+#[test]
+fn a_fetch_response_is_read_in_its_request_s_context() {
+    let Some((_, work)) = fixtures("relay") else {
+        return;
+    };
+    let dir = work.join("relay");
+    drive(
+        &work,
+        &dir,
+        &["build", "--host", HOST],
+        "target/velt/relay-workers",
+        "relay",
+    );
+    let _ = std::fs::remove_dir_all(&work);
+}
+
 /// A program that never accepts: its requests get a 500 saying so, logged once.
 #[test]
 fn a_program_that_never_accepts_answers_500() {
@@ -170,14 +188,19 @@ fn a_host_module_nothing_provides_is_an_error() {
     let err = String::from_utf8_lossy(&o.stderr);
     assert!(!o.status.success(), "{err}");
     assert!(
-        err.contains("the `--host host-cloudflare` build has no JavaScript for host module `nowhere`")
-            && err.contains("missing.vlt:4:")
+        err.contains(
+            "the `--host host-cloudflare` build has no JavaScript for host module `nowhere`"
+        ) && err.contains("missing.vlt:4:")
             && err.contains("list it in `single`'s package.vlt"),
         "{err}"
     );
     let o = velt(&dir, &["build", "--host", HOST, "glue.vlt"]);
     let err = String::from_utf8_lossy(&o.stderr);
-    for want in ["glue.vlt:4:", "glue.vlt:5:", "the import modules `velt:…` are the runtime glue's"] {
+    for want in [
+        "glue.vlt:4:",
+        "glue.vlt:5:",
+        "the import modules `velt:…` are the runtime glue's",
+    ] {
         assert!(!o.status.success() && err.contains(want), "{want}:\n{err}");
     }
     // A plain browser build leaves the host functions to its embedder.
