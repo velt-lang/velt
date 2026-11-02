@@ -1,0 +1,41 @@
+// Three nested reads storing parts of the innermost lock's value into the outer readers' arrays and the caller's (#1525 probe v4):
+// JavaScript would share those parts with code that does not hold the lock. An error that says
+// to store an explicit copy (`structuredClone(…)`) or change the value in `write`.
+class Box {
+  items: number[][] = [[1, 2], [3]];
+}
+function main() {
+  const a = new RwLock(new Box());
+  const b = new RwLock(new Box());
+  const c = new RwLock(new Box());
+  const top: number[][][] = [];
+  const res = a.read((x) => {
+    const l1: number[][][] = [];
+    const r2 = b.read((y) => {
+      const l2: number[][][] = [];
+      c.read((z) => {
+        top.push(z.items.slice());
+        l1.push(z.items.map((e) => e));
+        l2.push(z.items.slice());
+        l2.push(x.items.slice());
+        top.push(l1[0]);
+      });
+      l2[0].push([6]);
+      l1.push(l2[1]);
+      top.push(l2.pop()!);
+      return l2;
+    });
+    r2[0].push([5]);
+    l1[0].push([4]);
+    top.shift();
+    return [l1, r2];
+  });
+  res[0].push([[1]]);
+  c.read((z) => {
+    top.pop();
+  });
+  a.write((q) => { q.items = []; });
+  b.write((q) => { q.items = []; });
+  c.write((q) => { q.items[0].push(9); q.items = []; });
+  console.log(JSON.stringify(top), JSON.stringify(res));
+}

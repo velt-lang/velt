@@ -1,0 +1,1 @@
+rwlock_read_hidden_q32.vlt:12:14: error: this stores a part of the value an `RwLock` holds outside the `read` callback, where JavaScript would share it

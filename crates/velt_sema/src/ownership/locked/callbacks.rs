@@ -25,6 +25,9 @@ pub(super) struct Found {
     pub(super) opaque: Vec<(DefId, Expr)>,
     /// `(function, parameter index)` of parameters passed to `with` as the callback.
     params: FxHashSet<(DefId, usize)>,
+    /// The closures written as (or resolved from) the argument of an `RwLock`'s `read`, and
+    /// the function each `read` call is in.
+    pub(super) reads: Vec<(DefId, DefId)>,
 }
 
 /// Every callback of the program's `with` calls.
@@ -43,12 +46,18 @@ pub(super) fn find(cx: &mut Ctx, res: &mut Resolver) -> Found {
                 Callee::Intrinsic(Intrinsic::MutexWith | Intrinsic::LockRead)
             )
         });
-        for (args, params) in calls {
+        for (args, params, read) in calls {
             if let [m, cb] = args.as_slice() {
                 if let (E::Closure(c), false) = (&cb.kind, cx.is_rwlock(m.ty)) {
                     found.mutex_literals.insert(*c);
                 }
+                let before = found.callbacks.len();
                 resolve(cx, res, d, cb, &params, true, &mut found);
+                if read {
+                    let new = found.callbacks[before..].iter().map(|c| (c.0, d));
+                    let new: Vec<(DefId, DefId)> = new.collect();
+                    found.reads.extend(new);
+                }
             }
         }
     }
@@ -61,7 +70,7 @@ pub(super) fn find(cx: &mut Ctx, res: &mut Resolver) -> Found {
                 d,
                 |c, i| matches!(c, Callee::Def(g, _) if locked.contains(&(*g, i))),
             );
-            for (args, params) in calls {
+            for (args, params, _) in calls {
                 for a in args {
                     resolve(cx, res, d, &a, &params, false, &mut found);
                 }
@@ -106,13 +115,14 @@ fn resolve(
 
 /// The arguments of the calls in function `d` that `pick(callee, argument index)` selects
 /// (all of a call's arguments when any is selected), with `d`'s parameters.
-type Calls = Vec<(Vec<Expr>, Vec<LocalId>)>;
+/// The flag is set for an `RwLock`'s `read` call.
+type Calls = Vec<(Vec<Expr>, Vec<LocalId>, bool)>;
 
 fn calls_in(cx: &mut Ctx, d: DefId, pick: impl Fn(&Callee, usize) -> bool) -> Calls {
     let Some(Def::Fn(mut f)) = cx.defs[d.0 as usize].take() else {
         return vec![];
     };
-    let mut args_found: Vec<Vec<Expr>> = vec![];
+    let mut args_found: Vec<(Vec<Expr>, bool)> = vec![];
     visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
         if let E::Call { callee, args } = &e.kind {
             let picked: Vec<Expr> = (0..args.len())
@@ -124,9 +134,10 @@ fn calls_in(cx: &mut Ctx, d: DefId, pick: impl Fn(&Callee, usize) -> bool) -> Ca
                 Callee::Intrinsic(Intrinsic::MutexWith | Intrinsic::LockRead)
             ) && !picked.is_empty()
             {
-                args_found.push(args.clone());
+                let read = matches!(callee, Callee::Intrinsic(Intrinsic::LockRead));
+                args_found.push((args.clone(), read));
             } else if !picked.is_empty() {
-                args_found.push(picked);
+                args_found.push((picked, false));
             }
         }
     });
@@ -134,6 +145,6 @@ fn calls_in(cx: &mut Ctx, d: DefId, pick: impl Fn(&Callee, usize) -> bool) -> Ca
     cx.defs[d.0 as usize] = Some(Def::Fn(f));
     args_found
         .into_iter()
-        .map(|a| (a, params.clone()))
+        .map(|(a, read)| (a, params.clone(), read))
         .collect()
 }

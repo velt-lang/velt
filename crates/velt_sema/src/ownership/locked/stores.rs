@@ -12,12 +12,12 @@ use rustc_hash::FxHashSet;
 
 use velt_common::Span;
 
-use super::regions::{crosses, holds_shared, pat_locals, Regions, IN};
+use super::regions::{crosses, holds_shared, pat_locals, Regions, IN, OUT};
 use super::summary::{call_flows, outer_mode, Summaries};
 use crate::body::places::{is_place, place_root};
 use crate::ctx::Ctx;
 use crate::hir::{
-    Callee, DefId, Expr, ExprKind as E, FnDef, Intrinsic, LocalId, Pat, Stmt, StmtKind as S,
+    Callee, Def, DefId, Expr, ExprKind as E, FnDef, Intrinsic, LocalId, Pat, Stmt, StmtKind as S,
     TyKind, UseMode,
 };
 use crate::visit::{self, VisitMut};
@@ -74,6 +74,20 @@ pub(super) enum Cross {
     /// An outside object of this type owning a resource without `clone()`, stored into the
     /// value from a field or an element (it stays there too).
     ResourceInPlace(crate::hir::TyId),
+    /// A part of the value an `RwLock`'s `read` callback reads, stored outside the callback
+    /// (`returned`: returned by the callback): JavaScript would share it.
+    ReadPart { returned: bool },
+    /// A closure made in a `read` callback changes a variable of the callback bound to a call's
+    /// result.
+    CallAlias,
+    /// A `read` returns an object it also stored into the caller's containers.
+    ReturnStored,
+    /// A change through an element of an object the callback made that holds the caller's
+    /// objects (`h.rows[0].push(5)`).
+    CaughtPart,
+    /// What may be the caller's object goes into an object the callback made after that object
+    /// went into the caller's containers.
+    AfterStored,
 }
 
 struct Stores<'a, 'r, 's, 'm> {
@@ -122,6 +136,8 @@ impl Stores<'_, '_, '_, '_> {
             && root.is_some_and(|l| !self.r.is_home(self.def, l));
         if self.rewrite && !rebind {
             self.note_stored_fn(value, dest);
+            self.note_made(value, dest, false);
+            self.note_order(root, value, (dest, b), true);
         }
         if rebind || dest == 0 || !crosses(dest, b) {
             if let (false, Some(root)) = (self.rewrite, root) {
@@ -129,6 +145,11 @@ impl Stores<'_, '_, '_, '_> {
             }
         } else if self.rewrite {
             let span = value.span;
+            if read_part(self.cx, self.r, self.def, value, (dest, b)) {
+                let kind = Cross::ReadPart { returned: false };
+                self.unfixable.push(Unfixable { span, kind });
+                return;
+            }
             if let Err(kind) = self.transfer_owned(value, dest) {
                 self.unfixable.push(Unfixable { span, kind });
             }
@@ -169,7 +190,23 @@ impl Stores<'_, '_, '_, '_> {
             }
             _ => call_flows(self.s, callee, args),
         };
-        for (a, b) in flows {
+        // A method of the caller's own object (`all.concat(s.items)`) runs in a `read` callback
+        // by the counts outside read mode, keeping what it is given as the caller keeps its
+        // objects (velt_vir call.rs `changes_captured`): what may be the value's goes in as a
+        // copy, whether or not the method stores it.
+        let mut flows = flows;
+        // The flows that store (the others give the method a copy it only reads).
+        let stores = flows.len();
+        if let (Callee::Def(g, _), Some(recv)) = (callee, args.first()) {
+            let method = matches!(
+                &self.cx.defs[g.0 as usize],
+                Some(Def::Fn(gf)) if gf.self_ty.is_some()
+            );
+            if method && bits[0] & IN == 0 && self.mentions(recv) & OUT != 0 {
+                flows.extend((1..args.len()).map(|a| (a, Some(0))));
+            }
+        }
+        for (k, (a, b)) in flows.into_iter().enumerate() {
             let fn_value = match (b, callee) {
                 (None, Callee::Indirect(c)) => Some(c.span),
                 (Some(b), _) if is_fn_value(self.cx, &args[b]) => Some(args[b].span),
@@ -202,14 +239,147 @@ impl Stores<'_, '_, '_, '_> {
             }
             if self.rewrite {
                 self.note_stored_fn(&args[a], dest);
+                if k < stores {
+                    // A function of the program's may store a part of the argument only.
+                    let whole = match callee {
+                        Callee::Def(g, _) => self.cx.scopes[self.cx.fn_info(*g).module].is_std,
+                        Callee::Intrinsic(_) => true,
+                        _ => false,
+                    };
+                    self.note_made(&args[a], dest, !whole);
+                    self.note_order(root, &args[a], (dest, bits[a]), whole);
+                }
+                if k < stores && b == Some(0) && self.changes_call_alias(&args[0]) {
+                    if done.insert(a) {
+                        let kind = Cross::CallAlias;
+                        self.unfixable.push(Unfixable { span, kind });
+                    }
+                    continue;
+                }
             }
             if !crosses(dest, bits[a]) || !self.rewrite || !done.insert(a) {
+                continue;
+            }
+            if k < stores && read_part(self.cx, self.r, self.def, &args[a], (dest, bits[a])) {
+                let kind = Cross::ReadPart { returned: false };
+                let span = args[a].span;
+                self.unfixable.push(Unfixable { span, kind });
                 continue;
             }
             if let Err(kind) = self.transfer_arg(&mut args[a], dest) {
                 self.unfixable.push(Unfixable { span, kind });
             }
         }
+    }
+
+    /// For a `read` callback, where variables of its bodies go into the caller's containers, and
+    /// where what may be the caller's objects go into variables of its bodies
+    /// (`super::stored_then_given`).
+    fn note_order(
+        &mut self,
+        root: Option<LocalId>,
+        value: &Expr,
+        (dest, bits): (u8, u8),
+        whole: bool,
+    ) {
+        if self.r.read.is_none() {
+            return;
+        }
+        let x = unshared(value);
+        if let (true, E::Local(l, _)) = (whole && dest & OUT != 0, &x.kind) {
+            let l = *l;
+            if !self.r.is_home(self.def, l) {
+                for (d, l) in self.r.same_object(self.def, l) {
+                    self.r.outed.push((d, l, value.span));
+                }
+            }
+        }
+        let Some(root) = root.filter(|&r| !self.r.is_home(self.def, r)) else {
+            return;
+        };
+        let counted = self.cx.is_shared_value(value.ty) && !self.cx.is_string_value(value.ty);
+        if bits & OUT != 0 && counted && !is_copy(self.cx, x) {
+            for (d, l) in self.r.same_object(self.def, root) {
+                self.r.inbound.push((d, l, value.span));
+            }
+        }
+    }
+
+    /// Does a change through `recv` (a call changing it) reach an element of an object the
+    /// `read` callback made that may hold the caller's objects (`h.rows[0].push(5)`)? At run
+    /// time the callback cannot tell such an element from the value's own.
+    fn writes_caller_part(&mut self, recv: &Expr) -> bool {
+        if self.r.read.is_none() || outer_mode(recv) != Some(UseMode::BorrowMut) {
+            return false;
+        }
+        let mut x = recv;
+        let mut indexed = false;
+        loop {
+            match &x.kind {
+                E::Index { base, .. } => {
+                    indexed = true;
+                    x = base;
+                }
+                E::Field { base, .. } | E::UnwrapSome(base, _) => x = base,
+                _ => break,
+            }
+        }
+        let E::Local(l, _) = x.kind else {
+            return false;
+        };
+        indexed && self.r.made_locals.contains(&(self.def, l)) && self.r.get(self.def, l) & OUT != 0
+    }
+
+    /// Does a closure made in a `read` callback change, through `recv`, a variable of the
+    /// callback bound to a call's result (`const g = first(mine)`)? It may name the caller's
+    /// object or the callback's own, which a closure cannot tell apart.
+    fn changes_call_alias(&mut self, recv: &Expr) -> bool {
+        if self.r.read.is_none() || self.def == self.r.callback {
+            return false;
+        }
+        let Some(root) = place_root(recv) else {
+            return false;
+        };
+        let k = self.r.key((self.def, root));
+        k.0 == self.r.callback
+            && self.r.call_locals.contains(&k)
+            && outer_mode(recv) == Some(UseMode::BorrowMut)
+    }
+
+    /// A closure a `read` callback made, given to the caller's containers while the callback
+    /// still holds it (not moved): the store gets a copy of what it captures
+    /// (`super::made_copied`). So does an object it made (not an array) given to a function or
+    /// method of the program's (`user_call`) that moves its parts into the caller's containers
+    /// (velt_vir call.rs). An object it made stored there stays itself (velt_vir
+    /// glue/transfer.rs `keep_made_unshared`).
+    fn note_made(&mut self, value: &Expr, dest: u8, user_call: bool) {
+        if self.r.read.is_none() || dest & OUT == 0 {
+            return;
+        }
+        let mut x = unshared(value);
+        while let E::Upcast(inner) | E::WrapSome(inner) = &x.kind {
+            x = unshared(inner);
+        }
+        let Some(l) = place_root(x).filter(|_| is_place(x)) else {
+            return;
+        };
+        let closure = matches!(
+            self.cx.ty.kind(value.ty),
+            TyKind::Closure(_) | TyKind::FnPtr { .. }
+        );
+        // A type the value can hold is kept as the same object (velt_vir caller_stores.rs).
+        let object = user_call
+            && !matches!(self.cx.ty.kind(x.ty), TyKind::Array(_))
+            && !self.r.lock_tys.contains(&x.ty)
+            && holds_shared(self.cx, x.ty);
+        if !(closure || object)
+            || outer_mode(x) == Some(UseMode::Move)
+            || !self.r.made_locals.contains(&(self.def, l))
+            || self.r.is_home(self.def, l)
+        {
+            return;
+        }
+        self.r.made_stored.push((self.def, l, value.span));
     }
 
     /// A closure literal stored into the value (`v.f = () => r.deref()`).
@@ -342,6 +512,179 @@ fn is_handle(cx: &mut Ctx, s: &Summaries, t: crate::hir::TyId, depth: u32) -> bo
     }
 }
 
+/// Does storing `e` (reaching `bits`) into a place reaching `dest`, in an `RwLock`'s `read`
+/// callback, put a part of the value it reads outside the callback? JavaScript would share that
+/// part, while Velt copies it, so changes on either side would not show on the other: an error,
+/// unless the value is an explicit copy (`structuredClone(…)`, `.clone()`) or a new object that
+/// holds nothing that can be shared (`s.items.slice()` of a `number[]`).
+pub(super) fn read_part(
+    cx: &mut Ctx,
+    r: &Regions,
+    d: DefId,
+    e: &Expr,
+    (dest, bits): (u8, u8),
+) -> bool {
+    r.read.is_some()
+        && dest & OUT != 0
+        && bits & IN != 0
+        && may_hold_lock_type(cx, r, e)
+        && holds_part(cx, r, d, e)
+}
+
+/// Can `e` be, or hold, a part of the value a `read` callback reads? Only through a type the
+/// value can hold (`Regions::lock_tys`), a class one of whose subclasses it holds, or a type
+/// that may hide one (a type parameter, an interface, a function, `any`), in `e`'s type or the
+/// type of what it widens (`Upcast`, `WrapSome`). Any type can when the value holds such a type
+/// itself (`Regions::lock_opaque`). A fresh `{ status: number, body: string }` a function
+/// returns cannot.
+fn may_hold_lock_type(cx: &mut Ctx, r: &Regions, e: &Expr) -> bool {
+    if r.lock_opaque {
+        return true;
+    }
+    let mut x = e;
+    loop {
+        let mut seen = FxHashSet::default();
+        if reaches_lock(cx, r, x.ty, &mut seen) {
+            return true;
+        }
+        match &x.kind {
+            E::Upcast(inner) | E::WrapSome(inner) => x = unshared(inner),
+            _ => return false,
+        }
+    }
+}
+
+fn reaches_lock(
+    cx: &mut Ctx,
+    r: &Regions,
+    t: crate::hir::TyId,
+    seen: &mut FxHashSet<crate::hir::TyId>,
+) -> bool {
+    if cx.is_copy(t) || cx.is_string_value(t) || !seen.insert(t) {
+        return false;
+    }
+    if seen.len() > 256 || r.lock_tys.contains(&t) {
+        return true;
+    }
+    if let Some(ms) = cx.union_members(t) {
+        return ms.into_iter().any(|m| reaches_lock(cx, r, m, seen));
+    }
+    match cx.ty.kind(t).clone() {
+        TyKind::Array(e) | TyKind::Option(e, _) => reaches_lock(cx, r, e, seen),
+        TyKind::Tuple(ts) => ts.into_iter().any(|x| reaches_lock(cx, r, x, seen)),
+        TyKind::Adt(d, args) => {
+            let Some(a) = cx.adt(d) else {
+                return true;
+            };
+            let fields: Vec<crate::hir::TyId> = a.fields.iter().map(|f| f.ty).collect();
+            let mut parts: Vec<crate::hir::TyId> =
+                fields.into_iter().map(|f| cx.subst(f, &args)).collect();
+            parts.extend(args.iter().copied());
+            // A value of a class may be one of its subclasses.
+            if cx.class_of(t).is_some() {
+                let lock_classes: Vec<DefId> = r
+                    .lock_tys
+                    .iter()
+                    .filter_map(|&l| match cx.ty.kind(l) {
+                        TyKind::Adt(ld, _) => Some(*ld),
+                        _ => None,
+                    })
+                    .collect();
+                for s in super::regions::subclasses(cx, d) {
+                    if lock_classes.contains(&s) {
+                        return true;
+                    }
+                    if let Some(sa) = cx.adt(s) {
+                        parts.extend(sa.fields[sa.own_fields_start..].iter().map(|f| f.ty));
+                    }
+                }
+            }
+            parts.into_iter().any(|p| reaches_lock(cx, r, p, seen))
+        }
+        // Type parameters, interfaces, functions, `any`: they may hide anything.
+        _ => true,
+    }
+}
+
+/// May `e` (in body `d`) be, or hold, a part of the value the callback reads (`read_part`)?
+fn holds_part(cx: &mut Ctx, r: &Regions, d: DefId, e: &Expr) -> bool {
+    if !cx.is_shared_value(e.ty) || cx.is_string_value(e.ty) || r.mentions(cx, d, e) & IN == 0 {
+        return false;
+    }
+    let mut x = unshared(e);
+    while let E::Upcast(inner) | E::WrapSome(inner) = &x.kind {
+        x = unshared(inner);
+    }
+    match &x.kind {
+        E::Call {
+            callee: Callee::Intrinsic(Intrinsic::Clone),
+            ..
+        } => false,
+        // Transferred by the check of a `read` nested in this one (what it does not report).
+        E::Call {
+            callee: Callee::Intrinsic(Intrinsic::Transfer),
+            args,
+        } if args.len() == 1 => holds_part(cx, r, d, &args[0]),
+        E::Call {
+            callee: Callee::Def(g, _),
+            ..
+        } if Some(*g) == cx.prelude_fn("structuredClone") => false,
+        // A standard collection made from another (`new Map(s.m)`) holds its elements, which
+        // can be parts only when its type arguments can.
+        E::New { def, args, .. } if std_def(cx, *def) => {
+            let elems = match cx.ty.kind(x.ty).clone() {
+                TyKind::Adt(_, targs) => targs,
+                _ => vec![],
+            };
+            let shared = elems
+                .into_iter()
+                .any(|t| cx.is_shared_value(t) && !cx.is_string_value(t));
+            shared && args.iter().any(|y| holds_part(cx, r, d, y))
+        }
+        // A new array or object holds what it is made of.
+        E::ArrayLit(xs) | E::Tuple(xs) | E::New { args: xs, .. } | E::AdtLit { fields: xs, .. } => {
+            xs.iter().any(|y| holds_part(cx, r, d, y))
+        }
+        _ => !(crate::fresh_returns::fresh_value(cx, x) && !holds_shared(cx, x.ty)),
+    }
+}
+
+/// Is `x` an explicit copy (`x.clone()`, `structuredClone(x)`)?
+fn is_copy(cx: &Ctx, x: &Expr) -> bool {
+    match &x.kind {
+        E::Call {
+            callee: Callee::Intrinsic(Intrinsic::Clone),
+            ..
+        } => true,
+        E::Call {
+            callee: Callee::Def(g, _),
+            ..
+        } => Some(*g) == cx.prelude_fn("structuredClone"),
+        _ => false,
+    }
+}
+
+/// Is `x` the result of a function or method call (not a share, copy or transfer)?
+fn is_call_result(x: &Expr) -> bool {
+    match &x.kind {
+        E::Call {
+            callee: Callee::Intrinsic(i),
+            ..
+        } => !matches!(i, Intrinsic::Share | Intrinsic::Clone | Intrinsic::Transfer),
+        E::Call { .. } => true,
+        _ => false,
+    }
+}
+
+/// Is the object type `d` the standard library's?
+fn std_def(cx: &Ctx, d: DefId) -> bool {
+    let module = match cx.info.get(d.0 as usize) {
+        Some(crate::defs::DefInfo::Adt(a)) => a.module,
+        _ => return false,
+    };
+    cx.modules.get(module).is_some_and(|m| m.is_std)
+}
+
 /// `e` without the shares around it.
 fn unshared(mut e: &Expr) -> &Expr {
     while let E::Call {
@@ -373,6 +716,16 @@ impl VisitMut for Stores<'_, '_, '_, '_> {
                 local,
                 init: Some(init),
             } => {
+                let x = unshared(init);
+                if matches!(x.kind, E::New { .. } | E::AdtLit { .. } | E::Closure(_)) {
+                    self.r.made_locals.insert((self.def, *local));
+                }
+                if let (true, Some(root)) = (is_place(x), place_root(x)) {
+                    self.r.link(self.def, *local, root);
+                }
+                if is_call_result(x) {
+                    self.r.call_locals.insert((self.def, *local));
+                }
                 let b = self.mentions(init);
                 self.r.add(self.def, *local, b);
             }
@@ -383,6 +736,13 @@ impl VisitMut for Stores<'_, '_, '_, '_> {
             S::ForOf { binding, iter, .. } => {
                 let b = self.mentions(iter);
                 self.bind(binding, b);
+            }
+            S::Try {
+                body,
+                catch: Some((Some(l), _)),
+                ..
+            } if self.r.read.is_some() => {
+                self.r.caught(self.cx, self.def, *l, body);
             }
             _ => {}
         }
@@ -401,6 +761,10 @@ impl VisitMut for Stores<'_, '_, '_, '_> {
             } => {}
             E::Call { callee, args } => {
                 let callee = callee.clone();
+                if self.rewrite && args.first().is_some_and(|a| self.writes_caller_part(a)) {
+                    let kind = Cross::CaughtPart;
+                    self.unfixable.push(Unfixable { span: e.span, kind });
+                }
                 self.call(e.span, &callee, args);
             }
             E::Match { scrutinee, arms } if !self.rewrite => {

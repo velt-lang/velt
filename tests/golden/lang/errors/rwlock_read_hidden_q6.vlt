@@ -1,0 +1,15 @@
+// An RwLock read probe (#1559): a compile error, where a silent copy would differ from Node.
+// A subclass's field on the lock side (field typed as the base class), stored outside
+class Base { n: number = 1; }
+class Der extends Base { xs: number[] = [1]; }
+class Store { b: Base = new Der(); }
+function main() {
+  const lk = new RwLock(new Store());
+  const out: number[][] = [];
+  lk.read((s) => {
+    const b = s.b;
+    if (b instanceof Der) out.push(b.xs);
+  });
+  out[0].push(9);
+  lk.read((s) => { const b = s.b; if (b instanceof Der) console.log(JSON.stringify(b.xs)); });
+}

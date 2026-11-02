@@ -1,0 +1,75 @@
+// check: no leaks
+// An RwLock read probe (#1559): prints what Node prints.
+class Box {
+  items: number[][] = [[1, 2], [3]];
+}
+class Holder {
+  rows: number[][] = [];
+}
+
+async function reader(a: shared<RwLock<Box>>, b: shared<RwLock<Box>>, n: number): Promise<number> {
+  const out: number[][][] = [];
+  const keep: number[][][] = [];
+  const hs: Holder[] = [];
+  const mine: number[][] = [[0]];
+  for (let i = 0; i < n; i++) {
+    a.read((x) => {
+      const top: number[][] = [[x.items.length]];
+      out.push(top);
+      b.read((y) => {
+        const c: number[][] = [[y.items.length, i]];
+        out.push(c);
+        keep.push(c);
+        c.push([i]);
+        top.push([i]);
+      });
+      top.push([1]);
+      const h = new Holder();
+      h.rows.push(mine[0]);
+      hs.push(h);
+      h.rows.push([i]);
+    });
+    if (i % 7 == 0) {
+      await Promise.resolve(0);
+    }
+  }
+  mine[0].push(1);
+  let same = 0;
+  for (let i = 0; i < keep.length; i++) {
+    if (out[2 * i + 1] === keep[i] && keep[i].length == 2 && out[2 * i].length == 3) {
+      same++;
+    }
+  }
+  for (const h of hs) {
+    if (h.rows[0].length == 2 && h.rows.length == 2) {
+      same++;
+    }
+  }
+  return same;
+}
+
+async function writer(a: shared<RwLock<Box>>, n: number): Promise<number> {
+  for (let i = 0; i < n; i++) {
+    a.write((q) => {
+      q.items.push([i]);
+      if (q.items.length > 50) {
+        q.items = [[1]];
+      }
+    });
+    await Promise.resolve(0);
+  }
+  return n;
+}
+
+async function main() {
+  const a = shared(new RwLock<Box>(new Box()));
+  const b = shared(new RwLock<Box>(new Box()));
+  const ts = [spawn(reader(a, b, 3000)), spawn(reader(a, b, 3000)), spawn(reader(b, a, 3000)), spawn(reader(b, a, 3000))];
+  const w1 = spawn(writer(a, 3000));
+  const w2 = spawn(writer(b, 3000));
+  let s = 0;
+  for (const t of ts) {
+    s += await t;
+  }
+  console.log(s, await w1, await w2);
+}

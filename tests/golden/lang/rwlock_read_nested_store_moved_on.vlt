@@ -1,0 +1,90 @@
+// check: no leaks
+// An object a `read` nested in another stores into a container of the code outside every read
+// stays the readers' own until the outermost `read` returns; the outer callback moving it on
+// into another of the caller's containers (`keep.push(top.shift()!)`, a slot, a `Map`, a `Set`,
+// a field) keeps it the same object, counted once, and can still change it (#1523).
+class Box {
+  items: number[][] = [[1, 2], [3]];
+}
+
+function moved(a: RwLock<Box>, b: RwLock<Box>) {
+  const top: number[][][] = [];
+  const keep: number[][][] = [[[0]]];
+  const m = new Map<string, number[][]>();
+  const s = new Set<number[][]>();
+  const h = { v: [[0]] };
+  a.read((x) => {
+    const l: number[][][] = [[[1]], [[2]], [[3]], [[4]], [[5]], [[6]]];
+    b.read((y) => {
+      for (const e of l) {
+        top.push(e);
+      }
+    });
+    keep.push(top.shift()!);
+    keep[0] = top.shift()!;
+    const q = top.pop()!;
+    keep.push(q);
+    m.set("k", top.pop()!);
+    s.add(top.pop()!);
+    h.v = top.pop()!;
+    l[0].push([7]);
+    l[5].push([8]);
+  });
+  keep[0].push([9]);
+  console.log(
+    JSON.stringify(keep),
+    top.length,
+    JSON.stringify(m.get("k")!),
+    s.size,
+    JSON.stringify(h.v),
+  );
+}
+
+function kept(a: RwLock<Box>, b: RwLock<Box>) {
+  const top: number[][][] = [];
+  const keep: number[][][] = [];
+  a.read((x) => {
+    const l: number[][][] = [[[1]], [[2]]];
+    b.read((y) => {
+      top.push(l[0]);
+    });
+    keep.push(top[0]);
+    l[0].push([4]);
+  });
+  keep[0].push([5]);
+  console.log(JSON.stringify(keep), JSON.stringify(top), keep[0] === top[0]);
+}
+
+function looped(a: RwLock<Box>, b: RwLock<Box>) {
+  const top: number[][][] = [];
+  const keep: number[][][] = [];
+  for (let i = 0; i < 50; i++) {
+    a.read((x) => {
+      const l: number[][][] = [[[i]], [[i + 1]], [[x.items.length]]];
+      b.read((y) => {
+        top.push(l[0]);
+        top.push(l[1]);
+        top.push(l[2]);
+      });
+      l[1].push([7]);
+      keep.push(top.shift()!);
+      const q = top.pop()!;
+      keep.push(q);
+      keep.push(top.pop()!);
+    });
+  }
+  let n = 0;
+  for (const k of keep) {
+    k.push([n]);
+    n += k.length;
+  }
+  console.log(keep.length, top.length, n, JSON.stringify(keep[0]), JSON.stringify(keep[149]));
+}
+
+function main() {
+  const a = new RwLock(new Box());
+  const b = new RwLock(new Box());
+  moved(a, b);
+  kept(a, b);
+  looped(a, b);
+}

@@ -1,0 +1,55 @@
+// A read callback giving the lock's items to a method of the caller's object that keeps them (#1525 probe p7b):
+// JavaScript would share those parts with code that does not hold the lock. An error that says
+// to store an explicit copy (`structuredClone(…)`) or change the value in `write`.
+class Item {
+  v: i64 = 0;
+  constructor(v: i64) {
+    this.v = v;
+  }
+}
+class St {
+  items: Item[] = [new Item(1), new Item(2), new Item(3)];
+}
+class Acc {
+  n: i64 = 0;
+  keep: Item[] = [];
+  addAll(xs: Item[]) {
+    for (const x of xs) {
+      this.n += x.v;
+    }
+  }
+  keepFirst(xs: Item[]) {
+    this.keep.push(xs[0]);
+  }
+  joined(xs: Item[]): Item[] {
+    return this.keep.concat(xs);
+  }
+}
+function main() {
+  const rw = shared(new RwLock<St>(new St()));
+  const bump = (x: i64): i64 => x + 1;
+  const acc = new Acc();
+  let j: Item[] = [];
+  for (let i = 0; i < 3; i++) {
+    rw.read((s) => {
+      bump(1);
+      acc.addAll(s.items);
+      console.log("a");
+      acc.keepFirst(s.items);
+      console.log("b");
+      j = acc.joined(s.items);
+      console.log("c");
+    });
+  }
+  acc.keep[0].v = 100;
+  j.push(new Item(7));
+  j[0].v += 1000;
+  rw.write((s) => {
+    s.items[1].v = 50;
+  });
+  console.log(acc.n, acc.keep.length, j.map((o) => o.v).join(","));
+  rw.read((s) => console.log(s.items.map((o) => o.v).join(",")));
+  rw.write((s) => {
+    s.items = [];
+  });
+}

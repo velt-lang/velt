@@ -21,12 +21,12 @@ function main() {
   const h = new Holder();
   const byName = new Map<string, number[][]>();
   rw.read((c) => {
-    mapped = c.items.map((x) => x);
-    kept = c.items.filter((x) => x.length > 1);
-    sizes = c.items.map((x) => [x.length]);
-    out.push(c.items.map((x) => x));
-    h.rows = c.items.slice().map((x) => x);
-    byName.set("all", c.items.filter(() => true));
+    mapped = structuredClone(c.items.map((x) => x));
+    kept = structuredClone(c.items.filter((x) => x.length > 1));
+    sizes = structuredClone(c.items.map((x) => [x.length]));
+    out.push(structuredClone(c.items.map((x) => x)));
+    h.rows = structuredClone(c.items.slice().map((x) => x));
+    byName.set("all", structuredClone(c.items.filter(() => true)));
   });
   rw.write((c) => {
     c.items = [];

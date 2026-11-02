@@ -1,0 +1,41 @@
+// check: no leaks
+// A `read` callback's variable bound to what a function returns from the caller's array
+// (`const g = first(mine)`) names the caller's object, as in JavaScript: the callback can
+// change it, also through another variable bound to it, and the caller sees the change. Bound
+// to an array the function made, it is the callback's own (#1523).
+class Box {
+  items: string[][] = [["a"], ["b"]];
+}
+
+function first(xs: string[][]): string[] {
+  return xs[0];
+}
+
+function made(xs: string[][]): string[] {
+  return [xs[0][0], "new"];
+}
+
+function main() {
+  const a = new RwLock(new Box());
+  const mine: string[][] = [["p"], ["q"]];
+  const kept: string[][] = [];
+  a.read((x) => {
+    const g = first(mine);
+    g.push("ok");
+    const k = g;
+    k.push("k");
+    const h = made(mine);
+    h.push("own");
+    kept.push(h);
+    const f = first(x.items);
+    console.log(f.length, g.length, h.length);
+  });
+  a.read((x) => {
+    const g = first(mine);
+    for (let i = 0; i < 3; i++) {
+      g.push(`n${i}`);
+    }
+    g.pop();
+  });
+  console.log(JSON.stringify(mine), JSON.stringify(kept));
+}

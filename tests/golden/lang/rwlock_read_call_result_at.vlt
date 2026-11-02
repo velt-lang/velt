@@ -1,0 +1,38 @@
+// check: no leaks
+// A `read` callback's variable bound to the payload of a call on the caller's array
+// (`const g = mine.at(0)!`) names the caller's object, as one bound to `first(mine)` does:
+// `push` and `pop` through it change the caller's array, also through another
+// variable bound to it and stored in the caller's array (#1523).
+class Box {
+  items: string[][] = [["s"]];
+}
+
+function first(xs: string[][]): string[] {
+  return xs[0];
+}
+
+function main() {
+  const a = new RwLock(new Box());
+  const mine: string[][] = [
+    ["m", "n"],
+    ["z", "y"],
+  ];
+  const out: string[][] = [];
+  a.read((x) => {
+    const g = mine.at(0)!;
+    g.push("k");
+    g.pop();
+    g.push("a");
+    const h = mine.at(1)!;
+    const t = h.pop()!;
+    h.push(t + "!");
+  });
+  a.read((x) => {
+    const g = first(mine);
+    const k = g;
+    out.push(k);
+    k.push("j");
+    g.pop();
+  });
+  console.log(JSON.stringify(mine), JSON.stringify(out), out[0] === mine[0]);
+}

@@ -1,0 +1,1 @@
+rwlock_read_probe_m24.vlt:12:12: error: this puts what may be the caller's object into an object the `read` callback made, after storing that object into the caller's containers

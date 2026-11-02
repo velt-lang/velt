@@ -1,0 +1,14 @@
+// An RwLock read probe (#1559): a compile error, where a silent copy would differ from Node.
+// An interface method returning a part, on an interface-typed lock field
+interface Src { get(): number[]; }
+class Arr implements Src {
+  xs: number[] = [1];
+  get(): number[] { return this.xs; }
+}
+class Store { src: Src = new Arr(); }
+function main() {
+  const lk = new RwLock(new Store());
+  const r = lk.read((s) => s.src.get());
+  r.push(9);
+  lk.read((s) => console.log(JSON.stringify(s.src.get())));
+}

@@ -1,0 +1,35 @@
+// check: no leaks
+// What a `read` callback may store into the caller's containers: new arrays of plain values
+// (`map`, `slice()`, `filter`, a spread), an object literal of plain fields, a `Map` made from
+// the value's, and an explicit copy. None holds a part of the lock's value (#1541).
+class It {
+  id: number = 1;
+  name: string = "a";
+}
+class Box {
+  items: It[] = [new It()];
+  nums: number[] = [1, 2];
+  names: string[] = ["x"];
+  m: Map<string, number> = new Map<string, number>();
+}
+function main() {
+  const rw = new RwLock(new Box());
+  const ids: number[][] = [];
+  const names: string[][] = [];
+  const objs: { id: number; name: string }[] = [];
+  const ms: Map<string, number>[] = [];
+  let total = 0;
+  rw.read((x) => {
+    ids.push(x.items.map((i) => i.id));
+    ids.push(x.nums.slice());
+    ids.push(x.nums.filter((n) => n > 1));
+    ids.push([...x.nums]);
+    names.push(x.names.slice());
+    objs.push({ id: x.items[0].id, name: x.items[0].name });
+    ms.push(new Map(x.m));
+    const copy = structuredClone(x.nums);
+    ids.push(copy);
+    total += x.nums.length;
+  });
+  console.log(JSON.stringify(ids), JSON.stringify(names), JSON.stringify(objs), ms.length, total);
+}

@@ -1,9 +1,8 @@
 // check: no leaks
-// What a `read` returns leaves the lock as a copy of what it shares with the store, never the
-// store's object itself (read mode leaves those uncounted, so one would look unique to a later
-// writer and be freed under the result): an element, `slice`, `filter`, `map`, a spread,
-// `concat`, `Map.get` and `Array.from`, kept while writers replace the store, on one thread and
-// on many.
+// What a `read` returns is an explicit copy of what it shares with the store (returning a part
+// itself is an error, errors/rwlock_read_part_m18): an element, `slice`, `filter`, `map`, a
+// spread, `concat`, `Map.get` and `Array.from`, each `.clone()`d, kept while writers replace
+// the store, on one thread and on many, and freed once.
 class Item {
   v: i64 = 0;
   constructor(v: i64) {
@@ -21,15 +20,15 @@ function single() {
     s.items.push(new Item(2));
     s.m.set("a", new Item(3));
   });
-  const kept = rw.read((s) => s.items[0]);
-  const sl = rw.read((s) => s.items.slice(0, 1));
-  const all = rw.read((s) => s.items.slice());
-  const fl = rw.read((s) => s.items.filter((i) => i.v > 0));
-  const mp = rw.read((s) => s.items.map((i) => i));
-  const sp = rw.read((s) => [...s.items]);
-  const cc = rw.read((s) => s.items.concat([]));
-  const g = rw.read((s) => s.m.get("a"));
-  const af = rw.read((s) => Array.from(s.m.values()));
+  const kept = rw.read((s) => s.items[0].clone());
+  const sl = rw.read((s) => s.items.slice(0, 1).clone());
+  const all = rw.read((s) => s.items.slice().clone());
+  const fl = rw.read((s) => s.items.filter((i) => i.v > 0).clone());
+  const mp = rw.read((s) => s.items.map((i) => i).clone());
+  const sp = rw.read((s) => [...s.items].clone());
+  const cc = rw.read((s) => s.items.concat([]).clone());
+  const g = rw.read((s) => s.m.get("a")!.clone());
+  const af = rw.read((s) => Array.from(s.m.values()).clone());
   rw.write((s) => {
     s.items = [];
     s.m = new Map<string, Item>();
@@ -41,7 +40,7 @@ function single() {
 async function reader(rw: shared<RwLock<St>>, rounds: i64): Promise<i64> {
   let t: i64 = 0;
   for (let i: i64 = 0; i < rounds; i++) {
-    const kept = rw.read((s) => s.items.slice(0, 3));
+    const kept = rw.read((s) => s.items.slice(0, 3).clone());
     await Promise.resolve(0);
     for (const k of kept) {
       t += k.v;

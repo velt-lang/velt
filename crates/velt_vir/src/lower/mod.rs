@@ -63,6 +63,7 @@ mod boxes;
 mod boxing;
 mod call;
 mod callee;
+mod caller_aliases;
 mod caller_stores;
 mod cells;
 mod cfg;
@@ -83,9 +84,12 @@ mod for_of;
 mod for_of_shared;
 mod foreign;
 mod frame_envs;
+mod state;
+use state::{DropEntry, LInfo, LState, Scope, ScopeKind};
 mod fresh_fns;
 mod frozen;
 mod glue;
+mod hand_result;
 mod hooks;
 mod host;
 mod impl_lookup;
@@ -95,6 +99,7 @@ mod json;
 mod key_any;
 mod keys;
 mod layout;
+mod leave_levels;
 mod literal_accessors;
 mod match_switch;
 mod matching;
@@ -509,8 +514,11 @@ struct Cx<'h> {
     cur_def: Option<DefId>,
     /// The read mode of the function being built (`Work::Checked`, `Work::Read`).
     cur_mode: LkMode,
-    /// Whether the function being built is a `Work::ReadOwn`.
+    /// Whether the function being built is a `Work::ReadOwn`, and one in a `Work::Deferred`.
     cur_own: bool,
+    cur_own_deep: bool,
+    /// Each closure literal's function, and whether it is a `read` callback in read mode.
+    closure_parents: FxHashMap<DefId, (Option<DefId>, bool)>,
     /// Functions whose instances made an option of an option with another nothing (`T | null`
     /// at `T = U | undefined`, or the reverse; types.rs `intern`), which this phase cannot
     /// represent (issue #930): reported, not lowered silently.
@@ -531,96 +539,6 @@ struct Cx<'h> {
     /// Non-zero while the field types of a prelude `Map` are substituted (types.rs
     /// `keeps_nothings_apart`).
     map_fields: u32,
-}
-
-/// Static ownership state of a droppable local without a drop flag.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum LState {
-    Uninit,
-    Init,
-    Moved,
-}
-
-/// How a HIR local is represented in VIR.
-struct LInfo {
-    /// `None` for Unit-typed locals (they have no storage).
-    vir: Option<Local>,
-    /// Concrete (substituted) type.
-    ty: TyId,
-    /// The VIR local is a `Ptr` to the value (aggregate params, borrowed bindings, captures).
-    indirect: bool,
-    /// This function owns the value and must drop it at scope exit.
-    droppable: bool,
-    flag: Option<Local>,
-    state: LState,
-    /// Fields moved out of this (struct or class) local; the rest is dropped field by field.
-    moved_fields: Vec<u32>,
-    /// Parts moved out of this local are replaced by their all-zero ("nothing to drop") value
-    /// instead of being recorded in `moved_fields`: set when the static record would be wrong
-    /// on some path (drop flags, a field move in a conditional region).
-    zero_parts: bool,
-    /// The local is a shared cell (cells.rs): `vir` holds the cell pointer. When the local is
-    /// `droppable` this function owns a reference, and dropping the local releases it (a
-    /// captured cell's reference belongs to the closure environment).
-    cell: bool,
-    /// The value lives in a shared cell (this function's or a captured one): a closure may
-    /// replace it while a call borrows it (stabilize.rs).
-    in_cell: bool,
-    /// The local holds a generator's state inline (async_fn/generator.rs): `vir` is the state;
-    /// dropping the local closes the generator.
-    gen: Option<async_fn::GenLocal>,
-}
-
-/// A pending drop obligation.
-#[derive(Clone)]
-enum DropEntry {
-    Local(LocalId),
-    /// Owned temporary value at a place, with its concrete type for drop glue.
-    Temp(Place, TyId),
-    /// A class object `new` is constructing (adt.rs): on a throw from its constructor or field
-    /// initializers its fields drop and it is freed, but its `[Symbol.dispose]()` does not run.
-    /// Becomes a `Temp` once constructed.
-    HalfBuilt(Place, TyId),
-    /// Owned temporary value that holds something only when the `Bool` local is true.
-    Flagged(Place, TyId, vir::Local),
-    /// An owned value from which a pattern moved some parts: drop everything else.
-    Rest(Place, TyId, Rc<hir::Pat>),
-    /// An array consumed by `for…of`: elements `next..len` (of type `elem`) are still owned,
-    /// the ones before were moved out (for_of.rs).
-    ConsumedArray {
-        arr: Place,
-        next: Local,
-        elem: TyId,
-    },
-}
-
-enum ScopeKind {
-    Block,
-    /// Statement-level temporaries, dropped when the statement finishes.
-    Temps,
-    Loop {
-        label: Option<String>,
-        brk: BlockId,
-        cont: BlockId,
-    },
-    /// Inside a `try` body with a `catch`: errors are stored to `slot` and jump to `handler`.
-    Try {
-        handler: BlockId,
-        slot: Local,
-        /// The `catch` variable's (concrete) type: errors are converted to it.
-        ty: TyId,
-    },
-    /// Inside a `try` with `finally`: the block runs on every exit (taken while being lowered).
-    Finally(Option<Rc<hir::Block>>),
-    /// A module state initializer: an error thrown in it and not caught there prints
-    /// `Uncaught …` and ends the process with 1, as Node stops at an error thrown while it
-    /// evaluates a module (module_state.rs).
-    Uncaught,
-}
-
-struct Scope {
-    kind: ScopeKind,
-    drops: Vec<DropEntry>,
 }
 
 /// Per-function lowering state.
@@ -697,6 +615,8 @@ struct FnLower<'c, 'h> {
     /// A `read` callback that code outside read mode calls (`Work::ReadOwn`): the caller's
     /// variables it captured hold none of a store's objects.
     own_captures: bool,
+    /// A `Work::ReadOwn` callback in a `Work::Deferred` instance (leave_levels.rs).
+    own_deep: bool,
     /// The closure literal a `with`, `write` or `read` is about to call, and the read mode its
     /// code runs in.
     lock_callback: Option<(DefId, LkMode)>,
@@ -715,9 +635,8 @@ struct FnLower<'c, 'h> {
     kept_handed: Vec<(Operand, TyId, Option<Local>)>,
     /// Those of them the call's own values, dropped after that in the mode given.
     kept_drops: Vec<(Place, TyId, LkMode)>,
-    /// A `read` callback's variables naming the caller's objects (caller_stores.rs
-    /// `caller_alias`), once asked.
-    caller_aliases: Option<FxHashSet<LocalId>>,
+    /// What a `read` callback's body says, and how its stores go (caller_aliases.rs).
+    read_info: caller_aliases::ReadInfo,
     /// With debug info: where the block declaring a local ends (debug_vars.rs).
     scope_ends: FxHashMap<LocalId, SrcLoc>,
     /// Set while lowering the body of an async function (a poll function).
@@ -763,8 +682,7 @@ struct FnLower<'c, 'h> {
     /// Lowering an expression checked outside any body (module_state.rs): the module state's
     /// initializer (`Some(0)`), or a class field's initializer, whose locals are renumbered
     /// from this index on (`consume_detached`). Those locals (the temporaries of a `Record`
-    /// literal, ...) belong to no function body and are declared at their `let`
-    /// (`declare_init_local`).
+    /// literal, ...) belong to no function body: declared at their `let` (`declare_init_local`).
     init_locals: Option<u32>,
     /// While lowering a class's constructor: the (concrete) class type, whose field
     /// initializers the constructor runs (ctor_init.rs).

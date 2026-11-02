@@ -18,6 +18,8 @@ const COUNT: i128 = 8;
 /// The `LOCAL` bit of a lock-set object's count word (velt_rt `read_mode`), and its count
 /// without it.
 pub(super) const LOCAL: i128 = 1 << 62;
+/// The `STORED` bit (velt_rt `read_mode::STORED`): a reader's object stored outside every read.
+pub(super) const STORED: i128 = 1 << 61;
 const COUNT_MASK: i128 = LOCAL - 1;
 
 impl FnLower<'_, '_> {
@@ -44,7 +46,7 @@ impl FnLower<'_, '_> {
     /// This function's read mode: `velt_rt_lk_mode()`, asked the first time a lock-set object is
     /// counted or written, then kept in a local (2 until asked). A thread enters or leaves read
     /// mode only around a `read` callback, which is a function of its own.
-    fn lk_mode(&mut self) -> Operand {
+    pub(super) fn lk_mode(&mut self) -> Operand {
         let m = match self.lk_mode {
             Some(m) => m,
             None => {
@@ -248,8 +250,20 @@ impl FnLower<'_, '_> {
             self.lk_split(
                 |_| {},
                 |lw| {
+                    // `LOCAL` without `STORED`: the reader's own, not stored outside since.
                     let c = lw.count_place(p.clone());
-                    let mine = lw.is_local(&c);
+                    let bits = lw.rvalue_temp(
+                        Ty::U64,
+                        Rvalue::Binary(
+                            BinOp::BitAnd,
+                            Operand::Copy(c),
+                            cint(LOCAL | STORED, Ty::U64),
+                        ),
+                    );
+                    let mine = lw.rvalue_temp(
+                        Ty::Bool,
+                        Rvalue::Binary(BinOp::Eq, bits, cint(LOCAL, Ty::U64)),
+                    );
                     let (ok, stop) = (lw.new_block(), lw.new_block());
                     lw.branch(mine, ok, stop);
                     lw.switch_to(stop);
@@ -263,20 +277,40 @@ impl FnLower<'_, '_> {
     }
 
     /// The object of type `ty` at `p` leaves a `read` callback (transferred out of it): no longer
-    /// the reader's own.
+    /// the reader's own, unless the thread stays in read mode (the result of a `read` nested in
+    /// another, which the outer reader made: velt_rt `velt_rt_lk_leave`).
     pub(super) fn leave_read(&mut self, p: Operand, ty: TyId) {
-        if self.cx.lock_counted(ty) {
-            let c = self.count_place(p);
-            let k = self.rvalue_temp(
-                Ty::U64,
-                Rvalue::Binary(
-                    BinOp::BitAnd,
-                    Operand::Copy(c.clone()),
-                    cint(COUNT_MASK, Ty::U64),
-                ),
-            );
-            self.assign(c, Rvalue::Use(k));
+        if !self.cx.lock_counted(ty) {
+            return;
         }
+        let q = p.clone();
+        self.lk_split(
+            |lw| {
+                let c = lw.count_place(q);
+                let k = lw.rvalue_temp(
+                    Ty::U64,
+                    Rvalue::Binary(
+                        BinOp::BitAnd,
+                        Operand::Copy(c.clone()),
+                        cint(COUNT_MASK, Ty::U64),
+                    ),
+                );
+                lw.assign(c, Rvalue::Use(k));
+            },
+            |lw| {
+                let c = lw.count_place(p.clone());
+                let mine = lw.is_local(&c);
+                let (leave, done) = (lw.new_block(), lw.new_block());
+                lw.branch(mine, leave, done);
+                lw.switch_to(leave);
+                let c = lw.count_addr(p.clone());
+                // Its glue releases the reference a nested reader's store keeps until the reads end.
+                let glue = cfunc(lw.cx.func(Work::Glue(Glue::Drop, ty)));
+                lw.call_rt(Rt::LkLeave, vec![c, p, glue], None);
+                lw.goto(done);
+                lw.switch_to(done);
+            },
+        );
     }
 
     /// [`counted_alloc`](Self::counted_alloc) of a value of type `ty`: one made in a `read`

@@ -1,0 +1,21 @@
+// check: no leaks
+// An array a `read` callback made (an explicit copy of the lock's parts) stays the same object
+// once stored into the caller's array, and the callback can still change it through its own
+// variable until the read returns: the caller sees the change, as in JavaScript (#1541). Storing
+// the `concat` itself, which holds the lock's own arrays, is an error
+// (errors/rwlock_read_part_k1).
+class Box {
+  items: number[][] = [[1, 2], [3]];
+}
+
+function main() {
+  const a = new RwLock(new Box());
+  const out: number[][][] = [];
+  a.read((x) => {
+    const c = structuredClone(x.items.concat([[5]]));
+    out.push(c);
+    console.log("stored", out[0] === c);
+    c.push([8]);
+  });
+  console.log(JSON.stringify(out));
+}

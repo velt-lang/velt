@@ -1,0 +1,1 @@
+rwlock_read_kept_probe_a7.vlt:15:12: error: this `read` returns an object it also stored into the caller's containers, which would leave the `read` as a copy, where JavaScript returns that same object

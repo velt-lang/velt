@@ -76,7 +76,7 @@ async function main() {
   console.log(totals.length, st.read((s) => s.items.length));
 
   // A result that shares the store's objects leaves the lock as a copy.
-  const top = st.read((s) => sorted(s).slice(0, 3));
+  const top = st.read((s) => sorted(s).slice(0, 3).clone());
   st.write((s) => {
     s.items[38].name = "renamed";
   });

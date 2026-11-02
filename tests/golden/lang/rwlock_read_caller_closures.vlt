@@ -1,5 +1,6 @@
 // Closures a `read` callback makes and stores into the caller's containers keep the caller's
-// variables they capture (the same objects); what they capture from the store is a copy.
+// variables they capture (the same objects). One capturing a part of the value would be an error
+// (JavaScript shares it), so the last two capture what they need, read into numbers first.
 class Item {
   v: i64 = 0;
   constructor(v: i64) {
@@ -19,9 +20,10 @@ function main() {
     fs.push(() => out[0].v + n);
     const it = out[0];
     fs.push(() => it.v * 2);
-    fs.push(() => s.items.length as i64);
-    const st = s.items[0];
-    fs.push(() => st.v);
+    const len = s.items.length as i64;
+    fs.push(() => len);
+    const v = s.items[0].v;
+    fs.push(() => v);
     return 0;
   });
   out[0].v = 6;

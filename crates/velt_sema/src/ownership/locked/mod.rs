@@ -72,6 +72,7 @@ pub(crate) fn check_locked(cx: &mut Ctx) -> WeakCrossings {
     }
     let callbacks = found.callbacks;
     let mutex_literals = found.mutex_literals;
+    let reads = read_callbacks(cx, &mut res, &found.reads);
     let mut seen_named = FxHashSet::default();
     for &(g, span) in &found.named {
         if seen_named.insert((g, span)) {
@@ -97,12 +98,38 @@ pub(crate) fn check_locked(cx: &mut Ctx) -> WeakCrossings {
             &summaries,
             &mut res,
             (c, direct),
-            mutex_literals.contains(&c),
+            (mutex_literals.contains(&c), reads.get(&c).copied()),
             &mut reported,
             &mut weak,
         );
     }
     weak
+}
+
+/// The `read` callbacks among `reads` (callback, the function its `read` call is in), each with
+/// whether it is nested in another `read` callback: its `read` call is in one, or in a closure
+/// made in one.
+fn read_callbacks(
+    cx: &mut Ctx,
+    res: &mut values::Resolver,
+    reads: &[(DefId, DefId)],
+) -> FxHashMap<DefId, bool> {
+    let all: FxHashSet<DefId> = reads.iter().map(|r| r.0).collect();
+    let mut out = FxHashMap::default();
+    for &(c, d) in reads {
+        let mut at = Some(d);
+        let mut nested = false;
+        for _ in 0..64 {
+            let Some(x) = at else { break };
+            if all.contains(&x) {
+                nested = true;
+                break;
+            }
+            at = res.parent(cx, x);
+        }
+        *out.entry(c).or_insert(false) |= nested;
+    }
+    out
 }
 
 /// A named function passed to `with` (`m.with(fire)`), checked like `(v) => fire(v)`: it has
@@ -226,6 +253,7 @@ struct Crossings {
     unfixable: Vec<stores::Unfixable>,
     inward: Vec<(crate::hir::LocalId, Span, bool)>,
     stored_fns: Vec<(DefId, Span)>,
+    made_stored: Vec<(DefId, crate::hir::LocalId, Span)>,
 }
 
 /// Run the checks of callback `c` on its `bodies` (`take_bodies`), rewriting them.
@@ -236,9 +264,21 @@ fn crossings(
     bodies: &mut [(DefId, FnDef)],
     resolved: FxHashSet<Span>,
     named: FxHashMap<Span, Vec<DefId>>,
-    moved: &FxHashSet<crate::hir::LocalId>,
+    (moved, read): (&FxHashSet<crate::hir::LocalId>, Option<bool>),
 ) -> Crossings {
     let mut r = regions::Regions::new(c, bodies, moved);
+    r.read = read;
+    if read.is_some() {
+        let value = bodies.iter().find(|(d, _)| *d == c).and_then(|(_, f)| {
+            let n = f.captures.len();
+            f.params.get(n).map(|p| p.ty)
+        });
+        if let Some(t) = value {
+            let mut tys = FxHashSet::default();
+            r.lock_opaque = regions::lock_types(cx, t, &mut tys);
+            r.lock_tys = tys;
+        }
+    }
     r.resolved = resolved;
     r.named = named;
     loop {
@@ -271,12 +311,17 @@ fn crossings(
             inward.extend(i);
             stored_fns.extend(fns);
         }
+        if let (Some(_), Some((_, f))) = (read, bodies.iter().find(|(d, _)| *d == c)) {
+            unfixable.extend(read_results(cx, &r, c, f));
+        }
+        unfixable.extend(stored_then_given(&r));
     }
     Crossings {
         made,
         unfixable,
         inward,
         stored_fns,
+        made_stored: std::mem::take(&mut r.made_stored),
     }
 }
 
@@ -288,7 +333,7 @@ fn check_callback(
     s: &summary::Summaries,
     res: &mut values::Resolver,
     (c, direct): (DefId, bool),
-    at_mutex: bool,
+    (at_mutex, read): (bool, Option<bool>),
     reported: &mut FxHashSet<Span>,
     weak: &mut WeakCrossings,
 ) {
@@ -299,7 +344,7 @@ fn check_callback(
     };
     let (mut bodies, resolved, named) = take_bodies(cx, res, c);
     weak_across(cx, (c, direct), &bodies, reported, weak);
-    let found = crossings(cx, s, c, &mut bodies, resolved, named, &moved);
+    let found = crossings(cx, s, c, &mut bodies, resolved, named, (&moved, read));
     for (d, f) in bodies {
         cx.defs[d.0 as usize] = Some(Def::Fn(f));
     }
@@ -323,6 +368,33 @@ fn check_callback(
         unfixable_error(cx, u);
     }
     later_uses(cx, res, c, found.inward, reported);
+    made_copied(cx, found.made_stored, reported);
+}
+
+/// Report a closure a `read` callback made that it gives the caller's containers while still
+/// holding it (`stores::note_made`): they get a copy of what it captures, where JavaScript
+/// shares the closure.
+fn made_copied(
+    cx: &mut Ctx,
+    stored: Vec<(DefId, crate::hir::LocalId, Span)>,
+    reported: &mut FxHashSet<Span>,
+) {
+    for (d, l, at) in stored {
+        if !reported.insert(at) {
+            continue;
+        }
+        let name = match &cx.defs[d.0 as usize] {
+            Some(Def::Fn(body)) => body.body.locals[l.0 as usize].name.clone(),
+            _ => continue,
+        };
+        cx.error(
+            Diagnostic::error(
+                format!("this gives the caller's containers a copy of `{name}`, which the `read` callback made and still uses, where JavaScript would share it"),
+                at,
+            )
+            .with_note(format!("the copy would not see what the callback changes through `{name}` afterwards; store a closure as its last use in the callback (it then stays the same closure), move an object's items in the callback itself, or make it outside the `read`")),
+        );
+    }
 }
 
 /// A weak collection used across the lock (docs/internals/design/weak-refs.md "Threads and
@@ -417,20 +489,8 @@ fn resource_results(
     c: DefId,
     f: &FnDef,
 ) -> Vec<stores::Unfixable> {
-    struct Results(Vec<Expr>);
-    impl VisitMut for Results {
-        fn stmt(&mut self, s: &mut crate::hir::Stmt) {
-            if let crate::hir::StmtKind::Return(Some(e)) = &s.kind {
-                self.0.push(e.clone());
-            }
-        }
-    }
-    let mut body = f.body.block.clone();
-    let mut found = Results(vec![]);
-    visit::block(&mut body, &mut found);
-    found.0.extend(f.body.block.value.as_deref().cloned());
     let mut out = vec![];
-    for e in found.0 {
+    for e in results(f) {
         let mut x = &e;
         while let E::Call {
             callee: Callee::Intrinsic(crate::hir::Intrinsic::Share),
@@ -448,6 +508,94 @@ fn resource_results(
                 span: e.span,
                 kind: stores::Cross::Resource,
             });
+        }
+    }
+    out
+}
+
+/// What may be the caller's objects stored into a variable of a `read` callback's bodies after
+/// that variable went into the caller's containers: from the first store on, the callback no
+/// longer counts the object as its own.
+fn stored_then_given(r: &regions::Regions) -> Vec<stores::Unfixable> {
+    let mut out = vec![];
+    for &(d, l, at) in &r.inbound {
+        let after = r
+            .outed
+            .iter()
+            .any(|&(d2, l2, s)| d2 == d && l2 == l && s.hi <= at.lo);
+        if after {
+            let kind = stores::Cross::AfterStored;
+            out.push(stores::Unfixable { span: at, kind });
+        }
+    }
+    out
+}
+
+/// The variables whose objects (or parts of them) value `e` holds as themselves, not through
+/// a plain value read from them (`l.length`).
+fn held_locals(cx: &mut Ctx, e: &Expr, out: &mut Vec<crate::hir::LocalId>) {
+    if !cx.is_shared_value(e.ty) || cx.is_string_value(e.ty) {
+        return;
+    }
+    match &e.kind {
+        E::Local(l, _) => out.push(*l),
+        E::Field { base: x, .. }
+        | E::Index { base: x, .. }
+        | E::UnwrapSome(x, _)
+        | E::Upcast(x)
+        | E::WrapSome(x) => held_locals(cx, x, out),
+        E::Call {
+            callee: Callee::Intrinsic(crate::hir::Intrinsic::Share),
+            args,
+        } => args.iter().for_each(|a| held_locals(cx, a, out)),
+        E::ArrayLit(xs) | E::Tuple(xs) | E::AdtLit { fields: xs, .. } => {
+            xs.iter().for_each(|x| held_locals(cx, x, out))
+        }
+        _ => {}
+    }
+}
+
+/// What body `f` returns: its `return`s' values and its block's value.
+fn results(f: &FnDef) -> Vec<Expr> {
+    struct Results(Vec<Expr>);
+    impl VisitMut for Results {
+        fn stmt(&mut self, s: &mut crate::hir::Stmt) {
+            if let crate::hir::StmtKind::Return(Some(e)) = &s.kind {
+                self.0.push(e.clone());
+            }
+        }
+    }
+    let mut body = f.body.block.clone();
+    let mut found = Results(vec![]);
+    visit::block(&mut body, &mut found);
+    found.0.extend(f.body.block.value.as_deref().cloned());
+    found.0
+}
+
+/// The results of a `read` callback `c` nested in another that hold a part of the value it
+/// reads (`stores::read_part`): JavaScript gives the outer callback that part itself.
+fn read_results(cx: &mut Ctx, r: &regions::Regions, c: DefId, f: &FnDef) -> Vec<stores::Unfixable> {
+    let mut out = vec![];
+    for e in results(f) {
+        let bits = r.mentions(cx, c, &e);
+        if stores::read_part(cx, r, c, &e, (regions::OUT, bits)) {
+            let kind = stores::Cross::ReadPart { returned: true };
+            out.push(stores::Unfixable { span: e.span, kind });
+            continue;
+        }
+        // An object it also stored into the caller's containers would leave as a copy.
+        if !cx.is_shared_value(e.ty) || cx.is_string_value(e.ty) {
+            continue;
+        }
+        let mut held = vec![];
+        held_locals(cx, &e, &mut held);
+        let stored = held.into_iter().any(|l| {
+            let k = r.key((c, l));
+            r.outed.iter().any(|&(d, v, _)| (d, v) == k)
+        });
+        if stored {
+            let kind = stores::Cross::ReturnStored;
+            out.push(stores::Unfixable { span: e.span, kind });
         }
     }
     out
@@ -569,6 +717,32 @@ fn unfixable_error(cx: &mut Ctx, u: stores::Unfixable) {
             "the function might store a part of one in the other, shared by threads without the lock; call a function or a closure written here (`const f = (s) => ...`), or pass a copy (`x.clone()`)",
         ),
         stores::Cross::ResourceInPlace(_) => return,
+        stores::Cross::ReturnStored => (
+            "this `read` returns an object it also stored into the caller's containers, which would leave the `read` as a copy, where JavaScript returns that same object".to_string(),
+            "use it through the caller's container after `read` (`out[0]`), or return a value made for the result",
+        ),
+        stores::Cross::CaughtPart => (
+            "this changes, through an object the `read` callback made, what may be the caller's object, which the compiler cannot tell from the value's own here".to_string(),
+            "change the caller's object through the caller's own variable (`mine[0].push(5)`), or after `read`",
+        ),
+        stores::Cross::CallAlias => (
+            "a closure made in a `read` callback changes a variable bound to a function's result, which may be the caller's object".to_string(),
+            "inside such a closure the compiler cannot tell the caller's object from one the callback made; change it in the callback itself, or after `read`",
+        ),
+        stores::Cross::AfterStored => (
+            "this puts what may be the caller's object into an object the `read` callback made, after storing that object into the caller's containers".to_string(),
+            "from that store on, the callback no longer counts the object as its own; put the caller's objects in before storing it, or make the change after `read`",
+        ),
+        stores::Cross::ReadPart { returned } => {
+            let what = match returned {
+                true => "this `read` returns",
+                false => "this stores",
+            };
+            (
+                format!("{what} a part of the value an `RwLock` holds outside the `read` callback, where JavaScript would share it"),
+                "Velt cannot share the lock's own objects with code that does not hold the lock, and a silent copy would not see later changes on either side; store a copy you make explicitly (`structuredClone(…)`, or a new object made from the part's fields), or make the change inside `write`",
+            )
+        }
         stores::Cross::Resource => (
             "this would copy an object that owns a resource without `clone()` across the `with` lock".to_string(),
             "a part of the locked value stored outside it, returned from `with`, or kept by a promise made here must be copied; give the resource type a `clone()` method, or use it inside the callback",

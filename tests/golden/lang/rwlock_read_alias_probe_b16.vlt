@@ -1,0 +1,29 @@
+// check: no leaks
+// An RwLock read probe (#1559): a variable the callback made, also named another way, stored: Node prints the same.
+class Box {
+  items: number[][] = [[1, 2], [3]];
+}
+class Row {
+  v: number[] = [];
+  get grow(): number {
+    this.v.push(9);
+    return this.v.length;
+  }
+}
+function put(c: number[][], r: number[]) {
+  c.push(r);
+}
+function main() {
+  const a = new RwLock(new Box());
+  const b = new RwLock(new Box());
+  let mine: number[][] = [[7]];
+  const out: number[][][] = [];
+  a.read((x) => {
+    const c: number[][] = [[1]];
+    const d: number[][][] = [c];
+    d[0].push(mine[0]);
+    out.push(c);
+  });
+  mine = [[0]];
+  console.log(JSON.stringify(out));
+}

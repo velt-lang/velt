@@ -1,0 +1,1 @@
+rwlock_read_caught_f15.vlt:10:60: error: this stores a part of the value an `RwLock` holds outside the `read` callback, where JavaScript would share it

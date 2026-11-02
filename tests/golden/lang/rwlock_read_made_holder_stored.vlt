@@ -1,0 +1,22 @@
+// check: no leaks
+// An object a `read` callback made, holding the caller's own array, stored into the caller's
+// array as its last use in the callback: the same object, holding that same array, as in
+// JavaScript (#1525 probe s6a's shape, stored once complete).
+class Box {
+  items: number[][] = [[1, 2], [3]];
+}
+class Holder {
+  rows: number[][] = [];
+}
+function main() {
+  const a = new RwLock(new Box());
+  const mine: number[][][] = [[[1]], [[2]]];
+  const hs: Holder[] = [];
+  a.read((x) => {
+    const h = new Holder();
+    h.rows.push(mine[0][0]);
+    hs.push(h);
+  });
+  mine[0][0].push(5);
+  console.log(JSON.stringify(hs[0].rows[0]));
+}

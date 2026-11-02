@@ -126,9 +126,15 @@ impl<'c, 'h> FnLower<'c, 'h> {
         // in a `read` callback, so plain code's asks (in a program with a lock set); any other
         // closure may run anywhere.
         let callback = std::mem::take(&mut self.lock_callback);
-        // A `read` callback plain code calls captures that code's variables only.
-        let own =
-            matches!(callback, Some((d, LkMode::Read)) if d == def) && self.mode == LkMode::Plain;
+        let read_callback = matches!(callback, Some((d, LkMode::Read)) if d == def);
+        let parent = self.cx.cur_def;
+        self.cx.closure_parents.insert(def, (parent, read_callback));
+        // A `read` callback plain code calls captures that code's variables only; one nested
+        // in such a callback also those of the callbacks around it (leave_levels.rs). A
+        // function instance counting by the counts outside read mode (`Work::Deferred`) is
+        // such code for its callbacks too, at a depth of reads not known here (`own_deep`).
+        let deep = read_callback && self.mode == LkMode::Deferred && !self.own_captures;
+        let own = read_callback && (self.mode == LkMode::Plain || self.own_captures || deep);
         let mode = match callback {
             Some((d, m)) if d == def => m,
             _ if in_frame && !borrowed => self.mode,
@@ -160,7 +166,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let frozen = self.frozen_captures(def);
         let code = match frozen {
             _ if generic => cint(0, Ty::Ptr),
-            0 if own => cfunc(self.cx.func_read_own(Work::Fn(def, targs.clone()))),
+            0 if own => cfunc(self.cx.func_read_own(Work::Fn(def, targs.clone()), deep)),
+            // Code whose mode is asked: the thread's mode picks the callback's instance.
+            0 if read_callback && self.mode == LkMode::Checked => self.read_callback_code(def),
             0 => cfunc(self.cx.func_direct(Work::Fn(def, targs.clone()), mode)),
             mask => cfunc(
                 self.cx

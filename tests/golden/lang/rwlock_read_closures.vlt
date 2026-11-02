@@ -15,7 +15,7 @@ class St {
 }
 
 function g(rw: shared<RwLock<St>>, cb: (it: Item) => Item): Item {
-  return rw.read((s) => cb(s.items[0]));
+  return rw.read((s) => cb(s.items[0]).clone());
 }
 
 function apply(s: St, f: (s: St) => void) {
@@ -33,10 +33,10 @@ function main() {
   let outer: Item = new Item(5);
   for (let i = 0; i < 100; i++) {
     rw.read((s) => {
-      outer = s.items[0];
+      outer = new Item(s.items[0].v);
     });
   }
-  const last = rw.read((s) => s.items.findLast((i) => i.v == 1));
+  const last = rw.read((s) => s.items.findLast((i) => i.v == 1)!.clone());
   rw.write((s) => apply(s, (x) => x.items.push(x.items[0])));
   rw.write((s) => {
     s.items = [];

@@ -1,0 +1,25 @@
+// A function's read callback, called inside another read, storing a slice of the lock's arrays into the outer reader's array (#1525 probe v12):
+// JavaScript would share those parts with code that does not hold the lock. An error that says
+// to store an explicit copy (`structuredClone(…)`) or change the value in `write`.
+class Box {
+  items: number[][] = [[1, 2], [3]];
+}
+function stash(b: RwLock<Box>, out: number[][][]) {
+  b.read((y) => {
+    out.push(y.items.slice());
+  });
+}
+function main() {
+  const a = new RwLock(new Box());
+  const b = new RwLock(new Box());
+  const res = a.read((x) => {
+    const mine: number[][][] = [];
+    stash(b, mine);
+    mine[0].push([5]);
+    mine.pop();
+    stash(b, mine);
+    return mine;
+  });
+  b.write((q) => { q.items[0].push(5); q.items = []; });
+  console.log(JSON.stringify(res));
+}
