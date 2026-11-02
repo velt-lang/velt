@@ -381,4 +381,13 @@ function main() {
   test_i64();
   test_usize();
   test_isize();
+  // The results keep their integer type: narrow arithmetic wraps, wide values stay exact.
+  const a: u8 = 200;
+  const b: u8 = 100;
+  console.log(a.wrappingAdd(b) + 250);
+  const x: i64 = 9007199254740993;
+  const zero: i64 = 0;
+  console.log(x.wrappingAdd(zero));
+  const u: usize = 18446744073709551615;
+  console.log(u.wrappingMul(1 as usize));
 }
