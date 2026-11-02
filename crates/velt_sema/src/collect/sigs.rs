@@ -727,7 +727,7 @@ fn extension<'m>(cx: &mut Ctx<'m>, m: usize, e: &'m ast::ExtendDecl, used: &mut 
     let mut methods = FxHashMap::default();
     // A static named as an instance method (the two forms of an operator method,
     // `[Symbol.mul](k)` and `static [Symbol.mul](k, v)`) has a key of its own, as in a class.
-    let instance: Vec<&str> = (e.methods.iter())
+    let instance: rustc_hash::FxHashSet<&str> = (e.methods.iter())
         .filter(|m| !m.is_static && !m.is_setter)
         .map(|m| m.decl.sig.name.name.as_str())
         .collect();

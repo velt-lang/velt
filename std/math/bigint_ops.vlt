@@ -134,9 +134,16 @@ extend BigInt {
     }
   }
 
-  /** `this %= other`, in place. */
-  [Symbol.remAssign](other: BigInt): void {
-    this.remAssign(other);
+  /** `this %= other`, in place, with the sign of `this`. */
+  [Symbol.remAssign](other: BigInt): void;
+  /** `this %= k`, in place, with the sign of `this`. */
+  [Symbol.remAssign](k: i64): void;
+  [Symbol.remAssign](other: BigInt | i64): void {
+    if (other instanceof BigInt) {
+      this.remAssign(other);
+    } else {
+      this.remAssign(new BigInt(other));
+    }
   }
 
   /** `this <<= n`, in place. */

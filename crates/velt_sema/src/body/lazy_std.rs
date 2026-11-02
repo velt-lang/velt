@@ -16,8 +16,8 @@
 //!   helpers that lowering looks up by name ([`is_helper`]);
 //! - outside the prelude, module constants, and the methods and constructors of its classes and
 //!   structs;
-//! - the methods of its `extend` blocks on number types, `bool` and `string`, the prelude's
-//!   included ([`primitive_extension`]): reached by a call or a function value, or through an
+//! - the methods of its `extend` blocks on number types, `bool`, `string` and `velt/simd`
+//!   vectors, the prelude's included ([`primitive_extension`]): reached by a call or a function value, or through an
 //!   interface implementation that holds one ([`impl_methods`]);
 //! - nothing in the modules lowering looks into by name for other definitions ([`EAGER`]);
 //! - the hooks lowering calls to convert an `any` to a record ([`RECORD_HOOKS`]), although
@@ -310,8 +310,9 @@ fn decide(cx: &Ctx, d: DefId) -> bool {
     }
 }
 
-/// Is `f` a method of an `extend` block on a number type, `bool` or `string` in a lazy std
-/// module (`extend u32 { rotateLeft(…) }`), other than a helper? Such a method is reached only by
+/// Is `f` a method of an `extend` block on a number type, `bool`, `string` or a `velt/simd`
+/// vector in a lazy std module (`extend u32 { rotateLeft(…) }`, a vector's operators), other
+/// than a helper? Such a method is reached only by
 /// a call or a function value naming it, or through an interface implementation that holds it
 /// ([`impl_methods`]): no class's `any` table or subclass dispatch lists it.
 fn primitive_extension(cx: &Ctx, f: &crate::defs::FnInfo<'_>) -> bool {
@@ -321,7 +322,7 @@ fn primitive_extension(cx: &Ctx, f: &crate::defs::FnInfo<'_>) -> bool {
         && f.this.as_ref().is_some_and(|t| {
             matches!(
                 cx.ty.kind(t.ty),
-                TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Str
+                TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Str | TyKind::Simd(_)
             )
         })
 }

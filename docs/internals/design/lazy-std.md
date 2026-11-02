@@ -39,9 +39,9 @@ The definitions of a lazy module that are *deferred*:
   not. So a used class makes its subclasses used too, transitively: printing an `Error` checks
   the methods of every `Error` subclass the program loads (their `[util.inspect.custom]`, `toJSON`, …).
 
-The methods of an `extend` block on a number type, `bool` or `string` in a lazy module, the
-prelude's included (`extend u32 { rotateLeft(…) }`, the checked, saturating and wrapping
-arithmetic): checked once checked code calls one or takes it as a value (`Callee::Def`, `FnRef`),
+The methods of an `extend` block on a number type, `bool`, `string` or a `velt/simd` vector in a
+lazy module, the prelude's included (`extend u32 { rotateLeft(…) }`, the checked, saturating and
+wrapping arithmetic, a vector's lane operations and operators): checked once checked code calls one or takes it as a value (`Callee::Def`, `FnRef`),
 as a free function is, or once an interface implementation holds one (`hir::Program::impls`:
 `Comparable`'s `compareTo` of every number type, `extend u64 implements InlineKey`, a number
 converted to an interface), since lowering calls those through the implementation (a bound's

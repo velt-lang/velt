@@ -6,3 +6,6 @@ operator_simd.vlt:8:11: error: cannot apply binary operator `%` to type `f32x4`
 operator_simd.vlt:10:1: error: cannot assign to a lane of `f32x4`: a vector is a value
 note: write `v = v.withLane(i, x)`
 operator_simd.vlt:11:11: error: cannot apply binary operator `==` to type `f32x4`
+operator_simd.vlt:12:28: error: mismatched types
+operator_simd.vlt:13:11: error: cannot apply unary operator `-` to type `u32x4`
+note: this vector type has no lane operation for this operator

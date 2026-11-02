@@ -111,6 +111,8 @@ impl FnCx<'_, '_> {
             );
             if op == "-" && self.cx.ty.is_int(t) {
                 d = d.with_note("unsigned values cannot be negated");
+            } else if matches!(self.cx.ty.kind(t), TyKind::Simd(_)) {
+                d = d.with_note("this vector type has no lane operation for this operator");
             }
             self.cx.error(d);
         }

@@ -12,3 +12,7 @@ console.log(x.toString());
 let f = new BigInt(1);
 for (let i = 1; i <= 25; i++) f *= i;
 console.log(f.toString());
+f %= 1000007;
+console.log(f.toString());
+f %= new BigInt(-97);
+console.log(f.toString());

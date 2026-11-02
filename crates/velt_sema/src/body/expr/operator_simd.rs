@@ -15,7 +15,7 @@ use velt_syntax::ast;
 
 use super::method::Resolved;
 use super::setters::synth;
-use crate::body::FnCx;
+use crate::body::{FnCx, Want};
 use crate::hir::{self, DefId, TyId, TyKind};
 use velt_syntax::operators;
 
@@ -90,6 +90,16 @@ impl FnCx<'_, '_> {
         }
         let (scalar_ast, scalar) = if vector_left { (rhs, &r) } else { (lhs, &l) };
         let literal = super::ops::untyped(scalar_ast);
+        if literal {
+            // Checked as a constant of the lane type (`i32x4 * 2.5` is an error, as
+            // `const k: i32 = 2.5` is), not converted as a number passed to std.
+            let before = self.cx.diags.len();
+            let h = self.expr(scalar_ast, Some(lane), Want::Move);
+            self.coerce(h, lane);
+            if self.cx.diags.len() > before {
+                return Ok(self.error_expr(span));
+            }
+        }
         if !literal && scalar.ty != lane && !self.cx.ty.is_bottom(scalar.ty) {
             let (sn, ln, vn) = (
                 self.cx.display(scalar.ty),
@@ -112,9 +122,9 @@ impl FnCx<'_, '_> {
         let mut stmts = vec![];
         self.push_scope();
         let call = if vector_left {
-            // `v op k`: the vector first (held when it is not a path), then the scalar,
-            // splatted, as the argument.
-            let recv = if super::accessor_rmw::is_field_path(&l) {
+            // `v op k`: the vector first (held unless the scalar is a literal: `obj.v + f()`
+            // reads `obj.v` before `f` runs), then the scalar, splatted, as the argument.
+            let recv = if literal && super::accessor_rmw::is_field_path(&l) {
                 l
             } else {
                 let (ty, at) = (l.ty, l.span);

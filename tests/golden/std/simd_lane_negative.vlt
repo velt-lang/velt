@@ -1,0 +1,9 @@
+// A `number` lane index that is not a whole number from 0 up is out of range, as for the
+// named methods (`v.lane(i)`), not truncated (#2050).
+import { f32x4 } from "velt/simd";
+
+const v = f32x4.index();
+const ok: number = 3;
+console.log(v[ok]);
+const i: number = -1;
+console.log(v[i]);
