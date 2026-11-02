@@ -76,6 +76,9 @@ impl FnCx<'_, '_> {
                 self.throw_src(crate::defs::ThrowSrc::Direct(e, span));
             }
         }
+        if matches!(i, Intrinsic::Inline | Intrinsic::NoInline) {
+            self.inline_marker(i, span);
+        }
         let e = self.intrinsic(i, ck.args, ck.ret, span);
         if i == Intrinsic::SpawnHandled {
             self.spawned_promises(&e);

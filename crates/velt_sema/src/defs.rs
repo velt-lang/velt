@@ -258,6 +258,9 @@ pub(crate) struct FnInfo<'m> {
     pub is_private: bool,
     /// `get name()`: read as a property (`x.name`), never called with `()`.
     pub is_getter: bool,
+    /// std's inlining marker in the body, `inline()` or `noInline()`, with its span (set as the
+    /// body is checked, `body::inline_markers`).
+    pub inline_marker: Option<(crate::hir::Intrinsic, Span)>,
     /// An override without a written result of a method returning `this`: it returns `this`
     /// too (TypeScript infers `this` from `return this;`; anything else is its TS2416).
     pub inherits_this: bool,

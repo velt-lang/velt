@@ -2,86 +2,54 @@
 //! checks lowering and `velt_opt` rely on.
 //!
 //! - A function has at most one of them: `inline()` and `noInline()` together contradict.
+//!   Checked as the body is (`FnCx::inline_marker`), which records the marker on the function.
 //! - `inline()` is not on a recursive function, directly or through others. `velt_opt` inlines a
 //!   marked function at every call site, so a marked function on a cycle of direct calls could
 //!   only be honoured by unrolling the cycle without end (LLVM ignores `alwaysinline` there too).
 //!   The cycle is one of direct calls (`Callee::Def`), the only calls the inliner inlines: a
-//!   recursion through a virtual or interface call or a function value is not one.
+//!   recursion through a virtual or interface call or a function value is not one. Only the
+//!   bodies a marked function reaches are walked, so a program without one pays nothing.
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use velt_common::{Diagnostic, Span};
 
+use super::FnCx;
 use crate::ctx::Ctx;
 use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, Intrinsic};
-use crate::instantiation_cycles::Graph;
 use crate::visit;
 
-/// Reports the misplaced markers.
+impl FnCx<'_, '_> {
+    /// Records the marker `i` (at `span`) on the function whose body is checked: an error when it
+    /// already has the other one.
+    pub(super) fn inline_marker(&mut self, i: Intrinsic, span: Span) {
+        let Some(d) = self.body_def.filter(|_| self.outer.is_empty()) else {
+            return;
+        };
+        match self.cx.fn_info(d).inline_marker {
+            Some((had, _)) if had != i => self.cx.err(
+                "`inline()` and `noInline()` in one function".to_string(),
+                span,
+            ),
+            Some(_) => {}
+            None => self.cx.fn_info_mut(d).inline_marker = Some((i, span)),
+        }
+    }
+}
+
+/// Reports `inline()` on a recursive function.
 pub(crate) fn check(cx: &mut Ctx) {
-    // Per function, the span of its `inline()` and of its `noInline()`, and its direct callees.
-    let mut marked: FxHashMap<DefId, (Option<Span>, Option<Span>)> = FxHashMap::default();
-    let mut calls: Vec<(DefId, DefId)> = vec![];
-    for (i, d) in cx.defs.iter_mut().enumerate() {
-        let Some(Def::Fn(f)) = d else { continue };
-        let me = DefId(i as u32);
-        visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
-            let E::Call { callee, .. } = &e.kind else {
-                return;
-            };
-            match callee {
-                Callee::Def(to, _) => calls.push((me, *to)),
-                Callee::Intrinsic(Intrinsic::Inline) => {
-                    marked.entry(me).or_default().0.get_or_insert(e.span);
-                }
-                Callee::Intrinsic(Intrinsic::NoInline) => {
-                    marked.entry(me).or_default().1.get_or_insert(e.span);
-                }
-                _ => {}
-            }
-        });
-    }
-    if marked.is_empty() {
-        return;
-    }
-    let mut both: Vec<Span> = (marked.values())
-        .filter_map(|m| match m {
-            (Some(a), Some(_)) => Some(*a),
+    let marked: Vec<(DefId, Span)> = (cx.fn_defs.iter())
+        .filter_map(|&d| match cx.fn_info(d).inline_marker {
+            Some((Intrinsic::Inline, span)) => Some((d, span)),
             _ => None,
         })
         .collect();
-    both.sort_by_key(|s| (s.file, s.lo));
-    for span in both {
-        cx.error(Diagnostic::error(
-            "`inline()` and `noInline()` in one function".to_string(),
-            span,
-        ));
-    }
-    let mut always: Vec<(DefId, Span)> = (marked.iter())
-        .filter_map(|(d, m)| m.0.map(|s| (*d, s)))
-        .collect();
-    if always.is_empty() {
+    if marked.is_empty() {
         return;
     }
-    always.sort_by_key(|(d, _)| d.0);
-    let edges: Vec<((DefId, u32), (DefId, u32))> =
-        calls.iter().map(|&(a, b)| ((a, 0), (b, 0))).collect();
-    let graph = Graph::of(&edges);
-    let comp = graph.components();
-    let in_cycle = |d: DefId| {
-        let Some(&n) = graph.index.get(&(d, 0)) else {
-            return false;
-        };
-        calls.iter().any(|&(a, b)| {
-            a == d && b == d
-                || (graph.index.get(&(a, 0)) == Some(&n)
-                    && graph
-                        .index
-                        .get(&(b, 0))
-                        .is_some_and(|&m| m != n && comp[m] == comp[n]))
-        })
-    };
-    for (d, span) in always {
-        if in_cycle(d) {
+    let mut callees: FxHashMap<DefId, Vec<DefId>> = FxHashMap::default();
+    for (d, span) in marked {
+        if reaches(cx, &mut callees, d) {
             cx.error(
                 Diagnostic::error("`inline()` on a recursive function".to_string(), span)
                     .with_note(
@@ -91,4 +59,40 @@ pub(crate) fn check(cx: &mut Ctx) {
             );
         }
     }
+}
+
+/// Whether `from` calls itself through direct calls (a depth-first walk over the bodies it
+/// reaches; `callees` remembers each body's direct callees).
+fn reaches(cx: &mut Ctx, callees: &mut FxHashMap<DefId, Vec<DefId>>, from: DefId) -> bool {
+    let mut seen: FxHashSet<DefId> = FxHashSet::default();
+    let mut stack = vec![from];
+    while let Some(d) = stack.pop() {
+        let calls = callees.entry(d).or_insert_with(|| direct_callees(cx, d));
+        for &c in calls.iter() {
+            if c == from {
+                return true;
+            }
+            if seen.insert(c) {
+                stack.push(c);
+            }
+        }
+    }
+    false
+}
+
+/// The functions `d`'s body calls directly.
+fn direct_callees(cx: &mut Ctx, d: DefId) -> Vec<DefId> {
+    let mut out = vec![];
+    if let Some(Some(Def::Fn(f))) = cx.defs.get_mut(d.0 as usize) {
+        visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
+            if let E::Call {
+                callee: Callee::Def(to, _),
+                ..
+            } = &e.kind
+            {
+                out.push(*to);
+            }
+        });
+    }
+    out
 }
