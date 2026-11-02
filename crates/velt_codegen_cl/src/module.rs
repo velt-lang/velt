@@ -202,9 +202,14 @@ fn declare_all<M: Module>(
             externs.push(Some(id));
             continue;
         }
-        // Operations emitted inline (function/simd.rs, function/atomic.rs): nothing to link.
+        // Operations emitted inline (function/simd.rs, function/atomic.rs, and the math
+        // operations no runtime defines: `inline_math`): nothing to link, so no undefined
+        // symbol in the object either.
+        let inline_math =
+            velt_vir::math::MathOp::of_extern(e).is_some_and(|op| !op.has_runtime_function());
         if velt_vir::simd::SimdCall::of_symbol(&e.symbol).is_some()
             || velt_vir::atomic::AtomicCall::of_symbol(&e.symbol).is_some()
+            || inline_math
         {
             externs.push(None);
             continue;
@@ -414,7 +419,10 @@ fn write_reloc<M: Module>(
         vir::Const::Extern(e) => {
             let id = match targets.externs.get(e.0 as usize) {
                 Some(Some(id)) => *id,
-                Some(None) => bail!("the address of SIMD operation #{} is taken", e.0),
+                Some(None) => bail!(
+                    "the address of inline operation #{} (SIMD, atomic or `velt_math_*`) is taken",
+                    e.0
+                ),
                 None => bail!("unknown extern #{}", e.0),
             };
             let func = module.declare_func_in_data(id, desc);

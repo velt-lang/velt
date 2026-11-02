@@ -201,6 +201,8 @@ impl<M: Module> Translator<'_, '_, M> {
             MathOp::Popcount64 => self.builder.ins().popcnt(args[0]),
             MathOp::F64Bits => self.builder.ins().bitcast(ir::types::I64, flags, args[0]),
             MathOp::BitsF64 => self.builder.ins().bitcast(ir::types::F64, flags, args[0]),
+            MathOp::F32Bits => self.builder.ins().bitcast(ir::types::I32, flags, args[0]),
+            MathOp::BitsF32 => self.builder.ins().bitcast(ir::types::F32, flags, args[0]),
             MathOp::Umulh => self.builder.ins().umulhi(args[0], args[1]),
             MathOp::MulInt32 => {
                 // The exact product, rounded through a double like JS's multiply (|p| < 2^62).

@@ -1,12 +1,15 @@
-//! The scalar math operations: what each `velt_rt_math_*` (and `velt_rt_pow_*`) extern means
-//! (rt_abi.md "Math"), and what every runtime function may do to memory ([`Effects`]).
+//! The scalar math operations: what each `velt_rt_math_*`, `velt_rt_pow_*` and `velt_math_*`
+//! extern means (rt_abi.md "Math"), and what every runtime function may do to memory
+//! ([`Effects`]).
 //!
-//! Unlike the SIMD and atomic externs, these are real runtime functions (velt_rt's `math.rs`),
-//! which are the reference for what each computes; backends emit most of them inline (one
-//! instruction, or a short sequence with the runtime call on a cold path) and optimizers treat
-//! them as arithmetic. This module is the one place that says which symbols those are, with
-//! their signatures: backends and passes match on [`MathOp`], not on symbol strings, and the
-//! verifier rejects a `velt_rt_math_*` extern whose signature is not its operation's.
+//! Those named `velt_rt_*` are real runtime functions (velt_rt's `math.rs`), which are the
+//! reference for what each computes; backends emit most of them inline (one instruction, or a
+//! short sequence with the runtime call on a cold path). Those named `velt_math_*` have no
+//! runtime function: every backend emits them inline, as the SIMD externs, and
+//! [`MathOp::eval`] is their reference. Optimizers treat all of them as arithmetic. This module
+//! is the one place that says which symbols those are, with their signatures: backends and
+//! passes match on [`MathOp`], not on symbol strings, and the verifier rejects one of these
+//! externs whose signature is not its operation's.
 
 use crate::vir::{ExternFn, Ty};
 
@@ -50,11 +53,15 @@ pub enum MathOp {
     Ctz64,
     /// `(u64) -> u64`: set bits, `x.countOnes()`.
     Popcount64,
+    /// `(f32) -> u32`: the IEEE 754 bits, `x.toBits()` (no runtime function).
+    F32Bits,
+    /// `(u32) -> f32`: the float with those bits, `f32.fromBits(b)` (no runtime function).
+    BitsF32,
 }
 
 impl MathOp {
     /// Every operation.
-    pub const ALL: [MathOp; 18] = [
+    pub const ALL: [MathOp; 20] = [
         MathOp::Sqrt,
         MathOp::Floor,
         MathOp::Ceil,
@@ -73,6 +80,8 @@ impl MathOp {
         MathOp::Clz64,
         MathOp::Ctz64,
         MathOp::Popcount64,
+        MathOp::F32Bits,
+        MathOp::BitsF32,
     ];
 
     /// The runtime function's symbol.
@@ -96,15 +105,24 @@ impl MathOp {
             MathOp::Clz64 => "velt_rt_math_clz64",
             MathOp::Ctz64 => "velt_rt_math_ctz64",
             MathOp::Popcount64 => "velt_rt_math_popcount64",
+            MathOp::F32Bits => "velt_math_f32_bits",
+            MathOp::BitsF32 => "velt_math_bits_f32",
         }
     }
 
-    /// The operation's name: the symbol without its `velt_rt_math_` / `velt_rt_` prefix
-    /// (`sqrt`, `pow_f64`).
+    /// Whether velt_rt defines the operation's symbol (`velt_rt_*`), which a backend may call
+    /// where it has no inline code; a `velt_math_*` operation is always emitted inline.
+    pub fn has_runtime_function(self) -> bool {
+        self.symbol().starts_with("velt_rt_")
+    }
+
+    /// The operation's name: the symbol without its `velt_rt_math_` / `velt_rt_` /
+    /// `velt_math_` prefix (`sqrt`, `pow_f64`, `f32_bits`).
     pub fn name(self) -> &'static str {
         let s = self.symbol();
         s.strip_prefix("velt_rt_math_")
             .or_else(|| s.strip_prefix("velt_rt_"))
+            .or_else(|| s.strip_prefix("velt_math_"))
             .unwrap_or(s)
     }
 
@@ -124,7 +142,7 @@ impl MathOp {
     /// The VIR signature the extern must have (no allocation: backends and passes ask for it
     /// at every call of an extern).
     pub fn signature(self) -> (&'static [Ty], Ty) {
-        use Ty::{F64, I32, I64, U64};
+        use Ty::{F32, F64, I32, I64, U32, U64};
         match self {
             MathOp::Sqrt
             | MathOp::Floor
@@ -142,6 +160,8 @@ impl MathOp {
             MathOp::AddInt32 => (&[I32, F64], I32),
             MathOp::Clz32 => (&[I32], I32),
             MathOp::Clz64 | MathOp::Ctz64 | MathOp::Popcount64 => (&[U64], U64),
+            MathOp::F32Bits => (&[F32], U32),
+            MathOp::BitsF32 => (&[U32], F32),
         }
     }
 
@@ -160,8 +180,9 @@ impl MathOp {
 impl MathOp {
     /// The operation on constants, for folding: each argument and the result as the bits of its
     /// type ([`MathOp::signature`]) zero-extended to 64 (an `i32` is its 32-bit pattern, an
-    /// `f64` its IEEE 754 bits). Computes exactly what velt_rt's function does (a test of
-    /// veltc compares the two). `None` where folding could differ from running: `pow` on
+    /// `f32` and an `f64` their IEEE 754 bits). Computes exactly what velt_rt's function does
+    /// (a test of veltc compares the two); for a `velt_math_*` operation, which has no runtime
+    /// function, this is the reference. `None` where folding could differ from running: `pow` on
     /// doubles (the runtime's fdlibm), and a NaN argument or result of a double operation (a
     /// NaN's bits depend on the instruction that makes it).
     pub fn eval(self, args: &[u64]) -> Option<u64> {
@@ -208,6 +229,10 @@ impl MathOp {
             MathOp::Clz64 => Some(u64::from(u(0)?.leading_zeros())),
             MathOp::Ctz64 => Some(u64::from(u(0)?.trailing_zeros())),
             MathOp::Popcount64 => Some(u64::from(u(0)?.count_ones())),
+            // A bit cast: the same 32 bits, unless they are a NaN's (as `F64Bits`).
+            MathOp::F32Bits | MathOp::BitsF32 => {
+                u(0).filter(|&b| !f32::from_bits(b as u32).is_nan() && b >> 32 == 0)
+            }
         }
     }
 }
@@ -331,9 +356,14 @@ pub fn effects(symbol: &str) -> Effects {
 }
 
 /// Every runtime function [`effects`] knows more of than [`Effects::Any`] (the runtime must
-/// define each: a test of velt_opt checks).
+/// define each: a test of velt_opt checks). The `velt_math_*` operations are not runtime
+/// functions, so they are not listed.
 pub fn with_effects() -> impl Iterator<Item = &'static str> {
-    (MathOp::ALL.into_iter().map(MathOp::symbol)).chain(EFFECTS.iter().map(|&(s, _)| s))
+    let ops = MathOp::ALL
+        .into_iter()
+        .filter(|op| op.has_runtime_function());
+    ops.map(MathOp::symbol)
+        .chain(EFFECTS.iter().map(|&(s, _)| s))
 }
 
 #[cfg(test)]
@@ -365,6 +395,44 @@ mod tests {
         );
         assert_eq!(MathOp::of_extern(&ext(vec![Ty::I64], Ty::U64)), None);
         assert_eq!(MathOp::of_extern(&ext(vec![Ty::U64], Ty::U32)), None);
+    }
+
+    /// The `velt_math_*` operations have no runtime function; the `velt_rt_*` ones do.
+    #[test]
+    fn runtime_functions() {
+        assert!(MathOp::Sqrt.has_runtime_function());
+        assert!(MathOp::PowF64.has_runtime_function());
+        assert!(!MathOp::F32Bits.has_runtime_function());
+        assert!(!MathOp::BitsF32.has_runtime_function());
+        assert_eq!(MathOp::F32Bits.name(), "f32_bits");
+        assert_eq!(MathOp::BitsF64.name(), "bits_f64");
+    }
+
+    /// The f32 bit casts fold to the same 32 bits, except a NaN's (whose bits the hardware may
+    /// change) and an argument wider than 32 bits (no valid operand is).
+    #[test]
+    fn f32_bit_casts_fold() {
+        for x in [
+            0.0f32,
+            -0.0,
+            1.0,
+            -1.5,
+            0.1,
+            f32::MIN_POSITIVE,
+            1e-45,
+            f32::MAX,
+            f32::INFINITY,
+        ] {
+            let b = u64::from(x.to_bits());
+            assert_eq!(MathOp::F32Bits.eval(&[b]), Some(b), "{x}");
+            assert_eq!(MathOp::BitsF32.eval(&[b]), Some(b), "{x}");
+        }
+        for nan in [0x7fc0_0000u64, 0x7f80_0001, 0xffff_ffff] {
+            assert_eq!(MathOp::F32Bits.eval(&[nan]), None);
+            assert_eq!(MathOp::BitsF32.eval(&[nan]), None);
+        }
+        assert_eq!(MathOp::BitsF32.eval(&[1 << 32]), None);
+        assert_eq!(MathOp::F32Bits.eval(&[]), None);
     }
 
     #[test]

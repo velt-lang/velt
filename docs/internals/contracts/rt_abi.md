@@ -373,6 +373,11 @@ invariant 12), a statement that means the same as the call, and never as a direc
 verifier rejects one); the extern stays declared, and backends call it for `pow` and on
 ToInt32's cold path.
 
+The math operations named `velt_math_*` (`f32_bits bits_f32`: `x.toBits()` / `f32.fromBits(b)`
+on `f32`) have **no runtime function** (#2049): like the SIMD externs, std declares them and
+every backend emits them inline, so no runtime defines them and nothing may call them.
+`MathOp::eval` is their reference, and `MathOp::has_runtime_function` tells the two kinds apart.
+
 ## SIMD [additive]
 
 A SIMD value (HIR `TyKind::Simd`, the ten vector and four mask types) is a VIR `V128`: 16 bytes,

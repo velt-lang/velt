@@ -140,6 +140,15 @@ const BITS_F64: &str = "define internal double @velt.bits_f64(i64 %b) alwaysinli
   %r = bitcast i64 %b to double
   ret double %r
 }";
+/// `x.toBits()` / `f32.fromBits(b)` (`velt_math_f32_bits`, `_bits_f32`): one bitcast.
+const F32_BITS: &str = "define internal i32 @velt.f32_bits(float %x) alwaysinline nounwind {
+  %r = bitcast float %x to i32
+  ret i32 %r
+}";
+const BITS_F32: &str = "define internal float @velt.bits_f32(i32 %b) alwaysinline nounwind {
+  %r = bitcast i32 %b to float
+  ret float %r
+}";
 
 /// A runtime math function the backend calls through a helper defined in the module instead:
 /// the helper's name and its definition (with what it declares). The helper has the
@@ -156,6 +165,8 @@ pub(crate) fn inline_helper(op: MathOp) -> Option<InlineHelper> {
         MathOp::Umulh => ("@velt.umulh", &[UMULH]),
         MathOp::F64Bits => ("@velt.f64_bits", &[F64_BITS]),
         MathOp::BitsF64 => ("@velt.bits_f64", &[BITS_F64]),
+        MathOp::F32Bits => ("@velt.f32_bits", &[F32_BITS]),
+        MathOp::BitsF32 => ("@velt.bits_f32", &[BITS_F32]),
         _ => return None,
     })
 }
