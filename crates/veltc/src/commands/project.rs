@@ -57,6 +57,14 @@ impl Project {
         warn_toolchain_mismatch(member.as_ref().unwrap_or(&manifest));
         let installed = vpm::install(&root, &Locations::from_env()?, opts)?;
         super::package::warn_yanked(&installed);
+        for c in vpm::host::unreachable_conditions(&installed.graph) {
+            crate::style::warning(&format!(
+                "`imports` in {}/package.vlt names the condition `{c}`, which is not a built-in one \
+                 ({}) nor any dependency's host condition: its variants are never chosen",
+                root.display(),
+                vpm::imports::CONDITIONS.join(", ")
+            ));
+        }
         Ok(Project {
             root,
             manifest,

@@ -134,8 +134,28 @@ fn an_accept_loop_serves_requests() {
     let _ = std::fs::remove_dir_all(&work);
 }
 
+/// An accept loop over std's velt/host/worker alone builds (std's module loads the hooks that
+/// await host promises) and serves.
+#[test]
+fn std_alone_serves() {
+    let Some((_, work)) = fixtures("bare") else {
+        return;
+    };
+    let dir = work.join("bare");
+    drive(
+        &work,
+        &dir,
+        &["build", "--host", HOST],
+        "target/velt/bare-workers",
+        "bare",
+    );
+    let _ = std::fs::remove_dir_all(&work);
+}
+
 /// A `fetch` response's body is read in the context of the request that fetched it, even when
-/// another request's turn reads it (platforms tie I/O to the request that made it).
+/// another request's turn reads it (platforms tie I/O to the request that made it); the
+/// program's timer fires while a request's body waits for its client; a second answer is logged
+/// and ignored, and the instance goes on.
 #[test]
 fn a_fetch_response_is_read_in_its_request_s_context() {
     let Some((_, work)) = fixtures("relay") else {

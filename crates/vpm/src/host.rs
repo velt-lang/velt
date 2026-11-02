@@ -54,6 +54,32 @@ impl HostConfig {
     }
 }
 
+/// The conditions the root package's (`graph`'s first) `imports` variants name that no build of
+/// it has: neither built-in nor the condition of a host package among its packages. Most likely
+/// misspelled (`windows` for `win32`); such a variant is never chosen. A library's variants for
+/// hosts its users add are fine, so only the root's are listed.
+pub fn unreachable_conditions(graph: &crate::PackageGraph) -> Vec<String> {
+    let Some(root) = graph.packages().first() else {
+        return vec![];
+    };
+    let hosts: Vec<&str> = graph
+        .packages()
+        .iter()
+        .filter_map(|p| p.host.as_ref().map(|h| h.condition.as_str()))
+        .collect();
+    let mut out: Vec<String> = vec![];
+    for variant in root.imports.values().flatten() {
+        let c = variant.condition.as_str();
+        if !crate::imports::CONDITIONS.contains(&c)
+            && !hosts.contains(&c)
+            && !out.iter().any(|o| o == c)
+        {
+            out.push(c.to_string());
+        }
+    }
+    out
+}
+
 /// Check `target`: a target triple (no spaces).
 pub(crate) fn check_target(target: &str) -> Result<(), String> {
     if target.is_empty() || target.contains(char::is_whitespace) || target.split('-').count() < 2 {
@@ -162,5 +188,35 @@ mod tests {
             ..HostConfig::default()
         };
         assert_eq!(config.entry_name(), "worker.mjs");
+    }
+
+    #[test]
+    fn conditions_no_build_of_the_root_has() {
+        use crate::imports::Variant;
+        let variant = |c: &str| Variant {
+            condition: c.into(),
+            target: "./src/a.vlt".into(),
+        };
+        let mut graph = crate::PackageGraph::default();
+        graph.add("app", Path::new("/app"), BTreeMap::new()).imports = BTreeMap::from([(
+            "#io".to_string(),
+            vec![
+                variant("windows"),
+                variant("edge"),
+                variant("js"),
+                variant("default"),
+            ],
+        )]);
+        // A library naming a host its users add is fine.
+        graph.add("lib", Path::new("/lib"), BTreeMap::new()).imports =
+            BTreeMap::from([("#x".to_string(), vec![variant("deno")])]);
+        assert_eq!(unreachable_conditions(&graph), ["windows", "edge"]);
+        graph
+            .add("host-edge", Path::new("/h"), BTreeMap::new())
+            .host = Some(HostConfig {
+            condition: "edge".into(),
+            ..HostConfig::default()
+        });
+        assert_eq!(unreachable_conditions(&graph), ["windows"]);
     }
 }

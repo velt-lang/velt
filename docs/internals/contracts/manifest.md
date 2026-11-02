@@ -220,7 +220,9 @@ directory (`NpmResolver::resolve_in`) before Node's search.
   Conditions are the built-in `vpm::imports::CONDITIONS` (`native`, `darwin`, `linux`, `win32`,
   `wasm`, `wasi`, `js`, `default`) or any name spelled as a host package's condition (a lowercase
   letter, then lowercase letters, digits and `-`; Node's custom conditions), which only a
-  `--host` build for that host package has; `default` comes last; files are `./`-relative, below
+  `--host` build for that host package has (the root package's condition that is neither
+  built-in nor a dependency's host condition is warned about when the project opens,
+  `vpm::host::unreachable_conditions`; std's map takes only built-in ones); `default` comes last; files are `./`-relative, below
   `./src/`, with a source extension. A build's conditions come from its target and, for
   `velt build --host <package>`, the host package's `condition` (`vpm::imports::conditions`);
   the first variant whose condition it has is the module a `#name` import of the package's own

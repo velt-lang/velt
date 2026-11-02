@@ -280,19 +280,52 @@ mod tests {
         out
     }
 
+    /// The names of the functions an object literal returned by the glue's `marker` provides:
+    /// its properties at `indent` (`name:`, `name(`, `async name(`).
+    fn glue_functions(
+        glue: &str,
+        marker: &str,
+        indent: usize,
+    ) -> std::collections::BTreeSet<String> {
+        let start = glue.find(marker).expect("the glue's function");
+        let body = &glue[start..];
+        let outer = " ".repeat(indent - 2);
+        let body = &body[body
+            .find(&format!("\n{outer}return {{"))
+            .expect("its object")..];
+        let close = format!("\n{outer}}};");
+        let end = body.find(&close).expect("its end");
+        let pad = " ".repeat(indent);
+        body[..end]
+            .lines()
+            .filter_map(|l| l.strip_prefix(pad.as_str()))
+            .filter(|l| !l.starts_with(' ') && !l.starts_with("//") && !l.starts_with('}'))
+            .map(|l| l.strip_prefix("async ").unwrap_or(l))
+            .map(|l| {
+                l.chars()
+                    .take_while(|c| c.is_alphanumeric())
+                    .collect::<String>()
+            })
+            .filter(|n| !n.is_empty() && n != "return" && n != "const")
+            .collect()
+    }
+
+    /// Std's declarations of `velt:fetch` (velt_web.mjs's `fetchHost`) are the glue's functions.
+    #[test]
+    fn glue_contract_fetch() {
+        let glue = include_str!("../../../velt_rt_wasm/js/velt_web.mjs");
+        let provided = glue_functions(glue, "export function fetchHost(", 4);
+        let declared = std_declarations("velt:fetch");
+        assert!(declared.contains("requestSend"), "{declared:?}");
+        assert_eq!(declared, provided);
+    }
+
     /// Std's `velt:worker` declarations and the server core's functions are the same set, so the
     /// compiler needs no table of the glue's functions: only std may declare them (sema).
     #[test]
     fn glue_contract() {
         let glue = include_str!("../../../velt_rt_wasm/js/velt_serve.mjs");
-        let start = glue.find("workerImports() {").expect("workerImports");
-        let body = &glue[start..];
-        let body = &body[..body.find("\n  }\n").expect("its end")];
-        let provided: std::collections::BTreeSet<String> = body
-            .lines()
-            .filter_map(|l| l.trim().split_once(": ").map(|(k, _)| k.to_string()))
-            .filter(|k| k.chars().all(|c| c.is_alphanumeric()))
-            .collect();
+        let provided = glue_functions(glue, "workerImports() {", 6);
         let declared = std_declarations("velt:worker");
         assert!(!declared.is_empty());
         assert_eq!(declared, provided);

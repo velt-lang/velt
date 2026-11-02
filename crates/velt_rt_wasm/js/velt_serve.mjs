@@ -96,6 +96,8 @@ class Program {
       get: (_, key) => this.current?.context?.[key],
       has: (_, key) => key in (this.current?.context ?? {}),
     });
+    // Host modules are made in the first request's context, which they may read at once.
+    this.current = first;
     try {
       const imports = { "velt:worker": this.workerImports() };
       for (const [name, make] of Object.entries(this.options.modules ?? {})) {
@@ -271,6 +273,7 @@ class WorkerRequest {
     this.reader = null;
     this.stream = null;
     this.jobs = [];
+    this.inflight = 0; // jobs whose I/O goes on
     this.wake = null;
     this.pins = 0; // host promises started in this request's context, pending
     this.handing = false;
@@ -299,7 +302,7 @@ class WorkerRequest {
     const program = this.program;
     const held = program.timer?.holder === this;
     const pinned = this.pins > 0 && !program.failed && !program.ended;
-    return this.done && this.jobs.length === 0 && !held && !pinned;
+    return this.done && this.jobs.length === 0 && this.inflight === 0 && !held && !pinned;
   }
 
   /** Runs the request's I/O as the program asks for it, in the request's own handler. */
@@ -319,8 +322,19 @@ class WorkerRequest {
         });
         continue;
       }
+      // A job's I/O (a read waiting for the client, a write under backpressure) goes on while
+      // the pump runs the next jobs: a timer it holds, an answer, a read of another context's
+      // object. The pump lives while one is in flight.
       this.program.current = this;
-      await job();
+      const pending = job();
+      if (typeof pending?.then === "function") {
+        this.inflight++;
+        const done = () => {
+          this.inflight--;
+          this.poke();
+        };
+        pending.then(done, done);
+      }
     }
     pumps.splice(pumps.indexOf(this), 1);
     this.pumpEnded = true;

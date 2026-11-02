@@ -4,6 +4,9 @@
 // an error.
 
 import { HostRef } from "velt/host/host_ref";
+// The hooks lowering awaits an async host function's promise with (a program's module loads
+// them through std/prelude/global/host_async.vlt; std modules import what they use).
+import "velt/host/promise";
 
 /** The next request, in the order requests came. */
 export declare host("velt:worker") async function accept(): Promise<HostRef>;

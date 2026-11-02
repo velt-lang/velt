@@ -23,8 +23,8 @@ dropping a request
 drop: 500 content-type=text/plain; charset=utf-8 | Internal Server Error | waitUntil 0
 log: panic: index out of bounds: the len is 2 but the index is 5 at main.vlt:36:10
 log: velt: the program ended with exit code 101; its 2 request(s) in flight get a 500, and the next request starts a new instance
-slow: 500 content-type=text/plain; charset=utf-8 | Internal Server Error | waitUntil 0
 panic: 500 content-type=text/plain; charset=utf-8 | Internal Server Error | waitUntil 0
+slow: 500 content-type=text/plain; charset=utf-8 | Internal Server Error | waitUntil 0
 main starts
 main accepts
 hello: 200 content-type=text/plain x-served-by=velt | Hello, Cy (GET) | waitUntil 0

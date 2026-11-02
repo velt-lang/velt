@@ -208,13 +208,48 @@ const scenarios = {
     env.gates.open("start");
     await again;
   },
-  // relay/: a response fetched in one request's context, read from another's turn.
+  // relay/: a response fetched in one request's context, read from another's turn; timers go on
+  // while a request's body waits for its client; a second answer leaves the instance alone.
   async relay() {
     const fetching = send("fetch-start");
     await env.gates.reached("fetch");
     await send("fetch-read");
     env.gates.open("fetch");
     await fetching;
+
+    let release;
+    const stalled = new Promise((resolve) => (release = resolve));
+    let sent = false;
+    const body = new ReadableStream({
+      async pull(c) {
+        if (!sent) {
+          sent = true;
+          c.enqueue(encoder.encode("abc"));
+          return;
+        }
+        await stalled;
+        c.close();
+      },
+    });
+    const nap = send("nap");
+    await new Promise((resolve) => nativeSetTimeout(resolve, 5));
+    const upload = send("upload", { method: "POST", body, duplex: "half" });
+    const first = await Promise.race([
+      nap.then(() => "nap"),
+      new Promise((resolve) => nativeSetTimeout(() => resolve("upload"), 2000)),
+    ]);
+    console.log(`the naps ended while the upload waited: ${first === "nap"}`);
+    release();
+    await nap;
+    await upload;
+
+    const twice = send("twice");
+    await send("nothing");
+    await twice;
+  },
+  // bare/: an accept loop over std alone.
+  async bare() {
+    await send("x");
   },
 };
 

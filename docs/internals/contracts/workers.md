@@ -66,7 +66,9 @@ export default {
   `modules` maps each package host module's name to its file's default export, a function
   called once per instance with `host`, whose properties are those of the `context` of the
   request whose context runs the program now (packages/host-cloudflare's: `host.env`,
-  `host.ctx`), and that returns the module's functions. They are wrapped as velt_web.mjs wraps
+  `host.ctx`), and that returns the module's functions. Modules are made in the first request's
+  context; a host function reads `host.*` when it is called (after an `await` inside it, the
+  context may be another request's). They are wrapped as velt_web.mjs wraps
   any host function (what crosses, the checks of results, async functions returning promises).
 - The module is instantiated on the first request, once per isolate, and `main` runs once
   (`velt_start`); the instance serves every later request. Instantiation and `main` run in the
@@ -95,6 +97,11 @@ export default {
   whose client went away (`request.signal`, which Workers abort only with the compatibility flag
   `enable_request_signal`, set by host-cloudflare's scaffolded `wrangler.toml`) leaves the
   queue and is answered 499.
+- A pump runs its jobs in order without waiting for their I/O (a read waiting for the client, a
+  write under backpressure): it lives while one is in flight, and a timer it holds or an answer
+  is never held up by it. A `fetch` call's body is read and cancelled in the pump of the request
+  that started it (velt_web.mjs's `fetchHost` with `loadVelt`'s `context`/`within`), unless that
+  pump has ended.
 - `platform.waitUntil(p)`: a request whose pump must go on after its response calls it with
   the pump: while host promises started in its context are pending, while it holds the program's
   timer, or while the program still writes its body. Work that outlives Cloudflare's limit for
