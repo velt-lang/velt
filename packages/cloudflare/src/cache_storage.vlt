@@ -1,0 +1,23 @@
+// cloudflare (internal): the zone's caches, as Workers' global `caches`.
+
+import { IoError } from "velt/io";
+import { Cache } from "./cache";
+
+/** The caches of the zone (Workers' global `caches`). */
+export class CacheStorage {
+  /** The zone's default cache. */
+  get default(): Cache {
+    return new Cache("");
+  }
+
+  /** The cache `name` of the zone (made when first used; not empty). */
+  async open(name: string): Promise<Cache> {
+    if (name == "") {
+      throw new IoError("EINVAL", "cloudflare: a cache's name cannot be empty");
+    }
+    return new Cache(name);
+  }
+}
+
+/** The caches of the zone, as Workers' global `caches`: `caches.default`, `caches.open(name)`. */
+export const caches: CacheStorage = new CacheStorage();

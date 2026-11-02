@@ -107,7 +107,12 @@ fn a_tooling_crate_runs_veltc_unit_tests_and_its_binaries_only() {
     let wasm = plan(&["crates/velt_rt_wasm/src/lib.rs"]);
     assert_eq!(
         wasm.veltc,
-        Veltc::Some(set(&["playground", "wasm_goldens", "workers"]))
+        Veltc::Some(set(&[
+            "cloudflare",
+            "playground",
+            "wasm_goldens",
+            "workers"
+        ]))
     );
 }
 

@@ -1,0 +1,97 @@
+// cloudflare (internal): Workers KV, as the Workers API has it: `get` (text, or bytes with
+// `getBytes`), `put` (with an expiry), `delete` and `list`. Values cross as bytes, options and
+// listings as JSON text.
+
+import { utf8Encode } from "velt/encoding";
+import { kvDelete, kvGet, kvList, kvPut, takeBytes } from "./host";
+
+/** The options of `put`. */
+export interface KVPutOptions {
+  /** Seconds from now until the key expires (at least 60). */
+  expirationTtl?: number;
+  /** When the key expires, in seconds since the epoch. */
+  expiration?: number;
+}
+
+/** The options of `list`. */
+export interface KVListOptions {
+  /** Only keys starting with it. */
+  prefix?: string;
+  /** At most this many keys (KV's default and most: 1000). */
+  limit?: number;
+  /** Where an earlier page ended (`KVListResult.cursor`). */
+  cursor?: string;
+}
+
+/** A key `list` found. */
+export interface KVKey {
+  name: string;
+  /** When it expires, in seconds since the epoch; null when it doesn't. */
+  expiration: number | null;
+}
+
+/** A page of `list`. */
+export interface KVListResult {
+  keys: KVKey[];
+  /** Whether this is the last page. */
+  list_complete: bool;
+  /** Where the next page starts (null on the last page). */
+  cursor: string | null;
+}
+
+struct PutWire {
+  expirationTtl: number | null;
+  expiration: number | null;
+}
+
+struct ListWire {
+  prefix: string | null;
+  limit: number | null;
+  cursor: string | null;
+}
+
+/** A KV namespace: the binding `binding` of the Worker's env (`kvNamespace("KV")`). */
+export class KVNamespace {
+  readonly binding: string;
+
+  constructor(binding: string) {
+    this.binding = binding;
+  }
+
+  /** The value of `key` as text (UTF-8, invalid bytes as U+FFFD), or null when there is none. */
+  async get(key: string): Promise<string | null> {
+    const b = await this.getBytes(key);
+    return b == null ? null : b.utf8Slice(0, b.length as i64);
+  }
+
+  /** The value of `key` as bytes, or null when there is none. */
+  async getBytes(key: string): Promise<u8[] | null> {
+    const v = await kvGet(this.binding, key);
+    return v == null ? null : takeBytes(v);
+  }
+
+  /** Stores `value` (text as UTF-8) under `key`. */
+  async put(key: string, value: string | u8[], options?: KVPutOptions): Promise<void> {
+    const bytes = typeof value == "string" ? utf8Encode(value) : value;
+    const wire: PutWire = {
+      expirationTtl: options?.expirationTtl ?? null,
+      expiration: options?.expiration ?? null,
+    };
+    await kvPut(this.binding, key, bytes, JSON.stringify(wire));
+  }
+
+  /** Deletes `key` (a missing key is no error). */
+  async delete(key: string): Promise<void> {
+    await kvDelete(this.binding, key);
+  }
+
+  /** A page of the keys, in key order. */
+  async list(options?: KVListOptions): Promise<KVListResult> {
+    const wire: ListWire = {
+      prefix: options?.prefix ?? null,
+      limit: options?.limit ?? null,
+      cursor: options?.cursor ?? null,
+    };
+    return JSON.parse<KVListResult>(await kvList(this.binding, JSON.stringify(wire)));
+  }
+}

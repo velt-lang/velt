@@ -62,7 +62,10 @@ const TOOLING: &[(&str, &[&str])] = &[
     ),
     // A separate binary; its tests run the launcher against fake releases.
     ("velt_launcher", &[]),
-    ("velt_rt_wasm", &["wasm_goldens", "playground", "workers"]),
+    (
+        "velt_rt_wasm",
+        &["wasm_goldens", "playground", "workers", "cloudflare"],
+    ),
 ];
 
 /// Packages that compile or read a crate's sources by path, which the dependency graph doesn't

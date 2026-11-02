@@ -1,0 +1,74 @@
+// cloudflare (internal): an R2 object and its body, as `get` gives it: the body is read from the
+// host when the program asks (whole, or piece by piece through `body`). Read it while handling
+// the request that got the object: Workers tie it to that request.
+
+import { HostRef } from "velt/host";
+import { IoError } from "velt/io";
+import { BodyStream } from "velt/net/http";
+import { r2Info, r2Read } from "./host";
+import { R2Object, R2ObjectInfo } from "./r2_object";
+
+/** An object and its body (Cloudflare's `R2ObjectBody`): what `get` gives. */
+export class R2ObjectBody extends R2Object {
+  #object: HostRef;
+  #used: bool = false;
+  /** The stream `body` gave, which later reads of `body` give again. */
+  #stream: BodyStream | null = null;
+
+  constructor(o: HostRef) {
+    super(JSON.parse<R2ObjectInfo>(r2Info(o)));
+    this.#object = o;
+  }
+
+  /** Whether the body was read, or taken as `body` (a body is read once). */
+  get bodyUsed(): bool {
+    return this.#used;
+  }
+
+  /** The whole body. */
+  async bytes(): Promise<u8[]> {
+    this.claim();
+    return await r2Read(this.#object, true);
+  }
+
+  /** The whole body as text (UTF-8, invalid bytes as U+FFFD). */
+  async text(): Promise<string> {
+    const b = await this.bytes();
+    return b.utf8Slice(0, b.length as i64);
+  }
+
+  /** The whole body as JSON, parsed into a `T`. */
+  async json<T>(): Promise<T> {
+    return JSON.parse<T>(await this.text());
+  }
+
+  /** The body as a stream, read from R2 as it is read (`new Response(obj.body)` streams it). */
+  get body(): BodyStream throws IoError {
+    const made = this.#stream;
+    if (made != null) {
+      return made;
+    }
+    this.claim();
+    const s = BodyStream.from(pieces(this.#object.clone()));
+    this.#stream = s;
+    return s;
+  }
+
+  private claim() throws IoError {
+    if (this.#used) {
+      throw new IoError("EINVAL", "Body is unusable: Body has already been read");
+    }
+    this.#used = true;
+  }
+}
+
+/** The pieces of the body of the host's R2 object `o`, as R2 sends them. */
+async function* pieces(o: HostRef): AsyncGenerator<u8[]> {
+  for (;;) {
+    const piece = await r2Read(o, false);
+    if (piece.length == 0) {
+      return;
+    }
+    yield piece;
+  }
+}

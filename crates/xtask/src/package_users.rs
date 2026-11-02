@@ -30,11 +30,18 @@ pub(crate) const USERS: &[Users] = &[
         // and the `api` and `websocket` templates' projects (`templates`).
         binaries: &["std_tests", "bench_programs", "docs", "reload", "templates"],
     },
-    // `--host` builds (`workers` copies it beside its fixtures) and the documentation.
+    // `--host` builds (`workers` and `cloudflare` copy it beside their fixtures) and the
+    // documentation.
     Users {
         package: "host-cloudflare",
         goldens: &[],
-        binaries: &["workers", "docs"],
+        binaries: &["workers", "cloudflare", "docs"],
+    },
+    // Its bindings in a Worker (`cloudflare` copies it beside its fixtures) and the documentation.
+    Users {
+        package: "cloudflare",
+        goldens: &[],
+        binaries: &["cloudflare", "docs"],
     },
     // The database benchmarks (bench/db, bench/sqlite, bench/web, ...).
     Users {

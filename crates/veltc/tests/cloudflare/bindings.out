@@ -1,0 +1,60 @@
+r2: 200
+put notes/a.txt 5 6e809cbda0732ac4845916a59016f954
+head text/plain by=velt 1793577602000
+put if absent, present: true
+put if etag, stale: true
+put if etag, current: 7
+get notes/a.txt none v3 swapped
+body used: true
+read twice: EINVAL
+bytes 0,1,2,255
+streamed 10000 bytes in 3 pieces
+head 4 "f5425ec04d837072eb5bafe4e793b157"
+list notes/a.txt truncated true
+list on notes/b.bin truncated false
+prefixes notes/ objects big
+deleted: true true
+d1: 200
+run changes 1 last_row_id 1
+batch 2: 2, n=2
+user 1 Ada 36 1,2,3
+user 2 Bo 1.5 null
+rows_read 2
+first Ada
+first of none: true
+echo é 2.25 null 0,255 1
+a row that does not fit: expected field "n" at $[0]
+exec count 1
+kv: 200
+get hej 7,8,9 null
+key greeting expires 1800000120 complete false
+then raw expires null complete true
+prefixed raw
+deleted null
+cache: 200
+miss true
+hit 200 max-age=60 cached page
+delete true false
+named miss true
+put of a POST: EINVAL
+durable: 200
+id 64 room-1 same true
+count 200 2cb5ddf4 1
+count 200 2cb5ddf4 2
+posted 201 POST /echo velt ping
+unique differs true
+bad id: TypeError: Invalid Durable Object ID: must be 64 hex digits
+failures: 200
+missing binding: ENOENT: the Worker's env has no R2 bucket binding `NOPE`
+binding of another kind: ENOENT
+rejected: Error: D1_ERROR: no such table: nope: SQLITE_ERROR
+kv rejected: Error
+refs: 200
+got 20, dropped them
+R2 objects held after dropping them: 0
+hold: 200
+held one
+R2 objects held while kept: 1
+release: 200
+released it
+R2 objects held after releasing it: 0

@@ -1,0 +1,23 @@
+// cloudflare (internal): a Durable Object id, which crosses as its hex string.
+
+/** The id of a Durable Object: 64 hex digits. */
+export class DurableObjectId {
+  #hex: string;
+  /** The name it was made from (`idFromName`), else null. */
+  readonly name: string | null;
+
+  constructor(hex: string, name: string | null) {
+    this.#hex = hex;
+    this.name = name;
+  }
+
+  /** The id's hex string (`idFromString` gives it back). */
+  toString(): string {
+    return this.#hex;
+  }
+
+  /** Whether `other` is the same id. */
+  equals(other: DurableObjectId): bool {
+    return this.#hex == other.#hex;
+  }
+}

@@ -1,0 +1,33 @@
+// cloudflare (internal): a page of R2's `list`, which crosses as JSON (`R2Page`).
+
+import { R2Object, R2ObjectInfo } from "./r2_object";
+
+/** A page of `list`: objects in key order. */
+export class R2Objects {
+  readonly objects: R2Object[];
+  /** Whether more objects follow: list again with `cursor`. */
+  readonly truncated: bool;
+  /** Where the next page starts (null when `truncated` is false). */
+  readonly cursor: string | null;
+  /** The prefixes up to the `delimiter`, when the listing had one. */
+  readonly delimitedPrefixes: string[];
+
+  constructor(page: R2Page) {
+    const objects: R2Object[] = [];
+    for (const info of page.objects) {
+      objects.push(new R2Object(info));
+    }
+    this.objects = objects;
+    this.truncated = page.truncated;
+    this.cursor = page.cursor;
+    this.delimitedPrefixes = page.delimitedPrefixes;
+  }
+}
+
+/** A page of `list` as it crosses. */
+export interface R2Page {
+  objects: R2ObjectInfo[];
+  truncated: bool;
+  cursor: string | null;
+  delimitedPrefixes: string[];
+}

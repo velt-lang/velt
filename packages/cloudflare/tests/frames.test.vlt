@@ -1,0 +1,212 @@
+// The frames D1's parameters and rows cross in (src/frame_writer.vlt): what the package writes
+// for the host, and result frames read into typed rows (src/d1_rows.vlt). Frames from the host
+// are built here byte by byte, as src/cloudflare.mjs writes them. The bindings themselves call
+// host functions, which only `--host` builds have: crates/veltc/tests/cloudflare.rs runs them
+// against fakes.
+//
+// The rows are read as velt/db's `readRows` reads a `RowSource` through JSON text (src/
+// d1_decode.vlt); natively `readRows` itself links, so the two are compared.
+import { RowError, readRow, readRows } from "velt/db";
+import { IoError } from "velt/io";
+import { describe, expect, it } from "velt/test";
+import { BLOB, BOOL, FLOAT, FrameWriter, INT, JSON_TEXT, NULL, TEXT } from "../src/frame_writer";
+import { FrameReader } from "../src/frame_reader";
+import { D1Rows } from "../src/d1_rows";
+import { decodeRow, decodeRows } from "../src/d1_decode";
+import { headerPairs } from "../src/http";
+
+struct Row {
+  id: i64;
+  name: string;
+  score: f64;
+  data: u8[];
+  note: string | null;
+}
+
+struct Nested {
+  id: i64;
+  tags: string[];
+}
+
+/** A result frame: `meta`, the columns, then `cells` (written by `cell`, a row at a time). */
+function result(
+  meta: string,
+  columns: string[],
+  rows: u32,
+  cells: (w: FrameWriter) => void,
+): FrameReader {
+  const w = new FrameWriter();
+  w.text(meta);
+  w.u32(columns.length as u32);
+  for (const c of columns) {
+    w.text(c);
+  }
+  w.u32(rows);
+  cells(w);
+  return new FrameReader(w.bytes);
+}
+
+function float(w: FrameWriter, v: f64) {
+  w.u8(FLOAT);
+  w.u64(v.toBits());
+}
+
+function text(w: FrameWriter, s: string) {
+  w.u8(TEXT);
+  w.text(s);
+}
+
+describe("parameter frames", () => {
+  it("tag each value and give their count first", () => {
+    const w = new FrameWriter();
+    w.params(["é", 1.5, null, true, [9]]);
+    // count 5; text "é" (2 bytes); float 1.5; null; bool; blob [9]
+    const want: u8[] = [5, 0, 0, 0, TEXT, 2, 0, 0, 0, 195, 169, FLOAT];
+    const bits = (1.5).toBits();
+    for (let i: u64 = 0; i < 8; i++) {
+      want.push(((bits >>> (i * 8)) & 255) as u8);
+    }
+    for (const b of [NULL, BOOL, 1, BLOB, 1, 0, 0, 0, 9]) {
+      want.push(b as u8);
+    }
+    expect(w.bytes).toEqual(want);
+  });
+
+  it("read back as written", () => {
+    const w = new FrameWriter();
+    w.u32(4000000000);
+    w.u64(18446744073709551615);
+    w.text("hej");
+    const r = new FrameReader(w.bytes);
+    expect(r.u32()).toBe(4000000000);
+    expect(r.u64()).toBe(18446744073709551615);
+    expect(r.text()).toBe("hej");
+  });
+});
+
+describe("result frames", () => {
+  it("fill typed rows column by column", () => {
+    const frame = result("{}", ["id", "name", "score", "data", "note"], 2, (w) => {
+      // Integers cross as floats (D1's numbers), or as i64.
+      float(w, 1);
+      text(w, "Ada");
+      float(w, 2.5);
+      w.u8(BLOB);
+      w.blob([1, 2]);
+      w.u8(NULL);
+      w.u8(INT);
+      w.u64(9007199254740993);
+      text(w, "Bo");
+      w.u8(INT);
+      w.u64(3);
+      w.u8(BLOB);
+      w.blob([]);
+      text(w, "n");
+    });
+    const rows = D1Rows.parse(frame);
+    expect(rows.count()).toBe(2);
+    expect(rows.meta).toBe("{}");
+    const got = decodeRows<Row>(rows);
+    expect(got.length).toBe(2);
+    expect(got[0].id).toBe(1);
+    expect(got[0].name).toBe("Ada");
+    expect(got[0].score).toBe(2.5);
+    expect(got[0].data).toEqual([1, 2]);
+    expect(got[0].note).toBe(null);
+    expect(got[1].id).toBe(9007199254740993);
+    expect(got[1].score).toBe(3);
+    expect(got[1].note).toBe("n");
+  });
+
+  it("fill the rows velt/db's readRows fills", () => {
+    const frame = () => result("", ["id", "name", "score", "data", "note"], 1, (w) => {
+      float(w, 4);
+      text(w, "Cy");
+      float(w, -0.5);
+      w.u8(BLOB);
+      w.blob([255]);
+      text(w, "x");
+    });
+    const ours = decodeRows<Row>(D1Rows.parse(frame()));
+    const theirs = readRows<Row, D1Rows>(D1Rows.parse(frame()));
+    expect(JSON.stringify(ours)).toBe(JSON.stringify(theirs));
+    const one = decodeRow<Row>(D1Rows.parse(frame()));
+    const other = readRow<Row, D1Rows>(D1Rows.parse(frame()));
+    expect(JSON.stringify(one)).toBe(JSON.stringify(other));
+  });
+
+  it("fill other row types through JSON text, JSON cells too", () => {
+    const frame = result("", ["id", "tags"], 1, (w) => {
+      float(w, 7);
+      w.u8(JSON_TEXT);
+      w.text(`["a","b"]`);
+    });
+    const row = decodeRow<Nested>(D1Rows.parse(frame));
+    expect(row?.id).toBe(7);
+    expect(row?.tags).toEqual(["a", "b"]);
+  });
+
+  it("give no row when there is none", () => {
+    const rows = D1Rows.parse(result("", [], 0, (w) => {}));
+    expect(decodeRow<Row>(rows)).toBe(null);
+  });
+
+  it("throw RowError for a row that does not fit", () => {
+    const frame = result("", ["id", "name", "score", "data", "note"], 1, (w) => {
+      float(w, 1.5);
+      text(w, "x");
+      float(w, 1);
+      w.u8(BLOB);
+      w.blob([]);
+      w.u8(NULL);
+    });
+    let message = "";
+    try {
+      decodeRows<Row>(D1Rows.parse(frame));
+    } catch (e) {
+      message = e instanceof RowError ? e.message : "not a RowError";
+    }
+    expect(message.includes("i64")).toBe(true);
+  });
+
+  it("throw IoError, never panic, for a frame cut short or of an unknown tag", () => {
+    const whole = result("", ["a"], 1, (w) => text(w, "abc")).bytes;
+    for (let n: i64 = 0; n < (whole.length as i64); n++) {
+      let code = "";
+      try {
+        D1Rows.parse(new FrameReader(whole.slice(0, n)));
+      } catch (e) {
+        code = e instanceof IoError ? e.code : "other";
+      }
+      expect(code).toBe("EPROTO");
+    }
+    // Rows without columns, or more cells than bytes: refused at once, not counted through.
+    const shapes: string[][] = [[], ["a"]];
+    for (const columns of shapes) {
+      let refused = "";
+      try {
+        D1Rows.parse(result("", columns, 4000000000, (w) => {}));
+      } catch (e) {
+        refused = e instanceof IoError ? e.code : "other";
+      }
+      expect(refused).toBe("EPROTO");
+    }
+    let code = "";
+    try {
+      D1Rows.parse(result("", ["a"], 1, (w) => w.u8(99)));
+    } catch (e) {
+      code = e instanceof IoError ? e.code : "other";
+    }
+    expect(code).toBe("EPROTO");
+  });
+});
+
+describe("headers", () => {
+  it("cross as name and value lines", () => {
+    expect(headerPairs("")).toEqual([]);
+    expect(headerPairs("a\n1\nb\n")).toEqual([
+      ["a", "1"],
+      ["b", ""],
+    ]);
+  });
+});

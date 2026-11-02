@@ -1,0 +1,57 @@
+// cloudflare (internal): an R2 object's metadata, as `head`, `put` and `list` give it. It crosses
+// as JSON (`R2ObjectInfo`).
+
+import { HostRef } from "velt/host";
+import { r2Info } from "./host";
+
+/** An object's HTTP metadata, as `put` stores it and `get` gives it back. */
+export interface R2HTTPMetadata {
+  contentType?: string;
+  contentLanguage?: string;
+  contentDisposition?: string;
+  contentEncoding?: string;
+  cacheControl?: string;
+}
+
+/** An object's metadata as it crosses (src/cloudflare.mjs `r2Info`). */
+export interface R2ObjectInfo {
+  key: string;
+  version: string;
+  size: i64;
+  etag: string;
+  httpEtag: string;
+  /** Milliseconds since the epoch. */
+  uploaded: f64;
+  httpMetadata: R2HTTPMetadata;
+  customMetadata: Record<string, string>;
+}
+
+/** An object's metadata (Cloudflare's `R2Object`). */
+export class R2Object {
+  readonly key: string;
+  readonly version: string;
+  /** Bytes. */
+  readonly size: i64;
+  readonly etag: string;
+  /** The etag in quotes, for an HTTP `ETag` header. */
+  readonly httpEtag: string;
+  readonly uploaded: Date;
+  readonly httpMetadata: R2HTTPMetadata;
+  readonly customMetadata: Record<string, string>;
+
+  constructor(info: R2ObjectInfo) {
+    this.key = info.key;
+    this.version = info.version;
+    this.size = info.size;
+    this.etag = info.etag;
+    this.httpEtag = info.httpEtag;
+    this.uploaded = new Date(info.uploaded);
+    this.httpMetadata = info.httpMetadata;
+    this.customMetadata = info.customMetadata;
+  }
+
+  /** The metadata of the host's R2 object `o`. */
+  static of(o: HostRef): R2Object {
+    return new R2Object(JSON.parse<R2ObjectInfo>(r2Info(o)));
+  }
+}

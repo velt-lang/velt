@@ -1,0 +1,70 @@
+// cloudflare (internal): D1's rows (a `D1Rows`, velt/db's `RowSource`) into typed values, as
+// velt/db's `readRows<T>` reads a source through the JSON text of its rows: each column fills the
+// field of its name, with `JSON.parse<T>`'s conversions and messages, and a row that does not fit
+// throws velt/db's `RowError`.
+//
+// Not `readRows` itself: for a row type of plain fields it reads by column with code that calls
+// runtime functions the wasm32-unknown-unknown runtime lacks (`velt_rt_rows_exact_i64`,
+// `velt_rt_rows_fail`), so a `--host` build of it does not link (velt-lang/velt#2121). Once it
+// does, these become `readRows<T, D1Rows>` and `readRow<T, D1Rows>`; the results are the same.
+
+import { CellKind, RowError } from "velt/db";
+import { D1Rows } from "./d1_rows";
+
+/** Every remaining row of `rows` as a `T`; `RowError` for one that does not fit. */
+export function decodeRows<T>(rows: D1Rows): T[] {
+  const parts: string[] = [];
+  while (rows.next()) {
+    parts.push(rowJson(rows));
+  }
+  try {
+    return JSON.parse<T[]>(`[${parts.join(",")}]`);
+  } catch (e) {
+    throw new RowError(e.message);
+  }
+}
+
+/** The next row of `rows` as a `T`, or null when there is none; `RowError` as `decodeRows`. */
+export function decodeRow<T>(rows: D1Rows): T | null {
+  if (!rows.next()) {
+    return null;
+  }
+  try {
+    return JSON.parse<T>(rowJson(rows));
+  } catch (e) {
+    throw new RowError(e.message);
+  }
+}
+
+/** The current row as a JSON object. */
+function rowJson(rows: D1Rows): string {
+  const parts: string[] = [];
+  const n = rows.columnCount();
+  for (let i: i64 = 0; i < n; i++) {
+    parts.push(`${JSON.stringify(rows.columnName(i))}:${cellJson(rows, i)}`);
+  }
+  return `{${parts.join(",")}}`;
+}
+
+function cellJson(rows: D1Rows, i: i64): string {
+  const kind = rows.kind(i);
+  if (kind == CellKind.Bool) {
+    return rows.bool(i) ? "true" : "false";
+  }
+  if (kind == CellKind.Int) {
+    return `${rows.int(i)}`;
+  }
+  if (kind == CellKind.Float) {
+    return JSON.stringify(rows.float(i));
+  }
+  if (kind == CellKind.Text) {
+    return JSON.stringify(rows.text(i));
+  }
+  if (kind == CellKind.Blob) {
+    return JSON.stringify(rows.blob(i));
+  }
+  if (kind == CellKind.Json) {
+    return rows.json(i);
+  }
+  return "null";
+}

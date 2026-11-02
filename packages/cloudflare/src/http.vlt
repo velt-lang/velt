@@ -1,0 +1,100 @@
+// cloudflare (internal): std's `Request` and `Response` crossing to the host and back, for the
+// cache and Durable Object stubs: a request as its method, URL, headers (`name\nvalue\n…`, as
+// std's `fetch` crosses them on JS hosts) and body; a response the host read whole as a new
+// `Response`. Bodies cross whole.
+
+import { HostRef } from "velt/host";
+import { IoError } from "velt/io";
+import { utf8Encode } from "velt/encoding";
+import { BodyKind, Headers, Request, Response, responseParts } from "velt/net/http";
+import { responseBody, responseHeaders, responseStatus } from "./host";
+
+/** A request as it crosses. */
+export interface RequestWire {
+  method: string;
+  url: string;
+  headers: string;
+  body: u8[];
+}
+
+/** A response as it crosses. */
+export interface ResponseWire {
+  status: u16;
+  headers: string;
+  body: u8[];
+}
+
+/** `h` as `name\nvalue\n…`. */
+export function flatHeaders(h: Headers): string {
+  const parts: string[] = [];
+  for (const [name, value] of h) {
+    parts.push(name);
+    parts.push(value);
+  }
+  return parts.join("\n");
+}
+
+/** `[name, value]` pairs of `flat` (`name\nvalue\n…`). */
+export function headerPairs(flat: string): [string, string][] {
+  const out: [string, string][] = [];
+  if (flat == "") {
+    return out;
+  }
+  const parts = flat.split("\n");
+  for (let i: i64 = 0; i + 1 < (parts.length as i64); i += 2) {
+    out.push([parts[i], parts[i + 1]]);
+  }
+  return out;
+}
+
+/** `input` (a URL is a GET of it) as it crosses, its body read whole. */
+export async function requestWire(input: Request | string): Promise<RequestWire> {
+  if (typeof input == "string") {
+    return { method: "GET", url: new Request(input).url, headers: "", body: [] };
+  }
+  const method = input.method;
+  let body: u8[] = [];
+  if (method != "GET" && method != "HEAD") {
+    body = (await input.bytes()).toBytes();
+  }
+  return { method: method, url: input.url, headers: flatHeaders(input.headers), body: body };
+}
+
+/** `res` as it crosses: its status, headers (its implied `content-type` too) and whole body. */
+export async function responseWire(res: Response): Promise<ResponseWire> {
+  const p = responseParts(res);
+  const headers = p.headers.slice();
+  const t = p.type;
+  if (t != null && !headers.some((h, i) => i % 2 == 0 && h == "content-type")) {
+    headers.push("content-type");
+    headers.push(t);
+  }
+  let body: u8[] = [];
+  if (p.kind == BodyKind.Text) {
+    body = utf8Encode(p.text);
+  } else if (p.kind == BodyKind.Bytes) {
+    body = p.bytes;
+  } else if (p.kind == BodyKind.Stream && p.stream != null) {
+    for await (const piece of p.stream) {
+      for (const b of piece) {
+        body.push(b);
+      }
+    }
+  }
+  return { status: p.status as u16, headers: headers.join("\n"), body: body };
+}
+
+/**
+ * The response the host read whole (`r`) as a `Response`. A status `Response` cannot have (below
+ * 200: an upgrade, an informational one) throws `IoError` "ENOTSUP".
+ */
+export function receivedResponse(r: HostRef): Response throws IoError {
+  const status = responseStatus(r);
+  if (status < 200 || status > 599) {
+    throw new IoError("ENOTSUP", `cloudflare: a response of status ${status} cannot be a Response`);
+  }
+  const headers = headerPairs(responseHeaders(r));
+  const nullBody = status == 204 || status == 205 || status == 304;
+  const body = responseBody(r);
+  return new Response(nullBody ? null : body, { status: status as number, headers: headers });
+}

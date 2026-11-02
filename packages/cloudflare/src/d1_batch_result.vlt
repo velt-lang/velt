@@ -1,0 +1,23 @@
+// cloudflare (internal): one statement's outcome in a D1 `batch`, whose rows are read when asked
+// for (each statement of a batch has its own row type).
+
+import { D1Rows } from "./d1_rows";
+import { decodeRows } from "./d1_decode";
+import { D1Meta } from "./d1_prepared_statement";
+
+/** One statement's outcome in a `batch`: its meta, and its rows when asked for. */
+export class D1BatchResult {
+  readonly success: bool = true;
+  readonly meta: D1Meta;
+  #rows: D1Rows;
+
+  constructor(rows: D1Rows) {
+    this.meta = JSON.parse<D1Meta>(rows.meta);
+    this.#rows = rows;
+  }
+
+  /** The statement's rows as `T`s (`RowError` when one does not fit). Read once. */
+  results<T>(): T[] {
+    return decodeRows<T>(this.#rows);
+  }
+}

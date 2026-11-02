@@ -1,0 +1,48 @@
+// cloudflare (internal): a Durable Object namespace, as the Workers API has it: its ids
+// (`idFromName`, `idFromString`, `newUniqueId`) and `get(id)`. The host makes ids synchronously
+// and never throws: a failure is recorded and thrown here as an `IoError`.
+
+import { IoError } from "velt/io";
+import { durableId, lastFailure } from "./host";
+import { DurableObjectId } from "./durable_object_id";
+import { DurableObjectStub } from "./durable_object_stub";
+
+/** A Durable Object namespace: the binding `binding` of the Worker's env. */
+export class DurableObjectNamespace {
+  readonly binding: string;
+
+  constructor(binding: string) {
+    this.binding = binding;
+  }
+
+  /** The id of the object named `name` (the same name gives the same object, worldwide). */
+  idFromName(name: string): DurableObjectId throws IoError {
+    return new DurableObjectId(this.id(0, name), name);
+  }
+
+  /**
+   * The id whose hex string is `hex` (`id.toString()`); `IoError` when it is not one of this
+   * namespace's.
+   */
+  idFromString(hex: string): DurableObjectId throws IoError {
+    return new DurableObjectId(this.id(1, hex), null);
+  }
+
+  /** The id of a new object. */
+  newUniqueId(): DurableObjectId throws IoError {
+    return new DurableObjectId(this.id(2, ""), null);
+  }
+
+  /** The stub that sends requests to the object `id`. */
+  get(id: DurableObjectId): DurableObjectStub {
+    return new DurableObjectStub(this.binding, id);
+  }
+
+  private id(how: u32, value: string): string throws IoError {
+    const hex = durableId(this.binding, how, value);
+    if (hex == "") {
+      throw lastFailure();
+    }
+    return hex;
+  }
+}

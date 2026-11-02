@@ -1,0 +1,160 @@
+// cloudflare (internal): the host functions of the module `cloudflare`, whose JavaScript is
+// src/cloudflare.mjs (the package's `hostModules`). A binding is named by the string it has in
+// the Worker's `env`; the JavaScript looks it up when called. The async functions reject with an
+// `IoError` (code "ENOENT" for a binding the env lacks, else the name of what Cloudflare threw).
+// Callable in `velt build --host host-cloudflare` builds only: on a native target a call of one
+// is a compile error.
+
+import { HostRef } from "velt/host";
+import { IoError } from "velt/io";
+
+/** The last synchronous call's failure, `name\nmessage` ("" when it succeeded). */
+export declare host("cloudflare") function failure(): string;
+
+/** The bytes of a JavaScript `ArrayBuffer` or `Uint8Array`. */
+export declare host("cloudflare") function takeBytes(v: HostRef): u8[];
+
+/** `bucket.head(key)`: the R2 object, or null. */
+export declare host("cloudflare") async function r2Head(
+  bucket: string,
+  key: string,
+): Promise<HostRef | null>;
+
+/** `bucket.get(key)`: the R2 object with its body, or null. */
+export declare host("cloudflare") async function r2Get(
+  bucket: string,
+  key: string,
+): Promise<HostRef | null>;
+
+/** `bucket.put(key, value, options)` (options as JSON): the object; null when `onlyIf` failed. */
+export declare host("cloudflare") async function r2Put(
+  bucket: string,
+  key: string,
+  value: readonly u8[],
+  options: string,
+): Promise<HostRef | null>;
+
+/** `bucket.delete(keys)` (a JSON array of keys). */
+export declare host("cloudflare") async function r2Delete(
+  bucket: string,
+  keys: string,
+): Promise<void>;
+
+/** `bucket.list(options)` (options as JSON): the listing as JSON. */
+export declare host("cloudflare") async function r2List(
+  bucket: string,
+  options: string,
+): Promise<string>;
+
+/** An R2 object's metadata as JSON (src/r2_object.vlt `R2ObjectInfo`). */
+export declare host("cloudflare") function r2Info(object: HostRef): string;
+
+/** The next piece of an R2 object's body (empty at its end), or (`all`) the rest of it. */
+export declare host("cloudflare") async function r2Read(object: HostRef, all: bool): Promise<u8[]>;
+
+/**
+ * Runs `sql` with the parameter frame `params` on D1 database `db`: `all()` (mode 0), `first()`
+ * (1) or `run()` (2). A result frame (src/d1_rows.vlt).
+ */
+export declare host("cloudflare") async function d1Query(
+  db: string,
+  sql: string,
+  params: readonly u8[],
+  mode: u32,
+): Promise<u8[]>;
+
+/** `db.batch(…)` of a statement list: a count and a result frame (with its length) each. */
+export declare host("cloudflare") async function d1Batch(
+  db: string,
+  statements: readonly u8[],
+): Promise<u8[]>;
+
+/** `db.exec(sql)`: `{ count, duration }` as JSON. */
+export declare host("cloudflare") async function d1Exec(db: string, sql: string): Promise<string>;
+
+/** `ns.get(key, "arrayBuffer")`: the value's `ArrayBuffer`, or null. */
+export declare host("cloudflare") async function kvGet(
+  ns: string,
+  key: string,
+): Promise<HostRef | null>;
+
+/** `ns.put(key, value, options)` (options as JSON). */
+export declare host("cloudflare") async function kvPut(
+  ns: string,
+  key: string,
+  value: readonly u8[],
+  options: string,
+): Promise<void>;
+
+/** `ns.delete(key)`. */
+export declare host("cloudflare") async function kvDelete(ns: string, key: string): Promise<void>;
+
+/** `ns.list(options)` (options as JSON): the listing as JSON. */
+export declare host("cloudflare") async function kvList(
+  ns: string,
+  options: string,
+): Promise<string>;
+
+/**
+ * `cache.match(request)` of the cache `name` ("" for `caches.default`), headers `name\nvalue\n…`:
+ * the response read whole (`responseStatus`, …), or null.
+ */
+export declare host("cloudflare") async function cacheMatch(
+  name: string,
+  method: string,
+  url: string,
+  headers: string,
+): Promise<HostRef | null>;
+
+/** `cache.put(request, response)`: a GET of `url`, and a response of `status`, headers, body. */
+export declare host("cloudflare") async function cachePut(
+  name: string,
+  url: string,
+  headers: string,
+  status: u16,
+  responseHeaders: string,
+  body: readonly u8[],
+): Promise<void>;
+
+/** `cache.delete(request)`: whether there was a response to delete. */
+export declare host("cloudflare") async function cacheDelete(
+  name: string,
+  method: string,
+  url: string,
+  headers: string,
+): Promise<bool>;
+
+/**
+ * A Durable Object id's hex string from namespace `ns`: `idFromName(value)` (`how` 0),
+ * `idFromString(value)` (1) or `newUniqueId()` (2); "" when it failed (`failure()`).
+ */
+export declare host("cloudflare") function durableId(ns: string, how: u32, value: string): string;
+
+/** `ns.get(ns.idFromString(id)).fetch(request)`: the response read whole. */
+export declare host("cloudflare") async function durableFetch(
+  ns: string,
+  id: string,
+  method: string,
+  url: string,
+  headers: string,
+  body: readonly u8[],
+): Promise<HostRef>;
+
+/** A response read whole: its status. */
+export declare host("cloudflare") function responseStatus(r: HostRef): u16;
+
+/** A response read whole: its headers, `name\nvalue\n…`. */
+export declare host("cloudflare") function responseHeaders(r: HostRef): string;
+
+/** A response read whole: its body. */
+export declare host("cloudflare") function responseBody(r: HostRef): u8[];
+
+/** The failure `failure()` recorded, as an `IoError`. */
+export function lastFailure(): IoError {
+  const f = failure();
+  const nl = f.indexOf("\n");
+  if (nl < 0) {
+    return new IoError("Error", f);
+  }
+  return new IoError(f.slice(0, nl), f.slice(nl + 1));
+}

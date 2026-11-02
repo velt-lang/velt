@@ -1,0 +1,38 @@
+// cloudflare (internal): a Durable Object stub, which sends std's `Request`s to the object's
+// `fetch` handler. A stub is its namespace and id, so it holds no JavaScript object of the request
+// that made it; the host looks the stub up again for each `fetch` (Workers tie a stub to the
+// request that made it).
+
+import { Request, RequestInit, Response } from "velt/net/http";
+import { durableFetch } from "./host";
+import { receivedResponse, requestWire } from "./http";
+import { DurableObjectId } from "./durable_object_id";
+
+/** Sends requests to one Durable Object. */
+export class DurableObjectStub {
+  readonly id: DurableObjectId;
+  #namespace: string;
+
+  constructor(namespace: string, id: DurableObjectId) {
+    this.#namespace = namespace;
+    this.id = id;
+  }
+
+  /**
+   * Sends `input` (a URL, or a `Request`; `init` as `new Request(input, init)` takes it) to the
+   * object's `fetch` handler and gives its response. Bodies cross whole.
+   */
+  async fetch(input: Request | string, init?: RequestInit): Promise<Response> {
+    const request = init == undefined ? input : new Request(input, init);
+    const req = await requestWire(request);
+    const r = await durableFetch(
+      this.#namespace,
+      this.id.toString(),
+      req.method,
+      req.url,
+      req.headers,
+      req.body,
+    );
+    return receivedResponse(r);
+  }
+}
