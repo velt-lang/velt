@@ -737,6 +737,13 @@ impl VisitMut for Stores<'_, '_, '_, '_> {
                 let b = self.mentions(iter);
                 self.bind(binding, b);
             }
+            S::Try {
+                body,
+                catch: Some((Some(l), _)),
+                ..
+            } if self.r.read.is_some() => {
+                self.r.caught(self.cx, self.def, *l, body);
+            }
             _ => {}
         }
     }

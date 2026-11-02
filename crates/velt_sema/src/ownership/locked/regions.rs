@@ -53,8 +53,11 @@ pub(super) struct Regions {
     pub(super) read: Option<bool>,
     /// The types the value a `read` callback reads may hold (`lock_types`).
     pub(super) lock_tys: FxHashSet<TyId>,
-    /// One of `lock_tys` may hide a value of any type (`lock_types`).
+    /// One of `lock_tys` may hide a value of any type (`lock_types`), or a `catch` binding of
+    /// such a type may hold what the value throws (`Regions::caught`).
     pub(super) lock_opaque: bool,
+    /// The types of each body's locals.
+    local_tys: FxHashMap<DefId, Vec<TyId>>,
     /// Variables of a `read` callback's bodies holding a closure it made, stored into the
     /// caller's containers while still used (body, variable, store; `super::made_copied`).
     pub(super) made_stored: Vec<(DefId, LocalId, Span)>,
@@ -90,6 +93,7 @@ impl Regions {
             read: None,
             lock_tys: FxHashSet::default(),
             lock_opaque: false,
+            local_tys: FxHashMap::default(),
             made_stored: vec![],
             made_locals: FxHashSet::default(),
             roots: FxHashMap::default(),
@@ -135,6 +139,8 @@ impl Regions {
             r.captured
                 .insert(*d, f.captures.iter().map(|k| k.outer).collect());
             r.params.insert(*d, params);
+            r.local_tys
+                .insert(*d, f.body.locals.iter().map(|l| l.ty).collect());
         }
         r
     }
@@ -223,6 +229,44 @@ impl Regions {
     /// Is local `l` of body `d` the locked value or a captured variable?
     pub(super) fn is_home(&self, d: DefId, l: LocalId) -> bool {
         self.homes.contains(&self.key((d, l)))
+    }
+
+    /// A `catch` binding `l` of body `d` in a `read` callback, whose `try` block is `body`: it
+    /// may hold whatever the block mentions (a value it throws, or one a function it calls on
+    /// that value throws). When the binding's type may hide a value of any type (`unknown`, a
+    /// function's thrown type not known here), any type may be a part of the value read
+    /// (`lock_opaque`); otherwise it is the union of what the block can throw.
+    pub(super) fn caught(&mut self, cx: &mut Ctx, d: DefId, l: LocalId, body: &crate::hir::Block) {
+        struct Mentioned(Vec<LocalId>, Vec<DefId>);
+        impl visit::VisitMut for Mentioned {
+            fn expr(&mut self, e: &mut Expr) {
+                if let E::Closure(n) = e.kind {
+                    self.1.push(n);
+                }
+            }
+            fn local(&mut self, l: &mut LocalId) {
+                self.0.push(*l);
+            }
+        }
+        let mut m = Mentioned(vec![], vec![]);
+        visit::block(&mut body.clone(), &mut m);
+        let mut b = m.0.iter().fold(0, |b, &x| b | self.get(d, x));
+        for n in m.1 {
+            let cs = self.captured.get(&n).cloned().unwrap_or_default();
+            b = cs.iter().fold(b, |b, &x| b | self.get(d, x));
+        }
+        let ty = self
+            .local_tys
+            .get(&d)
+            .and_then(|ts| ts.get(l.0 as usize).copied());
+        if b & IN != 0 && !self.lock_opaque {
+            let hides = ty.is_none_or(|t| lock_types(cx, t, &mut FxHashSet::default()));
+            if hides {
+                self.lock_opaque = true;
+                self.changed = true;
+            }
+        }
+        self.add(d, l, b);
     }
 
     /// The regions a value of `e` (in body `d`) may reach.
