@@ -201,6 +201,10 @@ pub fn check_declares(
             system::check(p, f, target, diags);
             continue;
         }
+        // The JS host provides it (sema checked what crosses; lowering, the target).
+        if f.host.is_some() {
+            continue;
+        }
         if std_files.contains(&f.span.file) {
             continue;
         }

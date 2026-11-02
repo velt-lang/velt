@@ -639,6 +639,12 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
                 "read the bits through a `DataView` (`setBigUint64`, `getFloat64`)",
             ),
             ("leadingZeros", "use `Math.clz32(x)` (32 bits)"),
+            ("rotateLeft", "use `(x << n) | (x >>> (32 - n))` (32 bits)"),
+            ("rotateRight", "use `(x >>> n) | (x << (32 - n))` (32 bits)"),
+            (
+                "swapBytes",
+                "write the number to a `DataView` in one byte order and read it in the other",
+            ),
             (
                 "toBits",
                 "write the number to a `DataView` (`setFloat64`) and read `getBigUint64`",

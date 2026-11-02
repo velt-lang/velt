@@ -1,0 +1,10 @@
+// velt/host: `HostRef`, a JS value the host keeps for the program, which host functions take
+// and return (https://veltlang.com/docs/reference/host-functions/).
+
+/**
+ * A JS value the host keeps for the program (an object, a function, a promise, any value): what
+ * a host function returns as `HostRef`, and passes back to the host when given as an argument.
+ * Dropping it (or `[Symbol.dispose]()`) lets the host forget the value; `clone()` gives a second
+ * reference to the same value.
+ */
+export { HostRef } from "velt/host/host_ref";

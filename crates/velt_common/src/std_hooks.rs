@@ -294,6 +294,11 @@ hooks! {
 
     // lang/typed_array/buffer_view.vlt: the bytes of a typed array.
     view_bytes => lang_typed_array_buffer_view, "viewBytes", "(BufferView) -> usize", lowered;
+
+    // host/host_ref.vlt: a `HostRef` from and to a host function (velt_vir's lower/host.rs).
+    host_ref_of => host_host_ref, "hostRefOf", "(u32) -> HostRef", lowered;
+    host_ref_or_null => host_host_ref, "hostRefOrNull", "(u32) -> HostRef | null", lowered;
+    host_ref_handle => host_host_ref, "hostRefHandle", "(HostRef | null) -> u32", lowered;
 }
 
 /// One key of a std method the compiler calls: a symbol constant of std/lang/hooks/keys.vlt.

@@ -227,12 +227,16 @@ impl<'p> Canon<'p> {
         };
     }
 
-    /// An extern by symbol; link mode adds its declaration.
+    /// An extern by symbol; link mode adds its declaration (a host function's import too).
     fn extern_ref(&self, out: &mut String, id: u32) {
         let _ = write!(out, " E{}", self.extern_name(id));
         if let Some(e) = self.program.externs.get(id as usize) {
             if self.mode == Mode::Link {
                 let _ = write!(out, "({:?}){:?}{}", e.params, e.ret, e.noreturn);
+                // A host function's import and manifest line (what crosses) are part of it.
+                if let Some(h) = &e.host {
+                    let _ = write!(out, " H{:?}", h.manifest_line());
+                }
             }
         }
     }

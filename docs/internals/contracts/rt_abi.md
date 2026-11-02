@@ -396,6 +396,12 @@ std file declares one: sema checks the literals of `T.shuffle(a, b, …)` and lo
 extern (HIR `Intrinsic::SimdShuffle`). `velt_simd_<type>_reverse_bytes` (16-, 32- and 64-bit
 integer lanes) reverses the bytes within each lane.
 
+`velt_simd_f32x4_mul_add` and `velt_simd_f64x2_mul_add` [additive] compute `a * b + c` with one
+rounding on every target: the FMA instruction where the CPU has it, and otherwise libm's `fmaf` /
+`fma` per lane (which the link provides: `-lm`, the C runtime, compiler-builtins on wasm).
+`_mul_add_fast` may fuse or not, whichever is faster (LLVM's `llvm.fmuladd`; a multiply and an add
+in Cranelift).
+
 **CPU extensions (#1330).** `velt_simd_u32x4_<op>` for the SHA instructions (`sha1c`, `sha1p`,
 `sha1m`, `sha1h`, `sha1su0`, `sha1su1`, `sha256h`, `sha256h2`, `sha256su0`, `sha256su1` on
 aarch64; `sha256rnds2`, `sha256msg1`, `sha256msg2`, `sha1rnds4_<0-3>`, `sha1nexte`, `sha1msg1`,
@@ -600,6 +606,31 @@ answers the first hole below `index`, or -1. std/lang/proxy/index.vlt's `Reflect
 the gap before an element written past the end) and reports them as absent; elsewhere both are
 `TypeError`s. Both runtimes provide them (`velt_rt/src/proxy_array.rs`, compiled into
 velt_rt_wasm too).
+
+## Host values [additive, #1735]
+
+```c
+void velt_rt_host_release(uint32_t slot);
+uint32_t velt_rt_host_clone(uint32_t slot);
+/* WebAssembly (velt_rt_wasm), exported from browser modules for the JS glue: */
+const uint8_t *velt_host_str_ptr(const VeltStr *s);
+size_t velt_host_str_len(const VeltStr *s);
+uint8_t *velt_host_alloc(size_t len);
+void velt_host_str_new(VeltStr *out, uint8_t *buf, size_t len);
+void velt_host_bytes_new(VeltBytes *out, uint8_t *buf, size_t len);
+```
+
+What host functions (https://veltlang.com/docs/reference/host-functions/) need. A `HostRef` (std/host/host_ref.vlt)
+holds a slot of the JS glue's table of values (`velt_web.mjs`), 0 once released (and natively); its drop calls
+`velt_rt_host_release` and `clone()` `velt_rt_host_clone`, which on `wasm32-unknown-unknown`
+call the glue's imports `velt.host_release` / `velt.host_clone`. Natively and under WASI no
+`HostRef` exists (no host function can be called): velt_rt's versions do nothing and return 0.
+
+The glue reads a string argument (passed as `const VeltStr *`) through `velt_host_str_ptr` and
+`velt_host_str_len`. A string or `u8[]` result goes through a trailing out-pointer: the glue
+gets a buffer from `velt_host_alloc`, writes the bytes, and `velt_host_str_new` (UTF-8; it
+copies and frees the buffer) or `velt_host_bytes_new` (it adopts the buffer) writes the value.
+velt_link exports the five from every browser module.
 
 ## Views [additive, #1485]
 

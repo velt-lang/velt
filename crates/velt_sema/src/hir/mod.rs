@@ -28,6 +28,7 @@
 //! M2/M3 encodings (classes, vtables, interfaces, closures, errors, async, …) are specified in
 //! `docs/internals/contracts/hir_encodings.md` — part of this contract.
 
+mod extern_fn;
 mod fields;
 mod fresh;
 mod impl_bound;
@@ -43,6 +44,7 @@ use std::collections::{HashMap, HashSet};
 
 use velt_common::Span;
 
+pub use extern_fn::{ExternFnDef, HostImport, HostTy};
 pub use fields::{DynMember, DynMemberKind, FieldDef, FieldInit};
 pub use fresh::FreshClosure;
 pub use impl_bound::{ImplBound, ImplDef};
@@ -304,23 +306,6 @@ pub struct FnDef {
     /// Thrown error type (a union when several types can be thrown; see hir_encodings.md
     /// "Errors"). May mention type params; `Some(Never)` after substitution means non-throwing.
     pub throws: Option<TyId>,
-    pub span: Span,
-}
-
-#[derive(Clone, Debug)]
-pub struct ExternFnDef {
-    pub name: String,
-    /// Link symbol name (same as `name` without module path).
-    pub symbol: String,
-    pub params: Vec<TyId>,
-    pub ret: TyId,
-    /// M3: `declare async function f(...): Promise<T>` — the symbol returns an rt leaf future
-    /// (`VeltFut*`, result slot at offset 16; see rt_abi_async.md); `ret` is `Promise<T>`.
-    pub is_async: bool,
-    /// `declare system function` (https://veltlang.com/docs/reference/system-functions/): per parameter, whether
-    /// its type was written `readonly` (`readonly u8[]`, a buffer the C function only reads;
-    /// `params` has `u8[]` either way). `None` for runtime and native-package functions.
-    pub system: Option<Vec<bool>>,
     pub span: Span,
 }
 

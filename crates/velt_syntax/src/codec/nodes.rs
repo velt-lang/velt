@@ -63,10 +63,11 @@ structs! {
     GenericParam { name, bounds, default }
     Param { name, pattern, ty, default, optional, rest, span }
     FnSig {
-        name, generics, params, ret, throws, is_async, is_system, is_intrinsic, generator,
+        name, generics, params, ret, throws, is_async, is_system, is_intrinsic, generator, host,
         is_generator, this_param, span,
     }
     GeneratorSpec { spec, span }
+    HostModule { module, span }
     FnDecl { sig, body, overloads }
     TypeExpr { kind, span }
     Block { stmts, span }
