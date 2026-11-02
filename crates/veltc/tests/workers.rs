@@ -19,10 +19,10 @@ use wasm_tools::{build_runtime, copy_dir, for_node, missing_tools, root};
 const TRIPLE: &str = "wasm32-unknown-unknown";
 
 /// The most a release Worker of `hello.vlt` may weigh, its files gzipped one by one (what
-/// Cloudflare's limit measures, 3 MB on the Free plan): 1.5 times its 58,550 bytes.
-const HELLO_BUDGET: usize = 88_000;
-/// The same for `serve/`, an accept loop with a package host module: 1.5 times 115,811 bytes.
-const SERVE_BUDGET: usize = 174_000;
+/// Cloudflare's limit measures, 3 MB on the Free plan): 1.5 times its 59,872 bytes.
+const HELLO_BUDGET: usize = 90_000;
+/// The same for `serve/`, an accept loop with a package host module: 1.5 times 117,799 bytes.
+const SERVE_BUDGET: usize = 177_000;
 
 /// The fixtures, copied into a work directory of their own (a build writes `target/` beside
 /// its program).
@@ -154,7 +154,8 @@ fn a_program_that_never_accepts_answers_500() {
     let _ = std::fs::remove_dir_all(&work);
 }
 
-/// A host module nothing provides is an error at its declaration.
+/// A host module nothing provides, and a `velt:` function the glue lacks, are errors at their
+/// declarations.
 #[test]
 fn a_host_module_nothing_provides_is_an_error() {
     let Some((_, work)) = fixtures("missing") else {
@@ -167,6 +168,16 @@ fn a_host_module_nothing_provides_is_an_error() {
         err.contains("the `workers` build has no JavaScript for host module `nowhere`")
             && err.contains("missing.vlt:4:")
             && err.contains("only a package provides host modules"),
+        "{err}"
+    );
+    let o = velt(&work, &["build", "--host", "workers", "glue.vlt"]);
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(
+        !o.status.success()
+            && err.contains(
+                "the `workers` glue's host module `velt:worker` has no function `nosuch`"
+            )
+            && err.contains("glue.vlt:4:"),
         "{err}"
     );
     // A plain browser build leaves the host functions to its embedder.

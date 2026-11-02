@@ -7,7 +7,7 @@
 //! ```
 //!
 //! A module name is the string of `declare host("<name>")`. Names starting with
-//! [`RUNTIME_PREFIX`] belong to the runtime's glue (`velt:worker`, `velt:fetch`), so no package
+//! [`RUNTIME_PREFIX`] belong to the runtime's glue (`velt:worker`), so no package
 //! provides one. A file is one ES module, `./`-relative and below `./src/` (a package archive
 //! carries only `src/`), whose default export makes the module's functions
 //! (docs/internals/contracts/workers.md).

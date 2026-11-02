@@ -62,10 +62,16 @@ export async function runVelt(source, host = {}) {
  * Instantiate a Velt program without running it. `enter(f)` runs `f`, which calls into the
  * module (`exports.velt_start()`, `exports.velt_turn()`, another entry); `done` settles with the
  * exit code once the program reports its end, exits or traps, or rejects with what a host
- * function threw (the instance is then unusable). `host.turned`, if given, is called after each
- * call into the module that left the program running; `timerArmed` says whether the program
- * asked for a wake-up (`set_timer`) and `promises` holds the host promises it waits for, which
- * is all that can wake it besides a call from the host.
+ * function threw (the instance is then unusable).
+ *
+ * A host whose calls into the module must happen in a context of its own (a Worker's request,
+ * whose I/O and timers end with it) takes over two things. `host.setTimer(ms, fire)` replaces
+ * the `setTimeout` that wakes the program (`fire()` runs the turn; a negative `ms` cancels).
+ * `host.owner()` is called when the program starts a host promise (one that is not a
+ * `Deferred`) and gives the context that made it; `host.resuming(owner)` comes before the turn
+ * its settling runs, and `host.released(owner)` once the program no longer waits for it.
+ * `host.ended(code, error)`, if given, takes the place of `done`: the outcome, told at once in
+ * the context that ended the program.
  */
 export async function loadVelt(source, host = {}) {
   const write = host.write ?? defaultWrite();
@@ -74,21 +80,24 @@ export async function loadVelt(source, host = {}) {
   const rt = {
     memory: null,
     exports: null,
+    host,
     refs,
     ended: false,
-    timerArmed: false,
     // Calls into the module in progress (a settle during one waits for it to return).
     depth: 0,
     promises: new Map(),
     nextPromise: 1,
-    done: new Promise((res, rej) => ((resolve = res), (reject = rej))),
+    // With `host.ended`, none: a Worker's promise would belong to the first request's context.
+    done: host.ended ? undefined : new Promise((res, rej) => ((resolve = res), (reject = rej))),
     end(code, error) {
       if (rt.ended) return;
       rt.ended = true;
       clearTimeout(timer);
-      rt.timerArmed = false;
+      host.setTimer?.(-1, null);
+      for (const p of rt.promises.values()) host.released?.(p.owner);
       rt.promises.clear();
-      if (error === undefined) resolve(code);
+      if (host.ended) host.ended(code, error);
+      else if (error === undefined) resolve(code);
       else reject(error);
     },
     enter(f) {
@@ -106,7 +115,6 @@ export async function loadVelt(source, host = {}) {
       } finally {
         rt.depth--;
       }
-      if (!rt.ended && rt.depth === 0) host.turned?.();
     },
   };
   const imports = {
@@ -126,21 +134,23 @@ export async function loadVelt(source, host = {}) {
         clearTimeout(timer);
         // Rounded up: hosts round a delay down to whole milliseconds. Hosts fire a delay longer
         // than 2^31 - 1 ms at once; a turn that comes early asks again.
-        const delay = Math.min(Math.ceil(ms), 0x7fffffff);
-        rt.timerArmed = ms >= 0;
-        if (ms >= 0) {
-          timer = setTimeout(() => {
-            rt.timerArmed = false;
-            rt.enter(() => rt.exports.velt_turn());
-          }, delay);
-        }
+        const delay = ms < 0 ? -1 : Math.min(Math.ceil(ms), 0x7fffffff);
+        const fire = () => rt.enter(() => rt.exports.velt_turn());
+        if (host.setTimer) host.setTimer(delay, fire);
+        else if (delay >= 0) timer = setTimeout(fire, delay);
       },
       host_take(id, out) {
         const p = rt.promises.get(id >>> 0);
         rt.promises.delete(id >>> 0);
+        host.released?.(p.owner);
         p.take(out >>> 0);
       },
-      host_forget: (id) => rt.promises.delete(id >>> 0),
+      host_forget(id) {
+        const p = rt.promises.get(id >>> 0);
+        rt.promises.delete(id >>> 0);
+        host.released?.(p?.owner);
+        p?.deferred?.forgotten();
+      },
     },
   };
   const module = await compile(await source);
@@ -211,6 +221,11 @@ export class HostRefs {
 export class Deferred {
   #outcome = null;
   #settle = null;
+  #forgotten;
+  /** `forgotten(value)`: the program dropped its wait after the value was handed to it. */
+  constructor(forgotten) {
+    this.#forgotten = forgotten;
+  }
   resolve(value) {
     return this.#finish(true, value);
   }
@@ -225,6 +240,10 @@ export class Deferred {
   bind(settle) {
     this.#settle = settle;
     if (this.#outcome !== null) queueMicrotask(() => settle.deliver(...this.#outcome));
+  }
+  /** The glue's: the program dropped the call's promise. */
+  forgotten() {
+    if (this.#outcome?.[0] === true) this.#forgotten?.(this.#outcome[1]);
   }
   #finish(ok, value) {
     if (!this.pending) return false;
@@ -376,13 +395,15 @@ function hostFunction(label, fn, params, result, rt) {
     }
   };
   const settle = (id, ok, value) => {
-    if (!rt.promises.has(id)) return;
+    const pending = rt.promises.get(id);
+    if (pending === undefined) return;
     if (rt.depth > 0) {
       // From inside a call into the module (a host function settling a Deferred): after it.
       queueMicrotask(() => settle(id, ok, value));
       return;
     }
-    rt.promises.get(id).take = (out) => {
+    if (pending.deferred === undefined) rt.host.resuming?.(pending.owner);
+    pending.take = (out) => {
       if (ok) {
         try {
           return store(value, out + 48);
@@ -401,7 +422,8 @@ function hostFunction(label, fn, params, result, rt) {
     let id = rt.nextPromise;
     while (rt.promises.has(id)) id = (id + 1) >>> 0 || 1;
     rt.nextPromise = (id + 1) >>> 0 || 1;
-    rt.promises.set(id, {});
+    const pending = {};
+    rt.promises.set(id, pending);
     let result;
     try {
       result = fn(...args(raw)[0]);
@@ -409,8 +431,10 @@ function hostFunction(label, fn, params, result, rt) {
       result = Promise.reject(e);
     }
     if (result instanceof Deferred) {
+      pending.deferred = result;
       result.bind({ deliver: (ok, v) => settle(id, ok, v), waiting: () => rt.promises.has(id) });
     } else {
+      pending.owner = rt.host.owner?.();
       Promise.resolve(result).then((v) => settle(id, true, v), (e) => settle(id, false, e));
     }
     return id;
@@ -568,4 +592,7 @@ if (
   import.meta.url === node("node:url").pathToFileURL(process.argv[1]).href
 ) {
   await main(node("node:fs"));
+} else if (typeof node !== "function" && globalThis.process?.argv?.[1]?.endsWith("velt_web.mjs")) {
+  process.stderr.write("velt_web.mjs needs node 20.16 or newer (process.getBuiltinModule)\n");
+  process.exit(2);
 }

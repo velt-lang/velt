@@ -49,6 +49,9 @@ async function handle(req: HostRef): Promise<void> {
       await write(out, utf8Encode(part));
     }
     await close(out);
+  } else if (path == "nap") {
+    await sleep(20);
+    text(req, 200, "after a nap");
   } else if (path == "slow") {
     await waitFor("slow");
     text(req, 200, "slow at last");

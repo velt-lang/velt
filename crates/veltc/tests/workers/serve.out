@@ -1,12 +1,15 @@
 main starts
-the first request waits while main does
+two requests wait while main does
 main accepts
 hello: 200 content-type=text/plain x-served-by=velt | Hello, Ada (GET) | waitUntil 0
-hello: 200 content-type=text/plain x-served-by=velt | Hello, Bo (POST) | waitUntil 1
+hello: 200 content-type=text/plain x-served-by=velt | Hello, Eve (GET) | waitUntil 0
+nap: 200 content-type=text/plain x-served-by=velt | after a nap | waitUntil 0
+nap: 200 content-type=text/plain x-served-by=velt | after a nap | waitUntil 0
+hello: 200 content-type=text/plain x-served-by=velt | Hello, Bo (POST) | waitUntil 0
 slow: 200 content-type=text/plain x-served-by=velt | slow at last | waitUntil 0
 echo: 201 content-type=text/plain x-served-by=velt | got a|bc|d | waitUntil 0
 echo: 201 content-type=text/plain x-served-by=velt | got plain | waitUntil 0
-stream: 200 content-type=text/plain | one two three | waitUntil 2
+stream: 200 content-type=text/plain | one two three | waitUntil 1
 nothing: 404 content-type=text/plain x-served-by=velt | no nothing | waitUntil 0
 later: 200 content-type=text/plain x-served-by=velt | answered first | waitUntil 1
 waitUntil settled before the work was done: false

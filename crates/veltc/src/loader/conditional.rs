@@ -37,6 +37,11 @@ pub(super) fn build_conditions(target: Option<&str>, host: Option<&str>) -> Vec<
     }
 }
 
+/// The conditions of the build `opts` loads for.
+pub(super) fn load_conditions(opts: &super::LoadOptions) -> Vec<&'static str> {
+    build_conditions(opts.target.as_deref(), opts.host.as_deref())
+}
+
 /// Where the `#name`s of a module resolve.
 struct Scope {
     /// "package `app`", "the standard library".

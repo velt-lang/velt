@@ -83,18 +83,15 @@ pub struct LoadOptions<'a> {
     /// Unsaved file contents by path (the language server's open documents); consulted before
     /// the disk for every module, prelude included.
     pub overlay: Option<&'a HashMap<PathBuf, String>>,
-    /// A root inside [`LoadOptions::std_root`] is loaded as the std module it is (`velt/fs`), not
-    /// as `main`: the language server, for a std file opened in the editor, so it is checked like
-    /// std code (runtime declarations, std's own types) instead of as a user program.
+    /// A root inside [`LoadOptions::std_root`] loads as its std module (`velt/fs`), not `main`:
+    /// the language server checks a std file opened in the editor as std code.
     pub std_root_as_std: bool,
     /// The root is `velt test`'s generated harness: its imports of velt/test's internal files
     /// (the runner's hooks, velt_common `std_hooks.rs`) are the compiler's, not the user's.
     pub test_harness: bool,
-    /// The build's target triple, which sets the conditions `#name` imports resolve by
-    /// (`vpm::imports::conditions`); `None`: the host's.
+    /// The build's target triple (`None`: this machine's), whose conditions `#name` imports use.
     pub target: Option<String>,
-    /// The host a `--host` build is for (`workers`), a condition `#name` imports resolve by on
-    /// top of the target's.
+    /// `--host`'s host (`workers`), a condition of `#name` imports on top of the target's.
     pub host: Option<String>,
     /// Check that the variants of each `#name` import the program resolves export the same API
     /// ([`variants`]): `velt check`, `velt test` and the language server ask for it.
@@ -159,7 +156,7 @@ pub fn load_with_roots(
         effects: HashMap::new(),
         skipped: HashMap::new(),
         harness: None,
-        conditions: conditional::build_conditions(opts.target.as_deref(), opts.host.as_deref()),
+        conditions: conditional::load_conditions(&opts),
         std_imports: None,
         variant_checks: vec![],
         variant_tables: HashMap::new(),

@@ -46,9 +46,7 @@ pub struct BuildOptions {
     pub debug_info: bool,
     /// Target triple; `None` → host.
     pub target: Option<String>,
-    /// `--host`: the JavaScript host the build is for (`workers`, `vpm::imports::HOSTS`), a
-    /// condition of its `#name` imports; its host modules must come from its glue or a package
-    /// (`host_modules`).
+    /// `--host`: the JavaScript host (`workers`, `vpm::imports::HOSTS`); see `host_modules`.
     pub host: Option<String>,
     /// The CPU to build for (`--cpu`, `$VELT_CPU` or the package's `build.cpu`, resolved by
     /// `commands::cpu::resolve_cpu`); `None` → the target's default
@@ -395,12 +393,7 @@ pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Pr
             return Err(BuildError::Ice("lowering reported no errors".into()));
         }
     };
-    if let Some(host) = &opts.host {
-        let packages = opts.packages.as_ref();
-        let diags = host_modules::check(&hir, &program, &sess.sm, packages, host);
-        sess.diagnostics.extend(diags);
-        sess.stop_if_errors()?;
-    }
+    host_modules::check_build(sess, opts, &hir, &program)?;
     if !line_info && !opts.report_numbers {
         // Panic messages already carry their locations; only debug info needs these.
         program.files.clear();

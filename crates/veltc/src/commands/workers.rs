@@ -19,9 +19,9 @@ const GLUE_FILE: &str = "velt_worker.mjs";
 const ENTRY_FILE: &str = "worker.mjs";
 /// Where the package host modules go, below the Worker directory.
 const HOSTS_DIR: &str = "hosts";
-/// The `compatibility_date` a new `wrangler.toml` gets: the Workers runtime the glue was
-/// written against.
-const COMPATIBILITY_DATE: &str = "2026-10-01";
+/// The `compatibility_date` a new `wrangler.toml` gets: one the Workers runtime the glue was
+/// checked on accepts (a local `wrangler dev` rejects a date newer than its runtime).
+const COMPATIBILITY_DATE: &str = "2026-08-01";
 /// The custom section listing the module's host imports (velt_vir `vir::host::MANIFEST_SECTION`).
 const MANIFEST_SECTION: &str = velt_vir::vir::MANIFEST_SECTION;
 
@@ -284,7 +284,7 @@ mod tests {
         assert!(read("velt_worker.mjs").contains("export function createWorker"));
         assert_eq!(read("hosts/kv/js/kv.mjs"), "export default () => ({});\n");
         assert!(read("wrangler.toml").contains(
-            "name = \"my-app\"\nmain = \"worker.mjs\"\ncompatibility_date = \"2026-10-01\"\n"
+            "name = \"my-app\"\nmain = \"worker.mjs\"\ncompatibility_date = \"2026-08-01\"\n"
         ));
         // An edited wrangler.toml is kept.
         std::fs::write(dir.join("wrangler.toml"), "name = \"mine\"\n").unwrap();

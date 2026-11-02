@@ -27,31 +27,48 @@ workers.rs`, `driver/host_modules.rs`), and the Velt code that serves on Workers
   modules declare it; exactly one such package. Otherwise the build fails at a declaration of
   the module (`driver/host_modules.rs`): "the `workers` build has no JavaScript for host module
   `m`" (with where to list it), "package `p` provides host module `m`, which none of its modules
-  declares", "host module `m` is provided by two packages".
+  declares", "host module `m` is provided by two packages". A `velt:` function must be one the
+  glue has, with the same types (the table `GLUE` there): "the `workers` glue has no host module
+  `velt:x`", "… has no function `f`", "`velt:worker.f` is declared with other types than the
+  `workers` glue's".
 
 ## The glue
 
 - `createWorker(module, { modules, write })` returns the Worker's handlers (`{ fetch }`).
   `modules` maps each package host module's name to its file's default export, a function
-  called once per instance with `host` (`host.env`: the Worker's `env` of the latest request,
-  for bindings; `host.ctx`: that request's `ExecutionContext`) that returns the module's
+  called once per instance with `host` (`host.env`: the Worker's `env`, for bindings;
+  `host.ctx`: the `ExecutionContext` of the request whose context runs the program now) that
+  returns the module's
   functions. They are wrapped as velt_web.mjs wraps any host function (what crosses, the checks
   of results, async functions returning promises).
 - The module is instantiated on the first request, once per isolate, and `main` runs once
   (`velt_start`); the instance serves every later request. Instantiation and `main` run in the
   first request's handler.
-- The end of a program (`velt.done(code)`, velt_web.mjs `loadVelt`'s `done`): with code 0 the
-  instance stays; queued and later requests get a 500 "the program does not accept requests",
-  logged once, and requests the program took but had not answered get a 500, each logged.
-  Any other code (a panic is 101, a trap 134, `process.exit(n)`, an uncaught error 1), a host
+- The end of a program (`velt.done(code)`, velt_web.mjs `loadVelt`'s `done`): a program that
+  ends with 0 before it accepted a request keeps its instance; queued and later requests get a
+  500 "the program does not accept requests", logged once. Any other end (code 0 after it
+  accepted, a panic's 101, a trap's 134, `process.exit(n)`, an uncaught error's 1), a host
   function that throws, or a failed instantiation discards the instance (an exception that
   unwinds through the module leaves it unusable): every request in flight gets a 500, the cause
   is logged, and the next request instantiates the module again.
-- `ctx.waitUntil(p)`: a request's handler, once it has its response, calls it when the program
-  has work left that a request does not start (a timer it asked for, a host promise other than
-  `accept()`), with a promise that settles when it has none (checked after each turn), or when
-  the instance ends. A response whose body the program still writes also keeps its pump alive
-  with `waitUntil`.
+- Contexts. Workers tie I/O (a request's body, a `Response`, a stream, a timer, a fetch) to
+  the request whose handler made it, cancel a request whose handler waits on nothing of its
+  own, and end a request's context, with what it started, once its response and its
+  `ctx.waitUntil` promises are done. So each request has a pump, an async loop in its own
+  handler that keeps a timer of its own pending while it waits (every 10 s) and does the
+  request's I/O when the program asks: reading the body, making the `Response` (the glue's 500s
+  too), writing a streamed body. The program's turns run in a request's context: `main` in the
+  first request's, a request handed to `accept()` in its own (from its pump), a wait on a
+  request settled from its pump (velt_web.mjs's `Deferred`, which runs the turn on the caller's
+  stack instead of in a reaction of a promise another request made), a host promise's
+  settlement in the context of the turn that started it (`loadVelt`'s `owner`/`resuming`), the
+  program's timer in the pump holding it (`loadVelt`'s `setTimer`): the newest request's, moved
+  there on every request.
+- `ctx.waitUntil(p)`: a request whose pump must go on after its response calls it with the
+  pump: while host promises started in its context are pending, while it holds the program's
+  timer, or while the program still writes its body. Work that outlives Cloudflare's limit for
+  `waitUntil` (30 s after the response) is cancelled with the context; the timer moves to the
+  next request.
 - `HostRef` slots of a long-lived instance: velt_web.mjs's `HostRefs` uses a released slot's
   index again with the next generation (12 bits) above the index (20 bits: at most 1,048,575
   values held at once), so slots never wrap into a value in use and a stale slot misses.
@@ -90,10 +107,5 @@ declare host("velt:worker") async function close(stream: HostRef): Promise<void>
 - A request is answered once: a second `respond`/`respondStream` throws (and so ends the
   instance). A request whose last `HostRef` the program drops unanswered gets a 500, logged.
 
-Workers allow a request's I/O (its body, the stream of its response) only in that request's
-context, and run a promise's reactions in the context that made it. So the glue does each
-request's I/O in a pump, an async loop in that request's handler, when the program asks; and it
-settles the program's waits on a request (`accept`, `read`, `write`, `close`) from that pump or
-handler with velt_web.mjs's `Deferred`, which runs the program's turn at once on the caller's
-stack instead of in a reaction of a promise an earlier request made. (An `accept()` called while
-a request already waits takes it right after the turn that called it.)
+An `accept()` whose promise the program drops after the glue handed it a request (a race it
+lost) gives the request back to the next `accept()`.

@@ -3,8 +3,9 @@
 //! build writes. The runtime glue provides the `velt:` modules; a package provides the others,
 //! through `hostModules` in its `package.vlt`. A package provides only modules its own
 //! modules declare, so a dependency cannot take over another package's module, and each module
-//! comes from one package. Checked where the HIR and the VIR meet: the declarations say who
-//! declares a module, the VIR's externs which modules the program reaches.
+//! comes from one package; a `velt:` function must be one the glue has, with its types
+//! ([`GLUE`]). Checked where the HIR and the VIR meet: the declarations say who declares a
+//! module, the VIR's externs which modules the program reaches.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -14,6 +15,39 @@ use velt_vir::vir;
 use vpm::graph::GraphPackage;
 use vpm::host_modules::RUNTIME_PREFIX;
 use vpm::PackageGraph;
+
+/// The functions of the Worker glue's own host modules (velt_worker.mjs `workerImports`,
+/// docs/internals/contracts/workers.md): module, name, and the parameters and result as the
+/// manifest writes them (`vir::HostImport::manifest_line`).
+const GLUE: &[(&str, &str, &str, &str)] = &[
+    ("velt:worker", "accept", "", "async:ref"),
+    ("velt:worker", "method", "ref", "str"),
+    ("velt:worker", "url", "ref", "str"),
+    ("velt:worker", "headers", "ref", "str"),
+    ("velt:worker", "read", "ref", "async:bytes"),
+    ("velt:worker", "respond", "ref,u16,str,rbytes", "void"),
+    ("velt:worker", "respondStream", "ref,u16,str", "ref"),
+    ("velt:worker", "write", "ref,rbytes", "async:void"),
+    ("velt:worker", "close", "ref", "async:void"),
+];
+
+/// For a `--host` build: an error for each host module `program` imports that the build has no
+/// JavaScript for.
+pub(super) fn check_build(
+    sess: &mut super::Session,
+    opts: &super::BuildOptions,
+    hir: &hir::Program,
+    program: &vir::Program,
+) -> Result<(), super::BuildError> {
+    let Some(host) = &opts.host else {
+        return Ok(());
+    };
+    let diags = check(hir, program, &sess.sm, opts.packages.as_ref(), host);
+    sess.diagnostics.extend(diags);
+    sess.diagnostics
+        .extend(glue_diagnostics(hir, program, host));
+    sess.stop_if_errors()
+}
 
 /// Diagnostics for the host modules `program` imports that a build for `host` has no JavaScript
 /// for, located at a declaration of each.
@@ -59,6 +93,55 @@ pub(super) fn check(
             .filter(|p| p.host_modules.contains_key(module))
             .collect();
         out.extend(module_diagnostics(module, &declarers, &providers, host));
+    }
+    out
+}
+
+/// Diagnostics for the `velt:` functions `program` imports that the glue doesn't have, or has
+/// with other types, located at a declaration of each.
+fn glue_diagnostics(hir: &hir::Program, program: &vir::Program, host: &str) -> Vec<Diagnostic> {
+    let mut out = vec![];
+    for import in program.externs.iter().filter_map(|e| e.host.as_ref()) {
+        if !import.module.starts_with(RUNTIME_PREFIX) {
+            continue;
+        }
+        let line = import.manifest_line();
+        let mut fields = line.trim_end().splitn(4, '\t').skip(2);
+        let (params, ret) = (fields.next().unwrap_or(""), fields.next().unwrap_or(""));
+        let known = GLUE
+            .iter()
+            .find(|(m, n, _, _)| *m == import.module && *n == import.name);
+        let why = match known {
+            None if !GLUE.iter().any(|(m, ..)| *m == import.module) => {
+                format!("the `{host}` glue has no host module `{}`", import.module)
+            }
+            None => format!(
+                "the `{host}` glue's host module `{}` has no function `{}`",
+                import.module, import.name
+            ),
+            Some((_, _, p, r)) if (*p, *r) != (params, ret) => format!(
+                "`{}.{}` is declared with other types than the `{host}` glue's",
+                import.module, import.name
+            ),
+            Some(_) => continue,
+        };
+        let span = hir
+            .defs
+            .iter()
+            .find_map(|d| match d {
+                hir::Def::ExternFn(f)
+                    if f.symbol == import.name
+                        && f.host.as_ref().is_some_and(|h| h.module == import.module) =>
+                {
+                    Some(f.span)
+                }
+                _ => None,
+            })
+            .unwrap_or(Span::DUMMY);
+        out.push(
+            Diagnostic::error(why, span)
+                .with_note("the glue's functions are in docs/internals/contracts/workers.md"),
+        );
     }
     out
 }
@@ -212,6 +295,15 @@ mod tests {
         let got = messages(&g, &[Some("kv")], "kv");
         assert_eq!(got.len(), 1, "{got:?}");
         assert!(got[0].contains("`rogue`"), "{got:?}");
+    }
+
+    #[test]
+    fn the_glue_table_names_the_glue_s_functions() {
+        let glue = include_str!("../../../velt_rt_wasm/js/velt_worker.mjs");
+        for (module, name, ..) in GLUE {
+            assert_eq!(*module, "velt:worker");
+            assert!(glue.contains(&format!("      {name}: (")), "{name}");
+        }
     }
 
     #[test]

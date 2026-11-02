@@ -171,13 +171,14 @@ and keeps the instance.
 
 Requests reach the program through the glue's host module `velt:worker`: `fetch` queues each
 request, and the program takes them with the async `accept()`, reads them, and answers with
-`respond` or a streamed `respondStream`. Workers allow a request's I/O only in that request's
-context and run a promise's reactions in the context that made it, so the glue does each
-request's I/O in a pump in that request's own handler, and settles the program's waits from
-there with `Deferred` (velt_web.mjs), which runs the turn on the caller's stack rather than in a
-reaction of a promise an earlier request made, whose context may be gone. While the program has
-work that outlives a response (a timer, a host promise other than `accept`), the handler keeps
-its context with `ctx.waitUntil` until the program has none.
+`respond` or a streamed `respondStream`. Workers tie I/O and timers to the request that made
+them, cancel a request that waits on nothing of its own, and end what a request started with
+it. One program serves many requests, so the glue gives each request a pump in its own handler
+that keeps a timer pending and does that request's I/O, makes its `Response` included; it runs
+the program's turns in the context they concern (a request handed over from its pump, a host
+promise's settlement where it started, the program's timer in the newest request), and a
+request whose context holds the program's pending work keeps it with `ctx.waitUntil`. The rules
+are in the contract.
 
 ## 6. `serve` on Workers (#1786, #1787)
 
@@ -237,12 +238,18 @@ Settled in #1736:
   carries a generation above the index, so slots never wrap into a value in use and a stale
   `HostRef` misses (until its index was reused 4,096 times).
 - **Glue exports and size**: the five `velt_host_*` exports cost little against the budgets: a
-  release hello-world Worker is 58,550 bytes, its files gzipped one by one (the module 47,050),
-  and a small accept loop with a package host module 115,811 bytes; the tests' budgets are 1.5
+  release hello-world Worker is 59,872 bytes, its files gzipped one by one (the module 47,050),
+  and a small accept loop with a package host module 117,799 bytes; the tests' budgets are 1.5
   times these.
 
+- **Checked on workerd** (wrangler 4.120's, by hand; CI runs it in #1739): requests queued while
+  `main` awaits, overlapping handlers that sleep, streamed responses, a body read after a
+  second, work after the answer, and a panic with a request in flight (both 500, the next
+  request on a new instance).
+
 Still open: Durable Objects written in Velt (a class exported to the glue) rather than only
-stubs.
+stubs; `velt check` and the editor with `--host` (a variant only `workers` selects is compared
+with the others, but type-checked only by `velt build --host workers`).
 
 ## Alternatives considered
 

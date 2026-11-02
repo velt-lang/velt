@@ -1,0 +1,8 @@
+// A `velt:worker` function the Worker glue doesn't have: `velt build --host workers` fails
+// naming it (crates/veltc/tests/workers.rs).
+
+declare host("velt:worker") function nosuch(): u32;
+
+function main() {
+  console.log(nosuch());
+}

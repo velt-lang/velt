@@ -4,7 +4,13 @@
 // scenario's `Request`s to its `fetch` with a fake `env` and a `ctx` that records `waitUntil`,
 // and prints the responses. Everything goes to stdout in the order it happens: the program's
 // output, the glue's logs (`log: `) and what the scenario prints.
+//
+// Each request runs in a context of its own (an `AsyncLocalStorage` store), as on Workers, and
+// what Workers forbid is printed (`context: …`): a `Response` made in another request's context,
+// a request's body read from another, a timer outside any request, or one firing after its
+// request ended (its response sent and its `waitUntil` promises settled).
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { register } from "node:module";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -20,6 +26,39 @@ register(`data:text/javascript,${encodeURIComponent(hooks)}`);
 
 // A panic's location without the directory the test built in.
 console.error = (...args) => console.log("log:", ...args.map((a) => String(a).replace(/ at \S*main\.vlt:/, " at main.vlt:")));
+const contexts = new AsyncLocalStorage();
+const ended = new Set();
+const NativeResponse = Response;
+globalThis.Response = class extends NativeResponse {
+  constructor(...args) {
+    super(...args);
+    this.madeIn = contexts.getStore();
+  }
+};
+const nativeSetTimeout = setTimeout;
+globalThis.setTimeout = (f, ms, ...args) => {
+  const owner = contexts.getStore();
+  if (owner === undefined) console.log("context: a timer outside any request");
+  return nativeSetTimeout(() => {
+    if (ended.has(owner)) console.log(`context: a timer of request ${owner} fired after it ended`);
+    f(...args);
+  }, ms);
+};
+/** `body`, read only in request `id`'s context. */
+function watchBody(body, id) {
+  const getReader = body.getReader.bind(body);
+  body.getReader = (...args) => {
+    const reader = getReader(...args);
+    const read = reader.read.bind(reader);
+    reader.read = () => {
+      if (contexts.getStore() !== id) console.log(`context: request ${id}'s body read elsewhere`);
+      return read();
+    };
+    return reader;
+  };
+  return body;
+}
+
 let instances = 0;
 const instantiate = WebAssembly.instantiate;
 WebAssembly.instantiate = (...args) => {
@@ -62,13 +101,23 @@ function settled(waited) {
   return Promise.race([all, new Promise((resolve) => setImmediate(() => resolve(false)))]);
 }
 
-/** Fetch `path` from the Worker and print the response and how often `waitUntil` was called. */
+let requests = 0;
+
+/**
+ * Fetch `path` from the Worker in a context of its own and print the response and how often
+ * `waitUntil` was called.
+ */
 async function send(path, init = {}) {
+  const id = ++requests;
   const waited = [];
   const ctx = { waitUntil: (p) => waited.push(p), passThroughOnException() {} };
-  const res = await worker.fetch(new Request(`https://w.test/${path}`, init), env, ctx);
+  const request = new Request(`https://w.test/${path}`, init);
+  if (request.body !== null) watchBody(request.body, id);
+  const res = await contexts.run(id, () => worker.fetch(request, env, ctx));
+  if (res.madeIn !== id) console.log(`context: ${path}'s response was made in request ${res.madeIn}`);
   const headers = [...res.headers].map(([k, v]) => `${k}=${v}`).join(" ");
   console.log(`${path}: ${res.status} ${headers} | ${await res.text()} | waitUntil ${waited.length}`);
+  Promise.all(waited).then(() => ended.add(id));
   return waited;
 }
 
@@ -83,9 +132,14 @@ const scenarios = {
   async serve() {
     const first = send("hello", { headers: { "x-name": "Ada" } });
     await env.gates.reached("start");
-    console.log("the first request waits while main does");
+    const queued = send("hello", { headers: { "x-name": "Eve" } });
+    console.log("two requests wait while main does");
     env.gates.open("start");
     await first;
+    await queued;
+
+    const naps = [send("nap"), send("nap")];
+    await Promise.all(naps);
 
     const slow = send("slow");
     await env.gates.reached("slow");
