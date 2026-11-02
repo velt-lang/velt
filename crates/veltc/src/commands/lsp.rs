@@ -14,6 +14,10 @@ use vpm::{InstallOptions, PackageGraph};
 
 use crate::loader::{self, LoadOptions};
 
+#[path = "lsp_packages.rs"]
+mod packages;
+use packages::{list_dependencies, variant_target};
+
 /// Serve until the client exits.
 pub fn lsp_command() -> Result<(), String> {
     let served = velt_lsp::serve_stdio(&CliLoader::default());
@@ -205,41 +209,6 @@ impl ProgramLoader for CliLoader {
         let program = crate::generate::editor::Program::copy(sm, modules, root, graph)?;
         Some(Box::new(move || program.generator_diagnostics()))
     }
-}
-
-/// A target whose build uses `file`, when it is a variant of a `#name` of its package that the
-/// host's build does not use (`vpm::imports::target_selecting`).
-fn variant_target(graph: &PackageGraph, file: &Path) -> Option<String> {
-    let (_, root, imports) = graph.imports_of(file)?;
-    if imports.is_empty() {
-        return None;
-    }
-    let key = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
-    let rel = vpm::relpath::relative(&key(file), &key(root));
-    let host = velt_codegen_cl::host_triple();
-    vpm::imports::target_selecting(imports, &format!("./{rel}"), &host).map(str::to_string)
-}
-
-/// The modules of the dependencies of the package containing `file`, in `graph`.
-fn list_dependencies(graph: Option<&PackageGraph>, file: &Path) -> Vec<ModuleEntry> {
-    let Some(package) = graph.and_then(|g| g.package_of(file)) else {
-        return vec![];
-    };
-    let dir = file.parent().unwrap_or(Path::new(""));
-    let mut out = vec![];
-    for (name, root) in &package.dependencies {
-        out.extend(
-            velt_lsp::package_module_entries(name, root)
-                .into_iter()
-                .filter(|e| {
-                    matches!(
-                        loader::resolve_spec(&e.spec, dir),
-                        Ok(loader::ModuleRef::Package { .. })
-                    )
-                }),
-        );
-    }
-    out
 }
 
 #[cfg(test)]
