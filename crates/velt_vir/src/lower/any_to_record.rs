@@ -2,7 +2,8 @@
 //! (#1219): an object literal, a class instance, an array, or a record of other values
 //! (`style: { color }` passed through `any` to a `Record<string, any>` parameter). Node reads any
 //! object as a record. Velt's record is its own type, so the conversion builds one: std's hook
-//! `anyToRecordAny(o)` (`V` is `any`) or `anyToRecord<V>(o)` (std/lang/hooks/any_object.vlt)
+//! `anyToRecordAny(o)` (`V` is `any`) or `anyToRecord<V>(o)` (std/lang/hooks/any_record.vlt, loaded
+//! for a program that mentions `Record`; without it the conversion stays the `TypeError`)
 //! makes a new record of the object's own enumerable entries, in its order (`{ ...o }`, which
 //! asks a proxy's traps), each value converted to `V` as `AnyTo` converts it. It is a copy, as an
 //! object converted to another object type is (any_object_fill.rs): a later write through one is

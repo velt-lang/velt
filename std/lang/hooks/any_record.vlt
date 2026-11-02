@@ -1,0 +1,25 @@
+// velt/lang/hooks (internal): `x as Record<string, V>` of an `any` holding an object that is not
+// such a record (#1219; velt_vir `any_to_record.rs`). Loaded with the conditional global
+// std/prelude/global/record_any.vlt, for a program that mentions `Record`, so that other
+// programs don't check these hooks.
+
+/**
+ * `x as Record<string, any>` of an `any` holding an object that is not such a record (an object
+ * literal, a class instance, an array): a new record of its own enumerable entries, in its
+ * order, as Node reads the object (velt_vir `any_to_record.rs`). It is a copy: a later write
+ * through one is not seen through the other.
+ */
+export function anyToRecordAny(o: any): Record<string, any> {
+  const r: Record<string, any> = { ...o };
+  return r;
+}
+
+/** `x as Record<string, V>` of an `any` holding another object: `anyToRecordAny`, each value a `V`. */
+export function anyToRecord<V>(o: any): Record<string, V> {
+  const all: Record<string, any> = { ...o };
+  const r: Record<string, V> = {};
+  for (const k of Object.keys(all)) {
+    r[k] = all[k] as V;
+  }
+  return r;
+}

@@ -172,11 +172,13 @@ hooks! {
     any_ctor_name => lang_hooks_any_object, "anyCtorName", "(any) -> string";
     any_ctor_name_unsupported => lang_hooks_any_object, "anyCtorNameUnsupported", "(string) -> string";
     any_delete_member => lang_hooks_any_object, "anyDeleteMember", "(any, any) -> bool";
-    /// `x as Record<string, any>` of an `any` holding another object (`velt_vir` `any_to_record.rs`).
-    any_to_record_any => lang_hooks_any_object, "anyToRecordAny", "(any) -> Record<string, any>", lowered;
-    /// `x as Record<string, V>` of an `any` holding another object.
-    any_to_record => lang_hooks_any_object, "anyToRecord", "<A>(any) -> Record<string, A>", lowered;
     has_own_property => lang_hooks_any_object, "HasOwnProperty", "class", lowered;
+
+    // any_record.vlt: an `any` holding another object converted to a record (`velt_vir`
+    // `any_to_record.rs`), loaded for a program that mentions `Record`
+    // (std/prelude/global/record_any.vlt).
+    any_to_record_any => lang_hooks_any_record, "anyToRecordAny", "(any) -> Record<string, any>", lowered;
+    any_to_record => lang_hooks_any_record, "anyToRecord", "<A>(any) -> Record<string, A>", lowered;
 
     // any_ops.vlt: operators on `any` values holding objects (`ToPrimitive` first).
     any_primitive => lang_hooks_any_ops, "anyPrimitive", "(any, string, string) -> any", lowered;
@@ -268,9 +270,6 @@ hooks! {
     call_on => lang_this_fn, "callOn", "(any, any, any[]) -> any";
     call_opt_on => lang_this_fn, "callOptOn", "(any, any, () => any[]) -> any";
     this_fn => lang_this_fn, "ThisFn", "class", lowered;
-    /// `Array.prototype[key]` read through `any` in a program without `Proxy` (`velt_vir`
-    /// `any_get_body`).
-    array_prototype_this_fn => lang_this_fn_array_methods, "arrayPrototypeThisFn", "(string) -> any", lowered;
 
     // collections/set.vlt: the adapter of `Set<unknown>` (not exported).
     unknown_set_in => collections_set, "unknownSetIn", "(unknown) -> Set<unknown>";

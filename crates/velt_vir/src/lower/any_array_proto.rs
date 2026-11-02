@@ -1,13 +1,11 @@
 //! `Array.prototype[key]` read through `any` (#942, #823): `(Array.prototype as any)[method]`,
 //! which libraries wrap and call with an explicit `this`
-//! (`original.apply(this, arguments)`). A member read of the prelude's `ObjectPrototype` naming
-//! `Array.prototype` asks std's hook: in a program that has loaded `Proxy`,
-//! `arrayPrototypeMember(key)` (std/lang/proxy/array_apply.vlt), whose array method is an
-//! `ArrayMethod` that `apply` and `call` run on the `this` they pass (on a proxy through its
-//! traps, on an array as its own method); else, in a program with function expressions taking
-//! `this`, `arrayPrototypeThisFn(key)` (std/lang/this_fn/array_methods.vlt), a `ThisFn` running
-//! the method on the array it is called on. Any other prototype or key, and other programs,
-//! read `undefined` as before.
+//! (`original.apply(this, arguments)`). In a program that has loaded `Proxy`, a member read of
+//! the prelude's `ObjectPrototype` naming `Array.prototype` asks std's hook
+//! `arrayPrototypeMember(key)` (std/lang/proxy/array_apply.vlt): an array method is an
+//! `ArrayMethod`, whose `apply`, `call` and `bind` run it on the `this` they pass, through the
+//! traps of a proxy of an array, or of a proxy without traps around an array. Any other
+//! prototype or key, and a program without `Proxy`, read `undefined` as before.
 
 use velt_sema::hir::{PassMode, TyId};
 
@@ -17,8 +15,6 @@ use crate::vir::{self, Operand, Place, Rvalue, Ty};
 
 /// The hook that reads a member of `Array.prototype` in a program with `Proxy`.
 const PROTOTYPE_MEMBER: &str = velt_common::std_hook!(array_prototype_member);
-/// The hook that reads one in a program with function expressions taking `this`.
-const PROTOTYPE_THIS_FN: &str = velt_common::std_hook!(array_prototype_this_fn);
 
 /// The name of the prelude's prototype class (std/prelude/object_prototype.vlt).
 const OBJECT_PROTOTYPE: &str = "::ObjectPrototype";
@@ -48,8 +44,7 @@ impl FnLower<'_, '_> {
         else {
             return;
         };
-        let hook = self.cx.prelude_def(PROTOTYPE_MEMBER);
-        let Some(h) = hook.or_else(|| self.cx.prelude_def(PROTOTYPE_THIS_FN)) else {
+        let Some(h) = self.cx.prelude_def(PROTOTYPE_MEMBER) else {
             return;
         };
         let vp = self.any_value_place(data, ty);

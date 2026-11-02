@@ -22,7 +22,7 @@ import {
 } from "velt/lang/hooks/keys";
 import { proxyReverse, proxySort } from "velt/lang/proxy/array_order";
 import { arrayMethodApply } from "velt/lang/proxy/array_apply";
-import { arrayMethodName, concatArgs } from "velt/lang/proxy/array_call";
+import { arrayMethodName, concatArgs } from "velt/lang/proxy/array_names";
 
 /**
  * An array method read through a proxy (`Reflect.get(array, "push")`) or from `Array.prototype`

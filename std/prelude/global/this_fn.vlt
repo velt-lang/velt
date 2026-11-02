@@ -4,4 +4,3 @@
 // the compiler calls them (velt_common `std_hooks.rs`).
 // load for: a function expression with a `this` parameter
 import "velt/lang/this_fn";
-import "velt/lang/this_fn/array_methods";
