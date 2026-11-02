@@ -199,7 +199,7 @@ impl Emitter<'_> {
     /// needs).
     fn baseline_has(&self, ext: velt_vir::simd::Ext) -> bool {
         let needs = velt_codegen_cl::ext_x86_features(ext);
-        needs != 0 && self.x86_features & needs == needs
+        needs != 0 && self.cpu_features & needs == needs
     }
 
     /// Whether `callee` is `velt_simd_has_<ext>` and this function is gated on `ext`, or the
@@ -242,7 +242,7 @@ impl Emitter<'_> {
         };
         let e = self.program.externs.get(id.0 as usize)?;
         if let Some((name, definitions, want_params, want_ret)) =
-            crate::simd::helper(&e.symbol, self.simd)
+            crate::simd::helper(&e.symbol, self.simd, self.dotprod)
         {
             if params != want_params || ret != want_ret {
                 return None;

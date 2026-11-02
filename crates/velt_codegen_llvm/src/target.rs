@@ -31,8 +31,10 @@ pub(crate) struct Target {
     pub os: Os,
     /// `--cpu` (`velt_codegen_cl::check_cpu`); `None`: the default ([`Target::cpu_arg`]).
     pub cpu: Option<String>,
-    /// The x86 features the code may use, as [`crate::required_features`] (0 off x86_64).
-    pub x86_features: u32,
+    /// The CPU features code may use without checking, and that the start-up check checks:
+    /// `--cpu`'s, a mask over `velt_codegen_cl::X86_FEATURES` on x86-64 and `ARM_FEATURES` on
+    /// arm64.
+    pub cpu_features: u32,
 }
 
 /// Validate `target` (empty / `native` / `host` = the host triple).
@@ -48,7 +50,7 @@ pub(crate) fn normalize(target: &str) -> CodegenResult<Target> {
             triple,
             os,
             cpu: None,
-            x86_features: 0,
+            cpu_features: 0,
         });
     }
     let mut parts = triple.split('-');
@@ -70,7 +72,7 @@ pub(crate) fn normalize(target: &str) -> CodegenResult<Target> {
     let msvc_ok = os != Some(Os::Windows) || !rest.iter().any(|p| p.starts_with("gnu"));
     match os {
         Some(os) if arch_ok && msvc_ok && !rest.is_empty() => Ok(Target {
-            x86_features: velt_codegen_cl::required_features(&triple, None)?,
+            cpu_features: velt_codegen_cl::required_features(&triple, None)?,
             triple,
             os,
             cpu: None,
@@ -145,7 +147,7 @@ impl Target {
         if self.is_wasm() {
             return Ok(self);
         }
-        self.x86_features = crate::required_features(&self.triple, cpu)?;
+        self.cpu_features = crate::required_features(&self.triple, cpu)?;
         self.cpu = cpu.map(str::to_string);
         Ok(self)
     }
@@ -175,7 +177,7 @@ impl Target {
     /// has what clang gives it ([`crate::required_features`]).
     pub fn rounds_by_conversion(&self) -> bool {
         const SSE41: u32 = 1 << 2;
-        self.triple.starts_with("x86_64") && self.x86_features & SSE41 == 0
+        self.triple.starts_with("x86_64") && self.cpu_features & SSE41 == 0
     }
 
     /// Whether read-modify-writes call libgcc's / compiler-rt's `__aarch64_*` helpers, which use
@@ -184,6 +186,20 @@ impl Target {
     /// every CPU. Apple arm64 always has LSE and gets the instructions inline.
     pub fn outline_atomics(&self) -> bool {
         self.os == Os::Linux && self.has_neon()
+    }
+
+    /// Whether every CPU code for this target runs on has Arm's dot-product instructions
+    /// (`sdot`/`udot`, FEAT_DotProd): Apple arm64 (macOS), whose every CPU, M1 and later, has
+    /// them. Other arm64 CPUs may lack them (ARMv8.2 made them optional).
+    /// That holds for Apple arm64 with no `--cpu` (or `baseline`, clang's default there, Apple
+    /// M1); a `--cpu` names the CPU instead, which has them or not as clang says
+    /// (`required_features`): `native` on one or a CPU name with them gives them on any arm64
+    /// target, `--cpu cortex-a53` takes them away on Apple's too.
+    pub fn has_dotprod(&self) -> bool {
+        const DOTPROD: u32 = 1;
+        let apple_default =
+            self.os == Os::Darwin && matches!(self.cpu.as_deref(), None | Some("baseline"));
+        self.has_neon() && (apple_default || self.cpu_features & DOTPROD != 0)
     }
 
     /// Whether the target has NEON (`simd.rs` counts mask lanes with its widening sum).
