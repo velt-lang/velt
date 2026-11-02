@@ -16,6 +16,7 @@
 //! The conversion costs one pass over the value, paid only where a program writes it.
 
 use velt_common::Diagnostic;
+use velt_syntax::ast;
 
 use crate::body::{FnCx, LocalKind};
 use crate::fresh_returns::{fresh_callees, FreshCheck};
@@ -125,6 +126,10 @@ impl FnCx<'_, '_> {
         if !is_fresh(&h) {
             return self.dynamic_array_view(h, exp);
         }
+        let h = match self.widen_fresh_record(h, exp) {
+            Ok(w) => return Ok(w),
+            Err(h) => h,
+        };
         if !self.widens(h.ty, exp) {
             return Err(h);
         }
@@ -142,6 +147,37 @@ impl FnCx<'_, '_> {
             });
         }
         Ok(self.widen_owned(h, exp))
+    }
+
+    /// The fresh record `h` where a record of another value type (or one or `null` /
+    /// `undefined`) is expected, its values converting (`Record<string, string>` returned as a
+    /// `Record<string, any> | null`, sigx's `toStyleObject`): `{ ...h }` of the expected record
+    /// type, a new record nothing else could tell from `h`. `Err(h)` for other values.
+    fn widen_fresh_record(&mut self, h: hir::Expr, exp: TyId) -> Result<hir::Expr, hir::Expr> {
+        let mut target = exp;
+        while let Some(p) = self.cx.ty.opt_payload(target) {
+            target = p;
+        }
+        let (Some((k1, v1)), Some((k2, v2))) = (self.record_args(h.ty), self.record_args(target))
+        else {
+            return Err(h);
+        };
+        let span = h.span;
+        let mut probe = self.error_expr(span);
+        probe.ty = v1;
+        if self.detached || k1 != k2 || v1 == v2 || self.try_coerce(probe, v2).is_err() {
+            return Err(h);
+        }
+        let copy = self.with_temp("<record>", h, span, span, |s, r| {
+            let spread = vec![ast::ObjectProp::Spread(r.clone())];
+            let lit = super::setters::synth(ast::ExprKind::Object(spread), span);
+            let v = s.expr(&lit, Some(target), crate::body::Want::Move);
+            s.coerce(v, target)
+        });
+        match target == exp {
+            true => Ok(copy),
+            false => self.try_coerce(copy, exp),
+        }
     }
 
     /// A value for a place that only reads it, converted to `exp`: a parameter or variable

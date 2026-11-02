@@ -1,0 +1,7 @@
+// An existing record (a variable) where a record of another value type is expected stays an
+// error: other code still sees it as the narrower record (#1185).
+function keys(r: Record<string, any>): number {
+  return Object.keys(r).length;
+}
+const names: Record<string, string> = { a: "x" };
+console.log(keys(names));

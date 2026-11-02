@@ -1,0 +1,29 @@
+// check: no leaks
+// A fresh record (a call's result) where a record of another value type is expected, also
+// with `| null` (sigx's `toStyleObject`, #924): a new record of the expected type with the
+// same entries, which nothing else could tell from the result.
+function parseStyle(s: string): Record<string, string> {
+  const r: Record<string, string> = {};
+  for (const part of s.split(";")) {
+    const [k, v] = part.split(":");
+    if (k && v) r[k.trim()] = v.trim();
+  }
+  return r;
+}
+
+function toStyle(value: unknown): Record<string, any> | null {
+  if (!value) return null;
+  if (typeof value === "string") return parseStyle(value);
+  return null;
+}
+
+function all(s: string): Record<string, unknown> {
+  return parseStyle(s);
+}
+
+const style = toStyle("color: red; top: 1");
+console.log(JSON.stringify(style), JSON.stringify(toStyle("")), JSON.stringify(all("a:b")));
+if (style !== null) {
+  style.width = 3;
+  console.log(Object.keys(style).join(","), style.width);
+}

@@ -96,6 +96,9 @@ impl FnCx<'_, '_> {
         let target = self.resolve(ty);
         self.cx.diags.truncate(mark);
         let union = self.cx.ty.core(from).unwrap_or(from);
+        if let Some(h) = self.cast_field_read(inner, from, target, prop, optional, want, span) {
+            return Some(h);
+        }
         let reads = self.cast_member_reads(union, target, &prop.name)?;
         let mode = match self.cast_member_test {
             Some((s, m)) if s == span => Some(m),
@@ -332,6 +335,156 @@ impl FnCx<'_, '_> {
             reads.push(read);
         }
         Some(reads)
+    }
+
+    /// `(x as M).f` (or `?.f`) where `x` is no union and declares the field `f` itself, and `M`
+    /// is an object type (or one or `null`/`undefined`) with a field `f`: `x.f`, converted to
+    /// `M`'s field type (#1185, sigx's `(ctx as { parent?: Ctx<any> | null }).parent` of a
+    /// `Ctx<any>` whose `parent` is a `Ctx | null`). TypeScript reads `x`'s own property, so
+    /// the assertion converts nothing; the read converts as an assignment would (a generic
+    /// interface to `any` arguments). `None` when the field does not convert, or another rule
+    /// applies.
+    #[allow(clippy::too_many_arguments)] // the parts of the member read, as `cast_member_read` has them
+    fn cast_field_read(
+        &mut self,
+        inner: &ast::Expr,
+        from: TyId,
+        target: TyId,
+        prop: &ast::Ident,
+        optional: bool,
+        want: Want,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let mut object = target;
+        while let Some(p) = self.cx.ty.opt_payload(object) {
+            object = p;
+        }
+        let core = self.cx.ty.core(from).unwrap_or(from);
+        let plain_object = self.adt_of(object).is_some()
+            && !self.is_class_ty(object)
+            && self.record_args(object).is_none()
+            && self.cx.union_def(object).is_none();
+        if !plain_object
+            || self.cx.union_def(core).is_some()
+            || self.cx.ty.has_error(core)
+            || !self.declares_field(core, &prop.name)
+            || !self.overlaps(core, object, span)
+        {
+            return None;
+        }
+        let (d, args) = self.adt_of(object)?;
+        let field = self
+            .cx
+            .adt(d)?
+            .fields
+            .iter()
+            .find(|f| f.name == prop.name)?
+            .clone();
+        let mut ty = self.cx.subst(field.ty, &args);
+        // `?.f` reads `undefined` where `x` is missing, as an optional field does when absent.
+        let undefined = matches!(
+            self.cx.ty.nothing_of(ty),
+            Some(crate::hir::Nothing::Undefined | crate::hir::Nothing::Both)
+        );
+        if (field.optional || optional) && !undefined {
+            ty = self.cx.ty.option_of(ty, crate::hir::Nothing::Undefined);
+        }
+        let mark = self.cx.diags.len();
+        let read = self.member(inner, prop, optional, None, want, span);
+        if self.cx.diags.len() > mark {
+            self.cx.diags.truncate(mark);
+            return None;
+        }
+        self.try_coerce(read, ty).ok()
+    }
+
+    /// Do the value type `x` and the object type `m` overlap as tsc's assertion needs (TS2352):
+    /// every field `m` requires is one of `x`'s, of a type comparable to it (`x` is assignable
+    /// to `m`), or every field `x` has is one of `m`'s (`m` is assignable to `x`)? A field the
+    /// other type lacks rules a direction out, so `(c as { n: number; extra: string }).n` of a
+    /// `{ name: string; n: number }` stays a cast error.
+    fn overlaps(&mut self, x: TyId, m: TyId, span: Span) -> bool {
+        let Some(xs) = self.own_fields(x) else {
+            return false;
+        };
+        let Some(ms) = self.own_fields(m) else {
+            return false;
+        };
+        let mark = self.cx.diags.len();
+        let mut covered = |need: &[(String, TyId, bool)], have: &[(String, TyId, bool)]| {
+            need.iter()
+                .filter(|(_, _, optional)| !optional)
+                .all(|(n, t, _)| {
+                    have.iter()
+                        .find(|(h, _, _)| h == n)
+                        .is_some_and(|(_, u, _)| self.comparable(*u, *t, span))
+                })
+        };
+        let ok = covered(&ms, &xs) || covered(&xs, &ms);
+        self.cx.diags.truncate(mark);
+        ok
+    }
+
+    /// The fields of an object type or a fields-only view of an interface value, with their
+    /// types at `t`'s arguments and whether each is optional. An interface with methods has
+    /// members no object type of fields gives: `None` then, unless `t` is only read from.
+    fn own_fields(&mut self, t: TyId) -> Option<Vec<(String, TyId, bool)>> {
+        match self.cx.ty.kind(t).clone() {
+            TyKind::Adt(d, args) => {
+                let fields = self.cx.adt(d)?.fields.clone();
+                Some(
+                    fields
+                        .iter()
+                        .map(|f| (f.name.clone(), self.cx.subst(f.ty, &args), f.optional))
+                        .collect(),
+                )
+            }
+            TyKind::Dyn(id, args) => {
+                let fields = self.cx.iface(id)?.fields.clone();
+                let mut out: Vec<(String, TyId, bool)> = fields
+                    .iter()
+                    .map(|f| (f.name.clone(), self.cx.subst(f.ty, &args), f.optional))
+                    .collect();
+                // A method is a member `m` would have to give too (as a required one).
+                let methods = self.cx.iface(id)?.methods.clone();
+                out.extend(
+                    methods
+                        .iter()
+                        .map(|f| (f.name.clone(), self.cx.ty.error, false)),
+                );
+                Some(out)
+            }
+            _ => None,
+        }
+    }
+
+    /// Does a value of `a` convert to `b`, or one of `b` to `a`?
+    fn comparable(&mut self, a: TyId, b: TyId, span: Span) -> bool {
+        if a == b {
+            return true;
+        }
+        if self.cx.ty.has_error(a) || self.cx.ty.has_error(b) {
+            return false;
+        }
+        let probe = |s: &mut Self, from: TyId, to: TyId| {
+            let mut d = s.error_expr(span);
+            d.ty = from;
+            s.try_coerce(d, to).is_ok()
+        };
+        probe(self, a, b) || probe(self, b, a)
+    }
+
+    /// Does a value of `t` have the field `name` of its own: an object type's or class's field,
+    /// or an interface's (not a method or getter, which a subclass may implement otherwise)?
+    fn declares_field(&mut self, t: TyId, name: &str) -> bool {
+        match self.cx.ty.kind(t).clone() {
+            TyKind::Adt(..) => self.field_of(t, name).is_some(),
+            TyKind::Dyn(id, _) => self
+                .cx
+                .iface(id)
+                .is_some_and(|i| i.fields.iter().any(|f| f.name == name)),
+            _ => false,
+        }
     }
 
     /// Is `t` a class instance type (whose value may be of a subclass with more members)?

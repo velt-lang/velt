@@ -1,0 +1,8 @@
+// `(x as M).f` where `M` requires a field `x` lacks and `x` has fields `M` lacks stays a cast
+// error, as in tsc (TS2352: neither type sufficiently overlaps with the other) (#1185).
+interface Ctx {
+  name: string;
+  n: number;
+}
+const c: Ctx = { name: "c", n: 2 };
+console.log((c as { n: number; extra: string }).n);
