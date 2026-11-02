@@ -123,6 +123,8 @@ impl FnLower<'_, '_> {
     }
 
     /// Emit a call terminator and continue in a fresh block (`Unreachable` for noreturn callees).
+    /// A call of a math operation's runtime function is the operation as a statement instead
+    /// (`Rvalue::Intrinsic`, vir.rs invariant 12; the extern stays declared).
     pub(super) fn call(
         &mut self,
         callee: vir::Callee,
@@ -132,6 +134,13 @@ impl FnLower<'_, '_> {
     ) {
         if self.dead() {
             return;
+        }
+        if let (vir::Callee::Extern(id), Some(d)) = (&callee, &dest) {
+            let ext = &self.cx.externs[id.0 as usize];
+            if let Some(op) = crate::math::MathOp::of_extern(ext) {
+                let op = vir::Intrinsic::Math(op);
+                return self.assign(d.clone(), Rvalue::Intrinsic(op, args));
+            }
         }
         // A function value called in read mode may write what sema cannot see (boxing/locks.rs).
         if self.mode == super::LkMode::Read && matches!(callee, vir::Callee::Ptr { .. }) {
