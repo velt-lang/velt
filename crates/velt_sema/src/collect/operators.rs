@@ -11,6 +11,9 @@
 //! Every one is an instance method (but the binary static form), synchronous, with plain
 //! parameters. A `+` method taking a `string` can never run (`+` with a string operand is
 //! concatenation), so it is an error too.
+//!
+//! A type with operator methods implements their `velt/ops` interfaces without an `implements`
+//! clause ([`impls`]), so generic code bounded by them uses the operators.
 
 use velt_common::Diagnostic;
 use velt_syntax::ast::BinaryOp;
@@ -24,6 +27,8 @@ use velt_syntax::operators::{op_method, OpMethod, INDEX, SET_INDEX};
 struct Owner {
     /// The declaring type (the `extend` block's target).
     ty: TyId,
+    /// The number of its type parameters (the class's or the block's).
+    generics: u32,
     methods: Vec<(String, MethodRef)>,
     /// An `extend` block, which user code may not write for a type with built-in operators.
     extend: bool,
@@ -35,6 +40,7 @@ pub(super) fn check(cx: &mut Ctx) {
     for o in &owners {
         check_owner(cx, o);
     }
+    impls(cx, &owners);
 }
 
 /// Every class, struct and `extend` block that declares operator methods.
@@ -49,6 +55,7 @@ fn owners(cx: &mut Ctx) -> Vec<Owner> {
         if !ms.is_empty() {
             owners.push(Owner {
                 ty: super::self_type(cx, d, n),
+                generics: n as u32,
                 methods: ms,
                 extend: false,
             });
@@ -59,6 +66,7 @@ fn owners(cx: &mut Ctx) -> Vec<Owner> {
         if !ms.is_empty() {
             owners.push(Owner {
                 ty: x.target,
+                generics: x.generics.len() as u32,
                 methods: ms,
                 extend: true,
             });
@@ -297,4 +305,140 @@ fn index_pair(cx: &mut Ctx, o: &Owner) {
             "it takes a `{v}`: `a[i] op= v` reads the element with `{INDEX}` and writes it back with `{SET_INDEX}`"
         )),
     );
+}
+
+/// The `velt/ops` interface named `name`, if the module is loaded.
+fn ops_iface(cx: &Ctx, name: &str) -> Option<DefId> {
+    let module = velt_common::std_item!(ops_operators, "");
+    match cx.std_def(&format!("{module}{name}"))? {
+        crate::ctx::Item::Def(d) if cx.iface(d).is_some() => Some(d),
+        _ => None,
+    }
+}
+
+/// The `velt/ops` interface and its arguments that operator method `m` (named `name`)
+/// implements: `Add<R, O>` for `[Symbol.add](other: R): O`, `Neg<O>`, `AddAssign<R>`,
+/// `Index<K, V>` and `SetIndex<K, V>` (one index).
+fn implemented(cx: &Ctx, name: &str, m: &MethodRef) -> Option<(&'static str, Vec<TyId>)> {
+    let f = cx.fn_info(m.def);
+    let p = |i: usize| f.params.get(i).map(|p| p.ty);
+    let iface = |key: &str| -> Option<&'static str> {
+        let k = key.strip_prefix("[Symbol.")?.strip_suffix(']')?;
+        IFACES.iter().find(|(kk, _)| *kk == k).map(|(_, i)| *i)
+    };
+    let name_of = iface(name)?;
+    let args = match op_method(name)? {
+        OpMethod::Binary(_) if f.params.len() == 1 => vec![p(0)?, f.ret],
+        OpMethod::Unary(_) if f.params.is_empty() => vec![f.ret],
+        OpMethod::Assign(_) if f.params.len() == 1 => vec![p(0)?],
+        OpMethod::Index if f.params.len() == 1 => vec![p(0)?, f.ret],
+        OpMethod::SetIndex if f.params.len() == 2 => vec![p(0)?, p(1)?],
+        _ => return None,
+    };
+    Some((name_of, args))
+}
+
+/// The interface of each operator key.
+const IFACES: [(&str, &str); 28] = [
+    ("add", "Add"),
+    ("sub", "Sub"),
+    ("mul", "Mul"),
+    ("div", "Div"),
+    ("rem", "Rem"),
+    ("pow", "Pow"),
+    ("bitAnd", "BitAnd"),
+    ("bitOr", "BitOr"),
+    ("bitXor", "BitXor"),
+    ("shl", "Shl"),
+    ("shr", "Shr"),
+    ("ushr", "UShr"),
+    ("neg", "Neg"),
+    ("bitNot", "BitNot"),
+    ("addAssign", "AddAssign"),
+    ("subAssign", "SubAssign"),
+    ("mulAssign", "MulAssign"),
+    ("divAssign", "DivAssign"),
+    ("remAssign", "RemAssign"),
+    ("powAssign", "PowAssign"),
+    ("bitAndAssign", "BitAndAssign"),
+    ("bitOrAssign", "BitOrAssign"),
+    ("bitXorAssign", "BitXorAssign"),
+    ("shlAssign", "ShlAssign"),
+    ("shrAssign", "ShrAssign"),
+    ("ushrAssign", "UShrAssign"),
+    ("index", "Index"),
+    ("setIndex", "SetIndex"),
+];
+
+/// A type with an operator method implements its `velt/ops` interface without an `implements`
+/// clause (as `compareTo` makes a type `Comparable`), so generic code bounded by it uses the
+/// operator: an entry in `Program::impls` per method (per overload signature), and
+/// `Arithmetic<T>` where `T` has `+`, `-`, `*`, `/` and unary `-` on itself. Nothing when the
+/// program does not load `velt/ops`.
+fn impls(cx: &mut Ctx, owners: &[Owner]) {
+    if ops_iface(cx, "Add").is_none() {
+        return;
+    }
+    for o in owners {
+        let mut own: Vec<(&str, DefId, Vec<TyId>, DefId)> = vec![];
+        for (name, m) in o.methods.iter().filter(|(_, m)| !m.is_static) {
+            let Some((iname, args)) = implemented(cx, name, m) else {
+                continue;
+            };
+            let Some(iface) = ops_iface(cx, iname) else {
+                continue;
+            };
+            own.push((name, iface, args.clone(), m.def));
+            push_impl(cx, o, iface, args, vec![m.def]);
+        }
+        arithmetic(cx, o, &own);
+    }
+}
+
+/// `ImplDef` of `iface<args>` for `o`'s type with `methods`, unless it has one already.
+fn push_impl(cx: &mut Ctx, o: &Owner, iface: DefId, args: Vec<TyId>, methods: Vec<DefId>) {
+    let taken = cx
+        .impls
+        .iter()
+        .any(|x| x.iface == iface && x.ty == o.ty && x.iface_args == args);
+    if taken {
+        return;
+    }
+    // Called through `Callee::ParamMethod`: the interface's borrow ABI.
+    for &m in &methods {
+        cx.fn_info_mut(m).fixed_modes = true;
+    }
+    cx.impls.push(crate::hir::ImplDef {
+        ty: o.ty,
+        generics: o.generics,
+        iface,
+        iface_args: args,
+        methods,
+    });
+}
+
+/// `Arithmetic<T>` for `o`'s type `T` when its own operator methods (`own`: key, interface,
+/// args, method) give `Add<T, T>`, `Sub<T, T>`, `Mul<T, T>`, `Div<T, T>` and `Neg<T>`: the methods
+/// in the interface's slot order.
+fn arithmetic(cx: &mut Ctx, o: &Owner, own: &[(&str, DefId, Vec<TyId>, DefId)]) {
+    let Some(arith) = ops_iface(cx, "Arithmetic") else {
+        return;
+    };
+    let t = o.ty;
+    let slots: Vec<String> = match cx.iface(arith) {
+        Some(i) => i.methods.iter().map(|m| m.name.clone()).collect(),
+        None => return,
+    };
+    let mut methods = vec![];
+    for key in &slots {
+        let found = own.iter().find(|(name, iface, args, _)| {
+            let unary = cx.iface(*iface).is_some_and(|i| i.name == "Neg");
+            name == key && args.iter().all(|a| *a == t) && (unary || args.len() == 2)
+        });
+        match found {
+            Some((.., m)) => methods.push(*m),
+            None => return,
+        }
+    }
+    push_impl(cx, o, arith, vec![t], methods);
 }

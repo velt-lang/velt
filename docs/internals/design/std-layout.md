@@ -116,6 +116,7 @@ have their own docs page.
 | `velt/net/http/hpack` | HPACK (RFC 7541) and HTTP/2 frames, for the client and for servers outside std |
 | `velt/net/websocket` | the WebSocket client, and a `WebSocket` over an upgraded stream for servers (websocket) |
 | `velt/net/url` | `URL`, `URLSearchParams`, `encodeURIComponent` … (url) |
+| `velt/ops` | the interfaces of the operator methods for generic code, and the number types' operator methods (operators, signed, unsigned, floats) |
 | `velt/os` | os |
 | `velt/package` | the manifest types (package) |
 | `velt/path` | path |

@@ -1,0 +1,81 @@
+// Operators in generic code (#2050): `velt/ops`' interfaces bound a type parameter, a type
+// with the operator method implements them without an `implements` clause, and the number
+// types and `string` have them once `velt/ops` is imported.
+
+import type { Add, Arithmetic, Index, Mul, MulAssign } from "velt/ops";
+
+class Complex {
+  constructor(public re: f64, public im: f64) {}
+  [Symbol.add](o: Complex): Complex { return new Complex(this.re + o.re, this.im + o.im); }
+  [Symbol.sub](o: Complex): Complex { return new Complex(this.re - o.re, this.im - o.im); }
+  [Symbol.mul](o: Complex): Complex {
+    return new Complex(this.re * o.re - this.im * o.im, this.re * o.im + this.im * o.re);
+  }
+  [Symbol.div](o: Complex): Complex {
+    const d = o.re * o.re + o.im * o.im;
+    return new Complex((this.re * o.re + this.im * o.im) / d, (this.im * o.re - this.re * o.im) / d);
+  }
+  [Symbol.neg](): Complex { return new Complex(-this.re, -this.im); }
+  toString(): string { return `${this.re}${this.im < 0 ? "-" : "+"}${Math.abs(this.im)}i`; }
+}
+
+// A matrix that scales in place: `MulAssign<f64>`.
+class Scaled {
+  constructor(public v: f64[]) {}
+  [Symbol.mulAssign](k: f64): void {
+    for (let i = 0; i < this.v.length; i++) {
+      this.v[i] *= k;
+    }
+  }
+}
+
+class Row {
+  [Symbol.index](i: usize): f64 { return Number(i) + 0.5; }
+}
+
+function dot<T extends Arithmetic<T>>(a: T[], b: T[], zero: T): T {
+  let s = zero;
+  for (let i = 0; i < a.length; i++) {
+    s += a[i] * b[i];
+  }
+  return s;
+}
+
+function sum<T extends Add<T>>(xs: T[], zero: T): T {
+  let s = zero;
+  for (const x of xs) {
+    s = s + x;
+  }
+  return s;
+}
+
+function negated<T extends Arithmetic<T>>(xs: T[]): T[] {
+  return xs.map((x) => -x);
+}
+
+function scaleAll<T extends MulAssign<f64>>(xs: T[], k: f64) {
+  for (let i = 0; i < xs.length; i++) {
+    xs[i] *= k;
+  }
+}
+
+function square<T extends Mul<T>>(x: T): T {
+  return x * x;
+}
+
+function firstTwo<C extends Index<usize, f64>>(c: C): f64 {
+  return c[0] + c[1];
+}
+
+console.log(dot([1.5, 2], [3, 4], 0));
+console.log(dot<f32>([1.5, 2], [3, 4], 0));
+console.log(dot<i32>([2147483647, 1], [1, 1], 0));
+console.log(sum<u8>([200, 100], 0));
+console.log(dot([new Complex(1, 1), new Complex(0, 2)], [new Complex(2, -1), new Complex(1, 0)], new Complex(0, 0)).toString());
+console.log(sum(["a", "b", "c"], ""), sum([1, 2, 3], 0));
+console.log(negated([1, -2.5]), negated([new Complex(1, -1)])[0].toString());
+const ms = [new Scaled([1, 2]), new Scaled([3])];
+scaleAll(ms, 10);
+console.log(ms[0].v, ms[1].v);
+console.log(square(7), square(new Complex(0, 1)).toString());
+console.log(firstTwo(new Row()));

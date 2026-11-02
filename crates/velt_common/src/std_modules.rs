@@ -141,6 +141,8 @@ table! {
     /// The default JSX provider (`jsxImportSource`).
     jsx => "jsx",
     net_http_fetch_response => "net/http/fetch/response",
+    /// `velt/ops`: the interfaces of the operator methods (sema `collect/operators.rs`).
+    ops_operators => "ops/operators",
     process_stdout => "process/stdout",
     simd => "simd",
     simd_clmul => "simd/clmul",
