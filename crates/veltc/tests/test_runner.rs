@@ -643,4 +643,11 @@ fn concurrent_runs_never_start_a_program_being_linked() {
     }
     // No file was built alone because its shared harness failed to link.
     assert_eq!(built(dir), ["c_test", "harness", "runner"]);
+    // Every link renamed its temporary file into place.
+    let left: Vec<_> = std::fs::read_dir(dir.join("target/velt/test"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| n.contains(".link-") && !n.ends_with(".link-stamp"))
+        .collect();
+    assert!(left.is_empty(), "{left:?}");
 }
