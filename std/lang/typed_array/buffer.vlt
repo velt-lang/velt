@@ -9,27 +9,24 @@
 
 export { ArrayBuffer, inspectBuffer, toIndex, toInteger } from "velt/lang/typed_array/core";
 
-// Vector lanes (rt_abi.md "SIMD", emitted inline): the bit patterns of floats, and loads and
-// stores of 2, 4 and 8 bytes as one 16-byte access while 16 bytes are left in the buffer (one
-// bounds check and one load, where reading byte by byte checks and loads each byte).
+// IEEE 754 bit casts (rt_abi.md "Math operations", emitted inline: one register move).
+declare function velt_math_f32_bits(x: f32): u32;
+declare function velt_math_bits_f32(b: u32): f32;
+declare function velt_rt_math_f64_bits(x: f64): u64;
+declare function velt_rt_math_bits_f64(b: u64): f64;
+// Vector lanes (rt_abi.md "SIMD", emitted inline): loads and stores of 2, 4 and 8 bytes as one
+// 16-byte access while 16 bytes are left in the buffer (one bounds check and one load, where
+// reading byte by byte checks and loads each byte).
 declare function velt_simd_u32x4_splat(x: u32): u32x4;
-declare function velt_simd_u32x4_as_f32x4(v: u32x4): f32x4;
 declare function velt_simd_f32x4_splat(x: f32): f32x4;
-declare function velt_simd_f32x4_as_u32x4(v: f32x4): u32x4;
 declare function velt_simd_u32x4_lane(v: u32x4, index: u64): u32;
 declare function velt_simd_f32x4_lane(v: f32x4, index: u64): f32;
-declare function velt_simd_u64x2_splat(x: u64): u64x2;
-declare function velt_simd_u64x2_as_f64x2(v: u64x2): f64x2;
 declare function velt_simd_f64x2_splat(x: f64): f64x2;
-declare function velt_simd_f64x2_as_u64x2(v: f64x2): u64x2;
-declare function velt_simd_u64x2_lane(v: u64x2, index: u64): u64;
 declare function velt_simd_f64x2_lane(v: f64x2, index: u64): f64;
 declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
 declare function velt_simd_u8x16_load_partial(from: u8[], at: u64, count: u64): u8x16;
-declare function velt_simd_u8x16_as_u64x2(v: u8x16): u64x2;
 declare function velt_simd_u8x16_store_partial(v: u8x16, to: u8[], at: u64, count: u64);
 declare function velt_simd_u16x8_splat(x: u16): u16x8;
-declare function velt_simd_u64x2_as_u8x16(v: u64x2): u8x16;
 declare function velt_simd_f64x2_as_u8x16(v: f64x2): u8x16;
 declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
 declare function velt_simd_u8x16_as_u16x8(v: u8x16): u16x8;
@@ -94,22 +91,22 @@ export function toUint8Clamp(v: number): u8 {
 
 /** The `f32` with bit pattern `bits`. */
 export function f32FromBits(bits: u32): f32 {
-  return velt_simd_f32x4_lane(velt_simd_u32x4_as_f32x4(velt_simd_u32x4_splat(bits)), 0);
+  return velt_math_bits_f32(bits);
 }
 
 /** The bit pattern of `x`. */
 export function f32Bits(x: f32): u32 {
-  return velt_simd_u32x4_lane(velt_simd_f32x4_as_u32x4(velt_simd_f32x4_splat(x)), 0);
+  return velt_math_f32_bits(x);
 }
 
 /** The `f64` with bit pattern `bits`. */
 export function f64FromBits(bits: u64): f64 {
-  return velt_simd_f64x2_lane(velt_simd_u64x2_as_f64x2(velt_simd_u64x2_splat(bits)), 0);
+  return velt_rt_math_bits_f64(bits);
 }
 
 /** The bit pattern of `x`. */
 export function f64Bits(x: f64): u64 {
-  return velt_simd_u64x2_lane(velt_simd_f64x2_as_u64x2(velt_simd_f64x2_splat(x)), 0);
+  return velt_rt_math_f64_bits(x);
 }
 
 // Loads and stores at byte offset `o` (in range: the caller checked). A load of 2 or 4 bytes

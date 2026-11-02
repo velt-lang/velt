@@ -289,3 +289,46 @@ fn intrinsics_on_constants_fold_through_locals() {
         Stmt::Assign(_, Rvalue::Use(Operand::Const(Const::Int(31), Ty::I32)))
     )));
 }
+
+#[test]
+fn f32_bit_casts_fold() {
+    // b = math.f32_bits(-6.25f32); x = math.bits_f32(0x3f800000); return x
+    let mut pb = ProgramBuilder::new();
+    pb.ext("velt_math_f32_bits", &[Ty::F32], Ty::U32, false);
+    pb.ext("velt_math_bits_f32", &[Ty::U32], Ty::F32, false);
+    let mut fb = FuncBuilder::export("f", &[], Ty::F32);
+    let (b, x) = (fb.local(Ty::U32), fb.local(Ty::F32));
+    let blk = fb.block();
+    let bits = Intrinsic::Math(MathOp::F32Bits);
+    let from = Intrinsic::Math(MathOp::BitsF32);
+    let f32c = Operand::Const(Const::Float(-6.25), Ty::F32);
+    fb.assign(blk, b, Rvalue::Intrinsic(bits, vec![f32c]));
+    fb.assign(
+        blk,
+        x,
+        Rvalue::Intrinsic(from, vec![int(0x3f80_0000, Ty::U32)]),
+    );
+    // A NaN's bits are the instruction's: not folded.
+    let nan = fb.local(Ty::F32);
+    let nan_bits = vec![int(0x7fc0_0001, Ty::U32)];
+    fb.assign(blk, nan, Rvalue::Intrinsic(from, nan_bits));
+    fb.ret(blk, copy_local(x));
+    pb.add(fb.finish());
+    let mut program = pb.finish();
+    let sigs = crate::callgraph::signatures(&program);
+    run(&super::Program::of(&sigs), &mut program.funcs[0]);
+    assert_valid(&program);
+    let f = &program.funcs[0];
+    assert_eq!(*returned(f, 0), Operand::Const(Const::Float(1.0), Ty::F32));
+    assert!(f.blocks[0].stmts.iter().any(|s| matches!(
+        s,
+        Stmt::Assign(
+            _,
+            Rvalue::Use(Operand::Const(Const::Int(0xc0c8_0000), Ty::U32))
+        )
+    )));
+    assert!(f.blocks[0].stmts.iter().any(|s| matches!(
+        s,
+        Stmt::Assign(_, Rvalue::Intrinsic(Intrinsic::Math(MathOp::BitsF32), _))
+    )));
+}

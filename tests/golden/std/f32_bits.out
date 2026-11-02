@@ -1,0 +1,23 @@
+0 0 true true
+-0 80000000 true true
+1 3f800000 true true
+-1.5 bfc00000 true true
+0.10000000149011612 3dcccccd true true
+1.401298464324817e-45 1 true true
+3.4028234663852886e+38 7f7fffff true true
+Infinity ff800000
+true 7fc00000
+7f800001 true true
+7fa00000 true true
+7fc00123 true true
+ffc00000 true true
+ffffffff true true
+7fffffff true true
+7fffff true true
+800000 true true
+80000001 true true
+80000000 true true
+ff800001 true true
+1 129 480000
+3dcccccd c0000000
+3.1415927410125732

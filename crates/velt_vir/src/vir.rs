@@ -54,10 +54,11 @@
 //! 12. Intrinsics (additive, #1981): `Rvalue::Intrinsic(op, operands)` is a pure operation the
 //!     compiler knows, with the operand and result types of `Intrinsic::signature`; for
 //!     `Intrinsic::Math(op)` the program declares `op`'s runtime function (`velt_vir::math`),
-//!     which backends call where they have no inline code for it (both checked by `verify`).
-//!     It reads only its operands and never touches memory, panics or unwinds. A math
-//!     operation is never a direct call of its runtime function (checked by `verify`; an
-//!     indirect call through its address, a function value, is an ordinary call).
+//!     which backends call where they have no inline code for it (both checked by `verify`);
+//!     a `velt_math_*` operation (`MathOp::has_runtime_function` false) has none, and every
+//!     backend emits it inline. It reads only its operands and never touches memory, panics or
+//!     unwinds. A math operation is never a direct call of its runtime function (checked by
+//!     `verify`; an indirect call through its address, a function value, is an ordinary call).
 
 use std::fmt;
 
