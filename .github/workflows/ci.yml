@@ -241,9 +241,10 @@ jobs:
       VELT_ROBUSTNESS_FILES: ${{ needs.queue-plan.outputs.robustness_files }}
       # The WebAssembly goldens run in shards of their own (`queue-golden`).
       VELT_WASM_GOLDENS: skip
-    # The slowest job takes about 25 minutes on a cold cache: a runner that hangs fails the queue
-    # entry within the hour instead of holding the queue for two.
-    timeout-minutes: 45
+    # The slowest job (Windows) takes about 50 minutes on a slow runner (2026-11-02: two queue
+    # entries cancelled at 45 minutes with every test passing so far): a runner that hangs still
+    # fails the queue entry well within two hours.
+    timeout-minutes: 75
     steps:
       # With its parent: std-lint compares the allow lists with the change's base (`HEAD^1`).
       - uses: actions/checkout@v4
