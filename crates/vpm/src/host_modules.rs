@@ -32,6 +32,10 @@ pub(crate) fn check_name(name: &str) -> Result<(), String> {
             name.escape_default()
         ));
     }
+    // The glue makes an object of the modules by name, where `__proto__` is no key.
+    if name == "__proto__" {
+        return Err("`__proto__` cannot name a host module: choose another name".into());
+    }
     if name == "velt" || name.starts_with(RUNTIME_PREFIX) {
         return Err(format!(
             "`{name}` is the runtime glue's own host module: a package cannot provide it"
@@ -79,6 +83,7 @@ mod tests {
             ("a\tb", "control characters"),
             ("velt", "runtime glue's own"),
             ("velt:worker", "runtime glue's own"),
+            ("__proto__", "`__proto__` cannot name a host module"),
         ] {
             let err = check_name(bad).unwrap_err();
             assert!(err.contains(why), "{bad:?}: {err}");

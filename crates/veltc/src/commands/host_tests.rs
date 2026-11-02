@@ -150,6 +150,7 @@ fn the_build_directory() {
     assert_eq!(read("entry.mjs"), "// the platform's entry\n");
     assert_eq!(read("edge.toml"), "name = \"my-app\"\n");
     assert!(read(MARKER).contains("velt build --host host-edge"));
+    assert!(read(MARKER).ends_with("entry entry.mjs\nscaffold edge.toml\n"));
     // An edited scaffolded file is kept; the entry is written again.
     std::fs::write(dir.join("edge.toml"), "name = \"mine\"\n").unwrap();
     std::fs::write(dir.join("entry.mjs"), "stale\n").unwrap();
@@ -181,10 +182,68 @@ fn a_directory_of_the_user_s_is_refused() {
         err.contains("holds files a `--host` build did not write (`entry.mjs`…)"),
         "{err}"
     );
+    // A marker lets the build's own files and the entries it lists stay, nothing else.
     std::fs::write(dir.join(MARKER), "").unwrap();
+    assert!(module_path(Some(&dir), tmp.path(), &host).is_err());
+    std::fs::write(dir.join(MARKER), "# a host build's\nentry entry.mjs\n").unwrap();
+    std::fs::write(dir.join("program.wasm.link-stamp"), "").unwrap();
     assert!(module_path(Some(&dir), tmp.path(), &host).is_ok());
 }
 
+/// A directory another host's build wrote keeps the user's files that came after it: a second
+/// host whose entry has a user file's name is refused.
+#[test]
+fn a_host_switch_keeps_the_user_s_files() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut g = graph(tmp.path());
+    let two = tmp.path().join("host-two");
+    std::fs::create_dir_all(two.join("src")).unwrap();
+    std::fs::write(two.join("src/README.mjs"), "// host-two's entry\n").unwrap();
+    g.add("host-two", &two, BTreeMap::new()).host = Some(HostConfig {
+        target: "wasm32-unknown-unknown".into(),
+        condition: "two".into(),
+        entry: "./src/README.mjs".into(),
+        scaffold: BTreeMap::new(),
+    });
+    let edge = resolve("host-edge", Some(&g), None, "app").unwrap();
+    let dir = tmp.path().join("out");
+    let wasm = module_path(Some(&dir), tmp.path(), &edge)
+        .unwrap()
+        .with_extension("wasm");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(&wasm, module(&[])).unwrap();
+    write(&wasm, &edge, Some(&g)).unwrap();
+    assert_eq!(
+        recorded(&dir),
+        (vec!["entry.mjs".to_string()], vec!["edge.toml".to_string()])
+    );
+    // host-two may build here (host-edge's files and its scaffolded edge.toml stay), and its
+    // entry is recorded too.
+    let two = resolve("host-two", Some(&g), None, "app").unwrap();
+    assert!(module_path(Some(&dir), tmp.path(), &two).is_ok());
+    write(&wasm, &two, Some(&g)).unwrap();
+    assert_eq!(recorded(&dir).0, ["entry.mjs", "README.mjs"]);
+    // A user's file named as host-two's entry, added after a host-edge build, stays the user's.
+    std::fs::remove_file(dir.join("README.mjs")).unwrap();
+    write(&wasm, &edge, Some(&g)).unwrap();
+    std::fs::write(dir.join(MARKER), "entry entry.mjs\nscaffold edge.toml\n").unwrap();
+    std::fs::write(dir.join("README.mjs"), "mine\n").unwrap();
+    let err = module_path(Some(&dir), tmp.path(), &two).unwrap_err();
+    assert!(err.contains("(`README.mjs`…)"), "{err}");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("README.mjs")).unwrap(),
+        "mine\n"
+    );
+    // An entry never replaces a scaffolded file (the user may have edited it).
+    std::fs::remove_file(dir.join("README.mjs")).unwrap();
+    std::fs::write(dir.join(MARKER), "entry entry.mjs\nscaffold README.mjs\n").unwrap();
+    std::fs::write(dir.join("README.mjs"), "edited config\n").unwrap();
+    let err = module_path(Some(&dir), tmp.path(), &two).unwrap_err();
+    assert!(err.contains("(`README.mjs`…)"), "{err}");
+}
+
+/// vpm rejects the name `__proto__` (`host_modules::check_name`); the map's computed keys would
+/// keep it a key all the same.
 #[test]
 fn a_module_named_proto_is_a_key() {
     let map = modules_map(&[("__proto__".into(), "hosts/p/p.mjs".into())]);

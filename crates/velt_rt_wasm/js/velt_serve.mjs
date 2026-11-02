@@ -101,7 +101,8 @@ class Program {
     try {
       const imports = { "velt:worker": this.workerImports() };
       for (const [name, make] of Object.entries(this.options.modules ?? {})) {
-        imports[name] = make(host);
+        // Defined, not assigned: no module name reaches a setter (`__proto__`).
+        Object.defineProperty(imports, name, { value: make(host), enumerable: true });
       }
       const rt = await loadVelt(this.module, {
         write: this.options.write,

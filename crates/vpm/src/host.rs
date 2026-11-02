@@ -18,10 +18,15 @@
 use std::collections::BTreeMap;
 use std::path::{Component, Path};
 
-/// The files the build itself writes into a host build's directory: neither the entry nor a
-/// scaffolded file may take one of these names.
+/// The files the build itself writes into a host build's directory, its by-products (object
+/// files, stamps) included: neither the entry nor a scaffolded file (nor a folder a scaffolded
+/// file goes in) may take one of these names.
 pub const BUILD_FILES: &[&str] = &[
     "program.wasm",
+    "program.o",
+    "program.entry.o",
+    "program.wasm.build-stamp",
+    "program.wasm.link-stamp",
     "velt_web.mjs",
     "velt_serve.mjs",
     "velt_modules.mjs",
@@ -29,8 +34,10 @@ pub const BUILD_FILES: &[&str] = &[
     MARKER,
 ];
 
-/// The file marking a directory as a host build's own (it is overwritten only when present or
-/// when the directory holds nothing but scaffolded files).
+/// The file marking a directory as a host build's own, listing the entries host builds wrote
+/// there. A build writes only into a directory that is new or empty, holds nothing but its host's
+/// scaffolded files, or has this marker and nothing beyond the build's files, the entries it
+/// lists and the host's scaffolded files.
 pub const MARKER: &str = ".velt-host";
 
 /// What `host` of a host package's `package.vlt` says.
@@ -114,12 +121,15 @@ pub(crate) fn check_scaffold(path: &str, file: &str, entry: &str) -> Result<(), 
                 .all(|c| matches!(c, Component::Normal(_)))
     };
     let first = path.split('/').next().unwrap_or(path);
+    let entry_name = entry.rsplit('/').next().unwrap_or(entry);
     if !normal(path) {
         return Err(format!(
             "`{path}`: a scaffolded file is a `/`-separated path inside the build's directory"
         ));
     }
-    if BUILD_FILES.contains(&first) || path == entry.rsplit('/').next().unwrap_or(entry) {
+    // The first component too: `worker.mjs/x` would let the build's directory check pass a
+    // user's `worker.mjs`, which the entry then replaces.
+    if BUILD_FILES.contains(&first) || first == entry_name {
         return Err(format!(
             "`{path}` is a file the build writes itself: scaffold another one"
         ));
@@ -177,6 +187,13 @@ mod tests {
             ("program.wasm", "./src/x", "the build writes itself"),
             ("hosts/x.mjs", "./src/x", "the build writes itself"),
             ("w.mjs", "./src/x", "the build writes itself"),
+            ("w.mjs/x", "./src/x", "the build writes itself"),
+            ("program.o/x", "./src/x", "the build writes itself"),
+            (
+                "program.wasm.link-stamp",
+                "./src/x",
+                "the build writes itself",
+            ),
             ("app.toml", "./app.toml", "below `./src/`"),
             ("app.toml", "./src/../app.toml", "below `./src/`"),
         ] {

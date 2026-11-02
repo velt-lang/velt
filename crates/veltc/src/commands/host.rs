@@ -93,27 +93,37 @@ pub fn module_path(
     Ok(dir.join(MODULE_STEM))
 }
 
-/// A host build writes into a directory that doesn't exist, is empty, holds nothing but files
-/// its host package scaffolds, or that an earlier host build wrote (its [`MARKER`]): never over
-/// files of the user's.
+/// A host build writes into a directory that doesn't exist, is empty, or holds nothing but files
+/// its host package scaffolds and, when an earlier host build wrote it ([`MARKER`]), the build's
+/// own files and what the marker lists: never over files of the user's, whichever host the
+/// earlier build was for. The entry replaces only an entry an earlier build wrote, never a
+/// scaffolded file, which the user may have edited.
 fn check_dir(dir: &Path, config: &HostConfig) -> Result<(), String> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Ok(());
     };
-    if dir.join(MARKER).is_file() {
-        return Ok(());
-    }
+    let (written, scaffolds) = recorded(dir);
+    let marked = dir.join(MARKER).is_file();
     let scaffolded = |name: &str| {
         config
             .scaffold
             .keys()
             .any(|path| path.split('/').next() == Some(name))
     };
-    let foreign: Vec<String> = entries
+    let listed = |list: &[String], name: &str| list.iter().any(|r| r == name);
+    let owned = |name: &str| {
+        marked
+            && (BUILD_FILES.contains(&name) || listed(&written, name) || listed(&scaffolds, name))
+    };
+    let entry = config.entry_name();
+    let mut foreign: Vec<String> = entries
         .flatten()
         .map(|e| e.file_name().to_string_lossy().into_owned())
-        .filter(|name| !scaffolded(name))
+        .filter(|name| !scaffolded(name) && !owned(name))
         .collect();
+    if dir.join(entry).exists() && !listed(&written, entry) && !foreign.iter().any(|f| f == entry) {
+        foreign.insert(0, entry.to_string());
+    }
     match foreign.first() {
         None => Ok(()),
         Some(first) => Err(format!(
@@ -176,15 +186,41 @@ pub fn write(
         create_parent(&to)?;
         write_file(&to, &text.replace(NAME_PLACEHOLDER, &name))?;
     }
-    write_file(
-        &dir.join(MARKER),
-        &format!(
-            "Written by `velt build --host {}`: later builds write their files here again \
-             ({}, the entry), and keep the configuration files.\n",
-            host.package,
-            BUILD_FILES.join(", ")
-        ),
-    )
+    let (mut written, mut scaffolds) = recorded(dir);
+    let add = |list: &mut Vec<String>, name: &str| {
+        if !list.iter().any(|e| e == name) {
+            list.push(name.to_string());
+        }
+    };
+    add(&mut written, config.entry_name());
+    for path in config.scaffold.keys() {
+        add(&mut scaffolds, path.split('/').next().unwrap_or(path));
+    }
+    let mut marker = format!(
+        "# Written by `velt build --host {}`: later host builds write their files here again\n\
+         # ({}) and the entries listed, and keep the scaffolded configuration files.\n",
+        host.package,
+        BUILD_FILES.join(", ")
+    );
+    for (kind, list) in [("entry", &written), ("scaffold", &scaffolds)] {
+        for name in list {
+            marker.push_str(&format!("{kind} {name}\n"));
+        }
+    }
+    write_file(&dir.join(MARKER), &marker)
+}
+
+/// The entries and the scaffolded files (their first components) that host builds wrote into
+/// `dir`, as its [`MARKER`] lists them (`entry <name>`, `scaffold <name>`; none without one).
+fn recorded(dir: &Path) -> (Vec<String>, Vec<String>) {
+    let text = std::fs::read_to_string(dir.join(MARKER)).unwrap_or_default();
+    let of = |kind: &str| -> Vec<String> {
+        text.lines()
+            .filter_map(|l| l.strip_prefix(kind))
+            .map(str::to_string)
+            .collect()
+    };
+    (of("entry "), of("scaffold "))
 }
 
 /// The package providing host module `name`, and its file. The build checked that exactly one

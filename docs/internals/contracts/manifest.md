@@ -245,7 +245,7 @@ directory (`NpmResolver::resolve_in`) before Node's search.
 - `hostModules` (additive, #1736): the JavaScript of the host modules the package's `declare
   host("m")` functions import, `Record<string, string>` (`Manifest::host_modules`,
   `GraphPackage::host_modules`, `vpm::host_modules`). A key is a module name: not empty, no
-  control characters, not `velt` and not `velt:…` (the runtime glue's own). A value is one ES
+  control characters, not `__proto__`, not `velt` and not `velt:…` (the runtime glue's own). A value is one ES
   module, `./`-relative, `/`-separated, below `./src/` (an archive carries only `src/`), named
   `.mjs` or `.js`; its default export is a function that makes the module's functions
   ([workers.md](workers.md)). Used by `velt build --host <package>`, which copies the files of
@@ -258,8 +258,10 @@ directory (`NpmResolver::resolve_in`) before Node's search.
   checks it is one the JavaScript glue runs), `condition` (spelled as a condition, not a
   built-in one), `entry` (a `.mjs`/`.js` module below `./src/` whose file name is not one the
   build writes: `program.wasm`, `velt_web.mjs`, `velt_serve.mjs`, `velt_modules.mjs`, `hosts`,
-  `.velt-host`; `vpm::host::BUILD_FILES`), and `scaffold` (optional: a `/`-separated path inside
-  the build's directory, not one the build writes, → a file below `./src/`; `{{name}}` in it
+  `.velt-host`, and the by-products `program.o`, `program.entry.o`, `program.wasm.build-stamp`,
+  `program.wasm.link-stamp`; `vpm::host::BUILD_FILES`), and `scaffold` (optional: a
+  `/`-separated path inside the build's directory whose first component is neither one the build
+  writes nor the entry's name, → a file below `./src/`; `{{name}}` in it
   becomes the program's name). Missing `target`, `condition` or `entry`, or an unknown key, is
   an error. `to_vlt` writes it after `hostModules`; `velt manifest --json` prints it.
 - `entry` is a `/`-separated path inside the package (not empty, not absolute, no `..`).

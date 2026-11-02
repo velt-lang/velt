@@ -19,9 +19,12 @@ platform's services (packages/cloudflare, #1738).
   The host package is part of the build stamp's key.
 - Output: a directory, `-o <dir>`, else `<name>-<condition>/` in the build's default directory
   (`target/velt/` of the file's package; a package's name is without its `@scope/`). It must be
-  new, empty, hold only files the host package scaffolds, or hold `.velt-host` (an earlier host
-  build's); otherwise the build fails before compiling, so it never writes over the user's
-  files. It holds `program.wasm` (with the build's object and stamps), `velt_web.mjs` (the core
+  new, empty, or hold nothing but files the host package scaffolds and, when it has `.velt-host`
+  (an earlier host build's marker), the build's own files (`vpm::host::BUILD_FILES`, by-products
+  `program.o`, `program.entry.o` and the stamps included) and the entries and scaffolded files
+  the marker lists (`entry <name>`, `scaffold <name>`, one per line). The entry replaces only a
+  listed entry, never a scaffolded file. Otherwise the build fails before compiling, so it never
+  writes over the user's files, whichever host an earlier build was for. It holds `program.wasm` (with the build's object and stamps), `velt_web.mjs` (the core
   glue every browser build gets), `velt_serve.mjs` (the server core below), `velt_modules.mjs`
   (generated: `export const modules = { ["<module>"]: <its default export>, … }` with computed
   keys, so `__proto__` is a key), the host modules of packages under
