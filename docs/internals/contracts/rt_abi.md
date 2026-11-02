@@ -654,6 +654,15 @@ gets a buffer from `velt_host_alloc`, writes the bytes, and `velt_host_str_new` 
 copies and frees the buffer) or `velt_host_bytes_new` (it adopts the buffer) writes the value.
 velt_link exports the five from every browser module.
 
+std declares host functions of its own, whose module the glue provides itself, before (and
+overridable by) the embedder's `imports`: `velt:fetch` (std/net/http/fetch/client/transport/
+js_host.vlt), `fetch`'s transport on JS hosts over the host's `fetch` (`fetchHost` in
+velt_web.mjs, which a host such as the Workers glue can call with a `fetch` of its own). A call
+is a JS object (a `HostRef`) holding the request's `AbortController`, then its `Response`, the
+body's reader and the piece last read; its async functions fulfill with nothing and reject with
+an error whose `name` is the `IoError` code native `fetch` gives the failure (`AbortError` once
+the call was aborted).
+
 ## Views [additive, #1485]
 
 ```c

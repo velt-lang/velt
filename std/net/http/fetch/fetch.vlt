@@ -2,10 +2,12 @@
 // `fetch`, `Request`, `Response` and `Headers` need no import (std/prelude/global/fetch.vlt).
 //
 // `fetch` resolves once the response's status and headers have arrived; the body is received
-// when it is read. The client is Velt code on velt/net (std/fetch/client/): HTTP/1.1 with
-// keep-alive connections pooled per origin, redirects followed as the Fetch standard says,
-// bodies decoded by velt/compress, and an `AbortSignal` that stops the request where it is
-// waiting and closes its connection.
+// when it is read. The transport is a conditional import (`#http-transport`, std/imports.vlt).
+// Natively and under WASI it is Velt code on velt/net (std/net/http/fetch/client/): HTTP/1.1
+// with keep-alive connections pooled per origin, HTTP/2 over TLS, redirects followed as the Fetch
+// standard says, bodies decoded by velt/compress, and an `AbortSignal` that stops the request
+// where it is waiting and closes its connection. On JS hosts (`wasm32-unknown-unknown`) it is
+// the host's own `fetch` (client/transport/js.vlt), and the signal aborts that.
 
 import { IoError } from "velt/io/error";
 import { AbortError, AbortSignal } from "velt/task";
@@ -16,7 +18,8 @@ import { Headers } from "velt/net/http/fetch/headers";
 import { Request } from "velt/net/http/fetch/request";
 import { normalizeMethod, RequestInit, RequestRedirect } from "velt/net/http/fetch/request_init";
 import { Response } from "velt/net/http/fetch/response";
-import { ClientRequest, ERROR, FOLLOW, MANUAL, send } from "velt/net/http/fetch/client/send";
+import { ClientRequest, ERROR, FOLLOW, MANUAL } from "velt/net/http/fetch/client/client_request";
+import { send } from "#http-transport";
 
 export { BodyInit } from "velt/net/http/fetch/body";
 export { BodyStream } from "velt/net/http/fetch/body_stream";

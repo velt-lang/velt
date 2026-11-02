@@ -2,8 +2,8 @@
 // what a server handler returns (`serve`), or a response built with `new Response(body, init)`
 // / `Response.json(data)`.
 //
-// A fetched response holds the client's response (`Fetched`, std/net/http/fetch/client/fetched.vlt) whose
-// head has arrived; its body is received by the first `text()`, `json()`, `bytes()` or
+// A fetched response holds the transport's response (`Fetched` of `#http-transport`: client/fetched.vlt,
+// or client/transport/js_fetched.vlt on JS hosts) whose head has arrived; its body is received by the first `text()`, `json()`, `bytes()` or
 // `arrayBuffer()`, or chunk by chunk through `res.body` (a second read throws, as in JS). A
 // compressed body (`content-encoding: gzip`, `deflate`, `br`) arrives decoded. Dropping the
 // response closes the connection of a body nobody read. The status text and headers are made
@@ -27,7 +27,7 @@ import {
 import { BodyStream } from "velt/net/http/fetch/body_stream";
 import { Headers } from "velt/net/http/fetch/headers";
 import { ResponseInit } from "velt/net/http/fetch/response_init";
-import { Fetched } from "velt/net/http/fetch/client/fetched";
+import { Fetched } from "#http-transport";
 import { ResponseParts } from "velt/net/http/fetch/parts";
 import { INSPECT } from "velt/lang/hooks/keys";
 import { Remote } from "velt/net/http/fetch/response_remote";

@@ -7,7 +7,7 @@ import { utf8DecodeLossy, utf8Encode } from "velt/encoding";
 import { collect, impliedType } from "velt/net/http/fetch/body";
 import { BodyStream } from "velt/net/http/fetch/body_stream";
 import { Headers } from "velt/net/http/fetch/headers";
-import { Fetched } from "velt/net/http/fetch/client/fetched";
+import { Fetched } from "#http-transport";
 import { BodyKind, ResponseParts } from "velt/net/http/fetch/parts";
 import { tee } from "velt/net/http/fetch/tee";
 import { Response } from "velt/net/http/fetch/response";

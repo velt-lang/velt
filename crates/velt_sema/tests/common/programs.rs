@@ -86,27 +86,34 @@ impl Loader {
             specs.extend(runtime.clone());
             let dir = self.files[m].parent().unwrap().to_path_buf();
             for spec in specs {
-                let (canonical, file) = if let Some(rest) = spec.strip_prefix("velt/") {
-                    let file = std_dir.join(format!("{rest}.vlt"));
-                    // A folder module: `velt/fs` is `std/fs/index.vlt`.
-                    let file = if file.is_file() {
-                        file
-                    } else {
-                        std_dir.join(rest).join("index.vlt")
-                    };
-                    (format!("std/{rest}"), file)
-                } else {
-                    let file =
-                        normalize(&dir.join(format!("{}.vlt", spec.trim_start_matches("./"))));
-                    // A std file's relative import names a std module (`./number` in
-                    // std/lang/hooks/index.vlt is `std/lang/hooks/number`).
-                    let rel = match file.strip_prefix(normalize(&std_dir)) {
-                        Ok(in_std) => Path::new("std").join(in_std),
-                        Err(_) => file.strip_prefix(root_dir).unwrap_or(&file).to_path_buf(),
-                    };
-                    let rel = rel.with_extension("").to_string_lossy().replace('\\', "/");
-                    (rel, file)
+                // A std module's `#name`: the variant std/imports.vlt maps it to for every
+                // build (`default`), as the driver's loader picks it for a native target.
+                let target = match spec.strip_prefix('#') {
+                    Some(_) => std_default_variant(&std_dir, &spec).map(|p| format!("velt/{p}")),
+                    None => None,
                 };
+                let (canonical, file) =
+                    if let Some(rest) = target.as_deref().unwrap_or(&spec).strip_prefix("velt/") {
+                        let file = std_dir.join(format!("{rest}.vlt"));
+                        // A folder module: `velt/fs` is `std/fs/index.vlt`.
+                        let file = if file.is_file() {
+                            file
+                        } else {
+                            std_dir.join(rest).join("index.vlt")
+                        };
+                        (format!("std/{rest}"), file)
+                    } else {
+                        let file =
+                            normalize(&dir.join(format!("{}.vlt", spec.trim_start_matches("./"))));
+                        // A std file's relative import names a std module (`./number` in
+                        // std/lang/hooks/index.vlt is `std/lang/hooks/number`).
+                        let rel = match file.strip_prefix(normalize(&std_dir)) {
+                            Ok(in_std) => Path::new("std").join(in_std),
+                            Err(_) => file.strip_prefix(root_dir).unwrap_or(&file).to_path_buf(),
+                        };
+                        let rel = rel.with_extension("").to_string_lossy().replace('\\', "/");
+                        (rel, file)
+                    };
                 if !self.modules.iter().any(|x| x.path == canonical) {
                     // A missing module stays unresolved: sema reports the import.
                     let Ok(src) = std::fs::read_to_string(&file) else {
@@ -122,6 +129,22 @@ impl Loader {
             }
         }
     }
+}
+
+/// The `default` variant of std's conditional import `name` (`#http-transport`) as a path below
+/// std/ without `.vlt`, read from std/imports.vlt, whose entries are written
+/// `"#name": { …, default: "./path.vlt" }`.
+fn std_default_variant(std_dir: &Path, name: &str) -> Option<String> {
+    let src = std::fs::read_to_string(std_dir.join("imports.vlt")).ok()?;
+    let entry = &src[src.find(&format!("\"{name}\":"))?..];
+    let entry = &entry[..entry.find('}')?];
+    let after = &entry[entry.find("default:")? + "default:".len()..];
+    let path = after.split('"').nth(1)?;
+    Some(
+        path.trim_start_matches("./")
+            .trim_end_matches(".vlt")
+            .to_string(),
+    )
 }
 
 impl Loader {

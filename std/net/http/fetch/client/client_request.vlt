@@ -1,0 +1,47 @@
+// velt/net/http (internal): a request as `fetch` hands it to its transport (`#http-transport`,
+// std/imports.vlt): the Velt HTTP client natively (send.vlt), the host's `fetch` on JS hosts
+// (transport/js.vlt).
+
+import { AbortSignal } from "velt/task";
+
+/** What `fetch` does with a redirect. */
+export const FOLLOW: i64 = 0;
+export const ERROR: i64 = 1;
+export const MANUAL: i64 = 2;
+
+/** A request as `fetch` sends it (again, after a redirect). */
+export class ClientRequest {
+  method: string;
+  url: string;
+  /** The caller's headers, `[name, value, …]`, names lowercase. */
+  headers: string[];
+  /** The body: none (0), `text` (1) or `bytes` (2). */
+  kind: u32;
+  text: string;
+  bytes: u8[];
+  redirect: i64;
+  signal: AbortSignal | null;
+  ca: string;
+
+  constructor(
+    method: string,
+    url: string,
+    headers: string[],
+    kind: u32,
+    text: string,
+    bytes: u8[],
+    redirect: i64,
+    signal: AbortSignal | null,
+    ca: string,
+  ) {
+    this.method = method;
+    this.url = url;
+    this.headers = headers;
+    this.kind = kind;
+    this.text = text;
+    this.bytes = bytes;
+    this.redirect = redirect;
+    this.signal = signal;
+    this.ca = ca;
+  }
+}

@@ -39,7 +39,8 @@ function isTchar(c: i64): bool {
     c == 126;
 }
 
-function validName(s: string): bool {
+/** Whether `s` may be a header name (a token). */
+export function validName(s: string): bool {
   const n = s.length as i64;
   if (n == 0) {
     return false;
@@ -52,7 +53,8 @@ function validName(s: string): bool {
   return true;
 }
 
-function validValue(s: string): bool {
+/** Whether `s` may be a header value: no control characters but tab. */
+export function validValue(s: string): bool {
   const n = s.length as i64;
   for (let i: i64 = 0; i < n; i++) {
     const c = s.charCodeAt(i);

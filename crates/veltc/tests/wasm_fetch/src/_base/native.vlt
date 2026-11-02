@@ -1,0 +1,6 @@
+// The test server's URL natively: drive.mjs starts the program with it in `FETCH_BASE`.
+
+/** The URL of the test server, without a trailing slash. */
+export function base(): string {
+  return process.env.FETCH_BASE ?? "";
+}
