@@ -1,0 +1,163 @@
+// cloudflare (internal): a D1 result frame (src/frame.vlt) as velt/db's `RowSource`, so rows are
+// read into typed values as every Velt driver's are (`readRows<T>`: each column fills the field
+// of its name; plain fields are read cell by cell, other row types through JSON text). The frame
+// is its meta (JSON text, empty for `first()`), its column names, then its rows' cells. It is
+// checked whole when parsed, so the source's getters never fail.
+//
+// D1 gives numbers as JavaScript numbers: they cross as floats, which integer fields take when
+// they are integers exactly (all of them up to 2^53). D1 has no booleans: read 0/1 into an
+// integer field. A BLOB is a `u8[]`.
+
+import { CellKind, RowSource } from "velt/db";
+import { IoError } from "velt/io";
+import { BLOB, BOOL, FLOAT, FrameReader, INT, JSON_TEXT, TEXT } from "./frame";
+
+/** The rows of one D1 result. */
+export class D1Rows implements RowSource {
+  /** The meta's JSON text ("" for none). */
+  meta: string;
+  #frame: FrameReader;
+  #names: string[];
+  /** Where each cell's tag is, row by row. */
+  #cells: i64[];
+  #rows: i64;
+  /** The current row (-1 before the first). */
+  #row: i64 = -1;
+
+  private constructor(frame: FrameReader, meta: string, names: string[], cells: i64[], rows: i64) {
+    this.#frame = frame;
+    this.meta = meta;
+    this.#names = names;
+    this.#cells = cells;
+    this.#rows = rows;
+  }
+
+  /** The result frame at `frame`'s position, which moves past it. */
+  static parse(frame: FrameReader): D1Rows throws IoError {
+    const meta = frame.text();
+    const columns = frame.u32() as i64;
+    const names: string[] = [];
+    for (let i: i64 = 0; i < columns; i++) {
+      names.push(frame.text());
+    }
+    const rows = frame.u32() as i64;
+    const cells: i64[] = [];
+    for (let r: i64 = 0; r < rows; r++) {
+      for (let c: i64 = 0; c < columns; c++) {
+        cells.push(frame.skipValue());
+      }
+    }
+    return new D1Rows(frame, meta, names, cells, rows);
+  }
+
+  /** The number of rows. */
+  count(): i64 {
+    return this.#rows;
+  }
+
+  columnCount(): i64 {
+    return this.#names.length as i64;
+  }
+
+  columnName(i: i64): string {
+    return this.#names[i];
+  }
+
+  next(): bool {
+    if (this.#row + 1 >= this.#rows) {
+      this.#row = this.#rows;
+      return false;
+    }
+    this.#row += 1;
+    return true;
+  }
+
+  /** Where the tag of column `i` of the current row is. */
+  private cell(i: i64): i64 {
+    return this.#cells[this.#row * (this.#names.length as i64) + i];
+  }
+
+  /** The payload of column `i` of the current row, the frame positioned after its tag. */
+  private payload(i: i64): FrameReader {
+    const f = this.#frame;
+    f.at = this.cell(i) + 1;
+    return f;
+  }
+
+  kind(i: i64): CellKind {
+    const tag = this.#frame.bytes[this.cell(i)];
+    if (tag == INT) {
+      return CellKind.Int;
+    }
+    if (tag == FLOAT) {
+      return CellKind.Float;
+    }
+    if (tag == TEXT) {
+      return CellKind.Text;
+    }
+    if (tag == BLOB) {
+      return CellKind.Blob;
+    }
+    if (tag == BOOL) {
+      return CellKind.Bool;
+    }
+    if (tag == JSON_TEXT) {
+      return CellKind.Json;
+    }
+    return CellKind.Null;
+  }
+
+  bool(i: i64): bool {
+    return this.#frame.bytes[this.cell(i) + 1] == 1;
+  }
+
+  int(i: i64): i64 {
+    return this.word(i) as i64;
+  }
+
+  float(i: i64): f64 {
+    return f64.fromBits(this.word(i));
+  }
+
+  text(i: i64): string {
+    return this.textAt(i);
+  }
+
+  blob(i: i64): u8[] {
+    const f = this.payload(i);
+    const n = this.length(f);
+    return f.bytes.slice(f.at, f.at + n);
+  }
+
+  json(i: i64): string {
+    return this.textAt(i);
+  }
+
+  private textAt(i: i64): string {
+    const f = this.payload(i);
+    const n = this.length(f);
+    return f.bytes.utf8Slice(f.at, f.at + n);
+  }
+
+  // The eight bytes after the tag of column `i` (checked when parsed).
+  private word(i: i64): u64 {
+    const b = this.#frame.bytes;
+    const at = this.cell(i) + 1;
+    let v: u64 = 0;
+    for (let k: i64 = 7; k >= 0; k--) {
+      v = (v << 8) | (b[at + k] as u64);
+    }
+    return v;
+  }
+
+  // The length before a text or blob payload at `f.at` (checked when parsed), `f` moved past it.
+  private length(f: FrameReader): i64 {
+    const b = f.bytes;
+    let n: i64 = 0;
+    for (let k: i64 = 3; k >= 0; k--) {
+      n = (n << 8) | (b[f.at + k] as i64);
+    }
+    f.at += 4;
+    return n;
+  }
+}

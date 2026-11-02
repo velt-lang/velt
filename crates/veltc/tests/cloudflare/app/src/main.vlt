@@ -1,0 +1,307 @@
+// A Worker that uses each of packages/cloudflare's bindings against drive.mjs's fakes
+// (crates/veltc/tests/cloudflare.rs): each path runs one binding's calls and answers with what
+// they gave, a line each.
+
+import { HostRef } from "velt/host";
+import { IoError } from "velt/io";
+import { utf8Encode } from "velt/encoding";
+import { accept, respond, url } from "velt/host/worker";
+import {
+  caches,
+  d1Database,
+  durableObjectNamespace,
+  kvNamespace,
+  R2ObjectBody,
+  r2Bucket,
+} from "cloudflare";
+
+/** The `IoError` code of `e`, else what it is. */
+function code(e: Error): string {
+  return e instanceof IoError ? e.code : `not an IoError: ${e.message}`;
+}
+
+/** Objects `/hold` keeps, so their `HostRef`s stay. */
+const held: R2ObjectBody[] = [];
+
+struct User {
+  id: i64;
+  name: string;
+  age: f64;
+  avatar: u8[] | null;
+}
+
+struct Echo {
+  text: string;
+  num: f64;
+  nothing: string | null;
+  blob: u8[];
+  flag: i64;
+}
+
+struct Count {
+  n: i64;
+}
+
+async function r2(): Promise<string[]> {
+  const out: string[] = [];
+  const b = r2Bucket("BUCKET");
+  const put = await b.put("notes/a.txt", "hello", {
+    httpMetadata: { contentType: "text/plain" },
+    customMetadata: { by: "velt" },
+  });
+  out.push(`put ${put?.key} ${put?.size} ${put?.etag}`);
+  const meta = await b.head("notes/a.txt");
+  if (meta != null) {
+    const type = meta.httpMetadata.contentType ?? "none";
+    out.push(`head ${type} by=${meta.customMetadata["by"]} ${meta.uploaded.getTime()}`);
+  }
+  const twice = await b.put("notes/a.txt", "again", { onlyIf: { etagDoesNotMatch: "*" } });
+  out.push(`put if absent, present: ${twice == null}`);
+  const stale = await b.put("notes/a.txt", "again", { onlyIf: { etagMatches: "nope" } });
+  out.push(`put if etag, stale: ${stale == null}`);
+  const swapped = await b.put("notes/a.txt", "swapped", { onlyIf: { etagMatches: put?.etag } });
+  out.push(`put if etag, current: ${swapped?.size}`);
+  const obj = await b.get("notes/a.txt");
+  if (obj != null) {
+    // A put replaces the metadata too.
+    const type = obj.httpMetadata.contentType ?? "none";
+    out.push(`get ${obj.key} ${type} ${obj.version} ${await obj.text()}`);
+    out.push(`body used: ${obj.bodyUsed}`);
+    try {
+      await obj.bytes();
+    } catch (e) {
+      out.push(`read twice: ${code(e)}`);
+    }
+  }
+  await b.put("notes/b.bin", [0, 1, 2, 255]);
+  const bin = await b.get("notes/b.bin");
+  if (bin != null) {
+    out.push(`bytes ${await bin.bytes()}`);
+  }
+  const big = await b.get("big");
+  if (big != null) {
+    let pieces = 0;
+    let size = 0;
+    for await (const piece of big.body) {
+      pieces += 1;
+      size += piece.length;
+    }
+    out.push(`streamed ${size} bytes in ${pieces} pieces`);
+  }
+  const head = await b.head("notes/b.bin");
+  out.push(`head ${head?.size} ${head?.httpEtag}`);
+  const first = await b.list({ prefix: "notes/", limit: 1 });
+  out.push(`list ${first.objects.map((o) => o.key)} truncated ${first.truncated}`);
+  const rest = await b.list({ prefix: "notes/", cursor: first.cursor ?? "" });
+  out.push(`list on ${rest.objects.map((o) => o.key)} truncated ${rest.truncated}`);
+  const dirs = await b.list({ delimiter: "/" });
+  out.push(`prefixes ${dirs.delimitedPrefixes} objects ${dirs.objects.map((o) => o.key)}`);
+  await b.delete(["notes/a.txt", "notes/b.bin"]);
+  out.push(
+    `deleted: ${(await b.head("notes/a.txt")) == null} ${(await b.get("notes/b.bin")) == null}`,
+  );
+  return out;
+}
+
+async function d1(): Promise<string[]> {
+  const out: string[] = [];
+  const db = d1Database("DB");
+  const ran = await db
+    .prepare("INSERT INTO users (name, age, avatar) VALUES (?, ?, ?)")
+    .bind("Ada", 36, [1, 2, 3])
+    .run();
+  out.push(`run changes ${ran.meta.changes} last_row_id ${ran.meta.last_row_id}`);
+  const batch = await db.batch([
+    db.prepare("INSERT INTO users (name, age, avatar) VALUES (?, ?, ?)").bind("Bo", 1.5, null),
+    db.prepare("SELECT count(*) AS n FROM users"),
+  ]);
+  out.push(
+    `batch ${batch.length}: ${batch[0].meta.last_row_id}, n=${batch[1].results<Count>()[0].n}`,
+  );
+  const all = await db.prepare("SELECT id, name, age, avatar FROM users ORDER BY id").all<User>();
+  for (const u of all.results) {
+    out.push(`user ${u.id} ${u.name} ${u.age} ${u.avatar}`);
+  }
+  out.push(`rows_read ${all.meta.rows_read}`);
+  const ada = await db
+    .prepare("SELECT id, name, age, avatar FROM users WHERE name = ?")
+    .bind("Ada")
+    .first<User>();
+  out.push(`first ${ada?.name}`);
+  const nobody = await db
+    .prepare("SELECT id, name, age, avatar FROM users WHERE name = ?")
+    .bind("Zed")
+    .first<User>();
+  out.push(`first of none: ${nobody == null}`);
+  const echo = await db.prepare("ECHO").bind("é", 2.25, null, [0, 255], true).first<Echo>();
+  if (echo != null) {
+    out.push(`echo ${echo.text} ${echo.num} ${echo.nothing} ${echo.blob} ${echo.flag}`);
+  }
+  try {
+    await db.prepare("SELECT id, name, age, avatar FROM users").all<Count>();
+  } catch (e) {
+    out.push(`a row that does not fit: ${e.message}`);
+  }
+  const exec = await db.exec("DELETE FROM users");
+  out.push(`exec count ${exec.count}`);
+  return out;
+}
+
+async function kv(): Promise<string[]> {
+  const out: string[] = [];
+  const ns = kvNamespace("KV");
+  await ns.put("greeting", "hej", { expirationTtl: 120 });
+  await ns.put("raw", [7, 8, 9]);
+  out.push(
+    `get ${await ns.get("greeting")} ${await ns.getBytes("raw")} ${await ns.get("missing")}`,
+  );
+  const page = await ns.list({ prefix: "g" });
+  for (const k of page.keys) {
+    out.push(`key ${k.name} expires ${k.expiration} complete ${page.list_complete}`);
+  }
+  await ns.delete("greeting");
+  out.push(`deleted ${await ns.get("greeting")}`);
+  return out;
+}
+
+async function cache(): Promise<string[]> {
+  const out: string[] = [];
+  const c = caches.default;
+  out.push(`miss ${(await c.match("https://w.test/page")) == null}`);
+  await c.put(
+    "https://w.test/page",
+    new Response("cached page", { status: 200, headers: { "cache-control": "max-age=60" } }),
+  );
+  const hit = await c.match(new Request("https://w.test/page"));
+  if (hit != null) {
+    out.push(`hit ${hit.status} ${hit.headers.get("cache-control")} ${await hit.text()}`);
+  }
+  out.push(
+    `delete ${await c.delete("https://w.test/page")} ${await c.delete("https://w.test/page")}`,
+  );
+  const named = await caches.open("pages");
+  out.push(`named miss ${(await named.match("https://w.test/page")) == null}`);
+  try {
+    await c.put(
+      new Request("https://w.test/page", { method: "POST", body: "x" }),
+      new Response("no"),
+    );
+  } catch (e) {
+    out.push(`put of a POST: ${code(e)}`);
+  }
+  return out;
+}
+
+async function durable(): Promise<string[]> {
+  const out: string[] = [];
+  const ns = durableObjectNamespace("COUNTER");
+  const id = ns.idFromName("room-1");
+  out.push(`id ${id.toString().length} ${id.name} same ${id.equals(ns.idFromName("room-1"))}`);
+  const stub = ns.get(id);
+  for (let i = 0; i < 2; i++) {
+    const res = await stub.fetch("https://do.test/count");
+    out.push(`count ${res.status} ${res.headers.get("x-object")} ${await res.text()}`);
+  }
+  const again = ns.get(ns.idFromString(id.toString()));
+  const posted = await again.fetch("https://do.test/echo", {
+    method: "POST",
+    headers: { "x-who": "velt" },
+    body: "ping",
+  });
+  out.push(`posted ${posted.status} ${await posted.text()}`);
+  const fresh = ns.newUniqueId();
+  out.push(`unique differs ${!fresh.equals(id)}`);
+  try {
+    ns.idFromString("not hex");
+  } catch (e) {
+    out.push(`bad id: ${code(e)}: ${e.message}`);
+  }
+  return out;
+}
+
+async function failures(): Promise<string[]> {
+  const out: string[] = [];
+  try {
+    await r2Bucket("NOPE").get("x");
+  } catch (e) {
+    out.push(`missing binding: ${code(e)}: ${e.message}`);
+  }
+  try {
+    await r2Bucket("DB").head("x");
+  } catch (e) {
+    out.push(`binding of another kind: ${code(e)}`);
+  }
+  try {
+    await d1Database("DB").prepare("SELECT * FROM nope").all<Count>();
+  } catch (e) {
+    out.push(`rejected: ${code(e)}: ${e.message}`);
+  }
+  try {
+    await kvNamespace("KV").get("fail");
+  } catch (e) {
+    out.push(`kv rejected: ${code(e)}`);
+  }
+  return out;
+}
+
+async function refs(path: string): Promise<string[]> {
+  const b = r2Bucket("BUCKET");
+  await b.put("ref", "x");
+  if (path == "hold") {
+    const o = await b.get("ref");
+    if (o != null) {
+      held.push(o);
+    }
+    return ["held one"];
+  }
+  if (path == "release") {
+    held.pop();
+    return ["released it"];
+  }
+  for (let i = 0; i < 20; i++) {
+    const o = await b.get("ref");
+    if (i % 2 == 0 && o != null) {
+      await o.text();
+    }
+  }
+  return ["got 20, dropped them"];
+}
+
+async function lines(path: string): Promise<string[]> {
+  if (path == "r2") {
+    return await r2();
+  }
+  if (path == "d1") {
+    return await d1();
+  }
+  if (path == "kv") {
+    return await kv();
+  }
+  if (path == "cache") {
+    return await cache();
+  }
+  if (path == "durable") {
+    return await durable();
+  }
+  if (path == "failures") {
+    return await failures();
+  }
+  return await refs(path);
+}
+
+async function handle(req: HostRef): Promise<void> {
+  const path = url(req).split("/").pop() ?? "";
+  let body = "";
+  try {
+    body = (await lines(path)).join("\n");
+  } catch (e) {
+    body = `failed: ${e.message}`;
+  }
+  respond(req, 200, "content-type: text/plain", utf8Encode(body));
+}
+
+async function main() {
+  for (;;) {
+    spawn(handle(await accept()));
+  }
+}

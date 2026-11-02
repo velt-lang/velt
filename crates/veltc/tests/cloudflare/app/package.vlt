@@ -1,0 +1,12 @@
+import type { Package } from "velt/package";
+
+// A Worker using packages/cloudflare's bindings (crates/veltc/tests/cloudflare.rs).
+export const pkg: Package = {
+  name: "app",
+  version: "0.1.0",
+  dependencies: {
+    // packages/cloudflare and packages/host-cloudflare, copied beside the fixtures by the test.
+    cloudflare: { path: "../cloudflare" },
+    "host-cloudflare": { path: "../host-cloudflare" },
+  },
+};

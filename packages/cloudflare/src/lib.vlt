@@ -1,0 +1,21 @@
+// cloudflare: Cloudflare's bindings for Velt programs on Workers (`velt build --host
+// host-cloudflare`): R2, D1, KV, the cache and Durable Object stubs, with the Workers API's
+// shapes (README.md). A binding is named as in the Worker's env; the package's host module
+// (src/cloudflare.mjs) calls Cloudflare's JavaScript API. Async methods reject with `IoError`.
+
+export { d1Database, durableObjectNamespace, kvNamespace, r2Bucket } from "./env";
+export {
+  D1BatchResult,
+  D1Database,
+  D1ExecResult,
+  D1Meta,
+  D1PreparedStatement,
+  D1Response,
+  D1Result,
+} from "./d1";
+export { D1Value } from "./frame";
+export { R2Bucket, R2Conditional, R2ListOptions, R2PutOptions } from "./r2";
+export { R2HTTPMetadata, R2Object, R2ObjectBody, R2Objects } from "./r2_object";
+export { KVKey, KVListOptions, KVListResult, KVNamespace, KVPutOptions } from "./kv";
+export { Cache, CacheStorage, caches } from "./cache";
+export { DurableObjectId, DurableObjectNamespace, DurableObjectStub } from "./durable";

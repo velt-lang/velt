@@ -1,0 +1,148 @@
+// cloudflare (internal): R2 objects, as `head`, `get`, `put` and `list` give them: the
+// metadata (crossing as JSON, `R2ObjectInfo`) and, for `get`, the body, read from the host when
+// the program asks (whole, or piece by piece through `body`). Read a body while handling the
+// request that got the object: Workers tie it to that request.
+
+import { HostRef } from "velt/host";
+import { IoError } from "velt/io";
+import { BodyStream } from "velt/net/http";
+import { r2Info, r2Read } from "./host";
+
+/** An object's HTTP metadata, as `put` stores it and `get` gives it back. */
+export struct R2HTTPMetadata {
+  contentType?: string;
+  contentLanguage?: string;
+  contentDisposition?: string;
+  contentEncoding?: string;
+  cacheControl?: string;
+}
+
+/** An object's metadata as it crosses (src/cloudflare.mjs `r2Info`). */
+export struct R2ObjectInfo {
+  key: string;
+  version: string;
+  size: i64;
+  etag: string;
+  httpEtag: string;
+  /** Milliseconds since the epoch. */
+  uploaded: f64;
+  httpMetadata: R2HTTPMetadata;
+  customMetadata: Record<string, string>;
+}
+
+/** An object's metadata (Cloudflare's `R2Object`). */
+export class R2Object {
+  readonly key: string;
+  readonly version: string;
+  /** Bytes. */
+  readonly size: i64;
+  readonly etag: string;
+  /** The etag in quotes, for an HTTP `ETag` header. */
+  readonly httpEtag: string;
+  readonly uploaded: Date;
+  readonly httpMetadata: R2HTTPMetadata;
+  readonly customMetadata: Record<string, string>;
+
+  constructor(info: R2ObjectInfo) {
+    this.key = info.key;
+    this.version = info.version;
+    this.size = info.size;
+    this.etag = info.etag;
+    this.httpEtag = info.httpEtag;
+    this.uploaded = new Date(info.uploaded);
+    this.httpMetadata = info.httpMetadata;
+    this.customMetadata = info.customMetadata;
+  }
+
+  /** The metadata of the host's R2 object `o`. */
+  static of(o: HostRef): R2Object {
+    return new R2Object(JSON.parse<R2ObjectInfo>(r2Info(o)));
+  }
+}
+
+/** An object and its body (Cloudflare's `R2ObjectBody`): what `get` gives. */
+export class R2ObjectBody extends R2Object {
+  #object: HostRef;
+  #used: bool = false;
+
+  constructor(o: HostRef) {
+    super(JSON.parse<R2ObjectInfo>(r2Info(o)));
+    this.#object = o;
+  }
+
+  /** Whether the body was read (a body is read once). */
+  get bodyUsed(): bool {
+    return this.#used;
+  }
+
+  /** The whole body. */
+  async bytes(): Promise<u8[]> {
+    this.claim();
+    return await r2Read(this.#object, true);
+  }
+
+  /** The whole body as text (UTF-8, invalid bytes as U+FFFD). */
+  async text(): Promise<string> {
+    const b = await this.bytes();
+    return b.utf8Slice(0, b.length as i64);
+  }
+
+  /** The whole body as JSON, parsed into a `T`. */
+  async json<T>(): Promise<T> {
+    return JSON.parse<T>(await this.text());
+  }
+
+  /** The body as a stream, read from R2 as it is read (`new Response(obj.body)` streams it). */
+  get body(): BodyStream throws IoError {
+    this.claim();
+    return BodyStream.from(pieces(this.#object.clone()));
+  }
+
+  private claim() throws IoError {
+    if (this.#used) {
+      throw new IoError("EINVAL", "Body is unusable: Body has already been read");
+    }
+    this.#used = true;
+  }
+}
+
+/** The pieces of the body of the host's R2 object `o`, as R2 sends them. */
+async function* pieces(o: HostRef): AsyncGenerator<u8[]> {
+  for (;;) {
+    const piece = await r2Read(o, false);
+    if (piece.length == 0) {
+      return;
+    }
+    yield piece;
+  }
+}
+
+/** A page of `list`: objects in key order. */
+export class R2Objects {
+  readonly objects: R2Object[];
+  /** Whether more objects follow: list again with `cursor`. */
+  readonly truncated: bool;
+  /** Where the next page starts (null when `truncated` is false). */
+  readonly cursor: string | null;
+  /** The prefixes up to the `delimiter`, when the listing had one. */
+  readonly delimitedPrefixes: string[];
+
+  constructor(page: R2Page) {
+    const objects: R2Object[] = [];
+    for (const info of page.objects) {
+      objects.push(new R2Object(info));
+    }
+    this.objects = objects;
+    this.truncated = page.truncated;
+    this.cursor = page.cursor;
+    this.delimitedPrefixes = page.delimitedPrefixes;
+  }
+}
+
+/** A page of `list` as it crosses. */
+export struct R2Page {
+  objects: R2ObjectInfo[];
+  truncated: bool;
+  cursor: string | null;
+  delimitedPrefixes: string[];
+}

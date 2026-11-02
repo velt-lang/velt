@@ -1,0 +1,120 @@
+// cloudflare (internal): R2, Cloudflare's object storage, as the Workers API has it: `head`,
+// `get`, `put` (with `onlyIf`, HTTP metadata and custom metadata), `delete` and `list`. Options
+// cross as JSON text; the objects are src/r2_object.vlt's.
+
+import { utf8Encode } from "velt/encoding";
+import { r2Delete, r2Get, r2Head, r2List, r2Put } from "./host";
+import { R2HTTPMetadata, R2Object, R2ObjectBody, R2Objects, R2Page } from "./r2_object";
+
+/**
+ * A condition on an object's etag. `etagDoesNotMatch: "*"` puts only when the key is free
+ * (create-only); `etagMatches: obj.etag` replaces only the version read (compare-and-swap).
+ */
+export struct R2Conditional {
+  etagMatches?: string;
+  etagDoesNotMatch?: string;
+}
+
+/** The options of `put`. */
+export struct R2PutOptions {
+  /** Put only when this holds; otherwise `put` gives null and changes nothing. */
+  onlyIf?: R2Conditional;
+  httpMetadata?: R2HTTPMetadata;
+  customMetadata?: Record<string, string>;
+}
+
+/** The options of `list`. */
+export struct R2ListOptions {
+  /** Only keys starting with it. */
+  prefix?: string;
+  /** Where an earlier page ended (`R2Objects.cursor`). */
+  cursor?: string;
+  /** At most this many objects (R2's default and most: 1000). */
+  limit?: number;
+  /** Group keys up to it into `delimitedPrefixes` (e.g. "/"). */
+  delimiter?: string;
+}
+
+// What crosses: every field, null where not given.
+struct PutWire {
+  onlyIf: ConditionalWire | null;
+  httpMetadata: R2HTTPMetadata | null;
+  customMetadata: Record<string, string> | null;
+}
+
+struct ConditionalWire {
+  etagMatches: string | null;
+  etagDoesNotMatch: string | null;
+}
+
+struct ListWire {
+  prefix: string | null;
+  cursor: string | null;
+  limit: number | null;
+  delimiter: string | null;
+  include: string[];
+}
+
+/** An R2 bucket: the binding `binding` of the Worker's env (`r2Bucket("BUCKET")`). */
+export class R2Bucket {
+  readonly binding: string;
+
+  constructor(binding: string) {
+    this.binding = binding;
+  }
+
+  /** The metadata of the object `key`, or null when there is none. */
+  async head(key: string): Promise<R2Object | null> {
+    const o = await r2Head(this.binding, key);
+    return o == null ? null : R2Object.of(o);
+  }
+
+  /** The object `key` with its body, or null when there is none. */
+  async get(key: string): Promise<R2ObjectBody | null> {
+    const o = await r2Get(this.binding, key);
+    return o == null ? null : new R2ObjectBody(o);
+  }
+
+  /**
+   * Stores `value` (text as UTF-8) under `key`: the object stored, or null when `onlyIf` did not
+   * hold (nothing changed).
+   */
+  async put(key: string, value: string | u8[], options?: R2PutOptions): Promise<R2Object | null> {
+    const bytes = typeof value == "string" ? utf8Encode(value) : value;
+    const o = await r2Put(this.binding, key, bytes, putWire(options));
+    return o == null ? null : R2Object.of(o);
+  }
+
+  /** Deletes the object `key`, or the objects of the keys (a missing one is no error). */
+  async delete(keys: string | string[]): Promise<void> {
+    const all = typeof keys == "string" ? [keys] : keys;
+    await r2Delete(this.binding, JSON.stringify(all));
+  }
+
+  /** A page of the objects, in key order (`options` narrows it; `cursor` continues it). */
+  async list(options?: R2ListOptions): Promise<R2Objects> {
+    const wire: ListWire = {
+      prefix: options?.prefix ?? null,
+      cursor: options?.cursor ?? null,
+      limit: options?.limit ?? null,
+      delimiter: options?.delimiter ?? null,
+      // The metadata `get` gives, for each object listed.
+      include: ["httpMetadata", "customMetadata"],
+    };
+    const page = JSON.parse<R2Page>(await r2List(this.binding, JSON.stringify(wire)));
+    return new R2Objects(page);
+  }
+}
+
+function putWire(options?: R2PutOptions): string {
+  const c = options?.onlyIf;
+  const wire: PutWire = {
+    onlyIf:
+      c == undefined
+        ? null
+        : { etagMatches: c.etagMatches ?? null, etagDoesNotMatch: c.etagDoesNotMatch ?? null },
+    httpMetadata: options?.httpMetadata ?? null,
+    customMetadata: options?.customMetadata ?? null,
+  };
+  return JSON.stringify(wire);
+}

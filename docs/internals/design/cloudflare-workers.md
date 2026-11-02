@@ -215,6 +215,38 @@ A package, not std: R2 (`get`, `head`, `put` with `onlyIf`, `delete`, `list`), D
 Object stubs (`stub.fetch(req)`). Bindings are looked up by name on the `env` host-cloudflare's
 entry passes as the request's context (`host.env` in a host module).
 
+As built: Velt over one host module, `cloudflare` (`packages/cloudflare/src/cloudflare.mjs`,
+shipped through `hostModules`; its functions are declared in `src/host.vlt`). The package needs
+no compiler or runtime change and names nothing the compiler knows.
+
+- **Bindings by name.** `r2Bucket("BUCKET")`, `d1Database("DB")`, `kvNamespace("KV")`,
+  `durableObjectNamespace("NS")` and `caches.default`/`caches.open(name)` make wrappers holding
+  the name only; each host call looks the binding up in `host.env` when it is called, so no
+  wrapper holds a JavaScript object of another request's (Workers tie I/O objects to the request
+  that made them). A missing binding, or one of another kind, rejects with `IoError` "ENOENT".
+- **What crosses.** Options, metadata and listings as JSON text (`JSON.parse<T>` into structs);
+  values and bodies as `u8[]`; objects the program reads later (an R2 object's body, a response)
+  as `HostRef`s, released when dropped. A Durable Object id crosses as its hex string and a stub
+  is its namespace and id; the host gets the stub again for each `fetch`.
+- **D1's rows** go through `velt/db`: the host writes a result as one binary frame (meta as
+  JSON, column names, tagged cells: null, i64, f64, text, blob, bool, JSON text;
+  `src/frame.vlt`), which `D1Rows` reads as a `RowSource`; rows are filled as velt/db's
+  `readRows<T>` fills them from a source through JSON text (the same fields, conversions and
+  `RowError`s as every Velt driver's). Not `readRows` itself yet: its by-column path for plain
+  row types calls two runtime functions the wasm runtime lacks (#2121). A frame rather than the
+  rows' JSON text, which cannot tell a BLOB (an array of bytes) from an array. Parameters
+  (`string | number | bool | null | u8[]`) cross in the same frames.
+- **Errors.** Async functions reject with what Cloudflare threw (its `name` the `IoError`'s
+  code). The one synchronous function that can fail (a Durable Object id) never throws, since a
+  throw from a host function ends the instance: it records the failure, which Velt throws as an
+  `IoError`.
+- **Requests and responses** (the cache, stubs) cross as method, URL, `name\nvalue\n…` headers
+  and a whole body, as std's `fetch` crosses them on JS hosts; a response's parts come from
+  `responseParts`. Bodies are whole, except an R2 object's, which `body` streams.
+- Tests: `crates/veltc/tests/cloudflare.rs` (each binding against node fakes of R2, D1, KV,
+  `caches` and Durable Objects, debug and release; rejections; `HostRef`s released) and the
+  package's own `velt test` (the frames, natively).
+
 ## 8. Size, CPU and testing (#1739)
 
 - Size: release builds only, LLVM `-Oz`, dead code removed, no debug info; budgets for
