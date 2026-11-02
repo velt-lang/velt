@@ -482,10 +482,10 @@ impl FnCx<'_, '_> {
             return Some(LitEq::Done(done));
         }
         if self.cx.union_def(inner).is_none() {
-            // Beside an `f16`/`bf16`, the literal is an `f32`, the type the comparison runs in
-            // (#2049, as `operands`): `w == 0.1` is false for any `f16` `w`, as in JS.
+            // Beside an `f16`/`bf16`, the literal is an `f64`, and the comparison exact (#2049,
+            // as `operands`): `w == 0.1` is false for any `f16` `w`, as in JS.
             let hint = match self.cx.ty.is_storage_float(other.ty) {
-                true => self.cx.ty.primitive("f32"),
+                true => Some(self.cx.ty.f64),
                 false => (!self.cx.ty.is_bottom(other.ty)).then_some(other.ty),
             };
             let l = self.expr(lit_e, hint, Want::Borrow);

@@ -32,6 +32,7 @@ function main() {
     let s16 = 0;
     let sb16 = 0;
     let s16f = 0;
+    let sb16f = 0;
     let special = 0;
     for (let k = e; k < e + 10 && k < pow.length; k++) {
       for (const f of fracs) {
@@ -40,6 +41,7 @@ function main() {
           const h = x as f16;
           const b = x as bf16;
           const hf = (x as f32) as f16;
+          const bf = (x as f32) as bf16;
           // Negative values weigh a quarter (exactly), so they don't cancel the positive ones.
           const w = sign > 0 ? 1 : 0.25;
           if (h != h || h == Infinity || h == -Infinity) {
@@ -55,10 +57,13 @@ function main() {
           if (!(hf != hf || hf == Infinity || hf == -Infinity)) {
             s16f += hf * w;
           }
+          if (!(bf != bf || bf == Infinity || bf == -Infinity)) {
+            sb16f += bf * w;
+          }
         }
       }
     }
-    console.log(line, s16, sb16, s16f, special);
+    console.log(line, s16, sb16, s16f, sb16f, special);
     line++;
   }
   // Integers into bf16, above 2^53 too, where rounding through f64 would round twice.

@@ -3,6 +3,7 @@
 //! rounded once (an error where that is infinite), and only `as` narrows into one.
 
 use velt_common::{Diagnostic, Span};
+use velt_syntax::ast;
 
 use crate::body::FnCx;
 use crate::hir::{self, ExprKind as H, TyId, TyKind};
@@ -71,5 +72,32 @@ impl FnCx<'_, '_> {
         let msg = format!("an `any` doesn't convert to `{d}` yet: write `(x as number) as {d}`");
         self.cx.err(msg, span);
         self.error_expr(span)
+    }
+
+    /// A bitwise operator with an `f16`/`bf16` operand: an error (#2049), reported before
+    /// the JS ToInt32 path that `number` operands take.
+    pub(super) fn storage_bitwise(
+        &mut self,
+        op: ast::BinaryOp,
+        l: &hir::Expr,
+        r: &hir::Expr,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        use ast::BinaryOp as B;
+        let bitwise = matches!(
+            op,
+            B::BitAnd | B::BitOr | B::BitXor | B::Shl | B::Shr | B::UShr
+        );
+        let h = [l, r]
+            .into_iter()
+            .find(|h| bitwise && self.cx.ty.is_storage_float(h.ty))?;
+        let t = self.cx.display(h.ty);
+        self.cx.error(
+            Diagnostic::error(format!("bitwise operators take integers, not `{t}`"), span)
+                .with_note(format!(
+                    "an `{t}` is a float: convert it to an integer type with `as` first"
+                )),
+        );
+        Some(self.error_expr(span))
     }
 }

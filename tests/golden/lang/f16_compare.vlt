@@ -1,0 +1,53 @@
+// Comparisons of `f16`/`bf16` (#2049): with a literal, a `number` or an `f64` both sides widen
+// to `f64`, exactly, so the answer is JavaScript's for a `Float16Array` element (even for a
+// literal within half an `f32` step of the value); with an `f32` or another storage float they
+// compare in `f32`, exactly too. Arithmetic keeps the `f32` literal and result. A union with an
+// `f16` member compares by value across its members. The expected output is Node's, with real
+// `Float16Array` elements (bf16: an exact round-to-nearest-even reference).
+function main() {
+  const one: f16 = 1;
+  const bone: bf16 = 1;
+  const tenth: f16 = 0.1;
+  // At the boundary: 1.00000001 rounds to 1 as an f32, but is not 1.
+  console.log(one == 1.00000001, one != 1.00000001, one < 1.00000001, one <= 0.99999999);
+  console.log(1.00000001 > one, 1.00000001 == one, 0.99999999 < one);
+  console.log(bone == 1.00000001, bone < 1.00000001, 1.00000001 > bone, bone >= 1.00000001);
+  console.log(tenth == 0.1, tenth < 0.1, tenth == 0.0999755859375, tenth > 0.09997558593749999);
+  const n = 1.00000001;
+  console.log(one == n, one < n, n > bone, Object.is(one, 1.00000001), Object.is(one, 1));
+  switch (one) {
+    case 1.00000001:
+      console.log("1.00000001");
+      break;
+    case 1:
+      console.log("1");
+      break;
+  }
+  // With an `f32` (exact in f32): 1.00000001 as an f32 is 1.
+  const f: f32 = 1.00000001;
+  console.log(one == f, one < f);
+  // Arithmetic runs in f32, with the literal an f32: the f32 product is 1.
+  console.log(one * 1.00000001, (one * 1.00000001) as f16);
+  // Unions with a storage member compare by value across members.
+  const u: f16 | f32 = 1.5 as f16;
+  const z: f16 | f32 = -0 as f16;
+  const w: f16 | f32 = 1.5 as f32;
+  const h: f16 | number = 2 as f16;
+  const t: f16 | number = 0.1 as f16;
+  console.log(u == 1.5, 1.5 === u, z == 0, Object.is(z, -0), Object.is(z, 0), h == 2, t == 0.1);
+  console.log(u == w, [u].includes(w), new Set<f16 | f32>([u, w, z, 0 as f32]).size);
+  switch (u) {
+    case 1.5:
+      console.log("1.5");
+      break;
+    default:
+      console.log("default");
+  }
+  console.log(new Map<f16 | f32, string>([[1.5 as f16, "a"]]).get(1.5 as f32));
+  // An `any` holding one converts to an integer as `as` does: saturating, NaN is 0.
+  const a: any = 300.5 as f16;
+  const b: any = 1e10 as f16;
+  const c: any = -2.5 as bf16;
+  const d: any = (0 / 0) as f16;
+  console.log(a as u8, a as i8, b as i32, c as u32, d as i32, (300.5 as f16) as u8);
+}

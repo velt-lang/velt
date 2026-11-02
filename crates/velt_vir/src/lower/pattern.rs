@@ -183,6 +183,17 @@ impl FnLower<'_, '_> {
             let some = self.option_is_some(place, ty);
             return self.rvalue_temp(Ty::Bool, Rvalue::Unary(crate::vir::UnOp::Not, some));
         }
+        // An `f16`/`bf16` by value, as the f64 it is, never by its bits (#2049): `-0` is `0`.
+        if self.half_of(ty).is_some() {
+            let f = match l {
+                Lit::Float(f) => *f,
+                Lit::Int(n) => *n as f64,
+                _ => super::ice("a non-number literal pattern on a storage float"),
+            };
+            let v = self.float_as_f64(Operand::Copy(place.clone()), ty);
+            let c = Operand::Const(crate::vir::Const::Float(f), Ty::F64);
+            return self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, v, c));
+        }
         let v = Operand::Copy(place.clone());
         let c = self.lit(l, ty);
         if let TyKind::Str = self.cx.kind(ty) {

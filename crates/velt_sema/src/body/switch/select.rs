@@ -351,11 +351,13 @@ impl FnCx<'_, '_> {
         let l = self.new_local("<case>", ty, false, span, LocalKind::Bind);
         // Converted to the discriminant's type where it can be (`case 1:` on a `u8`); otherwise
         // the values compare like `===` does (`case t:` with `t: string | null`, #337).
-        // An `f16`/`bf16` compares in `f32`, with a literal case an `f32` (#2049, as `==`).
+        // An `f16`/`bf16` compares as `==` does (#2049): with a literal case (an `f64`) or a
+        // number in `f64`, exactly; with another storage float or an `f32` in `f32`.
         if self.cx.ty.is_storage_float(ty) {
-            let f32_ = self.cx.ty.primitive("f32");
-            let v = self.expr(test, f32_, Want::Borrow);
+            let f64_ = self.cx.ty.f64;
+            let v = self.expr(test, Some(f64_), Want::Borrow);
             let cur = self.mk(hir::ExprKind::Local(l, mode), ty, span);
+            let (cur, v) = self.mix_numbers(cur, v);
             let (cur, v) = (self.storage_widened(cur), self.storage_widened(v));
             let guard = self.eq_values(cur, v, span);
             return Sel {

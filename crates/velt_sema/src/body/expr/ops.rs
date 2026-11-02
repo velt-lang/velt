@@ -237,15 +237,18 @@ impl FnCx<'_, '_> {
         hint: Option<TyId>,
         want: Want,
     ) -> (hir::Expr, hir::Expr) {
-        // Beside an `f16`/`bf16`, a literal takes `f32`, the type the arithmetic runs in
-        // (#2049): `w == 0.1` compares with 0.1 as an f32, as JS compares a `Float16Array`
-        // element with the number.
-        let f32_ = self.cx.ty.primitive("f32");
+        // Beside an `f16`/`bf16`, a literal takes `f32`, the type arithmetic on it runs in, and
+        // `f64` in a comparison, which is then exact (#2049): `w == 0.1` compares as JS
+        // compares a `Float16Array` element with the number.
+        let storage_hint = match self.comparing {
+            true => Some(self.cx.ty.f64),
+            false => self.cx.ty.primitive("f32"),
+        };
         let pick = |s: &Self, first: &hir::Expr| {
             if s.cx.ty.is_bottom(first.ty) {
                 hint
             } else if s.cx.ty.is_storage_float(first.ty) {
-                f32_
+                storage_hint
             } else {
                 Some(first.ty)
             }
@@ -351,11 +354,18 @@ impl FnCx<'_, '_> {
                     self.cast_member_numbers
                         .extend(super::cast_member::number_operands(lhs, rhs));
                 }
+                let outer = std::mem::replace(&mut self.comparing, is_comparison(op));
                 let lr = self.checked_operands(op, lhs, rhs, hint);
+                self.comparing = outer;
                 self.cast_member_numbers.truncate(mark);
                 lr
             }
-            None => self.operands(lhs, rhs, hint, Want::Borrow),
+            None => {
+                let outer = std::mem::replace(&mut self.comparing, true);
+                let lr = self.operands(lhs, rhs, hint, Want::Borrow);
+                self.comparing = outer;
+                lr
+            }
         };
         // An `any` or `unknown` operand, by its checked type (a variable, a field, an element,
         // a call, a capture).
@@ -444,24 +454,8 @@ impl FnCx<'_, '_> {
             (l, r)
         };
         let (l, r) = self.std_int_operands(l, r);
-        let bitwise = matches!(
-            op,
-            B::BitAnd | B::BitOr | B::BitXor | B::Shl | B::Shr | B::UShr
-        );
-        if bitwise {
-            if let Some(h) = [&l, &r]
-                .into_iter()
-                .find(|h| self.cx.ty.is_storage_float(h.ty))
-            {
-                let t = self.cx.display(h.ty);
-                self.cx.error(
-                    Diagnostic::error(format!("bitwise operators take integers, not `{t}`"), span)
-                        .with_note(format!(
-                            "an `{t}` is a float: convert it to an integer type with `as` first"
-                        )),
-                );
-                return self.error_expr(span);
-            }
+        if let Some(e) = self.storage_bitwise(op, &l, &r, span) {
+            return e;
         }
         // Bitwise operators on numbers: JS's 32-bit semantics (`int32.rs`).
         if let Some(bop) = self.js_bitwise_applies(op, &l, &r) {
