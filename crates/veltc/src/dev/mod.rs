@@ -18,7 +18,7 @@ mod fault;
 mod host;
 mod interrupt;
 #[cfg(windows)]
-mod job;
+pub(crate) mod job;
 mod listeners;
 mod native;
 mod supervisor;

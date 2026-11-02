@@ -107,6 +107,8 @@ pub struct BuildArgs {
     /// `velt build --json`: the result (output path, debug info, diagnostics) as one JSON
     /// document on stdout instead of text on stderr.
     pub json: bool,
+    /// `--no-generators`: run no source generator; code that needs one is an error.
+    pub no_generators: bool,
 }
 
 /// How `velt dev` runs each version of the program.

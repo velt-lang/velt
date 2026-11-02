@@ -99,6 +99,7 @@ fn resolve(
         None => package_scope().map_err(BuildError::Failed)?,
     };
     let mut opts = options_for(&input, args.locked)?;
+    opts.no_generators = args.no_generators;
     opts.target = args.target.clone();
     let scope = without_other_variants(scope, &opts);
     Ok((opts, scope, same_path))

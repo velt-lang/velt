@@ -22,6 +22,8 @@ pub struct CheckArgs {
     /// `--std`: check every file of the standard library, every definition, reached or not
     /// (for the standard library's own development).
     pub std: bool,
+    /// `--no-generators`: run no source generator; code that needs one is an error.
+    pub no_generators: bool,
     /// `--target <triple>`: check for that target (the `#name` variants it selects, the system
     /// functions it has); `None` → the host.
     pub target: Option<String>,
@@ -46,6 +48,7 @@ pub(super) fn parse_check(args: Vec<OsString>) -> Result<Command, String> {
             }
             "--json" => c.json = true,
             "--locked" => c.locked = true,
+            "--no-generators" => c.no_generators = true,
             "--std" => c.std = true,
             "--ts-compat" => ts_compat = true,
             "-v" | "--verbose" => c.verbose = true,

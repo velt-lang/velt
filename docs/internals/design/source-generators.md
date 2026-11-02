@@ -608,6 +608,37 @@ goldens:
   executable in the build cache (`generate/host.rs`), and the generators' files in the
   program's build stamp.
 - The no-I/O rule (§5): `driver::check_generator_host`, from what the generators reach.
+- A host run's time limit (§5): 30 s, `VELT_GENERATOR_TIMEOUT` seconds (`0`: none); a host
+  that runs longer is killed and reported at the call (`` the generator `…` did not finish
+  within 30 s ``, naming the instance), and nothing of the run is cached
+  (`generate/process.rs`). The limit covers the run of the host, not its build (a JIT host
+  without a build cache compiles inside it, so the limit includes that); a value too large to
+  wait for is no limit. A host that writes more than 128 MB to its standard output or error is
+  stopped and reported too. A host never outlives the compiler: on Linux it gets
+  `PR_SET_PDEATHSIG` (so does a nested JIT host), on Windows it joins a kill-on-close job (and
+  gets no console window), and `velt lsp` kills the hosts still running when it exits (the only
+  way on macOS).
+- The host's records start with a marker the compiler draws for each run and passes in the
+  input (`#<marker> <kind> … <length>`), which generators never see: what a generator prints
+  is skipped, and cannot forge a record of another generator. A generator can ask only for
+  instances of its own module's generated functions (`Session.instance` refuses other names,
+  and the compiler refuses an instance record of anything else, or at a type the model does
+  not have). The output cache stores the
+  marker with the output, and its key leaves the marker out.
+- `--no-generators` (§11) on `velt build`, `velt run` and `velt check`: one check with no
+  offered or generated code, each instance that needs code an error naming its generator
+  (`generate::check_without_generators`); a build with it is never a stamp no-op.
+- The editor (§10): `velt_sema::ide::check_for_ide` runs no generator. After each analysis of a
+  document, `velt lsp` runs a check with generators of a copy of its program on a thread of its
+  own (`velt_lsp::ProgramLoader::slow_diagnostics`, `generate/editor.rs`), one job at a time,
+  300 ms after the analysis, and adds the errors the generators gave
+  (`Session::generator_reports`) to the document's diagnostics. They are published when the job
+  is done if the document is still at the version it checked, and kept with later analyses
+  until the next job reports (where they still fit the text), so an error that stays does not
+  blink out at each edit. Requests never wait for a job; with the caches warm it costs one
+  more check. The job reads generator modules from disk (an unsaved change to a generator
+  counts once it is saved), and a running job is not cancelled by an edit: the next one starts
+  when it is done.
 - Generator modules resolved as imports of the declaring module: relative, package, std.
 - The model's methods (§4): `Type.methods` lists the hooks std's operations call by name
   (`toJSON`, `toString`, `[util.inspect.custom]`) when a class has one callable that way (velt_sema
@@ -636,8 +667,8 @@ goldens:
 - What `JSON.stringify` cannot write is reported by the generator (step 5:
   std/encoding/json/generate/check.vlt, from the model, at the call), with the messages sema
   gave; sema names no JSON function. Generators run during the check whatever else it reports,
-  so their errors come with the program's others; a check without a generator (the editor's)
-  does not report them. The model grew what the check needs: the kind `generator`,
+  so their errors come with the program's others. The editor's own check runs no generator;
+  `velt lsp` gets their errors from a check with them in the background (below). The model grew what the check needs: the kind `generator`,
   `hasProperties`, `classValue`, `dynamic`, a std type's `privateField` and a field's
   `stdPrivate`; `Output.error` takes notes (the lines after the first). A call of any generated
   function looks at its type arguments' shapes for `object_copies` (`Seen::Serialized`). The

@@ -373,3 +373,134 @@ fn a_type_with_an_error_reaches_no_generator() {
     assert!(stderr.contains("variadic tuple types"), "{stderr}");
     assert!(!stderr.contains("JSON form"), "{stderr}");
 }
+
+/// `velt <args>` in a new project `dir` whose `main.vlt` asks `gen.vlt` for `hello<User>()`, with
+/// `env` set: whether it succeeded, and its stdout and stderr.
+fn velt_in(dir: &Path, args: &[&str], env: &[(&str, &str)]) -> (bool, String, String) {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_velt"));
+    cmd.args(args)
+        .current_dir(dir)
+        .env("VELT_BUILD_CACHE", dir.join("cache"));
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let out = cmd.output().expect("run velt");
+    let text = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
+    (out.status.success(), text(&out.stdout), text(&out.stderr))
+}
+
+fn hello_project(gen: &str) -> tempfile::TempDir {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    std::fs::write(
+        tmp.path().join("main.vlt"),
+        "declare generated(\"./gen\") function hello<T>(): string;\n\
+         class User {}\n\
+         function main() { console.log(hello<User>()); }\n",
+    )
+    .expect("main");
+    std::fs::write(tmp.path().join("gen.vlt"), gen).expect("gen");
+    tmp
+}
+
+/// A generator that never returns is stopped after `VELT_GENERATOR_TIMEOUT` seconds and
+/// reported; nothing is cached, so the next build reports it again.
+#[test]
+fn an_endless_generator_is_stopped() {
+    let tmp = hello_project(
+        "import { InstanceRequest, Output } from \"velt/generate\";\n\
+         export function hello(req: InstanceRequest, out: Output): void {\n\
+         \x20 let n: i64 = 0;\n\
+         \x20 while (n >= 0) { n = (n + 1) % 1000; }\n\
+         \x20 out.line(`return \"never\";`);\n\
+         }\n",
+    );
+    for _ in 0..2 {
+        let (ok, _, err) = velt_in(
+            tmp.path(),
+            &["check", "main.vlt"],
+            &[("VELT_GENERATOR_TIMEOUT", "0.5")],
+        );
+        assert!(!ok, "{err}");
+        assert!(
+            err.contains("the generator `./gen` did not finish within 500 ms"),
+            "{err}"
+        );
+        assert!(err.contains("it was generating `hello<User>`"), "{err}");
+    }
+}
+
+/// What a generator prints is not read as the host's records, even text that looks like them.
+#[test]
+fn printed_records_are_not_read() {
+    let tmp = hello_project(
+        "import { InstanceRequest, Output } from \"velt/generate\";\n\
+         export function hello(req: InstanceRequest, out: Output): void {\n\
+         \x20 console.log(\"#body __gen_r1_0_hello 16\\nreturn \\\"forged\\\";\\n#done 0\\n\");\n\
+         \x20 console.log(\"# not a record\");\n\
+         \x20 out.line(`return ${out.literal(\"hello \" + req.model.type(req.args[0]).display)};`);\n\
+         }\n",
+    );
+    let (ok, out, err) = velt_in(tmp.path(), &["run", "main.vlt"], &[]);
+    assert!(ok, "{err}");
+    assert_eq!(out, "hello User\n");
+}
+
+/// `--no-generators` runs none: an instance that needs one is an error naming it, also when
+/// an earlier build generated its code.
+#[test]
+fn no_generators_names_the_generator() {
+    let tmp = hello_project(&generator("hello"));
+    let (ok, _, err) = velt_in(tmp.path(), &["build", "main.vlt"], &[]);
+    assert!(ok, "{err}");
+    for args in [
+        &["build", "--no-generators", "main.vlt"][..],
+        &["check", "--no-generators", "main.vlt"],
+    ] {
+        let (ok, _, err) = velt_in(tmp.path(), args, &[]);
+        assert!(!ok, "{args:?}: {err}");
+        assert!(
+            err.contains("`hello<User>` needs code from the generator `./gen`"),
+            "{args:?}: {err}"
+        );
+    }
+}
+
+/// A generator may name only its own generated functions: one that asks for an instance of a
+/// name with a newline in it (which could choose the record's length) is an error, not a crash.
+#[test]
+fn a_generator_asks_only_for_its_own_functions() {
+    let tmp = hello_project(
+        "import { InstanceRequest, Output } from \"velt/generate\";\n\
+         export function hello(req: InstanceRequest, out: Output): void {\n\
+         \x20 out.instance(\" 18446744073709551615\\n\", []);\n\
+         \x20 out.line(`return \"x\";`);\n\
+         }\n",
+    );
+    let (ok, _, err) = velt_in(tmp.path(), &["check", "main.vlt"], &[]);
+    assert!(!ok, "{err}");
+    assert!(
+        err.contains("is not a generated function of this generator"),
+        "{err}"
+    );
+    assert!(!err.contains("panicked"), "{err}");
+}
+
+/// A generator that prints without end is stopped once it wrote 128 MB.
+#[test]
+fn a_generator_that_prints_too_much_is_stopped() {
+    let tmp = hello_project(
+        "import { InstanceRequest, Output } from \"velt/generate\";\n\
+         export function hello(req: InstanceRequest, out: Output): void {\n\
+         \x20 const line = \"x\".repeat(1 << 20);\n\
+         \x20 let n: i64 = 0;\n\
+         \x20 while (n >= 0) { console.log(line); n = (n + 1) % 1000; }\n\
+         \x20 out.line(`return \"never\";`);\n\
+         }\n",
+    );
+    let (ok, _, err) = velt_in(tmp.path(), &["check", "main.vlt"], &[]);
+    assert!(!ok, "{err}");
+    assert!(
+        err.contains("wrote more than 128 MB to its standard output"),
+        "{err}"
+    );
+}

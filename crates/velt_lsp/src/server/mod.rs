@@ -5,10 +5,13 @@
 //! on a document with a pending analysis runs it first, so answers always match the latest text.
 //! Closing a `package.vlt`, a manifest changing on disk and a folder appearing or disappearing
 //! schedule every open document too: they decide which files are in `tsCompat` folders.
+//! Diagnostics too slow for every edit (the source generators') follow each analysis on a thread
+//! of their own ([`slow`]).
 
 mod completion;
 mod features;
 mod requests;
+mod slow;
 mod tokens;
 
 use std::collections::HashMap;
@@ -64,6 +67,7 @@ pub fn run(connection: &Connection, loader: &dyn ProgramLoader) -> Result<(), St
         ts_folders: Default::default(),
         imports: Default::default(),
         run_lenses,
+        slow: Default::default(),
     }
     .main_loop()
 }
@@ -101,6 +105,8 @@ struct Server<'a> {
     imports: ImportHelp,
     /// Serve the run and debug code lenses ([`run_lenses`]).
     run_lenses: bool,
+    /// The slow diagnostics' jobs and findings.
+    slow: slow::Slow,
 }
 
 /// Id of the request registering the file watcher.
@@ -152,23 +158,41 @@ pub(crate) fn affects_packages(path: &Path, created: bool, deleted: bool) -> boo
     !skipped && ((created && path.is_dir()) || (deleted && !vpm::sources::is_source_file(path)))
 }
 
+/// What the main loop waits for.
+enum Event {
+    /// A message from the client (`Some(None)`: the time of the next due work came first; `None`:
+    /// the client is gone).
+    Message(Option<Option<Message>>),
+    /// The slow diagnostics' job is done.
+    SlowDone(velt_common::Diagnostics),
+}
+
 impl Server<'_> {
     fn main_loop(&mut self) -> Result<(), String> {
         loop {
-            let next = self.pending.values().min().copied();
-            let received = match next {
-                Some(deadline) => match self.connection.receiver.recv_deadline(deadline) {
-                    Ok(msg) => Some(msg),
-                    Err(e) if e.is_timeout() => None,
-                    Err(_) => return Ok(()),
-                },
-                None => match self.connection.receiver.recv() {
-                    Ok(msg) => Some(msg),
-                    Err(_) => return Ok(()),
-                },
+            let next = (self.pending.values().copied())
+                .chain(self.slow.next_due())
+                .min();
+            let timer = next.map_or_else(crossbeam_channel::never, crossbeam_channel::at);
+            let slow_done = self.slow.done();
+            let event = crossbeam_channel::select! {
+                recv(self.connection.receiver) -> msg => Event::Message(msg.ok().map(Some)),
+                recv(slow_done) -> found => Event::SlowDone(found.unwrap_or_default()),
+                recv(timer) -> _ => Event::Message(Some(None)),
+            };
+            let received = match event {
+                Event::Message(Some(msg)) => msg,
+                Event::Message(None) => return Ok(()),
+                Event::SlowDone(found) => {
+                    self.finish_slow(found);
+                    continue;
+                }
             };
             match received {
-                None => self.flush_due(),
+                None => {
+                    self.flush_due();
+                    self.start_slow();
+                }
                 Some(Message::Request(req)) => {
                     let shutdown = self
                         .connection
@@ -247,6 +271,7 @@ impl Server<'_> {
                 self.analyses.remove(&uri);
                 self.pending.remove(&uri);
                 self.sent_tokens.remove(&uri);
+                self.slow.forget(&uri);
                 let closed_manifest = manifest::is_manifest(&documents::uri_to_path(&uri));
                 self.publish(uri, vec![], None);
                 if closed_manifest {
@@ -317,7 +342,11 @@ impl Server<'_> {
         }
         let overlay = self.docs.overlay();
         let analysis = analysis::analyze(self.loader, &path, &overlay, &mut self.ts_folders);
-        let diags = diagnostics::for_document(&analysis, &|p| self.uri_of(p));
+        let slow = self.slow.found(uri);
+        let diags = diagnostics::for_document(&analysis, slow, &|p| self.uri_of(p));
+        if analysis.loaded_cleanly {
+            self.slow.want(uri);
+        }
         self.analyses.insert(uri.clone(), analysis);
         self.publish(uri.clone(), diags, Some(version));
     }

@@ -378,6 +378,7 @@ type Props = {
             modules: vec![module],
             root: 0,
             diagnostics: vec![],
+            loaded_cleanly: false,
             ide: None,
             ts_compat: vec![],
             docs: Cache::default(),

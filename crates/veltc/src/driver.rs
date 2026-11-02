@@ -59,6 +59,9 @@ pub struct BuildOptions {
     /// Off for builds that only run (`velt run`, `velt test`): the backend also stores each
     /// assignment of a described variable to a stack slot (+7–15% instructions on benchmarks).
     pub debug_vars: bool,
+    /// `--no-generators`: an instance of a generated function that has no code is an error
+    /// naming the generator that would write it, and no generator runs (`crate::generate`).
+    pub no_generators: bool,
     /// Compare the variants of every `#name` import the program resolves
     /// ([`loader::LoadOptions::check_variants`]): `velt check` and `velt test`, not the builds
     /// that only run.
@@ -169,6 +172,11 @@ pub struct Session {
     /// This builds a source generator host, whose generators must not reach outside the
     /// program (no I/O, clock, randomness or native code: [`check_generator_host`]).
     pub generator_build: bool,
+    /// Run no source generator: what would need one is an error ([`BuildOptions::no_generators`]).
+    pub no_generators: bool,
+    /// The errors source generators gave (also in `diagnostics`): what they reported, and their
+    /// failures (`crate::generate::report`). The editor shows these after its own check.
+    pub generator_reports: Diagnostics,
 }
 
 impl Session {
@@ -316,6 +324,7 @@ fn sema_stage(
         eager_std: scope.eager_std,
     };
     let packages = opts.packages.as_ref();
+    sess.no_generators |= opts.no_generators;
     let hir = crate::generate::check(sess, &loaded.modules, loaded.root, sema_opts, packages);
     if let Some(hir) = &hir {
         let std_root = loader::std_root();
@@ -525,7 +534,9 @@ fn build_on_current_thread(
     // An executable whose inputs are those of its last build is up to date (`stamp`).
     // The hashes of the files the last build's stamp records, for this build to reuse.
     let mut known = Default::default();
-    let stamped = (opts.emit == Emit::Exe && !opts.report_numbers && stamp::enabled()).then(|| {
+    // `--no-generators` checks the program again: an unchanged one may need generators.
+    let stamps = !opts.report_numbers && !opts.no_generators && stamp::enabled();
+    let stamped = (opts.emit == Emit::Exe && stamps).then(|| {
         let t = Instant::now();
         let backend = Backend::resolve(opts.backend, opts.release).0;
         let key = stamp::options_key(opts, backend);
@@ -734,58 +745,4 @@ fn write_file(path: &Path, bytes: &[u8]) -> Result<(), BuildError> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn missing_input_is_an_error_not_a_panic() {
-        let mut sess = Session::new();
-        let opts = BuildOptions {
-            input: PathBuf::from("no/such/file.vlt"),
-            ..Default::default()
-        };
-        match build(&mut sess, &opts) {
-            Err(BuildError::Failed(m)) => assert!(m.contains("cannot read"), "{m}"),
-            other => panic!("{other:?}"),
-        }
-    }
-
-    #[test]
-    fn stops_after_first_failing_stage() {
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("bad.vlt");
-        std::fs::write(&file, "function main( {").unwrap();
-        let mut sess = Session::new();
-        let r = compile_to_vir(
-            &mut sess,
-            &BuildOptions {
-                input: file,
-                ..Default::default()
-            },
-        );
-        assert!(matches!(r, Err(BuildError::Diagnostics)));
-        assert!(sess.has_errors());
-        assert_eq!(
-            sess.timings.len(),
-            1,
-            "only the parse stage should have run"
-        );
-        assert!(sess.render_diagnostics().contains("bad.vlt:"));
-    }
-
-    #[test]
-    fn root_source_replaces_the_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let opts = BuildOptions {
-            input: dir.path().join("virtual.vlt"),
-            root_source: Some("function main( {".into()),
-            ..Default::default()
-        };
-        let mut sess = Session::new();
-        assert!(matches!(
-            compile_to_vir(&mut sess, &opts),
-            Err(BuildError::Diagnostics)
-        ));
-        assert!(sess.render_diagnostics().contains("virtual.vlt:"));
-    }
-}
+mod tests;

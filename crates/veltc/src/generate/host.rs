@@ -7,13 +7,12 @@
 //! generator ends the host, not the compiler. Without a build cache it is JIT-compiled and run
 //! by `velt __generate-host`, as `velt dev --host` runs a program.
 
-use std::io::{Read, Write};
 use std::path::Path;
-use std::process::{Command, ExitCode, Stdio};
+use std::process::{Command, ExitCode};
 
 use crate::driver::{self, stamp, Artifact, BuildError, BuildOptions, Session};
 
-use super::{guard, HOST_COMMAND};
+use super::{guard, process, HOST_COMMAND};
 
 /// The host program's source, for [`host_main`].
 const ROOT_SOURCE_ENV: &str = "VELT_GENERATE_ROOT_SOURCE";
@@ -120,39 +119,10 @@ fn jit_command(root: &Path, src: &str) -> Result<Command, String> {
 }
 
 impl Host {
-    /// Run the host on `input` (the requests) and return its standard output.
-    pub fn run(mut self, input: &str) -> Result<Vec<u8>, String> {
-        let mut child = (self.command)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| format!("cannot start the generator host: {e}"))?;
-        let mut stdin = child.stdin.take().ok_or("no stdin")?;
-        let input = input.to_string();
-        let writer = std::thread::spawn(move || {
-            let _ = stdin.write_all(input.as_bytes());
-        });
-        let mut out = vec![];
-        let mut err = vec![];
-        let mut stdout = child.stdout.take().ok_or("no stdout")?;
-        let mut stderr = child.stderr.take().ok_or("no stderr")?;
-        let errs = std::thread::spawn(move || {
-            let _ = stderr.read_to_end(&mut err);
-            err
-        });
-        let _ = stdout.read_to_end(&mut out);
-        let status = child.wait().map_err(|e| e.to_string())?;
-        let _ = writer.join();
-        let err = errs.join().unwrap_or_default();
-        if !status.success() {
-            let err = String::from_utf8_lossy(&err);
-            return Err(format!(
-                "the generator host exited with {status}:\n{}",
-                err.trim_end()
-            ));
-        }
-        Ok(out)
+    /// Run the host on `input` (the requests) and return its standard output
+    /// ([`process::run`]: within a time limit, its output capped).
+    pub fn run(mut self, input: &str) -> Result<Vec<u8>, process::RunError> {
+        process::run(&mut self.command, input)
     }
 }
 

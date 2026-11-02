@@ -263,6 +263,7 @@ pub fn build_options(args: &BuildArgs) -> Result<BuildOptions, String> {
         emit: args.emit,
         backend,
         report_numbers: args.report_numbers,
+        no_generators: args.no_generators,
         ..Default::default()
     };
     let config_cpu;

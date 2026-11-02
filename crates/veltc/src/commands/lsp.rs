@@ -8,14 +8,22 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use velt_common::{Diagnostics, SourceMap};
-use velt_lsp::{LoadedProgram, ModuleEntry, ProgramLoader};
+use velt_lsp::{LoadedProgram, ModuleEntry, ProgramLoader, SlowJob};
+use velt_sema::SourceModule;
 use vpm::{InstallOptions, PackageGraph};
 
 use crate::loader::{self, LoadOptions};
 
+#[path = "lsp_packages.rs"]
+mod packages;
+use packages::{list_dependencies, variant_target};
+
 /// Serve until the client exits.
 pub fn lsp_command() -> Result<(), String> {
-    velt_lsp::serve_stdio(&CliLoader::default())
+    let served = velt_lsp::serve_stdio(&CliLoader::default());
+    // A generator host still running for a background check must not outlive the server.
+    crate::generate::stop_all();
+    served
 }
 
 /// [`ProgramLoader`] over [`loader::load_program`]. A package's dependency graph is installed like
@@ -188,41 +196,19 @@ impl ProgramLoader for CliLoader {
     fn resolves_modules(&self) -> bool {
         true
     }
-}
 
-/// A target whose build uses `file`, when it is a variant of a `#name` of its package that the
-/// host's build does not use (`vpm::imports::target_selecting`).
-fn variant_target(graph: &PackageGraph, file: &Path) -> Option<String> {
-    let (_, root, imports) = graph.imports_of(file)?;
-    if imports.is_empty() {
-        return None;
+    fn slow_diagnostics(
+        &self,
+        path: &Path,
+        sm: &SourceMap,
+        modules: &[SourceModule],
+        root: usize,
+    ) -> Option<SlowJob> {
+        // The package `load` installed for it, if any (a std file has none).
+        let graph = self.installed_graph(path);
+        let program = crate::generate::editor::Program::copy(sm, modules, root, graph)?;
+        Some(Box::new(move || program.generator_diagnostics()))
     }
-    let key = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
-    let rel = vpm::relpath::relative(&key(file), &key(root));
-    let host = velt_codegen_cl::host_triple();
-    vpm::imports::target_selecting(imports, &format!("./{rel}"), &host).map(str::to_string)
-}
-
-/// The modules of the dependencies of the package containing `file`, in `graph`.
-fn list_dependencies(graph: Option<&PackageGraph>, file: &Path) -> Vec<ModuleEntry> {
-    let Some(package) = graph.and_then(|g| g.package_of(file)) else {
-        return vec![];
-    };
-    let dir = file.parent().unwrap_or(Path::new(""));
-    let mut out = vec![];
-    for (name, root) in &package.dependencies {
-        out.extend(
-            velt_lsp::package_module_entries(name, root)
-                .into_iter()
-                .filter(|e| {
-                    matches!(
-                        loader::resolve_spec(&e.spec, dir),
-                        Ok(loader::ModuleRef::Package { .. })
-                    )
-                }),
-        );
-    }
-    out
 }
 
 #[cfg(test)]

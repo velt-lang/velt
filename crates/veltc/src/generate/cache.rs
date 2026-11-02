@@ -26,7 +26,7 @@ const OFFER_KIND: &str = "generated-offer";
 pub(super) fn output_key(root: &Path, src: &str, input: &str) -> Option<Key> {
     crate::build_cache::cache()?;
     let mut h = KeyHasher::new();
-    h.part(b"generate-output-v4");
+    h.part(b"generate-output-v5");
     h.part(&crate::build_cache::compiler_identity().0);
     // Absolute: the same relative path in another directory is another program.
     h.part(vpm::relpath::absolute(root).as_os_str().as_encoded_bytes());

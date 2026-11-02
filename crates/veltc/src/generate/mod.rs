@@ -12,7 +12,9 @@
 //! dropped, and the program is checked again from scratch, so a stale offer is never reported.
 
 mod cache;
+pub(crate) mod editor;
 mod host;
+mod process;
 mod run;
 
 use std::path::{Path, PathBuf};
@@ -26,6 +28,7 @@ use velt_syntax::ast::ItemKind;
 use crate::driver::Session;
 
 pub use host::host_main;
+pub(crate) use process::stop_all;
 
 /// The internal command a JIT host runs as (`velt __generate-host <virtual root path>`).
 pub const HOST_COMMAND: &str = "__generate-host";
@@ -45,6 +48,9 @@ pub(crate) fn check(
     opts: CheckOptions,
     packages: Option<&vpm::PackageGraph>,
 ) -> Option<hir::Program> {
+    if sess.no_generators {
+        return check_without_generators(sess, modules, root, opts);
+    }
     let declares = modules.iter().any(declares_generated);
     // Absolute: the offer is the program's, not that of whichever program has the same path
     // relative to its working directory.
@@ -69,6 +75,41 @@ pub(crate) fn check(
     sess.generator_inputs
         .extend(std::mem::take(&mut st.offer.generator_files));
     Some(program)
+}
+
+/// `--no-generators` (docs/internals/design/source-generators.md §11): one check, with no
+/// generated code offered or generated; each instance that needs code is an error naming the
+/// generator that would write it.
+fn check_without_generators(
+    sess: &mut Session,
+    modules: &[SourceModule],
+    root: usize,
+    opts: CheckOptions,
+) -> Option<hir::Program> {
+    let t = Instant::now();
+    let (out, diags) =
+        velt_sema::check_generating(modules, root, opts, &GenInput::default(), &[], None);
+    sess.timings.push(("sema", t.elapsed()));
+    sess.diagnostics.extend(diags);
+    let demand = match out {
+        Some(Checked::Program(p)) => return Some(*p),
+        Some(Checked::Demand(d)) => d,
+        Some(Checked::Again) | None => return None,
+    };
+    for r in &demand.requests {
+        let f = &demand.functions[r.function];
+        let instance = run::instance_display(&demand, &f.function, &r.type_args);
+        let msg = format!(
+            "`{instance}` needs code from the generator `{}`, and `--no-generators` runs none",
+            f.generator
+        );
+        let d = Diagnostic::error(msg, r.at).with_note(format!(
+            "`{}` is declared `generated` in `{}`",
+            f.function, f.module
+        ));
+        sess.diagnostics.push(d);
+    }
+    None
 }
 
 /// One check of `modules` with the offered generated modules appended: the program when they
@@ -166,8 +207,10 @@ fn rounds(
         let mut sources = sources;
         sources.append(&mut st.sources);
         st.sources = sources;
-        let diags = blame_generators(&sess.sm, diags, &st.files);
+        let mut blamed = vec![];
+        let diags = blame_generators(&sess.sm, diags, &st.files, &mut blamed);
         sess.diagnostics.extend(diags);
+        sess.generator_reports.extend(blamed);
         let sema = t.elapsed().saturating_sub(spent);
         sess.timings
             .push((if round == 1 { "sema" } else { "sema (again)" }, sema));
@@ -192,7 +235,7 @@ fn rounds(
                     "`{}` still needs generated code after {MAX_ROUNDS} rounds of generating",
                     f.function
                 );
-                sess.diagnostics.push(Diagnostic::error(msg, r.at));
+                report(sess, Diagnostic::error(msg, r.at));
             }
             return None;
         }
@@ -256,8 +299,10 @@ fn generate_now(
             for e in &errors {
                 d = d.with_note(e.message.clone());
             }
-            sess.diagnostics.push(d);
-            sess.diagnostics.extend(errors);
+            report(sess, d);
+            for e in errors {
+                report(sess, e);
+            }
             return None;
         }
         if let Some(i) = ast
@@ -272,7 +317,7 @@ fn generate_now(
                     file_path_of(&sess.sm, file),
                     sess.sm.line_col(file, i.span.lo).0
                 ));
-            sess.diagnostics.push(d);
+            report(sess, d);
             return None;
         }
         let Some(gm) = generated_module(current, &g.declaring, &path, file, ast) else {
@@ -408,12 +453,20 @@ struct Described {
     at: Span,
 }
 
+/// Report `d`, an error of a generator or of its run (also kept in
+/// [`Session::generator_reports`], for the editor).
+pub(super) fn report(sess: &mut Session, d: Diagnostic) {
+    sess.generator_reports.push(d.clone());
+    sess.diagnostics.push(d);
+}
+
 /// An error located in generated code is a bug in the generator: it is reported at the call
-/// that needed the code, with the error in the generated file as a note.
+/// that needed the code, with the error in the generated file as a note (and in `blamed`).
 fn blame_generators(
     sm: &velt_common::SourceMap,
     diags: Diagnostics,
     files: &[(FileId, Vec<Described>)],
+    blamed: &mut Diagnostics,
 ) -> Diagnostics {
     diags
         .into_iter()
@@ -450,6 +503,7 @@ fn blame_generators(
             for n in d.notes {
                 out = out.with_note(n);
             }
+            blamed.push(out.clone());
             out
         })
         .collect()

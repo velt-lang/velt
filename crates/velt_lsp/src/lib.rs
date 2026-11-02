@@ -109,7 +109,27 @@ pub trait ProgramLoader: Send + Sync {
     fn resolves_modules(&self) -> bool {
         false
     }
+
+    /// Diagnostics too slow to compute on every edit, for the program `modules` (`modules[root]`
+    /// is the document at `path`) loaded into `sm`: those of the source generators, which may
+    /// build and run a program. The loader copies what it needs into the job it returns, which
+    /// the server runs on a thread of its own once the document has been analyzed, and adds
+    /// what it finds to the document's diagnostics when it is done (requests never wait for
+    /// it). Spans index `sm`'s files. `None` (the default): there are none.
+    fn slow_diagnostics(
+        &self,
+        path: &Path,
+        sm: &SourceMap,
+        modules: &[SourceModule],
+        root: usize,
+    ) -> Option<SlowJob> {
+        let _ = (path, sm, modules, root);
+        None
+    }
 }
+
+/// A job computing a document's slow diagnostics ([`ProgramLoader::slow_diagnostics`]).
+pub type SlowJob = Box<dyn FnOnce() -> Diagnostics + Send>;
 
 /// A module an import specifier can name ([`ProgramLoader::module_index`]).
 #[derive(Clone, Debug, PartialEq, Eq)]

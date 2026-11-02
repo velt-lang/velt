@@ -21,5 +21,6 @@ mod quick_fixes;
 mod quoted_keys;
 mod refactor;
 mod server_features;
+mod slow;
 mod ts_compat;
 mod type_value_names;
