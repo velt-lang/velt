@@ -145,6 +145,7 @@ mod object_own;
 mod object_prototypes;
 mod object_view_cast;
 mod operator_assign;
+mod operator_simd;
 mod operators;
 mod ops;
 mod optional_fn_call;

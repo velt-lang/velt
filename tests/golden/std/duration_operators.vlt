@@ -1,0 +1,12 @@
+// `Duration`'s operators (#2050): spans added, subtracted, negated, scaled and divided.
+import { Duration } from "velt/time";
+
+const a = Duration.ofMinutes(90);
+const b = Duration.ofSeconds(30);
+console.log((a + b).toString(), (a - b).toString(), (-b).toString());
+console.log((b * 3).toString(), (4 * b).toString(), (a / 4).toString());
+let total = Duration.ofMs(0);
+for (let i = 0; i < 3; i++) {
+  total += a;
+}
+console.log(total.toString(), total > a);

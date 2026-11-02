@@ -171,6 +171,11 @@ impl FnCx<'_, '_> {
         if !self.operator_type(l.ty) && !self.operator_type(r.ty) {
             return Err(Box::new((l, r)));
         }
+        // A vector and a scalar for it: the scalar splatted (`operator_simd.rs`).
+        let (l, r) = match self.simd_scalar_operator(op, (lhs, rhs), l, r, exp, span) {
+            Ok(h) => return Ok(h),
+            Err(lr) => *lr,
+        };
         let prop = ast::Ident {
             name: name.into(),
             span: op_span(lhs, rhs, span),
@@ -179,12 +184,6 @@ impl FnCx<'_, '_> {
         let right = self.static_op(r.ty, name);
         match (left, right) {
             (false, None) => {
-                // A vector type keeps its note on the methods it has (`check_operands`).
-                if matches!(self.cx.ty.kind(l.ty), TyKind::Simd(_))
-                    || matches!(self.cx.ty.kind(r.ty), TyKind::Simd(_))
-                {
-                    return Err(Box::new((l, r)));
-                }
                 self.no_operator(op, &l, &r, span);
                 Ok(self.error_expr(span))
             }
@@ -348,6 +347,12 @@ impl FnCx<'_, '_> {
             "cannot apply binary operator `{}` to type `{tn}`",
             op_str(op)
         );
+        if matches!(self.cx.ty.kind(on), TyKind::Simd(_)) {
+            let note = super::ops::simd_method_note(op);
+            self.cx
+                .error(Diagnostic::error(message, span).with_note(note));
+            return;
+        }
         let help = match self.cx.ty.kind(on) {
             TyKind::Param(_) => format!(
                 "bound the type parameter by `velt/ops`' interface for it, such as `{tn} extends {}<{other_n}>`",

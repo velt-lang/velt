@@ -1,0 +1,151 @@
+// velt/math (internal): the operators of `BigInt` (design operators.md): `a + b` is `a.add(b)`,
+// `a += b` is `a.addAssign(b)`, in place, and so on, with an `i64` on either side as the
+// machine-integer twins take it (`a * 10`, `10 * a`). Division truncates and `%` takes the
+// dividend's sign, like JS; dividing by zero and a negative shift count panic with a RangeError.
+
+import { BigInt } from "velt/math/bigint";
+
+extend BigInt {
+  /** `this + other`. */
+  [Symbol.add](other: BigInt): BigInt;
+  /** `this + k`. */
+  [Symbol.add](k: i64): BigInt;
+  [Symbol.add](other: BigInt | i64): BigInt {
+    return other instanceof BigInt ? this.add(other) : this.addInt(other);
+  }
+
+  /** `k + b`. */
+  static [Symbol.add](k: i64, b: BigInt): BigInt {
+    return b.addInt(k);
+  }
+
+  /** `this - other`. */
+  [Symbol.sub](other: BigInt): BigInt;
+  /** `this - k`. */
+  [Symbol.sub](k: i64): BigInt;
+  [Symbol.sub](other: BigInt | i64): BigInt {
+    return other instanceof BigInt ? this.sub(other) : this.subInt(other);
+  }
+
+  /** `k - b`. */
+  static [Symbol.sub](k: i64, b: BigInt): BigInt {
+    return new BigInt(k).sub(b);
+  }
+
+  /** `this * other`. */
+  [Symbol.mul](other: BigInt): BigInt;
+  /** `this * k`. */
+  [Symbol.mul](k: i64): BigInt;
+  [Symbol.mul](other: BigInt | i64): BigInt {
+    return other instanceof BigInt ? this.mul(other) : this.mulInt(other);
+  }
+
+  /** `k * b`. */
+  static [Symbol.mul](k: i64, b: BigInt): BigInt {
+    return b.mulInt(k);
+  }
+
+  /** `this / other`, truncated. */
+  [Symbol.div](other: BigInt): BigInt;
+  /** `this / k`, truncated. */
+  [Symbol.div](k: i64): BigInt;
+  [Symbol.div](other: BigInt | i64): BigInt {
+    return other instanceof BigInt ? this.div(other) : this.divInt(other);
+  }
+
+  /** `k / b`, truncated. */
+  static [Symbol.div](k: i64, b: BigInt): BigInt {
+    return new BigInt(k).div(b);
+  }
+
+  /** `this % other`, with the sign of `this`. */
+  [Symbol.rem](other: BigInt): BigInt;
+  /** `this % k`, with the sign of `this`. */
+  [Symbol.rem](k: i64): BigInt;
+  [Symbol.rem](other: BigInt | i64): BigInt {
+    return other instanceof BigInt ? this.rem(other) : this.remInt(other);
+  }
+
+  /** `k % b`, with the sign of `k`. */
+  static [Symbol.rem](k: i64, b: BigInt): BigInt {
+    return new BigInt(k).rem(b);
+  }
+
+  /** `this << n` (`n` >= 0). */
+  [Symbol.shl](n: i64): BigInt {
+    return this.shl(n);
+  }
+
+  /** `this >> n` (`n` >= 0; rounds toward -Infinity, like JS). */
+  [Symbol.shr](n: i64): BigInt {
+    return this.shr(n);
+  }
+
+  /** `-this`. */
+  [Symbol.neg](): BigInt {
+    return this.neg();
+  }
+
+  /** `this += other`, in place. */
+  [Symbol.addAssign](other: BigInt): void;
+  /** `this += k`, in place. */
+  [Symbol.addAssign](k: i64): void;
+  [Symbol.addAssign](other: BigInt | i64): void {
+    if (other instanceof BigInt) {
+      this.addAssign(other);
+    } else {
+      this.addIntAssign(other);
+    }
+  }
+
+  /** `this -= other`, in place. */
+  [Symbol.subAssign](other: BigInt): void;
+  /** `this -= k`, in place. */
+  [Symbol.subAssign](k: i64): void;
+  [Symbol.subAssign](other: BigInt | i64): void {
+    if (other instanceof BigInt) {
+      this.subAssign(other);
+    } else {
+      this.subIntAssign(other);
+    }
+  }
+
+  /** `this *= other`, in place. */
+  [Symbol.mulAssign](other: BigInt): void;
+  /** `this *= k`, in place. */
+  [Symbol.mulAssign](k: i64): void;
+  [Symbol.mulAssign](other: BigInt | i64): void {
+    if (other instanceof BigInt) {
+      this.mulAssign(other);
+    } else {
+      this.mulIntAssign(other);
+    }
+  }
+
+  /** `this /= other`, in place, truncated. */
+  [Symbol.divAssign](other: BigInt): void;
+  /** `this /= k`, in place, truncated. */
+  [Symbol.divAssign](k: i64): void;
+  [Symbol.divAssign](other: BigInt | i64): void {
+    if (other instanceof BigInt) {
+      this.divAssign(other);
+    } else {
+      this.divIntAssign(other);
+    }
+  }
+
+  /** `this %= other`, in place. */
+  [Symbol.remAssign](other: BigInt): void {
+    this.remAssign(other);
+  }
+
+  /** `this <<= n`, in place. */
+  [Symbol.shlAssign](n: i64): void {
+    this.shlAssign(n);
+  }
+
+  /** `this >>= n`, in place. */
+  [Symbol.shrAssign](n: i64): void {
+    this.shrAssign(n);
+  }
+}

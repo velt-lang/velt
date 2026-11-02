@@ -1,0 +1,31 @@
+// Operators on `velt/simd` vectors (#2050): `+ - * /`, unary `-`, the bitwise operators and
+// shifts are the lane operations their named methods are; a scalar operand is splatted; `v[i]`
+// reads a lane (checked); masks have `& | ^ ~`; `+=` rebuilds the value.
+
+import { f32x4, i32x4, u8x16, mask32x4 } from "velt/simd";
+
+function show(v: f32x4): string { return `${v[0]} ${v[1]} ${v[2]} ${v[3]}`; }
+function showi(v: i32x4): string { return `${v[0]} ${v[1]} ${v[2]} ${v[3]}`; }
+
+const a = f32x4.index();
+const b = f32x4.splat(2);
+console.log(show(a + b), show(a - b), show(a * b), show(a / b), show(-a));
+console.log(show(a * 2), show(2 * a), show(a + 0.5));
+const k: f32 = 3;
+console.log(show(a * k), show(k - a));
+let acc = f32x4.splat(0);
+for (let i = 0; i < 3; i++) acc += a * a;
+console.log(show(acc));
+const x = i32x4.index() - 2;
+console.log(showi(x), showi(x << 2), showi(x >> 1), showi(x >>> 28), showi(~x), showi(x & 1), showi(x | 8), showi(x ^ -1));
+const m: mask32x4 = a.lt(b) & ~a.eq(f32x4.splat(0));
+console.log(m.bitmask());
+const i = 2;
+console.log(a[i], x[3]);
+// Bytes wrap; the operators equal the named methods.
+const p = u8x16.splat(250);
+const q = u8x16.splat(10);
+console.log((p + q)[0], p.add(q)[0], (p - q)[15], (q + 3)[7]);
+// A lane read outside the vector panics.
+const at = 4;
+console.log(a[at]);

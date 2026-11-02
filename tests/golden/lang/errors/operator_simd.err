@@ -1,0 +1,8 @@
+operator_simd.vlt:6:15: error: a scalar operand of `f32x4` must be a `f32`, not a `f64`
+note: convert it first: `x as f32`
+operator_simd.vlt:7:11: error: cannot apply binary operator `*` to type `u8x16`
+note: this vector type has no lane operation for this operator
+operator_simd.vlt:8:11: error: cannot apply binary operator `%` to type `f32x4`
+operator_simd.vlt:10:1: error: cannot assign to a lane of `f32x4`: a vector is a value
+note: write `v = v.withLane(i, x)`
+operator_simd.vlt:11:11: error: cannot apply binary operator `==` to type `f32x4`

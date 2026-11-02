@@ -18,9 +18,12 @@ impl FnCx<'_, '_> {
         d: DefId,
         name: &str,
     ) -> Option<(crate::defs::MethodRef, usize)> {
+        let key = crate::defs::static_key(name);
         self.cx.extensions.iter().find_map(|x| {
             let targets_d = matches!(self.cx.ty.kind(x.target), TyKind::Adt(t, _) if *t == d);
-            let m = x.methods.get(name).filter(|_| targets_d)?;
+            let m = (x.methods.get(&key))
+                .or_else(|| x.methods.get(name))
+                .filter(|_| targets_d)?;
             Some((*m, x.generics.len()))
         })
     }

@@ -17,3 +17,8 @@ import "velt/simd/sha";
 import "velt/simd/clmul";
 // The int8 dot product on `i32x4` (hand-written, not generated).
 import "velt/simd/dot";
+// The operators: `a + b`, `-v`, `v << n`, `v[i]`, … (scripts/gen-simd-ops.py).
+import "velt/simd/ops_bytes";
+import "velt/simd/ops_words";
+import "velt/simd/ops_floats";
+import "velt/simd/ops_masks";

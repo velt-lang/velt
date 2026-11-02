@@ -744,35 +744,21 @@ impl FnCx<'_, '_> {
     }
 }
 
-/// What to write instead of operator `op` on SIMD values, which have methods only.
-fn simd_method_note(op: ast::BinaryOp) -> String {
+/// What to write instead of operator `op` on SIMD values: comparisons are methods giving a mask;
+/// the other operators exist where the vector type has the lane operation.
+pub(super) fn simd_method_note(op: ast::BinaryOp) -> String {
     use ast::BinaryOp as B;
-    let (method, comparison) = match op {
-        B::Add => ("add", false),
-        B::Sub => ("sub", false),
-        B::Mul => ("mul", false),
-        B::Div => ("div", false),
-        B::BitAnd => ("and", false),
-        B::BitOr => ("or", false),
-        B::BitXor => ("xor", false),
-        B::Shl => ("shl", false),
-        B::Shr | B::UShr => ("shr", false),
-        B::Eq | B::StrictEq => ("eq", true),
-        B::NotEq | B::StrictNotEq => ("ne", true),
-        B::Lt => ("lt", true),
-        B::LtEq => ("le", true),
-        B::Gt => ("gt", true),
-        B::GtEq => ("ge", true),
-        B::Rem | B::Pow | B::And | B::Or | B::Nullish | B::In => {
-            return "SIMD values have methods instead of operators, and none for this one".into()
-        }
+    let method = match op {
+        B::Eq | B::StrictEq => "eq",
+        B::NotEq | B::StrictNotEq => "ne",
+        B::Lt => "lt",
+        B::LtEq => "le",
+        B::Gt => "gt",
+        B::GtEq => "ge",
+        _ => return "this vector type has no lane operation for this operator".into(),
     };
-    if comparison {
-        format!(
-            "SIMD values are compared lane by lane with a method, which gives a mask: \
-             `a.{method}(b).all()` or `a.{method}(b).any()`"
-        )
-    } else {
-        format!("SIMD values have methods instead of operators: `a.{method}(b)`")
-    }
+    format!(
+        "SIMD values are compared lane by lane with a method, which gives a mask: \
+         `a.{method}(b).all()` or `a.{method}(b).any()`"
+    )
 }

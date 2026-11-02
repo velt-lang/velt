@@ -48,6 +48,36 @@ export struct Duration implements Comparable<Duration> {
     return { ms: -this.ms };
   }
 
+  /** `this + other`: the two spans together. */
+  [Symbol.add](other: Duration): Duration {
+    return { ms: this.ms + other.ms };
+  }
+
+  /** `this - other`. */
+  [Symbol.sub](other: Duration): Duration {
+    return { ms: this.ms - other.ms };
+  }
+
+  /** `-this`: the span negated. */
+  [Symbol.neg](): Duration {
+    return { ms: -this.ms };
+  }
+
+  /** `this * k`: the span `k` times. */
+  [Symbol.mul](k: i64): Duration {
+    return { ms: this.ms * k };
+  }
+
+  /** `k * d`: the span `d`, `k` times. */
+  static [Symbol.mul](k: i64, d: Duration): Duration {
+    return { ms: d.ms * k };
+  }
+
+  /** `this / k`: the span divided into `k` parts, truncated to a millisecond. */
+  [Symbol.div](k: i64): Duration {
+    return { ms: this.ms / k };
+  }
+
   compareTo(other: Duration): i64 {
     return this.ms < other.ms ? -1 : this.ms > other.ms ? 1 : 0;
   }
