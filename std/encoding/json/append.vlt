@@ -10,8 +10,7 @@ import { writeString } from "velt/encoding/json/writer";
 import { StringBuilder } from "velt/text/string_builder";
 import { JSON_WRITE } from "velt/lang/hooks/keys";
 import { JsonValue } from "velt/prelude/json/json_value";
-
-declare function velt_rt_strbuf_push_u64(out: string, v: u64);
+import { pushU64 } from "velt/lang/number/integer";
 
 /** Appends `s` as a JSON string: quoted, with `"`, `\`, control characters and lone surrogates escaped. */
 export function appendJsonString(out: StringBuilder, s: string): void {
@@ -25,7 +24,7 @@ export function appendJsonNumber(out: StringBuilder, x: f64): void {
 
 /** Appends the decimal digits of an unsigned integer (every `u64`, unlike an `f64`). */
 export function appendJsonUint(out: StringBuilder, n: u64): void {
-  velt_rt_strbuf_push_u64(out.buf, n);
+  pushU64(out.buf, n);
 }
 
 /** Appends the JSON text of `v` (what `v.stringify()` returns), without making a string of it. */

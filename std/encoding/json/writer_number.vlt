@@ -1,11 +1,13 @@
 // velt/encoding/json (internal): numbers as `JSON.stringify` writes them (writer.vlt): integers in
 // decimal, other `f64`s in their shortest round-tripping form with JavaScript's exponent rules.
 
-import { strByteAt, strByteLen } from "velt/lang/intrinsics";
+import { strbufPushAsciiWords } from "velt/lang/intrinsics";
+import { decimalText } from "velt/lang/number/fixed";
+import { isWhole, pushF64 } from "velt/lang/number/format";
+import { pushI64 } from "velt/lang/number/integer";
 
-declare function velt_rt_strbuf_push_byte(out: string, byte: u8);
-declare function velt_rt_strbuf_push_u64(out: string, v: u64);
-declare function velt_rt_strbuf_push_f64(out: string, v: f64);
+// `null`, as the words `strbufPushAsciiWords` takes.
+const NULL_TEXT: u64 = 0x6c6c756e;
 
 // 10^0 to 10^22, each exact in f64.
 const POW10: f64[] = [
@@ -54,52 +56,30 @@ const POW10_U: u64[] = [
   1000000000000000,
 ];
 
-/** Appends the number `x` as `JSON.stringify` writes it. */
+/** Appends the number `x` as `JSON.stringify` writes it: `String(x)`, `null` for NaN and the infinities (`-0` is 0). */
 export function writeF64(out: string, x: f64): void {
   if (x != x || x == Infinity || x == -Infinity) {
-    writeAscii(out, "null");
+    strbufPushAsciiWords(out, NULL_TEXT, 0, 0, 4);
     return;
   }
+  if (isWhole(x)) {
+    pushI64(out, x as i64);
+    return;
+  }
+  // A short decimal (`123.5`, `0.25`): its digits from one multiply and one divide, laid out
+  // as `toFixed` lays them out, without the shortest-digits search.
   const d = shortNumber(x);
   if (d.ok) {
-    writeDecimal(out, d.neg, d.m, d.k);
+    const f = decimalText(d.neg, d.m, d.k as i64);
+    const t = f.t;
+    const w0 = t.w0;
+    const w1 = t.w1;
+    const w2 = t.w2;
+    const len = f.len as usize;
+    strbufPushAsciiWords(out, w0, w1, w2, len);
     return;
   }
-  // Anything else: JavaScript's general number printing (`-0` included, which JSON writes as 0).
-  velt_rt_strbuf_push_f64(out, x == 0 ? 0 : x);
-}
-
-// `m / 10^k` with an optional minus: the integer part, then `k` fraction digits (leading
-// zeros included). `m` has no trailing zero when `k > 0`.
-function writeDecimal(out: string, neg: bool, m: u64, k: usize) {
-  if (neg && m != 0) {
-    velt_rt_strbuf_push_byte(out, 45);
-  }
-  if (k == 0) {
-    velt_rt_strbuf_push_u64(out, m);
-    return;
-  }
-  const p = POW10_U[k];
-  velt_rt_strbuf_push_u64(out, m / p);
-  velt_rt_strbuf_push_byte(out, 46);
-  const frac = m % p;
-  // Leading zeros of the fraction: its digits are fewer than `k`.
-  let width: usize = 1;
-  while (width < k && frac >= POW10_U[width]) {
-    width++;
-  }
-  for (let z = width; z < k; z++) {
-    velt_rt_strbuf_push_byte(out, 48);
-  }
-  velt_rt_strbuf_push_u64(out, frac);
-}
-
-// Appends ASCII text `s` byte by byte.
-function writeAscii(out: string, s: string) {
-  const n = strByteLen(s);
-  for (let i: usize = 0; i < n; i++) {
-    velt_rt_strbuf_push_byte(out, strByteAt(s, i as u64));
-  }
+  pushF64(out, x);
 }
 
 /** A double as `m / 10^k` with a sign, when JSON writes it from those digits (`ok`). */

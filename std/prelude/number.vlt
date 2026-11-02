@@ -3,10 +3,10 @@
 // the static members of `Number` (`Number.isInteger`, `Number.MAX_SAFE_INTEGER`, …).
 
 import { trunc } from "velt/lang/intrinsics";
+import { fixedText } from "velt/lang/number/fixed";
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
-declare function velt_rt_f64_to_fixed(x: f64, digits: i64): string;
 // `digits` < 0: omitted.
 declare function velt_rt_f64_to_exponential(x: f64, digits: i64): string;
 declare function velt_rt_f64_to_precision(x: f64, precision: i64): string;
@@ -39,7 +39,7 @@ extend f64 {
     if (digits < 0 || digits > 100) {
       panic("RangeError: toFixed() digits argument must be between 0 and 100");
     }
-    return velt_rt_f64_to_fixed(this, digits);
+    return fixedText(this, digits);
   }
 
   /**
