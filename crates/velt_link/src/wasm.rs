@@ -5,9 +5,9 @@
 //!   from `$VELT_WASI_SYSROOT` (a directory holding them, e.g. wasi-sdk's
 //!   `share/wasi-sysroot/lib/wasm32-wasip1`) or the self-contained copy rustup installs with
 //!   `rustup target add wasm32-wasip1`.
-//! - `wasm32-unknown-unknown`: a browser module without entry point; it exports `velt_start`
-//!   and `memory`, and imports its host services from the `velt` module (the JS glue in
-//!   `editors/web/velt_web.js`).
+//! - `wasm32-unknown-unknown`: a browser module without entry point; it exports `velt_start`,
+//!   `memory` and what the JS glue converts host functions' values with, and imports its host
+//!   services from the `velt` module (the JS glue in `crates/velt_rt_wasm/js/velt_web.mjs`).
 //!
 //! The linker is `$VELT_LINKER`, else the toolchain's bundled lld or the `rust-lld` of the active
 //! Rust toolchain (`-flavor wasm`), else `wasm-ld` on `PATH`. lld comes first because it matches
@@ -25,6 +25,17 @@ use crate::{run_linker, LinkRequest};
 pub const RUNTIME_LIB_NAME: &str = "libvelt_rt_wasm.a";
 
 const STACK_SIZE: &str = "stack-size=8388608";
+
+/// What a browser module exports besides `memory`: its entry, and the runtime functions the JS
+/// glue converts host functions' values with (crates/velt_rt_wasm/src/host.rs).
+const BROWSER_EXPORTS: &[&str] = &[
+    "--export=velt_start",
+    "--export=velt_host_str_ptr",
+    "--export=velt_host_str_len",
+    "--export=velt_host_alloc",
+    "--export=velt_host_str_new",
+    "--export=velt_host_bytes_new",
+];
 
 /// The two supported WebAssembly flavors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -84,7 +95,8 @@ fn args(req: &LinkRequest, flavor: WasmFlavor) -> Result<Vec<OsString>, String> 
             Some(sysroot)
         }
         WasmFlavor::Browser => {
-            args.extend(["--no-entry", "--export=velt_start"].map(OsString::from));
+            args.push("--no-entry".into());
+            args.extend(BROWSER_EXPORTS.iter().map(OsString::from));
             None
         }
     };
@@ -263,7 +275,7 @@ mod tests {
     }
 
     #[test]
-    fn browser_args_export_the_entry() {
+    fn browser_args_export_the_entry_and_the_host_glue() {
         let req = LinkRequest {
             target: "wasm32-unknown-unknown",
             objects: &[PathBuf::from("p.o")],
@@ -277,13 +289,11 @@ mod tests {
             .iter()
             .map(|a| a.to_string_lossy().into_owned())
             .collect();
+        assert_eq!(&args[..3], ["-o", "p.wasm", "--no-entry"]);
+        assert_eq!(&args[3..3 + BROWSER_EXPORTS.len()], BROWSER_EXPORTS);
         assert_eq!(
-            args,
+            &args[3 + BROWSER_EXPORTS.len()..],
             [
-                "-o",
-                "p.wasm",
-                "--no-entry",
-                "--export=velt_start",
                 "p.o",
                 "rt.a",
                 "-z",

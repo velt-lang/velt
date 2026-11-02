@@ -343,8 +343,31 @@ impl<'h> Cx<'h> {
             params,
             ret,
             noreturn,
+            host: None,
         });
         self.extern_map.insert(symbol.to_string(), id);
+        id
+    }
+
+    /// The extern of host function `import`, with the VIR signature `params` → `ret` (lower/
+    /// host.rs). Interned by a symbol made of the module and the name, which is only the
+    /// function's name in the object: sema checked that every declaration of one import has
+    /// the same types and passes them the same way (`same_imports`).
+    pub(super) fn host_extern(
+        &mut self,
+        import: vir::HostImport,
+        params: Vec<Ty>,
+        ret: Ty,
+    ) -> ExternId {
+        let symbol = format!("velt_host.{}.{}", import.module, import.name);
+        let id = self.extern_sym(&symbol, params, ret, false);
+        let slot = &mut self.externs[id.0 as usize].host;
+        if slot.as_ref().is_some_and(|h| *h != import) {
+            ice(format_args!(
+                "host function `{symbol}` imported with two manifests"
+            ));
+        }
+        *slot = Some(import);
         id
     }
 

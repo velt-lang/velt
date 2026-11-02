@@ -24,6 +24,7 @@ async function* list(
     log.with((l) => {
       l.push(`sent ${i}`);
     });
+    // timing: makes the generator async
     await sleep(20);
   }
   if (broken) {
@@ -219,6 +220,7 @@ describe("velt/net/http streaming", () => {
     await c.write("POST /upload HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n");
     for (let i = 0; i < 4; i++) {
       await c.write("8000\r\n" + "x".repeat(32768) + "\r\n");
+      // timing: paces the upload; passes either way
       await sleep(5);
     }
     await c.write("0\r\n\r\n");
@@ -272,6 +274,7 @@ describe("velt/net/http streaming", () => {
     f.close();
     // A hang guard, not a wait: the handler reports as soon as its write fails, and a closed
     // channel gives `null`.
+    // timing: a guard timer that never fires
     const guard = setTimeout(() => gone.close(), 60000);
     const state = await gone.receive();
     clearTimeout(guard);

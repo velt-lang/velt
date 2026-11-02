@@ -303,7 +303,8 @@ jobs:
             }
 
   # The tests that have failed now and then in the merge queue, mostly on Windows and macOS: the
-  # async, promise and timer goldens and the `velt dev` reload goldens, each run 8 times on the
+  # async, promise and timer goldens, the `velt dev` reload goldens and the packages' tests
+  # (`velt test` in packages/<name>, crates/veltc/tests/packages.rs), each run 8 times on the
   # schedule and `flake_rounds` (20) times by hand (one job per OS and suite; a round takes 3 to 6
   # minutes). There are no automatic retries here
   # or anywhere else (they would hide real races in the runtime): every failure is recorded, the
@@ -316,7 +317,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest]
-        suite: [golden, reload_goldens]
+        suite: [golden, reload_goldens, packages]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 180
     env:
@@ -329,9 +330,9 @@ jobs:
       - name: build the tests
         shell: bash
         working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
-        run: cargo test -p veltc --test golden --test reload --no-run
-      # failures.tsv: one line per test and round that failed (test, round, log): the golden file
-      # or reload case the failure names, else (a crash, a build error) the whole test.
+        run: cargo test -p veltc --test golden --test reload --test packages --no-run
+      # failures.tsv: one line per test and round that failed (test, round, log): the golden file,
+      # reload case or package the failure names, else (a crash, a build error) the whole test.
       - name: ${{ matrix.suite }}, ${{ env.ROUNDS }} times
         shell: bash
         working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
@@ -345,6 +346,8 @@ jobs:
             start=$SECONDS
             if [ "$SUITE" = golden ]; then
               cargo test -q -p veltc --test golden -- --exact golden > "$out/logs/$log" 2>&1
+            elif [ "$SUITE" = packages ]; then
+              cargo test -q -p veltc --test packages every_package_passes_its_tests -- --exact > "$out/logs/$log" 2>&1
             else
               cargo test -q -p veltc --test reload reload_goldens -- --exact > "$out/logs/$log" 2>&1
             fi && status=ok || status=failed
@@ -353,6 +356,9 @@ jobs:
               ids=
             elif [ "$SUITE" = golden ]; then
               ids=$(grep -oE '^tests[\\/]golden[\\/][^ :]+\.vlt' "$out/logs/$log" | sed 's|\\|/|g' | sort -u || true)
+            elif [ "$SUITE" = packages ]; then
+              # `packages/<name> (debug|release): …` heads each failed package's report.
+              ids=$(grep -oE '^packages/[A-Za-z0-9_-]+ \((debug|release)\)' "$out/logs/$log" | cut -d' ' -f1 | sort -u || true)
             else
               ids=$(grep -oE "^($cases) (Jit|Exe): " "$out/logs/$log" | cut -d' ' -f1 | sort -u | sed 's|^|tests/reload/|' || true)
             fi

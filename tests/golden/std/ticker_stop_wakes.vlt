@@ -25,3 +25,5 @@ async function main() {
   // spawned task can start late on a loaded machine).
   console.log("within a period:", performance.now() - start < 60000);
 }
+
+// timing: a ticker's stop is the subject

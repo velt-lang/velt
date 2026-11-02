@@ -27,6 +27,8 @@ struct Variant {
     noreturn: bool,
     /// `f`'s gated target.
     target: Option<crate::simd::Ext>,
+    /// The import module when `velt_rt_set_throw_loc`, which `f` calls, is a host function.
+    host: Option<&'static str>,
 }
 
 const BASE: Variant = Variant {
@@ -40,6 +42,7 @@ const BASE: Variant = Variant {
     far: b"far",
     noreturn: true,
     target: None,
+    host: None,
 };
 
 /// `f(p: Ptr)`: a local of its state aggregate (holding a `Point`), a read of `Point`'s second
@@ -107,12 +110,19 @@ fn f_fingerprint(v: &Variant, mode: Mode) -> Fingerprint {
             params: vec![Ty::Ptr],
             ret: Ty::Unit,
             noreturn: false,
+            host: v.host.map(|module| crate::vir::HostImport {
+                module: module.into(),
+                name: "setThrowLoc".into(),
+                params: vec![crate::vir::HostValue::Str],
+                ret: crate::vir::HostValue::Void,
+            }),
         },
         ExternFn {
             symbol: "velt_rt_panic".into(),
             params: vec![],
             ret: Ty::Unit,
             noreturn: v.noreturn,
+            host: None,
         },
     ];
     let leaf = |symbol: &str| {
@@ -252,11 +262,24 @@ fn link_mode_counts_what_hot_reload_leaves_out() {
             target: Some(crate::simd::Ext::ShaX86),
             ..BASE
         },
+        // A host function's import: a cached object would carry its manifest line.
+        Variant {
+            host: Some("env"),
+            ..BASE
+        },
     ];
     for (i, v) in changes.iter().enumerate() {
         assert!(same(v, Mode::HotReload), "change {i}, hot reload");
         assert!(!same(v, Mode::Link), "change {i}, link");
     }
+    let host = |m| Variant {
+        host: Some(m),
+        ..BASE
+    };
+    assert_ne!(
+        f_fingerprint(&host("env"), Mode::Link),
+        f_fingerprint(&host("other"), Mode::Link)
+    );
 }
 
 /// Parameter attributes are not part of the fingerprint (they depend on the whole program) but

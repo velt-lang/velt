@@ -38,6 +38,7 @@ mod live;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use velt_vir::math::effects;
 use velt_vir::vir::{
     AggLayout, BinOp, Callee, ExternId, Function, Local, Operand, Place, Program, Proj, Rvalue,
     Stmt, Terminator, Ty, UnOp, STR_AGG,
@@ -53,37 +54,6 @@ const STR_CLONE: &str = "velt_rt_str_clone";
 const STR_DROP: &str = "velt_rt_str_drop";
 /// `velt_rt_alloc(size, align)`: fresh memory, nothing else written.
 const ALLOC: &str = "velt_rt_alloc";
-
-/// Runtime functions that write no memory compiled code reads: the `Effects::None`,
-/// `Effects::ReadOnly` and `Effects::ReadCaching` functions of velt_codegen_llvm's
-/// `runtime::effects` (keep the two lists in step).
-const READ_ONLY: [&str; 25] = [
-    "velt_rt_math_sqrt",
-    "velt_rt_math_floor",
-    "velt_rt_math_ceil",
-    "velt_rt_math_round",
-    "velt_rt_math_trunc",
-    "velt_rt_math_fabs",
-    "velt_rt_pow_f64",
-    "velt_rt_pow_i64",
-    "velt_rt_math_to_int32",
-    "velt_rt_math_clz32",
-    "velt_rt_math_clz64",
-    "velt_rt_math_ctz64",
-    "velt_rt_math_popcount64",
-    "velt_rt_math_umulh",
-    "velt_rt_math_mul_int32",
-    "velt_rt_math_add_int32",
-    "velt_rt_str_cmp",
-    "velt_rt_str_eq",
-    "velt_rt_str_hash",
-    "velt_rt_str_starts_with",
-    "velt_rt_str_ends_with",
-    "velt_rt_str_char_code_at",
-    "velt_rt_str_index_of",
-    "velt_rt_str_last_index_of",
-    "velt_rt_str_includes",
-];
 
 /// The runtime functions this pass knows, by id in one program.
 pub(crate) struct Runtime {
@@ -106,7 +76,11 @@ impl Runtime {
             clone: ext(STR_CLONE),
             drop: ext(STR_DROP),
             alloc: ext(ALLOC),
-            read_only: READ_ONLY.iter().filter_map(|n| ext(n)).collect(),
+            // Runtime functions that write no memory compiled code reads (`velt_vir::math`).
+            read_only: (program.externs.iter().enumerate())
+                .filter(|(_, e)| effects(&e.symbol).writes_nothing_visible())
+                .map(|(i, _)| ExternId(i as u32))
+                .collect(),
         }
     }
 

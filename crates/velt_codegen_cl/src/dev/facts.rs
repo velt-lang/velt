@@ -143,7 +143,7 @@ fn stmt_operands(stmt: &Stmt) -> Vec<&velt_vir::vir::Operand> {
         Stmt::Assign(_, rv) => match rv {
             Rvalue::Use(a) | Rvalue::Unary(_, a) | Rvalue::Cast(a, _) => vec![a],
             Rvalue::Binary(_, a, b) => vec![a, b],
-            Rvalue::Aggregate(_, ops) => ops.iter().collect(),
+            Rvalue::Aggregate(_, ops) | Rvalue::Intrinsic(_, ops) => ops.iter().collect(),
             Rvalue::AddrOf(_) => vec![],
         },
         Stmt::MemCopy { dst, src, .. } => vec![dst, src],

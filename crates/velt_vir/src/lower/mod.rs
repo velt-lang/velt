@@ -89,6 +89,7 @@ mod frozen;
 mod glue;
 mod hand_result;
 mod hooks;
+mod host;
 mod impl_lookup;
 mod intrinsics;
 mod js_string;
@@ -417,9 +418,9 @@ struct Cx<'h> {
     /// Report every use of a captured variable's cell to the debug runtime (cells.rs,
     /// `LowerOptions::cell_checks`).
     cell_checks: bool,
-    /// The target triple, for system functions (`LowerOptions::target`).
+    /// The target triple, for system and host functions (`LowerOptions::target`).
     target: String,
-    /// Calls of system functions the target lacks: (the declaration, the calling function, the
+    /// Calls of system and host functions the target lacks: (the declaration, the calling function, the
     /// user code being lowered then, `user_site`).
     unavailable: Vec<(DefId, Option<DefId>, velt_common::Span)>,
     /// Per user call site of a standard-library function, that function (call.rs): what an

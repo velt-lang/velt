@@ -130,3 +130,5 @@ async function main() {
   await done5.receive();
   done5.close();
 }
+
+// timing: the waits only make a body or a component pending

@@ -181,6 +181,26 @@ impl<M: Module> Translator<'_, '_, M> {
                 let m = self.lanes_of(values[0], ty);
                 self.builder.ins().bitselect(m, x, y)
             }
+            // One rounding per lane: the scalar `fma` (an instruction, or libm's `fma`/`fmaf`
+            // where the CPU has none), lane by lane.
+            Op::MulAdd => {
+                let [x, y, z] = [0, 1, 2].map(|i| self.lanes_of(values[i], ty));
+                let mut v = z;
+                for k in 0..lanes.count() as u8 {
+                    let a = self.builder.ins().extractlane(x, k);
+                    let b = self.builder.ins().extractlane(y, k);
+                    let c = self.builder.ins().extractlane(z, k);
+                    let r = self.builder.ins().fma(a, b, c);
+                    v = self.builder.ins().insertlane(v, r, k);
+                }
+                v
+            }
+            // Fused or not, as `mulAddFast` allows: a multiply and an add.
+            Op::MulAddFast => {
+                let [x, y, z] = [0, 1, 2].map(|i| self.lanes_of(values[i], ty));
+                let p = self.builder.ins().fmul(x, y);
+                self.builder.ins().fadd(p, z)
+            }
             Op::Shl | Op::Shr => {
                 let x = self.lanes_of(values[0], ty);
                 let ins = self.builder.ins();

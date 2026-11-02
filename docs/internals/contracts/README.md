@@ -87,6 +87,26 @@ Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exi
   test fails on a declaration without a table entry or an entry without a declaration
   (docs/internals/design/std-layout.md §10).
 
+## Host functions (additive AST, HIR and VIR extension, #1735)
+- `FnSig::host: Option<HostModule { module, span }>` (`ast.rs`): `declare host("<module>")
+  function name(…): R;`, an `ItemKind::ExternFn` like `declare system function` (`host` is a
+  word only between `declare` and `(`; `async` parses, sema rejects it). Any module may declare
+  one (https://veltlang.com/docs/reference/host-functions/).
+- `hir::ExternFnDef::host: Option<HostImport { module, params: Vec<HostTy>, ret: HostTy }>`
+  (`hir/extern_fn.rs`): a function the JS host provides, the WebAssembly import
+  `module`.`symbol`, with what crosses per parameter and for the result (`HostTy`: an integer,
+  `F64`, `Bool`, `Str`, `Bytes { readonly }`, `Ref { nullable }` for std's `HostRef`, `Void`). Not
+  an extern of the link: sema has checked the types, and every declaration of one import has the
+  same ones. Calls pass `u8[]` parameters `BorrowMut` and take views of bytes there, as for
+  system functions (hir_encodings.md).
+- `vir::ExternFn::host: Option<HostImport { module, name, params: Vec<HostValue>, ret }>`
+  (`vir/host.rs`): the extern is that import, not a link symbol; its `symbol` only names it in
+  the object. The extern's signature per value and the manifest the glue reads (the custom
+  section `velt.host`, a line per import) are in `vir/host.rs`. Lowering makes one only for
+  `wasm32-unknown-unknown`; on any other target a reachable call is an error, as for a system
+  function the target lacks. The LLVM backend declares it with `wasm-import-module` /
+  `wasm-import-name` and writes the manifest; other backends never see one.
+
 ## Who owns what
 | Area | Crates / files |
 |---|---|
@@ -108,6 +128,20 @@ Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exi
   `Rvalue::Unary`, `Binary` and `Cast` on it are rejected by `verify`. Operations are calls of
   `velt_simd_*` externs, which backends emit inline (`velt_vir::simd`, rt_abi.md "SIMD").
 - `hir::TyKind::Simd(SimdTy)`: the vector and mask types; Copy, no drop, not equatable.
+
+## Intrinsics (additive VIR extension)
+- `vir::Rvalue::Intrinsic(Intrinsic, Vec<Operand>)` and `vir::Intrinsic` (#1981; vir.rs
+  invariant 12): a pure operation the compiler knows, as a statement instead of a call: it reads
+  only its operands and touches no memory, so passes may fold, move, duplicate or delete it like
+  arithmetic. `Intrinsic::signature` gives operand and result types, `Intrinsic::name` its
+  spelling in dumps (`math.sqrt(_3)`). `verify` checks the types.
+- `Intrinsic::Math(MathOp)` (`velt_vir::math`): means exactly the call of the runtime function
+  `MathOp::symbol`, which the program must declare (checked by `verify`); backends emit it
+  inline as they do the call, and call that function for `pow` and ToInt32's cold path.
+  Lowering emits every call of a math operation's runtime function in this form (`call` in
+  `lower/cfg.rs`), so passes see no math call. `velt_opt`'s `constfold` evaluates it on
+  constants (`MathOp::eval`) and `numrep` narrows through it; the interpreters run it as the
+  call.
 
 ## Parameter attributes (additive VIR extension)
 - `vir::Function::param_attrs: Vec<ParamAttrs>` — empty (no information) or one entry per param

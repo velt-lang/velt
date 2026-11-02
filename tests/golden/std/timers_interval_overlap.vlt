@@ -25,3 +25,5 @@ async function main() {
   t.clear();
   console.log("cleared");
 }
+
+// timing: the interval's schedule is the subject

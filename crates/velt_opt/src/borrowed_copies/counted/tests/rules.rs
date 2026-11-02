@@ -72,7 +72,11 @@ fn every_function_taken_as_freeing_nothing_is_a_runtime_export() {
     let mut rt = String::new();
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../velt_rt/src");
     sources(&dir, &mut rt);
-    for name in NO_FREE.iter().chain(super::super::super::READ_ONLY.iter()) {
+    for name in NO_FREE
+        .iter()
+        .copied()
+        .chain(velt_vir::math::with_effects())
+    {
         assert!(
             rt.contains(&format!("fn {name}(")),
             "`{name}` is not defined in velt_rt"

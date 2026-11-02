@@ -155,7 +155,7 @@ impl Known {
             Rvalue::Unary(op, o) => Term::Unary(*op, b(o)),
             Rvalue::Binary(op, x, y) => Term::Binary(*op, b(x), b(y)),
             Rvalue::Cast(o, t) => Term::Cast(b(o), *t),
-            Rvalue::AddrOf(_) | Rvalue::Aggregate(..) => return None,
+            Rvalue::AddrOf(_) | Rvalue::Aggregate(..) | Rvalue::Intrinsic(..) => return None,
         })
     }
 

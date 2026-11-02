@@ -36,6 +36,7 @@ pub(crate) mod fill_defaults;
 pub(crate) mod forwarders;
 mod generator_sig;
 pub(crate) mod getters;
+pub(crate) mod host_sig;
 pub(crate) mod iface_extends;
 pub(crate) mod impls;
 mod imports;

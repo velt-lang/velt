@@ -1,0 +1,5 @@
+http_handler_reach_with_fetch.vlt:22:15: error: this code runs on another thread and calls `h.cb`, which changes `hits`
+http_handler_reach_with_fetch.vlt:19:5: `hits` is changed here
+http_handler_reach_with_fetch.vlt:21:24: but it is stored in a `Holder`, which is passed here to a function that runs it on other threads
+  = note: fix: const hits = shared(new Mutex(0))  // one value every thread shares, as in Node
+  = note: then read it with `hits.with((v) => v)` and change it with `hits.with((v) => { v = … })`

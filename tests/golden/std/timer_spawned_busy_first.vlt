@@ -35,3 +35,5 @@ async function main() {
   await h;
   console.log("spawned task done");
 }
+
+// timing: timers under a busy task are the subject

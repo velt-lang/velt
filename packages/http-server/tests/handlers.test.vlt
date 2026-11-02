@@ -236,6 +236,7 @@ describe("a resource a handler captures", () => {
       const originals = shared<i64>(0);
       const store = new Store("store", live.clone(), originals.clone());
       const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+        // timing: makes the handler async; the outcome doesn't depend on it
         await sleep(1);
         return new Response(store.name);
       });
@@ -415,6 +416,7 @@ describe("module state", () => {
       hits++;
       const n = hits;
       byPath.set(path, (byPath.get(path) ?? 0) + 1);
+      // timing: yields inside the handler
       await sleep(0);
       return new Response(`hit ${n}`);
     });
@@ -574,6 +576,7 @@ describe("velt/net/http", () => {
       ];
       for (const p of parts) {
         await c.write(p);
+        // timing: sends the request in pieces; passes if they coalesce
         await sleep(5);
       }
       while (!got.endsWith("abcde")) {

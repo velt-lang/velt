@@ -74,3 +74,37 @@ fn wasm_objects_when_llc_is_available() {
         assert_eq!(&obj[..4], b"\0asm", "{target}");
     }
 }
+
+/// A host function is declared as the WebAssembly import it is, and the unit defining
+/// `velt_main` lists it in the custom section the JS glue reads.
+#[test]
+fn host_functions_are_imports_listed_in_the_manifest() {
+    let mut pb = ProgramBuilder::new();
+    let now = pb.ext("velt_host.app.now", &[Ptr], F64, false);
+    let mut p = {
+        let mut fb = FuncBuilder::export("velt_main", &[], I32);
+        let b = fb.block();
+        let x = fb.local(F64);
+        let b = fb.call(b, Callee::Extern(now), vec![int(0, Ptr)], Some(x));
+        fb.ret(b, int(0, I32));
+        pb.add(fb.finish());
+        pb.finish()
+    };
+    p.externs[now.0 as usize].host = Some(HostImport {
+        module: "app".into(),
+        name: "now".into(),
+        params: vec![HostValue::Str],
+        ret: HostValue::F64,
+    });
+    let ir = emit_ir(&p, "wasm32-unknown-unknown").unwrap();
+    for needle in [
+        "\"wasm-import-module\"=\"app\" \"wasm-import-name\"=\"now\"",
+        "!wasm.custom_sections = !{!2000000000}",
+        "!2000000000 = !{!\"velt.host\", !\"app\\09now\\09str\\09f64\\0A\"}",
+    ] {
+        assert!(ir.contains(needle), "missing `{needle}` in\n{ir}");
+    }
+    assert!(!emit_ir(&sample(), "wasm32-unknown-unknown")
+        .unwrap()
+        .contains("custom_sections"));
+}

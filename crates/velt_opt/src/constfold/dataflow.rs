@@ -3,7 +3,7 @@
 //! actually be taken given the constants known so far (so code behind a constant-false branch
 //! does not pollute the analysis).
 
-use velt_vir::vir::{Function, Local, Operand, Rvalue, Stmt, Terminator, Ty};
+use velt_vir::vir::{Function, Intrinsic, Local, Operand, Rvalue, Stmt, Terminator, Ty};
 
 use super::liveness::Liveness;
 use super::value::{self, Value};
@@ -131,6 +131,13 @@ impl Facts {
                 value::binary(*op, x, y, self.ty(a))
             }
             Rvalue::Cast(a, to) => value::cast(self.value(st, a)?, self.ty(a), *to),
+            Rvalue::Intrinsic(Intrinsic::Math(op), ops) => {
+                let bits = (ops.iter())
+                    .map(|a| self.value(st, a)?.bits(self.known_ty(a)?))
+                    .collect::<Option<Vec<_>>>()?;
+                let ret = op.signature().1;
+                Some(Value::of_bits(op.eval(&bits)?, ret))
+            }
             Rvalue::AddrOf(_) | Rvalue::Aggregate(..) => None,
         }
     }

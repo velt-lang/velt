@@ -2,7 +2,8 @@
 //! policy between top-level items. Nominal type declarations are in `decls`.
 
 use velt_syntax::ast::{
-    Augment, FnDecl, Import, Item, ItemKind, Namespace, TypeAlias, TypeExprKind, VarDecl, VarKind,
+    Augment, FnDecl, FnSig, Import, Item, ItemKind, Namespace, TypeAlias, TypeExprKind, VarDecl,
+    VarKind,
 };
 
 use super::lists::delimited;
@@ -52,6 +53,7 @@ impl<'a> Printer<'a> {
             ItemKind::TypeAlias(alias) => self.type_alias(alias),
             ItemKind::Var(var) => cat![self.var_decl(var), ";"],
             ItemKind::Extend(decl) => self.extend(decl),
+            ItemKind::ExternFn(sig) if sig.host.is_some() => self.host_fn(sig),
             ItemKind::ExternFn(sig) => {
                 let asyncness = match (sig.is_system, sig.is_intrinsic, sig.is_async) {
                     // Not a system function (the check says why), but written as it was.
@@ -69,6 +71,18 @@ impl<'a> Printer<'a> {
             ItemKind::Namespace(n) => self.namespace(n, item.span.hi),
         };
         cat![export, body]
+    }
+
+    /// `declare host("<module>") [async] function f(…): R;` (`async` is an error, printed as
+    /// written).
+    fn host_fn(&mut self, sig: &FnSig) -> Doc {
+        let Some(h) = &sig.host else {
+            return text("");
+        };
+        let module = text(string_literal(slice(self.src, h.span)));
+        let asyncness = if sig.is_async { "async " } else { "" };
+        let sig = self.fn_sig(sig, "function ", sig.span.hi);
+        cat!["declare host(", module, ") ", asyncness, sig, ";"]
     }
 
     /// `declare generated("<spec>") [async] function f<T>(…): R;`.

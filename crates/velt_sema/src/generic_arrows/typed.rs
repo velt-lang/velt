@@ -471,6 +471,7 @@ fn decl(
             is_system: false,
             is_intrinsic: false,
             generator: None,
+            host: None,
             is_generator: false,
             this_param: None,
             span,

@@ -43,9 +43,10 @@ mod report;
 mod rewrite;
 mod simplify;
 
+use velt_vir::math::MathOp;
 use velt_vir::vir::{
-    AggId, AggLayout, Callee, ExternFn, ExternId, Function, Local, Operand, Rvalue, StaticData,
-    Stmt, Terminator, Ty,
+    AggId, AggLayout, Callee, ExternFn, ExternId, Function, Intrinsic, Local, Operand, Rvalue,
+    StaticData, Stmt, Terminator, Ty,
 };
 
 use crate::locals::Usage;
@@ -57,16 +58,7 @@ pub use report::Unnarrowed;
 pub(crate) use simplify::self_comparisons;
 
 /// The runtime's ToInt32 (`velt_rt_math_to_int32(f64) -> i32`).
-const TO_INT32: &str = "velt_rt_math_to_int32";
-/// `Math.trunc`, `floor`, `ceil`, `round` (`f64 -> f64`).
-const ROUNDING: [&str; 4] = [
-    "velt_rt_math_trunc",
-    "velt_rt_math_floor",
-    "velt_rt_math_ceil",
-    "velt_rt_math_round",
-];
-/// `Math.abs` (`f64 -> f64`).
-const ABS: &str = "velt_rt_math_fabs";
+const TO_INT32: &str = MathOp::ToInt32.symbol();
 /// The prelude's `xs[i]` with a float `i` (`std/prelude/math.vlt`).
 const FLOAT_INDEX: &str = velt_common::std_hook!(float_index);
 
@@ -145,21 +137,51 @@ impl<'p> Env<'p> {
             .map_or("", |e| e.symbol.as_str())
     }
 
-    fn is_rounding(&self, id: ExternId) -> bool {
-        ROUNDING.contains(&self.symbol(id))
+    /// The runtime math operation extern `id` is (`velt_vir::math`), if it is one.
+    fn math_op(&self, id: ExternId) -> Option<MathOp> {
+        MathOp::of_extern(self.externs.get(id.0 as usize)?)
     }
 
+    /// The math operation a call of `callee` is, if it calls one's runtime function.
+    fn callee_op(&self, callee: &Callee) -> Option<MathOp> {
+        match callee {
+            Callee::Extern(id) => self.math_op(*id),
+            _ => None,
+        }
+    }
+
+    /// `Math.trunc`, `floor`, `ceil` or `round` (`f64 -> f64`).
+    fn is_rounding(&self, id: ExternId) -> bool {
+        self.math_op(id).is_some_and(|op| op.rounding().is_some())
+    }
+
+    /// `Math.abs` (`f64 -> f64`).
     fn is_abs(&self, id: ExternId) -> bool {
-        self.symbol(id) == ABS
+        self.math_op(id) == Some(MathOp::Abs)
     }
 
     fn is_to_int32(&self, callee: &Callee) -> bool {
-        matches!(callee, Callee::Extern(id) if self.symbol(*id) == TO_INT32)
+        matches!(callee, Callee::Extern(id) if self.math_op(*id) == Some(MathOp::ToInt32))
     }
 
     fn is_float_index(&self, callee: &Callee) -> bool {
         matches!(callee, Callee::Func(f) if self.float_index.get(f.0 as usize) == Some(&true))
     }
+}
+
+/// The math operation and its operands, when `rv` is one (`Rvalue::Intrinsic`, the form of a
+/// call of its runtime function as a statement).
+fn math_rvalue(rv: &Rvalue) -> Option<(MathOp, &[Operand])> {
+    match rv {
+        Rvalue::Intrinsic(Intrinsic::Math(op), ops) => Some((*op, ops)),
+        _ => None,
+    }
+}
+
+/// Does `simplify` fold the math operation `op` when the facts about its operand allow
+/// (rounding, abs, ToInt32)?
+fn folds(op: MathOp) -> bool {
+    op.rounding().is_some() || matches!(op, MathOp::Abs | MathOp::ToInt32)
 }
 
 /// Narrow the number locals of `func`; returns whether anything changed.
@@ -222,9 +244,16 @@ fn analyse(env: &Env, func: &Function) -> (Option<Flow>, arrays::Elements) {
 
 /// Does `func` take ToInt32 of a constant (`simplify` folds it without tracking anything)?
 fn constant_to_int32(env: &Env, func: &Function) -> bool {
+    let constant = |op: MathOp, args: &[Operand]| {
+        op == MathOp::ToInt32 && matches!(args, [Operand::Const(..)])
+    };
     func.blocks.iter().any(|b| {
-        matches!(&b.term, Terminator::Call { callee, args, .. }
-            if env.is_to_int32(callee) && matches!(args.as_slice(), [Operand::Const(..)]))
+        let stmt = b.stmts.iter().any(|s| match s {
+            Stmt::Assign(_, rv) => math_rvalue(rv).is_some_and(|(op, a)| constant(op, a)),
+            _ => false,
+        });
+        stmt || matches!(&b.term, Terminator::Call { callee, args, .. }
+            if env.callee_op(callee).is_some_and(|op| constant(op, args)))
     })
 }
 
@@ -254,6 +283,10 @@ fn tracked(env: &Env, func: &Function, groups: &arrays::Groups) -> Vec<Local> {
                 }
             }
         });
+        // The operands of a math operation `simplify` folds, as for the call.
+        if math_rvalue(rv).is_some_and(|(op, _)| folds(op)) {
+            seeds.extend(locals.iter().copied());
+        }
         if !d.proj.is_empty() {
             if groups.of_element(d).is_some() {
                 seeds.extend(locals);

@@ -69,7 +69,9 @@ impl Refs {
                     self.operand(a);
                     self.operand(b);
                 }
-                Rvalue::Aggregate(_, ops) => ops.iter().for_each(|o| self.operand(o)),
+                Rvalue::Aggregate(_, ops) | Rvalue::Intrinsic(_, ops) => {
+                    ops.iter().for_each(|o| self.operand(o))
+                }
                 Rvalue::AddrOf(_) => {}
             },
             Stmt::MemCopy { dst, src, .. } => {

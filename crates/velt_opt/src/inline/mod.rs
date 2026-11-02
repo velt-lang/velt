@@ -36,7 +36,7 @@
 mod splice;
 
 use rustc_hash::FxHashMap;
-use velt_vir::vir::{Callee, FuncId, Function, Program, Stmt, Terminator};
+use velt_vir::vir::{Callee, FuncId, Function, Program, Rvalue, Stmt, Terminator};
 
 use crate::callgraph::{direct_calls, CallGraph};
 use crate::scc::on_cycle;
@@ -301,18 +301,27 @@ fn decide(
 }
 
 /// Whether `func` calls nothing but functions that never return (its checks' reports).
+///
+/// A math operation (`Rvalue::Intrinsic`) counts as the call of its runtime function it was
+/// lowered from before #1981, so this decides as it did then: taken as a leaf, a function like
+/// `energy` in `bench/nbody.vlt`, which divides by a `Math.sqrt`, is inlined into the caller
+/// that holds the hot loop, which then runs 1% more instructions. Whether functions doing math
+/// should be leaves is a decision of its own, to measure separately.
 fn is_leaf(program: &Program, func: &Function) -> bool {
-    func.blocks.iter().all(|b| match &b.term {
-        Terminator::Call { callee, .. } => match callee {
-            Callee::Func(f) => program.funcs.get(f.0 as usize).is_some_and(never_returns),
-            Callee::Extern(e) => program
-                .externs
-                .get(e.0 as usize)
-                .is_some_and(|e| e.noreturn),
-            Callee::Ptr { .. } => false,
-        },
-        _ => true,
-    })
+    let math = (func.blocks.iter().flat_map(|b| &b.stmts))
+        .any(|s| matches!(s, Stmt::Assign(_, Rvalue::Intrinsic(..))));
+    !math
+        && func.blocks.iter().all(|b| match &b.term {
+            Terminator::Call { callee, .. } => match callee {
+                Callee::Func(f) => program.funcs.get(f.0 as usize).is_some_and(never_returns),
+                Callee::Extern(e) => program
+                    .externs
+                    .get(e.0 as usize)
+                    .is_some_and(|e| e.noreturn),
+                Callee::Ptr { .. } => false,
+            },
+            _ => true,
+        })
 }
 
 /// Whether no call of `func` returns normally: no path through it returns (a panic helper such

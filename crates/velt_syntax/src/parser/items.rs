@@ -148,6 +148,9 @@ impl<'a> Parser<'a> {
             Some(Kw::Declare) if self.nth_word(1, "generated") && self.nth(2) == Tok::LParen => {
                 ItemKind::Function(self.parse_generated_decl(lo)?)
             }
+            Some(Kw::Declare) if self.nth_word(1, "host") && self.nth(2) == Tok::LParen => {
+                ItemKind::ExternFn(self.parse_host_decl(lo)?)
+            }
             Some(Kw::Declare) => ItemKind::ExternFn(self.parse_declare(lo)?),
             _ if self.at_var_decl() => {
                 let var = self.parse_var_decl()?;
@@ -197,6 +200,34 @@ impl<'a> Parser<'a> {
         sig.is_intrinsic = is_intrinsic;
         if sig.is_generator {
             self.error("a `declare function` cannot be a generator", sig.name.span);
+        }
+        if !self.eat_signature_end() {
+            self.expect_semi()?;
+        }
+        Ok(sig)
+    }
+
+    /// `declare host("<module>") [async] function name(...): R;`: a function the JS host provides
+    /// (`host` is a word only there). `async` parses, so sema can say why it is not allowed.
+    fn parse_host_decl(&mut self, lo: u32) -> PResult<FnSig> {
+        self.bump(); // declare
+        self.bump(); // host
+        self.expect(Tok::LParen)?;
+        let Tok::Str(idx) = self.peek() else {
+            self.error_expected("the host's import module as a string");
+            return Err(Fail);
+        };
+        let host = HostModule {
+            module: self.payload_text(idx),
+            span: self.cur_span(),
+        };
+        self.bump();
+        self.expect(Tok::RParen)?;
+        let is_async = self.eat_kw(Kw::Async);
+        let mut sig = self.parse_fn_sig(lo, is_async)?;
+        sig.host = Some(host);
+        if sig.is_generator {
+            self.error("a host function cannot be a generator", sig.name.span);
         }
         if !self.eat_signature_end() {
             self.expect_semi()?;
@@ -413,6 +444,7 @@ impl<'a> Parser<'a> {
             is_system: false,
             is_intrinsic: false,
             generator: None,
+            host: None,
             is_generator,
             this_param,
             span: self.span_from(lo),

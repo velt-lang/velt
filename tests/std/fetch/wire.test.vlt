@@ -429,6 +429,7 @@ async function scenario(method: string, reused: bool, connections: i64): Promise
     // A request that may not be sent twice takes only a pooled connection idle for 5 ms or
     // more (a close sent shortly after the response has arrived by then): wait at least that, so
     // POST and PATCH reuse it too. (A lower bound: waiting longer changes nothing.)
+    // timing: the pooled connection's idle threshold is the subject
     await sleep(10);
   }
   let result = "";

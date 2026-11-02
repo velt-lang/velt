@@ -120,3 +120,5 @@ async function main() {
   const r5 = s5.getReader();
   console.log((await r5.read()).value, pulls.n);
 }
+
+// timing: a 0 ms timer drains the queued microtasks

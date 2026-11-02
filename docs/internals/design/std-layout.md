@@ -105,6 +105,7 @@ have their own docs page.
 | `velt/encoding/csv` | `parseCsv`, `stringifyCsv`, `CsvError` (csv) |
 | `velt/fs` | file system, `FileReader`, `FileWriter` (fs, fs_stream) |
 | `velt/hash` | stable non-cryptographic hash (hash) |
+| `velt/host` | `HostRef`, the JS values host functions pass |
 | `velt/io` | `IoError`, WHATWG streams (io, streams) |
 | `velt/jsx`, `velt/jsx/jsx-runtime` | TSX rendering, the JSX provider (jsx, jsx/*) |
 | `velt/math` | `clamp gcd lcm …`, `BigInt` (math, bigint) |

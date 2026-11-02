@@ -154,7 +154,9 @@ pub(super) fn stmt_acc<'a>(s: &'a Stmt, out: &mut Vec<Acc<'a>>) {
                     operand_acc(b, out);
                 }
                 Rvalue::AddrOf(p) => out.push(Acc::Addr(p)),
-                Rvalue::Aggregate(_, ops) => ops.iter().for_each(|o| operand_acc(o, out)),
+                Rvalue::Aggregate(_, ops) | Rvalue::Intrinsic(_, ops) => {
+                    ops.iter().for_each(|o| operand_acc(o, out))
+                }
             }
             out.push(Acc::Write(p));
         }

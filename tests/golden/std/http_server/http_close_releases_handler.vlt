@@ -49,3 +49,5 @@ async function main() {
   console.log(await slow);
   console.log("done");
 }
+
+// timing: a slow handler; a channel fixes the order
