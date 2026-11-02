@@ -224,7 +224,11 @@ impl<M: Module> Translator<'_, '_, M> {
             | MathOp::F32ToBf16
             | MathOp::F64ToBf16
             | MathOp::I64ToBf16
-            | MathOp::U64ToBf16 => unreachable!("ICE: half conversions are handled above"),
+            | MathOp::U64ToBf16
+            | MathOp::F16Bits
+            | MathOp::BitsF16
+            | MathOp::Bf16Bits
+            | MathOp::BitsBf16 => unreachable!("ICE: half conversions are handled above"),
             MathOp::ToInt32
             | MathOp::AddInt32
             | MathOp::PowF64

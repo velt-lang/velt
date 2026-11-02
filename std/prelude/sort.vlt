@@ -148,6 +148,42 @@ extend Array<f64> {
   }
 }
 
+extend Array<f16> {
+  /** By value (`-0` and `0` are equal: in either order), NaN last; or by `cmp`, stable. */
+  sort(cmp: ((x: f16, y: f16) => number) | null = null) {
+    if (cmp != null) {
+      stableSort(this, cmp, (c) => c < 0.0);
+      return;
+    }
+    pdqsort(this, (a, b) => a < b || (b != b && a == a));
+  }
+
+  /** A sorted copy (ES2023); the receiver is unchanged. */
+  toSorted(cmp: ((x: f16, y: f16) => number) | null = null): f16[] {
+    const out = this.slice();
+    out.sort(cmp);
+    return out;
+  }
+}
+
+extend Array<bf16> {
+  /** By value (`-0` and `0` are equal: in either order), NaN last; or by `cmp`, stable. */
+  sort(cmp: ((x: bf16, y: bf16) => number) | null = null) {
+    if (cmp != null) {
+      stableSort(this, cmp, (c) => c < 0.0);
+      return;
+    }
+    pdqsort(this, (a, b) => a < b || (b != b && a == a));
+  }
+
+  /** A sorted copy (ES2023); the receiver is unchanged. */
+  toSorted(cmp: ((x: bf16, y: bf16) => number) | null = null): bf16[] {
+    const out = this.slice();
+    out.sort(cmp);
+    return out;
+  }
+}
+
 extend Array<string> {
   /**
    * Sorts an array in place. Unlike JS, it returns nothing.

@@ -174,6 +174,9 @@ impl FnLower<'_, '_> {
         let v = self.expr_at(e);
         self.restore_loc(prev);
         self.cx.user_site = site;
+        if cfg!(debug_assertions) {
+            self.note_half(e.ty, &v);
+        }
         v
     }
 

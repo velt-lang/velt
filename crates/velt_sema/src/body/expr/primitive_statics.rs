@@ -19,8 +19,9 @@ use crate::hir::{self, Callee, DefId, ExprKind as H, TyId};
 pub(super) type Prim<'n> = (&'n str, TyId);
 
 /// The primitive type names that have statics through `T.name`.
-const NAMES: [&str; 13] = [
-    "i8", "i16", "i32", "i64", "isize", "u8", "u16", "u32", "u64", "usize", "f32", "f64", "bool",
+const NAMES: [&str; 15] = [
+    "i8", "i16", "i32", "i64", "isize", "u8", "u16", "u32", "u64", "usize", "f16", "bf16", "f32",
+    "f64", "bool",
 ];
 
 /// In the body of `def`, a static method of an `extend` block of a primitive type: that type's

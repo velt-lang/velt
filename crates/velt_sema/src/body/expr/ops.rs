@@ -191,7 +191,9 @@ impl FnCx<'_, '_> {
                 if self.cx.maybe_dynamic(inner.ty) {
                     return self.dynamic_unary(op, inner, span);
                 }
-                if !self.cx.ty.is_numeric(inner.ty) && !self.cx.ty.is_bottom(inner.ty) {
+                let number =
+                    self.cx.ty.is_numeric(inner.ty) || self.cx.ty.is_storage_float(inner.ty);
+                if !number && !self.cx.ty.is_bottom(inner.ty) {
                     return self.unary_error("+", inner.ty, span);
                 }
                 inner.span = span;

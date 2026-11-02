@@ -367,7 +367,11 @@ impl FnCx<'_, '_> {
             "write" if self.cx.is_rwlock(recv) => Some(BuiltinMethod::MutexWith),
             "read" if self.cx.is_rwlock(recv) => Some(BuiltinMethod::LockRead),
             "clone" => Some(BuiltinMethod::Clone),
-            "toString" if self.cx.ty.is_numeric(recv) || recv == self.cx.ty.bool_ => {
+            "toString"
+                if self.cx.ty.is_numeric(recv)
+                    || self.cx.ty.is_storage_float(recv)
+                    || recv == self.cx.ty.bool_ =>
+            {
                 Some(BuiltinMethod::ToString)
             }
             _ => None,

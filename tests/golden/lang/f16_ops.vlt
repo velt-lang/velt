@@ -1,0 +1,89 @@
+// `f16`/`bf16` operations beyond the basics (#2049): compound assignment and `++`/`--` compute
+// in `f32` and round back once (a literal right side takes the place's type); `toBits` and
+// `fromBits` are the bit patterns; `sort()` and `compareTo` order by value with NaN last; `+w`,
+// `Number(w)`, `w.toString()` read the value; `x as f16` on an `any` takes the number it holds;
+// a literal compared with an `f16 | string` is exact. The expected output is Node's (a
+// `Float16Array` element for each `f16` store).
+class P {
+  w: f16 = 1;
+}
+
+// A narrowed field's object is the one it held before the right side runs, as in JS.
+class B {
+  items: f16[] = [1];
+}
+class S {
+  b: B | null = new B();
+}
+const st = new S();
+const kept: B[] = [];
+function change(): f16 {
+  if (st.b != null) {
+    kept.push(st.b);
+  }
+  st.b = null;
+  return 1;
+}
+
+function main() {
+  let acc: f16 = 0;
+  const tenth: f16 = 0.1;
+  for (let i = 0; i < 10; i++) {
+    acc += tenth;
+  }
+  let c: f16 = 2047;
+  c++;
+  c++;
+  ++c;
+  console.log(acc, c, c++, c, ++c, c--, --c);
+  let s: bf16 = 1;
+  s *= 3;
+  s /= 7;
+  s -= 0.5;
+  s **= 2;
+  s %= 0.1;
+  console.log(s);
+  let a: f16 = 1;
+  a += 0.1;
+  a -= -2;
+  console.log(a);
+  const xs: f16[] = [1, 2, 3];
+  let k = 0;
+  xs[k++] += 0.5;
+  xs[2] *= xs[1];
+  const p = new P();
+  p.w += 1.5;
+  p.w++;
+  console.log(xs, k, p.w);
+  if (st.b != null) {
+    st.b.items[0] += change();
+  }
+  console.log(kept[0].items, st.b);
+  // Bits.
+  const b: bf16 = -2.5;
+  console.log(tenth.toBits().toString(16), b.toBits().toString(16), f16.fromBits(0x3c00), bf16.fromBits(0x4049));
+  const nan = f16.fromBits(0x7d55);
+  console.log(nan != nan, nan.toBits().toString(16), f16.fromBits(0x8000), f16.fromBits(1), bf16.fromBits(0x7f80));
+  let same = 0;
+  for (let i = 0; i < 65536; i++) {
+    if (f16.fromBits(i as u16).toBits() == (i as u16) && bf16.fromBits(i as u16).toBits() == (i as u16)) {
+      same++;
+    }
+  }
+  console.log(same);
+  // Order.
+  const ys: f16[] = [3, (0 / 0) as f16, -1, 0.1, -0, 0, 65504];
+  ys.sort();
+  const bs: bf16[] = [2.5, -2.5, 1e30, 0.1];
+  console.log(ys, bs.toSorted(), (1.5 as f16).compareTo(2.5), ys.toSorted((x, y) => y - x)[0]);
+  // The value as a number.
+  console.log(+tenth, Number(tenth), Number(b), tenth.toString(), b.toString());
+  const n: any = 0.1;
+  const big: any = 70000;
+  const held: any = 0.1 as f16;
+  console.log(n as f16, big as f16, n as bf16, held as bf16, held as f16);
+  // Exact comparisons with a union member.
+  const u: f16 | string = 1.5 as f16;
+  const t: f16 | string = 0.1 as f16;
+  console.log(u == 1.5, u == 2, t == 0.1, t == 0.0999755859375, u === "1.5");
+}

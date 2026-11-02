@@ -177,6 +177,9 @@ impl FnLower<'_, '_> {
 
     /// Materialize deferred blocks, prune unreachable ones and build the VIR function.
     pub(super) fn finish(mut self, symbol: String, params: Vec<Ty>, ret: Ty) -> Function {
+        if cfg!(debug_assertions) {
+            self.check_half_bits(&symbol);
+        }
         self.build_div_zero_blocks();
         self.version_view_loops(params.len());
         self.place_sections();

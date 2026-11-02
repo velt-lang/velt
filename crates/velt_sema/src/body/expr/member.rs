@@ -586,7 +586,7 @@ impl FnCx<'_, '_> {
         let inner = self.expr(expr, hint, Want::Borrow);
         if self.cx.dynamic(inner.ty).is_some() {
             if storage {
-                return self.any_as_storage(target, span);
+                return self.any_as_storage_cast(inner, target, span);
             }
             return self.cast_dynamic(inner, target);
         }

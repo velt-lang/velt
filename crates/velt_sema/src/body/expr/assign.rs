@@ -501,6 +501,19 @@ impl FnCx<'_, '_> {
         }
         let v = self.expr(value, Some(lty), Want::Borrow);
         let v = self.unbrand(v);
+        // On an `f16`/`bf16`: computed in `f32`, rounded back once (#2049).
+        if self.cx.ty.is_storage_float(lty) && self.cx.dynamic(v.ty).is_none() {
+            let Some(bop) =
+                hir_binop(op).filter(|_| self.storage_bitwise(op, &place, &v, span).is_none())
+            else {
+                return self.error_expr(span);
+            };
+            let mut stmts = Vec::new();
+            return match self.storage_rmw(place, bop, v, &mut stmts, span) {
+                Some(assign) => self.with_temps(stmts, assign),
+                None => self.error_expr(span),
+            };
+        }
         if self.cx.dynamic(v.ty) == Some(crate::any::Dynamic::Any) {
             return self.number_place_any_rmw(place, op, v, span);
         }
@@ -607,6 +620,29 @@ impl FnCx<'_, '_> {
         let lty = place.ty;
         self.literal_use_arith(&place);
         let opname = if op == ast::UpdateOp::Inc { "++" } else { "--" };
+        // `w++` on an `f16`/`bf16`: `w += 1`, computed in `f32` (#2049).
+        if self.cx.ty.is_storage_float(lty) {
+            let one = self.mk(H::Lit(hir::Lit::Float(1.0)), lty, span);
+            let bop = if op == ast::UpdateOp::Inc {
+                BinOp::Add
+            } else {
+                BinOp::Sub
+            };
+            let mut place = place;
+            let mut stmts = Vec::new();
+            if as_value {
+                self.hoist_indices(&mut place, &mut stmts);
+            }
+            let read = self.place_read(&place, Want::Borrow);
+            let Some(ca) = self.storage_rmw(place, bop, one, &mut stmts, span) else {
+                return self.error_expr(span);
+            };
+            if !as_value {
+                return self.with_temps(stmts, ca);
+            }
+            let value = self.update_value(ca, read, prefix, span);
+            return self.with_temps_value(stmts, value);
+        }
         if !self.cx.ty.is_numeric(lty) {
             if !self.cx.ty.is_bottom(lty) {
                 let tn = self.cx.display(lty);

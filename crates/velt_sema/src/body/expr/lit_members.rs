@@ -82,15 +82,22 @@ impl FnCx<'_, '_> {
                 let st = self.cx.ty.primitive(s);
                 (find(&|t| Some(t) == st), "number")
             }
+            // An `f16`/`bf16` member is a float member too: its pattern compares the literal's
+            // exact value with the member's (#2049), so `0.1` never matches an `f16`.
             ast::Lit::Int { .. } => {
                 let ints = find(&|t| ty.is_int(t));
                 if ints.is_empty() {
-                    (find(&|t| ty.is_float(t)), "number")
+                    (
+                        find(&|t| ty.is_float(t) || ty.is_storage_float(t)),
+                        "number",
+                    )
                 } else {
                     (ints, "integer")
                 }
             }
-            ast::Lit::Float { .. } => (find(&|t| ty.is_float(t)), "float"),
+            ast::Lit::Float { .. } => {
+                (find(&|t| ty.is_float(t) || ty.is_storage_float(t)), "float")
+            }
             ast::Lit::Null => (vec![], "null"),
             ast::Lit::Undefined => (vec![], "undefined"),
         };
