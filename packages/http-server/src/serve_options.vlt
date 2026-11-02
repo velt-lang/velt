@@ -38,3 +38,6 @@ export struct HttpServeOptions {
   /** HTTP/2's SETTINGS_MAX_CONCURRENT_STREAMS: requests of a connection at once. Default 128. */
   maxConcurrentStreams?: number;
 }
+
+/** A request body larger than this is refused (413), unless `maxBodySize` says otherwise. */
+export const MAX_BODY: number = 8388608;

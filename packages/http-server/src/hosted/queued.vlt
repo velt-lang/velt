@@ -17,10 +17,20 @@ export class QueuedRequest implements RequestSource, Peer {
   private parsed: bool = false;
   // The body was read to its end (or there is none).
   private ended: bool;
+  // The largest body accepted (`maxBodySize`), and how much of it was read.
+  private maxBody: i64;
+  private size: i64 = 0;
 
-  constructor(req: HostRef) {
+  constructor(req: HostRef, maxBody: i64) {
     this.req = req;
     this.ended = !worker.hasBody(req);
+    this.maxBody = maxBody;
+  }
+
+  /** Whether its `content-length` says the body is larger than the server accepts. */
+  declaredTooLarge(): bool {
+    const length = this.header("content-length");
+    return length != null && parseInt(length) > (this.maxBody as number);
   }
 
   method(): string {
@@ -66,7 +76,10 @@ export class QueuedRequest implements RequestSource, Peer {
     return !this.ended;
   }
 
-  /** The next piece of the body, or null at its end. */
+  /**
+   * The next piece of the body, or null at its end; `IoError` "EMSGSIZE" past the server's
+   * `maxBodySize`, as natively.
+   */
   async read(): Promise<u8[] | null, IoError> {
     if (this.ended) {
       return null;
@@ -75,6 +88,11 @@ export class QueuedRequest implements RequestSource, Peer {
     if (piece.length == 0) {
       this.ended = true;
       return null;
+    }
+    this.size += piece.length as i64;
+    if (this.size > this.maxBody) {
+      this.ended = true;
+      throw new IoError("EMSGSIZE", `request body larger than ${this.maxBody} bytes`);
     }
     return piece;
   }

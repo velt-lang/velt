@@ -245,10 +245,17 @@ builds `serve` over the host's request queue (std's `velt/host/worker`) instead 
 - A request's body streams from the host as the handler reads it (`req.body`, `req.text()`), so an
   upload is never held whole before the handler sees it. A streamed `Response` body is written
   to the host as it is produced.
-- `opts` names no address there (the platform routes the requests; `server.port` is 0), and its
-  limits and TLS are the platform's. `info.remoteAddr` is what the host package's entry gives
+- `opts` names no address there (the platform routes the requests; `server.port` is 0); of its
+  limits only `maxBodySize` applies (413 when the request's `content-length` is larger, before the
+  handler runs; `IoError` "EMSGSIZE" from the body's readers when it turns out larger), the rest
+  and TLS are the platform's. `info.remoteAddr` is what the host package's entry gives
   (host-cloudflare: `cf-connecting-ip`, port 0).
-- `close()` stops taking requests: one the host hands over afterwards is answered 503.
+- Headers are checked as natively (a line break in a value answers 500), and a body without a
+  `content-type` gets `text/plain; charset=utf-8` (text) or `application/octet-stream` (bytes,
+  streams).
+- `close()` stops taking requests at once (requests stay in the host's queue); once the handlers in
+  flight finished the program has nothing left to do and ends, and the host starts it again
+  (`main` runs again) for the next request. `shutdown()` waits for those handlers.
 - A handler that throws gets a 500, logged, as natively. Upgrades (`upgradeConnection`) and
   `serveHttp` are native only.
 

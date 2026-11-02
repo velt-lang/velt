@@ -11,7 +11,7 @@ import { H2Options, h2Options } from "./h2/options";
 import { connection, HEADERS_MS, IDLE_MS, Limits, REQUEST_MS } from "./http1/connection";
 import { HttpRequest } from "./request";
 import { HttpResponse } from "./response";
-import { HttpServeOptions } from "./serve_options";
+import { HttpServeOptions, MAX_BODY } from "./serve_options";
 import { HttpServer } from "./server";
 
 const DEFAULT_HOST = "127.0.0.1";
@@ -20,8 +20,6 @@ const DEFAULT_HOST = "127.0.0.1";
 const MAX_HEAD: number = 16384;
 /// A request with more headers than this is refused (431).
 const MAX_HEADERS: number = 100;
-/// A request body larger than this is refused (413).
-const MAX_BODY: number = 8388608;
 
 /**
  * Binds `host:port` (default host 127.0.0.1; port 0 picks a free port) and serves `handler` in

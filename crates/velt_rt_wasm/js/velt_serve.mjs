@@ -242,10 +242,11 @@ class Program {
   fail(why) {
     if (this.failed) return;
     this.failed = true;
-    console.error(
-      `velt: the program ${why}; its ${this.requests.size} request(s) in flight get a ` +
-        "500, and the next request starts a new instance",
-    );
+    // Answered requests whose body is still being written are cut off; only unanswered ones get
+    // a 500 (none when a server closed and its handlers finished).
+    const unanswered = [...this.requests].filter((r) => !r.answered).length;
+    const lost = unanswered === 0 ? "" : `; its ${unanswered} request(s) in flight get a 500`;
+    console.error(`velt: the program ${why}${lost}, and the next request starts a new instance`);
     this.queue = [];
     this.timer = null;
     for (const req of [...this.requests]) req.abandon(null);

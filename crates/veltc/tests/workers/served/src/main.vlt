@@ -1,14 +1,18 @@
 // packages/http-server's `serve` on a JS host: the same program as natively. `main` awaits a gate
 // before it serves (#1787) and returns after `serve`; request bodies stream from the host as the
-// handler reads them (#1786); responses are text, JSON, bytes or streamed; a handler that throws
-// gets a 500.
+// handler reads them (#1786), up to `maxBodySize`; responses are text, JSON, bytes or streamed,
+// headers checked as natively; handlers run concurrently; a handler that throws gets a 500;
+// `close()` ends the program once its handlers finished, and the next request starts it again.
 
 import { utf8Encode } from "velt/encoding";
 import { BodyStream } from "velt/net/http";
-import { serve, ServeInfo } from "http-server";
+import { HttpServer, serve, ServeInfo } from "http-server";
 import { greet, waitFor } from "probe";
 
 class Oops extends Error {}
+
+/** The server, for `/close`. */
+const servers: HttpServer[] = [];
 
 async function* parts(): AsyncGenerator<u8[], never> {
   for (const p of ["one ", "two ", "three"]) {
@@ -48,12 +52,32 @@ async function handle(req: Request, info: ServeInfo): Promise<Response> {
   if (path == "/throw") {
     throw new Oops("the handler failed");
   }
+  if (path == "/slow") {
+    await waitFor("slow");
+    return new Response("slow at last");
+  }
+  if (path == "/bytes") {
+    return new Response(utf8Encode("raw"));
+  }
+  if (path == "/inject") {
+    const res = new Response("injected?");
+    res.headers.set("x-a", "1\nset-cookie: evil=1");
+    return res;
+  }
+  if (path == "/close") {
+    const server = servers.pop();
+    if (server != null) {
+      server.close();
+    }
+    return new Response("closing");
+  }
   return new Response(`no ${path}`, { status: 404 });
 }
 
 async function main() {
   console.log("main awaits before serving");
   await waitFor("start");
-  const server = await serve({ port: 8080 }, handle);
+  const server = await serve({ port: 8080, maxBodySize: 64 }, handle);
   console.log(`main returns, serving (port ${server.port})`);
+  servers.push(server);
 }

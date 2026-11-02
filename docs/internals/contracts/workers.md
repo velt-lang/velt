@@ -91,8 +91,10 @@ export default {
   500 "the program does not accept requests", logged once. Any other end (code 0 after it
   accepted, a panic's 101, a trap's 134, `process.exit(n)`, an uncaught error's 1), a host
   function that throws, or a failed instantiation discards the instance (an exception that
-  unwinds through the module leaves it unusable): every request in flight gets a 500, the cause
-  is logged, and the next request instantiates the module again.
+  unwinds through the module leaves it unusable): every request in flight that was not
+  answered gets a 500 (one answered whose body is still being written is cut off), the cause is
+  logged with the number of those 500s (left out when there are none, as when a server closed
+  and its handlers finished), and the next request instantiates the module again.
 - Contexts. Some platforms (Cloudflare's Workers) tie I/O (a request's body, a `Response`, a stream, a timer, a fetch) to
   the request whose handler made it, cancel a request whose handler waits on nothing of its
   own, and end a request's context, with what it started, once its response and its
