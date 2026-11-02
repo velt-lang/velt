@@ -306,3 +306,30 @@ fn the_entry_may_be_declared() {
     p.funcs.remove(main);
     expect_err(&p, "missing exported entry");
 }
+
+/// The program with one more extern, `symbol(params) -> ret`.
+fn with_extern(symbol: &str, params: Vec<Ty>, ret: Ty) -> vir::Program {
+    let mut p = base_program();
+    p.externs.push(ExternFn {
+        symbol: symbol.into(),
+        params,
+        ret,
+        noreturn: false,
+        host: None,
+    });
+    p
+}
+
+#[test]
+fn verify_rejects_math_externs_with_another_signature() {
+    // `velt_rt_math_clz64` is `(u64) -> u64` (`velt_vir::math::MathOp::Clz64`).
+    let ok = with_extern("velt_rt_math_clz64", vec![Ty::U64], Ty::U64);
+    assert_eq!(crate::verify(&ok), Ok(()));
+    let wrong_param = with_extern("velt_rt_math_clz64", vec![Ty::I64], Ty::U64);
+    expect_err(&wrong_param, "signature differs from the math operation's");
+    let wrong_ret = with_extern("velt_rt_pow_f64", vec![Ty::F64, Ty::F64], Ty::I64);
+    expect_err(&wrong_ret, "signature differs from the math operation's");
+    let mut noreturn = with_extern("velt_rt_math_sqrt", vec![Ty::F64], Ty::F64);
+    noreturn.externs.last_mut().expect("the extern").noreturn = true;
+    expect_err(&noreturn, "signature differs from the math operation's");
+}

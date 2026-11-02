@@ -11,6 +11,8 @@
 //! `Math.round` (ties toward +Infinity) is `floor` plus one comparison: `x - floor(x)` is exact
 //! for every finite double, and `copysign` gives `-0` for inputs in `[-0.5, -0]`, as in JS.
 
+use velt_vir::math::Rounding;
+
 /// The helpers' shared declarations (each one line, so equal lines from different helpers
 /// coincide in the module's set of definitions).
 const FABS: &str = "declare double @llvm.fabs.f64(double)";
@@ -76,22 +78,20 @@ const ROUND: &str = "define internal double @velt.round(double %x) alwaysinline 
   ret double %s
 }";
 
-/// The helper that computes the runtime function `symbol` of type `(f64) -> f64` inline, with
+/// The helper that computes the rounding `how` inline, with
 /// the definitions it needs: `Math.round` on every target, `floor`/`ceil`/`trunc` where they
 /// round by conversion (`by_conversion`, x86-64; elsewhere they are LLVM intrinsics,
 /// `runtime::math_intrinsic`).
 pub(crate) fn helper(
-    symbol: &str,
+    how: Rounding,
     by_conversion: bool,
 ) -> Option<(&'static str, &'static [&'static str])> {
-    Some(match (symbol, by_conversion) {
-        ("velt_rt_math_round", true) => {
-            ("@velt.round", &[FABS, COPYSIGN, FLOOR, ROUND_BY_CONVERSION])
-        }
-        ("velt_rt_math_round", false) => ("@velt.round", &[FLOOR_INTRINSIC, COPYSIGN, ROUND]),
-        ("velt_rt_math_floor", true) => ("@velt.floor", &[FABS, COPYSIGN, FLOOR]),
-        ("velt_rt_math_ceil", true) => ("@velt.ceil", &[FABS, COPYSIGN, CEIL]),
-        ("velt_rt_math_trunc", true) => ("@velt.trunc", &[FABS, COPYSIGN, TRUNC]),
+    Some(match (how, by_conversion) {
+        (Rounding::Round, true) => ("@velt.round", &[FABS, COPYSIGN, FLOOR, ROUND_BY_CONVERSION]),
+        (Rounding::Round, false) => ("@velt.round", &[FLOOR_INTRINSIC, COPYSIGN, ROUND]),
+        (Rounding::Floor, true) => ("@velt.floor", &[FABS, COPYSIGN, FLOOR]),
+        (Rounding::Ceil, true) => ("@velt.ceil", &[FABS, COPYSIGN, CEIL]),
+        (Rounding::Trunc, true) => ("@velt.trunc", &[FABS, COPYSIGN, TRUNC]),
         _ => return None,
     })
 }
@@ -102,12 +102,11 @@ mod tests {
 
     #[test]
     fn helpers_by_target() {
-        assert_eq!(helper("velt_rt_math_floor", true).unwrap().0, "@velt.floor");
-        assert!(helper("velt_rt_math_floor", false).is_none());
-        assert!(helper("velt_rt_math_sqrt", true).is_none());
-        let (_, defs) = helper("velt_rt_math_round", false).unwrap();
+        assert_eq!(helper(Rounding::Floor, true).unwrap().0, "@velt.floor");
+        assert!(helper(Rounding::Floor, false).is_none());
+        let (_, defs) = helper(Rounding::Round, false).unwrap();
         assert!(defs.contains(&FLOOR_INTRINSIC) && !defs.contains(&FLOOR));
-        let (_, defs) = helper("velt_rt_math_round", true).unwrap();
+        let (_, defs) = helper(Rounding::Round, true).unwrap();
         assert!(defs.contains(&FLOOR) && !defs.contains(&FLOOR_INTRINSIC));
     }
 }

@@ -18,28 +18,7 @@ use target_lexicon::Architecture;
 
 use super::Translator;
 
-/// A rounding direction of the `Math` functions.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) enum Rounding {
-    Floor,
-    Ceil,
-    Trunc,
-    /// JS `Math.round`: to the nearest integer, ties toward +Infinity.
-    Round,
-}
-
-impl Rounding {
-    /// The rounding done by the runtime function `symbol`, if it is one.
-    pub(super) fn of_symbol(symbol: &str) -> Option<Rounding> {
-        Some(match symbol {
-            "velt_rt_math_floor" => Rounding::Floor,
-            "velt_rt_math_ceil" => Rounding::Ceil,
-            "velt_rt_math_trunc" => Rounding::Trunc,
-            "velt_rt_math_round" => Rounding::Round,
-            _ => return None,
-        })
-    }
-}
+pub(super) use velt_vir::math::Rounding;
 
 impl<M: Module> Translator<'_, '_, M> {
     /// `x` (an `f64`) rounded as `how` says.
