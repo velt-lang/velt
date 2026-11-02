@@ -90,8 +90,8 @@ Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exi
 ## Host functions (additive AST, HIR and VIR extension, #1735)
 - `FnSig::host: Option<HostModule { module, span }>` (`ast.rs`): `declare host("<module>")
   function name(…): R;`, an `ItemKind::ExternFn` like `declare system function` (`host` is a
-  word only between `declare` and `(`; `async` parses, sema rejects it). Any module may declare
-  one (https://veltlang.com/docs/reference/host-functions/).
+  word only between `declare` and `(`). Any module may declare one
+  (https://veltlang.com/docs/reference/host-functions/).
 - `hir::ExternFnDef::host: Option<HostImport { module, params: Vec<HostTy>, ret: HostTy }>`
   (`hir/extern_fn.rs`): a function the JS host provides, the WebAssembly import
   `module`.`symbol`, with what crosses per parameter and for the result (`HostTy`: an integer,
@@ -106,6 +106,16 @@ Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exi
   `wasm32-unknown-unknown`; on any other target a reachable call is an error, as for a system
   function the target lacks. The LLVM backend declares it with `wasm-import-module` /
   `wasm-import-name` and writes the manifest; other backends never see one.
+- Async host functions (#1737): `declare host("m") async function f(…): Promise<T>` has
+  `ExternFnDef::is_async` with `host` (`HostImport::ret` is what `T` crosses as) and `ret`
+  `Promise<T, IoError>`; `vir::HostImport::is_async` (additive) marks its import, which returns
+  the `u32` id of the JS promise (manifest result `async:<type>`). Its call is the import, the
+  leaf `velt_rt_host_promise` and std's hook awaiting it (rt_abi_async.md §1.4), whose
+  `HostSettled<W>`, `hostAwait<T>`, `hostAwaitVoid`, `hostAwaitRef` and `hostAwaitRefOrNull`
+  (std/host/promise.vlt) are `std_hooks` entries; the global std/prelude/global/host_async.vlt
+  loads them for a module declaring one. On JS hosts `velt_main` hands `main`'s root to
+  `velt_rt_host_main` with the code after it (VIR `Work::MainFinish`) instead of calling
+  `velt_rt_block_on` (rt_abi_async.md §2.5).
 
 ## Who owns what
 | Area | Crates / files |

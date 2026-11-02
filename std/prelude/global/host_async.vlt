@@ -1,0 +1,6 @@
+// Global (loaded when a module declares an async host function, crates/veltc/src/loader/
+// globals.rs): velt/host's hooks that await the promise of such a function's call, and `IoError`,
+// which it rejects with. It names nothing a program can use: the compiler calls them (velt_common
+// `std_hooks.rs`).
+// load for: an async host function
+import "velt/host/promise";

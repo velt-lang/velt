@@ -18,9 +18,9 @@
 //! `if checked <= slot { block = velt_rt_module_state(&DESC, slot); checked = slot + 1 }`
 //! followed by a copy of `block`. The first access asks the runtime as before (an uninitialized
 //! slot still stops with its `ReferenceError` at the same point); later ones, in loops too, are a
-//! compare and a predictable branch. `velt_rt_block_on` hands the lock to the tasks, so a
-//! function that calls it is left as it is. Runs once the rounds are done, so calls inlined into
-//! one function share one lookup.
+//! compare and a predictable branch. `velt_rt_block_on` (on a JS host `velt_rt_host_main`, which
+//! runs the first turn) hands the lock to the tasks, so a function that calls it is left as it
+//! is. Runs once the rounds are done, so calls inlined into one function share one lookup.
 
 use velt_vir::vir::{
     BasicBlock, BinOp, BlockId, Callee, Const, ExternId, Function, Local, LocalDecl, Operand,
@@ -34,6 +34,7 @@ use crate::srclocs::{prepend_stmts, push_stmt};
 pub(crate) struct Lookups {
     state: Option<ExternId>,
     block_on: Option<ExternId>,
+    host_main: Option<ExternId>,
 }
 
 impl Lookups {
@@ -48,6 +49,7 @@ impl Lookups {
         Lookups {
             state: ext("velt_rt_module_state"),
             block_on: ext("velt_rt_block_on"),
+            host_main: ext("velt_rt_host_main"),
         }
     }
 }
@@ -76,7 +78,7 @@ pub(crate) fn run(lookups: Lookups, func: &mut Function) -> bool {
         else {
             continue;
         };
-        if Some(*e) == lookups.block_on {
+        if Some(*e) == lookups.block_on || Some(*e) == lookups.host_main {
             return false;
         }
         if *e != state {

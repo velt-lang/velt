@@ -52,8 +52,14 @@ pub(super) fn global_modules(std_root: &Path) -> Vec<Global> {
         .filter_map(|file| {
             let src = vpm::probe::read_to_string(&file).ok()?;
             let mut names = reexported_names(&src);
-            if names.is_empty() && src.contains(THIS_FN_LINE) {
-                names.push(THIS_FN.to_string());
+            if names.is_empty() {
+                let marked = [(THIS_FN_LINE, THIS_FN), (ASYNC_HOST_LINE, ASYNC_HOST)];
+                names.extend(
+                    marked
+                        .iter()
+                        .filter(|m| src.contains(m.0))
+                        .map(|m| m.1.into()),
+                );
             }
             let when = load_when(&src);
             Some(Global { file, names, when })
@@ -141,6 +147,21 @@ pub(super) fn names_global(src: &str, module: &ast::Module, name: &str) -> bool 
     mentions(src, name)
         || (name == "RegExp" && src.contains('/') && has_regex(module))
         || (name == THIS_FN && mentions(src, "this") && has_this_fn(module))
+        || (name == ASYNC_HOST && mentions(src, "host") && has_async_host(module))
+}
+
+/// The trigger of the global an async host function loads (std/prelude/global/host_async.vlt:
+/// the hooks that await its call's promise). No source can mention it as a word.
+const ASYNC_HOST: &str = "<async host function>";
+
+/// The line that marks that global ([`ASYNC_HOST`]).
+const ASYNC_HOST_LINE: &str = "// load for: an async host function";
+
+/// Whether `module` declares an async host function (`declare host("m") async function`).
+fn has_async_host(module: &ast::Module) -> bool {
+    module.items.iter().any(
+        |item| matches!(&item.kind, ast::ItemKind::ExternFn(f) if f.host.is_some() && f.is_async),
+    )
 }
 
 /// The trigger of the global a function expression with a `this` parameter loads
@@ -386,5 +407,24 @@ mod tests {
         // The class's name is no trigger: a program cannot name it.
         let named = "const ThisFn = 1;\n";
         assert!(!names_global(named, &parse(named), THIS_FN));
+    }
+
+    #[test]
+    fn the_global_of_async_host_functions_loads_on_its_marker() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("prelude/global");
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = format!("{ASYNC_HOST_LINE}\nimport \"velt/host/promise\";\n");
+        std::fs::write(dir.join("host_async.vlt"), src).unwrap();
+        assert_eq!(global_modules(tmp.path())[0].names, [ASYNC_HOST]);
+        let parse = |src: &str| {
+            let mut sm = SourceMap::new();
+            let file = sm.add(Path::new("main.vlt"), src.to_string());
+            velt_syntax::parse_file(file, &sm.get(file).src).0
+        };
+        let with = "declare host(\"m\") async function f(): Promise<u32>;\n";
+        assert!(names_global(with, &parse(with), ASYNC_HOST));
+        let sync = "declare host(\"m\") function f(): u32;\n";
+        assert!(!names_global(sync, &parse(sync), ASYNC_HOST));
     }
 }

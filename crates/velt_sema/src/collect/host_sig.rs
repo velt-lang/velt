@@ -2,7 +2,8 @@
 //! https://veltlang.com/docs/reference/host-functions/): what crosses between Velt and the JS host. Integers,
 //! `f64`, `bool`, `string`, `u8[]` and `readonly u8[]`, std's `HostRef` and `HostRef | null`
 //! cross, and `void` as the result; anything else is an error that names the parameter and
-//! lists them. A host function is synchronous: `async` and a `Promise` result are errors.
+//! lists them. An `async` host function returns `Promise<T>` of such a result `T`: the promise
+//! of the JS function, which rejects with an `IoError` (`Promise<T, IoError>`).
 
 use velt_common::Diagnostic;
 use velt_syntax::ast;
@@ -13,6 +14,10 @@ use crate::hir::{FloatTy, HostImport, HostTy, Nothing, TyId, TyKind};
 
 /// std's handle to a JS value (std/host/host_ref.vlt).
 pub(crate) const HOST_REF: &str = velt_common::std_item!(host_host_ref, "HostRef");
+
+/// What the promise of an async host function rejects with (loaded with the hooks that await it,
+/// std/prelude/global/host_async.vlt).
+const IO_ERROR: &str = velt_common::std_item!(io_error, "IoError");
 
 /// The import module the runtime's own imports come from (crates/velt_rt_wasm/js/velt_web.mjs):
 /// a program's host functions cannot share it.
@@ -27,12 +32,13 @@ const RESULTS_ALLOWED: &str =
     "`void`, integers, `f64`, `bool`, `string`, `u8[]`, `HostRef` and `HostRef | null`";
 
 /// The import of the host function `sig` (parameter types `ps`, result `ret`), reporting what
-/// cannot cross. Reported parameters cross as `void`: the program does not compile.
+/// cannot cross. Reported parameters cross as `void`: the program does not compile. An async
+/// one's `ret` becomes `Promise<T, IoError>`.
 pub(super) fn host_import(
     cx: &mut Ctx,
     sig: &ast::FnSig,
     ps: &[ParamSig],
-    ret: TyId,
+    ret: &mut TyId,
 ) -> HostImport {
     let name = &sig.name.name;
     let module = sig
@@ -62,14 +68,16 @@ pub(super) fn host_import(
     if sig.this_param.is_some() {
         cx.err("a host function has no `this` parameter", sig.name.span);
     }
-    let not_sync = sig.is_async || is_promise(cx, ret);
-    if not_sync {
+    let ret_span = sig.ret.as_ref().map_or(sig.name.span, |t| t.span);
+    if !sig.is_async && is_promise(cx, *ret) {
         cx.error(
             Diagnostic::error(
-                format!("host function `{name}` cannot be `async` or return a `Promise`"),
-                sig.ret.as_ref().map_or(sig.name.span, |t| t.span),
+                format!("host function `{name}` returns a `Promise` but is not `async`"),
+                ret_span,
             )
-            .with_note("a host function returns its result to the call, synchronously"),
+            .with_note(format!(
+                "declare it `declare host(\"{module}\") async function {name}(…)`"
+            )),
         );
     }
     let params = sig
@@ -77,18 +85,44 @@ pub(super) fn host_import(
         .iter()
         .zip(ps)
         .map(|(p, s)| param(cx, name, p, s.ty))
-        .collect();
-    let ret = match ret_ty(cx, ret) {
-        Some(t) => t,
-        None => {
-            if !not_sync {
-                let shown = cx.display(ret);
+        .collect::<Vec<_>>();
+    if sig.is_async {
+        for (p, t) in sig.params.iter().zip(&params) {
+            if *t == (HostTy::Bytes { readonly: false }) {
                 cx.error(
                     Diagnostic::error(
-                        format!("host function `{name}` returns `{shown}`, which cannot cross to the host"),
-                        sig.ret.as_ref().map_or(sig.name.span, |t| t.span),
+                        format!("parameter `{}` of async host function `{name}` is a `u8[]` the host could write after the call", p.name.name),
+                        p.ty.span,
                     )
-                    .with_note(format!("a host function returns {RESULTS_ALLOWED}")),
+                    .with_note("an async host function takes `readonly u8[]`: the host gets a copy"),
+                );
+            }
+        }
+    }
+    let value = match cx.ty.promise_payload(*ret) {
+        Some(v) if sig.is_async => {
+            *ret = rejecting(cx, v, ret_span);
+            v
+        }
+        _ => *ret,
+    };
+    let ret = match ret_ty(cx, value) {
+        Some(t) => t,
+        None => {
+            // A `Promise` result without `async` is reported above.
+            if sig.is_async || !is_promise(cx, value) {
+                let shown = cx.display(value);
+                let what = if sig.is_async {
+                    "fulfills with"
+                } else {
+                    "returns"
+                };
+                cx.error(
+                    Diagnostic::error(
+                        format!("host function `{name}` {what} `{shown}`, which cannot cross to the host"),
+                        ret_span,
+                    )
+                    .with_note(format!("a host function returns {RESULTS_ALLOWED}, or a `Promise` of one")),
                 );
             }
             HostTy::Void
@@ -171,6 +205,19 @@ fn is_host_ref(cx: &Ctx, ty: TyId) -> bool {
     cx.class_of(ty)
         .and_then(|(d, _)| cx.adt(d))
         .is_some_and(|a| a.qual_name == HOST_REF)
+}
+
+/// `Promise<v, IoError>`, the type of an async host function's call.
+fn rejecting(cx: &mut Ctx, v: TyId, span: velt_common::Span) -> TyId {
+    let Some(crate::ctx::Item::Def(d)) = cx.std_def(IO_ERROR) else {
+        cx.err(
+            "an async host function needs `IoError` (velt/io), which std does not have",
+            span,
+        );
+        return cx.ty.error;
+    };
+    let e = cx.ty.intern(TyKind::Adt(d, vec![]));
+    cx.ty.promise_rejecting(v, e)
 }
 
 fn is_promise(cx: &Ctx, ty: TyId) -> bool {

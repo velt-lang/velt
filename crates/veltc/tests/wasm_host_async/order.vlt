@@ -1,0 +1,31 @@
+// Promises, microtasks and timers without host functions (timers far enough apart that the
+// time a host takes to compile the module's code cannot reorder them): the output under a JS host (the turns
+// it drives) is the native build's (crates/veltc/tests/wasm_goldens.rs
+// `async_host_functions_under_node`).
+
+async function step(name: string, ms: i64): Promise<string> {
+  console.log(`${name} start`);
+  await sleep(ms);
+  console.log(`${name} after sleep(${ms})`);
+  await Promise.resolve();
+  console.log(`${name} after a resolved promise`);
+  return name;
+}
+
+async function main() {
+  queueMicrotask(() => console.log("microtask 1"));
+  Promise.resolve(1).then((v) => console.log(`then ${v}`));
+  const a = step("a", 30);
+  const b = step("b", 0);
+  queueMicrotask(() => console.log("microtask 2"));
+  console.log("main sync end");
+  console.log(await Promise.all([a, b]));
+  setTimeout(() => console.log("timeout 1"), 0);
+  setTimeout(() => console.log("timeout 2"), 0);
+  await sleep(30);
+  const t = spawn(step("task", 1));
+  await yieldNow();
+  console.log("yielded");
+  console.log(await t);
+  console.log("main end");
+}

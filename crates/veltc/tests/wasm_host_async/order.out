@@ -1,0 +1,19 @@
+a start
+b start
+main sync end
+microtask 1
+then 1
+microtask 2
+b after sleep(0)
+b after a resolved promise
+a after sleep(30)
+a after a resolved promise
+[ 'a', 'b' ]
+timeout 1
+timeout 2
+task start
+yielded
+task after sleep(1)
+task after a resolved promise
+task
+main end

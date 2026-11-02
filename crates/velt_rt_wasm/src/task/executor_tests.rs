@@ -65,5 +65,6 @@ unsafe extern "C" fn overtake_poll(s: *mut u8, cx: *mut c_void) -> u32 {
 fn a_due_timer_polled_first_does_not_overtake_an_earlier_one() {
     let mut st = [0i64; 2];
     unsafe { velt_rt_block_on(overtake_poll, st.as_mut_ptr() as *mut u8) };
+    after_main();
     assert_eq!(LOG.with(|l| l.borrow().clone()), ["a", "b"]);
 }

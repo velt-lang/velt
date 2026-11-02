@@ -244,6 +244,26 @@ one (the same pointer once it is shared, so a hash taken before stays valid).
 - WebAssembly keeps identities but has no views: a
   converted promise's rejection is reported as its own there.
 
+### 1.4 Host promises (JS hosts) [additive, #1737]
+
+The call of an async host function (`declare host("m") async function f(…): Promise<T>`,
+https://veltlang.com/docs/reference/host-functions/) is the import `m.f`, which calls the JS function and returns a
+`u32` id under which the glue keeps its JS promise, then a promise leaf over that id
+(velt_rt_wasm `host_promise.rs`), and the promise of a std hook awaiting the leaf (velt_vir
+`lower/host.rs`). The leaf's result is std's `HostSettled<W>` (std/host/promise.vlt) in its
+foreign layout, `{ VeltStr code; VeltStr message; W value; }` (offsets 0, 24, 48): `W` is `T`,
+`u32` (a `HostRef` slot, 0 for `null`) for `HostRef` and `HostRef | null`, and `bool` (unused)
+for `void`. The hook throws `IoError(code, message)` when `code` is not empty, else makes the
+`T` of `value`; the call's promise is a `Promise<T, IoError>`, started like a compiled async
+function's call (§1.1).
+
+`VeltFut* velt_rt_host_promise(u32 id)` (velt_rt_wasm only, wasm32-unknown-unknown): the leaf of
+host promise `id`; result `HostSettled<W>`. Pending until the host settles the promise
+(`velt_settle`, §2.5); polled then, it calls the import `velt.host_take(id, slot)`, which writes
+the outcome to the zeroed slot (the value as the import's result convention writes a result of
+its type, or the rejection's name and message as strings) and forgets the promise. Dropped before
+that, it calls `velt.host_forget(id)`.
+
 ## 2. Tasks
 
 | Symbol | Signature | Notes |
@@ -408,6 +428,45 @@ copy used after its scope ended finds no group). No code pointers are stored.
 | `velt_rt_group_leave` | `(u64 g)` | a child finished |
 | `velt_rt_group_wait` | `(u64 g) -> VeltFut*` | completes (unit) once no child is live, and closes the group then |
 | `velt_rt_group_free` | `(u64 g)` | the scope ended |
+
+### 2.5 Turns a JS host drives (wasm32-unknown-unknown) [additive, #1737]
+
+A JS host's thread belongs to its event loop, so nothing waits on it (velt_rt_wasm
+`host_turn.rs`), and nothing unwinds through the module: every call from the host returns
+normally, with the executor's state on the heap. On `wasm32-unknown-unknown`, `velt_main` does not
+call `velt_rt_block_on`: it hands `main`'s root task to the runtime and returns.
+
+- `velt_rt_host_main(PollFn poll, const void* state, u64 size, u64 align, int32_t (*finish)(void*
+  state))`: moves the root's unpolled state (`size` bytes, `align`) to the heap and runs the first
+  turn. `finish` is the code `velt_main` runs after `velt_rt_block_on` on other targets (the
+  uncaught error, the exit code), which the runtime calls with the heap state once the root is
+  done; then it frees the state.
+- `void velt_turn(void)` (export): a turn: run the microtasks, the ready tasks and the due timers
+  until none is left, as `velt_rt_block_on` does between its sleeps, so Velt's own order is the
+  native one; then ask for a wake-up at the earliest timer (every turn asks again: a host may
+  call early, as hosts round delays). The end follows native programs (velt_rt `entry.rs`
+  `finish`): once the root is done and the microtasks it queued ran, the runtime runs `finish`
+  at once (an uncaught error is reported then, whatever is still pending). A code other than 0
+  ends the program; with 0 the turns go on until no task `spawn` started and no started promise
+  is running and no keep-alive reference is held. When no timer or unsettled host promise can
+  wake a task any more, the program ends too (exit code 13 when the root waits at a top-level
+  `await` nothing can settle). Then the import `velt.done(code)`. No-op once the program ended.
+  WASI and the unit tests' `velt_rt_block_on` return to `velt_main` at the same point, and the
+  runtime runs the tasks on after a `main` that returned 0, sleeping between turns.
+- `void velt_settle(u32 id)` (export): host promise `id` settled: wake the task its leaf
+  registered (none if the leaf is gone), then `velt_turn()`.
+- `velt_start` (export) runs `velt_main`; a `main` that hands no root over ends at once, with
+  `velt.done(code)`.
+
+Imports from module `velt` (the glue, crates/velt_rt_wasm/js/velt_web.mjs): `set_timer(f64 ms)`
+(call `velt_turn` in `ms` milliseconds, replacing the previous request; a negative `ms` cancels
+it), `done(i32 code)` (the program ended), `host_take(u32 id, void* out)` and
+`host_forget(u32 id)` (§1.4). `velt.exit(code)` still throws (`process.exit`, a panic): the
+instance is done then. velt_link exports `velt_turn`, `velt_settle` and `__stack_pointer` (so a
+host can check that turns leave it where it was) from every browser module.
+A host that keeps the instance after `main` (a Worker) holds the program open with a started
+promise or a keep-alive reference while it calls entries of its own that spawn tasks, and drives
+them with the same `velt_turn` / `velt_settle`.
 
 ## 3. Results and errors
 

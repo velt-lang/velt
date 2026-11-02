@@ -115,6 +115,7 @@ fn f_fingerprint(v: &Variant, mode: Mode) -> Fingerprint {
                 name: "setThrowLoc".into(),
                 params: vec![crate::vir::HostValue::Str],
                 ret: crate::vir::HostValue::Void,
+                is_async: false,
             }),
         },
         ExternFn {
