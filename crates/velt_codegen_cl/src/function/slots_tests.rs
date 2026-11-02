@@ -51,7 +51,10 @@ fn field(l: Local, n: u32) -> Operand {
 }
 
 fn memory(f: &vir::Function) -> Vec<bool> {
-    f.locals.iter().map(|l| matches!(l.ty, Ty::Agg(_))).collect()
+    f.locals
+        .iter()
+        .map(|l| matches!(l.ty, Ty::Agg(_)))
+        .collect()
 }
 
 fn slots_of(f: &vir::Function, in_memory: &[bool]) -> (Vec<Option<u32>>, usize) {
@@ -121,7 +124,11 @@ fn a_value_carried_around_a_loop_stays_live_in_the_whole_loop() {
     let t = fb.local(S);
     let (b0, b1, b2) = (fb.block(), fb.block(), fb.block());
     fb.assign(b0, a, str_value());
-    fb.assign(b0, cond, Rvalue::Use(Operand::Const(Const::Bool(true), Ty::Bool)));
+    fb.assign(
+        b0,
+        cond,
+        Rvalue::Use(Operand::Const(Const::Bool(true), Ty::Bool)),
+    );
     fb.term(b0, Terminator::Goto(b1));
     fb.assign(b1, t, str_value());
     fb.assign(b1, sum, Rvalue::Use(field(t, 0)));
@@ -152,7 +159,11 @@ fn a_value_read_in_a_loop_written_before_it_overlaps_the_loop_temporaries() {
     let u = fb.local(S);
     let (b0, b1, b2) = (fb.block(), fb.block(), fb.block());
     fb.assign(b0, t0, str_value());
-    fb.assign(b0, cond, Rvalue::Use(Operand::Const(Const::Bool(true), Ty::Bool)));
+    fb.assign(
+        b0,
+        cond,
+        Rvalue::Use(Operand::Const(Const::Bool(true), Ty::Bool)),
+    );
     fb.term(b0, Terminator::Goto(b1));
     fb.assign(b1, sum, Rvalue::Use(field(t0, 0)));
     fb.assign(b1, u, str_value());
@@ -184,12 +195,7 @@ fn a_pointer_use_keeps_the_local_live() {
     fb.assign(b, a, str_value());
     fb.assign(b, c, str_value());
     fb.assign(b, sum, Rvalue::Use(field(c, 0)));
-    let next = fb.call(
-        b,
-        Callee::Extern(ExternId(0)),
-        vec![copy_local(p)],
-        None,
-    );
+    let next = fb.call(b, Callee::Extern(ExternId(0)), vec![copy_local(p)], None);
     ret(next, &mut fb);
     let f = fb.finish();
     let (slots, _) = slots_of(&f, &memory(&f));
@@ -218,7 +224,9 @@ fn an_out_pointer_write_starts_the_range() {
     let f = fb.finish();
     let (slots, count) = slots_of(&f, &memory(&f));
     assert_eq!(count, 1);
-    assert!(slots[a.0 as usize] == slots[bl.0 as usize] && slots[bl.0 as usize] == slots[c.0 as usize]);
+    assert!(
+        slots[a.0 as usize] == slots[bl.0 as usize] && slots[bl.0 as usize] == slots[c.0 as usize]
+    );
 }
 
 #[test]
@@ -305,7 +313,10 @@ fn described_locals_and_params_keep_keyed_slots() {
         param: false,
     });
     f.locals[1].name = Some("s".into());
-    let p = plan(&program(), &f, &memory(&f), &|i| f.locals[i].debug.is_some()).unwrap();
+    let p = plan(&program(), &f, &memory(&f), &|i| {
+        f.locals[i].debug.is_some()
+    })
+    .unwrap();
     let own = p.local_slot[1].unwrap() as usize;
     assert_eq!(p.slots[own].key, Some(1));
     assert!(p.local_slot[2..].iter().all(|s| *s != Some(own as u32)));

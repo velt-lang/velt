@@ -496,10 +496,7 @@ fn term_events(ctx: &Ctx, origins: &[Vec<u32>], t: &Terminator, out: &mut Vec<(u
         | Terminator::Switch { value: op, .. }
         | Terminator::Return(op) => pointer_operand(ctx, origins, op, out),
         Terminator::Call {
-            callee,
-            args,
-            dest,
-            ..
+            callee, args, dest, ..
         } => {
             if let Callee::Ptr { target, .. } = callee {
                 pointer_operand(ctx, origins, target, out);

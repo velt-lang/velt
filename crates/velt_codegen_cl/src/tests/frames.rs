@@ -68,5 +68,8 @@ fn disjoint_temporaries_share_their_slot() {
     };
     let bytes = emit_object(&program, &opts).unwrap();
     let size = frame_size(&bytes, "many_temporaries");
-    assert!(size <= 64, "frame of 1000 disjoint temporaries is {size} bytes");
+    assert!(
+        size <= 64,
+        "frame of 1000 disjoint temporaries is {size} bytes"
+    );
 }
