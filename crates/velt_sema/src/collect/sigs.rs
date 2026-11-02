@@ -215,7 +215,10 @@ fn fill_sig(cx: &mut Ctx, d: DefId, sig: &ast::FnSig, owner: &Generics, module: 
     // A generator declares its result (`generator_sig`), so it is never inferred.
     let inferred = sig.ret.is_none() && !sig.is_generator && infers_ret(cx, d);
     let (mut ret, ret_span) = match &sig.ret {
-        Some(t) => (cx.resolve_async_aware(t, &env, sig.is_async), Some(t.span)),
+        Some(t) => (
+            cx.resolve_async_aware(t, &env, sig.is_async, sig.is_generator),
+            Some(t.span),
+        ),
         None if inferred => (cx.ty.error, None),
         None => (cx.ty.unit, None),
     };

@@ -406,6 +406,8 @@ impl Ctx<'_> {
                 return self.typed_array_with_buffer(d, name, buffer, t, env);
             }
         }
+        // `AsyncGenerator<T>` without Velt's error type is a site (`throws::generator_sites`).
+        let site = self.generator_site_written(item, args);
         let protocol = match item {
             Item::Def(d) if args.len() >= 2 => self.protocol_type(d),
             _ => None,
@@ -443,7 +445,8 @@ impl Ctx<'_> {
             }
             _ => args,
         };
-        self.item_type_args(item, name, args, t)
+        let r = self.item_type_args(item, name, args, t);
+        self.generator_site_if(site, r, t.span, env.module)
     }
 
     /// The type an item named `name` denotes with the resolved type arguments `args`.

@@ -1,0 +1,14 @@
+// A generator type written with Velt's error type says what its `next()` throws: a generator
+// that throws something else is not one (`AsyncGenerator<T>` without it infers that, #379).
+class NotFound extends Error {}
+
+async function* rows(n: number): AsyncGenerator<string> {
+  if (n < 0) throw new RangeError("negative");
+  yield "row";
+}
+
+function keep(g: AsyncGenerator<string, NotFound>): AsyncGenerator<string, NotFound> {
+  return g;
+}
+
+keep(rows(1));

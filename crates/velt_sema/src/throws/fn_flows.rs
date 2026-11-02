@@ -26,7 +26,7 @@ impl Ctx<'_> {
     /// or its promise type (`promise_sites`).
     pub(crate) fn site_in(&self, range: Span, t: TyId) -> Option<Span> {
         let t = self.site_core(t);
-        if !matches!(self.ty.kind(t), TyKind::FnPtr { .. } | TyKind::Promise(..)) {
+        if !matches!(self.ty.kind(t), TyKind::FnPtr { .. }) && !self.takes_rejections(t) {
             return None;
         }
         let ids = self.fn_sites.by_file.get(&range.file)?;
@@ -74,9 +74,9 @@ impl Ctx<'_> {
         }
         // A `Promise<T>` written within the target's type: a generic parameter's, a tuple
         // element's, a union member (`promise_sites`).
-        match self.ty.kind(to) {
-            TyKind::Promise(..) => self.promise_site_in(s, to),
-            _ => None,
+        match self.takes_rejections(to) {
+            true => self.promise_site_in(s, to),
+            false => None,
         }
     }
 

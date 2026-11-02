@@ -71,7 +71,13 @@ impl FnCx<'_, '_> {
             }
         }
         let ret = match &sig.ret {
-            Some(t) => self.resolve(t),
+            // The declared result is no site (`throws::generator_sites`).
+            Some(t) => {
+                let outer = std::mem::replace(&mut self.cx.fn_sites.generator_ret, true);
+                let r = self.resolve(t);
+                self.cx.fn_sites.generator_ret = outer;
+                r
+            }
             None => self.expected_gen_result(exp, sig.is_async),
         };
         let Some((t, e, written)) = crate::collect::expr_result_args(self.cx, ret, sig) else {
