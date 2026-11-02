@@ -10,25 +10,6 @@ use super::{Fail, PResult, Parser};
 use crate::ast::*;
 use crate::lexer::Tok;
 
-/// The well-known symbols (`Symbol.<name>`) a computed key may name.
-const WELL_KNOWN: [&str; 15] = [
-    "asyncDispose",
-    "asyncIterator",
-    "dispose",
-    "hasInstance",
-    "isConcatSpreadable",
-    "iterator",
-    "match",
-    "matchAll",
-    "replace",
-    "search",
-    "species",
-    "split",
-    "toPrimitive",
-    "toStringTag",
-    "unscopables",
-];
-
 impl<'a> Parser<'a> {
     /// Is the cursor at `[Symbol.<name>]`?
     pub(super) fn at_well_known_key(&mut self) -> bool {
@@ -213,7 +194,7 @@ impl<'a> Parser<'a> {
         let key = self.take_ident();
         self.bump(); // ]
         let span = self.span_from(lo);
-        if !WELL_KNOWN.contains(&key.name.as_str()) {
+        if !crate::ast_names::is_well_known_symbol(&key.name) {
             self.error(
                 format!(
                     "`Symbol.{}` is not a well-known symbol: a computed key names a well-known symbol (`[Symbol.iterator]`) or a module constant holding a symbol (`[KEY]`)",

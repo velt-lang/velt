@@ -1,0 +1,7 @@
+operator_uses.vlt:13:10: error: cannot apply binary operator `*` to type `T`
+help: bound the type parameter
+operator_uses.vlt:18:11: error: cannot apply binary operator `*` to type `V`
+help: define `[Symbol.mul](other: V)` in `V` or in an `extend V` block
+operator_uses.vlt:19:11: error: cannot apply binary operator `-` to type `V`
+help: define `static [Symbol.sub](left: f64, right: V)` in `V` or in an `extend V` block
+operator_uses.vlt:20:11: error: ambiguous operator `+` for `V` and `W`

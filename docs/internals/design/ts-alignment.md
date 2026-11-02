@@ -85,8 +85,10 @@ switch (s.kind) { case "circle": return s.r; case "rect": return s.w * s.h; }
 - **Scoping** (planned): an extension is visible in its module and where it is imported
   (`import { Stats } from …`); prelude extensions are global. Today an extension applies
   wherever its module is loaded.
-- A type's own member always wins over an extension. No new fields (the layout is fixed). No
-  operator overloading.
+- A type's own member always wins over an extension. No new fields (the layout is fixed).
+- **Operators** (implemented, #2050): operator methods keyed by well-known symbols
+  (`[Symbol.add](other)` for `a + b`, operators.md); an `extend` block may add them to a class,
+  struct or vector, never to a type whose operators are built in.
 
 ### Retroactive implements: the rules
 

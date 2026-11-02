@@ -1,0 +1,90 @@
+// Operator methods (#2050): `a op b` is `a[Symbol.op](b)` on a class or struct, the static form
+// `B[Symbol.op](a, b)` takes a left operand of another type, and `-a` / `~a` call
+// `[Symbol.neg]` / `[Symbol.bitNot]`. Operands are evaluated left to right, once each.
+
+class Vec3 {
+  constructor(public x: f64, public y: f64, public z: f64) {}
+  [Symbol.add](o: Vec3): Vec3 { return new Vec3(this.x + o.x, this.y + o.y, this.z + o.z); }
+  [Symbol.sub](o: Vec3): Vec3 { return new Vec3(this.x - o.x, this.y - o.y, this.z - o.z); }
+  [Symbol.mul](k: f64): Vec3 { return new Vec3(this.x * k, this.y * k, this.z * k); }
+  static [Symbol.mul](k: f64, v: Vec3): Vec3 { return v * k; }
+  [Symbol.neg](): Vec3 { return new Vec3(-this.x, -this.y, -this.z); }
+  toString(): string { return `(${this.x}, ${this.y}, ${this.z})`; }
+}
+
+// Overloads pick by the right operand: `Mat * Mat` and `Mat * Vec2`.
+class Vec2 {
+  constructor(public x: f64, public y: f64) {}
+  toString(): string { return `[${this.x} ${this.y}]`; }
+}
+class Mat {
+  constructor(public a: f64, public b: f64, public c: f64, public d: f64) {}
+  [Symbol.mul](o: Mat): Mat;
+  [Symbol.mul](v: Vec2): Vec2;
+  [Symbol.mul](o: Mat | Vec2): Mat | Vec2 {
+    if (o instanceof Mat) {
+      return new Mat(
+        this.a * o.a + this.b * o.c, this.a * o.b + this.b * o.d,
+        this.c * o.a + this.d * o.c, this.c * o.b + this.d * o.d,
+      );
+    }
+    return new Vec2(this.a * o.x + this.b * o.y, this.c * o.x + this.d * o.y);
+  }
+  toString(): string { return `[${this.a} ${this.b}; ${this.c} ${this.d}]`; }
+}
+
+// Bitwise operators and `~` on a flag set.
+struct Flags {
+  bits: u32;
+  [Symbol.bitOr](o: Flags): Flags { return { bits: this.bits | o.bits }; }
+  [Symbol.bitAnd](o: Flags): Flags { return { bits: this.bits & o.bits }; }
+  [Symbol.bitNot](): Flags { return { bits: ~this.bits & 7 }; }
+  [Symbol.shl](n: u32): Flags { return { bits: this.bits << n }; }
+}
+
+// An operator method from an `extend` block, and one that throws.
+class Money {
+  constructor(public cents: i64) {}
+}
+extend Money {
+  [Symbol.add](o: Money): Money { return new Money(this.cents + o.cents); }
+  [Symbol.div](n: i64): Money throws RangeError {
+    if (n == 0) {
+      throw new RangeError("split into no parts");
+    }
+    return new Money(this.cents / n);
+  }
+}
+
+function mk(n: f64): Vec3 {
+  console.log(`mk ${n}`);
+  return new Vec3(n, n, n);
+}
+
+const a = new Vec3(1, 2, 3);
+const b = new Vec3(4, 5, 6);
+const c = new Vec3(1, 1, 1);
+console.log((a + b * 0.5 - -c).toString());
+console.log((2 * a).toString(), (a * 2).toString());
+// Left to right, once each.
+console.log((mk(1) + mk(2)).toString());
+console.log((a + mk(3)).toString());
+console.log((mk(4) * 2).toString(), (2 * mk(5)).toString());
+// The operands stay usable, and the method can be called by its key.
+console.log(a.toString(), b.toString(), a[Symbol.add](b).toString());
+
+const m = new Mat(1, 2, 3, 4);
+console.log((m * m).toString(), (m * new Vec2(1, 1)).toString());
+
+const r: Flags = { bits: 1 };
+const w: Flags = { bits: 2 };
+console.log((r | w).bits, ((r | w) & w).bits, (~r).bits, (r << 2).bits);
+
+const total = new Money(250) + new Money(50);
+console.log(total.cents);
+try {
+  console.log((total / 3).cents);
+  console.log((total / 0).cents);
+} catch (e) {
+  console.log(`caught ${e.message}`);
+}
