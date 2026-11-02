@@ -72,6 +72,7 @@ fn completion_and_hover_come_from_the_schema() {
             "paths",
             "imports",
             "hostModules",
+            "host",
             "jsx",
             "define",
             "tsCompat",
