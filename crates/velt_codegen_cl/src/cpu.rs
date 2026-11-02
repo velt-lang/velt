@@ -639,7 +639,10 @@ mod tests {
             level_features("aarch64-unknown-linux-gnu", Some("baseline")).unwrap(),
             Some(0)
         );
-        assert_eq!(level_features("aarch64-unknown-linux-gnu", None).unwrap(), Some(0));
+        assert_eq!(
+            level_features("aarch64-unknown-linux-gnu", None).unwrap(),
+            Some(0)
+        );
         assert!(level_features(LINUX, Some("skylkae")).is_err());
     }
 }

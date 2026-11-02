@@ -175,7 +175,11 @@ const ARM: Arch = Arch {
 };
 
 /// The list the mask of this build's architecture is over.
-const THIS: Arch = if cfg!(target_arch = "aarch64") { ARM } else { X86 };
+const THIS: Arch = if cfg!(target_arch = "aarch64") {
+    ARM
+} else {
+    X86
+};
 
 /// `have` without the features `disable` (`VELT_CPU_DISABLE`, a comma-separated list such as
 /// `popcnt,avx2`) names: how the check is tested on a CPU that has them.

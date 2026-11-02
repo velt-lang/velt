@@ -513,7 +513,12 @@ fn an_arm64_cpu_with_the_dot_product_gets_sdot_anywhere() {
     assert_eq!(crate::required_features(linux, Some("neoverse-n1")), Ok(1));
     assert_eq!(crate::required_features(linux, Some("cortex-a53")), Ok(0));
     assert_eq!(crate::required_features(linux, Some("baseline")), Ok(0));
-    let target = |cpu| crate::target::normalize(linux).unwrap().with_cpu(Some(cpu)).unwrap();
+    let target = |cpu| {
+        crate::target::normalize(linux)
+            .unwrap()
+            .with_cpu(Some(cpu))
+            .unwrap()
+    };
     assert!(target("neoverse-n1").has_dotprod());
     assert!(!target("cortex-a53").has_dotprod());
 }
