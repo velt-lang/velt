@@ -19,7 +19,9 @@
 //! - the methods of its `extend` blocks on number types, `bool` and `string`, the prelude's
 //!   included ([`primitive_extension`]): reached by a call or a function value, or through an
 //!   interface implementation that holds one ([`impl_methods`]);
-//! - nothing in the modules lowering looks into by name for other definitions ([`EAGER`]).
+//! - nothing in the modules lowering looks into by name for other definitions ([`EAGER`]);
+//! - the hooks lowering calls to convert an `any` to a record ([`RECORD_HOOKS`]), although
+//!   lowering calls them: reached by a conversion that may need them ([`record_hooks_needed`]).
 //!
 //! A user module's code is always checked, and so is a std module it imports: `velt check`
 //! reports everything in what a program imports, except the prelude's unreached free functions,
@@ -124,6 +126,17 @@ pub(crate) fn is_helper(qualified: &str) -> bool {
             .is_some_and(|r| r.starts_with(|c: char| c.is_ascii_uppercase()) && r.contains('_'))
 }
 
+/// The hooks that convert an `any` holding an object to a `Record<string, V>` (`velt_vir`
+/// `any_to_record.rs`). Lowering calls them from the conversion of an `any` to a type holding
+/// such a record, which no checked code names, but the element read through `any` an array
+/// needs makes checking them cost a program that mentions `Record` 4% (#2052): they are checked
+/// once [`record_hooks_needed`]. Lowering leaves a conversion whose hooks are unchecked the
+/// `TypeError` it was without them.
+pub(crate) const RECORD_HOOKS: &[&str] = &[
+    velt_common::std_hook!(any_to_record_any),
+    velt_common::std_hook!(any_to_record),
+];
+
 /// How a module's definitions are checked.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -156,6 +169,13 @@ pub(crate) struct Lazy {
     /// function, decided when asked). What decides it for a function (its module, kind and
     /// owner) does not change during a check, and the passes ask about every definition.
     fn_deferred: Vec<Option<bool>>,
+    /// Has checked code of a non-std module an `any` (or another dynamic type) in it?
+    user_dynamic: bool,
+    /// Has checked code an explicit conversion of an `any` to a type holding a record with
+    /// string keys (an `AnyTo`)?
+    record_conversion: bool,
+    /// Have [`RECORD_HOOKS`] been reached?
+    record_hooks: bool,
 }
 
 impl Lazy {
@@ -171,6 +191,9 @@ impl Lazy {
             subclasses: FxHashMap::default(),
             defaults_scanned: 0,
             fn_deferred: vec![],
+            user_dynamic: false,
+            record_conversion: false,
+            record_hooks: false,
         }
     }
 
@@ -255,7 +278,7 @@ fn decide(cx: &Ctx, d: DefId) -> bool {
             FnKind::Free | FnKind::Static => match cx.lazy.modules[f.module] {
                 Mode::Eager => false,
                 Mode::Lazy => true,
-                Mode::Helpers => !is_helper(&f.name),
+                Mode::Helpers => !is_helper(&f.name) || RECORD_HOOKS.contains(&f.name.as_str()),
             },
             // A type's methods, where the type is declared (an `extend` of a prelude class
             // keeps its methods checked); an `extend` of a primitive type's.
@@ -361,6 +384,13 @@ pub(crate) fn reach(cx: &mut Ctx) {
                 continue;
             }
             let deferred_fn = deferred(cx, d);
+            let module = match &cx.info[i] {
+                DefInfo::Fn(f) => f.module,
+                DefInfo::Global(g) => g.module,
+                _ => continue,
+            };
+            let user = !cx.modules[module].is_std;
+            let first_type = sc.types.len();
             match (&mut cx.defs[i], &mut cx.info[i]) {
                 (Some(hir::Def::Fn(f)), info) => {
                     if let (true, DefInfo::Fn(fi)) = (deferred_fn, info) {
@@ -380,8 +410,23 @@ pub(crate) fn reach(cx: &mut Ctx) {
                 }
                 _ => {}
             }
+            if user && !cx.lazy.user_dynamic {
+                let mut seen = FxHashSet::default();
+                cx.lazy.user_dynamic =
+                    (sc.types[first_type..].iter()).any(|&t| holds_dynamic(cx, t, &mut seen));
+            }
+        }
+        for t in std::mem::take(&mut sc.conversions) {
+            if !cx.lazy.record_conversion {
+                cx.lazy.record_conversion = holds_string_record(cx, t, &mut FxHashSet::default());
+            }
         }
         used_types(cx, std::mem::take(&mut sc.types), &mut sc.found);
+        if !cx.lazy.record_hooks && record_hooks_needed(cx) {
+            cx.lazy.record_hooks = true;
+            sc.found
+                .extend(RECORD_HOOKS.iter().filter_map(|h| cx.prelude_fn(h)));
+        }
         impl_methods(cx, &mut sc.found);
         let mut checked = false;
         for d in std::mem::take(&mut sc.found) {
@@ -442,6 +487,49 @@ fn used_types(cx: &mut Ctx, mut todo: Vec<TyId>, found: &mut Vec<DefId>) {
         classes.extend(cx.lazy.subclasses.get(&d).into_iter().flatten().copied());
         found.extend(cx.lazy.methods.get(&d).into_iter().flatten().copied());
     }
+}
+
+/// Does the program need [`RECORD_HOOKS`]: an explicit conversion of an `any` to a type holding
+/// a record with string keys, or, for the conversions lowering's glue makes (a member written
+/// through `any`, an object converted to a class), a non-std module handling an `any` in a
+/// program that uses such a record? A program that converts nothing to a record, or whose own
+/// code has no `any` (std's code has many), does not check them.
+fn record_hooks_needed(cx: &Ctx) -> bool {
+    cx.lazy.record_conversion
+        || (cx.lazy.user_dynamic
+            && (cx.lazy.types.iter())
+                .any(|&t| cx.record_type_args(t).is_some_and(|(k, _)| k == cx.ty.str_)))
+}
+
+/// Does `t` hold a record with string keys: itself, a part of it, or a field of a class or struct
+/// in it (the type an `any` converts to)?
+fn holds_string_record(cx: &Ctx, t: TyId, seen: &mut FxHashSet<TyId>) -> bool {
+    if !seen.insert(t) {
+        return false;
+    }
+    if cx.record_type_args(t).is_some_and(|(k, _)| k == cx.ty.str_) {
+        return true;
+    }
+    let kind = cx.ty.kind(t).clone();
+    if let TyKind::Adt(d, _) = kind {
+        let fields: Vec<TyId> = cx
+            .adt(d)
+            .map(|a| a.fields.iter().map(|f| f.ty).collect())
+            .unwrap_or_default();
+        if fields.into_iter().any(|f| holds_string_record(cx, f, seen)) {
+            return true;
+        }
+    }
+    (crate::types::children(&kind).into_iter()).any(|c| holds_string_record(cx, c, seen))
+}
+
+/// Is `t`, or a part of it, `any` or another dynamic type?
+fn holds_dynamic(cx: &Ctx, t: TyId, seen: &mut FxHashSet<TyId>) -> bool {
+    if !seen.insert(t) {
+        return false;
+    }
+    cx.dynamic(t).is_some()
+        || (crate::types::children(cx.ty.kind(t)).into_iter()).any(|c| holds_dynamic(cx, c, seen))
 }
 
 /// The field defaults and redefined initializers of class or struct `a`.
@@ -547,6 +635,8 @@ struct Scan {
     found: Vec<DefId>,
     /// Types of its expressions and locals.
     types: Vec<TyId>,
+    /// The types its explicit conversions of an `any` give (`AnyTo`).
+    conversions: Vec<TyId>,
 }
 
 /// The definitions and types `e` refers to, into `sc` (`visit` walks mutable HIR; nothing is
@@ -572,6 +662,10 @@ fn refs_of(e: &hir::Expr, sc: &mut Scan) {
             sc.types.extend(type_args)
         }
         E::Global(d) => sc.found.push(*d),
+        E::Call {
+            callee: Callee::Intrinsic(hir::Intrinsic::AnyTo | hir::Intrinsic::AnyToExact),
+            ..
+        } => sc.conversions.push(e.ty),
         E::Call {
             callee: Callee::Dyn {
                 method_type_args, ..

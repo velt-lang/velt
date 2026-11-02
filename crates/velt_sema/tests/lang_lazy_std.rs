@@ -380,3 +380,37 @@ fn an_extend_method_std_code_calls_is_checked_with_its_caller() {
     );
     assert!(d.iter().any(|d| d.is_error()), "{}", l.render(&d));
 }
+
+/// The record conversion hooks (`velt_sema` `lazy_std::RECORD_HOOKS`), loaded as the global a
+/// program mentioning `Record` loads.
+const RECORD_HOOKS: [&str; 2] = [
+    "std/lang/hooks/any_record::anyToRecordAny",
+    "std/lang/hooks/any_record::anyToRecord",
+];
+
+#[test]
+fn the_record_hooks_are_checked_only_for_a_program_that_may_convert_to_a_record() {
+    let load = "import \"velt/prelude/global/record_any\";\n";
+    // A record, and no `any` in the program's code: nothing converts to it.
+    let p = ok_src(&format!(
+        "{load}function main() {{\n  const r: Record<string, number> = {{ a: 1 }};\n  console.log(r.a);\n}}\n"
+    ));
+    let names = unchecked(&p);
+    for h in RECORD_HOOKS {
+        assert!(names.contains(&h.to_string()), "{h} is checked: {names:?}");
+    }
+    // `any` converted to a record, explicitly; through a member written through `any` (the
+    // glue converts it to the field's type); to an object type holding a record.
+    for body in [
+        "const x: any = { a: 1 };\n  const r = x as Record<string, any>;\n  console.log(r.a);",
+        "const n: { props: Record<string, any> } = { props: {} };\n  const h: any = n;\n  h.props = { id: 1 };\n  console.log(n.props.id);",
+        "const x: any = { props: { a: 1 } };\n  const n = x as { props: Record<string, number> };\n  console.log(n.props.a);",
+    ] {
+        let p = ok_src(&format!("{load}function main() {{\n  {body}\n}}\n"));
+        let names = unchecked(&p);
+        for h in RECORD_HOOKS {
+            assert!(!names.contains(&h.to_string()), "{h} is unchecked: {body}");
+            assert!(has_body(&p, h), "{h}: {body}");
+        }
+    }
+}

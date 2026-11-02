@@ -2,10 +2,11 @@
 //! (#1219): an object literal, a class instance, an array, or a record of other values
 //! (`style: { color }` passed through `any` to a `Record<string, any>` parameter). Node reads any
 //! object as a record. Velt's record is its own type, so the conversion builds one: std's hook
-//! `anyToRecordAny(o)` (`V` is `any`) or `anyToRecord<V>(o)` (std/lang/hooks/any_record.vlt, loaded
-//! for a program that mentions `Record`; without it the conversion stays the `TypeError`)
-//! makes a new record of the object's own enumerable entries, in its order (`{ ...o }`, which
-//! asks a proxy's traps), each value converted to `V` as `AnyTo` converts it. It is a copy, as an
+//! `anyToRecordAny(o)` (`V` is `any`) or `anyToRecord<V>(o)` (std/lang/hooks/any_record.vlt,
+//! loaded for a program that mentions `Record` and checked for one that may convert to it,
+//! velt_sema `lazy_std::RECORD_HOOKS`; without it the conversion stays the `TypeError`) makes a
+//! new record of the object's own enumerable entries, in its order (`Object.keys`, which asks a
+//! proxy's traps), each value converted to `V` as `AnyTo` converts it. It is a copy, as an
 //! object converted to another object type is (any_object_fill.rs): a later write through one is
 //! not seen through the other. `null`, `undefined` and primitives stay a `TypeError`.
 
@@ -44,7 +45,10 @@ impl FnLower<'_, '_> {
             true => (TO_RECORD_ANY, vec![]),
             false => (TO_RECORD, vec![v]),
         };
-        let Some(d) = self.cx.prelude_def(name) else {
+        // sema checks the hooks only for a program that may convert to a record (velt_sema
+        // `lazy_std::RECORD_HOOKS`); without them the conversion stays the `TypeError`.
+        let hook = self.cx.prelude_def(name);
+        let Some(d) = hook.filter(|d| !self.cx.hir.unchecked.contains(d)) else {
             return;
         };
         let desc = Operand::Copy(proj(p, Proj::Field(1)));
