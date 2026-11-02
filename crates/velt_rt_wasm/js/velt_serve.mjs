@@ -50,9 +50,11 @@ const KEEPALIVE_MS = 10_000;
  *   context runs the program now), and the sink of the program's output (default: console, a
  *   line at a time)
  * @returns {{ serve(request: Request, platform?: { context?: object,
- *             waitUntil?: (p: Promise<void>) => void }): Promise<Response> }} `serve` answers a
- *   request; `platform.context` is what host modules see for it, and `platform.waitUntil` keeps
- *   its handler's context alive after the answer (platforms that end it with the answer)
+ *             waitUntil?: (p: Promise<void>) => void, remoteAddr?: string }): Promise<Response> }}
+ *   `serve` answers a request; `platform.context` is what host modules see for it,
+ *   `platform.waitUntil` keeps its handler's context alive after the answer (platforms that end
+ *   it with the answer), and `platform.remoteAddr` is the client's address if the platform says
+ *   (a host name or `host:port`)
  */
 export function createServer(module, options = {}) {
   let program = null;
@@ -125,7 +127,7 @@ class Program {
   }
 
   async serve(request, platform) {
-    const req = new WorkerRequest(request, this, platform.context);
+    const req = new WorkerRequest(request, this, platform.context, peer(platform.remoteAddr));
     const pumping = req.pump();
     // Awaited only while it runs: a promise of the first request's context.
     if (!this.started) await (this.ready ??= this.start(req).then(() => (this.started = true)));
@@ -160,6 +162,8 @@ class Program {
       method: (req) => req.method,
       url: (req) => req.url,
       headers: (req) => req.headers,
+      remoteAddr: (req) => req.remoteAddr,
+      hasBody: (req) => req.body !== null,
       read: (req) => req.read(),
       respond: (req, status, headers, body) => req.respond(status, headers, body),
       respondStream: (req, status, headers) => req.respondStream(status, headers),
@@ -264,9 +268,10 @@ class Program {
  * I/O in its own handler.
  */
 class WorkerRequest {
-  constructor(request, program, context) {
+  constructor(request, program, context, remoteAddr) {
     this.program = program;
     this.context = context;
+    this.remoteAddr = remoteAddr;
     this.method = request.method;
     this.url = request.url;
     this.headers = [...request.headers].map(([k, v]) => `${k}: ${v}`).join("\n");
@@ -522,6 +527,19 @@ class ResponseStream {
   dropped() {
     this.abort();
   }
+}
+
+/**
+ * The client's address as `velt:worker`.`remoteAddr` gives it, from the address the adapter
+ * passed (`platform.remoteAddr`, a host name or `host:port`): `host:port`, `[v6]:port` for an IPv6
+ * address, port 0 when the adapter gave none; empty without one.
+ */
+function peer(addr) {
+  if (typeof addr !== "string" || addr === "") return "";
+  if (addr.startsWith("[")) return addr.includes("]:") ? addr : `${addr}:0`;
+  const colons = addr.split(":").length - 1;
+  if (colons > 1) return `[${addr}]:0`;
+  return colons === 1 ? addr : `${addr}:0`;
 }
 
 /** Take `timer` from its pump: its timeout is cleared there, in the context that made it. */

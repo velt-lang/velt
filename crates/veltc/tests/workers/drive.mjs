@@ -250,6 +250,33 @@ const scenarios = {
     await send("nothing");
     await twice;
   },
+  // served/: packages/http-server's `serve`. `main` awaits a gate first, then returns after
+  // `serve`; Workers give the client's IP in `cf-connecting-ip`.
+  async served() {
+    const ip = { "cf-connecting-ip": "203.0.113.7" };
+    const first = send("hello", { headers: { "x-name": "Ada", ...ip } });
+    await env.gates.reached("start");
+    console.log("a request waits while main does");
+    env.gates.open("start");
+    await first;
+    await send("hello", { method: "POST", headers: { "x-name": "Bo", "cf-connecting-ip": "2001:db8::1" } });
+    const pieces = ["ab", "c", "def"];
+    let at = 0;
+    const body = new ReadableStream({
+      async pull(c) {
+        // One piece at a time, each after the handler took the last.
+        if (at < pieces.length) c.enqueue(encoder.encode(pieces[at++]));
+        else c.close();
+      },
+    });
+    await send("pieces", { method: "POST", body, duplex: "half" });
+    await send("text", { method: "POST", body: "plain" });
+    await send("text");
+    await send("json");
+    await send("stream");
+    await send("throw");
+    await send("missing", { headers: ip });
+  },
   // bare/: an accept loop over std alone.
   async bare() {
     await send("x");

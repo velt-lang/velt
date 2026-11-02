@@ -28,6 +28,9 @@ const HOST: &str = "host-cloudflare";
 const HELLO_BUDGET: usize = 90_000;
 /// The same for `serve/`, an accept loop with a package host module: 1.5 times 117,799 bytes.
 const SERVE_BUDGET: usize = 177_000;
+/// The same for `served/`, packages/http-server's `serve` with JSON and streamed bodies: 1.5
+/// times 309,826 bytes.
+const SERVED_BUDGET: usize = 465_000;
 
 /// The fixtures, copied into a work directory of their own (a build writes `target/` beside
 /// its program).
@@ -43,6 +46,15 @@ fn fixtures(name: &str) -> Option<(PathBuf, PathBuf)> {
     let _ = std::fs::remove_dir_all(&work);
     copy_dir(&root.join("crates/veltc/tests/workers"), &work);
     copy_dir(&root.join("packages").join(HOST), &work.join(HOST));
+    // packages/http-server's sources (not its build output or tests).
+    let server = root.join("packages/http-server");
+    std::fs::create_dir_all(work.join("http-server")).expect("http-server dir");
+    std::fs::copy(
+        server.join("package.vlt"),
+        work.join("http-server/package.vlt"),
+    )
+    .expect("http-server package.vlt");
+    copy_dir(&server.join("src"), &work.join("http-server/src"));
     Some((root, work))
 }
 
@@ -131,6 +143,23 @@ fn an_accept_loop_serves_requests() {
     let worker = dir.join("target/velt/serve-workers");
     assert!(worker.join("hosts/probe/probe.mjs").is_file());
     within_budget(&worker, SERVE_BUDGET);
+    let _ = std::fs::remove_dir_all(&work);
+}
+
+/// packages/http-server's `serve` on a `--host` build: the program it runs natively, `main`
+/// awaiting before it serves and returning after; request bodies streamed from the host as the
+/// handler reads them; text, JSON, streamed and failed responses; the client's address.
+#[test]
+fn http_server_serves_on_a_js_host() {
+    let Some((_, work)) = fixtures("served") else {
+        return;
+    };
+    let dir = work.join("served");
+    for mode in [None, Some("--release")] {
+        let args: Vec<&str> = ["build", "--host", HOST].into_iter().chain(mode).collect();
+        drive(&work, &dir, &args, "target/velt/served-workers", "served");
+    }
+    within_budget(&dir.join("target/velt/served-workers"), SERVED_BUDGET);
     let _ = std::fs::remove_dir_all(&work);
 }
 

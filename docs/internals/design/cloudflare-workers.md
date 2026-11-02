@@ -208,6 +208,16 @@ condition, never a platform. The glue answers each JS `Request` with the `Respon
 hands back for it; a task that outlives its response is kept alive with the adapter's
 `waitUntil` (`ctx.waitUntil()` on Workers).
 
+As built: `imports: { "#standard": { workers: "./src/hosted/standard.vlt", default: … } }`.
+`serve` spawns the accept loop over std's `velt/host/worker` in a task scope and returns an
+`HttpServer` (which holds a close callback, not a `TcpListener`), so `main` may await before
+`serve` and return after it (#1787: the runtime keeps the program while the loop's task waits).
+Each request is a `RequestSource` (`QueuedRequest`) whose `read` is one `velt:worker` `read`, so
+the body streams (#1786); `hasBody` and the client's address come from the new `velt:worker`
+functions `hasBody` and `remoteAddr` (the adapter passes the address: host-cloudflare's
+`cf-connecting-ip`). The response is one `respond`, or `respondStream` with a `write` per chunk.
+A release build of the test's server is 309,826 bytes gzipped.
+
 ## 7. `packages/cloudflare` (#1738)
 
 A package, not std: R2 (`get`, `head`, `put` with `onlyIf`, `delete`, `list`), D1 (`prepare`,

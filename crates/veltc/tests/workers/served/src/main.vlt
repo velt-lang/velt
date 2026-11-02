@@ -1,0 +1,59 @@
+// packages/http-server's `serve` on a JS host: the same program as natively. `main` awaits a gate
+// before it serves (#1787) and returns after `serve`; request bodies stream from the host as the
+// handler reads them (#1786); responses are text, JSON, bytes or streamed; a handler that throws
+// gets a 500.
+
+import { utf8Encode } from "velt/encoding";
+import { BodyStream } from "velt/net/http";
+import { serve, ServeInfo } from "http-server";
+import { greet, waitFor } from "probe";
+
+class Oops extends Error {}
+
+async function* parts(): AsyncGenerator<u8[], never> {
+  for (const p of ["one ", "two ", "three"]) {
+    yield utf8Encode(p);
+    await sleep(1);
+  }
+}
+
+async function handle(req: Request, info: ServeInfo): Promise<Response> {
+  const path = new URL(req.url).pathname;
+  if (path == "/hello") {
+    const name = req.headers.get("x-name") ?? "nobody";
+    return new Response(`${greet(name)}: ${req.method} from ${info.remoteAddr.hostname}`);
+  }
+  if (path == "/pieces") {
+    // The body as it arrives: one read per piece the client sent (their sizes).
+    const seen: string[] = [];
+    const body = req.body;
+    if (body != null) {
+      for await (const chunk of body) {
+        seen.push(`${chunk.length}`);
+      }
+    }
+    return new Response(`${seen.length} pieces of ${seen.join("|")} bytes`, { status: 201 });
+  }
+  if (path == "/text") {
+    return new Response(`got "${await req.text()}"`);
+  }
+  if (path == "/json") {
+    const res = Response.json({ ok: true, n: 2 });
+    res.headers.set("x-kind", "json");
+    return res;
+  }
+  if (path == "/stream") {
+    return new Response(BodyStream.from(parts()));
+  }
+  if (path == "/throw") {
+    throw new Oops("the handler failed");
+  }
+  return new Response(`no ${path}`, { status: 404 });
+}
+
+async function main() {
+  console.log("main awaits before serving");
+  await waitFor("start");
+  const server = await serve({ port: 8080 }, handle);
+  console.log(`main returns, serving (port ${server.port})`);
+}

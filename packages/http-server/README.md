@@ -232,6 +232,26 @@ RFC 8441, [docs/websocket.md](docs/websocket.md)). `head` holds what the client 
 request, already in the new protocol (Node's `head`). [`http-server/websocket`](docs/websocket.md)
 is built on this.
 
+## On a JS host (`velt build --host`)
+
+The same program serves on a JavaScript platform: with a host package whose condition is
+`workers` (packages/host-cloudflare, for Cloudflare Workers), `velt build --host host-cloudflare`
+builds `serve` over the host's request queue (std's `velt/host/worker`) instead of a TCP listener
+(src/hosted/standard.vlt, chosen by `imports` in package.vlt). The handler, its `Request` and
+`Response` and `ServeInfo` are the same:
+
+- `serve` returns at once and `main` may return after it; `main` may also await anything first (a
+  database check, a fetch), and requests wait in the host's queue until it serves.
+- A request's body streams from the host as the handler reads it (`req.body`, `req.text()`), so an
+  upload is never held whole before the handler sees it. A streamed `Response` body is written
+  to the host as it is produced.
+- `opts` names no address there (the platform routes the requests; `server.port` is 0), and its
+  limits and TLS are the platform's. `info.remoteAddr` is what the host package's entry gives
+  (host-cloudflare: `cf-connecting-ip`, port 0).
+- `close()` stops taking requests: one the host hands over afterwards is answered 503.
+- A handler that throws gets a 500, logged, as natively. Upgrades (`upgradeConnection`) and
+  `serveHttp` are native only.
+
 ## `HttpServer`
 
 `HttpServer { port: number }`: `close()` stops accepting, lets in-flight requests finish and closes

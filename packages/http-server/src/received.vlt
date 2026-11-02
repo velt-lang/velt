@@ -11,9 +11,10 @@ import { RequestSource } from "velt/net/http";
 import { HttpRequest } from "./request";
 import { HttpResponse } from "./response";
 import { BodyTooLarge } from "./errors";
+import { Peer } from "./serve_info";
 
 /** The server side of a received `Request` (internal). */
-export class Received implements RequestSource {
+export class Received implements RequestSource, Peer {
   private req: HttpRequest;
   private res: HttpResponse;
   // `http://host` or `https://host`, from the `Host` header.

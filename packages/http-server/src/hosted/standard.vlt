@@ -1,0 +1,129 @@
+// http-server (internal): `serve` on a JS host (`velt build --host <package>`, the variant the
+// host's condition selects). A host package's entry queues each request the platform hands it,
+// and the program takes them with std's velt/host/worker, as the native server accepts
+// connections: `serve` starts that accept loop in the background and returns, so `main` may
+// await anything before it calls `serve`, and the handler and its `Request` and `Response` are
+// the same as natively. The request's body streams from the host as the handler reads it; a
+// streamed response body is written to the host as it is produced.
+
+import { IoError } from "velt/io";
+import { HostRef } from "velt/host";
+import * as worker from "velt/host/worker";
+import { utf8Encode } from "velt/encoding";
+import { BodyKind, Request, Response, responseParts, serverRequest } from "velt/net/http";
+import { AbortController, AbortSignal, TaskScope, taskScope } from "velt/task";
+import { QueuedRequest } from "./queued";
+import { HttpServeOptions } from "../serve_options";
+import { HttpServer } from "../server";
+import { ServeInfo } from "../serve_info";
+
+/**
+ * Serves `handler` for the requests the JS host queues, in the background; `opts` names no
+ * address here (the platform routes the requests), and its limits are the platform's. The
+ * handler returns a `Response`, or a promise of one, as natively; one that throws, or whose
+ * promise rejects, gets a 500, and the error is printed to stderr. Handlers run concurrently.
+ * `close()` stops taking requests: one the host hands over after it is answered 503.
+ */
+export async function serve<E, F>(
+  opts: HttpServeOptions,
+  handler: (req: Request, info: ServeInfo) => Response | Promise<Response, E> throws F,
+): Promise<HttpServer, IoError> {
+  const stop = new AbortController();
+  const done = spawn(acceptAll(handler, stop.signal));
+  return new HttpServer(0, (): void => {}, stop, done);
+}
+
+/**
+ * Takes the host's requests until `stopped`, each answered on a task of its own in one task
+ * scope, so this settles only once the last of them finished.
+ */
+async function acceptAll<E, F>(
+  handler: (req: Request, info: ServeInfo) => Response | Promise<Response, E> throws F,
+  stopped: AbortSignal,
+): Promise<void> {
+  await taskScope(
+    // `accept` rejects only when the host stops the program.
+    async (scope: TaskScope<IoError>): Promise<void, IoError> => {
+      while (!stopped.aborted) {
+        const req = await worker.accept();
+        if (stopped.aborted) {
+          text(req, 503, "Service Unavailable");
+          break;
+        }
+        // The scope waits for it: nothing awaits the handle.
+        const task = scope.spawn(answer(req, handler));
+      }
+    },
+    { cancelOnError: false },
+  );
+}
+
+/** Runs `handler` for `req` and writes its response. */
+async function answer<E, F>(
+  req: HostRef,
+  handler: (req: Request, info: ServeInfo) => Response | Promise<Response, E> throws F,
+): Promise<void> {
+  const queued = new QueuedRequest(req.clone());
+  let res: Response | null = null;
+  try {
+    res = await handler(serverRequest(queued), new ServeInfo(queued));
+  } catch (e) {
+    console.error("request handler failed:", e);
+  }
+  if (res == null) {
+    text(req, 500, "Internal Server Error");
+    return;
+  }
+  try {
+    await respond(req, res);
+  } catch (e) {
+    console.error("request handler failed: the response could not be written:", e);
+  }
+}
+
+/** A plain-text answer of the server's own. */
+function text(req: HostRef, status: u16, body: string) {
+  worker.respond(req, status, "content-type: text/plain; charset=utf-8", utf8Encode(body));
+}
+
+/**
+ * Writes `res` to the host: its status, headers and body. A body the server could not produce
+ * (a stream that fails) ends the response with an error, as natively the connection is cut.
+ */
+async function respond(req: HostRef, res: Response) {
+  let b = responseParts(res);
+  let lines: string[] = [];
+  let typed = false;
+  const h = b.headers;
+  for (let i: usize = 0; i + 1 < h.length; i += 2) {
+    const name = h[i];
+    // The platform frames the body.
+    if (name == "content-length" || name == "transfer-encoding") {
+      continue;
+    }
+    typed = typed || name == "content-type";
+    lines.push(`${name}: ${h[i + 1]}`);
+  }
+  const stream = b.stream;
+  const streamed = b.kind == BodyKind.Stream && stream != null;
+  // As natively: a streamed body without a type is `application/octet-stream`.
+  const type = b.type ?? (streamed ? "application/octet-stream" : null);
+  if (!typed && type != null) {
+    lines.push(`content-type: ${type}`);
+  }
+  const headers = lines.join("\n");
+  const status = b.status as u16;
+  if (streamed && stream != null) {
+    const out = worker.respondStream(req, status, headers);
+    for await (const chunk of stream) {
+      await worker.write(out, chunk);
+    }
+    await worker.close(out);
+  } else if (b.kind == BodyKind.Bytes) {
+    worker.respond(req, status, headers, b.bytes);
+  } else if (b.kind == BodyKind.Text) {
+    worker.respond(req, status, headers, utf8Encode(b.text));
+  } else {
+    worker.respond(req, status, headers, []);
+  }
+}

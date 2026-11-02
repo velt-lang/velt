@@ -74,7 +74,7 @@ export async function serveHttp<E>(
   const done = spawn(
     acceptAll(listener, handler, maxHead, maxBody, idle, limits, stopped, reload, h2, secure),
   );
-  return new HttpServer(listener, stop, done);
+  return new HttpServer(listener.port, (): void => listener.close(), stop, done);
 }
 
 /** Stops accepting once `stopped` is aborted (`close()` stops the listener itself). */

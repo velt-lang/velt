@@ -60,7 +60,11 @@ import { modules } from "./velt_modules.mjs";
 const server = createServer(module, { modules });
 export default {
   fetch: (request, env, ctx) =>
-    server.serve(request, { context: { env, ctx }, waitUntil: (p) => ctx.waitUntil(p) }),
+    server.serve(request, {
+      context: { env, ctx },
+      waitUntil: (p) => ctx.waitUntil(p),
+      remoteAddr: request.headers.get("cf-connecting-ip") ?? "",
+    }),
 };
 ```
 
@@ -70,6 +74,8 @@ export default {
   takes a Fetch `Request` and answers with a promise of a `Response`. `platform.context` is the
   request's context as the platform has it; `platform.waitUntil(p)` (optional) keeps the
   request's handler alive after its answer, for platforms that end it with the answer.
+  `platform.remoteAddr` (optional) is the client's address as the platform gives it (a host name
+  or `host:port`; host-cloudflare's: `cf-connecting-ip`), which `velt:worker`.`remoteAddr` reports.
   `modules` maps each package host module's name to its file's default export, a function
   called once per instance with `host`, whose properties are those of the `context` of the
   request whose context runs the program now (packages/host-cloudflare's: `host.env`,
@@ -131,6 +137,8 @@ declare host("velt:worker") async function accept(): Promise<HostRef>;
 declare host("velt:worker") function method(req: HostRef): string;
 declare host("velt:worker") function url(req: HostRef): string;
 declare host("velt:worker") function headers(req: HostRef): string;
+declare host("velt:worker") function remoteAddr(req: HostRef): string;
+declare host("velt:worker") function hasBody(req: HostRef): bool;
 declare host("velt:worker") async function read(req: HostRef): Promise<u8[]>;
 declare host("velt:worker") function respond(req: HostRef, status: u16, headers: string, body: readonly u8[]): void;
 declare host("velt:worker") function respondStream(req: HostRef, status: u16, headers: string): HostRef;
@@ -141,6 +149,9 @@ declare host("velt:worker") async function close(stream: HostRef): Promise<void>
 - `accept()` settles with the next request (a `HostRef` of the glue's request).
 - `method`, `url`: the request's. `headers`: its header fields as `name: value` lines joined by
   `\n` (names lowercase, as `Headers` iterates them; `set-cookie` once per value).
+- `remoteAddr(req)`: the client's address, `host:port` (`[v6]:port`; port 0 when the platform
+  gave none), empty when the adapter passed none. `hasBody(req)`: whether the request has a body
+  (the `Request`'s `body` is not null).
 - `read(req)`: the next piece of the body, never empty; empty at its end (and for a request
   without a body, or once its answer is complete). A rejection is the stream's error.
 - `respond(req, status, headers, body)`: the answer with a whole body (`headers` in the same

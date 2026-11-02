@@ -1,0 +1,104 @@
+// http-server (internal): a request a JS host queued for the program (std's velt/host/worker,
+// the runtime glue's `velt:worker`), as the web-standard `Request` its handler reads
+// (`serverRequest`). The body comes from the host a piece at a time, as the handler reads it,
+// so an upload is never held whole before the handler sees it.
+
+import { IoError } from "velt/io";
+import { HostRef } from "velt/host";
+import * as worker from "velt/host/worker";
+import { RequestSource } from "velt/net/http";
+import { Peer } from "../serve_info";
+
+/** The server side of a `Request` a JS host queued (internal). */
+export class QueuedRequest implements RequestSource, Peer {
+  private req: HostRef;
+  // The header fields, parsed from the host's `name: value` lines when first asked for.
+  private fields: [string, string][] = [];
+  private parsed: bool = false;
+  // The body was read to its end (or there is none).
+  private ended: bool;
+
+  constructor(req: HostRef) {
+    this.req = req;
+    this.ended = !worker.hasBody(req);
+  }
+
+  method(): string {
+    return worker.method(this.req);
+  }
+
+  /** The absolute URL, as the host gave it. */
+  url(): string {
+    return worker.url(this.req);
+  }
+
+  /** The values of `name` joined with ", ", as `Headers.get` reads them. */
+  header(name: string): string | null {
+    const want = name.toLowerCase();
+    const values: string[] = [];
+    for (const [n, v] of this.headers()) {
+      if (n == want) {
+        values.push(v);
+      }
+    }
+    return values.length == 0 ? null : values.join(", ");
+  }
+
+  hasHeader(name: string): bool {
+    return this.header(name) != null;
+  }
+
+  /** Every header as it came, in order (names lowercase). */
+  headers(): [string, string][] {
+    if (!this.parsed) {
+      this.parsed = true;
+      for (const line of worker.headers(this.req).split("\n")) {
+        const colon = line.indexOf(":");
+        if (colon > 0) {
+          this.fields.push([line.slice(0, colon), line.slice(colon + 1).trim()]);
+        }
+      }
+    }
+    return this.fields;
+  }
+
+  hasBody(): bool {
+    return !this.ended;
+  }
+
+  /** The next piece of the body, or null at its end. */
+  async read(): Promise<u8[] | null, IoError> {
+    if (this.ended) {
+      return null;
+    }
+    const piece = await worker.read(this.req);
+    if (piece.length == 0) {
+      this.ended = true;
+      return null;
+    }
+    return piece;
+  }
+
+  /** The rest of the body. */
+  async body(): Promise<u8[], IoError> {
+    let out: u8[] = [];
+    for (;;) {
+      const piece = await this.read();
+      if (piece == null) {
+        return out;
+      }
+      if (out.length == 0) {
+        out = piece;
+      } else {
+        for (const b of piece) {
+          out.push(b);
+        }
+      }
+    }
+  }
+
+  /** `host:port` as the host package's entry gave it; empty when the platform doesn't say. */
+  remoteAddr(): string {
+    return worker.remoteAddr(this.req);
+  }
+}
