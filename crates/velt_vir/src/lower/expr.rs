@@ -2,7 +2,7 @@
 //! param, a projection, or an owned temporary registered for dropping); `consume` additionally
 //! takes ownership of the value for a store, return or owned argument.
 
-use velt_sema::hir::{self, LocalId, TyId, UseMode};
+use velt_sema::hir::{self, FloatTy, LocalId, TyId, UseMode};
 
 use super::rt::Rt;
 use super::{cint, ice, unit, FnLower, Glue, ScopeKind, Work};
@@ -182,7 +182,7 @@ impl FnLower<'_, '_> {
             K::Cast(inner) => {
                 let v = self.expr(inner);
                 // Through the conversion operations to or from an `f16`/`bf16` (`half.rs`).
-                if self.cx.half(inner.ty).is_some() || self.cx.half(e.ty).is_some() {
+                if self.half_of(inner.ty).is_some() || self.half_of(e.ty).is_some() {
                     return self.num_cast(v, inner.ty, e.ty);
                 }
                 let (from, to) = (self.vty(inner.ty), self.vty(e.ty));
@@ -388,19 +388,11 @@ impl FnLower<'_, '_> {
     /// The value of table element `e` as a constant of type `to`: a number or boolean literal,
     /// negated or cast (with `as` semantics), or a module constant that is one. `None` for
     /// anything else (sema's `table_elem` accepts exactly what this folds).
-    fn table_const(&mut self, e: &hir::Expr, to: Ty, depth: u32) -> Option<Const> {
-        // An `f16`/`bf16` element (#2049): a literal's rounded bits into a table of the type;
-        // anything else is code, which converts it (a cast here would truncate its value).
-        if let Some(h) = self.cx.half(e.ty) {
-            let f = match &e.kind {
-                hir::ExprKind::Lit(hir::Lit::Float(f)) => *f,
-                hir::ExprKind::Lit(hir::Lit::Int(n)) => *n as f64,
-                _ => return None,
-            };
-            return match (to, super::half::half_lit(f, h)) {
-                (Ty::U16, Operand::Const(c, _)) => Some(c),
-                _ => None,
-            };
+    pub(super) fn table_const(&mut self, e: &hir::Expr, to: Ty, depth: u32) -> Option<Const> {
+        // An `f16`/`bf16` element (#2049): its rounded bits, into a table of the type.
+        if let Some(h) = self.half_of(e.ty) {
+            let bits = self.table_half(e, h, depth)?;
+            return (to == Ty::U16).then_some(Const::Int(i128::from(bits)));
         }
         let at = self.vty(e.ty);
         let v = match &e.kind {
@@ -418,6 +410,16 @@ impl FnLower<'_, '_> {
                 Const::Float(v) => Const::Float(-v),
                 _ => return None,
             },
+            // From an `f16`/`bf16`: its value, widened from its bits (exact).
+            hir::ExprKind::Cast(inner) if self.half_of(inner.ty).is_some() => {
+                let h = self.half_of(inner.ty)?;
+                let bits = self.table_half(inner, h, depth)?;
+                let w = match h {
+                    FloatTy::F16 => crate::math::half::f16_to_f32(bits),
+                    _ => crate::math::half::bf16_to_f32(bits),
+                };
+                Const::Float(f64::from(f32::from_bits(w)))
+            }
             hir::ExprKind::Cast(inner) => {
                 let from = self.vty(inner.ty);
                 self.table_const(inner, from, depth)?
@@ -450,7 +452,7 @@ impl FnLower<'_, '_> {
         let t = self.vty(ty);
         // A negated literal of a storage float (`-1.5` as an `f16`): its bits, `-0` included.
         // Sema widens every other operand of `-` to `f32`.
-        if let Some(h) = self.cx.half(ty) {
+        if let Some(h) = self.half_of(ty) {
             let f = match &inner.kind {
                 hir::ExprKind::Lit(hir::Lit::Float(f)) if op == hir::UnOp::Neg => *f,
                 hir::ExprKind::Lit(hir::Lit::Int(n)) if op == hir::UnOp::Neg => *n as f64,

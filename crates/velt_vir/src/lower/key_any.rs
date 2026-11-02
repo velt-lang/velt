@@ -175,7 +175,7 @@ impl FnLower<'_, '_> {
                 return AnyKey::Str(self.addr(kp));
             }
             // An `f16`/`bf16` key is its value, widened from its bits (#2049).
-            TyKind::Float(_) if self.cx.half(kty).is_some() => {
+            TyKind::Float(_) if self.half_of(kty).is_some() => {
                 return AnyKey::Num(self.float_as_f64(kv, kty));
             }
             TyKind::Float(_) | TyKind::Int(_) => {

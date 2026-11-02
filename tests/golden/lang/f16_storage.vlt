@@ -3,6 +3,13 @@
 // called by value), a `switch` (compared as `==` does, in `f32`), and JSON (a number). The
 // expected output is Node's, with each value a `Math.f16round`ed number.
 const WS: f16[] = [0.1 as f16, 2 as f16, 1.5, -0];
+// Constant tables fold to static data: casts, negated literals, constants, an integer above
+// 2^53 into a bf16 (rounded from the integer), and storage floats widened into an `f32` table.
+const H: f16 = 1.5;
+const BIG: i64 = 4503599627370497;
+const HS: f16[] = [(-2.5) as f16, H, 65519 as f16, 1e9 as f16, -0.0];
+const BS: bf16[] = [BIG as bf16, (0.1 as f16) as bf16, 3 as bf16];
+const FS: f32[] = [H as f32, (0.1 as f16) as f32];
 const T = new ThreadLocal<f16>(1.5);
 const A = new Atomic<bf16>(-2.5);
 
@@ -21,6 +28,7 @@ function kind(w: f16): string {
 
 function main() {
   console.log(WS, WS[0] * 10, T.get(), A.load());
+  console.log(HS, Object.is(HS[4], -0), BS, FS);
   T.set(-0.25);
   console.log(T.get());
   const at = new Atomic<f16>(1.5);

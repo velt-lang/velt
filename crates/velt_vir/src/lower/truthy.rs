@@ -224,7 +224,7 @@ impl FnLower<'_, '_> {
     /// `x != 0 && x == x`: neither `0`, `-0` nor `NaN`.
     fn float_truthy_into(&mut self, out: &Place, p: &Place, t: TyId) {
         // An `f16`/`bf16`: its value, widened from its bits (#2049).
-        let (vt, x) = match self.cx.half(t) {
+        let (vt, x) = match self.half_of(t) {
             Some(h) => (Ty::F32, self.widen_half(Operand::Copy(p.clone()), h)),
             None => (self.cx.ty(t), Operand::Copy(p.clone())),
         };

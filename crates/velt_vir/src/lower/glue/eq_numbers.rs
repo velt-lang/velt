@@ -40,7 +40,7 @@ impl FnLower<'_, '_> {
             // the equality glue, which widens it.
             return matches!(self.cx.kind(t), TyKind::Int(_) | TyKind::Float(_))
                 .then(|| (self.cx.ty(t), None))
-                .filter(|_| self.cx.half(t).is_none());
+                .filter(|_| self.half_of(t).is_none());
         }
         let [t] = tys[..] else {
             return None;

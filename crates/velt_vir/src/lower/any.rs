@@ -223,7 +223,7 @@ impl FnLower<'_, '_> {
             self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, x, y))
         } else if matches!(self.cx.kind(ty), TyKind::Option(..) | TyKind::Unit) {
             Operand::Const(Const::Bool(true), Ty::Bool)
-        } else if let Some(h) = self.cx.half(ty) {
+        } else if let Some(h) = self.half_of(ty) {
             // An `f16`/`bf16` by value (#2049): `-0` is `0`, NaN is not itself.
             let (pa, pb) = (self.deref_param(a, ty), self.deref_param(b, ty));
             let x = self.widen_half(Operand::Copy(pa), h);
