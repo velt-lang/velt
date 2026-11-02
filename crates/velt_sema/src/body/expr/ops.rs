@@ -162,6 +162,10 @@ impl FnCx<'_, '_> {
                 if self.cx.maybe_dynamic(inner.ty) {
                     return self.dynamic_unary(op, inner, span);
                 }
+                let inner = match self.unary_operator(op, inner, exp, span) {
+                    Ok(h) => return h,
+                    Err(inner) => inner,
+                };
                 self.literal_use_arith(&inner);
                 let t = inner.ty;
                 let ok = self.cx.ty.is_bottom(t)
@@ -192,6 +196,10 @@ impl FnCx<'_, '_> {
                 if self.cx.maybe_dynamic(inner.ty) {
                     return self.dynamic_unary(op, inner, span);
                 }
+                let inner = match self.unary_operator(op, inner, exp, span) {
+                    Ok(h) => return h,
+                    Err(inner) => inner,
+                };
                 self.literal_use_number(&inner);
                 // `~x` on a number is JS's: ToInt32, then a 32-bit not (`int32.rs`).
                 if self.js_bitnot_applies(&inner) {
@@ -362,6 +370,14 @@ impl FnCx<'_, '_> {
         }
         // Branded values are operands as their primitives.
         let (l, r) = (self.unbrand(l), self.unbrand(r));
+        // A class, struct, vector or type parameter: its operator method (`operators.rs`).
+        let (l, r) = match self.may_call_operator(op, &l, &r) {
+            true => match self.binary_operator(op, (lhs, rhs), l, r, exp, span) {
+                Ok(h) => return h,
+                Err(lr) => *lr,
+            },
+            false => (l, r),
+        };
         let (l, r) = if matches!(op, B::Eq | B::NotEq) {
             let (l, r) = self.nullable_operands(l, r);
             let (l, r) = self.union_operands(l, r);

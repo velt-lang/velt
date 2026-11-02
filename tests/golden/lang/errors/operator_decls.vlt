@@ -1,0 +1,41 @@
+// Operator methods have the shape their operator calls (#2050).
+
+class V {
+  constructor(public x: f64) {}
+  [Symbol.add](a: V, b: V): V { return a; }
+  [Symbol.sub](o: string): V { return this; }
+  static [Symbol.mul](a: V, k: f64): V { return a; }
+  static [Symbol.div](s: string, v: V): V { return v; }
+  [Symbol.neg](x: f64): V { return this; }
+  static [Symbol.bitNot](v: V): V { return v; }
+  [Symbol.mulAssign](o: V): V { return this; }
+  async [Symbol.rem](o: V): Promise<V> { return this; }
+  [Symbol.pow](o?: V): V { return this; }
+  [Symbol.index](): f64 { return 0; }
+}
+
+class S {
+  [Symbol.add](o: string): S { return this; }
+}
+
+class W {
+  [Symbol.index](i: usize): f64 { return 0; }
+  [Symbol.setIndex](i: usize, v: string): void {}
+}
+
+extend number {
+  [Symbol.add](o: number): number { return o; }
+}
+
+class Lits {
+  [Symbol.add](o: "a" | "b"): Lits { return this; }
+}
+
+class Nums {
+  static [Symbol.add](a: number, b: number): Nums { return new Nums(); }
+}
+
+class Keyed {
+  [Symbol.mul]: number = 3;
+  set [Symbol.sub](v: number) {}
+}

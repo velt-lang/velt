@@ -12,6 +12,7 @@ mod js_number;
 mod lexer;
 #[cfg(test)]
 mod linear_tests;
+pub mod operators;
 mod parser;
 pub mod scope;
 pub mod visit;
@@ -19,6 +20,9 @@ mod work;
 
 use rustc_hash::FxHashMap;
 
+/// The well-known symbols a computed key `[Symbol.<name>]` may name: JavaScript's and Velt's
+/// operator symbols.
+pub use ast_names::{is_well_known_symbol, JS_WELL_KNOWN_SYMBOLS, OPERATOR_SYMBOLS};
 /// A parsed module in a compact binary form, for caches of parsed modules (`codec`).
 pub use codec::{decode_module, encode_module, FORMAT as AST_FORMAT};
 pub use js_number::js_number;

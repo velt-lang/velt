@@ -159,7 +159,12 @@ impl FnCx<'_, '_> {
     }
 
     /// The call of `def` whose arguments `ck` checked.
-    fn def_call(&mut self, def: DefId, mut ck: super::args::Checked, span: Span) -> hir::Expr {
+    pub(super) fn def_call(
+        &mut self,
+        def: DefId,
+        mut ck: super::args::Checked,
+        span: Span,
+    ) -> hir::Expr {
         if let Some(h) = self.sync_call(def, &mut ck.args, ck.ret, span) {
             return h;
         }

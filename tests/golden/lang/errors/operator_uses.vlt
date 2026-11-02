@@ -1,0 +1,20 @@
+// Uses of operators a type does not define, and ambiguous ones (#2050).
+
+class V {
+  constructor(public x: f64) {}
+  [Symbol.add](o: V | W): V { return this; }
+}
+class W {
+  constructor(public x: f64) {}
+  static [Symbol.add](l: V, r: W): V { return l; }
+}
+
+function f<T>(a: T, b: T): T {
+  return a * b;
+}
+
+const v = new V(1);
+const w = new W(2);
+const p = v * v;
+const q = 2 - v;
+const r = v + w;

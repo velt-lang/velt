@@ -12,26 +12,6 @@ use crate::hir::{self, DefId, ExprKind as H, PatKind as P, TyId, TyKind};
 use crate::object_copies::Seen;
 use crate::symbols::Presence;
 
-/// The well-known symbols (std/lang/symbol/index.vlt `SymbolConstructor`), which name members as
-/// `[Symbol.<name>]`.
-const WELL_KNOWN: [&str; 15] = [
-    "asyncDispose",
-    "asyncIterator",
-    "dispose",
-    "hasInstance",
-    "isConcatSpreadable",
-    "iterator",
-    "match",
-    "matchAll",
-    "replace",
-    "search",
-    "species",
-    "split",
-    "toPrimitive",
-    "toStringTag",
-    "unscopables",
-];
-
 impl FnCx<'_, '_> {
     /// The member name `e` names as a key: the symbol a module constant holds (`KEY`, not
     /// hidden by a local), or a well-known symbol (`Symbol.iterator`).
@@ -56,7 +36,7 @@ impl FnCx<'_, '_> {
                     if s.name == "Symbol"
                         && !self.local_hides("Symbol")
                         && self.cx.names_global_symbol(self.module)
-                        && WELL_KNOWN.contains(&prop.name.as_str()) =>
+                        && velt_syntax::is_well_known_symbol(&prop.name) =>
                 {
                     Some(format!("[Symbol.{}]", prop.name))
                 }

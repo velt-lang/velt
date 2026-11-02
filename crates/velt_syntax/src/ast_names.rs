@@ -61,3 +61,62 @@ pub const SYMBOL_ITERATOR: &str = "[Symbol.iterator]";
 
 /// Member name of the computed key `[Symbol.asyncIterator]` (see [`SYMBOL_DISPOSE`]).
 pub const SYMBOL_ASYNC_ITERATOR: &str = "[Symbol.asyncIterator]";
+
+/// JavaScript's well-known symbols (`Symbol.<name>`), which name members as `[Symbol.<name>]`.
+pub const JS_WELL_KNOWN_SYMBOLS: [&str; 15] = [
+    "asyncDispose",
+    "asyncIterator",
+    "dispose",
+    "hasInstance",
+    "isConcatSpreadable",
+    "iterator",
+    "match",
+    "matchAll",
+    "replace",
+    "search",
+    "species",
+    "split",
+    "toPrimitive",
+    "toStringTag",
+    "unscopables",
+];
+
+/// Velt's operator symbols (`[Symbol.add](other)` is the method `a + b` calls; design
+/// operators.md), in the order std/lang/symbol numbers them after [`JS_WELL_KNOWN_SYMBOLS`]: the
+/// twelve binary operators, the two unary ones, the twelve compound assignments and the two
+/// index operations.
+pub const OPERATOR_SYMBOLS: [&str; 28] = [
+    "add",
+    "sub",
+    "mul",
+    "div",
+    "rem",
+    "pow",
+    "bitAnd",
+    "bitOr",
+    "bitXor",
+    "shl",
+    "shr",
+    "ushr",
+    "neg",
+    "bitNot",
+    "addAssign",
+    "subAssign",
+    "mulAssign",
+    "divAssign",
+    "remAssign",
+    "powAssign",
+    "bitAndAssign",
+    "bitOrAssign",
+    "bitXorAssign",
+    "shlAssign",
+    "shrAssign",
+    "ushrAssign",
+    "index",
+    "setIndex",
+];
+
+/// Is `Symbol.<name>` a well-known symbol: JavaScript's or one of Velt's operator symbols?
+pub fn is_well_known_symbol(name: &str) -> bool {
+    JS_WELL_KNOWN_SYMBOLS.contains(&name) || OPERATOR_SYMBOLS.contains(&name)
+}

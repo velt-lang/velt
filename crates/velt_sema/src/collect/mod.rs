@@ -43,6 +43,7 @@ mod imports;
 mod iterable;
 mod lookup;
 mod nested;
+mod operators;
 pub(crate) mod ret_infer;
 pub(crate) mod shapes;
 pub(crate) mod sigs;
@@ -96,6 +97,7 @@ pub(crate) fn collect(cx: &mut Ctx) -> ItemDefs {
     ext_impls::build(cx);
     comparable::extension_impls(cx);
     iterable::extension_impls(cx);
+    operators::check(cx);
     cx.bodies_ok = true;
     sigs::fill_deferred(cx);
     items
