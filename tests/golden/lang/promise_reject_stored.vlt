@@ -1,0 +1,18 @@
+// A `new Promise` executor's `resolve` and `reject` stored in variables of function types, to
+// settle the promise later (sigx's stream pump): calls of the stored `reject` reject the promise
+// with what its type takes.
+let resolveDone!: () => void;
+let rejectDone!: (e: unknown) => void;
+const done = new Promise<void>((res, rej) => {
+  resolveDone = res;
+  rejectDone = rej;
+});
+done.then(() => console.log("done"));
+resolveDone();
+
+let failLater!: (e: unknown) => void;
+const failed = new Promise<number>((_res, rej) => {
+  failLater = rej;
+});
+failed.catch((e) => console.log("rejected with", String(e)));
+failLater("boom");

@@ -133,6 +133,28 @@ impl Ctx<'_> {
         seeded
     }
 
+    /// The `reject` function of a `new Promise` executor being checked or of a
+    /// `Promise.withResolvers` (its parameter the promise's open error type), of type `found`,
+    /// stored as a value of function type `to` (`let rejectLater: (e: unknown) => void;
+    /// rejectLater = reject;`): a call through `to` rejects with its parameter's type, which is
+    /// added to the promise's site, as a call of `reject` would add its argument's.
+    pub(crate) fn seed_reject_fn(&mut self, found: TyId, to: TyId) -> bool {
+        let TyKind::FnPtr { params: fp, .. } = self.ty.kind(found).clone() else {
+            return false;
+        };
+        let to = self.ty.core(to).unwrap_or(to);
+        let TyKind::FnPtr { params: tp, .. } = self.ty.kind(to).clone() else {
+            return false;
+        };
+        let ([p], [q]) = (fp.as_slice(), tp.as_slice()) else {
+            return false;
+        };
+        if !self.fn_sites.rejects.iter().any(|(e, _)| e == p) {
+            return false;
+        }
+        self.seed_reject(*q, *p)
+    }
+
     /// The result `have` of a method (its site `have_site`) and the result `want` of the
     /// interface or base method it implements or overrides (site `want_site`): promise types of
     /// one payload written without error types reject with the union of both, so each site

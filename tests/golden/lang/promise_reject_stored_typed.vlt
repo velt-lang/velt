@@ -1,0 +1,7 @@
+// A `reject` whose promise has a written error type takes only that type: it is no function
+// taking another one.
+let failLater!: (e: number) => void;
+const failed = new Promise<void, string>((_res, rej) => {
+  failLater = rej;
+});
+failed.catch((e) => console.log(e));
