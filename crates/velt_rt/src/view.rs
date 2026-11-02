@@ -12,9 +12,10 @@ use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
 use std::sync::{Mutex, PoisonError};
 
-/// Hashes object addresses: one multiply (Fibonacci hashing).
+/// Hashes object addresses: one multiply (Fibonacci hashing). Also the hasher of the other
+/// tables keyed by an address (`fn_props`).
 #[derive(Default)]
-struct AddrHasher(u64);
+pub(crate) struct AddrHasher(u64);
 
 impl Hasher for AddrHasher {
     fn finish(&self) -> u64 {
@@ -120,6 +121,23 @@ pub extern "C" fn velt_rt_array_view_cold() {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
+    use std::hash::BuildHasher;
+
+    /// Aligned addresses spread over the buckets and the tag bits hashbrown takes from a hash
+    /// (the low bits index a bucket, the top 7 are the tag): without the rotate, the low bits of
+    /// the product of an aligned address stay zero and 4,096 addresses share 512 buckets.
+    #[test]
+    fn aligned_addresses_spread_over_buckets_and_tags() {
+        let build = BuildHasherDefault::<AddrHasher>::default();
+        let hashes: Vec<u64> = (0..4096usize)
+            .map(|i| build.hash_one(0x7f00_0000_0000usize + i * 16))
+            .collect();
+        let buckets: HashSet<u64> = hashes.iter().map(|h| h & 8191).collect();
+        let tags: HashSet<u64> = hashes.iter().map(|h| h >> 57).collect();
+        assert!(buckets.len() > 3500, "{} buckets of 8192", buckets.len());
+        assert!(tags.len() > 100, "{} tag values of 128", tags.len());
+    }
 
     #[test]
     fn a_view_is_found_until_it_is_removed() {
