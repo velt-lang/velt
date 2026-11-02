@@ -67,3 +67,5 @@ function main() {
   console.log(join.bind(plain)("+"), join.bind(p, "/")());
   console.log(typeof push, (Array.prototype as any).nope);
 }
+
+main();
