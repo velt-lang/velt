@@ -768,8 +768,7 @@ struct FnLower<'c, 'h> {
     /// Lowering an expression checked outside any body (module_state.rs): the module state's
     /// initializer (`Some(0)`), or a class field's initializer, whose locals are renumbered
     /// from this index on (`consume_detached`). Those locals (the temporaries of a `Record`
-    /// literal, ...) belong to no function body and are declared at their `let`
-    /// (`declare_init_local`).
+    /// literal, ...) belong to no function body: declared at their `let` (`declare_init_local`).
     init_locals: Option<u32>,
     /// While lowering a class's constructor: the (concrete) class type, whose field
     /// initializers the constructor runs (ctor_init.rs).
