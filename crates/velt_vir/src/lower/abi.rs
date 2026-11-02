@@ -48,6 +48,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             cx,
             targs,
             glue: false,
+            inline: crate::vir::Inline::Default,
             locals: vec![],
             blocks: vec![],
             block_locs: vec![],
@@ -282,9 +283,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
         // A `never` function (a throw helper such as `corrupt(what): never`) returns only
         // through its error, if at all: its calls are cold (`Function::cold`).
         let cold = lw.cx.is_never(ret);
+        let inline = lw.inline;
         let mut func = lw.finish(symbol, params, abi.ret);
         func.param_attrs = attrs;
         func.cold = cold;
+        func.inline = inline;
         func.target = hir_prog.cpu_targets.get(&def).map(|t| match t {
             hir::CpuTarget::ShaArm => crate::simd::Ext::ShaArm,
             hir::CpuTarget::ShaX86 => crate::simd::Ext::ShaX86,

@@ -43,6 +43,7 @@ pub(crate) fn check_bodies(cx: &mut Ctx) {
     super::returns::check_deferred(cx);
     static_copy_uses(cx);
     super::expr::iface_from_object::check_unwraps(cx);
+    super::inline_markers::check(cx);
 }
 
 /// The errors of copies of static methods (`Ctx::copy_diags`) whose copy the program uses: one

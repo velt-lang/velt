@@ -251,6 +251,23 @@ pub struct Function {
     /// it only grows the hot code around the call) and backends may compile it as cold. Set by
     /// lowering; `velt_opt` keeps it on clones. False promises nothing.
     pub cold: bool,
+    /// Whether optimizers and backends must inline it, must not, or decide for themselves: the
+    /// std markers `inline()` and `noInline()` (std/lang/intrinsics/inline.vlt). Set by
+    /// lowering; `velt_opt` keeps it on clones.
+    pub inline: Inline,
+}
+
+/// A function's inlining, as std's markers set it (`vir::Function::inline`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Inline {
+    /// No marker: the optimizer's and the backend's own heuristics decide.
+    #[default]
+    Default,
+    /// `inline()`: every call is inlined wherever `velt_opt`'s inliner runs, whatever the
+    /// callee's size (LLVM `alwaysinline`). Sema rejects it on a recursive function.
+    Always,
+    /// `noInline()` (#1884): every call stays a call (LLVM `noinline`, without `cold`).
+    Never,
 }
 
 /// What every caller guarantees about one `Ptr` param for the duration of the call
@@ -302,6 +319,7 @@ impl Function {
             is_poll: false,
             target: None,
             cold: false,
+            inline: Inline::Default,
         }
     }
 

@@ -1,0 +1,19 @@
+// velt/lang/intrinsics (internal): a std function's inlining, said by the function itself
+// (#1884). Each marker is the first statement of the function it applies to and compiles to no
+// code; `vir::Function::inline` carries it to the optimizer and the backend. They become the
+// decorators `@inline` and `@noInline` once compile-time decorators exist (#1664).
+
+/**
+ * As the first statement of a std function: every call of it is inlined, whatever its size, in
+ * release builds (debug builds keep their calls). For a small entry point whose callers are hot,
+ * which the inliner's size limits would otherwise leave a call. Not on a recursive function,
+ * directly or through others: sema reports it.
+ */
+export declare intrinsic function inline(): void;
+
+/**
+ * As the first statement of a std function: calls of it stay calls. For a large path that is
+ * rare or slow anyway (a fallback, a long form), whose copy in every caller would only cost
+ * build time and code size: the optimizer and the backend never inline it.
+ */
+export declare intrinsic function noInline(): void;

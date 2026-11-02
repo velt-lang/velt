@@ -476,3 +476,41 @@ fn math_statements_keep_a_callee_from_being_a_leaf() {
     inline(&mut p);
     assert_eq!(calls_to(&p.funcs[1], FuncId(0)), 2);
 }
+
+#[test]
+fn no_inline_callee_stays_a_call() {
+    // add(x) { x + 1 }: trivial and called once, so inlined, unless marked `noInline()`
+    // (`Inline::Never`, #1884); the same function unmarked is inlined.
+    for (marker, calls) in [(Inline::Never, 1), (Inline::Default, 0)] {
+        let mut pb = ProgramBuilder::new();
+        let mut add = adder("add", 1, Linkage::Internal);
+        add.inline = marker;
+        let add = pb.add(add);
+        pb.add(caller(&[add], 1));
+        let mut p = pb.finish();
+        inline(&mut p);
+        assert_eq!(calls_to(&p.funcs[1], add), calls, "{marker:?}");
+    }
+}
+
+#[test]
+fn always_inline_callee_is_inlined_whatever_its_size() {
+    // big(x): 500 statements, called three times outside a loop, so it stays a call, unless
+    // marked `inline()` (`Inline::Always`); a marked one is inlined everywhere without charging
+    // the budget, so a small callee after it is still inlined.
+    for (marker, calls) in [(Inline::Always, 0), (Inline::Default, 3)] {
+        let mut pb = ProgramBuilder::new();
+        let mut big = adder("big", 500, Linkage::Internal);
+        big.inline = marker;
+        let big = pb.add(big);
+        let small = pb.add(adder("small", 20, Linkage::Internal));
+        pb.add(caller(&[big, small], 3));
+        let mut p = pb.finish();
+        let mut budget = Budget::for_program(&p);
+        budget.remaining = 100;
+        run(&mut p, &mut budget);
+        assert_valid(&p);
+        assert_eq!(calls_to(&p.funcs[2], big), calls, "{marker:?}");
+        assert_eq!(calls_to(&p.funcs[2], small), 0, "{marker:?}");
+    }
+}

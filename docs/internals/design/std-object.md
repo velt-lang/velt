@@ -110,7 +110,7 @@ a build by reason):
 |---|---|---|
 | Generic (`function f<T>`, methods of generic classes) | Program, one instance per type, as today | Instances depend on the program's types |
 | Caller-tracking (`track_caller.rs`: small ones get an instance per call site, larger ones take the caller's location as a parameter) | Program | An instance per call site is the point of the small ones |
-| Marked as a fast path (`__intrinsic_inline()`, below) | Program | Callers must be able to inline it, such as the integer path of number printing |
+| Marked as a fast path (`inline()`, below) | Program | Callers must be able to inline it, such as the integer path of number printing |
 | Optimized cost ≤ `SMALL_COST` (40, `inline/mod.rs`) | Both: the object has it, the program keeps its body to inline it | Inlining a small function usually shrinks the caller |
 | Every other non-generic function | Object | The cost this note removes |
 | One whose VIR in this program differs from the object's (next section) | Program, as today | The object's code would be wrong for this program |
@@ -120,7 +120,7 @@ A fast path is marked with a statement at the top of its body, as gated function
 
 ```text
 export function numberToString(x: number): string {
-  __intrinsic_inline();            // std only: compiled into each program, inlinable
+  inline();                        // std only: compiled into each program, inlinable
   if (isSmallInteger(x)) return intToString(x);
   return formatDouble(x);          // large: called in the std object
 }
@@ -515,7 +515,7 @@ head, with interleaved runs:
 - `velt_vir`'s lowering entry: a root set instead of `main` for the object build, the class id
   and header tables from the manifest, and the fingerprint (`Canon`, in `velt_vir::fingerprint`
   with a link mode since #1828).
-- HIR: the `__intrinsic_inline` intrinsic (hir_encodings.md).
+- HIR: the `inline()` intrinsic (hir_encodings.md).
 - cli.md: `VELT_STD_OBJECT`, `VELT_STD_OBJECT_DIR`, `VELT_CACHE_DIR`, `velt clean --cache`;
   `--emit vir|llvm` show declarations for linked std functions.
 - rt_abi.md: nothing changes. The object calls the runtime as programs do.
@@ -553,7 +553,7 @@ head, with interleaved runs:
 3. The std cache ("The std cache" above), behind `VELT_STD_OBJECT=1`; on by default for release
    builds in a separate change once the measurements hold on all three OSes.
 4. Statics with symbols and linkage in VIR, so code reaching statics with identity is served too;
-   `__intrinsic_inline` for fast paths where measurements ask for one.
+   `inline()` for fast paths where measurements ask for one.
 5. Prebuilt objects in `scripts/package.sh` and target packs.
 6. Later: statics with identity in the object, the JIT host keeping std compiled, a cheaper
    fingerprint if lowering std shows up in profiles.
@@ -595,3 +595,6 @@ head, with interleaved runs:
 7. **The marker's name and form.** `__intrinsic_inline()` as a statement now, or wait for
    decorators (#1664) and write `@inline`? **Recommendation:** the intrinsic now, since only the
    number formatter needs it at first, and a decorator later replaces it mechanically.
+   **Decided:** `inline()`, with its twin `noInline()` (#1884), in
+   `std/lang/intrinsics/inline.vlt`, carried by `vir::Function::inline` (contracts README
+   "Inlining markers"); both become `@inline` / `@noInline` with #1664.

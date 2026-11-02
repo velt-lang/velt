@@ -59,6 +59,7 @@ mod generated_bodies;
 mod generators;
 mod global_narrow;
 mod index_keys;
+mod inline_markers;
 mod key_narrow;
 mod late_consts;
 pub(crate) mod lazy_std;
