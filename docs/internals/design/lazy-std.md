@@ -46,6 +46,19 @@ name in the code of lowering, the optimizer and the backends, which a unit test 
 `__any<Type>_<method>` built-ins of `any` values). Module `let`s and static fields are never
 deferred: they are module state.
 
+The instance methods of `extend` blocks on primitive types (numbers, `bool`, `string`, `symbol`,
+SIMD vectors), in the prelude and in lazy modules alike, are deferred too (`primitive_methods`),
+except helpers: checked once checked code calls one. Such a type has no class whose use would
+bring its methods in, but a call of one names it (`x.rotateLeft(1)` is a `Callee::Def` of
+`u64.rotateLeft`, and a method value is a closure making that call). The exception is a method
+of an implementation (`Program::impls`): `compareTo` makes every number `Comparable`, and
+`extend u64 implements InlineKey` makes `u64` an `InlineKey`. Generic code calls those through
+a type parameter's bound or an interface value (`Callee::ParamMethod`, `Callee::Dyn`), which
+names no method until monomorphization, so they stay checked. An implementation made while
+bodies are checked has its methods reached by `reach`. Generic `extend` blocks (`extend<T>
+Array<T>`, `extend<T> (T | null)`) and the `extend` blocks of the prelude's classes are not
+deferred.
+
 `body::check_bodies` checks everything else as before. Then `lazy_std::reach` scans the HIR
 checked so far (function bodies, constant initializers, field and parameter defaults) for
 references and for the types of every expression and local. It checks what they name, scans
@@ -92,4 +105,6 @@ requires no diagnostics, and nightly's `compile/check_all_std` measures it the s
 ## Cost
 
 One more walk over the checked HIR, in exchange for not checking the unreached bodies; see the
-pull request for the numbers.
+pull request for the numbers. A method on a primitive type that nothing calls costs a program
+nothing to check, so the prelude can add such methods (the integers' bit counts, rotations and
+checked arithmetic) without making every program slower to compile.

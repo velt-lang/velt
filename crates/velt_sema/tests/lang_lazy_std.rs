@@ -254,3 +254,76 @@ fn a_decoder_checks_the_tape_only_for_a_type_with_a_json_value() {
     );
     assert!(!unchecked(&value).contains(&tape.to_string()));
 }
+
+#[test]
+fn a_primitive_types_prelude_methods_are_checked_once_called() {
+    // Hello world calls no method of `extend u64` (std/prelude/bits.vlt).
+    let hello = unchecked(&ok_src("function main() {\n  console.log(\"hi\");\n}\n"));
+    for f in [
+        "std/prelude/bits::u64.rotateLeft",
+        "std/prelude/bits::u8.swapBytes",
+        "std/prelude/bits::f64.toBits",
+    ] {
+        assert!(hello.contains(&f.to_string()), "{f}: {hello:?}");
+    }
+    // `compareTo` makes a number `Comparable` (an implementation, called through a bound after
+    // monomorphization): checked.
+    assert!(
+        !hello.iter().any(|n| n.ends_with(".compareTo")),
+        "{hello:?}"
+    );
+    // A call, and a method value, reach the method they name; the others stay unchecked.
+    let p = ok_src(
+        "function main() {\n\
+           const x: u64 = 3;\n\
+           console.log(x.rotateLeft(1));\n\
+           const f = (1 as u8).swapBytes;\n\
+           console.log(f());\n\
+         }\n",
+    );
+    let names = unchecked(&p);
+    for f in [
+        "std/prelude/bits::u64.rotateLeft",
+        "std/prelude/bits::u8.swapBytes",
+    ] {
+        assert!(!names.contains(&f.to_string()), "{f} is checked: {names:?}");
+        assert!(matches!(p.def(def_id(&p, f)), Def::Fn(f) if !f.body.block.stmts.is_empty()));
+    }
+    assert!(
+        names.contains(&"std/prelude/bits::u64.rotateRight".to_string()),
+        "{names:?}"
+    );
+}
+
+#[test]
+fn a_primitive_types_methods_implementing_an_interface_stay_checked() {
+    // `extend u8 implements Sized` in a lazy module: a call through the bound of `T` names
+    // no method (`Callee::ParamMethod`), so the implementation's methods stay checked; the
+    // block's other methods are checked once called.
+    let impl_src = format!(
+        "{PROBE_IMPL}\
+export interface Sized {{ size(): i64; }}
+extend u8 implements Sized {{ size(): i64 {{ return 1; }} }}
+extend u8 {{ twice(): u8 {{ return this * 2; }} thrice(): u8 {{ return this * 3; }} }}
+export function sizeOf<T extends Sized>(x: T): i64 {{ return x.size(); }}
+"
+    );
+    let p = with_probe_std(
+        &impl_src,
+        "import { Gadget } from \"velt/zzprobe\";\n\
+         function main() { const b: u8 = 4; console.log(b.twice()); }\n",
+    );
+    let names = unchecked(&p);
+    assert!(
+        !names.contains(&"std/zzprobe/impl::u8.size".to_string()),
+        "{names:?}"
+    );
+    assert!(
+        !names.contains(&"std/zzprobe/impl::u8.twice".to_string()),
+        "{names:?}"
+    );
+    assert!(
+        names.contains(&"std/zzprobe/impl::u8.thrice".to_string()),
+        "{names:?}"
+    );
+}

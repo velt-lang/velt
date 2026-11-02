@@ -16,6 +16,8 @@
 //!   helpers that lowering looks up by name ([`is_helper`]);
 //! - outside the prelude, module constants, and the methods and constructors of its classes and
 //!   structs;
+//! - the instance methods of its `extend` blocks on primitive types, except those of an
+//!   implementation of an interface and the helpers ([`primitive_methods`]);
 //! - nothing in the modules lowering looks into by name for other definitions ([`EAGER`]).
 //!
 //! A user module's code is always checked, and so is a std module it imports: `velt check`
@@ -153,6 +155,10 @@ pub(crate) struct Lazy {
     /// function, decided when asked). What decides it for a function (its module, kind and
     /// owner) does not change during a check, and the passes ask about every definition.
     fn_deferred: Vec<Option<bool>>,
+    /// The deferred methods of `extend` blocks on primitive types ([`primitive_methods`]).
+    primitive: FxHashSet<DefId>,
+    /// The implementations below this one had their methods scanned ([`reach`]).
+    impls_scanned: usize,
 }
 
 impl Lazy {
@@ -168,6 +174,8 @@ impl Lazy {
             subclasses: FxHashMap::default(),
             defaults_scanned: 0,
             fn_deferred: vec![],
+            primitive: FxHashSet::default(),
+            impls_scanned: 0,
         }
     }
 
@@ -213,6 +221,7 @@ pub(crate) fn plan(cx: &mut Ctx) {
             }
         })
         .collect();
+    cx.lazy.primitive = primitive_methods(cx);
     cx.lazy.fn_deferred = (0..cx.info.len())
         .map(|i| matches!(cx.info[i], DefInfo::Fn(_)).then(|| decide(cx, DefId(i as u32))))
         .collect();
@@ -254,6 +263,8 @@ fn decide(cx: &Ctx, d: DefId) -> bool {
                 Mode::Lazy => true,
                 Mode::Helpers => !is_helper(&f.name),
             },
+            // A primitive type's methods, declared in `extend` blocks.
+            FnKind::Method if f.owner.is_none() => cx.lazy.primitive.contains(&d),
             // A type's methods, where the type is declared (an `extend` of a prelude type
             // keeps its methods checked).
             FnKind::Method | FnKind::Ctor => {
@@ -276,6 +287,51 @@ fn decide(cx: &Ctx, d: DefId) -> bool {
         }
         _ => false,
     }
+}
+
+/// The instance methods of the `extend` blocks on primitive types (numbers, `bool`, `string`,
+/// `symbol`, SIMD vectors) of lazy std modules, which are checked once checked code calls one:
+/// a value of such a type has no class whose use would bring its methods in, and the call
+/// names the method (`Callee::Def`, `body/expr/method.rs` `extension_method`). Except:
+/// - a method of an implementation (`Program::impls`: `compareTo` makes a number `Comparable`,
+///   `extend u64 implements InlineKey`), which a call through a type parameter's bound or an
+///   interface value reaches after monomorphization (`Callee::ParamMethod`, `Callee::Dyn`),
+///   with no reference in the HIR to scan. Those stay checked; an implementation made later
+///   (while bodies are checked) has its methods reached by [`reach`];
+/// - in the prelude, the helpers lowering looks up by name ([`is_helper`]).
+fn primitive_methods(cx: &Ctx) -> FxHashSet<DefId> {
+    let in_impls: FxHashSet<DefId> = (cx.impls.iter())
+        .flat_map(|i| i.methods.iter().copied())
+        .collect();
+    let mut out = FxHashSet::default();
+    for e in &cx.extensions {
+        let primitive = matches!(
+            cx.ty.kind(e.target),
+            TyKind::Int(_)
+                | TyKind::Float(_)
+                | TyKind::Bool
+                | TyKind::Str
+                | TyKind::Symbol
+                | TyKind::Simd(_)
+        );
+        if !primitive {
+            continue;
+        }
+        for m in e.methods.values().filter(|m| !m.is_static) {
+            let DefInfo::Fn(f) = &cx.info[m.def.0 as usize] else {
+                continue;
+            };
+            let lazy = match cx.lazy.modules[f.module] {
+                Mode::Eager => false,
+                Mode::Lazy => true,
+                Mode::Helpers => !is_helper(&f.name),
+            };
+            if lazy && f.kind == FnKind::Method && f.owner.is_none() && !in_impls.contains(&m.def) {
+                out.insert(m.def);
+            }
+        }
+    }
+    out
 }
 
 /// Check the deferred definitions that checked code reaches, and what their code reaches, until
@@ -306,6 +362,14 @@ pub(crate) fn reach(cx: &mut Ctx) {
         }
     }
     loop {
+        // An implementation made while bodies were checked: its methods are reached through
+        // tables and type-parameter bounds, after monomorphization ([`primitive_methods`]).
+        let from = std::mem::replace(&mut cx.lazy.impls_scanned, cx.impls.len());
+        sc.found.extend(
+            (cx.impls[from..].iter())
+                .flat_map(|i| i.methods.iter())
+                .filter(|d| cx.lazy.primitive.contains(d)),
+        );
         let used: Vec<DefId> = (cx.lazy.used.iter())
             .filter(|d| cx.lazy.methods.contains_key(d) && !cx.lazy.scanned.contains(d))
             .copied()
