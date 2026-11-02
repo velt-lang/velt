@@ -21,6 +21,8 @@ import "./clone";
 import "./compare";
 import "./date";
 import "./errors";
+import "./int_arith";
+import "./int_arith_wide";
 import "./iter";
 import "./map";
 import "./map_utf8";

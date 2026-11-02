@@ -62,6 +62,8 @@ table! {
     prelude_bits => "prelude/bits",
     prelude_compare => "prelude/compare",
     prelude_error => "prelude/errors",
+    prelude_int_arith => "prelude/int_arith",
+    prelude_int_arith_wide => "prelude/int_arith_wide",
     /// The globals loaded on demand (`prelude/global/*.vlt`).
     prelude_global => "prelude/global",
     prelude_iter => "prelude/iter",
