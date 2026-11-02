@@ -242,7 +242,7 @@ impl Emitter<'_> {
         };
         let e = self.program.externs.get(id.0 as usize)?;
         if let Some((name, definitions, want_params, want_ret)) =
-            crate::simd::helper(&e.symbol, self.simd)
+            crate::simd::helper(&e.symbol, self.simd, self.dotprod)
         {
             if params != want_params || ret != want_ret {
                 return None;

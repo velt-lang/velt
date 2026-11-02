@@ -53,8 +53,13 @@ impl Arch {
 pub(crate) const WASM_SIMD: &str = " \"target-features\"=\"+simd128\"";
 
 /// The helper computing the SIMD extern `symbol` for `arch`: its name, what the module must
-/// define and declare for it, and the signature the extern must have.
-pub(crate) fn helper(symbol: &str, arch: Arch) -> Option<(String, Vec<String>, Vec<Ty>, Ty)> {
+/// define and declare for it, and the signature the extern must have. `dotprod`: every CPU of
+/// the target has Arm's dot-product instructions (`Target::has_dotprod`).
+pub(crate) fn helper(
+    symbol: &str,
+    arch: Arch,
+    dotprod: bool,
+) -> Option<(String, Vec<String>, Vec<Ty>, Ty)> {
     let call = SimdCall::of_symbol(symbol)?;
     let (params, ret) = call.signature();
     let name = format!("@velt.simd.{}", symbol.strip_prefix("velt_simd_")?);
@@ -63,7 +68,7 @@ pub(crate) fn helper(symbol: &str, arch: Arch) -> Option<(String, Vec<String>, V
         SimdCall::Vector(lanes, Op::Min | Op::Max) if lanes.is_float() && arch == Arch::Sse2 => {
             Some(float_min_max(&mut body, lanes, call))
         }
-        SimdCall::Vector(lanes, op) => vector(&mut body, lanes, op),
+        SimdCall::Vector(lanes, op) => vector(&mut body, lanes, op, dotprod),
         SimdCall::Mask(bits, op) => mask(&mut body, bits, op, arch == Arch::Neon),
         SimdCall::Has(ext) => Some(sha::has(&mut body, arch, ext)),
         SimdCall::Inst(op) => Some(sha::op(&mut body, arch, op)),
@@ -187,7 +192,7 @@ fn mask_type(bits: u32) -> String {
 }
 
 /// The body of a vector operation; the value to return, if any.
-fn vector(b: &mut Body, lanes: Lanes, op: Op) -> Option<String> {
+fn vector(b: &mut Body, lanes: Lanes, op: Op, dotprod: bool) -> Option<String> {
     let (lane, ty, _) = spell(lanes);
     let value = match op {
         Op::Store => {
@@ -244,6 +249,7 @@ fn vector(b: &mut Body, lanes: Lanes, op: Op) -> Option<String> {
         Op::Neg | Op::Abs | Op::Sqrt | Op::Not => unary(b, lanes, op),
         Op::Shl | Op::Shr => shift(b, lanes, op),
         Op::Select => select(b, lanes),
+        Op::DotAdd if dotprod => sdot(b),
         Op::DotAdd => dot_add(b),
         // `llvm.fma` rounds once on every target (a library call per lane without FMA);
         // `llvm.fmuladd` fuses only where that is faster.
@@ -259,6 +265,18 @@ fn vector(b: &mut Body, lanes: Lanes, op: Op) -> Option<String> {
         }
     };
     Some(b.bytes(&value, &ty))
+}
+
+/// `Op::DotAdd` as Arm's `sdot`, for targets every CPU of which has it.
+fn sdot(b: &mut Body) -> String {
+    let acc = b.arg(0, "<4 x i32>");
+    b.declarations.push(
+        "declare <4 x i32> @llvm.aarch64.neon.sdot.v4i32.v16i8(<4 x i32>, <16 x i8>, <16 x i8>)"
+            .to_string(),
+    );
+    b.inst(format!(
+        "call <4 x i32> @llvm.aarch64.neon.sdot.v4i32.v16i8(<4 x i32> {acc}, <16 x i8> %a1, <16 x i8> %a2)"
+    ))
 }
 
 /// `%a0` (`<4 x i32>`) plus, per lane, the sum of the four products of the signed bytes of
@@ -510,14 +528,15 @@ mod tests {
 
     #[test]
     fn a_helper_per_supported_symbol() {
-        let (name, definitions, params, ret) = helper("velt_simd_u8x16_eq", Arch::Wasm).unwrap();
+        let (name, definitions, params, ret) =
+            helper("velt_simd_u8x16_eq", Arch::Wasm, false).unwrap();
         assert_eq!(name, "@velt.simd.u8x16_eq");
         assert_eq!((params, ret), (vec![Ty::V128, Ty::V128], Ty::V128));
         let text = definitions.last().unwrap();
         assert!(text.contains("icmp eq <16 x i8>"), "{text}");
         assert!(text.contains("alwaysinline"), "{text}");
-        assert!(helper("velt_simd_u8x16_mul", Arch::Wasm).is_none());
-        assert!(helper("velt_rt_math_sqrt", Arch::Wasm).is_none());
+        assert!(helper("velt_simd_u8x16_mul", Arch::Wasm, false).is_none());
+        assert!(helper("velt_rt_math_sqrt", Arch::Wasm, false).is_none());
     }
 
     /// An optimistic load is a plain vector load whose lanes are frozen, so a lane another
@@ -527,7 +546,7 @@ mod tests {
     fn optimistic_loads_freeze_their_lanes() {
         for arch in [Arch::Neon, Arch::Sse2, Arch::Wasm] {
             let (_, definitions, params, ret) =
-                helper("velt_simd_u64x2_load_optimistic", arch).unwrap();
+                helper("velt_simd_u64x2_load_optimistic", arch, false).unwrap();
             assert_eq!((params, ret), (vec![Ty::Ptr, Ty::U64], Ty::V128));
             let text = definitions.last().unwrap();
             let load = text.lines().find(|l| l.contains("load <2 x i64>"));
@@ -538,18 +557,18 @@ mod tests {
 
     #[test]
     fn float_min_on_sse2_is_built_from_comparisons() {
-        let (_, definitions, _, _) = helper("velt_simd_f64x2_min", Arch::Sse2).unwrap();
+        let (_, definitions, _, _) = helper("velt_simd_f64x2_min", Arch::Sse2, false).unwrap();
         assert_eq!(definitions.len(), 1, "no intrinsic is declared");
         let text = &definitions[0];
         assert!(text.contains("fcmp olt <2 x double>"), "{text}");
         assert!(text.contains("or <2 x i64>"), "{text}");
-        let (_, definitions, _, _) = helper("velt_simd_u8x16_min", Arch::Sse2).unwrap();
+        let (_, definitions, _, _) = helper("velt_simd_u8x16_min", Arch::Sse2, false).unwrap();
         assert!(definitions[0].contains("@llvm.umin.v16i8"));
     }
 
     #[test]
     fn lanes_are_rearranged_with_shuffles() {
-        let text = |symbol: &str| helper(symbol, Arch::Neon).unwrap().1.pop().unwrap();
+        let text = |symbol: &str| helper(symbol, Arch::Neon, false).unwrap().1.pop().unwrap();
         let zip = text("velt_simd_u32x4_zip_high");
         assert!(
             zip.contains("<4 x i32> <i32 2, i32 6, i32 3, i32 7>"),
@@ -574,12 +593,12 @@ mod tests {
 
     #[test]
     fn intrinsics_are_declared() {
-        let (_, definitions, _, _) = helper("velt_simd_f32x4_min", Arch::Wasm).unwrap();
+        let (_, definitions, _, _) = helper("velt_simd_f32x4_min", Arch::Wasm, false).unwrap();
         assert_eq!(
             definitions[0],
             "declare <4 x float> @llvm.minimum.v4f32(<4 x float>, <4 x float>)"
         );
-        let (_, definitions, _, _) = helper("velt_simd_i16x8_abs", Arch::Wasm).unwrap();
+        let (_, definitions, _, _) = helper("velt_simd_i16x8_abs", Arch::Wasm, false).unwrap();
         assert_eq!(
             definitions[0],
             "declare <8 x i16> @llvm.abs.v8i16(<8 x i16>, i1)"

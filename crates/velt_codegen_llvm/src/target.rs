@@ -186,6 +186,13 @@ impl Target {
         self.os == Os::Linux && self.has_neon()
     }
 
+    /// Whether every CPU code for this target runs on has Arm's dot-product instructions
+    /// (`sdot`/`udot`, FEAT_DotProd): Apple arm64 (macOS), whose every CPU, M1 and later, has
+    /// them. Other arm64 CPUs may lack them (ARMv8.2 made them optional).
+    pub fn has_dotprod(&self) -> bool {
+        self.has_neon() && self.os == Os::Darwin
+    }
+
     /// Whether the target has NEON (`simd.rs` counts mask lanes with its widening sum).
     pub fn has_neon(&self) -> bool {
         self.triple.starts_with("aarch64") || self.triple.starts_with("arm64")

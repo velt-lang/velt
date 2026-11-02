@@ -466,3 +466,39 @@ fn extension_checks_are_true_on_a_cpu_built_for_with_the_extension() {
     let partial = crate::checked_ir(&p, &partial, false).unwrap();
     assert!(partial.contains("@velt_cpu_sha_x86"), "{partial}");
 }
+
+#[test]
+fn the_dot_product_is_sdot_where_every_cpu_has_it() {
+    // `velt_main` returning lane 0 of `i32x4.dotAdd` on zeros.
+    let mut pb = ProgramBuilder::new();
+    let dot = pb.ext("velt_simd_i32x4_dot_add", &[V128, V128, V128], V128, false);
+    let lane = pb.ext("velt_simd_i32x4_lane", &[V128, U64], I32, false);
+    let mut fb = FuncBuilder::export("velt_main", &[], I32);
+    let (v, r) = (fb.local(V128), fb.local(I32));
+    let b = fb.block();
+    let zero = Operand::Const(Const::Int(0), V128);
+    let b = fb.call(
+        b,
+        Callee::Extern(dot),
+        vec![zero.clone(), zero.clone(), zero],
+        Some(v),
+    );
+    let b = fb.call(
+        b,
+        Callee::Extern(lane),
+        vec![copy_local(v), int(0, U64)],
+        Some(r),
+    );
+    fb.ret(b, copy_local(r));
+    pb.add(fb.finish());
+    let p = pb.finish();
+    let ir = |triple: &str| emit_ir(&p, triple).expect("emit_ir");
+    // Every Apple arm64 CPU has Arm's dot-product instructions.
+    assert!(ir("aarch64-apple-darwin").contains("@llvm.aarch64.neon.sdot.v4i32.v16i8"));
+    // Other arm64 CPUs may lack them, and x86 has no such instruction: widening code.
+    for triple in ["aarch64-unknown-linux-gnu", "x86_64-unknown-linux-gnu"] {
+        let text = ir(triple);
+        assert!(!text.contains("sdot"), "{triple}");
+        assert!(text.contains("sext <16 x i8>"), "{triple}");
+    }
+}

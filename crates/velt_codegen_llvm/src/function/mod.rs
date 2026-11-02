@@ -91,6 +91,8 @@ struct Emitter<'a> {
     rounds_by_conversion: bool,
     /// What the SIMD helpers depend on of the target.
     simd: crate::simd::Arch,
+    /// Every CPU of the target has Arm's dot-product instructions (`Target::has_dotprod`).
+    dotprod: bool,
     /// The x86 features the code may use without checking (`Target::x86_features`, `--cpu`).
     x86_features: u32,
     /// The program's array header aggregate (tbaa.rs).
@@ -136,6 +138,7 @@ pub(crate) fn emit_function(
         wide_pointer_slots: target.wide_pointer_slots(),
         rounds_by_conversion: target.rounds_by_conversion(),
         simd: crate::simd::Arch::of(target),
+        dotprod: target.has_dotprod(),
         x86_features: target.x86_features,
         array,
         text: crate::tbaa::text_agg(program),
