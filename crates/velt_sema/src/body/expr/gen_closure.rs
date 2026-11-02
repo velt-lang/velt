@@ -36,7 +36,7 @@ impl FnCx<'_, '_> {
         let sig = &d.sig;
         if let (Some(t), false) = (&sig.this_param, sig.is_generator) {
             let this_ty = self.resolve(t);
-            return self.this_fn_expr(d, this_ty, exp, span);
+            return self.this_fn_expr(d, None, this_ty, exp, span);
         }
         if let Some(t) = &sig.this_param {
             let this_ty = self.resolve(t);

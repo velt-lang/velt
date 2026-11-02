@@ -8,4 +8,5 @@ applied:a:true
 bound:b:undefined
 [streamed:t:tokens]
 OTHER:U:MORE
+true true true o
 direct:d:undefined 4

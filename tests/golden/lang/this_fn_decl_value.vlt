@@ -39,5 +39,15 @@ const s: any = stream;
 console.log(s.call({ name: "streamed" }, "t", () => "tokens"));
 console.log(other._stream("u", () => "more", (x: string) => x.toUpperCase()));
 
+// Every read of the function is the same value, as for any declared function.
+function who(this: any): string {
+  return String(this.name);
+}
+const a: any = who;
+const b: any = who;
+const o: any = { name: "o", who };
+const held: Function = who;
+console.log(a === b, o.who === a, held === a, o.who());
+
 // The declaration itself is still called as before.
 console.log(useAsync.call({ name: "direct" }, "d"), total.call({ base: 1 }, 2));

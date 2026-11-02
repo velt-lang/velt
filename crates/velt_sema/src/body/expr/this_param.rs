@@ -153,7 +153,8 @@ impl FnCx<'_, '_> {
             if matches!(self.cx.dynamic(t), Some(Dynamic::Any)) {
                 let fwd = forwarding_decl(decl, name, span);
                 self.this_fn_forwarding.push(d);
-                let h = self.this_fn_expr(&fwd, t, exp, span);
+                let key = format!("{}", d.0);
+                let h = self.this_fn_expr(&fwd, Some(&key), t, exp, span);
                 self.this_fn_forwarding.pop();
                 return Some(h);
             }
