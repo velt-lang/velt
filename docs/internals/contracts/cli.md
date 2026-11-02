@@ -1,7 +1,7 @@
 # `velt` CLI — CONTRACT
 
 ```
-velt build [<file.vlt>] [-o <out>] [--release] [-g] [--backend cranelift|llvm] [--target <triple>] [--cpu <name>] [--emit vir|llvm|obj|exe] [--locked] [--no-generators] [--json] [-v] [--timings]
+velt build [<file.vlt>] [-o <out>] [--release] [-g] [--backend cranelift|llvm] [--target <triple> | --host workers] [--cpu <name>] [--emit vir|llvm|obj|exe] [--locked] [--no-generators] [--json] [-v] [--timings]
 velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--cpu <name>] [--backend cranelift|llvm] [--locked] [--no-generators] [-- <program args>...]
 velt check [<file.vlt>] [--target <triple>] [--json] [--locked] [--no-generators] [-v]
 velt check --ts-compat [<file|dir>...] [--json] [--locked] [-v]
@@ -142,6 +142,15 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `velt_web.mjs` next to the module, and `run` executes them with `node velt_web.mjs <module>`.
   No TCP, HTTP server or child processes on WebAssembly (link error with a note); `fetch` links
   but rejects with `IoError` `ENOTSUP` (no network), so code that only builds `Response`s runs.
+- **`--host workers`** (additive, #1736; `velt build` only): a Cloudflare Worker
+  ([workers.md](workers.md)). Builds for `wasm32-unknown-unknown` (`--target` with another
+  triple: "`--host workers` builds for `wasm32-unknown-unknown`: leave out `--target <t>`"; an
+  unknown host: "unknown host `<name>` (expected workers)") with the condition `workers` added
+  to the target's, into a directory (`-o <dir>`, else `target/velt/<stem>-worker/`): the module,
+  the glue, the packages' host modules, `worker.mjs` and a `wrangler.toml` written only when
+  absent. Warns without `--release`. A host module the program calls that neither the glue
+  (`velt:…`) nor exactly one package declaring it provides is an error. `velt run --host` is an
+  error pointing to `velt build --host workers` and `npx wrangler dev`.
 - `playground` (additive): serves a page where programs are edited, compiled
   on the server to `wasm32-unknown-unknown` (`POST /api/compile[?release=1]`, body = source →
   `200 application/wasm` or `422` diagnostics text with paths as `main.vlt`) and run in the

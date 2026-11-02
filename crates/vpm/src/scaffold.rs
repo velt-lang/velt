@@ -89,6 +89,7 @@ pub fn manifest_text_depending(
             .collect(),
         paths: BTreeMap::new(),
         imports: BTreeMap::new(),
+        host_modules: BTreeMap::new(),
         native: None,
         jsx: None,
         define: BTreeMap::new(),

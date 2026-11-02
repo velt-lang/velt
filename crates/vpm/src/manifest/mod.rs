@@ -15,6 +15,7 @@
 //!   paths: { "@app/*": "src/*" },       // import aliases (`crate::paths`)
 //!   imports: { "#io": { js: "./src/io/js.vlt", default: "./src/io/native.vlt" } },
 //!                                       // conditional imports (`crate::imports`)
+//!   hostModules: { kv: "./src/kv.mjs" }, // JS of `declare host("kv")` (`crate::host_modules`)
 //!   jsx: { importSource: "sigx" },      // JSX runtime of the package's modules
 //!   native: { targets: ["x86_64-unknown-linux-gnu"] },  // a Rust crate (`crate::native`)
 //!   tsCompat: ["src/models"],           // folders kept TypeScript-compatible
@@ -74,6 +75,10 @@ pub struct Manifest {
     /// `imports`: conditional imports, `#name` → its variants (see [`crate::imports`]).
     #[serde(skip)]
     pub imports: crate::imports::ImportMap,
+    /// `hostModules`: the JavaScript of the host modules the package's `declare host("m")`
+    /// functions import, module name → file (see [`crate::host_modules`]).
+    #[serde(skip)]
+    pub host_modules: crate::host_modules::HostModules,
     /// `native`: the package ships a native library built from a Cargo crate.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native: Option<NativeConfig>,

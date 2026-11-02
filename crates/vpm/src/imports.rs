@@ -10,7 +10,7 @@
 //! ```
 //!
 //! A build has a set of conditions ([`conditions`]: `native` or `wasm`, the operating system or
-//! `wasi`/`js`, always `default`). The first variant, in the order written, whose condition the
+//! `wasi`/`js`, the host a `--host` build is for ([`HOSTS`]: `workers`), always `default`). The first variant, in the order written, whose condition the
 //! build has wins; `default` matches every build and so comes last. A `#name` resolves only in
 //! the package that defines it (its own modules' imports); the compiler checks that the variants
 //! of one name export the same API.
@@ -28,10 +28,31 @@ pub const DEFAULT: &str = "default";
 /// Every condition a build can have, and so every condition a variant may name. `native` and
 /// `wasm` split the targets; `darwin`, `linux` and `win32` (Node's `process.platform` names)
 /// refine `native`; `wasi` (`wasm32-wasip1`) and `js` (`wasm32-unknown-unknown`, a module the
-/// JavaScript glue runs) refine `wasm`.
+/// JavaScript glue runs) refine `wasm`; `workers` (a Cloudflare Worker, [`HOSTS`]) refines `js`.
 pub const CONDITIONS: &[&str] = &[
-    "native", "darwin", "linux", "win32", "wasm", "wasi", "js", DEFAULT,
+    "native", "darwin", "linux", "win32", "wasm", "wasi", "js", "workers", DEFAULT,
 ];
+
+/// A host a build can be for (`velt build --host <name>`): a JavaScript embedder with its own
+/// glue, whose name is a condition of its builds on top of its target's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Host {
+    /// The name `--host` takes, and the condition its builds have.
+    pub name: &'static str,
+    /// The target triple its builds are for.
+    pub target: &'static str,
+}
+
+/// The hosts `velt build --host` knows.
+pub const HOSTS: &[Host] = &[Host {
+    name: "workers",
+    target: "wasm32-unknown-unknown",
+}];
+
+/// The host named `name`, if Velt knows it.
+pub fn host(name: &str) -> Option<Host> {
+    HOSTS.iter().copied().find(|h| h.name == name)
+}
 
 /// One file of a `#name` entry, under one condition.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -51,8 +72,9 @@ pub fn is_specifier(spec: &str) -> bool {
     spec.starts_with('#')
 }
 
-/// The conditions of a build for target triple `triple`, [`DEFAULT`] included.
-pub fn conditions(triple: &str) -> Vec<&'static str> {
+/// The conditions of a build for target triple `triple` and, with `--host`, the host `host`
+/// ([`HOSTS`]; a name Velt doesn't know adds nothing), [`DEFAULT`] included.
+pub fn conditions(triple: &str, host: Option<&str>) -> Vec<&'static str> {
     let mut out = vec![];
     if triple.starts_with("wasm") && triple.contains("-wasi") {
         out.extend(["wasm", "wasi"]);
@@ -68,6 +90,7 @@ pub fn conditions(triple: &str) -> Vec<&'static str> {
             out.push("win32");
         }
     }
+    out.extend(host.and_then(self::host).map(|h| h.name));
     out.push(DEFAULT);
     out
 }
@@ -101,7 +124,7 @@ pub fn target_selecting(map: &ImportMap, target: &str, host: &str) -> Option<&'s
     };
     let wanted = file(target);
     let uses = |triple: &str| {
-        let conditions = conditions(triple);
+        let conditions = conditions(triple, None);
         map.values()
             .filter_map(|variants| select(variants, &conditions))
             .any(|v| file(&v.target) == wanted)
@@ -193,29 +216,47 @@ mod tests {
     #[test]
     fn conditions_per_target() {
         assert_eq!(
-            conditions("aarch64-apple-darwin"),
+            conditions("aarch64-apple-darwin", None),
             ["native", "darwin", "default"]
         );
         assert_eq!(
-            conditions("x86_64-unknown-linux-gnu"),
+            conditions("x86_64-unknown-linux-gnu", None),
             ["native", "linux", "default"]
         );
         assert_eq!(
-            conditions("x86_64-pc-windows-msvc"),
+            conditions("x86_64-pc-windows-msvc", None),
             ["native", "win32", "default"]
         );
-        assert_eq!(conditions("wasm32-wasip1"), ["wasm", "wasi", "default"]);
         assert_eq!(
-            conditions("wasm32-unknown-unknown"),
+            conditions("wasm32-wasip1", None),
+            ["wasm", "wasi", "default"]
+        );
+        assert_eq!(
+            conditions("wasm32-unknown-unknown", None),
             ["wasm", "js", "default"]
+        );
+        assert_eq!(
+            conditions("wasm32-unknown-unknown", Some("workers")),
+            ["wasm", "js", "workers", "default"]
+        );
+        assert_eq!(
+            conditions("wasm32-wasip1", Some("nobody")),
+            ["wasm", "wasi", "default"]
         );
         for triple in [
             "aarch64-apple-darwin",
             "wasm32-wasip1",
             "wasm32-unknown-unknown",
         ] {
-            assert!(conditions(triple).iter().all(|c| CONDITIONS.contains(c)));
+            assert!(conditions(triple, None)
+                .iter()
+                .all(|c| CONDITIONS.contains(c)));
         }
+        for h in HOSTS {
+            assert!(CONDITIONS.contains(&h.name), "{}", h.name);
+            assert_eq!(host(h.name), Some(*h));
+        }
+        assert_eq!(host("deno"), None);
     }
 
     #[test]
@@ -225,13 +266,24 @@ mod tests {
             ("wasm", "./src/wasm.vlt"),
             ("default", "./src/native.vlt"),
         ]);
-        let pick = |triple: &str| select(&v, &conditions(triple)).map(|v| v.target.as_str());
+        let pick = |triple: &str| select(&v, &conditions(triple, None)).map(|v| v.target.as_str());
+        // A host's variant comes before the target's when written first.
+        let workers = variants(&[("workers", "./src/w.vlt"), ("js", "./src/js.vlt")]);
+        let on = |host| select(&workers, &conditions("wasm32-unknown-unknown", host));
+        assert_eq!(
+            on(Some("workers")).map(|v| v.target.as_str()),
+            Some("./src/w.vlt")
+        );
+        assert_eq!(on(None).map(|v| v.target.as_str()), Some("./src/js.vlt"));
         assert_eq!(pick("wasm32-unknown-unknown"), Some("./src/js.vlt"));
         assert_eq!(pick("wasm32-wasip1"), Some("./src/wasm.vlt"));
         assert_eq!(pick("x86_64-unknown-linux-gnu"), Some("./src/native.vlt"));
         // Without `default`, a build no variant names has none.
         let no_default = variants(&[("js", "./src/js.vlt")]);
-        assert_eq!(select(&no_default, &conditions("wasm32-wasip1")), None);
+        assert_eq!(
+            select(&no_default, &conditions("wasm32-wasip1", None)),
+            None
+        );
     }
 
     #[test]
@@ -260,12 +312,12 @@ mod tests {
             Some("wasm32-unknown-unknown")
         );
         assert_eq!(
-            conditions("aarch64-apple-macos"),
+            conditions("aarch64-apple-macos", None),
             ["native", "darwin", "default"]
         );
         // Any WebAssembly triple is `wasm`, never `native`.
         assert_eq!(
-            conditions("wasm64-unknown-unknown"),
+            conditions("wasm64-unknown-unknown", None),
             ["wasm", "js", "default"]
         );
     }

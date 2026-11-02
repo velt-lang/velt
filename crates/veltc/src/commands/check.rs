@@ -206,7 +206,7 @@ fn unselected_variants(
     imports: &vpm::imports::ImportMap,
     target: &str,
 ) -> Vec<PathBuf> {
-    let conditions = vpm::imports::conditions(target);
+    let conditions = vpm::imports::conditions(target, None);
     let file = |t: &str| file_key(&base.join(t.trim_start_matches("./")));
     let used: Vec<PathBuf> = imports
         .values()

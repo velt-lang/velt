@@ -35,6 +35,11 @@ export type Package = {
   /// condition the build has wins; `default` comes last. A `#name` resolves only in the package's
   /// own modules.
   imports?: Record<string, Import>;
+  /// The JavaScript of the host modules the package's `declare host("m")` functions import, for
+  /// the hosts whose glue Velt writes (`velt build --host workers`): `{ kv: "./src/kv.mjs" }`.
+  /// Each file is an ES module below `./src/` whose default export makes the module's functions.
+  /// A package provides only modules it declares; `velt:` modules are the runtime's.
+  hostModules?: Record<string, string>;
   /// How the package's modules compile JSX.
   jsx?: Jsx;
   /// Build-time constants, as Vite's `define`: `{ __DEV__: "false" }`. Each value is the source
@@ -56,8 +61,8 @@ export type Package = {
 /// the order they are tried: `{ js: "./src/io/js.vlt", default: "./src/io/native.vlt" }`. Paths
 /// are `./`-relative to the package root and below `./src/`, with their extension. The
 /// conditions: `native` (any native target), `darwin`, `linux`, `win32`, `wasm` (any WebAssembly
-/// target), `wasi` (`wasm32-wasip1`), `js` (`wasm32-unknown-unknown`, run by JavaScript) and
-/// `default` (every build).
+/// target), `wasi` (`wasm32-wasip1`), `js` (`wasm32-unknown-unknown`, run by JavaScript),
+/// `workers` (`velt build --host workers`, a Cloudflare Worker) and `default` (every build).
 export type Import = string | Record<string, string>;
 
 /// The standard library's conditional imports (`std/imports.vlt`): the `imports` of a package,

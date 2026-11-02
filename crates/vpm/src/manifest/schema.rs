@@ -128,6 +128,17 @@ pub const PACKAGE: &[Field] = &[
               comes last. A `#name` resolves only in the package's own modules.",
     },
     Field {
+        key: "hostModules",
+        kind: Kind::Map(Entry::Str),
+        ty: "Record<string, string>",
+        required: false,
+        doc: "The JavaScript of the host modules the package's `declare host(\"m\")` functions \
+              import, for the hosts whose glue Velt writes (`velt build --host workers`): \
+              `{ kv: \"./src/kv.mjs\" }`. Each file is an ES module below `./src/` whose default \
+              export makes the module's functions. A package provides only modules it declares; \
+              `velt:` modules are the runtime's.",
+    },
+    Field {
         key: "jsx",
         kind: Kind::Object(JSX),
         ty: "Jsx",

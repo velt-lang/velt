@@ -30,7 +30,9 @@
 //           const code = await runVelt(fetch("hello.wasm"), { write: (s, bytes) => ..., imports });
 // Node:     node velt_web.mjs hello.wasm [args...]   (what `velt run --target
 //           wasm32-unknown-unknown` does)
-// Other hosts drive the module themselves with `loadVelt` (their own entries and turns).
+// Other hosts drive the module themselves with `loadVelt` (their own entries and turns), as the
+// Worker glue velt_worker.mjs does. The file imports nothing, so a bundler (wrangler's) takes it
+// as it is: node's modules are reached only when node runs it as its main module.
 
 /** Thrown by the `exit` import to unwind out of the module. */
 export class VeltExit extends Error {
@@ -60,7 +62,10 @@ export async function runVelt(source, host = {}) {
  * Instantiate a Velt program without running it. `enter(f)` runs `f`, which calls into the
  * module (`exports.velt_start()`, `exports.velt_turn()`, another entry); `done` settles with the
  * exit code once the program reports its end, exits or traps, or rejects with what a host
- * function threw (the instance is then unusable).
+ * function threw (the instance is then unusable). `host.turned`, if given, is called after each
+ * call into the module that left the program running; `timerArmed` says whether the program
+ * asked for a wake-up (`set_timer`) and `promises` holds the host promises it waits for, which
+ * is all that can wake it besides a call from the host.
  */
 export async function loadVelt(source, host = {}) {
   const write = host.write ?? defaultWrite();
@@ -71,6 +76,9 @@ export async function loadVelt(source, host = {}) {
     exports: null,
     refs,
     ended: false,
+    timerArmed: false,
+    // Calls into the module in progress (a settle during one waits for it to return).
+    depth: 0,
     promises: new Map(),
     nextPromise: 1,
     done: new Promise((res, rej) => ((resolve = res), (reject = rej))),
@@ -78,12 +86,14 @@ export async function loadVelt(source, host = {}) {
       if (rt.ended) return;
       rt.ended = true;
       clearTimeout(timer);
+      rt.timerArmed = false;
       rt.promises.clear();
       if (error === undefined) resolve(code);
       else reject(error);
     },
     enter(f) {
       if (rt.ended) return;
+      rt.depth++;
       try {
         f();
       } catch (e) {
@@ -93,7 +103,10 @@ export async function loadVelt(source, host = {}) {
           return rt.end(134);
         }
         rt.end(0, e);
+      } finally {
+        rt.depth--;
       }
+      if (!rt.ended && rt.depth === 0) host.turned?.();
     },
   };
   const imports = {
@@ -114,7 +127,13 @@ export async function loadVelt(source, host = {}) {
         // Rounded up: hosts round a delay down to whole milliseconds. Hosts fire a delay longer
         // than 2^31 - 1 ms at once; a turn that comes early asks again.
         const delay = Math.min(Math.ceil(ms), 0x7fffffff);
-        if (ms >= 0) timer = setTimeout(() => rt.enter(() => rt.exports.velt_turn()), delay);
+        rt.timerArmed = ms >= 0;
+        if (ms >= 0) {
+          timer = setTimeout(() => {
+            rt.timerArmed = false;
+            rt.enter(() => rt.exports.velt_turn());
+          }, delay);
+        }
       },
       host_take(id, out) {
         const p = rt.promises.get(id >>> 0);
@@ -140,14 +159,32 @@ async function compile(source) {
   return source instanceof WebAssembly.Module ? source : WebAssembly.compile(source);
 }
 
-/** The JS values a program holds as `HostRef`s, by slot (0 is `null`); `values.size` counts them. */
+/** Bits of a `HostRef` slot that index the table; the bits above them are its generation. */
+const SLOT_INDEX_BITS = 20;
+const SLOT_INDEX_MASK = (1 << SLOT_INDEX_BITS) - 1;
+
+/**
+ * The JS values a program holds as `HostRef`s, by slot (0 is `null`); `values.size` counts them.
+ * A released slot's index is used again, with the next generation in the slot's high bits, so a
+ * long-lived instance (a Worker) never runs out of slots, and a stale slot misses (until its
+ * index was reused 4096 times) instead of reaching another value.
+ */
 export class HostRefs {
   constructor() {
     this.values = new Map();
-    this.next = 1;
+    this.free = [];
+    this.generations = [0];
   }
   add(value) {
-    const slot = this.next++;
+    let index = this.free.pop();
+    if (index === undefined) {
+      index = this.generations.length;
+      if (index > SLOT_INDEX_MASK) {
+        throw new Error(`velt: the program holds more than ${SLOT_INDEX_MASK} HostRefs at once`);
+      }
+      this.generations.push(0);
+    }
+    const slot = ((this.generations[index] << SLOT_INDEX_BITS) | index) >>> 0;
     this.values.set(slot, value);
     return slot;
   }
@@ -156,7 +193,44 @@ export class HostRefs {
     return this.values.get(slot);
   }
   release(slot) {
-    this.values.delete(slot);
+    if (!this.values.delete(slot)) return;
+    const index = slot & SLOT_INDEX_MASK;
+    this.generations[index] = (this.generations[index] + 1) & (0xffffffff >>> SLOT_INDEX_BITS);
+    this.free.push(index);
+  }
+}
+
+/**
+ * What an async host function may return instead of a promise: the host settles it with
+ * `resolve(value)` or `reject(error)`, which runs the program's turn at once, on the caller's
+ * own stack, instead of in a reaction of a promise made when the program called the function.
+ * The Worker glue settles the wait for a request from that request's own handler, so the program
+ * runs in the request's I/O context. Both return whether the program still waited for it (it may
+ * have dropped the call's promise).
+ */
+export class Deferred {
+  #outcome = null;
+  #settle = null;
+  resolve(value) {
+    return this.#finish(true, value);
+  }
+  reject(error) {
+    return this.#finish(false, error);
+  }
+  /** Whether nothing settled it yet and the program still waits for it. */
+  get pending() {
+    return this.#outcome === null && (this.#settle === null || this.#settle.waiting());
+  }
+  /** Called by the glue once: `settle(ok, value)` delivers the outcome, `waiting()` asks. */
+  bind(settle) {
+    this.#settle = settle;
+    if (this.#outcome !== null) queueMicrotask(() => settle.deliver(...this.#outcome));
+  }
+  #finish(ok, value) {
+    if (!this.pending) return false;
+    this.#outcome = [ok, value];
+    if (this.#settle !== null) this.#settle.deliver(ok, value);
+    return true;
   }
 }
 
@@ -303,6 +377,11 @@ function hostFunction(label, fn, params, result, rt) {
   };
   const settle = (id, ok, value) => {
     if (!rt.promises.has(id)) return;
+    if (rt.depth > 0) {
+      // From inside a call into the module (a host function settling a Deferred): after it.
+      queueMicrotask(() => settle(id, ok, value));
+      return;
+    }
     rt.promises.get(id).take = (out) => {
       if (ok) {
         try {
@@ -323,13 +402,17 @@ function hostFunction(label, fn, params, result, rt) {
     while (rt.promises.has(id)) id = (id + 1) >>> 0 || 1;
     rt.nextPromise = (id + 1) >>> 0 || 1;
     rt.promises.set(id, {});
-    let promise;
+    let result;
     try {
-      promise = Promise.resolve(fn(...args(raw)[0]));
+      result = fn(...args(raw)[0]);
     } catch (e) {
-      promise = Promise.reject(e);
+      result = Promise.reject(e);
     }
-    promise.then((v) => settle(id, true, v), (e) => settle(id, false, e));
+    if (result instanceof Deferred) {
+      result.bind({ deliver: (ok, v) => settle(id, ok, v), waiting: () => rt.promises.has(id) });
+    } else {
+      Promise.resolve(result).then((v) => settle(id, true, v), (e) => settle(id, false, e));
+    }
     return id;
   };
 }
@@ -464,26 +547,25 @@ function defaultWrite() {
   };
 }
 
-async function main() {
-  const [{ readFile }, { writeSync }] = await Promise.all([
-    import("node:fs/promises"),
-    import("node:fs"),
-  ]);
+async function main(fs) {
   const [file] = process.argv.slice(2);
   if (!file) {
     process.stderr.write("usage: node velt_web.mjs <program.wasm> [args...]\n");
     process.exit(2);
   }
-  const code = await runVelt(readFile(file), {
-    write: (stream, bytes) => writeSync(stream, bytes),
+  const code = await runVelt(fs.readFileSync(file), {
+    write: (stream, bytes) => fs.writeSync(stream, bytes),
   });
   process.exit(code);
 }
 
+// Node's modules come from `process.getBuiltinModule` (node 20.16 and newer), not an `import`, so
+// no bundler goes looking for them.
+const node = globalThis.process?.getBuiltinModule;
 if (
-  typeof process !== "undefined" &&
+  typeof node === "function" &&
   process.argv?.[1] &&
-  import.meta.url === (await import("node:url")).pathToFileURL(process.argv[1]).href
+  import.meta.url === node("node:url").pathToFileURL(process.argv[1]).href
 ) {
-  await main();
+  await main(node("node:fs"));
 }

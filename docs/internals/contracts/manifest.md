@@ -28,6 +28,7 @@ export const pkg: Package = {
   imports: {                    // optional conditional imports (additive)
     "#io": { js: "./src/io/js.vlt", default: "./src/io/native.vlt" },
   },
+  hostModules: { kv: "./src/kv.mjs" },  // optional: JS of `declare host("kv")` (additive)
 };
 ```
 
@@ -211,8 +212,9 @@ directory (`NpmResolver::resolve_in`) before Node's search.
   `#` and `/`-separated segments of `[A-Za-z0-9_-]`; a value is a file or an object of
   conditions to files, kept in the order written (`Manifest::imports`, `GraphPackage::imports`).
   Conditions are `vpm::imports::CONDITIONS` (`native`, `darwin`, `linux`, `win32`, `wasm`,
-  `wasi`, `js`, `default`); `default` comes last; files are `./`-relative, below `./src/`, with
-  a source extension. A build's conditions come from its target (`vpm::imports::conditions`);
+  `wasi`, `js`, `workers`, `default`); `default` comes last; files are `./`-relative, below
+  `./src/`, with a source extension. A build's conditions come from its target and, for
+  `velt build --host <name>`, the host's name (`vpm::imports::conditions`, `HOSTS`);
   the first variant whose condition it has is the module a `#name` import of the package's own
   modules loads (`loader::conditional`). The standard library's map is `std/imports.vlt`
   (`export const imports: Imports = { … }`, read by `vpm::manifest::read::read_std_imports`,
@@ -230,6 +232,16 @@ directory (`NpmResolver::resolve_in`) before Node's search.
   with different signatures, or a star from outside the package, is an error). `velt manifest
   --json` prints a name's variants as
   `[condition, file]` pairs, in order.
+- `hostModules` (additive, #1736): the JavaScript of the host modules the package's `declare
+  host("m")` functions import, `Record<string, string>` (`Manifest::host_modules`,
+  `GraphPackage::host_modules`, `vpm::host_modules`). A key is a module name: not empty, no
+  control characters, not `velt` and not `velt:…` (the runtime glue's own). A value is one ES
+  module, `./`-relative, `/`-separated, below `./src/` (an archive carries only `src/`), named
+  `.mjs` or `.js`; its default export is a function that makes the module's functions
+  ([workers.md](workers.md)). Used by `velt build --host workers`, which copies the files of the
+  modules the program calls into the Worker; a package provides only modules its own modules
+  declare, and each module comes from one package (checked by the build, not the reader).
+  `to_vlt` writes it after `imports`; `velt manifest --json` prints it when present.
 - `entry` is a `/`-separated path inside the package (not empty, not absolute, no `..`).
 - `description` (additive, #184): one line of at most 300 characters (Unicode scalar values), no
   control characters, no leading or trailing whitespace, not empty. `keywords`: at most 10

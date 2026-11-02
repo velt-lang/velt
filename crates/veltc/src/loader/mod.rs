@@ -93,6 +93,9 @@ pub struct LoadOptions<'a> {
     /// The build's target triple, which sets the conditions `#name` imports resolve by
     /// (`vpm::imports::conditions`); `None`: the host's.
     pub target: Option<String>,
+    /// The host a `--host` build is for (`workers`), a condition `#name` imports resolve by on
+    /// top of the target's.
+    pub host: Option<String>,
     /// Check that the variants of each `#name` import the program resolves export the same API
     /// ([`variants`]): `velt check`, `velt test` and the language server ask for it.
     pub check_variants: bool,
@@ -156,7 +159,7 @@ pub fn load_with_roots(
         effects: HashMap::new(),
         skipped: HashMap::new(),
         harness: None,
-        conditions: conditional::build_conditions(opts.target.as_deref()),
+        conditions: conditional::build_conditions(opts.target.as_deref(), opts.host.as_deref()),
         std_imports: None,
         variant_checks: vec![],
         variant_tables: HashMap::new(),

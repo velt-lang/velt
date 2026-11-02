@@ -1,0 +1,28 @@
+main starts
+the first request waits while main does
+main accepts
+hello: 200 content-type=text/plain x-served-by=velt | Hello, Ada (GET) | waitUntil 0
+hello: 200 content-type=text/plain x-served-by=velt | Hello, Bo (POST) | waitUntil 1
+slow: 200 content-type=text/plain x-served-by=velt | slow at last | waitUntil 0
+echo: 201 content-type=text/plain x-served-by=velt | got a|bc|d | waitUntil 0
+echo: 201 content-type=text/plain x-served-by=velt | got plain | waitUntil 0
+stream: 200 content-type=text/plain | one two three | waitUntil 2
+nothing: 404 content-type=text/plain x-served-by=velt | no nothing | waitUntil 0
+later: 200 content-type=text/plain x-served-by=velt | answered first | waitUntil 1
+waitUntil settled before the work was done: false
+the work after the answer is done
+waitUntil settled
+timer: 200 content-type=text/plain x-served-by=velt | answered before the timer | waitUntil 1
+the timer fired
+waitUntil settled
+log: velt: GET https://w.test/drop: the program dropped the request without answering it
+dropping a request
+drop: 500 content-type=text/plain; charset=utf-8 | Internal Server Error | waitUntil 0
+log: panic: index out of bounds: the len is 2 but the index is 5 at main.vlt:36:10
+log: velt: the Worker's program ended with exit code 101; its 2 request(s) in flight get a 500, and the next request starts a new instance
+slow: 500 content-type=text/plain; charset=utf-8 | Internal Server Error | waitUntil 0
+panic: 500 content-type=text/plain; charset=utf-8 | Internal Server Error | waitUntil 0
+main starts
+main accepts
+hello: 200 content-type=text/plain x-served-by=velt | Hello, Cy (GET) | waitUntil 0
+instances 2

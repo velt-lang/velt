@@ -51,6 +51,17 @@ pub(super) fn parse_build(
                 b.output = Some(PathBuf::from(take_value(inline.as_deref(), &mut it, flag)?))
             }
             "--target" => b.target = Some(take_value(inline.as_deref(), &mut it, flag)?),
+            "--host" if cmd == "build" => {
+                b.host = Some(take_value(inline.as_deref(), &mut it, flag)?)
+            }
+            "--host" if cmd == "run" => {
+                return Err(
+                    "`velt run` cannot run a Worker: build it with `velt build --host \
+                            workers` and run it with `npx wrangler dev` in the directory the \
+                            build names"
+                        .into(),
+                )
+            }
             "--cpu" => b.cpu = Some(take_cpu(inline.as_deref(), &mut it)?),
             "--report" => match take_value(inline.as_deref(), &mut it, flag)?.as_str() {
                 "numbers" => b.report_numbers = true,
@@ -82,7 +93,33 @@ pub(super) fn parse_build(
             }
         }
     }
+    host_target(&mut b)?;
     Ok((b, prog_args))
+}
+
+/// `--host <name>`: a host Velt knows, which sets the target; a `--target` naming another one
+/// is an error.
+fn host_target(b: &mut BuildArgs) -> Result<(), String> {
+    let Some(name) = &b.host else {
+        return Ok(());
+    };
+    let Some(host) = vpm::imports::host(name) else {
+        let known: Vec<&str> = vpm::imports::HOSTS.iter().map(|h| h.name).collect();
+        return Err(format!(
+            "unknown host `{name}` (expected {})",
+            known.join(", ")
+        ));
+    };
+    match &b.target {
+        Some(t) if t.trim() != host.target => Err(format!(
+            "`--host {name}` builds for `{}`: leave out `--target {t}`",
+            host.target
+        )),
+        _ => {
+            b.target = Some(host.target.to_string());
+            Ok(())
+        }
+    }
 }
 
 /// `velt run <file> ...`: the rest belongs to the program, without a leading `--`.
@@ -248,6 +285,38 @@ mod tests {
             (b.emit, b.target.as_deref(), b.output),
             (Emit::Obj, Some("t"), Some(PathBuf::from("o")))
         );
+    }
+
+    #[test]
+    fn host_sets_the_target() {
+        let b = build(&["build", "--host", "workers", "a.vlt"]);
+        assert_eq!(
+            (b.host.as_deref(), b.target.as_deref()),
+            (Some("workers"), Some("wasm32-unknown-unknown"))
+        );
+        let b = build(&[
+            "build",
+            "--host=workers",
+            "--target",
+            "wasm32-unknown-unknown",
+        ]);
+        assert_eq!(b.target.as_deref(), Some("wasm32-unknown-unknown"));
+        let err = p(&["build", "--target", "wasm32-wasip1", "--host", "workers"]).unwrap_err();
+        assert!(
+            err.contains("`--host workers` builds for `wasm32-unknown-unknown`: leave out `--target wasm32-wasip1`"),
+            "{err}"
+        );
+        let err = p(&["build", "--host", "deno", "a.vlt"]).unwrap_err();
+        assert!(
+            err.starts_with("unknown host `deno` (expected workers)"),
+            "{err}"
+        );
+        let err = p(&["run", "--host", "workers", "a.vlt"]).unwrap_err();
+        assert!(err.contains("`velt run` cannot run a Worker"), "{err}");
+        assert!(p(&["build", "--host"])
+            .unwrap_err()
+            .contains("expects a value"));
+        assert_eq!(build(&["build", "a.vlt"]).host, None);
     }
 
     #[test]

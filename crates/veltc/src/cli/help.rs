@@ -89,12 +89,16 @@ pub const COMMANDS: &[CommandHelp] = &[
         name: "build",
         summary: "Compile a file or the current package",
         usage: &[
-            "build [<file.vlt>] [-o <out>] [--release] [-g] [--target <triple>] [--cpu <name>] [--backend <name>] [--emit <kind>] [--locked] [--json] [-v] [--timings] [--report numbers]",
+            "build [<file.vlt>] [-o <out>] [--release] [-g] [--target <triple> | --host workers] [--cpu <name>] [--backend <name>] [--emit <kind>] [--locked] [--json] [-v] [--timings] [--report numbers]",
             "build (--workspace | -p <glob>... | --affected [<base>]) [--fail-fast] [<build options>]",
         ],
         about: "Without a file, builds the package found by searching upward for package.vlt \
                 (output: <package>/target/velt/<name>[.exe]). A single file builds to \
-                ./target/velt/<stem>[.exe].",
+                ./target/velt/<stem>[.exe]. With `--host workers`, the output is a Cloudflare \
+                Worker: a directory (target/velt/<name>-worker/, or `-o <dir>`) with the \
+                WebAssembly module, its JavaScript glue, the host modules of the packages it \
+                uses, worker.mjs and a wrangler.toml (written when there is none); deploy it \
+                with `npx wrangler deploy` there.",
         options: &[
             WORKSPACE,
             PACKAGE,
@@ -104,6 +108,11 @@ pub const COMMANDS: &[CommandHelp] = &[
             RELEASE,
             DEBUG_INFO,
             TARGET,
+            (
+                "--host <name>",
+                "build for a JavaScript host: `workers` (a Cloudflare Worker, for \
+                 wasm32-unknown-unknown; its `#name` imports may choose a `workers` variant)",
+            ),
             CPU,
             BACKEND,
             ("--emit <kind>", "vir | llvm (print VIR / LLVM IR and stop) | obj (object file only) | exe"),
@@ -123,6 +132,7 @@ pub const COMMANDS: &[CommandHelp] = &[
             ("velt build --release", "optimized build"),
             ("velt build hello.vlt -o hello", "build one file"),
             ("velt build app.vlt --target wasm32-wasip1", "build WebAssembly"),
+            ("velt build --release --host workers", "build the package as a Cloudflare Worker"),
             ("velt build --release --report numbers", "which loop variables stay doubles"),
         ],
     },
@@ -773,6 +783,7 @@ mod tests {
             "--output",
             "--release",
             "-g",
+            "--host",
             "--emit",
             "-v",
             "--verbose",

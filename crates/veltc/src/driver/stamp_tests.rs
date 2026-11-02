@@ -284,3 +284,18 @@ fn a_rebuild_hashes_only_files_that_may_have_changed() {
     assert!(known(&stamp_path).is_empty());
     assert!(known(&dir.join("none.build-stamp")).is_empty());
 }
+
+#[test]
+fn the_host_is_part_of_the_key() {
+    let browser = BuildOptions {
+        input: "app.vlt".into(),
+        target: Some("wasm32-unknown-unknown".into()),
+        ..Default::default()
+    };
+    let worker = BuildOptions {
+        host: Some("workers".into()),
+        ..browser.clone()
+    };
+    let key = |o: &BuildOptions| options_key(o, Backend::Llvm).0;
+    assert_ne!(key(&browser), key(&worker));
+}

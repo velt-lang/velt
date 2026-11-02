@@ -15,6 +15,7 @@ use crate::cli::Emit;
 use crate::loader::{self, LoadOptions};
 
 mod cpu_check;
+mod host_modules;
 mod output;
 pub(crate) mod outside;
 mod pipeline;
@@ -22,7 +23,7 @@ mod recover;
 pub(crate) mod stamp;
 mod std_cache;
 
-pub use output::OutputPaths;
+pub use output::{default_dir, OutputPaths};
 use pipeline::on_pipeline_thread;
 
 /// What to build and how.
@@ -45,6 +46,10 @@ pub struct BuildOptions {
     pub debug_info: bool,
     /// Target triple; `None` → host.
     pub target: Option<String>,
+    /// `--host`: the JavaScript host the build is for (`workers`, `vpm::imports::HOSTS`), a
+    /// condition of its `#name` imports; its host modules must come from its glue or a package
+    /// (`host_modules`).
+    pub host: Option<String>,
     /// The CPU to build for (`--cpu`, `$VELT_CPU` or the package's `build.cpu`, resolved by
     /// `commands::cpu::resolve_cpu`); `None` → the target's default
     /// (`velt_codegen_cl::DEFAULT_X86_CPU` on x86_64).
@@ -297,6 +302,7 @@ fn load_modules(
         // internal files: it is std code (docs/internals/design/source-generators.md §5).
         std_root_as_std: sess.generator_build,
         target: Some(opts.target()),
+        host: opts.host.clone(),
         check_variants: opts.check_variants,
     };
     let loaded = loader::load_with_roots(
@@ -389,6 +395,12 @@ pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Pr
             return Err(BuildError::Ice("lowering reported no errors".into()));
         }
     };
+    if let Some(host) = &opts.host {
+        let packages = opts.packages.as_ref();
+        let diags = host_modules::check(&hir, &program, &sess.sm, packages, host);
+        sess.diagnostics.extend(diags);
+        sess.stop_if_errors()?;
+    }
     if !line_info && !opts.report_numbers {
         // Panic messages already carry their locations; only debug info needs these.
         program.files.clear();

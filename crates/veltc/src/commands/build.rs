@@ -133,13 +133,24 @@ fn build_with_input(
     if opts.release && matches!(artifact, Artifact::Executable(_)) {
         warn_debug_runtime(&opts.target());
     }
+    if !opts.release && opts.host.is_some() && matches!(artifact, Artifact::Executable(_)) {
+        crate::style::warning(
+            "a Worker built without `--release` is several times larger and slower; deploy one \
+             built with `velt build --release --host workers`",
+        );
+    }
     Ok((artifact, opts.input.clone()))
 }
 
-/// What a linked program needs beside it: the JavaScript glue of a WebAssembly module.
+/// What a linked program needs beside it: the JavaScript glue of a WebAssembly module, and the
+/// rest of a Worker for `--host workers`.
 fn finish_executable(opts: &BuildOptions, artifact: &Artifact) -> Result<(), String> {
-    match artifact {
-        Artifact::Executable(module) => super::wasm::write_glue(&opts.target(), module),
+    let Artifact::Executable(module) = artifact else {
+        return Ok(());
+    };
+    super::wasm::write_glue(&opts.target(), module)?;
+    match opts.host.as_deref() {
+        Some(super::workers::HOST) => super::workers::write(module, opts.packages.as_ref()),
         _ => Ok(()),
     }
 }
@@ -260,6 +271,7 @@ pub fn build_options(args: &BuildArgs) -> Result<BuildOptions, String> {
         release: args.release,
         debug_info: args.debug_info,
         target: args.target.clone(),
+        host: args.host.clone(),
         emit: args.emit,
         backend,
         report_numbers: args.report_numbers,
@@ -277,6 +289,11 @@ pub fn build_options(args: &BuildArgs) -> Result<BuildOptions, String> {
             config_cpu = project.as_ref().and_then(Project::build_cpu);
             opts.packages = project.map(|p| p.graph);
             opts.input = file.clone();
+            if args.host.is_some() && args.emit == Emit::Exe {
+                let stem = file.file_stem().unwrap_or_default().to_string_lossy();
+                let base = crate::driver::default_dir(file);
+                opts.output = Some(worker_module(args.output.as_deref(), &base, &stem));
+            }
         }
         None => {
             let project = Project::current(vpm::InstallOptions {
@@ -286,7 +303,13 @@ pub fn build_options(args: &BuildArgs) -> Result<BuildOptions, String> {
             })?;
             opts.input = project.entry()?;
             config_cpu = project.build_cpu();
-            if opts.output.is_none() {
+            if args.host.is_some() && args.emit == Emit::Exe {
+                let name = &project.manifest.package.name;
+                // `@scope/name` → `name`.
+                let stem = name.rsplit('/').next().unwrap_or(name);
+                let base = project.target_dir();
+                opts.output = Some(worker_module(args.output.as_deref(), &base, stem));
+            } else if opts.output.is_none() {
                 opts.output = Some(package_output(
                     &project.target_dir(),
                     &project.manifest.package.name,
@@ -305,6 +328,16 @@ pub fn build_options(args: &BuildArgs) -> Result<BuildOptions, String> {
         &opts.target(),
     )?;
     Ok(opts)
+}
+
+/// The module of a `--host` build, inside its Worker directory: `-o`, else `<stem>-worker` in
+/// `base` (a build's default directory); the driver adds `.wasm`.
+fn worker_module(output: Option<&Path>, base: &Path, stem: &str) -> PathBuf {
+    let dir = output.map_or_else(
+        || super::workers::default_dir(base, stem),
+        Path::to_path_buf,
+    );
+    dir.join(stem)
 }
 
 /// Default output of a package build: `<target dir>/<name>` (`.exe` added on Windows by the

@@ -709,6 +709,45 @@ fn imports_are_checked_where_written() {
 }
 
 #[test]
+fn host_modules_are_read_checked_and_written_back() {
+    let m = read(&with(
+        r#"hostModules: { kv: "./src/kv.mjs", "my:cache": "./src/js/cache.js" }"#,
+    ));
+    assert_eq!(m.host_modules["kv"], "./src/kv.mjs");
+    assert_eq!(m.host_modules["my:cache"], "./src/js/cache.js");
+    let again = Manifest::read(FILE, &m.to_vlt()).unwrap();
+    assert_eq!(again.host_modules, m.host_modules);
+    assert_eq!(m.to_json()["hostModules"]["kv"], "./src/kv.mjs");
+    for (fields, message, at) in [
+        (
+            r#"hostModules: { "velt:worker": "./src/w.mjs" }"#,
+            "`velt:worker` is the runtime glue's own host module",
+            "\"velt:worker\"",
+        ),
+        (
+            r#"hostModules: { kv: "./js/kv.mjs" }"#,
+            "below `./src/`",
+            "\"./js/kv.mjs\"",
+        ),
+        (
+            r#"hostModules: { kv: "./src/kv.ts" }"#,
+            "`.mjs` or `.js`",
+            "\"./src/kv.ts\"",
+        ),
+        (r#"hostModules: { kv: 1 }"#, "`kv` must be a string", "1"),
+        (
+            r#"hostModules: ["./src/kv.mjs"]"#,
+            "`hostModules` must be an object",
+            "[\"./src/kv.mjs\"]",
+        ),
+    ] {
+        let (msg, covered) = error(&with(fields));
+        assert!(msg.contains(message), "{fields}: {msg}");
+        assert_eq!(covered, at, "{fields}");
+    }
+}
+
+#[test]
 fn std_imports_file() {
     let src = "import type { Imports } from \"velt/package\";\n\nexport const imports: Imports = { \"#t\": { js: \"./net/js.vlt\", default: \"./net/native.vlt\" } };\n";
     let map = read_std_imports(FILE, src).unwrap();

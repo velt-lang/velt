@@ -19,6 +19,7 @@ helper), and explain it in your final report.
 | CLI | `docs/internals/contracts/cli.md` | tooling ↔ golden tests |
 | Manifest, lockfile, registry | `docs/internals/contracts/manifest.md` | vpm ↔ tooling, registries |
 | Native libraries of packages | `docs/internals/contracts/native_abi.md` + `crates/velt_native` | packages' Rust crates ↔ runtime, vpm, compiler |
+| Cloudflare Workers | `docs/internals/contracts/workers.md`: `velt build --host workers`'s output, the Worker glue, the host module `velt:worker` | glue ↔ the Velt code serving on Workers, packages' host modules |
 | Language semantics | https://veltlang.com/docs/reference/ + `tests/golden/**` | everyone |
 
 ## Pipeline

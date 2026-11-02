@@ -1,0 +1,8 @@
+import type { Package } from "velt/package";
+
+// A Worker answering requests with an accept loop (crates/veltc/tests/workers.rs).
+export const pkg: Package = {
+  name: "serve",
+  version: "0.1.0",
+  dependencies: { probe: { path: "../probe" } },
+};

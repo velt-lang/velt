@@ -25,8 +25,8 @@ async function main() {
 ```
 
 ```sh
-velt build --release --host workers app.vlt   # app.wasm, velt_worker.mjs, wrangler.toml
-npx wrangler deploy
+velt build --release --host workers app.vlt   # target/velt/app-worker/: app.wasm, worker.mjs, …
+cd target/velt/app-worker && npx wrangler deploy
 ```
 
 The first large user is the public package registry
@@ -158,11 +158,26 @@ browser gives the host's opaque redirect (status 0).
 
 ## 5. The Workers build (#1736)
 
-`velt build --host workers` builds for `wasm32-unknown-unknown` and writes the module,
-`velt_worker.mjs` and a `wrangler.toml` (written once, kept when edited). Packages ship JS host
-modules through `package.vlt`, and the build checks them against their `declare host` modules.
-The glue instantiates the module once per isolate, on the first request, runs `main`, and keeps
-the instance.
+The contract is [contracts/workers.md](../contracts/workers.md). `velt build --host workers`
+builds for `wasm32-unknown-unknown` with the condition `workers` added to the target's, and
+writes a directory (`target/velt/app-worker/`): the module, the glue (velt_web.mjs's `loadVelt`
+core and `velt_worker.mjs` on it), the host modules of packages, the entry `worker.mjs`, and a
+`wrangler.toml` (written once, kept when edited). Packages ship the JavaScript of their host
+modules through `hostModules` in `package.vlt` (a file below `src/` whose default export makes
+the functions, given the Worker's `env` and `ctx`); the build checks that every module the
+program calls has it, from the glue (`velt:…`) or from the one package declaring and providing
+it. The glue instantiates the module once per isolate, on the first request, runs `main` once,
+and keeps the instance.
+
+Requests reach the program through the glue's host module `velt:worker`: `fetch` queues each
+request, and the program takes them with the async `accept()`, reads them, and answers with
+`respond` or a streamed `respondStream`. Workers allow a request's I/O only in that request's
+context and run a promise's reactions in the context that made it, so the glue does each
+request's I/O in a pump in that request's own handler, and settles the program's waits from
+there with `Deferred` (velt_web.mjs), which runs the turn on the caller's stack rather than in a
+reaction of a promise an earlier request made, whose context may be gone. While the program has
+work that outlives a response (a timer, a host promise other than `accept`), the handler keeps
+its context with `ctx.waitUntil` until the program has none.
 
 ## 6. `serve` on Workers (#1786, #1787)
 
@@ -206,24 +221,28 @@ Object stubs (`stub.fetch(req)`). Bindings are looked up by name on the `env` th
 
 Each part changes its contract in its own pull request: the AST, HIR and VIR (host functions),
 rt_abi.md and rt_abi_async.md (host values, the executor's exports), `contracts/cli.md`
-(`--host`), and the loader's module resolution (conditional imports).
+(`--host`), `contracts/manifest.md` (`hostModules`), `contracts/workers.md` (the Worker glue and
+`velt:worker`), and the loader's module resolution (conditional imports).
 
-## Open questions for the long-lived Worker
+## The long-lived Worker
 
-To settle in #1736:
+Settled in #1736:
 
-- **A JS exception that unwinds through wasm** (a host function that throws, a glue
-  `TypeError`) leaves the instance inconsistent: the shadow stack pointer isn't restored and
-  nothing is dropped. A one-shot `runVelt` ends there; a Worker must discard the instance and
-  instantiate a fresh one (and answer the requests in flight with 500), or the glue must catch
-  errors in host functions and turn them into a Velt panic or a rejected promise.
-- **`HostRefs.next` only grows**: in a long-lived instance it passes 2^32 and wraps on the way
-  into wasm. The table needs slot reuse (a free list), with a check that a stale `HostRef`
-  can't reach a reused slot (a generation in the high bits).
-- **Glue exports and size**: browser modules export five runtime functions for the glue
-  (`velt_host_*`); measure them against the size budget, and export them only from modules
-  that import host functions if they matter.
-- Durable Objects written in Velt (a class exported to the glue) rather than only stubs.
+- **A JS exception that unwinds through wasm** (a panic, a trap, `process.exit`, a host
+  function that throws, a glue `TypeError`) leaves the instance inconsistent: the shadow stack
+  pointer isn't restored and nothing is dropped. The Worker discards the instance, answers the
+  requests in flight with 500, logs why, and instantiates a fresh one on the next request. An
+  asynchronous host function's rejection is no such exception: it becomes an `IoError`.
+- **`HostRef` slots** are used again: a released slot's index goes on a free list, and the slot
+  carries a generation above the index, so slots never wrap into a value in use and a stale
+  `HostRef` misses (until its index was reused 4,096 times).
+- **Glue exports and size**: the five `velt_host_*` exports cost little against the budgets: a
+  release hello-world Worker is 58,550 bytes, its files gzipped one by one (the module 47,050),
+  and a small accept loop with a package host module 115,811 bytes; the tests' budgets are 1.5
+  times these.
+
+Still open: Durable Objects written in Velt (a class exported to the glue) rather than only
+stubs.
 
 ## Alternatives considered
 

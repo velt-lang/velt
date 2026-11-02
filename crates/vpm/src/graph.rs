@@ -18,6 +18,8 @@ pub struct GraphPackage {
     pub paths: BTreeMap<String, String>,
     /// The package's conditional imports (`crate::imports`).
     pub imports: crate::imports::ImportMap,
+    /// The JavaScript of the host modules the package provides (`crate::host_modules`).
+    pub host_modules: crate::host_modules::HostModules,
     /// The package's native library for the build target (packages with native code, when the
     /// install had a target).
     pub native: Option<crate::native::NativeLib>,
@@ -73,6 +75,7 @@ impl PackageGraph {
             dependencies,
             paths: BTreeMap::new(),
             imports: BTreeMap::new(),
+            host_modules: BTreeMap::new(),
             native: None,
             jsx_import_source: None,
             define: BTreeMap::new(),

@@ -29,11 +29,11 @@ pub(super) struct Resolved {
     pub span: Span,
 }
 
-/// The conditions of a build for `target` (`None`: the host).
-pub(super) fn build_conditions(target: Option<&str>) -> Vec<&'static str> {
+/// The conditions of a build for `target` (`None`: this machine) and, with `--host`, `host`.
+pub(super) fn build_conditions(target: Option<&str>, host: Option<&str>) -> Vec<&'static str> {
     match target {
-        Some(triple) => imports::conditions(triple),
-        None => imports::conditions(&velt_codegen_cl::host_triple()),
+        Some(triple) => imports::conditions(triple, host),
+        None => imports::conditions(&velt_codegen_cl::host_triple(), host),
     }
 }
 
@@ -278,5 +278,5 @@ pub(super) fn resolve(
         }
     };
     let variants = scope.map.get(spec)?;
-    select(spec, variants, &build_conditions(target), &scope).ok()
+    select(spec, variants, &build_conditions(target, None), &scope).ok()
 }

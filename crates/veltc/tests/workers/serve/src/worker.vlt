@@ -1,0 +1,30 @@
+// The Worker glue's `velt:worker` host module (docs/internals/contracts/workers.md).
+
+import { HostRef } from "velt/host";
+
+/** The next request. */
+export declare host("velt:worker") async function accept(): Promise<HostRef>;
+/** Its method, URL and headers (`name: value` lines). */
+export declare host("velt:worker") function method(req: HostRef): string;
+export declare host("velt:worker") function url(req: HostRef): string;
+export declare host("velt:worker") function headers(req: HostRef): string;
+/** The next piece of its body; empty at the end. */
+export declare host("velt:worker") async function read(req: HostRef): Promise<u8[]>;
+/** Answer it with a whole body. */
+export declare host("velt:worker") function respond(
+  req: HostRef,
+  status: u16,
+  headers: string,
+  body: readonly u8[],
+): void;
+/** Answer it with a body written while it is sent, through the stream this returns. */
+export declare host("velt:worker") function respondStream(
+  req: HostRef,
+  status: u16,
+  headers: string,
+): HostRef;
+export declare host("velt:worker") async function write(
+  stream: HostRef,
+  chunk: readonly u8[],
+): Promise<void>;
+export declare host("velt:worker") async function close(stream: HostRef): Promise<void>;

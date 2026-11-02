@@ -25,6 +25,7 @@ mod ts_compat;
 pub(crate) mod version;
 mod warm;
 mod wasm;
+mod workers;
 
 use std::process::ExitCode;
 

@@ -52,6 +52,13 @@ pub(super) fn to_vlt(m: &Manifest) -> String {
         });
         fields.push(format!("imports: {}", multiline_object(imports)));
     }
+    if !m.host_modules.is_empty() {
+        let modules = m
+            .host_modules
+            .iter()
+            .map(|(name, file)| format!("{}: {}", key(name), string_lit(file)));
+        fields.push(format!("hostModules: {}", multiline_object(modules)));
+    }
     if let Some(jsx) = &m.jsx {
         let source = jsx
             .import_source
@@ -157,6 +164,9 @@ pub(super) fn to_json(m: &Manifest) -> Value {
             })
             .collect();
         out.insert("imports".into(), Value::Object(imports));
+    }
+    if !m.host_modules.is_empty() {
+        out.insert("hostModules".into(), json!(m.host_modules));
     }
     if let Some(jsx) = &m.jsx {
         let mut o = Map::new();
