@@ -248,6 +248,7 @@ const WASI_DIRS: &[&str] = &["m1", "m2", "m3", "m4", "lang"];
 /// and the std code written with them.
 const WASI_STD: &[&str] = &[
     "bytes_search",
+    "simd_dot",
     "simd_floats",
     "simd_generic",
     "simd_ints",

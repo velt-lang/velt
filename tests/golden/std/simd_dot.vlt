@@ -1,0 +1,58 @@
+// `i32x4.dotAdd(a: i8x16, b: i8x16)`: each lane plus the sum of four signed byte products, exact.
+// Fixed inputs with lanes computed outside the compiler (Python), then pseudo-random vectors
+// against a scalar loop.
+import { i8x16, i32x4 } from "velt/simd";
+
+function show(what: string, v: i32x4) {
+  console.log(what, v.lane(0), v.lane(1), v.lane(2), v.lane(3));
+}
+
+function fixed() {
+  const lo: i8[] = [-128, -128, -128, -128, 127, 127, 127, 127, -128, 127, -1, 1, 0, 5, -7, 9];
+  const hi: i8[] = [-128, -128, -128, -128, -128, -128, -128, -128, 127, -128, -1, 1, 3, -4, 2, 6];
+  const a = i8x16.load(lo);
+  const b = i8x16.load(hi);
+  show("extremes", i32x4.splat(0).dotAdd(a, b));
+  const acc: i32[] = [1000, -1000, 2147418112, -5];
+  show("accumulated", i32x4.load(acc).dotAdd(a, b));
+  show("twice", i32x4.splat(0).dotAdd(a, b).dotAdd(a, b));
+}
+
+let seed: u32 = 2463534242;
+function next(): i8 {
+  seed = seed ^ (seed << 13);
+  seed = seed ^ (seed >>> 17);
+  seed = seed ^ (seed << 5);
+  return (seed & 255) as u8 as i8;
+}
+
+function random() {
+  const xs: i8[] = [];
+  const ys: i8[] = [];
+  let wrong = 0;
+  for (let round = 0; round < 1000; round++) {
+    xs.length = 0;
+    ys.length = 0;
+    for (let i = 0; i < 16; i++) {
+      xs.push(next());
+      ys.push(next());
+    }
+    const start = i32x4.splat(round as i32);
+    const got = start.dotAdd(i8x16.load(xs), i8x16.load(ys));
+    for (let k: usize = 0; k < 4; k++) {
+      let want = round as i32;
+      for (let j: usize = 4 * k; j < 4 * k + 4; j++) {
+        want += (xs[j] as i32) * (ys[j] as i32);
+      }
+      if (got.lane(k) != want) {
+        wrong++;
+      }
+    }
+  }
+  console.log("random lanes wrong:", wrong);
+}
+
+function main() {
+  fixed();
+  random();
+}
