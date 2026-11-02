@@ -501,6 +501,8 @@ impl FnLower<'_, '_> {
                 }
                 self.switch_to(next);
             }
+            // `Array.prototype`'s methods (any_array_proto.rs).
+            self.array_prototype_member(data, key, &outp, ty);
             return self.any_get_fallback(key, &outp);
         }
         match self.cx.kind(ty) {
@@ -744,13 +746,10 @@ impl FnLower<'_, '_> {
                 self.any_drop_args(argv, 0, argc);
                 self.ret_status(ST_UNSUPPORTED);
             }
-            TyKind::Adt(..) if self.cx.is_this_fn(ty) => {
+            // An array method (`Reflect.get(array, "push")`, `Array.prototype[k]`) called plainly
+            // runs as a `ThisFn` does, with `undefined` as `this` (std/lang/proxy/array.vlt).
+            TyKind::Adt(..) if self.cx.is_this_fn(ty) || self.cx.is_array_method(ty) => {
                 self.this_fn_apply_body((data, argv, argc, out), ty)
-            }
-            // An array method (`Reflect.get(array, "push")`) runs only when called on a proxy.
-            TyKind::Adt(..) if self.cx.is_array_method(ty) => {
-                self.any_drop_args(argv, 0, argc);
-                self.ret_status(ST_UNSUPPORTED);
             }
             _ => {
                 self.any_drop_args(argv, 0, argc);

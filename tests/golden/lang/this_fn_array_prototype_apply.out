@@ -1,0 +1,10 @@
+4 4 [ 1, 2, 3, 4 ]
+4 1 3 [ 0, 2, 3 ]
+[ 2 ] [ 0, 'x', 'y', 3 ]
+2 false true
+[ 'x' ]
+false [ 3, 'y', 'x', 0 ]
+6 set 2 set 3 set length push/2 set length pop/0 set 0 set 1 set length shift/0 set 2 set 1 set 0 set length unshift/1 set 3 set 1 set 2 set length splice/4 set 0 set 3 set 1 set 2 reverse/0
+3 [ 7, 8, 9 ] 5 [ 3, 'y', 'x', 0, 10 ]
+7+8+9 3/y/x/0/10
+function undefined

@@ -1,0 +1,81 @@
+// velt/lang/proxy (internal): the array methods `Array.prototype[key]` gives through `any`
+// (velt_vir `any_array_proto.rs`), called on an array: what an `ArrayMethod` (array.vlt) does
+// for an array, and what velt/lang/this_fn/array_methods's functions do. It loads neither
+// `Proxy` nor `ThisFn`.
+
+import { anyJoinMethod } from "velt/lang/hooks/any_text";
+
+/** Is `key` one of the array methods `Array.prototype[key]` gives through `any`? */
+export function arrayMethodName(key: string): boolean {
+  return key === "push" ||
+    key === "pop" ||
+    key === "shift" ||
+    key === "unshift" ||
+    key === "splice" ||
+    key === "map" ||
+    key === "filter" ||
+    key === "forEach" ||
+    key === "some" ||
+    key === "every" ||
+    key === "find" ||
+    key === "includes" ||
+    key === "indexOf" ||
+    key === "join" ||
+    key === "slice" ||
+    key === "reverse" ||
+    key === "sort";
+}
+
+/** The array method `name` (one of `arrayMethodName`'s) called on the array `a` holds. */
+export function arrayCall(a: any, name: string, args: any[]): any {
+  switch (name) {
+    case "push":
+      return a.push(...args);
+    case "pop":
+      return a.pop(...args);
+    case "shift":
+      return a.shift(...args);
+    case "unshift":
+      return a.unshift(...args);
+    case "splice":
+      return a.splice(...args);
+    case "map":
+      return a.map(...args);
+    case "filter":
+      return a.filter(...args);
+    case "forEach":
+      return a.forEach(...args);
+    case "some":
+      return a.some(...args);
+    case "every":
+      return a.every(...args);
+    case "find":
+      return a.find(...args);
+    case "includes":
+      return a.includes(...args);
+    case "indexOf":
+      return a.indexOf(...args);
+    case "join":
+      // As velt_sema calls `xs.join(sep)` through `any`.
+      return anyJoinMethod(a, args.length > 0 ? args[0] : undefined, "join");
+    case "slice":
+      return a.slice(...args);
+    case "reverse":
+      return a.reverse(...args);
+    case "sort":
+      return a.sort(...args);
+  }
+  panic(`TypeError: \`Array.prototype.${name}\` through \`any\` is not supported yet (#823)`);
+}
+
+/** The elements of `a`, then those of `b`. */
+export function concatArgs(a: any[], b: any[]): any[] {
+  const all: any[] = [];
+  for (const x of a) {
+    all.push(x);
+  }
+  for (const x of b) {
+    all.push(x);
+  }
+  return all;
+}

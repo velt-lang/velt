@@ -1,0 +1,26 @@
+// velt/lang/this_fn (internal): `Array.prototype[key]` read through `any` in a program with
+// function expressions taking `this` and without `Proxy` (velt_vir `any_array_proto.rs`), as
+// `original.apply(this, arguments)` calls it: a `ThisFn` running the method on the array it is
+// called on. With `Proxy`, velt/lang/proxy/array_apply makes it an `ArrayMethod` instead.
+
+import { ThisFn } from "velt/lang/this_fn";
+import { arrayCall, arrayMethodName } from "velt/lang/proxy/array_call";
+
+/**
+ * `Array.prototype[key]` read through `any` in a program without `Proxy`: a function whose
+ * `this` is the array it is called on (`apply`, `call`, `bind`), else `undefined`.
+ */
+export function arrayPrototypeThisFn(key: string): any {
+  if (!arrayMethodName(key)) {
+    return undefined;
+  }
+  const f: any = new ThisFn((self: any, args: any[]): any => {
+    if (!Array.isArray(self)) {
+      panic(
+        `TypeError: \`Array.prototype.${key}\` called on a value that is not an array is not supported yet (#823)`,
+      );
+    }
+    return arrayCall(self, key, args);
+  });
+  return f;
+}

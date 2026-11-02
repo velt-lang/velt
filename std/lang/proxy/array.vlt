@@ -11,43 +11,79 @@
 
 import { Proxy } from "velt/lang/proxy";
 import { proxyArrayCall, proxyArrayHole } from "velt/lang/intrinsics";
-import { PROXY_DELETE, PROXY_GET, PROXY_HAS, PROXY_SET, PROXY_TARGET } from "velt/lang/hooks/keys";
+import {
+  PROXY_DELETE,
+  PROXY_GET,
+  PROXY_HAS,
+  PROXY_SET,
+  PROXY_TARGET,
+  THIS_FN_APPLY,
+  THIS_FN_BIND,
+} from "velt/lang/hooks/keys";
 import { proxyReverse, proxySort } from "velt/lang/proxy/array_order";
+import { arrayMethodApply } from "velt/lang/proxy/array_apply";
+import { arrayMethodName, concatArgs } from "velt/lang/proxy/array_call";
 
 /**
- * An array method read through a proxy (`Reflect.get(array, "push")`), or `constructor`
- * (`Array`): calling it on a proxy runs the method on the proxy. `typeof` and `console.log`
- * show it as the function it stands for (velt_vir's `is_array_method`); called any other way,
- * it is not supported yet. Each read makes a new one (the standard library keeps no module
- * state), so two reads of a method are not `===`.
+ * An array method read through a proxy (`Reflect.get(array, "push")`) or from `Array.prototype`
+ * through `any`, or `constructor` (`Array`): calling it on a proxy runs the method on the proxy.
+ * `typeof` and `console.log` show it as the function it stands for (velt_vir's
+ * `is_array_method`); `apply`, `call` and `bind` run it on the `this` they pass
+ * (array_apply.vlt), and a plain call runs a bound one. Each read makes a new one (the standard
+ * library keeps no module state), so two reads of a method are not `===`.
  */
 export class ArrayMethod {
   name: string;
+  // `bind`'s `this` and leading arguments (`null`: not bound).
+  #self: any;
+  #bound: any[] | null;
 
   constructor(name: string) {
     this.name = name;
+    this.#self = undefined;
+    this.#bound = null;
+  }
+
+  /** `m.apply(self, args)`: `null` or `undefined` passes no arguments. */
+  apply(self: any, args?: any): any {
+    if (args == null) {
+      return this[THIS_FN_APPLY](self, []);
+    }
+    const list: any[] = args;
+    return this[THIS_FN_APPLY](self, list);
+  }
+
+  /**
+   * `m.call(self, ...args)` (velt_vir's `this_fn_call_keys` packs the arguments), and a plain
+   * call `m(...args)` with `self` `undefined`: the method on `self`, or a bound one's.
+   */
+  [THIS_FN_APPLY](self: any, args: any[]): any {
+    const b = this.#bound;
+    if (b == null) {
+      return arrayMethodApply(this.name, self, args);
+    }
+    return arrayMethodApply(this.name, this.#self, concatArgs(b, args));
+  }
+
+  /** `m.bind(self, ...bound)`: the method on `self`, its arguments after `bound`. */
+  [THIS_FN_BIND](self: any, bound: any[]): Function {
+    const m = new ArrayMethod(this.name);
+    const b = this.#bound;
+    if (b == null) {
+      m.#self = self;
+      m.#bound = bound;
+    } else {
+      m.#self = this.#self;
+      m.#bound = concatArgs(b, bound);
+    }
+    const f: any = m;
+    return f;
   }
 }
 
 /** Is `key` an array method a proxy runs generically (`ArrayMethod`)? */
 export function proxyArrayMethod(key: string): boolean {
-  return key === "push" ||
-    key === "pop" ||
-    key === "shift" ||
-    key === "unshift" ||
-    key === "splice" ||
-    key === "map" ||
-    key === "filter" ||
-    key === "forEach" ||
-    key === "some" ||
-    key === "every" ||
-    key === "find" ||
-    key === "includes" ||
-    key === "indexOf" ||
-    key === "join" ||
-    key === "slice" ||
-    key === "reverse" ||
-    key === "sort";
+  return arrayMethodName(key);
 }
 
 /** JavaScript's `ToIntegerOrInfinity` of an argument (a number; anything else is 0). */

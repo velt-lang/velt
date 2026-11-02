@@ -23,6 +23,7 @@ mod adapters;
 mod adt;
 mod any;
 mod any_args;
+mod any_array_proto;
 mod any_builtin;
 mod any_checks;
 mod any_delete;

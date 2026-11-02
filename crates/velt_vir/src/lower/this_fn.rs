@@ -82,7 +82,8 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// In the `AnyCall` slot of a type `ty`, when it is `ThisFn`: `f.call(thisArg, ...args)` is
+    /// In the `AnyCall` slot of a type `ty`, when it is `ThisFn` (or velt/lang/proxy's `ArrayMethod`,
+    /// which has the same two methods): `f.call(thisArg, ...args)` is
     /// `[THIS_FN_APPLY](thisArg, args)` and `f.bind(thisArg, ...args)` is `[THIS_FN_BIND](thisArg, args)` (a
     /// method's rest parameter is not packed through `any`). Continues in the block for the
     /// other keys.
@@ -91,7 +92,8 @@ impl FnLower<'_, '_> {
         (data, key, argv, argc, out): (vir::Local, vir::Local, vir::Local, vir::Local, vir::Local),
         ty: TyId,
     ) {
-        if !self.cx.is_this_fn(ty) {
+        // An array method read from `Array.prototype` (any_array_proto.rs) has them too.
+        if !self.cx.is_this_fn(ty) && !self.cx.is_array_method(ty) {
             return;
         }
         let any = self.cx.any_ty();

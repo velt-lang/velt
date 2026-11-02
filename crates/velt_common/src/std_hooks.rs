@@ -261,11 +261,16 @@ hooks! {
     // Outside lang/hooks, defined where what they need is (none is exported to programs):
     // lang/proxy/array.vlt: an array method read through a proxy.
     array_method => lang_proxy_array, "ArrayMethod", "class", lowered;
+    /// `Array.prototype[key]` read through `any` (`velt_vir` `any_get_body`).
+    array_prototype_member => lang_proxy_array_apply, "arrayPrototypeMember", "(string) -> any", lowered;
 
     // lang/this_fn: a function whose `this` is bound at the call (a global loaded on demand).
     call_on => lang_this_fn, "callOn", "(any, any, any[]) -> any";
     call_opt_on => lang_this_fn, "callOptOn", "(any, any, () => any[]) -> any";
     this_fn => lang_this_fn, "ThisFn", "class", lowered;
+    /// `Array.prototype[key]` read through `any` in a program without `Proxy` (`velt_vir`
+    /// `any_get_body`).
+    array_prototype_this_fn => lang_this_fn_array_methods, "arrayPrototypeThisFn", "(string) -> any", lowered;
 
     // collections/set.vlt: the adapter of `Set<unknown>` (not exported).
     unknown_set_in => collections_set, "unknownSetIn", "(unknown) -> Set<unknown>";
