@@ -244,6 +244,7 @@ fn vector(b: &mut Body, lanes: Lanes, op: Op) -> Option<String> {
         Op::Neg | Op::Abs | Op::Sqrt | Op::Not => unary(b, lanes, op),
         Op::Shl | Op::Shr => shift(b, lanes, op),
         Op::Select => select(b, lanes),
+        Op::DotAdd => dot_add(b),
         // `llvm.fma` rounds once on every target (a library call per lane without FMA);
         // `llvm.fmuladd` fuses only where that is faster.
         Op::MulAdd | Op::MulAddFast => {
@@ -258,6 +259,39 @@ fn vector(b: &mut Body, lanes: Lanes, op: Op) -> Option<String> {
         }
     };
     Some(b.bytes(&value, &ty))
+}
+
+/// `%a0` (`<4 x i32>`) plus, per lane, the sum of the four products of the signed bytes of
+/// `%a1` and `%a2` in that quarter: the products at 32 bits (exact: |product| ≤ 2^14), then two
+/// rounds of adding neighbours. Plain IR, which LLVM selects per target.
+fn dot_add(b: &mut Body) -> String {
+    let acc = b.arg(0, "<4 x i32>");
+    let x = b.inst("sext <16 x i8> %a1 to <16 x i32>".to_string());
+    let y = b.inst("sext <16 x i8> %a2 to <16 x i32>".to_string());
+    let p = b.inst(format!("mul <16 x i32> {x}, {y}"));
+    let picks = |n: u32, odd: u32| -> String {
+        let v: Vec<String> = (0..n).map(|k| format!("i32 {}", 2 * k + odd)).collect();
+        v.join(", ")
+    };
+    let even = b.inst(format!(
+        "shufflevector <16 x i32> {p}, <16 x i32> poison, <8 x i32> <{}>",
+        picks(8, 0)
+    ));
+    let odd = b.inst(format!(
+        "shufflevector <16 x i32> {p}, <16 x i32> poison, <8 x i32> <{}>",
+        picks(8, 1)
+    ));
+    let pairs = b.inst(format!("add <8 x i32> {even}, {odd}"));
+    let even = b.inst(format!(
+        "shufflevector <8 x i32> {pairs}, <8 x i32> poison, <4 x i32> <{}>",
+        picks(4, 0)
+    ));
+    let odd = b.inst(format!(
+        "shufflevector <8 x i32> {pairs}, <8 x i32> poison, <4 x i32> <{}>",
+        picks(4, 1)
+    ));
+    let quads = b.inst(format!("add <4 x i32> {even}, {odd}"));
+    b.inst(format!("add <4 x i32> {acc}, {quads}"))
 }
 
 /// The bytes `mask` picks from the arguments (`%a0` followed by `%a1`, or only `%a0`).
