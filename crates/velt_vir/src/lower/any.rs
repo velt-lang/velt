@@ -755,6 +755,8 @@ impl FnLower<'_, '_> {
             // An object of another type: a view of it (any_view.rs).
             self.any_view(p, ty, &out, done);
         }
+        // An object read as a `Record<string, V>`: a record of its entries (any_to_record.rs).
+        self.any_to_record(p, from, ty, &out, done);
         if self.cx.array_view(ty) {
             // An array of another element type: a view of it (array_view.rs).
             self.array_view_make(p, desc.clone(), ty, &out, done);

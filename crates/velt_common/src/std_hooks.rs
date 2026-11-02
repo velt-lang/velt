@@ -172,6 +172,10 @@ hooks! {
     any_ctor_name => lang_hooks_any_object, "anyCtorName", "(any) -> string";
     any_ctor_name_unsupported => lang_hooks_any_object, "anyCtorNameUnsupported", "(string) -> string";
     any_delete_member => lang_hooks_any_object, "anyDeleteMember", "(any, any) -> bool";
+    /// `x as Record<string, any>` of an `any` holding another object (`velt_vir` `any_to_record.rs`).
+    any_to_record_any => lang_hooks_any_object, "anyToRecordAny", "(any) -> Record<string, any>", lowered;
+    /// `x as Record<string, V>` of an `any` holding another object.
+    any_to_record => lang_hooks_any_object, "anyToRecord", "<A>(any) -> Record<string, A>", lowered;
     has_own_property => lang_hooks_any_object, "HasOwnProperty", "class", lowered;
 
     // any_ops.vlt: operators on `any` values holding objects (`ToPrimitive` first).

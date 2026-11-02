@@ -1,11 +1,79 @@
-// An `any` holding an object of a fixed shape does not convert to a `Record` yet (#1219): the
-// conversion stops with a `TypeError` saying so (it compiled to invalid code before, #1211).
+// An `any` holding an object that is not that very record converts to a `Record<string, V>` as
+// Node reads it (#1219): an object literal, a class instance, an array, or a record of other
+// values gives a record of its own enumerable entries, in its order, each converted to `V`.
+function stringifyStyle(style: Record<string, any>): string {
+  let s = "";
+  for (const key in style) {
+    s += key + ":" + style[key] + ";";
+  }
+  return s;
+}
+
+function styleAttr(value: any): string {
+  return typeof value === "object" ? stringifyStyle(value) : String(value);
+}
+
 function keys(x: any): string[] {
   const r = x as Record<string, number>;
   return Object.keys(r);
 }
 
+function sum(x: any): number {
+  const r: Record<string, number> = x;
+  let t = 0;
+  for (const k in r) {
+    t += r[k];
+  }
+  return t;
+}
+
+class Point {
+  x: number;
+  y: number;
+  label: string;
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+    this.label = "p";
+  }
+}
+
+function props(type: string, p: any): string {
+  return type + " " + styleAttr(p.style);
+}
+
 function main() {
   console.log("before");
   console.log(keys({ a: 1, b: 2 }));
+  const a: any = { color: "red", "font-size": 12 };
+  console.log(styleAttr(a));
+  // Through a props object, as a JSX runtime passes it.
+  const color = "blue";
+  console.log(props("span", { style: { color }, children: "x" }));
+  console.log(styleAttr("plain"));
+  console.log(sum({ x: 1, y: 2, z: 3 }));
+  // A class instance: its fields.
+  const pt: any = new Point(3, 4);
+  const rp = pt as Record<string, any>;
+  console.log(Object.keys(rp), rp["x"], rp["label"]);
+  // A record of numbers read as a record of `any`, and the other way round.
+  const nums: Record<string, number> = { one: 1, two: 2 };
+  const held: any = nums;
+  console.log(stringifyStyle(held));
+  const anys: Record<string, any> = { three: 3, four: 4 };
+  const back: any = anys;
+  console.log(sum(back));
+  // Nested records.
+  const nested: any = { outer: { inner: 5 }, other: { k: 6 } };
+  const rr = nested as Record<string, Record<string, number>>;
+  const outer = rr["outer"];
+  const other = rr["other"];
+  if (outer !== undefined && other !== undefined) {
+    console.log((outer["inner"] ?? 0) + (other["k"] ?? 0));
+  }
+  // An array: its indices.
+  const arr: any = ["x", "y"];
+  console.log(stringifyStyle(arr));
+  // An empty object.
+  console.log(JSON.stringify(stringifyStyle({})));
 }

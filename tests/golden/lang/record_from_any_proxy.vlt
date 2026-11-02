@@ -1,0 +1,30 @@
+// In a program with proxies, an object reaching a `Record<string, any>` field through `any` (a
+// write through `any`, as a JSX runtime stores props) converts as it does without them (#1219),
+// and a record field is listed with `for...in` as before.
+const handler: ProxyHandler<any> = {};
+const unused = new Proxy({}, handler);
+
+interface VNode {
+  type: string;
+  props: Record<string, any>;
+}
+
+function render(n: VNode): string {
+  let s = "<" + n.type;
+  for (const k in n.props) {
+    s += " " + k + "=" + String(n.props[k]);
+  }
+  return s + ">";
+}
+
+function main() {
+  const plain: VNode = { type: "p", props: { id: "a" } };
+  console.log(render(plain));
+  const node: VNode = { type: "div", props: {} };
+  const held: any = node;
+  held.props = { id: "x", n: 2 };
+  console.log(render(node), Object.keys(node.props));
+  const style: any = { color: "red" };
+  held.props = { style, title: "t" };
+  console.log(render(node), typeof unused);
+}

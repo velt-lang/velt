@@ -23,6 +23,27 @@ export function spreadAny(r: Record<string, any>, o: any): void {
 }
 
 /**
+ * `x as Record<string, any>` of an `any` holding an object that is not such a record (an object
+ * literal, a class instance, an array): a new record of its own enumerable entries, in its
+ * order, as Node reads the object (velt_vir `any_to_record.rs`). It is a copy: a later write
+ * through one is not seen through the other.
+ */
+export function anyToRecordAny(o: any): Record<string, any> {
+  const r: Record<string, any> = { ...o };
+  return r;
+}
+
+/** `x as Record<string, V>` of an `any` holding another object: `anyToRecordAny`, each value a `V`. */
+export function anyToRecord<V>(o: any): Record<string, V> {
+  const all: Record<string, any> = { ...o };
+  const r: Record<string, V> = {};
+  for (const k of Object.keys(all)) {
+    r[k] = all[k] as V;
+  }
+  return r;
+}
+
+/**
  * `Object.hasOwn(o, k)` of an `any` (or `object`) `o`: one of its own enumerable keys, or an
  * array's or string's `length` (a proxy's `getOwnPropertyDescriptor` trap: velt/lang/hooks/proxy).
  */

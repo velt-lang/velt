@@ -1240,7 +1240,11 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   (`ExprKind::Lit(Lit::Str(text))`), says where the value comes from: a mismatch stops with
   `TypeError: <text>: the value is not a <T> (it is <found>)` (additive; sema writes it for
   the arguments of an overload signature's adapted callback, `crate::overload_adapter`).
-  Lowering reads the text while compiling; it is never evaluated.
+  Lowering reads the text while compiling; it is never evaluated. To a `Record<string, V>`, an
+  object of another type (an object literal, a class instance, an array, a record of other
+  values) gives a new record of its own enumerable entries, each converted to `V` (#1219;
+  velt_vir `lower/any_to_record.rs`, the hooks `anyToRecordAny` / `anyToRecord`): a copy, as
+  the conversion to another object type is.
 - `Intrinsic::AnyToExact` (`(x: borrow any) -> T | undefined`, `Expr::ty` an option of the
   function type `T`; made by sema only, additive): the function `x` holds, as a new reference,
   when its table is `T`'s (one comparison), else `undefined`. Sema converts an `any` or
