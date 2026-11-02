@@ -10,4 +10,11 @@ true true true true false true false
 true true 2
 1.5
 a
+false -1 -1 false -1
+true 1 true 2 1
+true 0 true -1
+undefined false undefined a b true
+2 true 1
+false true true false 2
+false -1 true true
 255 127 2147483647 0 0 255

@@ -350,7 +350,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// Reads whose value is used as it is (`"a" + x`): not taken as a payload.
     pub as_is_spans: Vec<Span>,
     /// Typing the operands of a comparison: a literal beside an `f16`/`bf16` is an `f64`, so
-    /// the comparison is exact, as in JS (#2049; arithmetic gives it `f32`).
+    /// the comparison is exact, as in JS (#2049; arithmetic gives it `f32`). Set around the
+    /// operands by `binary` (each operator sets it for its own operands, so arithmetic inside
+    /// a comparison resets it) and `Object.is`; read only by `operands`' literal hint.
     pub comparing: bool,
     /// A field read that is the operand of a type test (`typeof o.f`, `o.f instanceof C`,
     /// `o.f === lit`): it reads the field as narrowed, without converting it to the union of the

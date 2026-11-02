@@ -100,4 +100,127 @@ impl FnCx<'_, '_> {
         );
         Some(self.error_expr(span))
     }
+
+    /// The search and key methods of a collection of `f16`/`bf16` values (`includes`,
+    /// `indexOf`, `lastIndexOf` of an array, the `(f16 | null)[]` forms too; `get`, `has`,
+    /// `delete` of a `Map` key or a `Set` value) with a `number` argument compare it exactly, as
+    /// the operators do (#2049): `xs.includes(0.1)` is false, as in JS with a `Float16Array`.
+    /// Written as `x != x || (x as f16) == x ? recv.m(x as f16, …) : <not found>`, the receiver
+    /// and then the argument evaluated once, in order. `Err(recv)` for any other call.
+    pub(super) fn storage_search(
+        &mut self,
+        recv: hir::Expr,
+        prop: &ast::Ident,
+        type_args: &[ast::TypeExpr],
+        args: &[ast::Expr],
+        exp: Option<TyId>,
+        span: Span,
+    ) -> Result<hir::Expr, hir::Expr> {
+        let key = match prop.name.as_str() {
+            "includes" | "indexOf" | "lastIndexOf" => self.cx.ty.array_elem(recv.ty),
+            "get" | "has" | "delete" => match self.cx.ty.kind(recv.ty).clone() {
+                TyKind::Adt(d, a) if Some(d) == self.cx.prelude_adt("Map") => a.first().copied(),
+                TyKind::Adt(d, a) if Some(d) == self.cx.prelude_adt("Set") => a.first().copied(),
+                _ => None,
+            },
+            _ => None,
+        };
+        let key = key.map(|k| self.cx.ty.core(k).unwrap_or(k));
+        let Some(key) = key.filter(|k| self.cx.ty.is_storage_float(*k)) else {
+            return Err(recv);
+        };
+        let Some((first, rest)) = args.split_first() else {
+            return Err(recv);
+        };
+        // The call this writes (its argument a synthetic temporary, which no program names).
+        let synthetic =
+            |e: &ast::Expr| matches!(&e.kind, ast::ExprKind::Ident(i) if i.name.starts_with('<'));
+        let inner = match &first.kind {
+            ast::ExprKind::Cast { expr, .. } => synthetic(expr),
+            _ => synthetic(first),
+        };
+        // `null`/`undefined` (an `(f16 | null)[]`'s) take the method as it is.
+        let nothing = matches!(
+            &first.kind,
+            ast::ExprKind::Lit(ast::Lit::Null | ast::Lit::Undefined)
+        );
+        if inner || nothing {
+            return Err(recv);
+        }
+        let mut stmts = Vec::new();
+        // The receiver first (a place reads in place), then the argument.
+        let recv = match crate::body::places::is_place(&recv) {
+            true => recv,
+            false => {
+                let id = self.temp_ident("<recv>", recv, &mut stmts);
+                self.expr(&id, None, crate::body::Want::Borrow)
+            }
+        };
+        let a = self.expr(first, None, crate::body::Want::Borrow);
+        let number = self.cx.ty.is_numeric(a.ty) && a.ty != key;
+        if !number {
+            // The element type itself (or a type the call reports): the method as it is.
+            let id = self.temp_ident("<key>", a, &mut stmts);
+            let call_args: Vec<ast::Expr> =
+                std::iter::once(id).chain(rest.iter().cloned()).collect();
+            let call = self.method_call_on(recv, prop, type_args, &call_args, exp, span);
+            return Ok(self.with_temps_value(stmts, call));
+        }
+        let f64_ = self.cx.ty.f64;
+        let a = self.coerce(a, f64_);
+        let x = self.temp_ident("<number>", a, &mut stmts);
+        let tn = self.cx.display(key);
+        let synth = super::callback::synth;
+        let key_ty = ast::TypeExpr {
+            kind: ast::TypeExprKind::Named {
+                path: vec![ast::Ident { name: tn, span }],
+                args: vec![],
+            },
+            span,
+        };
+        let as_key = |x: &ast::Expr| {
+            let kind = ast::ExprKind::Cast {
+                expr: Box::new(x.clone()),
+                ty: key_ty.clone(),
+            };
+            synth(kind, span)
+        };
+        let binary = |op, lhs: ast::Expr, rhs: ast::Expr| {
+            let kind = ast::ExprKind::Binary {
+                op,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            };
+            synth(kind, span)
+        };
+        let ne = binary(ast::BinaryOp::NotEq, x.clone(), x.clone());
+        let eq = binary(ast::BinaryOp::Eq, as_key(&x), x.clone());
+        let held = binary(ast::BinaryOp::Or, ne, eq);
+        let cond = self.cond(&held);
+        let call_args: Vec<ast::Expr> = std::iter::once(as_key(&x))
+            .chain(rest.iter().cloned())
+            .collect();
+        let call = self.method_call_on(recv, prop, type_args, &call_args, exp, span);
+        let miss = match self.cx.ty.kind(call.ty) {
+            TyKind::Bool => self.mk(H::Lit(hir::Lit::Bool(false)), call.ty, span),
+            TyKind::Int(_) | TyKind::Float(_) => {
+                let one = self.mk(H::Lit(hir::Lit::Int(1)), call.ty, span);
+                let kind = H::Unary {
+                    op: hir::UnOp::Neg,
+                    expr: Box::new(one),
+                };
+                self.mk(kind, call.ty, span)
+            }
+            TyKind::Option(..) => self.mk(H::Lit(hir::Lit::Null), call.ty, span),
+            _ => return Ok(self.with_temps_value(stmts, call)),
+        };
+        let ty = call.ty;
+        let kind = H::If {
+            cond: Box::new(cond),
+            then: Box::new(call),
+            els: Box::new(miss),
+        };
+        let h = self.mk(kind, ty, span);
+        Ok(self.with_temps_value(stmts, h))
+    }
 }

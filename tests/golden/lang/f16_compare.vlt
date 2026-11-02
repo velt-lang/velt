@@ -44,6 +44,22 @@ function main() {
       console.log("default");
   }
   console.log(new Map<f16 | f32, string>([[1.5 as f16, "a"]]).get(1.5 as f32));
+  // The search and key methods of an `f16`/`bf16` collection compare a `number` exactly too:
+  // a value the format doesn't hold is never found (`as f16` finds the stored one).
+  const xs: f16[] = [0.1, 1, -0];
+  console.log(xs.includes(0.1), xs.indexOf(0.1), xs.lastIndexOf(0.1), xs.includes(1.00000001), xs.indexOf(1.00000001));
+  console.log(xs.includes(0.1 as f16), xs.indexOf(1), xs.includes(0), xs.indexOf(-0), xs.lastIndexOf(1));
+  const near = 0.0999755859375;
+  const nans: f16[] = [(0 / 0) as f16];
+  console.log(xs.includes(near), xs.indexOf(near), nans.includes(0 / 0), nans.indexOf(0 / 0));
+  const m = new Map<f16, string>([[0.1 as f16, "a"], [1, "b"]]);
+  console.log(m.get(0.1), m.has(0.1), m.get(1.00000001), m.get(0.1 as f16), m.get(1), m.has(near));
+  m.delete(0.1);
+  console.log(m.size, m.delete(near), m.size);
+  const bs = new Set<bf16>([0.1 as bf16, 2]);
+  console.log(bs.has(0.1), bs.has(0.10009765625), bs.has(2), bs.delete(0.1), bs.size);
+  const ys: (f16 | null)[] = [0.1 as f16, null];
+  console.log(ys.includes(0.1), ys.indexOf(0.1), ys.includes(near), ys.includes(null));
   // An `any` holding one converts to an integer as `as` does: saturating, NaN is 0.
   const a: any = 300.5 as f16;
   const b: any = 1e10 as f16;
