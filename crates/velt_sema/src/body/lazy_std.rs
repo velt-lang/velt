@@ -171,6 +171,8 @@ pub(crate) struct Lazy {
     fn_deferred: Vec<Option<bool>>,
     /// Has checked code of a non-std module an `any` (or another dynamic type) in it?
     user_dynamic: bool,
+    /// Has checked code of a non-std module a type holding a record with string keys in it?
+    user_record: bool,
     /// Has checked code an explicit conversion of an `any` to a type holding a record with
     /// string keys (an `AnyTo`)?
     record_conversion: bool,
@@ -192,6 +194,7 @@ impl Lazy {
             defaults_scanned: 0,
             fn_deferred: vec![],
             user_dynamic: false,
+            user_record: false,
             record_conversion: false,
             record_hooks: false,
         }
@@ -415,6 +418,11 @@ pub(crate) fn reach(cx: &mut Ctx) {
                 cx.lazy.user_dynamic =
                     (sc.types[first_type..].iter()).any(|&t| holds_dynamic(cx, t, &mut seen));
             }
+            if user && !cx.lazy.user_record {
+                let mut seen = FxHashSet::default();
+                cx.lazy.user_record =
+                    (sc.types[first_type..].iter()).any(|&t| holds_string_record(cx, t, &mut seen));
+            }
         }
         for t in std::mem::take(&mut sc.conversions) {
             if !cx.lazy.record_conversion {
@@ -422,13 +430,20 @@ pub(crate) fn reach(cx: &mut Ctx) {
             }
         }
         used_types(cx, std::mem::take(&mut sc.types), &mut sc.found);
-        if !cx.lazy.record_hooks && record_hooks_needed(cx) {
+        // Loaded (std/prelude/global/record_any.vlt) for a program that mentions `Record`.
+        let hooks: Vec<DefId> = match cx.lazy.record_hooks {
+            true => vec![],
+            false => RECORD_HOOKS
+                .iter()
+                .filter_map(|h| cx.prelude_fn(h))
+                .collect(),
+        };
+        if !hooks.is_empty() && record_hooks_needed(cx) {
             cx.lazy.record_hooks = true;
+            sc.found.extend(hooks);
             // They read the members of the object through `any` (std's own dynamic reads
             // don't add the member slots, `FnCx::note_dyn_members`).
             cx.note_dyn_members();
-            sc.found
-                .extend(RECORD_HOOKS.iter().filter_map(|h| cx.prelude_fn(h)));
         }
         impl_methods(cx, &mut sc.found);
         let mut checked = false;
@@ -494,14 +509,11 @@ fn used_types(cx: &mut Ctx, mut todo: Vec<TyId>, found: &mut Vec<DefId>) {
 
 /// Does the program need [`RECORD_HOOKS`]: an explicit conversion of an `any` to a type holding
 /// a record with string keys, or, for the conversions lowering's glue makes (a member written
-/// through `any`, an object converted to a class), a non-std module handling an `any` in a
-/// program that uses such a record? A program that converts nothing to a record, or whose own
-/// code has no `any` (std's code has many), does not check them.
+/// through `any`, an object converted to a class), a non-std module handling both an `any` and
+/// a type holding such a record? A program that converts nothing to a record, or whose own code
+/// has no `any` or no record (std's code has many), does not check them.
 fn record_hooks_needed(cx: &Ctx) -> bool {
-    cx.lazy.record_conversion
-        || (cx.lazy.user_dynamic
-            && (cx.lazy.types.iter())
-                .any(|&t| cx.record_type_args(t).is_some_and(|(k, _)| k == cx.ty.str_)))
+    cx.lazy.record_conversion || (cx.lazy.user_dynamic && cx.lazy.user_record)
 }
 
 /// Does `t` hold a record with string keys: itself, a part of it, or a field of a class or struct
