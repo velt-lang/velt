@@ -1,0 +1,21 @@
+// check: no leaks
+// `(obj as Record<string, T>)[key]` with `obj: object` reads and writes the key of the object
+// itself, as on an `any` (#930, sigx's `createModel`): a read where a `T` is expected is a `T`,
+// as TypeScript types it.
+function read<T>(obj: object, key: string): T {
+  return (obj as Record<string, T>)[key];
+}
+
+function write(obj: object, key: string, v: number): void {
+  (obj as Record<string, number>)[key] = v;
+}
+
+function maybe(obj: object, key: string): string {
+  const v = (obj as Record<string, number>)[key];
+  return v === undefined ? "missing" : `${v}`;
+}
+
+const state = { count: 1, label: "x" };
+console.log(read<number>(state, "count"), read<string>(state, "label"));
+write(state, "count", 5);
+console.log(state.count, maybe(state, "count"), maybe(state, "other"));

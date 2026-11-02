@@ -1,0 +1,7 @@
+// A `Record<string, string> | undefined` asserted as a `Record<string, number>` stays an error:
+// the records differ in more than `any` and `unknown` (#930).
+function f(props?: Record<string, string>): number {
+  const r = props as Record<string, number>;
+  return Object.keys(r).length;
+}
+console.log(f({ a: "x" }));

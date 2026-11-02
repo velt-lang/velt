@@ -650,12 +650,7 @@ impl FnCx<'_, '_> {
             let hs = h.span;
             self.intrinsic(Intrinsic::ToString, vec![h], self.cx.ty.str_, hs)
         } else {
-            let tn = self.cx.display(t);
-            self.cx.err(
-                format!("cannot format a value of type `{tn}` in {what}"),
-                h.span,
-            );
-            self.error_expr(h.span)
+            self.unprintable_text(h, what)
         }
     }
 

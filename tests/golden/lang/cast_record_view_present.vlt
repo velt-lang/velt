@@ -1,0 +1,12 @@
+// check: no leaks
+// `props as Record<string, any>` of a `Record<string, unknown> | undefined` (#930, sigx's
+// `jsxs`): the record, checked present, as the other view of the same record.
+function keyCount(props: Record<string, any>): number {
+  return Object.keys(props).length;
+}
+
+function jsxs(props?: Record<string, unknown>): number {
+  return keyCount(props as Record<string, any>);
+}
+
+console.log(jsxs({ a: 1, b: "two" }), jsxs({}));

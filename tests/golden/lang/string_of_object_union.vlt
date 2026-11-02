@@ -1,0 +1,31 @@
+// check: no leaks
+// `String(x)` of a union with an object type that `console.log` cannot print (a field holding
+// a function or an `any`) writes the object as JavaScript does, `[object Object]` (#930).
+const TextSym = Symbol.for("text");
+type VNode = {
+  type: string | typeof TextSym | Function;
+  props: Record<string, any>;
+  children: VNode[];
+  dom: any | null;
+  text?: string | number;
+  cleanup?: () => void;
+};
+
+function render(children: VNode[]): string {
+  let html = "";
+  for (const child of children) {
+    const raw = child.type === TextSym ? child.text : child;
+    html += typeof raw === "string" ? raw : String(raw);
+    html += `|${raw}|`;
+  }
+  return html;
+}
+
+console.log(
+  render([
+    { type: TextSym, props: {}, children: [], dom: null, text: "hi" },
+    { type: TextSym, props: {}, children: [], dom: null, text: 3 },
+    { type: "div", props: {}, children: [], dom: null },
+    { type: TextSym, props: {}, children: [], dom: null },
+  ]),
+);

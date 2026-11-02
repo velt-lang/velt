@@ -1,0 +1,2 @@
+cast_record_view_other.vlt:4:13
+error: cannot cast `Record<string, string> | undefined` as `Record<string, f64>`
