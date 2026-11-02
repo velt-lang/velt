@@ -19,6 +19,7 @@ function fixed() {
 }
 
 let seed: u32 = 2463534242;
+
 function next(): i8 {
   seed = seed ^ (seed << 13);
   seed = seed ^ (seed >>> 17);
