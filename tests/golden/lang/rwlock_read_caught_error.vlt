@@ -1,0 +1,17 @@
+// A `read` callback catching an `Error` it threw after reading the value, and storing it
+// outside: an `Error` cannot be a part of the value, so it is stored as it is (#1541).
+class Store {
+  xs: number[] = [1];
+}
+function main() {
+  const lk = new RwLock(new Store());
+  const errs: Error[] = [];
+  lk.read((s) => {
+    try {
+      if (s.xs.length < 5) throw new Error("short");
+    } catch (e) {
+      if (e instanceof Error) errs.push(e);
+    }
+  });
+  console.log(errs.length, errs[0].message);
+}

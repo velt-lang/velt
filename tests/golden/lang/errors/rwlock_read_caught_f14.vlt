@@ -1,0 +1,15 @@
+// An RwLock read probe (#1559): a compile error, where a silent copy would differ from Node.
+// A method of the locked class throws its own array; the read callback catches and returns it
+class Store {
+  xs: number[] = [1];
+  check(): void { throw this.xs; }
+}
+function main() {
+  const lk = new RwLock(new Store());
+  const r = lk.read((s): number[] => {
+    try { s.check(); } catch (e) { return e as number[]; }
+    return [0];
+  });
+  r.push(9);
+  lk.read((s) => console.log(JSON.stringify(s.xs)));
+}

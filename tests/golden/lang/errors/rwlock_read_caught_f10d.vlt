@@ -1,0 +1,13 @@
+// An RwLock read probe (#1559): a compile error, where a silent copy would differ from Node.
+// A function field throwing a captured class object; caught, its array stored outside
+class Item { xs: number[] = [1]; }
+class Store { f: () => void = () => {}; }
+function main() {
+  const lk = new RwLock(new Store());
+  const it = new Item();
+  lk.write((s) => { s.f = () => { throw it; }; });
+  const out: Item[] = [];
+  lk.read((s) => { try { s.f(); } catch (e) { if (e instanceof Item) out.push(e); } });
+  out[0].xs.push(9);
+  console.log(JSON.stringify(it.xs));
+}
