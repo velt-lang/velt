@@ -142,6 +142,9 @@ table! {
     io_error => "io/error",
     /// The default JSX provider (`jsxImportSource`).
     jsx => "jsx",
+    /// `velt/math`'s `BigInt`, whose operators take BigInt operands only (sema
+    /// `body/expr/operator_bigint.rs` names the fix for a mixed one).
+    math_bigint => "math/bigint",
     net_http_fetch_response => "net/http/fetch/response",
     /// `velt/ops/operators`, the interfaces of the operator methods `velt/ops` exports (sema
     /// `collect/operators.rs`).

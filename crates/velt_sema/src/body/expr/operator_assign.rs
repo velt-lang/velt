@@ -72,6 +72,14 @@ impl FnCx<'_, '_> {
         if !self.operator_type(place.ty) || operators::binary_method(op).is_none() {
             return Err(place);
         }
+        // `b += 3` on a `BigInt` (`operator_bigint.rs`).
+        let value_ty = match super::ops::untyped(value) {
+            true => Some(self.cx.ty.f64),
+            false => self.peek_ty(value),
+        };
+        if value_ty.is_some_and(|v| self.bigint_mixed(op, (place.ty, v), true, span)) {
+            return Ok(self.error_expr(span));
+        }
         // The place's indices are evaluated once, first (`arr[f(0)] += arr[f(1)]` calls `f(0)`
         // first).
         let mut place = place;

@@ -155,9 +155,12 @@ methods: they give masks, and `==` gives a `bool`. The named methods stay.
 
 ### Other std types
 
-`BigInt`: `+ - * / %` with a `BigInt` or an `i64` on either side, `<< >>` by an `i64`, unary `-`,
-and in-place `+= -= *= /= %= <<= >>=` from its existing methods (it has no bitwise methods to
-call). `Duration`: `+`, `-`, unary `-`, `*` and `/` by an `i64`.
+`BigInt`: `+ - * / %` on two BigInts, `<< >>` by an `i64`, unary `-`, and in-place
+`+= -= *= /= %= <<= >>=` from its existing methods (it has no bitwise methods to call). A number
+operand on either side is an error, as in JavaScript (`TypeError: Cannot mix BigInt and other
+types`) and TypeScript (TS2365); the note names `new BigInt(k)` or the named twin that takes an
+`i64` (`b.addInt(3)`) (owner decision on #2096: a `BigInt | i64` parameter costs about 36% on
+every operation, #2119). `Duration`: `+`, `-`, unary `-`, `*` and `/` by an `i64`.
 
 ## How it compiles
 
