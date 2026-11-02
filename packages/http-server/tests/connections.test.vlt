@@ -171,14 +171,15 @@ describe("velt/net/http's idle timeout", () => {
       await delay(900);
       open(g);
       expect((await timeout(c.readString(), 5000)).startsWith("HTTP/1.1 200")).toBe(true);
-      // And the next one too, sent at once.
+      // And the next one too, sent at once. The connection is idle from the end of its
+      // response, which comes after this moment however late this side runs: so it closes at
+      // least idleTimeout after it (less the timer granularity, about 15 ms on Windows).
+      const idleFrom = Date.now();
       await c.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
       expect((await timeout(c.readString(), 5000)).startsWith("HTTP/1.1 200")).toBe(true);
-      // Then idle: closed no sooner than the timeout after the last response (a little less as
-      // measured here, from after it arrived), and closed.
-      const idleFrom = Date.now();
+      // Then idle: closed, and no sooner than the timeout.
       expect(await timeout(readAll(c), 10000)).toBe("");
-      expect(Date.now() - idleFrom >= 250).toBe(true);
+      expect(Date.now() - idleFrom >= 280).toBe(true);
     } finally {
       c.close();
       server.close();
