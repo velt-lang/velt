@@ -1,7 +1,7 @@
 # Design: operator overloading
 
 Status: **accepted** (issue #2050, maintainer review 2026-11-02, its points written in below);
-built by a stack of four pull requests (steps 1–2, 3–4, 5–6 and 7 below); step 8 (`a[i, j]`)
+built by a stack of five pull requests (steps 1–2, 3–4, 5, 6 and 7 below); step 8 (`a[i, j]`)
 waits for its `ast::ExprKind::Index` change. Area 2 of #1866.
 
 ## Problem
@@ -194,10 +194,9 @@ before `numrep` runs; release inlines them anyway.
 ## Cost
 
 - **Run time** (instructions retired, `bench/ops/dot_generic.vlt` = `dot<number>` through
-  `Arithmetic` vs `bench/ops/dot_number.vlt`, the loop on numbers): release 87.7M vs 87.5M
-  (within run-to-run noise; the LLVM IR differs only in the order of its `alloca`s); debug
-  537M vs 528M (+1.7%: the inlined operator keeps its parameter as a local that debug builds
-  don't propagate). A generated golden (`lang/operators_numbers.vlt`) checks 3028 operator
+  `Arithmetic` vs `bench/ops/dot_number.vlt`, the loop on numbers, on the Linux builder under
+  cachegrind): equal within 7 instructions in both pipelines, release 75.67M and debug 461.46M.
+  (An earlier measurement on a busy Mac showed debug +1.7%; it does not reproduce.) A generated golden (`lang/operators_numbers.vlt`) checks 3028 operator
   results through generic code against the built-in operators.
 - **Compile time:** measured with the pull request (hello, `json/parse_typed`, `check_all_std`,
   `bench/simd/kernels`).

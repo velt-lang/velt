@@ -30,6 +30,7 @@ struct Owner {
 }
 
 pub(super) fn check(cx: &mut Ctx) {
+    misplaced_keys(cx);
     let owners = owners(cx);
     for o in &owners {
         check_owner(cx, o);
@@ -64,6 +65,36 @@ fn owners(cx: &mut Ctx) -> Vec<Owner> {
         }
     }
     owners
+}
+
+/// A setter or a field keyed by an operator's symbol (`set [Symbol.add](v)`,
+/// `[Symbol.mul]: number = 3`): never what the operator calls.
+fn misplaced_keys(cx: &mut Ctx) {
+    let mut errs = vec![];
+    for i in 0..cx.info.len() {
+        let Some(a) = cx.adt(DefId(i as u32)) else {
+            continue;
+        };
+        for (k, m) in &a.methods {
+            let Some(base) = k.strip_prefix("set ").filter(|b| b.starts_with('[')) else {
+                continue;
+            };
+            if op_method(base).is_some() {
+                errs.push((base.to_string(), cx.fn_info(m.def).name_span, "an accessor"));
+            }
+        }
+        for f in &a.fields[a.own_fields_start..] {
+            if f.name.starts_with('[') && op_method(&f.name).is_some() {
+                errs.push((f.name.clone(), f.span, "a field"));
+            }
+        }
+    }
+    for (name, span, what) in errs {
+        cx.error(Diagnostic::error(
+            format!("`{name}` names an operator method: it cannot be {what}"),
+            span,
+        ));
+    }
 }
 
 /// The operator methods of a method table (its overload signatures by their operator's name).
@@ -163,8 +194,14 @@ fn shape_error(cx: &Ctx, owner: TyId, name: &str, kind: OpMethod, m: &MethodRef)
                     op_symbol(op)
                 ));
             }
-            if op == BinaryOp::Add && left == cx.ty.str_ {
+            if op == BinaryOp::Add && cx.string_like(left) {
                 return Some(unreachable_concat());
+            }
+            if right != owner && !cx.ty.is_bottom(right) {
+                let (shown, l, r) = (cx.display(owner), cx.display(left), cx.display(right));
+                return Some(format!(
+                    "a static `{name}` is found on the type of its right operand, `{shown}`: its second parameter has that type, not `{r}` (`static {name}(a: {l}, b: {shown})`)"
+                ));
             }
             None
         }
@@ -173,7 +210,7 @@ fn shape_error(cx: &Ctx, owner: TyId, name: &str, kind: OpMethod, m: &MethodRef)
                 return Some(format!("`{name}` takes one parameter, the right operand"));
             }
             // std's `extend string` gives `string` its `+` for generic code (`velt/ops`).
-            if op == BinaryOp::Add && f.params[0].ty == cx.ty.str_ && operator_target(cx, owner) {
+            if op == BinaryOp::Add && cx.string_like(f.params[0].ty) && operator_target(cx, owner) {
                 return Some(unreachable_concat());
             }
             None

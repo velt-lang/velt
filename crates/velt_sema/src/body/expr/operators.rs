@@ -105,7 +105,7 @@ impl FnCx<'_, '_> {
     }
 
     /// May `l op r` call an operator method: `op` has one, and an operand's type may declare it
-    /// (not `+` with a `string`)? A test by reference, so the operands of the built-in operators
+    /// (not `+` with a string: `string`, a string literal type or a union of them)? A test by reference, so the operands of the built-in operators
     /// pass by without a move.
     pub(super) fn may_call_operator(
         &self,
@@ -113,9 +113,9 @@ impl FnCx<'_, '_> {
         l: &hir::Expr,
         r: &hir::Expr,
     ) -> bool {
-        let s = self.cx.ty.str_;
         operators::binary_method(op).is_some()
-            && !(op == ast::BinaryOp::Add && (l.ty == s || r.ty == s))
+            && !(op == ast::BinaryOp::Add
+                && (self.cx.string_like(l.ty) || self.cx.string_like(r.ty)))
             && (self.operator_type(l.ty) || self.operator_type(r.ty))
     }
 
@@ -165,8 +165,7 @@ impl FnCx<'_, '_> {
         let Some(name) = operators::binary_method(op) else {
             return Err(Box::new((l, r)));
         };
-        let s = self.cx.ty.str_;
-        if op == ast::BinaryOp::Add && (l.ty == s || r.ty == s) {
+        if op == ast::BinaryOp::Add && (self.cx.string_like(l.ty) || self.cx.string_like(r.ty)) {
             return Err(Box::new((l, r)));
         }
         if !self.operator_type(l.ty) && !self.operator_type(r.ty) {

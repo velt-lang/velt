@@ -88,3 +88,10 @@ try {
 } catch (e) {
   console.log(`caught ${e.message}`);
 }
+
+// `+` with a string operand concatenates (through `toString`, as in TypeScript), whether the
+// string is a `string`, a literal type or a union of them.
+type Lit = "lit" | "other";
+const lit: Lit = "lit";
+const one: "one" = "one";
+console.log(a + "!", "<" + a, a + lit, lit + a, a + one);

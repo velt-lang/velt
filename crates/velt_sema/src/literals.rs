@@ -57,6 +57,23 @@ impl Ctx<'_> {
         base.unwrap_or(t)
     }
 
+    /// Is `t` a string to `+`, which concatenates it: `string`, a string literal type or a union
+    /// of those? (A string enum value does not concatenate with an object.)
+    pub fn string_like(&self, t: TyId) -> bool {
+        let one = |m: TyId| {
+            m == self.ty.str_ || matches!(self.ty.kind(m), TyKind::Literal(LitValue::Str(_)))
+        };
+        // A union's members name no type parameter here: string literals.
+        one(t)
+            || self.union_def(t).is_some_and(|(d, _)| {
+                self.enum_info(d).is_some_and(|e| {
+                    e.variants
+                        .iter()
+                        .all(|v| v.payload.first().is_some_and(|p| one(*p)))
+                })
+            })
+    }
+
     /// Does `t` (or a member of union `t`) involve a literal type?
     pub fn has_literal_member(&mut self, t: TyId) -> bool {
         if self.lit_value(t).is_some() {

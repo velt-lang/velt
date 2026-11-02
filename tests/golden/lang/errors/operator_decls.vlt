@@ -26,3 +26,16 @@ class W {
 extend number {
   [Symbol.add](o: number): number { return o; }
 }
+
+class Lits {
+  [Symbol.add](o: "a" | "b"): Lits { return this; }
+}
+
+class Nums {
+  static [Symbol.add](a: number, b: number): Nums { return new Nums(); }
+}
+
+class Keyed {
+  [Symbol.mul]: number = 3;
+  set [Symbol.sub](v: number) {}
+}
