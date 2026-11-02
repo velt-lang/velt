@@ -8,7 +8,7 @@ async function slow(): Promise<string> {
 }
 
 async function fails(): Promise<string> {
-  await sleep(1);
+  await Promise.resolve(0);
   throw new Error("bad");
 }
 
