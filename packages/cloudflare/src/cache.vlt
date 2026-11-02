@@ -1,8 +1,9 @@
-// cloudflare (internal): the Cache API of Workers (`caches.default` and `caches.open(name)`):
-// `match`, `put` and `delete` of std's `Request` and `Response` (src/http.vlt crosses them).
-// Cloudflare keys the cache by URL (GET requests only), honours `Cache-Control` and ignores
-// `put` of a response it may not cache; a Worker on a `workers.dev` domain has no cache, so
-// there `match` always gives null.
+// cloudflare (internal): a cache of the Workers Cache API (`caches.default`, `caches.open(name)`,
+// src/cache_storage.vlt): `match`, `put` and `delete` of std's `Request` and `Response`
+// (src/http.vlt crosses them). Cloudflare keys the cache by URL (GET requests only), honours
+// `Cache-Control` and ignores `put` of a response it may not cache; a Worker on a `workers.dev`
+// domain has no cache, so there `match` always gives null. Each data center has a cache of its
+// own: `put` and `delete` reach the one running the Worker.
 
 import { IoError } from "velt/io";
 import { Request, Response } from "velt/net/http";
@@ -38,28 +39,12 @@ export class Cache {
     await cachePut(this.name, req.url, req.headers, res.status, res.headers, res.body);
   }
 
-  /** Removes the cached response for `request`: whether there was one. */
+  /**
+   * Removes the cached response for `request` from this data center's cache (the Cache API is
+   * per data center: a purge everywhere is Cloudflare's purge API): whether there was one.
+   */
   async delete(request: Request | string): Promise<bool> {
     const req = await requestWire(request);
     return await cacheDelete(this.name, req.method, req.url, req.headers);
   }
 }
-
-/** The caches of the zone (Workers' global `caches`). */
-export class CacheStorage {
-  /** The zone's default cache. */
-  get default(): Cache {
-    return new Cache("");
-  }
-
-  /** The cache `name` of the zone (made when first used; not empty). */
-  async open(name: string): Promise<Cache> {
-    if (name == "") {
-      throw new IoError("EINVAL", "cloudflare: a cache's name cannot be empty");
-    }
-    return new Cache(name);
-  }
-}
-
-/** The caches of the zone, as Workers' global `caches`: `caches.default`, `caches.open(name)`. */
-export const caches: CacheStorage = new CacheStorage();

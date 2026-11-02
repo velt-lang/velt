@@ -211,13 +211,19 @@ class FakeKV {
     this.values.delete(key);
   }
   async list(options = {}) {
-    const keys = [...this.values.keys()].filter((k) => k.startsWith(options.prefix ?? "")).sort();
+    const { prefix = "", limit = 1000, cursor } = options;
+    let keys = [...this.values.keys()].filter((k) => k.startsWith(prefix)).sort();
+    // The fake's cursor: the last key of the page before.
+    if (cursor !== undefined) keys = keys.filter((k) => k > cursor);
+    const page = keys.slice(0, limit);
+    const complete = keys.length <= limit;
     return {
-      keys: keys.map((name) => {
+      keys: page.map((name) => {
         const { expiration } = this.values.get(name);
         return expiration === undefined ? { name } : { name, expiration };
       }),
-      list_complete: true,
+      list_complete: complete,
+      ...(complete ? {} : { cursor: page[page.length - 1] }),
       cacheStatus: null,
     };
   }
@@ -296,7 +302,7 @@ class FakeDurableObjects {
   }
 }
 
-/** The Worker's env: the fixture's bindings, and one of another kind under `DB`'s name. */
+/** The Worker's env: the fixture's bindings. */
 export function fakeEnv(watch) {
   return {
     BUCKET: new FakeR2(watch),

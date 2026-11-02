@@ -155,10 +155,15 @@ async function kv(): Promise<string[]> {
   out.push(
     `get ${await ns.get("greeting")} ${await ns.getBytes("raw")} ${await ns.get("missing")}`,
   );
-  const page = await ns.list({ prefix: "g" });
+  const page = await ns.list({ limit: 1 });
   for (const k of page.keys) {
     out.push(`key ${k.name} expires ${k.expiration} complete ${page.list_complete}`);
   }
+  const next = await ns.list({ cursor: page.cursor ?? "" });
+  for (const k of next.keys) {
+    out.push(`then ${k.name} expires ${k.expiration} complete ${next.list_complete}`);
+  }
+  out.push(`prefixed ${(await ns.list({ prefix: "r" })).keys.map((k) => k.name)}`);
   await ns.delete("greeting");
   out.push(`deleted ${await ns.get("greeting")}`);
   return out;

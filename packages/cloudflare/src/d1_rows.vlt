@@ -1,6 +1,5 @@
-// cloudflare (internal): a D1 result frame (src/frame.vlt) as velt/db's `RowSource`, so rows are
-// read into typed values as every Velt driver's are (`readRows<T>`: each column fills the field
-// of its name; plain fields are read cell by cell, other row types through JSON text). The frame
+// cloudflare (internal): a D1 result frame (src/frame_writer.vlt) as velt/db's `RowSource`, whose
+// rows src/d1_decode.vlt reads into typed values as velt/db reads every driver's. The frame
 // is its meta (JSON text, empty for `first()`), its column names, then its rows' cells. It is
 // checked whole when parsed, so the source's getters never fail.
 //
@@ -10,7 +9,8 @@
 
 import { CellKind, RowSource } from "velt/db";
 import { IoError } from "velt/io";
-import { BLOB, BOOL, FLOAT, FrameReader, INT, JSON_TEXT, TEXT } from "./frame";
+import { FrameReader } from "./frame_reader";
+import { BLOB, BOOL, FLOAT, INT, JSON_TEXT, TEXT } from "./frame_writer";
 
 /** The rows of one D1 result. */
 export class D1Rows implements RowSource {
@@ -41,6 +41,10 @@ export class D1Rows implements RowSource {
       names.push(frame.text());
     }
     const rows = frame.u32() as i64;
+    // Each cell takes a byte at least, and rows without columns are none.
+    if (columns == 0 ? rows > 0 : rows * columns > (frame.bytes.length as i64) - frame.at) {
+      throw new IoError("EPROTO", `cloudflare: a malformed frame from the host (${rows} rows)`);
+    }
     const cells: i64[] = [];
     for (let r: i64 = 0; r < rows; r++) {
       for (let c: i64 = 0; c < columns; c++) {

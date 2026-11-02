@@ -1,0 +1,82 @@
+// cloudflare (internal): a D1 statement and its parameters (`bind`), run with `first`, `all` or
+// `run`, and what they give. Rows become typed values as velt/db reads a `RowSource`
+// (src/d1_rows.vlt, src/d1_decode.vlt): each column fills the field of its name (rename with
+// `AS`).
+
+import { d1Query } from "./host";
+import { FrameReader } from "./frame_reader";
+import { D1Value, FrameWriter } from "./frame_writer";
+import { D1Rows } from "./d1_rows";
+import { decodeRow, decodeRows } from "./d1_decode";
+
+/** What D1 reports about a statement it ran (Cloudflare's `D1Result.meta`). */
+export interface D1Meta {
+  /** Milliseconds the statement took. */
+  duration: f64;
+  /** Rows the statement changed. */
+  changes: i64;
+  /** The rowid of the last row inserted. */
+  last_row_id: i64;
+  changed_db: bool;
+  /** The database's size afterwards, in bytes. */
+  size_after: i64;
+  rows_read: i64;
+  rows_written: i64;
+}
+
+/** The outcome of `run()`: no rows. */
+export interface D1Response {
+  success: bool;
+  meta: D1Meta;
+}
+
+/** The outcome of `all<T>()`: the rows as `T`s, and the meta. */
+export interface D1Result<T> {
+  results: T[];
+  success: bool;
+  meta: D1Meta;
+}
+
+/** A statement of a D1 database, and the parameters bound to it. */
+export class D1PreparedStatement {
+  readonly database: string;
+  readonly sql: string;
+  readonly params: D1Value[];
+
+  constructor(database: string, sql: string, params: D1Value[]) {
+    this.database = database;
+    this.sql = sql;
+    this.params = params;
+  }
+
+  /** The statement with `values` bound to its `?` in order (a new statement, as in Workers). */
+  bind(...values: D1Value[]): D1PreparedStatement {
+    return new D1PreparedStatement(this.database, this.sql, values);
+  }
+
+  /** The first row as a `T`, or null when there is none (`RowError` when it does not fit). */
+  async first<T>(): Promise<T | null> {
+    const rows = await this.query(1);
+    return decodeRow<T>(rows);
+  }
+
+  /** Every row as a `T`, with the meta (`RowError` when one does not fit). */
+  async all<T>(): Promise<D1Result<T>> {
+    const rows = await this.query(0);
+    const meta = JSON.parse<D1Meta>(rows.meta);
+    return { results: decodeRows<T>(rows), success: true, meta: meta };
+  }
+
+  /** Runs the statement for its effect: the meta (`changes`, `last_row_id`). */
+  async run(): Promise<D1Response> {
+    const rows = await this.query(2);
+    return { success: true, meta: JSON.parse<D1Meta>(rows.meta) };
+  }
+
+  private async query(mode: u32): Promise<D1Rows> {
+    const w = new FrameWriter();
+    w.params(this.params);
+    const frame = new FrameReader(await d1Query(this.database, this.sql, w.bytes, mode));
+    return D1Rows.parse(frame);
+  }
+}

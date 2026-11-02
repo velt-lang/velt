@@ -230,7 +230,7 @@ no compiler or runtime change and names nothing the compiler knows.
   is its namespace and id; the host gets the stub again for each `fetch`.
 - **D1's rows** go through `velt/db`: the host writes a result as one binary frame (meta as
   JSON, column names, tagged cells: null, i64, f64, text, blob, bool, JSON text;
-  `src/frame.vlt`), which `D1Rows` reads as a `RowSource`; rows are filled as velt/db's
+  `src/frame_writer.vlt`), which `D1Rows` reads as a `RowSource`; rows are filled as velt/db's
   `readRows<T>` fills them from a source through JSON text (the same fields, conversions and
   `RowError`s as every Velt driver's). Not `readRows` itself yet: its by-column path for plain
   row types calls two runtime functions the wasm runtime lacks (#2121). A frame rather than the

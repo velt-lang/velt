@@ -26,7 +26,7 @@ export declare host("cloudflare") async function r2Get(
   key: string,
 ): Promise<HostRef | null>;
 
-/** `bucket.put(key, value, options)` (options as JSON): the object, or null when `onlyIf` failed. */
+/** `bucket.put(key, value, options)` (options as JSON): the object; null when `onlyIf` failed. */
 export declare host("cloudflare") async function r2Put(
   bucket: string,
   key: string,
@@ -106,7 +106,7 @@ export declare host("cloudflare") async function cacheMatch(
   headers: string,
 ): Promise<HostRef | null>;
 
-/** `cache.put(request, response)` of a GET of `url` and a response of `status`, headers and body. */
+/** `cache.put(request, response)`: a GET of `url`, and a response of `status`, headers, body. */
 export declare host("cloudflare") async function cachePut(
   name: string,
   url: string,

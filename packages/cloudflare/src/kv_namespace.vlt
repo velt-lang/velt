@@ -6,7 +6,7 @@ import { utf8Encode } from "velt/encoding";
 import { kvDelete, kvGet, kvList, kvPut, takeBytes } from "./host";
 
 /** The options of `put`. */
-export struct KVPutOptions {
+export interface KVPutOptions {
   /** Seconds from now until the key expires (at least 60). */
   expirationTtl?: number;
   /** When the key expires, in seconds since the epoch. */
@@ -14,7 +14,7 @@ export struct KVPutOptions {
 }
 
 /** The options of `list`. */
-export struct KVListOptions {
+export interface KVListOptions {
   /** Only keys starting with it. */
   prefix?: string;
   /** At most this many keys (KV's default and most: 1000). */
@@ -24,14 +24,14 @@ export struct KVListOptions {
 }
 
 /** A key `list` found. */
-export struct KVKey {
+export interface KVKey {
   name: string;
   /** When it expires, in seconds since the epoch; null when it doesn't. */
   expiration: number | null;
 }
 
 /** A page of `list`. */
-export struct KVListResult {
+export interface KVListResult {
   keys: KVKey[];
   /** Whether this is the last page. */
   list_complete: bool;

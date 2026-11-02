@@ -5,7 +5,7 @@
 //
 // What crosses (docs/internals/contracts/workers.md in the Velt repository): strings, bytes,
 // numbers and `HostRef`s. Metadata and options cross as JSON text; D1's parameters and rows as
-// the frames of src/frame.vlt (`writeValue` and `readValue` below are their JavaScript side). An
+// the frames of src/frame_writer.vlt (`writeValue` and `readValue` below are their JavaScript side). An
 // async function rejects with an error whose `name` becomes the `IoError`'s code. A synchronous
 // one never throws (a throw would end the program's instance): it records the failure, which
 // `failure()` hands over, and returns an empty result.
@@ -20,7 +20,7 @@ function named(name, message) {
   return e;
 }
 
-/** The value tags of a frame (src/frame.vlt). */
+/** The value tags of a frame (src/frame_writer.vlt). */
 const NULL = 0, INT = 1, FLOAT = 2, TEXT = 3, BLOB = 4, BOOL = 5, JSON_TEXT = 6;
 
 /** Bytes appended little-endian, growing as needed. */
@@ -58,7 +58,7 @@ class Writer {
   }
 }
 
-/** Reads what a `Writer` (or src/frame.vlt's `FrameWriter`) wrote. */
+/** Reads what a `Writer` (or src/frame_writer.vlt's `FrameWriter`) wrote. */
 class Reader {
   constructor(bytes) {
     this.bytes = bytes;
@@ -117,7 +117,7 @@ function writeValue(w, v) {
   }
 }
 
-/** A parameter of a D1 statement, as src/frame.vlt's `FrameWriter` wrote it. */
+/** A parameter of a D1 statement, as src/frame_writer.vlt's `FrameWriter` wrote it. */
 function readValue(r) {
   const tag = r.u8();
   switch (tag) {
@@ -217,6 +217,7 @@ async function received(res) {
   return { status: res.status, headers: headers.join("\n"), body: new Uint8Array(await res.arrayBuffer()) };
 }
 
+// Byte arguments (`readonly u8[]`) arrive as copies of their own, which may be kept.
 export default (host) => {
   let failed = "";
   /** The binding `name` of `env`, which `fits` (it has the methods of a `what`). */
@@ -237,7 +238,7 @@ export default (host) => {
   const readers = new WeakMap();
   /** `request` as a Fetch `Request`. */
   const request = (method, url, headers, body) =>
-    new Request(url, { method, headers: headerPairs(headers), body: body.length > 0 ? body.slice() : undefined });
+    new Request(url, { method, headers: headerPairs(headers), body: body.length > 0 ? body : undefined });
   /** A synchronous call's result: `f()`, or (it threw) `empty` with the failure recorded. */
   const guarded = (empty, f) => {
     try {
@@ -256,7 +257,7 @@ export default (host) => {
     r2Head: async (bucket, key) => (await r2(bucket).head(key)) ?? null,
     r2Get: async (bucket, key) => (await r2(bucket).get(key)) ?? null,
     r2Put: async (bucket, key, value, options) =>
-      (await r2(bucket).put(key, value.slice(), present(JSON.parse(options)))) ?? null,
+      (await r2(bucket).put(key, value, present(JSON.parse(options)))) ?? null,
     r2Delete: async (bucket, keys) => {
       await r2(bucket).delete(JSON.parse(keys));
     },
@@ -331,7 +332,7 @@ export default (host) => {
 
     kvGet: async (ns, key) => (await kv(ns).get(key, "arrayBuffer")) ?? null,
     kvPut: async (ns, key, value, options) => {
-      await kv(ns).put(key, value.slice(), present(JSON.parse(options)));
+      await kv(ns).put(key, value, present(JSON.parse(options)));
     },
     kvDelete: async (ns, key) => {
       await kv(ns).delete(key);
@@ -350,7 +351,7 @@ export default (host) => {
       return res == null ? null : received(res);
     },
     cachePut: async (name, url, headers, status, resHeaders, body) => {
-      const res = new Response(body.length > 0 ? body.slice() : null, { status, headers: headerPairs(resHeaders) });
+      const res = new Response(body.length > 0 ? body : null, { status, headers: headerPairs(resHeaders) });
       await (await cache(name)).put(request("GET", url, headers, new Uint8Array(0)), res);
     },
     cacheDelete: async (name, method, url, headers) =>

@@ -10,7 +10,7 @@ import { BodyKind, Headers, Request, Response, responseParts } from "velt/net/ht
 import { responseBody, responseHeaders, responseStatus } from "./host";
 
 /** A request as it crosses. */
-export struct RequestWire {
+export interface RequestWire {
   method: string;
   url: string;
   headers: string;
@@ -18,7 +18,7 @@ export struct RequestWire {
 }
 
 /** A response as it crosses. */
-export struct ResponseWire {
+export interface ResponseWire {
   status: u16;
   headers: string;
   body: u8[];

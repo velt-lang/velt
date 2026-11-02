@@ -27,7 +27,9 @@ a row that does not fit: expected field "n" at $[0]
 exec count 1
 kv: 200
 get hej 7,8,9 null
-key greeting expires 1800000120 complete true
+key greeting expires 1800000120 complete false
+then raw expires null complete true
+prefixed raw
 deleted null
 cache: 200
 miss true

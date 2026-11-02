@@ -1,22 +1,24 @@
 // cloudflare (internal): R2, Cloudflare's object storage, as the Workers API has it: `head`,
 // `get`, `put` (with `onlyIf`, HTTP metadata and custom metadata), `delete` and `list`. Options
-// cross as JSON text; the objects are src/r2_object.vlt's.
+// cross as JSON text; the objects are src/r2_object.vlt's and src/r2_object_body.vlt's.
 
 import { utf8Encode } from "velt/encoding";
 import { r2Delete, r2Get, r2Head, r2List, r2Put } from "./host";
-import { R2HTTPMetadata, R2Object, R2ObjectBody, R2Objects, R2Page } from "./r2_object";
+import { R2HTTPMetadata, R2Object } from "./r2_object";
+import { R2ObjectBody } from "./r2_object_body";
+import { R2Objects, R2Page } from "./r2_objects";
 
 /**
  * A condition on an object's etag. `etagDoesNotMatch: "*"` puts only when the key is free
  * (create-only); `etagMatches: obj.etag` replaces only the version read (compare-and-swap).
  */
-export struct R2Conditional {
+export interface R2Conditional {
   etagMatches?: string;
   etagDoesNotMatch?: string;
 }
 
 /** The options of `put`. */
-export struct R2PutOptions {
+export interface R2PutOptions {
   /** Put only when this holds; otherwise `put` gives null and changes nothing. */
   onlyIf?: R2Conditional;
   httpMetadata?: R2HTTPMetadata;
@@ -24,12 +26,12 @@ export struct R2PutOptions {
 }
 
 /** The options of `list`. */
-export struct R2ListOptions {
+export interface R2ListOptions {
   /** Only keys starting with it. */
   prefix?: string;
   /** Where an earlier page ended (`R2Objects.cursor`). */
   cursor?: string;
-  /** At most this many objects (R2's default and most: 1000). */
+  /** At most this many objects (R2's default and most: 1000; fewer may come: see `truncated`). */
   limit?: number;
   /** Group keys up to it into `delimitedPrefixes` (e.g. "/"). */
   delimiter?: string;

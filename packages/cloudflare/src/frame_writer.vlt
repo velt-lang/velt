@@ -1,0 +1,89 @@
+// cloudflare (internal): the frames D1's parameters and rows cross in, and the writer of the
+// ones Velt sends (src/frame_reader.vlt reads the others; src/cloudflare.mjs has the JavaScript
+// side of both). One host call carries a whole statement's parameters, or a whole result, as
+// bytes, instead of a call per value.
+//
+// Little-endian throughout. A string or blob is a `u32` length and its bytes (UTF-8 for text). A
+// value is a tag byte and its payload: null (none), an integer (`i64`), a float (`f64`), text, a
+// blob, a bool (one byte, 0 or 1), or JSON text. Parameters (Velt to the host) use null, float,
+// text, blob and bool; results (the host to Velt) every tag, JSON text for a value D1 gave that
+// is none of the others. A parameter frame is a `u32` count and the values; a statement list
+// (`batch`) a `u32` count and per statement its SQL (a string) and its parameter frame.
+
+import { utf8Encode } from "velt/encoding";
+
+export const NULL: u8 = 0;
+export const INT: u8 = 1;
+export const FLOAT: u8 = 2;
+export const TEXT: u8 = 3;
+export const BLOB: u8 = 4;
+export const BOOL: u8 = 5;
+export const JSON_TEXT: u8 = 6;
+
+/**
+ * A value a D1 statement binds, to its `?` in order. A `number` crosses as JavaScript's (an
+ * integer exactly up to 2^53): bind an `i64` as `id as number` (a union cannot tell `i64` from
+ * `f64`, both numbers).
+ */
+export type D1Value = string | number | bool | null | u8[];
+
+/** Writes frames for the JavaScript side to read. */
+export class FrameWriter {
+  bytes: u8[] = [];
+
+  u8(v: u8) {
+    this.bytes.push(v);
+  }
+
+  u32(v: u32) {
+    for (let i: u32 = 0; i < 4; i++) {
+      this.bytes.push(((v >>> (i * 8)) & 255) as u8);
+    }
+  }
+
+  u64(v: u64) {
+    for (let i: u64 = 0; i < 8; i++) {
+      this.bytes.push(((v >>> (i * 8)) & 255) as u8);
+    }
+  }
+
+  /** A length and `b`. */
+  blob(b: readonly u8[]) {
+    this.u32(b.length as u32);
+    for (const x of b) {
+      this.bytes.push(x);
+    }
+  }
+
+  /** A length and `s`'s UTF-8. */
+  text(s: string) {
+    this.blob(utf8Encode(s));
+  }
+
+  /** `v`, tagged. */
+  value(v: D1Value) {
+    if (v == null) {
+      this.u8(NULL);
+    } else if (typeof v == "string") {
+      this.u8(TEXT);
+      this.text(v);
+    } else if (typeof v == "number") {
+      this.u8(FLOAT);
+      this.u64(v.toBits());
+    } else if (typeof v == "boolean") {
+      this.u8(BOOL);
+      this.u8(v ? 1 : 0);
+    } else {
+      this.u8(BLOB);
+      this.blob(v);
+    }
+  }
+
+  /** A parameter frame of `values`. */
+  params(values: D1Value[]) {
+    this.u32(values.length as u32);
+    for (const v of values) {
+      this.value(v);
+    }
+  }
+}

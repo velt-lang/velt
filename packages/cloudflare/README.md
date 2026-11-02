@@ -77,7 +77,7 @@ integers exactly (up to 2^53); D1 has no booleans, so read 0/1 into an integer f
 a `u8[]`.
 
 Parameters and rows cross between Velt and JavaScript as one binary frame per call
-(`src/frame.vlt`), not as JSON text, in which a BLOB (an array of bytes) could not be told from
+(`src/frame_writer.vlt`), not as JSON text, in which a BLOB (an array of bytes) could not be told from
 an array.
 
 ## KV
@@ -98,6 +98,9 @@ const hit = await cache.match(request); // Response | null; a URL is a GET of it
 await cache.put(request, response.clone());
 await cache.delete(request);
 ```
+
+The Cache API is per data center: `put` and `delete` reach the cache of the data center
+running the Worker. Purging a URL everywhere is Cloudflare's purge API, not a binding.
 
 Requests and responses are std's `Request` and `Response`; bodies cross whole.
 

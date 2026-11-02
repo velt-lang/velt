@@ -1,25 +1,16 @@
-// The frames D1's parameters and rows cross in (src/frame.vlt): what the package writes for the
-// host, and result frames read into typed rows through velt/db (src/d1_rows.vlt). Frames from
-// the host are built here byte by byte, as src/cloudflare.mjs writes them. The bindings
-// themselves call host functions, which only `--host` builds have: crates/veltc/tests/
-// cloudflare.rs runs them against fakes.
+// The frames D1's parameters and rows cross in (src/frame_writer.vlt): what the package writes
+// for the host, and result frames read into typed rows (src/d1_rows.vlt). Frames from the host
+// are built here byte by byte, as src/cloudflare.mjs writes them. The bindings themselves call
+// host functions, which only `--host` builds have: crates/veltc/tests/cloudflare.rs runs them
+// against fakes.
 //
 // The rows are read as velt/db's `readRows` reads a `RowSource` through JSON text (src/
 // d1_decode.vlt); natively `readRows` itself links, so the two are compared.
 import { RowError, readRow, readRows } from "velt/db";
 import { IoError } from "velt/io";
 import { describe, expect, it } from "velt/test";
-import {
-  BLOB,
-  BOOL,
-  FLOAT,
-  FrameReader,
-  FrameWriter,
-  INT,
-  JSON_TEXT,
-  NULL,
-  TEXT,
-} from "../src/frame";
+import { BLOB, BOOL, FLOAT, FrameWriter, INT, JSON_TEXT, NULL, TEXT } from "../src/frame_writer";
+import { FrameReader } from "../src/frame_reader";
 import { D1Rows } from "../src/d1_rows";
 import { decodeRow, decodeRows } from "../src/d1_decode";
 import { headerPairs } from "../src/http";
@@ -188,6 +179,17 @@ describe("result frames", () => {
         code = e instanceof IoError ? e.code : "other";
       }
       expect(code).toBe("EPROTO");
+    }
+    // Rows without columns, or more cells than bytes: refused at once, not counted through.
+    const shapes: string[][] = [[], ["a"]];
+    for (const columns of shapes) {
+      let refused = "";
+      try {
+        D1Rows.parse(result("", columns, 4000000000, (w) => {}));
+      } catch (e) {
+        refused = e instanceof IoError ? e.code : "other";
+      }
+      expect(refused).toBe("EPROTO");
     }
     let code = "";
     try {
