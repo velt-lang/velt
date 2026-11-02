@@ -1,0 +1,2 @@
+x: 200 content-type=text/plain | bare https://w.test/x | waitUntil 0
+instances 1

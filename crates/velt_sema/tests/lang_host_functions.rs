@@ -207,8 +207,8 @@ async function main() {
     );
 }
 
-/// Type parameters, optional and rest parameters and the runtime's own import module are errors
-/// (two different declarations of one import: veltc's `native::tests`).
+/// Type parameters, optional and rest parameters, the runtime's own import module and the glue's
+/// `velt:` modules outside std are errors (two different declarations of one import: veltc's `native::tests`).
 #[test]
 fn declaration_errors() {
     let r = err_src(
@@ -217,6 +217,7 @@ declare host("env") function opt(x?: i32): void;
 declare host("env") function rest(...xs: u8[]): void;
 declare host("velt") function write(x: i32): void;
 declare host("") function nowhere(): void;
+declare host("velt:worker") function accept(): u32;
 function main() {}
 "#,
     );
@@ -234,6 +235,10 @@ function main() {}
         "{r}"
     );
     assert!(r.contains("a host function needs an import module"), "{r}");
+    assert!(
+        r.contains("the import modules `velt:…` are the runtime glue's"),
+        "{r}"
+    );
 }
 
 /// A `u8[]` parameter is a buffer the host may write: its argument is a mutable borrow (a

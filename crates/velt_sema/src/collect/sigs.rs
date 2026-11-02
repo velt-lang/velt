@@ -259,7 +259,7 @@ fn fill_sig(cx: &mut Ctx, d: DefId, sig: &ast::FnSig, owner: &Generics, module: 
         }
     }
     let host = (kind == FnKind::Extern && sig.host.is_some())
-        .then(|| super::host_sig::host_import(cx, sig, &ps, &mut ret));
+        .then(|| super::host_sig::host_import(cx, cx.scopes[module].is_std, sig, &ps, &mut ret));
     let f = cx.fn_info_mut(d);
     f.host = host;
     if kind == FnKind::Extern && sig.is_system {

@@ -39,6 +39,7 @@ const VALUE_FLAGS: &[&str] = &[
     "-o",
     "--output",
     "--target",
+    "--host",
     "--cpu",
     "--emit",
     "--backend",

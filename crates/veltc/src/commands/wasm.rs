@@ -18,7 +18,7 @@ pub fn is_wasm(target: &str) -> bool {
     velt_codegen_llvm::is_wasm(target)
 }
 
-fn is_browser(target: &str) -> bool {
+pub(super) fn is_browser(target: &str) -> bool {
     target.trim() == "wasm32-unknown-unknown"
 }
 

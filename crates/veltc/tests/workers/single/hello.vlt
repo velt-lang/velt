@@ -1,0 +1,5 @@
+// A program that never accepts a request (crates/veltc/tests/workers.rs).
+
+function main() {
+  console.log("hello from main");
+}

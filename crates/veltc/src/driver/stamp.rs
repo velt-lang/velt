@@ -78,6 +78,7 @@ pub(super) fn options_key(opts: &BuildOptions, backend: Backend) -> Key {
         release,
         debug_info,
         target: _,
+        host,
         cpu,
         emit,
         backend: _,
@@ -89,8 +90,8 @@ pub(super) fn options_key(opts: &BuildOptions, backend: Backend) -> Key {
     h.part(format!("{:?}", vpm::relpath::absolute(input)).as_bytes());
     h.part(format!("{root_source:?} {test_harness}").as_bytes());
     let settings = format!(
-        "{output:?} {release} {debug_info} {} {cpu:?} {emit:?} {backend:?} {report_numbers} \
-         {debug_vars} {check_variants} {}",
+        "{output:?} {release} {debug_info} {} {host:?} {cpu:?} {emit:?} {backend:?} \
+         {report_numbers} {debug_vars} {check_variants} {}",
         opts.target(),
         opts.has_line_info()
     );

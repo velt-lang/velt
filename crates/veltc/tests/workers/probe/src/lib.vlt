@@ -1,0 +1,15 @@
+// The host module `probe` (src/probe.mjs): a greeting from the Worker's `env`, and gates the test
+// opens.
+
+declare host("probe") function greeting(name: string): string;
+declare host("probe") async function gate(name: string): Promise<void>;
+
+/** `env.GREETING`, then `name`. */
+export function greet(name: string): string {
+  return greeting(name);
+}
+
+/** Settles once the test opens the gate `name`. */
+export async function waitFor(name: string): Promise<void> {
+  await gate(name);
+}

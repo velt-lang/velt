@@ -130,7 +130,7 @@ impl OutputPaths {
 /// wherever `velt` runs, so the members of a workspace built from its root keep their programs and
 /// build stamps apart (docs/internals/design/workspaces.md). Relative (to the current directory)
 /// when that is the package root, or `input` is in no package.
-fn default_dir(input: &Path) -> PathBuf {
+pub fn default_dir(input: &Path) -> PathBuf {
     let relative = Path::new("target").join("velt");
     let Some(root) = input.parent().and_then(vpm::manifest::find_package_root) else {
         return relative;

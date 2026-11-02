@@ -1,0 +1,12 @@
+// An accept loop over std's velt/host/worker alone: no package's async host function loads the
+// hooks that await host promises, so std's module must.
+
+import { utf8Encode } from "velt/encoding";
+import { accept, respond, url } from "velt/host/worker";
+
+async function main() {
+  for (;;) {
+    const req = await accept();
+    respond(req, 200, "content-type: text/plain", utf8Encode(`bare ${url(req)}`));
+  }
+}

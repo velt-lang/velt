@@ -23,6 +23,10 @@ const IO_ERROR: &str = velt_common::std_item!(io_error, "IoError");
 /// a program's host functions cannot share it.
 const RUNTIME_MODULE: &str = "velt";
 
+/// Import modules named with this are the runtime glue's (`velt:worker`, `velt:fetch`): std
+/// declares their functions once, so their types are the glue's, and only std may.
+const GLUE_PREFIX: &str = "velt:";
+
 /// What a parameter may be, for the errors.
 const PARAMS_ALLOWED: &str = "integers, `f64`, `bool`, `string`, `u8[]`, `readonly u8[]` (a \
                               view of bytes at the call), `HostRef` and `HostRef | null`";
@@ -33,9 +37,10 @@ const RESULTS_ALLOWED: &str =
 
 /// The import of the host function `sig` (parameter types `ps`, result `ret`), reporting what
 /// cannot cross. Reported parameters cross as `void`: the program does not compile. An async
-/// one's `ret` becomes `Promise<T, IoError>`.
+/// one's `ret` becomes `Promise<T, IoError>`. `in_std`: the declaration is std's.
 pub(super) fn host_import(
     cx: &mut Ctx,
+    in_std: bool,
     sig: &ast::FnSig,
     ps: &[ParamSig],
     ret: &mut TyId,
@@ -50,6 +55,11 @@ pub(super) fn host_import(
             Some("a host function needs an import module: `declare host(\"<module>\")`")
         } else if h.module == RUNTIME_MODULE {
             Some("the import module `velt` is the runtime's own: choose another one")
+        } else if h.module.starts_with(GLUE_PREFIX) && !in_std {
+            Some(
+                "the import modules `velt:…` are the runtime glue's: std declares their functions \
+                 (import them from std, e.g. `velt/host/worker`)",
+            )
         } else if h.module.chars().any(char::is_control) {
             Some("an import module cannot hold control characters")
         } else {

@@ -1,0 +1,52 @@
+// `fetch-start` fetches and waits at a gate; meanwhile `fetch-read` reads that response's body,
+// which the glue must read in `fetch-start`'s context (drive.mjs reports a read elsewhere).
+// `nap` sleeps while `upload`'s body waits for its client; `twice` answers twice.
+
+import { HostRef } from "velt/host";
+import { utf8Encode } from "velt/encoding";
+import { waitFor } from "probe";
+import { accept, read, respond, url } from "velt/host/worker";
+
+/** The response `fetch-start` fetched, which `fetch-read` reads. */
+const held: Response[] = [];
+
+function text(req: HostRef, s: string): void {
+  respond(req, 200, "content-type: text/plain", utf8Encode(s));
+}
+
+async function handle(req: HostRef): Promise<void> {
+  const path = url(req).split("/").pop() ?? "";
+  if (path == "nap") {
+    await sleep(20);
+    await sleep(20);
+    text(req, "after two naps");
+  } else if (path == "upload") {
+    let size = 0;
+    for (;;) {
+      const piece = await read(req);
+      if (piece.length == 0) {
+        break;
+      }
+      size += piece.length;
+    }
+    text(req, `got ${size} bytes`);
+  } else if (path == "twice") {
+    text(req, "first");
+    text(req, "second");
+  } else if (path == "fetch-start") {
+    held.push(await fetch("https://upstream.test/data"));
+    await waitFor("fetch");
+    text(req, "fetched");
+  } else if (path == "fetch-read") {
+    const res = held.pop();
+    text(req, res == undefined ? "nothing held" : await res.text());
+  } else {
+    text(req, `no ${path}`);
+  }
+}
+
+async function main() {
+  for (;;) {
+    spawn(handle(await accept()));
+  }
+}

@@ -128,6 +128,25 @@ pub const PACKAGE: &[Field] = &[
               comes last. A `#name` resolves only in the package's own modules.",
     },
     Field {
+        key: "hostModules",
+        kind: Kind::Map(Entry::Str),
+        ty: "Record<string, string>",
+        required: false,
+        doc: "The JavaScript of the host modules the package's `declare host(\"m\")` functions \
+              import, for the glue a `velt build --host <package>` build writes: \
+              `{ kv: \"./src/kv.mjs\" }`. Each file is an ES module below `./src/` whose default \
+              export makes the module's functions. A package provides only modules it declares; \
+              `velt:` modules are the runtime's.",
+    },
+    Field {
+        key: "host",
+        kind: Kind::Object(HOST),
+        ty: "Host",
+        required: false,
+        doc: "Makes the package a host package: `velt build --host <package>` builds programs \
+              for the JavaScript platform it describes, with no compiler change.",
+    },
+    Field {
         key: "jsx",
         kind: Kind::Object(JSX),
         ty: "Jsx",
@@ -254,6 +273,44 @@ pub const DEPENDENCY: &[Field] = &[
         ty: "string",
         required: false,
         doc: "With `git`: a full commit hash.",
+    },
+];
+
+/// `host` (`crate::host`).
+pub const HOST: &[Field] = &[
+    Field {
+        key: "target",
+        kind: Kind::Str,
+        ty: "string",
+        required: true,
+        doc: "The target triple the host's builds are for: `\"wasm32-unknown-unknown\"`.",
+    },
+    Field {
+        key: "condition",
+        kind: Kind::Str,
+        ty: "string",
+        required: true,
+        doc: "The condition the host's builds have on top of the target's, which `imports` \
+              variants of any package can name: lowercase letters, digits and `-`, not one of \
+              the built-in conditions.",
+    },
+    Field {
+        key: "entry",
+        kind: Kind::Str,
+        ty: "string",
+        required: true,
+        doc: "The platform's entry: a JavaScript module below `./src/` that every build copies \
+              beside its files under its file name. It imports `./program.wasm`, \
+              `./velt_serve.mjs` (the glue's core) and `./velt_modules.mjs` (the host modules).",
+    },
+    Field {
+        key: "scaffold",
+        kind: Kind::Map(Entry::Str),
+        ty: "Record<string, string>",
+        required: false,
+        doc: "Configuration files a build writes when absent, so edits stay: path in the build's \
+              directory → the package's file below `./src/`. `{{name}}` in one becomes the \
+              program's name.",
     },
 ];
 

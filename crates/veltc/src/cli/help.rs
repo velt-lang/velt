@@ -89,12 +89,15 @@ pub const COMMANDS: &[CommandHelp] = &[
         name: "build",
         summary: "Compile a file or the current package",
         usage: &[
-            "build [<file.vlt>] [-o <out>] [--release] [-g] [--target <triple>] [--cpu <name>] [--backend <name>] [--emit <kind>] [--locked] [--json] [-v] [--timings] [--report numbers]",
+            "build [<file.vlt>] [-o <out>] [--release] [-g] [--target <triple> | --host <package>] [--cpu <name>] [--backend <name>] [--emit <kind>] [--locked] [--json] [-v] [--timings] [--report numbers]",
             "build (--workspace | -p <glob>... | --affected [<base>]) [--fail-fast] [<build options>]",
         ],
         about: "Without a file, builds the package found by searching upward for package.vlt \
                 (output: <package>/target/velt/<name>[.exe]). A single file builds to \
-                ./target/velt/<stem>[.exe].",
+                ./target/velt/<stem>[.exe]. `--host <package>` builds for the platform of a host \
+                package among the dependencies: a directory (target/velt/<name>-<condition>/, \
+                or `-o <dir>`) with the module, the runtime's glue, the packages' host modules, \
+                the host package's entry and its configuration files (written when absent).",
         options: &[
             WORKSPACE,
             PACKAGE,
@@ -104,6 +107,11 @@ pub const COMMANDS: &[CommandHelp] = &[
             RELEASE,
             DEBUG_INFO,
             TARGET,
+            (
+                "--host <package>",
+                "build for the platform of host package <package>, a dependency: its target, \
+                 and its condition for `#name` imports",
+            ),
             CPU,
             BACKEND,
             ("--emit <kind>", "vir | llvm (print VIR / LLVM IR and stop) | obj (object file only) | exe"),
@@ -123,6 +131,7 @@ pub const COMMANDS: &[CommandHelp] = &[
             ("velt build --release", "optimized build"),
             ("velt build hello.vlt -o hello", "build one file"),
             ("velt build app.vlt --target wasm32-wasip1", "build WebAssembly"),
+            ("velt build --release --host host-edge", "build for host package host-edge's platform"),
             ("velt build --release --report numbers", "which loop variables stay doubles"),
         ],
     },
@@ -773,6 +782,7 @@ mod tests {
             "--output",
             "--release",
             "-g",
+            "--host",
             "--emit",
             "-v",
             "--verbose",

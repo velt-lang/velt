@@ -79,7 +79,8 @@ impl Reader<'_> {
                 );
             }
             after_default |= condition.name == DEFAULT;
-            self.check(check_condition(&condition.name), condition.span);
+            // Std's map (`src` false) names only the built-in conditions: std knows no host.
+            self.check(check_condition(&condition.name, src), condition.span);
             let Some(target) = self.string(v, &condition.name) else {
                 continue;
             };

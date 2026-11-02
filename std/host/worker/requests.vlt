@@ -1,0 +1,40 @@
+// velt/host/worker (internal): the runtime glue's `velt:worker` host module, the request queue
+// of a `velt build --host <package>` build (docs/internals/contracts/workers.md). Std declares
+// these functions once, so their types are the glue's: a `declare host("velt:…")` outside std is
+// an error.
+
+import { HostRef } from "velt/host/host_ref";
+// The hooks lowering awaits an async host function's promise with (a program's module loads
+// them through std/prelude/global/host_async.vlt; std modules import what they use).
+import "velt/host/promise";
+
+/** The next request, in the order requests came. */
+export declare host("velt:worker") async function accept(): Promise<HostRef>;
+/** The request's method. */
+export declare host("velt:worker") function method(req: HostRef): string;
+/** The request's URL. */
+export declare host("velt:worker") function url(req: HostRef): string;
+/** The request's header fields as `name: value` lines joined by `\n` (names lowercase). */
+export declare host("velt:worker") function headers(req: HostRef): string;
+/** The next piece of the request's body, never empty; empty at its end. */
+export declare host("velt:worker") async function read(req: HostRef): Promise<u8[]>;
+/** Answer the request with a whole body (`headers` as `name: value` lines; empty: no body). */
+export declare host("velt:worker") function respond(
+  req: HostRef,
+  status: u16,
+  headers: string,
+  body: readonly u8[],
+): void;
+/** Answer the request with a body written while it is sent, through the stream this returns. */
+export declare host("velt:worker") function respondStream(
+  req: HostRef,
+  status: u16,
+  headers: string,
+): HostRef;
+/** Write `chunk` to a streamed body; settles once it was taken. */
+export declare host("velt:worker") async function write(
+  stream: HostRef,
+  chunk: readonly u8[],
+): Promise<void>;
+/** End a streamed body; settles once it ended. */
+export declare host("velt:worker") async function close(stream: HostRef): Promise<void>;

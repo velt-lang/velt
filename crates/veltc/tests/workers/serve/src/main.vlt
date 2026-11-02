@@ -1,0 +1,82 @@
+// An accept loop over the runtime glue's `velt:worker` (crates/veltc/tests/workers.rs drives it
+// with drive.mjs): `main` waits for a gate before it accepts, and each request is handled in a
+// task of its own.
+
+import { HostRef } from "velt/host";
+import { utf8Decode, utf8Encode } from "velt/encoding";
+import { greet, waitFor } from "probe";
+import { accept, close, headers, method, read, respond, respondStream, url, write } from "velt/host/worker";
+
+function header(req: HostRef, name: string): string {
+  for (const line of headers(req).split("\n")) {
+    if (line.startsWith(`${name}: `)) {
+      return line.slice(name.length + 2);
+    }
+  }
+  return "";
+}
+
+async function body(req: HostRef): Promise<string> {
+  const pieces: string[] = [];
+  for (;;) {
+    const piece = await read(req);
+    if (piece.length == 0) {
+      return pieces.join("|");
+    }
+    pieces.push(utf8Decode(piece));
+  }
+}
+
+function text(req: HostRef, status: u16, s: string): void {
+  respond(req, status, "content-type: text/plain\nx-served-by: velt", utf8Encode(s));
+}
+
+function boom(n: i32): i32 {
+  const xs: i32[] = [1, 2];
+  return xs[n];
+}
+
+async function handle(req: HostRef): Promise<void> {
+  const path = url(req).split("/").pop() ?? "";
+  if (path == "hello") {
+    text(req, 200, `${greet(header(req, "x-name"))} (${method(req)})`);
+  } else if (path == "echo") {
+    const got = await body(req);
+    text(req, 201, `got ${got}`);
+  } else if (path == "stream") {
+    const out = respondStream(req, 200, "content-type: text/plain");
+    for (const part of ["one ", "two ", "three"]) {
+      await write(out, utf8Encode(part));
+    }
+    await close(out);
+  } else if (path == "nap") {
+    await sleep(20);
+    text(req, 200, "after a nap");
+  } else if (path == "slow") {
+    await waitFor("slow");
+    text(req, 200, "slow at last");
+  } else if (path == "later") {
+    text(req, 200, "answered first");
+    await waitFor("later");
+    console.log("the work after the answer is done");
+  } else if (path == "timer") {
+    text(req, 200, "answered before the timer");
+    await sleep(5);
+    console.log("the timer fired");
+  } else if (path == "drop") {
+    console.log("dropping a request");
+  } else if (path == "panic") {
+    console.log(boom(5));
+  } else {
+    text(req, 404, `no ${path}`);
+  }
+}
+
+async function main() {
+  console.log("main starts");
+  await waitFor("start");
+  console.log("main accepts");
+  for (;;) {
+    spawn(handle(await accept()));
+  }
+}

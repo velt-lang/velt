@@ -1,0 +1,9 @@
+import type { Package } from "velt/package";
+
+// A package with a host module of its own, shipped through `hostModules`
+// (crates/veltc/tests/workers.rs).
+export const pkg: Package = {
+  name: "probe",
+  version: "0.1.0",
+  hostModules: { probe: "./src/probe.mjs" },
+};

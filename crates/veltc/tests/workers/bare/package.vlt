@@ -1,0 +1,9 @@
+import type { Package } from "velt/package";
+
+// An accept loop that uses only std's velt/host/worker (crates/veltc/tests/workers.rs).
+export const pkg: Package = {
+  name: "bare",
+  version: "0.1.0",
+  // packages/host-cloudflare, copied beside the fixtures by the test.
+  dependencies: { "host-cloudflare": { path: "../host-cloudflare" } },
+};

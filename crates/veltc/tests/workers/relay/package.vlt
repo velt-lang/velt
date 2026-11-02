@@ -1,0 +1,13 @@
+import type { Package } from "velt/package";
+
+// A Worker that fetches in one request and reads the response in another
+// (crates/veltc/tests/workers.rs).
+export const pkg: Package = {
+  name: "relay",
+  version: "0.1.0",
+  dependencies: {
+    probe: { path: "../probe" },
+    // packages/host-cloudflare, copied beside the fixtures by the test.
+    "host-cloudflare": { path: "../host-cloudflare" },
+  },
+};

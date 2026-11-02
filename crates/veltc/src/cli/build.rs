@@ -51,6 +51,16 @@ pub(super) fn parse_build(
                 b.output = Some(PathBuf::from(take_value(inline.as_deref(), &mut it, flag)?))
             }
             "--target" => b.target = Some(take_value(inline.as_deref(), &mut it, flag)?),
+            "--host" if cmd == "build" => {
+                b.host = Some(take_value(inline.as_deref(), &mut it, flag)?)
+            }
+            "--host" if cmd == "run" => {
+                return Err(
+                    "`velt run` cannot run a `--host` build: build it with `velt build --host \
+                     <package>` and run it with the tools of the platform its host package is for"
+                        .into(),
+                )
+            }
             "--cpu" => b.cpu = Some(take_cpu(inline.as_deref(), &mut it)?),
             "--report" => match take_value(inline.as_deref(), &mut it, flag)?.as_str() {
                 "numbers" => b.report_numbers = true,
@@ -248,6 +258,30 @@ mod tests {
             (b.emit, b.target.as_deref(), b.output),
             (Emit::Obj, Some("t"), Some(PathBuf::from("o")))
         );
+    }
+
+    #[test]
+    fn host_names_a_package() {
+        // The package (a host package of the build's dependencies) sets the target, later.
+        let b = build(&["build", "--host", "host-edge", "a.vlt"]);
+        assert_eq!(
+            (b.host.as_deref(), b.target.as_deref()),
+            (Some("host-edge"), None)
+        );
+        let b = build(&["build", "--host=@acme/host", "--target", "t"]);
+        assert_eq!(
+            (b.host.as_deref(), b.target.as_deref()),
+            (Some("@acme/host"), Some("t"))
+        );
+        let err = p(&["run", "--host", "host-edge", "a.vlt"]).unwrap_err();
+        assert!(
+            err.contains("`velt run` cannot run a `--host` build"),
+            "{err}"
+        );
+        assert!(p(&["build", "--host"])
+            .unwrap_err()
+            .contains("expects a value"));
+        assert_eq!(build(&["build", "a.vlt"]).host, None);
     }
 
     #[test]

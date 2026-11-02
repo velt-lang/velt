@@ -1,0 +1,26 @@
+// The package's files keep the contract of `velt build --host` (docs/internals/contracts/
+// workers.md in the Velt repository): the entry imports the build's files and hands Workers'
+// requests to the glue's core, and the scaffolded wrangler.toml names that entry. Running the
+// Worker is crates/veltc/tests/workers.rs's job.
+import { readFileSync } from "velt/fs";
+import { describe, expect, it } from "velt/test";
+
+describe("the entry", () => {
+  it("imports the module, the core and the host modules the build writes", () => {
+    const entry = readFileSync("src/worker.mjs");
+    for (const file of ["./program.wasm", "./velt_serve.mjs", "./velt_modules.mjs"]) {
+      expect(entry.includes(`"${file}"`)).toBe(true);
+    }
+    expect(entry.includes("server.serve(request, { context: { env, ctx }")).toBe(true);
+    expect(entry.includes("ctx.waitUntil(p)")).toBe(true);
+  });
+});
+
+describe("the scaffolded wrangler.toml", () => {
+  it("names the entry and takes the program's name", () => {
+    const config = readFileSync("src/wrangler.toml");
+    expect(config.includes(`name = "{{name}}"`)).toBe(true);
+    expect(config.includes(`main = "worker.mjs"`)).toBe(true);
+    expect(config.includes(`compatibility_flags = ["enable_request_signal"]`)).toBe(true);
+  });
+});

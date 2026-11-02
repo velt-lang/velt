@@ -1,0 +1,10 @@
+// `velt:` host modules are the runtime glue's: only std declares their functions, so their types
+// are the glue's (crates/veltc/tests/workers.rs).
+
+declare host("velt:worker") function method(req: u32): string;
+declare host("velt:other") function other(): void;
+
+function main() {
+  console.log(method(1));
+  other();
+}

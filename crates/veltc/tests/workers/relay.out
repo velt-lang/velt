@@ -1,0 +1,9 @@
+fetch-read: 200 content-type=text/plain | upstream | waitUntil 0
+fetch-start: 200 content-type=text/plain | fetched | waitUntil 0
+nap: 200 content-type=text/plain | after two naps | waitUntil 0
+the naps ended while the upload waited: true
+upload: 200 content-type=text/plain | got 3 bytes | waitUntil 0
+log: velt: GET https://w.test/twice was answered already; the second answer is ignored
+twice: 200 content-type=text/plain | first | waitUntil 0
+nothing: 200 content-type=text/plain | no nothing | waitUntil 0
+instances 1
