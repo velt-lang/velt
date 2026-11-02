@@ -91,8 +91,9 @@ pub struct LoadOptions<'a> {
     pub test_harness: bool,
     /// The build's target triple (`None`: this machine's), whose conditions `#name` imports use.
     pub target: Option<String>,
-    /// `--host`'s host (`workers`), a condition of `#name` imports on top of the target's.
-    pub host: Option<String>,
+    /// The condition of `--host`'s host package (`vpm::host`), a condition of `#name` imports on
+    /// top of the target's.
+    pub host_condition: Option<String>,
     /// Check that the variants of each `#name` import the program resolves export the same API
     /// ([`variants`]): `velt check`, `velt test` and the language server ask for it.
     pub check_variants: bool,
@@ -263,7 +264,7 @@ struct Loader<'a, 'o> {
     /// ([`visibility`]).
     harness: Option<usize>,
     /// The build's conditions ([`LoadOptions::target`]).
-    conditions: Vec<&'static str>,
+    conditions: Vec<String>,
     /// std's conditional imports (`std/imports.vlt`), read when a std module first imports a
     /// `#name`.
     std_imports: Option<vpm::imports::ImportMap>,

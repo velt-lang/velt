@@ -20,6 +20,8 @@ pub struct GraphPackage {
     pub imports: crate::imports::ImportMap,
     /// The JavaScript of the host modules the package provides (`crate::host_modules`).
     pub host_modules: crate::host_modules::HostModules,
+    /// The package's `host` object: it is a host package (`crate::host`).
+    pub host: Option<crate::host::HostConfig>,
     /// The package's native library for the build target (packages with native code, when the
     /// install had a target).
     pub native: Option<crate::native::NativeLib>,
@@ -76,6 +78,7 @@ impl PackageGraph {
             paths: BTreeMap::new(),
             imports: BTreeMap::new(),
             host_modules: BTreeMap::new(),
+            host: None,
             native: None,
             jsx_import_source: None,
             define: BTreeMap::new(),

@@ -17,6 +17,7 @@ pub mod credentials;
 pub mod edit;
 pub mod git;
 pub mod graph;
+pub mod host;
 pub mod host_modules;
 pub mod imports;
 pub mod install;

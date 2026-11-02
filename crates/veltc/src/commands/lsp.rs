@@ -158,7 +158,7 @@ impl ProgramLoader for CliLoader {
             // target uses (`js.vlt`): then for that one. The variants of each `#name` are
             // compared as `velt check` does.
             target: graph.as_deref().and_then(|g| variant_target(g, root)),
-            host: None,
+            host_condition: None,
             check_variants: true,
         };
         let loaded = loader::load_program(sm, root, opts, diags)?;

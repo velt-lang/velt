@@ -36,10 +36,13 @@ export type Package = {
   /// own modules.
   imports?: Record<string, Import>;
   /// The JavaScript of the host modules the package's `declare host("m")` functions import, for
-  /// the hosts whose glue Velt writes (`velt build --host workers`): `{ kv: "./src/kv.mjs" }`.
+  /// the glue a `velt build --host <package>` build writes: `{ kv: "./src/kv.mjs" }`.
   /// Each file is an ES module below `./src/` whose default export makes the module's functions.
   /// A package provides only modules it declares; `velt:` modules are the runtime's.
   hostModules?: Record<string, string>;
+  /// Makes the package a host package: `velt build --host <package>` builds programs for the
+  /// JavaScript platform it describes.
+  host?: Host;
   /// How the package's modules compile JSX.
   jsx?: Jsx;
   /// Build-time constants, as Vite's `define`: `{ __DEV__: "false" }`. Each value is the source
@@ -61,9 +64,27 @@ export type Package = {
 /// the order they are tried: `{ js: "./src/io/js.vlt", default: "./src/io/native.vlt" }`. Paths
 /// are `./`-relative to the package root and below `./src/`, with their extension. The
 /// conditions: `native` (any native target), `darwin`, `linux`, `win32`, `wasm` (any WebAssembly
-/// target), `wasi` (`wasm32-wasip1`), `js` (`wasm32-unknown-unknown`, run by JavaScript),
-/// `workers` (`velt build --host workers`, a Cloudflare Worker) and `default` (every build).
+/// target), `wasi` (`wasm32-wasip1`), `js` (`wasm32-unknown-unknown`, run by JavaScript) and
+/// `default` (every build), and a host package's own condition (`Host.condition`), which only a
+/// `velt build --host` build for that package has.
 export type Import = string | Record<string, string>;
+
+/// A host package's platform (`velt build --host <package>`): the compiler knows no platform, so
+/// everything a platform needs is here.
+export type Host = {
+  /// The target triple the host's builds are for: `"wasm32-unknown-unknown"`.
+  target: string;
+  /// The condition the host's builds have on top of the target's, which `imports` variants of any
+  /// package can name: lowercase letters, digits and `-`, not a built-in condition.
+  condition: string;
+  /// The platform's entry: a JavaScript module below `./src/` that every build copies beside its
+  /// files under its file name. It imports `./program.wasm`, `./velt_serve.mjs` (the glue's core)
+  /// and `./velt_modules.mjs` (the host modules the program imports).
+  entry: string;
+  /// Configuration files a build writes when absent, so edits stay: the path in the build's
+  /// directory → the package's file below `./src/`. `{{name}}` in one becomes the program's name.
+  scaffold?: Record<string, string>;
+};
 
 /// The standard library's conditional imports (`std/imports.vlt`): the `imports` of a package,
 /// its files `./`-relative to the std root.

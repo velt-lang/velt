@@ -90,8 +90,8 @@ pub struct BuildArgs {
     pub debug_info: bool,
     /// `--target`.
     pub target: Option<String>,
-    /// `velt build --host <name>`: the JavaScript host to build for (`vpm::imports::HOSTS`),
-    /// which also sets [`BuildArgs::target`].
+    /// `velt build --host <package>`: the host package to build for (`vpm::host`), whose target
+    /// the build takes (`commands::host::resolve`).
     pub host: Option<String>,
     /// `--cpu`.
     pub cpu: Option<String>,

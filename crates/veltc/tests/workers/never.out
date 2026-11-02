@@ -1,5 +1,5 @@
 hello from main
-log: velt: the Worker's program does not accept requests; they get a 500
+log: velt: the program does not accept requests; they get a 500
 a: 500 content-type=text/plain; charset=utf-8 | the program does not accept requests | waitUntil 0
 b: 500 content-type=text/plain; charset=utf-8 | the program does not accept requests | waitUntil 0
 instances 1

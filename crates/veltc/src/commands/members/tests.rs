@@ -49,6 +49,8 @@ fn files_are_told_from_flag_values() {
         Some("src/a.vlt")
     );
     assert_eq!(positional(&os(&["--", "file"])), None);
+    // `-p <member> --host <package>`: the package is no file.
+    assert_eq!(positional(&os(&["--host", "host-edge", "--release"])), None);
 }
 
 /// A workspace: `core`, `util` (uses core), `app` (uses util) and `tool`.

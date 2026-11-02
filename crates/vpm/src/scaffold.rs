@@ -90,6 +90,7 @@ pub fn manifest_text_depending(
         paths: BTreeMap::new(),
         imports: BTreeMap::new(),
         host_modules: BTreeMap::new(),
+        host: None,
         native: None,
         jsx: None,
         define: BTreeMap::new(),

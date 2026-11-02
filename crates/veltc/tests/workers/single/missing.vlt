@@ -1,4 +1,4 @@
-// A host module nothing provides: `velt build --host workers` fails naming it
+// A host module nothing provides: `velt build --host host-cloudflare` fails naming it
 // (crates/veltc/tests/workers.rs).
 
 declare host("nowhere") function lookup(key: string): string;

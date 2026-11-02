@@ -59,6 +59,21 @@ pub(super) fn to_vlt(m: &Manifest) -> String {
             .map(|(name, file)| format!("{}: {}", key(name), string_lit(file)));
         fields.push(format!("hostModules: {}", multiline_object(modules)));
     }
+    if let Some(host) = &m.host {
+        let mut parts = vec![
+            format!("target: {}", string_lit(&host.target)),
+            format!("condition: {}", string_lit(&host.condition)),
+            format!("entry: {}", string_lit(&host.entry)),
+        ];
+        if !host.scaffold.is_empty() {
+            let files = host
+                .scaffold
+                .iter()
+                .map(|(path, file)| format!("{}: {}", key(path), string_lit(file)));
+            parts.push(format!("scaffold: {}", inline_object(files)));
+        }
+        fields.push(format!("host: {}", inline_object(parts.into_iter())));
+    }
     if let Some(jsx) = &m.jsx {
         let source = jsx
             .import_source
@@ -167,6 +182,17 @@ pub(super) fn to_json(m: &Manifest) -> Value {
     }
     if !m.host_modules.is_empty() {
         out.insert("hostModules".into(), json!(m.host_modules));
+    }
+    if let Some(host) = &m.host {
+        out.insert(
+            "host".into(),
+            json!({
+                "target": host.target,
+                "condition": host.condition,
+                "entry": host.entry,
+                "scaffold": host.scaffold,
+            }),
+        );
     }
     if let Some(jsx) = &m.jsx {
         let mut o = Map::new();

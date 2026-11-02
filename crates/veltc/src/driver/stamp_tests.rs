@@ -292,10 +292,27 @@ fn the_host_is_part_of_the_key() {
         target: Some("wasm32-unknown-unknown".into()),
         ..Default::default()
     };
-    let worker = BuildOptions {
-        host: Some("workers".into()),
+    let host = |condition: &str| crate::driver::HostBuild {
+        program: "app".into(),
+        package: "host-edge".into(),
+        root: "/p/host-edge".into(),
+        config: vpm::host::HostConfig {
+            target: "wasm32-unknown-unknown".into(),
+            condition: condition.into(),
+            entry: "./src/entry.mjs".into(),
+            scaffold: Default::default(),
+        },
+    };
+    let edge = BuildOptions {
+        host: Some(host("edge")),
+        ..browser.clone()
+    };
+    let other = BuildOptions {
+        host: Some(host("other")),
         ..browser.clone()
     };
     let key = |o: &BuildOptions| options_key(o, Backend::Llvm).0;
-    assert_ne!(key(&browser), key(&worker));
+    assert_ne!(key(&browser), key(&edge));
+    // Another condition loads other variants.
+    assert_ne!(key(&edge), key(&other));
 }

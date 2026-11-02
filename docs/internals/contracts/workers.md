@@ -1,46 +1,73 @@
-# Cloudflare Workers — CONTRACT (#1736)
+# Host builds — CONTRACT (#1736)
 
-`velt build --host workers` makes a Cloudflare Worker of a program (design:
-[cloudflare-workers.md](../design/cloudflare-workers.md)). This is the contract between the
-Worker glue (`crates/velt_rt_wasm/js/velt_worker.mjs`), the build (`crates/veltc/src/commands/
-workers.rs`, `driver/host_modules.rs`), and the Velt code that serves on Workers
-(`packages/http-server`'s `workers` variant, #1786) or binds Cloudflare's services
-(`packages/cloudflare`, #1738).
+`velt build --host <package>` builds a program for the JavaScript platform a **host package**
+describes (design: [cloudflare-workers.md](../design/cloudflare-workers.md)). The compiler names
+no platform: a platform is a package (packages/host-cloudflare is the first), and adding one
+needs no compiler change. This is the contract between the build (`crates/veltc/src/commands/
+host.rs`, `driver/host_modules.rs`), host packages (`vpm::host`, manifest.md's `host`), the
+glue's host-neutral server core (`crates/velt_rt_wasm/js/velt_serve.mjs`), and the Velt code
+that serves through `velt:worker` (packages/http-server's `workers` variant, #1786) or binds a
+platform's services (packages/cloudflare, #1738).
 
 ## The build
 
-- `--host workers` builds for `wasm32-unknown-unknown` (a `--target` naming another triple is an
-  error) and adds the condition `workers` to the target's (`wasm`, `js`): a `#name` variant
-  under `workers` is chosen before one under `js` when written first (`vpm::imports::HOSTS`,
-  `vpm::imports::conditions`). The host is part of the build stamp's key.
-- Output: a directory, `-o <dir>`, else `<stem>-worker/` in the build's default directory
-  (`target/velt/` of the file's package, or `./target/velt/`; a package's is
-  `target/velt/<name>-worker/`). It holds `<stem>.wasm` (with the build's object and stamps),
-  `velt_web.mjs` (the core glue every browser build gets), `velt_worker.mjs`, the host modules of
-  packages under `hosts/<package>/<path below src/>`, `worker.mjs` (the entry; every build
-  writes it), and `wrangler.toml` (`name`, `main = "worker.mjs"`, `compatibility_date`,
-  `compatibility_flags = ["enable_request_signal"]`), written only when there is none. A build without `--release` warns.
+- `--host <package>` names a package of the build's dependency graph whose `package.vlt` has
+  `host: { target, condition, entry, scaffold? }`. The build is for its `target` (one the
+  JavaScript glue runs: `wasm32-unknown-unknown`; a `--target` naming another is an error) and
+  adds its `condition` to the target's (`wasm`, `js`): a `#name` variant of any package under
+  that condition is chosen before one under `js` when written first (`vpm::imports::conditions`).
+  The host package is part of the build stamp's key.
+- Output: a directory, `-o <dir>`, else `<name>-<condition>/` in the build's default directory
+  (`target/velt/` of the file's package; a package's name is without its `@scope/`). It must be
+  new, empty, hold only files the host package scaffolds, or hold `.velt-host` (an earlier host
+  build's); otherwise the build fails before compiling, so it never writes over the user's
+  files. It holds `program.wasm` (with the build's object and stamps), `velt_web.mjs` (the core
+  glue every browser build gets), `velt_serve.mjs` (the server core below), `velt_modules.mjs`
+  (generated: `export const modules = { ["<module>"]: <its default export>, … }` with computed
+  keys, so `__proto__` is a key), the host modules of packages under
+  `hosts/<package>/<path below src/>`, the host package's `entry` under its file name (every
+  build writes these), each `scaffold` file only when absent (`{{name}}` replaced by the
+  program's name: lowercase letters, digits and `-`, at most 63), and `.velt-host`. A build
+  without `--release` warns.
 - Host modules: every import module the program reaches (a `declare host("m")` function it
   calls; the module's `velt.host` section lists them) needs JavaScript. Modules named `velt:…`
-  are the runtime glue's (`velt:worker` below). Any other comes from the package whose
+  are the runtime glue's (`velt:worker` below, `velt:fetch` of velt_web.mjs): only std declares
+  their functions (sema: "the import modules `velt:…` are the runtime glue's"), so their types
+  are the glue's and the compiler keeps no table of them. Any other comes from the package whose
   `package.vlt` lists it under `hostModules` (manifest.md), which must be a package whose own
   modules declare it; exactly one such package. Otherwise the build fails at a declaration of
-  the module (`driver/host_modules.rs`): "the `workers` build has no JavaScript for host module
-  `m`" (with where to list it), "package `p` provides host module `m`, which none of its modules
-  declares", "host module `m` is provided by two packages". A `velt:` function must be one the
-  glue has, with the same types (the table `GLUE` there): "the `workers` glue has no host module
-  `velt:x`", "… has no function `f`", "`velt:worker.f` is declared with other types than the
-  `workers` glue's".
+  the module (`driver/host_modules.rs`): "the `--host <p>` build has no JavaScript for host
+  module `m`" (with where to list it), "package `q` provides host module `m`, which none of its
+  modules declares", "host module `m` is provided by two packages".
 
-## The glue
+## The entry: a host package's adapter
 
-- `createWorker(module, { modules, write })` returns the Worker's handlers (`{ fetch }`).
+The entry is the platform's module, which imports `./program.wasm` however the platform loads a
+module, `createServer` from `./velt_serve.mjs` and `modules` from `./velt_modules.mjs`, and hands
+the platform's requests to the server. packages/host-cloudflare's:
+
+```js
+import module from "./program.wasm";
+import { createServer } from "./velt_serve.mjs";
+import { modules } from "./velt_modules.mjs";
+const server = createServer(module, { modules });
+export default {
+  fetch: (request, env, ctx) =>
+    server.serve(request, { context: { env, ctx }, waitUntil: (p) => ctx.waitUntil(p) }),
+};
+```
+
+## The server core
+
+- `createServer(module, { modules, write })` returns `{ serve(request, platform) }`. `serve`
+  takes a Fetch `Request` and answers with a promise of a `Response`. `platform.context` is the
+  request's context as the platform has it; `platform.waitUntil(p)` (optional) keeps the
+  request's handler alive after its answer, for platforms that end it with the answer.
   `modules` maps each package host module's name to its file's default export, a function
-  called once per instance with `host` (`host.env`: the Worker's `env`, for bindings;
-  `host.ctx`: the `ExecutionContext` of the request whose context runs the program now) that
-  returns the module's
-  functions. They are wrapped as velt_web.mjs wraps any host function (what crosses, the checks
-  of results, async functions returning promises).
+  called once per instance with `host`, whose properties are those of the `context` of the
+  request whose context runs the program now (packages/host-cloudflare's: `host.env`,
+  `host.ctx`), and that returns the module's functions. They are wrapped as velt_web.mjs wraps
+  any host function (what crosses, the checks of results, async functions returning promises).
 - The module is instantiated on the first request, once per isolate, and `main` runs once
   (`velt_start`); the instance serves every later request. Instantiation and `main` run in the
   first request's handler.
@@ -51,7 +78,7 @@ workers.rs`, `driver/host_modules.rs`), and the Velt code that serves on Workers
   function that throws, or a failed instantiation discards the instance (an exception that
   unwinds through the module leaves it unusable): every request in flight gets a 500, the cause
   is logged, and the next request instantiates the module again.
-- Contexts. Workers tie I/O (a request's body, a `Response`, a stream, a timer, a fetch) to
+- Contexts. Some platforms (Cloudflare's Workers) tie I/O (a request's body, a `Response`, a stream, a timer, a fetch) to
   the request whose handler made it, cancel a request whose handler waits on nothing of its
   own, and end a request's context, with what it started, once its response and its
   `ctx.waitUntil` promises are done. So each request has a pump, an async loop in its own
@@ -66,23 +93,24 @@ workers.rs`, `driver/host_modules.rs`), and the Velt code that serves on Workers
   answered yet, else the newest request; it moves when that changes (its timeout is cleared in
   the pump that set it), and a turn asking for the same deadline keeps it. A queued request
   whose client went away (`request.signal`, which Workers abort only with the compatibility flag
-  `enable_request_signal`) leaves the queue and is answered 499.
-- `ctx.waitUntil(p)`: a request whose pump must go on after its response calls it with the
-  pump: while host promises started in its context are pending, while it holds the program's
+  `enable_request_signal`, set by host-cloudflare's scaffolded `wrangler.toml`) leaves the
+  queue and is answered 499.
+- `platform.waitUntil(p)`: a request whose pump must go on after its response calls it with
+  the pump: while host promises started in its context are pending, while it holds the program's
   timer, or while the program still writes its body. Work that outlives Cloudflare's limit for
-  `waitUntil` (30 s after the response) is cancelled with the context; the timer moves to the
-  next request.
+  `waitUntil` (on Workers, 30 s after the response) is cancelled with the context; the timer
+  moves to the next request.
 - `HostRef` slots of a long-lived instance: velt_web.mjs's `HostRefs` uses a released slot's
   index again with the next generation (12 bits) above the index (20 bits: at most 1,048,575
   values held at once), so slots never wrap into a value in use and a stale slot misses.
 
 ## Requests: the host module `velt:worker`
 
-Requests arrive like connections on a listener. The Worker's `fetch(request, env, ctx)` puts
-the request in a queue; the program takes requests with `accept()`, in the order they came, and
-answers each. `main` may await anything before it accepts; a request waits in the queue until
-then. The program declares the functions it uses (`declare host("velt:worker") …`, as
-packages/http-server's `workers` variant will):
+Requests arrive like connections on a listener. `serve(request, platform)` puts the request in
+a queue; the program takes requests with `accept()`, in the order they came, and answers each.
+`main` may await anything before it accepts; a request waits in the queue until then. Std
+declares the functions, in `velt/host/worker` (std/host/worker/requests.vlt), and programs
+import them from there (packages/http-server's `workers` variant will):
 
 ```ts ignore
 declare host("velt:worker") async function accept(): Promise<HostRef>;
@@ -107,8 +135,8 @@ declare host("velt:worker") async function close(stream: HostRef): Promise<void>
 - `respondStream(req, status, headers)`: the answer with a body the program writes: `write`
   settles once the chunk was taken (backpressure), `close` once the body ended; both reject when
   the client went away. Dropping the stream's `HostRef` without `close` aborts the body.
-- A request is answered once: a second `respond`/`respondStream` throws (and so ends the
-  instance). A request whose last `HostRef` the program drops unanswered gets a 500, logged.
+- A request is answered once: a second `respond`/`respondStream` is logged and ignored (the
+  stream it returns rejects every `write`), so the instance and other requests go on. A request whose last `HostRef` the program drops unanswered gets a 500, logged.
 
 An `accept()` whose promise the program drops after the glue handed it a request (a race it
 lost) gives the request back to the next `accept()`.

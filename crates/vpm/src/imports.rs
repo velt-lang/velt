@@ -10,7 +10,8 @@
 //! ```
 //!
 //! A build has a set of conditions ([`conditions`]: `native` or `wasm`, the operating system or
-//! `wasi`/`js`, the host a `--host` build is for ([`HOSTS`]: `workers`), always `default`). The first variant, in the order written, whose condition the
+//! `wasi`/`js`, the condition of the host package a `--host` build is for (`crate::host`), always
+//! `default`). The first variant, in the order written, whose condition the
 //! build has wins; `default` matches every build and so comes last. A `#name` resolves only in
 //! the package that defines it (its own modules' imports); the compiler checks that the variants
 //! of one name export the same API.
@@ -25,39 +26,19 @@ pub const STD_IMPORTS_FILE: &str = "imports.vlt";
 /// The condition every build has: the variant used when no other one applies.
 pub const DEFAULT: &str = "default";
 
-/// Every condition a build can have, and so every condition a variant may name. `native` and
-/// `wasm` split the targets; `darwin`, `linux` and `win32` (Node's `process.platform` names)
-/// refine `native`; `wasi` (`wasm32-wasip1`) and `js` (`wasm32-unknown-unknown`, a module the
-/// JavaScript glue runs) refine `wasm`; `workers` (a Cloudflare Worker, [`HOSTS`]) refines `js`.
+/// The built-in conditions, which the target sets. `native` and `wasm` split the targets;
+/// `darwin`, `linux` and `win32` (Node's `process.platform` names) refine `native`; `wasi`
+/// (`wasm32-wasip1`) and `js` (`wasm32-unknown-unknown`, a module the JavaScript glue runs)
+/// refine `wasm`. A variant may also name a host package's condition (`crate::host`), which only
+/// a `--host` build for that package has, as Node's custom conditions.
 pub const CONDITIONS: &[&str] = &[
-    "native", "darwin", "linux", "win32", "wasm", "wasi", "js", "workers", DEFAULT,
+    "native", "darwin", "linux", "win32", "wasm", "wasi", "js", DEFAULT,
 ];
-
-/// A host a build can be for (`velt build --host <name>`): a JavaScript embedder with its own
-/// glue, whose name is a condition of its builds on top of its target's.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Host {
-    /// The name `--host` takes, and the condition its builds have.
-    pub name: &'static str,
-    /// The target triple its builds are for.
-    pub target: &'static str,
-}
-
-/// The hosts `velt build --host` knows.
-pub const HOSTS: &[Host] = &[Host {
-    name: "workers",
-    target: "wasm32-unknown-unknown",
-}];
-
-/// The host named `name`, if Velt knows it.
-pub fn host(name: &str) -> Option<Host> {
-    HOSTS.iter().copied().find(|h| h.name == name)
-}
 
 /// One file of a `#name` entry, under one condition.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Variant {
-    /// A name of [`CONDITIONS`].
+    /// A name of [`CONDITIONS`], or a host package's condition.
     pub condition: String,
     /// The file, `./`-relative to the package root (to the std root for std's map), with its
     /// source extension: `./src/transport/js.vlt`.
@@ -72,10 +53,10 @@ pub fn is_specifier(spec: &str) -> bool {
     spec.starts_with('#')
 }
 
-/// The conditions of a build for target triple `triple` and, with `--host`, the host `host`
-/// ([`HOSTS`]; a name Velt doesn't know adds nothing), [`DEFAULT`] included.
-pub fn conditions(triple: &str, host: Option<&str>) -> Vec<&'static str> {
-    let mut out = vec![];
+/// The conditions of a build for target triple `triple` and, with `--host`, the condition of its
+/// host package (`host`), [`DEFAULT`] included.
+pub fn conditions(triple: &str, host: Option<&str>) -> Vec<String> {
+    let mut out: Vec<&str> = vec![];
     if triple.starts_with("wasm") && triple.contains("-wasi") {
         out.extend(["wasm", "wasi"]);
     } else if triple.starts_with("wasm") {
@@ -90,16 +71,16 @@ pub fn conditions(triple: &str, host: Option<&str>) -> Vec<&'static str> {
             out.push("win32");
         }
     }
-    out.extend(host.and_then(self::host).map(|h| h.name));
+    out.extend(host);
     out.push(DEFAULT);
-    out
+    out.into_iter().map(str::to_string).collect()
 }
 
 /// The variant a build with `conditions` uses: the first whose condition it has.
-pub fn select<'a>(variants: &'a [Variant], conditions: &[&str]) -> Option<&'a Variant> {
+pub fn select<'a>(variants: &'a [Variant], conditions: &[String]) -> Option<&'a Variant> {
     variants
         .iter()
-        .find(|v| conditions.contains(&v.condition.as_str()))
+        .find(|v| conditions.contains(&v.condition))
 }
 
 /// One target per set of conditions a build can have: what [`target_selecting`] tries.
@@ -159,15 +140,50 @@ pub(crate) fn check_key(key: &str) -> Result<(), String> {
     }
 }
 
-/// Check a condition name.
-pub(crate) fn check_condition(condition: &str) -> Result<(), String> {
-    if CONDITIONS.contains(&condition) {
+/// Whether `name` has a condition's spelling: a lowercase letter, then lowercase letters, digits
+/// and `-`.
+fn condition_spelling(name: &str) -> bool {
+    name.bytes().next().is_some_and(|b| b.is_ascii_lowercase())
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
+/// Check a variant's condition: a built-in one, or, when `hosts` (a package's map, not std's), a
+/// host package's (any name spelled as one).
+pub(crate) fn check_condition(condition: &str, hosts: bool) -> Result<(), String> {
+    if CONDITIONS.contains(&condition) || (hosts && condition_spelling(condition)) {
         return Ok(());
     }
+    if !hosts {
+        return Err(format!(
+            "unknown condition `{condition}`: the standard library names only the built-in ones \
+             ({})",
+            CONDITIONS.join(", ")
+        ));
+    }
     Err(format!(
-        "unknown condition `{condition}` (the conditions: {})",
+        "`{condition}` is not a condition: the built-in ones are {}, and a host package's is \
+         lowercase letters, digits and `-`",
         CONDITIONS.join(", ")
     ))
+}
+
+/// Check the condition a host package gives its builds (`crate::host`): spelled as one, and not
+/// a built-in one, which the target sets.
+pub(crate) fn check_host_condition(condition: &str) -> Result<(), String> {
+    if CONDITIONS.contains(&condition) {
+        return Err(format!(
+            "`{condition}` is a built-in condition, which the target sets: name the host's own"
+        ));
+    }
+    if !condition_spelling(condition) {
+        return Err(format!(
+            "`{condition}`: a host's condition is a lowercase letter, then lowercase letters, \
+             digits and `-`"
+        ));
+    }
+    Ok(())
 }
 
 /// Check a variant's file: `./`-relative, `/`-separated, inside the package (below `src/` when
@@ -235,13 +251,10 @@ mod tests {
             conditions("wasm32-unknown-unknown", None),
             ["wasm", "js", "default"]
         );
+        // A host package's condition comes after the target's.
         assert_eq!(
-            conditions("wasm32-unknown-unknown", Some("workers")),
-            ["wasm", "js", "workers", "default"]
-        );
-        assert_eq!(
-            conditions("wasm32-wasip1", Some("nobody")),
-            ["wasm", "wasi", "default"]
+            conditions("wasm32-unknown-unknown", Some("edge")),
+            ["wasm", "js", "edge", "default"]
         );
         for triple in [
             "aarch64-apple-darwin",
@@ -250,13 +263,17 @@ mod tests {
         ] {
             assert!(conditions(triple, None)
                 .iter()
-                .all(|c| CONDITIONS.contains(c)));
+                .all(|c| CONDITIONS.contains(&c.as_str())));
         }
-        for h in HOSTS {
-            assert!(CONDITIONS.contains(&h.name), "{}", h.name);
-            assert_eq!(host(h.name), Some(*h));
+        for ok in ["edge", "my-host2"] {
+            assert!(check_condition(ok, true).is_ok() && check_host_condition(ok).is_ok(), "{ok}");
         }
-        assert_eq!(host("deno"), None);
+        for bad in ["Edge", "2x", "", "a_b", "a.b"] {
+            assert!(check_condition(bad, true).is_err() && check_host_condition(bad).is_err(), "{bad}");
+        }
+        let err = check_host_condition("js").unwrap_err();
+        assert!(err.contains("built-in condition"), "{err}");
+        assert!(check_condition("js", true).is_ok());
     }
 
     #[test]
@@ -268,10 +285,10 @@ mod tests {
         ]);
         let pick = |triple: &str| select(&v, &conditions(triple, None)).map(|v| v.target.as_str());
         // A host's variant comes before the target's when written first.
-        let workers = variants(&[("workers", "./src/w.vlt"), ("js", "./src/js.vlt")]);
-        let on = |host| select(&workers, &conditions("wasm32-unknown-unknown", host));
+        let edge = variants(&[("edge", "./src/w.vlt"), ("js", "./src/js.vlt")]);
+        let on = |host| select(&edge, &conditions("wasm32-unknown-unknown", host));
         assert_eq!(
-            on(Some("workers")).map(|v| v.target.as_str()),
+            on(Some("edge")).map(|v| v.target.as_str()),
             Some("./src/w.vlt")
         );
         assert_eq!(on(None).map(|v| v.target.as_str()), Some("./src/js.vlt"));
@@ -340,8 +357,9 @@ mod tests {
             assert!(check_key(bad).is_err(), "{bad}");
         }
         assert!(check_key("#io/*").unwrap_err().contains("patterns"));
-        assert!(check_condition("js").is_ok());
-        let err = check_condition("node").unwrap_err();
+        assert!(check_condition("js", false).is_ok());
+        assert!(check_condition("edge", false).unwrap_err().contains("only the built-in"));
+        let err = check_condition("No_de", true).unwrap_err();
         assert!(err.contains("native, darwin"), "{err}");
         assert!(check_target("./src/a/b.vlt", true).is_ok());
         assert!(check_target("./net/x.vlt", false).is_ok());

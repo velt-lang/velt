@@ -46,8 +46,8 @@ pub struct BuildOptions {
     pub debug_info: bool,
     /// Target triple; `None` → host.
     pub target: Option<String>,
-    /// `--host`: the JavaScript host (`workers`, `vpm::imports::HOSTS`); see `host_modules`.
-    pub host: Option<String>,
+    /// `--host <package>`: the host package the build is for; see `host_modules`.
+    pub host: Option<HostBuild>,
     /// The CPU to build for (`--cpu`, `$VELT_CPU` or the package's `build.cpu`, resolved by
     /// `commands::cpu::resolve_cpu`); `None` → the target's default
     /// (`velt_codegen_cl::DEFAULT_X86_CPU` on x86_64).
@@ -69,6 +69,21 @@ pub struct BuildOptions {
     /// ([`loader::LoadOptions::check_variants`]): `velt check` and `velt test`, not the builds
     /// that only run.
     pub check_variants: bool,
+}
+
+/// The host package of a `--host` build (`vpm::host`): what its `package.vlt`'s `host` says, and
+/// where its files are. The compiler knows no platform: this is everything about one.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HostBuild {
+    /// The program's name (a file's stem, a package's name without its scope): the default
+    /// directory's, and `{{name}}` in scaffolded files.
+    pub program: String,
+    /// The package's name, as `--host` gave it.
+    pub package: String,
+    /// The package's root (its `host` paths are relative to it).
+    pub root: PathBuf,
+    /// Its `host` object.
+    pub config: vpm::host::HostConfig,
 }
 
 impl BuildOptions {
@@ -300,7 +315,7 @@ fn load_modules(
         // internal files: it is std code (docs/internals/design/source-generators.md §5).
         std_root_as_std: sess.generator_build,
         target: Some(opts.target()),
-        host: opts.host.clone(),
+        host_condition: opts.host.as_ref().map(|h| h.config.condition.clone()),
         check_variants: opts.check_variants,
     };
     let loaded = loader::load_with_roots(

@@ -1,6 +1,6 @@
 //! Host modules a package ships (CONTRACT: docs/internals/contracts/manifest.md): the JavaScript
 //! of the import modules its `declare host("m")` functions call, for the hosts whose glue Velt
-//! writes (`velt build --host workers`).
+//! writes (`velt build --host <package>`).
 //!
 //! ```ts ignore
 //! hostModules: { cloudflare: "./src/cloudflare.mjs" },

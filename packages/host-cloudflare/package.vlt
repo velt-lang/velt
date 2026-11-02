@@ -1,0 +1,13 @@
+import type { Package } from "velt/package";
+
+export const pkg: Package = {
+  name: "host-cloudflare",
+  version: "0.1.0",
+  description: "Runs Velt programs on Cloudflare Workers: `velt build --host host-cloudflare`",
+  host: {
+    target: "wasm32-unknown-unknown",
+    condition: "workers",
+    entry: "./src/worker.mjs",
+    scaffold: { "wrangler.toml": "./src/wrangler.toml" },
+  },
+};

@@ -31,8 +31,8 @@
 // Node:     node velt_web.mjs hello.wasm [args...]   (what `velt run --target
 //           wasm32-unknown-unknown` does)
 // Other hosts drive the module themselves with `loadVelt` (their own entries and turns), as the
-// Worker glue velt_worker.mjs does. The file imports nothing, so a bundler (wrangler's) takes it
-// as it is: node's modules are reached only when node runs it as its main module.
+// server core velt_serve.mjs of `--host` builds does. The file imports nothing, so a bundler
+// takes it as it is: node's modules are reached only when node runs it as its main module.
 
 /** Thrown by the `exit` import to unwind out of the module. */
 export class VeltExit extends Error {

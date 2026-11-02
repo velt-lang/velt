@@ -11,6 +11,7 @@
 //!   paths: { "@app/*": "src/*" },
 //!   imports: { "#io": { js: "./src/io/js.vlt", default: "./src/io/native.vlt" } },
 //!   hostModules: { kv: "./src/kv.mjs" },
+//!   host: { target: "wasm32-unknown-unknown", condition: "edge", entry: "./src/entry.mjs" },
 //!   jsx: { importSource: "sigx" },
 //!   native: { targets: ["x86_64-unknown-linux-gnu"] },
 //!   tsCompat: ["src/models"],
@@ -315,6 +316,7 @@ impl Reader<'_> {
             paths: BTreeMap::new(),
             imports: BTreeMap::new(),
             host_modules: BTreeMap::new(),
+            host: None,
             native: None,
             jsx: None,
             define: BTreeMap::new(),
@@ -370,6 +372,7 @@ impl Reader<'_> {
                 "paths" => manifest.paths = self.paths(v),
                 "imports" => manifest.imports = self.imports(v, true),
                 "hostModules" => manifest.host_modules = self.host_modules(v),
+                "host" => manifest.host = self.host(v),
                 "jsx" => manifest.jsx = self.jsx(v),
                 "define" => manifest.define = self.define(v),
                 "native" => manifest.native = self.native(v),
@@ -649,6 +652,7 @@ pub(crate) fn edit_distance(a: &str, b: &str) -> usize {
     prev[b.len()]
 }
 
+mod host;
 mod host_modules;
 mod imports;
 mod native;

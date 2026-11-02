@@ -1,11 +1,11 @@
-// An accept loop over the Worker glue's `velt:worker` (crates/veltc/tests/workers.rs drives it
+// An accept loop over the runtime glue's `velt:worker` (crates/veltc/tests/workers.rs drives it
 // with drive.mjs): `main` waits for a gate before it accepts, and each request is handled in a
 // task of its own.
 
 import { HostRef } from "velt/host";
 import { utf8Decode, utf8Encode } from "velt/encoding";
 import { greet, waitFor } from "probe";
-import { accept, close, headers, method, read, respond, respondStream, url, write } from "./worker";
+import { accept, close, headers, method, read, respond, respondStream, url, write } from "velt/host/worker";
 
 function header(req: HostRef, name: string): string {
   for (const line of headers(req).split("\n")) {

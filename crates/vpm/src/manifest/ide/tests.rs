@@ -32,6 +32,7 @@ fn top_level_keys_not_yet_written() {
             "paths",
             "imports",
             "hostModules",
+            "host",
             "jsx",
             "define",
             "native",

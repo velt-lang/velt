@@ -29,6 +29,12 @@ export const pkg: Package = {
     "#io": { js: "./src/io/js.vlt", default: "./src/io/native.vlt" },
   },
   hostModules: { kv: "./src/kv.mjs" },  // optional: JS of `declare host("kv")` (additive)
+  host: {                       // optional: a host package's platform (additive)
+    target: "wasm32-unknown-unknown",
+    condition: "edge",
+    entry: "./src/entry.mjs",
+    scaffold: { "edge.toml": "./src/edge.toml" },
+  },
 };
 ```
 
@@ -211,15 +217,17 @@ directory (`NpmResolver::resolve_in`) before Node's search.
 - `imports` (additive): conditional imports, Node's `imports` field (`vpm::imports`). A key is
   `#` and `/`-separated segments of `[A-Za-z0-9_-]`; a value is a file or an object of
   conditions to files, kept in the order written (`Manifest::imports`, `GraphPackage::imports`).
-  Conditions are `vpm::imports::CONDITIONS` (`native`, `darwin`, `linux`, `win32`, `wasm`,
-  `wasi`, `js`, `workers`, `default`); `default` comes last; files are `./`-relative, below
+  Conditions are the built-in `vpm::imports::CONDITIONS` (`native`, `darwin`, `linux`, `win32`,
+  `wasm`, `wasi`, `js`, `default`) or any name spelled as a host package's condition (a lowercase
+  letter, then lowercase letters, digits and `-`; Node's custom conditions), which only a
+  `--host` build for that host package has; `default` comes last; files are `./`-relative, below
   `./src/`, with a source extension. A build's conditions come from its target and, for
-  `velt build --host <name>`, the host's name (`vpm::imports::conditions`, `HOSTS`);
+  `velt build --host <package>`, the host package's `condition` (`vpm::imports::conditions`);
   the first variant whose condition it has is the module a `#name` import of the package's own
   modules loads (`loader::conditional`). The standard library's map is `std/imports.vlt`
   (`export const imports: Imports = { … }`, read by `vpm::manifest::read::read_std_imports`,
   files relative to `std/`). Not supported, each a manifest error: `#x/*` patterns, nested
-  condition objects, arrays, `null` and bare-package targets, unknown conditions. An npm
+  condition objects, arrays, `null` and bare-package targets, misspelled conditions. An npm
   package's `#name` resolves through its `package.json` `imports` (`NpmResolver::resolve_import`,
   Node's PACKAGE_IMPORTS_RESOLVE, `SERVER_CONDITIONS`; a target naming another package is an
   error), never a Velt package's map. The importer's package scope is its nearest `package.json`
@@ -238,10 +246,20 @@ directory (`NpmResolver::resolve_in`) before Node's search.
   control characters, not `velt` and not `velt:…` (the runtime glue's own). A value is one ES
   module, `./`-relative, `/`-separated, below `./src/` (an archive carries only `src/`), named
   `.mjs` or `.js`; its default export is a function that makes the module's functions
-  ([workers.md](workers.md)). Used by `velt build --host workers`, which copies the files of the
-  modules the program calls into the Worker; a package provides only modules its own modules
-  declare, and each module comes from one package (checked by the build, not the reader).
-  `to_vlt` writes it after `imports`; `velt manifest --json` prints it when present.
+  ([workers.md](workers.md)). Used by `velt build --host <package>`, which copies the files of
+  the modules the program calls into its directory; a package provides only modules its own
+  modules declare, and each module comes from one package (checked by the build, not the
+  reader). `to_vlt` writes it after `imports`; `velt manifest --json` prints it when present.
+- `host` (additive, #1736): makes the package a host package, which `velt build --host
+  <package>` builds for (`Manifest::host`, `GraphPackage::host`, `vpm::host::HostConfig`). The
+  compiler knows no platform; this object is all a platform is: `target` (a triple; the build
+  checks it is one the JavaScript glue runs), `condition` (spelled as a condition, not a
+  built-in one), `entry` (a `.mjs`/`.js` module below `./src/` whose file name is not one the
+  build writes: `program.wasm`, `velt_web.mjs`, `velt_serve.mjs`, `velt_modules.mjs`, `hosts`,
+  `.velt-host`; `vpm::host::BUILD_FILES`), and `scaffold` (optional: a `/`-separated path inside
+  the build's directory, not one the build writes, → a file below `./src/`; `{{name}}` in it
+  becomes the program's name). Missing `target`, `condition` or `entry`, or an unknown key, is
+  an error. `to_vlt` writes it after `hostModules`; `velt manifest --json` prints it.
 - `entry` is a `/`-separated path inside the package (not empty, not absolute, no `..`).
 - `description` (additive, #184): one line of at most 300 characters (Unicode scalar values), no
   control characters, no leading or trailing whitespace, not empty. `keywords`: at most 10

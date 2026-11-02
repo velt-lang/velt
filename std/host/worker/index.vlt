@@ -1,0 +1,15 @@
+// velt/host/worker: the request queue of a `velt build --host <package>` build, the runtime
+// glue's `velt:worker` host module (https://veltlang.com/docs/reference/host-functions/). Servers
+// such as packages/http-server build their accept loop on it.
+
+export {
+  accept,
+  method,
+  url,
+  headers,
+  read,
+  respond,
+  respondStream,
+  write,
+  close,
+} from "velt/host/worker/requests";

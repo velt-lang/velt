@@ -133,25 +133,26 @@ fn build_with_input(
     if opts.release && matches!(artifact, Artifact::Executable(_)) {
         warn_debug_runtime(&opts.target());
     }
-    if !opts.release && opts.host.is_some() && matches!(artifact, Artifact::Executable(_)) {
-        crate::style::warning(
-            "a Worker built without `--release` is several times larger and slower; deploy one \
-             built with `velt build --release --host workers`",
-        );
+    if let (false, Some(host), Artifact::Executable(_)) = (opts.release, &opts.host, &artifact) {
+        crate::style::warning(&format!(
+            "a `--host` build without `--release` is several times larger and slower; deploy one \
+             built with `velt build --release --host {}`",
+            host.package
+        ));
     }
     Ok((artifact, opts.input.clone()))
 }
 
 /// What a linked program needs beside it: the JavaScript glue of a WebAssembly module, and the
-/// rest of a Worker for `--host workers`.
+/// rest of a `--host` build (its host package's files).
 fn finish_executable(opts: &BuildOptions, artifact: &Artifact) -> Result<(), String> {
     let Artifact::Executable(module) = artifact else {
         return Ok(());
     };
     super::wasm::write_glue(&opts.target(), module)?;
-    match opts.host.as_deref() {
-        Some(super::workers::HOST) => super::workers::write(module, opts.packages.as_ref()),
-        _ => Ok(()),
+    match &opts.host {
+        Some(host) => super::host::write(module, host, opts.packages.as_ref()),
+        None => Ok(()),
     }
 }
 
@@ -255,7 +256,10 @@ pub fn build_options(args: &BuildArgs) -> Result<BuildOptions, String> {
         // Printing IR needs neither clang nor a backend choice.
         Emit::Vir | Emit::Llvm => args.backend,
         // WebAssembly exists only in the LLVM backend (the driver rejects an explicit cranelift).
-        Emit::Obj | Emit::Exe if args.target.as_deref().is_some_and(super::wasm::is_wasm) => {
+        // A host package's target is one the JavaScript glue runs: WebAssembly.
+        Emit::Obj | Emit::Exe
+            if args.host.is_some() || args.target.as_deref().is_some_and(super::wasm::is_wasm) =>
+        {
             Some(args.backend.unwrap_or(Backend::Llvm))
         }
         Emit::Obj | Emit::Exe => {
@@ -271,7 +275,6 @@ pub fn build_options(args: &BuildArgs) -> Result<BuildOptions, String> {
         release: args.release,
         debug_info: args.debug_info,
         target: args.target.clone(),
-        host: args.host.clone(),
         emit: args.emit,
         backend,
         report_numbers: args.report_numbers,
@@ -285,30 +288,52 @@ pub fn build_options(args: &BuildArgs) -> Result<BuildOptions, String> {
                 .parent()
                 .filter(|d| !d.as_os_str().is_empty())
                 .unwrap_or(Path::new("."));
-            let project = Project::find(dir, args.locked, &opts.target())?;
+            let mut project = Project::find(dir, args.locked, &opts.target())?;
+            if let Some(name) = &args.host {
+                let stem = file.file_stem().unwrap_or_default().to_string_lossy();
+                let graph = project.as_ref().map(|p| &p.graph);
+                let host = super::host::resolve(name, graph, args.target.as_deref(), &stem)?;
+                if opts.target.as_deref() != Some(host.config.target.as_str()) {
+                    opts.target = Some(host.config.target.clone());
+                    project = Project::find(dir, args.locked, &opts.target())?;
+                }
+                if args.emit == Emit::Exe {
+                    let base = crate::driver::default_dir(file);
+                    let module = super::host::module_path(args.output.as_deref(), &base, &host)?;
+                    opts.output = Some(module);
+                }
+                opts.host = Some(host);
+            }
             config_cpu = project.as_ref().and_then(Project::build_cpu);
             opts.packages = project.map(|p| p.graph);
             opts.input = file.clone();
-            if args.host.is_some() && args.emit == Emit::Exe {
-                let stem = file.file_stem().unwrap_or_default().to_string_lossy();
-                let base = crate::driver::default_dir(file);
-                opts.output = Some(worker_module(args.output.as_deref(), &base, &stem));
-            }
         }
         None => {
-            let project = Project::current(vpm::InstallOptions {
-                locked: args.locked,
-                update: false,
-                target: Some(opts.target()),
-            })?;
+            let install = |target: String| {
+                Project::current(vpm::InstallOptions {
+                    locked: args.locked,
+                    update: false,
+                    target: Some(target),
+                })
+            };
+            let mut project = install(opts.target())?;
+            if let Some(name) = &args.host {
+                let package = &project.manifest.package.name;
+                // `@scope/name` → `name`.
+                let stem = package.rsplit('/').next().unwrap_or(package).to_string();
+                let host =
+                    super::host::resolve(name, Some(&project.graph), args.target.as_deref(), &stem)?;
+                if opts.target.as_deref() != Some(host.config.target.as_str()) {
+                    opts.target = Some(host.config.target.clone());
+                    project = install(opts.target())?;
+                }
+                opts.host = Some(host);
+            }
             opts.input = project.entry()?;
             config_cpu = project.build_cpu();
-            if args.host.is_some() && args.emit == Emit::Exe {
-                let name = &project.manifest.package.name;
-                // `@scope/name` → `name`.
-                let stem = name.rsplit('/').next().unwrap_or(name);
+            if let (Some(host), Emit::Exe) = (&opts.host, args.emit) {
                 let base = project.target_dir();
-                opts.output = Some(worker_module(args.output.as_deref(), &base, stem));
+                opts.output = Some(super::host::module_path(args.output.as_deref(), &base, host)?);
             } else if opts.output.is_none() {
                 opts.output = Some(package_output(
                     &project.target_dir(),
@@ -328,16 +353,6 @@ pub fn build_options(args: &BuildArgs) -> Result<BuildOptions, String> {
         &opts.target(),
     )?;
     Ok(opts)
-}
-
-/// The module of a `--host` build, inside its Worker directory: `-o`, else `<stem>-worker` in
-/// `base` (a build's default directory); the driver adds `.wasm`.
-fn worker_module(output: Option<&Path>, base: &Path, stem: &str) -> PathBuf {
-    let dir = output.map_or_else(
-        || super::workers::default_dir(base, stem),
-        Path::to_path_buf,
-    );
-    dir.join(stem)
 }
 
 /// Default output of a package build: `<target dir>/<name>` (`.exe` added on Windows by the

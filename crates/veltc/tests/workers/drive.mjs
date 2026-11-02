@@ -1,4 +1,4 @@
-// Drives a `velt build --host workers` directory under node as Workers run it
+// Drives a `velt build --host host-cloudflare` directory under node as Workers run it
 // (crates/veltc/tests/workers.rs): `node drive.mjs <worker dir> <scenario>` imports the
 // directory's `worker.mjs` (its `.wasm` import is the compiled module, as on Workers), sends the
 // scenario's `Request`s to its `fetch` with a fake `env` and a `ctx` that records `waitUntil`,
@@ -11,18 +11,29 @@
 // request ended (its response sent and its `waitUntil` promises settled).
 
 import { AsyncLocalStorage } from "node:async_hooks";
-import { register } from "node:module";
+import * as nodeModule from "node:module";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-// `import module from "./app.wasm"` gives the compiled module, as on Workers.
-const hooks = `export async function load(url, context, next) {
-  if (!url.endsWith(".wasm")) return next(url, context);
-  const source = "import { readFileSync } from 'node:fs';\\n" +
-    "export default new WebAssembly.Module(readFileSync(new URL(" + JSON.stringify(url) + ")));";
-  return { format: "module", shortCircuit: true, source };
-}`;
-register(`data:text/javascript,${encodeURIComponent(hooks)}`);
+// `import module from "./program.wasm"` gives the compiled module, as on Workers: a load hook,
+// in-thread with `registerHooks` where node has it (node 26 deprecates `register`, DEP0205).
+const wasmSource = (url) =>
+  "import { readFileSync } from 'node:fs';\n" +
+  `export default new WebAssembly.Module(readFileSync(new URL(${JSON.stringify(url)})));`;
+if (typeof nodeModule.registerHooks === "function") {
+  nodeModule.registerHooks({
+    load(url, context, next) {
+      if (!url.endsWith(".wasm")) return next(url, context);
+      return { format: "module", shortCircuit: true, source: wasmSource(url) };
+    },
+  });
+} else {
+  const hooks = `export async function load(url, context, next) {
+    if (!url.endsWith(".wasm")) return next(url, context);
+    return { format: "module", shortCircuit: true, source: (${wasmSource})(url) };
+  }`;
+  nodeModule.register(`data:text/javascript,${encodeURIComponent(hooks)}`);
+}
 
 // A panic's location without the directory the test built in.
 console.error = (...args) => console.log("log:", ...args.map((a) => String(a).replace(/ at \S*main\.vlt:/, " at main.vlt:")));

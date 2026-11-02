@@ -1,28 +1,33 @@
-// JS glue for Velt programs built with `velt build --host workers`: a Cloudflare Worker
-// (docs/internals/contracts/workers.md, docs/internals/design/cloudflare-workers.md). The build
-// writes it next to the module, with velt_web.mjs (whose `loadVelt` instantiates and drives the
-// program), the package host modules the program imports, and `worker.mjs`, the Worker's entry:
+// The host-neutral server core of the JS glue for `velt build --host <package>` builds
+// (docs/internals/contracts/workers.md). The build writes it next to the module
+// (`program.wasm`), with velt_web.mjs (whose `loadVelt` instantiates and drives the program),
+// `velt_modules.mjs` (the package host modules the program imports) and the host package's
+// entry, a thin adapter from the platform's way of handing over requests to this core:
 //
-//   import module from "./app.wasm";
-//   import { createWorker } from "./velt_worker.mjs";
-//   import kv from "./hosts/kv/kv.mjs";
-//   export default createWorker(module, { modules: { kv } });
+//   import module from "./program.wasm";            // however the platform loads a module
+//   import { createServer } from "./velt_serve.mjs";
+//   import { modules } from "./velt_modules.mjs";
+//   const server = createServer(module, { modules });
+//   export default { fetch: (request, env, ctx) =>
+//     server.serve(request, { context: { env, ctx }, waitUntil: (p) => ctx.waitUntil(p) }) };
 //
-// The module is instantiated once per isolate, on the first request, and `main` runs once
-// (`velt_start`); the instance then serves every request. A request goes into a queue the program
-// takes from with the async host function `velt:worker`.`accept()`, as a server accepts
-// connections, so `main` may await anything before it starts accepting. The program reads the
-// request and answers it through the other `velt:worker` functions (`workerImports` below).
+// The core knows no platform. The module is instantiated once, on the first request, and `main`
+// runs once (`velt_start`); the instance then serves every request. A request goes into a queue
+// the program takes from with the async host function `velt:worker`.`accept()`, as a server
+// accepts connections, so `main` may await anything before it starts accepting. The program
+// reads the request and answers it through the other `velt:worker` functions (`workerImports`
+// below).
 //
-// Workers tie I/O (a request's body, a `Response`, a stream, a timer, a fetch) to the request
-// whose handler made it, cancel a request whose handler waits on nothing of its own, and end a
-// request's context, with what it started, once its response and its `ctx.waitUntil` promises
-// are done. So each request has a pump: an async loop in its own handler that keeps a timer
-// pending while it waits, and does the request's I/O when the program asks. The program's waits
-// on a request are settled from that pump (`Deferred` of velt_web.mjs), so its turns run in the
-// request's context. A pump lives on (with `ctx.waitUntil`) after its answer while host promises
-// a turn in its context started are pending, or while it holds the program's timer, which moves
-// to the newest request's pump.
+// Some platforms (Cloudflare's Workers is one) tie I/O (a request's body, a `Response`, a
+// stream, a timer, a fetch) to the request whose handler made it, cancel a request whose handler
+// waits on nothing of its own, and end a request's context, with what it started, once its
+// response and the promises given to its `waitUntil` are done. So each request has a pump: an
+// async loop in its own handler that keeps a timer pending while it waits, and does the
+// request's I/O when the program asks. The program's waits on a request are settled from that
+// pump (`Deferred` of velt_web.mjs), so its turns run in the request's context. A pump lives on
+// (with the adapter's `waitUntil`) after its answer while host promises a turn in its context
+// started are pending, or while it holds the program's timer, which moves to the newest
+// request's pump. On a platform without such contexts the pumps cost a promise per request.
 //
 // A panic, a trap, `process.exit`, an uncaught error, a host function that throws, or a `main`
 // that ends after it accepted requests ends the instance (an exception that unwinds through the
@@ -36,20 +41,25 @@ import { loadVelt, HostRefs, Deferred } from "./velt_web.mjs";
 const KEEPALIVE_MS = 10_000;
 
 /**
- * A Worker's handlers for a compiled Velt program.
+ * A server for a compiled Velt program, which the host package's entry hands requests to.
  * @param {WebAssembly.Module} module the program
- * @param {{ modules?: Record<string, (host: { env: object, ctx: object }) => object>,
+ * @param {{ modules?: Record<string, (host: object) => object>,
  *           write?: (stream: number, bytes: Uint8Array) => void }} options the host modules a
  *   package provides, by import module (each a function making the module's functions, given
- *   the Worker's `env` and the `ctx` of the request whose context runs the program), and the
- *   sink of the program's output (default: console, a line at a time)
+ *   `host`, whose properties are those of the `context` the adapter gave the request whose
+ *   context runs the program now), and the sink of the program's output (default: console, a
+ *   line at a time)
+ * @returns {{ serve(request: Request, platform?: { context?: object,
+ *             waitUntil?: (p: Promise<void>) => void }): Promise<Response> }} `serve` answers a
+ *   request; `platform.context` is what host modules see for it, and `platform.waitUntil` keeps
+ *   its handler's context alive after the answer (platforms that end it with the answer)
  */
-export function createWorker(module, options = {}) {
+export function createServer(module, options = {}) {
   let program = null;
   return {
-    fetch(request, env, ctx) {
+    serve(request, platform = {}) {
       if (program === null || program.failed) program = new Program(module, options);
-      return program.serve(request, env, ctx);
+      return program.serve(request, platform);
     },
   };
 }
@@ -81,15 +91,11 @@ class Program {
 
   /** Instantiate the module and run `main`, in `first`'s context. */
   async start(first) {
-    const program = this;
-    const host = {
-      get env() {
-        return program.current?.env;
-      },
-      get ctx() {
-        return program.current?.ctx;
-      },
-    };
+    // The context of the request whose context runs the program now, as the adapter gave it.
+    const host = new Proxy(Object.create(null), {
+      get: (_, key) => this.current?.context?.[key],
+      has: (_, key) => key in (this.current?.context ?? {}),
+    });
     try {
       const imports = { "velt:worker": this.workerImports() };
       for (const [name, make] of Object.entries(this.options.modules ?? {})) {
@@ -113,8 +119,8 @@ class Program {
     }
   }
 
-  async serve(request, env, ctx) {
-    const req = new WorkerRequest(request, this, env, ctx);
+  async serve(request, platform) {
+    const req = new WorkerRequest(request, this, platform.context);
     const pumping = req.pump();
     // Awaited only while it runs: a promise of the first request's context.
     if (!this.started) await (this.ready ??= this.start(req).then(() => (this.started = true)));
@@ -129,7 +135,7 @@ class Program {
       this.armTimer();
     }
     const response = await req.response;
-    if (!req.finished()) ctx.waitUntil(pumping);
+    if (!req.finished()) platform.waitUntil?.(pumping);
     return response;
   }
 
@@ -228,7 +234,7 @@ class Program {
     if (this.failed) return;
     this.failed = true;
     console.error(
-      `velt: the Worker's program ${why}; its ${this.requests.size} request(s) in flight get a ` +
+      `velt: the program ${why}; its ${this.requests.size} request(s) in flight get a ` +
         "500, and the next request starts a new instance",
     );
     this.queue = [];
@@ -240,7 +246,7 @@ class Program {
   neverAccepted(req) {
     if (!this.toldNeverAccepts) {
       this.toldNeverAccepts = true;
-      console.error("velt: the Worker's program does not accept requests; they get a 500");
+      console.error("velt: the program does not accept requests; they get a 500");
     }
     this.requests.delete(req);
     req.answered = true;
@@ -253,10 +259,9 @@ class Program {
  * I/O in its own handler.
  */
 class WorkerRequest {
-  constructor(request, program, env, ctx) {
+  constructor(request, program, context) {
     this.program = program;
-    this.env = env;
-    this.ctx = ctx;
+    this.context = context;
     this.method = request.method;
     this.url = request.url;
     this.headers = [...request.headers].map(([k, v]) => `${k}: ${v}`).join("\n");
@@ -366,14 +371,14 @@ class WorkerRequest {
   }
 
   respond(status, headers, body) {
-    this.claim();
+    if (!this.claim()) return;
     this.post(() =>
       this.finish(this.made(() => new Response(body.length === 0 ? null : body, init(status, headers)))),
     );
   }
 
   respondStream(status, headers) {
-    this.claim();
+    if (!this.claim()) return new ResponseStream(this, true);
     const stream = new ResponseStream(this);
     this.post(() => {
       const { readable, writable } = new TransformStream();
@@ -383,11 +388,18 @@ class WorkerRequest {
     return stream;
   }
 
-  /** The program answers once; a second answer is its bug, which stops it. */
+  /**
+   * The program answers once: whether this is the first answer. A second one is the program's
+   * bug, logged and ignored, so other requests in flight are not affected.
+   */
   claim() {
-    if (this.answered) throw new Error(`velt: ${this.method} ${this.url} was answered already`);
+    if (this.answered) {
+      console.error(`velt: ${this.method} ${this.url} was answered already; the second answer is ignored`);
+      return false;
+    }
     this.answered = true;
     this.program.armTimer();
+    return true;
   }
 
   /** `make()`'s response, or a 500 when the program's status or headers make none. */
@@ -431,11 +443,12 @@ class WorkerRequest {
 
 /** The body of a response the program writes while it is sent. */
 class ResponseStream {
-  constructor(req) {
+  /** `ignored`: the stream of a second answer, whose writes fail (`claim`). */
+  constructor(req, ignored = false) {
     this.req = req;
     this.writer = null; // made by the pump
-    this.closed = false;
-    req.stream = this;
+    this.closed = ignored;
+    if (!ignored) req.stream = this;
   }
 
   write(chunk) {

@@ -29,8 +29,9 @@ pub(super) struct Resolved {
     pub span: Span,
 }
 
-/// The conditions of a build for `target` (`None`: this machine) and, with `--host`, `host`.
-pub(super) fn build_conditions(target: Option<&str>, host: Option<&str>) -> Vec<&'static str> {
+/// The conditions of a build for `target` (`None`: this machine) and, with `--host`, its host
+/// package's condition `host`.
+pub(super) fn build_conditions(target: Option<&str>, host: Option<&str>) -> Vec<String> {
     match target {
         Some(triple) => imports::conditions(triple, host),
         None => imports::conditions(&velt_codegen_cl::host_triple(), host),
@@ -38,8 +39,8 @@ pub(super) fn build_conditions(target: Option<&str>, host: Option<&str>) -> Vec<
 }
 
 /// The conditions of the build `opts` loads for.
-pub(super) fn load_conditions(opts: &super::LoadOptions) -> Vec<&'static str> {
-    build_conditions(opts.target.as_deref(), opts.host.as_deref())
+pub(super) fn load_conditions(opts: &super::LoadOptions) -> Vec<String> {
+    build_conditions(opts.target.as_deref(), opts.host_condition.as_deref())
 }
 
 /// Where the `#name`s of a module resolve.
@@ -218,7 +219,7 @@ fn unknown(spec: &str, scope: &Scope, std_has: bool) -> LocateError {
 fn select(
     spec: &str,
     variants: &[Variant],
-    conditions: &[&str],
+    conditions: &[String],
     scope: &Scope,
 ) -> Result<PathBuf, LocateError> {
     match imports::select(variants, conditions) {
@@ -228,7 +229,7 @@ fn select(
         None => {
             let build: Vec<&str> = conditions
                 .iter()
-                .copied()
+                .map(String::as_str)
                 .filter(|c| *c != DEFAULT)
                 .collect();
             let written: Vec<&str> = variants.iter().map(|v| v.condition.as_str()).collect();
