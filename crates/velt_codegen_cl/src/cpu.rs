@@ -109,6 +109,23 @@ pub fn x86_features_from_macros(defines: &str) -> u32 {
         .fold(0, |mask, (bit, _)| mask | 1 << bit)
 }
 
+/// The arm64 features the start-up check knows, by bit of its mask, with the macro clang defines
+/// for each (`clang -dM -E -mcpu=<cpu>`): only those generated code uses (the dot product's
+/// `sdot`); the arm64 baseline (armv8-a with NEON) needs none. Part of rt_abi.md "CPU check", in
+/// the runtime's order.
+pub const ARM_FEATURES: [(&str, &str); 1] = [("DOTPROD", "__ARM_FEATURE_DOTPROD")];
+
+/// The features of [`ARM_FEATURES`] whose macro `defines` (clang's `-dM -E` output) defines.
+pub fn arm_features_from_macros(defines: &str) -> u32 {
+    let defined: Vec<&str> = defines
+        .lines()
+        .filter_map(|l| l.strip_prefix("#define ")?.split_whitespace().next())
+        .collect();
+    (ARM_FEATURES.iter().enumerate())
+        .filter(|(_, (_, m))| defined.contains(m))
+        .fold(0, |mask, (bit, _)| mask | 1 << bit)
+}
+
 /// The psABI levels as feature masks over [`X86_FEATURES`].
 const X86_V2: u32 = 0b11_1111;
 const X86_V3: u32 = X86_V2 | 0b11_1111_1100_0000;
@@ -249,12 +266,20 @@ fn closest<'a>(cpu: &str, known: &[&'a str]) -> Option<&'a str> {
         .map(|(_, k)| k)
 }
 
-/// The x86 features code for `cpu` on `target` needs whoever compiles it, as a mask over
-/// [`X86_FEATURES`] (`None`: the default): 0 off x86_64 and for the baseline, the level's for a
-/// level, the host's for `native`; `None` for a CPU name, whose features depend on the backend.
+/// The features code for `cpu` on `target` needs whoever compiles it, as a mask over
+/// [`X86_FEATURES`] on x86_64 and [`ARM_FEATURES`] on arm64 (`None`: the default): 0 for the
+/// baseline and elsewhere, the level's for an x86 level, the host's for `native`; `None` for a
+/// CPU name, whose features depend on the backend.
 pub fn level_features(target: &str, cpu: Option<&str>) -> Result<Option<u32>, String> {
     if let Some(cpu) = cpu {
         check_cpu(target, cpu)?;
+    }
+    if matches!(arch(target), Architecture::Aarch64(_)) {
+        return Ok(match cpu {
+            None | Some("baseline") => Some(0),
+            Some("native") => Some(host_arm_features()),
+            Some(_) => None,
+        });
     }
     if arch(target) != Architecture::X86_64 {
         return Ok(Some(0));
@@ -300,6 +325,16 @@ pub fn required_features(target: &str, cpu: Option<&str>) -> Result<u32, String>
         .enumerate()
         .filter(|(_, (_, flag))| flag.is_some_and(|f| enabled.contains(&f)))
         .fold(0, |mask, (bit, _)| mask | 1 << bit))
+}
+
+/// The features of [`ARM_FEATURES`] the arm64 CPU the compiler runs on has (0 elsewhere).
+fn host_arm_features() -> u32 {
+    #[cfg(target_arch = "aarch64")]
+    {
+        u32::from(std::arch::is_aarch64_feature_detected!("dotprod"))
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    0
 }
 
 /// The features of the x86 CPU the compiler runs on (0 elsewhere).
@@ -595,10 +630,16 @@ mod tests {
             Some(X86_V3)
         );
         assert_eq!(level_features(LINUX, Some("alderlake")).unwrap(), None);
+        // An arm64 CPU name too: clang knows whether it has the dot product (ARM_FEATURES).
         assert_eq!(
             level_features("aarch64-apple-darwin", Some("apple-m4")).unwrap(),
+            None
+        );
+        assert_eq!(
+            level_features("aarch64-unknown-linux-gnu", Some("baseline")).unwrap(),
             Some(0)
         );
+        assert_eq!(level_features("aarch64-unknown-linux-gnu", None).unwrap(), Some(0));
         assert!(level_features(LINUX, Some("skylkae")).is_err());
     }
 }

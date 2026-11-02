@@ -372,11 +372,11 @@ fn x86_code_is_for_the_default_cpu_level_unless_asked() {
         const AVX2: u32 = 1 << 7;
         for cpu in ["alderlake", "znver4"] {
             let target = t(Some(cpu)).unwrap();
-            assert_ne!(target.x86_features & AVX2, 0, "{cpu}");
+            assert_ne!(target.cpu_features & AVX2, 0, "{cpu}");
             assert!(!target.rounds_by_conversion(), "{cpu}");
             assert_eq!(
                 crate::required_features(&target.triple, Some(cpu)),
-                Ok(target.x86_features)
+                Ok(target.cpu_features)
             );
         }
     }
@@ -457,12 +457,12 @@ fn extension_checks_are_true_on_a_cpu_built_for_with_the_extension() {
     assert!(checked.contains("@velt_cpu_sha_x86"), "{checked}");
     // Built for a CPU with SHA (`--cpu`), whose start-up check checks it: the check is true.
     let mut sha = target.clone();
-    sha.x86_features |= velt_codegen_cl::ext_x86_features(velt_vir::simd::Ext::ShaX86);
+    sha.cpu_features |= velt_codegen_cl::ext_x86_features(velt_vir::simd::Ext::ShaX86);
     let folded = crate::checked_ir(&p, &sha, false).unwrap();
     assert!(!folded.contains("@velt_cpu_sha_x86"), "{folded}");
     // SHA alone, without the SSSE3 and SSE4.1 the extension also needs, is not enough.
     let mut partial = target.clone();
-    partial.x86_features = 1 << 21;
+    partial.cpu_features = 1 << 21;
     let partial = crate::checked_ir(&p, &partial, false).unwrap();
     assert!(partial.contains("@velt_cpu_sha_x86"), "{partial}");
 }
@@ -501,4 +501,19 @@ fn the_dot_product_is_sdot_where_every_cpu_has_it() {
         assert!(!text.contains("sdot"), "{triple}");
         assert!(text.contains("sext <16 x i8>"), "{triple}");
     }
+}
+
+#[test]
+fn an_arm64_cpu_with_the_dot_product_gets_sdot_anywhere() {
+    if !crate::available() {
+        return;
+    }
+    // What clang says each CPU has (ARM_FEATURES' bit 0 is DOTPROD).
+    let linux = "aarch64-unknown-linux-gnu";
+    assert_eq!(crate::required_features(linux, Some("neoverse-n1")), Ok(1));
+    assert_eq!(crate::required_features(linux, Some("cortex-a53")), Ok(0));
+    assert_eq!(crate::required_features(linux, Some("baseline")), Ok(0));
+    let target = |cpu| crate::target::normalize(linux).unwrap().with_cpu(Some(cpu)).unwrap();
+    assert!(target("neoverse-n1").has_dotprod());
+    assert!(!target("cortex-a53").has_dotprod());
 }

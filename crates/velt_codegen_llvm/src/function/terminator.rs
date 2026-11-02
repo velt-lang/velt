@@ -199,7 +199,7 @@ impl Emitter<'_> {
     /// needs).
     fn baseline_has(&self, ext: velt_vir::simd::Ext) -> bool {
         let needs = velt_codegen_cl::ext_x86_features(ext);
-        needs != 0 && self.x86_features & needs == needs
+        needs != 0 && self.cpu_features & needs == needs
     }
 
     /// Whether `callee` is `velt_simd_has_<ext>` and this function is gated on `ext`, or the

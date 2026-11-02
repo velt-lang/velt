@@ -93,8 +93,8 @@ struct Emitter<'a> {
     simd: crate::simd::Arch,
     /// Every CPU of the target has Arm's dot-product instructions (`Target::has_dotprod`).
     dotprod: bool,
-    /// The x86 features the code may use without checking (`Target::x86_features`, `--cpu`).
-    x86_features: u32,
+    /// The CPU features the code may use without checking (`Target::cpu_features`, `--cpu`).
+    cpu_features: u32,
     /// The program's array header aggregate (tbaa.rs).
     array: Option<vir::AggId>,
     /// The aggregate string bytes are read through (tbaa.rs).
@@ -139,7 +139,7 @@ pub(crate) fn emit_function(
         rounds_by_conversion: target.rounds_by_conversion(),
         simd: crate::simd::Arch::of(target),
         dotprod: target.has_dotprod(),
-        x86_features: target.x86_features,
+        cpu_features: target.cpu_features,
         array,
         text: crate::tbaa::text_agg(program),
         objects: crate::tbaa::object_aggs(program),

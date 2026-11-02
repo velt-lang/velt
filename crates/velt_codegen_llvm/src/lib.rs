@@ -216,14 +216,21 @@ pub fn emit_ir_for(program: &vir::Program, opts: &CodegenOptions) -> Result<Stri
     checked_ir(program, &triple, false)
 }
 
-/// The x86 features code from this backend for `cpu` on `target` uses, as a mask over
-/// `velt_codegen_cl::X86_FEATURES` (`None`: the default CPU), which the start-up check checks:
-/// the level's for a level, the host's for `native`, and for a CPU name what clang enables for
-/// it (`-march=`), which is not always what Cranelift's preset of that name does.
+/// The features code from this backend for `cpu` on `target` uses, as a mask over
+/// `velt_codegen_cl::X86_FEATURES` on x86-64 and `ARM_FEATURES` on arm64 (`None`: the default
+/// CPU), which the start-up check checks: the level's for an x86 level, the host's for
+/// `native`, and for a CPU name what clang enables for it (`-march=` / `-mcpu=`), which is not
+/// always what Cranelift's preset of that name does.
 pub fn required_features(target: &str, cpu: Option<&str>) -> Result<u32, String> {
     match (velt_codegen_cl::level_features(target, cpu)?, cpu) {
         (Some(mask), _) => Ok(mask),
-        (None, Some(cpu)) => clang::x86_features(&target::normalize(target)?.triple, cpu),
+        (None, Some(cpu)) => {
+            let triple = target::normalize(target)?.triple;
+            match triple.starts_with("x86_64") {
+                true => clang::x86_features(&triple, cpu),
+                false => clang::arm_features(&triple, cpu),
+            }
+        }
         (None, None) => Err("ICE: the default CPU is a level".into()),
     }
 }

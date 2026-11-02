@@ -47,8 +47,9 @@ mod tests;
 
 pub use cache::{CacheStats, CodeCache};
 pub use cpu::{
-    check_cpu, ext_x86_features, is_for_another_arch, level_features, required_features,
-    x86_features_from_macros, DEFAULT_X86_CPU, X86_FEATURES, X86_FEATURE_MACROS,
+    arm_features_from_macros, check_cpu, ext_x86_features, is_for_another_arch, level_features,
+    required_features, x86_features_from_macros, ARM_FEATURES, DEFAULT_X86_CPU, X86_FEATURES,
+    X86_FEATURE_MACROS,
 };
 pub use dev::{DevSession, JitProgram, Reload};
 

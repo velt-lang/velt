@@ -94,6 +94,10 @@ const X86_FEATURES: [&str; 23] = [
     "PCLMULQDQ",
 ];
 
+/// The arm64 features `velt_rt_check_cpu` checks there, by bit of its mask (rt_abi.md "CPU
+/// check"; the order of `velt_codegen_cl::ARM_FEATURES`).
+const ARM_FEATURES: [&str; 1] = ["DOTPROD"];
+
 /// The psABI levels' masks, to name the level a program was built for.
 const X86_LEVELS: [(&str, u32); 3] = [
     ("x86-64-v2", 0x3f),
@@ -138,40 +142,83 @@ fn x86_features() -> u32 {
     0
 }
 
+/// The features of [`ARM_FEATURES`] this CPU has.
+fn arm_features() -> u32 {
+    #[cfg(target_arch = "aarch64")]
+    {
+        u32::from(std::arch::is_aarch64_feature_detected!("dotprod"))
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    0
+}
+
+/// This architecture's list of features the check knows, its levels, and how to name a CPU of it.
+struct Arch {
+    names: &'static [&'static str],
+    levels: &'static [(&'static str, u32)],
+    cpu: &'static str,
+    have: fn() -> u32,
+}
+
+const X86: Arch = Arch {
+    names: &X86_FEATURES,
+    levels: &X86_LEVELS,
+    cpu: "an x86-64 CPU",
+    have: x86_features,
+};
+
+const ARM: Arch = Arch {
+    names: &ARM_FEATURES,
+    levels: &[],
+    cpu: "an arm64 CPU",
+    have: arm_features,
+};
+
+/// The list the mask of this build's architecture is over.
+const THIS: Arch = if cfg!(target_arch = "aarch64") { ARM } else { X86 };
+
 /// `have` without the features `disable` (`VELT_CPU_DISABLE`, a comma-separated list such as
 /// `popcnt,avx2`) names: how the check is tested on a CPU that has them.
+#[cfg(test)]
 fn without_disabled(have: u32, disable: &str) -> u32 {
+    without_disabled_of(&X86, have, disable)
+}
+
+fn without_disabled_of(arch: &Arch, have: u32, disable: &str) -> u32 {
     let named = |name: &str| {
         disable
             .split(',')
             .any(|d| d.trim().eq_ignore_ascii_case(name))
     };
-    X86_FEATURES
-        .iter()
-        .enumerate()
+    (arch.names.iter().enumerate())
         .filter(|(_, name)| named(name))
         .fold(have, |have, (bit, _)| have & !(1 << bit))
 }
 
-/// The error for a CPU that has `have` running code that needs `required`, naming the highest
-/// level the CPU has to rebuild for; `None` when it has everything.
+/// The error for a CPU that has `have` running code that needs `required` (x86 masks), naming
+/// the highest level the CPU has to rebuild for; `None` when it has everything.
+#[cfg(test)]
 fn missing_message(required: u32, have: u32) -> Option<String> {
+    missing_message_of(&X86, required, have)
+}
+
+fn missing_message_of(arch: &Arch, required: u32, have: u32) -> Option<String> {
     let missing = required & !have;
     if missing == 0 {
         return None;
     }
     let names = |mask: u32| {
-        let list: Vec<&str> = (0..X86_FEATURES.len())
+        let list: Vec<&str> = (0..arch.names.len())
             .filter(|b| mask & 1 << b != 0)
-            .map(|b| X86_FEATURES[b])
+            .map(|b| arch.names[b])
             .collect();
         list.join(", ")
     };
-    let built_for = match X86_LEVELS.iter().find(|(_, mask)| *mask == required) {
+    let built_for = match arch.levels.iter().find(|(_, mask)| *mask == required) {
         Some((level, _)) => format!("{level} ({})", names(required)),
-        None => format!("an x86-64 CPU with {}", names(required)),
+        None => format!("{} with {}", arch.cpu, names(required)),
     };
-    let fits = X86_LEVELS.iter().rev().find(|(_, mask)| mask & !have == 0);
+    let fits = arch.levels.iter().rev().find(|(_, mask)| mask & !have == 0);
     Some(format!(
         "this program was built for {built_for}; this CPU lacks {}; rebuild it with \
          `--cpu {}`",
@@ -181,16 +228,16 @@ fn missing_message(required: u32, have: u32) -> Option<String> {
 }
 
 /// Exit with an error unless this CPU has the features `required` (a mask over
-/// [`X86_FEATURES`]): called first thing in `velt_main` by programs built for more than the
+/// [`X86_FEATURES`] on x86-64, [`ARM_FEATURES`] on arm64): called first thing in `velt_main` by programs built for more than the
 /// baseline (rt_abi.md "CPU check"), so an older CPU gets a message instead of an illegal
 /// instruction. Runs after the runtime's start-up, which is baseline code.
 #[no_mangle]
 pub extern "C" fn velt_rt_check_cpu(required: u32) {
     let have = match std::env::var("VELT_CPU_DISABLE") {
-        Ok(disable) => without_disabled(x86_features(), &disable),
-        Err(_) => x86_features(),
+        Ok(disable) => without_disabled_of(&THIS, (THIS.have)(), &disable),
+        Err(_) => (THIS.have)(),
     };
-    if let Some(msg) = missing_message(required, have) {
+    if let Some(msg) = missing_message_of(&THIS, required, have) {
         crate::io::flush_stdout();
         eprintln!("error: {msg}");
         std::process::exit(1);
@@ -200,6 +247,19 @@ pub extern "C" fn velt_rt_check_cpu(required: u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn arm64_features_are_named_too() {
+        assert_eq!(missing_message_of(&ARM, 1, 1), None);
+        assert_eq!(
+            missing_message_of(&ARM, 1, 0).as_deref(),
+            Some(
+                "this program was built for an arm64 CPU with DOTPROD; this CPU lacks DOTPROD; \
+                 rebuild it with `--cpu baseline`"
+            )
+        );
+        assert_eq!(without_disabled_of(&ARM, 1, "dotprod"), 0);
+    }
 
     #[test]
     fn a_missing_feature_is_named_with_the_level() {
