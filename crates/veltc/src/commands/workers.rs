@@ -183,7 +183,9 @@ fn entry(wasm: &str, modules: &[(String, String)]) -> String {
 fn wrangler_toml(stem: &str) -> String {
     format!(
         "# Written by `velt build --host workers` because there was none; later builds keep it.\n\
-         name = \"{}\"\nmain = \"{ENTRY_FILE}\"\ncompatibility_date = \"{COMPATIBILITY_DATE}\"\n",
+         name = \"{}\"\nmain = \"{ENTRY_FILE}\"\ncompatibility_date = \"{COMPATIBILITY_DATE}\"\n\
+         # A request's `signal` aborts when its client goes away (the glue drops it from the queue).\n\
+         compatibility_flags = [\"enable_request_signal\"]\n",
         worker_name(stem)
     )
 }

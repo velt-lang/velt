@@ -18,8 +18,8 @@ workers.rs`, `driver/host_modules.rs`), and the Velt code that serves on Workers
   `target/velt/<name>-worker/`). It holds `<stem>.wasm` (with the build's object and stamps),
   `velt_web.mjs` (the core glue every browser build gets), `velt_worker.mjs`, the host modules of
   packages under `hosts/<package>/<path below src/>`, `worker.mjs` (the entry; every build
-  writes it), and `wrangler.toml` (`name`, `main = "worker.mjs"`, `compatibility_date`), written
-  only when there is none. A build without `--release` warns.
+  writes it), and `wrangler.toml` (`name`, `main = "worker.mjs"`, `compatibility_date`,
+  `compatibility_flags = ["enable_request_signal"]`), written only when there is none. A build without `--release` warns.
 - Host modules: every import module the program reaches (a `declare host("m")` function it
   calls; the module's `velt.host` section lists them) needs JavaScript. Modules named `velt:…`
   are the runtime glue's (`velt:worker` below). Any other comes from the package whose
@@ -65,7 +65,8 @@ workers.rs`, `driver/host_modules.rs`), and the Velt code that serves on Workers
   program's timer in the pump holding it (`loadVelt`'s `setTimer`): the newest request not
   answered yet, else the newest request; it moves when that changes (its timeout is cleared in
   the pump that set it), and a turn asking for the same deadline keeps it. A queued request
-  whose client went away (`request.signal`) leaves the queue.
+  whose client went away (`request.signal`, which Workers abort only with the compatibility flag
+  `enable_request_signal`) leaves the queue and is answered 499.
 - `ctx.waitUntil(p)`: a request whose pump must go on after its response calls it with the
   pump: while host promises started in its context are pending, while it holds the program's
   timer, or while the program still writes its body. Work that outlives Cloudflare's limit for
