@@ -193,8 +193,10 @@ Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exi
 - `vir::Function::inline: vir::Inline` (`Default`, `Always`, `Never`): a std function's own
   statement `inline()` (`Always`) or `noInline()` (`Never`, #1884), declared in
   `std/lang/intrinsics/inline.vlt` (`hir::Intrinsic::Inline` / `NoInline`, which lower to no
-  code). One field, so "both" cannot be represented; sema rejects the two markers in one
-  function, and `inline()` on a function on a cycle of direct calls. `Function::new` sets
+  code). One field, so "both" cannot be represented. Sema rejects a marker that is not the first
+  statement of a declared function's or method's body, or is in a closure, a generator or an
+  async function (whose body lowering compiles into a resume function), so a function has at
+  most one; and `inline()` on a function on a cycle of direct calls. `Function::new` sets
   `Default`; lowering sets it from the body; `velt_opt` keeps it on clones.
 - `velt_opt`'s inliner inlines an `Always` function at every direct call site, whatever its
   size and the caller's, without charging the program's growth budget (the recursion and

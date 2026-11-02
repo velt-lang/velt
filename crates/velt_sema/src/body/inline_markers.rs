@@ -1,7 +1,11 @@
 //! std's inlining markers, `inline()` and `noInline()` (std/lang/intrinsics/inline.vlt): the
 //! checks lowering and `velt_opt` rely on.
 //!
-//! - A function has at most one of them: `inline()` and `noInline()` together contradict.
+//! - A marker is the first statement of a declared function's or method's body, and not of a
+//!   generator's or an async function's: lowering compiles those into a resume function the
+//!   marker would not reach, and a marker anywhere else (after other statements, in a branch
+//!   that may not run, in a closure) would say something about the function it does not mean.
+//!   So a function has at most one: a second marker, of either kind, is not the first statement.
 //!   Checked as the body is (`FnCx::inline_marker`), which records the marker on the function.
 //! - `inline()` is not on a recursive function, directly or through others. `velt_opt` inlines a
 //!   marked function at every call site, so a marked function on a cycle of direct calls could
@@ -13,25 +17,49 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 use velt_common::{Diagnostic, Span};
 
+use velt_syntax::ast;
+
 use super::FnCx;
 use crate::ctx::Ctx;
+use crate::defs::FnSource;
 use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, Intrinsic};
 use crate::visit;
 
 impl FnCx<'_, '_> {
-    /// Records the marker `i` (at `span`) on the function whose body is checked: an error when it
-    /// already has the other one.
+    /// Records the marker `i` (at `span`) on the function whose body is checked: an error unless
+    /// it is the first statement of a declared function or method that is not a generator or
+    /// async.
     pub(super) fn inline_marker(&mut self, i: Intrinsic, span: Span) {
-        let Some(d) = self.body_def.filter(|_| self.outer.is_empty()) else {
+        let first = (self.body_def)
+            .filter(|_| self.outer.is_empty() && !self.f.is_async && self.f.yield_ty.is_none())
+            .filter(|&d| self.first_statement_is(d, span));
+        let Some(d) = first else {
+            let name = if i == Intrinsic::Inline {
+                "inline"
+            } else {
+                "noInline"
+            };
+            self.cx.err(
+                format!("`{name}()` must be the first statement of a function or method (not of a closure, a generator or an async function)"),
+                span,
+            );
             return;
         };
-        match self.cx.fn_info(d).inline_marker {
-            Some((had, _)) if had != i => self.cx.err(
-                "`inline()` and `noInline()` in one function".to_string(),
-                span,
-            ),
-            Some(_) => {}
-            None => self.cx.fn_info_mut(d).inline_marker = Some((i, span)),
+        self.cx.fn_info_mut(d).inline_marker = Some((i, span));
+    }
+}
+
+impl FnCx<'_, '_> {
+    /// Whether the first statement of `d`'s body is the call at `span`.
+    fn first_statement_is(&self, d: DefId, span: Span) -> bool {
+        let body = match &self.cx.fn_info(d).source {
+            Some(FnSource::Decl(decl)) => &decl.body,
+            Some(FnSource::Default(_, body)) => *body,
+            None => return false,
+        };
+        match body.stmts.first().map(|s| &s.kind) {
+            Some(ast::StmtKind::Expr(e)) => e.span == span,
+            _ => false,
         }
     }
 }

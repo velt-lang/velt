@@ -1,6 +1,7 @@
 //! std's inlining markers (std/lang/intrinsics/inline.vlt, std only): `inline()` inlines every
 //! call of a function whatever its size, `noInline()` keeps every call a call, and sema rejects
-//! `inline()` on a recursive function and the two markers together. The markers are std-only, so
+//! `inline()` on a recursive function and a marker that is not the first statement of a plain
+//! function or method. The markers are std-only, so
 //! a golden file cannot use them: std is copied to a temp directory with a probe module added,
 //! and `velt` uses it through `$VELT_STD` (as gated_functions.rs does).
 
@@ -516,7 +517,9 @@ export function probe(a: i64): i64 {
 }
 
 #[test]
-fn both_markers_in_one_function_are_an_error() {
+fn a_second_marker_is_an_error() {
+    // Only the first statement may be a marker, so `inline()` and `noInline()` together (or a
+    // marker twice) is an error at the second.
     let probe = r#"
 function both(x: i64): i64 {
   inline();
@@ -528,5 +531,103 @@ export function probe(a: i64): i64 {
   return both(a);
 }
 "#;
-    check_fails(probe, &["`inline()` and `noInline()` in one function"]);
+    check_fails(
+        probe,
+        &["5:3: error: `noInline()` must be the first statement of a function or method"],
+    );
+}
+
+#[test]
+fn a_marker_is_the_first_statement_of_a_plain_function() {
+    // After another statement, last, in a branch, in a closure, a generator or an async
+    // function: each is an error (a generator's and an async function's body is compiled into a
+    // resume function the marker would not reach).
+    let probe = r#"
+function middle(n: i64): i64 {
+  const k = n * 2;
+  inline();
+  return k;
+}
+
+function last(n: i64): i64 {
+  const y = n + 1;
+  noInline();
+  return y;
+}
+
+function branch(n: i64): i64 {
+  if (n > 100) {
+    noInline();
+  }
+  return n;
+}
+
+function closure(n: i64): i64 {
+  const f = (x: i64): i64 => {
+    inline();
+    return x + 1;
+  };
+  return f(n);
+}
+
+function* gen(n: i64): Generator<i64> {
+  inline();
+  yield n;
+}
+
+async function later(n: i64): Promise<i64> {
+  noInline();
+  return n;
+}
+
+export function probe(a: i64): i64 {
+  let s = middle(a) + last(a) + branch(a) + closure(a);
+  for (const v of gen(a)) {
+    s += v;
+  }
+  later(a);
+  return s;
+}
+"#;
+    let dir = test_dir::TestDir::new();
+    let out = velt(&dir, probe, &["check"]);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{err}");
+    let inline = "`inline()` must be the first statement of a function or method";
+    let no_inline = "`noInline()` must be the first statement of a function or method";
+    assert_eq!(err.matches(inline).count(), 3, "{err}");
+    assert_eq!(err.matches(no_inline).count(), 3, "{err}");
+}
+
+#[test]
+fn a_marker_first_in_a_method_is_accepted() {
+    let probe = r#"
+class Counter {
+  n: i64 = 0;
+
+  bump(by: i64): i64 {
+    inline();
+    this.n += by;
+    return this.n;
+  }
+
+  static twice(x: i64): i64 {
+    noInline();
+    return x * 2;
+  }
+}
+
+export function probe(a: i64): i64 {
+  const c = new Counter();
+  return c.bump(a) + Counter.twice(a);
+}
+"#;
+    let dir = test_dir::TestDir::new();
+    let out = velt(&dir, probe, &["run", "--release"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "21");
 }
