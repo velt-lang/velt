@@ -274,7 +274,11 @@ mod tests {
         assert_eq!(parse_timeout(Some("0")), Ok(None));
         // Too long to wait for: no limit.
         assert_eq!(parse_timeout(Some("1e30")), Ok(None));
-        assert!(deadline(parse_timeout(Some("1e19")).unwrap()).is_none());
+        // Past what `Instant` can hold on Linux (no deadline); on Windows it can, and the
+        // deadline is billions of years away. Never reached either way.
+        let far = deadline(parse_timeout(Some("1e19")).unwrap());
+        let year = Duration::from_secs(365 * 24 * 3600);
+        assert!(far.is_none_or(|(at, _)| at > Instant::now() + 1000 * year));
         for bad in ["abc", "-1", "inf", "NaN", ""] {
             assert_eq!(parse_timeout(Some(bad)), Err(()), "{bad}");
         }
