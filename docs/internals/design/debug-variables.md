@@ -28,7 +28,9 @@ Four steps, each its own pull request:
    locals, and `numrep` moves a description to the narrowed local.
 2. **Cranelift emits them.** A described scalar stays in a register for its reads, and each
    assignment also stores it to a shadow stack slot; aggregates live in stack slots anyway
-   (`StackSlotKey` finds the slots after compilation). Cranelift's own value locations
+   (`StackSlotKey` finds the slots after compilation). A described local keeps a keyed slot of
+   its own; the other memory locals share slots when their live ranges are disjoint
+   (velt_codegen_cl `function/slots`, #2048). Cranelift's own value locations
    (`set_val_label`) were tried and dropped: at this optimization level they lose most values
    between uses, so a debugger showed `w`, `h` and loop counters as unavailable. A value set from
    the debugger (`expr x = 100`) goes to the slot, which the program does not read back: it keeps

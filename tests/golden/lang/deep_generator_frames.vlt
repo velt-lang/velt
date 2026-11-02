@@ -1,0 +1,109 @@
+// A recursive generator with many temporaries, nested through `yield*` 2,000 levels deep,
+// the way a server renderer walks a component tree. Each level is one frame of the generator's
+// resume function on the same stack, so a debug build must keep that frame small: with a stack
+// slot of its own for every temporary, the frames of 2,000 levels outgrow the 8 MiB stack and
+// the program crashes. Only every 1,000th level yields its tags (the others count them), so
+// the yields don't pass through thousands of frames each and the test stays fast.
+
+type Attr = { name: string; value: string | number | boolean | undefined };
+
+interface Node {
+    tag: string;
+    attrs: Attr[];
+    text: string | undefined;
+    children: Node[];
+}
+
+function attrText(a: Attr): string | undefined {
+    const v = a.value;
+    if (v === undefined || v === false) return undefined;
+    if (v === true) return a.name;
+    return `${a.name}="${String(v)}"`;
+}
+
+let counted = 0;
+let countedLength = 0;
+
+function count(s: string): void {
+    counted++;
+    countedLength += s.length;
+}
+
+function* render(node: Node, depth: number): Generator<string> {
+    let open = `<${node.tag}`;
+    for (const a of node.attrs) {
+        const t = attrText(a);
+        if (t !== undefined) open += ` ${t}`;
+    }
+    const id: string | number = depth % 2 === 0 ? `n${depth}` : depth;
+    const cls: string | undefined = depth % 3 === 0 ? "third" : undefined;
+    const title = typeof id === "string" ? id.toUpperCase() : `#${id.toFixed(0)}`;
+    const extra = cls !== undefined ? ` class="${cls}"` : "";
+    const data = [depth, depth + 1, depth + 2].map((x) => `${x}`).join("-");
+    // Straight-line string work: each temporary is dead before the next is made.
+    let digest = "";
+    digest += String(depth + 0) + String(depth * 1) + String(depth % 2) + node.tag.slice(0);
+    digest += String(depth + 1) + String(depth * 2) + String(depth % 3) + node.tag.slice(1);
+    digest += String(depth + 2) + String(depth * 3) + String(depth % 4) + node.tag.slice(2);
+    digest += String(depth + 3) + String(depth * 4) + String(depth % 5) + node.tag.slice(0);
+    digest += String(depth + 4) + String(depth * 5) + String(depth % 6) + node.tag.slice(1);
+    digest += String(depth + 5) + String(depth * 6) + String(depth % 7) + node.tag.slice(2);
+    digest += String(depth + 6) + String(depth * 7) + String(depth % 8) + node.tag.slice(0);
+    digest += String(depth + 7) + String(depth * 8) + String(depth % 9) + node.tag.slice(1);
+    digest += String(depth + 8) + String(depth * 9) + String(depth % 10) + node.tag.slice(2);
+    digest += String(depth + 9) + String(depth * 10) + String(depth % 11) + node.tag.slice(0);
+    digest += String(depth + 10) + String(depth * 11) + String(depth % 12) + node.tag.slice(1);
+    digest += String(depth + 11) + String(depth * 12) + String(depth % 13) + node.tag.slice(2);
+    digest += String(depth + 12) + String(depth * 13) + String(depth % 14) + node.tag.slice(0);
+    digest += String(depth + 13) + String(depth * 14) + String(depth % 15) + node.tag.slice(1);
+    digest += String(depth + 14) + String(depth * 15) + String(depth % 16) + node.tag.slice(2);
+    digest += String(depth + 15) + String(depth * 16) + String(depth % 17) + node.tag.slice(0);
+    open += ` data-d="${data}" data-h="${digest.length}" title="${title}"${extra}>`;
+    const shown = depth % 1000 === 0;
+    if (shown) {
+        yield open;
+    } else {
+        count(open);
+    }
+    if (node.text !== undefined) {
+        const s = node.text.length > 3 ? node.text.slice(0, 3) : node.text;
+        yield `${s}${node.text.length}`;
+    }
+    for (const child of node.children) {
+        yield* render(child, depth + 1);
+    }
+    const close = depth % 5 === 0 ? `</${node.tag}><!--${depth}-->` : `</${node.tag}>`;
+    if (shown) {
+        yield close;
+    } else {
+        count(close);
+    }
+}
+
+function chain(depth: number): Node {
+    let node: Node = { tag: "b", attrs: [], text: "leaf", children: [] };
+    for (let i = depth - 1; i >= 0; i--) {
+        node = {
+            tag: i % 2 === 0 ? "div" : "span",
+            attrs: [
+                { name: "id", value: i },
+                { name: "hidden", value: i % 4 === 0 },
+                { name: "lang", value: undefined },
+            ],
+            text: i === 0 || i % 1013 === 0 ? `text${i}` : undefined,
+            children: [node],
+        };
+    }
+    return node;
+}
+
+let parts = 0;
+let length = 0;
+let last = "";
+for (const s of render(chain(2000), 0)) {
+    parts++;
+    length += s.length;
+    last = s;
+}
+console.log(parts, length, last);
+console.log(counted, countedLength);

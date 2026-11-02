@@ -46,6 +46,9 @@ const UNSUPPORTED: &[&str] = &[
     "promise_identity_defer_rejects",
     "promise_identity_defer_twice",
     "promise_identity_rejection",
+    // Nests 2,000 generators, which a native debug build holds in its 8 MiB stack (#2048); the
+    // WebAssembly stacks overflow.
+    "deep_generator_frames",
 ];
 /// Goldens that need a file system (not available to browser modules).
 const NEEDS_FS: &[&str] = &["fs"];
