@@ -299,6 +299,18 @@ impl FnCheck<'_> {
         dest: Option<&Place>,
         next: BlockId,
     ) -> R<()> {
+        // A math operation is a statement (`Rvalue::Intrinsic`, vir.rs invariant 12), never a
+        // direct call of its runtime function: passes and backends know it in that form only.
+        if let Callee::Extern(e) = callee {
+            let symbol = self.p.externs.get(e.0 as usize).map(|e| e.symbol.as_str());
+            if let Some(op) = symbol.and_then(crate::math::MathOp::of_symbol) {
+                return Err(format!(
+                    "a call of `{}`: math operations are statements (`math.{}(…)`), not calls",
+                    op.symbol(),
+                    op.name()
+                ));
+            }
+        }
         let (params, ret, noreturn) = self.callee_sig(callee)?;
         if params.len() != args.len() {
             return Err(format!(

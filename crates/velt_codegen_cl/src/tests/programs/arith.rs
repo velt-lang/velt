@@ -231,26 +231,9 @@ pub(crate) fn casts() -> TestProgram {
 
 /// Runtime math functions that the backend emits as instructions (the link harness defines
 /// the symbols to return NaN, so a call instead of the instruction shows in the output).
+/// The math operations (`math_intrinsics`), each in a function of its own.
 pub(crate) fn math() -> TestProgram {
     let (mut pb, rt) = ProgramBuilder::new();
-    let cases = [
-        ("velt_rt_math_sqrt", 2.0, "1.4142135623730951"),
-        ("velt_rt_math_floor", -2.5, "-3"),
-        ("velt_rt_math_ceil", -2.5, "-2"),
-        ("velt_rt_math_trunc", -2.7, "-2"),
-        ("velt_rt_math_fabs", -0.5, "0.5"),
-    ];
-    let mut fns = vec![];
-    for (symbol, x, exp) in cases {
-        let ext = pb.ext(symbol, &[F64], F64, false);
-        let mut fb = FuncBuilder::internal(&format!("m_{symbol}"), &[F64], F64);
-        let r = fb.local(F64);
-        let b = fb.block();
-        let arg = vec![copy_local(Local(0))];
-        let b = fb.call(b, Callee::Extern(ext), arg, Some(Place::local(r)));
-        fb.term(b, Terminator::Return(copy_local(r)));
-        fns.push((pb.add(fb.finish()), vec![float(x, F64)], F64, exp));
-    }
     let intrinsics = math_intrinsics(&mut pb);
     let (mut fb, b0) = main_fb();
     let mut cs = Cases {
@@ -261,9 +244,6 @@ pub(crate) fn math() -> TestProgram {
         },
         expected: String::new(),
     };
-    for (f, args, rty, exp) in fns {
-        cs.call(f, args, rty, exp);
-    }
     for (f, args, rty, exp) in intrinsics {
         cs.call(f, args, rty, exp);
     }

@@ -57,8 +57,6 @@ pub(crate) use print::declare as declare_formatters;
 pub use report::Unnarrowed;
 pub(crate) use simplify::self_comparisons;
 
-/// The runtime's ToInt32 (`velt_rt_math_to_int32(f64) -> i32`).
-const TO_INT32: &str = MathOp::ToInt32.symbol();
 /// The prelude's `xs[i]` with a float `i` (`std/prelude/math.vlt`).
 const FLOAT_INDEX: &str = velt_common::std_hook!(float_index);
 
@@ -137,33 +135,6 @@ impl<'p> Env<'p> {
             .map_or("", |e| e.symbol.as_str())
     }
 
-    /// The runtime math operation extern `id` is (`velt_vir::math`), if it is one.
-    fn math_op(&self, id: ExternId) -> Option<MathOp> {
-        MathOp::of_extern(self.externs.get(id.0 as usize)?)
-    }
-
-    /// The math operation a call of `callee` is, if it calls one's runtime function.
-    fn callee_op(&self, callee: &Callee) -> Option<MathOp> {
-        match callee {
-            Callee::Extern(id) => self.math_op(*id),
-            _ => None,
-        }
-    }
-
-    /// `Math.trunc`, `floor`, `ceil` or `round` (`f64 -> f64`).
-    fn is_rounding(&self, id: ExternId) -> bool {
-        self.math_op(id).is_some_and(|op| op.rounding().is_some())
-    }
-
-    /// `Math.abs` (`f64 -> f64`).
-    fn is_abs(&self, id: ExternId) -> bool {
-        self.math_op(id) == Some(MathOp::Abs)
-    }
-
-    fn is_to_int32(&self, callee: &Callee) -> bool {
-        matches!(callee, Callee::Extern(id) if self.math_op(*id) == Some(MathOp::ToInt32))
-    }
-
     fn is_float_index(&self, callee: &Callee) -> bool {
         matches!(callee, Callee::Func(f) if self.float_index.get(f.0 as usize) == Some(&true))
     }
@@ -202,7 +173,7 @@ pub(crate) fn run(env: &Env, func: &mut Function) -> bool {
         }
     }
     changed |= arrays::choose(env, func, &elements, |f| narrow_locals(env, f, &elements));
-    changed |= int32::guarded_sums(env, func);
+    changed |= int32::guarded_sums(func);
     changed
 }
 
@@ -210,14 +181,14 @@ pub(crate) fn run(env: &Env, func: &mut Function) -> bool {
 /// (computed before `arrays` retyped any); returns whether anything changed.
 fn narrow_locals(env: &Env, func: &mut Function, elements: &arrays::Elements) -> bool {
     let tracked = tracked(env, func, &elements.groups);
-    if tracked.is_empty() && !constant_to_int32(env, func) {
+    if tracked.is_empty() && !constant_to_int32(func) {
         return false;
     }
     let Some(flow) = Flow::compute(func, env, &tracked, elements.per_local()) else {
         return false;
     };
     let plan = narrow::plan(env, &flow, func);
-    rewrite::apply(env, func, &plan)
+    rewrite::apply(func, &plan)
 }
 
 /// The `f64` locals of `func` inside loops that stay `f64`, each with the reason
@@ -234,7 +205,7 @@ pub(crate) fn unnarrowed(env: &Env, func: &Function) -> Vec<Unnarrowed> {
 fn analyse(env: &Env, func: &Function) -> (Option<Flow>, arrays::Elements) {
     let groups = arrays::useful_groups(env, func);
     let tracked = tracked(env, func, &groups);
-    if tracked.is_empty() && !constant_to_int32(env, func) {
+    if tracked.is_empty() && !constant_to_int32(func) {
         return (None, arrays::Elements::unknown(groups));
     }
     let (elements, flow) = arrays::Elements::of(env, func, &tracked, groups);
@@ -243,17 +214,13 @@ fn analyse(env: &Env, func: &Function) -> (Option<Flow>, arrays::Elements) {
 }
 
 /// Does `func` take ToInt32 of a constant (`simplify` folds it without tracking anything)?
-fn constant_to_int32(env: &Env, func: &Function) -> bool {
-    let constant = |op: MathOp, args: &[Operand]| {
-        op == MathOp::ToInt32 && matches!(args, [Operand::Const(..)])
-    };
-    func.blocks.iter().any(|b| {
-        let stmt = b.stmts.iter().any(|s| match s {
-            Stmt::Assign(_, rv) => math_rvalue(rv).is_some_and(|(op, a)| constant(op, a)),
-            _ => false,
-        });
-        stmt || matches!(&b.term, Terminator::Call { callee, args, .. }
-            if env.callee_op(callee).is_some_and(|op| constant(op, args)))
+fn constant_to_int32(func: &Function) -> bool {
+    func.blocks.iter().flat_map(|b| &b.stmts).any(|s| match s {
+        Stmt::Assign(_, rv) => matches!(
+            math_rvalue(rv),
+            Some((MathOp::ToInt32, [Operand::Const(..)]))
+        ),
+        _ => false,
     })
 }
 
@@ -321,11 +288,7 @@ fn tracked(env: &Env, func: &Function, groups: &arrays::Groups) -> Vec<Local> {
             }
         }
         if let Terminator::Call { callee, args, .. } = &b.term {
-            let folded = match callee {
-                Callee::Extern(id) => env.is_rounding(*id) || env.is_abs(*id),
-                c => env.is_to_int32(c) || env.is_float_index(c),
-            };
-            if folded {
+            if env.is_float_index(callee) {
                 for a in args {
                     if let Operand::Copy(p) = a {
                         seeds.push(p.local);

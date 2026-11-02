@@ -238,12 +238,12 @@ fn rt_abi_calls() {
             vec![copy_local(p), int(16, Ty::U64), int(8, Ty::U64)],
             None,
         ),
-        (
-            rt.pow_i64,
-            vec![int(2, Ty::I64), int(10, Ty::I64)],
-            Some(Place::local(n)),
-        ),
     ];
+    // `pow` is a statement (`math.pow_i64`) that calls its runtime function, declared here.
+    pb.ext("velt_rt_pow_i64", &[Ty::I64, Ty::I64], Ty::I64, false);
+    let pow = velt_vir::vir::Intrinsic::Math(velt_vir::math::MathOp::PowI64);
+    let pow_args = vec![int(2, Ty::I64), int(10, Ty::I64)];
+    fb.assign(b0, n, velt_vir::vir::Rvalue::Intrinsic(pow, pow_args));
     let mut cur = b0;
     for (e, args, dest) in calls {
         cur = fb.call(cur, Callee::Extern(e), args, dest);

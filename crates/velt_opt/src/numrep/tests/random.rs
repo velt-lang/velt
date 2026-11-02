@@ -227,7 +227,7 @@ fn program(seed: u64) -> Program {
     }
     let f = g.finish(b);
     pb.add(f);
-    pb.finish()
+    as_intrinsics(pb.finish())
 }
 
 /// Same bits, or both NaN, or the same trap.

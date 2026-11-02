@@ -265,9 +265,6 @@ fn folded_statement(flow: &Flow, func: &Function, st: &State, s: &Stmt) -> Optio
 
 /// The value of a call the facts about its argument `a` make unnecessary.
 fn folded_call(env: &Env, callee: &Callee, a: &Operand, f: Fact) -> Option<Rvalue> {
-    if let Some(op) = env.callee_op(callee) {
-        return folded_math(op, a, f);
-    }
     match callee {
         c if env.is_float_index(c)
             && f.integral

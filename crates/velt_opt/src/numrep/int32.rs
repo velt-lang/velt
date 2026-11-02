@@ -1,6 +1,6 @@
 //! ToInt32 of sums the facts cannot bound: an integer add behind a cheap range check.
 //!
-//! **`velt_rt_math_to_int32(x ± y)`** where `x` and `y` convert `i64`s (or are whole constants),
+//! **`math.to_int32(x ± y)`** where `x` and `y` convert `i64`s (or are whole constants),
 //! sema's `(a + b) | 0` of two numbers held as integers, which JS adds as doubles: when both are
 //! within ±2^52 the double sum is exact, so it is the `i64` sum truncated; other values add as
 //! doubles (an `a` at 2^53 rounds, #561).
@@ -9,11 +9,10 @@
 //! (a counter compared with an unknown bound).
 
 use velt_vir::vir::{
-    BasicBlock, BinOp, BlockId, Callee, Const, Function, Local, LocalDecl, Operand, Place, Rvalue,
-    Stmt, Terminator, Ty,
+    BasicBlock, BinOp, BlockId, Const, Function, Local, LocalDecl, Operand, Place, Rvalue, Stmt,
+    Terminator, Ty,
 };
 
-use super::{Env, TO_INT32};
 use crate::srclocs::{push_stmt, split_after};
 use velt_vir::math::MathOp;
 
@@ -30,14 +29,14 @@ pub(super) fn from_small_int(func: &Function, rv: &Rvalue) -> bool {
 }
 
 /// Guard the int32 sums of `func`; returns whether anything changed.
-pub(super) fn guarded_sums(env: &Env, func: &mut Function) -> bool {
+pub(super) fn guarded_sums(func: &mut Function) -> bool {
     let mut changed = false;
     // Blocks split off below are visited too: a block may hold several such sums.
     let mut bi = 0;
     while bi < func.blocks.len() {
         if let Some((si, sum)) = statement_sum(func, bi) {
-            // `d = math.to_int32(t)` as the call would be: the end of its block, so that
-            // the slow side computes it and both sides continue with the statements after it.
+            // `d = math.to_int32(t)` at the end of its block, so that the slow side computes it
+            // and both sides continue with the statements after it.
             let rest = split_after(func, bi, si);
             let s = func.blocks[bi]
                 .stmts
@@ -57,13 +56,6 @@ pub(super) fn guarded_sums(env: &Env, func: &mut Function) -> bool {
                 rest,
                 (vec![s], Terminator::Goto(rest)),
             );
-            changed = true;
-        } else if let Some(sum) = double_sum(env, func, bi) {
-            let Terminator::Call { dest, next, .. } = func.blocks[bi].term.clone() else {
-                unreachable!("ICE: numrep sum without its call")
-            };
-            let call = std::mem::replace(&mut func.blocks[bi].term, Terminator::Unreachable);
-            split_double_sum(func, bi, sum, dest, next, (vec![], call));
             changed = true;
         }
         bi += 1;
@@ -90,18 +82,6 @@ fn statement_sum(func: &Function, bi: usize) -> Option<(usize, (BinOp, Operand, 
 fn new_temp(func: &mut Function, ty: Ty) -> Local {
     func.locals.push(LocalDecl::new(ty, None));
     Local(func.locals.len() as u32 - 1)
-}
-
-/// The extern a block's call terminator calls, when it is `symbol`.
-fn calls<'f>(env: &Env, func: &'f Function, bi: usize, symbol: &str) -> Option<&'f [Operand]> {
-    match &func.blocks[bi].term {
-        Terminator::Call {
-            callee: Callee::Extern(id),
-            args,
-            ..
-        } if env.symbol(*id) == symbol => Some(args),
-        _ => None,
-    }
 }
 
 /// The last whole assignment to the place `p` (a plain local) among `stmts[..end]`.
@@ -149,15 +129,6 @@ fn i64_behind(func: &Function, bi: usize, x: &Operand, at: usize) -> Option<Oper
         }
         _ => None,
     }
-}
-
-/// `velt_rt_math_to_int32(t)` ending block `bi`, with `t = x ± y` set in the block from two
-/// converted `i64`s (`i64_behind`): the operation and the two `i64`s.
-fn double_sum(env: &Env, func: &Function, bi: usize) -> Option<(BinOp, Operand, Operand)> {
-    let [Operand::Copy(t)] = calls(env, func, bi, TO_INT32)? else {
-        return None;
-    };
-    sum_before(func, bi, t, func.blocks[bi].stmts.len())
 }
 
 /// `t = x ± y`, the last assignment to `t` among the first `end` statements of block `bi`,

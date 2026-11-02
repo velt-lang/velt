@@ -5,7 +5,7 @@
 //! marker, so a call left in the code shows as a mismatch (#535).
 
 use cranelift_jit::{JITBuilder, JITModule};
-use velt_vir::vir::{Callee, Program, Terminator, Ty};
+use velt_vir::vir::{Program, Terminator, Ty};
 
 use super::{copy_local, FuncBuilder, ProgramBuilder};
 
@@ -42,17 +42,14 @@ const FUNCTIONS: [(&str, Reference); 4] = [
 fn program() -> Program {
     let (mut pb, _) = ProgramBuilder::new();
     for (symbol, _) in FUNCTIONS {
-        let ext = pb.ext(symbol, &[Ty::F64], Ty::F64, false);
+        pb.ext(symbol, &[Ty::F64], Ty::F64, false);
+        let op = velt_vir::math::MathOp::of_symbol(symbol).expect("a math operation");
         let mut fb = FuncBuilder::internal(&format!("entry_{symbol}"), &[Ty::F64], Ty::F64);
         let r = fb.local(Ty::F64);
         let b = fb.block();
         let arg = vec![copy_local(fb.param(0))];
-        let b = fb.call(
-            b,
-            Callee::Extern(ext),
-            arg,
-            Some(velt_vir::vir::Place::local(r)),
-        );
+        let rv = velt_vir::vir::Rvalue::Intrinsic(velt_vir::vir::Intrinsic::Math(op), arg);
+        fb.assign(b, r, rv);
         fb.term(b, Terminator::Return(copy_local(r)));
         pb.add(fb.finish());
     }

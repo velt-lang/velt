@@ -369,8 +369,9 @@ functions), which LLVM's declarations and `velt_opt` both read. `velt_opt` folds
 constants (`MathOp::eval`, which a test of veltc checks against the runtime's functions), except
 `pow` on doubles and a double operation with a NaN argument or result, whose bits the hardware
 chooses. Lowering emits a math operation as `Rvalue::Intrinsic(Intrinsic::Math(op), …)` (vir.rs
-invariant 12), a statement that means the same as the call; the extern stays declared, and
-backends call it for `pow` and on ToInt32's cold path.
+invariant 12), a statement that means the same as the call, and never as a direct call (the
+verifier rejects one); the extern stays declared, and backends call it for `pow` and on
+ToInt32's cold path.
 
 ## SIMD [additive]
 

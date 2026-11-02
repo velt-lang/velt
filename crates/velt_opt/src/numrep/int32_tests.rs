@@ -4,10 +4,11 @@
 use super::*;
 use crate::interp::{Host, Interp, Memory, Trap};
 use crate::numrep::run_program;
+use crate::numrep::tests::{as_intrinsics, math_ops, TO_INT32};
 use crate::testkit::builder::*;
 use crate::testkit::validate::assert_valid;
 use velt_vir::vir::ExternFn;
-use velt_vir::vir::{Program, Rvalue, Terminator};
+use velt_vir::vir::{Callee, Program, Rvalue};
 
 /// Runs `velt_rt_math_to_int32` like the runtime (finite values below 2^63 are enough here).
 struct ToInt32Host;
@@ -99,7 +100,7 @@ pub(in crate::numrep) fn hash_program() -> Program {
     );
     fb.ret(exit, copy_local(out));
     pb.add(fb.finish());
-    pb.finish()
+    as_intrinsics(pb.finish())
 }
 
 fn call(p: &Program, args: &[u64]) -> u64 {
@@ -115,11 +116,7 @@ fn optimized(p: &Program) -> Program {
 }
 
 fn to_int32_calls(p: &Program) -> usize {
-    p.funcs[0]
-        .blocks
-        .iter()
-        .filter(|b| matches!(b.term, Terminator::Call { .. }))
-        .count()
+    math_ops(&p.funcs[0])
 }
 
 #[test]
@@ -167,6 +164,6 @@ fn locals_with_other_definitions_stay() {
     fb.assign(b, v, bin(BinOp::Add, copy_local(v), copy_local(x)));
     fb.ret(b, copy_local(v));
     pb.add(fb.finish());
-    let mut p = pb.finish();
+    let mut p = as_intrinsics(pb.finish());
     assert!(!run_program(&mut p));
 }
