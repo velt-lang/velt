@@ -303,8 +303,7 @@ fn impl_methods(cx: &Ctx, found: &mut Vec<DefId>) {
     for imp in &cx.impls {
         // Only the extension methods: a lazy class's methods wait for the class to be used.
         let extension = |d: DefId| {
-            matches!(&cx.info[d.0 as usize], DefInfo::Fn(f) if f.owner.is_none())
-                && deferred(cx, d)
+            matches!(&cx.info[d.0 as usize], DefInfo::Fn(f) if f.owner.is_none()) && deferred(cx, d)
         };
         found.extend(imp.methods.iter().copied().filter(|&d| extension(d)));
     }
