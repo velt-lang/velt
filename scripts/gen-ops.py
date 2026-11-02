@@ -156,7 +156,7 @@ FILES = [
     ("operators.vlt", interfaces()),
     ("signed.vlt", numbers("signed integer types", INTS[:5], False)),
     ("unsigned.vlt", numbers("unsigned integer types", INTS[5:], False)),
-    ("floats.vlt", numbers("float types and of `string`", FLOATS, True)),
+    ("floats.vlt", numbers("float types and `string`", FLOATS, True)),
     ("index.vlt", index()),
 ]
 for name, text in FILES:
@@ -189,7 +189,8 @@ def golden():
         "//",
         "// The operator methods `velt/ops` gives the number types mean exactly what the built-in",
         "// operators mean (#2050): called through generic code, each gives the operator's result",
-        "// on edge values, overflow and NaN included (Object.is: -0 and NaN count as equal).",
+        "// on edge values, overflow and NaN included. Results are compared as text, where -0 reads",
+        "// as 0 and NaN as NaN.",
         "",
         f'import type {{ {", ".join(ifaces)} }} from "velt/ops";',
         "",

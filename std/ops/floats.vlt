@@ -1,4 +1,4 @@
-// velt/ops (internal): the operator methods of the float types and of `string`, so that generic code bounded
+// velt/ops (internal): the operator methods of the float types and `string`, so that generic code bounded
 // by `velt/ops`' interfaces runs on them. Each is the built-in operator itself, which
 // generic code compiles to after inlining.
 //

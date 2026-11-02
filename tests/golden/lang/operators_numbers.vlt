@@ -2,7 +2,8 @@
 //
 // The operator methods `velt/ops` gives the number types mean exactly what the built-in
 // operators mean (#2050): called through generic code, each gives the operator's result
-// on edge values, overflow and NaN included (Object.is: -0 and NaN count as equal).
+// on edge values, overflow and NaN included. Results are compared as text, where -0 reads
+// as 0 and NaN as NaN.
 
 import type { Add, Sub, Mul, Div, Rem, Pow, BitAnd, BitOr, BitXor, Shl, Shr, UShr, Neg, BitNot } from "velt/ops";
 

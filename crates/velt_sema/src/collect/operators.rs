@@ -316,17 +316,14 @@ fn ops_iface(cx: &Ctx, name: &str) -> Option<DefId> {
     }
 }
 
-/// The `velt/ops` interface and its arguments that operator method `m` (named `name`)
-/// implements: `Add<R, O>` for `[Symbol.add](other: R): O`, `Neg<O>`, `AddAssign<R>`,
-/// `Index<K, V>` and `SetIndex<K, V>` (one index).
-fn implemented(cx: &Ctx, name: &str, m: &MethodRef) -> Option<(&'static str, Vec<TyId>)> {
+/// The `velt/ops` interface (its position in [`IFACES`]) and its arguments that operator
+/// method `m` (named `name`) implements: `Add<R, O>` for `[Symbol.add](other: R): O`, `Neg<O>`,
+/// `AddAssign<R>`, `Index<K, V>` and `SetIndex<K, V>` (one index).
+fn implemented(cx: &Ctx, name: &str, m: &MethodRef) -> Option<(usize, Vec<TyId>)> {
     let f = cx.fn_info(m.def);
     let p = |i: usize| f.params.get(i).map(|p| p.ty);
-    let iface = |key: &str| -> Option<&'static str> {
-        let k = key.strip_prefix("[Symbol.")?.strip_suffix(']')?;
-        IFACES.iter().find(|(kk, _)| *kk == k).map(|(_, i)| *i)
-    };
-    let name_of = iface(name)?;
+    let k = name.strip_prefix("[Symbol.")?.strip_suffix(']')?;
+    let at = IFACES.iter().position(|(kk, _)| *kk == k)?;
     let args = match op_method(name)? {
         OpMethod::Binary(_) if f.params.len() == 1 => vec![p(0)?, f.ret],
         OpMethod::Unary(_) if f.params.is_empty() => vec![f.ret],
@@ -335,7 +332,7 @@ fn implemented(cx: &Ctx, name: &str, m: &MethodRef) -> Option<(&'static str, Vec
         OpMethod::SetIndex if f.params.len() == 2 => vec![p(0)?, p(1)?],
         _ => return None,
     };
-    Some((name_of, args))
+    Some((at, args))
 }
 
 /// The interface of each operator key.
@@ -376,22 +373,27 @@ const IFACES: [(&str, &str); 28] = [
 /// `Arithmetic<T>` where `T` has `+`, `-`, `*`, `/` and unary `-` on itself. Nothing when the
 /// program does not load `velt/ops`.
 fn impls(cx: &mut Ctx, owners: &[Owner]) {
-    if ops_iface(cx, "Add").is_none() {
+    if owners.is_empty() || ops_iface(cx, "Add").is_none() {
         return;
     }
+    // Each interface looked up once.
+    let ifaces: Vec<Option<DefId>> = IFACES.iter().map(|(_, i)| ops_iface(cx, i)).collect();
+    let Some(arith) = ops_iface(cx, "Arithmetic") else {
+        return;
+    };
     for o in owners {
         let mut own: Vec<(&str, DefId, Vec<TyId>, DefId)> = vec![];
         for (name, m) in o.methods.iter().filter(|(_, m)| !m.is_static) {
-            let Some((iname, args)) = implemented(cx, name, m) else {
+            let Some((at, args)) = implemented(cx, name, m) else {
                 continue;
             };
-            let Some(iface) = ops_iface(cx, iname) else {
+            let Some(iface) = ifaces[at] else {
                 continue;
             };
             own.push((name, iface, args.clone(), m.def));
             push_impl(cx, o, iface, args, vec![m.def]);
         }
-        arithmetic(cx, o, &own);
+        arithmetic(cx, o, arith, &own);
     }
 }
 
@@ -420,10 +422,7 @@ fn push_impl(cx: &mut Ctx, o: &Owner, iface: DefId, args: Vec<TyId>, methods: Ve
 /// `Arithmetic<T>` for `o`'s type `T` when its own operator methods (`own`: key, interface,
 /// args, method) give `Add<T, T>`, `Sub<T, T>`, `Mul<T, T>`, `Div<T, T>` and `Neg<T>`: the methods
 /// in the interface's slot order.
-fn arithmetic(cx: &mut Ctx, o: &Owner, own: &[(&str, DefId, Vec<TyId>, DefId)]) {
-    let Some(arith) = ops_iface(cx, "Arithmetic") else {
-        return;
-    };
+fn arithmetic(cx: &mut Ctx, o: &Owner, arith: DefId, own: &[(&str, DefId, Vec<TyId>, DefId)]) {
     let t = o.ty;
     let slots: Vec<String> = match cx.iface(arith) {
         Some(i) => i.methods.iter().map(|m| m.name.clone()).collect(),
