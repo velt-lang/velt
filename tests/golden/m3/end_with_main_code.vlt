@@ -1,8 +1,9 @@
 // `main` returning an exit code other than 0 ends the program at once: the promises still
 // running do not keep it alive (only after a `main` that returned 0 does the program wait).
 
+// The loser sleeps 5 s, so only a runtime that waits for it prints its line, however loaded.
 async function slow(): Promise<string> {
-  await sleep(50);
+  await sleep(5000);
   console.log("the loser finished");
   return "slow";
 }

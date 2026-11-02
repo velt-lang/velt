@@ -1,12 +1,13 @@
 // Tasks started with `spawn` keep the program alive after `main` returns, until they are done.
 
-async function background(name: string, ms: i64): Promise<void> {
-  await sleep(ms);
-  console.log(`${name} done`);
+async function background(): Promise<void> {
+  await sleep(30);
+  console.log("first done");
+  await sleep(30);
+  console.log("second done");
 }
 
 async function main() {
-  spawn(background("first", 30));
-  spawn(background("second", 60));
+  spawn(background());
   console.log("main returns");
 }
