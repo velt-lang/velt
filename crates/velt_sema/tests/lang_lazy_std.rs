@@ -297,9 +297,10 @@ fn a_primitive_types_prelude_methods_are_checked_once_called() {
 
 #[test]
 fn a_primitive_types_methods_implementing_an_interface_stay_checked() {
-    // `extend u8 implements Sized` in a lazy module: a call through the bound of `T` names
-    // no method (`Callee::ParamMethod`), so the implementation's methods stay checked; the
-    // block's other methods are checked once called.
+    // `extend u8 implements Sized` in a lazy module: a call through the bound of `T`
+    // (`sizeOf`, which the program could call) names no method (`Callee::ParamMethod`), so the
+    // implementation's methods stay checked whether or not anything calls `sizeOf`; the block's
+    // other methods are checked once called.
     let impl_src = format!(
         "{PROBE_IMPL}\
 export interface Sized {{ size(): i64; }}

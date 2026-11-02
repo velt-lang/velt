@@ -17,7 +17,7 @@ A std module is *lazy* unless:
 
 - a user module imports it directly, or it is a user module's JSX runtime. `velt check` of a
   module that imports std still reports everything in what it imports (but not the prelude's
-  free functions and static methods it doesn't reach, below);
+  free functions, static methods and methods of primitive types it doesn't reach, below);
 - lowering looks its definitions up by name (`EAGER`: `std/sort`, `std/proxy`,
   `std/typed_array`, `std/sync/epoch`, `std/this_fn`);
 - it has top-level statements, which run when the module is evaluated.
@@ -41,23 +41,24 @@ The definitions of a lazy module that are *deferred*:
 
 The prelude (`std/prelude/`, `std/record`, `std/collections`) is lazy in a narrower way:
 lowering looks up its types' methods and its helper functions by name, so only its free
-functions and static methods are deferred, except the helpers (`HELPER_NAMES`: every `"__…"`
-name in the code of lowering, the optimizer and the backends, which a unit test checks, and the
-`__any<Type>_<method>` built-ins of `any` values). Module `let`s and static fields are never
-deferred: they are module state.
+functions and static methods (and the methods of primitive types, below) are deferred, except
+the helpers (`HELPER_NAMES`: every `"__…"` name in the code of lowering, the optimizer and the
+backends, which a unit test checks, and the `__any<Type>_<method>` built-ins of `any` values).
+Module `let`s and static fields are never deferred: they are module state.
 
-The instance methods of `extend` blocks on primitive types (numbers, `bool`, `string`, `symbol`,
-SIMD vectors), in the prelude and in lazy modules alike, are deferred too (`primitive_methods`),
-except helpers: checked once checked code calls one. Such a type has no class whose use would
-bring its methods in, but a call of one names it (`x.rotateLeft(1)` is a `Callee::Def` of
-`u64.rotateLeft`, and a method value is a closure making that call). The exception is a method
-of an implementation (`Program::impls`): `compareTo` makes every number `Comparable`, and
-`extend u64 implements InlineKey` makes `u64` an `InlineKey`. Generic code calls those through
-a type parameter's bound or an interface value (`Callee::ParamMethod`, `Callee::Dyn`), which
-names no method until monomorphization, so they stay checked. An implementation made while
-bodies are checked has its methods reached by `reach`. Generic `extend` blocks (`extend<T>
-Array<T>`, `extend<T> (T | null)`) and the `extend` blocks of the prelude's classes are not
-deferred.
+The instance methods (getters included) of `extend` blocks on primitive types (numbers, `bool`,
+`string`, `symbol`, SIMD vectors and masks), in the prelude and in lazy modules alike, are
+deferred too (`primitive_methods`), except helpers: checked once checked code calls one. Such a
+type has no class whose use would bring its methods in, but a call of one names it
+(`x.rotateLeft(1)` is a `Callee::Def` of `u64.rotateLeft`, and a method value is a closure
+making that call). The exception is a method of an implementation (`Program::impls`):
+`compareTo` makes every number `Comparable`, and `extend u64 implements InlineKey` makes `u64`
+an `InlineKey`. Generic code calls those through a type parameter's bound or an interface value
+(`Callee::ParamMethod`, `Callee::Dyn`), which names no method until monomorphization, so they
+stay checked. The implementations holding such methods are all built while collecting, before
+the plan is made; those made later hold methods of their own (adapters, closures, getters) or
+those of an implementation already built. The `extend` blocks on other types (`extend<T>
+Array<T>`, `extend Array<i64>`, `extend<T> (T | null)`, the prelude's classes) are not deferred.
 
 `body::check_bodies` checks everything else as before. Then `lazy_std::reach` scans the HIR
 checked so far (function bodies, constant initializers, field and parameter defaults) for
@@ -106,5 +107,5 @@ requires no diagnostics, and nightly's `compile/check_all_std` measures it the s
 
 One more walk over the checked HIR, in exchange for not checking the unreached bodies; see the
 pull request for the numbers. A method on a primitive type that nothing calls costs a program
-nothing to check, so the prelude can add such methods (the integers' bit counts, rotations and
-checked arithmetic) without making every program slower to compile.
+nothing to check, so the prelude can add such methods (the integers' bit counts and rotations)
+without making every program slower to compile.

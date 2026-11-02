@@ -21,10 +21,10 @@
 //! - nothing in the modules lowering looks into by name for other definitions ([`EAGER`]).
 //!
 //! A user module's code is always checked, and so is a std module it imports: `velt check`
-//! reports everything in what a program imports, except the prelude's unreached free functions
-//! and statics. All of std is checked with laziness off (`VELT_EAGER_STD=1`), as veltc's
-//! `all_of_std_checks_without_diagnostics` does for bench/compile/all_std.vlt. The editor's
-//! analysis checks everything.
+//! reports everything in what a program imports, except the prelude's unreached free functions,
+//! statics and methods of primitive types. All of std is checked with laziness off
+//! (`VELT_EAGER_STD=1`), as veltc's `all_of_std_checks_without_diagnostics` does for
+//! bench/compile/all_std.vlt. The editor's analysis checks everything.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -157,8 +157,6 @@ pub(crate) struct Lazy {
     fn_deferred: Vec<Option<bool>>,
     /// The deferred methods of `extend` blocks on primitive types ([`primitive_methods`]).
     primitive: FxHashSet<DefId>,
-    /// The implementations below this one had their methods scanned ([`reach`]).
-    impls_scanned: usize,
 }
 
 impl Lazy {
@@ -175,7 +173,6 @@ impl Lazy {
             defaults_scanned: 0,
             fn_deferred: vec![],
             primitive: FxHashSet::default(),
-            impls_scanned: 0,
         }
     }
 
@@ -289,15 +286,18 @@ fn decide(cx: &Ctx, d: DefId) -> bool {
     }
 }
 
-/// The instance methods of the `extend` blocks on primitive types (numbers, `bool`, `string`,
-/// `symbol`, SIMD vectors) of lazy std modules, which are checked once checked code calls one:
-/// a value of such a type has no class whose use would bring its methods in, and the call
-/// names the method (`Callee::Def`, `body/expr/method.rs` `extension_method`). Except:
+/// The instance methods (getters included) of the `extend` blocks on primitive types (numbers,
+/// `bool`, `string`, `symbol`, SIMD vectors and masks) of lazy std modules, which are checked
+/// once checked code calls one: a value of such a type has no class whose use would bring its
+/// methods in, and the call names the method (`Callee::Def`, `body/expr/method.rs`
+/// `extension_method`; a method value is a closure making that call). Except:
 /// - a method of an implementation (`Program::impls`: `compareTo` makes a number `Comparable`,
 ///   `extend u64 implements InlineKey`), which a call through a type parameter's bound or an
 ///   interface value reaches after monomorphization (`Callee::ParamMethod`, `Callee::Dyn`),
-///   with no reference in the HIR to scan. Those stay checked; an implementation made later
-///   (while bodies are checked) has its methods reached by [`reach`];
+///   with no reference in the HIR to scan. Those stay checked. The implementations that hold
+///   such methods are all built while collecting (`collect/comparable.rs`, `iterable.rs`,
+///   `ext_impls.rs`), before [`plan`]; the ones made later hold methods of their own
+///   (adapters, closures, getters) or those of an implementation already built;
 /// - in the prelude, the helpers lowering looks up by name ([`is_helper`]).
 fn primitive_methods(cx: &Ctx) -> FxHashSet<DefId> {
     let in_impls: FxHashSet<DefId> = (cx.impls.iter())
@@ -362,14 +362,6 @@ pub(crate) fn reach(cx: &mut Ctx) {
         }
     }
     loop {
-        // An implementation made while bodies were checked: its methods are reached through
-        // tables and type-parameter bounds, after monomorphization ([`primitive_methods`]).
-        let from = std::mem::replace(&mut cx.lazy.impls_scanned, cx.impls.len());
-        sc.found.extend(
-            (cx.impls[from..].iter())
-                .flat_map(|i| i.methods.iter())
-                .filter(|d| cx.lazy.primitive.contains(d)),
-        );
         let used: Vec<DefId> = (cx.lazy.used.iter())
             .filter(|d| cx.lazy.methods.contains_key(d) && !cx.lazy.scanned.contains(d))
             .copied()
