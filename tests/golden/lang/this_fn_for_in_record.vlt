@@ -1,0 +1,34 @@
+// `for...in` over a record in a program with a function expression taking `this` (#942): the
+// loop's own test of each key is a method of the record, not a value to call with `this`, as a
+// JSX runtime walks the rest of its props (`const { children, ...rest } = props`).
+interface JSXProps {
+  children?: any;
+  [key: string]: any;
+}
+
+const methods: Record<string, Function> = {};
+methods.self = function (this: any) {
+  return this;
+};
+
+function attrs(props: JSXProps): string {
+  const { children, ...rest } = props;
+  let out = "";
+  for (const k in rest) {
+    out += " " + k + "=" + String(rest[k]);
+  }
+  return out + " children=" + String(children);
+}
+
+function main() {
+  console.log(attrs({ href: "/a", title: "A", children: "x" }));
+  console.log(attrs({ children: 1 }));
+  const r: Record<string, number> = { a: 1, b: 2 };
+  for (const k in r) {
+    console.log(k, r[k]);
+  }
+  const box = { n: 3, get: methods.self };
+  console.log(box.get() === box);
+}
+
+main();

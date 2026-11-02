@@ -1,7 +1,7 @@
 // velt/lang/proxy (internal): the array methods called on a proxy of an array (`push`, `pop`,
 // `shift`, `unshift`, `splice`, `map`, `filter`, `forEach`, `some`, `every`, `find`, `includes`,
-// `indexOf`, `join`, `slice`, `reverse`, `sort`; issue #823, https://veltlang.com/docs/reference/types/ "Proxy and
-// Reflect").
+// `indexOf`, `lastIndexOf`, `join`, `slice`, `reverse`, `sort`; issue #823,
+// https://veltlang.com/docs/reference/types/ "Proxy and Reflect").
 //
 // `p.push(x)` on a proxy reads `push` through the `get` trap. When the trap forwards to an array
 // (`Reflect.get(target, key, receiver)`), the method it reads is an `ArrayMethod`, and the call
@@ -20,9 +20,11 @@ import {
   THIS_FN_APPLY,
   THIS_FN_BIND,
 } from "velt/lang/hooks/keys";
+import { anyString } from "velt/lang/hooks/any_text";
 import { proxyReverse, proxySort } from "velt/lang/proxy/array_order";
 import { arrayMethodApply } from "velt/lang/proxy/array_apply";
 import { arrayMethodName, concatArgs } from "velt/lang/proxy/array_names";
+import { proxySearch } from "velt/lang/proxy/array_search";
 
 /**
  * An array method read through a proxy (`Reflect.get(array, "push")`) or from `Array.prototype`
@@ -87,7 +89,7 @@ export function proxyArrayMethod(key: string): boolean {
 }
 
 /** JavaScript's `ToIntegerOrInfinity` of an argument (a number; anything else is 0). */
-function arrayInt(v: any): number {
+export function arrayInt(v: any): number {
   if (typeof v !== "number") {
     return 0;
   }
@@ -272,12 +274,12 @@ function proxySplice(
 }
 
 /** Argument `i` of a call, or `undefined`. */
-function arrayArg(args: any[], i: i64): any {
+export function arrayArg(args: any[], i: i64): any {
   return (args.length as i64) > i ? args[i] : undefined;
 }
 
 /** The position a relative index `v` (an argument; `undefined`: `dflt`) names in `0..len`. */
-function arrayRel(v: any, len: number, dflt: number): number {
+export function arrayRel(v: any, len: number, dflt: number): number {
   if (v === undefined) {
     return dflt;
   }
@@ -311,35 +313,15 @@ function proxyArrayRead(p: Proxy, name: string, args: any[], o: any, len: number
     }
     return undefined;
   }
-  if (name === "includes" || name === "indexOf") {
-    const found = name === "includes" ? true : false;
-    const none: any = name === "includes" ? false : -1;
-    if (len == 0) {
-      return none;
-    }
-    const from = arrayArg(args, 1);
-    if (arrayInt(from) >= len) {
-      return none;
-    }
-    for (let k = arrayRel(from, len, 0); k < len; k++) {
-      const key = `${k}`;
-      if (name === "includes") {
-        const v = trapGet(p, key, o);
-        if (v === a0 || (v !== v && a0 !== a0)) {
-          return found;
-        }
-      } else if (trapHas(p, key) && trapGet(p, key, o) === a0) {
-        return k;
-      }
-    }
-    return none;
+  if (name === "includes" || name === "indexOf" || name === "lastIndexOf") {
+    return proxySearch(p, name, args, o, len);
   }
   if (name === "join") {
-    const sep = a0 === undefined ? "," : String(a0);
+    const sep = a0 === undefined ? "," : anyString(a0, "");
     let out = "";
     for (let k = 0; k < len; k++) {
       const v = trapGet(p, `${k}`, o);
-      out += (k > 0 ? sep : "") + (v === undefined || v === null ? "" : String(v));
+      out += (k > 0 ? sep : "") + (v === undefined || v === null ? "" : anyString(v, ""));
     }
     return out;
   }

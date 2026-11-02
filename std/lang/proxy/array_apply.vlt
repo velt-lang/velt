@@ -45,4 +45,3 @@ export function arrayMethodApply(name: string, self: any, args: any[]): any {
     `TypeError: \`Array.prototype.${name}\` called on a value that is not an array is not supported yet (#823)`,
   );
 }
-

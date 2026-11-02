@@ -1,0 +1,91 @@
+// A reactive library's array instrumentation (#942, #823) on proxied arrays of objects, as
+// sigx's signal.ts writes it: `sort` with and without a comparator (objects compare by
+// `String(o)`, so the order stays), `lastIndexOf` with its fallback to the raw array, and the
+// methods read once from `Array.prototype` called on plain arrays.
+interface VNode {
+  type: string;
+  props: Record<string, any>;
+  key: number;
+  children: VNode[];
+}
+let depth = 0;
+const log: string[] = [];
+function startBatch() {
+  depth++;
+}
+function endBatch() {
+  depth--;
+}
+const arrayInstrumentations: Record<string, Function> = {};
+["push", "pop", "shift", "unshift", "splice", "sort", "reverse"].forEach((method) => {
+  const original = (Array.prototype as any)[method];
+  arrayInstrumentations[method] = function (this: any) {
+    startBatch();
+    try {
+      return original.apply(this, arguments);
+    } finally {
+      endBatch();
+    }
+  };
+});
+(["includes", "indexOf", "lastIndexOf"] as const).forEach((method) => {
+  arrayInstrumentations[method] = function (this: any, ...args: any[]) {
+    const raw = this.__raw as any[];
+    const result = (Array.prototype as any)[method].apply(this, args);
+    if (result !== -1 && result !== false) {
+      return result;
+    }
+    return (Array.prototype as any)[method].apply(raw, args);
+  };
+});
+const arrayInstrumentedKeys = new Set(Object.keys(arrayInstrumentations));
+
+function reactive(target: any[]): any {
+  return new Proxy(target, {
+    get(obj: any, prop: any, receiver: any): any {
+      if (prop === "__raw") {
+        return obj;
+      }
+      if (Array.isArray(obj) && typeof prop === "string" && arrayInstrumentedKeys.has(prop)) {
+        return arrayInstrumentations[prop];
+      }
+      return Reflect.get(obj, prop);
+    },
+    set(obj: any, prop: any, value: any, receiver: any): boolean {
+      log.push("set " + String(prop));
+      return Reflect.set(obj, prop, value, receiver);
+    },
+  });
+}
+
+function vn(type: string, key: number): VNode {
+  return { type, props: { id: "n" + key }, key, children: [] };
+}
+function show(a: any[]): string {
+  return a.map((v: any) => (v && typeof v === "object" ? v.type + ":" + v.key : String(v))).join(",");
+}
+
+function main() {
+  const a = vn("b", 2);
+  const b = vn("a", 1);
+  const c = vn("c", 3);
+  const raw: any[] = [a, b, c];
+  const p = reactive(raw);
+  console.log(p.push(vn("d", 0)), show(raw), depth);
+  console.log(p.sort((x: VNode, y: VNode) => x.key - y.key) === p, show(raw));
+  p.push(b);
+  console.log(p.lastIndexOf(b), p.indexOf(b), p.includes(c), p.lastIndexOf(vn("z", 9)));
+  console.log(p.sort() === p, show(raw));
+  const nums = reactive([3, 1, 10, 2]);
+  console.log(nums.sort().join(","), nums.sort((x: number, y: number) => y - x).join(","));
+  const strs = reactive(["b", undefined, "a"]);
+  console.log(strs.sort().join("|"));
+  console.log(p.map((v: VNode) => v.type).join(""), p.filter((v: VNode) => v.key > 1).length);
+  const plainSort = (Array.prototype as any).sort;
+  const plain: VNode[] = [c, a, b];
+  console.log(show(plainSort.call(plain, (x: VNode, y: VNode) => x.key - y.key)));
+  console.log(show(plainSort.apply(plain, [])), (Array.prototype as any).lastIndexOf.call([1, 2, 1], 1));
+  console.log(log.length, depth);
+}
+
+main();

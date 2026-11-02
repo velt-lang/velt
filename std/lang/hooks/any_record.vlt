@@ -10,16 +10,27 @@
  * through one is not seen through the other.
  */
 export function anyToRecordAny(o: any): Record<string, any> {
-  const r: Record<string, any> = { ...o };
+  const r: Record<string, any> = {};
+  for (const k of Object.keys(o)) {
+    r[k] = anyEntry(o, k);
+  }
   return r;
 }
 
 /** `x as Record<string, V>` of an `any` holding another object: `anyToRecordAny`, each value a `V`. */
 export function anyToRecord<V>(o: any): Record<string, V> {
-  const all: Record<string, any> = { ...o };
   const r: Record<string, V> = {};
-  for (const k of Object.keys(all)) {
-    r[k] = all[k] as V;
+  for (const k of Object.keys(o)) {
+    r[k] = anyEntry(o, k) as V;
   }
   return r;
+}
+
+/**
+ * The value of the own key `k` of `o` (an array's element by its index). The keys and values
+ * are read as `Object.keys` and a member read do, not as `{ ...o }`, whose checking costs every
+ * program that mentions `Record` several times as much.
+ */
+function anyEntry(o: any, k: string): any {
+  return Array.isArray(o) ? o[Number(k)] : o[k];
 }

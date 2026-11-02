@@ -17,6 +17,7 @@ export function arrayMethodName(key: string): boolean {
     key === "find" ||
     key === "includes" ||
     key === "indexOf" ||
+    key === "lastIndexOf" ||
     key === "join" ||
     key === "slice" ||
     key === "reverse" ||

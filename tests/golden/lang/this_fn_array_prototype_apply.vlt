@@ -5,7 +5,7 @@
 let batches = 0;
 const log: string[] = [];
 const inst: Record<string, Function> = {};
-["push", "pop", "shift", "unshift", "splice", "reverse"].forEach((method) => {
+["push", "pop", "shift", "unshift", "splice", "sort", "reverse"].forEach((method) => {
   const original = (Array.prototype as any)[method];
   inst[method] = function (this: any) {
     batches++;
@@ -16,7 +16,7 @@ const inst: Record<string, Function> = {};
     }
   };
 });
-(["includes", "indexOf"] as const).forEach((method) => {
+(["includes", "indexOf", "lastIndexOf"] as const).forEach((method) => {
   inst[method] = function (this: any, ...args: any[]) {
     const raw = this.__raw as any[];
     const result = (Array.prototype as any)[method].apply(this, args);
@@ -58,6 +58,9 @@ function main() {
   console.log(p.indexOf("y"), p.includes(9), p.includes(0));
   console.log(p.at2(1));
   console.log(p.reverse() === target, target);
+  console.log(p.lastIndexOf(3), p.lastIndexOf("y", -3), p.lastIndexOf(0, -2), p.lastIndexOf(9));
+  console.log(p.sort() === p, target);
+  console.log(p.sort((a: any, b: any) => (String(a) < String(b) ? 1 : -1)) === p, target);
   console.log(batches, log.join(" "));
   // The method itself, on a plain array and on the proxy.
   const push = (Array.prototype as any).push;
@@ -65,6 +68,9 @@ function main() {
   console.log(push.call(plain, 8, 9), plain, push.apply(p, [10]), target);
   const join = (Array.prototype as any).join;
   console.log(join.bind(plain)("+"), join.bind(p, "/")());
+  const sort = (Array.prototype as any).sort;
+  const words = ["b", "c", "a"];
+  console.log(sort.call(words), sort.apply([10, 9, 1], []), (Array.prototype as any).lastIndexOf.call(words, "a"));
   console.log(typeof push, (Array.prototype as any).nope);
 }
 

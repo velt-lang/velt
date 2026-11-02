@@ -84,6 +84,15 @@ impl FnCx<'_, '_> {
             // A field of a typed object, or a record's value (read without checking `o.m`,
             // which for a method makes a function value calling it).
             (ast::ExprKind::Member { prop, .. }, false) => match self.cx.record_type_args(ot) {
+                // A symbol-keyed member of a record is one of its methods (`[RECORD_HAS](k)`,
+                // which a `for...in` writes), not one of its values, whose keys are strings.
+                Some(_)
+                    if prop
+                        .name
+                        .starts_with(crate::property_order::SYMBOL_KEY_PREFIX) =>
+                {
+                    return None;
+                }
                 Some((_, v)) => v,
                 None => {
                     // Only an object type or class has fields (a union, an enum: none).
