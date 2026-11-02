@@ -34,6 +34,7 @@ macro_rules! bail {
 mod clang;
 mod debug;
 mod function;
+mod half;
 mod llc;
 mod module;
 mod rounding;

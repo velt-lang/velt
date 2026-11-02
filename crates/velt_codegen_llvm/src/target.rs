@@ -202,6 +202,21 @@ impl Target {
         self.has_neon() && (apple_default || self.cpu_features & DOTPROD != 0)
     }
 
+    /// Which f16 conversions have an instruction on every CPU the code runs on (`half.rs`):
+    /// all three on arm64 (`fcvt`, base ARMv8), f16 <-> f32 on x86 where `--cpu`'s features hold
+    /// F16C (x86-64-v3 and later), none elsewhere (x86-64-v2, the default; wasm).
+    pub(crate) fn half_native(&self) -> crate::half::HalfNative {
+        use crate::half::HalfNative;
+        const F16C: u32 = 1 << 13;
+        if self.has_neon() {
+            HalfNative::All
+        } else if self.triple.starts_with("x86_64") && self.cpu_features & F16C != 0 {
+            HalfNative::F32
+        } else {
+            HalfNative::None
+        }
+    }
+
     /// Whether the target has NEON (`simd.rs` counts mask lanes with its widening sum).
     pub fn has_neon(&self) -> bool {
         self.triple.starts_with("aarch64") || self.triple.starts_with("arm64")

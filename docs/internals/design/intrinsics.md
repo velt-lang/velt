@@ -116,7 +116,9 @@ The families are internal: programs use `Math`, `velt/simd`, `Atomic` and the in
 7. **Numeric operations for #1866**: f16/bf16 conversions, `mulAdd`, int8 dot products
    (`pmaddubsw`, VNNI `vpdpbusd`, `sdot`/`udot`), widening multiply-add, horizontal sums,
    saturating narrowing, then 256/512-bit vectors split into 128-bit halves where the CPU has
-   none (after step 5).
+   none (after step 5). The f16/bf16 conversions are designed in #2049: math operations with
+   no runtime function (`velt_math_*`, rt_abi.md "Math operations"), one instruction where the
+   CPU has it and the branchless integer sequences of `velt_vir::math::half` elsewhere.
 8. **HIR**: split `hir::Intrinsic` into language operations and library intrinsics; declare
    the builtins that still have hand-written signatures (`panic`, `sleep`, `xs.push`).
 

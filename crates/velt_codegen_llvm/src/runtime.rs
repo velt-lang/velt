@@ -261,6 +261,7 @@ mod tests {
         for op in MathOp::ALL {
             let inline = math_intrinsic(op).is_some()
                 || inline_helper(op).is_some()
+                || crate::half::helper(op, crate::half::HalfNative::None).is_some()
                 || op.rounding().is_some();
             assert!(
                 inline || matches!(op, MathOp::PowF64 | MathOp::PowI64),

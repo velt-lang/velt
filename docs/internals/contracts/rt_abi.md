@@ -373,10 +373,20 @@ invariant 12), a statement that means the same as the call, and never as a direc
 verifier rejects one); the extern stays declared, and backends call it for `pow` and on
 ToInt32's cold path.
 
-The math operations named `velt_math_*` (`f32_bits bits_f32`: `x.toBits()` / `f32.fromBits(b)`
-on `f32`) have **no runtime function** (#2049): like the SIMD externs, std declares them and
-every backend emits them inline, so no runtime defines them and nothing may call them.
-`MathOp::eval` is their reference, and `MathOp::has_runtime_function` tells the two kinds apart.
+The math operations named `velt_math_*` have **no runtime function** (#2049): like the SIMD
+externs, std declares them and every backend emits them inline, so no runtime defines them and
+nothing may call them. `MathOp::eval` is their reference, and `MathOp::has_runtime_function`
+tells the two kinds apart. They are `f32_bits bits_f32` (`x.toBits()` / `f32.fromBits(b)` on
+`f32`) and the f16/bf16 conversions, each 16-bit value its bit pattern in a `u16`:
+`f16_to_f32(h: u16): f32`, `f32_to_f16(x: f32): u16`, `f64_to_f16(x: f64): u16`,
+`bf16_to_f32(b: u16): f32`, `f32_to_bf16(x: f32): u16`, `f64_to_bf16(x: f64): u16`,
+`i64_to_bf16(x: i64): u16` and `u64_to_bf16(x: u64): u16`. Widening is exact; narrowing rounds
+to nearest even once, from the exact source (an f64 or an integer is not rounded through f32 or
+f64 first), keeps subnormals, overflows to infinity, and keeps a NaN as a quiet NaN with its sign
+and the payload's top bits; widening a NaN sets the quiet bit (Arm's `fcvt`/`bfcvt` and x86's
+F16C give the same bits; `velt_vir::math::half` is the reference). LLVM emits `fcvt` on arm64
+and F16C under a `--cpu` with it, and the reference's branchless integer sequences elsewhere
+(never compiler-rt's `__extendhfsf2` & co.); Cranelift always emits the sequences.
 
 ## SIMD [additive]
 

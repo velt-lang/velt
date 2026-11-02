@@ -332,3 +332,46 @@ fn f32_bit_casts_fold() {
         Stmt::Assign(_, Rvalue::Intrinsic(Intrinsic::Math(MathOp::BitsF32), _))
     )));
 }
+
+#[test]
+fn half_conversions_fold() {
+    // h = math.f64_to_f16(0.1); w = math.f16_to_f32(0x3c00); b = math.i64_to_bf16(2^60+2^52+1)
+    let mut pb = ProgramBuilder::new();
+    for op in [MathOp::F64ToF16, MathOp::F16ToF32, MathOp::I64ToBf16] {
+        let (params, ret) = op.signature();
+        pb.ext(op.symbol(), params, ret, false);
+    }
+    let mut fb = FuncBuilder::export("f", &[], Ty::F32);
+    let (h, w, b) = (fb.local(Ty::U16), fb.local(Ty::F32), fb.local(Ty::U16));
+    let nan = fb.local(Ty::F32);
+    let blk = fb.block();
+    let op = |op| Intrinsic::Math(op);
+    let tenth = Operand::Const(Const::Float(0.1), Ty::F64);
+    fb.assign(blk, h, Rvalue::Intrinsic(op(MathOp::F64ToF16), vec![tenth]));
+    let one = vec![int(0x3c00, Ty::U16)];
+    fb.assign(blk, w, Rvalue::Intrinsic(op(MathOp::F16ToF32), one));
+    let big = vec![int((1 << 60) + (1 << 52) + 1, Ty::I64)];
+    fb.assign(blk, b, Rvalue::Intrinsic(op(MathOp::I64ToBf16), big));
+    // A NaN result's bits are the instruction's: not folded.
+    let nan_bits = vec![int(0x7e01, Ty::U16)];
+    fb.assign(blk, nan, Rvalue::Intrinsic(op(MathOp::F16ToF32), nan_bits));
+    fb.ret(blk, copy_local(w));
+    pb.add(fb.finish());
+    let mut program = pb.finish();
+    let sigs = crate::callgraph::signatures(&program);
+    run(&super::Program::of(&sigs), &mut program.funcs[0]);
+    assert_valid(&program);
+    let f = &program.funcs[0];
+    assert_eq!(*returned(f, 0), Operand::Const(Const::Float(1.0), Ty::F32));
+    let consts: Vec<i128> = (f.blocks[0].stmts.iter())
+        .filter_map(|s| match s {
+            Stmt::Assign(_, Rvalue::Use(Operand::Const(Const::Int(v), Ty::U16))) => Some(*v),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(consts, [0x2e66, 0x5d81]);
+    assert!(f.blocks[0].stmts.iter().any(|s| matches!(
+        s,
+        Stmt::Assign(_, Rvalue::Intrinsic(Intrinsic::Math(MathOp::F16ToF32), _))
+    )));
+}
