@@ -32,6 +32,7 @@ pub const RULES: &[&str] = &[
     "int-cast",
     "struct",
     "extend",
+    "operator",
     "throws",
     "promise-error-type",
     "interface-body",

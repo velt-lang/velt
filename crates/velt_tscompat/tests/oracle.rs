@@ -46,6 +46,7 @@ const CLAIMS: &[(&str, Claim)] = &[
     ("int-cast", Claim::Rejected),
     ("struct", Claim::Rejected),
     ("extend", Claim::Rejected),
+    ("operator", Claim::Rejected),
     ("throws", Claim::Rejected),
     ("promise-error-type", Claim::Rejected),
     ("interface-body", Claim::Rejected),

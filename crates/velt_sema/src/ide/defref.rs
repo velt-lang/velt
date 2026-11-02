@@ -196,12 +196,16 @@ impl Builder<'_, '_, '_> {
     }
 
     fn function(&self, f: &FnInfo) -> DefRef {
-        let short = f
-            .name
-            .rsplit(['.', ':'])
-            .next()
-            .unwrap_or(&f.name)
-            .to_string();
+        // A computed key keeps its brackets and dots (`V.[Symbol.add]` is `[Symbol.add]`).
+        let short = match f.name.rfind('[').filter(|_| f.name.ends_with(']')) {
+            Some(i) => f.name[i..].to_string(),
+            None => f
+                .name
+                .rsplit(['.', ':'])
+                .next()
+                .unwrap_or(&f.name)
+                .to_string(),
+        };
         let names = &f.generics.names;
         let ps: Vec<String> = f
             .params

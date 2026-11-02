@@ -16,6 +16,7 @@ mod manifest;
 mod manifest_registry;
 mod modules;
 mod navigation;
+mod operators;
 mod protocol;
 mod quick_fixes;
 mod quoted_keys;
