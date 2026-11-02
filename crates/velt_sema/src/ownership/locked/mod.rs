@@ -275,7 +275,7 @@ fn crossings(
         });
         if let Some(t) = value {
             let mut tys = FxHashSet::default();
-            regions::lock_types(cx, t, &mut tys);
+            r.lock_opaque = regions::lock_types(cx, t, &mut tys);
             r.lock_tys = tys;
         }
     }

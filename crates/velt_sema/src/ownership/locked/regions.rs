@@ -53,6 +53,8 @@ pub(super) struct Regions {
     pub(super) read: Option<bool>,
     /// The types the value a `read` callback reads may hold (`lock_types`).
     pub(super) lock_tys: FxHashSet<TyId>,
+    /// One of `lock_tys` may hide a value of any type (`lock_types`).
+    pub(super) lock_opaque: bool,
     /// Variables of a `read` callback's bodies holding a closure it made, stored into the
     /// caller's containers while still used (body, variable, store; `super::made_copied`).
     pub(super) made_stored: Vec<(DefId, LocalId, Span)>,
@@ -87,6 +89,7 @@ impl Regions {
             changed: false,
             read: None,
             lock_tys: FxHashSet::default(),
+            lock_opaque: false,
             made_stored: vec![],
             made_locals: FxHashSet::default(),
             roots: FxHashMap::default(),
@@ -275,27 +278,83 @@ pub(super) fn reach(
     }
 }
 
-/// The types a value of `t` may hold at any depth, `t` included.
-pub(super) fn lock_types(cx: &mut Ctx, t: TyId, out: &mut FxHashSet<TyId>) {
-    if cx.is_copy(t) || cx.is_string_value(t) || out.len() > 512 || !out.insert(t) {
-        return;
+/// The types a value of `t` may hold at any depth, `t` included: a union's members, and a
+/// class's subclasses with the fields they add, and the types in a function type's signature,
+/// count too. Returns whether one of them may hide a value of any type (an interface or `any`,
+/// a type parameter, a closure's own type, a `shared` value, a generic subclass): then any type
+/// may be a part of the value (`stores::read_part`).
+pub(super) fn lock_types(cx: &mut Ctx, t: TyId, out: &mut FxHashSet<TyId>) -> bool {
+    if out.contains(&t) {
+        return false;
     }
-    let parts: Vec<TyId> = match cx.ty.kind(t).clone() {
-        TyKind::Array(e) | TyKind::Option(e, _) => vec![e],
-        TyKind::Tuple(ts) => ts,
-        TyKind::Adt(d, args) => {
-            let fields: Vec<TyId> = cx
-                .adt(d)
-                .map_or(vec![], |a| a.fields.iter().map(|f| f.ty).collect());
-            let mut parts: Vec<TyId> = fields.into_iter().map(|f| cx.subst(f, &args)).collect();
-            parts.extend(args.iter().copied());
-            parts
+    let opaque = matches!(
+        cx.ty.kind(t),
+        TyKind::Dyn(..)
+            | TyKind::Param(_)
+            | TyKind::Closure(_)
+            | TyKind::Shared(_)
+            | TyKind::Op(..)
+    );
+    if opaque {
+        out.insert(t);
+        return true;
+    }
+    if cx.is_copy(t) || cx.is_string_value(t) {
+        return false;
+    }
+    if out.len() > 512 {
+        return true;
+    }
+    out.insert(t);
+    let mut opaque = false;
+    let parts: Vec<TyId> = if let Some(ms) = cx.union_members(t) {
+        ms
+    } else {
+        match cx.ty.kind(t).clone() {
+            TyKind::Array(e) | TyKind::Option(e, _) => vec![e],
+            TyKind::Tuple(ts) => ts,
+            TyKind::Map(k, v) | TyKind::Promise(k, v) | TyKind::Result(k, v) => vec![k, v],
+            // What a function value gives its caller has the types of its signature: what it
+            // returns or throws, and what it passes to the functions it is given.
+            TyKind::FnPtr {
+                mut params,
+                ret,
+                throws,
+                ..
+            } => {
+                params.extend([ret, throws]);
+                params
+            }
+            TyKind::Adt(d, args) => {
+                let mut parts: Vec<TyId> = if let Some(a) = cx.adt(d) {
+                    a.fields.iter().map(|f| f.ty).collect()
+                } else if let Some(en) = cx.enum_info(d) {
+                    en.variants.iter().flat_map(|v| v.payload.clone()).collect()
+                } else {
+                    return true;
+                };
+                parts = parts.into_iter().map(|f| cx.subst(f, &args)).collect();
+                parts.extend(args.iter().copied());
+                // A value of a class may be one of its subclasses, holding the fields they add.
+                if cx.class_of(t).is_some() {
+                    for s in subclasses(cx, d) {
+                        match cx.adt(s) {
+                            Some(sa) if sa.generics.names.is_empty() => {
+                                parts.push(cx.ty.intern(TyKind::Adt(s, vec![])));
+                            }
+                            _ => opaque = true,
+                        }
+                    }
+                }
+                parts
+            }
+            _ => vec![],
         }
-        _ => vec![],
     };
     for p in parts {
-        lock_types(cx, p, out);
+        opaque |= lock_types(cx, p, out);
     }
+    opaque
 }
 
 /// Can a value of `t` hold a shared (non-Copy, non-string) value somewhere inside it? Only a

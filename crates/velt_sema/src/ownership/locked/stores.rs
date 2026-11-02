@@ -527,17 +527,31 @@ pub(super) fn read_part(
     r.read.is_some()
         && dest & OUT != 0
         && bits & IN != 0
-        && may_hold_lock_type(cx, r, e.ty)
+        && may_hold_lock_type(cx, r, e)
         && holds_part(cx, r, d, e)
 }
 
-/// Can a value of type `t` be, or hold, a part of the value a `read` callback reads? Only
-/// through a type the value can hold (`Regions::lock_tys`), a class one of whose subclasses it
-/// holds, or a type that may hide one (a type parameter, an interface, a function, `any`). A
-/// fresh `{ status: number, body: string }` a function returns cannot.
-fn may_hold_lock_type(cx: &mut Ctx, r: &Regions, t: crate::hir::TyId) -> bool {
-    let mut seen = FxHashSet::default();
-    reaches_lock(cx, r, t, &mut seen)
+/// Can `e` be, or hold, a part of the value a `read` callback reads? Only through a type the
+/// value can hold (`Regions::lock_tys`), a class one of whose subclasses it holds, or a type
+/// that may hide one (a type parameter, an interface, a function, `any`), in `e`'s type or the
+/// type of what it widens (`Upcast`, `WrapSome`). Any type can when the value holds such a type
+/// itself (`Regions::lock_opaque`). A fresh `{ status: number, body: string }` a function
+/// returns cannot.
+fn may_hold_lock_type(cx: &mut Ctx, r: &Regions, e: &Expr) -> bool {
+    if r.lock_opaque {
+        return true;
+    }
+    let mut x = e;
+    loop {
+        let mut seen = FxHashSet::default();
+        if reaches_lock(cx, r, x.ty, &mut seen) {
+            return true;
+        }
+        match &x.kind {
+            E::Upcast(inner) | E::WrapSome(inner) => x = unshared(inner),
+            _ => return false,
+        }
+    }
 }
 
 fn reaches_lock(
