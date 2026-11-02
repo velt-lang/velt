@@ -1,0 +1,1 @@
+`yield*` in a generator function expression needs its result type written

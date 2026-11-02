@@ -1,0 +1,43 @@
+// A generator function expression without a result type, called where no generator type is
+// expected: its yield type is inferred from its `yield`s, as TypeScript does (sigx's streaming
+// renderer pumps tokens through one).
+async function* tokens(): AsyncGenerator<string> {
+  yield "a";
+  yield "b";
+}
+
+function appendScript(id: number, token: string): string {
+  return `<script>append(${id}, ${JSON.stringify(token)})</script>`;
+}
+
+async function main() {
+  const pump = (async function* () {
+    let acc = "";
+    for await (const token of tokens()) {
+      acc += token;
+      yield appendScript(1, token);
+    }
+    yield acc;
+  })();
+  for await (const chunk of pump) console.log(chunk);
+
+  // A sync one, yielding numbers and strings: their union.
+  const mixed = (function* (n: number) {
+    for (let i = 0; i < n; i++) {
+      yield i;
+    }
+    yield "done";
+  })(2);
+  for (const v of mixed) console.log(typeof v, v);
+
+  // A promise yielded by an async generator is awaited.
+  const later = (async function* () {
+    yield Promise.resolve(7);
+    yield 8;
+  })();
+  let total = 0;
+  for await (const v of later) total += v;
+  console.log(total);
+}
+
+main();

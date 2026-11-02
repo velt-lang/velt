@@ -697,7 +697,7 @@ impl FnCx<'_, '_> {
     }
 
     /// `await call(...)`: the `using` variables passed to the call itself may be shared.
-    pub(super) fn awaited_using_shares(&mut self, h: &hir::Expr) {
+    pub(crate) fn awaited_using_shares(&mut self, h: &hir::Expr) {
         let H::Call { args, .. } = &h.kind else {
             return;
         };

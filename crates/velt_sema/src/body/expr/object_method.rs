@@ -192,7 +192,7 @@ impl FnCx<'_, '_> {
             declared = self.cx.join_errors(declared, Some(e));
         }
         let iface = self.iterator_iface(t, e, is_async)?;
-        Some(self.gen_closure(d, (iface, t), declared, span))
+        Some(self.gen_closure(d, (iface, t), declared, false, span))
     }
 
     /// `[Symbol.iterator](): Iterator<T> { ... }` as an arrow function.

@@ -1,0 +1,7 @@
+<script>append(1, "a")</script>
+<script>append(1, "b")</script>
+ab
+number 0
+number 1
+string done
+15

@@ -70,6 +70,12 @@ impl FnCx<'_, '_> {
                 return self.error_expr(span);
             }
         }
+        // No result type written or expected: the yield type is inferred (`yield_infer`).
+        if sig.ret.is_none() && self.expected_gen_result(exp, sig.is_async) == self.cx.ty.unit {
+            let declared = sig.throws.as_ref().map(|t| self.resolve(t));
+            let unit = self.cx.ty.unit;
+            return self.gen_closure(d, (unit, unit), declared, true, span);
+        }
         let ret = match &sig.ret {
             // The declared result is no site (`throws::generator_sites`).
             Some(t) => {
@@ -87,7 +93,7 @@ impl FnCx<'_, '_> {
         if written {
             declared = self.cx.join_errors(declared, Some(e));
         }
-        self.gen_closure(d, (ret, t), declared, span)
+        self.gen_closure(d, (ret, t), declared, false, span)
     }
 
     /// The result type of the expected function type `exp` when it is a generator's (`() =>
@@ -100,6 +106,19 @@ impl FnCx<'_, '_> {
         match self.cx.generator_result_kind(ret) {
             Some((_, _, a)) if a == is_async => ret,
             _ => self.cx.ty.unit,
+        }
+    }
+
+    /// `AsyncGenerator<t>` / `Generator<t>`: the result of a generator expression yielding `t`
+    /// with no result type written.
+    fn inferred_gen_result(&mut self, t: TyId, is_async: bool) -> TyId {
+        let never = self.cx.ty.never;
+        if is_async {
+            return self.cx.async_generator_ty(t, never);
+        }
+        match self.cx.generator_class() {
+            Some(g) => self.cx.ty.intern(TyKind::Adt(g, vec![t, never, never])),
+            None => self.cx.ty.error,
         }
     }
 
@@ -129,12 +148,14 @@ impl FnCx<'_, '_> {
     }
 
     /// The closure of a generator expression yielding `t` with declared result `ret` and the
-    /// declared error type `declared` (`throws`, or `E` in the result).
+    /// declared error type `declared` (`throws`, or `E` in the result); `infer`: neither is
+    /// written, and the yield type is inferred from the body (`body::yield_infer`).
     pub(super) fn gen_closure(
         &mut self,
         d: &ast::FnDecl,
         (ret, t): (TyId, TyId),
         declared: Option<TyId>,
+        infer: bool,
         span: Span,
     ) -> hir::Expr {
         let sig = &d.sig;
@@ -144,6 +165,7 @@ impl FnCx<'_, '_> {
         frame.escaping = true;
         frame.is_async = sig.is_async;
         frame.yield_ty = Some(t);
+        frame.infer_yields = infer.then(Vec::new);
         frame.type_guards = self.f.type_guards.clone();
         let n = self.cx.generator_next_ty(ret);
         frame.next_ty = (!self.cx.ty.is_bottom(n)).then_some(n);
@@ -170,10 +192,18 @@ impl FnCx<'_, '_> {
         self.cx.fn_value_depth += 1;
         self.stmts_into(&d.body.stmts, &mut stmts);
         self.cx.fn_value_depth -= 1;
-        let block = hir::Block {
+        let mut block = hir::Block {
             stmts,
             value: None,
             span: d.body.span,
+        };
+        let ret = match infer {
+            true => {
+                let t = self.finish_inferred_yields(&mut block, span);
+                self.f.yield_ty = Some(t);
+                self.inferred_gen_result(t, sig.is_async)
+            }
+            false => ret,
         };
         self.rec_frame_scopes();
         let parent = self.outer.pop().expect("ICE: closure frame");

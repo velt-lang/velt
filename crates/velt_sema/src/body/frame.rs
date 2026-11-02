@@ -51,6 +51,9 @@ pub(crate) struct Frame {
     pub top_level_outer: Vec<Span>,
     /// Body of a generator: the type of the values it yields (`yield` is allowed).
     pub yield_ty: Option<TyId>,
+    /// Body of a generator function expression whose yield type is inferred: the types of the
+    /// values its `yield`s give so far (`yield_infer`).
+    pub infer_yields: Option<Vec<(TyId, Span)>>,
     /// Body of a `Generator<T, E, N>`: `N`, the type of a `yield`'s value (`None`: it has
     /// none).
     pub next_ty: Option<TyId>,
@@ -224,6 +227,7 @@ impl Frame {
             top_level: false,
             top_level_outer: vec![],
             yield_ty: None,
+            infer_yields: None,
             next_ty: None,
             catch_depth: 0,
             fn_expr_name: None,

@@ -47,7 +47,10 @@ impl FnCx<'_, '_> {
         if used && next.is_none() {
             self.yield_value_used(delegate, span);
         }
+        let infer = self.f.infer_yields.is_some();
         let h = match (delegate, arg) {
+            (true, _) if infer => self.yield_star_inferred(span),
+            (false, arg) if infer => self.yield_inferred(arg, span),
             (true, Some(a)) => match self.yield_delegate(a, t, span) {
                 Some(h) => h,
                 None => self.yield_star(a, span),

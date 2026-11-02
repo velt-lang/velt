@@ -94,6 +94,7 @@ pub(crate) use stmt::closure_def;
 pub(crate) mod switch;
 mod untyped_let;
 mod using;
+mod yield_infer;
 
 use rustc_hash::FxHashMap;
 

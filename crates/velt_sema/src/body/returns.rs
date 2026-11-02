@@ -490,7 +490,7 @@ impl FnCx<'_, '_> {
     }
 
     /// The type of `tys` that every other converts to, else their union.
-    fn common_type(&mut self, tys: &[TyId], span: Span) -> TyId {
+    pub(super) fn common_type(&mut self, tys: &[TyId], span: Span) -> TyId {
         for &c in tys {
             let all = tys.iter().all(|&t| self.converts(t, c));
             if all {
