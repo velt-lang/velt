@@ -525,6 +525,7 @@ impl FnCx<'_, '_> {
         // member or a closure's `return`: the program is checked again with what was stored
         // there, which drops this report (`throws::promise_sites`).
         self.cx.seed_reject(found.ty, expected);
+        self.cx.seed_reject_fn(found.ty, expected);
         self.cx.seed_promise_site(found.ty, expected);
         // The comparisons don't see variables in the fields of anonymous object types yet
         // (`throws::vars`): such a mismatch may come from them.

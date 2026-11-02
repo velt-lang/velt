@@ -94,6 +94,7 @@ pub(crate) use stmt::closure_def;
 pub(crate) mod switch;
 mod untyped_let;
 mod using;
+mod yield_infer;
 
 use rustc_hash::FxHashMap;
 
@@ -255,6 +256,9 @@ pub(crate) struct FnCx<'a, 'm> {
     pub enclosing_locals: Vec<String>,
     /// The body is a local generic arrow function (checked as a nested function).
     pub generic_arrow: bool,
+    /// The functions with a `this` parameter whose value (a `ThisFn` forwarding to them,
+    /// `expr::this_param`) is being checked: a read of one inside is no value again.
+    pub this_fn_forwarding: Vec<DefId>,
     pub f: Frame,
     /// Enclosing frames of the closure being checked (innermost last).
     pub outer: Vec<Frame>,
@@ -395,6 +399,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             this_primitive: None,
             enclosing_locals: vec![],
             generic_arrow: false,
+            this_fn_forwarding: vec![],
             asserted_fn: None,
             dynamic_raw: None,
             forward_tys: Default::default(),

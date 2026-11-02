@@ -100,6 +100,9 @@ pub(crate) struct FnSites {
     /// The result type of an async function is being resolved: its `Promise<T>` rejects with
     /// what the body throws, so it is no site (`promise_sites`).
     pub async_ret: bool,
+    /// The result type of a generator function is being resolved: its `Generator<T>` throws
+    /// what the body throws, so it is no site (`generator_sites`).
+    pub generator_ret: bool,
     /// The open error types of `new Promise` executors being checked and of
     /// `Promise.withResolvers` calls, with the site of each (`promise_sites`).
     pub rejects: Vec<(TyId, Span)>,
@@ -273,10 +276,11 @@ impl Ctx<'_> {
         let inferred = inferred && err.is_some() && !gets_var;
         let err = err.unwrap_or(never);
         let plain_ret = ret;
-        let throws = match self.ty.kind(ret).clone() {
-            TyKind::Promise(v, e) if err != never => {
+        // A function returning a promise or a generator rejects with its errors there.
+        let throws = match self.rejection_error(ret) {
+            Some(e) if err != never => {
                 let e = self.join_errors(Some(e), Some(err)).unwrap_or(never);
-                ret = self.ty.promise_rejecting(v, e);
+                ret = self.with_rejection_error(ret, e);
                 never
             }
             _ => err,
@@ -324,7 +328,7 @@ impl Ctx<'_> {
             return t;
         };
         let never = self.ty.never;
-        let rejects = matches!(self.ty.kind(ret), TyKind::Promise(_, e) if *e != never);
+        let rejects = self.rejection_error(ret).is_some_and(|e| e != never);
         if throws != never || rejects {
             return t;
         }
@@ -332,12 +336,12 @@ impl Ctx<'_> {
             self.record_fn_site(span, module, t);
             return t;
         };
-        let throws = match self.ty.kind(ret).clone() {
-            TyKind::Promise(v, _) => {
-                ret = self.ty.promise_rejecting(v, err);
+        let throws = match self.rejection_error(ret) {
+            Some(_) => {
+                ret = self.with_rejection_error(ret, err);
                 never
             }
-            _ => err,
+            None => err,
         };
         let s = self.ty.intern(TyKind::FnPtr {
             params,
@@ -453,7 +457,7 @@ impl Ctx<'_> {
         // A function returning a promise rejects with what is stored into its sites (its type
         // has those errors from the next check on); a call does not throw them.
         if let TyKind::FnPtr { ret, .. } = self.ty.kind(t) {
-            if matches!(self.ty.kind(*ret), TyKind::Promise(..)) {
+            if self.rejection_error(*ret).is_some() {
                 return None;
             }
         }
@@ -516,6 +520,11 @@ impl Ctx<'_> {
                 },
             ) => pr == qr && all(p, q) && m(*r, *s),
             (TyKind::Promise(a, _), TyKind::Promise(b, _)) => m(*a, *b),
+            (TyKind::Adt(..), TyKind::Adt(..))
+                if self.generator_site_matches(g, used, m).is_some() =>
+            {
+                self.generator_site_matches(g, used, m) == Some(true)
+            }
             (TyKind::Adt(d, xs), TyKind::Adt(e, ys)) | (TyKind::Dyn(d, xs), TyKind::Dyn(e, ys)) => {
                 d == e && all(xs, ys)
             }
@@ -632,9 +641,15 @@ impl Ctx<'_> {
         else {
             return None;
         };
-        let promise_err = |cx: &Self, t: TyId| match cx.ty.kind(t) {
-            TyKind::Promise(v, e) => (*v, Some(*e)),
-            _ => (t, None),
+        let promise_err = |cx: &mut Self, t: TyId| match cx.rejection_error(t) {
+            Some(e) => {
+                let never = cx.ty.never;
+                match cx.ty.kind(t) {
+                    TyKind::Promise(v, _) => (*v, Some(e)),
+                    _ => (cx.with_rejection_error(t, never), Some(e)),
+                }
+            }
+            None => (t, None),
         };
         let ((rv, re), (sv, se)) = (promise_err(self, r), promise_err(self, s));
         if p != q || pr != qr || rv != sv || re.is_some() != se.is_some() || (e == f && re == se) {

@@ -9,12 +9,34 @@
 
 import { THIS_FN_APPLY, THIS_FN_BIND } from "velt/lang/hooks/keys";
 
+// The values of the declared functions with a `this: any` parameter read as values, by the
+// key sema gives each declaration (`ThisFn.of`).
+let declared: Map<string, ThisFn> | null = null;
+
 /** A function value whose `this` is bound at the call (module docs). */
 export class ThisFn {
   #f: Function;
 
   constructor(f: Function) {
     this.#f = f;
+  }
+
+  /**
+   * The one value of the declared function (`function f(this: any, ...)`) at `key`: made by
+   * `make` the first time it is read as a value, so every read is the same object, as in
+   * JavaScript.
+   */
+  static of(key: string, make: () => ThisFn): ThisFn {
+    if (declared === null) {
+      declared = new Map<string, ThisFn>();
+    }
+    const known = declared.get(key);
+    if (known !== undefined) {
+      return known;
+    }
+    const made = make();
+    declared.set(key, made);
+    return made;
   }
 
   /** The call with `self` as `this` and `args` as the arguments. */

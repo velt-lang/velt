@@ -1,0 +1,9 @@
+// `yield*` in a generator function expression needs a written result type: the yield type is
+// inferred from `yield` values only.
+function* inner(): Generator<number> {
+  yield 1;
+}
+const g = (function* () {
+  yield* inner();
+})();
+for (const v of g) console.log(v);

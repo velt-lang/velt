@@ -1,0 +1,66 @@
+// `AsyncGenerator<T>` and `Generator<T>` written without Velt's error type, as TypeScript code
+// writes them, accept a generator whose body throws (#379): what it throws is inferred where the
+// type is written, as for a `Promise<T>`, and a `for await` over it throws that.
+async function prepare(n: number): Promise<number> {
+  if (n < 0) throw new RangeError("negative");
+  return n;
+}
+
+async function* parts(p: Promise<number>): AsyncGenerator<string> {
+  const n = await p;
+  yield "a" + n;
+}
+
+function take(g: AsyncGenerator<string>): AsyncGenerator<string> {
+  return g;
+}
+
+async function* all(n: number): AsyncGenerator<string, void, unknown> {
+  yield* parts(prepare(n));
+}
+
+function both(n: number): { chunks: AsyncGenerator<string>; n: number } {
+  return { chunks: parts(prepare(n)), n };
+}
+
+// One parameter takes generators that throw.
+async function drain(label: string, g: AsyncGenerator<string>): Promise<void> {
+  try {
+    for await (const c of g) console.log(label, c);
+  } catch (err) {
+    console.log(label, "caught", (err as Error).message);
+  }
+}
+
+function* count(to: number): Generator<number> {
+  for (let i = 0; i < to; i++) {
+    if (i > 1) throw new Error("too far");
+    yield i;
+  }
+}
+
+function sum(g: Generator<number>): number {
+  let s = 0;
+  for (const x of g) s += x;
+  return s;
+}
+
+async function main() {
+  for await (const c of take(parts(prepare(1)))) console.log(c);
+  for await (const c of all(2)) console.log(c);
+  for await (const c of both(3).chunks) console.log(c);
+  try {
+    for await (const c of take(parts(prepare(-1)))) console.log(c);
+  } catch (err) {
+    console.log("caught", (err as Error).message);
+  }
+  await drain("parts", parts(prepare(-5)));
+  console.log(sum(count(2)));
+  try {
+    console.log(sum(count(5)));
+  } catch (err) {
+    console.log("caught", (err as Error).message);
+  }
+}
+
+main();

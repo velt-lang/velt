@@ -1,0 +1,53 @@
+// A declared function with a `this: any` parameter used as a value (#942): `this` is the object
+// it is called on, as in Node, as for a `function (this: any, ...)` expression held as a
+// `Function`. sigx's server renderer stores such shared functions on each component's context.
+function useAsync(this: any, key: string, opts: { server?: boolean } = {}): string {
+  const owner: string = this.name;
+  return `${owner}:${key}:${String(opts.server)}`;
+}
+
+function total(this: any, a: number, b: number = 1): number {
+  return this.base + a + b;
+}
+
+// A parameter of a function type, or a default that is an arrow, keeps the `this` parameter.
+function stream(this: any, key: string, source: () => string, wrap: (s: string) => string = (s) => `[${s}]`): string {
+  return wrap(this.name + ":" + key + ":" + source());
+}
+
+// In an object literal, called through `any`.
+const init = { name: "page", _useAsync: useAsync, _total: total, base: 10 };
+const ctx: any = init;
+console.log(ctx._useAsync("k"));
+console.log(ctx._useAsync("j", { server: false }));
+console.log(ctx._total(1, 5));
+
+// In another object, held as `any`.
+const other: any = { name: "other", base: 100, _useAsync: useAsync, _total: total, _stream: stream };
+console.log(other._useAsync("x", { server: true }));
+console.log(other._total(5));
+
+// Held as a `Function` or `any`: `call`, `apply` and `bind` pass the receiver.
+const f: Function = useAsync;
+const g: any = useAsync;
+console.log(f.call({ name: "called" }, "c"));
+console.log(g.apply({ name: "applied" }, ["a", { server: true }]));
+const bound = g.bind({ name: "bound" });
+console.log(bound("b"));
+
+const s: any = stream;
+console.log(s.call({ name: "streamed" }, "t", () => "tokens"));
+console.log(other._stream("u", () => "more", (x: string) => x.toUpperCase()));
+
+// Every read of the function is the same value, as for any declared function.
+function who(this: any): string {
+  return String(this.name);
+}
+const a: any = who;
+const b: any = who;
+const o: any = { name: "o", who };
+const held: Function = who;
+console.log(a === b, o.who === a, held === a, o.who());
+
+// The declaration itself is still called as before.
+console.log(useAsync.call({ name: "direct" }, "d"), total.call({ base: 1 }, 2));

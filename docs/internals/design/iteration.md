@@ -676,8 +676,10 @@ object from the env's captures (`ctor_state`, shared with async closures).
   `clone()` are checked there. The expression's own name is not in scope in its body (a function value cannot
   refer to itself); a use says so. Type parameters and rest parameters are errors.
 - Without a written result type, a generator expression takes the result of the function type
-  expected where it stands (`function_expr`'s `exp`), like an arrow; elsewhere the result type
-  stays required.
+  expected where it stands (`function_expr`'s `exp`), like an arrow; elsewhere its yield type
+  is inferred from its `yield` values, joined as an arrow's returns are (`body/yield_infer.rs`;
+  an async generator's yielded promise is awaited), and a `yield*` there needs the result type
+  written.
 - At module level, `const g = function* (...) { ... };` is lifted to the generator function `g`
   (`generic_arrows.rs`, next to generic arrow constants), since module constants must be
   constant expressions.

@@ -30,10 +30,12 @@ const ARGUMENTS: &str = "arguments";
 
 impl FnCx<'_, '_> {
     /// `function (this: T, ...) { ... }` (not a generator) whose body uses `this`, expected as
-    /// `exp` (module docs).
+    /// `exp` (module docs). `shared`: the key of the declared function it forwards to
+    /// (`this_param`), whose one `ThisFn` it is (`ThisFn.of(key, () => new ThisFn(...))`).
     pub(super) fn this_fn_expr(
         &mut self,
         d: &ast::FnDecl,
+        shared: Option<&str>,
         this_ty: TyId,
         exp: Option<TyId>,
         span: Span,
@@ -94,6 +96,10 @@ impl FnCx<'_, '_> {
             },
             span,
         );
+        let new = match shared {
+            Some(key) => shared_this_fn(key, new, span),
+            None => new,
+        };
         let saved = self.method_this.replace((span, any));
         let h = self.expr(&new, None, Want::Move);
         self.method_this = saved;
@@ -326,6 +332,44 @@ impl FnCx<'_, '_> {
             span,
         ))
     }
+}
+
+/// `ThisFn.of(key, () => made)`: the one `ThisFn` of the declaration at `key`, made the first
+/// time it is read as a value (std/lang/this_fn), so every read is the same object.
+fn shared_this_fn(key: &str, made: ast::Expr, span: Span) -> ast::Expr {
+    let class = synth(
+        ast::ExprKind::Ident(ident(velt_common::std_hook!(this_fn), span)),
+        span,
+    );
+    let of = synth(
+        ast::ExprKind::Member {
+            object: Box::new(class),
+            prop: ident("of", span),
+            optional: false,
+        },
+        span,
+    );
+    let make = synth(
+        ast::ExprKind::Arrow {
+            type_params: vec![],
+            params: vec![],
+            ret: None,
+            throws: None,
+            body: ast::ArrowBody::Expr(Box::new(made)),
+            is_async: false,
+        },
+        span,
+    );
+    let key = synth(ast::ExprKind::Lit(ast::Lit::Str(key.into())), span);
+    synth(
+        ast::ExprKind::Call {
+            callee: Box::new(of),
+            type_args: vec![],
+            args: vec![key, make],
+            optional: false,
+        },
+        span,
+    )
 }
 
 fn ident(name: &str, span: Span) -> ast::Ident {

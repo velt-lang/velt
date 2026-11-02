@@ -210,7 +210,7 @@ impl FnCx<'_, '_> {
     }
 
     /// Does `id` name a function declaration (not a variable holding a function)?
-    fn is_fn_item(&mut self, id: &ast::Ident) -> bool {
+    pub(super) fn is_fn_item(&mut self, id: &ast::Ident) -> bool {
         !self.is_local_name(&id.name)
             && matches!(self.lookup_item(&id.name, id.span), Some(Item::Def(d)) if matches!(self.cx.info[d.0 as usize], DefInfo::Fn(_)))
     }

@@ -1,0 +1,48 @@
+// The callback of `then(f)` or `finally(h)` may throw something else than what the promise
+// rejects with, as in TypeScript: the new promise rejects with either (`any` when the promise
+// rejects with `any`), and its `catch` handler takes that (#379).
+class UrlError extends Error {}
+
+function parse(s: string): string {
+  if (s === "") throw new UrlError("empty");
+  return s;
+}
+
+async function source(ok: boolean, v: string, why: any): Promise<string> {
+  if (!ok) throw why;
+  return v;
+}
+
+async function checked(n: number): Promise<number> {
+  if (n < 0) throw new RangeError("negative");
+  return n;
+}
+
+function half(n: number): number {
+  if (n % 2 !== 0) throw new TypeError("odd");
+  return n / 2;
+}
+
+async function main() {
+  const q = source(true, "x", null).then(html => parse(html)).catch(error => {
+    const err = error instanceof Error ? error : new Error(String(error));
+    return err.message;
+  });
+  console.log(await q);
+  console.log(await source(true, "", null).then(h => parse(h)).catch(e => "caught " + String(e)));
+  console.log(await source(false, "", 42).then(h => parse(h)).catch(e => "caught " + String(e)));
+  console.log(await source(false, "", "why").finally(() => parse("")).catch(e => "caught " + String(e)));
+  // Both checked: the union of the two.
+  for (const n of [4, 3, -2]) {
+    const r = await checked(n).then(half).catch(e => {
+      if (e instanceof RangeError) return -1;
+      return -2;
+    });
+    console.log(r);
+  }
+  // An async callback: its promise's errors join in too.
+  const a = await checked(-1).then(async n => parse(String(n))).catch(e => (e as Error).message);
+  console.log(a);
+}
+
+main();

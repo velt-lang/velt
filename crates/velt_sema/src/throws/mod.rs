@@ -18,6 +18,7 @@ mod checks;
 mod conventions;
 mod fn_flows;
 mod fn_types;
+mod generator_sites;
 mod groups;
 mod hints;
 mod infer;

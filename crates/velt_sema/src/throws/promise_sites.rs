@@ -46,16 +46,20 @@ impl Ctx<'_> {
         t
     }
 
-    /// The written result type `t` of a function, `is_async`: then its `Promise<T>` is no site.
+    /// The written result type `t` of a function, `is_async`: then its `Promise<T>` is no site;
+    /// `is_generator`: then its `Generator<T>` / `AsyncGenerator<T>` is none (`generator_sites`).
     pub(crate) fn resolve_async_aware(
         &mut self,
         t: &ast::TypeExpr,
         env: &crate::resolve::TyEnv,
         is_async: bool,
+        is_generator: bool,
     ) -> TyId {
         let outer = std::mem::replace(&mut self.fn_sites.async_ret, is_async);
+        let outer_gen = std::mem::replace(&mut self.fn_sites.generator_ret, is_generator);
         let r = self.resolve_type(t, env);
         self.fn_sites.async_ret = outer;
+        self.fn_sites.generator_ret = outer_gen;
         r
     }
 
@@ -70,9 +74,7 @@ impl Ctx<'_> {
         let (Some(from), Some(to)) = (self.promise_part(from), self.promise_part(to)) else {
             return false;
         };
-        let (&TyKind::Promise(_, e), &TyKind::Promise(_, f)) =
-            (self.ty.kind(from), self.ty.kind(to))
-        else {
+        let (Some(e), Some(f)) = (self.rejection_error(from), self.rejection_error(to)) else {
             return false;
         };
         if self.error_outside(Some(f), Some(e)).is_none() {
@@ -131,6 +133,28 @@ impl Ctx<'_> {
         seeded
     }
 
+    /// The `reject` function of a `new Promise` executor being checked or of a
+    /// `Promise.withResolvers` (its parameter the promise's open error type), of type `found`,
+    /// stored as a value of function type `to` (`let rejectLater: (e: unknown) => void;
+    /// rejectLater = reject;`): a call through `to` rejects with its parameter's type, which is
+    /// added to the promise's site, as a call of `reject` would add its argument's.
+    pub(crate) fn seed_reject_fn(&mut self, found: TyId, to: TyId) -> bool {
+        let TyKind::FnPtr { params: fp, .. } = self.ty.kind(found).clone() else {
+            return false;
+        };
+        let to = self.ty.core(to).unwrap_or(to);
+        let TyKind::FnPtr { params: tp, .. } = self.ty.kind(to).clone() else {
+            return false;
+        };
+        let ([p], [q]) = (fp.as_slice(), tp.as_slice()) else {
+            return false;
+        };
+        if !self.fn_sites.rejects.iter().any(|(e, _)| e == p) {
+            return false;
+        }
+        self.seed_reject(*q, *p)
+    }
+
     /// The result `have` of a method (its site `have_site`) and the result `want` of the
     /// interface or base method it implements or overrides (site `want_site`): promise types of
     /// one payload written without error types reject with the union of both, so each site
@@ -180,23 +204,21 @@ impl Ctx<'_> {
                 _ => return t,
             };
             cur = self.ty.core(inner).unwrap_or(inner);
-            if matches!(self.ty.kind(cur), TyKind::Promise(..)) {
+            if self.takes_rejections(cur) {
                 return cur;
             }
         }
         t
     }
 
-    /// The promise type `t` is or holds as its one promise member (`T | Promise<T>`).
+    /// The promise (or generator) type `t` is or holds as its one such member (`T | Promise<T>`).
     fn promise_part(&mut self, t: TyId) -> Option<TyId> {
         let t = self.ty.core(t).unwrap_or(t);
-        if matches!(self.ty.kind(t), TyKind::Promise(..)) {
+        if self.takes_rejections(t) {
             return Some(t);
         }
         let ms = self.union_members(t)?;
-        let mut ps = ms
-            .into_iter()
-            .filter(|m| matches!(self.ty.kind(*m), TyKind::Promise(..)));
+        let mut ps = ms.into_iter().filter(|m| self.takes_rejections(*m));
         match (ps.next(), ps.next()) {
             (Some(p), None) => Some(p),
             _ => None,
@@ -294,7 +316,7 @@ impl Ctx<'_> {
             .find(|(s, g)| {
                 s.lo >= range.lo
                     && s.hi <= range.hi
-                    && matches!(self.ty.kind(*g), TyKind::Promise(..))
+                    && self.takes_rejections(*g)
                     && self.site_matches(*g, promise, 0)
             })
             .map(|(s, _)| s)
@@ -322,7 +344,7 @@ impl Ctx<'_> {
         };
         if let TyKind::FnPtr { ret, .. } = self.ty.kind(ty).clone() {
             if let Some(p) = self.promise_part(ret) {
-                if let TyKind::Promise(_, e) = *self.ty.kind(p) {
+                if let Some(e) = self.rejection_error(p) {
                     if e != self.ty.never {
                         errs.push(e);
                     }
@@ -336,9 +358,7 @@ impl Ctx<'_> {
             return;
         };
         let site = (ids.iter().map(|&i| self.fn_sites.sites[i]))
-            .filter(|(s, g)| {
-                s.lo >= to.lo && s.hi <= to.hi && matches!(self.ty.kind(*g), TyKind::Promise(..))
-            })
+            .filter(|(s, g)| s.lo >= to.lo && s.hi <= to.hi && self.takes_rejections(*g))
             .max_by_key(|(s, _)| s.lo)
             .map(|(s, _)| s);
         if let Some(site) = site {
