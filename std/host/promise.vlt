@@ -1,0 +1,45 @@
+// velt/host (internal): the promise of an async host function's call (`declare host("m") async
+// function`): the outcome of the JS promise, which the glue writes, and the functions lowering
+// calls to await it (crates/velt_vir/src/lower/host.rs).
+
+import { IoError } from "velt/io/error";
+import { HostRef, hostRefOf, hostRefOrNull } from "velt/host/host_ref";
+
+/**
+ * How a host promise settled, as the JS glue writes it (rt_abi_async.md §1.4): the `name` and
+ * `message` of what it rejected with (empty when it fulfilled), and the value it fulfilled with.
+ */
+export struct HostSettled<T> {
+  code: string;
+  message: string;
+  value: T;
+}
+
+/**
+ * The value host promise `p` fulfills with; throws an `IoError` when it rejects (std only:
+ * lowering calls it).
+ */
+export async function hostAwait<T>(p: Promise<HostSettled<T>>): Promise<T> throws IoError {
+  const r = await p;
+  if (r.code != "") {
+    throw new IoError(r.code, r.message);
+  }
+  return r.value;
+}
+
+/** `hostAwait` for a host function without a result (std only, as `hostAwait`). */
+export async function hostAwaitVoid(p: Promise<HostSettled<bool>>): Promise<void> throws IoError {
+  await hostAwait(p);
+}
+
+/** `hostAwait` for a `HostRef` result (std only, as `hostAwait`). */
+export async function hostAwaitRef(p: Promise<HostSettled<u32>>): Promise<HostRef> throws IoError {
+  return hostRefOf(await hostAwait(p));
+}
+
+/** `hostAwait` for a `HostRef | null` result (std only, as `hostAwait`). */
+export async function hostAwaitRefOrNull(
+  p: Promise<HostSettled<u32>>,
+): Promise<HostRef | null> throws IoError {
+  return hostRefOrNull(await hostAwait(p));
+}

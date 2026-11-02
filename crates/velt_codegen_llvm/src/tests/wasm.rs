@@ -95,6 +95,7 @@ fn host_functions_are_imports_listed_in_the_manifest() {
         name: "now".into(),
         params: vec![HostValue::Str],
         ret: HostValue::F64,
+        is_async: false,
     });
     let ir = emit_ir(&p, "wasm32-unknown-unknown").unwrap();
     for needle in [

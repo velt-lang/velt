@@ -24,8 +24,8 @@ impl FnLower<'_, '_> {
     /// A call used as a value (`ExprKind::Call`); a compiled promise it returns is started unless
     /// it is awaited or spawned right away (`lazy_call`, set by `take_promise`). Async functions
     /// and function values returning promises (async closures) return lazy boxed promises, and so
-    /// do the combinator intrinsics (kept.rs); `PromiseWiden` starts its inner promise (widen.rs);
-    /// other intrinsics, externs (runtime leaves) and
+    /// do the combinator intrinsics (kept.rs) and async host functions (host.rs); `PromiseWiden`
+    /// starts its inner promise (widen.rs); other intrinsics, externs (runtime leaves) and
     /// synchronous functions (which started any promise they return) don't.
     pub(in crate::lower) fn call_value(
         &mut self,
@@ -50,7 +50,7 @@ impl FnLower<'_, '_> {
                 Some(started) => started,
                 None => return v,
             },
-            hir::Callee::Def(d, _) if self.cx.is_async_fn(*d) => v,
+            hir::Callee::Def(d, _) if self.cx.is_async_fn(*d) || self.cx.is_async_host(*d) => v,
             hir::Callee::Def(..) => return v,
             _ if matches!(self.kind(ty), TyKind::Promise(..)) => v,
             _ => return v,

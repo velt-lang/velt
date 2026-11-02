@@ -1,0 +1,19 @@
+// velt/simd (internal): the int8 dot product as a method of `i32x4` (#1981, #1866): each lane of an
+// `i32x4` accumulator plus the sum of four products of signed bytes, the inner loop of quantized
+// (int8) matrix products. Exact on every CPU: Arm's `sdot` where the CPU has it, and a widening
+// multiply-add elsewhere (signed × signed, so x86's VNNI, which multiplies unsigned bytes by
+// signed ones, does not apply directly).
+
+declare function velt_simd_i32x4_dot_add(acc: i32x4, a: i8x16, b: i8x16): i32x4;
+
+extend i32x4 {
+  /**
+   * This plus the dot products of `a` and `b` by quarters: lane `k` adds
+   * `a[4k] * b[4k] + a[4k + 1] * b[4k + 1] + a[4k + 2] * b[4k + 2] + a[4k + 3] * b[4k + 3]`, the
+   * products of signed bytes, exactly (no saturation). One call adds at most 4 × 128² = 65,536
+   * to a lane, so an `i32` accumulator holds 32,768 calls of the extremes.
+   */
+  dotAdd(a: i8x16, b: i8x16): i32x4 {
+    return velt_simd_i32x4_dot_add(this, a, b);
+  }
+}

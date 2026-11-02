@@ -15,3 +15,5 @@ export { mask8x16, mask16x8, mask32x4, mask64x2 } from "velt/simd/masks";
 import "velt/simd/sha";
 // Carry-less multiplication on `u64x2` (hand-written, not generated).
 import "velt/simd/clmul";
+// The int8 dot product on `i32x4` (hand-written, not generated).
+import "velt/simd/dot";

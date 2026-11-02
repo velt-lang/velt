@@ -2,8 +2,10 @@
 //! the runtime calls it:
 //! - WASI: wasi-libc's `_start` (crt1-command.o) calls `__main_void`, defined here, and exits
 //!   with its result;
-//! - browser: the JS glue calls the exported `velt_start` and reads its result (an explicit
-//!   exit or a panic throws out of it instead, see `platform`).
+//! - browser: the JS glue calls the exported `velt_start`; the program reports its exit code
+//!   through `velt.done`, when `main` returns or, when it hands its root to the host's turns,
+//!   once that is done (host_turn.rs). An explicit exit or a panic throws out of it instead (see
+//!   `platform`).
 
 use crate::{io, panic};
 
@@ -18,6 +20,11 @@ pub fn run_main(velt_main: extern "C" fn() -> i32) -> i32 {
 /// test process (`cargo test`) would exit the process instead of unwinding.
 fn run_program(velt_main: extern "C" fn() -> i32) -> i32 {
     let code = velt_main();
+    // Tasks that can still make progress keep the program alive after `main` returns, but not
+    // after it failed (an uncaught error, an exit code), as natively and in Node.
+    if code == 0 {
+        crate::task::executor::after_main();
+    }
     io::flush_stdout();
     code
 }
@@ -29,7 +36,7 @@ extern "C" {
 
 /// Safe wrapper for the generated `velt_main`.
 #[cfg(all(target_family = "wasm", not(test)))]
-extern "C" fn program() -> i32 {
+pub(crate) extern "C" fn program() -> i32 {
     // SAFETY: provided by the generated object, contract `int32_t velt_main(void)`.
     unsafe { velt_main() }
 }
@@ -44,8 +51,8 @@ pub extern "C" fn __main_void() -> i32 {
 /// Browser entry, exported for the JS glue.
 #[cfg(all(target_family = "wasm", target_os = "unknown", not(test)))]
 #[no_mangle]
-pub extern "C" fn velt_start() -> i32 {
-    run_main(program)
+pub extern "C" fn velt_start() {
+    crate::host_turn::main_returned(run_main(program));
 }
 
 #[cfg(test)]

@@ -7,12 +7,15 @@ use crate::ctx::Ctx;
 use crate::SourceModule;
 
 /// The prelude modules that are Velt's own API, JS having no counterpart: the ordering protocol
-/// (`compareTo`, classes.md) and the integer bit counts. Their integer results stay integers in
+/// (`compareTo`, classes.md), the integer bit counts and the checked, saturating and wrapping
+/// integer arithmetic. Their integer results stay integers in
 /// user code (`x.trailingZeros()` indexes an array as it is). A Velt-only prelude method goes in
 /// one of them, or in a new module listed here.
 const VELT_PRELUDE: &[&str] = &[
     velt_common::std_module!(prelude_compare),
     velt_common::std_module!(prelude_bits),
+    velt_common::std_module!(prelude_int_arith),
+    velt_common::std_module!(prelude_int_arith_wide),
 ];
 
 /// The modules of Velt-only globals (no JavaScript counterpart): like `VELT_PRELUDE`, their

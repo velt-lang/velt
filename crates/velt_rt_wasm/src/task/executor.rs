@@ -1,9 +1,10 @@
 //! The current-thread executor: spawned tasks, a FIFO ready queue, timers, and `block_on`.
 //!
 //! Tasks are heap `VeltFut`s. A waker is just a task id (0 = the `block_on` root) that `wake`
-//! pushes onto the ready queue once. When nothing is ready, the executor sleeps until the
-//! earliest timer; if there is no timer either, no task can ever be woken again and the program
-//! ends, as Node exits with promises pending (and as the native runtime does, task/quiet.rs).
+//! pushes onto the ready queue once. When nothing is ready, the executor waits for the earliest
+//! timer (block_on.rs); if there is no timer either (nor, under a JS host, a pending host
+//! promise), no task can ever be woken again and the program ends, as Node exits with promises
+//! pending (and as the native runtime does, task/quiet.rs).
 
 use std::cell::{Cell, RefCell};
 use std::cmp::{Ordering, Reverse};
@@ -49,6 +50,8 @@ struct Task {
     join: Option<Rc<RefCell<JoinState>>>,
     /// The logical task it runs for ([`logical_task`]).
     logical: u64,
+    /// `spawn` started it (counted in [`Executor::spawned`]).
+    spawned: bool,
 }
 
 /// The logical task of the `block_on` root.
@@ -111,7 +114,8 @@ struct Executor {
     timer_seq: u64,
     /// Inside `block_on` (promises can only be started while tasks run).
     running: bool,
-    /// Started promises that have not finished (`block_on` waits for them, like JS).
+    /// Started promises that have not finished (after a `main` that returned 0, the program
+    /// waits for them, as native programs do).
     locals: usize,
     /// The poll being run: a promise created during it ([`super::boxed`] stamps it) can only
     /// have been woken by that poll's own code, never by a timer (velt_rt's turns, #150).
@@ -122,8 +126,11 @@ struct Executor {
     polling: Vec<(usize, u32)>,
     /// The last turn in which something yielded (`yieldNow()`).
     yielded: u32,
-    /// Keep-alive references (ref'd timers): `block_on` also waits while any is held.
+    /// Keep-alive references (ref'd timers): the program also waits while any is held.
     keep_alive: usize,
+    /// The tasks `spawn` started that have not finished: the program goes on after `main` while
+    /// any is left, as on native targets.
+    spawned: usize,
     /// The microtask queue (`then` callbacks, `queueMicrotask`): it runs before the ready
     /// tasks, so it is drained after every task poll, like Node's microtask checkpoint
     /// (velt_rt task/local/micro.rs).
@@ -483,6 +490,17 @@ pub fn spawn(fut: *mut VeltFut, result_size: usize, join: Option<Rc<RefCell<Join
     spawn_for(fut, result_size, join, None)
 }
 
+/// [`spawn`] for `spawn(…)`: the program goes on after `main` until the task finishes.
+pub fn spawn_task(fut: *mut VeltFut, result_size: usize, join: Option<Rc<RefCell<JoinState>>>) {
+    let id = spawn(fut, result_size, join);
+    with_exec(|e| {
+        if let Some(Some(t)) = e.tasks.get_mut(id - 1) {
+            t.spawned = true;
+            e.spawned += 1;
+        }
+    });
+}
+
 /// [`spawn`] for logical task `logical` (`None`: a new one). A started promise's driving task
 /// runs for the logical task that started it, as on native targets, where the task's own set
 /// drives it.
@@ -503,6 +521,7 @@ pub fn spawn_for(
         result_size,
         join,
         logical,
+        spawned: false,
     };
     let id = with_exec(|e| match e.free.pop() {
         Some(slot) => {
@@ -531,6 +550,7 @@ pub fn cancel(id: usize) {
         e.queued.remove(&id);
         let task = e.tasks.get_mut(id - 1)?.take()?;
         e.free.push(id - 1);
+        e.spawned -= usize::from(task.spawned);
         Some(task)
     });
     if let Some(task) = task {
@@ -554,7 +574,9 @@ unsafe fn run_task(id: usize) {
     }
     let task = with_exec(|e| {
         e.free.push(id - 1);
-        e.tasks[id - 1].take()
+        let task = e.tasks[id - 1].take();
+        e.spawned -= usize::from(task.as_ref().is_some_and(|t| t.spawned));
+        task
     })
     .expect("ICE: a running task has a slot");
     if let Some(join) = &task.join {
@@ -676,76 +698,11 @@ unsafe fn fire_due_now() {
     fire_due(now);
 }
 
-/// Sleep until the earliest timer and fire every timer that is due; false if there is none.
-fn wait_for_timers() -> bool {
-    let sleep = with_exec(|e| e.timers.peek().map(|t| t.0.deadline));
-    let Some(first) = [sleep, super::order::first_expiry()]
-        .into_iter()
-        .flatten()
-        .reduce(f64::min)
-    else {
-        return false;
-    };
-    platform::sleep_ms(first - platform::monotonic_ms());
-    fire_due(platform::monotonic_ms());
-    true
-}
-
-/// `async main`: drive the compiled root state machine (and every task it spawns) until the
-/// root is ready, every started promise finished and no keep-alive reference (a ref'd timer) is
-/// held, or until nothing can wake any of them (the program ends then, with exit code 0 when the
-/// root never finished, or 13 when it waits at a top-level `await`). Spawned tasks still running
-/// afterwards are abandoned.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_block_on(poll: PollFn, state: *mut u8) {
-    with_exec(|e| e.running = true);
-    set_running_word(true);
-    schedule(ROOT);
-    let mut root_done = false;
-    loop {
-        if root_done && with_exec(|e| e.micro.is_empty()) && !resuming() {
-            super::local::flush_unhandled();
-        }
-        if root_done && with_exec(|e| e.locals == 0 && e.keep_alive == 0) {
-            with_exec(|e| e.running = false);
-            set_running_word(false);
-            return;
-        }
-        fire_due_now();
-        let Some(id) = next_micro().or_else(|| {
-            // The microtask queue is drained (and no awaiter resumes): unhandled rejections are
-            // reported now.
-            if !resuming() {
-                super::local::flush_unhandled();
-            }
-            next_ready()
-        }) else {
-            if !wait_for_timers() {
-                // Nothing can wake a task any more: the end, as in Node (exit code 13 at an
-                // unsettled top-level `await`).
-                if !root_done {
-                    crate::panic::velt_rt_exit(crate::top_level_await::unfinished_exit_code());
-                }
-                with_exec(|e| e.running = false);
-                set_running_word(false);
-                return;
-            }
-            continue;
-        };
-        if id != ROOT {
-            run_task(id);
-            continue;
-        }
-        if root_done {
-            continue;
-        }
-        let w = waker(ROOT);
-        let mut cx = Context::from_waker(&w);
-        begin_poll(ROOT);
-        root_done = poll(state, raw_cx(&mut cx).ptr()) == READY;
-        end_poll();
-    }
-}
+#[path = "block_on.rs"]
+mod block_on;
+pub use block_on::{
+    after_main, next_deadline, run_until_idle, start_root, stop, velt_rt_block_on, Root,
+};
 
 #[cfg(test)]
 #[path = "executor_tests.rs"]

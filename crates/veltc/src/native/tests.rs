@@ -423,19 +423,29 @@ fn one_host_import_has_one_signature() {
     let main = tmp.path().join("main.vlt");
     // `other` declares `f(param): ret` and calls it; main declares `f(param2): ret2`.
     let lower = |other: &str, mine: &str, arg: &str| {
-        let decl = |sig: &str| format!("export declare host(\"env\") function f{sig};\n");
+        // An async host function's promise is spawned (a floating one is an error).
+        let call = |sig: &str| match sig.starts_with("async ") {
+            true => format!("spawn(f({arg}))"),
+            false => format!("f({arg})"),
+        };
+        let decl = |sig: &str| match sig.strip_prefix("async ") {
+            Some(sig) => format!("export declare host(\"env\") async function f{sig};\n"),
+            None => format!("export declare host(\"env\") function f{sig};\n"),
+        };
         write(
             &tmp.path().join("other.vlt"),
             &format!(
-                "{}export function later(): void {{\n  const b: u8[] = [0];\n  f({arg});\n}}\n",
-                decl(other)
+                "{}export function later(): void {{\n  const b: u8[] = [0];\n  {};\n}}\n",
+                decl(other),
+                call(other)
             ),
         );
         write(
             &main,
             &format!(
-                "import {{ later }} from \"./other\";\n{}function main() {{\n  const b: u8[] = [0];\n  f({arg});\n  later();\n}}\n",
-                decl(mine).trim_start_matches("export ")
+                "import {{ later }} from \"./other\";\n{}function main() {{\n  const b: u8[] = [0];\n  {};\n  later();\n}}\n",
+                decl(mine).trim_start_matches("export "),
+                call(mine)
             ),
         );
         let opts = BuildOptions {
@@ -454,6 +464,16 @@ fn one_host_import_has_one_signature() {
     assert_eq!(lower("(b: u8[]): void", "(c: u8[]): void", "b"), "");
     let d = lower("(x: f64): f64", "(x: f64): i32", "1");
     assert!(d.contains(twice) && !d.contains("readonly"), "{d}");
+    assert_eq!(
+        lower(
+            "async (x: f64): Promise<u8>",
+            "async (y: f64): Promise<u8>",
+            "1"
+        ),
+        ""
+    );
+    let d = lower("async (x: f64): Promise<u8>", "(x: f64): u8", "1");
+    assert!(d.contains(twice), "{d}");
     for (other, mine) in [
         ("(b: readonly u8[]): void", "(b: u8[]): void"),
         ("(b: u8[]): void", "(b: readonly u8[]): void"),

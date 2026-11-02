@@ -175,6 +175,7 @@ impl<M: Module> Translator<'_, '_, M> {
             Op::ReverseBytes => self.simd_shuffle(&reversed_bytes(lanes), values[0], values[0]),
             Op::Shuffle(mask) => self.simd_shuffle(&mask, values[0], values[1]),
             Op::Narrow => self.simd_narrow(lanes, values),
+            Op::DotAdd => self.simd_dot_add(values),
             Op::Select => {
                 let x = self.lanes_of(values[1], ty);
                 let y = self.lanes_of(values[2], ty);
@@ -265,6 +266,28 @@ impl<M: Module> Translator<'_, '_, M> {
             Op::Convert(to) => ins.fcvt_to_uint_sat(vector_type(to), x),
             _ => ins.bnot(x),
         }
+    }
+
+    /// `acc + dot(a, b)` on `i32x4` (`Op::DotAdd`): the signed bytes widened to 16 bits and
+    /// multiplied (exact: |product| ≤ 2^14), widened to 32 bits, then neighbours added three
+    /// times (`iadd_pairwise`): products 0..3 land in lane 0, 4..7 in lane 1, and so on.
+    fn simd_dot_add(&mut self, values: &[ir::Value]) -> ir::Value {
+        let acc = self.lanes_of(values[0], types::I32X4);
+        let (a, b) = (values[1], values[2]);
+        let a_lo = self.builder.ins().swiden_low(a);
+        let a_hi = self.builder.ins().swiden_high(a);
+        let b_lo = self.builder.ins().swiden_low(b);
+        let b_hi = self.builder.ins().swiden_high(b);
+        let p_lo = self.builder.ins().imul(a_lo, b_lo);
+        let p_hi = self.builder.ins().imul(a_hi, b_hi);
+        let q0 = self.builder.ins().swiden_low(p_lo);
+        let q1 = self.builder.ins().swiden_high(p_lo);
+        let q2 = self.builder.ins().swiden_low(p_hi);
+        let q3 = self.builder.ins().swiden_high(p_hi);
+        let r01 = self.builder.ins().iadd_pairwise(q0, q1);
+        let r23 = self.builder.ins().iadd_pairwise(q2, q3);
+        let sums = self.builder.ins().iadd_pairwise(r01, r23);
+        self.builder.ins().iadd(acc, sums)
     }
 
     /// Whether a vector's worth of elements from `at` is inside the array whose header `array`

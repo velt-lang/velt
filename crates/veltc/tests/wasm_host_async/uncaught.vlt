@@ -1,0 +1,12 @@
+// A rejection nothing catches, after the program waited: `main` ends in a later turn, with the
+// uncaught error and exit code 1 (crates/veltc/tests/wasm_goldens.rs
+// `async_host_functions_under_node`). It imports nothing: the declaration loads `IoError`.
+
+declare host("test") async function fail(name: string): Promise<u32>;
+
+async function main() {
+  await sleep(1);
+  console.log("before");
+  await fail("RangeError");
+  console.log("never printed");
+}

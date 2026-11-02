@@ -3,7 +3,7 @@
 //! allocation) while the owner only observes completion. Everything runs on the one thread, so
 //! this is JS's concurrency model exactly; when one finishes, its awaiter runs next (a JS
 //! microtask). Dropped unfinished, a started promise keeps running and its task disposes of the
-//! result; `block_on` waits for started promises (see executor.rs).
+//! result; after a `main` that returned 0 the program waits for started promises (block_on.rs).
 
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
@@ -33,7 +33,7 @@ pub struct Started {
     handled: bool,
     /// In `WATCHED`: the checkpoint frees the promise if its owner dropped it meanwhile.
     watched: bool,
-    /// It runs a timer's callback (`mark_starting_timer`): `block_on` does not wait for it (a
+    /// It runs a timer's callback (`mark_starting_timer`): the program does not wait for it (a
     /// ref'd timer holds a keep-alive reference instead).
     timer: bool,
 }
@@ -542,6 +542,12 @@ mod tests {
     use super::*;
     use crate::task::boxed::velt_rt_fut_box;
     use crate::task::executor::velt_rt_block_on;
+
+    /// `main`'s root, then the tasks after it, as a program that returned 0 runs them.
+    unsafe fn run_root(poll: crate::task::PollFn, state: *mut u8) {
+        velt_rt_block_on(poll, state);
+        crate::task::executor::after_main();
+    }
     use crate::task::{velt_rt_fut_drop, velt_rt_fut_poll, velt_rt_yield_now};
     use std::cell::Cell;
 
@@ -672,7 +678,7 @@ mod tests {
     fn a_detached_promise_that_is_ready_runs_before_its_owner_goes_on() {
         LOG.with(|l| l.borrow_mut().clear());
         let mut st = [0i64; 2];
-        unsafe { velt_rt_block_on(ready_detach_poll, st.as_mut_ptr() as *mut u8) };
+        unsafe { run_root(ready_detach_poll, st.as_mut_ptr() as *mut u8) };
         let log = LOG.with(|l| l.borrow().clone());
         assert_eq!(log, ["waiter end", "owner goes on"]);
     }
@@ -707,7 +713,7 @@ mod tests {
     fn a_marked_promise_transfers_its_result_once_as_it_finishes() {
         LOG.with(|l| l.borrow_mut().clear());
         let mut st = [0i64; 3];
-        unsafe { velt_rt_block_on(hand_on_poll, st.as_mut_ptr() as *mut u8) };
+        unsafe { run_root(hand_on_poll, st.as_mut_ptr() as *mut u8) };
         assert_eq!(st[0], 105);
         let log = LOG.with(|l| l.borrow().clone());
         assert_eq!(log, ["child start", "marked", "child end", "transfer"]);
@@ -717,7 +723,7 @@ mod tests {
     fn a_detached_promise_runs_after_its_owner_and_finishes() {
         LOG.with(|l| l.borrow_mut().clear());
         let mut st = [0i64; 2];
-        unsafe { velt_rt_block_on(detach_poll, st.as_mut_ptr() as *mut u8) };
+        unsafe { run_root(detach_poll, st.as_mut_ptr() as *mut u8) };
         let log = LOG.with(|l| l.borrow().clone());
         assert_eq!(log, ["child start", "owner goes on", "child end"]);
         assert_eq!(RESULT_DROPS.with(Cell::get), 1);
@@ -727,7 +733,7 @@ mod tests {
     fn a_finished_promise_resumes_its_awaiter_first() {
         LOG.with(|l| l.borrow_mut().clear());
         let mut st = [0i64; 4];
-        unsafe { velt_rt_block_on(first_poll, st.as_mut_ptr() as *mut u8) };
+        unsafe { run_root(first_poll, st.as_mut_ptr() as *mut u8) };
         let log = LOG.with(|l| l.borrow().clone());
         let want = [
             "child start",
@@ -743,7 +749,7 @@ mod tests {
     fn started_promises_run_now_and_dropped_ones_finish() {
         LOG.with(|l| l.borrow_mut().clear());
         let mut st = [0i64; 4];
-        unsafe { velt_rt_block_on(main_poll, st.as_mut_ptr() as *mut u8) };
+        unsafe { run_root(main_poll, st.as_mut_ptr() as *mut u8) };
         assert_eq!(st[0], 5);
         let log = LOG.with(|l| l.borrow().clone());
         let want = [

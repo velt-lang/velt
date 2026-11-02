@@ -70,7 +70,7 @@ pub unsafe extern "C" fn velt_rt_spawn_fut(
     let mut state = JoinState::default();
     state.result_drop = result_drop;
     let join = Rc::new(RefCell::new(state));
-    executor::spawn(f, size, Some(join.clone()));
+    executor::spawn_task(f, size, Some(join.clone()));
     let handle = Box::new(JoinHandle {
         header: VeltFut::new(join_poll, join_drop),
         result: [0; MAX_RESULT / 8],
@@ -129,7 +129,7 @@ pub unsafe extern "C" fn velt_rt_spawn_detached(
 ) {
     crate::shared::refuse_tasks_in_read();
     let f = velt_rt_fut_box(poll, drop, state, state_size, state_align);
-    executor::spawn(f, 0, None);
+    executor::spawn_task(f, 0, None);
 }
 
 /// WebAssembly has one thread: one worker. The scheduler request is ignored.
