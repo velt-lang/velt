@@ -1,0 +1,10 @@
+// A declared function whose `this` parameter has another type than `any` cannot be used as a
+// value yet (#942): a function value passes no typed receiver.
+class Box {
+  n = 1;
+}
+function read(this: Box): number {
+  return this.n;
+}
+const f: any = read;
+console.log(f.call(new Box()));

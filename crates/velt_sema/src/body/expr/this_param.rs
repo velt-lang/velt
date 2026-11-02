@@ -118,11 +118,45 @@ impl FnCx<'_, '_> {
         matches!(self.cx.dynamic(t), Some(Dynamic::Any | Dynamic::Unknown))
     }
 
-    /// `f` used as a value, when it is a function with a `this` parameter: not supported yet
-    /// (a function value has no receiver to pass).
-    pub(crate) fn this_fn_value(&mut self, d: DefId, name: &str, span: Span) -> Option<hir::Expr> {
+    /// `f` used as a value, when it is a function with a `this` parameter: with `this: any`, a
+    /// `ThisFn` forwarding to it (`this_fn_expr`), as `function (this: any, a: A) { return
+    /// f.call(this, a); }` would be, so a call through `any` or a proxy, `call`, `apply` and
+    /// `bind` pass the receiver, as in JavaScript. Other `this` types, and generic, async or
+    /// generator functions or ones with a rest or destructured parameter, are not supported yet
+    /// (reported).
+    pub(crate) fn this_fn_value(
+        &mut self,
+        d: DefId,
+        name: &str,
+        exp: Option<TyId>,
+        span: Span,
+    ) -> Option<hir::Expr> {
         if !self.takes_this(d) {
             return None;
+        }
+        let info = self.cx.fn_info(d);
+        let this_ty = info.this.as_ref().map(|t| t.ty);
+        let decl = match info.source {
+            Some(crate::defs::FnSource::Decl(x)) => Some(x),
+            _ => None,
+        };
+        let forwards = |x: &&ast::FnDecl| {
+            x.sig.generics.is_empty()
+                && !x.sig.is_async
+                && !x.sig.is_generator
+                && x.sig.params.iter().all(|p| p.pattern.is_none() && !p.rest)
+        };
+        // Read again while its own forwarding function is checked (a trial read of the callee
+        // of `f.call(...)`): reported, not expanded again.
+        let again = self.this_fn_forwarding.contains(&d);
+        if let (Some(decl), Some(t), false) = (decl.filter(forwards), this_ty, again) {
+            if matches!(self.cx.dynamic(t), Some(Dynamic::Any)) {
+                let fwd = forwarding_decl(decl, name, span);
+                self.this_fn_forwarding.push(d);
+                let h = self.this_fn_expr(&fwd, t, exp, span);
+                self.this_fn_forwarding.pop();
+                return Some(h);
+            }
         }
         self.cx.error(
             Diagnostic::error(
@@ -130,9 +164,50 @@ impl FnCx<'_, '_> {
                 span,
             )
             .with_note(format!(
-                "TypeScript allows this; Velt doesn't yet because a function value has no receiver; call it: `{name}.call(obj, ...)`"
+                "TypeScript allows this; Velt passes the receiver to a function value only for a function with `this: any` that is not generic, async or a generator and has no rest or destructured parameter; call it: `{name}.call(obj, ...)`"
             )),
         );
         Some(self.error_expr(span))
     }
+}
+
+/// `function (this: any, <decl's parameters>) { return name.call(this, <parameters>); }`: the
+/// function expression a declared `this: any` function `decl` named `name` is as a value (its
+/// parameters bound as a function expression's, defaults included).
+fn forwarding_decl(decl: &ast::FnDecl, name: &str, span: Span) -> ast::FnDecl {
+    let ident = |n: &str| ast::Ident {
+        name: n.into(),
+        span,
+    };
+    let mut args = vec![synth(ast::ExprKind::This, span)];
+    for p in &decl.sig.params {
+        args.push(synth(ast::ExprKind::Ident(p.name.clone()), p.span));
+    }
+    let callee = synth(
+        ast::ExprKind::Member {
+            object: Box::new(synth(ast::ExprKind::Ident(ident(name)), span)),
+            prop: ident("call"),
+            optional: false,
+        },
+        span,
+    );
+    let call = synth(
+        ast::ExprKind::Call {
+            callee: Box::new(callee),
+            type_args: vec![],
+            args,
+            optional: false,
+        },
+        span,
+    );
+    let mut fwd = decl.clone();
+    fwd.overloads.clear();
+    fwd.body = ast::Block {
+        stmts: vec![ast::Stmt {
+            kind: ast::StmtKind::Return(Some(call)),
+            span,
+        }],
+        span: decl.body.span,
+    };
+    fwd
 }

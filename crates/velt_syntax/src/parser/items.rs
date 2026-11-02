@@ -561,6 +561,9 @@ impl<'a> Parser<'a> {
         self.expect(Tok::LParen)?;
         let mut params = Vec::new();
         self.parse_this_param()?;
+        // A parameter type or default may hold a function type or arrow, whose own parameter
+        // list resets it: this list's `this` parameter is restored after them.
+        let this_param = self.this_param.clone();
         while !self.at(Tok::RParen) {
             let p = self.parse_param(params.len())?;
             if params.last().is_some_and(|q: &Param| q.rest) {
@@ -572,6 +575,7 @@ impl<'a> Parser<'a> {
             }
         }
         self.expect(Tok::RParen)?;
+        self.this_param = this_param;
         let checked: Vec<_> = params.iter().map(ParamDefault::of_param).collect();
         for i in self.check_param_defaults(&checked, generator) {
             params[i].ty = super::param_patterns::applied_in_callee(params[i].ty.clone());

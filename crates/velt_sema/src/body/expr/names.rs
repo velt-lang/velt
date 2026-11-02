@@ -401,7 +401,7 @@ impl FnCx<'_, '_> {
                         return h;
                     }
                 }
-                if let Some(h) = self.this_fn_value(d, &id.name, span) {
+                if let Some(h) = self.this_fn_value(d, &id.name, exp, span) {
                     return h;
                 }
                 self.fn_ref(d, id, exp)

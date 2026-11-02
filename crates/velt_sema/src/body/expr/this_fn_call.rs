@@ -76,6 +76,13 @@ impl FnCx<'_, '_> {
             } => (object, false),
             _ => return None,
         };
+        // A declared function's `f.call(...)` / `f.apply(...)` (`call_apply.rs`): not read as
+        // a value (which for one with a `this` parameter makes a `ThisFn` calling it, `this_param`).
+        if let ast::ExprKind::Ident(id) = &object.kind {
+            if self.is_fn_item(id) {
+                return None;
+            }
+        }
         let ot = self.trial_type(object)?;
         let dynamic_object = self.cx.dynamic(ot).is_some();
         let ct = match (&callee.kind, dynamic_object) {

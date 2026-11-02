@@ -173,7 +173,9 @@ const THIS_FN: &str = "<function with this>";
 const THIS_FN_LINE: &str = "// load for: a function expression with a `this` parameter";
 
 /// Whether `module` holds a function expression (not a generator) whose `this` parameter its
-/// body uses (sema's `this_fn_expr`, whose value is a `ThisFn`).
+/// body uses (sema's `this_fn_expr`, whose value is a `ThisFn`), or a function declared with a
+/// `this` parameter that may be used as a value (not generic, async or a generator: sema's
+/// `this_fn_value` makes a `ThisFn` of it).
 fn has_this_fn(module: &ast::Module) -> bool {
     struct Find(bool);
     impl<'a> Visit<'a> for Find {
@@ -181,6 +183,12 @@ fn has_this_fn(module: &ast::Module) -> bool {
             if let ast::ExprKind::Function(d) = &e.kind {
                 self.0 |= d.sig.this_param.is_some() && !d.sig.is_generator;
             }
+        }
+        fn function(&mut self, sig: &'a ast::FnSig, _body: &'a ast::Block) {
+            self.0 |= sig.this_param.is_some()
+                && sig.generics.is_empty()
+                && !sig.is_async
+                && !sig.is_generator;
         }
     }
     let mut find = Find(false);
