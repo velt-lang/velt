@@ -8,15 +8,15 @@ import { AbortController } from "velt/task";
 export class HttpServer {
   /** The real port (useful after `port: 0`); 0 when the requests come from a JS host. */
   port: number = 0;
-  // Closes what accepts the requests (the TCP listener).
-  private closeListener: () => void;
+  // Closes what accepts the requests (the TCP listener); named for it, as JSON errors name it.
+  private listener: () => void;
   private stop: AbortController;
   // Settles once the server stopped accepting and every connection finished.
   private done: Promise<void>;
 
   constructor(port: number, closeListener: () => void, stop: AbortController, done: Promise<void>) {
     this.port = port;
-    this.closeListener = closeListener;
+    this.listener = closeListener;
     this.stop = stop;
     this.done = done;
   }
@@ -26,7 +26,7 @@ export class HttpServer {
    * request answers it, then closes. Idempotent.
    */
   close() {
-    const closeListener = this.closeListener;
+    const closeListener = this.listener;
     closeListener();
     this.stop.abort();
   }
