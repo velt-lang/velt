@@ -14,9 +14,16 @@
 //! another function with properties.
 
 use std::collections::HashMap;
+use std::hash::BuildHasherDefault;
 use std::sync::{Mutex, PoisonError};
 
 use crate::str::VeltStr;
+use crate::view::AddrHasher;
+
+/// A table keyed by an address. Addresses need no protection against chosen keys, and the
+/// default hasher (SipHash) cost more than the rest of a lookup: an environment with properties
+/// is looked up at every drop of a reference to it.
+type ByAddr<V> = HashMap<usize, V, BuildHasherDefault<AddrHasher>>;
 
 /// An `any` value as generated code lays it out: the data pointer and the type's table, each in
 /// a 64-bit word on every target (a pointer is 8 bytes in compiled code's memory, wasm32 too).
@@ -59,11 +66,10 @@ struct Props {
 // the function, which one thread uses at a time (counted objects never run on two at once).
 unsafe impl Send for Props {}
 
-static TABLE: Mutex<Option<HashMap<usize, Props>>> = Mutex::new(None);
+static TABLE: Mutex<ByAddr<Props>> = Mutex::new(HashMap::with_hasher(BuildHasherDefault::new()));
 
-fn with<R>(f: impl FnOnce(&mut HashMap<usize, Props>) -> R) -> R {
-    let mut t = TABLE.lock().unwrap_or_else(PoisonError::into_inner);
-    f(t.get_or_insert_with(HashMap::new))
+fn with<R>(f: impl FnOnce(&mut ByAddr<Props>) -> R) -> R {
+    f(&mut TABLE.lock().unwrap_or_else(PoisonError::into_inner))
 }
 
 /// Drop the `any` value `v` through its table.
@@ -238,9 +244,10 @@ const EMPTY_BLOCK: u64 = 32;
 /// the same, for `===` and `Map` keys too. Its properties are not atomic, so they are module
 /// state (rt_abi "Module state"): reaching them takes the module lock, as an access of a
 /// module-level `let` does, and the task keeps it in its polls from then on.
-type Identities = HashMap<usize, usize>;
+type Identities = ByAddr<usize>;
 
-static IDENTITIES: Mutex<Option<Identities>> = Mutex::new(None);
+static IDENTITIES: Mutex<Identities> =
+    Mutex::new(HashMap::with_hasher(BuildHasherDefault::new()));
 
 /// The identity environment of the function value with code `code` and no environment, made
 /// on first use (an environment holding nothing, whose entries change no count): the function
@@ -253,8 +260,7 @@ pub extern "C" fn velt_rt_fnprop_identity(code: *const u8) -> *mut u8 {
     }
     let key = code as usize;
     let mut t = IDENTITIES.lock().unwrap_or_else(PoisonError::into_inner);
-    *t.get_or_insert_with(HashMap::new)
-        .entry(key)
+    *t.entry(key)
         .or_insert_with(|| identity_env() as usize) as *mut u8
 }
 
@@ -297,8 +303,7 @@ fn empty_env() -> *mut u8 {
 pub extern "C" fn velt_rt_fnprop_identity_of(code: *const u8) -> *mut u8 {
     let key = code as usize;
     let t = IDENTITIES.lock().unwrap_or_else(PoisonError::into_inner);
-    let env = t.as_ref().and_then(|t| t.get(&key).copied());
-    env.unwrap_or(0) as *mut u8
+    t.get(&key).copied().unwrap_or(0) as *mut u8
 }
 
 /// The drop entry of an environment holding nothing: one reference less, the block freed with
@@ -457,7 +462,7 @@ pub unsafe extern "C" fn velt_rt_fnprop_env_transfer(env: *mut u8) -> *mut u8 {
 pub(crate) fn drop_at_exit() {
     let envs: Vec<usize> = {
         let mut t = IDENTITIES.lock().unwrap_or_else(PoisonError::into_inner);
-        t.take().map_or(vec![], |t| t.into_values().collect())
+        std::mem::take(&mut *t).into_values().collect()
     };
     for env in envs {
         let props = with(|t| t.remove(&env));

@@ -12,9 +12,10 @@ use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
 use std::sync::{Mutex, PoisonError};
 
-/// Hashes object addresses: one multiply (Fibonacci hashing).
+/// Hashes object addresses: one multiply (Fibonacci hashing). Also the hasher of the other
+/// tables keyed by an address (`fn_props`).
 #[derive(Default)]
-struct AddrHasher(u64);
+pub(crate) struct AddrHasher(u64);
 
 impl Hasher for AddrHasher {
     fn finish(&self) -> u64 {
