@@ -7,8 +7,9 @@
 //! variable for debuggers (`LocalDecl::debug`, debug builds, where the object gets DWARF
 //! variables: `debug_info::describes_variables`) stays in a register for its reads, and each
 //! write also goes to a shadow stack slot, which debug info names: one store per assignment,
-//! where a slot of its own cost a load at every use. Slots are keyed by the local's index, so
-//! debug_info finds them in the compiled frame. Submodules handle one concern each on
+//! where a slot of its own cost a load at every use. The slots debug info names are keyed by
+//! the local's index, so debug_info finds them in the compiled frame; other memory locals share
+//! slots when their live ranges are disjoint (`slots`). Submodules handle one concern each on
 //! the shared `Translator`.
 //!
 //! Why single assignments bypass `Variable`: `FunctionBuilder` keeps, per variable, a table
@@ -29,6 +30,9 @@ mod place;
 mod rounding;
 mod simd;
 mod simd_partial;
+mod slots;
+#[cfg(test)]
+mod slots_tests;
 mod stmt;
 #[cfg(test)]
 mod storage_tests;
@@ -330,11 +334,38 @@ fn allocate_locals(
             StackSlotKey::new(i as u64),
         )))
     };
+    // Memory locals: debug info finds a described local's slot by its key; the others share
+    // slots where their live ranges allow (`slots`).
+    let keyed = |i: usize| describe && function.locals[i].debug.is_some();
+    let plan = slots::plan(program, function, in_memory, &keyed)?;
+    let memory_slots: Vec<ir::StackSlot> = plan
+        .slots
+        .iter()
+        .map(|s| {
+            let data = match s.key {
+                Some(key) => StackSlotData::new_with_key(
+                    StackSlotKind::ExplicitSlot,
+                    s.size,
+                    s.align.trailing_zeros() as u8,
+                    StackSlotKey::new(u64::from(key)),
+                ),
+                None => StackSlotData::new(
+                    StackSlotKind::ExplicitSlot,
+                    s.size,
+                    s.align.trailing_zeros() as u8,
+                ),
+            };
+            builder.create_sized_stack_slot(data)
+        })
+        .collect();
     for (i, local) in function.locals.iter().enumerate() {
         let shadow = describe && local.debug.is_some();
         storage.push(match local.ty {
             Ty::Unit => Storage::Unit,
-            ty if in_memory[i] => Storage::Slot(keyed_slot(builder, i, ty)?),
+            _ if in_memory[i] => match plan.local_slot[i] {
+                Some(s) => Storage::Slot(memory_slots[s as usize]),
+                None => bail!("ICE: memory local _{i} has no planned slot"),
+            },
             ty if single[i] => {
                 if shadow {
                     shadows

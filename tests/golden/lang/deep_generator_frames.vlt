@@ -1,0 +1,70 @@
+// A recursive generator with many temporaries, nested through `yield*` 200 levels deep, the
+// way a server renderer walks a component tree. Each level is one frame of the generator's
+// resume function on the same stack, so a debug build must keep that frame small.
+
+type Attr = { name: string; value: string | number | boolean | undefined };
+
+interface Node {
+    tag: string;
+    attrs: Attr[];
+    text: string | undefined;
+    children: Node[];
+}
+
+function attrText(a: Attr): string | undefined {
+    const v = a.value;
+    if (v === undefined || v === false) return undefined;
+    if (v === true) return a.name;
+    return `${a.name}="${String(v)}"`;
+}
+
+function* render(node: Node, depth: number): Generator<string> {
+    let open = `<${node.tag}`;
+    for (const a of node.attrs) {
+        const t = attrText(a);
+        if (t !== undefined) open += ` ${t}`;
+    }
+    const id: string | number = depth % 2 === 0 ? `n${depth}` : depth;
+    const cls: string | undefined = depth % 3 === 0 ? "third" : undefined;
+    const title = typeof id === "string" ? id.toUpperCase() : `#${id.toFixed(0)}`;
+    const extra = cls !== undefined ? ` class="${cls}"` : "";
+    const data = [depth, depth + 1, depth + 2].map((x) => `${x}`).join("-");
+    open += ` data-d="${data}" title="${title}"${extra}>`;
+    yield open;
+    if (node.text !== undefined) {
+        const s = node.text.length > 3 ? node.text.slice(0, 3) : node.text;
+        yield `${s}${node.text.length}`;
+    }
+    for (const child of node.children) {
+        yield* render(child, depth + 1);
+    }
+    const close = depth % 5 === 0 ? `</${node.tag}><!--${depth}-->` : `</${node.tag}>`;
+    yield close;
+}
+
+function chain(depth: number): Node {
+    let node: Node = { tag: "b", attrs: [], text: "leaf", children: [] };
+    for (let i = depth - 1; i >= 0; i--) {
+        node = {
+            tag: i % 2 === 0 ? "div" : "span",
+            attrs: [
+                { name: "id", value: i },
+                { name: "hidden", value: i % 4 === 0 },
+                { name: "lang", value: undefined },
+            ],
+            text: i % 7 === 0 ? `text${i}` : undefined,
+            children: [node],
+        };
+    }
+    return node;
+}
+
+let parts = 0;
+let length = 0;
+let last = "";
+for (const s of render(chain(200), 0)) {
+    parts++;
+    length += s.length;
+    last = s;
+}
+console.log(parts, length, last);
