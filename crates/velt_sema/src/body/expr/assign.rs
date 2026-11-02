@@ -106,10 +106,7 @@ impl FnCx<'_, '_> {
                 if self.record_args(obj.ty).is_some() {
                     return Some(AssignTarget::Record(obj));
                 }
-                if self.has_indexer(obj.ty)
-                    && super::member::literal_key(index).is_none()
-                    && self.symbol_key_of(index).is_none()
-                {
+                if self.indexes_through(obj.ty, index) {
                     return Some(AssignTarget::Indexer(obj));
                 }
                 // `c["v"] = x` with a constant key is `c.v = x`, and `c[KEY] = x` with a symbol
@@ -460,6 +457,11 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.union_local_compound(&place, op, target, value, span) {
             return h;
         }
+        // A class, struct, vector or type parameter: its operator methods (`operator_assign`).
+        let place = match self.place_compound_operator(place, op, (target, value), span) {
+            Ok(h) => return h,
+            Err(place) => place,
+        };
         if lty == self.cx.ty.str_ && op == ast::BinaryOp::Add {
             // `rows[f()].out += x` / `g().out += x`: the object and indices are evaluated once,
             // before `x`, as in JS (`ns[f()] += 1` on numbers is one `CompoundAssign`).
@@ -598,6 +600,10 @@ impl FnCx<'_, '_> {
         if self.untyped_update(&place, span) {
             return self.error_expr(span);
         }
+        let place = match self.place_update_operator(place, op, prefix, as_value, span) {
+            Ok(h) => return h,
+            Err(place) => place,
+        };
         let lty = place.ty;
         self.literal_use_arith(&place);
         let opname = if op == ast::UpdateOp::Inc { "++" } else { "--" };

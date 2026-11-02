@@ -4,7 +4,7 @@
 //
 // Elements read as numbers and are converted when written, as in JS (`ToUint8`: 300 is 44,
 // `-1` is 255; `Uint8ClampedArray` clamps; `Float32Array` rounds to `f32`). `xs[i]` reads
-// element `i` (std's `[INDEX]`, which sema calls for `xs[i]`: crates/velt_sema/src/body/expr/
+// element `i` (`[Symbol.index]`, which sema calls for `xs[i]`: crates/velt_sema/src/body/expr/
 // indexers.rs) and panics out of range like an array index (JS reads `undefined`); `xs[i] = v`
 // writes it and does nothing out of range, as in JS. `subarray` shares the buffer, `slice`
 // copies.
@@ -22,9 +22,7 @@ import {
 import { ascending, elementsOf, localeNumber, TypedArray } from "velt/lang/typed_array/base";
 import { layout } from "velt/lang/typed_array/layout";
 import {
-  INDEX,
   INSPECT,
-  SET_INDEX,
   TYPED_ARRAY_GET,
   TYPED_ARRAY_KIND,
   TYPED_ARRAY_PUT,
@@ -141,7 +139,7 @@ export class Float32Array extends TypedArray implements Iterable<number> {
   }
 
   /** `xs[i]`: element `i`; panics out of range, like an array index (JS reads `undefined`). */
-  [INDEX](i: number): number {
+  [Symbol.index](i: number): number {
     // One test per branch, so the compiler knows `i` is in range where it converts it.
     if (!(i >= 0)) {
       this.outOfBounds(i);
@@ -174,7 +172,7 @@ export class Float32Array extends TypedArray implements Iterable<number> {
    * `xs[i] = v`: writes element `i`, converted; nothing out of range, as in JS (nor past the
    * end of a `u8[]` that became shorter than its `subarray`: `length`).
    */
-  [SET_INDEX](i: number, v: number) {
+  [Symbol.setIndex](i: number, v: number) {
     if (i >= 0 && i < this.count() && i == Math.trunc(i)) {
       // Inside the view and inside its buffer's bytes (`count`).
       const o = this.off + (i as usize) * 4;

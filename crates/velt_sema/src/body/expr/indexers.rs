@@ -1,19 +1,22 @@
-//! Indexing a class of the standard library that defines `[INDEX](i)`, and `[SET_INDEX](i, v)`
-//! for writes: the typed arrays (`Uint8Array`, `Float64Array`, …, std/lang/typed_array/index.vlt), whose
-//! elements live in an `ArrayBuffer` rather than in a Velt array, and `RegExpMatch`. `xs[i]`
-//! reads `xs[INDEX](i)`; `xs[i] = v` is `xs[SET_INDEX](i, v)`, and `xs[i] op= v`, `xs[i]++`
-//! and `xs[i] ??= v` read, then write, as in JS:
+//! Indexing a type that defines the operator method `[Symbol.index](i)`, and
+//! `[Symbol.setIndex](i, v)` for writes (design operators.md, #2050): a user class, struct or
+//! vector, and std's typed arrays (`Uint8Array`, `Float64Array`, …,
+//! std/lang/typed_array/index.vlt), whose elements live in an `ArrayBuffer` rather than in a
+//! Velt array, and `RegExpMatch`. `xs[i]` reads `xs[Symbol.index](i)`; `xs[i] = v` is
+//! `xs[Symbol.setIndex](i, v)`, and `xs[i] op= v` (in place on the element with its
+//! `[Symbol.opAssign]`), `xs[i]++` and `xs[i] ??= v` read, then write, as in JS:
 //!
 //! ```text
 //! { const <receiver> = xs;           // only when evaluating `xs` may have an effect
 //!   const <index> = i;               // only when `i` is not a literal
-//!   const <old> = <receiver>[INDEX](<index>);
+//!   const <old> = <receiver>[Symbol.index](<index>);
 //!   const <new> = <old> op v;
-//!   <receiver>[SET_INDEX](<index>, <new>);
+//!   <receiver>[Symbol.setIndex](<index>, <new>);
 //!   <old> or <new> }                 // the value, where one is wanted
 //! ```
 //!
-//! Only std classes are indexed this way: the keys (std/lang/hooks/keys.vlt) are std's own.
+//! A key naming a member stays property access, as in TypeScript: `a["x"]` with a member `x`
+//! (or a key of a literal type naming one) is the member, and the indexer takes the rest.
 
 use velt_common::Span;
 use velt_syntax::ast;
@@ -24,10 +27,7 @@ use super::setters::synth;
 use crate::body::{FnCx, Want};
 use crate::hir::{self, ExprKind as H, Nothing, TyId};
 
-/// The read method's name.
-const INDEX: &str = velt_common::std_key!(index);
-/// The write method's name.
-const SET_INDEX: &str = velt_common::std_key!(set_index);
+use velt_syntax::operators::{INDEX, SET_INDEX};
 /// An array's checked read (`T | undefined`), std/prelude/array.vlt.
 const GET: &str = velt_common::std_key!(array_get);
 const INDEX_TEMP: &str = "<index>";
@@ -59,16 +59,40 @@ fn index_parts(target: &ast::Expr) -> Option<(&ast::Expr, &ast::Expr)> {
 }
 
 impl FnCx<'_, '_> {
-    /// Is `t` a std class that defines `[INDEX]`?
+    /// Does `t` (a class, struct, vector, interface value or type parameter) define
+    /// `[Symbol.index]`?
     pub(crate) fn has_indexer(&mut self, t: TyId) -> bool {
-        let Some((d, _)) = self.cx.class_of(t) else {
+        self.has_instance_op(t, INDEX)
+    }
+
+    /// Is `obj[index]` (`obj` of type `t`) read and written through `t`'s indexer: `t` has one,
+    /// and the key is no symbol key and names no member (`a["x"]` with a member `x` is the
+    /// member, as in TypeScript)?
+    pub(crate) fn indexes_through(&mut self, t: TyId, index: &ast::Expr) -> bool {
+        if !self.has_indexer(t) || self.symbol_key_of(index).is_some() {
             return false;
+        }
+        match self.single_key(index) {
+            Some(k) => {
+                !(self.field_of(t, &k).is_some()
+                    || self.has_getter(t, &k)
+                    || self.has_setter(t, &k)
+                    || self.method_exists(t, &k))
+            }
+            None => true,
+        }
+    }
+
+    /// The type of the first parameter of `t`'s method `method` (an indexer's index), when it
+    /// is a known type (not one of the method's own type parameters).
+    fn index_param(&mut self, t: TyId, method: &str) -> Option<TyId> {
+        use super::method::Resolved;
+        let def = match self.resolve_method(t, method)? {
+            Resolved::Def { def, .. } | Resolved::Virtual { def, .. } => def,
+            _ => return None,
         };
-        let std = self.cx.adt(d).is_some_and(|a| {
-            a.qual_name
-                .starts_with(velt_common::std_modules::CANONICAL_PREFIX)
-        });
-        std && self.resolve_method(t, INDEX).is_some()
+        let p = self.cx.fn_info(def).params.first()?.ty;
+        (!matches!(self.cx.ty.kind(p), crate::hir::TyKind::Param(_))).then_some(p)
     }
 
     /// `obj[index]` read through `[INDEX]`.
@@ -137,15 +161,24 @@ impl FnCx<'_, '_> {
         method: &str,
         span: Span,
     ) -> hir::Expr {
-        let prop = ident(method, span);
-        if self.number_index(index) {
+        // The method is named by the brackets (`[0]` of `a[0]`: hover and go-to-definition).
+        let at = match obj.span.file == span.file && obj.span.hi < span.hi {
+            true => Span {
+                lo: obj.span.hi,
+                ..span
+            },
+            false => span,
+        };
+        let prop = ident(method, at);
+        let param = self.index_param(obj.ty, method);
+        if self.number_index(index, param) {
             return self.method_call_on(obj, &prop, &[], std::slice::from_ref(index), None, span);
         }
-        // An integer or computed index: evaluated once, after the object, as a number.
+        // An integer or computed index: evaluated once, after the object.
         let mut stmts = vec![];
         self.push_scope();
         let recv = self.object_once(obj, &mut stmts);
-        let idx = self.index_once(index, &mut stmts);
+        let idx = self.index_once(index, param, &mut stmts);
         let call = self.method_call_on(recv, &prop, &[], &[idx], None, span);
         self.pop_scope();
         self.temps_then(stmts, call, span)
@@ -165,9 +198,13 @@ impl FnCx<'_, '_> {
         let Some((object, index)) = index_parts(target) else {
             return self.error_expr(span);
         };
+        if !self.has_instance_op(obj.ty, SET_INDEX) {
+            return self.read_only_indexer(&obj, index, value, span);
+        }
+        let param = self.index_param(obj.ty, SET_INDEX);
         match op {
             // `xs[i] = v` as a statement: one call, its arguments evaluated in JS's order.
-            None if !as_value && self.number_index(index) && is_pure_value(value) => {
+            None if !as_value && self.number_index(index, param) && is_pure_value(value) => {
                 let prop = ident(SET_INDEX, span);
                 let args = [index.clone(), value.clone()];
                 self.method_call_on(obj, &prop, &[], &args, None, span)
@@ -178,7 +215,7 @@ impl FnCx<'_, '_> {
                 let mut stmts = vec![];
                 self.push_scope();
                 let recv = self.receiver_once(obj, object, Some(value), &mut stmts);
-                let idx = self.index_once(index, &mut stmts);
+                let idx = self.index_once(index, param, &mut stmts);
                 let v = self.expr(value, None, Want::Move);
                 self.bind_temp(NEW, v, &mut stmts);
                 let args = [idx, name_ref(NEW, span)];
@@ -229,8 +266,9 @@ impl FnCx<'_, '_> {
             Rmw::Compound(_, v) | Rmw::Logical(_, v) => Some(v),
             Rmw::Update(..) => None,
         };
+        let param = self.index_param(obj.ty, INDEX);
         let recv = self.receiver_once(obj, object, later, &mut stmts);
-        let idx = self.index_once(index, &mut stmts);
+        let idx = self.index_once(index, param, &mut stmts);
         let e = self.indexer_rmw_in(recv, idx, rmw, as_value, span, &mut stmts);
         self.pop_scope();
         e
@@ -253,10 +291,15 @@ impl FnCx<'_, '_> {
             return self.error_expr(span);
         }
         let old = self.bind_temp(OLD, old_val, stmts);
+        let mut computed = None;
         let (value, cond) = match rmw {
-            Rmw::Compound(op, v) => (binary(op, name_ref(OLD, span), v.clone(), span), None),
+            Rmw::Compound(op, v) => {
+                let new = self.rmw_compound_value(op, (old, OLD), old_ty, v, span);
+                computed = Some(new);
+                (name_ref(OLD, span), None)
+            }
             Rmw::Update(op, _) => {
-                if !self.cx.ty.is_numeric(old_ty) {
+                if !self.cx.ty.is_numeric(old_ty) && !self.operator_type(old_ty) {
                     let opname = if op == ast::UpdateOp::Inc { "++" } else { "--" };
                     let tn = self.cx.display(old_ty);
                     self.cx
@@ -286,7 +329,10 @@ impl FnCx<'_, '_> {
             Rmw::Logical(op, v) => (v.clone(), Some(self.decides(op, name_ref(OLD, span), span))),
         };
         let mut set = vec![];
-        let new_val = self.expr(&value, Some(old_ty), Want::Move);
+        let new_val = match computed {
+            Some(new) => new,
+            None => self.expr(&value, Some(old_ty), Want::Move),
+        };
         let new_ty = new_val.ty;
         let new = self.bind_temp(NEW, new_val, &mut set);
         let args = [idx, name_ref(NEW, span)];
@@ -329,8 +375,9 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         let mut stmts = vec![];
         self.push_scope();
+        let param = self.index_param(obj.ty, SET_INDEX);
         let recv = self.receiver_once(obj, object, Some(value), &mut stmts);
-        let idx = self.index_once(index, &mut stmts);
+        let idx = self.index_once(index, param, &mut stmts);
         let v = self.expr(value, None, Want::Move);
         let ty = v.ty;
         let new = self.bind_temp(NEW, v, &mut stmts);
@@ -342,14 +389,21 @@ impl FnCx<'_, '_> {
         self.mk(H::Block(block(stmts, Some(value), span)), ty, span)
     }
 
-    /// `index` to evaluate once: a literal itself, else a temporary holding it, converted to a
-    /// number when it is an integer (`xs[k]` with `k: usize`, as for an array index).
-    fn index_once(&mut self, index: &ast::Expr, stmts: &mut Vec<hir::Stmt>) -> ast::Expr {
+    /// `index` to evaluate once: a literal itself, else a temporary holding it. For an indexer
+    /// taking a `number` (`param`), an integer is converted (`xs[k]` with `k: usize`, as for an
+    /// array index).
+    fn index_once(
+        &mut self,
+        index: &ast::Expr,
+        param: Option<TyId>,
+        stmts: &mut Vec<hir::Stmt>,
+    ) -> ast::Expr {
         if let ast::ExprKind::Lit(_) = &index.kind {
             return index.clone();
         }
-        let mut i = self.expr(index, None, Want::Move);
-        if self.cx.ty.is_int(i.ty) {
+        let f64_ = self.cx.ty.f64;
+        let mut i = self.expr(index, param, Want::Move);
+        if self.cx.ty.is_int(i.ty) && param.is_none_or(|p| p == f64_) {
             let (f64_, span) = (self.cx.ty.f64, i.span);
             i = self.mk(H::Cast(Box::new(i)), f64_, span);
         }
@@ -357,14 +411,43 @@ impl FnCx<'_, '_> {
         name_ref(INDEX_TEMP, index.span)
     }
 
-    /// Is `index` passed to `[INDEX]` as it is: a literal, or a variable or field path that
-    /// holds a number (an integer one is converted, and any other index is evaluated once,
-    /// after the object: [`Self::index_once`])?
-    fn number_index(&mut self, index: &ast::Expr) -> bool {
+    /// Is `index` passed to the indexer as it is: a literal, or a variable or field path that
+    /// holds the indexer's index type (`param`, a number when unknown)? An integer one for a
+    /// `number` index is converted, and any other index is evaluated once, after the object
+    /// ([`Self::index_once`]).
+    fn number_index(&mut self, index: &ast::Expr, param: Option<TyId>) -> bool {
         if let ast::ExprKind::Lit(_) = &index.kind {
             return true;
         }
-        self.peek_ty(index).is_some_and(|t| t == self.cx.ty.f64)
+        let want = param.unwrap_or(self.cx.ty.f64);
+        self.peek_ty(index).is_some_and(|t| t == want)
+    }
+
+    /// `obj[index] = value` (or `op=`) on a type with `[Symbol.index]` and no
+    /// `[Symbol.setIndex]`.
+    fn read_only_indexer(
+        &mut self,
+        obj: &hir::Expr,
+        index: &ast::Expr,
+        value: &ast::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        self.expr(index, None, Want::Borrow);
+        self.expr(value, None, Want::Borrow);
+        let tn = self.cx.display(obj.ty);
+        let d = match self.cx.ty.kind(obj.ty) {
+            crate::hir::TyKind::Simd(_) => velt_common::Diagnostic::error(
+                format!("cannot assign to a lane of `{tn}`: a vector is a value"),
+                span,
+            )
+            .with_note("write `v = v.withLane(i, x)`"),
+            _ => velt_common::Diagnostic::error(
+                format!("cannot assign through `[]`: `{tn}` has `{INDEX}` but no `{SET_INDEX}`"),
+                span,
+            ),
+        };
+        self.cx.error(d);
+        self.error_expr(span)
     }
 
     /// The object, evaluated once: itself when it is a variable or a path of fields, else a

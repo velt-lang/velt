@@ -403,7 +403,7 @@ impl FnCx<'_, '_> {
                     let method = if optional {
                         "group"
                     } else {
-                        velt_common::std_key!(index)
+                        velt_syntax::operators::INDEX
                     };
                     call_method(m(), method, vec![index()], span)
                 }

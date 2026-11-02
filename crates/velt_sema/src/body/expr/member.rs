@@ -396,6 +396,11 @@ impl FnCx<'_, '_> {
             Ok(h) => return h,
             Err(obj) => obj,
         };
+        // `m[i]` on a type with `[Symbol.index]` (a typed array, a regex match, a user class,
+        // vector or bounded type parameter, `indexers`); a key naming a member stays the member.
+        if self.indexes_through(obj.ty, index) {
+            return self.indexer_read(obj, index, span);
+        }
         let obj = match self.generic_index(obj, index, want, span) {
             Ok(h) => return h,
             Err(obj) => obj,
@@ -408,6 +413,10 @@ impl FnCx<'_, '_> {
             false => obj,
         };
         let t = obj.ty;
+        // A shared value's indexer, read through the frozen view (`shared_indexed`).
+        if self.indexes_through(t, index) {
+            return self.indexer_read(obj, index, span);
+        }
         // `o[KEY]` with a symbol constant: the member the symbol names (a record's symbol
         // table, `record_index_read`, holds its symbol keys).
         if let Some(key) = self.symbol_key_of(index) {
@@ -420,27 +429,6 @@ impl FnCx<'_, '_> {
                 self.record_index_read(obj, index, span)
             }
             TyKind::Array(elem) => self.array_index(obj, elem, index, want, span),
-            // `m[1]` on a match of `s.matchAll(re)`: its group (std/regex `[INDEX]`).
-            TyKind::Adt(..)
-                if self.is_std_class(
-                    t,
-                    velt_common::std_item!(text_regex_regexp_match, "RegExpMatch"),
-                ) =>
-            {
-                let prop = ast::Ident {
-                    name: velt_common::std_key!(index).into(),
-                    span,
-                };
-                self.method_call_on(obj, &prop, &[], std::slice::from_ref(index), None, span)
-            }
-            // `xs[i]` on a typed array: `xs[INDEX](i)` (`indexers`).
-            TyKind::Adt(..)
-                if self.has_indexer(t)
-                    && literal_key(index).is_none()
-                    && self.symbol_key_of(index).is_none() =>
-            {
-                self.indexer_read(obj, index, span)
-            }
             // `s[i]` is `s.charAt(i)` (a string, as in JS).
             TyKind::Str => {
                 let prop = ast::Ident {
