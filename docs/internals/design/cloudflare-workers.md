@@ -87,16 +87,24 @@ declare host("cloudflare") function r2Get(bucket: HostRef, key: string): Promise
 
 ## 2. Async host functions and the host-driven executor (#1737)
 
-A host function returning `Promise<T>` is a promise leaf over a host promise id: the glue keeps
-the JS promise, and when it settles writes the result through the import's result convention
-and calls the exported `velt_settle(p, ok)`, which wakes the task and runs a turn. A rejection
-becomes an `IoError` (the JS error's `name` and `message`).
+`declare host("m") async function f(…): Promise<T>` calls the JS function at once; the import
+returns an id under which the glue keeps the JS promise, and the call's promise is a std hook
+awaiting the promise leaf over that id (`velt_rt_host_promise`). When the JS promise settles,
+the glue calls the exported `velt_settle(id)`, which wakes the task and runs a turn; the leaf,
+polled, has the glue write the outcome (`velt.host_take`) through the import's result
+convention. A rejection becomes an `IoError` (the JS error's `name` and `message`).
 
-`velt_rt_wasm`'s executor gains a host-driven turn: run microtasks and ready tasks until none
-is left, fire due timers, ask the host for a wake-up at the next deadline (`set_timer(ms)`,
-which calls `velt_turn()`), and return to JS instead of sleeping. Velt's `async` functions are
+`velt_rt_wasm`'s executor runs in turns the host drives, and nothing unwinds through the
+module: `velt_main` hands `main`'s root task to the runtime (`velt_rt_host_main`, which keeps
+its state on the heap) and returns. Each turn runs microtasks, ready tasks and due timers until
+none is left, asks the host for a wake-up at the next deadline (`set_timer(ms)`, which calls
+`velt_turn()`), and returns. When the root is done, the runtime runs the code after it (the
+uncaught error, the exit code) at once; after a `main` that returned 0 the turns go on while
+spawned tasks, started promises or ref'd timers remain, as native programs do. The end reaches
+the host through the import `done(code)`. A Worker keeps the program open after `main` (the accept loop
+awaits a host promise) and drives requests with the same turns. Velt's `async` functions are
 state machines, so waiting on the host needs no stack switching (no Asyncify, no JSPI). The
-browser glue uses the same protocol, so `sleep` stops busy-waiting there.
+browser glue uses the same protocol, so `sleep` does not busy-wait there.
 
 ## 3. Conditional imports (std and packages)
 
@@ -149,7 +157,7 @@ Object stubs (`stub.fetch(req)`). Bindings are looked up by name on the `env` th
 |---|---|---|---|---|
 | 0 | bug fix | `velt_http` reads chunked response bodies | — | — |
 | 1 | lang | host functions, `HostRef`, what crosses, the reachable-call error, fmt and LSP; synchronous calls | — | #1735 |
-| 2 | runtime | the host-driven executor, `velt_settle`/`velt_turn`, `set_timer`; `async` host functions; no busy-waiting `sleep` in the browser | 1 | #1737 |
+| 2 | runtime | the host-driven executor, `velt_settle`/`velt_turn`, `set_timer`, `done`; `async` host functions; no busy-waiting `sleep` in the browser | 1 | #1737 |
 | 3 | lang/loader | conditional imports, with the check that variants export the same API | — | — |
 | 4 | std | `fetch` on JS hosts | 2, 3 | #1785 |
 | 5 | tooling | `velt build --host workers`; packages ship JS host modules | 2 | #1736 |

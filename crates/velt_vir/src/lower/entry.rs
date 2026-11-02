@@ -12,6 +12,11 @@
 //! Before it returns, `velt_main` hands the runtime the function releasing what static atomics
 //! hold at exit, when there are any (static_atomic.rs).
 //!
+//! On a JS host (`wasm32-unknown-unknown`) the thread cannot wait: instead of
+//! `velt_rt_block_on`, `velt_main` hands the root to `velt_rt_host_main` with the code that
+//! runs after it (`MainFinish`: the uncaught error, the exit code), which the runtime calls when
+//! the root is done, in whichever turn of the host that is (velt_rt_wasm host_turn.rs).
+//!
 //! Before anything else, `velt_main` initializes the native libraries of packages
 //! (native_abi.md "Start-up"): for each, `rc = velt_native_init_<pkg>(velt_rt_native_api())`
 //! then `velt_rt_native_check(rc, &"<pkg>")`, which stops the program when `rc != 0`.
@@ -57,19 +62,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
             lw.cx.build_now(fid, &work);
         }
         let code = if lw.cx.reaches_tasks() {
-            let out = match (abi.out, throws) {
-                (Some(out), Some(_)) => out,
-                _ if abi.ret == Ty::I32 => Ty::I32,
-                _ => Ty::U8,
-            };
-            let s = lw.temp(out);
-            let a = lw.addr(Place::local(s));
-            let root = lw.cx.func(Work::SyncMainRoot);
-            lw.call_rt(Rt::BlockOn, vec![super::cfunc(root), a], None);
-            match throws {
-                Some(err) if abi.out.is_some() => lw.uncaught_check(s, ret, err),
-                _ if abi.ret == Ty::I32 => Operand::Copy(Place::local(s)),
-                _ => cint(0, Ty::I32),
+            let s = lw.temp(sync_root_ty(abi.ret, abi.out, throws));
+            let root = super::cfunc(lw.cx.func(Work::SyncMainRoot));
+            match lw.run_root(root, s) {
+                Some(_) => lw.sync_main_tail(s, ret, throws),
+                None => cint(0, Ty::I32),
             }
         } else {
             lw.call_main(def, None)
@@ -134,7 +131,64 @@ impl<'c, 'h> FnLower<'c, 'h> {
         lw.finish("_Gsync_main_root".into(), vec![Ty::Ptr, Ty::Ptr], Ty::U32)
     }
 
-    /// `velt_rt_block_on(main$poll, &state)`; yields the exit code.
+    /// The root task `poll` with its state in `s` (unpolled): natively `velt_rt_block_on`, and
+    /// the state's address (the code after it follows); on a JS host `velt_rt_host_main`, and
+    /// `None` (the runtime runs the code after it, `MainFinish`; module docs).
+    fn run_root(&mut self, poll: Operand, s: vir::Local) -> Option<Operand> {
+        let a = self.addr(Place::local(s));
+        if !super::host::js_host(&self.cx.target) {
+            self.call_rt(Rt::BlockOn, vec![poll, a.clone()], None);
+            return Some(a);
+        }
+        let (size, align) = self.cx.size_align(self.locals[s.0 as usize].ty);
+        let finish = super::cfunc(self.cx.func(Work::MainFinish));
+        let size = cint(size as i128, Ty::U64);
+        let args = vec![poll, a, size, cint(align as i128, Ty::U64), finish];
+        self.call_rt(Rt::HostMain, args, None);
+        None
+    }
+
+    /// `(state: ptr) -> i32`: the code after the root of `main` is done, on a JS host (module
+    /// docs): the exit code, or the uncaught error.
+    pub(super) fn build_main_finish(cx: &'c mut super::Cx<'h>) -> Function {
+        let mut lw = FnLower::bare(cx, vec![]);
+        let state = lw.new_local(Ty::Ptr, Some("state".into()));
+        let def = (lw.cx.hir.entry).unwrap_or_else(|| super::ice("a main root without a main"));
+        lw.push_scope(ScopeKind::Block);
+        let f = lw.cx.fn_def(def);
+        let code = if f.is_async {
+            lw.async_main_tail(def, Operand::Copy(Place::local(state)))
+        } else {
+            let (ret, throws) = (f.ret, f.throws);
+            let abi = lw.cx.ret_abi(ret, throws);
+            let ty = sync_root_ty(abi.ret, abi.out, throws);
+            let s = lw.temp(ty);
+            let st = proj(&Place::local(state), Proj::Deref(ty));
+            lw.assign(Place::local(s), Rvalue::Use(Operand::Copy(st)));
+            lw.sync_main_tail(s, ret, throws)
+        };
+        lw.terminate(Terminator::Return(code));
+        lw.scopes.clear();
+        lw.finish("_Gmain_finish".into(), vec![Ty::Ptr], Ty::I32)
+    }
+
+    /// The exit code of a synchronous `main` whose root (`SyncMainRoot`) stored its result in
+    /// `s`.
+    fn sync_main_tail(
+        &mut self,
+        s: vir::Local,
+        ret: hir::TyId,
+        throws: Option<hir::TyId>,
+    ) -> Operand {
+        let abi = self.cx.ret_abi(ret, throws);
+        match throws {
+            Some(err) if abi.out.is_some() => self.uncaught_check(s, ret, err),
+            _ if abi.ret == Ty::I32 => Operand::Copy(Place::local(s)),
+            _ => cint(0, Ty::I32),
+        }
+    }
+
+    /// The root of `async main`; yields the exit code.
     fn run_async_main(&mut self, def: hir::DefId) -> Operand {
         let info = self
             .cx
@@ -142,8 +196,18 @@ impl<'c, 'h> FnLower<'c, 'h> {
             .unwrap_or_else(|| super::ice("async main has no state layout"));
         let s = self.temp(Ty::Agg(info.state));
         self.init_state(&info, &Place::local(s), vec![]);
-        let a = self.addr(Place::local(s));
-        self.call_rt(Rt::BlockOn, vec![super::cfunc(info.poll), a.clone()], None);
+        match self.run_root(super::cfunc(info.poll), s) {
+            Some(a) => self.async_main_tail(def, a),
+            None => cint(0, Ty::I32),
+        }
+    }
+
+    /// The exit code of `async main` whose state is at `a`.
+    fn async_main_tail(&mut self, def: hir::DefId, a: Operand) -> Operand {
+        let info = self
+            .cx
+            .async_info(def, &[])
+            .unwrap_or_else(|| super::ice("async main has no state layout"));
         let f = self.cx.fn_def(def);
         let ret = self.cx.async_result(f);
         let res = proj(&self.operand_place(a, Ty::Ptr), Proj::Deref(info.result));
@@ -452,5 +516,14 @@ impl<'c, 'h> FnLower<'c, 'h> {
             && root.fields[0].name == "message"
             && root.fields[1].name == "#name";
         is_error.then_some(d)
+    }
+}
+
+/// The type of the result a synchronous `main`'s root stores (`SyncMainRoot`).
+fn sync_root_ty(ret: Ty, out: Option<Ty>, throws: Option<hir::TyId>) -> Ty {
+    match (out, throws) {
+        (Some(out), Some(_)) => out,
+        _ if ret == Ty::I32 => Ty::I32,
+        _ => Ty::U8,
     }
 }

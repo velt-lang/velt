@@ -116,6 +116,10 @@ function isTest(file: string): boolean {
   return file.endsWith(".test.vlt");
 }
 
+/** std's conditional imports (`#name` → the file per build condition), the one file of the root:
+ * it is std's `imports` field, as a package's manifest has one, not code of a module. */
+const STD_IMPORTS = "imports.vlt";
+
 function special(file: string): boolean {
   return file.startsWith("prelude/") || file.startsWith("lang/");
 }
@@ -288,7 +292,7 @@ function lint(std: Std): Problem[] {
   const all = std.files.join("\n") + "\n";
   for (const file of std.files) {
     const text = std.text(file);
-    const owned = special(file) || std.owner(file) !== null;
+    const owned = special(file) || file == STD_IMPORTS || std.owner(file) !== null;
     if (!owned) {
       const where = file.includes("/") ? "in no module's folder" : "directly in std/";
       problems.push(

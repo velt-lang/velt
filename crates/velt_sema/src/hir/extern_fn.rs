@@ -22,7 +22,8 @@ pub struct ExternFnDef {
     pub system: Option<Vec<bool>>,
     /// `declare host("<module>") function` (https://veltlang.com/docs/reference/host-functions/): a function the
     /// JS host provides, the WebAssembly import `module`.`symbol`, and what crosses for each
-    /// parameter and the result. Never with `system` or `is_async`. Additive.
+    /// parameter and the result. Never with `system`. With `is_async`, `ret` is
+    /// `Promise<T, IoError>` and `HostImport::ret` what `T` crosses as. Additive.
     pub host: Option<HostImport>,
     pub span: Span,
 }
@@ -34,6 +35,7 @@ pub struct HostImport {
     pub module: String,
     /// One per parameter of the declaration, in order.
     pub params: Vec<HostTy>,
+    /// The result; of an async host function, what its promise fulfills with.
     pub ret: HostTy,
 }
 

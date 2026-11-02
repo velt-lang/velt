@@ -335,7 +335,7 @@ first half of its 8-byte slot. Functions (`std/lang/symbol/index.vlt`; `string` 
 
 ## CPU check [additive]
 
-`velt_rt_check_cpu(required: u32)`: x86_64 code built for more than the baseline CPU
+`velt_rt_check_cpu(required: u32)`: x86_64 or arm64 code built for more than the baseline CPU
 (`--cpu`, https://veltlang.com/docs/tooling/platforms/ "CPU") calls it first thing in `velt_main`, after the
 runtime's start-up (baseline code) and before any code that may use the features. `required` is
 a mask of features, by bit: 0 SSE3, 1 SSSE3, 2 SSE4.1, 3 SSE4.2, 4 POPCNT, 5 CMPXCHG16B, 6 AVX,
@@ -343,7 +343,11 @@ a mask of features, by bit: 0 SSE3, 1 SSSE3, 2 SSE4.1, 3 SSE4.2, 4 POPCNT, 5 CMP
 16 AVX512CD, 17 AVX512DQ, 18 AVX512VL, 19 AVX512VBMI, 20 AVX512BITALG, 21 SHA [additive],
 22 PCLMULQDQ (`velt_codegen_cl::X86_FEATURES`; x86-64-v2 is bits 0–5, v3 0–13, v4 0–18). A
 feature joins the list when generated code uses it: a feature in the mask that the CPU (or a
-VM) hides stops the program at start-up. Code whose features hold an extension's (SHA with SSSE3 and
+VM) hides stops the program at start-up. On arm64 [additive] the mask is over
+`velt_codegen_cl::ARM_FEATURES` instead: bit 0 DOTPROD (`sdot`/`udot`), set by `--cpu native` on a
+CPU with it or `--cpu <name>` naming one (`neoverse-n1`), and then `i32x4.dotAdd` is one `sdot`
+(as on every Apple arm64 target, whose CPUs all have it without a check). The message names
+`an arm64 CPU with DOTPROD` and suggests `--cpu baseline`. Code whose features hold an extension's (SHA with SSSE3 and
 SSE4.1 for `sha-x86`, PCLMULQDQ with them for `clmul-x86`) takes its check
 (`velt_simd_has_<ext>`, "SIMD") as true; the LLVM backend folds it. When the CPU lacks
 one, it prints to stderr ``error: this program was built for <level> (<features>); this CPU

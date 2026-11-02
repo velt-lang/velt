@@ -2,7 +2,10 @@
 //! (debug builds: the shared runtime when it is installed, so a link takes milliseconds; release
 //! builds and `$VELT_RT_LIB`: the static one) and skips the link entirely when its inputs are
 //! unchanged since the last link of the same executable (a stamp file beside it), so `velt run`
-//! twice in a row links once.
+//! twice in a row links once. The linker writes a temporary file beside the executable, which is
+//! then renamed into place: a program started from the executable's path while it is linked
+//! again (another `velt test` in the package running the same harness) starts the old program or
+//! the new one, never a file the linker is still writing.
 
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -53,17 +56,83 @@ pub fn link_executable(
     }
     // A link that fails half-way must not leave a stamp that matches the old executable.
     let _ = std::fs::remove_file(&stamp_path);
-    velt_link::link(&velt_link::LinkRequest {
+    let tmp = temporary_output(exe);
+    let linked = velt_link::link(&velt_link::LinkRequest {
         target,
         objects: &objects,
         runtime_lib: &runtime_lib,
-        output: exe,
+        output: &tmp,
         release: strip_debug,
         native,
-    })?;
+    })
+    .and_then(|()| {
+        replace(&tmp, exe).map_err(|e| format!("cannot write `{}`: {e}", exe.display()))
+    });
+    if linked.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    linked?;
     // Best effort: without a stamp the next build just links again.
     let _ = std::fs::write(&stamp_path, stamp(&key, exe));
     Ok(Linked::Linked)
+}
+
+/// `<dir>/<stem>.link-<pid>-<n>` beside `<dir>/<stem>.<ext>`: where the linker writes `exe`
+/// before it is renamed into place. Without a `.` after the stem, the linkers that name a debug
+/// file after their output (`link.exe`, `lld-link`: `<stem>.pdb`) name it as for `exe`, so the
+/// program finds it.
+fn temporary_output(exe: &Path) -> PathBuf {
+    let stem = exe.file_stem().unwrap_or_default().to_string_lossy();
+    exe.with_file_name(format!("{stem}.link-{}", unique()))
+}
+
+/// `<pid>-<n>`: a name no other link, in this process or another, uses at the same time.
+fn unique() -> String {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("{}-{n}", std::process::id())
+}
+
+/// Rename the linked `tmp` to `exe`. Where the executable of a running program cannot be
+/// replaced (Windows, on file systems without POSIX rename semantics), it can be renamed: it is
+/// moved aside to `<exe>.old-<pid>-<n>` (a program started from the path just then does not
+/// find it, but never starts a partial file), and removed once nothing runs it, here or by a
+/// later link of `exe`.
+fn replace(tmp: &Path, exe: &Path) -> std::io::Result<()> {
+    if !cfg!(windows) {
+        return std::fs::rename(tmp, exe);
+    }
+    let mut replaced = std::fs::rename(tmp, exe);
+    if replaced.is_err() && exe.is_file() {
+        let name = exe.file_name().unwrap_or_default().to_string_lossy();
+        let aside = exe.with_file_name(format!("{name}.old-{}", unique()));
+        if std::fs::rename(exe, &aside).is_ok() {
+            replaced = std::fs::rename(tmp, exe);
+            if replaced.is_err() {
+                let _ = std::fs::rename(&aside, exe);
+            }
+        }
+    }
+    remove_old(exe);
+    replaced
+}
+
+/// Remove what [`replace`] moved aside from `exe` (best effort: one still running stays).
+fn remove_old(exe: &Path) {
+    let (Some(dir), Some(name)) = (exe.parent(), exe.file_name()) else {
+        return;
+    };
+    let prefix = format!("{}.old-", name.to_string_lossy());
+    let dir = if dir.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        dir
+    };
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        if entry.file_name().to_string_lossy().starts_with(&prefix) {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
 }
 
 /// `<dir>/<name>.entry.<ext>` beside the program object `<dir>/<name>.<ext>`.
@@ -146,6 +215,22 @@ mod tests {
             stamp_path(&dir.join("app.exe")),
             dir.join("app.exe.link-stamp")
         );
+    }
+
+    #[test]
+    fn links_beside_the_executable_and_renames() {
+        let tmp = tempfile::tempdir().unwrap();
+        let exe = tmp.path().join("my.app.exe");
+        let linked = temporary_output(&exe);
+        // The debug file a linker names after its output (`<stem>.pdb`) is the executable's.
+        assert_eq!(linked.with_extension("pdb"), exe.with_extension("pdb"));
+        assert_ne!(temporary_output(&exe), linked);
+        std::fs::write(&exe, b"old").unwrap();
+        std::fs::write(&linked, b"new").unwrap();
+        replace(&linked, &exe).unwrap();
+        assert_eq!(std::fs::read(&exe).unwrap(), b"new");
+        let names: Vec<_> = std::fs::read_dir(tmp.path()).unwrap().flatten().collect();
+        assert_eq!(names.len(), 1);
     }
 
     #[test]

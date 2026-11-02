@@ -6,7 +6,8 @@
 //!   `share/wasi-sysroot/lib/wasm32-wasip1`) or the self-contained copy rustup installs with
 //!   `rustup target add wasm32-wasip1`.
 //! - `wasm32-unknown-unknown`: a browser module without entry point; it exports `velt_start`,
-//!   `memory` and what the JS glue converts host functions' values with, and imports its host
+//!   `memory`, the turns the host drives and what the JS glue converts host functions' values
+//!   with, and imports its host
 //!   services from the `velt` module (the JS glue in `crates/velt_rt_wasm/js/velt_web.mjs`).
 //!
 //! The linker is `$VELT_LINKER`, else the toolchain's bundled lld or the `rust-lld` of the active
@@ -26,10 +27,15 @@ pub const RUNTIME_LIB_NAME: &str = "libvelt_rt_wasm.a";
 
 const STACK_SIZE: &str = "stack-size=8388608";
 
-/// What a browser module exports besides `memory`: its entry, and the runtime functions the JS
-/// glue converts host functions' values with (crates/velt_rt_wasm/src/host.rs).
+/// What a browser module exports besides `memory`: its entry, the turns the JS host drives
+/// (crates/velt_rt_wasm/src/host_turn.rs), and the runtime functions the JS glue converts host
+/// functions' values with (crates/velt_rt_wasm/src/host.rs).
 const BROWSER_EXPORTS: &[&str] = &[
     "--export=velt_start",
+    "--export=velt_turn",
+    "--export=velt_settle",
+    // The shadow stack pointer, so a host can check that the turns leave it where it was.
+    "--export=__stack_pointer",
     "--export=velt_host_str_ptr",
     "--export=velt_host_str_len",
     "--export=velt_host_alloc",

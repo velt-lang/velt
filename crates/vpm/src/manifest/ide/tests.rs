@@ -30,6 +30,7 @@ fn top_level_keys_not_yet_written() {
             "registry",
             "dependencies",
             "paths",
+            "imports",
             "jsx",
             "define",
             "native",

@@ -77,21 +77,13 @@ pub fn epoch_ms() -> i64 {
         .map_or(0, |d| d.as_millis() as i64)
 }
 
-/// Block the (only) thread for `ms` milliseconds: the executor's wait for its next timer. The
-/// browser cannot block its thread, so there this spins on the clock (programs run in a worker).
+/// Block the (only) thread for `ms` milliseconds: the executor's wait for its next timer. A JS
+/// host's thread cannot block: the executor returns to the host instead (host_turn.rs).
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 pub fn sleep_ms(ms: f64) {
-    if ms <= 0.0 {
-        return;
+    if ms > 0.0 {
+        std::thread::sleep(std::time::Duration::from_secs_f64(ms / 1000.0));
     }
-    #[cfg(all(target_family = "wasm", target_os = "unknown"))]
-    {
-        let end = monotonic_ms() + ms;
-        while monotonic_ms() < end {
-            std::hint::spin_loop();
-        }
-    }
-    #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
-    std::thread::sleep(std::time::Duration::from_secs_f64(ms / 1000.0));
 }
 
 /// The program's command-line arguments (argv[0] included; empty in the browser).

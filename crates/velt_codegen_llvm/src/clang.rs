@@ -225,6 +225,41 @@ pub(crate) fn compile_cached(
     Ok((obj, false))
 }
 
+/// The arm64 features clang lets code for `-mcpu=<cpu>` on `triple` use, as a mask over
+/// `velt_codegen_cl::ARM_FEATURES`: from the macros it defines, once per CPU and process. Without
+/// a clang, none (code then uses no feature beyond the baseline).
+pub(crate) fn arm_features(triple: &str, cpu: &str) -> CodegenResult<u32> {
+    static FEATURES: OnceLock<Mutex<HashMap<(String, String), u32>>> = OnceLock::new();
+    let features = FEATURES.get_or_init(Default::default);
+    let key = (triple.to_string(), cpu.to_string());
+    if let Some(mask) = features.lock().ok().and_then(|f| f.get(&key).copied()) {
+        return Ok(mask);
+    }
+    let Some(clang) = find_clang() else {
+        return Ok(0);
+    };
+    let out = Command::new(&clang)
+        .args(["-dM", "-E", "-x", "c"])
+        .arg(format!("--target={triple}"))
+        .arg(format!("-mcpu={cpu}"))
+        .arg("-")
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("codegen: cannot run `{}`: {e}", clang.display()))?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        return Err(unknown_cpu(
+            format!("codegen: `clang -mcpu={cpu}` failed:\n{err}"),
+            Some(cpu),
+        ));
+    }
+    let mask = velt_codegen_cl::arm_features_from_macros(&String::from_utf8_lossy(&out.stdout));
+    if let Ok(mut f) = features.lock() {
+        f.insert(key, mask);
+    }
+    Ok(mask)
+}
+
 /// The x86 features clang lets code for `-march=<cpu>` on `triple` use, as a mask over
 /// `velt_codegen_cl::X86_FEATURES`: from the macros it defines (`clang -dM -E`), once per CPU
 /// and process. Without a clang, Cranelift's idea of the CPU (`velt build --emit llvm` needs no

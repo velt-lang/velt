@@ -91,6 +91,8 @@ pub struct NpmResolver {
 /// A workspace's packages by name, and the pattern whose walk was cut short, if one was.
 struct Workspace {
     by_name: HashMap<String, PathBuf>,
+    /// Every member directory (named or not), canonical.
+    members: Vec<PathBuf>,
     cut: Option<String>,
 }
 
@@ -216,6 +218,9 @@ impl NpmResolver {
             let found = workspace::patterns(dir).map(|patterns| {
                 let listing = workspace::package_dirs_limited(dir, &patterns, max);
                 let mut by_name = HashMap::new();
+                let members = (listing.dirs.iter())
+                    .map(|d| std::fs::canonicalize(d).unwrap_or_else(|_| d.clone()))
+                    .collect();
                 for pkg in listing.dirs {
                     if let Some(name) = self.manifest_name(&pkg) {
                         by_name.entry(name).or_insert(pkg);
@@ -223,6 +228,7 @@ impl NpmResolver {
                 }
                 Workspace {
                     by_name,
+                    members,
                     cut: listing.cut,
                 }
             });
@@ -254,6 +260,10 @@ impl NpmResolver {
                     format!("package `{name}` does not export `{subpath}` (`exports` in its package.json)"),
                     vec![format!("the conditions Velt matches are {}", conditions_list())],
                 ),
+                exports::ExportsError::Package(dep) => (
+                    format!("package `{name}` maps `{subpath}` to the package `{dep}`, which Velt does not follow"),
+                    vec![],
+                ),
                 exports::ExportsError::Invalid => (
                     format!("package `{name}` has an invalid `exports` map: its keys mix subpaths (`.`, `./x`) and conditions"),
                     vec![],
@@ -270,9 +280,123 @@ impl NpmResolver {
             }
             None => vec![subpath.to_string()],
         };
+        self.source_of(dir, name, subpath, spec, &manifest, &targets, runtime)
+    }
+
+    /// The `#name` `spec` imported by `importer`, a file of an npm package (its package scope:
+    /// the nearest directory above it with a `package.json`, `scope`): the source file its
+    /// `imports` maps `spec` to, under the conditions of [`SERVER_CONDITIONS`], mapped back to
+    /// its TypeScript source as for `exports`. Node's PACKAGE_IMPORTS_RESOLVE, `#x/*` patterns
+    /// included; a target that is a bare package name is not followed (an error).
+    pub fn resolve_import(&mut self, scope: &Path, spec: &str) -> Result<PathBuf, NpmError> {
+        let shown = scope.join("package.json").display().to_string();
+        let manifest = self
+            .manifest(scope)
+            .cloned()
+            .ok_or_else(|| (format!("cannot read `{shown}`"), vec![]))?;
+        let name = manifest
+            .get("name")
+            .and_then(Json::as_str)
+            .unwrap_or("")
+            .to_string();
+        let who = match name.as_str() {
+            "" => format!("the npm package at `{}`", scope.display()),
+            name => format!("npm package `{name}`"),
+        };
+        let not_defined = || {
+            (
+                format!("{who} does not define `{spec}` (`imports` in its package.json)"),
+                vec![format!(
+                    "the conditions Velt matches are {}; a target must be a `./` path in the package",
+                    conditions_list()
+                )],
+            )
+        };
+        let imports = manifest.get("imports").ok_or_else(not_defined)?;
+        let found = exports::resolve_import_targets(imports, spec, SERVER_CONDITIONS).map_err(
+            |e| match e {
+                exports::ExportsError::Package(dep) => (
+                    format!(
+                        "{who} maps `{spec}` to the package `{dep}` (`imports` in its package.json), which Velt does not follow"
+                    ),
+                    vec![format!("Node loads `{dep}` there; import `{dep}` directly")],
+                ),
+                _ => not_defined(),
+            },
+        )?;
+        let shown_name = match name.as_str() {
+            "" => scope.display().to_string(),
+            name => name.to_string(),
+        };
+        self.source_of(
+            scope,
+            &shown_name,
+            spec,
+            spec,
+            &manifest,
+            &found.all,
+            found.runtime,
+        )
+    }
+
+    /// Whether the `package.json` in `dir` is an npm package's rather than a folder's settings
+    /// (`{ "type": "module" }`): it names a package, has `exports` or `imports`, or a workspace
+    /// around it (`pnpm-workspace.yaml`, `workspaces` in a `package.json` above) lists `dir`.
+    pub fn is_npm_package(&mut self, dir: &Path) -> bool {
+        let declares = self.manifest(dir).is_some_and(|m| {
+            ["name", "exports", "imports"]
+                .iter()
+                .any(|k| m.get(k).is_some())
+        });
+        if declares {
+            return true;
+        }
+        let dir = crate::relpath::absolute(dir);
+        let key = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        let own = key(&dir);
+        let ancestors: Vec<PathBuf> = dir.ancestors().skip(1).map(Path::to_path_buf).collect();
+        // Every workspace around it, not only the nearest (a member may be a workspace itself).
+        for above in ancestors {
+            if let Some(ws) = self.workspace(&above) {
+                if ws.by_name.values().any(|d| key(d) == own) || ws.members.contains(&own) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// The `name` of the `package.json` in `dir`, if it has one.
+    pub fn package_name(&mut self, dir: &Path) -> Option<String> {
+        self.manifest_name(dir)
+    }
+
+    /// The package scope of `file` as Node finds it: the nearest directory above it with a
+    /// `package.json`.
+    pub fn package_scope(&mut self, file: &Path) -> Option<PathBuf> {
+        let start = crate::relpath::absolute(file.parent()?);
+        start
+            .ancestors()
+            .find(|dir| crate::probe::is_file(&dir.join("package.json")))
+            .map(Path::to_path_buf)
+    }
+
+    /// The source file of the first of `targets` (of `subpath` of package `name` in `dir`, for
+    /// specifier `spec`) that has one; the root export (`.`) falls back to [`ROOT_FALLBACK`].
+    #[allow(clippy::too_many_arguments)]
+    fn source_of(
+        &mut self,
+        dir: &Path,
+        name: &str,
+        subpath: &str,
+        spec: &str,
+        manifest: &Json,
+        targets: &[String],
+        runtime: Option<(String, String)>,
+    ) -> Result<PathBuf, NpmError> {
         let out_dirs = self.ts_out_dirs(dir);
         let mut tried = vec![];
-        for target in &targets {
+        for target in targets {
             for candidate in source_candidates(target, &out_dirs) {
                 let file = dir.join(&candidate);
                 if crate::probe::is_file(&file) {

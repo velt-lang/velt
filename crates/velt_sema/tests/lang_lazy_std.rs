@@ -100,8 +100,29 @@ fn errors_in_user_code_are_reported_as_before() {
 /// A std module `velt/zzprobe` that re-exports what `velt/zzprobe/impl` (`impl_src`) declares,
 /// so that `impl` stays lazy when the program imports `velt/zzprobe`; `src` imports it.
 fn with_probe_std(impl_src: &str, src: &str) -> Program {
+    let (l, (p, d)) = probe_check(impl_src, src, false);
+    assert!(
+        p.is_some() && d.iter().all(|d| !d.is_error()),
+        "unexpected diagnostics:\n{}",
+        l.render(&d)
+    );
+    p.unwrap()
+}
+
+/// [`with_probe_std`]'s program, std checked lazily or (`eager`) whole, as `velt check --std`.
+fn probe_check(
+    impl_src: &str,
+    src: &str,
+    eager: bool,
+) -> (
+    common::programs::Loaded,
+    (Option<Program>, velt_common::Diagnostics),
+) {
     let mut l = common::programs::load_src(src);
-    let reexport = "export { Gadget, SpecialError, Base, Special } from \"velt/zzprobe/impl\";\n";
+    let reexport = match impl_src.contains("probeTwice") {
+        true => "export { Gadget, probeTwice } from \"velt/zzprobe/impl\";\n",
+        false => "export { Gadget, SpecialError, Base, Special } from \"velt/zzprobe/impl\";\n",
+    };
     for (path, text) in [("std/zzprobe", reexport), ("std/zzprobe/impl", impl_src)] {
         let file = l.sm.add(format!("{path}.vlt"), text.to_string());
         let (ast, diags) = velt_syntax::parse_file(file, text);
@@ -127,13 +148,12 @@ fn with_probe_std(impl_src: &str, src: &str) -> Program {
     l.modules[l.root]
         .imports
         .push(("velt/zzprobe".into(), "std/zzprobe".into()));
-    let (p, d) = l.check();
-    assert!(
-        p.is_some() && d.iter().all(|d| !d.is_error()),
-        "unexpected diagnostics:\n{}",
-        l.render(&d)
-    );
-    p.unwrap()
+    let opts = velt_sema::CheckOptions {
+        eager_std: eager,
+        ..Default::default()
+    };
+    let out = velt_sema::check_with(&l.modules, l.root, opts);
+    (l, out)
 }
 
 /// The classes of the probe's lazy module.
@@ -253,4 +273,110 @@ fn a_decoder_checks_the_tape_only_for_a_type_with_a_json_value() {
         "function main() {\n  const p = JSON.parse<{ v: JsonValue }[]>(\"[]\");\n  console.log(p.length);\n}\n",
     );
     assert!(!unchecked(&value).contains(&tape.to_string()));
+}
+
+/// An `extend` block on a number type and one on `string` in a lazy std module, with an error
+/// in one method, and a free function calling one of them.
+const PROBE_EXTEND: &str = "\
+export class Gadget { constructor() {} }
+export function probeTwice(x: u16): u16 { return x.probeDouble(); }
+extend u16 {
+  probeDouble(): u16 { return this * (2 as u16); }
+  probeBroken(): u16 { return \"not a number\"; }
+}
+extend string {
+  probeShout(): string { return this + \"!\"; }
+}
+";
+
+#[test]
+fn the_preludes_extend_methods_on_primitives_are_checked_when_reached() {
+    // Hello world calls none of the prelude's bit methods.
+    let names = unchecked(&ok_src("function main() {\n  console.log(\"hi\");\n}\n"));
+    for f in [
+        "std/prelude/bits::u32.rotateLeft",
+        "std/prelude/bits::i64.swapBytes",
+    ] {
+        assert!(names.contains(&f.to_string()), "{f}: {names:?}");
+    }
+    // A call and a method value reach them.
+    let p = ok_src(
+        "function main() {\n\
+           const x: u32 = 5;\n\
+           console.log(x.rotateLeft(3));\n\
+           const y: i64 = 7;\n\
+           const f = y.swapBytes;\n\
+           console.log(f());\n\
+         }\n",
+    );
+    let names = unchecked(&p);
+    for f in [
+        "std/prelude/bits::u32.rotateLeft",
+        "std/prelude/bits::i64.swapBytes",
+    ] {
+        assert!(!names.contains(&f.to_string()), "{f} is checked: {names:?}");
+        assert!(has_body(&p, f), "{f}");
+    }
+    assert!(names.contains(&"std/prelude/bits::u32.rotateRight".to_string()));
+}
+
+/// Does function `f` of `p` have a checked body (not a stub's empty one)?
+fn has_body(p: &Program, f: &str) -> bool {
+    matches!(p.def(def_id(p, f)), Def::Fn(f) if f.body.block.value.is_some() || !f.body.block.stmts.is_empty())
+}
+
+#[test]
+fn an_extend_method_held_by_an_interface_implementation_is_checked() {
+    // `compareTo` of a number is called through the bound `Comparable<T>`, never named.
+    let p = ok_src(
+        "function least<T extends Comparable<T>>(a: T, b: T): T { return a < b ? a : b; }\n\
+         function main() {\n  const a: u16 = 3;\n  const b: u16 = 2;\n  console.log(least(a, b));\n}\n",
+    );
+    let f = "std/prelude/compare::u16.compareTo";
+    assert!(!unchecked(&p).contains(&f.to_string()), "{f}");
+    assert!(has_body(&p, f), "{f}");
+}
+
+#[test]
+fn an_error_in_an_unreached_extend_method_is_reported_only_when_std_is_checked_whole() {
+    let hello =
+        "import { Gadget } from \"velt/zzprobe\";\nfunction main() { console.log(\"hi\"); }\n";
+    let (l, (p, d)) = probe_check(PROBE_EXTEND, hello, false);
+    assert!(!d.iter().any(|d| d.is_error()), "{}", l.render(&d));
+    let names = unchecked(&p.expect("a program"));
+    for f in ["u16.probeDouble", "u16.probeBroken", "string.probeShout"] {
+        let f = format!("std/zzprobe/impl::{f}");
+        assert!(names.contains(&f), "{f}: {names:?}");
+    }
+    let (l, (_, d)) = probe_check(PROBE_EXTEND, hello, true);
+    let all = l.render(&d);
+    assert!(
+        d.iter().any(|d| d.is_error()) && all.contains("impl.vlt"),
+        "{all}"
+    );
+}
+
+#[test]
+fn an_extend_method_std_code_calls_is_checked_with_its_caller() {
+    // `probeTwice` (a deferred free function) calls `probeDouble`: reaching it reaches both.
+    let p = with_probe_std(
+        PROBE_EXTEND,
+        "import { probeTwice } from \"velt/zzprobe\";\n\
+         function main() { const x: u16 = 4; console.log(probeTwice(x)); console.log(\"a\".probeShout()); }\n",
+    );
+    let names = unchecked(&p);
+    for f in ["u16.probeDouble", "string.probeShout"] {
+        let f = format!("std/zzprobe/impl::{f}");
+        assert!(!names.contains(&f), "{f} is checked: {names:?}");
+        assert!(has_body(&p, &f), "{f}");
+    }
+    assert!(names.contains(&"std/zzprobe/impl::u16.probeBroken".to_string()));
+    // Calling the broken one reports its error.
+    let (l, (_, d)) = probe_check(
+        PROBE_EXTEND,
+        "import { Gadget } from \"velt/zzprobe\";\n\
+         function main() { const x: u16 = 4; console.log(x.probeBroken()); }\n",
+        false,
+    );
+    assert!(d.iter().any(|d| d.is_error()), "{}", l.render(&d));
 }

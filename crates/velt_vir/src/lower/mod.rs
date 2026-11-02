@@ -353,6 +353,8 @@ enum Work {
     /// `(state: ptr, cx: ptr) -> u32`: the task root that runs a synchronous `main` which reaches
     /// promises or tasks; stores its result at `state` (entry.rs).
     SyncMainRoot,
+    /// `(state: ptr) -> i32`: the code after the root of `main` is done, on a JS host (entry.rs).
+    MainFinish,
     /// `(state: ptr, cx: ptr) -> u32` poll function of an async function instance (async_fn/).
     Poll(DefId, Vec<TyId>),
     /// `(state: ptr)` drop function of an async function instance.

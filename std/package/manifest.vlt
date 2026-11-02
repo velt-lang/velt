@@ -30,6 +30,11 @@ export type Package = {
   /// Import aliases, like TypeScript's `compilerOptions.paths`: `{ "@app/*": "src/*" }`. A
   /// pattern and its target have at most one `*`, at the end; targets stay inside the package.
   paths?: Record<string, string>;
+  /// Conditional imports, like Node's `imports`: `#name` → a file, or the files per build
+  /// condition, `{ "#io": { js: "./src/io/js.vlt", default: "./src/io/native.vlt" } }`. The first
+  /// condition the build has wins; `default` comes last. A `#name` resolves only in the package's
+  /// own modules.
+  imports?: Record<string, Import>;
   /// How the package's modules compile JSX.
   jsx?: Jsx;
   /// Build-time constants, as Vite's `define`: `{ __DEV__: "false" }`. Each value is the source
@@ -46,6 +51,18 @@ export type Package = {
   /// How the package's program is built. Only the root package's applies.
   build?: Build;
 };
+
+/// A conditional import's files: one file (`"./src/config.vlt"`), or one per build condition, in
+/// the order they are tried: `{ js: "./src/io/js.vlt", default: "./src/io/native.vlt" }`. Paths
+/// are `./`-relative to the package root and below `./src/`, with their extension. The
+/// conditions: `native` (any native target), `darwin`, `linux`, `win32`, `wasm` (any WebAssembly
+/// target), `wasi` (`wasm32-wasip1`), `js` (`wasm32-unknown-unknown`, run by JavaScript) and
+/// `default` (every build).
+export type Import = string | Record<string, string>;
+
+/// The standard library's conditional imports (`std/imports.vlt`): the `imports` of a package,
+/// its files `./`-relative to the std root.
+export type Imports = Record<string, Import>;
 
 /// A dependency: a semver requirement such as `"^1.2"`, or where to get it.
 export type Dependency = string | DependencySource;

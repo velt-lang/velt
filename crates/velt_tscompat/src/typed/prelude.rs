@@ -632,6 +632,9 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
     (
         "number",
         &[
+            ("checkedAdd", CHECKED),
+            ("checkedMul", CHECKED),
+            ("checkedSub", CHECKED),
             ("compareTo", COMPARE),
             ("countOnes", "count the set bits in a loop"),
             (
@@ -641,6 +644,9 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
             ("leadingZeros", "use `Math.clz32(x)` (32 bits)"),
             ("rotateLeft", "use `(x << n) | (x >>> (32 - n))` (32 bits)"),
             ("rotateRight", "use `(x >>> n) | (x << (32 - n))` (32 bits)"),
+            ("saturatingAdd", SATURATING),
+            ("saturatingMul", SATURATING),
+            ("saturatingSub", SATURATING),
             (
                 "swapBytes",
                 "write the number to a `DataView` in one byte order and read it in the other",
@@ -650,6 +656,9 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
                 "write the number to a `DataView` (`setFloat64`) and read `getBigUint64`",
             ),
             ("trailingZeros", "use `31 - Math.clz32(x & -x)` (32 bits)"),
+            ("wrappingAdd", WRAPPING),
+            ("wrappingMul", WRAPPING),
+            ("wrappingSub", WRAPPING),
         ],
     ),
     (
@@ -668,6 +677,12 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
 ];
 
 const JSON_VALUE: &str = "keep dynamic JSON out of code shared with TypeScript";
+/// The TypeScript way to do `checkedAdd` & co.
+const CHECKED: &str = "compute the result and compare it with the type's range";
+/// The TypeScript way to do `saturatingAdd` & co.
+const SATURATING: &str = "compute the result and clamp it with `Math.min` and `Math.max`";
+/// The TypeScript way to do `wrappingAdd` & co.
+const WRAPPING: &str = "use `(a + b) | 0` (32 bits) or `Math.imul(a, b)`";
 const COMPARE: &str = "compare with `<` and `>`, or subtract: `a - b`";
 const TIMER_REF: &str =
     "keep it out of shared code: it is Node's, and in the browser `setTimeout` returns a number";

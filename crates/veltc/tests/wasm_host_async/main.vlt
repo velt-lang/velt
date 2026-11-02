@@ -1,0 +1,113 @@
+// Async host functions and the turns the host drives, run under node by host.mjs
+// (crates/veltc/tests/wasm_goldens.rs `async_host_functions_under_node`).
+
+import { HostRef } from "velt/host";
+import { IoError } from "velt/io";
+
+declare host("test") async function num(n: i32): Promise<i32>;
+declare host("test") async function big(n: i64): Promise<u64>;
+declare host("test") async function real(): Promise<f64>;
+declare host("test") async function yes(): Promise<bool>;
+declare host("test") async function small(): Promise<i8>;
+declare host("test") async function tooBig(): Promise<u8>;
+declare host("test") async function text(s: string): Promise<string>;
+declare host("test") async function bytes(n: u8): Promise<u8[]>;
+declare host("test") async function box(label: string): Promise<HostRef>;
+declare host("test") async function find(label: string): Promise<HostRef | null>;
+declare host("test") async function label(b: HostRef): Promise<string>;
+declare host("test") async function nothing(): Promise<void>;
+declare host("test") async function fail(name: string): Promise<u32>;
+declare host("test") async function gate(id: u32): Promise<u32>;
+declare host("test") function open(ids: string): void;
+declare host("test") function ticks(): u32;
+declare host("test") function live(): i32;
+
+class Lock {
+  name: string;
+
+  constructor(name: string) {
+    this.name = name;
+  }
+
+  [Symbol.dispose]() {
+    console.log(`released ${this.name}`);
+  }
+}
+
+async function through(id: u32): Promise<void> {
+  const v = await gate(id);
+  console.log(`gate ${id} opened with ${v}`);
+}
+
+async function failed(name: string): Promise<void> {
+  try {
+    console.log(await fail(name));
+  } catch (e) {
+    const err: IoError = e;
+    console.log(`${err.code}: ${err.message}`);
+  }
+}
+
+async function main() {
+  console.log(await num(20), await big(9007199254740993), await real(), await yes(), await small());
+  console.log(await text("wörld"));
+  console.log((await bytes(4)).join(","));
+  await nothing();
+  const b = await box("a");
+  console.log(await label(b), (await find("missing")) == null, live());
+  {
+    const found = await find("a");
+    if (found != null) {
+      console.log(await label(found), live());
+    }
+  }
+  b[Symbol.dispose]();
+  console.log(live());
+
+  await failed("TypeError");
+  await failed("plain");
+  try {
+    console.log(await tooBig());
+  } catch (e) {
+    const err: IoError = e;
+    console.log(`${err.code}: ${err.message}`);
+  }
+  try {
+    await box("");
+  } catch (e) {
+    const err: IoError = e;
+    console.log(err.code);
+  }
+
+  // Settled in another order than they were awaited.
+  const waiting = [through(1), through(2), through(3)];
+  open("3,1,2");
+  await Promise.all(waiting);
+
+  // Timers and host promises interleaved.
+  const later = gate(4);
+  setTimeout(() => console.log("timeout 0"), 0);
+  await sleep(15);
+  console.log("slept 15");
+  open("4");
+  console.log("gate 4:", await later);
+  queueMicrotask(() => console.log("microtask"));
+  await sleep(0);
+  console.log("after sleep(0)");
+
+  // What a turn drops is dropped: a disposable and a HostRef held across awaits.
+  {
+    using lock = new Lock("after awaits");
+    using held = await box("held");
+    await nothing();
+    await sleep(1);
+    console.log("holding", await label(held), live());
+  }
+  console.log("released", live());
+
+  // The host's event loop runs while the program sleeps.
+  const before = ticks();
+  const start = performance.now();
+  await sleep(20);
+  console.log(performance.now() - start >= 20, ticks() > before);
+}

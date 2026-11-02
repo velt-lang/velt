@@ -13,6 +13,8 @@
 //!     util: { path: "../util" },        // local package
 //!   },
 //!   paths: { "@app/*": "src/*" },       // import aliases (`crate::paths`)
+//!   imports: { "#io": { js: "./src/io/js.vlt", default: "./src/io/native.vlt" } },
+//!                                       // conditional imports (`crate::imports`)
 //!   jsx: { importSource: "sigx" },      // JSX runtime of the package's modules
 //!   native: { targets: ["x86_64-unknown-linux-gnu"] },  // a Rust crate (`crate::native`)
 //!   tsCompat: ["src/models"],           // folders kept TypeScript-compatible
@@ -69,6 +71,9 @@ pub struct Manifest {
     /// (`"@app/*" = "src/*"`, see [`crate::paths`]).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub paths: BTreeMap<String, String>,
+    /// `imports`: conditional imports, `#name` → its variants (see [`crate::imports`]).
+    #[serde(skip)]
+    pub imports: crate::imports::ImportMap,
     /// `native`: the package ships a native library built from a Cargo crate.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native: Option<NativeConfig>,

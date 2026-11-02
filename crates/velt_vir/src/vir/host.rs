@@ -17,6 +17,16 @@
 //!
 //! The glue never wraps a result: one that does not fit the declared type (an integer out of
 //! range or not an integer, a value of another type) is a `TypeError`, which stops the program.
+//!
+//! An async host function ([`HostImport::is_async`]) returns a `U32` instead: the id under which
+//! the glue keeps the JS promise. Lowering makes the promise leaf of it (`velt_rt_host_promise`),
+//! whose result the glue writes when the program takes it (`velt.host_take`): std's
+//! `HostSettled<W>` in its foreign layout, `{ code: Str, message: Str, value: W }` (offsets 0, 24
+//! and 48). The value is stored as the scalar of its type (a `Ref` as its `U32` slot), or made
+//! through `velt_host_str_new` / `velt_host_bytes_new`; the code and message stay empty unless
+//! the promise rejected. A fulfilled value that does not fit the result type is a rejection with
+//! the glue's `TypeError` (code `TypeError`), not a stop: the program catches it. An async host
+//! function takes no `u8[]` (the host could write it after the call), only `readonly u8[]`.
 
 /// The name of the custom section holding the program's host imports, one
 /// [`HostImport::manifest_line`] each (in any order, possibly repeated).
@@ -28,7 +38,10 @@ pub struct HostImport {
     pub module: String,
     pub name: String,
     pub params: Vec<HostValue>,
+    /// The result; for an async host function, what its promise settles with.
     pub ret: HostValue,
+    /// `declare host("m") async function`: the call returns a JS promise (module docs). Additive.
+    pub is_async: bool,
 }
 
 /// A value crossing to or from the host, as the glue converts it.
@@ -80,15 +93,17 @@ impl HostValue {
 
 impl HostImport {
     /// The import's line of the manifest: module, name, the parameters (comma-separated) and the
-    /// result, separated by tabs, ending in a line feed. Neither a module nor a name holds a tab
-    /// or a line feed (sema rejects such a module).
+    /// result (`async:` before it for an async host function), separated by tabs, ending in a
+    /// line feed. Neither a module nor a name holds a tab or a line feed (sema rejects such a
+    /// module).
     pub fn manifest_line(&self) -> String {
         let params: Vec<&str> = self.params.iter().map(|p| p.manifest_name()).collect();
         format!(
-            "{}\t{}\t{}\t{}\n",
+            "{}\t{}\t{}\t{}{}\n",
             self.module,
             self.name,
             params.join(","),
+            if self.is_async { "async:" } else { "" },
             self.ret.manifest_name()
         )
     }
@@ -109,13 +124,22 @@ mod tests {
                 HostValue::NullableRef,
             ],
             ret: HostValue::Str,
+            is_async: false,
         };
         assert_eq!(h.manifest_line(), "env\tgreet\tstr,rbytes,ref?\tstr\n");
         let none = HostImport {
             params: vec![],
             ret: HostValue::Void,
-            ..h
+            ..h.clone()
         };
         assert_eq!(none.manifest_line(), "env\tgreet\t\tvoid\n");
+        let later = HostImport {
+            is_async: true,
+            ..h
+        };
+        assert_eq!(
+            later.manifest_line(),
+            "env\tgreet\tstr,rbytes,ref?\tasync:str\n"
+        );
     }
 }

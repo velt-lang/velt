@@ -198,6 +198,10 @@ pub enum Op {
     Ge,
     /// `(mask, a, b) -> v`: the lanes of `a` where the mask is set, of `b` elsewhere.
     Select,
+    /// `(acc, a, b) -> v` on `i32x4`, `a` and `b` being `i8x16`: each lane of `acc` plus the sum
+    /// of the four products of the signed bytes in the same quarter of `a` and `b` (bytes
+    /// `4k..4k + 3` for lane `k`), exactly (no saturation): Arm's `sdot`.
+    DotAdd,
     /// `(a, b, c) -> v`: `a * b + c` with one rounding (fused), the same bits on every CPU: one
     /// instruction where the CPU has FMA (arm64, x86 with `--cpu x86-64-v3`), a library call
     /// per lane elsewhere. Floats only.
@@ -342,7 +346,9 @@ impl SimdCall {
                 | Op::ReverseBytes
                 | Op::Convert(_) => (vec![V128], V128),
                 Op::Shl | Op::Shr => (vec![V128, U32], V128),
-                Op::Select | Op::MulAdd | Op::MulAddFast => (vec![V128, V128, V128], V128),
+                Op::Select | Op::MulAdd | Op::MulAddFast | Op::DotAdd => {
+                    (vec![V128, V128, V128], V128)
+                }
                 _ => (vec![V128, V128], V128),
             },
         }
@@ -455,6 +461,7 @@ fn vector_op(name: &str) -> Option<Op> {
         "gt" => Op::Gt,
         "ge" => Op::Ge,
         "select" => Op::Select,
+        "dot_add" => Op::DotAdd,
         "mul_add" => Op::MulAdd,
         "mul_add_fast" => Op::MulAddFast,
         "zip_low" => Op::ZipLow,
@@ -474,6 +481,7 @@ fn supported(lanes: Lanes, op: Op) -> bool {
     let float = lanes.is_float();
     let bits = lanes.bits();
     match op {
+        Op::DotAdd => lanes == Lanes::I32,
         Op::Div | Op::Sqrt | Op::MulAdd | Op::MulAddFast => float,
         Op::Mul => float || bits != 8,
         Op::Neg => float || lanes.is_signed(),
@@ -582,6 +590,12 @@ mod tests {
             SimdCall::of_symbol("velt_simd_i16x8_widen_high"),
             Some(SimdCall::Vector(Lanes::I16, Op::WidenHigh))
         );
+        assert_eq!(
+            SimdCall::of_symbol("velt_simd_i32x4_dot_add"),
+            Some(SimdCall::Vector(Lanes::I32, Op::DotAdd))
+        );
+        assert_eq!(SimdCall::of_symbol("velt_simd_u32x4_dot_add"), None);
+        assert_eq!(SimdCall::of_symbol("velt_simd_i16x8_dot_add"), None);
         assert_eq!(
             SimdCall::of_symbol("velt_simd_f64x2_mul_add"),
             Some(SimdCall::Vector(Lanes::F64, Op::MulAdd))

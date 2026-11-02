@@ -372,11 +372,11 @@ fn x86_code_is_for_the_default_cpu_level_unless_asked() {
         const AVX2: u32 = 1 << 7;
         for cpu in ["alderlake", "znver4"] {
             let target = t(Some(cpu)).unwrap();
-            assert_ne!(target.x86_features & AVX2, 0, "{cpu}");
+            assert_ne!(target.cpu_features & AVX2, 0, "{cpu}");
             assert!(!target.rounds_by_conversion(), "{cpu}");
             assert_eq!(
                 crate::required_features(&target.triple, Some(cpu)),
-                Ok(target.x86_features)
+                Ok(target.cpu_features)
             );
         }
     }
@@ -457,12 +457,86 @@ fn extension_checks_are_true_on_a_cpu_built_for_with_the_extension() {
     assert!(checked.contains("@velt_cpu_sha_x86"), "{checked}");
     // Built for a CPU with SHA (`--cpu`), whose start-up check checks it: the check is true.
     let mut sha = target.clone();
-    sha.x86_features |= velt_codegen_cl::ext_x86_features(velt_vir::simd::Ext::ShaX86);
+    sha.cpu_features |= velt_codegen_cl::ext_x86_features(velt_vir::simd::Ext::ShaX86);
     let folded = crate::checked_ir(&p, &sha, false).unwrap();
     assert!(!folded.contains("@velt_cpu_sha_x86"), "{folded}");
     // SHA alone, without the SSSE3 and SSE4.1 the extension also needs, is not enough.
     let mut partial = target.clone();
-    partial.x86_features = 1 << 21;
+    partial.cpu_features = 1 << 21;
     let partial = crate::checked_ir(&p, &partial, false).unwrap();
     assert!(partial.contains("@velt_cpu_sha_x86"), "{partial}");
+}
+
+/// `velt_main` returning lane 0 of `i32x4.dotAdd` on zeros.
+fn dot_sample() -> Program {
+    let mut pb = ProgramBuilder::new();
+    let dot = pb.ext("velt_simd_i32x4_dot_add", &[V128, V128, V128], V128, false);
+    let lane = pb.ext("velt_simd_i32x4_lane", &[V128, U64], I32, false);
+    let mut fb = FuncBuilder::export("velt_main", &[], I32);
+    let (v, r) = (fb.local(V128), fb.local(I32));
+    let b = fb.block();
+    let zero = Operand::Const(Const::Int(0), V128);
+    let b = fb.call(
+        b,
+        Callee::Extern(dot),
+        vec![zero.clone(), zero.clone(), zero],
+        Some(v),
+    );
+    let b = fb.call(
+        b,
+        Callee::Extern(lane),
+        vec![copy_local(v), int(0, U64)],
+        Some(r),
+    );
+    fb.ret(b, copy_local(r));
+    pb.add(fb.finish());
+    pb.finish()
+}
+
+#[test]
+fn the_dot_product_is_sdot_where_every_cpu_has_it() {
+    let p = dot_sample();
+    let ir = |triple: &str| emit_ir(&p, triple).expect("emit_ir");
+    // Every Apple arm64 CPU has Arm's dot-product instructions.
+    assert!(ir("aarch64-apple-darwin").contains("@llvm.aarch64.neon.sdot.v4i32.v16i8"));
+    // Other arm64 CPUs may lack them, and x86 has no such instruction: widening code.
+    for triple in ["aarch64-unknown-linux-gnu", "x86_64-unknown-linux-gnu"] {
+        let text = ir(triple);
+        assert!(!text.contains("sdot"), "{triple}");
+        assert!(text.contains("sext <16 x i8>"), "{triple}");
+    }
+}
+
+#[test]
+fn an_arm64_cpu_with_the_dot_product_gets_sdot_anywhere() {
+    if !crate::available() {
+        return;
+    }
+    // What clang says each CPU has (ARM_FEATURES' bit 0 is DOTPROD).
+    let linux = "aarch64-unknown-linux-gnu";
+    assert_eq!(crate::required_features(linux, Some("neoverse-n1")), Ok(1));
+    assert_eq!(crate::required_features(linux, Some("cortex-a53")), Ok(0));
+    assert_eq!(crate::required_features(linux, Some("baseline")), Ok(0));
+    let target = |cpu| {
+        crate::target::normalize(linux)
+            .unwrap()
+            .with_cpu(Some(cpu))
+            .unwrap()
+    };
+    assert!(target("neoverse-n1").has_dotprod());
+    assert!(!target("cortex-a53").has_dotprod());
+    // A `--cpu` names the CPU on Apple's target too: one without the extension gets none.
+    let apple = |cpu| {
+        let t = crate::target::normalize("aarch64-apple-darwin").unwrap();
+        t.with_cpu(cpu).unwrap()
+    };
+    assert!(apple(None).has_dotprod() && apple(Some("baseline")).has_dotprod());
+    assert!(apple(Some("apple-m4")).has_dotprod());
+    assert!(!apple(Some("cortex-a53")).has_dotprod());
+    // And the emitted code follows: `sdot` for a dotprod CPU on Linux, none for an ARMv8.0 one
+    // on Apple's target.
+    let p = dot_sample();
+    let ir = |t: &crate::target::Target| crate::checked_ir(&p, t, false).unwrap();
+    assert!(ir(&target("neoverse-n1")).contains("@llvm.aarch64.neon.sdot"));
+    assert!(!ir(&apple(Some("cortex-a53"))).contains("sdot"));
 }

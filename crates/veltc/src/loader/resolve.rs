@@ -12,19 +12,28 @@ use super::pick::{first_existing, on_disk_exactly};
 use super::spec::{resolve_spec, ModuleRef};
 use super::{file_key, is_std_path};
 
-/// The file that `spec`, imported by the file `importer`, names; `None` when the import would
-/// fail (invalid, not found, ambiguous, outside the std root, a std file named by path).
+/// The file that `spec`, imported by the file `importer`, names in a build for `target` (`None`:
+/// the host; it selects a `#name`'s variant); `None` when the import would fail (invalid, not
+/// found, ambiguous, outside the std root, a std file named by path).
 pub fn resolve_module(
     spec: &str,
     importer: &Path,
     std_root: Option<&Path>,
     packages: Option<&dyn PackageResolver>,
+    target: Option<&str>,
 ) -> Option<PathBuf> {
     let dir = importer.parent()?;
-    let aliased =
+    let in_std = std_root.is_some_and(|std| file_key(importer).starts_with(file_key(std)));
+    let aliased = if vpm::imports::is_specifier(spec) {
+        let std = std_root.filter(|_| in_std);
+        Some(super::conditional::resolve(
+            spec, importer, std, packages, target,
+        )?)
+    } else {
         (!spec.starts_with("./") && !spec.starts_with("../") && !spec.starts_with("velt/"))
             .then(|| packages?.path_alias(importer, spec))
-            .flatten();
+            .flatten()
+    };
     let module = match aliased {
         Some(file) => ModuleRef::Relative {
             file: vpm::relpath::normalize(&file),
@@ -32,13 +41,12 @@ pub fn resolve_module(
         None => {
             let classified = resolve_spec(spec, dir);
             let mut npm = vpm::npm::NpmResolver::default();
-            match super::npm_module(&mut npm, packages, importer, spec, &classified) {
+            match super::locate::npm_module(&mut npm, packages, importer, spec, &classified) {
                 Some(found) => ModuleRef::Relative { file: found.ok()? },
                 None => classified.ok()?,
             }
         }
     };
-    let in_std = std_root.is_some_and(|std| file_key(importer).starts_with(file_key(std)));
     let origin = match std_root {
         Some(std) if in_std => Origin::Std(std.to_path_buf()),
         _ => Origin::Root(dir.to_path_buf()),
@@ -97,7 +105,7 @@ mod tests {
             write(&root, f);
         }
         let main = root.join("app/main.vlt");
-        let resolve = |spec: &str| resolve_module(spec, &main, Some(&std), None);
+        let resolve = |spec: &str| resolve_module(spec, &main, Some(&std), None, None);
         assert_eq!(resolve("velt/fs"), Some(std.join("fs/index.vlt")));
         assert_eq!(
             resolve("velt/collections/set"),
@@ -109,7 +117,7 @@ mod tests {
         // From a std file, relative imports stay in std.
         let net = std.join("net.vlt");
         assert_eq!(
-            resolve_module("./net/bytes", &net, Some(&std), None),
+            resolve_module("./net/bytes", &net, Some(&std), None, None),
             Some(std.join("net/bytes.vlt"))
         );
         // Ambiguous, wrong case, missing, or escaping the std root: nothing.
