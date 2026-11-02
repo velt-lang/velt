@@ -116,9 +116,45 @@ check` mode and the gate). This replaces a loader that prefers `x.workers.vlt` f
 
 ## 4. `fetch` on JS hosts (#1785)
 
-`fetch` is Velt code; its `#transport` is the Velt TCP client natively and the host's `fetch`
-under `js` (browser, Node, Deno and Workers alike). Bodies stream both ways through a host
-reader and writer, and `AbortSignal` maps to an `AbortController` held as a `HostRef`.
+`fetch` is Velt code; its transport is the conditional import `#http-transport` (std/imports.vlt):
+the Velt HTTP/1.1 and HTTP/2 client over velt/net by default (natively and under WASI), and the
+host's own `fetch` under `js` (browser, Node, Deno and Workers alike), so a JS host's module
+links no TCP, TLS, HTTP/2 or decompression code. The seam is two names, which both variants
+export with the same signatures (the variant check compares them):
+
+- `send(o: ClientRequest): Promise<Fetched, IoError | AbortError>`: the request as `fetch` made
+  it (client/client_request.vlt: method, URL, headers, the body as text or bytes, the redirect
+  mode, the signal, `ca`), resolved once the response's head arrived;
+- `class Fetched`: `status`, `url`, `redirected`, `statusText()`, `headers()`, `decoded()`,
+  `bytes()`, `text()`, `chunk()` and `close()`. `Request`, `Response`, `Headers` and the body
+  types are shared; `Response` holds a `Fetched`.
+
+The `js` variant (client/transport/) calls the host functions of module `velt:fetch`, which the
+glue provides over the host's `fetch` (rt_abi.md "Host values"). A call is one `HostRef` (the
+request's `AbortController`, then its `Response` and body reader). The request is checked as the
+Velt client checks it (URL, scheme, header names and values), so a bad one fails with the same
+`IoError`; the host follows redirects as `redirect` says and decodes compressed bodies. The
+response's body arrives piece by piece, one async host call per `chunk()` (`bytes()` and
+`text()` take the rest in one call), so `res.body` streams. While the program waits on the host
+for a request with an `AbortSignal`, a task races the signal's wait against the end of that wait
+and aborts the `AbortController` when the signal wins; the pending `fetch` or body read then
+rejects, and `fetch` throws the signal's `AbortError` (`TimeoutError` for `AbortSignal.timeout`).
+Nothing waits on the signal between waits, so an unread response keeps no task alive. The host
+call itself is not raced: the wasm executor loses track of a task when a started promise loses a
+race inside a stream's pull (#2040). Network failures carry the code native `fetch` gives them
+(the glue maps the code of the error's `cause`: errno codes as they are, a broken compressed body
+`EILSEQ`, a response that isn't HTTP `EPROTO`, TLS and certificate failures `EILSEQ`, undici's
+`UND_ERR_*` to `ECONNRESET`, `ETIMEDOUT`, `EINVAL`, `ENOTSUP`, anything else `UNKNOWN`), with
+the host's message. Header values cross as UTF-8, as the Velt client sends and reads them.
+
+What differs from native: a custom `ca` is an `IoError` (`ENOTSUP`; the host verifies
+certificates itself); the host refuses some requests the Velt client sends (undici: the
+`keep-alive`, `upgrade` and `expect` headers, `CONNECT` and `TRACE`, credentials in the URL; the
+ports the Fetch standard blocks, such as 1), and browsers drop forbidden headers; a DNS failure
+is `ENOTFOUND` (natively `UNKNOWN`); a streamed request body is sent whole, as natively (no streaming upload);
+`res.statusText` is the host's (empty over HTTP/2 in node, then the standard text); repeated
+response headers other than `set-cookie` arrive joined with ", "; `redirect: "manual"` in a
+browser gives the host's opaque redirect (status 0).
 
 ## 5. The Workers build (#1736)
 

@@ -1,0 +1,33 @@
+text: 200 OK true text/plain; charset=utf-8
+  url: true redirected: false
+  body: hello from node
+json: velt [ 1, 2, 3 ]
+404: 404 Not Found false no such page
+big: 300000 37494610
+follow: 200 true true
+  body: hello from node
+manual: 302 false /text
+error: IoError UNKNOWN
+post text: second a=1 | b=2
+   POST first text/plain;charset=UTF-8 14 héllo, wörld
+put bytes: PUT application/octet-stream 6 0001027f80ff
+utf-8 headers: 68c3a96c6c6f då
+bad header: IoError EINVAL
+stream: before the rest was sent: first;
+  then 200000 bytes in more than one piece: true
+abort before response: AbortError: stopped by the program
+  server: the request's connection closed
+abort mid-body: got part one;
+abort mid-body: AbortError: enough
+  server: the request's connection closed
+abort in text(): AbortError: no more
+  server: the request's connection closed
+timeout in bytes(): TimeoutError: timed out after 100 ms
+timeout: TimeoutError: timed out after 100 ms after at least 100 ms: true
+  server: the request's connection closed
+refused: IoError ECONNREFUSED
+ftp: IoError ENOTSUP
+bad gzip: IoError EILSEQ
+reset: IoError ECONNRESET
+unread: 200
+exit 0

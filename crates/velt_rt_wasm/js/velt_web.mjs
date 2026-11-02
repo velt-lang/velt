@@ -23,7 +23,8 @@
 // custom section "velt.host" lists each one, a line "m<TAB>f<TAB>params<TAB>result" (velt_vir's
 // vir/host.rs), and the glue wraps the embedder's function to convert what crosses. An async one
 // (result "async:<type>") returns the id of its promise, whose outcome the glue writes as
-// `HostSettled<T>` (std/host/promise.vlt) when the program takes it.
+// `HostSettled<T>` (std/host/promise.vlt) when the program takes it. The glue itself provides
+// the module `velt:fetch`, std's `fetch` over the host's own (`fetchHost` below).
 //
 // Browser:  import { runVelt } from "./velt_web.mjs";
 //           const code = await runVelt(fetch("hello.wasm"), { write: (s, bytes) => ..., imports });
@@ -124,7 +125,8 @@ export async function loadVelt(source, host = {}) {
     },
   };
   const module = await compile(await source);
-  Object.assign(imports, hostImports(module, host.imports ?? {}, rt));
+  const provided = { "velt:fetch": fetchHost(), ...host.imports };
+  Object.assign(imports, hostImports(module, provided, rt));
   const instance = await WebAssembly.instantiate(module, imports);
   rt.exports = instance.exports;
   rt.memory = instance.exports.memory;
@@ -344,6 +346,110 @@ function described(value) {
   } catch {
     return ["Error", "a host promise rejected with a value that cannot be shown"];
   }
+}
+
+/** What native `fetch` calls the failures undici (node's `fetch`) gives other codes. */
+const UNDICI_CODES = {
+  UND_ERR_SOCKET: "ECONNRESET",
+  UND_ERR_CONNECT_TIMEOUT: "ETIMEDOUT",
+  UND_ERR_HEADERS_TIMEOUT: "ETIMEDOUT",
+  UND_ERR_BODY_TIMEOUT: "ETIMEDOUT",
+  UND_ERR_INVALID_ARG: "EINVAL",
+  UND_ERR_REQ_CONTENT_LENGTH_MISMATCH: "EINVAL",
+  UND_ERR_NOT_SUPPORTED: "ENOTSUP",
+};
+
+/**
+ * The `IoError` code native `fetch` gives the failure whose error code is `code`: an errno code
+ * as it is, a broken compressed body (zlib's `Z_*`) `EILSEQ`, a response that isn't HTTP
+ * (llhttp's `HPE_*`) `EPROTO`, a TLS or certificate failure `EILSEQ`, undici's own mapped, else
+ * `UNKNOWN`.
+ */
+function fetchCode(code) {
+  if (/^E[A-Z0-9_]+$/.test(code)) return code;
+  if (code.startsWith("Z_") || /CERT|ERR_TLS|ERR_SSL/.test(code)) return "EILSEQ";
+  if (code.startsWith("HPE_")) return "EPROTO";
+  return UNDICI_CODES[code] ?? "UNKNOWN";
+}
+
+/** `text` as a byte string of its UTF-8 (a header value as native `fetch` sends it). */
+const byteString = (text) => String.fromCharCode(...utf8.encoder.encode(text));
+
+/** A byte string's bytes as UTF-8 (a header value as native `fetch` reads it). */
+const fromByteString = (bytes) =>
+  utf8.decoder.decode(Uint8Array.from(bytes, (c) => c.charCodeAt(0)));
+
+/**
+ * The import module `velt:fetch`: std's `fetch` on JS hosts over `hostFetch`
+ * (std/net/http/fetch/client/transport/js_host.vlt). A call is an object holding the request's
+ * AbortController, then its Response, the reader of its body and the piece last read. What a
+ * call rejects with is named as native `fetch` names the failure (the program's `IoError.code`):
+ * `AbortError` once the call was aborted, else the code of the error's `cause` (`fetchCode`).
+ * Header values cross as UTF-8, as native `fetch` sends and reads them.
+ */
+export function fetchHost(hostFetch = (url, init) => globalThis.fetch(url, init)) {
+  const failed = (call, e) => {
+    if (call.ctrl.signal.aborted) return { name: "AbortError", message: "This operation was aborted" };
+    const cause = e?.cause ?? e;
+    const code = typeof cause?.code === "string" ? cause.code : "";
+    return { name: fetchCode(code), message: `fetch failed: ${cause?.message ?? e}` };
+  };
+  const next = async (call) => {
+    while (call.reader) {
+      const { done, value } = await call.reader.read();
+      if (done) break;
+      if (value.length > 0) return value;
+    }
+    call.reader = null;
+    return new Uint8Array(0);
+  };
+  const rest = async (call) => {
+    const parts = [];
+    for (let p; (p = await next(call)).length > 0; ) parts.push(p);
+    const all = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+    parts.reduce((at, p) => (all.set(p, at), at + p.length), 0);
+    return all;
+  };
+  return {
+    requestStart: () => ({ ctrl: new AbortController(), res: null, reader: null, piece: null }),
+    async requestSend(call, method, url, headers, redirect, kind, text, body) {
+      try {
+        const list = headers === "" ? [] : headers.split("\n");
+        const h = new Headers();
+        for (let i = 0; i + 1 < list.length; i += 2) h.append(list[i], byteString(list[i + 1]));
+        const init = { method, headers: h, redirect, signal: call.ctrl.signal };
+        if (kind === 1) init.body = text;
+        else if (kind === 2) init.body = body;
+        call.res = await hostFetch(url, init);
+      } catch (e) {
+        throw failed(call, e);
+      }
+      call.reader = call.res.body?.getReader() ?? null;
+    },
+    requestAbort: (call) => call.ctrl.abort(),
+    responseStatus: (call) => call.res.status,
+    responseStatusText: (call) => call.res.statusText,
+    responseUrl: (call) => call.res.url,
+    responseRedirected: (call) => call.res.redirected,
+    responseHeaders: (call) =>
+      [...call.res.headers].map(([k, v]) => `${k}\n${fromByteString(v)}`).join("\n"),
+    async bodyRead(call, all) {
+      try {
+        call.piece = await (all ? rest(call) : next(call));
+      } catch (e) {
+        throw failed(call, e);
+      }
+    },
+    bodyTake(call) {
+      const piece = call.piece;
+      call.piece = null;
+      return piece;
+    },
+    bodyCancel(call) {
+      call.reader?.cancel().catch(() => {});
+      call.reader = null;
+    },
+  };
 }
 
 /** console-based output for browsers: decodes UTF-8 per stream and logs whole lines. */

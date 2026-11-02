@@ -1,0 +1,4 @@
+// The test server's URL on a JS host: drive.mjs provides it as the host function `test.base`.
+
+/** The URL of the test server, without a trailing slash. */
+export declare host("test") function base(): string;

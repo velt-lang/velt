@@ -578,3 +578,74 @@ fn async_host_functions_under_node() {
     }
     let _ = std::fs::remove_dir_all(&work);
 }
+
+/// `fetch` on JS hosts (std/net/http/fetch/client/transport/js.vlt, the host's own `fetch`)
+/// under node: tests/wasm_fetch/src/main.vlt fetches from drive.mjs's local server (text, JSON,
+/// a 404, a large body, redirects followed, manual and refused, headers and text and bytes
+/// bodies both ways, a body whose first piece arrives before the server sends the rest, an abort
+/// before the response and between two pieces of the body, a timeout, a refused connection) and
+/// prints what it gets. Its native build prints main.out against the same server, and so must
+/// its wasm32-unknown-unknown build in debug and release mode, holding no `HostRef` at the end.
+#[test]
+fn fetch_on_js_hosts() {
+    if let Some(missing) = missing_tools("wasm32-unknown-unknown", "node") {
+        eprintln!("note: {missing} not available; skipping fetch on JS hosts");
+        return;
+    }
+    let root = root();
+    build_runtime(&root, "wasm32-unknown-unknown");
+    let fixture = root.join("crates/veltc/tests/wasm_fetch");
+    let want = std::fs::read_to_string(fixture.join("main.out"))
+        .expect("main.out")
+        .replace("\r\n", "\n");
+    // A package builds into its own `target/`: built in a copy, never in the source tree.
+    let work = work_dir::work_dir(&root, "golden-work-fetch").join(std::process::id().to_string());
+    let _ = std::fs::remove_dir_all(&work);
+    copy_dir(&fixture, &work);
+    let native = work.join(format!("main_native{}", std::env::consts::EXE_SUFFIX));
+    let wasm = work.join("main.wasm");
+    let builds: [(&[&str], &Path, &str); 3] = [
+        (&[], &native, "native"),
+        (&["--target", "wasm32-unknown-unknown"], &wasm, "wasm debug"),
+        (
+            &["--target", "wasm32-unknown-unknown", "--release"],
+            &wasm,
+            "wasm release",
+        ),
+    ];
+    for (args, module, what) in builds {
+        let o = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
+            .current_dir(&work)
+            .arg("build")
+            .args(args)
+            .arg("src/main.vlt")
+            .arg("-o")
+            .arg(module)
+            .output()
+            .expect("run velt");
+        assert!(
+            o.status.success(),
+            "velt build ({what}):\n{}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+        let glue = if what == "native" {
+            PathBuf::from("-")
+        } else {
+            for_node(&work.join("velt_web.mjs"))
+        };
+        let o = crate::no_window::command("node")
+            .arg(for_node(&work.join("drive.mjs")))
+            .arg(glue)
+            .arg(for_node(module))
+            .output()
+            .expect("run node");
+        let got = String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n");
+        assert!(
+            o.status.success() && got == want,
+            "{what}: exit {:?}\n--- want ---\n{want}--- got ---\n{got}--- stderr ---\n{}",
+            o.status.code(),
+            String::from_utf8_lossy(&o.stderr)
+        );
+    }
+    let _ = std::fs::remove_dir_all(&work);
+}
