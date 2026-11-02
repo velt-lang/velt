@@ -419,7 +419,10 @@ fn write_reloc<M: Module>(
         vir::Const::Extern(e) => {
             let id = match targets.externs.get(e.0 as usize) {
                 Some(Some(id)) => *id,
-                Some(None) => bail!("the address of SIMD operation #{} is taken", e.0),
+                Some(None) => bail!(
+                    "the address of inline operation #{} (SIMD, atomic or `velt_math_*`) is taken",
+                    e.0
+                ),
                 None => bail!("unknown extern #{}", e.0),
             };
             let func = module.declare_func_in_data(id, desc);

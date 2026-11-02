@@ -10,6 +10,8 @@ function main() {
   console.log(inf, (-inf).toBits().toString(16));
   const nan = f32.fromBits(0x7fc00000);
   console.log(nan != nan, nan.toBits().toString(16));
+  // A constant signalling NaN: the optimizer must not fold its bits (nor quiet it).
+  console.log(f32.fromBits(0x7f800001).toBits().toString(16));
   // Every bit pattern comes back exactly, NaN payloads included: signalling, payload, negative
   // and all-ones NaNs, the largest subnormal and the smallest normal, through a function
   // parameter, an array element and a class field.
