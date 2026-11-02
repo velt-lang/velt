@@ -89,7 +89,10 @@ globalThis.fetch = async (input, init) => {
 let instances = 0;
 const instantiate = WebAssembly.instantiate;
 WebAssembly.instantiate = (...args) => {
-  if (args[0] instanceof WebAssembly.Module) instances++;
+  // A Velt program's, not one of node's own (node 22's fetch instantiates undici's llhttp).
+  const program = args[0] instanceof WebAssembly.Module &&
+    WebAssembly.Module.exports(args[0]).some((e) => e.name === "velt_start");
+  if (program) instances++;
   return instantiate(...args);
 };
 
