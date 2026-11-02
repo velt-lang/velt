@@ -256,16 +256,17 @@ fn decide(cx: &Ctx, d: DefId) -> bool {
             },
             // A type's methods, where the type is declared (an `extend` of a prelude type
             // keeps its methods checked).
-            FnKind::Method | FnKind::Ctor => {
-                f.owner.is_some_and(|o| match &cx.info[o.0 as usize] {
+            FnKind::Method | FnKind::Ctor => match f.owner {
+                Some(o) => match &cx.info[o.0 as usize] {
                     DefInfo::Adt(a) => match cx.lazy.modules[a.module] {
                         Mode::Lazy => true,
                         Mode::Helpers => LAZY_PRELUDE_TYPES.contains(&a.qual_name.as_str()),
                         Mode::Eager => false,
                     },
                     _ => false,
-                })
-            }
+                },
+                None => primitive_extension(cx, f),
+            },
             _ => false,
         },
         DefInfo::Global(g) => {
@@ -275,6 +276,37 @@ fn decide(cx: &Ctx, d: DefId) -> bool {
                 && cx.lazy.modules[g.module] == Mode::Lazy
         }
         _ => false,
+    }
+}
+
+/// Is `f` a method of an `extend` block on a number type, `bool` or `string` in a lazy std
+/// module (`extend u32 { rotateLeft(…) }`), other than a helper? Such a method is reached only by
+/// a call or a function value naming it, or through an interface implementation that holds it
+/// ([`impl_methods`]): no class's `any` table or subclass dispatch lists it.
+fn primitive_extension(cx: &Ctx, f: &crate::defs::FnInfo<'_>) -> bool {
+    f.kind == FnKind::Method
+        && cx.lazy.modules[f.module] != Mode::Eager
+        && !is_helper(&f.name)
+        && f.this.as_ref().is_some_and(|t| {
+            matches!(
+                cx.ty.kind(t.ty),
+                TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Str
+            )
+        })
+}
+
+/// The deferred methods held by interface implementations (`extend i32 implements I`, the
+/// `Comparable` of every number type, a number converted to an interface): lowering calls them
+/// through the implementation (a bound's method, a table of a `dyn` value), which no checked code
+/// names.
+fn impl_methods(cx: &Ctx, found: &mut Vec<DefId>) {
+    for imp in &cx.impls {
+        // Only the extension methods: a lazy class's methods wait for the class to be used.
+        let extension = |d: DefId| {
+            matches!(&cx.info[d.0 as usize], DefInfo::Fn(f) if f.owner.is_none())
+                && deferred(cx, d)
+        };
+        found.extend(imp.methods.iter().copied().filter(|&d| extension(d)));
     }
 }
 
@@ -348,6 +380,7 @@ pub(crate) fn reach(cx: &mut Ctx) {
             }
         }
         used_types(cx, std::mem::take(&mut sc.types), &mut sc.found);
+        impl_methods(cx, &mut sc.found);
         let mut checked = false;
         for d in std::mem::take(&mut sc.found) {
             if !deferred(cx, d) {
