@@ -111,6 +111,11 @@ fn compound_assignment_takes_the_type_or_a_literal() {
 #[test]
 fn an_any_converts_only_with_as() {
     ok_src("function main() { const a: any = 1.5; const w = a as f16; console.log(w); }");
+    let r = err_src("function main() { let w: f16 = 1; const a: any = 2; w -= a; }");
+    assert!(
+        r.contains("an `any` doesn't convert to `f16` implicitly"),
+        "{r}"
+    );
     let r = err_src("function main() { const a: any = 1.5; const w: f16 = a; }");
     assert!(
         r.contains("an `any` doesn't convert to `f16` implicitly: write `x as f16`"),

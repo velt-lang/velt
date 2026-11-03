@@ -115,11 +115,11 @@ impl FnCx<'_, '_> {
         Some(self.error_expr(span))
     }
 
-    /// `place op= v` (or `place++`, `v` the `f32` 1) on an `f16`/`bf16` place (#2049): the place
-    /// is read, both sides widen to `f32`, the operation runs there and its result rounds back
-    /// once. The place's object and indices are evaluated once, before `v`. `v` is an `f16`/
-    /// `bf16` of the place's own type or a literal (typed as it, as `=` types one); a wider value
-    /// needs the cast, as for `=`. `None` after reporting.
+    /// `place op= v` (or `place++`) on an `f16`/`bf16` place (#2049): the place is read, both
+    /// sides widen to `f32`, the operation runs there and its result rounds back once, so it is
+    /// `place = (place op v) as f16`. The place's object and indices are evaluated once, before
+    /// `v`. `v` is of the place's own type or a literal (an `f32`); a wider value needs the
+    /// cast, as for `=`. `None` after reporting.
     pub(super) fn storage_rmw(
         &mut self,
         place: hir::Expr,
@@ -134,9 +134,11 @@ impl FnCx<'_, '_> {
             .ty
             .primitive("f32")
             .expect("ICE: f32 is a primitive");
-        // A literal on the right is typed as the place (`=`'s rule), so only the place's type
-        // passes; an `f32` (`0.1f32` too) needs the cast.
-        if v.ty != lty && !self.cx.ty.is_bottom(v.ty) {
+        // The place's type, or a literal (an `f32`, the type the operation runs in); another
+        // `f32`, a `number` or the other storage type needs the cast.
+        let literal = matches!(&v.kind, H::Lit(_))
+            || matches!(&v.kind, H::Unary { expr, .. } if matches!(expr.kind, H::Lit(_)));
+        if v.ty != lty && !(literal && v.ty == f32_) && !self.cx.ty.is_bottom(v.ty) {
             let (t, vt) = (self.cx.display(lty), self.cx.display(v.ty));
             self.cx.error(
                 Diagnostic::error(

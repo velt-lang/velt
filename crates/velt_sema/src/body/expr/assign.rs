@@ -499,10 +499,21 @@ impl FnCx<'_, '_> {
             let assign = self.mk(kind, unit, span);
             return self.with_temps(stmts, assign);
         }
-        let v = self.expr(value, Some(lty), Want::Borrow);
+        // On an `f16`/`bf16` place a literal on the right is an `f32`, the type the operation
+        // runs in, so `x op= L` is `x = (x op L) as f16` (#2049; `=` keeps the f16 literal).
+        let storage = self.cx.ty.is_storage_float(lty);
+        let hint = match storage {
+            true => self.cx.ty.primitive("f32"),
+            false => Some(lty),
+        };
+        let v = self.expr(value, hint, Want::Borrow);
         let v = self.unbrand(v);
+        // An `any` on the right needs `as`, as for `=`.
+        if storage && self.cx.dynamic(v.ty).is_some() {
+            return self.any_as_storage(lty, span);
+        }
         // On an `f16`/`bf16`: computed in `f32`, rounded back once (#2049).
-        if self.cx.ty.is_storage_float(lty) && self.cx.dynamic(v.ty).is_none() {
+        if storage {
             let Some(bop) =
                 hir_binop(op).filter(|_| self.storage_bitwise(op, &place, &v, span).is_none())
             else {
