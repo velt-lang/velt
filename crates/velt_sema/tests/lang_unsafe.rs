@@ -148,3 +148,44 @@ fn a_generic_unsafe_function_is_not_a_value_either() {
         "{e}"
     );
 }
+
+#[test]
+fn an_unsafe_method_is_not_a_value_either() {
+    let e = err_src(&format!(
+        "{RAW} function main() {{ const b = unsafe {{ Buf.make() }}; const f = b.at; }}"
+    ));
+    assert_eq!(
+        e.matches("unsafe function `at` can only be called, not used as a value")
+            .count(),
+        1,
+        "{e}"
+    );
+    assert!(!e.contains("calling unsafe"), "{e}");
+}
+
+/// Inside an `unsafe` block, the functions that are expressions of the block are unsafe code:
+/// arrows, generator function expressions and object-literal methods. Class members are not, in
+/// a class expression too, like nested function declarations: a class is a declaration whose
+/// methods are called from anywhere.
+#[test]
+fn which_functions_in_an_unsafe_block_are_unsafe_code() {
+    ok_src(&format!(
+        "{RAW} interface I {{ m(): i64 }}
+         function main() {{
+           unsafe {{
+             const f = (n: i64) => raw(n);
+             const g = function* (): Generator<i64> {{ yield raw(1); }};
+             const o = {{ m(): i64 {{ return raw(2); }} }};
+             const i: I = {{ m(): i64 {{ return raw(3); }} }};
+             const it = {{ *[Symbol.iterator](): Generator<i64> {{ yield raw(4); }} }};
+             console.log(f(1), o.m(), i.m());
+             for (const x of g()) {{ console.log(x); }}
+             for (const x of it) {{ console.log(x); }}
+           }}
+         }}"
+    ));
+    let e = err_src(&format!(
+        "{RAW} function main() {{ unsafe {{ const K = class {{ m(): i64 {{ return raw(1); }} }}; console.log(new K().m()); }} }}"
+    ));
+    assert!(e.contains("calling unsafe function `raw`"), "{e}");
+}

@@ -149,3 +149,13 @@ fn implicitly_called_methods_cant_be_unsafe() {
         "{e:?}"
     );
 }
+
+#[test]
+fn interface_members_cant_be_unsafe() {
+    let e = errors("interface I { unsafe m(): void }");
+    assert!(
+        e.iter()
+            .any(|m| m.contains("interface members can't be `unsafe`")),
+        "{e:?}"
+    );
+}

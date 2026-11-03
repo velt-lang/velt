@@ -466,6 +466,12 @@ impl<'a> Parser<'a> {
             Tok::Str(_) => self.parse_prop_key()?,
             _ => self.parse_member_name()?,
         };
+        if mods.is_unsafe {
+            self.error(
+                "interface members can't be `unsafe`: a call through the interface would need no `unsafe` block",
+                name.span,
+            );
+        }
         if literal && self.at_method_start() {
             self.reject_literal_method_name(&name);
         }

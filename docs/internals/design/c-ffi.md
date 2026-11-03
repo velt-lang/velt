@@ -138,7 +138,10 @@ unsafe function sum(p: Ptr<f32>, n: usize): f32 { … }
   sqlite3_step(s) };`, `p => unsafe { sqlite3_finalize(p) }`). `unsafe` is a modifier on
   functions and methods, read like `async` (`unsafe function`, `unsafe async function`,
   `static unsafe m()`), and an `unsafe` function's body is an unsafe block. Unsafe contexts are
-  lexical: a closure written inside one is unsafe code, a nested function declaration is not.
+  lexical: the functions that are expressions of an unsafe block (arrows, generator function
+  expressions, object-literal methods) are unsafe code; nested function declarations and class
+  members (in a class expression too) are not, nor are an unsafe function's default parameters.
+  Interface members can't be `unsafe`.
   It is a contextual keyword: `unsafe` stays usable as an identifier where neither `{` nor a
   function follows it on the same line.
 - **Unsafe functions are not values.** A function type can't say it is unsafe, so an unsafe
