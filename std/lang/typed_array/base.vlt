@@ -6,6 +6,7 @@
 
 import { BufferView } from "velt/lang/typed_array/buffer_view";
 import { TYPED_ARRAY_GET, TYPED_ARRAY_KIND, TYPED_ARRAY_PUT } from "velt/lang/hooks/keys";
+import "velt/lang/number/to_fixed";
 
 /**
  * What every typed array is (std only: JS's `%TypedArray%`): a view of a buffer

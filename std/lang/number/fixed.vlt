@@ -3,10 +3,11 @@
 // `|x|` is `m / 2^s` with `m` below 2^53, so it is `m * 10^digits` (two words) shifted right by
 // `s`, plus one when the bits shifted out are at least half. Its digits get the point and the
 // sign in four words (velt/lang/number/text) and are stored as an inline string. More digits,
-// and the few values whose result needs more than 64 bits, take the runtime's exact printer.
+// and the few values whose result needs more than 64 bits, take the runtime's exact printer, as
+// do 1e21 and up (`String(x)`): this module is imported by the prelude, so it keeps to
+// velt/lang/number's integer and text helpers.
 
 import { noInline, strAsciiWords } from "velt/lang/intrinsics";
-import { f64Text } from "velt/lang/number/format";
 import { intWords } from "velt/lang/number/integer";
 import { between, DOT, insert, MINUS, moved, or, shift, Text, ZEROS } from "velt/lang/number/text";
 
@@ -95,7 +96,9 @@ export function fixedText(x: f64, digits: i64): string {
   const neg = x < 0;
   const a = neg ? -x : x;
   if (!(a < 1e21)) {
-    return f64Text(x);
+    // `String(x)` (and NaN), as the runtime's printer writes it: not `f64Text`, whose shortest-digits
+    // search and table every program would then check, since the prelude's `toFixed` is here.
+    return velt_rt_f64_to_fixed(x, digits);
   }
   if (digits > 19) {
     return velt_rt_f64_to_fixed(x, digits);

@@ -10,6 +10,8 @@
 
 import { anyString, anyText } from "./any_text";
 
+declare function velt_rt_f64_to_fixed(x: f64, digits: i64): string;
+
 /** Argument `k` of `args`, `undefined` when it was left out. */
 export function anyArg(args: any[], k: i64): any {
   return k < (args.length as i64) ? args[k as usize] : undefined;
@@ -204,8 +206,17 @@ export function anyStr_localeCompare(s: string, args: any[]): any {
 
 // Numbers and booleans.
 
+/**
+ * `n.toFixed(digits)` through `any`, by the runtime's printer rather than std's `toFixed`
+ * (velt/lang/number/to_fixed): this module is in every program, and the formatter is loaded only
+ * for one that mentions `toFixed`.
+ */
 export function anyNum_toFixed(n: number, args: any[]): any {
-  return n.toFixed(anyIntArg(args, 0, 0));
+  const digits = anyIntArg(args, 0, 0);
+  if (digits < 0 || digits > 100) {
+    panic("RangeError: toFixed() digits argument must be between 0 and 100");
+  }
+  return velt_rt_f64_to_fixed(n, digits);
 }
 
 export function anyNum_toString(n: number, args: any[]): any {
