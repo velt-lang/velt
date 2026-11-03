@@ -8,6 +8,7 @@ client agree. The request handling over pluggable storage (`BlobStore`, `Metadat
 
 ```ts ignore
 import {
+  readManifest,
   checkName,
   checkPackagePaths,
   contentChecksum,
@@ -22,6 +23,7 @@ Version.parse("1.2.3-rc.1").compare(Version.parse("1.2.3")); // negative: a pre-
 const entries = readArchive(body, (path: string): bool => true); // ArchiveError when malformed
 checkPackagePaths(entries, null); // only package.vlt, src/ and the native crate's directory
 const sum = contentChecksum(entries); // "sha256:…", as `velt` records it
+const manifest = readManifest(text); // ManifestError when vpm would refuse it
 ```
 
 - **Names** (`src/names.vlt`): package names (lowercase words joined by single `-` or `_`; not
@@ -30,8 +32,16 @@ const sum = contentChecksum(entries); // "sha256:…", as `velt` records it
 - **Versions** (`src/semver/version.vlt`): semver 2.0 versions, parsed and ordered exactly as the
   Rust `semver` crate does for `velt` (numbers up to `u64`'s largest; build metadata ordered
   too).
-- **Archives** (`src/archive.vlt`): the `VELTPKG1` archive `velt publish` uploads, its path rules,
-  and the content checksum of its files.
+- **Requirements** (`src/semver/requirement.vlt`): which strings are version requirements
+  (`^1.2`, `>=1, <2`, `1.*`), as the `semver` crate parses them.
+- **Manifests** (`src/manifest/`): `package.vlt` read as vpm reads it, never compiled or run:
+  one `export const pkg: Package = { … }` of data (strings, booleans, arrays, objects), every
+  field checked; `readManifest(text)` gives a `Manifest` or throws `ManifestError` with every
+  problem, and `Manifest.toJson()` is `velt manifest --json`.
+- **Archives** (`src/archive.vlt`, `src/package_archive.vlt`): the `VELTPKG1` archive `velt
+  publish` uploads, its path rules (`readPackageArchive` allows the native crate's directory its
+  manifest declares), and the content checksum of its files.
 
 `crates/veltc/tests/registry_core.rs` checks every rule against the Rust it must agree with
-(vpm, the `semver` crate) over some 3,000 listed and generated cases.
+(vpm, the `semver` crate) over some 5,000 listed and generated cases, among them manifests
+mutated token by token.

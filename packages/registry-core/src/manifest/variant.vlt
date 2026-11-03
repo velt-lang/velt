@@ -1,0 +1,7 @@
+// registry-core (internal): part of a package's manifest (./manifest.vlt).
+
+/** One variant of a conditional import: the condition it applies under, and its file. */
+export struct Variant {
+  condition: string;
+  target: string;
+}

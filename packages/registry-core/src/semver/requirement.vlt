@@ -1,0 +1,174 @@
+// registry-core (internal): which strings are semver version requirements, as the Rust `semver`
+// crate's `VersionReq::parse` decides for vpm (`dependencies`' requirements, and with a `~` in
+// front of a bare version the `velt` field's): comma-separated comparators (`>=1.2, <2`), each an
+// optional operator, a version that may stop after its major or minor number or end in a
+// wildcard, and a pre-release and build only after a patch number; at most 32; or `*` alone.
+
+/** The largest version number (`u64`). */
+const U64_MAX = "18446744073709551615";
+
+/** Reads one requirement's text. */
+class Reader {
+  private text: string;
+  at = 0;
+
+  constructor(text: string) {
+    this.text = text;
+  }
+
+  peek(): string {
+    return this.text.slice(this.at, this.at + 1);
+  }
+
+  done(): bool {
+    return this.at >= this.text.length;
+  }
+
+  rest(): string {
+    return this.text.slice(this.at);
+  }
+
+  eat(c: string): bool {
+    if (this.peek() == c) {
+      this.at++;
+      return true;
+    }
+    return false;
+  }
+
+  spaces(): void {
+    while (this.peek() == " ") {
+      this.at++;
+    }
+  }
+
+  wildcard(): bool {
+    const c = this.peek();
+    if (c == "*" || c == "x" || c == "X") {
+      this.at++;
+      return true;
+    }
+    return false;
+  }
+
+  /** A version number: digits, no leading zero, at most `u64`'s largest. */
+  number(): bool {
+    const start = this.at;
+    while (this.peek() >= "0" && this.peek() <= "9" && this.peek().length == 1) {
+      if (this.at > start && this.text.slice(start, start + 1) == "0") {
+        return false;
+      }
+      this.at++;
+    }
+    const digits = this.text.slice(start, this.at);
+    if (digits.length == 0) {
+      return false;
+    }
+    return digits.length < U64_MAX.length || (digits.length == U64_MAX.length && digits <= U64_MAX);
+  }
+
+  /** Identifiers after `-` or `+` (none empty; a pre-release's numbers without leading zeros). */
+  identifiers(pre: bool): bool {
+    let segment = this.at;
+    let nondigit = false;
+    for (;;) {
+      const c = this.peek();
+      const letter =
+        c.length == 1 && ((c >= "A" && c <= "Z") || (c >= "a" && c <= "z") || c == "-");
+      const digit = c.length == 1 && c >= "0" && c <= "9";
+      if (letter || digit) {
+        nondigit = nondigit || letter;
+        this.at++;
+        continue;
+      }
+      const length = this.at - segment;
+      if (length == 0) {
+        // An empty identifier, whole or between dots.
+        return false;
+      }
+      if (pre && length > 1 && !nondigit && this.text.slice(segment, segment + 1) == "0") {
+        return false;
+      }
+      if (c == ".") {
+        this.at++;
+        segment = this.at;
+        nondigit = false;
+        continue;
+      }
+      return true;
+    }
+  }
+
+  /** One comparator (`crates.io/semver`'s `comparator`), followed by spaces. */
+  comparator(): bool {
+    const c = this.peek();
+    if (c == "=" || c == "~" || c == "^") {
+      this.at++;
+    } else if (c == ">" || c == "<") {
+      this.at++;
+      this.eat("=");
+    }
+    this.spaces();
+    if (!this.number()) {
+      return false;
+    }
+    let wildcard = false;
+    let patch = false;
+    if (this.eat(".")) {
+      if (this.wildcard()) {
+        wildcard = true;
+      } else if (!this.number()) {
+        return false;
+      }
+      if (this.eat(".")) {
+        if (this.wildcard()) {
+          // A wildcard patch: no pre-release or build may follow.
+        } else if (wildcard) {
+          return false;
+        } else if (!this.number()) {
+          return false;
+        } else {
+          patch = true;
+        }
+      }
+    }
+    if (patch && this.eat("-") && !this.identifiers(true)) {
+      return false;
+    }
+    if (patch && this.eat("+") && !this.identifiers(false)) {
+      return false;
+    }
+    this.spaces();
+    return true;
+  }
+}
+
+/** Whether `text` is a version requirement the `semver` crate accepts. */
+export function isValidRequirement(text: string): bool {
+  const r = new Reader(text);
+  r.spaces();
+  const save = r.at;
+  if (r.wildcard()) {
+    r.spaces();
+    if (r.done()) {
+      return true;
+    }
+    return false;
+  }
+  r.at = save;
+  for (let count = 1;; count++) {
+    if (!r.comparator()) {
+      return false;
+    }
+    if (r.done()) {
+      return true;
+    }
+    if (!r.eat(",")) {
+      return false;
+    }
+    r.spaces();
+    if (count + 1 > 32) {
+      return false;
+    }
+  }
+}

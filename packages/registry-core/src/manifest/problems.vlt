@@ -1,0 +1,35 @@
+// registry-core (internal): the problems found while decoding a manifest, and the type checks
+// every field starts with (vpm's `Reader::object`, `string`, `check`, `unknown_key`).
+
+import { Data, DataKind } from "./data";
+
+/** The problems of one manifest. */
+export class Problems {
+  problems: string[] = [];
+
+  check(problem: string | null): void {
+    if (problem != null) {
+      this.problems.push(problem);
+    }
+  }
+
+  object(v: Data, what: string): bool {
+    if (v.kind != DataKind.Object) {
+      this.problems.push(`${what} must be an object, not ${v.describe()}`);
+      return false;
+    }
+    return true;
+  }
+
+  string(v: Data, key: string): string | null {
+    if (v.kind != DataKind.Str) {
+      this.problems.push(`\`${key}\` must be a string, not ${v.describe()}`);
+      return null;
+    }
+    return v.str;
+  }
+
+  unknown(key: string): void {
+    this.problems.push(`unknown key \`${key}\` in the manifest`);
+  }
+}
