@@ -1,4 +1,4 @@
-// Global, conditional (crates/veltc/src/loader/globals.rs): what `Reflect` and
+// Global, conditional (crates/velt_loader/src/globals): what `Reflect` and
 // `Object.getOwnPropertyDescriptor` do to a record's symbol keys and accessors
 // (velt/lang/record/reflect).
 // load when std/prelude/record uses: Proxy Reflect getOwnPropertyDescriptor

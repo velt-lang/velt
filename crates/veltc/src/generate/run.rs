@@ -364,15 +364,15 @@ fn locate_generator(
     spec: &str,
     packages: Option<&vpm::PackageGraph>,
 ) -> Option<(PathBuf, PathBuf, String)> {
-    let std_root = crate::loader::std_root();
-    let resolver = packages.map(|g| g as &dyn crate::loader::PackageResolver);
-    let file = crate::loader::resolve_module(spec, decl, std_root.as_deref(), resolver, None)?;
+    let std_root = velt_loader::std_root();
+    let resolver = packages.map(|g| g as &dyn velt_loader::PackageResolver);
+    let file = velt_loader::resolve_module(spec, decl, std_root.as_deref(), resolver, None)?;
     if let Some(std) = std_root
         .as_deref()
-        .filter(|s| crate::loader::in_std(&file, s))
+        .filter(|s| velt_loader::in_std(&file, s))
     {
         let rel = vpm::relpath::relative(&file, std);
-        let module = crate::loader::module_path(&rel).to_string();
+        let module = velt_loader::module_path(&rel).to_string();
         return Some((file, std.to_path_buf(), format!("velt/{module}")));
     }
     Some((file, decl.parent()?.to_path_buf(), spec.to_string()))

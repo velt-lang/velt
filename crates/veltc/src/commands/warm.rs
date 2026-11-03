@@ -180,13 +180,13 @@ fn programs(dir: &Path) -> Vec<PathBuf> {
 const LIST: &str = "programs.txt";
 
 /// `$VELT_SHARE/warm`; else `share/velt/warm` beside the std this velt uses
-/// (`crate::loader::std_root`: `<prefix>/std` installed, the checkout's `std/` in one, wherever
+/// (`velt_loader::std_root`: `<prefix>/std` installed, the checkout's `std/` in one, wherever
 /// its target directory is), so the programs and the std they exercise come from one place.
 fn warm_dir() -> Option<PathBuf> {
     if let Some(share) = std::env::var_os("VELT_SHARE").filter(|s| !s.is_empty()) {
         return Some(Path::new(&share).join("warm")).filter(|d| d.is_dir());
     }
-    warm_dir_of_std(&crate::loader::std_root()?)
+    warm_dir_of_std(&velt_loader::std_root()?)
 }
 
 fn warm_dir_of_std(std: &Path) -> Option<PathBuf> {

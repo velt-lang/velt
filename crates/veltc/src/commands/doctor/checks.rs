@@ -5,7 +5,7 @@
 use std::path::Path;
 
 use super::{Check, Status};
-use crate::loader;
+use velt_loader as loader;
 
 /// Label of the clang check (the smoke test runs a release build only when it passed).
 pub const CLANG: &str = "clang";

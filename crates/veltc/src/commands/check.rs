@@ -111,7 +111,7 @@ fn std_scope(
     locked: bool,
     target: Option<String>,
 ) -> Result<(driver::BuildOptions, CheckScope, Vec<Vec<PathBuf>>), BuildError> {
-    let std = crate::loader::std_root().ok_or_else(|| {
+    let std = velt_loader::std_root().ok_or_else(|| {
         BuildError::Failed("cannot find the standard library; set VELT_STD".into())
     })?;
     let mut extra_roots: Vec<PathBuf> = discover::source_files(&std)

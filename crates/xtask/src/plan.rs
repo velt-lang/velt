@@ -18,6 +18,8 @@ const PIPELINE: &[&str] = &[
     "velt_common",
     "velt_syntax",
     "velt_sema",
+    // Which modules a program is made of (std, packages, the globals it loads).
+    "velt_loader",
     "velt_vir",
     "velt_codegen_cl",
     "velt_codegen_llvm",

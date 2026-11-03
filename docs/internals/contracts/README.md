@@ -11,6 +11,7 @@ helper), and explain it in your final report.
 | Well-known std modules | `crates/velt_common/src/std_modules.rs`: the std modules the compiler names (`std_module!`, `std_item!`, …; docs/internals/design/std-layout.md §5) | std ↔ every compiler crate |
 | Compiler hooks | `crates/velt_common/src/std_hooks.rs`: the std functions and classes the compiler calls (`std_hook!`), with their signatures (docs/internals/design/std-layout.md §10b) | std ↔ sema, lowering |
 | AST | `crates/velt_syntax/src/ast.rs` (with `ast/blocks.rs`, `ast/type_parts.rs`, `ast/type_level.rs`, `ast/jsx.rs`) + `parse_file` (`parse_with` for the loader: `define`, ambient declarations; `encode_module`/`decode_module`: a module in a compact binary form, `AST_FORMAT` first, spans stored without their file and decoded for the file id given, a damaged value `None`) | frontend → sema |
+| Program loader | `crates/velt_loader/src/lib.rs`: `load_program(sm, root, LoadOptions, diags) -> Result<Loaded, String>` and the resolution rules a tool must share with it (§ Program loader below) | loader → driver, language server, tests and tools that load programs as `velt build` does |
 | HIR | `crates/velt_sema/src/hir/mod.rs`, `hir/intrinsic.rs`, `hir/module_state.rs` + `hir_encodings.md` + `check`, `SourceModule` (`is_std`: loaded from the std root; `is_dependency`: loaded from a package the program depends on, a library like std for the analyses that report at the program's call into one, with no privilege; drivers set both, sema never derives them from the path), `effects::may_change_memory` (can evaluating an expression run code that changes memory: a call other than an intrinsic, an intrinsic handed a place to modify or move, an assignment, `new`, `await`; IR lowering holds earlier operands and re-forms element addresses on it) | sema → IR |
 | VIR | `crates/velt_vir/src/vir.rs` + `lower`, `verify`, `fingerprint::{Canon, Mode, Fingerprint, fingerprint, attrs_hold, is_state_layout}` (function fingerprints for `velt dev` and the cached std object; `Canon::reaches_mutable_static`); values are built with `Function::new`, `LocalDecl::new` and `Program::default()` (struct update for the rest), where a new field gets its "no information" default | IR → codegen |
 | Codegen API | `crates/velt_codegen_cl/src/lib.rs` (`emit_object`, `host_triple`) | codegen → driver |
@@ -25,8 +26,9 @@ helper), and explain it in your final report.
 ## Pipeline
 ```
 velt build main.vlt
-  └─ driver (veltc): load main.vlt, follow imports, SourceMap
-      ├─ velt_syntax::parse_with       per file      → ast::Module (+ ambient declarations;
+  └─ driver (veltc)
+      ├─ velt_loader::load_program     main.vlt + imports → SourceModules, SourceMap
+      │   └─ velt_syntax::parse_with   per file      → ast::Module (+ ambient declarations;
       │                                                 parse_file for std and the formatter;
       │                                                 std's parses come from the build cache)
       ├─ velt_sema::check              whole program → hir::Program (check_with: library roots)
@@ -37,6 +39,30 @@ velt build main.vlt
       └─ velt_link::link  (+ velt_rt staticlib)       → executable
 ```
 Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exit code 1 on errors.
+
+## Program loader (crate boundary, #2197)
+`crates/velt_loader` loads a program: the root file and every module it needs (the prelude, the
+globals loaded on demand with their `// load for:` / `// load when` conditions, std, packages,
+npm sources, `#name` variants), parsed, in the order sema expects. It depends on `velt_common`,
+`velt_syntax`, `velt_sema` (for `SourceModule`), `vpm`, `velt_build_cache` and
+`velt_toolchain`, never on veltc, VIR or a backend, so whatever must load programs exactly as
+`velt build` does (velt_vir's tests, the language server, a per-package cache) can depend on it.
+Its public API is kept small:
+- `load_program(sm: &mut SourceMap, root: &Path, opts: LoadOptions, diags: &mut Diagnostics)
+  -> Result<Loaded, String>`: `Err` only when the root cannot be read; syntax and import problems
+  go into `diags`. `Loaded { modules: Vec<SourceModule>, root: usize }`: the prelude first, then
+  the root, its imports breadth-first, then the extra roots.
+- `LoadOptions` (all fields default to "none"): `std_root`, `packages: Option<&dyn
+  PackageResolver>` (implemented for `vpm::PackageGraph`), `extra_roots`, `root_source`,
+  `overlay` (unsaved editor buffers), `std_root_as_std`, `test_harness`, `target`,
+  `host_condition`, `check_variants`, `std_ast_cache: Option<StdAstCache { cache, compiler }>`
+  (std's parses kept in the build cache; the caller names the cache and the compiler identity).
+- The resolution rules tools must share with the loader: `std_root()`, `prelude_files`,
+  `in_std`, `resolve_spec` → `ModuleRef`, `resolve_module`, `module_path`, and
+  `PackageResolver` / `PackageImports`.
+
+Everything else (resolution, globals, visibility, variants, the std parse cache) is private to
+the crate. The same inputs give the same modules, diagnostics and order for every caller.
 
 ## Source locations (additive VIR extension)
 - `vir::SrcLoc { file: u32, line: u32, col: u32 }` (1-based line, 1-based byte column).
@@ -131,7 +157,7 @@ Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exi
 | optimizer | `crates/velt_opt` |
 | codegen | `crates/velt_codegen_cl`, `crates/velt_codegen_llvm` |
 | runtime | `crates/velt_rt`, `std/**` |
-| tooling | `crates/veltc`, `crates/velt_link`, `crates/vpm` (except `tests/golden.rs`), `crates/velt_doc`, `crates/velt_tscompat`, `crates/velt_registry`, `crates/velt_http`, `crates/velt_lsp`, `crates/velt_fmt`, `crates/xtask` |
+| tooling | `crates/veltc`, `crates/velt_loader`, `crates/velt_link`, `crates/vpm` (except `tests/golden.rs`), `crates/velt_doc`, `crates/velt_tscompat`, `crates/velt_registry`, `crates/velt_http`, `crates/velt_lsp`, `crates/velt_fmt`, `crates/xtask` |
 | native SDK | `crates/velt_native`, `crates/velt_native_macros` (versioned with the native ABI), `packages/**` |
 | runtime (wasm) | `crates/velt_rt_wasm`, `crates/velt_rt_host` (mirror of velt_rt deps) |
 | runtime packaging | `crates/velt_rt_shared` (the runtime as a shared library for debug builds; mirror of velt_rt deps) |

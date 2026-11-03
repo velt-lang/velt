@@ -11,6 +11,7 @@ license = "MIT OR Apache-2.0"
 velt_common = { path = "crates/velt_common" }
 velt_syntax = { path = "crates/velt_syntax" }
 velt_sema = { path = "crates/velt_sema" }
+velt_loader = { path = "crates/velt_loader" }
 velt_vir = { path = "crates/velt_vir" }
 velt_codegen_cl = { path = "crates/velt_codegen_cl" }
 velt_codegen_llvm = { path = "crates/velt_codegen_llvm" }

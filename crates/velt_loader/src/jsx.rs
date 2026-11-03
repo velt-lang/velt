@@ -9,15 +9,15 @@ use velt_common::Span;
 use velt_syntax::ast::{self, ExprKind as E, StmtKind as S};
 
 /// The import source of modules that name none.
-pub const DEFAULT_IMPORT_SOURCE: &str = velt_common::std_specifier!(jsx);
+pub(crate) const DEFAULT_IMPORT_SOURCE: &str = velt_common::std_specifier!(jsx);
 
 /// The module a JSX import source provides its factories from.
-pub fn runtime_spec(source: &str) -> String {
+pub(crate) fn runtime_spec(source: &str) -> String {
     format!("{}/jsx-runtime", source.trim_end_matches('/'))
 }
 
 /// Span of the first JSX element or fragment in `module`, if it has any.
-pub fn first_jsx(module: &ast::Module) -> Option<Span> {
+pub(crate) fn first_jsx(module: &ast::Module) -> Option<Span> {
     module.items.iter().find_map(item)
 }
 

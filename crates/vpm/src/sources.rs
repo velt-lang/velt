@@ -45,6 +45,13 @@ pub fn strip_source_extension(name: &str) -> Option<&str> {
     })
 }
 
+/// Whether a file named `name` is a test file (`velt test`'s `*.test.vlt`, `*.test.ts`,
+/// `*.test.tsx`): a source module whose name without the extension ends in `.test`. The loader
+/// keeps a package's test files out of what other packages may import by this rule too.
+pub fn is_test_file(name: &str) -> bool {
+    strip_source_extension(name).is_some_and(|stem| stem.ends_with(".test"))
+}
+
 /// Whether a walk for source files below a folder enters its subdirectory `dir`: not a symlink
 /// (which can lead back up, `src/up -> ..`, walking the package again or forever), not `target/`,
 /// `node_modules/` or hidden, and not the root of a nested package.

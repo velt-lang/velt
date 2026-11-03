@@ -16,7 +16,7 @@ use velt_common::std_modules;
 
 use super::locate::{module_path, Origin, Target};
 use super::Loader;
-use crate::commands::test::discover::is_test_file;
+use vpm::sources::is_test_file;
 
 impl Loader<'_, '_> {
     /// `target` with a std origin when it is one of std's test files (`file`, whose

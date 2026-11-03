@@ -94,7 +94,7 @@ pub struct PackageImports {
 
 /// The tree a module belongs to.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Origin {
+pub(crate) enum Origin {
     /// The user's program; canonical paths are relative to the root file's directory.
     Root(PathBuf),
     /// The standard library rooted here.
@@ -111,7 +111,7 @@ pub enum Origin {
 impl Origin {
     /// Canonical module path of `file` (a source file inside this origin): its path relative to
     /// the origin, without the source extension (`.vlt`, `.ts`, `.tsx`) or a final `/index`.
-    pub fn canonical(&self, file: &Path) -> String {
+    pub(crate) fn canonical(&self, file: &Path) -> String {
         let (base, prefix) = match self {
             Origin::Root(dir) => (dir, None),
             Origin::Std(root) => (root, Some("std")),
@@ -137,7 +137,7 @@ pub fn module_path(rel: &str) -> &str {
 /// A module to load: the files to try, in groups (the first group with an existing file wins;
 /// two existing files in one group make the import ambiguous), plus its canonical path and
 /// origin.
-pub struct Target {
+pub(crate) struct Target {
     pub candidates: Vec<Vec<PathBuf>>,
     pub canonical: Option<String>,
     pub origin: Origin,
@@ -147,10 +147,10 @@ pub struct Target {
 }
 
 /// Why a module could not be located: message plus notes.
-pub type LocateError = (String, Vec<String>);
+pub(crate) type LocateError = (String, Vec<String>);
 
 /// Where `module` (imported by `importer`, which has origin `from`) lives.
-pub fn target(
+pub(crate) fn target(
     module: ModuleRef,
     importer: &Path,
     from: &Origin,
