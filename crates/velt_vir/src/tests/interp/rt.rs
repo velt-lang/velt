@@ -158,8 +158,8 @@ impl Interp<'_> {
                 let s = self.str_text(a[1]);
                 self.out(a[0], &s);
             }
-            "velt_rt_write_i64" => self.out(a[0], &(a[1] as i64).to_string()),
-            "velt_rt_write_u64" => self.out(a[0], &a[1].to_string()),
+            "velt_test_write_i64" => self.out(a[0], &(a[1] as i64).to_string()),
+            "velt_test_write_u64" => self.out(a[0], &a[1].to_string()),
             "velt_rt_write_f64" => self.out(a[0], &inspect_num(f64::from_bits(a[1]))),
             "velt_rt_write_bool" => self.out(a[0], if a[1] & 1 == 1 { "true" } else { "false" }),
             "velt_rt_write_byte" => self.out(a[0], &((a[1] as u8) as char).to_string()),

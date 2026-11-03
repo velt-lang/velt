@@ -46,7 +46,8 @@ pub enum Construct {
     /// parameter or held as `any`): `console.log` and `console.error` of it, `inspect`,
     /// `errorText`, `String()` and `${}` of a value that is no scalar, the report of it thrown
     /// and not caught, its conversion to an interface or `any`, and the `format` slot of an
-    /// interface value's table. A class's table has that slot only where this is present.
+    /// interface value's table. A class's table has that slot only where this is present. Also
+    /// `console.log` of a float, whose writer's code holds the integer's.
     Format,
     /// A bounds-checked index of an array (`xs[i]`, an array pattern, the array intrinsics): the
     /// out-of-bounds message prints the length and the index.
@@ -159,17 +160,22 @@ mod tests {
 
     #[test]
     fn the_integer_hooks_are_demanded_by_their_constructs() {
-        use crate::std_hooks::hook_index::{int_push, int_text, uint_push, uint_text};
+        use crate::std_hooks::hook_index::{int_push, int_text, int_write, number_write};
+        use crate::std_hooks::hook_index::{uint_push, uint_text, uint_write};
+        const WRITE: [usize; 3] = [int_write, uint_write, number_write];
         // Every entry of the table, and that nothing else demands these hooks.
         for (c, hooks) in [
             (Construct::TextInt, &[int_text, int_push][..]),
             (Construct::TextUint, &[uint_text, uint_push]),
-            (Construct::Format, &[int_push, uint_push]),
+            (
+                Construct::Format,
+                &[int_push, uint_push, WRITE[0], WRITE[1], WRITE[2]],
+            ),
             (Construct::IndexCheck, &[int_text, uint_text]),
             (Construct::Dynamic, &[uint_text, int_push, uint_push]),
         ] {
             let by = HookSet::demanded_by(c.bit());
-            for hook in [int_text, uint_text, int_push, uint_push] {
+            for hook in [int_text, uint_text, int_push, uint_push].into_iter().chain(WRITE) {
                 assert_eq!(by.contains(hook), hooks.contains(&hook), "{}", c.name());
             }
         }

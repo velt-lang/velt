@@ -72,7 +72,42 @@ impl PB {
         id
     }
 
-    pub fn finish(self) -> Program {
+    /// `console.log`'s number writers (velt_common `std_hooks.rs` `int_write`, `uint_write`,
+    /// `number_write`), which a hand-built program has no std for: each forwards to an extern
+    /// the interpreter prints with (`velt_test_write_i64`, `velt_test_write_u64`; a float by the
+    /// runtime's printer), so these tests keep printing integers (#2197). Tests of the hooks
+    /// themselves load the real std (std_src.rs).
+    fn console_writers(&mut self) {
+        let u32 = self.types.intern(TyKind::Int(IntTy::U32));
+        let u64 = self.types.intern(TyKind::Int(IntTy::U64));
+        let writers = [
+            (velt_common::std_hook!(int_write), self.t.i64, "velt_test_write_i64"),
+            (velt_common::std_hook!(uint_write), u64, "velt_test_write_u64"),
+            (velt_common::std_hook!(number_write), self.t.f64, "velt_rt_write_f64"),
+        ];
+        for (hook, ty, symbol) in writers {
+            let ext = self.declare();
+            self.defs[ext.0 as usize] = Some(Def::ExternFn(ExternFnDef {
+                name: symbol.into(),
+                symbol: symbol.into(),
+                params: vec![u32, ty],
+                ret: self.t.unit,
+                is_async: false,
+                system: None,
+                host: None,
+                c: None,
+                span: SP,
+            }));
+            let mut f = FB::new(hook, self.t.unit);
+            let stream = f.param("stream", u32, PassMode::Copy);
+            let v = f.param("v", ty, PassMode::Copy);
+            let body = vec![se(call(ext, vec![f.cp(stream), f.cp(v)], self.t.unit))];
+            self.add_fn(f.build(body));
+        }
+    }
+
+    pub fn finish(mut self) -> Program {
+        self.console_writers();
         Program {
             types: self.types,
             defs: self
