@@ -304,16 +304,89 @@ pub(super) fn maybe_written(f: &Function, s: &Susp, u: &Universe) -> Vec<Bits> {
     for &b in &s.starts {
         out[b].union(&ins);
     }
-    let edges = semantic_edges(f, &s.extra);
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for &(from, to) in &edges {
-            let src = out[from].clone();
-            changed |= out[to].union(&src);
+    let (mut succs, mut preds) = (vec![vec![]; nb], vec![vec![]; nb]);
+    for (from, to) in semantic_edges(f, &s.extra) {
+        succs[from].push(to);
+        preds[to].push(from);
+    }
+    // The set at the end of a block is the writes of every block reaching it. So over the
+    // strongly connected components, sources first, a component's set is its blocks' writes
+    // plus the sets of the components entering it, each computed once. (A fixpoint over the
+    // edges took a round per edge against the block order, each round the whole function.)
+    let comps = components(&succs);
+    let mut comp_of = vec![0; nb];
+    for (c, bs) in comps.iter().enumerate() {
+        bs.iter().for_each(|&b| comp_of[b] = c);
+    }
+    for (c, bs) in comps.iter().enumerate().rev() {
+        let mut acc = Bits::new(u.len());
+        for &b in bs {
+            acc.union(&out[b]);
+            for &p in preds[b].iter().filter(|&&p| comp_of[p] != c) {
+                acc.union(&out[p]);
+            }
+        }
+        for &b in bs {
+            out[b] = acc.clone();
         }
     }
     out
+}
+
+/// The strongly connected components of the graph `succs` (Tarjan), each listed after every
+/// component it reaches.
+fn components(succs: &[Vec<usize>]) -> Vec<Vec<usize>> {
+    const NONE: usize = usize::MAX;
+    let n = succs.len();
+    let (mut index, mut low, mut on_stack) = (vec![NONE; n], vec![0; n], vec![false; n]);
+    let (mut stack, mut comps, mut next) = (vec![], vec![], 0);
+    macro_rules! enter {
+        ($v:expr) => {{
+            let v = $v;
+            index[v] = next;
+            low[v] = next;
+            next += 1;
+            stack.push(v);
+            on_stack[v] = true;
+        }};
+    }
+    for root in 0..n {
+        if index[root] != NONE {
+            continue;
+        }
+        enter!(root);
+        // The depth-first path: each block with the index of its next successor.
+        let mut path = vec![(root, 0)];
+        while let Some(top) = path.last_mut() {
+            let (v, i) = *top;
+            if let Some(&w) = succs[v].get(i) {
+                top.1 += 1;
+                if index[w] == NONE {
+                    enter!(w);
+                    path.push((w, 0));
+                } else if on_stack[w] {
+                    low[v] = low[v].min(index[w]);
+                }
+                continue;
+            }
+            path.pop();
+            if let Some(&(p, _)) = path.last() {
+                low[p] = low[p].min(low[v]);
+            }
+            if low[v] == index[v] {
+                let mut comp = vec![];
+                while let Some(w) = stack.pop() {
+                    on_stack[w] = false;
+                    comp.push(w);
+                    if w == v {
+                        break;
+                    }
+                }
+                comps.push(comp);
+            }
+        }
+    }
+    comps
 }
 
 /// Edges of the semantic CFG: ordinary edges except those leaving the dispatch block 0, plus

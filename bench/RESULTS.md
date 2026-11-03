@@ -1543,3 +1543,43 @@ loop instead; with six kernels in one function its cost limit turns that off). `
 null first, when the loops write no memory and call nothing. Against `main`'s own compiler the
 kernels take 37-80% fewer instructions (`nested` the same): there `numrep` skips this `main`,
 which has grown past its size limit, and the counters stay doubles.
+
+## Compile speed at scale: sigx's small-page and generated 10k/100k-line programs (2026-11-03)
+
+Linux x86-64 builder (12 cores, shared: load 20-48 during these runs, so the stage times below
+are wall-clock and inflated; compare the CPU column). Each run has a fresh empty `VELT_HOME` and
+`VELT_BUILD_CACHE=off VELT_BUILD_STAMP=off`. CPU = user seconds of `velt` and its children.
+
+**sigx small-page** (`velt-shim/scen-small-page.ts` in the audit-20 copy of sigx; main
+`915753a2f`):
+
+| | CPU s | peak RSS | parse | sema | generate | lower | verify | optimize | codegen | link |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `velt check` | 4.9 | 0.75 GB | 0.31 | 3.75 | 0.74 | | | | | |
+| debug build | 613.5 | 1.8 GB | 0.21 | 4.17 | 0.89 | 644.2 | 1.67 | 6.96 | 46.0 | 1.88 |
+| release build | 2168.4 | 4.9 GB | 0.31 | 3.58 | 0.92 | 689.4 | 4.32 | 238.8 | 1170.2 | 1.19 |
+| debug, `vir: lowering a large function` | 333.3 | 1.8 GB | | | | 520.9 (load 40) | | | | |
+
+- Lowering is 90% of a debug build. It runs the whole program 6 times (the counted-types
+  fixpoint, `lower/boxing/`), and one function dominates each pass: `renderNode$poll`, the
+  state machine of render-core.ts's 350-line generator, at 187,519 blocks in the first pass and
+  about 37,000 in the others (69,000 locals). Three analyses over it were superlinear
+  (view_unswitch's address facts, the async state's interference and its dataflow fixpoints);
+  `VELT_LOWER_PROFILE=1` names the slowest functions per pass.
+- The release build's codegen is one clang process (1,091 s of 1,170 s: the unit holding
+  `renderNode$poll`), and its optimizer spends 59 s in `vtable_loads` and 52 s in
+  `borrowed_copies`.
+
+**Generated programs** (`bench/compile/scale/run.sh <lines>`; Go 1.25.3 builds the same program,
+std warmed in a fresh `GOCACHE`):
+
+| lines | `velt check` | debug build | release build | `go build` |
+|---|---:|---:|---:|---:|
+| 10,116 | 0.6 s | 3.6 s | 53.4 s | |
+| 101,577 | 2.7 s | 38.4 s | 2,324 s | 61.6 s (26.5 s wall) |
+
+At 100k lines the debug build costs about what Go does on this machine (CPU), and `velt check`
+far less; the release build is the outlier, with 2,283 s of codegen at 100k lines and 13.9 s at
+10k (wall clock under different loads, but over 100× for 10× the code). At 10k lines one clang
+process takes 13.7 s of the 13.9 s, the IR is 635,891 lines (63 per source line), and `main` alone is 32,821 lines:
+the inliner merges the units' entries into it.

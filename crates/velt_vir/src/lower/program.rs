@@ -263,6 +263,7 @@ impl<'h> Cx<'h> {
         let outer_site = std::mem::replace(&mut self.user_site, site.unwrap_or_default());
         let outer_mode = std::mem::take(&mut self.cur_mode);
         let outer_tuples = self.start_fn_tuples();
+        let prof = super::lower_profile::enter();
         let func = match work {
             Work::Checked(w) | Work::Read(w) | Work::ReadOwn(w) | Work::Deferred(w) => {
                 let deep = matches!(work, Work::ReadOwn(w) if matches!(**w, Work::Deferred(_)));
@@ -290,6 +291,7 @@ impl<'h> Cx<'h> {
         self.user_site = outer_site;
         self.finish_fn_tuples(fid, outer_tuples);
         self.bind_unique_params(fid);
+        super::lower_profile::leave(prof, &func);
         self.funcs[fid.0 as usize] = Some(func);
         self.building.remove(&fid);
     }
