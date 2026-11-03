@@ -9,14 +9,13 @@
 //! (`jit_memory`), so the unwind records become a read-only data object of the same module
 //! ([`JitUnwind::stage`]), placed in that arena when the module is finalized.
 
-use cranelift_codegen::isa::unwind::UnwindInfo;
 use cranelift_jit::JITModule;
 use cranelift_module::{DataDescription, DataId, FuncId, Module};
 use windows_sys::Win32::System::Diagnostics::Debug::{
     RtlAddFunctionTable, IMAGE_RUNTIME_FUNCTION_ENTRY, IMAGE_RUNTIME_FUNCTION_ENTRY_0,
 };
 
-use super::FunctionUnwind;
+use super::{FunctionUnwind, Unwind};
 use crate::CodegenResult;
 
 /// A module's unwind records, defined as data but not yet registered.
@@ -33,15 +32,13 @@ impl JitUnwind {
         let mut bytes = Vec::new();
         let mut functions = Vec::with_capacity(infos.len());
         for (id, size, info) in infos {
-            let UnwindInfo::WindowsX64(info) = info else {
+            let Unwind::WindowsX64(record) = info else {
                 continue;
             };
             // UNWIND_INFO records are DWORD-aligned.
             bytes.resize(bytes.len().next_multiple_of(4), 0);
             let offset = u32::try_from(bytes.len()).map_err(|_| "ICE: unwind info over 4 GiB")?;
-            let start = bytes.len();
-            bytes.resize(start + info.emit_size(), 0);
-            info.emit(&mut bytes[start..]);
+            bytes.extend_from_slice(record);
             functions.push((*id, *size, offset));
         }
         let error = |e| format!("codegen: JIT unwind info: {e}");
