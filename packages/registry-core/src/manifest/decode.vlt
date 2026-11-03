@@ -22,7 +22,8 @@ import {
   isDefineName,
   MAX_KEYWORDS,
 } from "./checks";
-import { checkDependency, checkTsCompat, isDefineLiteral } from "./fields";
+import { checkDependency, isDefineLiteral } from "./fields";
+import { TsCompatFolders } from "./ts_compat";
 import { checkDependencyName, checkName, splitScoped } from "../names";
 
 /** Decodes one manifest's data, collecting problems. */
@@ -131,17 +132,19 @@ class Decoder {
       );
     }
     const words: string[] = [];
+    const seen: Set<string> = new Set();
     for (const e of v.items) {
       if (e.kind != DataKind.Str) {
         this.p.problems.push(`\`keywords\` entries must be strings, not ${e.describe()}`);
         continue;
       }
-      if (words.includes(e.str)) {
+      if (seen.has(e.str)) {
         this.p.problems.push(`duplicate keyword \`${e.str}\``);
         continue;
       }
       this.p.check(checkKeyword(e.str));
       words.push(e.str);
+      seen.add(e.str);
     }
     return words;
   }
@@ -267,20 +270,15 @@ class Decoder {
     if (v.items.length == 0) {
       this.p.problems.push("`tsCompat` is empty; remove the field instead");
     }
-    const dirs: string[] = [];
+    const dirs = new TsCompatFolders();
     for (const e of v.items) {
       if (e.kind != DataKind.Str) {
         this.p.problems.push(`\`tsCompat\` entries must be strings, not ${e.describe()}`);
         continue;
       }
-      const why = checkTsCompat(e.str, dirs);
-      if (why != null) {
-        this.p.problems.push(why);
-        continue;
-      }
-      dirs.push(e.str);
+      this.p.check(dirs.add(e.str));
     }
-    return dirs;
+    return dirs.folders;
   }
 
   private build(v: Data, m: Manifest): void {

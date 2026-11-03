@@ -44,7 +44,7 @@ export function decodeImports(p: Problems, v: Data): Map<string, Variant[]> {
         const condition = value.keys[k];
         if (afterDefault) {
           p.problems.push(
-            `\`${condition}\` comes after \`default\`, which every build has: it never applies`,
+            `\`${condition}\` comes after \`default\`, which every build has: it never applies (put \`default\` last)`,
           );
         }
         afterDefault = afterDefault || condition == "default";

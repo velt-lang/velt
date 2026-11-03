@@ -81,6 +81,24 @@ describe("readManifest", () => {
     );
   });
 
+  it("names the first earlier tsCompat folder a new one clashes with", () => {
+    const ts = (dirs: string): string => refusal(
+      `${HEAD}{ name: "a", version: "1.0.0", tsCompat: [${dirs}] };`,
+    );
+    expect(ts(`"a/b/c", "a/d", "a"`)).toBe(
+      "`a` contains `a/b/c`, which `tsCompat` already lists; keep one of them",
+    );
+    expect(ts(`"a/d", "a/b/c", "A"`)).toBe(
+      "`A` contains `a/d`, which `tsCompat` already lists; keep one of them",
+    );
+    expect(ts(`"x", "a", "A/b/c"`)).toBe("`A/b/c` is inside `a`, which `tsCompat` already lists");
+    expect(ts(`"src/m", "src/M"`)).toBe(
+      "`tsCompat` lists `src/M` and `src/m`, which differ only in case (the same folder on case-insensitive file systems); keep one of them",
+    );
+    expect(ts(`"a", "a"`)).toBe("`tsCompat` lists `a` twice");
+    expect(ts(`"a/b", "a/bc", "ab"`)).toBe("accepted");
+  });
+
   it("gives vpm's JSON", () => {
     const m: Manifest = readManifest(`${HEAD}{ name: "a", version: "1.0.0", jsx: {} };`);
     expect(m.toJson()).toBe(

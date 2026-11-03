@@ -1,6 +1,6 @@
 // registry-core (internal): the checks of `package.vlt`'s compound fields that need more than one
 // value (crates/vpm/src/manifest/mod.rs `check_dependency`, crates/vpm/src/git.rs, `define`
-// literals, `tsCompat` folders).
+// literals).
 
 import { anyChar, componentsNormal, isControl, isWhitespace, trim } from "./chars";
 import { Dependency } from "./dependency";
@@ -209,39 +209,34 @@ export function isDefineLiteral(text: string): bool {
     const inner = t.slice(1, t.length - 1);
     return !inner.includes("'") && !inner.includes("\\");
   }
-  // A number Rust's `f64` parse reads, starting with a digit, and finite.
-  return /^[0-9]+(\.[0-9]*)?([eE][+-]?[0-9]+)?$/.test(t) && Number.isFinite(Number(t));
+  // A number Rust's `f64` parse reads, starting with a digit, and finite: `digits(.digits?)?`
+  // then `(e|E)(+|-)?digits`, checked by hand (a regex literal is built again on every call).
+  let i = digitsEnd(t, 0);
+  if (i == 0) {
+    return false;
+  }
+  if (i < t.length && t.charCodeAt(i) == 46) {
+    i = digitsEnd(t, i + 1);
+  }
+  if (i < t.length && (t.charCodeAt(i) == 69 || t.charCodeAt(i) == 101)) {
+    let j = i + 1;
+    if (j < t.length && (t.charCodeAt(j) == 43 || t.charCodeAt(j) == 45)) {
+      j++;
+    }
+    const end = digitsEnd(t, j);
+    if (end == j) {
+      return false;
+    }
+    i = end;
+  }
+  return i == t.length && Number.isFinite(Number(t));
 }
 
-/** A `tsCompat` folder (crates/vpm/src/manifest/read/ts_compat.rs): a path, and no overlap. */
-export function checkTsCompat(dir: string, earlier: string[]): string | null {
-  const inside =
-    !dir.includes("\\") &&
-    !dir.includes(":") &&
-    dir.split("/").every((s: string): bool => s.length > 0 && s != "." && s != "..");
-  if (!inside) {
-    return `\`tsCompat\` folder \`${dir}\` must be a \`/\`-separated path inside the package, relative to its root (such as \`src/models\`: no \`.\` or \`..\` parts, no leading or trailing \`/\`)`;
+/** The index after the ASCII digits of `t` from `from`. */
+function digitsEnd(t: string, from: i64): i64 {
+  let i = from;
+  while (i < t.length && t.charCodeAt(i) >= 48 && t.charCodeAt(i) <= 57) {
+    i++;
   }
-  const lower = dir.toLowerCase();
-  const lowered = earlier.map((e: string): string => e.toLowerCase());
-  const within = (inner: string, outer: string): bool =>
-    inner.startsWith(outer) && inner.slice(outer.length).startsWith("/");
-  for (let i = 0; i < earlier.length; i++) {
-    if (lowered[i] == lower) {
-      const e = earlier[i];
-      return e == dir
-        ? `\`tsCompat\` lists \`${dir}\` twice`
-        : `\`tsCompat\` lists \`${dir}\` and \`${e}\`, which differ only in case`;
-    }
-  }
-  for (let i = 0; i < earlier.length; i++) {
-    const e = earlier[i];
-    if (within(lower, lowered[i])) {
-      return `\`${dir}\` is inside \`${e}\`, which \`tsCompat\` already lists`;
-    }
-    if (within(lowered[i], lower)) {
-      return `\`${dir}\` contains \`${e}\`, which \`tsCompat\` already lists; keep one of them`;
-    }
-  }
-  return null;
+  return i;
 }

@@ -8,6 +8,8 @@
 //! covers each rule, versions assembled from every kind of part, every pair of an ordered list,
 //! and every prefix of a valid archive.
 
+#[path = "registry_core/drift.rs"]
+mod drift;
 #[path = "registry_core/manifests.rs"]
 mod manifests;
 mod no_window;
@@ -113,11 +115,13 @@ fn requirement_case(req: &str) -> Case {
 }
 
 fn manifests() -> Vec<Case> {
-    manifests::whole()
-        .iter()
-        .chain(manifests::mutations().iter())
-        .map(|m| manifest_case(m))
-        .collect()
+    let mut all = manifests::whole();
+    all.extend(manifests::mutations());
+    all.extend(drift::keyword_cases(&root()));
+    all.extend(drift::ts_compat_cases());
+    all.extend(drift::big_cases());
+    all.extend(drift::fuzz_cases(4000));
+    all.iter().map(|m| manifest_case(m)).collect()
 }
 
 /// Requirements assembled from operators, versions with wildcards, and separators.
