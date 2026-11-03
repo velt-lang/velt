@@ -98,6 +98,7 @@ pub(super) fn recursive_arrow(v: &ast::VarDecl) -> Option<ast::FnDecl> {
             is_intrinsic: false,
             generator: None,
             host: None,
+            c: None,
             is_generator: false,
             this_param: None,
             span: v.span,

@@ -30,6 +30,8 @@ impl<'h> Cx<'h> {
             cell_checks: false,
             target: String::new(),
             unavailable: vec![],
+            c_clashes: vec![],
+            c_symbols: Default::default(),
             std_calls: FxHashMap::default(),
             system_aggs: FxHashMap::default(),
             no_await_steps: false,
@@ -328,6 +330,13 @@ impl<'h> Cx<'h> {
     }
 
     /// Intern an extern by symbol; the same symbol must always have the same signature.
+    /// The signature extern `symbol` has so far, if it has one.
+    pub(super) fn extern_signature(&self, symbol: &str) -> Option<(&[Ty], Ty)> {
+        let id = self.extern_map.get(symbol)?;
+        let e = &self.externs[id.0 as usize];
+        Some((&e.params[..], e.ret))
+    }
+
     pub(super) fn extern_sym(
         &mut self,
         symbol: &str,
@@ -343,6 +352,14 @@ impl<'h> Cx<'h> {
         if let Some(&id) = self.extern_map.get(symbol) {
             let e = &self.externs[id.0 as usize];
             if e.params != params || e.ret != ret {
+                if let Some(&at) = self.c_symbols.get(symbol) {
+                    // The program declared it as a C function first (c_call.rs).
+                    self.c_clashes.push(velt_common::Diagnostic::error(
+                        format!("C function `{symbol}` is a symbol the compiler calls with another signature"),
+                        at,
+                    ));
+                    return id;
+                }
                 ice(format_args!(
                     "extern `{symbol}` declared with two different signatures"
                 ));

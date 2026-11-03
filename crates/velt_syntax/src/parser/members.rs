@@ -432,6 +432,7 @@ impl<'a> Parser<'a> {
             is_intrinsic: false,
             generator: None,
             host: None,
+            c: None,
             is_generator: false,
             this_param: None,
             span: self.span_from(lo),

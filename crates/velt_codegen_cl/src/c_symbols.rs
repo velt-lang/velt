@@ -56,7 +56,7 @@ pub(crate) fn lookup(name: &str) -> Option<*const u8> {
         "nearbyintf" => nearbyintf as *const u8,
         "fma" => fma as *const u8,
         "fmaf" => fmaf as *const u8,
-        _ => return system(name),
+        _ => return system(name).or_else(|| loaded(name)),
     };
     Some(address)
 }
@@ -124,6 +124,32 @@ fn system(name: &str) -> Option<*const u8> {
 /// Windows keeps `cranelift-jit`'s lookup through the loaded modules (kernel32's included).
 #[cfg(not(unix))]
 fn system(_: &str) -> Option<*const u8> {
+    None
+}
+
+/// Any other function of the C library or of a library loaded into the host, by name: the C
+/// functions a program declares (`declare c("c") function`, docs/internals/design/c-ffi.md).
+/// A fully static host has no dynamic loader, so there it finds nothing and the JIT reports the
+/// symbol as missing.
+#[cfg(unix)]
+fn loaded(name: &str) -> Option<*const u8> {
+    use std::ffi::{c_char, c_void, CString};
+    extern "C" {
+        fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
+    }
+    // `RTLD_DEFAULT`: every image loaded into the process, in load order.
+    #[cfg(target_os = "macos")]
+    let default = -2isize as *mut c_void;
+    #[cfg(not(target_os = "macos"))]
+    let default = std::ptr::null_mut();
+    let symbol = CString::new(name).ok()?;
+    // SAFETY: `dlsym` only reads the NUL-terminated name; the address is not called here.
+    let address = unsafe { dlsym(default, symbol.as_ptr()) };
+    (!address.is_null()).then_some(address as *const u8)
+}
+
+#[cfg(not(unix))]
+fn loaded(_: &str) -> Option<*const u8> {
     None
 }
 

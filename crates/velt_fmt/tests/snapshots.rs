@@ -571,3 +571,11 @@ fn unsafe_accessors_and_abstract_methods_keep_their_modifier() {
 ",
     );
 }
+
+#[test]
+fn c_declarations() {
+    assert_fmt(
+        "declare  c( 'c' )  function labs(x:i64):i64\nexport declare c(\"m\") function cos(x: f64): f64;\n",
+        "declare c(\"c\") function labs(x: i64): i64;\nexport declare c(\"m\") function cos(x: f64): f64;\n",
+    );
+}

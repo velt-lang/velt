@@ -105,6 +105,7 @@ pub(crate) fn fn_placeholder<'m>(
         is_async: false,
         system: None,
         host: None,
+        c: None,
         intrinsic: None,
         is_generator: false,
         is_async_gen: false,

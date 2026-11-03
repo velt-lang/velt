@@ -64,6 +64,7 @@ mod atomic_str;
 mod attempt;
 mod boxes;
 mod boxing;
+mod c_call;
 mod call;
 mod callee;
 mod caller_aliases;
@@ -435,6 +436,11 @@ struct Cx<'h> {
     /// Calls of system and host functions the target lacks: (the declaration, the calling function, the
     /// user code being lowered then, `user_site`).
     unavailable: Vec<(DefId, Option<DefId>, velt_common::Span)>,
+    /// C functions called with a signature their symbol already has another one of (c_call.rs).
+    c_clashes: Vec<velt_common::Diagnostic>,
+    /// The symbols C functions declared (c_call.rs): a later extern of the same symbol with
+    /// another signature is that clash, reported, not an internal error.
+    c_symbols: FxHashMap<String, velt_common::Span>,
     /// Per user call site of a standard-library function, that function (call.rs): what an
     /// unavailable system function deep in std is reported as, at the user's call.
     std_calls: FxHashMap<velt_common::Span, DefId>,
