@@ -227,4 +227,22 @@ impl FnCx<'_, '_> {
         let h = self.mk(kind, ty, span);
         Ok(self.with_temps_value(stmts, h))
     }
+
+    /// The type a literal beside an `f16`/`bf16` takes in `operands`: `f32`, the type arithmetic
+    /// on it runs in, or `f64` in a comparison (`comparing`), which is then exact (#2049): `w ==
+    /// 0.1` compares as JS compares a `Float16Array` element with the number.
+    pub(super) fn storage_literal_hint(&mut self) -> Option<TyId> {
+        match self.comparing {
+            true => Some(self.cx.ty.f64),
+            false => self.cx.ty.primitive("f32"),
+        }
+    }
+
+    /// `f` with `comparing` set to `on` (a comparison's operands), restored after.
+    pub(super) fn comparing_in<R>(&mut self, on: bool, f: impl FnOnce(&mut Self) -> R) -> R {
+        let outer = std::mem::replace(&mut self.comparing, on);
+        let r = f(self);
+        self.comparing = outer;
+        r
+    }
 }

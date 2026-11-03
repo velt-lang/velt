@@ -237,13 +237,7 @@ impl FnCx<'_, '_> {
         hint: Option<TyId>,
         want: Want,
     ) -> (hir::Expr, hir::Expr) {
-        // Beside an `f16`/`bf16`, a literal takes `f32`, the type arithmetic on it runs in, and
-        // `f64` in a comparison, which is then exact (#2049): `w == 0.1` compares as JS
-        // compares a `Float16Array` element with the number.
-        let storage_hint = match self.comparing {
-            true => Some(self.cx.ty.f64),
-            false => self.cx.ty.primitive("f32"),
-        };
+        let storage_hint = self.storage_literal_hint();
         let pick = |s: &Self, first: &hir::Expr| {
             if s.cx.ty.is_bottom(first.ty) {
                 hint
@@ -354,18 +348,13 @@ impl FnCx<'_, '_> {
                     self.cast_member_numbers
                         .extend(super::cast_member::number_operands(lhs, rhs));
                 }
-                let outer = std::mem::replace(&mut self.comparing, is_comparison(op));
-                let lr = self.checked_operands(op, lhs, rhs, hint);
-                self.comparing = outer;
+                let lr = self.comparing_in(is_comparison(op), |s| {
+                    s.checked_operands(op, lhs, rhs, hint)
+                });
                 self.cast_member_numbers.truncate(mark);
                 lr
             }
-            None => {
-                let outer = std::mem::replace(&mut self.comparing, true);
-                let lr = self.operands(lhs, rhs, hint, Want::Borrow);
-                self.comparing = outer;
-                lr
-            }
+            None => self.comparing_in(true, |s| s.operands(lhs, rhs, hint, Want::Borrow)),
         };
         // An `any` or `unknown` operand, by its checked type (a variable, a field, an element,
         // a call, a capture).
