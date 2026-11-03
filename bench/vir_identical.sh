@@ -24,7 +24,10 @@ if [ $# -gt 4 ]; then
   programs=("$@")
 else
   cd "$(dirname "$0")"
-  programs=(*.vlt */*.vlt)
+  # TypeScript benchmarks too (bench/any_ops/*.ts); a pattern matching nothing is left out.
+  shopt -s nullglob
+  programs=(*.vlt */*.vlt *.ts */*.ts)
+  shopt -u nullglob
 fi
 tmp=$(mktemp -d)
 mkdir -p "$tmp/base" "$tmp/head"

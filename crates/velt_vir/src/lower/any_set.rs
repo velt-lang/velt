@@ -483,10 +483,9 @@ impl FnLower<'_, '_> {
             self.goto(done);
             self.switch_to(next);
         }
-        // An object or array of another type: a view of it as the union's member.
-        self.union_array_view(p, desc.clone(), ty, n, &out, done);
-        self.union_object_view(p, desc.clone(), ty, n, &out, done);
-        self.any_type_error(desc, ty);
+        // An object or array of another type: a view of it as the union's member, or the
+        // `TypeError` (any_unbox_slow.rs).
+        self.any_unbox_rest(p, from, ty, &out, done);
         self.switch_to(done);
         Operand::Copy(out)
     }

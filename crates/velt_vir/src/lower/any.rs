@@ -746,38 +746,8 @@ impl FnLower<'_, '_> {
         self.assign(out.clone(), Rvalue::Use(v));
         self.goto(done);
         self.switch_to(bad_bb);
-        // A record built by `{} as D` (sema's `empty_as_deferred`) where `D` is an object type.
-        self.any_record_fill(p, from, ty, &out, done);
-        // A generic function value held as `unknown` (glue/vtable.rs `ClosureAny`).
-        self.any_to_generic_fn(p, ty, desc.clone(), &out, done);
-        // A function of another type (`Program::any_fn_views`, any_generic_fn.rs).
-        self.any_to_fn_view(p, ty, desc.clone(), &out, done);
-        // An object implementing the interface, or the interface at other type arguments.
-        self.any_to_iface(p, ty, &out, done);
-        if self.cx.proxiable(ty) {
-            // A proxy converted to a type that may hold one: the tagged `Proxy` object.
-            let err = self.new_block();
-            let data = Operand::Copy(proj(p, Proj::Field(0)));
-            self.proxy_unbox(data, desc.clone(), &out, done, err);
-            self.switch_to(err);
-            // An object of another type: a view of it (any_view.rs).
-            self.any_view(p, ty, &out, done);
-        }
-        // An object read as a `Record<string, V>`: a record of its entries (any_to_record.rs).
-        self.any_to_record(p, from, ty, &out, done);
-        if self.cx.array_view(ty) {
-            // An array of another element type: a view of it (array_view.rs).
-            self.array_view_make(p, desc.clone(), ty, &out, done);
-        }
-        if !self.cx.proxiable(ty) {
-            // An object of another object type, where no view can be made: a copy of its
-            // members (any_object_fill.rs).
-            self.any_object_fill(p, from, ty, &out, done);
-        }
-        // A number of another numeric type (any_number.rs).
-        if !self.any_number_convert(p, ty, desc.clone(), &out, done) {
-            self.any_type_error(desc, ty);
-        }
+        // Every other way the value converts, or the `TypeError` (any_unbox_slow.rs).
+        self.any_unbox_rest(p, from, ty, &out, done);
         self.switch_to(done);
         Operand::Copy(out)
     }
