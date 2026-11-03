@@ -269,8 +269,8 @@ fn vector(b: &mut Body, lanes: Lanes, op: Op, dotprod: bool) -> Option<String> {
 }
 
 /// The sum of the lanes (`Op::Sum`), or of the lanes extended to `sum_wide_lane`
-/// (`Op::SumWide`): `llvm.vector.reduce.add`, which LLVM selects per target (`addv`,
-/// `saddlv`/`uaddlv`, `sdot`/`udot` with ones; `psadbw` for bytes on x86).
+/// (`Op::SumWide`), which LLVM selects per target (`addv`, `saddlv`/`uaddlv`, `sdot`/`udot`
+/// with ones; `psadbw` for bytes on x86).
 fn sum(b: &mut Body, lanes: Lanes, wide: bool) -> String {
     let (_, ty, _) = spell(lanes);
     let mut x = b.arg(0, &ty);
@@ -281,12 +281,17 @@ fn sum(b: &mut Body, lanes: Lanes, wide: bool) -> String {
         let ext = if lanes.is_signed() { "sext" } else { "zext" };
         x = b.inst(format!("{ext} {ty} {x} to <{n} x {lane}>"));
     }
-    b.declarations.push(format!(
-        "declare {lane} @llvm.vector.reduce.add.v{n}{lane}(<{n} x {lane}>)"
-    ));
-    b.inst(format!(
-        "call {lane} @llvm.vector.reduce.add.v{n}{lane}(<{n} x {lane}> {x})"
-    ))
+    // A chain of lane adds, not `llvm.vector.reduce.add`: in a loop that adds each vector's sum
+    // into an accumulator, the vectorizer reassociates the chain into vector accumulators and
+    // reduces once after the loop, which it cannot do through the intrinsic (+35-90% on x86
+    // with the intrinsic, #2194 review); on its own the chain still becomes one reduction
+    // (`addv`, `saddlv`, `psadbw`).
+    let mut total = b.inst(format!("extractelement <{n} x {lane}> {x}, i64 0"));
+    for k in 1..n {
+        let e = b.inst(format!("extractelement <{n} x {lane}> {x}, i64 {k}"));
+        total = b.inst(format!("add {lane} {total}, {e}"));
+    }
+    total
 }
 
 /// `Op::DotAdd` as Arm's `sdot`, for targets every CPU of which has it.

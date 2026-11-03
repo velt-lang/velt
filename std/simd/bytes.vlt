@@ -173,7 +173,8 @@ extend i8x16 {
 
   /**
    * The sum of the lanes as an `i32`, which never overflows: how an integer kernel reduces its
-   * accumulator (one or two instructions on arm64).
+   * accumulator, once, after a loop that adds whole vectors (`acc = acc.dotAdd(a, b)`); one or
+   * two instructions on arm64.
    */
   sumWide(): i32 {
     return velt_simd_i8x16_sum_wide(this);
@@ -484,7 +485,8 @@ extend u8x16 {
 
   /**
    * The sum of the lanes as a `u32`, which never overflows: how an integer kernel reduces its
-   * accumulator (one or two instructions on arm64).
+   * accumulator, once, after a loop that adds whole vectors (`acc = acc.dotAdd(a, b)`); one or
+   * two instructions on arm64.
    */
   sumWide(): u32 {
     return velt_simd_u8x16_sum_wide(this);
@@ -805,7 +807,8 @@ extend i16x8 {
 
   /**
    * The sum of the lanes as an `i32`, which never overflows: how an integer kernel reduces its
-   * accumulator (one or two instructions on arm64).
+   * accumulator, once, after a loop that adds whole vectors (`acc = acc.dotAdd(a, b)`); one or
+   * two instructions on arm64.
    */
   sumWide(): i32 {
     return velt_simd_i16x8_sum_wide(this);
@@ -1120,7 +1123,8 @@ extend u16x8 {
 
   /**
    * The sum of the lanes as a `u32`, which never overflows: how an integer kernel reduces its
-   * accumulator (one or two instructions on arm64).
+   * accumulator, once, after a loop that adds whole vectors (`acc = acc.dotAdd(a, b)`); one or
+   * two instructions on arm64.
    */
   sumWide(): u32 {
     return velt_simd_u16x8_sum_wide(this);

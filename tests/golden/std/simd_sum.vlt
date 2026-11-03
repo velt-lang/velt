@@ -136,6 +136,33 @@ function random() {
     }
     if (h.sum() != s16 || h.sumWide() != w16 || g.sum() != sg || g.sumWide() != wg) wrong++;
   }
+  for (let round = 0; round < 1000; round++) {
+    const ws: i32[] = [];
+    const vs: u32[] = [];
+    const ls: i64[] = [];
+    for (let i = 0; i < 4; i++) {
+      const w = ((next() as u32) << 24) | ((next() as u32) << 16) | ((next() as u32) << 8) | (next() as u32);
+      ws.push(w as i32);
+      vs.push(w);
+      ls.push(((w as u64) << 32 | (next() as u64)) as i64);
+    }
+    const a = i32x4.load(ws);
+    const u = u32x4.load(vs);
+    const l = i64x2.load(ls);
+    const q = u64x2.load([ls[2] as u64, ls[3] as u64]);
+    let s32: i32 = 0;
+    let w32: i64 = 0;
+    let su: u32 = 0;
+    let wu: u64 = 0;
+    for (let i: usize = 0; i < 4; i++) {
+      s32 = s32 + a.lane(i);
+      w32 += a.lane(i) as i64;
+      su = su + u.lane(i);
+      wu += u.lane(i) as u64;
+    }
+    if (a.sum() != s32 || a.sumWide() != w32 || u.sum() != su || u.sumWide() != wu) wrong++;
+    if (l.sum() != l.lane(0) + l.lane(1) || q.sum() != q.lane(0) + q.lane(1)) wrong++;
+  }
   console.log("random mismatches", wrong);
 }
 
