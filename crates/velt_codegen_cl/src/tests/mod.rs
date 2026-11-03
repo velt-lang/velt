@@ -172,7 +172,7 @@ impl ProgramBuilder {
             exit: pb.ext("velt_rt_exit", &[I32], Unit, true),
             alloc: pb.ext("velt_rt_alloc", &[U64, U64], Ptr, false),
             free: pb.ext("velt_rt_free", &[Ptr, U64, U64], Unit, false),
-            str_from_i64: pb.ext("velt_rt_str_from_i64", &[I64, Ptr], Unit, false),
+            str_from_i64: pb.ext("velt_test_str_from_i64", &[I64, Ptr], Unit, false),
             str_concat: pb.ext("velt_rt_str_concat", &[Ptr, Ptr, Ptr], Unit, false),
             str_drop: pb.ext("velt_rt_str_drop", &[Ptr], Unit, false),
             str_cmp: pb.ext("velt_rt_str_cmp", &[Ptr, Ptr], I32, false),

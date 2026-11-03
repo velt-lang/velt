@@ -317,7 +317,6 @@ const JSON: &str = r#"
 typedef struct Reader Reader;
 void velt_rt_strbuf_new(uint64_t, VeltStr*);
 void velt_rt_strbuf_push_str(VeltStr*, const VeltStr*);
-void velt_rt_strbuf_push_i64(VeltStr*, int64_t);
 void velt_rt_strbuf_push_json_str(VeltStr*, const VeltStr*);
 void velt_rt_strbuf_push_byte(VeltStr*, uint8_t);
 void velt_rt_strbuf_finish(VeltStr*, VeltStr*);
@@ -343,7 +342,7 @@ int32_t velt_main(void) {
     velt_rt_strbuf_push_str(&b, &p1);
     velt_rt_strbuf_push_json_str(&b, &name);
     velt_rt_strbuf_push_str(&b, &p2);
-    velt_rt_strbuf_push_i64(&b, 30);
+    velt_rt_strbuf_push_byte(&b, '3'); velt_rt_strbuf_push_byte(&b, '0');
     velt_rt_strbuf_push_byte(&b, '}');
     velt_rt_strbuf_finish(&b, &s);
     velt_rt_write_str(1, &s); velt_rt_write_byte(1, '\n');

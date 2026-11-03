@@ -172,7 +172,7 @@ pub(super) fn stub_symbols() -> [(&'static str, *const u8); 27] {
         ("velt_rt_exit", rt_exit as *const u8),
         ("velt_rt_alloc", rt_alloc as *const u8),
         ("velt_rt_free", rt_free as *const u8),
-        ("velt_rt_str_from_i64", rt_str_from_i64 as *const u8),
+        ("velt_test_str_from_i64", rt_str_from_i64 as *const u8),
         ("velt_rt_str_concat", rt_str_concat as *const u8),
         ("velt_rt_str_drop", rt_str_drop as *const u8),
         ("velt_rt_str_cmp", rt_str_cmp as *const u8),
