@@ -230,7 +230,7 @@ limit).
 
 Not part of this plan, found on the way:
 - `clang --version` runs on every release build (31M instructions, 6% of a warm hello). Its
-  answer is now cached by clang's path, size and time.
+  answer is cached by clang's path, size and time (#2239).
 - Linking the static runtime costs 156M instructions in every release build of hello (`ld.lld`
   over `libvelt_rt.a`, 72 MB). A thin archive costs the same (155.7M), and a runtime prelinked
   into one object (`ld.lld -r --whole-archive`) 147.8M (-5%). The cost is lld's work on the
