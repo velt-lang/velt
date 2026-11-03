@@ -10,7 +10,7 @@
 //! lowered once more as a copy without the view side, which the original loop, kept for views,
 //! still has.
 //! - A test of a box held in a local the loop does not change (by assignment, or through the
-//!   local's address, which must not escape: view_unswitch_addrs.rs) is false in the copy, and a
+//!   local's address, which must not escape: `view_unswitch_addrs.rs`) is false in the copy, and a
 //!   test before the loop picks the copy when the box is not a view. That is sound because the
 //!   bit of a box never gets set once the box exists: a view is made only as a new box
 //!   (`array_view_new`), and a plain array stays plain whatever is done to it (a push

@@ -43,7 +43,9 @@ ru = resource.getrusage(resource.RUSAGE_CHILDREN)
 cpu = ru.ru_utime + ru.ru_stime
 stages = [l.split()[1:3] for l in open(err) if re.match(r"velt: \S+\s+[\d.]+ ms", l)]
 st = " ".join(f"{n}={float(ms)/1000:.2f}" for n, ms in stages if n != "total")
-print(f"{label:<14} rc={rc} cpu_s={cpu:.2f} wall_s={wall:.2f} maxrss_mb={ru.ru_maxrss/1024:.0f} {st}")
+# ru_maxrss is in KB on Linux and in bytes on macOS.
+rss_mb = ru.ru_maxrss / (1024 * 1024 if sys.platform == "darwin" else 1024)
+print(f"{label:<14} rc={rc} cpu_s={cpu:.2f} wall_s={wall:.2f} maxrss_mb={rss_mb:.0f} {st}")
 PY
 }
 

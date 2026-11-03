@@ -1,6 +1,7 @@
 //! Where the lowering spends its time: with `VELT_LOWER_PROFILE` set, each lowering pass prints
 //! its time and function count, and the slowest functions by their own time (nested builds
-//! excluded) with their size, to stderr. Off, a function costs one thread-local read.
+//! excluded) with their size, to stderr. Off, a function build costs a thread-local access and
+//! a `RefCell` borrow.
 
 use std::cell::RefCell;
 use std::time::{Duration, Instant};

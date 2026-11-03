@@ -617,13 +617,18 @@ impl Cx<'_> {
 }
 
 impl Boxing {
-    /// The fields that differ from `next`, each with its size here and there (`VELT_LOWER_PROFILE`).
+    /// The fields that differ from `next`, each with its value there and here: its number of
+    /// entries for a set, or the flag (`VELT_LOWER_PROFILE`).
     pub(super) fn changes(&self, next: &Boxing) -> String {
         let mut out = vec![];
         macro_rules! field {
             ($($f:ident),*) => {$(
                 if self.$f != next.$f {
-                    let size = |d: String| d.matches(',').count() + 1;
+                    let size = |d: String| match d.as_str() {
+                        "{}" | "[]" | "None" => "0".to_string(),
+                        _ if d.starts_with(['{', '[']) => (d.matches(", ").count() + 1).to_string(),
+                        _ => d,
+                    };
                     out.push(format!("{} {}->{}", stringify!($f), size(format!("{:?}", self.$f)), size(format!("{:?}", next.$f))));
                 }
             )*};
