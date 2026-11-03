@@ -32,6 +32,7 @@ pub(in crate::lower) enum ShareKind {
 impl Cx<'_> {
     /// How values of the concrete type `t` are shared.
     pub(in crate::lower) fn share_kind(&mut self, t: TyId) -> ShareKind {
+        let t = self.ph_rep(t);
         if self.boxed(t) {
             return ShareKind::Object;
         }

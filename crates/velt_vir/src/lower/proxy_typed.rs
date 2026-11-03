@@ -39,6 +39,7 @@ impl Cx<'_> {
             return false;
         }
         let b = &self.boxing;
+        let t = self.ph_rep(t);
         match self.types.kind(t) {
             TyKind::Adt(d, _) if self.is_class(t) => b.proxy_roots.contains(&self.class_root(*d)),
             _ => b.proxy_types.contains(&t),

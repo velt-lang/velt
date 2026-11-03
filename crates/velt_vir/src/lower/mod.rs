@@ -119,6 +119,7 @@ mod param_attrs;
 mod pattern;
 mod place;
 mod program;
+mod shape;
 mod proxy_call;
 mod proxy_method;
 mod proxy_throws;
@@ -224,6 +225,8 @@ pub(crate) fn lower_program(
             .map_or_else(crate::system::host_triple, str::to_string);
         cx.no_await_steps = no_await_steps;
         cx.facts_only = facts_only;
+        cx.shapes.wanted = shape::wanted(opts.shapes);
+        cx.shapes.on = !facts_only && cx.shapes.wanted;
         cx.locs = opts
             .source_map
             .map(|sm| srcloc::LocMap::new(sm, opts.std_root));
@@ -246,6 +249,7 @@ pub(crate) fn lower_program(
         }
         cx.build_iface_glues();
         lower_profile::end_pass(pass, pass_start.elapsed());
+        cx.shapes_close();
         let next = cx.close_boxing();
         if profile {
             let kind = if facts_only { "facts only" } else { "whole" };
@@ -519,6 +523,8 @@ struct Cx<'h> {
     boxing: boxing::Boxing,
     /// Sharing facts observed in this pass (boxing/).
     facts: boxing::Facts,
+    /// Generic instances shared by shape in this pass (shape/).
+    shapes: shape::Shapes,
     /// `Program::impls` indexes per interface (`impls_of`), built on first use.
     iface_impls: Option<FxHashMap<DefId, Rc<[u32]>>>,
     /// Finished `extend` lookups by `(interface, arguments, type)` (impl_lookup.rs), and bound

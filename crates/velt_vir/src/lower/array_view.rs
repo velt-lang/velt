@@ -199,7 +199,15 @@ impl FnLower<'_, '_> {
             .cx
             .prelude_def(name)
             .unwrap_or_else(|| ice(format_args!("no prelude `{name}`")));
-        let f = self.cx.func_for_direct(d, targs, self.mode);
+        let mut args = args;
+        // One instance per shape, given the dictionary of these type arguments (shape/).
+        let f = match self.cx.shared_call(d, &targs, self.mode) {
+            Some((f, dict)) => {
+                args.push(Operand::Const(crate::vir::Const::Static(dict), Ty::Ptr));
+                f
+            }
+            None => self.cx.func_for_direct(d, targs, self.mode),
+        };
         self.call(Callee::Func(f), args, out, false);
     }
 

@@ -27,6 +27,7 @@ impl<'h> Cx<'h> {
     /// and layout treat it as two nested options.
     pub(super) fn kind(&self, t: TyId) -> TyKind {
         match self.types.kind(t) {
+            TyKind::Param(n) if *n >= super::shape::SHAPE_BASE => ice("a placeholder's kind"),
             TyKind::Option(_, Nothing::Both) => {
                 let mid = self
                     .types
@@ -382,6 +383,7 @@ impl<'h> Cx<'h> {
         }
         let s = |cx: &mut Self, x: TyId| cx.subst_raw(x, targs);
         let k = match self.kind(t) {
+            TyKind::Param(n) if n >= super::shape::SHAPE_BASE => return t,
             TyKind::Param(n) => {
                 return *targs
                     .get(n as usize)
@@ -451,7 +453,7 @@ impl<'h> Cx<'h> {
 
     /// Is `t` a class instance type?
     pub(super) fn is_class(&self, t: TyId) -> bool {
-        match self.types.kind(t) {
+        match self.types.kind(self.ph_rep(t)) {
             TyKind::Adt(d, _) => {
                 matches!(self.hir.def(*d), hir::Def::Adt(a) if a.kind == AdtKind::Class)
             }
@@ -477,6 +479,7 @@ impl<'h> Cx<'h> {
 
     /// `Option<t>` uses the null pointer for none.
     pub(super) fn has_null_niche(&self, t: TyId) -> bool {
+        let t = self.ph_rep(t);
         self.is_class(t)
             || self.boxed(t)
             || matches!(self.types.kind(t), TyKind::Shared(_) | TyKind::Symbol)
@@ -485,6 +488,7 @@ impl<'h> Cx<'h> {
     /// VIR type of a concrete HIR type. `Unit` and `Never` map to `Ty::Unit` (no value), and
     /// an option of such a type to `Bool`.
     pub(super) fn ty(&mut self, t: TyId) -> Ty {
+        let t = self.ph_rep(t);
         match self.kind(t) {
             TyKind::Int(i) => int_ty(i),
             TyKind::Float(FloatTy::F32) => Ty::F32,
@@ -525,6 +529,7 @@ impl<'h> Cx<'h> {
 
     /// Does a value of this type own resources that must be released (drop glue)?
     pub(super) fn needs_drop(&mut self, t: TyId) -> bool {
+        let t = self.ph_rep(t);
         if let Some(&b) = self.lay.drop_memo.get(&t) {
             return b;
         }

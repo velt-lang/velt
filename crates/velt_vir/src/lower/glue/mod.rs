@@ -131,6 +131,13 @@ pub(crate) enum Glue {
     JsText,
     ViewDrop,
     MirrorDrop,
+    /// `(src, out)`: the value at `src` (taken) as an `any` at `out`; `ToAnyParam` as a type
+    /// parameter's value, which an option or union unpacks into (shape/glue.rs).
+    ToAny,
+    ToAnyParam,
+    /// `(src, out)`: the `any` at `src` (taken) converted to the type at `out`, or the
+    /// `TypeError` (shape/glue.rs).
+    FromAny,
 }
 
 /// Vtable slots below 0 (interface/virtual methods use slots 0..n).
@@ -198,6 +205,9 @@ impl Glue {
             Glue::JsText => "jstext",
             Glue::ViewDrop => "viewdrop",
             Glue::MirrorDrop => "mirrordrop",
+            Glue::ToAny => "toany",
+            Glue::ToAnyParam => "toanyparam",
+            Glue::FromAny => "fromany",
         }
     }
 
@@ -215,6 +225,7 @@ impl Glue {
             | Glue::ViewDrop
             | Glue::MirrorDrop => (vec![Ptr], Unit),
             Glue::Clone | Glue::Share | Glue::ShareSlot => (vec![Ptr, Ptr], Unit),
+            Glue::ToAny | Glue::ToAnyParam | Glue::FromAny => (vec![Ptr, Ptr], Unit),
             Glue::ObjClone
             | Glue::DynClone
             | Glue::DynShare
@@ -306,6 +317,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 lw.mirror_drop = true;
                 lw.drop_body(args[0], ty);
             }
+            Glue::ToAny | Glue::ToAnyParam => lw.to_any_body(args[0], args[1], ty, g),
+            Glue::FromAny => lw.from_any_body(args[0], args[1], ty),
         }
         let sym = format!("_G{}_{}", g.name(), lw.cx.type_symbol(ty));
         lw.finish(sym, params, ret)
