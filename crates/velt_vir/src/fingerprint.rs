@@ -107,7 +107,7 @@ impl<'p> Canon<'p> {
     }
 
     /// The canonical text [`Self::function`] fingerprints, for a key of its own (the std cache
-    /// hashes it with SHA-256 next to the compiler and target).
+    /// hashes it, BLAKE3, next to the compiler and target).
     pub fn text(&self, func: &Function) -> String {
         let mut out = String::new();
         let _ = write!(out, "fn(");

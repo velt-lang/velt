@@ -2,6 +2,7 @@
 //! once per variant, stored in the build cache, and linked into every program that compiles the
 //! same code (design/std-object.md "The std cache").
 //!
+//! - Std's code is std's own and what std's generators wrote for the program (`select::is_std`).
 //! - After lowering, every std function that may be served (`select`) gets a key (`key`): its
 //!   canonical code and parameter attributes, those of every small function it may inline, and
 //!   who compiles it for what.

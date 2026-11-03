@@ -335,7 +335,8 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `.cargo/config.toml`); the root gets a `CACHEDIR.TAG` on the first write when it is new, empty or
   holds only what the cache makes (a directory with other files is used, never adopted), and
   `velt clean --cache` and garbage collection act only on a root that has it, removing only layout directories,
-  `warm/` and the marker (the root too when it is then empty); layout `v4/<kind>/`
+  `warm/` and the marker (the root too when it is then empty); layout `v5/<kind>/` (keys are
+  BLAKE3 hashes; `v4` used SHA-256)
   with kinds `cl` (Cranelift compiled functions, Cranelift's incremental-cache key with the
   Cranelift version), `stdfn` (the std cache below: objects of single std functions, file
   entries), `llvm`
@@ -345,7 +346,7 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   parses without diagnostics of files read from disk, never an editor's unsaved buffer; every
   command that loads a program uses them, `check` and the language server included).
   Entries under 16 KiB are packed: 64 shards per kind by the key's first byte, each `<nn>.pack`
-  (values) + `<nn>.idx` (56-byte records: key, offset, length, 8-byte SHA-256 prefix of the
+  (values) + `<nn>.idx` (56-byte records: key, offset, length, 8-byte checksum (CRC-32) of the
   value, minutes since 1970 of the last use; the last record of a key wins) appended under an
   exclusive lock of `<nn>.lock`; a value whose checksum does not match is a miss, and the next
   store appends it again. Larger ones are files, `<kind>/large/<2 hex>/<62 hex>`: the value's
@@ -367,7 +368,7 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   LLVM without debug info (`-g`), with `VELT_STD_OBJECT=1`,
   take std functions out of the program: each std function that is not small (40 statements),
   not a `$dup` rename, reaches no static with relocations or written (named by it or by a small
-  function it may inline) and makes no indirect call is keyed by SHA-256 over `velt std function
+  function it may inline) and makes no indirect call is keyed by BLAKE3 over `velt std function
   1`, `build_cache::compiler_identity()` (version line, executable size and time), clang's path,
   size and time, clang's optimization flag (`VELT_LLVM_OPT`), the target, the CPU and the
   optimization level; then, for it and each small internal function it reaches through small
@@ -563,7 +564,7 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `*.vlt` of the warm-up directory (`$VELT_SHARE/warm`, else `share/velt/warm` beside the std
   root's directory: `<prefix>/share/velt/warm`, or the checkout's) with a child `velt build
   <file> -o <tmp>/warm[.exe]` (an executable; `VELT_BUILD_STAMP=off`, no `VELT_CPU`), once with `--cpu native` and once without, then
-  writes the marker `<cache>/warm/<hex>` (SHA-256 of the version line and the executable's size
+  writes the marker `<cache>/warm/<hex>` (BLAKE3 of the version line and the executable's size
   and time) and prints `velt: warmed the build cache with <n> programs in <s>s`. With the marker
   present it prints that the cache is warm and does nothing; one run per marker at a time
   (`<marker>.lock`). A program that fails to build is reported (exit 1, no marker) after the

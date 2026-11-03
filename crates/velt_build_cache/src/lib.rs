@@ -5,7 +5,7 @@
 //!   code, the target and settings, the version of whatever compiled it), so an entry is never
 //!   stale, and two compiler versions (projects can pin different ones) keep their entries side
 //!   by side instead of overwriting each other's.
-//! - Layout: `<root>/v4/<kind>/`. Entries under [`LARGE`] bytes (most compiled functions) are
+//! - Layout: `<root>/v5/<kind>/`. Entries under [`LARGE`] bytes (most compiled functions) are
 //!   packed into a few files per kind (`pack`); larger ones (objects) are a file each (`files`).
 //!   File entries ([`Cache::put_file`], [`Cache::path_of`]) are plain files in `<kind>/files/`,
 //!   handed out by path, for whoever must pass a file on (a linker): the cached std object.
@@ -35,13 +35,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, SystemTime};
 
-use sha2::{Digest, Sha256};
-
 use pack::Packs;
 
 /// The layout version: a change of the layout or of how keys are made starts a new directory
 /// (garbage collection removes the others).
-const LAYOUT: &str = "v4";
+const LAYOUT: &str = "v5";
 /// The file that marks a directory as a build cache (<https://bford.info/cachedir/>).
 pub const MARKER: &str = "CACHEDIR.TAG";
 const MARKER_TEXT: &str = "Signature: 8a477f597d28d172789f06886806bc55\n\
@@ -59,7 +57,9 @@ const GC_EVERY: Duration = Duration::from_secs(60 * 60);
 /// Temporary files older than this are left over from a build that stopped while writing.
 const STALE_TEMP: Duration = Duration::from_secs(60 * 60);
 
-/// A key: the SHA-256 of what an entry depends on.
+/// A key: the BLAKE3 hash of what an entry depends on (layouts before `v5` used SHA-256, which
+/// cost about 8% of a warm build of a 10k-line program in hashing codegen units without SHA
+/// instructions).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Key(pub [u8; 32]);
 
@@ -81,7 +81,7 @@ impl Key {
 
 /// Builds a [`Key`] from parts.
 #[derive(Clone, Default)]
-pub struct KeyHasher(Sha256);
+pub struct KeyHasher(blake3::Hasher);
 
 impl KeyHasher {
     pub fn new() -> Self {
@@ -90,13 +90,13 @@ impl KeyHasher {
 
     /// Add one part, length-prefixed.
     pub fn part(&mut self, bytes: &[u8]) -> &mut Self {
-        self.0.update((bytes.len() as u64).to_le_bytes());
+        self.0.update(&(bytes.len() as u64).to_le_bytes());
         self.0.update(bytes);
         self
     }
 
     pub fn finish(self) -> Key {
-        Key(self.0.finalize().into())
+        Key(*self.0.finalize().as_bytes())
     }
 }
 
@@ -113,7 +113,7 @@ pub struct Usage {
 pub struct Cache {
     /// `<root>`.
     root: PathBuf,
-    /// `<root>/v4`.
+    /// `<root>/v5`.
     dir: PathBuf,
     /// The size limit in bytes.
     limit: u64,
@@ -452,8 +452,8 @@ fn is_layout(name: &str) -> bool {
 }
 
 /// The check of an entry's value, read on every hit: its CRC-32, which tells a value written
-/// whole from one torn or damaged (all the check is for; keys are SHA-256) at a fraction of the
-/// cost of a cryptographic hash. Layouts before `v4` checked the first 8 bytes of the value's
+/// whole from one torn or damaged (all the check is for; keys are BLAKE3 hashes) at a fraction of
+/// the cost of a cryptographic hash. Layouts before `v4` checked the first 8 bytes of the value's
 /// SHA-256.
 fn checksum(value: &[u8]) -> u64 {
     u64::from(crc32fast::hash(value))
