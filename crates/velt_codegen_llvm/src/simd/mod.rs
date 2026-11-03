@@ -3,7 +3,7 @@
 //! LLVM vector instruction or intrinsic, and reinterprets the result back. After inlining
 //! nothing of the helper or the reinterpretation is left.
 
-use velt_vir::simd::{reversed_bytes, Lanes, Op, SimdCall};
+use velt_vir::simd::{reversed_bytes, sum_wide_lane, Lanes, Op, SimdCall};
 use velt_vir::vir::Ty;
 
 use crate::types::{abi_ret, abi_type};
@@ -216,6 +216,7 @@ fn vector(b: &mut Body, lanes: Lanes, op: Op, dotprod: bool) -> Option<String> {
             let x = b.arg(0, &ty);
             return Some(b.inst(format!("extractelement {ty} {x}, i64 %a1")));
         }
+        Op::Sum | Op::SumWide => return Some(sum(b, lanes, op == Op::SumWide)),
         Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge => return Some(compare(b, lanes, op)),
         Op::WidenLow | Op::WidenHigh => return Some(widen(b, lanes, op == Op::WidenHigh)),
         Op::Narrow => return Some(narrow(b, lanes)),
@@ -265,6 +266,27 @@ fn vector(b: &mut Body, lanes: Lanes, op: Op, dotprod: bool) -> Option<String> {
         }
     };
     Some(b.bytes(&value, &ty))
+}
+
+/// The sum of the lanes (`Op::Sum`), or of the lanes extended to `sum_wide_lane`
+/// (`Op::SumWide`): `llvm.vector.reduce.add`, which LLVM selects per target (`addv`,
+/// `saddlv`/`uaddlv`, `sdot`/`udot` with ones; `psadbw` for bytes on x86).
+fn sum(b: &mut Body, lanes: Lanes, wide: bool) -> String {
+    let (_, ty, _) = spell(lanes);
+    let mut x = b.arg(0, &ty);
+    let to = if wide { sum_wide_lane(lanes) } else { lanes };
+    let n = lanes.count();
+    let lane = int_type(to.bits());
+    if wide {
+        let ext = if lanes.is_signed() { "sext" } else { "zext" };
+        x = b.inst(format!("{ext} {ty} {x} to <{n} x {lane}>"));
+    }
+    b.declarations.push(format!(
+        "declare {lane} @llvm.vector.reduce.add.v{n}{lane}(<{n} x {lane}>)"
+    ));
+    b.inst(format!(
+        "call {lane} @llvm.vector.reduce.add.v{n}{lane}(<{n} x {lane}> {x})"
+    ))
 }
 
 /// `Op::DotAdd` as Arm's `sdot`, for targets every CPU of which has it.

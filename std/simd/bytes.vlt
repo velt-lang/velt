@@ -27,6 +27,8 @@ declare function velt_simd_i8x16_store(v: i8x16, to: i8[], at: u64);
 declare function velt_simd_i8x16_load_partial(from: i8[], at: u64, count: u64): i8x16;
 declare function velt_simd_i8x16_store_partial(v: i8x16, to: i8[], at: u64, count: u64);
 declare function velt_simd_i8x16_lane(v: i8x16, index: u64): i8;
+declare function velt_simd_i8x16_sum(v: i8x16): i8;
+declare function velt_simd_i8x16_sum_wide(v: i8x16): i32;
 declare function velt_simd_i8x16_with_lane(v: i8x16, index: u64, x: i8): i8x16;
 declare function velt_simd_i8x16_select(m: mask8x16, a: i8x16, b: i8x16): i8x16;
 declare function velt_simd_i8x16_add(a: i8x16, b: i8x16): i8x16;
@@ -164,6 +166,19 @@ extend i8x16 {
     return velt_simd_i8x16_with_lane(this, index as u64, x);
   }
 
+  /** The sum of the lanes, wrapping on overflow as `+` on `i8` does. */
+  sum(): i8 {
+    return velt_simd_i8x16_sum(this);
+  }
+
+  /**
+   * The sum of the lanes as an `i32`, which never overflows: how an integer kernel reduces its
+   * accumulator (one or two instructions on arm64).
+   */
+  sumWide(): i32 {
+    return velt_simd_i8x16_sum_wide(this);
+  }
+
   /** Lane-wise sum, wrapping on overflow. */
   add(other: i8x16): i8x16 {
     return velt_simd_i8x16_add(this, other);
@@ -299,6 +314,8 @@ declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
 declare function velt_simd_u8x16_load_partial(from: u8[], at: u64, count: u64): u8x16;
 declare function velt_simd_u8x16_store_partial(v: u8x16, to: u8[], at: u64, count: u64);
 declare function velt_simd_u8x16_lane(v: u8x16, index: u64): u8;
+declare function velt_simd_u8x16_sum(v: u8x16): u8;
+declare function velt_simd_u8x16_sum_wide(v: u8x16): u32;
 declare function velt_simd_u8x16_with_lane(v: u8x16, index: u64, x: u8): u8x16;
 declare function velt_simd_u8x16_select(m: mask8x16, a: u8x16, b: u8x16): u8x16;
 declare function velt_simd_u8x16_add(a: u8x16, b: u8x16): u8x16;
@@ -458,6 +475,19 @@ extend u8x16 {
       panic("RangeError: u8x16.withLane: index is out of range");
     }
     return velt_simd_u8x16_with_lane(this, index as u64, x);
+  }
+
+  /** The sum of the lanes, wrapping on overflow as `+` on `u8` does. */
+  sum(): u8 {
+    return velt_simd_u8x16_sum(this);
+  }
+
+  /**
+   * The sum of the lanes as a `u32`, which never overflows: how an integer kernel reduces its
+   * accumulator (one or two instructions on arm64).
+   */
+  sumWide(): u32 {
+    return velt_simd_u8x16_sum_wide(this);
   }
 
   /** Lane-wise sum, wrapping on overflow. */
@@ -625,6 +655,8 @@ declare function velt_simd_i16x8_store(v: i16x8, to: i16[], at: u64);
 declare function velt_simd_i16x8_load_partial(from: i16[], at: u64, count: u64): i16x8;
 declare function velt_simd_i16x8_store_partial(v: i16x8, to: i16[], at: u64, count: u64);
 declare function velt_simd_i16x8_lane(v: i16x8, index: u64): i16;
+declare function velt_simd_i16x8_sum(v: i16x8): i16;
+declare function velt_simd_i16x8_sum_wide(v: i16x8): i32;
 declare function velt_simd_i16x8_with_lane(v: i16x8, index: u64, x: i16): i16x8;
 declare function velt_simd_i16x8_select(m: mask16x8, a: i16x8, b: i16x8): i16x8;
 declare function velt_simd_i16x8_add(a: i16x8, b: i16x8): i16x8;
@@ -764,6 +796,19 @@ extend i16x8 {
       panic("RangeError: i16x8.withLane: index is out of range");
     }
     return velt_simd_i16x8_with_lane(this, index as u64, x);
+  }
+
+  /** The sum of the lanes, wrapping on overflow as `+` on `i16` does. */
+  sum(): i16 {
+    return velt_simd_i16x8_sum(this);
+  }
+
+  /**
+   * The sum of the lanes as an `i32`, which never overflows: how an integer kernel reduces its
+   * accumulator (one or two instructions on arm64).
+   */
+  sumWide(): i32 {
+    return velt_simd_i16x8_sum_wide(this);
   }
 
   /** Lane-wise sum, wrapping on overflow. */
@@ -927,6 +972,8 @@ declare function velt_simd_u16x8_store(v: u16x8, to: u16[], at: u64);
 declare function velt_simd_u16x8_load_partial(from: u16[], at: u64, count: u64): u16x8;
 declare function velt_simd_u16x8_store_partial(v: u16x8, to: u16[], at: u64, count: u64);
 declare function velt_simd_u16x8_lane(v: u16x8, index: u64): u16;
+declare function velt_simd_u16x8_sum(v: u16x8): u16;
+declare function velt_simd_u16x8_sum_wide(v: u16x8): u32;
 declare function velt_simd_u16x8_with_lane(v: u16x8, index: u64, x: u16): u16x8;
 declare function velt_simd_u16x8_select(m: mask16x8, a: u16x8, b: u16x8): u16x8;
 declare function velt_simd_u16x8_add(a: u16x8, b: u16x8): u16x8;
@@ -1064,6 +1111,19 @@ extend u16x8 {
       panic("RangeError: u16x8.withLane: index is out of range");
     }
     return velt_simd_u16x8_with_lane(this, index as u64, x);
+  }
+
+  /** The sum of the lanes, wrapping on overflow as `+` on `u16` does. */
+  sum(): u16 {
+    return velt_simd_u16x8_sum(this);
+  }
+
+  /**
+   * The sum of the lanes as a `u32`, which never overflows: how an integer kernel reduces its
+   * accumulator (one or two instructions on arm64).
+   */
+  sumWide(): u32 {
+    return velt_simd_u16x8_sum_wide(this);
   }
 
   /** Lane-wise sum, wrapping on overflow. */
