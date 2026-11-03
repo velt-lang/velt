@@ -1,0 +1,74 @@
+// A generator that throws nothing is a value of a generator type that throws (#2085), as
+// TypeScript allows: where one parameter, array or variable takes generators that throw, a quiet
+// generator passes too, and yields the same values. Breaking out of a loop over it closes it.
+async function* quiet(): AsyncGenerator<string> {
+  try {
+    yield "q1";
+    yield "q2";
+  } finally {
+    console.log("quiet closed");
+  }
+}
+
+async function* loud(n: number): AsyncGenerator<string> {
+  if (n < 0) {
+    throw new RangeError("loud failed");
+  }
+  yield "loud " + n;
+}
+
+function* calm(): Generator<number> {
+  yield 1;
+  yield 2;
+}
+
+function* wild(n: number): Generator<number> {
+  if (n < 0) {
+    throw new RangeError("wild failed");
+  }
+  yield n;
+}
+
+async function drain(label: string, g: AsyncGenerator<string>): Promise<void> {
+  try {
+    for await (const c of g) {
+      console.log(label, c);
+    }
+  } catch (err) {
+    console.log(label, "caught", (err as Error).message);
+  }
+}
+
+async function first(g: AsyncGenerator<string>): Promise<void> {
+  for await (const c of g) {
+    console.log("first", c);
+    break;
+  }
+  console.log("after break");
+}
+
+function sum(g: Generator<number>): number {
+  let s = 0;
+  try {
+    for (const x of g) {
+      s += x;
+    }
+  } catch (err) {
+    console.log("sum caught", (err as Error).message);
+  }
+  return s;
+}
+
+async function main() {
+  await drain("loud", loud(1));
+  await drain("loud", loud(-1));
+  await drain("quiet", quiet());
+  await first(loud(2));
+  await first(quiet());
+  const all: AsyncGenerator<string>[] = [loud(3)];
+  all.push(quiet());
+  for (const g of all) {
+    await drain("all", g);
+  }
+  console.log(sum(wild(2)), sum(wild(-1)), sum(calm()));
+}

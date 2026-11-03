@@ -198,7 +198,8 @@ impl FnCx<'_, '_> {
             };
             return Ok(self.mk(call, exp, span));
         }
-        let h = match self.promise_retype(h, exp) {
+        // A generator that throws nothing as one that throws: through a generator of that type.
+        let h = match (self.promise_retype(h, exp)).or_else(|h| self.widen_generator(h, exp)) {
             Ok(h) => return Ok(h),
             Err(h) => h,
         };
@@ -423,7 +424,7 @@ impl FnCx<'_, '_> {
     /// `Promise<T, E1>` → `Promise<T, E2>`: the same `T` (the wrapper copies the value as it is),
     /// and `E2` allows every error `E1` can reject with (an unrelated error type is still a
     /// mismatch).
-    fn widens_promise(&mut self, from: TyId, to: TyId) -> bool {
+    pub(super) fn widens_promise(&mut self, from: TyId, to: TyId) -> bool {
         let (&TyKind::Promise(x, e), &TyKind::Promise(y, f)) =
             (self.cx.ty.kind(from), self.cx.ty.kind(to))
         else {

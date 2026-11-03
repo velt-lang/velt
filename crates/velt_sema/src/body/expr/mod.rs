@@ -86,6 +86,7 @@ mod frameless_fn;
 mod frozen;
 mod gen_closure;
 mod gen_value;
+mod generator_widen;
 mod generic_conversions;
 mod generic_member;
 mod generic_spread;

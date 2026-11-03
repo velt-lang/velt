@@ -210,3 +210,10 @@ export class Generator<T, E = never, N = never> implements Iterator<T, E>, Itera
     generatorReturn(this);
   }
 }
+
+// A generator that throws nothing, as one of a wider error type (`Generator<T>` where a
+// `Generator<T, E>` is expected): its results are laid out by the error type, so the compiler
+// passes its values through a generator of the wider type, as it widens a promise.
+function* generatorWiden<T, E>(g: Generator<T>): Generator<T, E> {
+  yield* g;
+}

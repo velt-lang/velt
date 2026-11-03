@@ -133,3 +133,10 @@ declare function velt_rt_latch_free(latch: u64);
 declare function velt_rt_latch_open(latch: u64);
 
 declare async function velt_rt_latch_wait(latch: u64): Promise<void>;
+
+// An async generator that throws nothing, as one of a wider error type (`AsyncGenerator<T>`
+// where an `AsyncGenerator<T, E>` is expected): its results are laid out by the error type, so
+// the compiler passes its values through a generator of the wider type, as it widens a promise.
+async function* asyncGeneratorWiden<T, E>(g: AsyncGenerator<T>): AsyncGenerator<T, E> {
+  yield* g;
+}
