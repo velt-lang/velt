@@ -36,6 +36,7 @@ pub use build::{build_options, exit_code, failure_code, report};
 
 /// Run `cmd` and return the process exit code (`velt run` exits directly with the program's code).
 pub fn execute(cmd: Command) -> ExitCode {
+    velt_codegen_llvm::set_probe_memo(&crate::build_cache::ClangProbes);
     let result = match cmd {
         Command::Version => {
             println!("{}", version::version_line());

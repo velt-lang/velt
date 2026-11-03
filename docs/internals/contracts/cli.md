@@ -339,11 +339,13 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   with kinds `cl` (Cranelift compiled functions, Cranelift's incremental-cache key with the
   Cranelift version), `stdfn` (the std cache below: objects of single std functions, file
   entries), `llvm`
-  (unit objects, keyed by clang's path, size, time and arguments, the host triple and the IR)
-  and `std-ast` (std files' parses, `velt_syntax::encode_module`, keyed by the compiler identity,
+  (unit objects, keyed by clang's path, size, time and arguments, the host triple and the IR),
+  `std-ast` (std files' parses, `velt_syntax::encode_module`, keyed by the compiler identity,
   `AST_FORMAT`, plain TypeScript or not and the source's length, CRC-32 and 64-bit hash; only
   parses without diagnostics of files read from disk, never an editor's unsaved buffer; every
-  command that loads a program uses them, `check` and the language server included).
+  command that loads a program uses them, `check` and the language server included), and
+  `clang-probe` (`clang --version`'s output, keyed by the candidate's resolved path, size and
+  modification time, so a release build doesn't start clang to learn its version).
   Entries under 16 KiB are packed: 64 shards per kind by the key's first byte, each `<nn>.pack`
   (values) + `<nn>.idx` (56-byte records: key, offset, length, 8-byte SHA-256 prefix of the
   value, minutes since 1970 of the last use; the last record of a key wins) appended under an
