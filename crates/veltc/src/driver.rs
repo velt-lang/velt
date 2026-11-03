@@ -195,6 +195,9 @@ pub struct Session {
     /// The errors source generators gave (also in `diagnostics`): what they reported, and their
     /// failures (`crate::generate::report`). The editor shows these after its own check.
     pub generator_reports: Diagnostics,
+    /// The system libraries of the C libraries the program's `declare c` functions name
+    /// (`crate::native::c_links`: `sqlite3`, `framework:Accelerate`), set by the check.
+    pub c_libs: Vec<String>,
 }
 
 impl Session {
@@ -358,6 +361,7 @@ fn sema_stage(
             &opts.target(),
             &mut sess.diagnostics,
         );
+        sess.c_libs = crate::native::c_links(hir, &sess.sm, opts.packages.as_ref(), &opts.target());
     }
     let _ = t;
     sess.stop_if_errors()?;
@@ -740,6 +744,7 @@ fn link_stage(
             true => vec![],
             false => crate::native::links(opts.packages.as_ref(), opts.release),
         },
+        &crate::native::c_link_args(&sess.c_libs, target),
     )
     .map_err(BuildError::Failed)?;
     sess.record("link", t);

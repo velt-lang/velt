@@ -92,6 +92,8 @@ pub fn manifest_text_depending(
         host_modules: BTreeMap::new(),
         host: None,
         native: None,
+        c_libraries: Default::default(),
+        allow_native: Vec::new(),
         jsx: None,
         define: BTreeMap::new(),
         ts_compat: vec![],

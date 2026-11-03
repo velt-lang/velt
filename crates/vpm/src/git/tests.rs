@@ -424,6 +424,19 @@ fn native_code_from_a_repository_is_not_built_unasked() {
         target: Some("x86_64-unknown-linux-gnu".into()),
         ..Default::default()
     };
+    // Not allowed (`allowNative`) yet: refused before anything is built, through its chain.
+    let err = install(&app, &e.loc, opts.clone()).unwrap_err();
+    assert!(
+        err.contains("package `sib` (through `lib` → `sib`) has native code"),
+        "{err}"
+    );
+    let manifest = std::fs::read_to_string(app.join("package.vlt")).unwrap();
+    let allowed = manifest.replacen(
+        "version: \"0.1.0\",",
+        "version: \"0.1.0\", allowNative: [\"sib\"],",
+        1,
+    );
+    std::fs::write(app.join("package.vlt"), allowed).unwrap();
     let err = install(&app, &e.loc, opts).unwrap_err();
     assert!(
         err.contains("`sib` from") && err.contains("VELT_NATIVE_FROM_SOURCE=1"),

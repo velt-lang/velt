@@ -36,6 +36,7 @@ fn top_level_keys_not_yet_written() {
             "jsx",
             "define",
             "native",
+            "allowNative",
             "tsCompat",
             "lint",
             "build"
@@ -69,7 +70,10 @@ fn a_key_completion_inserts_a_value_placeholder() {
 #[test]
 fn nested_objects_complete_their_own_fields() {
     assert_eq!(labels("{ jsx: { | } }"), ["importSource"]);
-    assert_eq!(labels("{ native: { targets: [], | } }"), ["path", "wasm"]);
+    assert_eq!(
+        labels("{ native: { targets: [], | } }"),
+        ["path", "wasm", "c"]
+    );
     assert_eq!(
         labels("{ dependencies: { util: { path: \"../u\", | } } }"),
         ["version", "git", "branch", "tag", "rev"]

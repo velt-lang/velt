@@ -15,21 +15,31 @@ mod runtime_support;
 mod test_dir;
 
 /// A package `cmath` with C declarations (`decls`) and the safe functions around them (`api`),
-/// and a program depending on it whose `main` is `main`.
+/// which says it has native code (`native: { c: {} }`), and a program depending on it, which
+/// allows that code, whose `main` is `main`.
 fn project(dir: &Path, lib: &str, main: &str) {
+    project_with(dir, lib, main, NATIVE_C, "allowNative: [\"cmath\"], ");
+}
+
+/// `cmath`'s manifest fields of a package calling only the platform's C library.
+const NATIVE_C: &str = ", native: { c: {} }";
+
+/// [`project`] with `native` (`cmath`'s manifest fields after its version) and `allow` (the
+/// app's).
+fn project_with(dir: &Path, lib: &str, main: &str, native: &str, allow: &str) {
     let pkg = dir.join("cmath");
     let app = dir.join("app");
     std::fs::create_dir_all(pkg.join("src")).unwrap();
     std::fs::create_dir_all(app.join("src")).unwrap();
     std::fs::write(
         pkg.join("package.vlt"),
-        "import type { Package } from \"velt/package\";\n\nexport const pkg: Package = { name: \"cmath\", version: \"0.1.0\" };\n",
+        format!("import type {{ Package }} from \"velt/package\";\n\nexport const pkg: Package = {{ name: \"cmath\", version: \"0.1.0\"{native} }};\n"),
     )
     .unwrap();
     std::fs::write(pkg.join("src/lib.vlt"), lib).unwrap();
     std::fs::write(
         app.join("package.vlt"),
-        "import type { Package } from \"velt/package\";\n\nexport const pkg: Package = {\n  name: \"app\",\n  version: \"0.1.0\",\n  dependencies: { cmath: { path: \"../cmath\" } },\n};\n",
+        format!("import type {{ Package }} from \"velt/package\";\n\nexport const pkg: Package = {{\n  name: \"app\",\n  version: \"0.1.0\",\n  {allow}dependencies: {{ cmath: {{ path: \"../cmath\" }} }},\n}};\n"),
     )
     .unwrap();
     std::fs::write(app.join("src/main.vlt"), main).unwrap();
@@ -260,7 +270,90 @@ fn what_cant_cross_and_unknown_libraries_are_errors() {
         "import { x } from \"cmath\";\n\nfunction main() {\n  console.log(x);\n}\n",
     );
     let out = check(dir.path());
-    assert!(out.contains("C library `sqlite3` is not known"), "{out}");
+    assert!(
+        out.contains("C library `sqlite3` is not in package.vlt's `native.c`: package `cmath` lists no C libraries"),
+        "{out}"
+    );
+}
+
+/// A package declaring C functions says it has native code (`native.c`), and a program needs
+/// `allowNative` to install it: one error each, naming what to add, and none once it's there.
+#[test]
+fn a_program_allows_a_package_s_c_declarations() {
+    let dir = test_dir::TestDir::new();
+    project_with(dir.path(), LIB, MAIN, "", "allowNative: [\"cmath\"], ");
+    let out = check(dir.path());
+    let unsaid = "package `cmath` declares C function `llabs`, but its package.vlt doesn't say it has native code";
+    assert!(out.contains(unsaid), "{out}");
+    assert_eq!(
+        out.matches("doesn't say it has native code").count(),
+        1,
+        "{out}"
+    );
+    assert!(out.contains("`native: { c: {} }`"), "{out}");
+    project_with(dir.path(), LIB, MAIN, NATIVE_C, "");
+    let out = check(dir.path());
+    let refusal = "package `cmath` has native code, which runs with no safety net";
+    assert!(out.contains(refusal), "{out}");
+    assert!(out.contains("allowNative: [\"cmath\"]"), "{out}");
+    project(dir.path(), LIB, MAIN);
+    let o = velt(dir.path(), &["check"]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+}
+
+const LIBM: &str = r#"declare c("m") function cbrt(x: f64): f64;
+
+export function cubeRoot(x: f64): f64 {
+  // SAFETY: `cbrt` takes any double.
+  return unsafe { cbrt(x) };
+}
+"#;
+
+/// A C library of the package's own (`native.c`), linked per target: libm (in the C library on
+/// macOS, which links it anyway), in debug and release builds and under `velt dev`.
+#[cfg(unix)]
+#[test]
+fn a_package_s_c_library_is_linked_per_target() {
+    let dir = test_dir::TestDir::new();
+    let main = "import { cubeRoot } from \"cmath\";\n\nfunction main() {\n  console.log(cubeRoot(27));\n}\n";
+    let native = ", native: { c: { m: { system: { linux: \"m\", darwin: \"m\" } } } }";
+    project_with(dir.path(), LIBM, main, native, "allowNative: [\"cmath\"], ");
+    for args in [&["run"][..], &["run", "--release"][..]] {
+        let o = velt(dir.path(), args);
+        let stderr = String::from_utf8_lossy(&o.stderr);
+        assert!(o.status.success(), "velt {args:?} failed:\n{stderr}");
+        assert_eq!(String::from_utf8_lossy(&o.stdout), "3\n", "velt {args:?}");
+    }
+    reload_support::build_runtime();
+    std::fs::write(dir.path().join("app/main.vlt"), main).unwrap();
+    let dev = reload_support::Dev::start(&dir.path().join("app"), &[]);
+    dev.wait_stdout(reload_support::Mark::default(), "3")
+        .unwrap_or_else(|e| panic!("{e}"));
+}
+
+/// A library a package lists without an entry for the build's target, and system library names
+/// that aren't library names, are errors.
+#[test]
+fn c_libraries_need_an_entry_for_the_target() {
+    let dir = test_dir::TestDir::new();
+    let main = "import { cubeRoot } from \"cmath\";\n\nfunction main() {\n  console.log(cubeRoot(27));\n}\n";
+    // An entry for another OS only.
+    let other = if cfg!(windows) { "linux" } else { "win32" };
+    let native = format!(", native: {{ c: {{ m: {{ system: {{ {other}: \"m\" }} }} }} }}");
+    let native = native.as_str();
+    project_with(dir.path(), LIBM, main, native, "allowNative: [\"cmath\"], ");
+    let out = check(dir.path());
+    assert!(
+        out.contains("C library `m` of package `cmath` has no `system` entry for target `"),
+        "{out}"
+    );
+    let native = ", native: { c: { m: { system: { default: \"-Wl,-rpath,/tmp\" } } } }";
+    project_with(dir.path(), LIBM, main, native, "allowNative: [\"cmath\"], ");
+    let out = check(dir.path());
+    assert!(
+        out.contains("`-Wl,-rpath,/tmp` is not a system library"),
+        "{out}"
+    );
 }
 
 #[test]

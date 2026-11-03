@@ -86,6 +86,7 @@ fn elf_gnu_args(req: &LinkRequest, kit: &Kit) -> Vec<OsString> {
     args.extend(kit::linux_gnu_libs(kit.arch).map(|lib| kit.file(lib).into()));
     // The packages' prelinked objects' libraries beyond the kit's glibc ones.
     args.extend(native::system_lib_args(req.native, GLIBC_LIBS));
+    args.extend(native::c_lib_args(req.c_libs, GLIBC_LIBS));
     args.push("--no-as-needed".into());
     args
 }
@@ -181,10 +182,9 @@ fn macho_args(req: &LinkRequest, kit: &Kit) -> Vec<OsString> {
     args.push("-lSystem".into());
     // The packages' prelinked objects' libraries (frameworks resolve to the kit's stubs). libc,
     // libm and libiconv are in libSystem (rustc lists them for every staticlib).
-    args.extend(native::system_lib_args(
-        req.native,
-        &["-lSystem", "-lc", "-lm", "-liconv"],
-    ));
+    let in_libsystem = ["-lSystem", "-lc", "-lm", "-liconv"];
+    args.extend(native::system_lib_args(req.native, &in_libsystem));
+    args.extend(native::c_lib_args(req.c_libs, &in_libsystem));
     args
 }
 
@@ -221,6 +221,7 @@ mod tests {
             output: Path::new("out"),
             release,
             native: &[],
+            c_libs: &[],
         }
     }
 

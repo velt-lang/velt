@@ -121,6 +121,19 @@ fn native_packages_end_to_end() {
         target: Some(LINUX.into()),
         ..Default::default()
     };
+    // Native code is installed only when the app allows it (`allowNative`), naming the line.
+    let e = install(&app, &loc, for_linux.clone()).unwrap_err();
+    assert!(
+        e.contains("package `db` has native code, which runs with no safety net")
+            && e.contains("allowNative: [\"db\"]"),
+        "{e}"
+    );
+    let manifest = std::fs::read_to_string(app.join("package.vlt")).unwrap();
+    std::fs::write(
+        app.join("package.vlt"),
+        manifest.replacen("name: \"app\",", "name: \"app\", allowNative: [\"db\"],", 1),
+    )
+    .unwrap();
     let installed = install(&app, &loc, for_linux.clone()).unwrap();
     let (pkg, native) = installed.graph.natives().next().unwrap();
     assert_eq!(pkg.name, "db");
@@ -234,7 +247,7 @@ fn native_packages_end_to_end() {
     );
 
     // A path dependency with native code needs cargo to build it.
-    std::fs::write(app.join("package.vlt"), "export const pkg: Package = { name: \"app\", version: \"0.1.0\", dependencies: { db: { path: \"../db\" } } };").unwrap();
+    std::fs::write(app.join("package.vlt"), "export const pkg: Package = { name: \"app\", version: \"0.1.0\", allowNative: [\"db\"], dependencies: { db: { path: \"../db\" } } };").unwrap();
     let e = install(
         &app,
         &loc,

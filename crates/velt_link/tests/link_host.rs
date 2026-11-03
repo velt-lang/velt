@@ -196,6 +196,7 @@ impl Setup {
             output: exe,
             release,
             native: &[],
+            c_libs: &[],
         }
     }
 }
@@ -237,6 +238,7 @@ fn link_and_run_on_host() {
             output: &exe,
             release,
             native: &[],
+            c_libs: &[],
         })
         .unwrap_or_else(|e| panic!("link failed (release={release}):\n{e}"));
         assert_runs(&exe);
@@ -261,6 +263,7 @@ fn link_and_run_on_host() {
         output: &dir.join(format!("bad{}", std::env::consts::EXE_SUFFIX)),
         release: false,
         native: &[],
+        c_libs: &[],
     })
     .unwrap_err();
     assert!(

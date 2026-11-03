@@ -28,6 +28,7 @@ pub fn link_executable(
     release: bool,
     strip_debug: bool,
     native: &[velt_link::NativeLink],
+    c_libs: &[String],
 ) -> Result<Linked, String> {
     let shared = if release {
         None
@@ -50,7 +51,14 @@ pub fn link_executable(
     }
     let stamp_path = stamp_path(exe);
     let linker = velt_link::linker_identity(target);
-    let key = link_key(target, &objects, &runtime_lib, strip_debug, native, &linker);
+    let key = link_key(
+        target,
+        &objects,
+        &runtime_lib,
+        strip_debug,
+        (native, c_libs),
+        &linker,
+    );
     if std::fs::read_to_string(&stamp_path).ok() == Some(stamp(&key, exe)) {
         return Ok(Linked::UpToDate);
     }
@@ -64,6 +72,7 @@ pub fn link_executable(
         output: &tmp,
         release: strip_debug,
         native,
+        c_libs,
     })
     .and_then(|()| {
         replace(&tmp, exe).map_err(|e| format!("cannot write `{}`: {e}", exe.display()))
@@ -164,7 +173,7 @@ fn link_key(
     objects: &[PathBuf],
     runtime_lib: &Path,
     strip_debug: bool,
-    native: &[velt_link::NativeLink],
+    (native, c_libs): (&[velt_link::NativeLink], &[String]),
     linker: &str,
 ) -> String {
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -185,6 +194,7 @@ fn link_key(
         }
         n.system_libs.hash(&mut h);
     }
+    c_libs.hash(&mut h);
     linker.hash(&mut h);
     format!("{:016x}", h.finish())
 }
@@ -240,21 +250,25 @@ mod tests {
         std::fs::write(&obj, b"one").unwrap();
         std::fs::write(&rt, b"runtime").unwrap();
         let objs = [obj.clone()];
-        let key = link_key("t", &objs, &rt, false, &[], "L");
-        assert_eq!(key, link_key("t", &objs, &rt, false, &[], "L"));
-        assert_ne!(key, link_key("t", &objs, &rt, true, &[], "L"));
-        assert_ne!(key, link_key("u", &objs, &rt, false, &[], "L"));
+        const NONE: (&[velt_link::NativeLink], &[String]) = (&[], &[]);
+        let key = link_key("t", &objs, &rt, false, NONE, "L");
+        assert_eq!(key, link_key("t", &objs, &rt, false, NONE, "L"));
+        assert_ne!(key, link_key("t", &objs, &rt, true, NONE, "L"));
+        assert_ne!(key, link_key("u", &objs, &rt, false, NONE, "L"));
         let native = [velt_link::NativeLink {
             shared: rt.clone(),
             import_lib: None,
             static_obj: None,
             system_libs: vec![],
         }];
-        assert_ne!(key, link_key("t", &objs, &rt, false, &native, "L"));
+        assert_ne!(key, link_key("t", &objs, &rt, false, (&native, &[]), "L"));
+        // Another C library (`native.c`) links again.
+        let sqlite = ["-lsqlite3".to_string()];
+        assert_ne!(key, link_key("t", &objs, &rt, false, (&[], &sqlite), "L"));
         // Another linker (bundled ↔ system, another kit) links again.
-        assert_ne!(key, link_key("t", &objs, &rt, false, &[], "M"));
+        assert_ne!(key, link_key("t", &objs, &rt, false, NONE, "M"));
         std::fs::write(&obj, b"two").unwrap();
-        assert_ne!(key, link_key("t", &objs, &rt, false, &[], "L"));
+        assert_ne!(key, link_key("t", &objs, &rt, false, NONE, "L"));
     }
 
     #[test]

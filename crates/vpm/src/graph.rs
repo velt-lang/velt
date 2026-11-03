@@ -25,6 +25,12 @@ pub struct GraphPackage {
     /// The package's native library for the build target (packages with native code, when the
     /// install had a target).
     pub native: Option<crate::native::NativeLib>,
+    /// The package's C libraries (`native.c`), by the name its `declare c("<library>")`
+    /// functions give.
+    pub c_libraries: BTreeMap<String, crate::manifest::CLibraryConfig>,
+    /// The package has native code (`crate::manifest::Manifest::has_native_code`): only such a
+    /// package may declare C functions.
+    pub has_native_code: bool,
     /// The package's `jsx.importSource`, as written.
     pub jsx_import_source: Option<String>,
     /// The package's `define` (name → literal source); the root package's apply to the build.
@@ -40,6 +46,9 @@ pub struct GraphPackage {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PackageGraph {
     packages: Vec<GraphPackage>,
+    /// The root package's name and its `allowNative`: the packages whose C declarations the
+    /// program allows (`None`: a graph without a root package, such as a workspace's).
+    allow_native: Option<(String, Vec<String>)>,
 }
 
 /// Canonical form of `p`; for a path that does not exist (yet), its deepest existing ancestor is
@@ -80,12 +89,29 @@ impl PackageGraph {
             host_modules: BTreeMap::new(),
             host: None,
             native: None,
+            c_libraries: BTreeMap::new(),
+            has_native_code: false,
             jsx_import_source: None,
             define: BTreeMap::new(),
             npm: BTreeMap::new(),
             key,
         });
         self.packages.last_mut().expect("ICE: just pushed")
+    }
+
+    /// Record the root package `name` and its `allowNative` list.
+    pub fn set_allow_native(&mut self, name: &str, allowed: &[String]) {
+        self.allow_native = Some((name.to_string(), allowed.to_vec()));
+    }
+
+    /// Whether the program allows package `name`'s native code: the root package's own, and
+    /// those the root lists in `allowNative`. A graph without a root allows all (its members
+    /// are checked when each is built).
+    pub fn allows_native(&self, name: &str) -> bool {
+        match &self.allow_native {
+            Some((root, allowed)) => root == name || allowed.iter().any(|a| a == name),
+            None => true,
+        }
     }
 
     /// The package added last.

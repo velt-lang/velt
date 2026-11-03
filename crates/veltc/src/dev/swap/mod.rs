@@ -77,6 +77,11 @@ fn reload(session: &mut DevSession, opts: &BuildOptions, flags: Report) -> Reloa
     let program = driver::compile(&mut sess, opts);
     let mut files: Vec<_> = sess.sm.files().map(|(_, f)| f.path.clone()).collect();
     files.extend(source_files(opts.packages.as_ref()));
+    let program = program.and_then(|p| {
+        velt_codegen_cl::load_c_libraries(&sess.c_libs)
+            .map_err(crate::driver::BuildError::Failed)?;
+        Ok(p)
+    });
     let program = match program {
         Ok(program) => program,
         Err(err) => {

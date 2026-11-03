@@ -5,6 +5,8 @@ import type { Package } from "velt/package";
 export const pkg: Package = {
   name: "feed-bench",
   version: "0.1.0",
+  // Packages with native code run with no safety net, so the program lists the ones it trusts.
+  allowNative: ["sqlite"],
   dependencies: {
     "http-server": { path: "../../../packages/http-server" },
     sqlite: { path: "../../../packages/sqlite" },

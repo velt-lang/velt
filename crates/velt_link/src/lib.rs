@@ -60,6 +60,9 @@ pub struct LinkRequest<'a> {
     pub release: bool,
     /// Native libraries of packages (empty for most programs).
     pub native: &'a [NativeLink],
+    /// The C libraries of packages' `declare c` functions, as linker arguments (`-lsqlite3`,
+    /// `-framework Accelerate`, `sqlite3.lib`): linked into every build of the program.
+    pub c_libs: &'a [String],
 }
 
 /// Operating-system family a target triple links for.
@@ -520,6 +523,7 @@ mod tests {
             output: Path::new("y"),
             release: false,
             native: &[],
+            c_libs: &[],
         })
         .unwrap_err();
         assert!(err.contains("cross-OS linking"), "{err}");

@@ -88,19 +88,37 @@ pub(super) fn to_vlt(m: &Manifest) -> String {
             .map(|(name, value)| format!("{}: {}", key(name), string_lit(value)));
         fields.push(format!("define: {}", multiline_object(defines)));
     }
-    if let Some(native) = &m.native {
+    if m.native.is_some() || m.c_libraries.is_some() {
         let mut parts = Vec::new();
-        if native.path != DEFAULT_NATIVE_PATH {
-            parts.push(format!("path: {}", string_lit(&native.path)));
+        if let Some(native) = &m.native {
+            if native.path != DEFAULT_NATIVE_PATH {
+                parts.push(format!("path: {}", string_lit(&native.path)));
+            }
+            if !native.targets.is_empty() {
+                let targets: Vec<String> = native.targets.iter().map(|t| string_lit(t)).collect();
+                parts.push(format!("targets: [{}]", targets.join(", ")));
+            }
+            if native.wasm {
+                parts.push("wasm: true".into());
+            }
         }
-        if !native.targets.is_empty() {
-            let targets: Vec<String> = native.targets.iter().map(|t| string_lit(t)).collect();
-            parts.push(format!("targets: [{}]", targets.join(", ")));
-        }
-        if native.wasm {
-            parts.push("wasm: true".into());
+        if let Some(libraries) = &m.c_libraries {
+            let libs = libraries.iter().map(|(name, lib)| {
+                let system = lib
+                    .system
+                    .iter()
+                    .map(|(cond, s)| format!("{}: {}", key(cond), string_lit(s)));
+                let fields =
+                    (!lib.system.is_empty()).then(|| format!("system: {}", inline_object(system)));
+                format!("{}: {}", key(name), inline_object(fields.into_iter()))
+            });
+            parts.push(format!("c: {}", inline_object(libs)));
         }
         fields.push(format!("native: {}", inline_object(parts.into_iter())));
+    }
+    if !m.allow_native.is_empty() {
+        let names: Vec<String> = m.allow_native.iter().map(|n| string_lit(n)).collect();
+        fields.push(format!("allowNative: [{}]", names.join(", ")));
     }
     if !m.ts_compat.is_empty() {
         let dirs: Vec<String> = m.ts_compat.iter().map(|d| string_lit(d)).collect();
@@ -207,11 +225,33 @@ pub(super) fn to_json(m: &Manifest) -> Value {
     if !m.define.is_empty() {
         out.insert("define".into(), json!(m.define));
     }
-    if let Some(native) = &m.native {
-        out.insert(
-            "native".into(),
-            json!({ "path": native.path, "targets": native.targets, "wasm": native.wasm }),
-        );
+    if m.native.is_some() || m.c_libraries.is_some() {
+        let mut o = match &m.native {
+            Some(native) => {
+                let crate_fields =
+                    json!({ "path": native.path, "targets": native.targets, "wasm": native.wasm });
+                crate_fields.as_object().cloned().unwrap_or_default()
+            }
+            None => Map::new(),
+        };
+        if let Some(libraries) = &m.c_libraries {
+            let libs: Map<String, Value> = libraries
+                .iter()
+                .map(|(name, lib)| {
+                    let system: Map<String, Value> = lib
+                        .system
+                        .iter()
+                        .map(|(c, s)| (c.clone(), json!(s)))
+                        .collect();
+                    (name.clone(), json!({ "system": system }))
+                })
+                .collect();
+            o.insert("c".into(), Value::Object(libs));
+        }
+        out.insert("native".into(), Value::Object(o));
+    }
+    if !m.allow_native.is_empty() {
+        out.insert("allowNative".into(), json!(m.allow_native));
     }
     if !m.ts_compat.is_empty() {
         out.insert("tsCompat".into(), json!(m.ts_compat));

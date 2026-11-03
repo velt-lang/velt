@@ -640,7 +640,7 @@ Step 1 lands in layers, each its own pull request:
    (another `$suffix`, another package) is an error until calls through C function pointers.
    Under `velt dev` a C function no loaded library has is an error naming its declaration.
    Step 1 is complete only with layers 5 (the trust boundary) and 6 (the header check): until
-   then any package may declare C functions, unchecked.
+   6, declarations are unchecked.
 3. `Ptr<T>` (a std struct over the address; `Ptr.at` is unsafe), `Ptr<T> | null`, `null`,
    `declare c type`, arrays of numbers and views of bytes as buffers (read at the call, after
    every argument), `StrBytes` (a well-formed string's own bytes; a std hook makes the U+FFFD
@@ -657,8 +657,25 @@ Step 1 lands in layers, each its own pull request:
    `OutPtr<T>` point at a C type, a number, `bool`, `void` or another pointer. `CString.bytesOf`
    lends its bytes read-only, zero-copy (Rust's `as_bytes`); #2228 closes the `readonly` gaps
    that let a write through them.
-5. The trust boundary: `native.c` libraries per target, `allowNative`, the export rule for raw
-   types, the `SAFETY` lint and `velt check`'s listing.
+5. The trust boundary, in two parts.
+   - 5a: `allowNative` and `native.c`'s `system` libraries.
+     - A package declaring C functions has `native.c`, `c: {}` when it calls only the C library;
+       without it, its first declaration is an error. So its manifest says it has native code.
+     - Installing a package with native code (a Rust crate or `native.c`) that the root doesn't
+       list is an error naming the dependency chain and the line to add. The compiler checks
+       the same at each package's first C declaration.
+     - A library other than `c` is one of the package's `native.c` entries. Its `system` object
+       maps build conditions (`native`, `darwin`, `linux`, `win32`, `default`) to a library name
+       or `framework:Name`, checked to be a name and never a linker flag. The first condition the
+       build has applies. A target with none is an error at the declaration.
+     - Every build links the libraries the program's declarations name (`-lname`, `-framework
+       Name`, `name.lib`), and `velt dev` opens them (`dlopen` with `RTLD_GLOBAL`,
+       `LoadLibraryA`).
+     - The bundled linker's kits have only the platform's own libraries, so another system
+       library links with the system linker (`VELT_LINKER=system`).
+     - `sources`/`crate` entries come with the bundle builds (step 3).
+   - 5b: `unsafe` only in allowed packages and std; the export rule for raw types; the `SAFETY`
+     lint; `velt check`'s listing; `allowNative` recorded in `velt.lock.json`.
 6. The header check and `declare c const`.
 
 ## Decisions

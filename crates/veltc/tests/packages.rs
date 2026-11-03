@@ -307,7 +307,7 @@ fn a_closed_redis_client_lets_the_program_end() {
     std::fs::write(
         app.join("package.vlt"),
         format!(
-            "import type {{ Package }} from \"velt/package\";\n\nexport const pkg: Package = {{\n  name: \"app\",\n  version: \"0.1.0\",\n  dependencies: {{ redis: {{ path: \"{dep}\" }} }},\n}};\n"
+            "import type {{ Package }} from \"velt/package\";\n\nexport const pkg: Package = {{\n  name: \"app\",\n  version: \"0.1.0\",\n  allowNative: [\"redis\"],\n  dependencies: {{ redis: {{ path: \"{dep}\" }} }},\n}};\n"
         ),
     )
     .unwrap();

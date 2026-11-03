@@ -16,6 +16,7 @@ use crate::relpath;
 use crate::resolve::{resolve, Resolution, ResolvedPackage, Source};
 use crate::workspace::{Workspace, WorkspaceFile};
 
+mod allow_native;
 pub mod workspace;
 
 /// How to treat the existing lockfile, and what to install for.
@@ -155,6 +156,11 @@ pub fn install(root: &Path, loc: &Locations, opts: InstallOptions) -> Result<Ins
         &opts,
     )?;
     let dirs = fetch(loc, resolution.packages.values())?;
+    allow_native::check(
+        (&manifest, &resolution.root_dependencies),
+        resolution.packages.values(),
+        &dirs,
+    )?;
     let natives = natives(
         loc,
         Some((&root, &manifest)),
@@ -611,6 +617,7 @@ fn build_graph<'r>(
     let mut graph = PackageGraph::default();
     if let Some((manifest, root, dependencies)) = root {
         add(&mut graph, &manifest.package.name, root, dependencies);
+        graph.set_allow_native(&manifest.package.name, &manifest.allow_native);
         let added = graph.last_mut();
         configure(added, manifest);
         added.native = natives.remove(&manifest.package.name);
@@ -633,7 +640,7 @@ fn build_graph<'r>(
 }
 
 /// The per-package compile settings of `manifest`: `paths`, `imports`, `hostModules`, `host`,
-/// `jsx` and `define`.
+/// `jsx`, `define` and `native.c`.
 fn configure(package: &mut crate::graph::GraphPackage, manifest: &Manifest) {
     package.paths = manifest.paths.clone();
     package.imports = manifest.imports.clone();
@@ -641,6 +648,8 @@ fn configure(package: &mut crate::graph::GraphPackage, manifest: &Manifest) {
     package.host = manifest.host.clone();
     package.jsx_import_source = manifest.jsx.as_ref().and_then(|j| j.import_source.clone());
     package.define = manifest.define.clone();
+    package.c_libraries = manifest.c_libraries.clone().unwrap_or_default();
+    package.has_native_code = manifest.has_native_code();
 }
 
 #[cfg(test)]

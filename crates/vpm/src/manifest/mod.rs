@@ -92,6 +92,15 @@ pub struct Manifest {
     /// `native`: the package ships a native library built from a Cargo crate.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native: Option<NativeConfig>,
+    /// `native.c`: the C libraries the package's `declare c("<library>")` functions name, by
+    /// that name (docs/internals/design/c-ffi.md); `Some` (perhaps empty) when the package
+    /// declares C functions at all. A `native` object with only `c` is no Rust crate (`native`
+    /// stays `None`).
+    #[serde(skip)]
+    pub c_libraries: Option<BTreeMap<String, CLibraryConfig>>,
+    /// `allowNative`: the packages with native code the program allows (the root package's).
+    #[serde(skip)]
+    pub allow_native: Vec<String>,
     /// `jsx`: how the package's modules compile JSX.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jsx: Option<JsxConfig>,
@@ -152,6 +161,34 @@ pub struct NativeConfig {
     /// Whether a `wasm32-wasip1` library is published too (not supported yet: must be false).
     #[serde(default)]
     pub wasm: bool,
+}
+
+/// A C library of a package (`native.c.<library>`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CLibraryConfig {
+    /// `system`: the platform's library by build condition, in the order written
+    /// (`"sqlite3"`, `"framework:Accelerate"`).
+    pub system: Vec<(String, String)>,
+}
+
+impl Manifest {
+    /// Whether the package has native code: a Rust crate, or C declarations (`native.c`). Such a
+    /// package is installed only when the program allows it (`allowNative`).
+    pub fn has_native_code(&self) -> bool {
+        self.native.is_some() || self.c_libraries.is_some()
+    }
+}
+
+impl CLibraryConfig {
+    /// The system library a build for `triple` links: the first `system` entry whose condition
+    /// the build has (`None`: the library has none for that target).
+    pub fn system_for(&self, triple: &str) -> Option<&str> {
+        let conditions = crate::imports::conditions(triple, None);
+        self.system
+            .iter()
+            .find(|(cond, _)| conditions.contains(cond))
+            .map(|(_, lib)| lib.as_str())
+    }
 }
 
 /// Default `native.path`.
