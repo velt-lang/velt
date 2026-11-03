@@ -33,6 +33,7 @@ mod native_init;
 mod numeric;
 mod param_attrs;
 mod programs_m3;
+mod shape_guard;
 mod srclocs;
 mod verifier;
 mod vir_ext;
