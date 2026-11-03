@@ -48,7 +48,7 @@ impl FnLower<'_, '_> {
                 let tagged = self.tagged(obj.clone());
                 if self.cx.has_header(d) {
                     let vt = self.obj_vtable(obj, ty);
-                    let f = self.dispatch(vt, SLOT_TRANSFER);
+                    let f = self.dispatch_class_glue(vt, SLOT_TRANSFER, ty);
                     self.call_entry(f, vec![tagged], vec![Ty::Ptr], Ty::Ptr);
                 } else {
                     self.call_glue(Glue::ObjTransfer, ty, vec![tagged]);

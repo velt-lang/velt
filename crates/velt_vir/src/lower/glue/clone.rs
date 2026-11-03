@@ -59,7 +59,7 @@ impl FnLower<'_, '_> {
                 self.when(nn, done);
                 let new = if self.cx.has_header(dd) {
                     let vt = self.obj_vtable(obj.clone(), ty);
-                    let f = self.dispatch(vt, SLOT_CLONE);
+                    let f = self.dispatch_class_glue(vt, SLOT_CLONE, ty);
                     self.call_entry(f, vec![obj], vec![Ty::Ptr], Ty::Ptr)
                 } else {
                     self.call_glue(Glue::ObjClone, ty, vec![obj])

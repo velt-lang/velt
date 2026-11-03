@@ -127,6 +127,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.when(nn, done);
         if self.cx.has_header(d) {
             let vt = self.obj_vtable(obj, ty);
+            self.note_class_glue(SLOT_TRANSFER, ty);
             self.via_vtable(place, vt);
         } else {
             let new = self.call_glue(Glue::ObjTransfer, ty, vec![obj]);

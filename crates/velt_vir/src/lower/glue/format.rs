@@ -265,7 +265,7 @@ impl FnLower<'_, '_> {
                 let args = vec![buf.clone(), obj.clone(), depth.clone()];
                 if self.cx.has_header(d) {
                     let vt = self.obj_vtable(obj, ty);
-                    let f = self.dispatch(vt, SLOT_FORMAT);
+                    let f = self.dispatch_class_glue(vt, SLOT_FORMAT, ty);
                     self.call_entry(f, args, vec![Ty::Ptr, Ty::Ptr, Ty::U32], Ty::Unit);
                 } else {
                     self.call_glue(Glue::ObjFormat, ty, args);

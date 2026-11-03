@@ -169,6 +169,9 @@ impl Cx<'_> {
         });
         let id = StaticId(self.statics.len() as u32 - 1);
         self.lay.vtables.insert(key, id);
+        if let VtableKey::Class(cls) = key {
+            self.note_class_table(id, cls);
+        }
         // Its `any` table, made with its entries, points back at it.
         if let VtableKey::Closure(index, inst) = key {
             if let Some(&a) = self.lay.vtables.get(&VtableKey::ClosureAny(index, inst)) {
