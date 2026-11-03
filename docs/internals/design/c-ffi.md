@@ -631,11 +631,16 @@ Step 1 lands in layers, each its own pull request:
 1. `unsafe` blocks, expressions and functions (#2201).
 2. `declare c("lib") function` with scalars (integers, `f32`, `f64`, `bool`, `void`): a direct
    call in both backends and the dev JIT (which finds the C library's functions with `dlsym`),
-   `errno` captured after it (on Unix; Windows captures the CRT's `errno` with step 2), calls
+   `errno` captured after it on Unix (on Windows, `lastOsError()` after a C call reads
+   `GetLastError()`, which the C library doesn't set, so it does not report the call's error
+   until step 2 captures the CRT's `errno`), calls
    only in unsafe code. Until the trust boundary layer, a C declaration is allowed in std and in
    any file with a package (not a lone file), the only library is `"c"`, the platform's C
    library, and a call on WebAssembly is an error. One symbol has one signature: a second one
    (another `$suffix`, another package) is an error until calls through C function pointers.
+   Under `velt dev` a C function no loaded library has is an error naming its declaration.
+   Step 1 is complete only with layers 5 (the trust boundary) and 6 (the header check): until
+   then any package may declare C functions, unchecked.
 3. The types that cross beyond scalars (`Ptr`, `declare c type`, arrays and views, `StrBytes`,
    `CString`, `Out`) and the raw reads.
 4. The trust boundary: `native.c` libraries per target, `allowNative`, the export rule for raw

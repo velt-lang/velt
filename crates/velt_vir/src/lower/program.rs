@@ -32,6 +32,7 @@ impl<'h> Cx<'h> {
             unavailable: vec![],
             c_clashes: vec![],
             c_symbols: Default::default(),
+            c_clashes_reported: Default::default(),
             std_calls: FxHashMap::default(),
             system_aggs: FxHashMap::default(),
             no_await_steps: false,
@@ -352,11 +353,14 @@ impl<'h> Cx<'h> {
         if let Some(&id) = self.extern_map.get(symbol) {
             let e = &self.externs[id.0 as usize];
             if e.params != params || e.ret != ret {
-                if let Some(&at) = self.c_symbols.get(symbol) {
+                if let Some(c) = self.c_symbols.get(symbol) {
                     // The program declared it as a C function first (c_call.rs).
                     self.c_clashes.push(velt_common::Diagnostic::error(
-                        format!("C function `{symbol}` is a symbol the compiler calls with another signature"),
-                        at,
+                        format!(
+                            "C function `{symbol}` (`{}`) is a symbol the compiler's runtime calls with another signature",
+                            c.shown
+                        ),
+                        c.span,
                     ));
                     return id;
                 }
@@ -373,6 +377,7 @@ impl<'h> Cx<'h> {
             ret,
             noreturn,
             host: None,
+            c_decl: None,
         });
         self.extern_map.insert(symbol.to_string(), id);
         id

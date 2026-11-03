@@ -41,31 +41,44 @@ impl FnLower<'_, '_> {
         }
         let cret = c_vir(c.ret);
         let link = base_symbol(&symbol);
-        if let Some(other) = self
+        let decl = (self.cx.locs.as_ref())
+            .and_then(|m| m.loc(x.span).map(|l| m.describe(l)))
+            .unwrap_or_else(|| link.to_string());
+        let shown = shown_signature(&symbol, &c);
+        let clash = self
             .cx
             .extern_signature(link)
-            .filter(|s| *s != (&ctys[..], cret))
-        {
-            let other = format!("{other:?}");
-            let span = x.span;
-            self.cx.c_clashes.push(
-                velt_common::Diagnostic::error(
-                    format!("C function `{link}` is called with two different signatures"),
-                    span,
-                )
-                .with_note(format!(
-                    "this declaration's is {:?} -> {cret:?}; another declaration of the symbol (or the runtime) uses {other}",
-                    ctys
-                ))
-                .with_note("one symbol has one signature until calls through C function pointers come (#2187 step 4)"),
-            );
+            .is_some_and(|s| s != (&ctys[..], cret));
+        if clash {
+            // Reported once per declaration, naming the other one (or the runtime's use).
+            if self.cx.c_clashes_reported.insert(def) {
+                let other = match self.cx.c_symbols.get(link) {
+                    Some(o) => format!("`{}` at {}", o.shown, o.at),
+                    None => "the signature the compiler's runtime calls it with".to_string(),
+                };
+                self.cx.c_clashes.push(
+                    velt_common::Diagnostic::error(
+                        format!("C function `{link}` has two signatures: `{shown}` here, and {other}"),
+                        x.span,
+                    )
+                    .with_note("one symbol has one signature until calls through C function pointers come (#2187 step 4)"),
+                );
+            }
             return match cret {
                 Ty::Unit => unit(),
                 t => Operand::Copy(Place::local(self.temp(t))),
             };
         }
-        self.cx.c_symbols.insert(link.to_string(), x.span);
+        self.cx
+            .c_symbols
+            .entry(link.to_string())
+            .or_insert(super::CDecl {
+                span: x.span,
+                at: decl.clone(),
+                shown,
+            });
         let id = self.cx.extern_sym(link, ctys, cret, false);
+        self.cx.externs[id.0 as usize].c_decl = Some(decl);
         let dest = (cret != Ty::Unit).then(|| self.temp(cret));
         self.call(
             vir::Callee::Extern(id),
@@ -99,6 +112,34 @@ fn c_vir(t: CTy) -> Ty {
         CTy::F64 => Ty::F64,
         CTy::Bool => Ty::Bool,
         CTy::Void => Ty::Unit,
+    }
+}
+
+/// How a C function's declaration reads, for messages: `abs$u8(u8): i32`.
+fn shown_signature(declared: &str, c: &hir::CImport) -> String {
+    let ps: Vec<&str> = c.params.iter().map(|t| c_name(*t)).collect();
+    format!("{declared}({}): {}", ps.join(", "), c_name(c.ret))
+}
+
+/// A C type as the declaration spells it.
+fn c_name(t: CTy) -> &'static str {
+    match t {
+        CTy::Int(i) => match i {
+            IntTy::I8 => "i8",
+            IntTy::I16 => "i16",
+            IntTy::I32 => "i32",
+            IntTy::I64 => "i64",
+            IntTy::ISize => "isize",
+            IntTy::U8 => "u8",
+            IntTy::U16 => "u16",
+            IntTy::U32 => "u32",
+            IntTy::U64 => "u64",
+            IntTy::USize => "usize",
+        },
+        CTy::F32 => "f32",
+        CTy::F64 => "f64",
+        CTy::Bool => "bool",
+        CTy::Void => "void",
     }
 }
 
